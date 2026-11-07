@@ -130,6 +130,8 @@
             case 'liquidline': return !!(G.WTS_state && G.WTS_state.liquidline);
             case 'pipelife':   return !!(G.WTS_state && G.WTS_state.pipelife);
             case 'prism': {
+                // A workspace mode (PRiSM_modeExt) with a key line has results.
+                if (_prismExtKeyLine()) return true;
                 // A fit exists, or a model is chosen and data is loaded.
                 if (_prismFit()) return true;
                 var st = G.PRiSM_state, ds = G.PRiSM_dataset;
@@ -166,6 +168,21 @@
         var lbl = (e && (e.label || e.name)) || '';
         if (!lbl && key) lbl = String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, function (c) { return c.toUpperCase(); });
         return lbl;
+    }
+    // Workspace mode (PRiSM_modeExt[PRiSM.mode]) and its report key line
+    // (36: PRiSM_reportKeyLine), resolved at call time; '' in the built-in modes.
+    function _prismExt() {
+        if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+        var m = G.PRiSM && G.PRiSM.mode, X = G.PRiSM_modeExt;
+        if (typeof m !== 'string' || m === 'transient' || m === 'decline' || m === 'combined') return null;
+        var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, m)) ? X[m] : null;
+        return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+    }
+    function _prismExtKeyLine() {
+        if (!_prismExt() || typeof G.PRiSM_reportKeyLine !== 'function') return '';
+        var kl = '';
+        try { kl = G.PRiSM_reportKeyLine(); } catch (e) { _warn('reportKeyLine failed', e); kl = ''; }
+        return (typeof kl === 'string') ? kl : '';
     }
     // Key results: the report layer's summary when present, else computed
     // here from lastFit.phys and the well inputs (field units).
@@ -445,6 +462,12 @@
     }
     function _renderPRiSM() {
         if (!_hasState('prism')) return _placeholder('PRiSM Well Test Analysis');
+        var extLine = _prismExtKeyLine();
+        if (extLine) {
+            // ext mode: the mode's key line replaces the PTA fit line
+            return _section('PRiSM Well Test Analysis', '<table class="qr-kv">' +
+                _row('Analysis', _prismExt().label) + _row('Result', extLine) + '</table>');
+        }
         var ps = G.PRiSM_state || {};
         var fit = _prismFit();
         var key = (fit && fit.modelKey) || ps.model || '';

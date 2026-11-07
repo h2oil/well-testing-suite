@@ -159,6 +159,29 @@ function _bourdetOnLn(lx, y, L) {
     var n = lx.length, d = new Array(n), i;
     for (i = 0; i < n; i++) d[i] = NaN;
     if (n < 3) return d;
+    // O(n) window: with every ln x finite and non-decreasing the two edges of
+    // the outward walk move monotonically (identical edges, identical result).
+    var mono = true;
+    for (i = 0; i < n; i++) if (!_num(lx[i]) || (i > 0 && !(lx[i] >= lx[i - 1]))) { mono = false; break; }
+    if (mono) {
+        var m = -1, r = 1;
+        for (i = 1; i < n - 1; i++) {
+            if (!_num(y[i])) continue;
+            var j1 = i - 1, j2 = i + 1;
+            if (L > 0) {
+                while (m + 1 <= i - 1 && lx[i] - lx[m + 1] >= L) m++;
+                j1 = m > 0 ? m : 0;
+                if (r < i + 1) r = i + 1;
+                while (r < n - 1 && lx[r] - lx[i] < L) r++;
+                j2 = r;
+            }
+            var e1 = lx[i] - lx[j1], e2 = lx[j2] - lx[i], eT = lx[j2] - lx[j1];
+            if (!_num(e1) || !_num(e2) || !_num(eT) || e1 === 0 || e2 === 0 || eT === 0) continue;
+            if (!_num(y[j1]) || !_num(y[j2])) continue;
+            d[i] = (y[i] - y[j1]) / e1 * (e2 / eT) + (y[j2] - y[i]) / e2 * (e1 / eT);
+        }
+        return d;
+    }
     for (i = 1; i < n - 1; i++) {
         if (!_num(lx[i]) || !_num(y[i])) continue;
         var i1 = i - 1, i2 = i + 1;
@@ -1514,7 +1537,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
 // gasOpts / rateSkin / deliverability: gas & deliverability (52-prism-gas.js).
 var STATE_FIELDS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                     'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools',
-                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
+                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability', 'dfit'];
 
 G.PRiSM_saveState = function PRiSM_saveState() {
     var st = G.PRiSM_state;
@@ -1528,6 +1551,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     if (P) {
         if (P.mode != null) snap.mode = P.mode;
         if (P.tab != null) snap.tab = P.tab;
+        if (P.step != null) snap.step = P.step;
     }
     var ls = _storage();
     if (ls) {
@@ -1567,15 +1591,18 @@ G.PRiSM_restoreState = function PRiSM_restoreState(obj) {
     // Saved fits, compare selection and named branches (51); gas options,
     // rate-dependent skin and deliverability inputs (52).
     if (Array.isArray(snap.fits)) st.fits = snap.fits;
+    // Workspace-mode state (DFIT: tests, inputs, picks and summaries; plain object).
+    if (snap.dfit && typeof snap.dfit === 'object' && !Array.isArray(snap.dfit)) st.dfit = snap.dfit;
     ['fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'].forEach(function (k) {
         if (snap[k] && typeof snap[k] === 'object' && !Array.isArray(snap[k])) st[k] = snap[k];
     });
     // Legacy field stays neutral: fits never live in st.match.
     st.match = { timeShift: 0, pressShift: 0 };
-    if (snap.mode != null || snap.tab != null) {
+    if (snap.mode != null || snap.tab != null || snap.step != null) {
         if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
         if (typeof snap.mode === 'string') G.PRiSM.mode = snap.mode;
         if (_num(snap.tab)) G.PRiSM.tab = snap.tab;
+        if (_num(snap.step) && snap.step >= 1 && snap.step <= 5) G.PRiSM.step = snap.step;
     }
     return snap;
 };
@@ -1593,7 +1620,8 @@ function _scheduleSave() {
 if (typeof G.addEventListener === 'function' && !G.__PRiSM_ptaCoreListeners) {
     G.__PRiSM_ptaCoreListeners = true;
     ['prism:fit-updated', 'prism:model-changed', 'prism:plot-changed', 'prism:well-changed',
-     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded'].forEach(function (ev) {
+     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded',
+     'prism:dfit-updated', 'prism:dfit-model-updated', 'prism:mode-changed'].forEach(function (ev) {
         try { G.addEventListener(ev, _scheduleSave); } catch (e) { /* ignore */ }
     });
 }
@@ -3150,9 +3178,14 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
     function _installListeners() {
         if (typeof G.addEventListener !== 'function' || G.__prismSemilogListeners) return;
         G.__prismSemilogListeners = true;
+        // in DFIT mode the semilog result is neither shown nor reported (an injection + falloff record): the recompute is
+        // deferred to the next change to another mode instead of running an IARF search on every DFIT dataset or C1 write
+        var pending = false;
         function recompute() {
             var ds = G.PRiSM_dataset;
             if (!ds || !ds.t || !ds.t.length) return;
+            if (G.PRiSM && G.PRiSM.mode === 'dfit') { pending = true; return; }
+            pending = false;
             var st = _state();
             var o = {};
             var so = (st.semilog && st.semilog.opts) || {};
@@ -3162,6 +3195,7 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
         }
         G.addEventListener('prism:dataset-loaded', recompute);
         G.addEventListener('prism:well-changed', recompute);
+        G.addEventListener('prism:mode-changed', function () { if (pending && !(G.PRiSM && G.PRiSM.mode === 'dfit')) recompute(); });
     }
 
     // ── Public API ──────────────────────────────────────────────────
@@ -4780,6 +4814,13 @@ function PRiSM_rtaLinearFlow(rta, opts) {
         if (typeof G.PRiSM_getLastFit === 'function') { try { lf = G.PRiSM_getLastFit(); } catch (e) { lf = null; } }
         if (!lf && _st()) lf = _st().lastFit;
         if (lf && lf.phys && _pos(+lf.phys.k) && lf.kind !== 'rate') { k = +lf.phys.k; kSrc = 'pressure fit'; }
+    }
+    // No input and no fit: a k constraint published by another PRiSM layer
+    // (DFIT after-closure), resolved at call time.
+    if (!k && typeof G.PRiSM_dfit_kConstraint === 'function') {
+        var dk = null;
+        try { dk = G.PRiSM_dfit_kConstraint(); } catch (e) { dk = null; }
+        if (dk && _pos(+dk.k)) { k = +dk.k; kSrc = 'DFIT after-closure'; }
     }
     if (k && out.xf_sqrt_k) { out.k = k; out.kSource = kSrc; out.xf = out.xf_sqrt_k / Math.sqrt(k); }
     return out;
@@ -6854,6 +6895,109 @@ function reportData() {
     return model;
 }
 
+// Workspace-mode extension (PRiSM_modeExt[PRiSM.mode], DFIT plan §3.12),
+// resolved at call time; null in the built-in modes.
+function _modeKey() { return (G.PRiSM && typeof G.PRiSM.mode === 'string') ? G.PRiSM.mode : 'transient'; }
+function _modeExt() {
+    if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+    var m = _modeKey(), X = G.PRiSM_modeExt;
+    if (m === 'transient' || m === 'decline' || m === 'combined') return null;
+    var e = (X && typeof X === 'object' && _own(X, m)) ? X[m] : null;
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+// ext.reportHeader(model) → {title, keyRows:[[label, text]], keyLine} (plain text), or null.
+function _extHeader(ext, model) {
+    if (!ext || typeof ext.reportHeader !== 'function') return null;
+    var h = null;
+    try { h = ext.reportHeader(model); } catch (e) { _warn('[report] reportHeader failed', e); h = null; }
+    if (!h || typeof h !== 'object') return null;
+    return {
+        title: String(h.title || ext.label),
+        keyRows: Array.isArray(h.keyRows) ? h.keyRows.filter(function (p) { return Array.isArray(p) && p.length >= 2; })
+            .map(function (p) { return [String(p[0]), String(p[1] == null ? '' : p[1])]; }) : [],
+        keyLine: typeof h.keyLine === 'string' ? h.keyLine : ''
+    };
+}
+// Ext mode with the legacy PTA sections kept: the mode's header (title, key
+// rows, key line) goes first, ahead of the PTA key results.
+function _extLegacyHeadHTML(m, ext, pdf) {
+    var hx = _extHeader(ext, m);
+    if (!hx || (!hx.keyRows.length && !hx.keyLine)) return '';
+    if (pdf) {
+        return '<section class="rp-sec rp-out"><h2>' + _esc(hx.title) + ' — key results (field units)</h2>' + _rpKV(hx.keyRows) +
+               (hx.keyLine ? '<p class="rp-modsub">' + _esc(hx.keyLine) + '</p>' : '') + '</section>';
+    }
+    return _card(hx.title + ' — key results', _kvHTML(hx.keyRows) +
+        (hx.keyLine ? '<div class="prism-rpt-note" id="prism_report_keyline">' + _esc(hx.keyLine) + '</div>' : ''), 'prism_report_extresults');
+}
+// Section blocks: [{kind:'kv', pairs|kv:[[l, t]]} | {kind:'table', title?, head:[], rows:[[t]]} |
+// {kind:'verdict', level:'ok'|'warn'|'bad'|'info', text} | {kind:'notes', items:[t]|text} |
+// {kind:'plot', key, title}] — every string plain text.
+function _normBlocks(list) {
+    if (!Array.isArray(list)) return [];
+    var str = function (v) { return String(v == null ? '' : v); };
+    var out = [];
+    list.forEach(function (b) {
+        if (!b || typeof b !== 'object') return;
+        if (b.kind === 'kv') {
+            var pairs = Array.isArray(b.pairs) ? b.pairs : (Array.isArray(b.kv) ? b.kv : (Array.isArray(b.rows) ? b.rows : []));
+            out.push({ kind: 'kv', pairs: pairs.filter(function (p) { return Array.isArray(p) && p.length >= 2; }).map(function (p) { return [str(p[0]), str(p[1])]; }) });
+        } else if (b.kind === 'table' && Array.isArray(b.head) && Array.isArray(b.rows)) {
+            out.push({ kind: 'table', title: b.title ? str(b.title) : '', head: b.head.map(str),
+                       rows: b.rows.map(function (r) { return (Array.isArray(r) ? r : []).map(str); }) });
+        } else if (b.kind === 'verdict' && b.text) {
+            var lv = (b.level === 'ok' || b.level === 'warn' || b.level === 'bad') ? b.level : 'info';
+            out.push({ kind: 'verdict', level: lv, text: str(b.text) });
+        } else if (b.kind === 'notes') {
+            var items = Array.isArray(b.items) ? b.items.map(str) : (b.text ? [str(b.text)] : []);
+            if (items.length) out.push({ kind: 'notes', items: items });
+        } else if (b.kind === 'plot' && typeof b.key === 'string' && b.key) {
+            out.push({ kind: 'plot', key: b.key, title: str(b.title || b.key) });
+        }
+    });
+    return out;
+}
+var VERDICT_MARK = { ok: '✓ ', warn: '⚠ ', bad: '✗ ', info: '' };
+function _blockPlotURL(key) {
+    if (!_hasDoc) return '';
+    try {
+        var cv = null;
+        if (typeof G.PRiSM_renderPlotToCanvas === 'function') cv = G.PRiSM_renderPlotToCanvas(key, 900, 480);
+        if (!cv && typeof G.PRiSM_drawPlot === 'function') {
+            cv = document.createElement('canvas'); cv.width = 900; cv.height = 480;
+            if (!G.PRiSM_drawPlot(cv, key, { width: 900, height: 480, hover: false, dragZoom: false })) cv = null;
+        }
+        return cv && typeof cv.toDataURL === 'function' ? (cv.toDataURL('image/png') || '') : '';
+    } catch (e) { _warn('[report] block plot failed', e); return ''; }
+}
+function _blocksHTML(blocks, pdf, sid) {
+    var h = '';
+    blocks.forEach(function (b, i) {
+        if (b.kind === 'kv' && b.pairs.length) h += pdf ? _rpKV(b.pairs) : _kvHTML(b.pairs);
+        else if (b.kind === 'table') {
+            var rows = b.rows.map(function (r) { return r.map(_esc); });
+            if (b.title) h += pdf ? '<h3>' + _esc(b.title) + '</h3>' : '<div class="prism-rpt-sub">' + _esc(b.title) + '</div>';
+            h += pdf ? _rpTable(b.head, rows) : _tableHTML(b.head, rows);
+        } else if (b.kind === 'verdict') {
+            var t = VERDICT_MARK[b.level] + b.text;
+            if (pdf) h += '<div class="rp-note ' + (b.level === 'ok' ? 'n-green' : b.level === 'bad' ? 'n-red' : b.level === 'warn' ? 'n-amber' : 'n-blue') + '">' + _esc(t) + '</div>';
+            else h += b.level === 'ok' ? _okHTML(t) : b.level === 'info' ? _infoHTML(t) : b.level === 'bad' ? _badHTML(t) : _warnHTML(t);
+        } else if (b.kind === 'notes') {
+            h += pdf ? '<div class="rp-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>'
+                     : '<div class="prism-rpt-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>';
+        } else if (b.kind === 'plot') {
+            if (pdf) {
+                var url = _blockPlotURL(b.key);
+                if (url) h += '<div class="rp-fig"><img src="' + _esc(url) + '" alt="' + _esc(b.title) + '"><div class="rp-modsub">' + _esc(b.title) + '</div></div>';
+            } else {
+                h += '<div class="prism-rpt-plot chart-wrap"><canvas id="prism_report_xp_' + sid + '_' + i + '" data-plot-key="' + _esc(b.key) +
+                     '" data-prism-block-plot="1" style="width:100%;height:280px;display:block;"></canvas><div>' + _esc(b.title) + '</div></div>';
+            }
+        }
+    });
+    return h;
+}
+
 // Sections contributed by other layers (fit workspace 51, gas 52):
 // window.PRiSM_reportSections = [fn(model) → null | {id, title, order,
 // kv:[[label, text]], table:{head:[], rows:[[text]]}, notes:[text]}].
@@ -6861,8 +7005,13 @@ function reportData() {
 function _extraSections(model) {
     var reg = Array.isArray(G.PRiSM_reportSections) ? G.PRiSM_reportSections : [];
     var out = [];
+    var mode = _modeKey(), ext = _modeExt();
     reg.forEach(function (fn) {
         if (typeof fn !== 'function') return;
+        // fn.modes = ['dfit', …]: only in those modes; an ext mode with
+        // reportLegacySections:false skips sections without modes.
+        if (Array.isArray(fn.modes)) { if (fn.modes.indexOf(mode) === -1) return; }
+        else if (ext && ext.reportLegacySections === false) return;
         var s = null;
         try { s = fn(model); } catch (e) { _warn('[report] extra section failed', e); s = null; }
         if (!s || typeof s !== 'object' || !s.title) return;
@@ -6873,7 +7022,8 @@ function _extraSections(model) {
                 head: s.table.head.map(String),
                 rows: s.table.rows.map(function (r) { return (Array.isArray(r) ? r : []).map(function (c) { return String(c == null ? '' : c); }); })
             } : null,
-            notes: Array.isArray(s.notes) ? s.notes.map(String) : []
+            notes: Array.isArray(s.notes) ? s.notes.map(String) : [],
+            blocks: _normBlocks(s.blocks)
         });
     });
     out.sort(function (a, b) { return a.order - b.order; });
@@ -6888,6 +7038,7 @@ function _extraHTML(m, pdf) {
             body += pdf ? _rpTable(s.table.head, rows) : _tableHTML(s.table.head, rows);
         }
         s.notes.forEach(function (n) { body += pdf ? '<p class="rp-modsub">' + _esc(n) + '</p>' : '<div class="prism-rpt-note">' + _esc(n) + '</div>'; });
+        if (s.blocks && s.blocks.length) body += _blocksHTML(s.blocks, pdf, String(s.id).replace(/[^A-Za-z0-9_-]/g, '_'));
         return pdf ? '<section class="rp-sec"><h2>' + _esc(s.title) + '</h2>' + body + '</section>'
                    : _card(s.title, body, 'prism_report_x_' + String(s.id).replace(/[^A-Za-z0-9_-]/g, '_'));
     }).join('');
@@ -7147,6 +7298,11 @@ function _semilogKey(c) {
     return (tt === 'buildup' || tt === 'falloff') ? 'horner' : 'mdh';
 }
 function _plotSpecs(c) {
+    var ext = _modeExt();
+    if (ext) {
+        return (Array.isArray(ext.reportPlots) ? ext.reportPlots : []).filter(function (p) { return p && typeof p.key === 'string' && p.key; })
+            .map(function (p) { return { id: 'x_' + p.key.replace(/[^A-Za-z0-9_-]/g, '_'), key: p.key, title: String(p.title || p.key), ext: true }; });
+    }
     var withModel = c.fit ? ' with the model' : '', withLine = c.semilog ? ' with the straight line' : '';
     if (c.kind === 'rate') {
         return [
@@ -7227,6 +7383,10 @@ function _plotPayload(c, spec) {
     return _withOverlay(c, spec, payload);
 }
 function _drawPlot(canvas, c, spec, size) {
+    if (spec.ext && typeof G.PRiSM_drawPlot === 'function') {
+        try { return !!G.PRiSM_drawPlot(canvas, spec.key, { width: size.width, height: size.height, hover: !!size.hover, dragZoom: false, showLegend: true }); }
+        catch (e) { _warn('[report] plot ' + spec.key + ' failed', e); return false; }
+    }
     var fn = _plotFn(spec.key);
     if (!fn) return false;
     var payload = _plotPayload(c, spec);
@@ -7307,9 +7467,62 @@ function _unresolved(m) {
     return bad;
 }
 
+// Ext-mode report: the mode's header and key rows, its sections (blocks) and
+// ext.reportPlots; the PTA blocks only when reportLegacySections is not false.
+function _extReportHTML(m, ext, pdf, opts) {
+    var hx = _extHeader(ext, m) || { title: ext.label, keyRows: [], keyLine: '' };
+    var hd = m.header, h = '';
+    var head = [['Client', hd.client], ['Well', hd.well], ['Field', hd.field], ['Analysis', hx.title],
+                ['Data points', hd.nPoints ? String(hd.nPoints) : ''], ['Report date', m.generatedAt]];
+    if (pdf) {
+        h += '<section class="rp-sec"><h2>' + _esc(hx.title) + '</h2>' + _rpKV(head) + '</section>';
+        if (hx.keyRows.length || hx.keyLine) {
+            h += '<section class="rp-sec rp-out"><h2>Key results (field units)</h2>' + _rpKV(hx.keyRows) +
+                 (hx.keyLine ? '<p class="rp-modsub">' + _esc(hx.keyLine) + '</p>' : '') + '</section>';
+        }
+    } else {
+        h += _card(hx.title, _kvHTML(head.filter(function (p) { return p[1]; })) +
+            '<div class="prism-rpt-actions">' +
+            '<button type="button" class="btn btn-primary" id="prism_report_pdf">Export PDF</button>' +
+            (typeof G.PRiSM_exportReportPDF === 'function' ? '<button type="button" class="btn btn-secondary" id="prism_report_pdf_hires">PDF with all plots</button>' : '') +
+            '</div><div id="prism_report_msg" style="margin-top:6px;font-size:12px;color:var(--text2);min-height:16px;"></div>', 'prism_report_head');
+        if (hx.keyRows.length || hx.keyLine) {
+            h += _card('Key results', _kvHTML(hx.keyRows) + (hx.keyLine ? '<div class="prism-rpt-note" id="prism_report_keyline">' + _esc(hx.keyLine) + '</div>' : ''), 'prism_report_results');
+        }
+    }
+    if (!m.hasData) {
+        h += pdf ? '<div class="rp-note n-amber"><b>No data.</b>Load data in PRiSM before issuing a report.</div>'
+                 : _card('Nothing to report yet', '<div class="prism-rpt-note">Load data on step ① to build a report.</div>');
+        return h;
+    }
+    h += _extraHTML(m, pdf);
+    var specs = _plotSpecs(m.ctx).filter(function (sp) { return !!(G.PRiSM_PLOT_REGISTRY && G.PRiSM_PLOT_REGISTRY[sp.key]); });
+    if (pdf) {
+        if (opts.plots !== false) {
+            var figs = '';
+            specs.forEach(function (sp) {
+                var url = _blockPlotURL(sp.key);
+                if (url) figs += '<div class="rp-fig"><img src="' + _esc(url) + '" alt="' + _esc(sp.title) + '"><div class="rp-modsub">' + _esc(sp.title) + '</div></div>';
+            });
+            if (figs) h += '<section class="rp-sec"><h2>Plots</h2>' + figs + '</section>';
+        }
+        if (m.notes) h += '<section class="rp-sec"><h2>Analyst comments</h2><p>' + _esc(m.notes).replace(/\n/g, '<br>') + '</p></section>';
+    } else {
+        if (specs.length) {
+            h += _card('Plots', '<div class="prism-rpt-plots" id="prism_report_plots">' + specs.map(function (sp) {
+                return '<div class="prism-rpt-plot chart-wrap"><canvas id="prism_report_plot_' + sp.id + '" data-plot-key="' + _esc(sp.key) + '" style="width:100%;height:280px;display:block;"></canvas><div>' + _esc(sp.title) + '</div></div>';
+            }).join('') + '</div>');
+        }
+        h += _card('Analyst comments', '<textarea id="prism_report_notes" placeholder="Comments to print with the report">' + _esc(m.notes) + '</textarea>');
+    }
+    return h;
+}
+
 function buildReportHTML(opts) {
     opts = opts || {};
     var m = opts.model || reportData();
+    var xm = _modeExt();
+    if (xm && xm.reportLegacySections === false) return _extReportHTML(m, xm, true, opts);
     var h = '', u = m.units;
     var hd = m.header;
     // Test & well summary
@@ -7319,6 +7532,7 @@ function buildReportHTML(opts) {
         ['Data points', hd.nPoints ? String(hd.nPoints) : ''], ['Model', m.model ? m.model.label : ''],
         ['Report date', m.generatedAt]
     ]) + '</section>';
+    if (xm) h += _extLegacyHeadHTML(m, xm, true);
     if (!m.hasData) {
         h += '<div class="rp-note n-amber"><b>No data.</b>Load pressure or rate data in PRiSM before issuing a report.</div>';
         return h;
@@ -7535,7 +7749,7 @@ function _injectStyles() {
         '.prism-chip--fit{border-color:var(--blue);color:var(--blue);} .prism-chip--line{border-color:var(--green);color:var(--green);}' +
         '.prism-chip--def{border-color:var(--yellow);color:var(--yellow);} .prism-chip--bad{border-color:var(--red);color:var(--red);}' +
         '.prism-rpt-note{font-size:12px;padding:7px 10px;border-radius:6px;border-left:3px solid var(--border);background:var(--bg1);color:var(--text2);margin-top:6px;}' +
-        '.prism-rpt-note--warn{border-left-color:var(--yellow);} .prism-rpt-note--ok{border-left-color:var(--green);} .prism-rpt-note--info{border-left-color:var(--blue);}' +
+        '.prism-rpt-note--warn{border-left-color:var(--yellow);} .prism-rpt-note--ok{border-left-color:var(--green);} .prism-rpt-note--info{border-left-color:var(--blue);} .prism-rpt-note--bad{border-left-color:var(--red);}' +
         '.prism-rpt-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;}' +
         '.prism-rpt-plots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px;}' +
         '.prism-rpt-plot{min-width:0;} .prism-rpt-plot canvas{display:block;width:100%;height:280px;border-radius:6px;}' +
@@ -7562,6 +7776,7 @@ function _tableHTML(head, rows) {
 function _warnHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--warn">' + _esc(t) + '</div>'; }
 function _okHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--ok">' + _esc(t) + '</div>'; }
 function _infoHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--info">' + _esc(t) + '</div>'; }
+function _badHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--bad">' + _esc(t) + '</div>'; }
 function _chip(source) {
     var cls = source === 'semilog' ? 'prism-chip--line' : (source === 'input' || source === 'derived') ? '' : 'prism-chip--fit';
     return '<span class="prism-chip ' + cls + '">' + _esc(_sourceLabel(source)) + '</span>';
@@ -7573,6 +7788,8 @@ var RESULT_HELP = {
     DR: 'prism_help_DR', J: 'prism_help_J', J_ideal: 'prism_help_Jideal', rwa: 'prism_help_rwa'
 };
 function _tabHTML(m) {
+    var xm = _modeExt();
+    if (xm && xm.reportLegacySections === false) return '<div class="prism-rpt" id="prism_report_root">' + _extReportHTML(m, xm, false, {}) + '</div>';
     var hd = m.header, h = '<div class="prism-rpt" id="prism_report_root">';
     var tiles = [['Client', hd.client], ['Well', hd.well], ['Field', hd.field], ['Test', hd.testLabel],
                  ['Period', hd.periodLabel], ['Data', hd.nPoints ? hd.nPoints + ' points' : ''],
@@ -7588,6 +7805,7 @@ function _tabHTML(m) {
         (typeof G.PRiSM_exportXMLDownload === 'function' ? '<button type="button" class="btn btn-secondary" id="prism_report_xml">Export XML</button>' : '') +
         '</div><div id="prism_report_msg" style="margin-top:6px;font-size:12px;color:var(--text2);min-height:16px;"></div>';
     h += _card('Report', head + btns);
+    if (xm) h += _extLegacyHeadHTML(m, xm, false);
     if (!m.hasData) {
         h += _card('Nothing to report yet', '<div class="prism-rpt-note">Load pressure or rate data on step ① (Data) to build a report.</div>' +
             '<div class="prism-rpt-actions"><button type="button" class="btn btn-secondary" id="prism_report_goto_data">Go to Data</button></div>');
@@ -7730,6 +7948,36 @@ function _drawTabPlots(host, m) {
         if (!cv) return;
         _drawPlot(cv, c, spec, { width: _plotWidth(cv.parentNode), height: 280, hover: true });
     });
+    // plot blocks of contributed sections
+    var bl = host.querySelectorAll ? host.querySelectorAll('canvas[data-prism-block-plot]') : [];
+    Array.prototype.forEach.call(bl, function (cv) {
+        var key = cv.getAttribute('data-plot-key');
+        if (key) _drawPlot(cv, c, { key: key, ext: true }, { width: _plotWidth(cv.parentNode), height: 280, hover: true });
+    });
+}
+
+// Mode-aware key line for the job report / quick report: the ext mode's
+// reportHeader().keyLine; '' in the built-in modes (their key line stays
+// the host's / quick report's own).
+function reportKeyLine() {
+    var ext = _modeExt();
+    if (!ext) return '';
+    var m = null;
+    try { m = reportData(); } catch (e) { m = null; }
+    var hx = _extHeader(ext, m);
+    return (hx && hx.keyLine) ? hx.keyLine : '';
+}
+// Would the PRiSM report fragment be produced? Built-in modes: a fit, or a
+// model and data (the host's own rule); ext modes: ext.reportReady() or a key line.
+function reportReady() {
+    var ext = _modeExt();
+    if (ext) {
+        if (typeof ext.reportReady === 'function') { try { return !!ext.reportReady(); } catch (e) { return false; } }
+        return !!reportKeyLine();
+    }
+    var st = _state();
+    var fit = (typeof G.PRiSM_getLastFit === 'function' ? G.PRiSM_getLastFit() : null) || st.lastFit || null;
+    return !!((fit || (st.model && G.PRiSM_dataset)) && typeof G.PRiSM_buildReportHTML === 'function');
 }
 
 function renderReportTab(hostEl) {
@@ -7833,6 +8081,8 @@ G.PRiSM_buildReportCSV = buildReportCSV;
 G.PRiSM_exportCSV = exportCSV;
 G.PRiSM_reportData = reportData;
 G.PRiSM_reportResults = reportResults;
+G.PRiSM_reportKeyLine = reportKeyLine;
+G.PRiSM_reportReady = reportReady;
 G.PRiSM_exportReport = exportReportPDF;
 G.PRiSM_hostExportReport = hostExportReport;
 G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet: _bourdet, normFit: _normFit };
@@ -7948,6 +8198,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         }
         return G.PRiSM_state;
     }
+
+    // Workspace-mode extension of the current mode (PRiSM_modeExt, §3.12 of the
+    // DFIT plan), resolved at call time; null in the built-in modes.
+    function curModeExt() {
+        if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+        var m = G.PRiSM && G.PRiSM.mode, X = G.PRiSM_modeExt;
+        if (typeof m !== 'string' || m === 'transient' || m === 'decline' || m === 'combined') return null;
+        var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, m)) ? X[m] : null;
+        return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+    }
+    function curModeKey() { return (G.PRiSM && typeof G.PRiSM.mode === 'string') ? G.PRiSM.mode : 'transient'; }
 
     function dispatch(type, detail) {
         if (typeof G.dispatchEvent !== 'function') return;
@@ -8913,6 +9174,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function PRiSM_renderRail(railEl) {
         railEl = railEl || $('prism_rail');
         if (!railEl) return null;
+        syncUndoExtras();
+        var ext = curModeExt();
+        if (ext && typeof ext.rail === 'function') {
+            try { ext.rail(railEl); }
+            catch (e) { railEl.innerHTML = '<div class="prism-rail-body"><div class="prism-rail-warn prism-rail-warn--bad"><span>Results unavailable: ' + esc(e && e.message) + '</span></div></div>'; }
+            return null;
+        }
         ensureStyle();
         var info;
         try { info = railInfo(); } catch (e) {
@@ -9422,6 +9690,12 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
 
     function PRiSM_analyse(opts) {
+        var ext = curModeExt();
+        if (ext && typeof ext.analyse === 'function') {
+            var r;
+            try { r = ext.analyse(opts || {}); } catch (e) { return Promise.reject(e); }
+            return (r && typeof r.then === 'function') ? r : Promise.resolve(r);
+        }
         if (_analyseRun) return _analyseRun;
         opts = opts || {};
         var t0 = now();
@@ -10039,17 +10313,39 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
 
     function listTools() {
-        var out = [], seen = {};
+        var out = [], seen = {}, ids = {};
+        // a workspace-mode extension may allow only some built-in tools (ext.toolAllow: catalogue ids); the PTA/RTA tools then
+        // leave its drawer, and so do the discovered renderers. Built-in modes have no extension, so their list is unchanged
+        var mxf = typeof G.PRiSM_activeModeExt === 'function' ? G.PRiSM_activeModeExt() : null;
+        var allow = mxf && isArr(mxf.toolAllow) ? toArr(mxf.toolAllow).map(String) : null;
         TOOL_CATALOGUE.forEach(function (t) {
             seen[t.fn] = true;
+            if (allow && allow.indexOf(t.id) === -1) return;
+            ids[t.id] = true;
             out.push({ id: t.id, title: t.title, sub: t.sub, group: t.group, fn: t.fn, args: t.args, available: typeof G[t.fn] === 'function' });
+        });
+        // Extra catalogue entries (PRiSM_toolCatalogueExtra: {id, fn, group, title,
+        // sub, modes:[…]|'*'}). Every named fn is marked as seen BEFORE the mode
+        // filter, so the discovery below never lists it under "More".
+        var extra = isArr(G.PRiSM_toolCatalogueExtra) ? toArr(G.PRiSM_toolCatalogueExtra) : [];
+        extra.forEach(function (t) { if (t && typeof t.fn === 'string') seen[t.fn] = true; });
+        var mk = curModeKey();
+        extra.forEach(function (t) {
+            if (!t || t.id == null || ids[String(t.id)]) return;
+            var md = t.modes;
+            if (md !== undefined && md !== '*' && !(isArr(md) && toArr(md).indexOf(mk) !== -1)) return;
+            ids[String(t.id)] = true;
+            var item = { id: String(t.id), title: String(t.title || t.id), sub: String(t.sub || ''), group: String(t.group || 'More'), args: t.args };
+            if (typeof t.fn === 'function') { item.render = t.fn; item.available = true; }
+            else { item.fn = t.fn; item.available = typeof G[t.fn] === 'function'; }
+            out.push(item);
         });
         // Discover any other exported panel renderer so nothing is orphaned.
         var keys = [];
         try { for (var k in G) keys.push(k); } catch (e) {}
         try { Object.getOwnPropertyNames(G).forEach(function (k) { if (keys.indexOf(k) === -1) keys.push(k); }); } catch (e) {}
         keys.sort().forEach(function (k) {
-            if (seen[k]) return;
+            if (seen[k] || allow) return;
             if (!/^PRiSM_render[A-Za-z0-9_]*(Panel|Manager|Toolbar|Tool|Picker)$/.test(k)) return;
             if (EXCLUDE_DISCOVERY.test(k)) return;
             var f;
@@ -10068,6 +10364,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 if (!isArr(arr)) return;
                 toArr(arr).forEach(function (spec) {
                     if (!spec || typeof spec.render !== 'function') return;
+                    if (!panelAllowedNow(n, spec)) return;
                     var title = String(spec.title || spec.id || 'Panel');
                     var hay = (String(spec.id || '') + ' ' + title).toLowerCase();
                     var dup = titles[title.toLowerCase()] || out.some(function (t) { return typeof G[t.fn] === 'function' && G[t.fn] === spec.render; }) ||
@@ -10082,6 +10379,18 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             });
         }
         return out;
+    }
+
+    // C7 panel filter for the drawer: spec.modes in every mode; when() too in
+    // an ext mode (built-in modes list every panel as before).
+    function panelAllowedNow(n, spec) {
+        if (typeof G.PRiSM_panelModeAllows === 'function') {
+            try { if (!G.PRiSM_panelModeAllows(parseInt(n, 10), spec)) return false; } catch (e) { return false; }
+        } else if (isArr(spec.modes) && toArr(spec.modes).indexOf(curModeKey()) === -1) return false;
+        if (curModeExt() && typeof spec.when === 'function') {
+            try { return !!spec.when(); } catch (e) { return false; }
+        }
+        return true;
     }
 
     function closeTools() {
@@ -10207,7 +10516,61 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // =========================================================================
 
     var UNDO_CAP = 50;
-    var _undo = [], _redo = [], _cur = null, _restoring = false, _batch = 0;
+    var _undo = [], _redo = [], _cur = null, _restoring = false, _batch = 0, _userBatch = 0;
+    var _extraEvents = {}, _seenExtras = {};
+
+    // PRiSM_undoExtras = {key: {get() → JSON-safe, set(v), events?:[name]}},
+    // read at call time. Each extra's events become record triggers (installed
+    // once per event name; events with detail.source 'undo' / 'restore' are
+    // ignored). Called from the rail, snapshots, batches and undo / redo, so an
+    // extra registered after this file loaded is picked up on first use.
+    function undoExtras() {
+        var X = G.PRiSM_undoExtras;
+        if (!X || typeof X !== 'object') return [];
+        return Object.keys(X).filter(function (k) {
+            var e = X[k];
+            return e && typeof e.get === 'function' && typeof e.set === 'function';
+        }).map(function (k) { return { key: k, spec: X[k] }; });
+    }
+    function syncUndoExtras() {
+        var xs = undoExtras();
+        // An extra seen for the first time joins the current baseline (no undo
+        // step), so the first change after registration can be undone.
+        var fresh = xs.filter(function (x) { return !_seenExtras[x.key]; });
+        if (fresh.length) {
+            fresh.forEach(function (x) { _seenExtras[x.key] = true; });
+            if (_cur != null) {
+                var o = null;
+                try { o = JSON.parse(_cur); } catch (e) { o = null; }
+                if (o && typeof o === 'object') {
+                    var changed = false;
+                    fresh.forEach(function (x) {
+                        if (o.extras && Object.prototype.hasOwnProperty.call(o.extras, x.key)) return;
+                        var v;
+                        try { v = clone(x.spec.get()); } catch (e) { v = undefined; }
+                        if (v === undefined) return;
+                        if (!o.extras || typeof o.extras !== 'object') o.extras = {};
+                        o.extras[x.key] = v;
+                        changed = true;
+                    });
+                    if (changed) { try { _cur = JSON.stringify(o); } catch (e) {} }
+                }
+            }
+        }
+        if (typeof G.addEventListener !== 'function') return;
+        xs.forEach(function (x) {
+            var evs = isArr(x.spec.events) ? toArr(x.spec.events) : [];
+            evs.forEach(function (type) {
+                if (typeof type !== 'string' || !type || _extraEvents[type]) return;
+                _extraEvents[type] = true;
+                G.addEventListener(type, function (ev) {
+                    var src = ev && ev.detail && ev.detail.source;
+                    if (src === 'undo' || src === 'restore') return;
+                    recordSnapshot(type);
+                });
+            });
+        });
+    }
 
     function snapObject() {
         var s = st(), pvt = G.PRiSM_pvt, well = null;
@@ -10215,7 +10578,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             well = {};
             for (var k in pvt) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(pvt, k)) well[k] = pvt[k];
         }
-        return {
+        var o = {
             model: s.model == null ? null : s.model,
             params: s.params || {},
             paramFreeze: s.paramFreeze || {},
@@ -10227,6 +10590,16 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             // Multi-rate table (rate history): seeded from the events log (39).
             multiRate: (G.PRiSM && Array.isArray(G.PRiSM.multiRate)) ? G.PRiSM.multiRate : []
         };
+        var xs = undoExtras();
+        if (xs.length) {
+            o.extras = {};
+            xs.forEach(function (x) {
+                var v;
+                try { v = x.spec.get(); } catch (e) { v = undefined; }
+                if (v !== undefined) o.extras[x.key] = v;
+            });
+        }
+        return o;
     }
     function snapString() {
         try { return JSON.stringify(snapObject()); } catch (e) { return null; }
@@ -10239,7 +10612,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
 
     function recordSnapshot(reason) {
-        if (_restoring || _batch > 0) return false;
+        if (_restoring || _batch > 0 || _userBatch > 0) return false;
+        syncUndoExtras();
         var s = snapString();
         if (s == null || s === _cur) return false;
         if (_cur != null) {
@@ -10283,6 +10657,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 try { s.interp = G.PRiSM_interpretCurrentFit() || null; } catch (e) {}
             } else if (!s.lastFit) s.interp = null;
             if (typeof G.PRiSM_evalModelCurve === 'function') { try { G.PRiSM_evalModelCurve(s.model, s.params); } catch (e) {} }
+            // Undo extras: only the keys this snapshot carries (an older
+            // baseline without the key leaves the extra's state alone).
+            if (o.extras && typeof o.extras === 'object') {
+                undoExtras().forEach(function (x) {
+                    if (!Object.prototype.hasOwnProperty.call(o.extras, x.key)) return;
+                    try { x.spec.set(clone(o.extras[x.key])); }
+                    catch (e) { try { console.warn('PRiSM undo extra "' + x.key + '" failed:', e && e.message); } catch (_) {} }
+                });
+            }
             saveState();
             dispatch('prism:model-changed', { source: 'undo', modelKey: s.model });
             dispatch('prism:well-changed', { source: 'undo' });
@@ -10300,7 +10683,25 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         } catch (e) {}
         renderRailIfMounted();
         syncUndoButtons();
+        // Step views (any step) re-render with the restored state.
+        if (typeof G.PRiSM_refreshShell === 'function') { try { G.PRiSM_refreshShell({ stepView: true }); } catch (e) {} }
         return true;
+    }
+
+    // PRiSM_undoBatch('begin' | 'end'): nesting counter; the changes between the
+    // outermost begin and end are one undo step. The caller ends the batch on
+    // finish, cancel and reject. → the depth after the call.
+    function PRiSM_undoBatch(what) {
+        if (what === 'begin') {
+            if (_userBatch === 0) recordSnapshot('pre-batch');   // capture silent edits first
+            _userBatch++;
+        } else if (what === 'end') {
+            if (_userBatch > 0) {
+                _userBatch--;
+                if (_userBatch === 0) recordSnapshot('batch');
+            }
+        }
+        return _userBatch;
     }
 
     function PRiSM_undo() {
@@ -10396,6 +10797,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     G.PRiSM_canUndo = function () { return _undo.length > 0; };
     G.PRiSM_canRedo = function () { return _redo.length > 0; };
     G.PRiSM_recordSnapshot = recordSnapshot;
+    G.PRiSM_undoBatch = PRiSM_undoBatch;
+    G.PRiSM_undoExtrasSync = syncUndoExtras;
+    G.PRiSM_undoExtras = (G.PRiSM_undoExtras && typeof G.PRiSM_undoExtras === 'object') ? G.PRiSM_undoExtras : {};
+    G.PRiSM_toolCatalogueExtra = isArr(G.PRiSM_toolCatalogueExtra) ? G.PRiSM_toolCatalogueExtra : [];
     G.PRiSM_getReportPins = function () { return clone(isArr(st().reportPins) ? st().reportPins : []); };
     // Internal helpers, exposed for tests and for other layers' fallbacks.
     G.PRiSM_workflow = {
@@ -19523,42 +19928,47 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // -----------------------------------------------------------------------------
 // DFIT pre-closure core (docs/DFIT-PLAN.md §3.5; owner WP2). Pure engine: no DOM, no storage, no timers, no events.
 //
-// WP0 SKELETON. Every §3.5 function is a stub that returns
-//   {ok:false, code:'NOT_IMPLEMENTED', errors:[…], bad:[]}
-// (Job twins return a Job whose result() is that object). WP2 replaces the stubs; the names, argument lists and result
-// shapes are fixed by §3.5 and prism-build/tests/_dfit-shapes.js. Two parts are real already because WP0 freezes them:
+// WP2 implementation of every §3.5 function: units, dataset hash, preparation (non-destructive channel fixes, masks
+// compacted out), the O(n) resampler, events and volumes (§4.3), the G family (closed forms, 64-point Gauss–Legendre for a
+// general α, data-driven and model-derived G, inverse), derivatives (§4.6), ISIP reconciliation (§4.4), the closure methods
+// (§4.7), the G-domain forward model and the variable-compliance fit, consensus with the stability grid and block bootstrap
+// (§4.8, §6.2; also as a Job), bounds with the two-tier frictional check, efficiency, net pressure, the storage-consistent
+// closure balance, CL, geometry, leak-off rate, before-closure k, closure forecast (§4.9, §4.10), the leak-off-type
+// classifier (§4.11) and the §6.12 calibration outputs. The h-function and the far-field extension reading are deferred to
+// 3.4b by gate G6 (PRiSM_dfit_hFn and PRiSM_dfit_farField return null).
+// Frozen in WP0 and kept as is:
 //   • PRiSM_dfit_inputRanges — the §3.2 range table {path: {min, max, def, unit, integer, scope, display?, rows?}} with
 //     clamp(inputs) → {inputs, warnings} (fields, rows, flags, unit fixes, mask and event overrides; the output always
 //     passes the DfitInputs shape), clampValue(path, v) and defaults() (the reference behaviour of tests/_dfit-shapes.js
 //     clampInputs);
-//   • PRiSM_dfit_units.table — the display ↔ engine conversion factors of §3.5 (toEngine / toDisplay are stubs).
+//   • PRiSM_dfit_units.table — the display ↔ engine conversion factors of §3.5 (exactly those seven; the bbl → ft³ factor
+//     of the fields map is kept apart in UNIT_EXTRA).
+// Closure picks under noise (review fix round; §4.7 / §4.8 / §8.2 noise levels σ 0.05 / 0.3 / 1 psi, white and ρ1 0.9):
+//   • the early p-G window is grown while its curvature is statistically absent (σ_eff, ρ1 from lag-1 / lag-2 difference
+//     variances) and capped one Bourdet window before the provisional G·dP/dG departure;
+//   • the departure is searched from the window start with ε as the §4.7 floor and the local noise 3σ_y/ŷ as the scale,
+//     held, persistent (joint z ≥ 4) and still beyond the threshold 0.3 ln units later;
+//   • the onset (compliance; the plateau end after a downward departure) is refined by a hinge fit on the pressure,
+//     p = A + B·u + C·u₊² + D·u₊³, with an SSR-profile standard error; an abrupt break (an interval falling ≥ 3 × the early
+//     slope after one falling less than half as fast, e.g. the exact Carter after-closure line of FIX.ds) is read at the
+//     start of that interval;
+//   • the tangent after an upward departure is the vertex of dP/dG (touch point of the line through the origin, s* = max
+//     dP/dG) on a noise-limited short window, fitted where dP/dG ≥ (1 − δ)·s*, δ = max(ε_tangent, 3σ_s/s*); a flat top
+//     longer than 0.5 ln units keeps the §4.7 plateau-end rule;
+//   • the stability grid evaluates each setting at its own L; the family band adds the voting pick's own se in quadrature.
+//   Deviations for lead sign-off: the hinge / vertex refinements and the se fold-in are additions to §4.7 / §4.8 (the
+//   detection itself follows them, ε as the floor); classify reads to ctx.Gc → frac.Gc → ctx.consensus → the tangent G
+//   (gcSource), and the pipeline (57) should pass frac or the consensus (gradual-decline signatures pick early);
+//   gSpec.G(dt) / Gp(dt) take Δt in hours (§3.5), Gp = dG/dΔtD, and GD / GpD / gD take ΔtD.
 // Loads without document, WTS_units, the 02 lexical helpers or any Round-9 engine (smoke stub).
 // =============================================================================
 
+// The globals used in hot loops are passed in as parameters (local bindings are much faster than global lookups in a
+// vm context such as the test harness).
 (function () {
+  (function (Math, isFinite, Array, Object, JSON, String) {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
-
-    function _ni(name) {
-        return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP0 skeleton).'], bad: [] };
-    }
-    function _stub(name) {
-        var f = function () { return _ni(name); };
-        f._dfitStub = true;
-        return f;
-    }
-    function _jobStub(name) {
-        var f = function () {
-            var r = _ni(name);
-            return {
-                step: function () { return { done: true, progress: 1, label: 'not implemented' }; },
-                result: function () { return r; },
-                cancel: function () {}
-            };
-        };
-        f._dfitStub = true;
-        return f;
-    }
 
     // ─────────────────────────────────────────────────────────────────────
     // §3.5 units: display ↔ engine factors (engine = h, ft, psi, ft³, psi·h)
@@ -19573,9 +19983,38 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             'md->ft2': 1.062315e-14,
             'bbl/psi->ft3/psi': 5.614583
         },
-        toEngine: _stub('PRiSM_dfit_units.toEngine'),
-        toDisplay: _stub('PRiSM_dfit_units.toDisplay')
+        // field name → [display unit, engine unit, factor display→engine]; keys not listed pass through unchanged
+        fields: {
+            q: 'bbl/min->ft3/h', qMax: 'bbl/min->ft3/h', qLast: 'bbl/min->ft3/h', qEq: 'bbl/min->ft3/h', qL: 'bbl/min->ft3/h', qStar: 'bbl/min->ft3/h',
+            CL: 'ft/sqrt(min)->ft/sqrt(h)', Cw: 'ft/sqrt(min)->ft/sqrt(h)', CLeq: 'ft/sqrt(min)->ft/sqrt(h)',
+            Sp: 'gal/100ft2->ft', KIc: 'psi*sqrt(in)->psi*sqrt(ft)',
+            mu: 'cp->psi*h', muCp: 'cp->psi*h', muRes: 'cp->psi*h', k: 'md->ft2',
+            VwCw: 'bbl/psi->ft3/psi', Csys: 'bbl/psi->ft3/psi', AfCf: 'bbl/psi->ft3/psi',
+            V: 'bbl->ft3', Vi: 'bbl->ft3', ViStar: 'bbl->ft3', ViFrac: 'bbl->ft3', Vf: 'bbl->ft3', VL: 'bbl->ft3', Vfill: 'bbl->ft3', Vfb: 'bbl->ft3'
+        },
+        toEngine: function (obj) { return _unitConv(obj, false); },
+        toDisplay: function (obj) { return _unitConv(obj, true); }
     };
+    // factors used by the fields map but not part of the frozen §3.5 table (kept apart so the table deep-compares as frozen)
+    var UNIT_EXTRA = { 'bbl->ft3': 5.614583 };
+    function _unitConv(obj, inverse) {
+        try {
+            if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, code: 'BAD_INPUT', errors: ['PRiSM_dfit_units: an object of named fields is needed.'], bad: [] };
+            var U = G.PRiSM_dfit_units, out = {};
+            for (var k in obj) {
+                if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+                var v = obj[k], key = U.fields[k], f = key ? (U.table[key] || UNIT_EXTRA[key]) : null;
+                if (!f) { out[k] = v; continue; }
+                var fac = inverse ? 1 / f : f;
+                if (typeof v === 'number') out[k] = isFinite(v) ? v * fac : null;
+                else if (Array.isArray(v)) out[k] = v.map(function (x) { return (typeof x === 'number' && isFinite(x)) ? x * fac : null; });
+                else out[k] = v;
+            }
+            return out;
+        } catch (e) {
+            return { ok: false, code: 'UNIT_FAILED', errors: [String(e && e.message || e)], bad: [] };
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────────────
     // §3.2 range table (FROZEN in WP0) and the clamp
@@ -19863,16 +20302,2929 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
     G.PRiSM_dfit_inputRanges = { table: TABLE, enums: ENUMS, defaults: defaults, clamp: clamp, clampValue: clampValue };
 
-    // ─────────────────────────────────────────────────────────────────────
-    // §3.5 engine functions (stubs until WP2)
-    // ─────────────────────────────────────────────────────────────────────
-    ['PRiSM_dfit_dsHash', 'PRiSM_dfit_prepare', 'PRiSM_dfit_resample', 'PRiSM_dfit_events',
-     'PRiSM_dfit_g', 'PRiSM_dfit_gPrime', 'PRiSM_dfit_G', 'PRiSM_dfit_Ginv', 'PRiSM_dfit_gFromHistory', 'PRiSM_dfit_hFn',
-     'PRiSM_dfit_derivs', 'PRiSM_dfit_isip', 'PRiSM_dfit_closurePicks', 'PRiSM_dfit_varComplianceFit', 'PRiSM_dfit_vcModel',
-     'PRiSM_dfit_consensus', 'PRiSM_dfit_consensusLite', 'PRiSM_dfit_bounds', 'PRiSM_dfit_classify', 'PRiSM_dfit_frac',
-     'PRiSM_dfit_whatIf', 'PRiSM_dfit_leakoffRate', 'PRiSM_dfit_kBeforeClosure', 'PRiSM_dfit_farField',
-     'PRiSM_dfit_forecastClosure'].forEach(function (n) { G[n] = _stub(n); });
-    G.PRiSM_dfit_consensusJob = _jobStub('PRiSM_dfit_consensusJob');
+
+    // ═════════════════════════════════════════════════════════════════════
+    // WP2 ENGINE (docs/DFIT-PLAN.md §3.5, §4.1, §4.3–§4.11, §6.2, §6.12)
+    // Internal units: time h, pressure psi, rate bbl/min, volume bbl, compliance bbl/psi (geometry in ft / ft³ / psi).
+    // Cross-file engines (WTS_wellbore, PRiSM_lm, PRiSM_compute_bourdet, PRiSM_rng, PRiSM_autoInterp, PRiSM_dfit_lk*) are
+    // resolved at CALL time, each behind a typeof guard with a stated fallback.
+    // ═════════════════════════════════════════════════════════════════════
+    var BBL = 5.614583;            // ft³ per bbl
+    var PI = Math.PI;
+    var LN10 = Math.LN10;
+    var INF = 1 / 0;
+
+    function _fail(code, msg, bad) { return { ok: false, code: code, errors: [String(msg)], bad: bad || [] }; }
+    function _W(code, level, text, ev) { return { code: code, level: level || 'warn', text: _txt(text), ev: ev || [] }; }
+    // plain text < 300 characters, never the banned words (§3.0)
+    function _txt(s) {
+        s = String(s == null ? '' : s).replace(/\b(null|undefined|NaN|Infinity)\b/g, 'n/a').replace(/\[object Object\]/g, '');
+        return s.length > 299 ? s.slice(0, 296) + '...' : s;
+    }
+    function _fin(v) { return typeof v === 'number' && v - v === 0; }
+    function _nn(v) { return _fin(v) ? v : null; }                 // finite or null
+    function _r(v, n) { if (!_fin(v)) return null; var f = Math.pow(10, n); return Math.round(v * f) / f; }
+    function _sf(v, n) { return _fin(v) ? +v.toPrecision(n) : null; }
+    function _f0(v) { return _fin(v) ? String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : 'n/a'; }   // 7,000
+    function _f1(v, n) { return _fin(v) ? (+v.toFixed(n == null ? 1 : n)).toString() : 'n/a'; }
+    function _clampN(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    function _kth(s, k) {                    // k-th smallest (quickselect, in place, deterministic middle pivot)
+        var lo = 0, hi = s.length - 1;
+        while (lo < hi) {
+            var piv = s[(lo + hi) >> 1], i = lo, j = hi;
+            while (i <= j) { while (s[i] < piv) i++; while (s[j] > piv) j--; if (i <= j) { var t = s[i]; s[i] = s[j]; s[j] = t; i++; j--; } }
+            if (k <= j) hi = j; else if (k >= i) lo = i; else break;
+        }
+        return s[k];
+    }
+    function _median(a) {
+        var s = []; for (var i = 0; i < a.length; i++) { var x = a[i]; if (typeof x === 'number' && x === x && x !== INF && x !== -INF) s.push(x); }
+        if (!s.length) return null;
+        var m = s.length >> 1;
+        if (s.length % 2) return _kth(s, m);
+        var hiV = _kth(s, m), loV = -INF;
+        for (i = 0; i < m; i++) if (s[i] > loV) loV = s[i];       // after the select, s[0..m-1] ≤ s[m]
+        return 0.5 * (loV + hiV);
+    }
+    function _pct(sorted, q) {             // sorted ascending, linear interpolation
+        if (!sorted.length) return null;
+        var x = q * (sorted.length - 1), i = Math.floor(x), f = x - i;
+        return i + 1 < sorted.length ? sorted[i] + f * (sorted[i + 1] - sorted[i]) : sorted[i];
+    }
+    function _sortedFinite(a) { var s = []; for (var i = 0; i < a.length; i++) if (_fin(a[i])) s.push(a[i]); s.sort(function (x, y) { return x - y; }); return s; }
+    function _isObj2(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+    function _okRes(v) { return _isObj2(v) && v.ok !== false; }
+    function _fn(name) { return (typeof G[name] === 'function') ? G[name] : null; }
+    function _wb(name) { var W = G.WTS_wellbore; return (W && typeof W[name] === 'function' && !W[name]._dfitStub) ? W[name] : null; }
+    function _safe(f) {                     // public functions never throw (§3.0)
+        return function () {
+            try { return f.apply(this, arguments); }
+            catch (e) { return _fail('ENGINE_ERROR', 'DFIT engine error: ' + String(e && e.message || e).slice(0, 200)); }
+        };
+    }
+
+    // ── seeded PRNG: PRiSM_rng (05, WPH) at call time, else mulberry32 (never an unseeded generator) ──
+    function _rng(seed) {
+        var f = _fn('PRiSM_rng');
+        if (f) { try { var r = f(seed == null ? 1 : seed); if (typeof r === 'function') return r; } catch (e) { /* fall through */ } }
+        var a = (seed == null ? 1 : seed) >>> 0;
+        return function () {
+            a = (a + 0x6D2B79F5) >>> 0;
+            var t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    // ── hashes (§3.0): 53's canon + hash16 when present, else a local FNV-1a pair (weak) ──
+    function _fnv(s, seed) {
+        var h = seed >>> 0;
+        for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+        return h >>> 0;
+    }
+    function _hex8(x) { var s = (x >>> 0).toString(16); while (s.length < 8) s = '0' + s; return s; }
+    function _hash(obj) {
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.canon === 'function' && typeof AI.hash16 === 'function') {
+            try { var h = AI.hash16(AI.canon(obj, 'inputs')); if (typeof h === 'string' && /^[0-9a-f]{16}$/.test(h)) return { hash: h, weak: false }; } catch (e) { /* fall through */ }
+        }
+        var s = JSON.stringify(obj, function (k, v) { return (typeof v === 'number' && !isFinite(v)) ? null : v; });
+        return { hash: _hex8(_fnv(s, 2166136261)) + _hex8(_fnv(s, 0x811c9dc5 ^ 0x5bd1e995)), weak: true };
+    }
+    G.PRiSM_dfit_dsHash = _safe(function (ds) {
+        if (!_isObj2(ds) || !Array.isArray(ds.t) || !Array.isArray(ds.p)) return _fail('BAD_DATASET', 'A dataset with t and p arrays is needed.', ['t', 'p']);
+        return _hash({ t: ds.t, p: ds.p, q: ds.q || null }).hash;
+    });
+    G.PRiSM_dfit_hash = function (obj) { return _hash(obj); };   // {hash, weak} for 57 / 59 (inputHash, picksHash)
+
+    // ── Gauss–Legendre 64 nodes on [0, 1] (computed once at load, Newton on P64) ──
+    var GL = (function () {
+        var n = 64, x = [], w = [];
+        for (var i = 1; i <= n; i++) {
+            var z = Math.cos(PI * (i - 0.25) / (n + 0.5)), pp = 0;
+            for (var it = 0; it < 100; it++) {
+                var p1 = 1, p2 = 0;
+                for (var j = 1; j <= n; j++) { var p3 = p2; p2 = p1; p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j; }
+                pp = n * (z * p1 - p2) / (z * z - 1);
+                var z1 = z; z = z1 - p1 / pp;
+                if (Math.abs(z - z1) < 1e-15) break;
+            }
+            x.push(0.5 * (1 - z)); w.push(1 / ((1 - z * z) * pp * pp));      // mapped to [0,1]: weight 2/((1-z²)P'²) × ½
+        }
+        return { x: x, w: w };
+    })();
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.5 G-function family
+    // ═════════════════════════════════════════════════════════════════════
+    // g(ΔtD, α) = 2∫₀¹ √(1 + ΔtD − a^(1/α)) da; general α by a = 1 − (1 − u)² and 64-point Gauss–Legendre on u.
+    function _gQuad(d, alpha) {
+        var s = 0, ia = 1 / alpha;
+        for (var k = 0; k < 64; k++) {
+            var u = GL.x[k], om = 1 - u, a = 1 - om * om, v = 1 + d - Math.pow(a, ia);
+            s += GL.w[k] * 2 * om * Math.sqrt(v > 0 ? v : 0);
+        }
+        return 2 * s;
+    }
+    function _gpQuad(d, alpha) {          // dg/dΔtD = ∫₀¹ da / √(1 + ΔtD − a^(1/α))
+        var s = 0, ia = 1 / alpha;
+        for (var k = 0; k < 64; k++) {
+            var u = GL.x[k], om = 1 - u, a = 1 - om * om, v = 1 + d - Math.pow(a, ia);
+            if (v <= 0) {                  // ΔtD = 0 at a → 1: the integrand limit 2(1 − u)/√(1 − a^(1/α)) → 2√α
+                s += GL.w[k] * 2 * Math.sqrt(alpha);
+                continue;
+            }
+            s += GL.w[k] * 2 * om / Math.sqrt(v);
+        }
+        return s;
+    }
+    function _alphaOf(a) {
+        if (a === 0.5 || a === 1) return a;
+        if (_fin(a) && a > 0.5 && a <= 1) return a;
+        return null;
+    }
+    function _isSpec(s) { return _isObj2(s) && typeof s.G === 'function'; }
+    function g_(d, alpha) {
+        if (!(d >= 0)) return NaN;
+        if (alpha === 1) return 4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5));
+        if (alpha === 0.5) return (1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d);
+        return _gQuad(d, alpha);
+    }
+    function gp_(d, alpha) {
+        if (!(d >= 0)) return NaN;
+        if (alpha === 1) return 2 * (Math.sqrt(1 + d) - Math.sqrt(d));
+        if (alpha === 0.5) return Math.asin(1 / Math.sqrt(1 + d));
+        return _gpQuad(d, alpha);
+    }
+    var _g0cache = {};
+    function g0_(alpha) {
+        if (alpha === 0.5) return PI / 2;
+        if (alpha === 1) return 4 / 3;
+        var k = String(alpha);
+        if (!(k in _g0cache)) _g0cache[k] = _gQuad(0, alpha);
+        return _g0cache[k];
+    }
+    function G_(d, alpha) { return 4 / PI * (g_(d, alpha) - g0_(alpha)); }
+    function Gp_(d, alpha) { return 4 / PI * gp_(d, alpha); }       // dG/dΔtD
+    // generic G / G′ for an α or a gSpec
+    // a gSpec's public G(dt) / Gp(dt) take the shut-in time in hours (§3.5, §3.0); the engine works in ΔtD through GD / GpD
+    // (a gSpec without them is converted with its tp)
+    function _sGD(a, d) { return typeof a.GD === 'function' ? a.GD(d) : a.G(d * a.tp); }
+    function _sGpD(a, d) { return typeof a.GpD === 'function' ? a.GpD(d) : a.Gp(d * a.tp); }
+    function _Gof(d, a) { return _isSpec(a) ? _sGD(a, d) : G_(d, a); }
+    function _Gpof(d, a) { return _isSpec(a) ? _sGpD(a, d) : Gp_(d, a); }
+    function _Ginv(Gv, a) {
+        if (!(Gv >= 0)) return NaN;
+        if (Gv === 0) return 0;
+        var lo = Math.log(1e-9), hi = Math.log(1e7);
+        for (var i = 0; i < 60; i++) {
+            var m = 0.5 * (lo + hi);
+            if (_Gof(Math.exp(m), a) < Gv) lo = m; else hi = m;
+        }
+        return Math.exp(0.5 * (lo + hi));
+    }
+    G.PRiSM_dfit_g = function (dtD, alpha) {
+        if (_isSpec(alpha)) return _nn(typeof alpha.gD === 'function' ? alpha.gD(dtD) : (alpha.g ? alpha.g(dtD * alpha.tp) : NaN));
+        var a = _alphaOf(alpha); if (a === null || !_fin(dtD) || dtD < 0) return null;
+        return _nn(g_(dtD, a));
+    };
+    G.PRiSM_dfit_g.quad = function (dtD, alpha) { return (_fin(dtD) && dtD >= 0 && alpha > 0.5 - 1e-12 && alpha <= 1) ? _gQuad(dtD, alpha) : null; };
+    G.PRiSM_dfit_g.g0 = function (alpha) { var a = _alphaOf(alpha); return a === null ? null : g0_(a); };
+    G.PRiSM_dfit_gPrime = function (dtD, alpha) {
+        if (_isSpec(alpha)) return _nn(_sGpD(alpha, dtD) * PI / 4);
+        var a = _alphaOf(alpha); if (a === null || !_fin(dtD) || dtD < 0) return null;
+        return _nn(gp_(dtD, a));
+    };
+    G.PRiSM_dfit_gPrime.quad = function (dtD, alpha) { return (_fin(dtD) && dtD >= 0 && alpha > 0.5 - 1e-12 && alpha <= 1) ? _gpQuad(dtD, alpha) : null; };
+    G.PRiSM_dfit_G = function (dtD, alpha) {
+        if (!_fin(dtD) || dtD < 0) return null;
+        if (_isSpec(alpha)) return _nn(_sGD(alpha, dtD));
+        var a = _alphaOf(alpha); if (a === null) return null;
+        return _nn(G_(dtD, a));
+    };
+    G.PRiSM_dfit_Ginv = function (Gv, alpha) {
+        if (!_fin(Gv) || Gv < 0) return null;
+        var a = _isSpec(alpha) ? alpha : _alphaOf(alpha);
+        if (a === null) return null;
+        return _nn(_Ginv(Gv, a));
+    };
+    // η_G = G_c/(G_c + 4·g0/π) (§4.9) and the α-pair display rule (|η(½) − η(1)| > 0.01)
+    G.PRiSM_dfit_eta = function (Gc, alpha) {
+        var a = _alphaOf(alpha); if (a === null || !_fin(Gc) || Gc <= 0) return null;
+        return Gc / (Gc + 4 * g0_(a) / PI);
+    };
+    G.PRiSM_dfit_etaPair = function (dtDc) {
+        if (!_fin(dtDc) || dtDc <= 0) return null;
+        var G5 = G_(dtDc, 0.5), G1 = G_(dtDc, 1), e5 = G5 / (G5 + 2), e1 = G1 / (G1 + 16 / (3 * PI));
+        return { Gc: { a05: G5, a1: G1 }, a05: e5, a1: e1, delta: Math.abs(e1 - e5), showPair: Math.abs(e1 - e5) > 0.01 };
+    };
+
+    // ── data-driven G (§4.5): g(Δt) = 2∫₀¹ √((t_s + Δt − τ(a))/tp) da, τ(a) the opening time of area fraction a ──
+    // schedule: rate steps [{t, q}] (q bbl/min from t to the next t; the last step runs to ts) or, with opts.area 'model',
+    // opts.modelHist {t, AL} (area history). a = (V(τ)/V_total)^α (volume) or AL(τ)/AL(ts) (model). The gSpec's g(dt), G(dt) and Gp(dt) take the
+    // shut-in time Δt in hours (§3.5); Gp is dG/dΔtD (the derivative used by D_ref = m_G·ΔtD·G′). gD / GD / GpD take ΔtD.
+    function _invMonotone(xs, ys, y) {      // xs ascending, ys non-decreasing → x at y (linear)
+        var n = xs.length;
+        if (y <= ys[0]) return xs[0];
+        if (y >= ys[n - 1]) return xs[n - 1];
+        var lo = 0, hi = n - 1;
+        while (hi - lo > 1) { var m = (lo + hi) >> 1; if (ys[m] < y) lo = m; else hi = m; }
+        var dy = ys[hi] - ys[lo];
+        return dy > 0 ? xs[lo] + (y - ys[lo]) / dy * (xs[hi] - xs[lo]) : xs[hi];
+    }
+    G.PRiSM_dfit_gFromHistory = _safe(function (schedule, ts, tp, opts) {
+        opts = opts || {};
+        if (!_fin(ts) || !_fin(tp) || tp <= 0) return _fail('BAD_INPUT', 'gFromHistory needs a shut-in time and tp > 0.', ['ts', 'tp']);
+        var alpha = _alphaOf(opts.alpha == null ? 0.5 : opts.alpha);
+        if (alpha === null) return _fail('BAD_INPUT', 'alpha must lie in (0.5, 1].', ['alpha']);
+        var kind = opts.area === 'model' ? 'model' : 'data', xs = [], ys = [], i;
+        if (kind === 'model') {
+            var mh = opts.modelHist;
+            if (!mh || !Array.isArray(mh.t) || !Array.isArray(mh.AL) || mh.t.length < 2) return _fail('BAD_INPUT', 'The model area history (t, AL) is missing.', ['modelHist']);
+            for (i = 0; i < mh.t.length; i++) if (_fin(mh.t[i]) && _fin(mh.AL[i]) && mh.t[i] <= ts + 1e-12) { xs.push(mh.t[i]); ys.push(Math.max(ys.length ? ys[ys.length - 1] : 0, mh.AL[i])); }
+        } else {
+            if (!Array.isArray(schedule) || !schedule.length) return _fail('BAD_INPUT', 'A rate schedule is needed.', ['schedule']);
+            var V = 0;
+            for (i = 0; i < schedule.length; i++) {
+                var s = schedule[i], t0 = s.t, t1 = (i + 1 < schedule.length) ? schedule[i + 1].t : ts;
+                if (!_fin(t0) || !_fin(t1)) continue;
+                t1 = Math.min(t1, ts);
+                if (t1 <= t0) continue;
+                if (!xs.length) { xs.push(t0); ys.push(0); }
+                else if (t0 > xs[xs.length - 1]) { xs.push(t0); ys.push(V); }
+                V += Math.max(0, _fin(s.q) ? s.q : 0) * (t1 - t0) * 60;
+                xs.push(t1); ys.push(V);
+            }
+        }
+        var tot = ys.length ? ys[ys.length - 1] : 0;
+        if (!(tot > 0)) return _fail('NO_VOLUME', 'The schedule injects no volume before shut-in.', ['schedule']);
+        // τ at the 64 nodes (independent of Δt)
+        var tau = [], jac = [];
+        for (var k = 0; k < 64; k++) {
+            var u = GL.x[k], om = 1 - u, a = 1 - om * om;
+            var frac = kind === 'model' ? a : Math.pow(a, 1 / alpha);
+            tau.push(_invMonotone(xs, ys, frac * tot));
+            jac.push(GL.w[k] * 2 * om);
+        }
+        function gD(d) {
+            var dt = d * tp, s2 = 0;
+            for (var k2 = 0; k2 < 64; k2++) { var v = (ts + dt - tau[k2]) / tp; s2 += jac[k2] * Math.sqrt(v > 0 ? v : 0); }
+            return 2 * s2;
+        }
+        function gpD(d) {
+            var dt = d * tp, s2 = 0;
+            for (var k2 = 0; k2 < 64; k2++) { var v = (ts + dt - tau[k2]) / tp; s2 += v > 1e-12 ? jac[k2] / Math.sqrt(v) : 0; }
+            return s2;
+        }
+        var g0 = gD(0);
+        return {
+            ok: true, kind: kind, alpha: alpha, tp: tp, ts: ts, g0: g0, dtUnit: 'h',
+            g: function (dt) { return gD(dt / tp); }, G: function (dt) { return 4 / PI * (gD(dt / tp) - g0); }, Gp: function (dt) { return 4 / PI * gpD(dt / tp); },
+            gD: gD, GD: function (d) { return 4 / PI * (gD(d) - g0); }, GpD: function (d) { return 4 / PI * gpD(d); },
+            tauNodes: tau.map(function (x) { return x; })
+        };
+    });
+
+    // ── h-function (gate G6, §4.6): the definition and check values could not be taken from a verified source in this
+    // increment, so the h-function, its permeability estimate and the far-field extension reading stay on the 3.4b slip
+    // list (plan §9 WP2, gate G6). The function returns null and the dfitH plot stays hidden. ──
+    G.PRiSM_dfit_hFn = function () { return null; };
+    G.PRiSM_dfit_hFn.gate = { id: 'G6', verified: false, note: 'h-function deferred to 3.4b (gate G6): definition not verified against the cited source.' };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.6 Bourdet derivative (one engine): PRiSM_compute_bourdet (02, O(n) after WPH) at call time, else the same
+    // two-pointer algorithm here. Points without a full window (L on both sides) are NaN.
+    // ═════════════════════════════════════════════════════════════════════
+    function _bourdet(x, y, L) {
+        var n = x.length, out = new Array(n), lnx = new Array(n), i;
+        L = (_fin(L) && L > 0) ? L : 0;
+        for (i = 0; i < n; i++) { out[i] = NaN; lnx[i] = x[i] > 0 ? Math.log(x[i]) : NaN; }
+        if (n < 3) return out;
+        // full-window flags with two monotone pointers (x ascending)
+        var lft = new Array(n), rgt = new Array(n), j = -1, k = 0;
+        for (i = 0; i < n; i++) {
+            while (j + 1 < i && lnx[i] - lnx[j + 1] >= L) j++;
+            lft[i] = (j >= 0 && lnx[i] - lnx[j] >= L) ? j : -1;
+            if (k <= i) k = i + 1;
+            while (k < n && lnx[k] - lnx[i] < L) k++;
+            rgt[i] = k < n ? k : -1;
+        }
+        // The host engine is used only on request (PRiSM_dfit_hostBourdet = true): its numbers are identical (same window and
+        // weights), but before WPH's O(n) rewrite it walks the window with Math.log at every step, ≈ 5 × slower here.
+        var ext = G.PRiSM_dfit_hostBourdet === true ? _fn('PRiSM_compute_bourdet') : null, d = null;
+        if (ext) { try { d = ext(x, y, L); } catch (e) { d = null; } }
+        for (i = 1; i < n - 1; i++) {
+            var i1 = lft[i], i2 = rgt[i];
+            var yi = y[i];
+            if (i1 < 0 || i2 < 0 || typeof yi !== 'number' || yi !== yi || !(lnx[i] === lnx[i])) continue;
+            if (d && d.length === n) { var di = d[i]; out[i] = (typeof di === 'number' && isFinite(di)) ? di : NaN; continue; }
+            var dl1 = lnx[i] - lnx[i1], dl2 = lnx[i2] - lnx[i], dlT = lnx[i2] - lnx[i1], y1 = y[i1], y2 = y[i2];
+            if (!(dl1 > 0 && dl2 > 0 && dlT > 0) || typeof y1 !== 'number' || typeof y2 !== 'number' || y1 !== y1 || y2 !== y2) continue;
+            out[i] = (yi - y1) / dl1 * (dl2 / dlT) + (y2 - yi) / dl2 * (dl1 / dlT);
+        }
+        return out;
+    }
+    G.PRiSM_dfit_bourdet = function (x, y, L) { return _bourdet(x, y, L); };
+
+    // robust noise of a series: σ = 1.4826·MAD(Δ²y)/√6 (second differences remove a smooth trend)
+    G.PRiSM_dfit_noise2 = function (y) { return _noise2(y); };
+    function _noise2(y, i0, i1) {
+        var d = [];
+        for (var i = Math.max(1, i0 || 0); i < Math.min(y.length - 1, (i1 == null ? y.length : i1 + 1)); i++) {
+            var a0 = y[i - 1], a1 = y[i], a2 = y[i + 1];
+            if (typeof a0 === 'number' && typeof a1 === 'number' && typeof a2 === 'number') { var dd = a2 - 2 * a1 + a0; if (dd === dd && dd !== INF && dd !== -INF) d.push(dd); }
+        }
+        if (d.length < 3) return 0;
+        var m = _median(d), ad = d.map(function (v) { return Math.abs(v - m); });
+        return 1.4826 * _median(ad) / Math.sqrt(6);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.1 preparation (non-destructive; masked samples removed with an index map)
+    // ═════════════════════════════════════════════════════════════════════
+    G.PRiSM_dfit_prepare = _safe(function (ds, inputs, well) {
+        if (!_isObj2(ds) || !Array.isArray(ds.t) || !Array.isArray(ds.p) || ds.t.length < 2 || ds.p.length !== ds.t.length) {
+            return _fail('BAD_DATASET', 'The dataset needs t and p arrays of the same length (at least 2 samples).', ['t', 'p']);
+        }
+        var cl = G.PRiSM_dfit_inputRanges.clamp(inputs || {});
+        if (cl && cl.ok === false) return cl;
+        var I = cl.inputs, ch = I.channels, flags = [], n = ds.t.length, i;
+        cl.warnings.forEach(function (w) { flags.push(w); });
+        var hasQ = Array.isArray(ds.q) && ds.q.length === n;
+        var psigC = (ds.meta && ds.meta.psigConverted) || {};
+        var atmDelta = ch.atmPsia - 14.696;
+        function chanAtm(name) {   // psia correction for a channel (§3.1 psig rule)
+            if (_fin(psigC[name])) return atmDelta;
+            if (ch.psig && ch.psig[name] === true) return ch.atmPsia;
+            return 0;
+        }
+        function fix(arr, f) {
+            if (!f) return arr;
+            return arr.map(function (v) { return _fin(v) ? v * f.factor + f.offset : v; });
+        }
+        var t = fix(ds.t.slice(), ch.unitFix.t), p = fix(ds.p.slice(), ch.unitFix.p);
+        var qd = hasQ ? fix(ds.q.slice(), ch.unitFix.q) : null;
+        var ps = Array.isArray(ds.pSurf) && ds.pSurf.length === n ? fix(ds.pSurf.slice(), ch.unitFix.pSurf) : null;
+        var TT = Array.isArray(ds.T) && ds.T.length === n ? ds.T.slice() : null;
+        var qfb = Array.isArray(ds.qFb) && ds.qFb.length === n ? ds.qFb.slice() : null;
+        var aP = chanAtm('p'), aS = chanAtm('pSurf');
+        if (aP) for (i = 0; i < n; i++) if (_fin(p[i])) p[i] += aP;
+        if (ps && aS) for (i = 0; i < n; i++) if (_fin(ps[i])) ps[i] += aS;
+        if (aP || aS) flags.push(_W('ATM_APPLIED', 'info', 'Atmospheric correction applied: ' + _f1(aP || aS, 3) + ' psi (test value ' + _f1(ch.atmPsia, 3) + ' psia).'));
+        // depth fix (an applied 'gauge-to-datum' blunder fix of 49-calc-dfit-triage): the bottomhole channel is referred from the
+        // gauge depth to the datum by the static column difference dpPsi (datum minus gauge, psi); non-destructive like the unit fixes
+        var dFix = (_isObj2(ch.depthFix) && _fin(ch.depthFix.dpPsi)) ? ch.depthFix.dpPsi : 0;
+        if (dFix && ch.primary !== 'surface') {
+            for (i = 0; i < n; i++) if (_fin(p[i])) p[i] += dFix;
+            flags.push(_W('DEPTH_FIX', 'info', 'Gauge pressure referred to the datum: ' + (dFix > 0 ? '+' : '') + _f1(dFix, 2) + ' psi' +
+                (_fin(ch.depthFix.fromTvd) && _fin(ch.depthFix.toTvd) ? ' (' + _f1(ch.depthFix.fromTvd, 0) + ' ft to ' + _f1(ch.depthFix.toTvd, 0) + ' ft TVD).' : '.')));
+        } else dFix = 0;
+        // clock offset (rate logger vs gauge): q'(t) = q(t − offset), sample-and-hold on the dataset clock
+        var off = _fin(ch.clockOffsetH) ? ch.clockOffsetH : 0;
+        if (qd && off !== 0) {
+            var q2 = new Array(n), k = 0;
+            for (i = 0; i < n; i++) {
+                var tq = t[i] - off;
+                while (k + 1 < n && t[k + 1] <= tq) k++;
+                q2[i] = (tq < t[0]) ? 0 : qd[k];
+            }
+            qd = q2;
+            flags.push(_W('CLOCK_OFFSET', 'info', 'Rate clock shifted by ' + _f1(off * 3600, 1) + ' s against the gauge clock.'));
+        }
+        // keep: finite t and p, t strictly ascending, outside every mask window
+        var mask = ch.mask || [], keep = [], last = -INF, nMasked = 0, nDup = 0, nBad = 0;
+        for (i = 0; i < n; i++) {
+            if (!_fin(t[i]) || !_fin(p[i])) { nBad++; continue; }
+            var inMask = false;
+            for (var m = 0; m < mask.length; m++) if (t[i] >= mask[m][0] && t[i] <= mask[m][1]) { inMask = true; break; }
+            if (inMask) { nMasked++; continue; }
+            if (!(t[i] > last)) { nDup++; continue; }
+            keep.push(i); last = t[i];
+        }
+        if (keep.length < 2) return _fail('NO_DATA', 'Fewer than two usable samples remain after the masks and checks.', ['t', 'p']);
+        if (nBad) flags.push(_W('NONFINITE', 'warn', nBad + ' samples with a missing time or pressure were skipped.'));
+        if (nDup) flags.push(_W('TIME_ORDER', 'bad', nDup + ' samples with a repeated or reversed time were skipped.'));
+        if (nMasked) flags.push(_W('MASKED', 'info', nMasked + ' samples inside the masked windows were removed before any derivative.'));
+        var out = { ok: true, t: [], pw: [], band: null, pSurf: ps ? [] : null, q: qd ? [] : null, T: TT ? [] : null, idx: keep.slice(),
+                    src: 'bh', sigma: 0, quantum: 0,
+                    applied: { atmDelta: aP, unitFix: (ch.unitFix.p || ch.unitFix.q || ch.unitFix.t || ch.unitFix.pSurf) ? ch.unitFix : null, clockOffsetH: off, masked: nMasked, depthFixPsi: dFix },
+                    flags: flags, hf: null };
+        var qfbOut = qfb ? [] : null;
+        for (var kk = 0; kk < keep.length; kk++) {
+            i = keep[kk];
+            out.t.push(t[i]); out.pw.push(p[i]);
+            if (out.pSurf) out.pSurf.push(_nn(ps[i]));
+            if (out.q) out.q.push(_fin(qd[i]) && qd[i] > 0 ? qd[i] / 1440 : 0);     // bbl/d → bbl/min
+            if (out.T) out.T.push(_nn(TT[i]));
+            if (qfbOut) qfbOut.push(_fin(qfb[i]) && qfb[i] > 0 ? qfb[i] / 1440 : 0);
+        }
+        if (qfbOut) out.qFb = qfbOut;
+        // primary channel: a surface gauge is converted to bottomhole (WTS_wellbore.convert at call time, else constant gradient)
+        var depthGauge = _fin(I.gauge.bhTvd) ? I.gauge.bhTvd : null;
+        if (ch.primary === 'surface') {
+            var conv = _wb('convert'), cv = null;
+            // integration: WTS_wellbore.convert(ds, prepCtx, opts) reads the surface channel from ds.pSurf (or ds.p with
+            // opts.channel 'p') and needs prepCtx.column (survey, strings, fluid, temperature, datum), the fluid, the temperature
+            // model and the test atmospheric pressure; the primary surface channel here is the dataset's p (psia)
+            var sCol = _fin(I.datumTvd) && I.datumTvd > 0 ? { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd } : null;
+            if (conv && sCol) {
+                try {
+                    cv = conv({ t: out.t, p: out.pw, q: out.q ? out.q.map(function (x) { return x * 1440; }) : null, qFb: out.qFb ? out.qFb.map(function (x) { return x * 1440; }) : null },
+                              { column: sCol, fluid: I.fluid, temp: I.temp, atmPsia: ch.atmPsia, gaugeTvd: 0, well: well || null }, { band: true, channel: 'p' });
+                } catch (e) { cv = null; }
+            }
+            if (_okRes(cv) && Array.isArray(cv.pw) && cv.pw.length === out.t.length) {
+                out.pSurf = out.pw.slice(); out.pw = cv.pw.slice();
+                if (cv.band && Array.isArray(cv.band.p10) && cv.band.p10.length === out.t.length) out.band = { p10: cv.band.p10.map(_nn), p90: cv.band.p90.map(_nn) };
+                (cv.flags || []).forEach(function (f) { if (_isObj2(f) && f.code) flags.push(_W(f.code, f.level, f.text, f.ev)); });
+                if (_fin(cv.vacuumAt)) flags.push(_W('VACUUM', 'bad', 'The surface gauge reads a vacuum from ' + _f1(cv.vacuumAt, 3) + ' h; converted data after that time need a bottomhole gauge.'));
+            } else if (_fin(I.datumTvd)) {
+                var grad = 0.052 * I.fluid.rhoPpg, dpH = grad * I.datumTvd;
+                out.pSurf = out.pw.slice();
+                out.pw = out.pw.map(function (v) { return v + dpH; });
+                flags.push(_W('CONVERSION_FALLBACK', 'warn', 'Surface pressure converted with a constant ' + _f1(grad, 3) + ' psi/ft gradient and no friction (wellbore engine unavailable); pumping pressures read high.'));
+            } else {
+                flags.push(_W('NO_DATUM', 'bad', 'The datum depth is not set: the surface pressure cannot be converted to bottomhole and is used as recorded.'));
+            }
+            out.src = 'surface-converted';
+        } else if (!dFix && depthGauge !== null && _fin(I.datumTvd) && Math.abs(I.datumTvd - depthGauge) > 0.5) {     // an applied depth fix supersedes it
+            var dz = 0.052 * I.fluid.rhoPpg * (I.datumTvd - depthGauge);
+            out.pw = out.pw.map(function (v) { return v + dz; });
+            flags.push(_W('GAUGE_TO_DATUM', 'info', 'Gauge pressure moved to the datum: ' + (dz >= 0 ? '+' : '') + _f1(dz, 1) + ' psi over ' + _f1(I.datumTvd - depthGauge, 0) + ' ft.'));
+        }
+        // noise σ (second differences) and quantum (most common non-zero |Δp|)
+        out.sigma = _noise2(out.pw);
+        var cnt = {}, best = 0, bestN = 0;
+        for (i = 1; i < out.pw.length; i++) {
+            var dq = Math.abs(out.pw[i] - out.pw[i - 1]);
+            if (dq > 0) { var key = dq.toPrecision(4); cnt[key] = (cnt[key] || 0) + 1; if (cnt[key] > bestN) { bestN = cnt[key]; best = +key; } }
+        }
+        out.quantum = bestN >= 3 ? best : 0;
+        // Hampel spikes (window 7, 4 MAD): flagged, never deleted
+        var spikes = 0, nn = out.pw.length;
+        if (nn >= 7) {
+            for (i = 3; i < nn - 3; i++) {
+                var win = out.pw.slice(i - 3, i + 4), md = _median(win), mad = 1.4826 * _median(win.map(function (v) { return Math.abs(v - md); }));
+                if (mad > 0 && Math.abs(out.pw[i] - md) > 4 * mad && Math.abs(out.pw[i] - md) > 3 * Math.max(out.sigma, 0.01) &&
+                    Math.abs(out.pw[i] - out.pw[i - 1]) > 3 * mad && Math.abs(out.pw[i + 1] - out.pw[i]) > 3 * mad &&
+                    (out.pw[i] - out.pw[i - 1]) * (out.pw[i + 1] - out.pw[i]) < 0) spikes++;
+            }
+        }
+        if (spikes) flags.push(_W('SPIKES', 'warn', spikes + ' isolated pressure spikes flagged (Hampel test); they are kept.'));
+        // high-rate windows (≥ 2 Hz around shut-in): indexed for 59 to store (§3.1)
+        var iq = -1;
+        if (out.q) for (i = out.q.length - 1; i >= 0; i--) if (out.q[i] > 0) { iq = i; break; }
+        // Each window carries its samples (t h, p psia on the analysed channel) so the wave ISIP (WTS_wellbore.hammerQuick) and
+        // 59's store can use them: from the main record when it is ≥ 2 Hz there, else from ds.meta.hfWindows (a logger's
+        // high-rate shut-in window beside a 1 Hz main record), converted like the main bottomhole channel
+        var wins = [];
+        if (iq >= 0) {
+            var tsx = out.t[iq], a0 = tsx - 10 / 3600, a1 = tsx + 120 / 3600, wt = [], wp = [];
+            for (i = 0; i < out.t.length; i++) if (out.t[i] >= a0 && out.t[i] <= a1) { wt.push(out.t[i]); wp.push(out.pw[i]); }
+            if (wt.length >= 2 && (a1 - a0) * 3600 / wt.length <= 0.5)
+                wins.push({ kind: 'shutin', t0: a0, t1: a1, n: wt.length, t: wt, p: wp, dtS: (wt[wt.length - 1] - wt[0]) * 3600 / (wt.length - 1), src: 'record' });
+        }
+        var mw = ds.meta && Array.isArray(ds.meta.hfWindows) ? ds.meta.hfWindows : [];
+        if (ch.primary !== 'surface') mw.slice(0, 4).forEach(function (w) {
+            if (!_isObj2(w) || !_fin(w.t0) || !_fin(w.dtS) || !(w.dtS > 0) || !Array.isArray(w.p) || w.p.length < 2) return;
+            var kind = /^(shutin|step|flowback|ramp)$/.test(w.kind) ? w.kind : 'shutin';
+            if (wins.some(function (x) { return x.kind === kind; })) return;            // the main record's own window wins
+            var nW = Math.min(w.p.length, 20000), wt2 = new Array(nW), wp2 = new Array(nW), fp = ch.unitFix.p;
+            for (var j = 0; j < nW; j++) {
+                wt2[j] = w.t0 + j * w.dtS / 3600;
+                var v = w.p[j];
+                wp2[j] = _fin(v) ? (fp ? v * fp.factor + fp.offset : v) + aP + dFix : null;
+            }
+            wins.push({ kind: kind, t0: wt2[0], t1: wt2[nW - 1], n: nW, t: wt2, p: wp2, dtS: w.dtS, src: 'meta' });
+        });
+        if (wins.length) out.hf = { windows: wins };
+        out.atmPsia = ch.atmPsia;
+        return out;
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.1 resampler: O(n), one pass; pumping ≤ keepPump (bin extremes), falloff log-spaced (perDecade) or a pressure step
+    // ═════════════════════════════════════════════════════════════════════
+    function _qselect(a, k, cnt) {        // in place, deterministic middle pivot; returns a[k]
+        var lo = 0, hi = a.length - 1;
+        while (lo < hi) {
+            var piv = a[(lo + hi) >> 1], i = lo, j = hi;
+            while (i <= j) {
+                while (a[i] < piv) { i++; cnt.n++; }
+                while (a[j] > piv) { j--; cnt.n++; }
+                if (i <= j) { var tmp = a[i]; a[i] = a[j]; a[j] = tmp; i++; j--; }
+                cnt.n++;
+            }
+            if (k <= j) hi = j; else if (k >= i) lo = i; else break;
+        }
+        return a[k];
+    }
+    G.PRiSM_dfit_resample = _safe(function (t, p, ts, opts) {
+        opts = opts || {};
+        if (!t || !p || t.length !== p.length || t.length < 2) return _fail('BAD_INPUT', 'resample needs t and p arrays of equal length.', ['t', 'p']);
+        var n = t.length, per = _fin(opts.perDecade) && opts.perDecade > 0 ? opts.perDecade : 40, keepPump = _fin(opts.keepPump) && opts.keepPump >= 2 ? Math.floor(opts.keepPump) : 2000;
+        var cnt = { n: 0 }, idx = [], i;
+        var dpMin = opts.dpMin;
+        if (!_fin(dpMin)) {
+            var sig = _noise2(p), q = _fin(opts.quantum) ? opts.quantum : 0;
+            cnt.n += n;
+            dpMin = Math.max(0.05, 3 * sig, 10 * q);
+        }
+        // split at ts (first index with t > ts)
+        var iS = 0;
+        while (iS < n && t[iS] <= ts) { iS++; cnt.n++; }
+        if (iS <= keepPump) { for (i = 0; i < iS; i++) idx.push(i); cnt.n += iS; }
+        else {
+            var nb = Math.max(1, Math.floor(keepPump / 2)), bs = iS / nb;
+            for (var b = 0; b < nb; b++) {
+                var i0 = Math.floor(b * bs), i1 = Math.min(iS, Math.floor((b + 1) * bs)), imn = i0, imx = i0;
+                for (i = i0; i < i1; i++) { if (p[i] < p[imn]) imn = i; if (p[i] > p[imx]) imx = i; cnt.n++; }
+                if (imn === imx) idx.push(imn); else if (imn < imx) { idx.push(imn); idx.push(imx); } else { idx.push(imx); idx.push(imn); }
+            }
+        }
+        // falloff bins: a bin closes when ln Δt advanced by ln10/per or p moved by dpMin from the bin start
+        var step = LN10 / per, binStart = iS, out = [];
+        function flush(i0, i1) {          // [i0, i1)
+            if (i1 <= i0) return;
+            if (i1 - i0 === 1) { idx.push(i0); return; }
+            var vals = []; for (var j = i0; j < i1; j++) { vals.push(p[j]); cnt.n++; }
+            var k = (vals.length - 1) >> 1, med = _qselect(vals, k, cnt), pick = i0, bestD = INF;
+            for (j = i0; j < i1; j++) { var dd = Math.abs(p[j] - med); cnt.n++; if (dd < bestD) { bestD = dd; pick = j; } }
+            idx.push(pick);
+        }
+        for (i = iS; i < n; i++) {
+            cnt.n++;
+            if (i === binStart) continue;
+            var lt0 = Math.log(Math.max(t[binStart] - ts, 1e-12)), lt = Math.log(Math.max(t[i] - ts, 1e-12));
+            if (lt - lt0 >= step || Math.abs(p[i] - p[binStart]) >= dpMin) { flush(binStart, i); binStart = i; }
+        }
+        if (binStart < n) flush(binStart, n);
+        return { ok: true, idx: idx, t: idx.map(function (j) { return t[j]; }), p: idx.map(function (j) { return p[j]; }), dpMin: dpMin, ops: cnt.n };
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.3 events, volumes and the pumping time
+    // ═════════════════════════════════════════════════════════════════════
+    function _vwcwTheory(inputs, well) {   // bbl/psi from WTS_wellbore.csys (call time); null when unavailable
+        var col = _wb('column'), cs = _wb('csys');
+        if (!col || !cs || !inputs) return null;
+        try {
+            var c = col({ survey: inputs.survey, strings: inputs.strings, fluid: inputs.fluid, temp: inputs.temp, datumTvd: inputs.datumTvd, datumMd: inputs.datumMd });
+            if (!_okRes(c)) return null;
+            var r = cs(c, inputs.fluid, null);
+            return (_okRes(r) && _fin(r.VwCw) && r.VwCw > 0) ? r.VwCw : null;
+        } catch (e) { return null; }
+    }
+    G.PRiSM_dfit_events = _safe(function (prep, overrides, opts) {
+        opts = opts || {};
+        if (!_okRes(prep) || !Array.isArray(prep.t) || prep.t.length < 3) return _fail('BAD_INPUT', 'Prepared data are needed for the events.', ['prep']);
+        overrides = overrides || {};
+        var t = prep.t, p = prep.pw, q = prep.q, n = t.length, i, warnings = [];
+        var fStart = _fin(opts.qStartFrac) ? opts.qStartFrac : 0.02, fStop = _fin(opts.qStopFrac) ? opts.qStopFrac : 0.05;
+        var sig = Math.max(prep.sigma || 0, 0.01);
+        var hasQ = Array.isArray(q) && q.some(function (v) { return v > 0; });
+        var qMax = 0; if (hasQ) for (i = 0; i < n; i++) if (q[i] > qMax) qMax = q[i];
+        // cycles: runs of q > fStart·qMax (rate sample i holds over (t[i−1], t[i]])
+        var cycles = [], src = { tStart: 'auto', tb: 'auto', ts: 'auto' };
+        if (hasQ) {
+            var on = false, c0 = -1;
+            for (i = 0; i < n; i++) {
+                var pump = q[i] > fStart * qMax;
+                if (pump && !on) { on = true; c0 = i; }
+                if (!pump && on) { on = false; cycles.push({ i0: c0, i1: i - 1 }); }
+            }
+            if (on) cycles.push({ i0: c0, i1: n - 1 });
+        } else {
+            // pressure only: the injection is the rise from the first static level; shut-in at the largest negative step
+            var iDrop = -1, big = 0;
+            for (i = 1; i < n; i++) { var dd = p[i] - p[i - 1]; if (dd < big) { big = dd; iDrop = i; } }
+            if (iDrop < 1) return _fail('NO_SHUTIN', 'No shut-in could be found (no rate and no pressure drop).', ['q']);
+            var p0 = p[0], ir = 0;
+            for (i = 1; i < iDrop; i++) if (p[i] - p0 > Math.max(5 * sig, 1)) { ir = i; break; }
+            cycles.push({ i0: Math.max(ir, 1), i1: iDrop - 1 });
+            warnings.push(_W('NO_RATE', 'warn', 'No rate channel: events are read from the pressure; volumes need the rate.'));
+        }
+        if (!cycles.length) return _fail('NO_INJECTION', 'No injection period was found in the rate.', ['q']);
+        function cycVol(c) {
+            if (!hasQ) return null;
+            var v = 0;
+            for (var j = c.i0; j <= c.i1; j++) v += q[j] * (t[j] - (j === c.i0 ? c.tStart : t[j - 1])) * 60;
+            return v;
+        }
+        // pump start refined by the pressure ramp onset (back-extrapolated to the pre-pump level within (t[i0−1], t[i0]])
+        // The onset is read from the first sample that has risen above the pre-pump level (a pressure still at that level
+        // at t[i0] means the pumping began at t[i0], the end of the bracket, not at its start): the line through that sample
+        // and the next one, back to the pre-pump level, clamped to the rate bracket.
+        cycles.forEach(function (c) {
+            var i0 = c.i0, tA = i0 > 0 ? t[i0 - 1] : t[i0], tS = tA;
+            if (i0 > 0 && i0 + 1 < n) {
+                var pPre = p[i0 - 1], thr = Math.max(5 * sig, 1), kR = i0;
+                while (kR < Math.min(n - 2, i0 + 3) && !(p[kR] - pPre > thr)) kR++;
+                var s = (p[kR + 1] - p[kR]) / (t[kR + 1] - t[kR]);
+                if (s > 0 && p[kR] - pPre > thr) { var tx = t[kR] - (p[kR] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+                else if (s > 0 && p[i0] > pPre) { tx = t[i0] - (p[i0] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+            }
+            c.tStart = tS;
+            c.ts = t[c.i1];
+            c.pStart = i0 > 0 ? p[i0 - 1] : p[i0];
+            c.Vi = cycVol(c);
+        });
+        var cyc = cycles[cycles.length - 1];
+        // the analysed cycle: the last one (re-opening is analysed alone when the fracture closed in between)
+        var tStart = cyc.tStart, iS = cyc.i1, ts = t[iS];
+        if (_fin(overrides.tStart)) { tStart = overrides.tStart; src.tStart = 'user'; }
+        if (_fin(overrides.ts)) {
+            ts = overrides.ts; src.ts = 'user';
+            iS = 0; for (i = 0; i < n; i++) if (t[i] <= ts) iS = i;
+        }
+        // the last pumping sample from the pressure (§4.3: the largest negative pressure difference between the last pumping and
+        // the first falloff sample): a logger that writes the rate as the value from its time stamp on (forward-held) reports
+        // q = 0 at the shut-in sample while the pressure there is still the pumping pressure. When the largest drop within the
+        // next three samples comes after a sample that has not fallen, that sample is the last pumping one; the rate arrays
+        // keep iQ (the last sample with q > 0) and the volume carries the last rate up to it.
+        var iQ = iS;
+        if (src.ts === 'auto' && hasQ) {
+            var kD = iS, dBest = -INF, thrD = Math.max(5 * sig, 1);
+            for (i = iS; i <= Math.min(n - 2, iS + 3); i++) { var ddp = p[i] - p[i + 1]; if (ddp > dBest) { dBest = ddp; kD = i; } }
+            var flat = true; for (i = iS + 1; i <= kD; i++) if (p[i] < p[i - 1] - thrD) flat = false;
+            if (kD > iS && flat && dBest > thrD) { iS = kD; ts = t[kD]; }
+        }
+        // shut-in refined to sub-sample resolution by the water-hammer onset when a high-rate window gives one
+        var tsRefined = false;
+        if (src.ts === 'auto' && _fin(opts.hammerOnset) && iS + 1 < n && opts.hammerOnset >= t[iS] && opts.hammerOnset < t[iS + 1]) { ts = opts.hammerOnset; tsRefined = true; }
+        // breakdown: pressure maximum during pumping followed by a drop (> max(5σ, 0.5 % of the rise)) while pumping
+        var iB = -1, pmx = -INF, i0c = cyc.i0;
+        for (i = i0c; i <= iS; i++) if (p[i] > pmx) { pmx = p[i]; iB = i; }
+        var tb = null, pb = null;
+        if (iB >= 0 && iB < iS) {
+            var pMinAfter = INF; for (i = iB; i <= iS; i++) if (p[i] < pMinAfter) pMinAfter = p[i];
+            if (pmx - pMinAfter > Math.max(5 * sig, 0.005 * (pmx - cyc.pStart))) { tb = t[iB]; pb = pmx; }
+        }
+        if (_fin(overrides.tb)) { tb = overrides.tb; src.tb = 'user'; var kb = 0; for (i = 0; i < n; i++) if (t[i] <= tb) kb = i; pb = p[kb]; }
+        // rates
+        var qLast = null, steps = [];
+        if (hasQ) {
+            // last stable rate: median of the pumping samples in the last 20 % of the cycle that lie within 5 % of the final run
+            var runs = [], r0 = i0c;
+            for (i = i0c + 1; i <= iQ + 1; i++) {
+                if (i > iQ || Math.abs(q[i] - q[r0]) > 0.01 * Math.max(q[r0], 1e-9)) { runs.push({ a: r0, b: i - 1, q: _median(q.slice(r0, i)) }); r0 = i; }
+            }
+            var lastRun = runs[runs.length - 1];
+            qLast = lastRun.q;
+            // steps: plateaus of ≥ 5 s at distinct levels (> 5 %)
+            var plats = runs.filter(function (r) { return (t[r.b] - (r.a > 0 ? t[r.a - 1] : t[r.a])) * 3600 >= 5; });
+            if (plats.length >= 2) {
+                var down = true, up = true;
+                for (i = 1; i < plats.length; i++) {
+                    if (!(plats[i].q < plats[i - 1].q * 0.95)) down = false;
+                    if (!(plats[i].q > plats[i - 1].q * 1.05)) up = false;
+                }
+                if (down || up) {
+                    plats.forEach(function (r) {
+                        steps.push({ t0: r.a > 0 ? t[r.a - 1] : t[r.a], t1: t[r.b], q: r.q, pSettled: p[r.b], n: r.b - r.a + 1, dir: down ? 'down' : 'up' });
+                    });
+                }
+            }
+        }
+        // ramp-down: time with q below 95 % of q_last before shut-in, as a fraction of tp
+        var tp = ts - tStart, rampDown = 0;
+        if (hasQ && qLast > 0) {
+            var iR = iQ; while (iR > i0c && q[iR] < 0.95 * qLast) iR--;
+            rampDown = tp > 0 ? _clampN((ts - t[iR]) / tp, 0, 1) : 0;
+            if (rampDown > 0.1) warnings.push(_W('RAMP_DOWN', 'warn', 'The rate ramps down over ' + _f1(rampDown * 100, 0) + ' % of the pumping time: the instantaneous shut-in is not defined, the data-driven G is used.'));
+        }
+        // volumes (bbl)
+        var Vi = 0;
+        if (hasQ) {
+            for (i = i0c; i <= iQ; i++) Vi += q[i] * (t[i] - (i === i0c ? tStart : t[i - 1])) * 60;
+            if (iS > iQ) Vi += q[iQ] * (t[iS] - t[iQ]) * 60;
+            if (cycles.length > 1) {
+                var prev = cycles[cycles.length - 2];
+                var pBetween = INF; for (i = prev.i1; i < cyc.i0; i++) if (p[i] < pBetween) pBetween = p[i];
+                var sp = _fin(opts.sigmaPrior) ? opts.sigmaPrior : null;
+                cyc.closedBefore = sp !== null ? pBetween < sp : false;
+                if (!cyc.closedBefore) { cycles.slice(0, -1).forEach(function (c) { Vi += c.Vi || 0; }); warnings.push(_W('MULTI_CYCLE', 'info', cycles.length + ' injection cycles; closure between them was not established, so the volumes are combined.')); }
+            }
+        }
+        // V_fill: delay between the rate start and the pressure rise
+        var Vfill = 0;
+        if (hasQ) {
+            var pS = cyc.pStart, iRise = -1;
+            for (i = cyc.i0; i <= iS; i++) if (p[i] - pS > Math.max(5 * sig, 1)) { iRise = i; break; }
+            if (iRise > cyc.i0 + 1) { for (i = cyc.i0; i < iRise - 1; i++) Vfill += q[i] * (t[i] - (i === cyc.i0 ? tStart : t[i - 1])) * 60; }
+        }
+        // flowback
+        var flowback = null, Vfb = 0;
+        if (Array.isArray(prep.qFb)) {
+            var f0 = -1, f1 = -1, qs = [];
+            for (i = iS + 1; i < n; i++) if (prep.qFb[i] > 0) { if (f0 < 0) f0 = i; f1 = i; qs.push(prep.qFb[i]); Vfb += prep.qFb[i] * (t[i] - t[i - 1]) * 60; }
+            if (f0 >= 0) flowback = { t0: t[f0 - 1 >= 0 ? f0 - 1 : f0], t1: t[f1], q: _median(qs), V: Vfb };
+        }
+        if (overrides.flowback && _fin(overrides.flowback.t0) && _fin(overrides.flowback.t1)) flowback = { t0: overrides.flowback.t0, t1: overrides.flowback.t1, q: flowback ? flowback.q : null, V: flowback ? flowback.V : null };
+        // wellbore stiffness from the pre-breakdown ramp: V_w·c_w = q/(dp/dt) (bbl/psi); fit over the steep part
+        var VwCwM = null;
+        if (hasQ) {
+            var iEnd = (tb !== null && iB > cyc.i0) ? iB : iS, best2 = 0;
+            for (i = cyc.i0 + 1; i <= iEnd; i++) { var s2 = (p[i] - p[i - 1]) / ((t[i] - t[i - 1]) * 60); if (s2 > best2) best2 = s2; }
+            var sx = 0, sy = 0, sxx = 0, sxy = 0, nr = 0, qr = [];
+            for (i = cyc.i0 + 1; i <= iEnd; i++) {
+                var s3 = (p[i] - p[i - 1]) / ((t[i] - t[i - 1]) * 60);
+                if (s3 >= 0.8 * best2 && best2 > 0) { var x = t[i] * 60; sx += x; sy += p[i]; sxx += x * x; sxy += x * p[i]; nr++; qr.push(q[i]); }
+            }
+            if (nr >= 2) {
+                var den = nr * sxx - sx * sx, slope = den !== 0 ? (nr * sxy - sx * sy) / den : null;
+                if (!(nr >= 3) || !_fin(slope)) slope = best2;
+                if (slope > 0) VwCwM = _median(qr) / slope;
+            } else if (best2 > 0) VwCwM = q[cyc.i0] / best2;
+        }
+        var VwCw = _fin(opts.VwCw) ? opts.VwCw : (VwCwM !== null ? VwCwM : _vwcwTheory(opts.inputs, opts.well));
+        var pShut = p[iS], pStart = cyc.pStart;
+        var ViFrac = hasQ ? Vi - (VwCw || 0) * (pShut - pStart) - Vfill : null;
+        // V_i* depends on the closure candidate (§4.3): opts.sigmaC, else the prior, else the first falloff pressure (an
+        // ISIP proxy, so V_i* starts as V_i,frac); 56's frac recomputes it per candidate.
+        var sigC = _fin(opts.sigmaC) ? opts.sigmaC : (_fin(opts.sigmaPrior) ? opts.sigmaPrior : (iS + 1 < n ? p[iS + 1] : pShut));
+        var ViStar = hasQ ? Vi - (VwCw || 0) * (sigC - pStart) - Vfill : null;
+        // tp_veq = V_i / q: q_last, unless the injection ends below the main stage (a step-down, or any last rate under 90 % of
+        // q_max): then the volume-weighted rate of this cycle Σq²Δt / ΣqΔt (the reference demo's 1.25 bbl/min last step made
+        // V_i/q_last 21.5 min against a 5.6 min pump time)
+        var qVeq = qLast;
+        if (hasQ && qLast > 0 && _fin(qMax) && qLast < 0.9 * qMax) {
+            var sq = 0, sq2 = 0;
+            for (i = i0c; i <= iQ; i++) { var dtq = (t[i] - (i === i0c ? tStart : t[i - 1])) * 60, qq = q[i] > 0 ? q[i] : 0; sq += qq * dtq; sq2 += qq * qq * dtq; }
+            if (sq > 0 && sq2 > 0) qVeq = sq2 / sq;
+        }
+        var tpPump = ts - tStart, tpB = tb !== null ? ts - tb : null, tpV = (hasQ && qVeq > 0) ? Vi / qVeq / 60 : null;
+        var qEq = (hasQ && tpV > 0) ? (Vi - Vfill - Vfb) / (tpV * 60) : null;
+        var schedule = hasQ && tpV > 0 ? [{ t: ts - tpV, q: qEq }, { t: ts, q: 0 }] : [];
+        var cycOut = cycles.map(function (c, k) {
+            var rw = null;
+            if (k > 0) {         // re-pressurisation window of a later cycle: start → breakdown or end of the ramp
+                var jm = c.i0, pm = -INF; for (var j = c.i0; j <= c.i1; j++) if (p[j] > pm) { pm = p[j]; jm = j; }
+                if (t[jm] > c.tStart) rw = [c.tStart, t[jm]];
+            }
+            return { tStart: c.tStart, ts: c.ts, Vi: _nn(c.Vi), closedBefore: !!c.closedBefore, rampWin: rw };
+        });
+        if (tb === null) warnings.push(_W('NO_BREAKDOWN', 'info', 'No breakdown (pressure maximum followed by a drop while pumping) was found.'));
+        return {
+            ok: true, tStart: tStart, tb: tb, pb: pb, ts: ts, tsRefined: tsRefined, tEnd: t[n - 1], qMax: hasQ ? qMax : null, qLast: qLast,
+            Vi: hasQ ? Vi : null, ViFrac: _nn(ViFrac), ViStar: _nn(ViStar), Vfill: hasQ ? Vfill : null, Vfb: Array.isArray(prep.qFb) ? Vfb : 0, qEq: _nn(qEq),
+            VwCwMeasured: _nn(VwCwM), tp: { pump: tpPump > 0 ? tpPump : null, breakdown: tpB > 0 ? tpB : null, veq: tpV > 0 ? tpV : null }, rampDownFrac: rampDown,
+            steps: steps, flowback: flowback, cycles: cycOut, schedule: schedule, source: src, warnings: warnings, ev: ['E1'],
+            pStart: pStart, pShut: pShut, iShut: iS, VwCwUsed: _nn(VwCw), sigmaCForViStar: sigC
+        };
+    });
+
+    // rate history of the analysed cycle as steps [{t, q}] (bbl/min; sample i holds over (t[i−1], t[i]])
+    function _rateSteps(prep, events) {
+        if (!prep || !Array.isArray(prep.q) || !events) return null;
+        var t = prep.t, q = prep.q, out = [], i0 = -1, i;
+        for (i = 0; i < t.length; i++) if (t[i] > events.tStart && t[i] <= events.ts + 1e-12) { if (i0 < 0) i0 = i; }
+        if (i0 < 0) return null;
+        out.push({ t: events.tStart, q: q[i0] });
+        for (i = i0 + 1; i < t.length && t[i] <= events.ts + 1e-12; i++) if (q[i] !== q[i - 1]) out.push({ t: t[i - 1], q: q[i] });
+        return out;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.6 derivatives on the falloff
+    // ═════════════════════════════════════════════════════════════════════
+    // early-G straight line p = a − m·G grown over [G_min, …] while a quadratic term stays insignificant
+    function _linfit(x, y, i0, i1, origin) {
+        var n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, i;
+        for (i = i0; i <= i1; i++) { if (!_fin(x[i]) || !_fin(y[i])) continue; n++; sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; }
+        if (origin) {
+            if (n < 1 || sxx <= 0) return null;
+            var b0 = sxy / sxx, ss0 = 0;
+            for (i = i0; i <= i1; i++) if (_fin(x[i]) && _fin(y[i])) { var r0 = y[i] - b0 * x[i]; ss0 += r0 * r0; }
+            return { a: 0, b: b0, n: n, s: n > 1 ? Math.sqrt(ss0 / (n - 1)) : 0, seA: 0, seB: n > 1 ? Math.sqrt(ss0 / (n - 1) / sxx) : 0 };
+        }
+        if (n < 2) return null;
+        var den = n * sxx - sx * sx; if (!(den > 0)) return null;
+        var b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n, ss = 0;
+        for (i = i0; i <= i1; i++) if (_fin(x[i]) && _fin(y[i])) { var r = y[i] - a - b * x[i]; ss += r * r; }
+        var s2 = n > 2 ? ss / (n - 2) : 0, xm = sx / n;
+        return { a: a, b: b, n: n, s: Math.sqrt(s2), seA: Math.sqrt(s2 * (1 / n + xm * xm / (sxx - n * xm * xm || 1e-300))), seB: Math.sqrt(s2 / ((sxx - n * xm * xm) || 1e-300)) };
+    }
+    function _quadDev(x, y, i0, i1, lf) {   // max |quadratic − linear| fit over the window
+        var n = 0, xm = 0, i;
+        for (i = i0; i <= i1; i++) { n++; xm += x[i]; }
+        xm /= n;
+        var S = [0, 0, 0, 0, 0], T = [0, 0, 0];
+        for (i = i0; i <= i1; i++) { var u = x[i] - xm, u2 = u * u; S[0]++; S[1] += u; S[2] += u2; S[3] += u2 * u; S[4] += u2 * u2; T[0] += y[i]; T[1] += u * y[i]; T[2] += u2 * y[i]; }
+        // solve 3×3 normal equations
+        var M = [[S[0], S[1], S[2], T[0]], [S[1], S[2], S[3], T[1]], [S[2], S[3], S[4], T[2]]];
+        for (var c = 0; c < 3; c++) {
+            var piv = c; for (var r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-300) return 0;
+            for (r = c + 1; r < 3; r++) { var f = M[r][c] / M[c][c]; for (var k = c; k < 4; k++) M[r][k] -= f * M[c][k]; }
+        }
+        var c2 = M[2][3] / M[2][2], c1 = (M[1][3] - M[1][2] * c2) / M[1][1], c0 = (M[0][3] - M[0][1] * c1 - M[0][2] * c2) / M[0][0];
+        var dev = 0;
+        for (i = i0; i <= i1; i++) { var uu = x[i] - xm, q = c0 + c1 * uu + c2 * uu * uu, l = lf.a + lf.b * x[i]; dev = Math.max(dev, Math.abs(q - l)); }
+        return dev;
+    }
+    // prefix sums of 1, x, x², x³, x⁴, y, xy, x²y, y² (x centred) → every window's line and quadratic in O(1)
+    function _prefix(x, y) {
+        var n = x.length, xm = 0, i;
+        for (i = 0; i < n; i++) xm += x[i];
+        xm = n ? xm / n : 0;
+        var P = { xm: xm, s: [] }, a = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        P.s.push(a.slice());
+        for (i = 0; i < n; i++) {
+            var u = x[i] - xm, u2 = u * u, yy = y[i];
+            a[0] += 1; a[1] += u; a[2] += u2; a[3] += u2 * u; a[4] += u2 * u2; a[5] += yy; a[6] += u * yy; a[7] += u2 * yy; a[8] += yy * yy;
+            P.s.push(a.slice());
+        }
+        return P;
+    }
+    function _winFits(P, x, i0, i1) {          // {lin:{a,b,s,seA,n}, dev} on the window [i0, i1] (a, b in raw x)
+        var A = P.s[i1 + 1], B = P.s[i0], S = [];
+        for (var k = 0; k < 9; k++) S.push(A[k] - B[k]);
+        var n = S[0];
+        if (n < 3) return null;
+        var den = n * S[2] - S[1] * S[1];
+        if (!(den > 0)) return null;
+        var b = (n * S[6] - S[1] * S[5]) / den, ac = (S[5] - b * S[1]) / n;           // y = ac + b·u
+        var ssr = S[8] - ac * S[5] - b * S[6];
+        if (ssr < 0) ssr = 0;
+        var s2 = n > 2 ? ssr / (n - 2) : 0, um = S[1] / n, sxx = S[2] - n * um * um;
+        var lin = { a: ac - b * P.xm, b: b, n: n, s: Math.sqrt(s2), seA: Math.sqrt(s2 * (1 / n + Math.pow(um + P.xm, 2) / (sxx || 1e-300))) };
+        // quadratic y = c0 + c1·u + c2·u²
+        var M = [[S[0], S[1], S[2], S[5]], [S[1], S[2], S[3], S[6]], [S[2], S[3], S[4], S[7]]];
+        for (var c = 0; c < 3; c++) {
+            var piv = c; for (var r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-300) return { lin: lin, dev: 0 };
+            for (r = c + 1; r < 3; r++) { var f = M[r][c] / M[c][c]; for (var kk = c; kk < 4; kk++) M[r][kk] -= f * M[c][kk]; }
+        }
+        var c2 = M[2][3] / M[2][2], c1 = (M[1][3] - M[1][2] * c2) / M[1][1], c0 = (M[0][3] - M[0][1] * c1 - M[0][2] * c2) / M[0][0];
+        // max |quad − lin| over [u(i0), u(i1)]: the difference is a quadratic → the ends and the vertex
+        var dq = function (u) { return Math.abs((c0 + c1 * u + c2 * u * u) - (ac + b * u)); };
+        var u0 = x[i0] - P.xm, u1 = x[i1] - P.xm, dev = Math.max(dq(u0), dq(u1));
+        if (c2 !== 0) { var uv = -(c1 - b) / (2 * c2); if (uv > u0 && uv < u1) dev = Math.max(dev, dq(uv)); }
+        return { lin: lin, dev: dev };
+    }
+    // per-sample noise of y[i0..i1] and its lag-1 correlation for AR(1)-like gauge noise, from the robust variances of the
+    // lag-1 and lag-2 differences, each de-trended by a 21-sample quadratic (Savitzky–Golay) smoother — a moving median is
+    // the identity on a monotone trend and would remove the noise with it where the slope changes fast: V(h) = 2σ²(1 − ρ^h),
+    // so ρ = V(2)/V(1) − 1 and σ² = V(1)/(2(1 − ρ)). Second differences alone read correlated noise ≈ 4 × low (ρ 0.9).
+    var SG21 = (function () { var w = []; for (var j = -10; j <= 10; j++) w.push(3 * (329 - 5 * j * j) / 9177); return w; })();
+    function _noiseAR(y, i0, i1) {
+        var mad = function (a) { var m = _median(a); return 1.4826 * _median(a.map(function (v) { return Math.abs(v - m); })); };
+        function vlag(h) {
+            var d = [], k;
+            for (k = Math.max(h, i0 + h); k <= i1; k++) if (_fin(y[k]) && _fin(y[k - h])) d.push(y[k] - y[k - h]);
+            if (d.length < 30) return null;
+            var e = [], j;
+            for (k = 10; k < d.length - 10; k++) { var sm = 0; for (j = -10; j <= 10; j++) sm += SG21[j + 10] * d[k + j]; e.push(d[k] - sm); }
+            return Math.pow(mad(e), 2) / (1 - SG21[10]);
+        }
+        var v1 = vlag(1), v2 = vlag(2);
+        if (!(v1 > 0) || !(v2 > 0)) return { sigma: 0, rho: 0 };
+        var rho = _clampN(v2 / v1 - 1, 0, 0.97);
+        return { sigma: Math.sqrt(v1 / (2 * (1 - rho))), rho: rho };
+    }
+    // the noise used by the line tests: σ_eff ≥ the second-difference σ, and the effective sample count n·(1 − ρ)/(1 + ρ)
+    function _nEff(n, rho) { var r = _clampN(rho || 0, 0, 0.98); return Math.max(2, n * (1 - r) / (1 + r)); }
+    function _growLine(Gv, p, i0, iMax, sigma, P, rho) {
+        if (i0 < 0 || iMax - i0 < 3) return null;
+        var thr0 = Math.max(3 * sigma, 0.05), best = null, j = Math.min(iMax, i0 + 5), fails = 0;
+        while (j <= iMax) {
+            var wf = _winFits(P, Gv, i0, j);
+            if (!wf) break;
+            var lf = wf.lin;
+            // curvature test: the quadratic-minus-line deviation of a pure-noise window is ≈ 1.68 σ/√n, so a window stops
+            // where the deviation exceeds 4 standard errors (never below the 0.05 psi resolution floor, never above 3σ).
+            // With correlated noise (ρ1 > 0.3) n_eff is too uncertain for that and the fixed 3σ deviation is kept; the
+            // derivative cap in _derivsCore then bounds the window either way.
+            var thr = (rho || 0) > 0.3 ? thr0 : Math.max(0.05, Math.min(thr0, 6.7 * sigma / Math.sqrt(_nEff(lf.n, rho))));
+            if (wf.dev > thr || lf.s > Math.max(2 * sigma, 0.03)) { if (best || ++fails >= 2) break; }
+            else best = { a: lf.a, b: lf.b, i0: i0, i1: j, seA: lf.seA, s: lf.s, n: lf.n };
+            if (j === iMax) break;
+            var gTarget = Gv[j] * 1.12, jn = j + 1;
+            while (jn < iMax && Gv[jn] < gTarget) jn++;
+            j = jn;
+        }
+        return best;
+    }
+    // the longest straight early-G segment: starts at G_min, then later (× 3 steps in G) when the earliest samples are
+    // distorted (shut-in time off by a sample, bleed-off, hammer, a PDL hump); among windows of ≥ 6 points and ≥ 0.5 ln
+    // units the one reaching the largest G wins. Each window is grown only while its curvature is statistically absent
+    // (_growLine with σ_eff and ρ1), so with noise a window no longer runs past a gentle closure; _derivsCore then caps it
+    // at the provisional derivative departure (_departure).
+    function _earlyLine(Gv, p, i0, iMax, sigma, rho) {
+        if (i0 < 0 || iMax - i0 < 3) return null;
+        var P = _prefix(Gv, p), best = null, start = i0, g0 = Gv[i0], tries = 0;
+        while (start <= iMax - 5 && tries < 8) {
+            var w = _growLine(Gv, p, start, iMax, sigma, P, rho);
+            if (w && w.n >= 6) {
+                // prefer a window of at least 0.5 ln units that ends at the largest G; else the longest one
+                var span = Math.log(Gv[w.i1] / Gv[w.i0]), bspan = best ? Math.log(Gv[best.i1] / Gv[best.i0]) : -1;
+                if (!best) best = w;
+                else if (span >= 0.5 && (bspan < 0.5 || Gv[w.i1] > Gv[best.i1] * 1.05)) best = w;
+                else if (bspan < 0.5 && span > bspan) best = w;
+            }
+            tries++;
+            var gT = Math.max(g0, Gv[start]) * 3; while (start <= iMax && Gv[start] < gT) start++;
+        }
+        return best;
+    }
+    // the early G·dP/dG line over [i0, i1]: through the origin when |ι| = |a/(b·G_end)| < 0.05 (§4.7), else free
+    function _yLine(x, y, i0, i1) {
+        var lfA = _linfit(x, y, i0, i1, false);
+        var iota0 = (lfA && lfA.b > 0) ? lfA.a / (lfA.b * x[i1]) : 0;
+        var lf = _linfit(x, y, i0, i1, Math.abs(iota0) < 0.05);
+        if (!lf || !(lf.b > 0)) return null;
+        lf.iota = iota0; lf.origin = Math.abs(iota0) < 0.05;
+        return lf;
+    }
+    // _yLine with one robust refit (samples within max(3ε·ŷ, 4σ_y) of the first line)
+    function _yLineRobust(x, y, i0, i1, epsC) {
+        var lf = _yLine(x, y, i0, i1);
+        if (!lf) return null;
+        var nz0 = _lineNoise(x, y, lf, i0, i1), keepG = [], keepY = [];
+        for (var i = i0; i <= i1; i++) { var yh0 = lf.a + lf.b * x[i]; if (Math.abs(y[i] - yh0) <= Math.max(3 * epsC * yh0, 4 * nz0.sigma)) { keepG.push(x[i]); keepY.push(y[i]); } }
+        var lf2 = keepG.length >= 4 ? _linfit(keepG, keepY, 0, keepG.length - 1, lf.origin) : null;
+        if (lf2 && lf2.b > 0) { lf2.iota = lf.iota; lf2.origin = lf.origin; return lf2; }
+        return lf;
+    }
+    // absolute per-sample noise of y about a line over the upper part of [i0, i1] (x ≥ x[i1]·e^−1.5, at least 8 samples):
+    // σ = 1.4826·MAD of the residuals, ρ1 their lag-1 correlation. G·dP/dG noise is nearly constant in absolute terms
+    // (≈ σ_p/(√2·L) for white pressure noise), so a relative tolerance is σ/ŷ at each sample, not one number.
+    function _lineNoise(x, y, lf, i0, i1) {
+        var j0 = i1; while (j0 > i0 && (x[j0 - 1] >= x[i1] * Math.exp(-1.5) || i1 - j0 < 7)) j0--;
+        var r = [], k;
+        for (k = j0; k <= i1; k++) if (_fin(y[k])) r.push(y[k] - (lf.a + lf.b * x[k]));
+        if (r.length < 4) return { sigma: 0, rho: 0 };
+        var m = _median(r), ad = r.map(function (v) { return Math.abs(v - m); }), num = 0, den = 0;
+        for (k = 0; k < r.length; k++) { var u = r[k] - m; den += u * u; if (k) num += u * (r[k - 1] - m); }
+        return { sigma: 1.4826 * _median(ad), rho: den > 0 ? _clampN(num / den, -0.99, 0.99) : 0 };
+    }
+    // the first held departure of y from the early line after index i0 (§4.7 compliance rule). The relative residual of a
+    // 5-point moving median must exceed thr(k) = max(ε, 3·c·σ_y/ŷ(k)) — ε is the floor, the noise term the local scale —
+    // and stay beyond it for nHold samples (more when the noise is correlated), ≥ 0.05 in ln G with two, or to the end.
+    // A moving median is the identity on monotone noise-free data, so clean departures are not shifted.
+    function _departure(x, y, lf, i0, eps, sigY, rho) {
+        var n = x.length, sm = _movMed(y, 5), rr = _clampN(rho || 0, 0, 0.95);
+        var c = Math.min(1, 0.6 * Math.sqrt((1 + rr) / (1 - rr))), nHold = Math.max(3, Math.min(15, Math.round(1 / (1 - rr))));
+        function yh(k) { return Math.max(lf.a + lf.b * x[k], 1e-9); }
+        function thr(k) { return Math.max(eps, 3 * c * sigY / yh(k)); }
+        function rel(k) { return (sm[k] - yh(k)) / yh(k); }
+        for (var i = Math.max(0, i0); i < n; i++) {
+            var t = thr(i), r0 = rel(i), up = r0 > t;
+            if (!(up || r0 < -t)) continue;
+            var held = 0, j;
+            for (j = i; j < n; j++) { var rj = rel(j), tj = thr(j); if (up ? rj > tj : rj < -tj) held++; else break; }
+            // a short excursion (fewer than nHold samples: nHold grows to 15 on smooth, correlated residuals) that then crosses to
+            // the other side of the line within 0.3 ln units is a sharp closure, not noise (see the persistence test below)
+            // (the excursion must also be far beyond the noise, Σ(r/σ_r)/√n_eff ≥ 8: correlated noise crosses the line too)
+            var crossH = false;
+            if (held >= 3 && held < nHold) {
+                var zH = 0; for (var jz = i; jz < i + held; jz++) zH += (y[jz] - yh(jz)) / Math.max(sigY, 1e-12);
+                if (Math.abs(zH) / Math.sqrt(_nEff(held, rr)) >= 8)
+                    for (var jc = i + held; jc < n && x[jc] <= x[i] * Math.exp(0.3); jc++) { var rc = rel(jc), tc = thr(jc); if (up ? rc < -tc : rc > tc) { crossH = true; break; } }
+            }
+            if (held >= nHold || crossH || (nHold <= 3 && held >= 2 && Math.log(x[i + held - 1] / x[i]) >= 0.05) || (j === n && held >= 2)) {
+                // persistence: a closure departure grows, a correlated-noise excursion reverts. The smoothed residual must
+                // stay beyond half the threshold, same sign, over max(0.05, 0.25·ρ1) in ln G and at least 6 samples after the
+                // crossing, and the raw residuals there must be significant together: Σ(r/σ_r)/√n_eff ≥ 4 (σ_r = σ_y/ŷ, n_eff
+                // = n·(1 − ρ)/(1 + ρ)). Many crossings are tested on a long falloff, so one 3σ crossing alone is not enough.
+                var span = Math.max(0.05, 0.25 * rr), persist = true, zs = 0, nz = 0;
+                for (j = i; j < n && (Math.log(x[j] / x[i]) <= span || nz < 6); j++) {
+                    var rp = rel(j);
+                    if (up ? rp <= 0.5 * thr(j) : rp >= -0.5 * thr(j)) {
+                        // a sharp closure reverses ACROSS the line within 0.3 ln units (the excursion can be shorter than the span
+                        // on smooth, highly correlated data); a correlated-noise excursion only returns to it
+                        var crossE = false;
+                        if (nz > 0 && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) >= 8)
+                            for (var jj = j; jj < n && x[jj] <= x[i] * Math.exp(0.3); jj++) { var rq = rel(jj), tq = thr(jj); if (up ? rq < -tq : rq > tq) { crossE = true; break; } }
+                        if (!crossE) persist = false;
+                        break;
+                    }
+                    zs += (y[j] - yh(j)) / Math.max(sigY, 1e-12); nz++;
+                }
+                if (persist && j < n && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) < 4 && sigY > 0) persist = false;
+                // and still beyond the threshold 0.3 ln units later (a start-up distortion or a bump reverts; closure does not)
+                // — unless it reverts by crossing to the other side of the line (the after-closure signature of a sharp,
+                // compliance-drop closure: G·dP/dG jumps above the line at G_c and then falls below it as the decline slows) or
+                // it is far beyond the noise (Σ(r/σ_r)/√n_eff ≥ 8). Those are read at their start (the abrupt-break rule). The
+                // reversion test alone moved a noise-free sharp closure 140–190 psi late (Example A, penny case)
+                if (persist) {
+                    var kl = i; while (kl + 1 < n && x[kl + 1] <= x[i] * Math.exp(0.3)) kl++;
+                    if (kl + 1 < n) {
+                        var rl = rel(kl), tl = thr(kl);
+                        var reverted = up ? rl <= tl : rl >= -tl, crossed = up ? rl < -tl : rl > tl;
+                        var strong = sigY > 0 && Math.abs(zs) / Math.sqrt(_nEff(Math.max(nz, 1), rr)) >= 8;
+                        if (reverted && !crossed && !strong) persist = false;
+                    }
+                }
+                if (persist) return { i: i, down: !up, thr: thr, rel: rel, sm: sm, nHold: nHold, c: c };
+                i = Math.max(i, j - 1);
+                continue;
+            }
+        }
+        return null;
+    }
+    // hinge refinement of a departure on the pressure itself: p = A + B·(G − G_c) + C·(G − G_c)₊² by least squares over
+    // [i0, i1], G_c scanned over the samples in [i0 + 5, jMax] and refined by a parabola through the SSR minimum. A dP/dG
+    // that leaves its plateau linearly in G (contact onset, the post-closure damping) is exactly this shape at the onset,
+    // and the fit uses every pressure sample instead of the first noisy derivative crossing. sgn = +1 needs C > 0 (the
+    // decline slows: closure, downward departure), −1 needs C < 0 (stiffening). → {G, p (= A, on the line), C, B} or null
+    function _hingeAt(x, p, i0, i1, gc, pm, curved) {
+        // basis 1, u, u₊², u₊³ (u = G − G_c): the cubic term absorbs the change of the departure rate over the window, so
+        // the onset is not pulled early or late by a curvature that is not exactly quadratic. curved adds u² over the whole
+        // window: a base trend that already bends (reservoir-controlled leak-off, dP/dG declining with p − p_r), so u₊² is
+        // the change of curvature at G_c
+        var m = curved ? 5 : 4, M = [], k, c, r, q;
+        for (r = 0; r < m; r++) { var row = []; for (c = 0; c <= m; c++) row.push(0); M.push(row); }
+        var bs = [1, 0, 0, 0, 0];
+        for (k = i0; k <= i1; k++) {
+            var u = x[k] - gc, h = u > 0 ? u * u : 0, yy = p[k] - pm;
+            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0; bs[4] = u * u;
+            for (r = 0; r < m; r++) { var br = bs[r]; if (br === 0) continue; for (c = r; c < m; c++) M[r][c] += br * bs[c]; M[r][m] += br * yy; }
+        }
+        for (r = 1; r < m; r++) for (c = 0; c < r; c++) M[r][c] = M[c][r];
+        var idx = []; for (r = 0; r < m; r++) idx.push(r);
+        if (!(M[3][3] > 0)) {          // no point past G_c far enough for the cubic term: drop it
+            idx = idx.filter(function (z) { return z !== 3; });
+            M = idx.map(function (rr) { return idx.map(function (cc) { return M[rr][cc]; }).concat([M[rr][m]]); });
+            m = idx.length;
+        }
+        for (c = 0; c < m; c++) {
+            var piv = c; for (r = c + 1; r < m; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-200) return null;
+            for (r = c + 1; r < m; r++) { var f = M[r][c] / M[c][c]; for (q = c; q <= m; q++) M[r][q] -= f * M[c][q]; }
+        }
+        var cs = []; for (r = 0; r < m; r++) cs.push(0);
+        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * cs[c]; cs[r] = sum / M[r][r]; }
+        var co = [0, 0, 0, 0, 0]; idx.forEach(function (z, j) { co[z] = cs[j]; });
+        var ss = 0;
+        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + co[4] * u2 * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
+        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], E: co[4], ssr: ss };
+    }
+    function _hinge(x, p, i0, i1, jMax, sgn, curved) {
+        if (i1 - i0 < 10) return null;
+        var pm = 0, k; for (k = i0; k <= i1; k++) pm += p[k]; pm /= (i1 - i0 + 1);
+        var best = null, bj = -1, ss = {};
+        var jS = i0 + 5; while (jS < jMax && x[jS] < x[Math.min(jMax, i1 - 3)] * Math.exp(-0.45)) jS++;
+        for (var j = jS; j <= Math.min(jMax, i1 - 3); j++) {
+            var f = _hingeAt(x, p, i0, i1, x[j], pm, curved);
+            if (!f) continue;
+            ss[j] = f.ssr;
+            if (sgn * f.C > 0 && (!best || f.ssr < best.ssr)) { best = f; bj = j; best.gc = x[j]; }
+        }
+        if (!best) return null;
+        // sub-sample scan (4 steps per interval over the neighbouring intervals): the SSR is not convex at the sample
+        // resolution when the departure law is only approximately cubic; the best sub-sample G_c is then refined by a
+        // parabola through its neighbours
+        var gl = x[Math.max(i0 + 5, bj - 1)], gh = x[Math.min(Math.min(jMax, i1 - 3), bj + 1)], fine = [], q;
+        if (gh > gl) {
+            for (q = 0; q <= 8; q++) {
+                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm, curved);
+                fine.push({ g: gq, f: fq });
+                if (fq && sgn * fq.C > 0 && fq.ssr < best.ssr) { best = fq; best.gc = gq; }
+            }
+            var qb = -1; for (q = 0; q < fine.length; q++) if (fine[q].f && fine[q].g === best.gc) qb = q;
+            if (qb > 0 && qb < fine.length - 1 && fine[qb - 1].f && fine[qb + 1].f) {
+                var x0 = fine[qb - 1].g, x1 = fine[qb].g, x2 = fine[qb + 1].g, y0 = fine[qb - 1].f.ssr, y1 = fine[qb].f.ssr, y2 = fine[qb + 1].f.ssr;
+                var den = (x0 - x1) * (x0 - x2) * (x1 - x2);
+                if (den !== 0) {
+                    var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
+                    if (A2 > 0) {
+                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm, curved);
+                        if (fv && sgn * fv.C > 0 && fv.ssr <= best.ssr) { best = fv; best.gc = gv; }
+                    }
+                }
+            }
+        }
+        // profile interval of G_c: the samples whose SSR stays within σ²·(1 + ρ)/(1 − ρ) of the minimum (χ²₁ = 1, the
+        // residual σ² and lag-1 ρ of the best fit), contiguous around it → se(G_c) = half its width (≥ half a sample step)
+        var r = [], num = 0, den = 0;
+        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (best.E || 0) * u * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
+        for (k = 1; k < r.length; k++) { num += r[k] * r[k - 1]; den += r[k] * r[k]; }
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - (curved ? 6 : 5)), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
+        var jl = bj, jh = bj;
+        while (ss[jl - 1] != null && ss[jl - 1] <= lim) jl--;
+        while (ss[jh + 1] != null && ss[jh + 1] <= lim) jh++;
+        var seG = Math.max((x[jh] - x[jl]) / 2, 0.5 * (x[Math.min(bj + 1, i1)] - x[Math.max(bj - 1, i0)]) / 2);
+        return { G: best.gc, p: best.A, C: best.C, B: best.B, ssr: best.ssr, seG: seG, se: Math.abs(best.B) * seG, rho: rho };
+    }
+    function _inv3(A) {
+        var a = A[0][0], b = A[0][1], c = A[0][2], d = A[1][0], e = A[1][1], f = A[1][2], g = A[2][0], h = A[2][1], i = A[2][2];
+        var D = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+        if (!(Math.abs(D) > 1e-300)) return null;
+        return [[(e * i - f * h) / D, (c * h - b * i) / D, (b * f - c * e) / D], [(f * g - d * i) / D, (a * i - c * g) / D, (c * d - a * f) / D], [(d * h - e * g) / D, (b * g - a * h) / D, (a * e - b * d) / D]];
+    }
+    // the vertex of a peak of s (concave quadratic in ln G) over [k0, k1]; null when not concave or outside
+    function _vertex(x, s, k0, k1) {
+        var n = 0, sx = [0, 0, 0, 0, 0], sy = [0, 0, 0], k, xm = 0;
+        for (k = k0; k <= k1; k++) if (_fin(s[k]) && x[k] > 0) { xm += Math.log(x[k]); n++; }
+        if (n < 3) return null;
+        xm /= n;
+        for (k = k0; k <= k1; k++) {
+            if (!_fin(s[k]) || !(x[k] > 0)) continue;
+            var u = Math.log(x[k]) - xm, u2 = u * u;
+            sx[0]++; sx[1] += u; sx[2] += u2; sx[3] += u2 * u; sx[4] += u2 * u2; sy[0] += s[k]; sy[1] += u * s[k]; sy[2] += u2 * s[k];
+        }
+        var M = [[sx[0], sx[1], sx[2], sy[0]], [sx[1], sx[2], sx[3], sy[1]], [sx[2], sx[3], sx[4], sy[2]]], c, r, q;
+        for (c = 0; c < 3; c++) {
+            var piv = c; for (r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-300) return null;
+            for (r = c + 1; r < 3; r++) { var f = M[r][c] / M[c][c]; for (q = c; q < 4; q++) M[r][q] -= f * M[c][q]; }
+        }
+        var c2 = M[2][3] / M[2][2], c1 = (M[1][3] - M[1][2] * c2) / M[1][1], c0 = (M[0][3] - M[0][1] * c1 - M[0][2] * c2) / M[0][0];
+        if (!(c2 < 0)) return null;
+        var uv = -c1 / (2 * c2), lo = Math.log(x[k0]) - xm, hi = Math.log(x[k1]) - xm;
+        if (uv < lo || uv > hi) return null;
+        // se of the vertex (delta method on c1, c2 with the residual σ², inflated by the lag-1 correlation)
+        var rs = [], ss2 = 0, num = 0, den = 0;
+        for (k = k0; k <= k1; k++) { if (!_fin(s[k]) || !(x[k] > 0)) continue; var w = Math.log(x[k]) - xm; rs.push(s[k] - (c0 + c1 * w + c2 * w * w)); }
+        for (k = 0; k < rs.length; k++) { ss2 += rs[k] * rs[k]; if (k) num += rs[k] * rs[k - 1]; }
+        den = ss2;
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = n > 3 ? ss2 / (n - 3) * (1 + rho) / (1 - rho) : 0, seU = null;
+        var Sx = [[sx[0], sx[1], sx[2]], [sx[1], sx[2], sx[3]], [sx[2], sx[3], sx[4]]], Ci = n > 3 ? _inv3(Sx) : null;
+        if (Ci) {
+            var g1 = -1 / (2 * c2), g2 = c1 / (2 * c2 * c2);           // ∂u_v/∂c1, ∂u_v/∂c2
+            var vv = s2 * (g1 * g1 * Ci[1][1] + 2 * g1 * g2 * Ci[1][2] + g2 * g2 * Ci[2][2]);
+            seU = vv > 0 ? Math.sqrt(vv) : 0;
+        }
+        return { G: Math.exp(uv + xm), s: c0 + c1 * uv + c2 * uv * uv, seLn: seU };
+    }
+    function _tpOf(events, choice) {
+        var tpc = events.tp || {};
+        var v = tpc[choice];
+        if (_fin(v) && v > 0) return { tp: v, choice: choice };
+        return { tp: tpc.pump, choice: 'pump' };
+    }
+    // the G function object used by derivs: closed form (α ½ / 1 / general) or a data-driven / model gSpec
+    function _gChoice(prep, events, opts, tp) {
+        var a = opts.alpha, aGen = _fin(opts.alphaGeneral) ? opts.alphaGeneral : 0.75;
+        if (_isSpec(a)) return { fn: a, alpha: a.alpha || 0.5, gType: a.kind === 'model' ? 'model' : 'data' };
+        if (a === 'general') return { fn: aGen, alpha: aGen, gType: 'general' };
+        if (a === 0.5 || a === 1) return { fn: a, alpha: a, gType: a === 1 ? 'a1' : 'a05' };
+        if (_fin(a) && a > 0.5 && a <= 1) return { fn: a, alpha: a, gType: 'general' };
+        var wantData = (a === 'data') || (a === 'auto' || a == null);
+        var steps = wantData ? _rateSteps(prep, events) : null;
+        if (steps && steps.length) {
+            var gs = G.PRiSM_dfit_gFromHistory(steps, events.ts, tp, { alpha: 0.5 });
+            if (_okRes(gs)) return { fn: gs, alpha: 0.5, gType: 'data' };
+        }
+        return { fn: 0.5, alpha: 0.5, gType: 'a05' };
+    }
+    function _derivsCore(prep, events, opts) {
+        opts = opts || {};
+        var tpc = _tpOf(events, opts.tp || 'pump'), tp = tpc.tp;
+        if (!_fin(tp) || tp <= 0) return _fail('NO_TP', 'The pumping time is not defined.', ['tp']);
+        var ts = _fin(opts.ts) ? opts.ts : events.ts, tEnd = INF;
+        // the falloff ends at the next injection or the flowback start
+        if (events.flowback && _fin(events.flowback.t0) && events.flowback.t0 > ts) tEnd = events.flowback.t0;
+        (events.cycles || []).forEach(function (c) { if (c.tStart > ts + 1e-9 && c.tStart < tEnd) tEnd = c.tStart; });
+        var gc = _gChoice(prep, events, opts, tp);
+        var L = _fin(opts.L) && opts.L > 0 ? opts.L : 0.1;
+        var t = prep.t, pw = prep.pw, dt = [], p = [], idx = [], i;
+        var qq = Array.isArray(prep.q) ? prep.q : null;   // pumping samples never enter the falloff (t_s moved by a sample)
+        for (i = 0; i < t.length; i++) if (t[i] > ts + 1e-12 && t[i] < tEnd && !(qq && qq[i] > 0 && t[i] <= events.ts + 1e-12)) { dt.push(t[i] - ts); p.push(pw[i]); idx.push(i); }
+        var n = dt.length;
+        if (n < 5) return _fail('SHORT_FALLOFF', 'Fewer than five falloff samples after shut-in.', ['p']);
+        var dtD = new Array(n), Gv = new Array(n), Gp = new Array(n);
+        for (i = 0; i < n; i++) { dtD[i] = dt[i] / tp; Gv[i] = _Gof(dtD[i], gc.fn); Gp[i] = _Gpof(dtD[i], gc.fn); }
+        var sigma = Math.max(prep.sigma || 0, 1e-6);
+        // G_min: hammer end, predicted bleed-off end, gauge thermal transient end, 1 % of the falloff samples; or the user's
+        var gMin = null, why = '1%', i1p = Math.min(n - 1, Math.floor(0.01 * n));
+        gMin = Gv[i1p];
+        var tMinH = 0, cand = [];
+        if (opts.hammer && _fin(opts.hammer.tEnd)) { var te = opts.hammer.tEnd > ts ? opts.hammer.tEnd - ts : opts.hammer.tEnd; cand.push({ dt: te, why: 'hammer' }); }
+        if (opts.bleed) {
+            var thr1 = Math.max(1, 3 * sigma), tb1 = null;
+            if (typeof opts.bleed.curve === 'function') {
+                for (i = 0; i < n; i++) { var bv = opts.bleed.curve(dt[i]); if (_fin(bv) && bv < thr1) { tb1 = dt[i]; break; } }
+            } else if (_fin(opts.bleed.t1psi)) tb1 = opts.bleed.t1psi;
+            if (_fin(tb1)) cand.push({ dt: tb1, why: 'bleed-off' });
+        }
+        if (Array.isArray(prep.T)) {
+            var tTh = null;
+            for (i = 1; i < idx.length; i++) {
+                var Ta = prep.T[idx[i - 1]], Tb = prep.T[idx[i]];
+                if (_fin(Ta) && _fin(Tb) && Math.abs(Tb - Ta) / ((dt[i] - dt[i - 1]) * 60) > 1) tTh = dt[i];
+            }
+            if (tTh !== null) cand.push({ dt: tTh, why: 'thermal' });
+        }
+        cand.forEach(function (c) { var gc2 = _Gof(c.dt / tp, gc.fn); if (gc2 > gMin) { gMin = gc2; why = c.why; } });
+        if (_fin(opts.gMin)) { gMin = opts.gMin; why = 'user'; }
+        // early line (needs ≥ 6 points after G_min) → m_G and a provisional ISIP
+        var iG = 0; while (iG < n && Gv[iG] < gMin) iG++;
+        var iMax = n - 1;
+        // per-sample pressure noise with its lag-1 correlation (block quadratics), never below the second-difference σ
+        var nzP = _noiseAR(p, iG, iMax), sigEff = Math.max(sigma, nzP.sigma);
+        var el = _earlyLine(Gv, p, iG, iMax, sigEff, nzP.rho);
+        // cap the p-line window at the provisional derivative departure: the line must end one window L before G·dP/dG
+        // leaves the early line (a p-line can still run a little past a gentle closure within its noise)
+        // the G derivative does not depend on the ISIP (a constant offset): computed once on −p and reused below
+        var yt = _bourdet(Gv, p.map(function (v) { return -v; }), L);
+        if (el) {
+            var cx = [], cy = [], ci = [];
+            for (i = el.i0; i < n; i++) if (_fin(yt[i]) && Gv[i] > 0) { cx.push(Gv[i]); cy.push(yt[i]); ci.push(i); }
+            var gEnd = Gv[el.i1] * Math.exp(-L), ke = 0; while (ke + 1 < cx.length && ci[ke + 1] <= el.i1 && cx[ke + 1] <= gEnd) ke++;
+            var ly = ke >= 5 ? _yLineRobust(cx, cy, 0, ke, 0.02) : null;
+            if (ly) {
+                var kS = 1; while (kS < ke && cx[kS] < cx[0] * Math.exp(L + 0.02)) kS++;
+                var nzY = _lineNoise(cx, cy, ly, 0, ke), dpv = _departure(cx, cy, ly, kS, 0.02, nzY.sigma, nzY.rho);
+                if (dpv && ci[dpv.i] <= el.i1) {
+                    var gCap = cx[dpv.i] * Math.exp(-L), j1 = el.i0;
+                    while (j1 + 1 <= el.i1 && Gv[j1 + 1] <= gCap) j1++;
+                    var wfc = (j1 - el.i0 >= 5 && Math.log(Gv[j1] / Gv[el.i0]) >= 0.5) ? _winFits(_prefix(Gv, p), Gv, el.i0, j1) : null;
+                    if (wfc) el = { a: wfc.lin.a, b: wfc.lin.b, i0: el.i0, i1: j1, seA: wfc.lin.seA, s: wfc.lin.s, n: wfc.lin.n, capped: true };
+                }
+            }
+        }
+        // PDL hump (§4.4, §4.11: fit after the hump). With pressure-dependent leak-off the earliest straight p-G piece lies on the
+        // hump (dP/dG still falling) and its slope is not m_G. A later straight window (≥ 0.5 ln units, ≥ 6 points, its own
+        // G·dP/dG line through the origin, |ι| < 0.05) with a dP/dG at least 10 % lower, reached by a dP/dG that only falls
+        // (2 % tolerance) and joins that window within 5 %, is the post-hump line: it sets m_G and the early window of the
+        // picks; the ISIP stays on the earliest line (the hump decays from the true ISIP)
+        var late = null;
+        if (el && !opts.noPostHump) {
+            var Pp = _prefix(Gv, p), smD = _movMed(Gv.map(function (g, k) { return _fin(yt[k]) && g > 0 ? yt[k] / g : null; }), 5);
+            var humpOK = function (e1, w2) {
+                if (!w2 || w2.n < 6 || Math.log(Gv[w2.i1] / Gv[w2.i0]) < 0.5 || !(-w2.b > 0) || !(-w2.b < 0.9 * -e1.b)) return false;
+                // ι over the window less one Bourdet window L at its end (the derivative there already sees what follows)
+                var j1L = w2.i0; while (j1L + 1 <= w2.i1 && Gv[j1L + 1] <= Gv[w2.i1] * Math.exp(-L)) j1L++;
+                var bL = -w2.b, lyL = j1L - w2.i0 >= 4 ? _linfit(Gv, yt, w2.i0, j1L, false) : null, ioL = lyL && lyL.b > 0 ? lyL.a / (lyL.b * Gv[j1L]) : 1;
+                if (!(Math.abs(ioL) < 0.05 && _fin(smD[w2.i0]) && Math.abs(smD[w2.i0] / bL - 1) <= 0.05)) return false;
+                for (var kk = e1.i0, mx = -INF; kk <= w2.i0; kk++) {
+                    if (!_fin(smD[kk])) continue;
+                    if (mx > -INF && smD[kk] > 1.02 * mx) return false;      // dP/dG rises again: not a decaying hump
+                    mx = mx === -INF ? smD[kk] : Math.min(mx, smD[kk]);
+                }
+                return _fin(smD[e1.i0]) && smD[e1.i0] >= 1.1 * bL;
+            };
+            var asLate = function (w2) { return { a: w2.a, b: w2.b, i0: w2.i0, i1: w2.i1, seA: w2.seA, s: w2.s, n: w2.n, postHump: true }; };
+            // the window _earlyLine chose (the one reaching the largest G) may itself be the post-hump line: the ISIP line is
+            // then the earliest window from G_min (on the hump, where the decline starts from the true ISIP)
+            var elF = _growLine(Gv, p, iG, iMax, sigEff, Pp, nzP.rho);
+            // — only when the hump carries a real pressure drop (the two intercepts differ by ≥ 15 % of the drop to the end of the
+            // later window): a short bleed-off of the near-well friction on a soft (gas-filled) wellbore also lifts the first
+            // samples, by a few psi, and there the later line's intercept is the ISIP
+            if (elF && elF.n >= 6 && el.i0 > elF.i1 && elF.a - el.a >= 0.15 * (elF.a - p[el.i1]) && humpOK(elF, el)) { late = asLate(el); el = { a: elF.a, b: elF.b, i0: elF.i0, i1: elF.i1, seA: elF.seA, s: elF.s, n: elF.n }; }
+            var st2 = el.i1, tr2 = 0;
+            while (!late && st2 <= iMax - 5 && tr2 < 24) {
+                var w2 = _growLine(Gv, p, st2, iMax, sigEff, Pp, nzP.rho);
+                if (humpOK(el, w2)) late = asLate(w2);
+                tr2++;
+                var gT2 = Gv[st2] * 1.25; while (st2 <= iMax && Gv[st2] < gT2) st2++;
+            }
+            var bEl = -el.b;
+            // second route: after the hump the leak-off can still decline gently with p − p_r (no exactly straight p-G piece). The
+            // hump ends where the smoothed dP/dG stops falling fast (log slope over the next 0.2 ln above −0.1, after a hump
+            // with dP/dG(start) ≥ 1.3 × its end value); the post-hump window runs on while dP/dG stays within 15 % of that end
+            // value (≥ 0.4 ln units, ≥ 6 points), its G·dP/dG line within |ι| < 0.15 of the origin
+            if (!late) {
+                var kAtG = function (gv, from) { var k = from; while (k + 1 <= iMax && Gv[k + 1] <= gv) k++; return k; };
+                var kh = -1;
+                for (var q = el.i1; q <= iMax - 3 && kh < 0; q++) {
+                    if (!_fin(smD[q]) || !(smD[q] > 0)) continue;
+                    var qn = kAtG(Gv[q] * Math.exp(0.2), q);
+                    if (qn <= q || !_fin(smD[qn]) || !(smD[qn] > 0)) continue;
+                    if (Math.log(smD[qn] / smD[q]) / Math.log(Gv[qn] / Gv[q]) > -0.1 && _fin(smD[el.i0]) && smD[el.i0] >= 1.3 * smD[q]) kh = q;
+                }
+                if (kh > 0) {
+                    var ref = smD[kh], kq = kh;
+                    while (kq + 1 <= iMax && _fin(smD[kq + 1]) && Math.abs(smD[kq + 1] / ref - 1) <= 0.15) kq++;
+                    var kqL = kq; while (kqL > kh && Gv[kqL] > Gv[kq] * Math.exp(-L)) kqL--;
+                    if (kq - kh >= 5 && Math.log(Gv[kq] / Gv[kh]) >= 0.4) {
+                        var wfL = _winFits(Pp, Gv, kh, kq), lyQ = kqL - kh >= 4 ? _linfit(Gv, yt, kh, kqL, false) : null;
+                        var ioQ = lyQ && lyQ.b > 0 ? lyQ.a / (lyQ.b * Gv[kqL]) : 1;
+                        for (var kk2 = el.i0, mx2 = -INF, okQ = true; kk2 <= kh; kk2++) {
+                            if (!_fin(smD[kk2])) continue;
+                            if (mx2 > -INF && smD[kk2] > 1.02 * mx2) okQ = false;
+                            mx2 = mx2 === -INF ? smD[kk2] : Math.min(mx2, smD[kk2]);
+                        }
+                        if (wfL && wfL.lin.b < 0 && -wfL.lin.b < 0.9 * bEl && Math.abs(ioQ) < 0.15 && okQ)
+                            late = { a: wfL.lin.a, b: wfL.lin.b, i0: kh, i1: kq, seA: wfL.lin.seA, s: wfL.lin.s, n: wfL.lin.n, postHump: true, plateau: true };
+                    }
+                }
+            }
+        }
+        var isip = _fin(opts.isip) ? opts.isip : (el ? el.a : p[0]);
+        var elM = late || el;
+        var mG = elM ? -elM.b : null;
+        var dpI = p.map(function (v) { return isip - v; });
+        var y = yt, Dd = _bourdet(dt, dpI, L);
+        var GdPdG = new Array(n), dPdG = new Array(n), D = new Array(n), Dref = new Array(n), ppd = new Array(n), sdPds = new Array(n), dPds = new Array(n), sq = new Array(n), usable = new Array(n);
+        for (i = 0; i < n; i++) {
+            var yi = y[i], di = Dd[i];
+            GdPdG[i] = _fin(yi) ? Math.max(0, yi) : null;
+            dPdG[i] = _fin(yi) ? Math.max(0, yi / Gv[i]) : null;
+            D[i] = _fin(di) ? Math.max(0, di) : null;
+            ppd[i] = _fin(di) ? Math.max(0, di / dt[i]) : null;
+            sdPds[i] = _fin(di) ? Math.max(0, 2 * di) : null;
+            dPds[i] = _fin(di) ? Math.max(0, 2 * di / Math.sqrt(dt[i])) : null;
+            sq[i] = Math.sqrt(dt[i]);
+            Dref[i] = (_fin(mG) && mG > 0) ? mG * dtD[i] * Gp[i] : null;
+            usable[i] = (Gv[i] >= gMin && GdPdG[i] !== null) ? 1 : 0;
+        }
+        // derivative noise σ_y (second differences of G·dP/dG over the usable part)
+        var yu = []; for (i = 0; i < n; i++) if (usable[i]) yu.push(GdPdG[i]);
+        var sigmaY = _noise2(yu);
+        function axis(arr) {
+            var a = []; for (var k = 0; k < n; k++) if (usable[k] && arr[k] !== null) a.push(arr[k]);
+            a.sort(function (u, v) { return u - v; });
+            if (!a.length) return [0, 1];
+            var lo = _pct(a, 0.02), hi = _pct(a, 0.98), pad = 0.1 * (hi - lo || Math.abs(hi) || 1);
+            return [Math.max(0, lo - pad), hi + pad];
+        }
+        var warnings = [];
+        if (!el) warnings.push(_W('NO_EARLY_LINE', 'warn', 'No straight early-G segment after G_min: m_G and the reference curve are not defined.', ['G1']));
+        return {
+            ok: true, alpha: gc.alpha, gType: gc.gType, tp: tp, tpChoice: tpc.choice, dt: dt, dtD: dtD, G: Gv, p: p, dpIsip: dpI,
+            GdPdG: GdPdG, dPdG: dPdG, sqrtDt: sq, sdPds: sdPds, dPds: dPds, D: D, Dref: Dref, ppd: ppd, mG: _nn(mG),
+            earlyWin: elM ? [Gv[elM.i0], Gv[elM.i1]] : [gMin, gMin], h: null, humpWin: late ? [Gv[el.i0], Gv[late.i0]] : null, axis: opts._inner ? { GdPdG: [0, 1], dPdG: [0, 1] } : { GdPdG: axis(GdPdG), dPdG: axis(dPdG) },
+            L: L, gMin: gMin, gMinWhy: why, usable: usable, sigmaY: sigmaY, ev: ['G1'],
+            // extras (not in the §3.5 table; read by 56's own pick, ISIP and frac functions and by 57)
+            ts: ts, isip: isip, idx: idx, Gp: Gp, sigma: sigma, sigmaEff: sigEff, rho: _r(nzP.rho, 4), early: el ? { a: el.a, b: el.b, seA: el.seA, i0: el.i0, i1: el.i1, s: el.s, n: el.n } : null,
+            gSpec: _isSpec(gc.fn) ? gc.fn : null, warnings: warnings
+        };
+    }
+    G.PRiSM_dfit_derivs = _safe(function (prep, events, opts) {
+        if (!_okRes(prep) || !Array.isArray(prep.t)) return _fail('BAD_INPUT', 'Prepared data are needed.', ['prep']);
+        if (!_okRes(events) || !_fin(events.ts)) return _fail('BAD_INPUT', 'Events with a shut-in time are needed.', ['events']);
+        return _derivsCore(prep, events, opts || {});
+    });
+    // G at a ΔtD for a Derivs object (closed form when the α is closed, the gSpec when data-driven)
+    function _GatD(derivs, dtD) {
+        if (derivs.gSpec) return _sGD(derivs.gSpec, dtD);
+        return G_(dtD, derivs.gType === 'a1' ? 1 : (derivs.gType === 'a05' ? 0.5 : derivs.alpha));
+    }
+    function _GinvD(derivs, Gv) {
+        if (derivs.gSpec) return _Ginv(Gv, derivs.gSpec);
+        return _Ginv(Gv, derivs.gType === 'a1' ? 1 : (derivs.gType === 'a05' ? 0.5 : derivs.alpha));
+    }
+    // Δt at which the falloff reaches a pressure (first crossing; log interpolation) or null
+    function _dtAtP(derivs, pc) {
+        var p = derivs.p, dt = derivs.dt, el = derivs.early;
+        for (var i = 1; i < p.length; i++) {
+            if (p[i - 1] >= pc && p[i] < pc) {
+                // on the early straight line the crossing is read on the line (exact for normal leak-off)
+                if (el && _fin(el.a) && el.b < 0) {
+                    var gl = (el.a - pc) / -el.b;
+                    if (gl >= derivs.G[i - 1] && gl <= derivs.G[i] && Math.abs(p[i - 1] - (el.a + el.b * derivs.G[i - 1])) <= Math.max(3 * (derivs.sigma || 0), 0.05)) {
+                        return _GinvD(derivs, gl) * derivs.tp;
+                    }
+                }
+                var f = (p[i - 1] - pc) / (p[i - 1] - p[i]);
+                return Math.exp(Math.log(dt[i - 1]) + f * (Math.log(dt[i]) - Math.log(dt[i - 1])));
+            }
+        }
+        if (p.length && p[0] < pc) return dt[0];
+        return null;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.4 ISIP: four estimates in three families, reconciled over families
+    // ═════════════════════════════════════════════════════════════════════
+    // candidates [{method, family, value, se, ok, upper, …}] → {value, spread, confidence, why}; pn and sigma set the bands
+    function _reconcile(cands, o) {
+        o = o || {};
+        var pn = _fin(o.pn) && o.pn > 0 ? o.pn : 0, fams = {}, why = [];
+        cands.forEach(function (c) {
+            if (!c.ok || c.upper || !_fin(c.value)) return;
+            var se = Math.max(_fin(c.se) ? c.se : 0, 0.1);
+            if (!fams[c.family] || se < Math.max(fams[c.family].se, 0.1)) fams[c.family] = { value: c.value, se: se, method: c.method };
+        });
+        var keys = Object.keys(fams);
+        if (!keys.length) {
+            var up = cands.filter(function (c) { return c.ok && _fin(c.value); });
+            if (!up.length) return null;
+            var mn = Math.min.apply(null, up.map(function (c) { return c.value; }));
+            return { value: mn, spread: 0, confidence: 'low', why: ['Only upper estimates are available; the lowest, ' + _f0(mn) + ' psia, is used.'], families: {} };
+        }
+        var ws = 0, wv = 0, mx = -INF, mn2 = INF;
+        keys.forEach(function (k) { var f = fams[k], w = 1 / (f.se * f.se); ws += w; wv += w * f.value; mx = Math.max(mx, f.value); mn2 = Math.min(mn2, f.value); });
+        var val = wv / ws, spread = mx - mn2;
+        var hi = Math.max(10, 0.02 * pn), med = Math.max(25, 0.05 * pn), conf;
+        if (keys.length === 1) { conf = 'medium'; why.push('Only one ISIP family (' + keys[0] + ') is available, so agreement cannot be checked.'); }
+        else if (spread <= hi) { conf = 'high'; why.push(keys.length + ' families agree within ' + _f1(spread, 1) + ' psi, inside max(10 psi, 2 % of pn) = ' + _f1(hi, 0) + ' psi.'); }
+        else if (spread <= med) { conf = 'medium'; why.push('The families differ by ' + _f1(spread, 1) + ' psi, inside max(25 psi, 5 % of pn) = ' + _f1(med, 0) + ' psi.'); }
+        else {
+            conf = 'low';
+            var far = null, fd = -1;
+            keys.forEach(function (k) { var d = Math.abs(fams[k].value - val); if (d > fd) { fd = d; far = k; } });
+            var reason = { wave: 'friction bleed-off left in the hammer midline', falloff: 'a non-linear early-G segment (PDL or tip extension)', friction: 'step-down coefficients or in-fracture viscous loss' }[far] || 'an inconsistent estimate';
+            why.push('The families differ by ' + _f1(spread, 1) + ' psi; the ' + far + ' estimate is the outlier (likely ' + reason + ').');
+        }
+        return { value: val, spread: spread, confidence: conf, why: why, families: fams };
+    }
+    G.PRiSM_dfit_isip = _safe(function (prep, events, derivs, ctx) {
+        ctx = ctx || {};
+        if (!_okRes(derivs) || !Array.isArray(derivs.G)) return _fail('BAD_INPUT', 'Derivatives are needed for the ISIP.', ['derivs']);
+        var sigma = Math.max(_fin(derivs.sigma) ? derivs.sigma : (prep && prep.sigma) || 0, 0.01), cands = [];
+        var sig3 = Math.max(2, 3 * sigma);
+        // 1. water-hammer midline (WTS_wellbore.hammerQuick result passed in ctx.hammer)
+        var hm = ctx.hammer;
+        if (_okRes(hm) && _fin(hm.isip)) {
+            // WTS_wellbore.hammerQuick reports the fit as hm.bleed.fitted and its own §4.4 verdict as hm.upper (false = accepted)
+            var bleedAtEnd = null, fitted = hm.bleedFitted === true || (_isObj2(hm.bleed) && hm.bleed.fitted === true);
+            var dtEnd = _fin(hm.tEnd) ? (hm.tEnd > derivs.ts ? hm.tEnd - derivs.ts : hm.tEnd) : null;
+            if (ctx.bleed && typeof ctx.bleed.curve === 'function' && _fin(dtEnd)) bleedAtEnd = ctx.bleed.curve(dtEnd);
+            if (!_fin(bleedAtEnd) && _isObj2(hm.bleed) && _fin(hm.bleed.dEnd)) bleedAtEnd = hm.bleed.dEnd;
+            var accepted = fitted || (_fin(bleedAtEnd) && bleedAtEnd < sig3) || (hm.upper === false && _fin(bleedAtEnd));
+            cands.push({ method: 'wh', family: 'wave', value: hm.isip, se: _fin(hm.se) ? hm.se : Math.max(1, 3 * sigma), ok: true, upper: !accepted,
+                         bleedAtEnd: _nn(bleedAtEnd), viscCorr: null,
+                         why: _txt(accepted ? (fitted ? 'Water-hammer midline with the friction bleed-off term fitted.' : 'Water-hammer midline; the predicted bleed-off at the window end is ' + _f1(bleedAtEnd, 1) + ' psi.')
+                             : 'Upper estimate: the friction bleed-off is ' + (_fin(bleedAtEnd) ? _f1(bleedAtEnd, 1) + ' psi at the window end and was not fitted.' : 'not modelled in the hammer fit.')),
+                         ev: ['H1'] });
+        }
+        // 2. early-G extrapolation p = ISIP − m_G·G (on G, never on √Δt)
+        var el = derivs.early;
+        if (el && _fin(el.a)) {
+            var nl = derivs.earlyWin && derivs.earlyWin[0] > derivs.gMin * 1.5;
+            cands.push({ method: 'g', family: 'falloff', value: el.a, se: Math.max(el.seA || 0, sigma / Math.sqrt(Math.max(el.n, 1)), 0.1), ok: true, upper: false,
+                         bleedAtEnd: null, viscCorr: null,
+                         why: _txt('Early-G straight line on G from ' + _f1(derivs.earlyWin[0], 2) + ' to ' + _f1(derivs.earlyWin[1], 2) + (nl ? ' (after a non-linear early segment).' : '.')), ev: ['I2'] });
+        }
+        // 3. step-down intercept, 4. last pump pressure minus friction (shared coefficients, family friction)
+        var sd = ctx.stepDown;
+        if (_okRes(sd) && _fin(sd.pFrac)) {
+            cands.push({ method: 'sd', family: 'friction', value: sd.pFrac, se: (sd.se && _fin(sd.se.pFrac)) ? Math.max(sd.se.pFrac, 0.1) : 5, ok: sd.label !== 'refused', upper: false,
+                         bleedAtEnd: null, viscCorr: null, why: _txt('Step-down intercept (' + (sd.label || 'unlabelled') + ').'), ev: ['S1'] });
+            if (events && _fin(events.pShut) && sd.at) {
+                var lump = ctx.lumped, visc = (lump && _fin(lump.lambda) && _fin(lump.pVisc)) ? (lump.lambda - 1) * lump.pVisc : null;
+                // the friction at the LAST pumping rate (pShut is read there): a·q_last² + b·q_last^β from the step-down coefficients.
+                // sd.at is evaluated at the top step rate, which after a step-down overstated the friction (reference demo: 353 psi
+                // at 5 bbl/min against 160 psi at 1.25 bbl/min, so ISIP_lp sat 190 psi low)
+                var qL = _fin(events.qLast) && events.qLast > 0 ? events.qLast : null, dpF;
+                if (qL !== null && _fin(sd.a) && _fin(sd.b)) dpF = sd.a * qL * qL + sd.b * Math.pow(qL, _fin(sd.beta) && sd.beta > 0 ? sd.beta : 0.5);
+                else dpF = (_fin(sd.at.dpPerf) ? sd.at.dpPerf : 0) + (_fin(sd.at.dpNwb) ? sd.at.dpNwb : 0);
+                var lp = events.pShut - dpF - (visc || 0);
+                cands.push({ method: 'lp', family: 'friction', value: lp, se: Math.sqrt(Math.pow((sd.se && _fin(sd.se.pFrac)) ? sd.se.pFrac : 5, 2) + 4) + (visc === null ? 10 : 0), ok: true, upper: visc === null,
+                             bleedAtEnd: null, viscCorr: _nn(visc),
+                             why: _txt(visc === null ? 'Fracture-entrance pressure, upper estimate: the in-fracture viscous term is not known.' : 'Last pump pressure minus perforation, tortuosity and in-fracture viscous losses.'), ev: ['S2'] });
+            }
+        }
+        // extra given candidates (tests, user-entered estimates)
+        (ctx.candidates || []).forEach(function (c) {
+            if (!_isObj2(c) || !_fin(c.value)) return;
+            var fam = c.family || ({ wh: 'wave', g: 'falloff', sd: 'friction', lp: 'friction' }[c.method] || 'falloff');
+            cands.push({ method: c.method || 'g', family: fam, value: c.value, se: _fin(c.se) ? c.se : 5, ok: c.ok !== false, upper: !!c.upper,
+                         bleedAtEnd: _nn(c.bleedAtEnd), viscCorr: _nn(c.viscCorr), why: _txt(c.why || 'Given estimate.'), ev: Array.isArray(c.ev) && c.ev.length ? c.ev : ['I3'] });
+        });
+        if (!cands.length) return _fail('NO_ISIP', 'No ISIP estimate is available (no early straight G segment, hammer or step-down).', ['isip']);
+        // the agreement bands scale with p_n: ctx.pn, else ISIP − ctx.sigmaC once the ISIP is known, else the 10 / 25 psi floors
+        var rec = _reconcile(cands, { pn: ctx.pn });
+        if (!_fin(ctx.pn) && _fin(ctx.sigmaC) && rec) rec = _reconcile(cands, { pn: rec.value - ctx.sigmaC });
+        if (!rec) return _fail('NO_ISIP', 'No usable ISIP estimate.', ['isip']);
+        // log-log check: the ISIP for which early Δp and D keep the Nolte ratio Δp/D = G/(ΔtD·G′)
+        var best = [], d = derivs;
+        for (var i = 0; i < d.G.length; i++) {
+            if (!d.usable[i] || d.D[i] === null || !(d.G[i] <= d.earlyWin[1])) continue;
+            best.push(d.p[i] + d.D[i] * d.G[i] / (d.dtD[i] * d.Gp[i]));
+        }
+        var ib = _median(best);
+        var llOk = _fin(ib) ? Math.abs(ib - rec.value) <= Math.max(10, 2 * rec.spread, 3 * sigma) : false;
+        if (_fin(ib) && !llOk) rec.why.push('The log-log check prefers ' + _f0(ib) + ' psia: early Δp and D do not keep the reference ratio.');
+        cands.forEach(function (c) { c.value = _r(c.value, 2); c.se = _r(c.se, 3); });
+        return { ok: true, value: _r(rec.value, 2), spread: _r(rec.spread, 2), confidence: rec.confidence, why: rec.why.map(_txt), candidates: cands,
+                 loglogCheck: { isipBest: _r(ib, 2), ok: llOk }, ev: ['I1'] };
+    });
+    G.PRiSM_dfit_isip.reconcile = function (cands, o) { var r = _reconcile(cands || [], o); return r ? { value: r.value, spread: r.spread, confidence: r.confidence, why: r.why } : null; };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.7 G-domain forward model of the variable-compliance fit (also the test-signal generator)
+    //   dp/dG = −K·f_L(p)·M(p) / C_sys(p),  C_sys(p) = A_f·c_f·c(p)/c_f0 + V_w·c_w(p),  p(0) = ISIP
+    //   c(p)/c_f0: 1 above σ_c (× the height-recession factor when hrStep is set); below (x = σ_c − p):
+    //     'hyp' (s_h/(s_h + x))², 'exp' f_res·e^(−x/s_r) + (1 − f_res)·e^(−x/s_c) (s_r null = no decay of the residual)
+    //   f_L = 1 above σ_c, (p − p_r)/(σ_c − p_r) below; M: fissure PDL e^(C_d·(p − p_fo)) above p_fo (≤ 50), matrix
+    //   [(p − p_r)/(ISIP − p_r)]^nMat; tip extension C × (1 + tipA·G); gas wellbore V_w·c_w·[(1 − φ_g) + φ_g·ISIP/p].
+    //   params also take AfCf (default 1 − VwCw when absent) and sh (hyp scale, default sc).
+    // ═════════════════════════════════════════════════════════════════════
+    function _vcNorm(P) {
+        var VwCw = _fin(P.VwCw) ? P.VwCw : 0;
+        return {
+            isip: P.isip, K: P.K, sigmaC: P.sigmaC, law: P.law === 'hyp' ? 1 : (P.law === 'none' ? 2 : 0),
+            sh: _fin(P.sh) ? P.sh : (_fin(P.sc) ? P.sc : 100), sc: _fin(P.sc) && P.sc > 0 ? P.sc : 100, fres: _fin(P.fres) ? P.fres : 0.1,
+            sr: _fin(P.sr) && P.sr > 0 ? P.sr : 0, hr: _fin(P.hrStep) && P.hrStep > 0 ? P.hrStep : 0, hrFrac: _fin(P.hrFrac) ? P.hrFrac : 0.5,
+            gas: P.cwOfP === 'gas', phiGas: _fin(P.phiGas) ? P.phiGas : 0.5, VwCw: VwCw, AfCf: _fin(P.AfCf) ? P.AfCf : Math.max(1e-9, 1 - VwCw),
+            tipA: _fin(P.tipA) && P.tipA > 0 ? P.tipA : 0, pr: _fin(P.pr) ? P.pr : 0, Cd: _fin(P.Cd) && P.Cd > 0 && _fin(P.pfo) ? P.Cd : 0, pfo: P.pfo,
+            fmax: _fin(P.fmax) ? P.fmax : 50, nMat: _fin(P.nMat) && P.nMat > 0 ? P.nMat : 0
+        };
+    }
+    function _vcRate(p, Gv, Q) {
+        var x = Q.sigmaC - p, c = 1;
+        if (x > 0) {
+            if (Q.law === 1) { var r = Q.sh / (Q.sh + x); c = r * r; }
+            else if (Q.law === 0) c = Q.fres * (Q.sr ? Math.exp(-x / Q.sr) : 1) + (1 - Q.fres) * Math.exp(-x / Q.sc);
+        }
+        if (Q.hr) { var pHr = Q.sigmaC + Q.hr; if (p < pHr) c *= 1 - Q.hrFrac * Math.min(1, (pHr - p) / Q.hr); }
+        var cw = Q.gas ? Q.VwCw * ((1 - Q.phiGas) + Q.phiGas * Q.isip / Math.max(p, 1)) : Q.VwCw;
+        var C = Q.AfCf * c * (Q.tipA ? 1 + Q.tipA * Gv : 1) + cw;
+        var fL = x > 0 ? Math.max(0, (p - Q.pr) / Math.max(Q.sigmaC - Q.pr, 1e-9)) : 1;
+        var M = 1;
+        if (Q.Cd && p > Q.pfo) M = Math.min(Q.fmax, Math.exp(Q.Cd * (p - Q.pfo)));
+        if (Q.nMat) M *= Math.pow(Math.max(0, (p - Q.pr) / Math.max(Q.isip - Q.pr, 1e-9)), Q.nMat);
+        return -Q.K * fL * M / Math.max(C, 1e-12);
+    }
+    function _vcIntegrate(Garr, P, maxStep) {
+        var Q = _vcNorm(P), out = new Array(Garr.length), g = 0, p = Q.isip, h0 = maxStep || 0.02;
+        for (var i = 0; i < Garr.length; i++) {
+            var gT = Garr[i];
+            if (typeof gT !== 'number' || !isFinite(gT) || gT < g) { out[i] = p; continue; }
+            var span = gT - g, ns = Math.max(1, Math.ceil(span / h0)), h = span / ns;
+            for (var s = 0; s < ns; s++) {
+                var k1 = _vcRate(p, g, Q), k2 = _vcRate(p + 0.5 * h * k1, g + 0.5 * h, Q), k3 = _vcRate(p + 0.5 * h * k2, g + 0.5 * h, Q), k4 = _vcRate(p + h * k3, g + h, Q);
+                p += h / 6 * (k1 + 2 * k2 + 2 * k3 + k4); g += h;
+            }
+            out[i] = p;
+        }
+        return out;
+    }
+    G.PRiSM_dfit_vcModel = _safe(function (Garr, params, ctx) {
+        if (!Array.isArray(Garr) || !_isObj2(params) || !_fin(params.isip) || !_fin(params.K) || !_fin(params.sigmaC)) return _fail('BAD_INPUT', 'vcModel needs a G grid and params isip, K, sigmaC.', ['params']);
+        var step = ctx && _fin(ctx.maxStep) && ctx.maxStep > 0 ? ctx.maxStep : 0.02;
+        return _vcIntegrate(Garr, params, step);
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.7 closure picks
+    // ═════════════════════════════════════════════════════════════════════
+    function _movMed(a, w) {
+        var n = a.length, out = new Array(n), h = w >> 1, buf = new Array(w), i, j, k, m;
+        for (i = 0; i < n; i++) {
+            m = 0;
+            for (j = (i - h > 0 ? i - h : 0); j <= (i + h < n - 1 ? i + h : n - 1); j++) {
+                var x = a[j];
+                if (typeof x !== 'number' || x !== x || x === INF || x === -INF) continue;
+                k = m++; while (k > 0 && buf[k - 1] > x) { buf[k] = buf[k - 1]; k--; } buf[k] = x;     // insertion sort
+            }
+            out[i] = m ? (m % 2 ? buf[m >> 1] : 0.5 * (buf[(m >> 1) - 1] + buf[m >> 1])) : NaN;
+        }
+        return out;
+    }
+    // the usable falloff as compact arrays (masked / windowless samples out: no null reaches a numeric routine)
+    function _usableView(d) {
+        var v = { i: [], G: [], y: [], s: [], p: [], dt: [], dtD: [], D: [], Dref: [], sd: [] };
+        for (var i = 0; i < d.G.length; i++) {
+            if (!d.usable[i] || d.GdPdG[i] === null || d.dPdG[i] === null) continue;
+            v.i.push(i); v.G.push(d.G[i]); v.y.push(d.GdPdG[i]); v.s.push(d.dPdG[i]); v.p.push(d.p[i]); v.dt.push(d.dt[i]); v.dtD.push(d.dtD[i]);
+            v.D.push(d.D[i]); v.Dref.push(d.Dref[i]); v.sd.push(d.dPds[i]);
+        }
+        return v;
+    }
+    // PDL hump (§4.11 H): dP/dG above the early-line slope b at the start, returning to it before the straight segment
+    // → {iEnd (first index back within ε), H (max relative excess of G·dP/dG over b·G), returns, s: b, span (in G)}
+    function _hump(v, sm, b, e0, eps) {
+        var n = v.G.length, i0 = -1, iE = -1, j;
+        if (n < 8 || !(b > 0)) return null;
+        for (j = 0; j < Math.min(n, e0 + 2); j++) {
+            if (sm[j] > (1 + eps) * b) { if (i0 < 0) i0 = j; iE = j; }
+            else if (i0 >= 0 && j > iE + 2) break;
+        }
+        if (i0 < 0 || i0 > 3) return null;
+        var H = 0;
+        for (j = i0; j <= iE; j++) H = Math.max(H, (v.y[j] - b * v.G[j]) / (b * v.G[j]));
+        var span = v.G[iE] - v.G[i0], ret = false, jr = -1;
+        for (j = iE + 1; j < Math.min(n, iE + 10); j++) if (sm[j] <= (1 + eps) * b) { jr = j; break; }
+        if (jr >= 0) {
+            var jp = jr; while (jp + 1 < n && Math.abs(sm[jp + 1] - b) <= eps * b) jp++;
+            ret = Math.log(v.G[jp] / v.G[jr]) >= 0.3;
+        }
+        if (!(H > 0.05 && span >= 0.3)) return null;
+        return { iEnd: Math.min(n - 1, iE + 1), H: H, returns: ret, s: b, span: span };
+    }
+    // ι = a/(b·G_c) of y = a + bG over the lower 60 % of W
+    function _iota(v, iA, iC) {
+        if (iC - iA < 4) return 0;
+        var gA = v.G[iA], gC = v.G[iC], gCut = gA + 0.6 * (gC - gA), i1 = iA;
+        while (i1 + 1 <= iC && v.G[i1 + 1] <= gCut) i1++;
+        var lf = _linfit(v.G, v.y, iA, Math.max(i1, iA + 3), false);
+        if (!lf || !(lf.b > 0)) return 0;
+        return lf.a / (lf.b * gC);
+    }
+    function _pick(method, family, v, k, o) {
+        var d = o.derivs;
+        return {
+            method: method, family: family, vote: !!o.vote, ok: true, dt: _r(o.dt != null ? o.dt : v.dt[k], 6), G: _r(o.G != null ? o.G : v.G[k], 4),
+            p: _r(o.p != null ? o.p : v.p[k], 2), band: o.band || null, se: _r(_fin(o.se) ? o.se : Math.max(d.sigma, 0.5), 3),
+            window: o.window || [_r(d.gMin, 4), _r(v.G[v.G.length - 1], 4)], admissible: true, vetoes: [], warnings: [],
+            sameEvidenceAs: o.same || null, upperSide: !!o.upperSide, evidence: [{ text: _txt(o.text), ev: [o.ev] }], ev: [o.ev]
+        };
+    }
+    // the falloff pressure at G (linear in G between samples)
+    function _pAtG(d, Gv) {
+        var g = d.G, p = d.p;
+        if (Gv <= g[0]) return p[0];
+        for (var i = 1; i < g.length; i++) if (g[i] >= Gv) { var f = (Gv - g[i - 1]) / (g[i] - g[i - 1]); return p[i - 1] + f * (p[i] - p[i - 1]); }
+        return p[p.length - 1];
+    }
+    function _dtAtG(d, Gv) { return _GinvD(d, Gv) * d.tp; }
+    // the closed-form methods on one Derivs (shared by closurePicks and the stability grid)
+    // a copy of a Derivs on another Bourdet window (the pick window; display arrays keep the user's L)
+    function _rederive(d, Lp) {
+        var c = {}, k, n = d.G.length, i;
+        for (k in d) c[k] = d[k];
+        var y = _bourdet(d.G, d.dpIsip, Lp), Dd = _bourdet(d.dt, d.dpIsip, Lp);
+        c.GdPdG = new Array(n); c.dPdG = new Array(n); c.D = new Array(n); c.dPds = new Array(n); c.usable = new Array(n);
+        for (i = 0; i < n; i++) {
+            c.GdPdG[i] = _fin(y[i]) ? Math.max(0, y[i]) : null;
+            c.dPdG[i] = _fin(y[i]) ? Math.max(0, y[i] / d.G[i]) : null;
+            c.D[i] = _fin(Dd[i]) ? Math.max(0, Dd[i]) : null;
+            c.dPds[i] = _fin(Dd[i]) ? Math.max(0, 2 * Dd[i] / Math.sqrt(d.dt[i])) : null;
+            c.usable[i] = (d.G[i] >= d.gMin && c.GdPdG[i] !== null) ? 1 : 0;
+        }
+        var yu = []; for (i = 0; i < n; i++) if (c.usable[i]) yu.push(c.GdPdG[i]);
+        c.sigmaY = _noise2(yu); c.Lpick = Lp;
+        return c;
+    }
+    // noise-limited pick window: the smallest L in {0, 0.01, 0.02, 0.05} (≤ the user's L) whose dP/dG noise over the upper
+    // part of the early straight segment stays ≤ 0.5 %; else the user's L. Smoothing only as far as the noise needs it
+    // keeps the Bourdet window from shifting the picks on clean data.
+    function _pickWindow(d) {
+        var ge = d.earlyWin ? d.earlyWin[1] : null;
+        if (!_fin(ge) || ge <= 0) return null;
+        var cands = [0, 0.01, 0.02, 0.05], gLo = Math.max(d.gMin, 0.1 * ge), a0 = 0, a1 = d.G.length - 1;
+        // the derivative only on the tested segment (with a margin wider than the largest candidate window)
+        while (a0 < a1 && d.G[a0] < gLo * Math.exp(-0.06)) a0++;
+        while (a1 > a0 && d.G[a1] > ge * Math.exp(0.06)) a1--;
+        var gs = d.G.slice(a0, a1 + 1), ps = d.dpIsip.slice(a0, a1 + 1);
+        for (var c = 0; c < cands.length; c++) {
+            var Lp = cands[c];
+            if (Lp >= d.L) break;
+            var y = _bourdet(gs, ps, Lp), r = [];
+            for (var i = 0; i < gs.length; i++) if (gs[i] >= gLo && gs[i] <= ge && _fin(y[i])) r.push(y[i] / gs[i]);
+            if (r.length < 8) continue;
+            var md = _median(r), nz = _noise2(r);
+            if (md > 0 && nz / md <= 0.005) return Lp;
+        }
+        return null;
+    }
+    function _closedForm(d0, o) {
+        o = o || {};
+        var Lp = _fin(o.Lpick) ? o.Lpick : _pickWindow(d0), d = (Lp !== null && Lp < d0.L) ? _rederive(d0, Lp) : d0;
+        var eps = o.eps || {}, epsC = _fin(eps.compliance) ? eps.compliance : 0.02, epsT = _fin(eps.tangent) ? eps.tangent : 0.02, epsL = _fin(eps.loglog) ? eps.loglog : 0.05;
+        var v = _usableView(d), n = v.G.length, res = { picks: {}, iota: 0, hump: null, view: v, Lpick: d.Lpick != null ? d.Lpick : d0.L, line: null, noDeparture: false };
+        if (n < 6) return res;
+        var Lw = _fin(d.Lpick) ? d.Lpick : d.L, i, j;
+        // 1. the early window (from the straight p-G segment), trimmed by the pick window at its end
+        var gE0 = d.earlyWin ? d.earlyWin[0] : v.G[0], gE1 = d.earlyWin ? d.earlyWin[1] : v.G[n - 1];
+        var e0 = 0; while (e0 < n && v.G[e0] < gE0) e0++;
+        if (e0 > n - 4) return res;
+        var e1 = e0; while (e1 + 1 < n && v.G[e1 + 1] <= gE1 * Math.exp(-Lw)) e1++;
+        if (e1 - e0 < 3) e1 = Math.min(n - 1, e0 + 3);
+        // 2. the G·dP/dG line over the early window: through the origin when |ι| < 0.05; one robust refit
+        var lf = _yLineRobust(v.G, v.y, e0, e1, epsC);
+        if (!lf) return res;
+        var iota0 = lf.iota, origin = lf.origin, b = lf.b;
+        res.line = lf; res.iota = iota0;
+        // absolute G·dP/dG noise (≈ constant in G) and its lag-1 correlation over the upper early window; the relative
+        // noise at a sample is σ_y/ŷ there (res.relNoise is its value at the window end)
+        var nz = _lineNoise(v.G, v.y, lf, e0, e1), sigY = Math.max(nz.sigma, 1e-9), rhoY = nz.rho;
+        function yh(k) { return lf.a + lf.b * v.G[k]; }
+        var relN = sigY / Math.max(yh(e1), 1e-9); res.relNoise = relN; res.sigmaY = sigY; res.rhoY = rhoY;
+        var sm = _movMed(v.s, 5);
+        // 3. PDL hump before the early window: dP/dG above (1 + ε)·b at the start, returning to b
+        var hump = _hump(v, sm, b, e0, Math.max(epsC, 0.02));
+        res.hump = hump;
+        // 4. the first held departure from the line, searched from the window start (ε the floor, the local noise the scale)
+        // (from the first sample whose derivative window lies inside the early segment)
+        var eS = e0 + 1; while (eS < e1 && v.G[eS] < v.G[e0] * Math.exp(Lw + 0.02)) eS++;
+        var dep = _departure(v.G, v.y, lf, eS, epsC, sigY, rhoY);
+        if (!dep) { res.noDeparture = true; return res; }
+        var iDep = dep.i, down = dep.down, thrAt = dep.thr;
+        // 4b. a downward first departure followed by a strong stiffening is reservoir-controlled (matrix) leak-off, not a
+        //     closure: dP/dG declines smoothly as p − p_r falls (§4.11: 28-40 % to closure) and the closure is the later upward
+        //     departure from that declining trend. The trend is the straight G·dP/dG line over the last 0.7 ln units before the
+        //     dP/dG minimum; the search for the upward departure starts one Bourdet window L before that minimum.
+        if (down) {
+            var iMx = iDep, iMn = iDep;
+            for (i = iDep; i < n; i++) if (_fin(sm[i]) && sm[i] > sm[iMx]) iMx = i;
+            for (i = iDep; i <= iMx; i++) if (_fin(sm[i]) && sm[i] < sm[iMn]) iMn = i;
+            if (iMx - iMn >= 3 && sm[iMx] >= 1.3 * sm[iMn] && sm[iMn] < (1 - thrAt(iMn)) * b) {
+                var kT = function (gv) { var k = 0; while (k + 1 < n && v.G[k + 1] <= gv) k++; return k; };
+                var w0 = Math.max(e0, kT(v.G[iMn] * Math.exp(-0.7))), lf2 = (iMn - w0 >= 4) ? _linfit(v.G, v.y, w0, iMn, false) : null;
+                if (lf2 && lf2.b > 0) {
+                    lf2.iota = lf.iota; lf2.origin = false;
+                    var nz2 = _lineNoise(v.G, v.y, lf2, w0, iMn), q2s = Math.max(w0 + 1, kT(v.G[iMn] * Math.exp(-Lw))), dep2 = null;
+                    for (var tries = 0; tries < 6 && q2s < n - 3; tries++) {
+                        var dd2 = _departure(v.G, v.y, lf2, q2s, epsC, Math.max(nz2.sigma, sigY * 0.5, 1e-9), nz2.rho);
+                        if (!dd2) break;
+                        if (!dd2.down) { dep2 = dd2; break; }
+                        q2s = dd2.i + 1;
+                    }
+                    if (dep2) {
+                        dep = dep2; iDep = dep2.i; down = false; thrAt = dep2.thr; lf = lf2;
+                        res.matrixDecline = { gMin: _r(v.G[iMn], 3), drop: _r(1 - sm[iMn] / b, 3), trend: [_r(v.G[w0], 3), _r(v.G[iMn], 3)] };
+                    }
+                }
+            }
+        }
+        // 5. the onset by the hinge fit on the pressure: from ln 0.7 before the departure (inside the early window) to where
+        //    the derivative has moved by max(15 %, 2 thresholds) or ln 0.4 after it. A Bourdet window L shows a departure up
+        //    to L early (the derivative at G sees G·e^L), so the onset is searched up to G_dep·e^L and the derivative
+        //    criterion of the window end is read L back.
+        function kAt(gv) { var k = 0; while (k + 1 < n && v.G[k + 1] <= gv) k++; return k; }
+        var h0 = e0; while (h0 < iDep && v.G[h0] < v.G[iDep] * Math.exp(-0.7)) h0++;
+        var jMax = Math.max(iDep, kAt(v.G[iDep] * Math.exp(Lw))), h1 = jMax, gH = v.G[iDep] * Math.exp(0.4 + Lw);
+        while (h1 + 1 < n && v.G[h1 + 1] <= gH && Math.abs(dep.rel(kAt(v.G[h1 + 1] * Math.exp(-Lw)))) <= Math.max(0.15, 2 * thrAt(h1))) h1++;
+        h1 = Math.min(n - 1, Math.max(h1, jMax + 4));
+        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1, !!res.matrixDecline);
+        if (hg && !(hg.G >= v.G[h0] && hg.G <= v.G[jMax])) hg = null;
+        // an abrupt break (a pressure interval falling ≥ 3 × faster than the early slope while the interval before it falls
+        // less than half as fast: a closure with an unbounded slope, as on an exact Carter after-closure line) is read at the start of
+        // that interval; neither the hinge shape nor a derivative peak can locate a jump between two samples
+        var brk = null;
+        if (!down) {
+            var sl = function (k) { return (v.p[k] - v.p[k + 1]) / Math.max(v.G[k + 1] - v.G[k], 1e-12); }, kb = -1;
+            for (i = Math.max(e0, iDep - 2); i <= Math.min(n - 2, jMax + 1); i++) if (kb < 0 || sl(i) > sl(kb)) kb = i;
+            // the break starts in the first of the steep intervals: walk back from the steepest one while the interval before
+            // it still falls ≥ 3 × faster than the early slope (on an exact Carter line the slope keeps growing for a few samples
+            // after closure, so the steepest interval is not the one that holds the closure)
+            while (kb > Math.max(e0, 1) && sl(kb - 1) > 3 * b) kb--;
+            // the closure lies inside that interval, uniformly as far as the samples tell: its centre on the pre-closure line
+            // (p at the interval start minus the slope of the interval before it over half the interval), se = half-width / √3
+            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) {
+                var dGb = v.G[kb + 1] - v.G[kb], sPre = Math.max(0, sl(kb - 1));
+                brk = { k: kb, G: v.G[kb] + 0.5 * dGb, p: v.p[kb] - 0.5 * sPre * dGb, se: Math.max(sPre, b) * dGb / (2 * Math.sqrt(3)) };
+            }
+        }
+        res.abrupt = !!brk;
+        if (!down) {
+            var gOn = v.G[iDep], pOn = v.p[iDep], kOn = iDep, seOn = null;
+            if (brk) { gOn = brk.G; pOn = brk.p; kOn = brk.k; seOn = brk.se; }
+            else if (hg) { gOn = hg.G; pOn = hg.p; kOn = kAt(gOn); seOn = hg.se; }
+            res.picks.compliance = { k: kOn, G: gOn, p: pOn, se: seOn, down: false, line: lf, departRel: dep.rel(iDep), hinge: hg,
+                text: 'G·dP/dG leaves the early ' + (origin ? 'line through the origin' : 'straight line') + ' upward at G ' + _f1(gOn, 2) + ' (ε ' + _f1(epsC, 3) + ').' };
+        }
+        // 6. tangent through the origin. After an upward departure: s* = max dP/dG and the touch point is where y/G is largest,
+        //    i.e. the vertex of a concave quadratic (ln G) fitted to dP/dG where it stays within (1 − δ)·s*,
+        //    δ = max(ε_tangent, 3σ_s/s*) (§4.7: ε the floor, the noise the scale). The vertex is read on a derivative with a
+        //    short window (L ≤ 0.02): a long Bourdet window drags an asymmetric peak late. A flat top longer than 0.5 ln
+        //    units keeps the §4.7 plateau-end rule. After a downward departure the compliance and tangent picks coincide at
+        //    the onset of the decline (the hinge).
+        var tg = null;
+        if (!down) {
+            var cs = sm, iPk = iDep;
+            for (i = iDep; i < n; i++) if (cs[i] > cs[iPk]) iPk = i;
+            if (iPk < n - 2) {
+                // the vertex window: the smallest L in {0, 0.01, 0.02} (≤ the pick L) whose dP/dG noise near the peak is
+                // ≤ 0.3 % of s* — the vertex is read as unsmoothed as the noise allows, whatever the detection window L
+                var Lv = Math.min(Lw, 0.02), sv = v.s, csv = relN < 0.005 ? v.s : cs, LvC = [0, 0.01, 0.02];
+                // the short-window derivative only around the peak (± 80 samples; L ≤ 0.02 needs a few), mapped back
+                var b0 = Math.max(0, iPk - 80), b1 = Math.min(n - 1, iPk + 80), gS = v.G.slice(b0, b1 + 1), nS = v.p.slice(b0, b1 + 1).map(function (x) { return -x; });
+                for (var lc = 0; lc < LvC.length; lc++) {
+                    var Lc = LvC[lc]; if (Lc >= Lw) break;
+                    var ycS = _bourdet(gS, nS, Lc), sc = new Array(n);
+                    for (var kk = 0; kk < n; kk++) sc[kk] = NaN;
+                    for (kk = 0; kk < ycS.length; kk++) sc[b0 + kk] = _fin(ycS[kk]) ? Math.max(0, ycS[kk] / gS[kk]) : NaN;
+                    var w0 = Math.max(0, iPk - 15), w1 = Math.min(n - 1, iPk + 15), nzc = _noise2(sc, w0, w1);
+                    if (lc === LvC.length - 1 || (cs[iPk] > 0 && nzc / cs[iPk] <= 0.003)) {
+                        Lv = Lc; sv = sc;
+                        if (Lc === 0 && nzc / cs[iPk] <= 0.0005) csv = sc;
+                        else { csv = new Array(n); var mS = _movMed(sc.slice(b0, b1 + 1), 5); for (kk = 0; kk < n; kk++) csv[kk] = NaN; for (kk = 0; kk < mS.length; kk++) csv[b0 + kk] = mS[kk]; }
+                        break;
+                    }
+                }
+                // the short-window peak near the smoothed one (the long window moves it later, never earlier by more than L)
+                var q0 = kAt(v.G[iPk] * Math.exp(-Lw - 0.05)), q1 = kAt(v.G[iPk] * Math.exp(0.05)), jPk = iPk;
+                for (i = Math.max(iDep, q0); i <= q1; i++) if (_fin(csv[i]) && (!_fin(csv[jPk]) || csv[i] > csv[jPk])) jPk = i;
+                var sStar = _fin(csv[jPk]) ? csv[jPk] : cs[iPk], sigS = sigY * (Lv > 0 && Lw > Lv ? Lw / Lv : 1);
+                var dl = function (k) { return Math.max(epsT, 3 * dep.c * sigS / Math.max(sStar * v.G[k], 1e-9)); };
+                var k0 = jPk, k1 = jPk, dips = 0;
+                while (k0 - 1 > iDep && _fin(csv[k0 - 1]) && csv[k0 - 1] >= (1 - dl(k0 - 1)) * sStar) k0--;
+                for (j = jPk + 1; j < n; j++) { if (_fin(csv[j]) && csv[j] >= (1 - dl(j)) * sStar) { k1 = j; dips = 0; } else if (++dips > 2) break; }
+                var gT = v.G[jPk], pT = v.p[jPk], sPk = sStar, vx = null, seT = null;
+                if (brk && Math.abs(Math.log(v.G[jPk] / brk.G)) <= Lw + Lv + 0.03) { gT = brk.G; pT = brk.p; seT = brk.se; }     // the peak is the break itself (within the derivative windows)
+                else if (Math.log(v.G[k1] / v.G[k0]) > 0.5) {                 // a plateau: its end (§4.7)
+                    gT = v.G[k1]; pT = v.p[k1];
+                    if (k1 + 1 < n && csv[k1] > csv[k1 + 1]) {
+                        var f = _clampN((csv[k1] - (1 - dl(k1)) * sStar) / (csv[k1] - csv[k1 + 1]), 0, 1);
+                        gT = v.G[k1] + f * (v.G[k1 + 1] - v.G[k1]); pT = v.p[k1] + f * (v.p[k1 + 1] - v.p[k1]);
+                    }
+                } else {
+                    // at least ±1 sample (±3 when the derivative noise is above 0.2 %) around the peak; raw short-window values
+                    var hw = (sigS / Math.max(sStar * v.G[jPk], 1e-9) > 0.002) ? 2 : 1;
+                    var r0 = Math.max(iDep, Math.min(k0, jPk - hw)), r1 = Math.min(n - 1, Math.max(k1, jPk + hw));
+                    vx = _vertex(v.G, sv, r0, r1) || _vertex(v.G, csv, Math.max(0, jPk - 1), Math.min(n - 1, jPk + 1));
+                    if (vx) { gT = vx.G; pT = _pAtG(d, gT); sPk = Math.max(sStar, vx.s); seT = _fin(vx.seLn) ? sPk * gT * vx.seLn : null; }
+                }
+                tg = { k: kAt(gT), G: gT, p: pT, se: seT, sStar: sPk, iPk: jPk, noise: sigS / Math.max(sPk * gT, 1e-9), tol: dl(kAt(gT)) };
+            } else res.noDeparture = true;     // still stiffening at the end of the data
+        } else {
+            var gP = null, pP = null, kP = iDep, seP = null;
+            if (hg) { gP = hg.G; pP = hg.p; kP = kAt(gP); seP = hg.se; }
+            else {                                   // the plateau end with the §4.7 tolerance (no hinge)
+                var iP = e0 + 1, dps = 0;
+                for (j = e0 + 1; j < n; j++) { if (sm[j] >= (1 - thrAt(j)) * b) { iP = j; dps = 0; } else if (++dps > 2) break; }
+                if (iP < n - 2) { gP = v.G[iP]; pP = v.p[iP]; kP = iP; }
+            }
+            if (gP !== null) {
+                tg = { k: kP, G: gP, p: pP, se: seP, sStar: b, iPk: kP, noise: sigY / Math.max(b * gP, 1e-9), tol: thrAt(kP) };
+                res.picks.compliance = { k: kP, G: gP, p: pP, se: seP, down: true, line: lf, departRel: 0, hinge: hg,
+                    text: 'G·dP/dG first leaves the early line downward, so the compliance and tangent picks coincide at G ' + _f1(gP, 2) + '.' };
+            } else res.noDeparture = true;
+        }
+        // the pre-refinement detection pressure (the departure sample), read by the stability grid: the hinge / vertex refinement
+        // re-reads one pressure for every L / tp setting, so the grid spread g measured no sensitivity at all
+        // (an abrupt break is exact — the detection sample then already lies after the jump — so it keeps its reading)
+        if (res.picks.compliance) res.picks.compliance.pRaw = res.abrupt ? res.picks.compliance.p : v.p[iDep];
+        if (tg) {
+            tg.pRaw = res.abrupt ? tg.p : (_fin(tg.iPk) && tg.iPk >= 0 && tg.iPk < n ? v.p[tg.iPk] : v.p[iDep]);
+            tg.text = 'The tangent through the origin touches G·dP/dG up to G ' + _f1(tg.G, 2) + ' (largest dP/dG ' + _f1(tg.sStar, 2) + ' psi per unit G).';
+            res.picks.tangent = tg;
+            // dependent F2 members: the dP/dG maximum and the √t inflection (smoothed, vertex-refined), searched after the
+            // early window up to 1.5 × G_tangent
+            var iM = -1, iS2 = -1, gLim = 1.5 * tg.G, q2 = Math.max(e1, 0), q3 = q2; while (q3 + 1 < n && v.G[q3 + 1] <= gLim) q3++;
+            var smd = new Array(n), smdS = _movMed(v.sd.slice(Math.max(0, q2 - 3), Math.min(n, q3 + 4)), 5);
+            for (i = 0; i < smdS.length; i++) smd[Math.max(0, q2 - 3) + i] = smdS[i];
+            for (i = q2; i < n && v.G[i] <= gLim; i++) {
+                if (_fin(sm[i]) && (iM < 0 || sm[i] > sm[iM])) iM = i;
+                if (_fin(smd[i]) && (iS2 < 0 || smd[i] > smd[iS2])) iS2 = i;
+            }
+            if (iM >= 0) {
+                var vm = (iM > 0 && iM < n - 1) ? _vertex(v.G, sm, iM - 1, iM + 1) : null, gM = vm ? vm.G : v.G[iM];
+                res.picks.maxdpdg = { k: iM, G: gM, p: vm ? _pAtG(d, gM) : v.p[iM], text: 'dP/dG is largest at G ' + _f1(gM, 2) + '.' };
+            }
+            if (iS2 >= 0) {
+                var vs = (iS2 > 0 && iS2 < n - 1) ? _vertex(v.dt, smd, iS2 - 1, iS2 + 1) : null, gS = vs ? _GatD(d, vs.G / d.tp) : v.G[iS2];
+                res.picks.sqrt = { k: iS2, G: gS, p: vs ? _pAtG(d, gS) : v.p[iS2], text: 'The square-root-of-time derivative is largest at √Δt ' + _f1(Math.sqrt((vs ? vs.G : v.dt[iS2]) * 60), 2) + ' min^½.' };
+            }
+        }
+        // crel (same evidence as compliance): the first p where C_rel = b/(dP/dG) < 1 − max(ε, local noise) for the hold count
+        if (res.picks.compliance && !down) {
+            for (i = Math.max(e0 + 1, e1 < iDep ? e1 : iDep); i < n; i++) {
+                if (b / Math.max(sm[i], 1e-12) < 1 - thrAt(i)) {
+                    var h2 = 0; for (j = i; j < n && b / Math.max(sm[j], 1e-12) < 1 - thrAt(j); j++) h2++;
+                    if (h2 >= Math.max(3, dep.nHold) || j === n) { res.picks.crel = { k: i, G: v.G[i], p: v.p[i], text: 'The relative compliance falls below ' + _f1(1 - epsC, 3) + ' at ' + _f0(v.p[i]) + ' psia.' }; break; }
+                }
+            }
+        }
+        // log-log departure: D/D_ref > 1 + ε_ll held ≥ 0.1 log cycle on Δt
+        for (i = Math.max(e0, e1 - 3); i < n; i++) {
+            if (!_fin(v.D[i]) || !_fin(v.Dref[i]) || v.Dref[i] <= 0) continue;
+            if (v.D[i] / v.Dref[i] > 1 + epsL) {
+                var ok2 = true, j2;
+                for (j2 = i; j2 < n && Math.log(v.dt[j2] / v.dt[i]) / LN10 < 0.1; j2++) if (!(v.D[j2] / v.Dref[j2] > 1 + epsL)) { ok2 = false; break; }
+                if (ok2 && j2 < n) { res.picks.loglog = { k: i, G: v.G[i], p: v.p[i], text: 'D leaves the reference curve upward (D/D_ref above ' + _f1(1 + epsL, 2) + ') at Δt ' + _f1(v.dt[i] * 60, 1) + ' min.' }; break; }
+            }
+        }
+        // fissure (F0): the end of the PDL hump = p_fo
+        if (hump) res.picks.fissure = { k: hump.iEnd, G: v.G[hump.iEnd], p: v.p[hump.iEnd], text: 'The PDL hump ends at G ' + _f1(v.G[hump.iEnd], 2) + ': fissure opening pressure about ' + _f0(v.p[hump.iEnd]) + ' psia.' };
+        return res;
+    }
+    G.PRiSM_dfit_closedForm = function (derivs, o) { return _closedForm(derivs, o || {}); };   // the raw closed-form readings (tests, 57)
+    // ClosurePick list from the closed-form result + ramps, a leak-off fit, the variable-compliance fit and a user pick
+    function _bctx(ctx) { return { isip: ctx.isipValue, pi: ctx.pi, piBracket: ctx.piBracket, inputs: ctx.inputs, well: ctx.well, datumTvd: ctx.inputs ? ctx.inputs.datumTvd : null }; }
+    G.PRiSM_dfit_closurePicks = _safe(function (derivs, ctx) {
+        ctx = ctx || {};
+        if (!_okRes(derivs) || !Array.isArray(derivs.G)) return _fail('BAD_INPUT', 'Derivatives are needed for the closure picks.', ['derivs']);
+        var I = ctx.inputs ? G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs : G.PRiSM_dfit_inputRanges.defaults();
+        var eps = ctx.eps || I.options.eps, d = derivs;
+        var cf = _closedForm(d, { eps: eps }), P = cf.picks, v = cf.view, out = [];
+        var ov = { derivs: d };
+        function mk(m, fam, src, o) { var oo = {}; for (var k in ov) oo[k] = ov[k]; for (k in o) oo[k] = o[k]; oo.G = src.G; oo.p = src.p; oo.dt = _dtAtG(d, src.G); oo.text = src.text; return _pick(m, fam, v, src.k, oo); }
+        var dtDcT = P.tangent ? _dtAtG(d, P.tangent.G) / d.tp : null;
+        var seOf = function (src) { return Math.max(d.sigma, 0.5, _fin(src.se) ? src.se : 0); };
+        if (P.compliance) out.push(mk('compliance', 'F1', P.compliance, { vote: true, ev: 'C2', se: seOf(P.compliance) }));
+        if (P.crel) out.push(mk('crel', 'F1', P.crel, { vote: false, same: 'compliance', ev: 'C6' }));
+        if (P.loglog) {
+            var indep = Math.abs(cf.iota) >= 0.05;
+            out.push(mk('loglog', 'F1', P.loglog, { vote: indep, same: indep ? null : 'compliance', ev: 'C7' }));
+            if (!indep) out[out.length - 1].evidence.push({ text: _txt('iota ' + _f1(cf.iota, 3) + ' is below 0.05: the log-log departure is the compliance test with another ε (same evidence).'), ev: ['C7'] });
+        }
+        if (P.tangent) out.push(mk('tangent', 'F2', P.tangent, { vote: true, ev: 'C3', se: seOf(P.tangent) }));
+        if (P.sqrt) out.push(mk('sqrt', 'F2', P.sqrt, { vote: false, same: (dtDcT !== null && dtDcT > 5) ? 'tangent' : null, ev: 'C4' }));
+        if (P.maxdpdg) out.push(mk('maxdpdg', 'F2', P.maxdpdg, { vote: false, same: 'tangent', ev: 'C5' }));
+        if (P.fissure) out.push(mk('fissure', 'F0', P.fissure, { vote: false, ev: 'C10' }));
+        // F3: variable-compliance fit (cross-check, own LM CI) and the leak-off model closure
+        if (ctx.varcomp !== false && P.tangent) {
+            var vc = G.PRiSM_dfit_varComplianceFit(d, { picks: P, VwCw: ctx.VwCw, Csys: ctx.Csys, AfCf: ctx.AfCf, pr: ctx.pr, inputs: I }, ctx.varcompOpts || {});
+            if (_okRes(vc) && _fin(vc.sigmaC)) {
+                var se = vc.ci95 ? Math.abs(vc.ci95[1] - vc.ci95[0]) / (2 * 1.96) : Math.max(d.sigma, 1);
+                var gV = _GatD(d, (_dtAtP(d, vc.sigmaC) || d.dt[d.dt.length - 1]) / d.tp);
+                out.push(_pick('varcomp', 'F3', v, 0, { derivs: d, vote: false, ev: 'C8', p: vc.sigmaC, G: gV, dt: _dtAtP(d, vc.sigmaC) || d.dt[d.dt.length - 1],
+                    band: { p10: _r(vc.sigmaC - 1.2816 * se, 2), p50: _r(vc.sigmaC, 2), p90: _r(vc.sigmaC + 1.2816 * se, 2) }, se: se,
+                    text: 'The variable-compliance fit gives ' + _f0(vc.sigmaC) + ' psia (cross-check, no vote; rms ' + _f1(vc.rmse, 2) + ' psi).' }));
+                out[out.length - 1]._fit = vc;
+            }
+        }
+        var lk = ctx.lkFit;
+        if (lk && lk.params && _fin(lk.params.sigmaC)) {
+            var dtm = _dtAtP(d, lk.params.sigmaC) || d.dt[d.dt.length - 1];
+            out.push(_pick('model', 'F3', v, 0, { derivs: d, vote: false, ev: 'C9', p: lk.params.sigmaC, G: _GatD(d, dtm / d.tp), dt: dtm, text: 'The leak-off model fit places mechanical closure at ' + _f0(lk.params.sigmaC) + ' psia (cross-check).' }));
+        }
+        // F4: reopening knees of later ramps (WTS_wellbore.ramp results), near-wellbore corrected when a step-down exists
+        (ctx.ramps || []).forEach(function (rp) {
+            if (!_okRes(rp) || !rp.knee || !_fin(rp.knee.p)) return;
+            var corr = _fin(rp.nwbCorr), pk = corr ? rp.knee.p - rp.nwbCorr : rp.knee.p;
+            var b = rp.band && _fin(rp.band.p10) ? { p10: _r(rp.band.p10 - (corr ? rp.nwbCorr : 0), 2), p50: _r(pk, 2), p90: _r(rp.band.p90 - (corr ? rp.nwbCorr : 0), 2) } : null;
+            if (b && !(b.p10 <= b.p50 && b.p50 <= b.p90)) b = null;
+            var dtr = _dtAtP(d, pk) || d.dt[d.dt.length - 1];
+            out.push(_pick('reopening', 'F4', v, 0, { derivs: d, vote: corr, upperSide: true, ev: 'C11', p: pk, G: _GatD(d, dtr / d.tp), dt: dtr, band: b,
+                se: b ? (b.p90 - b.p10) / 2.563 : 5,
+                text: corr ? 'Reopening knee ' + _f0(rp.knee.p) + ' psia less ' + _f1(rp.nwbCorr, 1) + ' psi near-wellbore loss = ' + _f0(pk) + ' psia.' : 'Reopening knee ' + _f0(rp.knee.p) + ' psia: an upper-side bound (reads high by the near-wellbore loss).' }));
+        });
+        // user pick
+        var u = ctx.user;
+        if (u && _fin(u.p)) {
+            var dtu = _fin(u.dt) ? u.dt : (_dtAtP(d, u.p) || d.dt[d.dt.length - 1]);
+            var fam = (u.family === 'F1' || u.family === 'F2' || u.family === 'F4') ? u.family : 'F1';
+            out.push(_pick('user', fam, v, 0, { derivs: d, vote: true, ev: 'C12', p: u.p, G: _GatD(d, dtu / d.tp), dt: dtu, text: 'User closure ' + _f0(u.p) + ' psia' + (u.reason ? ': ' + String(u.reason).slice(0, 200) : '.') }));
+            out[out.length - 1].source = 'user';
+        }
+        // bounds per pick
+        var bc = _bctx(ctx);
+        out.forEach(function (pk) {
+            var b = G.PRiSM_dfit_bounds(pk.p, bc);
+            if (_okRes(b)) {
+                pk.admissible = b.admissible; pk.vetoes = b.vetoes; pk.warnings = b.warnings;
+                if (!b.admissible && pk.method !== 'user') { if (pk.vote) pk.vetoedVote = true; pk.vote = false; }
+            }
+        });
+        out.iota = cf.iota;
+        out.hump = cf.hump;
+        return out;
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.7 variable-compliance fit (F3): PRiSM_lm (05) at call time, else a small LM here
+    // ═════════════════════════════════════════════════════════════════════
+    function _lmLocal(model, data, p0, bounds, keys, maxIter) {
+        var p = {}, k; for (k in p0) p[k] = p0[k];
+        function ssr(pp) { var y = model(data.t, pp), s = 0; for (var i = 0; i < y.length; i++) { var r = data.p[i] - y[i]; s += r * r; } return s; }
+        var lam = 1e-3, cur = ssr(p), it, J, r, y;
+        for (it = 0; it < (maxIter || 40); it++) {
+            y = model(data.t, p); r = data.p.map(function (v, i) { return v - y[i]; });
+            J = keys.map(function (key) {
+                var h = Math.max(Math.abs(p[key]) * 1e-4, 1e-6), q = {}; for (var kk in p) q[kk] = p[kk]; q[key] += h;
+                var y2 = model(data.t, q); return y2.map(function (v, i) { return (v - y[i]) / h; });
+            });
+            var m = keys.length, A = [], g = [], i, j, l;
+            for (i = 0; i < m; i++) { A.push([]); g.push(0); for (j = 0; j < m; j++) { var s = 0; for (l = 0; l < r.length; l++) s += J[i][l] * J[j][l]; A[i].push(s); } for (l = 0; l < r.length; l++) g[i] += J[i][l] * r[l]; }
+            var improved = false;
+            for (var tries = 0; tries < 8; tries++) {
+                var M = A.map(function (row, ii) { return row.map(function (v, jj) { return ii === jj ? v * (1 + lam) + 1e-12 : v; }); });
+                var dx = _solve(M, g.slice());
+                if (!dx) { lam *= 10; continue; }
+                var q2 = {}; for (k in p) q2[k] = p[k];
+                keys.forEach(function (key, ii) { q2[key] = _clampN(p[key] + dx[ii], bounds[key][0], bounds[key][1]); });
+                var s2 = ssr(q2);
+                if (s2 < cur) { p = q2; cur = s2; lam = Math.max(lam / 10, 1e-12); improved = true; break; }
+                lam *= 10;
+            }
+            if (!improved) break;
+        }
+        // covariance from the last Jacobian
+        var dof = Math.max(1, data.t.length - keys.length), s2r = cur / dof, cov = null;
+        if (J) {
+            var A2 = keys.map(function (_, ii) { return keys.map(function (__, jj) { var s = 0; for (var l2 = 0; l2 < J[ii].length; l2++) s += J[ii][l2] * J[jj][l2]; return s; }); });
+            cov = _inv(A2); if (cov) cov = cov.map(function (row) { return row.map(function (v) { return v * s2r; }); });
+        }
+        var se = {}, ci = {}, corr = {};
+        keys.forEach(function (key, ii) { var sd = cov && cov[ii][ii] > 0 ? Math.sqrt(cov[ii][ii]) : null; se[key] = sd; ci[key] = sd !== null ? [p[key] - 1.96 * sd, p[key] + 1.96 * sd] : null; });
+        if (cov && keys.indexOf('sigmaC') >= 0 && keys.indexOf('sc') >= 0) {
+            var a = keys.indexOf('sigmaC'), b = keys.indexOf('sc');
+            corr.sigmaC_sc = cov[a][b] / Math.sqrt(cov[a][a] * cov[b][b]);
+        }
+        return { params: p, ci95: ci, stderr: se, rmse: Math.sqrt(cur / data.t.length), corr: corr, converged: true };
+    }
+    function _solve(A, b) {
+        var n = A.length, M = A.map(function (r, i) { return r.concat([b[i]]); });
+        for (var c = 0; c < n; c++) {
+            var piv = c; for (var r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            if (Math.abs(M[piv][c]) < 1e-300) return null;
+            var t = M[c]; M[c] = M[piv]; M[piv] = t;
+            for (r = 0; r < n; r++) { if (r === c) continue; var f = M[r][c] / M[c][c]; for (var k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+        }
+        return M.map(function (row, i) { return row[n] / row[i]; });
+    }
+    function _inv(A) {
+        var n = A.length, cols = [];
+        for (var j = 0; j < n; j++) { var e = []; for (var i = 0; i < n; i++) e.push(i === j ? 1 : 0); var x = _solve(A, e); if (!x) return null; cols.push(x); }
+        return A.map(function (_, i) { return cols.map(function (c) { return c[i]; }); });
+    }
+    var _vcCalls = 0;     // variable-compliance fits made (the consensus reads the count: none may run inside the grid)
+    G.PRiSM_dfit_varComplianceFit = _safe(function (derivs, ctx, opts) {
+        _vcCalls++;
+        ctx = ctx || {}; opts = opts || {};
+        if (!_okRes(derivs) || !Array.isArray(derivs.G) || !_fin(derivs.mG)) return _fail('BAD_INPUT', 'Derivatives with an early slope are needed.', ['derivs']);
+        var d = derivs, P = ctx.picks || (_closedForm(d, {}).picks);
+        var gT = P.tangent ? P.tangent.G : null;
+        if (!_fin(gT)) return _fail('NO_PICK', 'The variable-compliance fit needs an F2 pick to set its window.', ['picks']);
+        var gEnd = 1.5 * gT, G0 = [], P0 = [];
+        for (var i = 0; i < d.G.length; i++) if (d.G[i] >= d.gMin && d.G[i] <= gEnd) { G0.push(d.G[i]); P0.push(d.p[i]); }
+        if (G0.length < 8) return _fail('SHORT', 'Too few samples in the variable-compliance window.', ['p']);
+        // thin to ≤ 120 points (uniform in index) for speed
+        var stride = Math.max(1, Math.ceil(G0.length / 120)), Gf = [], Pf = [];
+        for (i = 0; i < G0.length; i += stride) { Gf.push(G0[i]); Pf.push(P0[i]); }
+        var VwCw = _fin(ctx.VwCw) ? ctx.VwCw : 0, AfCf = _fin(ctx.AfCf) ? ctx.AfCf : (_fin(ctx.Csys) ? Math.max(ctx.Csys - VwCw, 1e-9) : null);
+        if (AfCf === null) { AfCf = 1; VwCw = VwCw > 0 ? VwCw : 0.02; }       // relative units: R_vis 0.98 when nothing is known
+        var Copen = AfCf + VwCw, isip0 = d.early ? d.early.a : d.isip;
+        var sig0 = P.compliance ? P.compliance.p : (P.tangent.p + (isip0 - P.tangent.p) * 0.1);
+        var pr = _fin(ctx.pr) ? ctx.pr : Math.min(d.p[d.p.length - 1], sig0) - 0.5 * Math.abs(isip0 - sig0) - 1;
+        var base = { isip: isip0, K: d.mG * Copen, sigmaC: sig0, sc: Math.max(10, 0.2 * Math.abs(sig0 - P.tangent.p)), fres: 0.1, sr: null, law: opts.law === 'hyp' ? 'hyp' : 'exp', pr: pr, VwCw: VwCw, AfCf: AfCf };
+        var keys = opts.law === 'hyp' ? ['isip', 'K', 'sigmaC', 'sc'] : ['isip', 'K', 'sigmaC', 'sc', 'fres'];
+        var bounds = { isip: [isip0 - 200, isip0 + 200], K: [base.K * 0.2, base.K * 5], sigmaC: [Math.min.apply(null, Pf), isip0], sc: [1, 2000], fres: [0.001, 0.9] };
+        function model(Garr, pp) { var q = {}; for (var k in base) q[k] = base[k]; for (k in pp) if (_fin(pp[k])) q[k] = pp[k]; if (q.law === 'hyp') q.sh = q.sc; return _vcIntegrate(Garr, q, 0.05); }
+        var lm = _fn('PRiSM_lm'), res = null, p0 = {};
+        keys.forEach(function (k) { p0[k] = base[k]; });
+        if (lm) {
+            try {
+                var free = {}; for (var kk in p0) free[kk] = false;
+                var r = lm(model, { t: Gf, p: Pf }, p0, bounds, free, { maxIter: 40 });
+                if (r && r.params) res = { params: r.params, ci95: r.ci95 || {}, rmse: r.rmse, corr: r.corr, converged: r.converged };
+            } catch (e) { res = null; }
+        }
+        if (!res) res = _lmLocal(model, { t: Gf, p: Pf }, p0, bounds, keys, 40);
+        var pp2 = res.params, ciS = res.ci95 && res.ci95.sigmaC;
+        var corrSS = null;
+        if (res.corr) {
+            if (_fin(res.corr.sigmaC_sc)) corrSS = res.corr.sigmaC_sc;
+            else if (res.corr.sigmaC && _fin(res.corr.sigmaC.sc)) corrSS = res.corr.sigmaC.sc;
+        }
+        var fit = model(Gf, pp2), resid = Pf.map(function (v, j) { return _r(v - fit[j], 3); });
+        // profile of σ_c on demand (opts.profile): σ_c held at 9 values across ±max(3 se, 50 psi), the others refitted
+        var profile = null;
+        if (opts.profile) {
+            profile = [];
+            var seS = (Array.isArray(ciS) && _fin(ciS[0]) && _fin(ciS[1])) ? (ciS[1] - ciS[0]) / 3.92 : 0, half = Math.max(3 * seS, 50);
+            var kp = keys.filter(function (k) { return k !== 'sigmaC'; });
+            for (var q = -4; q <= 4; q++) {
+                var sv = pp2.sigmaC + half * q / 4, b2 = {}; for (var bk in base) b2[bk] = base[bk];
+                b2.sigmaC = sv;
+                var p1 = {}; kp.forEach(function (k) { p1[k] = pp2[k]; });
+                var m2 = function (Garr, pp) { var qq = {}; for (var k in b2) qq[k] = b2[k]; for (k in pp) if (_fin(pp[k])) qq[k] = pp[k]; if (qq.law === 'hyp') qq.sh = qq.sc; return _vcIntegrate(Garr, qq, 0.05); };
+                var rr = _lmLocal(m2, { t: Gf, p: Pf }, p1, bounds, kp, 20);
+                profile.push({ sigmaC: _r(sv, 2), rmse: _r(rr.rmse, 4) });
+            }
+        }
+        return { ok: true, sigmaC: _r(pp2.sigmaC, 2), ci95: (Array.isArray(ciS) && _fin(ciS[0]) && _fin(ciS[1])) ? [_r(ciS[0], 2), _r(ciS[1], 2)] : null,
+                 sc: _r(pp2.sc, 3), fres: _r(_fin(pp2.fres) ? pp2.fres : base.fres, 4), K: _sf(pp2.K, 6), isip: _r(pp2.isip, 2), corrSigmaSc: _nn(corrSS),
+                 resid: resid, rmse: _r(res.rmse, 4), profile: profile, law: base.law, n: Gf.length };
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.8 bounds check: order, efficiency, pn plausibility, two-tier frictional limit
+    // ═════════════════════════════════════════════════════════════════════
+    function _fricLimit(pp, sv, mu) { var f = Math.pow(Math.sqrt(mu * mu + 1) + mu, 2); return pp + (sv - pp) / f; }
+    function _frictional(ctx) {
+        var I = ctx.inputs ? G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs : G.PRiSM_dfit_inputRanges.defaults();
+        var tvd = _fin(ctx.datumTvd) ? ctx.datumTvd : I.datumTvd;
+        if (!_fin(tvd)) return null;
+        var hyd = 0.052 * 8.33 * tvd;
+        var ppLo = (Array.isArray(ctx.piBracket) && _fin(ctx.piBracket[0])) ? ctx.piBracket[0] : (_fin(ctx.ppLo) ? ctx.ppLo : hyd);
+        var ppNom = _fin(ctx.pi) ? ctx.pi : (ctx.well && _fin(ctx.well.pi) ? ctx.well.pi : (_fin(I.priors.piGrad) ? I.priors.piGrad * tvd : hyd));
+        var veto = _fricLimit(ppLo, I.rock.sigmaVGradLo * tvd, I.rock.muFricVeto);
+        var warn = _fricLimit(ppNom, I.rock.sigmaVGrad * tvd, I.rock.muFricWarn);
+        return { veto: veto, warn: Math.max(warn, veto), ppLo: ppLo, ppNom: ppNom, tvd: tvd, I: I };
+    }
+    G.PRiSM_dfit_bounds = _safe(function (candidate, ctx) {
+        ctx = ctx || {};
+        var pc = _fin(candidate) ? candidate : (_isObj2(candidate) && _fin(candidate.p) ? candidate.p : null);
+        if (pc === null) return _fail('BAD_INPUT', 'A closure candidate pressure is needed.', ['candidate']);
+        var vetoes = [], warnings = [];
+        var pi = _fin(ctx.pi) ? ctx.pi : (ctx.well && _fin(ctx.well.pi) ? ctx.well.pi : null);
+        var isip = _fin(ctx.isip) ? ctx.isip : null;
+        if (pi !== null && !(pc > pi)) vetoes.push({ rule: 'order', text: _txt('The closure ' + _f0(pc) + ' psia is not above the reservoir pressure ' + _f0(pi) + ' psia.'), value: pc, limit: pi });
+        if (isip !== null && !(pc < isip)) vetoes.push({ rule: 'order', text: _txt('The closure ' + _f0(pc) + ' psia is not below the ISIP ' + _f0(isip) + ' psia.'), value: pc, limit: isip });
+        if (_fin(ctx.eta) && !(ctx.eta > 0 && ctx.eta < 1)) vetoes.push({ rule: 'eta', text: _txt('The efficiency ' + _f1(ctx.eta, 3) + ' lies outside (0, 1).'), value: ctx.eta, limit: 1 });
+        if (isip !== null && pi !== null && isip - pc > 0.5 * (isip - pi)) warnings.push({ rule: 'pn', text: _txt('Net pressure ' + _f0(isip - pc) + ' psi is more than half of ISIP minus p_i (' + _f0(isip - pi) + ' psi).'), value: isip - pc, limit: 0.5 * (isip - pi) });
+        var fr = _frictional(ctx), fric = { veto: null, warn: null };
+        if (fr) {
+            fric = { veto: _r(fr.veto, 1), warn: _r(fr.warn, 1) };
+            if (pc < fr.veto) vetoes.push({ rule: 'frictional', text: _txt('Below the conservative frictional limit ' + _f0(fr.veto) + ' psia (friction ' + _f1(fr.I.rock.muFricVeto, 2) + ', p_p ' + _f0(fr.ppLo) + ' psia, S_v ' + _f1(fr.I.rock.sigmaVGradLo, 2) + ' psi/ft).'), value: pc, limit: _r(fr.veto, 1) });
+            else if (pc < fr.warn) warnings.push({ rule: 'frictional', text: _txt('Between the frictional limits ' + _f0(fr.veto) + ' and ' + _f0(fr.warn) + ' psia (friction ' + _f1(fr.I.rock.muFricWarn, 2) + ', S_v ' + _f1(fr.I.rock.sigmaVGrad, 2) + ' psi/ft).'), value: pc, limit: _r(fr.warn, 1) });
+        }
+        return { admissible: vetoes.length === 0, vetoes: vetoes, warnings: warnings, frictional: fric };
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.9 / §4.10 frac outputs for one closure candidate (storage-consistent chain)
+    // ═════════════════════════════════════════════════════════════════════
+    function _isipVal(x) { return _fin(x) ? x : (_isObj2(x) && _fin(x.value) ? x.value : null); }
+    G.PRiSM_dfit_frac = _safe(function (pClosure, derivs, ctx) {
+        ctx = ctx || {};
+        if (!_fin(pClosure)) return _fail('BAD_INPUT', 'A closure pressure is needed.', ['pClosure']);
+        if (!_okRes(derivs) || !Array.isArray(derivs.G)) return _fail('BAD_INPUT', 'Derivatives are needed.', ['derivs']);
+        var d = derivs, ev = ctx.events || {}, I = G.PRiSM_dfit_inputRanges.clamp(ctx.inputs || {}).inputs, well = ctx.well || {};
+        var isip = _isipVal(ctx.isip); if (isip === null) isip = d.isip;
+        var pn = isip - pClosure, msgs = [];
+        var mG = _fin(ctx.mG) ? ctx.mG : d.mG;
+        // closure time on the data (or the early line when the data stop above it)
+        var dtc = _dtAtP(d, pClosure), reached = dtc !== null;
+        if (!reached && _fin(mG) && mG > 0) { dtc = _GinvD(d, pn / mG) * d.tp; msgs.push(_txt('Closure is not reached in the data; the closure time is extrapolated on the early G line.')); }
+        if (!_fin(dtc) || dtc <= 0) return _fail('NO_CLOSURE_TIME', 'The closure time could not be found.', ['pClosure']);
+        var tp = d.tp, tpMin = tp * 60, dtDc = dtc / tp, Gc = _GatD(d, dtDc);
+        var Gc5 = G_(dtDc, 0.5), Gc1 = G_(dtDc, 1);
+        var e5 = Gc5 / (Gc5 + 2), e1 = Gc1 / (Gc1 + 16 / (3 * PI));
+        var g0m = d.gSpec ? d.gSpec.g0 : g0_(d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : d.alpha));
+        var eM = Gc / (Gc + 4 * g0m / PI);
+        var VwCw = _fin(ctx.VwCw) ? ctx.VwCw : (_fin(ev.VwCwMeasured) ? ev.VwCwMeasured : (_fin(ev.VwCwUsed) ? ev.VwCwUsed : _vwcwTheory(I, well)));
+        if (!_fin(VwCw)) { VwCw = 0; msgs.push(_txt('No wellbore storage value (ramp or theory): V_w·c_w is taken as zero, so A_f·c_f is an upper bound.')); }
+        var pStart = _fin(ev.pStart) ? ev.pStart : (_fin(well.pi) ? well.pi : null);
+        var ViStar = _fin(ctx.ViStar) ? ctx.ViStar : ((_fin(ev.Vi) && pStart !== null) ? ev.Vi - VwCw * (pClosure - pStart) - (ev.Vfill || 0) : null);
+        var Csys = (ViStar !== null && pn > 0) ? eM * ViStar / pn : null;          // bbl/psi
+        // PDL (a hump before the post-hump early window, §4.11): the leak-off coefficient during pumping is the one at the pumping
+        // pressure, m = the PDL multiplier at the ISIP times the post-hump one. V* = C_sys·p_n (leak-off after shut-in, exact) +
+        // X·(4g0/π)·m (during pumping), X = C_sys·m_G, so C_sys = V*/(p_n + (4g0/π)·m_G·m). The constant-CL η = G_c/(G_c + 4g0/π)
+        // assumes m = 1 and overstated A_f·c_f by 36 % on the mini-model PDL case. m: the classifier's multiplier at the ISIP
+        // (only when the classifier calls the test PDL and gives its multiplier: a gas-filled wellbore also has a falling early
+        // dP/dG, from its pressure-dependent storage)
+        var mPdl = (ctx.classification && ctx.classification.type === 'pdl' && ctx.classification.pdl && _fin(ctx.classification.pdl.multAtIsip)) ? ctx.classification.pdl.multAtIsip : null;
+        if (_fin(mPdl) && mPdl > 1.05 && ViStar !== null && pn > 0 && _fin(mG) && mG > 0) {
+            Csys = ViStar / (pn + (4 * g0m / PI) * mG * mPdl);
+            eM = Csys * pn / ViStar;
+        }
+        var AfCf = Csys !== null ? Csys - VwCw : null, Rvis = (Csys > 0 && AfCf !== null) ? AfCf / Csys : null;
+        if (AfCf !== null && AfCf <= 0) msgs.push(_txt('The system compliance is below the wellbore storage: the fracture compliance is not positive (check V_w·c_w and the closure).'));
+        var X = (Csys !== null && _fin(mG)) ? Csys * mG : null;                    // bbl per unit G
+        var chi = (_fin(mG) && mG > 0 && Gc > 0) ? pn / (mG * Gc) : null;
+        var tvd = I.datumTvd, Gamma = _fin(mG) ? 2 * mG / (PI * Math.sqrt(tpMin)) : null;
+        // geometry from A_f·c_f (ft³/psi)
+        var Ep = I.rock.Ep, hf = I.rock.hf, hp = _fin(I.rock.hp) ? I.rock.hp : hf, bar = _fin(I.rock.barrierSpacing) ? I.rock.barrierSpacing : hf;
+        var AfCfFt = (AfCf !== null && AfCf > 0) ? AfCf * BBL : null, VfB = (AfCf !== null && AfCf > 0) ? AfCf * pn : null;
+        var VLpump = (ViStar !== null) ? ViStar * (1 - eM) : null, etaF = (VfB !== null && VLpump !== null) ? VfB / (VfB + VLpump) : null;
+        function geo(model) {
+            var o = { cf: null, Af: null, rp: null, CL: null, wAvg: null, wMax: null, Vf: _r(VfB, 3), VLpump: _r(VLpump, 3) };
+            if (model === 'radial') o.R = null; else o.xf = null;
+            if (!(AfCfFt > 0) || !_fin(Ep)) return o;
+            var Af, rp, wf, xs;
+            if (model === 'PKN') { if (!_fin(hf)) return o; xs = AfCfFt * Ep / (PI * hf * hf); Af = 2 * xs * hf; rp = Math.min(1, hp / hf); wf = 4 / PI; o.xf = _r(xs, 2); }
+            else if (model === 'KGD') { if (!_fin(hf)) return o; xs = Math.sqrt(AfCfFt * Ep / (2 * PI * hf)); Af = 2 * xs * hf; rp = Math.min(1, hp / hf); wf = 4 / PI; o.xf = _r(xs, 2); }
+            else { xs = Math.pow(3 * Ep * AfCfFt / 16, 1 / 3); Af = PI * xs * xs; var u = _fin(hp) ? Math.min(1, hp / (2 * xs)) : 1; rp = 2 / PI * (u * Math.sqrt(1 - u * u) + Math.asin(u)); wf = 1.5; o.R = _r(xs, 2); }
+            o.cf = _sf(AfCfFt / Af, 5); o.Af = _r(Af, 1); o.rp = _r(rp, 4);
+            o.CL = (X !== null && rp > 0) ? _sf(2 * X * BBL / (PI * rp * Af * Math.sqrt(tpMin)), 5) : null;
+            var w = VfB * BBL / Af * 12; o.wAvg = _r(w, 4); o.wMax = _r(w * wf, 4);
+            o._size = xs;
+            return o;
+        }
+        var byModel = { PKN: geo('PKN'), KGD: geo('KGD'), radial: geo('radial') };
+        var model = 'PKN', consistent = true, auto = true;
+        if (byModel.radial._size && _fin(bar) && 2 * byModel.radial._size <= bar) model = 'radial';
+        else {
+            if (byModel.radial._size && _fin(bar)) msgs.push(_txt('Radial: 2R = ' + _f1(2 * byModel.radial._size, 1) + ' ft exceeds the ' + _f1(bar, 0) + ' ft barrier spacing; the radial geometry is not consistent.'));
+            if (byModel.PKN._size && _fin(hf) && byModel.PKN._size >= 1.5 * hf) model = 'PKN';
+            else if (byModel.KGD._size) { model = 'KGD'; if (byModel.PKN._size) msgs.push(_txt('PKN xf ' + _f1(byModel.PKN._size, 1) + ' ft is below 1.5 h_f: KGD is used (PKN and KGD bound the length).')); }
+        }
+        if (_fin(ctx.geometry) || ctx.geometry === 'PKN' || ctx.geometry === 'KGD' || ctx.geometry === 'radial') { model = ctx.geometry; auto = false; }
+        if (model === 'radial' && byModel.radial._size && _fin(bar) && 2 * byModel.radial._size > bar) consistent = false;
+        if (model === 'PKN' && byModel.PKN._size && _fin(hf) && byModel.PKN._size < 1.5 * hf) consistent = false;
+        if (!_fin(Ep) || !_fin(hf)) { msgs.push(_txt('E′ and the fracture height are needed for the geometry, CL and the leak-off coefficient.')); consistent = false; }
+        ['PKN', 'KGD', 'radial'].forEach(function (k) { delete byModel[k]._size; });
+        var ch = byModel[model] || byModel.PKN;
+        // k from CL (§4.10 convention: Δp_CL = ½(ISIP + σ_c) − p_r)
+        var kb = G.PRiSM_dfit_kBeforeClosure({ isip: isip, pClosure: pClosure, CL: ch.CL }, d, { well: well, pr: ctx.pr });
+        var gradI = _fin(tvd) ? isip / tvd : null, gradC = _fin(tvd) ? pClosure / tvd : null;
+        // stress-log calibration offset Δσ_tect = σ_c − [ν/(1 − ν)·(S_v − α·p_p) + α·p_p]
+        var pp = _fin(ctx.pr) ? ctx.pr : (_fin(well.pi) ? well.pi : (_fin(I.priors.piGrad) && _fin(tvd) ? I.priors.piGrad * tvd : null));
+        var stressCal = null;
+        if (_fin(tvd) && pp !== null) {
+            var nu = I.rock.nu, al = I.rock.biot, Sv = I.rock.sigmaVGrad * tvd, sm = nu / (1 - nu) * (Sv - al * pp) + al * pp;
+            stressCal = { dSigmaTect: _r(pClosure - sm, 1), sigmaModel: _r(sm, 1), biot: al };
+        }
+        var pair = G.PRiSM_dfit_etaPair(dtDc);
+        var eta = { a05: _r(e5, 5), a1: _r(e1, 5), matched: _r(eM, 5), alphaUsed: d.alpha, etaF: _r(etaF, 5), showPair: pair ? pair.showPair : false };
+        var pdlMult = (ctx.classification && ctx.classification.pdl && _fin(ctx.classification.pdl.multAtIsip)) ? ctx.classification.pdl.multAtIsip : null;
+        var ff = G.PRiSM_dfit_farField(d, ev, ctx);
+        return {
+            pClosure: _r(pClosure, 2), family: ctx.family || null, method: ctx.method || null, Gc: _r(Gc, 4), dtc: _r(dtc, 6), dtDc: _r(dtDc, 4), ViStar: _r(ViStar, 4),
+            eta: eta, Csys: _sf(Csys, 5), VwCw: _sf(VwCw, 5), AfCf: _sf(AfCf, 5), Rvis: _r(Rvis, 4), pn: _r(pn, 2), chi: _r(chi, 4),
+            gradIsip: _r(gradI, 5), gradClosure: _r(gradC, 5), Gamma: _r(Gamma, 4), GammaPKN: (_fin(Gamma) && Rvis > 0) ? _r(PI / 2 * Gamma / Rvis, 4) : null, mG: _r(mG, 4),
+            geometry: { model: model, auto: auto, consistent: consistent, msgs: msgs, byModel: byModel },
+            spurt: { value: null, note: 'Spurt is not separable from a falloff alone; the efficiency is an upper bound.' },
+            kBefore: { kCL: _okRes(kb) ? kb.kCL : null, kH: _okRes(kb) ? kb.kH : null }, pdlMult: _nn(pdlMult), farField: _okRes(ff) ? ff : null,
+            padFraction: { lo: _r(Math.pow(1 - eM, 2), 5), hi: _r((1 - eM) / (1 + eM), 5) }, stressCal: stressCal, ev: ['F1'],
+            reached: reached, X: _sf(X, 6)
+        };
+    });
+    G.PRiSM_dfit_whatIf = _safe(function (candidates, derivs, ctx) {
+        if (!Array.isArray(candidates)) return _fail('BAD_INPUT', 'A list of candidates is needed.', ['candidates']);
+        var out = [];
+        candidates.forEach(function (c, i) {
+            if (!_isObj2(c) || !_fin(c.p)) return;
+            var o = {}; for (var k in (ctx || {})) o[k] = ctx[k];
+            o.family = c.family || null; o.method = c.method || null;
+            var f = G.PRiSM_dfit_frac(c.p, derivs, o);
+            if (_okRes(f)) { f.label = _txt(c.label || ('Candidate ' + (i + 1))); out.push(f); }
+        });
+        return out;
+    });
+    G.PRiSM_dfit_kBeforeClosure = _safe(function (frac, derivs, ctx) {
+        ctx = ctx || {};
+        var well = ctx.well || {}, isip = _fin(frac && frac.isip) ? frac.isip : (derivs && derivs.isip), pc = frac && (_fin(frac.pClosure) ? frac.pClosure : null);
+        var CL = frac && (_fin(frac.CL) ? frac.CL : (frac.geometry && frac.geometry.byModel && frac.geometry.byModel[frac.geometry.model] ? frac.geometry.byModel[frac.geometry.model].CL : null));
+        var pr = _fin(ctx.pr) ? ctx.pr : (_fin(well.pi) ? well.pi : null);
+        var kCL = null;
+        if (_fin(CL) && CL > 0 && _fin(isip) && _fin(pc) && pr !== null && _fin(well.mu) && _fin(well.phi) && _fin(well.ct)) {
+            var dpCL = 0.5 * (isip + pc) - pr;
+            if (dpCL > 0) {
+                var k = 1000 * Math.pow(CL / (0.0374 * dpCL), 2) * well.mu / (well.phi * well.ct);
+                kCL = { k: _sf(k, 5), dpCL: _r(dpCL, 2), factor: 2, kCorr: _sf(k / 2, 5) };
+            }
+        }
+        return { kCL: kCL, kH: null, note: 'k from CL is read high against the after-closure k (÷ 2 shown); the h-function estimate is deferred (gate G6).' };
+    });
+    // far-field extension pressure (informational, gate G6): deferred with the h-function → null
+    G.PRiSM_dfit_farField = function () { return null; };
+    G.PRiSM_dfit_forecastClosure = _safe(function (derivs, ctx, sigmas) {
+        if (!_okRes(derivs) || !_fin(derivs.mG) || derivs.mG <= 0) return _fail('BAD_INPUT', 'Derivatives with an early slope are needed.', ['derivs']);
+        ctx = ctx || {};
+        var isip = _isipVal(ctx.isip); if (isip === null) isip = derivs.isip;
+        var list = Array.isArray(sigmas) ? sigmas : [];
+        if (!list.length && ctx.inputs) {
+            var I = G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs;
+            if (_fin(I.priors.sigmaGrad) && _fin(I.datumTvd)) { var s0 = I.priors.sigmaGrad * I.datumTvd, ds = I.priors.sigmaGradSd * I.datumTvd; list = [s0 + ds, s0, s0 - ds]; }
+        }
+        var out = [];
+        list.forEach(function (sg) {
+            if (!_fin(sg) || sg >= isip) return;
+            var Gcf = (isip - sg) / derivs.mG, dtD = _GinvD(derivs, Gcf);
+            if (_fin(dtD)) out.push({ sigma: _r(sg, 1), Gc: _r(Gcf, 4), dtc: _r(dtD * derivs.tp, 4) });
+        });
+        return out;
+    });
+    // §4.10 leak-off rate from the data: q_L = C_sys·|dP/dG|·dG/dt (bbl/min), V_L = V_L(t_s) + X·G, V_f = A_f·c_f·(p − σ_c)
+    G.PRiSM_dfit_leakoffRate = _safe(function (derivs, frac) {
+        if (!_okRes(derivs) || !_okRes(frac) || !_fin(frac.Csys)) return _fail('BAD_INPUT', 'Derivatives and frac outputs (with C_sys) are needed.', ['frac']);
+        var d = derivs, tp = d.tp, X = frac.Csys * (_fin(frac.mG) ? frac.mG : d.mG), dtc = frac.dtc, out = { dt: [0], qL: [], VL: [], Vf: [], qLData: [null], pdl: _fin(frac.pdlMult) };
+        var VL0 = frac.ViStar !== null && frac.eta ? frac.ViStar * (1 - frac.eta.matched) : 0;
+        function dGdt(dtD) { return (d.gSpec ? _sGpD(d.gSpec, dtD) : Gp_(dtD, d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : d.alpha))) / (tp * 60); }   // per minute
+        out.qL.push(_sf(X * dGdt(0), 6)); out.VL.push(_r(VL0, 4)); out.Vf.push(_r(frac.AfCf * frac.pn, 4));
+        for (var i = 0; i < d.dt.length && d.dt[i] <= dtc * (1 + 1e-9); i++) {
+            out.dt.push(d.dt[i]);
+            // normal leak-off: q_L = X·dG/dt; with PDL (frac.pdlMult set) the data slope: q_L = C_sys·|dP/dG|·dG/dt
+            var qd = (d.dPdG[i] !== null && _fin(d.dPdG[i])) ? frac.Csys * d.dPdG[i] * dGdt(d.dtD[i]) : null;
+            out.qLData.push(_sf(qd, 6));
+            out.qL.push(_sf(out.pdl && qd !== null ? qd : X * dGdt(d.dtD[i]), 6));
+            out.VL.push(_r(VL0 + X * d.G[i], 4));
+            out.Vf.push(_r(Math.max(0, frac.AfCf * (d.p[i] - frac.pClosure)), 4));
+        }
+        out.dt.push(dtc); out.qL.push(_sf(X * dGdt(dtc / tp), 6)); out.qLData.push(null); out.VL.push(_r(VL0 + X * frac.Gc, 4)); out.Vf.push(0);
+        out.ok = true;
+        return out;
+    });
+    // §6.12 overlay curve: G·dP/dG normalised by m_G·G against G/G_c, ≤ 60 points log-spaced (DfitTest.summary.gdpdgN)
+    G.PRiSM_dfit_gdpdgN = _safe(function (derivs, frac, maxN) {
+        if (!_okRes(derivs) || !_fin(derivs.mG) || derivs.mG <= 0) return _fail('BAD_INPUT', 'Derivatives with an early slope are needed.', ['derivs']);
+        var Gc = _okRes(frac) && _fin(frac.Gc) ? frac.Gc : null, m = _fin(maxN) ? Math.min(60, Math.max(2, maxN)) : 60, d = derivs, xs = [], ys = [], i;
+        for (i = 0; i < d.G.length; i++) if (d.usable[i] && d.GdPdG[i] !== null && d.G[i] > 0) { xs.push(Gc ? d.G[i] / Gc : d.G[i]); ys.push(d.GdPdG[i] / (d.mG * d.G[i])); }
+        if (!xs.length) return { x: [], y: [] };
+        var lo = Math.log(xs[0]), hi = Math.log(xs[xs.length - 1]), out = { x: [], y: [] }, k = 0;
+        for (var j = 0; j < m; j++) {
+            var target = m === 1 ? lo : lo + (hi - lo) * j / (m - 1);
+            while (k + 1 < xs.length && Math.log(xs[k + 1]) <= target) k++;
+            if (out.x.length && out.x[out.x.length - 1] === _r(xs[k], 5)) continue;
+            out.x.push(_r(xs[k], 5)); out.y.push(_r(ys[k], 5));
+        }
+        return out;
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.11 leak-off-type classifier
+    // ═════════════════════════════════════════════════════════════════════
+    function _logit(x) { return 1 / (1 + Math.exp(-x)); }
+    // logistic margin σ((value − threshold)/(0.2·|threshold| + δ)), oriented: dir +1 'above', −1 'below'
+    function _mg(value, thr, dir, delta) { if (!_fin(value)) return 0.5; return _logit(dir * (value - thr) / (0.2 * Math.abs(thr) + (delta || 0.02))); }
+    // robust relative change of dP/dG across [iA, iC]: the start is the median over the first 10 % of the window in G
+    // (at least 3 points), the end the median of the last 3 points (log-spaced data put most indices at early G)
+    function _relChange(v, iA, iC) {
+        if (iC - iA < 3) return 0;
+        var gA = v.G[iA], gC = v.G[iC], a = [], b = [], i;
+        for (i = iA; i <= iC && (v.G[i] <= gA + 0.1 * (gC - gA) || a.length < 3); i++) a.push(v.s[i]);
+        for (i = Math.max(iA, iC - 2); i <= iC; i++) b.push(v.s[i]);
+        var s0 = _median(a), s1 = _median(b);
+        return (s0 > 0 && _fin(s1)) ? (s1 - s0) / s0 : 0;
+    }
+    function _kappaExp(d, ctx, gA, gC, isip, sigC, pr) {
+        // a coarse w_c = 1 leak-off model run (58 at call time) read over the same window; else the quasi-static form
+        var run = ctx.curvExpRun;
+        if (!run) {
+            var sim = _fn('PRiSM_dfit_lkSimulate'), defs = _fn('PRiSM_dfit_lkDefaults');
+            if (sim && !sim._dfitStub && defs && !defs._dfitStub) {
+                try {
+                    var cfg = defs();
+                    // integration: 58's 'prescribed' mode needs {Ap, cf, alpha, rp, tp} (Nolte's constant-area assumptions), taken
+                    // from the frac candidate's geometry; the leak-off is fully reservoir-controlled (CL with w_c = 1). Without a
+                    // geometry or p_r there is no model run (quasi-static form below).
+                    var fr = ctx.frac, gmK = fr && fr.geometry && fr.geometry.byModel ? fr.geometry.byModel[fr.geometry.model || 'PKN'] || fr.geometry.byModel.PKN : null;
+                    if (_okRes(cfg) && _isObj2(gmK) && _fin(gmK.Af) && gmK.Af > 0 && _fin(gmK.cf) && gmK.cf > 0 && _fin(gmK.CL) && gmK.CL > 0 && _fin(pr) && _fin(sigC) && sigC > pr) {
+                        cfg.sigmaC = sigC; cfg.pr = pr; cfg.wc = 1; cfg.CL = gmK.CL; cfg.mode = 'prescribed';
+                        cfg.prescribed = { Ap: gmK.Af, cf: gmK.cf, alpha: d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : (_fin(d.alpha) ? d.alpha : 0.5)), rp: _fin(gmK.rp) ? gmK.rp : undefined, tp: d.tp };
+                        if (_fin(isip) && isip > sigC) cfg.dpRef = isip - pr;
+                        if (ctx.events && Array.isArray(ctx.events.schedule) && ctx.events.schedule.length) cfg.schedule = ctx.events.schedule.map(function (s) { return { t: s.t - ctx.events.schedule[0].t, q: s.q }; });
+                        var r = sim(cfg, { grid: 'coarse' });
+                        if (_okRes(r)) run = r;
+                    }
+                } catch (e) { run = null; }
+            }
+        }
+        if (_okRes(run) && Array.isArray(run.pw) && Array.isArray(run.Ggen) && run.events) {
+            var Gm = [], Pm = [];
+            for (var i = 0; i < run.t.length; i++) if (run.t[i] > run.events.ts && _fin(run.Ggen[i]) && _fin(run.pw[i])) { Gm.push(run.Ggen[i]); Pm.push(run.pw[i]); }
+            if (Gm.length >= 4) {
+                var sl = function (g) {     // |dp/dG| of the model at G (central difference on the model grid)
+                    var j = 1; while (j < Gm.length - 1 && Gm[j] < g) j++;
+                    return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
+                };
+                // the end of the window is the model's own closure when the model closes before the data's G_c: the expected
+                // change is the change up to σ_c (dP/dG ∝ p − p_r there), and past the model closure the slope is the
+                // after-closure one (it read +345 % on a matrix case whose model run closed at G 17.9 against the data's 19.3)
+                var gcm = run.events.Gc ? (_fin(run.events.Gc.gen) ? run.events.Gc.gen : run.events.Gc.a05) : null;
+                var gE = (_fin(gcm) && gcm > 0 && gcm < gC) ? 0.97 * gcm : gC;
+                // the end slope on the last model interval that ends at or before the window end (an interval that straddles
+                // the model closure mixes in the after-closure slope)
+                var slEnd = function (g) {
+                    var j = 1; while (j + 1 < Gm.length && Gm[j + 1] <= g) j++;
+                    return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
+                };
+                var sA = sl(Math.max(gA, Gm[1])), sC = slEnd(gE);
+                if (sA > 0) return { k: (sC - sA) / sA, source: 'model' };
+            }
+        }
+        if (_fin(isip) && _fin(sigC) && _fin(pr) && isip > pr) return { k: (sigC - pr) / (isip - pr) - 1, source: 'quasi-static' };
+        return { k: 0, source: 'none' };
+    }
+    G.PRiSM_dfit_classify = _safe(function (derivs, ctx) {
+        ctx = ctx || {};
+        if (!_okRes(derivs) || !Array.isArray(derivs.G)) return _fail('BAD_INPUT', 'Derivatives are needed for the classifier.', ['derivs']);
+        var d = derivs, cf = ctx.closed || _closedForm(d, { eps: ctx.eps }), v = cf.view, n = v.G.length, evid = [];
+        if (n < 6) return _fail('SHORT', 'Too few usable derivative samples to classify the leak-off.', ['derivs']);
+        var P = cf.picks, hump = cf.hump;
+        // the closure G read to: ctx.Gc, else the frac candidate's G_c, else the consensus closure (value, or the F1 median of
+        // a range), else the tangent pick. The closed-form picks land early on gradual-decline signatures (matrix, tip
+        // extension), so the pipeline (57) passes frac or the consensus; the tangent is only the last resort.
+        var cons = _isObj2(ctx.consensus) && ctx.consensus.ok !== false ? ctx.consensus : null;
+        var pCons = null;       // a Consensus or a ConsensusLite: the value, else the F1 (upper) median of a range
+        if (cons) {
+            if (_fin(cons.value)) pCons = cons.value;
+            else if (cons.range && cons.range.medians && _fin(cons.range.medians.high)) pCons = cons.range.medians.high;
+            else if (cons.families && cons.families.F1 && _fin(cons.families.F1.p50)) pCons = cons.families.F1.p50;
+            else if (cons.range && _fin(cons.range.hi)) pCons = cons.range.hi;
+        }
+        var dtCons = pCons !== null ? _dtAtP(d, pCons) : null, gCons = _fin(dtCons) ? _GatD(d, dtCons / d.tp) : null;
+        var gC = _fin(ctx.Gc) ? ctx.Gc : (ctx.frac && _fin(ctx.frac.Gc) ? ctx.frac.Gc : (_fin(gCons) ? gCons : (P.tangent ? P.tangent.G : v.G[n - 1])));
+        var gcSource = _fin(ctx.Gc) ? 'ctx' : (ctx.frac && _fin(ctx.frac.Gc) ? 'frac' : (_fin(gCons) ? 'consensus' : (P.tangent ? 'tangent' : 'end')));
+        // §4.11: W ends at the tangent (end of stiffening) G. When the tangent pick lies after the closure candidate (a
+        // concave-up closure range: the F1 onset first, the F2 end later), W runs to it, so the stiffening between the two
+        // is part of κ; on a single closure the two coincide.
+        if (!_fin(ctx.Gc) && P.tangent && _fin(P.tangent.G) && !cf.noDeparture && P.tangent.G > gC * Math.exp(0.02) && (gcSource === 'frac' || gcSource === 'consensus')) { gC = P.tangent.G; gcSource = 'tangent'; }
+        var iA = 0, iC = n - 1; while (iC > 0 && v.G[iC] > gC) iC--;
+        var iota = _iota(v, iA, iC), curv = _relChange(v, hump ? hump.iEnd : iA, iC);
+        var frac = ctx.frac || null, isip = _isipVal(ctx.isip); if (isip === null) isip = d.isip;
+        var sigC = frac && _fin(frac.pClosure) ? frac.pClosure : (pCons !== null ? pCons : (P.tangent ? P.tangent.p : v.p[iC]));
+        var pr = _fin(ctx.pr) ? ctx.pr : (ctx.well && _fin(ctx.well.pi) ? ctx.well.pi : null);
+        var ke = _kappaExp(d, ctx, v.G[iA], gC, isip, sigC, pr), kwb = 0;
+        if (typeof ctx.VwCwOfP === 'function' && frac && _fin(frac.AfCf)) {
+            var cA = frac.AfCf + ctx.VwCwOfP(v.p[iA]), cC = frac.AfCf + ctx.VwCwOfP(v.p[iC]);
+            if (cA > 0 && cC > 0) kwb = cA / cC - 1;
+        }
+        var curvExp = ke.k + kwb;
+        var ratios = []; for (var i = iA; i <= iC; i++) if (_fin(v.D[i]) && _fin(v.Dref[i]) && v.Dref[i] > 0) ratios.push(v.D[i] / v.Dref[i]);
+        var DoverDref = _median(ratios); if (!_fin(DoverDref)) DoverDref = 1;
+        var late = ratios.slice(Math.floor(ratios.length * 0.85)), DlateRatio = late.length ? Math.max.apply(null, late) : DoverDref;
+        var H = hump ? hump.H : 0, returns = hump ? hump.returns : false;
+        // no-return excess: G·dP/dG above the late line from the start (tip extension) — H measured against the end slope
+        var sEnd = _median(v.s.slice(Math.max(iA, iC - 3), iC + 1)), Hnr = 0;
+        if (sEnd > 0) for (i = iA; i <= iC; i++) Hnr = Math.max(Hnr, (v.y[i] - sEnd * v.G[i]) / (sEnd * v.G[i]));
+        var Rvis = frac && _fin(frac.Rvis) ? frac.Rvis : (_fin(ctx.Rvis) ? ctx.Rvis : null);
+        var VwT = _fin(ctx.VwCwTheory) ? ctx.VwCwTheory : null, VwM = _fin(ctx.VwCwMeasured) ? ctx.VwCwMeasured : null;
+        var VwR = (VwT > 0 && VwM > 0) ? VwM / VwT : null;
+        // no closure (R_vis not computable): an upper bound from the early slope. Closure is not reached by G_end, so
+        // V* = X·(G_c + 4g0/π) ≥ X·(G_end + 4g0/π), X = C_sys·m_G, hence C_sys ≤ V*/(m_G·(G_end + 4g0/π)) and
+        // R_vis ≤ 1 − V_w·c_w/C_sys,max. When storage explains ≥ 70 % of that C_sys (R_vis,max ≤ 0.3) the test is storage;
+        // without either number the type is never reported as 'normal' (q-storage-gas, R_vis 0.009, was normal 0.74)
+        var RvisMax = null, ev0 = ctx.events || {};
+        if (Rvis === null) {
+            var VwU = VwM > 0 ? VwM : (_fin(ev0.VwCwUsed) && ev0.VwCwUsed > 0 ? ev0.VwCwUsed : (VwT > 0 ? VwT : null));
+            var Vi0 = _fin(ev0.Vi) ? ev0.Vi - (_fin(ev0.Vfill) ? ev0.Vfill : 0) : null, gEnd0 = v.G[n - 1];
+            var g0c = d.gSpec ? d.gSpec.g0 : g0_(d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : d.alpha));
+            if (VwU && Vi0 > 0 && _fin(d.mG) && d.mG > 0 && gEnd0 > 0) {
+                var CsMax = Vi0 / (d.mG * (gEnd0 + 4 * g0c / PI));
+                if (CsMax > 0) RvisMax = Math.max(0, 1 - VwU / CsMax);
+            }
+        }
+        // unit log-log slope past ΔtD ≈ 1 (a constant-rate sink, not storage)
+        var unit = [], dtSpan = [];
+        for (i = 0; i < d.G.length; i++) if (d.usable[i] && d.dtD[i] >= 1 && d.G[i] <= gC && _fin(d.D[i]) && d.dpIsip[i] > 0) { unit.push(d.D[i] / d.dpIsip[i]); dtSpan.push(d.dt[i]); }
+        var unitSlope = unit.length >= 4 && _median(unit) >= 0.9 && Math.log(dtSpan[dtSpan.length - 1] / dtSpan[0]) / LN10 >= 0.3;
+        // bleed-off / hammer explanation of an early hump (tested first)
+        var bleedExpl = true;
+        if (hump) {
+            bleedExpl = false;
+            if (ctx.bleed && typeof ctx.bleed.curve === 'function') {
+                var dtEnd = v.dt[hump.iEnd], b = ctx.bleed.curve(dtEnd);
+                if (_fin(b) && b >= Math.max(1, 3 * d.sigma)) bleedExpl = true;
+            }
+            if (ctx.hammer && _fin(ctx.hammer.tEnd)) { var te = ctx.hammer.tEnd > d.ts ? ctx.hammer.tEnd - d.ts : ctx.hammer.tEnd; if (v.dt[hump.iEnd] <= te) bleedExpl = true; }
+        }
+        // scores: mean logistic margin over each class's conditions
+        function mean(a) { var s = 0; a.forEach(function (x) { s += x; }); return a.length ? s / a.length : 0; }
+        var hasHump = !!hump && !bleedExpl;
+        var sc = {
+            normal: mean([_mg(Math.abs(iota), 0.05, -1), _mg(Math.abs(curv), 0.05, -1), _mg(hasHump ? H : 0, 0.05, -1), _mg(Math.abs(DoverDref - 1), 0.1, -1)]),
+            matrix: mean([_mg(Math.abs(iota), 0.05, -1), _mg(Math.abs(curv - ke.k), 0.05, -1), _mg(hasHump ? H : 0, 0.05, -1), _mg(-ke.k, 0.05, 1)]),
+            pdl: mean([_mg(hasHump ? iota : -1, 0.0, 1, 0.05), _mg(hasHump ? H : 0, 0.05, 1), hasHump && returns ? 0.9 : 0.1]),
+            tip: mean([_mg(iota, 0.1, 1), _mg(curv, curvExp - 0.1, -1), (!returns && Hnr > 0.05) ? 0.9 : 0.1]),
+            hrContact: mean([_mg(curv, 0.1, 1), _mg(curv, 0.1, 1), Math.max(_mg(iota, -0.05, -1), _mg(DlateRatio, 1.05, 1, 0.05))]),
+            storage: Rvis === null ? (RvisMax !== null && RvisMax <= 0.3 && cons && cons.mode === 'none' ? 0.9 : 0.1) : mean([(Rvis < 0.3 || (Rvis < 0.5 && VwR !== null && VwR > 2)) ? 0.95 : _mg(Rvis, 0.3, -1, 0.05), _mg(Math.abs(iota), 0.05, -1)])
+        };
+        if (!hasHump) sc.pdl = Math.min(sc.pdl, 0.2);
+        if (Rvis !== null && Rvis > 0.7) sc.storage = Math.min(sc.storage, 0.2);
+        if (Math.abs(ke.k) < 0.05) sc.matrix = Math.min(sc.matrix, sc.normal - 0.16);
+        Object.keys(sc).forEach(function (k) { sc[k] = _r(Math.max(0, sc[k]), 4); });
+        var names = { normal: 'normal', matrix: 'matrix', pdl: 'pdl', tip: 'tip', hrContact: 'hr-contact', storage: 'storage' };
+        var order = Object.keys(sc).sort(function (a, b) { return sc[b] - sc[a]; });
+        var top = order[0];
+        if (sc.storage >= 0.5 && Rvis !== null && Rvis <= 0.7) top = 'storage';
+        if (Rvis === null && RvisMax !== null && RvisMax <= 0.3 && cons && cons.mode === 'none') top = 'storage';
+        var type = sc[top] >= 0.5 ? names[top] : 'undetermined';
+        // no closure visibility (R_vis not computable) and the bound does not show storage: never 'normal' — the test may still
+        // be storage-dominated, which is exactly when closure is not seen
+        var consNone = !!(cons && cons.mode === 'none') && !frac && !_fin(ctx.Gc);
+        if (consNone && Rvis === null && type === 'normal') type = 'undetermined';
+        var alt = order.filter(function (k) { return k !== top && sc[k] >= 0.5 && sc[top] - sc[k] <= 0.15; }).map(function (k) { return names[k]; });
+        // PDL block
+        var pdl = null;
+        if (hasHump) {
+            var pfo = v.p[hump.iEnd], sB = hump.s, xs = [], ys = [];
+            for (i = 0; i <= hump.iEnd; i++) if (v.s[i] > sB) { xs.push(v.p[i] - pfo); ys.push(Math.log(v.s[i] / sB)); }
+            var lfp = xs.length >= 3 ? _linfit(xs, ys, 0, xs.length - 1, false) : null, Cd = lfp && lfp.b > 0 ? lfp.b : 0;
+            pdl = { pfo: _r(pfo, 2), Cd: _sf(Cd, 4), multAtIsip: _r(Math.exp(Cd * (isip - pfo)), 3), sigmaHminusH: _r((1 - 2 * (ctx.inputs ? G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs.rock.nu : 0.25)) * (pfo - sigC), 1) };
+            evid.push('A PDL hump spans G ' + _f1(v.G[0], 2) + ' to ' + _f1(v.G[hump.iEnd], 2) + ' (excess ' + _f1(H * 100, 0) + ' %); fissure opening about ' + _f0(pfo) + ' psia, C_d ' + _f1(Cd, 4) + ' 1/psi.');
+        }
+        var hr = null;
+        if (type === 'hr-contact') {
+            var Rs = curv + 1, hfI = ctx.inputs ? G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs.rock.hf : null;
+            hr = { Rs: _r(Rs, 4), hf0FromPKN: _r(_fin(hfI) ? hfI * Math.sqrt(Math.max(Rs, 0)) : Math.sqrt(Math.max(Rs, 0)), 3), hf0FromKGD: _r(_fin(hfI) ? hfI * Math.max(Rs, 0) : Math.max(Rs, 0), 3) };
+        }
+        evid.unshift('dP/dG changes ' + _f1(curv * 100, 0) + ' % to closure; ' + _f1(curvExp * 100, 0) + ' % is expected (' + (ke.source === 'model' ? 'leak-off model run' : (ke.source === 'quasi-static' ? 'quasi-static estimate' : 'no estimate')) + (_fin(pr) ? ' at p_r = ' + _f0(pr) + ' psia' : '') + '); iota ' + _f1(iota, 3) + '; classified ' + type + '.');
+        if (unitSlope) evid.push('The log-log slope stays near 1 past ΔtD 1: a near-constant-rate sink (leak?), not storage.');
+        if (Rvis !== null) evid.push('Storage-consistent closure visibility R_vis ' + _f1(Rvis, 3) + (VwR !== null ? '; measured to theory V_w·c_w ' + _f1(VwR, 2) : '') + '.');
+        if (type === 'tip') evid.push('Alternatives to tip extension: wrong shut-in time or tp, matrix PDL with a large pn, a slow valve, thermal effects, gas in the wellbore.');
+        if (hump && bleedExpl) evid.push('The early hump is explained by friction bleed-off or the water hammer (G_min moved), not by PDL.');
+        return {
+            ok: true, type: type, scores: sc, alt: alt,
+            features: { iota: _r(iota, 4), curv: _r(curv, 4), curvExp: _r(curvExp, 4), curvWb: _r(kwb, 4), H: _r(hasHump ? H : 0, 4), DoverDref: _r(DoverDref, 4), Rvis: _r(Rvis, 4), RvisMax: _r(RvisMax, 4), VwCwRatio: _r(VwR, 4),
+                        unitSlopeSink: unitSlope, bleedOffExplained: bleedExpl },
+            pdl: pdl, hr: hr, evidence: evid.map(_txt), ev: ['M1'], curvExpSource: ke.source, gcSource: gcSource
+        };
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.8 / §6.2 consensus: stability grid (closed-form methods only) + block bootstrap, mode, label, counterfactual
+    // ═════════════════════════════════════════════════════════════════════
+    var CF_METHODS = ['tangent', 'sqrt', 'maxdpdg', 'compliance', 'crel', 'loglog', 'fissure'];
+    var GRID_L = [0.05, 0.1, 0.2], GRID_TP = ['pump', 'breakdown', 'veq'], GRID_TS = [-1, 0, 1], GRID_EPS = [0.02, 0.05];
+    var NAMES_M = { compliance: 'compliance', tangent: 'tangent', loglog: 'log-log', reopening: 'reopening', user: 'user' };
+    function _stat(samples, sigGauge) {
+        var s = _sortedFinite(samples);
+        if (!s.length) return null;
+        var p10 = _pct(s, 0.1), p50 = _pct(s, 0.5), p90 = _pct(s, 0.9);
+        return { p10: _r(p10, 2), p50: _r(p50, 2), p90: _r(p90, 2), sigma: _r(Math.max((p90 - p10) / 2.563, 1, 2 * (sigGauge || 0)), 3), n: s.length };
+    }
+    // τ = max(τ_abs, f_σ·σ_c, f_n·p_n) (§4.8) and the family statistics with the σ_f floor max(1 psi, 2σ_gauge)
+    G.PRiSM_dfit_tau = function (sigmaC, pn, inputs) {
+        var I = G.PRiSM_dfit_inputRanges.clamp(inputs || {}).inputs;
+        return Math.max(I.options.tau.abs, I.options.tau.fSigma * (_fin(sigmaC) ? sigmaC : 0), I.options.tau.fN * (_fin(pn) && pn > 0 ? pn : 0));
+    };
+    G.PRiSM_dfit_familyStat = function (samples, sigmaGauge) { return _stat(Array.isArray(samples) ? samples : [], sigmaGauge); };
+    function _voters(picks) {        // one voting member per family (admissible); user picks win in their family
+        var fam = {};
+        (picks || []).forEach(function (pk) {
+            if (!pk || !pk.ok || !pk.vote || !pk.admissible || !_fin(pk.p)) return;
+            var f = pk.family;
+            if (f !== 'F1' && f !== 'F2' && f !== 'F4') return;
+            if (!fam[f] || pk.method === 'user' || (fam[f].method === 'loglog' && pk.method === 'compliance')) fam[f] = pk;
+        });
+        return fam;
+    }
+    // the work list of the grid (54 settings) and the bootstrap (50 resamples); each evaluates every closed-form method
+    function _consensusPlan(picks, derivs, ctx) {
+        var prep = ctx.prep, events = ctx.events, I = G.PRiSM_dfit_inputRanges.clamp(ctx.inputs || {}).inputs;
+        var items = [];
+        var canGrid = _okRes(prep) && _okRes(events) && Array.isArray(prep.t);
+        if (canGrid) {
+            var iS = _fin(events.iShut) ? events.iShut : null;
+            if (iS === null) { iS = 0; for (var i = 0; i < prep.t.length; i++) if (prep.t[i] <= events.ts) iS = i; }
+            GRID_L.forEach(function (L, li) {
+                GRID_TP.forEach(function (tpC, ti) {
+                    GRID_TS.forEach(function (sh) {
+                        var j = _clampN(iS + sh, 1, prep.t.length - 2);
+                        GRID_EPS.forEach(function (e) { items.push({ kind: 'grid', L: L, li: li, tp: tpC, ti: ti, ts: prep.t[j], sh: sh, eps: e }); });
+                    });
+                });
+            });
+            var nb = _fin(ctx.nBoot) ? ctx.nBoot : 50;
+            for (var b = 0; b < nb; b++) items.push({ kind: 'boot', b: b });
+        }
+        return { items: items, canGrid: canGrid, I: I };
+    }
+    function _bootSetup(prep, derivs, seed) {
+        // residuals of the falloff about a 7-point quadratic smoother (index space), block length from the lag-1 correlation
+        var idx = derivs.idx || [], n = idx.length, p = idx.map(function (k) { return prep.pw[k]; }), sm = p.slice(), cfs = [-2, 3, 6, 7, 6, 3, -2];
+        for (var i = 3; i < n - 3; i++) { var s = 0; for (var j = -3; j <= 3; j++) s += cfs[j + 3] * p[i + j]; sm[i] = s / 21; }
+        var r = p.map(function (v, k) { return v - sm[k]; }), mr = 0;
+        for (i = 3; i < n - 3; i++) mr += r[i];
+        mr /= Math.max(1, n - 6);
+        // winsorised at 3σ (σ from second differences): curvature left by the smoother at a closure kink is not noise
+        var sg = Math.max(prep.sigma || 0, derivs.sigmaEff || 0, 1e-9), keep = new Array(n);
+        // where the smoother misses by more than 5σ (a closure jump, a kink) the resamples keep the data (±3 samples, no
+        // residual): smoothing across a break would move the break in every resample
+        for (i = 3; i < n - 3; i++) if (Math.abs(r[i] - mr) > 5 * sg) for (j = i - 3; j <= i + 3; j++) keep[j] = 1;
+        for (i = 0; i < n; i++) { if (keep[i]) { sm[i] = p[i]; r[i] = 0; } else r[i] = (i >= 3 && i < n - 3) ? _clampN(r[i] - mr, -3 * sg, 3 * sg) : 0; }
+        var num = 0, den = 0; for (i = 4; i < n - 3; i++) { num += r[i] * r[i - 1]; den += r[i] * r[i]; }
+        var rho = den > 0 ? _clampN(num / den, -0.99, 0.99) : 0, bl = Math.min(50, Math.max(5, Math.round(2 / (1 - Math.max(rho, 0)))));
+        return { idx: idx, sm: sm, r: r, keep: keep, bl: bl, rng: _rng(seed == null ? 1 : seed), rho: rho };
+    }
+    function _bootPrep(prep, bs) {
+        var n = bs.idx.length, pw = prep.pw.slice(), pool = [], i;
+        for (i = 3; i < n - 3; i++) if (!bs.keep[i]) pool.push(bs.r[i]);
+        var out = [], m = pool.length;
+        while (out.length < n && m > 0) { var st = Math.floor(bs.rng() * Math.max(1, m - bs.bl + 1)); for (i = 0; i < bs.bl && out.length < n; i++) out.push(pool[Math.min(m - 1, st + i)]); }
+        for (i = 0; i < n; i++) pw[bs.idx[i]] = bs.sm[i] + (bs.keep[i] ? 0 : (out[i] || 0));
+        var cp = {}; for (var k in prep) cp[k] = prep[k];
+        cp.pw = pw;
+        return cp;
+    }
+    function _evalItem(it, base, st) {
+        var prep = base.prep, ev = base.events, d, epsO = { compliance: base.eps.compliance, tangent: base.eps.tangent, loglog: base.eps.loglog };
+        if (it.kind === 'grid') {
+            var e2 = {}; for (var k in ev) e2[k] = ev[k];
+            e2.ts = it.ts;
+            e2.tp = { pump: it.ts - ev.tStart, breakdown: _fin(ev.tb) ? it.ts - ev.tb : null, veq: ev.tp ? ev.tp.veq : null };
+            var key = it.L + '|' + it.tp + '|' + it.sh;      // the two ε settings share one derivative
+            if (st.cache[key]) st.counts.cacheHits++;
+            d = st.cache[key] || (st.cache[key] = _derivsCore(prep, e2, { L: it.L, tp: it.tp, alpha: base.alpha, alphaGeneral: base.alphaGeneral, isip: base.isip, gMin: base.gMinUser, hammer: base.hammer, bleed: base.bleed, _inner: true }));
+            epsO.compliance = it.eps; epsO.tangent = it.eps;
+        } else {
+            d = _derivsCore(_bootPrep(prep, st.boot), ev, { L: base.L, tp: base.tp, alpha: base.alpha, alphaGeneral: base.alphaGeneral, isip: base.isip, gMin: base.gMinUser, hammer: base.hammer, bleed: base.bleed, _inner: true });
+        }
+        if (!_okRes(d)) return;
+        st.counts.evals += CF_METHODS.length;     // one closed-form evaluation reads all seven methods
+        // a grid setting is evaluated at its own L (Lpick = L): the noise-limited pick window of the nominal reading would
+        // collapse L ∈ {0.05, 0.1, 0.2} onto one derivative and hide the window sensitivity
+        var cf = _closedForm(d, it.kind === 'grid' ? { eps: epsO, Lpick: it.L } : { eps: epsO });
+        st.counts.cf++;
+        CF_METHODS.forEach(function (m) {
+            var pk = cf.picks[m];
+            if (pk && _fin(pk.p)) {
+                st.samples[m].push(pk.p);
+                st.tags[m].push(it);
+                if (st.raw) (st.raw[m] = st.raw[m] || []).push(_fin(pk.pRaw) ? pk.pRaw : pk.p);
+            }
+        });
+    }
+    function _consensusFinish(picks, derivs, ctx, st) {
+        var I = st.I, sigG = _fin(ctx.sigmaGauge) ? ctx.sigmaGauge : (derivs.sigma || 0);
+        st.counts.vcInGrid = _vcCalls - (st.counts.vcBefore || 0);
+        if (_isObj2(ctx._debug)) ctx._debug.st = st;
+        var isip = _isipVal(ctx.isip); if (isip === null) isip = derivs.isip;
+        var vot = _voters(picks), methods = {}, fams = { F0: null, F1: null, F2: null, F3: null, F4: null }, samples = { F1: [], F2: [], F4: [] };
+        CF_METHODS.forEach(function (m) { var s = _stat(st.samples[m], sigG); if (s) methods[m] = s; });
+        // family stats from the one voting member (grid + bootstrap samples), F4 from its ramp band, a user pick as a point
+        ['F1', 'F2', 'F4'].forEach(function (f) {
+            var pk = vot[f];
+            if (!pk) return;
+            if (pk.method === 'user') { fams[f] = { p10: pk.p, p50: pk.p, p90: pk.p, sigma: _r(Math.max(1, 2 * sigG), 3), n: 1 }; samples[f] = [pk.p]; return; }
+            if (f === 'F4') {
+                var b = pk.band || { p10: pk.p - 1.2816 * (pk.se || 5), p50: pk.p, p90: pk.p + 1.2816 * (pk.se || 5) };
+                fams.F4 = { p10: _r(b.p10, 2), p50: _r(b.p50, 2), p90: _r(b.p90, 2), sigma: _r(Math.max((b.p90 - b.p10) / 2.563, 1, 2 * sigG), 3), n: 1 };
+                samples.F4 = [b.p10, b.p50, b.p90].map(function (x) { return _r(x, 2); });
+                return;
+            }
+            var arr = st.samples[pk.method] && st.samples[pk.method].length ? st.samples[pk.method] : [pk.p];
+            fams[f] = _stat(arr, sigG);
+            // the pick's own noise-limited uncertainty (hinge SSR profile or vertex se) is added in quadrature to the grid and
+            // bootstrap band: a residual bootstrap about a local smoother keeps the realisation's slow noise in every
+            // resample and so under-reports how far noise can move an onset that is only weakly curved
+            if (fams[f] && _fin(pk.se) && pk.se > 0) {
+                var e = 1.2816 * pk.se, m50 = fams[f].p50, lo = m50 - Math.sqrt(Math.pow(m50 - fams[f].p10, 2) + e * e), hi = m50 + Math.sqrt(Math.pow(fams[f].p90 - m50, 2) + e * e);
+                fams[f].p10 = _r(lo, 2); fams[f].p90 = _r(hi, 2); fams[f].sigma = _r(Math.max((hi - lo) / 2.563, 1, 2 * (sigG || 0)), 3);
+            }
+            samples[f] = arr.map(function (x) { return _r(x, 2); });
+        });
+        // model-form floor of a voting family band: σ ≥ max(1 psi, 2σ_gauge, 0.25 % of p_n, 0.05 % of the closure). On noise-free
+        // data the band came only from the hinge se (≈ 0.5 psi) and missed the method's own model-form error (Example B +3.25 psi)
+        ['F1', 'F2'].forEach(function (f) {
+            var st0 = fams[f]; if (!st0 || !_fin(st0.p50)) return;
+            var pnF = _fin(isip) ? Math.max(0, isip - st0.p50) : 0, fl = Math.max(1, 2 * (sigG || 0), 0.0025 * pnF, 0.0005 * Math.abs(st0.p50)), e2 = 1.2816 * fl;
+            if (st0.p50 - st0.p10 < e2) st0.p10 = _r(st0.p50 - e2, 2);
+            if (st0.p90 - st0.p50 < e2) st0.p90 = _r(st0.p50 + e2, 2);
+            st0.sigma = _r(Math.max(st0.sigma || 0, fl), 3);
+        });
+        // cross-check families (no vote): F0 fissure from its samples, F3 from the LM CI / model pick
+        if (methods.fissure) fams.F0 = methods.fissure;
+        (picks || []).forEach(function (pk) {
+            if (pk && pk.family === 'F3' && !fams.F3 && _fin(pk.p)) {
+                var b3 = pk.band || { p10: pk.p, p50: pk.p, p90: pk.p };
+                fams.F3 = { p10: b3.p10, p50: b3.p50, p90: b3.p90, sigma: _r(Math.max((b3.p90 - b3.p10) / 2.563, 1, 2 * sigG), 3), n: 1 };
+            }
+        });
+        // uncorrected F4 bounds (upper-side, not voting)
+        var f4u = (picks || []).filter(function (pk) { return pk && pk.method === 'reopening' && !pk.vote && pk.admissible && _fin(pk.p); });
+        var V = ['F1', 'F2', 'F4'].filter(function (f) { return fams[f] && vot[f]; });
+        var p50s = V.map(function (f) { return fams[f].p50; }), sigC0 = p50s.length ? p50s.reduce(function (a, b) { return a + b; }, 0) / p50s.length : null;
+        var pn0 = (sigC0 !== null && _fin(isip)) ? isip - sigC0 : 0;
+        var tau = Math.max(I.options.tau.abs, I.options.tau.fSigma * (sigC0 || 0), I.options.tau.fN * Math.max(pn0, 0));
+        var w = 0, s = 0, g = 0;
+        V.forEach(function (f) { w = Math.max(w, (fams[f].p90 - fams[f].p10) / 2); });
+        for (var a = 0; a < V.length; a++) for (var b2 = a + 1; b2 < V.length; b2++) s = Math.max(s, Math.abs(fams[V[a]].p50 - fams[V[b2]].p50));
+        // grid table: family P50 per (L, tp) cell (median over t_s and ε)
+        var grid = { F1: [], F2: [] }, unstable = false;
+        ['F1', 'F2'].forEach(function (f) {
+            var pk = vot[f], m = pk ? pk.method : null, cells = [];
+            for (var li = 0; li < 3; li++) { var row = []; for (var ti = 0; ti < 3; ti++) row.push(null); cells.push(row); }
+            if (m && st.tags[m]) {
+                // the cells show the family reading per setting; the spread g is taken on the pre-refinement detection points
+                var bucket = {}, bucketR = {}, rawM = st.raw && st.raw[m] && st.raw[m].length === st.samples[m].length ? st.raw[m] : st.samples[m];
+                st.tags[m].forEach(function (it, k) { if (it.kind !== 'grid') return; var key = it.li + '_' + it.ti; (bucket[key] = bucket[key] || []).push(st.samples[m][k]); (bucketR[key] = bucketR[key] || []).push(rawM[k]); });
+                var vals = [];
+                Object.keys(bucket).forEach(function (key) { var md = _median(bucket[key]), q = key.split('_'); cells[+q[0]][+q[1]] = _r(md, 1); vals.push(_median(bucketR[key])); });
+                if (vals.length) { var gg = (Math.max.apply(null, vals) - Math.min.apply(null, vals)) / 2; g = Math.max(g, gg); }
+            }
+            grid[f] = cells;
+        });
+        unstable = g > 2.5 * tau;
+        // mode
+        var mode, value = null, range = null;
+        function overlap(x, y) { return x.p10 <= y.p90 && y.p10 <= x.p90; }
+        if (!V.length) mode = 'none';
+        else {
+            var allOverlap = true;
+            for (a = 0; a < V.length; a++) for (b2 = a + 1; b2 < V.length; b2++) if (!overlap(fams[V[a]], fams[V[b2]])) allOverlap = false;
+            var ws = 0, wv = 0;
+            V.forEach(function (f) { var sg = fams[f].sigma; ws += 1 / (sg * sg); wv += fams[f].p50 / (sg * sg); });
+            var cand = wv / ws, f4below = f4u.filter(function (pk) { return pk.p < cand; });
+            if (s <= 2.5 * tau && allOverlap && !f4below.length) { mode = 'single'; value = _r(cand, 2); }
+            else {
+                mode = 'range';
+                var ends = V.map(function (f) { return { f: f, st: fams[f] }; });
+                f4below.forEach(function (pk) { var b4 = pk.band || { p10: pk.p - 1.2816 * (pk.se || 5), p50: pk.p, p90: pk.p + 1.2816 * (pk.se || 5) }; ends.push({ f: 'F4', st: { p10: b4.p10, p50: pk.p, p90: b4.p90 } }); if (!fams.F4) fams.F4 = { p10: _r(b4.p10, 2), p50: _r(pk.p, 2), p90: _r(b4.p90, 2), sigma: _r(Math.max((b4.p90 - b4.p10) / 2.563, 1), 3), n: 1 }; });
+                ends.sort(function (x, y) { return x.st.p50 - y.st.p50; });
+                var lowE = ends[0], hiE = ends[ends.length - 1];
+                var lo = lowE.st.p10, hi = hiE.st.p90;
+                if (!(lo < hi)) { lo = Math.min(lowE.st.p10, hiE.st.p10) - 0.5; hi = Math.max(lowE.st.p90, hiE.st.p90) + 0.5; }
+                range = { lo: _r(lo, 2), hi: _r(hi, 2), medians: { low: _r(lowE.st.p50, 2), high: _r(hiE.st.p50, 2) }, lowFamily: lowE.f, highFamily: hiE.f };
+            }
+        }
+        // the storage-consistent chain at the value (R_vis, χ) for the label
+        var pRef = value !== null ? value : (range ? range.medians.high : null), fr = null;
+        if (pRef !== null) {
+            var fc = {}; for (var k in ctx) fc[k] = ctx[k];
+            fr = G.PRiSM_dfit_frac(pRef, derivs, fc);
+            if (!_okRes(fr)) fr = null;
+        }
+        var Rvis = fr ? fr.Rvis : null, chi = fr ? fr.chi : null;
+        var mainPk = vot.F1 || vot.F2 || vot.F4 || null;
+        var gEnd = derivs.G[derivs.G.length - 1], past = (mainPk && mainPk.G > 0) ? Math.log(gEnd / mainPk.G) / LN10 : null;
+        var cf = ctx._closed || _closedForm(derivs, { eps: I.options.eps });
+        var noise = cf.picks.tangent ? cf.picks.tangent.noise : null;
+        var dep = cf.picks.compliance && !cf.picks.compliance.down ? cf.picks.compliance.departRel : null;
+        var depWeak = (dep !== null && cf.picks.compliance) ? dep < 3 * (derivs.sigmaY || 0) / Math.max(cf.picks.compliance.line.b * cf.picks.compliance.G, 1e-9) : false;
+        var overlapFlag = !!(ctx.prep && Array.isArray(ctx.prep.flags) && ctx.prep.flags.some(function (f) { return f.code === 'VACUUM' || f.code === 'THERMAL'; }));
+        // every voting-family candidate vetoed (§4.8 bounds): mode none, but the picks did depart; K1 says so, lists them and the
+        // binding limit, and K10 is read at the vetoed candidates (it used to say 'above both frictional-limit lines')
+        var vetoed = [];
+        if (mode === 'none') (picks || []).forEach(function (pk) {
+            if (!pk || !pk.ok || !pk.vetoedVote || pk.admissible !== false || !_fin(pk.p)) return;
+            if (pk.family !== 'F1' && pk.family !== 'F2' && pk.family !== 'F4') return;
+            var vt = Array.isArray(pk.vetoes) && pk.vetoes.length ? pk.vetoes[0] : null;
+            vetoed.push({ method: pk.method, family: pk.family, p: _r(pk.p, 2), rule: vt ? vt.rule : 'bounds', limit: vt && _fin(vt.limit) ? _r(vt.limit, 1) : null });
+        });
+        var pRefB = pRef !== null ? pRef : (vetoed.length ? _median(vetoed.map(function (x) { return x.p; })) : null);
+        var br = pRefB !== null ? G.PRiSM_dfit_bounds(pRefB, { isip: isip, pi: ctx.pi, piBracket: ctx.piBracket, inputs: ctx.inputs, well: ctx.well }) : null;
+        var fric = br && _okRes(br) ? br.frictional : { veto: null, warn: null };
+        var fricFired = !!(br && _okRes(br) && (br.vetoes.some(function (x) { return x.rule === 'frictional'; }) || br.warnings.some(function (x) { return x.rule === 'frictional'; })));
+        var k1None = 'Mode none: dP/dG never departs; closure is not estimable.';
+        if (vetoed.length) {
+            var lst = vetoed.slice(0, 3).map(function (x) { return (NAMES_M[x.method] || x.method) + ' ' + _f0(x.p); }).join(', ');
+            var bind = vetoed.filter(function (x) { return x.limit !== null; })[0];
+            k1None = 'Mode none: all closure candidates vetoed (' + lst + ' psia)' + (bind ? ' by the ' + bind.rule + ' limit ' + _f0(bind.limit) + ' psia' : '') + '; closure is not estimable.';
+        }
+        var rules = [
+            { id: 'K1', fired: mode !== 'single', value: null, threshold: null, text: mode === 'single' ? 'Mode single: the family medians differ by less than 2.5 τ and the bands overlap.' : (mode === 'range' ? 'Mode range: the families do not agree within 2.5 τ or their bands do not overlap.' : k1None) },
+            { id: 'K2', fired: s > tau, value: _r(s, 3), threshold: _r(tau, 3), text: 'Family separation s ' + _f1(s, 1) + ' psi against τ ' + _f1(tau, 1) + ' psi.' },
+            { id: 'K3', fired: w > tau, value: _r(w, 3), threshold: _r(tau, 3), text: 'Largest voting-family half-width w ' + _f1(w, 1) + ' psi against τ.' },
+            { id: 'K4', fired: g > tau, value: _r(g, 3), threshold: _r(tau, 3), text: 'Stability-grid spread g ' + _f1(g, 1) + ' psi against τ.' },
+            { id: 'K5', fired: !(Rvis > 0.7), value: _r(Rvis, 3), threshold: 0.7, text: Rvis === null ? 'Closure visibility R_vis could not be computed (volume or storage missing).' : 'Storage-consistent closure visibility R_vis ' + _f1(Rvis, 3) + ' (high needs above 0.7).' },
+            { id: 'K6', fired: !(past >= 0.3), value: _r(past, 3), threshold: 0.3, text: 'Data past the pick: ' + _f1(past, 2) + ' G-decade (high needs 0.3).' },
+            { id: 'K7', fired: !(noise !== null && noise < 0.02), value: _r(noise, 4), threshold: 0.02, text: 'Derivative noise at the pick ' + _f1((noise || 0) * 100, 2) + ' % (high needs below 2 %).' },
+            { id: 'K8', fired: !(chi >= 0.9 && chi <= 1.1), value: _r(chi, 3), threshold: null, text: 'Consistency ratio χ ' + _f1(chi, 3) + ' (high needs 0.9 to 1.1).' },
+            { id: 'K9', fired: overlapFlag, value: null, threshold: null, text: overlapFlag ? 'A vacuum or thermal flag overlaps the pick window.' : 'No vacuum or thermal flag overlaps the pick window.' },
+            { id: 'K10', fired: fricFired, value: _r(fric.veto, 1), threshold: _r(fric.warn, 1), text: fricFired ? 'The closure lies below a frictional-limit line.' : 'The closure lies above both frictional-limit lines.' }
+        ];
+        rules.forEach(function (r) { r.text = _txt(r.text); });
+        var conf;
+        if (mode === 'none') conf = 'not-estimable';
+        else {
+            var low = w > 2.5 * tau || g > 2.5 * tau || (Rvis !== null && Rvis < 0.3) || depWeak || overlapFlag;
+            var high = mode === 'single' && !rules.slice(1).some(function (r) { return r.fired; });
+            conf = low ? 'low' : (high ? 'high' : 'medium');
+        }
+        // preferred reading from the classifier
+        var cls = ctx.classification, preferred = null, prefWhy = null, ctype = cls && cls.type;
+        if (mode === 'single') prefWhy = 'Families agree' + (ctype ? ' (' + ctype + ' leak-off).' : '.');
+        else if (mode === 'range') {
+            if (ctype === 'hr-contact') prefWhy = 'Ambiguous: the F1 end is the contact (compliance) reading, the F2 end the end of stiffening (tangent) reading.';
+            else if (ctype === 'pdl') { prefWhy = 'PDL: the reading after the hump is preferred.'; preferred = vot.F2 ? 'F2' : null; }
+            else if (ctype === 'storage') prefWhy = 'Low visibility: storage masks the closure signature.';
+            else prefWhy = 'The families differ; no reading is preferred by the classifier.';
+            if (fams.F4 && vot.F4) {
+                var dF1 = fams.F1 ? Math.abs(fams.F4.p50 - fams.F1.p50) : INF, dF2 = fams.F2 ? Math.abs(fams.F4.p50 - fams.F2.p50) : INF;
+                preferred = dF1 <= dF2 ? 'F1' : 'F2';
+                prefWhy = 'Reopening ' + _f0(fams.F4.p50) + ' psia, near-wellbore corrected, supports the ' + preferred + ' end.';
+            }
+        }
+        // counterfactual sentence from the stability samples (no refit)
+        var counterfactual = null;
+        var mF = vot.F1 && st.tags[vot.F1.method] ? 'F1' : (vot.F2 && st.tags[vot.F2.method] ? 'F2' : null);
+        if (mF && st.samples[vot[mF].method].length > 1) {
+            var meth = vot[mF].method, tags = st.tags[meth], sv = st.samples[meth], knobs = { L: 'L', tp: 'tp', ts: 'sh', eps: 'eps' }, bestK = null, bestE = -1, bestSet = null;
+            Object.keys(knobs).forEach(function (kn) {
+                var grp = {};
+                tags.forEach(function (it, k2) { if (it.kind !== 'grid') return; var key = String(it[knobs[kn]]); (grp[key] = grp[key] || []).push(sv[k2]); });
+                var meds = Object.keys(grp).map(function (key) { return { key: key, m: _median(grp[key]) }; });
+                if (meds.length < 2) return;
+                var mx = Math.max.apply(null, meds.map(function (x) { return x.m; })), mn = Math.min.apply(null, meds.map(function (x) { return x.m; }));
+                if (mx - mn > bestE) { bestE = mx - mn; bestK = kn; var dev = meds.slice().sort(function (x, y) { return Math.abs(y.m - fams[mF].p50) - Math.abs(x.m - fams[mF].p50); })[0]; bestSet = dev.key; }
+            });
+            var gs = []; tags.forEach(function (it, k2) { if (it.kind === 'grid') gs.push(sv[k2]); });
+            var moveMax = gs.length ? Math.max(Math.max.apply(null, gs) - fams[mF].p50, fams[mF].p50 - Math.min.apply(null, gs)) : 0;
+            var other = mF === 'F1' ? 'F2' : 'F1', enter = null;
+            if (fams[other] && vot[other] && st.tags[vot[other].method]) {
+                tags.forEach(function (it, k2) {
+                    if (enter || it.kind !== 'grid') return;
+                    var x = sv[k2];
+                    if (x >= fams[other].p10 && x <= fams[other].p90) enter = it;
+                });
+            }
+            if (bestK) {
+                var setTxt = bestK === 'ts' ? (bestSet === '0' ? 'the detected shut-in' : 'shut-in ' + (bestSet > 0 ? '+' : '') + bestSet + ' sample') : bestK + ' = ' + bestSet;
+                var t1 = 'Within the tested settings the ' + NAMES_M[meth] + ' pick moves at most ' + _f1(moveMax, 0) + ' psi (largest effect: ' + bestK + ')';
+                var t2;
+                if (!fams[other] || !vot[other]) t2 = '.';
+                else if (enter) t2 = '; at ' + (enter.L !== undefined ? 'L = ' + enter.L + ', tp ' + enter.tp + ', ε ' + enter.eps : 'one setting') + ' it enters the ' + NAMES_M[vot[other].method] + ' band.';
+                else t2 = '; no tested setting brings it into the ' + NAMES_M[vot[other].method] + ' band, so the difference is interpretive.';
+                var settle = '';
+                if (mode === 'range') settle = ctype === 'storage' ? ' A bottomhole gauge with less wellbore volume would settle it.' : (ctype === 'pdl' ? ' A longer shut-in past the hump would settle it.' : ' A second-cycle reopening ramp would settle it.');
+                var txt = t1 + t2 + settle;
+                if (txt.length > 299) txt = t1 + t2;
+                counterfactual = { knob: bestK, setting: setTxt, text: _txt(txt) };
+            }
+        }
+        var forecast = null;
+        if (mode === 'none' || (ctx.inputs && _fin(I.priors.sigmaGrad) && _fin(I.datumTvd))) {
+            var fc2 = G.PRiSM_dfit_forecastClosure(derivs, { isip: isip, inputs: ctx.inputs }, ctx.forecastSigmas);
+            forecast = Array.isArray(fc2) && fc2.length ? fc2 : null;
+        }
+        var calTab = G.PRiSM_dfit_cal, calibrated = !!(calTab && calTab.calibrated === true), hitRate = null;
+        if (calibrated && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
+            var hrr = calTab.hitRate[mode][conf];
+            if (_isObj2(hrr) && _fin(hrr.p)) hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode };
+        }
+        return {
+            ok: true, mode: mode, value: value, range: range, families: fams, tau: _r(tau, 2), metrics: { w: _r(w, 2), s: _r(s, 2), g: _r(g, 2) },
+            bimodal: mode === 'range' && s > 2.5 * tau, preferred: preferred, preferredWhy: prefWhy ? _txt(prefWhy) : null, confidence: conf,
+            calibrated: calibrated, hitRate: hitRate, rules: rules,
+            stability: { L: GRID_L.slice(), tp: GRID_TP.slice(), grid: grid, unstable: unstable },
+            samples: samples, counterfactual: counterfactual, frictional: { veto: fric.veto, warn: fric.warn }, forecast: forecast, ev: ['C1', 'K1'], vetoed: vetoed,
+            methods: methods, counts: { evals: st.counts.evals, refits: st.counts.refits, draws: 0 }, label: conf === 'not-estimable' ? conf : conf + ' (uncalibrated rule label)',
+            chain: fr ? { Rvis: fr.Rvis, chi: fr.chi, pn: fr.pn } : null
+        };
+    }
+    function _consensusJob(picks, derivs, ctx) {
+        ctx = ctx || {};
+        var bad = null;
+        if (!_okRes(derivs) || !Array.isArray(derivs.G)) bad = _fail('BAD_INPUT', 'Derivatives are needed for the consensus.', ['derivs']);
+        else if (!Array.isArray(picks)) bad = _fail('BAD_INPUT', 'A list of closure picks is needed.', ['picks']);
+        var plan = bad ? null : _consensusPlan(picks, derivs, ctx), k = 0, done = !!bad, result = bad, cancelled = false;
+        var st = null, base = null;
+        if (!bad) {
+            var I = plan.I;
+            st = { I: I, counts: { evals: 0, refits: 0, cf: 0, cacheHits: 0, vcBefore: _vcCalls }, samples: {}, tags: {}, raw: {}, boot: null, cache: {} };
+            CF_METHODS.forEach(function (m) { st.samples[m] = []; st.tags[m] = []; st.raw[m] = []; });
+            base = { prep: ctx.prep, events: ctx.events, L: derivs.L, tp: derivs.tpChoice, alpha: I.options.alpha, alphaGeneral: I.options.alphaGeneral,
+                     isip: _isipVal(ctx.isip) !== null ? _isipVal(ctx.isip) : derivs.isip, gMinUser: _fin(I.options.gMin) ? I.options.gMin : null,
+                     hammer: ctx.hammer, bleed: ctx.bleed, eps: I.options.eps };
+            if (plan.canGrid) st.boot = _bootSetup(ctx.prep, derivs, _fin(ctx.seed) ? ctx.seed : I.options.unc.seed);
+            // the default-settings picks enter the samples of methods the grid never found (no grid possible)
+            if (!plan.canGrid) (picks || []).forEach(function (pk) { if (pk && st.samples[pk.method] && _fin(pk.p)) { st.samples[pk.method].push(pk.p); st.tags[pk.method].push({ kind: 'pick' }); } });
+        }
+        var total = plan ? plan.items.length : 0;
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'consensus' };
+                try {
+                    var end = Math.min(total, k + 8);
+                    for (; k < end; k++) _evalItem(plan.items[k], base, st);
+                    if (k >= total) { result = _consensusFinish(picks, derivs, ctx, st); done = true; }
+                } catch (e) { result = _fail('ENGINE_ERROR', 'Consensus failed: ' + String(e && e.message || e).slice(0, 200)); done = true; }
+                return { done: done, progress: total ? Math.min(1, k / total) : 1, label: done ? 'consensus' : 'stability grid ' + k + ' of ' + total };
+            },
+            result: function () { return result; },
+            cancel: function () { cancelled = true; if (!done) result = _fail('CANCELLED', 'The consensus was cancelled.'); }
+        };
+    }
+    G.PRiSM_dfit_consensusJob = function (picks, derivs, ctx) { try { return _consensusJob(picks, derivs, ctx); } catch (e) { var r = _fail('ENGINE_ERROR', String(e && e.message || e)); return { step: function () { return { done: true, progress: 1, label: 'error' }; }, result: function () { return r; }, cancel: function () {} }; } };
+    G.PRiSM_dfit_consensus = _safe(function (picks, derivs, ctx) {
+        var job = G.PRiSM_dfit_consensusJob(picks, derivs, ctx), guard = 0;
+        while (!job.step().done && guard++ < 100000) { /* run to completion */ }
+        return job.result();
+    });
+    G.PRiSM_dfit_consensusLite = _safe(function (picks, derivs, ctx) {
+        ctx = ctx || {};
+        var vot = _voters(picks), I = G.PRiSM_dfit_inputRanges.clamp(ctx.inputs || {}).inputs, fam = { F1: null, F2: null, F4: null };
+        ['F1', 'F2', 'F4'].forEach(function (f) { if (vot[f]) fam[f] = { p50: vot[f].p }; });
+        var V = ['F1', 'F2', 'F4'].filter(function (f) { return fam[f]; });
+        if (!V.length) return { mode: 'none', value: null, range: null, families: fam, confidence: 'stale' };
+        var ps = V.map(function (f) { return fam[f].p50; }), mn = Math.min.apply(null, ps), mx = Math.max.apply(null, ps), mean = ps.reduce(function (a, b) { return a + b; }, 0) / ps.length;
+        var isip = _isipVal(ctx.isip); if (isip === null && derivs && _fin(derivs.isip)) isip = derivs.isip;
+        var tau = Math.max(I.options.tau.abs, I.options.tau.fSigma * mean, I.options.tau.fN * Math.max(0, (isip || mean) - mean));
+        var f4u = (picks || []).some(function (pk) { return pk && pk.method === 'reopening' && !pk.vote && pk.admissible && pk.p < mean; });
+        if (mx - mn <= 2.5 * tau && !f4u) return { mode: 'single', value: _r(mean, 2), range: null, families: fam, confidence: 'stale' };
+        var lo = mn, hi = mx;
+        (picks || []).forEach(function (pk) { if (pk && pk.method === 'reopening' && !pk.vote && pk.p < lo) lo = pk.p; });
+        if (!(lo < hi)) hi = lo + 1;
+        return { mode: 'range', value: null, range: { lo: _r(lo, 2), hi: _r(hi, 2) }, families: fam, confidence: 'stale' };
+    });
+    // the closure used downstream: a user pick in picks wins (source 'user'), else the consensus value, else the F1 / F2
+    // end chosen for hand-offs (mode 'family'), else the upper family median of a range
+    G.PRiSM_dfit_chooseClosure = function (consensus, picks, choice) {
+        var u = (picks || []).filter(function (pk) { return pk && pk.method === 'user' && _fin(pk.p); })[0];
+        if (u) return { p: u.p, family: u.family, method: 'user', source: 'user', mode: 'user' };
+        if (!_isObj2(consensus) || consensus.ok === false) return null;
+        if (consensus.mode === 'single') return { p: consensus.value, family: null, method: 'consensus', source: 'auto', mode: 'consensus' };
+        if (consensus.mode === 'range') {
+            var f = (choice === 'F1' || choice === 'F2' || choice === 'F4') ? choice : (consensus.preferred || consensus.range.highFamily);
+            var st = consensus.families[f];
+            return st ? { p: st.p50, family: f, method: 'consensus', source: 'auto', mode: 'family' } : null;
+        }
+        return null;
+    };
+    // what-if candidates: the chosen closure, each voting family median, a user value and the what-if marker
+    G.PRiSM_dfit_whatIfCandidates = function (consensus, picks, whatIfP) {
+        var out = [], ch = G.PRiSM_dfit_chooseClosure(consensus, picks);
+        if (ch) out.push({ label: ch.source === 'user' ? 'User closure' : 'Consensus', family: ch.family, p: ch.p, method: ch.method });
+        if (_isObj2(consensus) && consensus.families) {
+            if (consensus.families.F1) out.push({ label: 'F1 compliance', family: 'F1', p: consensus.families.F1.p50, method: 'compliance' });
+            if (consensus.families.F2) out.push({ label: 'F2 tangent', family: 'F2', p: consensus.families.F2.p50, method: 'tangent' });
+            if (consensus.families.F4) out.push({ label: 'F4 reopening', family: 'F4', p: consensus.families.F4.p50, method: 'reopening' });
+        }
+        if (_fin(whatIfP)) out.push({ label: 'What-if ' + _f0(whatIfP) + ' psia', family: null, p: whatIfP, method: 'user' });
+        return out;
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.10 extras: spurt with independent geometry, thermal sensitivity, injection net-pressure slope
+    // ═════════════════════════════════════════════════════════════════════
+    // S_p = [V_i* − C_sys·p_n − 2·r_p·A_f·g0·CL·√tp] / (2·r_p·A_f), with C_sys = A_f·c_f + V_w·c_w and CL from m_G (gal/100 ft²);
+    // negative → "geometry inconsistent" (never clipped). geo {Af (ft², one face), cf (ft/psi), rp}
+    G.PRiSM_dfit_spurt = _safe(function (frac, derivs, geo) {
+        if (!_okRes(frac) || !_okRes(derivs) || !_isObj2(geo) || !_fin(geo.Af) || !_fin(geo.cf) || geo.Af <= 0) return _fail('BAD_INPUT', 'Frac outputs, derivatives and an independent geometry (A_f, c_f) are needed.', ['geo']);
+        var rp = _fin(geo.rp) && geo.rp > 0 ? geo.rp : 1, tpMin = derivs.tp * 60;
+        var VwCwFt = (_fin(frac.VwCw) ? frac.VwCw : 0) * BBL, Csys = geo.Af * geo.cf + VwCwFt;               // ft³/psi
+        var mG = _fin(frac.mG) ? frac.mG : derivs.mG, pn = frac.pn, Vstar = (_fin(frac.ViStar) ? frac.ViStar : 0) * BBL;
+        var CL = 2 * mG * Csys / (PI * rp * geo.Af * Math.sqrt(tpMin));                                          // ft/√min
+        var g0 = derivs.gSpec ? derivs.gSpec.g0 : g0_(derivs.gType === 'a1' ? 1 : (derivs.gType === 'a05' ? 0.5 : derivs.alpha));
+        var Sp = (Vstar - Csys * pn - 2 * rp * geo.Af * g0 * CL * Math.sqrt(tpMin)) / (2 * rp * geo.Af) * 748.05;
+        if (Math.abs(Sp) < 1e-3) Sp = 0;      // rounding of the inputs
+        return { ok: true, value: _r(Sp, 4), CL: _sf(CL, 5), Csys: _sf(Csys / BBL, 5), consistent: Sp >= 0,
+                 note: _txt(Sp >= 0 ? 'Spurt from the independent geometry: ' + _f1(Sp, 3) + ' gal/100 ft².' : 'Negative spurt (' + _f1(Sp, 3) + ' gal/100 ft²): the geometry is inconsistent with the falloff.') };
+    });
+    // dp/dT ≈ V_w·β/C_sys before closure and β/c_sys after (C_sys → V_w·c_sys), β = ∂ln B_w/∂T (Meehan, 16, at call time)
+    G.PRiSM_dfit_thermal = _safe(function (frac, ctx) {
+        ctx = ctx || {};
+        var T = _fin(ctx.TmeanF) ? ctx.TmeanF : 100, p = _fin(ctx.pMean) ? ctx.pMean : (_okRes(frac) && _fin(frac.pClosure) ? frac.pClosure : 5000);
+        var pv = G.PRiSM_pvt_correlations, beta = null, src = 'default';
+        if (pv && typeof pv.Bw_meehan === 'function') {
+            var b1 = pv.Bw_meehan(p, T - 1), b2 = pv.Bw_meehan(p, T + 1);
+            if (_fin(b1) && _fin(b2) && b1 > 0 && b2 > 0) { beta = (Math.log(b2) - Math.log(b1)) / 2; src = 'Bw correlation'; }
+        }
+        if (!_fin(beta)) beta = 2.3e-4;
+        var notes = [];
+        if (p > 5000 || T > 260) notes.push('The water formation-volume correlation is fitted to p ≤ 5,000 psia and T ≤ 260 °F: correlation range exceeded.');
+        var cSys = _fin(ctx.cSys) ? ctx.cSys : null, Vw = _fin(ctx.VwFt3) ? ctx.VwFt3 : null;     // 1/psi, ft³
+        var before = (Vw !== null && _okRes(frac) && _fin(frac.Csys)) ? Vw * beta / (frac.Csys * BBL) : null;
+        var after = cSys ? beta / cSys : null;
+        return { ok: true, beta: _sf(beta, 4), betaSource: src, beforeClosure: _r(before, 3), afterClosure: _r(after, 2), notes: notes };
+    });
+    // injection net-pressure slope (indicative): d ln(p − σ_c)/d ln(t − t_start) over the propagation period after breakdown
+    G.PRiSM_dfit_netPressureSlope = _safe(function (prep, events, sigmaC) {
+        if (!_okRes(prep) || !_okRes(events) || !_fin(sigmaC)) return _fail('BAD_INPUT', 'Prepared data, events and a closure stress are needed.', ['sigmaC']);
+        var t0 = _fin(events.tb) ? events.tb : events.tStart, xs = [], ys = [];
+        for (var i = 0; i < prep.t.length; i++) {
+            var t = prep.t[i];
+            if (t <= t0 || t > events.ts || prep.pw[i] <= sigmaC) continue;
+            if (t - t0 < 0.2 * (events.ts - t0)) continue;                    // past the breakdown transient
+            xs.push(Math.log(t - events.tStart)); ys.push(Math.log(prep.pw[i] - sigmaC));
+        }
+        if (xs.length < 4) return _fail('SHORT', 'Too few pumping samples above the closure stress.', ['p']);
+        var lf = _linfit(xs, ys, 0, xs.length - 1, false), s = lf ? lf.b : null;
+        var reading = !_fin(s) ? 'undetermined' : (s >= 0.15 && s <= 0.3 ? 'contained height (PKN-like)' : (s < -0.02 ? 'KGD / radial or height growth' : (Math.abs(s) <= 0.05 ? 'barrier or fissures (near-constant)' : (s > 0.5 ? 'restriction' : 'transitional'))));
+        return { ok: true, slope: _r(s, 4), n: xs.length, reading: reading, note: 'Indicative: the injection net-pressure slope reading (Nolte and Smith).' };
+    });
+  })(Math, isFinite, Array, Object, JSON, String);
 })();
 
 // ─── END 56-prism-dfit-core ─────────────────────────────────────────────
@@ -19884,49 +23236,2872 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // =============================================================================
 // PRiSM — 57-prism-dfit-aca.js  (Round 8)
 // -----------------------------------------------------------------------------
-// DFIT after-closure analysis, the pure pipeline and the results layer (docs/DFIT-PLAN.md §3.3a, §3.6; owner WP3).
-// Pure engine: no DOM, no storage, no timers, no events.
+// DFIT after-closure analysis, the pure pipeline and the results layer (docs/DFIT-PLAN.md §3.3a, §3.6, §4.12, §4.13,
+// §4.20, §6.4, §6.6, §6.8, §6.9, §6.10; owner WP3). Shapes: prism-build/tests/_dfit-shapes.js (frozen).
 //
-// WP0 SKELETON. Every §3.3a / §3.6 function is a stub returning {ok:false, code:'NOT_IMPLEMENTED', errors:[…], bad:[]};
-// Job twins return a Job whose result() is that object. PRiSM_dfit_kConstraint returns null (its "no DFIT k" value, read
-// by the 35 fallback). PRiSM_dfit_live is the namespace object {create}. Shapes: prism-build/tests/_dfit-shapes.js.
+// Pure engine: no DOM, no storage, no timers, no events, no unseeded random numbers (randomness only from PRiSM_rng(seed), or the
+// identical local generator when 05's export is absent). Every cross-file call (56, 58, 49-calc-dfit-triage,
+// WTS_wellbore, PRiSM_lm, PRiSM_mpTable, PRiSM_gasPseudoTime, PRiSM_MODELS, PRiSM_autoInterp) is resolved at call time
+// behind a typeof guard. Public functions never throw: they return {ok:false, code, errors, bad}.
+//
+// Units (§3.0): time in hours (record clock t; injection clock tInj = t − tStart; AcaResult.t0 / tcInj / diag.x on the
+// injection clock, x = tInj − t0), pressure psia, V bbl, rates in DFIT objects bbl/min, leak rates bbl/d, k md,
+// kh/μ md·ft/cp, μ cp, c_t 1/psi, lengths ft, CL ft/√min.
+//
+// Sections
+//   1  helpers (numbers, warnings, statistics, the O(n) two-pointer Bourdet window, seeded generator, hashes)
+//   2  after-closure kernels and constants (PRiSM_dfit_acaKernels — exported for tests, plots and the generator check)
+//   3  time functions, centroid, p_i-free diagnosis, Nolte and impulse lines, bounds, p_i consensus
+//   4  gas adjustment, constant-rate transform, model-library match
+//   5  PRiSM_dfit_aca, leak plot, k constraint
+//   6  uncertainty budget and what-if propagator (closed-form chain per draw, per-family range mode, shares, tornado)
+//   7  live engine and replay (PRiSM_dfit_live.create, PRiSM_dfit_replay / Job)
+//   8  results layer (evidence index, report model, quoted-value check, export, frac sheet, hand-off, summary, grade)
+//   9  PRiSM_dfit_pipeline / Job — the only place that knows the stage order (§4.20)
+//
+// Exports beyond §3.6 (read-only helpers for tests, plots and WP5/WP6): PRiSM_dfit_acaKernels {K, erf, E1, ufPd, ufPdPrime,
+// ufImpulse, ufRate, ufShape, pennyShape, theta, carter, originSlope, qkMax, gasProps, bourdet}; PRiSM_dfit_uncertainty.chain and
+// .shares; LiveSession also has firsts(), closure(), stats(), size(). Uncertainty results carry counts {draws, chainEvals, ops}
+// and log[] (a family-weight change); AcaResult.diag carries p (the pressures at diag.x).
 // =============================================================================
 
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
 
-    function _ni(name) {
-        return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP0 skeleton).'], bad: [] };
+    // ═════════════════════════════════════════════════════════════════════
+    // 1. Helpers
+    // ═════════════════════════════════════════════════════════════════════
+    function fin(v) { return typeof v === 'number' && isFinite(v); }
+    function pos(v) { return fin(v) && v > 0; }
+    function nn(v) { return fin(v) ? v : null; }                      // finite or null (§3.0)
+    function rnd(v, dp) { if (!fin(v)) return null; var f = Math.pow(10, dp); return Math.round(v * f) / f; }
+    function sig(v, n) { return fin(v) ? +v.toPrecision(n) : null; }
+    function fail(code, msg, bad) { return { ok: false, code: code, errors: [String(msg).slice(0, 290)], bad: bad || [] }; }
+    function W(code, level, text, ev) { return { code: code, level: level, text: _txt(text), ev: ev || [] }; }
+    // plain text < 300 characters without the words the GUI sweep scans for
+    function _txt(s) {
+        s = String(s == null ? '' : s).replace(/\b(null|undefined|NaN|Infinity)\b/g, '–').replace(/\[object Object\]/g, '–');
+        return s.length > 299 ? s.slice(0, 296) + '…' : s;
     }
-    function _stub(name) { var f = function () { return _ni(name); }; f._dfitStub = true; return f; }
-    function _jobStub(name) {
-        var f = function () {
-            var r = _ni(name);
-            return {
-                step: function () { return { done: true, progress: 1, label: 'not implemented' }; },
-                result: function () { return r; },
-                cancel: function () {}
-            };
+    function fmt(v, dp) {
+        if (!fin(v)) return '–';
+        var s = Math.abs(v).toFixed(dp == null ? 0 : dp), parts = s.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return (v < 0 && +s !== 0 ? '-' : '') + parts.join('.');
+    }
+    function fmtSig(v, n) { if (!fin(v)) return '–'; var a = Math.abs(v); return (a !== 0 && (a < 1e-3 || a >= 1e6)) ? v.toExponential(n - 1) : String(+v.toPrecision(n)); }
+    function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    function arrOk(a) { return Array.isArray(a) || (a && typeof a.length === 'number' && ArrayBuffer.isView && ArrayBuffer.isView(a)); }
+    function realFn(f) { return typeof f === 'function' && !f._dfitStub; }
+
+    function sortNum(a) { return a.slice().sort(function (x, y) { return x - y; }); }
+    function quant(sorted, f) {                                    // linear interpolation between order statistics
+        var n = sorted.length; if (!n) return null; if (n === 1) return sorted[0];
+        var h = (n - 1) * f, i = Math.floor(h), j = Math.min(n - 1, i + 1);
+        return sorted[i] + (h - i) * (sorted[j] - sorted[i]);
+    }
+    function median(a) { var f = []; for (var i = 0; i < a.length; i++) if (fin(a[i])) f.push(a[i]); return f.length ? quant(sortNum(f), 0.5) : null; }
+    // the median of an array of finite numbers (no filtering) by selection in a typed buffer (O(n); the same value as
+    // quant(sortNum(a), 0.5)) — the IRLS loops of the leak-plot bootstrap
+    function _selectK(f, k, lo, hi) {
+        while (hi > lo) {
+            var pv = f[(lo + hi) >> 1], i = lo, j = hi;
+            while (i <= j) { while (f[i] < pv) i++; while (f[j] > pv) j--; if (i <= j) { var tmp = f[i]; f[i] = f[j]; f[j] = tmp; i++; j--; } }
+            if (k <= j) hi = j; else if (k >= i) lo = i; else return f[k];
+        }
+        return f[k];
+    }
+    function medianF(a, buf) {
+        var n = a.length; if (!n) return null;
+        var f = buf && buf.length === n ? buf : new Float64Array(n), i;
+        for (i = 0; i < n; i++) f[i] = a[i];
+        var h = (n - 1) * 0.5, k = Math.floor(h), v = _selectK(f, k, 0, n - 1);
+        if (h === k) return v;
+        var w = Infinity; for (i = k + 1; i < n; i++) if (f[i] < w) w = f[i];      // after selection f[k+1..] ≥ f[k]: the next order statistic
+        return v + 0.5 * (w - v);
+    }
+    function mean(a) { var s = 0, n = 0; for (var i = 0; i < a.length; i++) if (fin(a[i])) { s += a[i]; n++; } return n ? s / n : null; }
+    function wmedian(vals, ws) {
+        var it = []; for (var i = 0; i < vals.length; i++) if (fin(vals[i]) && pos(ws[i])) it.push([vals[i], ws[i]]);
+        if (!it.length) return null;
+        it.sort(function (a, b) { return a[0] - b[0]; });
+        var tot = 0, k; for (k = 0; k < it.length; k++) tot += it[k][1];
+        var acc = 0; for (k = 0; k < it.length; k++) { acc += it[k][1]; if (acc >= tot / 2 - 1e-12) return it[k][0]; }
+        return it[it.length - 1][0];
+    }
+    // weighted least squares y = b + m·x → {m, b, seM, seB, n, ssr, sigma}
+    function linfit(X, Y, Wt) {
+        var n = 0, sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, i, w;
+        for (i = 0; i < X.length; i++) {
+            if (!fin(X[i]) || !fin(Y[i])) continue;
+            w = Wt ? Wt[i] : 1; if (!pos(w)) continue;
+            n++; sw += w; sx += w * X[i]; sy += w * Y[i]; sxx += w * X[i] * X[i]; sxy += w * X[i] * Y[i];
+        }
+        if (n < 2) return null;
+        var den = sw * sxx - sx * sx; if (!(Math.abs(den) > 1e-300)) return null;
+        var m = (sw * sxy - sx * sy) / den, b = (sy - m * sx) / sw, ssr = 0;
+        for (i = 0; i < X.length; i++) { if (!fin(X[i]) || !fin(Y[i])) continue; w = Wt ? Wt[i] : 1; if (!pos(w)) continue; var r = Y[i] - b - m * X[i]; ssr += w * r * r; }
+        var s2 = n > 2 ? ssr / (n - 2) : 0;
+        return { m: m, b: b, seM: Math.sqrt(Math.max(0, s2 * sw / den)), seB: Math.sqrt(Math.max(0, s2 * sxx / den)), n: n, ssr: ssr, sigma: Math.sqrt(s2) };
+    }
+    // small dense solve (Gauss-Jordan with partial pivoting) → x, or null; also returns the inverse when asked
+    function solve(A, b, wantInv) {
+        var n = A.length, M = [], i, j, k;
+        for (i = 0; i < n; i++) { M.push(A[i].slice()); for (j = 0; j < n; j++) M[i].push(i === j ? 1 : 0); M[i].push(b[i]); }
+        for (k = 0; k < n; k++) {
+            var piv = k; for (i = k + 1; i < n; i++) if (Math.abs(M[i][k]) > Math.abs(M[piv][k])) piv = i;
+            if (!(Math.abs(M[piv][k]) > 1e-300)) return null;
+            var tmp = M[k]; M[k] = M[piv]; M[piv] = tmp;
+            var d = M[k][k]; for (j = 0; j < 2 * n + 1; j++) M[k][j] /= d;
+            for (i = 0; i < n; i++) if (i !== k) { var f = M[i][k]; if (f !== 0) for (j = 0; j < 2 * n + 1; j++) M[i][j] -= f * M[k][j]; }
+        }
+        var x = [], inv = []; for (i = 0; i < n; i++) { x.push(M[i][2 * n]); if (wantInv) inv.push(M[i].slice(n, 2 * n)); }
+        return wantInv ? { x: x, inv: inv } : x;
+    }
+    function interp(xs, ys, x) {                                    // xs ascending; linear, clamped at the ends
+        var n = xs.length; if (!n) return null;
+        if (x <= xs[0]) return ys[0]; if (x >= xs[n - 1]) return ys[n - 1];
+        var lo = 0, hi = n - 1; while (hi - lo > 1) { var m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; }
+        var f = (x - xs[lo]) / (xs[hi] - xs[lo] || 1); return ys[lo] + f * (ys[hi] - ys[lo]);
+    }
+
+    // O(n) two-pointer Bourdet window on an ascending log-time axis lx (the PRiSM_compute_bourdet formula, 02): for each i
+    // the left point is the nearest j < i with lx_i − lx_j ≥ L (else 0), the right point the nearest j > i with
+    // lx_j − lx_i ≥ L (else n − 1); the end points use the one-sided slope over the same window instead of NaN.
+    // End points: the slope at the end of a local quadratic fitted over the last (first) 2L of the axis.
+    function bourdet(lx, y, L, opsBox, spans) {
+        var n = lx.length, d = new Array(n), i1 = 0, i2 = 1, i;
+        for (i = 0; i < n; i++) d[i] = NaN;
+        if (n < 2) return d;
+        for (i = 0; i < n; i++) {
+            while (i1 + 1 < i && lx[i] - lx[i1 + 1] >= L) i1++;
+            if (i2 <= i) i2 = i + 1;
+            while (i2 < n - 1 && lx[i2] - lx[i] < L) i2++;
+            if (opsBox) opsBox.n++;
+            if (!fin(y[i])) continue;
+            if (i === 0 || i === n - 1) { d[i] = _endSlope(lx, y, i, L); continue; }
+            var a = i1, b = i2; if (a >= i) a = i - 1;
+            if (!fin(y[a]) || !fin(y[b])) continue;
+            var dl1 = lx[i] - lx[a], dl2 = lx[b] - lx[i], dlT = lx[b] - lx[a];
+            if (!(dl1 > 0) || !(dl2 > 0) || !(dlT > 0)) continue;
+            d[i] = (y[i] - y[a]) / dl1 * (dl2 / dlT) + (y[b] - y[i]) / dl2 * (dl1 / dlT);
+            if (spans) spans[i] = [dl1, dl2];
+        }
+        return d;
+    }
+    function _endSlope(lx, y, i, L) {
+        var n = lx.length, sgn = i === 0 ? 1 : -1, U = [], Y = [], j;
+        for (j = i; j >= 0 && j < n; j += sgn) { var u = lx[j] - lx[i]; if (Math.abs(u) > 2 * L && U.length >= 3) break; if (fin(y[j])) { U.push(u); Y.push(y[j]); } }
+        if (U.length < 2) return NaN;
+        if (U.length === 2) return (Y[1] - Y[0]) / (U[1] - U[0]);
+        // least-squares polynomial (cubic with ≥ 6 points, else quadratic) in u = lx − lx_end; the slope at u = 0
+        var deg = U.length >= 6 ? 3 : 2, m = deg + 1, A = [], b = [], r, c, k;
+        for (r = 0; r < m; r++) { A.push([]); b.push(0); for (c = 0; c < m; c++) A[r].push(0); }
+        for (k = 0; k < U.length; k++) {
+            var pw = [1]; for (r = 1; r < 2 * m; r++) pw.push(pw[r - 1] * U[k]);
+            for (r = 0; r < m; r++) { b[r] += pw[r] * Y[k]; for (c = 0; c < m; c++) A[r][c] += pw[r + c]; }
+        }
+        var sol = solve(A, b);
+        return sol ? sol[1] : NaN;
+    }
+    // window factor of the Bourdet difference on a local power law y ∝ x^s: estimate / truth
+    function _winFactor(s, dl1, dl2) {
+        if (!fin(s) || Math.abs(s) < 1e-9) return 1;
+        var dlT = dl1 + dl2;
+        return ((1 - Math.exp(-s * dl1)) / dl1 * (dl2 / dlT) + (Math.exp(s * dl2) - 1) / dl2 * (dl1 / dlT)) / s;
+    }
+
+    // Seeded generator: PRiSM_rng (05, WPH) when present, else the same mulberry32 as 05's _makeRng (seed null → 1).
+    function makeRng(seed) {
+        var s0 = (seed == null || !fin(+seed)) ? 1 : (+seed);
+        if (typeof G.PRiSM_rng === 'function') { try { var r = G.PRiSM_rng(s0); if (typeof r === 'function') return r; } catch (e) { /* fall through */ } }
+        var s = (s0 | 0) || 1;
+        return function () {
+            s |= 0; s = (s + 0x6D2B79F5) | 0;
+            var t = s;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return (((t ^ (t >>> 14)) >>> 0) / 4294967296);
         };
-        f._dfitStub = true;
-        return f;
+    }
+    function gauss(r) { var u = 0; while (u === 0) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); }
+
+    // Hashes (§3.0 / §3.13): 53's canon + hash16 when present, else a local FNV-1a over JSON (flagged weak by callers).
+    function _fnv16(s) {
+        var h1 = 0x811c9dc5, h2 = 0x01000193 ^ 0x5bd1e995, i, c;
+        for (i = 0; i < s.length; i++) { c = s.charCodeAt(i); h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0; h2 ^= c + i; h2 = Math.imul(h2, 0x01000193) >>> 0; }
+        var a = ('00000000' + (h1 >>> 0).toString(16)).slice(-8), b = ('00000000' + (h2 >>> 0).toString(16)).slice(-8);
+        return a + b;
+    }
+    function hashOf(obj, mode) {
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.canon === 'function' && typeof AI.hash16 === 'function') {
+            try { return { h: AI.hash16(AI.canon(obj, mode || 'inputs')), weak: false }; } catch (e) { /* fall through */ }
+        }
+        var s; try { s = JSON.stringify(obj); } catch (e2) { s = String(obj); }
+        return { h: _fnv16(s || ''), weak: true };
     }
 
-    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_timeFns', 'PRiSM_dfit_centroid', 'PRiSM_dfit_acaDiag',
-     'PRiSM_dfit_nolte', 'PRiSM_dfit_impulseLines', 'PRiSM_dfit_acaBounds', 'PRiSM_dfit_piConsensus', 'PRiSM_dfit_gasAdjust',
-     'PRiSM_dfit_crTransform', 'PRiSM_dfit_acaMatch', 'PRiSM_dfit_aca', 'PRiSM_dfit_leakPlot', 'PRiSM_dfit_uncertainty',
-     'PRiSM_dfit_replay', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel', 'PRiSM_dfit_checkQuoted', 'PRiSM_dfit_exportText',
-     'PRiSM_dfit_fracSheet', 'PRiSM_dfit_handoff'].forEach(function (n) { G[n] = _stub(n); });
-    ['PRiSM_dfit_pipelineJob', 'PRiSM_dfit_acaMatchJob', 'PRiSM_dfit_uncertaintyJob', 'PRiSM_dfit_replayJob']
-        .forEach(function (n) { G[n] = _jobStub(n); });
+    // ═════════════════════════════════════════════════════════════════════
+    // 2. Kernels and constants (§4.12)
+    // ═════════════════════════════════════════════════════════════════════
+    // Every after-closure kernel is Δp = 5.6146·V/(φc_t)·G_d(t) with η_d = 0.0002637·k/(φμc_t) ft²/h:
+    //   radial 5.614583/(4π·η_c) = 1,694.5 · V·μ/(kh·t);   linear 5.614583/√(4π·η_c) = 97.54 · (V/A)·√(μ/(kφc_t))/√t
+    //   (A = one face of both wings = 2·L·h);  spherical 5.614583/(4π·η_c)^1.5 = 29,437;  bilinear 264.8.
+    //   Nolte radial kh/μ = 4·1,694.5/χ · V/(m_R·t_c) = 4,181 (t_c in h) = 250,856 (t_c in min), χ = 16/π².
+    //   Linear m_L = 845.5·CL·√(μ/(kφc_t)) with CL in ft/√min (109.15 with ft/√h); k = μ/(φc_t)·(CL/(1.1827e-3·m_L))².
+    var KC = {
+        etaC: 0.000263679, bbl: 5.614583, unit: 141.2, rad: 1694.5, lin: 97.54, sph: 29437, bil: 264.8,
+        khmuH: 4181, khmuMin: 250856, mLmin: 845.5, mLh: 109.15, invmL: 1.1827e-3, chi: 16 / (Math.PI * Math.PI)
+    };
 
+    function erfc(x) {                                              // Chebyshev fit, fractional error < 1.2e-7
+        var z = Math.abs(x), t = 1 / (1 + 0.5 * z);
+        var r = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 +
+                t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+        return x >= 0 ? r : 2 - r;
+    }
+    function erf(x) { return 1 - erfc(x); }
+    function E1(x) {                                                // exponential integral E1(x), x > 0
+        if (!(x > 0)) return NaN;
+        if (x <= 1) {
+            var s = 0, term = 1, k;
+            for (k = 1; k < 60; k++) { term *= -x / k; var add = -term / k; s += add; if (Math.abs(add) < 1e-16 * Math.abs(s)) break; }
+            return -0.5772156649015329 - Math.log(x) + s;
+        }
+        var b = x + 1, c = 1e300, d = 1 / b, h = d, i;           // modified Lentz continued fraction
+        for (i = 1; i < 200; i++) {
+            var an = -i * i; b += 2; d = 1 / (an * d + b); c = b + an / c; var del = c * d; h *= del;
+            if (Math.abs(del - 1) < 1e-15) break;
+        }
+        return h * Math.exp(-x);
+    }
+    // uniform-flux fracture (full height, observed at the centre): pD = √(πtD)·erf(1/(2√tD)) + ½E1(1/(4tD));
+    // pD′ = tD·dpD/dtD = (√(πtD)/2)·erf(1/(2√tD))   (exactly; the E1 term cancels)
+    function ufPdPrime(tD) { return tD > 0 ? 0.5 * Math.sqrt(Math.PI * tD) * erf(1 / (2 * Math.sqrt(tD))) : 0; }
+    function ufPd(tD) { return tD > 0 ? Math.sqrt(Math.PI * tD) * erf(1 / (2 * Math.sqrt(tD))) + 0.5 * E1(1 / (4 * tD)) : 0; }
+    function etaD(P) { return KC.etaC * P.k / (P.phi * P.mu * P.ct); }
+    // impulse response of the whole volume V released at t = 0 into a uniform-flux fracture of half-length L (psi)
+    function ufImpulse(t, P) { if (!(t > 0)) return NaN; var tD = etaD(P) * t / (P.L * P.L); return 24 * P.V * KC.unit * P.mu / (P.k * P.h) * ufPdPrime(tD) / t; }
+    // constant-rate response per bbl/d (psi)
+    function ufRate(t, P) { if (!(t > 0)) return 0; var tD = etaD(P) * t / (P.L * P.L); return KC.unit * P.mu / (P.k * P.h) * ufPd(tD); }
+    // penny-shaped (uniform-flux disc of radius R in a thick zone) impulse shape at the centre, τ = η·t/R²
+    function pennyShape(tau) { return tau > 0 ? (1 - Math.exp(-1 / (4 * tau))) / Math.sqrt(tau) : NaN; }
+    // uniform-flux impulse shape (∝ dpD/dtD), t_DL = η·t/L²
+    function ufShape(tDL) { return tDL > 0 ? ufPdPrime(tDL) / tDL : NaN; }
+    // Θ = pD/pD′ of the uniform-flux fracture (leak budget, §6.4)
+    function theta(tDL) { var a = ufPdPrime(tDL); return a > 0 ? ufPd(tDL) / a : null; }
+
+    var _GL = null;                                                 // 64-point Gauss–Legendre on [−1, 1]
+    function gl64() {
+        if (_GL) return _GL;
+        var n = 64, x = [], w = [], i, j;
+        for (i = 1; i <= n; i++) {
+            var z = Math.cos(Math.PI * (i - 0.25) / (n + 0.5)), z1, pp, it = 0;
+            do {
+                var p1 = 1, p2 = 0;
+                for (j = 1; j <= n; j++) { var p3 = p2; p2 = p1; p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j; }
+                pp = n * (z * p1 - p2) / (z * z - 1); z1 = z; z = z1 - p1 / pp;
+            } while (Math.abs(z - z1) > 1e-15 && ++it < 100);
+            x.push(z); w.push(2 / ((1 - z * z) * pp * pp));
+        }
+        _GL = { x: x, w: w }; return _GL;
+    }
+    // Carter source (constant area, leak-off rate ∝ 1/√τ on 0 < τ < t_c, mean release time t_c/3): with τ = t_c·u² the
+    // convolution of an impulse kernel f (response to the whole V) is Δp(t) = ∫₀¹ f(t − t_c·u²) du.
+    function carter(f, t, tc, panels) {
+        if (!(t > tc)) return NaN;
+        var Q = gl64(), N = panels || 8, s = 0, k, i;
+        for (k = 0; k < N; k++) {
+            var a = k / N, b = (k + 1) / N;
+            for (i = 0; i < Q.x.length; i++) { var u = 0.5 * (a + b) + 0.5 * (b - a) * Q.x[i]; s += 0.5 * (b - a) * Q.w[i] * f(t - tc * u * u); }
+        }
+        return s;
+    }
+    // log-log slope of the pure-radial Carter response Δp ∝ u·artanh(u) (u = √(t_c/t)) or of its D, against the time
+    // since an origin t0 (fraction of t_c): 'sinceClosure' 1, 'centroid' 1/3, 'total' 0 (§4.12 origin table)
+    function originSlope(origin, tOverTc, what) {
+        var t0 = origin === 'sinceClosure' ? 1 : origin === 'centroid' ? 1 / 3 : origin === 'midInjection' ? 0.5 * (fin(what && what.teOverTc) ? what.teOverTc : 0) : 0;
+        var useD = what === 'D' || (what && what.D);
+        var dp = function (t) { var u = Math.sqrt(1 / t); return u * 0.5 * Math.log((1 + u) / (1 - u)); };
+        var Df = function (t) { var e = 1e-6; return Math.abs((dp(t * (1 + e)) - dp(t * (1 - e))) / (2 * e * t)) * (t - t0); };
+        var f = useD ? Df : dp, x = tOverTc - t0, e2 = 1e-4;
+        if (!(x > 0)) return null;
+        return (Math.log(f(t0 + x * Math.exp(e2))) - Math.log(f(t0 + x * Math.exp(-e2)))) / (2 * e2);
+    }
+    // leak tolerance q_k,max = ε·V/(Θ·t_end) (bbl/d; V bbl, t h)
+    function qkMaxRule(eps, V, th, tEnd) { return (pos(V) && pos(th) && pos(tEnd)) ? (fin(eps) ? eps : 0.05) * V / (th * tEnd) * 24 : null; }
+    // gas properties at p (reservoir temperature and gravity from the well): {mu cp, cg 1/psi, z}
+    function gasProps(p, well) {
+        var C = G.PRiSM_pvt_correlations; well = well || {};
+        var T = fin(well.T_F) ? well.T_F : (fin(well.T_res) ? well.T_res : null), sg = pos(well.SG_g) ? well.SG_g : null;
+        if (!C || !fin(T) || !sg || !(p > 0)) return null;
+        try {
+            var Tpr = (T + 459.67) / C.Tpc_sutton(sg), Ppr = p / C.Ppc_sutton(sg), z = C.Z_dranchukAbouKassem(Tpr, Ppr);
+            var mu = C.mu_g_leeGonzalezEakin(sg, T, z, p), cg = typeof C.cg_realGas === 'function' ? C.cg_realGas(p, T, z, sg) : 1 / p;
+            if (!pos(mu) || !pos(cg)) return null;
+            return { mu: mu, cg: cg, z: z };
+        } catch (e) { return null; }
+    }
+
+    G.PRiSM_dfit_acaKernels = {
+        K: KC, erf: erf, erfc: erfc, E1: E1, ufPd: ufPd, ufPdPrime: ufPdPrime, ufImpulse: ufImpulse, ufRate: ufRate,
+        ufShape: ufShape, pennyShape: pennyShape, theta: theta, carter: carter, originSlope: originSlope,
+        qkMax: qkMaxRule, gasProps: gasProps, bourdet: bourdet
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 3. Time functions, centroid, diagnosis, lines, bounds, p_i consensus
+    // ═════════════════════════════════════════════════════════════════════
+    function FL1(t, tc) { return t > tc ? 2 / Math.PI * Math.asin(Math.sqrt(tc / t)) : (t > 0 ? 1 : null); }
+    function FR1(t, tc) { return t > tc ? 0.25 * Math.log(1 + KC.chi * tc / (t - tc)) : null; }
+    function FRc1(t, tc) { if (!(t > tc)) return null; var u = Math.sqrt(tc / t); return KC.chi / 4 * u * 0.5 * Math.log((1 + u) / (1 - u)); }
+
+    G.PRiSM_dfit_timeFns = function (tInj, tcInj, opts) {
+        try {
+            opts = opts || {};
+            var useA = arrOk(opts.ta), tc = useA && pos(opts.tcA) ? opts.tcA : tcInj;
+            if (!pos(tc)) return fail('BAD_INPUT', 'The closure time on the injection clock must be positive.', ['tcInj']);
+            var single = !arrOk(tInj), T = single ? [tInj] : tInj, out = { FL: [], FR: [], FRc: [] };
+            for (var i = 0; i < T.length; i++) {
+                var t = useA ? opts.ta[i] : T[i];
+                out.FL.push(fin(t) ? nn(FL1(t, tc)) : null);
+                out.FR.push(fin(t) ? nn(FR1(t, tc)) : null);
+                out.FRc.push(fin(t) ? nn(FRc1(t, tc)) : null);
+            }
+            if (opts.carterExact) out.FR = out.FRc.slice();
+            if (single) { out.FL = out.FL[0]; out.FR = out.FR[0]; out.FRc = out.FRc[0]; }
+            out.ok = true;
+            return out;
+        } catch (e) { return fail('TIMEFNS_FAILED', e && e.message || e); }
+    };
+
+    G.PRiSM_dfit_centroid = function (src) {
+        if (!src) return null;
+        if (pos(src.tcInj) && !arrOk(src.tau)) return src.tcInj / 3;
+        if (arrOk(src.tau) && arrOk(src.qL) && src.tau.length === src.qL.length && src.tau.length > 1) {
+            var a = 0, b = 0;
+            for (var i = 1; i < src.tau.length; i++) {
+                var dt = src.tau[i] - src.tau[i - 1]; if (!(dt > 0)) continue;
+                var q0 = fin(src.qL[i - 1]) ? src.qL[i - 1] : 0, q1 = fin(src.qL[i]) ? src.qL[i] : 0;
+                a += 0.5 * (q0 * src.tau[i - 1] + q1 * src.tau[i]) * dt; b += 0.5 * (q0 + q1) * dt;
+            }
+            return b > 0 ? a / b : null;
+        }
+        return null;
+    };
+
+    // ── p_i-free diagnosis (§4.12) ──
+    var BANDS = [['linear', -0.5, 0.07], ['bilinear', -0.75, 0.07], ['radial', -1.0, 0.07], ['spherical', -1.5, 0.1]];
+    function bandOf(s) {
+        if (!fin(s)) return null;
+        for (var i = 0; i < BANDS.length; i++) if (Math.abs(s - BANDS[i][1]) <= BANDS[i][2] + 1e-12) return BANDS[i][0];
+        if (s < -1.6) return 'artefact';
+        return 'transition';
+    }
+    G.PRiSM_dfit_acaDiag = function (t, p, opts) {
+        try {
+            opts = opts || {};
+            if (!arrOk(t) || !arrOk(p) || t.length !== p.length) return fail('BAD_INPUT', 'Time and pressure arrays of equal length are needed.', ['t', 'p']);
+            var t0 = fin(opts.t0) ? opts.t0 : 0, LB = pos(opts.LB) ? opts.LB : 0.25, sigma = fin(opts.sigma) && opts.sigma > 0 ? opts.sigma : 0;
+            var x = [], pp = [], i;
+            for (i = 0; i < t.length; i++) if (fin(t[i]) && fin(p[i]) && t[i] - t0 > 0 && (!x.length || t[i] - t0 > x[x.length - 1])) { x.push(t[i] - t0); pp.push(p[i]); }
+            var n = x.length;
+            var out = { x: x, D: [], sD: [], n: [], piLo: [], piHi: [], piPoint: [], noiseD: [], regimes: [], sequenceOk: true, p: pp, kinds: [], ok: true };
+            if (n < 3) { out.ok = n > 0; for (i = 0; i < n; i++) { out.D.push(null); out.sD.push(null); out.n.push(null); out.piLo.push(null); out.piHi.push(null); out.piPoint.push(null); out.noiseD.push(null); out.kinds.push(null); } out.sequenceOk = false; return out; }
+            var lx = x.map(Math.log), spans = new Array(n), dd = bourdet(lx, pp, LB, null, spans), D = [], lD = [];
+            for (i = 0; i < n; i++) { var v = fin(dd[i]) ? Math.abs(dd[i]) : null; D.push(v); lD.push(v > 0 ? Math.log(v) : NaN); }
+            var sd = bourdet(lx, lD, LB), sD = [];
+            for (i = 0; i < n; i++) sD.push(fin(sd[i]) ? sd[i] : null);
+            // remove the window bias of the difference on a local power law (D ∝ x^s_D): D/f(s_D, Δ₁, Δ₂)
+            for (i = 0; i < n; i++) {
+                if (D[i] == null || !spans[i] || !fin(sD[i])) continue;
+                var wf = _winFactor(sD[i], spans[i][0], spans[i][1]);
+                if (wf > 0.5 && wf < 2) { D[i] = D[i] / wf; lD[i] = Math.log(D[i]); }
+            }
+            var sigD = sigma > 0 ? sigma / (Math.SQRT2 * LB) : 0, kinds = [], seenBand = false;
+            for (i = 0; i < n; i++) {
+                var acc = D[i] != null && (sigD === 0 || D[i] >= 10 * sigD), kd = acc ? bandOf(sD[i]) : null;
+                // steep s_D right after closure (closure proximity, before any regime band) is a transition, not an artefact
+                if (kd === 'artefact' && !seenBand) kd = 'transition';
+                if (kd && kd !== 'transition' && kd !== 'artefact') seenBand = true;
+                kinds.push(kd);
+            }
+            // storage call: s_D > −0.40 from the first accepted points (before any point steeper than −0.43) for ≥ 0.2 log
+            // cycle, or s_D > −0.40 held for more than one log cycle anywhere; the linear-to-radial hump (≤ 0.5 cycle) is not
+            var storage = false, firstSteep = -1, runStart = -1, LN10 = Math.LN10;
+            for (i = 0; i < n; i++) { if (kinds[i] != null && sD[i] <= -0.43) { firstSteep = i; break; } }
+            var iFirst = -1; for (i = 0; i < n; i++) if (kinds[i] != null) { iFirst = i; break; }
+            if (iFirst >= 0) {
+                var lim = firstSteep < 0 ? n : firstSteep, allShallow = true;
+                for (i = iFirst; i < lim; i++) if (kinds[i] != null && !(sD[i] > -0.40)) { allShallow = false; break; }
+                if (allShallow && lim - 1 > iFirst && (lx[lim - 1] - lx[iFirst]) / LN10 >= 0.2) storage = true;
+            }
+            for (i = 0; i < n; i++) {
+                if (kinds[i] != null && sD[i] > -0.40) { if (runStart < 0) runStart = i; if ((lx[i] - lx[runStart]) / LN10 > 1) storage = true; }
+                else runStart = -1;
+            }
+            // gate for the bracket p − 2D ≤ p_i ≤ p − D: the sequence so far is linear → (hump) → radial-ward; no storage
+            // call; points steeper than −1.1 never carry it, and after a steepening past −1.1 that follows at least 0.3
+            // cycle of regime-band data (penny / spherical trend), no later point carries it
+            // steepening: after ≥ 0.3 log cycle of regime-band progress, a run with s_D < −1.1 that lasts ≥ 0.3 log cycle or
+            // reaches the end of the data (closure proximity makes s_D steep right after closure and then rises: not this)
+            var progressed = -1, steepened = false, steepFrom = n, rs = -1;
+            for (i = 0; i < n; i++) {
+                var s1 = sD[i];
+                if (fin(s1) && s1 >= -1.07 && s1 <= -0.43 && kinds[i] != null && progressed < 0) progressed = i;
+                if (progressed >= 0 && i > progressed && fin(s1) && s1 < -1.1 && (lx[i] - lx[progressed]) / LN10 >= 0.3) {
+                    if (rs < 0) rs = i;
+                    if ((lx[i] - lx[rs]) / LN10 >= 0.3 || (i === n - 1 && i - rs >= 2 && (lx[i] - lx[rs]) / LN10 >= 0.15)) { steepened = true; steepFrom = rs; break; }
+                } else rs = -1;
+            }
+            for (i = 0; i < n; i++) {
+                var s = sD[i], g = !storage && D[i] != null && fin(s) && s >= -1.1 && i < steepFrom;
+                out.D.push(D[i] == null ? null : D[i]);
+                out.sD.push(s == null ? null : s);
+                out.n.push(fin(s) ? -2 * s : null);
+                out.piLo.push(g ? pp[i] - 2 * D[i] : null);
+                out.piHi.push(g ? pp[i] - D[i] : null);
+                out.noiseD.push(sigD);
+                // point estimate only where s_D is locally constant (|Δs_D| < 0.1 over 0.5 log cycle) inside a regime band
+                var pt = null, k = kinds[i];
+                if (g && (k === 'linear' || k === 'bilinear' || k === 'radial' || k === 'spherical')) {
+                    var la = lx[i] - 0.25 * LN10, lb = lx[i] + 0.25 * LN10;
+                    if (la >= lx[0] && lb <= lx[n - 1]) {
+                        var sa = _interpFinite(lx, sD, la), sb = _interpFinite(lx, sD, lb);
+                        if (fin(sa) && fin(sb) && Math.abs(sb - sa) < 0.1) pt = pp[i] - (2 / (-2 * s)) * D[i];
+                    }
+                }
+                out.piPoint.push(fin(pt) ? pt : null);
+            }
+            out.kinds = kinds;
+            // regimes: merged runs of one kind (≥ 0.1 log cycle, storage always kept)
+            var runs = [], cur = null;
+            for (i = 0; i < n; i++) {
+                var kk = kinds[i]; if (kk === 'transition' && fin(sD[i]) && sD[i] > -0.40 && storage) kk = 'storage';
+                if (kk == null) { cur = null; continue; }
+                if (cur && cur.kind === kk) { cur.i1 = i; cur.s.push(sD[i]); }
+                else { cur = { kind: kk, i0: i, i1: i, s: [sD[i]] }; runs.push(cur); }
+            }
+            runs.forEach(function (r) {
+                var span = (lx[r.i1] - lx[r.i0]) / LN10;
+                if (span >= 0.1 || r.kind === 'storage') out.regimes.push({ kind: r.kind, t0: x[r.i0] + t0, t1: x[r.i1] + t0, slope: rnd(median(r.s), 4), _span: span });
+            });
+            out.storage = storage;
+            out.steepened = steepened;
+            out.sequenceOk = !storage && !steepened && !out.regimes.some(function (r) { return r.kind === 'artefact'; });
+            return out;
+        } catch (e) { return fail('ACADIAG_FAILED', e && e.message || e); }
+    };
+    function _interpFinite(xs, ys, x) {
+        var lo = -1, hi = -1, i;
+        for (i = 0; i < xs.length; i++) { if (!fin(ys[i])) continue; if (xs[i] <= x) lo = i; else { hi = i; break; } }
+        if (lo < 0 || hi < 0) return lo >= 0 && xs[lo] === x ? ys[lo] : null;
+        return ys[lo] + (x - xs[lo]) / (xs[hi] - xs[lo]) * (ys[hi] - ys[lo]);
+    }
+
+    function _inWin(t, w) { return w && fin(w[0]) && fin(w[1]) && t >= w[0] - 1e-12 && t <= w[1] + 1e-12; }
+    function _winPts(t, p, w, fx) {
+        var X = [], Y = [];
+        for (var i = 0; i < t.length; i++) if (fin(p[i]) && _inWin(t[i], w)) { var v = fx(t[i], i); if (fin(v)) { X.push(v); Y.push(p[i]); } }
+        return { X: X, Y: Y };
+    }
+
+    // Nolte / Talley lines (t, t_c from the start of injection): p = p_r + m_L·F_L and p = p_r + m_R·F_R (F_Rc when exact)
+    G.PRiSM_dfit_nolte = function (ctx) {
+        try {
+            ctx = ctx || {};
+            var t = ctx.tInj, p = ctx.p, tc = ctx.tcInj;
+            if (!arrOk(t) || !arrOk(p) || !pos(tc)) return fail('BAD_INPUT', 'Nolte lines need the injection-clock times, pressures and t_c.', ['tInj', 'p', 'tcInj']);
+            var ta = arrOk(ctx.ta) ? ctx.ta : null, tcA = ta && pos(ctx.tcA) ? ctx.tcA : tc;
+            var out = { lin: null, rad: null, ok: true };
+            if (ctx.linWin) {
+                var L = _winPts(ta || t, p, ctx.linWin, function (v) { return FL1(v, tcA); });
+                var fl = L.X.length >= 3 ? linfit(L.X, L.Y) : null;
+                if (fl && fl.m > 0) {
+                    var kL = (pos(ctx.CL) && pos(ctx.mu) && pos(ctx.phi) && pos(ctx.ct)) ? ctx.mu / (ctx.phi * ctx.ct) * Math.pow(ctx.CL / (KC.invmL * fl.m), 2) : null;
+                    out.lin = { pr: fl.b, mL: fl.m, k: nn(kL), win: [ctx.linWin[0], ctx.linWin[1]], seB: fl.seB, n: fl.n };
+                }
+            }
+            if (ctx.radWin) {
+                var fR = ctx.carterExact ? FRc1 : FR1;
+                var R = _winPts(ta || t, p, ctx.radWin, function (v) { return fR(v, tcA); });
+                var fr = R.X.length >= 3 ? linfit(R.X, R.Y) : null;
+                if (fr && fr.m > 0 && pos(ctx.V)) {
+                    var khmu = KC.khmuH * ctx.V / (fr.m * tcA);
+                    out.rad = { pr: fr.b, mR: fr.m, khmu: khmu, k: (pos(ctx.mu) && pos(ctx.h)) ? khmu * ctx.mu / ctx.h : null, win: [ctx.radWin[0], ctx.radWin[1]], seB: fr.seB, n: fr.n, exact: !!ctx.carterExact };
+                }
+            }
+            return out;
+        } catch (e) { return fail('NOLTE_FAILED', e && e.message || e); }
+    };
+
+    // Impulse lines p = p_i + m·g(t − t0): linear t′^−½ (A√k), radial 1/t′ (kh/μ), spherical t′^−3/2 (k_s), bilinear t′^−¾
+    G.PRiSM_dfit_impulseLines = function (ctx) {
+        try {
+            ctx = ctx || {};
+            var t = ctx.t, p = ctx.p, t0 = fin(ctx.t0) ? ctx.t0 : 0, reg = ctx.regime || 'linear', V = ctx.V;
+            if (!arrOk(t) || !arrOk(p) || !pos(V)) return fail('BAD_INPUT', 'Impulse lines need times, pressures and the volume.', ['t', 'p', 'V']);
+            var ex = reg === 'radial' ? 1 : reg === 'spherical' ? 1.5 : reg === 'bilinear' ? 0.75 : 0.5;
+            var w = ctx.win || [-Infinity, Infinity];
+            var P = _winPts(t, p, w, function (v) { var x = v - t0; return x > 0 ? Math.pow(x, -ex) : NaN; });
+            var f = P.X.length >= 3 ? linfit(P.X, P.Y) : null;
+            if (!f || !(f.m > 0)) return fail('NO_LINE', 'Fewer than three usable points, or no decline, in the impulse window.', ['win']);
+            var mu = ctx.mu, phi = ctx.phi, ct = ctx.ct, out = { ok: true, pi: f.b, m: f.m, group: 'Ask', value: null, seB: f.seB, n: f.n, regime: reg };
+            if (reg === 'linear') {
+                out.group = 'Ask';
+                out.value = (pos(mu) && pos(phi) && pos(ct)) ? KC.lin * V * Math.sqrt(mu / (phi * ct)) / f.m : null;
+                if (pos(ctx.A) && pos(out.value)) out.k = Math.pow(out.value / ctx.A, 2);
+            } else if (reg === 'radial') {
+                out.group = 'khmu'; out.value = KC.rad * V / f.m;
+                if (pos(mu) && pos(ctx.h)) out.k = out.value * mu / ctx.h;
+            } else if (reg === 'spherical') {
+                out.group = 'ks';
+                out.value = (pos(mu) && pos(phi) && pos(ct)) ? Math.pow(KC.sph * V * Math.pow(mu, 1.5) * Math.sqrt(phi * ct) / f.m, 2 / 3) : null;
+            } else {
+                out.group = 'kfw';
+                out.value = (pos(mu) && pos(ctx.h)) ? KC.bil * V * mu / (ctx.h * f.m) : null;
+            }
+            return out;
+        } catch (e) { return fail('IMPULSE_FAILED', e && e.message || e); }
+    };
+
+    // Bounds on k when radial flow is not reached (§4.12), at the conservative ends of the input ranges
+    var KMEM = 1.3;                    // CL model-form factor of the leak-off-limit k bound (Duhamel memory, §4.11)
+    G.PRiSM_dfit_acaBounds = function (ctx) {
+        try {
+            ctx = ctx || {};
+            var dg = ctx.diag, rg = ctx.ranges || {};
+            if (!dg || !arrOk(dg.x) || !dg.x.length) return fail('BAD_INPUT', 'Bounds need the after-closure diagnosis.', ['diag']);
+            var hiOf = function (k, def) { var r = rg[k]; return r && fin(r[1]) ? r[1] : def; };
+            var loOf = function (k, def) { var r = rg[k]; return r && fin(r[0]) ? r[0] : def; };
+            var phi = ctx.phi, mu = ctx.mu, ct = ctx.ct, h = ctx.h, V = ctx.V;
+            var props = typeof ctx.props === 'function' ? ctx.props : null;
+            var n = dg.x.length, iEnd = n - 1;
+            while (iEnd > 0 && !(fin(dg.D[iEnd]) && dg.D[iEnd] > 0)) iEnd--;
+            var xEnd = fin(ctx.tEnd) && fin(ctx.t0) ? ctx.tEnd - ctx.t0 : dg.x[iEnd], DEnd = dg.D[iEnd], pEnd = dg.p ? dg.p[iEnd] : null;
+            var sEnd = null; for (var i = iEnd; i >= 0 && sEnd == null; i--) if (fin(dg.sD[i])) sEnd = dg.sD[i];
+            var reversed = fin(sEnd) && sEnd < -1.1;
+            var his = [], los = [], trend = { khmuPi: null, khmuD: null };
+            var muHi = hiOf('mu', mu), hHi = hiOf('h', h), VHi = hiOf('V', V), phiHi = hiOf('phi', phi), ctHi = hiOf('ct', ct);
+            var muLo = loOf('mu', mu), VLo = loOf('V', V);
+            if (props && fin(ctx.piLo)) { var pr = props(ctx.piLo); if (pr) { if (pos(pr.mu)) { muLo = pr.mu; muHi = pr.mu; } if (pos(pr.ct)) { ctHi = pr.ct; } } }
+            // k_hi from the trend (kh/μ ≤ 1,694.5·V/(Δp_end·t′_end) and ≤ 1,694.5·V/(D_end·t′_end)); reversed for n > 2
+            if (pos(VHi) && pos(xEnd)) {
+                if (fin(ctx.piHi) && fin(pEnd) && pEnd - ctx.piHi > 0) trend.khmuPi = KC.rad * VHi / ((pEnd - ctx.piHi) * xEnd);
+                if (pos(DEnd)) trend.khmuD = KC.rad * VHi / (DEnd * xEnd);
+                [['trend', trend.khmuPi], ['trend-pfree', trend.khmuD]].forEach(function (r) {
+                    if (!pos(r[1]) || !pos(muHi) || !pos(h)) return;
+                    var kk = r[1] * (reversed ? muLo : muHi) / (reversed ? hHi : loOf('h', h));     // conservative ends: the lowest h for k_hi
+                    (reversed ? los : his).push({ edge: reversed ? 'lo' : 'hi', rule: r[0], value: rnd(ctx.tEnd != null ? ctx.tEnd : xEnd, 4), k: kk });
+                });
+            }
+            // k_hi when radial flow is not reached (s_D > −0.90 at t_end): k < 1.6·φμc_t·L_max²/(0.0002637·t′_end)
+            if (pos(ctx.Lmax) && pos(xEnd) && fin(sEnd) && sEnd > -0.90 && pos(phiHi) && pos(muHi) && pos(ctHi)) {
+                his.push({ edge: 'hi', rule: 'radial-not-reached', value: rnd(ctx.Lmax, 1), k: 1.6 * phiHi * muHi * ctHi * ctx.Lmax * ctx.Lmax / (KC.etaC * xEnd) });
+            }
+            // k_lo, linear flow with the largest plausible area: k = (97.54·V/(A_max·m_L′))²·μ/(φc_t)
+            // (not under PDL: the opened fissures leak over an area that the main fracture's 2·L_max·h does not bound — the
+            // mini-model PDL case put k_lo 1.5 × above the true k)
+            if (ctx.classType !== 'pdl' && pos(ctx.Amax) && pos(ctx.mImpLin) && pos(VLo) && pos(muLo) && pos(phiHi) && pos(ctHi)) {
+                los.push({ edge: 'lo', rule: 'linear-Amax', value: rnd(ctx.Amax / (2 * (pos(h) ? h : 1)), 1), k: Math.pow(KC.lin * VLo / (ctx.Amax * ctx.mImpLin), 2) * muLo / (phiHi * ctHi) });
+            }
+            // k_lo, leak-off cannot exceed its reservoir-controlled limit: k ≥ μ/(φc_t)·(CL_lo/(1.1827e-3·Δp_hi)),
+            // Δp_hi = p_mid,hi − p_i,lo (the Δp_CL convention ½·(ISIP + σ_c) − p_r at the conservative ends, §4.22)
+            // The G-analysis CL carries the Duhamel memory of the higher early Δp (§4.11): on reservoir-controlled leak-off it sits
+            // ~19 % above the reservoir-equivalent CL at the mean Δp (mini-model reference 2.267e-4 against 1.903e-4), so the
+            // "limit" was crossed by construction and k_lo missed the true k in every mini-model case. CL_lo is divided by the
+            // model-form factor KMEM = 1.3 (the 19 % plus margin, calibrated on the lk matrix cases). Under PDL or tip extension
+            // the observed CL is not matrix leak-off at all: the bound is not used (ctx.classType)
+            var dpCL = (fin(ctx.pMidHi) && fin(ctx.piLo)) ? ctx.pMidHi - ctx.piLo : null;
+            var CLlo = pos(ctx.CLlo) ? ctx.CLlo : (pos(ctx.CL) ? ctx.CL : null);
+            var noLeakLim = ctx.classType === 'pdl' || ctx.classType === 'tip';
+            if (!noLeakLim && pos(dpCL) && CLlo && pos(muLo) && pos(phiHi) && pos(ctHi)) {
+                los.push({ edge: 'lo', rule: 'leakoff-limit', value: rnd(dpCL, 1), k: muLo / (phiHi * ctHi) * Math.pow(CLlo / (KMEM * KC.invmL * dpCL), 2) });
+            }
+            var kHi = null, kLo = null, bHi = null, bLo = null;
+            his.forEach(function (b) { if (pos(b.k) && (kHi == null || b.k < kHi)) { kHi = b.k; bHi = b; } });
+            los.forEach(function (b) { if (pos(b.k) && (kLo == null || b.k > kLo)) { kLo = b.k; bLo = b; } });
+            var warnings = [];
+            if (kLo != null && kHi != null && kLo > kHi) {
+                warnings.push(W('BOUNDS_CROSSED', 'warn', 'The lower and upper k bounds cross; the inputs (area, CL or the trend) are inconsistent.', ['A1']));
+                var tmp = kLo; kLo = kHi; kHi = tmp;
+            }
+            var binding = [];
+            if (bLo) binding.push({ edge: 'lo', rule: bLo.rule, value: fin(bLo.value) ? bLo.value : 0 });
+            if (bHi) binding.push({ edge: 'hi', rule: bHi.rule, value: fin(bHi.value) ? bHi.value : 0 });
+            return { ok: true, kLo: nn(kLo), kHi: nn(kHi), binding: binding, direction: reversed ? 'reversed' : 'normal', dpCL: nn(dpCL), trend: trend,
+                     candidates: { lo: los, hi: his }, warnings: warnings };
+        } catch (e) { return fail('BOUNDS_FAILED', e && e.message || e); }
+    };
+
+    // p_i consensus: intersect the brackets, weighted median of the candidates inside, label (§4.12)
+    var BR_TOL = 0.02;       // relative model-form allowance of the p_i bracket edges (see the brackets in PRiSM_dfit_aca)
+    G.PRiSM_dfit_piConsensus = function (ctx) {
+        try {
+            ctx = ctx || {};
+            var br = ctx.brackets || {}, lo = -Infinity, hi = Infinity, eLo = null, eHi = null, names = ['cart', 'imp', 'deriv'], any = false;
+            names.forEach(function (k) {
+                var b = br[k]; if (!b || !fin(b[0]) || !fin(b[1])) return;
+                any = true;
+                if (b[0] > lo) { lo = b[0]; eLo = k; }
+                if (b[1] < hi) { hi = b[1]; eHi = k; }
+            });
+            var cands = (ctx.candidates || []).filter(function (c) { return c && fin(c.value); });
+            var reasons = [], crossed = any && lo > hi;
+            var vals = cands.map(function (c) { return c.value; }), ws = cands.map(function (c) { return pos(c.w) ? c.w : 1; });
+            var value = wmedian(vals, ws);
+            if (!any || crossed) {
+                if (crossed) reasons.push('The brackets do not overlap; only the candidate lines are used.');
+                if (value == null) return fail('NO_PI', 'Neither a bracket nor a candidate line gives p_i.', ['candidates']);
+                var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+                lo = mn; hi = mx; eLo = eLo || 'candidates'; eHi = eHi || 'candidates';
+                if (crossed) { eLo = 'candidates'; eHi = 'candidates'; }
+            }
+            if (value == null) value = 0.5 * (lo + hi);
+            if (value < lo) value = lo; if (value > hi) value = hi;
+            var width = hi - lo, label = 'low';
+            var hiTol = Math.max(10, 0.005 * Math.abs(value));
+            var stable = fin(ctx.stableCycles) ? ctx.stableCycles >= 0.5 : false;
+            var epsOk = fin(ctx.eps) ? ctx.eps < 0.05 : true;
+            var matchOk = !ctx.matchCI || (ctx.matchCI[0] >= lo - 1e-9 && ctx.matchCI[1] <= hi + 1e-9);
+            if (!crossed && any && width <= hiTol && stable && epsOk && matchOk && !ctx.storage && !ctx.steepened) label = 'high';
+            else if (!crossed && !ctx.storage && !ctx.steepened && (width <= 50 || (ctx.linearOnly && fin(ctx.flVsImp) && Math.abs(ctx.flVsImp) <= 10))) label = 'medium';
+            if (label === 'high') reasons.push('Bracket width ' + fmt(width, 1) + ' psi is within ' + fmt(hiTol, 1) + ' psi and the regime is stable for at least half a log cycle.');
+            else if (label === 'medium') {
+                if (width <= 50) reasons.push('Bracket width ' + fmt(width, 1) + ' psi is within 50 psi.');
+                else reasons.push('Linear flow only: the F_L line and the impulse line agree within 10 psi.');
+            }
+            if (ctx.storage) reasons.push('After-closure storage: straight lines are withheld and p_i is uncertain.');
+            if (ctx.steepened) reasons.push('Penny or spherical flow suspected: the derivative keeps steepening past −1.1.');
+            if (ctx.surface) reasons.push('Surface gauge: the column temperature is not modelled.');
+            if (label === 'low' && !reasons.length) reasons.push('Bracket width ' + fmt(width, 1) + ' psi exceeds 50 psi.');
+            return { ok: true, value: value, lo: lo, hi: hi, label: label, reasons: reasons.map(_txt), edges: { lo: eLo, hi: eHi } };
+        } catch (e) { return fail('PICONS_FAILED', e && e.message || e); }
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 4. Gas adjustment, constant-rate transform, model-library match
+    // ═════════════════════════════════════════════════════════════════════
+    // p_a = p_i + (μz/p)_i·∫_{p_i}^{p} p′/(μz) dp′ = p_i + (m(p) − m(p_i))/m′(p_i)   (so p_a(p_i) = p_i, intercepts in psia)
+    // t_a = (μc_t)_i·∫ dt′/(μc_t)(p(t′))  (PRiSM_gasPseudoTime normalised at p_i)
+    G.PRiSM_dfit_gasAdjust = function (t, p, ctx) {
+        try {
+            ctx = ctx || {};
+            if (!arrOk(t) || !arrOk(p) || t.length !== p.length || t.length < 2) return fail('BAD_INPUT', 'Gas adjustment needs matching time and pressure arrays.', ['t', 'p']);
+            if (!pos(ctx.pi)) return fail('BAD_INPUT', 'Gas adjustment needs a reference p_i.', ['pi']);
+            if (typeof G.PRiSM_mpTable !== 'function') return fail('NO_MP', 'The pseudo-pressure table (16-pvt) is not loaded.', []);
+            var pmax = 1.2 * Math.max(ctx.pi, Math.max.apply(null, p.filter(fin)));
+            var tbl = G.PRiSM_mpTable({ T_F: ctx.T_F, SG_g: ctx.SG_g, pi: ctx.pi, pmax: pmax });
+            var mi = tbl.mOf(ctx.pi), dpi = Math.max(0.5, 1e-4 * ctx.pi), dm = (tbl.mOf(ctx.pi + dpi) - tbl.mOf(ctx.pi - dpi)) / (2 * dpi);
+            if (!pos(dm)) return fail('NO_MP', 'dm/dp is not positive at p_i.', ['pi']);
+            var pa = p.map(function (v) { return fin(v) ? ctx.pi + (tbl.mOf(v) - mi) / dm : null; });
+            var ta = null, info = null;
+            if (typeof G.PRiSM_gasPseudoTime === 'function') {
+                var tt = [], pp = [], idx = [];
+                for (var i = 0; i < t.length; i++) if (fin(t[i]) && t[i] > 0 && fin(p[i]) && (!tt.length || t[i] > tt[tt.length - 1])) { tt.push(t[i]); pp.push(p[i]); idx.push(i); }
+                var r = tt.length >= 2 ? G.PRiSM_gasPseudoTime(tt, pp, { T_F: ctx.T_F, SG_g: ctx.SG_g, pNorm: ctx.pi, p0: pp[0], ct: ctx.ct, Sg: ctx.Sg }) : null;
+                if (r && r.ok) { ta = t.map(function () { return null; }); idx.forEach(function (j, k) { ta[j] = r.ta[k]; }); info = r.info; }
+            }
+            if (!ta) return fail('NO_PSEUDOTIME', 'Pseudo-time is not available (52-prism-gas or the gas properties are missing).', ['T_F', 'SG_g']);
+            return { ok: true, pa: pa, ta: ta, iterations: 0, converged: true, info: info };
+        } catch (e) { return fail('GAS_FAILED', e && e.message || e); }
+    };
+
+    // impulse → constant-rate transform (§6.8): y = t′·(p − p_i)/(24·V) psi per STB/d; p_i-free t′·D/(24·V)
+    G.PRiSM_dfit_crTransform = function (t, p, ctx) {
+        try {
+            ctx = ctx || {};
+            if (!arrOk(t) || !arrOk(p) || !pos(ctx.V)) return fail('BAD_INPUT', 'The transform needs times, pressures and V.', ['t', 'p', 'V']);
+            var t0 = fin(ctx.t0) ? ctx.t0 : 0, x = [], pp = [];
+            for (var i = 0; i < t.length; i++) if (fin(t[i]) && fin(p[i]) && t[i] - t0 > 0 && (!x.length || t[i] - t0 > x[x.length - 1])) { x.push(t[i] - t0); pp.push(p[i]); }
+            var d = bourdet(x.map(Math.log), pp, pos(ctx.L) ? ctx.L : 0.25), V24 = 24 * ctx.V;
+            return { ok: true, t: x, y: x.map(function (xx, k) { return fin(ctx.pi) ? xx * (pp[k] - ctx.pi) / V24 : null; }),
+                     yPiFree: x.map(function (xx, k) { return fin(d[k]) ? xx * Math.abs(d[k]) / V24 : null; }) };
+        } catch (e) { return fail('CR_FAILED', e && e.message || e); }
+    };
+
+    // model library match (§6.8): p(t′) = p_i + 24·V·(141.2·μ/(kh))·pd′(t_D)/t′, p_i by variable projection inside the bracket
+    var RW_REF = 0.3;
+    function _pdPrimeFor(model, tDarr, prm) {
+        if (model === 'infiniteFrac') return tDarr.map(ufPdPrime);       // uniform flux, the closed form of the registry kernel
+        var M = G.PRiSM_MODELS && G.PRiSM_MODELS[model];
+        if (!M || typeof M.pdPrime !== 'function') return null;
+        var r = M.pdPrime(tDarr, prm);
+        return arrOk(r) ? Array.prototype.slice.call(r) : tDarr.map(function (td) { return M.pdPrime(td, prm); });
+    }
+    var MATCH_SPEC = {
+        homogeneous: { free: ['k'], refL: function () { return RW_REF; }, prm: function () { return { Cd: 0, S: 0 }; } },
+        infiniteFrac: { free: ['k', 'L'], refL: function (q) { return q.L; }, prm: function () { return { Cd: 0, S: 0, uniformFlux: true }; } },
+        finiteFrac: { free: ['k', 'L', 'FcD'], refL: function (q) { return q.L; }, prm: function (q) { return { Cd: 0, S: 0, FcD: q.FcD }; } },
+        radialComposite: { free: ['k', 'M', 'Rin'], refL: function () { return RW_REF; }, prm: function (q) { return { Cd: 0, S: 0, M: q.M, F: 1, R: Math.max(1.5, q.Rin / RW_REF) }; } }
+    };
+    function _matchPrep(ctx) {
+        var t0 = fin(ctx.t0) ? ctx.t0 : 0, tMin = pos(ctx.tcInj) ? 3 * ctx.tcInj : 0, x = [], pp = [];
+        for (var i = 0; i < ctx.t.length; i++) { var xx = ctx.t[i] - t0; if (fin(xx) && xx > 0 && xx >= tMin && fin(ctx.p[i])) { x.push(xx); pp.push(ctx.p[i]); } }
+        var maxPts = pos(ctx.maxPts) ? ctx.maxPts : 120;
+        if (x.length > maxPts) {                                      // ≤ 120 log-spaced points
+            var lx0 = Math.log(x[0]), lx1 = Math.log(x[x.length - 1]), X = [], P = [], j = 0;
+            for (var k = 0; k < maxPts; k++) {
+                var target = lx0 + (lx1 - lx0) * k / (maxPts - 1);
+                while (j < x.length - 1 && Math.abs(Math.log(x[j + 1]) - target) <= Math.abs(Math.log(x[j]) - target)) j++;
+                if (!X.length || x[j] > X[X.length - 1]) { X.push(x[j]); P.push(pp[j]); }
+            }
+            x = X; pp = P;
+        }
+        return { x: x, p: pp };
+    }
+    function _matchOne(model, D, ctx, bracket, counter) {
+        var S = MATCH_SPEC[model]; if (!S) return { model: model, ok: false, why: 'unknown model' };
+        var mu = ctx.mu, h = ctx.h, phi = ctx.phi, ct = ctx.ct, V = ctx.V;
+        function curve(q) {
+            var L = S.refL(q), eta = KC.etaC * q.k / (phi * mu * ct), tD = D.x.map(function (x) { return eta * x / (L * L); });
+            var pd = _pdPrimeFor(model, tD, S.prm(q)); if (!pd) return null;
+            var c = 24 * V * KC.unit * mu / (q.k * h);
+            return D.x.map(function (x, i) { return c * pd[i] / x; });
+        }
+        function project(f) {
+            var r = []; for (var i = 0; i < f.length; i++) r.push(D.p[i] - f[i]);
+            var pi = mean(r); if (bracket) { if (pi < bracket[0]) pi = bracket[0]; if (pi > bracket[1]) pi = bracket[1]; }
+            return pi;
+        }
+        var fn = function (tArr, q) {
+            if (counter) counter.n++;
+            var f = curve(q); if (!f) return tArr.map(function () { return NaN; });
+            var pi = project(f); return f.map(function (v) { return v + pi; });
+        };
+        var p0 = { k: pos(ctx.kInit) ? ctx.kInit : 0.01 }, bounds = { k: [1e-7, 1e5] }, logKeys = ['k'];
+        if (S.free.indexOf('L') >= 0) { p0.L = pos(ctx.LInit) ? ctx.LInit : 100; bounds.L = [1, 5000]; logKeys.push('L'); }
+        if (S.free.indexOf('FcD') >= 0) { p0.FcD = 10; bounds.FcD = [0.1, 1e4]; logKeys.push('FcD'); }
+        if (S.free.indexOf('M') >= 0) { p0.M = 2; bounds.M = [0.01, 100]; logKeys.push('M'); p0.Rin = pos(ctx.LInit) ? ctx.LInit : 50; bounds.Rin = [1, 5000]; logKeys.push('Rin'); }
+        var res;
+        try { res = G.PRiSM_lm(fn, { t: D.x, p: D.p }, p0, bounds, null, { logKeys: logKeys, maxIter: 60 }); }
+        catch (e) { return { model: model, ok: false, why: String(e && e.message || e) }; }
+        if (!res || !res.params) return { model: model, ok: false, why: 'no fit' };
+        var f = curve(res.params), pi = f ? project(f) : null, ssr = 0;
+        if (f) for (var i = 0; i < f.length; i++) { var r = D.p[i] - f[i] - pi; ssr += r * r; }
+        var n = D.x.length, npar = S.free.length + 1, bic = n * Math.log(Math.max(ssr, 1e-300) / n) + npar * Math.log(n);
+        return { model: model, ok: !!f && fin(ssr), k: res.params.k, L: res.params.L != null ? res.params.L : null, pi: pi, ssr: ssr, bic: bic,
+                 ci95: res.ci95 || null, params: res.params, converged: !!res.converged, n: n };
+    }
+    function _matchFinish(cands) {
+        var best = null;
+        cands.forEach(function (c) { if (c.ok && fin(c.bic) && (!best || c.bic < best.bic)) best = c; });
+        if (!best) return fail('NO_MATCH', 'No library model could be matched to the after-closure data.', ['models']);
+        var ci = best.ci95 && best.ci95.k ? best.ci95.k : null;
+        return { ok: true, best: { model: best.model, k: best.k, L: best.L, pi: best.pi, ci95: ci ? { k: ci } : null, bic: best.bic, params: best.params },
+                 candidates: cands.map(function (c) { return { model: c.model, ok: c.ok, k: nn(c.k), L: nn(c.L), pi: nn(c.pi), bic: nn(c.bic), ssr: nn(c.ssr) }; }) };
+    }
+    function _matchSetup(ctx, opts) {
+        ctx = ctx || {}; opts = opts || {};
+        if (typeof G.PRiSM_lm !== 'function') return { err: fail('NO_LM', 'The regression engine (05) is not loaded.', []) };
+        if (!arrOk(ctx.t) || !arrOk(ctx.p) || !pos(ctx.V) || !pos(ctx.mu) || !pos(ctx.h) || !pos(ctx.phi) || !pos(ctx.ct))
+            return { err: fail('BAD_INPUT', 'The match needs t, p, V, μ, h, φ and c_t.', ['t', 'p', 'V', 'mu', 'h', 'phi', 'ct']) };
+        var D = _matchPrep(ctx);
+        if (D.x.length < 8) return { err: fail('TOO_FEW', 'Fewer than eight after-closure points beyond 3 t_c.', ['t']) };
+        var models = (opts.models || ['infiniteFrac', 'finiteFrac', 'homogeneous', 'radialComposite']).filter(function (m) { return MATCH_SPEC[m]; });
+        var br = opts.piBracket || ctx.piBracket || null;
+        return { D: D, models: models, bracket: br && fin(br[0]) && fin(br[1]) && br[0] <= br[1] ? br : null };
+    }
+    G.PRiSM_dfit_acaMatch = function (ctx, opts) {
+        try {
+            var S = _matchSetup(ctx, opts); if (S.err) return S.err;
+            var counter = { n: 0 }, cands = S.models.map(function (m) { return _matchOne(m, S.D, ctx, S.bracket, counter); });
+            var r = _matchFinish(cands); if (r.ok) r.evals = counter.n; return r;
+        } catch (e) { return fail('MATCH_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_acaMatchJob = function (ctx, opts) {
+        var S = null, cands = [], i = 0, done = false, cancelled = false, res = null, counter = { n: 0 };
+        try { S = _matchSetup(ctx, opts); } catch (e) { S = { err: fail('MATCH_FAILED', e && e.message || e) }; }
+        if (S.err) { done = true; res = S.err; }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try { cands.push(_matchOne(S.models[i], S.D, ctx, S.bracket, counter)); } catch (e) { cands.push({ model: S.models[i], ok: false }); }
+                i++;
+                if (i >= S.models.length) { done = true; res = _matchFinish(cands); if (res.ok) res.evals = counter.n; }
+                return { done: done, progress: i / S.models.length, label: 'model ' + i + ' of ' + S.models.length };
+            },
+            result: function () { return res || fail('CANCELLED', 'The match was cancelled.', []); },
+            cancel: function () { cancelled = true; }
+        };
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 5. PRiSM_dfit_aca, leak plot, k constraint
+    // ═════════════════════════════════════════════════════════════════════
+    function _acaCore(tInj, p, A) {
+        // A: {t0, tcInj, V, LB, sigma, well, CL, isip, pClosure, linWin, radWin, carterExactFR, VwCw, ta, tcA, geometry, hp}
+        var dg = G.PRiSM_dfit_acaDiag(A.ta ? A.ta : tInj, p, { t0: A.t0, LB: A.LB, sigma: A.sigma });
+        if (!dg || dg.ok === false) return { err: dg || fail('ACADIAG_FAILED', 'diagnosis failed') };
+        var w = A.well, mu = w.mu, phi = w.phi, ct = w.ct, h = w.h, tAx = A.ta ? A.ta : tInj, tc = A.tcA || A.tcInj;
+        var runs = dg.regimes, linRun = null, radRun = null, sphRun = null, bilRun = null;
+        runs.forEach(function (r) {
+            if (r.kind === 'linear' && (!linRun || r._span > linRun._span)) linRun = r;
+            if (r.kind === 'radial' && r._span >= 0.3 && (!radRun || r._span > radRun._span)) radRun = r;
+            if (r.kind === 'spherical' && (!sphRun || r._span > sphRun._span)) sphRun = r;
+            if (r.kind === 'bilinear' && (!bilRun || r._span > bilRun._span)) bilRun = r;
+        });
+        var summary = dg.storage ? 'storage' : radRun ? (linRun ? 'linear-radial' : 'radial') : (sphRun || dg.steepened) ? 'spherical' : linRun ? 'linear' : 'none';
+        var mapW = function (w) { return (w && A.ta) ? [interp(tInj, A.ta, w[0]), interp(tInj, A.ta, w[1])] : w; };   // user windows: injection clock
+        var uLin = mapW(A.linWin), uRad = mapW(A.radWin);
+        var linWin = uLin || (linRun ? [linRun.t0, linRun.t1] : null), radWin = uRad || (radRun ? [radRun.t0, radRun.t1] : null);
+        if (dg.storage) { linWin = uLin || null; radWin = uRad || null; }
+        var withhold = dg.storage && !A.linWin && !A.radWin;
+        var CL = A.CL;
+        var nol = withhold ? { lin: null, rad: null } : G.PRiSM_dfit_nolte({ tInj: tInj, p: p, tcInj: A.tcInj, ta: A.ta, tcA: A.tcA, V: A.V, linWin: linWin, radWin: radWin, CL: CL, mu: mu, phi: phi, ct: ct, h: h, carterExact: A.carterExactFR });
+        if (!nol || nol.ok === false) nol = { lin: null, rad: null };
+        var Aface = pos(A.L) && pos(A.hp) ? 2 * A.L * A.hp : null;
+        var imp = { lin: null, rad: null, sph: null };
+        if (!withhold) {
+            if (linWin) { var il = G.PRiSM_dfit_impulseLines({ t: tAx, p: p, t0: A.t0, V: A.V, win: linWin, regime: 'linear', A: Aface, h: h, mu: mu, phi: phi, ct: ct }); if (il.ok) imp.lin = il; }
+            if (radWin) { var ir = G.PRiSM_dfit_impulseLines({ t: tAx, p: p, t0: A.t0, V: A.V, win: radWin, regime: 'radial', h: h, mu: mu, phi: phi, ct: ct }); if (ir.ok) imp.rad = ir; }
+            if (sphRun) { var is = G.PRiSM_dfit_impulseLines({ t: tAx, p: p, t0: A.t0, V: A.V, win: [sphRun.t0, sphRun.t1], regime: 'spherical', h: h, mu: mu, phi: phi, ct: ct }); if (is.ok) imp.sph = is; }
+        }
+        // brackets on the latest data (the last half log cycle, ≥ 5 points)
+        var n = dg.x.length, xEnd = dg.x[n - 1], late = [], i;
+        for (i = 0; i < n; i++) if (dg.x[i] >= xEnd / Math.sqrt(10)) late.push(i);
+        if (late.length < 5) { late = []; for (i = Math.max(0, n - 5); i < n; i++) late.push(i); }
+        var lt = late.map(function (j) { return dg.x[j] + A.t0; }), lp = late.map(function (j) { return dg.p[j]; });
+        var cart = null, impB = null, deriv = null;
+        if (!dg.storage && lt.length >= 3) {
+            var fL = linfit(lt.map(function (v) { return FL1(v, tc); }), lp), fRc = linfit(lt.map(function (v) { return FRc1(v, tc); }), lp);
+            if (fL && fRc) cart = [Math.min(fL.b, fRc.b), Math.max(fL.b, fRc.b)];
+            var gL = linfit(lt.map(function (v) { return Math.pow(v - A.t0, -0.5); }), lp), gR = linfit(lt.map(function (v) { return 1 / (v - A.t0); }), lp);
+            if (gL && gR) impB = [Math.min(gL.b, gR.b), Math.max(gL.b, gR.b)];
+            if (dg.steepened) { cart = cart ? [cart[0], Infinity] : null; impB = impB ? [impB[0], Infinity] : null; }
+        }
+        for (i = n - 1; i >= 0; i--) if (fin(dg.piLo[i]) && fin(dg.piHi[i])) { deriv = [dg.piLo[i], dg.piHi[i]]; break; }
+        if (deriv && i < n - 1 && (dg.storage || dg.steepened)) deriv = null;
+        if (cart && !fin(cart[1])) cart = null;
+        if (impB && !fin(impB[1])) impB = null;
+        // model-form allowance: the edges are exact for a Carter (constant-C_L) source; a reservoir-controlled or pressure-
+        // dependent leak-off history moves the late intercepts by up to about 1 % of the remaining Δp (the matrix integration
+        // case: F_L line 4,505.6 psia on a perfect fit, σ 0.2 psi, truth 4,500 with p_end 4,989). Each edge is widened outward by
+        // BR_TOL of its distance from the last pressure, so the bracket keeps the truth without changing a radial (small Δp) result.
+        var pEndB = p[p.length - 1], widen = function (b) {
+            if (!b || !fin(b[0]) || !fin(b[1]) || !fin(pEndB)) return b;
+            return [pEndB - (pEndB - b[0]) * (1 + BR_TOL), pEndB - (pEndB - b[1]) * (1 - BR_TOL)];
+        };
+        cart = widen(cart); impB = widen(impB); deriv = widen(deriv);
+        // p_i candidates
+        var cands = [], tr = null;
+        if (summary === 'radial' || summary === 'linear-radial') { if (nol.rad) cands.push({ method: 'nolte-radial', value: nol.rad.pr, w: 2 }); if (imp.rad) cands.push({ method: 'impulse-radial', value: imp.rad.pi, w: 2 }); }
+        else { if (nol.lin) cands.push({ method: 'nolte-linear', value: nol.lin.pr, w: 1 }); if (imp.lin) cands.push({ method: 'impulse-linear', value: imp.lin.pi, w: 1 }); if (imp.sph) cands.push({ method: 'impulse-spherical', value: imp.sph.pi, w: 1 }); }
+        // derivative trajectory: point estimates flat over ≥ 0.3 log cycle at the end
+        var pts = []; for (i = n - 1; i >= 0; i--) { if (!fin(dg.piPoint[i])) { if (pts.length) break; continue; } pts.push(i); }
+        if (pts.length >= 2 && Math.log10(dg.x[pts[0]] / dg.x[pts[pts.length - 1]]) >= 0.3) { tr = median(pts.map(function (j) { return dg.piPoint[j]; })); cands.push({ method: 'derivative', value: tr, w: 1 }); }
+        var stableCycles = 0, regRun = radRun || (summary === 'linear' ? linRun : null);
+        if (regRun) stableCycles = regRun._span;
+        var VwCw = A.VwCw, epsNow = null, epsC = null;
+        var piC = G.PRiSM_dfit_piConsensus({
+            candidates: cands, brackets: { cart: cart, imp: impB, deriv: deriv }, stableCycles: stableCycles,
+            linearOnly: summary === 'linear', flVsImp: nol.lin && imp.lin ? nol.lin.pr - imp.lin.pi : null,
+            storage: dg.storage, steepened: dg.steepened, surface: A.surface,
+            eps: (pos(VwCw) && pos(A.V)) ? VwCw * Math.max(0, p[p.length - 1] - (cands.length ? median(cands.map(function (c) { return c.value; })) : p[p.length - 1])) / A.V : null
+        });
+        if (!piC.ok) {
+            var pE = p[p.length - 1], dE = null; for (i = n - 1; i >= 0 && dE == null; i--) if (fin(dg.D[i])) dE = dg.D[i];
+            var lo0 = fin(dE) ? Math.max(1, pE - 2 * dE) : pE;
+            piC = { value: 0.5 * (lo0 + pE), lo: lo0, hi: pE, label: 'low', edges: { lo: 'derivative', hi: 'data' },
+                    reasons: [dg.storage ? 'After-closure storage: straight lines are withheld and p_i is uncertain.' : dg.steepened ? 'Penny or spherical flow suspected: no line or bracket holds.' : 'No p_i estimate is possible from these data.'] };
+        }
+        if (pos(VwCw) && pos(A.V)) { epsC = VwCw * Math.max(0, A.pClosure - piC.value) / A.V; epsNow = VwCw * Math.max(0, p[p.length - 1] - piC.value) / A.V; }
+        return { dg: dg, nol: nol, imp: imp, summary: summary, cart: cart, impB: impB, deriv: deriv, pi: piC, linRun: linRun, radRun: radRun, epsC: epsC, epsNow: epsNow };
+    }
+
+    // PRiSM_dfit_aca(run, opts): opts {well, inputs, picks, match:false, matchModels, sigma}
+    G.PRiSM_dfit_aca = function (run, opts) {
+        try {
+            opts = opts || {};
+            if (!run || !run.prep || !run.events || run.prep.ok === false || run.events.ok === false) return fail('BAD_INPUT', 'After-closure analysis needs a run with prepared data and events.', ['prep', 'events']);
+            var prep = run.prep, ev = run.events, inputs = opts.inputs || {}, iop = (inputs.options && inputs.options.aca) || {};
+            var picksA = (opts.picks && opts.picks.aca) || {};
+            var well = opts.well || {}, chosen = run.frac && (run.frac.chosen || _firstFamily(run.frac.byFamily));
+            if (!chosen || !pos(chosen.dtc)) return fail('NO_CLOSURE', 'No closure is chosen; after-closure analysis needs a closure time.', ['frac']);
+            var mu = pos(well.mu) ? well.mu : null, phi = pos(well.phi) ? well.phi : null, ct = pos(well.ct) ? well.ct : null, h = pos(well.h) ? well.h : null;
+            var warnings = [];
+            if (!mu || !phi || !ct || !h) warnings.push(W('ACA_INPUTS', 'warn', 'Reservoir μ, φ, c_t or h is missing: permeability values are not computed.', ['A1']));
+            var tStart = fin(ev.tStart) ? ev.tStart : 0, tcRec = ev.ts + chosen.dtc, tcInj = tcRec - tStart;
+            var tpe = fin(ev.ts) ? ev.ts - tStart : 0;
+            var origin = picksA.origin || iop.origin || 'centroid';
+            var t0 = origin === 'total' ? 0 : origin === 'midInjection' ? tpe / 2 : origin === 'sinceClosure' ? tcInj : tcInj / 3;
+            var V = (fin(ev.Vi) ? ev.Vi : 0) - (fin(ev.Vfb) ? ev.Vfb : 0);
+            if (!pos(V)) return fail('NO_VOLUME', 'The injected volume net of flowback is not positive.', ['events.Vi']);
+            var tInj = [], p = [], i;
+            for (i = 0; i < prep.t.length; i++) if (prep.t[i] > tcRec * (1 + 1e-9) + 1e-12 && fin(prep.pw[i])) { tInj.push(prep.t[i] - tStart); p.push(prep.pw[i]); }
+            if (tInj.length < 5) return fail('TOO_FEW', 'Fewer than five samples after closure.', ['prep']);
+            // tides removed before the diagnosis (§4.12): options.aca.tideRemove 'on' always, 'auto' when the after-closure record
+            // spans ≥ 48 h and the fitted M2 is significant (SNR ≥ 3), 'off' never; PRiSM_tideAnalysis resolved at call time
+            var tide = { mode: iop.tideRemove || 'auto', applied: false, snr: null, why: null };
+            if (tide.mode !== 'off' && typeof G.PRiSM_tideAnalysis === 'function' && tInj[tInj.length - 1] - tInj[0] >= (tide.mode === 'on' ? 4 : 48)) {
+                try {
+                    var td = G.PRiSM_tideAnalysis(tInj, p, { detrend: true });
+                    tide.snr = td && fin(td.snr) ? td.snr : null;
+                    // amplitude (largest constituent) against the after-closure pressure change: the triage tides check (Q20)
+                    // only a significant (SNR ≥ 3) or applied fit carries an amplitude: a rejected fit's largest constituent is
+                    // detrend leakage (the reference demo has no tide yet read 364 psi), so it is never handed to the triage
+                    tide.significant = tide.mode === 'on' || (fin(tide.snr) && tide.snr >= 3);
+                    if (tide.significant && td && arrOk(td.constituents)) { var aMax = null; td.constituents.forEach(function (cn) { if (cn && fin(cn.amplitude) && (aMax === null || cn.amplitude > aMax)) aMax = cn.amplitude; }); tide.ampPsi = aMax; }
+                    tide.dpPsi = Math.abs(p[0] - p[p.length - 1]);
+                    if (td && arrOk(td.p_corrected) && td.p_corrected.length === p.length && arrOk(td.constituents) && td.constituents.length && (tide.mode === 'on' || (fin(td.snr) && td.snr >= 3))) {
+                        var pT = td.p_corrected.map(function (v, j) { return fin(v) ? v : p[j]; });
+                        p = pT; tide.applied = true;
+                        warnings.push(W('ACA_TIDE', 'info', 'Tides removed before the diagnosis (M2 signal-to-noise ' + fmt(tide.snr, 1) + ').', ['A1']));
+                    } else tide.why = 'no significant tide';
+                } catch (eT) { tide.why = 'tide analysis failed'; }
+            } else tide.why = tide.mode === 'off' ? 'off' : 'record too short or tide analysis unavailable';
+            var geomModel = chosen.geometry && chosen.geometry.model || 'PKN', gm = chosen.geometry && chosen.geometry.byModel ? chosen.geometry.byModel[geomModel] : null;
+            var CL = gm && pos(gm.CL) ? gm.CL : null, L = gm ? (pos(gm.xf) ? gm.xf : (pos(gm.R) ? gm.R : null)) : null;
+            var isipV = run.isip && fin(run.isip.value) ? run.isip.value : null;
+            var hp = inputs.rock && pos(inputs.rock.hp) ? inputs.rock.hp : h;
+            var VwCw = pos(chosen.VwCw) ? chosen.VwCw : (pos(ev.VwCwMeasured) ? ev.VwCwMeasured : null);
+            var A = { t0: t0, tcInj: tcInj, V: V, LB: pos(iop.LB) ? iop.LB : 0.25, sigma: fin(opts.sigma) ? opts.sigma : prep.sigma, well: { mu: mu, phi: phi, ct: ct, h: h },
+                      CL: CL, L: L, hp: hp, pClosure: chosen.pClosure, linWin: picksA.linWin || null, radWin: picksA.radWin || null, carterExactFR: !!iop.carterExactFR,
+                      VwCw: VwCw, surface: prep.src === 'surface-converted' };
+            var core = _acaCore(tInj, p, A);
+            if (core.err) return core.err;
+            // gas: adjusted variables, p_i iterated (≤ 3 passes, |Δp_i| < 0.1 psi); forced when (p_c − p_i)/p_i > 0.1 or p_i < 3,000
+            var gas = null;
+            if (well.fluid === 'gas') {
+                var pi0 = core.pi.value, iters = 0, conv = false;
+                if ((chosen.pClosure - pi0) / pi0 > 0.1 || pi0 < 3000) {
+                    var tAll = [], pAll = [];
+                    for (i = 0; i < prep.t.length; i++) if (prep.t[i] - tStart > 0 && fin(prep.pw[i])) { tAll.push(prep.t[i] - tStart); pAll.push(prep.pw[i]); }
+                    var piCur = pi0, coreG = null;
+                    for (iters = 1; iters <= 3; iters++) {
+                        var ga = G.PRiSM_dfit_gasAdjust(tAll, pAll, { pi: piCur, T_F: well.T_F, SG_g: well.SG_g, ct: ct, Sg: well.Sg });
+                        if (!ga.ok) { warnings.push(W('GAS_ADJUST', 'warn', 'Gas adjustment unavailable: ' + (ga.errors && ga.errors[0] || ''), ['A1'])); break; }
+                        var tcA = interp(tAll, ga.ta, tcInj), off = tAll.length - tInj.length;
+                        var A2 = {}; for (var kk in A) A2[kk] = A[kk];
+                        var gpi = gasProps(piCur, well); if (gpi && pos(gpi.mu)) { A2.well = Object.assign({}, A.well, { mu: gpi.mu }); A2.muI = gpi.mu; }   // μ_i at p_i
+                        A2.ta = ga.ta.slice(off); A2.tcA = tcA; A2.t0 = origin === 'total' ? 0 : origin === 'sinceClosure' ? tcA : origin === 'midInjection' ? interp(tAll, ga.ta, tpe / 2) : tcA / 3;
+                        coreG = _acaCore(tInj, ga.pa.slice(off), A2);
+                        if (coreG.err) break;
+                        var d = Math.abs(coreG.pi.value - piCur); piCur = coreG.pi.value;
+                        if (d < 0.1) { conv = true; break; }
+                    }
+                    if (coreG && !coreG.err) { core = coreG; core._t0 = A2.t0; core._tcA = A2.tcA; }
+                    gas = { iterations: Math.min(iters, 3), converged: conv, muI: coreG && !coreG.err && A2 && pos(A2.muI) ? A2.muI : null };
+                    warnings.push(W('GAS_LABEL', 'info', 'Effective gas permeability; water invasion and imbibition are not modelled.', ['A1']));
+                }
+            }
+            if (well.fluid === 'gas' && !gas) {
+                // not adjusted (p_i high and close to closure): the liquid kernels apply with μ_i at p_i
+                var gp0 = gasProps(core.pi.value, well);
+                if (gp0 && pos(gp0.mu) && (!pos(mu) || Math.abs(gp0.mu - mu) > 1e-9 * gp0.mu)) {
+                    var A3 = {}; for (var k3 in A) A3[k3] = A[k3];
+                    A3.well = Object.assign({}, A.well, { mu: gp0.mu });
+                    var core3 = _acaCore(tInj, p, A3); if (!core3.err) core = core3;
+                }
+                gas = { iterations: 0, converged: true, muI: gp0 && pos(gp0.mu) ? gp0.mu : null };
+            }
+            if (gas && pos(gas.muI)) mu = gas.muI;
+            var dg = core.dg, nol = core.nol, imp = core.imp;
+            var kh = null;
+            if (nol.rad && pos(nol.rad.khmu)) kh = { khmu: nol.rad.khmu, k: pos(nol.rad.k) ? nol.rad.k : 0, biasDirection: 'upper' };
+            else if (imp.rad && pos(imp.rad.value)) kh = { khmu: imp.rad.value, k: pos(imp.rad.k) ? imp.rad.k : 0, biasDirection: 'upper' };
+            var bounds = null;
+            if (!kh && !dg.storage) {
+                // L_max: an explicit input (opts.Lmax, options.aca.Lmax or rock.Lmax, ft), else 2·xf of the chosen geometry (the default of
+                // the frozen fixture; §4.22)
+                var LmaxIn = pos(opts.Lmax) ? opts.Lmax : pos(iop.Lmax) ? iop.Lmax : (inputs.rock && pos(inputs.rock.Lmax) ? inputs.rock.Lmax : null);
+                var Lmax = LmaxIn || (pos(L) ? 2 * L : null), Amax = Lmax && pos(hp) ? 2 * Lmax * hp : null;
+                var sigmaHi = run.consensus && run.consensus.range ? run.consensus.range.hi : chosen.pClosure;
+                var isipHi = fin(isipV) ? isipV + (run.isip && fin(run.isip.spread) ? run.isip.spread / 2 : 0) : null;
+                var CLlo = CL;                                       // the lowest CL among the family chains (range mode)
+                if (run.frac && run.frac.byFamily) Object.keys(run.frac.byFamily).forEach(function (k) {
+                    var f = run.frac.byFamily[k], g = f && f.geometry && f.geometry.byModel && f.geometry.byModel[geomModel];
+                    if (g && pos(g.CL) && (!CLlo || g.CL < CLlo)) CLlo = g.CL;
+                });
+                var b = G.PRiSM_dfit_acaBounds({ diag: dg, Lmax: Lmax, Amax: Amax, CL: CL, CLlo: CLlo, pMidHi: fin(isipHi) ? 0.5 * (isipHi + sigmaHi) : null,
+                    piLo: core.pi.lo, piHi: fin(core.pi.hi) ? core.pi.hi : core.pi.value, tEnd: tInj[tInj.length - 1], t0: core._t0 != null ? core._t0 : t0, mImpLin: imp.lin ? imp.lin.m : null,
+                    phi: phi, mu: mu, ct: ct, h: h, V: V, ranges: opts.ranges || iop.ranges || null, classType: run.classification && run.classification.ok !== false ? run.classification.type : null, props: well.fluid === 'gas' ? function (pp) { var g = gasProps(pp, well); return g ? { mu: g.mu, ct: ct } : null; } : null });
+                if (b.ok && (b.kLo != null || b.kHi != null)) {
+                    bounds = { kLo: b.kLo != null ? b.kLo : 0, kHi: b.kHi != null ? b.kHi : (b.kLo || 0), binding: b.binding, direction: b.direction, dpCL: b.dpCL };
+                    if (b.warnings) warnings = warnings.concat(b.warnings);
+                }
+            }
+            var match = null;
+            if (opts.match && mu && phi && ct && h) {
+                var tArr = core._tcA ? null : tInj;
+                if (tArr) {
+                    var mt = G.PRiSM_dfit_acaMatch({ t: tInj, p: p, t0: t0, V: V, mu: mu, phi: phi, ct: ct, h: h, tcInj: tcInj, kInit: kh ? kh.k : (nol.lin && nol.lin.k) || 0.01, LInit: L || 100 },
+                                                   { models: opts.matchModels, piBracket: [core.pi.lo, core.pi.hi] });
+                    match = mt.ok ? mt : null;
+                    if (!mt.ok) warnings.push(W('MATCH_FAILED', 'warn', 'Model match: ' + (mt.errors && mt.errors[0] || 'failed'), ['A1']));
+                }
+            }
+            if (dg.storage) warnings.push(W('ACA_STORAGE', 'warn', 'After-closure storage: the derivative stays shallower than −0.4 before any linear segment; straight lines are withheld.', ['A1']));
+            if (dg.steepened) warnings.push(W('ACA_STEEP', 'warn', 'The derivative steepens past −1.1 after a regime: penny or spherical flow suspected; no radial kh/μ is reported.', ['A1']));
+            var pMid = fin(isipV) ? 0.5 * (isipV + chosen.pClosure) : null;
+            var ratios = null;
+            if (nol.lin && fin(pMid)) {
+                var kForA = kh ? kh.k : (match ? match.best.k : null), AacaR = null;
+                if (imp.lin && pos(imp.lin.value) && pos(kForA) && pos(CL)) {
+                    var Acarter = V * KC.bbl / (4 * CL * Math.sqrt(tcInj * 60));
+                    AacaR = (imp.lin.value / Math.sqrt(kForA)) / Acarter;
+                }
+                ratios = { AacaOverAcarter: nn(AacaR), lambda: nn(nol.lin.mL / (pMid - core.pi.value)) };
+            }
+            var regimes = dg.regimes.map(function (r) { return { kind: r.kind, t0: r.t0, t1: r.t1, slope: fin(r.slope) ? r.slope : 0 }; });
+            var diag = { x: dg.x, D: dg.D, sD: dg.sD, n: dg.n, piLo: dg.piLo, piHi: dg.piHi, piPoint: dg.piPoint, noiseD: dg.noiseD, regimes: regimes, sequenceOk: dg.sequenceOk, p: dg.p };
+            var combined = null;
+            if (core.pi && fin(core.pi.lo) && fin(core.pi.hi)) combined = [core.pi.lo, core.pi.hi];
+            // p_i at the datum with the reservoir-fluid gradient (§4.12): priors.piGrad, else the gas gradient at p_i, else water
+            var gTvd = inputs.gauge && fin(inputs.gauge.bhTvd) ? inputs.gauge.bhTvd : null, dTvd = fin(inputs.datumTvd) ? inputs.datumTvd : null;
+            var gradR = null, gradSrc = null;
+            if (inputs.priors && pos(inputs.priors.piGrad)) { gradR = inputs.priors.piGrad; gradSrc = 'prior'; }
+            else if (pos(well.resGrad)) { gradR = well.resGrad; gradSrc = 'well'; }
+            else if (well.fluid === 'gas') {
+                var gq = gasProps(core.pi.value, well), sgG = pos(well.SG_g) ? well.SG_g : null, TF = fin(well.T_F) ? well.T_F : (fin(well.T_res) ? well.T_res : null);
+                if (gq && sgG && fin(TF)) { gradR = core.pi.value * 28.97 * sgG / (gq.z * 10.7316 * (TF + 459.67)) / 144; gradSrc = 'gas'; }
+            }
+            if (gradR == null) { gradR = 0.433; gradSrc = 'water (assumed)'; }
+            var dz = (gTvd != null && dTvd != null) ? dTvd - gTvd : 0;
+            var piDatum = { value: core.pi.value + gradR * dz, lo: core.pi.lo + gradR * dz, hi: core.pi.hi + gradR * dz, gradient: gradR, gradientSource: gradSrc,
+                            gaugeTvd: gTvd, datumTvd: dTvd, note: _txt(dz === 0 ? 'Gauge at the datum: p_i at the datum equals p_i at the gauge.' : 'p_i moved ' + fmt(dz, 0) + ' ft to the datum at ' + fmt(gradR, 3) + ' psi/ft (' + gradSrc + ').') };
+            // a re-pump after closure: the last cycle is analysed alone (§4.5), so the earlier cycles' leak-off is not superposed and
+            // the after-closure decline still carries it; p_i is flagged low (the two-cycle demo read 5,556 against 4,500 psia)
+            var cysA = arrOk(ev.cycles) ? ev.cycles : [];
+            if (cysA.length > 1 && cysA[cysA.length - 1] && cysA[cysA.length - 1].closedBefore && core.pi) {
+                core.pi.label = 'low';
+                core.pi.reasons = (arrOk(core.pi.reasons) ? core.pi.reasons : []).concat([_txt('Earlier injection cycles are not superposed: p_i from the last cycle alone is biased high.')]);
+                warnings.push(W('ACA_MULTICYCLE', 'warn', 'p_i is read from the last cycle alone; the leak-off of the earlier cycles still decays in this record, so p_i is an upper value (label low).', ['A1']));
+            }
+            return {
+                ok: true, regimeSummary: core.summary, origin: origin, t0: core._t0 != null ? core._t0 : t0, tcInj: tcInj, V: V, diag: diag,
+                nolte: { lin: nol.lin ? { pr: nol.lin.pr, mL: nol.lin.mL, k: nol.lin.k, win: nol.lin.win } : null,
+                         rad: nol.rad ? { pr: nol.rad.pr, mR: nol.rad.mR, khmu: nol.rad.khmu, k: nn(nol.rad.k), win: nol.rad.win } : null },
+                impulse: { lin: imp.lin ? { pi: imp.lin.pi, m: imp.lin.m, group: 'Ask', value: nn(imp.lin.value) } : null,
+                           rad: imp.rad ? { pi: imp.rad.pi, m: imp.rad.m, group: 'khmu', value: nn(imp.rad.value) } : null,
+                           sph: imp.sph ? { pi: imp.sph.pi, m: imp.sph.m, group: 'ks', value: nn(imp.sph.value) } : null },
+                brackets: { cart: core.cart, imp: core.impB, deriv: core.deriv, combined: combined, edges: { lo: core.pi.edges.lo, hi: core.pi.edges.hi } },
+                pi: { value: core.pi.value, lo: core.pi.lo, hi: core.pi.hi, label: core.pi.label, reasons: core.pi.reasons, datum: piDatum },
+                kh: kh, bounds: bounds, match: match, gas: gas, tidalCt: null, tide: tide,
+                eps: { atClosure: fin(core.epsC) ? core.epsC : 0, now: fin(core.epsNow) ? core.epsNow : 0 }, ratios: ratios,
+                warnings: warnings, ev: ['A1']
+            };
+        } catch (e) { return fail('ACA_FAILED', e && e.message || e); }
+    };
+    function _firstFamily(by) { if (!by) return null; var ks = ['F1', 'F2', 'F4', 'F0', 'F3']; for (var i = 0; i < ks.length; i++) if (by[ks[i]]) return by[ks[i]]; return null; }
+
+    // Leak plot (§6.4): linear y = −2·t′^1.5·dp/dt′ = A + B·t′ − 2d·t′^1.5, q_k = (B/A)·V/2 (bbl/h); radial y = −t′²·dp/dt′ =
+    // A + B·t′ − d·t′², q_k = (B/A)·V. Huber IRLS with the drift d held by a Gaussian prior N(0, s_d²) (a pseudo-observation),
+    // block-bootstrap interval, detection floor at 2σ of B, leak-corrected p_i.
+    G.PRiSM_dfit_leakPlot = function (aca, ctx) {
+        try {
+            ctx = ctx || {};
+            if (!aca || aca.ok === false || !aca.diag || !arrOk(aca.diag.x)) return fail('BAD_INPUT', 'The leak plot needs an after-closure result.', ['aca']);
+            var dg = aca.diag, x = dg.x, D = dg.D, pArr = dg.p || [], V = pos(ctx.V) ? ctx.V : aca.V;
+            var form = ctx.form || ((aca.regimeSummary === 'radial' || aca.regimeSummary === 'linear-radial') ? 'radial' : 'linear');
+            var tcI = aca.tcInj, t0 = aca.t0, xMin = 2 * tcI;                // default window t′ ≥ 2 t_c (§6.4)
+            var win = ctx.win || null, idx = [], i;
+            for (i = 0; i < x.length; i++) {
+                if (!fin(D[i]) || !(D[i] > 0) || !fin(pArr[i])) continue;
+                var tI = x[i] + t0;
+                if (win) { if (!_inWin(tI, win)) continue; }
+                else if (x[i] < xMin) continue;
+                idx.push(i);
+            }
+            if (idx.length < 6) return fail('TOO_FEW', 'Fewer than six points in the leak-plot window (t′ ≥ 2 t_c).', ['win']);
+            var lin = form === 'linear';
+            // impulse shape ψ normalised to t′^−½ (linear) or 1/t′ (radial) at late time: the exact Carter shapes F_L and F_Rc,
+            // so y = (dp/dt′)/ψ′ = A + B·X₁ + d·X₂ with X₁ ≈ t′, X₂ ≈ −2t′^1.5 (linear) or −t′² (radial) — the §6.4 forms
+            // without the near-closure curvature of the source
+            var psiOf = function (xx) {
+                var t = xx + t0; if (!(t > tcI) || !(tcI > 0)) return null;
+                var u = Math.sqrt(tcI / t), du = -u / (2 * t), f, df;
+                if (lin) { f = Math.asin(u) / Math.sqrt(tcI); df = du / Math.sqrt(1 - u * u) / Math.sqrt(tcI); }
+                else { var at = 0.5 * Math.log((1 + u) / (1 - u)); f = u * at / tcI; df = (at + u / (1 - u * u)) * du / tcI; }
+                return (fin(f) && fin(df) && df < 0) ? { f: f, df: df } : null;
+            };
+            idx = idx.filter(function (j) { return !!psiOf(x[j]); });
+            if (idx.length < 6) return fail('TOO_FEW', 'Fewer than six points in the leak-plot window after closure.', ['win']);
+            var PS = idx.map(function (j) { return psiOf(x[j]); });
+            var X = idx.map(function (j, k) { var t = x[j], dfk = PS[k].df; return [1, lin ? -1 / (2 * Math.sqrt(t) * dfk) : -1 / (t * dfk), 1 / dfk]; });
+            var Y = idx.map(function (j, k) { return (-D[j] / x[j]) / PS[k].df; });
+            var sigma = fin(ctx.sigma) ? ctx.sigma : 0, LB = 0.25;
+            var sigY = idx.map(function (j, k) { var sd = sigma > 0 ? sigma / (Math.SQRT2 * LB) : 0; return sd / (x[j] * Math.abs(PS[k].df)); });
+            var drift = fin(ctx.driftSpec) ? ctx.driftSpec : 0.02, sd_ = Math.max(drift, 1e-6) / 24;     // psi/h
+            var noiseY = median(sigY) || 0;
+            var X0 = X.map(function (row) { return row[0]; }), X1 = X.map(function (row) { return row[1]; }), X2 = X.map(function (row) { return row[2]; });
+            function fitW(Yv, wts) {     // weighted normal equations (the same sums, flat arrays)
+                var a00 = 0, a01 = 0, a02 = 0, a11 = 0, a12 = 0, a22 = 0, b0 = 0, b1 = 0, b2 = 0, k;
+                for (k = 0; k < Yv.length; k++) {
+                    var w = wts[k], x0 = X0[k], x1 = X1[k], x2 = X2[k], y = Yv[k];
+                    b0 += w * x0 * y; b1 += w * x1 * y; b2 += w * x2 * y;
+                    a00 += w * x0 * x0; a01 += w * x0 * x1; a02 += w * x0 * x2; a11 += w * x1 * x1; a12 += w * x1 * x2; a22 += w * x2 * x2;
+                }
+                return { A: [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]], b: [b0, b1, b2] };
+            }
+            // Huber IRLS; the residuals are finite by construction, so the medians skip the finiteness filter (the same values,
+            // a native numeric sort of a typed buffer: the bootstrap below calls this 120 times)
+            var nY = Y.length, bufR = new Float64Array(nY), resB = new Array(nY), absB = new Array(nY);
+            function solveFit(Yv, sres) {
+                var wts = [], beta = null, inv = null, s2 = 1, it, k;
+                for (k = 0; k < Yv.length; k++) wts.push(1);
+                for (it = 0; it < 12; it++) {
+                    var NE = fitW(Yv, wts), s = Math.max(sres, 1e-12);
+                    NE.A[2][2] += 1 / (sd_ * sd_) * s * s;           // prior pseudo-observation on d, scaled to the residual variance
+                    var sol = solve(NE.A, NE.b, true); if (!sol) return null;
+                    beta = sol.x; inv = sol.inv;
+                    for (k = 0; k < nY; k++) resB[k] = Yv[k] - (beta[0] * X0[k] + beta[1] * X1[k] + beta[2] * X2[k]);
+                    var med = medianF(resB, bufR);
+                    for (k = 0; k < nY; k++) absB[k] = Math.abs(resB[k] - med);
+                    var mad = medianF(absB, bufR) * 1.4826;
+                    var noise = noiseY;
+                    s2 = Math.max(mad, noise, 1e-9 * Math.abs(beta[0] || 1));
+                    var c = 1.345 * s2, dw = 0, nw = new Array(nY);
+                    for (k = 0; k < nY; k++) { var a = Math.abs(resB[k]); nw[k] = a <= c ? 1 : c / a; dw = Math.max(dw, Math.abs(nw[k] - wts[k])); }
+                    wts = nw; sres = s2;
+                    if (dw < 1e-4) break;
+                }
+                var cov = inv.map(function (row) { return row.map(function (v) { return v * s2 * s2; }); });
+                return { beta: beta, cov: cov, s: s2 };
+            }
+            var s0 = Math.max(median(sigY) || 0, 1e-9);
+            var F = solveFit(Y, s0); if (!F) return fail('LEAK_FIT', 'The leak-plot regression is singular.', []);
+            var Aa = F.beta[0], Bb = F.beta[1], dd = F.beta[2];
+            var fac = (lin ? V / 2 : V) * 24;
+            var qk = Aa !== 0 ? Bb / Aa * fac : 0;
+            var seB = Math.sqrt(Math.max(0, F.cov[1][1])), seD = Math.sqrt(Math.max(0, F.cov[2][2]));
+            var corrBd = (seB > 0 && seD > 0) ? F.cov[1][2] / (seB * seD) : 0;
+            var floor = Aa !== 0 ? Math.abs(2 * seB / Aa * fac) : 0;
+            // block bootstrap of the residuals (seeded)
+            var r = makeRng(fin(ctx.seed) ? ctx.seed : 1), nB = fin(ctx.nBoot) ? Math.max(0, Math.min(400, Math.round(ctx.nBoot))) : 120, res0 = Y.map(function (y, j) { return y - (Aa * X[j][0] + Bb * X[j][1] + dd * X[j][2]); });
+            var blk = Math.max(3, Math.round(Y.length / 10)), qs = [];
+            for (var bI = 0; bI < nB; bI++) {
+                var Yb = [], k2;
+                while (Yb.length < Y.length) { var st = Math.floor(r() * Math.max(1, Y.length - blk + 1)); for (k2 = 0; k2 < blk && Yb.length < Y.length; k2++) Yb.push(res0[st + k2]); }
+                Yb = Yb.map(function (e, j) { return Aa * X[j][0] + Bb * X[j][1] + dd * X[j][2] + e; });
+                var Fb = solveFit(Yb, F.s); if (Fb && Fb.beta[0] !== 0) qs.push(Fb.beta[1] / Fb.beta[0] * fac);
+            }
+            qs = sortNum(qs);
+            var ci = qs.length >= 10 ? [quant(qs, 0.025), quant(qs, 0.975)] : [qk - floor, qk + floor];     // analytic: ± 2σ_B (the floor) without the bootstrap
+            if (ci[0] > qk) ci[0] = qk; if (ci[1] < qk) ci[1] = qk;
+            var separable = !(Math.abs(corrBd) > 0.95);
+            // leak-corrected p_i (linear form p − A/√t′ + B·√t′ − d·t′; radial p − A/t′ + B·ln … uses the same window median)
+            var pc = idx.map(function (j, k) { var t = x[j], ps = PS[k].f; return lin ? pArr[j] - Aa * ps + Bb * Math.sqrt(t) - dd * t : pArr[j] - Aa * ps + Bb * Math.log(t) - dd * t; });
+            var pu = idx.map(function (j, k) { return pArr[j] - Aa * PS[k].f; });
+            var piCorr = median(pc), piUncorr = (aca.pi && fin(aca.pi.value)) ? aca.pi.value : median(pu);
+            var tEnd = pos(ctx.tEnd) ? ctx.tEnd : x[x.length - 1], th = fin(ctx.theta) ? ctx.theta : (lin ? 2 : null), qkMax = null;
+            if (!fin(th) && !lin) { var eta = (aca.kh && pos(aca.kh.k) && pos(ctx.phi) && pos(ctx.mu) && pos(ctx.ct) && pos(ctx.L)) ? KC.etaC * aca.kh.k / (ctx.phi * ctx.mu * ctx.ct) : null; th = eta ? theta(eta * tEnd / (ctx.L * ctx.L)) : 4; }
+            if (typeof G.PRiSM_dfit_leakBudget === 'function' && !G.PRiSM_dfit_leakBudget._dfitStub && ctx.useBudget !== false) {
+                // integration: t_DL draws from the after-closure k (bounds and estimate) when φ, μ, c_t and L are known, so the
+                // budget uses the leak-off flow regime (Θ) of this test, not the linear default
+                var kL = [], tdl = null;
+                if (aca.bounds && pos(aca.bounds.kLo)) kL.push(aca.bounds.kLo);
+                if (aca.kh && pos(aca.kh.k)) kL.push(aca.kh.k);
+                if (aca.bounds && pos(aca.bounds.kHi)) kL.push(aca.bounds.kHi);
+                if (kL.length && pos(ctx.phi) && pos(ctx.mu) && pos(ctx.ct) && pos(ctx.L)) tdl = kL.map(function (k) { return KC.etaC * k * tEnd / (ctx.phi * ctx.mu * ctx.ct * ctx.L * ctx.L); });
+                try { var lb = G.PRiSM_dfit_leakBudget(V, tEnd, { sigmaP: sigma, VwCw: ctx.VwCw, driftSpec: drift, tDLDraws: tdl || undefined }); if (lb && pos(lb.qkMax)) { qkMax = lb.qkMax; if (fin(lb.theta)) th = lb.theta; } } catch (e) { /* local rule */ }
+            }
+            if (qkMax == null) qkMax = qkMaxRule(fin(ctx.eps) ? ctx.eps : 0.05, V, th, tEnd);
+            var verdict = 'none';
+            if (!separable && qk > floor) verdict = 'leak-or-drift';
+            else if (ci[0] > 0 && qk > floor) verdict = 'leak';
+            else if (qk > 0 && qk <= floor) verdict = 'below-floor';
+            return {
+                ok: true, form: form, A: Aa, B: Bb, d: dd, dPrior: sd_, corrBd: corrBd, separable: separable, qk: qk, qkCI: ci, floor: floor,
+                // not separable (corr(B, d) > 0.95): leak or drift, and no corrected p_i is offered (§6.4)
+                piCorr: separable && fin(piCorr) ? piCorr : piUncorr, piUncorr: piUncorr,
+                windowBiasNote: _txt(separable ? 'A window bias remains in the corrected p_i (a few psi) even with no leak; the floor is ' + fmtSig(floor, 2) + ' bbl/d.'
+                    : 'Leak and gauge drift are not separable in this window (corr ' + fmt(corrBd, 2) + '): no leak correction is applied to p_i; the floor is ' + fmtSig(floor, 2) + ' bbl/d.'),
+                qkMax: fin(qkMax) ? qkMax : 0, theta: fin(th) ? th : 0, verdict: verdict, n: idx.length,
+                piCorrSeries: { t: idx.map(function (j) { return x[j] + t0; }), p: pc }
+            };
+        } catch (e) { return fail('LEAKPLOT_FAILED', e && e.message || e); }
+    };
+
+    // k for the RTA fallback (35): reads the active test's summary; {k, kLo, kHi, source} or null
+    G.PRiSM_dfit_kConstraint = function () {
+        try {
+            var st = G.PRiSM_state, d = st && st.dfit;
+            if (!d || !Array.isArray(d.tests)) return null;
+            var T = null; for (var i = 0; i < d.tests.length; i++) if (d.tests[i] && d.tests[i].id === d.active) { T = d.tests[i]; break; }
+            var s = T && T.summary;
+            if (!s || s.stale || s.forOtherDataset) return null;
+            if (pos(s.k)) return { k: s.k, kLo: pos(s.kLo) ? s.kLo : null, kHi: pos(s.kHi) ? s.kHi : null, source: pos(s.khmu) ? 'aca-radial' : 'aca-match' };
+            if (pos(s.kLo) && pos(s.kHi)) return { k: Math.sqrt(s.kLo * s.kHi), kLo: s.kLo, kHi: s.kHi, source: 'bounds' };
+            return null;
+        } catch (e) { return null; }
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 6. Uncertainty budget and what-if propagator (§6.6)
+    // ═════════════════════════════════════════════════════════════════════
+    // Closed-form, storage-consistent chain per draw (§4.6, §4.9, §4.10): G_c(σ_c) by monotone interpolation of p(G), η with
+    // the matched α (½ here: G type of the run), p_n = ISIP − σ_c, C_sys = η_G·V_i*/p_n, A_f·c_f = C_sys − V_w·c_w,
+    // R_vis, PKN xf = A_f·c_f·E′/(π·h_f²), CL = 2·m_G·C_sys/(π·r_p·A_f·√tp[min]), Γ = 2·m_G/(π·√tp[min]),
+    // k from CL at Δp_CL = ½·(ISIP + σ_c) − p_r.
+    var BBL = KC.bbl;
+    function _g1(d) { return 4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5)); }
+    function _G1(d) { return 4 / Math.PI * (_g1(d) - 4 / 3); }
+    function _G05u(d) { return d > 0 ? 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2) : 0; }
+    // ln Γ (Lanczos, g 7, 9 terms) for g0(α) = √π·Γ(α + 1)/Γ(α + 3/2) (α ½ → π/2, 1 → 4/3, 4/5 → 1.41495)
+    var LZ = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905,
+              -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+    function _lnGamma(z) {
+        if (z < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * z))) - _lnGamma(1 - z);
+        z -= 1; var x = LZ[0]; for (var i = 1; i < 9; i++) x += LZ[i] / (z + i);
+        var t = z + 7.5; return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+    }
+    function _g0(alpha) {
+        if (Math.abs(alpha - 0.5) < 1e-12) return Math.PI / 2;
+        if (Math.abs(alpha - 1) < 1e-12) return 4 / 3;
+        return Math.sqrt(Math.PI) * Math.exp(_lnGamma(alpha + 1) - _lnGamma(alpha + 1.5));
+    }
+    // matched-α G-function efficiency η_G = G_c/(G_c + 4·g0/π) (§4.9): α ½ → G_c/(G_c + 2), α 1 → G_c/(G_c + 16/(3π))
+    function _etaOf(Gc, alpha, g0) { var c = 4 * (fin(g0) && g0 > 0 ? g0 : _g0(fin(alpha) ? alpha : 0.5)) / Math.PI; return Gc / (Gc + c); }
+    // G(ΔtD) with the run's α: closed forms at ½ and 1; between them linear in α (used only to move G_c when the tp draw changes)
+    function _Galpha(d, alpha) {
+        if (!fin(alpha) || Math.abs(alpha - 0.5) < 1e-12) return _G05u(d);
+        if (Math.abs(alpha - 1) < 1e-12) return _G1(d);
+        var w = Math.max(0, Math.min(1, (alpha - 0.5) / 0.5)); return (1 - w) * _G05u(d) + w * _G1(d);
+    }
+    function _uncCtx(run, opts) {
+        var d = run.derivs || {}, ev = run.events || {}, inp = opts.inputs || {}, rock = inp.rock || {}, well = opts.well || {};
+        var ch = run.frac && (run.frac.chosen || _firstFamily(run.frac.byFamily)) || {};
+        var Garr = [], parr = [], dDarr = [];
+        if (arrOk(d.G) && arrOk(d.p)) for (var i = 0; i < d.G.length; i++) if (fin(d.G[i]) && fin(d.p[i]) && (!Garr.length || d.G[i] > Garr[Garr.length - 1])) { Garr.push(d.G[i]); parr.push(d.p[i]); dDarr.push(arrOk(d.dtD) ? d.dtD[i] : null); }
+        var tp = pos(d.tp) ? d.tp : (ev.tp && pos(ev.tp.pump) ? ev.tp.pump : null);
+        var aca = run.aca && run.aca.ok !== false ? run.aca : null;
+        // V_i*(σ_c) (§4.3): V_i − V_w·c_w·(σ_c − p_start) − V_fill, anchored on the run's own V_i* at its closure so the chain
+        // reproduces the run at that closure; p_start = the last prepared sample at or before the pump start
+        var ViStarRef = pos(ch.ViStar) ? ch.ViStar : (pos(ev.ViStar) ? ev.ViStar : null), VwCw0 = pos(ch.VwCw) ? ch.VwCw : (pos(ev.VwCwMeasured) ? ev.VwCwMeasured : 0);
+        var pcRef = fin(ch.pClosure) ? ch.pClosure : (run.consensus && fin(run.consensus.value) ? run.consensus.value : null), pStart = fin(ev.pStart) ? ev.pStart : null, pr = run.prep;
+        if (pStart == null && pr && arrOk(pr.t) && arrOk(pr.pw) && fin(ev.tStart)) { for (var j = 0; j < pr.t.length && pr.t[j] <= ev.tStart + 1e-12; j++) if (fin(pr.pw[j])) pStart = pr.pw[j]; }
+        if (pStart == null && pos(VwCw0) && fin(pcRef) && pos(ev.Vi) && pos(ViStarRef)) pStart = pcRef - (ev.Vi - (fin(ev.Vfill) ? ev.Vfill : 0) - ViStarRef) / VwCw0;
+        var geomModel = (ch.geometry && ch.geometry.model) || (inp.geometry && inp.geometry.model) || 'PKN';
+        var tps = []; if (ev.tp) ['pump', 'breakdown', 'veq'].forEach(function (k) { if (pos(ev.tp[k])) tps.push({ choice: k, tp: ev.tp[k] }); });
+        return {
+            G: Garr, p: parr, dtD: dDarr, tp: tp, mG: pos(d.mG) ? d.mG : (pos(ch.mG) ? ch.mG : null), alpha: fin(d.alpha) ? d.alpha : 0.5,
+            isip: run.isip && fin(run.isip.value) ? run.isip.value : null, isipSd: run.isip && fin(run.isip.spread) ? Math.max(run.isip.spread / 2, 0.5) : 1,
+            ViStar: ViStarRef, ViStarRef: ViStarRef, pcRef: pcRef, pStart: fin(pStart) ? pStart : pcRef, VwCw0: VwCw0,
+            g0: d.gSpec && pos(d.gSpec.g0) ? d.gSpec.g0 : null, geom: geomModel, tps: tps,
+            VwCw: VwCw0, VwCwTheory: !pos(ev.VwCwMeasured),
+            Ep: pos(rock.Ep) ? rock.Ep : null, hf: pos(rock.hf) ? rock.hf : null, hp: pos(rock.hp) ? rock.hp : (pos(rock.hf) ? rock.hf : null),
+            barrier: pos(rock.barrierSpacing) ? rock.barrierSpacing : null,
+            mu: pos(well.mu) ? well.mu : null, phi: pos(well.phi) ? well.phi : null, ct: pos(well.ct) ? well.ct : null,
+            pi: aca && aca.pi && fin(aca.pi.value) ? aca.pi.value : (pos(well.pi) ? well.pi : null),
+            piLo: aca && aca.pi ? aca.pi.lo : null, piHi: aca && aca.pi ? aca.pi.hi : null,
+            khmu: aca && aca.kh && pos(aca.kh.khmu) ? aca.kh.khmu : null
+        };
+    }
+    function _GcOf(C, pc) {                                         // G at p = σ_c along the recorded falloff (p falls with G)
+        var n = C.G.length; if (!n) return pos(C.mG) && fin(C.isip) ? (C.isip - pc) / C.mG : null;
+        if (pc >= C.p[0]) return pos(C.mG) && fin(C.isip) ? Math.max(0, (C.isip - pc) / C.mG) : C.G[0];
+        if (pc <= C.p[n - 1]) return C.G[n - 1];
+        var lo = 0, hi = n - 1; while (hi - lo > 1) { var m = (lo + hi) >> 1; if (C.p[m] >= pc) lo = m; else hi = m; }
+        var f = (C.p[lo] - pc) / ((C.p[lo] - C.p[hi]) || 1);
+        return C.G[lo] + f * (C.G[hi] - C.G[lo]);
+    }
+    function _dtDOf(C, Gc) {
+        if (C._dtDok == null) C._dtDok = !!(C.G.length && C.dtD.every(fin));     // once per context (it was re-checked per draw)
+        var n = C.G.length, ok = C._dtDok;
+        if (ok && Gc >= C.G[0] && Gc <= C.G[n - 1]) return interp(C.G, C.dtD, Gc);
+        var lo = Math.log(1e-9), hi = Math.log(1e7), G05 = function (d) { return 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2); };
+        for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (G05(Math.exp(m)) < Gc) lo = m; else hi = m; }
+        return Math.exp(0.5 * (lo + hi));
+    }
+    function _chain(pc, C, x) {
+        x = x || {};
+        var isip = fin(x.isip) ? x.isip : C.isip, Ep = fin(x.Ep) ? x.Ep : C.Ep, hf = fin(x.hf) ? x.hf : C.hf, hp = fin(x.hp) ? x.hp : C.hp;
+        var VwCw = fin(x.VwCw) ? x.VwCw : C.VwCw, mu = fin(x.mu) ? x.mu : C.mu, phi = fin(x.phi) ? x.phi : C.phi, ct = fin(x.ct) ? x.ct : C.ct;
+        var pi = fin(x.pi) ? x.pi : C.pi, out = { closure: pc };
+        var Gc = _GcOf(C, pc);
+        if (!fin(isip) || !fin(Gc) || !(Gc > 0) || !pos(C.ViStarRef) || !pos(C.tp) || !pos(C.mG)) return out;
+        var pn = isip - pc; out.pn = pn;
+        var dtD = _dtDOf(C, Gc), tp = C.tp, mG = C.mG;
+        // tp choice drawn (pump / breakdown / veq): the closure time Δt_c is fixed by the data; G_c and m_G move with tp
+        if (pos(x.tp) && Math.abs(x.tp - C.tp) > 1e-12 * C.tp) {
+            var dtc0 = dtD * C.tp; dtD = dtc0 / x.tp;
+            var Gn = _Galpha(dtD, C.alpha); if (Gn > 0) { mG = C.mG * Gc / Gn; Gc = Gn; }
+            tp = x.tp;
+        }
+        var Gc1 = _G1(dtD);
+        var etaG = _etaOf(Gc, C.alpha, C.g0), eta1 = Gc1 / (Gc1 + 16 / (3 * Math.PI));
+        out.eta = etaG; out.eta1 = eta1; out.Gc = Gc; out.dtc = dtD * tp; out.alpha = C.alpha;
+        // V_i*(σ_c) with the drawn V_w·c_w (anchored on the run's V_i* at its closure)
+        var ViS = fin(C.pcRef) ? C.ViStarRef - VwCw * (pc - C.pcRef) - (VwCw - C.VwCw0) * (C.pcRef - C.pStart) : C.ViStarRef;
+        out.ViStar = ViS;
+        if (!(pn > 0) || !(ViS > 0)) return out;
+        var Vs = ViS * BBL, Csys = etaG * Vs / pn, AfCf = Csys - VwCw * BBL, Rvis = AfCf / Csys;
+        out.Csys = Csys / BBL; out.AfCf = AfCf / BBL; out.Rvis = Rvis;
+        var Vf = AfCf * pn, VLts = Vs * (1 - etaG); out.etaF = Vf + VLts > 0 ? Vf / (Vf + VLts) : null;
+        var sqtp = Math.sqrt(tp * 60);
+        out.Gamma = 2 * mG / (Math.PI * sqtp);
+        if (pos(Ep) && pos(hf) && AfCf > 0) {
+            // c_f by the chosen geometry (§4.10): PKN c_f = π·h_f/(2E′), KGD π·xf/E′, radial 16·R/(3π·E′)
+            var rp = Math.min(1, (pos(hp) ? hp : hf) / hf), Af, xf = null;
+            if (C.geom === 'KGD') { xf = Math.sqrt(AfCf * Ep / (2 * Math.PI * hf)); Af = 2 * xf * hf; }
+            else if (C.geom === 'radial') { var Rr = Math.pow(3 * Ep * AfCf / 16, 1 / 3); Af = Math.PI * Rr * Rr; out.R = Rr; rp = 1; }
+            else { xf = AfCf * Ep / (Math.PI * hf * hf); Af = 2 * xf * hf; }
+            if (xf != null) out.xf = xf;
+            out.CL = 2 * mG * Csys / (Math.PI * rp * Af * sqtp);
+            var dpCL = 0.5 * (isip + pc) - pi;
+            if (pos(dpCL) && pos(mu) && pos(phi) && pos(ct)) out.k = mu / (phi * ct) * Math.pow(out.CL / (KC.invmL * dpCL), 2);
+        }
+        if (fin(pi)) out.pi = pi;
+        if (pos(C.khmu)) out.khmu = C.khmu;
+        return out;
+    }
+    var OUT_UNITS = { closure: 'psia', pn: 'psi', eta: '–', etaF: '–', Csys: 'bbl/psi', AfCf: 'bbl/psi', Rvis: '–', xf: 'ft', R: 'ft', CL: 'ft/√min', Gamma: 'psi/√min', k: 'md', khmu: 'md·ft/cp', pi: 'psia' };
+    var CLOSURE_FREE = { Gamma: true, khmu: true, pi: true };
+    function _lognormalOf(r, med, sdLn) { return med * Math.exp(sdLn * gauss(r)); }
+    function _triangular(r, a, m, b) { var u = r(), F = (m - a) / ((b - a) || 1); return u < F ? a + Math.sqrt(u * (b - a) * (m - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - m)); }
+    function _uncSetup(run, opts) {
+        opts = opts || {};
+        if (!run || !run.derivs || run.derivs.ok === false) return { err: fail('BAD_INPUT', 'The uncertainty needs a run with derivatives.', ['run']) };
+        var n = Math.max(100, Math.min(2000, Math.round(fin(opts.n) ? opts.n : 1000))), seed = fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : 1;
+        var C = _uncCtx(run, opts), cons = run.consensus || run.consensusLite || {};
+        var mode = cons.mode === 'range' ? 'range' : 'single';
+        var wF1 = fin(opts.familyWeightF1) ? Math.max(0, Math.min(1, opts.familyWeightF1)) : 0.5;
+        var fixAll = !!opts.fixAll, fixed = {}; (opts.fixed || []).forEach(function (k) { fixed[k] = true; });
+        var isFixed = function (k) { return fixAll || fixed[k]; };
+        var S = cons.samples || {}, fam = cons.families || {};
+        var famSamples = function (F) { return arrOk(S[F]) ? S[F].filter(fin) : []; };
+        var centre = fin(cons.value) ? cons.value : (run.frac && run.frac.chosen ? run.frac.chosen.pClosure : null);
+        var pools = {};
+        if (mode === 'single') {
+            var pool = famSamples('F1').concat(famSamples('F2')).concat(famSamples('F4'));
+            pools.all = pool;
+        } else {
+            pools.F1 = famSamples('F1'); pools.F2 = famSamples('F2');
+            var f4 = famSamples('F4');
+            if (f4.length) { var m4 = median(f4), m1 = median(pools.F1), m2 = median(pools.F2); if (fin(m1) && fin(m2)) (Math.abs(m4 - m1) <= Math.abs(m4 - m2) ? pools.F1 : pools.F2).push.apply(Math.abs(m4 - m1) <= Math.abs(m4 - m2) ? pools.F1 : pools.F2, f4); }
+            ['F1', 'F2'].forEach(function (F) { if (!pools[F].length && fam[F] && fin(fam[F].p50)) pools[F] = [fam[F].p50]; });
+            if (!pools.F1.length || !pools.F2.length) mode = 'single';
+            if (mode === 'single') pools.all = pools.F1.concat(pools.F2);
+        }
+        var famCentre = { F1: median(pools.F1 || []), F2: median(pools.F2 || []) };
+        // the stability pool alone can be one repeated value (the hinge re-reads the same pressure for every grid setting): each
+        // draw also gets N(0, s_j) with s_j² = σ_family² − var(pool) ≥ 0, so the closure spread matches the consensus family band
+        // (the pick se in quadrature, WP2 change 5). Its own seeded stream, so the other inputs' draws are unchanged
+        var sdOf = function (a) { if (!a || a.length < 2) return 0; var m = 0, v = 0, i; for (i = 0; i < a.length; i++) m += a[i]; m /= a.length; for (i = 0; i < a.length; i++) v += (a[i] - m) * (a[i] - m); return Math.sqrt(v / (a.length - 1)); };
+        var famSig = function (F) { return fam[F] && fin(fam[F].sigma) && fam[F].sigma > 0 ? fam[F].sigma : 0; };
+        var jit = {};
+        if (mode === 'single') { var sF = Math.max(famSig('F1'), famSig('F2')), sp0 = sdOf(pools.all); jit.all = Math.sqrt(Math.max(0, sF * sF - sp0 * sp0)); }
+        else ['F1', 'F2'].forEach(function (F) { var sF2 = famSig(F), spF = sdOf(pools[F]); jit[F] = Math.sqrt(Math.max(0, sF2 * sF2 - spF * spF)); });
+        var inputs = [], add = function (name, dist, params, prov) { inputs.push({ name: name, dist: isFixed(name) ? 'fixed' : dist, params: params, provenance: prov }); };
+        add('closure', 'empirical', { samples: mode === 'single' ? (pools.all || []).length : (pools.F1.length + pools.F2.length), mode: mode }, 'stability');
+        if (fin(C.isip)) add('isip', 'normal', { mu: C.isip, sd: C.isipSd }, 'dfit');
+        if (pos(C.Ep)) add('Ep', 'lognormal', { p50: C.Ep, sdLn: 0.15 }, 'user');
+        if (pos(C.hf)) add('hf', 'triangular', { a: pos(C.hp) ? Math.min(C.hp, C.hf) : C.hf * 0.8, m: C.hf, b: pos(C.barrier) ? Math.max(C.barrier, C.hf) : 1.5 * C.hf }, 'user');
+        if (pos(C.hp)) add('hp', 'uniform', { lo: 0.9 * C.hp, hi: 1.1 * C.hp }, 'user');
+        if (pos(C.mu)) add('mu', 'lognormal', { p50: C.mu, sdLn: 0.1 }, 'C1');
+        if (pos(C.ct)) add('ct', 'lognormal', { p50: C.ct, sdLn: 0.3 }, 'C1');
+        if (pos(C.phi)) add('phi', 'lognormal', { p50: C.phi, sdLn: 0.1 }, 'C1');
+        if (pos(C.VwCw)) add('VwCw', 'normal', { mu: C.VwCw, sd: (C.VwCwTheory ? 0.5 : 0.1) * C.VwCw }, C.VwCwTheory ? 'theory' : 'ramp');
+        if (fin(C.pi)) add('pi', 'normal', { mu: C.pi, sd: fin(C.piLo) && fin(C.piHi) ? Math.max(0.5, (C.piHi - C.piLo) / 4) : 5, lo: C.piLo, hi: C.piHi }, 'after-closure');
+        // tp choice: discrete, equal weights over the event values (pump / breakdown / veq, §6.6); fixed when they all agree
+        var tpv = (C.tps || []).map(function (o) { return o.tp; }), tpc = (C.tps || []).map(function (o) { return o.choice; });
+        var tpDiff = tpv.some(function (v) { return Math.abs(v - tpv[0]) > 1e-9 * tpv[0]; });
+        if (tpv.length >= 2 && tpDiff) add('tp', 'empirical', { values: tpv, choices: tpc, weights: tpv.map(function () { return 1 / tpv.length; }), base: C.tp }, 'events');
+        else add('tp', 'fixed', { choice: 'pump', mu: C.tp }, 'events');
+        var byName = {}; inputs.forEach(function (it) { byName[it.name] = it; });
+        // §6.6 rank correlation φ–c_t (Spearman, default −0.3) induced through a Gaussian copula (in place of Iman–Conover): the
+        // normal-space coefficient ρ_N = 2·sin(π·r_s/6) gives exactly the Spearman r_s for any monotone marginals
+        var rs = fin(opts.rhoPhiCt) ? Math.max(-0.99, Math.min(0.99, opts.rhoPhiCt)) : -0.3, rho = 2 * Math.sin(Math.PI * rs / 6);
+        return { C: C, n: n, seed: seed, mode: mode, wF1: wF1, pools: pools, famCentre: famCentre, centre: centre, inputs: inputs, byName: byName, rho: rho,
+                 jitter: jit, jrng: makeRng(seed + 104729),
+                 draws: { all: [], F1: [], F2: [] }, rngs: mode === 'single' ? { all: makeRng(seed) } : { F1: makeRng(seed), F2: makeRng(seed + 7919) },
+                 targets: mode === 'single' ? { all: n } : { F1: Math.ceil(n / 2), F2: Math.floor(n / 2) }, counts: { draws: 0, chainEvals: 0, ops: 0 },
+                 opts: opts };
+    }
+    function _drawX(U, key) {
+        var r = U.rngs[key], C = U.C, b = U.byName, x = {}, it;
+        var pool = key === 'all' ? U.pools.all : U.pools[key];
+        it = b.closure;
+        if (it.dist === 'fixed' || !pool || !pool.length) x.closure = key === 'all' ? U.centre : U.famCentre[key];
+        else {
+            x.closure = pool[Math.min(pool.length - 1, Math.floor(r() * pool.length))];
+            if (U.jitter && U.jitter[key] > 0 && U.jrng) x.closure += U.jitter[key] * gauss(U.jrng);
+        }
+        var z1 = gauss(r), z2 = gauss(r), zz = U.rho * z1 + Math.sqrt(1 - U.rho * U.rho) * z2;   // φ–c_t correlation
+        function num(name, f) { var q = b[name]; if (!q) return; x[name] = q.dist === 'fixed' ? q.params.mu != null ? q.params.mu : q.params.p50 != null ? q.params.p50 : q.params.m : f(q.params); }
+        num('isip', function (p) { return p.mu + p.sd * gauss(r); });
+        num('Ep', function (p) { return _lognormalOf(r, p.p50, p.sdLn); });
+        num('hf', function (p) { return _triangular(r, p.a, p.m, p.b); });
+        if (b.hp) x.hp = b.hp.dist === 'fixed' ? C.hp : b.hp.params.lo + r() * (b.hp.params.hi - b.hp.params.lo);
+        num('mu', function (p) { return _lognormalOf(r, p.p50, p.sdLn); });
+        if (b.ct) x.ct = b.ct.dist === 'fixed' ? C.ct : b.ct.params.p50 * Math.exp(b.ct.params.sdLn * zz);
+        if (b.phi) x.phi = b.phi.dist === 'fixed' ? C.phi : b.phi.params.p50 * Math.exp(b.phi.params.sdLn * z1);
+        num('VwCw', function (p) { return Math.max(0, p.mu + p.sd * gauss(r)); });
+        // p_i: normal truncated to the bracket by redrawing (≤ 50 tries, then the nearest bracket edge)
+        num('pi', function (p) { var v = p.mu + p.sd * gauss(r), k = 0; while (((fin(p.lo) && v < p.lo) || (fin(p.hi) && v > p.hi)) && k++ < 50) v = p.mu + p.sd * gauss(r); if (fin(p.lo) && v < p.lo) v = p.lo; if (fin(p.hi) && v > p.hi) v = p.hi; return v; });
+        if (b.tp) x.tp = b.tp.dist === 'fixed' ? C.tp : b.tp.params.values[Math.min(b.tp.params.values.length - 1, Math.floor(r() * b.tp.params.values.length))];
+        if (x.hp != null && x.hf != null && x.hp > x.hf) x.hp = x.hf;
+        return x;
+    }
+    function _uncStep(U, k) {                                       // up to k draws; returns true when all are done
+        var keys = Object.keys(U.targets), done = true;
+        for (var a = 0; a < keys.length && k > 0; a++) {
+            var key = keys[a];
+            while (U.draws[key].length < U.targets[key] && k > 0) {
+                var x = _drawX(U, key), y = _chain(x.closure, U.C, x);
+                U.counts.draws++; U.counts.chainEvals++; U.counts.ops++;
+                U.draws[key].push({ x: x, y: y }); k--;
+            }
+            if (U.draws[key].length < U.targets[key]) done = false;
+        }
+        for (var b2 = 0; b2 < keys.length; b2++) if (U.draws[keys[b2]].length < U.targets[keys[b2]]) done = false;
+        return done;
+    }
+    // first-order variance index by 20 quantile bins of each input (no extra runs)
+    function _shares(xs, ys, nBins, opsBox) {
+        var n = ys.length; if (n < 4) return 0;
+        var m = 0, i; for (i = 0; i < n; i++) m += ys[i]; m /= n;
+        var vt = 0; for (i = 0; i < n; i++) vt += (ys[i] - m) * (ys[i] - m); vt /= n;
+        // a constant output (only rounding noise left) has no variance to share out
+        if (!(vt > 1e-300) || vt <= Math.pow(1e-9 * Math.abs(m), 2)) return 0;
+        var idx = []; for (i = 0; i < n; i++) idx.push(i);
+        idx.sort(function (a, b) { if (opsBox) opsBox.n++; return xs[a] - xs[b]; });
+        var B = Math.min(nBins || 20, n), vb = 0;
+        for (var b = 0; b < B; b++) {
+            var i0 = Math.floor(b * n / B), i1 = Math.floor((b + 1) * n / B); if (i1 <= i0) continue;
+            var s = 0; for (i = i0; i < i1; i++) s += ys[idx[i]];
+            var mb = s / (i1 - i0); vb += (i1 - i0) / n * (mb - m) * (mb - m);
+        }
+        return Math.max(0, Math.min(1, vb / vt));
+    }
+    function _p3(vals, opsBox) {
+        var v = vals.filter(fin); if (!v.length) return null;
+        v.sort(function (a, b) { if (opsBox) opsBox.n++; return a - b; });
+        return { p10: quant(v, 0.1), p50: quant(v, 0.5), p90: quant(v, 0.9) };
+    }
+    function _uncFinish(U) {
+        var opsBox = { n: 0 }, outputs = {}, keys = Object.keys(OUT_UNITS), names = U.inputs.filter(function (it) { return it.dist !== 'fixed'; }).map(function (it) { return it.name; });
+        var single = U.mode === 'single', wF = { F1: U.wF1, F2: 1 - U.wF1 };
+        keys.forEach(function (k) {
+            var o = { unit: OUT_UNITS[k], shares: [], closureShare: 0, bimodal: false, byFamily: null, envelope: null, p10: null, p50: null, p90: null };
+            if (single || CLOSURE_FREE[k]) {
+                var D = single ? U.draws.all : U.draws.F1.concat(U.draws.F2), ys = [], X = {};
+                D.forEach(function (d) { if (fin(d.y[k])) { ys.push(d.y[k]); names.forEach(function (nm) { (X[nm] = X[nm] || []).push(d.x[nm]); }); } });
+                if (!ys.length) return;
+                var q = _p3(ys, opsBox); o.p10 = q.p10; o.p50 = q.p50; o.p90 = q.p90;
+                names.forEach(function (nm) { var s = _shares(X[nm], ys, 20, opsBox); o.shares.push({ input: nm, s: rnd(s, 4) }); if (nm === 'closure') o.closureShare = rnd(s, 4); });
+            } else {
+                var fams = {}, allY = [], allW = [], within = {};
+                ['F1', 'F2'].forEach(function (F) {
+                    var ys2 = [], X2 = {};
+                    U.draws[F].forEach(function (d) { if (fin(d.y[k])) { ys2.push(d.y[k]); names.forEach(function (nm) { (X2[nm] = X2[nm] || []).push(d.x[nm]); }); } });
+                    fams[F] = { ys: ys2, q: _p3(ys2, opsBox) };
+                    within[F] = names.map(function (nm) { return _shares(X2[nm] || [], ys2, 20, opsBox); });
+                    ys2.forEach(function (y) { allY.push(y); allW.push(wF[F] / Math.max(1, ys2.length)); });
+                });
+                if (!fams.F1.q || !fams.F2.q) return;
+                o.bimodal = true;
+                o.byFamily = { F1: fams.F1.q, F2: fams.F2.q };
+                // envelope [P10 of the low family, P90 of the high family]; when the family columns overlap, the outer edges
+                o.envelope = [Math.min(fams.F1.q.p10, fams.F2.q.p10), Math.max(fams.F1.q.p90, fams.F2.q.p90)];
+                // interpretation share: between-family variance of the weighted mixture over its total variance
+                var mT = 0, wT = 0, i;
+                for (i = 0; i < allY.length; i++) { mT += allW[i] * allY[i]; wT += allW[i]; }
+                mT = wT > 0 ? mT / wT : 0;
+                var vT = 0; for (i = 0; i < allY.length; i++) vT += allW[i] * (allY[i] - mT) * (allY[i] - mT); vT = wT > 0 ? vT / wT : 0;
+                var vB = 0; ['F1', 'F2'].forEach(function (F) { var mf = mean(fams[F].ys); if (fin(mf)) vB += wF[F] * (mf - mT) * (mf - mT); });
+                var share = vT > 0 ? Math.max(0, Math.min(1, vB / vT)) : 0;
+                o.closureShare = rnd(share, 4);
+                names.forEach(function (nm, j) {
+                    var s = (1 - share) * (wF.F1 * within.F1[j] + wF.F2 * within.F2[j]);
+                    o.shares.push({ input: nm, s: rnd(Math.max(0, Math.min(1, s)), 4) });
+                });
+            }
+            outputs[k] = o;
+        });
+        // tornado: one-at-a-time P10 / P90 of each input, others central (per family in range mode)
+        var tornado = [], C = U.C, centres = single ? { all: U.centre } : { F1: U.famCentre.F1, F2: U.famCentre.F2 };
+        var tOut = ['closure', 'pn', 'eta', 'xf', 'CL'];
+        Object.keys(centres).forEach(function (fk) {
+            var pc = centres[fk]; if (!fin(pc)) return;
+            U.inputs.forEach(function (it) {
+                if (it.dist === 'fixed' || it.name === 'closure') return;
+                var lo = {}, hi = {}, pp = it.params;
+                if (it.dist === 'normal') { lo[it.name] = pp.mu - 1.2816 * pp.sd; hi[it.name] = pp.mu + 1.2816 * pp.sd; }
+                else if (it.dist === 'lognormal') { lo[it.name] = pp.p50 * Math.exp(-1.2816 * pp.sdLn); hi[it.name] = pp.p50 * Math.exp(1.2816 * pp.sdLn); }
+                else if (it.dist === 'uniform') { lo[it.name] = pp.lo + 0.1 * (pp.hi - pp.lo); hi[it.name] = pp.lo + 0.9 * (pp.hi - pp.lo); }
+                else if (it.dist === 'triangular') { lo[it.name] = pp.a + Math.sqrt(0.1 * (pp.b - pp.a) * (pp.m - pp.a)); hi[it.name] = pp.b - Math.sqrt(0.1 * (pp.b - pp.a) * (pp.b - pp.m)); }
+                else if (it.dist === 'empirical' && arrOk(pp.values)) { lo[it.name] = Math.min.apply(null, pp.values); hi[it.name] = Math.max.apply(null, pp.values); }
+                var ylo = _chain(pc, C, lo), yhi = _chain(pc, C, hi); U.counts.chainEvals += 2;
+                tOut.forEach(function (ok) {
+                    if (fin(ylo[ok]) && fin(yhi[ok]) && ylo[ok] !== yhi[ok]) tornado.push(Object.assign({ output: ok, input: it.name, lo: ylo[ok], hi: yhi[ok] }, single ? {} : { family: fk }));
+                });
+            });
+        });
+        U.counts.ops += opsBox.n;
+        var log = [];
+        if (fin(U.opts.prevFamilyWeightF1) && Math.abs(U.opts.prevFamilyWeightF1 - U.wF1) > 1e-12)
+            log.push({ item: 'options.familyWeightF1', old: U.opts.prevFamilyWeightF1, new: U.wF1, reason: 'Interpretive weight, not a probability.' });
+        return {
+            ok: true, n: U.n, seed: U.seed, mode: U.mode, familyWeight: { F1: U.wF1, F2: 1 - U.wF1 },
+            inputs: U.inputs.map(function (it) { return { name: it.name, dist: it.dist, params: it.params, provenance: it.provenance }; }),
+            outputs: outputs, tornado: tornado, ev: ['U1'], counts: { draws: U.counts.draws, chainEvals: U.counts.chainEvals, ops: U.counts.ops }, log: log,
+            note: U.mode === 'range' ? 'Range mode: closure-dependent outputs are given per family; the family weight is an interpretive weight, not a probability.' : null
+        };
+    }
+    G.PRiSM_dfit_uncertainty = function (run, opts) {
+        try {
+            var U = _uncSetup(run, opts); if (U.err) return U.err;
+            _uncStep(U, Infinity);
+            return _uncFinish(U);
+        } catch (e) { return fail('UNC_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_uncertaintyJob = function (run, opts) {
+        var U = null, done = false, cancelled = false, res = null;
+        try { U = _uncSetup(run, opts); } catch (e) { U = { err: fail('UNC_FAILED', e && e.message || e) }; }
+        if (U.err) { done = true; res = U.err; }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try { if (_uncStep(U, 250)) { done = true; res = _uncFinish(U); } } catch (e) { done = true; res = fail('UNC_FAILED', e && e.message || e); }
+                return { done: done, progress: done ? 1 : U.counts.draws / U.n, label: 'draws ' + U.counts.draws + ' of ' + U.n };
+            },
+            result: function () { return res || fail('CANCELLED', 'The uncertainty run was cancelled.', []); },
+            cancel: function () { cancelled = true; }
+        };
+    };
+    G.PRiSM_dfit_uncertainty.chain = function (pc, run, opts, x) { return _chain(pc, _uncCtx(run, opts || {}), x || {}); };
+    G.PRiSM_dfit_uncertainty.shares = function (xs, ys, nBins) { return _shares(xs, ys, nBins || 20); };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 7. Live engine and replay (§6.9)
+    // ═════════════════════════════════════════════════════════════════════
+    // A session is incremental. Samples are appended in place when they arrive in time order (spliced only when out of order;
+    // duplicates merged; psig converted with the test's atmPsia). The events come from PRiSM_dfit_events (56) when available,
+    // else from the record: the pump start from the pressure ramp back-extrapolated to the static pressure inside the bracket
+    // [last zero-rate sample, first pumping sample] (its midpoint when the ramp is not usable, then tp is refined inside the
+    // bracket as a nuisance parameter of the early G line), the shut-in at the last pumping sample. The falloff is resampled at
+    // push time with the pressure-increment rule (|Δp| ≥ dpMin or Δln Δt ≥ 0.01), G is closed-form (α = ½), and every later
+    // stage keeps its state between runs: the early G line on the first third of the G range, the running least-squares sums,
+    // the two-sided CUSUM on the pressure residuals r = p − (ISIP − m_G·G) (only candidates after the last processed one are
+    // evaluated; restarted when ρ or the mode changes), the confirmation counters, a two-pointer Bourdet dP/dG with the
+    // tangent-line (F2) detector, and the after-closure series (1 % in ln(t_inj − t0)) for the p_i bracket and the radial check.
+    // Candidates: white residuals (|ρ| ≤ 0.2) one point per 2L/5 in ln G with h raised so that the false-alarm rate per log
+    // cycle is that of 2L at h (finer timing); correlated residuals one point per 2L (decimation) or, when that series is short
+    // (< 30 points), 2L blocks of lag-1 prewhitened innovations. σ includes the line's own parameter variance at G.
+    // Calibration items (3.4b): (k, h), the spacing and the timing on densely, uniformly sampled records (0.1 Hz: provisional
+    // calls 2–20 % of t_c after closure on the reference signal, against ≤ 2 % on log-spaced records).
+    function _G05(d) { return d > 0 ? 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2) : 0; }
+    function _G05inv(Gv) { var lo = Math.log(1e-9), hi = Math.log(1e7); for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (_G05(Math.exp(m)) < Gv) lo = m; else hi = m; } return Math.exp(0.5 * (lo + hi)); }
+    function _lagK(a, K) {
+        var v = a.filter(fin), n = v.length; if (n < K + 3) return null;
+        var m = mean(v), num = 0, den = 0, i;
+        for (i = 0; i < n; i++) den += (v[i] - m) * (v[i] - m);
+        for (i = K; i < n; i++) num += (v[i] - m) * (v[i - K] - m);
+        return den > 0 ? num / den : null;
+    }
+    function _lag1(a) { return _lagK(a, 1); }
+    // ARL₀ of a one-sided CUSUM (Siegmund's approximation, unit-variance z): used to keep the false-alarm rate per log cycle of G
+    // when the candidate spacing is finer than 2L (white residuals, no decimation needed)
+    function _arl0(h, k) { var b = h + 1.166, x = 2 * k * b; return k > 0 ? (Math.exp(x) - x - 1) / (2 * k * k) : b * b; }
+    function _hFor(h, k, factor) {
+        var target = _arl0(h, k) * factor, lo = h, hi = h + 60;
+        for (var i = 0; i < 80; i++) { var m = 0.5 * (lo + hi); if (_arl0(m, k) < target) lo = m; else hi = m; }
+        return 0.5 * (lo + hi);
+    }
+    function _sums() { return { n: 0, sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0, fp: 0 }; }
+    function _liveCreate(ctx) {
+        ctx = ctx || {};
+        var T = ctx.test || {}, inp = T.inputs || {}, ch = inp.channels || {}, opt = inp.options || {}, ev = inp.events || {};
+        var atm = fin(ch.atmPsia) ? ch.atmPsia : 14.696, L = pos(opt.L) ? opt.L : 0.1;
+        var cus = ctx.cusum || {}, kC = fin(cus.k) ? cus.k : 0.5, hC = fin(cus.h) ? cus.h : 5;
+        var cal = G.PRiSM_dfit_cal; if (!ctx.cusum && cal && cal.cusum) { if (fin(cal.cusum.k)) kC = cal.cusum.k; if (fin(cal.cusum.h)) hC = cal.cusum.h; }
+        // fine candidate spacing for white residuals (|ρ| ≤ 0.2, no decimation needed): one point per 2L/5 in ln G with h raised so that ARL₀ per log cycle is that of 2L at h
+        var FINE = pos(ctx.fine) ? ctx.fine : 5, hFine = _hFor(hC, kC, FINE);
+        var tau = opt.tau || {}, tauAbs = fin(tau.abs) ? tau.abs : 15, tauF = fin(tau.fSigma) ? tau.fSigma : 0.003;
+        var pri = inp.priors || {}, datum = inp.datumTvd;
+        var prior = ctx.sigmaPrior || (pos(pri.sigmaGrad) && pos(datum) ? { p50: pri.sigmaGrad * datum, sd: (pos(pri.sigmaGradSd) ? pri.sigmaGradSd : 0.02) * datum } : null);
+        if (!prior && ctx.plan && ctx.plan.ranges && ctx.plan.ranges.sigmaGrad && pos(ctx.plan.ranges.datumTvd)) prior = { p50: ctx.plan.ranges.sigmaGrad.p50 * ctx.plan.ranges.datumTvd, sd: ctx.plan.ranges.sigmaGrad.sd * ctx.plan.ranges.datumTvd };
+        var tStart0 = fin(ctx.tStart) ? ctx.tStart : (fin(ev.tStart) ? ev.tStart : null), ts0 = fin(ctx.ts) ? ctx.ts : (fin(ev.ts) ? ev.ts : null), tp0 = pos(ctx.tp) ? ctx.tp : null;
+        var sigmaG = fin(ctx.sigma) && ctx.sigma > 0 ? ctx.sigma : 0, gMin = 0.05;
+        var dpMin = fin(ctx.dpMin) ? ctx.dpMin : Math.max(0.05, 3 * sigmaG);
+        var S = { t: [], p: [], q: [], T: [] }, timeline = [], last = null, firsts = {}, closedAt = null;
+        var E = { tStart: null, ts: null, tp: null, src: null, bracket: null }, evDirty = true, Z = null, minDirtyT = Infinity;
+        var counts = { samples: 0, appends: 0, splices: 0, eventScans: 0, rebuilds: 0, resampled: 0, kept: 0, candidates: 0, derivs: 0, acaDiag: 0, acaPoints: 0, tpSearch: 0, runs: 0 };
+
+        // ── raw store: appended in place when in time order, spliced only when a sample is out of order ──
+        function insert(t, p, q, Tm) {
+            var n = S.t.length, at = n;
+            if (n && t <= S.t[n - 1] + 1e-12) {
+                if (Math.abs(S.t[n - 1] - t) < 1e-12) { if (fin(q) && !fin(S.q[n - 1])) { S.q[n - 1] = q; evDirty = true; } return false; }
+                var lo = 0, hi = n;
+                while (lo < hi) { var m = (lo + hi) >> 1; if (S.t[m] < t) lo = m + 1; else hi = m; }
+                if (lo < n && Math.abs(S.t[lo] - t) < 1e-12) { if (fin(q) && !fin(S.q[lo])) { S.q[lo] = q; evDirty = true; } return false; }
+                at = lo;
+            }
+            if (at === n) { S.t.push(t); S.p.push(p); S.q.push(fin(q) ? q : null); S.T.push(fin(Tm) ? Tm : null); counts.appends++; }
+            else {
+                S.t.splice(at, 0, t); S.p.splice(at, 0, p); S.q.splice(at, 0, fin(q) ? q : null); S.T.splice(at, 0, fin(Tm) ? Tm : null);
+                counts.splices++; if (t < minDirtyT) minDirtyT = t; evDirty = true;
+            }
+            if (fin(q) && (q > 0 || E.ts == null)) evDirty = true;
+            return true;
+        }
+        // ── events: 56's PRiSM_dfit_events when it is available (resolved at call time; it interpolates the rate step), else the
+        // pump start from the pressure ramp back-extrapolated to the static pressure between the last zero-rate and the first pumping
+        // sample (the midpoint of that bracket when the ramp is not usable), shut-in at the last pumping sample. Rescanned only when
+        // a pumping sample, a rate before the shut-in or an out-of-order sample arrives.
+        function scanEvents() {
+            counts.eventScans++;
+            var n = S.t.length, qmax = 0, i, tS = tStart0, tSh = ts0, src = tStart0 != null ? 'user' : null, tpE = null, bracket = null;
+            for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > qmax) qmax = S.q[i];
+            if ((tS == null || tSh == null) && realFn(G.PRiSM_dfit_events) && n >= 3 && qmax > 0) {
+                try {
+                    var prep = { ok: true, t: S.t, pw: S.p, q: S.q.map(function (v) { return fin(v) ? v : 0; }), T: null, band: null, pSurf: null, idx: null,
+                                 src: 'bh', sigma: sigmaG, quantum: 0, applied: { atmDelta: 0, unitFix: null, clockOffsetH: 0, masked: 0 }, flags: [], hf: null };
+                    var r = G.PRiSM_dfit_events(prep, ev, {});
+                    // integration: while the pump is still on, 56 places the shut-in at the end of the record; a live shut-in is
+                    // taken only once a zero-rate sample after it has arrived (else every block would move t_s and rebuild the state)
+                    var seenOff = false;
+                    if (r && fin(r.ts)) for (i = n - 1; i >= 0 && S.t[i] > r.ts; i--) if (fin(S.q[i]) && !(S.q[i] > 0.05 * qmax)) { seenOff = true; break; }
+                    if (r && r.ok !== false && fin(r.tStart) && fin(r.ts) && r.ts > r.tStart) {
+                        if (tS == null) { tS = r.tStart; src = 'events'; }
+                        if (tSh == null && seenOff) tSh = r.ts;
+                        if (r.tp && pos(r.tp.pump) && tStart0 == null) tpE = r.tp.pump;
+                    }
+                } catch (e) { /* local rule below */ }
+            }
+            if (qmax > 0) {
+                var fromEv = src === 'events';
+                if (tS == null || fromEv) {
+                    var tS56 = tS; tS = null;
+                    var iF = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.02 * qmax) { iF = i; break; }
+                    if (iF >= 0) {
+                        var iZ = -1; for (i = iF - 1; i >= 0; i--) if (fin(S.q[i])) { iZ = i; break; }
+                        if (iZ < 0) { tS = S.t[iF]; src = 'first-rate'; }
+                        else {
+                            var tLo = S.t[iZ], tHi = S.t[iF], est = null, pSt = S.p[iZ], i1 = iF + 1;
+                            if (i1 < n && fin(S.q[i1]) && S.q[i1] > 0.02 * qmax && S.t[i1] > S.t[iF]) {
+                                var sl = (S.p[i1] - S.p[iF]) / (S.t[i1] - S.t[iF]);
+                                if (sl > 0 && S.p[iF] > pSt) est = S.t[iF] - (S.p[iF] - pSt) / sl;
+                            }
+                            src = 'ramp';
+                            if (est == null || est < tLo - 1e-12 || est > tHi + 1e-12) { est = 0.5 * (tLo + tHi); src = 'midpoint'; }
+                            tS = est; bracket = [tLo, tHi];
+                        }
+                    }
+                    // integration: 56's pump start is kept; when the record has no usable ramp (the start is only known to the
+                    // rate-step bracket) its tp is not trusted and the nuisance tp search runs over the bracket as for the midpoint
+                    if (fromEv) {
+                        if (src === 'midpoint' && bracket && tS56 >= bracket[0] - 1e-12 && tS56 <= bracket[1] + 1e-12) { tS = tS56; tpE = null; }
+                        else { tS = tS56; src = 'events'; }
+                    }
+                }
+                if (tSh == null) {
+                    var lastOn = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.05 * qmax) lastOn = i;
+                    if (lastOn >= 0 && lastOn < n - 1) { for (i = lastOn + 1; i < n; i++) if (fin(S.q[i])) break; if (i < n) tSh = S.t[lastOn]; }
+                }
+            }
+            var tp = tp0 || tpE || (tS != null && tSh != null && tSh > tS ? tSh - tS : null);
+            evDirty = false;
+            // the bracket (for the nuisance tp search) only when the pump start is the bracket midpoint (no usable ramp)
+            return { tStart: tS, ts: tSh, tp: tp, src: tp0 ? 'tp' : src, bracket: tp0 || tpE || src !== 'midpoint' ? null : bracket };
+        }
+        function evKey(e) { return [e.tStart, e.ts, e.tp].map(function (v) { return fin(v) ? v.toPrecision(15) : '-'; }).join('|'); }
+
+        // ── derived state, rebuilt only when the events or the tp change, or a sample arrives before the processed point ──
+        function newZ(tp) {
+            counts.rebuilds++;
+            return { tp: tp, iRaw: 0, tProc: -Infinity, lastP: null, lastL: null, F: { dt: [], p: [], t: [] },
+                     K: { G: [], lg: [], p: [], t: [] }, Lg: { dt: [], p: [], last: -Infinity }, nDec: 0, lastDecLG: -Infinity, decIdx: [],
+                     early: null, Ra: _sums(), cus: null, frozen: null, conf: null,
+                     bd: { kB: 0, jl: 0, jr: 0, D: [], tAt: [], f2: { Dmax: 0, kT: -1, kDep: null, below: 0, tot: 0, done: false, ssd: 0, nsd: 0, lastD: null, lastLGd: -Infinity, tProv: null, tConf: null, p: null, G: null } },
+                     A: { t: [], p: [], last: -Infinity, iF: 0 }, dgN: 0, dgRes: null, tpSearched: false };
+        }
+        function processRaw() {
+            var n = S.t.length, i;
+            for (i = Z.iRaw; i < n; i++) {
+                var dt = S.t[i] - E.ts; if (!(dt > 0)) continue;
+                var l = Math.log(dt);
+                // pressure increment |Δp| ≥ dpMin or 1 % in Δt (with rounding slack): O(1) per sample
+                if (Z.lastP == null || Math.abs(S.p[i] - Z.lastP) >= dpMin || l - Z.lastL >= 0.0099) {
+                    Z.F.dt.push(dt); Z.F.p.push(S.p[i]); Z.F.t.push(S.t[i]); Z.lastP = S.p[i]; Z.lastL = l; counts.resampled++;
+                    var Gv = _G05(dt / Z.tp);
+                    if (Gv >= gMin) {
+                        var lg = Math.log(Gv), K = Z.K; K.G.push(Gv); K.lg.push(lg); K.p.push(S.p[i]); K.t.push(S.t[i]); counts.kept++;
+                        if (lg >= Z.lastDecLG + 2 * L) { Z.nDec++; Z.lastDecLG = lg; Z.decIdx.push(K.G.length - 1); }
+                    }
+                    if (l >= Z.Lg.last + 0.01) { Z.Lg.dt.push(dt); Z.Lg.p.push(S.p[i]); Z.Lg.last = l; }
+                }
+            }
+            Z.iRaw = n; Z.tProc = n ? S.t[n - 1] : -Infinity;
+        }
+        function addTo(R, Gv) {
+            var K = Z.K, p00 = K.p[0];
+            while (R.fp < K.G.length && K.G[R.fp] <= Gv) { var gx = K.G[R.fp], py = K.p[R.fp] - p00; R.n++; R.sx += gx; R.sy += py; R.sxx += gx * gx; R.sxy += gx * py; R.syy += py * py; R.fp++; }
+        }
+        function lineOf(R) {
+            if (R.n < 20) return null;
+            var p00 = Z.K.p[0], mx = R.sx / R.n, my = R.sy / R.n, Sxx = R.sxx - R.n * mx * mx, Sxy = R.sxy - R.n * mx * my, Syy = R.syy - R.n * my * my;
+            if (!(Sxx > 0)) return null;
+            var m = Sxy / Sxx, b = my - m * mx + p00, s2v = Math.max(0, (Syy - m * Sxy) / Math.max(1, R.n - 2));
+            return { m: m, b: b, s2: Math.max(s2v, sigmaG * sigmaG, 1e-8), xb: mx, sxx: Sxx, n: R.n, gMax: R.fp > 0 ? Z.K.G[R.fp - 1] : 0 };
+        }
+        // early G line on G ≤ G0 = max(0.5, min(2, G_now/3)) and the lag-1 coefficient ρ of its residuals; frozen once G_now ≥ 6
+        function early() {
+            var K = Z.K, nK = K.G.length, Gnow = K.G[nK - 1], G0 = Math.max(0.5, Math.min(2, Gnow / 3));
+            if (Z.early && (Z.early.frozen || (Z.early.G0 === G0 && Z.early.nK === nK))) return Z.early;
+            var X0 = [], Y0 = [];
+            for (var i = 0; i < nK && K.G[i] <= G0; i++) { X0.push(K.G[i]); Y0.push(K.p[i]); }
+            var fit0 = X0.length >= 5 ? linfit(X0, Y0) : null, rho = 0;
+            if (fit0) {
+                var res0 = Y0.map(function (y, q) { return y - (fit0.b + fit0.m * X0[q]); });
+                var r1 = _lag1(res0), r2 = _lagK(res0, 2);                  // AR part under white gauge noise: ρ ≈ r₂/r₁
+                rho = r1; if (fin(r1) && fin(r2) && r1 > 0.2 && r2 > 0) rho = Math.max(r1, Math.min(0.95, r2 / r1));
+                rho = fin(rho) ? Math.max(-0.95, Math.min(0.95, rho)) : 0;
+            }
+            Z.early = { G0: G0, nK: nK, fit0: fit0, X0: X0, rho: rho, frozen: G0 === 2 && Gnow >= 6 };
+            return Z.early;
+        }
+        // nuisance tp (no logged pump start, no events engine, no usable pressure ramp): the tp inside the bracket that makes the
+        // early G line straight
+        // (least squares over G ≤ 2, golden section), searched once when the window is complete; then the state is rebuilt
+        function searchTp() {
+            Z.tpSearched = true;
+            if (!E.bracket || E.ts == null) return null;
+            var tpLo = E.ts - E.bracket[1], tpHi = E.ts - E.bracket[0];
+            if (!(tpLo > 0) || !(tpHi > tpLo * (1 + 1e-6))) return null;
+            var F = Z.F, dts = [], ps = [], dtMax = tpHi * _G05inv(2);
+            for (var i = 0; i < F.dt.length && F.dt[i] <= dtMax * 1.0001; i++) { dts.push(F.dt[i]); ps.push(F.p[i]); }
+            var rss = function (tp) {
+                counts.tpSearch++;
+                var X = [], Y = [];
+                for (var j = 0; j < dts.length; j++) { var g = _G05(dts[j] / tp); if (g >= gMin && g <= 2) { X.push(g); Y.push(ps[j]); } }
+                if (X.length < 8) return Infinity;
+                var f = linfit(X, Y); if (!f) return Infinity;
+                var s = 0; for (j = 0; j < X.length; j++) { var e = Y[j] - (f.b + f.m * X[j]); s += e * e; }
+                return s / X.length;
+            };
+            var gr = (Math.sqrt(5) - 1) / 2, a = tpLo, b = tpHi, c = b - gr * (b - a), d = a + gr * (b - a), fc = rss(c), fd = rss(d);
+            for (var it = 0; it < 40 && (b - a) > 1e-7 * tpLo; it++) {
+                if (fc < fd) { b = d; d = c; fd = fc; c = b - gr * (b - a); fc = rss(c); } else { a = c; c = d; fc = fd; d = a + gr * (b - a); fd = rss(d); }
+            }
+            var tpBest = 0.5 * (a + b), f0 = rss(E.tp);
+            // keep the ramp estimate unless the bracket search straightens the early line
+            return rss(tpBest) < f0 * (1 - 1e-6) ? tpBest : null;
+        }
+        // ── CUSUM over the candidate stream; the state is kept between runs and restarted only when ρ or the mode changes ──
+        function modeOf(rho) { return Math.abs(rho) <= 0.2 ? 'fine' : (Z.nDec >= 30 ? 'dec' : 'white'); }
+        function runCusum(eA) {
+            var K = Z.K, rho = eA.rho, mode = modeOf(rho), sig = rho.toPrecision(12) + '|' + mode + '|' + (eA.frozen ? 1 : 0);
+            if (!Z.cus || Z.cus.sig !== sig) {
+                Z.cus = { sig: sig, mode: mode, rho: rho, infl: rho > 0 ? Math.min(50, (1 + rho) / (1 - rho)) : 1, Sp: 0, Sm: 0, seq: 0, R: _sums(), scanK: mode === 'white' ? 1 : 0, lastLG: -Infinity, blk: null, h: mode === 'fine' ? hFine : hC };
+            }
+            var C = Z.cus, spacing = mode === 'fine' ? 2 * L / FINE : 2 * L;
+            var lineVarOf = function (ln, Gv) { return ln.s2 * C.infl * (1 / ln.n + (Gv - ln.xb) * (Gv - ln.xb) / ln.sxx); };
+            // the reference line over the last 0.7 ln units before the candidate (less 2L): after a reservoir-controlled decline
+            // the closure is a departure from the declining trend, not from the early line (as 56's closed form, §4.11)
+            var lineWin = function (Gc0) {
+                var gHi = Gc0 * Math.exp(-2 * L), gLo = gHi * Math.exp(-0.7), p00 = K.p[0], Rw = _sums();
+                for (var kw = 0; kw < K.G.length && K.G[kw] <= gHi; kw++) {
+                    if (K.G[kw] < gLo) continue;
+                    var gx = K.G[kw], py = K.p[kw] - p00; Rw.n++; Rw.sx += gx; Rw.sy += py; Rw.sxx += gx * gx; Rw.sxy += gx * py; Rw.syy += py * py; Rw.fp = kw + 1;
+                }
+                return lineOf(Rw);
+            };
+            var zOf = function (cd, R) {
+                var Gc0 = K.G[cd.k0];
+                addTo(R, Gc0 * Math.exp(-2 * L));
+                var ln = C.decline ? lineWin(Gc0) : lineOf(R);
+                // detection starts once the line spans G 0.05 … ≥ 2 and the candidate lies beyond G 3
+                if (!ln || ln.gMax < 2 || Gc0 < 3 || !(ln.m < 0)) return null;
+                counts.candidates++;
+                if (C.mode === 'white') {
+                    var s = 0, mm = 0, rPrev = K.p[cd.k0 - 1] - (ln.b + ln.m * K.G[cd.k0 - 1]);
+                    for (var kq = cd.k0; kq <= cd.k1; kq++) { var rq = K.p[kq] - (ln.b + ln.m * K.G[kq]); s += rq - rho * rPrev; rPrev = rq; mm++; }
+                    var Gm = K.G[cd.k1], vz = mm * ln.s2 * (1 - rho * rho) + mm * mm * (1 - rho) * (1 - rho) * lineVarOf(ln, Gm);
+                    return { z: s / Math.sqrt(Math.max(vz, 1e-12)), ln: ln };
+                }
+                var Gq = K.G[cd.k0], rq2 = K.p[cd.k0] - (ln.b + ln.m * Gq);
+                return { z: rq2 / Math.sqrt(ln.s2 + lineVarOf(ln, Gq)), ln: ln };
+            };
+            var step = function (cd, commit) {
+                var R = commit ? C.R : { n: C.R.n, sx: C.R.sx, sy: C.R.sy, sxx: C.R.sxx, sxy: C.R.sxy, syy: C.R.syy, fp: C.R.fp };
+                var zz = zOf(cd, R); if (!zz) return null;
+                var Sp = Math.max(0, C.Sp + zz.z - kC), Sm = Math.max(0, C.Sm - zz.z - kC);
+                // only the closure sign raises a call: p below the line (dP/dG rising, the stiffening at closure). p above the line
+                // first is a reservoir-controlled (matrix) decline — dP/dG falling with p − p_r — and was called a closure about
+                // 5 h early on the mini-model reference: it switches the reference to the declining trend (lineWin) and restarts
+                if (!C.decline && Sp > C.h) { if (commit) { C.decline = true; C.Sp = 0; C.Sm = 0; C.seq++; } return null; }
+                if (C.decline) Sp = 0;
+                if (commit) { C.Sp = Sp; C.Sm = Sm; C.seq++; }
+                if (Sm > C.h) return { k1: cd.k1, sgn: -1, line: zz.ln };
+                return null;
+            };
+            var nK = K.G.length, k, al = null;
+            if (C.mode === 'white') {
+                // 2L blocks of prewhitened innovations: a block is committed once the next one starts; the open block is tried
+                for (k = C.scanK; k < nK && !al; k++) {
+                    if (!C.blk || K.lg[k] >= C.blk.lg0 + 2 * L) {
+                        if (C.blk) al = step(C.blk, true);
+                        if (al) break;
+                        C.blk = { lg0: K.lg[k], k0: k, k1: k };
+                    } else C.blk.k1 = k;
+                    C.scanK = k + 1;
+                }
+                if (!al && C.blk) al = step(C.blk, false);
+            } else {
+                for (k = C.scanK; k < nK && !al; k++) {
+                    C.scanK = k + 1;
+                    if (K.lg[k] >= C.lastLG + spacing) { C.lastLG = K.lg[k]; al = step({ k0: k, k1: k }, true); }
+                }
+            }
+            return al;
+        }
+        // ── two-pointer Bourdet dP/dG (window L in ln G) and the tangent-line (F2) detector ──
+        function runBourdet() {
+            var K = Z.K, B = Z.bd, f2 = B.f2, nK = K.G.length;
+            while (B.kB < nK) {
+                var k = B.kB, lgk = K.lg[k];
+                if (B.jr < k + 1) B.jr = k + 1;
+                while (B.jr < nK && K.lg[B.jr] < lgk + L) B.jr++;
+                if (B.jr >= nK) break;                                  // waits for the right-hand point
+                while (B.jl + 1 < k && K.lg[B.jl + 1] <= lgk - L) B.jl++;
+                var D = null;
+                if (k > 0 && K.lg[B.jl] <= lgk - L) {
+                    var dGl = K.G[k] - K.G[B.jl], dGr = K.G[B.jr] - K.G[k], sl = (K.p[k] - K.p[B.jl]) / dGl, sr = (K.p[B.jr] - K.p[k]) / dGr;
+                    D = -(sl * dGr + sr * dGl) / (dGl + dGr);
+                }
+                B.D.push(D); B.tAt.push(K.t[B.jr]); counts.derivs++; B.kB++;
+                if (f2.done || !(K.G[k] >= 1) || !fin(D) || !(D > 0)) continue;
+                // noise of dP/dG from 2L-spaced successive differences on G 1 … 3 (before any closure signal); detection from G 3
+                if (K.G[k] <= 3) { if (lgk >= f2.lastLGd + 2 * L) { if (f2.lastD != null) { f2.ssd += (D - f2.lastD) * (D - f2.lastD); f2.nsd++; } f2.lastD = D; f2.lastLGd = lgk; } continue; }
+                if (D > f2.Dmax) { f2.Dmax = D; f2.kT = k; f2.kDep = null; f2.below = 0; f2.tot = 0; f2.tProv = null; continue; }
+                var sdD = f2.nsd >= 3 ? Math.sqrt(f2.ssd / (2 * f2.nsd)) : 0, tol = Math.max(0.03, 4 * sdD / f2.Dmax), below = D < f2.Dmax * (1 - tol);
+                if (f2.kDep == null) { if (below && k > f2.kT) { f2.kDep = k; f2.below = 1; f2.tot = 1; f2.tProv = K.t[B.jr]; } continue; }
+                f2.tot++; if (below) f2.below++;
+                if (f2.below / f2.tot < 0.5) { f2.kDep = null; f2.below = 0; f2.tot = 0; f2.tProv = null; continue; }
+                if (Math.log10(K.G[k] / K.G[f2.kDep]) >= 0.05 && f2.below / f2.tot >= 0.9) {
+                    var kp = Math.max(f2.kT, f2.kDep - 1);
+                    f2.done = true; f2.tConf = K.t[B.jr]; f2.p = K.p[kp]; f2.G = K.G[kp]; f2.t = K.t[kp];
+                }
+            }
+        }
+        // ── after-closure series (1 % in ln(t_inj − t0) from the resampled falloff) and its p_i-free diagnosis ──
+        function runAfter(tDep) {
+            if (E.tStart == null) return Z.dgRes;
+            var A = Z.A, F = Z.F, tcInj = tDep - E.tStart, t0 = tcInj / 3;
+            for (var i = A.iF; i < F.t.length; i++) {
+                if (!(F.t[i] > tDep * 1.0001)) continue;
+                var x = F.t[i] - E.tStart - t0; if (!(x > 0)) continue;
+                var lx = Math.log(x);
+                if (lx >= A.last + 0.01) { A.t.push(F.t[i] - E.tStart); A.p.push(F.p[i]); A.last = lx; }
+            }
+            A.iF = F.t.length;
+            if (A.t.length === Z.dgN) return Z.dgRes;
+            Z.dgN = A.t.length;
+            if (A.t.length < 8 || Math.log10((A.t[A.t.length - 1] - t0) / (A.t[0] - t0)) < 0.3) return Z.dgRes;
+            counts.acaDiag++; counts.acaPoints += A.t.length;
+            var dg = G.PRiSM_dfit_acaDiag(A.t, A.p, { t0: t0, LB: 0.25, sigma: sigmaG });
+            if (!dg || dg.ok === false) return Z.dgRes;
+            var lo = null, hi = null;
+            for (i = dg.x.length - 1; i >= 0; i--) if (fin(dg.piLo[i])) { lo = dg.piLo[i]; hi = dg.piHi[i]; break; }
+            // radial flow seen: a radial regime (s_D in −1 ± 0.07) held over ≥ 0.3 log cycle (§4.12), not a steep end point
+            var radial = (dg.regimes || []).some(function (r) { return r.kind === 'radial' && r._span >= 0.3; }) && !dg.steepened && !dg.storage;
+            Z.dgRes = { lo: lo, hi: hi, radial: radial };
+            return Z.dgRes;
+        }
+        function verdictOf(state, t, fam, p, fc, text, evs) { return { t: t, state: state, family: fam, p: fin(p) ? p : null, forecast: fc, text: _txt(text), ev: evs || [] }; }
+        function run() {
+            counts.runs++;
+            if (evDirty) {
+                var E2 = scanEvents();
+                if (evKey(E2) !== evKey(E)) { E = E2; Z = null; } else E.bracket = E2.bracket;
+            }
+            var n = S.t.length, tNow = n ? S.t[n - 1] : 0;
+            if (E.ts == null || !pos(E.tp) || n < 3) { last = verdictOf('none', tNow, null, n ? S.p[n - 1] : null, null, 'Waiting for the shut-in.', []); return record(last); }
+            if (!Z || minDirtyT <= Z.tProc) { var tpKeep = Z && Z.tpRefined ? Z.tp : null; Z = newZ(tpKeep || E.tp); if (tpKeep) { Z.tpRefined = true; Z.tpSearched = true; } }
+            minDirtyT = Infinity;
+            processRaw();
+            var K = Z.K, nK = K.G.length;
+            if (Z.F.dt.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: too few falloff samples yet.', []); return record(last); }
+            if (nK < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: the early G line is not defined yet.', []); return record(last); }
+            // the nuisance tp, once the window G ≤ 2 is complete at every tp in the bracket
+            if (!Z.tpSearched && E.bracket && K.G[nK - 1] * (E.tp / (E.ts - E.bracket[0])) >= 2.05) {
+                var tpN = searchTp();
+                if (tpN != null) { Z = newZ(tpN); Z.tpRefined = true; Z.tpSearched = true; processRaw(); K = Z.K; nK = K.G.length; }
+            }
+            var Gnow = K.G[nK - 1], eA = early(), fit0 = eA.fit0;
+            if (!fit0 || !(fit0.m < 0)) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: no falling G line yet.', []); return record(last); }
+            if (!Z.frozen) {
+                var al = runCusum(eA);
+                if (al) Z.frozen = { line: al.line, kA: al.k1, tA: K.t[al.k1], sgn: al.sgn, infl: Z.cus.infl };
+            }
+            runBourdet();
+            addTo(Z.Ra, Z.frozen ? Z.frozen.line.gMax : Gnow);
+            var lnAll = Z.frozen ? Z.frozen.line : lineOf(Z.Ra);
+            Z.lnAll = lnAll;
+            var infl = Z.frozen ? Z.frozen.infl : (Z.cus ? Z.cus.infl : 1);
+            var lnF = lnAll || { b: fit0.b, m: fit0.m, s2: Math.max(fit0.sigma * fit0.sigma, 1e-8), xb: mean(eA.X0), sxx: 1, n: eA.X0.length, gMax: eA.G0 };
+            var isip = lnF.b, mG = -lnF.m, Gw = lnF.gMax;
+            var sigAt = function (Gv) { return Math.sqrt(Math.max(lnF.s2 + (lnF.sxx > 0 ? lnF.s2 * infl * (1 / lnF.n + (Gv - lnF.xb) * (Gv - lnF.xb) / lnF.sxx) : 0), sigmaG * sigmaG, 1e-6)); };
+            var rOf = function (k) { return K.p[k] - (isip - mG * K.G[k]); };
+            // forecast before closure: G_c = (ISIP − σ_prior)/m_G at σ_prior ± sd
+            var fc = null;
+            if (prior && pos(mG)) {
+                var Ghi = (isip - (prior.p50 - prior.sd)) / mG, Glo = (isip - (prior.p50 + prior.sd)) / mG;
+                if (Glo > 0 && Ghi > 0) fc = { lo: Z.tp * _G05inv(Glo), hi: Z.tp * _G05inv(Ghi) };
+            }
+            var f2 = Z.bd.f2, fam2 = { family: 'F2', state: f2.done ? 'confirmed' : (f2.kDep != null ? 'provisional' : 'continue'), p: f2.done ? f2.p : (f2.kDep != null ? K.p[Math.max(f2.kT, f2.kDep - 1)] : null), sameAsF1: false };
+            if (!Z.frozen) {
+                var txt = fc ? 'Continue: closure expected ' + fmt(fc.lo, 1) + '–' + fmt(fc.hi, 1) + ' h after shut-in.' : 'Continue: closure not yet seen.';
+                last = verdictOf('continue', tNow, null, S.p[n - 1], fc, txt, []);
+                last.families = [{ family: 'F1', state: 'continue', p: null }, fam2];
+                return record(last);
+            }
+            var FZ = Z.frozen, sgnA = FZ.sgn, kA = FZ.kA;
+            if (!Z.conf) {
+                // change point on the full-resolution residuals: back from the alarm while |r| > 2σ on the alarm side
+                var kD = kA;
+                while (kD > 0 && sgnA * rOf(kD - 1) > 2 * sigAt(K.G[kD - 1]) && K.G[kD - 1] > Gw) kD--;
+                // the departure starts where the residual leaves the line (first point of the run beyond 2σ, stepped back once)
+                if (kD > 0 && K.G[kD - 1] > Gw) kD--;
+                Z.conf = { kD: kD, kc: kD, held: 0, tot: 0, tConf: null };
+            }
+            // confirmed when the departure is held over ≥ 0.05 in log G (≥ 90 % of the points since beyond 2σ, on the same side)
+            var CF = Z.conf, GD = K.G[CF.kD], iniOk = Math.log10(Gw / gMin) >= 0.3;
+            for (; CF.kc < nK; CF.kc++) {
+                var kk = CF.kc; CF.tot++; if (sgnA * rOf(kk) > 2 * sigAt(K.G[kk])) CF.held++;
+                if (CF.tConf == null && kk >= kA && Math.log10(K.G[kk] / GD) >= 0.05 && CF.held / CF.tot >= 0.9 && iniOk) CF.tConf = K.t[kk];
+            }
+            var tDep = K.t[CF.kD], pDep = K.p[CF.kD], tProv = K.t[kA], tConf = CF.tConf;
+            var confirmed = tConf != null && CF.held / CF.tot >= 0.9;
+            closedAt = { t: tDep, dt: tDep - E.ts, p: pDep, G: GD, tProvisional: tProv, tConfirmed: tConf };
+            var fam1 = { family: 'F1', state: confirmed ? 'confirmed' : 'provisional', p: pDep };
+            // a tangent touch within one derivative window (2L in ln G) of the F1 departure is not a separate stiffening interval:
+            // the end-of-stiffening reading is the F1 reading (the families agree)
+            if (f2.kT >= 0 && f2.kDep != null && Math.log(K.G[f2.kT] / GD) <= 2 * L + 1e-9) { fam2.p = pDep; fam2.sameAsF1 = true; }
+            var p2 = fam2.p, both = confirmed && f2.done && !fam2.sameAsF1 && fin(p2) && Math.abs(p2 - pDep) > Math.max(tauAbs, tauF * pDep);
+            if (!confirmed) {
+                last = verdictOf('provisional', tNow, 'F1', pDep, fc, 'Contact reading (family F1) provisional at ' + fmt(pDep, 0) + ' psia.', ['C2']);
+                last.tProv = tProv; last.families = [fam1, fam2];
+                return record(last);
+            }
+            // after closure: p_i bracket and the radial check on the injection clock with the centroid origin
+            var out = verdictOf('confirmed', tNow, 'F1', pDep, null, both
+                ? 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia; end of stiffening (family F2) confirmed: ' + fmt(p2, 0) + ' psia (closure range ' + fmt(Math.min(pDep, p2), 0) + '–' + fmt(Math.max(pDep, p2), 0) + ' psia).'
+                : 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia.', ['C2']);
+            var dgR = runAfter(tDep);
+            if (dgR && dgR.lo != null) {
+                var hw = (dgR.hi - dgR.lo) / 2;
+                out.piHalfWidth = hw; out.pi = { lo: dgR.lo, hi: dgR.hi };
+                if (hw <= 25) { out = verdictOf('enough-pi', tNow, 'F1', 0.5 * (dgR.lo + dgR.hi), null, 'Enough for p_i ± ' + fmt(Math.max(1, Math.ceil(hw)), 0) + ' psi (' + fmt(dgR.lo, 0) + '–' + fmt(dgR.hi, 0) + ' psia).', ['A1']); out.piHalfWidth = hw; out.pi = { lo: dgR.lo, hi: dgR.hi }; }
+            }
+            if (dgR && dgR.radial) out.radialSeen = true;
+            var pl = ctx.plan;
+            if (pl && pl.tRadial && pos(pl.allowedShutInD) && fin(pl.tRadial.p10) && pl.tRadial.p10 > pl.allowedShutInD * 24 && out.state === 'confirmed')
+                out = verdictOf('radial-unreachable', tNow, 'F1', pDep, null, 'Radial flow is not reachable in the allowed time: plan for bounds on k.', ['A1']);
+            if (pl && pl.corridor && arrOk(pl.corridor.t) && pl.corridor.t.length > 1) {
+                // the last log cycle of the 1 %-in-Δt series (bounded work per run)
+                var outN = 0, tot = 0, tLo = Math.max(1e-6, (tNow - E.ts) / 10), Lg = Z.Lg, i;
+                for (i = Lg.dt.length - 1; i >= 0 && Lg.dt[i] >= tLo; i--) { var c10 = interp(pl.corridor.t, pl.corridor.p10, Lg.dt[i]), c90 = interp(pl.corridor.t, pl.corridor.p90, Lg.dt[i]); tot++; if (Lg.p[i] < Math.min(c10, c90) || Lg.p[i] > Math.max(c10, c90)) outN++; }
+                if (tot > 5 && outN / tot > 0.1) out = verdictOf('outside-corridor', tNow, null, S.p[n - 1], null, 'Outside the designer corridor: check the gauge.', []);
+            }
+            out.families = [fam1, fam2];
+            if (both) out.range = { lo: Math.min(pDep, p2), hi: Math.max(pDep, p2) };
+            out.tProv = tProv; out.tConf = tConf;
+            last = out;
+            return record(last);
+        }
+        // timeline of state transitions; the "first available" times use the sample at which a call became true
+        // (inside a block), not the end of the block
+        function record(v) {
+            var prev = timeline.length ? timeline[timeline.length - 1] : null;
+            if (fin(v.tProv) && firsts.closureProvisional == null) firsts.closureProvisional = v.tProv;
+            if (fin(v.tConf) && firsts.closureConfirmed == null) firsts.closureConfirmed = v.tConf;
+            var vv = clone(v); delete vv.tProv; delete vv.tConf; delete vv.piHalfWidth; delete vv.radialSeen; delete vv.pi;
+            if (!prev || prev.state !== v.state) {
+                if (v.state !== 'provisional' && v.state !== 'continue' && v.state !== 'none' && prev && prev.state === 'continue' && fin(v.tProv))
+                    timeline.push(Object.assign(clone(vv), { t: v.tProv, state: 'provisional', text: _txt('Contact reading (family F1) provisional at ' + fmt(v.p, 0) + ' psia.') }));
+                timeline.push(vv);
+            }
+            if (v.state === 'provisional' && firsts.closureProvisional == null) firsts.closureProvisional = v.t;
+            if ((v.state === 'confirmed' || v.state === 'enough-pi' || v.state === 'radial-unreachable') && firsts.closureConfirmed == null) firsts.closureConfirmed = v.t;
+            if (fin(v.piHalfWidth) && v.piHalfWidth <= 25 && firsts.piW25 == null) firsts.piW25 = v.t;
+            if (fin(v.piHalfWidth) && v.piHalfWidth <= 10 && firsts.piW10 == null) firsts.piW10 = v.t;
+            if (v.radialSeen && firsts.radialSeen == null) firsts.radialSeen = v.t;
+            if (Z && Z.bd.f2.tConf != null && firsts.f2Confirmed == null) firsts.f2Confirmed = Z.bd.f2.tConf;
+            return v;
+        }
+        // statistics of the pre-departure residuals (about the line through all of them): ρ, decimated and prewhitened lag-1;
+        // computed on request (O(n) once), not in every run
+        function statsNow() {
+            if (!Z || !Z.early || !Z.lnAll) return null;
+            var K = Z.K, ln = Z.lnAll, rPre = [], rDec = [], d = 0, decSet = Z.decIdx;
+            for (var k = 0; k < K.G.length && K.G[k] <= ln.gMax; k++) {
+                var v0 = K.p[k] - (ln.b + ln.m * K.G[k]); rPre.push(v0);
+                while (d < decSet.length && decSet[d] < k) d++;
+                if (d < decSet.length && decSet[d] === k) rDec.push(v0);
+            }
+            var rho = Z.early.rho;
+            return { rho1: rho, useWhite: Z.cus ? Z.cus.mode === 'white' : false, mode: Z.cus ? Z.cus.mode : null, decLag1: _lag1(rDec),
+                     whiteLag1: _lag1(rPre.slice(1).map(function (v, q) { return v - rho * rPre[q]; })), nDec: rDec.length, isip: ln.b, mG: -ln.m, Gw: ln.gMax,
+                     candidates: Z.cus ? Z.cus.seq : 0, tp: Z.tp, tpRefined: !!Z.tpRefined, eventsSource: E.src };
+        }
+        return {
+            push: function (samples) {
+                var added = 0;
+                (samples || []).forEach(function (s) {
+                    if (!s || !fin(s.t) || !fin(s.p)) return;
+                    var p = s.p + ((s.unit === 'psig' || (ctx.psig && s.unit !== 'psia')) ? atm : 0);
+                    counts.samples++;
+                    if (insert(s.t, p, s.q, s.T)) added++;
+                });
+                return { changed: added > 0, added: added };
+            },
+            run: run,
+            verdict: function () { return last ? clone(last) : verdictOf('none', 0, null, null, null, 'No data yet.', []); },
+            timeline: function () { return clone(timeline); },
+            firsts: function () { return { closureProvisional: nn(firsts.closureProvisional), closureConfirmed: nn(firsts.closureConfirmed), piW25: nn(firsts.piW25), piW10: nn(firsts.piW10), radialSeen: nn(firsts.radialSeen) }; },
+            closure: function () { return closedAt ? clone(closedAt) : null; },
+            f2: function () { var f = Z ? Z.bd.f2 : null; return f && (f.done || f.kDep != null) ? { state: f.done ? 'confirmed' : 'provisional', p: f.done ? f.p : null, tProvisional: f.tProv, tConfirmed: f.tConf, G: f.G } : null; },
+            events: function () { return { tStart: E.tStart, ts: E.ts, tp: Z ? Z.tp : E.tp, source: E.src }; },
+            stats: function () { var s = statsNow(); return s ? clone(s) : null; },
+            counts: function () { return clone(counts); },
+            size: function () { return S.t.length; },
+            close: function () { S = { t: [], p: [], q: [], T: [] }; Z = null; E = { tStart: null, ts: null, tp: null, src: null, bracket: null }; evDirty = true; }
+        };
+    }
     G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
-    G.PRiSM_dfit_live.create = _stub('PRiSM_dfit_live.create');
+    G.PRiSM_dfit_live.create = function (ctx) { try { return _liveCreate(ctx); } catch (e) { return fail('LIVE_FAILED', e && e.message || e); } };
 
-    // {k, kLo, kHi, source} or null when no DFIT after-closure k exists (always null in the skeleton)
-    G.PRiSM_dfit_kConstraint = function () { return null; };
-    G.PRiSM_dfit_kConstraint._dfitStub = true;
+    function _replaySetup(ds, ctx) {
+        ctx = ctx || {};
+        if (!ds || !arrOk(ds.t) || !arrOk(ds.p) || ds.t.length !== ds.p.length) return { err: fail('BAD_INPUT', 'Replay needs a dataset with t and p.', ['ds']) };
+        var ses = _liveCreate(ctx), block = pos(ctx.block) ? Math.round(ctx.block) : 50, rows = [];
+        for (var i = 0; i < ds.t.length; i++) rows.push({ t: ds.t[i], p: ds.p[i], q: ds.q && fin(ds.q[i]) ? ds.q[i] / 1440 : null, T: ds.T && fin(ds.T[i]) ? ds.T[i] : null, unit: ctx.unit || null });
+        return { ses: ses, rows: rows, block: block, i: 0 };
+    }
+    function _replayStep(R) { var end = Math.min(R.rows.length, R.i + R.block); R.ses.push(R.rows.slice(R.i, end)); R.i = end; R.ses.run(); return R.i >= R.rows.length; }
+    function _replayFinish(R) { return { ok: true, timeline: R.ses.timeline(), firsts: R.ses.firsts(), tEnd: R.rows.length ? R.rows[R.rows.length - 1].t : 0, closure: R.ses.closure(), verdict: R.ses.verdict(), f2: R.ses.f2(), events: R.ses.events(), stats: R.ses.stats(), counts: R.ses.counts() }; }
+    G.PRiSM_dfit_replay = function (ds, ctx) {
+        try { var R = _replaySetup(ds, ctx); if (R.err) return R.err; var guard = 0; while (!_replayStep(R) && guard++ < 1e6); return _replayFinish(R); }
+        catch (e) { return fail('REPLAY_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_replayJob = function (ds, ctx) {
+        var R = null, done = false, cancelled = false, res = null;
+        try { R = _replaySetup(ds, ctx); } catch (e) { R = { err: fail('REPLAY_FAILED', e && e.message || e) }; }
+        if (R.err) { done = true; res = R.err; }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try { if (_replayStep(R)) { done = true; res = _replayFinish(R); } } catch (e) { done = true; res = fail('REPLAY_FAILED', e && e.message || e); }
+                return { done: done, progress: R.rows.length ? R.i / R.rows.length : 1, label: 'samples ' + R.i + ' of ' + R.rows.length };
+            },
+            result: function () { return res || fail('CANCELLED', 'The replay was cancelled.', []); },
+            cancel: function () { cancelled = true; }
+        };
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 8. Results layer: evidence index, report model, quoted-value check, data + picks export, frac sheet, hand-off,
+    //    summary, grade fallback (§6.10, §6.8, §2.10, §2.11, §3.3)
+    // ═════════════════════════════════════════════════════════════════════
+    var EV_GROUPS = 'QXEIHSGCKMFALUPO';
+    var EV_TITLES = { Q: 'Triage', X: 'Conversion', E: 'Events', I: 'ISIP', H: 'Water hammer', S: 'Step tests and ramps', G: 'Pre-closure derivatives',
+                      C: 'Closure', K: 'Confidence rule', M: 'Leak-off type', F: 'Fracture outputs', A: 'After-closure', L: 'Leak-off model',
+                      U: 'Uncertainty', P: 'Plan', O: 'Overrides' };
+    var EV_RE = /^[QXEIHSGCKMFALUPO]\d+$/;
+    function _getPath(o, path) {
+        if (!path) return o;
+        var parts = String(path).replace(/\[(\d+)\]/g, '.$1').split('.'), a = o;
+        for (var i = 0; i < parts.length; i++) { if (a == null) return undefined; a = a[parts[i]]; }
+        return a;
+    }
+    function _evValues(o, id) {
+        var V = [], v = function (label, value, unit, dp) { if (value != null && (fin(value) || typeof value === 'string')) V.push({ label: label, value: fin(value) ? +value : String(value).slice(0, 80), unit: unit, dp: dp }); };
+        if (!o || typeof o !== 'object') return V;
+        if (id === 'C1' && o.mode) { if (fin(o.value)) v('closure', o.value, 'psia', 0); if (o.range) { v('lo', o.range.lo, 'psia', 0); v('hi', o.range.hi, 'psia', 0); } v('mode', o.mode, '', 0); return V; }
+        if (fin(o.value) && o.candidates) { v('ISIP', o.value, 'psia', 0); v('spread', o.spread, 'psi', 1); return V; }
+        if (o.pi && o.regimeSummary) { v('p_i', o.pi.value, 'psia', 0); if (o.kh) v('kh/μ', o.kh.khmu, 'md·ft/cp', 2); else if (o.bounds) { v('k_lo', o.bounds.kLo, 'md', 6); v('k_hi', o.bounds.kHi, 'md', 6); } v('regime', o.regimeSummary, '', 0); return V; }
+        if (o.geometry && fin(o.pClosure)) { v('closure', o.pClosure, 'psia', 0); v('p_n', o.pn, 'psi', 0); if (o.eta) v('η', o.eta.a05, '', 3); if (o.geometry.byModel && o.geometry.byModel.PKN) v('xf', o.geometry.byModel.PKN.xf, 'ft', 0); return V; }
+        if (fin(o.n) && fin(o.seed) && o.outputs) { v('n', o.n, 'draws', 0); v('seed', o.seed, '', 0); return V; }
+        if (fin(o.mG) && arrOk(o.G)) { v('m_G', o.mG, 'psi', 2); v('α', o.alpha, '', 2); return V; }
+        if (o.tp && fin(o.Vi)) { v('tp', o.tp.pump * 60, 'min', 1); v('V_i', o.Vi, 'bbl', 1); return V; }
+        if (o.light) { v('light', o.light, '', 0); return V; }
+        if (o.type && o.scores) { v('type', o.type, '', 0); return V; }
+        if (o.method && fin(o.p)) { v('p', o.p, 'psia', 0); v('G', o.G, '', 2); return V; }
+        if (o.method && fin(o.value)) { v(o.method, o.value, 'psia', 1); return V; }
+        if (o.id && /^K/.test(o.id)) { v('value', o.value, '', 3); v('threshold', o.threshold, '', 3); return V; }
+        if (fin(o.value)) v('value', o.value, '', 3);
+        return V;
+    }
+    function _evText(o, g) {
+        var t = null;
+        if (o) {
+            if (typeof o.why === 'string') t = o.why; else if (arrOk(o.why) && o.why.length) t = o.why[0];
+            if (!t && typeof o.text === 'string') t = o.text;
+            if (!t && arrOk(o.evidence) && o.evidence.length) t = typeof o.evidence[0] === 'string' ? o.evidence[0] : o.evidence[0].text;
+            if (!t && o.pi && arrOk(o.pi.reasons) && o.pi.reasons.length) t = o.pi.reasons[0];
+            if (!t && typeof o.preferredWhy === 'string') t = o.preferredWhy;
+        }
+        return _txt(t || (EV_TITLES[g] + ' result of this run.'));
+    }
+    G.PRiSM_dfit_evidence = function (run) {
+        try {
+            if (!run || typeof run !== 'object') return fail('BAD_INPUT', 'The evidence index needs a run.', ['run']);
+            var items = {}, seen = {};
+            function add(id, o, path) {
+                if (!EV_RE.test(id) || items[id]) return;
+                var g = id[0], ttl = EV_TITLES[g] + (o && o.method ? ': ' + o.method : (o && o.title ? ': ' + o.title : (g === 'K' && o && o.id ? ' ' + o.id : '')));
+                items[id] = { id: id, group: g, title: _txt(ttl), values: _evValues(o, id), path: path, text: _evText(o, g) };
+            }
+            function walk(o, path, depth) {
+                if (!o || typeof o !== 'object' || depth > 6 || seen[path]) return;
+                seen[path] = true;
+                if (arrOk(o)) { if (o.length > 0 && typeof o[0] === 'object') for (var i = 0; i < Math.min(o.length, 200); i++) walk(o[i], path + '[' + i + ']', depth + 1); return; }
+                if (typeof o.id === 'string' && EV_RE.test(o.id) && o.id[0] === 'K') add(o.id, o, path);
+                if (arrOk(o.ev)) o.ev.forEach(function (id) { add(id, o, path); });
+                for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k) && k !== 'ev' && k !== 'evidence' && k !== 'report' && k !== 'summary' && k !== 'samples' && k !== 'stability' && o[k] && typeof o[k] === 'object')
+                    walk(o[k], path ? path + '.' + k : k, depth + 1);
+                if (arrOk(o.evidence)) o.evidence.forEach(function (e, i) { if (e && arrOk(e.ev)) e.ev.forEach(function (id) { add(id, o, path); }); });
+            }
+            ['triage', 'prep', 'events', 'isip', 'derivs', 'picks', 'consensus', 'consensusLite', 'classification', 'frac', 'whatIf', 'aca', 'leak', 'unc', 'warnings']
+                .forEach(function (k) { if (run[k] != null) walk(run[k], k, 0); });
+            var order = Object.keys(items).sort(function (a, b) { var ga = EV_GROUPS.indexOf(a[0]), gb = EV_GROUPS.indexOf(b[0]); return ga !== gb ? ga - gb : (+a.slice(1)) - (+b.slice(1)); });
+            return { items: items, order: order };
+        } catch (e) { return fail('EVIDENCE_FAILED', e && e.message || e); }
+    };
+
+    function _closureOf(run) {
+        var c = run.consensus || run.consensusLite || {};
+        return { mode: c.mode || 'none', value: fin(c.value) ? c.value : null, range: c.range || null, label: run.consensus ? run.consensus.confidence : 'low',
+                 families: c.families || {}, preferred: run.consensus ? run.consensus.preferred : null };
+    }
+    function _localGrade(run) {
+        var tri = run.triage, cl = _closureOf(run), aca = run.aca && run.aca.ok !== false ? run.aca : null, why = [];
+        var light = tri && tri.light ? tri.light : null, piL = aca && aca.pi ? aca.pi.label : null;
+        var letter = 'D';
+        if (cl.mode !== 'none') letter = 'C';
+        if (cl.mode !== 'none' && light !== 'red' && aca) letter = 'B';
+        if (cl.mode === 'single' && (cl.label === 'high' || cl.label === 'medium') && light !== 'red' && light !== 'amber' && (piL === 'high' || piL === 'medium')) letter = 'A';
+        why.push('Triage ' + (light || 'not run') + '; closure ' + (cl.mode === 'single' ? 'single with label ' + cl.label : cl.mode === 'range' ? 'a range (' + cl.label + ')' : 'not estimable') + ' (uncalibrated); p_i label ' + (piL || 'not available') + '.');
+        return { letter: letter, why: why.map(_txt) };
+    }
+    function _gradeOf(run) {
+        if (realFn(G.PRiSM_dfit_grade)) {
+            try { var g = G.PRiSM_dfit_grade(run.triage, run.consensus, run.aca); if (g && /^[ABCD]$/.test(g.letter) && arrOk(g.why)) return { letter: g.letter, why: g.why.map(_txt) }; } catch (e) { /* fallback */ }
+        }
+        return _localGrade(run);
+    }
+
+    // ── report model ──
+    function _evOk(EVI, ids) { return (ids || []).filter(function (id) { return EVI && EVI.items[id]; }); }
+    G.PRiSM_dfit_reportModel = function (run, opts) {
+        try {
+            opts = opts || {};
+            if (!run || typeof run !== 'object') return fail('BAD_INPUT', 'The report model needs a run.', ['run']);
+            var EVI = run.evidence && run.evidence.items ? run.evidence : G.PRiSM_dfit_evidence(run);
+            if (!EVI || !EVI.items) EVI = { items: {}, order: [] };
+            var groups = opts.groups || null, want = function (id) { return !groups || groups.indexOf(id) >= 0 || groups.indexOf(id.replace('dfit-', '')) >= 0; };
+            var cl = _closureOf(run), ch = run.frac ? run.frac.chosen : null, aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var isip = run.isip && run.isip.ok !== false ? run.isip : null, unc = run.unc && run.unc.ok !== false ? run.unc : null;
+            var grade = run.grade && /^[ABCD]$/.test(run.grade.letter) ? run.grade : _gradeOf(run);
+            var quotes = [], sections = [];
+            function sec(id, title, order) { var s = { id: id, title: title, order: order, blocks: [] }; sections.push(s); return s; }
+            function q(s, b, r, c, path, dp, ref) { quotes.push({ ref: ref, s: sections.indexOf(s), b: b, r: r, c: c, path: path, dp: dp }); }
+            function kvRow(s, blk, label, val, dp, unit, path, ev) {
+                var text = fin(val) ? fmt(val, dp) + (unit ? ' ' + unit : '') : '–';
+                blk.rows.push([label, text, _evOk(EVI, ev)]);
+                if (fin(val) && path) q(s, s.blocks.indexOf(blk), blk.rows.length - 1, 1, path, dp, label);
+            }
+            var piHalf = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? Math.round((aca.pi.hi - aca.pi.lo) / 2) : null;
+            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + (piHalf != null ? ' ±' + piHalf : '') + ' psia' : 'p_i not available';
+            var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + cl.label + ') · ' + piTxt
+                : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + cl.label + ') · ' + piTxt
+                : 'DFIT · closure not estimable · ' + piTxt;
+            var keyRows = [
+                ['Closure', cl.mode === 'single' ? fmt(cl.value, 0) + ' psia (single, ' + cl.label + ', uncalibrated)' : cl.mode === 'range' ? fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (range, ' + cl.label + ')' : 'not estimable'],
+                ['ISIP', isip ? fmt(isip.value, 0) + ' psia' : '–'],
+                ['Net pressure', ch && fin(ch.pn) ? fmt(ch.pn, 0) + ' psi' : (cl.mode === 'range' ? 'per family (range mode)' : '–')],
+                ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + aca.pi.label + ')' : '–'],
+                ['Grade', grade.letter]
+            ];
+            // 10 headline
+            if (want('dfit-headline')) {
+                var s1 = sec('dfit-headline', 'DFIT headline', 10), kv = { kind: 'kv', rows: [] }; s1.blocks.push(kv);
+                if (cl.mode === 'single') kvRow(s1, kv, 'Closure', cl.value, 0, 'psia', run.consensus ? 'consensus.value' : 'consensusLite.value', ['C1']);
+                else if (cl.mode === 'range') { kvRow(s1, kv, 'Closure (low end)', cl.range.lo, 0, 'psia', (run.consensus ? 'consensus' : 'consensusLite') + '.range.lo', ['C1']); kvRow(s1, kv, 'Closure (high end)', cl.range.hi, 0, 'psia', (run.consensus ? 'consensus' : 'consensusLite') + '.range.hi', ['C1']); }
+                else kv.rows.push(['Closure', 'not estimable', _evOk(EVI, ['C1'])]);
+                if (isip) kvRow(s1, kv, 'ISIP', isip.value, 0, 'psia', 'isip.value', ['I1']);
+                if (ch) { kvRow(s1, kv, 'Net pressure', ch.pn, 0, 'psi', 'frac.chosen.pn', ['F1']); kvRow(s1, kv, 'Efficiency (α = ' + (ch.eta && ch.eta.alphaUsed === 1 ? '1' : '½') + ')', ch.eta ? ch.eta.matched : null, 3, '', 'frac.chosen.eta.matched', ['F1']);
+                          kvRow(s1, kv, 'Closure gradient', ch.gradClosure, 3, 'psi/ft', 'frac.chosen.gradClosure', ['F1']); }
+                if (aca && aca.pi) kvRow(s1, kv, 'p_i', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
+                if (aca && aca.kh) kvRow(s1, kv, 'kh/μ (late radial)', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']);
+                else if (aca && aca.bounds) { kvRow(s1, kv, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s1, kv, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']); }
+                kv.rows.push(['Grade', grade.letter, []]);
+                if (unc) {
+                    var outs = [['Closure', 'closure', 'C1'], ['Net pressure', 'pn', 'F1'], ['Efficiency', 'eta', 'F1'], ['xf (PKN)', 'xf', 'F1'], ['CL', 'CL', 'F1'], ['p_i', 'pi', 'A1']];
+                    if (unc.mode === 'range') {
+                        var tb = { kind: 'table', head: ['Output', 'F1 P10', 'F1 P50', 'F1 P90', 'F2 P10', 'F2 P50', 'F2 P90', 'Unit', 'Ev.'], ev: true, rows: [] };
+                        outs.forEach(function (o) { var u = unc.outputs[o[1]]; if (!u) return; var bf = u.byFamily; var ev = _evOk(EVI, [o[2]]);
+                            if (bf) tb.rows.push([o[0], sig(bf.F1.p10, 5), sig(bf.F1.p50, 5), sig(bf.F1.p90, 5), sig(bf.F2.p10, 5), sig(bf.F2.p50, 5), sig(bf.F2.p90, 5), u.unit, ev.join(' ')]);
+                            else tb.rows.push([o[0], sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), null, null, null, u.unit, ev.join(' ')]); });
+                        s1.blocks.push(tb);
+                    } else {
+                        var tb2 = { kind: 'table', head: ['Output', 'P10', 'P50', 'P90', 'Unit', 'Ev.'], ev: true, rows: [] };
+                        outs.forEach(function (o) { var u = unc.outputs[o[1]]; if (!u) return; tb2.rows.push([o[0], sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), u.unit, _evOk(EVI, [o[2]]).join(' ')]); });
+                        s1.blocks.push(tb2);
+                    }
+                }
+                var vl = cl.mode === 'single' ? (cl.label === 'high' ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
+                var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + cl.label + ', uncalibrated).'
+                    : cl.mode === 'range' ? '⚠ Closure is a range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia: every closure-dependent value is given per family.'
+                    : '✗ No closure can be estimated from this falloff.';
+                if (vl !== 'ok' && cl.mode === 'single') vt = '⚠' + vt.slice(1);
+                s1.blocks.push({ kind: 'verdict', level: vl, text: _txt(vt) });
+            }
+            // 11 closure board
+            if (want('dfit-board') && arrOk(run.picks) && run.picks.length) {
+                var s2 = sec('dfit-board', 'Closure board', 11), tbB = { kind: 'table', head: ['Method', 'Family', 'Vote', 'Closure (psia)', 'P10', 'P90', 'Ev.'], ev: true, rows: [] };
+                s2.blocks.push(tbB);
+                run.picks.forEach(function (p, i) {
+                    tbB.rows.push([p.method, p.family, p.vote ? 'yes' : 'no', rnd(p.p, 0), p.band ? rnd(p.band.p10, 0) : null, p.band ? rnd(p.band.p90, 0) : null, _evOk(EVI, p.ev).join(' ')]);
+                    if (fin(p.p)) q(s2, 0, tbB.rows.length - 1, 3, 'picks[' + i + '].p', 0, 'pick ' + p.method);
+                });
+                if (run.consensus && run.consensus.counterfactual && run.consensus.counterfactual.text) s2.blocks.push({ kind: 'notes', text: _txt(run.consensus.counterfactual.text) });
+                s2.blocks.push({ kind: 'plot', key: 'dfitG', title: 'G-function plot' }, { kind: 'plot', key: 'dfitStrip', title: 'Closure strip' });
+            }
+            // 12 what-if
+            if (want('dfit-whatif') && arrOk(run.whatIf) && run.whatIf.length) {
+                var s3 = sec('dfit-whatif', 'What-if closure table', 12), tbW = { kind: 'table', head: ['Candidate', 'Family', 'Closure (psia)', 'G_c', 'η', 'p_n (psi)', 'C_sys (bbl/psi)', 'R_vis', 'xf (ft)', 'CL (ft/√min)', 'Ev.'], ev: true, rows: [] };
+                s3.blocks.push(tbW);
+                run.whatIf.forEach(function (w) {
+                    var pk = w.geometry && w.geometry.byModel ? w.geometry.byModel.PKN : null;
+                    tbW.rows.push([w.label || '', w.family || '–', rnd(w.pClosure, 0), rnd(w.Gc, 2), rnd(w.eta ? w.eta.matched : null, 3), rnd(w.pn, 0), sig(w.Csys, 4), rnd(w.Rvis, 3), pk ? rnd(pk.xf, 1) : null, pk ? sig(pk.CL, 4) : null, _evOk(EVI, w.ev).join(' ')]);
+                });
+                s3.blocks.push({ kind: 'notes', text: 'Each row is the consistent chain of one closure candidate; values are never mixed between rows.' });
+            }
+            // 13 after-closure
+            if (want('dfit-aca') && aca) {
+                var s4 = sec('dfit-aca', 'After-closure analysis', 13), kvA = { kind: 'kv', rows: [] }; s4.blocks.push(kvA);
+                kvA.rows.push(['Regime', aca.regimeSummary, _evOk(EVI, ['A1'])]);
+                kvA.rows.push(['Time origin', aca.origin + ' (t0 ' + fmt(aca.t0, 3) + ' h)', _evOk(EVI, ['A1'])]);
+                kvRow(s4, kvA, 'p_i (' + aca.pi.label + ')', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
+                kvRow(s4, kvA, 'p_i bracket low', aca.pi.lo, 0, 'psia', 'aca.pi.lo', ['A1']); kvRow(s4, kvA, 'p_i bracket high', aca.pi.hi, 0, 'psia', 'aca.pi.hi', ['A1']);
+                if (aca.kh) { kvRow(s4, kvA, 'kh/μ', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']); kvRow(s4, kvA, 'k (kh/μ·μ/h)', aca.kh.k, 4, 'md', 'aca.kh.k', ['A1']); }
+                if (aca.nolte && aca.nolte.lin && fin(aca.nolte.lin.k)) kvRow(s4, kvA, 'k (F_L line, CL)', aca.nolte.lin.k, 6, 'md', 'aca.nolte.lin.k', ['A1']);
+                if (aca.bounds) { kvRow(s4, kvA, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s4, kvA, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']);
+                                  kvA.rows.push(['Binding', aca.bounds.binding.map(function (b) { return b.edge + ': ' + b.rule; }).join('; '), _evOk(EVI, ['A1'])]); }
+                var tbBr = { kind: 'table', head: ['Bracket', 'Low (psia)', 'High (psia)'], ev: false, rows: [] };
+                [['Cartesian', aca.brackets.cart], ['Impulse', aca.brackets.imp], ['Derivative', aca.brackets.deriv], ['Combined', aca.brackets.combined]].forEach(function (b) { if (b[1]) tbBr.rows.push([b[0], rnd(b[1][0], 1), rnd(b[1][1], 1)]); });
+                s4.blocks.push(tbBr);
+                if (run.leak && run.leak.ok) s4.blocks.push({ kind: 'verdict', level: run.leak.verdict === 'leak' ? 'bad' : run.leak.verdict === 'leak-or-drift' ? 'warn' : 'ok',
+                    text: _txt((run.leak.verdict === 'leak' ? '✗ Leak ' : run.leak.verdict === 'leak-or-drift' ? '⚠ Leak or drift (not separable): ' : '✓ No leak above the floor: ') + 'q_k ' + fmtSig(run.leak.qk, 2) + ' bbl/d against q_k,max ' + fmtSig(run.leak.qkMax, 2) + ' bbl/d (Θ ' + fmt(run.leak.theta, 1) + ').') });
+                s4.blocks.push({ kind: 'notes', text: 'Δp_CL = ½·(ISIP + σ_c) − p_r is used for every CL ↔ k conversion (fracture outputs, after-closure bounds and the leak-off model). ' + (aca.pi.reasons || []).join(' ') });
+                s4.blocks.push({ kind: 'plot', key: 'dfitAcaLogLog', title: 'After-closure log-log' }, { kind: 'plot', key: 'dfitPiTraj', title: 'p_i trajectory' });
+            }
+            // 14 leak-off type
+            if (want('dfit-type') && run.classification && run.classification.ok !== false) {
+                var c = run.classification, s5 = sec('dfit-type', 'Leak-off type', 14), kvT = { kind: 'kv', rows: [] }; s5.blocks.push(kvT);
+                kvT.rows.push(['Type', c.type + (c.alt && c.alt.length ? ' (alternative: ' + c.alt.join(', ') + ')' : ''), _evOk(EVI, c.ev)]);
+                if (c.features) kvT.rows.push(['R_vis', fin(c.features.Rvis) ? fmt(c.features.Rvis, 3) : '–', _evOk(EVI, c.ev)]);
+                if (arrOk(c.evidence) && c.evidence.length) s5.blocks.push({ kind: 'notes', text: c.evidence.map(_txt).join(' ') });
+            }
+            // 15 triage
+            if (want('dfit-triage') && run.triage && run.triage.ok !== false) {
+                var tr = run.triage, s6 = sec('dfit-triage', 'Test triage', 15), tbQ = { kind: 'table', head: ['Check', 'Level', 'Value', 'Note', 'Ev.'], ev: true, rows: [] };
+                s6.blocks.push(tbQ);
+                (tr.checks || []).forEach(function (k) { tbQ.rows.push([k.title, k.level, fin(k.value) ? k.value : (typeof k.value === 'string' ? k.value : null), _txt(k.text), _evOk(EVI, k.ev).join(' ')]); });
+                s6.blocks.push({ kind: 'verdict', level: tr.light === 'green' ? 'ok' : tr.light === 'amber' ? 'warn' : 'bad', text: _txt((tr.light === 'green' ? '✓ ' : tr.light === 'amber' ? '⚠ ' : '✗ ') + 'Triage ' + tr.light + ': the test is ' + tr.verdict + '.') });
+            }
+            // 16 step tests
+            if (want('dfit-steps') && run.events && arrOk(run.events.steps) && run.events.steps.length) {
+                var s7 = sec('dfit-steps', 'Step tests and ramps', 16), tbS = { kind: 'table', head: ['Step', 'Rate (bbl/min)', 'Settled p (psia)', 'Direction'], ev: false, rows: [] };
+                s7.blocks.push(tbS);
+                run.events.steps.forEach(function (st, i) { tbS.rows.push([String(i + 1), rnd(st.q, 3), rnd(st.pSettled, 1), st.dir]); });
+            }
+            // 17 leak-off model (from the stored fit of the test)
+            if (want('dfit-model') && opts.lk && opts.lk.fit) {
+                var s8 = sec('dfit-model', 'Leak-off model', 17), kvL = { kind: 'kv', rows: [] }; s8.blocks.push(kvL);
+                var fp = opts.lk.fit.params || {};
+                Object.keys(fp).forEach(function (k) { kvL.rows.push([k, fin(fp[k]) ? fmtSig(fp[k], 4) : '–', []]); });
+                if (opts.lk.fit.groups) kvL.rows.push(['Γ', fin(opts.lk.fit.groups.Gamma) ? fmt(opts.lk.fit.groups.Gamma, 2) + ' psi/√min' : '–', []]);
+            }
+            // 18 uncertainty
+            if (want('dfit-unc') && unc) {
+                var s9 = sec('dfit-unc', 'Uncertainty', 18), tbU = unc.mode === 'range'
+                    ? { kind: 'table', head: ['Output', 'F1 P10–P90', 'F2 P10–P90', 'Envelope', 'Unit', 'Interpretation share', 'Ev.'], ev: true, rows: [] }
+                    : { kind: 'table', head: ['Output', 'P10', 'P50', 'P90', 'Unit', 'Largest driver', 'Ev.'], ev: true, rows: [] };
+                s9.blocks.push(tbU);
+                Object.keys(unc.outputs).forEach(function (k) {
+                    var u = unc.outputs[k], drv = u.shares.slice().sort(function (a, b) { return b.s - a.s; })[0];
+                    if (unc.mode === 'range' && u.byFamily) tbU.rows.push([k, fmtSig(u.byFamily.F1.p10, 4) + ' – ' + fmtSig(u.byFamily.F1.p90, 4), fmtSig(u.byFamily.F2.p10, 4) + ' – ' + fmtSig(u.byFamily.F2.p90, 4), fmtSig(u.envelope[0], 4) + ' – ' + fmtSig(u.envelope[1], 4), u.unit, rnd(u.closureShare, 2), _evOk(EVI, ['U1']).join(' ')]);
+                    else if (unc.mode === 'range') tbU.rows.push([k, fmtSig(u.p10, 4) + ' – ' + fmtSig(u.p90, 4), 'same', '–', u.unit, rnd(u.closureShare, 2), _evOk(EVI, ['U1']).join(' ')]);
+                    else tbU.rows.push([k, sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), u.unit, drv ? drv.input : '–', _evOk(EVI, ['U1']).join(' ')]);
+                });
+                s9.blocks.push({ kind: 'notes', text: _txt('Seeded draws: n ' + unc.n + ', seed ' + unc.seed + (unc.mode === 'range' ? '; family weight F1 ' + fmt(unc.familyWeight.F1, 2) + ' (an interpretive weight, not a probability).' : '.')) });
+            }
+            // 19 hand-off and geomechanics
+            if (want('dfit-handoff') && ch) {
+                var s10 = sec('dfit-handoff', 'Hand-off and geomechanics', 19), kvH = { kind: 'kv', rows: [] }; s10.blocks.push(kvH);
+                kvRow(s10, kvH, 'Closure gradient', ch.gradClosure, 3, 'psi/ft', 'frac.chosen.gradClosure', ['F1']);
+                kvRow(s10, kvH, 'ISIP gradient', ch.gradIsip, 3, 'psi/ft', 'frac.chosen.gradIsip', ['F1']);
+                kvRow(s10, kvH, 'Γ', ch.Gamma, 2, 'psi/√min', 'frac.chosen.Gamma', ['F1']);
+            }
+            // 20 pick log and evidence appendix
+            if (want('dfit-log')) {
+                var s11 = sec('dfit-log', 'Pick log and evidence', 20), log = arrOk(opts.log) ? opts.log : [];
+                if (log.length) {
+                    var tbLg = { kind: 'table', head: ['Seq', 'Time', 'Who', 'Item', 'Old → new', 'Reason'], ev: false, rows: [] };
+                    log.forEach(function (e) { tbLg.rows.push([e.seq, String(e.at || ''), String(e.who || ''), String(e.item || ''), _txt(_logVal(e.old) + ' → ' + _logVal(e.new)), _txt(e.reason || '')]); });
+                    s11.blocks.push(tbLg);
+                } else s11.blocks.push({ kind: 'notes', text: 'No user picks or overrides.' });
+                if (opts.appendix !== false) {
+                    var tbE = { kind: 'table', head: ['Id', 'Group', 'Title', 'Values'], ev: false, rows: [] };
+                    EVI.order.forEach(function (id) { var it = EVI.items[id]; tbE.rows.push([id, EV_TITLES[it.group], it.title, _txt(it.values.map(function (v) { return v.label + ' ' + (fin(v.value) ? fmt(v.value, v.dp) : v.value) + (v.unit ? ' ' + v.unit : ''); }).join(', '))]); });
+                    s11.blocks.push(tbE);
+                }
+            }
+            var model = { title: _txt('DFIT analysis' + (opts.zone ? ' — ' + opts.zone : '')), keyRows: keyRows.map(function (r) { return [r[0], _txt(r[1])]; }), keyLine: _txt(keyLine),
+                          grade: { letter: grade.letter, why: grade.why.map(_txt) }, sections: sections, appendix: EVI, quoted: { ok: true, nFailed: 0 }, quotes: quotes };
+            var chk = G.PRiSM_dfit_checkQuoted(model, run, { annotate: true });
+            model.quoted = { ok: !!chk.ok, nFailed: chk.nFailed || 0 };
+            return model;
+        } catch (e) { return fail('REPORT_FAILED', e && e.message || e); }
+    };
+    function _logVal(v) { if (v == null) return '–'; if (fin(v)) return String(+v.toPrecision(6)); if (typeof v === 'string') return v.slice(0, 60); try { return JSON.stringify(v).slice(0, 60); } catch (e) { return '–'; } }
+    function _parseNum(s) {
+        if (fin(s)) return s;
+        if (typeof s !== 'string') return null;
+        var m = s.replace(/,/g, '').match(/-?\d+(\.\d+)?(e[-+]?\d+)?/i);
+        return m ? +m[0] : null;
+    }
+    // Quoted-value self-check (§6.10): every number the report quotes is re-read from the displayed cell and compared with
+    // the run; it fails when |quoted − recomputed| > half a unit in the last displayed digit. With {annotate:true} a single
+    // ⚠ verdict line naming the failures is put into the headline section (nothing is printed when it passes).
+    G.PRiSM_dfit_checkQuoted = function (model, run, opts) {
+        try {
+            opts = opts || {};
+            if (!model || !arrOk(model.sections)) return fail('BAD_INPUT', 'The check needs a report model.', ['model']);
+            var Q = arrOk(model.quotes) ? model.quotes : [], failures = [], n = 0;
+            Q.forEach(function (qq) {
+                var s = model.sections[qq.s], b = s && s.blocks[qq.b], cell = null;
+                if (!b) return;
+                if (b.kind === 'kv') cell = b.rows[qq.r] ? b.rows[qq.r][1] : null;
+                else if (b.kind === 'table') cell = b.rows[qq.r] ? b.rows[qq.r][qq.c] : null;
+                else if (b.kind === 'kpi') cell = b.items[qq.r] ? b.items[qq.r].value : null;
+                var quoted = _parseNum(cell), recomputed = _getPath(run, qq.path);
+                if (!fin(recomputed)) return;
+                n++;
+                if (!fin(quoted) || Math.abs(quoted - recomputed) > 0.5 * Math.pow(10, -qq.dp) + 1e-9 * Math.abs(recomputed)) failures.push({ ref: qq.ref, quoted: fin(quoted) ? quoted : null, recomputed: recomputed });
+            });
+            var res = { ok: failures.length === 0, nChecked: n, nFailed: failures.length, failures: failures };
+            if (opts.annotate) {
+                model.sections.forEach(function (s) { s.blocks = s.blocks.filter(function (b) { return !b._quotedCheck; }); });
+                if (failures.length && model.sections.length) {
+                    var head = model.sections[0];
+                    head.blocks.push({ kind: 'verdict', level: 'warn', text: _txt('⚠ Quoted-value self-check failed for: ' + failures.map(function (f) { return f.ref + ' (quoted ' + fmtSig(f.quoted, 6) + ', run ' + fmtSig(f.recomputed, 6) + ')'; }).join('; ') + '.'), _quotedCheck: true });
+                }
+                model.quoted = { ok: res.ok, nFailed: res.nFailed };
+            }
+            return res;
+        } catch (e) { return fail('CHECK_FAILED', e && e.message || e); }
+    };
+
+    // ── data + picks export (§6.10) ──
+    var EXPORT_COLS = { t: { label: 't_h', unit: 'h', dp: 9 }, dt: { label: 'dt_h', unit: 'h', dp: 9 }, p: { label: 'p_psia', unit: 'psia', dp: 3 },
+                        q: { label: 'q_bbl_min', unit: 'bbl/min', dp: 4 }, flag: { label: 'after_closure', unit: '', dp: 0 }, pSurf: { label: 'p_surf_psia', unit: 'psia', dp: 3 }, T: { label: 'T_F', unit: '°F', dp: 2 } };
+    // exportText(run, template, opts?): opts {test, inputs, well} (or the same keys on the template) give the §6.10 header (well,
+    // test, zone, datum, gauge, fluid, rock, input provenance); without them the header says "not stated".
+    function _provOf(inp) {
+        var IR = G.PRiSM_dfit_inputRanges, D = IR && typeof IR.defaults === 'function' && !IR.defaults._dfitStub ? IR.defaults() : null;
+        if (!inp) return 'not stated';
+        var keys = ['datumTvd', 'gauge.bhTvd', 'fluid.rhoPpg', 'fluid.muCp', 'rock.Ep', 'rock.hf', 'rock.hp', 'priors.sigmaGrad', 'priors.piGrad', 'channels.atmPsia'];
+        var user = [], def = [];
+        keys.forEach(function (k) {
+            var v = _getPath(inp, k); if (v == null) return;
+            var d0 = D ? _getPath(D, k) : undefined;
+            (d0 !== undefined && d0 === v ? def : user).push(k);
+        });
+        var ev = inp.events || {}, evU = ['tStart', 'tb', 'ts'].filter(function (k) { return fin(ev[k]); });
+        return (user.length ? 'user ' + user.join(', ') : 'no user values') + (def.length ? '; default ' + def.join(', ') : '') + (inp.rock && inp.rock.EpSource ? '; Ep source ' + inp.rock.EpSource : '') +
+               (evU.length ? '; event overrides ' + evU.join(', ') : '; events auto');
+    }
+    // the app version: the host getter WTS_appVersion (RELEASE_NOTES is a host const, not on window)
+    function _appVer() {
+        try { if (typeof G.WTS_appVersion === 'function') { var v = G.WTS_appVersion(); if (v) return String(v); } } catch (e) { /* host getter missing */ }
+        var RN = G.RELEASE_NOTES;
+        return RN && RN[0] && RN[0].ver ? String(RN[0].ver) : null;
+    }
+    G.PRiSM_dfit_exportText = function (run, template, xo) {
+        try {
+            if (!run || !run.prep || run.prep.ok === false) return fail('BAD_INPUT', 'The export needs a run with prepared data.', ['run']);
+            var tpl = (template && typeof template === 'object') ? template : {}, sep = typeof tpl.sep === 'string' && tpl.sep ? tpl.sep : '\t';
+            var cols = arrOk(tpl.columns) && tpl.columns.length ? tpl.columns.map(function (c) { return typeof c === 'string' ? { key: c } : c; }) : [{ key: 't' }, { key: 'p' }, { key: 'q' }, { key: 'flag' }];
+            cols = cols.filter(function (c) { return EXPORT_COLS[c.key]; });
+            var dec = tpl.decimals || {}, L = [], ev = run.events || {}, ch = run.frac ? run.frac.chosen : null, cl = _closureOf(run);
+            var name = String(tpl.name || 'test').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'test';
+            var h8 = String(run.dsHash || '').slice(0, 8) || '00000000';
+            L.push('# DFIT data and picks export');
+            (arrOk(tpl.header) ? tpl.header : []).forEach(function (h) { L.push('# ' + String(h).replace(/[\r\n]+/g, ' ')); });
+            xo = xo || {};
+            var Tt = tpl.test || xo.test || null, wl = tpl.well || xo.well || null;
+            var inp = tpl.inputs || xo.inputs || (Tt && Tt.inputs) || null, cln = function (v) { return String(v).replace(/[\r\n]+/g, ' ').slice(0, 120); };
+            L.push('# well: ' + (wl && (wl.name || wl.id) ? cln(wl.name || wl.id) : 'not stated'));
+            L.push('# test: ' + (Tt && Tt.id ? cln(Tt.id) : 'not stated') + '; zone: ' + (Tt && Tt.zone ? cln(Tt.zone) : (tpl.zone ? cln(tpl.zone) : 'not stated')));
+            if (inp) {
+                L.push('# datum TVD ft: ' + (fin(inp.datumTvd) ? inp.datumTvd : '–') + '; gauge TVD ft: ' + (inp.gauge && fin(inp.gauge.bhTvd) ? inp.gauge.bhTvd : 'at datum'));
+                if (inp.fluid) L.push('# fluid: ' + inp.fluid.kind + ', ' + inp.fluid.rhoPpg + ' ppg, ' + inp.fluid.muCp + ' cp');
+                if (inp.rock) L.push('# rock: Ep psi ' + (fin(inp.rock.Ep) ? inp.rock.Ep : '–') + ' (' + inp.rock.EpSource + '), hf ft ' + (fin(inp.rock.hf) ? inp.rock.hf : '–') + ', hp ft ' + (fin(inp.rock.hp) ? inp.rock.hp : '–'));
+            } else L.push('# datum, gauge, fluid and rock: not stated');
+            L.push('# input provenance: ' + _provOf(inp));
+            if (wl && (pos(wl.mu) || pos(wl.ct) || pos(wl.h))) {
+                var pv = G.PRiSM_pvt && G.PRiSM_pvt.provenance || {}, pf = function (k, u) { return k + ' ' + (fin(wl[k]) ? wl[k] : '–') + (u ? ' ' + u : '') + (pv[k] ? ' (' + pv[k] + ')' : ''); };
+                L.push('# reservoir: ' + [pf('mu', 'cp'), pf('phi', ''), pf('ct', '1/psi'), pf('h', 'ft')].join(', '));
+            }
+            if (run.weakHash) L.push('# hashes: weak (local FNV-1a; the shared hash was not available)');
+            L.push('# app version: ' + String(tpl.appVersion || _appVer() || 'not stated'));
+            L.push('# input hash: ' + (run.inputsHash || '–') + '; data hash: ' + (run.dsHash || '–') + (run.summary && run.summary.resultHash ? '; result hash: ' + run.summary.resultHash : ''));
+            L.push('# EVENTS');
+            L.push('# pump start h: ' + fmtSig(ev.tStart, 9) + '; breakdown h: ' + fmtSig(ev.tb, 9) + '; shut-in h: ' + fmtSig(ev.ts, 9) + '; Vi bbl: ' + fmtSig(ev.Vi, 6) + '; Vi* bbl: ' + fmtSig(ev.ViStar, 6) + '; tp h: ' + (ev.tp ? fmtSig(ev.tp.pump, 6) : '–'));
+            L.push('# PICKS');
+            (run.picks || []).forEach(function (p) { L.push('# ' + p.method + ' (' + p.family + (p.vote ? ', votes' : '') + '): ' + fmt(p.p, 1) + ' psia at G ' + fmt(p.G, 3) + (p.band ? '; P10–P90 ' + fmt(p.band.p10, 1) + '–' + fmt(p.band.p90, 1) : '')); });
+            if (run.isip && fin(run.isip.value)) L.push('# ISIP: ' + fmt(run.isip.value, 1) + ' psia (spread ' + fmt(run.isip.spread, 1) + ' psi, ' + run.isip.confidence + ')');
+            L.push('# CLOSURE');
+            L.push('# ' + (cl.mode === 'single' ? 'single ' + fmt(cl.value, 1) + ' psia (' + cl.label + ')' : cl.mode === 'range' ? 'range ' + fmt(cl.range.lo, 1) + '–' + fmt(cl.range.hi, 1) + ' psia (' + cl.label + ')' : 'not estimable'));
+            (arrOk(tpl.log) ? tpl.log : []).forEach(function (e) { L.push('# log ' + e.seq + ' ' + (e.at || '') + ' ' + (e.who || '') + ': ' + e.item + ' ' + _logVal(e.old) + ' → ' + _logVal(e.new) + (e.reason ? ' (' + String(e.reason).replace(/[\r\n]+/g, ' ') + ')' : '')); });
+            L.push('# RESULTS');
+            if (ch) L.push('# p_n psi ' + fmt(ch.pn, 1) + '; eta ' + fmt(ch.eta ? ch.eta.matched : null, 4) + '; Gamma ' + fmt(ch.Gamma, 3) + '; CL ' + fmtSig(ch.geometry && ch.geometry.byModel.PKN ? ch.geometry.byModel.PKN.CL : null, 4) + '; xf ft ' + fmt(ch.geometry && ch.geometry.byModel.PKN ? ch.geometry.byModel.PKN.xf : null, 1));
+            if (run.unc && run.unc.outputs) Object.keys(run.unc.outputs).forEach(function (k) {
+                var u = run.unc.outputs[k];
+                L.push('# ' + k + ' ' + (u.byFamily ? 'F1 ' + fmtSig(u.byFamily.F1.p10, 5) + '/' + fmtSig(u.byFamily.F1.p50, 5) + '/' + fmtSig(u.byFamily.F1.p90, 5) + ' F2 ' + fmtSig(u.byFamily.F2.p10, 5) + '/' + fmtSig(u.byFamily.F2.p50, 5) + '/' + fmtSig(u.byFamily.F2.p90, 5)
+                    : 'P10/P50/P90 ' + fmtSig(u.p10, 5) + '/' + fmtSig(u.p50, 5) + '/' + fmtSig(u.p90, 5)) + ' ' + u.unit);
+            });
+            if (run.aca && run.aca.pi) L.push('# p_i psia ' + fmt(run.aca.pi.value, 1) + ' [' + fmt(run.aca.pi.lo, 1) + ', ' + fmt(run.aca.pi.hi, 1) + '] (' + run.aca.pi.label + ')');
+            var gr = run.grade && run.grade.letter ? run.grade : _gradeOf(run);
+            L.push('# GRADE ' + gr.letter + ': ' + (gr.why || []).join(' '));
+            L.push('# DATA');
+            L.push(cols.map(function (c) { return c.label || EXPORT_COLS[c.key].label; }).join(sep));
+            var P = run.prep, tc = fin(ev.ts) && ch && fin(ch.dtc) ? ev.ts + ch.dtc : null;
+            for (var i = 0; i < P.t.length; i++) {
+                L.push(cols.map(function (c) {
+                    var dp = fin(dec[c.key]) ? dec[c.key] : EXPORT_COLS[c.key].dp, v;
+                    if (c.key === 't') v = P.t[i]; else if (c.key === 'dt') v = fin(ev.ts) ? P.t[i] - ev.ts : null; else if (c.key === 'p') v = P.pw[i];
+                    else if (c.key === 'q') v = P.q ? P.q[i] : null; else if (c.key === 'flag') v = tc != null ? (P.t[i] >= tc ? 1 : 0) : 0;
+                    else if (c.key === 'pSurf') v = P.pSurf ? P.pSurf[i] : null; else if (c.key === 'T') v = P.T ? P.T[i] : null;
+                    return fin(v) ? v.toFixed(dp) : '';
+                }).join(sep));
+            }
+            return { ok: true, text: L.join('\n') + '\n', filename: 'dfit-' + name + '-' + h8 + '.txt' };
+        } catch (e) { return fail('EXPORT_FAILED', e && e.message || e); }
+    };
+
+    // ── frac-design sheet (§2.11) ──
+    G.PRiSM_dfit_fracSheet = function (run) {
+        try {
+            if (!run || !run.frac) return fail('BAD_INPUT', 'The frac sheet needs a run with fracture outputs.', ['frac']);
+            var rows = [], unc = run.unc && run.unc.outputs ? run.unc : null, cl = _closureOf(run);
+            function uq(k, fam) { var u = unc && unc.outputs[k]; if (!u) return null; if (fam && u.byFamily) return u.byFamily[fam]; return fin(u.p50) ? u : null; }
+            // column 3 is the point estimate ('value'), P10 / P50 / P90 come from the uncertainty ensemble (P50 appended as column
+            // 8, blank without an ensemble): a point estimate is not the ensemble median, and labelling it P50 put P10 above it
+            function row(name, fam, v, unit, lens, ev, ukey) { var u = ukey ? uq(ukey, fam) : null; rows.push([name, fam, u ? u.p10 : null, fin(v) ? v : null, u ? u.p90 : null, unit, lens, ev, u && fin(u.p50) ? u.p50 : null]); }
+            function chainRows(f, fam) {
+                if (!f) return;
+                var pk = f.geometry && f.geometry.byModel ? f.geometry.byModel.PKN : null, rd = f.geometry && f.geometry.byModel ? f.geometry.byModel.radial : null;
+                row('Closure stress', fam, f.pClosure, 'psia', 'default', 'C1', 'closure');
+                row('Closure gradient', fam, f.gradClosure, 'psi/ft', 'default', 'F1', null);
+                row('Net pressure', fam, f.pn, 'psi', 'default', 'F1', 'pn');
+                row('Efficiency (upper bound, spurt unknown)', fam, f.eta ? f.eta.matched : null, '–', 'default', 'F1', 'eta');
+                row('Pad fraction (low)', fam, f.padFraction ? f.padFraction.lo : null, '–', 'default', 'F1', null);
+                row('Pad fraction (high)', fam, f.padFraction ? f.padFraction.hi : null, '–', 'default', 'F1', null);
+                row('CL (conditional on the geometry)', fam, pk ? pk.CL : null, 'ft/√min', 'default', 'F1', 'CL');
+                row('xf (PKN)', fam, pk ? pk.xf : null, 'ft', 'default', 'F1', 'xf');
+                row('R (radial)', fam, rd ? rd.R : null, 'ft', 'default', 'F1', null);
+                row('C_sys', fam, f.Csys, 'bbl/psi', 'default', 'F1', 'Csys');
+                row('R_vis', fam, f.Rvis, '–', 'default', 'F1', 'Rvis');
+                if (fin(f.pdlMult)) row('PDL multiplier at ISIP', fam, f.pdlMult, '–', 'default', 'M1', null);
+            }
+            row('ISIP', null, run.isip ? run.isip.value : null, 'psia', 'default', 'I1', null);
+            var any = run.frac.chosen || run.frac.byFamily && Object.keys(run.frac.byFamily).length;
+            if (cl.mode === 'range' && run.frac.byFamily) { ['F1', 'F2'].forEach(function (F) { chainRows(run.frac.byFamily[F], F); }); }
+            else chainRows(run.frac.chosen || _firstFamily(run.frac.byFamily), null);
+            if (run.frac.chosen || any) row('Γ = r_p·CL·A_f/C_sys', null, (run.frac.chosen || _firstFamily(run.frac.byFamily) || {}).Gamma, 'psi/√min', 'default', 'F1', 'Gamma');
+            if (run.aca && run.aca.pi) row('p_i', null, run.aca.pi.value, 'psia', 'default', 'A1', 'pi');
+            if (run.aca && run.aca.kh) row('k (after-closure radial)', null, run.aca.kh.k, 'md', 'default', 'A1', null);
+            else if (run.aca && run.aca.bounds) { row('k lower bound', null, run.aca.bounds.kLo, 'md', 'default', 'A1', null); row('k upper bound', null, run.aca.bounds.kHi, 'md', 'default', 'A1', null); }
+            var head = ['name', 'family', 'p10', 'value', 'p90', 'unit', 'lens', 'ev', 'p50'];
+            var esc = function (v) { if (v == null) return ''; if (fin(v)) return String(+v.toPrecision(8)); var s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+            var csv = [head.join(',')].concat(rows.map(function (r) { return r.map(esc).join(','); })).join('\n') + '\n';
+            return { ok: true, rows: rows, csv: csv, head: head };
+        } catch (e) { return fail('FRACSHEET_FAILED', e && e.message || e); }
+    };
+
+    // ── hand-off packets (§2.11, §6.8) ──
+    G.PRiSM_dfit_handoff = function (run, target, opts) {
+        try {
+            opts = opts || {};
+            if (!run || !run.events || run.events.ok === false) return fail('BAD_INPUT', 'The hand-off needs a run with events.', ['run']);
+            if (target !== 'pta' && target !== 'rta' && target !== 'frac') return fail('BAD_INPUT', 'Target must be pta, rta or frac.', ['target']);
+            var ev = run.events, cl = _closureOf(run), fam = opts.family === 'F1' || opts.family === 'F2' || opts.family === 'F4' ? opts.family : null;
+            var notes = [], blockers = [], aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var f = fam && run.frac && run.frac.byFamily ? run.frac.byFamily[fam] : (run.frac ? run.frac.chosen : null);
+            if (cl.mode === 'range' && !fam) blockers.push('Range mode: choose the closure family whose chain is handed over.');
+            if (fam && !f) blockers.push('No fracture chain exists for family ' + fam + '.');
+            var tpV = ev.tp && pos(ev.tp.veq) ? ev.tp.veq : (ev.tp && pos(ev.tp.pump) ? ev.tp.pump : null);
+            var Vnet = (fin(ev.Vi) ? ev.Vi : 0) - (fin(ev.Vfill) ? ev.Vfill : 0) - (fin(ev.Vfb) ? ev.Vfb : 0);
+            var qEq = pos(tpV) && Vnet > 0 ? Vnet / (tpV * 60) : 0;          // bbl/min
+            var piOk = aca && aca.pi && (aca.pi.label === 'high' || aca.pi.label === 'medium');
+            if (aca && aca.pi && !piOk) blockers.push('p_i label is ' + aca.pi.label + ': it is not handed over unless you override it.');
+            var model = null;
+            if (aca && aca.match && aca.match.best) model = aca.match.best.model;
+            else if (aca && aca.regimeSummary) {
+                var bil = aca.diag && aca.diag.regimes && aca.diag.regimes.some(function (r) { return r.kind === 'bilinear'; });
+                model = aca.regimeSummary === 'linear' || aca.regimeSummary === 'linear-radial' ? (bil ? 'finiteFrac' : 'infiniteFrac') : aca.regimeSummary === 'radial' ? (bil ? 'finiteFrac' : 'homogeneous') : null;
+            }
+            var pk = f && f.geometry && f.geometry.byModel ? f.geometry.byModel[f.geometry.model || 'PKN'] : null;
+            var xf = aca && aca.match && aca.match.best && pos(aca.match.best.L) ? aca.match.best.L : (pk ? (pos(pk.xf) ? pk.xf : pk.R) : null);
+            var k = aca && aca.match && aca.match.best && pos(aca.match.best.k) ? aca.match.best.k : aca && aca.kh && pos(aca.kh.k) ? aca.kh.k
+                : aca && aca.nolte && aca.nolte.lin && pos(aca.nolte.lin.k) ? aca.nolte.lin.k : aca && aca.bounds && pos(aca.bounds.kLo) && pos(aca.bounds.kHi) ? Math.sqrt(aca.bounds.kLo * aca.bounds.kHi) : null;
+            var pi = aca && aca.pi ? aca.pi.value : null;
+            var pkt = { target: target, family: fam, setWell: {}, multiRate: [], qEq: qEq, model: null, seeds: { xf: nn(xf), k: nn(k), pi: nn(pi) }, notes: notes, blockers: blockers };
+            if (target === 'pta') {
+                pkt.setWell = { testType: 'falloff', tShut: ev.ts, tp: tpV, pwf0: run.isip && fin(run.isip.value) ? run.isip.value : null };
+                if (piOk) pkt.setWell.pi = pi;
+                if (fin(ev.ts) && pos(tpV) && qEq > 0) pkt.multiRate = [{ t: ev.ts - tpV, q: qEq * 1440 }, { t: ev.ts, q: 0 }];
+                pkt.model = model;
+                notes.push('Idealised schedule at q_eq = (V_i − V_fill − V_fb)/tp_veq = ' + fmt(qEq, 3) + ' bbl/min; the wellbore compression volume is part of the impulse.');
+                if (model) notes.push('Model ' + model + ' seeded with xf ' + fmt(xf, 1) + ' ft and k ' + fmtSig(k, 3) + ' md.');
+            } else if (target === 'rta') {
+                pkt.rta = { k: nn(k), kLo: aca && aca.bounds ? aca.bounds.kLo : (aca && aca.kh ? aca.kh.k : null), kHi: aca && aca.bounds ? aca.bounds.kHi : (aca && aca.kh ? aca.kh.k : null),
+                            source: aca && aca.match ? 'aca-match' : aca && aca.kh ? 'aca-radial' : 'bounds' };
+                notes.push('k for the RTA linear-flow analysis from the after-closure analysis.');
+                if (!pos(k)) blockers.push('No after-closure permeability is available.');
+            } else {
+                var sh = G.PRiSM_dfit_fracSheet(run);
+                pkt.sheet = sh.ok ? sh.rows : [];
+                notes.push('Frac-design sheet with ' + (sh.ok ? sh.rows.length : 0) + ' rows' + (cl.mode === 'range' ? ', both family columns.' : '.'));
+            }
+            pkt.notes = notes.map(_txt); pkt.blockers = blockers.map(_txt);
+            return pkt;
+        } catch (e) { return fail('HANDOFF_FAILED', e && e.message || e); }
+    };
+
+    // ── summary for the rail, report key line, Quick Report and the tests table (§3.3) ──
+    var RESULT_KEYS = ['isip', 'closure', 'pn', 'eta', 'CL', 'Gamma', 'xf', 'R', 'pi', 'khmu', 'k', 'kLo', 'kHi', 'triage', 'grade'];
+    G.PRiSM_dfit_summarise = function (run, opts) {
+        try {
+            opts = opts || {};
+            if (!run || typeof run !== 'object' || run.ok === false && !run.prep) return fail('BAD_INPUT', 'The summary needs a run.', ['run']);
+            var cl = _closureOf(run), ch = run.frac ? run.frac.chosen : null, aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var fams = cl.families || {}, famP = function (F) { var f = fams[F]; return f && fin(f.p50) ? { p50: f.p50 } : null; };
+            var label = cl.mode === 'none' ? 'not-estimable' : (cl.label === 'high' || cl.label === 'medium' || cl.label === 'low') ? cl.label : 'low';
+            if (cl.mode === 'single' && label === 'not-estimable') label = 'low';
+            var pk = ch && ch.geometry && ch.geometry.byModel ? ch.geometry.byModel : null, gm = ch && ch.geometry ? ch.geometry.model : null;
+            var k = aca && aca.kh && pos(aca.kh.k) ? aca.kh.k : aca && aca.match && aca.match.best && pos(aca.match.best.k) ? aca.match.best.k : aca && aca.nolte && aca.nolte.lin && pos(aca.nolte.lin.k) ? aca.nolte.lin.k : null;
+            var d = run.derivs || {}, gx = [], gy = [], Gc = ch && pos(ch.Gc) ? ch.Gc : null;
+            if (arrOk(d.G) && arrOk(d.GdPdG) && pos(d.mG)) {
+                var Gmax = 0; d.G.forEach(function (g) { if (fin(g) && g > Gmax) Gmax = g; });
+                var norm = Gc || Gmax || 1, step = Math.max(1, Math.floor(d.G.length / 60));
+                for (var i = 0; i < d.G.length && gx.length < 60; i += step) if (d.G[i] > 0 && fin(d.GdPdG[i])) { gx.push(rnd(d.G[i] / norm, 4)); gy.push(rnd(d.GdPdG[i] / (d.mG * d.G[i]), 4)); }
+            }
+            var unc = run.unc && run.unc.ok !== false ? run.unc : null;
+            var s = {
+                at: opts.at || run.at || new Date().toISOString(), dsHash: run.dsHash, inputHash: run.inputsHash, resultHash: '0000000000000000',
+                stale: !!run.fast, forOtherDataset: false,
+                isip: { value: run.isip && fin(run.isip.value) ? run.isip.value : null, spread: run.isip && fin(run.isip.spread) ? run.isip.spread : null,
+                        label: run.isip && (run.isip.confidence === 'high' || run.isip.confidence === 'medium' || run.isip.confidence === 'low') ? run.isip.confidence : null },
+                closure: { mode: cl.mode, value: cl.mode === 'single' ? cl.value : null, lo: cl.mode === 'range' ? cl.range.lo : null, hi: cl.mode === 'range' ? cl.range.hi : null,
+                           label: label, families: { F1: famP('F1'), F2: famP('F2'), F4: famP('F4') } },
+                pn: ch ? nn(ch.pn) : null, eta: ch && ch.eta ? nn(ch.eta.matched) : null, CL: pk && gm && pk[gm] ? nn(pk[gm].CL) : null, Gamma: ch ? nn(ch.Gamma) : null,
+                xf: pk && gm !== 'radial' && pk[gm || 'PKN'] ? nn(pk[gm || 'PKN'].xf) : null, R: pk && gm === 'radial' && pk.radial ? nn(pk.radial.R) : null, model: gm || null,
+                pi: aca && aca.pi ? { value: aca.pi.value, lo: aca.pi.lo, hi: aca.pi.hi, label: aca.pi.label } : { value: null, lo: null, hi: null, label: null },
+                khmu: aca && aca.kh ? nn(aca.kh.khmu) : null, k: nn(k), kLo: aca && aca.bounds ? nn(aca.bounds.kLo) : null, kHi: aca && aca.bounds ? nn(aca.bounds.kHi) : null,
+                triage: run.triage && run.triage.light ? run.triage.light : null, grade: run.grade && run.grade.letter ? run.grade.letter : null,
+                unc: { seed: unc ? unc.seed : (fin(run.seed) ? run.seed : 1), n: unc ? unc.n : 0 }, gdpdgN: { x: gx, y: gy }
+            };
+            if (s.isip.value != null && s.isip.spread == null) s.isip.spread = 0;
+            var o = {}; RESULT_KEYS.forEach(function (kk) { o[kk] = s[kk]; });
+            s.resultHash = hashOf(o, 'display').h;
+            return s;
+        } catch (e) { return fail('SUMMARY_FAILED', e && e.message || e); }
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 9. The pure pipeline and its Job twin (§3.3a, §4.20) — the only place that knows the stage order
+    // ═════════════════════════════════════════════════════════════════════
+    function _call(name, args, warnings, code) {
+        var f = G[name];
+        if (!realFn(f)) { warnings.push(W('STAGE_UNAVAILABLE', 'info', name.replace('PRiSM_dfit_', '') + ' is not available in this build.', [])); return fail('NOT_IMPLEMENTED', name + ' is not available.', []); }
+        try { var r = f.apply(null, args); if (r && r.ok === false) warnings.push(W(code || 'STAGE_FAILED', 'warn', name.replace('PRiSM_dfit_', '') + ': ' + (r.errors && r.errors[0] || r.code), [])); return r; }
+        catch (e) { warnings.push(W(code || 'STAGE_FAILED', 'warn', name.replace('PRiSM_dfit_', '') + ' failed: ' + (e && e.message || e), [])); return fail('STAGE_FAILED', e && e.message || e); }
+    }
+    function _wb(name, args, warnings) {
+        var W2 = G.WTS_wellbore, f = W2 && W2[name];
+        if (!realFn(f)) return null;
+        try { var r = f.apply(null, args); return r && r.ok !== false ? r : null; } catch (e) { warnings.push(W('WELLBORE_FAILED', 'warn', 'Wellbore ' + name + ' failed.', [])); return null; }
+    }
+    function _pipeInit(ds, inputs, well, picks, opts) {
+        opts = opts || {};
+        var warnings = [], IR = G.PRiSM_dfit_inputRanges, inp = inputs || {};
+        if (IR && typeof IR.clamp === 'function') { var c = IR.clamp(inputs || {}); if (c && c.inputs) { inp = c.inputs; (c.warnings || []).forEach(function (w) { if (w && w.code) warnings.push(W(w.code, w.level || 'info', w.text || w.code, w.ev || [])); }); } }
+        picks = picks || { isip: null, closure: null, user: {}, aca: { origin: 'centroid', linWin: null, radWin: null, piLevel: null } };
+        var o = inp.options || {}, uo = o.unc || {};
+        var dsH = realFn(G.PRiSM_dfit_dsHash) ? G.PRiSM_dfit_dsHash(ds) : null, weak = false;
+        if (typeof dsH !== 'string' || !/^[0-9a-f]{16}$/.test(dsH)) { var hD = hashOf({ t: ds && ds.t, p: ds && ds.p, q: ds && ds.q || null }, 'inputs'); dsH = hD.h; weak = weak || hD.weak; }
+        var hI = hashOf(inp, 'inputs'), hP = hashOf(picks, 'inputs'); weak = weak || hI.weak || hP.weak;
+        var run = { v: 1, ok: false, fast: !!opts.fast, dsHash: dsH, inputsHash: hI.h, picksHash: hP.h, weakHash: weak,
+                    seed: fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : (fin(uo.seed) ? uo.seed : 1),
+                    prep: null, events: null, triage: null, isip: null, derivs: null, picks: [], consensus: null, consensusLite: null, classification: null,
+                    frac: { chosen: null, byFamily: {} }, whatIf: [], aca: null, leak: null, unc: null, evidence: null, report: null, grade: null, summary: null,
+                    warnings: warnings, counts: { evals: 0, refits: 0, draws: 0 } };
+        var alphaOpt = o.alpha === 'general' ? (fin(o.alphaGeneral) ? o.alphaGeneral : 0.75) : o.alpha;
+        return { ds: ds, inputs: inp, well: well || {}, picks: picks, opts: opts, run: run, W: warnings,
+                 dOpts: { alpha: alphaOpt == null ? 'auto' : alphaOpt, tp: o.tp || 'pump', L: fin(o.L) ? o.L : 0.1, gMin: o.gMin == null ? 'auto' : o.gMin },
+                 extra: { ramps: [], hammer: null, stepDown: null, stepRate: null }, consJob: null, uncJob: null };
+    }
+    function _ctxOf(P) { var r = P.run; return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, prep: r.prep, user: P.picks.closure, ramps: P.extra.ramps, lkFit: P.opts.lkFit || null }; }
+    var STAGES = [
+        { id: 'prepare', fn: function (P) {
+            P.run.prep = _call('PRiSM_dfit_prepare', [P.ds, P.inputs, P.well], P.W, 'PREPARE_FAILED');
+        } },
+        { id: 'events', fn: function (P) {
+            var r = P.run;
+            r.events = _call('PRiSM_dfit_events', [r.prep, P.inputs.events || {}, {}], P.W, 'EVENTS_FAILED');
+            var rampOf = [];
+            if (r.events && r.events.ok !== false && arrOk(r.events.cycles) && r.prep && r.prep.ok !== false) r.events.cycles.forEach(function (cy, k) {
+                if (cy && cy.rampWin) { var rp = _wb('ramp', [r.prep.t, r.prep.pw, r.prep.q, cy.rampWin, { VwCw: r.events.VwCwMeasured, seed: r.seed }], P.W); if (rp) { P.extra.ramps.push(rp); rampOf[k] = rp; } }
+            });
+            // a re-pump after closure (§4.5): the fracture closed between the cycles when the pressure fell below the reopening
+            // pressure of the last cycle (its F4 ramp knee), else below the closure prior σ_grad·TVD. 56 then analyses the last cycle
+            // alone (its own V_i and tp) instead of combining the volumes
+            var evc = r.events && r.events.ok !== false && arrOk(r.events.cycles) ? r.events.cycles : [];
+            if (evc.length > 1) {
+                var rpL = rampOf[evc.length - 1], sp = null, spSrc = null;
+                if (rpL && rpL.ok !== false && rpL.knee && fin(rpL.knee.p) && rpL.label === 'knee') { sp = rpL.knee.p; spSrc = 'reopening knee of the last cycle'; }
+                var sgp = P.inputs.priors && fin(P.inputs.priors.sigmaGrad) ? P.inputs.priors.sigmaGrad : null;
+                if (sp === null && sgp !== null && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { sp = sgp * P.inputs.datumTvd; spSrc = 'closure-gradient prior'; }
+                if (sp !== null) {
+                    var ev2 = _call('PRiSM_dfit_events', [r.prep, P.inputs.events || {}, { sigmaPrior: sp }], P.W, 'EVENTS_FAILED');
+                    if (ev2 && ev2.ok !== false) {
+                        ev2.closedBeforeFrom = spSrc; ev2.closedBeforeP = sp;
+                        var lc = ev2.cycles[ev2.cycles.length - 1];
+                        if (lc && lc.closedBefore) P.W.push(W('REPUMP_CLOSED', 'info', 'The fracture closed before the last cycle (pressure below the ' + spSrc + ', ' + fmt(sp, 0) + ' psia): the last cycle is analysed alone.', ['E1']));
+                        r.events = ev2;
+                    }
+                }
+            }
+        } },
+        { id: 'isip', fn: function (P) {
+            var r = P.run;
+            var d0 = _call('PRiSM_dfit_derivs', [r.prep, r.events, P.dOpts], P.W, 'DERIVS_FAILED');
+            var ev = r.events && r.events.ok !== false ? r.events : null, I = P.inputs;
+            // step tests first: the step-down coefficients {b, β} seed the friction bleed-off term of the water-hammer fit
+            if (ev && arrOk(ev.steps)) {
+                var down = ev.steps.filter(function (s) { return s.dir === 'down'; }), up = ev.steps.filter(function (s) { return s.dir === 'up'; });
+                if (down.length >= 3) P.extra.stepDown = _wb('stepDown', [down.map(function (s) { return { q: s.q, p: s.pSettled, n: s.n, t: s.t1 }; }), { beta: 0.5, drift: true, perfs: I.perfs, rhoPpg: I.fluid && I.fluid.rhoPpg }], P.W);
+                if (up.length >= 3) P.extra.stepRate = _wb('stepRate', [up.map(function (s) { return { q: s.q, t0: s.t0, t1: s.t1 }; }), { seed: r.seed, t: r.prep.t, p: r.prep.pw }], P.W);
+            }
+            // integration: hammerQuick gets the wellbore column, the shut-in rate, V_w·c_w and tp, and the step-down {b, β, q_t} (or
+            // fitBleed:true when there is no step-down), so the wave ISIP can be accepted under §4.4 instead of being an upper estimate;
+            // the valve closing time comes from the dataset metadata when the logger recorded it
+            var sdOk = P.extra.stepDown && P.extra.stepDown.ok !== false && fin(P.extra.stepDown.b) && P.extra.stepDown.b > 0 ? P.extra.stepDown : null;
+            var meta = (P.ds && P.ds.meta) || {};
+            var hfW = r.prep && r.prep.hf && arrOk(r.prep.hf.windows) ? r.prep.hf.windows.filter(function (x) { return x && x.kind === 'shutin' && arrOk(x.t) && arrOk(x.p) && x.t.length === x.p.length; }) : [];
+            if (ev && hfW.length) {
+                var w = hfW[0];
+                var hctx = { qShut: ev.qLast, VwCw: fin(ev.VwCwUsed) ? ev.VwCwUsed : (fin(ev.VwCwMeasured) ? ev.VwCwMeasured : undefined), tp: ev.tp && fin(ev.tp.pump) ? ev.tp.pump : undefined, fluid: I.fluid };
+                if (fin(I.datumTvd) && I.datumTvd > 0) hctx.column = { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd };
+                if (fin(meta.tCloseS) && meta.tCloseS >= 0) hctx.tClose = meta.tCloseS;
+                if (sdOk) hctx.bleed = { b: sdOk.b, beta: fin(sdOk.beta) ? sdOk.beta : 0.5, qt: 0.1 };
+                else hctx.fitBleed = true;
+                // hammerQuick wants plain arrays with finite pressures
+                var hT = [], hP = []; for (var hi = 0; hi < w.t.length; hi++) if (fin(w.t[hi]) && fin(w.p[hi])) { hT.push(w.t[hi]); hP.push(w.p[hi]); }
+                P.extra.hammer = _wb('hammerQuick', [hT, hP, ev.ts, hctx], P.W);
+            }
+            // the bleed-off law for the ISIP acceptance (§4.4) and the triage bleed window (Q13): WTS_wellbore.bleedOff from the
+            // step-down b / β (or the b fitted by the hammer), the shut-in rate and V_w·c_w
+            var bl = null, hmB = P.extra.hammer && P.extra.hammer.ok !== false && P.extra.hammer.bleed && fin(P.extra.hammer.bleed.b) ? P.extra.hammer.bleed.b : null;
+            var bB = sdOk ? sdOk.b : hmB, VC = ev && fin(ev.VwCwUsed) ? ev.VwCwUsed : (ev && fin(ev.VwCwMeasured) ? ev.VwCwMeasured : null);
+            if (ev && fin(bB) && bB > 0 && fin(VC) && VC > 0 && fin(ev.qLast) && ev.qLast > 0) {
+                bl = _wb('bleedOff', [{ b: bB, beta: sdOk && fin(sdOk.beta) ? sdOk.beta : 0.5, qt: 0.1, VwCw: VC, q0: ev.qLast }], P.W);
+                if (bl && bl.ok === false) bl = null;
+            }
+            P.extra.bleed = bl;
+            r.isip = _call('PRiSM_dfit_isip', [r.prep, r.events, d0, { hammer: P.extra.hammer, stepDown: P.extra.stepDown, bleed: bl, lumped: null }], P.W, 'ISIP_FAILED');
+            var ui = P.picks.isip;
+            if (r.isip && r.isip.ok !== false && ui && ui.source === 'user' && fin(ui.value)) { r.isip.value = ui.value; r.isip.why = (r.isip.why || []).concat([_txt('User ISIP pick: ' + (ui.reason || 'no reason given') + '.')]).slice(0, 8); }
+            // triage context (integration): the raw dataset, the step-rate result, the bleed-off law, and the strap volume / valve
+            // closing time / tide when the dataset metadata (or opts) carry them. The tide check (Q20) needs the after-closure
+            // tide amplitude, known only after the ACA stage, so it is re-run there (stage 'aca').
+            if (realFn(G.PRiSM_dfit_triage)) {
+                P.triCtx = { isip: r.isip, derivs: d0, hammer: P.extra.hammer, ramps: P.extra.ramps, stepDown: P.extra.stepDown, stepRate: P.extra.stepRate,
+                             inputs: P.inputs, well: P.well, plan: P.opts.plan || null, ds: P.ds, bleed: bl };
+                var sv = fin(P.opts.strapVolume) ? P.opts.strapVolume : meta.strapVolume, tc = fin(P.opts.tCloseS) ? P.opts.tCloseS : meta.tCloseS;
+                if (fin(sv) && sv > 0) P.triCtx.strapVolume = sv;
+                if (fin(tc) && tc >= 0) P.triCtx.tCloseS = tc;
+                if (P.opts.tide && typeof P.opts.tide === 'object') P.triCtx.tide = P.opts.tide;
+                r.triage = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
+            }
+            if (r.triage && r.triage.ok === false) r.triage = null;
+            P.d0 = d0;
+        } },
+        { id: 'derivs', fn: function (P) {
+            var r = P.run, dO = {}; for (var k in P.dOpts) dO[k] = P.dOpts[k];
+            if (r.isip && fin(r.isip.value)) { dO.isip = r.isip.value; r.derivs = _call('PRiSM_dfit_derivs', [r.prep, r.events, dO], P.W, 'DERIVS_FAILED'); r.counts.refits++; }
+            else r.derivs = P.d0;
+            var pk = _call('PRiSM_dfit_closurePicks', [r.derivs, { ramps: P.extra.ramps, lkFit: P.opts.lkFit || null, user: P.picks.user || {}, events: r.events, isip: r.isip, inputs: P.inputs, well: P.well }], P.W, 'PICKS_FAILED');
+            r.picks = arrOk(pk) ? pk : [];
+            r.consensusLite = _call('PRiSM_dfit_consensusLite', [r.picks, r.derivs, _ctxOf(P)], P.W, 'CONSENSUS_FAILED');
+        } },
+        { id: 'consensus', skipFast: true, job: true, fn: function (P) {
+            var r = P.run, c = _call('PRiSM_dfit_consensus', [r.picks, r.derivs, _ctxOf(P)], P.W, 'CONSENSUS_FAILED');
+            r.consensus = c && c.ok !== false ? c : null;
+        }, start: function (P) {
+            var r = P.run;
+            if (!realFn(G.PRiSM_dfit_consensusJob)) return null;
+            try { return G.PRiSM_dfit_consensusJob(r.picks, r.derivs, _ctxOf(P)); } catch (e) { return null; }
+        }, finish: function (P, res) { P.run.consensus = res && res.ok !== false ? res : null; if (res && res.ok === false) P.W.push(W('CONSENSUS_FAILED', 'warn', 'consensus: ' + (res.errors && res.errors[0] || res.code), [])); } },
+        { id: 'frac', fn: function (P) {
+            var r = P.run, c = r.consensus || (r.consensusLite && r.consensusLite.ok !== false ? r.consensusLite : null) || {}, uc = P.picks.closure, fams = c.families || {};
+            var pc = null, fam = null, method = 'consensus';
+            if (uc && uc.mode === 'user' && fin(uc.p)) { pc = uc.p; fam = uc.family || null; method = uc.method || 'user'; }
+            else if (uc && uc.mode === 'family' && uc.family && fams[uc.family] && fin(fams[uc.family].p50)) { pc = fams[uc.family].p50; fam = uc.family; method = uc.method || 'family'; }
+            else if (c.mode === 'single' && fin(c.value)) pc = c.value;
+            var clsF = null;
+            var fctx = function (f, m) { return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, family: f, method: m, classification: clsF }; };
+            var doFrac = function () {
+                if (fin(pc)) { var ch = _call('PRiSM_dfit_frac', [pc, r.derivs, fctx(fam, method)], P.W, 'FRAC_FAILED'); r.frac.chosen = ch && ch.ok !== false ? ch : null; }
+                ['F0', 'F1', 'F2', 'F3', 'F4'].forEach(function (F) {
+                    var f = fams[F]; if (!f || !fin(f.p50)) return;
+                    var o = _call('PRiSM_dfit_frac', [f.p50, r.derivs, fctx(F, F)], P.W, 'FRAC_FAILED');
+                    if (o && o.ok !== false) r.frac.byFamily[F] = o;
+                });
+            };
+            doFrac();
+            var cands = [];
+            if (c.mode === 'single' && fin(c.value)) cands.push({ label: 'Consensus', family: null, p: c.value, method: 'consensus' });
+            ['F1', 'F2', 'F4'].forEach(function (F) { if (fams[F] && fin(fams[F].p50)) cands.push({ label: 'Family ' + F, family: F, p: fams[F].p50, method: F }); });
+            if (P.opts.whatIf && fin(P.opts.whatIf.p)) cands.push({ label: 'What-if ' + fmt(P.opts.whatIf.p, 0) + ' psia', family: null, p: P.opts.whatIf.p, method: 'user' });
+            if (cands.length) { var wi = _call('PRiSM_dfit_whatIf', [cands, r.derivs, fctx(null, null)], P.W, 'WHATIF_FAILED'); r.whatIf = arrOk(wi) ? wi.filter(function (x) { return x && x.ok !== false && x.label; }) : []; }
+            // integration: the classifier reads G_c from the frac candidate (gcSource 'frac'), the consensus as a fallback, and p_r for
+            // κ_exp (the coarse reservoir-controlled model run of 58): C1 p_i, else the p_i-gradient prior at the datum
+            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad, prSrc = prC !== null ? 'well' : null;
+            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = pgC * P.inputs.datumTvd; prSrc = 'prior'; }
+            // nothing known: a normally pressured reservoir (the injected fluid's hydrostatic at the datum, as the CL-to-k
+            // conversion assumes, §4.10), replaced after the ACA by the after-closure p_i when that is labelled high or medium
+            var rhoC = P.inputs.fluid && fin(P.inputs.fluid.rhoPpg) ? P.inputs.fluid.rhoPpg : 8.43;
+            if (prC === null && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = 0.052 * rhoC * P.inputs.datumTvd; prSrc = 'hydrostatic'; }
+            P.prSrc = prSrc;
+            var frC = r.frac.chosen || _firstFamily(r.frac.byFamily);
+            P.clsCtx = { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
+                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs };
+            r.classification = _call('PRiSM_dfit_classify', [r.derivs, P.clsCtx], P.W, 'CLASSIFY_FAILED');
+            if (r.classification && r.classification.ok !== false) {
+                r.classification.prSource = prSrc;
+                if (prSrc === 'hydrostatic' && arrOk(r.classification.evidence)) r.classification.evidence.push(_txt('p_r for the expected decline is assumed hydrostatic at the datum, ' + fmt(prC, 0) + ' psia (no p_i known).'));
+                // PDL: the fracture chain again with the PDL multiplier at the ISIP (56 frac: the pumping leak-off runs at that
+                // multiplier, so C_sys = V*/(p_n + (4g0/π)·m_G·m) instead of the constant-CL η·V*/p_n)
+                if (r.classification.type === 'pdl' && r.classification.pdl && fin(r.classification.pdl.multAtIsip)) { clsF = r.classification; doFrac(); }
+            }
+        } },
+        { id: 'aca', fn: function (P) {
+            var r = P.run;
+            if (!(r.frac.chosen || Object.keys(r.frac.byFamily).length)) return;
+            var a = G.PRiSM_dfit_aca(r, { well: P.well, inputs: P.inputs, picks: P.picks, match: !!P.opts.match, matchModels: P.opts.matchModels });
+            if (a && a.ok !== false) {
+                r.aca = a;
+                if (a.match && fin(a.match.evals)) r.counts.evals += a.match.evals;
+                // the triage tides check (Q20) once the after-closure tide is known (the other checks are unchanged by it)
+                var tdA = a.tide;
+                if (P.triCtx && r.triage && tdA && (fin(tdA.ampPsi) || tdA.significant === false) && !P.triCtx.tide) {
+                    P.triCtx.tide = tdA.significant === false ? { significant: false, snr: tdA.snr }
+                                                              : { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
+                    var tr2 = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
+                    if (tr2 && tr2.ok !== false) r.triage = tr2;
+                }
+                // κ_exp needs p_r (§4.11). Without C1 p_i or a p_i-gradient prior the classifier had no estimate; the
+                // after-closure p_i (label high or medium) is the reservoir pressure of this test, so the classifier runs once
+                // more with it and says where p_r came from
+                var piA = a.pi;
+                if (P.clsCtx && (P.prSrc === 'hydrostatic' || !fin(P.clsCtx.pr)) && piA && fin(piA.value) && (piA.label === 'high' || piA.label === 'medium') && r.classification && r.classification.ok !== false) {
+                    var cc2 = {}; for (var kc in P.clsCtx) cc2[kc] = P.clsCtx[kc];
+                    cc2.pr = piA.value;
+                    var cl2 = _call('PRiSM_dfit_classify', [r.derivs, cc2], P.W, 'CLASSIFY_FAILED');
+                    if (cl2 && cl2.ok !== false) {
+                        cl2.prSource = 'aca-pi';
+                        if (arrOk(cl2.evidence)) cl2.evidence.push(_txt('p_r for the expected decline is the after-closure p_i, ' + fmt(piA.value, 0) + ' psia (' + piA.label + ').'));
+                        r.classification = cl2;
+                    }
+                }
+                var chF = r.frac.chosen, gmF = chF && chF.geometry && chF.geometry.byModel ? chF.geometry.byModel[chF.geometry.model || 'PKN'] : null;
+                var wl = P.well || {}, Lf = gmF ? (pos(gmF.xf) ? gmF.xf : (pos(gmF.R) ? gmF.R : null)) : null;
+                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 0 : 120,
+                                                    phi: pos(wl.phi) ? wl.phi : undefined, mu: pos(wl.mu) ? wl.mu : undefined, ct: pos(wl.ct) ? wl.ct : undefined, L: Lf || undefined,
+                                                    VwCw: chF && pos(chF.VwCw) ? chF.VwCw : undefined });     // fast: no bootstrap (§3.3a / §4.20)
+                r.leak = lp && lp.ok !== false ? lp : null;
+            } else if (a && a.code !== 'NO_CLOSURE') P.W.push(W('ACA_FAILED', 'info', 'After-closure analysis: ' + (a.errors && a.errors[0] || a.code), ['A1']));
+        } },
+        { id: 'uncertainty', skipFast: true, job: true, fn: function (P) {
+            var u = G.PRiSM_dfit_uncertainty(P.run, P.uncOpts());
+            P.run.unc = u && u.ok !== false ? u : null; if (P.run.unc) P.run.counts.draws = u.counts.draws;
+        }, start: function (P) { return G.PRiSM_dfit_uncertaintyJob(P.run, P.uncOpts()); },
+           finish: function (P, u) { P.run.unc = u && u.ok !== false ? u : null; if (P.run.unc) P.run.counts.draws = u.counts.draws; } },
+        { id: 'report', fn: function (P) {
+            var r = P.run;
+            r.ok = !!(r.prep && r.prep.ok !== false && r.events && r.events.ok !== false && r.derivs && r.derivs.ok !== false);
+            r.grade = _gradeOf(r);
+            r.evidence = G.PRiSM_dfit_evidence(r); if (r.evidence && r.evidence.ok === false) r.evidence = null;
+            r.summary = G.PRiSM_dfit_summarise(r, { at: P.opts.at }); if (r.summary && r.summary.ok === false) r.summary = null;
+            var T = P.opts.test || null;
+            r.report = G.PRiSM_dfit_reportModel(r, { zone: P.opts.zone || (T && T.zone) || '', log: P.opts.log || (T && T.log) || [], lk: T && T.lk, groups: P.opts.groups || null });
+            if (r.report && r.report.ok === false) r.report = null;
+            if (r.consensus && fin(r.consensus.evalCount)) r.counts.evals += r.consensus.evalCount;
+            if (r.consensus && r.consensus.counts && fin(r.consensus.counts.evals)) r.counts.evals += r.consensus.counts.evals;
+            if (!r.isip) r.isip = fail('NOT_IMPLEMENTED', 'ISIP stage did not run.', []);
+            ['prep', 'events', 'derivs', 'consensusLite', 'classification'].forEach(function (k) { if (!r[k]) r[k] = fail('NOT_IMPLEMENTED', k + ' stage did not run.', []); });
+        } }
+    ];
+    // opts.stages: 'all' (default) or a list of stage ids (prepare, events, isip, derivs, consensus, frac, aca, uncertainty, report),
+    // run in the §4.20 order; 'report' always runs last (ok, grade, evidence, summary). opts.fast drops the grid and the uncertainty.
+    function _stagesFor(P) {
+        var want = Array.isArray(P.opts.stages) ? P.opts.stages : null;
+        return STAGES.filter(function (s) { return !(s.skipFast && P.opts.fast) && (!want || s.id === 'report' || want.indexOf(s.id) >= 0); });
+    }
+    function _finishRun(P) { return P.run; }
+    function _mkP(ds, inputs, well, picks, opts) {
+        var P = _pipeInit(ds, inputs, well, picks, opts);
+        P.uncOpts = function () {
+            var o = P.inputs.options || {}, uo = o.unc || {};
+            return { n: fin(P.opts.uncN) ? P.opts.uncN : (fin(uo.n) ? uo.n : 1000), seed: P.run.seed, inputs: P.inputs, well: P.well,
+                     familyWeightF1: fin(o.familyWeightF1) ? o.familyWeightF1 : 0.5, prevFamilyWeightF1: P.opts.prevFamilyWeightF1 };
+        };
+        return P;
+    }
+    G.PRiSM_dfit_pipeline = function (ds, inputs, well, picks, opts) {
+        try {
+            if (!ds || !arrOk(ds.t) || !arrOk(ds.p)) return fail('BAD_INPUT', 'The pipeline needs a dataset with t and p.', ['ds']);
+            var P = _mkP(ds, inputs, well, picks, opts);
+            _stagesFor(P).forEach(function (s) { s.fn(P); });
+            return _finishRun(P);
+        } catch (e) { return fail('PIPELINE_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_pipelineJob = function (ds, inputs, well, picks, opts) {
+        var P = null, list = [], i = 0, sub = null, done = false, cancelled = false, res = null;
+        try {
+            if (!ds || !arrOk(ds.t) || !arrOk(ds.p)) { done = true; res = fail('BAD_INPUT', 'The pipeline needs a dataset with t and p.', ['ds']); }
+            else { P = _mkP(ds, inputs, well, picks, opts); list = _stagesFor(P); }
+        } catch (e) { done = true; res = fail('PIPELINE_FAILED', e && e.message || e); }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try {
+                    var s = list[i];
+                    if (s.job && !sub && s.start) { sub = s.start(P) || { _sync: true }; if (sub._sync) { s.fn(P); sub = null; i++; } }
+                    else if (sub) { var st = sub.step(); if (st && st.done) { s.finish(P, sub.result()); sub = null; i++; } }
+                    else { s.fn(P); i++; }
+                    if (i >= list.length) { done = true; res = _finishRun(P); }
+                } catch (e) { done = true; res = fail('PIPELINE_FAILED', e && e.message || e); }
+                return { done: done, progress: done ? 1 : Math.min(0.99, i / list.length), label: done ? 'done' : (list[i] ? list[i].id : 'done') };
+            },
+            result: function () { return res || fail('CANCELLED', 'Analyse was cancelled — previous results kept.', []); },
+            cancel: function () { cancelled = true; if (sub && typeof sub.cancel === 'function') sub.cancel(); }
+        };
+    };
+
 })();
 
 // ─── END 57-prism-dfit-aca ─────────────────────────────────────────────
@@ -19938,38 +26113,2118 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // =============================================================================
 // PRiSM — 58-prism-dfit-leakoff.js  (Round 8)
 // -----------------------------------------------------------------------------
-// DFIT leak-off mini-model, history match, identifiability, designer and leak budget (docs/DFIT-PLAN.md §3.7, §5;
-// owner WP4). Pure engine: no DOM, no storage, no timers, no events.
+// DFIT leak-off mini-model, history match, identifiability, designer and leak budget (docs/DFIT-PLAN.md §3.7, §5, §6.1,
+// §6.4, §6.5, §6.7; owner WP4). Pure engine: no DOM, no storage, no timers, no events, no unseeded random numbers.
 //
-// WP0 SKELETON. Every §3.7 function is a stub returning {ok:false, code:'NOT_IMPLEMENTED', errors:[…], bad:[]};
-// Job twins return a Job whose result() is that object. Shapes: prism-build/tests/_dfit-shapes.js.
+// Public (window):
+//   PRiSM_dfit_lkDefaults()                  LkConfig of the §5.4 base case (display units)
+//   PRiSM_dfit_lkToEngine(cfg)               {ok, e} engine config (h, ft, psi, ft³, ft³/h, psi·h, ft/√h, ft²)
+//   PRiSM_dfit_lkSimulate(cfg, opts)         LkResult (display units: h, psia, ft, ft², in, bbl, bbl/min); opts.surface adds p_s
+//   PRiSM_dfit_lkSample(res, t)              p_w at the times t (linear in t)
+//   PRiSM_dfit_lkQuick(cfg)                  quick table (q_L at shut-in / 5 / 25 / 100 min and at closure, η, t_c …)
+//   PRiSM_dfit_lkSolveCL(cfg, dtcObserved)   CL (wall) or k (reservoir) for an observed closure time (h after shut-in)
+//   PRiSM_dfit_lkGoalSeek / …Job             V × q scan for a visible closure within goal.tH hours (≤ 25 coarse runs)
+//   PRiSM_dfit_lkFit / …Job                  history match (LM in transformed parameters: log k, log C_w, …; optional
+//                                            derivative residuals, MAP priors, structural spread)
+//   PRiSM_dfit_lkProfile / …Job              profile likelihood of one free parameter (σ_c, p_r), one refit per step
+//   PRiSM_dfit_lkFisher(cfg, design)         noise-only Fisher information, CI, correlations, sloppy directions
+//   PRiSM_dfit_lkGroups(cfg | LkResult)      identifiable groups Γ and Γ_PKN
+//   PRiSM_dfit_identify(fit, ctx)            "what this test can tell you" (§6.7)
+//   PRiSM_dfit_lkVerify()                    the §5.4 V1–V14 numbers
+//   PRiSM_dfit_design / …Job                 pre-job designer ensemble (§6.5)
+//   PRiSM_dfit_leakBudget(V, tEnd, ctx)      leak tolerance with Θ and the pressure-test hold (§6.4)
+//
+// Cross-file calls are resolved at call time: PRiSM_dfit_G (56; local closed forms when absent or a stub), PRiSM_rng (05,
+// WPH; a local seeded mulberry32 when absent), WTS_wellbore (Round 9; constant-gradient fallbacks), PRiSM_autoInterp.drive is
+// not used here (59 drives the Jobs).
+// Literature: Nolte 1979 (SPE 8341); Carter 1957; Howard and Fast 1957; Spence and Sharp 1985; Adachi and Detournay 2002;
+// Savitski and Detournay 2002; Gringarten, Ramey and Raghavan 1974 (uniform-flux fracture).
 // =============================================================================
 
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
 
-    function _ni(name) {
-        return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP0 skeleton).'], bad: [] };
-    }
-    function _stub(name) { var f = function () { return _ni(name); }; f._dfitStub = true; return f; }
-    function _jobStub(name) {
-        var f = function () {
-            var r = _ni(name);
-            return {
-                step: function () { return { done: true, progress: 1, label: 'not implemented' }; },
-                result: function () { return r; },
-                cancel: function () {}
-            };
+    // Local aliases: inside an embedding sandbox a global lookup per element is an intercepted call.
+    var _sqrt = Math.sqrt, _exp = Math.exp, _log = Math.log, _abs = Math.abs, _min = Math.min, _max = Math.max,
+        _pow = Math.pow, _floor = Math.floor, _asin = Math.asin, _isFinite = isFinite, PI = Math.PI;
+    var SQPI = _sqrt(PI);
+    var _now = function () { try { return Date.now(); } catch (e) { return 0; } };
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Units (engine: h, ft, psi, ft³, ft³/h, psi·h, ft/√h, ft, psi·√ft, ft²) — §3.5 table when 56 is loaded
+    // ─────────────────────────────────────────────────────────────────────
+    function _units() {
+        var t = (G.PRiSM_dfit_units && G.PRiSM_dfit_units.table) || {};
+        function f(k, d) { var v = +t[k]; return (_isFinite(v) && v > 0) ? v : d; }
+        return {
+            bpm: f('bbl/min->ft3/h', 336.875),
+            sqmin: f('ft/sqrt(min)->ft/sqrt(h)', 7.745966692),
+            galp100: f('gal/100ft2->ft', 1 / 748.05),
+            psiin: f('psi*sqrt(in)->psi*sqrt(ft)', 0.288675135),
+            cp: f('cp->psi*h', 4.02883e-11),
+            md: f('md->ft2', 1.062315e-14),
+            bbl: f('bbl/psi->ft3/psi', 5.614583)
         };
-        f._dfitStub = true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Small helpers
+    // ─────────────────────────────────────────────────────────────────────
+    function _fail(code, msg, bad) { return { ok: false, code: code, errors: [String(msg)], bad: bad || [] }; }
+    function _num(v) { return (typeof v === 'number' && _isFinite(v)) ? v : null; }
+    function _w(code, level, text) { return { code: code, level: level, text: String(text).slice(0, 299), ev: [] }; }
+    function _clone(o) { return JSON.parse(JSON.stringify(o)); }
+    function _okn(v) { return typeof v === 'number' && _isFinite(v); }   // isFinite(null) is true: guard the type too
+    function _sig(v, n) { if (!_okn(v)) return '-'; return (+v.toPrecision(n || 3)).toString(); }
+    function _fx(v, n) { if (!_okn(v)) return '-'; return v.toFixed(n == null ? 1 : n); }
+    function _sci(v, n) {
+        if (!_okn(v) || v === 0) return _okn(v) ? '0' : '-';
+        var e = _floor(_log(_abs(v)) / Math.LN10), m = v / _pow(10, e);
+        if (_abs(+m.toFixed(n == null ? 2 : n)) >= 10) { e += 1; m = v / _pow(10, e); }
+        return m.toFixed(n == null ? 2 : n) + 'e' + e;
+    }
+    function _arr(a) { var o = new Array(a.length); for (var i = 0; i < a.length; i++) o[i] = a[i]; return o; }
+    function _pct(sorted, q) {
+        var n = sorted.length; if (!n) return null;
+        var x = q * (n - 1), i = _floor(x), w = x - i;
+        return i + 1 < n ? sorted[i] * (1 - w) + sorted[i + 1] * w : sorted[n - 1];
+    }
+    function _p3(vals) {
+        var a = []; for (var i = 0; i < vals.length; i++) if (_isFinite(vals[i])) a.push(vals[i]);
+        a.sort(function (x, y) { return x - y; });
+        if (!a.length) return { p10: null, p50: null, p90: null };
+        return { p10: _pct(a, 0.1), p50: _pct(a, 0.5), p90: _pct(a, 0.9) };
+    }
+
+    // seeded PRNG: PRiSM_rng (05, WPH) at call time; local seeded mulberry32 otherwise
+    function _rng(seed) {
+        if (typeof G.PRiSM_rng === 'function') { try { var r = G.PRiSM_rng(seed); if (typeof r === 'function') return r; } catch (e) { /* fall through */ } }
+        var a = (seed == null ? 1 : seed) >>> 0;
+        return function () {
+            a = (a + 0x6D2B79F5) >>> 0;
+            var t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+    // inverse standard normal (Acklam)
+    function _qnorm(p) {
+        if (p <= 0) return -8; if (p >= 1) return 8;
+        var a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00],
+            b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01],
+            c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00],
+            d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+        var q, r;
+        if (p < 0.02425) { q = _sqrt(-2 * _log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        if (p > 1 - 0.02425) { q = _sqrt(-2 * _log(1 - p)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+        q = p - 0.5; r = q * q;
+        return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Special functions (§5.3)
+    // ─────────────────────────────────────────────────────────────────────
+    function erf(x) {
+        var s = x < 0 ? -1 : 1; x = _abs(x);
+        if (x < 3) {
+            var sum = x, term = x, n = 0;
+            while (_abs(term) > 1e-17 * _abs(sum) && n < 200) { n++; term *= -x * x / n; sum += term / (2 * n + 1); }
+            return s * 2 / SQPI * sum;
+        }
+        var t = 0; for (var k = 60; k >= 1; k--) t = k / 2 / (x + t);
+        return s * (1 - _exp(-x * x) / SQPI / (x + t));
+    }
+    function erfcx(x) {   // e^(x²)·erfc(x), x ≥ 0: series below 3, continued fraction above (the naive product overflows near 27)
+        if (x < 3) return _exp(x * x) * (1 - erf(x));
+        var t = 0; for (var k = 60; k >= 1; k--) t = k / 2 / (x + t);
+        return 1 / SQPI / (x + t);
+    }
+    function E1(x) {      // exponential integral, x > 0: series ≤ 1, continued fraction above
+        if (x <= 1) {
+            var s = 0, term = 1;
+            for (var k = 1; k < 80; k++) { term *= -x / k; s += term / k; if (_abs(term / k) < 1e-17) break; }
+            return -0.5772156649015329 - _log(x) - s;
+        }
+        var b = x + 1, c = 1e300, d = 1 / b, h = d;
+        for (var i = 1; i < 300; i++) { var a = -i * i; b += 2; d = 1 / (a * d + b); c = b + a / c; var del = c * d; h *= del; if (_abs(del - 1) < 1e-16) break; }
+        return h * _exp(-x);
+    }
+    // uniform-flux vertical fracture, infinite reservoir: p_D,uf(t_D) and t_D·dp_D/dt_D
+    function pDuf(tD) { return SQPI * _sqrt(tD) * erf(1 / (2 * _sqrt(tD))) + 0.5 * E1(1 / (4 * tD)); }
+    function pDufPrime(tD) { return 0.5 * SQPI * _sqrt(tD) * erf(1 / (2 * _sqrt(tD))); }
+    function theta(tD) { return (tD > 0) ? pDuf(tD) / pDufPrime(tD) : 2; }
+
+    // Nolte g / G closed forms (fallback; 56's PRiSM_dfit_G is used when it is a real function)
+    function gN(d, a) { return a === 1 ? (4 / 3) * (_pow(1 + d, 1.5) - _pow(d, 1.5)) : (1 + d) * _asin(1 / _sqrt(1 + d)) + _sqrt(d); }
+    function GN(d, a) { return (4 / PI) * (gN(d, a) - gN(0, a)); }
+    function Gfn() {
+        var f = G.PRiSM_dfit_G;
+        if (typeof f === 'function' && !f._dfitStub) {
+            return function (d, a) { var v; try { v = f(d, a); } catch (e) { v = null; } return (typeof v === 'number' && _isFinite(v)) ? v : GN(d, a === 1 ? 1 : 0.5); };
+        }
+        return function (d, a) { return GN(d, a === 1 ? 1 : 0.5); };
+    }
+    function GinvLocal(Gv, a, Gf) {
+        var lo = 1e-12, hi = 1e9;
+        for (var i = 0; i < 200; i++) { var m = _sqrt(lo * hi); if (Gf(m, a) < Gv) lo = m; else hi = m; if (hi / lo < 1 + 1e-14) break; }
+        return _sqrt(lo * hi);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Geometry and propagation (§5.2): lumped PKN / KGD / radial
+    // ─────────────────────────────────────────────────────────────────────
+    // κ (viscous prefactor) per geometry. PKN from the constant-flux elliptic channel; KGD / radial calibrated so that the lumped
+    // no-leak-off laws reproduce the zero-toughness similarity constants 0.6152 (KGD) and 0.6955 (radial) under μ′ = 12μ,
+    // Q₀ = the total injection rate (per unit height for KGD), K′ = 4·√(2/π)·K_Ic. Gate G4: those two constants are not
+    // re-verified against the original papers in WP4, so KGD / radial pumping pressures carry "viscous term uncalibrated".
+    var KVISC = {
+        PKN: _pow(32 / PI, 0.25) / 1.25,
+        KGD: _pow(0.6152 / _pow(1.5, 1 / 6), -1.5) / PI,
+        radial: 3 / (16 * _pow(0.6955 / _pow(12, 1 / 9), 9 / 4))
+    };
+    var LAMBDA = { PKN: 1.25, KGD: 1, radial: 1 };
+
+    function makeGeom(e) {
+        var g = e.geom, E = e.Ep, hf = e.hf, hp = e.hp, KI = e.KIc || 0, mu = e.mu, kap = (e.viscCal || 1) * KVISC[g];
+        var o = { name: g, lam: LAMBDA[g] };
+        o.A = function (L) { return g === 'radial' ? PI * L * L : 2 * L * hf; };
+        o.AL = function (L) {
+            if (g !== 'radial') return o.A(L) * _min(1, hp / hf);
+            if (!(L > 0)) return 0;
+            var u = _min(1, hp / (2 * L));
+            return L * L * 2 * (u * _sqrt(1 - u * u) + _asin(u));
+        };
+        o.cf = function (L) { return g === 'PKN' ? PI * hf / (2 * E) : g === 'KGD' ? PI * L / E : 16 * L / (3 * PI * E); };
+        o.ptip = function (L) {
+            if (!KI || !(L > 0)) return 0;
+            return g === 'PKN' ? KI / _sqrt(PI * hf / 2) : g === 'KGD' ? KI / _sqrt(PI * L) : KI * SQPI / (2 * _sqrt(L));
+        };
+        o.pvis = function (L, q) {   // volume-equivalent mean viscous net pressure; q = total rate ft³/h
+            if (!(q > 0) || !(mu > 0) || !(L > 0)) return 0;
+            if (g === 'PKN') return kap * _pow(mu * (q / 2) * E * E * E * L / _pow(hf, 4), 0.25);
+            if (g === 'KGD') return kap * _pow(mu * (q / 2) * E * E * E / (hf * L * L), 0.25);
+            return kap * _pow(mu * q * E * E * E / (L * L * L), 0.25);
+        };
+        return o;
+    }
+
+    // Aperture laws (§5.2): W(p̄; c_f0) and the relative compliance c/c_f0 (positive for every x below σ_c)
+    function makeAperture(ap) {
+        var law = (ap && ap.law) || 'none';
+        var sh = (ap && ap.sh) || 60, sc = (ap && ap.sc) || 100, fres = (ap && ap.fres != null) ? ap.fres : 0.1;
+        var sr = (ap && ap.sr) ? ap.sr : 20 * sc;
+        var wsig = fres * sr + (1 - fres) * sc;   // w_σ / c_f0 for 'exp'
+        var o = { law: law, sh: sh, sc: sc, fres: fres, sr: sr };
+        o.W = function (pb, cf0) {
+            var w;
+            if (law === 'none') w = pb > 0 ? cf0 * pb : 0;
+            else if (law === 'exp') {
+                if (pb >= 0) w = cf0 * (wsig + pb);
+                else { var x = -pb; w = cf0 * (fres * sr * _exp(-x / sr) + (1 - fres) * sc * _exp(-x / sc)); }
+            } else {
+                if (pb >= 0) w = cf0 * (sh + pb);
+                else w = cf0 * sh * sh / (sh - pb);
+            }
+            return w > 0 ? w : 0;
+        };
+        o.rel = function (pb) {
+            if (pb >= 0) return 1;
+            if (law === 'none') return 0;
+            var x = -pb;
+            if (law === 'exp') return fres * _exp(-x / sr) + (1 - fres) * _exp(-x / sc);
+            var r = 1 + x / sh; return 1 / (r * r);
+        };
+        // wall-part open fraction over a step: hard law → step-averaged open fraction (continuous in p̄_n+1);
+        // contact laws → c(p̄_m)/c_f0 at the mid-step pressure (§5.2)
+        o.relStep = function (pb0, pb1) {
+            if (law !== 'none') return o.rel(0.5 * (pb0 + pb1));
+            if (pb0 > 0 && pb1 > 0) return 1;
+            if (pb0 <= 0 && pb1 <= 0) return 0;
+            return pb0 > 0 ? pb0 / (pb0 - pb1) : pb1 / (pb1 - pb0);
+        };
+        // net pressure (p̄ = p − σ_c) at hydraulic closure (c/c_f0 = ½)
+        o.pbHyd = function () {
+            if (law === 'none') return 0;
+            if (law === 'hyp') return -sh * (_sqrt(2) - 1);
+            var lo = 0, hi = 50 * sr;
+            for (var i = 0; i < 200; i++) { var m = 0.5 * (lo + hi); if (o.rel(-m) > 0.5) lo = m; else hi = m; }
+            return -0.5 * (lo + hi);
+        };
+        return o;
+    }
+
+    // Root finder: non-decreasing f on [lo, hi] with f(lo) < 0 < f(hi) (Illinois); relative tolerance, iteration cap
+    function illinois(f, lo, hi, flo, fhi, tol, cap, cnt) {
+        var side = 0, x = lo;
+        for (var it = 0; it < (cap || 60); it++) {
+            x = (lo * fhi - hi * flo) / (fhi - flo);
+            if (!(x > lo && x < hi)) x = 0.5 * (lo + hi);
+            var fx = f(x); if (cnt) cnt.n++;
+            if (fx === 0 || _abs(hi - lo) <= tol * (1 + _abs(x))) return x;
+            if (fx > 0) { hi = x; fhi = fx; if (side === -1) flo /= 2; side = -1; }
+            else { lo = x; flo = fx; if (side === 1) fhi /= 2; side = 1; }
+        }
+        return x;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Configuration: defaults (display) and the engine conversion
+    // ─────────────────────────────────────────────────────────────────────
+    var BASE_VWCW_FT3 = 4.98e-3;   // §5.4 common input (the prototype's), ft³/psi
+
+    function lkDefaults() {
+        var u = _units(), VwCw = BASE_VWCW_FT3 / u.bbl;
+        return {
+            mode: 'propagate', geometry: 'PKN',
+            schedule: [{ t: 0, q: 5 }, { t: 5 / 60, q: 0 }],
+            Ep: 5.0e6, nu: 0.25, hf: 50, hp: 40, muCp: 1, KIc: 14000, viscCal: 1,
+            Cw: 1.863e-4, k: null, Sp: 0,
+            pdl: { Cd: 0, pfo: null, fmax: 50 }, sigmaC: 7000, pr: 4500, VwCw: VwCw,
+            nwb: null, pBd: null, L0: 1,
+            aperture: { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null }, tip: { tauX: null }, farField: false,
+            tEnd: 5 / 60 + 300, phi: 0.06, ct: 1e-5, muRes: 0.5,
+            CL: null, wc: null
+        };
+    }
+
+    // schedule [{t, q bbl/min}] → segments [{t0, t1, q ft³/h}] up to tEnd
+    function _segments(schedule, tEnd, bpm) {
+        var s = schedule.slice().sort(function (a, b) { return a.t - b.t; }), seg = [];
+        for (var i = 0; i < s.length; i++) {
+            var t0 = +s[i].t, t1 = (i + 1 < s.length) ? +s[i + 1].t : tEnd;
+            if (t1 > t0) seg.push({ t0: t0, t1: t1, q: _max(0, +s[i].q || 0) * bpm });
+        }
+        return seg;
+    }
+
+    // κ_k = √(kφc_t/(πμ_r)) (ft/(psi·√h)) from k in md
+    function _kappa(kMd, phi, ct, muCp, u) {
+        if (!(kMd > 0)) return 0;
+        return _sqrt(kMd * u.md * phi * ct / (PI * muCp * u.cp));
+    }
+    function _kFromKappa(kap, phi, ct, muCp, u) { return (kap > 0) ? kap * kap * PI * muCp * u.cp / (phi * ct) / u.md : 0; }
+
+    function lkToEngine(cfg) {
+        try {
+            if (!cfg || typeof cfg !== 'object') return _fail('BAD_CONFIG', 'LkConfig expected.', ['cfg']);
+            var u = _units(), bad = [], warnings = [];
+            var d = lkDefaults();
+            function num(key, def, lo) {
+                var v = cfg[key]; v = (v == null) ? def : +v;
+                if (!_isFinite(v) || (lo != null && !(v > lo))) { bad.push(key); return def; }
+                return v;
+            }
+            var mode = cfg.mode || 'propagate';
+            if (mode !== 'propagate' && mode !== 'prescribed' && mode !== 'constP') { bad.push('mode'); mode = 'propagate'; }
+            var geom = cfg.geometry || 'PKN';
+            if (geom === 'auto') geom = 'PKN';
+            if (geom !== 'PKN' && geom !== 'KGD' && geom !== 'radial') { bad.push('geometry'); geom = 'PKN'; }
+            var sched = Array.isArray(cfg.schedule) && cfg.schedule.length ? cfg.schedule : null;
+            if (!sched) return _fail('BAD_SCHEDULE', 'A pumping schedule [{t, q}] is required.', ['schedule']);
+            for (var i = 0; i < sched.length; i++) if (!sched[i] || !_isFinite(+sched[i].t) || !_isFinite(+sched[i].q) || +sched[i].q < 0) return _fail('BAD_SCHEDULE', 'Schedule rows need finite t (h) and q ≥ 0 (bbl/min).', ['schedule']);
+            var tEnd = num('tEnd', d.tEnd, 0);
+            var segs = _segments(sched, tEnd, u.bpm), ts = null, tStart = null, Vi = 0;
+            for (i = 0; i < segs.length; i++) if (segs[i].q > 0) { if (tStart === null) tStart = segs[i].t0; ts = segs[i].t1; Vi += segs[i].q * (segs[i].t1 - segs[i].t0); }
+            if (ts === null) return _fail('NO_INJECTION', 'The schedule has no injection.', ['schedule']);
+            if (!(tEnd > ts)) return _fail('BAD_TEND', 'tEnd must be after the shut-in.', ['tEnd']);
+            var last = segs[segs.length - 1];
+            if (last.q > 0) return _fail('NO_SHUTIN', 'The schedule must end with a shut-in (q = 0) before tEnd.', ['schedule']);
+            var gaps = 0; for (i = 0; i < segs.length; i++) if (segs[i].q === 0 && segs[i].t1 <= ts && segs[i].t0 >= tStart) gaps++;
+            if (gaps) warnings.push(_w('MULTI_CYCLE', 'info', 'The schedule has a pause between injections; re-opening is represented, not modelled in detail (multi-cycle is a later increment).'));
+
+            var Ep = num('Ep', d.Ep, 0), hf = num('hf', d.hf, 0), hp = num('hp', d.hp, 0);
+            var muCp = (cfg.muCp === 0) ? 0 : num('muCp', d.muCp, 0), KIc = cfg.KIc == null ? d.KIc : +cfg.KIc;
+            if (!_isFinite(KIc) || KIc < 0) { bad.push('KIc'); KIc = d.KIc; }
+            var sigmaC = num('sigmaC', d.sigmaC, 0), pr = num('pr', d.pr, 0);
+            if (pr >= sigmaC) { bad.push('pr'); }
+            var phi = num('phi', d.phi, 0), ct = num('ct', d.ct, 0), muRes = num('muRes', d.muRes, 0);
+            var VwCwB = (cfg.VwCw == null) ? d.VwCw : +cfg.VwCw;
+            if (!_isFinite(VwCwB) || VwCwB < 0) { bad.push('VwCw'); VwCwB = d.VwCw; }
+            var Sp = (cfg.Sp == null) ? 0 : +cfg.Sp; if (!_isFinite(Sp) || Sp < 0) { bad.push('Sp'); Sp = 0; }
+
+            // leak-off: fit parameters C_w (wall) and k (reservoir). CL / w_c (display inputs) convert at Δp_CL.
+            var Cw = (cfg.Cw == null) ? 0 : +cfg.Cw, kMd = (cfg.k == null) ? 0 : +cfg.k, fromCL = false;
+            if (!_isFinite(Cw) || Cw < 0) { bad.push('Cw'); Cw = 0; }
+            if (!_isFinite(kMd) || kMd < 0) { bad.push('k'); kMd = 0; }
+            var CLin = (cfg.CL == null) ? null : +cfg.CL, wcIn = (cfg.wc == null) ? 0 : +cfg.wc, dpConv = null;
+            if (CLin != null) {
+                if (!_isFinite(CLin) || CLin < 0) { bad.push('CL'); CLin = null; }
+                if (!_isFinite(wcIn) || wcIn < 0 || wcIn > 1) { bad.push('wc'); wcIn = 0; }
+            }
+            if (bad.length) return _fail('BAD_CONFIG', 'Invalid leak-off model inputs: ' + bad.join(', ') + '.', bad);
+            if (CLin != null) {
+                fromCL = true;
+                Cw = CLin * (1 - wcIn);
+                dpConv = (cfg.dpRef != null && +cfg.dpRef > 0) ? +cfg.dpRef : null;   // optional fixed conversion pressure
+            }
+            var pdl = cfg.pdl || {}, Cd = +pdl.Cd || 0, pfo = (pdl.pfo == null) ? sigmaC : +pdl.pfo, fmax = (+pdl.fmax > 0) ? +pdl.fmax : 50;
+            if (pfo < sigmaC) { pfo = sigmaC; warnings.push(_w('PFO_RAISED', 'info', 'The fissure-opening pressure was raised to the closure stress (it is constrained to be at or above it).')); }
+            var ap = cfg.aperture || {};
+            var law = ap.law || 'none'; if (law !== 'none' && law !== 'exp' && law !== 'hyp') law = 'none';
+            var nwb = cfg.nwb && typeof cfg.nwb === 'object' ? { a: +cfg.nwb.a || 0, b: +cfg.nwb.b || 0, beta: +cfg.nwb.beta || 0.5 } : null;
+            if (cfg.tip && cfg.tip.tauX) warnings.push(_w('TIP_NOT_MODELLED', 'info', 'Tip extension after shut-in is a later increment; it is not modelled in this run.'));
+            var pBd = (cfg.pBd == null) ? 0 : +cfg.pBd; if (!_isFinite(pBd) || pBd < 0) pBd = 0;
+            var L0 = (+cfg.L0 > 0) ? +cfg.L0 : 1;
+            var p0 = (cfg.p0 != null && _isFinite(+cfg.p0)) ? +cfg.p0 : (pBd ? pr : sigmaC);
+            var e = {
+                mode: mode, geom: geom, segs: segs, tStart: tStart, ts: ts, tEnd: tEnd, ViFt3: Vi,
+                Ep: Ep, hf: hf, hp: hp, mu: muCp * u.cp, KIc: KIc * u.psiin, viscCal: (+cfg.viscCal > 0) ? +cfg.viscCal : 1,
+                Cw: Cw * u.sqmin, kap: _kappa(kMd, phi, ct, muRes, u), kMd: kMd, Sp: Sp * u.galp100,
+                pdl: Cd > 0 ? { Cd: Cd, pfo: pfo, fmax: fmax } : null,
+                sigmaC: sigmaC, pr: pr, VwCw: VwCwB * u.bbl, nwb: nwb, pBd: pBd, L0: L0, p0: p0,
+                aperture: { law: law, sh: +ap.sh || 60, sc: +ap.sc || 100, fres: (ap.fres != null && _isFinite(+ap.fres)) ? +ap.fres : 0.1, sr: (+ap.sr > 0) ? +ap.sr : null },
+                farField: !!cfg.farField, phi: phi, ct: ct, muRes: muRes,
+                fromCL: fromCL, CLc: fromCL ? CLin * wcIn * u.sqmin : 0, dpConv: dpConv,
+                prescribed: cfg.prescribed || null, constPbar: (+cfg.constPbar > 0) ? +cfg.constPbar : null,
+                u: u, warnings: warnings
+            };
+            if (mode === 'prescribed') {
+                var pz = e.prescribed;
+                if (!pz || !(+pz.Ap > 0) || !(+pz.cf > 0) || !(+pz.alpha >= 0)) return _fail('BAD_CONFIG', "Mode 'prescribed' needs prescribed {Ap ft², cf ft/psi, alpha, rp, tp h}.", ['prescribed']);
+                e.prescribed = { Ap: +pz.Ap, cf: +pz.cf, alpha: +pz.alpha, rp: (+pz.rp > 0) ? +pz.rp : _min(1, hp / hf), tp: (+pz.tp > 0) ? +pz.tp : (ts - tStart) };
+            }
+            if (mode === 'constP' && !e.constPbar) return _fail('BAD_CONFIG', "Mode 'constP' needs constPbar (psi).", ['constPbar']);
+            return { ok: true, e: e, warnings: warnings };
+        } catch (err) {
+            return _fail('ENGINE_CONFIG', err && err.message || err, []);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Time grid (§5.3): fixed by the schedule and t_end, never by the parameters
+    // ─────────────────────────────────────────────────────────────────────
+    var GRIDS = {
+        fit: { dt0: 0.5 / 3600, r: 1.1, maxFrac: 1 / 40, nShut: 500 },
+        display: { dt0: 0.25 / 3600, r: 1.05, maxFrac: 1 / 100, nShut: 1700 },
+        coarse: { dt0: 1 / 3600, r: 1.15, maxFrac: 1 / 20, nShut: 180 }
+    };
+    function _gridSpec(g) {
+        if (g && typeof g === 'object') {
+            var b = GRIDS.fit;
+            return { dt0: (+g.dt0 > 0) ? +g.dt0 : b.dt0, r: (+g.r > 1) ? +g.r : b.r, maxFrac: (+g.maxFrac > 0) ? +g.maxFrac : b.maxFrac, nShut: (+g.nShut >= 10) ? _floor(+g.nShut) : b.nShut, dtShut0: (+g.dtShut0 > 0) ? +g.dtShut0 : null };
+        }
+        return GRIDS[g] || GRIDS.fit;
+    }
+    function buildGrid(e, gs) {
+        var t = [e.segs[0].t0], dt0 = gs.dt0, segs = e.segs, ts = e.ts;
+        for (var i = 0; i < segs.length; i++) {
+            var s = segs[i]; if (s.t0 >= ts - 1e-15) break;
+            var x = s.t0, dt = dt0, cap = (s.t1 - s.t0) * gs.maxFrac;
+            while (x < s.t1 - 1e-12) {
+                dt = _min(dt, cap);
+                var xn = _min(s.t1, x + dt);
+                if (s.t1 - xn < 0.3 * dt) xn = s.t1;
+                t.push(xn); x = xn; dt *= gs.r;
+            }
+        }
+        var d0 = gs.dtShut0 || dt0, a = _log(d0), b = _log(e.tEnd - ts), n = gs.nShut;
+        for (var j = 0; j <= n; j++) {
+            var tt = ts + _exp(a + (b - a) * j / n);
+            if (j === n) tt = e.tEnd;
+            if (tt > t[t.length - 1] + 1e-12) t.push(tt);
+        }
+        return t;
+    }
+    function _rateAt(segs, ta, tb) {
+        var v = 0;
+        for (var i = 0; i < segs.length; i++) { var s = segs[i], lo = _max(ta, s.t0), hi = _min(tb, s.t1); if (hi > lo) v += s.q * (hi - lo); }
+        return v / (tb - ta);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 2-D far-field correction table (optional): D(lag) = P_2D − P_1D per unit flux (psi per ft³/h)
+    // ─────────────────────────────────────────────────────────────────────
+    function _farFieldTable(e, kFt2, xe, tMax) {
+        var mu = e.muRes * e.u.cp, eta = kFt2 / (e.phi * mu * e.ct);
+        var coef = mu / (2 * PI * kFt2 * e.hp), n = 600, lmin = _log(1e-6), lmax = _log(tMax * 2), tab = new Float64Array(n + 1);
+        for (var i = 0; i <= n; i++) {
+            var lag = _exp(lmin + (lmax - lmin) * i / n), tD = eta * lag / (xe * xe);
+            tab[i] = tD < 1e-3 ? 0 : coef * (pDuf(tD) - SQPI * _sqrt(tD));
+        }
+        var f = function (lag) {
+            if (lag <= 0) return 0;
+            var x = (_log(lag) - lmin) / (lmax - lmin) * n;
+            if (x <= 0) return tab[0]; if (x >= n) return tab[n];
+            var i0 = _floor(x), w = x - i0; return tab[i0] * (1 - w) + tab[i0 + 1] * w;
+        };
+        f.eta = eta; f.xe = xe;
         return f;
     }
 
-    ['PRiSM_dfit_lkDefaults', 'PRiSM_dfit_lkToEngine', 'PRiSM_dfit_lkSimulate', 'PRiSM_dfit_lkSample', 'PRiSM_dfit_lkQuick',
-     'PRiSM_dfit_lkSolveCL', 'PRiSM_dfit_lkGoalSeek', 'PRiSM_dfit_lkFit', 'PRiSM_dfit_lkFisher', 'PRiSM_dfit_lkGroups',
-     'PRiSM_dfit_identify', 'PRiSM_dfit_lkVerify', 'PRiSM_dfit_design', 'PRiSM_dfit_leakBudget'].forEach(function (n) { G[n] = _stub(n); });
-    ['PRiSM_dfit_lkFitJob', 'PRiSM_dfit_designJob'].forEach(function (n) { G[n] = _jobStub(n); });
+    // ─────────────────────────────────────────────────────────────────────
+    // The simulator (engine units). Returns raw arrays; lkSimulate converts.
+    // ─────────────────────────────────────────────────────────────────────
+    function _simulateEngine(e, grid, budgetMs, maxSteps, counter) {
+        var geo = makeGeom(e), ap = makeAperture(e.aperture), segs = e.segs, mode = e.mode;
+        var t = grid, N = t.length, ts = e.ts, sig = e.sigmaC, pr = e.pr;
+        var Cw = e.Cw, kap = e.kap, Sp = e.Sp, VwCw = e.VwCw, pdl = e.pdl, nwb = e.nwb, pbd = e.pBd, L0 = e.L0;
+        var P = new Float64Array(N), PW = new Float64Array(N), L = new Float64Array(N), AL = new Float64Array(N), A = new Float64Array(N),
+            Y = new Float64Array(N), VL = new Float64Array(N), VLw = new Float64Array(N), VLc = new Float64Array(N), VS = new Float64Array(N),
+            VF = new Float64Array(N), VI = new Float64Array(N), QC = new Float64Array(N), DEL = new Float64Array(N), BW = new Float64Array(N),
+            PTIP = new Float64Array(N), PVIS = new Float64Array(N);
+        var IA = 0, IY = 0, frac = false, warnings = [], why = null, nDone = N - 1, t0ms = _now(), nEval = 0, holdWarned = false;
+        var ff = null, ffWanted = e.farField && kap > 0;
+        if (e.farField && !(kap > 0)) warnings.push(_w('FARFIELD_OFF', 'info', 'The 2-D far-field correction needs reservoir-controlled leak-off (k > 0); it was not applied.'));
+        function fP(p) { if (!pdl) return 1; return p > pdl.pfo ? _min(pdl.fmax, _exp(pdl.Cd * (p - pdl.pfo))) : 1; }
+        function dpN(q) { if (!nwb || !(q > 0)) return 0; var qb = q / e.u.bpm; return nwb.a * qb * qb + nwb.b * _pow(qb, nwb.beta); }
+        P[0] = e.p0; PW[0] = e.p0;
+        if (mode === 'prescribed' || mode === 'constP') frac = true;
+        if (mode === 'prescribed') {   // area at the first node (α = 0: a constant area from the start, Nolte's limit)
+            var pz0 = e.prescribed, A0 = pz0.Ap * _pow(_min(1, _max(0, t[0] - e.tStart) / pz0.tp), pz0.alpha);
+            A[0] = A0; AL[0] = pz0.rp * A0; VF[0] = A0 * ap.W(P[0] - sig, pz0.cf);
+        }
+        L[0] = mode === 'constP' ? 1e-6 : 0;
+        if (mode === 'propagate' && !pbd) { frac = true; L[0] = L0; }
+        if (mode !== 'prescribed') {
+            A[0] = frac ? geo.A(L[0]) : 0;
+            AL[0] = frac ? geo.AL(L[0]) : 0;
+            VF[0] = frac ? A[0] * ap.W(P[0] - sig, geo.cf(L[0] || 1e-9)) : 0;
+        }
+        Y[0] = AL[0] * (P[0] - pr);
+        var tb = null, pb = null;
+        var _s = _sqrt;
+        for (var n = 0; n < N - 1; n++) {
+            if (maxSteps && n >= maxSteps) { why = 'step cap reached'; nDone = n; break; }
+            if (budgetMs && (n & 63) === 0 && _now() - t0ms > budgetMs) { why = 'run budget exceeded'; nDone = n; break; }
+            var ta = t[n], t1 = t[n + 1], dt = t1 - ta, q = _rateAt(segs, ta, t1), pumping = q > 0, Qin = q * dt;
+            VI[n + 1] = VI[n] + Qin;
+            // history sums at T = t1, one loop with two accumulators sharing the kernel weights (§5.3)
+            var hA = 0, hY = 0, sPrev = _s(t1 - t[0]);
+            for (var j = 1; j <= n; j++) {
+                var sb = _s(t1 - t[j]), den = sPrev + sb, d1 = (t[j] - t[j - 1]) / den, wq = (2 / 3) * (1 + sPrev / den);
+                hA += d1 * (2 * AL[j - 1] + wq * (AL[j] - AL[j - 1]));
+                hY += d1 * (2 * Y[j - 1] + wq * (Y[j] - Y[j - 1]));
+                sPrev = sb;
+            }
+            var s3 = _s(dt), del = 0;
+            if (ffWanted && !ff && ta >= ts - 1e-12 && L[n] > 0) {
+                var xe = (e.geom === 'radial') ? AL[n] / (2 * e.hp) : L[n];
+                ff = _farFieldTable(e, e.kMd * e.u.md, xe, t[N - 1]);
+            }
+            if (ff) { for (var jj = 1; jj <= n; jj++) del += QC[jj] * (ff(t1 - t[jj - 1]) - ff(t1 - t[jj])); }
+            DEL[n + 1] = del;
+            var fricN = pumping ? dpN(q) : 0;
+            var dVL = (function (nn, hAx, hYx, s3x, delx) {
+                return function (ALn1, pf1) {
+                    var Ia = hAx + s3x * ((2 / 3) * AL[nn] + (4 / 3) * ALn1);
+                    var Yn1 = ALn1 * (pf1 - pr - delx);
+                    var Iy = hYx + s3x * ((2 / 3) * Y[nn] + (4 / 3) * Yn1);
+                    var pm = 0.5 * (P[nn] + pf1), f = fP(pm);
+                    var dw = Cw > 0 ? 2 * Cw * (Ia - IA) * ap.relStep(P[nn] - sig, pf1 - sig) * f : 0;
+                    var dc = kap > 0 ? 2 * kap * (Iy - IY) * f : 0;
+                    var ds = Sp > 0 ? 2 * Sp * _max(0, ALn1 - AL[nn]) : 0;
+                    return { v: dw + dc + ds, dw: dw, dc: dc, ds: ds, Ia: Ia, Iy: Iy, Y: Yn1 };
+                };
+            })(n, hA, hY, s3, del);
+            var Ln1 = L[n], pf1, pw1, r;
+            // ---- breakdown (no fracture yet): wellbore only ----
+            if (!frac) {
+                pw1 = PW[n] + Qin / _max(VwCw, 1e-6);
+                if (pw1 >= pbd) {
+                    frac = true; tb = ta; pb = PW[n];
+                    L[n] = L0; A[n] = geo.A(L0); AL[n] = geo.AL(L0); Y[n] = AL[n] * (P[n] - pr); Ln1 = L0; VF[n] = 0;
+                    dVL = (function (nn, hAx, hYx, s3x, delx) {   // AL[n] changed: rebuild the step closure
+                        return function (ALn1, pf1x) {
+                            var Ia = hAx + s3x * ((2 / 3) * AL[nn] + (4 / 3) * ALn1);
+                            var Yn1 = ALn1 * (pf1x - pr - delx);
+                            var Iy = hYx + s3x * ((2 / 3) * Y[nn] + (4 / 3) * Yn1);
+                            var pm = 0.5 * (P[nn] + pf1x), f = fP(pm);
+                            var dw = Cw > 0 ? 2 * Cw * (Ia - IA) * ap.relStep(P[nn] - sig, pf1x - sig) * f : 0;
+                            var dc = kap > 0 ? 2 * kap * (Iy - IY) * f : 0;
+                            var ds = Sp > 0 ? 2 * Sp * _max(0, ALn1 - AL[nn]) : 0;
+                            return { v: dw + dc + ds, dw: dw, dc: dc, ds: ds, Ia: Ia, Iy: Iy, Y: Yn1 };
+                        };
+                    })(n, hA, hY, s3, del);
+                } else {
+                    P[n + 1] = pw1; PW[n + 1] = pw1; L[n + 1] = 0; VL[n + 1] = VL[n]; VLw[n + 1] = VLw[n]; VLc[n + 1] = VLc[n]; VS[n + 1] = VS[n]; VF[n + 1] = 0;
+                    BW[n + 1] = 0;
+                    continue;
+                }
+            }
+            if (mode === 'prescribed') {
+                var pz = e.prescribed;
+                var An1 = pz.Ap * _pow(_min(1, _max(0, t1 - e.tStart) / pz.tp), pz.alpha), ALp = pz.rp * An1;
+                var fpp = (function (An, ALx, nn, Qx) { return function (pf) { nEval++; return VwCw * (pf - PW[nn]) + An * ap.W(pf - sig, pz.cf) - VF[nn] + dVL(ALx, pf).v - Qx; }; })(An1, ALp, n, Qin);
+                pf1 = solveP(fpp, P[n]);
+                r = dVL(ALp, pf1);
+                commit(n, pf1, pf1, 0, An1, ALp, An1 * ap.W(pf1 - sig, pz.cf), r, 0, 0);
+                if (!okState(n + 1)) break;
+                continue;
+            }
+            // ---- trial: fixed L ----
+            var Afx = geo.A(Ln1), ALfx = geo.AL(Ln1), cfn = geo.cf(Ln1);
+            var exc = (pumping && mode === 'propagate') ? (geo.lam - 1) * geo.pvis(Ln1, q) : 0;
+            var fnp = (function (An, ALx, cfx, nn, Qx, ex, fr) { return function (pf) { nEval++; return VwCw * (pf + fr + ex - PW[nn]) + An * ap.W(pf - sig, cfx) - VF[nn] + dVL(ALx, pf).v - Qx; }; })(Afx, ALfx, cfn, n, Qin, exc, fricN);
+            pf1 = solveP(fnp, P[n]);
+            var canProp = pumping && (mode === 'propagate' || mode === 'constP');
+            var pprop = canProp ? (mode === 'constP' ? e.constPbar : geo.ptip(Ln1) + geo.pvis(Ln1, q)) : Infinity;
+            if (canProp && pf1 - sig > pprop) {
+                var qq = q, nn2 = n, Qx2 = Qin;
+                var pbarL = function (Lx) { return mode === 'constP' ? e.constPbar : geo.ptip(Lx) + geo.pvis(Lx, qq); };
+                var pwL = function (Lx) { if (mode === 'constP') return sig + e.constPbar; return sig + geo.ptip(Lx) + geo.lam * geo.pvis(Lx, qq) + fricN; };
+                var FL = function (Lx) { nEval++; var pbx = pbarL(Lx); return VwCw * (pwL(Lx) - PW[nn2]) + geo.A(Lx) * ap.W(pbx, geo.cf(Lx)) - VF[nn2] + dVL(geo.AL(Lx), sig + pbx).v - Qx2; };
+                var lo = Ln1, flo = FL(lo), hi = _max(lo * 1.2, 1e-3), fhi = FL(hi), kx = 0;
+                while (fhi < 0 && kx < 200 && hi < 5000) { lo = hi; flo = fhi; hi *= 1.5; fhi = FL(hi); kx++; }
+                if (fhi < 0) { why = 'geometry runaway (length above 5,000 ft)'; nDone = n; break; }
+                if (flo >= 0) Ln1 = lo; else Ln1 = illinois(FL, lo, hi, flo, fhi, 1e-10, 60);
+                var pb1 = pbarL(Ln1); pf1 = sig + pb1; pw1 = pwL(Ln1);
+                r = dVL(geo.AL(Ln1), pf1);
+                commit(n, pf1, pw1, Ln1, geo.A(Ln1), geo.AL(Ln1), geo.A(Ln1) * ap.W(pb1, geo.cf(Ln1)), r, geo.ptip(Ln1), mode === 'constP' ? 0 : geo.pvis(Ln1, q));
+            } else {
+                r = dVL(ALfx, pf1);
+                commit(n, pf1, pf1 + fricN + exc, Ln1, Afx, ALfx, Afx * ap.W(pf1 - sig, cfn), r, PTIP[n], PVIS[n]);
+            }
+            if (!okState(n + 1)) break;
+        }
+        if (counter) counter.evals = (counter.evals || 0) + nEval;
+        function okState(i) {
+            if (!_isFinite(P[i]) || !_isFinite(PW[i]) || !_isFinite(L[i]) || !_isFinite(VL[i]) || !_isFinite(VF[i])) { why = 'non-finite state at step ' + i; nDone = i - 1; return false; }
+            return true;
+        }
+        function commit(nn, pf, pw, Lx, Ax, ALx, Vf, rr, ptip, pvis) {
+            P[nn + 1] = pf; PW[nn + 1] = pw; L[nn + 1] = Lx; A[nn + 1] = Ax; AL[nn + 1] = ALx; VF[nn + 1] = Vf; Y[nn + 1] = rr.Y;
+            VL[nn + 1] = VL[nn] + rr.v; VLw[nn + 1] = VLw[nn] + rr.dw; VLc[nn + 1] = VLc[nn] + rr.dc; VS[nn + 1] = VS[nn] + rr.ds;
+            QC[nn + 1] = rr.dc / (t[nn + 1] - t[nn]); IA = rr.Ia; IY = rr.Iy; BW[nn + 1] = rr.Ia; PTIP[nn + 1] = ptip; PVIS[nn + 1] = pvis;
+        }
+        function solveP(f, pguess) {
+            var lo = _min(pguess, pr) - 50, hi = pguess + 50, flo = f(lo), fhi = f(hi), k = 0, stp = 100;
+            while (flo > 0 && k < 100) { hi = lo; fhi = flo; lo -= stp; stp *= 2; flo = f(lo); k++; }
+            stp = 100;
+            while (fhi < 0 && k < 200) { lo = hi; flo = fhi; hi += stp; stp *= 2; fhi = f(hi); k++; }
+            if (!(flo <= 0 && fhi >= 0) || fhi === flo) {
+                // flat balance (no storage, no open fracture, no leak-off): the pressure is undetermined — hold it
+                if (!holdWarned) { holdWarned = true; warnings.push(_w('PRESSURE_HELD', 'info', 'With no wellbore storage and a closed fracture the pressure is undetermined; it was held at its last value.')); }
+                return pguess;
+            }
+            return illinois(f, lo, hi, flo, fhi, 1e-13, 60);
+        }
+        return { t: t, N: nDone + 1, P: P, PW: PW, L: L, A: A, AL: AL, VL: VL, VLw: VLw, VLc: VLc, VS: VS, VF: VF, VI: VI, DEL: DEL, BW: BW,
+                 PTIP: PTIP, PVIS: PVIS, tb: tb, pb: pb, why: why, warnings: warnings, ff: ff, geo: geo, ap: ap, evals: nEval };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // lkSimulate: engine run → LkResult (display units)
+    // ─────────────────────────────────────────────────────────────────────
+    function _crossTime(t, y, level, from, n) {   // first downward crossing of level after index from (linear in t)
+        for (var i = from + 1; i < n; i++) if (y[i - 1] >= level && y[i] < level) return t[i - 1] + (t[i] - t[i - 1]) * (y[i - 1] - level) / (y[i - 1] - y[i]);
+        return null;
+    }
+    // extrapolate the last two open samples (p ≥ σ_c) linearly on the axis X to σ_c → X_c
+    function _xcAtClosure(X, p, sig, from, n) {
+        var i = -1;
+        for (var k = from + 1; k < n; k++) { if (p[k] < sig) { i = k - 1; break; } }
+        if (i < 0) return null;
+        if (i - 1 < from || X[i] == null || X[i - 1] == null) return null;
+        var x1 = X[i - 1], x2 = X[i], p1 = p[i - 1], p2 = p[i];
+        if (!(p1 !== p2)) return x2;
+        return x2 + (sig - p2) * (x2 - x1) / (p2 - p1);
+    }
+
+    function lkSimulate(cfg, opts) {
+        try {
+            opts = opts || {};
+            var conv = lkToEngine(cfg);
+            if (!conv.ok) return conv;
+            var e = conv.e;
+            if (e.fromCL) _resolveCL(e, opts);
+            var res = _runAndPack(e, opts);
+            if (opts.surface) _surfacePressure(res, cfg, opts.surface);
+            return res;
+        } catch (err) {
+            return _fail('SIMULATION_FAILED', err && err.message || err, []);
+        }
+    }
+    // Optional surface pressure (§5.5): p_s = p_w − p_hyd + Δp_pipe(q) through WTS_wellbore (resolved at call time). The column
+    // head is integrated at 5 bottomhole-pressure nodes and interpolated per sample; pipe friction once per distinct rate.
+    // surface = {column, fluid, T (°F or fn(tvd)), datumTvd | datumMd}; res.ps stays null (with a note) without the engine.
+    var ATM = 14.696;
+    function _surfacePressure(res, cfg, sp) {
+        var W = G.WTS_wellbore, col = sp && sp.column;
+        res.ps = null;
+        function note(code, text) { res.warnings.push(_w(code, 'info', text)); }
+        if (!W || typeof W.hydrostatic !== 'function' || W.hydrostatic._dfitStub) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the wellbore engine is not available.');
+        if (!col || typeof col !== 'object') return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: no wellbore column was given.');
+        var datum = _num(sp.datumTvd);
+        if (datum == null && _num(sp.datumMd) != null && typeof col.tvdAt === 'function') datum = _num(col.tvdAt(sp.datumMd));
+        if (!(datum > 0)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the gauge datum depth is missing.');
+        var pw = res.pw, n = pw.length, lo = Infinity, hi = -Infinity, i;
+        for (i = 0; i < n; i++) if (pw[i] != null) { if (pw[i] < lo) lo = pw[i]; if (pw[i] > hi) hi = pw[i]; }
+        if (!(hi >= lo)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: no bottomhole pressure.');
+        var NN = 5, nodes = [], heads = [];
+        for (i = 0; i < NN; i++) {
+            var pn = (hi > lo) ? lo + (hi - lo) * i / (NN - 1) : lo, h = W.hydrostatic(pn, datum, 0, col, sp.T);
+            if (!h || h.ok === false || !_isFinite(+h.p)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the column integration failed.');
+            nodes.push(pn); heads.push(+h.p);
+            if (hi === lo) break;
+        }
+        function pStatic(p) {
+            if (nodes.length === 1) return heads[0] + (p - nodes[0]);
+            var j = 1; while (j < nodes.length - 1 && nodes[j] < p) j++;
+            var w = (p - nodes[j - 1]) / (nodes[j] - nodes[j - 1]); return heads[j - 1] + w * (heads[j] - heads[j - 1]);
+        }
+        var sch = (cfg.schedule || []).slice().sort(function (a, b) { return a.t - b.t; }), fric = {};
+        function qAt(t) { var q = 0; for (var k = 0; k < sch.length; k++) { if (sch[k].t <= t + 1e-12) q = +sch[k].q || 0; else break; } return q; }
+        function dpPipe(q) {
+            if (!q) return 0;
+            if (fric[q] != null) return fric[q];
+            var s = 0, segs = Array.isArray(col.segments) ? col.segments : [];
+            if (typeof W.pipeFriction === 'function') for (var k = 0; k < segs.length; k++) {
+                var f = W.pipeFriction(_abs(q), segs[k], sp.fluid, sp.T), len = (+segs[k].botMd) - (+segs[k].topMd);
+                if (f && f.ok !== false && _isFinite(+f.dpdl) && len > 0) s += _abs(+f.dpdl) * len;
+            }
+            fric[q] = q > 0 ? s : -s;   // injection: p_s = p_w − p_hyd + Δp_pipe; the sign flips for flowback
+            return fric[q];
+        }
+        var ps = new Array(n), tVac = null, tLow = null;
+        for (i = 0; i < n; i++) {
+            if (pw[i] == null) { ps[i] = null; continue; }
+            var tt = res.t[i], q = qAt(tt);
+            ps[i] = pStatic(pw[i]) + dpPipe(q);
+            if (tt > res.events.ts) { if (tVac == null && ps[i] < ATM) tVac = tt; if (tLow == null && ps[i] < ATM + 15) tLow = tt; }
+        }
+        res.ps = ps;
+        if (tVac != null) res.warnings.push(_w('SURFACE_VACUUM', 'bad', 'The surface pressure falls below 0 psig ' + _sig((tVac - res.events.ts), 3) + ' h after shut-in: after-closure analysis needs a bottomhole gauge.'));
+        else if (tLow != null) res.warnings.push(_w('SURFACE_LOW', 'warn', 'The surface pressure falls below 15 psig ' + _sig((tLow - res.events.ts), 3) + ' h after shut-in: the column may not stay liquid-supported.'));
+    }
+
+    // CL / w_c display inputs: κ_k from the reservoir share at Δp_CL = ½(ISIP + σ_c) − p_r (two coarse fixed-point passes)
+    function _resolveCL(e, opts) {
+        if (!(e.CLc > 0)) { e.kap = 0; e.kMd = 0; return; }
+        var dp = e.dpConv || (e.sigmaC - e.pr + 300);
+        if (!e.dpConv) {
+            for (var it = 0; it < 2; it++) {
+                e.kap = e.CLc / dp;
+                var raw = _simulateEngine(e, buildGrid(e, GRIDS.coarse), opts.budgetMs || 2000, 0, opts.counts);
+                var iS = _idxAtOrAfter(raw.t, e.ts, raw.N), isip = raw.P[iS];
+                if (_isFinite(isip)) dp = _max(1, 0.5 * (isip + e.sigmaC) - e.pr);
+            }
+        }
+        e.kap = e.CLc / dp; e.kMd = _kFromKappa(e.kap, e.phi, e.ct, e.muRes, e.u);
+    }
+    function _idxAtOrAfter(t, x, n) { for (var i = 0; i < n; i++) if (t[i] >= x - 1e-12) return i; return n - 1; }
+
+    function _runAndPack(e, opts) {
+        var gs = _gridSpec(opts.grid || 'fit'), grid = opts.tGrid || buildGrid(e, gs);
+        var raw = _simulateEngine(e, grid, opts.budgetMs == null ? 2000 : opts.budgetMs, opts.maxSteps || 0, opts.counts);
+        if (opts.counts) opts.counts.runs = (opts.counts.runs || 0) + 1;
+        return _pack(e, raw, opts);
+    }
+
+    function _pack(e, raw, opts) {
+        var u = e.u, N = raw.N, t = raw.t, sig = e.sigmaC, bbl = u.bbl, warnings = e.warnings.slice().concat(raw.warnings), validity = [];
+        var Gf = Gfn();
+        var out = { ok: !raw.why, why: raw.why || null, t: [], pw: [], pf: [], L: [], A: [], AL: [], W: [], Vf: [], Vi: [], VL: [], VLw: [], VLc: [], VS: [], qL: [], eta: [], Bw: [], Ggen: [] };
+        var iS = _idxAtOrAfter(t, e.ts, N), tp = e.ts - e.tStart, ALs = raw.AL[iS] || 0, gS = (ALs > 0 && tp > 0) ? raw.BW[iS] / (ALs * _sqrt(tp)) : null;
+        var Xa05 = new Array(N), Xa1 = new Array(N), Xgen = new Array(N), bal = 0;
+        for (var i = 0; i < N; i++) {
+            var pw = raw.PW[i], pf = raw.P[i];
+            out.t.push(t[i]);
+            out.pw.push(pw > 0 && pw < 1e5 ? pw : null);
+            out.pf.push(pf > 0 && pf < 1e5 ? pf : null);
+            out.L.push(raw.L[i] >= 0 ? raw.L[i] : 0); out.A.push(raw.A[i]); out.AL.push(raw.AL[i]);
+            out.W.push(raw.A[i] > 0 ? raw.VF[i] / raw.A[i] * 12 : 0);
+            out.Vf.push(raw.VF[i] / bbl); out.Vi.push(raw.VI[i] / bbl); out.VL.push(raw.VL[i] / bbl);
+            out.VLw.push(raw.VLw[i] / bbl); out.VLc.push(raw.VLc[i] / bbl); out.VS.push(raw.VS[i] / bbl);
+            out.qL.push(i === 0 ? 0 : (raw.VL[i] - raw.VL[i - 1]) / (t[i] - t[i - 1]) / u.bpm);
+            out.Bw.push(raw.BW[i]);
+            var gg = (i >= iS && gS != null) ? (4 / PI) * (raw.BW[i] / (ALs * _sqrt(tp)) - gS) : null;
+            out.Ggen.push(gg);
+            var dD = (t[i] - e.ts) / tp;
+            Xa05[i] = i >= iS ? Gf(_max(0, dD), 0.5) : null; Xa1[i] = i >= iS ? Gf(_max(0, dD), 1) : null; Xgen[i] = gg;
+            var b = _abs(raw.VI[i] - (raw.VF[i] - raw.VF[0] + raw.VL[i] + e.VwCw * (raw.PW[i] - raw.PW[0])));   // the initial flaw may hold a residual aperture
+            if (b > bal) bal = b;
+        }
+        // ISIP: the fracture pressure once the wellbore over-pressure (viscous excess, friction) has redistributed — the first
+        // shut-in node when there is an excess, else the pressure at the shut-in itself
+        var isip = (iS + 1 < N && raw.PW[iS] > raw.P[iS] + 1e-9) ? raw.P[iS + 1] : raw.P[iS];
+        var Gc05 = _xcAtClosure(Xa05, raw.P, sig, iS, N), Gc1 = _xcAtClosure(Xa1, raw.P, sig, iS, N), Gcg = _xcAtClosure(Xgen, raw.P, sig, iS, N);
+        var tcMech = null;
+        if (Gc05 != null && Gc05 >= 0) tcMech = e.ts + tp * GinvLocal(Gc05, 0.5, Gf);
+        if (tcMech == null) tcMech = _crossTime(t, raw.P, sig, iS, N);
+        var pbH = raw.ap.pbHyd(), tcHyd = (raw.ap.law === 'none') ? tcMech : _crossTime(t, raw.P, sig + pbH, iS, N);
+        var Lts = raw.L[iS], Ltc = tcMech != null ? raw.L[_idxAtOrAfter(t, tcMech, N)] : null;
+        var pmax = null; for (i = 0; i <= iS; i++) if (pmax === null || raw.PW[i] > pmax) pmax = raw.PW[i];
+        var tStart = e.tStart, tb = raw.tb != null ? raw.tb : tStart, pb = raw.pb != null ? raw.pb : pmax;
+        out.events = { tb: tb, pb: (pb > 0 && pb < 1e5) ? pb : null, ts: e.ts, isip: (isip > 0 && isip < 1e5) ? isip : null, tcMech: tcMech, tcHyd: tcHyd,
+                       Gc: { a05: (Gc05 != null && Gc05 >= 0) ? Gc05 : null, a1: (Gc1 != null && Gc1 >= 0) ? Gc1 : null, gen: (Gcg != null && Gcg >= 0) ? Gcg : null } };
+        out.xf = { ts: Lts, tc: Ltc };
+        var dpCL = (isip > 0) ? 0.5 * (isip + sig) - e.pr : sig - e.pr;
+        var CcEq = e.kap * dpCL / u.sqmin, CwD = e.Cw / u.sqmin, CLeq = CwD + CcEq;
+        out.CLeq = CLeq; out.dpCL = dpCL; out.wcEq = CLeq > 0 ? CcEq / CLeq : 0;
+        out.k = e.kMd > 0 ? e.kMd : null;
+        var etaR = (e.kMd > 0) ? e.kMd * u.md / (e.phi * e.muRes * u.cp * e.ct) : 0;
+        out.tDxfMax = (etaR > 0 && Lts > 0) ? etaR * (t[N - 1] - e.ts) / (Lts * Lts) : 0;
+        out.balanceErr = bal / bbl;
+        var tipS = raw.PTIP[iS], visS = raw.PVIS[iS];
+        out.regime = { tipShare: (tipS + visS) > 0 ? tipS / (tipS + visS) : (e.KIc > 0 ? 1 : 0) };
+        // validity diagnostics (§5.3)
+        if (e.mode === 'propagate') {
+            if (e.geom === 'PKN' && Lts > 0 && Lts / e.hf < 1.5) validity.push(_w('PKN_SHORT', 'warn', 'PKN needs a half-length at least 1.5 × the height; here xf/h_f = ' + _fx(Lts / e.hf, 2) + '. KGD or radial may describe it better.'));
+            if (e.geom === 'KGD' && Lts > 0 && Lts / e.hf > 1) validity.push(_w('KGD_LONG', 'warn', 'KGD assumes a half-length below the height; here xf/h_f = ' + _fx(Lts / e.hf, 2) + '. PKN may describe it better.'));
+            if (e.geom === 'radial' && 2 * Lts > e.hf) validity.push(_w('RADIAL_CONTAINED', 'warn', 'The radial fracture (2R = ' + _fx(2 * Lts, 0) + ' ft) exceeds the barrier spacing h_f = ' + _fx(e.hf, 0) + ' ft: a contained geometry (PKN) is more likely.'));
+            if (e.geom !== 'PKN') validity.push(_w('VISC_UNCALIBRATED', 'info', 'KGD / radial pumping pressures: viscous term uncalibrated (the similarity constants are pending verification).'));
+            validity.push(_w('APPARENT_TOUGHNESS', 'info', 'Apparent toughness stands in for tip and scale effects; it is not a rock property.'));
+        }
+        if (!(e.kap > 0)) validity.push(_w('WALL_ONLY', 'info', 'After-closure not modelled: wall-controlled leak-off does not feed the reservoir pressure.'));
+        if (bal > 1e-6 * _max(raw.VI[N - 1], 1e-9)) warnings.push(_w('VOLUME_BALANCE', 'warn', 'The volume balance closes only to ' + _sci(bal / bbl, 2) + ' bbl.'));
+        if (tcMech == null) warnings.push(_w('NO_CLOSURE', 'info', 'The fracture does not close within the simulated time.'));
+        if (raw.why) warnings.push(_w('RUN_STOPPED', 'bad', 'The run stopped early: ' + raw.why + '. The partial result is kept.'));
+        out.validity = validity; out.warnings = warnings;
+        out.Vw = []; for (i = 0; i < N; i++) out.Vw.push(e.VwCw * (raw.PW[i] - raw.PW[0]) / bbl);   // wellbore compression volume (partition)
+        out.ViFrac = []; for (i = 0; i < N; i++) out.ViFrac.push(out.Vi[i] - out.Vw[i]);
+        // η(t) = V_f/V_i,frac (§5.5): the efficiency of the volume that entered the fracture and formation; the pumped-volume
+        // efficiency V_f/V_i at shut-in is the scalar etaS (0.814 against 0.916 in the breakdown example)
+        for (i = 0; i < N; i++) out.eta.push(out.ViFrac[i] > 0 ? out.Vf[i] / out.ViFrac[i] : null);
+        out.parts = { qLw: [], qLc: [], qLs: [] };
+        for (i = 0; i < N; i++) {
+            if (i === 0) { out.parts.qLw.push(0); out.parts.qLc.push(0); out.parts.qLs.push(0); continue; }
+            var dtt = (t[i] - t[i - 1]) * u.bpm;
+            out.parts.qLw.push((raw.VLw[i] - raw.VLw[i - 1]) / dtt); out.parts.qLc.push((raw.VLc[i] - raw.VLc[i - 1]) / dtt); out.parts.qLs.push((raw.VS[i] - raw.VS[i - 1]) / dtt);
+        }
+        out.tStart = e.tStart; out.tp = tp; out.Vinj = e.ViFt3 / bbl; out.evals = raw.evals; out.N = N;
+        out.etaS = raw.VI[iS] > 0 ? raw.VF[iS] / raw.VI[iS] : null;
+        out.geometry = e.geom; out.sigmaC = sig; out.pr = e.pr;
+        out.Af = raw.A[iS]; out.ALs = ALs; out.cf = raw.geo.cf(Lts || 1e-9); out.VwCw = e.VwCw / bbl;
+        out.engine = { kap: e.kap, Cw: e.Cw, kMd: e.kMd };
+        out.cfgEcho = { hf: e.hf, hp: e.hp, Ep: e.Ep, geometry: e.geom };
+        return out;
+    }
+
+    function lkSample(res, t) {
+        if (!res || !Array.isArray(res.t) || !res.t.length) return [];
+        var ts = Array.isArray(t) ? t : [t], out = new Array(ts.length), rt = res.t, rp = res.pw, n = rt.length, i = 1;
+        var sorted = true; for (var k = 1; k < ts.length; k++) if (ts[k] < ts[k - 1]) { sorted = false; break; }
+        for (k = 0; k < ts.length; k++) {
+            var x = ts[k];
+            if (!sorted) i = 1;
+            if (x <= rt[0]) { out[k] = rp[0]; continue; }
+            if (x >= rt[n - 1]) { out[k] = rp[n - 1]; continue; }
+            while (i < n - 1 && rt[i] < x) i++;
+            var a = rp[i - 1], b = rp[i];
+            if (a == null || b == null) { out[k] = null; continue; }
+            var w = (x - rt[i - 1]) / (rt[i] - rt[i - 1]); out[k] = a * (1 - w) + b * w;
+        }
+        return Array.isArray(t) ? out : out[0];
+    }
+    function _atT(res, arr, x) {
+        var rt = res.t, n = rt.length;
+        if (x <= rt[0]) return arr[0]; if (x >= rt[n - 1]) return arr[n - 1];
+        var lo = 0, hi = n - 1; while (hi - lo > 1) { var m = (lo + hi) >> 1; if (rt[m] < x) lo = m; else hi = m; }
+        var w = (x - rt[lo]) / (rt[hi] - rt[lo]); return arr[lo] * (1 - w) + arr[hi] * w;
+    }
+    function _qLAt(res, x) {   // leak-off rate on the step that holds x (bbl/min)
+        var rt = res.t, n = rt.length; if (x >= rt[n - 1]) return res.qL[n - 1];
+        for (var i = 1; i < n; i++) if (rt[i] >= x) return res.qL[i];
+        return res.qL[n - 1];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Quick answers (§5.6): quick table, CL for an observed closure time, volume and rate for a visible closure
+    // ─────────────────────────────────────────────────────────────────────
+    function lkQuick(cfg, opts) {
+        try {
+            var res = lkSimulate(cfg, { grid: (opts && opts.grid) || 'display' });
+            if (!res || res.ok !== true) return res && res.ok === false && res.code ? res : _fail('SIMULATION_FAILED', (res && res.why) || 'The model run failed.', []);
+            var ts = res.events.ts, tc = res.events.tcMech, rows = [];
+            [[1 / 60, 'At shut-in'], [5, '5 min'], [25, '25 min'], [100, '100 min']].forEach(function (r) {
+                var x = ts + r[0] / 60;
+                rows.push({ label: r[1], dtMin: r[0], qL: _qLAt(res, x) });
+            });
+            if (tc != null) rows.push({ label: 'At closure', dtMin: (tc - ts) * 60, qL: _qLAt(res, tc) });
+            var n = res.t.length, xAt = tc != null ? tc : res.t[n - 1];
+            var Vi = _atT(res, res.Vi, xAt), Vf = _atT(res, res.Vf, xAt), VL = _atT(res, res.VL, xAt), Vw = _atT(res, res.Vw, xAt);
+            var iS = _idxAtOrAfter(res.t, ts, n);
+            return {
+                ok: true, rows: rows, VL: res.VL[n - 1], VLclosure: tc != null ? VL : null, eta: res.etaS,
+                tc: tc != null ? tc - ts : null, tcHyd: res.events.tcHyd != null ? res.events.tcHyd - ts : null,
+                xf: res.xf.ts, wAvg: res.W[iS], wMax: res.W[iS] * (res.geometry === 'radial' ? 1.5 : 4 / PI),
+                partition: { frac: Vi > 0 ? Vf / Vi : null, form: Vi > 0 ? VL / Vi : null, wb: Vi > 0 ? Vw / Vi : null, at: xAt },
+                CLeq: res.CLeq, wcEq: res.wcEq, k: res.k, isip: res.events.isip, warnings: res.warnings.concat(res.validity)
+            };
+        } catch (err) { return _fail('QUICK_FAILED', err && err.message || err, []); }
+    }
+
+    // CL (wall) or k (reservoir) that gives an observed closure time dtc (h after shut-in): bisection in log, ≈ 25 runs
+    function lkSolveCL(cfg, dtcObserved, opts) {
+        try {
+            opts = opts || {};
+            if (!(dtcObserved > 0)) return _fail('BAD_INPUT', 'An observed closure time (h after shut-in) is required.', ['dtcObserved']);
+            var conv = lkToEngine(cfg); if (!conv.ok) return conv;
+            var useK = (cfg.k != null && +cfg.k > 0) || (cfg.CL != null && +cfg.wc > 0.5);
+            var base = _clone(cfg); base.CL = null; base.wc = null;
+            var x0 = useK ? (+cfg.k > 0 ? +cfg.k : conv.e.kMd || 1e-3) : (+cfg.Cw > 0 ? +cfg.Cw : (+cfg.CL > 0 ? +cfg.CL : 1e-4));
+            var runs = 0, grid = opts.grid || 'fit';
+            function dtcOf(x) {
+                var c = _clone(base);
+                if (useK) { c.k = x; c.Cw = 0; } else { c.Cw = x; c.k = null; }
+                var r = lkSimulate(c, { grid: grid }); runs++;
+                if (!r || !r.ok) return null;
+                return r.events.tcMech != null ? r.events.tcMech - r.events.ts : Infinity;   // no closure → longer than any observation
+            }
+            // closure time falls as the leak-off rises: bracket in log x, then bisect
+            var lo = x0, hi = x0, dLo = dtcOf(lo), dHi = dLo, k = 0;
+            if (dLo == null) return _fail('SIMULATION_FAILED', 'The model run failed.', []);
+            while (dHi > dtcObserved && k < 12) { hi *= 4; dHi = dtcOf(hi); k++; if (dHi == null) return _fail('SIMULATION_FAILED', 'The model run failed.', []); }
+            while (dLo < dtcObserved && k < 24) { lo /= 4; dLo = dtcOf(lo); k++; if (dLo == null) return _fail('SIMULATION_FAILED', 'The model run failed.', []); }
+            if (!(dLo >= dtcObserved && dHi <= dtcObserved)) return _fail('NOT_BRACKETED', 'No leak-off coefficient in range reproduces that closure time.', ['dtcObserved']);
+            var mid = _sqrt(lo * hi);
+            for (var it = 0; it < 30 && hi / lo > 1 + 1e-4; it++) {
+                mid = _sqrt(lo * hi);
+                var dm = dtcOf(mid); if (dm == null) return _fail('SIMULATION_FAILED', 'The model run failed.', []);
+                if (dm > dtcObserved) lo = mid; else hi = mid;
+            }
+            mid = _sqrt(lo * hi);
+            var out = { ok: true, CL: null, k: null, runs: runs, solvedFor: useK ? 'k' : 'Cw' };
+            if (useK) {
+                out.k = mid;
+                var cc = _clone(base); cc.k = mid; cc.Cw = 0;
+                var rr = lkSimulate(cc, { grid: grid }); out.runs = ++runs;
+                out.CL = rr && rr.ok ? rr.CLeq : null;
+            } else out.CL = mid;
+            return out;
+        } catch (err) { return _fail('SOLVE_FAILED', err && err.message || err, []); }
+    }
+
+    // Volume × rate for a closure that is visible (R_vis ≥ 0.7) within goal.tH hours (§5.6, §6.1). A Job of ≤ 25 coarse runs
+    // (opts.maxRuns) on the 6 × 6 V × q grid. A probe along V at the lowest rate (the most visible one: R_vis falls slightly
+    // with the rate) finds the first visible volume; from that row on each row is scanned by rising rate, a row stops at its
+    // first feasible cell and the scan at the first feasible row (the smallest volume, then the lowest rate). 3 runs are kept
+    // for the refinement between the next smaller volume and the best cell; a scan cut by the budget says so. One run per step.
+    function _rvis(res) { var cf = res.cf, Af = res.Af, C = Af * cf, Vw = res.VwCw * 5.614583; return (C + Vw) > 0 ? C / (C + Vw) : null; }
+    function lkGoalSeekJob(cfg, goal, opts) {
+        var done = false, cancelled = false, result = null, st = null, label = 'starting';
+        opts = opts || {};
+        function finish(r) { result = r; done = true; }
+        function one(V, q) {
+            var c = _clone(cfg), tp = V / q / 60, t0 = 0;
+            c.schedule = [{ t: t0, q: q }, { t: t0 + tp, q: 0 }];
+            c.tEnd = t0 + tp + _max(st.tH * 1.5, 1);
+            var r = lkSimulate(c, { grid: 'coarse', counts: st.counts }); st.runs++;
+            if (!r || !r.ok) return { V: V, q: q, dtc: null, Rvis: null, ok: false };
+            var dtc = r.events.tcMech != null ? r.events.tcMech - r.events.ts : null, Rv = _rvis(r);
+            return { V: V, q: q, dtc: dtc, Rvis: Rv, ok: dtc != null && dtc <= st.tH && Rv != null && Rv >= 0.7 };
+        }
+        function init() {
+            if (!cfg || typeof cfg !== 'object') return finish(_fail('BAD_CONFIG', 'LkConfig expected.', ['cfg']));
+            if (!goal || goal.kind !== 'visibleClosureBy' || !(+goal.tH > 0)) return finish(_fail('BAD_GOAL', "goal {kind:'visibleClosureBy', tH} is required.", ['goal']));
+            var conv = lkToEngine(cfg); if (!conv.ok) return finish(conv);
+            var Vs = (goal.V || [2, 5, 10, 20, 40, 80]).slice().sort(function (x, y) { return x - y; }), qs = (goal.q || [1, 2, 3, 5, 8, 12]).slice().sort(function (x, y) { return x - y; });
+            var maxRuns = (+opts.maxRuns > 0) ? _floor(+opts.maxRuns) : 25;
+            st = { tH: +goal.tH, Vs: Vs, qs: qs, iV: 0, iq: 0, table: [], best: null, runs: 0, counts: opts.counts || {}, maxRuns: maxRuns,
+                   scanCap: _max(1, maxRuns - 3), phase: 'scan', ref: [], budgetHit: false, probe: true };
+        }
+        function scanStep() {
+            if (st.runs >= st.scanCap) { st.budgetHit = st.iV < st.Vs.length; st.phase = 'refine'; return; }
+            var r = one(st.Vs[st.iV], st.qs[st.iq]); st.table.push(r);
+            if (r.ok) { st.best = r; st.phase = 'refine'; return; }
+            if (st.probe) {   // probe along V at the lowest rate (the most visible one) for the first visible volume
+                if (r.Rvis != null && r.Rvis >= 0.7) { st.probe = false; st.iq = 1; if (st.iq >= st.qs.length) endRow(); return; }
+                st.iV++; if (st.iV >= st.Vs.length) st.phase = 'refine';
+                return;
+            }
+            st.iq++;
+            if (st.iq >= st.qs.length) endRow();
+        }
+        function endRow() { st.iq = 0; st.iV++; if (st.iV >= st.Vs.length) st.phase = 'refine'; }
+        function refineInit() {
+            st.phase = 'refining';
+            if (!st.best) return;
+            var iV = st.Vs.indexOf(st.best.V);
+            if (iV > 0) { var vLo = st.Vs[iV - 1]; for (var m = 1; m <= 3; m++) st.ref.push(+(vLo + (st.best.V - vLo) * m / 4).toPrecision(3)); }
+        }
+        function finalise() {
+            var best = st.best, tH = st.tH;
+            var text = best ? ('A closure visible within ' + _sig(tH, 3) + ' h needs about ' + _sig(best.V, 3) + ' bbl at ' + _sig(best.q, 3) + ' bbl/min.')
+                            : ('No scanned volume and rate gives a visible closure within ' + _sig(tH, 3) + ' h' + (st.budgetHit ? ' (the scan stopped at its ' + st.maxRuns + '-run budget at ' + _sig(st.Vs[_min(st.iV, st.Vs.length - 1)], 3) + ' bbl).' : '.'));
+            finish({ ok: true, V: best ? best.V : null, q: best ? best.q : null, runs: st.runs, table: st.table, budgetHit: st.budgetHit, text: text.slice(0, 299) });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: label };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; label = 'scan'; return { done: false, progress: 0, label: label }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The goal-seek was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.phase === 'scan') scanStep();
+                else {
+                    if (st.phase === 'refine') refineInit();
+                    if (st.ref.length && st.runs < st.maxRuns) {
+                        var rr = one(st.ref.shift(), st.best.q); st.table.push(rr);
+                        if (rr.ok && rr.V < st.best.V) { st.best = rr; st.ref = []; }
+                    } else st.ref = [];
+                    if (!st.ref.length) { finalise(); return { done: true, progress: 1, label: 'done' }; }
+                }
+                label = (st.phase === 'scan' ? 'scan' : 'refinement') + ', run ' + st.runs + ' of at most ' + st.maxRuns;
+                return { done: false, progress: _min(0.99, st.runs / st.maxRuns), label: label };
+            } catch (err) { finish(_fail('GOALSEEK_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function lkGoalSeek(cfg, goal, opts) {
+        try { return _drain(lkGoalSeekJob(cfg, goal, opts)); } catch (err) { return _fail('GOALSEEK_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Identifiable groups (§5.6, D15): Γ = r_p·CL·A_f/C_sys = 2·m_G/(π·√tp), Γ_PKN = r_p·CL·E′/h_f
+    // ─────────────────────────────────────────────────────────────────────
+    function lkGroups(x) {
+        try {
+            var res = x, cfg = null;
+            if (!x || !x.events) { cfg = x; res = lkSimulate(x, { grid: 'fit' }); }
+            if (!res || res.ok !== true) return _fail('SIMULATION_FAILED', (res && (res.why || (res.errors && res.errors[0]))) || 'The model run failed.', []);
+            var hf = cfg ? +cfg.hf : null, hp = cfg ? +cfg.hp : null, Ep = cfg ? +cfg.Ep : null;
+            if (res.cfgEcho) { hf = res.cfgEcho.hf; hp = res.cfgEcho.hp; Ep = res.cfgEcho.Ep; }
+            var rp = (hf > 0 && hp > 0) ? _min(1, hp / hf) : (res.Af > 0 ? res.ALs / res.Af : 1);
+            var C = res.Af * res.cf + res.VwCw * 5.614583;
+            var Gamma = C > 0 ? rp * res.CLeq * res.Af / C : null;
+            var GammaPKN = (Ep > 0 && hf > 0) ? rp * res.CLeq * Ep / hf : null;
+            var tpMin = res.tp * 60, mG = Gamma != null ? Gamma * PI * _sqrt(tpMin) / 2 : null, Rvis = C > 0 ? res.Af * res.cf / C : null;
+            return { ok: true, Gamma: Gamma, GammaPKN: GammaPKN, mG: mG, Rvis: Rvis, CL: res.CLeq,
+                     text: 'This falloff fixes Γ = r_p·CL·A_f/C_sys = 2·m_G/(π·√tp) = ' + _sig(Gamma, 4) + ' psi/√min' +
+                           (GammaPKN != null ? ' (' + (res.geometry === 'PKN' ? 'PKN form' : 'PKN-equivalent') + ' r_p·CL·E′/h_f = ' + _sig(GammaPKN, 5) + '); CL is conditional on E′ = ' + _sci(Ep, 2) + ' psi and h_f = ' + _sig(hf, 3) + ' ft.' : '.') };
+        } catch (err) { return _fail('GROUPS_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Leak budget (§6.4): q_k,max = ε·V/(Θ·t_end), Θ = p_D/p_D′ of the expected regime at t_end; pressure-test hold
+    // The regime comes from t_DL(t_end), in order of precedence:
+    //   ctx.tDLDraws  t_DL(t_end) per draw (dimensionless; the designer passes these) → the P90 is used
+    //   ctx.tDL       one t_DL(t_end)
+    //   ctx.kDraws    permeability draws in md (the §3.7 name): converted with t_DL = C_TDL·k·t_end/(φ·μ·c_t·L²), which needs
+    //                 ctx.phi, ctx.muRes (cp), ctx.ct (1/psi) and ctx.L (ft); without them the draws are not used (warning
+    //                 LEAK_KDRAWS_UNUSED) and the budget assumes linear flow
+    // ─────────────────────────────────────────────────────────────────────
+    function leakBudget(V, tEnd, ctx) {
+        try {
+            ctx = ctx || {};
+            if (!(V > 0) || !(tEnd > 0)) return _fail('BAD_INPUT', 'Injected volume (bbl) and shut-in duration (h) are required.', ['V', 'tEnd']);
+            var eps = (+ctx.eps > 0) ? +ctx.eps : 0.05, tDL = null, warnings = [];
+            var finiteList = function (a) { return a.filter(function (v) { return _okn(v) && v >= 0; }); };
+            if (Array.isArray(ctx.tDLDraws) && finiteList(ctx.tDLDraws).length) tDL = _p3(finiteList(ctx.tDLDraws)).p90;
+            else if (_okn(ctx.tDL)) tDL = ctx.tDL;
+            else if (Array.isArray(ctx.kDraws) && finiteList(ctx.kDraws).length) {
+                var phi = +ctx.phi, mu = +ctx.muRes, ct = +ctx.ct, Lx = +ctx.L;
+                if (phi > 0 && mu > 0 && ct > 0 && Lx > 0) {
+                    tDL = _p3(finiteList(ctx.kDraws).map(function (k) { return C_TDL * k * tEnd / (phi * mu * ct * Lx * Lx); })).p90;
+                } else {
+                    warnings.push(_w('LEAK_KDRAWS_UNUSED', 'warn', 'Permeability draws need φ, μ, c_t and the leak-off length L to give t_DL; linear flow (Θ = 2) is assumed.'));
+                }
+            }
+            var radial = tDL != null && tDL >= 1, th = radial ? theta(tDL) : 2;
+            var tD = tEnd / 24, qkMax = eps * V / (th * tD);   // bbl/d
+            var sigmaP = (+ctx.sigmaP > 0) ? +ctx.sigmaP : 0.05, VwCw = (+ctx.VwCw > 0) ? +ctx.VwCw : null;
+            var holdMin = VwCw != null ? 5 * sigmaP * VwCw / qkMax * 1440 : null;
+            var dpdT = (+ctx.dpdT > 0) ? +ctx.dpdT : (_isFinite(+ctx.tempF) && ctx.tempF != null ? 65 + _max(0, _min(1, (+ctx.tempF - 100) / 150)) * 40 : 65);
+            var dTneeded = 5 * sigmaP / dpdT, realistic = dTneeded >= ((+ctx.dTmin > 0) ? +ctx.dTmin : 0.05);
+            var regime = radial ? 'radial' : 'linear';
+            var text = 'A leak below ' + _sig(qkMax, 2) + ' bbl/d biases the after-closure signal by less than ' + _fx(eps * 100, 0) + ' % at ' + _sig(tEnd, 3) + ' h (' + regime +
+                       ' flow, Θ = ' + _fx(th, 2) + ').' + (holdMin != null ? ' A pressure-test hold of ' + _sig(holdMin, 2) + ' min proves it only if the column stays within ' + _sig(dTneeded, 1) + ' °F' +
+                       (realistic ? '.' : ', which is unrealistic: prove the leak after the fact with the leak plot instead.') : '');
+            return { ok: true, qkMax: qkMax, theta: th, regime: regime, tDL: tDL, holdMin: holdMin, dTneeded: dTneeded, holdRealistic: realistic, dpdT: dpdT, text: text.slice(0, 299), warnings: warnings };
+        } catch (err) { return _fail('LEAK_BUDGET_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Verification vectors (§5.4): V1–V14 (each case can be run alone with {only:[ids]})
+    // ─────────────────────────────────────────────────────────────────────
+    // general-α Nolte g by quadrature (a = 1 − (1 − u)², 400 midpoints): used for η with the model's own α (V4)
+    function gGeneral(d, al) {
+        var n = 400, s = 0;
+        for (var i = 0; i < n; i++) { var u = (i + 0.5) / n, a = 1 - (1 - u) * (1 - u), da = 2 * (1 - u) / n; s += _sqrt(_max(0, 1 + d - _pow(a, 1 / al))) * da; }
+        return 2 * s;
+    }
+    function _baseCfg(o) { var c = lkDefaults(); for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k]; return c; }
+    var TP = 5 / 60;
+    var VCASES = {
+        V1a: function () { return _vNolte(1, 0); },
+        V1b: function () { return _vNolte(0.5, 0); },
+        V1c: function () {
+            var out = [];
+            [[50, 2], [200, 0.5], [800, 0.25], [3200, 0.1]].forEach(function (g) {
+                var r = _vNolteRun(0.5, 0, { dt0: g[1] / 3600, r: 1.08, maxFrac: 1 / 60, nShut: g[0] });
+                out.push({ N: r.t.length, Gc: _gcExtrap(r, 0.5) });
+            });
+            return { grids: out };
+        },
+        V1d: function () {
+            var r = _vNolteRun(0.5, BASE_VWCW_FT3), iS = _idxAtOrAfter(r.t, r.events.ts, r.t.length), isip = r.pf[iS];
+            return { isip: isip, Gc: _gcExtrap(r, 0.5), GcExpected: (isip - 7000) * (1 + BASE_VWCW_FT3 / (13404 * 1.571e-5)) / 33.322 };
+        },
+        V2: function () {
+            var u = _units(), out = [];
+            [[1.863e-4, 0], [1.863e-4, 2], [1e-3, 0], [1e-3, 5], [5e-3, 0]].forEach(function (cs) {
+                var r = lkSimulate(_baseCfg({ mode: 'constP', constPbar: 600, hp: 50, Cw: cs[0], Sp: cs[1], VwCw: 0, KIc: 0, schedule: [{ t: 0, q: 5 }, { t: 0.5, q: 0 }], tEnd: 0.51, p0: 7600 }),
+                    { grid: { dt0: 0.25 / 3600, r: 1.05, maxFrac: 1 / 200, nShut: 10 } });
+                var w = PI * 50 / (2 * 5e6) * 600, C = cs[0] * u.sqmin, we = w + 2 * cs[1] * u.galp100, q = 5 * u.bpm, maxe = 0, Aend = null;
+                for (var i = 1; i < r.t.length; i++) {
+                    if (r.t[i] > 0.5 + 1e-12) break;
+                    var x = 2 * C * _sqrt(PI * r.t[i]) / we, Aex = q * we / (4 * PI * C * C) * (erfcx(x) + 2 * x / SQPI - 1);
+                    if (r.t[i] > 10 / 3600) maxe = _max(maxe, _abs(r.A[i] - Aex) / Aex);
+                    Aend = r.A[i];
+                }
+                var xe = 2 * C * _sqrt(PI * 0.5) / we;
+                out.push({ CL: cs[0], Sp: cs[1], A: Aend, Acarter: q * we / (4 * PI * C * C) * (erfcx(xe) + 2 * xe / SQPI - 1), maxRelErr: maxe });
+            });
+            return { cases: out };
+        },
+        V3: function () {
+            var u = _units(), out = [], K = KVISC, Ep = 5e6, hf = 50, mu = u.cp, q = 5 * u.bpm;
+            function law(g, t, KI) {
+                if (g === 'PKN') return _pow(2 / (PI * K.PKN), 0.8) * _pow(Ep * _pow(q / 2, 3) * _pow(t, 4) / (mu * _pow(hf, 4)), 0.2);
+                if (g === 'KGD') return KI ? _pow(q * t * Ep / (2 * SQPI * hf * KI), 2 / 3) : _pow(PI * K.KGD, -2 / 3) * _pow(Ep * _pow(q / 2, 3) * _pow(t, 4) / (mu * _pow(hf, 3)), 1 / 6);
+                if (KI) { var Kp = 4 * _sqrt(2 / PI) * KI; return 0.8546 * _pow(Ep * q * t / Kp, 0.4); }
+                return _pow(3 / (16 * K.radial), 4 / 9) * _pow(Ep * q * q * q * _pow(t, 4) / mu, 1 / 9);
+            }
+            [['PKN', 0], ['KGD', 0], ['radial', 0], ['KGD', 1000], ['radial', 1000]].forEach(function (cs) {
+                var r = lkSimulate(_baseCfg({ geometry: cs[0], KIc: cs[1], muCp: cs[1] ? 0 : 1, L0: 0.01, Cw: 0, VwCw: 0, hp: 50, tEnd: TP + 0.01, p0: 7000 }),
+                    { grid: { dt0: 0.1 / 3600, r: 1.05, maxFrac: 1 / 300, nShut: 10 } });
+                var i5 = _idxAtOrAfter(r.t, TP, r.t.length), ia = _idxAtOrAfter(r.t, 2.5 / 60, r.t.length), maxDev = 0;
+                for (var i = 1; i <= i5; i++) if (r.t[i] >= 0.1 / 60) maxDev = _max(maxDev, _abs(r.L[i] / law(cs[0], r.t[i], cs[1] * u.psiin) - 1));
+                out.push({ geometry: cs[0], vertex: cs[1] ? 'K' : 'M', L5: r.L[i5], exponent: _log(r.L[i5] / r.L[ia]) / _log(r.t[i5] / r.t[ia]), eta: r.etaS, maxLawDev: maxDev });
+            });
+            var KIp = 1000 * u.psiin;   // toughness prefactors under K′ = 4·√(2/π)·K_Ic: KGD (2√2/π)^(2/3), radial 0.8546
+            return { cases: out, prefKGD: _pow(2 * _sqrt(2) / PI, 2 / 3), prefRadial: 0.8546, KIp: KIp };
+        },
+        V4: function () {
+            var out = [];
+            [1e-6, 1e-4, 1e-3, 3e-2].forEach(function (cl) {
+                var r = lkSimulate(_baseCfg({ KIc: 0, hp: 50, Cw: cl, VwCw: 0, L0: 0.01, p0: 7000, tEnd: TP + (cl < 1e-5 ? 1 : 400) }),
+                    { grid: { dt0: 0.1 / 3600, r: 1.05, maxFrac: 1 / 300, nShut: cl < 1e-5 ? 50 : 1500 } });
+                var i5 = _idxAtOrAfter(r.t, TP, r.t.length), ia = _idxAtOrAfter(r.t, TP / 2, r.t.length);
+                var al = _log(r.A[i5] / r.A[ia]) / _log(r.t[i5] / r.t[ia]), etaG = null;
+                if (r.events.Gc.a05 != null) {
+                    var Gf = Gfn(), dtc = GinvLocal(r.events.Gc.a05, 0.5, Gf), gc = gGeneral(dtc, al), g0 = gGeneral(0, al);
+                    etaG = (gc - g0) / gc;
+                }
+                out.push({ CL: cl, alphaA: al, etaS: r.etaS, etaG: etaG });
+            });
+            return { cases: out };
+        },
+        V5: function () {
+            var u = _units(), VwCwB = BASE_VWCW_FT3 / u.bbl;
+            var r = lkSimulate(_baseCfg({ pBd: 9500, p0: 4500, KIc: 0, k: null, CL: 1.863e-4, wc: 1, dpRef: 2500, VwCw: VwCwB }), { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 300 } });
+            return { dpdt: (r.pw[5] - r.pw[0]) / (r.t[5] - r.t[0]) / 60, expected: 5 * u.bpm / BASE_VWCW_FT3 / 60, ok: r.ok };
+        },
+        V6: function () {
+            var r = lkSimulate(_baseCfg({ KIc: 0, CL: 1.863e-4, wc: 1, dpRef: 2500, Cw: 0, tEnd: TP + 500 }), { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 1900 } });
+            var u = _units(), Cc = 1.863e-4 * u.sqmin, n = r.t.length, ALf = r.AL[n - 1], out = [];
+            [20, 50, 100, 200].forEach(function (th) {
+                var i = _idxAtOrAfter(r.t, TP + th, n), j = i; while (r.t[j] > r.t[i] / 1.2) j--;
+                var Vt = r.VLc[i] * u.bbl / (2 * ALf), asym = Vt * 2500 / (PI * Cc);
+                out.push({ tH: th, ratio: (r.pf[i] - 4500) * _sqrt(r.t[i]) / asym, slope: _log((r.pf[i] - 4500) / (r.pf[j] - 4500)) / _log(r.t[i] / r.t[j]) });
+            });
+            return { k: r.k, points: out };
+        },
+        V7: function () {
+            var u = _units(), r = lkSimulate(_baseCfg({ KIc: 3000, pBd: 9500, p0: 4500, CL: 1.863e-4, wc: 0.5, dpRef: 2500, Sp: 1, VwCw: BASE_VWCW_FT3 / u.bbl,
+                pdl: { Cd: 0.002, pfo: 7000, fmax: 20 }, aperture: { law: 'hyp', sh: 60, sc: 100, fres: 0.1, sr: null }, nwb: { a: 1.528, b: 140.9, beta: 0.5 }, tEnd: TP + 200 }),
+                { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 800 } });
+            var n = r.t.length;
+            return { balanceErr: r.balanceErr, Vi: r.Vi[n - 1], ok: r.ok };
+        },
+        V8: function () {
+            var r = lkSimulate(lkDefaults(), { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 1600 } });
+            return { xf: r.xf.ts, pn: r.events.isip - 7000, eta: r.etaS, dtc: (r.events.tcMech - r.events.ts) * 60, ref: { xf: 131.2, pn: 600, eta: 0.900, dtc: 305.1 } };
+        },
+        V9: function () {
+            var r = lkSimulate(_baseCfg({ KIc: 0, Cw: 0, k: 0.1, farField: true, tEnd: TP + 2000 }), { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 1900 } });
+            var u = _units(), n = r.t.length, kk = 0.1 * u.md, eta = kk / (0.06 * 0.5 * u.cp * 1e-5), xe = r.xf.ts, Vtot = r.VLc[n - 1] * u.bbl, out = [];
+            [50, 200, 500, 1000, 2000].forEach(function (th) {
+                var i = _idxAtOrAfter(r.t, TP + th - 1e-9, n), j = i; while (r.t[j] > r.t[i] / 1.2) j--;
+                var rad = Vtot * 0.5 * u.cp / (4 * PI * kk * 40 * r.t[i]);
+                out.push({ tH: th, tD: eta * r.t[i] / (xe * xe), slope: _log((r.pf[i] - 4500) / (r.pf[j] - 4500)) / _log(r.t[i] / r.t[j]), dpOverRadial: (r.pf[i] - 4500) / rad });
+            });
+            return { xe: xe, points: out };
+        },
+        V10: function () {
+            var r = lkSimulate(_baseCfg({ pBd: 9500, p0: 4500 }), { grid: { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 1600 } });
+            var Gf = Gfn(), out = [], n = r.t.length, ts = r.events.ts;
+            [1, 5, 15, 30, 60, 120, 240].forEach(function (m) {
+                var i = _idxAtOrAfter(r.t, ts + m / 60, n), j = i + 1, dG = r.Ggen[j] - r.Ggen[i - 1];
+                var dGn = Gf((r.t[j] - ts) / r.tp, 0.5) - Gf((r.t[i - 1] - ts) / r.tp, 0.5);
+                out.push({ dtMin: m, dPdGgen: (r.pf[j] - r.pf[i - 1]) / dG, dPdGa05: (r.pf[j] - r.pf[i - 1]) / dGn });
+            });
+            return { points: out };
+        },
+        V13: function () {
+            var out = [];
+            [[0.5, 'a05'], [1, 'a1'], [0, 'const']].forEach(function (cs) {
+                var r = _vNolteRun(cs[0], 0, { dt0: 0.001 / 3600, r: 1.03, maxFrac: 1 / 400, nShut: 600 }), n = r.t.length, ts = r.events.ts, maxe = 0, ALs = r.AL[_idxAtOrAfter(r.t, ts, n)];
+                for (var i = 0; i < n; i++) {
+                    if (r.t[i] < ts + 1 / 60) continue;
+                    var d = (r.t[i] - ts) / TP, g = r.Bw[i] / (ALs * _sqrt(TP)), gx = cs[0] === 0 ? 2 * _sqrt(1 + d) : gN(d, cs[0]);
+                    maxe = _max(maxe, _abs(g - gx) / gx);
+                }
+                out.push({ alpha: cs[1], maxRelErr: maxe });
+            });
+            return { cases: out };
+        },
+        V14: function () {
+            var ex = makeAperture({ law: 'exp', sc: 100, fres: 0.1, sr: 2000 }), hy = makeAperture({ law: 'hyp', sh: 60 }), exInf = makeAperture({ law: 'exp', sc: 100, fres: 0.1, sr: 1e9 });
+            var minW = Infinity, minC = Infinity;
+            for (var x = 0; x <= 3000; x += 5) { minW = _min(minW, ex.W(-x, 1), hy.W(-x, 1)); minC = _min(minC, ex.rel(-x), hy.rel(-x)); }
+            return { minW: minW, minC: minC, hydExp: -ex.pbHyd() / 100, hydExpInf: -exInf.pbHyd() / 100, hydHyp: -hy.pbHyd() / 60, hydHypExpected: _sqrt(2) - 1 };
+        }
+    };
+    function _vNolteRun(alpha, VwCwFt3, grid) {
+        var u = _units();
+        return lkSimulate(_baseCfg({ mode: 'prescribed', prescribed: { tp: TP, Ap: 13404, alpha: alpha, rp: 0.8, cf: 1.571e-5 }, Cw: 1.863e-4, k: null,
+            VwCw: VwCwFt3 / u.bbl, tEnd: TP + 12, p0: 7000 }), { grid: grid || { dt0: 0.25 / 3600, r: 1.08, maxFrac: 1 / 60, nShut: 1500 } });
+    }
+    function _gcExtrap(r, al) {   // G_c from the last two open samples, linear in G (exact for Nolte)
+        var Gf = Gfn(), n = r.t.length, ts = r.events.ts, i = n - 1;
+        while (i > 0 && r.pf[i] < 7000) i--;
+        var G1 = Gf((r.t[i - 1] - ts) / TP, al), G2 = Gf((r.t[i] - ts) / TP, al);
+        return G2 + (7000 - r.pf[i]) * (G2 - G1) / (r.pf[i] - r.pf[i - 1]);
+    }
+    function _vNolte(alpha, VwCwFt3) {
+        var r = _vNolteRun(alpha, VwCwFt3), u = _units(), n = r.t.length, ts = r.events.ts, iS = _idxAtOrAfter(r.t, ts, n), isip = r.pf[iS];
+        var CL = 1.863e-4 * u.sqmin, mG = PI * 0.8 * CL * _sqrt(TP) / (2 * 1.571e-5), maxV = 0, maxP = 0, Gf = Gfn();
+        for (var i = iS + 1; i < n; i++) {
+            if (r.pf[i] <= 7000) break;
+            var d = (r.t[i] - ts) / TP, VLex = 2 * 0.8 * 13404 * CL * _sqrt(TP) * gN(d, alpha);
+            maxV = _max(maxV, _abs(r.VL[i] * u.bbl - VLex) / VLex);
+            maxP = _max(maxP, _abs(r.pf[i] - (isip - mG * Gf(d, alpha))));
+        }
+        var Gc = _gcExtrap(r, alpha);
+        return { isip: isip, eta: r.etaS, Gc: Gc, dtcMin: GinvLocal(Gc, alpha, Gf) * TP * 60, maxRelErrVL: maxV, maxDevP: maxP, mG0: mG, N: n };
+    }
+    function lkVerify(opts) {
+        try {
+            var only = opts && Array.isArray(opts.only) ? opts.only : Object.keys(VCASES), out = { ok: true };
+            only.forEach(function (id) { if (VCASES[id]) out[id] = VCASES[id](); });
+            return out;
+        } catch (err) { return _fail('VERIFY_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // History match (§5.7): Levenberg–Marquardt in transformed parameters (log k, log C_w, …), forward-difference Jacobian
+    // (n_p + 1 runs per iteration), run budget, honest uncertainty (n_eff inflation, structural spread), sloppy directions.
+    // Exposed as a Job (one LM iteration per step) next to the synchronous function with the identical result.
+    // ─────────────────────────────────────────────────────────────────────
+    // parameter catalogue: transform, how to read / write it on an LkConfig, default bounds
+    var PDEF = {
+        k: { log: true, get: function (c) { return c.k; }, set: function (c, v) { c.k = v; }, lo: 1e-7, hi: 100, label: 'permeability', unit: 'md' },
+        Cw: { log: true, get: function (c) { return c.Cw; }, set: function (c, v) { c.Cw = v; }, lo: 1e-7, hi: 1e-1, label: 'the wall coefficient', unit: 'ft/√min' },
+        Sp: { log: true, get: function (c) { return c.Sp; }, set: function (c, v) { c.Sp = v; }, lo: 1e-3, hi: 20, label: 'spurt', unit: 'gal/100 ft²' },
+        sigmaC: { log: false, get: function (c) { return c.sigmaC; }, set: function (c, v) { c.sigmaC = v; }, lo: null, hi: null, label: 'closure stress', unit: 'psia', pressure: true },
+        pr: { log: false, get: function (c) { return c.pr; }, set: function (c, v) { c.pr = v; }, lo: 0, hi: null, label: 'pore pressure', unit: 'psia', pressure: true },
+        Ep: { log: true, get: function (c) { return c.Ep; }, set: function (c, v) { c.Ep = v; }, lo: 3e5, hi: 1e7, label: 'E′', unit: 'psi' },
+        hf: { log: true, get: function (c) { return c.hf; }, set: function (c, v) { c.hf = v; }, lo: null, hi: null, label: 'fracture height', unit: 'ft' },
+        KIc: { log: true, get: function (c) { return c.KIc; }, set: function (c, v) { c.KIc = v; }, lo: 500, hi: 50000, label: 'apparent toughness', unit: 'psi·√in' },
+        sh: { log: true, get: function (c) { return c.aperture.sh; }, set: function (c, v) { c.aperture.sh = v; }, lo: 1, hi: 2000, label: 'contact scale', unit: 'psi' },
+        sc: { log: true, get: function (c) { return c.aperture.sc; }, set: function (c, v) { c.aperture.sc = v; }, lo: 1, hi: 2000, label: 'contact scale', unit: 'psi' },
+        Cd: { log: false, get: function (c) { return c.pdl.Cd; }, set: function (c, v) { c.pdl.Cd = _max(0, v); }, lo: 0, hi: 0.05, label: 'the PDL coefficient', unit: '1/psi' },
+        pfo: { log: false, get: function (c) { return c.pdl.pfo == null ? c.sigmaC : c.pdl.pfo; }, set: function (c, v) { c.pdl.pfo = v; }, lo: null, hi: null, label: 'the fissure-opening pressure', unit: 'psia', pressure: true },
+        VwCw: { log: true, get: function (c) { return c.VwCw; }, set: function (c, v) { c.VwCw = v; }, lo: null, hi: null, label: 'wellbore storage', unit: 'bbl/psi' }
+    };
+    function _presetFree(preset, cfg) {
+        var res = (cfg.k != null && +cfg.k > 0) || (+cfg.Cw > 0 === false), lk = res ? 'k' : 'Cw', law = (cfg.aperture && cfg.aperture.law) || 'none';
+        var contact = law === 'hyp' ? ['sh'] : (law === 'exp' ? ['sc'] : []);
+        var wall = (+cfg.Cw > 0 && res) ? ['Cw'] : [];
+        var f;
+        if (preset === 'falloff') f = [lk, 'sigmaC'].concat(contact);
+        else if (preset === 'geometry') f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Ep']);
+        else if (preset === 'pdl') f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Cd', 'pfo']);
+        else if (preset === 'spurt') f = [lk, 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Sp']);
+        else f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall);
+        return f;
+    }
+    function _freeRules(free) {
+        var w = [];
+        if (free.indexOf('Ep') >= 0 && free.indexOf('hf') >= 0) w.push(_w('GROUP_FREE', 'warn', 'E′ and the fracture height are both free: only their group is determined; free one member, read σ_c from that fit and report Γ.'));
+        if (free.indexOf('KIc') >= 0 && free.indexOf('Ep') >= 0) w.push(_w('TOUGHNESS_EP', 'warn', 'Apparent toughness is best freed only with E′ fixed: the two trade off along the Γ direction.'));
+        return w;
+    }
+
+    // n_eff = n·(1 − ρ1)/(1 + ρ1) from the lag-1 autocorrelation of the residuals; intervals inflate by √(n/n_eff)
+    function _neff(e) {
+        var n = e.length, sumE2 = 0, sumL = 0;
+        for (var i = 0; i < n; i++) { sumE2 += e[i] * e[i]; if (i > 0) sumL += e[i] * e[i - 1]; }
+        var rho1 = sumE2 > 0 ? sumL / sumE2 : 0, nEff = rho1 > 0 ? n * (1 - rho1) / (1 + rho1) : n;
+        return { rho1: rho1, nEff: nEff, inflation: _sqrt(n / _max(nEff, 1)) };
+    }
+    function _median(a) { var b = a.slice().sort(function (x, y) { return x - y; }); return b.length ? _pct(b, 0.5) : 0; }
+    function _sigmaFromData(t, p) {   // late falloff: σ_p = 1.4826·MAD(second differences)/√6 over the last 30 % of the points
+        var n = p.length, i0 = _max(1, _floor(n * 0.7)), d = [];
+        for (var i = i0; i < n - 1; i++) d.push(p[i + 1] - 2 * p[i] + p[i - 1]);
+        if (d.length < 5) return null;
+        var m = _median(d), dev = d.map(function (x) { return _abs(x - m); });
+        var s = 1.4826 * _median(dev) / _sqrt(6);
+        return s > 0 ? s : null;
+    }
+    // falloff data → ≤ nMax log-spaced points after the shut-in (injection weight 0 by default)
+    function _prepData(data, ts, nMax) {
+        var t = [], p = [], w = [];
+        for (var i = 0; i < data.t.length; i++) {
+            var ti = +data.t[i], pi = +data.p[i], wi = data.w ? +data.w[i] : 1;
+            if (!_isFinite(ti) || !_isFinite(pi) || !(wi > 0)) continue;
+            if (ti <= ts + 1e-9 && !(data.w && wi > 0 && data.injection)) continue;
+            t.push(ti); p.push(pi); w.push(wi);
+        }
+        if (t.length > nMax) {
+            var lt0 = _log(t[0] - ts), lt1 = _log(t[t.length - 1] - ts), pick = [], j = 0;
+            for (var k = 0; k < nMax; k++) {
+                var target = ts + _exp(lt0 + (lt1 - lt0) * k / (nMax - 1));
+                while (j < t.length - 1 && _abs(t[j + 1] - target) <= _abs(t[j] - target)) j++;
+                if (!pick.length || pick[pick.length - 1] !== j) pick.push(j);
+            }
+            t = pick.map(function (q) { return t[q]; }); p = pick.map(function (q) { return p[q]; }); w = pick.map(function (q) { return w[q]; });
+        }
+        return { t: t, p: p, w: w };
+    }
+    function _solveLin(A, b) {   // Gaussian elimination with partial pivoting (small systems)
+        var n = b.length, M = A.map(function (r, i) { return r.slice().concat([b[i]]); });
+        for (var i = 0; i < n; i++) {
+            var pv = i; for (var k = i + 1; k < n; k++) if (_abs(M[k][i]) > _abs(M[pv][i])) pv = k;
+            var tmp = M[i]; M[i] = M[pv]; M[pv] = tmp;
+            if (!(_abs(M[i][i]) > 1e-300)) return null;
+            for (k = i + 1; k < n; k++) { var f = M[k][i] / M[i][i]; for (var j = i; j <= n; j++) M[k][j] -= f * M[i][j]; }
+        }
+        var x = new Array(n);
+        for (i = n - 1; i >= 0; i--) { var s = M[i][n]; for (j = i + 1; j < n; j++) s -= M[i][j] * x[j]; x[i] = s / M[i][i]; }
+        return x;
+    }
+    function _inv(A) {
+        var n = A.length, cols = [];
+        for (var j = 0; j < n; j++) { var e = new Array(n); for (var i = 0; i < n; i++) e[i] = i === j ? 1 : 0; var c = _solveLin(A, e); if (!c) return null; cols.push(c); }
+        var out = []; for (i = 0; i < n; i++) { out.push([]); for (j = 0; j < n; j++) out[i].push(cols[j][i]); }
+        return out;
+    }
+    function _jacobiEig(S) {
+        var n = S.length, a = S.map(function (r) { return r.slice(); }), V = [];
+        for (var i = 0; i < n; i++) { V.push([]); for (var j = 0; j < n; j++) V[i].push(i === j ? 1 : 0); }
+        for (var sweep = 0; sweep < 100; sweep++) {
+            var off = 0; for (i = 0; i < n; i++) for (j = i + 1; j < n; j++) off += a[i][j] * a[i][j];
+            if (off < 1e-24) break;
+            for (var p = 0; p < n; p++) for (var q = p + 1; q < n; q++) {
+                if (_abs(a[p][q]) < 1e-300) continue;
+                var th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = (th >= 0 ? 1 : -1) / (_abs(th) + _sqrt(th * th + 1)), c = 1 / _sqrt(t * t + 1), s = t * c, k;
+                for (k = 0; k < n; k++) { var akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+                for (k = 0; k < n; k++) { var apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
+                for (k = 0; k < n; k++) { var vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; }
+            }
+        }
+        var idx = []; for (i = 0; i < n; i++) idx.push(i);
+        idx.sort(function (x, y) { return a[x][x] - a[y][y]; });
+        return { vals: idx.map(function (i2) { return a[i2][i2]; }), vecs: idx.map(function (i2) { return V.map(function (r) { return r[i2]; }); }) };
+    }
+
+    // ln G(Δt_D, α = ½) at the falloff times (null before or at the shut-in)
+    function _lnGAt(t, ts, tp) {
+        var Gf = Gfn(), out = new Array(t.length);
+        for (var i = 0; i < t.length; i++) { var d = (t[i] - ts) / tp, gv = d > 0 ? Gf(d, 0.5) : 0; out[i] = gv > 0 ? _log(gv) : null; }
+        return out;
+    }
+    // Bourdet derivative −dp/dx with the window L in x (x = ln G, so −dp/dln G = −G·dP/dG); null without a point L away on both sides
+    function _bourdetLn(x, p, L) {
+        var n = x.length, out = new Array(n), j, k;
+        for (var i = 0; i < n; i++) {
+            out[i] = null;
+            if (x[i] == null || p[i] == null) continue;
+            var l = -1, r = -1;
+            for (j = i - 1; j >= 0; j--) { if (x[j] == null) break; if (x[i] - x[j] >= L) { l = j; break; } }
+            for (k = i + 1; k < n; k++) { if (x[k] != null && x[k] - x[i] >= L) { r = k; break; } }
+            if (l < 0 || r < 0 || p[l] == null || p[r] == null) continue;
+            var dl = x[i] - x[l], dr = x[r] - x[i], sl = (p[i] - p[l]) / dl, sr = (p[r] - p[i]) / dr;
+            out[i] = -(sl * dr + sr * dl) / (dl + dr);
+        }
+        return out;
+    }
+
+    // model: transformed vector → pressures at the data times (one forward run on the fixed grid)
+    function _makeModel(cfg0, keys, tData, opts, counts) {
+        var conv = lkToEngine(cfg0);
+        if (!conv.ok) return { ok: false, fail: conv };
+        var e0 = conv.e, gs = _gridSpec(opts.grid || 'fit'), grid = buildGrid(e0, gs);   // grid fixed by schedule and t_end only
+        function cfgOf(x) {
+            var c = _clone(cfg0); c.CL = null; c.wc = null;
+            for (var i = 0; i < keys.length; i++) { var d = PDEF[keys[i]], v = d.log ? _exp(x[i]) : x[i]; d.set(c, v); }
+            if (c.pr >= c.sigmaC - 1) c.pr = c.sigmaC - 1;
+            if (c.pdl && c.pdl.pfo != null && c.pdl.pfo < c.sigmaC) c.pdl.pfo = c.sigmaC;
+            return c;
+        }
+        function run(x) {
+            var c = cfgOf(x), cv = lkToEngine(c);
+            if (!cv.ok) return null;
+            var raw = _simulateEngine(cv.e, grid, opts.budgetMs == null ? 2000 : opts.budgetMs, 0, counts);
+            counts.runs++;
+            if (raw.why) return null;
+            var res = _pack(cv.e, raw, {});
+            return { res: res, p: lkSample(res, tData), cfg: c };
+        }
+        return { ok: true, cfgOf: cfgOf, run: run, e0: e0, grid: grid };
+    }
+
+    function _toX(keys, cfg) { return keys.map(function (k) { var v = PDEF[k].get(cfg); return PDEF[k].log ? _log(v) : v; }); }
+
+    function lkFitJob(data, cfg, preset, opts) {
+        var done = false, cancelled = false, result = null, st = null, lastLabel = 'starting';
+        opts = opts || {};
+        preset = preset || 'full';
+        function finish(r) { result = r; done = true; }
+        function init() {
+            if (!data || !Array.isArray(data.t) || !Array.isArray(data.p) || data.t.length !== data.p.length) return finish(_fail('BAD_DATA', 'data {t, p} arrays of equal length are required.', ['data']));
+            if (['falloff', 'full', 'geometry', 'pdl', 'spurt'].indexOf(preset) < 0) return finish(_fail('BAD_PRESET', "preset must be 'falloff', 'full', 'geometry', 'pdl' or 'spurt'.", ['preset']));
+            var c0 = _clone(cfg);
+            if (c0.CL != null) {   // CL / w_c display inputs → {C_w, k} once, never fitted as such
+                var cv0 = lkToEngine(c0); if (!cv0.ok) return finish(cv0);
+                _resolveCL(cv0.e, {});
+                c0.Cw = cv0.e.Cw / cv0.e.u.sqmin; c0.k = cv0.e.kMd > 0 ? cv0.e.kMd : null; c0.CL = null; c0.wc = null;
+            }
+            c0.aperture = c0.aperture || { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null };
+            c0.pdl = c0.pdl || { Cd: 0, pfo: null, fmax: 50 };
+            var keys = Array.isArray(opts.free) && opts.free.length ? opts.free.slice() : _presetFree(preset, c0);
+            for (var i = 0; i < keys.length; i++) if (!PDEF[keys[i]]) return finish(_fail('BAD_PARAM', 'Unknown free parameter ' + keys[i] + '.', ['free']));
+            if (keys.indexOf('Cd') >= 0 && !(c0.pdl.Cd > 0)) c0.pdl.Cd = 0.002;
+            if (keys.indexOf('k') >= 0 && !(c0.k > 0)) c0.k = 1e-3;
+            if (keys.indexOf('Cw') >= 0 && !(c0.Cw > 0)) c0.Cw = 1e-4;
+            if (keys.indexOf('Sp') >= 0 && !(c0.Sp > 0)) c0.Sp = 0.5;
+            var conv = lkToEngine(c0); if (!conv.ok) return finish(conv);
+            var ts = conv.e.ts, pd = _prepData(data, ts, opts.nMax || 300);
+            if (pd.t.length < keys.length + 3) return finish(_fail('TOO_FEW_POINTS', 'Too few falloff points for ' + keys.length + ' free parameters.', ['data']));
+            var tLast = pd.t[pd.t.length - 1];
+            c0.tEnd = tLast + 1e-6 * (tLast - ts) + 1e-6;   // the grid is fixed by the schedule and the data end
+            var pMax = -Infinity, pMin = Infinity; pd.p.forEach(function (v) { if (v > pMax) pMax = v; if (v < pMin) pMin = v; });
+            // bounds in transformed space
+            var lo = [], hi = [];
+            keys.forEach(function (k) {
+                var d = PDEF[k], v = d.get(c0), L = d.lo, H = d.hi;
+                if (k === 'sigmaC') { L = _max(+c0.pr + 10, 1); H = pMax; }
+                if (k === 'pr') { L = 1; H = (keys.indexOf('sigmaC') >= 0 ? pMax : +c0.sigmaC) - 1; }
+                if (k === 'pfo') { L = +c0.sigmaC; H = pMax + 500; }
+                if (k === 'hf') { L = +c0.hp; H = 10 * c0.hp; }
+                if (k === 'VwCw') { L = v * 0.5; H = v * 1.5; }
+                if (opts.bounds && opts.bounds[k]) { L = opts.bounds[k][0]; H = opts.bounds[k][1]; }
+                lo.push(d.log ? _log(L) : L); hi.push(d.log ? _log(H) : H);
+            });
+            var counts = { runs: 0, evals: 0 };
+            var model = _makeModel(c0, keys, pd.t, opts, counts);
+            if (!model.ok) return finish(model.fail);
+            var sigmaP = (+opts.sigmaP > 0) ? +opts.sigmaP : (_sigmaFromData(pd.t, pd.p) || 0.5);
+            // starts: the given one plus (optionally) 4 deterministic perturbations
+            var x0 = _toX(keys, c0).map(function (v, i) { return _min(hi[i], _max(lo[i], v)); });
+            var starts = [x0];
+            if (opts.multiStart) {
+                var band = (+opts.sigmaBand > 0) ? +opts.sigmaBand : 50, pert = [[4, 1, 3], [0.25, -1, 1 / 3], [4, -1, 1 / 3], [0.25, 1, 3]];
+                pert.forEach(function (pp) {
+                    var x = x0.slice();
+                    keys.forEach(function (k, i) {
+                        if (k === 'k' || k === 'Cw') x[i] += _log(pp[0]);
+                        else if (k === 'sigmaC') x[i] += pp[1] * band;
+                        else if (k === 'sh' || k === 'sc') x[i] += _log(pp[2]);
+                        x[i] = _min(hi[i], _max(lo[i], x[i]));
+                    });
+                    starts.push(x);
+                });
+            }
+            var priors = [];
+            if (opts.priors && typeof opts.priors === 'object') keys.forEach(function (k, j) {
+                var pz = opts.priors[k]; if (!pz || !(+pz.value > 0 || (!PDEF[k].log && _isFinite(+pz.value)))) return;
+                var sd = PDEF[k].log ? +pz.sdLn : +pz.sd; if (!(sd > 0)) return;
+                priors.push({ j: j, mu: PDEF[k].log ? _log(+pz.value) : +pz.value, sd: sd, key: k });
+            });
+            // optional derivative residuals on ln(G·dP/dG) (§5.7): the same Bourdet engine and L on data and model; fixed index set
+            var dv = null, wD = (+opts.derivWeight > 0) ? +opts.derivWeight : (opts.deriv ? 0.2 : 0);
+            if (wD > 0) {
+                var tpD = ts - conv.e.tStart, LD = (+opts.derivL > 0) ? +opts.derivL : 0.1, xG = _lnGAt(pd.t, ts, tpD), Dd = _bourdetLn(xG, pd.p, LD), idxD = [], DdKeep = [];
+                for (var q0 = 0; q0 < Dd.length; q0++) if (Dd[q0] != null && Dd[q0] > 0) { idxD.push(q0); DdKeep.push(Dd[q0]); }
+                if (idxD.length >= 5) {
+                    var scaleD = _median(DdKeep);
+                    dv = { w: wD, L: LD, x: xG, idx: idxD, lnD: DdKeep.map(function (v) { return _log(v); }), scale: scaleD, floor: _log(1e-3 * scaleD) };
+                }
+            }
+            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [], priors: priors, dv: dv,
+                   maxRuns: (+opts.maxRuns > 0) ? +opts.maxRuns : 400, maxIter: (+opts.maxIter > 0) ? +opts.maxIter : 60, budgetMs: (+opts.budgetMs > 0) ? +opts.budgetMs : 5000,
+                   t0: _now(), cur: null, c0: c0 };
+        }
+        function resid(x) {
+            var r = st.model.run(x);
+            if (!r) return null;
+            var nd = st.pd.t.length, dv = st.dv, nD = dv ? dv.idx.length : 0, e = new Array(nd + nD + st.priors.length), S = 0;
+            for (var i = 0; i < nd; i++) { var v = r.p[i]; if (v == null) return null; e[i] = (v - st.pd.p[i]) * _sqrt(st.pd.w[i]); S += e[i] * e[i]; }
+            var Sd = S;
+            if (dv) {   // derivative pseudo-residuals in psi: w·D̃·(ln D_model − ln D_data), D̃ = the median data derivative
+                var Dm = _bourdetLn(dv.x, r.p, dv.L);
+                for (var m = 0; m < nD; m++) {
+                    var dmv = Dm[dv.idx[m]], lm = (dmv != null && dmv > 0) ? _max(_log(dmv), dv.floor) : dv.floor;
+                    e[nd + m] = dv.w * dv.scale * (lm - dv.lnD[m]); S += e[nd + m] * e[nd + m];
+                }
+            }
+            for (var q = 0; q < st.priors.length; q++) {   // MAP priors as pseudo-residuals in psi: σ_p·(θ − θ_prior)/σ_θ (log for log parameters)
+                var pz = st.priors[q]; e[nd + nD + q] = st.sigmaP * (x[pz.j] - pz.mu) / pz.sd; S += e[nd + nD + q] * e[nd + nD + q];
+            }
+            return { e: e, S: S, Sd: Sd, r: r };
+        }
+        function jac(x, base) {
+            var J = [];
+            for (var j = 0; j < st.keys.length; j++) {
+                var d = PDEF[st.keys[j]], h = d.log ? 1e-4 : _max(1e-3, _abs(x[j]) * 1e-6) * 10;
+                if (x[j] + h > st.hi[j]) h = -h;
+                var x2 = x.slice(); x2[j] += h;
+                var r2 = resid(x2); if (!r2) return null;
+                var col = new Array(base.e.length);
+                for (var k = 0; k < col.length; k++) col[k] = (r2.e[k] - base.e[k]) / h;
+                J.push(col);
+            }
+            return J;
+        }
+        function normal(J, e) {
+            var np = J.length, A = [], g = [];
+            for (var i = 0; i < np; i++) {
+                A.push(new Array(np)); var gi = 0;
+                for (var k = 0; k < e.length; k++) gi += J[i][k] * e[k];
+                g.push(gi);
+                for (var j = 0; j < np; j++) { var s = 0; for (k = 0; k < e.length; k++) s += J[i][k] * J[j][k]; A[i][j] = s; }
+            }
+            return { A: A, g: g };
+        }
+        function startNext() {
+            st.iStart++;
+            if (st.iStart >= st.starts.length) return false;
+            var x = st.starts[st.iStart], r = resid(x);
+            if (!r) { st.runsOut.push({ ok: false }); return startNext(); }
+            st.cur = { x: x, r: r, lam: 1e-2, it: 0, stop: null };
+            return true;
+        }
+        function iterate() {   // one LM iteration of the current start
+            var c = st.cur;
+            if (st.counts.runs >= st.maxRuns) { c.stop = 'budget'; return; }
+            if (_now() - st.t0 > st.budgetMs) { c.stop = 'time budget'; return; }
+            if (c.it >= st.maxIter) { c.stop = 'maxIter'; return; }
+            var J = jac(c.x, c.r); if (!J) { c.stop = 'failed run'; return; }
+            var ne = normal(J, c.r.e), improved = false;
+            for (var tries = 0; tries < 12; tries++) {
+                var B = ne.A.map(function (row, i) { var r2 = row.slice(); r2[i] *= (1 + c.lam); if (!(r2[i] > 0)) r2[i] = c.lam; return r2; });
+                var dx = _solveLin(B, ne.g.map(function (v) { return -v; }));
+                if (!dx) { c.lam *= 4; continue; }
+                var xn = c.x.map(function (v, i) { return _min(st.hi[i], _max(st.lo[i], v + dx[i])); });
+                var rn = resid(xn);
+                if (rn && rn.S < c.r.S) {
+                    var rel = (c.r.S - rn.S) / _max(c.r.S, 1e-300), step = 0;
+                    for (var i = 0; i < dx.length; i++) step = _max(step, _abs(xn[i] - c.x[i]) / (PDEF[st.keys[i]].log ? 1 : _max(1, _abs(c.x[i]))));
+                    c.x = xn; c.r = rn; c.lam = _max(c.lam / 5, 1e-7); improved = true;
+                    if (rel < 1e-7 || step < 1e-8) c.stop = 'converged';
+                    break;
+                }
+                c.lam *= 4;
+                if (st.counts.runs >= st.maxRuns) break;
+            }
+            c.it++;
+            if (!improved && !c.stop) c.stop = 'converged';
+        }
+        function finalise() {
+            var best = null;
+            st.runsOut.forEach(function (o) { if (o.ok && (!best || o.S < best.S)) best = o; });
+            if (!best) return finish(_fail('FIT_FAILED', 'Every model run of the history match failed.', []));
+            var keys = st.keys, np = keys.length, n = st.pd.t.length, x = best.x, base = best.r;
+            var J = jac(x, base);
+            var warnings = _freeRules(keys).concat(base.r.res.warnings.filter(function (w) { return w.level !== 'info'; }));
+            var ne = J ? normal(J, base.e) : null, C = ne ? _inv(ne.A) : null;
+            var s2 = base.Sd / _max(1, n - np), sd = [], corr = {}, params = {}, ci95 = {}, ci95I = {};
+            var ne1 = _neff(base.e.slice(0, n)), rho1 = ne1.rho1, nEff = ne1.nEff, infl = ne1.inflation, i;
+            keys.forEach(function (k, j) {
+                var d = PDEF[k], v = d.log ? _exp(x[j]) : x[j];
+                params[k] = v;
+                var s = (C && C[j][j] > 0) ? _sqrt(C[j][j] * s2) : null; sd.push(s);
+                if (s == null) { ci95[k] = null; ci95I[k] = null; return; }
+                ci95[k] = d.log ? [v * _exp(-1.96 * s), v * _exp(1.96 * s)] : [v - 1.96 * s, v + 1.96 * s];
+                ci95I[k] = d.log ? [v * _exp(-1.96 * s * infl), v * _exp(1.96 * s * infl)] : [v - 1.96 * s * infl, v + 1.96 * s * infl];
+            });
+            if (C) for (i = 0; i < np; i++) for (var j = i + 1; j < np; j++) if (sd[i] && sd[j]) corr[keys[i] + '_' + keys[j]] = C[i][j] * s2 / (sd[i] * sd[j]);
+            // sloppy directions: correlation-scaled Fisher, λ_min/λ_max < 1e-4
+            var sloppy = [], eig = null;
+            if (ne) {
+                var Fs = ne.A.map(function (row, a) { return row.map(function (v, b) { return v / _sqrt(ne.A[a][a] * ne.A[b][b]); }); });
+                eig = _jacobiEig(Fs);
+                var lmax = eig.vals[eig.vals.length - 1];
+                eig.vals.forEach(function (lv, m) { if (lv / lmax < 1e-4) sloppy.push(_sloppyEntry(keys, eig.vecs[m], best.r.r.cfg, best.r.r.res, C, s2, infl)); });
+            }
+            var bestRes = best.r.r.res, bestCfg = best.r.r.cfg, grp = lkGroups(bestRes);
+            var rmse = _sqrt(base.Sd / n), chi2 = base.Sd / (st.sigmaP * st.sigmaP);
+            if (st.sigmaP > 0 && rmse > 5 * st.sigmaP) warnings.push(_w('FIT_MISFIT', 'warn', 'The model does not fit (rmse ' + _sig(rmse, 3) + ' psi against a noise of ' + _sig(st.sigmaP, 2) + ' psi): a fixed height or E′ may be wrong; free one member of the {E′, h_f} group.'));
+            var conv = st.runsOut.filter(function (o) { return o.ok && o.S <= best.S * 1.05; }).length;
+            var structural = { sigmaC: null, pr: null, k: null, CLeq: null };
+            var out = {
+                ok: true, preset: preset, params: params, ci95: ci95, ci95Inflated: ci95I, corr: corr, nEff: nEff, rho1: rho1, inflation: infl,
+                structural: structural, groups: grp.ok ? { Gamma: grp.Gamma, GammaPKN: grp.GammaPKN == null ? 0 : grp.GammaPKN, text: grp.text.slice(0, 299) } : { Gamma: 0, GammaPKN: 0, text: 'The identifiable group could not be computed.' },
+                sloppy: sloppy, starts: { n: st.starts.length, converged: conv }, runs: st.counts.runs, chi2: chi2, rmse: rmse, sigmaP: st.sigmaP,
+                stopReason: best.stop || 'converged', warnings: warnings,
+                free: keys.slice(), cfg: bestCfg, CLeq: bestRes.CLeq, dpCL: bestRes.dpCL, wcEq: bestRes.wcEq, kEq: bestRes.k, evals: st.counts.evals,
+                design: { t: st.pd.t.slice(), p: st.pd.p.slice(), w: st.pd.w.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null, priors: st.priors.map(function (pz) { return pz.key; }),
+                S: base.S, Sd: base.Sd, deriv: st.dv ? { weight: st.dv.w, L: st.dv.L, n: st.dv.idx.length, scale: st.dv.scale } : null,
+                fitOpts: { nMax: opts.nMax || 300, sigmaP: st.sigmaP, bounds: opts.bounds || null, priors: opts.priors || null, derivWeight: st.dv ? st.dv.w : 0, derivL: st.dv ? st.dv.L : null, grid: opts.grid || 'fit', budgetMs: opts.budgetMs || null }
+            };
+            finish(out);
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: lastLabel };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; startNext(); lastLabel = 'start 1'; return { done: false, progress: 0, label: lastLabel }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The history match was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.cur && !st.cur.stop) iterate();
+                if (st.cur && st.cur.stop) {
+                    st.runsOut.push({ ok: true, x: st.cur.x, r: st.cur.r, S: st.cur.r.S, stop: st.cur.stop });
+                    if (!startNext()) { finalise(); return { done: true, progress: 1, label: 'done' }; }
+                }
+                var prog = _min(0.99, (st.iStart + (st.cur ? st.cur.it / st.maxIter : 0)) / st.starts.length);
+                lastLabel = 'start ' + (st.iStart + 1) + ' of ' + st.starts.length + ', iteration ' + (st.cur ? st.cur.it : 0);
+                return { done: false, progress: prog, label: lastLabel };
+            } catch (err) { finish(_fail('FIT_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function _drain(job, cap) { var n = 0, s; do { s = job.step(); n++; } while (!s.done && n < (cap || 100000)); return job.result(); }
+    function lkFit(data, cfg, preset, opts) {
+        try {
+            var r = _drain(lkFitJob(data, cfg, preset, opts));
+            if (r && r.ok && opts && opts.structural) _structural(r, data, preset, opts);
+            return r;
+        } catch (err) { return _fail('FIT_FAILED', err && err.message || err, []); }
+    }
+    // structural spread: refit with each aperture law and PDL on/off; ranges over the structures with Δχ²/s² ≤ 4 + 2·|Δn_p|
+    function _structural(fit, data, preset, opts) {
+        var laws = ['none', 'exp', 'hyp'], rows = [];
+        laws.forEach(function (law) {
+            [false, true].forEach(function (pdl) {
+                var c = _clone(fit.cfg); c.aperture.law = law; c.pdl.Cd = pdl ? 0.002 : 0;
+                var free = fit.free.filter(function (k) { return k !== 'sh' && k !== 'sc' && k !== 'Cd'; });
+                if (law === 'hyp') free.push('sh'); if (law === 'exp') free.push('sc'); if (pdl) free.push('Cd');
+                var o = _clone(opts); o.free = free; o.structural = false; o.multiStart = false;
+                var f = _drain(lkFitJob(data, c, preset, o));
+                if (f && f.ok) rows.push(f);
+            });
+        });
+        // kept: Δχ²/s² ≤ 4 + 2·|Δn_p| against the best structure (s² = χ²_best/(n − n_p,best), the residual variance). The
+        // ratio rule χ² ≤ 1.5·χ²_best depended on n: noise-free it kept only the true structure (a one-point range), on noisy
+        // data with n ≈ 500 it admitted structures up to Δχ²/s² ≈ 250
+        var best = null; rows.forEach(function (f) { if (!best || f.chi2 < best.chi2) best = f; });
+        var nD = data && data.t ? data.t.length : 0, npB = best && best.free ? best.free.length : 0;
+        var s2B = best ? Math.max(best.chi2 / Math.max(1, nD - npB), 1e-30) : 1;
+        var keep = rows.filter(function (f) { var dnp = Math.abs((f.free ? f.free.length : 0) - npB); return (f.chi2 - best.chi2) / s2B <= 4 + 2 * dnp; });
+        function rng(get) { var v = keep.map(get).filter(function (x) { return _isFinite(x); }); if (!v.length) return null; return [_min.apply(null, v), _max.apply(null, v)]; }
+        fit.structural = { sigmaC: rng(function (f) { return f.params.sigmaC != null ? f.params.sigmaC : f.cfg.sigmaC; }), pr: rng(function (f) { return f.params.pr != null ? f.params.pr : f.cfg.pr; }),
+                           k: rng(function (f) { return f.kEq; }), CLeq: rng(function (f) { return f.CLeq; }), n: keep.length };
+    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Profile likelihood (§5.7 item 4, §6.7): fix one parameter at n values around the estimate, refit the others (warm start
+    // from the neighbour), Δχ² = (S(v) − S_best)/s², s² = S_d,best/(n − n_p); the 95 % interval is where Δχ² ≤ 3.84 (× the
+    // n_eff inflation² for the inflated interval). One refit per Job step.
+    // ─────────────────────────────────────────────────────────────────────
+    function lkProfileJob(fit, key, opts) {
+        var done = false, cancelled = false, result = null, st = null, label = 'starting';
+        opts = opts || {};
+        function finish(r) { result = r; done = true; }
+        function init() {
+            if (!fit || fit.ok !== true || !fit.cfg || !fit.design) return finish(_fail('BAD_FIT', 'A successful history match (LkFit) is required.', ['fit']));
+            key = key || 'sigmaC';
+            if (fit.free.indexOf(key) < 0 || !PDEF[key]) return finish(_fail('NOT_FREE', 'The profiled parameter must be free in the match.', ['key']));
+            var others = fit.free.filter(function (k) { return k !== key; });
+            if (!others.length) return finish(_fail('NOTHING_TO_PROFILE', 'A profile needs at least one other free parameter.', ['key']));
+            var d = PDEF[key], n = (+opts.n >= 3) ? _floor(+opts.n) : 15, span = (+opts.span > 0) ? +opts.span : 2.5;
+            var v0 = fit.params[key], x0 = d.log ? _log(v0) : v0, ci = fit.ci95[key];
+            var sdX = ci ? (d.log ? (_log(ci[1]) - _log(ci[0])) : (ci[1] - ci[0])) / (2 * 1.96) : null;
+            var half = span * 1.96 * (sdX > 0 ? sdX : (d.log ? 0.05 : 5));
+            if (!d.log) half = _max(half, (+opts.minHalf > 0) ? +opts.minHalf : 1);
+            var xs = [];
+            if (Array.isArray(opts.values) && opts.values.length) xs = opts.values.map(function (v) { return d.log ? _log(+v) : +v; });
+            else for (var i = 0; i < n; i++) xs.push(x0 - half + 2 * half * i / (n - 1));
+            xs = xs.filter(function (x) { return _isFinite(x) && _abs(x - x0) > 1e-12 * _max(1, _abs(x0)); }).sort(function (a, b) { return a - b; });
+            var up = xs.filter(function (x) { return x > x0; }), dn = xs.filter(function (x) { return x < x0; }).reverse();
+            var np = fit.free.length, nd = fit.design.t.length, s2 = fit.Sd / _max(1, nd - np);
+            var fo = fit.fitOpts || {};
+            st = { key: key, d: d, x0: x0, others: others, queue: up.map(function (x) { return { x: x, side: 1 }; }).concat(dn.map(function (x) { return { x: x, side: -1 }; })),
+                   pts: [{ x: x0, S: fit.S, cfg: fit.cfg, ok: true }], prev: { '1': fit.cfg, '-1': fit.cfg }, s2: s2, runs: 0, total: up.length + dn.length,
+                   data: opts.data || { t: fit.design.t, p: fit.design.p, w: fit.design.w },
+                   fo: { nMax: fo.nMax || 300, sigmaP: fo.sigmaP || fit.sigmaP, bounds: fo.bounds || undefined, priors: fo.priors || undefined, derivWeight: fo.derivWeight || 0, derivL: fo.derivL || undefined,
+                         grid: fo.grid || 'fit', maxRuns: (+opts.maxRunsPerFit > 0) ? +opts.maxRunsPerFit : 150 } };
+        }
+        function one() {
+            var q = st.queue.shift(), c = _clone(st.prev[String(q.side)]), v = st.d.log ? _exp(q.x) : q.x;
+            st.d.set(c, v);
+            if (st.key === 'sigmaC' && c.pr >= v - 1) c.pr = v - 10;
+            var o = _clone(st.fo); o.free = st.others.slice(); o.multiStart = false;
+            if (o.bounds && o.bounds[st.key]) delete o.bounds[st.key];
+            var f = _drain(lkFitJob(st.data, c, fit.preset, o));
+            st.runs += f && f.runs ? f.runs : 0;
+            if (f && f.ok) { st.pts.push({ x: q.x, S: f.S, cfg: f.cfg, ok: true }); st.prev[String(q.side)] = f.cfg; }
+            else st.pts.push({ x: q.x, S: null, ok: false });
+        }
+        function bound(pts, side, lim) {   // first crossing of Δχ² = lim walking out from the minimum on one side, linear in √Δχ²
+            var seq = pts.filter(function (p) { return p.ok && (side > 0 ? p.x >= st.x0 : p.x <= st.x0); }).sort(function (a, b) { return side * (a.x - b.x); });
+            var rl = _sqrt(lim), rt = function (v) { return _sqrt(_max(0, v)); };
+            for (var i = 1; i < seq.length; i++) {
+                var a = seq[i - 1], b = seq[i], ra = rt(a.dchi2), rb = rt(b.dchi2);
+                if (ra <= rl && rb > rl) return a.x + (rl - ra) * (b.x - a.x) / (rb - ra);
+            }
+            return null;
+        }
+        function finalise() {
+            var Smin = Infinity; st.pts.forEach(function (p) { if (p.ok && p.S < Smin) Smin = p.S; });
+            st.pts.forEach(function (p) { p.dchi2 = p.ok ? (p.S - fit.S) / st.s2 : null; });
+            var infl = fit.inflation || 1, d = st.d, tr = function (x) { return x == null ? null : (d.log ? _exp(x) : x); };
+            var lo = bound(st.pts, -1, 3.84), hi = bound(st.pts, 1, 3.84), loI = bound(st.pts, -1, 3.84 * infl * infl), hiI = bound(st.pts, 1, 3.84 * infl * infl);
+            var pts = st.pts.slice().sort(function (a, b) { return a.x - b.x; });
+            var lin = fit.ci95[st.key], v0 = fit.params[st.key], agree = null, text;
+            var lbl = _cap(LABEL[st.key] || st.key), unit = d.pressure ? ' psi' : '';
+            var fmtHw = function (a, b) { return d.pressure ? _sig(_abs(b - a), 2) + unit : _fx(100 * _abs(b / a - 1), 0) + ' %'; };
+            if (lo != null && hi != null && lin) {
+                var rL = d.log ? (st.x0 - lo) / (st.x0 - _log(lin[0])) : (v0 - lo) / (v0 - lin[0]);
+                var rH = d.log ? (hi - st.x0) / (_log(lin[1]) - st.x0) : (hi - v0) / (lin[1] - v0);
+                agree = _abs(rL - 1) <= 0.25 && _abs(rH - 1) <= 0.25;
+                text = lbl + ': the profile gives −' + fmtHw(tr(lo), v0) + ' / +' + fmtHw(v0, tr(hi)) + ' (linearised ±' + fmtHw(lin[0], v0) + '): ' +
+                       (agree ? 'the linearised interval holds.' : (rL > 1.25 || rH > 1.25 ? 'the linearised interval is too narrow; quote the profile.' : 'the linearised interval is conservative.'));
+            } else {
+                text = lbl + ': the profile does not reach Δχ² = 3.84 on ' + (lo == null && hi == null ? 'either side' : (lo == null ? 'the low side' : 'the high side')) + ' within the scanned range; the interval is wider than the scan.';
+            }
+            if (Smin < fit.S * (1 - 1e-6) - 1e-9) text += ' A lower misfit was found at ' + _sig(tr(pts.filter(function (p) { return p.ok && p.S === Smin; })[0].x), 5) + unit + ': the match had not reached its minimum.';
+            finish({ ok: true, key: st.key, values: pts.map(function (p) { return tr(p.x); }), S: pts.map(function (p) { return p.S; }), dchi2: pts.map(function (p) { return p.dchi2; }),
+                     ci95: [tr(lo), tr(hi)], ci95Inflated: [tr(loI), tr(hiI)], linear: lin ? lin.slice() : null, agree: agree, runs: st.runs, refits: st.total, text: text.slice(0, 299) });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: label };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; label = 'profile of ' + key; return { done: false, progress: 0, label: label }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The profile was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.queue.length) one();
+                if (!st.queue.length) { finalise(); return { done: true, progress: 1, label: 'done' }; }
+                var k = st.total - st.queue.length;
+                label = 'profile of ' + key + ': refit ' + k + ' of ' + st.total;
+                return { done: false, progress: _min(0.99, k / st.total), label: label };
+            } catch (err) { finish(_fail('PROFILE_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function lkProfile(fit, key, opts) {
+        try { return _drain(lkProfileJob(fit, key, opts)); } catch (err) { return _fail('PROFILE_FAILED', err && err.message || err, []); }
+    }
+    var LABEL = { k: 'permeability', Cw: 'the wall coefficient', Sp: 'spurt', sigmaC: 'closure stress', pr: 'pore pressure', Ep: 'E′', hf: 'fracture height',
+                  KIc: 'apparent toughness', sh: 'the contact scale', sc: 'the contact scale', Cd: 'the PDL coefficient', pfo: 'the fissure-opening pressure', VwCw: 'wellbore storage' };
+    function _sloppyEntry(keys, vec, cfg, res, C, s2, infl) {
+        var comps = keys.map(function (k, i) { return { k: k, v: vec[i] }; }).sort(function (a, b) { return _abs(b.v) - _abs(a.v); });
+        var top = comps.filter(function (c) { return _abs(c.v) > 0.3; }).slice(0, 3), vobj = {};
+        keys.forEach(function (k, i) { vobj[k] = vec[i]; });
+        var names = top.map(function (c) { return c.k; }), text;
+        var geo = names.indexOf('Ep') >= 0 || names.indexOf('hf') >= 0 || names.indexOf('KIc') >= 0;
+        if (geo) {
+            var g = lkGroups(res), pm = _groupPm(keys, cfg, res, C, s2, infl);
+            text = (names.indexOf('Ep') >= 0 && names.indexOf('hf') >= 0 ? 'E′ and fracture height cannot be separated by this test' : top.map(function (c) { return LABEL[c.k]; }).join(', ').replace(/^./, function (m) { return m.toUpperCase(); }) + ' cannot be separated by this test') +
+                ': only Γ = ' + _sig(g.Gamma, 3) + ' psi/√min (r_p·CL·E′/h_f = ' + _sig(g.GammaPKN, 3) + ') is determined (±' + _sig(pm, 1) + ' %). CL = ' + _sci(res.CLeq, 2) +
+                ' ft/√min assumes E′ = ' + _sci(cfg.Ep, 1) + ' psi and h_f = ' + _sig(cfg.hf, 3) + ' ft.';
+        } else {
+            text = top.map(function (c) { return LABEL[c.k]; }).join(' and ').replace(/^./, function (m) { return m.toUpperCase(); }) + ' cannot be separated by this test; only their combination is determined.';
+        }
+        return { vec: vobj, text: text.slice(0, 299) };
+    }
+    // relative 95 % half-width (%) of Γ_PKN = r_p·CL·E′/h_f from the parameter covariance (linear propagation)
+    function _groupPm(keys, cfg, res, C, s2, infl) {
+        if (!C) return 0;
+        var dl = keys.map(function (k) {
+            if (k === 'Ep') return 1;
+            if (k === 'hf') return (cfg.hp < cfg.hf) ? -2 : -1;
+            if (k === 'Cw') return res.CLeq > 0 ? (cfg.Cw || 0) / res.CLeq : 0;
+            if (k === 'k') return res.CLeq > 0 ? 0.5 * (res.CLeq - (cfg.Cw || 0)) / res.CLeq : 0;
+            return 0;
+        });
+        var v = 0; for (var i = 0; i < keys.length; i++) for (var j = 0; j < keys.length; j++) v += dl[i] * dl[j] * C[i][j] * s2;
+        return 100 * 1.96 * _sqrt(_max(0, v)) * (infl || 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Fisher information on a planned design (noise only): {tEnd, sigma, nPts, free, priors?}
+    // ─────────────────────────────────────────────────────────────────────
+    function lkFisher(cfg, design) {
+        try {
+            design = design || {};
+            var c0 = _clone(cfg); c0.aperture = c0.aperture || { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null }; c0.pdl = c0.pdl || { Cd: 0, pfo: null, fmax: 50 };
+            var conv = lkToEngine(c0); if (!conv.ok) return conv;
+            var ts = conv.e.ts, tEnd = (+design.tEnd > ts) ? +design.tEnd : c0.tEnd, nPts = (+design.nPts >= 5) ? _floor(+design.nPts) : 250;
+            var sigma = (+design.sigma > 0) ? +design.sigma : 0.5;
+            var keys = Array.isArray(design.free) && design.free.length ? design.free.slice() : _presetFree('full', c0);
+            var t = [], t0 = 10 / 3600;
+            for (var i = 0; i < nPts; i++) t.push(ts + _exp(_log(t0) + (_log(tEnd - ts) - _log(t0)) * i / (nPts - 1)));
+            c0.tEnd = tEnd * (1 + 1e-9) + 1e-6;
+            var counts = { runs: 0, evals: 0 }, model = _makeModel(c0, keys, t, design, counts);
+            if (!model.ok) return model.fail;
+            var lin = {}; keys.forEach(function (k) { lin[k] = !PDEF[k].log || !(PDEF[k].get(c0) > 0); });
+            var x = keys.map(function (k) { var v = PDEF[k].get(c0); return lin[k] ? v : _log(v); });
+            var cfgOf = function (xx) { var c = _clone(c0); c.CL = null; c.wc = null; keys.forEach(function (k, j) { PDEF[k].set(c, lin[k] ? xx[j] : _exp(xx[j])); }); if (c.pr >= c.sigmaC - 1) c.pr = c.sigmaC - 1; return c; };
+            function runAt(xx) {
+                var c = cfgOf(xx), cv = lkToEngine(c); if (!cv.ok) return null;
+                var raw = _simulateEngine(cv.e, model.grid, 2000, 0, counts); counts.runs++;
+                if (raw.why) return null;
+                return lkSample(_pack(cv.e, raw, {}), t);
+            }
+            var p0 = runAt(x); if (!p0) return _fail('SIMULATION_FAILED', 'The base run failed.', []);
+            var J = [];
+            for (var j = 0; j < keys.length; j++) {
+                var hh = lin[keys[j]] ? (keys[j] === 'Cw' || keys[j] === 'k' ? _max(1e-9, _abs(x[j]) * 1e-3) : _max(1e-3, _abs(x[j]) * 1e-6) * 10) : 1e-4;
+                var x2 = x.slice(); x2[j] += hh;
+                var p2 = runAt(x2); if (!p2) return _fail('SIMULATION_FAILED', 'A perturbed run failed.', []);
+                J.push(p2.map(function (v, m) { return (v - p0[m]) / hh; }));
+            }
+            var F = keys.map(function (a, ia) { return keys.map(function (b, ib) { var s = 0; for (var m = 0; m < t.length; m++) s += J[ia][m] * J[ib][m]; return s / (sigma * sigma); }); });
+            var pri = design.priors || {};
+            keys.forEach(function (k, ia) { if (pri[k] > 0) F[ia][ia] += 1 / (pri[k] * pri[k]); });
+            if (design.gaugeFactor > 0) F = F.map(function (row) { return row.map(function (v) { return v * design.gaugeFactor; }); });
+            var C = _inv(F), ci = {}, corr = {}, sd = {};
+            keys.forEach(function (k, ia) {
+                var s = (C && C[ia][ia] > 0) ? _sqrt(C[ia][ia]) : null, v = PDEF[k].get(c0);
+                sd[k] = s;
+                ci[k] = s == null ? null : (lin[k] ? 1.96 * s : (_exp(1.96 * s) - 1) * v);
+            });
+            if (C) for (var a = 0; a < keys.length; a++) for (var b = a + 1; b < keys.length; b++) if (sd[keys[a]] && sd[keys[b]]) corr[keys[a] + '_' + keys[b]] = C[a][b] / (sd[keys[a]] * sd[keys[b]]);
+            var Fs = F.map(function (row, ia) { return row.map(function (v, ib) { return v / _sqrt(F[ia][ia] * F[ib][ib]); }); }), eg = _jacobiEig(Fs), sloppy = [];
+            var res0 = (function () { var cv = lkToEngine(cfgOf(x)); return _pack(cv.e, _simulateEngine(cv.e, model.grid, 2000, 0, counts), {}); })();
+            eg.vals.forEach(function (lv, m) { if (lv / eg.vals[eg.vals.length - 1] < 1e-4) sloppy.push(_sloppyEntry(keys, eg.vecs[m], c0, res0, C, 1, 1)); });
+            return { ok: true, ci: ci, sd: sd, corr: corr, eig: eg.vals, sloppy: sloppy, free: keys, logParam: keys.map(function (k) { return !lin[k]; }), F: F, C: C, runs: counts.runs, t: t, res: null };
+        } catch (err) { return _fail('FISHER_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // "What this test can tell you" (§6.7)
+    // ─────────────────────────────────────────────────────────────────────
+    // ctx (all optional):
+    //   extendTimesH       shut-in durations of the extension table (h; default 0.5, 1, 2, 3, 5, 7, 14 days)
+    //   tDLPerHourDraws    per designer / uncertainty draw, the t_DL rate C_TDL·k/(φ·μ·c_t·L²) in 1/h (t_DL(t_end) = value·t_end);
+    //                      P(radial) = share of draws with t_DL(t_end) ≥ 1.6. Without it P(radial) is 0 or 1 from the fitted model
+    //   profile, profileN  run the 1-D σ_c profile (≈ 10 refits) on demand
+    // The extension table's σ(p_i) comes from the Fisher matrix of the match's free set plus p_r (at its configured value, the
+    // linearisation point) when the match held p_r fixed, so a fall-off-preset match still reports how p_i narrows; a wall-only
+    // model (no reservoir term) cannot estimate p_r and flags its rows pFixed:true (σ(p_i) 0, no keep-or-pull comparison).
+    // The k range is the inflated Fisher interval of log k on the extended shut-in (kBasis 'fisher'); the §4.12 bounds with the
+    // forecast D belong to the after-closure analysis (57) and replace it once that engine is wired in.
+    function identify(fit, ctx) {
+        try {
+            if (!fit || fit.ok !== true) return _fail('BAD_FIT', 'A successful history match (LkFit) is required.', ['fit']);
+            ctx = ctx || {};
+            var rows = [], infl = fit.inflation || 1, sloppyKeys = {}, structural = fit.structural || {};
+            fit.sloppy.forEach(function (s) { Object.keys(s.vec).forEach(function (k) { if (_abs(s.vec[k]) > 0.3) sloppyKeys[k] = true; }); });
+            var cfg = fit.cfg, sigma = fit.sigmaP || 0.5, tData = fit.design && fit.design.t, ts = lkToEngine(cfg).e.ts;
+            var tEndData = tData && tData.length ? tData[tData.length - 1] : cfg.tEnd, nPts = tData && tData.length ? tData.length : 250;
+            var keys = fit.free.slice(), priorsBase = {};   // the information content of THIS match: its free parameters only
+            var base = lkFisher(cfg, { tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase });
+            var res = lkSimulate(cfg, { grid: 'fit' }), xf = res && res.ok ? res.xf.ts : null;
+            fit.free.forEach(function (k) {
+                var v = fit.params[k], ci = fit.ci95Inflated[k], d = PDEF[k], status, pm = null, text, widened = false;
+                if (ci) pm = (ci[1] - ci[0]) / 2;
+                // widened by the structural spread (aperture law, PDL on/off) when lkFit computed it: linear sum (conservative)
+                var sr = (k === 'sigmaC' || k === 'pr' || k === 'k') ? structural[k] : null;
+                if (pm != null && sr && _okn(sr[0]) && _okn(sr[1])) { var dev = _max(_abs(sr[1] - v), _abs(v - sr[0])); if (dev > 0) { pm += dev; widened = true; } }
+                var relOk = ci && (d.pressure ? pm < _max(25, 0.01 * v) : pm / v < 0.25);
+                if (relOk && !sloppyKeys[k]) {
+                    status = 'determined';
+                    text = _cap(LABEL[k]) + ' is determined to ±' + (d.pressure ? _sig(pm, 2) + ' psi' : _sig(100 * pm / v, 2) + ' %') + (widened ? ' (including the structural spread).' : '.');
+                }
+                else if (sloppyKeys[k]) { status = 'group'; text = _cap(LABEL[k]) + ' is determined only as part of a group' + (k === 'Ep' || k === 'hf' ? '; a log-derived height or a core E′ would determine it.' : '.'); }
+                else { status = 'not'; text = _cap(LABEL[k]) + ' is not determined by this test' + (k === 'pr' ? '; a longer shut-in would determine it.' : '.'); }
+                rows.push({ param: k, status: status, pm: pm, text: text.slice(0, 299) });
+            });
+            // the group Γ: relative 95 % half-width (%) of r_p·CL·E′/h_f from the match's Fisher covariance (inflated)
+            var gPm = (base.ok && base.C && res && res.ok) ? _groupPm(keys, cfg, res, base.C, 1, infl) : null;
+            if (gPm != null && !(gPm > 0)) gPm = null;
+            var pknWord = (res && res.ok && res.geometry !== 'PKN') ? 'PKN-equivalent' : 'PKN form';
+            rows.push({ param: 'Gamma', status: 'determined', pm: gPm, text: ('The group Γ = ' + _sig(fit.groups.Gamma, 3) + ' psi/√min is determined' + (gPm != null ? ' (±' + _sig(gPm, 2) + ' %)' : '') +
+                       ' (' + pknWord + ' ' + _sig(fit.groups.GammaPKN, 4) + ').').slice(0, 299) });
+            var sloppyText = fit.sloppy.length ? fit.sloppy[0].text : 'No parameter combination is poorly determined by this test.';
+            // value of information: Fisher on the fitted model (its free set) with the candidate priors / designs
+            var outs = ['sigmaC', 'pr', 'k', 'Cw'].filter(function (k) { return keys.indexOf(k) >= 0; });
+            function varsOf(f) { var o = {}; outs.forEach(function (k) { var s = f.sd[k]; o[k] = s == null ? null : s * s; }); return o; }
+            var voi = [];
+            if (base.ok) {
+                var v0 = varsOf(base);
+                var cands = [
+                    { source: 'height from logs ±10 %', d: { priors: Object.assign({}, priorsBase, { hf: 0.10 }) }, text: 'A log-derived fracture height (±10 %)', needs: 'hf' },
+                    { source: 'E′ from core ±15 %', d: { priors: Object.assign({}, priorsBase, { Ep: 0.15 }) }, text: 'A core E′ (±15 %)', needs: 'Ep' },
+                    { source: 'offset p_i ±50 psi', d: { priors: Object.assign({}, priorsBase, { pr: 50 }) }, text: 'An offset pore pressure (±50 psi)', needs: 'pr' },
+                    { source: 'gauge with half the noise', d: { priors: priorsBase, gaugeFactor: 4 }, text: 'A gauge with half the noise' },
+                    { source: 'longer shut-in', d: { priors: priorsBase, tEnd: ts + 2 * (tEndData - ts) }, text: 'Doubling the shut-in' }
+                ];
+                cands.forEach(function (cd) {
+                    if (cd.needs && keys.indexOf(cd.needs) < 0) {
+                        voi.push({ source: cd.source, reduction: 0, text: (cd.text + ' does not change this match: that quantity is fixed in it (the results are conditional on it).').slice(0, 299) });
+                        return;
+                    }
+                    var f = lkFisher(cfg, Object.assign({ tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys }, cd.d));
+                    if (!f.ok) return;
+                    var v1 = varsOf(f), lsum = 0, m = 0;
+                    outs.forEach(function (k) { if (v0[k] > 0 && v1[k] > 0) { lsum += _log(v1[k] / v0[k]); m++; } });
+                    var red = m ? 1 - _exp(lsum / m) : 0;
+                    voi.push({ source: cd.source, reduction: red, text: (cd.text + ' narrows the key outputs by ' + _fx(100 * red, 0) + ' % (variance, geometric mean).').slice(0, 299) });
+                });
+                voi.sort(function (a, b) { return b.reduction - a.reduction; });
+            }
+            // extension table
+            var extend = [], times = Array.isArray(ctx.extendTimesH) ? ctx.extendTimesH : [0.5, 1, 2, 3, 5, 7, 14].map(function (d) { return d * 24; });
+            var resCtl = cfg.k != null && +cfg.k > 0, extKeys = keys.slice();
+            if (resCtl && extKeys.indexOf('pr') < 0) extKeys.push('pr');   // p_r at its configured value is the linearisation point
+            var kF = extKeys.indexOf('k') >= 0, rateDraws = Array.isArray(ctx.tDLPerHourDraws) ? ctx.tDLPerHourDraws.filter(_okn) : null;
+            var etaR = resCtl ? cfg.k * _units().md / (cfg.phi * cfg.muRes * _units().cp * cfg.ct) : 0;
+            times.forEach(function (th) {
+                var f = lkFisher(_clone(cfg), { tEnd: ts + th, sigma: sigma, nPts: nPts, free: extKeys, priors: priorsBase });
+                if (!f.ok) return;
+                var pFixed = !(f.sd.pr != null && f.sd.pr > 0), sdPi = pFixed ? 0 : f.sd.pr * infl, kr = null;
+                if (kF && f.sd.k != null) kr = [cfg.k * _exp(-1.96 * f.sd.k * infl), cfg.k * _exp(1.96 * f.sd.k * infl)];
+                var tDL = (etaR > 0 && xf > 0) ? etaR * th / (xf * xf) : 0;
+                var pRad = (rateDraws && rateDraws.length) ? rateDraws.filter(function (v) { return v * th >= 1.6; }).length / rateDraws.length : (tDL >= 1.6 ? 1 : 0);
+                extend.push({ tEndD: th / 24, tEndH: th, sdPi: sdPi, pFixed: pFixed, kRange: kr, kBasis: kr ? 'fisher' : null, pRadial: pRad });
+            });
+            var keepText = null, anyFixed = extend.some(function (r) { return r.pFixed; });
+            if (extend.length > 1 && !anyFixed) {
+                var a0 = extend[0].sdPi, a1 = extend[extend.length - 1].sdPi;
+                keepText = a1 < 0.5 * a0 ? 'Keep the gauge in: p_i narrows from ±' + _sig(1.96 * a0, 2) + ' to ±' + _sig(1.96 * a1, 2) + ' psi over the table.' : 'Pulling the gauge early costs little: p_i barely narrows with a longer shut-in.';
+            } else if (anyFixed) {
+                keepText = 'This model has no reservoir term, so a longer shut-in cannot determine p_i here; the table gives the k range only.';
+            }
+            // on demand: a 1-D profile on σ_c (≈ 10 refits) checks the linearised interval (the UI runs lkProfileJob for progress)
+            var profile = null;
+            if (ctx.profile && fit.free.indexOf('sigmaC') >= 0 && fit.free.length > 1) {
+                profile = lkProfile(fit, 'sigmaC', { n: (+ctx.profileN >= 3) ? +ctx.profileN : 10 });
+                if (profile && profile.ok && profile.agree === false) rows.forEach(function (r) { if (r.param === 'sigmaC') r.text = (r.text + ' ' + profile.text).slice(0, 299); });
+            }
+            return { ok: true, rows: rows, sloppyText: sloppyText.slice(0, 299), voi: voi, extend: extend, keepText: keepText, profile: profile };
+        } catch (err) { return _fail('IDENTIFY_FAILED', err && err.message || err, []); }
+    }
+    function _cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pre-job designer (§6.5): seeded Latin-hypercube ensemble on the coarse grid, after-closure timing from the s_D
+    // thresholds, outcome label, minimum volume, vacuum and gauge advice, leak budget, step-down plan, precision, corridor.
+    // Exposed as a Job (opts.perStep draws per step, by count) next to the synchronous function with the identical result.
+    // ─────────────────────────────────────────────────────────────────────
+    var T_REC = 6068, T_BAND = 8800, T_CONF = 27800, TDL_REC = 1.6, TDL_CONF = 7.34, C_TDL = 0.0002637;
+    function _lnPR(r) { var a = _log(r.p10), b = _log(r.p90); return { m: 0.5 * (a + b), s: (b - a) / (2 * 1.2815516) }; }
+    function _wellboreVwCw(ranges, opts) {
+        if (opts && +opts.VwCw > 0) return { VwCw: +opts.VwCw, src: 'given' };
+        var W = G.WTS_wellbore;
+        if (W && typeof W.column === 'function' && !W.column._dfitStub && typeof W.csys === 'function') {
+            try {
+                var col = W.column({ survey: [], strings: ranges.strings || [], fluid: ranges.fluid || {}, temp: null, datumTvd: ranges.datumTvd, datumMd: ranges.datumTvd });
+                var cs = col && col.ok ? W.csys(col, ranges.fluid || {}, null) : null;
+                if (cs && cs.ok && cs.VwCw > 0) return { VwCw: cs.VwCw, src: 'wellbore' };
+            } catch (e) { /* fall through */ }
+        }
+        // fallback: string capacity × c_sys = 144/(ρ·c²) with c 4,539 ft/s (water-filled steel string)
+        var rho = ((ranges.fluid && +ranges.fluid.rhoPpg > 0) ? +ranges.fluid.rhoPpg : 8.43) * 7.48052 / 32.174, cSys = 144 / (rho * 4539 * 4539), V = 0;
+        (ranges.strings || []).forEach(function (s) { var id = +s.id, len = +s.botMd - +s.topMd; if (id > 0 && len > 0) V += PI / 4 * (id / 12) * (id / 12) * len; });
+        if (!(V > 0)) V = PI / 4 * (4.778 / 12) * (4.778 / 12) * (+ranges.datumTvd || 10000);
+        return { VwCw: V * cSys / 5.614583, src: 'string capacity' };
+    }
+    function _vacuum(pi, ranges) {
+        var W = G.WTS_wellbore, atm = 14.696, r = null;
+        if (W && typeof W.vacuum === 'function' && !W.vacuum._dfitStub) {
+            try {
+                var col = (typeof W.column === 'function' && !W.column._dfitStub) ? W.column({ survey: [], strings: ranges.strings || [], fluid: ranges.fluid || {}, temp: null, datumTvd: ranges.datumTvd, datumMd: ranges.datumTvd }) : null;
+                r = W.vacuum(pi, col, null, atm);
+            } catch (e) { r = null; }
+        }
+        var pS, src;
+        if (r && _isFinite(+r.pSurfAtPi)) { pS = +r.pSurfAtPi; src = 'column'; }
+        else { pS = pi - 0.052 * ((ranges.fluid && +ranges.fluid.rhoPpg > 0) ? +ranges.fluid.rhoPpg : 8.43) * (+ranges.datumTvd || 0); src = 'constant gradient'; }
+        var risk = (r && (r.risk === 'none' || r.risk === 'surface-zero')) ? r.risk : ((pS - atm < 15) ? 'surface-zero' : 'none');   // the engine's own risk first
+        var text = risk === 'none' ? ('The column stays liquid-supported at the expected p_i (surface ' + _fx(pS, 0) + ' psia): a surface gauge sees closure and after-closure.')
+            : (pS - atm < 0 ? 'The surface goes on vacuum before p_i (surface ' + _fx(pS, 0) + ' psia at p_i): surface gauge sufficient for closure; BH gauge required for ACA.'
+                            : 'The surface falls below 15 psig near p_i (surface ' + _fx(pS, 0) + ' psia): surface gauge sufficient for closure; BH gauge recommended for ACA.');
+        return { risk: risk, text: text.slice(0, 299), pSurfAtPi: pS, src: src };
+    }
+    function designJob(ranges, opts) {
+        opts = opts || {};
+        var done = false, cancelled = false, result = null, st = null;
+        function finish(r) { result = r; done = true; }
+        function need(o, k) { return o && o[k] && _isFinite(+o[k].p10) && _isFinite(+o[k].p90) && +o[k].p10 > 0 && +o[k].p90 >= +o[k].p10; }
+        function init() {
+            var R = ranges || {}, bad = [];
+            ['k', 'phi', 'ct', 'muRes', 'h', 'hf'].forEach(function (k) { if (!need(R, k)) bad.push(k); });
+            if (!R.Ep || !(+R.Ep.p50 > 0)) bad.push('Ep');
+            if (!R.sigmaGrad || !(+R.sigmaGrad.p50 > 0)) bad.push('sigmaGrad');
+            if (!R.piGrad || !(+R.piGrad.p50 > 0)) bad.push('piGrad');
+            if (!(+R.datumTvd > 0)) bad.push('datumTvd');
+            if (!(+R.allowedShutInD > 0)) bad.push('allowedShutInD');
+            if (bad.length) return finish(_fail('BAD_RANGES', 'Designer inputs missing or invalid: ' + bad.join(', ') + '.', bad));
+            var n = _floor(+opts.n > 0 ? +opts.n : 500); if (n > 2000) n = 2000;
+            var seed = (opts.seed == null) ? 1 : _floor(+opts.seed), rnd = _rng(seed);
+            var vw = _wellboreVwCw(R, opts), epsMax = (+R.epsMax > 0) ? +R.epsMax : 0.05;
+            var sig50 = R.sigmaGrad.p50 * R.datumTvd, pi50 = R.piGrad.p50 * R.datumTvd;
+            var Vmin = vw.VwCw * _max(0, sig50 - pi50) / epsMax;
+            var V = (+R.V > 0) ? +R.V : (R.suggest === false ? 25 : _min(50, _max(5, Math.ceil(Vmin)))), q = (+R.q > 0) ? +R.q : 5;
+            // Latin-hypercube: one stratified permutation per variable (seeded)
+            var vars = ['k', 'phi', 'ct', 'muRes', 'h', 'hf', 'Ep', 'sg', 'pg'], U = {};
+            vars.forEach(function (vn) {
+                var perm = []; for (var i = 0; i < n; i++) perm.push(i);
+                for (i = n - 1; i > 0; i--) { var j = _floor(rnd() * (i + 1)), tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+                U[vn] = perm.map(function (p) { return (p + rnd()) / n; });
+            });
+            var allowedH = R.allowedShutInD * 24;
+            st = { R: R, n: n, seed: seed, U: U, i: 0, draws: [], VwCw: vw.VwCw, VwSrc: vw.src, Vmin: Vmin, V: V, q: q, epsMax: epsMax, allowedH: allowedH,
+                   counts: { evals: 0, fisherRuns: 0, steps: 0 }, perStep: (+opts.perStep > 0) ? _floor(+opts.perStep) : 25,
+                   tCorr: (function () { var a = []; for (var m = 0; m < 60; m++) a.push(_exp(_log(10 / 3600) + (_log(allowedH) - _log(10 / 3600)) * m / 59)); return a; })() };
+        }
+        function q2(vn, i, pr, isLog) {
+            var u = st.U[vn][i], z = _qnorm(u);
+            if (isLog) { var L = _lnPR(pr); return _exp(L.m + z * L.s); }
+            return pr.p50 + z * pr.sd;
+        }
+        function oneDraw(i) {
+            var R = st.R;
+            var d = { k: q2('k', i, R.k, true), phi: q2('phi', i, R.phi, true), ct: q2('ct', i, R.ct, true), muRes: q2('muRes', i, R.muRes, true),
+                      h: q2('h', i, R.h, true), hf: q2('hf', i, R.hf, true), Ep: _exp(_log(R.Ep.p50) + _qnorm(st.U.Ep[i]) * (+R.Ep.sdLn || 0)),
+                      sg: q2('sg', i, R.sigmaGrad, false), pg: q2('pg', i, R.piGrad, false) };
+            d.sigmaC = d.sg * R.datumTvd; d.pi = d.pg * R.datumTvd;
+            if (d.pi >= d.sigmaC - 50) d.pi = d.sigmaC - 50;
+            var hp = (+R.hp > 0) ? +R.hp : _min(d.h, d.hf), tp = st.V / st.q / 60;
+            var cfg = lkDefaults();
+            cfg.schedule = [{ t: 0, q: st.q }, { t: tp, q: 0 }]; cfg.Ep = d.Ep; cfg.nu = (R.nu != null) ? +R.nu : 0.25; cfg.hf = _max(d.hf, hp); cfg.hp = hp;
+            cfg.muCp = (R.fluid && +R.fluid.muCp > 0) ? +R.fluid.muCp : 1; cfg.Cw = 0; cfg.k = d.k; cfg.sigmaC = d.sigmaC; cfg.pr = d.pi; cfg.VwCw = st.VwCw;
+            cfg.phi = d.phi; cfg.ct = d.ct; cfg.muRes = d.muRes; cfg.tEnd = tp + st.allowedH;
+            var r = lkSimulate(cfg, { grid: opts.grid || 'coarse' });
+            st.counts.evals++;
+            var out = { d: d, ok: !!(r && r.ok), cfg: cfg };
+            if (!out.ok) { st.draws.push(out); return; }
+            var ts = r.events.ts;
+            out.tc = r.events.tcMech != null ? r.events.tcMech - ts : null;
+            out.xf = r.xf.ts; out.eta = r.etaS; out.Vf = r.Vf[_idxAtOrAfter(r.t, ts, r.t.length)]; out.Rvis = _rvis(r);
+            out.p = st.tCorr.map(function (x) { return _atT(r, r.pf, ts + x); });
+            var L = (+opts.L > 0) ? +opts.L : out.xf, fmc = d.phi * d.muRes * d.ct * L * L / d.k;
+            out.L = L; out.tRec = T_REC * fmc; out.tBand = T_BAND * fmc; out.tConf = T_CONF * fmc;
+            out.t3tc = out.tc != null ? 3 * out.tc : null;
+            out.tEps = 33890 * st.VwCw * d.muRes / (d.k * d.h);
+            out.tW = null;
+            if (+R.targetW > 0) {
+                var A = 2 * L * hp, mL = 97.54 * (st.V / A) * _sqrt(d.muRes / (d.k * d.phi * d.ct)), tWl = _pow(mL / (2 * R.targetW), 2), tWr = 1694.5 * st.V * d.muRes / (d.k * d.h * R.targetW);
+                out.tW = (out.tRec <= tWl) ? tWr : tWl;
+            }
+            var cand = [['radial', out.tConf], ['3tc', out.t3tc], ['afterflow', out.tEps], ['precision', out.tW]], best = null;
+            cand.forEach(function (c) { if (c[1] != null && _isFinite(c[1]) && (!best || c[1] > best[1])) best = c; });
+            out.shutIn = best[1]; out.binding = best[0];
+            out.signal = 0.4468 * st.V / (TDL_REC * d.phi * d.ct * d.h * L * L);
+            out.signalConf = 0.4468 * st.V / (TDL_CONF * d.phi * d.ct * d.h * L * L);
+            out.tDLat = function (tH) { return C_TDL * d.k * tH / (d.phi * d.muRes * d.ct * L * L); };
+            st.draws.push(out);
+        }
+        function finalise() {
+            var R = st.R, ok = st.draws.filter(function (d) { return d.ok; }), n = ok.length, warnings = [];
+            if (!n) return finish(_fail('DESIGN_FAILED', 'Every designer run failed.', []));
+            if (n < st.draws.length) warnings.push(_w('DESIGN_RUNS_FAILED', 'warn', (st.draws.length - n) + ' of ' + st.draws.length + ' designer runs failed and were left out.'));
+            var tcs = ok.map(function (d) { return d.tc; }), tcP = _p3(tcs);
+            var nClosed = tcs.filter(function (v) { return v != null; }).length;
+            var nRad = ok.filter(function (d) { return d.tRec <= st.allowedH; }).length;
+            var nLin = ok.filter(function (d) { return d.tc != null && 2 * d.tc <= st.allowedH; }).length;
+            var label = nRad >= 0.5 * n ? 'radial' : (nLin >= 0.5 * n ? 'linear' : 'closure-only');
+            var shutP = _p3(ok.map(function (d) { return d.shutIn; })), bindCount = {};
+            ok.forEach(function (d) { bindCount[d.binding] = (bindCount[d.binding] || 0) + 1; });
+            var binding = Object.keys(bindCount).sort(function (a, b) { return bindCount[b] - bindCount[a]; })[0];
+            var bindWords = { radial: 'radial confirmation', '3tc': 'three closure times', afterflow: 'afterflow', precision: 'p_i precision' }[binding] || binding;
+            var tRad = _p3(ok.map(function (d) { return d.tRec; })), tConf = _p3(ok.map(function (d) { return d.tConf; })), sig = _p3(ok.map(function (d) { return d.signal; }));
+            var sigConf = _p3(ok.map(function (d) { return d.signalConf; }));
+            var kP = _p3(ok.map(function (d) { return d.d.k; })), days = function (h) { return h / 24; };
+            var text;
+            if (label === 'radial') text = 'Radial flow is expected within the allowed ' + _sig(R.allowedShutInD, 3) + ' days (recognisable after ' + _sig(tRad.p50, 2) + ' h at P50): kh/μ can be read; the spread comes from the k range (' + _sci(kP.p10, 1) + '–' + _sci(kP.p90, 1) + ' md).';
+            else if (label === 'linear') text = 'Closure and after-closure linear flow are expected within ' + _sig(R.allowedShutInD, 3) + ' days; radial flow needs about ' + _sig(days(tRad.p50), 2) + ' days at P50: plan for p_i and bounds on k (the spread comes from the k range).';
+            else text = 'Only closure is expected within ' + _sig(R.allowedShutInD, 3) + ' days (' + nClosed + ' of ' + n + ' draws close): after-closure analysis needs a longer shut-in.';
+            var vac = _vacuum(R.piGrad.p50 * R.datumTvd, R);
+            var gaugeKind = (R.gauge && R.gauge.kind) || 'bh', gSigma = (R.gauge && +R.gauge.sigma > 0) ? +R.gauge.sigma : 0.05, why = [];
+            var bhReq = false;
+            if (vac.risk !== 'none') { bhReq = true; why.push('The surface reaches vacuum near p_i: a bottomhole gauge is required for after-closure analysis.'); }
+            if (sig.p10 != null && sig.p10 < 35 * gSigma) { bhReq = true; why.push('The radial-onset signal (P10 ' + _sig(sig.p10, 2) + ' psi) is below 35 × the gauge noise: use a quartz bottomhole gauge.'); }
+            if (!why.length) why.push(gaugeKind === 'surface' ? 'Surface gauge adequate: the column stays liquid-filled and the signal is well above the noise.' : 'A bottomhole gauge meets the closure and after-closure needs.');
+            var hz = _max(1, Math.ceil(10 * 4539 / (2 * R.datumTvd)));
+            var resPsi = sig.p10 != null ? _max(0.001, sig.p10 / 50) : 0.01, drift = (sig.p10 != null && tRad.p50 > 0) ? sig.p10 / _max(1, days(tRad.p50)) / 10 : 0.02;
+            var tEndLeak = _min(st.allowedH, shutP.p50 || st.allowedH);
+            var tdl = ok.map(function (d) { return d.tDLat(tEndLeak); });
+            var tempF = (R.fluid && _isFinite(+R.fluid.TF)) ? +R.fluid.TF : ((_isFinite(+R.tempF)) ? +R.tempF : 100);
+            var lb = leakBudget(st.V, tEndLeak, { tDLDraws: tdl, sigmaP: gSigma, VwCw: st.VwCw, tempF: tempF });
+            var leak = lb.ok ? { qkMax: lb.qkMax, theta: lb.theta, holdMin: lb.holdMin == null ? 0 : lb.holdMin, dTneeded: lb.dTneeded, regime: lb.regime, holdRealistic: lb.holdRealistic, text: lb.text }
+                             : { qkMax: 0, theta: 2, holdMin: 0, dTneeded: 0 };
+            var rates = [1, 0.8, 0.6, 0.4, 0.2].map(function (f) { return +(st.q * f).toPrecision(3); });
+            var sigP = _p3(ok.map(function (d) { return d.d.sigmaC; }));
+            var rep = R.repressurise ? { q: 0.35, V: 1.5, kneeP: sigP } : null;
+            // pre-job precision of p_i on the planned schedule (P50 case, Fisher, noise-free design)
+            var precision = [];
+            if (opts.precision !== false && tcP.p50 != null) {
+                var mid = ok.slice().sort(function (a, b) { return a.d.k - b.d.k; })[_floor(n / 2)];
+                // the multiples of t_c are taken on the median-k draw's own closure time (its configuration is the one simulated),
+                // so "1.5 t_c" is never before that draw's closure; the ensemble P50 t_c only when the draw does not close
+                var tcMid = (mid.tc != null && mid.tc > 0) ? mid.tc : tcP.p50;
+                [1.5, 2, 3, 5, 10, 20].forEach(function (m) {
+                    var c = _clone(mid.cfg), tEndH = mid.cfg.schedule[1].t + m * tcMid;
+                    var f = lkFisher(c, { tEnd: tEndH, sigma: gSigma, nPts: 250, free: ['k', 'sigmaC', 'pr'], grid: 'coarse' });
+                    if (f.ok) { st.counts.fisherRuns += f.runs; if (f.sd.pr != null) precision.push({ tEndD: (m * tcMid) / 24, sdPi: f.sd.pr, tcMult: m }); }
+                });
+            }
+            var checklist = [
+                { id: 'C1', text: 'Pressure-test the surface lines and the string; record the hold on the same gauge.' },
+                { id: 'C2', text: 'Remove air from the lines and the gauge dead spaces; use anti-freeze in exposed gauge lines.' },
+                { id: 'C3', text: 'Use one clock for pumps and gauges and mark it with a pressure blip before pumping.' },
+                { id: 'C4', text: 'Record at least 60 min concurrently with the pump unit before and after the injection.' },
+                { id: 'C5', text: 'Shut in with the valve on the pump side of the gauge, then close in quickly and leave it closed.' },
+                { id: 'C6', text: 'Pump ' + _sig(st.V, 3) + ' bbl at ' + _sig(st.q, 3) + ' bbl/min; skip the step-down unless a friction split is needed.' },
+                { id: 'C7', text: 'Sample at ' + hz + ' Hz or faster around the shut-in to resolve the water hammer.' },
+                { id: 'C8', text: shutP.p50 <= st.allowedH ? 'Keep the gauge in for ' + _sig(days(shutP.p50), 2) + ' days (P50 recommendation, set by ' + bindWords + ').'
+                                                            : 'Keep the gauge in for the full ' + _sig(R.allowedShutInD, 3) + ' days allowed; the P50 recommendation (' + _sig(days(shutP.p50), 2) + ' days, set by ' + bindWords + ') exceeds it.' }
+            ];
+            var corridor = { t: st.tCorr.slice(), p10: [], p50: [], p90: [] };
+            st.tCorr.forEach(function (x, m) {
+                var pp = _p3(ok.map(function (d) { return d.p[m]; }));
+                corridor.p10.push(pp.p10); corridor.p50.push(pp.p50); corridor.p90.push(pp.p90);
+            });
+            if (nClosed < n) warnings.push(_w('NO_CLOSURE_SOME', 'info', (n - nClosed) + ' of ' + n + ' draws do not close within the allowed shut-in.'));
+            if (st.V < st.Vmin) warnings.push(_w('VOLUME_BELOW_VMIN', 'warn', 'The planned ' + _sig(st.V, 3) + ' bbl is below V_min ≈ ' + _sig(st.Vmin, 3) + ' bbl: afterflow may bias the after-closure analysis.'));
+            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding };
+            var vmn = _p3(ok.map(function (d) { return d.Rvis; }));
+            finish({
+                ok: true, n: n, seed: st.seed, outcome: { label: label, text: text.slice(0, 299) },
+                tc: tcP, shutIn: shut, tRadial: tRad, tConfirm: tConf, signalPsi: sig, signalConfirmPsi: sigConf, Vmin: st.Vmin, V: st.V, q: st.q, Rvis: { p50: vmn.p50 },
+                vacuum: { risk: vac.risk, text: vac.text }, vacuumDetail: vac,
+                gauge: { bhRequired: bhReq, why: why.map(function (s) { return s.slice(0, 299); }), hz: hz, resolutionPsi: resPsi, driftPsiPerDay: drift },
+                leak: leak, stepDown: { rates: rates }, repressurise: rep, precision: precision, checklist: checklist, corridor: corridor,
+                VwCw: st.VwCw, VwCwSource: st.VwSrc, shares: { radial: nRad / n, linear: nLin / n, closed: nClosed / n },
+                counts: { evals: st.counts.evals, refits: 0, draws: st.draws.length, fisherRuns: st.counts.fisherRuns, steps: st.counts.steps },
+                warnings: warnings
+            });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: 'done' };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; return { done: false, progress: 0, label: 'drawing ' + st.n + ' cases' }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The design was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                st.counts.steps++;
+                if (st.i < st.n) {
+                    var stop = _min(st.n, st.i + st.perStep);
+                    for (; st.i < stop; st.i++) oneDraw(st.i);
+                    return { done: false, progress: 0.95 * st.i / st.n, label: st.i + ' of ' + st.n + ' runs' };
+                }
+                finalise();
+                return { done: true, progress: 1, label: 'done' };
+            } catch (err) { finish(_fail('DESIGN_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function design(ranges, opts) {
+        try { return _drain(designJob(ranges, opts)); } catch (err) { return _fail('DESIGN_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+
+    G.PRiSM_dfit_lkDefaults = lkDefaults;
+    G.PRiSM_dfit_lkToEngine = lkToEngine;
+    G.PRiSM_dfit_lkSimulate = lkSimulate;
+    G.PRiSM_dfit_lkSample = lkSample;
+    G.PRiSM_dfit_lkQuick = lkQuick;
+    G.PRiSM_dfit_lkSolveCL = lkSolveCL;
+    G.PRiSM_dfit_lkGoalSeek = lkGoalSeek;
+    G.PRiSM_dfit_lkGoalSeekJob = lkGoalSeekJob;
+    G.PRiSM_dfit_lkProfile = lkProfile;
+    G.PRiSM_dfit_lkProfileJob = lkProfileJob;
+    G.PRiSM_dfit_lkGroups = lkGroups;
+    G.PRiSM_dfit_lkVerify = lkVerify;
+    G.PRiSM_dfit_leakBudget = leakBudget;
+    G.PRiSM_dfit_lkFit = lkFit;
+    G.PRiSM_dfit_lkFitJob = lkFitJob;
+    G.PRiSM_dfit_lkFisher = lkFisher;
+    G.PRiSM_dfit_identify = identify;
+    G.PRiSM_dfit_design = design;
+    G.PRiSM_dfit_designJob = designJob;
+    G._PRiSM_dfit_lk = { erf: erf, erfcx: erfcx, E1: E1, pDuf: pDuf, theta: theta, gN: gN, GN: GN, KVISC: KVISC, units: _units, atT: _atT, qLAt: _qLAt, neff: _neff };
 })();
 
 // ─── END 58-prism-dfit-leakoff ─────────────────────────────────────────────
@@ -19981,45 +28236,3525 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // =============================================================================
 // PRiSM — 59-prism-dfit-ui.js  (Round 8)
 // -----------------------------------------------------------------------------
-// DFIT user interface: PRiSM_modeExt.dfit, step views, C7 panels, plots and picks, rail, ▶ Analyse, Tools entries,
-// report sections, exports and hand-offs (docs/DFIT-PLAN.md §3.8, §7; owner WP6). The only DFIT file that touches the
-// DOM, writes PRiSM.multiRate, writes C1, writes storage and fires events.
+// DFIT user interface (docs/DFIT-PLAN.md §2.6–2.11, §3.8, §4.20, §6.12, §7; owner WP6). The only DFIT file that
+// touches the DOM, writes PRiSM.multiRate, writes C1, writes storage and fires events. The engines (56, 57, 58 and the
+// Round-9 helpers) are resolved at call time; every call is guarded, so the page works (with ⚠ reasons) while an engine
+// is missing or still a NOT_IMPLEMENTED stub.
 //
-// WP0 SKELETON. Every §3.8 export except the five Tools render functions (see below) is a stub returning {ok:false, code:'NOT_IMPLEMENTED', errors:[…], bad:[]}
-// (PRiSM_dfit_analyse returns a Promise resolving to it). Nothing touches the DOM, the state or storage, and the
-// skeleton deliberately does NOT register PRiSM_modeExt.dfit, panels, plots, line tools, report sections, undo extras or
-// Tools entries: once the generic hooks (WPH) land, a registered stub mode would show in the header select. WP6 adds
-// them. PRiSM_dfit_hooks is real (the read-only hook points for the 3.4b files; merged, never replaced).
+// Exports (§3.8)
+//   PRiSM_modeExt.dfit            the workspace-mode extension read by the generic shell hooks (WPH, §3.12)
+//   PRiSM_dfit_analyse(opts)      ▶ Analyse → Promise (pipeline Job via PRiSM_autoInterp.drive, one undo batch, cancel)
+//   PRiSM_dfit_renderStep2(host), PRiSM_dfit_renderStep4(host)          step views (#prism_stepview)
+//   PRiSM_renderDfit{Designer,Sandbox,Replay,Hammer,Notes}Tool(host)     Tools drawer entries (PRiSM_toolCatalogueExtra)
+//   PRiSM_dfit_state() / _test() / _selectTest(id) / _addTest(opts)     st.dfit (created on demand) and its tests
+//   PRiSM_dfit_setPick(item, value, {source, reason})                    the only writer of picks (log, event, fast run)
+//   PRiSM_dfit_applyHandoff(target, {family})                            confirm → PRiSM_dfit_handoff inside one undo batch
+//   PRiSM_dfit_results()          the active test's summary (rail, report key line, WTS_state.dfit)
+//   PRiSM_dfit_hooks              read-only hook points for the 3.4b files (merged, never replaced)
+//   PRiSM_plot_dfitDual / PRiSM_plot_dfitStrip / PRiSM_plot_dfitStack   plot functions (host-IIFE scope, bridged)
+// Also (tests and the integrator): PRiSM_dfit_ui = {fields, plots, panels, tools, …} and PRiSM_dfit_deleteTest(id).
+//
+// The generic hooks of §3.12 (PRiSM_modeExt read by 01/04/37, PRiSM_undoBatch, PRiSM_drawPlot, PRiSM_plot_overlay,
+// panel `modes`, gallery / report `modes`, analysis-key `store:false`) belong to WPH. Until they are in the build the
+// items that would leak into the transient / decline / combined modes (plot registry entries, line tools, Tools
+// functions) are kept off the shared registries (PRiSM_dfit_ui.hooksReady() === false); everything else works.
+// No timers in this file: long work runs through PRiSM_autoInterp.drive (53), the one timer user in Round 8.
 // =============================================================================
 
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    var HAS_DOC = typeof document !== 'undefined' && !!document && typeof document.getElementById === 'function';
 
-    function _ni(name) {
-        return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP0 skeleton).'], bad: [] };
+    // =========================================================================
+    // SECTION 1 — UTILITIES
+    // =========================================================================
+    function _isNum(v) { return typeof v === 'number' && isFinite(v); }
+    function _num(v) { return _isNum(v) ? v : null; }
+    function _own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+    function _isObj(o) { return !!o && typeof o === 'object' && !(o instanceof Array); }
+    function _arr(a) { return (a && typeof a.length === 'number' && typeof a !== 'string') ? a : null; }
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    function _stub(name) { var f = function () { return _ni(name); }; f._dfitStub = true; return f; }
+    function _clone(o) { if (o == null) return o; try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; } }
+    function _nowISO() { try { return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); } catch (e) { return '2026-01-01T00:00:00Z'; } }
+    function _byId(id) { return HAS_DOC ? document.getElementById(id) : null; }
+    function _fn(name) { var f = G[name]; return (typeof f === 'function' && !f._dfitStub) ? f : null; }
+    function _okRes(r) { return !!(r && typeof r === 'object' && r.ok !== false); }
+    // number text: thousands separators, fixed decimals; '—' for anything that is not a finite number
+    function _f(v, dp) {
+        if (!_isNum(v)) return '—';
+        dp = (dp == null) ? 0 : dp;
+        var neg = v < 0, s = Math.abs(v).toFixed(dp), parts = s.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return (neg ? '−' : '') + parts.join('.');
+    }
+    // significant-figure text for small quantities (k, CL)
+    function _sig(v, n) {
+        if (!_isNum(v)) return '—';
+        if (v === 0) return '0';
+        n = n || 3;
+        var a = Math.abs(v);
+        if (a >= 1e5 || a < 1e-3) return v.toExponential(n - 1).replace('e', 'e');
+        var d = Math.max(0, n - 1 - Math.floor(Math.log(a) / Math.LN10));
+        return _f(v, Math.min(d, 6));
+    }
+    // plain text guard (§3.0): under 300 characters, no banned words
+    var BANNED = /\b(null|undefined|NaN|Infinity)\b|\[object Object\]/g;
+    function _txt(s) { return String(s == null ? '' : s).replace(BANNED, '—').slice(0, 299); }
+    function _emit(name, detail) {
+        if (!G || typeof G.dispatchEvent !== 'function') return;
+        try {
+            var ev = null;
+            if (typeof CustomEvent === 'function') ev = new CustomEvent(name, { detail: detail || {} });
+            else if (HAS_DOC && document.createEvent) { ev = document.createEvent('CustomEvent'); ev.initCustomEvent(name, false, false, detail || {}); }
+            if (ev) G.dispatchEvent(ev);
+        } catch (e) { /* listeners must not break the UI */ }
+    }
+    function _st() { if (!G.PRiSM_state || typeof G.PRiSM_state !== 'object') G.PRiSM_state = {}; return G.PRiSM_state; }
+    function _P() { if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] }; return G.PRiSM; }
+    function _inDfit() { return !!(G.PRiSM && G.PRiSM.mode === 'dfit'); }
+    // st.dfit exists and is this module's (v 2): outside DFIT mode, listeners and the undo snapshot leave any other st.dfit
+    // alone and never create one (a transient-mode session gets no DFIT state until DFIT mode or a DFIT API call needs it)
+    function _ownState() { var d = G.PRiSM_state && G.PRiSM_state.dfit; return !!(d && typeof d === 'object' && d.v === 2 && (d.tests instanceof Array || _arr(d.tests))); }
+    function _engaged() { return _inDfit() || _ownState(); }
+    function _ls() { try { return G.localStorage || null; } catch (e) { return null; } }
+    function _shell() { return _byId('prism_shell'); }
+    // the WPH generic hooks (§3.12) are in the build
+    function hooksReady() {
+        // PRiSM_drawPlot (04) and PRiSM_undoBatch (37) come with the generic hooks; PRiSM_modeExt is created here when absent
+        return typeof G.PRiSM_drawPlot === 'function' && typeof G.PRiSM_undoBatch === 'function';
+    }
+    function _batch(which) { if (typeof G.PRiSM_undoBatch === 'function') { try { G.PRiSM_undoBatch(which); } catch (e) { /* ignore */ } } }
+    function _well() { try { return (typeof G.PRiSM_getWell === 'function') ? (G.PRiSM_getWell() || {}) : {}; } catch (e) { return {}; } }
+    function _hasData(ds) { return !!(ds && _arr(ds.t) && ds.t.length >= 2 && _arr(ds.p)); }
 
-    // The five Tools-drawer render functions of §3.8 (PRiSM_renderDfit{Designer,Sandbox,Replay,Hammer,Notes}Tool) are NOT
-    // exported by the skeleton: 37's listTools discovers every window.PRiSM_render*Tool and would list them under "More"
-    // until WPH marks PRiSM_toolCatalogueExtra functions as seen. WP6 exports them together with their catalogue entries.
-    ['PRiSM_dfit_renderStep2', 'PRiSM_dfit_renderStep4',
-     'PRiSM_dfit_state', 'PRiSM_dfit_test', 'PRiSM_dfit_selectTest', 'PRiSM_dfit_addTest', 'PRiSM_dfit_setPick',
-     'PRiSM_dfit_applyHandoff', 'PRiSM_dfit_results',
-     'PRiSM_plot_dfitDual', 'PRiSM_plot_dfitStrip', 'PRiSM_plot_dfitStack'].forEach(function (n) { G[n] = _stub(n); });
+    // =========================================================================
+    // SECTION 2 — RANGE TABLE, INPUT FIELDS
+    // =========================================================================
+    function _ranges() { return _isObj(G.PRiSM_dfit_inputRanges) ? G.PRiSM_dfit_inputRanges : null; }
+    function _defaults() {
+        var R = _ranges();
+        if (R && typeof R.defaults === 'function') { try { return R.defaults(); } catch (e) { /* fall through */ } }
+        return {
+            datumTvd: null, datumMd: null, survey: null, gauge: { bhTvd: null, bhMd: null }, strings: [],
+            fluid: { kind: 'water', rhoPpg: 8.43, salinityWt: null, muCp: 1.0, fr: 0, nPrime: null, kPrime: null, tInjF: 70 },
+            temp: { model: 'static', surfF: 70, gradFper100: 1.5, tauLoH: 0.5, tauHiH: 5 },
+            perfs: { n: null, dIn: 0.40, cd: 0.62 },
+            rock: { Ep: null, EpSource: 'unknown', nu: 0.25, hf: null, hp: null, barrierSpacing: null, sigmaVGrad: 1.0, sigmaVGradLo: 0.9,
+                    muFricWarn: 0.6, muFricVeto: 1.0, biot: 1.0 },
+            priors: { sigmaGrad: null, sigmaGradSd: 0.02, piGrad: null },
+            channels: { primary: 'bh', psig: { p: false, pSurf: false, pAnn: false }, atmPsia: 14.696, clockOffsetH: 0,
+                        unitFix: { p: null, pSurf: null, q: null, t: null }, depthFix: null, mask: [] },
+            events: { tStart: null, tb: null, ts: null, flowback: null },
+            options: { alpha: 'auto', alphaGeneral: 0.75, tp: 'pump', L: 0.1, gMin: 'auto', eps: { compliance: 0.02, tangent: 0.02, loglog: 0.05 },
+                       tau: { abs: 15, fSigma: 0.003, fN: 0.03 }, familyWeightF1: 0.5, axisLock: false, ppd: false,
+                       aca: { origin: 'centroid', LB: 0.25, carterExactFR: false, tideRemove: 'auto' }, unc: { n: 1000, seed: 1 }, triage: {} }
+        };
+    }
+    function _clampInputs(inp) {
+        var R = _ranges();
+        if (R && typeof R.clamp === 'function') { try { var r = R.clamp(inp); if (r && r.inputs) return r.inputs; } catch (e) { /* fall through */ } }
+        return inp || _defaults();
+    }
+    function _getPath(o, path) {
+        var parts = String(path).split('.');
+        for (var i = 0; i < parts.length; i++) { if (!o || typeof o !== 'object') return undefined; o = o[parts[i]]; }
+        return o;
+    }
+    function _setPath(o, path, v) {
+        var parts = String(path).split('.');
+        for (var i = 0; i < parts.length - 1; i++) { if (!_isObj(o[parts[i]])) o[parts[i]] = {}; o = o[parts[i]]; }
+        o[parts[parts.length - 1]] = v;
+    }
+    // One range-table field: raw text (or number) → {value, warning}. Ep is entered in 1e6 psi and stored in psi.
+    function clampField(path, raw) {
+        var R = _ranges(), row = R && R.table ? R.table[path] : null;
+        var scale = (row && row.display && _isNum(row.display.scale)) ? row.display.scale : 1;
+        var v = raw;
+        if (scale !== 1 && raw !== '' && raw != null) {
+            var n = (typeof raw === 'number') ? raw : _parse(raw);
+            v = _isNum(n) ? n * scale : raw;
+        }
+        if (R && typeof R.clampValue === 'function') {
+            try { var r = R.clampValue(path, v); if (r && 'value' in r) return { value: r.value, warning: r.warning || null }; } catch (e) { /* fall through */ }
+        }
+        var x = (typeof v === 'number') ? v : _parse(v);
+        if (!_isNum(x)) return { value: row ? row.def : null, warning: null };
+        if (row) { if (x < row.min) x = row.min; if (x > row.max) x = row.max; if (row.integer) x = Math.round(x); }
+        return { value: x, warning: null };
+    }
+    function _parse(s) {
+        if (typeof s === 'number') return s;
+        if (s == null) return NaN;
+        s = String(s).trim();
+        if (!s) return NaN;
+        if (s.indexOf(',') !== -1) {
+            var A = G.WTS_a11y, dc = false;
+            try { dc = !!(A && typeof A.decimalComma === 'function' && A.decimalComma()); } catch (e) { dc = false; }
+            if (dc && typeof G.WTS_parseNumber === 'function' && /^[-+]?\d+,\d+$/.test(s)) { try { var n = G.WTS_parseNumber(s); if (_isNum(n)) return n; } catch (e) { /* fall through */ } }
+            if (/^[-+]?\d{1,3}(,\d{3}){2,}(\.\d+)?$/.test(s) || /^[-+]?\d{1,3},\d{3}\.\d+$/.test(s)) s = s.replace(/,/g, '');   // thousands groups
+            else if (/^[-+]?\d{1,3},\d{3}$/.test(s)) return NaN;                                                          // ambiguous
+            else if (/^[-+]?\d+,\d+$/.test(s)) s = s.replace(',', '.');                                                   // decimal comma
+            else return NaN;
+        }
+        return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s) ? parseFloat(s) : NaN;
+    }
+    function _displayOf(path, v) {
+        var R = _ranges(), row = R && R.table ? R.table[path] : null;
+        if (!_isNum(v)) return '';
+        var scale = (row && row.display && _isNum(row.display.scale)) ? row.display.scale : 1;
+        var x = v / scale;
+        return String(Math.round(x * 1e6) / 1e6);
+    }
+    function _unitOf(path) {
+        var R = _ranges(), row = R && R.table ? R.table[path] : null;
+        return row ? ((row.display && row.display.unit) || row.unit || '') : '';
+    }
+    function _id(path) { return 'prism_dfit_' + String(path).replace(/\./g, '_').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(); }
 
-    G.PRiSM_dfit_analyse = function () {
-        var r = _ni('PRiSM_dfit_analyse');
-        return (typeof Promise !== 'undefined') ? Promise.resolve(r) : r;
+    // Step-① numeric fields: [path, label]; ids are _id(path) (e.g. datumTvd → prism_dfit_datum_tvd)
+    var FIELDS = {
+        well: [['datumTvd', 'Datum TVD (mid-perforation, required)'], ['datumMd', 'Datum MD (blank = vertical)'],
+               ['gauge.bhTvd', 'Bottomhole gauge TVD'], ['gauge.bhMd', 'Bottomhole gauge MD']],
+        fluid: [['fluid.rhoPpg', 'Density'], ['fluid.salinityWt', 'Salinity'], ['fluid.muCp', 'Viscosity'], ['fluid.fr', 'Friction reduction (0–0.85)'],
+                ['fluid.nPrime', "n′ (gel)"], ['fluid.kPrime', "K′ (gel)"], ['fluid.tInjF', 'Injection temperature']],
+        temp: [['temp.surfF', 'Surface temperature'], ['temp.gradFper100', 'Temperature gradient'], ['temp.tauLoH', 'τ_T low'], ['temp.tauHiH', 'τ_T high']],
+        perfs: [['perfs.n', 'Shot holes'], ['perfs.dIn', 'Hole diameter'], ['perfs.cd', 'Discharge coefficient C_d']],
+        rock: [['rock.Ep', 'Plane-strain modulus E′'], ['rock.nu', "Poisson's ratio ν"], ['rock.hf', 'Fracture height h_f'], ['rock.hp', 'Permeable height h_p'],
+               ['rock.barrierSpacing', 'Barrier spacing'], ['rock.sigmaVGrad', 'Overburden gradient'], ['rock.sigmaVGradLo', 'Overburden gradient, low'],
+               ['rock.muFricWarn', 'Friction coefficient (warning)'], ['rock.muFricVeto', 'Friction coefficient (veto)'], ['rock.biot', 'Biot coefficient']],
+        priors: [['priors.sigmaGrad', 'Prior closure gradient'], ['priors.sigmaGradSd', 'Prior gradient s.d.'], ['priors.piGrad', 'Prior p_i gradient']],
+        channels: [['channels.atmPsia', 'Atmospheric pressure'], ['channels.clockOffsetH', 'Clock offset (rate vs pressure)']],
+        options: [['options.L', 'Bourdet window L'], ['options.alphaGeneral', 'General α (when α = general)'], ['options.tau.abs', 'Tolerance τ_abs'],
+                  ['options.familyWeightF1', 'Family weight F1 (range mode)'], ['options.unc.n', 'Uncertainty draws'], ['options.unc.seed', 'Uncertainty seed']],
+        aca: [['options.aca.LB', 'After-closure window L_B']]
     };
-    G.PRiSM_dfit_analyse._dfitStub = true;
+    var SELECTS = {
+        'fluid.kind': [['water', 'Water'], ['slickwater', 'Slickwater'], ['gel', 'Gel'], ['oil', 'Oil']],
+        'temp.model': [['static', 'Static'], ['displaced', 'Displaced']],
+        'rock.EpSource': [['unknown', 'Unknown'], ['static', 'Static'], ['dynamic-corrected', 'Dynamic, corrected'], ['dynamic', 'Dynamic']],
+        'channels.primary': [['bh', 'Bottomhole gauge'], ['surface', 'Surface (converted)']],
+        'options.alpha': [['auto', 'Auto'], ['0.5', '½'], ['1', '1'], ['general', 'General'], ['data', 'Data-driven']],
+        'options.tp': [['pump', 'Pump time'], ['breakdown', 'From breakdown'], ['veq', 'Volume-equivalent']],
+        'options.aca.origin': [['centroid', 'Centroid'], ['total', 'Total'], ['midInjection', 'Mid-injection'], ['sinceClosure', 'Since closure']],
+        'options.aca.tideRemove': [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']]
+    };
+    var SELECT_IDS = { 'fluid.kind': 'prism_dfit_fluid', 'temp.model': 'prism_dfit_tmodel', 'channels.primary': 'prism_dfit_primary',
+                       'options.alpha': 'prism_dfit_alpha', 'options.tp': 'prism_dfit_tp', 'options.aca.origin': 'prism_dfit_aca_origin',
+                       'rock.EpSource': 'prism_dfit_ep_source', 'options.aca.tideRemove': 'prism_dfit_aca_tide' };
+    function _selId(path) { return SELECT_IDS[path] || _id(path); }
 
-    // read-only hook points for the 3.4b files (§3.8): merged, never replaced
-    var H = G.PRiSM_dfit_hooks = G.PRiSM_dfit_hooks || {};
+    // =========================================================================
+    // SECTION 3 — STATE (st.dfit, §3.3)
+    // =========================================================================
+    var TEST_CAP = 12, LOG_CAP = 300;
+    function _newTest(id) {
+        return { id: id, zone: '', dsRef: null, inputs: _defaults(),
+                 picks: { isip: null, closure: null, user: {}, aca: { origin: 'centroid', linWin: null, radWin: null, piLevel: null } },
+                 summary: null, lk: null, hf: null, log: [] };
+    }
+    function _validTest(t) { return _isObj(t) && typeof t.id === 'string' && /^t\d+$/.test(t.id); }
+    function dstate() {
+        var st = _st();
+        var d = st.dfit;
+        if (!_isObj(d) || !(d.tests instanceof Array) && !_arr(d.tests)) d = st.dfit = { v: 2, active: 't1', tests: [], plan: null, live: null };
+        d.v = 2;
+        var tests = [];
+        for (var i = 0; i < d.tests.length && tests.length < TEST_CAP; i++) if (_validTest(d.tests[i])) tests.push(d.tests[i]);
+        if (!tests.length) tests.push(_newTest('t1'));
+        d.tests = tests;
+        tests.forEach(function (t) {
+            if (!_isObj(t.inputs)) t.inputs = _defaults();
+            if (!_isObj(t.picks)) t.picks = _newTest(t.id).picks;
+            if (!_isObj(t.picks.user)) t.picks.user = {};
+            if (!_isObj(t.picks.aca)) t.picks.aca = { origin: 'centroid', linWin: null, radWin: null, piLevel: null };
+            if (!(t.log instanceof Array) && !_arr(t.log)) t.log = [];
+            if (typeof t.zone !== 'string') t.zone = '';
+        });
+        if (!tests.some(function (t) { return t.id === d.active; })) d.active = tests[0].id;
+        if (!('plan' in d)) d.plan = null;
+        if (!('live' in d)) d.live = null;
+        return d;
+    }
+    function test() {
+        var d = dstate();
+        for (var i = 0; i < d.tests.length; i++) if (d.tests[i].id === d.active) return d.tests[i];
+        return d.tests[0];
+    }
+    function _findTest(id) { var d = dstate(); for (var i = 0; i < d.tests.length; i++) if (d.tests[i].id === id) return d.tests[i]; return null; }
+    function _who() { var d = dstate(); return (d.report && typeof d.report.who === 'string') ? d.report.who.slice(0, 60) : ''; }
+    function logEntry(T, item, oldV, newV, reason) {
+        T = T || test();
+        if (!(T.log instanceof Array)) T.log = [];
+        var seq = T.log.length ? (T.log[T.log.length - 1].seq || T.log.length) + 1 : 1;
+        var small = function (v) { var s = JSON.stringify(v == null ? null : v); return (s && s.length > 200) ? s.slice(0, 200) : (v == null ? null : v); };
+        T.log.push({ seq: seq, at: _nowISO(), who: _who(), item: String(item).slice(0, 80), old: small(oldV), new: small(newV), reason: _txt(reason || '') });
+        if (T.log.length > LOG_CAP) T.log.splice(0, T.log.length - LOG_CAP);
+        return T.log[T.log.length - 1];
+    }
+    function _nextId() {
+        var d = dstate(), n = 0;
+        d.tests.forEach(function (t) { var k = parseInt(t.id.slice(1), 10); if (k > n) n = k; });
+        return 't' + (n + 1);
+    }
+    function addTest(opts) {
+        opts = opts || {};
+        var d = dstate();
+        if (d.tests.length >= TEST_CAP) return { ok: false, code: 'TEST_CAP', errors: ['A well holds at most ' + TEST_CAP + ' DFIT tests.'], bad: ['tests'] };
+        var T = _newTest(_nextId());
+        T.zone = _txt(opts.zone || '').slice(0, 40);
+        if (opts.copyInputs !== false) { var A = test(); if (A && A.inputs) { T.inputs = _clone(A.inputs); T.inputs.events = _defaults().events; T.inputs.channels.mask = []; } }
+        d.tests.push(T);
+        _batch('begin');
+        var prev = d.active;
+        d.active = T.id;
+        logEntry(T, 'test.add', null, T.id, opts.reason || 'Test added');
+        _dropRun();
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        _batch('end');
+        _refreshUI();
+        return { ok: true, id: T.id, previous: prev };
+    }
+    function selectTest(id) {
+        var d = dstate(), T = _findTest(id);
+        if (!T) return { ok: false, code: 'NO_TEST', errors: ['No test ' + _txt(id) + ' in this well.'], bad: ['id'] };
+        if (d.active === id) return { ok: true, id: id, loaded: false };
+        _batch('begin');
+        var old = d.active;
+        d.active = id;
+        logEntry(T, 'test.open', old, id, 'Opened from the tests table');
+        var loaded = _loadTestDataset(T);
+        _dropRun();
+        _checkBinding();
+        runFast('test');
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        _batch('end');
+        _refreshUI();
+        return { ok: true, id: id, loaded: loaded };
+    }
+    function deleteTest(id) {
+        var d = dstate();
+        if (d.tests.length <= 1) return { ok: false, code: 'LAST_TEST', errors: ['The last test cannot be deleted; reset its inputs instead.'], bad: ['id'] };
+        var i = -1;
+        for (var k = 0; k < d.tests.length; k++) if (d.tests[k].id === id) i = k;
+        if (i < 0) return { ok: false, code: 'NO_TEST', errors: ['No test ' + _txt(id) + ' in this well.'], bad: ['id'] };
+        _batch('begin');
+        d.tests.splice(i, 1);
+        if (d.active === id) { d.active = d.tests[Math.max(0, i - 1)].id; _dropRun(); }
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        _batch('end');
+        _refreshUI();
+        return { ok: true, id: id, active: d.active };
+    }
+    function _dropRun() { var st = _st(); delete st._dfitRun; delete st._dfitWhatIf; }
+    function _run() { var r = _st()._dfitRun; return (r && r.ok) ? r : null; }
+
+    // ── dataset binding (§2.9) ──
+    function dsHash(ds) {
+        if (!_hasData(ds)) return null;
+        var f = _fn('PRiSM_dfit_dsHash');
+        if (f) { try { var h = f(ds); if (typeof h === 'string' && /^[0-9a-f]{16}$/.test(h)) return h; } catch (e) { /* fall through */ } }
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.canon === 'function' && typeof AI.hash16 === 'function') {
+            try { return AI.hash16(AI.canon({ t: ds.t, p: ds.p, q: ds.q || null }, 'inputs')); } catch (e) { /* fall through */ }
+        }
+        // FNV-1a 32-bit, doubled (weak hash; only without 53)
+        var s = ds.t.length + ':' + ds.t[0] + ':' + ds.t[ds.t.length - 1] + ':' + ds.p[0] + ':' + ds.p[ds.p.length - 1];
+        var h1 = 0x811c9dc5, h2 = 0x01000193;
+        for (var i = 0; i < s.length; i++) { h1 ^= s.charCodeAt(i); h1 = (h1 * 16777619) >>> 0; h2 = ((h2 ^ s.charCodeAt(i)) * 2246822519) >>> 0; }
+        return ('00000000' + h1.toString(16)).slice(-8) + ('00000000' + h2.toString(16)).slice(-8);
+    }
+    function _dsRefOf(ds, kind, id) {
+        return { kind: kind || 'data-tab', id: id || null, name: _txt(ds.name || 'Data tab').slice(0, 80), hash: dsHash(ds), n: ds.t.length };
+    }
+    // compare the active test's binding with the loaded dataset; returns 'bound' | 'other' | 'new' | 'none'
+    function _checkBinding() {
+        var T = test(), ds = G.PRiSM_dataset;
+        if (!_hasData(ds)) return 'none';
+        var h = dsHash(ds);
+        if (!T.dsRef || !T.dsRef.hash) {
+            var kind = (ds.source === 'dfit-demo') ? 'demo' : (ds.source === 'gauge' ? 'gauge' : 'data-tab');
+            T.dsRef = _dsRefOf(ds, kind, ds.source === 'dfit-demo' ? (ds.demoName || null) : null);
+            if (T.summary) T.summary.forOtherDataset = false;
+            return 'new';
+        }
+        var other = T.dsRef.hash !== h;
+        if (T.summary) { T.summary.forOtherDataset = other; if (other) T.summary.stale = true; }
+        return other ? 'other' : 'bound';
+    }
+    function rebind(reason) {
+        var T = test(), ds = G.PRiSM_dataset;
+        if (!_hasData(ds)) return { ok: false, code: 'NO_DATA', errors: ['Load a DFIT first.'], bad: [] };
+        var old = T.dsRef ? T.dsRef.hash : null;
+        T.dsRef = _dsRefOf(ds, ds.source === 'dfit-demo' ? 'demo' : 'data-tab', ds.demoName || null);
+        logEntry(T, 'dsRef', old, T.dsRef.hash, reason || 'Decisions re-bound to the loaded dataset');
+        if (T.summary) { T.summary.forOtherDataset = false; T.summary.stale = true; }
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        return { ok: true, hash: T.dsRef.hash };
+    }
+    function _loadTestDataset(T) {
+        var ds = G.PRiSM_dataset;
+        if (!T.dsRef || (_hasData(ds) && dsHash(ds) === T.dsRef.hash)) return false;
+        if (T.dsRef.kind === 'demo' && T.dsRef.id) return !!loadDemo(T.dsRef.id, { silentBind: true });
+        return false;
+    }
+
+    // =========================================================================
+    // SECTION 4 — RUNS: fast pipeline, ▶ Analyse (§4.20), applying a run
+    // =========================================================================
+    var _job = null;          // {token, job, cancelled}
+    var _token = 0;
+    var _status = { text: '', level: 'info' };
+    function _setStatus(text, level) {
+        _status = { text: _txt(text), level: level || 'info' };
+        var el = _byId('prism_dfit_status');
+        if (el) { el.textContent = _status.text; el.className = 'prism-dfit-status prism-dfit-status--' + _status.level; }
+    }
+    // the reason a pipeline run failed, with the next step: the engine's first error, else its first stage warning
+    function _failText(run) {
+        var why = run && _arr(run.errors) && run.errors[0] ? run.errors[0] : null, code = run && run.code;
+        var Ws = run && _arr(run.warnings) ? run.warnings : [];
+        var stage = null;
+        for (var i = 0; i < Ws.length && !stage; i++) if (Ws[i] && /_FAILED$/.test(String(Ws[i].code || ''))) stage = Ws[i];
+        if (!why && stage) why = String(stage.text || '').replace(/^\w+: /, '');
+        var noDfit = /^(EVENTS|DERIVS|PREPARE)_FAILED$/.test(String((stage && stage.code) || code || '')) || /falloff|shut-in|injection/i.test(String(why || ''));
+        if (noDfit) return '⚠ No injection and shut-in found in this record' + (why ? ' (' + _txt(why).slice(0, 120) + ')' : '') + ': load a DFIT record or a demo DFIT on step ①.';
+        return '⚠ The analysis failed: ' + _txt(why || 'no result') + '.';
+    }
+    function _engineMissing(r) { return !r || r.code === 'NOT_IMPLEMENTED'; }
+    function _pipeArgs(fast) {
+        var T = test(), o = T.inputs.options || {};
+        return [G.PRiSM_dataset, T.inputs, _well(), T.picks,
+                { fast: !!fast, seed: (o.unc && o.unc.seed) || 1, uncN: (o.unc && o.unc.n) || 1000, stages: 'all', whatIf: _st()._dfitWhatIf || null }];
+    }
+    // the fast pipeline (no stability grid, bootstrap or uncertainty): undo restore, picks, drag preview, restore
+    function runFast(why) {
+        var ds = G.PRiSM_dataset, T = test();
+        if (!_hasData(ds)) return null;
+        if (T.summary && T.summary.forOtherDataset) return null;
+        var f = G.PRiSM_dfit_pipeline;
+        if (typeof f !== 'function') { if (T.summary) T.summary.stale = true; return null; }
+        var run = null;
+        try { run = f.apply(null, _pipeArgs(true)); } catch (e) { run = null; }
+        if (!run || run.ok === false) { if (T.summary) T.summary.stale = true; return null; }
+        _apply(run, { fast: true, why: why || 'fast' });
+        return run;
+    }
+    function _summaryOf(run) {
+        var f = _fn('PRiSM_dfit_summarise'), s = null;
+        if (f) { try { s = f(run); } catch (e) { s = null; } }
+        if (!s || s.ok === false || !_isObj(s.closure)) s = _clone(run.summary) || null;
+        if (s) { s.stale = false; s.forOtherDataset = false; if (!s.at) s.at = _nowISO(); }
+        return s;
+    }
+    // store a run: st._dfitRun, T.summary, PRiSM.multiRate (idealised schedule, bbl/d), C1, WTS_state.dfit, event
+    // full runs kept by test, inputs and picks (a few): an undo back to the inputs and picks of a full run reinstates it, so an
+    // override and its undo do not leave the fast run's labels on the board
+    var FULL_CAP = 4, _fullRuns = [];
+    function _fnv(str) { var h = 0x811c9dc5; for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; } return ('0000000' + h.toString(16)).slice(-8); }
+    function _runKey(T) {
+        var dh = T && T.dsRef ? T.dsRef.hash : '';
+        try { return T.id + '|' + dh + '|' + _fnv(JSON.stringify(T.inputs || null)) + '|' + _fnv(JSON.stringify(T.picks || null)); } catch (e) { return null; }
+    }
+    function _keepFull(T, run) {
+        var k = _runKey(T);
+        if (!k || !T.summary) return;
+        _fullRuns = _fullRuns.filter(function (x) { return x.key !== k; });
+        _fullRuns.push({ key: k, run: run, summary: _clone(T.summary) });
+        if (_fullRuns.length > FULL_CAP) _fullRuns.shift();
+    }
+    function _fullFor(T) {
+        var k = _runKey(T);
+        for (var i = _fullRuns.length - 1; i >= 0; i--) if (_fullRuns[i].key === k) return _fullRuns[i];
+        return null;
+    }
+    function _apply(run, o) {
+        o = o || {};
+        var st = _st(), T = test();
+        st._dfitRun = run;
+        var s = _summaryOf(run);
+        if (s) {
+            if (o.fast && T.summary && _isObj(T.summary.unc)) s.unc = T.summary.unc;
+            T.summary = s;
+        }
+        // a fast run after an undo is not the full analysis of these picks: the board says so (press ▶ Analyse)
+        if (o.fast && o.source === 'undo' && T.summary) T.summary.stale = true;
+        if (!o.fast) _keepFull(T, run);
+        if (!T.dsRef || !T.dsRef.hash) _checkBinding();
+        // an undo restores C1 and multiRate from its own snapshot: re-writing them here would undo the undo
+        if (o.source !== 'undo') { _writeSchedule(run); _writeC1(run); }
+        if (!o.fast) { try { _storeHf(run); } catch (e) { /* the windows are optional */ } }
+        _publish();
+        _emit('prism:dfit-updated', { what: o.what || 'all', source: o.source || 'auto' });
+        _refreshUI();
+    }
+    // High-rate windows (§3.11): the ≥ 2 Hz windows 56 cut on import go to 19's PRiSM_storage as the analysis record
+    // 'dfit-hf:<dsHash>' (IndexedDB backend, carried by project files); without IndexedDB only the shut-in window
+    // (≤ 150 kB) is kept in 'wts_prism_dfit_hf'. Pressures are scaled integers stored as first differences.
+    var HF_LS_KEY = 'wts_prism_dfit_hf', HF_LS_CAP = 150000, HF_MAX = 12000;
+    function _encWin(w) {
+        var p = _arr(w && w.p) ? w.p : null;
+        if (!p || !p.length) return null;
+        var n = Math.min(p.length, HF_MAX), scale = 0.01, off = _isNum(p[0]) ? p[0] : 0, d = [], prev = 0;
+        for (var i = 0; i < n; i++) { var q = Math.round(((_isNum(p[i]) ? p[i] : off) - off) / scale); d.push(q - prev); prev = q; }
+        var kind = /^(shutin|step|flowback|ramp)$/.test(w.kind) ? w.kind : 'shutin';
+        return { kind: kind, t0: _num(w.t0), dtS: _num(w.dtS), n: n, p: d, pSurf: null, q: null, scale: scale, offset: off };
+    }
+    function _storeHf(run) {
+        var T = test(), hf = run && run.prep && run.prep.hf;
+        var wins = hf && _arr(hf.windows) ? Array.prototype.slice.call(hf.windows, 0, 4).map(_encWin).filter(function (x) { return !!x; }) : [];
+        if (!wins.length || !run.dsHash) return null;
+        var key = 'dfit-hf:' + run.dsHash, rec = { v: 1, windows: wins };
+        var S = G.PRiSM_storage, idb = !!(S && S.backend === 'indexedDB' && typeof S.putAnalysis === 'function');
+        var txt = JSON.stringify(rec);
+        if (idb) {
+            try { S.putAnalysis(key, rec); } catch (e) { idb = false; }
+        }
+        if (!idb) {
+            var shut = wins.filter(function (x) { return x.kind === 'shutin'; }).slice(0, 1);
+            txt = JSON.stringify({ v: 1, key: key, windows: shut });
+            if (!shut.length || txt.length > HF_LS_CAP) { T.hf = null; return null; }
+            var ls = _ls();
+            if (ls) { try { ls.setItem(HF_LS_KEY, txt); } catch (e) { T.hf = null; return null; } }
+            wins = shut;
+        }
+        T.hf = { key: key, kinds: wins.map(function (x) { return x.kind; }), bytes: txt.length, store: idb ? 'idb' : 'ls' };
+        return T.hf;
+    }
+    function _schedule(run) {
+        var ev = run && run.events;
+        if (!ev || !_isNum(ev.ts)) return null;
+        var tp = (ev.tp && _isNum(ev.tp.veq) && ev.tp.veq > 0) ? ev.tp.veq : null;
+        var qEq = _isNum(ev.qEq) && ev.qEq > 0 ? ev.qEq : null;
+        if (!tp || !qEq) return null;
+        return [{ t: ev.ts - tp, q: qEq * 1440 }, { t: ev.ts, q: 0 }];
+    }
+    function _writeSchedule(run) {
+        var rows = _schedule(run);
+        if (!rows) return false;
+        var P = _P();
+        P.multiRate = rows;
+        var ls = _ls();
+        if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e) { /* quota */ } }
+        return true;
+    }
+    function _writeC1(run) {
+        if (typeof G.PRiSM_setWell !== 'function' || !run || !run.events) return false;
+        var ev = run.events, patch = {};
+        var w = _well();
+        if (w.testType !== 'falloff') patch.testType = 'falloff';
+        if (_isNum(ev.ts)) patch.tShut = ev.ts;
+        if (ev.tp && _isNum(ev.tp.veq)) patch.tp = ev.tp.veq;
+        if (run.isip && _isNum(run.isip.value)) patch.pwf0 = run.isip.value;
+        var same = true;
+        for (var k in patch) if (_own(patch, k) && w[k] !== patch[k]) same = false;
+        if (same) return false;
+        try { G.PRiSM_setWell(patch, { source: 'dfit' }); } catch (e) { return false; }
+        return true;
+    }
+    // WTS_state.dfit (§2.9): field units, published after each stored run
+    function _publish() {
+        var d = dstate(), T = test(), s = T.summary;
+        var W = G.WTS_state = (G.WTS_state && typeof G.WTS_state === 'object') ? G.WTS_state : {};
+        if (!s) { W.dfit = { ok: false, tests: _testRows(d) }; return W.dfit; }
+        var c = s.closure || {};
+        W.dfit = {
+            ok: true, ts: (_run() && _run().events) ? _num(_run().events.ts) : null,
+            isip: s.isip ? _num(s.isip.value) : null,
+            closure: { mode: c.mode || 'none', value: _num(c.value), lo: _num(c.lo), hi: _num(c.hi), label: c.label || null,
+                       families: _clone(c.families) || {} },
+            closureGrad: _grad(_closureP(s), T), pn: _num(s.pn), eta: _num(s.eta), CL: _num(s.CL), Gamma: _num(s.Gamma), xf: _num(s.xf),
+            pi: s.pi ? _num(s.pi.value) : null, piLabel: s.pi ? (s.pi.label || null) : null,
+            khmu: _num(s.khmu), k: _num(s.k), kLo: _num(s.kLo), kHi: _num(s.kHi), triage: s.triage || null, grade: s.grade || null,
+            tests: _testRows(d), appVersion: _appVersion()
+        };
+        return W.dfit;
+    }
+    function _appVersion() {
+        try { if (typeof G.WTS_appVersion === 'function') { var v = G.WTS_appVersion(); if (v) return String(v); } } catch (e) { /* host getter missing */ }
+        var RN = G.RELEASE_NOTES;
+        return (RN && RN[0] && RN[0].ver) ? String(RN[0].ver) : null;
+    }
+    function _closureP(s) {
+        var c = s && s.closure;
+        if (!c) return null;
+        if (c.mode === 'single') return _num(c.value);
+        if (c.mode === 'range' && _isNum(c.lo) && _isNum(c.hi)) {
+            var F1 = c.families && c.families.F1 && c.families.F1.p50, F2 = c.families && c.families.F2 && c.families.F2.p50;
+            if (_isNum(F1) && _isNum(F2)) return (F1 + F2) / 2;
+            return (c.lo + c.hi) / 2;
+        }
+        return null;
+    }
+    function _grad(p, T) { var z = T && T.inputs ? _num(T.inputs.datumTvd) : null; return (_isNum(p) && z) ? p / z : null; }
+    function _testRows(d) {
+        return d.tests.map(function (t) {
+            var s = t.summary || null;
+            return { id: t.id, zone: t.zone || '', datumTvd: _num(t.inputs && t.inputs.datumTvd), closureGrad: _grad(_closureP(s), t),
+                     closureLabel: s && s.closure ? (s.closure.label || null) : null, pi: s && s.pi ? _num(s.pi.value) : null,
+                     k: s ? _num(s.k) : null, kRange: s && _isNum(s.kLo) && _isNum(s.kHi) ? [s.kLo, s.kHi] : null };
+        });
+    }
+
+    function _shouldCancelFactory(tok, hadShell) {
+        // leaving DFIT mode cancels a run started in DFIT mode; a run started from code outside DFIT mode (tests, scripts) runs on
+        var startedInDfit = !!(G.PRiSM && G.PRiSM.mode === 'dfit');
+        return function () {
+            if (!_job || _job.token !== tok || _job.cancelled || tok !== _token) return true;
+            if (hadShell) { var sh = _shell(); if (!sh || sh.isConnected === false) return true; }
+            if (startedInDfit && hooksReady() && G.PRiSM && G.PRiSM.mode !== 'dfit') return true;
+            return false;
+        };
+    }
+    function cancelAnalyse(why) {
+        if (!_job) return false;
+        _job.cancelled = true;
+        try { if (_job.job && typeof _job.job.cancel === 'function') _job.job.cancel(); } catch (e) { /* ignore */ }
+        if (why) _setStatus(why, 'warn');
+        return true;
+    }
+    function _runJobSync(job, shouldCancel, onProgress) {
+        for (var i = 0; i < 100000; i++) {
+            if (shouldCancel()) { if (job.cancel) job.cancel(); throw { code: 'CANCELLED' }; }
+            var s = job.step();
+            if (onProgress) onProgress(s.progress, s.label);
+            if (s.done) return job.result();
+        }
+        throw { code: 'STEP_CAP' };
+    }
+    function analyse(opts) {
+        opts = opts || {};
+        var resolved = function (v) { return (typeof Promise !== 'undefined') ? Promise.resolve(v) : v; };
+        var ds = G.PRiSM_dataset;
+        if (!_hasData(ds)) { _setStatus('⚠ Load a DFIT first: paste or open a record on the Data step, or load a demo DFIT.', 'warn'); return resolved({ ok: false, code: 'NO_DATA', errors: ['Load a DFIT first.'], bad: [] }); }
+        var T = test();
+        var bind = _checkBinding();
+        if (bind === 'other') { _setStatus('⚠ The decisions of this test belong to another dataset: load it, or re-bind the test to the loaded data.', 'warn'); return resolved({ ok: false, code: 'OTHER_DATASET', errors: ['Decisions belong to another dataset.'], bad: [] }); }
+        var mk = G.PRiSM_dfit_pipelineJob;
+        if (typeof mk !== 'function') { _setStatus('⚠ The DFIT engines are not in this build.', 'warn'); return resolved({ ok: false, code: 'NO_ENGINE', errors: ['No pipeline.'], bad: [] }); }
+        if (_job) cancelAnalyse();
+        var tok = ++_token, job = null;
+        try { job = mk.apply(null, _pipeArgs(false)); } catch (e) { job = null; }
+        if (!job || typeof job.step !== 'function') { _setStatus('⚠ The DFIT pipeline could not start.', 'warn'); return resolved({ ok: false, code: 'NO_JOB', errors: ['No job.'], bad: [] }); }
+        _job = { token: tok, job: job, cancelled: false };
+        var hadShell = !!_shell();
+        var shouldCancel = _shouldCancelFactory(tok, hadShell);
+        var onProgress = function (p, label) {
+            var el = _byId('prism_dfit_progress');
+            if (el) { el.style.display = ''; el.textContent = 'Analysing… ' + Math.round(100 * (_isNum(p) ? p : 0)) + ' %' + (label ? ' · ' + _txt(label).slice(0, 60) : ''); }
+            if (typeof opts.onProgress === 'function') { try { opts.onProgress(p, label); } catch (e) { /* ignore */ } }
+        };
+        _setStatus('Analysing…', 'info');
+        _batch('begin');
+        var ended = false;
+        var finish = function () { if (!ended) { ended = true; _batch('end'); } if (_job && _job.token === tok) _job = null; var el = _byId('prism_dfit_progress'); if (el) el.style.display = 'none'; };
+        var done = function (run) {
+            if (!run || run.ok === false) {
+                finish();
+                _setStatus(_engineMissing(run) ? '⚠ The DFIT engines are not available in this build yet: previous results kept.' : _failText(run), 'warn');
+                return run || { ok: false, code: 'NO_RESULT', errors: ['No result.'], bad: [] };
+            }
+            try { _apply(run, { fast: false, what: 'all', source: 'auto' }); } catch (e) { finish(); throw e; }
+            finish();
+            _nAnalyse++;
+            _setStatus('✓ Analysis ' + _nAnalyse + ' complete' + (run && run.counts && _isNum(run.counts.evals) ? ' (' + _f(run.counts.evals, 0) + ' evaluations)' : '') + '.', 'ok');
+            return run;
+        };
+        var fail = function (err) {
+            finish();
+            if (err && err.code === 'CANCELLED') { _setStatus('Cancelled — previous results kept.', 'warn'); return { ok: false, code: 'CANCELLED', errors: ['Cancelled.'], bad: [] }; }
+            _setStatus('⚠ The analysis stopped: ' + _txt((err && err.message) || (err && err.code) || 'error'), 'warn');
+            return { ok: false, code: 'PIPELINE_FAILED', errors: [_txt((err && err.message) || 'error')], bad: [] };
+        };
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.drive === 'function' && typeof Promise !== 'undefined') {
+            return AI.drive(job, { shouldCancel: shouldCancel, onProgress: onProgress }).then(done, fail);
+        }
+        var out;
+        try { out = done(_runJobSync(job, shouldCancel, onProgress)); } catch (e) { out = fail(e); }
+        return resolved(out);
+    }
+
+    // =========================================================================
+    // SECTION 5 — PICKS (the only writer, §3.8, §7.10) and inputs
+    // =========================================================================
+    var PICK_ITEMS = { isip: 1, closure: 1, aca: 1 };
+    function setPick(item, value, o) {
+        _batch('begin');
+        try { return _setPick(item, value, o); } finally { _batch('end'); }
+    }
+    function _setPick(item, value, o) {
+        o = o || {};
+        var T = test(), source = o.source || 'user';
+        var reason = _txt(o.reason || '');
+        if (source === 'user' && !reason && o.requireReason) return { ok: false, code: 'REASON_REQUIRED', errors: ['A reason is required for an override.'], bad: ['reason'] };
+        var key = String(item || '');
+        var old;
+        if (value != null && (typeof value !== 'object' || value instanceof Array || _arr(value)))
+            return { ok: false, code: 'BAD_VALUE', errors: ['A pick is an object such as {p: psia}.'], bad: ['value'] };
+        if (PICK_ITEMS[key]) {
+            old = _clone(T.picks[key]);
+            if (value == null) T.picks[key] = (key === 'aca') ? { origin: 'centroid', linWin: null, radWin: null, piLevel: null } : null;
+            else if (key === 'aca') { var a = T.picks.aca; for (var k in value) if (_own(value, k)) a[k] = value[k]; }
+            else { var v = _clone(value) || {}; v.source = source; v.reason = reason; v.at = _nowISO(); T.picks[key] = v; }
+        } else if (/^dfit[A-Z]\w*$/.test(key)) {
+            old = _clone(T.picks.user[key] || null);
+            if (value == null) delete T.picks.user[key];
+            else { var u = _clone(value) || {}; u.at = _nowISO(); T.picks.user[key] = u; }
+        } else return { ok: false, code: 'BAD_ITEM', errors: ['Unknown pick ' + _txt(key) + '.'], bad: ['item'] };
+        logEntry(T, PICK_ITEMS[key] ? key : 'pick.' + key, old && (old.value != null ? old.value : (old.p != null ? old.p : old)),
+                 value && (value.value != null ? value.value : (value.p != null ? value.p : value)), reason || (source === 'user' ? 'User pick' : 'Automatic pick'));
+        if (T.summary) T.summary.stale = true;
+        _emit('prism:dfit-updated', { what: 'pick', item: key, source: source });
+        if (o.fast !== false) runFast('pick');
+        _refreshUI();
+        return { ok: true, item: key };
+    }
+    // one input field written from the UI: clamp, store, log; returns {value, warning}
+    function setInput(path, raw, o) {
+        o = o || {};
+        var T = test(), r;
+        var R = _ranges();
+        if (SELECTS[path]) {
+            var en = R && R.enums ? R.enums[path] : null, v = raw;
+            if (path === 'options.alpha' && (raw === '0.5' || raw === '1')) v = +raw;
+            if (en && en.indexOf(v) === -1) v = _getPath(_defaults(), path);
+            r = { value: v, warning: null };
+        } else if (/^options\.(axisLock|ppd)$|carterExactFR$/.test(path)) {
+            r = { value: !!raw, warning: null };
+        } else r = clampField(path, raw);
+        var old = _getPath(T.inputs, path);
+        if (old === r.value) return r;
+        _setPath(T.inputs, path, r.value);
+        logEntry(T, 'inputs.' + path, old, r.value, o.reason || 'Edited in the DFIT cards');
+        if (T.summary) T.summary.stale = true;
+        if (o.silent !== true) _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        return r;
+    }
+    function results() { var T = test(); return T.summary || null; }
+
+    // ── demo datasets (49-calc-dfit-synth, WP5) committed with a role-header CSV in the Data-tab text (§2.9) ──
+    var DEMOS = [['reference', 'Reference (normal leak-off)'], ['tight-linear', 'Tight, linear flow'], ['conventional-radial', 'Conventional, radial flow'],
+                 ['contact', 'Contact (closure range)'], ['pdl', 'Pressure-dependent leak-off'], ['surface-gauge', 'Surface gauge'], ['two-cycle', 'Two cycles']];
+    function _csvOf(ds) {
+        var cols = [['time_h', ds.t], ['pressure_psia', ds.p]];
+        if (_arr(ds.q)) cols.push(['rate_bbl/d', ds.q]);
+        if (_arr(ds.pSurf)) cols.push(['pressure_surf_psia', ds.pSurf]);
+        if (_arr(ds.T)) cols.push(['temp_F', ds.T]);
+        if (_arr(ds.pAnn)) cols.push(['pressure_ann_psia', ds.pAnn]);
+        if (_arr(ds.qFb)) cols.push(['rate_fb_bbl/d', ds.qFb]);
+        var lines = [cols.map(function (c) { return c[0]; }).join(',')];
+        for (var i = 0; i < ds.t.length; i++) lines.push(cols.map(function (c) { var v = c[1][i]; return _isNum(v) ? String(v) : ''; }).join(','));
+        return lines.join('\n');
+    }
+    // the demo's own well set-up (49-calc-dfit-synth inputsFor / wellFor): rock, string, fluid, perforations, datum and channel into
+    // the test inputs (logged), φ, c_t, μ, h, r_w into C1 as 'sample' values (never over a user value)
+    var DEMO_INPUT_PATHS = ['datumTvd', 'strings', 'fluid.kind', 'fluid.rhoPpg', 'perfs.n', 'perfs.dIn', 'perfs.cd', 'rock.Ep', 'rock.EpSource',
+                            'rock.hf', 'rock.hp', 'channels.primary',
+                            'temp.model', 'temp.tauLoH', 'temp.tauHiH'];
+    function _applyDemoSetup(T, S, name) {
+        if (!S || typeof S.demoSpec !== 'function' || typeof S.inputsFor !== 'function') return false;
+        var spec = null, inp = null, wl = null;
+        try { spec = S.demoSpec(name); spec = spec && spec.spec ? spec.spec : spec; inp = spec ? S.inputsFor(spec) : null; } catch (e) { inp = null; }
+        if (!_isObj(inp) || inp.ok === false) return false;
+        var changed = [];
+        DEMO_INPUT_PATHS.forEach(function (path) {
+            var v = _getPath(inp, path);
+            if (v === undefined || v === null) return;
+            var old = _getPath(T.inputs, path);
+            if (JSON.stringify(old) === JSON.stringify(v)) return;
+            _setPath(T.inputs, path, _clone(v));
+            changed.push(path);
+        });
+        // one log line for the whole set-up, in display text (the log is printed in the report)
+        if (changed.length) logEntry(T, 'inputs', 'previous set-up', changed.length + ' fields: ' + changed.join(', '), 'Demo DFIT ' + name + ' set-up');
+        if (typeof S.wellFor === 'function' && typeof G.PRiSM_setWell === 'function') {
+            try { wl = S.wellFor(spec); } catch (e) { wl = null; }
+            if (_isObj(wl)) {
+                var cur = _well(), prov = (cur && cur.provenance) || {}, patch = {}, n = 0;
+                ['phi', 'ct', 'mu', 'h', 'rw'].forEach(function (k) { if (_isNum(wl[k]) && prov[k] !== 'user') { patch[k] = wl[k]; n++; } });
+                if (n) { try { G.PRiSM_setWell(patch, { source: 'sample', origin: 'dfit-demo' }); } catch (e) { /* keep the well */ } }
+            }
+        }
+        return true;
+    }
+    // the active test when DFIT state already exists (never creates it: a session outside DFIT gets none until needed)
+    function st0Test() { var st = _st(); return (_isObj(st.dfit) && st.dfit.v === 2) ? test() : null; }
+    function loadDemo(name, o) {
+        o = o || {};
+        var S = G.PRiSM_dfit_synth, ds = null;
+        if (S && typeof S.demo === 'function') { try { ds = S.demo(name); } catch (e) { ds = null; } }
+        if (!_hasData(ds) || ds.ok === false) { _setStatus('⚠ The demo DFIT datasets are not available in this build yet.', 'warn'); return null; }
+        ds.source = 'dfit-demo'; ds.demoName = name;
+        if (!ds.name) ds.name = 'DFIT demo — ' + name;
+        var csv = _csvOf(ds);
+        if (typeof PRiSM_persistPaste === 'function') { try { PRiSM_persistPaste(csv); } catch (e) { /* ignore */ } }
+        var box = _byId('prism_data_paste');
+        if (box) box.value = csv;
+        _batch('begin');
+        // the binding is decided before the commit: the dataset-loaded listener (_onDatasetLoaded → _checkBinding) binds an
+        // unbound test itself, which used to skip the demo set-up below (integration: the surface-gauge demo had no datum)
+        var T0 = st0Test(), prevRef = T0 && T0.dsRef ? T0.dsRef.hash : null, newH = dsHash(ds);
+        if (typeof G.PRiSM_commitDataset === 'function') G.PRiSM_commitDataset(ds, { source: 'dfit-demo', name: ds.name });
+        else { G.PRiSM_dataset = ds; _emit('prism:dataset-loaded', { source: 'dfit-demo', dataset: ds }); }
+        var T = test();
+        if (prevRef !== newH || !T.dsRef || T.dsRef.hash !== newH) {
+            if (!o.silentBind) logEntry(T, 'dsRef', prevRef, newH, 'Demo DFIT ' + name + ' loaded');
+            T.dsRef = _dsRefOf(ds, 'demo', name);
+            if (T.summary) { T.summary.forOtherDataset = false; T.summary.stale = true; }
+            if (o.inputs !== false) _applyDemoSetup(T, S, name);
+        }
+        _batch('end');
+        _refreshUI();
+        return ds;
+    }
+
+    // =========================================================================
+    // SECTION 6 — PLOT FUNCTIONS (host-IIFE scope: the 02 lexical helpers, typeof-guarded)
+    // =========================================================================
+    function _theme(k, d) { try { return (typeof PRiSM_THEME !== 'undefined' && PRiSM_THEME[k]) ? PRiSM_THEME[k] : d; } catch (e) { return d; } }
+    function _plotLib() {
+        return typeof PRiSM_plot_setup === 'function' && typeof PRiSM_plot_axes === 'function' && typeof PRiSM_plot_finish === 'function' &&
+               typeof PRiSM_plot_line === 'function' && typeof PRiSM_plot_range === 'function';
+    }
+    function _msgCanvas(canvas, msg) {
+        if (typeof PRiSM_plot_message === 'function') { try { PRiSM_plot_message(canvas, msg); return; } catch (e) { /* fall through */ } }
+        try {
+            var c = canvas.getContext && canvas.getContext('2d');
+            if (!c) return;
+            c.clearRect(0, 0, canvas.width || 300, canvas.height || 150);
+            c.fillStyle = '#8b949e'; c.font = '13px sans-serif'; c.textAlign = 'center';
+            c.fillText(msg, (canvas.width || 300) / 2, (canvas.height || 150) / 2);
+        } catch (e) { /* ignore */ }
+    }
+    function _pairs(x, y) { var out = []; if (!_arr(x) || !_arr(y)) return out; for (var i = 0; i < x.length && i < y.length; i++) out.push([x[i], y[i]]); return out; }
+    function _finiteVals(a, log) { var out = []; if (!_arr(a)) return out; for (var i = 0; i < a.length; i++) { var v = a[i]; if (_isNum(v) && (!log || v > 0)) out.push(v); } return out; }
+    function _fillBand(ctx, x, lo, hi, toX, toY, color) {
+        var pts = [], i;
+        for (i = 0; i < x.length; i++) if (_isNum(x[i]) && _isNum(lo[i]) && _isNum(hi[i])) pts.push(i);
+        if (pts.length < 2) return;
+        ctx.save(); ctx.fillStyle = color; ctx.beginPath();
+        for (i = 0; i < pts.length; i++) { var j = pts[i], X = toX(x[j]), Y = toY(lo[j]); if (!isFinite(X) || !isFinite(Y)) continue; if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); }
+        for (i = pts.length - 1; i >= 0; i--) { var k = pts[i], X2 = toX(x[k]), Y2 = toY(hi[k]); if (isFinite(X2) && isFinite(Y2)) ctx.lineTo(X2, Y2); }
+        ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    function _vline(ctx, plot, X, color, dash, label) {
+        if (!isFinite(X) || X < plot.x - 1 || X > plot.x + plot.w + 1) return;
+        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; if (dash && ctx.setLineDash) ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(X, plot.y); ctx.lineTo(X, plot.y + plot.h); ctx.stroke();
+        if (label) { if (ctx.setLineDash) ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(label, X + 3, plot.y + 3, 140); }
+        ctx.restore();
+    }
+    function _hline(ctx, plot, Y, color, dash, label) {
+        if (!isFinite(Y) || Y < plot.y - 1 || Y > plot.y + plot.h + 1) return;
+        ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1.2; if (dash && ctx.setLineDash) ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(plot.x, Y); ctx.lineTo(plot.x + plot.w, Y); ctx.stroke();
+        if (label) { if (ctx.setLineDash) ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(label, plot.x + plot.w - 4, Y - 2, 180); }
+        ctx.restore();
+    }
+    // Dual-axis DFIT plot. data = {series:[{x, y, axis:'L'|'R', color, dash, dots, width, label}], bands:[{x, lo, hi, axis, color}],
+    //   vlines:[{x, color, dash, label}], hlines:[{y, axis, color, dash, label}], shade:[{x0, x1, color}], hbands:[{y0, y1, axis, color}],
+    //   markers:[{x, y, axis, color, label, hollow}],
+    //   xKind, yKind ('lin'|'log'), xRange:{min,max}?, yRange:{min,max}?, yR:{min, max, label}? (right linear axis)}
+    function PRiSM_plot_dfitDual(canvas, data, opts) {
+        opts = opts || {};
+        if (!canvas || typeof canvas.getContext !== 'function') return false;
+        if (!_plotLib()) { _msgCanvas(canvas, 'Plot library not loaded'); return false; }
+        var series = (data && _arr(data.series)) ? data.series : [];
+        var hasR = !!(data && data.yR && series.some(function (s) { return s.axis === 'R'; }));
+        var setup = PRiSM_plot_setup(canvas, opts, { secondaryAxis: hasR });
+        var ctx = setup.ctx, plot = setup.plot;
+        if (!series.length) { PRiSM_plot_noData(setup, opts.empty || 'No data'); return false; }
+        var xKind = data.xKind === 'log' ? 'log' : 'lin', yKind = data.yKind === 'log' ? 'log' : 'lin';
+        var xs = [], ys = [];
+        series.forEach(function (s) { xs = xs.concat(_finiteVals(s.x, xKind === 'log')); if (s.axis !== 'R') ys = ys.concat(_finiteVals(s.y, yKind === 'log')); });
+        (data.bands || []).forEach(function (b) { if (b.axis !== 'R') { ys = ys.concat(_finiteVals(b.lo, yKind === 'log')).concat(_finiteVals(b.hi, yKind === 'log')); } });
+        (data.hlines || []).forEach(function (h) { if (h.axis !== 'R' && h.fit && _isNum(h.y)) ys.push(h.y); });
+        if (!xs.length || !ys.length) { PRiSM_plot_noData(setup, opts.empty || 'No data'); return false; }
+        var xr = (data.xRange && _isNum(data.xRange.min) && data.xRange.max > data.xRange.min) ? data.xRange : PRiSM_plot_range(xs, xKind === 'log', 0.03, 8);
+        var yr = (data.yRange && _isNum(data.yRange.min) && data.yRange.max > data.yRange.min) ? data.yRange : PRiSM_plot_range(ys, yKind === 'log', 0.06, 6);
+        var scaleX = { kind: xKind, min: xr.min, max: xr.max, label: opts.xLabel || data.xLabel || 'x' };
+        var scaleY = { kind: yKind, min: yr.min, max: yr.max, label: opts.yLabel || data.yLabel || 'y' };
+        var scaleY2 = hasR ? { min: data.yR.min, max: data.yR.max, label: data.yR.label || '', color: _theme('cyan', '#39c5cf') } : null;
+        var first = series[0], points = _pairs(first.x, first.y);
+        function render() {
+            var tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || data.title || '', scaleY2: scaleY2 });
+            var toYR = tr.toY2 || null;
+            var yOf = function (axis) { return axis === 'R' ? toYR : tr.toY; };
+            if (typeof PRiSM_plot_clip === 'function') PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h); else ctx.save();
+            (data.shade || []).forEach(function (s) {
+                var a = tr.toX(s.x0), b = tr.toX(s.x1);
+                if (!isFinite(a) || !isFinite(b)) return;
+                ctx.save(); ctx.fillStyle = s.color || 'rgba(88,166,255,0.10)'; ctx.fillRect(Math.min(a, b), plot.y, Math.abs(b - a), plot.h); ctx.restore();
+            });
+            (data.hbands || []).forEach(function (b) {
+                var ty = yOf(b.axis); if (!ty || !_isNum(b.y0) || !_isNum(b.y1)) return;
+                var a = ty(b.y0), c = ty(b.y1); if (!isFinite(a) || !isFinite(c)) return;
+                ctx.save(); ctx.fillStyle = b.color || 'rgba(210,153,34,0.14)'; ctx.fillRect(plot.x, Math.min(a, c), plot.w, Math.abs(c - a)); ctx.restore();
+            });
+            (data.bands || []).forEach(function (b) { var ty = yOf(b.axis); if (ty) _fillBand(ctx, b.x, b.lo, b.hi, tr.toX, ty, b.color || 'rgba(88,166,255,0.18)'); });
+            series.forEach(function (s) {
+                var ty = yOf(s.axis);
+                if (!ty) return;
+                var pts = _pairs(s.x, s.y);
+                if (s.dots && typeof PRiSM_plot_dots === 'function') PRiSM_plot_dots(ctx, pts, tr.toX, ty, s.color || _theme('accent', '#f0883e'), s.r || 2.2);
+                else PRiSM_plot_line(ctx, pts, tr.toX, ty, s.color || _theme('accent', '#f0883e'), { width: s.width || 2, dash: s.dash || null });
+            });
+            (data.hlines || []).forEach(function (h) { var ty = yOf(h.axis); if (ty && _isNum(h.y)) _hline(ctx, plot, ty(h.y), h.color || _theme('text2', '#8b949e'), h.dash || [4, 4], h.label || ''); });
+            (data.vlines || []).forEach(function (v) { if (_isNum(v.x)) _vline(ctx, plot, tr.toX(v.x), v.color || _theme('text2', '#8b949e'), v.dash || [4, 4], v.label || ''); });
+            (data.markers || []).forEach(function (m) {
+                var ty = yOf(m.axis); if (!ty || !_isNum(m.x) || !_isNum(m.y)) return;
+                var X = tr.toX(m.x), Y = ty(m.y); if (!isFinite(X) || !isFinite(Y)) return;
+                ctx.save(); ctx.beginPath(); ctx.arc(X, Y, m.r || 4.5, 0, Math.PI * 2);
+                if (m.hollow) { ctx.strokeStyle = m.color || '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); } else { ctx.fillStyle = m.color || '#fff'; ctx.fill(); }
+                if (m.label) { ctx.fillStyle = m.color || '#fff'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.fillText(m.label, X + 6, Y - 6, 160); }
+                ctx.restore();
+            });
+            ctx.restore();
+            if (opts.showLegend !== false && typeof PRiSM_plot_legend === 'function') {
+                var items = series.filter(function (s) { return s.label; }).map(function (s) { return { label: s.label, color: s.color || _theme('accent', '#f0883e'), dash: !!s.dash, marker: s.dots ? 'dot' : 'line' }; });
+                if (items.length) PRiSM_plot_legend(ctx, items.slice(0, 6), plot);
+            }
+        }
+        PRiSM_plot_finish(setup, render, { scaleX: scaleX, scaleY: scaleY, points: points, plotKey: opts.plotKey || data.plotKey || null, data: data,
+                                           xName: data.xName || 'x', yName: data.yName || 'y' });
+        return true;
+    }
+    // Closure strip: one row per family (F0 top … F4 bottom) on a pressure axis.
+    // data = {rows:[{fam, label, band:{p10,p50,p90}|null, members:[{p, method, vote, vetoed}]}], consensus:{mode, value, lo, hi, medians:[]},
+    //         friction:{veto, warn}, whatIf:p|null, xRange?}
+    var FAM_COLORS = { F0: '#8b949e', F1: '#58a6ff', F2: '#f0883e', F3: '#bc8cff', F4: '#3fb950' };
+    function _rgba(hex, a) {
+        var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+        return m ? 'rgba(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ',' + a + ')' : 'rgba(139,148,158,' + a + ')';
+    }
+    function PRiSM_plot_dfitStrip(canvas, data, opts) {
+        opts = opts || {};
+        if (!canvas || typeof canvas.getContext !== 'function') return false;
+        if (!_plotLib()) { _msgCanvas(canvas, 'Plot library not loaded'); return false; }
+        var setup = PRiSM_plot_setup(canvas, opts);
+        var ctx = setup.ctx, plot = setup.plot;
+        var rows = (data && _arr(data.rows)) ? data.rows : [];
+        var ps = [];
+        rows.forEach(function (r) { (r.members || []).forEach(function (m) { if (_isNum(m.p)) ps.push(m.p); }); if (r.band) { if (_isNum(r.band.p10)) ps.push(r.band.p10); if (_isNum(r.band.p90)) ps.push(r.band.p90); } });
+        var c = (data && data.consensus) || {};
+        [c.value, c.lo, c.hi, data && data.whatIf, data && data.friction && data.friction.veto, data && data.friction && data.friction.warn].forEach(function (v) { if (_isNum(v)) ps.push(v); });
+        if (!ps.length) { PRiSM_plot_noData(setup, opts.empty || 'No closure picks yet — run ▶ Analyse'); return false; }
+        var xr = (data.xRange && data.xRange.max > data.xRange.min) ? data.xRange : PRiSM_plot_range(ps, false, 0.12);
+        var scaleX = { kind: 'lin', min: xr.min, max: xr.max, label: 'Closure pressure (psia)' };
+        var scaleY = { kind: 'lin', min: -0.5, max: 4.5, label: 'F4 · F3 · F2 · F1 · F0' };
+        var points = ps.map(function (p) { return [p, 0]; });
+        function render() {
+            var tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Closure consensus strip' });
+            if (typeof PRiSM_plot_clip === 'function') PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h); else ctx.save();
+            if (c.mode === 'range' && _isNum(c.lo) && _isNum(c.hi)) {
+                ctx.save(); ctx.fillStyle = 'rgba(210,153,34,0.14)'; var a = tr.toX(c.lo), b = tr.toX(c.hi); ctx.fillRect(Math.min(a, b), plot.y, Math.abs(b - a), plot.h); ctx.restore();
+                (c.medians || []).forEach(function (m) { if (_isNum(m)) _vline(ctx, plot, tr.toX(m), '#d29922', [2, 3], _f(m, 0)); });
+            } else if (_isNum(c.value)) _vline(ctx, plot, tr.toX(c.value), '#3fb950', null, _f(c.value, 0));
+            if (data.friction) {
+                if (_isNum(data.friction.veto)) _vline(ctx, plot, tr.toX(data.friction.veto), '#f85149', [6, 3], 'μ veto');
+                if (_isNum(data.friction.warn)) _vline(ctx, plot, tr.toX(data.friction.warn), '#d29922', [6, 3], 'μ warn');
+            }
+            if (_isNum(data.whatIf)) _vline(ctx, plot, tr.toX(data.whatIf), '#bc8cff', [3, 2], 'what-if');
+            rows.forEach(function (r) {
+                var idx = parseInt(String(r.fam).slice(1), 10);
+                if (!(idx >= 0 && idx <= 4)) return;
+                var Y = tr.toY(4 - idx), col = FAM_COLORS[r.fam] || '#8b949e';
+                if (r.band && _isNum(r.band.p10) && _isNum(r.band.p90)) {
+                    var x0 = tr.toX(r.band.p10), x1 = tr.toX(r.band.p90);
+                    ctx.save(); ctx.fillStyle = col; ctx.globalAlpha = 0.35; ctx.fillRect(Math.min(x0, x1), Y - 6, Math.max(2, Math.abs(x1 - x0)), 12); ctx.restore();
+                }
+                (r.members || []).forEach(function (m) {
+                    if (!_isNum(m.p)) return;
+                    var X = tr.toX(m.p);
+                    ctx.save(); ctx.beginPath(); ctx.arc(X, Y, m.vote ? 5 : 4, 0, Math.PI * 2);
+                    if (m.vote) { ctx.fillStyle = col; ctx.fill(); } else { ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke(); }
+                    if (m.vetoed) { ctx.strokeStyle = '#f85149'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X - 7, Y - 7); ctx.lineTo(X + 7, Y + 7); ctx.stroke(); }
+                    ctx.restore();
+                });
+                ctx.save(); ctx.fillStyle = col; ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                ctx.fillText(r.fam + (r.label ? ' ' + r.label : ''), plot.x + 4, Y - 11, 200); ctx.restore();
+            });
+            ctx.restore();
+        }
+        try {
+            var fams = rows.map(function (r) { return r.fam + (r.band && _isNum(r.band.p50) ? ' ' + _f(r.band.p50, 0) : ''); }).join(', ');
+            var cs = c.mode === 'single' ? 'single closure ' + _f(c.value, 0) + ' psia' : (c.mode === 'range' ? 'closure range ' + _f(c.lo, 0) + ' to ' + _f(c.hi, 0) + ' psia' : 'no closure');
+            canvas.setAttribute('aria-label', 'Closure strip: ' + cs + '. Families ' + fams + '.');
+            canvas.setAttribute('role', 'img');
+        } catch (e) { /* aria is a nicety */ }
+        PRiSM_plot_finish(setup, render, { scaleX: scaleX, scaleY: scaleY, points: points, plotKey: opts.plotKey || 'dfitStrip', data: data, xName: 'p', yName: 'family' });
+        return true;
+    }
+    // Stacked partition: data = {x:[], layers:[{label, y:[], color}], xLabel, yLabel, xKind}
+    function PRiSM_plot_dfitStack(canvas, data, opts) {
+        opts = opts || {};
+        if (!canvas || typeof canvas.getContext !== 'function') return false;
+        if (!_plotLib()) { _msgCanvas(canvas, 'Plot library not loaded'); return false; }
+        var setup = PRiSM_plot_setup(canvas, opts);
+        var layers = (data && _arr(data.layers)) ? data.layers : [];
+        if (!layers.length || !data || !_arr(data.x) || !data.x.length) { PRiSM_plot_noData(setup, opts.empty || 'No data'); return false; }
+        var n = data.x.length, cum = [], top = [];
+        layers.forEach(function (L, j) {
+            var row = [];
+            for (var i = 0; i < n; i++) { var v = _isNum(L.y[i]) ? Math.max(0, L.y[i]) : 0; row.push((j ? cum[j - 1][i] : 0) + v); }
+            cum.push(row);
+        });
+        top = cum[cum.length - 1];
+        var xKind = data.xKind === 'log' ? 'log' : 'lin';
+        var xr = PRiSM_plot_range(_finiteVals(data.x, xKind === 'log'), xKind === 'log', 0.02, 8), yr = PRiSM_plot_range(top.concat([0]), false, 0.05);
+        var scaleX = { kind: xKind, min: xr.min, max: xr.max, label: opts.xLabel || data.xLabel || 't (h)' };
+        var scaleY = { kind: 'lin', min: Math.min(0, yr.min), max: yr.max, label: opts.yLabel || data.yLabel || 'Volume (bbl)' };
+        var ctx = setup.ctx, plot = setup.plot;
+        function render() {
+            var tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || data.title || '' });
+            if (typeof PRiSM_plot_clip === 'function') PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h); else ctx.save();
+            for (var j = cum.length - 1; j >= 0; j--) {
+                var lo = j ? cum[j - 1] : data.x.map(function () { return 0; });
+                _fillBand(ctx, data.x, lo, cum[j], tr.toX, tr.toY, layers[j].color || 'rgba(88,166,255,0.4)');
+            }
+            ctx.restore();
+            if (typeof PRiSM_plot_legend === 'function') PRiSM_plot_legend(ctx, layers.map(function (L) { return { label: L.label, color: L.color || '#58a6ff' }; }), plot);
+        }
+        PRiSM_plot_finish(setup, render, { scaleX: scaleX, scaleY: scaleY, points: _pairs(data.x, top), plotKey: opts.plotKey || null, data: data, xName: 'x', yName: 'V' });
+        return true;
+    }
+
+    // =========================================================================
+    // SECTION 7 — PLOT REGISTRY ENTRIES AND DATA BUILDERS (§7.9)
+    // =========================================================================
+    var C = { p: '#f0883e', d1: '#3fb950', d2: '#58a6ff', ref: '#8b949e', band: 'rgba(88,166,255,0.16)', q: '#39c5cf', y: '#d29922', r: '#f85149', v: '#bc8cff' };
+    var NEED_RUN = 'Run ▶ Analyse (or load a demo DFIT) to draw this plot.';
+    function _interp(xs, ys, x) {
+        if (!_arr(xs) || !xs.length) return null;
+        var n = xs.length, inc = xs[n - 1] >= xs[0];
+        for (var i = 1; i < n; i++) {
+            var a = xs[i - 1], b = xs[i];
+            if (!_isNum(a) || !_isNum(b) || !_isNum(ys[i - 1]) || !_isNum(ys[i])) continue;
+            if ((inc && x >= a && x <= b) || (!inc && x <= a && x >= b)) return (b === a) ? ys[i] : ys[i - 1] + (ys[i] - ys[i - 1]) * (x - a) / (b - a);
+        }
+        return null;
+    }
+    // G at a closure pressure (the falloff is monotone before closure)
+    function _gAtP(d, p) { if (!d || !_isNum(p)) return null; return _interp(d.p, d.G, p); }
+    function _closureOf(run) {
+        var c = run && (run.consensus || run.consensusLite);
+        if (!c) return { mode: 'none' };
+        var fam = c.families || {};
+        var med = [];
+        if (c.range && c.range.medians) { med = [c.range.medians.low, c.range.medians.high]; }
+        else if (c.mode === 'range') { ['F1', 'F2', 'F4'].forEach(function (k) { if (fam[k] && _isNum(fam[k].p50)) med.push(fam[k].p50); }); }
+        return { mode: c.mode, value: _num(c.value), lo: c.range ? _num(c.range.lo) : null, hi: c.range ? _num(c.range.hi) : null, medians: med, families: fam };
+    }
+    function _scaleR(lo, hi, label) { if (!_isNum(lo) || !_isNum(hi) || hi <= lo) return null; return { min: lo, max: hi, label: label }; }
+    function _rangeOf(arr, from) {
+        var v = [];
+        for (var i = from || 0; i < (arr ? arr.length : 0); i++) if (_isNum(arr[i])) v.push(arr[i]);
+        if (!v.length) return null;
+        v.sort(function (a, b) { return a - b; });
+        var lo = v[Math.floor(0.02 * (v.length - 1))], hi = v[Math.ceil(0.98 * (v.length - 1))];
+        if (!(hi > lo)) { hi = lo + 1; }
+        return [Math.min(0, lo), hi * 1.1];
+    }
+    var _axisLock = null;   // runtime: the derivative ranges captured when "lock axis" was turned on
+    function _derivAxis(d, key) {
+        var T = test(), o = T.inputs.options || {};
+        if (o.axisLock && _axisLock && _axisLock[key]) return _axisLock[key];
+        var a = (d.axis && _arr(d.axis[key]) && d.axis[key].length === 2 && _isNum(d.axis[key][0]) && d.axis[key][1] > d.axis[key][0]) ? d.axis[key].slice() : null;
+        if (!a) a = _rangeOf(d[key]);
+        if (o.axisLock && a) { _axisLock = _axisLock || {}; _axisLock[key] = a; }
+        return a;
+    }
+    function _pickVlines(run, xOf) {
+        var out = [], c = _closureOf(run);
+        if (c.mode === 'single' && _isNum(c.value)) { var x = xOf(c.value); if (_isNum(x)) out.push({ x: x, color: C.d1, dash: [6, 3], label: 'closure ' + _f(c.value, 0) }); }
+        if (c.mode === 'range') (c.medians || []).forEach(function (m) { var x2 = xOf(m); if (_isNum(x2)) out.push({ x: x2, color: C.y, dash: [6, 3], label: _f(m, 0) }); });
+        return out;
+    }
+    var B = {};   // plotKey → function(run, T, ds) → {data, opts} | {error}
+    B.dfitHistory = function (run, T, ds) {
+        if (!_hasData(ds)) return { error: 'No data loaded — load a DFIT on the Data step.' };
+        var s = [{ x: ds.t, y: ds.p, color: C.p, label: 'p (psia)' }];
+        if (_arr(ds.pSurf)) s.push({ x: ds.t, y: ds.pSurf, color: C.d2, dash: [5, 3], label: 'p_surf (psia)' });
+        var qmax = 0, q = null;
+        if (_arr(ds.q)) { q = ds.q.map(function (v) { return _isNum(v) ? v / 1440 : null; }); q.forEach(function (v) { if (_isNum(v) && v > qmax) qmax = v; }); }
+        var yR = null;
+        if (q && qmax > 0) { s.push({ x: ds.t, y: q, axis: 'R', color: C.q, width: 1.5, label: 'q (bbl/min)' }); yR = { min: 0, max: qmax * 1.2, label: 'Rate (bbl/min)' }; }
+        var v = [];
+        var ev = run && run.events;
+        if (ev) {
+            if (_isNum(ev.tStart)) v.push({ x: ev.tStart, color: C.q, label: 'start' });
+            if (_isNum(ev.tb)) v.push({ x: ev.tb, color: C.y, label: 'breakdown' });
+            if (_isNum(ev.ts)) v.push({ x: ev.ts, color: C.r, label: 'shut-in' });
+        }
+        var shade = [];
+        if (run && run.triage && run.triage.windows) (run.triage.windows.excluded || []).forEach(function (w) { if (_isNum(w.t0) && _isNum(w.t1)) shade.push({ x0: w.t0, x1: w.t1, color: 'rgba(248,81,73,0.10)' }); });
+        return { data: { series: s, vlines: v, shade: shade, yR: yR, xKind: 'lin', yKind: 'lin', xName: 't', yName: 'p' }, opts: { title: 'DFIT history', xLabel: 'Time, t (h)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitConv = function (run, T, ds) {
+        if (!_hasData(ds)) return { error: 'No data loaded — load a DFIT on the Data step.' };
+        var pr = run && run.prep;
+        if (!pr || pr.src !== 'surface-converted') {
+            if (!_arr(ds.pSurf)) return { error: 'No surface channel: the primary gauge is bottomhole (no conversion needed).' };
+            return { data: { series: [{ x: ds.t, y: ds.pSurf, color: C.d2, label: 'p_surf' }, { x: ds.t, y: ds.p, color: C.p, label: 'p (BH)' }], xName: 't', yName: 'p' },
+                     opts: { title: 'Surface and bottomhole pressure', xLabel: 'Time, t (h)', yLabel: 'Pressure (psia)' } };
+        }
+        var s = [{ x: pr.t, y: pr.pw, color: C.p, label: 'converted p_w' }];
+        if (_arr(pr.pSurf)) s.unshift({ x: pr.t, y: pr.pSurf, color: C.d2, dash: [5, 3], label: 'p_surf' });
+        var bands = pr.band && _arr(pr.band.p10) ? [{ x: pr.t, lo: pr.band.p10, hi: pr.band.p90, color: C.band }] : [];
+        var v = [];
+        (pr.flags || []).forEach(function (f) { if (f && f.code === 'TRIAGE_VACUUM' && _isNum(f.t)) v.push({ x: f.t, color: C.r, label: 'vacuum' }); });
+        return { data: { series: s, bands: bands, vlines: v, xName: 't', yName: 'p' }, opts: { title: 'Bottomhole conversion', xLabel: 'Time, t (h)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitGradient = function (run, T, ds) {
+        var z = _num(T.inputs.datumTvd);
+        if (!z) return { error: '⚠ Enter the datum TVD (step ①, DFIT well card) to plot gradients.' };
+        if (!_hasData(ds)) return { error: 'No data loaded — load a DFIT on the Data step.' };
+        var x = run && run.prep ? run.prep.t : ds.t, p = run && run.prep ? run.prep.pw : ds.p;
+        var g = p.map(function (v) { return _isNum(v) ? v / z : null; });
+        var h = [], s = T.summary || {};
+        var cp = _closureP(s);
+        if (_isNum(cp)) h.push({ y: cp / z, color: C.d1, label: 'closure ' + _f(cp / z, 3), fit: true });
+        if (s.isip && _isNum(s.isip.value)) h.push({ y: s.isip.value / z, color: C.r, label: 'ISIP ' + _f(s.isip.value / z, 3), fit: true });
+        if (s.pi && _isNum(s.pi.value)) h.push({ y: s.pi.value / z, color: C.d2, label: 'p_i ' + _f(s.pi.value / z, 3), fit: true });
+        var ob = _num(T.inputs.rock && T.inputs.rock.sigmaVGrad);
+        if (ob) h.push({ y: ob, color: C.ref, label: 'overburden ' + _f(ob, 2) });
+        return { data: { series: [{ x: x, y: g, color: C.p, label: 'p_w / TVD' }], hlines: h, xName: 't', yName: 'gradient' },
+                 opts: { title: 'Pressure gradient', xLabel: 'Time, t (h)', yLabel: 'Gradient (psi/ft)' } };
+    };
+    B.dfitStress = function (run, T) {
+        var d = dstate(), s = [], m = [];
+        d.tests.forEach(function (t) {
+            var z = _num(t.inputs && t.inputs.datumTvd), sm = t.summary;
+            if (!z || !sm) return;
+            var c = sm.closure || {};
+            if (c.mode === 'single' && _isNum(c.value)) m.push({ x: c.value / z, y: -z, color: C.d1, label: (t.zone || t.id) + ' closure' });
+            if (c.mode === 'range' && _isNum(c.lo) && _isNum(c.hi)) s.push({ x: [c.lo / z, c.hi / z], y: [-z, -z], color: C.y, width: 6, label: (t.zone || t.id) + ' closure range' });
+            if (sm.isip && _isNum(sm.isip.value)) m.push({ x: sm.isip.value / z, y: -z, color: C.r, hollow: true });
+            if (sm.pi && _isNum(sm.pi.value)) m.push({ x: sm.pi.value / z, y: -z, color: C.d2, hollow: true });
+        });
+        if (!m.length && !s.length) return { error: 'Gradient vs depth needs analysed tests with a datum TVD.' };
+        var zs = m.map(function (k) { return k.y; });
+        s.forEach(function (k) { zs = zs.concat(k.y); });
+        var zmin = Math.min.apply(null, zs), zmax = Math.max.apply(null, zs);
+        s.push({ x: [0.433, 0.433], y: [zmin - 500, zmax + 500], color: C.ref, dash: [4, 4], label: 'hydrostatic 0.433' });
+        var ob = _num(T.inputs.rock && T.inputs.rock.sigmaVGrad) || 1.0;
+        s.push({ x: [ob, ob], y: [zmin - 500, zmax + 500], color: C.v, dash: [4, 4], label: 'overburden ' + _f(ob, 2) });
+        return { data: { series: s, markers: m, xName: 'gradient', yName: 'depth' }, opts: { title: 'Gradients against depth', xLabel: 'Gradient (psi/ft)', yLabel: 'Depth (−TVD, ft)' } };
+    };
+    B.dfitOverlay = function () {
+        var d = dstate(), cols = [C.p, C.d2, C.d1, C.v, C.y, C.q], s = [];
+        d.tests.forEach(function (t, i) {
+            var g = t.summary && t.summary.gdpdgN;
+            if (g && _arr(g.x) && g.x.length > 1) s.push({ x: g.x, y: g.y, color: cols[i % cols.length], label: (t.zone || t.id) });
+        });
+        if (s.length < 1) return { error: 'The overlay needs at least one analysed test (two to compare).' };
+        return { data: { series: s, xName: 'G/G_c', yName: 'normalised' }, opts: { title: 'G·dP/dG overlay (normalised)', xLabel: 'G / G_c', yLabel: 'G·dP/dG ÷ (m_G·G)' } };
+    };
+    B.dfitIsip = function (run) {
+        var d = run.derivs, I = run.isip;
+        if (!d || !_arr(d.G)) return { error: NEED_RUN };
+        var n = d.G.length, x = [], y = [];
+        for (var i = 0; i < n; i++) if (d.G[i] <= Math.max(2, (d.earlyWin && d.earlyWin[1]) || 2) * 1.5) { x.push(d.G[i]); y.push(d.p[i]); }
+        var s = [{ x: x, y: y, color: C.p, dots: true, label: 'p' }];
+        if (I && _isNum(I.value) && _isNum(d.mG)) s.push({ x: [0, x[x.length - 1] || 1], y: [I.value, I.value - d.mG * (x[x.length - 1] || 1)], color: C.d2, dash: [6, 3], label: 'early G line' });
+        var h = [];
+        (I && I.candidates || []).forEach(function (c) { if (_isNum(c.value)) h.push({ y: c.value, color: c.upper ? C.r : C.ref, dash: [2, 3], label: c.method + ' ' + _f(c.value, 0), fit: true }); });
+        return { data: { series: s, hlines: h, xName: 'G', yName: 'p' }, opts: { title: 'Early falloff and ISIP', xLabel: 'G-function', yLabel: 'Pressure (psia)' } };
+    };
+    // Water hammer (§4.17, §7.3): run.hammer when the pipeline carries one, else WTS_wellbore.hammerQuick on the high-rate
+    // shut-in window of prep.hf (resolved at call time). The view (seconds since shut-in, the window pressures and the fitted
+    // midline + damped sinusoid) is cached on the run object, never stored. → {H, why, s:[], p:[], fit:[]|null} | null (no window)
+    var HAMMER_1HZ = 'Water hammer not resolvable at 1 Hz: record ≥ 2.3 Hz at the wellhead through shut-in to use it.';
+    function _hammerOf(run) {
+        if (!run) return null;
+        if (Object.prototype.hasOwnProperty.call(run, '_dfitHammerView')) return run._dfitHammerView;
+        var ev = run.events, W = G.WTS_wellbore, T = test(), I = T.inputs, view = null;
+        var wins = (run.prep && run.prep.hf && _arr(run.prep.hf.windows)) ? run.prep.hf.windows : [], win = null, i;
+        for (i = 0; i < wins.length; i++) if (wins[i] && wins[i].kind === 'shutin' && _arr(wins[i].p) && _isNum(wins[i].t0) && wins[i].dtS > 0) { win = wins[i]; break; }
+        if (win && ev && _isNum(ev.ts)) {
+            var t = [], p = [];
+            for (i = 0; i < win.p.length && i < HF_MAX; i++) if (_isNum(win.p[i])) { t.push(win.t0 + i * win.dtS / 3600); p.push(win.p[i]); }
+            var H = (run.hammer && run.hammer.ok === true) ? run.hammer : null, why = null;
+            if (!H && W && typeof W.hammerQuick === 'function' && !W.hammerQuick._dfitStub) {
+                var col = { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd };
+                var r = null;
+                try { r = W.hammerQuick(t, p, ev.ts, { column: col, fluid: I.fluid, qShut: ev.qLast, VwCw: ev.VwCwMeasured }); } catch (e) { r = null; }
+                if (r && r.ok === true) H = r; else why = _txt((r && (r.why || (r.errors && r.errors[0]))) || 'The water-hammer fit did not run.');
+            } else if (!H) why = 'The wellbore engine is needed for the water-hammer fit.';
+            var sx = [], py = [], fit = null;
+            for (i = 0; i < t.length; i++) { var si = (t[i] - ev.ts) * 3600; if (si >= 0 && si <= 60) { sx.push(si); py.push(p[i]); } }
+            if (H && _isNum(H.T) && H.T > 0 && _isNum(H.tau) && H.tau > 0 && _isNum(H.A) && _isNum(H.isip) && sx.length > 3) {
+                var osc = sx.map(function (x) { return H.A * Math.exp(-x / H.tau) * Math.cos(2 * Math.PI * x / H.T + (_isNum(H.phi) ? H.phi : 0)); });
+                var sxx = 0, sxr = 0;   // midline isip − m·(s/60): m by least squares through the fitted intercept
+                for (i = 0; i < sx.length; i++) { var xm = sx[i] / 60; sxx += xm * xm; sxr += xm * (H.isip - (py[i] - osc[i])); }
+                var m = sxx > 0 ? sxr / sxx : 0;
+                fit = sx.map(function (x, k) { return H.isip - m * x / 60 + osc[k]; });
+            }
+            view = { H: H, why: H ? null : why, s: sx, p: py, fit: fit };
+        }
+        try { Object.defineProperty(run, '_dfitHammerView', { value: view, enumerable: false, configurable: true, writable: true }); } catch (e) { /* frozen run */ }
+        return view;
+    }
+    function _hammerHTML(run, big) {
+        var v = _hammerOf(run);
+        if (!v || !v.s.length) return _verdict('warn', HAMMER_1HZ);
+        var H = v.H;
+        if (!H) return _verdict('warn', 'High-rate window found, but ' + (v.why || 'the water hammer could not be fitted.').replace(/^Water hammer not resolvable: /, 'the water hammer is not resolvable: ')) + _chart('dfitHammer', big ? 240 : 220);
+        var J = H.joukowsky || {}, md = _num(test().inputs.datumMd) || _num(test().inputs.datumTvd);
+        var rows = [_rrow('Period T (s)', _f(H.T, 3)), _rrow('Regime', H.regime || '—'), _rrow('Damping τ (s)', _f(H.tau, 2)),
+                    _rrow('Quarter-wave length c·T/4 (ft)', _f(H.Lquarter, 0)), _rrow('Perforation MD (ft)', _f(md, 0)), _rrow('Reflector', H.reflectorMatch || '—'),
+                    _rrow('Joukowsky expected / measured (psi)', _f(J.expected, 0) + ' / ' + _f(J.measured, 0)), _rrow('Wave ISIP (psia)', _f(H.isip, 1)),
+                    _rrow('V_w·c_w from the period (bbl/psi)', _isNum(H.VwCwHammer) ? _sig(H.VwCwHammer, 3) : '—'), _rrow('Hammer end (h after shut-in)', _isNum(H.tEnd) && run.events ? _f(H.tEnd - run.events.ts, 4) : '—')];
+        if (big && H.sampling) rows.push(_rrow('Sampling (Hz; samples per 2L/c)', _f(H.sampling.hz, 1) + '; ' + _f(H.sampling.per2Lc, 1)));
+        return _chart('dfitHammer', big ? 240 : 220) + _rbox('Water hammer', rows);
+    }
+    B.dfitHammer = function (run) {
+        var v = _hammerOf(run);
+        if (!v || !v.s.length) return { error: '⚠ ' + HAMMER_1HZ };
+        var s = [{ x: v.s, y: v.p, color: C.p, label: 'p (high rate)' }];
+        if (_arr(v.fit)) s.push({ x: v.s, y: v.fit, color: C.d2, dash: [5, 3], label: 'midline + damped sinusoid' });
+        var h = (v.H && _isNum(v.H.isip)) ? [{ y: v.H.isip, color: C.r, dash: [2, 3], label: 'wave ISIP ' + _f(v.H.isip, 0) }] : [];
+        return { data: { series: s, hlines: h, xName: 't', yName: 'p' }, opts: { title: 'Water hammer', xLabel: 'Time since shut-in (s)', yLabel: 'Pressure (psia)' } };
+    };
+    function _stepResult(kind, run) {
+        var W = G.WTS_wellbore, ev = run && run.events;
+        if (!ev || !_arr(ev.steps) || !ev.steps.length) return null;
+        var dir = kind === 'down' ? 'down' : 'up';
+        var steps = ev.steps.filter(function (s) { return s.dir === dir; });
+        if (steps.length < 2) return null;
+        if (run['_' + kind]) return run['_' + kind];
+        var r = null;
+        try {
+            if (kind === 'down' && W && typeof W.stepDown === 'function') r = W.stepDown(steps.map(function (s) { return { q: s.q, p: s.pSettled, n: s.n, t: s.t1 }; }), { beta: 0.5 });
+            if (kind === 'up' && W && typeof W.stepRate === 'function') r = W.stepRate(steps.map(function (s) { return { q: s.q, t0: s.t0, t1: s.t1 }; }), { stabFrac: 0.3, seed: 1 });
+        } catch (e) { r = null; }
+        try { Object.defineProperty(run, '_' + kind, { value: r, enumerable: false, configurable: true, writable: true }); } catch (e) { /* frozen */ }
+        return { steps: steps, res: (r && r.ok) ? r : null };
+    }
+    B.dfitStepDown = function (run) {
+        var sd = _stepResult('down', run);
+        if (!sd) return { error: 'No step-down in this record (rate steps down before shut-in).' };
+        var q = sd.steps.map(function (s) { return s.q; }), p = sd.steps.map(function (s) { return s.pSettled; });
+        var s = [{ x: q, y: p, color: C.p, dots: true, r: 4, label: 'settled p' }];
+        var r = sd.res;
+        if (r && _isNum(r.pFrac)) {
+            var qq = [], pp = [], qm = Math.max.apply(null, q);
+            for (var i = 0; i <= 20; i++) { var x = qm * i / 20; qq.push(x); pp.push(r.pFrac + (r.a || 0) * x * x + (r.b || 0) * Math.pow(x, r.beta || 0.5)); }
+            s.push({ x: qq, y: pp, color: C.d2, dash: [5, 3], label: 'fit' });
+        }
+        return { data: { series: s, xName: 'q', yName: 'p' }, opts: { title: 'Step-down', xLabel: 'Rate, q (bbl/min)', yLabel: 'Settled pressure (psia)' } };
+    };
+    B.dfitStepRate = function (run) {
+        var sr = _stepResult('up', run);
+        if (!sr) return { error: 'No step-rate sequence in this record (rate steps up before breakdown).' };
+        var r = sr.res, pts = r && _arr(r.steps) ? r.steps : sr.steps.map(function (s) { return { q: s.q, pEnd: s.pSettled, stabilised: true }; });
+        var stab = pts.filter(function (s) { return s.stabilised !== false; }), un = pts.filter(function (s) { return s.stabilised === false; });
+        var s = [{ x: stab.map(function (s) { return s.q; }), y: stab.map(function (s) { return s.pEnd; }), color: C.p, dots: true, r: 4, label: 'end-of-step p' }];
+        var m = un.map(function (u) { return { x: u.q, y: u.pEnd, color: C.p, hollow: true }; });
+        var v = [];
+        if (r && _isNum(r.qStar)) v.push({ x: r.qStar, color: C.r, label: 'FEP ' + _f(r.fep, 0) + ' psia' });
+        return { data: { series: s, markers: m, vlines: v, xName: 'q', yName: 'p' }, opts: { title: 'Step-rate test', xLabel: 'Rate, q (bbl/min)', yLabel: 'End-of-step pressure (psia)' } };
+    };
+    B.dfitCycles = function (run, T, ds) {
+        var ev = run.events;
+        if (!ev || !_arr(ev.cycles) || !ev.cycles.some(function (c) { return c.rampWin; })) return { error: 'No re-pressurisation ramp (a later cycle, pump-in or LOT) in this record.' };
+        if (!_hasData(ds) || !_arr(ds.q)) return { error: 'The cycles plot needs the rate channel.' };
+        var s = [], cols = [C.p, C.d2, C.d1, C.v];
+        ev.cycles.forEach(function (c, j) {
+            if (!c.rampWin) return;
+            var V = 0, x = [], y = [];
+            for (var i = 1; i < ds.t.length; i++) {
+                if (ds.t[i] < c.rampWin[0] || ds.t[i] > c.rampWin[1]) continue;
+                V += (_isNum(ds.q[i]) ? ds.q[i] : 0) / 1440 * (ds.t[i] - ds.t[i - 1]) * 60;
+                x.push(V); y.push(ds.p[i]);
+            }
+            s.push({ x: x, y: y, color: cols[j % cols.length], label: 'cycle ' + (j + 1) });
+        });
+        // the falloff closure families (F1–F3, consensus P50 with its P10–P90 band) on the pressure axis; the picked closure lines
+        // when the consensus carries no families
+        var h = [], hb = [], fams = run.consensus && _isObj(run.consensus.families) ? run.consensus.families : null;
+        ['F1', 'F2', 'F3'].forEach(function (f) {
+            var st = fams && fams[f];
+            if (!_isObj(st) || !_isNum(st.p50)) return;
+            h.push({ y: st.p50, color: FAM_COLORS[f], dash: [6, 3], label: f + ' falloff ' + _f(st.p50, 0) });
+            if (_isNum(st.p10) && _isNum(st.p90) && st.p90 > st.p10) hb.push({ y0: st.p10, y1: st.p90, color: _rgba(FAM_COLORS[f], 0.10) });
+        });
+        if (!h.length) h = _pickVlines(run, function (p) { return p; }).map(function (v) { return { y: v.x, color: v.color, label: v.label }; });
+        // the knee (F4 reopening pick) and its band, a marker where each cycle crosses it, and the wellbore line V/(V_w·c_w)
+        var mk = [], knees = (_arr(run.picks) ? run.picks : []).filter(function (pk) { return pk && pk.method === 'reopening' && pk.ok !== false && _isNum(pk.p); });
+        var uk = T && T.picks && T.picks.user ? T.picks.user.dfitRampKnee : null;
+        if (uk && _isNum(uk.p)) knees.push({ p: uk.p, user: true, V: uk.V });
+        var Vw = (_isNum(ev.VwCwMeasured) && ev.VwCwMeasured > 0) ? ev.VwCwMeasured : null;
+        knees.forEach(function (k) {
+            h.push({ y: k.p, color: k.user ? C.r : FAM_COLORS.F4 || C.v, dash: k.user ? [6, 2] : [4, 2], label: (k.user ? 'user knee ' : 'reopening ') + _f(k.p, 0) + (k.upperSide ? ' (upper side)' : '') });
+            if (k.band && _isNum(k.band.p10) && _isNum(k.band.p90)) hb.push({ y0: k.band.p10, y1: k.band.p90, color: 'rgba(163,113,247,0.14)' });
+            s.forEach(function (c) {
+                if (/^wellbore/.test(c.label || '')) return;
+                for (var i = 1; i < c.y.length; i++) if ((c.y[i - 1] - k.p) * (c.y[i] - k.p) <= 0 && c.y[i] !== c.y[i - 1]) {
+                    var f = (k.p - c.y[i - 1]) / (c.y[i] - c.y[i - 1]);
+                    mk.push({ x: c.x[i - 1] + f * (c.x[i] - c.x[i - 1]), y: k.p, color: c.color, hollow: !!k.user });
+                    break;
+                }
+            });
+        });
+        if (Vw) s.slice().forEach(function (c, j) {
+            if (!c.x.length || /^wellbore/.test(c.label || '')) return;
+            var top = knees.length ? knees[0].p : Math.max.apply(null, _finiteVals(c.y)), p0 = c.y[0];
+            if (!(top > p0)) return;
+            s.push({ x: [c.x[0], c.x[0] + (top - p0) * Vw], y: [p0, top], color: C.ref, dash: [5, 4], label: j === 0 ? 'wellbore line (V_w·c_w ' + _sig(Vw, 3) + ' bbl/psi)' : '' });
+        });
+        return { data: { series: s, hlines: h, hbands: hb, markers: mk, xName: 'V', yName: 'p' }, opts: { title: 'Cycles and reopening', xLabel: 'Pumped volume (bbl)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitInjNet = function (run, T, ds) {
+        var ev = run.events, pc = _closureP(T.summary);
+        if (T.inputs.channels && T.inputs.channels.primary === 'surface') return { error: 'Injection net pressure needs a bottomhole gauge.' };
+        if (!ev || !_isNum(ev.tb) || !_isNum(ev.ts) || !_isNum(pc)) return { error: NEED_RUN };
+        var x = [], y = [];
+        for (var i = 0; i < ds.t.length; i++) if (ds.t[i] > ev.tb && ds.t[i] <= ev.ts && ds.p[i] - pc > 0) { x.push((ds.t[i] - ev.tb) * 60); y.push(ds.p[i] - pc); }
+        if (x.length < 3) return { error: 'Too few pumping samples after breakdown.' };
+        return { data: { series: [{ x: x, y: y, color: C.p, label: 'p_n,inj (indicative)' }], xKind: 'log', yKind: 'log', xName: 't − t_b', yName: 'p_n' },
+                 opts: { title: 'Injection net pressure (indicative)', xLabel: 't − t_b (min)', yLabel: 'Net pressure (psi)' } };
+    };
+    B.dfitG = function (run, T) {
+        var d = run.derivs;
+        if (!d || !_arr(d.G)) return { error: NEED_RUN };
+        var s = [{ x: d.G, y: d.p, color: C.p, dots: true, r: 1.8, label: 'p' }];
+        var a1 = _derivAxis(d, 'GdPdG');
+        s.push({ x: d.G, y: d.GdPdG, axis: 'R', color: C.d1, label: 'G·dP/dG' });
+        s.push({ x: d.G, y: d.dPdG, axis: 'R', color: C.d2, label: 'dP/dG' });
+        if (_isNum(d.mG)) {
+            var gm = Math.max.apply(null, _finiteVals(d.G));
+            s.push({ x: [0, gm], y: [0, d.mG * gm], axis: 'R', color: C.ref, dash: [6, 4], label: 'm_G·G' });
+            if (run.isip && _isNum(run.isip.value)) s.push({ x: [0, gm], y: [run.isip.value, run.isip.value - d.mG * gm], color: C.ref, dash: [3, 3] });
+        }
+        var bands = [], c = _closureOf(run), v = _pickVlines(run, function (p) { return _gAtP(d, p); });
+        var shade = [];
+        if (c.mode === 'range' && _isNum(c.lo) && _isNum(c.hi)) { var g0 = _gAtP(d, c.hi), g1 = _gAtP(d, c.lo); if (_isNum(g0) && _isNum(g1)) shade.push({ x0: g0, x1: g1, color: 'rgba(210,153,34,0.12)' }); }
+        return { data: { series: s, bands: bands, vlines: v, shade: shade, yR: _scaleR(a1 ? a1[0] : 0, a1 ? a1[1] : 1, 'G·dP/dG, dP/dG (psi)'), xName: 'G', yName: 'p' },
+                 opts: { title: 'G-function plot', xLabel: 'G-function', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitSqrt = function (run) {
+        var d = run.derivs;
+        if (!d || !_arr(d.dt)) return { error: NEED_RUN };
+        var x = d.dt.map(function (v) { return Math.sqrt(Math.max(0, v) * 60); });
+        var a = _derivAxis(d, 'sdPds') || _rangeOf(d.sdPds);
+        var s = [{ x: x, y: d.p, color: C.p, dots: true, r: 1.8, label: 'p' },
+                 { x: x, y: d.sdPds, axis: 'R', color: C.d1, label: '√t·dP/d√t' }, { x: x, y: d.dPds, axis: 'R', color: C.d2, label: 'dP/d√t' }];
+        var v = _pickVlines(run, function (p) { var dt = _interp(d.p, d.dt, p); return _isNum(dt) ? Math.sqrt(dt * 60) : null; });
+        return { data: { series: s, vlines: v, yR: _scaleR(a ? a[0] : 0, a ? a[1] : 1, 'Derivatives (psi)'), xName: '√Δt', yName: 'p' },
+                 opts: { title: 'Square-root-of-time plot', xLabel: '√Δt (min^½)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitLogLog = function (run, T) {
+        var d = run.derivs;
+        if (!d || !_arr(d.dt)) return { error: NEED_RUN };
+        var x = d.dt.map(function (v) { return v * 60; });
+        var s = [{ x: x, y: d.dpIsip, color: C.p, dots: true, r: 1.8, label: 'ISIP − p' }, { x: x, y: d.D, color: C.d1, dots: true, r: 1.8, label: 'D (Bourdet)' }];
+        if (_arr(d.Dref)) s.push({ x: x, y: d.Dref, color: C.ref, dash: [5, 4], label: 'D_ref (open fracture)' });
+        if (T.inputs.options && T.inputs.options.ppd && _arr(d.ppd)) s.push({ x: x, y: d.ppd, color: C.v, dots: true, r: 1.5, label: 'dp/dΔt (PPD)' });
+        var v = _pickVlines(run, function (p) { var dt = _interp(d.p, d.dt, p); return _isNum(dt) ? dt * 60 : null; });
+        return { data: { series: s, vlines: v, xKind: 'log', yKind: 'log', xName: 'Δt', yName: 'Δp' }, opts: { title: 'Log-log diagnostic', xLabel: 'Δt (min)', yLabel: 'ISIP − p, D (psi)' } };
+    };
+    B.dfitCompliance = function (run) {
+        var d = run.derivs;
+        if (!d || !_arr(d.dPdG) || !_isNum(d.mG) || !(d.mG > 0)) return { error: NEED_RUN };
+        var crel = d.dPdG.map(function (v) { return (_isNum(v) && v > 0) ? d.mG / v : null; });
+        var v = _pickVlines(run, function (p) { return p; });
+        return { data: { series: [{ x: d.p, y: crel, color: C.d2, dots: true, r: 1.8, label: 'C_rel' }], hlines: [{ y: 1, color: C.ref, label: 'open fracture' }], vlines: v, xName: 'p', yName: 'C_rel' },
+                 opts: { title: 'Relative compliance', xLabel: 'Pressure (psia; falls with time)', yLabel: 'C_rel (–)' } };
+    };
+    B.dfitH = function (run) {
+        var d = run.derivs;
+        if (!d || !d.h || !_arr(d.h.h)) return { error: 'The h-function plot is not available until its definition is verified.' };
+        return { data: { series: [{ x: d.h.h, y: d.p, color: C.p, dots: true, r: 1.8, label: 'p' }, { x: d.h.h, y: d.h.hdPdh, axis: 'R', color: C.d1, label: 'h·dP/dh' }],
+                         yR: _scaleR.apply(null, (_rangeOf(d.h.hdPdh) || [0, 1]).concat(['h·dP/dh (psi)'])), xName: 'h', yName: 'p' },
+                 opts: { title: 'h-function plot', xLabel: 'h-function', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitPdpdt = function (run) {
+        var d = run.derivs;
+        if (!d || !_arr(d.dt) || d.dt.length < 3) return { error: NEED_RUN };
+        var x = [], y = [];
+        for (var i = 1; i < d.dt.length - 1; i++) {
+            var dd = d.dt[i + 1] - d.dt[i - 1];
+            if (dd > 0 && _isNum(d.p[i + 1]) && _isNum(d.p[i - 1])) { x.push(Math.abs(d.p[i + 1] - d.p[i - 1]) / dd); y.push(d.p[i]); }
+        }
+        return { data: { series: [{ x: x, y: y, color: C.p, dots: true, r: 1.8, label: 'p' }], xName: '|dp/dt|', yName: 'p' }, opts: { title: 'p against |dp/dt|', xLabel: '|dp/dt| (psi/h)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitStrip = function (run, T) {
+        var picks = _arr(run.picks) ? run.picks : [];
+        var cons = run.consensus || run.consensusLite || {};
+        var fam = cons.families || {};
+        var rows = ['F0', 'F1', 'F2', 'F3', 'F4'].map(function (k) {
+            var b = fam[k] && _isNum(fam[k].p50) ? { p10: _num(fam[k].p10), p50: fam[k].p50, p90: _num(fam[k].p90) } : null;
+            var mem = picks.filter(function (p) { return p.family === k; }).map(function (p) { return { p: p.p, method: p.method, vote: !!p.vote, vetoed: p.admissible === false }; });
+            return { fam: k, label: '', band: b, members: mem };
+        });
+        var c = _closureOf(run);
+        var fr = cons.frictional || null;
+        return { data: { rows: rows, consensus: c, friction: fr ? { veto: _num(fr.veto), warn: _num(fr.warn) } : null, whatIf: _st()._dfitWhatIf ? _num(_st()._dfitWhatIf.p) : null },
+                 opts: { title: 'Closure consensus strip' }, fn: 'PRiSM_plot_dfitStrip' };
+    };
+    B.dfitQL = function (run) {
+        var f = _fn('PRiSM_dfit_leakoffRate'), r = null;
+        if (f && run.derivs && run.frac && run.frac.chosen) { try { r = f(run.derivs, run.frac.chosen); } catch (e) { r = null; } }
+        if (!r || !_arr(r.dt) || !r.dt.length) return { error: 'The leak-off rate needs a closure pick and the pre-closure engine.' };
+        var x = r.dt.map(function (v) { return v * 60; });
+        return { data: { series: [{ x: x, y: r.qL, color: C.p, label: 'q_L (bbl/min)' }], xKind: 'log', xName: 'Δt', yName: 'q_L' },
+                 opts: { title: 'Leak-off rate', xLabel: 'Δt (min)', yLabel: 'q_L (bbl/min)' } };
+    };
+    function _aca(run) { return (run && run.aca && run.aca.ok !== false && run.aca.diag && _arr(run.aca.diag.x)) ? run.aca : null; }
+    var NEED_ACA = 'After-closure analysis needs data after closure — run ▶ Analyse.';
+    B.dfitAcaLogLog = function (run, T) {
+        var A = _aca(run);
+        if (!A) return { error: NEED_ACA };
+        var D = A.diag, s = [{ x: D.x, y: D.D, color: C.d1, dots: true, r: 2, label: 'D' }];
+        if (T.inputs.options && T.inputs.options.ppd) s.push({ x: D.x, y: D.x.map(function (x, i) { return (_isNum(D.D[i]) && x > 0) ? D.D[i] / x : null; }), color: C.v, dots: true, r: 1.5, label: 'PPD' });
+        var bands = _arr(D.noiseD) ? [{ x: D.x, lo: D.x.map(function () { return 1e-9; }), hi: D.noiseD, color: 'rgba(139,148,158,0.15)' }] : [];
+        var x0 = D.x[0], x1 = D.x[D.x.length - 1], y0 = null;
+        for (var i = 0; i < D.D.length; i++) if (_isNum(D.D[i]) && D.D[i] > 0) { y0 = D.D[i]; break; }
+        if (_isNum(y0) && x0 > 0) { s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -0.5)], color: C.y, dash: [4, 4], label: 'slope −½' }); s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -1)], color: C.r, dash: [4, 4], label: 'slope −1' }); }
+        return { data: { series: s, bands: bands, shade: _winShade(run, 'dfitAcaLogLog'), xKind: 'log', yKind: 'log', xName: 't − t0', yName: 'D' }, opts: { title: 'After-closure log-log', xLabel: 't − t0 (h)', yLabel: 'D (psi)' } };
+    };
+    B.dfitFlowDim = function (run) {
+        var A = _aca(run);
+        if (!A || !_arr(A.diag.n)) return { error: NEED_ACA };
+        var h = [1, 1.5, 2, 3].map(function (n) { return { y: n, color: C.ref, label: 'n = ' + n }; });
+        return { data: { series: [{ x: A.diag.x, y: A.diag.n, color: C.d2, dots: true, r: 2, label: 'n(t)' }], hlines: h, xKind: 'log', yRange: { min: 0, max: 4 }, xName: 't − t0', yName: 'n' },
+                 opts: { title: 'Flow dimension', xLabel: 't − t0 (h)', yLabel: 'Flow dimension n' } };
+    };
+    function _afterClosure(run) {
+        var pr = run.prep, ev = run.events, A = _aca(run);
+        if (!pr || !ev || !A) return null;
+        var tc = _isNum(A.tcInj) ? A.tcInj : null, t0 = _isNum(ev.tStart) ? ev.tStart : 0;
+        if (!tc) return null;
+        var x = [], p = [];
+        for (var i = 0; i < pr.t.length; i++) { var ti = pr.t[i] - t0; if (ti > tc * 1.0001 && _isNum(pr.pw[i])) { x.push(ti); p.push(pr.pw[i]); } }
+        return x.length > 2 ? { tInj: x, p: p, tc: tc, t0A: _isNum(A.t0) ? A.t0 : 0 } : null;
+    }
+    B.dfitFL = function (run) {
+        var a = _afterClosure(run);
+        if (!a) return { error: NEED_ACA };
+        var f = _fn('PRiSM_dfit_timeFns'), FL = null;
+        if (f) { try { var r = f(a.tInj, a.tc, {}); if (r && _arr(r.FL)) FL = r.FL; } catch (e) { FL = null; } }
+        if (!FL) FL = a.tInj.map(function (t) { return (2 / Math.PI) * Math.asin(Math.sqrt(Math.min(1, a.tc / t))); });
+        var s = [{ x: FL, y: a.p, color: C.p, dots: true, r: 2, label: 'p' }];
+        var L = run.aca.nolte && run.aca.nolte.lin;
+        if (L && _isNum(L.pr) && _isNum(L.mL)) s.push({ x: [0, 1], y: [L.pr, L.pr + L.mL], color: C.d2, dash: [6, 3], label: 'linear line' });
+        return { data: { series: s, shade: _winShade(run, 'dfitFL'), xRange: { min: 0, max: 1 }, xName: 'F_L', yName: 'p' }, opts: { title: 'After-closure linear (F_L)', xLabel: 'F_L', yLabel: 'Pressure (psia)' } };
+    };
+    var _frShading = false;   // _acaConv('dfitFR') rebuilds this plot: no recursion through the shading
+    B.dfitFR = function (run) {
+        var a = _afterClosure(run), f = _fn('PRiSM_dfit_timeFns'), FR = null;
+        if (!a) return { error: NEED_ACA };
+        if (f) { try { var r = f(a.tInj, a.tc, {}); if (r && _arr(r.FRc || r.FR)) FR = r.FRc || r.FR; } catch (e) { FR = null; } }
+        if (!FR) return { error: 'The radial time function needs the after-closure engine.' };
+        var s = [{ x: FR, y: a.p, color: C.p, dots: true, r: 2, label: 'p' }];
+        var R = run.aca.nolte && run.aca.nolte.rad;
+        if (R && _isNum(R.pr) && _isNum(R.mR)) { var xm = Math.max.apply(null, _finiteVals(FR)); s.push({ x: [0, xm], y: [R.pr, R.pr + R.mR * xm], color: C.d2, dash: [6, 3], label: 'radial line' }); }
+        var out = { data: { series: s, xName: 'F_R', yName: 'p' }, opts: { title: 'After-closure radial (F_R)', xLabel: 'F_R', yLabel: 'Pressure (psia)' } };
+        if (!_frShading) { _frShading = true; try { out.data.shade = _winShade(run, 'dfitFR'); } finally { _frShading = false; } }
+        return out;
+    };
+    function _impulse(run, pow, title) {
+        var a = _afterClosure(run);
+        if (!a) return { error: NEED_ACA };
+        var x = [], y = [];
+        for (var i = 0; i < a.tInj.length; i++) { var dt = a.tInj[i] - a.t0A; if (dt > 0) { x.push(Math.pow(dt, -pow)); y.push(a.p[i]); } }
+        var h = [];
+        if (run.aca.pi && _isNum(run.aca.pi.value)) h.push({ y: run.aca.pi.value, color: C.d2, label: 'p_i ' + _f(run.aca.pi.value, 0), fit: true });
+        return { data: { series: [{ x: x, y: y, color: C.p, dots: true, r: 2, label: 'p' }], hlines: h, shade: _winShade(run, pow === 0.5 ? 'dfitImpLin' : 'dfitImpRad'), xName: 'x', yName: 'p' },
+                 opts: { title: title, xLabel: pow === 0.5 ? '(t − t0)^−½ (h^−½)' : '(t − t0)^−1 (1/h)', yLabel: 'Pressure (psia)' } };
+    }
+    B.dfitImpLin = function (run) { return _impulse(run, 0.5, 'Impulse linear'); };
+    B.dfitImpRad = function (run) { return _impulse(run, 1, 'Impulse radial'); };
+    B.dfitPiTraj = function (run) {
+        var A = _aca(run);
+        if (!A) return { error: NEED_ACA };
+        var D = A.diag, s = [];
+        if (_arr(D.piPoint)) s.push({ x: D.x, y: D.piPoint, color: C.p, dots: true, r: 2, label: 'p_i (point)' });
+        var bands = (_arr(D.piLo) && _arr(D.piHi)) ? [{ x: D.x, lo: D.piLo, hi: D.piHi, color: C.band }] : [];
+        if (!s.length) s.push({ x: D.x, y: D.piLo || [], color: C.d2, label: 'lower bracket' });
+        var h = (A.pi && _isNum(A.pi.value)) ? [{ y: A.pi.value, color: C.d1, label: 'p_i ' + _f(A.pi.value, 0) + ' (' + (A.pi.label || '—') + ')', fit: true }] : [];
+        return { data: { series: s, bands: bands, hlines: h, xKind: 'log', xName: 't − t0', yName: 'p_i' }, opts: { title: 'p_i trajectory and bracket', xLabel: 't − t0 (h)', yLabel: 'p_i (psia)' } };
+    };
+    B.dfitCrDeriv = function (run) {
+        var f = _fn('PRiSM_dfit_crTransform'), a = _afterClosure(run);
+        if (!f || !a) return { error: 'The constant-rate transform needs the after-closure engine.' };
+        var r = null;
+        try { r = f(a.tInj, a.p, { t0: a.t0A, V: run.aca.V, pi: run.aca.pi ? run.aca.pi.value : null }); } catch (e) { r = null; }
+        if (!r || !_arr(r.t)) return { error: 'The constant-rate transform failed for these data.' };
+        return { data: { series: [{ x: r.t, y: r.y, color: C.p, dots: true, r: 2, label: 't·(p − p_i)/(24V)' }], xKind: 'log', yKind: 'log', xName: 't', yName: 'y' },
+                 opts: { title: 'Constant-rate equivalent derivative', xLabel: 't − t0 (h)', yLabel: 'psi per STB/d' } };
+    };
+    B.dfitLeakPlot = function (run) {
+        var L = run.leak;
+        if (!L || L.ok === false || !_arr(L.x)) return { error: 'The leak plot needs after-closure data and the leak check.' };
+        return { data: { series: [{ x: L.x, y: L.y, color: C.p, dots: true, r: 2, label: L.form === 'radial' ? 'y_rad' : 'y_lin' }], xName: "t′", yName: 'y' },
+                 opts: { title: 'Leak plot', xLabel: "t′", yLabel: L.form === 'radial' ? 'y_rad' : 'y_lin' } };
+    };
+    function _lk() { var r = _st()._dfitLk; return (r && r.ok && _arr(r.t)) ? r : null; }
+    var NEED_LK = 'Run the leak-off model (step ④ → Leak-off model) to draw this plot.';
+    B.dfitLkP = function (run, T, ds) {
+        var r = _lk();
+        if (!r) return { error: NEED_LK };
+        var s = [{ x: r.t, y: r.pw, color: C.d2, label: 'model p_w' }];
+        if (_hasData(ds) && run && run.events && _isNum(run.events.tStart)) s.unshift({ x: ds.t.map(function (t) { return t - run.events.tStart; }), y: ds.p, color: C.p, dots: true, r: 1.5, label: 'data' });
+        return { data: { series: s, xName: 't', yName: 'p' }, opts: { title: 'Leak-off model: pressure', xLabel: 't since pump start (h)', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitLkQ = function () {
+        var r = _lk();
+        if (!r) return { error: NEED_LK };
+        return { data: { x: r.t, layers: [{ label: 'in fracture V_f', y: r.Vf, color: 'rgba(88,166,255,0.55)' }, { label: 'leaked (Carter) V_Lc', y: r.VLc, color: 'rgba(63,185,80,0.55)' },
+                                          { label: 'leaked (wall) V_Lw', y: r.VLw, color: 'rgba(210,153,34,0.55)' }, { label: 'spurt V_S', y: r.VS, color: 'rgba(188,140,255,0.55)' }] },
+                 opts: { title: 'Volume partition', xLabel: 't since pump start (h)', yLabel: 'Volume (bbl)' }, fn: 'PRiSM_plot_dfitStack' };
+    };
+    B.dfitLkG = function () {
+        var r = _lk();
+        if (!r || !_arr(r.Ggen)) return { error: NEED_LK };
+        return { data: { series: [{ x: r.Ggen, y: r.pw, color: C.d2, label: 'model p_w' }], xName: 'G', yName: 'p' }, opts: { title: 'Leak-off model on G', xLabel: 'G-function', yLabel: 'Pressure (psia)' } };
+    };
+    B.dfitLkGeom = function () {
+        var r = _lk();
+        if (!r) return { error: NEED_LK };
+        var wm = 0; (r.W || []).forEach(function (v) { if (_isNum(v) && v > wm) wm = v; });
+        return { data: { series: [{ x: r.t, y: r.L, color: C.p, label: 'half-length L (ft)' }, { x: r.t, y: r.W, axis: 'R', color: C.d2, label: 'w̄ (in)' }],
+                         yR: _scaleR(0, (wm || 0.1) * 1.2, 'Average width (in)'), xName: 't', yName: 'L' }, opts: { title: 'Leak-off model geometry', xLabel: 't since pump start (h)', yLabel: 'Half-length (ft)' } };
+    };
+    B.dfitLkRes = function (run, T, ds) {
+        var r = _lk(), f = _fn('PRiSM_dfit_lkSample');
+        if (!r || !f || !_hasData(ds) || !run || !run.events) return { error: NEED_LK };
+        var t0 = run.events.tStart || 0, tt = ds.t.map(function (t) { return t - t0; }), m = null;
+        try { m = f(r, tt); } catch (e) { m = null; }
+        if (!_arr(m)) return { error: NEED_LK };
+        var res = ds.p.map(function (p, i) { return (_isNum(p) && _isNum(m[i]) && tt[i] >= 0) ? p - m[i] : null; });
+        return { data: { series: [{ x: tt, y: res, color: C.p, dots: true, r: 1.5, label: 'data − model' }], hlines: [{ y: 0, color: C.ref }], xName: 't', yName: 'residual' },
+                 opts: { title: 'Leak-off model residuals', xLabel: 't since pump start (h)', yLabel: 'Residual (psi)' } };
+    };
+    B.dfitPlan = function () {
+        var pl = dstate().plan, c = pl && pl.corridor;
+        if (!c || !_arr(c.t) || c.t.length < 2) return { error: 'Plan a DFIT in the designer (Tools → DFIT designer) to draw the corridor.' };
+        return { data: { series: [{ x: c.t, y: c.p50, color: C.p, label: 'P50' }], bands: [{ x: c.t, lo: c.p10, hi: c.p90, color: C.band }], xKind: 'log', xName: 't', yName: 'p' },
+                 opts: { title: 'Planned falloff corridor', xLabel: 'Shut-in time (h)', yLabel: 'Pressure (psia)' } };
+    };
+
+    // registry metadata: [key, label, x, y, step]
+    var PLOTS = [
+        ['dfitHistory', 'DFIT history (p, q, events)', 'lin', 'lin', 1], ['dfitConv', 'Bottomhole conversion', 'lin', 'lin', 1],
+        ['dfitGradient', 'Pressure gradient', 'lin', 'lin', 1], ['dfitStress', 'Gradients against depth (tests)', 'lin', 'lin', 1],
+        ['dfitOverlay', 'G·dP/dG overlay (tests)', 'lin', 'lin', 1], ['dfitIsip', 'Early falloff and ISIP', 'lin', 'lin', 2],
+        ['dfitHammer', 'Water hammer', 'lin', 'lin', 2], ['dfitStepDown', 'Step-down', 'lin', 'lin', 2], ['dfitStepRate', 'Step-rate', 'lin', 'lin', 2],
+        ['dfitCycles', 'Cycles and reopening', 'lin', 'lin', 2], ['dfitInjNet', 'Injection net pressure', 'log', 'log', 2],
+        ['dfitG', 'G-function (p, G·dP/dG, dP/dG)', 'lin', 'lin', 3], ['dfitSqrt', 'Square-root of time', 'lin', 'lin', 3],
+        ['dfitLogLog', 'Log-log (ISIP − p, D)', 'log', 'log', 3], ['dfitCompliance', 'Relative compliance', 'lin', 'lin', 3],
+        ['dfitH', 'h-function', 'lin', 'lin', 3], ['dfitPdpdt', 'p against |dp/dt|', 'lin', 'lin', 3], ['dfitStrip', 'Closure strip', 'lin', 'lin', 3],
+        ['dfitQL', 'Leak-off rate', 'log', 'lin', 3], ['dfitAcaLogLog', 'After-closure log-log', 'log', 'log', 4], ['dfitFlowDim', 'Flow dimension', 'log', 'lin', 4],
+        ['dfitFL', 'After-closure F_L', 'lin', 'lin', 4], ['dfitFR', 'After-closure F_R', 'lin', 'lin', 4], ['dfitImpLin', 'Impulse linear', 'lin', 'lin', 4],
+        ['dfitImpRad', 'Impulse radial', 'lin', 'lin', 4], ['dfitPiTraj', 'p_i trajectory', 'log', 'lin', 4], ['dfitCrDeriv', 'Constant-rate equivalent', 'log', 'log', 4],
+        ['dfitLeakPlot', 'Leak plot', 'lin', 'lin', 4], ['dfitLkP', 'Leak-off model: pressure', 'lin', 'lin', 4], ['dfitLkQ', 'Leak-off model: volumes', 'lin', 'lin', 4],
+        ['dfitLkG', 'Leak-off model: G', 'lin', 'lin', 4], ['dfitLkGeom', 'Leak-off model: geometry', 'lin', 'lin', 4], ['dfitLkRes', 'Leak-off model: residuals', 'lin', 'lin', 4],
+        ['dfitPlan', 'Planned corridor', 'log', 'lin', 0]
+    ];
+    var STEP3_PLOTS = ['dfitG', 'dfitSqrt', 'dfitLogLog', 'dfitCompliance', 'dfitH', 'dfitPdpdt', 'dfitHistory', 'dfitGradient', 'dfitStrip'];
+    function buildPlot(key, extra) {
+        var b = B[key];
+        if (!b) return { data: null, opts: {}, error: 'Unknown DFIT plot.' };
+        var run = _run(), T = test(), ds = G.PRiSM_dataset;
+        var needsRun = !(key === 'dfitHistory' || key === 'dfitConv' || key === 'dfitGradient' || key === 'dfitStress' || key === 'dfitOverlay' ||
+                         key === 'dfitPlan' || key === 'dfitLkP' || key === 'dfitLkQ' || key === 'dfitLkG' || key === 'dfitLkGeom');
+        if (needsRun && !run) return { data: null, opts: {}, error: _hasData(ds) ? NEED_RUN : 'Load a DFIT first (Data step), or load a demo DFIT.' };
+        var r;
+        try { r = b(run || {}, T, ds, extra || {}); } catch (e) { r = { error: 'Plot data failed: ' + _txt(e && e.message) }; }
+        if (!r || r.error) return { data: null, opts: {}, error: _txt((r && r.error) || 'Nothing to plot.') };
+        var o = r.opts || {};
+        o.hoverEvent = true;
+        return { data: r.data, opts: o, fn: r.fn || null, error: null };
+    }
+    function _entry(meta) {
+        var key = meta[0];
+        var e = { fn: 'PRiSM_plot_dfitDual', label: meta[1], mode: 'dfit', kind: 'dfit', axes: { x: meta[2], y: meta[3] }, dfitStep: meta[4] };
+        if (key === 'dfitStrip') e.fn = 'PRiSM_plot_dfitStrip';
+        if (key === 'dfitLkQ') e.fn = 'PRiSM_plot_dfitStack';
+        e.build = function () { return buildPlot(key); };
+        return e;
+    }
+    var PLOT_ENTRIES = {};
+    PLOTS.forEach(function (m) { PLOT_ENTRIES[m[0]] = _entry(m); });
+    // Draw any DFIT plot on any canvas: PRiSM_drawPlot (WPH: registry build + fn + _prismAxes + post-draw hooks) when present,
+    // else the same steps here (02 runs the post-draw hooks on paint because opts.plotKey is set).
+    function drawPlot(canvas, key, extra) {
+        if (!canvas) return false;
+        if ((LINK_KEYS[key] || LK_LINK[key]) && !(extra && _own(extra, 'hoverEvent'))) {
+            var ex = {}; if (extra) for (var k0 in extra) if (_own(extra, k0)) ex[k0] = extra[k0];
+            ex.hoverEvent = true; extra = ex;
+        }
+        if (typeof G.PRiSM_drawPlot === 'function' && G.PRiSM_PLOT_REGISTRY && G.PRiSM_PLOT_REGISTRY[key]) {
+            try { var okH = G.PRiSM_drawPlot(canvas, key, extra || {}) !== false; if (okH) _attachOwner(canvas, key); return okH; } catch (e) { /* fall through */ }
+        }
+        var b = buildPlot(key, extra);
+        if (!b.data) { _msgCanvas(canvas, b.error || 'Nothing to plot.'); return false; }
+        var fname = b.fn || PLOT_ENTRIES[key].fn, f = G[fname];
+        if (typeof f !== 'function') { _msgCanvas(canvas, 'Plot not available in this build.'); return false; }
+        var o = { hover: true, dragZoom: true, showLegend: true, plotKey: key };
+        for (var k in b.opts) if (_own(b.opts, k)) o[k] = b.opts[k];
+        if (extra) for (var k2 in extra) if (_own(extra, k2)) o[k2] = extra[k2];
+        try { f(canvas, b.data, o); } catch (e) { _msgCanvas(canvas, 'Render error: ' + _txt(e && e.message)); return false; }
+        _attachOwner(canvas, key);
+        return true;
+    }
+
+    // =========================================================================
+    // SECTION 8 — PICKS HOOK ('dfit-picks'), LINE TOOLS (§2.7)
+    // =========================================================================
+    function _xOfPick(key, d, pk) {
+        if (!d) return null;
+        if (key === 'dfitG' || key === 'dfitIsip') return _isNum(pk.G) ? pk.G : _gAtP(d, pk.p);
+        var dt = _isNum(pk.dt) ? pk.dt : _interp(d.p, d.dt, pk.p);
+        if (!_isNum(dt)) return null;
+        if (key === 'dfitSqrt') return Math.sqrt(dt * 60);
+        if (key === 'dfitLogLog') return dt * 60;
+        if (key === 'dfitCompliance' || key === 'dfitStrip') return pk.p;
+        return null;
+    }
+    var PICK_PLOTS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitCompliance: 1, dfitStrip: 1, dfitIsip: 1 };
+    function picksHook(info) {
+        if (!info || !info.canvas || !PICK_PLOTS[info.plotKey]) return;
+        if (!info.exporting) _attachOwner(info.canvas, info.plotKey);
+        var ax = info.canvas._prismAxes || info.axes;
+        var run = _run();
+        if (!ax || typeof ax.toX !== 'function' || !run) return;
+        var ctx = info.canvas.getContext && info.canvas.getContext('2d');
+        if (!ctx) return;
+        var d = run.derivs, T = test(), plot = ax.plot || { x: 0, y: 0, w: 300, h: 150 };
+        var marks = [];
+        if (info.plotKey !== 'dfitStrip') (_arr(run.picks) ? run.picks : []).forEach(function (pk) {
+            if (!pk || pk.ok === false || !_isNum(pk.p)) return;
+            var x = _xOfPick(info.plotKey, d, pk);
+            if (_isNum(x)) marks.push({ x: x, color: FAM_COLORS[pk.family] || '#8b949e', dash: pk.vote ? null : [2, 3], label: '', method: pk.method });
+        });
+        var U = T.picks.user || {};
+        Object.keys(U).forEach(function (k) { var u = U[k]; if (!u) return; var x = _xOfPick(info.plotKey, d, u); if (_isNum(x)) marks.push({ x: x, color: '#ff7b72', dash: [6, 2], label: 'user ' + _f(u.p != null ? u.p : u.value, 0) }); });
+        var cp = T.picks.closure;
+        if (cp && cp.source === 'user' && _isNum(cp.p)) { var x3 = _xOfPick(info.plotKey, d, cp); if (_isNum(x3)) marks.push({ x: x3, color: '#ff7b72', dash: null, label: 'override ' + _f(cp.p, 0) }); }
+        if (!marks.length) return;
+        try {
+            ctx.save();
+            marks.forEach(function (m) { _vline(ctx, plot, ax.toX(m.x), m.color, m.dash, m.label); });
+            ctx.restore();
+        } catch (e) { /* cosmetic */ }
+    }
+    picksHook._prismId = 'dfit-picks';
+    function _registerPicksHook() {
+        var hooks = G.PRiSM_postDrawHooks = (G.PRiSM_postDrawHooks instanceof Array || _arr(G.PRiSM_postDrawHooks)) ? G.PRiSM_postDrawHooks : [];
+        for (var i = 0; i < hooks.length; i++) if (hooks[i] && hooks[i]._prismId === 'dfit-picks') { hooks[i] = picksHook; return; }
+        hooks.push(picksHook);
+    }
+    // ── draggable handles through 02's pointer-owner hook (§2.7, §7.10): the closure marker on dfitG / dfitSqrt / dfitLogLog
+    //    and the what-if marker on dfitStrip. Within 24 px of the marker the gesture is taken; a drag previews (redraw with the
+    //    marker at the pointer) and the release commits ONE pick-log entry (closure) or the what-if (strip).
+    //    Further handles (§7.2, §7.5): the event markers (pump start, breakdown, shut-in) on dfitHistory write T.inputs.events,
+    //    and the after-closure window edges on dfitFL / dfitFR / dfitImpLin / dfitImpRad / dfitAcaLogLog write picks.aca
+    //    (linWin / radWin on the injection clock, h). One release = one log entry, inside one undo batch.
+    var DRAG_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitStrip: 1, dfitHistory: 1, dfitFL: 1, dfitFR: 1, dfitImpLin: 1, dfitImpRad: 1, dfitAcaLogLog: 1 };
+    var WIN_PLOTS = { dfitFL: ['lin'], dfitImpLin: ['lin'], dfitFR: ['rad'], dfitImpRad: ['rad'], dfitAcaLogLog: ['lin', 'rad'] };
+    var EV_KEYS = [['tStart', 'pump start'], ['tb', 'breakdown'], ['ts', 'shut-in']];
+    var HIT_PX = 24;
+    function _localX(canvas, ev) {
+        if (_isNum(ev.offsetX)) return ev.offsetX;
+        var r = (canvas.getBoundingClientRect && canvas.getBoundingClientRect()) || { left: 0 };
+        return (_isNum(ev.clientX) ? ev.clientX : 0) - (r.left || 0);
+    }
+    function _markerX(canvas, key) {
+        var ax = canvas._prismAxes, run = _run();
+        if (!ax || typeof ax.toX !== 'function' || !run) return null;
+        if (key === 'dfitStrip') {
+            var w = _st()._dfitWhatIf, c = _closureOf(run);
+            var p = (w && _isNum(w.p)) ? w.p : (c.mode === 'single' ? c.value : (c.medians && c.medians[0]));
+            return _isNum(p) ? ax.toX(p) : null;
+        }
+        var cp = test().picks.closure, pc = (cp && cp.source === 'user' && _isNum(cp.p)) ? cp.p : _closureP(test().summary);
+        if (!_isNum(pc)) return null;
+        var x = _xOfPick(key, run.derivs, { p: pc });
+        return _isNum(x) ? ax.toX(x) : null;
+    }
+    // x on an after-closure plot <-> injection-clock time (h); null when the plot has no window axis
+    function _acaConv(key, run) {
+        var A = _aca(run);
+        if (!A) return null;
+        var t0 = _isNum(A.t0) ? A.t0 : 0, tc = _isNum(A.tcInj) ? A.tcInj : null;
+        if (key === 'dfitAcaLogLog') return { toT: function (x) { return x > 0 ? t0 + x : null; }, fromT: function (t) { return t > t0 ? t - t0 : null; } };
+        if (key === 'dfitImpLin') return { toT: function (x) { return x > 0 ? t0 + 1 / (x * x) : null; }, fromT: function (t) { return t > t0 ? 1 / Math.sqrt(t - t0) : null; } };
+        if (key === 'dfitImpRad') return { toT: function (x) { return x > 0 ? t0 + 1 / x : null; }, fromT: function (t) { return t > t0 ? 1 / (t - t0) : null; } };
+        if (key === 'dfitFL' && tc) return { toT: function (x) { var sn = Math.sin(Math.PI * Math.min(1, x) / 2); return (x > 0 && sn > 0) ? tc / (sn * sn) : null; },
+                                            fromT: function (t) { return t >= tc ? (2 / Math.PI) * Math.asin(Math.sqrt(tc / t)) : null; } };
+        if (key === 'dfitFR') {
+            var b = B.dfitFR(run), a = _afterClosure(run);
+            if (!b || !b.data || !a) return null;
+            var X = b.data.series[0].x;
+            return { toT: function (x) { var i = _nearestIdx(X, x); return i < 0 ? null : a.tInj[i]; }, fromT: function (t) { var i = _nearestIdx(a.tInj, t); return i < 0 ? null : X[i]; } };
+        }
+        return null;
+    }
+    function _acaWin(run, which) {
+        var w = test().picks.aca && test().picks.aca[which + 'Win'];
+        if (_arr(w) && _isNum(w[0]) && _isNum(w[1])) return w;
+        var A = _aca(run), n = A && A.nolte && A.nolte[which];
+        return (n && _arr(n.win) && _isNum(n.win[0]) && _isNum(n.win[1])) ? n.win : null;
+    }
+    function _winShade(run, key) {
+        var cv = _acaConv(key, run), out = [];
+        if (!cv) return out;
+        (WIN_PLOTS[key] || []).forEach(function (which) {
+            var w = _acaWin(run, which);
+            if (!w) return;
+            var a = cv.fromT(w[0]), b = cv.fromT(w[1]);
+            if (_isNum(a) && _isNum(b)) out.push({ x0: a, x1: b, color: which === 'lin' ? 'rgba(63,185,80,0.12)' : 'rgba(88,166,255,0.12)' });
+        });
+        return out;
+    }
+    function _evTime(run, k) { var I = test().inputs.events; return _isNum(I[k]) ? I[k] : (run && run.events && _isNum(run.events[k]) ? run.events[k] : null); }
+    // the draggable handles of a canvas: [{id, X (px)}]
+    function _handles(canvas, key) {
+        var ax = canvas._prismAxes, run = _run(), out = [];
+        if (!ax || typeof ax.toX !== 'function' || !run) return out;
+        if (key === 'dfitHistory') {
+            EV_KEYS.forEach(function (e) { var t = _evTime(run, e[0]); if (_isNum(t)) out.push({ id: 'ev.' + e[0], X: ax.toX(t) }); });
+            return out;
+        }
+        if (WIN_PLOTS[key]) {
+            var cv = _acaConv(key, run);
+            if (!cv) return out;
+            WIN_PLOTS[key].forEach(function (which) {
+                var w = _acaWin(run, which);
+                if (!w) return;
+                [0, 1].forEach(function (j) { var x = cv.fromT(w[j]); if (_isNum(x)) out.push({ id: which + j, X: ax.toX(x) }); });
+            });
+            return out;
+        }
+        var mx = _markerX(canvas, key);
+        if (_isNum(mx)) out.push({ id: key === 'dfitStrip' ? 'whatif' : 'closure', X: mx });
+        return out;
+    }
+    function _pickFromX(key, xData) {
+        var run = _run(), d = run && run.derivs;
+        if (!d) return null;
+        if (key === 'dfitG') return _pickAtG(d, xData);
+        if (key === 'dfitSqrt') return _pickAtDt(d, Math.pow(Math.max(0, xData), 2) / 60);
+        if (key === 'dfitLogLog') return _pickAtDt(d, xData / 60);
+        return null;
+    }
+    function _attachOwner(canvas, key) {
+        if (!canvas || !DRAG_KEYS[key]) return;
+        canvas._dfitPlotKey = key;
+        if (canvas._prismPointerOwner && canvas._prismPointerOwner._dfit) return;
+        var owner = function (ev) {
+            var k = canvas._dfitPlotKey;
+            if (!ev || !DRAG_KEYS[k]) return false;
+            var x0 = _localX(canvas, ev), hs = _handles(canvas, k), best = null;
+            hs.forEach(function (hd) { var dd = Math.abs(x0 - hd.X); if (_isNum(dd) && dd <= HIT_PX && (!best || dd < best.d)) best = { id: hd.id, d: dd }; });
+            if (!best) return false;
+            var drag = canvas._dfitDrag = { key: k, id: best.id, x: x0, moved: false };
+            var move = function (e) { if (canvas._dfitDrag !== drag) return; drag.x = _localX(canvas, e); drag.moved = true; _previewDrag(canvas, drag); };
+            var up = function (e) {
+                canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel);
+                if (canvas._dfitDrag !== drag) return;
+                canvas._dfitDrag = null;
+                if (e && e.type !== 'pointercancel') drag.x = _localX(canvas, e);
+                _commitDrag(canvas, drag);
+            };
+            var cancel = function () { canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel); canvas._dfitDrag = null; drawPlot(canvas, k); };
+            drag.move = move; drag.up = up; drag.cancel = cancel;
+            canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', cancel);
+            return true;
+        };
+        owner._dfit = true;
+        canvas._prismPointerOwner = owner;
+    }
+    function _dragLabel(canvas, drag) {
+        var ax = canvas._prismAxes, xd = ax.fromX(drag.x);
+        if (drag.id === 'whatif') return _f(xd, 0) + ' psia';
+        if (/^ev\./.test(drag.id)) return _f(xd, 4) + ' h';
+        if (/^(lin|rad)[01]$/.test(drag.id)) { var cv = _acaConv(drag.key, _run()), t = cv ? cv.toT(xd) : null; return _isNum(t) ? _f(t, 2) + ' h' : ''; }
+        return _f((_pickFromX(drag.key, xd) || {}).p, 0);
+    }
+    function _previewDrag(canvas, drag) {
+        var ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function') return;
+        var lbl = _dragLabel(canvas, drag);
+        var draw = function (ctx, a) { _vline(ctx, (a || ax).plot || ax.plot, drag.x, '#ff7b72', [6, 2], lbl); };
+        if (typeof G.PRiSM_plot_overlay === 'function') { try { if (G.PRiSM_plot_overlay(canvas, draw)) return; } catch (e) { /* fall through */ } }
+        drawPlot(canvas, drag.key);
+        try { draw(canvas.getContext('2d'), ax); } catch (e) { /* cosmetic */ }
+    }
+    // one event override (typed or dragged): stored in T.inputs.events, logged, the fast pipeline re-runs
+    function setEvent(k, value, reason) {
+        var T = test();
+        if (!/^(tStart|tb|ts)$/.test(String(k))) return { ok: false, code: 'BAD_ITEM', errors: ['Unknown event ' + _txt(k) + '.'], bad: ['event'] };
+        var nv = (_isNum(value) && value >= 0 && value < 1e6) ? value : null, old = T.inputs.events[k];
+        if (old === nv) return { ok: true, changed: false };
+        _batch('begin');
+        try {
+            T.inputs.events[k] = nv;
+            logEntry(T, 'events.' + k, old, nv, reason || 'Event override');
+            if (T.summary) T.summary.stale = true;
+            _emit('prism:dfit-updated', { what: 'events', source: 'user' });
+            runFast('events');
+        } finally { _batch('end'); }
+        _refreshUI();
+        return { ok: true, changed: true, value: nv };
+    }
+    function _commitDrag(canvas, drag) {
+        var ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function') return null;
+        var xd = ax.fromX(drag.x), run = _run();
+        if (drag.id === 'whatif') {
+            if (!_isNum(xd)) return null;
+            _st()._dfitWhatIf = { p: xd };
+            runFast('what-if');
+            _refreshUI();
+            return { whatIf: xd };
+        }
+        if (/^ev\./.test(drag.id)) {
+            if (!_isNum(xd)) { drawPlot(canvas, drag.key); return null; }
+            var lab = '';
+            EV_KEYS.forEach(function (e) { if ('ev.' + e[0] === drag.id) lab = e[1]; });
+            return setEvent(drag.id.slice(3), xd, 'The ' + lab + ' marker dragged on the history plot');
+        }
+        var wm = /^(lin|rad)([01])$/.exec(drag.id);
+        if (wm) {
+            var cv = _acaConv(drag.key, run), w = _acaWin(run, wm[1]), t = cv && _isNum(xd) ? cv.toT(xd) : null;
+            if (!w || !_isNum(t)) { drawPlot(canvas, drag.key); return null; }
+            var nw = [w[0], w[1]]; nw[+wm[2]] = t; nw.sort(function (a, b) { return a - b; });
+            if (!(nw[1] > nw[0])) { drawPlot(canvas, drag.key); return null; }
+            var pv = {}; pv[wm[1] + 'Win'] = nw;
+            return setPick('aca', pv, { source: 'user', reason: (wm[1] === 'lin' ? 'Linear' : 'Radial') + ' window edge dragged on the ' + ((PLOT_ENTRIES[drag.key] || {}).label || 'plot') });
+        }
+        var pk = _pickFromX(drag.key, xd);
+        if (!pk || !_isNum(pk.p)) { drawPlot(canvas, drag.key); return null; }
+        return setPick('closure', { mode: 'user', family: null, method: 'user', p: pk.p, dt: pk.dt, G: pk.G }, { source: 'user', reason: 'Closure marker dragged on the ' + ((PLOT_ENTRIES[drag.key] || {}).label || 'plot') });
+    }
+    // nearest-index helpers on the derivative arrays
+    function _nearestIdx(xs, x) { var best = -1, bd = Infinity; for (var i = 0; i < (xs ? xs.length : 0); i++) { var dd = Math.abs(xs[i] - x); if (_isNum(dd) && dd < bd) { bd = dd; best = i; } } return best; }
+    function _tangentAt(d, Gc) {
+        var i0 = _nearestIdx(d.G, Gc);
+        if (i0 < 0) return null;
+        var s = 0;
+        for (var i = Math.max(0, i0 - 10); i <= Math.min(d.G.length - 1, i0 + 10); i++) if (d.G[i] > 0 && _isNum(d.GdPdG[i])) s = Math.max(s, d.GdPdG[i] / d.G[i]);
+        if (!(s > 0)) return null;
+        // from the click window on: the last G where G·dP/dG still lies within ε of the tangent s·G (left for three points in a row)
+        var eps = (test().inputs.options.eps && test().inputs.options.eps.tangent) || 0.02, last = i0, off = 0;
+        for (var j = Math.max(0, i0 - 10); j < d.G.length; j++) {
+            if (!(d.G[j] > 0) || !_isNum(d.GdPdG[j])) continue;
+            if (Math.abs(d.GdPdG[j] - s * d.G[j]) <= eps * s * d.G[j]) { last = j; off = 0; }
+            else if (++off >= 3) break;
+        }
+        return { G: d.G[last], dt: d.dt[last], p: d.p[last], value: d.p[last], slope: s };
+    }
+    function _pickAtG(d, Gc) { var i = _nearestIdx(d.G, Gc); return i < 0 ? null : { G: d.G[i], dt: d.dt[i], p: d.p[i], value: d.p[i] }; }
+    function _pickAtDt(d, dtH) { var i = _nearestIdx(d.dt, dtH); return i < 0 ? null : { G: d.G[i], dt: d.dt[i], p: d.p[i], value: d.p[i] }; }
+    function _toolAction(key, fnPick) {
+        return function (pts) {
+            var run = _run();
+            if (!run || !run.derivs) return { error: 'Run ▶ Analyse first: the DFIT tools work on the analysed falloff.' };
+            var r = fnPick(run.derivs, pts, run);
+            if (!r || !_isNum(r.p)) return { error: 'No pick near the click — click on the data.' };
+            var res = setPick(key, r, { source: 'user', reason: 'Line tool on the plot' });
+            if (!res.ok) return { error: res.errors[0] };
+            return { values: { p: r.p, G: r.G }, note: 'DFIT pick ' + _f(r.p, 0) + ' psia stored (undo with Ctrl-Z).' };
+        };
+    }
+    // after-closure window from two clicks: x of the plot → injection-clock time (h) → picks.aca.linWin / radWin
+    function _winTool(which, pts, cx, defKey) {
+        var run = _run();
+        if (!run || !_aca(run)) return { error: 'Run ▶ Analyse first: the window tools work on the after-closure data.' };
+        var key = (cx && cx.plotKey && WIN_PLOTS[cx.plotKey]) ? cx.plotKey : (((G.PRiSM_state || {}).activePlot && WIN_PLOTS[G.PRiSM_state.activePlot]) ? G.PRiSM_state.activePlot : defKey);
+        var cv = _acaConv(key, run), a = cv ? cv.toT(pts[0].x) : null, b = cv ? cv.toT(pts[1].x) : null;
+        if (!_isNum(a) || !_isNum(b) || a === b) return { error: 'Click two different points on the after-closure data.' };
+        var pv = {}; pv[which + 'Win'] = [Math.min(a, b), Math.max(a, b)];
+        var r = setPick('aca', pv, { source: 'user', reason: (which === 'lin' ? 'Linear' : 'Radial') + ' window drawn on the plot' });
+        return r.ok ? { values: {}, note: (which === 'lin' ? 'Linear' : 'Radial') + ' window ' + _f(pv[which + 'Win'][0], 2) + '–' + _f(pv[which + 'Win'][1], 2) + ' h stored.' } : { error: r.errors[0] };
+    }
+    var LINE_TOOLS = {
+        dfitIsipLine: { label: 'Shut-in pressure from the early G line', plot: 'dfitG', clicks: 2, prompts: ['Click the start of the early straight line', 'Click its end'],
+            action: _toolAction('dfitIsipLine', function (d, pts) {
+                var a = _pickAtG(d, pts[0].x), b = _pickAtG(d, pts[1].x);
+                if (!a || !b || a.G === b.G) return null;
+                var m = (b.p - a.p) / (b.G - a.G), isip = a.p - m * a.G;
+                return { G: 0, dt: 0, p: isip, value: isip };
+            }) },
+        dfitTangent: { label: 'Tangent through the origin', plot: 'dfitG', clicks: 1, prompts: ['Click near where G·dP/dG leaves the tangent'],
+            action: _toolAction('dfitTangent', function (d, pts) { return _tangentAt(d, pts[0].x); }) },
+        dfitCompliance: { label: 'Compliance line and departure', plot: 'dfitG', clicks: 2, prompts: ['Click on the early G·dP/dG line', 'Click the departure'],
+            action: _toolAction('dfitCompliance', function (d, pts) { return _pickAtG(d, pts[1].x); }) },
+        dfitClosure: { label: 'User closure', plot: ['dfitG', 'dfitSqrt', 'dfitLogLog'], clicks: 1, prompts: ['Click the closure point'],
+            action: _toolAction('dfitClosure', function (d, pts) {
+                var pk = (G.PRiSM_state && G.PRiSM_state.activePlot) || 'dfitG';
+                if (pk === 'dfitSqrt') return _pickAtDt(d, Math.pow(pts[0].x, 2) / 60);
+                if (pk === 'dfitLogLog') return _pickAtDt(d, pts[0].x / 60);
+                return _pickAtG(d, pts[0].x);
+            }) },
+        dfitSqrtInfl: { label: '√t inflection', plot: 'dfitSqrt', clicks: 1, prompts: ['Click the inflection'],
+            action: _toolAction('dfitSqrtInfl', function (d, pts) { return _pickAtDt(d, Math.pow(pts[0].x, 2) / 60); }) },
+        dfitAcaLinear: { label: 'After-closure linear window', plot: ['dfitFL', 'dfitImpLin'], clicks: 2, prompts: ['Click the window start', 'Click the window end'],
+            action: function (pts, cx) { return _winTool('lin', pts, cx, 'dfitFL'); } },
+        dfitAcaRadial: { label: 'After-closure radial window', plot: ['dfitFR', 'dfitImpRad'], clicks: 2, prompts: ['Click the window start', 'Click the window end'],
+            action: function (pts, cx) { return _winTool('rad', pts, cx, 'dfitFR'); } },
+        dfitPiLevel: { label: 'p_i level', plot: 'dfitPiTraj', clicks: 1, prompts: ['Click the p_i level'],
+            action: function (pts) { var r = setPick('aca', { piLevel: pts[0].y }, { source: 'user', reason: 'p_i level picked on the trajectory' }); return r.ok ? { values: { pi: pts[0].y }, note: 'p_i level stored.' } : { error: r.errors[0] }; } },
+        dfitRampKnee: { label: 'User reopening knee', plot: 'dfitCycles', clicks: 1, prompts: ['Click the knee'],
+            action: function (pts) { var r = setPick('dfitRampKnee', { V: pts[0].x, p: pts[0].y, value: pts[0].y }, { source: 'user', reason: 'Reopening knee picked on the cycles plot' }); return r.ok ? { values: { p: pts[0].y }, note: 'Reopening pick stored.' } : { error: r.errors[0] }; } }
+    };
+    Object.keys(LINE_TOOLS).forEach(function (k) { LINE_TOOLS[k].group = 'DFIT'; LINE_TOOLS[k].store = false; LINE_TOOLS[k].hint = LINE_TOOLS[k].prompts[0]; });
+
+    // =========================================================================
+    // SECTION 9 — HTML HELPERS (capture classes: .card/.fg-item inputs, .rbox/.rrow results, table.dtable, .chart-wrap)
+    // =========================================================================
+    function _rrow(label, value) { return '<div class="rrow"><span class="rl">' + _esc(label) + '</span><span class="rv">' + _esc(value) + '</span></div>'; }
+    function _rbox(title, rows, extra) { return '<div class="rbox"><div class="rbox-title">' + _esc(title) + '</div>' + rows.join('') + (extra || '') + '</div>'; }
+    function _table(head, rows, id) {
+        return '<div class="dtable-wrap"><table class="dtable"' + (id ? ' id="' + _esc(id) + '"' : '') + '><thead><tr>' + head.map(function (h) { return '<th>' + _esc(h) + '</th>'; }).join('') +
+               '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + _esc(c == null ? '—' : c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+    }
+    function _verdict(level, text) {
+        var sym = level === 'ok' ? '✓' : (level === 'bad' ? '✗' : '⚠');
+        var t = _txt(text);
+        if (t.charAt(0) !== sym) t = sym + ' ' + t;
+        return '<div class="prism-dfit-verdict prism-dfit-verdict--' + (level || 'warn') + '">' + _esc(t.slice(0, 299)) + '</div>';
+    }
+    function _chart(key, h) {
+        return '<div class="chart-wrap prism-dfit-chart"><canvas id="prism_dfit_cv_' + _esc(key) + '" data-dfit-plot="' + _esc(key) + '" style="width:100%;height:' + (h || 260) + 'px" role="img" aria-label="' + _esc((PLOT_ENTRIES[key] && PLOT_ENTRIES[key].label) || key) + '"></canvas></div>';
+    }
+    function _numInput(path, label) {
+        var T = test(), v = _getPath(T.inputs, path), u = _unitOf(path);
+        return '<div class="fg-item"><label for="' + _id(path) + '">' + _esc(label) + (u && u !== '–' ? ' (' + _esc(u) + ')' : '') + '</label>' +
+               '<input type="text" inputmode="decimal" id="' + _id(path) + '" data-dfit-path="' + _esc(path) + '" value="' + _esc(_displayOf(path, v)) + '" autocomplete="off"></div>';
+    }
+    function _select(path, label) {
+        var T = test(), v = String(_getPath(T.inputs, path));
+        return '<div class="fg-item"><label for="' + _selId(path) + '">' + _esc(label) + '</label><select id="' + _selId(path) + '" data-dfit-path="' + _esc(path) + '">' +
+               SELECTS[path].map(function (o) { return '<option value="' + _esc(o[0]) + '"' + (o[0] === v ? ' selected' : '') + '>' + _esc(o[1]) + '</option>'; }).join('') + '</select></div>';
+    }
+    function _check(path, id, label) {
+        var on = !!_getPath(test().inputs, path);
+        return '<label class="prism-dfit-check"><input type="checkbox" id="' + _esc(id) + '" data-dfit-path="' + _esc(path) + '"' + (on ? ' checked' : '') + '> ' + _esc(label) + '</label>';
+    }
+    function _fields(list) { return '<div class="fg">' + list.map(function (f) { return _numInput(f[0], f[1]); }).join('') + '</div>'; }
+    function _btn(id, label, act, cls) { return '<button type="button" class="btn ' + (cls || 'btn-secondary') + '" id="' + _esc(id) + '" data-dfit-act="' + _esc(act) + '">' + _esc(label) + '</button>'; }
+    function _note(text) { return '<div class="prism-dfit-note">' + _esc(_txt(text)) + '</div>'; }
+    function _warnLine(id, text) { return '<div class="prism-dfit-warn" id="' + _esc(id) + '"' + (text ? '' : ' style="display:none"') + '>' + _esc(text ? '⚠ ' + _txt(text) : '') + '</div>'; }
+
+    // input change handler shared by every DFIT container (delegated)
+    function _onInputChange(e) {
+        var t = e && e.target;
+        if (!t || !t.getAttribute) return;
+        var path = t.getAttribute('data-dfit-path');
+        if (!path) return;
+        var raw = (t.type === 'checkbox') ? !!t.checked : t.value;
+        _batch('begin');
+        var r = setInput(path, raw);
+        _batch('end');
+        if (t.type !== 'checkbox' && !SELECTS[path]) t.value = _displayOf(path, r.value);
+        if (path === 'options.axisLock' && !r.value) _axisLock = null;
+        var w = _byId('prism_dfit_input_warn');
+        if (w) {
+            if (r.warning && r.warning.text) { w.style.display = ''; w.textContent = '⚠ ' + _txt(r.warning.text); }
+            else { w.style.display = 'none'; w.textContent = ''; }
+        }
+        if (path === 'options.ppd' || path === 'options.axisLock') redrawAll();
+    }
+    function _onMatchModel(e) {
+        var t = e && e.target, k = t && t.getAttribute ? t.getAttribute('data-dfit-mm') : null;
+        if (!k) return;
+        var sel = _matchSel(), i = sel.indexOf(k);
+        if (t.checked && i === -1) sel.push(k);
+        if (!t.checked && i !== -1) sel.splice(i, 1);
+    }
+    function _wire(root) {
+        if (!root || root._dfitWired) return;
+        root._dfitWired = true;
+        root.addEventListener('change', _onMatchModel);
+        root.addEventListener('change', _onInputChange);
+        root.addEventListener('click', _onAction);
+    }
+
+    // =========================================================================
+    // SECTION 10 — ACTIONS (data-dfit-act buttons)
+    // =========================================================================
+    function _onAction(e) {
+        var t = e && e.target, b = (t && t.closest) ? t.closest('[data-dfit-act]') : null;
+        if (!b) return;
+        var act = b.getAttribute('data-dfit-act'), arg = b.getAttribute('data-dfit-arg');
+        var fn = ACTIONS[act];
+        if (fn) { try { fn(arg, b); } catch (err) { _setStatus('⚠ ' + _txt(err && err.message), 'warn'); } }
+    }
+    function _findBlunder(run, id) {
+        var bl = run && run.triage && run.triage.blunders;
+        if (!(bl instanceof Array)) return null;
+        for (var i = 0; i < bl.length; i++) if (bl[i] && bl[i].id === id) return bl[i];
+        return null;
+    }
+    function applyBlunderFix(id) {
+        var T = test(), run = _run(), b = _findBlunder(run, id);
+        if (!b || !_isObj(b.fix) || typeof b.fix.field !== 'string') return { ok: false, code: 'NO_FIX', errors: ['No fix for blunder ' + _txt(id) + ' in the current run.'], bad: [String(id)] };
+        var list = [b.fix].concat(b.fix.also instanceof Array ? b.fix.also.filter(function (a) { return _isObj(a) && typeof a.field === 'string'; }) : []);
+        var x = _clone(T.inputs), olds = list.map(function (a) { return _clone(_getPath(x, a.field)); });
+        list.forEach(function (a) { _setPath(x, a.field, _clone(a.to)); });
+        _batch('begin');
+        try {
+            T.inputs = _clampInputs(x);
+            list.forEach(function (a, i) { logEntry(T, 'inputs.' + a.field, olds[i], _getPath(T.inputs, a.field), 'Blunder fix ' + b.id + ': ' + (b.hypothesis || '')); });
+        } finally { _batch('end'); }
+        _setStatus('✓ Fix applied (' + list.map(function (a) { return a.field; }).join(', ') + '); Analyse again for the full chain.', 'ok');
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        runFast('blunder fix'); _refreshUI();
+        return { ok: true, fields: list.map(function (a) { return a.field; }) };
+    }
+    function _need(cond, msg) { if (!cond) { _setStatus('⚠ ' + msg, 'warn'); _toast(msg); } return !!cond; }
+    function _toast(msg) { var el = _byId('prism_dfit_msg'); if (el) { el.style.display = ''; el.textContent = '⚠ ' + _txt(msg); } }
+    var ACTIONS = {
+        analyse: function () { analyse(); },
+        cancel: function () { if (!cancelAnalyse('Cancelled — previous results kept.')) _toast('Nothing is running.'); },
+        demo: function () { var s = _byId('prism_dfit_demo'); var n = s ? s.value : 'reference'; if (loadDemo(n)) analyse(); },
+        addTest: function () { var r = addTest({}); if (!r.ok) _toast(r.errors[0]); },
+        openTest: function (id) { var r = selectTest(id); if (!r.ok) _toast(r.errors[0]); },
+        deleteTest: function (id) {
+            var ok = (typeof G.confirm === 'function') ? G.confirm('Delete DFIT test ' + id + '? (Undo restores it.)') : true;
+            if (!ok) return;
+            var r = deleteTest(id); if (!r.ok) _toast(r.errors[0]);
+        },
+        rebind: function () { var r = rebind(); if (!r.ok) _toast(r.errors[0]); else _refreshUI(); },
+        zone: function () {
+            var T = test(), z = (typeof G.prompt === 'function') ? G.prompt('Zone label for test ' + T.id, T.zone || '') : null;
+            if (z == null) return;
+            var old = T.zone; T.zone = _txt(z).slice(0, 40); logEntry(T, 'zone', old, T.zone, 'Zone renamed');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        strAdd: function () {
+            var T = test();
+            if (!_need(T.inputs.strings.length < 10, 'A flow path holds at most 10 strings.')) return;
+            var last = T.inputs.strings[T.inputs.strings.length - 1];
+            var top = last ? last.botMd : 0, bot = _num(T.inputs.datumMd) || _num(T.inputs.datumTvd) || (top + 1000);
+            if (!(bot > top)) bot = top + 1000;
+            T.inputs.strings.push({ tubKey: null, id: 4.778, od: 5.5, wall: 0.361, topMd: top, botMd: bot });
+            logEntry(T, 'inputs.strings', null, T.inputs.strings.length, 'String added');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        strDel: function (i) {
+            var T = test(); i = parseInt(i, 10);
+            if (!(i >= 0 && i < T.inputs.strings.length)) return;
+            T.inputs.strings.splice(i, 1); logEntry(T, 'inputs.strings', i, null, 'String removed');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        survey: function () {
+            var T = test(), box = _byId('prism_dfit_survey'), txt = box ? String(box.value || '') : '';
+            var rows = [];
+            txt.split(/\r?\n/).forEach(function (ln) { var a = ln.split(/[\s;\t]+/).map(_parse); if (a.length >= 2 && _isNum(a[0]) && _isNum(a[1])) rows.push([a[0], a[1]]); });
+            if (!_need(rows.length > 0 || T.inputs.survey, 'Paste the survey first: one MD and TVD pair (ft) per line, ascending MD.')) return;
+            var cl = _clampInputs((function () { var x = _clone(T.inputs); x.survey = rows.length ? rows : null; return x; })());
+            _setStatus(cl.survey ? '✓ Survey applied: ' + cl.survey.length + ' stations.' : 'Survey cleared: the well is treated as vertical.', 'ok');
+            T.inputs.survey = cl.survey;
+            logEntry(T, 'inputs.survey', null, cl.survey ? cl.survey.length : 0, 'Survey pasted');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        // §6.3 blunder cards: "Apply fix" writes fix.field and every fix.also[] entry into T.inputs (e.g. MD-as-TVD moves datumTvd and
+        // datumMd together), clamps, logs each field and re-runs; 56 applies channel fixes non-destructively. "It is real" dismisses.
+        blunderApply: function (id) { applyBlunderFix(id); },
+        blunderDismiss: function (id) {
+            var T = test(), run = _run(), b = _findBlunder(run, id);
+            if (!_need(b, 'That blunder is not in the current run.')) return;
+            var st = _st(); st._dfitBlunderDismissed = st._dfitBlunderDismissed || {}; st._dfitBlunderDismissed[T.id + ':' + id] = true;
+            logEntry(T, 'blunder:' + id, null, 'dismissed', 'It is real: ' + (b.hypothesis || id));
+            _setStatus('Blunder hypothesis dismissed: ' + _txt(b.hypothesis || id) + '.', 'ok');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        override: function () { openOverride(); },
+        overrideSave: function () { _saveOverride(); },
+        overrideClose: function () { _closeOverride(); },
+        familyEnd: function (fam) {
+            var run = _run(), c = run && run.consensus, f = c && c.families && c.families[fam];
+            if (!_need(f && _isNum(f.p50), 'No ' + fam + ' family reading in this run.')) return;
+            setPick('closure', { mode: 'family', family: fam, method: fam === 'F1' ? 'compliance' : 'tangent', p: f.p50, dt: null }, { source: 'user', reason: 'Use the ' + fam + ' end for hand-offs' });
+        },
+        clearOverride: function () { setPick('closure', null, { source: 'user', reason: 'Override removed' }); },
+        why: function (method, btn) {
+            var map = { tangent: 'dfitG', compliance: 'dfitG', crel: 'dfitCompliance', loglog: 'dfitLogLog', sqrt: 'dfitSqrt', maxdpdg: 'dfitG', varcomp: 'dfitG', fissure: 'dfitG', reopening: 'dfitCycles', model: 'dfitG', user: 'dfitG' };
+            var st = _st(); st.activePlot = map[method] || 'dfitG';
+            if (typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+            notes(method, btn);
+        },
+        note: function (key, btn) { notes(key, btn); },
+        s4: function (tab) { _s4Tab = tab || 'aca'; var h = _byId('prism_dfit_step4'); if (h) _renderStep4Into(h); },
+        whatIf: function () {
+            var inp = _byId('prism_dfit_whatif_p'), p = inp ? _parse(inp.value) : NaN;
+            if (!_need(_isNum(p) && p > 0 && p < 1e5, 'Enter a what-if closure pressure in psia.')) return;
+            _st()._dfitWhatIf = { p: p };
+            runFast('what-if'); _refreshUI();
+        },
+        whatIfClear: function () { delete _st()._dfitWhatIf; runFast('what-if'); _refreshUI(); },
+        handoff: function (target) { applyHandoff(target || 'pta', {}); },
+        handoffF: function (fam) { applyHandoff('pta', { family: fam }); },
+        copyGrad: function () {
+            var s = results(), g = _grad(_closureP(s), test());
+            if (!_need(_isNum(g), 'No closure gradient yet.')) return;
+            var txt = 'Closure gradient ' + _f(g, 3) + ' psi/ft (' + _f(g / 0.052, 2) + ' ppg equivalent)';
+            try { if (G.navigator && G.navigator.clipboard && G.navigator.clipboard.writeText) G.navigator.clipboard.writeText(txt); } catch (e) { /* ignore */ }
+            _setStatus('Copied: ' + txt, 'ok');
+        },
+        copyIsipGrad: function () {
+            var s = results(), T = test(), run = _run();
+            var p = (s && s.isip && _isNum(s.isip.value)) ? s.isip.value : (run && run.isip ? run.isip.value : null), g = _grad(p, T);
+            if (!_need(_isNum(g), _isNum(p) ? 'Enter the datum TVD (step ①) for the ISIP gradient.' : 'No ISIP yet — press ▶ Analyse.')) return;
+            var txt = 'ISIP gradient ' + _f(g, 3) + ' psi/ft (' + _f(g / 0.052, 2) + ' ppg equivalent)';
+            try { if (G.navigator && G.navigator.clipboard && G.navigator.clipboard.writeText) G.navigator.clipboard.writeText(txt); } catch (e) { /* ignore */ }
+            _setStatus('Copied: ' + txt, 'ok');
+        },
+        exportText: function () { _exportText(); },
+        exportSheet: function () { _exportSheet(); },
+        lkSim: function () { _lkSimulate(); },
+        lkFit: function () { _lkFit(); },
+        lkStruct: function () { _lkFit({ structural: true }); },
+        acaMatch: function () { _acaMatch(); },
+        lkCancel: function () { if (_lkJob) { _lkJob.cancelled = true; _setStatus('Cancelled — previous model kept.', 'warn'); } else _toast('Nothing is running.'); },
+        design: function () { _design(); },
+        replay: function () { _replay(); },
+        sandbox: function () { openSandbox(); },
+        sandboxShow: function () {
+            if (typeof G.PRiSM_closeTools === 'function') { try { G.PRiSM_closeTools(); } catch (e) { /* ignore */ } }
+            var el = _byId('prism_dfit_sb_V');
+            if (el && el.focus) { try { el.focus(); } catch (e) { /* ignore */ } }
+        },
+        plan: function () { if (typeof G.PRiSM_openTools === 'function') { try { G.PRiSM_openTools('dfit-designer'); return; } catch (e) { /* ignore */ } } _toast('Open Tools → DFIT designer.'); },
+        gauge: function () { _toast('Build the analysis set from gauge records in the Data step (gauge manager), then press ▶ Analyse.'); }
+    };
+
+    // =========================================================================
+    // SECTION 11 — PANELS (C7, §2.8)
+    // =========================================================================
+    function _panelHost(body, id) {
+        body.innerHTML = '<div id="prism_dfit_panel_' + id + '" class="prism-dfit-panel"></div>';
+        var h = body.firstChild || _byId('prism_dfit_panel_' + id);
+        _wire(h);
+        return h;
+    }
+    function _staleLine(T) {
+        var s = T.summary;
+        if (s && s.forOtherDataset) return _verdict('warn', 'Decisions belong to another dataset: load it, or re-bind this test to the loaded data.') + _btn('prism_dfit_rebind', 'Re-bind to the loaded data', 'rebind');
+        if (s && s.stale) return _verdict('warn', 'Results stale — press ▶ Analyse.');
+        return '';
+    }
+    var PANEL_RENDER = {};
+    PANEL_RENDER.tests = function (h) {
+        var d = dstate(), T = test(), ds = G.PRiSM_dataset;
+        var html = '<div class="prism-dfit-bar">' + _btn('prism_dfit_analyse', '▶ Analyse DFIT', 'analyse', 'btn-primary') + _btn('prism_dfit_cancel', 'Cancel', 'cancel') +
+                   '<span id="prism_dfit_progress" class="prism-dfit-progress" style="display:none"></span>' +
+                   '<span id="prism_dfit_status" class="prism-dfit-status prism-dfit-status--' + _status.level + '">' + _esc(_status.text) + '</span></div>' +
+                   '<div id="prism_dfit_msg" class="prism-dfit-warn" style="display:none"></div>';
+        if (!_hasData(ds)) {
+            html += '<div class="card"><div class="card-title">Start a DFIT</div>' +
+                    _note('Load a DFIT record on the Data step (time, pressure, rate in bbl/min; surface pressure and temperature optional), or start from a demo.') +
+                    '<div class="fg"><div class="fg-item"><label for="prism_dfit_demo">Demo DFIT</label><select id="prism_dfit_demo">' +
+                    DEMOS.map(function (x) { return '<option value="' + x[0] + '">' + _esc(x[1]) + '</option>'; }).join('') + '</select></div></div>' +
+                    '<div class="prism-dfit-bar">' + _btn('prism_dfit_demo_btn', 'Load demo DFIT', 'demo', 'btn-primary') + _btn('prism_dfit_gauge_btn', 'Build from gauge records', 'gauge') +
+                    _btn('prism_dfit_plan_btn', 'Plan a DFIT', 'plan') + _btn('prism_dfit_sandbox_btn', 'Leak-off sandbox', 'sandbox') + '</div></div>';
+        } else {
+            html += '<div class="fg"><div class="fg-item"><label for="prism_dfit_demo">Demo DFIT</label><select id="prism_dfit_demo">' +
+                    DEMOS.map(function (x) { return '<option value="' + x[0] + '">' + _esc(x[1]) + '</option>'; }).join('') + '</select></div></div>' +
+                    '<div class="prism-dfit-bar">' + _btn('prism_dfit_demo_btn', 'Load demo DFIT', 'demo') + '</div>';
+        }
+        html += _staleLine(T);
+        var rows = d.tests.map(function (t) {
+            var s = t.summary, c = s && s.closure, z = _num(t.inputs.datumTvd);
+            var cg = (c && c.mode === 'range' && c.families) ? [c.families.F1, c.families.F2].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return z ? _f(x.p50 / z, 3) : '—'; }).join(' / ') : (z ? _f((_closureP(s) || NaN) / z, 3) : '—');
+            var status = !t.dsRef ? 'no data' : (_hasData(ds) && t.dsRef.hash === dsHash(ds) ? 'loaded' : 'other data');
+            return [t.id + (t.id === d.active ? ' (active)' : ''), t.zone || '—', z ? _f(z, 0) : '—', (t.dsRef ? t.dsRef.name : '—') + ' · ' + status,
+                    s && s.isip && z ? _f(s.isip.value / z, 3) : '—', cg || '—', s && s.pi && z && _isNum(s.pi.value) ? _f(s.pi.value / z, 3) : '—', (s && s.grade) || '—'];
+        });
+        html += _table(['Test', 'Zone', 'Datum TVD (ft)', 'Dataset', 'ISIP (psi/ft)', 'Closure (psi/ft)', 'p_i (psi/ft)', 'Grade'], rows, 'prism_dfit_tests_tbl');
+        html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_test_add', '+ Add test', 'addTest') + _btn('prism_dfit_zone', 'Rename zone', 'zone') +
+                d.tests.filter(function (t) { return t.id !== d.active; }).map(function (t) { return _btn('prism_dfit_open_' + t.id, 'Open ' + t.id, 'openTest').replace('data-dfit-act="openTest"', 'data-dfit-act="openTest" data-dfit-arg="' + t.id + '"'); }).join('') +
+                (d.tests.length > 1 ? _btn('prism_dfit_del_' + T.id, 'Delete ' + T.id, 'deleteTest').replace('data-dfit-act="deleteTest"', 'data-dfit-act="deleteTest" data-dfit-arg="' + T.id + '"') : '') + '</div>';
+        if (d.tests.length >= 2) html += _chart('dfitStress', 240) + _chart('dfitOverlay', 240);
+        h.innerHTML = html;
+    };
+    PANEL_RENDER.well = function (h) {
+        var T = test(), I = T.inputs, w = _well(), run = _run();
+        var TB = G.WTS_tubulars, list = [];
+        if (TB && typeof TB.all === 'function') { try { list = TB.all() || []; } catch (e) { list = []; } }
+        var tubOpts = function (sel) {
+            var o = '<option value=""' + (sel ? '' : ' selected') + '>custom</option>';
+            for (var i = 0; i < list.length && i < 300; i++) { var x = list[i]; if (x && x.key) o += '<option value="' + _esc(x.key) + '"' + (x.key === sel ? ' selected' : '') + '>' + _esc(x.label || x.key) + '</option>'; }
+            return o;
+        };
+        var cell = function (i, f, v, dp) { return '<input type="text" inputmode="decimal" id="prism_dfit_str_' + i + '_' + f + '" data-dfit-str="' + i + ':' + f + '" value="' + _esc(_isNum(v) ? String(Math.round(v * Math.pow(10, dp)) / Math.pow(10, dp)) : '') + '" aria-label="String ' + (i + 1) + ' ' + f + '">'; };
+        var strRows = I.strings.map(function (s, i) { return i; });
+        var strHTML = strRows.length ? '<div class="dtable-wrap"><table class="dtable" id="prism_dfit_strings_tbl"><thead><tr><th>#</th><th>Tubular</th><th>ID (in)</th><th>OD (in)</th><th>Top MD (ft)</th><th>Bottom MD (ft)</th></tr></thead><tbody>' +
+            I.strings.map(function (s, i) {
+                return '<tr><td>' + (i + 1) + '</td><td><select id="prism_dfit_str_' + i + '_key" data-dfit-str="' + i + ':key" aria-label="String ' + (i + 1) + ' tubular">' + tubOpts(s.tubKey) + '</select></td><td>' +
+                       cell(i, 'id', s.id, 3) + '</td><td>' + cell(i, 'od', s.od, 3) + '</td><td>' + cell(i, 'top', s.topMd, 0) + '</td><td>' + cell(i, 'bot', s.botMd, 0) + '</td></tr>';
+            }).join('') + '</tbody></table></div>' : '';
+        var html = '<div class="card"><div class="card-title">Datum and gauge</div>' + _fields(FIELDS.well) +
+                   (!_num(I.datumTvd) ? _verdict('warn', 'Enter the datum TVD: gradients and the bottomhole conversion are disabled without it.') : '') +
+                   '<div class="fg"><div class="fg-item"><label for="prism_dfit_survey">Survey (MD TVD per line, ft)</label><textarea id="prism_dfit_survey" rows="3">' +
+                   _esc((I.survey || []).map(function (r) { return r[0] + ' ' + r[1]; }).join('\n')) + '</textarea></div></div>' +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_survey_apply', 'Apply survey', 'survey') + '</div></div>';
+        html += '<div class="card"><div class="card-title">Flow path (strings, top → perforations)</div>' +
+                (strRows.length ? strHTML : _note('No strings: the conversion uses a constant gradient and no pipe friction.')) +
+                '<div class="prism-dfit-bar">' + _btn('prism_dfit_str_add', '+ String', 'strAdd') +
+                (strRows.length ? _btn('prism_dfit_str_del', '− Last string', 'strDel').replace('data-dfit-act="strDel"', 'data-dfit-act="strDel" data-dfit-arg="' + (strRows.length - 1) + '"') : '') + '</div></div>';
+        html += '<div class="card"><div class="card-title">Injected fluid and temperature</div><div class="fg">' + _select('fluid.kind', 'Fluid') + _select('temp.model', 'Temperature model') + '</div>' +
+                _fields(FIELDS.fluid) + _fields(FIELDS.temp) + '</div>';
+        html += '<div class="card"><div class="card-title">Perforations and rock</div>' + _fields(FIELDS.perfs) + '<div class="fg">' + _select('rock.EpSource', 'E′ source') + '</div>' + _fields(FIELDS.rock) + _fields(FIELDS.priors) + '</div>';
+        var ev = run && run.events, fr = run && run.frac && run.frac.chosen;
+        html += _rbox('System compressibility and wellbore storage', [
+            _rrow('V_w·c_w from the ramp (bbl/psi)', ev ? _sig(ev.VwCwMeasured, 3) : '—'),
+            _rrow('V_w·c_w used (bbl/psi)', fr ? _sig(fr.VwCw, 3) : '—'),
+            _rrow('C_sys (bbl/psi)', fr ? _sig(fr.Csys, 3) : '—')]);
+        var prov = (G.PRiSM_pvt && G.PRiSM_pvt.provenance) || {};
+        var pv = function (k) { return prov[k] ? ' [' + prov[k] + ']' : ''; };
+        html += _rbox('Reservoir (PRiSM well inputs, C1)', [
+            _rrow('p_i (psia)' + pv('pi'), _f(w.pi, 0)), _rrow('φ' + pv('phi'), _f(w.phi, 3)), _rrow('c_t (1/psi)' + pv('ct'), _sig(w.ct, 3)),
+            _rrow('μ_res (cp)' + pv('mu'), _f(w.mu, 3)), _rrow('h (ft)' + pv('h'), _f(w.h, 1)), _rrow('Test type', w.testType || '—')],
+            _note('Edit the reservoir inputs in Well & Test (transient mode); DFIT reads them through PRiSM_getWell and writes only the test type, shut-in time, tp and pwf0.'));
+        html += '<div class="card"><div class="card-title">Events and time base</div><div class="fg">' + _select('options.tp', 'Producing time tp') + _select('options.alpha', 'Leak-off exponent α') + '</div>' +
+                _fields([['options.L', 'Bourdet window L'], ['options.alphaGeneral', 'General α']]) +
+                _table(['Event', 'Detected (h)', 'Override (h)'], [
+                    ['Pump start', ev ? _f(ev.tStart, 4) : '—', _f(I.events.tStart, 4)], ['Breakdown', ev ? _f(ev.tb, 4) : '—', _f(I.events.tb, 4)],
+                    ['Shut-in', ev ? _f(ev.ts, 4) : '—', _f(I.events.ts, 4)]], 'prism_dfit_events_tbl') +
+                '<div class="fg">' + ['tStart', 'tb', 'ts'].map(function (k) {
+                    var id = 'prism_dfit_ev_' + k.toLowerCase();
+                    return '<div class="fg-item"><label for="' + id + '">Override ' + (k === 'tStart' ? 'pump start' : (k === 'tb' ? 'breakdown' : 'shut-in')) + ' (h)</label><input type="text" inputmode="decimal" id="' + id + '" data-dfit-ev="' + k + '" value="' + _esc(_isNum(I.events[k]) ? I.events[k] : '') + '"></div>';
+                }).join('') + '</div>' +
+                (ev && ev.tp ? _note('tp: pump ' + _f(ev.tp.pump * 60, 2) + ' min, from breakdown ' + _f(ev.tp.breakdown * 60, 2) + ' min, volume-equivalent ' + _f(ev.tp.veq * 60, 2) + ' min.') : '') + '</div>';
+        html += _warnLine('prism_dfit_input_warn', '');
+        h.innerHTML = html;
+        Array.prototype.forEach.call(h.querySelectorAll ? h.querySelectorAll('[data-dfit-str]') : [], function (inp) {
+            inp.addEventListener('change', function () {
+                var a = String(inp.getAttribute('data-dfit-str')).split(':'), i = parseInt(a[0], 10), f = a[1], T2 = test(), row = T2.inputs.strings[i];
+                if (!row) return;
+                var next = _clone(row);
+                if (f === 'key') {
+                    var e = (TB && typeof TB.find === 'function') ? TB.find(inp.value) : null;
+                    next.tubKey = e ? e.key : null;
+                    if (e) { next.id = e.id; next.od = e.od; next.wall = e.wall; }
+                } else {
+                    var v = _parse(inp.value), k = { id: 'id', od: 'od', top: 'topMd', bot: 'botMd' }[f];
+                    if (_isNum(v)) next[k] = v;
+                    if (f === 'id' || f === 'od') { next.tubKey = null; next.wall = (next.od - next.id) / 2; }
+                }
+                var trial = _clone(T2.inputs);
+                trial.strings[i] = next;
+                var cl = _clampInputs(trial);
+                var ok = cl.strings.length === trial.strings.length;
+                _batch('begin');
+                if (ok) { T2.inputs.strings = cl.strings; logEntry(T2, 'inputs.strings[' + i + '].' + f, null, inp.value, 'String edited'); if (T2.summary) T2.summary.stale = true; _emit('prism:dfit-updated', { what: 'test', source: 'user' }); }
+                _batch('end');
+                var w = _byId('prism_dfit_input_warn');
+                if (w) { w.style.display = ok ? 'none' : ''; w.textContent = ok ? '' : '⚠ String ' + (i + 1) + ' needs ID < OD and top MD < bottom MD: the change was not applied.'; }
+                PANEL_RENDER.well(h);
+            });
+        });
+        var evs = h.querySelectorAll ? h.querySelectorAll('[data-dfit-ev]') : [];
+        Array.prototype.forEach.call(evs, function (inp) {
+            inp.addEventListener('change', function () {
+                var k = inp.getAttribute('data-dfit-ev'), v = _parse(inp.value);
+                var r = setEvent(k, v, 'Event override typed');
+                var el = _byId(inp.id) || inp;
+                if (r.ok) el.value = _isNum(test().inputs.events[k]) ? String(test().inputs.events[k]) : '';
+            });
+        });
+    };
+    PANEL_RENDER.channels = function (h) {
+        var T = test(), I = T.inputs, ds = G.PRiSM_dataset, run = _run();
+        var conv = (ds && ds.meta && ds.meta.psigConverted) || {};
+        var html = '<div class="card"><div class="card-title">Channels</div><div class="fg">' + _select('channels.primary', 'Primary channel') + '</div>' +
+                   '<div class="prism-dfit-checks">' +
+                   ['p', 'pSurf', 'pAnn'].map(function (k) {
+                       return _check('channels.psig.' + k, 'prism_dfit_psig_' + k.toLowerCase(), (k === 'p' ? 'Primary' : (k === 'pSurf' ? 'Surface' : 'Annulus')) + ' recorded in psig' + (conv[k] ? ' (already converted on import)' : ''));
+                   }).join('') + '</div>' + _fields(FIELDS.channels) +
+                   (I.channels.mask && I.channels.mask.length ? _table(['Mask from (h)', 'to (h)', 'Why'], I.channels.mask.map(function (m) { return [_f(m[0], 3), _f(m[1], 3), m[2] || '—']; })) : _note('No masked intervals.')) + '</div>';
+        var pr = run && run.prep;
+        html += _rbox('Bottomhole conversion', [
+            _rrow('Source', pr ? (pr.src === 'surface-converted' ? 'surface, converted' : 'bottomhole gauge') : '—'),
+            _rrow('Gauge noise σ (psi)', pr ? _sig(pr.sigma, 3) : '—'),
+            _rrow('Atmospheric correction applied (psi)', pr && pr.applied ? _f(pr.applied.atmDelta, 3) : '—'),
+            _rrow('Masked samples', pr && pr.applied ? _f(pr.applied.masked, 0) : '—')]);
+        (pr && pr.flags || []).slice(0, 6).forEach(function (f) { if (f && f.text) html += _verdict(f.level === 'bad' ? 'bad' : (f.level === 'info' ? 'ok' : 'warn'), f.text); });
+        html += _chart('dfitConv', 240) + _chart('dfitHistory', 260);
+        if (!_hasData(ds)) html = _note('Load a DFIT first.') + html;
+        h.innerHTML = html;
+    };
+    PANEL_RENDER.triage = function (h) {
+        var run = _run(), tr = run && run.triage;
+        var html = '';
+        if (!tr || tr.ok === false) html += _note(_hasData(G.PRiSM_dataset) ? 'Press ▶ Analyse to run the data-health checks.' : 'Load a DFIT first.');
+        else {
+            var lvl = tr.light === 'green' ? 'ok' : (tr.light === 'red' ? 'bad' : 'warn');
+            var g = run.grade || tr.grade || {};
+            html += _verdict(lvl, (tr.light === 'green' ? 'Test interpretable' : (tr.light === 'red' ? 'Test not interpretable as it stands' : 'Test partly interpretable')) + (g.letter ? ' (grade ' + g.letter + ')' : '') + ': ' + ((g.why && g.why[0]) || tr.verdict || ''));
+            html += _table(['Check', 'Status', 'Value', 'Threshold', 'Note', 'Ev.'], (tr.checks || []).map(function (c) {
+                return [c.title, c.level, _isNum(c.value) ? _sig(c.value, 3) : '—', _isNum(c.threshold) ? _sig(c.threshold, 3) : '—', c.text, (c.ev || []).join(' ')];
+            }), 'prism_dfit_triage_tbl');
+            if (tr.repump) html += _rbox('Re-pump verdict', [_rrow('Verdict', tr.repump.verdict)].concat((tr.repump.rules || []).slice(0, 6).map(function (r) { return _rrow(r.id, r.text); })));
+            var dis = _st()._dfitBlunderDismissed || {};
+            (tr.blunders || []).slice(0, 4).forEach(function (b) {
+                if (!b || !b.text || dis[test().id + ':' + b.id]) return;
+                var arg = ' data-dfit-arg="' + _esc(b.id) + '"';
+                html += _verdict('warn', b.text) + '<div class="prism-dfit-bar">' +
+                    (b.fix ? _btn('prism_dfit_blunder_apply_' + b.id, 'Apply fix', 'blunderApply').replace('data-dfit-act="blunderApply"', 'data-dfit-act="blunderApply"' + arg) : '') +
+                    _btn('prism_dfit_blunder_dismiss_' + b.id, 'It is real', 'blunderDismiss').replace('data-dfit-act="blunderDismiss"', 'data-dfit-act="blunderDismiss"' + arg) + '</div>';
+            });
+        }
+        html += _chart('dfitGradient', 220);
+        h.innerHTML = html;
+    };
+    PANEL_RENDER.board = function (h) {
+        var run = _run(), T = test();
+        var html = '<div class="prism-dfit-checks">' + _check('options.axisLock', 'prism_dfit_axislock', 'Lock derivative axis') + _check('options.ppd', 'prism_dfit_ppd', 'Show primary pressure derivative (PPD)') + '</div>';
+        html += _chart('dfitStrip', 140);
+        if (!run || !run.consensus && !run.consensusLite) { h.innerHTML = html + _note(_hasData(G.PRiSM_dataset) ? 'Press ▶ Analyse to build the closure board.' : 'Load a DFIT first.'); return; }
+        var c = run.consensus || run.consensusLite, cl = _closureOf(run), z = _num(T.inputs.datumTvd), lab = c.confidence || 'stale';
+        var val = cl.mode === 'single' ? _f(cl.value, 0) + ' psia' : (cl.mode === 'range' ? _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' / ') + ')' : 'not reached');
+        var rows = [_rrow('Closure', val), _rrow('Mode', cl.mode || 'none'), _rrow('Label', lab + (c.calibrated ? '' : ' (uncalibrated rule label)')),
+                    _rrow('Gradient (psi/ft)', z && _isNum(_closureP(T.summary)) ? _f(_closureP(T.summary) / z, 3) : '—'), _rrow('Tolerance τ (psi)', _f(c.tau, 0))];
+        var cp = T.picks.closure;
+        if (cp && cp.source === 'user') rows.push(_rrow('User override', (cp.mode === 'family' ? cp.family + ' end' : _f(cp.p, 0) + ' psia') + (cp.reason ? ' — ' + cp.reason : '')));
+        html += _rbox('Closure', rows);
+        if (cl.mode === 'single') html += _verdict(lab === 'high' ? 'ok' : 'warn', 'Closure ' + _f(cl.value, 0) + ' psia' + (z ? ' (' + _f(cl.value / z, 3) + ' psi/ft)' : '') + ', ' + lab + ' confidence (uncalibrated rule label): ' + (c.preferredWhy || 'families agree') + ' (tolerance ' + _f(c.tau, 0) + ' psi).');
+        else if (cl.mode === 'range') html += _verdict('warn', 'Closure range ' + _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' and ') + '; ' + lab + '): every downstream number is shown for both readings.');
+        else html += _verdict('warn', 'No closure yet: dP/dG has not departed.' + (c.forecast && c.forecast.length ? ' Forecast: ' + c.forecast.map(function (f) { return _f(f.sigma, 0) + ' psia at ' + _f(f.dtc, 2) + ' h'; }).join(', ') + '.' : ''));
+        html += _table(['Method', 'Family', 'Vote', 'Closure (psia)', 'G', 'Why', 'Ev.'], (run.picks || []).map(function (p) {
+            return [p.method, p.family, p.vote ? 'yes' : (p.sameEvidenceAs ? 'same evidence' : 'no'), _f(p.p, 0), _f(p.G, 2), 'why', (p.ev || []).join ? p.ev.join(' ') : p.ev];
+        }), 'prism_dfit_picks_tbl');
+        html += '<div class="prism-dfit-bar">' + (run.picks || []).filter(function (p, i, a) { return a.map(function (x) { return x.method; }).indexOf(p.method) === i; }).map(function (p) {
+            return _btn('prism_dfit_why_' + p.method, 'Why ' + p.method + '?', 'why').replace('data-dfit-act="why"', 'data-dfit-act="why" data-dfit-arg="' + _esc(p.method) + '"');
+        }).join('') + '</div>';
+        if (c.counterfactual && c.counterfactual.text) html += _note(c.counterfactual.text);
+        if (c.stability && c.stability.grid && c.stability.grid.F1) {
+            var g = c.stability.grid.F1;
+            html += '<div class="prism-dfit-sub">Stability of the F1 median (rows L, columns tp)</div>' + _table(['L \\ tp'].concat(c.stability.tp || []), (c.stability.L || []).map(function (L, i) { return [L].concat((g[i] || []).map(function (v) { return _f(v, 0); })); }), 'prism_dfit_stab_tbl');
+        }
+        if (c.rules && c.rules.length) html += '<details class="prism-dfit-rules"><summary>Label rules</summary>' + _table(['Rule', 'Fired', 'Value', 'Threshold', 'Text'], c.rules.map(function (r) { return [r.id, r.fired ? 'yes' : 'no', _isNum(r.value) ? _sig(r.value, 3) : '—', _isNum(r.threshold) ? _sig(r.threshold, 3) : '—', r.text]; })) + '</details>';
+        html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_override_btn', 'Use another value', 'override') +
+                (cl.mode === 'range' ? _btn('prism_dfit_fam_F1', 'Use the F1 end for hand-offs', 'familyEnd').replace('data-dfit-act="familyEnd"', 'data-dfit-act="familyEnd" data-dfit-arg="F1"') +
+                                       _btn('prism_dfit_fam_F2', 'Use the F2 end for hand-offs', 'familyEnd').replace('data-dfit-act="familyEnd"', 'data-dfit-act="familyEnd" data-dfit-arg="F2"') : '') +
+                (cp && cp.source === 'user' ? _btn('prism_dfit_override_clear', 'Remove override', 'clearOverride') : '') +
+                _btn('prism_dfit_notes_btn', 'Method notes', 'note').replace('data-dfit-act="note"', 'data-dfit-act="note" data-dfit-arg="index"') + '</div>';
+        // keyboard equivalent of the closure-marker drag (§7.14): ← / → move by one resampled point (Shift × 10), Enter commits
+        // one pick-log entry, Escape restores the marker
+        var d = run.derivs, i0 = d && _arr(d.p) ? _nearestIdx(d.p, (cp && cp.source === 'user' && _isNum(cp.p)) ? cp.p : _closureP(T.summary)) : -1;
+        if (i0 >= 0) html += '<div class="prism-dfit-bar"><button type="button" class="btn btn-secondary" id="prism_dfit_marker" data-dfit-idx="' + i0 + '" aria-describedby="prism_dfit_marker_help">Closure marker: ' +
+            _esc(_f(d.p[i0], 0)) + ' psia</button><span id="prism_dfit_marker_help" class="prism-dfit-note">Arrow keys move the marker (Shift × 10); Enter keeps it.</span></div>';
+        h.innerHTML = html;
+        var mk = h.querySelector ? h.querySelector('#prism_dfit_marker') : null;
+        if (mk) {
+            mk.addEventListener('keydown', function (e) { _markerKey(mk, e); });
+            mk.addEventListener('click', function () {
+                var on = mk.getAttribute('aria-pressed') !== 'true';
+                mk.setAttribute('aria-pressed', on ? 'true' : 'false');
+                if (on && mk.focus) { try { mk.focus(); } catch (e) { /* ignore */ } }
+                var hp = _byId('prism_dfit_marker_help');
+                if (hp) hp.textContent = on ? 'Marker selected: ← → move it by one point (Shift × 10), Enter keeps it, Esc cancels.' : 'Arrow keys move the marker (Shift × 10); Enter keeps it.';
+            });
+        }
+    };
+    function _markerKey(mk, e) {
+        var run = _run(), d = run && run.derivs;
+        if (!d || !e) return;
+        var i = parseInt(mk.getAttribute('data-dfit-idx'), 10), n = d.p.length, step = e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') i = Math.max(0, i - step);
+        else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') i = Math.min(n - 1, i + step);
+        else if (e.key === 'Enter') {
+            if (e.preventDefault) e.preventDefault();
+            setPick('closure', { mode: 'user', family: null, method: 'user', p: d.p[i], dt: d.dt[i], G: d.G[i] }, { source: 'user', reason: 'Closure marker moved with the keyboard' });
+            return;
+        } else if (e.key === 'Escape' || e.key === 'Esc') { var hst = _byId('prism_dfit_panel_board'); if (hst) PANEL_RENDER.board(hst); return; }
+        else return;
+        if (e.preventDefault) e.preventDefault();
+        mk.setAttribute('data-dfit-idx', String(i));
+        mk.textContent = 'Closure marker: ' + _f(d.p[i], 0) + ' psia (Enter keeps it)';
+    }
+    PANEL_RENDER.classify = function (h) {
+        var run = _run(), k = run && run.classification;
+        if (!k || k.ok === false) { h.innerHTML = _note('Press ▶ Analyse to classify the leak-off type.'); return; }
+        var sc = k.scores || {};
+        var html = _rbox('Leak-off type', [_rrow('Type', k.type), _rrow('Alternatives', (k.alt || []).join(', ') || '—'),
+                    _rrow('R_vis (closure visibility)', _f(k.features && k.features.Rvis, 3)), _rrow('D / D_ref at closure', _f(k.features && k.features.DoverDref, 3))]);
+        html += _table(['Type', 'Score'], Object.keys(sc).map(function (x) { return [x, _f(sc[x], 2)]; }), 'prism_dfit_class_tbl');
+        (k.evidence || []).slice(0, 6).forEach(function (e) { html += _note(e); });
+        if (k.features && k.features.unitSlopeSink) html += _verdict('warn', 'The log-log derivative keeps a unit slope past ΔtD 1: a near-constant leak (valve, casing, packer or another zone) is likely. Check the leak plot and the annulus.');
+        html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_note_type', 'About this type', 'note').replace('data-dfit-act="note"', 'data-dfit-act="note" data-dfit-arg="' + _esc(k.type) + '"') + '</div>';
+        h.innerHTML = html;
+    };
+    PANEL_RENDER.frac = function (h) {
+        var run = _run(), fr = run && run.frac && run.frac.chosen;
+        if (!fr) { h.innerHTML = _note('Press ▶ Analyse to compute efficiency, net pressure and geometry.'); return; }
+        var g = fr.geometry || {}, bm = g.byModel || {};
+        var html = _rbox('Efficiency and net pressure', [
+            _rrow('Closure used (psia)', _f(fr.pClosure, 0) + (fr.family ? ' (' + fr.family + ')' : '')), _rrow('G_c', _f(fr.Gc, 2)), _rrow('Δt_c (h)', _f(fr.dtc, 3)),
+            _rrow('η_G (α = ½ / α = 1)', _f(fr.eta && fr.eta.a05, 3) + ' / ' + _f(fr.eta && fr.eta.a1, 3)), _rrow('η_f (fracture)', _f(fr.eta && fr.eta.etaF, 3)),
+            _rrow('Net pressure p_n (psi)', _f(fr.pn, 0)), _rrow('Consistency ratio χ', _f(fr.chi, 2)),
+            _rrow('ISIP gradient (psi/ft)', _f(fr.gradIsip, 3)), _rrow('Closure gradient (psi/ft)', _f(fr.gradClosure, 3))]);
+        html += _rbox('Storage-consistent closure balance', [_rrow('C_sys (bbl/psi)', _sig(fr.Csys, 4)), _rrow('A_f·c_f (bbl/psi)', _sig(fr.AfCf, 4)), _rrow('R_vis', _f(fr.Rvis, 3)),
+            _rrow('Γ (psi/√min)', _f(fr.Gamma, 2)), _rrow('Γ_PKN', _f(fr.GammaPKN, 2))]);
+        html += _table(['Geometry', 'xf or R (ft)', 'A_f (ft²)', 'w̄ (in)', 'CL (ft/√min)'], ['PKN', 'KGD', 'radial'].map(function (k) {
+            var x = bm[k] || {}; return [k + (k === g.model ? ' (chosen)' : ''), _f(x.xf != null ? x.xf : x.R, 1), _f(x.Af, 0), _f(x.wAvg, 3), _sig(x.CL, 3)];
+        }), 'prism_dfit_geom_tbl');
+        (g.msgs || []).slice(0, 4).forEach(function (s) { html += _note(s); });
+        if (fr.spurt && fr.spurt.note) html += _note(fr.spurt.note);
+        if (fr.kBefore && fr.kBefore.kCL) html += _rbox('Before-closure k estimates (indicative)', [_rrow('k from CL (md)', _sig(fr.kBefore.kCL.k, 3) + ' (factor ' + _f(fr.kBefore.kCL.factor, 1) + ')')]);
+        if (fr.padFraction) html += _rbox('Pad fraction (indicative)', [_rrow('Range', _f(fr.padFraction.lo, 3) + '–' + _f(fr.padFraction.hi, 3))]);
+        if (fr.stressCal) html += _rbox('Stress-log calibration offset', [_rrow('Δσ_tect (psi)', _f(fr.stressCal.dSigmaTect, 0)), _rrow('Biot', _f(fr.stressCal.biot, 2))]);
+        html += _chart('dfitQL', 200);
+        h.innerHTML = html;
+    };
+    PANEL_RENDER.whatif = function (h) {
+        var run = _run(), W = run && run.whatIf;
+        var wp = _st()._dfitWhatIf;
+        var html = '<div class="fg"><div class="fg-item"><label for="prism_dfit_whatif_p">What-if closure (psia)</label><input type="text" inputmode="decimal" id="prism_dfit_whatif_p" value="' + _esc(wp && _isNum(wp.p) ? wp.p : '') + '"></div></div>' +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_whatif_go', 'Compute', 'whatIf') + (wp ? _btn('prism_dfit_whatif_clear', 'Clear', 'whatIfClear') : '') + '</div>';
+        if (!W || !W.length) { h.innerHTML = html + _note('Press ▶ Analyse for the what-if table.'); return; }
+        html += _table(['Candidate', 'Family', 'Method', 'σ_c (psia)', 'G_c', 'Δt_c (h)', 'η (½)', 'η (1)', 'p_n (psi)', 'χ', 'R_vis', 'CL (ft/√min)', 'xf (ft)'], W.map(function (w) {
+            var bm = (w.geometry && w.geometry.byModel) || {}, x = bm[(w.geometry && w.geometry.model) || 'PKN'] || {};
+            return [w.label || '—', w.family || '—', w.method || '—', _f(w.pClosure, 0), _f(w.Gc, 2), _f(w.dtc, 3), _f(w.eta && w.eta.a05, 3), _f(w.eta && w.eta.a1, 3), _f(w.pn, 0), _f(w.chi, 2), _f(w.Rvis, 3), _sig(x.CL, 3), _f(x.xf != null ? x.xf : x.R, 1)];
+        }), 'prism_dfit_whatif_tbl');
+        h.innerHTML = html;
+    };
+    PANEL_RENDER['report-opts'] = function (h) {
+        var d = dstate();
+        if (!_isObj(d.report)) d.report = { groups: {}, familyColumns: true, log: true, appendix: true, template: 'default', who: '' };
+        var R = d.report;
+        var html = '<div class="card"><div class="card-title">DFIT report options</div><div class="prism-dfit-checks">' +
+                   SECTIONS.map(function (s) { return '<label class="prism-dfit-check"><input type="checkbox" id="prism_dfit_rg_' + s[0] + '" data-dfit-rg="' + s[0] + '"' + (R.groups[s[0]] === false ? '' : ' checked') + '> ' + _esc(s[1]) + '</label>'; }).join('') +
+                   '<label class="prism-dfit-check"><input type="checkbox" id="prism_dfit_rg_famcols" data-dfit-ro="familyColumns"' + (R.familyColumns ? ' checked' : '') + '> Per-family columns (range mode)</label>' +
+                   '<label class="prism-dfit-check"><input type="checkbox" id="prism_dfit_rg_log" data-dfit-ro="log"' + (R.log ? ' checked' : '') + '> Include the pick log</label>' +
+                   '<label class="prism-dfit-check"><input type="checkbox" id="prism_dfit_rg_appx" data-dfit-ro="appendix"' + (R.appendix ? ' checked' : '') + '> Include the evidence appendix</label></div>' +
+                   '<div class="fg"><div class="fg-item"><label for="prism_dfit_who">Analyst name</label><input type="text" id="prism_dfit_who" value="' + _esc(R.who || '') + '" maxlength="60"></div></div>' +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_export_txt', 'DFIT data + picks (ASCII)', 'exportText') + _btn('prism_dfit_export_sheet', 'Frac-design sheet (CSV)', 'exportSheet') + '</div></div>';
+        h.innerHTML = html;
+        Array.prototype.forEach.call(h.querySelectorAll ? h.querySelectorAll('[data-dfit-rg],[data-dfit-ro]') : [], function (inp) {
+            inp.addEventListener('change', function () {
+                var g = inp.getAttribute('data-dfit-rg'), o = inp.getAttribute('data-dfit-ro');
+                if (g) R.groups[g] = !!inp.checked; else if (o) R[o] = !!inp.checked;
+                _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+            });
+        });
+        var who = h.querySelector ? h.querySelector('#prism_dfit_who') : null;
+        if (who) who.addEventListener('change', function () { R.who = _txt(who.value).slice(0, 60); });
+    };
+    var PANELS = [
+        [1, 'dfit-tests', 'Tests in this well', 5, 'tests'], [1, 'dfit-well', 'DFIT well, wellbore and fluid', 10, 'well'],
+        [1, 'dfit-channels', 'Channels and bottomhole conversion', 20, 'channels'], [1, 'dfit-triage', 'Test triage', 30, 'triage'],
+        [2, 'dfit-board', 'Closure consensus', 10, 'board'], [2, 'dfit-classify', 'Leak-off type', 20, 'classify'],
+        [2, 'dfit-frac', 'Efficiency, net pressure, CL and geometry', 30, 'frac'], [2, 'dfit-whatif', 'What-if closure table', 40, 'whatif'],
+        [7, 'dfit-report-opts', 'DFIT report options (sections, family columns, pick log, export template)', 10, 'report-opts']
+    ];
+    var PANEL_SPECS = {};
+    PANELS.forEach(function (p) {
+        var name = p[4];
+        PANEL_SPECS[p[1]] = { tab: p[0], id: p[1], title: p[2], order: p[3], modes: ['dfit'],
+            when: function () { return !!(G.PRiSM && G.PRiSM.mode === 'dfit'); },
+            render: function (body) { var hst = _panelHost(body, name); PANEL_RENDER[name](hst); _drawIn(hst); } };
+    });
+    function _rerenderPanels() {
+        Object.keys(PANEL_RENDER).forEach(function (name) {
+            var hst = _byId('prism_dfit_panel_' + name);
+            if (hst && hst.isConnected !== false) { try { PANEL_RENDER[name](hst); _drawIn(hst); } catch (e) { /* a panel must not break the others */ } }
+        });
+    }
+
+    // =========================================================================
+    // SECTION 12 — STEP VIEWS ② and ④ (§7.3, §7.5)
+    // =========================================================================
+    function _drawIn(host) {
+        if (!host || !host.querySelectorAll) return;
+        Array.prototype.forEach.call(host.querySelectorAll('canvas[data-dfit-plot]'), function (cv) { drawPlot(cv, cv.getAttribute('data-dfit-plot')); });
+    }
+    function redrawAll() {
+        if (!HAS_DOC || !document.querySelectorAll) return 0;
+        var n = 0;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) { if (cv.isConnected !== false) { drawPlot(cv, cv.getAttribute('data-dfit-plot')); n++; } });
+        var st = _st();
+        if (hooksReady() && _inDfit() && st.activePlot && PLOT_ENTRIES[st.activePlot] && typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+        return n;
+    }
+    function renderStep2(host) {
+        if (!host) return null;
+        host.innerHTML = '<div id="prism_dfit_step2" class="prism-dfit-step"></div>';
+        var h = host.firstChild || _byId('prism_dfit_step2');
+        _wire(h);
+        _renderStep2Into(h);
+        return h;
+    }
+    function _renderStep2Into(h) {
+        var run = _run(), T = test(), I = run && run.isip;
+        var html = _staleLine(T);
+        html += '<div class="card"><div class="card-title">ISIP</div>';
+        if (!I || I.ok === false) html += _note(_hasData(G.PRiSM_dataset) ? 'Press ▶ Analyse to estimate the ISIP.' : 'Load a DFIT first (step ①).');
+        else {
+            html += _table(['Method', 'Family', 'ISIP (psia)', 'se (psi)', 'Status', 'Bleed-off at end (psi)'], (I.candidates || []).map(function (c) {
+                return [c.method, c.family, _f(c.value, 1), _f(c.se, 1), !c.ok ? 'failed' : (c.upper ? 'upper estimate' : 'accepted'), _f(c.bleedAtEnd, 1)];
+            }), 'prism_dfit_isip_tbl');
+            html += _rbox('Consensus', [_rrow('ISIP (psia)', _f(I.value, 1) + ' ± ' + _f(I.spread, 1)), _rrow('Label', I.confidence)]);
+            html += _verdict(I.confidence === 'high' ? 'ok' : 'warn', 'ISIP ' + _f(I.value, 0) + ' psia (' + I.confidence + '): ' + ((I.why && I.why[0]) || ''));
+            (I.candidates || []).filter(function (c) { return c.upper; }).forEach(function (c) { html += _verdict('warn', 'The ' + c.method + ' ISIP ' + _f(c.value, 0) + ' psia is an upper estimate' + (_isNum(c.bleedAtEnd) ? ': the friction bleed-off had not died out at the end of the fit window (' + _f(c.bleedAtEnd, 0) + ' psi predicted).' : '.')); });
+            var ip = T.picks.isip;
+            if (ip && ip.source === 'user') html += _rrow('User ISIP', _f(ip.value, 1) + ' psia — ' + (ip.reason || ''));
+        }
+        html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_isip_override', 'Use another ISIP', 'override').replace('data-dfit-act="override"', 'data-dfit-act="override" data-dfit-arg="isip"') +
+                _btn('prism_dfit_note_isip', 'ISIP method notes', 'note').replace('data-dfit-act="note"', 'data-dfit-act="note" data-dfit-arg="isip-wh"') + '</div>' + _chart('dfitIsip', 240) + '</div>';
+        html += '<div class="card"><div class="card-title">Water hammer</div>' + _hammerHTML(run, false) + '</div>';
+        var sd = run ? _stepResult('down', run) : null;
+        html += '<div class="card"><div class="card-title">Step-down</div>' + (sd ? _stepDownHTML(sd) + _chart('dfitStepDown', 220) : _note('No step-down in this record.')) + '</div>';
+        var sr = run ? _stepResult('up', run) : null;
+        html += '<div class="card"><div class="card-title">Step-rate</div>' + (sr ? _stepRateHTML(sr) + _chart('dfitStepRate', 220) : _note('No step-rate sequence in this record.')) + '</div>';
+        var hasCyc = run && run.events && _arr(run.events.cycles) && run.events.cycles.some(function (c) { return c.rampWin; });
+        html += '<div class="card"><div class="card-title">Cycles and reopening</div>' + (hasCyc ? _chart('dfitCycles', 220) : _note('No re-pressurisation ramp (later cycle, pump-in or LOT) in this record.')) + '</div>';
+        html += '<div class="card"><div class="card-title">Injection net pressure (indicative)</div>' + _chart('dfitInjNet', 200) + '</div>';
+        (G.PRiSM_dfit_hooks && _arr(G.PRiSM_dfit_hooks.step2Cards) ? G.PRiSM_dfit_hooks.step2Cards : []).forEach(function (fn) {
+            if (typeof fn !== 'function') return;
+            try { var x = fn(run, T); if (typeof x === 'string') html += x; } catch (e) { /* 3.4b card failed */ }
+        });
+        h.innerHTML = html;
+        _drawIn(h);
+    }
+    function _stepDownHTML(sd) {
+        var r = sd.res;
+        if (!r) return _note('Step-down found (' + sd.steps.length + ' steps); the wellbore engine is needed for the friction split.');
+        var rows = [_rrow('p_frac (psia)', _f(r.pFrac, 1)), _rrow('Perforation coefficient a', _sig(r.a, 3)), _rrow('Near-wellbore coefficient b', _sig(r.b, 3)), _rrow('β', _f(r.beta, 2)), _rrow('Label', r.label || '—')];
+        if (r.nOpenBand) rows.push(_rrow('Open perforations P10/P50/P90', _f(r.nOpenBand.p10, 1) + ' / ' + _f(r.nOpenBand.p50, 1) + ' / ' + _f(r.nOpenBand.p90, 1)));
+        return _rbox('Step-down', rows) + (r.refused ? _verdict('warn', r.refused) : '');
+    }
+    function _stepRateHTML(sr) {
+        var r = sr.res;
+        if (!r) return _note('Step-rate steps found (' + sr.steps.length + '); the wellbore engine is needed for the hinge.');
+        return _rbox('Step-rate', [_rrow('Parting rate q* (bbl/min)', _f(r.qStar, 2)), _rrow('Fracture extension pressure (psia)', _f(r.fep, 0)), _rrow('F-test p', _sig(r.fTest && r.fTest.p, 2))]) +
+               _table(['q (bbl/min)', 'p_end (psia)', 'dp/dt', 'Stabilised'], (r.steps || []).map(function (s) { return [_f(s.q, 2), _f(s.pEnd, 0), _sig(s.dpdt, 2), s.stabilised ? 'yes' : 'no']; })) +
+               (r.breakFound ? '' : _verdict('warn', 'No break: the F-test does not support a parting point.'));
+    }
+    var _s4Tab = 'aca';
+    var S4_TABS = [['aca', 'After-closure'], ['lk', 'Leak-off model'], ['unc', 'Uncertainty'], ['tell', 'What this test can tell']];
+    function renderStep4(host, tab) {
+        if (!host) return null;
+        if (tab) _s4Tab = tab;
+        host.innerHTML = '<div id="prism_dfit_step4" class="prism-dfit-step"></div>';
+        var h = host.firstChild || _byId('prism_dfit_step4');
+        _wire(h);
+        _renderStep4Into(h);
+        return h;
+    }
+    function _renderStep4Into(h) {
+        var T = test();
+        var html = '<div id="prism_dfit_s4_tabs" class="prism-dfit-seg" role="tablist">' + S4_TABS.map(function (t) {
+            return '<button type="button" role="tab" class="btn ' + (t[0] === _s4Tab ? 'btn-primary' : 'btn-secondary') + '" id="prism_dfit_s4_' + t[0] + '" aria-selected="' + (t[0] === _s4Tab) + '" data-dfit-act="s4" data-dfit-arg="' + t[0] + '">' + _esc(t[1]) + '</button>';
+        }).join('') + '</div>' + _staleLine(T) + '<div id="prism_dfit_msg" class="prism-dfit-warn" style="display:none"></div>';
+        if (_s4Tab === 'lk') html += _lkHTML();
+        else if (_s4Tab === 'unc') html += _uncHTML();
+        else if (_s4Tab === 'tell') html += _tellHTML();
+        else html += _acaHTML();
+        h.innerHTML = html;
+        _drawIn(h);
+    }
+    function _acaHTML() {
+        var run = _run(), A = run && run.aca;
+        var html = '<div class="card"><div class="card-title">After-closure options</div><div class="fg">' + _select('options.aca.origin', 'Time origin') + _select('options.aca.tideRemove', 'Tide removal') + '</div>' +
+                   _fields(FIELDS.aca) + '<div class="prism-dfit-checks">' + _check('options.aca.carterExactFR', 'prism_dfit_aca_frc', 'Carter-exact F_R') + _check('options.ppd', 'prism_dfit_ppd4', 'Show PPD') + '</div></div>';
+        if (!A || A.ok === false) return html + _note(_hasData(G.PRiSM_dataset) ? 'After-closure analysis needs data after closure — press ▶ Analyse.' : 'Load a DFIT first (step ①).');
+        var b = A.brackets || {}, br = function (x) { return x ? _f(x[0], 0) + ' – ' + _f(x[1], 0) : '—'; };
+        html += _rbox('After-closure summary', [_rrow('Regime', A.regimeSummary), _rrow('p_i (psia)', _f(A.pi && A.pi.value, 0) + ' (' + ((A.pi && A.pi.label) || '—') + ')'),
+                    _rrow('kh/μ (md·ft/cp)', A.kh ? _sig(A.kh.khmu, 3) : '—'), _rrow('k (md)', A.kh ? _sig(A.kh.k, 3) : (A.nolte && A.nolte.lin ? _sig(A.nolte.lin.k, 3) + ' (F_L line)' : '—')),
+                    _rrow('k bounds (md)', A.bounds ? _sig(A.bounds.kLo, 3) + ' – ' + _sig(A.bounds.kHi, 3) : '—')]);
+        html += _table(['Bracket', 'Lower (psia)', 'Upper (psia)'], [['Cartesian', br(b.cart).split(' – ')[0], (br(b.cart).split(' – ')[1] || '—')], ['Impulse', br(b.imp).split(' – ')[0], (br(b.imp).split(' – ')[1] || '—')],
+                    ['Derivative', br(b.deriv).split(' – ')[0], (br(b.deriv).split(' – ')[1] || '—')], ['Combined', br(b.combined).split(' – ')[0], (br(b.combined).split(' – ')[1] || '—')]], 'prism_dfit_brackets_tbl');
+        if (A.pi && A.pi.label === 'high') html += _verdict('ok', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (high).');
+        else if (A.pi) html += _verdict('warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + (A.pi.label || 'low') + ').');
+        if (!A.kh && A.bounds) html += _verdict('warn', 'Radial flow not reached: k between ' + _sig(A.bounds.kLo, 3) + ' and ' + _sig(A.bounds.kHi, 3) + ' md.');
+        (A.warnings || []).slice(0, 4).forEach(function (w) { if (w && w.text) html += _verdict(w.level === 'bad' ? 'bad' : 'warn', w.text); });
+        var L = run.leak;
+        if (L && L.ok !== false) html += _rbox('Leak check', [_rrow('Verdict', L.verdict), _rrow('Leak rate (bbl/d)', _sig(L.qk, 3)), _rrow('Tolerance (bbl/d)', _sig(L.qkMax, 3))]);
+        html += _chart('dfitAcaLogLog', 240) + _chart('dfitFlowDim', 180) + _chart('dfitFL', 220) + _chart('dfitImpLin', 200) + _chart('dfitPiTraj', 200);
+        html += _matchHTML(run);
+        var c = _closureOf(run);
+        html += '<div class="card"><div class="card-title">Hand-offs</div><div class="prism-dfit-bar">' +
+                (c.mode === 'range' ? _btn('prism_dfit_handoff_F1', 'Open in PTA (F1 chain)', 'handoffF').replace('data-dfit-act="handoffF"', 'data-dfit-act="handoffF" data-dfit-arg="F1"') +
+                                      _btn('prism_dfit_handoff_F2', 'Open in PTA (F2 chain)', 'handoffF').replace('data-dfit-act="handoffF"', 'data-dfit-act="handoffF" data-dfit-arg="F2"')
+                                    : _btn('prism_dfit_handoff_pta', 'Open in PTA (transient)', 'handoff').replace('data-dfit-act="handoff"', 'data-dfit-act="handoff" data-dfit-arg="pta"')) +
+                _btn('prism_dfit_handoff_frac', 'Frac-design sheet (CSV)', 'exportSheet') + _btn('prism_dfit_copy_grad', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_copy_isip_grad', 'Copy ISIP gradient', 'copyIsipGrad') + '</div></div>';
+        return html;
+    }
+    // ── "Model match" card (§6.8): the PRiSM model library on the constant-rate-equivalent derivative, p_i bounded by the bracket.
+    //    The match itself is 57's PRiSM_dfit_acaMatch(Job) (resolved at call time); the result is kept in memory (st._dfitAcaMatch,
+    //    keyed by the run's dataset and inputs hashes) like the what-if, and run.aca.match is shown when the pipeline carries one.
+    var MATCH_MODELS = [['infiniteFrac', 'Fracture, uniform flux'], ['finiteFrac', 'Fracture, finite conductivity'], ['homogeneous', 'Radial homogeneous'], ['radialComposite', 'Radial composite']];
+    var _mmJob = null;
+    function _matchSel() {
+        var st = _st();
+        if (!_arr(st._dfitMatchModels)) st._dfitMatchModels = MATCH_MODELS.map(function (m) { return m[0]; });
+        return st._dfitMatchModels;
+    }
+    function _matchOf(run) {
+        var m = _st()._dfitAcaMatch;
+        if (m && run && m.dsHash === run.dsHash && m.inputsHash === run.inputsHash && m.res) return m.res;
+        var A = _aca(run);
+        return (A && _isObj(A.match)) ? A.match : null;
+    }
+    function _matchHTML(run) {
+        var sel = _matchSel(), m = _matchOf(run);
+        var html = '<div class="card"><div class="card-title">Model match</div>' +
+                   _note('Matches PRiSM models to the after-closure constant-rate-equivalent derivative from the centroid origin; p_i stays inside the bracket. The result seeds the PTA hand-off.') +
+                   '<div class="prism-dfit-checks">' + MATCH_MODELS.map(function (o) {
+                       var id = 'prism_dfit_mm_' + o[0];
+                       return '<label class="prism-dfit-check"><input type="checkbox" id="' + id + '" data-dfit-mm="' + o[0] + '"' + (sel.indexOf(o[0]) !== -1 ? ' checked' : '') + '> ' + _esc(o[1]) + '</label>';
+                   }).join('') + '</div><div class="prism-dfit-bar">' + _btn('prism_dfit_aca_match', 'Match', 'acaMatch', 'btn-primary') + '</div>' + _chart('dfitCrDeriv', 200);
+        if (m && m.ok !== false && m.best) {
+            var b = m.best, ci = b.ci95 || {};
+            var nm = ''; MATCH_MODELS.forEach(function (o) { if (o[0] === b.model) nm = o[1]; });
+            html += _rbox('Best match', [_rrow('Model', nm || b.model || '—'), _rrow('k (md)', _sig(b.k, 3) + (ci.k ? ' (' + _sig(ci.k[0], 3) + ' – ' + _sig(ci.k[1], 3) + ')' : '')),
+                       _rrow('L (ft)', _f(b.L, 1) + (ci.L ? ' (' + _f(ci.L[0], 1) + ' – ' + _f(ci.L[1], 1) + ')' : '')), _rrow('p_i (psia)', _f(b.pi, 0)), _rrow('BIC', _f(b.bic, 1))]);
+            if (_arr(m.candidates) && m.candidates.length) html += _table(['Model', 'k (md)', 'L (ft)', 'p_i (psia)', 'BIC'], m.candidates.map(function (c) {
+                return [c.model || '—', _sig(c.k, 3), _f(c.L, 1), _f(c.pi, 0), _f(c.bic, 1)];
+            }), 'prism_dfit_mm_tbl');
+        } else if (m && m.ok === false) html += _verdict('warn', 'The model match failed: ' + _txt((m.errors && m.errors[0]) || m.why || 'no result'));
+        return html + '</div>';
+    }
+    function _acaMatch() {
+        var run = _run(), A = _aca(run);
+        if (!_need(run && A && A.ok !== false, 'The model match needs after-closure results — press ▶ Analyse.')) return null;
+        var sel = _matchSel().slice();
+        if (!_need(sel.length > 0, 'Tick at least one model to match.')) return null;
+        var mk = _fn('PRiSM_dfit_acaMatchJob'), f1 = _fn('PRiSM_dfit_acaMatch');
+        if (!_need(mk || f1, 'The after-closure model match is not available in this build yet.')) return null;
+        var T = test();
+        var ctx = { run: run, aca: A, prep: run.prep, events: run.events, inputs: T.inputs, well: _well(), ds: G.PRiSM_dataset };
+        var opts = { models: sel, piBracket: (A.pi && _isNum(A.pi.lo) && _isNum(A.pi.hi)) ? [A.pi.lo, A.pi.hi] : null, seed: 1 };
+        var me = _mmJob = { cancelled: false };
+        var finish = function (res) {
+            if (_mmJob === me) _mmJob = null;
+            if (!res) { _setStatus('⚠ The model match did not return a result.', 'warn'); return null; }
+            _st()._dfitAcaMatch = { dsHash: run.dsHash, inputsHash: run.inputsHash, res: res };
+            if (res.ok !== false && res.best) logEntry(T, 'aca.match', null, res.best.model || null, 'After-closure model match');
+            _emit('prism:dfit-updated', { what: 'aca', source: 'user' });
+            _refreshUI();
+            return res;
+        };
+        var job = null;
+        if (mk) { try { job = mk(ctx, opts); } catch (e) { job = null; } }
+        var AI = G.PRiSM_autoInterp;
+        if (job && typeof job.step === 'function') {
+            if (AI && typeof AI.drive === 'function') return AI.drive(job, { shouldCancel: function () { return me.cancelled; } }).then(finish, function () { if (_mmJob === me) _mmJob = null; return null; });
+            try { return finish(_runJobSync(job, function () { return me.cancelled; })); } catch (e) { _mmJob = null; return null; }
+        }
+        var r = null;
+        try { r = f1(ctx, opts); } catch (e) { r = { ok: false, errors: [_txt(e && e.message)] }; }
+        return finish(r);
+    }
+    var _nAnalyse = 0;   // ▶ Analyse runs in this session (status line)
+    var _lkJob = null;
+    function _sandboxCfg() {
+        var f = _fn('PRiSM_dfit_lkDefaults'), cfg = null;
+        if (f) { try { cfg = f(); } catch (e) { cfg = null; } }
+        if (!_okRes(cfg) || cfg.code) return null;
+        var sb = dstate().sandbox || {};
+        var V = _num(sb.V) || 25, q = _num(sb.q) || 5, tEnd = _num(sb.tEnd) || 300;
+        cfg.schedule = [{ t: 0, q: q }, { t: V / q / 60, q: 0 }];
+        cfg.tEnd = tEnd;
+        return cfg;
+    }
+    function _lkHTML() {
+        var d = dstate();
+        if (!_isObj(d.sandbox)) d.sandbox = { V: 25, q: 5, tEnd: 300 };
+        var sb = d.sandbox;
+        var inp = function (k, label, unit) { return '<div class="fg-item"><label for="prism_dfit_sb_' + k + '">' + _esc(label) + ' (' + unit + ')</label><input type="text" inputmode="decimal" id="prism_dfit_sb_' + k + '" data-dfit-sb="' + k + '" value="' + _esc(_isNum(sb[k]) ? sb[k] : '') + '"></div>'; };
+        var html = '<div class="card"><div class="card-title">Leak-off sandbox</div>' + _note('What leak-off rate does a fracture of this size give? The mini-model runs without data; with data, the history match fits it to the falloff.') +
+                   '<div class="fg">' + inp('V', 'Injected volume', 'bbl') + inp('q', 'Rate', 'bbl/min') + inp('tEnd', 'Shut-in to', 'h') + '</div>' +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_lk_sim', 'Simulate', 'lkSim', 'btn-primary') + '</div>';
+        var cfg = _sandboxCfg(), qf = _fn('PRiSM_dfit_lkQuick'), qr = null;
+        if (cfg && qf) { try { qr = qf(cfg); } catch (e) { qr = null; } }
+        if (qr && _arr(qr.rows)) html += _table(['After', 'Δt (min)', 'Leak-off rate (bbl/min)'], qr.rows.map(function (r) { return [r.label, _f(r.dtMin, 1), _sig(r.qL, 3)]; }), 'prism_dfit_lk_quick') +
+                                         _rbox('Quick answers', [_rrow('Leaked volume (bbl)', _f(qr.VL, 2)), _rrow('Efficiency η', _f(qr.eta, 3)), _rrow('Closure time (h)', _f(qr.tc, 2)), _rrow('xf (ft)', _f(qr.xf, 1))]);
+        else if (!cfg) html += _verdict('warn', 'The leak-off model is not available in this build yet.');
+        html += '</div>';
+        html += '<div class="card"><div class="card-title">History match</div><div class="fg"><div class="fg-item"><label for="prism_dfit_lk_preset">Preset</label><select id="prism_dfit_lk_preset">' +
+                [['falloff', 'Falloff only'], ['full', 'Full record'], ['geometry', 'Geometry'], ['pdl', 'Pressure-dependent leak-off'], ['spurt', 'Spurt']].map(function (o) { return '<option value="' + o[0] + '">' + _esc(o[1]) + '</option>'; }).join('') +
+                '</select></div></div><div class="prism-dfit-bar">' + _btn('prism_dfit_lk_fit', 'Fit', 'lkFit', 'btn-primary') + _btn('prism_dfit_lk_struct', 'Structural spread', 'lkStruct') + _btn('prism_dfit_lk_cancel', 'Cancel', 'lkCancel') + '</div>';
+        var T = test(), fit = T.lk && T.lk.fit;
+        if (fit && fit.params) html += _table(['Parameter', 'Value', '95 % CI', 'Inflated CI'], Object.keys(fit.params).map(function (k) {
+            var ci = fit.ci95 && fit.ci95[k], cj = fit.ci95Inflated && fit.ci95Inflated[k];
+            return [k, _sig(fit.params[k], 4), ci ? _sig(ci[0], 4) + ' – ' + _sig(ci[1], 4) : '—', cj ? _sig(cj[0], 4) + ' – ' + _sig(cj[1], 4) : '—'];
+        }), 'prism_dfit_lk_fit_tbl');
+        var SS = fit && fit.groups && fit.groups.structural;
+        if (_isObj(SS)) {
+            var rr = function (k, lab, dp) { var v = SS[k]; return [lab, _arr(v) && _isNum(v[0]) && _isNum(v[1]) ? (dp == null ? _sig(v[0], 3) + ' – ' + _sig(v[1], 3) : _f(v[0], dp) + ' – ' + _f(v[1], dp)) : '—']; };
+            html += _table(['Structural spread (aperture laws, PDL on/off; χ² ≤ 1.5 × best)', 'Range'], [rr('sigmaC', 'σ_c (psia)', 0), rr('pr', 'p_r (psia)', 0), rr('k', 'k (md)'), rr('CLeq', 'CL equivalent (ft/√min)')], 'prism_dfit_lk_struct_tbl');
+        }
+        if (fit && fit.groups && fit.groups.text) html += _note(_txt(fit.groups.text));
+        html += '</div>' + _chart('dfitLkP', 220) + _chart('dfitLkQ', 200) + _schemHTML() + _chart('dfitLkGeom', 200) + _chart('dfitLkRes', 180);
+        return html;
+    }
+    // ── fracture schematic of the sandbox (§6.1): inline SVG (PKN ellipse section, KGD rectangle, radial disc) scaled by L(t) and w̄(t)
+    // at the hovered time of dfitLkP / dfitLkQ / dfitLkGeom (prism:plot-hover); shut-in by default. Only computed numbers go in.
+    function _schemIndex(r, t) {
+        if (_isNum(t)) return _nearestIdx(r.t, t);
+        var ts = r.events && _isNum(r.events.ts) ? r.events.ts : null;
+        return ts !== null ? _nearestIdx(r.t, ts) : r.t.length - 1;
+    }
+    function schematicSVG(t) {
+        var r = _lk();
+        if (!r || !_arr(r.L) || !r.L.length) return '';
+        var i = _schemIndex(r, t);
+        if (i < 0) return '';
+        var geo = (_st()._dfitLkGeo) || ((_sandboxCfg() || {}).geometry) || 'PKN';
+        var Lmax = 0, Wmax = 0;
+        r.L.forEach(function (v) { if (_isNum(v) && v > Lmax) Lmax = v; });
+        (r.W || []).forEach(function (v) { if (_isNum(v) && v > Wmax) Wmax = v; });
+        var L = _isNum(r.L[i]) ? Math.max(0, r.L[i]) : 0, W = _arr(r.W) && _isNum(r.W[i]) ? Math.max(0, r.W[i]) : 0;
+        var fL = Lmax > 0 ? L / Lmax : 0, fW = Wmax > 0 ? W / Wmax : 0;
+        var cx = 160, cy = 62, sh = '', geoTxt;
+        var col = 'rgba(88,166,255,' + _f(0.25 + 0.55 * fW, 2) + ')';
+        if (geo === 'radial') {
+            var R = 4 + 50 * fL;
+            sh = '<circle cx="' + cx + '" cy="' + cy + '" r="' + _f(R, 1) + '" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'radial disc';
+        } else if (geo === 'KGD') {
+            var hw = 4 + 140 * fL;
+            sh = '<rect x="' + _f(cx - hw, 1) + '" y="' + (cy - 32) + '" width="' + _f(2 * hw, 1) + '" height="64" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'KGD rectangle';
+        } else {
+            var rx = 4 + 140 * fL;
+            sh = '<ellipse cx="' + cx + '" cy="' + cy + '" rx="' + _f(rx, 1) + '" ry="32" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'PKN ellipse section';
+        }
+        // the width bar (w̄ relative to its largest value) and the well
+        var wb = '<rect x="296" y="' + _f(94 - 60 * fW, 1) + '" width="10" height="' + _f(60 * fW, 1) + '" fill="#f0883e"/><rect x="296" y="34" width="10" height="60" fill="none" stroke="#8b949e"/>';
+        var well = '<line x1="' + cx + '" y1="8" x2="' + cx + '" y2="116" stroke="#c9d1d9" stroke-width="2"/>';
+        var lab = 't ' + _f(r.t[i], 2) + ' h · ' + (geo === 'radial' ? 'R ' : 'L ') + _f(L, 1) + ' ft · w̄ ' + _f(W, 3) + ' in';
+        var aria = 'Fracture schematic (' + geoTxt + ') at ' + lab;
+        return '<svg id="prism_dfit_lk_schem_svg" class="prism-dfit-schem" viewBox="0 0 320 128" width="100%" height="128" role="img" aria-label="' + _esc(aria) + '" data-t="' + _f(r.t[i], 4) + '">' +
+               '<title>' + _esc(aria) + '</title>' + sh + well + wb +
+               '<text x="6" y="124" fill="#c9d1d9" font-size="11">' + _esc(lab) + '</text><text x="290" y="28" fill="#8b949e" font-size="9">w̄</text></svg>';
+    }
+    function _schemHTML() {
+        var svg = schematicSVG(null);
+        return '<div class="chart-wrap prism-dfit-chart" id="prism_dfit_lk_schem">' + (svg || _note('Run the leak-off model to see the fracture schematic.')) + '</div>';
+    }
+    function _schemUpdate(t) {
+        var host = _byId('prism_dfit_lk_schem');
+        if (!host) return false;
+        var svg = schematicSVG(t);
+        if (svg) host.innerHTML = svg;
+        return !!svg;
+    }
+    function _uncHTML() {
+        var run = _run(), U = run && run.unc;
+        if (!U || U.ok === false) return _note(run ? 'The uncertainty runs with the full ▶ Analyse (not with fast updates): press ▶ Analyse.' : 'Press ▶ Analyse first.');
+        var rows = Object.keys(U.outputs || {}).map(function (k) {
+            var o = U.outputs[k];
+            if (o.bimodal && o.byFamily) return [k, 'F1 ' + _f(o.byFamily.F1 && o.byFamily.F1.p50, 3) + ' / F2 ' + _f(o.byFamily.F2 && o.byFamily.F2.p50, 3), '—', '—', o.unit || ''];
+            return [k, _sig(o.p10, 4), _sig(o.p50, 4), _sig(o.p90, 4), o.unit || ''];
+        });
+        return _rbox('Uncertainty', [_rrow('Draws', _f(U.n, 0)), _rrow('Seed', _f(U.seed, 0)), _rrow('Mode', U.mode)]) + _table(['Output', 'P10', 'P50', 'P90', 'Unit'], rows, 'prism_dfit_unc_tbl') +
+               _table(['Input', 'Distribution', 'Provenance'], (U.inputs || []).map(function (i) { return [i.name, i.dist, i.provenance || '—']; }));
+    }
+    function _tellHTML() {
+        var T = test(), fit = T.lk && T.lk.fit, f = _fn('PRiSM_dfit_identify'), id = null;
+        if (fit && f) { try { id = f(fit, {}); } catch (e) { id = null; } }
+        if (!id || !_arr(id.rows)) return _note('Run the history match (Leak-off model) to see which parameters this test determines.');
+        return _table(['Parameter', 'Status', '±', 'Sentence'], id.rows.map(function (r) { return [r.param, r.status, _sig(r.pm, 3), r.text]; }), 'prism_dfit_tell_tbl') +
+               (id.sloppyText ? _note(id.sloppyText) : '') +
+               (_arr(id.voi) ? _table(['Information', 'Reduction', 'Sentence'], id.voi.map(function (v) { return [v.source, _f(v.reduction, 2), v.text]; })) : '') +
+               (_arr(id.extend) ? _table(['Shut-in (d)', 'σ(p_i) (psi)', 'k range (md)', 'P(radial)'], id.extend.map(function (x) { return [_f(x.tEndD, 1), _f(x.sdPi, 0), x.kRange ? _sig(x.kRange[0], 2) + ' – ' + _sig(x.kRange[1], 2) : '—', _f(x.pRadial, 2)]; })) : '');
+    }
+    function _readSandbox() {
+        var d = dstate(); if (!_isObj(d.sandbox)) d.sandbox = { V: 25, q: 5, tEnd: 300 };
+        ['V', 'q', 'tEnd'].forEach(function (k) { var el = _byId('prism_dfit_sb_' + k); if (el) { var r = clampField('sandbox.' + k, el.value); d.sandbox[k] = r.value; el.value = _isNum(r.value) ? String(r.value) : ''; } });
+        return d.sandbox;
+    }
+    function _lkSimulate() {
+        _readSandbox();
+        var cfg = _sandboxCfg(), f = _fn('PRiSM_dfit_lkSimulate');
+        if (!_need(cfg && f, 'The leak-off model is not available in this build yet.')) return null;
+        var r = null;
+        try { r = f(cfg, { grid: 'display' }); } catch (e) { r = null; }
+        if (!_need(r && r.ok !== false, 'The leak-off model run failed: ' + _txt((r && (r.why || (r.errors && r.errors[0]))) || 'no result'))) return null;
+        _st()._dfitLk = r; _st()._dfitLkGeo = cfg.geometry || 'PKN';
+        _emit('prism:dfit-model-updated', { kind: 'simulate', ok: true });
+        _refreshUI();
+        return r;
+    }
+    function _lkFit(o) {
+        o = o || {};
+        var run = _run(), ds = G.PRiSM_dataset, mk = G.PRiSM_dfit_lkFitJob, cfg = _sandboxCfg();
+        if (!_need(_hasData(ds) && run, 'Load a DFIT and press ▶ Analyse before the history match.')) return null;
+        if (!_need(typeof mk === 'function' && !mk._dfitStub && cfg, 'The history match is not available in this build yet.')) return null;
+        var sel = _byId('prism_dfit_lk_preset'), preset = sel ? sel.value : 'falloff';
+        var t0 = (run.events && run.events.tStart) || 0;
+        var job = null;
+        try { job = mk({ t: ds.t.map(function (t) { return t - t0; }), p: ds.p }, cfg, preset, o.structural ? { seed: 1, structural: true } : { seed: 1 }); } catch (e) { job = null; }
+        if (!_need(job && typeof job.step === 'function', 'The history match could not start.')) return null;
+        var me = _lkJob = { cancelled: false };
+        var T = test();
+        var finish = function (fit) {
+            if (_lkJob === me) _lkJob = null;
+            if (!fit || fit.ok === false) { _setStatus('⚠ The history match failed.', 'warn'); return fit; }
+            _batch('begin');
+            var grp = _clone(fit.groups) || {};
+            if (o.structural && _isObj(fit.structural)) grp.structural = _clone(fit.structural);
+            T.lk = { cfg: cfg, preset: preset, fit: { params: fit.params, ci95: fit.ci95, ci95Inflated: fit.ci95Inflated, groups: grp, chi2: fit.chi2, at: _nowISO() }, gridN: null };
+            logEntry(T, 'lk.fit', null, preset, o.structural ? 'History match with the structural spread' : 'History match');
+            _emit('prism:dfit-model-updated', { kind: 'fit', ok: true });
+            _emit('prism:dfit-updated', { what: 'all', source: 'user' });
+            _batch('end');
+            _refreshUI();
+            return fit;
+        };
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.drive === 'function') return AI.drive(job, { shouldCancel: function () { return me.cancelled; } }).then(finish, function () { if (_lkJob === me) _lkJob = null; return null; });
+        try { return finish(_runJobSync(job, function () { return me.cancelled; })); } catch (e) { _lkJob = null; return null; }
+    }
+
+    // =========================================================================
+    // SECTION 13 — OVERRIDE DIALOG, METHOD NOTES, EXPORTS, HAND-OFF
+    // =========================================================================
+    var _ovItem = 'closure';
+    function openOverride(item) {
+        if (!HAS_DOC) return null;
+        _ovItem = (item === 'isip') ? 'isip' : 'closure';
+        _closeOverride();
+        var run = _run(), cur = _ovItem === 'isip' ? (run && run.isip && run.isip.value) : _closureP(results());
+        var dlg = document.createElement('dialog');
+        dlg.id = 'prism_dfit_override';
+        dlg.className = 'rp-skip';
+        dlg.setAttribute('data-rp-nosnap', '');
+        dlg.setAttribute('role', 'dialog');
+        dlg.setAttribute('aria-modal', 'true');
+        dlg.setAttribute('aria-labelledby', 'prism_dfit_override_title');
+        dlg.innerHTML = '<div class="prism-dfit-dlg"><h3 id="prism_dfit_override_title">' + (_ovItem === 'isip' ? 'Use another ISIP' : 'Use another closure') + '</h3>' +
+            '<div class="fg-item"><label for="prism_dfit_ov_value">Value (psia)</label><input type="text" inputmode="decimal" id="prism_dfit_ov_value" value="' + _esc(_isNum(cur) ? Math.round(cur) : '') + '"></div>' +
+            // family choices: a user pick may vote only in F1, F2 or F4 (§3.0 vote rule); F0 (fissure closure) and F3 (model-based
+            // cross-checks) never vote, so an override "as F0 / F3" would have no effect on the consensus and is not offered
+            (_ovItem === 'closure' ? '<div class="fg-item"><label for="prism_dfit_ov_family">Family</label><select id="prism_dfit_ov_family"><option value="user">User</option><option value="F1">F1</option><option value="F2">F2</option><option value="F4">F4</option></select></div>' : '') +
+            '<div class="fg-item"><label for="prism_dfit_ov_reason">Reason (required)</label><textarea id="prism_dfit_ov_reason" rows="2" maxlength="299"></textarea></div>' +
+            // analyst (§7 item 7): read-only, from the report options; logEntry stores the same value as the entry's who
+            '<div class="fg-item"><label for="prism_dfit_ov_who">Analyst</label><input type="text" id="prism_dfit_ov_who" readonly aria-readonly="true" value="' + _esc(_who()) + '" placeholder="not set (report options)"></div>' +
+            '<div id="prism_dfit_ov_msg" class="prism-dfit-warn" style="display:none"></div>' +
+            '<div class="prism-dfit-bar">' + _btn('prism_dfit_ov_save', 'Save', 'overrideSave', 'btn-primary') + _btn('prism_dfit_ov_close', 'Cancel', 'overrideClose') + '</div></div>';
+        var host = _byId('pgBody') || document.body;
+        host.appendChild(dlg);
+        dlg.addEventListener('click', _onAction);
+        dlg.addEventListener('keydown', function (e) { if (e.key === 'Escape' || e.key === 'Esc') { if (e.preventDefault) e.preventDefault(); _closeOverride(); } });
+        dlg.addEventListener('cancel', function (e) { if (e.preventDefault) e.preventDefault(); _closeOverride(); });
+        var modal = false;
+        if (typeof dlg.showModal === 'function') { try { dlg.showModal(); modal = true; } catch (e) { modal = false; } }
+        if (!modal) dlg.setAttribute('open', '');
+        return dlg;
+    }
+    function _closeOverride() { var d = _byId('prism_dfit_override'); if (d) { try { if (d.open && d.close) d.close(); } catch (e) { /* ignore */ } if (d.parentNode) d.parentNode.removeChild(d); } }
+    function _saveOverride() {
+        var v = _byId('prism_dfit_ov_value'), r = _byId('prism_dfit_ov_reason'), fsel = _byId('prism_dfit_ov_family'), msg = _byId('prism_dfit_ov_msg');
+        var p = v ? _parse(v.value) : NaN, reason = r ? _txt(r.value).trim() : '';
+        var bad = !(_isNum(p) && p > 0 && p < 1e5) ? 'Enter a pressure in psia.' : (!reason ? 'A reason is required.' : '');
+        if (bad) { if (msg) { msg.style.display = ''; msg.textContent = '⚠ ' + bad; } return false; }
+        var res;
+        if (_ovItem === 'isip') res = setPick('isip', { value: p, method: 'user' }, { source: 'user', reason: reason });
+        else {
+            var fam = fsel ? fsel.value : 'user';
+            var d = _run() && _run().derivs;
+            res = setPick('closure', { mode: 'user', family: fam === 'user' ? null : fam, method: 'user', p: p, dt: d ? _interp(d.p, d.dt, p) : null }, { source: 'user', reason: reason });
+        }
+        _closeOverride();
+        return res && res.ok;
+    }
+    function notes(key, opener) {
+        var I = G.WTS_dfitInfo;
+        if (I && typeof I.open === 'function' && !I.open._dfitStub) { var r = I.open(key || 'index', opener || null); if (r) return r; }
+        _toast('Method notes are not available in this build.');
+        return null;
+    }
+    function _download(name, text, type) {
+        if (!HAS_DOC) return false;
+        try {
+            var blob = new Blob([text], { type: type || 'text/plain' });
+            var url = (G.URL && G.URL.createObjectURL) ? G.URL.createObjectURL(blob) : null;
+            if (!url) return false;
+            var a = document.createElement('a');
+            a.href = url; a.download = name; a.style.display = 'none';
+            (document.body || _byId('pgBody')).appendChild(a);
+            a.click();
+            if (a.parentNode) a.parentNode.removeChild(a);
+            return true;
+        } catch (e) { return false; }
+    }
+    function _exportText() {
+        var run = _run(), f = _fn('PRiSM_dfit_exportText');
+        if (!_need(run, 'Press ▶ Analyse before exporting the DFIT data and picks.')) return null;
+        if (!_need(f, 'The DFIT export is not available in this build yet.')) return null;
+        var T = test(), wl = _clone(_well()) || {};
+        // the active well's name (WTS_wells.active() is its id; list() carries the names)
+        var wn = G.WTS_wells && typeof G.WTS_wells.list === 'function' ? (function () {
+            try { var L = G.WTS_wells.list() || []; for (var i = 0; i < L.length; i++) if (L[i] && L[i].active) return L[i].name || L[i].id; } catch (e) { /* no wells layer */ }
+            return null;
+        })() : null;
+        if (wn && !wl.name) wl.name = wn;
+        var r = null; try { r = f(run, 'default', { test: T, inputs: T.inputs, well: wl }); } catch (e) { r = null; }
+        if (!_need(r && typeof r.text === 'string', 'The DFIT export failed.')) return null;
+        _download(r.filename || 'dfit.txt', r.text, 'text/plain');
+        return r;
+    }
+    function _exportSheet() {
+        var run = _run(), f = _fn('PRiSM_dfit_fracSheet');
+        if (!_need(run, 'Press ▶ Analyse before exporting the frac-design sheet.')) return null;
+        if (!_need(f, 'The frac-design sheet is not available in this build yet.')) return null;
+        var r = null; try { r = f(run); } catch (e) { r = null; }
+        if (!_need(r && typeof r.csv === 'string', 'The frac-design sheet failed.')) return null;
+        _download('dfit-frac-design.csv', r.csv, 'text/csv');
+        return r;
+    }
+    // the DFIT volumes and q_eq are barrels of the injected liquid: the transient analysis takes B = 1 bbl/bbl for them (gas keeps its
+    // own formation volume factor), so the PTA radial kh/μ and the after-closure kh/μ use the same volumes (I15)
+    function _handoffWell(sw, run) {
+        var out = _clone(sw) || {};
+        var w = _well(), gas = w.fluid === 'gas' || !!(run && run.aca && run.aca.gas && run.aca.gas.applied);
+        if (!gas && !_own(out, 'B')) out.B = 1;
+        return out;
+    }
+    function applyHandoff(target, o) {
+        o = o || {};
+        var run = _run(), f = _fn('PRiSM_dfit_handoff');
+        if (!run) return { ok: false, code: 'NO_RUN', errors: ['Press ▶ Analyse before the hand-off.'], bad: [] };
+        if (!f) { _toast('The hand-off is not available in this build yet.'); return { ok: false, code: 'NO_ENGINE', errors: ['No hand-off engine.'], bad: [] }; }
+        var pk = null;
+        try { pk = f(run, target || 'pta', { family: o.family || null }); } catch (e) { pk = null; }
+        if (!pk || pk.ok === false) return { ok: false, code: 'HANDOFF_FAILED', errors: ['The hand-off packet could not be built.'], bad: [] };
+        if ((target || 'pta') !== 'pta') return { ok: true, packet: pk };
+        var lines = [];
+        var sw = pk.setWell ? _handoffWell(pk.setWell, run) : null;
+        if (sw) Object.keys(sw).forEach(function (k) { lines.push(k + ' = ' + (_isNum(sw[k]) ? _f(sw[k], 4) : sw[k])); });
+        lines.push('model ' + pk.model);
+        if (pk.blockers && pk.blockers.length) lines.push(pk.blockers.join(' '));
+        var ok = (o.confirm === false || typeof G.confirm !== 'function') ? true : G.confirm('Open this DFIT in PTA (transient)?\n' + lines.join('\n'));
+        if (!ok) return { ok: false, code: 'DECLINED', errors: ['Declined.'], bad: [] };
+        var T = test();
+        _batch('begin');
+        try {
+            if (pk.setWell && typeof G.PRiSM_setWell === 'function') G.PRiSM_setWell(_handoffWell(pk.setWell, run), { source: 'dfit' });
+            if (_arr(pk.multiRate) && pk.multiRate.length) { _P().multiRate = pk.multiRate.map(function (r) { return { t: r.t, q: r.q }; }); var ls = _ls(); if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(_P().multiRate)); } catch (e) { /* quota */ } } }
+            if (pk.model && typeof G.PRiSM_setModel === 'function') { try { G.PRiSM_setModel(pk.model); } catch (e) { /* ignore */ } }
+            var st = _st();
+            if (pk.seeds) { st.phys = _isObj(st.phys) ? st.phys : {}; if (_isNum(pk.seeds.xf)) st.phys.xf = pk.seeds.xf; if (_isNum(pk.seeds.k)) st.phys.k = pk.seeds.k; }
+            logEntry(T, 'handoff.pta', null, pk.model, 'Opened in PTA' + (o.family ? ' (' + o.family + ' chain)' : ''));
+            if (G.PRiSM && typeof G.PRiSM.setMode === 'function') G.PRiSM.setMode('transient');
+            if (typeof G.PRiSM_gotoStep === 'function') { try { G.PRiSM_gotoStep(3); } catch (e) { /* ignore */ } }
+        } finally { _batch('end'); }
+        return { ok: true, packet: pk };
+    }
+
+    // =========================================================================
+    // SECTION 14 — RAIL (§7.8), STATUS TICKS, REPORT (§2.10), TOOLS (§7.7)
+    // =========================================================================
+    function railRows() {
+        var d = dstate(), T = test(), s = T.summary, run = _run(), z = _num(T.inputs.datumTvd), rows = [];
+        if (d.tests.length > 1) rows.push(['Test', T.id + (T.zone ? ' · ' + T.zone : '') + ' (' + d.tests.length + ' tests)']);
+        if (!s) { rows.push(['DFIT', _hasData(G.PRiSM_dataset) ? 'press ▶ Analyse' : 'load a DFIT']); return rows; }
+        var c = s.closure || {};
+        rows.push(['ISIP', s.isip ? _f(s.isip.value, 0) + ' ± ' + _f(s.isip.spread, 0) + ' psia' : '—']);
+        var ctext = c.mode === 'single' ? _f(c.value, 0) + ' psia (' + (c.label || '—') + ')' :
+                    (c.mode === 'range' ? _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (' + (c.label || '—') + '; medians ' + [c.families && c.families.F1, c.families && c.families.F2].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + ')' : 'not reached');
+        var cp = T.picks.closure;
+        if (cp && cp.source === 'user') ctext += ' · user override';
+        if (_st()._dfitWhatIf) ctext += ' · what-if';
+        rows.push(['Closure', ctext]);
+        var g = _grad(_closureP(s), T);
+        rows.push(['Closure gradient', _isNum(g) ? _f(g, 3) + ' psi/ft (' + _f(g / 0.052, 2) + ' ppg)' : (z ? '—' : 'enter the datum TVD')]);
+        rows.push(['Net pressure', _isNum(s.pn) ? _f(s.pn, 0) + ' psi' : '—']);
+        rows.push(['Efficiency η', _isNum(s.eta) ? _f(s.eta, 3) : '—']);
+        rows.push(['Γ / CL', (_isNum(s.Gamma) ? _f(s.Gamma, 2) + ' psi/√min' : '—') + ' / ' + (_isNum(s.CL) ? _sig(s.CL, 3) + ' ft/√min (conditional)' : '—')]);
+        rows.push([s.model === 'radial' ? 'R' : 'xf', _isNum(s.xf) ? _f(s.xf, 1) + ' ft (' + (s.model || '—') + ')' : (_isNum(s.R) ? _f(s.R, 1) + ' ft (radial)' : '—')]);
+        rows.push(['p_i', s.pi && _isNum(s.pi.value) ? _f(s.pi.value, 0) + ' psia [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + '] (' + (s.pi.label || '—') + ')' : '—']);
+        rows.push(['k', _isNum(s.khmu) ? 'kh/μ ' + _sig(s.khmu, 3) + ' md·ft/cp' : (_isNum(s.kLo) && _isNum(s.kHi) ? '[' + _sig(s.kLo, 3) + ', ' + _sig(s.kHi, 3) + '] md' : (_isNum(s.k) ? _sig(s.k, 3) + ' md' : '—'))]);
+        rows.push(['Triage / grade', (s.triage || '—') + ' / ' + (s.grade || '—')]);
+        var fr = run && run.frac && run.frac.chosen;
+        if (fr && fr.stressCal && _isNum(fr.stressCal.dSigmaTect)) rows.push(['Stress-log offset', _f(fr.stressCal.dSigmaTect, 0) + ' psi']);
+        if (run && run.fast) rows.push(['Bands', 'stale — ▶ Analyse refreshes them']);
+        if (s.stale) rows.push(['Results', 'stale — ▶ Analyse']);
+        if (s.forOtherDataset) rows.push(['Decisions', 'belong to another dataset']);
+        var H = G.PRiSM_dfit_hooks;
+        if (H && typeof H.liveVerdict === 'function') { try { var lv = H.liveVerdict(); if (lv && lv.text) rows.push(['Live', _txt(lv.text)]); } catch (e) { /* 3.4b */ } }
+        (H && _arr(H.railRows) ? H.railRows : []).forEach(function (fn) { if (typeof fn !== 'function') return; try { var r = fn(s, run); if (_arr(r) && r.length === 2) rows.push([_txt(r[0]), _txt(r[1])]); } catch (e) { /* 3.4b */ } });
+        return rows;
+    }
+    // Below 1024 px 37 gives the rail the bottom-sheet class: the DFIT rail then shows one summary bar (closure, grade) and
+    // expands on a tap, so it never covers the step content (37's own sheet bar is not used in an ext mode).
+    var _railOpen = false;
+    function rail(el) {
+        if (!el) return false;
+        var rows = railRows();
+        var sheet = !!(el.classList && el.classList.contains('prism-rail--sheet'));
+        var body = rows.map(function (r) { return _rrow(r[0], r[1]); }).join('') +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_rail_analyse', '▶ Analyse', 'analyse', 'btn-primary') + _btn('prism_dfit_rail_copy', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_rail_copy_isip', 'Copy ISIP gradient', 'copyIsipGrad') + '</div>';
+        if (sheet) {
+            var sum = 'DFIT results';
+            rows.forEach(function (r) { if (/^Closure/.test(r[0]) && sum === 'DFIT results') sum = 'DFIT · ' + r[0].replace(/\s*\(.*\)$/, '') + ' ' + _txt(r[1]); });
+            el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail prism-dfit-rail--sheet"><button type="button" class="prism-rail-sheetbar" id="prism_dfit_rail_bar" aria-expanded="' + (_railOpen ? 'true' : 'false') + '" aria-controls="prism_dfit_rail_body">' +
+                           '<span class="prism-rail-grip" aria-hidden="true"></span><span class="prism-rail-sum">' + _esc(sum) + '</span><span aria-hidden="true">' + (_railOpen ? '▾' : '▴') + '</span></button>' +
+                           '<div id="prism_dfit_rail_body" class="prism-dfit-rail-body" style="display:' + (_railOpen ? 'block' : 'none') + ';max-height:60vh;overflow-y:auto;"><div class="prism-rail-title">DFIT results</div>' + body + '</div></div>';
+            var bar = el.querySelector ? el.querySelector('#prism_dfit_rail_bar') : null;
+            if (bar) bar.onclick = function () { _railOpen = !_railOpen; rail(el); };
+        } else el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail"><div class="prism-rail-title">DFIT results</div>' + body + '</div>';
+        _wire(el.firstChild || el);
+        return true;
+    }
+    function status(snap) {
+        var T = test(), s = T.summary, run = _run();
+        var tri = run && run.triage ? run.triage.light : (s && s.triage);
+        return { 1: !!(_hasData(G.PRiSM_dataset) && run && run.prep && run.prep.ok !== false && tri !== 'red'),
+                 2: !!((run && run.isip && run.isip.ok !== false && _isNum(run.isip.value)) || (T.picks.isip && _isNum(T.picks.isip.value))),
+                 3: !!((s && s.closure && s.closure.mode && s.closure.mode !== 'none') || (T.picks.closure && T.picks.closure.source === 'user')),
+                 4: !!((run && run.aca && run.aca.ok !== false) || (T.picks.aca && T.picks.aca.closureOnly)), 5: true };
+    }
+    // Report sections (36): one per DFIT group, fn.modes = ['dfit']; content from run.report (ReportModel, §3.6)
+    var SECTIONS = [['dfit-headline', 'DFIT headline', 10], ['dfit-board', 'Closure board', 11], ['dfit-whatif', 'What-if', 12], ['dfit-aca', 'After-closure analysis', 13],
+                    ['dfit-classify', 'Leak-off type', 14], ['dfit-triage', 'Triage', 15], ['dfit-steps', 'Step tests', 16], ['dfit-lk', 'Leak-off model', 17],
+                    ['dfit-unc', 'Uncertainty', 18], ['dfit-handoff', 'Hand-off and geomechanics', 19], ['dfit-log', 'Pick log and evidence', 20]];
+    function _reportModel() {
+        var run = _run();
+        if (!run) return null;
+        if (run.report && _arr(run.report.sections)) return run.report;
+        var f = _fn('PRiSM_dfit_reportModel');
+        if (f) { try { var m = f(run, dstate().report || {}); if (m && _arr(m.sections)) return m; } catch (e) { /* none */ } }
+        return null;
+    }
+    function _blockCell(c) { if (_isNum(c)) return _f(c, Math.abs(c) < 10 ? 3 : (Math.abs(c) < 1000 ? 1 : 0)); return c == null ? '—' : String(c); }
+    function _sectionFn(id, title, order) {
+        var fn = function () {
+            if (!_inDfit()) return null;
+            var d = dstate(), R = d.report || {};
+            if (R.groups && R.groups[id] === false) return null;
+            var m = _reportModel(), sec = null;
+            if (m) for (var i = 0; i < m.sections.length; i++) if (m.sections[i].id === id) sec = m.sections[i];
+            if (id === 'dfit-log' && R.log !== false) {
+                var T = test(), logBlocks = [];
+                if (T.log.length) logBlocks.push({ kind: 'table', head: ['#', 'When', 'Who', 'Item', 'Old', 'New', 'Reason'], rows: T.log.slice(-60).map(function (l) { return [l.seq, l.at, l.who || '—', l.item, JSON.stringify(l.old), JSON.stringify(l.new), l.reason || '—']; }), ev: false });
+                if (sec) sec = { id: id, title: sec.title, order: order, blocks: (sec.blocks || []).concat(logBlocks) };
+                else if (logBlocks.length) sec = { id: id, title: title, order: order, blocks: logBlocks };
+            }
+            if (!sec || !_arr(sec.blocks) || !sec.blocks.length) return null;
+            var kv = [], table = null, notesOut = [];
+            sec.blocks.forEach(function (b) {
+                if (b.kind === 'kv' && _arr(b.rows)) b.rows.forEach(function (r) { kv.push([_txt(r[0]), _txt(_blockCell(r[1]))]); });
+                else if (b.kind === 'kpi' && _arr(b.items)) b.items.forEach(function (it) { kv.push([_txt(it.label), _txt(_blockCell(it.value))]); });
+                else if (b.kind === 'table' && !table && _arr(b.head)) table = { head: b.head.map(_txt), rows: (b.rows || []).map(function (r) { return r.map(function (c) { return _txt(_blockCell(c)); }); }) };
+                else if (b.kind === 'verdict' || b.kind === 'notes') notesOut.push(_txt(b.text));
+            });
+            return { id: id, title: _txt(sec.title || title), order: order, kv: kv, table: table, notes: notesOut, blocks: _clone(sec.blocks) };
+        };
+        fn.modes = ['dfit'];
+        fn._prismId = id;
+        return fn;
+    }
+    var SECTION_FNS = SECTIONS.map(function (s) { return _sectionFn(s[0], s[1], s[2]); });
+    function reportHeader(model) {
+        var m = _reportModel(), T = test();
+        var well = (G.WTS_wells && typeof G.WTS_wells.list === 'function') ? (function () {
+            try { var L = G.WTS_wells.list() || []; for (var i = 0; i < L.length; i++) if (L[i] && L[i].active) return L[i].name; } catch (e) { /* no wells */ }
+            return null;
+        })() : null;
+        var title = 'DFIT interpretation — ' + (well || 'well') + (T.zone ? ' · ' + T.zone : '');
+        var rows = railRows().filter(function (r) { return r[0] !== 'Bands' && r[0] !== 'Test'; });
+        return { title: _txt(title), keyRows: rows.map(function (r) { return [_txt(r[0]), _txt(r[1])]; }), keyLine: keyLine() || (m ? _txt(m.keyLine) : '') };
+    }
+    function keyLine() {
+        var s = results();
+        if (!s || !s.closure) return '';
+        var c = s.closure, out = 'DFIT';
+        if (c.mode === 'single') out += ' · closure ' + _f(c.value, 0) + ' psia (single, ' + (c.label || '—') + ')';
+        else if (c.mode === 'range') out += ' · closure range ' + _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (medians ' + [c.families && c.families.F2, c.families && c.families.F1].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + '; ' + (c.label || '—') + ')';
+        else out += ' · no closure yet';
+        if (s.pi && _isNum(s.pi.value)) out += ' · p_i ' + _f(s.pi.value, 0) + ' ±' + _f(_isNum(s.pi.hi) && _isNum(s.pi.lo) ? (s.pi.hi - s.pi.lo) / 2 : null, 0) + ' psia';
+        return _txt(out);
+    }
+    var REPORT_PLOTS = [{ key: 'dfitHistory', title: 'DFIT history' }, { key: 'dfitG', title: 'G-function plot' }, { key: 'dfitSqrt', title: 'Square-root of time' },
+                        { key: 'dfitLogLog', title: 'Log-log diagnostic' }, { key: 'dfitStrip', title: 'Closure strip' }, { key: 'dfitAcaLogLog', title: 'After-closure log-log' },
+                        { key: 'dfitPiTraj', title: 'p_i trajectory' }];
+    function reportPlots() {
+        var out = REPORT_PLOTS.slice(), T = test();
+        if (T.lk && T.lk.fit && _st()._dfitLk) out.push({ key: 'dfitLkP', title: 'Leak-off model' });
+        if (dstate().tests.length >= 2) out.push({ key: 'dfitStress', title: 'Gradients against depth' });
+        return out;
+    }
+    // Tools drawer (§7.7)
+    function _toolHost(host, id, html) { if (!host) return null; host.innerHTML = '<div id="' + id + '" class="prism-dfit-tool">' + html + '</div>'; var h = host.firstChild; _wire(h); return h; }
+    // DesignRanges inputs (§3.7): [id, label, path in the ranges, unit, min, max, optional]. DFIT mode is field-unit only (the
+    // shell's note), so these are not WTS_units-tagged, as every other DFIT input
+    var DESIGN_FIELDS = [
+        ['k10', 'k P10', 'k.p10', 'md', 1e-7, 1e4], ['k90', 'k P90', 'k.p90', 'md', 1e-7, 1e4],
+        ['phi10', 'φ P10', 'phi.p10', '–', 0.001, 0.5], ['phi90', 'φ P90', 'phi.p90', '–', 0.001, 0.5],
+        ['ct10', 'c_t P10', 'ct.p10', '1/psi', 1e-7, 1e-3], ['ct90', 'c_t P90', 'ct.p90', '1/psi', 1e-7, 1e-3],
+        ['mu10', 'μ reservoir P10', 'muRes.p10', 'cp', 0.005, 1e4], ['mu90', 'μ reservoir P90', 'muRes.p90', 'cp', 0.005, 1e4],
+        ['h10', 'h P10', 'h.p10', 'ft', 1, 5000], ['h90', 'h P90', 'h.p90', 'ft', 1, 5000],
+        ['hf10', 'h_f P10', 'hf.p10', 'ft', 1, 5000], ['hf90', 'h_f P90', 'hf.p90', 'ft', 1, 5000],
+        ['hp', 'h_p', 'hp', 'ft', 1, 5000], ['ep', 'E′ P50', 'Ep.p50', 'psi', 1e5, 2e7], ['epsd', 'E′ spread (σ of ln)', 'Ep.sdLn', '–', 0, 2],
+        ['nu', 'ν', 'nu', '–', 0, 0.5],
+        ['sg', 'Closure gradient prior P50', 'sigmaGrad.p50', 'psi/ft', 0.3, 1.5], ['sgsd', 'Closure gradient prior σ', 'sigmaGrad.sd', 'psi/ft', 0, 0.3],
+        ['pg', 'p_i gradient prior P50', 'piGrad.p50', 'psi/ft', 0.1, 1.2], ['pgsd', 'p_i gradient prior σ', 'piGrad.sd', 'psi/ft', 0, 0.3],
+        ['gs', 'Gauge noise σ', 'gauge.sigma', 'psi', 0, 50], ['gr', 'Gauge resolution', 'gauge.resolution', 'psi', 0, 10],
+        ['ghz', 'Gauge rate', 'gauge.hz', 'Hz', 0.001, 1000], ['gd', 'Gauge drift', 'gauge.driftPsiPerDay', 'psi/d', 0, 50],
+        ['V', 'Planned volume (blank: suggest)', 'V', 'bbl', 0.1, 1e4, true], ['q', 'Planned rate (blank: suggest)', 'q', 'bbl/min', 0.01, 100, true],
+        ['shut', 'Allowed shut-in', 'allowedShutInD', 'd', 0.1, 365], ['W', 'Target closure band W (blank: none)', 'targetW', 'psi', 0.1, 5000, true]
+    ];
+    function _getP(o, p) { var a = p.split('.'), x = o; for (var i = 0; i < a.length; i++) { if (!_isObj(x)) return undefined; x = x[a[i]]; } return x; }
+    function _setP(o, p, v) { var a = p.split('.'), x = o; for (var i = 0; i < a.length - 1; i++) { if (!_isObj(x[a[i]])) x[a[i]] = {}; x = x[a[i]]; } x[a[a.length - 1]] = v; }
+    function _defaultRanges() {
+        var T = test(), w = _well();
+        var k = _num(w.k) || 0.01, z = _num(T.inputs.datumTvd) || 10000;
+        return { k: { p10: k / 10, p90: k * 10 }, phi: { p10: 0.04, p90: 0.1 }, ct: { p10: 5e-6, p90: 2e-5 }, muRes: { p10: 0.3, p90: 1 }, h: { p10: 30, p90: 80 },
+                 hf: { p10: 40, p90: 100 }, hp: 40, Ep: { p50: 5e6, sdLn: 0.25 }, nu: 0.25, sigmaGrad: { p50: 0.7, sd: 0.02 }, piGrad: { p50: 0.45, sd: 0.02 }, datumTvd: z,
+                 strings: T.inputs.strings, fluid: { kind: T.inputs.fluid.kind, rhoPpg: T.inputs.fluid.rhoPpg, muCp: T.inputs.fluid.muCp },
+                 gauge: { kind: T.inputs.channels.primary === 'surface' ? 'surface' : 'bh', sigma: 0.05, resolution: 0.01, hz: 1, driftPsiPerDay: 0.1 },
+                 V: null, q: null, suggest: true, allowedShutInD: 10, targetW: null, repressurise: false, epsMax: 0.05, leakEps: 0.05 };
+    }
+    function _designRanges() { var pl = dstate().plan; return (pl && _isObj(pl.ranges)) ? pl.ranges : _defaultRanges(); }
+    function _dfVal(v) { return _isNum(v) ? String(+(+v).toPrecision(6)) : ''; }
+    function renderDesignerTool(host) {
+        var pl = dstate().plan, R = _designRanges(), items = '';
+        DESIGN_FIELDS.forEach(function (fd) {
+            items += '<div class="fg-item"><label for="prism_dfit_dr_' + fd[0] + '">' + _esc(fd[1] + ' (' + fd[3] + ')') + '</label>' +
+                     '<input type="text" inputmode="decimal" id="prism_dfit_dr_' + fd[0] + '" value="' + _esc(_dfVal(_getP(R, fd[2]))) + '"></div>';
+        });
+        var h = _toolHost(host, 'prism_dfit_designer', '<div class="card"><div class="card-title">DFIT designer (pre-job)</div>' +
+            _note('Plans the injection volume, rate, shut-in duration and gauge from ranges of the reservoir and rock properties (seeded ensemble). Field units.') +
+            '<div class="fg">' + items + '</div>' +
+            '<div class="fg"><div class="fg-item"><label for="prism_dfit_design_n">Draws</label><input type="text" inputmode="decimal" id="prism_dfit_design_n" value="500"></div>' +
+            '<div class="fg-item"><label for="prism_dfit_design_seed">Seed</label><input type="text" inputmode="decimal" id="prism_dfit_design_seed" value="1"></div></div>' +
+            '<div class="prism-dfit-bar">' + _btn('prism_dfit_design_go', 'Design', 'design', 'btn-primary') + '</div>' +
+            '<div id="prism_dfit_design_out">' + (pl && pl.summary ? _designHTML(pl.summary) : '') + '</div>' + _chart('dfitPlan', 220) + '</div>');
+        _drawIn(h);
+        return h;
+    }
+    // the ranges from the form (blank or unreadable → the stored / default value; optional fields blank → null); errors list the
+    // P10 > P90 pairs and out-of-range entries
+    function _readDesignForm() {
+        var R = _clone(_designRanges()) || _defaultRanges(), errs = [];
+        DESIGN_FIELDS.forEach(function (fd) {
+            var el = _byId('prism_dfit_dr_' + fd[0]);
+            if (!el) return;
+            var raw = String(el.value == null ? '' : el.value).trim();
+            if (!raw) { if (fd[6]) _setP(R, fd[2], null); return; }
+            var x = _parse(raw);
+            if (!_isNum(x)) { errs.push(fd[1] + ': not a number'); return; }
+            if (x < fd[4] || x > fd[5]) { errs.push(fd[1] + ' outside ' + fd[4] + '–' + fd[5] + ' ' + fd[3]); x = Math.min(fd[5], Math.max(fd[4], x)); }
+            _setP(R, fd[2], x);
+        });
+        ['k', 'phi', 'ct', 'muRes', 'h', 'hf'].forEach(function (k) { if (_isObj(R[k]) && _isNum(R[k].p10) && _isNum(R[k].p90) && R[k].p10 > R[k].p90) errs.push(k + ': P10 is above P90'); });
+        R.suggest = !(_isNum(R.V) && _isNum(R.q));
+        return { ranges: R, errors: errs };
+    }
+    var BIND_WORDS = { radial: 'radial confirmation', '3tc': 'three closure times', afterflow: 'afterflow', precision: 'p_i precision' };
+    function _designHTML(D, ranges) {
+        if (!D || D.ok === false) return '';
+        var sh = D.shutIn || null, allow = ranges && _isNum(ranges.allowedShutInD) ? ranges.allowedShutInD : (_isNum(D.allowedShutInD) ? D.allowedShutInD : null);
+        var shTxt = sh && _isNum(sh.p50) ? _f(sh.p50 / 24, sh.p50 / 24 < 10 ? 1 : 0) + ' d (' + _f(sh.p50, 0) + ' h)' : '—';
+        var html = _rbox('Design', [_rrow('Outcome', D.outcome ? D.outcome.label : '—'), _rrow('Closure time P50 (h)', _f(D.tc && D.tc.p50, 1)),
+                    _rrow('Shut-in P50', shTxt + (sh ? ', set by ' + (BIND_WORDS[sh.binding] || sh.binding) : '')),
+                    _rrow('Allowed shut-in', _isNum(allow) ? _f(allow, 1) + ' d' : '—'), _rrow('Minimum volume (bbl)', _f(D.Vmin, 1))]);
+        if (sh && _isNum(sh.p50) && _isNum(allow) && sh.p50 / 24 > allow)
+            html += _verdict('warn', 'The P50 shut-in (' + _f(sh.p50 / 24, 1) + ' d, ' + (BIND_WORDS[sh.binding] || sh.binding) + ') is longer than the allowed ' + _f(allow, 1) + ' d.');
+        if (D.outcome && D.outcome.text) html += _note(D.outcome.text);
+        if (_arr(D.checklist)) html += _table(['#', 'Checklist'], D.checklist.map(function (c) { return [c.id, c.text]; }));
+        return html;
+    }
+    function _design() {
+        var f = _fn('PRiSM_dfit_design');
+        if (!_need(f, 'The DFIT designer is not available in this build yet.')) return null;
+        var n = clampField('designer.n', (_byId('prism_dfit_design_n') || {}).value).value, seed = clampField('designer.seed', (_byId('prism_dfit_design_seed') || {}).value).value;
+        var rd = _readDesignForm(), ranges = rd.ranges;
+        if (rd.errors.length) _toast('⚠ ' + _txt(rd.errors.slice(0, 3).join('; ')));
+        var D = null;
+        try { D = f(ranges, { n: n, seed: seed, grid: 'coarse' }); } catch (e) { D = null; }
+        if (!_need(D && D.ok !== false, 'The design failed for these ranges.')) return null;
+        var c = D.corridor || {};
+        var cap = function (a) { return _arr(a) ? a.slice(0, 60) : []; };
+        dstate().plan = { ranges: ranges, summary: { ok: true, outcome: D.outcome, tc: D.tc, shutIn: D.shutIn, Vmin: D.Vmin, allowedShutInD: ranges.allowedShutInD, checklist: (D.checklist || []).slice(0, 20) },
+                          corridor: { t: cap(c.t), p10: cap(c.p10), p50: cap(c.p50), p90: cap(c.p90) }, ticks: {} };
+        _emit('prism:dfit-updated', { what: 'all', source: 'user' });
+        var out = _byId('prism_dfit_design_out'); if (out) out.innerHTML = _designHTML(dstate().plan.summary, ranges);
+        redrawAll();
+        return D;
+    }
+    function renderSandboxTool(host) {
+        // switches to DFIT mode (one undo step) and opens step ④ → Leak-off model
+        openSandbox();
+        if (host) {
+            host.innerHTML = '<div id="prism_dfit_sandbox_tool" class="prism-dfit-tool">' + _note('The leak-off sandbox is open in DFIT mode, step ④ → Leak-off model, behind this drawer: set the volume and rate there and press Simulate.') +
+                             '<div class="prism-dfit-bar">' + _btn('prism_dfit_sandbox_show', 'Show the sandbox', 'sandboxShow', 'btn-primary') + '</div></div>';
+            _wire(host.firstChild);
+        }
+        return host ? host.firstChild : null;
+    }
+    function openSandbox() {
+        _s4Tab = 'lk';
+        if (hooksReady() && G.PRiSM && typeof G.PRiSM.setMode === 'function') {
+            _batch('begin');
+            try { if (G.PRiSM.mode !== 'dfit') G.PRiSM.setMode('dfit'); if (typeof G.PRiSM_gotoStep === 'function') G.PRiSM_gotoStep(4); } finally { _batch('end'); }
+            // the drawer stays open on the sandbox card (its note and the step-④ sub-view behind it); Back / Esc closes it
+        }
+        var h = _byId('prism_dfit_step4');
+        if (h) _renderStep4Into(h);
+        return true;
+    }
+    function renderReplayTool(host) {
+        var h = _toolHost(host, 'prism_dfit_replay', '<div class="card"><div class="card-title">Replay a recorded DFIT</div>' +
+            _note('Replays the loaded record as if it were arriving live and lists when each answer first became available.') +
+            '<div class="prism-dfit-bar">' + _btn('prism_dfit_replay_go', 'Replay', 'replay', 'btn-primary') + '</div><div id="prism_dfit_replay_out"></div></div>');
+        return h;
+    }
+    function _replay() {
+        var f = _fn('PRiSM_dfit_replay'), ds = G.PRiSM_dataset;
+        if (!_need(_hasData(ds), 'Load a DFIT first.')) return null;
+        if (!_need(f, 'The replay is not available in this build yet.')) return null;
+        var T = test(), r = null;
+        try { r = f(ds, { test: T, inputs: T.inputs, well: _well() }); } catch (e) { r = null; }
+        if (!_need(r && r.firsts, 'The replay failed.')) return null;
+        var F = r.firsts, lab = { closureProvisional: 'Provisional closure', closureConfirmed: 'Confirmed closure', piW25: 'p_i bracket within 25 psi', piW10: 'p_i bracket within 10 psi', radialSeen: 'Radial flow seen' };
+        var out = _byId('prism_dfit_replay_out');
+        if (out) out.innerHTML = _table(['Answer', 'First available (h after shut-in)'], Object.keys(lab).map(function (k) { return [lab[k], _isNum(F[k]) ? _f(F[k], 2) : 'not reached']; }), 'prism_dfit_replay_tbl');
+        return r;
+    }
+    function renderHammerTool(host) {
+        var run = _run();
+        var h = _toolHost(host, 'prism_dfit_hammer', '<div class="card"><div class="card-title">Water hammer (detail)</div>' +
+            _hammerHTML(run, true) + '</div>');
+        _drawIn(h);
+        return h;
+    }
+    function renderNotesTool(host) {
+        var I = G.WTS_dfitInfo, c = (I && typeof I.content === 'function') ? I.content('index') : null;
+        var html = '<div class="card"><div class="card-title">DFIT method notes</div>';
+        if (c && c.index) c.index.forEach(function (g) {
+            html += '<div class="prism-dfit-sub">' + _esc(g.title) + '</div><div class="prism-dfit-bar">' + g.items.map(function (it) {
+                return '<button type="button" class="btn btn-secondary" data-dfit-act="note" data-dfit-arg="' + _esc(it.key) + '">' + _esc(it.title) + '</button>';
+            }).join('') + '</div>';
+        });
+        else html += _note('Method notes are not available in this build.');
+        return _toolHost(host, 'prism_dfit_notes', html + '</div>');
+    }
+    var TOOLS = [
+        { id: 'dfit-sandbox', fn: 'PRiSM_renderDfitSandboxTool', group: 'DFIT', title: 'Leak-off sandbox', sub: 'Mini-model: what leak-off rate does this fracture give?', modes: '*' },
+        { id: 'dfit-designer', fn: 'PRiSM_renderDfitDesignerTool', group: 'DFIT', title: 'DFIT designer (pre-job)', sub: 'Volume, rate, shut-in and gauge from ranges', modes: ['dfit'] },
+        { id: 'dfit-replay', fn: 'PRiSM_renderDfitReplayTool', group: 'DFIT', title: 'Replay a recorded DFIT', sub: 'When each answer first became available', modes: ['dfit'] },
+        { id: 'dfit-hammer', fn: 'PRiSM_renderDfitHammerTool', group: 'DFIT', title: 'Water hammer (detail)', sub: 'Period, damping, reflector depth', modes: ['dfit'] },
+        { id: 'dfit-notes', fn: 'PRiSM_renderDfitNotesTool', group: 'DFIT', title: 'Method notes', sub: 'Assumptions, failure modes, references', modes: ['dfit'] }
+    ];
+    var TOOL_FNS = { PRiSM_renderDfitSandboxTool: renderSandboxTool, PRiSM_renderDfitDesignerTool: renderDesignerTool, PRiSM_renderDfitReplayTool: renderReplayTool,
+                     PRiSM_renderDfitHammerTool: renderHammerTool, PRiSM_renderDfitNotesTool: renderNotesTool };
+
+    // =========================================================================
+    // SECTION 15 — REFRESH, CSS
+    // =========================================================================
+    var CSS_ID = 'prism-dfit-css';
+    var CSS = '.prism-dfit-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}' +
+        '.prism-dfit-status{font-size:12px;color:var(--text2)}.prism-dfit-status--ok{color:var(--green)}.prism-dfit-status--warn{color:var(--yellow)}' +
+        '.prism-dfit-progress{font-size:12px;color:var(--accent)}' +
+        '.prism-dfit-warn{margin:6px 0;padding:6px 8px;border-left:3px solid var(--yellow);background:rgba(210,153,34,.08);font-size:12.5px}' +
+        '.prism-dfit-note{margin:6px 0;font-size:12.5px;color:var(--text2)}' +
+        '.prism-dfit-sub{margin:10px 0 4px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)}' +
+        '.prism-dfit-verdict{margin:6px 0;padding:6px 8px;border-radius:6px;font-size:13px;background:var(--bg3)}' +
+        '.prism-dfit-verdict--ok{border-left:3px solid var(--green)}.prism-dfit-verdict--warn{border-left:3px solid var(--yellow)}.prism-dfit-verdict--bad{border-left:3px solid var(--red)}' +
+        '.prism-dfit-checks{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0}.prism-dfit-check{font-size:12.5px}' +
+        '.prism-dfit-seg{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}' +
+        '.prism-dfit-chart{margin:8px 0}.prism-dfit-chart canvas{display:block;width:100%}' +
+        '.dtable-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}' +
+        '#prism_dfit_override{position:fixed;inset:0;z-index:10050;display:none;align-items:center;justify-content:center;box-sizing:border-box;width:auto;height:auto;max-width:none;max-height:none;margin:0;padding:16px;border:0;background:rgba(1,4,9,.72);color:var(--text)}' +
+        '#prism_dfit_override[open]{display:flex}#prism_dfit_override::backdrop{background:transparent}' +
+        '#prism_dfit_override .prism-dfit-dlg{width:min(480px,100%);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}' +
+        '#prism_dfit_override h3{margin:0 0 8px;font-size:16px;color:var(--accent)}#prism_dfit_override textarea{width:100%;box-sizing:border-box}' +
+        '@media (max-width:600px){#prism_dfit_cv_dfitStrip{height:160px!important}.prism-dfit-chart canvas{height:auto;aspect-ratio:4/3}.prism-dfit-seg .btn{flex:1 1 45%}}';
+    function _ensureCss() {
+        if (!HAS_DOC || _byId(CSS_ID)) return;
+        try {
+            var s = document.createElement('style');
+            s.id = CSS_ID;
+            s.textContent = CSS;
+            (document.head || document.body).appendChild(s);
+        } catch (e) { /* styles are a nicety */ }
+    }
+    var _refreshing = false;
+    function _refreshUI() {
+        if (!HAS_DOC || _refreshing) return;
+        _refreshing = true;
+        try {
+            _ensureCss();
+            _rerenderPanels();
+            var h2 = _byId('prism_dfit_step2'); if (h2 && h2.isConnected !== false) _renderStep2Into(h2);
+            var h4 = _byId('prism_dfit_step4'); if (h4 && h4.isConnected !== false) _renderStep4Into(h4);
+            var r = _byId('prism_dfit_rail'); if (r && r.parentNode && r.isConnected !== false) rail(r.parentNode);
+            var st = _st();
+            if (hooksReady() && _inDfit() && st.activePlot && PLOT_ENTRIES[st.activePlot] && typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+        } finally { _refreshing = false; }
+    }
+
+    // =========================================================================
+    // SECTION 16 — MODE EXTENSION (§3.8, §3.12), UNDO EXTRA, EVENTS
+    // =========================================================================
+    function onEnter(prev) {
+        _batch('begin');
+        try {
+            var w = _well();
+            if (w.testType !== 'falloff' && typeof G.PRiSM_setWell === 'function') { try { G.PRiSM_setWell({ testType: 'falloff' }, { source: 'dfit' }); } catch (e) { /* ignore */ } }
+            dstate();
+            var st = _st();
+            if (!st.activePlot || !PLOT_ENTRIES[st.activePlot]) st.activePlot = 'dfitG';
+            var b = _checkBinding();
+            if (b !== 'none' && b !== 'other') runFast('enter');
+            if (!_run() && typeof G.PRiSM_dfit_pipeline === 'function') { /* no result yet: the rail asks for ▶ Analyse */ }
+        } finally { _batch('end'); }
+        _ensureCss();
+        return prev;
+    }
+    function onLeave(next) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; _closeOverride(); return next; }
+    var EXT = {
+        label: 'DFIT (fracture injection)', testType: 'falloff', stateKey: 'dfit',
+        steps: { 1: 'Data & events', 2: 'ISIP & friction', 3: 'Pre-closure', 4: 'After-closure & model', 5: 'Report' },
+        tabs: { 1: 1, 3: 2, 5: 7 },
+        stepView: { 2: function (host) { return G.PRiSM_dfit_renderStep2(host); }, 4: function (host) { return G.PRiSM_dfit_renderStep4(host); } },
+        defaultPlot: 'dfitG',
+        showsPlot: function (entry, key) { return !!(entry && entry.mode === 'dfit' && STEP3_PLOTS.indexOf(key) !== -1); },
+        showsModel: function () { return false; },
+        showsPanel: function (n, spec) {
+            if (!spec) return false;
+            if (spec.modes && (spec.modes instanceof Array || _arr(spec.modes))) return Array.prototype.indexOf.call(spec.modes, 'dfit') !== -1;
+            return EXT.panelAllow.indexOf(String(spec.id)) !== -1;
+        },
+        panelAllow: ['crop', 'gauges', 'linetools'],
+        panelsFirst: [1],
+        // the built-in Tools that make sense on an injection + falloff record (no semilog / RTA / decline / model race / skin
+        // check / deconvolution: they read the record as a PTA)
+        toolAllow: ['pvt', 'crop', 'tide', 'gauges', 'datasets', 'project', 'gaugecheck', 'dsets', 'overlays', 'diff', 'clipboard', 'plottools'],
+        plotsTab: { hide: ['period', 'timeFn', 'overlay'] },
+        note: 'DFIT is field-unit only (psia, psi/ft, ft, bbl, bbl/min, cp, md).',
+        rail: function (el) { return rail(el); },
+        status: function (snap) { return status(snap); },
+        analyse: function (opts) { return G.PRiSM_dfit_analyse(opts); },
+        onEnter: onEnter, onLeave: onLeave,
+        reportHeader: reportHeader,
+        reportPlots: REPORT_PLOTS,
+        reportLegacySections: false,
+        exportItems: [{ id: 'dfit-text', label: 'DFIT data + picks (ASCII)', fn: function () { return _exportText(); } },
+                      { id: 'dfit-sheet', label: 'Frac-design sheet (CSV)', fn: function () { return _exportSheet(); } }]
+    };
+    // reportPlots is read as a property: keep it current (two-test and leak-off-model plots)
+    try { Object.defineProperty(EXT, 'reportPlots', { enumerable: true, configurable: true, get: reportPlots }); } catch (e) { EXT.reportPlots = REPORT_PLOTS; }
+    var UNDO_EXTRA = {
+        get: function () {
+            if (!_engaged()) return undefined;   // 37 skips an extra that returns undefined
+            var d = dstate(), T = test();
+            return { active: d.active, test: { id: T.id, inputs: _clone(T.inputs), picks: _clone(T.picks) } };
+        },
+        set: function (v) {
+            if (!_isObj(v) || !_isObj(v.test)) return;
+            var d = dstate();
+            var T = _findTest(v.test.id);
+            if (!T) return;
+            if (typeof v.active === 'string' && _findTest(v.active)) d.active = v.active;
+            if (_isObj(v.test.inputs)) T.inputs = _clampInputs(_clone(v.test.inputs));
+            if (_isObj(v.test.picks)) T.picks = _clone(v.test.picks);
+            var full = _fullFor(T);
+            if (full) {
+                // back to the inputs and picks of a full run: reinstate it (labels, tolerances and uncertainty included)
+                _st()._dfitRun = full.run;
+                T.summary = _clone(full.summary);
+                _publish();
+                _emit('prism:dfit-updated', { what: 'all', source: 'undo' });
+                _refreshUI();
+                return;
+            }
+            if (T.summary) T.summary.stale = true;
+            _dropRun();
+            var f = G.PRiSM_dfit_pipeline;
+            if (typeof f === 'function' && _hasData(G.PRiSM_dataset)) {
+                var run = null;
+                try { run = f.apply(null, _pipeArgs(true)); } catch (e) { run = null; }
+                if (run && run.ok !== false) _apply(run, { fast: true, what: 'all', source: 'undo' });
+            } else _emit('prism:dfit-updated', { what: 'all', source: 'undo' });
+            _refreshUI();
+        },
+        events: ['prism:dfit-updated']
+    };
+    function _onDatasetLoaded() {
+        if (!_engaged()) return;
+        var b = _checkBinding();
+        if (b === 'other' || b === 'none') { _dropRun(); _refreshUI(); return; }
+        if (_inDfit()) runFast('dataset');
+        else _refreshUI();
+    }
+    function _onProject(e) {
+        cancelAnalyse();
+        _dropRun();
+        delete _st()._dfitLk; delete _st()._dfitLkGeo;
+        if (e && e.type === 'wts:project-new') { var st = _st(); delete st.dfit; }
+        else if (_engaged()) { dstate(); _checkBinding(); }
+        else {
+            // the opened project has no DFIT state (29 drops st.dfit): no stale WTS_state.dfit either
+            if (G.WTS_state && typeof G.WTS_state === 'object' && 'dfit' in G.WTS_state) delete G.WTS_state.dfit;
+            return;
+        }
+        _publish();
+    }
+    function _onPage() { var sh = _shell(); if (!sh || sh.isConnected === false) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; } }
+    // linked cursor: the hovered x on one DFIT canvas drawn on the other visible DFIT canvases (02's overlay frame)
+    // Linked cursor (§7.4): a hover on one shut-in plot draws the same shut-in time on the other DFIT canvases through 02's
+    // overlay frame (no redraw). x ↔ Δt (h): dfitG nearest G, dfitSqrt √(Δt·60), dfitLogLog Δt·60, dfitHistory t_s + Δt.
+    var LINK_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitHistory: 1 };
+    // the leak-off model plots share the model clock (t since pump start, h): a cursor on the others and the schematic follow
+    var LK_LINK = { dfitLkP: 1, dfitLkQ: 1, dfitLkGeom: 1 };
+    function _dtOfX(key, x, run) {
+        var d = run && run.derivs;
+        if (!_isNum(x)) return null;
+        if (key === 'dfitG') { if (!d || !_arr(d.G)) return null; var i = _nearestIdx(d.G, x); return i < 0 ? null : d.dt[i]; }
+        if (key === 'dfitSqrt') return x > 0 ? x * x / 60 : null;
+        if (key === 'dfitLogLog') return x > 0 ? x / 60 : null;
+        if (key === 'dfitHistory') return (run.events && _isNum(run.events.ts) && x >= run.events.ts) ? x - run.events.ts : null;
+        return null;
+    }
+    function _xOfDt(key, dt, run) {
+        var d = run && run.derivs;
+        if (!_isNum(dt)) return null;
+        if (key === 'dfitG') { if (!d || !_arr(d.dt)) return null; var i = _nearestIdx(d.dt, dt); return i < 0 ? null : d.G[i]; }
+        if (key === 'dfitSqrt') return Math.sqrt(dt * 60);
+        if (key === 'dfitLogLog') return dt > 0 ? dt * 60 : null;
+        if (key === 'dfitHistory') return (run.events && _isNum(run.events.ts)) ? run.events.ts + dt : null;
+        return null;
+    }
+    function _onLkHover(e, d) {
+        if (!_isNum(d.x)) return;
+        _schemUpdate(d.x);
+        if (typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC || !document.querySelectorAll) return;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) {
+            if (cv === e.target || cv.isConnected === false || cv._dfitDrag) return;
+            if (!LK_LINK[cv.getAttribute('data-dfit-plot')]) return;
+            try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(d.x), '#c9d1d9', [2, 2], 't ' + _f(d.x, 2) + ' h'); }); } catch (err) { /* cosmetic */ }
+        });
+    }
+    function _onHover(e) {
+        var d = e && e.detail;
+        if (d && LK_LINK[d.plotKey]) { _onLkHover(e, d); return; }
+        if (!d || !LINK_KEYS[d.plotKey] || typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC || !document.querySelectorAll) return;
+        var run = _run(), dt = _dtOfX(d.plotKey, d.x, run);
+        if (!_isNum(dt)) return;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) {
+            if (cv === e.target || cv.isConnected === false || cv._dfitDrag) return;
+            var key = cv.getAttribute('data-dfit-plot');
+            if (!LINK_KEYS[key]) return;
+            var x = _xOfDt(key, dt, run);
+            if (!_isNum(x)) return;
+            try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(x), '#c9d1d9', [2, 2], 'Δt ' + _f(dt * 60, 1) + ' min'); }); } catch (err) { /* cosmetic */ }
+        });
+    }
+    // Escape cancels a drag in progress (an armed line tool is cancelled by 11)
+    function _onKey(e) {
+        if (!e || (e.key !== 'Escape' && e.key !== 'Esc') || !HAS_DOC) return;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) { if (cv._dfitDrag && cv._dfitDrag.cancel) cv._dfitDrag.cancel(); });
+        var mc = _byId('prism_plot_canvas'); if (mc && mc._dfitDrag && mc._dfitDrag.cancel) mc._dfitDrag.cancel();
+    }
+    var _listening = false;
+    function _listen() {
+        if (_listening || typeof G.addEventListener !== 'function') return;
+        _listening = true;
+        G.addEventListener('prism:dataset-loaded', _onDatasetLoaded);
+        G.addEventListener('prism:plot-hover', _onHover);
+        if (HAS_DOC && typeof document.addEventListener === 'function') {
+            document.addEventListener('wts:project-loaded', _onProject);
+            document.addEventListener('wts:project-new', _onProject);
+            document.addEventListener('h2oil:pagechange', _onPage);
+            document.addEventListener('keydown', _onKey);
+        }
+    }
+
+    // =========================================================================
+    // SECTION 17 — REGISTRATION AND EXPORTS
+    // =========================================================================
+    G.PRiSM_plot_dfitDual = PRiSM_plot_dfitDual;
+    G.PRiSM_plot_dfitStrip = PRiSM_plot_dfitStrip;
+    G.PRiSM_plot_dfitStack = PRiSM_plot_dfitStack;
+    G.PRiSM_dfit_state = function () { return dstate(); };
+    G.PRiSM_dfit_test = function () { return test(); };
+    G.PRiSM_dfit_selectTest = selectTest;
+    G.PRiSM_dfit_addTest = addTest;
+    G.PRiSM_dfit_deleteTest = deleteTest;
+    G.PRiSM_dfit_setPick = setPick;
+    G.PRiSM_dfit_applyHandoff = applyHandoff;
+    G.PRiSM_dfit_results = results;
+    G.PRiSM_dfit_analyse = analyse;
+    G.PRiSM_dfit_renderStep2 = renderStep2;
+    G.PRiSM_dfit_renderStep4 = renderStep4;
+    var H = G.PRiSM_dfit_hooks = G.PRiSM_dfit_hooks || {};    // read-only hook points for the 3.4b files: merged, never replaced
     if (!('liveVerdict' in H)) H.liveVerdict = null;
-    if (!(H.railRows instanceof Array)) H.railRows = [];
-    if (!(H.step2Cards instanceof Array)) H.step2Cards = [];
+    if (!(H.railRows instanceof Array) && !_arr(H.railRows)) H.railRows = [];
+    if (!(H.step2Cards instanceof Array) && !_arr(H.step2Cards)) H.step2Cards = [];
+
+    var installed = { modeExt: false, plots: false, panels: false, tools: false, lineTools: false, sections: false, undo: false, hook: false };
+    // Register in the shared registries. Items that would leak into the built-in modes before the WPH hooks exist (plot
+    // registry entries — 04 shows every entry in combined mode; line tools — 11 stores them; Tools functions — 37 lists
+    // every PRiSM_render*Tool under "More") wait for the hooks; install({force:true}) registers them anyway (tests).
+    function install(o) {
+        o = o || {};
+        var ready = hooksReady() || o.force === true;
+        var MX = G.PRiSM_modeExt = _isObj(G.PRiSM_modeExt) ? G.PRiSM_modeExt : {};
+        MX.dfit = EXT; installed.modeExt = true;
+        var UX = G.PRiSM_undoExtras = _isObj(G.PRiSM_undoExtras) ? G.PRiSM_undoExtras : {};
+        UX.dfit = UNDO_EXTRA; installed.undo = true;
+        _registerPicksHook(); installed.hook = true;
+        var reg = G.PRiSM_reportSections = (G.PRiSM_reportSections instanceof Array || _arr(G.PRiSM_reportSections)) ? G.PRiSM_reportSections : [];
+        SECTION_FNS.forEach(function (fn) {
+            for (var i = 0; i < reg.length; i++) if (reg[i] && reg[i]._prismId === fn._prismId) { reg[i] = fn; return; }
+            reg.push(fn);
+        });
+        installed.sections = true;
+        if (typeof G.PRiSM_registerTabPanel === 'function' || _isObj(G.PRiSM_tabPanels)) {
+            Object.keys(PANEL_SPECS).forEach(function (id) {
+                var s = PANEL_SPECS[id];
+                if (typeof G.PRiSM_registerTabPanel === 'function') { try { G.PRiSM_registerTabPanel(s.tab, s); return; } catch (e) { /* fall through */ } }
+                var T = G.PRiSM_tabPanels = _isObj(G.PRiSM_tabPanels) ? G.PRiSM_tabPanels : {};
+                if (!(T[s.tab] instanceof Array) && !_arr(T[s.tab])) T[s.tab] = [];
+                var arr = T[s.tab], j;
+                for (j = 0; j < arr.length; j++) if (arr[j] && arr[j].id === s.id) { arr[j] = s; break; }
+                if (j === arr.length) arr.push(s);
+            });
+            installed.panels = true;
+        }
+        if (!ready) return installed;
+        var R = G.PRiSM_PLOT_REGISTRY = _isObj(G.PRiSM_PLOT_REGISTRY) ? G.PRiSM_PLOT_REGISTRY : {};
+        Object.keys(PLOT_ENTRIES).forEach(function (k) { R[k] = PLOT_ENTRIES[k]; });
+        installed.plots = true;
+        if (_isObj(G.PRiSM_analysisKeys)) { Object.keys(LINE_TOOLS).forEach(function (k) { G.PRiSM_analysisKeys[k] = LINE_TOOLS[k]; }); installed.lineTools = true; }
+        var cat = G.PRiSM_toolCatalogueExtra = (G.PRiSM_toolCatalogueExtra instanceof Array || _arr(G.PRiSM_toolCatalogueExtra)) ? G.PRiSM_toolCatalogueExtra : [];
+        TOOLS.forEach(function (t) {
+            G[t.fn] = TOOL_FNS[t.fn];
+            for (var i = 0; i < cat.length; i++) if (cat[i] && cat[i].id === t.id) { cat[i] = t; return; }
+            cat.push(t);
+        });
+        installed.tools = true;
+        return installed;
+    }
+
+    G.PRiSM_dfit_ui = {
+        version: '1.0', hooksReady: hooksReady, install: install, installed: installed,
+        fields: FIELDS, selects: SELECTS, id: _id, clampField: clampField, setInput: setInput,
+        plots: PLOT_ENTRIES, plotKeys: function () { return PLOTS.map(function (p) { return p[0]; }); }, step3Plots: STEP3_PLOTS.slice(),
+        buildPlot: buildPlot, drawPlot: drawPlot, redrawAll: redrawAll, picksHook: picksHook,
+        panels: PANEL_SPECS, tools: TOOLS, toolFns: TOOL_FNS, lineTools: LINE_TOOLS, sections: SECTION_FNS, sectionIds: SECTIONS.map(function (s) { return s[0]; }),
+        ext: EXT, undo: UNDO_EXTRA, railRows: railRows, rail: rail, status: status, keyLine: keyLine, reportHeader: reportHeader,
+        runFast: runFast, cancel: cancelAnalyse, loadDemo: loadDemo, demos: DEMOS.map(function (d) { return d[0]; }), rebind: rebind, notes: notes,
+        openOverride: openOverride, saveOverride: _saveOverride, closeOverride: _closeOverride, openSandbox: openSandbox,
+        lkSimulate: _lkSimulate, lkFit: _lkFit, design: _design, replay: _replay, exportText: _exportText, exportSheet: _exportSheet,
+        publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
+        statusText: function () { return _status.text; },
+        handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch,
+        schematic: schematicSVG, schematicAt: _schemUpdate, applyBlunderFix: applyBlunderFix, applyDemoSetup: function (name) { var S = G.PRiSM_dfit_synth; return _applyDemoSetup(test(), S, name); }
+    };
+
+    install();
+    _listen();
 })();
 
 // ─── END 59-prism-dfit-ui ─────────────────────────────────────────────

@@ -535,6 +535,46 @@ function PRiSM_registerTabPanel(n, spec) {
     return true;
 }
 
+// ── Workspace-mode extensions (generic; resolved at call time) ──
+// window.PRiSM_modeExt[key] = { label, … } adds a workspace mode next to the
+// built-in transient / decline / combined modes (docs: §3.12 of the DFIT
+// plan). Built-in keys are never taken from the registry.
+const PRiSM_BUILTIN_MODES = ['transient', 'decline', 'combined'];
+function PRiSM_modeExtFor(mode) {
+    if (typeof window === 'undefined' || typeof mode !== 'string' || PRiSM_BUILTIN_MODES.indexOf(mode) !== -1) return null;
+    const X = window.PRiSM_modeExt;
+    if (!X || typeof X !== 'object' || !Object.prototype.hasOwnProperty.call(X, mode)) return null;
+    const e = X[mode];
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+function PRiSM_modeExtKeys() {
+    const X = (typeof window !== 'undefined') ? window.PRiSM_modeExt : null;
+    if (!X || typeof X !== 'object') return [];
+    return Object.keys(X).filter(k => !!PRiSM_modeExtFor(k));
+}
+function PRiSM_activeModeExt() {
+    const P = (typeof window !== 'undefined') ? window.PRiSM : null;
+    return PRiSM_modeExtFor(P && P.mode);
+}
+// C7 mode filter: in an ext mode a panel mounts only when ext.showsPanel(n,
+// spec) is true (default: spec.modes lists the mode or the id is in
+// ext.panelAllow); in a built-in mode a spec whose modes list leaves the
+// mode out is skipped. Specs without modes mount as before.
+function PRiSM_panelModeAllows(n, spec) {
+    const P = (typeof window !== 'undefined') ? window.PRiSM : null;
+    const mode = (P && typeof P.mode === 'string') ? P.mode : 'transient';
+    const ext = PRiSM_modeExtFor(mode);
+    if (ext) {
+        if (typeof ext.showsPanel === 'function') {
+            try { return !!ext.showsPanel(n, spec); } catch (e) { return false; }
+        }
+        if (Array.isArray(spec.modes) && spec.modes.indexOf(mode) !== -1) return true;
+        return Array.isArray(ext.panelAllow) && ext.panelAllow.indexOf(String(spec.id)) !== -1;
+    }
+    if (Array.isArray(spec.modes)) return spec.modes.indexOf(mode) !== -1;
+    return true;
+}
+
 // Collapsed/expanded choice per "tab:id", kept for the session.
 const PRiSM_panelCollapsed = {};
 
@@ -566,6 +606,7 @@ function PRiSM_mountTabPanels(n) {
             try { show = !!spec.when(); } catch (e) { show = false; }
             if (!show) return;
         }
+        if (!PRiSM_panelModeAllows(n, spec)) return;
         const id = String(spec.id);
         const safe = id.replace(/[^A-Za-z0-9_-]/g, '_');
         const key = n + ':' + id;
@@ -699,7 +740,23 @@ const PRiSM_SHELL = (function () {
         { tab: 6, label: 'Regression' }
     ];
     const STEP_FOR_TAB = { 1: 1, 2: 3, 3: 4, 4: 4, 5: 4, 6: 4, 7: 5 };
-    const MODES = ['transient', 'decline', 'combined'];
+    const MODES = PRiSM_BUILTIN_MODES;
+    const modes = () => MODES.concat(PRiSM_modeExtKeys());
+    const extOf = (m) => PRiSM_modeExtFor(m);
+    const curExt = () => extOf(hasWin() && window.PRiSM ? window.PRiSM.mode : null);
+    // ext.stepView[n] → the renderer of step n (into #prism_stepview), else null
+    const extStepView = (n, ext) => {
+        ext = ext === undefined ? curExt() : ext;
+        const sv = ext && ext.stepView;
+        return (sv && typeof sv[n] === 'function') ? sv[n] : null;
+    };
+    function stepLabel(n, ext) {
+        ext = ext === undefined ? curExt() : ext;
+        const v = ext && ext.steps ? ext.steps[n] : null;
+        if (typeof v === 'string' && v) return v;
+        if (v && typeof v === 'object' && typeof v.label === 'string' && v.label) return v.label;
+        return STEPS[n].label;
+    }
     const TEST_TYPES = ['auto', 'drawdown', 'buildup', 'injection', 'falloff'];
     const TEST_LABELS = { auto: 'Auto-detect', drawdown: 'Drawdown', buildup: 'Buildup', injection: 'Injection',
                           falloff: 'Falloff', rate: 'Rate only (decline)', combined: 'Pressure + rate' };
@@ -730,6 +787,12 @@ const PRiSM_SHELL = (function () {
     }
 
     function tabForStep(n, P) {
+        const ext = curExt();
+        if (ext) {
+            if (extStepView(n, ext)) return null;
+            const et = ext.tabs ? parseInt(ext.tabs[n], 10) : NaN;
+            if (et >= 1 && et <= 7) return et;
+        }
         if (n === 4) return (P && [3, 4, 5, 6].indexOf(P.sub4) !== -1) ? P.sub4 : 3;
         return STEPS[n] ? STEPS[n].tab : null;
     }
@@ -739,13 +802,17 @@ const PRiSM_SHELL = (function () {
         if (!hasWin()) return { mode: 'transient', tab: 1, step: 1, sub4: 3, multiRate: [] };
         let P = window.PRiSM;
         if (!P || typeof P !== 'object') P = window.PRiSM = {};
-        if (MODES.indexOf(P.mode) === -1) P.mode = 'transient';
+        if (modes().indexOf(P.mode) === -1) P.mode = 'transient';
         let t = parseInt(P.tab, 10);
         if (!(t >= 1 && t <= 7)) t = 1;
         P.tab = t;
         let s = parseInt(P.step, 10);
         if (!(s >= 1 && s <= 5)) s = STEP_FOR_TAB[t];
-        if (s !== 2 && STEP_FOR_TAB[t] !== s) s = STEP_FOR_TAB[t];
+        const ext = extOf(P.mode);
+        if (ext) {
+            // ext mode: keep a step that has a step view; else the step of the tab
+            if (!extStepView(s, ext) && tabForStep(s, P) !== t) s = stepForTabExt(t, ext);
+        } else if (s !== 2 && STEP_FOR_TAB[t] !== s) s = STEP_FOR_TAB[t];
         P.step = s;
         if ([3, 4, 5, 6].indexOf(P.sub4) === -1) P.sub4 = (t >= 3 && t <= 6) ? t : 3;
         if (!Array.isArray(P.multiRate)) P.multiRate = [];
@@ -768,6 +835,13 @@ const PRiSM_SHELL = (function () {
         if (typeof P.getState !== 'function') P.getState = function () { return getState(); };
         if (typeof P.gotoStep !== 'function') P.gotoStep = function (n, o) { return gotoStep(n, o); };
         return P;
+    }
+
+    function stepForTabExt(t, ext) {
+        if (ext && ext.tabs) {
+            for (let n = 1; n <= 5; n++) if (parseInt(ext.tabs[n], 10) === t && !extStepView(n, ext)) return n;
+        }
+        return STEP_FOR_TAB[t];
     }
 
     function getState() {
@@ -866,10 +940,11 @@ const PRiSM_SHELL = (function () {
     function markup(P) {
         const steps = [1, 2, 3, 4, 5].map(n => {
             const s = STEPS[n];
+            const lbl = stepLabel(n);
             return '<button type="button" class="prism-step" id="prism_step_btn_' + n + '" data-prism-step="' + n + '"' +
-                   ' title="' + PRiSM_escHTML(s.label) + '">' +
+                   ' title="' + PRiSM_escHTML(lbl) + '">' +
                    '<span class="prism-step-num" aria-hidden="true">' + s.num + '</span>' +
-                   '<span class="prism-step-label">' + PRiSM_escHTML(s.label) + '</span>' +
+                   '<span class="prism-step-label">' + PRiSM_escHTML(lbl) + '</span>' +
                    '<span class="prism-step-tick" id="prism_step_tick_' + n + '"></span></button>';
         }).join('');
         const sub = SUBTABS.map(t =>
@@ -877,11 +952,17 @@ const PRiSM_SHELL = (function () {
         ).join('');
         const tt = ['auto', 'drawdown', 'buildup', 'injection', 'falloff', 'rate', 'combined'].map(v =>
             '<option value="' + v + '">' + PRiSM_escHTML(TEST_LABELS[v]) + '</option>'
+        ).join('') + PRiSM_modeExtKeys().map(k =>
+            '<option value="' + PRiSM_escHTML(k) + '">' + PRiSM_escHTML(extOf(k).label) + '</option>'
         ).join('');
         let tabs = '';
+        // an extension mode may mount the C7 panels of some tabs above the tab body (ext.panelsFirst = [tab numbers]): DFIT puts
+        // its Tests / demo card above the generic data cards; built-in modes keep the body first
+        const pxt = extOf(P.mode), pFirst = (pxt && Array.isArray(pxt.panelsFirst)) ? pxt.panelsFirst : [];
         for (let i = 1; i <= 7; i++) {
-            tabs += '<div id="prism_tab_' + i + '" class="prism-tab" style="display:none;"></div>' +
-                    '<div id="prism_tab_' + i + '_panels" class="prism-panels" style="display:none;"></div>';
+            const tb = '<div id="prism_tab_' + i + '" class="prism-tab" style="display:none;"></div>',
+                  pn = '<div id="prism_tab_' + i + '_panels" class="prism-panels" style="display:none;"></div>';
+            tabs += pFirst.indexOf(i) !== -1 ? pn + tb : tb + pn;
         }
         return '' +
         '<div class="prism-shell" id="prism_shell" data-mode="' + PRiSM_escHTML(P.mode) + '">' +
@@ -912,6 +993,8 @@ const PRiSM_SHELL = (function () {
             '<div class="prism-workspace" id="prism_workspace">' +
               '<div class="tabs prism-subtabs" id="prism_tabs" role="tablist" aria-label="Model and fit" style="display:none;">' + sub + '</div>' +
               '<div id="prism_step2" class="prism-stepview" style="display:none;"></div>' +
+              // generic step-view host, only in a workspace mode (built-in markup unchanged)
+              (curExt() ? '<div id="prism_stepview" class="prism-stepview" style="display:none;"></div>' : '') +
               tabs +
             '</div>' +
             '<div class="prism-railwrap" id="prism_railwrap">' +
@@ -1016,7 +1099,7 @@ const PRiSM_SHELL = (function () {
         }
         if (!shellPresent()) return;
         const P = state();
-        if (P.step === 2 && (t === 'prism:dataset-loaded' || t === 'prism:dataset-cleared') &&
+        if (P.step === 2 && !extStepView(2) && (t === 'prism:dataset-loaded' || t === 'prism:dataset-cleared') &&
             !(hasWin() && window.PRiSM_stepViews && typeof window.PRiSM_stepViews[2] === 'function')) {
             renderStep2();
         }
@@ -1084,6 +1167,16 @@ const PRiSM_SHELL = (function () {
 
     function stepStatus(snap) {
         snap = snap || snapshot();
+        const ext = curExt();
+        if (ext && typeof ext.status === 'function') {
+            let r = null;
+            try { r = ext.status(snap); } catch (e) { r = null; }
+            if (r && typeof r === 'object') {
+                const o = {};
+                for (let n = 1; n <= 5; n++) o[n] = (n === 5 && r[5] === undefined) ? true : !!r[n];
+                return o;
+            }
+        }
         const s = { 1: snap.has, 2: false, 3: false, 4: false, 5: true };
         if (snap.has) {
             s[2] = snap.activePeriod != null || snap.nPeriods <= 1;
@@ -1126,6 +1219,7 @@ const PRiSM_SHELL = (function () {
         const P = state();
         if (P.mode === 'decline') return 'rate';
         if (P.mode === 'combined') return 'combined';
+        if (extOf(P.mode)) return P.mode;
         return storedTestType(snap);
     }
 
@@ -1137,7 +1231,7 @@ const PRiSM_SHELL = (function () {
 
     function compactLabel(n) {
         const s = STEPS[n];
-        return s.num + ' ' + s.label + ' · ' + n + '/5' + (n < 5 ? ' ›' : '');
+        return s.num + ' ' + stepLabel(n) + ' · ' + n + '/5' + (n < 5 ? ' ›' : '');
     }
 
     function fmtNum(v) {
@@ -1167,7 +1261,7 @@ const PRiSM_SHELL = (function () {
         const compact = byId('prism_step_compact');
         if (compact) {
             compact.textContent = compactLabel(P.step);
-            compact.setAttribute('aria-label', 'Step ' + P.step + ' of 5, ' + STEPS[P.step].label + (P.step < 5 ? '. Go to the next step' : '. Go to step 1'));
+            compact.setAttribute('aria-label', 'Step ' + P.step + ' of 5, ' + stepLabel(P.step) + (P.step < 5 ? '. Go to the next step' : '. Go to step 1'));
         }
         const hist = (fnName, canName, id) => {
             const b = byId(id);
@@ -1194,7 +1288,7 @@ const PRiSM_SHELL = (function () {
             if (active) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
             const tick = byId('prism_step_tick_' + n);
             if (tick) tick.textContent = (n < 5 && done[n]) ? '✓' : '';
-            b.title = STEPS[n].label + (n < 5 ? (done[n] ? ' — done' : ' — to do') : '');
+            b.title = stepLabel(n) + (n < 5 ? (done[n] ? ' — done' : ' — to do') : '');
         }
     }
 
@@ -1248,11 +1342,19 @@ const PRiSM_SHELL = (function () {
             }
             return;
         }
+        const ext = curExt();
+        if (ext && typeof ext.rail === 'function') {
+            try { ext.rail(rail); return; } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode rail failed:', e); }
+        }
         fallbackRail(rail, snap || snapshot());
     }
 
-    function refresh() {
+    function refresh(opts) {
         if (!shellPresent()) return;
+        if (opts && opts.stepView) {
+            const P0 = state();
+            if (extStepView(P0.step)) renderStepView(P0.step);
+        }
         if (refreshing) { refreshAgain = true; return; }
         const railNow = byId('prism_rail');
         if (railNow && isNarrow() !== railNow.classList.contains('prism-rail--sheet')) applyViewport();
@@ -1281,11 +1383,15 @@ const PRiSM_SHELL = (function () {
             const p = byId('prism_tab_' + i + '_panels');
             if (p) p.style.display = (i === tab) ? '' : 'none';
         }
+        const ext = curExt();
+        const sv = extStepView(n, ext);
         const s2 = byId('prism_step2');
-        if (s2) s2.style.display = (n === 2) ? 'block' : 'none';
+        if (s2) s2.style.display = (n === 2 && !sv && !tab) ? 'block' : 'none';
+        const hostV = byId('prism_stepview');
+        if (hostV) hostV.style.display = sv ? 'block' : 'none';
         const sub = byId('prism_tabs');
         if (sub) {
-            sub.style.display = (n === 4) ? 'flex' : 'none';
+            sub.style.display = (n === 4 && !ext) ? 'flex' : 'none';
             const btns = sub.querySelectorAll ? sub.querySelectorAll('[data-prism-tab]') : [];
             Array.prototype.forEach.call(btns, b => {
                 const on = parseInt(b.getAttribute('data-prism-tab'), 10) === tab;
@@ -1293,6 +1399,26 @@ const PRiSM_SHELL = (function () {
                 b.setAttribute('aria-selected', on ? 'true' : 'false');
             });
         }
+    }
+
+    // ext step views render into #prism_stepview (any step n)
+    function renderStepView(n) {
+        const host = byId('prism_stepview');
+        const fn = extStepView(n);
+        if (!host || !fn) return false;
+        try { fn(host); }
+        catch (e) {
+            if (typeof console !== 'undefined') console.warn('PRiSM step view ' + n + ' failed:', e);
+            PRiSM_renderTabError(host, 0, e);
+            const title = host.querySelector ? host.querySelector('.card-title') : null;
+            if (title) title.textContent = stepLabel(n) + ' could not be displayed';
+        }
+        return true;
+    }
+    function renderStepHost(n, tab) {
+        if (extStepView(n)) renderStepView(n);
+        else if (tab) PRiSM_renderTab(tab);
+        else renderStep2();
     }
 
     function renderStep2() {
@@ -1355,8 +1481,7 @@ const PRiSM_SHELL = (function () {
         closeMenu();
         if (!shellPresent()) return true;
         showStep(n, tab);
-        if (tab) PRiSM_renderTab(tab);
-        else renderStep2();
+        renderStepHost(n, tab);
         const before = refreshCount;
         PRiSM_emit('prism:step-changed', { step: n, prev: prev, tab: tab });
         if (refreshCount === before) refresh();   // no listener reached (e.g. events unavailable)
@@ -1370,11 +1495,20 @@ const PRiSM_SHELL = (function () {
     }
 
     function setMode(m) {
-        if (MODES.indexOf(m) === -1) return false;
+        if (modes().indexOf(m) === -1) return false;
         const P = state();
-        const changed = P.mode !== m;
+        const prev = P.mode;
+        const changed = prev !== m;
+        const prevExt = changed ? extOf(prev) : null;
+        if (prevExt && typeof prevExt.onLeave === 'function') {
+            try { prevExt.onLeave(m); } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode onLeave failed:', e); }
+        }
         P.mode = m;
         if (body && body.querySelector && body.querySelector('#prism_shell')) renderPRiSM(body);
+        const ext = changed ? extOf(m) : null;
+        if (ext && typeof ext.onEnter === 'function') {
+            try { ext.onEnter(prev); } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode onEnter failed:', e); }
+        }
         if (changed) PRiSM_emit('prism:mode-changed', { mode: m });
         return true;
     }
@@ -1383,6 +1517,7 @@ const PRiSM_SHELL = (function () {
         const P = state();
         if (v === 'rate') { setMode('decline'); return; }
         if (v === 'combined') { setMode('combined'); return; }
+        if (extOf(v)) { setMode(v); return; }
         if (TEST_TYPES.indexOf(v) === -1) return;
         if (typeof window.PRiSM_setWell === 'function') {
             try { window.PRiSM_setWell({ testType: v }, { source: 'user' }); }
@@ -1404,6 +1539,14 @@ const PRiSM_SHELL = (function () {
             if (r && typeof r.then === 'function') {
                 r.then(() => refresh(), (e) => { setStatus('Analysis failed: ' + (e && e.message ? e.message : e), 'bad'); refresh(); });
             } else refresh();
+            return;
+        }
+        const ext = curExt();
+        if (ext && typeof ext.analyse === 'function') {
+            let r2;
+            try { r2 = ext.analyse({}); }
+            catch (e) { setStatus('Analysis failed: ' + (e && e.message ? e.message : e), 'bad'); return; }
+            if (r2 && typeof r2.then === 'function') r2.then(() => refresh(), () => refresh()); else refresh();
             return;
         }
         // Without the one-click pipeline, open the regression view.
@@ -1444,10 +1587,19 @@ const PRiSM_SHELL = (function () {
             ];
         }
         const items = [{ label: 'Open the report (step ⑤)', run: () => gotoStep(5) }];
+        // ext mode: the PTA results CSV and XML describe the transient model, not the extension's results, so they are left
+        // out there (the extension lists its own exports below); built-in modes keep every item
+        const ext = curExt();
         if (typeof W.PRiSM_exportReportPDF === 'function') items.push({ label: 'Report as PDF', run: () => W.PRiSM_exportReportPDF() });
-        if (typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
+        if (!ext && typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
         if (typeof W.PRiSM_exportPlotPNG === 'function') items.push({ label: 'Current plot as PNG', run: () => W.PRiSM_exportPlotPNG(st.activePlot || 'bourdet') });
-        if (typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
+        if (!ext && typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
+        // ext mode: its own export items [{id, label, fn}] after the built-in ones
+        if (ext && Array.isArray(ext.exportItems)) {
+            ext.exportItems.forEach(x => {
+                if (x && typeof x.fn === 'function' && x.label) items.push({ label: String(x.label), run: () => x.fn() });
+            });
+        }
         return items;
     }
 
@@ -1537,8 +1689,7 @@ const PRiSM_SHELL = (function () {
         // and their persistence exist whichever step is open.
         if (tab !== 1) PRiSM_renderTab(1, { silent: true });
         showStep(P.step, tab);
-        if (tab) PRiSM_renderTab(tab);
-        else renderStep2();
+        renderStepHost(P.step, tab);
         refresh();
     }
 
@@ -1569,7 +1720,11 @@ if (typeof window !== 'undefined') {
     window.PRiSM_gotoStep = function (n, opts) { return PRiSM_SHELL.gotoStep(n, opts); };
     window.PRiSM_currentStep = function () { return PRiSM_SHELL.currentStep(); };
     window.PRiSM_stepStatus = function () { return PRiSM_SHELL.stepStatus(); };
-    window.PRiSM_refreshShell = function () { return PRiSM_SHELL.refresh(); };
+    window.PRiSM_refreshShell = function (opts) { return PRiSM_SHELL.refresh(opts); };
+    window.PRiSM_activeModeExt = PRiSM_activeModeExt;
+    window.PRiSM_modeExtFor = PRiSM_modeExtFor;
+    window.PRiSM_panelModeAllows = PRiSM_panelModeAllows;
+    window.PRiSM_modes = function () { return PRiSM_BUILTIN_MODES.concat(PRiSM_modeExtKeys()); };
 }
 
 
@@ -4720,6 +4875,62 @@ function PRiSM_plot_zoomBox(S, cur, g) {
     return true;
 }
 
+// opts.hoverEvent: dispatch 'prism:plot-hover' {plotKey, x, y, index} from the
+// canvas on pointermove inside the plot (world x / y; index = the nearest
+// plotted point within 30 px, else null). No timer, no throttle object.
+function PRiSM_plot_emitHover(canvas, cur, pos) {
+    try {
+        const ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function' || typeof ax.fromY !== 'function') return;
+        if (!PRiSM_plot_inPlot(cur.plot, pos)) return;
+        const x = ax.fromX(pos.x), y = ax.fromY(pos.y);
+        if (!isFinite(x) || !isFinite(y)) return;
+        let index = null, bd = 900;
+        const pts = cur.points || [];
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+            const px = ax.toX(p[0]), py = ax.toY(p[1]);
+            if (!isFinite(px) || !isFinite(py)) continue;
+            const dd = (px - pos.x) * (px - pos.x) + (py - pos.y) * (py - pos.y);
+            if (dd < bd) { bd = dd; index = i; }
+        }
+        const CE = PRiSM_PLOT_G.CustomEvent;
+        if (typeof CE !== 'function' || typeof canvas.dispatchEvent !== 'function') return;
+        canvas.dispatchEvent(new CE('prism:plot-hover', { bubbles: true,
+            detail: { plotKey: cur.plotKey || null, x: x, y: y, index: index } }));
+    } catch (_) { /* a read-out event is a nicety — never break a gesture */ }
+}
+
+// Draw on the cached overlay frame of a finished plot without a full redraw
+// (a linked cursor): the frame is restored, then drawFn(ctx, axes, plot) runs
+// inside save / restore. drawFn null only restores the frame. → true when drawn.
+function PRiSM_plot_overlay(canvas, drawFn) {
+    const S = PRiSM_plot_getState(canvas);
+    const cur = S && S.cur;
+    if (!cur || cur.empty || !cur.ctx) return false;
+    if (!S.snap) S.snap = PRiSM_plot_snapshot(cur.canvas);
+    if (!S.snap) return false;
+    const ctx = cur.ctx;
+    try {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(S.snap, 0, 0);
+        ctx.restore();
+    } catch (_) { return false; }
+    if (typeof drawFn !== 'function') return true;
+    try {
+        ctx.save();
+        drawFn(ctx, canvas._prismAxes || null, cur.plot);
+        ctx.restore();
+    } catch (e) {
+        try { ctx.restore(); } catch (_) { /* ignore */ }
+        try { console.warn('PRiSM plot overlay failed:', e && e.message); } catch (_) { /* ignore */ }
+        return false;
+    }
+    return true;
+}
+
 function PRiSM_plot_makeHandlers(canvas, S) {
     const G = PRiSM_PLOT_G;
     const LONG_PRESS_MS = 600, SLOP = 8;
@@ -4741,6 +4952,13 @@ function PRiSM_plot_makeHandlers(canvas, S) {
     };
 
     const down = function (e) {
+        // Pointer-owner hook (generic): a layer that owns the gesture (a
+        // draggable handle) returns true and the box / pan gesture is skipped.
+        if (typeof canvas._prismPointerOwner === 'function') {
+            let owned = false;
+            try { owned = canvas._prismPointerOwner(e) === true; } catch (_) { owned = false; }
+            if (owned) return;
+        }
         const cur = live();
         if (!cur || !S.pointers) return;
         const o = cur.opts || {};
@@ -4787,6 +5005,7 @@ function PRiSM_plot_makeHandlers(canvas, S) {
         if (!cur || !S.pointers) return;
         const o = cur.opts || {};
         const pos = PRiSM_plot_localXY(canvas, S, e);
+        if (o.hoverEvent) PRiSM_plot_emitHover(canvas, cur, pos);
         const rec = S.pointers.get(e.pointerId);
         if (rec) { rec.x = pos.x; rec.y = pos.y; }
         const g = S.gesture;
@@ -4945,7 +5164,7 @@ function PRiSM_plot_install(canvas, S) {
     if (!cur) return;
     const o = cur.opts || {};
     const pan = !!o.dragZoom && !cur.empty;
-    const hov = !!o.hover && !cur.empty;
+    const hov = (!!o.hover || !!o.hoverEvent) && !cur.empty;
     const st = canvas.style;
     if (st) {
         if (pan) {
@@ -5040,6 +5259,45 @@ function PRiSM_compute_bourdet(t, dp, L) {
     const n = t.length;
     const d = new Array(n).fill(NaN);
     if (n < 3) return d;
+    // O(n) path: ln t is computed once and the two window edges move
+    // monotonically. It needs every t finite, > 0 and non-decreasing (the
+    // outward walk of the old loop then stops at exactly these edges, and
+    // every difference below is the same double); otherwise the old loop runs.
+    const lnx = new Array(n);
+    let mono = true;
+    for (let k = 0; k < n; k++) {
+        const tk = t[k];
+        if (!isFinite(tk) || tk <= 0 || (k > 0 && !(tk >= t[k - 1]))) { mono = false; break; }
+        lnx[k] = Math.log(tk);
+    }
+    if (!mono) return PRiSM_compute_bourdet_loop(t, dp, L, d);
+    let m = -1, r = 1;     // m: largest j ≤ i-1 with lnT - lnx[j] >= L (-1 = none); r: right edge
+    for (let i = 1; i < n - 1; i++) {
+        if (!isFinite(dp[i])) continue;
+        let i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            const lnT = lnx[i];
+            while (m + 1 <= i - 1 && lnT - lnx[m + 1] >= L) m++;
+            i1 = m > 0 ? m : 0;
+            if (r < i + 1) r = i + 1;
+            while (r < n - 1 && lnx[r] - lnT < L) r++;
+            i2 = r;
+        }
+        const dl1 = lnx[i] - lnx[i1];
+        const dl2 = lnx[i2] - lnx[i];
+        const dlT = lnx[i2] - lnx[i1];
+        if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
+        const a = (dp[i] - dp[i1]) / dl1 * (dl2 / dlT);
+        const b = (dp[i2] - dp[i]) / dl2 * (dl1 / dlT);
+        d[i] = a + b;
+    }
+    return d;
+}
+
+// The original outward-walking loop: used when t is not finite, positive and
+// non-decreasing (NaN, t ≤ 0, unsorted), so those sets behave exactly as before.
+function PRiSM_compute_bourdet_loop(t, dp, L, d) {
+    const n = t.length;
     for (let i = 1; i < n - 1; i++) {
         if (!isFinite(t[i]) || t[i] <= 0 || !isFinite(dp[i])) continue;
         // Walk outward to find points that are at least L apart in ln t
@@ -6159,6 +6417,11 @@ function PRiSM_plot_typecurve_overlay(canvas, data, opts) {
         PRiSM_plot_message: PRiSM_plot_message,
         PRiSM_plot_cumulative: PRiSM_plot_cumulative,
         PRiSM_plot_superposition_x: PRiSM_plot_superposition_x,
+        PRiSM_plot_finish: PRiSM_plot_finish,
+        PRiSM_plot_straightLine: PRiSM_plot_straightLine,
+        PRiSM_plot_keyPoint: PRiSM_plot_keyPoint,
+        PRiSM_plot_clip: PRiSM_plot_clip,
+        PRiSM_plot_overlay: PRiSM_plot_overlay,
         PRiSM_plotResetView: PRiSM_plotResetView,
         PRiSM_plotSetView: PRiSM_plotSetView,
         PRiSM_plotGetView: PRiSM_plotGetView

@@ -794,7 +794,8 @@ def('StepDown', true, {
   refused: 'text|null', resid: arr('num|null'), corr: 'any',
 }, { fail: true });
 def('StepRate', true, {
-  ok: 'bool', qStar: 'rate', fep: 'psia', band: P3, b1: 'num', b2: 'num', fTest: { F: 'nonneg', p: 'frac' }, breakFound: 'bool',
+  // band = the fracture-extension pressure band (psia), qStarBand = the q* band (bbl/min); both from the bootstrap
+  ok: 'bool', qStar: 'rate', fep: 'psia', band: P3, qStarBand: orNull(P3), b1: 'num', b2: 'num', fTest: { F: 'nonneg', p: 'frac' }, breakFound: 'bool',
   steps: arr({ q: 'rate', pEnd: 'psia', dpdt: 'num', stabilised: 'bool' }), why: 'text|null',
 }, { fail: true });
 def('Ramp', true, {
@@ -1330,15 +1331,33 @@ function genRun(ds) {
   // ── triage ──
   const triage = {
     ok: true, light: 'green', verdict: 'interpretable',
+    // the 21 WPT checks in CHECKS order (49-calc-dfit-triage.js), evidence ids Q1–Q21; Q0 is the triage summary
     checks: [
-      { id: 'units', title: 'Units and time base', level: 'pass', value: null, threshold: null, text: 'Columns mapped, time monotonic, no gaps.', ev: ['Q1'] },
-      { id: 'stiffness', title: 'Wellbore stiffness', level: 'pass', value: 1.0, threshold: 2, text: 'Ramp storage equals the theory value (ratio 1.00).', ev: ['Q2'] },
-      { id: 'shutin', title: 'Shut-in duration', level: 'pass', value: 72, threshold: null, text: 'The shut-in covers 14 closure times.', ev: ['Q3'] },
-      { id: 'noise', title: 'Derivative noise', level: 'pass', value: 0.001, threshold: 0.05, text: 'Derivative noise at the pick is 0.1 % of D.', ev: ['Q4'] },
+      { id: 'units', title: 'Units and time base', level: 'pass', value: 0, threshold: 0.01, text: 'Columns mapped, time monotonic, no significant gaps.', ev: ['Q1'] },
+      { id: 'clock', title: 'Clock alignment', level: 'pass', value: -5.6, threshold: 1, text: 'Rate and pressure clocks agree within 7.3 s (offset -5.6 s).', ev: ['Q2'] },
+      { id: 'stiffness', title: 'Wellbore stiffness', level: 'pass', value: 1, threshold: 2, text: 'Ramp storage 7.908e-4 bbl/psi is 1.00 times the theory value.', ev: ['Q3'] },
+      { id: 'air', title: 'Air or gas cross-check', level: 'na', value: null, threshold: 2, text: 'The air cross-check needs the ramp storage, the theory value and a hammer period with a known reflector.', ev: ['Q4'] },
+      { id: 'surface', title: 'Surface liquid-supported', level: 'na', value: null, threshold: 15, text: 'No surface pressure channel.', ev: ['Q5'] },
+      { id: 'hydrostatic', title: 'Static hydrostatic check', level: 'na', value: null, threshold: 0.02, text: 'Needs a bottomhole and a surface channel before pumping and the datum TVD.', ev: ['Q6'] },
+      { id: 'isolation', title: 'Gauge isolation', level: 'pass', value: 40.539, threshold: 2, text: 'The falloff has a decline shape.', ev: ['Q7'] },
+      { id: 'sampling', title: 'Sampling vs hammer', level: 'pass', value: 153.06, threshold: 10, text: '153.1 samples per 2L/c.', ev: ['Q8'] },
+      { id: 'shutin', title: 'Shut-in duration', level: 'pass', value: 0.9, threshold: 4.41, text: 'Valve closed in 0.9 s against 2L/c = 4.4 s.', ev: ['Q9'] },
+      { id: 'stepdown', title: 'Step-down quality', level: 'na', value: null, threshold: 4, text: 'No step-down in the record.', ev: ['Q10'] },
+      { id: 'steprate', title: 'Step-rate stabilisation', level: 'na', value: null, threshold: 1, text: 'No step-rate test in the record.', ev: ['Q11'] },
+      { id: 'friction', title: 'Surface-gauge friction share', level: 'na', value: null, threshold: 1, text: 'No pipe friction in the step-down (bottomhole gauge or no step-down).', ev: ['Q12'] },
+      { id: 'bleed', title: 'Bleed-off window', level: 'na', value: null, threshold: null, text: 'Needs the bleed-off prediction and G_min.', ev: ['Q13'] },
+      { id: 'volume', title: 'Volume reconciliation', level: 'na', value: null, threshold: 0.05, text: 'No strap or stroke volume entered.', ev: ['Q14'] },
+      { id: 'temperature', title: 'Temperature channel', level: 'na', value: null, threshold: null, text: 'No temperature channel; the thermal checks are not run.', ev: ['Q15'] },
+      { id: 'gaugeThermal', title: 'Gauge thermal transient', level: 'na', value: null, threshold: 1, text: 'No temperature channel.', ev: ['Q16'] },
+      { id: 'noise', title: 'Derivative noise', level: 'pass', value: 0, threshold: 0.05, text: 'Derivative noise after G_min is 0.0 % of G dP/dG.', ev: ['Q17'] },
+      { id: 'thermal', title: 'Thermal correlation', level: 'na', value: null, threshold: 0.3, text: 'No temperature channel.', ev: ['Q18'] },
+      { id: 'sink', title: 'Constant-rate sink', level: 'pass', value: 0, threshold: 0.3, text: 'No constant-rate sink before closure.', ev: ['Q19'] },
+      { id: 'tides', title: 'Tides and barometric', level: 'na', value: null, threshold: 0.1, text: 'No tidal or barometric analysis.', ev: ['Q20'] },
+      { id: 'annulus', title: 'Annulus communication', level: 'na', value: null, threshold: 50, text: 'No annulus pressure channel.', ev: ['Q21'] },
     ],
     windows: { usable: [[fx(R.ts, 9), ds.t[n - 1]]], excluded: [] }, blunders: [],
     repump: { verdict: 'continue', rules: [{ id: 'R1', level: 'pass', text: 'Breakdown seen at 8,188 psia.' }, { id: 'R2', level: 'pass', text: 'ISIP gradient 0.760 psi/ft lies between the pore and overburden gradients.' }], ack: false },
-    grade: { letter: 'A', why: ['Triage green; closure single with label high; p_i label medium.'] }, salvage: [], ev: ['Q1'],
+    grade: { letter: 'A', why: ['Triage green; closure single with label high; p_i label medium.'] }, salvage: [], ev: ['Q0'],
   };
   const grade = { letter: 'A', why: ['Triage green; closure single with label high (uncalibrated); p_i label medium.'] };
   const run = {
@@ -1468,10 +1487,8 @@ function genEvidence(run) {
   const items = {}, order = [];
   const add = (id, title, values, pathStr, text) => { items[id] = { id, group: id[0], title, values, path: pathStr, text }; order.push(id); };
   const v = (label, value, unit, dp) => ({ label, value, unit, dp });
-  add('Q1', 'Triage', [v('light', 'green', '', 0)], 'triage', 'All checks pass.');
-  add('Q2', 'Wellbore stiffness', [v('ratio', 1.0, '', 2)], 'triage.checks[1]', 'Ramp storage equals the theory value.');
-  add('Q3', 'Shut-in duration', [v('shut-in', 72, 'h', 0)], 'triage.checks[2]', 'Shut-in long enough for after-closure analysis.');
-  add('Q4', 'Derivative noise', [v('noise', 0.1, '%', 1)], 'triage.checks[3]', 'Derivative noise at the pick.');
+  add('Q0', 'Triage', [v('light', 'green', '', 0)], 'triage', 'Triage result of this run.');
+  run.triage.checks.forEach((c, i) => add(c.ev[0], 'Triage: ' + c.title, [v('value', c.value, '', 3)], 'triage.checks[' + i + ']', c.text));
   add('E1', 'Events', [v('tp', 5.0, 'min', 1), v('V_i', 25, 'bbl', 1)], 'events', 'Pump start, breakdown and shut-in from the rate record.');
   add('H1', 'Water-hammer ISIP', [v('ISIP', 7605.0, 'psia', 0)], 'isip.candidates[0]', 'Wave family member.');
   add('I1', 'ISIP', [v('ISIP', run.isip.value, 'psia', 0), v('spread', run.isip.spread, 'psi', 1)], 'isip', 'Inverse-variance mean over the families.');
@@ -1616,11 +1633,11 @@ function genSamples(run) {
     StepDown: { ok: true, pFrac: 7595.5, se: { pFrac: 3.0, a: 0.05, b: 4.0 }, a: 1.505, b: 140.9, beta: 0.5, drift: 0, nOpen: 11.9,
                 nOpenBand: { p10: 8.9, p50: 11.7, p90: 16.0, driver: 'perforation discharge coefficient' }, at: { dpPerf: 37.6, dpNwb: 315.0, dpPipe: null },
                 label: 'high', refused: null, resid: [0.4, -0.3, 0.1, -0.2], corr: { ab: -0.62 } },
-    StepRate: { ok: true, qStar: 3.2, fep: 7480.0, band: { p10: 2.9, p50: 3.2, p90: 3.5 }, b1: 410.0, b2: 52.0, fTest: { F: 38.4, p: 0.001 }, breakFound: true,
+    StepRate: { ok: true, qStar: 3.2, fep: 7480.0, band: { p10: 7470.0, p50: 7480.0, p90: 7492.0 }, qStarBand: { p10: 2.9, p50: 3.2, p90: 3.5 }, b1: 410.0, b2: 52.0, fTest: { F: 38.4, p: 0.001 }, breakFound: true,
                 steps: [{ q: 0.5, pEnd: 5060, dpdt: 0.2, stabilised: true }, { q: 1.5, pEnd: 5880, dpdt: 0.3, stabilised: true }, { q: 2.5, pEnd: 6700, dpdt: 0.4, stabilised: true },
                         { q: 3.5, pEnd: 7495, dpdt: 0.6, stabilised: true }, { q: 4.5, pEnd: 7547, dpdt: 0.5, stabilised: true }], why: null },
     Ramp: { ok: true, kind: 'pre-breakdown', VwCwRamp: sf(R.VwCw, 4), knee: null, band: null, slopes: { s1: fx(1 / R.VwCw, 1), s2: null }, stiffRatio: null, nwbCorr: null, label: 'high', why: null },
-    Hammer: { ok: true, why: null, c: R.c, cSource: 'korteweg', T: fx(T, 3), tau: 6.5, delta: 0.11, A: 115.0, phi: 0.0, isip: 7605.0, regime: 'ringing',
+    Hammer: { ok: true, why: null, c: R.c, cSource: 'korteweg', T: fx(T, 3), tau: 6.5, delta: fx(fx(T, 3) / 6.5, 4), A: 115.0, phi: 0.0, isip: 7605.0, regime: 'ringing',
               Lquarter: fx(R.c * T / 4, 0), Lhalf: fx(R.c * T / 2, 0), reflectorMatch: 'perfs', gammaDecay: 0.15,
               joukowsky: { expected: fx(jouk, 1), measured: 228.0, ratio: fx(228 / jouk, 3) }, VwCwHammer: sf(R.VwCw, 4), tEnd: fx(R.ts + 60 / 3600, 6),
               sampling: { hz: 50, per2Lc: fx(50 * twoLc, 1), ok: true } },

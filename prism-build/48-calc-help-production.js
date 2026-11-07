@@ -19,7 +19,7 @@ function crop(id, target, alt, caption, co) { return { id: id, view: 'desktop', 
 function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir**.', shot: 'view' }; }
 
 var prism = {
-  route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
+  route: 'prism', reviewed: V, reviewedSrc: 'bfc37c3e', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',

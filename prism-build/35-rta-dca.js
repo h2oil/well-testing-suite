@@ -1566,6 +1566,13 @@ function PRiSM_rtaLinearFlow(rta, opts) {
         if (!lf && _st()) lf = _st().lastFit;
         if (lf && lf.phys && _pos(+lf.phys.k) && lf.kind !== 'rate') { k = +lf.phys.k; kSrc = 'pressure fit'; }
     }
+    // No input and no fit: a k constraint published by another PRiSM layer
+    // (DFIT after-closure), resolved at call time.
+    if (!k && typeof G.PRiSM_dfit_kConstraint === 'function') {
+        var dk = null;
+        try { dk = G.PRiSM_dfit_kConstraint(); } catch (e) { dk = null; }
+        if (dk && _pos(+dk.k)) { k = +dk.k; kSrc = 'DFIT after-closure'; }
+    }
     if (k && out.xf_sqrt_k) { out.k = k; out.kSource = kSrc; out.xf = out.xf_sqrt_k / Math.sqrt(k); }
     return out;
 }

@@ -264,6 +264,16 @@ function _save() {
     if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
 }
 function _mode() { return (G.PRiSM && G.PRiSM.mode) || 'transient'; }
+// Workspace-mode extension (PRiSM_modeExt, read at call time); null for the
+// built-in modes and unknown keys.
+function _modeExt(mode) {
+    mode = mode || _mode();
+    if (mode === 'transient' || mode === 'decline' || mode === 'combined') return null;
+    var X = G.PRiSM_modeExt;
+    var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, mode)) ? X[mode] : null;
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+function _isExtModeKey(m) { return typeof m === 'string' && !!_modeExt(m); }
 function _hasData(ds) { return !!(ds && ds.t && ds.t.length); }
 function _defer(fn) {
     if (typeof G.setTimeout === 'function') G.setTimeout(fn, 20);
@@ -1208,7 +1218,16 @@ function _runPostDrawHooks(info) {
     }
 }
 
-function _modeAllows(entryMode, mode) {
+function _modeAllows(entryMode, mode, entry, key) {
+    var ext = _modeExt(mode);
+    if (ext) {
+        if (typeof ext.showsPlot === 'function') {
+            try { return !!ext.showsPlot(entry || { mode: entryMode }, key); } catch (e) { return false; }
+        }
+        return entryMode === mode;
+    }
+    // entries of an ext mode never show in another mode, combined included
+    if (_isExtModeKey(entryMode)) return false;
     if (mode === 'combined') return true;
     var m = entryMode || 'transient';
     return m === 'both' || m === mode;
@@ -1217,7 +1236,17 @@ function _normaliseActivePlot(mode) {
     var st = _st();
     mode = mode || _mode();
     var e = REG[st.activePlot];
-    if (e && _modeAllows(e.mode, mode)) return st.activePlot;
+    if (e && _modeAllows(e.mode, mode, e, st.activePlot)) return st.activePlot;
+    var ext = _modeExt(mode);
+    if (ext) {
+        var dk = ext.defaultPlot;
+        st.activePlot = (typeof dk === 'string' && REG[dk]) ? dk : null;
+        if (!st.activePlot) {
+            for (var k0 in REG) if (Object.prototype.hasOwnProperty.call(REG, k0) && REG[k0] && _modeAllows(REG[k0].mode, mode, REG[k0], k0)) { st.activePlot = k0; break; }
+        }
+        if (!st.activePlot) st.activePlot = 'bourdet';
+        return st.activePlot;
+    }
     st.activePlot = (mode === 'decline') ? 'rateLog' : 'bourdet';
     if (!REG[st.activePlot]) {
         for (var k in REG) if (Object.prototype.hasOwnProperty.call(REG, k) && _modeAllows(REG[k].mode, mode)) { st.activePlot = k; break; }
@@ -1400,11 +1429,16 @@ function _resetCanvasView(c) {
     try { delete c._prismAxes; } catch (e) { c._prismAxes = null; }
     try { delete c._prismOriginalScale; } catch (e) { c._prismOriginalScale = null; }
 }
-function PRiSM_drawActivePlot(canvasArg) {
-    var canvas = (canvasArg && typeof canvasArg.getContext === 'function') ? canvasArg : _el('prism_plot_canvas');
-    if (!canvas) return false;
+// PRiSM_drawPlot(canvas, plotKey, extraOpts): one registry plot on any canvas —
+// builds {data, opts} from the entry, calls entry.fn, leaves _prismAxes with
+// this plotKey and runs the post-draw hooks once for it. extraOpts override the
+// built opts. PRiSM_drawActivePlot is this call on #prism_plot_canvas.
+function PRiSM_drawPlot(canvas, plotKey, extraOpts) {
+    if (!canvas || typeof canvas.getContext !== 'function') return false;
+    return _drawPlotOn(canvas, String(plotKey), extraOpts || null, false);
+}
+function _drawPlotOn(canvas, plotKey, extraOpts, active) {
     var st = _st();
-    var plotKey = _normaliseActivePlot();
     var entry = REG[plotKey];
     var built;
     try { built = PRiSM_buildPlotData(plotKey); }
@@ -1419,16 +1453,29 @@ function PRiSM_drawActivePlot(canvasArg) {
         return false;
     }
     var opts = { hover: true, dragZoom: true, showLegend: true, smoothL: st.bourdetL, plotKey: plotKey };
-    if (_resetViewOnce) { opts.resetView = true; _resetViewOnce = false; }
+    if (active && _resetViewOnce) { opts.resetView = true; _resetViewOnce = false; }
     for (var k in built.opts) if (Object.prototype.hasOwnProperty.call(built.opts, k)) opts[k] = built.opts[k];
+    if (!active) {
+        if (extraOpts && typeof extraOpts === 'object') {
+            for (var k2 in extraOpts) if (Object.prototype.hasOwnProperty.call(extraOpts, k2)) opts[k2] = extraOpts[k2];
+        }
+        opts.plotKey = plotKey;
+    }
     try { fn(canvas, built.data, opts); }
     catch (e) {
         try { console.error('PRiSM plot render error:', e); } catch (_) { /* ignore */ }
         _drawCanvasMessage(canvas, 'Render error: ' + (e && e.message), '#f85149');
         return false;
     }
+    if (!active) { try { if (canvas._prismAxes && typeof canvas._prismAxes === 'object') canvas._prismAxes.plotKey = plotKey; } catch (_) { /* frozen */ } }
     _runPostDrawHooks({ canvas: canvas, plotKey: plotKey, data: built.data, opts: opts, axes: canvas._prismAxes || null });
     return true;
+}
+function PRiSM_drawActivePlot(canvasArg) {
+    var canvas = (canvasArg && typeof canvasArg.getContext === 'function') ? canvasArg : _el('prism_plot_canvas');
+    if (!canvas) return false;
+    var plotKey = _normaliseActivePlot();
+    return _drawPlotOn(canvas, plotKey, null, true);
 }
 // Internal redraws go through window so any wrapper sees them.
 function _redraw() {
@@ -1481,6 +1528,11 @@ function _catOf(e) { return (e && e.category) ? String(e.category) : 'other'; }
 function _catTitle(c) { return CAT_TITLES[c] || _titleCase(c); }
 function _kindOf(e) { return (e && e.kind === 'rate') ? 'rate' : 'pressure'; }
 function _modeShows(e, mode) {
+    var ext = _modeExt(mode);
+    if (ext) {
+        if (typeof ext.showsModel === 'function') { try { return !!ext.showsModel(e); } catch (er) { return false; } }
+        return _kindOf(e) !== 'rate';
+    }
     if (mode === 'decline') return _kindOf(e) === 'rate';
     if (mode === 'transient') return _kindOf(e) !== 'rate';
     return true;
@@ -1544,6 +1596,8 @@ var WELL_NAMES = { q: 'rate q', B: 'formation volume factor B', mu: 'viscosity �
     h: 'thickness h', phi: 'porosity φ', rw: 'wellbore radius rw', pi: 'initial pressure pi', tp: 'producing time tp', pwf0: 'pwf at shut-in' };
 function _wellBanner(well, context) {
     if (!well) return '';
+    // an extension workspace mode (DFIT) has its own inputs and computes p_i itself: no C1 defaults banner there
+    if (typeof G.PRiSM_activeModeExt === 'function' && G.PRiSM_activeModeExt()) return '';
     var miss = well.missing || [], def = well.defaulted || [];
     if (!miss.length && !def.length) return '';
     var list = function (a) { return a.map(function (k) { return WELL_NAMES[k] || k; }).join(', '); };
@@ -1718,11 +1772,17 @@ function PRiSM_renderPlotsTab(hostEl, ropts) {
     if (st.activePeriod != null && !(st.activePeriod >= 0 && st.activePeriod < periods.length && showPeriods)) st.activePeriod = null;
     var tt = ad ? String(ad.testType || '') : '';
     var showTimeFn = !!ad && (/buildup|falloff/.test(tt) || periods.length > 1 || (ad.periods && ad.periods.length > 1));
+    // ext.plotsTab.hide: ['period', 'timeFn', 'overlay'] hides those controls
+    var tabExt = _modeExt(mode);
+    var hideList = (tabExt && tabExt.plotsTab && Array.isArray(tabExt.plotsTab.hide)) ? tabExt.plotsTab.hide : [];
+    var hideOverlay = hideList.indexOf('overlay') !== -1;
+    if (hideList.indexOf('period') !== -1) showPeriods = false;
+    if (hideList.indexOf('timeFn') !== -1) showTimeFn = false;
 
     var pick = '';
     for (var key in REG) {
         if (!Object.prototype.hasOwnProperty.call(REG, key) || !REG[key]) continue;
-        if (!_modeAllows(REG[key].mode, mode)) continue;
+        if (!_modeAllows(REG[key].mode, mode, REG[key], key)) continue;
         var lbl = REG[key].label || key;
         if (mode === 'combined' && REG[key].mode === 'decline') lbl = 'Rate · ' + lbl;
         pick += '<option value="' + _esc(key) + '"' + (key === st.activePlot ? ' selected' : '') + '>' + _esc(lbl) + '</option>';
@@ -1755,7 +1815,7 @@ function PRiSM_renderPlotsTab(hostEl, ropts) {
             '<label class="prism-field" title="Bourdet derivative smoothing window, in natural-log cycles"><span>Derivative smoothing L</span>' +
               '<input type="number" id="prism_plot_L" min="0" max="0.5" step="0.01" value="' + _esc(String(st.bourdetL)) + '" style="width:72px;"></label>' +
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_autoL">Auto L</button>' +
-            '<label class="prism-field"><input type="checkbox" id="prism_plot_overlay"' + (st.showOverlay !== false ? ' checked' : '') + '><span>Model overlay</span></label>' +
+            (hideOverlay ? '' : '<label class="prism-field"><input type="checkbox" id="prism_plot_overlay"' + (st.showOverlay !== false ? ' checked' : '') + '><span>Model overlay</span></label>') +
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_autofit">Auto-align overlay</button>' +
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_reset" disabled title="' + RESET_VIEW_IDLE + '">Reset view</button>' +
           '</div>' +
@@ -1960,6 +2020,8 @@ function PRiSM_renderModelTab(hostEl, ropts) {
     if (_libState.cat !== 'all' && cats.indexOf(_libState.cat) === -1) _libState.cat = 'all';
     var ds = G.PRiSM_dataset;
     var modeNote = mode === 'decline' ? 'Decline mode shows rate models only.' : mode === 'transient' ? 'Pressure-transient mode shows pressure models.' : 'Combined mode shows every model.';
+    var mExt = _modeExt(mode);
+    if (mExt && typeof mExt.note === 'string' && mExt.note) modeNote = mExt.note;
 
     var chips = '<button type="button" class="prism-chip' + (_libState.cat === 'all' ? ' is-on' : '') + '" aria-pressed="' + (_libState.cat === 'all') + '" data-prism-cat="all">All <span class="prism-num">' + shown.length + '</span></button>' +
         cats.map(function (c) {
@@ -2852,6 +2914,7 @@ G.PRiSM_detectPeriods = PRiSM_detectPeriods;
 G.PRiSM_evalModelCurve = PRiSM_evalModelCurve;
 G.PRiSM_buildPlotData = PRiSM_buildPlotData;
 G.PRiSM_drawActivePlot = PRiSM_drawActivePlot;
+G.PRiSM_drawPlot = PRiSM_drawPlot;
 G.PRiSM_registerPostDrawHook = PRiSM_registerPostDrawHook;
 G.PRiSM_setModel = PRiSM_setModel;
 G.PRiSM_autoAlignOverlay = PRiSM_autoAlignOverlay;
