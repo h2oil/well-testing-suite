@@ -286,6 +286,18 @@ module.exports = [
       assert(cv._prismPointerOwner({ offsetX: mx2, offsetY: 100 }), 'taken again at the user marker');
       cv._dfitDrag.cancel();
       assert.strictEqual(w.PRiSM_dfit_test().log.length, n0 + 1, 'cancelled drag adds nothing');
+      // keyboard equivalent (§7.14): arrows move the marker by one resampled point, Enter commits one entry
+      const b = app.document.createElement('div'); h.appendChild(b);
+      U.panels['dfit-board'].render(b);
+      const mk = app.el('prism_dfit_marker');
+      assert(mk, 'focusable closure-marker button');
+      const i0 = +mk.getAttribute('data-dfit-idx');
+      app.key(mk, 'ArrowLeft'); app.key(mk, 'ArrowLeft');
+      assert.strictEqual(+app.el('prism_dfit_marker').getAttribute('data-dfit-idx'), i0 - 2, 'two points back');
+      assert.strictEqual(w.PRiSM_dfit_test().log.length, n0 + 1, 'arrows alone add nothing');
+      app.key(app.el('prism_dfit_marker'), 'Enter');
+      assert.strictEqual(w.PRiSM_dfit_test().log.length, n0 + 2, 'Enter commits one entry');
+      assert(/keyboard/.test(w.PRiSM_dfit_test().picks.closure.reason), 'keyboard pick');
     },
   },
   {
@@ -319,6 +331,17 @@ module.exports = [
       assert(/Cancelled — previous results kept/.test(U.statusText()), 'status text');
       assert.strictEqual(begins, ends, 'cancel closes the batch');
       w.PRiSM_undoBatch = realBatch;
+      // high-rate windows: without IndexedDB only the shut-in window is kept in wts_prism_dfit_hf (§3.11)
+      const hr = JSON.parse(JSON.stringify(run)); hr.prep.hf = { windows: [{ kind: 'shutin', t0: 0.1166, dtS: 0.02, p: [7640, 7652.5, 7631.25, 7600] }, { kind: 'step', t0: 0.1, dtS: 0.02, p: [7900, 7899] }] };
+      const idx = U.storeHf(app.toWin(hr));
+      if (w.PRiSM_storage && w.PRiSM_storage.backend === 'indexedDB') assert(idx && idx.store === 'idb' && idx.kinds.length === 2, 'HF index (idb)');
+      else {
+        assert(idx && idx.store === 'ls' && idx.key === 'dfit-hf:' + run.dsHash && JSON.stringify(idx.kinds) === '["shutin"]', 'HF index (localStorage, shut-in only): ' + JSON.stringify(idx));
+        const rec = JSON.parse(app.storage.getItem('wts_prism_dfit_hf'));
+        let acc = 0; const back = rec.windows[0].p.map((d) => { acc += d; return rec.windows[0].offset + acc * rec.windows[0].scale; });
+        assert(back.every((v, i) => Math.abs(v - [7640, 7652.5, 7631.25, 7600][i]) < 0.006), 'delta encoding round-trips: ' + back);
+      }
+      assert(S.checkShape('DfitTest', JSON.parse(JSON.stringify(w.PRiSM_dfit_test()))).ok, 'test with the HF index keeps its shape');
       if (!hooks(w)) skip('one Analyse = one undo step through 37');
     },
   },

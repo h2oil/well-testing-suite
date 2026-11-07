@@ -412,9 +412,43 @@
         if (!T.dsRef || !T.dsRef.hash) _checkBinding();
         _writeSchedule(run);
         _writeC1(run);
+        if (!o.fast) { try { _storeHf(run); } catch (e) { /* the windows are optional */ } }
         _publish();
         _emit('prism:dfit-updated', { what: o.what || 'all', source: o.source || 'auto' });
         _refreshUI();
+    }
+    // High-rate windows (§3.11): the ≥ 2 Hz windows 56 cut on import go to 19's PRiSM_storage as the analysis record
+    // 'dfit-hf:<dsHash>' (IndexedDB backend, carried by project files); without IndexedDB only the shut-in window
+    // (≤ 150 kB) is kept in 'wts_prism_dfit_hf'. Pressures are scaled integers stored as first differences.
+    var HF_LS_KEY = 'wts_prism_dfit_hf', HF_LS_CAP = 150000, HF_MAX = 12000;
+    function _encWin(w) {
+        var p = _arr(w && w.p) ? w.p : null;
+        if (!p || !p.length) return null;
+        var n = Math.min(p.length, HF_MAX), scale = 0.01, off = _isNum(p[0]) ? p[0] : 0, d = [], prev = 0;
+        for (var i = 0; i < n; i++) { var q = Math.round(((_isNum(p[i]) ? p[i] : off) - off) / scale); d.push(q - prev); prev = q; }
+        var kind = /^(shutin|step|flowback|ramp)$/.test(w.kind) ? w.kind : 'shutin';
+        return { kind: kind, t0: _num(w.t0), dtS: _num(w.dtS), n: n, p: d, pSurf: null, q: null, scale: scale, offset: off };
+    }
+    function _storeHf(run) {
+        var T = test(), hf = run && run.prep && run.prep.hf;
+        var wins = hf && _arr(hf.windows) ? Array.prototype.slice.call(hf.windows, 0, 4).map(_encWin).filter(function (x) { return !!x; }) : [];
+        if (!wins.length || !run.dsHash) return null;
+        var key = 'dfit-hf:' + run.dsHash, rec = { v: 1, windows: wins };
+        var S = G.PRiSM_storage, idb = !!(S && S.backend === 'indexedDB' && typeof S.putAnalysis === 'function');
+        var txt = JSON.stringify(rec);
+        if (idb) {
+            try { S.putAnalysis(key, rec); } catch (e) { idb = false; }
+        }
+        if (!idb) {
+            var shut = wins.filter(function (x) { return x.kind === 'shutin'; }).slice(0, 1);
+            txt = JSON.stringify({ v: 1, key: key, windows: shut });
+            if (!shut.length || txt.length > HF_LS_CAP) { T.hf = null; return null; }
+            var ls = _ls();
+            if (ls) { try { ls.setItem(HF_LS_KEY, txt); } catch (e) { T.hf = null; return null; } }
+            wins = shut;
+        }
+        T.hf = { key: key, kinds: wins.map(function (x) { return x.kind; }), bytes: txt.length, store: idb ? 'idb' : 'ls' };
+        return T.hf;
     }
     function _schedule(run) {
         var ev = run && run.events;
@@ -1920,8 +1954,31 @@
                                        _btn('prism_dfit_fam_F2', 'Use the F2 end for hand-offs', 'familyEnd').replace('data-dfit-act="familyEnd"', 'data-dfit-act="familyEnd" data-dfit-arg="F2"') : '') +
                 (cp && cp.source === 'user' ? _btn('prism_dfit_override_clear', 'Remove override', 'clearOverride') : '') +
                 _btn('prism_dfit_notes_btn', 'Method notes', 'note').replace('data-dfit-act="note"', 'data-dfit-act="note" data-dfit-arg="index"') + '</div>';
+        // keyboard equivalent of the closure-marker drag (§7.14): ← / → move by one resampled point (Shift × 10), Enter commits
+        // one pick-log entry, Escape restores the marker
+        var d = run.derivs, i0 = d && _arr(d.p) ? _nearestIdx(d.p, (cp && cp.source === 'user' && _isNum(cp.p)) ? cp.p : _closureP(T.summary)) : -1;
+        if (i0 >= 0) html += '<div class="prism-dfit-bar"><button type="button" class="btn btn-secondary" id="prism_dfit_marker" data-dfit-idx="' + i0 + '" aria-describedby="prism_dfit_marker_help">Closure marker: ' +
+            _esc(_f(d.p[i0], 0)) + ' psia</button><span id="prism_dfit_marker_help" class="prism-dfit-note">Arrow keys move the marker (Shift × 10); Enter keeps it.</span></div>';
         h.innerHTML = html;
+        var mk = h.querySelector ? h.querySelector('#prism_dfit_marker') : null;
+        if (mk) mk.addEventListener('keydown', function (e) { _markerKey(mk, e); });
     };
+    function _markerKey(mk, e) {
+        var run = _run(), d = run && run.derivs;
+        if (!d || !e) return;
+        var i = parseInt(mk.getAttribute('data-dfit-idx'), 10), n = d.p.length, step = e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') i = Math.max(0, i - step);
+        else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') i = Math.min(n - 1, i + step);
+        else if (e.key === 'Enter') {
+            if (e.preventDefault) e.preventDefault();
+            setPick('closure', { mode: 'user', family: null, method: 'user', p: d.p[i], dt: d.dt[i], G: d.G[i] }, { source: 'user', reason: 'Closure marker moved with the keyboard' });
+            return;
+        } else if (e.key === 'Escape' || e.key === 'Esc') { var hst = _byId('prism_dfit_panel_board'); if (hst) PANEL_RENDER.board(hst); return; }
+        else return;
+        if (e.preventDefault) e.preventDefault();
+        mk.setAttribute('data-dfit-idx', String(i));
+        mk.textContent = 'Closure marker: ' + _f(d.p[i], 0) + ' psia (Enter keeps it)';
+    }
     PANEL_RENDER.classify = function (h) {
         var run = _run(), k = run && run.classification;
         if (!k || k.ok === false) { h.innerHTML = _note('Press ▶ Analyse to classify the leak-off type.'); return; }
@@ -2819,7 +2876,7 @@
         runFast: runFast, cancel: cancelAnalyse, loadDemo: loadDemo, demos: DEMOS.map(function (d) { return d[0]; }), rebind: rebind, notes: notes,
         openOverride: openOverride, saveOverride: _saveOverride, closeOverride: _closeOverride, openSandbox: openSandbox,
         lkSimulate: _lkSimulate, lkFit: _lkFit, design: _design, replay: _replay, exportText: _exportText, exportSheet: _exportSheet,
-        publish: _publish, schedule: _schedule, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
+        publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
         statusText: function () { return _status.text; }
     };
 
