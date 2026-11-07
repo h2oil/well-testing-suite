@@ -4,7 +4,7 @@
 // DFIT after-closure analysis, the pure pipeline and the results layer (docs/DFIT-PLAN.md §3.3a, §3.6, §4.12, §4.13,
 // §4.20, §6.4, §6.6, §6.8, §6.9, §6.10; owner WP3). Shapes: prism-build/tests/_dfit-shapes.js (frozen).
 //
-// Pure engine: no DOM, no storage, no timers, no events, no Math.random (randomness only from PRiSM_rng(seed), or the
+// Pure engine: no DOM, no storage, no timers, no events, no unseeded random numbers (randomness only from PRiSM_rng(seed), or the
 // identical local generator when 05's export is absent). Every cross-file call (56, 58, 49-calc-dfit-triage,
 // WTS_wellbore, PRiSM_lm, PRiSM_mpTable, PRiSM_gasPseudoTime, PRiSM_MODELS, PRiSM_autoInterp) is resolved at call time
 // behind a typeof guard. Public functions never throw: they return {ok:false, code, errors, bad}.
@@ -19,6 +19,15 @@
 //   3  time functions, centroid, p_i-free diagnosis, Nolte and impulse lines, bounds, p_i consensus
 //   4  gas adjustment, constant-rate transform, model-library match
 //   5  PRiSM_dfit_aca, leak plot, k constraint
+//   6  uncertainty budget and what-if propagator (closed-form chain per draw, per-family range mode, shares, tornado)
+//   7  live engine and replay (PRiSM_dfit_live.create, PRiSM_dfit_replay / Job)
+//   8  results layer (evidence index, report model, quoted-value check, export, frac sheet, hand-off, summary, grade)
+//   9  PRiSM_dfit_pipeline / Job — the only place that knows the stage order (§4.20)
+//
+// Exports beyond §3.6 (read-only helpers for tests, plots and WP5/WP6): PRiSM_dfit_acaKernels {K, erf, E1, ufPd, ufPdPrime,
+// ufImpulse, ufRate, ufShape, pennyShape, theta, carter, originSlope, qkMax, gasProps, bourdet}; PRiSM_dfit_uncertainty.chain and
+// .shares; LiveSession also has firsts(), closure(), stats(), size(). Uncertainty results carry counts {draws, chainEvals, ops}
+// and log[] (a family-weight change); AcaResult.diag carries p (the pressures at diag.x).
 // =============================================================================
 
 (function () {
@@ -1921,7 +1930,7 @@
     };
 
     // ── data + picks export (§6.10) ──
-    var EXPORT_COLS = { t: { label: 't_h', unit: 'h', dp: 6 }, dt: { label: 'dt_h', unit: 'h', dp: 6 }, p: { label: 'p_psia', unit: 'psia', dp: 3 },
+    var EXPORT_COLS = { t: { label: 't_h', unit: 'h', dp: 9 }, dt: { label: 'dt_h', unit: 'h', dp: 9 }, p: { label: 'p_psia', unit: 'psia', dp: 3 },
                         q: { label: 'q_bbl_min', unit: 'bbl/min', dp: 4 }, flag: { label: 'after_closure', unit: '', dp: 0 }, pSurf: { label: 'p_surf_psia', unit: 'psia', dp: 3 }, T: { label: 'T_F', unit: '°F', dp: 2 } };
     G.PRiSM_dfit_exportText = function (run, template) {
         try {
