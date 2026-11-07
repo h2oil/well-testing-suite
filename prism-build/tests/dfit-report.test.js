@@ -121,6 +121,11 @@ module.exports = [
       assert(!/\b(null|undefined|NaN|Infinity)\b/.test(x.text), 'no banned words');
       const named = win.PRiSM_dfit_exportText(run, { name: 'Zone A / DFIT 1', inputs: S.FIX.state.tests[0].inputs, log: S.FIX.state.tests[1].log });
       assert(/^dfit-zone-a-dfit-1-/.test(named.filename) && /# datum TVD ft: 10000/.test(named.text) && /# log 1 /.test(named.text), 'name, inputs and log in the header');
+      ['# well: not stated', '# test: not stated', '# input provenance: not stated'].forEach((h) => assert(x.text.indexOf(h) >= 0, 'default header line ' + h));
+      const T = S.FIX.state.tests[0], full = win.PRiSM_dfit_exportText(run, 'default', { test: T, well: { name: 'Well A-1', mu: 0.5, phi: 0.06, ct: 1e-5, h: 40 } });
+      assert(/# well: Well A-1/.test(full.text) && new RegExp('# test: ' + T.id).test(full.text) && /# datum TVD ft: 10000/.test(full.text) && /# fluid: /.test(full.text), 'well, test, datum and fluid from the test: ' + full.text.split('\n').slice(0, 9).join(' | '));
+      assert(/# input provenance: user .*datumTvd/.test(full.text) && /# reservoir: mu 0.5 cp/.test(full.text), 'provenance and reservoir lines');
+      assert(!/\b(null|undefined|NaN|Infinity)\b/.test(full.text), 'no banned words in the full header');
     },
   },
   {

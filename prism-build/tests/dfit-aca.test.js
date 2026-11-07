@@ -500,7 +500,7 @@ module.exports = [
     },
   },
   {
-    name: 'A20 PRiSM_dfit_pipeline sync = job on FIX.ds; opts.fast skips the grid and the uncertainty (counts) [fake 56 engines]',
+    name: 'A20 PRiSM_dfit_pipeline sync = job on FIX.ds; opts.fast skips the grid, the bootstrap and the uncertainty; opts.stages; weakHash [fake 56 engines]',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const win = app0(ctx).win, F = S.FIX, restore = installFakes(win, F);
@@ -521,6 +521,17 @@ module.exports = [
         assert(S.checkShape('DfitRun', f).ok, 'fast DfitRun shape: ' + JSON.stringify(S.checkShape('DfitRun', f).errors.slice(0, 4)));
         assert(a.dsHash === S.dsHash(F.ds) && a.inputsHash === S.inputHash(win.PRiSM_dfit_inputRanges.clamp(inputs).inputs) && a.picksHash === S.picksHash(picks), 'frozen hash definitions');
         const c = job; c.cancel(); assert(c.step().done === true, 'cancel ends the job');
+        assert(a.weakHash === false, 'shared hashes: weakHash false');
+        // fast: the leak plot has no bootstrap (analytic ± 2σ_B interval = ± the floor)
+        if (f.leak) assert(Math.abs((f.leak.qkCI[1] - f.leak.qkCI[0]) - 2 * f.leak.floor) < 1e-9 * Math.max(1, f.leak.floor) || f.leak.qkCI[0] === f.leak.qk || f.leak.qkCI[1] === f.leak.qk, 'fast leak interval is analytic: ' + JSON.stringify(f.leak.qkCI) + ' floor ' + f.leak.floor);
+        // opts.stages: a subset runs in the §4.20 order, report always last
+        const sub = win.PRiSM_dfit_pipeline(F.ds, inputs, well, picks, Object.assign({}, o, { stages: ['prepare', 'events', 'isip', 'derivs'] }));
+        assert(sub.ok === true && sub.derivs && sub.derivs.ok !== false && sub.frac.chosen === null && sub.aca === null && sub.unc === null && sub.summary, 'stage subset: ' + JSON.stringify({ frac: !!sub.frac.chosen, aca: !!sub.aca, unc: !!sub.unc }));
+        // weak hashes are flagged when 53's canon / hash16 is missing
+        const AI = win.PRiSM_autoInterp, keep = { canon: AI.canon, hash16: AI.hash16 }; AI.canon = undefined; AI.hash16 = undefined;
+        const dsH = win.PRiSM_dfit_dsHash; win.PRiSM_dfit_dsHash = undefined;
+        try { const w = win.PRiSM_dfit_pipeline(F.ds, inputs, well, picks, Object.assign({}, o, { fast: true })); assert(w.weakHash === true && /^[0-9a-f]{16}$/.test(w.dsHash), 'FNV fallback flagged weakHash'); }
+        finally { AI.canon = keep.canon; AI.hash16 = keep.hash16; win.PRiSM_dfit_dsHash = dsH; }
       } finally { restore(); }
     },
   },
