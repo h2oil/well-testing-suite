@@ -438,7 +438,7 @@ module.exports = [
       const W = app.win;
       demo(app);
       installExt(app);
-      app.evalInApp(`window.PRiSM_state.dfit = { picks: [] };
+      app.evalInApp(`window.__ext.v = 5; window.PRiSM_state.dfit = { picks: [5] };   // state present at load
         window.PRiSM_undoExtras.test = {
           get: function () { return { v: window.__ext.v, picks: window.PRiSM_state.dfit.picks.slice() }; },
           set: function (o) { window.__ext.v = o.v; window.PRiSM_state.dfit.picks = o.picks.slice(); },
@@ -447,11 +447,11 @@ module.exports = [
           window.dispatchEvent(new CustomEvent('prism:test-updated', { detail: { what: 'pick', source: src || 'user' } })); };`);
       W.PRiSM.setMode('test');
       W.PRiSM_gotoStep(4);
-      // a first undo after load (the baseline predates the extra) leaves the extra alone
+      // a first undo after load (the load-time baseline predates the extra) keeps the extra's state
       W.PRiSM_setWell(app.toWin({ h: 61 }), app.toWin({ source: 'user' }));
-      W.__ext.v = 5; W.PRiSM_state.dfit.picks.push(5);   // a silent change, not recorded
       assert(W.PRiSM_undo(), 'undo the well change');
       assert.equal(W.__ext.v, 5, 'the extra keeps its state on the first undo');
+      assert.deepEqual(Array.from(W.PRiSM_state.dfit.picks), [5], 'st.dfit kept on the first undo');
       W.PRiSM_workflow._resetHistory();
       // pick → undo → redo
       W.__pick(7);
@@ -495,6 +495,20 @@ module.exports = [
       // Analyse in the ext mode is the ext's
       const r = await settle(app, W.PRiSM_analyse());
       assert(r && r.ok && W.__ext.log.indexOf('analyse') !== -1, 'ext.analyse dispatched by 37');
+      // an extra registered after the current baseline, without a history reset: its first change can be undone
+      app.evalInApp(`window.__x2 = 0;
+        window.PRiSM_undoExtras.test2 = { get: function () { return window.__x2; }, set: function (v) { window.__x2 = v; },
+          events: ['prism:test2-updated'] };`);
+      W.PRiSM_undoExtrasSync();   // what the rail / any snapshot does on first use
+      const depth3 = W.PRiSM_workflow.undoDepth().undo;
+      W.__x2 = 7;
+      app.evalInApp(`window.dispatchEvent(new CustomEvent('prism:test2-updated', { detail: { source: 'user' } }));`);
+      assert.equal(W.PRiSM_workflow.undoDepth().undo, depth3 + 1, 'the first change of the new extra is one undo step');
+      assert(W.PRiSM_undo(), 'undo the new extra');
+      assert.equal(W.__x2, 0, 'undo restores the value before the first change');
+      assert.equal(W.__ext.v, 10, 'the other extra unchanged');
+      assert(W.PRiSM_redo(), 'redo the new extra');
+      assert.equal(W.__x2, 7);
       // 'dfit' in STATE_FIELDS and P.step survive a reload
       W.PRiSM_saveState();
       const app2 = app.reload();
@@ -704,8 +718,10 @@ module.exports = [
       // opening the function tool works in the ext mode
       W.PRiSM.setMode('test');
       W.PRiSM_openTools();
-      const item = Array.from(app.document.querySelectorAll('[data-tool-id], [data-prism-tool]')).find((b) => /tfn/.test(b.getAttribute('data-tool-id') || b.getAttribute('data-prism-tool') || ''));
-      if (item) { app.click(item); assert(app.el('tx_fn'), 'function tool rendered'); }
+      const item = app.document.querySelector('[data-tool="tfn"]');
+      assert(item, 'the function tool has a drawer button');
+      app.click(item);
+      assert(app.el('tx_fn'), 'function tool rendered by its item.render path');
       noErrors(app, assert);
     },
   },

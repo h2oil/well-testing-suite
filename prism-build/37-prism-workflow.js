@@ -2413,7 +2413,7 @@
 
     var UNDO_CAP = 50;
     var _undo = [], _redo = [], _cur = null, _restoring = false, _batch = 0, _userBatch = 0;
-    var _extraEvents = {};
+    var _extraEvents = {}, _seenExtras = {};
 
     // PRiSM_undoExtras = {key: {get() → JSON-safe, set(v), events?:[name]}},
     // read at call time. Each extra's events become record triggers (installed
@@ -2429,8 +2429,32 @@
         }).map(function (k) { return { key: k, spec: X[k] }; });
     }
     function syncUndoExtras() {
+        var xs = undoExtras();
+        // An extra seen for the first time joins the current baseline (no undo
+        // step), so the first change after registration can be undone.
+        var fresh = xs.filter(function (x) { return !_seenExtras[x.key]; });
+        if (fresh.length) {
+            fresh.forEach(function (x) { _seenExtras[x.key] = true; });
+            if (_cur != null) {
+                var o = null;
+                try { o = JSON.parse(_cur); } catch (e) { o = null; }
+                if (o && typeof o === 'object') {
+                    var changed = false;
+                    fresh.forEach(function (x) {
+                        if (o.extras && Object.prototype.hasOwnProperty.call(o.extras, x.key)) return;
+                        var v;
+                        try { v = clone(x.spec.get()); } catch (e) { v = undefined; }
+                        if (v === undefined) return;
+                        if (!o.extras || typeof o.extras !== 'object') o.extras = {};
+                        o.extras[x.key] = v;
+                        changed = true;
+                    });
+                    if (changed) { try { _cur = JSON.stringify(o); } catch (e) {} }
+                }
+            }
+        }
         if (typeof G.addEventListener !== 'function') return;
-        undoExtras().forEach(function (x) {
+        xs.forEach(function (x) {
             var evs = isArr(x.spec.events) ? toArr(x.spec.events) : [];
             evs.forEach(function (type) {
                 if (typeof type !== 'string' || !type || _extraEvents[type]) return;
