@@ -1,7 +1,11 @@
 # DFIT module in PRiSM (v3.4) — implementation plan
 
-> **Status: plan, reviewed — target v3.4** (2026-10-31). No code has been written and no repository file other than this one was
-> changed. This revision resolves the theory, novelty and architecture review (every blocker, major and minor); Appendix C
+> **Status: WP0 landed — target v3.4** (2026-11-07, on top of v3.3.3). WP0 (contracts and skeleton, §9) is in: the frozen
+> fixtures `prism-build/tests/_dfit-shapes.js` (all §3.13 names, the §3.2 range table, `FIX.ds` / `.state` / `.run` / `.aca`,
+> `sharedApp`, `resetDfit`; resolutions at the end of §3.13), `tests/dfit-shapes.test.js` (SH1, SH2), the stub skeletons of
+> 56–59 and of the five Round-9 helpers, and 56–59 in the Round-8 FILES list. The engine and UI work packages (WPH, WP1–WP6,
+> WPT) start from here; test counts in this plan are relative to the v3.3.3 gates (smoke 330, acceptance 1,369).
+> Plan history: reviewed 2026-10-31. This revision resolves the theory, novelty and architecture review (every blocker, major and minor); Appendix C
 > ("Review notes") lists the points that were resolved differently from the reviewer's proposal and why. The module is our own
 > design. No other software product, vendor, company or website is named in it, cited by it or compared with it by name; the
 > state of the art is described generically ("commercial DFIT packages commonly …"). Literature is cited by author, year, title
@@ -1080,6 +1084,24 @@ Exports `checkShape(name, obj) → {ok, errors:[path]}` for `DfitDataset`, `Dfit
 `ctx.loadApp()` and held in a module-level variable, with `resetDfit(app)` clearing `st.dfit`, `st._dfitRun` and the DFIT storage
 keys between tests. Every WP asserts `checkShape` on its outputs; WP6 builds against the fixtures (and fake engines returning
 `FIX.run`) until the engines land. The helper changes only through the lead, together with this section.
+
+**WP0 resolutions** (frozen with the helper; the file header repeats them):
+- Derivative arrays in `Derivs` (`GdPdG`, `dPdG`, `sdPds`, `dPds`, `D`, `Dref`, `ppd`) are magnitudes (≥ 0 for a falling
+  pressure); `dpIsip = ISIP − p`. `AcaResult.t0`, `tcInj` and `diag.x` are on the injection clock (`x = t_inj − t0`).
+  `Hammer.T` and `Hammer.tau` are seconds (wave quantities). Areas ft², widths in.
+- The range table stores `rock.Ep` in psi (`display:{unit:'1e6 psi', scale:1e6}`); `datumTvd` / `datumMd` have min 100 ft and the
+  gauge depths min 0. Row caps (survey 2,000, strings 10, tests 12) are table entries with `rows:true`; designer, synth and sandbox
+  fields carry their own `scope`. Clamp rule: blank → default (no warning when the default is null or `'auto'`), unparsable →
+  default with `INPUT_DEFAULT`, outside → nearest bound with `INPUT_CLAMPED`, integers rounded (`INPUT_ROUNDED`); invalid enums →
+  default. `PRiSM_dfit_inputRanges` in 56 carries the same table, `enums`, `defaults()`, `clamp()` and `clampValue()` (SH2
+  compares them).
+- Hashes: `dsHash(ds) = hash16(canon({t, p, q}, 'inputs'))`; `inputHash` / `picksHash` = `hash16(canon(x, 'inputs'))`;
+  `resultHash` = `hash16(canon(summary result fields, 'display'))` (53's frozen canon + hash16).
+- The failure form passes every engine-output shape; `{}` and `null` never pass. Stored `DfitInputs` must lie inside the table.
+- `FIX.run` follows §4.21's convention that the 25 bbl is V_i\* (an engine run on `FIX.ds` gives V_i\* 23.02 bbl): it is a shape
+  and consistency fixture, not regression truth. The ISIP candidates are the §4.4 P3a given numbers.
+- The 59 skeleton registers no `PRiSM_modeExt.dfit`, panels, plots, tools or undo extras (a stub mode would appear in the header
+  select as soon as WPH lands); WP6 registers them. `PRiSM_dfit_kConstraint` returns `null` until WP3.
 
 ---
 
