@@ -581,8 +581,14 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
     if (app.win.PRiSM_dfit_ui) app.win.PRiSM_dfit_ui.refresh();
     app.flush(5000);
     okT = app.pendingTimers() === 0;
+    // with the WPH hooks in the build (the mode registry has dfit and the shell hooks exist) the mode MUST switch, else the
+    // check would pass without DFIT mode ever being opened; without them it is reported as skipped
+    const wphIn = !!(app.win.PRiSM_modeExt && app.win.PRiSM_modeExt.dfit) && isFn(app.win.PRiSM_drawPlot) && isFn(app.win.PRiSM_undoBatch);
     if (!okT) detail = JSON.stringify(app.timers()).slice(0, 600);
-    else if (!(P && P.mode === 'dfit')) detail = '(mode stayed ' + (P && P.mode) + ': the WPH hooks are not in the build yet)';
+    else if (!(P && P.mode === 'dfit')) {
+      if (wphIn) { okT = false; detail = 'DFIT mode did not switch on (mode ' + (P && P.mode) + ') although PRiSM_modeExt.dfit and the WPH hooks exist'; }
+      else detail = '(skipped: mode stayed ' + (P && P.mode) + ', the WPH hooks are not in the build yet)';
+    }
   } catch (e) { detail = e.message; okT = false; }
   if (detail && !okT) console.error('[dfit] pending timers with DFIT mode open:', detail);
   checks.push(['no pending timers 5 s after opening DFIT mode' + (detail && okT ? ' ' + detail : ''), okT]);

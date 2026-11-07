@@ -64,16 +64,17 @@ function shared(ctx) {
   return app;
 }
 const sharedWin = (ctx) => SH.sharedApp(ctx, {}).win;      // for the gate only: no reset
-// Budget (§9: ≤ 8 s). One reference-demo analysis on the shared app serves I1, I5, I8 and I10 (REF; in DFIT mode whenever the
-// WPH hooks exist), and I2 reads only its bottomhole closure (PBH); I16's two stacked tests serve I6 (TWO). A cached state is
-// used only while the shared app still holds it (same app, reference test with a summary, the mode asked for); every other
-// use of the shared app goes through shared(), which drops both caches. The run order below is therefore I1, I5, I8, I10,
-// I16, I6, I2, I3, I4, I7, I9, I11–I15 (the names keep the plan's numbers).
-let REF = null, TWO = null, PBH = null;
-async function refRun(ctx, dfitMode) {
+// Budget (§9: ≤ 8 s). One reference-demo analysis on the shared app serves I1, I5, I8, I10 and the first test of I16 (REF; in
+// DFIT mode whenever the WPH hooks exist), and I2 reads only its bottomhole closure (PBH); I16's two stacked tests serve I6
+// (TWO); one conventional-radial analysis on its own app serves I15 and then I4 (CR). A cached state is used only while the
+// app still holds it (same app, reference test with a summary, the mode asked for, no user pick unless the caller allows it);
+// every other use of the shared app goes through shared(), which drops the caches. The run order below is therefore I1, I5,
+// I8, I10, I16, I6, I2, I3, I15, I4, I7, I9, I11–I14 (the names keep the plan's numbers).
+let REF = null, TWO = null, PBH = null, CR = null;
+async function refRun(ctx, dfitMode, allowPicked) {
   let app = SH.sharedApp(ctx, {});
   const w = app.win;
-  const T = REF && REF.app === app && typeof w.PRiSM_dfit_test === 'function' ? w.PRiSM_dfit_test() : null;
+  const T = REF && REF.app === app && (allowPicked || !REF.picked) && typeof w.PRiSM_dfit_test === 'function' ? w.PRiSM_dfit_test() : null;
   if (T && T.dsRef && T.dsRef.id === 'reference' && T.summary && (!dfitMode || (w.PRiSM && w.PRiSM.mode === 'dfit'))) return { app, run: REF.run };
   app = shared(ctx);
   if (dfitMode) { app.openPRiSM(); app.win.PRiSM.setMode('dfit'); app.flush(50); }
@@ -141,26 +142,32 @@ I[3] = {
   },
 };
 I[4] = {
-  name: 'I4 RTA k fallback: PRiSM_dfit_kConstraint gives the after-closure k', wp: WP, integration: true,
-  async run(app, assert) {
-    // own app: C1 user values and a rate-transient dataset. The PRiSM page is not opened (the analysis and the RTA engine
-    // need no DOM; rendering the shell is what the other tests check)
+  name: 'I4 RTA k fallback: PRiSM_dfit_kConstraint gives the after-closure k', wp: WP, integration: true, opts: false,
+  async run(_app, assert, ctx) {
+    // the conventional-radial app of I15 (CR; the after-closure run is unchanged by the hand-off), else an own app; then C1
+    // user values and a rate-transient dataset, so the app is disposed afterwards. The PRiSM page is not opened (the
+    // analysis and the RTA engine need no DOM; rendering the shell is what the other tests check)
+    const own = !CR;
+    const app = own ? ctx.loadApp({}) : CR.app;
+    CR = null;
     const w = app.win;
-    if (!gate(w, true, [[real(w.PRiSM_dfit_kConstraint), '57 kConstraint']])) return;
-    await analyseDemo(app, 'conventional-radial');
-    const k = w.PRiSM_dfit_kConstraint();
-    assert(k && k.k > 0 && /^(aca-radial|aca-match|bounds)$/.test(k.source), 'k constraint: ' + JSON.stringify(k));
-    // a rate-transient linear-flow set (q ∝ 1/√t at constant pwf, as dfit-hooks H10) with no input k and no pressure fit:
-    // the 35 linear-flow analysis takes the DFIT after-closure k
-    const t = [], q = [], p = [];
-    for (let i = 1; i <= 60; i++) { t.push(i * 24); q.push(800 / Math.sqrt(i)); p.push(1500); }
-    w.PRiSM_dataset = app.toWin({ t, q, p, name: 'rta' });
-    w.PRiSM_setWell(app.toWin({ testType: 'drawdown', pi: 5000, B: 1.2, h: 40, mu: 0.8, phi: 0.08, ct: 1.5e-5, rw: 0.3, q: 800 }), app.toWin({ source: 'user' }));
-    w.PRiSM_state.lastFit = null;
-    if (typeof w.PRiSM_setLastFit === 'function') { try { w.PRiSM_setLastFit(null); } catch (e) { /* optional */ } }
-    const lin = w.PRiSM_rtaLinearFlow(w.PRiSM_rtaData(w.PRiSM_dataset), app.toWin({}));
-    assert(lin.ok && lin.kSource === 'DFIT after-closure', 'RTA linear flow k source: ' + JSON.stringify([lin.ok, lin.kSource, lin.k, lin.reason, lin.missing, w.PRiSM_rtaData(w.PRiSM_dataset).reason]));
-    assert(Math.abs(lin.k / k.k - 1) < 1e-9 && Math.abs(lin.xf - lin.xf_sqrt_k / Math.sqrt(k.k)) < 1e-6 * lin.xf, 'k and xf from the DFIT k');
+    try {
+      if (!gate(w, true, [[real(w.PRiSM_dfit_kConstraint), '57 kConstraint']])) return;
+      if (own) await analyseDemo(app, 'conventional-radial');
+      const k = w.PRiSM_dfit_kConstraint();
+      assert(k && k.k > 0 && /^(aca-radial|aca-match|bounds)$/.test(k.source), 'k constraint: ' + JSON.stringify(k));
+      // a rate-transient linear-flow set (q ∝ 1/√t at constant pwf, as dfit-hooks H10) with no input k and no pressure fit:
+      // the 35 linear-flow analysis takes the DFIT after-closure k
+      const t = [], q = [], p = [];
+      for (let i = 1; i <= 60; i++) { t.push(i * 24); q.push(800 / Math.sqrt(i)); p.push(1500); }
+      w.PRiSM_dataset = app.toWin({ t, q, p, name: 'rta' });
+      w.PRiSM_setWell(app.toWin({ testType: 'drawdown', pi: 5000, B: 1.2, h: 40, mu: 0.8, phi: 0.08, ct: 1.5e-5, rw: 0.3, q: 800 }), app.toWin({ source: 'user' }));
+      w.PRiSM_state.lastFit = null;
+      if (typeof w.PRiSM_setLastFit === 'function') { try { w.PRiSM_setLastFit(null); } catch (e) { /* optional */ } }
+      const lin = w.PRiSM_rtaLinearFlow(w.PRiSM_rtaData(w.PRiSM_dataset), app.toWin({}));
+      assert(lin.ok && lin.kSource === 'DFIT after-closure', 'RTA linear flow k source: ' + JSON.stringify([lin.ok, lin.kSource, lin.k, lin.reason, lin.missing, w.PRiSM_rtaData(w.PRiSM_dataset).reason]));
+      assert(Math.abs(lin.k / k.k - 1) < 1e-9 && Math.abs(lin.xf - lin.xf_sqrt_k / Math.sqrt(k.k)) < 1e-6 * lin.xf, 'k and xf from the DFIT k');
+    } finally { app.dispose(); }
   },
 };
 I[5] = {
@@ -267,7 +274,7 @@ I[10] = {
   async run(_app, assert, ctx) {
     if (!gate(sharedWin(ctx), true)) return;
     const { app } = await refRun(ctx, true);
-    REF = null;                                        // the user pick below changes the cached state
+    REF.picked = true;                                 // the user closure pick below: only I16 (which sets its own pick) reuses it
     const w = app.win;
     w.PRiSM_dfit_setPick('closure', { mode: 'user', method: 'user', p: 6990, dt: null }, { source: 'user', reason: 'Test pick' });
     const before = JSON.stringify(w.PRiSM_dfit_test().picks);
@@ -342,13 +349,17 @@ I[14] = {
   },
 };
 I[15] = {
-  name: 'I15 after the PTA hand-off on the conventional-radial demo the transient radial kh/μ equals the ACA kh/μ within 2 %', wp: WP, integration: true,
-  async run(app, assert) {
-    // own app: the hand-off writes C1. The PRiSM page is not opened, so the hand-off does not render the transient step ③
-    // (≈ 2.6 s of drawing that I15 does not read)
+  name: 'I15 after the PTA hand-off on the conventional-radial demo the transient radial kh/μ equals the ACA kh/μ within 2 %', wp: WP, integration: true, opts: false,
+  async run(_app, assert, ctx) {
+    // own app (the hand-off writes C1), kept for I4 (CR). The PRiSM page is not opened, so the hand-off does not render the
+    // transient step ③ (≈ 2.6 s of drawing that I15 does not read)
+    if (CR) { CR.app.dispose(); CR = null; }
+    const app = ctx.loadApp({});
     const w = app.win;
-    if (!gate(w, true, [[real(w.PRiSM_dfit_handoff), '57 hand-off']])) return;
-    const run = await analyseDemo(app, 'conventional-radial');
+    if (!gate(w, true, [[real(w.PRiSM_dfit_handoff), '57 hand-off']])) { app.dispose(); return; }
+    let run;
+    try { run = await analyseDemo(app, 'conventional-radial'); } catch (e) { app.dispose(); throw e; }
+    CR = { app };
     assert(run.aca.kh && run.aca.kh.khmu > 0, 'ACA kh/μ');
     assert(w.PRiSM_dfit_applyHandoff('pta', { confirm: false }).ok, 'hand-off');
     assert.strictEqual(w.PRiSM_getWell().B, 1, 'the hand-off takes B = 1 for the injected liquid volumes');
@@ -370,9 +381,9 @@ I[16] = {
   name: 'I16 two stacked tests on two demo datasets: switching keeps each test\'s picks, the gradient plot shows both', wp: WP, integration: true, opts: false,
   async run(_app, assert, ctx) {
     if (!gate(sharedWin(ctx), false)) return;
-    const app = shared(ctx);
+    const { app } = await refRun(ctx, false, true);
+    REF = null;                                        // a second test follows
     const w = app.win;
-    await analyseDemo(app, 'reference');
     w.PRiSM_dfit_test().inputs.datumTvd = 10000;
     w.PRiSM_dfit_setPick('dfitTangent', { G: 18, dt: 5.08, p: 7000, value: 7000 }, { source: 'user', reason: 'Zone A pick' });
     w.PRiSM_dfit_addTest({ zone: 'B' });
@@ -388,4 +399,4 @@ I[16] = {
   },
 };
 
-module.exports = [1, 5, 8, 10, 16, 6, 2, 3, 4, 7, 9, 11, 12, 13, 14, 15].map((n) => I[n]);
+module.exports = [1, 5, 8, 10, 16, 6, 2, 3, 15, 4, 7, 9, 11, 12, 13, 14].map((n) => I[n]);

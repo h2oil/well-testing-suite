@@ -2713,8 +2713,12 @@
         dlg.setAttribute('aria-labelledby', 'prism_dfit_override_title');
         dlg.innerHTML = '<div class="prism-dfit-dlg"><h3 id="prism_dfit_override_title">' + (_ovItem === 'isip' ? 'Use another ISIP' : 'Use another closure') + '</h3>' +
             '<div class="fg-item"><label for="prism_dfit_ov_value">Value (psia)</label><input type="text" inputmode="decimal" id="prism_dfit_ov_value" value="' + _esc(_isNum(cur) ? Math.round(cur) : '') + '"></div>' +
+            // family choices: a user pick may vote only in F1, F2 or F4 (§3.0 vote rule); F0 (fissure closure) and F3 (model-based
+            // cross-checks) never vote, so an override "as F0 / F3" would have no effect on the consensus and is not offered
             (_ovItem === 'closure' ? '<div class="fg-item"><label for="prism_dfit_ov_family">Family</label><select id="prism_dfit_ov_family"><option value="user">User</option><option value="F1">F1</option><option value="F2">F2</option><option value="F4">F4</option></select></div>' : '') +
             '<div class="fg-item"><label for="prism_dfit_ov_reason">Reason (required)</label><textarea id="prism_dfit_ov_reason" rows="2" maxlength="299"></textarea></div>' +
+            // analyst (§7 item 7): read-only, from the report options; logEntry stores the same value as the entry's who
+            '<div class="fg-item"><label for="prism_dfit_ov_who">Analyst</label><input type="text" id="prism_dfit_ov_who" readonly aria-readonly="true" value="' + _esc(_who()) + '" placeholder="not set (report options)"></div>' +
             '<div id="prism_dfit_ov_msg" class="prism-dfit-warn" style="display:none"></div>' +
             '<div class="prism-dfit-bar">' + _btn('prism_dfit_ov_save', 'Save', 'overrideSave', 'btn-primary') + _btn('prism_dfit_ov_close', 'Cancel', 'overrideClose') + '</div></div>';
         var host = _byId('pgBody') || document.body;
