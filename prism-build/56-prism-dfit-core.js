@@ -1519,8 +1519,12 @@
         if (i0 < 0 || i0 > 3) return null;
         var H = 0;
         for (j = i0; j <= iE; j++) H = Math.max(H, (v.y[j] - b * v.G[j]) / (b * v.G[j]));
-        var span = v.G[iE] - v.G[i0], ret = false;
-        for (j = iE + 1; j < Math.min(n, iE + 10); j++) if (sm[j] <= (1 + eps) * b) { ret = true; break; }
+        var span = v.G[iE] - v.G[i0], ret = false, jr = -1;
+        for (j = iE + 1; j < Math.min(n, iE + 10); j++) if (sm[j] <= (1 + eps) * b) { jr = j; break; }
+        if (jr >= 0) {
+            var jp = jr; while (jp + 1 < n && Math.abs(sm[jp + 1] - b) <= eps * b) jp++;
+            ret = Math.log(v.G[jp] / v.G[jr]) >= 0.3;
+        }
         if (!(H > 0.05 && span >= 0.3)) return null;
         return { iEnd: Math.min(n - 1, iE + 1), H: H, returns: ret, s: b, span: span };
     }
@@ -2091,10 +2095,13 @@
     function _logit(x) { return 1 / (1 + Math.exp(-x)); }
     // logistic margin σ((value − threshold)/(0.2·|threshold| + δ)), oriented: dir +1 'above', −1 'below'
     function _mg(value, thr, dir, delta) { if (!_fin(value)) return 0.5; return _logit(dir * (value - thr) / (0.2 * Math.abs(thr) + (delta || 0.02))); }
-    function _relChange(v, iA, iC) {           // robust relative change of dP/dG from the start to the end of [iA, iC]
-        var m = Math.max(2, Math.round((iC - iA + 1) * 0.15)), a = [], b = [];
-        for (var i = iA; i < iA + m && i <= iC; i++) a.push(v.s[i]);
-        for (i = Math.max(iA, iC - m + 1); i <= iC; i++) b.push(v.s[i]);
+    // robust relative change of dP/dG across [iA, iC]: the start is the median over the first 10 % of the window in G
+    // (at least 3 points), the end the median of the last 3 points (log-spaced data put most indices at early G)
+    function _relChange(v, iA, iC) {
+        if (iC - iA < 3) return 0;
+        var gA = v.G[iA], gC = v.G[iC], a = [], b = [], i;
+        for (i = iA; i <= iC && (v.G[i] <= gA + 0.1 * (gC - gA) || a.length < 3); i++) a.push(v.s[i]);
+        for (i = Math.max(iA, iC - 2); i <= iC; i++) b.push(v.s[i]);
         var s0 = _median(a), s1 = _median(b);
         return (s0 > 0 && _fin(s1)) ? (s1 - s0) / s0 : 0;
     }
@@ -2136,7 +2143,7 @@
         var d = derivs, cf = ctx.closed || _closedForm(d, { eps: ctx.eps }), v = cf.view, n = v.G.length, evid = [];
         if (n < 6) return _fail('SHORT', 'Too few usable derivative samples to classify the leak-off.', ['derivs']);
         var P = cf.picks, hump = cf.hump;
-        var gC = _fin(ctx.Gc) ? ctx.Gc : (P.tangent ? P.tangent.G : v.G[n - 1]);
+        var gC = _fin(ctx.Gc) ? ctx.Gc : (P.tangent ? P.tangent.G : (ctx.frac && _fin(ctx.frac.Gc) ? ctx.frac.Gc : v.G[n - 1]));
         var iA = 0, iC = n - 1; while (iC > 0 && v.G[iC] > gC) iC--;
         var iota = _iota(v, iA, iC), curv = _relChange(v, hump ? hump.iEnd : iA, iC);
         var frac = ctx.frac || null, isip = _isipVal(ctx.isip); if (isip === null) isip = d.isip;
@@ -2150,6 +2157,7 @@
         var curvExp = ke.k + kwb;
         var ratios = []; for (var i = iA; i <= iC; i++) if (_fin(v.D[i]) && _fin(v.Dref[i]) && v.Dref[i] > 0) ratios.push(v.D[i] / v.Dref[i]);
         var DoverDref = _median(ratios); if (!_fin(DoverDref)) DoverDref = 1;
+        var late = ratios.slice(Math.floor(ratios.length * 0.85)), DlateRatio = late.length ? Math.max.apply(null, late) : DoverDref;
         var H = hump ? hump.H : 0, returns = hump ? hump.returns : false;
         // no-return excess: G·dP/dG above the late line from the start (tip extension) — H measured against the end slope
         var sEnd = _median(v.s.slice(Math.max(iA, iC - 3), iC + 1)), Hnr = 0;
@@ -2179,7 +2187,7 @@
             matrix: mean([_mg(Math.abs(iota), 0.05, -1), _mg(Math.abs(curv - ke.k), 0.05, -1), _mg(hasHump ? H : 0, 0.05, -1), _mg(-ke.k, 0.05, 1)]),
             pdl: mean([_mg(hasHump ? iota : -1, 0.0, 1, 0.05), _mg(hasHump ? H : 0, 0.05, 1), hasHump && returns ? 0.9 : 0.1]),
             tip: mean([_mg(iota, 0.1, 1), _mg(curv, curvExp - 0.1, -1), (!returns && Hnr > 0.05) ? 0.9 : 0.1]),
-            hrContact: mean([_mg(iota, -0.05, -1), _mg(curv, 0.1, 1), _mg(DoverDref, 1.0, 1, 0.05)]),
+            hrContact: mean([_mg(curv, 0.1, 1), _mg(curv, 0.1, 1), Math.max(_mg(iota, -0.05, -1), _mg(DlateRatio, 1.05, 1, 0.05))]),
             storage: Rvis === null ? 0.1 : mean([(Rvis < 0.3 || (Rvis < 0.5 && VwR !== null && VwR > 2)) ? 0.95 : _mg(Rvis, 0.3, -1, 0.05), _mg(Math.abs(iota), 0.05, -1)])
         };
         if (!hasHump) sc.pdl = Math.min(sc.pdl, 0.2);
@@ -2197,7 +2205,7 @@
         if (hasHump) {
             var pfo = v.p[hump.iEnd], sB = hump.s, xs = [], ys = [];
             for (i = 0; i <= hump.iEnd; i++) if (v.s[i] > sB) { xs.push(v.p[i] - pfo); ys.push(Math.log(v.s[i] / sB)); }
-            var lfp = xs.length >= 3 ? _linfit(xs, ys, 0, xs.length - 1, true) : null, Cd = lfp && lfp.b > 0 ? lfp.b : 0;
+            var lfp = xs.length >= 3 ? _linfit(xs, ys, 0, xs.length - 1, false) : null, Cd = lfp && lfp.b > 0 ? lfp.b : 0;
             pdl = { pfo: _r(pfo, 2), Cd: _sf(Cd, 4), multAtIsip: _r(Math.exp(Cd * (isip - pfo)), 3), sigmaHminusH: _r((1 - 2 * (ctx.inputs ? G.PRiSM_dfit_inputRanges.clamp(ctx.inputs).inputs.rock.nu : 0.25)) * (pfo - sigC), 1) };
             evid.push('A PDL hump spans G ' + _f1(v.G[0], 2) + ' to ' + _f1(v.G[hump.iEnd], 2) + ' (excess ' + _f1(H * 100, 0) + ' %); fissure opening about ' + _f0(pfo) + ' psia, C_d ' + _f1(Cd, 4) + ' 1/psi.');
         }
