@@ -209,10 +209,14 @@
         return Math.abs((convAt(K, V, tc, t + hstep) - convAt(K, V, tc, t - hstep)) / (2 * hstep)) * x;
     }
     S.acaExact = acaExact;
-    function regimeFromSD(s) {
+    // truth regime at t_end from s_D (§4.12 bands), in the AcaResult.regimeSummary vocabulary plus 'transition' (between bands) and
+    // 'artefact' (< −1.6, not scored). The uniform-flux / infinite-conductivity kernels used here (full, penny, box) have no bilinear
+    // flow: their linear-to-radial passage through s_D ≈ −0.75 is 'transition'. 'bilinear' is only returned for a finite-conductivity
+    // kernel (none in 3.4a; the argument is kept so a later kernel can use the band).
+    function regimeFromSD(s, kernelKind) {
         if (!fin(s)) return null;
         if (Math.abs(s + 0.5) <= 0.07) return 'linear';
-        if (Math.abs(s + 0.75) <= 0.07) return 'bilinear';
+        if (kernelKind === 'finite-conductivity' && Math.abs(s + 0.75) <= 0.07) return 'bilinear';
         if (Math.abs(s + 1) <= 0.07) return 'radial';
         if (Math.abs(s + 1.5) <= 0.1) return 'spherical';
         if (s < -1.6) return 'artefact';
@@ -443,14 +447,15 @@
         var sF2 = hard ? gd.sigmaC : sigmaCF2From(M.cfRatio, M.AfCf, M.vwcw, gd.sigmaC, gd.pr);
         var sHyd = gd.sigmaC;
         if (!hard) { for (var x = 0; x < gd.sigmaC - gd.pr; x += 1) { if (M.cfRatio(gd.sigmaC - x) <= 0.05) { sHyd = gd.sigmaC - x; break; } } }
-        var regimeAtEnd = null;
+        var regimeAtEnd = null, sDEnd = null;
         if (hard) {                                                  // s_D of the exact solution at the record end (injection clock tp + dtEnd)
             var ex = acaExact(aca, [tp + dtEnd], { geometry: 'full' });
-            regimeAtEnd = ex.ok ? regimeFromSD(ex.sD[0]) : null;
+            sDEnd = ex.ok && fin(ex.sD[0]) ? ex.sD[0] : null;
+            regimeAtEnd = ex.ok ? regimeFromSD(ex.sD[0], 'full') : null;
         }
         var truth = {
             sigmaC: gd.sigmaC, sigmaCHyd: sHyd, sigmaCF2: sF2, isip: gd.isip, pi: pi, k: kTrue, khmu: kTrue * gd.hp / gd.mu, L: geo.xf,
-            mechanism: gd.mechanism, regimeAtEnd: regimeAtEnd, tcInj: tcInj, eta: etaG, CL: CL, Gamma: 2 * mG0 / (PI * Math.sqrt(tpMin)),
+            mechanism: gd.mechanism, regimeAtEnd: regimeAtEnd, sDEnd: sDEnd, tcInj: tcInj, eta: etaG, CL: CL, Gamma: 2 * mG0 / (PI * Math.sqrt(tpMin)),
             AfCf: M.AfCf, Rvis: M.AfCf / (M.AfCf + M.vwcw(gd.sigmaC)), xf: geo.xf,
             // extras
             source: 'gdomain', Gc: Gc, dtc: dtc, dtDc: dtDc, tp: tp, Vi: sch.Vi, ViStar: Vstar, pn: pn, mG: mG0, VwCw: M.vwcw(gd.sigmaC), Csys: M.AfCf + M.vwcw(gd.sigmaC),
@@ -502,7 +507,7 @@
         var exEnd = acaExact(a, [te + dtEnd], { geometry: geo });
         var truth = {
             sigmaC: sc, sigmaCHyd: sc, sigmaCF2: sc, isip: sc + pn, pi: a.pi, k: a.k, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal',
-            regimeAtEnd: exEnd.ok ? regimeFromSD(exEnd.sD[0]) : null, tcInj: a.tcInj, eta: Gc / (Gc + 2), CL: CL, Gamma: 2 * mG / (PI * Math.sqrt(tpMin)),
+            regimeAtEnd: exEnd.ok ? regimeFromSD(exEnd.sD[0], geo) : null, sDEnd: exEnd.ok && fin(exEnd.sD[0]) ? exEnd.sD[0] : null, tcInj: a.tcInj, eta: Gc / (Gc + 2), CL: CL, Gamma: 2 * mG / (PI * Math.sqrt(tpMin)),
             AfCf: AfCf, Rvis: AfCf / (AfCf + wb.VwCw), xf: geom.xf,
             source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: pn, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
             kCL: kFromCL(CL, sc + pn, sc, a.pi, a.mu, a.phi, a.ct), kSolved: false, acaScored: true, geometry: geo, rampSlopePsiMin: pump.rampSlopePsiMin,
@@ -567,7 +572,11 @@
         var Af = Array.isArray(res.A) && fin(res.A[tsI]) ? res.A[tsI] : (xf ? 2 * xf * hf : null);
         var cfFt = geoName === 'KGD' ? PI * xf / Ep : geoName === 'radial' ? 16 * xf / (3 * PI * Ep) : PI * hf / (2 * Ep);
         var AfCf = Af && cfFt ? Af * cfFt / BBL : null;
-        var VwCw = wb.VwCw;
+        // storage-consistent V_w·c_w at σ_c: the gdomain truth uses vwcw(σ_c) of its c_w(p) law, so the lk truth does the same.
+        // 58 exposes no c_w(p) law in LkResult (§3.7); when it reports a per-sample V_w·c_w(p) series (res.VwCwP, aligned with
+        // res.pw) it is read at σ_c, otherwise the gdomain law is used (V_w·c_w(p) = V_w·c_w,0·((1 − f) + f·σ_c/p), f = cwFrac,
+        // which is V_w·c_w,0 at σ_c by construction of the case inputs).
+        var VwCw = lkVwcwAt(res, wb, cfg.sigmaC);
         var law = ap.law || 'none', sc = cfg.sigmaC, pr = cfg.pr;
         function cfRatio(pv) {
             if (pv >= sc || law === 'none') return 1;
@@ -591,9 +600,12 @@
         var tDL = (k && L && tcInj) ? etaD * (ts + dtEnd - tcInj / 3) / (L * L) : null;
         var reg = tDL == null ? null : tDL <= 0.051 ? 'linear' : tDL >= 2.32 ? 'radial' : 'transition';
         var mech = spec.mechanism;
+        // §4.11 / R5: the storage class needs a storage-consistent R_vis < 0.3; a 'storage' case that is not storage-dominated
+        // (e.g. the I14 quick case, R_vis ≈ 0.54) carries the underlying leak-off mechanism of LK_MECH.storage (Carter normal)
+        if (mech === 'storage' && !(AfCf && AfCf / (AfCf + VwCw) < 0.3)) mech = 'normal';
         var truth = {
             sigmaC: sc, sigmaCHyd: fin(ev.tcHyd) ? p(ev.tcHyd) : sc, sigmaCF2: sF2, isip: isip, pi: pr, k: k, khmu: k ? k * cfg.hp / cfg.muRes : null, L: L,
-            mechanism: mech, regimeAtEnd: reg, tcInj: tcInj != null ? tcInj - tStartInj : null,
+            mechanism: mech, mechanismSpec: spec.mechanism, regimeAtEnd: reg, sDEnd: null, tDLEnd: tDL, tcInj: tcInj != null ? tcInj - tStartInj : null,
             eta: Gc05 ? Gc05 / (Gc05 + 2) : null, CL: CLeq, Gamma: grp && fin(grp.Gamma) ? grp.Gamma : (mG ? 2 * mG / (PI * Math.sqrt(tpMin)) : null),
             AfCf: AfCf, Rvis: AfCf ? AfCf / (AfCf + VwCw) : null, xf: xf,
             source: 'lk', Gc: Gc05, dtc: tcInj != null ? tcInj - ts : null, dtDc: (tcInj != null && tpMin > 0) ? (tcInj - ts) / (tpMin / 60) : null, tp: tpMin / 60,
@@ -607,6 +619,18 @@
         var seg0 = seg.map(function (g) { return { t0: g.t0 - tStartInj, t1: g.t1 - tStartInj, q: g.q }; });
         return { ok: true, p: function (tInj) { return p(tInj + tStartInj); }, seg: seg0, tp: ts - tStartInj, dtEnd: dtEnd, pStart: p(tStartInj), truth: truth, lkRes: res, cfg: cfg };
     }
+    function lkVwcwAt(res, wb, p) {
+        var base = wb.VwCw;
+        if (!wb.cwOfP || !fin(p)) return base;
+        if (res && Array.isArray(res.VwCwP) && Array.isArray(res.pw) && res.VwCwP.length === res.pw.length) {
+            var b = -1;                                              // the sample whose pressure is closest to p, after the peak
+            for (var i = 0; i < res.pw.length; i++) if (fin(res.pw[i]) && pos(res.VwCwP[i]) && (b < 0 || Math.abs(res.pw[i] - p) < Math.abs(res.pw[b] - p))) b = i;
+            if (b >= 0) return res.VwCwP[b];
+        }
+        var f = gdDefaults().cwFrac;
+        return base * ((1 - f) + f * p / Math.max(p, 50));
+    }
+    S.lkVwcwAt = lkVwcwAt;
     function idxNear(a, x) { var b = 0; for (var i = 0; i < a.length; i++) if (Math.abs(a[i] - x) < Math.abs(a[b] - x)) b = i; return b; }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -843,8 +867,13 @@
         pdl: { Cw: 1.0e-4, k: 2.75e-3, pdl: { Cd: 0.004, pfo: 7250, fmax: 50 } },
         'contact-hyp': { aperture: { law: 'hyp', sh: 60, sc: 100, fres: 0.1, sr: null } },
         'contact-exp': { aperture: { law: 'exp', sh: 60, sc: 100, fres: 0.1, sr: 1000 } },
-        storage: { Cw: 0, k: 2.75e-3 }
+        // storage-dominated (§8.1): Carter normal leak-off under a large, pressure-dependent V_w·c_w — the wellbore block is set
+        // per case (STORAGE_RVIS / STORAGE_CW in benchPre; the quick case passes its own), never the matrix wellbore
+        storage: { Cw: 1.903e-4, k: 2.75e-3 }
     };
+    // the storage stratum's three levels: storage-consistent R_vis below the §4.11 / R5 threshold 0.3, with gas or air in the well
+    var STORAGE_RVIS = [0.25, 0.15, 0.08], STORAGE_CW = ['gas', 'air', 'gas'];
+    S.STORAGE_RVIS = STORAGE_RVIS;
     function caseRef(id) { var s = lkSpec(id || 'reference', 'matrix', {}); s.tags = ['reference']; s.sampling = { dtS: 1 }; return s; }
     function cases(kind) {
         var out = [];
@@ -902,6 +931,9 @@
                         for (var sdI = 1; sdI <= 5; sdI++) {
                             var id = 'pre-' + m + '-r' + iv + '-n' + inz + '-s' + sh + '-' + sdI, s;
                             var VwCw = AfCfRef * (1 / rv - 1), cw = iv === 2 ? 'gas' : null;
+                            // storage stratum: always storage-dominated (R_vis 0.25 / 0.15 / 0.08, c_w(p) of gas or air), so its
+                            // truth label 'storage' is reachable; the other mechanisms keep the R_vis 0.95 / 0.6 / 0.3 levels
+                            if (m === 'storage') { VwCw = AfCfRef * (1 / STORAGE_RVIS[iv] - 1); cw = STORAGE_CW[iv]; }
                             if (m === 'tip' || m === 'height-recession') {
                                 s = gdSpec(id, m, { Rvis: rv, AfCf: AfCfRef });
                                 s.wellbore = { VwCw: VwCw, cwOfP: cw };
@@ -1010,6 +1042,14 @@
             r.ds.source = 'dfit-demo';
             r.ds.meta.demo = name;
             if (d.spec.hf && d.spec.hf.shutin) r.ds.meta.hfWindows = [hfShutin(d.spec, d.seed, r.truth)];
+            if (name === 'reference') {
+                // the step-down lengthens the pump time: every tp-dependent value of this demo uses the full pump time (main stage +
+                // three 10 s steps), not the §4.21 5.0 min. ISIP, σ_c, η_G, C_sys, A_f·c_f, R_vis and xf are the §4.21 values;
+                // Δt_c, CL, Γ, k_CL and the G-time follow the longer tp (see truth.tp / truth.dtc / truth.CL / truth.Gamma / truth.kCL)
+                r.truth.tpNote = 'tp = ' + rnd(r.truth.tp * 60, 2) + ' min (main stage + step-down), not the §4.21 5.0 min: Δt_c, CL, Γ, k_CL and G use this tp';
+                r.ds.meta.tpMin = rnd(r.truth.tp * 60, 3);
+                r.ds.meta.note = r.truth.tpNote;
+            }
             _demoCache[name] = r;
         }
         return clone(_demoCache[name].ds);
@@ -1123,11 +1163,21 @@
                      'contact-hyp': 'hr-contact', 'contact-exp': 'hr-contact', 'height-recession': 'hr-contact', contact: 'hr-contact' };
     S.classOf = function (m) { return CLASS_OF[m] || 'undetermined'; };
     function concaveUp(m) { return S.classOf(m) === 'hr-contact'; }
+    // §8.3 'none' closure: right when the truth closure is after the record end or within this many G-decades before it
+    var NONE_G_DECADES = 0.3;
+    // p_i label widths (the point must lie within the label's width of the truth, §8.3). high and medium are the §4.12 p_i-consensus
+    // label definitions (high: width ≤ max(10 psi, 0.5 % p_i); medium: width ≤ 50 psi). §4.12 gives low no width ("low otherwise"),
+    // so WP5 fixes one: twice the medium width (an ASSUMPTION of the scorer, not of the engine; WP8 may revise it).
+    var PI_WIDTH = { highPsi: 10, highFrac: 0.005, mediumPsi: 50, lowPsi: 100 };
+    S.PI_WIDTH = PI_WIDTH; S.NONE_G_DECADES = NONE_G_DECADES;
+    // regime adjacency for 'partial' (§8.3): truth regimes in s_D order; 'linear-radial' is read as 'radial' except for a 'transition'
+    // truth (and is adjacent to a 'linear' truth)
+    var REGIME_ORDER = ['linear', 'bilinear', 'transition', 'radial', 'spherical'];
     function gDecades(dt, tp) { var g = GFn(dt / tp, 0.5); return g > 0 ? Math.log(g) / Math.LN10 : -Infinity; }
     function score(run, truth) {
         var out = { ok: !!(run && run.ok === true), closure: { mode: null, right: false, partial: false, err: null, inBand: null, intervalScore: null },
                     isip: { right: false, partial: false, err: null }, classify: { right: false, partial: false, type: null, truth: truth ? S.classOf(truth.mechanism) : null },
-                    pi: { right: false, partial: false, err: null }, k: { right: false, partial: false }, regime: { right: false, partial: false, value: null, truth: truth ? truth.regimeAtEnd : null },
+                    pi: { right: false, partial: false, err: null }, k: { right: false, partial: false }, regime: { right: false, partial: false, scored: false, value: null, truth: truth ? truth.regimeAtEnd : null },
                     frac: { AfCf: null, Rvis: null, xf: null, sigmaCF2: null }, labels: { closure: null, mode: null, pi: null } };
         if (!run || run.ok !== true || !truth) return out;
         var sc = truth.sigmaC;
@@ -1151,7 +1201,9 @@
                 if (cons.range.medians && fin(truth.sigmaCF2)) out.frac.sigmaCF2 = cons.range.medians.low - truth.sigmaCF2;
             } else if (mode === 'none') {
                 var dtEnd = truth.dtEnd, dtc = truth.dtc;
-                var notReached = fin(dtc) && fin(dtEnd) && (dtc >= dtEnd || gDecades(dtc, truth.tp) - gDecades(dtEnd, truth.tp) <= 0.3);
+                // §8.3: the truth closure is after the last point, or within 0.3 G-decade BEFORE it (closure inside the record
+                // earlier than that means the record did show closure, so 'none' is wrong)
+                var notReached = fin(dtc) && fin(dtEnd) && (dtc >= dtEnd || gDecades(dtEnd, truth.tp) - gDecades(dtc, truth.tp) <= NONE_G_DECADES);
                 out.closure.right = !!notReached; out.closure.partial = !!notReached;
             }
         }
@@ -1172,7 +1224,7 @@
             var pr = aca.pi;
             if (pr && fin(pr.lo) && fin(pr.hi) && fin(truth.pi)) {
                 var inside = truth.pi >= pr.lo && truth.pi <= pr.hi;
-                var width = pr.label === 'high' ? Math.max(10, 0.005 * truth.pi) : pr.label === 'medium' ? 50 : Math.max(50, 0.5 * (pr.hi - pr.lo));
+                var width = pr.label === 'high' ? Math.max(PI_WIDTH.highPsi, PI_WIDTH.highFrac * truth.pi) : pr.label === 'medium' ? PI_WIDTH.mediumPsi : PI_WIDTH.lowPsi;
                 out.pi.err = fin(pr.value) ? pr.value - truth.pi : null;
                 out.pi.partial = inside; out.pi.right = inside && fin(pr.value) && Math.abs(pr.value - truth.pi) <= width;
                 out.labels.pi = pr.label || null;
@@ -1184,19 +1236,31 @@
                 } else {
                     var kv = (aca.kh && fin(aca.kh.k) && aca.kh.k) || (aca.nolte && aca.nolte.lin && fin(aca.nolte.lin.k) && aca.nolte.lin.k) || null;
                     var ci = aca.match && aca.match.ci95 && aca.match.ci95.k;
+                    // §8.3: right only inside a reported interval (bounds or the 95 % CI); a point estimate with no interval can
+                    // only be partial (within × 2)
                     if (Array.isArray(ci) && fin(ci[0]) && fin(ci[1])) out.k.right = truth.k >= ci[0] && truth.k <= ci[1];
-                    else if (kv) out.k.right = Math.abs(Math.log(kv / truth.k)) <= Math.log(1.1);
                     if (kv) out.k.partial = out.k.right || Math.abs(Math.log(kv / truth.k)) <= Math.log(2);
                 }
             }
-            var rs = aca.regimeSummary, rv = rs === 'linear-radial' ? 'radial' : rs === 'none' ? null : rs;
-            out.regime.value = rv;
-            if (truth.regimeAtEnd) {
-                var order = ['linear', 'transition', 'radial', 'spherical'];
-                out.regime.right = rv === truth.regimeAtEnd;
-                var i1 = order.indexOf(rv), i2 = order.indexOf(truth.regimeAtEnd);
-                out.regime.partial = out.regime.right || (i1 >= 0 && i2 >= 0 && Math.abs(i1 - i2) === 1);
-            }
+            // AcaResult.regimeSummary (§3.6): 'none'|'linear'|'linear-radial'|'radial'|'spherical'|'storage'
+            var rs = aca.regimeSummary || null, tr = truth.regimeAtEnd;
+            out.regime.value = rs;
+            if (tr && REGIME_ORDER.indexOf(tr) !== -1) {
+                out.regime.scored = true;
+                var sDe = truth.sDEnd;
+                if (tr === 'transition') {
+                    // between the linear and radial bands (incl. the −0.75 passage of the uniform-flux kernels): right only as
+                    // 'linear-radial' once the radial side is recognisable (s_D ≤ −0.90, §4.12), partial as 'linear' or 'linear-radial'
+                    var radialSide = (fin(sDe) && sDe <= -0.90) || (fin(truth.tDLEnd) && truth.tDLEnd >= 1.6);
+                    out.regime.right = rs === 'linear-radial' && radialSide;
+                    out.regime.partial = out.regime.right || rs === 'linear' || rs === 'linear-radial';
+                } else {
+                    var rv = rs === 'linear-radial' ? 'radial' : rs;
+                    out.regime.right = rv === tr;
+                    var i1 = REGIME_ORDER.indexOf(rv), i2 = REGIME_ORDER.indexOf(tr);
+                    out.regime.partial = out.regime.right || (i1 >= 0 && i2 >= 0 && Math.abs(i1 - i2) === 1) || (tr === 'linear' && rs === 'linear-radial');
+                }
+            } else out.regime.scored = false;                      // no truth, or 'artefact' (< −1.6): not scored
         }
         // pre-closure chain
         var ch = run.frac && run.frac.chosen;

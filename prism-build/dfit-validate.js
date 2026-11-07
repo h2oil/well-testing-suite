@@ -154,7 +154,7 @@ function aggregate(recs) {
   out.isip = rate(() => true, 'isip');
   out.pi = rate((r) => r.score.pi.err != null || r.score.pi.partial, 'pi');
   out.k = rate((r) => r.truth && r.truth.k != null, 'k');
-  out.regime = rate((r) => r.truth && r.truth.regimeAtEnd, 'regime');
+  out.regime = rate((r) => r.score.regime.scored === true, 'regime');   // truth in the scorable vocabulary ('artefact' is not)
   // mechanism confusion matrix (truth class × reported type)
   const cm = {};
   scored.forEach((r) => { const t = r.score.classify.truth || '?', p = r.score.classify.type || '?'; cm[t] = cm[t] || {}; cm[t][p] = (cm[t][p] || 0) + 1; });
@@ -173,23 +173,44 @@ function aggregate(recs) {
 }
 function med(a) { const s = a.filter(fin).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; }
 
-// calibration table (§8.4): out-of-fold by seed — the hit rate of each label is measured on the cases of the other folds' seeds
-// only in WP8's threshold search; with fixed 3.4a thresholds the per-fold rates are pooled (they are out of fold by construction)
+// calibration table (§8.4), folds by seed (seed mod k). 3.4a tunes no threshold (thresholds: {}), so every case is out of fold
+// for every fold and the headline hit rates are POOLED over all scored cases; the per-fold Wilson rates are reported next to them
+// (folds.byLabel, folds.spread = max − min of the fold rates) so their spread is visible. The fold machinery that holds a fold
+// out of a threshold search is WP8's (3.4b).
 function calibrate(recs, folds) {
   const scored = recs.filter((r) => r.status === 'scored');
-  const cell = (mode, lb) => { const s = scored.filter((r) => r.score.closure.mode === mode && r.score.labels.closure === lb); return s.length ? wilson(s.filter((r) => r.score.closure.right).length, s.length) : null; };
+  const rateOf = (set, mode, lb) => { const s = set.filter((r) => r.score.closure.mode === mode && r.score.labels.closure === lb); return s.length ? wilson(s.filter((r) => r.score.closure.right).length, s.length) : null; };
+  const cell = (mode, lb) => rateOf(scored, mode, lb);
   const range = scored.filter((r) => r.score.closure.mode === 'range').map((r) => r.score.closure.intervalScore).filter(fin);
-  const foldN = []; for (let f = 0; f < folds; f++) foldN.push(scored.filter((r) => (r.seed % folds) === f).length);
+  const foldSets = []; for (let f = 0; f < folds; f++) foldSets.push(scored.filter((r) => (r.seed % folds) === f));
+  const foldN = foldSets.map((s) => s.length);
+  const CELLS = [['single', 'high'], ['single', 'medium'], ['single', 'low'], ['range', 'medium'], ['range', 'low']];
+  const byLabel = {}, spread = {};
+  CELLS.forEach(([mode, lb]) => {
+    const key = mode + '.' + lb, rows = foldSets.map((s) => rateOf(s, mode, lb));
+    byLabel[key] = rows;
+    const ps = rows.filter((r) => r && fin(r.p)).map((r) => r.p);
+    spread[key] = ps.length >= 2 ? +(Math.max.apply(null, ps) - Math.min.apply(null, ps)).toFixed(4) : null;
+  });
   return {
     calibrated: true, version: 'g1-' + new Date().toISOString().slice(0, 10), generator: 'g1', n: scored.length,
     hitRate: { single: { high: cell('single', 'high'), medium: cell('single', 'medium'), low: cell('single', 'low') },
                range: { medium: cell('range', 'medium'), low: cell('range', 'low') } },
     intervalScore: { range: range.length ? +(range.reduce((a, b) => a + b, 0) / range.length).toFixed(1) : null },
-    cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {}, folds: { k: folds, n: foldN },
+    cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {},
+    folds: { k: folds, n: foldN, pooled: true, note: '3.4a: no threshold is tuned, so the hit rates are pooled over all folds; per-fold rates in byLabel, spread = max - min',
+             byLabel: byLabel, spread: spread },
   };
 }
 function calSource(tbl) {
-  const appVer = (() => { try { const m = /ver:\s*'([0-9.]+)'/.exec(fs.readFileSync(path.join(ROOT, '..', 'well-testing-app.html'), 'utf8').slice(0, 2e6)); return m ? m[1] : null; } catch (e) { return null; } })();
+  const appVer = (() => {
+    try {
+      // RELEASE_NOTES[0].ver is written ver:'v3.3.3' (the label under the logo); read the first entry after the array head
+      const h = fs.readFileSync(path.join(ROOT, '..', 'well-testing-app.html'), 'utf8'), i = h.indexOf('const RELEASE_NOTES');
+      const m = i < 0 ? null : /ver:\s*'v?([0-9.]+)'/.exec(h.slice(i, i + 20000));
+      return m ? m[1] : null;
+    } catch (e) { return null; }
+  })();
   tbl.date = new Date().toISOString().slice(0, 10); tbl.appVersion = appVer;
   return '// =============================================================================\n'
     + '// WTS — 49-calc-dfit-cal.js  (Round 9)\n'
@@ -199,6 +220,8 @@ function calSource(tbl) {
     + '//\n'
     + '// window.PRiSM_dfit_cal — the DFIT confidence-label calibration table (docs/DFIT-PLAN.md §3.9, §8.4), measured on ' + tbl.n + ' synthetic\n'
     + '// cases (generator ' + tbl.generator + '). Loads with no document and no other symbol; the table is deep-frozen.\n'
+    + '// 3.4a hit rates are POOLED over the ' + (tbl.folds ? tbl.folds.k : '–') + ' seed folds because no threshold was tuned; the per-fold\n'
+    + '// rates and their spread are in folds.byLabel / folds.spread (the out-of-fold threshold search is WP8, 3.4b).\n'
     + '// =============================================================================\n\n'
     + '(function () {\n    \'use strict\';\n    var G = (typeof window !== \'undefined\') ? window : globalThis;\n'
     + '    function freeze(o) { if (o && typeof o === \'object\' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); } return o; }\n'
@@ -316,7 +339,14 @@ function perf(env) {
   // stability grid alone (56): the consensus over the closed-form methods
   if (env.engines.consensus && env.engines.pipeline) {
     const run = W.PRiSM_dfit_pipeline(ds, inputs, well, emptyPicks(), { fast: true, seed: 1 });
-    if (run && run.ok) row('grid', timeIt(() => W.PRiSM_dfit_consensus(run.picks, { derivs: run.derivs, prep: run.prep, inputs, seed: 1 }), 3), BUDGETS.grid, 'stability grid (closed-form methods)');
+    if (run && run.ok) {
+      // §3.5: PRiSM_dfit_consensus(picks, derivs, ctx); ctx carries prep, inputs and the seed (the 56 ctx contract)
+      const call = () => W.PRiSM_dfit_consensus(run.picks, run.derivs, { prep: run.prep, inputs, seed: 1 });
+      let c0 = null, chk = null;
+      try { c0 = call(); chk = require('./tests/_dfit-shapes').checkShape('Consensus', c0); } catch (e) { chk = { ok: false, errors: [String(e && e.message)] }; }
+      if (c0 && c0.ok !== false && chk && chk.ok) row('grid', timeIt(call, 3), BUDGETS.grid, 'stability grid (closed-form methods)');
+      else out.grid = { skipped: 'PRiSM_dfit_consensus did not return a valid Consensus: ' + ((chk && chk.errors && chk.errors.slice(0, 3).join('; ')) || (c0 && c0.code) || 'no result') };
+    } else out.grid = { skipped: 'the pipeline run failed: no picks for the stability grid' };
   } else out.grid = { skipped: 'PRiSM_dfit_consensus (56, WP2) / the pipeline not implemented yet' };
   // redraw: one DFIT plot through PRiSM_drawPlot (needs the DFIT plot registry of 59)
   const reg = W.PRiSM_PLOT_REGISTRY;

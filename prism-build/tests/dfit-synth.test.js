@@ -255,6 +255,57 @@ module.exports = [
       assert(sr.closure.partial === true && sr.closure.right === false && Math.abs(sr.closure.intervalScore - 310) < 1e-9, 'score: a range on a normal truth is partial with its interval score');
       const sf = plainS.score({ ok: false, code: 'X' }, tr);
       assert(sf.ok === false && sf.closure.right === false, 'score: a failed run scores nothing');
+      // 'none' closure (§8.3): wrong on a record that closed long before its end, right when the record stops before closure
+      const none = { ok: true, consensus: { mode: 'none', value: null, range: null, confidence: 'low' } };
+      assert(r.dtc < r.dtEnd, 'reference demo closes inside its record (Δt_c ' + r.dtc + ' h, end ' + r.dtEnd + ' h)');
+      const sn = plainS.score(none, r);
+      assert(sn.closure.right === false && sn.closure.partial === false, "score: 'none' on the reference truth (closed at 5.7 h of 80 h) is wrong");
+      const es = plain(plainS.demoSpec('reference').spec);
+      es.tEndFactor = 0.5; es.artefacts = []; es.hf = null;
+      const me = plainS.make(es, 3);
+      assert(me.ok && me.truth.dtEnd < me.truth.dtc, 'early-stop case (factor 0.5) stops before closure');
+      assert(plainS.score(none, me.truth).closure.right === true, "score: 'none' on an early-stop case is right");
+      // a record that ends within 0.3 G-decade after closure still scores 'none' right; one 1 G-decade after does not
+      const gdec = (dt) => Math.log10(plainS.G(dt / r.tp, 0.5));
+      const nearT = Object.assign({}, r, { dtEnd: r.dtc * 1.2 }), farT = Object.assign({}, r, { dtEnd: r.dtc * 200 });
+      assert(gdec(nearT.dtEnd) - gdec(r.dtc) <= 0.3 && plainS.score(none, nearT).closure.right === true, "score: 'none' just after closure (≤ 0.3 G-decade) is right");
+      assert(gdec(farT.dtEnd) - gdec(r.dtc) > 0.3 && plainS.score(none, farT).closure.right === false, "score: 'none' well after closure is wrong");
+      // the reference demo's tp is the full pump time (step-down included) and is stated in its meta
+      const rds = plainS.demo('reference');
+      assert(r.tp * 60 > 5.0 && typeof rds.meta.note === 'string' && /tp = [0-9.]+ min/.test(rds.meta.note) && Math.abs(rds.meta.tpMin - r.tp * 60) < 1e-3, 'reference demo: tp stated in meta (' + rds.meta.note + ')');
+      // storage stratum ≠ matrix stratum (LkConfig and wellbore), storage-dominated at every level
+      const bench = plainS.cases('benchmark');
+      [0, 1, 2].forEach((iv) => {
+        const st = bench.find((s) => s.id === 'pre-storage-r' + iv + '-n0-s1.5-1'), mx = bench.find((s) => s.id === 'pre-matrix-r' + iv + '-n0-s1.5-1');
+        assert(st && mx, 'storage / matrix cells r' + iv);
+        assert(JSON.stringify(st.lk) !== JSON.stringify(mx.lk), 'r' + iv + ': storage LkConfig differs from matrix');
+        assert(JSON.stringify(st.wellbore) !== JSON.stringify(mx.wellbore), 'r' + iv + ': storage wellbore differs from matrix');
+        const AfCfRef = 0.2061 / 5.614583, rv = AfCfRef / (AfCfRef + st.wellbore.VwCw);
+        assert(rv < 0.3 && (st.wellbore.cwOfP === 'gas' || st.wellbore.cwOfP === 'air'), 'r' + iv + ': storage-dominated (R_vis ' + rv.toFixed(3) + ', ' + st.wellbore.cwOfP + ')');
+      });
+      // storage truth only when storage-dominated (§4.11): I14's R_vis ≈ 0.54 case carries the underlying mechanism
+      const qs = withLk.make(withLk.cases('quick').find((s) => s.id === 'q-storage-gas'), 3);
+      assert(qs.ok && (qs.truth.Rvis < 0.3 ? qs.truth.mechanism === 'storage' : qs.truth.mechanism === 'normal') && qs.truth.mechanismSpec === 'storage',
+        'q-storage-gas: truth mechanism ' + qs.truth.mechanism + ' at R_vis ' + qs.truth.Rvis);
+      const bs = bench.find((s) => s.id === 'pre-storage-r1-n0-s1.5-1'), mb = withLk.make(bs, 3);
+      assert(mb.ok && mb.truth.mechanism === 'storage' && mb.truth.Rvis < 0.3, 'benchmark storage cell: truth storage at R_vis ' + (mb.truth && mb.truth.Rvis));
+      // regime truth in the regimeSummary vocabulary (+ 'transition'); no bilinear for the uniform-flux / box / penny kernels
+      const acaTr = bench.filter((s) => s.source === 'aca-exact' && !(s.aca && s.aca.fluid === 'gas')).map((s) => plainS.make(s, 1)).filter((m) => m.ok).map((m) => m.truth.regimeAtEnd);
+      assert(acaTr.length >= 50 && acaTr.every((x) => x === null || ['linear', 'transition', 'radial', 'spherical', 'artefact'].includes(x)), 'after-closure truths: ' + JSON.stringify([...new Set(acaTr)]));
+      assert(plainS.regimeFromSD(-0.75) === 'transition' && plainS.regimeFromSD(-0.75, 'full') === 'transition' && plainS.regimeFromSD(-0.75, 'finite-conductivity') === 'bilinear', 'the −0.75 band is bilinear only for a finite-conductivity kernel');
+      const rg = (rs, t) => plainS.score({ ok: true, aca: { ok: true, regimeSummary: rs, pi: null, bounds: null } }, Object.assign({}, tr, t)).regime;
+      assert(rg('linear-radial', { regimeAtEnd: 'radial' }).right, "'linear-radial' is right for a radial truth");
+      assert(!rg('linear-radial', { regimeAtEnd: 'transition', sDEnd: -0.6 }).right && rg('linear-radial', { regimeAtEnd: 'transition', sDEnd: -0.6 }).partial, 'transition truth before s_D −0.90: linear-radial partial only');
+      assert(rg('linear-radial', { regimeAtEnd: 'transition', sDEnd: -0.92 }).right, 'transition truth past s_D −0.90: linear-radial right');
+      assert(rg('linear', { regimeAtEnd: 'transition', sDEnd: -0.6 }).partial && !rg('radial', { regimeAtEnd: 'transition', sDEnd: -0.6 }).partial, 'transition: linear partial, radial not');
+      assert(rg('linear-radial', { regimeAtEnd: 'linear' }).partial && rg('spherical', { regimeAtEnd: 'radial' }).partial, 'adjacent regimes are partial');
+      assert(rg('radial', { regimeAtEnd: 'artefact' }).scored === false, "an 'artefact' truth is not scored");
+      // p_i widths: named constants (§4.12 high / medium; low fixed); k point estimate with no interval is partial only
+      assert(plainS.PI_WIDTH.highPsi === 10 && plainS.PI_WIDTH.mediumPsi === 50 && plainS.PI_WIDTH.lowPsi > 0, 'p_i label widths');
+      const piS = (v, lb) => plainS.score({ ok: true, aca: { ok: true, pi: { value: v, lo: 4000, hi: 5000, label: lb } } }, tr).pi;
+      assert(!piS(4800, 'low').right && piS(4800, 'low').partial && piS(4550, 'low').right, "p_i 'low': right only within the fixed width, inside the bracket partial");
+      const kS = (k) => plainS.score({ ok: true, aca: { ok: true, nolte: { lin: { k } } } }, tr).k;
+      assert(!kS(tr.k * 1.05).right && kS(tr.k * 1.05).partial && !kS(tr.k * 3).partial, 'k point with no interval: partial within × 2 only');
     },
   },
   {
