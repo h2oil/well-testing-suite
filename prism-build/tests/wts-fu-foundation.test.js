@@ -240,8 +240,9 @@ module.exports = [
       // both: sepBy + ck2
       const z = mk(blockFlow(S, { sepBy: true, sepByCk2: true }), { separator: false, heaterChoke: true });
       assert.ok(z._internal().fu.sel === 'sepBy+ck2' && z._internal().fu.Pck_ss === ex.ck1.Pout, 'sepBy+ck2');
-      // a CK-102 rig toggle keeps the state finite and balanced (the lag only decays in E0)
-      c.advance(300); c.setRigup({ heaterChoke: false }); c.advance(60);
+      // a CK-102 rig toggle keeps the state finite and balanced. WP-E1: the lag holds the CK-102 ΔP (≈ 979 psi) and decays
+      // with τ 5 s after CK-102 leaves, reaching exactly 0 (the 1e-9 psi snap) after about 28 τ
+      c.advance(300); c.setRigup({ heaterChoke: false }); c.advance(200);
       const cz = c.getState();
       assert.ok(c._internal().fu.ck2dP === 0 && cz.nodes.heaterChoke.inRig === false, 'out again');
       balanced(assert, cz, 'CK-102 toggled');
