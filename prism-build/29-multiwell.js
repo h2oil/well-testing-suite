@@ -195,8 +195,27 @@
         // v3.3 Build-up Surveillance (49-calc-buildup.js publishes WTS_state.buildup)
         if (st.buildup) r.buildup = _ok(st.buildup) ? { S: _num(st.buildup.latest && st.buildup.latest.S), dS: _num(st.buildup.dS),
             alertCode: _ALERT_LABEL[st.buildup.alertCode] ? st.buildup.alertCode : null, k: _num(st.buildup.kMedian) } : null;
+        // v3.4 PRiSM DFIT (59-prism-dfit-ui.js publishes WTS_state.dfit after each analysis; docs/DFIT-PLAN.md §2.3, §2.9)
+        if (st.dfit) r.dfit = _dfitOf(st.dfit);
         return r;
     }
+    // Active DFIT test (closure gradient, label, p_i, k) and every test of the well (zone, datum, gradients) — numbers only.
+    var _DFIT_LABEL = { high: 'High', medium: 'Medium', low: 'Low', 'not-estimable': 'Not estimable' };
+    function _dfitOf(d) {
+        if (!d || typeof d !== 'object') return null;
+        var tests = (d.tests && typeof d.tests.length === 'number') ? Array.prototype.slice.call(d.tests, 0, 12).map(function (t) {
+            t = t || {};
+            var kr = (t.kRange && typeof t.kRange.length === 'number' && t.kRange.length === 2) ? [_num(t.kRange[0]), _num(t.kRange[1])] : null;
+            return { zone: typeof t.zone === 'string' ? t.zone.slice(0, 40) : '', datumTvd: _num(t.datumTvd), closureGrad: _num(t.closureGrad),
+                     closureLabel: _DFIT_LABEL[t.closureLabel] ? t.closureLabel : null, pi: _num(t.pi), k: _num(t.k), kRange: kr };
+        }) : [];
+        if (d.ok === false) return tests.length ? { ok: false, tests: tests } : null;
+        var c = (d.closure && typeof d.closure === 'object') ? d.closure : {};
+        return { ok: true, closureGrad: _num(d.closureGrad), closureLabel: _DFIT_LABEL[c.label] ? c.label : null, closureMode: (c.mode === 'single' || c.mode === 'range') ? c.mode : 'none',
+                 pi: _num(d.pi), k: _num(d.k), kLo: _num(d.kLo), kHi: _num(d.kHi), tests: tests };
+    }
+    function _dfitK(r) { var x = r.dfit; if (!x || !x.ok) return null; return x.k != null ? x.k : null; }
+    function _dfitNote(r) { var n = r.dfit && r.dfit.tests ? r.dfit.tests.length : 0; return n > 1 ? ' (active test of ' + n + ')' : ''; }
     // Skin-alert status codes → text (the comparison row shows a label, not a number).
     var _ALERT_LABEL = { none: 'No alert', possible: 'Possible', provisional: 'Provisional', confirmed: 'Confirmed' };
     function _fitOf(fit) {
@@ -245,7 +264,7 @@
         }
         return { gasdeliv: r.gasdeliv || null, oilipr: r.oilipr || null, rates: _pickRates(r),
                  flareghg: r.flareghg || null, h2sroe: r.h2sroe || null, wellkill: r.wellkill || null, fit: fit,
-                 buildup: r.buildup || null };
+                 buildup: r.buildup || null, dfit: r.dfit || null };
     }
 
     // Display: canonical field units → active unit system (22-units.js).
@@ -278,14 +297,23 @@
         { key: 'buS',  label: 'Latest skin (build-up surveillance)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.S; }, cat: null, dp: 2, imp: '' },
         { key: 'buDS', label: 'Skin change vs baseline', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.dS; }, cat: null, dp: 2, imp: '' },
         { key: 'buAlert', label: 'Skin alert',           src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.alertCode; }, text: function (v) { return _ALERT_LABEL[v] || '—'; } },
-        { key: 'buK',  label: 'Permeability k (build-up median)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.k; }, cat: 'permeability', dp: 2, imp: 'md' }
+        { key: 'buK',  label: 'Permeability k (build-up median)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.k; }, cat: 'permeability', dp: 2, imp: 'md' },
+        // PRiSM DFIT is field-unit only (docs/DFIT-PLAN.md §7.15): no unit category, values in psi/ft, psia and md
+        { key: 'dfGrad', label: 'Closure gradient (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.closureGrad : null; },
+          text: function (v, r) { return v == null ? '—' : _fmt(v, 3) + ' psi/ft' + _dfitNote(r); } },
+        { key: 'dfLabel', label: 'Closure label (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.closureLabel : null; },
+          text: function (v, r) { return v ? _DFIT_LABEL[v] + (r.dfit.closureMode === 'range' ? ' (range)' : '') : '—'; } },
+        { key: 'dfPi', label: 'Reservoir pressure p_i (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.pi : null; },
+          text: function (v) { return v == null ? '—' : _fmt(v, 0) + ' psia'; } },
+        { key: 'dfK', label: 'Permeability k (DFIT after-closure)', src: 'PRiSM DFIT', get: _dfitK,
+          text: function (v, r) { var x = r.dfit; var p3 = function (n) { return Number(n).toPrecision(3); }; if (v != null) return p3(v) + ' md'; return (x && x.ok && x.kLo != null && x.kHi != null) ? p3(x.kLo) + '–' + p3(x.kHi) + ' md' : '—'; } }
     ];
     // Comparison table: one row per result, one column per well.
     function table() {
         var reg = _readReg();
         var wells = reg.wells.map(function (w) { return { id: w.id, name: w.name, active: w.id === reg.active, r: results(w.id) || {} }; });
         var cells = ROWS.map(function (row) {
-            return wells.map(function (w) { var v = row.get(w.r); return row.text ? row.text(v) : _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
+            return wells.map(function (w) { var v = row.get(w.r); return row.text ? row.text(v, w.r) : _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
         });
         var srcRow = wells.map(function (w) { return (w.r.rates && w.r.rates.source) || '—'; });
         return { rows: ROWS.map(function (r) { return { key: r.key, label: r.label, src: r.src }; }), wells: wells, cells: cells, rateSource: srcRow };
