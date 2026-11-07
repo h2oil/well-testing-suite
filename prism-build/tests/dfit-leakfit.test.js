@@ -118,6 +118,11 @@ module.exports = [
       assert(rel(rb.groups.GammaPKN, a.groups.GammaPKN) <= 1e-3, 'run B vs run A Γ_PKN ' + rb.groups.GammaPKN + ' / ' + a.groups.GammaPKN);
       assert(rel(rb.groups.Gamma, a.groups.Gamma) <= 1e-3, 'Γ');
       assert(b.warnings.some((w) => w.code === 'GROUP_FREE'), 'E′ and h_f both free is flagged');
+      // a MAP prior on h_f (log-derived height ± 2 %) pins the group member and keeps Γ_PKN
+      const bp = W.PRiSM_dfit_lkFit(dataW(W), startW(W, { hf: 40 }), 'full', { free: ['Cw', 'sigmaC', 'Ep', 'hf'], priors: { hf: { value: 50, sdLn: 0.02 } } });
+      okFit(assert, bp, 'run B_w with a height prior');
+      assert(rel(bp.params.hf, 50) <= 0.03 && rel(bp.params.Ep, 5e6) <= 0.06, 'prior pins h_f (' + bp.params.hf.toFixed(2) + ') and E′ (' + bp.params.Ep.toPrecision(4) + ')');
+      assert(rel(bp.groups.GammaPKN, 14.904) <= 1e-3 && bp.priors.length === 1, 'Γ_PKN with the prior');
     },
   },
   {

@@ -1269,16 +1269,26 @@
                     starts.push(x);
                 });
             }
-            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [],
+            var priors = [];
+            if (opts.priors && typeof opts.priors === 'object') keys.forEach(function (k, j) {
+                var pz = opts.priors[k]; if (!pz || !(+pz.value > 0 || (!PDEF[k].log && _isFinite(+pz.value)))) return;
+                var sd = PDEF[k].log ? +pz.sdLn : +pz.sd; if (!(sd > 0)) return;
+                priors.push({ j: j, mu: PDEF[k].log ? _log(+pz.value) : +pz.value, sd: sd, key: k });
+            });
+            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [], priors: priors,
                    maxRuns: (+opts.maxRuns > 0) ? +opts.maxRuns : 400, maxIter: (+opts.maxIter > 0) ? +opts.maxIter : 60, budgetMs: (+opts.budgetMs > 0) ? +opts.budgetMs : 5000,
                    t0: _now(), cur: null, c0: c0 };
         }
         function resid(x) {
             var r = st.model.run(x);
             if (!r) return null;
-            var e = new Array(st.pd.t.length), S = 0;
-            for (var i = 0; i < e.length; i++) { var v = r.p[i]; if (v == null) return null; e[i] = (v - st.pd.p[i]) * _sqrt(st.pd.w[i]); S += e[i] * e[i]; }
-            return { e: e, S: S, r: r };
+            var nd = st.pd.t.length, e = new Array(nd + st.priors.length), S = 0;
+            for (var i = 0; i < nd; i++) { var v = r.p[i]; if (v == null) return null; e[i] = (v - st.pd.p[i]) * _sqrt(st.pd.w[i]); S += e[i] * e[i]; }
+            var Sd = S;
+            for (var q = 0; q < st.priors.length; q++) {   // MAP priors as pseudo-residuals in psi: σ_p·(θ − θ_prior)/σ_θ (log for log parameters)
+                var pz = st.priors[q]; e[nd + q] = st.sigmaP * (x[pz.j] - pz.mu) / pz.sd; S += e[nd + q] * e[nd + q];
+            }
+            return { e: e, S: S, Sd: Sd, r: r };
         }
         function jac(x, base) {
             var J = [];
@@ -1345,8 +1355,8 @@
             var J = jac(x, base);
             var warnings = _freeRules(keys).concat(base.r.res.warnings.filter(function (w) { return w.level !== 'info'; }));
             var ne = J ? normal(J, base.e) : null, C = ne ? _inv(ne.A) : null;
-            var s2 = base.S / _max(1, n - np), sd = [], corr = {}, params = {}, ci95 = {}, ci95I = {};
-            var ne1 = _neff(base.e), rho1 = ne1.rho1, nEff = ne1.nEff, infl = ne1.inflation, i;
+            var s2 = base.Sd / _max(1, n - np), sd = [], corr = {}, params = {}, ci95 = {}, ci95I = {};
+            var ne1 = _neff(base.e.slice(0, n)), rho1 = ne1.rho1, nEff = ne1.nEff, infl = ne1.inflation, i;
             keys.forEach(function (k, j) {
                 var d = PDEF[k], v = d.log ? _exp(x[j]) : x[j];
                 params[k] = v;
@@ -1365,7 +1375,7 @@
                 eig.vals.forEach(function (lv, m) { if (lv / lmax < 1e-4) sloppy.push(_sloppyEntry(keys, eig.vecs[m], best.r.r.cfg, best.r.r.res, C, s2, infl)); });
             }
             var bestRes = best.r.r.res, bestCfg = best.r.r.cfg, grp = lkGroups(bestRes);
-            var rmse = _sqrt(base.S / n), chi2 = base.S / (st.sigmaP * st.sigmaP);
+            var rmse = _sqrt(base.Sd / n), chi2 = base.Sd / (st.sigmaP * st.sigmaP);
             if (st.sigmaP > 0 && rmse > 5 * st.sigmaP) warnings.push(_w('FIT_MISFIT', 'warn', 'The model does not fit (rmse ' + _sig(rmse, 3) + ' psi against a noise of ' + _sig(st.sigmaP, 2) + ' psi): a fixed height or E′ may be wrong; free one member of the {E′, h_f} group.'));
             var conv = st.runsOut.filter(function (o) { return o.ok && o.S <= best.S * 1.05; }).length;
             var structural = { sigmaC: null, pr: null, k: null, CLeq: null };
@@ -1375,7 +1385,7 @@
                 sloppy: sloppy, starts: { n: st.starts.length, converged: conv }, runs: st.counts.runs, chi2: chi2, rmse: rmse, sigmaP: st.sigmaP,
                 stopReason: best.stop || 'converged', warnings: warnings,
                 free: keys.slice(), cfg: bestCfg, CLeq: bestRes.CLeq, dpCL: bestRes.dpCL, wcEq: bestRes.wcEq, kEq: bestRes.k, evals: st.counts.evals,
-                design: { t: st.pd.t.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null
+                design: { t: st.pd.t.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null, priors: st.priors.map(function (pz) { return pz.key; })
             };
             finish(out);
         }
