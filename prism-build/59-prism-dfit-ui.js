@@ -2439,7 +2439,10 @@
     var SECTION_FNS = SECTIONS.map(function (s) { return _sectionFn(s[0], s[1], s[2]); });
     function reportHeader(model) {
         var m = _reportModel(), T = test();
-        var well = (G.WTS_wells && typeof G.WTS_wells.active === 'function') ? (function () { try { var w = G.WTS_wells.active(); return w && w.name; } catch (e) { return null; } })() : null;
+        var well = (G.WTS_wells && typeof G.WTS_wells.list === 'function') ? (function () {
+            try { var L = G.WTS_wells.list() || []; for (var i = 0; i < L.length; i++) if (L[i] && L[i].active) return L[i].name; } catch (e) { /* no wells */ }
+            return null;
+        })() : null;
         var title = 'DFIT interpretation — ' + (well || 'well') + (T.zone ? ' · ' + T.zone : '');
         var rows = railRows().filter(function (r) { return r[0] !== 'Bands' && r[0] !== 'Test'; });
         return { title: _txt(title), keyRows: rows.map(function (r) { return [_txt(r[0]), _txt(r[1])]; }), keyLine: keyLine() || (m ? _txt(m.keyLine) : '') };
