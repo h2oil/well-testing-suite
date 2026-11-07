@@ -13,6 +13,8 @@
 'use strict';
 
 const WP = 'WTSRIG';
+// SIM-FOLLOWUP §3.6: signatures derive from the contract's default (11 characters since v1.5.0, CK-102 appended)
+const FU = require('./_wts-fu-shapes');
 const NOISE_OFF = { noise: { on: false } };
 const WGRAD = 0.4331;                  // psi/ft of fresh water
 const GPM_BPD = 34.2857;               // 1 US gal/min = 34.2857 bbl/d
@@ -97,8 +99,8 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const S = app.win.WTS_sim;
-      // v3.3.1: signature order appends the optional items DS-101 (desander) and T-202 (surge2)
-      assert.deepStrictEqual(JSON.parse(JSON.stringify(S.RIG_KEYS)), ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2']);
+      // v3.3.1: signature order appends the optional items DS-101 (desander) and T-202 (surge2); v1.5.0 CK-102 (heaterChoke)
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(S.RIG_KEYS)), ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2', 'heaterChoke']);
       assert.ok(S.RIGUP.filter((it) => it.locked).map((it) => it.key).join() === 'esd,choke', 'locked items');
       const n = S.normRigup(app.toWin({ esd: false, choke: false, separator: false, flare: false, gauge: false }));
       assert.ok(n.rig.esd && n.rig.choke, 'ESD and choke stay in');
@@ -116,24 +118,24 @@ module.exports = [
       assert.strictEqual(s.setRigup(null), false, 'bad input ignored');
       // default = full rig-up, no notes (existing behaviour)
       st = s.getState();
-      assert.ok(st.rigup.full && st.rigup.sig === '1111111100' && st.rigup.notes.length === 0 && st.rates.separated === true, 'default full rig-up');
+      assert.ok(st.rigup.full && st.rigup.sig === FU.SIG_DEFAULT && st.rigup.notes.length === 0 && st.rates.separated === true, 'default full rig-up');
       assert.deepStrictEqual(JSON.parse(JSON.stringify(st.rigup.extras)), [], 'no optional item in by default');
     }
   },
   {
-    name: 'WTSRIG optional items: DS-101 and T-202 out by default, in only when strictly true; T-201 out forces T-202 out (note) and the dumps go to T-301; full counts core items only',
+    name: 'WTSRIG optional items: DS-101, T-202 and CK-102 out by default, in only when strictly true; T-201 out forces T-202 out (note) and the dumps go to T-301; full counts core items only',
     wp: WP,
     run(app, assert) {
       const S = app.win.WTS_sim;
       const items = S.RIGUP.filter((it) => it.optional).map((it) => it.key + ':' + it.tag + ':' + it.def);
-      assert.deepStrictEqual(JSON.parse(JSON.stringify(items)), ['desander:DS-101:false', 'surge2:T-202:false'], 'two optional items, out by default');
-      assert.strictEqual(S.RIGUP.map((it) => it.key).join(), 'esd,desander,choke,heater,separator,surge,surge2,gauge,pump,flare', 'display order = process order');
-      assert.strictEqual(S.normRigup(app.toWin({ desander: 'true', surge2: 1 })).sig, '1111111100', 'strings / numbers do not put an optional item in');
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(items)), ['desander:DS-101:false', 'heaterChoke:CK-102:false', 'surge2:T-202:false'], 'three optional items, out by default');
+      assert.strictEqual(S.RIGUP.map((it) => it.key).join(), FU.RIG_ORDER.join(), 'display order = process order');
+      assert.strictEqual(S.normRigup(app.toWin({ desander: 'true', surge2: 1, heaterChoke: 'yes' })).sig, FU.SIG_DEFAULT, 'strings / numbers do not put an optional item in');
       // a v3.3 request (8 keys, all present) leaves both new items out
-      assert.strictEqual(S.normRigup(app.toWin({ esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true })).sig, '1111111100');
+      assert.strictEqual(S.normRigup(app.toWin({ esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true })).sig, FU.SIG_DEFAULT);
       const n = S.normRigup(app.toWin({ surge: false, surge2: true }));
       assert.ok(!n.rig.surge2 && n.notes.some((m) => /T-202 works alongside T-201/.test(m)), 'T-201 out forces T-202 out with a note');
-      assert.ok(n.full === false && n.sig === '1111011100', 'sig ' + n.sig);
+      assert.ok(n.full === false && n.sig === '1111011100' + FU.SIG_DEFAULT.slice(10), 'sig ' + n.sig);
       assert.ok(S.normRigup(app.toWin({ desander: true, surge2: true })).full === true, 'full counts core items only');
       const s = sim(app, { config: NOISE_OFF, rigup: { surge: false, surge2: true } });
       run(s, 1800, 10);
@@ -287,11 +289,12 @@ module.exports = [
       const card = app.el('wtsl_rigup');
       assert.ok(card && card.classList.contains('card'), 'Rig-up card below the live view');
       const sw = (k) => card.querySelector('[data-rig="' + k + '"]');
-      ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2'].forEach((k) => assert.ok(sw(k), 'switch ' + k));
-      // v3.3.1 optional items: off by default, their rows rp-skip; the card lists them in process order (DS-101 after SDV-101, T-202 after T-201)
-      assert.ok(sw('desander').getAttribute('aria-checked') === 'false' && sw('surge2').getAttribute('aria-checked') === 'false', 'optional items off');
+      FU.RIG_KEYS.forEach((k) => assert.ok(sw(k), 'switch ' + k));
+      // optional items (v3.3.1 DS-101 / T-202, v1.5.0 CK-102): off by default, their rows rp-skip; the card lists them in process
+      // order (DS-101 after SDV-101, CK-102 after CK-101, T-202 after T-201)
+      assert.ok(['desander', 'surge2', 'heaterChoke'].every((k) => sw(k).getAttribute('aria-checked') === 'false'), 'optional items off');
       const order = Array.from(card.querySelectorAll('[data-rig]')).map((b) => b.getAttribute('data-rig'));
-      assert.deepStrictEqual(order, ['esd', 'desander', 'choke', 'heater', 'separator', 'surge', 'surge2', 'gauge', 'pump', 'flare'], 'process order');
+      assert.deepStrictEqual(order, FU.RIG_ORDER, 'process order');
       assert.ok(/LCV-201, LCV-202/.test(card.textContent), 'intro: both surge tanks transfer on their own vessel pressure');
       assert.ok(sw('esd').disabled && sw('choke').disabled, 'ESD / choke locked');
       assert.ok(!sw('heater').disabled && sw('heater').getAttribute('aria-checked') === 'true', 'heater on by default');

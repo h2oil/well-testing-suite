@@ -1065,6 +1065,7 @@ async function simJob(browser) {
     addFinding({ severity: 'error', kind: 'sim', route, view, message: 'simulator run failed: ' + e.message.split('\n')[0] });
   } finally {
     try { if (eqRun && routeInfo.wts) routeInfo.wts.equipment = await eqRun(); } catch (e) { /* equipmentRun reports its own findings */ }
+    try { if (eqRun && routeInfo.wts) routeInfo.wts.followup = await followupRun(s, route); } catch (e) { /* followupRun reports its own findings */ }
     await s.close();
   }
 }
@@ -1157,6 +1158,93 @@ async function equipmentRun(s, act, clockTxt, route) {
         const S = window.WTS_live && window.WTS_live.getSim(); if (S && S.setRigup) S.setRigup({ desander: false, surge2: false });
         try { localStorage.removeItem('wts_sim_rigup'); } catch (e) {}
       });
+    } catch (e) {}
+  }
+  return out;
+}
+
+// Simulator follow-up (docs/SIM-FOLLOWUP-PLAN.md §9.3, WP-L): the Scenarios → Cushion unload form with blank / 0 / −1 / 1e12 in
+// every field (the form sanitises: no NaN / Infinity in the form, the HUD or a toast), Start, Stop, Esc; CK-102 into the rig-up
+// from the Rig-up card and the CK-102 card bean2 buttons (−4 / +4 on wts_bean2 when the page has it). The four new page inputs
+// (wts_bean2, wts_ck2Pos, wts_sepByDest, wts_sepByP) get the edge values from the generic input pass of the wts route. The
+// rig-up and the cushion prefs are restored at the end (both persist across reloads).
+async function followupRun(s, route) {
+  const view = 'followup';
+  const out = { form: null, starts: 0, bean2: null };
+  const note = (sev, msg) => addFinding({ severity: sev, kind: 'sim', route, view, message: msg });
+  const bad = /NaN|undefined|Infinity|\[object/;
+  let prefs0 = null;
+  try {
+    await s.page.reload({ waitUntil: 'load', timeout: 20000 });
+    await navTo(s, 'wts'); await s.take();
+    prefs0 = await s.eval(() => { try { return localStorage.getItem('h2viz3d_prefs'); } catch (e) { return null; } });
+    const hasForm = await s.eval(() => !!(window.WTS_sim && window.WTS_sim.features && window.WTS_sim.features.cushion));
+    if (!hasForm) { note('info', 'follow-up run skipped: WTS_sim.features.cushion not set (simulator before v1.5.0)'); return out; }
+    await s.eval(() => { const b = document.querySelector('[data-act=mode2d]'); if (b) b.click(); });
+    await sleep(500);
+    // Scenarios → Cushion unload
+    await s.eval(() => { const b = Array.from(document.querySelectorAll('[data-act=scen]')).find((x) => x.offsetParent); if (b) b.click(); });
+    await sleep(250);
+    const opened = await s.eval(() => { const b = document.querySelector('.wtsl-menu [data-act=cush-open]'); if (!b) return null; const t = b.textContent.trim(); b.click(); return t; });
+    if (!opened) { note('error', 'Scenarios menu: no "Cushion unload (clean-up)" entry'); return out; }
+    await sleep(250);
+    out.form = await s.eval(() => { const d = document.getElementById('wtsl_cush_dlg'); return d ? { open: d.open, ids: Array.from(d.querySelectorAll('[id]')).map((e) => e.id) } : null; });
+    if (!out.form || !out.form.open) { note('error', 'Cushion unload form did not open'); return out; }
+    if (!out.form.ids.every((id) => /^wtsl_cush_/.test(id))) note('warning', 'Cushion unload form: ids without the wtsl_cush_ prefix: ' + out.form.ids.join(', '));
+    eventsToFindings(await s.take(), { route, view, control: { label: 'Scenarios → ' + opened }, action: 'open cushion form' });
+    for (const v of ['', '0', '-1', '1e12']) {
+      await s.eval((val) => {
+        ['wtsl_cush_V', 'wtsl_cush_SG', 'wtsl_cush_q', 'wtsl_cush_depth'].forEach((id) => {
+          const el = document.getElementById(id); if (!el) return;
+          el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      }, v);
+      const st = await s.eval(() => { const b = document.getElementById('wtsl_cush_start'); if (!b || b.disabled) return b ? 'disabled: ' + (b.title || '') : 'missing'; b.click(); return 'clicked'; });
+      if (st === 'clicked') out.starts++;
+      await sleep(600);
+      const txt = await s.eval(() => { const d = document.getElementById('wtsl_cush_dlg'), h = document.getElementById('wtsl_hud'), t = document.getElementById('wtsl_toast');
+        return { form: d ? Array.from(d.querySelectorAll('input')).map((e) => e.value).join('|') + ' ' + d.textContent : '', hud: h ? h.textContent : '', toast: t ? t.textContent : '' }; });
+      if (bad.test(txt.form)) note('error', 'Cushion unload form shows a bad value after "' + v + '": ' + txt.form.slice(0, 160));
+      if (bad.test(txt.hud) || bad.test(txt.toast)) note('error', 'HUD / toast shows a bad value after a cushion start with "' + v + '"');
+      eventsToFindings(await s.take(), { route, view, control: { label: 'cushion form = ' + JSON.stringify(v) }, action: 'cushion start' });
+      await s.eval(() => { const b = document.getElementById('wtsl_cush_stop'); if (b && !b.disabled) b.click(); });
+      await sleep(200);
+    }
+    await s.page.keyboard.press('Escape'); await sleep(200);
+    if (await s.eval(() => !!document.getElementById('wtsl_cush_dlg'))) note('warning', 'Cushion unload form: Esc did not close it');
+    // CK-102 into the rig-up, its card and the bean2 buttons
+    const on = await s.eval(() => { const b = document.querySelector('#wtsl_rigup [data-rig="heaterChoke"]'); if (!b || b.disabled) return null; if (b.getAttribute('aria-checked') !== 'true') b.click(); return true; });
+    if (!on) note('error', 'Rig-up card: no usable switch for CK-102');
+    await sleep(400);
+    await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'heaterChoke'); v.appendChild(f); f.click(); f.remove(); });
+    await sleep(400);
+    out.bean2 = await s.eval(async () => {
+      const r = { before: null, after: null, buttons: 0, disabled: '' };
+      const el = document.getElementById('wts_bean2');
+      r.before = el ? el.value : null;
+      const bs = Array.from(document.querySelectorAll('#wtsl_card [data-act=bean2]'));
+      r.buttons = bs.length;
+      if (bs[0] && bs[0].disabled) r.disabled = bs[0].title || 'disabled';
+      for (const b of bs) if (!b.disabled) b.click();
+      r.after = el ? el.value : null;
+      return r;
+    });
+    if (!out.bean2.buttons) note('error', 'CK-102 card: no bean2 buttons');
+    else if (out.bean2.disabled && /not in the rig-up/.test(out.bean2.disabled)) note('error', 'CK-102 card: bean2 buttons disabled with CK-102 in the rig-up');
+    await sleep(600);
+    const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.textContent : ''; });
+    if (bad.test(card)) note('error', 'CK-102 card shows NaN / undefined text');
+    eventsToFindings(await s.take(), { route, view, control: { label: 'CK-102 card bean2 −4 / +4' }, action: 'bean2' });
+  } catch (e) {
+    note('error', 'follow-up run failed: ' + e.message.split('\n')[0]);
+  } finally {
+    try {
+      await s.eval((p) => {
+        const S = window.WTS_live && window.WTS_live.getSim();
+        if (S && S.stopCushion) S.stopCushion();
+        if (S && S.setRigup) S.setRigup({ heaterChoke: false });
+        try { localStorage.removeItem('wts_sim_rigup'); if (p == null) localStorage.removeItem('h2viz3d_prefs'); else localStorage.setItem('h2viz3d_prefs', p); } catch (e) {}
+      }, prefs0);
     } catch (e) {}
   }
   return out;

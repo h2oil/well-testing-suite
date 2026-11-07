@@ -5,6 +5,35 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-07 — v3.3.3 release: simulator heater inlet choke, bypass destination & cushion unload
+
+Plan: docs/SIM-FOLLOWUP-PLAN.md (WP0, WP-E0, WP-C, WP-E1, WP-E2, WP-3D, WP-L, WP-2D, WP-HC, WP-I; branch `sim-fu`). App and
+App Store version 3.3.3 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
+`#appVersionLabel` fallback); `WTS_sim.VERSION` 1.5.0, 32 v1.3.0. Requests: the product owner (a choke of its own on the heater
+inlet) and a field well tester (unloading the completion cushion to the burner boom or a production line).
+
+**What shipped**
+- CK-102 heater inlet choke (rig key `heaterChoke`, out by default; on the H-101 inlet or between the coil passes): host
+  `calcWTS` walks both chokes into `flow.ck2` (pressure between the chokes, regimes, the limiting choke, J-T per stage, CK-102
+  hydrate margin; a flow-limited pair shows its states at QmaxPair); the engine runs CK-102 live with PAH-102 and a blocked-in
+  check (1,440 psig rating assumed); out of line with the heater bypass.
+- V-101-out destination: burner / flare line or production line at a set pressure (`flow.sepBy`; NRV-501 / XV-501 at the
+  tie-in, FS-401 may be out with tank relief to vent, PSHH-104 on the bypass path trips SDV-101; page warnings for the PSHH-104
+  set point and the line rating). The choke outlet with V-101 out now includes the whole-stream line loss.
+- Scenarios → Cushion unload (volume, SG, unload rate; WHP rise, bean limit, breakthrough and tail, volume by destination,
+  CUSH_NOLIFT / LIMIT / BURNER / DUMP and the heater full-firing warning).
+- Views: 3D scene, 2D schematic and live HMI (CK-102 card, destination labels, cushion form); Help: wts guide, course exercise 11,
+  FS-1 / FS-2 on the new settings, three new screenshots (212 in all), user guide regenerated.
+- Identity: with CK-102 out, V-101 in and no cushion the engine equals the frozen v3.3.1 copy (`tests/_wts-sim-v331.js`) and the
+  page equals the v3.3.1 golden (`wts-calc-golden.js --check`); the rig-up and Dynamic Simulation cards show the new options.
+- Perf baseline re-recorded (`perf-baseline.json`: html gzip +11 % over the v3.3 baseline, intended).
+
+**Gates**: smoke 330/330; accept --html --integration 1369/1369; wts3d 130/132 (the two CRLF checks, LF checkout);
+wts-sim-perf ok; wts-calc-golden --check --time ok; help-shots --check; build-user-guide --check.
+
+**Open**: see CLAUDE.md known limitations (v3.3.3) and plan Appendix C / D (SEPBY_RATING rounding of a small loss, the
+cushion tail after `done`, the inter-choke rating default).
+
 ## 2026-11-06 — v3.3.2 release: Help & User Guide, simulator course and field scenarios
 
 Plan: docs/HELP-GUIDE-PLAN.md (WP-H, WP-S, WP-C1…C9, WP-T, WP-G, WP-I; branch `help`). App and App Store version 3.3.2
