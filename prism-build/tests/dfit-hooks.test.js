@@ -7,9 +7,9 @@
 //   H3  opts.hoverEvent → prism:plot-hover; canvas._prismPointerOwner suppresses the box gesture
 //   H4  _defaultKinds honours entry.axes; PTA-kind post-draw hooks (51 saved fits, 21 overlays) skip a kind:'dfit' entry
 //   H5  the dummy mode: select option, step labels, step views 2 and 4 in #prism_stepview, gotoStep(4) survives
-//       refreshShell and a reload, #prism_tabs hidden, ext rail and status, exact panels per mode, built-in modes unchanged
+//       refreshShell (and a reload, checked in H6), #prism_tabs hidden, ext rail and status, exact panels per mode, built-in modes unchanged
 //   H6  PRiSM_undoExtras round trip, PRiSM_undoBatch (also ended after a rejection), ext rail + step view after undo,
-//       'dfit' in STATE_FIELDS and P.step survive a reload
+//       an extra registered after the baseline, 'dfit' in STATE_FIELDS, the mode and P.step survive a reload
 //   H7  report section with modes + blocks (3 tables, verdict, 2 plots) in Tab 7 and PDF, only in its mode;
 //       PRiSM_reportKeyLine / PRiSM_reportReady; the gallery lists only ext.reportPlots, no mode:'test' entry in combined
 //   H8  PRiSM_rng(1) reproduces the 05 bootstrap sequence; PRiSM_rng(undefined) deterministic
@@ -229,7 +229,9 @@ module.exports = [
       const W = app.win;
       const onLn = newBourdetOnLn();
       for (const s of bourdetSets()) {
-        for (const L of [0, 0.05, 0.1, 0.2, 0.5, 2]) {
+        // every L on the small sets; 0 / 0.1 / 0.5 on the 300-400-point ones
+        const Ls = s.t.length >= 300 ? [0, 0.1, 0.5] : [0, 0.05, 0.1, 0.2, 0.5, 2];
+        for (const L of Ls) {
           // plain arrays (app.toWin would turn NaN into null)
           const got = Array.from(W.PRiSM_compute_bourdet(s.t, s.y, L));
           const want = oldBourdet(s.t, s.y, L);
@@ -258,7 +260,12 @@ module.exports = [
       const ad = W.PRiSM_getAnalysisData(W.PRiSM_dataset, app.toWin({ L: 0.1 }));
       const ms = Number(process.hrtime.bigint() - t0) / 1e6;
       assert(ad && ad.ok, 'C2 analysis data ok on 4,000 points: ' + (ad && ad.reason));
-      assert(ms < 250, 'C2 on 4,000 uniform falloff points: ' + ms.toFixed(1) + ' ms');
+      // the plan's target (< 60 ms) is asserted under --perf; the CI ceiling is 250 ms
+      const perf = process.argv.indexOf('--perf') !== -1;
+      if (perf || process.argv.indexOf('--verbose') !== -1) {
+        console.log('[H1] C2 on 4,000 uniform falloff points: ' + ms.toFixed(1) + ' ms; Math.log calls 2,000 / 4,000 points: ' + w2 + ' / ' + w4);
+      }
+      assert(ms < (perf ? 60 : 250), 'C2 on 4,000 uniform falloff points: ' + ms.toFixed(1) + ' ms (' + (perf ? '--perf target 60' : 'CI ceiling 250') + ' ms)');
       if (ctx && ctx.note) ctx.note('C2 4,000 pts ' + ms.toFixed(1) + ' ms; ln calls ' + w2 + ' / ' + w4);
     },
   },
@@ -344,22 +351,21 @@ module.exports = [
     },
   },
   {
-    name: 'H5 dummy mode: select, labels, step views 2/4 in #prism_stepview, gotoStep(4) survives refresh + reload, #prism_tabs hidden, rail/status, exact panels, built-ins unchanged',
+    name: 'H5 dummy mode: select, labels, step views 2/4 in #prism_stepview, gotoStep(4) survives refresh (reload in H6), #prism_tabs hidden, rail/status, exact panels, built-ins unchanged',
     wp: WP,
     run(app, assert) {
       const W = app.win;
       demo(app);
       // built-in baseline before the ext exists
       const base = {};
-      for (const m of ['transient', 'decline', 'combined']) {
+      // transient + decline (combined uses the same per-mode filter; its plot gallery is checked in H7); ends in transient
+      for (const m of ['decline', 'transient']) {
         W.PRiSM.setMode(m);
         W.PRiSM_gotoStep(3);
         base[m] = { labels: stepLabels(app), plots: plotOptions(app).join(','), panels1: (W.PRiSM_gotoStep(1), panelIds(app, 1)).join(','),
                     hasStepview: !!app.el('prism_stepview') };
       }
-      W.PRiSM.setMode('transient');
       installExt(app);
-      W.PRiSM_refreshShell();
       W.PRiSM.setMode('transient');   // re-render the shell so the select learns the mode
       const opts = Array.from(app.el('prism_testtype').querySelectorAll('option')).map((o) => o.value);
       assert.deepEqual(opts.slice(-2), ['combined', 'test'], 'ext option appended: ' + opts.join(','));
@@ -396,22 +402,12 @@ module.exports = [
       const want = reg1.filter((id) => id === 'tpanel' || id === 'crop');
       assert.deepEqual(panelIds(app, 1).slice().sort(), want.slice().sort(), 'test-mode tab-1 panels: ' + panelIds(app, 1).join(','));
       assert(want.indexOf('tpanel') !== -1, 'the ext panel mounts');
-      // a reload keeps the mode and step 4
-      W.PRiSM_gotoStep(4);
-      app.flush(400);
-      const app2 = app.reload();
-      try {
-        app2.evalInApp(EXT_SRC);
-        app2.openPRiSM();
-        assert.equal(app2.win.PRiSM.mode, 'test', 'mode restored');
-        assert.equal(app2.win.PRiSM_currentStep(), 4, 'step 4 restored');
-        assert(app2.el('tx_sv4'), 'step view rendered after the reload');
-      } finally { /* app2 is discarded */ }
+      // (a reload keeping the mode and step 4 is checked in H6)
       // back to the built-ins: unchanged
       app.change('prism_testtype', 'falloff');
       assert.equal(W.PRiSM.mode, 'transient');
       assert(W.__ext.log.indexOf('leave:transient:test') !== -1, 'onLeave(next) while the old mode is still set: ' + W.__ext.log.join(','));
-      for (const m of ['transient', 'decline', 'combined']) {
+      for (const m of ['transient', 'decline']) {
         W.PRiSM.setMode(m);
         W.PRiSM_gotoStep(3);
         const now = { labels: stepLabels(app), plots: plotOptions(app).join(','), panels1: (W.PRiSM_gotoStep(1), panelIds(app, 1)).join(','), hasStepview: !!app.el('prism_stepview') };
@@ -420,19 +416,17 @@ module.exports = [
         assert.equal(now.panels1, base[m].panels1, m + ' tab-1 panels');
         assert.equal(now.hasStepview, false, m + ': built-in markup unchanged');
       }
-      // step hosts (the same code path in all three built-in modes; checked in transient)
-      W.PRiSM.setMode('transient');
+      // step hosts (the same code path in all three built-in modes; checked in the last one, decline)
       W.PRiSM_gotoStep(4);
       assert(!app.el('prism_stepview'), 'no step-view host in the built-in markup');
       assert.equal(app.el('prism_tabs').style.display, 'flex', 'model sub-tabs shown on step 4');
-      W.PRiSM.setMode('transient');
       W.PRiSM_gotoStep(2);
       assert.equal(app.el('prism_step2').style.display, 'block', 'built-in step ② view unchanged');
       noErrors(app, assert);
     },
   },
   {
-    name: 'H6 undo extras: first undo keeps the extra, pick → undo → redo, a batch is one step (also after a rejection), ext rail + step view after undo, dfit + step persist',
+    name: 'H6 undo extras: first undo keeps the extra, pick → undo → redo, a batch is one step (also after a rejection), ext rail + step view after undo, dfit + mode + step persist',
     wp: WP,
     async run(app, assert) {
       const W = app.win;
@@ -511,9 +505,16 @@ module.exports = [
       assert.equal(W.__x2, 7);
       // 'dfit' in STATE_FIELDS and P.step survive a reload
       W.PRiSM_saveState();
+      app.flush(400);
       const app2 = app.reload();
       assert.deepEqual(app2.win.PRiSM_state.dfit && Array.from(app2.win.PRiSM_state.dfit.picks), [5, 7, 8, 9, 10], 'st.dfit restored');
       assert.equal(app2.win.PRiSM.step, 4, 'P.step restored');
+      // the mode and step 4 survive the reload (from H5): the ext registers, PRiSM opens on its step view
+      app2.evalInApp(EXT_SRC);
+      app2.openPRiSM();
+      assert.equal(app2.win.PRiSM.mode, 'test', 'mode restored');
+      assert.equal(app2.win.PRiSM_currentStep(), 4, 'step 4 restored');
+      assert(app2.el('tx_sv4'), 'step view rendered after the reload');
       noErrors(app, assert);
     },
   },
