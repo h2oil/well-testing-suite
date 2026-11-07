@@ -1072,6 +1072,274 @@
     };
 
     // ═════════════════════════════════════════════════════════════════════
+    // 6. Uncertainty budget and what-if propagator (§6.6)
+    // ═════════════════════════════════════════════════════════════════════
+    // Closed-form, storage-consistent chain per draw (§4.6, §4.9, §4.10): G_c(σ_c) by monotone interpolation of p(G), η with
+    // the matched α (½ here: G type of the run), p_n = ISIP − σ_c, C_sys = η_G·V_i*/p_n, A_f·c_f = C_sys − V_w·c_w,
+    // R_vis, PKN xf = A_f·c_f·E′/(π·h_f²), CL = 2·m_G·C_sys/(π·r_p·A_f·√tp[min]), Γ = 2·m_G/(π·√tp[min]),
+    // k from CL at Δp_CL = ½·(ISIP + σ_c) − p_r.
+    var BBL = KC.bbl;
+    function _g1(d) { return 4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5)); }
+    function _G1(d) { return 4 / Math.PI * (_g1(d) - 4 / 3); }
+    function _uncCtx(run, opts) {
+        var d = run.derivs || {}, ev = run.events || {}, inp = opts.inputs || {}, rock = inp.rock || {}, well = opts.well || {};
+        var ch = run.frac && (run.frac.chosen || _firstFamily(run.frac.byFamily)) || {};
+        var Garr = [], parr = [], dDarr = [];
+        if (arrOk(d.G) && arrOk(d.p)) for (var i = 0; i < d.G.length; i++) if (fin(d.G[i]) && fin(d.p[i]) && (!Garr.length || d.G[i] > Garr[Garr.length - 1])) { Garr.push(d.G[i]); parr.push(d.p[i]); dDarr.push(arrOk(d.dtD) ? d.dtD[i] : null); }
+        var tp = pos(d.tp) ? d.tp : (ev.tp && pos(ev.tp.pump) ? ev.tp.pump : null);
+        var aca = run.aca && run.aca.ok !== false ? run.aca : null;
+        return {
+            G: Garr, p: parr, dtD: dDarr, tp: tp, mG: pos(d.mG) ? d.mG : (pos(ch.mG) ? ch.mG : null), alpha: fin(d.alpha) ? d.alpha : 0.5,
+            isip: run.isip && fin(run.isip.value) ? run.isip.value : null, isipSd: run.isip && fin(run.isip.spread) ? Math.max(run.isip.spread / 2, 0.5) : 1,
+            ViStar: pos(ev.ViStar) ? ev.ViStar : (pos(ch.ViStar) ? ch.ViStar : null),
+            VwCw: pos(ch.VwCw) ? ch.VwCw : (pos(ev.VwCwMeasured) ? ev.VwCwMeasured : 0), VwCwTheory: !pos(ev.VwCwMeasured),
+            Ep: pos(rock.Ep) ? rock.Ep : null, hf: pos(rock.hf) ? rock.hf : null, hp: pos(rock.hp) ? rock.hp : (pos(rock.hf) ? rock.hf : null),
+            barrier: pos(rock.barrierSpacing) ? rock.barrierSpacing : null,
+            mu: pos(well.mu) ? well.mu : null, phi: pos(well.phi) ? well.phi : null, ct: pos(well.ct) ? well.ct : null,
+            pi: aca && aca.pi && fin(aca.pi.value) ? aca.pi.value : (pos(well.pi) ? well.pi : null),
+            piLo: aca && aca.pi ? aca.pi.lo : null, piHi: aca && aca.pi ? aca.pi.hi : null,
+            khmu: aca && aca.kh && pos(aca.kh.khmu) ? aca.kh.khmu : null
+        };
+    }
+    function _GcOf(C, pc) {                                         // G at p = σ_c along the recorded falloff (p falls with G)
+        var n = C.G.length; if (!n) return pos(C.mG) && fin(C.isip) ? (C.isip - pc) / C.mG : null;
+        if (pc >= C.p[0]) return pos(C.mG) && fin(C.isip) ? Math.max(0, (C.isip - pc) / C.mG) : C.G[0];
+        if (pc <= C.p[n - 1]) return C.G[n - 1];
+        var lo = 0, hi = n - 1; while (hi - lo > 1) { var m = (lo + hi) >> 1; if (C.p[m] >= pc) lo = m; else hi = m; }
+        var f = (C.p[lo] - pc) / ((C.p[lo] - C.p[hi]) || 1);
+        return C.G[lo] + f * (C.G[hi] - C.G[lo]);
+    }
+    function _dtDOf(C, Gc) {
+        var n = C.G.length, ok = n && C.dtD.every(fin);
+        if (ok && Gc >= C.G[0] && Gc <= C.G[n - 1]) return interp(C.G, C.dtD, Gc);
+        var lo = Math.log(1e-9), hi = Math.log(1e7), G05 = function (d) { return 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2); };
+        for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (G05(Math.exp(m)) < Gc) lo = m; else hi = m; }
+        return Math.exp(0.5 * (lo + hi));
+    }
+    function _chain(pc, C, x) {
+        x = x || {};
+        var isip = fin(x.isip) ? x.isip : C.isip, Ep = fin(x.Ep) ? x.Ep : C.Ep, hf = fin(x.hf) ? x.hf : C.hf, hp = fin(x.hp) ? x.hp : C.hp;
+        var VwCw = fin(x.VwCw) ? x.VwCw : C.VwCw, mu = fin(x.mu) ? x.mu : C.mu, phi = fin(x.phi) ? x.phi : C.phi, ct = fin(x.ct) ? x.ct : C.ct;
+        var pi = fin(x.pi) ? x.pi : C.pi, out = { closure: pc };
+        var Gc = _GcOf(C, pc);
+        if (!fin(isip) || !fin(Gc) || !(Gc > 0) || !pos(C.ViStar) || !pos(C.tp) || !pos(C.mG)) return out;
+        var pn = isip - pc; out.pn = pn;
+        var dtD = _dtDOf(C, Gc), Gc1 = _G1(dtD);
+        var etaG = Gc / (Gc + 2), eta1 = Gc1 / (Gc1 + 16 / (3 * Math.PI));
+        out.eta = etaG; out.eta1 = eta1; out.Gc = Gc; out.dtc = dtD * C.tp;
+        if (!(pn > 0)) return out;
+        var Vs = C.ViStar * BBL, Csys = etaG * Vs / pn, AfCf = Csys - VwCw * BBL, Rvis = AfCf / Csys;
+        out.Csys = Csys / BBL; out.AfCf = AfCf / BBL; out.Rvis = Rvis;
+        var Vf = AfCf * pn, VLts = Vs * (1 - etaG); out.etaF = Vf + VLts > 0 ? Vf / (Vf + VLts) : null;
+        var sqtp = Math.sqrt(C.tp * 60);
+        out.Gamma = 2 * C.mG / (Math.PI * sqtp);
+        if (pos(Ep) && pos(hf) && AfCf > 0) {
+            var rp = Math.min(1, (pos(hp) ? hp : hf) / hf), xf = AfCf * Ep / (Math.PI * hf * hf), Af = 2 * xf * hf;
+            out.xf = xf; out.CL = 2 * C.mG * Csys / (Math.PI * rp * Af * sqtp);
+            var dpCL = 0.5 * (isip + pc) - pi;
+            if (pos(dpCL) && pos(mu) && pos(phi) && pos(ct)) out.k = mu / (phi * ct) * Math.pow(out.CL / (KC.invmL * dpCL), 2);
+        }
+        if (fin(pi)) out.pi = pi;
+        if (pos(C.khmu)) out.khmu = C.khmu;
+        return out;
+    }
+    var OUT_UNITS = { closure: 'psia', pn: 'psi', eta: '–', etaF: '–', Csys: 'bbl/psi', AfCf: 'bbl/psi', Rvis: '–', xf: 'ft', CL: 'ft/√min', Gamma: 'psi/√min', k: 'md', khmu: 'md·ft/cp', pi: 'psia' };
+    var CLOSURE_FREE = { Gamma: true, khmu: true, pi: true };
+    function _lognormalOf(r, med, sdLn) { return med * Math.exp(sdLn * gauss(r)); }
+    function _triangular(r, a, m, b) { var u = r(), F = (m - a) / ((b - a) || 1); return u < F ? a + Math.sqrt(u * (b - a) * (m - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - m)); }
+    function _uncSetup(run, opts) {
+        opts = opts || {};
+        if (!run || !run.derivs || run.ok === false) return { err: fail('BAD_INPUT', 'The uncertainty needs a run with derivatives.', ['run']) };
+        var n = Math.max(100, Math.min(2000, Math.round(fin(opts.n) ? opts.n : 1000))), seed = fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : 1;
+        var C = _uncCtx(run, opts), cons = run.consensus || run.consensusLite || {};
+        var mode = cons.mode === 'range' ? 'range' : 'single';
+        var wF1 = fin(opts.familyWeightF1) ? Math.max(0, Math.min(1, opts.familyWeightF1)) : 0.5;
+        var fixAll = !!opts.fixAll, fixed = {}; (opts.fixed || []).forEach(function (k) { fixed[k] = true; });
+        var isFixed = function (k) { return fixAll || fixed[k]; };
+        var S = cons.samples || {}, fam = cons.families || {};
+        var famSamples = function (F) { return arrOk(S[F]) ? S[F].filter(fin) : []; };
+        var centre = fin(cons.value) ? cons.value : (run.frac && run.frac.chosen ? run.frac.chosen.pClosure : null);
+        var pools = {};
+        if (mode === 'single') {
+            var pool = famSamples('F1').concat(famSamples('F2')).concat(famSamples('F4'));
+            pools.all = pool;
+        } else {
+            pools.F1 = famSamples('F1'); pools.F2 = famSamples('F2');
+            var f4 = famSamples('F4');
+            if (f4.length) { var m4 = median(f4), m1 = median(pools.F1), m2 = median(pools.F2); if (fin(m1) && fin(m2)) (Math.abs(m4 - m1) <= Math.abs(m4 - m2) ? pools.F1 : pools.F2).push.apply(Math.abs(m4 - m1) <= Math.abs(m4 - m2) ? pools.F1 : pools.F2, f4); }
+            ['F1', 'F2'].forEach(function (F) { if (!pools[F].length && fam[F] && fin(fam[F].p50)) pools[F] = [fam[F].p50]; });
+            if (!pools.F1.length || !pools.F2.length) mode = 'single';
+            if (mode === 'single') pools.all = pools.F1.concat(pools.F2);
+        }
+        var famCentre = { F1: median(pools.F1 || []), F2: median(pools.F2 || []) };
+        var inputs = [], add = function (name, dist, params, prov) { inputs.push({ name: name, dist: isFixed(name) ? 'fixed' : dist, params: params, provenance: prov }); };
+        add('closure', 'empirical', { samples: mode === 'single' ? (pools.all || []).length : (pools.F1.length + pools.F2.length), mode: mode }, 'stability');
+        if (fin(C.isip)) add('isip', 'normal', { mu: C.isip, sd: C.isipSd }, 'dfit');
+        if (pos(C.Ep)) add('Ep', 'lognormal', { p50: C.Ep, sdLn: 0.15 }, 'user');
+        if (pos(C.hf)) add('hf', 'triangular', { a: pos(C.hp) ? Math.min(C.hp, C.hf) : C.hf * 0.8, m: C.hf, b: pos(C.barrier) ? Math.max(C.barrier, C.hf) : 1.5 * C.hf }, 'user');
+        if (pos(C.hp)) add('hp', 'uniform', { lo: 0.9 * C.hp, hi: 1.1 * C.hp }, 'user');
+        if (pos(C.mu)) add('mu', 'lognormal', { p50: C.mu, sdLn: 0.1 }, 'C1');
+        if (pos(C.ct)) add('ct', 'lognormal', { p50: C.ct, sdLn: 0.3 }, 'C1');
+        if (pos(C.phi)) add('phi', 'lognormal', { p50: C.phi, sdLn: 0.1 }, 'C1');
+        if (pos(C.VwCw)) add('VwCw', 'normal', { mu: C.VwCw, sd: (C.VwCwTheory ? 0.5 : 0.1) * C.VwCw }, C.VwCwTheory ? 'theory' : 'ramp');
+        if (fin(C.pi)) add('pi', 'normal', { mu: C.pi, sd: fin(C.piLo) && fin(C.piHi) ? Math.max(0.5, (C.piHi - C.piLo) / 4) : 5, lo: C.piLo, hi: C.piHi }, 'after-closure');
+        add('tp', 'fixed', { choice: 'pump' }, 'events');
+        var byName = {}; inputs.forEach(function (it) { byName[it.name] = it; });
+        var rho = fin(opts.rhoPhiCt) ? opts.rhoPhiCt : -0.3;
+        return { C: C, n: n, seed: seed, mode: mode, wF1: wF1, pools: pools, famCentre: famCentre, centre: centre, inputs: inputs, byName: byName, rho: rho,
+                 draws: { all: [], F1: [], F2: [] }, rngs: mode === 'single' ? { all: makeRng(seed) } : { F1: makeRng(seed), F2: makeRng(seed + 7919) },
+                 targets: mode === 'single' ? { all: n } : { F1: Math.ceil(n / 2), F2: Math.floor(n / 2) }, counts: { draws: 0, chainEvals: 0, ops: 0 },
+                 opts: opts };
+    }
+    function _drawX(U, key) {
+        var r = U.rngs[key], C = U.C, b = U.byName, x = {}, it;
+        var pool = key === 'all' ? U.pools.all : U.pools[key];
+        it = b.closure;
+        if (it.dist === 'fixed' || !pool || !pool.length) x.closure = key === 'all' ? U.centre : U.famCentre[key];
+        else x.closure = pool[Math.min(pool.length - 1, Math.floor(r() * pool.length))];
+        var z1 = gauss(r), z2 = gauss(r), zz = U.rho * z1 + Math.sqrt(1 - U.rho * U.rho) * z2;   // φ–c_t correlation
+        function num(name, f) { var q = b[name]; if (!q) return; x[name] = q.dist === 'fixed' ? q.params.mu != null ? q.params.mu : q.params.p50 != null ? q.params.p50 : q.params.m : f(q.params); }
+        num('isip', function (p) { return p.mu + p.sd * gauss(r); });
+        num('Ep', function (p) { return _lognormalOf(r, p.p50, p.sdLn); });
+        num('hf', function (p) { return _triangular(r, p.a, p.m, p.b); });
+        if (b.hp) x.hp = b.hp.dist === 'fixed' ? C.hp : b.hp.params.lo + r() * (b.hp.params.hi - b.hp.params.lo);
+        num('mu', function (p) { return _lognormalOf(r, p.p50, p.sdLn); });
+        if (b.ct) x.ct = b.ct.dist === 'fixed' ? C.ct : b.ct.params.p50 * Math.exp(b.ct.params.sdLn * zz);
+        if (b.phi) x.phi = b.phi.dist === 'fixed' ? C.phi : b.phi.params.p50 * Math.exp(b.phi.params.sdLn * z1);
+        num('VwCw', function (p) { return Math.max(0, p.mu + p.sd * gauss(r)); });
+        num('pi', function (p) { var v = p.mu + p.sd * gauss(r); if (fin(p.lo) && v < p.lo) v = p.lo; if (fin(p.hi) && v > p.hi) v = p.hi; return v; });
+        if (x.hp != null && x.hf != null && x.hp > x.hf) x.hp = x.hf;
+        return x;
+    }
+    function _uncStep(U, k) {                                       // up to k draws; returns true when all are done
+        var keys = Object.keys(U.targets), done = true;
+        for (var a = 0; a < keys.length && k > 0; a++) {
+            var key = keys[a];
+            while (U.draws[key].length < U.targets[key] && k > 0) {
+                var x = _drawX(U, key), y = _chain(x.closure, U.C, x);
+                U.counts.draws++; U.counts.chainEvals++; U.counts.ops++;
+                U.draws[key].push({ x: x, y: y }); k--;
+            }
+            if (U.draws[key].length < U.targets[key]) done = false;
+        }
+        for (var b2 = 0; b2 < keys.length; b2++) if (U.draws[keys[b2]].length < U.targets[keys[b2]]) done = false;
+        return done;
+    }
+    // first-order variance index by 20 quantile bins of each input (no extra runs)
+    function _shares(xs, ys, nBins, opsBox) {
+        var n = ys.length; if (n < 4) return 0;
+        var m = 0, i; for (i = 0; i < n; i++) m += ys[i]; m /= n;
+        var vt = 0; for (i = 0; i < n; i++) vt += (ys[i] - m) * (ys[i] - m); vt /= n;
+        if (!(vt > 1e-300)) return 0;
+        var idx = []; for (i = 0; i < n; i++) idx.push(i);
+        idx.sort(function (a, b) { if (opsBox) opsBox.n++; return xs[a] - xs[b]; });
+        var B = Math.min(nBins || 20, n), vb = 0;
+        for (var b = 0; b < B; b++) {
+            var i0 = Math.floor(b * n / B), i1 = Math.floor((b + 1) * n / B); if (i1 <= i0) continue;
+            var s = 0; for (i = i0; i < i1; i++) s += ys[idx[i]];
+            var mb = s / (i1 - i0); vb += (i1 - i0) / n * (mb - m) * (mb - m);
+        }
+        return Math.max(0, Math.min(1, vb / vt));
+    }
+    function _p3(vals, opsBox) {
+        var v = vals.filter(fin); if (!v.length) return null;
+        v.sort(function (a, b) { if (opsBox) opsBox.n++; return a - b; });
+        return { p10: quant(v, 0.1), p50: quant(v, 0.5), p90: quant(v, 0.9) };
+    }
+    function _uncFinish(U) {
+        var opsBox = { n: 0 }, outputs = {}, keys = Object.keys(OUT_UNITS), names = U.inputs.filter(function (it) { return it.dist !== 'fixed'; }).map(function (it) { return it.name; });
+        var single = U.mode === 'single', wF = { F1: U.wF1, F2: 1 - U.wF1 };
+        keys.forEach(function (k) {
+            var o = { unit: OUT_UNITS[k], shares: [], closureShare: 0, bimodal: false, byFamily: null, envelope: null, p10: null, p50: null, p90: null };
+            if (single || CLOSURE_FREE[k]) {
+                var D = single ? U.draws.all : U.draws.F1.concat(U.draws.F2), ys = [], X = {};
+                D.forEach(function (d) { if (fin(d.y[k])) { ys.push(d.y[k]); names.forEach(function (nm) { (X[nm] = X[nm] || []).push(d.x[nm]); }); } });
+                if (!ys.length) return;
+                var q = _p3(ys, opsBox); o.p10 = q.p10; o.p50 = q.p50; o.p90 = q.p90;
+                names.forEach(function (nm) { var s = _shares(X[nm], ys, 20, opsBox); o.shares.push({ input: nm, s: rnd(s, 4) }); if (nm === 'closure') o.closureShare = rnd(s, 4); });
+            } else {
+                var fams = {}, allY = [], allW = [], within = {};
+                ['F1', 'F2'].forEach(function (F) {
+                    var ys2 = [], X2 = {};
+                    U.draws[F].forEach(function (d) { if (fin(d.y[k])) { ys2.push(d.y[k]); names.forEach(function (nm) { (X2[nm] = X2[nm] || []).push(d.x[nm]); }); } });
+                    fams[F] = { ys: ys2, q: _p3(ys2, opsBox) };
+                    within[F] = names.map(function (nm) { return _shares(X2[nm] || [], ys2, 20, opsBox); });
+                    ys2.forEach(function (y) { allY.push(y); allW.push(wF[F] / Math.max(1, ys2.length)); });
+                });
+                if (!fams.F1.q || !fams.F2.q) return;
+                o.bimodal = true;
+                o.byFamily = { F1: fams.F1.q, F2: fams.F2.q };
+                // envelope [P10 of the low family, P90 of the high family]; when the family columns overlap, the outer edges
+                o.envelope = [Math.min(fams.F1.q.p10, fams.F2.q.p10), Math.max(fams.F1.q.p90, fams.F2.q.p90)];
+                // interpretation share: between-family variance of the weighted mixture over its total variance
+                var mT = 0, wT = 0, i;
+                for (i = 0; i < allY.length; i++) { mT += allW[i] * allY[i]; wT += allW[i]; }
+                mT = wT > 0 ? mT / wT : 0;
+                var vT = 0; for (i = 0; i < allY.length; i++) vT += allW[i] * (allY[i] - mT) * (allY[i] - mT); vT = wT > 0 ? vT / wT : 0;
+                var vB = 0; ['F1', 'F2'].forEach(function (F) { var mf = mean(fams[F].ys); if (fin(mf)) vB += wF[F] * (mf - mT) * (mf - mT); });
+                var share = vT > 0 ? Math.max(0, Math.min(1, vB / vT)) : 0;
+                o.closureShare = rnd(share, 4);
+                names.forEach(function (nm, j) {
+                    var s = (1 - share) * (wF.F1 * within.F1[j] + wF.F2 * within.F2[j]);
+                    o.shares.push({ input: nm, s: rnd(Math.max(0, Math.min(1, s)), 4) });
+                });
+            }
+            outputs[k] = o;
+        });
+        // tornado: one-at-a-time P10 / P90 of each input, others central (per family in range mode)
+        var tornado = [], C = U.C, centres = single ? { all: U.centre } : { F1: U.famCentre.F1, F2: U.famCentre.F2 };
+        var tOut = ['closure', 'pn', 'eta', 'xf', 'CL'];
+        Object.keys(centres).forEach(function (fk) {
+            var pc = centres[fk]; if (!fin(pc)) return;
+            U.inputs.forEach(function (it) {
+                if (it.dist === 'fixed' || it.name === 'closure' || it.name === 'tp') return;
+                var lo = {}, hi = {}, pp = it.params;
+                if (it.dist === 'normal') { lo[it.name] = pp.mu - 1.2816 * pp.sd; hi[it.name] = pp.mu + 1.2816 * pp.sd; }
+                else if (it.dist === 'lognormal') { lo[it.name] = pp.p50 * Math.exp(-1.2816 * pp.sdLn); hi[it.name] = pp.p50 * Math.exp(1.2816 * pp.sdLn); }
+                else if (it.dist === 'uniform') { lo[it.name] = pp.lo + 0.1 * (pp.hi - pp.lo); hi[it.name] = pp.lo + 0.9 * (pp.hi - pp.lo); }
+                else if (it.dist === 'triangular') { lo[it.name] = pp.a + Math.sqrt(0.1 * (pp.b - pp.a) * (pp.m - pp.a)); hi[it.name] = pp.b - Math.sqrt(0.1 * (pp.b - pp.a) * (pp.b - pp.m)); }
+                var ylo = _chain(pc, C, lo), yhi = _chain(pc, C, hi); U.counts.chainEvals += 2;
+                tOut.forEach(function (ok) {
+                    if (fin(ylo[ok]) && fin(yhi[ok]) && ylo[ok] !== yhi[ok]) tornado.push(Object.assign({ output: ok, input: it.name, lo: ylo[ok], hi: yhi[ok] }, single ? {} : { family: fk }));
+                });
+            });
+        });
+        U.counts.ops += opsBox.n;
+        var log = [];
+        if (fin(U.opts.prevFamilyWeightF1) && Math.abs(U.opts.prevFamilyWeightF1 - U.wF1) > 1e-12)
+            log.push({ item: 'options.familyWeightF1', old: U.opts.prevFamilyWeightF1, new: U.wF1, reason: 'Interpretive weight, not a probability.' });
+        return {
+            ok: true, n: U.n, seed: U.seed, mode: U.mode, familyWeight: { F1: U.wF1, F2: 1 - U.wF1 },
+            inputs: U.inputs.map(function (it) { return { name: it.name, dist: it.dist, params: it.params, provenance: it.provenance }; }),
+            outputs: outputs, tornado: tornado, ev: ['U1'], counts: { draws: U.counts.draws, chainEvals: U.counts.chainEvals, ops: U.counts.ops }, log: log,
+            note: U.mode === 'range' ? 'Range mode: closure-dependent outputs are given per family; the family weight is an interpretive weight, not a probability.' : null
+        };
+    }
+    G.PRiSM_dfit_uncertainty = function (run, opts) {
+        try {
+            var U = _uncSetup(run, opts); if (U.err) return U.err;
+            _uncStep(U, Infinity);
+            return _uncFinish(U);
+        } catch (e) { return fail('UNC_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_uncertaintyJob = function (run, opts) {
+        var U = null, done = false, cancelled = false, res = null;
+        try { U = _uncSetup(run, opts); } catch (e) { U = { err: fail('UNC_FAILED', e && e.message || e) }; }
+        if (U.err) { done = true; res = U.err; }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try { if (_uncStep(U, 250)) { done = true; res = _uncFinish(U); } } catch (e) { done = true; res = fail('UNC_FAILED', e && e.message || e); }
+                return { done: done, progress: done ? 1 : U.counts.draws / U.n, label: 'draws ' + U.counts.draws + ' of ' + U.n };
+            },
+            result: function () { return res || fail('CANCELLED', 'The uncertainty run was cancelled.', []); },
+            cancel: function () { cancelled = true; }
+        };
+    };
+    G.PRiSM_dfit_uncertainty.chain = function (pc, run, opts, x) { return _chain(pc, _uncCtx(run, opts || {}), x || {}); };
+    G.PRiSM_dfit_uncertainty.shares = function (xs, ys, nBins) { return _shares(xs, ys, nBins || 20); };
+
+    // ═════════════════════════════════════════════════════════════════════
     // Stubs still to be replaced in later WP3 milestones
     // ═════════════════════════════════════════════════════════════════════
     function _ni(name) { return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP3 milestone).'], bad: [] }; }
@@ -1080,9 +1348,9 @@
         var f = function () { var r = _ni(name); return { step: function () { return { done: true, progress: 1, label: 'not implemented' }; }, result: function () { return r; }, cancel: function () {} }; };
         f._dfitStub = true; return f;
     }
-    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_uncertainty', 'PRiSM_dfit_replay', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel',
+    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_replay', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel',
      'PRiSM_dfit_checkQuoted', 'PRiSM_dfit_exportText', 'PRiSM_dfit_fracSheet', 'PRiSM_dfit_handoff'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _stub(n); });
-    ['PRiSM_dfit_pipelineJob', 'PRiSM_dfit_uncertaintyJob', 'PRiSM_dfit_replayJob'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _jobStub(n); });
+    ['PRiSM_dfit_pipelineJob', 'PRiSM_dfit_replayJob'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _jobStub(n); });
     G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
     if (!G.PRiSM_dfit_live.create || G.PRiSM_dfit_live.create._dfitStub) G.PRiSM_dfit_live.create = _stub('PRiSM_dfit_live.create');
 
