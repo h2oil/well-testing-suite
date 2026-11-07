@@ -111,8 +111,9 @@ function renderAll(app, h) {
 module.exports = [
   {
     name: 'U1 the header option and setMode("dfit") relabel the steps (PRiSM_modeExt.dfit)',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, X = w.PRiSM_modeExt && w.PRiSM_modeExt.dfit;
       assert(X, 'PRiSM_modeExt.dfit registered');
       ['label', 'steps', 'analyse', 'rail', 'showsPanel', 'stepView', 'onEnter', 'onLeave', 'reportHeader', 'status'].forEach((k) => assert(X[k], 'ext.' + k));
@@ -133,8 +134,9 @@ module.exports = [
   },
   {
     name: 'U2 transient / decline / combined unchanged: no DFIT plot, panel or report section outside DFIT mode',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       withRun(app);
       app.openPRiSM(); app.flush(100);
@@ -230,6 +232,38 @@ module.exports = [
       const n0 = draws();
       hk.forEach((fn) => { const f = typeof fn === 'function' ? fn : fn.fn; try { f({ canvas: cv, plotKey: 'dfitG', data: {}, opts: { plotKey: 'dfitG' }, axes: cv._prismAxes }); } catch (e) { /* a hook may throw on foreign data */ } });
       assert.strictEqual(draws(), n0, 'no foreign hook draws on a DFIT canvas (' + hk.length + ' hooks)');
+      // water hammer (§7.3): without a high-rate window the plain 1 Hz reason; with a 50 Hz shut-in window the trace is drawn,
+      // and with the wellbore engine (48, call time) the fitted midline + damped sinusoid and the hammer rows
+      const R = w.PRiSM_state._dfitRun, ts = R.events.ts;
+      assert.strictEqual(U.hammer(R), null, 'no high-rate window: no hammer view');
+      assert(/1 Hz/.test(U.buildPlot('dfitHammer').error || ''), 'plain 1 Hz reason');
+      const hp = [];
+      for (let i = 0; i < 3000; i++) { const sec = i * 0.02; hp.push(7600 - 0.5 * sec / 60 + 110 * Math.exp(-sec / 12) * Math.cos(2 * Math.PI * sec / 8.81)); }
+      const R2 = app.toWin(JSON.parse(JSON.stringify(R)));
+      R2.prep.hf = app.toWin({ windows: [{ kind: 'shutin', t0: ts, dtS: 0.02, p: hp }] });
+      w.PRiSM_state._dfitRun = R2;
+      const hv = U.hammer(R2);
+      assert(hv && hv.s.length > 2000 && hv.s[0] >= 0 && hv.s[hv.s.length - 1] <= 60, 'hammer view: seconds since shut-in, 60 s window');
+      assert(U.drawPlot(cv, 'dfitHammer') && cv._prismAxes && cv._prismAxes.plotKey === 'dfitHammer', 'dfitHammer draws from the window');
+      const hb = app.document.createElement('div'); h.appendChild(hb);
+      U.toolFns.PRiSM_renderDfitHammerTool(hb);
+      if (hv.H) {
+        assert(Array.isArray(hv.fit) && hv.fit.length === hv.s.length, 'fitted curve');
+        assert(Math.abs(hv.H.T - 8.81) < 0.5, 'period ' + hv.H.T);
+        assert(/Period T/.test(hb.textContent), 'hammer rows in the tool');
+      } else assert(/High-rate window found/.test(hb.textContent), 'the reason the hammer was not fitted: ' + hb.textContent.slice(0, 120));
+      assert(!BANNED.test(hb.textContent), 'no NaN text in the hammer tool');
+      // cycles (§7.3): the knee of the F4 reopening pick with its band, a marker on the cycle and the wellbore line
+      R2.events.cycles = app.toWin([{ tStart: 0.0, ts: 0.0333, Vi: 2, closedBefore: true, rampWin: [0.0, 0.03] }]);
+      R2.picks.push(app.toWin({ method: 'reopening', family: 'F4', vote: true, ok: true, dt: 0, G: 0, p: 7150, band: { p10: 7120, p50: 7150, p90: 7185 }, se: 10, window: [0, 1],
+        admissible: true, vetoes: [], warnings: [], sameEvidenceAs: null, upperSide: false, evidence: [], ev: ['C1'] }));
+      const cy = U.buildPlot('dfitCycles');
+      if (cy.data) {
+        assert(cy.data.hbands.length === 1 && cy.data.hbands[0].y0 === 7120 && cy.data.hbands[0].y1 === 7185, 'knee band');
+        assert(cy.data.hlines.some((x) => /reopening 7,150/.test(x.label)), 'knee line');
+        assert(cy.data.series.some((x) => /wellbore line/.test(x.label || '')), 'wellbore line');
+      } else assert(/rate channel|ramp/.test(cy.error), 'cycles: ' + cy.error);
+      w.PRiSM_state._dfitRun = R;
     },
   },
   {
@@ -312,6 +346,49 @@ module.exports = [
       app.key(app.el('prism_dfit_marker'), 'Enter');
       assert.strictEqual(w.PRiSM_dfit_test().log.length, n0 + 2, 'Enter commits one entry');
       assert(/keyboard/.test(w.PRiSM_dfit_test().picks.closure.reason), 'keyboard pick');
+      // event markers on dfitHistory (§7.2): the shut-in marker dragged → T.inputs.events.ts, one log entry
+      const run = w.PRiSM_state._dfitRun, hv = app.document.createElement('canvas');
+      hv.style.width = '800px'; hv.style.height = '400px'; h.appendChild(hv);
+      U.drawPlot(hv, 'dfitHistory');
+      const hs = U.handles(hv, 'dfitHistory');
+      assert.deepStrictEqual(Array.from(hs, (x) => x.id).sort(), ['ev.tStart', 'ev.tb', 'ev.ts'].filter((k) => typeof run.events[k.slice(3)] === 'number').sort(), 'event handles');
+      const tsH = hs.find((x) => x.id === 'ev.ts');
+      const n2 = w.PRiSM_dfit_test().log.length;
+      assert(hv._prismPointerOwner({ offsetX: tsH.X + 3, offsetY: 100 }), 'shut-in marker taken');
+      assert.strictEqual(hv._dfitDrag.id, 'ev.ts');
+      const tNew = run.events.ts + 0.004;
+      hv._dfitDrag.up({ type: 'pointerup', offsetX: hv._prismAxes.toX(tNew), offsetY: 100 });
+      const T2 = w.PRiSM_dfit_test();
+      assert.strictEqual(T2.log.length, n2 + 1, 'one log entry for the event drag');
+      assert.strictEqual(T2.log[n2].item, 'events.ts');
+      assert(Math.abs(T2.inputs.events.ts - tNew) < 0.002, 'events.ts override ' + T2.inputs.events.ts);
+      assert(U.setEvent('ts', null, 'reset').ok && w.PRiSM_dfit_test().inputs.events.ts === null, 'override cleared');
+      // after-closure window edges (§7.5): the linear window start dragged on dfitFL → picks.aca.linWin on the injection clock
+      const fl = app.document.createElement('canvas'); fl.style.width = '800px'; fl.style.height = '400px'; h.appendChild(fl);
+      assert(U.drawPlot(fl, 'dfitFL'), 'dfitFL draws');
+      const conv = U.acaConv('dfitFL', run), win0 = U.acaWin(run, 'lin');
+      assert(conv && win0, 'F_L conversion and the engine window');
+      assert(Math.abs(conv.toT(conv.fromT(30)) - 30) < 1e-6, 'F_L ↔ t round trip');
+      const fh = U.handles(fl, 'dfitFL');
+      assert.deepStrictEqual(Array.from(fh, (x) => x.id), ['lin0', 'lin1'], 'two window edges');
+      const n3 = w.PRiSM_dfit_test().log.length;
+      assert(fl._prismPointerOwner({ offsetX: fh[0].X + 2, offsetY: 100 }), 'window edge taken');
+      fl._dfitDrag.up({ type: 'pointerup', offsetX: fl._prismAxes.toX(conv.fromT(30)), offsetY: 100 });
+      const lw = w.PRiSM_dfit_test().picks.aca.linWin;
+      assert.strictEqual(w.PRiSM_dfit_test().log.length, n3 + 1, 'one log entry for the window drag');
+      assert(lw && Math.abs(lw[0] - 30) < 1.5 && Math.abs(lw[1] - win0[1]) < 1e-9, 'linWin from the drag ' + JSON.stringify(lw));
+      assert(U.buildPlot('dfitFL').data.shade.length === 1, 'window shaded');
+      // the two-click window tool on dfitImpLin stores hours, not plot units
+      const ci = U.acaConv('dfitImpLin', run);
+      const tr = U.lineTools.dfitAcaLinear.action([{ x: ci.fromT(25), y: 4600 }, { x: ci.fromT(60), y: 4550 }], { plotKey: 'dfitImpLin' });
+      assert(tr && !tr.error, 'window tool: ' + JSON.stringify(tr));
+      const lw2 = w.PRiSM_dfit_test().picks.aca.linWin;
+      assert(Math.abs(lw2[0] - 25) < 1e-6 && Math.abs(lw2[1] - 60) < 1e-6, 'window tool in hours ' + JSON.stringify(lw2));
+      // linked cursor mapping (§7.4): Δt ↔ x on the linked plots
+      [['dfitSqrt', 0.5], ['dfitLogLog', 0.5], ['dfitHistory', 0.5]].forEach((c) => {
+        const x = U.xOfDt(c[0], c[1], run);
+        assert(Math.abs(U.dtOfX(c[0], x, run) - c[1]) < 1e-9, c[0] + ' Δt round trip');
+      });
     },
   },
   {
@@ -374,8 +451,9 @@ module.exports = [
   },
   {
     name: 'U10 panel specs (ids, tabs, order, modes, when) and the exact mounted list per mode',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui;
       assert.deepStrictEqual(Array.from(Object.keys(U.panels)), DFIT_PANELS);
       const want = { 'dfit-tests': [1, 5], 'dfit-well': [1, 10], 'dfit-channels': [1, 20], 'dfit-triage': [1, 30], 'dfit-board': [2, 10], 'dfit-classify': [2, 20], 'dfit-frac': [2, 30], 'dfit-whatif': [2, 40], 'dfit-report-opts': [7, 10] };
@@ -488,6 +566,32 @@ module.exports = [
       // each tool renders (the sandbox switches mode only with the hooks)
       const h = host(app);
       Object.keys(U.toolFns).forEach((k) => { const b = app.document.createElement('div'); h.appendChild(b); U.toolFns[k](b); assert(b.innerHTML.length > 20 && !BANNED.test(b.textContent), k + ' renders'); });
+      // step ④: Model match (§6.8) with a stand-in 57 match; the structural-spread button; the ISIP-gradient copy (§7.5, §2.9)
+      withRun(app);
+      U.setInput('datumTvd', 10000);
+      const s4 = app.document.createElement('div'); h.appendChild(s4);
+      w.PRiSM_dfit_renderStep4(s4, 'aca');
+      assert(app.el('prism_dfit_aca_match') && app.el('prism_dfit_mm_infiniteFrac'), 'Model match card');
+      const hadMatch = w.PRiSM_dfit_acaMatch;
+      if (!hadMatch || hadMatch._dfitStub) {
+        app.click('prism_dfit_aca_match');
+        assert(/not available/.test(U.statusText() + ' ' + s4.textContent), 'a plain reason without the match engine');
+        w.PRiSM_dfit_acaMatch = (ctx, o) => ({ ok: true, best: { model: o.models[0], k: 0.0102, L: 49.6, pi: 4501, ci95: { k: [0.009, 0.0115] }, bic: -812.4, params: {} },
+          candidates: o.models.map((m, i) => ({ model: m, k: 0.01 * (i + 1), L: 50, pi: 4500, bic: -812.4 + 10 * i })) });
+      }
+      app.check('prism_dfit_mm_homogeneous', false);
+      app.click('prism_dfit_aca_match');
+      const s4b = app.el('prism_dfit_step4');
+      assert(/Best match/.test(s4b.textContent) && app.el('prism_dfit_mm_tbl'), 'match results shown');
+      assert(!/Radial homogeneous/.test(app.el('prism_dfit_mm_tbl').textContent) && !app.el('prism_dfit_mm_homogeneous').checked, 'unticked model not matched');
+      assert(w.PRiSM_dfit_test().log.some((l) => l.item === 'aca.match'), 'match logged');
+      if (!hadMatch || hadMatch._dfitStub) w.PRiSM_dfit_acaMatch = hadMatch;
+      app.click('prism_dfit_copy_isip_grad');
+      assert(/^ISIP gradient 0\.7\d\d psi\/ft/.test(app.clipboard || ''), 'ISIP gradient copied: ' + app.clipboard);
+      w.PRiSM_dfit_renderStep4(s4, 'lk');
+      assert(app.el('prism_dfit_lk_struct'), 'structural-spread button');
+      app.click('prism_dfit_lk_struct');
+      assert(U.statusText().length > 5 || /⚠/.test(s4.textContent), 'the structural spread answers (result or plain reason)');
       if (!hooks(w)) {
         assert(!Object.keys(w).some((k) => /^PRiSM_renderDfit\w*Tool$/.test(k)), 'no PRiSM_renderDfit*Tool on window before the hooks (37 would list it under "More")');
         skip('PRiSM_listTools per mode');

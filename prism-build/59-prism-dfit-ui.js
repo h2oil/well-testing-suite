@@ -740,7 +740,8 @@
         ctx.restore();
     }
     // Dual-axis DFIT plot. data = {series:[{x, y, axis:'L'|'R', color, dash, dots, width, label}], bands:[{x, lo, hi, axis, color}],
-    //   vlines:[{x, color, dash, label}], hlines:[{y, axis, color, dash, label}], shade:[{x0, x1, color}], markers:[{x, y, axis, color, label, hollow}],
+    //   vlines:[{x, color, dash, label}], hlines:[{y, axis, color, dash, label}], shade:[{x0, x1, color}], hbands:[{y0, y1, axis, color}],
+    //   markers:[{x, y, axis, color, label, hollow}],
     //   xKind, yKind ('lin'|'log'), xRange:{min,max}?, yRange:{min,max}?, yR:{min, max, label}? (right linear axis)}
     function PRiSM_plot_dfitDual(canvas, data, opts) {
         opts = opts || {};
@@ -772,6 +773,11 @@
                 var a = tr.toX(s.x0), b = tr.toX(s.x1);
                 if (!isFinite(a) || !isFinite(b)) return;
                 ctx.save(); ctx.fillStyle = s.color || 'rgba(88,166,255,0.10)'; ctx.fillRect(Math.min(a, b), plot.y, Math.abs(b - a), plot.h); ctx.restore();
+            });
+            (data.hbands || []).forEach(function (b) {
+                var ty = yOf(b.axis); if (!ty || !_isNum(b.y0) || !_isNum(b.y1)) return;
+                var a = ty(b.y0), c = ty(b.y1); if (!isFinite(a) || !isFinite(c)) return;
+                ctx.save(); ctx.fillStyle = b.color || 'rgba(210,153,34,0.14)'; ctx.fillRect(plot.x, Math.min(a, c), plot.w, Math.abs(c - a)); ctx.restore();
             });
             (data.bands || []).forEach(function (b) { var ty = yOf(b.axis); if (ty) _fillBand(ctx, b.x, b.lo, b.hi, tr.toX, ty, b.color || 'rgba(88,166,255,0.18)'); });
             series.forEach(function (s) {
@@ -1039,12 +1045,60 @@
         (I && I.candidates || []).forEach(function (c) { if (_isNum(c.value)) h.push({ y: c.value, color: c.upper ? C.r : C.ref, dash: [2, 3], label: c.method + ' ' + _f(c.value, 0), fit: true }); });
         return { data: { series: s, hlines: h, xName: 'G', yName: 'p' }, opts: { title: 'Early falloff and ISIP', xLabel: 'G-function', yLabel: 'Pressure (psia)' } };
     };
+    // Water hammer (§4.17, §7.3): run.hammer when the pipeline carries one, else WTS_wellbore.hammerQuick on the high-rate
+    // shut-in window of prep.hf (resolved at call time). The view (seconds since shut-in, the window pressures and the fitted
+    // midline + damped sinusoid) is cached on the run object, never stored. → {H, why, s:[], p:[], fit:[]|null} | null (no window)
+    var HAMMER_1HZ = 'Water hammer not resolvable at 1 Hz: record ≥ 2.3 Hz at the wellhead through shut-in to use it.';
+    function _hammerOf(run) {
+        if (!run) return null;
+        if (Object.prototype.hasOwnProperty.call(run, '_dfitHammerView')) return run._dfitHammerView;
+        var ev = run.events, W = G.WTS_wellbore, T = test(), I = T.inputs, view = null;
+        var wins = (run.prep && run.prep.hf && _arr(run.prep.hf.windows)) ? run.prep.hf.windows : [], win = null, i;
+        for (i = 0; i < wins.length; i++) if (wins[i] && wins[i].kind === 'shutin' && _arr(wins[i].p) && _isNum(wins[i].t0) && wins[i].dtS > 0) { win = wins[i]; break; }
+        if (win && ev && _isNum(ev.ts)) {
+            var t = [], p = [];
+            for (i = 0; i < win.p.length && i < HF_MAX; i++) if (_isNum(win.p[i])) { t.push(win.t0 + i * win.dtS / 3600); p.push(win.p[i]); }
+            var H = (run.hammer && run.hammer.ok === true) ? run.hammer : null, why = null;
+            if (!H && W && typeof W.hammerQuick === 'function' && !W.hammerQuick._dfitStub) {
+                var col = { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd };
+                var r = null;
+                try { r = W.hammerQuick(t, p, ev.ts, { column: col, fluid: I.fluid, qShut: ev.qLast, VwCw: ev.VwCwMeasured }); } catch (e) { r = null; }
+                if (r && r.ok === true) H = r; else why = _txt((r && (r.why || (r.errors && r.errors[0]))) || 'The water-hammer fit did not run.');
+            } else if (!H) why = 'The wellbore engine is needed for the water-hammer fit.';
+            var sx = [], py = [], fit = null;
+            for (i = 0; i < t.length; i++) { var si = (t[i] - ev.ts) * 3600; if (si >= 0 && si <= 60) { sx.push(si); py.push(p[i]); } }
+            if (H && _isNum(H.T) && H.T > 0 && _isNum(H.tau) && H.tau > 0 && _isNum(H.A) && _isNum(H.isip) && sx.length > 3) {
+                var osc = sx.map(function (x) { return H.A * Math.exp(-x / H.tau) * Math.cos(2 * Math.PI * x / H.T + (_isNum(H.phi) ? H.phi : 0)); });
+                var sxx = 0, sxr = 0;   // midline isip − m·(s/60): m by least squares through the fitted intercept
+                for (i = 0; i < sx.length; i++) { var xm = sx[i] / 60; sxx += xm * xm; sxr += xm * (H.isip - (py[i] - osc[i])); }
+                var m = sxx > 0 ? sxr / sxx : 0;
+                fit = sx.map(function (x, k) { return H.isip - m * x / 60 + osc[k]; });
+            }
+            view = { H: H, why: H ? null : why, s: sx, p: py, fit: fit };
+        }
+        try { Object.defineProperty(run, '_dfitHammerView', { value: view, enumerable: false, configurable: true, writable: true }); } catch (e) { /* frozen run */ }
+        return view;
+    }
+    function _hammerHTML(run, big) {
+        var v = _hammerOf(run);
+        if (!v || !v.s.length) return _verdict('warn', HAMMER_1HZ);
+        var H = v.H;
+        if (!H) return _verdict('warn', 'High-rate window found, but ' + (v.why || 'the water hammer could not be fitted.').replace(/^Water hammer not resolvable: /, 'the water hammer is not resolvable: ')) + _chart('dfitHammer', big ? 240 : 220);
+        var J = H.joukowsky || {}, md = _num(test().inputs.datumMd) || _num(test().inputs.datumTvd);
+        var rows = [_rrow('Period T (s)', _f(H.T, 3)), _rrow('Regime', H.regime || '—'), _rrow('Damping τ (s)', _f(H.tau, 2)),
+                    _rrow('Quarter-wave length c·T/4 (ft)', _f(H.Lquarter, 0)), _rrow('Perforation MD (ft)', _f(md, 0)), _rrow('Reflector', H.reflectorMatch || '—'),
+                    _rrow('Joukowsky expected / measured (psi)', _f(J.expected, 0) + ' / ' + _f(J.measured, 0)), _rrow('Wave ISIP (psia)', _f(H.isip, 1)),
+                    _rrow('V_w·c_w from the period (bbl/psi)', _isNum(H.VwCwHammer) ? _sig(H.VwCwHammer, 3) : '—'), _rrow('Hammer end (h after shut-in)', _isNum(H.tEnd) && run.events ? _f(H.tEnd - run.events.ts, 4) : '—')];
+        if (big && H.sampling) rows.push(_rrow('Sampling (Hz; samples per 2L/c)', _f(H.sampling.hz, 1) + '; ' + _f(H.sampling.per2Lc, 1)));
+        return _chart('dfitHammer', big ? 240 : 220) + _rbox('Water hammer', rows);
+    }
     B.dfitHammer = function (run) {
-        var H = run && run.hammer;
-        if (!H || !_arr(H.tS)) return { error: '⚠ Water hammer not resolvable at 1 Hz: record ≥ 2.3 Hz at the wellhead through shut-in to use it.' };
-        var s = [{ x: H.tS, y: H.p, color: C.p, label: 'p (high rate)' }];
-        if (_arr(H.fit)) s.push({ x: H.tS, y: H.fit, color: C.d2, dash: [5, 3], label: 'damped sinusoid + bleed-off' });
-        return { data: { series: s, xName: 't', yName: 'p' }, opts: { title: 'Water hammer', xLabel: 't (s)', yLabel: 'Pressure (psia)' } };
+        var v = _hammerOf(run);
+        if (!v || !v.s.length) return { error: '⚠ ' + HAMMER_1HZ };
+        var s = [{ x: v.s, y: v.p, color: C.p, label: 'p (high rate)' }];
+        if (_arr(v.fit)) s.push({ x: v.s, y: v.fit, color: C.d2, dash: [5, 3], label: 'midline + damped sinusoid' });
+        var h = (v.H && _isNum(v.H.isip)) ? [{ y: v.H.isip, color: C.r, dash: [2, 3], label: 'wave ISIP ' + _f(v.H.isip, 0) }] : [];
+        return { data: { series: s, hlines: h, xName: 't', yName: 'p' }, opts: { title: 'Water hammer', xLabel: 'Time since shut-in (s)', yLabel: 'Pressure (psia)' } };
     };
     function _stepResult(kind, run) {
         var W = G.WTS_wellbore, ev = run && run.events;
@@ -1101,7 +1155,30 @@
             s.push({ x: x, y: y, color: cols[j % cols.length], label: 'cycle ' + (j + 1) });
         });
         var h = _pickVlines(run, function (p) { return p; }).map(function (v) { return { y: v.x, color: v.color, label: v.label }; });
-        return { data: { series: s, hlines: h, xName: 'V', yName: 'p' }, opts: { title: 'Cycles and reopening', xLabel: 'Pumped volume (bbl)', yLabel: 'Pressure (psia)' } };
+        // the knee (F4 reopening pick) and its band, a marker where each cycle crosses it, and the wellbore line V/(V_w·c_w)
+        var hb = [], mk = [], knees = (_arr(run.picks) ? run.picks : []).filter(function (pk) { return pk && pk.method === 'reopening' && pk.ok !== false && _isNum(pk.p); });
+        var uk = T && T.picks && T.picks.user ? T.picks.user.dfitRampKnee : null;
+        if (uk && _isNum(uk.p)) knees.push({ p: uk.p, user: true, V: uk.V });
+        var Vw = (_isNum(ev.VwCwMeasured) && ev.VwCwMeasured > 0) ? ev.VwCwMeasured : null;
+        knees.forEach(function (k) {
+            h.push({ y: k.p, color: k.user ? C.r : FAM_COLORS.F4 || C.v, dash: k.user ? [6, 2] : [4, 2], label: (k.user ? 'user knee ' : 'reopening ') + _f(k.p, 0) + (k.upperSide ? ' (upper side)' : '') });
+            if (k.band && _isNum(k.band.p10) && _isNum(k.band.p90)) hb.push({ y0: k.band.p10, y1: k.band.p90, color: 'rgba(163,113,247,0.14)' });
+            s.forEach(function (c) {
+                if (/^wellbore/.test(c.label || '')) return;
+                for (var i = 1; i < c.y.length; i++) if ((c.y[i - 1] - k.p) * (c.y[i] - k.p) <= 0 && c.y[i] !== c.y[i - 1]) {
+                    var f = (k.p - c.y[i - 1]) / (c.y[i] - c.y[i - 1]);
+                    mk.push({ x: c.x[i - 1] + f * (c.x[i] - c.x[i - 1]), y: k.p, color: c.color, hollow: !!k.user });
+                    break;
+                }
+            });
+        });
+        if (Vw) s.slice().forEach(function (c, j) {
+            if (!c.x.length || /^wellbore/.test(c.label || '')) return;
+            var top = knees.length ? knees[0].p : Math.max.apply(null, _finiteVals(c.y)), p0 = c.y[0];
+            if (!(top > p0)) return;
+            s.push({ x: [c.x[0], c.x[0] + (top - p0) * Vw], y: [p0, top], color: C.ref, dash: [5, 4], label: j === 0 ? 'wellbore line (V_w·c_w ' + _sig(Vw, 3) + ' bbl/psi)' : '' });
+        });
+        return { data: { series: s, hlines: h, hbands: hb, markers: mk, xName: 'V', yName: 'p' }, opts: { title: 'Cycles and reopening', xLabel: 'Pumped volume (bbl)', yLabel: 'Pressure (psia)' } };
     };
     B.dfitInjNet = function (run, T, ds) {
         var ev = run.events, pc = _closureP(T.summary);
@@ -1210,7 +1287,7 @@
         var x0 = D.x[0], x1 = D.x[D.x.length - 1], y0 = null;
         for (var i = 0; i < D.D.length; i++) if (_isNum(D.D[i]) && D.D[i] > 0) { y0 = D.D[i]; break; }
         if (_isNum(y0) && x0 > 0) { s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -0.5)], color: C.y, dash: [4, 4], label: 'slope −½' }); s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -1)], color: C.r, dash: [4, 4], label: 'slope −1' }); }
-        return { data: { series: s, bands: bands, xKind: 'log', yKind: 'log', xName: 't − t0', yName: 'D' }, opts: { title: 'After-closure log-log', xLabel: 't − t0 (h)', yLabel: 'D (psi)' } };
+        return { data: { series: s, bands: bands, shade: _winShade(run, 'dfitAcaLogLog'), xKind: 'log', yKind: 'log', xName: 't − t0', yName: 'D' }, opts: { title: 'After-closure log-log', xLabel: 't − t0 (h)', yLabel: 'D (psi)' } };
     };
     B.dfitFlowDim = function (run) {
         var A = _aca(run);
@@ -1237,8 +1314,9 @@
         var s = [{ x: FL, y: a.p, color: C.p, dots: true, r: 2, label: 'p' }];
         var L = run.aca.nolte && run.aca.nolte.lin;
         if (L && _isNum(L.pr) && _isNum(L.mL)) s.push({ x: [0, 1], y: [L.pr, L.pr + L.mL], color: C.d2, dash: [6, 3], label: 'linear line' });
-        return { data: { series: s, xRange: { min: 0, max: 1 }, xName: 'F_L', yName: 'p' }, opts: { title: 'After-closure linear (F_L)', xLabel: 'F_L', yLabel: 'Pressure (psia)' } };
+        return { data: { series: s, shade: _winShade(run, 'dfitFL'), xRange: { min: 0, max: 1 }, xName: 'F_L', yName: 'p' }, opts: { title: 'After-closure linear (F_L)', xLabel: 'F_L', yLabel: 'Pressure (psia)' } };
     };
+    var _frShading = false;   // _acaConv('dfitFR') rebuilds this plot: no recursion through the shading
     B.dfitFR = function (run) {
         var a = _afterClosure(run), f = _fn('PRiSM_dfit_timeFns'), FR = null;
         if (!a) return { error: NEED_ACA };
@@ -1247,7 +1325,9 @@
         var s = [{ x: FR, y: a.p, color: C.p, dots: true, r: 2, label: 'p' }];
         var R = run.aca.nolte && run.aca.nolte.rad;
         if (R && _isNum(R.pr) && _isNum(R.mR)) { var xm = Math.max.apply(null, _finiteVals(FR)); s.push({ x: [0, xm], y: [R.pr, R.pr + R.mR * xm], color: C.d2, dash: [6, 3], label: 'radial line' }); }
-        return { data: { series: s, xName: 'F_R', yName: 'p' }, opts: { title: 'After-closure radial (F_R)', xLabel: 'F_R', yLabel: 'Pressure (psia)' } };
+        var out = { data: { series: s, xName: 'F_R', yName: 'p' }, opts: { title: 'After-closure radial (F_R)', xLabel: 'F_R', yLabel: 'Pressure (psia)' } };
+        if (!_frShading) { _frShading = true; try { out.data.shade = _winShade(run, 'dfitFR'); } finally { _frShading = false; } }
+        return out;
     };
     function _impulse(run, pow, title) {
         var a = _afterClosure(run);
@@ -1256,7 +1336,7 @@
         for (var i = 0; i < a.tInj.length; i++) { var dt = a.tInj[i] - a.t0A; if (dt > 0) { x.push(Math.pow(dt, -pow)); y.push(a.p[i]); } }
         var h = [];
         if (run.aca.pi && _isNum(run.aca.pi.value)) h.push({ y: run.aca.pi.value, color: C.d2, label: 'p_i ' + _f(run.aca.pi.value, 0), fit: true });
-        return { data: { series: [{ x: x, y: y, color: C.p, dots: true, r: 2, label: 'p' }], hlines: h, xName: 'x', yName: 'p' },
+        return { data: { series: [{ x: x, y: y, color: C.p, dots: true, r: 2, label: 'p' }], hlines: h, shade: _winShade(run, pow === 0.5 ? 'dfitImpLin' : 'dfitImpRad'), xName: 'x', yName: 'p' },
                  opts: { title: title, xLabel: pow === 0.5 ? '(t − t0)^−½ (h^−½)' : '(t − t0)^−1 (1/h)', yLabel: 'Pressure (psia)' } };
     }
     B.dfitImpLin = function (run) { return _impulse(run, 0.5, 'Impulse linear'); };
@@ -1377,8 +1457,12 @@
     // else the same steps here (02 runs the post-draw hooks on paint because opts.plotKey is set).
     function drawPlot(canvas, key, extra) {
         if (!canvas) return false;
+        if (LINK_KEYS[key] && !(extra && _own(extra, 'hoverEvent'))) {
+            var ex = {}; if (extra) for (var k0 in extra) if (_own(extra, k0)) ex[k0] = extra[k0];
+            ex.hoverEvent = true; extra = ex;
+        }
         if (typeof G.PRiSM_drawPlot === 'function' && G.PRiSM_PLOT_REGISTRY && G.PRiSM_PLOT_REGISTRY[key]) {
-            try { return G.PRiSM_drawPlot(canvas, key, extra || {}) !== false; } catch (e) { /* fall through */ }
+            try { var okH = G.PRiSM_drawPlot(canvas, key, extra || {}) !== false; if (okH) _attachOwner(canvas, key); return okH; } catch (e) { /* fall through */ }
         }
         var b = buildPlot(key, extra);
         if (!b.data) { _msgCanvas(canvas, b.error || 'Nothing to plot.'); return false; }
@@ -1441,7 +1525,12 @@
     // ── draggable handles through 02's pointer-owner hook (§2.7, §7.10): the closure marker on dfitG / dfitSqrt / dfitLogLog
     //    and the what-if marker on dfitStrip. Within 24 px of the marker the gesture is taken; a drag previews (redraw with the
     //    marker at the pointer) and the release commits ONE pick-log entry (closure) or the what-if (strip).
-    var DRAG_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitStrip: 1 };
+    //    Further handles (§7.2, §7.5): the event markers (pump start, breakdown, shut-in) on dfitHistory write T.inputs.events,
+    //    and the after-closure window edges on dfitFL / dfitFR / dfitImpLin / dfitImpRad / dfitAcaLogLog write picks.aca
+    //    (linWin / radWin on the injection clock, h). One release = one log entry, inside one undo batch.
+    var DRAG_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitStrip: 1, dfitHistory: 1, dfitFL: 1, dfitFR: 1, dfitImpLin: 1, dfitImpRad: 1, dfitAcaLogLog: 1 };
+    var WIN_PLOTS = { dfitFL: ['lin'], dfitImpLin: ['lin'], dfitFR: ['rad'], dfitImpRad: ['rad'], dfitAcaLogLog: ['lin', 'rad'] };
+    var EV_KEYS = [['tStart', 'pump start'], ['tb', 'breakdown'], ['ts', 'shut-in']];
     var HIT_PX = 24;
     function _localX(canvas, ev) {
         if (_isNum(ev.offsetX)) return ev.offsetX;
@@ -1461,6 +1550,64 @@
         var x = _xOfPick(key, run.derivs, { p: pc });
         return _isNum(x) ? ax.toX(x) : null;
     }
+    // x on an after-closure plot <-> injection-clock time (h); null when the plot has no window axis
+    function _acaConv(key, run) {
+        var A = _aca(run);
+        if (!A) return null;
+        var t0 = _isNum(A.t0) ? A.t0 : 0, tc = _isNum(A.tcInj) ? A.tcInj : null;
+        if (key === 'dfitAcaLogLog') return { toT: function (x) { return x > 0 ? t0 + x : null; }, fromT: function (t) { return t > t0 ? t - t0 : null; } };
+        if (key === 'dfitImpLin') return { toT: function (x) { return x > 0 ? t0 + 1 / (x * x) : null; }, fromT: function (t) { return t > t0 ? 1 / Math.sqrt(t - t0) : null; } };
+        if (key === 'dfitImpRad') return { toT: function (x) { return x > 0 ? t0 + 1 / x : null; }, fromT: function (t) { return t > t0 ? 1 / (t - t0) : null; } };
+        if (key === 'dfitFL' && tc) return { toT: function (x) { var sn = Math.sin(Math.PI * Math.min(1, x) / 2); return (x > 0 && sn > 0) ? tc / (sn * sn) : null; },
+                                            fromT: function (t) { return t >= tc ? (2 / Math.PI) * Math.asin(Math.sqrt(tc / t)) : null; } };
+        if (key === 'dfitFR') {
+            var b = B.dfitFR(run), a = _afterClosure(run);
+            if (!b || !b.data || !a) return null;
+            var X = b.data.series[0].x;
+            return { toT: function (x) { var i = _nearestIdx(X, x); return i < 0 ? null : a.tInj[i]; }, fromT: function (t) { var i = _nearestIdx(a.tInj, t); return i < 0 ? null : X[i]; } };
+        }
+        return null;
+    }
+    function _acaWin(run, which) {
+        var w = test().picks.aca && test().picks.aca[which + 'Win'];
+        if (_arr(w) && _isNum(w[0]) && _isNum(w[1])) return w;
+        var A = _aca(run), n = A && A.nolte && A.nolte[which];
+        return (n && _arr(n.win) && _isNum(n.win[0]) && _isNum(n.win[1])) ? n.win : null;
+    }
+    function _winShade(run, key) {
+        var cv = _acaConv(key, run), out = [];
+        if (!cv) return out;
+        (WIN_PLOTS[key] || []).forEach(function (which) {
+            var w = _acaWin(run, which);
+            if (!w) return;
+            var a = cv.fromT(w[0]), b = cv.fromT(w[1]);
+            if (_isNum(a) && _isNum(b)) out.push({ x0: a, x1: b, color: which === 'lin' ? 'rgba(63,185,80,0.12)' : 'rgba(88,166,255,0.12)' });
+        });
+        return out;
+    }
+    function _evTime(run, k) { var I = test().inputs.events; return _isNum(I[k]) ? I[k] : (run && run.events && _isNum(run.events[k]) ? run.events[k] : null); }
+    // the draggable handles of a canvas: [{id, X (px)}]
+    function _handles(canvas, key) {
+        var ax = canvas._prismAxes, run = _run(), out = [];
+        if (!ax || typeof ax.toX !== 'function' || !run) return out;
+        if (key === 'dfitHistory') {
+            EV_KEYS.forEach(function (e) { var t = _evTime(run, e[0]); if (_isNum(t)) out.push({ id: 'ev.' + e[0], X: ax.toX(t) }); });
+            return out;
+        }
+        if (WIN_PLOTS[key]) {
+            var cv = _acaConv(key, run);
+            if (!cv) return out;
+            WIN_PLOTS[key].forEach(function (which) {
+                var w = _acaWin(run, which);
+                if (!w) return;
+                [0, 1].forEach(function (j) { var x = cv.fromT(w[j]); if (_isNum(x)) out.push({ id: which + j, X: ax.toX(x) }); });
+            });
+            return out;
+        }
+        var mx = _markerX(canvas, key);
+        if (_isNum(mx)) out.push({ id: key === 'dfitStrip' ? 'whatif' : 'closure', X: mx });
+        return out;
+    }
     function _pickFromX(key, xData) {
         var run = _run(), d = run && run.derivs;
         if (!d) return null;
@@ -1474,11 +1621,12 @@
         canvas._dfitPlotKey = key;
         if (canvas._prismPointerOwner && canvas._prismPointerOwner._dfit) return;
         var owner = function (ev) {
-            var k = canvas._dfitPlotKey, mx = _markerX(canvas, k);
-            if (!_isNum(mx) || !ev) return false;
-            var x0 = _localX(canvas, ev);
-            if (Math.abs(x0 - mx) > HIT_PX) return false;
-            var drag = canvas._dfitDrag = { key: k, x: x0, moved: false };
+            var k = canvas._dfitPlotKey;
+            if (!ev || !DRAG_KEYS[k]) return false;
+            var x0 = _localX(canvas, ev), hs = _handles(canvas, k), best = null;
+            hs.forEach(function (hd) { var dd = Math.abs(x0 - hd.X); if (_isNum(dd) && dd <= HIT_PX && (!best || dd < best.d)) best = { id: hd.id, d: dd }; });
+            if (!best) return false;
+            var drag = canvas._dfitDrag = { key: k, id: best.id, x: x0, moved: false };
             var move = function (e) { if (canvas._dfitDrag !== drag) return; drag.x = _localX(canvas, e); drag.moved = true; _previewDrag(canvas, drag); };
             var up = function (e) {
                 canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel);
@@ -1495,24 +1643,64 @@
         owner._dfit = true;
         canvas._prismPointerOwner = owner;
     }
+    function _dragLabel(canvas, drag) {
+        var ax = canvas._prismAxes, xd = ax.fromX(drag.x);
+        if (drag.id === 'whatif') return _f(xd, 0) + ' psia';
+        if (/^ev\./.test(drag.id)) return _f(xd, 4) + ' h';
+        if (/^(lin|rad)[01]$/.test(drag.id)) { var cv = _acaConv(drag.key, _run()), t = cv ? cv.toT(xd) : null; return _isNum(t) ? _f(t, 2) + ' h' : ''; }
+        return _f((_pickFromX(drag.key, xd) || {}).p, 0);
+    }
     function _previewDrag(canvas, drag) {
         var ax = canvas._prismAxes;
         if (!ax || typeof ax.fromX !== 'function') return;
-        var draw = function (ctx, a) { _vline(ctx, (a || ax).plot || ax.plot, drag.x, '#ff7b72', [6, 2], _f((drag.key === 'dfitStrip') ? ax.fromX(drag.x) : (_pickFromX(drag.key, ax.fromX(drag.x)) || {}).p, 0)); };
-        if (typeof G.PRiSM_plot_overlay === 'function') { try { G.PRiSM_plot_overlay(canvas, draw); return; } catch (e) { /* fall through */ } }
+        var lbl = _dragLabel(canvas, drag);
+        var draw = function (ctx, a) { _vline(ctx, (a || ax).plot || ax.plot, drag.x, '#ff7b72', [6, 2], lbl); };
+        if (typeof G.PRiSM_plot_overlay === 'function') { try { if (G.PRiSM_plot_overlay(canvas, draw)) return; } catch (e) { /* fall through */ } }
         drawPlot(canvas, drag.key);
         try { draw(canvas.getContext('2d'), ax); } catch (e) { /* cosmetic */ }
+    }
+    // one event override (typed or dragged): stored in T.inputs.events, logged, the fast pipeline re-runs
+    function setEvent(k, value, reason) {
+        var T = test();
+        if (!/^(tStart|tb|ts)$/.test(String(k))) return { ok: false, code: 'BAD_ITEM', errors: ['Unknown event ' + _txt(k) + '.'], bad: ['event'] };
+        var nv = (_isNum(value) && value >= 0 && value < 1e6) ? value : null, old = T.inputs.events[k];
+        if (old === nv) return { ok: true, changed: false };
+        _batch('begin');
+        try {
+            T.inputs.events[k] = nv;
+            logEntry(T, 'events.' + k, old, nv, reason || 'Event override');
+            if (T.summary) T.summary.stale = true;
+            _emit('prism:dfit-updated', { what: 'events', source: 'user' });
+            runFast('events');
+        } finally { _batch('end'); }
+        _refreshUI();
+        return { ok: true, changed: true, value: nv };
     }
     function _commitDrag(canvas, drag) {
         var ax = canvas._prismAxes;
         if (!ax || typeof ax.fromX !== 'function') return null;
-        var xd = ax.fromX(drag.x);
-        if (drag.key === 'dfitStrip') {
+        var xd = ax.fromX(drag.x), run = _run();
+        if (drag.id === 'whatif') {
             if (!_isNum(xd)) return null;
             _st()._dfitWhatIf = { p: xd };
             runFast('what-if');
             _refreshUI();
             return { whatIf: xd };
+        }
+        if (/^ev\./.test(drag.id)) {
+            if (!_isNum(xd)) { drawPlot(canvas, drag.key); return null; }
+            var lab = '';
+            EV_KEYS.forEach(function (e) { if ('ev.' + e[0] === drag.id) lab = e[1]; });
+            return setEvent(drag.id.slice(3), xd, 'The ' + lab + ' marker dragged on the history plot');
+        }
+        var wm = /^(lin|rad)([01])$/.exec(drag.id);
+        if (wm) {
+            var cv = _acaConv(drag.key, run), w = _acaWin(run, wm[1]), t = cv && _isNum(xd) ? cv.toT(xd) : null;
+            if (!w || !_isNum(t)) { drawPlot(canvas, drag.key); return null; }
+            var nw = [w[0], w[1]]; nw[+wm[2]] = t; nw.sort(function (a, b) { return a - b; });
+            if (!(nw[1] > nw[0])) { drawPlot(canvas, drag.key); return null; }
+            var pv = {}; pv[wm[1] + 'Win'] = nw;
+            return setPick('aca', pv, { source: 'user', reason: (wm[1] === 'lin' ? 'Linear' : 'Radial') + ' window edge dragged on the ' + ((PLOT_ENTRIES[drag.key] || {}).label || 'plot') });
         }
         var pk = _pickFromX(drag.key, xd);
         if (!pk || !_isNum(pk.p)) { drawPlot(canvas, drag.key); return null; }
@@ -1548,6 +1736,17 @@
             return { values: { p: r.p, G: r.G }, note: 'DFIT pick ' + _f(r.p, 0) + ' psia stored (undo with Ctrl-Z).' };
         };
     }
+    // after-closure window from two clicks: x of the plot → injection-clock time (h) → picks.aca.linWin / radWin
+    function _winTool(which, pts, cx, defKey) {
+        var run = _run();
+        if (!run || !_aca(run)) return { error: 'Run ▶ Analyse first: the window tools work on the after-closure data.' };
+        var key = (cx && cx.plotKey && WIN_PLOTS[cx.plotKey]) ? cx.plotKey : (((G.PRiSM_state || {}).activePlot && WIN_PLOTS[G.PRiSM_state.activePlot]) ? G.PRiSM_state.activePlot : defKey);
+        var cv = _acaConv(key, run), a = cv ? cv.toT(pts[0].x) : null, b = cv ? cv.toT(pts[1].x) : null;
+        if (!_isNum(a) || !_isNum(b) || a === b) return { error: 'Click two different points on the after-closure data.' };
+        var pv = {}; pv[which + 'Win'] = [Math.min(a, b), Math.max(a, b)];
+        var r = setPick('aca', pv, { source: 'user', reason: (which === 'lin' ? 'Linear' : 'Radial') + ' window drawn on the plot' });
+        return r.ok ? { values: {}, note: (which === 'lin' ? 'Linear' : 'Radial') + ' window ' + _f(pv[which + 'Win'][0], 2) + '–' + _f(pv[which + 'Win'][1], 2) + ' h stored.' } : { error: r.errors[0] };
+    }
     var LINE_TOOLS = {
         dfitIsipLine: { label: 'ISIP from the early G line', plot: 'dfitG', clicks: 2, prompts: ['Click the start of the early straight line', 'Click its end'],
             action: _toolAction('dfitIsipLine', function (d, pts) {
@@ -1570,9 +1769,9 @@
         dfitSqrtInfl: { label: '√t inflection', plot: 'dfitSqrt', clicks: 1, prompts: ['Click the inflection'],
             action: _toolAction('dfitSqrtInfl', function (d, pts) { return _pickAtDt(d, Math.pow(pts[0].x, 2) / 60); }) },
         dfitAcaLinear: { label: 'After-closure linear window', plot: ['dfitFL', 'dfitImpLin'], clicks: 2, prompts: ['Click the window start', 'Click the window end'],
-            action: function (pts) { var r = setPick('aca', { linWin: [Math.min(pts[0].x, pts[1].x), Math.max(pts[0].x, pts[1].x)] }, { source: 'user', reason: 'Linear window drawn on the plot' }); return r.ok ? { values: {}, note: 'Linear window stored.' } : { error: r.errors[0] }; } },
+            action: function (pts, cx) { return _winTool('lin', pts, cx, 'dfitFL'); } },
         dfitAcaRadial: { label: 'After-closure radial window', plot: ['dfitFR', 'dfitImpRad'], clicks: 2, prompts: ['Click the window start', 'Click the window end'],
-            action: function (pts) { var r = setPick('aca', { radWin: [Math.min(pts[0].x, pts[1].x), Math.max(pts[0].x, pts[1].x)] }, { source: 'user', reason: 'Radial window drawn on the plot' }); return r.ok ? { values: {}, note: 'Radial window stored.' } : { error: r.errors[0] }; } },
+            action: function (pts, cx) { return _winTool('rad', pts, cx, 'dfitFR'); } },
         dfitPiLevel: { label: 'p_i level', plot: 'dfitPiTraj', clicks: 1, prompts: ['Click the p_i level'],
             action: function (pts) { var r = setPick('aca', { piLevel: pts[0].y }, { source: 'user', reason: 'p_i level picked on the trajectory' }); return r.ok ? { values: { pi: pts[0].y }, note: 'p_i level stored.' } : { error: r.errors[0] }; } },
         dfitRampKnee: { label: 'User reopening knee', plot: 'dfitCycles', clicks: 1, prompts: ['Click the knee'],
@@ -1636,9 +1835,17 @@
         }
         if (path === 'options.ppd' || path === 'options.axisLock') redrawAll();
     }
+    function _onMatchModel(e) {
+        var t = e && e.target, k = t && t.getAttribute ? t.getAttribute('data-dfit-mm') : null;
+        if (!k) return;
+        var sel = _matchSel(), i = sel.indexOf(k);
+        if (t.checked && i === -1) sel.push(k);
+        if (!t.checked && i !== -1) sel.splice(i, 1);
+    }
     function _wire(root) {
         if (!root || root._dfitWired) return;
         root._dfitWired = true;
+        root.addEventListener('change', _onMatchModel);
         root.addEventListener('change', _onInputChange);
         root.addEventListener('click', _onAction);
     }
@@ -1731,10 +1938,20 @@
             try { if (G.navigator && G.navigator.clipboard && G.navigator.clipboard.writeText) G.navigator.clipboard.writeText(txt); } catch (e) { /* ignore */ }
             _setStatus('Copied: ' + txt, 'ok');
         },
+        copyIsipGrad: function () {
+            var s = results(), T = test(), run = _run();
+            var p = (s && s.isip && _isNum(s.isip.value)) ? s.isip.value : (run && run.isip ? run.isip.value : null), g = _grad(p, T);
+            if (!_need(_isNum(g), _isNum(p) ? 'Enter the datum TVD (step ①) for the ISIP gradient.' : 'No ISIP yet — press ▶ Analyse.')) return;
+            var txt = 'ISIP gradient ' + _f(g, 3) + ' psi/ft (' + _f(g / 0.052, 2) + ' ppg equivalent)';
+            try { if (G.navigator && G.navigator.clipboard && G.navigator.clipboard.writeText) G.navigator.clipboard.writeText(txt); } catch (e) { /* ignore */ }
+            _setStatus('Copied: ' + txt, 'ok');
+        },
         exportText: function () { _exportText(); },
         exportSheet: function () { _exportSheet(); },
         lkSim: function () { _lkSimulate(); },
         lkFit: function () { _lkFit(); },
+        lkStruct: function () { _lkFit({ structural: true }); },
+        acaMatch: function () { _acaMatch(); },
         lkCancel: function () { if (_lkJob) { _lkJob.cancelled = true; _setStatus('Cancelled — previous model kept.', 'warn'); } else _toast('Nothing is running.'); },
         design: function () { _design(); },
         replay: function () { _replay(); },
@@ -1872,17 +2089,10 @@
         var evs = h.querySelectorAll ? h.querySelectorAll('[data-dfit-ev]') : [];
         Array.prototype.forEach.call(evs, function (inp) {
             inp.addEventListener('change', function () {
-                var k = inp.getAttribute('data-dfit-ev'), T2 = test(), v = _parse(inp.value);
-                var nv = (_isNum(v) && v >= 0 && v < 1e6) ? v : null;
-                var old = T2.inputs.events[k];
-                if (old === nv) return;
-                _batch('begin');
-                T2.inputs.events[k] = nv;
-                logEntry(T2, 'events.' + k, old, nv, 'Event override typed');
-                if (T2.summary) T2.summary.stale = true;
-                _emit('prism:dfit-updated', { what: 'events', source: 'user' });
-                _batch('end');
-                inp.value = _isNum(nv) ? String(nv) : '';
+                var k = inp.getAttribute('data-dfit-ev'), v = _parse(inp.value);
+                var r = setEvent(k, v, 'Event override typed');
+                var el = _byId(inp.id) || inp;
+                if (r.ok) el.value = _isNum(test().inputs.events[k]) ? String(test().inputs.events[k]) : '';
             });
         });
     };
@@ -2109,7 +2319,7 @@
         }
         html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_isip_override', 'Use another ISIP', 'override').replace('data-dfit-act="override"', 'data-dfit-act="override" data-dfit-arg="isip"') +
                 _btn('prism_dfit_note_isip', 'ISIP method notes', 'note').replace('data-dfit-act="note"', 'data-dfit-act="note" data-dfit-arg="isip-wh"') + '</div>' + _chart('dfitIsip', 240) + '</div>';
-        html += '<div class="card"><div class="card-title">Water hammer</div>' + ((run && run.hammer) ? _chart('dfitHammer', 220) : _verdict('warn', 'Water hammer not resolvable at 1 Hz: record ≥ 2.3 Hz at the wellhead through shut-in to use it.')) + '</div>';
+        html += '<div class="card"><div class="card-title">Water hammer</div>' + _hammerHTML(run, false) + '</div>';
         var sd = run ? _stepResult('down', run) : null;
         html += '<div class="card"><div class="card-title">Step-down</div>' + (sd ? _stepDownHTML(sd) + _chart('dfitStepDown', 220) : _note('No step-down in this record.')) + '</div>';
         var sr = run ? _stepResult('up', run) : null;
@@ -2179,13 +2389,80 @@
         var L = run.leak;
         if (L && L.ok !== false) html += _rbox('Leak check', [_rrow('Verdict', L.verdict), _rrow('Leak rate (bbl/d)', _sig(L.qk, 3)), _rrow('Tolerance (bbl/d)', _sig(L.qkMax, 3))]);
         html += _chart('dfitAcaLogLog', 240) + _chart('dfitFlowDim', 180) + _chart('dfitFL', 220) + _chart('dfitImpLin', 200) + _chart('dfitPiTraj', 200);
+        html += _matchHTML(run);
         var c = _closureOf(run);
         html += '<div class="card"><div class="card-title">Hand-offs</div><div class="prism-dfit-bar">' +
                 (c.mode === 'range' ? _btn('prism_dfit_handoff_F1', 'Open in PTA (F1 chain)', 'handoffF').replace('data-dfit-act="handoffF"', 'data-dfit-act="handoffF" data-dfit-arg="F1"') +
                                       _btn('prism_dfit_handoff_F2', 'Open in PTA (F2 chain)', 'handoffF').replace('data-dfit-act="handoffF"', 'data-dfit-act="handoffF" data-dfit-arg="F2"')
                                     : _btn('prism_dfit_handoff_pta', 'Open in PTA (transient)', 'handoff').replace('data-dfit-act="handoff"', 'data-dfit-act="handoff" data-dfit-arg="pta"')) +
-                _btn('prism_dfit_handoff_frac', 'Frac-design sheet (CSV)', 'exportSheet') + _btn('prism_dfit_copy_grad', 'Copy closure gradient', 'copyGrad') + '</div></div>';
+                _btn('prism_dfit_handoff_frac', 'Frac-design sheet (CSV)', 'exportSheet') + _btn('prism_dfit_copy_grad', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_copy_isip_grad', 'Copy ISIP gradient', 'copyIsipGrad') + '</div></div>';
         return html;
+    }
+    // ── "Model match" card (§6.8): the PRiSM model library on the constant-rate-equivalent derivative, p_i bounded by the bracket.
+    //    The match itself is 57's PRiSM_dfit_acaMatch(Job) (resolved at call time); the result is kept in memory (st._dfitAcaMatch,
+    //    keyed by the run's dataset and inputs hashes) like the what-if, and run.aca.match is shown when the pipeline carries one.
+    var MATCH_MODELS = [['infiniteFrac', 'Fracture, uniform flux'], ['finiteFrac', 'Fracture, finite conductivity'], ['homogeneous', 'Radial homogeneous'], ['radialComposite', 'Radial composite']];
+    var _mmJob = null;
+    function _matchSel() {
+        var st = _st();
+        if (!_arr(st._dfitMatchModels)) st._dfitMatchModels = MATCH_MODELS.map(function (m) { return m[0]; });
+        return st._dfitMatchModels;
+    }
+    function _matchOf(run) {
+        var m = _st()._dfitAcaMatch;
+        if (m && run && m.dsHash === run.dsHash && m.inputsHash === run.inputsHash && m.res) return m.res;
+        var A = _aca(run);
+        return (A && _isObj(A.match)) ? A.match : null;
+    }
+    function _matchHTML(run) {
+        var sel = _matchSel(), m = _matchOf(run);
+        var html = '<div class="card"><div class="card-title">Model match</div>' +
+                   _note('Matches PRiSM models to the after-closure constant-rate-equivalent derivative from the centroid origin; p_i stays inside the bracket. The result seeds the PTA hand-off.') +
+                   '<div class="prism-dfit-checks">' + MATCH_MODELS.map(function (o) {
+                       var id = 'prism_dfit_mm_' + o[0];
+                       return '<label class="prism-dfit-check"><input type="checkbox" id="' + id + '" data-dfit-mm="' + o[0] + '"' + (sel.indexOf(o[0]) !== -1 ? ' checked' : '') + '> ' + _esc(o[1]) + '</label>';
+                   }).join('') + '</div><div class="prism-dfit-bar">' + _btn('prism_dfit_aca_match', 'Match', 'acaMatch', 'btn-primary') + '</div>' + _chart('dfitCrDeriv', 200);
+        if (m && m.ok !== false && m.best) {
+            var b = m.best, ci = b.ci95 || {};
+            var nm = ''; MATCH_MODELS.forEach(function (o) { if (o[0] === b.model) nm = o[1]; });
+            html += _rbox('Best match', [_rrow('Model', nm || b.model || '—'), _rrow('k (md)', _sig(b.k, 3) + (ci.k ? ' (' + _sig(ci.k[0], 3) + ' – ' + _sig(ci.k[1], 3) + ')' : '')),
+                       _rrow('L (ft)', _f(b.L, 1) + (ci.L ? ' (' + _f(ci.L[0], 1) + ' – ' + _f(ci.L[1], 1) + ')' : '')), _rrow('p_i (psia)', _f(b.pi, 0)), _rrow('BIC', _f(b.bic, 1))]);
+            if (_arr(m.candidates) && m.candidates.length) html += _table(['Model', 'k (md)', 'L (ft)', 'p_i (psia)', 'BIC'], m.candidates.map(function (c) {
+                return [c.model || '—', _sig(c.k, 3), _f(c.L, 1), _f(c.pi, 0), _f(c.bic, 1)];
+            }), 'prism_dfit_mm_tbl');
+        } else if (m && m.ok === false) html += _verdict('warn', 'The model match failed: ' + _txt((m.errors && m.errors[0]) || m.why || 'no result'));
+        return html + '</div>';
+    }
+    function _acaMatch() {
+        var run = _run(), A = _aca(run);
+        if (!_need(run && A && A.ok !== false, 'The model match needs after-closure results — press ▶ Analyse.')) return null;
+        var sel = _matchSel().slice();
+        if (!_need(sel.length > 0, 'Tick at least one model to match.')) return null;
+        var mk = _fn('PRiSM_dfit_acaMatchJob'), f1 = _fn('PRiSM_dfit_acaMatch');
+        if (!_need(mk || f1, 'The after-closure model match is not available in this build yet.')) return null;
+        var T = test();
+        var ctx = { run: run, aca: A, prep: run.prep, events: run.events, inputs: T.inputs, well: _well(), ds: G.PRiSM_dataset };
+        var opts = { models: sel, piBracket: (A.pi && _isNum(A.pi.lo) && _isNum(A.pi.hi)) ? [A.pi.lo, A.pi.hi] : null, seed: 1 };
+        var me = _mmJob = { cancelled: false };
+        var finish = function (res) {
+            if (_mmJob === me) _mmJob = null;
+            if (!res) { _setStatus('⚠ The model match did not return a result.', 'warn'); return null; }
+            _st()._dfitAcaMatch = { dsHash: run.dsHash, inputsHash: run.inputsHash, res: res };
+            if (res.ok !== false && res.best) logEntry(T, 'aca.match', null, res.best.model || null, 'After-closure model match');
+            _emit('prism:dfit-updated', { what: 'aca', source: 'user' });
+            _refreshUI();
+            return res;
+        };
+        var job = null;
+        if (mk) { try { job = mk(ctx, opts); } catch (e) { job = null; } }
+        var AI = G.PRiSM_autoInterp;
+        if (job && typeof job.step === 'function') {
+            if (AI && typeof AI.drive === 'function') return AI.drive(job, { shouldCancel: function () { return me.cancelled; } }).then(finish, function () { if (_mmJob === me) _mmJob = null; return null; });
+            try { return finish(_runJobSync(job, function () { return me.cancelled; })); } catch (e) { _mmJob = null; return null; }
+        }
+        var r = null;
+        try { r = f1(ctx, opts); } catch (e) { r = { ok: false, errors: [_txt(e && e.message)] }; }
+        return finish(r);
     }
     var _lkJob = null;
     function _sandboxCfg() {
@@ -2214,12 +2491,18 @@
         html += '</div>';
         html += '<div class="card"><div class="card-title">History match</div><div class="fg"><div class="fg-item"><label for="prism_dfit_lk_preset">Preset</label><select id="prism_dfit_lk_preset">' +
                 [['falloff', 'Falloff only'], ['full', 'Full record'], ['geometry', 'Geometry'], ['pdl', 'Pressure-dependent leak-off'], ['spurt', 'Spurt']].map(function (o) { return '<option value="' + o[0] + '">' + _esc(o[1]) + '</option>'; }).join('') +
-                '</select></div></div><div class="prism-dfit-bar">' + _btn('prism_dfit_lk_fit', 'Fit', 'lkFit', 'btn-primary') + _btn('prism_dfit_lk_cancel', 'Cancel', 'lkCancel') + '</div>';
+                '</select></div></div><div class="prism-dfit-bar">' + _btn('prism_dfit_lk_fit', 'Fit', 'lkFit', 'btn-primary') + _btn('prism_dfit_lk_struct', 'Structural spread', 'lkStruct') + _btn('prism_dfit_lk_cancel', 'Cancel', 'lkCancel') + '</div>';
         var T = test(), fit = T.lk && T.lk.fit;
         if (fit && fit.params) html += _table(['Parameter', 'Value', '95 % CI', 'Inflated CI'], Object.keys(fit.params).map(function (k) {
             var ci = fit.ci95 && fit.ci95[k], cj = fit.ci95Inflated && fit.ci95Inflated[k];
             return [k, _sig(fit.params[k], 4), ci ? _sig(ci[0], 4) + ' – ' + _sig(ci[1], 4) : '—', cj ? _sig(cj[0], 4) + ' – ' + _sig(cj[1], 4) : '—'];
         }), 'prism_dfit_lk_fit_tbl');
+        var SS = fit && fit.groups && fit.groups.structural;
+        if (_isObj(SS)) {
+            var rr = function (k, lab, dp) { var v = SS[k]; return [lab, _arr(v) && _isNum(v[0]) && _isNum(v[1]) ? (dp == null ? _sig(v[0], 3) + ' – ' + _sig(v[1], 3) : _f(v[0], dp) + ' – ' + _f(v[1], dp)) : '—']; };
+            html += _table(['Structural spread (aperture laws, PDL on/off; χ² ≤ 1.5 × best)', 'Range'], [rr('sigmaC', 'σ_c (psia)', 0), rr('pr', 'p_r (psia)', 0), rr('k', 'k (md)'), rr('CLeq', 'CL equivalent (ft/√min)')], 'prism_dfit_lk_struct_tbl');
+        }
+        if (fit && fit.groups && fit.groups.text) html += _note(_txt(fit.groups.text));
         html += '</div>' + _chart('dfitLkP', 220) + _chart('dfitLkQ', 200) + _chart('dfitLkGeom', 200) + _chart('dfitLkRes', 180);
         return html;
     }
@@ -2260,14 +2543,15 @@
         _refreshUI();
         return r;
     }
-    function _lkFit() {
+    function _lkFit(o) {
+        o = o || {};
         var run = _run(), ds = G.PRiSM_dataset, mk = G.PRiSM_dfit_lkFitJob, cfg = _sandboxCfg();
         if (!_need(_hasData(ds) && run, 'Load a DFIT and press ▶ Analyse before the history match.')) return null;
         if (!_need(typeof mk === 'function' && !mk._dfitStub && cfg, 'The history match is not available in this build yet.')) return null;
         var sel = _byId('prism_dfit_lk_preset'), preset = sel ? sel.value : 'falloff';
         var t0 = (run.events && run.events.tStart) || 0;
         var job = null;
-        try { job = mk({ t: ds.t.map(function (t) { return t - t0; }), p: ds.p }, cfg, preset, { seed: 1 }); } catch (e) { job = null; }
+        try { job = mk({ t: ds.t.map(function (t) { return t - t0; }), p: ds.p }, cfg, preset, o.structural ? { seed: 1, structural: true } : { seed: 1 }); } catch (e) { job = null; }
         if (!_need(job && typeof job.step === 'function', 'The history match could not start.')) return null;
         var me = _lkJob = { cancelled: false };
         var T = test();
@@ -2275,8 +2559,10 @@
             if (_lkJob === me) _lkJob = null;
             if (!fit || fit.ok === false) { _setStatus('⚠ The history match failed.', 'warn'); return fit; }
             _batch('begin');
-            T.lk = { cfg: cfg, preset: preset, fit: { params: fit.params, ci95: fit.ci95, ci95Inflated: fit.ci95Inflated, groups: fit.groups, chi2: fit.chi2, at: _nowISO() }, gridN: null };
-            logEntry(T, 'lk.fit', null, preset, 'History match');
+            var grp = _clone(fit.groups) || {};
+            if (o.structural && _isObj(fit.structural)) grp.structural = _clone(fit.structural);
+            T.lk = { cfg: cfg, preset: preset, fit: { params: fit.params, ci95: fit.ci95, ci95Inflated: fit.ci95Inflated, groups: grp, chi2: fit.chi2, at: _nowISO() }, gridN: null };
+            logEntry(T, 'lk.fit', null, preset, o.structural ? 'History match with the structural spread' : 'History match');
             _emit('prism:dfit-model-updated', { kind: 'fit', ok: true });
             _emit('prism:dfit-updated', { what: 'all', source: 'user' });
             _batch('end');
@@ -2442,7 +2728,7 @@
         if (!el) return false;
         var rows = railRows();
         el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail"><div class="prism-rail-title">DFIT results</div>' + rows.map(function (r) { return _rrow(r[0], r[1]); }).join('') +
-                       '<div class="prism-dfit-bar">' + _btn('prism_dfit_rail_analyse', '▶ Analyse', 'analyse', 'btn-primary') + _btn('prism_dfit_rail_copy', 'Copy closure gradient', 'copyGrad') + '</div></div>';
+                       '<div class="prism-dfit-bar">' + _btn('prism_dfit_rail_analyse', '▶ Analyse', 'analyse', 'btn-primary') + _btn('prism_dfit_rail_copy', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_rail_copy_isip', 'Copy ISIP gradient', 'copyIsipGrad') + '</div></div>';
         _wire(el.firstChild || el);
         return true;
     }
@@ -2608,7 +2894,7 @@
     function renderHammerTool(host) {
         var run = _run();
         var h = _toolHost(host, 'prism_dfit_hammer', '<div class="card"><div class="card-title">Water hammer (detail)</div>' +
-            ((run && run.hammer) ? _chart('dfitHammer', 240) : _verdict('warn', 'Water hammer not resolvable at 1 Hz: record ≥ 2.3 Hz at the wellhead through shut-in to use it.')) + '</div>');
+            _hammerHTML(run, true) + '</div>');
         _drawIn(h);
         return h;
     }
@@ -2766,18 +3052,39 @@
     }
     function _onPage() { var sh = _shell(); if (!sh || sh.isConnected === false) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; } }
     // linked cursor: the hovered x on one DFIT canvas drawn on the other visible DFIT canvases (02's overlay frame)
+    // Linked cursor (§7.4): a hover on one shut-in plot draws the same shut-in time on the other DFIT canvases through 02's
+    // overlay frame (no redraw). x ↔ Δt (h): dfitG nearest G, dfitSqrt √(Δt·60), dfitLogLog Δt·60, dfitHistory t_s + Δt.
+    var LINK_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitHistory: 1 };
+    function _dtOfX(key, x, run) {
+        var d = run && run.derivs;
+        if (!_isNum(x)) return null;
+        if (key === 'dfitG') { if (!d || !_arr(d.G)) return null; var i = _nearestIdx(d.G, x); return i < 0 ? null : d.dt[i]; }
+        if (key === 'dfitSqrt') return x > 0 ? x * x / 60 : null;
+        if (key === 'dfitLogLog') return x > 0 ? x / 60 : null;
+        if (key === 'dfitHistory') return (run.events && _isNum(run.events.ts) && x >= run.events.ts) ? x - run.events.ts : null;
+        return null;
+    }
+    function _xOfDt(key, dt, run) {
+        var d = run && run.derivs;
+        if (!_isNum(dt)) return null;
+        if (key === 'dfitG') { if (!d || !_arr(d.dt)) return null; var i = _nearestIdx(d.dt, dt); return i < 0 ? null : d.G[i]; }
+        if (key === 'dfitSqrt') return Math.sqrt(dt * 60);
+        if (key === 'dfitLogLog') return dt > 0 ? dt * 60 : null;
+        if (key === 'dfitHistory') return (run.events && _isNum(run.events.ts)) ? run.events.ts + dt : null;
+        return null;
+    }
     function _onHover(e) {
         var d = e && e.detail;
-        if (!d || !PLOT_ENTRIES[d.plotKey] || typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC) return;
-        var run = _run(), dt = null;
-        if (run && run.derivs && _arr(d.index != null ? run.derivs.dt : null)) dt = run.derivs.dt[d.index];
+        if (!d || !LINK_KEYS[d.plotKey] || typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC || !document.querySelectorAll) return;
+        var run = _run(), dt = _dtOfX(d.plotKey, d.x, run);
+        if (!_isNum(dt)) return;
         Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) {
-            if (cv === e.target || cv.isConnected === false) return;
-            var key = cv.getAttribute('data-dfit-plot'), x = null;
-            if (!_isNum(dt)) return;
-            if (key === 'dfitG') x = run.derivs.G[d.index]; else if (key === 'dfitSqrt') x = Math.sqrt(dt * 60); else if (key === 'dfitLogLog') x = dt * 60;
+            if (cv === e.target || cv.isConnected === false || cv._dfitDrag) return;
+            var key = cv.getAttribute('data-dfit-plot');
+            if (!LINK_KEYS[key]) return;
+            var x = _xOfDt(key, dt, run);
             if (!_isNum(x)) return;
-            try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(x), '#c9d1d9', [2, 2], ''); }); } catch (err) { /* cosmetic */ }
+            try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(x), '#c9d1d9', [2, 2], 'Δt ' + _f(dt * 60, 1) + ' min'); }); } catch (err) { /* cosmetic */ }
         });
     }
     // Escape cancels a drag in progress (an armed line tool is cancelled by 11)
@@ -2878,7 +3185,8 @@
         openOverride: openOverride, saveOverride: _saveOverride, closeOverride: _closeOverride, openSandbox: openSandbox,
         lkSimulate: _lkSimulate, lkFit: _lkFit, design: _design, replay: _replay, exportText: _exportText, exportSheet: _exportSheet,
         publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
-        statusText: function () { return _status.text; }
+        statusText: function () { return _status.text; },
+        handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch
     };
 
     install();
