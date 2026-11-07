@@ -538,7 +538,7 @@
                 if (pos(DEnd)) trend.khmuD = KC.rad * VHi / (DEnd * xEnd);
                 [['trend', trend.khmuPi], ['trend-pfree', trend.khmuD]].forEach(function (r) {
                     if (!pos(r[1]) || !pos(muHi) || !pos(h)) return;
-                    var kk = r[1] * (reversed ? muLo : muHi) / (reversed ? hHi : h);
+                    var kk = r[1] * (reversed ? muLo : muHi) / (reversed ? hHi : loOf('h', h));     // conservative ends: the lowest h for k_hi
                     (reversed ? los : his).push({ edge: reversed ? 'lo' : 'hi', rule: r[0], value: rnd(ctx.tEnd != null ? ctx.tEnd : xEnd, 4), k: kk });
                 });
             }
@@ -859,6 +859,20 @@
             var tInj = [], p = [], i;
             for (i = 0; i < prep.t.length; i++) if (prep.t[i] > tcRec * (1 + 1e-9) + 1e-12 && fin(prep.pw[i])) { tInj.push(prep.t[i] - tStart); p.push(prep.pw[i]); }
             if (tInj.length < 5) return fail('TOO_FEW', 'Fewer than five samples after closure.', ['prep']);
+            // tides removed before the diagnosis (§4.12): options.aca.tideRemove 'on' always, 'auto' when the after-closure record
+            // spans ≥ 48 h and the fitted M2 is significant (SNR ≥ 3), 'off' never; PRiSM_tideAnalysis resolved at call time
+            var tide = { mode: iop.tideRemove || 'auto', applied: false, snr: null, why: null };
+            if (tide.mode !== 'off' && typeof G.PRiSM_tideAnalysis === 'function' && tInj[tInj.length - 1] - tInj[0] >= (tide.mode === 'on' ? 4 : 48)) {
+                try {
+                    var td = G.PRiSM_tideAnalysis(tInj, p, { detrend: true });
+                    tide.snr = td && fin(td.snr) ? td.snr : null;
+                    if (td && arrOk(td.p_corrected) && td.p_corrected.length === p.length && arrOk(td.constituents) && td.constituents.length && (tide.mode === 'on' || (fin(td.snr) && td.snr >= 3))) {
+                        var pT = td.p_corrected.map(function (v, j) { return fin(v) ? v : p[j]; });
+                        p = pT; tide.applied = true;
+                        warnings.push(W('ACA_TIDE', 'info', 'Tides removed before the diagnosis (M2 signal-to-noise ' + fmt(tide.snr, 1) + ').', ['A1']));
+                    } else tide.why = 'no significant tide';
+                } catch (eT) { tide.why = 'tide analysis failed'; }
+            } else tide.why = tide.mode === 'off' ? 'off' : 'record too short or tide analysis unavailable';
             var geomModel = chosen.geometry && chosen.geometry.model || 'PKN', gm = chosen.geometry && chosen.geometry.byModel ? chosen.geometry.byModel[geomModel] : null;
             var CL = gm && pos(gm.CL) ? gm.CL : null, L = gm ? (pos(gm.xf) ? gm.xf : (pos(gm.R) ? gm.R : null)) : null;
             var isipV = run.isip && fin(run.isip.value) ? run.isip.value : null;
@@ -882,6 +896,7 @@
                         if (!ga.ok) { warnings.push(W('GAS_ADJUST', 'warn', 'Gas adjustment unavailable: ' + (ga.errors && ga.errors[0] || ''), ['A1'])); break; }
                         var tcA = interp(tAll, ga.ta, tcInj), off = tAll.length - tInj.length;
                         var A2 = {}; for (var kk in A) A2[kk] = A[kk];
+                        var gpi = gasProps(piCur, well); if (gpi && pos(gpi.mu)) { A2.well = Object.assign({}, A.well, { mu: gpi.mu }); A2.muI = gpi.mu; }   // μ_i at p_i
                         A2.ta = ga.ta.slice(off); A2.tcA = tcA; A2.t0 = origin === 'total' ? 0 : origin === 'sinceClosure' ? tcA : origin === 'midInjection' ? interp(tAll, ga.ta, tpe / 2) : tcA / 3;
                         coreG = _acaCore(tInj, ga.pa.slice(off), A2);
                         if (coreG.err) break;
@@ -889,17 +904,31 @@
                         if (d < 0.1) { conv = true; break; }
                     }
                     if (coreG && !coreG.err) { core = coreG; core._t0 = A2.t0; core._tcA = A2.tcA; }
-                    gas = { iterations: Math.min(iters, 3), converged: conv };
+                    gas = { iterations: Math.min(iters, 3), converged: conv, muI: coreG && !coreG.err && A2 && pos(A2.muI) ? A2.muI : null };
                     warnings.push(W('GAS_LABEL', 'info', 'Effective gas permeability; water invasion and imbibition are not modelled.', ['A1']));
                 }
             }
+            if (well.fluid === 'gas' && !gas) {
+                // not adjusted (p_i high and close to closure): the liquid kernels apply with μ_i at p_i
+                var gp0 = gasProps(core.pi.value, well);
+                if (gp0 && pos(gp0.mu) && (!pos(mu) || Math.abs(gp0.mu - mu) > 1e-9 * gp0.mu)) {
+                    var A3 = {}; for (var k3 in A) A3[k3] = A[k3];
+                    A3.well = Object.assign({}, A.well, { mu: gp0.mu });
+                    var core3 = _acaCore(tInj, p, A3); if (!core3.err) core = core3;
+                }
+                gas = { iterations: 0, converged: true, muI: gp0 && pos(gp0.mu) ? gp0.mu : null };
+            }
+            if (gas && pos(gas.muI)) mu = gas.muI;
             var dg = core.dg, nol = core.nol, imp = core.imp;
             var kh = null;
             if (nol.rad && pos(nol.rad.khmu)) kh = { khmu: nol.rad.khmu, k: pos(nol.rad.k) ? nol.rad.k : 0, biasDirection: 'upper' };
             else if (imp.rad && pos(imp.rad.value)) kh = { khmu: imp.rad.value, k: pos(imp.rad.k) ? imp.rad.k : 0, biasDirection: 'upper' };
             var bounds = null;
             if (!kh && !dg.storage) {
-                var Lmax = pos(L) ? 2 * L : null, Amax = Lmax && pos(hp) ? 2 * Lmax * hp : null;
+                // L_max: an explicit input (opts.Lmax, options.aca.Lmax or rock.Lmax, ft), else 2·xf of the chosen geometry (the default of
+                // the frozen fixture; §4.22)
+                var LmaxIn = pos(opts.Lmax) ? opts.Lmax : pos(iop.Lmax) ? iop.Lmax : (inputs.rock && pos(inputs.rock.Lmax) ? inputs.rock.Lmax : null);
+                var Lmax = LmaxIn || (pos(L) ? 2 * L : null), Amax = Lmax && pos(hp) ? 2 * Lmax * hp : null;
                 var sigmaHi = run.consensus && run.consensus.range ? run.consensus.range.hi : chosen.pClosure;
                 var isipHi = fin(isipV) ? isipV + (run.isip && fin(run.isip.spread) ? run.isip.spread / 2 : 0) : null;
                 var CLlo = CL;                                       // the lowest CL among the family chains (range mode)
@@ -908,8 +937,8 @@
                     if (g && pos(g.CL) && (!CLlo || g.CL < CLlo)) CLlo = g.CL;
                 });
                 var b = G.PRiSM_dfit_acaBounds({ diag: dg, Lmax: Lmax, Amax: Amax, CL: CL, CLlo: CLlo, pMidHi: fin(isipHi) ? 0.5 * (isipHi + sigmaHi) : null,
-                    piLo: core.pi.lo, piHi: core.pi.value, tEnd: tInj[tInj.length - 1], t0: core._t0 != null ? core._t0 : t0, mImpLin: imp.lin ? imp.lin.m : null,
-                    phi: phi, mu: mu, ct: ct, h: h, V: V, props: well.fluid === 'gas' ? function (pp) { var g = gasProps(pp, well); return g ? { mu: g.mu, ct: ct } : null; } : null });
+                    piLo: core.pi.lo, piHi: fin(core.pi.hi) ? core.pi.hi : core.pi.value, tEnd: tInj[tInj.length - 1], t0: core._t0 != null ? core._t0 : t0, mImpLin: imp.lin ? imp.lin.m : null,
+                    phi: phi, mu: mu, ct: ct, h: h, V: V, ranges: opts.ranges || iop.ranges || null, props: well.fluid === 'gas' ? function (pp) { var g = gasProps(pp, well); return g ? { mu: g.mu, ct: ct } : null; } : null });
                 if (b.ok && (b.kLo != null || b.kHi != null)) {
                     bounds = { kLo: b.kLo != null ? b.kLo : 0, kHi: b.kHi != null ? b.kHi : (b.kLo || 0), binding: b.binding, direction: b.direction, dpCL: b.dpCL };
                     if (b.warnings) warnings = warnings.concat(b.warnings);
@@ -941,6 +970,19 @@
             var diag = { x: dg.x, D: dg.D, sD: dg.sD, n: dg.n, piLo: dg.piLo, piHi: dg.piHi, piPoint: dg.piPoint, noiseD: dg.noiseD, regimes: regimes, sequenceOk: dg.sequenceOk, p: dg.p };
             var combined = null;
             if (core.pi && fin(core.pi.lo) && fin(core.pi.hi)) combined = [core.pi.lo, core.pi.hi];
+            // p_i at the datum with the reservoir-fluid gradient (§4.12): priors.piGrad, else the gas gradient at p_i, else water
+            var gTvd = inputs.gauge && fin(inputs.gauge.bhTvd) ? inputs.gauge.bhTvd : null, dTvd = fin(inputs.datumTvd) ? inputs.datumTvd : null;
+            var gradR = null, gradSrc = null;
+            if (inputs.priors && pos(inputs.priors.piGrad)) { gradR = inputs.priors.piGrad; gradSrc = 'prior'; }
+            else if (pos(well.resGrad)) { gradR = well.resGrad; gradSrc = 'well'; }
+            else if (well.fluid === 'gas') {
+                var gq = gasProps(core.pi.value, well), sgG = pos(well.SG_g) ? well.SG_g : null, TF = fin(well.T_F) ? well.T_F : (fin(well.T_res) ? well.T_res : null);
+                if (gq && sgG && fin(TF)) { gradR = core.pi.value * 28.97 * sgG / (gq.z * 10.7316 * (TF + 459.67)) / 144; gradSrc = 'gas'; }
+            }
+            if (gradR == null) { gradR = 0.433; gradSrc = 'water (assumed)'; }
+            var dz = (gTvd != null && dTvd != null) ? dTvd - gTvd : 0;
+            var piDatum = { value: core.pi.value + gradR * dz, lo: core.pi.lo + gradR * dz, hi: core.pi.hi + gradR * dz, gradient: gradR, gradientSource: gradSrc,
+                            gaugeTvd: gTvd, datumTvd: dTvd, note: _txt(dz === 0 ? 'Gauge at the datum: p_i at the datum equals p_i at the gauge.' : 'p_i moved ' + fmt(dz, 0) + ' ft to the datum at ' + fmt(gradR, 3) + ' psi/ft (' + gradSrc + ').') };
             return {
                 ok: true, regimeSummary: core.summary, origin: origin, t0: core._t0 != null ? core._t0 : t0, tcInj: tcInj, V: V, diag: diag,
                 nolte: { lin: nol.lin ? { pr: nol.lin.pr, mL: nol.lin.mL, k: nol.lin.k, win: nol.lin.win } : null,
@@ -949,8 +991,8 @@
                            rad: imp.rad ? { pi: imp.rad.pi, m: imp.rad.m, group: 'khmu', value: nn(imp.rad.value) } : null,
                            sph: imp.sph ? { pi: imp.sph.pi, m: imp.sph.m, group: 'ks', value: nn(imp.sph.value) } : null },
                 brackets: { cart: core.cart, imp: core.impB, deriv: core.deriv, combined: combined, edges: { lo: core.pi.edges.lo, hi: core.pi.edges.hi } },
-                pi: { value: core.pi.value, lo: core.pi.lo, hi: core.pi.hi, label: core.pi.label, reasons: core.pi.reasons },
-                kh: kh, bounds: bounds, match: match, gas: gas, tidalCt: null,
+                pi: { value: core.pi.value, lo: core.pi.lo, hi: core.pi.hi, label: core.pi.label, reasons: core.pi.reasons, datum: piDatum },
+                kh: kh, bounds: bounds, match: match, gas: gas, tidalCt: null, tide: tide,
                 eps: { atClosure: fin(core.epsC) ? core.epsC : 0, now: fin(core.epsNow) ? core.epsNow : 0 }, ratios: ratios,
                 warnings: warnings, ev: ['A1']
             };
@@ -967,7 +1009,7 @@
             if (!aca || aca.ok === false || !aca.diag || !arrOk(aca.diag.x)) return fail('BAD_INPUT', 'The leak plot needs an after-closure result.', ['aca']);
             var dg = aca.diag, x = dg.x, D = dg.D, pArr = dg.p || [], V = pos(ctx.V) ? ctx.V : aca.V;
             var form = ctx.form || ((aca.regimeSummary === 'radial' || aca.regimeSummary === 'linear-radial') ? 'radial' : 'linear');
-            var tcI = aca.tcInj, t0 = aca.t0, xMin = 2 * tcI - t0;
+            var tcI = aca.tcInj, t0 = aca.t0, xMin = 2 * tcI;                // default window t′ ≥ 2 t_c (§6.4)
             var win = ctx.win || null, idx = [], i;
             for (i = 0; i < x.length; i++) {
                 if (!fin(D[i]) || !(D[i] > 0) || !fin(pArr[i])) continue;
@@ -1030,7 +1072,7 @@
             var corrBd = (seB > 0 && seD > 0) ? F.cov[1][2] / (seB * seD) : 0;
             var floor = Aa !== 0 ? Math.abs(2 * seB / Aa * fac) : 0;
             // block bootstrap of the residuals (seeded)
-            var r = makeRng(fin(ctx.seed) ? ctx.seed : 1), nB = pos(ctx.nBoot) ? Math.min(400, ctx.nBoot) : 120, res0 = Y.map(function (y, j) { return y - (Aa * X[j][0] + Bb * X[j][1] + dd * X[j][2]); });
+            var r = makeRng(fin(ctx.seed) ? ctx.seed : 1), nB = fin(ctx.nBoot) ? Math.max(0, Math.min(400, Math.round(ctx.nBoot))) : 120, res0 = Y.map(function (y, j) { return y - (Aa * X[j][0] + Bb * X[j][1] + dd * X[j][2]); });
             var blk = Math.max(3, Math.round(Y.length / 10)), qs = [];
             for (var bI = 0; bI < nB; bI++) {
                 var Yb = [], k2;
@@ -1039,7 +1081,7 @@
                 var Fb = solveFit(Yb, F.s); if (Fb && Fb.beta[0] !== 0) qs.push(Fb.beta[1] / Fb.beta[0] * fac);
             }
             qs = sortNum(qs);
-            var ci = qs.length >= 10 ? [quant(qs, 0.025), quant(qs, 0.975)] : [qk - 2 * floor / 2, qk + 2 * floor / 2];
+            var ci = qs.length >= 10 ? [quant(qs, 0.025), quant(qs, 0.975)] : [qk - floor, qk + floor];     // analytic: ± 2σ_B (the floor) without the bootstrap
             if (ci[0] > qk) ci[0] = qk; if (ci[1] < qk) ci[1] = qk;
             var separable = !(Math.abs(corrBd) > 0.95);
             // leak-corrected p_i (linear form p − A/√t′ + B·√t′ − d·t′; radial p − A/t′ + B·ln … uses the same window median)
@@ -1058,8 +1100,10 @@
             else if (qk > 0 && qk <= floor) verdict = 'below-floor';
             return {
                 ok: true, form: form, A: Aa, B: Bb, d: dd, dPrior: sd_, corrBd: corrBd, separable: separable, qk: qk, qkCI: ci, floor: floor,
-                piCorr: fin(piCorr) ? piCorr : piUncorr, piUncorr: piUncorr,
-                windowBiasNote: _txt('A window bias remains in the corrected p_i (a few psi) even with no leak; the floor is ' + fmtSig(floor, 2) + ' bbl/d.'),
+                // not separable (corr(B, d) > 0.95): leak or drift, and no corrected p_i is offered (§6.4)
+                piCorr: separable && fin(piCorr) ? piCorr : piUncorr, piUncorr: piUncorr,
+                windowBiasNote: _txt(separable ? 'A window bias remains in the corrected p_i (a few psi) even with no leak; the floor is ' + fmtSig(floor, 2) + ' bbl/d.'
+                    : 'Leak and gauge drift are not separable in this window (corr ' + fmt(corrBd, 2) + '): no leak correction is applied to p_i; the floor is ' + fmtSig(floor, 2) + ' bbl/d.'),
                 qkMax: fin(qkMax) ? qkMax : 0, theta: fin(th) ? th : 0, verdict: verdict, n: idx.length,
                 piCorrSeries: { t: idx.map(function (j) { return x[j] + t0; }), p: pc }
             };
@@ -1932,7 +1976,23 @@
     // ── data + picks export (§6.10) ──
     var EXPORT_COLS = { t: { label: 't_h', unit: 'h', dp: 9 }, dt: { label: 'dt_h', unit: 'h', dp: 9 }, p: { label: 'p_psia', unit: 'psia', dp: 3 },
                         q: { label: 'q_bbl_min', unit: 'bbl/min', dp: 4 }, flag: { label: 'after_closure', unit: '', dp: 0 }, pSurf: { label: 'p_surf_psia', unit: 'psia', dp: 3 }, T: { label: 'T_F', unit: '°F', dp: 2 } };
-    G.PRiSM_dfit_exportText = function (run, template) {
+    // exportText(run, template, opts?): opts {test, inputs, well} (or the same keys on the template) give the §6.10 header (well,
+    // test, zone, datum, gauge, fluid, rock, input provenance); without them the header says "not stated".
+    function _provOf(inp) {
+        var IR = G.PRiSM_dfit_inputRanges, D = IR && typeof IR.defaults === 'function' && !IR.defaults._dfitStub ? IR.defaults() : null;
+        if (!inp) return 'not stated';
+        var keys = ['datumTvd', 'gauge.bhTvd', 'fluid.rhoPpg', 'fluid.muCp', 'rock.Ep', 'rock.hf', 'rock.hp', 'priors.sigmaGrad', 'priors.piGrad', 'channels.atmPsia'];
+        var user = [], def = [];
+        keys.forEach(function (k) {
+            var v = _getPath(inp, k); if (v == null) return;
+            var d0 = D ? _getPath(D, k) : undefined;
+            (d0 !== undefined && d0 === v ? def : user).push(k);
+        });
+        var ev = inp.events || {}, evU = ['tStart', 'tb', 'ts'].filter(function (k) { return fin(ev[k]); });
+        return (user.length ? 'user ' + user.join(', ') : 'no user values') + (def.length ? '; default ' + def.join(', ') : '') + (inp.rock && inp.rock.EpSource ? '; Ep source ' + inp.rock.EpSource : '') +
+               (evU.length ? '; event overrides ' + evU.join(', ') : '; events auto');
+    }
+    G.PRiSM_dfit_exportText = function (run, template, xo) {
         try {
             if (!run || !run.prep || run.prep.ok === false) return fail('BAD_INPUT', 'The export needs a run with prepared data.', ['run']);
             var tpl = (template && typeof template === 'object') ? template : {}, sep = typeof tpl.sep === 'string' && tpl.sep ? tpl.sep : '\t';
@@ -1943,12 +2003,22 @@
             var h8 = String(run.dsHash || '').slice(0, 8) || '00000000';
             L.push('# DFIT data and picks export');
             (arrOk(tpl.header) ? tpl.header : []).forEach(function (h) { L.push('# ' + String(h).replace(/[\r\n]+/g, ' ')); });
-            var inp = tpl.inputs || null;
+            xo = xo || {};
+            var Tt = tpl.test || xo.test || null, wl = tpl.well || xo.well || null;
+            var inp = tpl.inputs || xo.inputs || (Tt && Tt.inputs) || null, cln = function (v) { return String(v).replace(/[\r\n]+/g, ' ').slice(0, 120); };
+            L.push('# well: ' + (wl && (wl.name || wl.id) ? cln(wl.name || wl.id) : 'not stated'));
+            L.push('# test: ' + (Tt && Tt.id ? cln(Tt.id) : 'not stated') + '; zone: ' + (Tt && Tt.zone ? cln(Tt.zone) : (tpl.zone ? cln(tpl.zone) : 'not stated')));
             if (inp) {
                 L.push('# datum TVD ft: ' + (fin(inp.datumTvd) ? inp.datumTvd : '–') + '; gauge TVD ft: ' + (inp.gauge && fin(inp.gauge.bhTvd) ? inp.gauge.bhTvd : 'at datum'));
                 if (inp.fluid) L.push('# fluid: ' + inp.fluid.kind + ', ' + inp.fluid.rhoPpg + ' ppg, ' + inp.fluid.muCp + ' cp');
                 if (inp.rock) L.push('# rock: Ep psi ' + (fin(inp.rock.Ep) ? inp.rock.Ep : '–') + ' (' + inp.rock.EpSource + '), hf ft ' + (fin(inp.rock.hf) ? inp.rock.hf : '–') + ', hp ft ' + (fin(inp.rock.hp) ? inp.rock.hp : '–'));
+            } else L.push('# datum, gauge, fluid and rock: not stated');
+            L.push('# input provenance: ' + _provOf(inp));
+            if (wl && (pos(wl.mu) || pos(wl.ct) || pos(wl.h))) {
+                var pv = G.PRiSM_pvt && G.PRiSM_pvt.provenance || {}, pf = function (k, u) { return k + ' ' + (fin(wl[k]) ? wl[k] : '–') + (u ? ' ' + u : '') + (pv[k] ? ' (' + pv[k] + ')' : ''); };
+                L.push('# reservoir: ' + [pf('mu', 'cp'), pf('phi', ''), pf('ct', '1/psi'), pf('h', 'ft')].join(', '));
             }
+            if (run.weakHash) L.push('# hashes: weak (local FNV-1a; the shared hash was not available)');
             L.push('# app version: ' + String(tpl.appVersion || (G.RELEASE_NOTES && G.RELEASE_NOTES[0] && G.RELEASE_NOTES[0].ver) || 'not stated'));
             L.push('# input hash: ' + (run.inputsHash || '–') + '; data hash: ' + (run.dsHash || '–') + (run.summary && run.summary.resultHash ? '; result hash: ' + run.summary.resultHash : ''));
             L.push('# EVENTS');
@@ -2100,7 +2170,7 @@
                 closure: { mode: cl.mode, value: cl.mode === 'single' ? cl.value : null, lo: cl.mode === 'range' ? cl.range.lo : null, hi: cl.mode === 'range' ? cl.range.hi : null,
                            label: label, families: { F1: famP('F1'), F2: famP('F2'), F4: famP('F4') } },
                 pn: ch ? nn(ch.pn) : null, eta: ch && ch.eta ? nn(ch.eta.matched) : null, CL: pk && gm && pk[gm] ? nn(pk[gm].CL) : null, Gamma: ch ? nn(ch.Gamma) : null,
-                xf: pk && pk.PKN && gm !== 'radial' ? nn(pk[gm || 'PKN'].xf) : null, R: pk && gm === 'radial' && pk.radial ? nn(pk.radial.R) : null, model: gm || null,
+                xf: pk && gm !== 'radial' && pk[gm || 'PKN'] ? nn(pk[gm || 'PKN'].xf) : null, R: pk && gm === 'radial' && pk.radial ? nn(pk.radial.R) : null, model: gm || null,
                 pi: aca && aca.pi ? { value: aca.pi.value, lo: aca.pi.lo, hi: aca.pi.hi, label: aca.pi.label } : { value: null, lo: null, hi: null, label: null },
                 khmu: aca && aca.kh ? nn(aca.kh.khmu) : null, k: nn(k), kLo: aca && aca.bounds ? nn(aca.bounds.kLo) : null, kHi: aca && aca.bounds ? nn(aca.bounds.kHi) : null,
                 triage: run.triage && run.triage.light ? run.triage.light : null, grade: run.grade && run.grade.letter ? run.grade.letter : null,
@@ -2133,9 +2203,10 @@
         if (IR && typeof IR.clamp === 'function') { var c = IR.clamp(inputs || {}); if (c && c.inputs) { inp = c.inputs; (c.warnings || []).forEach(function (w) { if (w && w.code) warnings.push(W(w.code, w.level || 'info', w.text || w.code, w.ev || [])); }); } }
         picks = picks || { isip: null, closure: null, user: {}, aca: { origin: 'centroid', linWin: null, radWin: null, piLevel: null } };
         var o = inp.options || {}, uo = o.unc || {};
-        var dsH = realFn(G.PRiSM_dfit_dsHash) ? G.PRiSM_dfit_dsHash(ds) : null;
-        if (typeof dsH !== 'string' || !/^[0-9a-f]{16}$/.test(dsH)) dsH = hashOf({ t: ds && ds.t, p: ds && ds.p, q: ds && ds.q || null }, 'inputs').h;
-        var run = { v: 1, ok: false, fast: !!opts.fast, dsHash: dsH, inputsHash: hashOf(inp, 'inputs').h, picksHash: hashOf(picks, 'inputs').h,
+        var dsH = realFn(G.PRiSM_dfit_dsHash) ? G.PRiSM_dfit_dsHash(ds) : null, weak = false;
+        if (typeof dsH !== 'string' || !/^[0-9a-f]{16}$/.test(dsH)) { var hD = hashOf({ t: ds && ds.t, p: ds && ds.p, q: ds && ds.q || null }, 'inputs'); dsH = hD.h; weak = weak || hD.weak; }
+        var hI = hashOf(inp, 'inputs'), hP = hashOf(picks, 'inputs'); weak = weak || hI.weak || hP.weak;
+        var run = { v: 1, ok: false, fast: !!opts.fast, dsHash: dsH, inputsHash: hI.h, picksHash: hP.h, weakHash: weak,
                     seed: fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : (fin(uo.seed) ? uo.seed : 1),
                     prep: null, events: null, triage: null, isip: null, derivs: null, picks: [], consensus: null, consensusLite: null, classification: null,
                     frac: { chosen: null, byFamily: {} }, whatIf: [], aca: null, leak: null, unc: null, evidence: null, report: null, grade: null, summary: null,
@@ -2219,7 +2290,7 @@
             if (a && a.ok !== false) {
                 r.aca = a;
                 if (a.match && fin(a.match.evals)) r.counts.evals += a.match.evals;
-                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 30 : 120 });
+                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 0 : 120 });     // fast: no bootstrap (§3.3a / §4.20)
                 r.leak = lp && lp.ok !== false ? lp : null;
             } else if (a && a.code !== 'NO_CLOSURE') P.W.push(W('ACA_FAILED', 'info', 'After-closure analysis: ' + (a.errors && a.errors[0] || a.code), ['A1']));
         } },
@@ -2243,7 +2314,12 @@
             ['prep', 'events', 'derivs', 'consensusLite', 'classification'].forEach(function (k) { if (!r[k]) r[k] = fail('NOT_IMPLEMENTED', k + ' stage did not run.', []); });
         } }
     ];
-    function _stagesFor(P) { return STAGES.filter(function (s) { return !(s.skipFast && P.opts.fast); }); }
+    // opts.stages: 'all' (default) or a list of stage ids (prepare, events, isip, derivs, consensus, frac, aca, uncertainty, report),
+    // run in the §4.20 order; 'report' always runs last (ok, grade, evidence, summary). opts.fast drops the grid and the uncertainty.
+    function _stagesFor(P) {
+        var want = Array.isArray(P.opts.stages) ? P.opts.stages : null;
+        return STAGES.filter(function (s) { return !(s.skipFast && P.opts.fast) && (!want || s.id === 'report' || want.indexOf(s.id) >= 0); });
+    }
     function _finishRun(P) { return P.run; }
     function _mkP(ds, inputs, well, picks, opts) {
         var P = _pipeInit(ds, inputs, well, picks, opts);

@@ -12,7 +12,7 @@
 //   A8  origin table (since closure −0.52 / −0.65; centroid within 3 % from 3 t_c)
 //   A9  gas: p_i converges in ≤ 3 passes, late radial kh/μ_i within 2 % at 5,000 psi
 //   A10–A12 constant-rate transform and the model-library match (infiniteFrac on B, BIC → homogeneous on A late data)
-//   A13, A13b, A14, A14b, A15  leak budget rule and leak plot
+//   A13, A13b, A14, A14b, A14c, A15  leak budget rule and leak plot (A14c: not separable → no corrected p_i; default window)
 //   A16 p_i labels; A17 gas details; A18 the uniform-flux hump is not storage; A19 a storage case withholds the lines
 //   A20 PRiSM_dfit_pipeline sync = job, fast mode; A21 summarise passes checkShape; A22 the Δp_CL convention
 //
@@ -397,6 +397,25 @@ module.exports = [
         const lp = win.PRiSM_dfit_leakPlot(aca, { win: [5, 30], driftSpec: 0.02, sigma: 0.01, seed, nBoot: 60 });
         assert(lp.ok && lp.verdict !== 'leak', 'seed ' + seed + ': verdict ' + lp.verdict + ' (q_k ' + lp.qk + ', floor ' + lp.floor + ')');
       });
+    },
+  },
+  {
+    name: 'A14c not separable (corr(B, d) > 0.95): leak or drift, no corrected p_i (piCorr = piUncorr); the default window starts at t′ ≥ 2 t_c',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const win = app0(ctx).win, P = EXB_P;
+      const aca = win.PRiSM_dfit_aca(mkRun(P, mkData(P, { sigma: 0.01, seed: 3, leak: 0.2, drift: 0.05 }), { sigma: 0.01 }), { well: wellOf(P), inputs: INP });
+      // a weak drift prior (1 psi/d) over a short window: B and d are collinear
+      const lp = win.PRiSM_dfit_leakPlot(aca, { win: [5, 30], driftSpec: 1, sigma: 0.01, seed: 1, nBoot: 20 });
+      assert(lp.ok && S.checkShape('LeakPlot', lp).ok, 'leak plot ok and shaped');
+      assert(lp.separable === false && Math.abs(lp.corrBd) > 0.95, 'not separable: corr ' + lp.corrBd);
+      assert(lp.verdict === 'leak-or-drift', 'verdict leak or drift: ' + lp.verdict);
+      assert(lp.piCorr === lp.piUncorr, 'no corrected p_i is offered: ' + lp.piCorr + ' vs ' + lp.piUncorr);
+      assert(/not separable/.test(lp.windowBiasNote) && /no leak correction/.test(lp.windowBiasNote), 'the note says so: ' + lp.windowBiasNote);
+      const d = win.PRiSM_dfit_leakPlot(aca, { driftSpec: 0.02, sigma: 0.01, seed: 1, nBoot: 0 });
+      assert(d.ok, 'default window ok');
+      const tMin = Math.min.apply(null, d.piCorrSeries.t);
+      assert(tMin - aca.t0 >= 2 * aca.tcInj - 1e-9, 'default window t′ ≥ 2 t_c: t′_min ' + (tMin - aca.t0) + ' vs ' + 2 * aca.tcInj);
     },
   },
   {
