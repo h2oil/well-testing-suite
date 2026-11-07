@@ -28,6 +28,7 @@ function blockFlow(S, o) {
   if (o.skipped) f.ck2 = X.EXAMPLES.flowCk2Skipped;
   if (o.sepBy) { f.sepBy = X.EXAMPLES.flowSepBy; if (o.sepByCk2) f.sepBy.ck2 = X.EXAMPLES.flowCk2; }
   if (o.dest) f.sim.sepByDest = o.dest;
+  if (typeof o.P === 'number') f.sim.sepByP_psig = o.P;
   return f;
 }
 
@@ -144,8 +145,11 @@ module.exports = [
       assert.ok(st.cum.toLine_gas_mscf > 0 && st.cum.toLine_oil_stb > 0 && st.cum.toLine_water_bbl > 0, 'line totals ' + JSON.stringify([st.cum.toLine_gas_mscf, st.cum.toLine_oil_stb]));
       balanced(assert, st, 'to the line, FS-401 out');
       const fl0 = st.cum.flare_mmscf;
+      const nDest = (s) => s.getState().alarmLog.filter((e) => e.id === 'BYPASS_DEST').length, nd0 = nDest(sim);
       sim.setConfig({ sep: { bypass: { P_psig: 250 } } });
       assert.ok(ev.length === 1 && sim.getState().rigup.notes.indexOf(fill(X.RIG_NOTES.sepFlareOutLine, 250)) >= 0, 'P change: notes follow, no rigup event');
+      // BYPASS_DEST rule (pinned): logged only when the destination itself changes ('flare' <-> 'line'), never on a line pressure
+      assert.strictEqual(nDest(sim), nd0, 'P change: no BYPASS_DEST entry');
       sim.setConfig({ sep: { bypass: { dest: 'flare' } } });
       st = sim.getState();
       assert.ok(st.rigup.flare === true && ev.length === 2 && /FS-401 back in the rig-up/.test(ev[1].msg) && sim.getRigup().flare === false, 'line → flare re-forces FS-401: ' + (ev[1] && ev[1].msg));
@@ -170,6 +174,21 @@ module.exports = [
       const s4 = S.create(S.SAMPLE_FLOW, { seed: 33 }), sig4 = s4.getState().rigup.sig;
       s4.setConfig({ sep: { bypass: { dest: 'line' } } });
       assert.ok(s4.getState().rigup.sig === sig4 && s4.getState().sepBy.active === false && s4.getState().sepBy.P0_psig === 150, 'V-101 in: rig-up unchanged');
+      // typing the line pressure on the page (one setFlow per keystroke, dest 'line', V-101 in): one BYPASS_DEST at most
+      const s5 = S.create(S.SAMPLE_FLOW, { seed: 34, config: NOISE_OFF });
+      [1, 15, 150, 1500].forEach((P) => s5.setFlow(blockFlow(S, { dest: 'line', P: P })));
+      const d5 = s5.getState().alarmLog.filter((e) => e.id === 'BYPASS_DEST');
+      assert.ok(d5.length === 1 && /production line/.test(d5[0].msg), 'keystrokes: one BYPASS_DEST (' + d5.length + ')');
+      [10, 20].forEach((P) => s5.setConfig({ sep: { bypass: { P_psig: P } } }));
+      assert.strictEqual(s5.getState().alarmLog.filter((e) => e.id === 'BYPASS_DEST').length, 1, 'setConfig P only: no entry');
+      s5.setConfig({ sep: { bypass: { dest: 'flare' } } });
+      assert.strictEqual(s5.getState().alarmLog.filter((e) => e.id === 'BYPASS_DEST').length, 2, 'destination change: logged');
+      // V-101 out on the legacy path (no flow.sepBy): the flare node shows the burner-line inlet pDown uses (P_flare_psig)
+      const s6 = S.create(S.SAMPLE_FLOW, { seed: 35, config: Object.assign({}, NOISE_OFF, { sep: { pcv: { P2_psig: 20 } } }), rigup: { separator: false } });
+      for (let i = 0; i < 30; i++) s6.advance(10);
+      const n6 = s6.getState();
+      assert.ok(n6.nodes.flare.P === S.DEFAULTS.sep.bypass.P_flare_psig && n6.nodes.flare.Pline === n6.nodes.flare.P && n6.sepBy.P0_psig === n6.nodes.flare.P,
+        'legacy V-101 out: flare P ' + n6.nodes.flare.P + ' / Pline ' + n6.nodes.flare.Pline + ' = P0 ' + n6.sepBy.P0_psig);
     },
   },
   {

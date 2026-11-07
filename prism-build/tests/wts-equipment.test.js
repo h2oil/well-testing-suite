@@ -17,6 +17,8 @@ const WP = 'WTSEQ';
 const BUILD_DIR = path.resolve(__dirname, '..');
 const R7_FILES = ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'];
 
+// a rig-up signature derived from the module's RIG_KEYS / RIG_DEFAULTS (§3.6: no hard-coded length)
+const sigOf = (S, on) => S.RIG_KEYS.map((k) => ((on && k in on) ? on[k] : S.RIG_DEFAULTS[k]) ? '1' : '0').join('');
 const quietLog = { log() {}, warn() {} };
 function strip31(src) { return require(path.join(BUILD_DIR, 'concat-round7.js')).stripSelfTest(src, '31-wts-sim.js', quietLog); }
 
@@ -330,7 +332,7 @@ module.exports = [
       const r = S.normRigup(app.toWin({ surge2: true, surge: false }));
       assert.ok(r.rig.surge2 === false && r.notes.indexOf(X.RIG_NOTES.surge2NeedsSurge) >= 0, 'surge2 without surge → out with the note');
       const both = S.normRigup(app.toWin({ desander: true, surge2: true }));
-      assert.ok(both.sig === '11111111110' && both.full === true && J(both.extras).join() === 'desander,surge2', 'both in: sig / full / extras');
+      assert.ok(both.sig === sigOf(S, { desander: true, surge2: true }) && both.full === true && J(both.extras).join() === 'desander,surge2', 'both in: sig / full / extras');
       const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 2, config: { noise: { on: false } } }));
       assert.strictEqual(JSON.stringify(sim.getRigup()), FU.GETRIGUP_DEFAULT_JSON, 'getRigup default (11 keys)');
       let st = sim.getState();
@@ -557,7 +559,7 @@ module.exports = [
       I.writeRig(app.toWin({ desander: true }));
       assert.strictEqual(JSON.parse(ls.getItem(I.RIG_KEY)).desander, true, 'optional-only request stored');
       const r331 = I.readRig(), s331 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: r331 }));
-      assert.strictEqual(s331.getState().rigup.sig, '11111111100', 'round trip v3.3.1 → DS-101 in');
+      assert.strictEqual(s331.getState().rigup.sig, sigOf(S, { desander: true }), 'round trip v3.3.1 → DS-101 in');
       I.writeRig(s331.getRigup()); assert.strictEqual(JSON.parse(ls.getItem(I.RIG_KEY)).desander, true);
       I.writeRig(S.RIG_DEFAULTS); assert.strictEqual(ls.getItem(I.RIG_KEY), null, 'request = RIG_DEFAULTS → no key');
       I.writeRig(app.toWin({ heater: true, desander: false })); assert.strictEqual(ls.getItem(I.RIG_KEY), null, 'default request → no key');

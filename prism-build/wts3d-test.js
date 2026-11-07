@@ -207,7 +207,7 @@ const SECTION_A = (G, src) => {
       if (S.RIGUP.map((it) => it.key).sort().join() !== S.RIG_KEYS.slice().sort().join()) bad.push('RIGUP keys = RIG_KEYS');
       if (!deepFrozen(S.RIG_DEFAULTS) || !deepFrozen(S.RIG_OPTIONAL) || S.RIG_OPTIONAL.join() !== 'desander,surge2,heaterChoke' || S.VERSION !== '1.5.0') bad.push('v1.5.0 exports');
       const s = S.create(F, { seed: 2 }); let st = s.getState();
-      if (!(st.rigup.full && st.rigup.sig === '11111111000' && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
+      if (!(st.rigup.full && st.rigup.sig === S.RIG_KEYS.map((k) => S.RIG_DEFAULTS[k] ? '1' : '0').join('') && st.rigup.sig.length === S.RIG_KEYS.length && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
       // step numbers (D17): the four combinations; the default is the v3.3 STEP table
       const STEPS = [[{}, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' }],
         [{ desander: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', gauge: '⑨', pump: '⑩' }],

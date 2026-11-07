@@ -28,13 +28,30 @@ function gitShow(spec) {
   try { return execFileSync('git', ['show', spec], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 }); } catch (e) { return null; }
 }
 
-function runStates(S, secs, dt, every, setup, flow, opts) {
-  const sim = S.create(flow, Object.assign({ seed: 7 }, opts || {}));
+// mid: [[t_s, fn(sim)], …] calls made during the run (mid-run setRigup); the 'rigup' events are collected (payload JSON)
+function runStates(S, secs, dt, every, setup, flow, opts, mid) {
+  const sim = S.create(flow, Object.assign({ seed: 7 }, opts || {})), events = [];
+  sim.on('rigup', (p) => events.push(J(p)));
   if (setup) setup(sim);
   const states = [J(sim.getState())];
-  const n = Math.round(secs / dt), k = Math.round(every / dt);
-  for (let i = 1; i <= n; i++) { sim.advance(dt); if (i % k === 0) states.push(J(sim.getState())); }
-  return { sim, states };
+  const n = Math.round(secs / dt), k = Math.round(every / dt), calls = (mid || []).map((m) => [Math.round(m[0] / dt), m[1]]);
+  for (let i = 1; i <= n; i++) {
+    sim.advance(dt);
+    calls.forEach((c) => { if (c[0] === i) c[1](sim); });
+    if (i % k === 0) states.push(J(sim.getState()));
+  }
+  return { sim, states, events };
+}
+// a 'rigup' event of the working engine vs v3.3.1: the same payload except rig.heaterChoke and the 11-character sig (§9.2 rule)
+function sameRigEvents(assert, a, b, tag) {
+  assert.strictEqual(b.events.length, a.events.length, tag + ' rigup event count');
+  a.events.forEach((ea, i) => {
+    const eb = J(b.events[i]);
+    assert.ok(sigRule(ea.sig, eb.sig) === '', tag + ' event ' + i + ' sig: ' + sigRule(ea.sig, eb.sig));
+    assert.ok(eb.rig.heaterChoke === false, tag + ' event ' + i + ' CK-102 out');
+    delete eb.rig.heaterChoke; eb.sig = ea.sig;
+    assert.strictEqual(JSON.stringify(eb), JSON.stringify(ea), tag + ' event ' + i + ' payload / msg');
+  });
 }
 // v3.3.1 → working: identityDiff (every path of the v3.3.1 snapshot ===) plus the exact sig rule of §9.2
 function sigRule(a, b) {
@@ -337,11 +354,17 @@ module.exports = [
         const rig = {}; rig[k] = false;
         scen.push({ name: '(b) 1 h without ' + k, secs: 3600, dt: 10, every: 900, opts: { rigup: rig } });
       });
+      // mid-run setRigup (log and 'rigup' event text, not only create-time rig-ups): V-101 out then in (dest 'flare': the
+      // v1.4.0 separator text), H-101 out then in, V-101 and FS-401 out together (FS-401 re-forced, its note)
+      scen.push({ name: 'mid-run V-101 out, back in', secs: 2400, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ separator: false })], [1800, (s) => s.setRigup({ separator: true })]] });
+      scen.push({ name: 'mid-run H-101 out, back in', secs: 2400, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ heater: false })], [1800, (s) => s.setRigup({ heater: true })]] });
+      scen.push({ name: 'mid-run V-101 + FS-401 out', secs: 1800, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ separator: false, flare: false })]] });
       [['SAMPLE_FLOW', sample], ['calcWTS default flow', host]].forEach(([fn, flow]) => {
         scen.forEach((sc) => {
-          const a = runStates(A, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts);
-          const b = runStates(B, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts);
+          const a = runStates(A, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts, sc.mid);
+          const b = runStates(B, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts, sc.mid);
           sameStates(assert, a, b, sc.name + ' / ' + fn);
+          sameRigEvents(assert, a, b, sc.name + ' / ' + fn);
           if (sc.after) {
             const ra = a.sim.resetESD(), rb = b.sim.resetESD();
             assert.strictEqual(JSON.stringify(ra), JSON.stringify(rb), 'resetESD result');
@@ -350,6 +373,22 @@ module.exports = [
             assert.ok(d.length === 0, sc.name + ' / ' + fn + ' after the reset: ' + d.join('; '));
           }
         });
+        // mid-run CK-102 in, then out, on a flow without a CK-102 block (in line with ΔP 0): v3.3.1 ignores the key, the working
+        // engine logs two rig-up entries, fires two 'rigup' events and — as v3.3.1 does on every effective rig-up change —
+        // re-derives with a bumpless controller re-initialisation, so the trajectory is not === after the first change (the
+        // noise draws shift). Checked here: the log and event text, and the v3.3.1 log entries (type, id, message) in order
+        const ck = [[600, (s) => s.setRigup({ heaterChoke: true })], [1500, (s) => s.setRigup({ heaterChoke: false })]];
+        const a = runStates(A, 2400, 10, 300, null, J(flow), null, ck), b = runStates(B, 2400, 10, 300, null, J(flow), null, ck);
+        const tag = 'mid-run CK-102 in, out / ' + fn;
+        assert.strictEqual(a.events.length, 0, tag + ': v3.3.1 ignores heaterChoke');
+        assert.ok(b.events.length === 2 && /CK-102 in line on the H-101 inlet/.test(b.events[0].msg) && /CK-102 out of the rig-up/.test(b.events[1].msg),
+          tag + ' events: ' + b.events.map((e) => e.msg).join(' | '));
+        const la = a.sim.getState().alarmLog, lb = b.sim.getState().alarmLog;
+        const ck2Log = lb.filter((e) => e.id === 'RIGUP' && /CK-102/.test(e.msg)).map((e) => e.msg);
+        assert.deepStrictEqual(J(ck2Log), ['Rig-up: CK-102 in line on the H-101 inlet (full rig-up)', 'Rig-up: CK-102 out of the rig-up (full rig-up)'], tag + ' log text: ' + JSON.stringify(ck2Log));
+        const idm = (l) => l.map((e) => e.type + ' ' + e.id + ' ' + e.msg).join('\n');
+        assert.strictEqual(idm(lb.filter((e) => !(e.id === 'RIGUP' && /CK-102/.test(e.msg)))), idm(la), tag + ': the v3.3.1 log entries');
+        assert.strictEqual(b.states[b.states.length - 1].rigup.sig, X.SIG_DEFAULT, tag + ': CK-102 out at the end');
       });
     },
   },
