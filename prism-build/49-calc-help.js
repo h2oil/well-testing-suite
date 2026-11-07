@@ -231,7 +231,9 @@
         }
         return x + '</li>';
       }).join('') + '</ol>';
-      b += shots.filter(z => !used[z.id] && !z.hidden).map(z => shotHTML(folder, z, o)).join('');
+      // other shots once, at the guide level
+      arr(g.parts).forEach(p => arr(p && p.steps).forEach(z => { if (z && z.shot) used[z.shot] = 1; }));
+      if (!g._part) b += shots.filter(z => !used[z.id] && !z.hidden).map(z => shotHTML(folder, z, o)).join('');
       h += sec('steps', 2, b);
     }
     var ins = arr(g.inputs);
@@ -271,7 +273,7 @@
     arr(g.parts).forEach(p => {
       if (!p || !p.id) return;
       h += '<section class="help-part" id="' + idp + '-' + esc(p.id) + '"><h' + hl + '>' + md(p.title || p.id, o) + '</h' + hl + '>' +
-        guideBody(r, Object.assign({ units: g.units, shots: g.shots }, p), o, hl + 1, idp + '-' + esc(p.id)) + '</section>';
+        guideBody(r, Object.assign({ units: g.units, shots: g.shots, _part: 1 }, p), o, hl + 1, idp + '-' + esc(p.id)) + '</section>';
     });
     if (g.reviewed) h += '<p class="help-rev">Reviewed for ' + esc(g.reviewed) + '</p>';
     return h + '</article>';

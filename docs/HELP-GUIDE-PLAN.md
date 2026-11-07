@@ -341,6 +341,7 @@ shots: [
 - **Named actions (initial set):**
   - `prismAnalyse`: ▶ Analyse, then wait for `prism:fit-updated`.
   - `prismStep` n.
+  - `prismDfit` demo (v3.4): Test = DFIT, the demo DFIT (default `reference`), Load demo DFIT, ▶ Analyse DFIT until the status reads complete.
   - `buildupDemo` kind.
   - `modbusSimDemo`.
   - `wellosDemo`.
@@ -457,6 +458,10 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 | 48-calc-help-welltest.js (incl. `wts` parts) | 36 kB | 48-calc-help-manifest.js (generated) | 8.5 kB |
 | 48-calc-help-production.js (incl. PRiSM parts) | 33.5 kB | **sum** | **345 kB** |
 | 48-calc-help-livedata.js | 16.5 kB | | |
+
+(The table is the v3.3.2 allocation. Later moves of unused headroom — simulator follow-up WP-HC and its review, and the v3.4 DFIT
+help of WP7: welltest, print, overview, the page and others to production 36.02 kB, start 18.88 kB and the manifest module 8.75 kB —
+are recorded in the CAPS comment of `help-content.test.js`, which holds the caps in force; the sum stays 345 kB.)
 
 (Owner decision, Q13 option 1: every cap rises by about 5 % from the content-round caps below; welltest 32 → 36 kB and
 simcourse 38 → 39 kB also carry the v3.3.1 DS-101 / T-202 content. WP-I review round: 2.5 kB of unused headroom moved
