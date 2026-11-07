@@ -4069,42 +4069,314 @@ function create(flowIn, opts) {
   //   cushReset()                  fuInit (initState)   cushS back to 'off'
   // cushS: the cushion state (a closure object, not on X, never touched by derive()); cushS.SG (water dump, D8), cushS.qNow
   // (warm-up, D8) and cushS.wJTe (J-T weight, D8) are read by E0 hook sites while cushOn. cushFm: the mixture-rate fraction.
+  //   WP-E2 notes (recorded departures; the numbers of §6.3 / §6.4 are unchanged):
+  //   (1) The delivered cushion water qDel is the τf lag of §6.3, delivered piecewise constant over a substep (qIn = qDel · ESD
+  //       travel, set at the flux step by cushInW): Vprod and cum.waterIn count the same volume, and breakthrough is located
+  //       linearly on it (exact for that scheme; hMax 0.25 s, so no Newton step is needed).
+  //   (2) The tail target is written in its volume-feedback form qcT = (V − Vprod − τf·qDel)/tailTau, identical in continuous
+  //       time to (Vtail/tailTau)·e^{−(t − tBreak)/tailTau}; it delivers V whatever the step and keeps the remainder through an
+  //       ESD trip. After 'done' the tail runs on (it is not set to 0) until the formation blend ends, so ∫ = V at 10·tailTau.
+  //   (3) While the cushion flows the choke-outlet and heater-inlet node temperatures follow the cushion J-T weight wJTc
+  //       ((1 − w)·θ offset on the steady law, cushTemps): unloading a mostly-liquid stream is warm, and the steady (cold)
+  //       temperatures return with the formation flow at breakthrough (the course point: warm the heater before it).
+  //   (4) While stalled, fUnload uses the rate the well tries to take (min(qSet, qLcap)), not 0, so the stall test does not
+  //       chatter on its own hysteresis.
   var cushS = { phase: 'off', V: 0, SG: 1, qSet: 0, cap: 0, depth: 0, Gr: 0, gasFrac: 0, tailFrac: 0, tailTau: 0, breakTau: 0, Vmain: 0, Vtail: 0,
-    Vprod: 0, qNow: 0, qDel: 0, fUnload: 0, WHPcol: 0, wJTc: 0, wJTe: 1, tStart: 0, tBreak: null, tPhase: 0, out: { flare: 0, line: 0, sep: 0 } };
+    Vprod: 0, qNow: 0, qDel: 0, fUnload: 0, WHPcol: 0, wJTc: 0, wJTe: 1, tStart: 0, tBreak: null, tPhase: 0, out: { flare: 0, line: 0, sep: 0 },
+    // WP-E2 working values: delivered rate of the substep (bbl/s), liquid cap (bbl/d), column (ft), blend w, SIT / floor / WHP
+    // target (psig), derive-time Bgwh (rb/scf) / qRes (rb/d) / mcpSs (Btu/h·°F) / heater efficiency, constants of the start,
+    // heater cap (fired MMBtu/h, °F) and the node temperature offsets (°F); tEnd = the time the scenario ended (null while on)
+    qIn: 0, qLcap: 0, hc: 0, w: 0, SIT: 0, floor: 0, WHPtgt: 0, Bgwh: 0, qRes: 0, mcpSs: 0, eff: 1, Cd: 0.85, cpL: 1, stallM: 50,
+    hyst: 25, htrF: 1.25, burnerSG: 0.95, duty: 0, dutyCapped: false, ThCap: 0, ThSet: 0, dTch: 0, dThi: 0, kT: 0, tEnd: null };
   var cushFm = 0;
-  function bypDerive(sel) { bypP0 = sel.P0; bypDP = sel.sepByBlk !== null ? SS[4].dP : 0; }
-  function bypPDown(fg) { return bypP0 + bypDP * fg * fg; }
+  // seg 5 with V-101 out (bypDerive): Bg5 (ft³/scf at the seg-5 mean pressure and the steady line T), the steady mixture rate
+  // (ft³/s) of the cushion mixture-rate fraction, and the P0-mismatch note
+  var Bg5 = 0, bypMix = 0, bypNote = '';
+  var SEPBY_MISMATCH = 'the destination of this flow differs from the engine setting; the flow block wins';
+  var SEPBY_SHUTIN = 'held at line pressure by NRV-501: close XV-501 to isolate';
+  // an integer with thousands separators (the alarm texts quote design pressures as "1,440 psig")
+  function fmtK(v) { var s = mround(mabs(v)).toFixed(0), o = ''; while (s.length > 3) { o = ',' + s.slice(-3) + o; s = s.slice(0, -3); } return (v < 0 ? '-' : '') + s + o; }
+  function uqK(v, cat) { return fmtHook ? uq(v, cat, 0) : fmtK(v) + IMPU[cat]; }
+  MSG.PSHH_SEPBY = function (v) {
+    return 'PSHH-104: bypass path ' + uq(v, 'pressureG') + ' ≥ ' + rnd0(num(cfg.sep.bypass.pshhFrac, 0.9) * 100) + ' % of its ' +
+      uqK(num(cfg.sep.bypass.designP_psig, 1440), 'pressureG') + ' design pressure — SDV-101 tripped';
+  };
+  MSG.SEPBY_RATING = function () {
+    return 'Production line ' + uq(bypP0, 'pressureG') + ' plus line loss ' + uq(bypDP, 'pressure') + ' above the bypass-path design pressure; a blocked outlet is not simulated';
+  };
+  MSG.CUSH_LIMIT = function (v, l) { return 'CK-101 bean limits the cushion unload: ' + fmtK(v) + ' of ' + fmtK(l) + ' bbl/d (liquid orifice law across the choke ΔP)'; };
+  MSG.CUSH_NOLIFT = function (v, l) {
+    return 'WH-101: the well cannot lift the cushion — column WHP ' + uq(v, 'pressureG') + ' at or below ' + uq(l, 'pressureG') +
+      ' (back pressure + ' + rnd0(cushS.stallM) + ' psi); well dead (nitrogen lift / swab not modelled)';
+  };
+  MSG.CUSH_BURNER = function () {
+    return cushS.SG >= cushS.burnerSG ? 'Water / brine cushion to the burner: flame-out and fallout — put V-101 in (liquids to the tanks) or route to a production line'
+      : 'Oil / diesel cushion to the burner: liquid fallout and burning liquid without an atomising burner (not modelled) — put V-101 in or route to a production line';
+  };
+  MSG.CUSH_DUMP = function (v, l) { return 'V-101 water dump passes ' + fmtK(l) + ' bbl/d: reduce the unload rate or route to the line'; };
+  MSG.HTR_FULL = function (v, l) { return 'H-101 at full firing: outlet ' + uq(v, 'temperature') + ', set point ' + uq(l, 'temperature'); };
+
+  // ── bypass destination (§6.2) ──
+  function bypDerive(sel) {
+    bypP0 = sel.P0; bypDP = sel.sepByBlk !== null ? SS[4].dP : 0;
+    Bg5 = 0; bypMix = 0; bypNote = '';
+    if (sel.sepByBlk === null) return;
+    var B = plain(cfg.sep.bypass), bd = sel.sepByBlk.dest === 'line' ? 'line' : 'flare', cd = B.dest === 'line' ? 'line' : 'flare';
+    var cP = cd === 'line' ? num(B.P_psig, 150) : bypF0;
+    if (bd !== cd || mabs(cP - bypP0) > 1e-6) bypNote = SEPBY_MISMATCH;
+    var Pa = mmax(bypP0 + 0.5 * bypDP + PSC, PSC), TR = Tfl_ss + RANK;
+    Bg5 = Zf(Pa, TR) * TR * PSC / (TSC * Pa);
+    bypMix = BBL * (qoE + qwE) + qgE * Bg5;
+  }
+  // with a flow.sepBy block: P0 + the whole-stream seg-5 loss · f² (f = the mixture-rate fraction while a cushion flows)
+  function bypPDown(fg) { var f = cushOn ? cushFm : fg; return bypP0 + bypDP * f * f; }
   function bypAccount(h, byG, byO, byW, qRel) {
     if (bypLine) { cum.lineGas += byG * h; cum.lineOil += byO * h; cum.lineWater += byW * h; }
     else { cum.flare += byG * h; cum.ltfOil += byO * h; cum.ltfWater += byW * h; }
     if (ventOn) cum.vent += qRel * h; else cum.flare += qRel * h;
   }
-  function bypRefresh(s, fg) { s.sepBy.note = ''; }
-  function bypFlareQ(qFl) { return qFl; }           // WP-E2 (§6.2)
-  function bypVentHist(q) { return q; }             // WP-E2 (§6.2)
-  function bypAlarms() { /* WP-E2 (§6.2, D16) */ }
-  function cushStart(o) { return { ok: false, msg: 'not available yet', warn: '' }; }
-  function cushStop() { return false; }
-  function cushDerive() { /* WP-E2 */ }
-  function cushInW() { return 0; }
-  function cushStep(h, aF) {                        // placeholder = the v1.4.0 target lines (never reached while E0 refuses a start)
-    if (rDes) { var sCk = DX.s; X.qBg += (qgE * sCk - X.qBg) * aF; X.qBo += (qoE * sCk - X.qBo) * aF; X.qBw += (qwE * sCk - X.qBw) * aF; }
-    else { X.qBg += (qgE - X.qBg) * aF; X.qBo += (qoE - X.qBo) * aF; X.qBw += (qwE - X.qBw) * aF; }
+  function bypRefresh(s, fg) {
+    var Nf = s.nodes.flare;
+    Nf.P = bypP0; Nf.Pline = pDown();             // the inlet pDown uses, and the same expression for the line (§6.2)
+    if (bypLine) { Nf.flame = 0; Nf.label = 'production line'; } else Nf.label = 'burner / flare line';
+    s.sepBy.note = bypLine && shut ? SEPBY_SHUTIN : bypNote;
   }
-  function cushWhp(tgtW) { return tgtW; }
-  function cushChooseH(c) { /* WP-E2 */ }
-  function cushVel(i, ss) { return 0; }
-  function cushHeater(n) { /* WP-E2 (D8 (3)) */ }
-  function cushTsep(T) { return T; }
-  function cushBatch(b, w) { /* WP-E2 (§6.3) */ }
-  function cushAlarms() { /* WP-E2 (§6.3) */ }
-  function cushBalance(op, o) { /* WP-E2 */ }
-  function cushRefresh(s) { cushSnapOff(s.cushion); }
+  // flare-node gas with V-101 out to a production line: the well stream goes to the line; with FS-401 out too the relief and
+  // vent gas of the vessels still in the rig-up goes to vent, so the flare carries nothing
+  function bypFlareQ(qFl) { return ventOn ? 0 : mmax(0, qFl - F.byG); }
+  function bypVentHist(q) { return 0; }             // V-101 + FS-401 out: the PCV / PSV / BPV gas of qgFlare goes to vent
+  function bypAlarms() {
+    var B = cfg.sep.bypass, dP = num(B.designP_psig, 1440), lim = num(B.pshhFrac, 0.9) * dP, A;
+    var Ph = pDown() + (Ph_ss - Psep_ss) * X.fInst * X.fInst;   // H-101 outlet / seg-4 inlet (PSHH-104 on the bypass path)
+    A = aDef('PSHH_SEPBY', 'PSHH-104', 'trip', 'separator', 'p');
+    evalA(A, Ph >= lim, Ph < 0.99 * lim, Ph, lim, MSG.PSHH_SEPBY, false);
+    var bad = bypLine && bypP0 + bypDP > dP;
+    A = aDef('SEPBY_RATING', 'V-101', 'warn', 'separator', 'p');
+    evalA(A, bad, !bad, bypP0 + bypDP, dP, MSG.SEPBY_RATING, false);
+  }
+
+  // ── cushion unload (§6.3) ──
+  function cushDest() { return rSep ? 'sep' : (bypLine ? 'line' : 'flare'); }
+  function cushSIT() { return DD.sitEst === false ? DD.sit : num(cfg.ramp.sithpFactor, 1.2) * Pwh_ss; }
+  function cushDump() { return liqQ(Cv_w, mmax(SP - PspU, 10), cushS.SG) * 86400; }   // V-101 water dump at its design ΔP (bbl/d)
+  function cushMix() { return bypMix > 0 ? clamp((BBL * (F.byO + F.byW) + F.byG * Bg5) / bypMix, 0, 2) : 0; }
+  function cushEvent(phase, msg) {
+    cushS.phase = phase; cushS.tPhase = X.t;
+    emit('cushion', { type: 'cushion', t: X.t, phase: phase, msg: msg });
+    logEntry('event', 'CUSHION', null, TAGS.wellhead, msg);
+  }
+  function cushStart(o) {
+    if (esdS.tripped) return { ok: false, msg: 'ESD tripped: reset SDV-101 before a cushion unload', warn: '' };
+    if (cushOn) return { ok: false, msg: 'a cushion unload is already running', warn: '' };
+    var C = cfg.cushion, L = isPlainObj(C.lim) ? C.lim : {}, p = plain(o);
+    function lim(v, d, r) { var x = num(v, d); return Array.isArray(r) ? clamp(x, r[0], r[1]) : x; }
+    cushReset();
+    var c = cushS;
+    c.V = lim(num(p.V, p.V_bbl), C.V_bbl, L.V); c.SG = lim(p.SG, C.SG, L.SG); c.qSet = lim(num(p.q, p.q_bpd), C.q_bpd, L.q);
+    c.cap = lim(num(p.cap, p.tbgCap_bblft), C.tbgCap_bblft, L.cap); c.depth = lim(num(p.depth, p.depth_ft), C.depth_ft, L.depth);
+    c.Gr = clamp(num(p.Gr, num(C.Gr_psift, 0.08)), 0, 0.5); c.gasFrac = clamp(num(p.gasFrac, num(C.gasFrac, 0.05)), 0, 1);
+    c.tailFrac = clamp(num(p.tailFrac, num(C.tailFrac, 0.15)), 0, 0.9);
+    c.tailTau = clamp(num(p.tailTau, num(C.tailTau_s, 1800)), 10, 86400); c.breakTau = clamp(num(p.breakTau, num(C.breakTau_s, 600)), 10, 86400);
+    c.Cd = num(C.Cd_liq, 0.85); c.burnerSG = num(C.burnerSG, 0.95); c.cpL = c.SG >= c.burnerSG ? 1.0 : 0.5;
+    c.stallM = num(C.stallMargin_psi, 50); c.hyst = num(C.unstallHyst_psi, 25); c.htrF = num(C.htrRatedFactor, 1.25);
+    c.Vmain = c.V * (1 - c.tailFrac); c.tStart = X.t; c.qNow = c.qSet; c.qLcap = c.qSet;
+    cushOn = true; cushHas = true;
+    cushDerive(); cushFm = cushMix();
+    c.phase = 'unloading';
+    cushEval(true);
+    c.wJTe = c.wJTc;
+    c.WHPtgt =c.phase === 'stalled' ? cushStallWhp() : mmax(c.floor, c.WHPcol);
+    var warn = '';
+    if (rSep) { var qd = cushDump(); if (c.qSet > qd) warn = MSG.CUSH_DUMP(c.qSet, qd); }
+    var msg = 'Cushion unload started: ' + fmtK(c.V) + ' bbl at ' + fmtK(c.qSet) + ' bbl/d', st = c.phase === 'stalled';
+    cushEvent('unloading', msg);
+    if (st) cushEvent('stalled', MSG.CUSH_NOLIFT(c.WHPcol, c.floor));
+    return { ok: true, msg: msg, warn: warn };
+  }
+  function cushStop() {
+    if (!cushHas) return false;
+    cushOn = false; cushHas = false; cushFm = 0;
+    quiet(Q_CUSH);
+    cushReset();
+    emit('cushion', { type: 'cushion', t: X.t, phase: 'off', msg: 'Cushion unload stopped' });
+    logEntry('event', 'CUSHION', null, TAGS.wellhead, 'Cushion unload stopped');
+    return true;
+  }
+  // derive-time constants of the flow (the cushion state itself is kept): Bgwh at the steady wellhead, the reservoir-volume rate
+  // of the steady flow (Bo ≈ 1, ASSUMPTION), the heater's steady heat-capacity rate (Btu/h·°F, process duty) and efficiency
+  function cushDerive() {
+    var c = cushS, TR = Twh_ss + RANK, Pa = mmax(Pwh_ss + PSC, PSC);
+    c.Bgwh = 0.00504 * Zf(Pa, TR) * TR / Pa;
+    c.qRes = qgE * 86400 * c.Bgwh + (qoE + qwE) * 86400;
+    c.eff = clamp(num(flow.inputs.htrEff, 1), 0.05, 1);
+    c.mcpSs = duty_ss > 0 && Th_ss - Tin_ss > 1e-6 ? duty_ss * c.eff * 1e6 / (Th_ss - Tin_ss) : 0;
+  }
+  function cushInW() { var c = cushS; c.qIn = c.qDel * X.fE; return c.qIn; }
+  // before breakthrough: the column of the main slug, the deliverability (fUnload), the column WHP, the stall rule, the liquid cap
+  // on the equivalent bean across the whole choke ΔP, the unload rate and the J-T weight of the unload stream (silent: cushStart)
+  function cushEval(silent) {
+    var c = cushS, fi2 = X.fInst * X.fInst, Pdn = pDown();
+    c.floor = Pdn + c.stallM;
+    if (c.tBreak !== null) return;
+    c.hc = c.cap > 0 ? mmin(mmax(0, c.Vmain - c.Vprod), c.depth * c.cap) / c.cap : 0;
+    var qTry = c.phase === 'stalled' ? mmin(c.qSet, c.qLcap) : c.qNow;
+    c.fUnload = mmin(1, (c.gasFrac * qgE * 86400 * c.Bgwh + qTry) / mmax(c.qRes, 1e-9));
+    c.SIT = cushSIT();
+    c.WHPcol = c.SIT - (c.SIT - Pwh_ss) * c.fUnload - (0.433 * c.SG - c.Gr) * c.hc;
+    var K = ck2Info(), dPch = K.act ? X.PB - (Pdn + (Ph_ss - Psep_ss) * fi2) - SS[2].dP * fi2 : X.PB - pckLive(Pdn, fi2);
+    var de = (K.act && K.b2 > 0 && K.b1 > 0 ? mpow(mpow(K.b1, -4) + mpow(K.b2, -4), -0.25) : mmax(0, K.b1)) / 64;
+    c.qLcap = 1023 * c.Cd * de * de * msqrt(mmax(0, dPch) / c.SG);
+    var was = c.phase === 'stalled', st = was;
+    if (!was && c.WHPcol <= c.floor) st = true; else if (was && c.WHPcol > c.floor + c.hyst) st = false;
+    if (st !== was) {
+      if (silent) c.phase = st ? 'stalled' : 'unloading';
+      else if (st) cushEvent('stalled', MSG.CUSH_NOLIFT(c.WHPcol, c.floor));
+      else cushEvent('unloading', 'Cushion unload resumed: column WHP ' + uq(c.WHPcol, 'pressureG') + ' above ' + uq(c.floor + c.hyst, 'pressureG'));
+    }
+    c.qNow = c.phase === 'stalled' ? 0 : mmin(c.qSet, c.qLcap);
+    if (c.qNow > 0) {                               // J-T weight of the unload stream: gas and liquid heat-capacity shares (D8)
+      var gW = c.gasFrac * qgE * 0.0764 * SGg * 0.56, lW = 14.6 / 3600 * c.SG * c.qNow * c.cpL;
+      c.wJTc = gW + lW > 0 ? gW / (gW + lW) : chk.wJT;
+    }
+  }
+  function cushStallWhp() { var c = cushS; return mmax(pDown(), c.SIT - (0.433 * c.SG - c.Gr) * c.hc); }   // static WHP of a dead well
+  // per substep (replaces the v1.4.0 rate-target lines while cushOn): delivered water, phases, targets, the delivered-water lag
+  function cushStep(h, aF) {
+    var c = cushS, tEnd = X.t + h, sCk = rDes ? DX.s : 1, tg, to, tw, qcT;
+    var dv = c.qIn * h;
+    c.Vprod += dv; c.out[cushDest()] += dv;
+    if (SEL.sepByBlk !== null) cushFm = cushMix();
+    cushEval(false);
+    if (c.tBreak === null && c.Vprod >= c.Vmain - 1e-9) {          // breakthrough: Vmain delivered (located by cushChooseH)
+      c.tBreak = tEnd; c.hc = 0; X.tFlow = 0;
+      c.Vtail = mmax(0, c.V - c.Vprod - cfg.ramp.tauFlow * c.qDel);
+      cushEvent('breakthrough', 'Cushion gas breakthrough: ' + c.Vprod.toFixed(1) + ' bbl recovered, tail ' + c.Vtail.toFixed(1) + ' bbl to come');
+    }
+    if (c.tBreak === null) {
+      c.w = 0;
+      if (c.phase === 'stalled') { qcT = 0; tg = 0; } else { qcT = c.qNow / 86400; tg = c.gasFrac * qgE * sCk; }
+      to = 0; tw = 0;
+    } else {
+      var s = tEnd - c.tBreak, w = 1 - mexp(-s / c.breakTau);
+      c.w = w;
+      tg = (c.gasFrac + w * (1 - c.gasFrac)) * qgE * sCk; to = w * qoE * sCk; tw = w * qwE * sCk;
+      qcT = mmax(0, c.V - c.Vprod - cfg.ramp.tauFlow * c.qDel) / c.tailTau;    // volume-balanced tail (feedback form)
+      if (c.phase !== 'done') {
+        if (c.Vprod >= c.V * (1 - 1e-3) || s >= 10 * c.tailTau) cushEvent('done', 'Cushion recovered: ' + c.Vprod.toFixed(1) + ' of ' + fmtK(c.V) + ' bbl (' + cushOutTxt() + ')');
+        else if (c.phase === 'breakthrough' && w >= 0.95) cushEvent('tail', 'Cushion tail: ' + mmax(0, c.V - c.Vprod).toFixed(1) + ' bbl left');
+      }
+      c.qNow = qcT * 86400;
+    }
+    X.qBg += (tg - X.qBg) * aF; X.qBo += (to - X.qBo) * aF; X.qBw += (tw - X.qBw) * aF;
+    c.qDel += (qcT - c.qDel) * aF;
+    c.wJTe = (1 - c.w) * c.wJTc + c.w * chk.wJT;
+    c.kT += ((1 - c.w) - c.kT) * (1 - mexp(-h / mmax(1, num(cfg.ramp.warmTau, 300))));   // the node T offsets follow on the warm-up lag
+    if (c.phase === 'done' && c.w > 1 - 1e-9) {     // the formation blend is complete: the scenario ends (its state stays readable)
+      cushOn = false; c.qNow = 0; c.qIn = 0; c.dutyCapped = false; c.tEnd = tEnd; quiet(Q_CUSH);
+    }
+  }
+  function cushOutTxt() {
+    var o = cushS.out, p = [];
+    if (o.sep > 1e-6) p.push(o.sep.toFixed(1) + ' to V-101');
+    if (o.flare > 1e-6) p.push(o.flare.toFixed(1) + ' to the burner line');
+    if (o.line > 1e-6) p.push(o.line.toFixed(1) + ' to the production line');
+    return p.length ? p.join(', ') : 'none delivered';
+  }
+  function cushWhp(tgtW) {
+    var c = cushS, N = cfg.noise, nz = N.on ? N.whpSigma * X.xiW : 0;
+    if (c.phase === 'stalled') { c.WHPtgt = cushStallWhp(); return c.WHPtgt; }   // no noise applied (the draws continue)
+    var col = mmax(c.floor, c.WHPcol) * (1 + nz);
+    c.WHPtgt = c.tBreak === null ? col : (1 - c.w) * col + c.w * tgtW;
+    return c.WHPtgt;
+  }
+  function cushChooseH(ch) {
+    var c = cushS;
+    if (c.tBreak !== null) return;
+    var q = c.qDel * X.fE;
+    if (!(q > 1e-12)) return;
+    var te = (c.Vmain - c.Vprod) / q;
+    if (te >= 0 && te < ch.te) ch.te = te;
+  }
+  function cushVel(i, ss) {
+    if (i === 4 && rSep) return 0;                  // seg 5 carries liquid only with V-101 out
+    var A = PI / 4 * (ss.ID / 12) * (ss.ID / 12);
+    return A > 0 ? cushS.qIn * BBL / A : 0;
+  }
+  // node temperature offsets while the cushion flows (°F, on the steady law): choke outlet and heater inlet at the cushion J-T
+  // weight, blended out with w (formation flow) and scaled with the warm-up θ like every node temperature
+  function cushTemps(Pck, Ph) {
+    var c = cushS, k = c.kT * X.theta;
+    if (!(k > 0)) { c.dTch = 0; c.dThi = 0; return; }
+    var j = 0.07 * c.wJTc;
+    c.dTch = k * (Tesd_ss - mmin(150, j * mmax(X.PB - Pck, 0)) - Tck_ss);
+    c.dThi = k * (Tesd_ss - mmin(150, j * mmax(X.PB - Ph, 0)) - Tin_ss);
+  }
+  // additive heater duty (fired, MMBtu/h): gas duty_ss·X.f + the cushion liquid term, capped at htrRatedFactor·duty_ss; when the
+  // cap binds the outlet falls to Tin + cap·eff·1e6/mcpTot (Btu/h·°F basis; process duty = fired duty · efficiency)
+  function cushHtr(Th, Tin) {
+    var c = cushS;
+    c.ThSet = Th;
+    if (bypass || !(duty_ss > 0)) { c.duty = 0; c.dutyCapped = false; c.ThCap = Th; return Th; }
+    var mcpL = 3600 * 350.4 * c.SG * c.qIn * c.cpL;  // 350.4 lb per bbl of water × SG, bbl/s → Btu/h·°F
+    var tot = duty_ss * X.f + mcpL * mmax(0, Th - Tin) / 1e6 / c.eff, cap = c.htrF * duty_ss;
+    if (tot <= cap) { c.duty = tot; c.dutyCapped = false; c.ThCap = Th; return Th; }
+    var mcpT = X.f * c.mcpSs + mcpL, Tc = mcpT > 0 ? mmin(Th, Tin + cap * c.eff * 1e6 / mcpT) : Th;
+    c.duty = cap; c.dutyCapped = Tc < Th - 1e-9; c.ThCap = Tc;
+    return Tc;
+  }
+  function cushHeater(n) {
+    var c = cushS, Nc = snap.nodes.choke;
+    cushTemps(Nc.P, n.P);
+    if (c.dTch !== 0) { Nc.T += c.dTch; hydOf(Nc); }
+    n.Tin += c.dThi;
+    if (bypass) { n.T += c.dThi; c.dutyCapped = false; return; }
+    n.T = cushHtr(mmax(n.T, n.Tin), n.Tin);
+    n.dutyMMBtuHr = c.duty;
+  }
+  function cushTsep(T) {
+    var c = cushS, fi2 = X.fInst * X.fInst, Pdn = pDown();
+    cushTemps(pckLive(Pdn, fi2), Pdn + (Ph_ss - Psep_ss) * fi2);
+    if (bypass) return T + c.dThi;
+    var th = X.theta, Th = Tamb + (Th_ss - Tamb) * th, Tin = Tamb + (Tin_ss - Tamb) * th + c.dThi;
+    return T + (cushHtr(mmax(Th, Tin), Tin) - Th);
+  }
+  function cushBatch(b, w) {
+    var c = cushS;
+    if (w.tClose >= c.tStart && (c.tEnd === null || w.tOpen <= c.tEnd)) b.cushion = true;
+  }
+  function cushAlarms() {
+    var c = cushS, A, on;
+    on = c.phase === 'unloading' && c.qLcap < 0.99 * c.qSet;
+    A = aDef('CUSH_LIMIT', 'CK-101', 'warn', 'choke', 'd');
+    evalA(A, on, !(c.phase === 'unloading' && c.qLcap < c.qSet), c.qLcap, c.qSet, MSG.CUSH_LIMIT, true);
+    on = c.phase === 'stalled';
+    A = aDef('CUSH_NOLIFT', 'WH-101', 'alarm', 'wellhead', 'p');
+    evalA(A, on, !on, c.WHPcol, c.floor, MSG.CUSH_NOLIFT, false);
+    on = !rSep && !bypLine && c.qIn > 1e-9;
+    A = aDef('CUSH_BURNER', 'FS-401', 'warn', 'flare', 'b');
+    evalA(A, on, !on, c.qIn * 86400, null, MSG.CUSH_BURNER, true);
+    var qd = rSep ? cushDump() : 0, qw = (c.qIn + X.qBw * X.fE) * 86400;
+    on = rSep && qw > qd;
+    A = aDef('CUSH_DUMP', 'LCV-101', 'warn', 'separator', 'l');
+    evalA(A, on, !rSep || qw < 0.98 * qd, qw, qd, MSG.CUSH_DUMP, true);
+    A = aDef('HTR_FULL', 'H-101', 'warn', 'heater', 'd');
+    evalA(A, c.dutyCapped, !c.dutyCapped, c.ThCap, c.ThSet, MSG.HTR_FULL, true);
+  }
+  function cushBalance(op, o) { /* the cushion water is part of cum.waterIn (delivered rate): no separate balance term */ }
+  function cushRefresh(s) {
+    var c = cushS, o = s.cushion;
+    o.on = cushOn; o.phase = c.phase; o.V_bbl = c.V; o.SG = c.SG; o.q_set_bpd = c.qSet; o.q_bpd = c.qNow; o.qcap_bpd = c.qLcap;
+    o.WHPtgt_psig = c.WHPtgt; o.column_ft = c.hc; o.Vleft_bbl = mmax(0, c.V - c.Vprod); o.recovered_bbl = c.Vprod; o.fUnload = c.fUnload;
+    o.wJT = c.wJTe; o.dutyCapped = cushOn && c.dutyCapped; o.tBreak = c.tBreak;   // tBreak: simulation time (s), as snap.t
+    o.out.flare = c.out.flare; o.out.line = c.out.line; o.out.sep = c.out.sep;
+  }
   function cushReset() {
     var c = cushS;
     c.phase = 'off'; c.V = 0; c.SG = 1; c.qSet = 0; c.cap = 0; c.depth = 0; c.Gr = 0; c.gasFrac = 0; c.tailFrac = 0; c.tailTau = 0; c.breakTau = 0;
     c.Vmain = 0; c.Vtail = 0; c.Vprod = 0; c.qNow = 0; c.qDel = 0; c.fUnload = 0; c.WHPcol = 0; c.wJTc = 0; c.wJTe = 1; c.tStart = 0; c.tBreak = null;
     c.tPhase = 0; c.out.flare = 0; c.out.line = 0; c.out.sep = 0;
+    c.qIn = 0; c.qLcap = 0; c.hc = 0; c.w = 0; c.SIT = 0; c.floor = 0; c.WHPtgt = 0; c.duty = 0; c.dutyCapped = false; c.ThCap = 0; c.ThSet = 0;
+    c.dTch = 0; c.dThi = 0; c.kT = 0; c.tEnd = null;
   }
 
   Object.defineProperty(api, 'disposed', { get: function () { return disposed; } });
