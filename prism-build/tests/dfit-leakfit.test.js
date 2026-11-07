@@ -3,7 +3,9 @@
 // leak-off (k 3.308e-3 md = CL 1.863e-4 ft/√min at σ_c − p_r = 2,500 psi), asperity contact (hyp, s_h 60 psi), spurt
 // 1 gal/100 ft², 250 log-spaced points to 100 h, σ_p 0.5 psi (seeded mulberry32, seed 1), generated on the display grid.
 //
-//   LF1  run A {k, σ_c, p_r} from ×1.5 / +150 / −200 psi: truth inside the 95 % CI in ≤ 40 runs; Job = sync
+//   LF1  run A {k, σ_c, p_r} from ×1.5 / +150 / −200 psi: truth inside the 95 % CI in ≤ 40 runs; Job = sync; the optional
+//        derivative residuals on ln(G·dP/dG) (weight 0.2); the on-demand σ_c profile in identify (10 refits) agrees with the
+//        linearised interval; lkProfileJob = lkProfile
 //   LF2  Γ_PKN conserved: 14.904 to 1e-3 (relative) for the wall-only truth (runs B_w {C_w, σ_c, E′, h_f} and G_w
 //        {C_w, σ_c, K_Ic, E′}) and, reservoir-controlled, run B {k, σ_c, p_r, E′, h_f} equal to run A to 1e-3
 //   LF3  run J (h_f wrong at 40 ft, E′ fixed): rmse ≈ 19.6 psi, σ_c bias ≈ −78 psi, the geometry warning fires
@@ -101,6 +103,26 @@ module.exports = [
       const cs = jc.step(); assert(cs.done && jc.result().code === 'CANCELLED', 'cancel');
       const bad = W.PRiSM_dfit_lkFit({ t: [1], p: [1, 2] }, startA(W), 'full');
       assert(bad.ok === false && S.checkShape('Failure', bad).ok, 'bad data → failure form');
+      // optional derivative residuals on ln(G·dP/dG) (weight 0.2, same Bourdet engine and L on data and model)
+      const fd = W.PRiSM_dfit_lkFit(dataA(W), startA(W), 'full', { free: ['k', 'sigmaC', 'pr'], deriv: true });
+      okFit(assert, fd, 'run A with derivative residuals');
+      assert(fd.deriv && fd.deriv.weight === 0.2 && fd.deriv.L === 0.1 && fd.deriv.n > 150, 'derivative residuals used: ' + JSON.stringify(fd.deriv));
+      assert(f.deriv === null, 'off by default');
+      assert(inside(fd.ci95.sigmaC, 7000) && inside(fd.ci95.pr, 4500) && rel(fd.params.k, K_TRUE) < 0.01, 'truth recovered with derivative residuals');
+      assert(fd.S > fd.Sd && Math.abs(f.S - f.Sd) < 1e-9, 'derivative pseudo-residuals enter the objective only');
+      assert(rel(fd.rmse, f.rmse) < 0.05, 'pressure rmse unchanged (' + fd.rmse.toFixed(3) + ' vs ' + f.rmse.toFixed(3) + ')');
+      // profile likelihood (on demand): the 1-D σ_c profile in identify checks the linearised interval; Job = sync
+      const id = W.PRiSM_dfit_identify(f, { extendTimesH: [24], profile: true }), pf = id.profile;
+      assert(pf && pf.ok === true && pf.key === 'sigmaC' && pf.refits === 10, 'σ_c profile of 10 refits');
+      assert(pf.values.length === 11 && pf.dchi2.every((v, i) => v >= -1e-6 && (i === 0 || pf.values[i] > pf.values[i - 1])), 'profile values sorted, Δχ² ≥ 0');
+      const hwP = (pf.ci95[1] - pf.ci95[0]) / 2, hwL = (f.ci95.sigmaC[1] - f.ci95.sigmaC[0]) / 2;
+      assert(rel(hwP, hwL) < 0.1 && pf.agree === true && /linearised interval holds/.test(pf.text) && pf.text.length < 300, 'profile ±' + hwP.toFixed(4) + ' vs linear ±' + hwL.toFixed(4));
+      const pj = W.PRiSM_dfit_lkProfileJob(f, 'pr', { n: 4 }); assert(S.checkShape('Job', pj).ok, 'profile Job shape');
+      let ps, pn = 0; do { ps = pj.step(); pn++; } while (!ps.done && pn < 50);
+      assert(pn >= 4, 'one refit per step');
+      assert.deepStrictEqual(pj.result(), W.PRiSM_dfit_lkProfile(f, 'pr', { n: 4 }), 'profile Job = sync');
+      assert(inside(pj.result().ci95, 4500), 'p_r profile interval holds the truth');
+      assert(W.PRiSM_dfit_lkProfile(f, 'Ep').code === 'NOT_FREE', 'only a free parameter can be profiled');
     },
   },
   {

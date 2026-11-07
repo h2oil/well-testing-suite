@@ -7,12 +7,14 @@
 // Public (window):
 //   PRiSM_dfit_lkDefaults()                  LkConfig of the §5.4 base case (display units)
 //   PRiSM_dfit_lkToEngine(cfg)               {ok, e} engine config (h, ft, psi, ft³, ft³/h, psi·h, ft/√h, ft²)
-//   PRiSM_dfit_lkSimulate(cfg, opts)         LkResult (display units: h, psia, ft, ft², in, bbl, bbl/min)
+//   PRiSM_dfit_lkSimulate(cfg, opts)         LkResult (display units: h, psia, ft, ft², in, bbl, bbl/min); opts.surface adds p_s
 //   PRiSM_dfit_lkSample(res, t)              p_w at the times t (linear in t)
 //   PRiSM_dfit_lkQuick(cfg)                  quick table (q_L at shut-in / 5 / 25 / 100 min and at closure, η, t_c …)
 //   PRiSM_dfit_lkSolveCL(cfg, dtcObserved)   CL (wall) or k (reservoir) for an observed closure time (h after shut-in)
-//   PRiSM_dfit_lkGoalSeek(cfg, goal)         V × q scan for a visible closure within goal.tH hours
-//   PRiSM_dfit_lkFit / …Job                  history match (LM in transformed parameters: log k, log C_w, …)
+//   PRiSM_dfit_lkGoalSeek / …Job             V × q scan for a visible closure within goal.tH hours (≤ 25 coarse runs)
+//   PRiSM_dfit_lkFit / …Job                  history match (LM in transformed parameters: log k, log C_w, …; optional
+//                                            derivative residuals, MAP priors, structural spread)
+//   PRiSM_dfit_lkProfile / …Job              profile likelihood of one free parameter (σ_c, p_r), one refit per step
 //   PRiSM_dfit_lkFisher(cfg, design)         noise-only Fisher information, CI, correlations, sloppy directions
 //   PRiSM_dfit_lkGroups(cfg | LkResult)      identifiable groups Γ and Γ_PKN
 //   PRiSM_dfit_identify(fit, ctx)            "what this test can tell you" (§6.7)
@@ -615,11 +617,65 @@
             var e = conv.e;
             if (e.fromCL) _resolveCL(e, opts);
             var res = _runAndPack(e, opts);
+            if (opts.surface) _surfacePressure(res, cfg, opts.surface);
             return res;
         } catch (err) {
             return _fail('SIMULATION_FAILED', err && err.message || err, []);
         }
     }
+    // Optional surface pressure (§5.5): p_s = p_w − p_hyd + Δp_pipe(q) through WTS_wellbore (resolved at call time). The column
+    // head is integrated at 5 bottomhole-pressure nodes and interpolated per sample; pipe friction once per distinct rate.
+    // surface = {column, fluid, T (°F or fn(tvd)), datumTvd | datumMd}; res.ps stays null (with a note) without the engine.
+    var ATM = 14.696;
+    function _surfacePressure(res, cfg, sp) {
+        var W = G.WTS_wellbore, col = sp && sp.column;
+        res.ps = null;
+        function note(code, text) { res.warnings.push(_w(code, 'info', text)); }
+        if (!W || typeof W.hydrostatic !== 'function' || W.hydrostatic._dfitStub) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the wellbore engine is not available.');
+        if (!col || typeof col !== 'object') return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: no wellbore column was given.');
+        var datum = _num(sp.datumTvd);
+        if (datum == null && _num(sp.datumMd) != null && typeof col.tvdAt === 'function') datum = _num(col.tvdAt(sp.datumMd));
+        if (!(datum > 0)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the gauge datum depth is missing.');
+        var pw = res.pw, n = pw.length, lo = Infinity, hi = -Infinity, i;
+        for (i = 0; i < n; i++) if (pw[i] != null) { if (pw[i] < lo) lo = pw[i]; if (pw[i] > hi) hi = pw[i]; }
+        if (!(hi >= lo)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: no bottomhole pressure.');
+        var NN = 5, nodes = [], heads = [];
+        for (i = 0; i < NN; i++) {
+            var pn = (hi > lo) ? lo + (hi - lo) * i / (NN - 1) : lo, h = W.hydrostatic(pn, datum, 0, col, sp.T);
+            if (!h || h.ok === false || !_isFinite(+h.p)) return note('SURFACE_UNAVAILABLE', 'Surface pressure not computed: the column integration failed.');
+            nodes.push(pn); heads.push(+h.p);
+            if (hi === lo) break;
+        }
+        function pStatic(p) {
+            if (nodes.length === 1) return heads[0] + (p - nodes[0]);
+            var j = 1; while (j < nodes.length - 1 && nodes[j] < p) j++;
+            var w = (p - nodes[j - 1]) / (nodes[j] - nodes[j - 1]); return heads[j - 1] + w * (heads[j] - heads[j - 1]);
+        }
+        var sch = (cfg.schedule || []).slice().sort(function (a, b) { return a.t - b.t; }), fric = {};
+        function qAt(t) { var q = 0; for (var k = 0; k < sch.length; k++) { if (sch[k].t <= t + 1e-12) q = +sch[k].q || 0; else break; } return q; }
+        function dpPipe(q) {
+            if (!q) return 0;
+            if (fric[q] != null) return fric[q];
+            var s = 0, segs = Array.isArray(col.segments) ? col.segments : [];
+            if (typeof W.pipeFriction === 'function') for (var k = 0; k < segs.length; k++) {
+                var f = W.pipeFriction(_abs(q), segs[k], sp.fluid, sp.T), len = (+segs[k].botMd) - (+segs[k].topMd);
+                if (f && f.ok !== false && _isFinite(+f.dpdl) && len > 0) s += _abs(+f.dpdl) * len;
+            }
+            fric[q] = q > 0 ? s : -s;   // injection: p_s = p_w − p_hyd + Δp_pipe; the sign flips for flowback
+            return fric[q];
+        }
+        var ps = new Array(n), tVac = null, tLow = null;
+        for (i = 0; i < n; i++) {
+            if (pw[i] == null) { ps[i] = null; continue; }
+            var tt = res.t[i], q = qAt(tt);
+            ps[i] = pStatic(pw[i]) + dpPipe(q);
+            if (tt > res.events.ts) { if (tVac == null && ps[i] < ATM) tVac = tt; if (tLow == null && ps[i] < ATM + 15) tLow = tt; }
+        }
+        res.ps = ps;
+        if (tVac != null) res.warnings.push(_w('SURFACE_VACUUM', 'bad', 'The surface pressure falls below 0 psig ' + _sig((tVac - res.events.ts), 3) + ' h after shut-in: after-closure analysis needs a bottomhole gauge.'));
+        else if (tLow != null) res.warnings.push(_w('SURFACE_LOW', 'warn', 'The surface pressure falls below 15 psig ' + _sig((tLow - res.events.ts), 3) + ' h after shut-in: the column may not stay liquid-supported.'));
+    }
+
     // CL / w_c display inputs: κ_k from the reservoir share at Δp_CL = ½(ISIP + σ_c) − p_r (two coarse fixed-point passes)
     function _resolveCL(e, opts) {
         if (!(e.CLc > 0)) { e.kap = 0; e.kMd = 0; return; }
@@ -816,40 +872,81 @@
         } catch (err) { return _fail('SOLVE_FAILED', err && err.message || err, []); }
     }
 
-    // Volume × rate for a closure that is visible (R_vis ≥ 0.7) within goal.tH hours: 6 × 6 coarse scan + refinement in V
+    // Volume × rate for a closure that is visible (R_vis ≥ 0.7) within goal.tH hours (§5.6, §6.1). A Job of ≤ 25 coarse runs
+    // (opts.maxRuns) on the 6 × 6 V × q grid. A probe along V at the lowest rate (the most visible one: R_vis falls slightly
+    // with the rate) finds the first visible volume; from that row on each row is scanned by rising rate, a row stops at its
+    // first feasible cell and the scan at the first feasible row (the smallest volume, then the lowest rate). 3 runs are kept
+    // for the refinement between the next smaller volume and the best cell; a scan cut by the budget says so. One run per step.
     function _rvis(res) { var cf = res.cf, Af = res.Af, C = Af * cf, Vw = res.VwCw * 5.614583; return (C + Vw) > 0 ? C / (C + Vw) : null; }
-    function lkGoalSeek(cfg, goal, opts) {
-        try {
-            opts = opts || {};
-            if (!goal || goal.kind !== 'visibleClosureBy' || !(+goal.tH > 0)) return _fail('BAD_GOAL', "goal {kind:'visibleClosureBy', tH} is required.", ['goal']);
-            var tH = +goal.tH, Vs = goal.V || [2, 5, 10, 20, 40, 80], qs = goal.q || [1, 2, 3, 5, 8, 12], table = [], runs = 0;
-            var counts = opts.counts || {};
-            function one(V, q) {
-                var c = _clone(cfg), tp = V / q / 60, t0 = 0;
-                c.schedule = [{ t: t0, q: q }, { t: t0 + tp, q: 0 }];
-                c.tEnd = t0 + tp + _max(tH * 1.5, 1);
-                var r = lkSimulate(c, { grid: 'coarse', counts: counts }); runs++;
-                if (!r || !r.ok) return { V: V, q: q, dtc: null, Rvis: null, ok: false };
-                var dtc = r.events.tcMech != null ? r.events.tcMech - r.events.ts : null, Rv = _rvis(r);
-                return { V: V, q: q, dtc: dtc, Rvis: Rv, ok: dtc != null && dtc <= tH && Rv != null && Rv >= 0.7 };
+    function lkGoalSeekJob(cfg, goal, opts) {
+        var done = false, cancelled = false, result = null, st = null, label = 'starting';
+        opts = opts || {};
+        function finish(r) { result = r; done = true; }
+        function one(V, q) {
+            var c = _clone(cfg), tp = V / q / 60, t0 = 0;
+            c.schedule = [{ t: t0, q: q }, { t: t0 + tp, q: 0 }];
+            c.tEnd = t0 + tp + _max(st.tH * 1.5, 1);
+            var r = lkSimulate(c, { grid: 'coarse', counts: st.counts }); st.runs++;
+            if (!r || !r.ok) return { V: V, q: q, dtc: null, Rvis: null, ok: false };
+            var dtc = r.events.tcMech != null ? r.events.tcMech - r.events.ts : null, Rv = _rvis(r);
+            return { V: V, q: q, dtc: dtc, Rvis: Rv, ok: dtc != null && dtc <= st.tH && Rv != null && Rv >= 0.7 };
+        }
+        function init() {
+            if (!cfg || typeof cfg !== 'object') return finish(_fail('BAD_CONFIG', 'LkConfig expected.', ['cfg']));
+            if (!goal || goal.kind !== 'visibleClosureBy' || !(+goal.tH > 0)) return finish(_fail('BAD_GOAL', "goal {kind:'visibleClosureBy', tH} is required.", ['goal']));
+            var conv = lkToEngine(cfg); if (!conv.ok) return finish(conv);
+            var Vs = (goal.V || [2, 5, 10, 20, 40, 80]).slice().sort(function (x, y) { return x - y; }), qs = (goal.q || [1, 2, 3, 5, 8, 12]).slice().sort(function (x, y) { return x - y; });
+            var maxRuns = (+opts.maxRuns > 0) ? _floor(+opts.maxRuns) : 25;
+            st = { tH: +goal.tH, Vs: Vs, qs: qs, iV: 0, iq: 0, table: [], best: null, runs: 0, counts: opts.counts || {}, maxRuns: maxRuns,
+                   scanCap: _max(1, maxRuns - 3), phase: 'scan', ref: [], budgetHit: false, probe: true };
+        }
+        function scanStep() {
+            if (st.runs >= st.scanCap) { st.budgetHit = st.iV < st.Vs.length; st.phase = 'refine'; return; }
+            var r = one(st.Vs[st.iV], st.qs[st.iq]); st.table.push(r);
+            if (r.ok) { st.best = r; st.phase = 'refine'; return; }
+            if (st.probe) {   // probe along V at the lowest rate (the most visible one) for the first visible volume
+                if (r.Rvis != null && r.Rvis >= 0.7) { st.probe = false; st.iq = 1; if (st.iq >= st.qs.length) endRow(); return; }
+                st.iV++; if (st.iV >= st.Vs.length) st.phase = 'refine';
+                return;
             }
-            for (var i = 0; i < Vs.length; i++) for (var j = 0; j < qs.length; j++) table.push(one(Vs[i], qs[j]));
-            var best = null;
-            table.forEach(function (r) { if (r.ok && (!best || r.V < best.V || (r.V === best.V && r.q < best.q))) best = r; });
-            if (best) {   // refine between the next smaller volume and the best cell
-                var iV = Vs.indexOf(best.V);
-                if (iV > 0) {
-                    var vLo = Vs[iV - 1];
-                    for (var m = 1; m <= 3; m++) {
-                        var v = vLo + (best.V - vLo) * m / 4, rr = one(+v.toPrecision(3), best.q); table.push(rr);
-                        if (rr.ok && rr.V < best.V) { best = rr; break; }
-                    }
+            st.iq++;
+            if (st.iq >= st.qs.length) endRow();
+        }
+        function endRow() { st.iq = 0; st.iV++; if (st.iV >= st.Vs.length) st.phase = 'refine'; }
+        function refineInit() {
+            st.phase = 'refining';
+            if (!st.best) return;
+            var iV = st.Vs.indexOf(st.best.V);
+            if (iV > 0) { var vLo = st.Vs[iV - 1]; for (var m = 1; m <= 3; m++) st.ref.push(+(vLo + (st.best.V - vLo) * m / 4).toPrecision(3)); }
+        }
+        function finalise() {
+            var best = st.best, tH = st.tH;
+            var text = best ? ('A closure visible within ' + _sig(tH, 3) + ' h needs about ' + _sig(best.V, 3) + ' bbl at ' + _sig(best.q, 3) + ' bbl/min.')
+                            : ('No scanned volume and rate gives a visible closure within ' + _sig(tH, 3) + ' h' + (st.budgetHit ? ' (the scan stopped at its ' + st.maxRuns + '-run budget at ' + _sig(st.Vs[_min(st.iV, st.Vs.length - 1)], 3) + ' bbl).' : '.'));
+            finish({ ok: true, V: best ? best.V : null, q: best ? best.q : null, runs: st.runs, table: st.table, budgetHit: st.budgetHit, text: text.slice(0, 299) });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: label };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; label = 'scan'; return { done: false, progress: 0, label: label }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The goal-seek was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.phase === 'scan') scanStep();
+                else {
+                    if (st.phase === 'refine') refineInit();
+                    if (st.ref.length && st.runs < st.maxRuns) {
+                        var rr = one(st.ref.shift(), st.best.q); st.table.push(rr);
+                        if (rr.ok && rr.V < st.best.V) { st.best = rr; st.ref = []; }
+                    } else st.ref = [];
+                    if (!st.ref.length) { finalise(); return { done: true, progress: 1, label: 'done' }; }
                 }
-            }
-            return { ok: true, V: best ? best.V : null, q: best ? best.q : null, runs: runs, table: table,
-                     text: best ? ('A closure visible within ' + _sig(tH, 3) + ' h needs about ' + _sig(best.V, 3) + ' bbl at ' + _sig(best.q, 3) + ' bbl/min.')
-                                : ('No scanned volume and rate gives a visible closure within ' + _sig(tH, 3) + ' h.') };
-        } catch (err) { return _fail('GOALSEEK_FAILED', err && err.message || err, []); }
+                label = (st.phase === 'scan' ? 'scan' : 'refinement') + ', run ' + st.runs + ' of at most ' + st.maxRuns;
+                return { done: false, progress: _min(0.99, st.runs / st.maxRuns), label: label };
+            } catch (err) { finish(_fail('GOALSEEK_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function lkGoalSeek(cfg, goal, opts) {
+        try { return _drain(lkGoalSeekJob(cfg, goal, opts)); } catch (err) { return _fail('GOALSEEK_FAILED', err && err.message || err, []); }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1183,6 +1280,28 @@
         return { vals: idx.map(function (i2) { return a[i2][i2]; }), vecs: idx.map(function (i2) { return V.map(function (r) { return r[i2]; }); }) };
     }
 
+    // ln G(Δt_D, α = ½) at the falloff times (null before or at the shut-in)
+    function _lnGAt(t, ts, tp) {
+        var Gf = Gfn(), out = new Array(t.length);
+        for (var i = 0; i < t.length; i++) { var d = (t[i] - ts) / tp, gv = d > 0 ? Gf(d, 0.5) : 0; out[i] = gv > 0 ? _log(gv) : null; }
+        return out;
+    }
+    // Bourdet derivative −dp/dx with the window L in x (x = ln G, so −dp/dln G = −G·dP/dG); null without a point L away on both sides
+    function _bourdetLn(x, p, L) {
+        var n = x.length, out = new Array(n), j, k;
+        for (var i = 0; i < n; i++) {
+            out[i] = null;
+            if (x[i] == null || p[i] == null) continue;
+            var l = -1, r = -1;
+            for (j = i - 1; j >= 0; j--) { if (x[j] == null) break; if (x[i] - x[j] >= L) { l = j; break; } }
+            for (k = i + 1; k < n; k++) { if (x[k] != null && x[k] - x[i] >= L) { r = k; break; } }
+            if (l < 0 || r < 0 || p[l] == null || p[r] == null) continue;
+            var dl = x[i] - x[l], dr = x[r] - x[i], sl = (p[i] - p[l]) / dl, sr = (p[r] - p[i]) / dr;
+            out[i] = -(sl * dr + sr * dl) / (dl + dr);
+        }
+        return out;
+    }
+
     // model: transformed vector → pressures at the data times (one forward run on the fixed grid)
     function _makeModel(cfg0, keys, tData, opts, counts) {
         var conv = lkToEngine(cfg0);
@@ -1275,18 +1394,35 @@
                 var sd = PDEF[k].log ? +pz.sdLn : +pz.sd; if (!(sd > 0)) return;
                 priors.push({ j: j, mu: PDEF[k].log ? _log(+pz.value) : +pz.value, sd: sd, key: k });
             });
-            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [], priors: priors,
+            // optional derivative residuals on ln(G·dP/dG) (§5.7): the same Bourdet engine and L on data and model; fixed index set
+            var dv = null, wD = (+opts.derivWeight > 0) ? +opts.derivWeight : (opts.deriv ? 0.2 : 0);
+            if (wD > 0) {
+                var tpD = ts - conv.e.tStart, LD = (+opts.derivL > 0) ? +opts.derivL : 0.1, xG = _lnGAt(pd.t, ts, tpD), Dd = _bourdetLn(xG, pd.p, LD), idxD = [], DdKeep = [];
+                for (var q0 = 0; q0 < Dd.length; q0++) if (Dd[q0] != null && Dd[q0] > 0) { idxD.push(q0); DdKeep.push(Dd[q0]); }
+                if (idxD.length >= 5) {
+                    var scaleD = _median(DdKeep);
+                    dv = { w: wD, L: LD, x: xG, idx: idxD, lnD: DdKeep.map(function (v) { return _log(v); }), scale: scaleD, floor: _log(1e-3 * scaleD) };
+                }
+            }
+            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [], priors: priors, dv: dv,
                    maxRuns: (+opts.maxRuns > 0) ? +opts.maxRuns : 400, maxIter: (+opts.maxIter > 0) ? +opts.maxIter : 60, budgetMs: (+opts.budgetMs > 0) ? +opts.budgetMs : 5000,
                    t0: _now(), cur: null, c0: c0 };
         }
         function resid(x) {
             var r = st.model.run(x);
             if (!r) return null;
-            var nd = st.pd.t.length, e = new Array(nd + st.priors.length), S = 0;
+            var nd = st.pd.t.length, dv = st.dv, nD = dv ? dv.idx.length : 0, e = new Array(nd + nD + st.priors.length), S = 0;
             for (var i = 0; i < nd; i++) { var v = r.p[i]; if (v == null) return null; e[i] = (v - st.pd.p[i]) * _sqrt(st.pd.w[i]); S += e[i] * e[i]; }
             var Sd = S;
+            if (dv) {   // derivative pseudo-residuals in psi: w·D̃·(ln D_model − ln D_data), D̃ = the median data derivative
+                var Dm = _bourdetLn(dv.x, r.p, dv.L);
+                for (var m = 0; m < nD; m++) {
+                    var dmv = Dm[dv.idx[m]], lm = (dmv != null && dmv > 0) ? _max(_log(dmv), dv.floor) : dv.floor;
+                    e[nd + m] = dv.w * dv.scale * (lm - dv.lnD[m]); S += e[nd + m] * e[nd + m];
+                }
+            }
             for (var q = 0; q < st.priors.length; q++) {   // MAP priors as pseudo-residuals in psi: σ_p·(θ − θ_prior)/σ_θ (log for log parameters)
-                var pz = st.priors[q]; e[nd + q] = st.sigmaP * (x[pz.j] - pz.mu) / pz.sd; S += e[nd + q] * e[nd + q];
+                var pz = st.priors[q]; e[nd + nD + q] = st.sigmaP * (x[pz.j] - pz.mu) / pz.sd; S += e[nd + nD + q] * e[nd + nD + q];
             }
             return { e: e, S: S, Sd: Sd, r: r };
         }
@@ -1385,7 +1521,9 @@
                 sloppy: sloppy, starts: { n: st.starts.length, converged: conv }, runs: st.counts.runs, chi2: chi2, rmse: rmse, sigmaP: st.sigmaP,
                 stopReason: best.stop || 'converged', warnings: warnings,
                 free: keys.slice(), cfg: bestCfg, CLeq: bestRes.CLeq, dpCL: bestRes.dpCL, wcEq: bestRes.wcEq, kEq: bestRes.k, evals: st.counts.evals,
-                design: { t: st.pd.t.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null, priors: st.priors.map(function (pz) { return pz.key; })
+                design: { t: st.pd.t.slice(), p: st.pd.p.slice(), w: st.pd.w.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null, priors: st.priors.map(function (pz) { return pz.key; }),
+                S: base.S, Sd: base.Sd, deriv: st.dv ? { weight: st.dv.w, L: st.dv.L, n: st.dv.idx.length, scale: st.dv.scale } : null,
+                fitOpts: { nMax: opts.nMax || 300, sigmaP: st.sigmaP, bounds: opts.bounds || null, priors: opts.priors || null, derivWeight: st.dv ? st.dv.w : 0, derivL: st.dv ? st.dv.L : null, grid: opts.grid || 'fit', budgetMs: opts.budgetMs || null }
             };
             finish(out);
         }
@@ -1432,6 +1570,98 @@
         function rng(get) { var v = keep.map(get).filter(function (x) { return _isFinite(x); }); if (!v.length) return null; return [_min.apply(null, v), _max.apply(null, v)]; }
         fit.structural = { sigmaC: rng(function (f) { return f.params.sigmaC != null ? f.params.sigmaC : f.cfg.sigmaC; }), pr: rng(function (f) { return f.params.pr != null ? f.params.pr : f.cfg.pr; }),
                            k: rng(function (f) { return f.kEq; }), CLeq: rng(function (f) { return f.CLeq; }), n: keep.length };
+    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Profile likelihood (§5.7 item 4, §6.7): fix one parameter at n values around the estimate, refit the others (warm start
+    // from the neighbour), Δχ² = (S(v) − S_best)/s², s² = S_d,best/(n − n_p); the 95 % interval is where Δχ² ≤ 3.84 (× the
+    // n_eff inflation² for the inflated interval). One refit per Job step.
+    // ─────────────────────────────────────────────────────────────────────
+    function lkProfileJob(fit, key, opts) {
+        var done = false, cancelled = false, result = null, st = null, label = 'starting';
+        opts = opts || {};
+        function finish(r) { result = r; done = true; }
+        function init() {
+            if (!fit || fit.ok !== true || !fit.cfg || !fit.design) return finish(_fail('BAD_FIT', 'A successful history match (LkFit) is required.', ['fit']));
+            key = key || 'sigmaC';
+            if (fit.free.indexOf(key) < 0 || !PDEF[key]) return finish(_fail('NOT_FREE', 'The profiled parameter must be free in the match.', ['key']));
+            var others = fit.free.filter(function (k) { return k !== key; });
+            if (!others.length) return finish(_fail('NOTHING_TO_PROFILE', 'A profile needs at least one other free parameter.', ['key']));
+            var d = PDEF[key], n = (+opts.n >= 3) ? _floor(+opts.n) : 15, span = (+opts.span > 0) ? +opts.span : 2.5;
+            var v0 = fit.params[key], x0 = d.log ? _log(v0) : v0, ci = fit.ci95[key];
+            var sdX = ci ? (d.log ? (_log(ci[1]) - _log(ci[0])) : (ci[1] - ci[0])) / (2 * 1.96) : null;
+            var half = span * 1.96 * (sdX > 0 ? sdX : (d.log ? 0.05 : 5));
+            if (!d.log) half = _max(half, (+opts.minHalf > 0) ? +opts.minHalf : 1);
+            var xs = [];
+            if (Array.isArray(opts.values) && opts.values.length) xs = opts.values.map(function (v) { return d.log ? _log(+v) : +v; });
+            else for (var i = 0; i < n; i++) xs.push(x0 - half + 2 * half * i / (n - 1));
+            xs = xs.filter(function (x) { return _isFinite(x) && _abs(x - x0) > 1e-12 * _max(1, _abs(x0)); }).sort(function (a, b) { return a - b; });
+            var up = xs.filter(function (x) { return x > x0; }), dn = xs.filter(function (x) { return x < x0; }).reverse();
+            var np = fit.free.length, nd = fit.design.t.length, s2 = fit.Sd / _max(1, nd - np);
+            var fo = fit.fitOpts || {};
+            st = { key: key, d: d, x0: x0, others: others, queue: up.map(function (x) { return { x: x, side: 1 }; }).concat(dn.map(function (x) { return { x: x, side: -1 }; })),
+                   pts: [{ x: x0, S: fit.S, cfg: fit.cfg, ok: true }], prev: { '1': fit.cfg, '-1': fit.cfg }, s2: s2, runs: 0, total: up.length + dn.length,
+                   data: opts.data || { t: fit.design.t, p: fit.design.p, w: fit.design.w },
+                   fo: { nMax: fo.nMax || 300, sigmaP: fo.sigmaP || fit.sigmaP, bounds: fo.bounds || undefined, priors: fo.priors || undefined, derivWeight: fo.derivWeight || 0, derivL: fo.derivL || undefined,
+                         grid: fo.grid || 'fit', maxRuns: (+opts.maxRunsPerFit > 0) ? +opts.maxRunsPerFit : 150 } };
+        }
+        function one() {
+            var q = st.queue.shift(), c = _clone(st.prev[String(q.side)]), v = st.d.log ? _exp(q.x) : q.x;
+            st.d.set(c, v);
+            if (st.key === 'sigmaC' && c.pr >= v - 1) c.pr = v - 10;
+            var o = _clone(st.fo); o.free = st.others.slice(); o.multiStart = false;
+            if (o.bounds && o.bounds[st.key]) delete o.bounds[st.key];
+            var f = _drain(lkFitJob(st.data, c, fit.preset, o));
+            st.runs += f && f.runs ? f.runs : 0;
+            if (f && f.ok) { st.pts.push({ x: q.x, S: f.S, cfg: f.cfg, ok: true }); st.prev[String(q.side)] = f.cfg; }
+            else st.pts.push({ x: q.x, S: null, ok: false });
+        }
+        function bound(pts, side, lim) {   // first crossing of Δχ² = lim walking out from the minimum on one side, linear in √Δχ²
+            var seq = pts.filter(function (p) { return p.ok && (side > 0 ? p.x >= st.x0 : p.x <= st.x0); }).sort(function (a, b) { return side * (a.x - b.x); });
+            var rl = _sqrt(lim), rt = function (v) { return _sqrt(_max(0, v)); };
+            for (var i = 1; i < seq.length; i++) {
+                var a = seq[i - 1], b = seq[i], ra = rt(a.dchi2), rb = rt(b.dchi2);
+                if (ra <= rl && rb > rl) return a.x + (rl - ra) * (b.x - a.x) / (rb - ra);
+            }
+            return null;
+        }
+        function finalise() {
+            var Smin = Infinity; st.pts.forEach(function (p) { if (p.ok && p.S < Smin) Smin = p.S; });
+            st.pts.forEach(function (p) { p.dchi2 = p.ok ? (p.S - fit.S) / st.s2 : null; });
+            var infl = fit.inflation || 1, d = st.d, tr = function (x) { return x == null ? null : (d.log ? _exp(x) : x); };
+            var lo = bound(st.pts, -1, 3.84), hi = bound(st.pts, 1, 3.84), loI = bound(st.pts, -1, 3.84 * infl * infl), hiI = bound(st.pts, 1, 3.84 * infl * infl);
+            var pts = st.pts.slice().sort(function (a, b) { return a.x - b.x; });
+            var lin = fit.ci95[st.key], v0 = fit.params[st.key], agree = null, text;
+            var lbl = _cap(LABEL[st.key] || st.key), unit = d.pressure ? ' psi' : '';
+            var fmtHw = function (a, b) { return d.pressure ? _sig(_abs(b - a), 2) + unit : _fx(100 * _abs(b / a - 1), 0) + ' %'; };
+            if (lo != null && hi != null && lin) {
+                var rL = d.log ? (st.x0 - lo) / (st.x0 - _log(lin[0])) : (v0 - lo) / (v0 - lin[0]);
+                var rH = d.log ? (hi - st.x0) / (_log(lin[1]) - st.x0) : (hi - v0) / (lin[1] - v0);
+                agree = _abs(rL - 1) <= 0.25 && _abs(rH - 1) <= 0.25;
+                text = lbl + ': the profile gives −' + fmtHw(tr(lo), v0) + ' / +' + fmtHw(v0, tr(hi)) + ' (linearised ±' + fmtHw(lin[0], v0) + '): ' +
+                       (agree ? 'the linearised interval holds.' : (rL > 1.25 || rH > 1.25 ? 'the linearised interval is too narrow; quote the profile.' : 'the linearised interval is conservative.'));
+            } else {
+                text = lbl + ': the profile does not reach Δχ² = 3.84 on ' + (lo == null && hi == null ? 'either side' : (lo == null ? 'the low side' : 'the high side')) + ' within the scanned range; the interval is wider than the scan.';
+            }
+            if (Smin < fit.S * (1 - 1e-6) - 1e-9) text += ' A lower misfit was found at ' + _sig(tr(pts.filter(function (p) { return p.ok && p.S === Smin; })[0].x), 5) + unit + ': the match had not reached its minimum.';
+            finish({ ok: true, key: st.key, values: pts.map(function (p) { return tr(p.x); }), S: pts.map(function (p) { return p.S; }), dchi2: pts.map(function (p) { return p.dchi2; }),
+                     ci95: [tr(lo), tr(hi)], ci95Inflated: [tr(loI), tr(hiI)], linear: lin ? lin.slice() : null, agree: agree, runs: st.runs, refits: st.total, text: text.slice(0, 299) });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: label };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; label = 'profile of ' + key; return { done: false, progress: 0, label: label }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The profile was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.queue.length) one();
+                if (!st.queue.length) { finalise(); return { done: true, progress: 1, label: 'done' }; }
+                var k = st.total - st.queue.length;
+                label = 'profile of ' + key + ': refit ' + k + ' of ' + st.total;
+                return { done: false, progress: _min(0.99, k / st.total), label: label };
+            } catch (err) { finish(_fail('PROFILE_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function lkProfile(fit, key, opts) {
+        try { return _drain(lkProfileJob(fit, key, opts)); } catch (err) { return _fail('PROFILE_FAILED', err && err.message || err, []); }
     }
     var LABEL = { k: 'permeability', Cw: 'the wall coefficient', Sp: 'spurt', sigmaC: 'closure stress', pr: 'pore pressure', Ep: 'E′', hf: 'fracture height',
                   KIc: 'apparent toughness', sh: 'the contact scale', sc: 'the contact scale', Cd: 'the PDL coefficient', pfo: 'the fissure-opening pressure', VwCw: 'wellbore storage' };
@@ -1585,7 +1815,13 @@
                 var a0 = extend[0].sdPi, a1 = extend[extend.length - 1].sdPi;
                 keepText = a1 < 0.5 * a0 ? 'Keep the gauge in: p_i narrows from ±' + _sig(1.96 * a0, 2) + ' to ±' + _sig(1.96 * a1, 2) + ' psi over the table.' : 'Pulling the gauge early costs little: p_i barely narrows with a longer shut-in.';
             }
-            return { ok: true, rows: rows, sloppyText: sloppyText.slice(0, 299), voi: voi, extend: extend, keepText: keepText };
+            // on demand: a 1-D profile on σ_c (≈ 10 refits) checks the linearised interval (the UI runs lkProfileJob for progress)
+            var profile = null;
+            if (ctx.profile && fit.free.indexOf('sigmaC') >= 0 && fit.free.length > 1) {
+                profile = lkProfile(fit, 'sigmaC', { n: (+ctx.profileN >= 3) ? +ctx.profileN : 10 });
+                if (profile && profile.ok && profile.agree === false) rows.forEach(function (r) { if (r.param === 'sigmaC') r.text = (r.text + ' ' + profile.text).slice(0, 299); });
+            }
+            return { ok: true, rows: rows, sloppyText: sloppyText.slice(0, 299), voi: voi, extend: extend, keepText: keepText, profile: profile };
         } catch (err) { return _fail('IDENTIFY_FAILED', err && err.message || err, []); }
     }
     function _cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -1811,6 +2047,9 @@
     G.PRiSM_dfit_lkQuick = lkQuick;
     G.PRiSM_dfit_lkSolveCL = lkSolveCL;
     G.PRiSM_dfit_lkGoalSeek = lkGoalSeek;
+    G.PRiSM_dfit_lkGoalSeekJob = lkGoalSeekJob;
+    G.PRiSM_dfit_lkProfile = lkProfile;
+    G.PRiSM_dfit_lkProfileJob = lkProfileJob;
     G.PRiSM_dfit_lkGroups = lkGroups;
     G.PRiSM_dfit_lkVerify = lkVerify;
     G.PRiSM_dfit_leakBudget = leakBudget;

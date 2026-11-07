@@ -2,8 +2,10 @@
 //
 //   L1–L14  the §5.4 acceptance vectors V1–V14 (V11 / V12 here in a light form; the noisy history matches are LF1 / LF2)
 //   L15     quick table on the base case (q_L 0.586 / 0.262 / 0.135 / 0.070 bbl/min, η 0.892, Δt_c 307.1 min, ± 2 %)
-//   L16     lkSolveCL: 1.863e-4 ± 2 % for Δt_c 307.1 min (wall-only) and the matching k for the reservoir-controlled case
-//   L17     the volume partition (fracture + formation + wellbore) sums to V_i within 1e-6
+//   L16     lkSolveCL: 1.863e-4 ± 2 % for Δt_c 307.1 min (wall-only) and the matching k for the reservoir-controlled case;
+//           goal-seek as a Job of ≤ 25 coarse runs (Job = sync)
+//   L17     the volume partition (fracture + formation + wellbore) sums to V_i within 1e-6; the optional surface pressure
+//           p_s through WTS_wellbore (replaced in the test by a constant-gradient column until WP1 merges)
 //   L18     simulate and fit leave localStorage, PRiSM_state and the event log unchanged (pure)
 //
 // 56's G functions are stubbed (closed forms, §4.5) through sourceOverrides until WP2 merges (plan §2.12 rule 4): the stub
@@ -212,6 +214,18 @@ module.exports = [
       within(assert, s2.CL, r.CLeq, 0.02, 'CL equivalent at Δp_CL');
       const bad = W.PRiSM_dfit_lkSolveCL(base(W, {}), -1);
       assert(bad.ok === false && S.checkShape('Failure', bad).ok, 'invalid input → failure form');
+      // goal-seek as a Job of ≤ 25 coarse runs (§6.1): stiff wellbore storage (V_w·c_w 0.01 bbl/psi) needs a larger volume
+      const gc = base(W, { VwCw: 0.01 }), goal = { kind: 'visibleClosureBy', tH: 12 };
+      const job = W.PRiSM_dfit_lkGoalSeekJob(gc, goal); assert(S.checkShape('Job', job).ok, 'goal-seek Job shape');
+      let s3, n3 = 0; do { s3 = job.step(); n3++; } while (!s3.done && n3 < 100);
+      const gj = job.result(), gs = W.PRiSM_dfit_lkGoalSeek(gc, goal);
+      assert.deepStrictEqual(gj, gs, 'goal-seek Job = sync'); assert(n3 >= gs.runs, 'one run per step');
+      assert(gs.ok === true && gs.runs <= 25 && gs.V === 25 && gs.q === 1 && gs.budgetHit === false, 'visible by 12 h: ' + gs.text);
+      const c20 = gs.table.find((c) => c.V === 20 && c.q === 1), c25 = gs.table.find((c) => c.V === 25);
+      assert(c20 && !c20.ok && c20.Rvis < 0.7 && c25.ok && c25.Rvis >= 0.7 && c25.dtc <= 12, 'refinement between 20 and 40 bbl');
+      const gb = W.PRiSM_dfit_lkGoalSeek(base(W, {}), { kind: 'visibleClosureBy', tH: 2 });
+      assert(gb.ok && gb.V === null && gb.runs <= 25 && gb.budgetHit === true && /budget/.test(gb.text), 'a scan cut by the budget says so: ' + gb.text);
+      assert(W.PRiSM_dfit_lkGoalSeek(base(W, {}), { kind: 'x' }).code === 'BAD_GOAL', 'bad goal');
     },
   },
   {
@@ -227,6 +241,22 @@ module.exports = [
       const iS = r.t.findIndex((x) => x >= r.events.ts - 1e-12);
       assert(r.Vf[iS] / r.ViFrac[iS] > r.Vf[iS] / r.Vi[iS], 'η of the fracture volume exceeds η of the pumped volume');
       const sh = S.checkShape('LkResult', r); assert(sh.ok, 'shape: ' + sh.errors.slice(0, 3).join('; '));
+      // optional surface pressure p_s = p_w − p_hyd + Δp_pipe(q) through WTS_wellbore (WP1; replaced here by a constant
+      // 0.438 psi/ft column with 0.01·q² psi/ft friction until WP1 merges — plan §2.12 rule 4) — restored afterwards
+      const saved = W.WTS_wellbore, col = { segments: [{ topMd: 0, botMd: 10000 }] };
+      let rs;
+      W.WTS_wellbore = { hydrostatic: (p, z0, z1) => ({ ok: true, p: p - 0.438 * (z0 - z1) }), pipeFriction: (q) => ({ ok: true, dpdl: 0.01 * q * q }) };
+      try { rs = W.PRiSM_dfit_lkSimulate(base(W, {}), { grid: 'fit', surface: { column: col, datumTvd: 10000 } }); } finally { W.WTS_wellbore = saved; }
+      assert(rs.ok && Array.isArray(rs.ps) && rs.ps.length === rs.pw.length, 'p_s series');
+      const iS2 = rs.t.findIndex((x) => x > rs.events.ts + 1e-9), nn = rs.t.length;
+      assert.near(rs.ps[1], rs.pw[1] - 4380 + 2500, 1e-6, 'pumping: p_w − 4,380 psi head + 2,500 psi friction at 5 bbl/min');
+      assert.near(rs.ps[iS2], rs.pw[iS2] - 4380, 1e-6, 'shut-in: no friction'); assert.near(rs.ps[nn - 1], rs.pw[nn - 1] - 4380, 1e-6, 'end of the falloff');
+      assert(!rs.warnings.some((w) => /^SURFACE_/.test(w.code)), 'liquid-supported column: no surface warning');
+      W.WTS_wellbore = { hydrostatic: (p, z0, z1) => ({ ok: true, p: p - 0.7 * (z0 - z1) }), pipeFriction: () => ({ ok: true, dpdl: 0 }) };
+      try { rs = W.PRiSM_dfit_lkSimulate(base(W, {}), { grid: 'coarse', surface: { column: col, datumTvd: 10000 } }); } finally { W.WTS_wellbore = saved; }
+      assert(rs.warnings.some((w) => w.code === 'SURFACE_VACUUM' && w.level === 'bad' && w.text.length < 300), 'a column heavier than p_w → below 0 psig, bottomhole gauge needed');
+      const rn = W.PRiSM_dfit_lkSimulate(base(W, {}), { grid: 'coarse' });
+      assert(!('ps' in rn), 'no p_s unless asked');
     },
   },
   {
