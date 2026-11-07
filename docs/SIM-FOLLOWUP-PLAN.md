@@ -1194,3 +1194,41 @@ two fixes, the one chosen is named. R-numbers follow the order of the review lis
 | R38 | minor | Help branch conflicts in smoke / iOS CSS; stale counts | `Dev` merged into `sim-fu` before WP-L; CSS rule in its own block after Help; counts from the merged tree (§12.4-12.5) |
 | R39 | minor | `flow.sepBy` P0 vs engine `pDown()` P0 | `flow.sepBy.P0_psig` published and used by `pDown()` (D3, §6.2) |
 | R34 | minor | `wts_bypass_*` / `flow.byp` naming and label drift | Renamed to `sepBy` (`wts_sepByDest`, `wts_sepByP`, `flow.sepBy`, `snap.sepBy`); one label per item in `LABELS` (D17) |
+
+---
+
+## Appendix C — WP-I part 1 and WP-HC notes (lead, 2026-11-07, worktree `simfu/wt-rel`, branch `sim-fu`)
+
+**Merges** (all `--no-ff`, in this order): `dev-87qwkg` (v3.3.2 Help; no conflicts, sim-fu had touched no host or Help
+file), `sf/wp-c-fix`, `sf/wp-e1-fix`, `sf/wp-e2-fix`, `sf/wp-3d-fix`, `sf/wp-l-fix`, `sf/wp-2d-fix`. After each: accept
+`--sources --integration --grep WTS`, `wts3d-test.js` (only the two CRLF checks fail on the LF checkout), `wts-calc-golden.js
+--check --time` (BASE_FIELDS and page strictly equal; ratios 2.36–2.49 / 2.08–2.45, gates 4 / 6) and `wts-sim-perf.js` (all
+cases; default 1.000–1.010 / pooled 0.998–1.024 ≤ 1.05, both 1.44–1.47 ≤ 1.6, ck2 0.98–1.01 ≤ 1.10, cushion 1.09–1.10 ≤ 1.15
+from WP-E2 on, line 0.89–0.93 ≤ 1.05). The only red test between the merges was the Help page's today-variant check (the
+engine ships `features` since WP-E0), fixed in WP-HC.
+
+**Conflicts.** `tests/wts-heater-choke.test.js` (C / E1), `tests/wts-bypass-cushion.test.js` (C / E2) and
+`tests/wts-fu-views.test.js` (L / 2D) were added on both branches: each kept both groups (`HOST.concat(ENGINE)`;
+`[].concat(L, D2)` with the 2D group in its own function scope). `ios-styles.css`: the Help centre's section 8 stays, the
+WP-L cushion-form block follows as section 9.
+
+**Lead items.** Fixture `WARN_TEXTS.ck2HydrateIn` (the §4.3-7 second hydrate check added in the WP-C review); plan text
+corrected as built (§8.1, §8.2, §8.3, §9.1, §9.2); WP-C's edit of the lead file `wts-fu-identity.test.js` reviewed and kept.
+
+**WP-HC** (minimal and full parts of §11). The wts guide stays under its 14 kB serialised cap only because older parts were
+tightened; the per-file caps moved 4.3 kB of unused headroom to welltest, simcourse and the manifest module (sum 345 kB). FS-1 /
+FS-2 `afterSim` are the main texts and `today` a short note; the course test checks `afterSim` references and bold text when
+the engine has the feature, and the search index uses the variant shown. Live checks: FS-1 cushion to the burner (CUSH_BURNER,
+WHP target 1,700, breakthrough 2,468 s after the start, done ≈ 3.2 h, 50 bbl), through V-101 (CUSH_DUMP, LAHH-101, carry-over),
+12/64 (CUSH_LIMIT, ≈ 1,200 bbl/d); FS-2 line 300 (choke outlet 308 psig, FS-401 out, vent) and the subcritical example;
+exercise 11 (ANCHORS_CK2, live Pm ≈ 2,460 psig on 32/64 at the cut rate). Three new screenshots (ex11 card and 2D, FS-1 cushion).
+
+**Browser check (§9.3)**: Chromium with software GL on the built page, desktop 1440 × 900 in 2D and 3D and a phone at 390 px:
+CK-102 32/64 (CHOKE2_LIMIT, CK1_SUBCRIT, PAH_CK2; CK-101 outlet = Pm + seg-3 loss), heater bypass (CK-102 bypassed, alarms
+released), V-101 out → line 300 (CK-102 outlet 307 psig) → FS-401 out (vent, To production line) → back to flare (FS-401 forced
+back in), cushion start → breakthrough → done (49.97 bbl, mass balance < 1e-14), one `wts:calc` per calc, none on a rig-up
+change, Project New; no NaN, no console errors (45 checks).
+
+**Open after part 1.** The SEPBY_RATING text rounds a small line loss to "0 psi" at 1,440 psig (it quotes the seg-5 dP
+only); after `done` the cushion tail runs on, so CUSH_BURNER stays until the formation blend ends (E2 note (2)); release items
+of §13 (version, RELEASE_NOTES, README, CLAUDE.md limitations and stats, PROJECT-NOTES) are WP-I part 2.
