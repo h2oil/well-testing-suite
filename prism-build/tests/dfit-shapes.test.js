@@ -307,8 +307,11 @@ module.exports = [
       assert.deepStrictEqual(sk.warns, [], 'skeletons load silently');
       assert(typeof G.document === 'undefined', 'no document in the bare context');
       const isNI = (r) => r && r.ok === false && r.code === 'NOT_IMPLEMENTED' && Array.isArray(r.errors) && r.errors.length === 1 && Array.isArray(r.bad);
+      // a skeleton name is either still the WP0 stub (NOT_IMPLEMENTED) or implemented by its work package: then a call with
+      // no arguments must still return a §3.0 Failure (WPT's 49-calc-dfit-triage.js is implemented)
       Object.keys(NAMES).forEach((f) => NAMES[f].forEach((n) => {
         assert(typeof G[n] === 'function', f + ': ' + n + ' exported');
+        if (!G[n]._dfitStub && f === '49-calc-dfit-triage.js') { const r = G[n](); assert(r && r.ok === false && /^[A-Z_]+$/.test(r.code), n + '() (implemented) returns a Failure'); assert(S.checkShape('Failure', r).ok, n + ' failure shape'); return; }
         assert(isNI(G[n]()), n + '() returns NOT_IMPLEMENTED');
         assert(S.checkShape('Failure', G[n]()).ok, n + ' failure shape');
       }));
