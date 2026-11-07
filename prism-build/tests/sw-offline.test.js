@@ -39,6 +39,7 @@ class FakeCache {
   match(k) { return Promise.resolve(this.m.get(typeof k === 'string' ? k : k.url)); }
   put(k, r) { this.m.set(typeof k === 'string' ? k : k.url, r); return Promise.resolve(); }
   keys() { return Promise.resolve(Array.from(this.m.keys()).map((u) => ({ url: u }))); }
+  delete(k) { return Promise.resolve(this.m.delete(typeof k === 'string' ? k : k.url)); }
 }
 
 // Load sw.js into a fresh realm. net(url, init) → FakeResponse | throws (offline).
@@ -243,6 +244,89 @@ module.exports = [
       await sw.dispatch('message', { data: { type: 'WTS_CACHE_SHELL', url: SCOPE + 'api/secret.json' } });
       await sw.dispatch('message', { data: 'junk' });
       assert.strictEqual(sw.fetches.length, before, 'foreign / non-page URLs ignored');
+    },
+  },
+  {
+    name: 'Help centre: help/ images and the printable guide are static (full href with ?v=), never the app shell',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const sw = loadSW();
+      const r = (url, extra) => sw.api.route(Object.assign({ url, method: 'GET', mode: 'no-cors' }, extra || {}));
+      const IMG = SCOPE + 'help/img/orifice/res-d.webp?v=1a2b3c4d';
+      assert.deepStrictEqual(Object.assign({}, r(IMG)), { kind: 'static', key: IMG, help: true }, 'screenshot: static (help cache), keyed with its content hash');
+      assert.strictEqual(r(SCOPE + 'help/img/orifice/res-d.webp?v=9f8e7d6c').key, SCOPE + 'help/img/orifice/res-d.webp?v=9f8e7d6c', 're-shoot → a new cache key');
+      const GUIDE = SCOPE + 'help/user-guide.html?v=3.3.2';
+      assert.deepStrictEqual(Object.assign({}, r(GUIDE, { mode: 'navigate' })), { kind: 'static', key: GUIDE, help: true }, 'guide navigation: static, not shell');
+      assert.strictEqual(r(GUIDE).kind, 'static', 'guide fetched directly: static');
+      assert.strictEqual(r(SCOPE + 'help/user-guide.html#ch-3', { mode: 'navigate' }).key, SCOPE + 'help/user-guide.html', 'hash dropped from the key');
+      assert.strictEqual(r(SCOPE + 'help/img/manifest.json').kind, 'static', 'manifest.json under help/ is static');
+      assert.strictEqual(r(SCOPE + 'help/notes.txt').kind, 'bypass', 'other file types under help/ are left to the network');
+      // shell is SHELL_PAGES (+ scope root / index.html) only
+      assert.deepStrictEqual(Array.from(sw.api.SHELL_PAGES), ['well-testing-app.html']);
+      assert.strictEqual(r(PAGE, { mode: 'navigate' }).kind, 'shell', 'the app page is the shell');
+      assert.strictEqual(r(SCOPE + 'other.html', { mode: 'navigate' }).why, 'navigate-other', 'another page under the scope is not the shell');
+      assert.strictEqual(r(SCOPE + 'other.html').kind, 'bypass', '… nor cached when fetched');
+      assert.strictEqual(r(SCOPE + 'docs/', { mode: 'navigate' }).kind, 'bypass', 'a sub-folder is not the shell');
+    },
+  },
+  {
+    name: 'Help centre: the guide is cache-first with no update notice; offline, an uncached app URL never gets the guide',
+    wp: WP, opts: false,
+    async run(app, assert) {
+      let online = true, body = '<html>guide v1</html>';
+      const sw = loadSW((url) => { if (!online) throw new TypeError('offline'); return html(body); });
+      const GUIDE = SCOPE + 'help/user-guide.html?v=3.3.2';
+      let o = await sw.get(GUIDE, 'navigate');
+      assert.strictEqual(o.response.body, '<html>guide v1</html>', 'first visit from the network');
+      body = '<html>guide v2</html>';
+      o = await sw.get(GUIDE, 'navigate');
+      assert.strictEqual(o.response.body, '<html>guide v1</html>', 'cache first: same versioned URL → cached copy');
+      assert.strictEqual(sw.posted.length, 0, 'the guide never raises the app update notice');
+      o = await sw.get(SCOPE + 'help/user-guide.html?v=3.3.3', 'navigate');
+      assert.strictEqual(o.response.body, '<html>guide v2</html>', 'a new version link is a new entry');
+      assert.strictEqual(sw.posted.length, 0, 'still no update notice');
+      // offline: the scope root was never cached; the only cached pages are the guide entries → network error, not the guide
+      online = false;
+      o = await sw.get(SCOPE, 'navigate');
+      assert.strictEqual(o.response.type, 'error', 'offline fallback ignores cached Help pages');
+      o = await sw.get(SCOPE + 'index.html', 'navigate');
+      assert.strictEqual(o.response.type, 'error', 'index.html likewise');
+      // once the app page is cached, an uncached shell URL falls back to it
+      await sw.cache('wts-shell-v1').put(PAGE, html('<html>app</html>'));
+      o = await sw.get(SCOPE + 'index.html?v=2', 'navigate');
+      assert.strictEqual(o.response.body, '<html>app</html>', 'fallback = the cached SHELL_PAGES entry');
+      // a screenshot seen once is served offline from its hashed key
+      online = true;
+      const sw2 = loadSW(() => new FakeResponse('webp-bytes', { headers: { 'content-type': 'image/webp' } }));
+      const IMG = SCOPE + 'help/img/wts/view-d.webp?v=0011aabb';
+      await sw2.get(IMG, 'no-cors');
+      sw2.net = () => { throw new TypeError('offline'); };
+      o = await sw2.get(IMG, 'no-cors');
+      assert.strictEqual(o.response.body, 'webp-bytes', 'screenshot served offline after one view');
+    },
+  },
+  {
+    name: 'Help centre: help/ entries use their own cache, pruned to the current URLs by WTS_HELP_PRUNE',
+    wp: WP, opts: false,
+    async run(app, assert) {
+      const sw = loadSW((url) => new FakeResponse('bytes:' + url, { headers: { 'content-type': 'image/webp' } }));
+      assert.strictEqual(sw.api.HELP_CACHE, 'wts-help-v1');
+      const OLD = SCOPE + 'help/img/wts/view-d.webp?v=00000000', NEW = SCOPE + 'help/img/wts/view-d.webp?v=11111111';
+      const GUIDE = SCOPE + 'help/user-guide.html?v=3.3.2';
+      for (const u of [OLD, NEW, GUIDE]) await sw.get(u, 'no-cors');
+      await sw.get(SCOPE + 'img/logo.png', 'no-cors');
+      const help = sw.cache('wts-help-v1');
+      assert.ok(help && help.m.size === 3, 'the three help/ entries are in wts-help-v1');
+      assert.ok(!(await sw.cache('wts-shell-v1').match(NEW)), 'not in the shell cache');
+      assert.ok(await sw.cache('wts-shell-v1').match(SCOPE + 'img/logo.png'), 'other static files stay in the shell cache');
+      await sw.dispatch('message', { data: { type: 'WTS_HELP_PRUNE', keep: [NEW, GUIDE + '#ch-2', SCOPE + 'img/logo.png', 42] } });
+      assert.deepStrictEqual(Array.from(help.m.keys()).sort(), [GUIDE, NEW].sort(), 'superseded screenshot deleted; current ones kept');
+      assert.ok(await sw.cache('wts-shell-v1').match(SCOPE + 'img/logo.png'), 'pruning never touches the shell cache');
+      await sw.dispatch('message', { data: { type: 'WTS_HELP_PRUNE', keep: 'nope' } });
+      assert.strictEqual(help.m.size, 2, 'a malformed prune message is ignored');
+      ['wts-help-v0'].forEach((n) => sw.stores.set(n, new FakeCache()));
+      await sw.dispatch('activate');
+      assert.ok(sw.stores.has('wts-help-v1') && !sw.stores.has('wts-help-v0'), 'activate keeps the current help cache, drops old ones');
     },
   },
 ];

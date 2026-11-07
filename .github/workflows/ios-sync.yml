@@ -14,6 +14,7 @@ on:
       - 'well-testing-app.html'
       - 'ios-app/ios-additions/**'
       - 'ios-app/scripts/sync-from-main.js'
+      - 'help/**'                    # Help screenshots / user guide → ios-app/www/help (sync step 8)
   workflow_dispatch:  # manual trigger
 
 permissions:
@@ -45,9 +46,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain ios-app/www/)" ]; then
             # Stage everything the sync script may have produced: index.html,
-            # capacitor.js, and any bundled libs copied from ios-additions/libs/
-            # (jspdf.umd.min.js, html2canvas.min.js). Using the directory path
-            # picks up all tracked + new files under www/.
+            # capacitor.js, any bundled libs copied from ios-additions/libs/
+            # (jspdf.umd.min.js, html2canvas.min.js) and the Help files in
+            # www/help/ (screenshots, manifest, user guide; removed files too).
+            # Using the directory path picks up all tracked + new files under www/.
             git add ios-app/www/
             git commit -m "chore(ios): auto-sync www from main HTML [skip ci]"
             git push

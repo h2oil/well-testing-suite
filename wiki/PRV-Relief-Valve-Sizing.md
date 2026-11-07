@@ -1,5 +1,7 @@
 # PRV / Relief Valve Sizing
 
+> **Superseded by the in-app Help** (Help & Guide → PSV / relief valve sizing), which follows the current version. This page is kept for one release and will then be removed.
+
 Sizes pressure relief valves per **API 520 Part I** with standard orifice selection from **API 526**.
 
 ## Service Types

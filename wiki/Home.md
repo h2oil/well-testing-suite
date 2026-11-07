@@ -1,5 +1,7 @@
 # Well Testing Suite — Wiki
 
+> **Superseded by the in-app Help** (Help & Guide → Help home), which follows the current version. This page is kept for one release and will then be removed.
+
 Welcome to the Well Testing Suite wiki. This documentation covers every module, feature, and workflow in the application.
 
 ## Table of Contents

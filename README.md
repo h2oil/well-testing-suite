@@ -21,6 +21,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 - [Live data: Mini WellOS, Modbus and the historian](#live-data-mini-wellos-modbus-and-the-historian)
 - [Units, standard conditions and standards](#units-standard-conditions-and-standards)
 - [Reports, projects and multi-well](#reports-projects-and-multi-well)
+- [Help and user guide](#help-and-user-guide)
 - [Getting started](#getting-started)
 - [Privacy](#privacy)
 - [For developers](#for-developers)
@@ -375,6 +376,24 @@ Standards and methods cited in the calculators:
 
 ---
 
+## Help and user guide
+
+- **Help & Guide** (Overview, also the Help link under the version and the **?** button next to every
+  page title, or F1): a guide for every module with screenshots — what it does, when to use it, steps,
+  inputs, results and verdicts, a worked example, tips and the standards it follows.
+- **Search** ranks "How do I…" tasks first, then guide titles, synonyms and the field answers (for
+  example *burner*, *production pressure*, *cushion*). Getting started, a glossary and a troubleshooting FAQ.
+- **Well Test Simulator course:** 10 self-paced exercises with steps, what to observe, questions,
+  answers, trainer notes and a printable worksheet.
+- **Field scenarios:** unloading the cushion to the burner, flowing to a production line, clean-up
+  with sand and cold start-up — which pressure goes in which input, and the order of the steps that runs
+  without an ESD trip.
+- **Print / Save as PDF** a quick card, one guide, a sidebar group, a worksheet or the whole user guide
+  (Images off option). The complete guide is also published as `help/user-guide.html`; the iOS app opens
+  the bundled copy offline.
+
+---
+
 ## Getting started
 
 ### Web
@@ -527,6 +546,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.3.2 | 2026-11-06 | Help & User Guide: a guide for every module with screenshots, search, a ? button on every page (F1), Getting started, "How do I…" tasks, a printable user guide and quick cards; Well Test Simulator training course (10 exercises, with trainer notes and worksheets) and field scenarios (unloading the cushion to the burner or a production line) |
 | v3.3 | 2026-11-01 | Build-up Surveillance (Production & Reservoir): shut-ins found in permanent-gauge data, each full build-up interpreted automatically, rates over the flowing hours, skin / k / p* / PI trends with delta and absolute alerts, onset and forecast, gas wells and injector fall-offs, rule-based review with an evidence check, audit trail and sign-off, Quick Report section; PRiSM Skin-check card with a calibrated confidence label and the closed-circle model (46 models) |
 | v3.2 | 2026-10-31 | Chemical Injection planner (Test System Safety): hydrate-inhibitor design with real-gas J-T cooling and a 10 °F margin, ppm treating chemicals, pump settings ranked for classified areas, discharge pressure and relief-valve band, calibration, tank and totes; links from Hydrate Management and Chemical & Dosage; Quick Report entries; ⓘ background and standards pop-ups; Multiphase Flowline flare line calculated from the flare tip back to the separator gas control valve (header pressure, valve drop, Mach, ρv²) and the choke from the separator pressure |
 | v3.1.1 | 2026-10-30 | iOS app: iOS 27 launch fix (UIKit scene life cycle), App Store version matches the app, archive builds with no warnings |

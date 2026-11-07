@@ -1,5 +1,7 @@
 # Engineering Calculators
 
+> **Superseded by the in-app Help** (Help & Guide → the guide for each calculator), which follows the current version. This page is kept for one release and will then be removed.
+
 This group covers equipment sizing and process engineering calculations commonly needed during well testing and production operations.
 
 ## Pump Sizing

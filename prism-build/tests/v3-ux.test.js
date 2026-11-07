@@ -62,7 +62,10 @@ module.exports = [
     run(app, assert) {
       app.hook.nav('home');
       const groups = sidebarGroups(app).filter((g) => g.label.toLowerCase() !== 'overview');
-      const secs = app.findAll('.dash-sec[data-group]');
+      // v3.3.2: the Help & User Guide tile (registry, group Overview) is the dashboard's only Overview tile
+      const ov = app.findAll('.dash-sec[data-group="Overview"] .dash-card').map((c) => c.getAttribute('data-id'));
+      assert.deepStrictEqual(ov, app.win.WTS_calcRegistry.help ? ['help'] : [], 'Overview tiles: Help only');
+      const secs = app.findAll('.dash-sec[data-group]').filter((s) => s.getAttribute('data-group') !== 'Overview');
       assert.deepStrictEqual(secs.map((s) => s.getAttribute('data-group')), groups.map((g) => g.label), 'section order = sidebar group order');
       secs.forEach((s, i) => {
         const ids = Array.from(s.querySelectorAll('.dash-card')).map((c) => c.getAttribute('data-id'));
@@ -70,13 +73,13 @@ module.exports = [
         assert.strictEqual(text(s.querySelector('.dash-group-n')), String(ids.length), 'group count badge');
         assert.ok(new RegExp('^' + groups[i].label.replace(/[&]/g, '\\$&')).test(text(s.querySelector('.dash-group-h'))), 'heading text');
       });
-      const all = app.findAll('.dash-card').map((c) => c.getAttribute('data-id'));
+      const all = app.findAll('.dash-card').map((c) => c.getAttribute('data-id')).filter((id) => ov.indexOf(id) === -1);
       assert.strictEqual(new Set(all).size, all.length, 'no duplicate tiles in the grids');
       const sidebarCalcs = [].concat(...groups.map((g) => g.ids));
       assert.deepStrictEqual(all.slice().sort(), sidebarCalcs.slice().sort(), 'every sidebar calculator has a tile');
       ['esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife'].forEach((k) => assert.ok(all.includes(k), 'Test System Safety tile ' + k));
       assert.ok(all.length >= 50, '~50 tiles: ' + all.length);
-      assert.strictEqual(text(app.el('dash_count')), all.length + ' calculators');
+      assert.strictEqual(text(app.el('dash_count')), all.length + ' calculators', 'the Overview (Help) tile is not a calculator');
       app.click(app.find('.dash-card[data-id="sepqc"]'));
       assert.strictEqual(app.hook.page(), 'sepqc', 'tile still navigates');
     },
@@ -89,7 +92,7 @@ module.exports = [
       app.hook.nav('home');
       app.input('dash_search', 'vogel');                        // only in the Oil IPR description
       assert.deepStrictEqual(visibleCards(app), ['oilipr']);
-      assert.strictEqual(text(app.el('dash_count')), '1 of ' + app.findAll('.dash-card').length + ' calculators');
+      assert.strictEqual(text(app.el('dash_count')), '1 of ' + (app.findAll('.dash-card').length - app.findAll('.dash-sec[data-group="Overview"] .dash-card').length) + ' calculators');
       assert.ok(app.el('dash_quick').classList.contains('hidden'), 'favourites / recent hidden while searching');
       app.input('dash_search', 'ELECTRICAL');                   // group label, case-insensitive
       const elec = ['gensz', 'cablesz', 'vdrop', 'elec'];      // the Electrical hub (v3.1: one entry in Fluids & Utilities)
@@ -421,7 +424,8 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const reg = app.win.WTS_calcRegistry;
-      const keys = Object.keys(reg).filter((k) => typeof reg[k].render === 'function');
+      // help (v3.3.2) is a guide page, not a calculator: no Notes box, no export bar (docs/HELP-GUIDE-PLAN.md D14)
+      const keys = Object.keys(reg).filter((k) => typeof reg[k].render === 'function' && k !== 'help');
       assert.ok(keys.length >= 15, 'plug-in calculators: ' + keys.length);
       const COLOR = { '✓': 'green', '⚠': 'yellow', '✗': 'red' };
       keys.forEach((k) => {

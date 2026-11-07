@@ -6,13 +6,23 @@
  * ios-app/scripts/sync-from-main.js and the app refuses capacitor:/file:).
  *
  * WHAT IS CACHED (nothing else is touched — the request goes to the network)
- *   shell   the app page itself (navigations to the scope root or *.html
- *           under the scope). Stale-while-revalidate: served from the cache
- *           at once (works without signal); when online a fresh copy is
- *           fetched in the background and, if it differs, stored and every
- *           open window is told ("WTS_SW_UPDATE") so the app can offer Reload.
+ *   shell   the app page itself: the scope root, SHELL_PAGES and their
+ *           index.html alias — nothing else. Stale-while-revalidate: served
+ *           from the cache at once (works without signal); when online a
+ *           fresh copy is fetched in the background and, if it differs,
+ *           stored and every open window is told ("WTS_SW_UPDATE") so the
+ *           app can offer Reload. Offline, an uncached shell URL is answered
+ *           only from the cached SHELL_PAGES, never from another cached page.
  *   static  same-origin fonts, images, stylesheets and scripts under the
- *           scope (cache first).
+ *           scope (cache first, keyed by the full href). The Help folder
+ *           help/ is static too, its pages included (help/user-guide.html):
+ *           its links carry ?v=<app version> and its screenshots
+ *           ?v=<first 8 hex of sha256>, so a new release or a re-shoot is a
+ *           new cache entry and the guide never raises the update notice.
+ *           help/ entries live in their own cache (HELP_CACHE), so that
+ *           superseded screenshots and guide versions do not pile up: the
+ *           Help page's offline download sends "WTS_HELP_PRUNE" with the
+ *           current URLs and every other help/ entry is deleted.
  *   lib     the pinned CDN libraries the app loads on demand (three.js
  *           r170 for the 3D view, SheetJS 0.18.5 for .xlsx import, SQLite WASM
  *           3.53.4 and sql.js 1.14.2 for the historian), by exact versioned URL
@@ -33,8 +43,12 @@
 var VERSION = '1';
 var SHELL_CACHE = 'wts-shell-v1';
 var LIB_CACHE = 'wts-libs-v1';
-var CACHES = [SHELL_CACHE, LIB_CACHE];
+var HELP_CACHE = 'wts-help-v1';                                   // help/ only (prunable to the current manifest)
+var CACHES = [SHELL_CACHE, LIB_CACHE, HELP_CACHE];
 var SHELL_PAGES = ['well-testing-app.html'];                     // relative to the scope
+var SHELL_ALIASES = ['', 'index.html'];                           // the scope root and its index page also serve the app (plan §2.10)
+var HELP_DIR = 'help/';                                           // Help centre files (static, never shell)
+var HELP_RE = /\.(?:html?|json|webp|png|jpe?g|svg|css|js)$/i;
 var CDN_LIBS = [
     'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
     'https://unpkg.com/three@0.170.0/build/three.module.min.js',
@@ -71,8 +85,9 @@ function route(req) {
     if (url.pathname.indexOf(scope.pathname) !== 0) return { kind: 'bypass', why: 'out-of-scope' };
     var rel = url.pathname.slice(scope.pathname.length);
     if (rel === 'sw.js') return { kind: 'bypass', why: 'worker' };
-    var htmlPath = rel === '' || /\/$/.test(rel) || /\.html?$/i.test(rel);
-    if (htmlPath && (req.mode === 'navigate' || /\.html?$/i.test(rel) || rel === '')) return { kind: 'shell', key: bare };   // ?v= cache-busters dropped
+    // Help centre: screenshots and the printable guide are static (cache first by full href, ?v= kept).
+    if (rel.indexOf(HELP_DIR) === 0) return HELP_RE.test(rel) ? { kind: 'static', key: url.href.split('#')[0], help: true } : { kind: 'bypass', why: 'not-app-asset' };
+    if (SHELL_PAGES.indexOf(rel) !== -1 || SHELL_ALIASES.indexOf(rel) !== -1) return { kind: 'shell', key: bare };   // ?v= cache-busters dropped
     if (req.mode === 'navigate') return { kind: 'bypass', why: 'navigate-other' };
     if (STATIC_RE.test(rel)) return { kind: 'static', key: url.href.split('#')[0] };
     return { kind: 'bypass', why: 'not-app-asset' };
@@ -126,14 +141,23 @@ function handleShell(req, r, waitUntil) {
                 return cached;
             }
             return refresh.catch(function () {
-                // Offline and this exact URL was never cached: any cached app page will do.
-                return cache.keys().then(function (keys) {
-                    var alt = keys.map(function (k) { return k.url || k; }).filter(function (u) { return /\.html?$|\/$/i.test(u); })[0];
-                    return alt ? cache.match(alt) : Response.error();
-                });
+                // Offline and this exact URL was never cached: a cached app page (SHELL_PAGES only, in order) will do.
+                return shellFallback(cache);
             });
         });
     });
+}
+
+// The first cached SHELL_PAGES entry, else a network error. Never another cached page (e.g. the Help guide).
+function shellFallback(cache) {
+    var scope = scopeURL();
+    var urls = SHELL_PAGES.map(function (p) { return new URL(p, scope).href; });
+    var i = 0;
+    var next = function () {
+        if (i >= urls.length) return Response.error();
+        return cache.match(urls[i++]).then(function (hit) { return hit || next(); });
+    };
+    return next();
 }
 
 // Static / lib: cache first, fill on a miss.
@@ -154,7 +178,7 @@ function handleFetch(event) {
     if (r.kind === 'bypass') return null;
     var waitUntil = function (p) { try { event.waitUntil(p); } catch (e) {} };
     if (r.kind === 'shell') return handleShell(event.request, r, waitUntil);
-    return handleCacheFirst(event.request, r, r.kind === 'lib' ? LIB_CACHE : SHELL_CACHE);
+    return handleCacheFirst(event.request, r, r.kind === 'lib' ? LIB_CACHE : r.help ? HELP_CACHE : SHELL_CACHE);
 }
 
 // Best-effort fetch + store; a failure never breaks install.
@@ -184,6 +208,21 @@ function onMessage(event) {
     var d = event && event.data;
     if (!d || typeof d !== 'object') return null;
     if (d.type === 'WTS_SKIP_WAITING') return self.skipWaiting();
+    // {type, keep: [help/ URLs]}: delete every HELP_CACHE entry not in keep (fragments ignored). → number deleted.
+    if (d.type === 'WTS_HELP_PRUNE' && Array.isArray(d.keep)) {
+        var keep = {};
+        d.keep.forEach(function (u) {
+            if (typeof u !== 'string') return;
+            var k = route({ method: 'GET', url: u, mode: 'no-cors' });
+            if (k.help) keep[k.key] = 1;
+        });
+        return caches.open(HELP_CACHE).then(function (c) {
+            return c.keys().then(function (reqs) {
+                var gone = reqs.filter(function (q) { return !keep[q.url]; });
+                return Promise.all(gone.map(function (q) { return c.delete(q); })).then(function () { return gone.length; });
+            });
+        });
+    }
     if (d.type === 'WTS_CACHE_SHELL' && typeof d.url === 'string') {
         var r = route({ method: 'GET', url: d.url, mode: 'navigate' });
         if (r.kind !== 'shell') return Promise.resolve(false);
@@ -205,5 +244,5 @@ self.addEventListener('fetch', function (event) {
 });
 
 // Test hook (read-only; used by prism-build/tests/sw-offline.test.js).
-self.WTS_SW = { VERSION: VERSION, SHELL_CACHE: SHELL_CACHE, LIB_CACHE: LIB_CACHE, CDN_LIBS: CDN_LIBS.slice(),
-    SHELL_PAGES: SHELL_PAGES.slice(), route: route, cacheable: cacheable };
+self.WTS_SW = { VERSION: VERSION, SHELL_CACHE: SHELL_CACHE, LIB_CACHE: LIB_CACHE, HELP_CACHE: HELP_CACHE, CDN_LIBS: CDN_LIBS.slice(),
+    SHELL_PAGES: SHELL_PAGES.slice(), SHELL_ALIASES: SHELL_ALIASES.slice(), route: route, cacheable: cacheable };

@@ -1,5 +1,7 @@
 # Field Calculators
 
+> **Superseded by the in-app Help** (Help & Guide → the guide for each calculator), which follows the current version. This page is kept for one release and will then be removed.
+
 Quick-reference calculators for everyday oilfield engineering tasks.
 
 ## Gas Calculations
