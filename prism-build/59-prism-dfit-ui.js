@@ -151,8 +151,15 @@
         if (s == null) return NaN;
         s = String(s).trim();
         if (!s) return NaN;
-        if (typeof G.WTS_parseNumber === 'function') { try { var n = G.WTS_parseNumber(s); if (_isNum(n)) return n; } catch (e) { /* fall through */ } }
-        if (/^[-+]?\d+,\d+$/.test(s) && !/^[-+]?\d{1,3},\d{3}$/.test(s)) s = s.replace(',', '.');
+        if (s.indexOf(',') !== -1) {
+            var A = G.WTS_a11y, dc = false;
+            try { dc = !!(A && typeof A.decimalComma === 'function' && A.decimalComma()); } catch (e) { dc = false; }
+            if (dc && typeof G.WTS_parseNumber === 'function' && /^[-+]?\d+,\d+$/.test(s)) { try { var n = G.WTS_parseNumber(s); if (_isNum(n)) return n; } catch (e) { /* fall through */ } }
+            if (/^[-+]?\d{1,3}(,\d{3}){2,}(\.\d+)?$/.test(s) || /^[-+]?\d{1,3},\d{3}\.\d+$/.test(s)) s = s.replace(/,/g, '');   // thousands groups
+            else if (/^[-+]?\d{1,3},\d{3}$/.test(s)) return NaN;                                                          // ambiguous
+            else if (/^[-+]?\d+,\d+$/.test(s)) s = s.replace(',', '.');                                                   // decimal comma
+            else return NaN;
+        }
         return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s) ? parseFloat(s) : NaN;
     }
     function _displayOf(path, v) {
@@ -282,7 +289,7 @@
         var loaded = _loadTestDataset(T);
         _dropRun();
         _checkBinding();
-        if (_inDfit() && !T.summary || (T.summary && T.summary.stale)) runFast('test');
+        runFast('test');
         _emit('prism:dfit-updated', { what: 'test', source: 'user' });
         _batch('end');
         _refreshUI();
@@ -564,6 +571,10 @@
     // =========================================================================
     var PICK_ITEMS = { isip: 1, closure: 1, aca: 1 };
     function setPick(item, value, o) {
+        _batch('begin');
+        try { return _setPick(item, value, o); } finally { _batch('end'); }
+    }
+    function _setPick(item, value, o) {
         o = o || {};
         var T = test(), source = o.source || 'user';
         var reason = _txt(o.reason || '');
@@ -1342,6 +1353,7 @@
         for (var k in b.opts) if (_own(b.opts, k)) o[k] = b.opts[k];
         if (extra) for (var k2 in extra) if (_own(extra, k2)) o[k2] = extra[k2];
         try { f(canvas, b.data, o); } catch (e) { _msgCanvas(canvas, 'Render error: ' + _txt(e && e.message)); return false; }
+        _attachOwner(canvas, key);
         return true;
     }
 
@@ -1361,6 +1373,7 @@
     var PICK_PLOTS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitCompliance: 1, dfitStrip: 1, dfitIsip: 1 };
     function picksHook(info) {
         if (!info || !info.canvas || !PICK_PLOTS[info.plotKey]) return;
+        if (!info.exporting) _attachOwner(info.canvas, info.plotKey);
         var ax = info.canvas._prismAxes || info.axes;
         var run = _run();
         if (!ax || typeof ax.toX !== 'function' || !run) return;
@@ -1390,6 +1403,86 @@
         for (var i = 0; i < hooks.length; i++) if (hooks[i] && hooks[i]._prismId === 'dfit-picks') { hooks[i] = picksHook; return; }
         hooks.push(picksHook);
     }
+    // ── draggable handles through 02's pointer-owner hook (§2.7, §7.10): the closure marker on dfitG / dfitSqrt / dfitLogLog
+    //    and the what-if marker on dfitStrip. Within 24 px of the marker the gesture is taken; a drag previews (redraw with the
+    //    marker at the pointer) and the release commits ONE pick-log entry (closure) or the what-if (strip).
+    var DRAG_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitStrip: 1 };
+    var HIT_PX = 24;
+    function _localX(canvas, ev) {
+        if (_isNum(ev.offsetX)) return ev.offsetX;
+        var r = (canvas.getBoundingClientRect && canvas.getBoundingClientRect()) || { left: 0 };
+        return (_isNum(ev.clientX) ? ev.clientX : 0) - (r.left || 0);
+    }
+    function _markerX(canvas, key) {
+        var ax = canvas._prismAxes, run = _run();
+        if (!ax || typeof ax.toX !== 'function' || !run) return null;
+        if (key === 'dfitStrip') {
+            var w = _st()._dfitWhatIf, c = _closureOf(run);
+            var p = (w && _isNum(w.p)) ? w.p : (c.mode === 'single' ? c.value : (c.medians && c.medians[0]));
+            return _isNum(p) ? ax.toX(p) : null;
+        }
+        var cp = test().picks.closure, pc = (cp && cp.source === 'user' && _isNum(cp.p)) ? cp.p : _closureP(test().summary);
+        if (!_isNum(pc)) return null;
+        var x = _xOfPick(key, run.derivs, { p: pc });
+        return _isNum(x) ? ax.toX(x) : null;
+    }
+    function _pickFromX(key, xData) {
+        var run = _run(), d = run && run.derivs;
+        if (!d) return null;
+        if (key === 'dfitG') return _pickAtG(d, xData);
+        if (key === 'dfitSqrt') return _pickAtDt(d, Math.pow(Math.max(0, xData), 2) / 60);
+        if (key === 'dfitLogLog') return _pickAtDt(d, xData / 60);
+        return null;
+    }
+    function _attachOwner(canvas, key) {
+        if (!canvas || !DRAG_KEYS[key]) return;
+        canvas._dfitPlotKey = key;
+        if (canvas._prismPointerOwner && canvas._prismPointerOwner._dfit) return;
+        var owner = function (ev) {
+            var k = canvas._dfitPlotKey, mx = _markerX(canvas, k);
+            if (!_isNum(mx) || !ev) return false;
+            var x0 = _localX(canvas, ev);
+            if (Math.abs(x0 - mx) > HIT_PX) return false;
+            var drag = canvas._dfitDrag = { key: k, x: x0, moved: false };
+            var move = function (e) { if (canvas._dfitDrag !== drag) return; drag.x = _localX(canvas, e); drag.moved = true; _previewDrag(canvas, drag); };
+            var up = function (e) {
+                canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel);
+                if (canvas._dfitDrag !== drag) return;
+                canvas._dfitDrag = null;
+                if (e && e.type !== 'pointercancel') drag.x = _localX(canvas, e);
+                _commitDrag(canvas, drag);
+            };
+            var cancel = function () { canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', cancel); canvas._dfitDrag = null; drawPlot(canvas, k); };
+            drag.move = move; drag.up = up; drag.cancel = cancel;
+            canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', cancel);
+            return true;
+        };
+        owner._dfit = true;
+        canvas._prismPointerOwner = owner;
+    }
+    function _previewDrag(canvas, drag) {
+        var ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function') return;
+        var draw = function (ctx, a) { _vline(ctx, (a || ax).plot || ax.plot, drag.x, '#ff7b72', [6, 2], _f((drag.key === 'dfitStrip') ? ax.fromX(drag.x) : (_pickFromX(drag.key, ax.fromX(drag.x)) || {}).p, 0)); };
+        if (typeof G.PRiSM_plot_overlay === 'function') { try { G.PRiSM_plot_overlay(canvas, draw); return; } catch (e) { /* fall through */ } }
+        drawPlot(canvas, drag.key);
+        try { draw(canvas.getContext('2d'), ax); } catch (e) { /* cosmetic */ }
+    }
+    function _commitDrag(canvas, drag) {
+        var ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function') return null;
+        var xd = ax.fromX(drag.x);
+        if (drag.key === 'dfitStrip') {
+            if (!_isNum(xd)) return null;
+            _st()._dfitWhatIf = { p: xd };
+            runFast('what-if');
+            _refreshUI();
+            return { whatIf: xd };
+        }
+        var pk = _pickFromX(drag.key, xd);
+        if (!pk || !_isNum(pk.p)) { drawPlot(canvas, drag.key); return null; }
+        return setPick('closure', { mode: 'user', family: null, method: 'user', p: pk.p, dt: pk.dt, G: pk.G }, { source: 'user', reason: 'Closure marker dragged on the ' + ((PLOT_ENTRIES[drag.key] || {}).label || 'plot') });
+    }
     // nearest-index helpers on the derivative arrays
     function _nearestIdx(xs, x) { var best = -1, bd = Infinity; for (var i = 0; i < (xs ? xs.length : 0); i++) { var dd = Math.abs(xs[i] - x); if (_isNum(dd) && dd < bd) { bd = dd; best = i; } } return best; }
     function _tangentAt(d, Gc) {
@@ -1398,8 +1491,13 @@
         var s = 0;
         for (var i = Math.max(0, i0 - 10); i <= Math.min(d.G.length - 1, i0 + 10); i++) if (d.G[i] > 0 && _isNum(d.GdPdG[i])) s = Math.max(s, d.GdPdG[i] / d.G[i]);
         if (!(s > 0)) return null;
-        var eps = (test().inputs.options.eps && test().inputs.options.eps.tangent) || 0.02, last = i0;
-        for (var j = 0; j < d.G.length; j++) if (d.G[j] > 0 && _isNum(d.GdPdG[j]) && d.GdPdG[j] >= (1 - eps) * s * d.G[j]) last = j;
+        // from the click window on: the last G where G·dP/dG still lies within ε of the tangent s·G (left for three points in a row)
+        var eps = (test().inputs.options.eps && test().inputs.options.eps.tangent) || 0.02, last = i0, off = 0;
+        for (var j = Math.max(0, i0 - 10); j < d.G.length; j++) {
+            if (!(d.G[j] > 0) || !_isNum(d.GdPdG[j])) continue;
+            if (Math.abs(d.GdPdG[j] - s * d.G[j]) <= eps * s * d.G[j]) { last = j; off = 0; }
+            else if (++off >= 3) break;
+        }
         return { G: d.G[last], dt: d.dt[last], p: d.p[last], value: d.p[last], slope: s };
     }
     function _pickAtG(d, Gc) { var i = _nearestIdx(d.G, Gc); return i < 0 ? null : { G: d.G[i], dt: d.dt[i], p: d.p[i], value: d.p[i] }; }
@@ -2621,6 +2719,12 @@
             try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(x), '#c9d1d9', [2, 2], ''); }); } catch (err) { /* cosmetic */ }
         });
     }
+    // Escape cancels a drag in progress (an armed line tool is cancelled by 11)
+    function _onKey(e) {
+        if (!e || (e.key !== 'Escape' && e.key !== 'Esc') || !HAS_DOC) return;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) { if (cv._dfitDrag && cv._dfitDrag.cancel) cv._dfitDrag.cancel(); });
+        var mc = _byId('prism_plot_canvas'); if (mc && mc._dfitDrag && mc._dfitDrag.cancel) mc._dfitDrag.cancel();
+    }
     var _listening = false;
     function _listen() {
         if (_listening || typeof G.addEventListener !== 'function') return;
@@ -2631,6 +2735,7 @@
             document.addEventListener('wts:project-loaded', _onProject);
             document.addEventListener('wts:project-new', _onProject);
             document.addEventListener('h2oil:pagechange', _onPage);
+            document.addEventListener('keydown', _onKey);
         }
     }
 
