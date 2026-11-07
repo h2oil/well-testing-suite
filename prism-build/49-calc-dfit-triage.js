@@ -267,6 +267,21 @@
         }
         return best;
     }
+    // largest drop between consecutive samples within t[kd] ± max(60 s, 5 × the median sample interval before kd), kd = the rate
+    // down-crossing (a clock offset of up to a minute either way still finds the shut-in drop; a log-spaced late falloff
+    // interval never does)
+    function dropNear(C, kd) {
+        var t = C.t, dts = [], i;
+        for (i = Math.max(1, kd - 20); i <= kd; i++) if (fin(t[i]) && fin(t[i - 1]) && t[i] > t[i - 1]) dts.push(t[i] - t[i - 1]);
+        var md = dts.length ? median(dts) : 0, win = Math.max(60 / 3600, 5 * md);
+        var tMin = t[kd] - win, tMax = t[kd] + win, best = -1, bd = 0;
+        for (i = 0; i + 1 < C.n && t[i] <= tMax; i++) {
+            if (t[i + 1] < tMin) continue;
+            var d = C.pw[i] - C.pw[i + 1];
+            if (fin(d) && d > bd) { bd = d; best = i; }
+        }
+        return best;
+    }
     function theory(C) {
         var cs = C.raw.csys, vw = null, c = null, W = G.WTS_wellbore;
         if (isObj(cs)) { if (fin(cs.VwCw) && cs.VwCw > 0) vw = cs.VwCw; if (fin(cs.waveSpeed) && cs.waveSpeed > 0) c = cs.waveSpeed; }
@@ -330,7 +345,10 @@
         var top = p0 + 0.9 * (p[kmax] - p0), kEnd = ku;
         while (kEnd + 1 <= kmax && p[kEnd + 1] <= top) kEnd++;
         var slope1 = (p[ku] - p[ku - 1]) / (t[ku] - t[ku - 1]);
-        var tp0 = slope1 > 0 ? t[ku] - (p[ku] - p0) / slope1 : t[ku];
+        // a resolved ramp: back-extrapolate with the ramp's own slope (the first interval may hold the start, so its slope is
+        // too low when the pre-pump sampling is coarse); never before the last baseline sample
+        if (ku + 1 <= kEnd) { var sR = (p[ku + 1] - p[ku]) / (t[ku + 1] - t[ku]); if (sR > slope1) slope1 = sR; }
+        var tp0 = slope1 > 0 ? Math.max(t[ku - 1], t[ku] - (p[ku] - p0) / slope1) : t[ku];
         var uncP = 0.5 * (t[ku] - t[ku - 1]) * 3600;
         if (kEnd - ku >= 1) uncP = Math.min(uncP, 0.5);
         var L0 = (tq0 - tp0);                        // h
@@ -361,18 +379,35 @@
             }
         } else best = { L: L0, b: NaN };
         var offsetS = best.L * 3600;
+        // a sampled rate step (0 → ≥ half the maximum between two samples) starts anywhere in (t[kq-1], t[kq]]: the trapezoid
+        // volume smears it over the whole interval, so a coarse pre-pump sampling (12 s on the reference demo) reads as a lag. The
+        // offset is then the distance from the pressure-up start to that interval (0 inside it)
+        if (q[kq] - q0 >= 0.5 * qMaxRec) {
+            var tA = t[kq - 1], tB = t[kq], tpS = tp0 < tA ? tA : (tp0 > tB ? tB : tp0);
+            offsetS = (tpS - tp0) * 3600;
+        }
         var uncS = Math.max(uncQ, uncP);
         // stop event: last down-crossing of 50 % of the last rate vs the largest negative pressure difference
         var stopS = null, stopUnc = null, qlr = fin(q[C.iLastPump]) && q[C.iLastPump] > 0.05 * qMaxRec ? q[C.iLastPump] : qMaxRec, lvl = 0.5 * qlr, kd = -1;
         for (i = n - 1; i >= 1; i--) if (fin(q[i]) && q[i] < lvl && q[i - 1] >= lvl) { kd = i; break; }
-        var iDrop = largestDrop(C);
+        // the shut-in drop is looked for only near the rate stop (plan §4.1: last pumping sample → first falloff sample); a
+        // log-spaced late falloff interval can drop more than the shut-in step, so the whole record is never searched
+        var iDrop = kd > 0 ? dropNear(C, kd) : -1;
         if (kd > 0 && iDrop >= 0) {
             var tq1 = t[kd - 1] + (q[kd - 1] - lvl) / (q[kd - 1] - q[kd]) * (t[kd] - t[kd - 1]);
             var tp1 = 0.5 * (t[iDrop] + t[iDrop + 1]);
             stopS = (tq1 - tp1) * 3600;
             stopUnc = 0.5 * (t[kd] - t[kd - 1]) * 3600 + 0.5 * (t[iDrop + 1] - t[iDrop]) * 3600;
         }
-        return { ok: true, offsetS: offsetS, uncS: uncS, stopS: stopS, stopUncS: stopUnc,
+        // a surface gauge on vacuum at the rate start: the pumped volume first fills the void, so the pressure rise lags the rate
+        // by the fill time (a physical delay, not a clock error); the stop event then carries the clock check
+        var vac = false;
+        if (C.pSurf) {
+            var ps = [];
+            for (i = Math.max(0, kq - 5); i < kq; i++) if (fin(C.pSurf[i])) ps.push(C.pSurf[i]);
+            vac = ps.length > 0 && median(ps) < C.atm - 1;
+        }
+        return { ok: true, offsetS: offsetS, uncS: uncS, stopS: stopS, stopUncS: stopUnc, vacuumFill: vac && offsetS < 0,
                  slopePsiPerBbl: fin(best.b) ? best.b : null, method: 'event', rampIdx: idx, p0: p0, tq0: tq0, tp0: tp0 };
     }
     function getAlign(C) {
@@ -421,6 +456,13 @@
         var a = getAlign(C);
         if (!a || !a.ok) return { level: 'na', value: null, threshold: T.passS, text: 'Rate and pressure events could not both be found: clock alignment not checked.' };
         var off = a.offsetS, applied = 3600 * (fin(gp(C.prep, 'applied.clockOffsetH', null)) ? C.prep.applied.clockOffsetH : 0);
+        if (a.vacuumFill) {
+            if (a.stopS == null) return { level: 'na', value: null, threshold: T.passS, text: 'The well was on vacuum at the rate start (the pressure rise lags by the fill time ' + fmt(-off, 1) + ' s) and no stop event was found: clock alignment not checked.' };
+            var tolS = Math.max(T.passS, a.stopUncS || 0);
+            if (Math.abs(a.stopS) > tolS)
+                return { level: 'warn', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate stop lags the shut-in drop by ' + fmt(a.stopS, 1) + ' s (the start is not used: the well was on vacuum); confirm and apply the clock offset before picking events.' };
+            return { level: 'pass', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate and pressure clocks agree at the shut-in within ' + fmt(tolS, 1) + ' s (offset ' + fmt(a.stopS, 1) + ' s); the start lags by the vacuum fill time ' + fmt(-off, 1) + ' s.' };
+        }
         if (a.stopS != null && Math.abs(a.stopS - off) > Math.max(T.contradictS, 2 * ((a.uncS || 0) + (a.stopUncS || 0))))
             return { level: 'fail', value: rnd(off, 1), threshold: T.contradictS, inWindow: true,
                      text: 'Events contradict: the rate starts ' + fmt(off, 1) + ' s after the pressure rise but stops ' + fmt(a.stopS, 1) + ' s after the shut-in drop.' };
@@ -782,6 +824,7 @@
 
     CK.tides = function (C, T) {
         var td = C.raw.tide;
+        if (isObj(td) && td.significant === false) return { level: 'pass', value: null, threshold: T.warn, text: 'No significant tide' + (fin(td.snr) ? ' (signal-to-noise ' + fmt(td.snr, 1) + ')' : '') + '.' };
         if (!isObj(td) || !fin(td.ampPsi)) return { level: 'na', value: null, threshold: T.warn, text: 'No tidal or barometric analysis.' };
         if (td.removed === true) return { level: 'pass', value: null, threshold: T.warn, text: 'Tidal and barometric signal removed.' };
         var dp = fin(td.dpPsi) && td.dpPsi > 0 ? td.dpPsi : null;

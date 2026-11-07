@@ -896,7 +896,10 @@
                     var td = G.PRiSM_tideAnalysis(tInj, p, { detrend: true });
                     tide.snr = td && fin(td.snr) ? td.snr : null;
                     // amplitude (largest constituent) against the after-closure pressure change: the triage tides check (Q20)
-                    if (td && arrOk(td.constituents)) { var aMax = null; td.constituents.forEach(function (cn) { if (cn && fin(cn.amplitude) && (aMax === null || cn.amplitude > aMax)) aMax = cn.amplitude; }); tide.ampPsi = aMax; }
+                    // only a significant (SNR ≥ 3) or applied fit carries an amplitude: a rejected fit's largest constituent is
+                    // detrend leakage (the reference demo has no tide yet read 364 psi), so it is never handed to the triage
+                    tide.significant = tide.mode === 'on' || (fin(tide.snr) && tide.snr >= 3);
+                    if (tide.significant && td && arrOk(td.constituents)) { var aMax = null; td.constituents.forEach(function (cn) { if (cn && fin(cn.amplitude) && (aMax === null || cn.amplitude > aMax)) aMax = cn.amplitude; }); tide.ampPsi = aMax; }
                     tide.dpPsi = Math.abs(p[0] - p[p.length - 1]);
                     if (td && arrOk(td.p_corrected) && td.p_corrected.length === p.length && arrOk(td.constituents) && td.constituents.length && (tide.mode === 'on' || (fin(td.snr) && td.snr >= 3))) {
                         var pT = td.p_corrected.map(function (v, j) { return fin(v) ? v : p[j]; });
@@ -1015,6 +1018,14 @@
             var dz = (gTvd != null && dTvd != null) ? dTvd - gTvd : 0;
             var piDatum = { value: core.pi.value + gradR * dz, lo: core.pi.lo + gradR * dz, hi: core.pi.hi + gradR * dz, gradient: gradR, gradientSource: gradSrc,
                             gaugeTvd: gTvd, datumTvd: dTvd, note: _txt(dz === 0 ? 'Gauge at the datum: p_i at the datum equals p_i at the gauge.' : 'p_i moved ' + fmt(dz, 0) + ' ft to the datum at ' + fmt(gradR, 3) + ' psi/ft (' + gradSrc + ').') };
+            // a re-pump after closure: the last cycle is analysed alone (§4.5), so the earlier cycles' leak-off is not superposed and
+            // the after-closure decline still carries it; p_i is flagged low (the two-cycle demo read 5,556 against 4,500 psia)
+            var cysA = arrOk(ev.cycles) ? ev.cycles : [];
+            if (cysA.length > 1 && cysA[cysA.length - 1] && cysA[cysA.length - 1].closedBefore && core.pi) {
+                core.pi.label = 'low';
+                core.pi.reasons = (arrOk(core.pi.reasons) ? core.pi.reasons : []).concat([_txt('Earlier injection cycles are not superposed: p_i from the last cycle alone is biased high.')]);
+                warnings.push(W('ACA_MULTICYCLE', 'warn', 'p_i is read from the last cycle alone; the leak-off of the earlier cycles still decays in this record, so p_i is an upper value (label low).', ['A1']));
+            }
             return {
                 ok: true, regimeSummary: core.summary, origin: origin, t0: core._t0 != null ? core._t0 : t0, tcInj: tcInj, V: V, diag: diag,
                 nolte: { lin: nol.lin ? { pr: nol.lin.pr, mL: nol.lin.mL, k: nol.lin.k, win: nol.lin.win } : null,
@@ -1322,6 +1333,14 @@
             if (mode === 'single') pools.all = pools.F1.concat(pools.F2);
         }
         var famCentre = { F1: median(pools.F1 || []), F2: median(pools.F2 || []) };
+        // the stability pool alone can be one repeated value (the hinge re-reads the same pressure for every grid setting): each
+        // draw also gets N(0, s_j) with s_j² = σ_family² − var(pool) ≥ 0, so the closure spread matches the consensus family band
+        // (the pick se in quadrature, WP2 change 5). Its own seeded stream, so the other inputs' draws are unchanged
+        var sdOf = function (a) { if (!a || a.length < 2) return 0; var m = 0, v = 0, i; for (i = 0; i < a.length; i++) m += a[i]; m /= a.length; for (i = 0; i < a.length; i++) v += (a[i] - m) * (a[i] - m); return Math.sqrt(v / (a.length - 1)); };
+        var famSig = function (F) { return fam[F] && fin(fam[F].sigma) && fam[F].sigma > 0 ? fam[F].sigma : 0; };
+        var jit = {};
+        if (mode === 'single') { var sF = Math.max(famSig('F1'), famSig('F2')), sp0 = sdOf(pools.all); jit.all = Math.sqrt(Math.max(0, sF * sF - sp0 * sp0)); }
+        else ['F1', 'F2'].forEach(function (F) { var sF2 = famSig(F), spF = sdOf(pools[F]); jit[F] = Math.sqrt(Math.max(0, sF2 * sF2 - spF * spF)); });
         var inputs = [], add = function (name, dist, params, prov) { inputs.push({ name: name, dist: isFixed(name) ? 'fixed' : dist, params: params, provenance: prov }); };
         add('closure', 'empirical', { samples: mode === 'single' ? (pools.all || []).length : (pools.F1.length + pools.F2.length), mode: mode }, 'stability');
         if (fin(C.isip)) add('isip', 'normal', { mu: C.isip, sd: C.isipSd }, 'dfit');
@@ -1343,6 +1362,7 @@
         // normal-space coefficient ρ_N = 2·sin(π·r_s/6) gives exactly the Spearman r_s for any monotone marginals
         var rs = fin(opts.rhoPhiCt) ? Math.max(-0.99, Math.min(0.99, opts.rhoPhiCt)) : -0.3, rho = 2 * Math.sin(Math.PI * rs / 6);
         return { C: C, n: n, seed: seed, mode: mode, wF1: wF1, pools: pools, famCentre: famCentre, centre: centre, inputs: inputs, byName: byName, rho: rho,
+                 jitter: jit, jrng: makeRng(seed + 104729),
                  draws: { all: [], F1: [], F2: [] }, rngs: mode === 'single' ? { all: makeRng(seed) } : { F1: makeRng(seed), F2: makeRng(seed + 7919) },
                  targets: mode === 'single' ? { all: n } : { F1: Math.ceil(n / 2), F2: Math.floor(n / 2) }, counts: { draws: 0, chainEvals: 0, ops: 0 },
                  opts: opts };
@@ -1352,7 +1372,10 @@
         var pool = key === 'all' ? U.pools.all : U.pools[key];
         it = b.closure;
         if (it.dist === 'fixed' || !pool || !pool.length) x.closure = key === 'all' ? U.centre : U.famCentre[key];
-        else x.closure = pool[Math.min(pool.length - 1, Math.floor(r() * pool.length))];
+        else {
+            x.closure = pool[Math.min(pool.length - 1, Math.floor(r() * pool.length))];
+            if (U.jitter && U.jitter[key] > 0 && U.jrng) x.closure += U.jitter[key] * gauss(U.jrng);
+        }
         var z1 = gauss(r), z2 = gauss(r), zz = U.rho * z1 + Math.sqrt(1 - U.rho * U.rho) * z2;   // φ–c_t correlation
         function num(name, f) { var q = b[name]; if (!q) return; x[name] = q.dist === 'fixed' ? q.params.mu != null ? q.params.mu : q.params.p50 != null ? q.params.p50 : q.params.m : f(q.params); }
         num('isip', function (p) { return p.mu + p.sd * gauss(r); });
@@ -1388,7 +1411,8 @@
         var n = ys.length; if (n < 4) return 0;
         var m = 0, i; for (i = 0; i < n; i++) m += ys[i]; m /= n;
         var vt = 0; for (i = 0; i < n; i++) vt += (ys[i] - m) * (ys[i] - m); vt /= n;
-        if (!(vt > 1e-300)) return 0;
+        // a constant output (only rounding noise left) has no variance to share out
+        if (!(vt > 1e-300) || vt <= Math.pow(1e-9 * Math.abs(m), 2)) return 0;
         var idx = []; for (i = 0; i < n; i++) idx.push(i);
         idx.sort(function (a, b) { if (opsBox) opsBox.n++; return xs[a] - xs[b]; });
         var B = Math.min(nBins || 20, n), vb = 0;
@@ -2338,6 +2362,12 @@
         return (user.length ? 'user ' + user.join(', ') : 'no user values') + (def.length ? '; default ' + def.join(', ') : '') + (inp.rock && inp.rock.EpSource ? '; Ep source ' + inp.rock.EpSource : '') +
                (evU.length ? '; event overrides ' + evU.join(', ') : '; events auto');
     }
+    // the app version: the host getter WTS_appVersion (RELEASE_NOTES is a host const, not on window)
+    function _appVer() {
+        try { if (typeof G.WTS_appVersion === 'function') { var v = G.WTS_appVersion(); if (v) return String(v); } } catch (e) { /* host getter missing */ }
+        var RN = G.RELEASE_NOTES;
+        return RN && RN[0] && RN[0].ver ? String(RN[0].ver) : null;
+    }
     G.PRiSM_dfit_exportText = function (run, template, xo) {
         try {
             if (!run || !run.prep || run.prep.ok === false) return fail('BAD_INPUT', 'The export needs a run with prepared data.', ['run']);
@@ -2365,7 +2395,7 @@
                 L.push('# reservoir: ' + [pf('mu', 'cp'), pf('phi', ''), pf('ct', '1/psi'), pf('h', 'ft')].join(', '));
             }
             if (run.weakHash) L.push('# hashes: weak (local FNV-1a; the shared hash was not available)');
-            L.push('# app version: ' + String(tpl.appVersion || (G.RELEASE_NOTES && G.RELEASE_NOTES[0] && G.RELEASE_NOTES[0].ver) || 'not stated'));
+            L.push('# app version: ' + String(tpl.appVersion || _appVer() || 'not stated'));
             L.push('# input hash: ' + (run.inputsHash || '–') + '; data hash: ' + (run.dsHash || '–') + (run.summary && run.summary.resultHash ? '; result hash: ' + run.summary.resultHash : ''));
             L.push('# EVENTS');
             L.push('# pump start h: ' + fmtSig(ev.tStart, 9) + '; breakdown h: ' + fmtSig(ev.tb, 9) + '; shut-in h: ' + fmtSig(ev.ts, 9) + '; Vi bbl: ' + fmtSig(ev.Vi, 6) + '; Vi* bbl: ' + fmtSig(ev.ViStar, 6) + '; tp h: ' + (ev.tp ? fmtSig(ev.tp.pump, 6) : '–'));
@@ -2407,7 +2437,9 @@
             if (!run || !run.frac) return fail('BAD_INPUT', 'The frac sheet needs a run with fracture outputs.', ['frac']);
             var rows = [], unc = run.unc && run.unc.outputs ? run.unc : null, cl = _closureOf(run);
             function uq(k, fam) { var u = unc && unc.outputs[k]; if (!u) return null; if (fam && u.byFamily) return u.byFamily[fam]; return fin(u.p50) ? u : null; }
-            function row(name, fam, v, unit, lens, ev, ukey) { var u = ukey ? uq(ukey, fam) : null; rows.push([name, fam, u ? u.p10 : null, fin(v) ? v : (u ? u.p50 : null), u ? u.p90 : null, unit, lens, ev]); }
+            // column 3 is the point estimate ('value'), P10 / P50 / P90 come from the uncertainty ensemble (P50 appended as column
+            // 8, blank without an ensemble): a point estimate is not the ensemble median, and labelling it P50 put P10 above it
+            function row(name, fam, v, unit, lens, ev, ukey) { var u = ukey ? uq(ukey, fam) : null; rows.push([name, fam, u ? u.p10 : null, fin(v) ? v : null, u ? u.p90 : null, unit, lens, ev, u && fin(u.p50) ? u.p50 : null]); }
             function chainRows(f, fam) {
                 if (!f) return;
                 var pk = f.geometry && f.geometry.byModel ? f.geometry.byModel.PKN : null, rd = f.geometry && f.geometry.byModel ? f.geometry.byModel.radial : null;
@@ -2432,7 +2464,7 @@
             if (run.aca && run.aca.pi) row('p_i', null, run.aca.pi.value, 'psia', 'default', 'A1', 'pi');
             if (run.aca && run.aca.kh) row('k (after-closure radial)', null, run.aca.kh.k, 'md', 'default', 'A1', null);
             else if (run.aca && run.aca.bounds) { row('k lower bound', null, run.aca.bounds.kLo, 'md', 'default', 'A1', null); row('k upper bound', null, run.aca.bounds.kHi, 'md', 'default', 'A1', null); }
-            var head = ['name', 'family', 'p10', 'p50', 'p90', 'unit', 'lens', 'ev'];
+            var head = ['name', 'family', 'p10', 'value', 'p90', 'unit', 'lens', 'ev', 'p50'];
             var esc = function (v) { if (v == null) return ''; if (fin(v)) return String(+v.toPrecision(8)); var s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
             var csv = [head.join(',')].concat(rows.map(function (r) { return r.map(esc).join(','); })).join('\n') + '\n';
             return { ok: true, rows: rows, csv: csv, head: head };
@@ -2570,9 +2602,29 @@
         { id: 'events', fn: function (P) {
             var r = P.run;
             r.events = _call('PRiSM_dfit_events', [r.prep, P.inputs.events || {}, {}], P.W, 'EVENTS_FAILED');
-            if (r.events && r.events.ok !== false && arrOk(r.events.cycles) && r.prep && r.prep.ok !== false) r.events.cycles.forEach(function (cy) {
-                if (cy && cy.rampWin) { var rp = _wb('ramp', [r.prep.t, r.prep.pw, r.prep.q, cy.rampWin, { VwCw: r.events.VwCwMeasured, seed: r.seed }], P.W); if (rp) P.extra.ramps.push(rp); }
+            var rampOf = [];
+            if (r.events && r.events.ok !== false && arrOk(r.events.cycles) && r.prep && r.prep.ok !== false) r.events.cycles.forEach(function (cy, k) {
+                if (cy && cy.rampWin) { var rp = _wb('ramp', [r.prep.t, r.prep.pw, r.prep.q, cy.rampWin, { VwCw: r.events.VwCwMeasured, seed: r.seed }], P.W); if (rp) { P.extra.ramps.push(rp); rampOf[k] = rp; } }
             });
+            // a re-pump after closure (§4.5): the fracture closed between the cycles when the pressure fell below the reopening
+            // pressure of the last cycle (its F4 ramp knee), else below the closure prior σ_grad·TVD. 56 then analyses the last cycle
+            // alone (its own V_i and tp) instead of combining the volumes
+            var evc = r.events && r.events.ok !== false && arrOk(r.events.cycles) ? r.events.cycles : [];
+            if (evc.length > 1) {
+                var rpL = rampOf[evc.length - 1], sp = null, spSrc = null;
+                if (rpL && rpL.ok !== false && rpL.knee && fin(rpL.knee.p) && rpL.label === 'knee') { sp = rpL.knee.p; spSrc = 'reopening knee of the last cycle'; }
+                var sgp = P.inputs.priors && fin(P.inputs.priors.sigmaGrad) ? P.inputs.priors.sigmaGrad : null;
+                if (sp === null && sgp !== null && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { sp = sgp * P.inputs.datumTvd; spSrc = 'closure-gradient prior'; }
+                if (sp !== null) {
+                    var ev2 = _call('PRiSM_dfit_events', [r.prep, P.inputs.events || {}, { sigmaPrior: sp }], P.W, 'EVENTS_FAILED');
+                    if (ev2 && ev2.ok !== false) {
+                        ev2.closedBeforeFrom = spSrc; ev2.closedBeforeP = sp;
+                        var lc = ev2.cycles[ev2.cycles.length - 1];
+                        if (lc && lc.closedBefore) P.W.push(W('REPUMP_CLOSED', 'info', 'The fracture closed before the last cycle (pressure below the ' + spSrc + ', ' + fmt(sp, 0) + ' psia): the last cycle is analysed alone.', ['E1']));
+                        r.events = ev2;
+                    }
+                }
+            }
         } },
         { id: 'isip', fn: function (P) {
             var r = P.run;
@@ -2589,14 +2641,17 @@
             // the valve closing time comes from the dataset metadata when the logger recorded it
             var sdOk = P.extra.stepDown && P.extra.stepDown.ok !== false && fin(P.extra.stepDown.b) && P.extra.stepDown.b > 0 ? P.extra.stepDown : null;
             var meta = (P.ds && P.ds.meta) || {};
-            if (ev && r.prep && r.prep.hf && arrOk(r.prep.hf.windows) && r.prep.hf.windows.length) {
-                var w = r.prep.hf.windows[0];
+            var hfW = r.prep && r.prep.hf && arrOk(r.prep.hf.windows) ? r.prep.hf.windows.filter(function (x) { return x && x.kind === 'shutin' && arrOk(x.t) && arrOk(x.p) && x.t.length === x.p.length; }) : [];
+            if (ev && hfW.length) {
+                var w = hfW[0];
                 var hctx = { qShut: ev.qLast, VwCw: fin(ev.VwCwUsed) ? ev.VwCwUsed : (fin(ev.VwCwMeasured) ? ev.VwCwMeasured : undefined), tp: ev.tp && fin(ev.tp.pump) ? ev.tp.pump : undefined, fluid: I.fluid };
                 if (fin(I.datumTvd) && I.datumTvd > 0) hctx.column = { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd };
                 if (fin(meta.tCloseS) && meta.tCloseS >= 0) hctx.tClose = meta.tCloseS;
                 if (sdOk) hctx.bleed = { b: sdOk.b, beta: fin(sdOk.beta) ? sdOk.beta : 0.5, qt: 0.1 };
                 else hctx.fitBleed = true;
-                P.extra.hammer = _wb('hammerQuick', [w.t || w.tHz, w.p, ev.ts, hctx], P.W);
+                // hammerQuick wants plain arrays with finite pressures
+                var hT = [], hP = []; for (var hi = 0; hi < w.t.length; hi++) if (fin(w.t[hi]) && fin(w.p[hi])) { hT.push(w.t[hi]); hP.push(w.p[hi]); }
+                P.extra.hammer = _wb('hammerQuick', [hT, hP, ev.ts, hctx], P.W);
             }
             // the bleed-off law for the ISIP acceptance (§4.4) and the triage bleed window (Q13): WTS_wellbore.bleedOff from the
             // step-down b / β (or the b fitted by the hammer), the shut-in rate and V_w·c_w
@@ -2686,8 +2741,9 @@
                 if (a.match && fin(a.match.evals)) r.counts.evals += a.match.evals;
                 // the triage tides check (Q20) once the after-closure tide is known (the other checks are unchanged by it)
                 var tdA = a.tide;
-                if (P.triCtx && r.triage && tdA && fin(tdA.ampPsi) && !P.triCtx.tide) {
-                    P.triCtx.tide = { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
+                if (P.triCtx && r.triage && tdA && (fin(tdA.ampPsi) || tdA.significant === false) && !P.triCtx.tide) {
+                    P.triCtx.tide = tdA.significant === false ? { significant: false, snr: tdA.snr }
+                                                              : { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
                     var tr2 = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
                     if (tr2 && tr2.ok !== false) r.triage = tr2;
                 }

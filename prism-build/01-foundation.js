@@ -949,9 +949,13 @@ const PRiSM_SHELL = (function () {
             '<option value="' + PRiSM_escHTML(k) + '">' + PRiSM_escHTML(extOf(k).label) + '</option>'
         ).join('');
         let tabs = '';
+        // an extension mode may mount the C7 panels of some tabs above the tab body (ext.panelsFirst = [tab numbers]): DFIT puts
+        // its Tests / demo card above the generic data cards; built-in modes keep the body first
+        const pxt = extOf(P.mode), pFirst = (pxt && Array.isArray(pxt.panelsFirst)) ? pxt.panelsFirst : [];
         for (let i = 1; i <= 7; i++) {
-            tabs += '<div id="prism_tab_' + i + '" class="prism-tab" style="display:none;"></div>' +
-                    '<div id="prism_tab_' + i + '_panels" class="prism-panels" style="display:none;"></div>';
+            const tb = '<div id="prism_tab_' + i + '" class="prism-tab" style="display:none;"></div>',
+                  pn = '<div id="prism_tab_' + i + '_panels" class="prism-panels" style="display:none;"></div>';
+            tabs += pFirst.indexOf(i) !== -1 ? pn + tb : tb + pn;
         }
         return '' +
         '<div class="prism-shell" id="prism_shell" data-mode="' + PRiSM_escHTML(P.mode) + '">' +
@@ -1576,12 +1580,14 @@ const PRiSM_SHELL = (function () {
             ];
         }
         const items = [{ label: 'Open the report (step ⑤)', run: () => gotoStep(5) }];
-        if (typeof W.PRiSM_exportReportPDF === 'function') items.push({ label: 'Report as PDF', run: () => W.PRiSM_exportReportPDF() });
-        if (typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
-        if (typeof W.PRiSM_exportPlotPNG === 'function') items.push({ label: 'Current plot as PNG', run: () => W.PRiSM_exportPlotPNG(st.activePlot || 'bourdet') });
-        if (typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
-        // ext mode: its own export items [{id, label, fn}] after the built-in ones
+        // ext mode: the PTA results CSV and XML describe the transient model, not the extension's results, so they are left
+        // out there (the extension lists its own exports below); built-in modes keep every item
         const ext = curExt();
+        if (typeof W.PRiSM_exportReportPDF === 'function') items.push({ label: 'Report as PDF', run: () => W.PRiSM_exportReportPDF() });
+        if (!ext && typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
+        if (typeof W.PRiSM_exportPlotPNG === 'function') items.push({ label: 'Current plot as PNG', run: () => W.PRiSM_exportPlotPNG(st.activePlot || 'bourdet') });
+        if (!ext && typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
+        // ext mode: its own export items [{id, label, fn}] after the built-in ones
         if (ext && Array.isArray(ext.exportItems)) {
             ext.exportItems.forEach(x => {
                 if (x && typeof x.fn === 'function' && x.label) items.push({ label: String(x.label), run: () => x.fn() });

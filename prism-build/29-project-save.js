@@ -363,6 +363,8 @@
         if (P && typeof P === 'object') {
             if (P.mode != null) out.mode = P.mode;
             if (P.tab != null) out.tab = P.tab;
+            var stp = parseInt(P.step, 10);
+            if (stp >= 1 && stp <= 5) out.step = stp;
             if (Array.isArray(P.multiRate)) out.multiRate = _clone(P.multiRate);
         }
         var cs = G.PRiSM_cropState;
@@ -410,6 +412,16 @@
             if (later[key] || !_own(state, key)) continue;
             st[key] = (state[key] === null) ? null : _clone(state[key]);
         }
+        // a workspace-mode extension's own state key (ext.stateKey, e.g. 'dfit') belongs to the project: a project without it
+        // must not keep the previous session's copy (built-in modes have none, so nothing changes for them)
+        var MX = G.PRiSM_modeExt;
+        if (MX && typeof MX === 'object') {
+            for (var mk in MX) {
+                if (!_own(MX, mk) || !_modeExt(mk)) continue;
+                var sk = MX[mk].stateKey;
+                if (typeof sk === 'string' && sk && !_own(state, sk) && !(state.extra && typeof state.extra === 'object' && _own(state.extra, sk))) delete st[sk];
+            }
+        }
         if (state.extra && typeof state.extra === 'object') {
             for (var x in state.extra) if (_own(state.extra, x) && !PRISM_SKIP[x] && PRISM_KEYS.indexOf(x) < 0) st[x] = _clone(state.extra[x]);
         }
@@ -423,9 +435,19 @@
         if (!st.interp && state.interp) st.interp = _clone(state.interp);
         // Shell state
         if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
-        if (['transient', 'decline', 'combined'].indexOf(state.mode) >= 0) G.PRiSM.mode = state.mode;
+        // a built-in mode, or a registered workspace-mode extension (DFIT): entering an extension goes through PRiSM.setMode so
+        // its onEnter runs; leaving one calls its onLeave first (cancels its running jobs, closes its dialogs)
+        var nm = typeof state.mode === 'string' && (PRISM_BUILTIN_MODES.indexOf(state.mode) >= 0 || _modeExt(state.mode)) ? state.mode : null;
+        if (nm && nm !== G.PRiSM.mode) {
+            if (_modeExt(nm) && typeof G.PRiSM.setMode === 'function') {
+                try { G.PRiSM.setMode(nm); } catch (e) { _warn('[WTS_project] PRiSM.setMode failed', e); }
+                if (G.PRiSM.mode !== nm) { _leaveExt(nm); G.PRiSM.mode = nm; }
+            } else { _leaveExt(nm); G.PRiSM.mode = nm; }
+        }
         var tab = parseInt(state.tab, 10);
         if (tab >= 1 && tab <= 7) G.PRiSM.tab = tab;
+        var step = parseInt(state.step, 10);
+        if (step >= 1 && step <= 5) G.PRiSM.step = step;
         if (Array.isArray(state.multiRate)) G.PRiSM.multiRate = _clone(state.multiRate) || [];
         var cs = G.PRiSM_cropState;
         if (cs && typeof cs === 'object') {
@@ -436,6 +458,17 @@
             cs.i_end = cr ? _numOrNull(cr.i_end) : null;
             cs.fullDataset = (cr && cr.fullDataset) ? _clone(cr.fullDataset) : null;
         }
+    }
+
+    var PRISM_BUILTIN_MODES = ['transient', 'decline', 'combined'];
+    function _modeExt(m) {
+        if (typeof G.PRiSM_modeExtFor !== 'function') return null;
+        try { return G.PRiSM_modeExtFor(m) || null; } catch (e) { return null; }
+    }
+    // leave the current workspace-mode extension (if any) before the mode is set to `next` directly
+    function _leaveExt(next) {
+        var P = G.PRiSM, ext = P && P.mode !== next ? _modeExt(P.mode) : null;
+        if (ext && typeof ext.onLeave === 'function') { try { ext.onLeave(next); } catch (e) { _warn('[WTS_project] mode onLeave failed', e); } }
     }
 
     // New: analysis state back to the UI layer's defaults (model presets kept).
@@ -456,7 +489,7 @@
         st.interp = null;
         ['semilog', 'tcMatch', 'autoMatch'].forEach(function (key) { if (key in st) st[key] = null; });
         if ('activePeriod' in st) st.activePeriod = null;
-        if (G.PRiSM && typeof G.PRiSM === 'object') { G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
+        if (G.PRiSM && typeof G.PRiSM === 'object') { _leaveExt('transient'); G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
         var cs = G.PRiSM_cropState;
         if (cs && typeof cs === 'object') { cs.t_start = cs.t_end = cs.i_start = cs.i_end = null; cs.fullDataset = null; }
     }

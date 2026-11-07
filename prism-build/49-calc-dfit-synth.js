@@ -885,7 +885,8 @@
         if (wb) s.wellbore = merge(s.wellbore, wb);
         return s;
     }
-    var EXAMPLE_A = { k: 1, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 0.5, pi: 4500, te: 5 / 60, geometry: 'full' };
+    // Example A states an 8,000 ft datum (σ_c 5,105.5 psia with p_i 4,500 psia is below the frictional limit deeper than ~8,900 ft)
+    var EXAMPLE_A = { k: 1, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 0.5, pi: 4500, te: 5 / 60, geometry: 'full', datumTvd: 8000 };
     var EXAMPLE_B = { k: 0.01, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 2, pi: 4500, te: 5 / 60, geometry: 'full' };
     S.EXAMPLE_A = EXAMPLE_A; S.EXAMPLE_B = EXAMPLE_B;
     function acaSpec(id, aca, extra) {
@@ -934,7 +935,7 @@
             out.push(gdSpec('q-height-recession', 'height-recession', {}));
             out.push(acaSpec('q-example-a', EXAMPLE_A));
             out.push(acaSpec('q-example-b', EXAMPLE_B));
-            out.push(acaSpec('q-penny', { k: 0.1, L: 60, h: 400, phi: 0.1, ct: 1e-5, mu: 0.6, V: 20, tcInj: 1, pi: 4500, te: 5 / 60, geometry: 'penny' }));
+            out.push(acaSpec('q-penny', { k: 0.1, L: 60, h: 400, phi: 0.1, ct: 1e-5, mu: 0.6, V: 20, tcInj: 1, pi: 4500, te: 5 / 60, geometry: 'penny', datumTvd: 8000 }));
             out.push(acaSpec('q-gas-linear', merge(clone(EXAMPLE_B), { fluid: 'gas', T_F: 200, SG_g: 0.65 })));
             var sg = gdSpec('q-surface-vacuum', 'normal', { pr: vacuumPr(), pStart: vacuumPr() });
             sg.artefacts = [{ kind: 'surface', tauT: 2, warm: 18 }, { kind: 'vacuum', pVap: 0.4 }];
@@ -1157,7 +1158,15 @@
                            meta: { synth: { version: S.version, caseId: spec.id, seed: seed, source: 'gdomain' }, primary: 'bh' } });
         var truth = clone(tr);
         truth.tStart = tStart; truth.ts = ts1; truth.tEnd = tEnd; truth.dtEnd = tEnd - ts1; truth.artefacts = [];
-        truth.cycle2 = { tStart: t2, ts: ts2, tp: tp2, q: c2.q, V: c2.V, reopenKnee: pK, tKnee: tK, isip: isip2, sigmaC: gd.sigmaC, dtc: dtc2, Gc: c2.Gc, mG: mG2 };
+        // the cycle-2 truth as the record realises it: the reopening ramp does not reach the nominal propagation pressure in V/q,
+        // so the shut-in pressure (and pn, m_G) are the realised ones; the G-domain chain of that falloff then gives η, C_sys,
+        // A_f·c_f and xf (V* = V − V_w·c_w·(σ_c − p_0), X = V*/(G_c + 2), C_sys = X/m_G). isipNominal keeps the spec value
+        var pShut2 = (ts2 < tK ? p0 + s1 * (ts2 - t2) : pK + (pProp - pK) * (1 - Math.exp(-(ts2 - tK) / tau2))) - nwb(gd, c2.q);
+        var pn2 = pShut2 - gd.sigmaC, mG2r = pn2 / c2.Gc, Vst2 = c2.V - VwCw * (gd.sigmaC - p0), X2 = Vst2 / (c2.Gc + 2);
+        var Csys2 = mG2r > 0 ? X2 / mG2r : null, AfCf2 = Csys2 !== null ? Csys2 - VwCw : null;
+        var geo2 = AfCf2 > 0 ? geometryFromAfCf(AfCf2, gd.Ep, gd.hf, gd.hp, gd.geometry) : null;
+        truth.cycle2 = { tStart: t2, ts: ts2, tp: tp2, q: c2.q, V: c2.V, reopenKnee: pK, tKnee: tK, isip: pShut2, isipNominal: isip2, pn: pn2, sigmaC: gd.sigmaC,
+                         dtc: dtc2, Gc: c2.Gc, mG: mG2r, eta: c2.Gc / (c2.Gc + 2), Vstar: Vst2, Csys: Csys2, AfCf: AfCf2, xf: geo2 ? geo2.xf : null };
         return { ok: true, ds: ds, truth: truth, artefacts: [], caseSpec: spec };
     }
 
@@ -1181,8 +1190,11 @@
         var IR = G.PRiSM_dfit_inputRanges;
         if (!IR || typeof IR.defaults !== 'function' || typeof IR.clamp !== 'function') return fail('INPUTS_UNAVAILABLE', 'PRiSM_dfit_inputRanges is not available.', []);
         var inp = IR.defaults(), lk = spec && spec.lk, gd = spec && spec.gd, aca = spec && spec.aca;
-        inp.datumTvd = REF.datumTvd;
-        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: REF.datumTvd }];
+        // an after-closure case may state its own datum (aca.datumTvd): Example A and the penny case close near 5,100 psia, below
+        // the conservative frictional limit at 10,000 ft (p_i 4,500, S_v 0.9 psi/ft, friction 1.0 → σ_h ≥ 0.9·T ≤ 8,027 psi…), so
+        // they sit at 8,000 ft where that closure is admissible
+        inp.datumTvd = aca && pos(aca.datumTvd) ? aca.datumTvd : REF.datumTvd;
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
         inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
         inp.perfs.n = REF.nPerf; inp.perfs.dIn = REF.dPerf; inp.perfs.cd = REF.cdPerf;
         inp.rock.Ep = (lk && lk.Ep) || (gd && gd.Ep) || (aca && aca.Ep) || REF.Ep;

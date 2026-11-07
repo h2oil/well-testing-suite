@@ -134,7 +134,8 @@ module.exports = [
     run(_a, assert, ctx) {
       const win = app0(ctx).win, one = win.PRiSM_dfit_fracSheet(refRun());
       assert(one.ok === true && one.rows.length >= 12, 'single-mode rows ' + one.rows.length);
-      assert(one.head.join(',') === 'name,family,p10,p50,p90,unit,lens,ev', 'columns');
+      assert(one.head.join(',') === 'name,family,p10,value,p90,unit,lens,ev,p50', 'columns (value = point estimate; p50 = ensemble median)');
+      one.rows.forEach((r) => { if (r[2] != null && r[8] != null && r[4] != null) assert(r[2] <= r[8] && r[8] <= r[4], r[0] + ': ensemble P10 ≤ P50 ≤ P90: ' + JSON.stringify(r)); });
       const cl = one.rows.find((r) => r[0] === 'Closure stress');
       assert(cl && cl[1] === null && cl[3] === S.FIX.run.frac.chosen.pClosure && cl[2] != null && cl[4] != null, 'closure row with P10/P50/P90 from the uncertainty: ' + JSON.stringify(cl));
       const rg = win.PRiSM_dfit_fracSheet(rangeRun());
@@ -144,8 +145,8 @@ module.exports = [
       });
       near(assert, rg.rows.find((r) => r[0] === 'Closure stress' && r[1] === 'F2')[3], 6507, 0.5, 'F2 closure');
       const lines = rg.csv.trim().split('\n');
-      assert(lines[0] === 'name,family,p10,p50,p90,unit,lens,ev' && lines.length === rg.rows.length + 1, 'CSV header and one line per row');
-      lines.slice(1).forEach((l, i) => { const n = l.replace(/"[^"]*"/g, 'x').split(',').length; assert(n === 8, 'CSV line ' + i + ' has 8 fields: ' + l); });
+      assert(lines[0] === 'name,family,p10,value,p90,unit,lens,ev,p50' && lines.length === rg.rows.length + 1, 'CSV header and one line per row');
+      lines.slice(1).forEach((l, i) => { const n = l.replace(/"[^"]*"/g, 'x').split(',').length; assert(n === 9, 'CSV line ' + i + ' has 9 fields: ' + l); });
       assert(lines.some((l) => /,F1,/.test(l)) && lines.some((l) => /,F2,/.test(l)), 'family column in the CSV');
     },
   },

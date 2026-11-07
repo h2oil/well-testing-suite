@@ -850,11 +850,30 @@
         // high-rate windows (≥ 2 Hz around shut-in): indexed for 59 to store (§3.1)
         var iq = -1;
         if (out.q) for (i = out.q.length - 1; i >= 0; i--) if (out.q[i] > 0) { iq = i; break; }
+        // Each window carries its samples (t h, p psia on the analysed channel) so the wave ISIP (WTS_wellbore.hammerQuick) and
+        // 59's store can use them: from the main record when it is ≥ 2 Hz there, else from ds.meta.hfWindows (a logger's
+        // high-rate shut-in window beside a 1 Hz main record), converted like the main bottomhole channel
+        var wins = [];
         if (iq >= 0) {
-            var tsx = out.t[iq], a0 = tsx - 10 / 3600, a1 = tsx + 120 / 3600, nWin = 0;
-            for (i = 0; i < out.t.length; i++) if (out.t[i] >= a0 && out.t[i] <= a1) nWin++;
-            if (nWin >= 2 && (a1 - a0) * 3600 / nWin <= 0.5) out.hf = { windows: [{ kind: 'shutin', t0: a0, t1: a1, n: nWin }] };
+            var tsx = out.t[iq], a0 = tsx - 10 / 3600, a1 = tsx + 120 / 3600, wt = [], wp = [];
+            for (i = 0; i < out.t.length; i++) if (out.t[i] >= a0 && out.t[i] <= a1) { wt.push(out.t[i]); wp.push(out.pw[i]); }
+            if (wt.length >= 2 && (a1 - a0) * 3600 / wt.length <= 0.5)
+                wins.push({ kind: 'shutin', t0: a0, t1: a1, n: wt.length, t: wt, p: wp, dtS: (wt[wt.length - 1] - wt[0]) * 3600 / (wt.length - 1), src: 'record' });
         }
+        var mw = ds.meta && Array.isArray(ds.meta.hfWindows) ? ds.meta.hfWindows : [];
+        if (ch.primary !== 'surface') mw.slice(0, 4).forEach(function (w) {
+            if (!_isObj2(w) || !_fin(w.t0) || !_fin(w.dtS) || !(w.dtS > 0) || !Array.isArray(w.p) || w.p.length < 2) return;
+            var kind = /^(shutin|step|flowback|ramp)$/.test(w.kind) ? w.kind : 'shutin';
+            if (wins.some(function (x) { return x.kind === kind; })) return;            // the main record's own window wins
+            var nW = Math.min(w.p.length, 20000), wt2 = new Array(nW), wp2 = new Array(nW), fp = ch.unitFix.p;
+            for (var j = 0; j < nW; j++) {
+                wt2[j] = w.t0 + j * w.dtS / 3600;
+                var v = w.p[j];
+                wp2[j] = _fin(v) ? (fp ? v * fp.factor + fp.offset : v) + aP + dFix : null;
+            }
+            wins.push({ kind: kind, t0: wt2[0], t1: wt2[nW - 1], n: nW, t: wt2, p: wp2, dtS: w.dtS, src: 'meta' });
+        });
+        if (wins.length) out.hf = { windows: wins };
         out.atmPsia = ch.atmPsia;
         return out;
     });
@@ -1101,7 +1120,16 @@
         // ISIP proxy, so V_i* starts as V_i,frac); 56's frac recomputes it per candidate.
         var sigC = _fin(opts.sigmaC) ? opts.sigmaC : (_fin(opts.sigmaPrior) ? opts.sigmaPrior : (iS + 1 < n ? p[iS + 1] : pShut));
         var ViStar = hasQ ? Vi - (VwCw || 0) * (sigC - pStart) - Vfill : null;
-        var tpPump = ts - tStart, tpB = tb !== null ? ts - tb : null, tpV = (hasQ && qLast > 0) ? Vi / qLast / 60 : null;
+        // tp_veq = V_i / q: q_last, unless the injection ends below the main stage (a step-down, or any last rate under 90 % of
+        // q_max): then the volume-weighted rate of this cycle Σq²Δt / ΣqΔt (the reference demo's 1.25 bbl/min last step made
+        // V_i/q_last 21.5 min against a 5.6 min pump time)
+        var qVeq = qLast;
+        if (hasQ && qLast > 0 && _fin(qMax) && qLast < 0.9 * qMax) {
+            var sq = 0, sq2 = 0;
+            for (i = i0c; i <= iQ; i++) { var dtq = (t[i] - (i === i0c ? tStart : t[i - 1])) * 60, qq = q[i] > 0 ? q[i] : 0; sq += qq * dtq; sq2 += qq * qq * dtq; }
+            if (sq > 0 && sq2 > 0) qVeq = sq2 / sq;
+        }
+        var tpPump = ts - tStart, tpB = tb !== null ? ts - tb : null, tpV = (hasQ && qVeq > 0) ? Vi / qVeq / 60 : null;
         var qEq = (hasQ && tpV > 0) ? (Vi - Vfill - Vfb) / (tpV * 60) : null;
         var schedule = hasQ && tpV > 0 ? [{ t: ts - tpV, q: qEq }, { t: ts, q: 0 }] : [];
         var cycOut = cycles.map(function (c, k) {
@@ -1336,9 +1364,18 @@
                 }
                 if (persist && j < n && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) < 4 && sigY > 0) persist = false;
                 // and still beyond the threshold 0.3 ln units later (a start-up distortion or a bump reverts; closure does not)
+                // — unless it reverts by crossing to the other side of the line (the after-closure signature of a sharp,
+                // compliance-drop closure: G·dP/dG jumps above the line at G_c and then falls below it as the decline slows) or
+                // it is far beyond the noise (Σ(r/σ_r)/√n_eff ≥ 8). Those are read at their start (the abrupt-break rule). The
+                // reversion test alone moved a noise-free sharp closure 140–190 psi late (Example A, penny case)
                 if (persist) {
                     var kl = i; while (kl + 1 < n && x[kl + 1] <= x[i] * Math.exp(0.3)) kl++;
-                    if (kl + 1 < n) { var rl = rel(kl); if (up ? rl <= thr(kl) : rl >= -thr(kl)) persist = false; }
+                    if (kl + 1 < n) {
+                        var rl = rel(kl), tl = thr(kl);
+                        var reverted = up ? rl <= tl : rl >= -tl, crossed = up ? rl < -tl : rl > tl;
+                        var strong = sigY > 0 && Math.abs(zs) / Math.sqrt(_nEff(Math.max(nz, 1), rr)) >= 8;
+                        if (reverted && !crossed && !strong) persist = false;
+                    }
                 }
                 if (persist) return { i: i, down: !up, thr: thr, rel: rel, sm: sm, nHold: nHold, c: c };
                 i = Math.max(i, j - 1);
@@ -1704,7 +1741,12 @@
                          bleedAtEnd: null, viscCorr: null, why: _txt('Step-down intercept (' + (sd.label || 'unlabelled') + ').'), ev: ['S1'] });
             if (events && _fin(events.pShut) && sd.at) {
                 var lump = ctx.lumped, visc = (lump && _fin(lump.lambda) && _fin(lump.pVisc)) ? (lump.lambda - 1) * lump.pVisc : null;
-                var dpF = (_fin(sd.at.dpPerf) ? sd.at.dpPerf : 0) + (_fin(sd.at.dpNwb) ? sd.at.dpNwb : 0);
+                // the friction at the LAST pumping rate (pShut is read there): a·q_last² + b·q_last^β from the step-down coefficients.
+                // sd.at is evaluated at the top step rate, which after a step-down overstated the friction (reference demo: 353 psi
+                // at 5 bbl/min against 160 psi at 1.25 bbl/min, so ISIP_lp sat 190 psi low)
+                var qL = _fin(events.qLast) && events.qLast > 0 ? events.qLast : null, dpF;
+                if (qL !== null && _fin(sd.a) && _fin(sd.b)) dpF = sd.a * qL * qL + sd.b * Math.pow(qL, _fin(sd.beta) && sd.beta > 0 ? sd.beta : 0.5);
+                else dpF = (_fin(sd.at.dpPerf) ? sd.at.dpPerf : 0) + (_fin(sd.at.dpNwb) ? sd.at.dpNwb : 0);
                 var lp = events.pShut - dpF - (visc || 0);
                 cands.push({ method: 'lp', family: 'friction', value: lp, se: Math.sqrt(Math.pow((sd.se && _fin(sd.se.pFrac)) ? sd.se.pFrac : 5, 2) + 4) + (visc === null ? 10 : 0), ok: true, upper: visc === null,
                              bleedAtEnd: null, viscCorr: _nn(visc),
@@ -2180,7 +2222,7 @@
             var b = G.PRiSM_dfit_bounds(pk.p, bc);
             if (_okRes(b)) {
                 pk.admissible = b.admissible; pk.vetoes = b.vetoes; pk.warnings = b.warnings;
-                if (!b.admissible && pk.method !== 'user') pk.vote = false;
+                if (!b.admissible && pk.method !== 'user') { if (pk.vote) pk.vetoedVote = true; pk.vote = false; }
             }
         });
         out.iota = cf.iota;
@@ -2883,11 +2925,27 @@
         var dep = cf.picks.compliance && !cf.picks.compliance.down ? cf.picks.compliance.departRel : null;
         var depWeak = (dep !== null && cf.picks.compliance) ? dep < 3 * (derivs.sigmaY || 0) / Math.max(cf.picks.compliance.line.b * cf.picks.compliance.G, 1e-9) : false;
         var overlapFlag = !!(ctx.prep && Array.isArray(ctx.prep.flags) && ctx.prep.flags.some(function (f) { return f.code === 'VACUUM' || f.code === 'THERMAL'; }));
-        var br = pRef !== null ? G.PRiSM_dfit_bounds(pRef, { isip: isip, pi: ctx.pi, piBracket: ctx.piBracket, inputs: ctx.inputs, well: ctx.well }) : null;
+        // every voting-family candidate vetoed (§4.8 bounds): mode none, but the picks did depart; K1 says so, lists them and the
+        // binding limit, and K10 is read at the vetoed candidates (it used to say 'above both frictional-limit lines')
+        var vetoed = [];
+        if (mode === 'none') (picks || []).forEach(function (pk) {
+            if (!pk || !pk.ok || !pk.vetoedVote || pk.admissible !== false || !_fin(pk.p)) return;
+            if (pk.family !== 'F1' && pk.family !== 'F2' && pk.family !== 'F4') return;
+            var vt = Array.isArray(pk.vetoes) && pk.vetoes.length ? pk.vetoes[0] : null;
+            vetoed.push({ method: pk.method, family: pk.family, p: _r(pk.p, 2), rule: vt ? vt.rule : 'bounds', limit: vt && _fin(vt.limit) ? _r(vt.limit, 1) : null });
+        });
+        var pRefB = pRef !== null ? pRef : (vetoed.length ? _median(vetoed.map(function (x) { return x.p; })) : null);
+        var br = pRefB !== null ? G.PRiSM_dfit_bounds(pRefB, { isip: isip, pi: ctx.pi, piBracket: ctx.piBracket, inputs: ctx.inputs, well: ctx.well }) : null;
         var fric = br && _okRes(br) ? br.frictional : { veto: null, warn: null };
         var fricFired = !!(br && _okRes(br) && (br.vetoes.some(function (x) { return x.rule === 'frictional'; }) || br.warnings.some(function (x) { return x.rule === 'frictional'; })));
+        var k1None = 'Mode none: dP/dG never departs; closure is not estimable.';
+        if (vetoed.length) {
+            var lst = vetoed.slice(0, 3).map(function (x) { return (NAMES_M[x.method] || x.method) + ' ' + _f0(x.p); }).join(', ');
+            var bind = vetoed.filter(function (x) { return x.limit !== null; })[0];
+            k1None = 'Mode none: all closure candidates vetoed (' + lst + ' psia)' + (bind ? ' by the ' + bind.rule + ' limit ' + _f0(bind.limit) + ' psia' : '') + '; closure is not estimable.';
+        }
         var rules = [
-            { id: 'K1', fired: mode !== 'single', value: null, threshold: null, text: mode === 'single' ? 'Mode single: the family medians differ by less than 2.5 τ and the bands overlap.' : (mode === 'range' ? 'Mode range: the families do not agree within 2.5 τ or their bands do not overlap.' : 'Mode none: dP/dG never departs; closure is not estimable.') },
+            { id: 'K1', fired: mode !== 'single', value: null, threshold: null, text: mode === 'single' ? 'Mode single: the family medians differ by less than 2.5 τ and the bands overlap.' : (mode === 'range' ? 'Mode range: the families do not agree within 2.5 τ or their bands do not overlap.' : k1None) },
             { id: 'K2', fired: s > tau, value: _r(s, 3), threshold: _r(tau, 3), text: 'Family separation s ' + _f1(s, 1) + ' psi against τ ' + _f1(tau, 1) + ' psi.' },
             { id: 'K3', fired: w > tau, value: _r(w, 3), threshold: _r(tau, 3), text: 'Largest voting-family half-width w ' + _f1(w, 1) + ' psi against τ.' },
             { id: 'K4', fired: g > tau, value: _r(g, 3), threshold: _r(tau, 3), text: 'Stability-grid spread g ' + _f1(g, 1) + ' psi against τ.' },
@@ -2972,7 +3030,7 @@
             bimodal: mode === 'range' && s > 2.5 * tau, preferred: preferred, preferredWhy: prefWhy ? _txt(prefWhy) : null, confidence: conf,
             calibrated: calibrated, hitRate: hitRate, rules: rules,
             stability: { L: GRID_L.slice(), tp: GRID_TP.slice(), grid: grid, unstable: unstable },
-            samples: samples, counterfactual: counterfactual, frictional: { veto: fric.veto, warn: fric.warn }, forecast: forecast, ev: ['C1', 'K1'],
+            samples: samples, counterfactual: counterfactual, frictional: { veto: fric.veto, warn: fric.warn }, forecast: forecast, ev: ['C1', 'K1'], vetoed: vetoed,
             methods: methods, counts: { evals: st.counts.evals, refits: st.counts.refits, draws: 0 }, label: conf === 'not-estimable' ? conf : conf + ' (uncalibrated rule label)',
             chain: fr ? { Rvis: fr.Rvis, chi: fr.chi, pn: fr.pn } : null
         };

@@ -529,14 +529,20 @@ module.exports = [
     },
   },
   {
-    name: 'U12 the iOS CSS block: safe-area padding for the two DFIT dialogs and 44 px tile buttons',
+    name: 'U12 the iOS CSS block: safe-area padding for the two DFIT dialogs, their boxes capped to the safe area, 44 px close / override / tile buttons',
     wp: WP, opts: false,
     run(app, assert) {
       const css = fs.readFileSync(path.join(REPO, 'ios-app', 'ios-additions', 'ios-styles.css'), 'utf8');
       const i = css.indexOf('DFIT');
       assert(i !== -1, 'DFIT block marker');
       const blk = css.slice(i);
-      assert(/html\.ios-app #prism_dfit_override,\s*html\.ios-app #wts_dfit_info\s*\{[^}]*env\(safe-area-inset-top\)[^}]*env\(safe-area-inset-right\)[^}]*env\(safe-area-inset-bottom\)[^}]*env\(safe-area-inset-left\)[^}]*max-height:\s*calc\(100dvh - 20px\)/.test(blk), 'dialog safe-area rule');
+      const ov = blk.match(/html\.ios-app #prism_dfit_override,\s*html\.ios-app #wts_dfit_info\s*\{([^}]*)\}/);
+      assert(ov && /env\(safe-area-inset-top\)[^;]*env\(safe-area-inset-right\)[^;]*env\(safe-area-inset-bottom\)[^;]*env\(safe-area-inset-left\)/.test(ov[1]), 'overlay safe-area padding');
+      // the full-screen overlay is never shortened (that left a strip without backdrop); the dialog boxes are capped instead
+      assert(!/max-height/.test(ov[1]), 'no max-height on the full-screen overlay');
+      assert(/html\.ios-app #prism_dfit_override \.prism-dfit-dlg,\s*html\.ios-app #wts_dfit_info \.wdi-box\s*\{[^}]*max-height:\s*calc\(100dvh - max\(10px, env\(safe-area-inset-top\)\) - max\(10px, env\(safe-area-inset-bottom\)\)\)/.test(blk), 'dialog boxes capped inside the safe area');
+      assert(/html\.ios-app #wts_dfit_info \.wdi-x\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/.test(blk), 'method-note × 44 pt');
+      assert(/html\.ios-app #prism_dfit_override \.btn\s*\{[^}]*min-height:\s*44px/.test(blk), 'override buttons 44 pt');
       assert(/html\.ios-app \.prism-dfit-tile button\s*\{[^}]*min-height:\s*44px/.test(blk), '44 px tile buttons');
     },
   },

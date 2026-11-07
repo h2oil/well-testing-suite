@@ -2215,8 +2215,13 @@
 
     function listTools() {
         var out = [], seen = {}, ids = {};
+        // a workspace-mode extension may allow only some built-in tools (ext.toolAllow: catalogue ids); the PTA/RTA tools then
+        // leave its drawer, and so do the discovered renderers. Built-in modes have no extension, so their list is unchanged
+        var mxf = typeof G.PRiSM_activeModeExt === 'function' ? G.PRiSM_activeModeExt() : null;
+        var allow = mxf && isArr(mxf.toolAllow) ? toArr(mxf.toolAllow).map(String) : null;
         TOOL_CATALOGUE.forEach(function (t) {
             seen[t.fn] = true;
+            if (allow && allow.indexOf(t.id) === -1) return;
             ids[t.id] = true;
             out.push({ id: t.id, title: t.title, sub: t.sub, group: t.group, fn: t.fn, args: t.args, available: typeof G[t.fn] === 'function' });
         });
@@ -2241,7 +2246,7 @@
         try { for (var k in G) keys.push(k); } catch (e) {}
         try { Object.getOwnPropertyNames(G).forEach(function (k) { if (keys.indexOf(k) === -1) keys.push(k); }); } catch (e) {}
         keys.sort().forEach(function (k) {
-            if (seen[k]) return;
+            if (seen[k] || allow) return;
             if (!/^PRiSM_render[A-Za-z0-9_]*(Panel|Manager|Toolbar|Tool|Picker)$/.test(k)) return;
             if (EXCLUDE_DISCOVERY.test(k)) return;
             var f;

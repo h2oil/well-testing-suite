@@ -2729,7 +2729,8 @@ G.PRiSM_renderAnalysisKeyToolbar = function (container, plotKey) {
     });
     var well = _wellInputs();
     var chip = '';
-    if (well.defaulted.length) {
+    var inExt = typeof G.PRiSM_activeModeExt === 'function' && !!G.PRiSM_activeModeExt();   // DFIT: its own inputs, no C1 chip
+    if (well.defaulted.length && !inExt) {
         chip = '<div data-prism-akey-defaults style="margin:6px 0; padding:6px 8px; border-radius:6px; font-size:12px; ' +
                'background:rgba(210,153,34,.12); border:1px solid var(--yellow, #d29922); color:var(--yellow, #d29922);">' +
                '⚠ Default inputs: ' + _esc(well.defaulted.map(function (k) { return WELL_LABEL[k]; }).join(', ')) +

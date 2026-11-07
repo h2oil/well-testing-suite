@@ -278,8 +278,14 @@
            DFIT form controls inherit the 16 px rule above; the step-④ segmented control and the tool tiles get 44 px targets. */
         html.ios-app #prism_dfit_override, html.ios-app #wts_dfit_info {
             padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
-            max-height: calc(100dvh - 20px);
         }
+        /* the overlay keeps its full-screen backdrop; the dialog box is capped to the padded (safe) area, as for cheminj / buildup */
+        html.ios-app #prism_dfit_override .prism-dfit-dlg, html.ios-app #wts_dfit_info .wdi-box {
+            max-height: calc(100vh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+            max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+        }
+        html.ios-app #wts_dfit_info .wdi-x { width: 44px; height: 44px; min-height: 44px; }
+        html.ios-app #prism_dfit_override .btn { min-height: 44px; }
         html.ios-app .prism-dfit-tile button { min-height: 44px; }
         html.ios-app .prism-dfit-seg .btn, html.ios-app .prism-dfit-bar .btn { min-height: 44px; }
         html.ios-app .prism-dfit-panel input, html.ios-app .prism-dfit-panel select, html.ios-app .prism-dfit-step input,

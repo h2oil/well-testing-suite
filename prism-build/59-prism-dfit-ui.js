@@ -378,6 +378,17 @@
         var el = _byId('prism_dfit_status');
         if (el) { el.textContent = _status.text; el.className = 'prism-dfit-status prism-dfit-status--' + _status.level; }
     }
+    // the reason a pipeline run failed, with the next step: the engine's first error, else its first stage warning
+    function _failText(run) {
+        var why = run && _arr(run.errors) && run.errors[0] ? run.errors[0] : null, code = run && run.code;
+        var Ws = run && _arr(run.warnings) ? run.warnings : [];
+        var stage = null;
+        for (var i = 0; i < Ws.length && !stage; i++) if (Ws[i] && /_FAILED$/.test(String(Ws[i].code || ''))) stage = Ws[i];
+        if (!why && stage) why = String(stage.text || '').replace(/^\w+: /, '');
+        var noDfit = /^(EVENTS|DERIVS|PREPARE)_FAILED$/.test(String((stage && stage.code) || code || '')) || /falloff|shut-in|injection/i.test(String(why || ''));
+        if (noDfit) return '⚠ No injection and shut-in found in this record' + (why ? ' (' + _txt(why).slice(0, 120) + ')' : '') + ': load a DFIT record or a demo DFIT on step ①.';
+        return '⚠ The analysis failed: ' + _txt(why || 'no result') + '.';
+    }
     function _engineMissing(r) { return !r || r.code === 'NOT_IMPLEMENTED'; }
     function _pipeArgs(fast) {
         var T = test(), o = T.inputs.options || {};
@@ -405,6 +416,26 @@
         return s;
     }
     // store a run: st._dfitRun, T.summary, PRiSM.multiRate (idealised schedule, bbl/d), C1, WTS_state.dfit, event
+    // full runs kept by test, inputs and picks (a few): an undo back to the inputs and picks of a full run reinstates it, so an
+    // override and its undo do not leave the fast run's labels on the board
+    var FULL_CAP = 4, _fullRuns = [];
+    function _fnv(str) { var h = 0x811c9dc5; for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; } return ('0000000' + h.toString(16)).slice(-8); }
+    function _runKey(T) {
+        var dh = T && T.dsRef ? T.dsRef.hash : '';
+        try { return T.id + '|' + dh + '|' + _fnv(JSON.stringify(T.inputs || null)) + '|' + _fnv(JSON.stringify(T.picks || null)); } catch (e) { return null; }
+    }
+    function _keepFull(T, run) {
+        var k = _runKey(T);
+        if (!k || !T.summary) return;
+        _fullRuns = _fullRuns.filter(function (x) { return x.key !== k; });
+        _fullRuns.push({ key: k, run: run, summary: _clone(T.summary) });
+        if (_fullRuns.length > FULL_CAP) _fullRuns.shift();
+    }
+    function _fullFor(T) {
+        var k = _runKey(T);
+        for (var i = _fullRuns.length - 1; i >= 0; i--) if (_fullRuns[i].key === k) return _fullRuns[i];
+        return null;
+    }
     function _apply(run, o) {
         o = o || {};
         var st = _st(), T = test();
@@ -414,6 +445,9 @@
             if (o.fast && T.summary && _isObj(T.summary.unc)) s.unc = T.summary.unc;
             T.summary = s;
         }
+        // a fast run after an undo is not the full analysis of these picks: the board says so (press ▶ Analyse)
+        if (o.fast && o.source === 'undo' && T.summary) T.summary.stale = true;
+        if (!o.fast) _keepFull(T, run);
         if (!T.dsRef || !T.dsRef.hash) _checkBinding();
         // an undo restores C1 and multiRate from its own snapshot: re-writing them here would undo the undo
         if (o.source !== 'undo') { _writeSchedule(run); _writeC1(run); }
@@ -505,6 +539,7 @@
         return W.dfit;
     }
     function _appVersion() {
+        try { if (typeof G.WTS_appVersion === 'function') { var v = G.WTS_appVersion(); if (v) return String(v); } } catch (e) { /* host getter missing */ }
         var RN = G.RELEASE_NOTES;
         return (RN && RN[0] && RN[0].ver) ? String(RN[0].ver) : null;
     }
@@ -584,7 +619,7 @@
         var done = function (run) {
             if (!run || run.ok === false) {
                 finish();
-                _setStatus(_engineMissing(run) ? '⚠ The DFIT engines are not available in this build yet: previous results kept.' : '⚠ The analysis failed: ' + _txt((run && run.errors && run.errors[0]) || 'no result'), 'warn');
+                _setStatus(_engineMissing(run) ? '⚠ The DFIT engines are not available in this build yet: previous results kept.' : _failText(run), 'warn');
                 return run || { ok: false, code: 'NO_RESULT', errors: ['No result.'], bad: [] };
             }
             try { _apply(run, { fast: false, what: 'all', source: 'auto' }); } catch (e) { finish(); throw e; }
@@ -623,6 +658,8 @@
         if (source === 'user' && !reason && o.requireReason) return { ok: false, code: 'REASON_REQUIRED', errors: ['A reason is required for an override.'], bad: ['reason'] };
         var key = String(item || '');
         var old;
+        if (value != null && (typeof value !== 'object' || value instanceof Array || _arr(value)))
+            return { ok: false, code: 'BAD_VALUE', errors: ['A pick is an object such as {p: psia}.'], bad: ['value'] };
         if (PICK_ITEMS[key]) {
             old = _clone(T.picks[key]);
             if (value == null) T.picks[key] = (key === 'aca') ? { origin: 'centroid', linWin: null, radWin: null, piLevel: null } : null;
@@ -2817,7 +2854,14 @@
         var run = _run(), f = _fn('PRiSM_dfit_exportText');
         if (!_need(run, 'Press ▶ Analyse before exporting the DFIT data and picks.')) return null;
         if (!_need(f, 'The DFIT export is not available in this build yet.')) return null;
-        var r = null; try { r = f(run, 'default'); } catch (e) { r = null; }
+        var T = test(), wl = _clone(_well()) || {};
+        // the active well's name (WTS_wells.active() is its id; list() carries the names)
+        var wn = G.WTS_wells && typeof G.WTS_wells.list === 'function' ? (function () {
+            try { var L = G.WTS_wells.list() || []; for (var i = 0; i < L.length; i++) if (L[i] && L[i].active) return L[i].name || L[i].id; } catch (e) { /* no wells layer */ }
+            return null;
+        })() : null;
+        if (wn && !wl.name) wl.name = wn;
+        var r = null; try { r = f(run, 'default', { test: T, inputs: T.inputs, well: wl }); } catch (e) { r = null; }
         if (!_need(r && typeof r.text === 'string', 'The DFIT export failed.')) return null;
         _download(r.filename || 'dfit.txt', r.text, 'text/plain');
         return r;
@@ -3005,10 +3049,46 @@
     }
     // Tools drawer (§7.7)
     function _toolHost(host, id, html) { if (!host) return null; host.innerHTML = '<div id="' + id + '" class="prism-dfit-tool">' + html + '</div>'; var h = host.firstChild; _wire(h); return h; }
+    // DesignRanges inputs (§3.7): [id, label, path in the ranges, unit, min, max, optional]. DFIT mode is field-unit only (the
+    // shell's note), so these are not WTS_units-tagged, as every other DFIT input
+    var DESIGN_FIELDS = [
+        ['k10', 'k P10', 'k.p10', 'md', 1e-7, 1e4], ['k90', 'k P90', 'k.p90', 'md', 1e-7, 1e4],
+        ['phi10', 'φ P10', 'phi.p10', '–', 0.001, 0.5], ['phi90', 'φ P90', 'phi.p90', '–', 0.001, 0.5],
+        ['ct10', 'c_t P10', 'ct.p10', '1/psi', 1e-7, 1e-3], ['ct90', 'c_t P90', 'ct.p90', '1/psi', 1e-7, 1e-3],
+        ['mu10', 'μ reservoir P10', 'muRes.p10', 'cp', 0.005, 1e4], ['mu90', 'μ reservoir P90', 'muRes.p90', 'cp', 0.005, 1e4],
+        ['h10', 'h P10', 'h.p10', 'ft', 1, 5000], ['h90', 'h P90', 'h.p90', 'ft', 1, 5000],
+        ['hf10', 'h_f P10', 'hf.p10', 'ft', 1, 5000], ['hf90', 'h_f P90', 'hf.p90', 'ft', 1, 5000],
+        ['hp', 'h_p', 'hp', 'ft', 1, 5000], ['ep', 'E′ P50', 'Ep.p50', 'psi', 1e5, 2e7], ['epsd', 'E′ spread (σ of ln)', 'Ep.sdLn', '–', 0, 2],
+        ['nu', 'ν', 'nu', '–', 0, 0.5],
+        ['sg', 'Closure gradient prior P50', 'sigmaGrad.p50', 'psi/ft', 0.3, 1.5], ['sgsd', 'Closure gradient prior σ', 'sigmaGrad.sd', 'psi/ft', 0, 0.3],
+        ['pg', 'p_i gradient prior P50', 'piGrad.p50', 'psi/ft', 0.1, 1.2], ['pgsd', 'p_i gradient prior σ', 'piGrad.sd', 'psi/ft', 0, 0.3],
+        ['gs', 'Gauge noise σ', 'gauge.sigma', 'psi', 0, 50], ['gr', 'Gauge resolution', 'gauge.resolution', 'psi', 0, 10],
+        ['ghz', 'Gauge rate', 'gauge.hz', 'Hz', 0.001, 1000], ['gd', 'Gauge drift', 'gauge.driftPsiPerDay', 'psi/d', 0, 50],
+        ['V', 'Planned volume (blank: suggest)', 'V', 'bbl', 0.1, 1e4, true], ['q', 'Planned rate (blank: suggest)', 'q', 'bbl/min', 0.01, 100, true],
+        ['shut', 'Allowed shut-in', 'allowedShutInD', 'd', 0.1, 365], ['W', 'Target closure band W (blank: none)', 'targetW', 'psi', 0.1, 5000, true]
+    ];
+    function _getP(o, p) { var a = p.split('.'), x = o; for (var i = 0; i < a.length; i++) { if (!_isObj(x)) return undefined; x = x[a[i]]; } return x; }
+    function _setP(o, p, v) { var a = p.split('.'), x = o; for (var i = 0; i < a.length - 1; i++) { if (!_isObj(x[a[i]])) x[a[i]] = {}; x = x[a[i]]; } x[a[a.length - 1]] = v; }
+    function _defaultRanges() {
+        var T = test(), w = _well();
+        var k = _num(w.k) || 0.01, z = _num(T.inputs.datumTvd) || 10000;
+        return { k: { p10: k / 10, p90: k * 10 }, phi: { p10: 0.04, p90: 0.1 }, ct: { p10: 5e-6, p90: 2e-5 }, muRes: { p10: 0.3, p90: 1 }, h: { p10: 30, p90: 80 },
+                 hf: { p10: 40, p90: 100 }, hp: 40, Ep: { p50: 5e6, sdLn: 0.25 }, nu: 0.25, sigmaGrad: { p50: 0.7, sd: 0.02 }, piGrad: { p50: 0.45, sd: 0.02 }, datumTvd: z,
+                 strings: T.inputs.strings, fluid: { kind: T.inputs.fluid.kind, rhoPpg: T.inputs.fluid.rhoPpg, muCp: T.inputs.fluid.muCp },
+                 gauge: { kind: T.inputs.channels.primary === 'surface' ? 'surface' : 'bh', sigma: 0.05, resolution: 0.01, hz: 1, driftPsiPerDay: 0.1 },
+                 V: null, q: null, suggest: true, allowedShutInD: 10, targetW: null, repressurise: false, epsMax: 0.05, leakEps: 0.05 };
+    }
+    function _designRanges() { var pl = dstate().plan; return (pl && _isObj(pl.ranges)) ? pl.ranges : _defaultRanges(); }
+    function _dfVal(v) { return _isNum(v) ? String(+(+v).toPrecision(6)) : ''; }
     function renderDesignerTool(host) {
-        var pl = dstate().plan;
+        var pl = dstate().plan, R = _designRanges(), items = '';
+        DESIGN_FIELDS.forEach(function (fd) {
+            items += '<div class="fg-item"><label for="prism_dfit_dr_' + fd[0] + '">' + _esc(fd[1] + ' (' + fd[3] + ')') + '</label>' +
+                     '<input type="text" inputmode="decimal" id="prism_dfit_dr_' + fd[0] + '" value="' + _esc(_dfVal(_getP(R, fd[2]))) + '"></div>';
+        });
         var h = _toolHost(host, 'prism_dfit_designer', '<div class="card"><div class="card-title">DFIT designer (pre-job)</div>' +
-            _note('Plans the injection volume, rate, shut-in duration and gauge from ranges of the reservoir and rock properties (seeded ensemble).') +
+            _note('Plans the injection volume, rate, shut-in duration and gauge from ranges of the reservoir and rock properties (seeded ensemble). Field units.') +
+            '<div class="fg">' + items + '</div>' +
             '<div class="fg"><div class="fg-item"><label for="prism_dfit_design_n">Draws</label><input type="text" inputmode="decimal" id="prism_dfit_design_n" value="500"></div>' +
             '<div class="fg-item"><label for="prism_dfit_design_seed">Seed</label><input type="text" inputmode="decimal" id="prism_dfit_design_seed" value="1"></div></div>' +
             '<div class="prism-dfit-bar">' + _btn('prism_dfit_design_go', 'Design', 'design', 'btn-primary') + '</div>' +
@@ -3016,10 +3096,34 @@
         _drawIn(h);
         return h;
     }
-    function _designHTML(D) {
+    // the ranges from the form (blank or unreadable → the stored / default value; optional fields blank → null); errors list the
+    // P10 > P90 pairs and out-of-range entries
+    function _readDesignForm() {
+        var R = _clone(_designRanges()) || _defaultRanges(), errs = [];
+        DESIGN_FIELDS.forEach(function (fd) {
+            var el = _byId('prism_dfit_dr_' + fd[0]);
+            if (!el) return;
+            var raw = String(el.value == null ? '' : el.value).trim();
+            if (!raw) { if (fd[6]) _setP(R, fd[2], null); return; }
+            var x = _parse(raw);
+            if (!_isNum(x)) { errs.push(fd[1] + ': not a number'); return; }
+            if (x < fd[4] || x > fd[5]) { errs.push(fd[1] + ' outside ' + fd[4] + '–' + fd[5] + ' ' + fd[3]); x = Math.min(fd[5], Math.max(fd[4], x)); }
+            _setP(R, fd[2], x);
+        });
+        ['k', 'phi', 'ct', 'muRes', 'h', 'hf'].forEach(function (k) { if (_isObj(R[k]) && _isNum(R[k].p10) && _isNum(R[k].p90) && R[k].p10 > R[k].p90) errs.push(k + ': P10 is above P90'); });
+        R.suggest = !(_isNum(R.V) && _isNum(R.q));
+        return { ranges: R, errors: errs };
+    }
+    var BIND_WORDS = { radial: 'radial confirmation', '3tc': 'three closure times', afterflow: 'afterflow', precision: 'p_i precision' };
+    function _designHTML(D, ranges) {
         if (!D || D.ok === false) return '';
+        var sh = D.shutIn || null, allow = ranges && _isNum(ranges.allowedShutInD) ? ranges.allowedShutInD : (_isNum(D.allowedShutInD) ? D.allowedShutInD : null);
+        var shTxt = sh && _isNum(sh.p50) ? _f(sh.p50 / 24, sh.p50 / 24 < 10 ? 1 : 0) + ' d (' + _f(sh.p50, 0) + ' h)' : '—';
         var html = _rbox('Design', [_rrow('Outcome', D.outcome ? D.outcome.label : '—'), _rrow('Closure time P50 (h)', _f(D.tc && D.tc.p50, 1)),
-                    _rrow('Shut-in P50 (h)', _f(D.shutIn && D.shutIn.p50, 0) + (D.shutIn ? ' (' + D.shutIn.binding + ')' : '')), _rrow('Minimum volume (bbl)', _f(D.Vmin, 1))]);
+                    _rrow('Shut-in P50', shTxt + (sh ? ', set by ' + (BIND_WORDS[sh.binding] || sh.binding) : '')),
+                    _rrow('Allowed shut-in', _isNum(allow) ? _f(allow, 1) + ' d' : '—'), _rrow('Minimum volume (bbl)', _f(D.Vmin, 1))]);
+        if (sh && _isNum(sh.p50) && _isNum(allow) && sh.p50 / 24 > allow)
+            html += _verdict('warn', 'The P50 shut-in (' + _f(sh.p50 / 24, 1) + ' d, ' + (BIND_WORDS[sh.binding] || sh.binding) + ') is longer than the allowed ' + _f(allow, 1) + ' d.');
         if (D.outcome && D.outcome.text) html += _note(D.outcome.text);
         if (_arr(D.checklist)) html += _table(['#', 'Checklist'], D.checklist.map(function (c) { return [c.id, c.text]; }));
         return html;
@@ -3028,24 +3132,17 @@
         var f = _fn('PRiSM_dfit_design');
         if (!_need(f, 'The DFIT designer is not available in this build yet.')) return null;
         var n = clampField('designer.n', (_byId('prism_dfit_design_n') || {}).value).value, seed = clampField('designer.seed', (_byId('prism_dfit_design_seed') || {}).value).value;
-        var T = test(), w = _well(), ranges = (dstate().plan && dstate().plan.ranges) || null;
-        if (!ranges) {
-            var k = _num(w.k) || 0.01, z = _num(T.inputs.datumTvd) || 10000;
-            ranges = { k: { p10: k / 10, p90: k * 10 }, phi: { p10: 0.04, p90: 0.1 }, ct: { p10: 5e-6, p90: 2e-5 }, muRes: { p10: 0.3, p90: 1 }, h: { p10: 30, p90: 80 },
-                       hf: { p10: 40, p90: 100 }, hp: 40, Ep: { p50: 5e6, sdLn: 0.25 }, nu: 0.25, sigmaGrad: { p50: 0.7, sd: 0.02 }, piGrad: { p50: 0.45, sd: 0.02 }, datumTvd: z,
-                       strings: T.inputs.strings, fluid: { kind: T.inputs.fluid.kind, rhoPpg: T.inputs.fluid.rhoPpg, muCp: T.inputs.fluid.muCp },
-                       gauge: { kind: T.inputs.channels.primary === 'surface' ? 'surface' : 'bh', sigma: 0.05, resolution: 0.01, hz: 1, driftPsiPerDay: 0.1 },
-                       V: null, q: null, suggest: true, allowedShutInD: 10, targetW: null, repressurise: false, epsMax: 0.05, leakEps: 0.05 };
-        }
+        var rd = _readDesignForm(), ranges = rd.ranges;
+        if (rd.errors.length) _toast('⚠ ' + _txt(rd.errors.slice(0, 3).join('; ')));
         var D = null;
         try { D = f(ranges, { n: n, seed: seed, grid: 'coarse' }); } catch (e) { D = null; }
         if (!_need(D && D.ok !== false, 'The design failed for these ranges.')) return null;
         var c = D.corridor || {};
         var cap = function (a) { return _arr(a) ? a.slice(0, 60) : []; };
-        dstate().plan = { ranges: ranges, summary: { ok: true, outcome: D.outcome, tc: D.tc, shutIn: D.shutIn, Vmin: D.Vmin, checklist: (D.checklist || []).slice(0, 20) },
+        dstate().plan = { ranges: ranges, summary: { ok: true, outcome: D.outcome, tc: D.tc, shutIn: D.shutIn, Vmin: D.Vmin, allowedShutInD: ranges.allowedShutInD, checklist: (D.checklist || []).slice(0, 20) },
                           corridor: { t: cap(c.t), p10: cap(c.p10), p50: cap(c.p50), p90: cap(c.p90) }, ticks: {} };
         _emit('prism:dfit-updated', { what: 'all', source: 'user' });
-        var out = _byId('prism_dfit_design_out'); if (out) out.innerHTML = _designHTML(dstate().plan.summary);
+        var out = _byId('prism_dfit_design_out'); if (out) out.innerHTML = _designHTML(dstate().plan.summary, ranges);
         redrawAll();
         return D;
     }
@@ -3181,7 +3278,7 @@
     }
     function onLeave(next) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; _closeOverride(); return next; }
     var EXT = {
-        label: 'DFIT (fracture injection)', testType: 'falloff',
+        label: 'DFIT (fracture injection)', testType: 'falloff', stateKey: 'dfit',
         steps: { 1: 'Data & events', 2: 'ISIP & friction', 3: 'Pre-closure', 4: 'After-closure & model', 5: 'Report' },
         tabs: { 1: 1, 3: 2, 5: 7 },
         stepView: { 2: function (host) { return G.PRiSM_dfit_renderStep2(host); }, 4: function (host) { return G.PRiSM_dfit_renderStep4(host); } },
@@ -3194,6 +3291,10 @@
             return EXT.panelAllow.indexOf(String(spec.id)) !== -1;
         },
         panelAllow: ['crop', 'gauges', 'linetools'],
+        panelsFirst: [1],
+        // the built-in Tools that make sense on an injection + falloff record (no semilog / RTA / decline / model race / skin
+        // check / deconvolution: they read the record as a PTA)
+        toolAllow: ['pvt', 'crop', 'tide', 'gauges', 'datasets', 'project', 'gaugecheck', 'dsets', 'overlays', 'diff', 'clipboard', 'plottools'],
         plotsTab: { hide: ['period', 'timeFn', 'overlay'] },
         note: 'DFIT is field-unit only (psia, psi/ft, ft, bbl, bbl/min, cp, md).',
         rail: function (el) { return rail(el); },
@@ -3222,6 +3323,16 @@
             if (typeof v.active === 'string' && _findTest(v.active)) d.active = v.active;
             if (_isObj(v.test.inputs)) T.inputs = _clampInputs(_clone(v.test.inputs));
             if (_isObj(v.test.picks)) T.picks = _clone(v.test.picks);
+            var full = _fullFor(T);
+            if (full) {
+                // back to the inputs and picks of a full run: reinstate it (labels, tolerances and uncertainty included)
+                _st()._dfitRun = full.run;
+                T.summary = _clone(full.summary);
+                _publish();
+                _emit('prism:dfit-updated', { what: 'all', source: 'undo' });
+                _refreshUI();
+                return;
+            }
             if (T.summary) T.summary.stale = true;
             _dropRun();
             var f = G.PRiSM_dfit_pipeline;
@@ -3247,7 +3358,11 @@
         delete _st()._dfitLk; delete _st()._dfitLkGeo;
         if (e && e.type === 'wts:project-new') { var st = _st(); delete st.dfit; }
         else if (_engaged()) { dstate(); _checkBinding(); }
-        else return;
+        else {
+            // the opened project has no DFIT state (29 drops st.dfit): no stale WTS_state.dfit either
+            if (G.WTS_state && typeof G.WTS_state === 'object' && 'dfit' in G.WTS_state) delete G.WTS_state.dfit;
+            return;
+        }
         _publish();
     }
     function _onPage() { var sh = _shell(); if (!sh || sh.isConnected === false) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; } }
