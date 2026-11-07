@@ -6521,6 +6521,12 @@ function _makeCtx(plotKey, axes) {
 }
 
 function _defaultKinds(plotKey) {
+    // A registry entry may state its axes: {x:'lin'|'log', y:'lin'|'log'}.
+    var reg = G.PRiSM_PLOT_REGISTRY;
+    var ax = (reg && typeof reg === 'object' && reg[plotKey] && reg[plotKey].axes) || null;
+    if (ax && typeof ax === 'object' && (ax.x === 'lin' || ax.x === 'log') && (ax.y === 'lin' || ax.y === 'log')) {
+        return { x: ax.x, y: ax.y };
+    }
     if (plotKey === 'bourdet' || plotKey === 'sandface') return { x: 'log', y: 'log' };
     if (plotKey === 'mdh' || plotKey === 'horner') return { x: 'log', y: 'lin' };
     return { x: 'lin', y: 'lin' };
@@ -6578,6 +6584,13 @@ G.PRiSM_runAnalysisKey = function (keyName, points, opts) {
         if (_num(entry.values[vk])) results[qd.label + (qd.unit ? ' (' + qd.unit + ')' : '')] = entry.values[vk];
     });
     entry.results = results;
+    // store:false keys keep their own results (the layer that owns the key);
+    // they are not stored here and not drawn by the linetools-picks hook.
+    if (key.store === false) {
+        _emit('prism:analysis-key', { key: keyName, result: entry, stored: false });
+        _refreshToolbars();
+        return { ok: true, key: keyName, result: entry };
+    }
     var st = G.PRiSM_state;
     if (!st) st = G.PRiSM_state = {};
     if (!st.analysisKeyResults || typeof st.analysisKeyResults !== 'object') st.analysisKeyResults = {};
@@ -6980,7 +6993,10 @@ function _linetoolsPostDraw(info) {
     if (!tr) return;
     var plotKey = info.plotKey || st.activePlot;
     var list = Object.keys(res).map(function (k) { return res[k]; })
-        .filter(function (e) { return e && e.plotKey === plotKey && Array.isArray(e.points); })
+        .filter(function (e) {
+            var ak = e && G.PRiSM_analysisKeys ? G.PRiSM_analysisKeys[e.key] : null;
+            return e && e.plotKey === plotKey && Array.isArray(e.points) && !(ak && ak.store === false);
+        })
         .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); }).slice(0, 4);
     if (!list.length) return;
     var ctx = info.canvas.getContext('2d');
@@ -7154,13 +7170,34 @@ G.PRiSM_exportPlotPNG = function (plotKey) {
     return true;
 };
 
+// Workspace-mode extension (PRiSM_modeExt) of a mode key; null for the
+// built-in modes and unknown keys. Resolved at call time.
+function _modeExtOf(mode) {
+    if (typeof mode !== 'string' || mode === 'transient' || mode === 'decline' || mode === 'combined') return null;
+    var X = G.PRiSM_modeExt;
+    var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, mode)) ? X[mode] : null;
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+
 function _galleryHTML() {
     var ds = G.PRiSM_dataset;
     if (!ds || !ds.t || !ds.t.length) return '<p><em>No dataset loaded — plot gallery skipped.</em></p>';
     var mode = (G.PRiSM && G.PRiSM.mode) || 'transient';
     var html = '<h2 style="page-break-before:always;">Plots</h2>', cnt = 0;
-    _plotEntries().forEach(function (e) {
-        if (mode !== 'combined' && e.mode !== mode && e.mode !== 'both') return;
+    var ext = _modeExtOf(mode);
+    var entries = _plotEntries();
+    if (ext) {
+        // ext mode: exactly ext.reportPlots [{key, title}], in that order
+        var byKey = {};
+        entries.forEach(function (e) { byKey[e.key] = e; });
+        entries = (Array.isArray(ext.reportPlots) ? ext.reportPlots : []).map(function (rp) {
+            var e = rp && byKey[rp.key];
+            return e ? { key: e.key, fn: e.fn, label: rp.title || e.label, mode: mode } : null;
+        }).filter(Boolean);
+    }
+    entries.forEach(function (e) {
+        if (!ext && (_modeExtOf(e.mode) || ['transient', 'decline', 'both'].indexOf(e.mode) === -1)) return;   // other workspace modes
+        if (!ext && mode !== 'combined' && e.mode !== mode && e.mode !== 'both') return;
         var url = _plotDataURL(e.key, 1200, 800);
         if (!url) return;
         cnt++;
