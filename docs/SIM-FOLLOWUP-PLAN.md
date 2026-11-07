@@ -718,7 +718,7 @@ an absence. The destination and the cushion are labels and colours only.
   - The heater inlet leg E3c (l.212) runs from the tee (−4.3,1.2,0) to (−3.9,1.2,0), up the riser past the inlet gate valve at
     (−3.9,1.55,0) (l.1940), to (−3.9,1.9,0), then to (−3.9,1.9,0.4) and on to the coil inlet (−3.15,1.9,0.4).
   - CK-102 is a copy of the CK-101 block (l.1831-1843: angle body, bonnet, handwheel) at 0.8 scale, placed on the last
-    horizontal stub at x ≈ −3.55, y 1.9, z 0.4, clear of the shell end ring at x −3.1. A small PAH-102 label sits on the
+    horizontal stub at x ≈ −3.45 (as built: −3.55 moved by the clearance model to keep the riser and the H-101 end ring clear), y 1.9, z 0.4, clear of the shell end ring at x −3.1. A small PAH-102 label sits on the
     stub between the chokes.
   - E3c splits into E3c1 / CK-102 / E3c2 with `rig:'heaterChoke'`, like D1/D2 (l.233-234). Add the NEW_ROUTES entry
     (l.248) and the NOZZLES entries for the endpoint check. While CK-102 is out, E3c is drawn as in v3.3.1.
@@ -731,7 +731,7 @@ an absence. The destination and the cushion are labels and colours only.
 - **Dynamics**: `S.dyn.heaterChoke = {wheel, ang}` turns with `bean2`. Frost on the downstream body when
   `nodes.heaterChoke.hyd`. Greyed while bypassed.
 - **midcoil (C)**: the body moves to a crossover loop above the shell end (WP-3D picks the location, and the clearance test
-  covers it). If time is short, the inlet body stays with the label "between passes".
+  covers it). If time is short, the inlet body stays with the label "between passes". **As built (WP-3D): the fallback** — the body stays on the inlet stub and the chip title reads "HEATER CHOKE (BETWEEN PASSES)".
 - **Bypass destination 'line'**: the separator bypass spool (`BYPASS_SPOOLS.separator` l.257) is routed to the export spool
   (`BYPASS_SPOOLS.flare` l.260), with labels PSHH-104 on the bypass spool and NRV-501 / XV-501 at the tie-in, and the
   flame stays off. With 'flare' the scene is unchanged (PSHH-104 label only while V-101 is out).
@@ -752,6 +752,9 @@ an absence. The destination and the cushion are labels and colours only.
   `wtsEqChk`. `wtsEqChk` itself is **not changed**, so its `wts-host-patch.js` done marker
   (`function wtsEqChk(ctx,x,y,regime,limited){`) and all existing calls stay byte-identical.
 - While CK-102 is out (or the static call), the v3.3.1 row is drawn exactly (divert glyph tests unchanged).
+- As built (WP-2D review): with CK-102 in, its hydrate flag replaces the bean label (cy + 90 would run into the strip), and seg 3
+  carries no phase label (the CK-101 and CK-102 regime texts at cy − 34 leave no room); with V-101 out to the production line and
+  a seg-3 hydrate mark the destination label starts at tx[4] + 60.
 - Labels by destination: `BYPASSED → BURNER LINE` / `BYPASSED → PRODUCTION LINE (P psig) · NRV-501 / XV-501` (38 l.3117),
   and `GAS → EXPORT LINE` (l.3121) stays.
 
@@ -780,9 +783,11 @@ an absence. The destination and the cushion are labels and colours only.
   and "To vent" while `ventOn`.
 - **Flare card**: label "Production line" and P while `bypLine`; flame 0.
 - **2D overlay (WP-2D)**: `draw2dLive` l.2830, `drawRig2d` l.3048, `zones2d` l.3244 (zone at `ck2.x`), `valves2d` l.3226.
-  The `off('heater')` mask (l.3113) also masks CK-102.
+  The `off('heater')` mask (l.3113) also masks CK-102 (as built: not needed — `normRigup` takes CK-102 out with H-101, and the
+  host draws CK-102 only with H-101 in; the unreachable mask was removed in the WP-2D review).
 - **Phone / iOS**: the cushion form follows the `.cj-dlg-ov` safe-area rule in `ios-additions/ios-styles.css` (one rule,
-  owned by WP-L, in its own commented block placed **after** the Help release's rules). Inputs ≥ 16 px.
+  owned by WP-L, in its own commented block placed **after** the Help release's rules; as merged: section 9, after the Help
+  centre's section 8, closed by "end of section 9"). Inputs ≥ 16 px.
 
 ### 8.4 Reports and project files
 - The CK-102 rbox and the Rig-up row are captured for free (`.rbox`, `.rrow`). Rows of an item that is out are `rp-skip`, so
@@ -796,7 +801,7 @@ an absence. The destination and the cushion are labels and colours only.
 
 ### 9.1 Existing tests that change
 - The counts of §3.6 (from the grep rule, recorded in `COUNT_SITES`).
-- `wts-equipment.test.js`: `SAMPLE_FLOW_SIM` keys 7 → 9; `ALARM_IDS` and the quiet-list test gain the thirteen ids of D12
+- `wts-equipment.test.js`: `SAMPLE_FLOW_SIM` keys 7 → 9; `ALARM_IDS` and the quiet-list test gain the eleven ids of D12 (Appendix B, Counts)
   (three new quiet lists); FAULT_IDS stays at 16.
 - `wts3d-test.js`: node count 11, RIGUP 11, 3D rigSig 9, and the host flow check l.791 ("patched calcWTS publishes flow
   v1 = `WTS_sim.SAMPLE_FLOW`", strict key-set `eqShape` l.643-647): **named allowance "fu-blocks"** (permanent, not
@@ -814,7 +819,7 @@ an absence. The destination and the cushion are labels and colours only.
 | `tests/_wts-calc-v331-src.js` | WP0 | the v3.3.1 `calcWTS` function text (and its helpers), frozen from the host at `3611343`; the timing baseline of §10 |
 | `tests/_wts-fu-shapes.js` | WP0 | §7.3 |
 | `tests/wts-fu-identity.test.js` | WP0 / lead | **(1)** frozen v3.3.1 vs working engine, every v3.3.1 snapshot path `===`, sig `slice(0,10)` equal and `slice(10) === '0'`, on scenarios a–e plus (b) one per core item out, plus DS-101 in with flow-back, T-202 in with route 'both', and both in — **on `SAMPLE_FLOW` and on a harness-`calcWTS` default flow** (blocks present, V-101 in, CK-102 out) fed to both engines. **(2)** v3.3 identity tests unchanged. **(3)** host golden: the base fields (`BASE_FIELDS`: all of `flow` minus `ts`, `seq`, `ck2`, `sepBy`, `sim.sepByDest`, `sim.sepByP_psig`; this includes `flow.warnings`, `flow.nodes`, `flow.segs`, `flow.choke`, `flow.heater`, `flow.sim.surgeP_psig`) for the 12 sets are strict `===` to the golden, with and without CK-102 / destination inputs set and with `wts_sim_rigup` holding a CK-102 / V-101-out rig-up (the rig-up must not move the base). **(4)** `DEFAULTS.sep.bypass.P_flare_psig === DEFAULTS.sep.pcv.P2_psig`; `features` keys all equal |
-| `tests/wts-heater-choke.test.js` | WP-C (host part), WP-E1 (engine part) | normRigup (needs heater, strict-true, sig 11, extras); `flow.ck2` at bean2 48 = `ANCHORS_CK2` (Pm, CK-101 critical); bean2 32 → flow-limited, limiter `'CK-102'`, `QmaxPair` = anchor; equal-bean and both-subcritical cases give limiter `'both'`; bean2 4 → `No Flow`, no throw; liquid-only flow (Qg 0) → `skipped` block with note; **dry-gas anchor**: heater inlet T and duty with CK-102 48/64 inlet equal the CK-101-only walk within the recorded seg-3 tolerance; position midcoil: same pressures and duty, CK-102 outlet T differs by the pass-1 heat, Tp1 ≤ Tho − 25; blocked-in warning text by position at SITHP 3,600; engine with `flow.ck2`: choke outlet = Pm + seg-3 loss; `HYD_heaterChoke`, `CHOKE2_LIMIT` (and `CHOKE_LIMIT` suppressed), `CK1_SUBCRIT` only when the base was critical; `PAH_CK2` raised on a live bean2 pinch to 4/64 at high WHP (U7); heater bypass → inactive and continuous (no step > 1 psi in 1 s); rig in / out continuity through the lag; **derive-survival**: change bean2, then the Thtr input, during a CK-102 transient — `X.ck2dP` kept and no step; cumulative J-T cap in the engine (`N.choke.dTjt + N.heaterChoke.dTjt ≤ 150`); determinism (same seed → same state); dt 1 vs dt 10 within the self-test-6 tolerances; old flow without `flow.ck2` → note, no throw; `calcWTS` never reads `wts_sim_rigup` (storage spy) |
+| `tests/wts-heater-choke.test.js` | WP-C (host part), WP-E1 (engine part) | normRigup (needs heater, strict-true, sig 11, extras); `flow.ck2` at bean2 48 = `ANCHORS_CK2` (Pm, CK-101 critical); bean2 32 → flow-limited, limiter `'CK-102'`, `QmaxPair` = anchor; both chokes subcritical at the pair capacity gives limiter `'both'` — at a separator pressure of 1,500 psig (32/64 + 40/64, and equal beans 32/32); at 150 psig equal beans give `'CK-102'` (Appendix B); bean2 4 → `No Flow`, no throw; liquid-only flow (Qg 0) → `skipped` block with note; **dry-gas anchor**: heater inlet T and duty with CK-102 48/64 inlet equal the CK-101-only walk within the recorded seg-3 tolerance; position midcoil: same pressures and duty, CK-102 outlet T differs by the pass-1 heat, Tp1 ≤ Tho − 25; blocked-in warning text by position at SITHP 3,600; engine with `flow.ck2`: choke outlet = Pm + seg-3 loss; `HYD_heaterChoke`, `CHOKE2_LIMIT` (and `CHOKE_LIMIT` suppressed), `CK1_SUBCRIT` only when the base was critical; `PAH_CK2` raised on a live bean2 pinch to 4/64 at high WHP (U7); heater bypass → inactive and continuous (no step > 1 psi in 1 s); rig in / out continuity through the lag; **derive-survival**: change bean2, then the Thtr input, during a CK-102 transient — `X.ck2dP` kept and no step; cumulative J-T cap in the engine (`N.choke.dTjt + N.heaterChoke.dTjt ≤ 150`); determinism (same seed → same state); dt 1 vs dt 10 within the self-test-6 tolerances; old flow without `flow.ck2` → note, no throw; `calcWTS` never reads `wts_sim_rigup` (storage spy) |
 | `tests/wts-bypass-cushion.test.js` | WP-C (host part), WP-E2 (engine part) | HELP-GUIDE-PLAN §8.3 as corrected: `pDown` per destination (legacy on `SAMPLE_FLOW`, multiphase with `flow.sepBy`, P0 from the block); `calcWTS` sepBy choke outlet follows the destination, not Psep; `wts_sepByP` 0 is kept (not 150); destination ≥ choke inlet → No Flow warning; normRigup allows V-101 + FS-401 out only for 'line', and line → flare re-forces the flare **through `setConfig` and through `setFlow`** (page path); no flare totals with 'line'; vent sink with FS-401 out; mass balance `massErr` < 1e-6 per destination, with the vent and with the cushion; `PSHH_SEPBY` trips SDV-101 with line P 1,400 psig; `SEPBY_RATING`; shut-in with 'line' holds line pressure with the NRV note; **cushion units**: gasFrac 0, 1,500 bbl/d, `cum.waterIn` after 1 h = 62.5 bbl within 1 %; breakthrough at Vmain delivered to one substep, dt 1 vs dt 10 agree on tBreak; **∫cushion water dt = V within 0.1 % at tBreak + 10·tailTau** (separately from `done`), and `done` reached after tBreak + about 5·tailTau (± 10 %); phase sequence unloading → breakthrough → tail → done; WHP monotonic while unloading and start WHP = `ANCHORS_CUSH` (SIT-based law); no WHP step > 50 psi at breakthrough; `CUSH_LIMIT` at 12/64; qLcap with CK-102 128/64 within 1 % of CK-101 alone; `CUSH_NOLIFT` with 150 bbl in 2-7/8″ to 25,000 ft, all well rates 0 while stalled; `CUSH_BURNER` with dest flare at SG 1.03 (water text) and at SG 0.85 (hydrocarbon text); J-T: no `HYD_*` during unloading with a warm heater, the existing hydrate alarms at breakthrough with a cold heater; warm-up runs during the unload; duty additive, `HTR_FULL` with q 3,000 bbl/d from a 60 °F wellhead and the outlet below the set point; `CUSH_DUMP` and LAH with V-101 in at the defaults, `Cv_w` unchanged before / during / after; **derive-survival**: change Thtr and bean2 during an unload — cushion state and `Cv_w` kept; Reset clears; determinism |
 | `tests/wts-fu-views.test.js` | WP-L, WP-2D, WP-3D (groups), lead merges | 2D: CK-102 glyph only on the live call while in, static diagram byte-identical, legacy row byte-identical when out, destination labels; HMI: card rows, bean2 action → `setHostInput('wts_bean2')`, Scenarios entry and form (ids `wtsl_cush_*`), prefs round trip and sanitiser, `inputsDiff` entries, HUD line, rig-card notes, the `rigup` handler calls `wtsRenderResults` and not `calcWTS` (no `wts:calc` dispatch, `flowSeq` unchanged), (stub sim with `fakeFuSnapshot`); 3D table filters, clearance, frost, rebuild key with the destination (wts3d-test section) |
 | `prism-build/wts-sim-perf.js` | WP0 | `--base v331` default (`--base v33` keeps the old pair); new `--case ck2` and `--case cushion` modes for the secondary ratios |

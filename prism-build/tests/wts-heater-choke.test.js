@@ -122,6 +122,7 @@ const HOST = [
       assert.ok(!warnHas(b48, X.WARN_TEXTS.ck2Hydrate) && b48.hyd.margin > 10, 'defaults: no hydrate warning');
       // §4.3-7 second check: seg 3 at the CK-102 inlet, Thyd(Pm) against T3 (a warning; the frozen hyd shape is the outlet)
       const inRe = /^Hydrate margin at the CK-102 inlet -?[\d,.]+ °F \(hydrate [\d,.]+ °F at [\d,.]+ psig\)$/;
+      assert.ok(X.textRe(X.WARN_TEXTS.ck2HydrateIn).test('Hydrate margin at the CK-102 inlet 4.2 °F (hydrate 61 °F at 1,135 psig)'), 'fixture text ck2HydrateIn');
       assert.ok(cold.warnings.some((w) => inRe.test(w.msg)), 'cold: inlet hydrate warning: ' + cold.warnings.map((w) => w.msg).join(' | '));
       assert.ok(!b48.warnings.some((w) => /CK-102 inlet/.test(w.msg)), 'defaults: no inlet hydrate warning');
       // the base never carries the new texts

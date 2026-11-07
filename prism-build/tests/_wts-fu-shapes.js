@@ -227,6 +227,7 @@ var WARN_TEXTS = {   // host, flow.ck2.warnings / flow.sepBy.warnings (§4.5)
   blockedInlet: 'SITHP {x} psig above the 1,440 psig design pressure of the line CK-101 → CK-102: if CK-102 is closed or plugged this line sees full SITHP; the coil is downstream of CK-102',
   blockedMidcoil: 'SITHP {x} psig above the 1,440 psig design pressure between the chokes: if CK-102 is closed or plugged the line and H-101 pass 1 see full SITHP',
   ck2Hydrate: 'Hydrate margin at the CK-102 outlet {x} °F',
+  ck2HydrateIn: 'Hydrate margin at the CK-102 inlet {x} °F (hydrate {y} °F at {p} psig)',   // WP-C review (§4.3-7 second check, seg 3 at Pm); lead, WP-I
   sepBySubcrit: 'Destination pressure makes CK-101 subcritical',
   sepByNoFlow: 'No flow: destination pressure ≥ choke upstream pressure',
   sepByRating: 'Production line {x} psig plus line loss {y} psi above the 1,440 psig design pressure of the bypass path (blocked outlet not simulated)' };
