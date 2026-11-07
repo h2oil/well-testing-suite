@@ -1579,6 +1579,13 @@ const PRiSM_SHELL = (function () {
         if (typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
         if (typeof W.PRiSM_exportPlotPNG === 'function') items.push({ label: 'Current plot as PNG', run: () => W.PRiSM_exportPlotPNG(st.activePlot || 'bourdet') });
         if (typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
+        // ext mode: its own export items [{id, label, fn}] after the built-in ones
+        const ext = curExt();
+        if (ext && Array.isArray(ext.exportItems)) {
+            ext.exportItems.forEach(x => {
+                if (x && typeof x.fn === 'function' && x.label) items.push({ label: String(x.label), run: () => x.fn() });
+            });
+        }
         return items;
     }
 

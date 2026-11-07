@@ -165,7 +165,8 @@ const EXT_SRC = `
     onLeave: function (next) { W.__ext.log.push('leave:' + next + ':' + W.PRiSM.mode); },
     reportHeader: function () { return { title: 'Test report', keyRows: [['Closure', '7,000 psia']], keyLine: 'TEST · closure 7,000 psia' }; },
     reportPlots: [{ key: 'testPlot', title: 'Test plot in the report' }],
-    reportLegacySections: false
+    reportLegacySections: false,
+    exportItems: [{ id: 'tx', label: 'Test export', fn: function () { W.__ext.log.push('export'); } }]
   };
 })();`;
 function installExt(app) { app.evalInApp(EXT_SRC); }
@@ -689,6 +690,16 @@ module.exports = [
       W.PRiSM.setMode('transient');
       assert(JSON.parse(app.evalInApp(TOOL_IDS_PROBE)).indexOf('tab1:tpanel|Step panels') === -1, 'not in transient');
       assert.deepEqual(JSON.parse(app.evalInApp(TOOL_IDS_PROBE)).filter((x) => before.indexOf(x) === -1), ['tsandbox|Test'], 'transient list = baseline + "*" entry');
+      // ext.exportItems join the Export menu in the ext mode only
+      const exportLabels = () => { app.click('prism_export_btn'); const l = Array.from(app.el('prism_menu').querySelectorAll('[data-prism-menu]')).map((b) => b.textContent); app.click('prism_export_btn'); return l; };
+      W.PRiSM.setMode('test');
+      assert(exportLabels().indexOf('Test export') !== -1, 'ext export item listed');
+      app.click('prism_export_btn');
+      const tb = Array.from(app.el('prism_menu').querySelectorAll('[data-prism-menu]')).find((b) => b.textContent === 'Test export');
+      app.click(tb);
+      assert(W.__ext.log.indexOf('export') !== -1, 'ext export item runs');
+      W.PRiSM.setMode('transient');
+      assert(exportLabels().indexOf('Test export') === -1, 'not in transient');
       // opening the function tool works in the ext mode
       W.PRiSM.setMode('test');
       W.PRiSM_openTools();
