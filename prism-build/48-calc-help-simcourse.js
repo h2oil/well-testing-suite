@@ -152,7 +152,7 @@
             'Run at **×60**. WHP falls to the column law (about {{1700|pressureG}}) and rises by itself as the column unloads; the choke outlet stays at about {{5|pressureG}}.',
             'CUSH_BURNER: cushion liquid at the burner (water or brine: flame-out; oil or diesel: burning fallout).',
             'Breakthrough about 41 minutes after the start: gas returns, WHP peaks near {{3370|pressureG}} and settles at the flowing WHP while the tail comes out. Done after about 3.2 hours, {{50|volume}} recovered.',
-            'Go through the separator once the returns are clean and stable: switch V-101 in.'], ordered: true },
+            'Go through the separator once the returns are clean and stable.'], ordered: true },
             'The bean can limit the liquid: CUSH_LIMIT on CK-101 (12/64 at {{1|gasRate}}: about {{1200|liquidRate}}). A well that cannot lift the cushion stalls with CUSH_NOLIFT. H-101 at its limit: HTR_FULL.',
             'Through V-101 the water dump passes about {{790|liquidRate}} at the defaults: **Start** warns, CUSH_DUMP stays up, LAHH-101 within 5 minutes.',
             { h: 'Limits' }, 'Liquid orifice law for the bean; flare-line geometry and no riser for the line loss; burning liquid is warned about, not modelled.'] },
@@ -228,12 +228,12 @@
             'In the form set **Heater choke CK-102 bean** to 32. Watch the alarms and both cards.', 'Set it to 64, then back to 48.', 'On the H-101 card select **Bypass**: CK-102 goes out of line with it. Select it again.', OUT('Heater inlet choke')],
         observe: ['On 48/64 about {{1135|pressureG}} between the chokes: CK-101 P2/P1 0.38, **Critical**, and CK-101 limits the pair ({{10.71|gasRate}}).',
             'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), CK-101 subcritical (CK1_SUBCRIT); about {{2460|pressureG}} between the chokes at the cut rate.',
-            'On 64/64 about {{634|pressureG}} between the chokes.', 'The page warns that SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} design pressure between the chokes.'],
+            'On 64/64 about {{634|pressureG}} between the chokes.', 'The page warns: SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} rating between the chokes.'],
         questions: ['Why does CK-101 go subcritical on 32/64?', 'Which choke sets the rate on 48/64?', 'What protects the line between the chokes?'],
         answers: ['CK-102 holds the pressure between the chokes above about 0.55 of the CK-101 inlet.', 'CK-101: it is still critical and the pair passes its capacity.', 'Its design pressure, PAH-102 at 90 % and the blocked-in check; no relief valve is modelled between the chokes.'],
         form: DEF, trainer: { duration: '20 minutes.', fault: 'None. Variant: start on 32/64 and ask why the rate is short.',
             good: 'Reads the pressure between the chokes and the limiter, and opens CK-102 until CK-101 is critical again.', mistakes: ['Pinching CK-102 below the CK-101 bean.', 'Forgetting that the heater bypass takes CK-102 out of line.'],
-            debrief: ['Where would a second choke sit on your spread?', 'Why stage the drop at all?', 'What if CK-102 plugged with hydrate?'] } });
+            debrief: ['Where would a second choke sit on your spread?', 'Why stage the drop?', 'What if CK-102 plugged with hydrate?'] } });
         var T4 = F0('FS-4').today; T4.splice(T4.length - 2, 0, { h: 'Staging with CK-102' }, 'Switch **Heater inlet choke** in and pinch CK-102 while you open CK-101, so each takes part of the drop. Keep both outlets {{10|tempDelta}} above the hydrate temperature (CK-102 card **Hydrate T / margin**). **On the heater inlet** both drops are on cold fluid; **Between the coil passes** heats first. The line between the chokes is rated {{1440|pressureG}}: watch PAH-102 and the blocked-in warning ([[course#ex11|exercise 11]]).');
     }
     var A = function (a, x) { return { action: a, args: x }; }, R0 = A('simReset', 'steady'), V2 = A('simView', '2d'), V3 = A('simView', '3d'), RUN = function (sp, s) { return A('simRun', { speed: sp, simSeconds: s }); };
