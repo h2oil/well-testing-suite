@@ -8520,7 +8520,7 @@ function crop(id, target, alt, caption, co) { return { id: id, view: 'desktop', 
 function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir**.', shot: 'view' }; }
 
 var prism = {
-  route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
+  route: 'prism', reviewed: V, reviewedSrc: 'bfc37c3e', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -32149,6 +32149,23 @@ pipesz: {
         var dpCL = 0.5 * (isip + sc) - pr;
         return dpCL > 0 ? 1000 * Math.pow(CL / (0.0374 * dpCL), 2) * mu / (phi * ct) : null;
     }
+    // the pressure at the largest dP/dG (Bourdet, 0.05 ln G) among the falloff samples below σ_c and above p_r + 10 % of σ_c − p_r
+    function lkF2(tt, pp, ts, tp, sc, pr) {
+        if (!(tp > 0)) return null;
+        var Gs = [], ps = [], i;
+        for (i = 0; i < tt.length; i++) if (tt[i] > ts) { var gv = GFn((tt[i] - ts) / tp, 0.5); if (gv > 0) { Gs.push(gv); ps.push(pp[i]); } }
+        var n = Gs.length, best = null, bestV = -Infinity, Lw = 0.05;
+        for (i = 1; i < n - 1; i++) {
+            if (!(ps[i] <= sc && ps[i] >= pr + 0.1 * (sc - pr))) continue;
+            var l = i - 1, r = i + 1;
+            while (l > 0 && Math.log(Gs[i] / Gs[l]) < Lw) l--;
+            while (r < n - 1 && Math.log(Gs[r] / Gs[i]) < Lw) r++;
+            var d1 = (ps[l] - ps[i]) / (Gs[i] - Gs[l]), d2 = (ps[i] - ps[r]) / (Gs[r] - Gs[i]), wl = Math.log(Gs[r] / Gs[i]), wr = Math.log(Gs[i] / Gs[l]);
+            var dv = (d1 * wl + d2 * wr) / (wl + wr);
+            if (fin(dv) && dv > bestV) { bestV = dv; best = ps[i]; }
+        }
+        return best;
+    }
     function sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr) {        // end of stiffening: max of f_L(p)/C(p) below σ_c
         var best = sc, bestV = -1;
         for (var x = 0; x <= sc - pr; x += Math.max(0.5, (sc - pr) / 4000)) {
@@ -32177,7 +32194,11 @@ pipesz: {
         var pStart = fin(gd.pStart) ? gd.pStart : gd.pr;
         if (!(gd.isip > gd.sigmaC && gd.sigmaC > gd.pr)) return fail('BAD_INPUT', 'gdomain needs isip > sigmaC > pr', ['gd']);
         var M = gdModel(gd, wb.VwCw, wb.cwOfP);
-        var Vstar = pos(gd.Vstar) ? gd.Vstar : M.X * (gd.Gc + 4 * (PI / 2) / PI);   // V_L(t_c) = X·(G_c + 4g0/π)
+        // V_L(t_c) = X·(G_c + 4g0/π·m): with PDL the pumping leak-off runs at the multiplier of the pumping pressure
+        // m = exp(C_d·(ISIP − p_fo)) (it used to be 1, so the PDL demo's truth assumed constant-CL pumping leak-off while its
+        // falloff had the PDL multiplier — the mini-model PDL case needs m ≈ 4, as the engine now does)
+        var mPump = ((gd.mechanism === 'pdl' || gd.Cd > 0) && gd.isip > M.pfo) ? Math.exp(gd.Cd * (gd.isip - M.pfo)) : 1;
+        var Vstar = pos(gd.Vstar) ? gd.Vstar : M.X * (gd.Gc + 4 * (PI / 2) / PI * mPump);
         var Vi = Vstar + M.vwcw(gd.sigmaC) * (gd.sigmaC - pStart);
         var sch = buildSchedule(gd.q, Vi, gd.stepDown);
         var tp = sch.tp;                                             // pump definition (t_s − t_start)
@@ -32285,15 +32306,26 @@ pipesz: {
         var tpMin = te * 60;
         var CL = 2 * X * BBL / (PI * geom.rp * geom.Af * Math.sqrt(tpMin));
         var exEnd = acaExact(a, [te + dtEnd], { geometry: geo });
+        // gas: the record is the liquid response mapped through m(p), so the truth pressures are mapped the same way (ISIP and
+        // σ_c used to stay at the liquid values: the scorer marked the engine's mapped 8,068.7 / 7,478.1 wrong against 8,128.1 /
+        // 7,528.1), and k is the gas-convention value: the response's kh/μ_liq read at μ_g(p_i), k = k_liq·μ_g,i/μ_liq
+        var scT = gas ? gas(sc) : sc, isipT = gas ? gas(sc + pn) : sc + pn, kT = a.k;
+        if (gas) { var mugi = gasMuAt(a, a.pi); if (pos(mugi) && pos(a.mu)) kT = a.k * mugi / a.mu; }
         var truth = {
-            sigmaC: sc, sigmaCHyd: sc, sigmaCF2: sc, isip: sc + pn, pi: a.pi, k: a.k, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal',
+            sigmaC: scT, sigmaCHyd: scT, sigmaCF2: scT, isip: isipT, pi: a.pi, k: kT, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal', kLiquid: gas ? a.k : undefined,
             regimeAtEnd: exEnd.ok ? regimeFromSD(exEnd.sD[0], geo) : null, sDEnd: exEnd.ok && fin(exEnd.sD[0]) ? exEnd.sD[0] : null, tcInj: a.tcInj, eta: Gc / (Gc + 2), CL: CL, Gamma: 2 * mG / (PI * Math.sqrt(tpMin)),
             AfCf: AfCf, Rvis: AfCf / (AfCf + wb.VwCw), xf: geom.xf,
-            source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: pn, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
+            source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: isipT - scT, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
             kCL: kFromCL(CL, sc + pn, sc, a.pi, a.mu, a.phi, a.ct), kSolved: false, acaScored: true, geometry: geo, rampSlopePsiMin: pump.rampSlopePsiMin,
             rampScaled: pump.rampScaled, pb: pump.pb, tbInj: pump.tb, pfo: null, pHr: null, fluid: a.fluid === 'gas' ? 'gas' : 'water', gasApprox: !!gas
         };
         return { ok: true, p: p, seg: sch.seg, tp: te, dtEnd: dtEnd, pStart: a.pi, truth: truth, gd: gd, M: M, aca: a, pump: pump };
+    }
+    // μ_g at p (the correlations 57 uses: Sutton pseudo-criticals, Dranchuk–Abou-Kassem z, Lee–Gonzalez–Eakin μ), call time
+    function gasMuAt(a, p) {
+        var C = G.PRiSM_pvt_correlations, T = pos(a.T_F) ? a.T_F : 200, sg = pos(a.SG_g) ? a.SG_g : 0.65;
+        if (!C || !(p > 0)) return null;
+        try { var z = C.Z_dranchukAbouKassem((T + 459.67) / C.Tpc_sutton(sg), p / C.Ppc_sutton(sg)); return C.mu_g_leeGonzalezEakin(sg, T, z, p); } catch (e) { return null; }
     }
     // gas: the convolution gives the adjusted pressure p_a = p_i + (μz/p)_i·∫ p/(μz) dp; map back with PRiSM's own m(p)
     // (PRiSM_mpTable, call time). The clock is not stretched (pseudo-time not applied; truth.gasApprox).
@@ -32366,7 +32398,11 @@ pipesz: {
             return ap.fres * Math.exp(-x / sr) + (1 - ap.fres) * Math.exp(-x / ap.sc);
         }
         var vwcw = function () { return VwCw; };
-        var sF2 = (law === 'none' || !AfCf) ? sc : sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr);
+        // F2 truth (end of stiffening): the mini-model's own dP/dG maximum below σ_c on its display grid (G with α = ½ on the
+        // pump time, a Bourdet window of 0.05 in ln G). The quasi-static f_L = (p − p_r)/(σ_c − p_r) of sigmaCF2From misses the
+        // Duhamel memory of the leak-off (§4.11), so the 436 psi median F2 "error" of the quick set came from the truth
+        var sF2 = (law === 'none' || !AfCf) ? sc : lkF2(tt, pp, ts, ts - tStartInj, sc, pr);
+        if (!fin(sF2)) sF2 = (law === 'none' || !AfCf) ? sc : sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr);
         var Gc05 = ev.Gc && fin(ev.Gc.a05) ? ev.Gc.a05 : null;
         var isip = fin(ev.isip) ? ev.isip : p(ts + 1e-6);
         var tpMin = (ts - tStartInj) * 60;
@@ -32665,7 +32701,8 @@ pipesz: {
         if (wb) s.wellbore = merge(s.wellbore, wb);
         return s;
     }
-    var EXAMPLE_A = { k: 1, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 0.5, pi: 4500, te: 5 / 60, geometry: 'full' };
+    // Example A states an 8,000 ft datum (σ_c 5,105.5 psia with p_i 4,500 psia is below the frictional limit deeper than ~8,900 ft)
+    var EXAMPLE_A = { k: 1, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 0.5, pi: 4500, te: 5 / 60, geometry: 'full', datumTvd: 8000 };
     var EXAMPLE_B = { k: 0.01, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 2, pi: 4500, te: 5 / 60, geometry: 'full' };
     S.EXAMPLE_A = EXAMPLE_A; S.EXAMPLE_B = EXAMPLE_B;
     function acaSpec(id, aca, extra) {
@@ -32714,7 +32751,7 @@ pipesz: {
             out.push(gdSpec('q-height-recession', 'height-recession', {}));
             out.push(acaSpec('q-example-a', EXAMPLE_A));
             out.push(acaSpec('q-example-b', EXAMPLE_B));
-            out.push(acaSpec('q-penny', { k: 0.1, L: 60, h: 400, phi: 0.1, ct: 1e-5, mu: 0.6, V: 20, tcInj: 1, pi: 4500, te: 5 / 60, geometry: 'penny' }));
+            out.push(acaSpec('q-penny', { k: 0.1, L: 60, h: 400, phi: 0.1, ct: 1e-5, mu: 0.6, V: 20, tcInj: 1, pi: 4500, te: 5 / 60, geometry: 'penny', datumTvd: 8000 }));
             out.push(acaSpec('q-gas-linear', merge(clone(EXAMPLE_B), { fluid: 'gas', T_F: 200, SG_g: 0.65 })));
             var sg = gdSpec('q-surface-vacuum', 'normal', { pr: vacuumPr(), pStart: vacuumPr() });
             sg.artefacts = [{ kind: 'surface', tauT: 2, warm: 18 }, { kind: 'vacuum', pVap: 0.4 }];
@@ -32937,7 +32974,15 @@ pipesz: {
                            meta: { synth: { version: S.version, caseId: spec.id, seed: seed, source: 'gdomain' }, primary: 'bh' } });
         var truth = clone(tr);
         truth.tStart = tStart; truth.ts = ts1; truth.tEnd = tEnd; truth.dtEnd = tEnd - ts1; truth.artefacts = [];
-        truth.cycle2 = { tStart: t2, ts: ts2, tp: tp2, q: c2.q, V: c2.V, reopenKnee: pK, tKnee: tK, isip: isip2, sigmaC: gd.sigmaC, dtc: dtc2, Gc: c2.Gc, mG: mG2 };
+        // the cycle-2 truth as the record realises it: the reopening ramp does not reach the nominal propagation pressure in V/q,
+        // so the shut-in pressure (and pn, m_G) are the realised ones; the G-domain chain of that falloff then gives η, C_sys,
+        // A_f·c_f and xf (V* = V − V_w·c_w·(σ_c − p_0), X = V*/(G_c + 2), C_sys = X/m_G). isipNominal keeps the spec value
+        var pShut2 = (ts2 < tK ? p0 + s1 * (ts2 - t2) : pK + (pProp - pK) * (1 - Math.exp(-(ts2 - tK) / tau2))) - nwb(gd, c2.q);
+        var pn2 = pShut2 - gd.sigmaC, mG2r = pn2 / c2.Gc, Vst2 = c2.V - VwCw * (gd.sigmaC - p0), X2 = Vst2 / (c2.Gc + 2);
+        var Csys2 = mG2r > 0 ? X2 / mG2r : null, AfCf2 = Csys2 !== null ? Csys2 - VwCw : null;
+        var geo2 = AfCf2 > 0 ? geometryFromAfCf(AfCf2, gd.Ep, gd.hf, gd.hp, gd.geometry) : null;
+        truth.cycle2 = { tStart: t2, ts: ts2, tp: tp2, q: c2.q, V: c2.V, reopenKnee: pK, tKnee: tK, isip: pShut2, isipNominal: isip2, pn: pn2, sigmaC: gd.sigmaC,
+                         dtc: dtc2, Gc: c2.Gc, mG: mG2r, eta: c2.Gc / (c2.Gc + 2), Vstar: Vst2, Csys: Csys2, AfCf: AfCf2, xf: geo2 ? geo2.xf : null };
         return { ok: true, ds: ds, truth: truth, artefacts: [], caseSpec: spec };
     }
 
@@ -32961,8 +33006,11 @@ pipesz: {
         var IR = G.PRiSM_dfit_inputRanges;
         if (!IR || typeof IR.defaults !== 'function' || typeof IR.clamp !== 'function') return fail('INPUTS_UNAVAILABLE', 'PRiSM_dfit_inputRanges is not available.', []);
         var inp = IR.defaults(), lk = spec && spec.lk, gd = spec && spec.gd, aca = spec && spec.aca;
-        inp.datumTvd = REF.datumTvd;
-        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: REF.datumTvd }];
+        // an after-closure case may state its own datum (aca.datumTvd): Example A and the penny case close near 5,100 psia, below
+        // the conservative frictional limit at 10,000 ft (p_i 4,500, S_v 0.9 psi/ft, friction 1.0 → σ_h ≥ 0.9·T ≤ 8,027 psi…), so
+        // they sit at 8,000 ft where that closure is admissible
+        inp.datumTvd = aca && pos(aca.datumTvd) ? aca.datumTvd : REF.datumTvd;
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
         inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
         inp.perfs.n = REF.nPerf; inp.perfs.dIn = REF.dPerf; inp.perfs.cd = REF.cdPerf;
         inp.rock.Ep = (lk && lk.Ep) || (gd && gd.Ep) || (aca && aca.Ep) || REF.Ep;
@@ -33384,6 +33432,21 @@ pipesz: {
         }
         return best;
     }
+    // largest drop between consecutive samples within t[kd] ± max(60 s, 5 × the median sample interval before kd), kd = the rate
+    // down-crossing (a clock offset of up to a minute either way still finds the shut-in drop; a log-spaced late falloff
+    // interval never does)
+    function dropNear(C, kd) {
+        var t = C.t, dts = [], i;
+        for (i = Math.max(1, kd - 20); i <= kd; i++) if (fin(t[i]) && fin(t[i - 1]) && t[i] > t[i - 1]) dts.push(t[i] - t[i - 1]);
+        var md = dts.length ? median(dts) : 0, win = Math.max(60 / 3600, 5 * md);
+        var tMin = t[kd] - win, tMax = t[kd] + win, best = -1, bd = 0;
+        for (i = 0; i + 1 < C.n && t[i] <= tMax; i++) {
+            if (t[i + 1] < tMin) continue;
+            var d = C.pw[i] - C.pw[i + 1];
+            if (fin(d) && d > bd) { bd = d; best = i; }
+        }
+        return best;
+    }
     function theory(C) {
         var cs = C.raw.csys, vw = null, c = null, W = G.WTS_wellbore;
         if (isObj(cs)) { if (fin(cs.VwCw) && cs.VwCw > 0) vw = cs.VwCw; if (fin(cs.waveSpeed) && cs.waveSpeed > 0) c = cs.waveSpeed; }
@@ -33447,7 +33510,10 @@ pipesz: {
         var top = p0 + 0.9 * (p[kmax] - p0), kEnd = ku;
         while (kEnd + 1 <= kmax && p[kEnd + 1] <= top) kEnd++;
         var slope1 = (p[ku] - p[ku - 1]) / (t[ku] - t[ku - 1]);
-        var tp0 = slope1 > 0 ? t[ku] - (p[ku] - p0) / slope1 : t[ku];
+        // a resolved ramp: back-extrapolate with the ramp's own slope (the first interval may hold the start, so its slope is
+        // too low when the pre-pump sampling is coarse); never before the last baseline sample
+        if (ku + 1 <= kEnd) { var sR = (p[ku + 1] - p[ku]) / (t[ku + 1] - t[ku]); if (sR > slope1) slope1 = sR; }
+        var tp0 = slope1 > 0 ? Math.max(t[ku - 1], t[ku] - (p[ku] - p0) / slope1) : t[ku];
         var uncP = 0.5 * (t[ku] - t[ku - 1]) * 3600;
         if (kEnd - ku >= 1) uncP = Math.min(uncP, 0.5);
         var L0 = (tq0 - tp0);                        // h
@@ -33478,18 +33544,35 @@ pipesz: {
             }
         } else best = { L: L0, b: NaN };
         var offsetS = best.L * 3600;
+        // a sampled rate step (0 → ≥ half the maximum between two samples) starts anywhere in (t[kq-1], t[kq]]: the trapezoid
+        // volume smears it over the whole interval, so a coarse pre-pump sampling (12 s on the reference demo) reads as a lag. The
+        // offset is then the distance from the pressure-up start to that interval (0 inside it)
+        if (q[kq] - q0 >= 0.5 * qMaxRec) {
+            var tA = t[kq - 1], tB = t[kq], tpS = tp0 < tA ? tA : (tp0 > tB ? tB : tp0);
+            offsetS = (tpS - tp0) * 3600;
+        }
         var uncS = Math.max(uncQ, uncP);
         // stop event: last down-crossing of 50 % of the last rate vs the largest negative pressure difference
         var stopS = null, stopUnc = null, qlr = fin(q[C.iLastPump]) && q[C.iLastPump] > 0.05 * qMaxRec ? q[C.iLastPump] : qMaxRec, lvl = 0.5 * qlr, kd = -1;
         for (i = n - 1; i >= 1; i--) if (fin(q[i]) && q[i] < lvl && q[i - 1] >= lvl) { kd = i; break; }
-        var iDrop = largestDrop(C);
+        // the shut-in drop is looked for only near the rate stop (plan §4.1: last pumping sample → first falloff sample); a
+        // log-spaced late falloff interval can drop more than the shut-in step, so the whole record is never searched
+        var iDrop = kd > 0 ? dropNear(C, kd) : -1;
         if (kd > 0 && iDrop >= 0) {
             var tq1 = t[kd - 1] + (q[kd - 1] - lvl) / (q[kd - 1] - q[kd]) * (t[kd] - t[kd - 1]);
             var tp1 = 0.5 * (t[iDrop] + t[iDrop + 1]);
             stopS = (tq1 - tp1) * 3600;
             stopUnc = 0.5 * (t[kd] - t[kd - 1]) * 3600 + 0.5 * (t[iDrop + 1] - t[iDrop]) * 3600;
         }
-        return { ok: true, offsetS: offsetS, uncS: uncS, stopS: stopS, stopUncS: stopUnc,
+        // a surface gauge on vacuum at the rate start: the pumped volume first fills the void, so the pressure rise lags the rate
+        // by the fill time (a physical delay, not a clock error); the stop event then carries the clock check
+        var vac = false;
+        if (C.pSurf) {
+            var ps = [];
+            for (i = Math.max(0, kq - 5); i < kq; i++) if (fin(C.pSurf[i])) ps.push(C.pSurf[i]);
+            vac = ps.length > 0 && median(ps) < C.atm - 1;
+        }
+        return { ok: true, offsetS: offsetS, uncS: uncS, stopS: stopS, stopUncS: stopUnc, vacuumFill: vac && offsetS < 0,
                  slopePsiPerBbl: fin(best.b) ? best.b : null, method: 'event', rampIdx: idx, p0: p0, tq0: tq0, tp0: tp0 };
     }
     function getAlign(C) {
@@ -33538,6 +33621,13 @@ pipesz: {
         var a = getAlign(C);
         if (!a || !a.ok) return { level: 'na', value: null, threshold: T.passS, text: 'Rate and pressure events could not both be found: clock alignment not checked.' };
         var off = a.offsetS, applied = 3600 * (fin(gp(C.prep, 'applied.clockOffsetH', null)) ? C.prep.applied.clockOffsetH : 0);
+        if (a.vacuumFill) {
+            if (a.stopS == null) return { level: 'na', value: null, threshold: T.passS, text: 'The well was on vacuum at the rate start (the pressure rise lags by the fill time ' + fmt(-off, 1) + ' s) and no stop event was found: clock alignment not checked.' };
+            var tolS = Math.max(T.passS, a.stopUncS || 0);
+            if (Math.abs(a.stopS) > tolS)
+                return { level: 'warn', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate stop lags the shut-in drop by ' + fmt(a.stopS, 1) + ' s (the start is not used: the well was on vacuum); confirm and apply the clock offset before picking events.' };
+            return { level: 'pass', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate and pressure clocks agree at the shut-in within ' + fmt(tolS, 1) + ' s (offset ' + fmt(a.stopS, 1) + ' s); the start lags by the vacuum fill time ' + fmt(-off, 1) + ' s.' };
+        }
         if (a.stopS != null && Math.abs(a.stopS - off) > Math.max(T.contradictS, 2 * ((a.uncS || 0) + (a.stopUncS || 0))))
             return { level: 'fail', value: rnd(off, 1), threshold: T.contradictS, inWindow: true,
                      text: 'Events contradict: the rate starts ' + fmt(off, 1) + ' s after the pressure rise but stops ' + fmt(a.stopS, 1) + ' s after the shut-in drop.' };
@@ -33899,6 +33989,7 @@ pipesz: {
 
     CK.tides = function (C, T) {
         var td = C.raw.tide;
+        if (isObj(td) && td.significant === false) return { level: 'pass', value: null, threshold: T.warn, text: 'No significant tide' + (fin(td.snr) ? ' (signal-to-noise ' + fmt(td.snr, 1) + ')' : '') + '.' };
         if (!isObj(td) || !fin(td.ampPsi)) return { level: 'na', value: null, threshold: T.warn, text: 'No tidal or barometric analysis.' };
         if (td.removed === true) return { level: 'pass', value: null, threshold: T.warn, text: 'Tidal and barometric signal removed.' };
         var dp = fin(td.dpPsi) && td.dpPsi > 0 ? td.dpPsi : null;

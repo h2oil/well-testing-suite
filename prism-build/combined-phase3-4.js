@@ -1608,6 +1608,8 @@ var WELL_NAMES = { q: 'rate q', B: 'formation volume factor B', mu: 'viscosity Î
     h: 'thickness h', phi: 'porosity Ï†', rw: 'wellbore radius rw', pi: 'initial pressure pi', tp: 'producing time tp', pwf0: 'pwf at shut-in' };
 function _wellBanner(well, context) {
     if (!well) return '';
+    // an extension workspace mode (DFIT) has its own inputs and computes p_i itself: no C1 defaults banner there
+    if (typeof G.PRiSM_activeModeExt === 'function' && G.PRiSM_activeModeExt()) return '';
     var miss = well.missing || [], def = well.defaulted || [];
     if (!miss.length && !def.length) return '';
     var list = function (a) { return a.map(function (k) { return WELL_NAMES[k] || k; }).join(', '); };
