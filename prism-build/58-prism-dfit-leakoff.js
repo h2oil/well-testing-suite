@@ -1581,7 +1581,217 @@
     function _cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
 
     // ─────────────────────────────────────────────────────────────────────
-    // PLACEHOLDER: designer (later milestone)
+    // Pre-job designer (§6.5): seeded Latin-hypercube ensemble on the coarse grid, after-closure timing from the s_D
+    // thresholds, outcome label, minimum volume, vacuum and gauge advice, leak budget, step-down plan, precision, corridor.
+    // Exposed as a Job (opts.perStep draws per step, by count) next to the synchronous function with the identical result.
+    // ─────────────────────────────────────────────────────────────────────
+    var T_REC = 6068, T_BAND = 8800, T_CONF = 27800, TDL_REC = 1.6, TDL_CONF = 7.34, C_TDL = 0.0002637;
+    function _lnPR(r) { var a = _log(r.p10), b = _log(r.p90); return { m: 0.5 * (a + b), s: (b - a) / (2 * 1.2815516) }; }
+    function _wellboreVwCw(ranges, opts) {
+        if (opts && +opts.VwCw > 0) return { VwCw: +opts.VwCw, src: 'given' };
+        var W = G.WTS_wellbore;
+        if (W && typeof W.column === 'function' && !W.column._dfitStub && typeof W.csys === 'function') {
+            try {
+                var col = W.column({ survey: [], strings: ranges.strings || [], fluid: ranges.fluid || {}, temp: null, datumTvd: ranges.datumTvd, datumMd: ranges.datumTvd });
+                var cs = col && col.ok ? W.csys(col, ranges.fluid || {}, null) : null;
+                if (cs && cs.ok && cs.VwCw > 0) return { VwCw: cs.VwCw, src: 'wellbore' };
+            } catch (e) { /* fall through */ }
+        }
+        // fallback: string capacity × c_sys = 144/(ρ·c²) with c 4,539 ft/s (water-filled steel string)
+        var rho = ((ranges.fluid && +ranges.fluid.rhoPpg > 0) ? +ranges.fluid.rhoPpg : 8.43) * 7.48052 / 32.174, cSys = 144 / (rho * 4539 * 4539), V = 0;
+        (ranges.strings || []).forEach(function (s) { var id = +s.id, len = +s.botMd - +s.topMd; if (id > 0 && len > 0) V += PI / 4 * (id / 12) * (id / 12) * len; });
+        if (!(V > 0)) V = PI / 4 * (4.778 / 12) * (4.778 / 12) * (+ranges.datumTvd || 10000);
+        return { VwCw: V * cSys / 5.614583, src: 'string capacity' };
+    }
+    function _vacuum(pi, ranges) {
+        var W = G.WTS_wellbore, atm = 14.696, r = null;
+        if (W && typeof W.vacuum === 'function' && !W.vacuum._dfitStub) {
+            try {
+                var col = (typeof W.column === 'function' && !W.column._dfitStub) ? W.column({ survey: [], strings: ranges.strings || [], fluid: ranges.fluid || {}, temp: null, datumTvd: ranges.datumTvd, datumMd: ranges.datumTvd }) : null;
+                r = W.vacuum(pi, col, null, atm);
+            } catch (e) { r = null; }
+        }
+        var pS, src;
+        if (r && _isFinite(+r.pSurfAtPi)) { pS = +r.pSurfAtPi; src = 'column'; }
+        else { pS = pi - 0.052 * ((ranges.fluid && +ranges.fluid.rhoPpg > 0) ? +ranges.fluid.rhoPpg : 8.43) * (+ranges.datumTvd || 0); src = 'constant gradient'; }
+        var risk = (pS - atm < 15) ? 'surface-zero' : 'none';
+        var text = risk === 'none' ? ('The column stays liquid-supported at the expected p_i (surface ' + _fx(pS, 0) + ' psia): a surface gauge sees closure and after-closure.')
+            : (pS - atm < 0 ? 'The surface goes on vacuum before p_i (surface ' + _fx(pS, 0) + ' psia at p_i): surface gauge sufficient for closure; BH gauge required for ACA.'
+                            : 'The surface falls below 15 psig near p_i (surface ' + _fx(pS, 0) + ' psia): surface gauge sufficient for closure; BH gauge recommended for ACA.');
+        return { risk: risk, text: text.slice(0, 299), pSurfAtPi: pS, src: src };
+    }
+    function designJob(ranges, opts) {
+        opts = opts || {};
+        var done = false, cancelled = false, result = null, st = null;
+        function finish(r) { result = r; done = true; }
+        function need(o, k) { return o && o[k] && _isFinite(+o[k].p10) && _isFinite(+o[k].p90) && +o[k].p10 > 0 && +o[k].p90 >= +o[k].p10; }
+        function init() {
+            var R = ranges || {}, bad = [];
+            ['k', 'phi', 'ct', 'muRes', 'h', 'hf'].forEach(function (k) { if (!need(R, k)) bad.push(k); });
+            if (!R.Ep || !(+R.Ep.p50 > 0)) bad.push('Ep');
+            if (!R.sigmaGrad || !(+R.sigmaGrad.p50 > 0)) bad.push('sigmaGrad');
+            if (!R.piGrad || !(+R.piGrad.p50 > 0)) bad.push('piGrad');
+            if (!(+R.datumTvd > 0)) bad.push('datumTvd');
+            if (!(+R.allowedShutInD > 0)) bad.push('allowedShutInD');
+            if (bad.length) return finish(_fail('BAD_RANGES', 'Designer inputs missing or invalid: ' + bad.join(', ') + '.', bad));
+            var n = _floor(+opts.n > 0 ? +opts.n : 500); if (n > 2000) n = 2000;
+            var seed = (opts.seed == null) ? 1 : _floor(+opts.seed), rnd = _rng(seed);
+            var vw = _wellboreVwCw(R, opts), epsMax = (+R.epsMax > 0) ? +R.epsMax : 0.05;
+            var sig50 = R.sigmaGrad.p50 * R.datumTvd, pi50 = R.piGrad.p50 * R.datumTvd;
+            var Vmin = vw.VwCw * _max(0, sig50 - pi50) / epsMax;
+            var V = (+R.V > 0) ? +R.V : (R.suggest === false ? 25 : _min(50, _max(5, Math.ceil(Vmin)))), q = (+R.q > 0) ? +R.q : 5;
+            // Latin-hypercube: one stratified permutation per variable (seeded)
+            var vars = ['k', 'phi', 'ct', 'muRes', 'h', 'hf', 'Ep', 'sg', 'pg'], U = {};
+            vars.forEach(function (vn) {
+                var perm = []; for (var i = 0; i < n; i++) perm.push(i);
+                for (i = n - 1; i > 0; i--) { var j = _floor(rnd() * (i + 1)), tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+                U[vn] = perm.map(function (p) { return (p + rnd()) / n; });
+            });
+            var allowedH = R.allowedShutInD * 24;
+            st = { R: R, n: n, seed: seed, U: U, i: 0, draws: [], VwCw: vw.VwCw, VwSrc: vw.src, Vmin: Vmin, V: V, q: q, epsMax: epsMax, allowedH: allowedH,
+                   counts: { evals: 0, fisherRuns: 0, steps: 0 }, perStep: (+opts.perStep > 0) ? _floor(+opts.perStep) : 25,
+                   tCorr: (function () { var a = []; for (var m = 0; m < 60; m++) a.push(_exp(_log(10 / 3600) + (_log(allowedH) - _log(10 / 3600)) * m / 59)); return a; })() };
+        }
+        function q2(vn, i, pr, isLog) {
+            var u = st.U[vn][i], z = _qnorm(u);
+            if (isLog) { var L = _lnPR(pr); return _exp(L.m + z * L.s); }
+            return pr.p50 + z * pr.sd;
+        }
+        function oneDraw(i) {
+            var R = st.R;
+            var d = { k: q2('k', i, R.k, true), phi: q2('phi', i, R.phi, true), ct: q2('ct', i, R.ct, true), muRes: q2('muRes', i, R.muRes, true),
+                      h: q2('h', i, R.h, true), hf: q2('hf', i, R.hf, true), Ep: _exp(_log(R.Ep.p50) + _qnorm(st.U.Ep[i]) * (+R.Ep.sdLn || 0)),
+                      sg: q2('sg', i, R.sigmaGrad, false), pg: q2('pg', i, R.piGrad, false) };
+            d.sigmaC = d.sg * R.datumTvd; d.pi = d.pg * R.datumTvd;
+            if (d.pi >= d.sigmaC - 50) d.pi = d.sigmaC - 50;
+            var hp = (+R.hp > 0) ? +R.hp : _min(d.h, d.hf), tp = st.V / st.q / 60;
+            var cfg = lkDefaults();
+            cfg.schedule = [{ t: 0, q: st.q }, { t: tp, q: 0 }]; cfg.Ep = d.Ep; cfg.nu = (R.nu != null) ? +R.nu : 0.25; cfg.hf = _max(d.hf, hp); cfg.hp = hp;
+            cfg.muCp = (R.fluid && +R.fluid.muCp > 0) ? +R.fluid.muCp : 1; cfg.Cw = 0; cfg.k = d.k; cfg.sigmaC = d.sigmaC; cfg.pr = d.pi; cfg.VwCw = st.VwCw;
+            cfg.phi = d.phi; cfg.ct = d.ct; cfg.muRes = d.muRes; cfg.tEnd = tp + st.allowedH;
+            var r = lkSimulate(cfg, { grid: opts.grid || 'coarse' });
+            st.counts.evals++;
+            var out = { d: d, ok: !!(r && r.ok), cfg: cfg };
+            if (!out.ok) { st.draws.push(out); return; }
+            var ts = r.events.ts;
+            out.tc = r.events.tcMech != null ? r.events.tcMech - ts : null;
+            out.xf = r.xf.ts; out.eta = r.etaS; out.Vf = r.Vf[_idxAtOrAfter(r.t, ts, r.t.length)]; out.Rvis = _rvis(r);
+            out.p = st.tCorr.map(function (x) { return _atT(r, r.pf, ts + x); });
+            var L = (+opts.L > 0) ? +opts.L : out.xf, fmc = d.phi * d.muRes * d.ct * L * L / d.k;
+            out.L = L; out.tRec = T_REC * fmc; out.tBand = T_BAND * fmc; out.tConf = T_CONF * fmc;
+            out.t3tc = out.tc != null ? 3 * out.tc : null;
+            out.tEps = 33890 * st.VwCw * d.muRes / (d.k * d.h);
+            out.tW = null;
+            if (+R.targetW > 0) {
+                var A = 2 * L * hp, mL = 97.54 * (st.V / A) * _sqrt(d.muRes / (d.k * d.phi * d.ct)), tWl = _pow(mL / (2 * R.targetW), 2), tWr = 1694.5 * st.V * d.muRes / (d.k * d.h * R.targetW);
+                out.tW = (out.tRec <= tWl) ? tWr : tWl;
+            }
+            var cand = [['radial', out.tConf], ['3tc', out.t3tc], ['afterflow', out.tEps], ['precision', out.tW]], best = null;
+            cand.forEach(function (c) { if (c[1] != null && _isFinite(c[1]) && (!best || c[1] > best[1])) best = c; });
+            out.shutIn = best[1]; out.binding = best[0];
+            out.signal = 0.4468 * st.V / (TDL_REC * d.phi * d.ct * d.h * L * L);
+            out.signalConf = 0.4468 * st.V / (TDL_CONF * d.phi * d.ct * d.h * L * L);
+            out.tDLat = function (tH) { return C_TDL * d.k * tH / (d.phi * d.muRes * d.ct * L * L); };
+            st.draws.push(out);
+        }
+        function finalise() {
+            var R = st.R, ok = st.draws.filter(function (d) { return d.ok; }), n = ok.length, warnings = [];
+            if (!n) return finish(_fail('DESIGN_FAILED', 'Every designer run failed.', []));
+            if (n < st.draws.length) warnings.push(_w('DESIGN_RUNS_FAILED', 'warn', (st.draws.length - n) + ' of ' + st.draws.length + ' designer runs failed and were left out.'));
+            var tcs = ok.map(function (d) { return d.tc; }), tcP = _p3(tcs);
+            var nClosed = tcs.filter(function (v) { return v != null; }).length;
+            var nRad = ok.filter(function (d) { return d.tRec <= st.allowedH; }).length;
+            var nLin = ok.filter(function (d) { return d.tc != null && 2 * d.tc <= st.allowedH; }).length;
+            var label = nRad >= 0.5 * n ? 'radial' : (nLin >= 0.5 * n ? 'linear' : 'closure-only');
+            var shutP = _p3(ok.map(function (d) { return d.shutIn; })), bindCount = {};
+            ok.forEach(function (d) { bindCount[d.binding] = (bindCount[d.binding] || 0) + 1; });
+            var binding = Object.keys(bindCount).sort(function (a, b) { return bindCount[b] - bindCount[a]; })[0];
+            var tRad = _p3(ok.map(function (d) { return d.tRec; })), tConf = _p3(ok.map(function (d) { return d.tConf; })), sig = _p3(ok.map(function (d) { return d.signal; }));
+            var sigConf = _p3(ok.map(function (d) { return d.signalConf; }));
+            var kP = _p3(ok.map(function (d) { return d.d.k; })), days = function (h) { return h / 24; };
+            var text;
+            if (label === 'radial') text = 'Radial flow is expected within the allowed ' + _sig(R.allowedShutInD, 3) + ' days (recognisable after ' + _sig(tRad.p50, 2) + ' h at P50): kh/μ can be read; the spread comes from the k range (' + _sci(kP.p10, 1) + '–' + _sci(kP.p90, 1) + ' md).';
+            else if (label === 'linear') text = 'Closure and after-closure linear flow are expected within ' + _sig(R.allowedShutInD, 3) + ' days; radial flow needs about ' + _sig(days(tRad.p50), 2) + ' days at P50: plan for p_i and bounds on k (the spread comes from the k range).';
+            else text = 'Only closure is expected within ' + _sig(R.allowedShutInD, 3) + ' days (' + nClosed + ' of ' + n + ' draws close): after-closure analysis needs a longer shut-in.';
+            var vac = _vacuum(R.piGrad.p50 * R.datumTvd, R);
+            var gaugeKind = (R.gauge && R.gauge.kind) || 'bh', gSigma = (R.gauge && +R.gauge.sigma > 0) ? +R.gauge.sigma : 0.05, why = [];
+            var bhReq = false;
+            if (vac.risk !== 'none') { bhReq = true; why.push('The surface reaches vacuum near p_i: a bottomhole gauge is required for after-closure analysis.'); }
+            if (sig.p10 != null && sig.p10 < 35 * gSigma) { bhReq = true; why.push('The radial-onset signal (P10 ' + _sig(sig.p10, 2) + ' psi) is below 35 × the gauge noise: use a quartz bottomhole gauge.'); }
+            if (!why.length) why.push(gaugeKind === 'surface' ? 'Surface gauge adequate: the column stays liquid-filled and the signal is well above the noise.' : 'A bottomhole gauge meets the closure and after-closure needs.');
+            var hz = _max(1, Math.ceil(10 * 4539 / (2 * R.datumTvd)));
+            var resPsi = sig.p10 != null ? _max(0.001, sig.p10 / 50) : 0.01, drift = (sig.p10 != null && tRad.p50 > 0) ? sig.p10 / _max(1, days(tRad.p50)) / 10 : 0.02;
+            var tEndLeak = _min(st.allowedH, shutP.p50 || st.allowedH);
+            var tdl = ok.map(function (d) { return d.tDLat(tEndLeak); });
+            var tempF = (R.fluid && _isFinite(+R.fluid.TF)) ? +R.fluid.TF : ((_isFinite(+R.tempF)) ? +R.tempF : 100);
+            var lb = leakBudget(st.V, tEndLeak, { kDraws: tdl, sigmaP: gSigma, VwCw: st.VwCw, tempF: tempF });
+            var leak = lb.ok ? { qkMax: lb.qkMax, theta: lb.theta, holdMin: lb.holdMin == null ? 0 : lb.holdMin, dTneeded: lb.dTneeded, regime: lb.regime, holdRealistic: lb.holdRealistic, text: lb.text }
+                             : { qkMax: 0, theta: 2, holdMin: 0, dTneeded: 0 };
+            var rates = [1, 0.8, 0.6, 0.4, 0.2].map(function (f) { return +(st.q * f).toPrecision(3); });
+            var sigP = _p3(ok.map(function (d) { return d.d.sigmaC; }));
+            var rep = R.repressurise ? { q: 0.35, V: 1.5, kneeP: sigP } : null;
+            // pre-job precision of p_i on the planned schedule (P50 case, Fisher, noise-free design)
+            var precision = [];
+            if (opts.precision !== false && tcP.p50 != null) {
+                var mid = ok.slice().sort(function (a, b) { return a.d.k - b.d.k; })[_floor(n / 2)];
+                [1.5, 2, 3, 5, 10, 20].forEach(function (m) {
+                    var c = _clone(mid.cfg), tEndH = mid.cfg.schedule[1].t + m * tcP.p50;
+                    var f = lkFisher(c, { tEnd: tEndH, sigma: gSigma, nPts: 250, free: ['k', 'sigmaC', 'pr'], grid: 'coarse' });
+                    if (f.ok) { st.counts.fisherRuns += f.runs; if (f.sd.pr != null) precision.push({ tEndD: (m * tcP.p50) / 24, sdPi: f.sd.pr, tcMult: m }); }
+                });
+            }
+            var checklist = [
+                { id: 'C1', text: 'Pressure-test the surface lines and the string; record the hold on the same gauge.' },
+                { id: 'C2', text: 'Remove air from the lines and the gauge dead spaces; use anti-freeze in exposed gauge lines.' },
+                { id: 'C3', text: 'Use one clock for pumps and gauges and mark it with a pressure blip before pumping.' },
+                { id: 'C4', text: 'Record at least 60 min concurrently with the pump unit before and after the injection.' },
+                { id: 'C5', text: 'Shut in with the valve on the pump side of the gauge, then close in quickly and leave it closed.' },
+                { id: 'C6', text: 'Pump ' + _sig(st.V, 3) + ' bbl at ' + _sig(st.q, 3) + ' bbl/min; skip the step-down unless a friction split is needed.' },
+                { id: 'C7', text: 'Sample at ' + hz + ' Hz or faster around the shut-in to resolve the water hammer.' },
+                { id: 'C8', text: shutP.p50 <= st.allowedH ? 'Keep the gauge in for ' + _sig(days(shutP.p50), 2) + ' days (P50 recommendation, binding: ' + binding + ').'
+                                                            : 'Keep the gauge in for the full ' + _sig(R.allowedShutInD, 3) + ' days allowed; the P50 recommendation (' + _sig(days(shutP.p50), 2) + ' days, binding: ' + binding + ') exceeds it.' }
+            ];
+            var corridor = { t: st.tCorr.slice(), p10: [], p50: [], p90: [] };
+            st.tCorr.forEach(function (x, m) {
+                var pp = _p3(ok.map(function (d) { return d.p[m]; }));
+                corridor.p10.push(pp.p10); corridor.p50.push(pp.p50); corridor.p90.push(pp.p90);
+            });
+            if (nClosed < n) warnings.push(_w('NO_CLOSURE_SOME', 'info', (n - nClosed) + ' of ' + n + ' draws do not close within the allowed shut-in.'));
+            if (st.V < st.Vmin) warnings.push(_w('VOLUME_BELOW_VMIN', 'warn', 'The planned ' + _sig(st.V, 3) + ' bbl is below V_min ≈ ' + _sig(st.Vmin, 3) + ' bbl: afterflow may bias the after-closure analysis.'));
+            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding };
+            var vmn = _p3(ok.map(function (d) { return d.Rvis; }));
+            finish({
+                ok: true, n: n, seed: st.seed, outcome: { label: label, text: text.slice(0, 299) },
+                tc: tcP, shutIn: shut, tRadial: tRad, tConfirm: tConf, signalPsi: sig, signalConfirmPsi: sigConf, Vmin: st.Vmin, V: st.V, q: st.q, Rvis: { p50: vmn.p50 },
+                vacuum: { risk: vac.risk, text: vac.text }, vacuumDetail: vac,
+                gauge: { bhRequired: bhReq, why: why.map(function (s) { return s.slice(0, 299); }), hz: hz, resolutionPsi: resPsi, driftPsiPerDay: drift },
+                leak: leak, stepDown: { rates: rates }, repressurise: rep, precision: precision, checklist: checklist, corridor: corridor,
+                VwCw: st.VwCw, VwCwSource: st.VwSrc, shares: { radial: nRad / n, linear: nLin / n, closed: nClosed / n },
+                counts: { evals: st.counts.evals, refits: 0, draws: st.draws.length, fisherRuns: st.counts.fisherRuns, steps: st.counts.steps },
+                warnings: warnings
+            });
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: 'done' };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; return { done: false, progress: 0, label: 'drawing ' + st.n + ' cases' }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The design was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                st.counts.steps++;
+                if (st.i < st.n) {
+                    var stop = _min(st.n, st.i + st.perStep);
+                    for (; st.i < stop; st.i++) oneDraw(st.i);
+                    return { done: false, progress: 0.95 * st.i / st.n, label: st.i + ' of ' + st.n + ' runs' };
+                }
+                finalise();
+                return { done: true, progress: 1, label: 'done' };
+            } catch (err) { finish(_fail('DESIGN_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function design(ranges, opts) {
+        try { return _drain(designJob(ranges, opts)); } catch (err) { return _fail('DESIGN_FAILED', err && err.message || err, []); }
+    }
+
     // ─────────────────────────────────────────────────────────────────────
 
     G.PRiSM_dfit_lkDefaults = lkDefaults;
@@ -1598,5 +1808,22 @@
     G.PRiSM_dfit_lkFitJob = lkFitJob;
     G.PRiSM_dfit_lkFisher = lkFisher;
     G.PRiSM_dfit_identify = identify;
+    G.PRiSM_dfit_design = design;
+    G.PRiSM_dfit_designJob = designJob;
     G._PRiSM_dfit_lk = { erf: erf, erfcx: erfcx, E1: E1, pDuf: pDuf, theta: theta, gN: gN, GN: GN, KVISC: KVISC, units: _units, atT: _atT, qLAt: _qLAt, neff: _neff };
+})();
+
+// === SELF-TEST ===
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis, bad = [];
+    try {
+        var v = G.PRiSM_dfit_lkVerify({ only: ['V1d', 'V8', 'V14'] });
+        if (!v.ok || Math.abs(v.V1d.Gc - 18.004) > 1e-3) bad.push('V1d G_c');
+        if (!v.ok || Math.abs(v.V8.xf - 133.8) > 0.2 || Math.abs(v.V8.dtc - 307.1) > 0.2) bad.push('V8 base case');
+        if (!v.ok || !(v.V14.minW > 0)) bad.push('V14 aperture');
+        var lb = G.PRiSM_dfit_leakBudget(25, 300, { tDL: 5 });
+        if (!lb.ok || Math.abs(lb.theta - 4.509) > 0.01) bad.push('theta(5)');
+    } catch (e) { bad.push(String(e && e.message || e)); }
+    if (bad.length && typeof console !== 'undefined') console.warn('[58-prism-dfit-leakoff self-test] ' + bad.join('; '));
 })();
