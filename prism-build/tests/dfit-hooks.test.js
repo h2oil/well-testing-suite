@@ -532,6 +532,7 @@ module.exports = [
           { kind: 'table', title: 'Table B', head: ['c'], rows: [['3'], ['4']] },
           { kind: 'table', head: ['d', 'e', 'f'], rows: [['<x>', '6', '7']] },
           { kind: 'verdict', level: 'warn', text: 'Closure is a range' },
+          { kind: 'verdict', level: 'bad', text: 'No closure found' },
           { kind: 'plot', key: 'testPlot', title: 'Block plot 1' },
           { kind: 'plot', key: 'testPlot2', title: 'Block plot 2' },
           { kind: 'notes', items: ['A note.'] } ] }; };
@@ -554,6 +555,7 @@ module.exports = [
       assert.equal((pdf.match(/<table class="rp-tbl">/g) || []).length, 3, 'three tables');
       assert(/Table A/.test(pdf) && /Table B/.test(pdf) && /&lt;x&gt;/.test(pdf), 'table titles; cells escaped');
       assert(/⚠ Closure is a range/.test(pdf), 'verdict');
+      assert(/<div class="rp-note n-red">✗ No closure found<\/div>/.test(pdf), 'bad verdict red in the PDF');
       assert(/Block plot 1/.test(pdf) && /Block plot 2/.test(pdf), 'plot blocks');
       assert.equal((pdf.match(/<img src="data:image\/png/g) || []).length, 3, 'two block plots + one report plot as PNG');
       assert(!/Key results \(field units\)<\/h2>.*Quantity/.test(pdf) && !/Fit quality/.test(pdf), 'no PTA blocks (reportLegacySections false)');
@@ -567,6 +569,23 @@ module.exports = [
       assert.equal(blockCanvases.length, 2, 'two block canvases');
       blockCanvases.forEach((cv) => assert(cv._prismAxes && cv._prismAxes.plotKey === cv.getAttribute('data-plot-key'), 'block plot drawn: ' + cv.getAttribute('data-plot-key')));
       assert(tab.querySelector('canvas[data-plot-key="testPlot"]#prism_report_plot_x_testPlot'), 'ext.reportPlots on Tab 7');
+      const badNote = Array.from(tab.querySelectorAll('.prism-rpt-note--bad')).map((e) => e.textContent);
+      assert.deepEqual(badNote, ['✗ No closure found'], 'Tab 7: a bad verdict has its own (red) note class: ' + badNote.join('|'));
+      assert(Array.from(tab.querySelectorAll('.prism-rpt-note--warn')).every((e) => !/No closure/.test(e.textContent)), 'bad is not drawn as warn');
+      // an ext mode that keeps the legacy PTA sections: its header and key rows come first, then the PTA blocks
+      W.PRiSM_modeExt.test.reportLegacySections = true;
+      try {
+        const pdfL = W.PRiSM_buildReportHTML();
+        const iExt = pdfL.indexOf('Test report — key results (field units)'), iWell = pdfL.indexOf('<h2>Well test</h2>');
+        assert(iWell !== -1 && iExt > iWell, 'legacy PDF: the ext key results after the well summary');
+        assert(/TEST · closure 7,000 psia/.test(pdfL) && /Closure/.test(pdfL), 'legacy PDF: ext key rows + key line');
+        const iPta = pdfL.indexOf('Key results (field units)</h2>');
+        assert(iPta === -1 || iPta > iExt, 'legacy PDF: the ext header ahead of the PTA key results');
+        W.PRiSM_renderReportTab();   // already on step 5
+        const xr = app.el('prism_report_extresults');
+        assert(xr && /Test report — key results/.test(xr.textContent) && /7,000 psia/.test(xr.textContent), 'legacy Tab 7: ext key-row card');
+        assert(app.el('prism_report_keyline') && app.el('prism_report_keyline').textContent === 'TEST · closure 7,000 psia', 'legacy Tab 7: key line');
+      } finally { W.PRiSM_modeExt.test.reportLegacySections = false; }
       // the PDF gallery (11): only ext.reportPlots in the ext mode, none of them in combined
       let gallery = '';
       W.__reportOverride = (title, html) => { gallery = html; };

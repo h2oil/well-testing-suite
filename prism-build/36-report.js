@@ -989,6 +989,18 @@ function _extHeader(ext, model) {
         keyLine: typeof h.keyLine === 'string' ? h.keyLine : ''
     };
 }
+// Ext mode with the legacy PTA sections kept: the mode's header (title, key
+// rows, key line) goes first, ahead of the PTA key results.
+function _extLegacyHeadHTML(m, ext, pdf) {
+    var hx = _extHeader(ext, m);
+    if (!hx || (!hx.keyRows.length && !hx.keyLine)) return '';
+    if (pdf) {
+        return '<section class="rp-sec rp-out"><h2>' + _esc(hx.title) + ' — key results (field units)</h2>' + _rpKV(hx.keyRows) +
+               (hx.keyLine ? '<p class="rp-modsub">' + _esc(hx.keyLine) + '</p>' : '') + '</section>';
+    }
+    return _card(hx.title + ' — key results', _kvHTML(hx.keyRows) +
+        (hx.keyLine ? '<div class="prism-rpt-note" id="prism_report_keyline">' + _esc(hx.keyLine) + '</div>' : ''), 'prism_report_extresults');
+}
 // Section blocks: [{kind:'kv', pairs|kv:[[l, t]]} | {kind:'table', title?, head:[], rows:[[t]]} |
 // {kind:'verdict', level:'ok'|'warn'|'bad'|'info', text} | {kind:'notes', items:[t]|text} |
 // {kind:'plot', key, title}] — every string plain text.
@@ -1040,7 +1052,7 @@ function _blocksHTML(blocks, pdf, sid) {
         } else if (b.kind === 'verdict') {
             var t = VERDICT_MARK[b.level] + b.text;
             if (pdf) h += '<div class="rp-note ' + (b.level === 'ok' ? 'n-green' : b.level === 'bad' ? 'n-red' : b.level === 'warn' ? 'n-amber' : 'n-blue') + '">' + _esc(t) + '</div>';
-            else h += b.level === 'ok' ? _okHTML(t) : (b.level === 'info' ? _infoHTML(t) : _warnHTML(t));
+            else h += b.level === 'ok' ? _okHTML(t) : b.level === 'info' ? _infoHTML(t) : b.level === 'bad' ? _badHTML(t) : _warnHTML(t);
         } else if (b.kind === 'notes') {
             h += pdf ? '<div class="rp-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>'
                      : '<div class="prism-rpt-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>';
@@ -1591,6 +1603,7 @@ function buildReportHTML(opts) {
         ['Data points', hd.nPoints ? String(hd.nPoints) : ''], ['Model', m.model ? m.model.label : ''],
         ['Report date', m.generatedAt]
     ]) + '</section>';
+    if (xm) h += _extLegacyHeadHTML(m, xm, true);
     if (!m.hasData) {
         h += '<div class="rp-note n-amber"><b>No data.</b>Load pressure or rate data in PRiSM before issuing a report.</div>';
         return h;
@@ -1807,7 +1820,7 @@ function _injectStyles() {
         '.prism-chip--fit{border-color:var(--blue);color:var(--blue);} .prism-chip--line{border-color:var(--green);color:var(--green);}' +
         '.prism-chip--def{border-color:var(--yellow);color:var(--yellow);} .prism-chip--bad{border-color:var(--red);color:var(--red);}' +
         '.prism-rpt-note{font-size:12px;padding:7px 10px;border-radius:6px;border-left:3px solid var(--border);background:var(--bg1);color:var(--text2);margin-top:6px;}' +
-        '.prism-rpt-note--warn{border-left-color:var(--yellow);} .prism-rpt-note--ok{border-left-color:var(--green);} .prism-rpt-note--info{border-left-color:var(--blue);}' +
+        '.prism-rpt-note--warn{border-left-color:var(--yellow);} .prism-rpt-note--ok{border-left-color:var(--green);} .prism-rpt-note--info{border-left-color:var(--blue);} .prism-rpt-note--bad{border-left-color:var(--red);}' +
         '.prism-rpt-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;}' +
         '.prism-rpt-plots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px;}' +
         '.prism-rpt-plot{min-width:0;} .prism-rpt-plot canvas{display:block;width:100%;height:280px;border-radius:6px;}' +
@@ -1834,6 +1847,7 @@ function _tableHTML(head, rows) {
 function _warnHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--warn">' + _esc(t) + '</div>'; }
 function _okHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--ok">' + _esc(t) + '</div>'; }
 function _infoHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--info">' + _esc(t) + '</div>'; }
+function _badHTML(t) { return '<div class="prism-rpt-note prism-rpt-note--bad">' + _esc(t) + '</div>'; }
 function _chip(source) {
     var cls = source === 'semilog' ? 'prism-chip--line' : (source === 'input' || source === 'derived') ? '' : 'prism-chip--fit';
     return '<span class="prism-chip ' + cls + '">' + _esc(_sourceLabel(source)) + '</span>';
@@ -1862,6 +1876,7 @@ function _tabHTML(m) {
         (typeof G.PRiSM_exportXMLDownload === 'function' ? '<button type="button" class="btn btn-secondary" id="prism_report_xml">Export XML</button>' : '') +
         '</div><div id="prism_report_msg" style="margin-top:6px;font-size:12px;color:var(--text2);min-height:16px;"></div>';
     h += _card('Report', head + btns);
+    if (xm) h += _extLegacyHeadHTML(m, xm, false);
     if (!m.hasData) {
         h += _card('Nothing to report yet', '<div class="prism-rpt-note">Load pressure or rate data on step ① (Data) to build a report.</div>' +
             '<div class="prism-rpt-actions"><button type="button" class="btn btn-secondary" id="prism_report_goto_data">Go to Data</button></div>');
