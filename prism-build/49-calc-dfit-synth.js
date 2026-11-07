@@ -444,11 +444,9 @@
         var sHyd = gd.sigmaC;
         if (!hard) { for (var x = 0; x < gd.sigmaC - gd.pr; x += 1) { if (M.cfRatio(gd.sigmaC - x) <= 0.05) { sHyd = gd.sigmaC - x; break; } } }
         var regimeAtEnd = null;
-        if (hard) {
-            var tEndInj = tcInj + dtEnd - dtc + 0;                   // = tp + dtEnd
+        if (hard) {                                                  // s_D of the exact solution at the record end (injection clock tp + dtEnd)
             var ex = acaExact(aca, [tp + dtEnd], { geometry: 'full' });
             regimeAtEnd = ex.ok ? regimeFromSD(ex.sD[0]) : null;
-            if (tEndInj < 0) regimeAtEnd = null;
         }
         var truth = {
             sigmaC: gd.sigmaC, sigmaCHyd: sHyd, sigmaCF2: sF2, isip: gd.isip, pi: pi, k: kTrue, khmu: kTrue * gd.hp / gd.mu, L: geo.xf,
@@ -601,7 +599,7 @@
             source: 'lk', Gc: Gc05, dtc: tcInj != null ? tcInj - ts : null, dtDc: (tcInj != null && tpMin > 0) ? (tcInj - ts) / (tpMin / 60) : null, tp: tpMin / 60,
             Vi: seg.reduce(function (s2, g) { return s2 + g.q * (g.t1 - g.t0) * 60; }, 0), ViStar: null, pn: isip - sc, mG: mG, VwCw: VwCw,
             Csys: AfCf ? AfCf + VwCw : null, kCL: CLeq ? kFromCL(CLeq, isip, sc, pr, cfg.muRes, cfg.phi, cfg.ct) : null, kSolved: false,
-            acaScored: law === 'none' || true, geometry: geoName, rampSlopePsiMin: VwCw > 0 && seg.length ? seg[0].q / VwCw : null, rampScaled: false,
+            acaScored: true, geometry: geoName, rampSlopePsiMin: VwCw > 0 && seg.length ? seg[0].q / VwCw : null, rampScaled: false,
             pb: fin(ev.pb) ? ev.pb : null, tbInj: fin(ev.tb) ? ev.tb - tStartInj : null, pfo: cfg.pdl && cfg.pdl.Cd > 0 ? cfg.pdl.pfo : null, pHr: null,
             fluid: 'water', gasApprox: false
         };
