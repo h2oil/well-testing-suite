@@ -2,9 +2,9 @@
 //
 //   U1  determinism: the same seed gives the same result (sync = job); another seed differs
 //   U2  all inputs fixed, single closure: P10 = P50 = P90 = the deterministic chain (incl. C_sys, A_f·c_f, R_vis), which
-//       agrees with the frozen §4.21 reference chain of _dfit-shapes
+//       agrees with the frozen §4.21 reference chain of _dfit-shapes; the matched-α η_G for α = 1 and α = 4/5 runs
 //   U3  range case: bimodal, no pooled P50 for closure, xf, η, p_n or CL; per-family columns contain each family's chain;
-//       interpretation share > 60 %
+//       interpretation share > 60 % (closure, p_n; η shares it with the tp draw); V_i*(σ_c) of each family chain (§4.3)
 //   U4  first-order shares sum within [0.8, 1.2] on an additive test function
 //   U5  1,000 draws = 1,000 chain evaluations (counts.draws) and linear scaling (2,000 draws < 2.5 × the work)
 //   U6  changing the family weight changes neither per-family column and logs one entry
@@ -68,6 +68,19 @@ module.exports = [
       rel(assert, det.xf, ref.geometry.byModel.PKN.xf, 0.01, 'PKN xf'); rel(assert, det.CL, ref.geometry.byModel.PKN.CL, 0.01, 'CL');
       near(assert, det.Gamma, ref.Gamma, 0.01, 'Γ'); rel(assert, det.k, ref.kBefore.kCL.k, 0.02, 'k from CL');
       near(assert, det.pn, ref.pn, 0.2, 'p_n');
+      // matched α: an α = 1 run (G on the α = 1 closed form) gives η_G = G_c/(G_c + 16/(3π)) = the reference α = 1 value
+      const G1 = (d) => 4 / Math.PI * (4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5)) - 4 / 3);
+      const r1 = S.FIX.run; r1.derivs.alpha = 1; r1.derivs.gType = 'a1'; r1.derivs.G = r1.derivs.dtD.map((d) => (d == null ? null : G1(d)));
+      const d1 = win.PRiSM_dfit_uncertainty.chain(run.consensus.value, r1, o);
+      near(assert, d1.eta, d1.Gc / (d1.Gc + 16 / (3 * Math.PI)), 1e-12, 'α = 1: η_G = G_c/(G_c + 16/(3π))');
+      near(assert, d1.eta, ref.eta.a1, 0.002, 'α = 1: η_G vs the reference α = 1 value');
+      assert(d1.eta > det.eta, 'α = 1 efficiency above α = ½ (' + d1.eta + ' > ' + det.eta + ')');
+      const u1 = win.PRiSM_dfit_uncertainty(r1, o);
+      near(assert, u1.outputs.eta.p50, d1.eta, 1e-12, 'α = 1 run: P50 = the matched-α chain');
+      // general α (4/5): 4·g0/π = 1.8016
+      const r8 = S.FIX.run; r8.derivs.alpha = 0.8; r8.derivs.gType = 'general';
+      const d8 = win.PRiSM_dfit_uncertainty.chain(run.consensus.value, r8, o);
+      near(assert, d8.eta, d8.Gc / (d8.Gc + 1.8016), 2e-5, 'α = 4/5: η_G = G_c/(G_c + 1.8016)');
     },
   },
   {
@@ -88,9 +101,26 @@ module.exports = [
         });
         assert(q.envelope[0] <= Math.min(q.byFamily.F1.p10, q.byFamily.F2.p10) + 1e-9 && q.envelope[1] >= Math.max(q.byFamily.F1.p90, q.byFamily.F2.p90) - 1e-9, k + ' envelope');
       });
-      ['closure', 'pn', 'eta'].forEach((k) => assert(u.outputs[k].closureShare > 0.6, k + ' interpretation share > 60 %: ' + u.outputs[k].closureShare));
+      ['closure', 'pn'].forEach((k) => assert(u.outputs[k].closureShare > 0.6, k + ' interpretation share > 60 %: ' + u.outputs[k].closureShare));
+      // η moves with the tp draw (pump / breakdown / veq, §6.6) as much as with the family here (G_c 17.9 / 19.0 for F1 / F2,
+      // 19.2 at the breakdown tp): the interpretation and tp shares together carry ≥ 80 % of its variance
+      const eS = u.outputs.eta, tpS = (eS.shares.find((x) => x.input === 'tp') || { s: 0 }).s;
+      assert(eS.closureShare > 0.25 && eS.closureShare + tpS >= 0.8, 'η: interpretation ' + eS.closureShare + ' + tp ' + tpS + ' ≥ 0.8');
+      assert(u.inputs.some((it) => it.name === 'tp' && it.dist === 'empirical' && it.params.values.length === 3), 'tp drawn from the three event values');
       ['Gamma', 'pi'].forEach((k) => assert(u.outputs[k].bimodal === false && u.outputs[k].p50 !== null, k + ' does not depend on the closure: single P50'));
       assert(u.familyWeight.F1 === 0.5 && u.familyWeight.F2 === 0.5, 'family weight');
+      // V_i*(σ_c) per family chain (§4.3): V_i − V_w·c_w·(σ_c − p_start) − V_fill. A run whose V_i* follows that definition at its
+      // closure (FracOutputs of 56: 25 − 7.908e-4 × (7,000 − 4,500) = 23.02 bbl) gives each family chain the 56 value at its own σ_c
+      const r3 = rangeRun(), VwCw = r3.frac.chosen.VwCw, vi = (pc) => 25 - VwCw * (pc - 4500);
+      r3.frac.chosen.ViStar = vi(r3.frac.chosen.pClosure); r3.events.ViStar = r3.frac.chosen.ViStar;
+      ['F1', 'F2'].forEach((F) => {
+        const pc = F === 'F1' ? 6998 : 6507, c3 = win.PRiSM_dfit_uncertainty.chain(pc, r3, o);
+        near(assert, c3.ViStar, vi(pc), 1e-9, F + ' chain V_i*(σ_c) = the FracOutputs value at ' + pc + ' psia');
+      });
+      const c1 = win.PRiSM_dfit_uncertainty.chain(6998, run, o), c2 = win.PRiSM_dfit_uncertainty.chain(6507, run, o);
+      near(assert, c2.ViStar - c1.ViStar, VwCw * (6998 - 6507), 1e-9, 'F2 chain V_i* larger by V_w·c_w·Δσ (' + (c2.ViStar - c1.ViStar) + ' bbl)');
+      const c2w = win.PRiSM_dfit_uncertainty.chain(6507, run, o, { VwCw: 2 * VwCw });
+      near(assert, c2w.ViStar, c2.ViStar - VwCw * (6507 - 4500), 1e-9, 'a drawn V_w·c_w moves V_i* by ΔV_w·c_w·(σ_c − p_start)');
       assert(u.tornado.some((t) => t.family === 'F1') && u.tornado.some((t) => t.family === 'F2'), 'tornado per family');
     },
   },

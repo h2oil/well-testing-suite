@@ -1134,6 +1134,28 @@
     var BBL = KC.bbl;
     function _g1(d) { return 4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5)); }
     function _G1(d) { return 4 / Math.PI * (_g1(d) - 4 / 3); }
+    function _G05u(d) { return d > 0 ? 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2) : 0; }
+    // ln Γ (Lanczos, g 7, 9 terms) for g0(α) = √π·Γ(α + 1)/Γ(α + 3/2) (α ½ → π/2, 1 → 4/3, 4/5 → 1.41495)
+    var LZ = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905,
+              -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+    function _lnGamma(z) {
+        if (z < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * z))) - _lnGamma(1 - z);
+        z -= 1; var x = LZ[0]; for (var i = 1; i < 9; i++) x += LZ[i] / (z + i);
+        var t = z + 7.5; return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+    }
+    function _g0(alpha) {
+        if (Math.abs(alpha - 0.5) < 1e-12) return Math.PI / 2;
+        if (Math.abs(alpha - 1) < 1e-12) return 4 / 3;
+        return Math.sqrt(Math.PI) * Math.exp(_lnGamma(alpha + 1) - _lnGamma(alpha + 1.5));
+    }
+    // matched-α G-function efficiency η_G = G_c/(G_c + 4·g0/π) (§4.9): α ½ → G_c/(G_c + 2), α 1 → G_c/(G_c + 16/(3π))
+    function _etaOf(Gc, alpha, g0) { var c = 4 * (fin(g0) && g0 > 0 ? g0 : _g0(fin(alpha) ? alpha : 0.5)) / Math.PI; return Gc / (Gc + c); }
+    // G(ΔtD) with the run's α: closed forms at ½ and 1; between them linear in α (used only to move G_c when the tp draw changes)
+    function _Galpha(d, alpha) {
+        if (!fin(alpha) || Math.abs(alpha - 0.5) < 1e-12) return _G05u(d);
+        if (Math.abs(alpha - 1) < 1e-12) return _G1(d);
+        var w = Math.max(0, Math.min(1, (alpha - 0.5) / 0.5)); return (1 - w) * _G05u(d) + w * _G1(d);
+    }
     function _uncCtx(run, opts) {
         var d = run.derivs || {}, ev = run.events || {}, inp = opts.inputs || {}, rock = inp.rock || {}, well = opts.well || {};
         var ch = run.frac && (run.frac.chosen || _firstFamily(run.frac.byFamily)) || {};
@@ -1141,11 +1163,20 @@
         if (arrOk(d.G) && arrOk(d.p)) for (var i = 0; i < d.G.length; i++) if (fin(d.G[i]) && fin(d.p[i]) && (!Garr.length || d.G[i] > Garr[Garr.length - 1])) { Garr.push(d.G[i]); parr.push(d.p[i]); dDarr.push(arrOk(d.dtD) ? d.dtD[i] : null); }
         var tp = pos(d.tp) ? d.tp : (ev.tp && pos(ev.tp.pump) ? ev.tp.pump : null);
         var aca = run.aca && run.aca.ok !== false ? run.aca : null;
+        // V_i*(σ_c) (§4.3): V_i − V_w·c_w·(σ_c − p_start) − V_fill, anchored on the run's own V_i* at its closure so the chain
+        // reproduces the run at that closure; p_start = the last prepared sample at or before the pump start
+        var ViStarRef = pos(ch.ViStar) ? ch.ViStar : (pos(ev.ViStar) ? ev.ViStar : null), VwCw0 = pos(ch.VwCw) ? ch.VwCw : (pos(ev.VwCwMeasured) ? ev.VwCwMeasured : 0);
+        var pcRef = fin(ch.pClosure) ? ch.pClosure : (run.consensus && fin(run.consensus.value) ? run.consensus.value : null), pStart = fin(ev.pStart) ? ev.pStart : null, pr = run.prep;
+        if (pStart == null && pr && arrOk(pr.t) && arrOk(pr.pw) && fin(ev.tStart)) { for (var j = 0; j < pr.t.length && pr.t[j] <= ev.tStart + 1e-12; j++) if (fin(pr.pw[j])) pStart = pr.pw[j]; }
+        if (pStart == null && pos(VwCw0) && fin(pcRef) && pos(ev.Vi) && pos(ViStarRef)) pStart = pcRef - (ev.Vi - (fin(ev.Vfill) ? ev.Vfill : 0) - ViStarRef) / VwCw0;
+        var geomModel = (ch.geometry && ch.geometry.model) || (inp.geometry && inp.geometry.model) || 'PKN';
+        var tps = []; if (ev.tp) ['pump', 'breakdown', 'veq'].forEach(function (k) { if (pos(ev.tp[k])) tps.push({ choice: k, tp: ev.tp[k] }); });
         return {
             G: Garr, p: parr, dtD: dDarr, tp: tp, mG: pos(d.mG) ? d.mG : (pos(ch.mG) ? ch.mG : null), alpha: fin(d.alpha) ? d.alpha : 0.5,
             isip: run.isip && fin(run.isip.value) ? run.isip.value : null, isipSd: run.isip && fin(run.isip.spread) ? Math.max(run.isip.spread / 2, 0.5) : 1,
-            ViStar: pos(ev.ViStar) ? ev.ViStar : (pos(ch.ViStar) ? ch.ViStar : null),
-            VwCw: pos(ch.VwCw) ? ch.VwCw : (pos(ev.VwCwMeasured) ? ev.VwCwMeasured : 0), VwCwTheory: !pos(ev.VwCwMeasured),
+            ViStar: ViStarRef, ViStarRef: ViStarRef, pcRef: pcRef, pStart: fin(pStart) ? pStart : pcRef, VwCw0: VwCw0,
+            g0: d.gSpec && pos(d.gSpec.g0) ? d.gSpec.g0 : null, geom: geomModel, tps: tps,
+            VwCw: VwCw0, VwCwTheory: !pos(ev.VwCwMeasured),
             Ep: pos(rock.Ep) ? rock.Ep : null, hf: pos(rock.hf) ? rock.hf : null, hp: pos(rock.hp) ? rock.hp : (pos(rock.hf) ? rock.hf : null),
             barrier: pos(rock.barrierSpacing) ? rock.barrierSpacing : null,
             mu: pos(well.mu) ? well.mu : null, phi: pos(well.phi) ? well.phi : null, ct: pos(well.ct) ? well.ct : null,
@@ -1175,20 +1206,35 @@
         var VwCw = fin(x.VwCw) ? x.VwCw : C.VwCw, mu = fin(x.mu) ? x.mu : C.mu, phi = fin(x.phi) ? x.phi : C.phi, ct = fin(x.ct) ? x.ct : C.ct;
         var pi = fin(x.pi) ? x.pi : C.pi, out = { closure: pc };
         var Gc = _GcOf(C, pc);
-        if (!fin(isip) || !fin(Gc) || !(Gc > 0) || !pos(C.ViStar) || !pos(C.tp) || !pos(C.mG)) return out;
+        if (!fin(isip) || !fin(Gc) || !(Gc > 0) || !pos(C.ViStarRef) || !pos(C.tp) || !pos(C.mG)) return out;
         var pn = isip - pc; out.pn = pn;
-        var dtD = _dtDOf(C, Gc), Gc1 = _G1(dtD);
-        var etaG = Gc / (Gc + 2), eta1 = Gc1 / (Gc1 + 16 / (3 * Math.PI));
-        out.eta = etaG; out.eta1 = eta1; out.Gc = Gc; out.dtc = dtD * C.tp;
-        if (!(pn > 0)) return out;
-        var Vs = C.ViStar * BBL, Csys = etaG * Vs / pn, AfCf = Csys - VwCw * BBL, Rvis = AfCf / Csys;
+        var dtD = _dtDOf(C, Gc), tp = C.tp, mG = C.mG;
+        // tp choice drawn (pump / breakdown / veq): the closure time Δt_c is fixed by the data; G_c and m_G move with tp
+        if (pos(x.tp) && Math.abs(x.tp - C.tp) > 1e-12 * C.tp) {
+            var dtc0 = dtD * C.tp; dtD = dtc0 / x.tp;
+            var Gn = _Galpha(dtD, C.alpha); if (Gn > 0) { mG = C.mG * Gc / Gn; Gc = Gn; }
+            tp = x.tp;
+        }
+        var Gc1 = _G1(dtD);
+        var etaG = _etaOf(Gc, C.alpha, C.g0), eta1 = Gc1 / (Gc1 + 16 / (3 * Math.PI));
+        out.eta = etaG; out.eta1 = eta1; out.Gc = Gc; out.dtc = dtD * tp; out.alpha = C.alpha;
+        // V_i*(σ_c) with the drawn V_w·c_w (anchored on the run's V_i* at its closure)
+        var ViS = fin(C.pcRef) ? C.ViStarRef - VwCw * (pc - C.pcRef) - (VwCw - C.VwCw0) * (C.pcRef - C.pStart) : C.ViStarRef;
+        out.ViStar = ViS;
+        if (!(pn > 0) || !(ViS > 0)) return out;
+        var Vs = ViS * BBL, Csys = etaG * Vs / pn, AfCf = Csys - VwCw * BBL, Rvis = AfCf / Csys;
         out.Csys = Csys / BBL; out.AfCf = AfCf / BBL; out.Rvis = Rvis;
         var Vf = AfCf * pn, VLts = Vs * (1 - etaG); out.etaF = Vf + VLts > 0 ? Vf / (Vf + VLts) : null;
-        var sqtp = Math.sqrt(C.tp * 60);
-        out.Gamma = 2 * C.mG / (Math.PI * sqtp);
+        var sqtp = Math.sqrt(tp * 60);
+        out.Gamma = 2 * mG / (Math.PI * sqtp);
         if (pos(Ep) && pos(hf) && AfCf > 0) {
-            var rp = Math.min(1, (pos(hp) ? hp : hf) / hf), xf = AfCf * Ep / (Math.PI * hf * hf), Af = 2 * xf * hf;
-            out.xf = xf; out.CL = 2 * C.mG * Csys / (Math.PI * rp * Af * sqtp);
+            // c_f by the chosen geometry (§4.10): PKN c_f = π·h_f/(2E′), KGD π·xf/E′, radial 16·R/(3π·E′)
+            var rp = Math.min(1, (pos(hp) ? hp : hf) / hf), Af, xf = null;
+            if (C.geom === 'KGD') { xf = Math.sqrt(AfCf * Ep / (2 * Math.PI * hf)); Af = 2 * xf * hf; }
+            else if (C.geom === 'radial') { var Rr = Math.pow(3 * Ep * AfCf / 16, 1 / 3); Af = Math.PI * Rr * Rr; out.R = Rr; rp = 1; }
+            else { xf = AfCf * Ep / (Math.PI * hf * hf); Af = 2 * xf * hf; }
+            if (xf != null) out.xf = xf;
+            out.CL = 2 * mG * Csys / (Math.PI * rp * Af * sqtp);
             var dpCL = 0.5 * (isip + pc) - pi;
             if (pos(dpCL) && pos(mu) && pos(phi) && pos(ct)) out.k = mu / (phi * ct) * Math.pow(out.CL / (KC.invmL * dpCL), 2);
         }
@@ -1196,7 +1242,7 @@
         if (pos(C.khmu)) out.khmu = C.khmu;
         return out;
     }
-    var OUT_UNITS = { closure: 'psia', pn: 'psi', eta: '–', etaF: '–', Csys: 'bbl/psi', AfCf: 'bbl/psi', Rvis: '–', xf: 'ft', CL: 'ft/√min', Gamma: 'psi/√min', k: 'md', khmu: 'md·ft/cp', pi: 'psia' };
+    var OUT_UNITS = { closure: 'psia', pn: 'psi', eta: '–', etaF: '–', Csys: 'bbl/psi', AfCf: 'bbl/psi', Rvis: '–', xf: 'ft', R: 'ft', CL: 'ft/√min', Gamma: 'psi/√min', k: 'md', khmu: 'md·ft/cp', pi: 'psia' };
     var CLOSURE_FREE = { Gamma: true, khmu: true, pi: true };
     function _lognormalOf(r, med, sdLn) { return med * Math.exp(sdLn * gauss(r)); }
     function _triangular(r, a, m, b) { var u = r(), F = (m - a) / ((b - a) || 1); return u < F ? a + Math.sqrt(u * (b - a) * (m - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - m)); }
@@ -1236,7 +1282,11 @@
         if (pos(C.phi)) add('phi', 'lognormal', { p50: C.phi, sdLn: 0.1 }, 'C1');
         if (pos(C.VwCw)) add('VwCw', 'normal', { mu: C.VwCw, sd: (C.VwCwTheory ? 0.5 : 0.1) * C.VwCw }, C.VwCwTheory ? 'theory' : 'ramp');
         if (fin(C.pi)) add('pi', 'normal', { mu: C.pi, sd: fin(C.piLo) && fin(C.piHi) ? Math.max(0.5, (C.piHi - C.piLo) / 4) : 5, lo: C.piLo, hi: C.piHi }, 'after-closure');
-        add('tp', 'fixed', { choice: 'pump' }, 'events');
+        // tp choice: discrete, equal weights over the event values (pump / breakdown / veq, §6.6); fixed when they all agree
+        var tpv = (C.tps || []).map(function (o) { return o.tp; }), tpc = (C.tps || []).map(function (o) { return o.choice; });
+        var tpDiff = tpv.some(function (v) { return Math.abs(v - tpv[0]) > 1e-9 * tpv[0]; });
+        if (tpv.length >= 2 && tpDiff) add('tp', 'empirical', { values: tpv, choices: tpc, weights: tpv.map(function () { return 1 / tpv.length; }), base: C.tp }, 'events');
+        else add('tp', 'fixed', { choice: 'pump', mu: C.tp }, 'events');
         var byName = {}; inputs.forEach(function (it) { byName[it.name] = it; });
         var rho = fin(opts.rhoPhiCt) ? opts.rhoPhiCt : -0.3;
         return { C: C, n: n, seed: seed, mode: mode, wF1: wF1, pools: pools, famCentre: famCentre, centre: centre, inputs: inputs, byName: byName, rho: rho,
@@ -1260,7 +1310,9 @@
         if (b.ct) x.ct = b.ct.dist === 'fixed' ? C.ct : b.ct.params.p50 * Math.exp(b.ct.params.sdLn * zz);
         if (b.phi) x.phi = b.phi.dist === 'fixed' ? C.phi : b.phi.params.p50 * Math.exp(b.phi.params.sdLn * z1);
         num('VwCw', function (p) { return Math.max(0, p.mu + p.sd * gauss(r)); });
-        num('pi', function (p) { var v = p.mu + p.sd * gauss(r); if (fin(p.lo) && v < p.lo) v = p.lo; if (fin(p.hi) && v > p.hi) v = p.hi; return v; });
+        // p_i: normal truncated to the bracket by redrawing (≤ 50 tries, then the nearest bracket edge)
+        num('pi', function (p) { var v = p.mu + p.sd * gauss(r), k = 0; while (((fin(p.lo) && v < p.lo) || (fin(p.hi) && v > p.hi)) && k++ < 50) v = p.mu + p.sd * gauss(r); if (fin(p.lo) && v < p.lo) v = p.lo; if (fin(p.hi) && v > p.hi) v = p.hi; return v; });
+        if (b.tp) x.tp = b.tp.dist === 'fixed' ? C.tp : b.tp.params.values[Math.min(b.tp.params.values.length - 1, Math.floor(r() * b.tp.params.values.length))];
         if (x.hp != null && x.hf != null && x.hp > x.hf) x.hp = x.hf;
         return x;
     }
@@ -1345,12 +1397,13 @@
         Object.keys(centres).forEach(function (fk) {
             var pc = centres[fk]; if (!fin(pc)) return;
             U.inputs.forEach(function (it) {
-                if (it.dist === 'fixed' || it.name === 'closure' || it.name === 'tp') return;
+                if (it.dist === 'fixed' || it.name === 'closure') return;
                 var lo = {}, hi = {}, pp = it.params;
                 if (it.dist === 'normal') { lo[it.name] = pp.mu - 1.2816 * pp.sd; hi[it.name] = pp.mu + 1.2816 * pp.sd; }
                 else if (it.dist === 'lognormal') { lo[it.name] = pp.p50 * Math.exp(-1.2816 * pp.sdLn); hi[it.name] = pp.p50 * Math.exp(1.2816 * pp.sdLn); }
                 else if (it.dist === 'uniform') { lo[it.name] = pp.lo + 0.1 * (pp.hi - pp.lo); hi[it.name] = pp.lo + 0.9 * (pp.hi - pp.lo); }
                 else if (it.dist === 'triangular') { lo[it.name] = pp.a + Math.sqrt(0.1 * (pp.b - pp.a) * (pp.m - pp.a)); hi[it.name] = pp.b - Math.sqrt(0.1 * (pp.b - pp.a) * (pp.b - pp.m)); }
+                else if (it.dist === 'empirical' && arrOk(pp.values)) { lo[it.name] = Math.min.apply(null, pp.values); hi[it.name] = Math.max.apply(null, pp.values); }
                 var ylo = _chain(pc, C, lo), yhi = _chain(pc, C, hi); U.counts.chainEvals += 2;
                 tOut.forEach(function (ok) {
                     if (fin(ylo[ok]) && fin(yhi[ok]) && ylo[ok] !== yhi[ok]) tornado.push(Object.assign({ output: ok, input: it.name, lo: ylo[ok], hi: yhi[ok] }, single ? {} : { family: fk }));
