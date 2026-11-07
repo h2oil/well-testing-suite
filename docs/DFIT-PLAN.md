@@ -1101,7 +1101,9 @@ keys between tests. Every WP asserts `checkShape` on its outputs; WP6 builds aga
 - `FIX.run` follows §4.21's convention that the 25 bbl is V_i\* (an engine run on `FIX.ds` gives V_i\* 23.02 bbl): it is a shape
   and consistency fixture, not regression truth. The ISIP candidates are the §4.4 P3a given numbers.
 - The 59 skeleton registers no `PRiSM_modeExt.dfit`, panels, plots, tools or undo extras (a stub mode would appear in the header
-  select as soon as WPH lands); WP6 registers them. `PRiSM_dfit_kConstraint` returns `null` until WP3.
+  select as soon as WPH lands); WP6 registers them. It also does not export the five `PRiSM_renderDfit…Tool` functions: 37's
+  `listTools` discovers every `window.PRiSM_render*Tool` by name and would list them under "More" until WPH marks catalogue
+  functions as seen. `PRiSM_dfit_kConstraint` returns `null` until WP3.
 
 ---
 
