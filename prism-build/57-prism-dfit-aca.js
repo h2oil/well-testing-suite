@@ -1149,7 +1149,7 @@
     function _triangular(r, a, m, b) { var u = r(), F = (m - a) / ((b - a) || 1); return u < F ? a + Math.sqrt(u * (b - a) * (m - a)) : b - Math.sqrt((1 - u) * (b - a) * (b - m)); }
     function _uncSetup(run, opts) {
         opts = opts || {};
-        if (!run || !run.derivs || run.ok === false) return { err: fail('BAD_INPUT', 'The uncertainty needs a run with derivatives.', ['run']) };
+        if (!run || !run.derivs || run.derivs.ok === false) return { err: fail('BAD_INPUT', 'The uncertainty needs a run with derivatives.', ['run']) };
         var n = Math.max(100, Math.min(2000, Math.round(fin(opts.n) ? opts.n : 1000))), seed = fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : 1;
         var C = _uncCtx(run, opts), cons = run.consensus || run.consensusLite || {};
         var mode = cons.mode === 'range' ? 'range' : 'single';
@@ -1615,23 +1615,667 @@
     };
 
     // ═════════════════════════════════════════════════════════════════════
-    // Stubs still to be replaced in later WP3 milestones
+    // 8. Results layer: evidence index, report model, quoted-value check, data + picks export, frac sheet, hand-off,
+    //    summary, grade fallback (§6.10, §6.8, §2.10, §2.11, §3.3)
     // ═════════════════════════════════════════════════════════════════════
-    function _ni(name) { return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP3 milestone).'], bad: [] }; }
-    function _stub(name) { var f = function () { return _ni(name); }; f._dfitStub = true; return f; }
-    function _jobStub(name) {
-        var f = function () { var r = _ni(name); return { step: function () { return { done: true, progress: 1, label: 'not implemented' }; }, result: function () { return r; }, cancel: function () {} }; };
-        f._dfitStub = true; return f;
+    var EV_GROUPS = 'QXEIHSGCKMFALUPO';
+    var EV_TITLES = { Q: 'Triage', X: 'Conversion', E: 'Events', I: 'ISIP', H: 'Water hammer', S: 'Step tests and ramps', G: 'Pre-closure derivatives',
+                      C: 'Closure', K: 'Confidence rule', M: 'Leak-off type', F: 'Fracture outputs', A: 'After-closure', L: 'Leak-off model',
+                      U: 'Uncertainty', P: 'Plan', O: 'Overrides' };
+    var EV_RE = /^[QXEIHSGCKMFALUPO]\d+$/;
+    function _getPath(o, path) {
+        if (!path) return o;
+        var parts = String(path).replace(/\[(\d+)\]/g, '.$1').split('.'), a = o;
+        for (var i = 0; i < parts.length; i++) { if (a == null) return undefined; a = a[parts[i]]; }
+        return a;
     }
-    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel',
-     'PRiSM_dfit_checkQuoted', 'PRiSM_dfit_exportText', 'PRiSM_dfit_fracSheet', 'PRiSM_dfit_handoff'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _stub(n); });
-    ['PRiSM_dfit_pipelineJob'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _jobStub(n); });
-    G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
-    if (!G.PRiSM_dfit_live.create || G.PRiSM_dfit_live.create._dfitStub) G.PRiSM_dfit_live.create = _stub('PRiSM_dfit_live.create');
+    function _evValues(o, id) {
+        var V = [], v = function (label, value, unit, dp) { if (value != null && (fin(value) || typeof value === 'string')) V.push({ label: label, value: fin(value) ? +value : String(value).slice(0, 80), unit: unit, dp: dp }); };
+        if (!o || typeof o !== 'object') return V;
+        if (id === 'C1' && o.mode) { if (fin(o.value)) v('closure', o.value, 'psia', 0); if (o.range) { v('lo', o.range.lo, 'psia', 0); v('hi', o.range.hi, 'psia', 0); } v('mode', o.mode, '', 0); return V; }
+        if (fin(o.value) && o.candidates) { v('ISIP', o.value, 'psia', 0); v('spread', o.spread, 'psi', 1); return V; }
+        if (o.pi && o.regimeSummary) { v('p_i', o.pi.value, 'psia', 0); if (o.kh) v('kh/μ', o.kh.khmu, 'md·ft/cp', 2); else if (o.bounds) { v('k_lo', o.bounds.kLo, 'md', 6); v('k_hi', o.bounds.kHi, 'md', 6); } v('regime', o.regimeSummary, '', 0); return V; }
+        if (o.geometry && fin(o.pClosure)) { v('closure', o.pClosure, 'psia', 0); v('p_n', o.pn, 'psi', 0); if (o.eta) v('η', o.eta.a05, '', 3); if (o.geometry.byModel && o.geometry.byModel.PKN) v('xf', o.geometry.byModel.PKN.xf, 'ft', 0); return V; }
+        if (fin(o.n) && fin(o.seed) && o.outputs) { v('n', o.n, 'draws', 0); v('seed', o.seed, '', 0); return V; }
+        if (fin(o.mG) && arrOk(o.G)) { v('m_G', o.mG, 'psi', 2); v('α', o.alpha, '', 2); return V; }
+        if (o.tp && fin(o.Vi)) { v('tp', o.tp.pump * 60, 'min', 1); v('V_i', o.Vi, 'bbl', 1); return V; }
+        if (o.light) { v('light', o.light, '', 0); return V; }
+        if (o.type && o.scores) { v('type', o.type, '', 0); return V; }
+        if (o.method && fin(o.p)) { v('p', o.p, 'psia', 0); v('G', o.G, '', 2); return V; }
+        if (o.method && fin(o.value)) { v(o.method, o.value, 'psia', 1); return V; }
+        if (o.id && /^K/.test(o.id)) { v('value', o.value, '', 3); v('threshold', o.threshold, '', 3); return V; }
+        if (fin(o.value)) v('value', o.value, '', 3);
+        return V;
+    }
+    function _evText(o, g) {
+        var t = null;
+        if (o) {
+            if (typeof o.why === 'string') t = o.why; else if (arrOk(o.why) && o.why.length) t = o.why[0];
+            if (!t && typeof o.text === 'string') t = o.text;
+            if (!t && arrOk(o.evidence) && o.evidence.length) t = typeof o.evidence[0] === 'string' ? o.evidence[0] : o.evidence[0].text;
+            if (!t && o.pi && arrOk(o.pi.reasons) && o.pi.reasons.length) t = o.pi.reasons[0];
+            if (!t && typeof o.preferredWhy === 'string') t = o.preferredWhy;
+        }
+        return _txt(t || (EV_TITLES[g] + ' result of this run.'));
+    }
+    G.PRiSM_dfit_evidence = function (run) {
+        try {
+            if (!run || typeof run !== 'object') return fail('BAD_INPUT', 'The evidence index needs a run.', ['run']);
+            var items = {}, seen = {};
+            function add(id, o, path) {
+                if (!EV_RE.test(id) || items[id]) return;
+                var g = id[0], ttl = EV_TITLES[g] + (o && o.method ? ': ' + o.method : (o && o.title ? ': ' + o.title : (g === 'K' && o && o.id ? ' ' + o.id : '')));
+                items[id] = { id: id, group: g, title: _txt(ttl), values: _evValues(o, id), path: path, text: _evText(o, g) };
+            }
+            function walk(o, path, depth) {
+                if (!o || typeof o !== 'object' || depth > 6 || seen[path]) return;
+                seen[path] = true;
+                if (arrOk(o)) { if (o.length > 0 && typeof o[0] === 'object') for (var i = 0; i < Math.min(o.length, 200); i++) walk(o[i], path + '[' + i + ']', depth + 1); return; }
+                if (typeof o.id === 'string' && EV_RE.test(o.id) && o.id[0] === 'K') add(o.id, o, path);
+                if (arrOk(o.ev)) o.ev.forEach(function (id) { add(id, o, path); });
+                for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k) && k !== 'ev' && k !== 'evidence' && k !== 'report' && k !== 'summary' && k !== 'samples' && k !== 'stability' && o[k] && typeof o[k] === 'object')
+                    walk(o[k], path ? path + '.' + k : k, depth + 1);
+                if (arrOk(o.evidence)) o.evidence.forEach(function (e, i) { if (e && arrOk(e.ev)) e.ev.forEach(function (id) { add(id, o, path); }); });
+            }
+            ['triage', 'prep', 'events', 'isip', 'derivs', 'picks', 'consensus', 'consensusLite', 'classification', 'frac', 'whatIf', 'aca', 'leak', 'unc', 'warnings']
+                .forEach(function (k) { if (run[k] != null) walk(run[k], k, 0); });
+            var order = Object.keys(items).sort(function (a, b) { var ga = EV_GROUPS.indexOf(a[0]), gb = EV_GROUPS.indexOf(b[0]); return ga !== gb ? ga - gb : (+a.slice(1)) - (+b.slice(1)); });
+            return { items: items, order: order };
+        } catch (e) { return fail('EVIDENCE_FAILED', e && e.message || e); }
+    };
 
-    // internal helpers shared by the later sections of this file
-    G.PRiSM_dfit_acaKernels._h = { fin: fin, pos: pos, nn: nn, rnd: rnd, sig: sig, fail: fail, W: W, txt: _txt, fmt: fmt, fmtSig: fmtSig, clone: clone,
-        sortNum: sortNum, quant: quant, median: median, mean: mean, linfit: linfit, interp: interp, makeRng: makeRng, gauss: gauss, hashOf: hashOf, realFn: realFn };
+    function _closureOf(run) {
+        var c = run.consensus || run.consensusLite || {};
+        return { mode: c.mode || 'none', value: fin(c.value) ? c.value : null, range: c.range || null, label: run.consensus ? run.consensus.confidence : 'low',
+                 families: c.families || {}, preferred: run.consensus ? run.consensus.preferred : null };
+    }
+    function _localGrade(run) {
+        var tri = run.triage, cl = _closureOf(run), aca = run.aca && run.aca.ok !== false ? run.aca : null, why = [];
+        var light = tri && tri.light ? tri.light : null, piL = aca && aca.pi ? aca.pi.label : null;
+        var letter = 'D';
+        if (cl.mode !== 'none') letter = 'C';
+        if (cl.mode !== 'none' && light !== 'red' && aca) letter = 'B';
+        if (cl.mode === 'single' && (cl.label === 'high' || cl.label === 'medium') && light !== 'red' && light !== 'amber' && (piL === 'high' || piL === 'medium')) letter = 'A';
+        why.push('Triage ' + (light || 'not run') + '; closure ' + (cl.mode === 'single' ? 'single with label ' + cl.label : cl.mode === 'range' ? 'a range (' + cl.label + ')' : 'not estimable') + ' (uncalibrated); p_i label ' + (piL || 'not available') + '.');
+        return { letter: letter, why: why.map(_txt) };
+    }
+    function _gradeOf(run) {
+        if (realFn(G.PRiSM_dfit_grade)) {
+            try { var g = G.PRiSM_dfit_grade(run.triage, run.consensus, run.aca); if (g && /^[ABCD]$/.test(g.letter) && arrOk(g.why)) return { letter: g.letter, why: g.why.map(_txt) }; } catch (e) { /* fallback */ }
+        }
+        return _localGrade(run);
+    }
+
+    // ── report model ──
+    function _evOk(EVI, ids) { return (ids || []).filter(function (id) { return EVI && EVI.items[id]; }); }
+    G.PRiSM_dfit_reportModel = function (run, opts) {
+        try {
+            opts = opts || {};
+            if (!run || typeof run !== 'object') return fail('BAD_INPUT', 'The report model needs a run.', ['run']);
+            var EVI = run.evidence && run.evidence.items ? run.evidence : G.PRiSM_dfit_evidence(run);
+            if (!EVI || !EVI.items) EVI = { items: {}, order: [] };
+            var groups = opts.groups || null, want = function (id) { return !groups || groups.indexOf(id) >= 0 || groups.indexOf(id.replace('dfit-', '')) >= 0; };
+            var cl = _closureOf(run), ch = run.frac ? run.frac.chosen : null, aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var isip = run.isip && run.isip.ok !== false ? run.isip : null, unc = run.unc && run.unc.ok !== false ? run.unc : null;
+            var grade = run.grade && /^[ABCD]$/.test(run.grade.letter) ? run.grade : _gradeOf(run);
+            var quotes = [], sections = [];
+            function sec(id, title, order) { var s = { id: id, title: title, order: order, blocks: [] }; sections.push(s); return s; }
+            function q(s, b, r, c, path, dp, ref) { quotes.push({ ref: ref, s: sections.indexOf(s), b: b, r: r, c: c, path: path, dp: dp }); }
+            function kvRow(s, blk, label, val, dp, unit, path, ev) {
+                var text = fin(val) ? fmt(val, dp) + (unit ? ' ' + unit : '') : '–';
+                blk.rows.push([label, text, _evOk(EVI, ev)]);
+                if (fin(val) && path) q(s, s.blocks.indexOf(blk), blk.rows.length - 1, 1, path, dp, label);
+            }
+            var piHalf = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? Math.round((aca.pi.hi - aca.pi.lo) / 2) : null;
+            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + (piHalf != null ? ' ±' + piHalf : '') + ' psia' : 'p_i not available';
+            var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + cl.label + ') · ' + piTxt
+                : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + cl.label + ') · ' + piTxt
+                : 'DFIT · closure not estimable · ' + piTxt;
+            var keyRows = [
+                ['Closure', cl.mode === 'single' ? fmt(cl.value, 0) + ' psia (single, ' + cl.label + ', uncalibrated)' : cl.mode === 'range' ? fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (range, ' + cl.label + ')' : 'not estimable'],
+                ['ISIP', isip ? fmt(isip.value, 0) + ' psia' : '–'],
+                ['Net pressure', ch && fin(ch.pn) ? fmt(ch.pn, 0) + ' psi' : (cl.mode === 'range' ? 'per family (range mode)' : '–')],
+                ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + aca.pi.label + ')' : '–'],
+                ['Grade', grade.letter]
+            ];
+            // 10 headline
+            if (want('dfit-headline')) {
+                var s1 = sec('dfit-headline', 'DFIT headline', 10), kv = { kind: 'kv', rows: [] }; s1.blocks.push(kv);
+                if (cl.mode === 'single') kvRow(s1, kv, 'Closure', cl.value, 0, 'psia', run.consensus ? 'consensus.value' : 'consensusLite.value', ['C1']);
+                else if (cl.mode === 'range') { kvRow(s1, kv, 'Closure (low end)', cl.range.lo, 0, 'psia', (run.consensus ? 'consensus' : 'consensusLite') + '.range.lo', ['C1']); kvRow(s1, kv, 'Closure (high end)', cl.range.hi, 0, 'psia', (run.consensus ? 'consensus' : 'consensusLite') + '.range.hi', ['C1']); }
+                else kv.rows.push(['Closure', 'not estimable', _evOk(EVI, ['C1'])]);
+                if (isip) kvRow(s1, kv, 'ISIP', isip.value, 0, 'psia', 'isip.value', ['I1']);
+                if (ch) { kvRow(s1, kv, 'Net pressure', ch.pn, 0, 'psi', 'frac.chosen.pn', ['F1']); kvRow(s1, kv, 'Efficiency (α = ' + (ch.eta && ch.eta.alphaUsed === 1 ? '1' : '½') + ')', ch.eta ? ch.eta.matched : null, 3, '', 'frac.chosen.eta.matched', ['F1']);
+                          kvRow(s1, kv, 'Closure gradient', ch.gradClosure, 3, 'psi/ft', 'frac.chosen.gradClosure', ['F1']); }
+                if (aca && aca.pi) kvRow(s1, kv, 'p_i', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
+                if (aca && aca.kh) kvRow(s1, kv, 'kh/μ (late radial)', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']);
+                else if (aca && aca.bounds) { kvRow(s1, kv, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s1, kv, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']); }
+                kv.rows.push(['Grade', grade.letter, []]);
+                if (unc) {
+                    var outs = [['Closure', 'closure', 'C1'], ['Net pressure', 'pn', 'F1'], ['Efficiency', 'eta', 'F1'], ['xf (PKN)', 'xf', 'F1'], ['CL', 'CL', 'F1'], ['p_i', 'pi', 'A1']];
+                    if (unc.mode === 'range') {
+                        var tb = { kind: 'table', head: ['Output', 'F1 P10', 'F1 P50', 'F1 P90', 'F2 P10', 'F2 P50', 'F2 P90', 'Unit', 'Ev.'], ev: true, rows: [] };
+                        outs.forEach(function (o) { var u = unc.outputs[o[1]]; if (!u) return; var bf = u.byFamily; var ev = _evOk(EVI, [o[2]]);
+                            if (bf) tb.rows.push([o[0], sig(bf.F1.p10, 5), sig(bf.F1.p50, 5), sig(bf.F1.p90, 5), sig(bf.F2.p10, 5), sig(bf.F2.p50, 5), sig(bf.F2.p90, 5), u.unit, ev.join(' ')]);
+                            else tb.rows.push([o[0], sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), null, null, null, u.unit, ev.join(' ')]); });
+                        s1.blocks.push(tb);
+                    } else {
+                        var tb2 = { kind: 'table', head: ['Output', 'P10', 'P50', 'P90', 'Unit', 'Ev.'], ev: true, rows: [] };
+                        outs.forEach(function (o) { var u = unc.outputs[o[1]]; if (!u) return; tb2.rows.push([o[0], sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), u.unit, _evOk(EVI, [o[2]]).join(' ')]); });
+                        s1.blocks.push(tb2);
+                    }
+                }
+                var vl = cl.mode === 'single' ? (cl.label === 'high' ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
+                var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + cl.label + ', uncalibrated).'
+                    : cl.mode === 'range' ? '⚠ Closure is a range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia: every closure-dependent value is given per family.'
+                    : '✗ No closure can be estimated from this falloff.';
+                if (vl !== 'ok' && cl.mode === 'single') vt = '⚠' + vt.slice(1);
+                s1.blocks.push({ kind: 'verdict', level: vl, text: _txt(vt) });
+            }
+            // 11 closure board
+            if (want('dfit-board') && arrOk(run.picks) && run.picks.length) {
+                var s2 = sec('dfit-board', 'Closure board', 11), tbB = { kind: 'table', head: ['Method', 'Family', 'Vote', 'Closure (psia)', 'P10', 'P90', 'Ev.'], ev: true, rows: [] };
+                s2.blocks.push(tbB);
+                run.picks.forEach(function (p, i) {
+                    tbB.rows.push([p.method, p.family, p.vote ? 'yes' : 'no', rnd(p.p, 0), p.band ? rnd(p.band.p10, 0) : null, p.band ? rnd(p.band.p90, 0) : null, _evOk(EVI, p.ev).join(' ')]);
+                    if (fin(p.p)) q(s2, 0, tbB.rows.length - 1, 3, 'picks[' + i + '].p', 0, 'pick ' + p.method);
+                });
+                if (run.consensus && run.consensus.counterfactual && run.consensus.counterfactual.text) s2.blocks.push({ kind: 'notes', text: _txt(run.consensus.counterfactual.text) });
+                s2.blocks.push({ kind: 'plot', key: 'dfitG', title: 'G-function plot' }, { kind: 'plot', key: 'dfitStrip', title: 'Closure strip' });
+            }
+            // 12 what-if
+            if (want('dfit-whatif') && arrOk(run.whatIf) && run.whatIf.length) {
+                var s3 = sec('dfit-whatif', 'What-if closure table', 12), tbW = { kind: 'table', head: ['Candidate', 'Family', 'Closure (psia)', 'G_c', 'η', 'p_n (psi)', 'C_sys (bbl/psi)', 'R_vis', 'xf (ft)', 'CL (ft/√min)', 'Ev.'], ev: true, rows: [] };
+                s3.blocks.push(tbW);
+                run.whatIf.forEach(function (w) {
+                    var pk = w.geometry && w.geometry.byModel ? w.geometry.byModel.PKN : null;
+                    tbW.rows.push([w.label || '', w.family || '–', rnd(w.pClosure, 0), rnd(w.Gc, 2), rnd(w.eta ? w.eta.matched : null, 3), rnd(w.pn, 0), sig(w.Csys, 4), rnd(w.Rvis, 3), pk ? rnd(pk.xf, 1) : null, pk ? sig(pk.CL, 4) : null, _evOk(EVI, w.ev).join(' ')]);
+                });
+                s3.blocks.push({ kind: 'notes', text: 'Each row is the consistent chain of one closure candidate; values are never mixed between rows.' });
+            }
+            // 13 after-closure
+            if (want('dfit-aca') && aca) {
+                var s4 = sec('dfit-aca', 'After-closure analysis', 13), kvA = { kind: 'kv', rows: [] }; s4.blocks.push(kvA);
+                kvA.rows.push(['Regime', aca.regimeSummary, _evOk(EVI, ['A1'])]);
+                kvA.rows.push(['Time origin', aca.origin + ' (t0 ' + fmt(aca.t0, 3) + ' h)', _evOk(EVI, ['A1'])]);
+                kvRow(s4, kvA, 'p_i (' + aca.pi.label + ')', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
+                kvRow(s4, kvA, 'p_i bracket low', aca.pi.lo, 0, 'psia', 'aca.pi.lo', ['A1']); kvRow(s4, kvA, 'p_i bracket high', aca.pi.hi, 0, 'psia', 'aca.pi.hi', ['A1']);
+                if (aca.kh) { kvRow(s4, kvA, 'kh/μ', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']); kvRow(s4, kvA, 'k (kh/μ·μ/h)', aca.kh.k, 4, 'md', 'aca.kh.k', ['A1']); }
+                if (aca.nolte && aca.nolte.lin && fin(aca.nolte.lin.k)) kvRow(s4, kvA, 'k (F_L line, CL)', aca.nolte.lin.k, 6, 'md', 'aca.nolte.lin.k', ['A1']);
+                if (aca.bounds) { kvRow(s4, kvA, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s4, kvA, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']);
+                                  kvA.rows.push(['Binding', aca.bounds.binding.map(function (b) { return b.edge + ': ' + b.rule; }).join('; '), _evOk(EVI, ['A1'])]); }
+                var tbBr = { kind: 'table', head: ['Bracket', 'Low (psia)', 'High (psia)'], ev: false, rows: [] };
+                [['Cartesian', aca.brackets.cart], ['Impulse', aca.brackets.imp], ['Derivative', aca.brackets.deriv], ['Combined', aca.brackets.combined]].forEach(function (b) { if (b[1]) tbBr.rows.push([b[0], rnd(b[1][0], 1), rnd(b[1][1], 1)]); });
+                s4.blocks.push(tbBr);
+                if (run.leak && run.leak.ok) s4.blocks.push({ kind: 'verdict', level: run.leak.verdict === 'leak' ? 'bad' : run.leak.verdict === 'leak-or-drift' ? 'warn' : 'ok',
+                    text: _txt((run.leak.verdict === 'leak' ? '✗ Leak ' : run.leak.verdict === 'leak-or-drift' ? '⚠ Leak or drift (not separable): ' : '✓ No leak above the floor: ') + 'q_k ' + fmtSig(run.leak.qk, 2) + ' bbl/d against q_k,max ' + fmtSig(run.leak.qkMax, 2) + ' bbl/d (Θ ' + fmt(run.leak.theta, 1) + ').') });
+                s4.blocks.push({ kind: 'notes', text: 'Δp_CL = ½·(ISIP + σ_c) − p_r is used for every CL ↔ k conversion (fracture outputs, after-closure bounds and the leak-off model). ' + (aca.pi.reasons || []).join(' ') });
+                s4.blocks.push({ kind: 'plot', key: 'dfitAcaLogLog', title: 'After-closure log-log' }, { kind: 'plot', key: 'dfitPiTraj', title: 'p_i trajectory' });
+            }
+            // 14 leak-off type
+            if (want('dfit-type') && run.classification && run.classification.ok !== false) {
+                var c = run.classification, s5 = sec('dfit-type', 'Leak-off type', 14), kvT = { kind: 'kv', rows: [] }; s5.blocks.push(kvT);
+                kvT.rows.push(['Type', c.type + (c.alt && c.alt.length ? ' (alternative: ' + c.alt.join(', ') + ')' : ''), _evOk(EVI, c.ev)]);
+                if (c.features) kvT.rows.push(['R_vis', fin(c.features.Rvis) ? fmt(c.features.Rvis, 3) : '–', _evOk(EVI, c.ev)]);
+                if (arrOk(c.evidence) && c.evidence.length) s5.blocks.push({ kind: 'notes', text: c.evidence.map(_txt).join(' ') });
+            }
+            // 15 triage
+            if (want('dfit-triage') && run.triage && run.triage.ok !== false) {
+                var tr = run.triage, s6 = sec('dfit-triage', 'Test triage', 15), tbQ = { kind: 'table', head: ['Check', 'Level', 'Value', 'Note', 'Ev.'], ev: true, rows: [] };
+                s6.blocks.push(tbQ);
+                (tr.checks || []).forEach(function (k) { tbQ.rows.push([k.title, k.level, fin(k.value) ? k.value : (typeof k.value === 'string' ? k.value : null), _txt(k.text), _evOk(EVI, k.ev).join(' ')]); });
+                s6.blocks.push({ kind: 'verdict', level: tr.light === 'green' ? 'ok' : tr.light === 'amber' ? 'warn' : 'bad', text: _txt((tr.light === 'green' ? '✓ ' : tr.light === 'amber' ? '⚠ ' : '✗ ') + 'Triage ' + tr.light + ': the test is ' + tr.verdict + '.') });
+            }
+            // 16 step tests
+            if (want('dfit-steps') && run.events && arrOk(run.events.steps) && run.events.steps.length) {
+                var s7 = sec('dfit-steps', 'Step tests and ramps', 16), tbS = { kind: 'table', head: ['Step', 'Rate (bbl/min)', 'Settled p (psia)', 'Direction'], ev: false, rows: [] };
+                s7.blocks.push(tbS);
+                run.events.steps.forEach(function (st, i) { tbS.rows.push([String(i + 1), rnd(st.q, 3), rnd(st.pSettled, 1), st.dir]); });
+            }
+            // 17 leak-off model (from the stored fit of the test)
+            if (want('dfit-model') && opts.lk && opts.lk.fit) {
+                var s8 = sec('dfit-model', 'Leak-off model', 17), kvL = { kind: 'kv', rows: [] }; s8.blocks.push(kvL);
+                var fp = opts.lk.fit.params || {};
+                Object.keys(fp).forEach(function (k) { kvL.rows.push([k, fin(fp[k]) ? fmtSig(fp[k], 4) : '–', []]); });
+                if (opts.lk.fit.groups) kvL.rows.push(['Γ', fin(opts.lk.fit.groups.Gamma) ? fmt(opts.lk.fit.groups.Gamma, 2) + ' psi/√min' : '–', []]);
+            }
+            // 18 uncertainty
+            if (want('dfit-unc') && unc) {
+                var s9 = sec('dfit-unc', 'Uncertainty', 18), tbU = unc.mode === 'range'
+                    ? { kind: 'table', head: ['Output', 'F1 P10–P90', 'F2 P10–P90', 'Envelope', 'Unit', 'Interpretation share', 'Ev.'], ev: true, rows: [] }
+                    : { kind: 'table', head: ['Output', 'P10', 'P50', 'P90', 'Unit', 'Largest driver', 'Ev.'], ev: true, rows: [] };
+                s9.blocks.push(tbU);
+                Object.keys(unc.outputs).forEach(function (k) {
+                    var u = unc.outputs[k], drv = u.shares.slice().sort(function (a, b) { return b.s - a.s; })[0];
+                    if (unc.mode === 'range' && u.byFamily) tbU.rows.push([k, fmtSig(u.byFamily.F1.p10, 4) + ' – ' + fmtSig(u.byFamily.F1.p90, 4), fmtSig(u.byFamily.F2.p10, 4) + ' – ' + fmtSig(u.byFamily.F2.p90, 4), fmtSig(u.envelope[0], 4) + ' – ' + fmtSig(u.envelope[1], 4), u.unit, rnd(u.closureShare, 2), _evOk(EVI, ['U1']).join(' ')]);
+                    else if (unc.mode === 'range') tbU.rows.push([k, fmtSig(u.p10, 4) + ' – ' + fmtSig(u.p90, 4), 'same', '–', u.unit, rnd(u.closureShare, 2), _evOk(EVI, ['U1']).join(' ')]);
+                    else tbU.rows.push([k, sig(u.p10, 5), sig(u.p50, 5), sig(u.p90, 5), u.unit, drv ? drv.input : '–', _evOk(EVI, ['U1']).join(' ')]);
+                });
+                s9.blocks.push({ kind: 'notes', text: _txt('Seeded draws: n ' + unc.n + ', seed ' + unc.seed + (unc.mode === 'range' ? '; family weight F1 ' + fmt(unc.familyWeight.F1, 2) + ' (an interpretive weight, not a probability).' : '.')) });
+            }
+            // 19 hand-off and geomechanics
+            if (want('dfit-handoff') && ch) {
+                var s10 = sec('dfit-handoff', 'Hand-off and geomechanics', 19), kvH = { kind: 'kv', rows: [] }; s10.blocks.push(kvH);
+                kvRow(s10, kvH, 'Closure gradient', ch.gradClosure, 3, 'psi/ft', 'frac.chosen.gradClosure', ['F1']);
+                kvRow(s10, kvH, 'ISIP gradient', ch.gradIsip, 3, 'psi/ft', 'frac.chosen.gradIsip', ['F1']);
+                kvRow(s10, kvH, 'Γ', ch.Gamma, 2, 'psi/√min', 'frac.chosen.Gamma', ['F1']);
+            }
+            // 20 pick log and evidence appendix
+            if (want('dfit-log')) {
+                var s11 = sec('dfit-log', 'Pick log and evidence', 20), log = arrOk(opts.log) ? opts.log : [];
+                if (log.length) {
+                    var tbLg = { kind: 'table', head: ['Seq', 'Time', 'Who', 'Item', 'Old → new', 'Reason'], ev: false, rows: [] };
+                    log.forEach(function (e) { tbLg.rows.push([e.seq, String(e.at || ''), String(e.who || ''), String(e.item || ''), _txt(_logVal(e.old) + ' → ' + _logVal(e.new)), _txt(e.reason || '')]); });
+                    s11.blocks.push(tbLg);
+                } else s11.blocks.push({ kind: 'notes', text: 'No user picks or overrides.' });
+                if (opts.appendix !== false) {
+                    var tbE = { kind: 'table', head: ['Id', 'Group', 'Title', 'Values'], ev: false, rows: [] };
+                    EVI.order.forEach(function (id) { var it = EVI.items[id]; tbE.rows.push([id, EV_TITLES[it.group], it.title, _txt(it.values.map(function (v) { return v.label + ' ' + (fin(v.value) ? fmt(v.value, v.dp) : v.value) + (v.unit ? ' ' + v.unit : ''); }).join(', '))]); });
+                    s11.blocks.push(tbE);
+                }
+            }
+            var model = { title: _txt('DFIT analysis' + (opts.zone ? ' — ' + opts.zone : '')), keyRows: keyRows.map(function (r) { return [r[0], _txt(r[1])]; }), keyLine: _txt(keyLine),
+                          grade: { letter: grade.letter, why: grade.why.map(_txt) }, sections: sections, appendix: EVI, quoted: { ok: true, nFailed: 0 }, quotes: quotes };
+            var chk = G.PRiSM_dfit_checkQuoted(model, run, { annotate: true });
+            model.quoted = { ok: !!chk.ok, nFailed: chk.nFailed || 0 };
+            return model;
+        } catch (e) { return fail('REPORT_FAILED', e && e.message || e); }
+    };
+    function _logVal(v) { if (v == null) return '–'; if (fin(v)) return String(+v.toPrecision(6)); if (typeof v === 'string') return v.slice(0, 60); try { return JSON.stringify(v).slice(0, 60); } catch (e) { return '–'; } }
+    function _parseNum(s) {
+        if (fin(s)) return s;
+        if (typeof s !== 'string') return null;
+        var m = s.replace(/,/g, '').match(/-?\d+(\.\d+)?(e[-+]?\d+)?/i);
+        return m ? +m[0] : null;
+    }
+    // Quoted-value self-check (§6.10): every number the report quotes is re-read from the displayed cell and compared with
+    // the run; it fails when |quoted − recomputed| > half a unit in the last displayed digit. With {annotate:true} a single
+    // ⚠ verdict line naming the failures is put into the headline section (nothing is printed when it passes).
+    G.PRiSM_dfit_checkQuoted = function (model, run, opts) {
+        try {
+            opts = opts || {};
+            if (!model || !arrOk(model.sections)) return fail('BAD_INPUT', 'The check needs a report model.', ['model']);
+            var Q = arrOk(model.quotes) ? model.quotes : [], failures = [], n = 0;
+            Q.forEach(function (qq) {
+                var s = model.sections[qq.s], b = s && s.blocks[qq.b], cell = null;
+                if (!b) return;
+                if (b.kind === 'kv') cell = b.rows[qq.r] ? b.rows[qq.r][1] : null;
+                else if (b.kind === 'table') cell = b.rows[qq.r] ? b.rows[qq.r][qq.c] : null;
+                else if (b.kind === 'kpi') cell = b.items[qq.r] ? b.items[qq.r].value : null;
+                var quoted = _parseNum(cell), recomputed = _getPath(run, qq.path);
+                if (!fin(recomputed)) return;
+                n++;
+                if (!fin(quoted) || Math.abs(quoted - recomputed) > 0.5 * Math.pow(10, -qq.dp) + 1e-9 * Math.abs(recomputed)) failures.push({ ref: qq.ref, quoted: fin(quoted) ? quoted : null, recomputed: recomputed });
+            });
+            var res = { ok: failures.length === 0, nChecked: n, nFailed: failures.length, failures: failures };
+            if (opts.annotate) {
+                model.sections.forEach(function (s) { s.blocks = s.blocks.filter(function (b) { return !b._quotedCheck; }); });
+                if (failures.length && model.sections.length) {
+                    var head = model.sections[0];
+                    head.blocks.push({ kind: 'verdict', level: 'warn', text: _txt('⚠ Quoted-value self-check failed for: ' + failures.map(function (f) { return f.ref + ' (quoted ' + fmtSig(f.quoted, 6) + ', run ' + fmtSig(f.recomputed, 6) + ')'; }).join('; ') + '.'), _quotedCheck: true });
+                }
+                model.quoted = { ok: res.ok, nFailed: res.nFailed };
+            }
+            return res;
+        } catch (e) { return fail('CHECK_FAILED', e && e.message || e); }
+    };
+
+    // ── data + picks export (§6.10) ──
+    var EXPORT_COLS = { t: { label: 't_h', unit: 'h', dp: 6 }, dt: { label: 'dt_h', unit: 'h', dp: 6 }, p: { label: 'p_psia', unit: 'psia', dp: 3 },
+                        q: { label: 'q_bbl_min', unit: 'bbl/min', dp: 4 }, flag: { label: 'after_closure', unit: '', dp: 0 }, pSurf: { label: 'p_surf_psia', unit: 'psia', dp: 3 }, T: { label: 'T_F', unit: '°F', dp: 2 } };
+    G.PRiSM_dfit_exportText = function (run, template) {
+        try {
+            if (!run || !run.prep || run.prep.ok === false) return fail('BAD_INPUT', 'The export needs a run with prepared data.', ['run']);
+            var tpl = (template && typeof template === 'object') ? template : {}, sep = typeof tpl.sep === 'string' && tpl.sep ? tpl.sep : '\t';
+            var cols = arrOk(tpl.columns) && tpl.columns.length ? tpl.columns.map(function (c) { return typeof c === 'string' ? { key: c } : c; }) : [{ key: 't' }, { key: 'p' }, { key: 'q' }, { key: 'flag' }];
+            cols = cols.filter(function (c) { return EXPORT_COLS[c.key]; });
+            var dec = tpl.decimals || {}, L = [], ev = run.events || {}, ch = run.frac ? run.frac.chosen : null, cl = _closureOf(run);
+            var name = String(tpl.name || 'test').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'test';
+            var h8 = String(run.dsHash || '').slice(0, 8) || '00000000';
+            L.push('# DFIT data and picks export');
+            (arrOk(tpl.header) ? tpl.header : []).forEach(function (h) { L.push('# ' + String(h).replace(/[\r\n]+/g, ' ')); });
+            var inp = tpl.inputs || null;
+            if (inp) {
+                L.push('# datum TVD ft: ' + (fin(inp.datumTvd) ? inp.datumTvd : '–') + '; gauge TVD ft: ' + (inp.gauge && fin(inp.gauge.bhTvd) ? inp.gauge.bhTvd : 'at datum'));
+                if (inp.fluid) L.push('# fluid: ' + inp.fluid.kind + ', ' + inp.fluid.rhoPpg + ' ppg, ' + inp.fluid.muCp + ' cp');
+                if (inp.rock) L.push('# rock: Ep psi ' + (fin(inp.rock.Ep) ? inp.rock.Ep : '–') + ' (' + inp.rock.EpSource + '), hf ft ' + (fin(inp.rock.hf) ? inp.rock.hf : '–') + ', hp ft ' + (fin(inp.rock.hp) ? inp.rock.hp : '–'));
+            }
+            L.push('# app version: ' + String(tpl.appVersion || (G.RELEASE_NOTES && G.RELEASE_NOTES[0] && G.RELEASE_NOTES[0].ver) || 'not stated'));
+            L.push('# input hash: ' + (run.inputsHash || '–') + '; data hash: ' + (run.dsHash || '–') + (run.summary && run.summary.resultHash ? '; result hash: ' + run.summary.resultHash : ''));
+            L.push('# EVENTS');
+            L.push('# pump start h: ' + fmtSig(ev.tStart, 9) + '; breakdown h: ' + fmtSig(ev.tb, 9) + '; shut-in h: ' + fmtSig(ev.ts, 9) + '; Vi bbl: ' + fmtSig(ev.Vi, 6) + '; Vi* bbl: ' + fmtSig(ev.ViStar, 6) + '; tp h: ' + (ev.tp ? fmtSig(ev.tp.pump, 6) : '–'));
+            L.push('# PICKS');
+            (run.picks || []).forEach(function (p) { L.push('# ' + p.method + ' (' + p.family + (p.vote ? ', votes' : '') + '): ' + fmt(p.p, 1) + ' psia at G ' + fmt(p.G, 3) + (p.band ? '; P10–P90 ' + fmt(p.band.p10, 1) + '–' + fmt(p.band.p90, 1) : '')); });
+            if (run.isip && fin(run.isip.value)) L.push('# ISIP: ' + fmt(run.isip.value, 1) + ' psia (spread ' + fmt(run.isip.spread, 1) + ' psi, ' + run.isip.confidence + ')');
+            L.push('# CLOSURE');
+            L.push('# ' + (cl.mode === 'single' ? 'single ' + fmt(cl.value, 1) + ' psia (' + cl.label + ')' : cl.mode === 'range' ? 'range ' + fmt(cl.range.lo, 1) + '–' + fmt(cl.range.hi, 1) + ' psia (' + cl.label + ')' : 'not estimable'));
+            (arrOk(tpl.log) ? tpl.log : []).forEach(function (e) { L.push('# log ' + e.seq + ' ' + (e.at || '') + ' ' + (e.who || '') + ': ' + e.item + ' ' + _logVal(e.old) + ' → ' + _logVal(e.new) + (e.reason ? ' (' + String(e.reason).replace(/[\r\n]+/g, ' ') + ')' : '')); });
+            L.push('# RESULTS');
+            if (ch) L.push('# p_n psi ' + fmt(ch.pn, 1) + '; eta ' + fmt(ch.eta ? ch.eta.matched : null, 4) + '; Gamma ' + fmt(ch.Gamma, 3) + '; CL ' + fmtSig(ch.geometry && ch.geometry.byModel.PKN ? ch.geometry.byModel.PKN.CL : null, 4) + '; xf ft ' + fmt(ch.geometry && ch.geometry.byModel.PKN ? ch.geometry.byModel.PKN.xf : null, 1));
+            if (run.unc && run.unc.outputs) Object.keys(run.unc.outputs).forEach(function (k) {
+                var u = run.unc.outputs[k];
+                L.push('# ' + k + ' ' + (u.byFamily ? 'F1 ' + fmtSig(u.byFamily.F1.p10, 5) + '/' + fmtSig(u.byFamily.F1.p50, 5) + '/' + fmtSig(u.byFamily.F1.p90, 5) + ' F2 ' + fmtSig(u.byFamily.F2.p10, 5) + '/' + fmtSig(u.byFamily.F2.p50, 5) + '/' + fmtSig(u.byFamily.F2.p90, 5)
+                    : 'P10/P50/P90 ' + fmtSig(u.p10, 5) + '/' + fmtSig(u.p50, 5) + '/' + fmtSig(u.p90, 5)) + ' ' + u.unit);
+            });
+            if (run.aca && run.aca.pi) L.push('# p_i psia ' + fmt(run.aca.pi.value, 1) + ' [' + fmt(run.aca.pi.lo, 1) + ', ' + fmt(run.aca.pi.hi, 1) + '] (' + run.aca.pi.label + ')');
+            var gr = run.grade && run.grade.letter ? run.grade : _gradeOf(run);
+            L.push('# GRADE ' + gr.letter + ': ' + (gr.why || []).join(' '));
+            L.push('# DATA');
+            L.push(cols.map(function (c) { return c.label || EXPORT_COLS[c.key].label; }).join(sep));
+            var P = run.prep, tc = fin(ev.ts) && ch && fin(ch.dtc) ? ev.ts + ch.dtc : null;
+            for (var i = 0; i < P.t.length; i++) {
+                L.push(cols.map(function (c) {
+                    var dp = fin(dec[c.key]) ? dec[c.key] : EXPORT_COLS[c.key].dp, v;
+                    if (c.key === 't') v = P.t[i]; else if (c.key === 'dt') v = fin(ev.ts) ? P.t[i] - ev.ts : null; else if (c.key === 'p') v = P.pw[i];
+                    else if (c.key === 'q') v = P.q ? P.q[i] : null; else if (c.key === 'flag') v = tc != null ? (P.t[i] >= tc ? 1 : 0) : 0;
+                    else if (c.key === 'pSurf') v = P.pSurf ? P.pSurf[i] : null; else if (c.key === 'T') v = P.T ? P.T[i] : null;
+                    return fin(v) ? v.toFixed(dp) : '';
+                }).join(sep));
+            }
+            return { ok: true, text: L.join('\n') + '\n', filename: 'dfit-' + name + '-' + h8 + '.txt' };
+        } catch (e) { return fail('EXPORT_FAILED', e && e.message || e); }
+    };
+
+    // ── frac-design sheet (§2.11) ──
+    G.PRiSM_dfit_fracSheet = function (run) {
+        try {
+            if (!run || !run.frac) return fail('BAD_INPUT', 'The frac sheet needs a run with fracture outputs.', ['frac']);
+            var rows = [], unc = run.unc && run.unc.outputs ? run.unc : null, cl = _closureOf(run);
+            function uq(k, fam) { var u = unc && unc.outputs[k]; if (!u) return null; if (fam && u.byFamily) return u.byFamily[fam]; return fin(u.p50) ? u : null; }
+            function row(name, fam, v, unit, lens, ev, ukey) { var u = ukey ? uq(ukey, fam) : null; rows.push([name, fam, u ? u.p10 : null, fin(v) ? v : (u ? u.p50 : null), u ? u.p90 : null, unit, lens, ev]); }
+            function chainRows(f, fam) {
+                if (!f) return;
+                var pk = f.geometry && f.geometry.byModel ? f.geometry.byModel.PKN : null, rd = f.geometry && f.geometry.byModel ? f.geometry.byModel.radial : null;
+                row('Closure stress', fam, f.pClosure, 'psia', 'default', 'C1', 'closure');
+                row('Closure gradient', fam, f.gradClosure, 'psi/ft', 'default', 'F1', null);
+                row('Net pressure', fam, f.pn, 'psi', 'default', 'F1', 'pn');
+                row('Efficiency (upper bound, spurt unknown)', fam, f.eta ? f.eta.matched : null, '–', 'default', 'F1', 'eta');
+                row('Pad fraction (low)', fam, f.padFraction ? f.padFraction.lo : null, '–', 'default', 'F1', null);
+                row('Pad fraction (high)', fam, f.padFraction ? f.padFraction.hi : null, '–', 'default', 'F1', null);
+                row('CL (conditional on the geometry)', fam, pk ? pk.CL : null, 'ft/√min', 'default', 'F1', 'CL');
+                row('xf (PKN)', fam, pk ? pk.xf : null, 'ft', 'default', 'F1', 'xf');
+                row('R (radial)', fam, rd ? rd.R : null, 'ft', 'default', 'F1', null);
+                row('C_sys', fam, f.Csys, 'bbl/psi', 'default', 'F1', 'Csys');
+                row('R_vis', fam, f.Rvis, '–', 'default', 'F1', 'Rvis');
+                if (fin(f.pdlMult)) row('PDL multiplier at ISIP', fam, f.pdlMult, '–', 'default', 'M1', null);
+            }
+            row('ISIP', null, run.isip ? run.isip.value : null, 'psia', 'default', 'I1', null);
+            var any = run.frac.chosen || run.frac.byFamily && Object.keys(run.frac.byFamily).length;
+            if (cl.mode === 'range' && run.frac.byFamily) { ['F1', 'F2'].forEach(function (F) { chainRows(run.frac.byFamily[F], F); }); }
+            else chainRows(run.frac.chosen || _firstFamily(run.frac.byFamily), null);
+            if (run.frac.chosen || any) row('Γ = r_p·CL·A_f/C_sys', null, (run.frac.chosen || _firstFamily(run.frac.byFamily) || {}).Gamma, 'psi/√min', 'default', 'F1', 'Gamma');
+            if (run.aca && run.aca.pi) row('p_i', null, run.aca.pi.value, 'psia', 'default', 'A1', 'pi');
+            if (run.aca && run.aca.kh) row('k (after-closure radial)', null, run.aca.kh.k, 'md', 'default', 'A1', null);
+            else if (run.aca && run.aca.bounds) { row('k lower bound', null, run.aca.bounds.kLo, 'md', 'default', 'A1', null); row('k upper bound', null, run.aca.bounds.kHi, 'md', 'default', 'A1', null); }
+            var head = ['name', 'family', 'p10', 'p50', 'p90', 'unit', 'lens', 'ev'];
+            var esc = function (v) { if (v == null) return ''; if (fin(v)) return String(+v.toPrecision(8)); var s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+            var csv = [head.join(',')].concat(rows.map(function (r) { return r.map(esc).join(','); })).join('\n') + '\n';
+            return { ok: true, rows: rows, csv: csv, head: head };
+        } catch (e) { return fail('FRACSHEET_FAILED', e && e.message || e); }
+    };
+
+    // ── hand-off packets (§2.11, §6.8) ──
+    G.PRiSM_dfit_handoff = function (run, target, opts) {
+        try {
+            opts = opts || {};
+            if (!run || !run.events || run.events.ok === false) return fail('BAD_INPUT', 'The hand-off needs a run with events.', ['run']);
+            if (target !== 'pta' && target !== 'rta' && target !== 'frac') return fail('BAD_INPUT', 'Target must be pta, rta or frac.', ['target']);
+            var ev = run.events, cl = _closureOf(run), fam = opts.family === 'F1' || opts.family === 'F2' || opts.family === 'F4' ? opts.family : null;
+            var notes = [], blockers = [], aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var f = fam && run.frac && run.frac.byFamily ? run.frac.byFamily[fam] : (run.frac ? run.frac.chosen : null);
+            if (cl.mode === 'range' && !fam) blockers.push('Range mode: choose the closure family whose chain is handed over.');
+            if (fam && !f) blockers.push('No fracture chain exists for family ' + fam + '.');
+            var tpV = ev.tp && pos(ev.tp.veq) ? ev.tp.veq : (ev.tp && pos(ev.tp.pump) ? ev.tp.pump : null);
+            var Vnet = (fin(ev.Vi) ? ev.Vi : 0) - (fin(ev.Vfill) ? ev.Vfill : 0) - (fin(ev.Vfb) ? ev.Vfb : 0);
+            var qEq = pos(tpV) && Vnet > 0 ? Vnet / (tpV * 60) : 0;          // bbl/min
+            var piOk = aca && aca.pi && (aca.pi.label === 'high' || aca.pi.label === 'medium');
+            if (aca && aca.pi && !piOk) blockers.push('p_i label is ' + aca.pi.label + ': it is not handed over unless you override it.');
+            var model = null;
+            if (aca && aca.match && aca.match.best) model = aca.match.best.model;
+            else if (aca && aca.regimeSummary) {
+                var bil = aca.diag && aca.diag.regimes && aca.diag.regimes.some(function (r) { return r.kind === 'bilinear'; });
+                model = aca.regimeSummary === 'linear' || aca.regimeSummary === 'linear-radial' ? (bil ? 'finiteFrac' : 'infiniteFrac') : aca.regimeSummary === 'radial' ? (bil ? 'finiteFrac' : 'homogeneous') : null;
+            }
+            var pk = f && f.geometry && f.geometry.byModel ? f.geometry.byModel[f.geometry.model || 'PKN'] : null;
+            var xf = aca && aca.match && aca.match.best && pos(aca.match.best.L) ? aca.match.best.L : (pk ? (pos(pk.xf) ? pk.xf : pk.R) : null);
+            var k = aca && aca.match && aca.match.best && pos(aca.match.best.k) ? aca.match.best.k : aca && aca.kh && pos(aca.kh.k) ? aca.kh.k
+                : aca && aca.nolte && aca.nolte.lin && pos(aca.nolte.lin.k) ? aca.nolte.lin.k : aca && aca.bounds && pos(aca.bounds.kLo) && pos(aca.bounds.kHi) ? Math.sqrt(aca.bounds.kLo * aca.bounds.kHi) : null;
+            var pi = aca && aca.pi ? aca.pi.value : null;
+            var pkt = { target: target, family: fam, setWell: {}, multiRate: [], qEq: qEq, model: null, seeds: { xf: nn(xf), k: nn(k), pi: nn(pi) }, notes: notes, blockers: blockers };
+            if (target === 'pta') {
+                pkt.setWell = { testType: 'falloff', tShut: ev.ts, tp: tpV, pwf0: run.isip && fin(run.isip.value) ? run.isip.value : null };
+                if (piOk) pkt.setWell.pi = pi;
+                if (fin(ev.ts) && pos(tpV) && qEq > 0) pkt.multiRate = [{ t: ev.ts - tpV, q: qEq * 1440 }, { t: ev.ts, q: 0 }];
+                pkt.model = model;
+                notes.push('Idealised schedule at q_eq = (V_i − V_fill − V_fb)/tp_veq = ' + fmt(qEq, 3) + ' bbl/min; the wellbore compression volume is part of the impulse.');
+                if (model) notes.push('Model ' + model + ' seeded with xf ' + fmt(xf, 1) + ' ft and k ' + fmtSig(k, 3) + ' md.');
+            } else if (target === 'rta') {
+                pkt.rta = { k: nn(k), kLo: aca && aca.bounds ? aca.bounds.kLo : (aca && aca.kh ? aca.kh.k : null), kHi: aca && aca.bounds ? aca.bounds.kHi : (aca && aca.kh ? aca.kh.k : null),
+                            source: aca && aca.match ? 'aca-match' : aca && aca.kh ? 'aca-radial' : 'bounds' };
+                notes.push('k for the RTA linear-flow analysis from the after-closure analysis.');
+                if (!pos(k)) blockers.push('No after-closure permeability is available.');
+            } else {
+                var sh = G.PRiSM_dfit_fracSheet(run);
+                pkt.sheet = sh.ok ? sh.rows : [];
+                notes.push('Frac-design sheet with ' + (sh.ok ? sh.rows.length : 0) + ' rows' + (cl.mode === 'range' ? ', both family columns.' : '.'));
+            }
+            pkt.notes = notes.map(_txt); pkt.blockers = blockers.map(_txt);
+            return pkt;
+        } catch (e) { return fail('HANDOFF_FAILED', e && e.message || e); }
+    };
+
+    // ── summary for the rail, report key line, Quick Report and the tests table (§3.3) ──
+    var RESULT_KEYS = ['isip', 'closure', 'pn', 'eta', 'CL', 'Gamma', 'xf', 'R', 'pi', 'khmu', 'k', 'kLo', 'kHi', 'triage', 'grade'];
+    G.PRiSM_dfit_summarise = function (run, opts) {
+        try {
+            opts = opts || {};
+            if (!run || typeof run !== 'object' || run.ok === false && !run.prep) return fail('BAD_INPUT', 'The summary needs a run.', ['run']);
+            var cl = _closureOf(run), ch = run.frac ? run.frac.chosen : null, aca = run.aca && run.aca.ok !== false ? run.aca : null;
+            var fams = cl.families || {}, famP = function (F) { var f = fams[F]; return f && fin(f.p50) ? { p50: f.p50 } : null; };
+            var label = cl.mode === 'none' ? 'not-estimable' : (cl.label === 'high' || cl.label === 'medium' || cl.label === 'low') ? cl.label : 'low';
+            if (cl.mode === 'single' && label === 'not-estimable') label = 'low';
+            var pk = ch && ch.geometry && ch.geometry.byModel ? ch.geometry.byModel : null, gm = ch && ch.geometry ? ch.geometry.model : null;
+            var k = aca && aca.kh && pos(aca.kh.k) ? aca.kh.k : aca && aca.match && aca.match.best && pos(aca.match.best.k) ? aca.match.best.k : aca && aca.nolte && aca.nolte.lin && pos(aca.nolte.lin.k) ? aca.nolte.lin.k : null;
+            var d = run.derivs || {}, gx = [], gy = [], Gc = ch && pos(ch.Gc) ? ch.Gc : null;
+            if (arrOk(d.G) && arrOk(d.GdPdG) && pos(d.mG)) {
+                var Gmax = 0; d.G.forEach(function (g) { if (fin(g) && g > Gmax) Gmax = g; });
+                var norm = Gc || Gmax || 1, step = Math.max(1, Math.floor(d.G.length / 60));
+                for (var i = 0; i < d.G.length && gx.length < 60; i += step) if (d.G[i] > 0 && fin(d.GdPdG[i])) { gx.push(rnd(d.G[i] / norm, 4)); gy.push(rnd(d.GdPdG[i] / (d.mG * d.G[i]), 4)); }
+            }
+            var unc = run.unc && run.unc.ok !== false ? run.unc : null;
+            var s = {
+                at: opts.at || run.at || new Date().toISOString(), dsHash: run.dsHash, inputHash: run.inputsHash, resultHash: '0000000000000000',
+                stale: !!run.fast, forOtherDataset: false,
+                isip: { value: run.isip && fin(run.isip.value) ? run.isip.value : null, spread: run.isip && fin(run.isip.spread) ? run.isip.spread : null,
+                        label: run.isip && (run.isip.confidence === 'high' || run.isip.confidence === 'medium' || run.isip.confidence === 'low') ? run.isip.confidence : null },
+                closure: { mode: cl.mode, value: cl.mode === 'single' ? cl.value : null, lo: cl.mode === 'range' ? cl.range.lo : null, hi: cl.mode === 'range' ? cl.range.hi : null,
+                           label: label, families: { F1: famP('F1'), F2: famP('F2'), F4: famP('F4') } },
+                pn: ch ? nn(ch.pn) : null, eta: ch && ch.eta ? nn(ch.eta.matched) : null, CL: pk && gm && pk[gm] ? nn(pk[gm].CL) : null, Gamma: ch ? nn(ch.Gamma) : null,
+                xf: pk && pk.PKN && gm !== 'radial' ? nn(pk[gm || 'PKN'].xf) : null, R: pk && gm === 'radial' && pk.radial ? nn(pk.radial.R) : null, model: gm || null,
+                pi: aca && aca.pi ? { value: aca.pi.value, lo: aca.pi.lo, hi: aca.pi.hi, label: aca.pi.label } : { value: null, lo: null, hi: null, label: null },
+                khmu: aca && aca.kh ? nn(aca.kh.khmu) : null, k: nn(k), kLo: aca && aca.bounds ? nn(aca.bounds.kLo) : null, kHi: aca && aca.bounds ? nn(aca.bounds.kHi) : null,
+                triage: run.triage && run.triage.light ? run.triage.light : null, grade: run.grade && run.grade.letter ? run.grade.letter : null,
+                unc: { seed: unc ? unc.seed : (fin(run.seed) ? run.seed : 1), n: unc ? unc.n : 0 }, gdpdgN: { x: gx, y: gy }
+            };
+            if (s.isip.value != null && s.isip.spread == null) s.isip.spread = 0;
+            var o = {}; RESULT_KEYS.forEach(function (kk) { o[kk] = s[kk]; });
+            s.resultHash = hashOf(o, 'display').h;
+            return s;
+        } catch (e) { return fail('SUMMARY_FAILED', e && e.message || e); }
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 9. The pure pipeline and its Job twin (§3.3a, §4.20) — the only place that knows the stage order
+    // ═════════════════════════════════════════════════════════════════════
+    function _call(name, args, warnings, code) {
+        var f = G[name];
+        if (!realFn(f)) { warnings.push(W('STAGE_UNAVAILABLE', 'info', name.replace('PRiSM_dfit_', '') + ' is not available in this build.', [])); return fail('NOT_IMPLEMENTED', name + ' is not available.', []); }
+        try { var r = f.apply(null, args); if (r && r.ok === false) warnings.push(W(code || 'STAGE_FAILED', 'warn', name.replace('PRiSM_dfit_', '') + ': ' + (r.errors && r.errors[0] || r.code), [])); return r; }
+        catch (e) { warnings.push(W(code || 'STAGE_FAILED', 'warn', name.replace('PRiSM_dfit_', '') + ' failed: ' + (e && e.message || e), [])); return fail('STAGE_FAILED', e && e.message || e); }
+    }
+    function _wb(name, args, warnings) {
+        var W2 = G.WTS_wellbore, f = W2 && W2[name];
+        if (!realFn(f)) return null;
+        try { var r = f.apply(null, args); return r && r.ok !== false ? r : null; } catch (e) { warnings.push(W('WELLBORE_FAILED', 'warn', 'Wellbore ' + name + ' failed.', [])); return null; }
+    }
+    function _pipeInit(ds, inputs, well, picks, opts) {
+        opts = opts || {};
+        var warnings = [], IR = G.PRiSM_dfit_inputRanges, inp = inputs || {};
+        if (IR && typeof IR.clamp === 'function') { var c = IR.clamp(inputs || {}); if (c && c.inputs) { inp = c.inputs; (c.warnings || []).forEach(function (w) { if (w && w.code) warnings.push(W(w.code, w.level || 'info', w.text || w.code, w.ev || [])); }); } }
+        picks = picks || { isip: null, closure: null, user: {}, aca: { origin: 'centroid', linWin: null, radWin: null, piLevel: null } };
+        var o = inp.options || {}, uo = o.unc || {};
+        var dsH = realFn(G.PRiSM_dfit_dsHash) ? G.PRiSM_dfit_dsHash(ds) : null;
+        if (typeof dsH !== 'string' || !/^[0-9a-f]{16}$/.test(dsH)) dsH = hashOf({ t: ds && ds.t, p: ds && ds.p, q: ds && ds.q || null }, 'inputs').h;
+        var run = { v: 1, ok: false, fast: !!opts.fast, dsHash: dsH, inputsHash: hashOf(inp, 'inputs').h, picksHash: hashOf(picks, 'inputs').h,
+                    seed: fin(opts.seed) ? Math.max(1, Math.round(opts.seed)) : (fin(uo.seed) ? uo.seed : 1),
+                    prep: null, events: null, triage: null, isip: null, derivs: null, picks: [], consensus: null, consensusLite: null, classification: null,
+                    frac: { chosen: null, byFamily: {} }, whatIf: [], aca: null, leak: null, unc: null, evidence: null, report: null, grade: null, summary: null,
+                    warnings: warnings, counts: { evals: 0, refits: 0, draws: 0 } };
+        var alphaOpt = o.alpha === 'general' ? (fin(o.alphaGeneral) ? o.alphaGeneral : 0.75) : o.alpha;
+        return { ds: ds, inputs: inp, well: well || {}, picks: picks, opts: opts, run: run, W: warnings,
+                 dOpts: { alpha: alphaOpt == null ? 'auto' : alphaOpt, tp: o.tp || 'pump', L: fin(o.L) ? o.L : 0.1, gMin: o.gMin == null ? 'auto' : o.gMin },
+                 extra: { ramps: [], hammer: null, stepDown: null, stepRate: null }, consJob: null, uncJob: null };
+    }
+    function _ctxOf(P) { var r = P.run; return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, prep: r.prep, user: P.picks.closure, ramps: P.extra.ramps, lkFit: P.opts.lkFit || null }; }
+    var STAGES = [
+        { id: 'prepare', fn: function (P) {
+            P.run.prep = _call('PRiSM_dfit_prepare', [P.ds, P.inputs, P.well], P.W, 'PREPARE_FAILED');
+        } },
+        { id: 'events', fn: function (P) {
+            var r = P.run;
+            r.events = _call('PRiSM_dfit_events', [r.prep, P.inputs.events || {}, {}], P.W, 'EVENTS_FAILED');
+            if (r.events && r.events.ok !== false && arrOk(r.events.cycles) && r.prep && r.prep.ok !== false) r.events.cycles.forEach(function (cy) {
+                if (cy && cy.rampWin) { var rp = _wb('ramp', [r.prep.t, r.prep.pw, r.prep.q, cy.rampWin, { VwCw: r.events.VwCwMeasured, seed: r.seed }], P.W); if (rp) P.extra.ramps.push(rp); }
+            });
+        } },
+        { id: 'isip', fn: function (P) {
+            var r = P.run;
+            var d0 = _call('PRiSM_dfit_derivs', [r.prep, r.events, P.dOpts], P.W, 'DERIVS_FAILED');
+            var ev = r.events && r.events.ok !== false ? r.events : null;
+            if (ev && r.prep && r.prep.hf && arrOk(r.prep.hf.windows) && r.prep.hf.windows.length) {
+                var w = r.prep.hf.windows[0]; P.extra.hammer = _wb('hammerQuick', [w.t || w.tHz, w.p, ev.ts, { qShut: ev.qLast }], P.W);
+            }
+            if (ev && arrOk(ev.steps)) {
+                var down = ev.steps.filter(function (s) { return s.dir === 'down'; }), up = ev.steps.filter(function (s) { return s.dir === 'up'; });
+                if (down.length >= 3) P.extra.stepDown = _wb('stepDown', [down.map(function (s) { return { q: s.q, p: s.pSettled, n: s.n, t: s.t1 }; }), { beta: 0.5, drift: true, perfs: P.inputs.perfs, rhoPpg: P.inputs.fluid && P.inputs.fluid.rhoPpg }], P.W);
+                if (up.length >= 3) P.extra.stepRate = _wb('stepRate', [up.map(function (s) { return { q: s.q, t0: s.t0, t1: s.t1 }; }), { seed: r.seed, t: r.prep.t, p: r.prep.pw }], P.W);
+            }
+            r.isip = _call('PRiSM_dfit_isip', [r.prep, r.events, d0, { hammer: P.extra.hammer, stepDown: P.extra.stepDown, bleed: null, lumped: null }], P.W, 'ISIP_FAILED');
+            var ui = P.picks.isip;
+            if (r.isip && r.isip.ok !== false && ui && ui.source === 'user' && fin(ui.value)) { r.isip.value = ui.value; r.isip.why = (r.isip.why || []).concat([_txt('User ISIP pick: ' + (ui.reason || 'no reason given') + '.')]).slice(0, 8); }
+            if (realFn(G.PRiSM_dfit_triage)) r.triage = _call('PRiSM_dfit_triage', [r.prep, r.events, { isip: r.isip, derivs: d0, hammer: P.extra.hammer, ramps: P.extra.ramps, stepDown: P.extra.stepDown, inputs: P.inputs, well: P.well, plan: P.opts.plan || null }], P.W, 'TRIAGE_FAILED');
+            if (r.triage && r.triage.ok === false) r.triage = null;
+            P.d0 = d0;
+        } },
+        { id: 'derivs', fn: function (P) {
+            var r = P.run, dO = {}; for (var k in P.dOpts) dO[k] = P.dOpts[k];
+            if (r.isip && fin(r.isip.value)) { dO.isip = r.isip.value; r.derivs = _call('PRiSM_dfit_derivs', [r.prep, r.events, dO], P.W, 'DERIVS_FAILED'); r.counts.refits++; }
+            else r.derivs = P.d0;
+            var pk = _call('PRiSM_dfit_closurePicks', [r.derivs, { ramps: P.extra.ramps, lkFit: P.opts.lkFit || null, user: P.picks.user || {}, events: r.events, isip: r.isip, inputs: P.inputs, well: P.well }], P.W, 'PICKS_FAILED');
+            r.picks = arrOk(pk) ? pk : [];
+            r.consensusLite = _call('PRiSM_dfit_consensusLite', [r.picks, r.derivs, _ctxOf(P)], P.W, 'CONSENSUS_FAILED');
+        } },
+        { id: 'consensus', skipFast: true, job: true, fn: function (P) {
+            var r = P.run, c = _call('PRiSM_dfit_consensus', [r.picks, r.derivs, _ctxOf(P)], P.W, 'CONSENSUS_FAILED');
+            r.consensus = c && c.ok !== false ? c : null;
+        }, start: function (P) {
+            var r = P.run;
+            if (!realFn(G.PRiSM_dfit_consensusJob)) return null;
+            try { return G.PRiSM_dfit_consensusJob(r.picks, r.derivs, _ctxOf(P)); } catch (e) { return null; }
+        }, finish: function (P, res) { P.run.consensus = res && res.ok !== false ? res : null; if (res && res.ok === false) P.W.push(W('CONSENSUS_FAILED', 'warn', 'consensus: ' + (res.errors && res.errors[0] || res.code), [])); } },
+        { id: 'frac', fn: function (P) {
+            var r = P.run, c = r.consensus || (r.consensusLite && r.consensusLite.ok !== false ? r.consensusLite : null) || {}, uc = P.picks.closure, fams = c.families || {};
+            var pc = null, fam = null, method = 'consensus';
+            if (uc && uc.mode === 'user' && fin(uc.p)) { pc = uc.p; fam = uc.family || null; method = uc.method || 'user'; }
+            else if (uc && uc.mode === 'family' && uc.family && fams[uc.family] && fin(fams[uc.family].p50)) { pc = fams[uc.family].p50; fam = uc.family; method = uc.method || 'family'; }
+            else if (c.mode === 'single' && fin(c.value)) pc = c.value;
+            var fctx = function (f, m) { return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, family: f, method: m }; };
+            if (fin(pc)) { var ch = _call('PRiSM_dfit_frac', [pc, r.derivs, fctx(fam, method)], P.W, 'FRAC_FAILED'); r.frac.chosen = ch && ch.ok !== false ? ch : null; }
+            ['F0', 'F1', 'F2', 'F3', 'F4'].forEach(function (F) {
+                var f = fams[F]; if (!f || !fin(f.p50)) return;
+                var o = _call('PRiSM_dfit_frac', [f.p50, r.derivs, fctx(F, F)], P.W, 'FRAC_FAILED');
+                if (o && o.ok !== false) r.frac.byFamily[F] = o;
+            });
+            var cands = [];
+            if (c.mode === 'single' && fin(c.value)) cands.push({ label: 'Consensus', family: null, p: c.value, method: 'consensus' });
+            ['F1', 'F2', 'F4'].forEach(function (F) { if (fams[F] && fin(fams[F].p50)) cands.push({ label: 'Family ' + F, family: F, p: fams[F].p50, method: F }); });
+            if (P.opts.whatIf && fin(P.opts.whatIf.p)) cands.push({ label: 'What-if ' + fmt(P.opts.whatIf.p, 0) + ' psia', family: null, p: P.opts.whatIf.p, method: 'user' });
+            if (cands.length) { var wi = _call('PRiSM_dfit_whatIf', [cands, r.derivs, fctx(null, null)], P.W, 'WHATIF_FAILED'); r.whatIf = arrOk(wi) ? wi.filter(function (x) { return x && x.ok !== false && x.label; }) : []; }
+            r.classification = _call('PRiSM_dfit_classify', [r.derivs, { frac: r.frac.chosen || _firstFamily(r.frac.byFamily), curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs }], P.W, 'CLASSIFY_FAILED');
+        } },
+        { id: 'aca', fn: function (P) {
+            var r = P.run;
+            if (!(r.frac.chosen || Object.keys(r.frac.byFamily).length)) return;
+            var a = G.PRiSM_dfit_aca(r, { well: P.well, inputs: P.inputs, picks: P.picks, match: !!P.opts.match, matchModels: P.opts.matchModels });
+            if (a && a.ok !== false) {
+                r.aca = a;
+                if (a.match && fin(a.match.evals)) r.counts.evals += a.match.evals;
+                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 30 : 120 });
+                r.leak = lp && lp.ok !== false ? lp : null;
+            } else if (a && a.code !== 'NO_CLOSURE') P.W.push(W('ACA_FAILED', 'info', 'After-closure analysis: ' + (a.errors && a.errors[0] || a.code), ['A1']));
+        } },
+        { id: 'uncertainty', skipFast: true, job: true, fn: function (P) {
+            var u = G.PRiSM_dfit_uncertainty(P.run, P.uncOpts());
+            P.run.unc = u && u.ok !== false ? u : null; if (P.run.unc) P.run.counts.draws = u.counts.draws;
+        }, start: function (P) { return G.PRiSM_dfit_uncertaintyJob(P.run, P.uncOpts()); },
+           finish: function (P, u) { P.run.unc = u && u.ok !== false ? u : null; if (P.run.unc) P.run.counts.draws = u.counts.draws; } },
+        { id: 'report', fn: function (P) {
+            var r = P.run;
+            r.ok = !!(r.prep && r.prep.ok !== false && r.events && r.events.ok !== false && r.derivs && r.derivs.ok !== false);
+            r.grade = _gradeOf(r);
+            r.evidence = G.PRiSM_dfit_evidence(r); if (r.evidence && r.evidence.ok === false) r.evidence = null;
+            r.summary = G.PRiSM_dfit_summarise(r, { at: P.opts.at }); if (r.summary && r.summary.ok === false) r.summary = null;
+            var T = P.opts.test || null;
+            r.report = G.PRiSM_dfit_reportModel(r, { zone: P.opts.zone || (T && T.zone) || '', log: P.opts.log || (T && T.log) || [], lk: T && T.lk, groups: P.opts.groups || null });
+            if (r.report && r.report.ok === false) r.report = null;
+            if (r.consensus && fin(r.consensus.evalCount)) r.counts.evals += r.consensus.evalCount;
+            if (r.consensus && r.consensus.counts && fin(r.consensus.counts.evals)) r.counts.evals += r.consensus.counts.evals;
+            if (!r.isip) r.isip = fail('NOT_IMPLEMENTED', 'ISIP stage did not run.', []);
+            ['prep', 'events', 'derivs', 'consensusLite', 'classification'].forEach(function (k) { if (!r[k]) r[k] = fail('NOT_IMPLEMENTED', k + ' stage did not run.', []); });
+        } }
+    ];
+    function _stagesFor(P) { return STAGES.filter(function (s) { return !(s.skipFast && P.opts.fast); }); }
+    function _finishRun(P) { return P.run; }
+    function _mkP(ds, inputs, well, picks, opts) {
+        var P = _pipeInit(ds, inputs, well, picks, opts);
+        P.uncOpts = function () {
+            var o = P.inputs.options || {}, uo = o.unc || {};
+            return { n: fin(P.opts.uncN) ? P.opts.uncN : (fin(uo.n) ? uo.n : 1000), seed: P.run.seed, inputs: P.inputs, well: P.well,
+                     familyWeightF1: fin(o.familyWeightF1) ? o.familyWeightF1 : 0.5, prevFamilyWeightF1: P.opts.prevFamilyWeightF1 };
+        };
+        return P;
+    }
+    G.PRiSM_dfit_pipeline = function (ds, inputs, well, picks, opts) {
+        try {
+            if (!ds || !arrOk(ds.t) || !arrOk(ds.p)) return fail('BAD_INPUT', 'The pipeline needs a dataset with t and p.', ['ds']);
+            var P = _mkP(ds, inputs, well, picks, opts);
+            _stagesFor(P).forEach(function (s) { s.fn(P); });
+            return _finishRun(P);
+        } catch (e) { return fail('PIPELINE_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_pipelineJob = function (ds, inputs, well, picks, opts) {
+        var P = null, list = [], i = 0, sub = null, done = false, cancelled = false, res = null;
+        try {
+            if (!ds || !arrOk(ds.t) || !arrOk(ds.p)) { done = true; res = fail('BAD_INPUT', 'The pipeline needs a dataset with t and p.', ['ds']); }
+            else { P = _mkP(ds, inputs, well, picks, opts); list = _stagesFor(P); }
+        } catch (e) { done = true; res = fail('PIPELINE_FAILED', e && e.message || e); }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try {
+                    var s = list[i];
+                    if (s.job && !sub && s.start) { sub = s.start(P) || { _sync: true }; if (sub._sync) { s.fn(P); sub = null; i++; } }
+                    else if (sub) { var st = sub.step(); if (st && st.done) { s.finish(P, sub.result()); sub = null; i++; } }
+                    else { s.fn(P); i++; }
+                    if (i >= list.length) { done = true; res = _finishRun(P); }
+                } catch (e) { done = true; res = fail('PIPELINE_FAILED', e && e.message || e); }
+                return { done: done, progress: done ? 1 : Math.min(0.99, i / list.length), label: done ? 'done' : (list[i] ? list[i].id : 'done') };
+            },
+            result: function () { return res || fail('CANCELLED', 'Analyse was cancelled — previous results kept.', []); },
+            cancel: function () { cancelled = true; if (sub && typeof sub.cancel === 'function') sub.cancel(); }
+        };
+    };
+
 })();
 
 // === SELF-TEST ===
