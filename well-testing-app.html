@@ -129721,7 +129721,11 @@ window.calcWTS=function(){
 
 const WTS_DIAG_LAYOUT={W:1200,H:340,tx:[85,230,380,535,695,950],cy:130,bx:[695,1000],by:245,cl:[18,16,20,27,30,10],strip:{x:20,y:215,w:600,h:103},
     ds:{tx:[70,180,400,535,695,950],x:290,cl:12},
-    t202:{x:775,w:30,h:38,hdrY:28,outY:12,lcv1X:738,lcv2X:805,riserX:822,seg5X:834}};
+    t202:{x:775,w:30,h:38,hdrY:28,outY:12,lcv1X:738,lcv2X:805,riserX:822,seg5X:834},
+    ck2:{x:470,cl:10}};
+// v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §8.2): ck2 = the CK-102 heater inlet choke slot on seg 3, the same in every variant (base:
+// choke 380 / heater 535; DS-101: choke 400 / heater 535). Only the live call draws it (11 nodes and opts.rigup.heaterChoke ===
+// true with H-101 in); the static page diagram and every rig-up without CK-102 draw the v3.3.1 row exactly.
 // Effective 2D layout for a rig-up (v3.3.1): two fixed variants per row, no layout maths. The top row is the v3.3 row
 // unless DS-101 is in (then tx = ds.tx, DS-101 at ds.x); the bottom row is the v3.3 row unless T-202 is in (T-202 at
 // t202.x, LCV-201 on the T-201 outlet header under it). bx is the same in every variant. No rig-up (static calc, Mini
@@ -129744,12 +129748,18 @@ function wtsDrawDiag(nodes,segs,opts){
     // Top-row node x positions, bottom-row tanks and pipe clearances (WTS_DIAG_LAYOUT)
     const tx=L.tx, cy=L.cy, bx=L.bx, by=L.by, cl=L.cl;
     const ds=L.dsOn?L.ds:null, t2=L.t2On?L.t202:null, nDs=nodes[8], nT2=nodes[9];   // optional items (drawn only when in)
+    // v1.5.0 CK-102 (live call only: liveNodes[10], rig-up strict true with H-101 in); greyed "bypassed" while the stream goes
+    // round the heater (CK-102 is in the rig-up but not in line)
+    const ru=opts&&opts.rigup, nK2=nodes.length>=11?nodes[10]:null;
+    const k2=(ru&&ru.heaterChoke===true&&ru.heater!==false&&nK2&&L.ck2)?L.ck2:null;
+    const k2Byp=!!(k2&&(nK2.bypassed===true||(nodes[3]&&nodes[3].bypass)));
     const pipeClr=s=>s.vSt==='EXCEED'?'#f85149':s.vSt==='WARNING'?'#d29922':'#3fb950';
     // Draw top-row pipes (segs[0..4])
     for(let i=0;i<5;i++){
         const s=segs[i];
         const x1=tx[i]+cl[i]+3, x2=tx[i+1]-cl[i+1]-3;
-        if(ds&&i===1){wtsDrawPipe(ctx,x1,ds.x-ds.cl-3,cy,s,pipeClr(s));wtsDrawPipe(ctx,ds.x+ds.cl+3,x2,cy,s,pipeClr(s),{bare:true});}
+        if(k2&&i===2){wtsDrawPipe(ctx,x1,k2.x-k2.cl-3,cy,s,pipeClr(s),{compact:true});wtsDrawPipe(ctx,k2.x+k2.cl+3,x2,cy,s,pipeClr(s),{bare:true});}
+        else if(ds&&i===1){wtsDrawPipe(ctx,x1,ds.x-ds.cl-3,cy,s,pipeClr(s));wtsDrawPipe(ctx,ds.x+ds.cl+3,x2,cy,s,pipeClr(s),{bare:true});}
         else wtsDrawPipe(ctx,x1,x2,cy,s,pipeClr(s),ds&&i===0?{compact:true}:undefined);
     }
     // Vertical pipe: Separator → Surge Tank
@@ -129779,6 +129789,7 @@ function wtsDrawDiag(nodes,segs,opts){
     wtsEqSep(ctx,tx[4],cy);
     wtsEqFlr(ctx,tx[5],cy);
     if(ds)wtsEqDs(ctx,ds.x,cy,nDs);
+    if(k2){ctx.save();if(k2Byp)ctx.globalAlpha=0.35;wtsEqChkS(ctx,k2.x,cy,k2Byp?'':nK2.regime,!k2Byp&&!!nK2.flowLimited,0.6);ctx.restore();}
     // Equipment symbols — bottom row (surge & atm tanks)
     wtsEqTnk(ctx,bx[0],by);
     wtsEqAtm(ctx,bx[1],by);
@@ -129831,6 +129842,23 @@ function wtsDrawDiag(nodes,segs,opts){
         ctx.fillStyle=st8==='SAND HIGH'?'#f85149':st8?'#d29922':'#8b949e';
         ctx.fillText(st8?String(st8):nDs&&fin(nDs.dP)?'\u0394P '+uF(nDs.dP,'pressure',1,'psi'):'\u0394P \u2014',ds.x,cy-37);
     }
+    if(k2){
+        // CK-102: tag (cy \u2212 48), regime or "bypassed" (cy \u2212 34), outlet P / T (cy + 50 / 63), hydrate (cy + 76), bean (cy + 78)
+        ctx.textAlign='center';
+        ctx.fillStyle=k2Byp?'#6e7681':'#e6edf3';ctx.font='bold 11px sans-serif';
+        ctx.fillText('CK-102',k2.x,cy-48);
+        if(k2Byp){ctx.fillStyle='#6e7681';ctx.font='bold 9px sans-serif';ctx.fillText('bypassed',k2.x,cy-34);}
+        else if(nK2.regime){
+            ctx.fillStyle=nK2.flowLimited?'#f85149':nK2.regime==='Critical'?'#bc8cff':'#3fb950';ctx.font='bold 9px sans-serif';
+            ctx.fillText(String(nK2.regime),k2.x,cy-34);
+        }
+        ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
+        ctx.fillText(!k2Byp&&fin(nK2.P)?uF(nK2.P,'pressureG',0,'psig'):'\u2014',k2.x,cy+50);
+        ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
+        ctx.fillText(!k2Byp&&fin(nK2.T)?uF(nK2.T,'temperature',1,'\u00b0F'):'\u2014',k2.x,cy+63);
+        if(!k2Byp&&fin(nK2.T)&&fin(nK2.th)&&nK2.T<nK2.th&&nK2.P>10){ctx.fillStyle='#58a6ff';ctx.font='bold 9px sans-serif';ctx.fillText('\u2744 HYDRATE',k2.x,cy+76);}
+        if(fin(nK2.bean)&&nK2.bean>0){ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';ctx.fillText(nK2.bean+'/64"',k2.x,cy+78);}
+    }
     if(t2){
         ctx.textAlign='center';
         ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
@@ -129858,7 +129886,7 @@ function wtsDrawDiag(nodes,segs,opts){
     ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='center';
     const phases=['Multiphase','Multiphase','Multiphase','Multiphase','Gas Only'];
     for(let i=0;i<5;i++){
-        ctx.fillText(phases[i],ds&&i===1?(tx[1]+cl[1]+3+ds.x-ds.cl-3)/2:(tx[i]+tx[i+1])/2,cy-28);
+        ctx.fillText(phases[i],ds&&i===1?(tx[1]+cl[1]+3+ds.x-ds.cl-3)/2:k2&&i===2?(tx[2]+cl[2]+3+k2.x-k2.cl-3)/2:(tx[i]+tx[i+1])/2,cy-28);
     }
     // Phase label for Surge→Atm pipe (T-202 variant: at segment 5's midpoint, clear of the riser)
     ctx.fillText('Liquid',t2?(t2.seg5X+bx[1]-20)/2:(bx[0]+bx[1])/2,by-20);
@@ -129915,6 +129943,12 @@ function wtsEqChk(ctx,x,y,regime,limited){
     ctx.fillStyle=c;ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
     ctx.beginPath();ctx.moveTo(x-16,y-14);ctx.lineTo(x,y);ctx.lineTo(x-16,y+14);ctx.closePath();ctx.fill();ctx.stroke();
     ctx.beginPath();ctx.moveTo(x+16,y-14);ctx.lineTo(x,y);ctx.lineTo(x+16,y+14);ctx.closePath();ctx.fill();ctx.stroke();
+}
+// v1.5.0: a scaled choke glyph (CK-102 on the live 2D); wtsEqChk itself stays as it is (its wts-host-patch.js done marker)
+function wtsEqChkS(ctx,x,y,regime,limited,sc){
+    ctx.save();ctx.translate(x,y);ctx.scale(sc,sc);
+    wtsEqChk(ctx,0,0,regime,limited);
+    ctx.restore();
 }
 function wtsEqHtr(ctx,x,y,bypassed){
     ctx.fillStyle=bypassed?'#1c2128':'#30363d';

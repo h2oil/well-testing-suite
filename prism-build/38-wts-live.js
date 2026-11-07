@@ -3192,10 +3192,16 @@ function createController(vizEl, mopts) {
             var sb = st.sepBy || {};
             if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4], cy + 40);
             else bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → BURNER LINE', tx[4], cy + 27);
+            // PSHH-104 on the bypass path (D16: trips SDV-101), tagged while V-101 is out
+            ctx.save(); ctx.fillStyle = GREY; ctx.font = 'bold 7.5px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('PSHH-104', tx[4], cy - 21); ctx.restore();
         }
         if (off('flare')) {
             mask(tx[5] - 18, cy - 44, 36, 68, '');
             bypass([[tx[5] - 20, cy], [tx[5] + 70, cy]], 'GAS → EXPORT LINE', tx[5] + 64, cy - 8, true);
+            // V-101 and FS-401 out (dest 'line' only): relief and vent gas of the tanks still in the rig-up goes to vent (§6.2)
+            if (st.sepBy && st.sepBy.vent === true) {
+                ctx.save(); ctx.fillStyle = AMB; ctx.font = 'bold 7.5px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('TANK RELIEF → VENT', tx[5], cy + 34); ctx.restore();
+            }
         }
         if (off('surge')) {
             mask(bx[0] - 30, by - 42, 60, 80, 'NOT IN RIG-UP');
