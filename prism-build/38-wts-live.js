@@ -785,6 +785,28 @@ var CSS = [
 '.wtsl-rig-all{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--border,#30363d);background:var(--bg2,#161b22);color:var(--text,#e6edf3);font:inherit;font-size:12px;cursor:pointer}',
 '.wtsl-rig-all:disabled{opacity:.5;cursor:default}',
 '.wtsl-rigout{font-size:11.5px;color:#e3b341;background:rgba(210,153,34,.12);border-radius:6px;padding:6px 8px}',
+/* v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §8.3): five HUD tank lines (DS-101 + cushion), the HUD totals to the production line / vent,
+   and the Scenarios → Cushion unload form (a modal <dialog>, like the Chemical Injection info dialog; iOS safe-area rule in
+   ios-additions/ios-styles.css) */
+'.wtsl-hud.l5 .wtsl-tl{font-size:9.5px;line-height:1.06}',
+'.wtsl-cush-ov{position:fixed;inset:0;z-index:10050;display:none;align-items:center;justify-content:center;box-sizing:border-box;width:auto;height:auto;',
+' max-width:none;max-height:none;margin:0;padding:16px;border:0;background:rgba(1,4,9,.72);color:#e6edf3;overflow:hidden;overscroll-behavior:contain}',
+'.wtsl-cush-ov[open]{display:flex}.wtsl-cush-ov::backdrop{background:transparent}',
+'.wtsl-cush{display:flex;flex-direction:column;width:min(440px,100%);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);box-sizing:border-box;',
+' background:#0d1117;border:1px solid var(--hmi-line,#30363d);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.45);font:13px/1.4 system-ui,sans-serif}',
+'.wtsl-cush-hd{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;border-bottom:1px solid var(--hmi-line,#30363d)}',
+'.wtsl-cush-hd h3{flex:1;min-width:0;margin:0;font-size:15px;color:#e6edf3}',
+'.wtsl-cush-bd{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 14px}',
+'.wtsl-cush-lead{margin:0 0 8px;color:#8b949e;font-size:12px}',
+'.wtsl-cush-f{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:6px 10px;align-items:center}',
+'.wtsl-cush-f label{color:#c9d1d9;font-size:12.5px}',
+'.wtsl-cush-f input,.wtsl-cush-f select{height:30px;box-sizing:border-box;width:100%;padding:0 8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font:inherit;font-size:13px}',
+'.wtsl-cush-st{margin:10px 0 0;padding:6px 8px;border-radius:6px;background:rgba(56,139,253,.1);color:#c9d1d9;font-size:12px}',
+'.wtsl-cush-st:empty{display:none}',
+'.wtsl-cush-warn{margin:8px 0 0;padding:6px 8px;border-radius:6px;background:rgba(210,153,34,.12);color:#e3b341;font-size:12px}',
+'.wtsl-cush-warn:empty{display:none}',
+'.wtsl-cush-ft{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--hmi-line,#30363d)}',
+'@media (max-width:600px){.wtsl-cush-ov{padding:10px}.wtsl-cush{max-height:calc(100vh - 20px);max-height:calc(100dvh - 20px)}.wtsl-cush-f{grid-template-columns:minmax(0,1fr) 128px}}',
 '@keyframes wtsl-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
 '@keyframes wtsl-flash{0%{opacity:1}50%{opacity:.55}}',
 '@keyframes wtsl-shim{0%{left:-40%}100%{left:100%}}',
@@ -848,7 +870,8 @@ function writePrefs(p) {
 // v1.5.0 cushion-unload form values (Scenarios → Cushion unload; device prefs, not host inputs — docs/SIM-FOLLOWUP-PLAN.md D5,
 // §3.4): {V bbl, SG, q bbl/d, tbg (tubing size id → capacity), depth ft}, each clamped by WTS_sim.DEFAULTS.cushion.lim; a missing
 // or invalid field takes the default (D7)
-var CUSH_TBG = [['2-3/8', 0.00387], ['2-7/8', 0.00579], ['3-1/2', 0.00870], ['4-1/2', 0.01522]];
+var CUSH_TBG = [['2-3/8', 0.00387, '2-3/8″ 4.7 lb/ft (1.995″ ID)'], ['2-7/8', 0.00579, '2-7/8″ 6.5 lb/ft (2.441″ ID)'],
+    ['3-1/2', 0.00870, '3-1/2″ 9.2 lb/ft (2.992″ ID)'], ['4-1/2', 0.01522, '4-1/2″ 12.75 lb/ft (3.958″ ID)']];
 var CUSH_LIM = { V: [1, 500], SG: [0.80, 1.50], q: [100, 6000], depth: [500, 25000] };
 function cushionDefs() {
     var S = G.WTS_sim, C = S && S.DEFAULTS && S.DEFAULTS.cushion ? S.DEFAULTS.cushion : null, L = C && C.lim ? C.lim : CUSH_LIM;
@@ -863,6 +886,28 @@ function cushionPrefs(o) {
     return out;
 }
 function cushionCap(tbg) { for (var i = 0; i < CUSH_TBG.length; i++) if (CUSH_TBG[i][0] === tbg) return CUSH_TBG[i][1]; return 0.00870; }
+// ── v1.5.0 HMI (WP-L, docs/SIM-FOLLOWUP-PLAN.md §8.3): CK-102 card, bypass destination, cushion unload ──
+var CUSH_SCEN = 'Cushion unload (clean-up)';                       // Scenarios menu entry (_wts-fu-shapes LABELS.scenario)
+var CK2_BYP = 'Bypassed with H-101';                                // CK-102 in the rig-up, heater bypassed or H-101 out
+var CUSH_PHASE_TXT = { off: 'off', unloading: 'unloading', stalled: 'STALLED (no lift)', breakthrough: 'gas breakthrough', tail: 'tail', done: 'recovered' };
+// the cushion form → startCushion options (the keys of WTS_sim.DEFAULTS.cushion.lim: V bbl, SG, q bbl/d, cap bbl/ft, depth ft)
+function cushionOpts(p) { var c = cushionPrefs(p); return { V: c.V, SG: c.SG, q: c.q, cap: cushionCap(c.tbg), depth: c.depth }; }
+// CK-102: in the rig-up (strictly true) but not in line — heater bypassed or H-101 out (§3.4 predicate; the node flag when present)
+function ck2Bypassed(st) {
+    if (!rigIn(st, 'heaterChoke')) return false;
+    var n = st && st.nodes && st.nodes.heaterChoke;
+    if (n && typeof n.bypassed === 'boolean' && n.inRig === true) return n.bypassed;
+    var h = st && st.nodes && st.nodes.heater, I = (st && st.inputs) || {};
+    return rigOut(st, 'heater') || !!(h && h.bypass != null ? h.bypass : I.bypass);
+}
+function ck2Active(st) { return rigIn(st, 'heaterChoke') && !ck2Bypassed(st); }
+// V-101 out: destination of the whole stream (snapshot sepBy; older snapshots: the burner / flare line)
+function sepByOf(st) { var b = st && st.sepBy; return b && typeof b === 'object' ? b : { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '' }; }
+function bypLine(st) { return rigOut(st, 'separator') && sepByOf(st).dest === 'line'; }
+function ventOn(st) { return bypLine(st) && (sepByOf(st).vent === true || rigOut(st, 'flare')); }
+function destTxt(st) { var b = sepByOf(st); return b.dest === 'line' ? 'production line (' + fmtU(b.P_psig, 'pressureG') + ')' : 'burner / flare line'; }
+function cushOf(st) { var c = st && st.cushion; return c && typeof c === 'object' && typeof c.phase === 'string' ? c : null; }
+function cushShown(st) { var c = cushOf(st); return !!(c && c.phase !== 'off'); }
 // Rig-up items [{key, tag, name, locked, why}] from WTS_sim (fallback: local list)
 function rigItems() {
     var S = G.WTS_sim;
@@ -1206,7 +1251,8 @@ function createController(vizEl, mopts) {
         var stDs = rigStatusDs(st), stU2 = rigStatusU2(st);           // status rows (only while the item is in; reach the page report)
         var sig = (ru ? ru.sig + '|' + (ru.notes || []).join('|') : '-') + '|' + JSON.stringify(req) + '|' + tr + '|' + !!_sim +
             (x2s ? '|' + [x2s.on, x2s.tripped, x2s.failed, isNum(x2s.dP_psi) ? fmtU(x2s.dP_psi, 'pressure', 1) : ''].join(',') : '') +
-            '|' + refused + '|' + stDs + '|' + stU2;
+            '|' + refused + '|' + stDs + '|' + stU2 +
+            '|' + ck2Bypassed(st) + '|' + rigOut(st, 'separator') + '|' + sepByOf(st).dest + '|' + sepByOf(st).P_psig + '|' + ventOn(st) + '|' + unitsSys();   // v1.5.0
         if (!force && c.__sig === sig) return;
         c.__sig = sig;
         // in / asked: core items are in unless false (older snapshots: in); optional items only when strictly true (older: out)
@@ -1222,15 +1268,25 @@ function createController(vizEl, mopts) {
                 // disabled with the reason while the same change would still be refused
                 if (it.key === 'surge2' && refused && inRig) { dis = true; why = refused; }
                 var tipO = why || (asked ? 'Take ' + it.tag + ' out of the rig-up' : 'Add ' + it.tag + ' to the rig-up');
+                // v1.5.0: CK-102 in the rig-up while the stream goes round H-101 (heater bypassed or H-101 out)
+                var optTxt = inRig ? (it.key === 'heaterChoke' && ck2Bypassed(st) ? CK2_BYP : 'In service') : asked ? 'Out of line (see note)' : 'Not in the spread';
                 // out → rp-skip (not 'off'): a default page report keeps exactly the v3.3 rows
                 return '<div class="rrow wtsl-rig-row opt' + (inRig ? '' : ' rp-skip') + '" data-k="' + esc(it.key) + '"><span class="rl">' + esc(it.tag) + ' · ' + esc(it.name) + '</span>' +
-                    '<span class="rv">' + esc(inRig ? 'In service' : asked ? 'Out of line (see note)' : 'Not in the spread') + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + asked + '"' +
+                    '<span class="rv">' + esc(optTxt) + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + asked + '"' +
                     ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tipO) + '"' + (dis ? ' disabled' : '') + '><i></i></button></div>';
             }
             if (!inRig) nOut++;
             var txt = it.locked ? 'In service (required)' : inRig ? (asked ? 'In service' : 'In service (kept, see note)')
                 : asked ? 'Out of line (see note)' : (it.key === 'heater' || it.key === 'separator') ? 'Bypassed' : 'Out of rig-up';
             var tip = it.locked ? (it.why || 'Required') : (asked ? 'Take ' + it.tag + ' out of the rig-up' : 'Put ' + it.tag + ' back in the rig-up');
+            // v1.5.0 (§8.3): the V-101 row follows the bypass destination; FS-401 may leave the rig-up with V-101 out only when the
+            // whole stream goes to a production line (the tank relief then goes to vent)
+            var sepOut = !!(ru && ru.separator === false), lineDest = sepByOf(st).dest === 'line';
+            if (it.key === 'separator' && !inRig && !asked) txt = 'Bypassed → ' + (lineDest ? 'production line' : 'burner / flare line');
+            if (it.key === 'flare') {
+                if (sepOut && !lineDest && inRig && !it.locked) { dis = true; tip = 'With V-101 out FS-401 stays in unless the well stream goes to a production line (With V-101 out, well stream to)'; }
+                else if (sepOut && lineDest && !it.locked) { tip = asked ? 'Take FS-401 out: relief of the tanks goes to vent' : tip; if (!inRig && !asked) txt = 'Out of rig-up · relief of the tanks goes to vent'; }
+            }
             return '<div class="rrow wtsl-rig-row' + (inRig ? '' : ' off') + '" data-k="' + esc(it.key) + '"><span class="rl">' + esc(it.tag) + ' · ' + esc(it.name) + '</span>' +
                 '<span class="rv">' + esc(txt) + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + (it.locked || asked) + '"' +
                 ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tip) + '"' + (dis ? ' disabled' : '') + '><i></i></button></div>';
@@ -1267,9 +1323,12 @@ function createController(vizEl, mopts) {
                 '<div class="wtsl-sepbar" data-h="sepbar" title="Separator pressure vs setpoint: green ±5 psi band, amber = PAH, red = PSHH"><div class="band"></div><div class="tk" style="background:#d29922"></div><div class="tk" style="background:#f85149"></div><div class="mk"></div></div></div>' +
                 item('pSu', 'Surge') + '</div></div>' +
             '<div class="wtsl-hg"><div class="wtsl-hrow">' + item('rG', 'Gas') + item('rO', 'Oil') + item('rW', 'Water') + item('rR', 'GOR', 'h-gor') + item('rB', 'BS&amp;W', 'h-bsw') + '</div></div>' +
-            '<div class="wtsl-hg g-cum" title="Totals since test start (T+0)"><div class="wtsl-hrow">' + item('cO', 'Cum oil') + item('cW', 'Water') + item('cG', 'Gas') + item('cF', 'Flared') + '</div></div>' +
+            '<div class="wtsl-hg g-cum" title="Totals since test start (T+0)"><div class="wtsl-hrow">' + item('cO', 'Cum oil') + item('cW', 'Water') + item('cG', 'Gas') + item('cF', 'Flared') +
+                // v1.5.0: V-101 out to a production line / FS-401 out (hidden otherwise)
+                (item('cL', 'To production line', 'h-line') + item('cV', 'To vent', 'h-vent')).replace(/<div class="wtsl-hi /g, '<div hidden class="wtsl-hi ') + '</div></div>' +
             '<div class="wtsl-hg"><div class="wtsl-tl" data-h="tSu">Surge —</div><div class="wtsl-tl" data-h="tGt">A — · B —</div>' +
                 '<div class="wtsl-tl" data-h="tDs" hidden></div>' +
+                '<div class="wtsl-tl" data-h="tCu" hidden></div>' +
                 '<div class="wtsl-tl al" data-h="tAl">● No active alarms</div></div>' +
             '</div>' +
             '<div class="wtsl-tiles">' +
@@ -1344,6 +1403,8 @@ function createController(vizEl, mopts) {
             poke(); resig();
         });
         h('reset', function (p) { _alarmMap = {}; toast('Test reset (' + (p && p.mode ? p.mode : 'steady') + ')'); poke(); });
+        // v1.5.0 cushion unload (start, stall, un-stall, breakthrough, tail, done)
+        h('cushion', function (p) { if (p && p.msg) toast(p.msg, p.phase === 'stalled' ? 'bad' : p.phase === 'done' ? 'ok' : ''); poke(); if (E.cush) E.cush.__sig = ''; });
         // lineup changes (manual or automatic) persist in the prefs; automatic diverts are announced
         h('control', function () { saveCtl(); poke(); if (cardRefs && cardRefs.act) cardRefs.act.__sig = ''; });
         h('divert', function (p) { if (p && p.msg) toast(p.msg.replace(/^T-[23]01 /, '')); });
@@ -1680,6 +1741,9 @@ function createController(vizEl, mopts) {
         else if (a.type === 'suction') { if (a.eq === undefined || (eqvKind(a.eq) && EQV[a.eq].suction)) toggleSuction(a.idx ? 1 : 0); }
         else if (a.type === 'dump' && eqvKind(a.eq) === 'desander') askDump(null);
         else if (a.type === 'bypass' && eqvKind(a.eq) === 'desander') toggleDsBypass();
+        // v1.5.0 (§7.3): CK-102 bean ±4 from the 3D handwheel; the cushion scenario start (saved form values) / stop
+        else if (a.type === 'bean' && a.eq === 'heaterChoke' && (a.d === 4 || a.d === -4)) doAct('bean2', { getAttribute: function (k) { return k === 'data-v' ? String(a.d) : null; } });
+        else if (a.type === 'cushion' && (a.cmd === 'start' || a.cmd === 'stop')) { if (a.cmd === 'start') startCush(); else stopCush(); }
     }
     function unitsOpt() {
         if (!E.units) E.units = { system: unitsSys(), conv: unitsConv };
@@ -1908,7 +1972,7 @@ function createController(vizEl, mopts) {
         }
         var dpr = num(G.devicePixelRatio, 1);
         if (mode === '2d' && lastDpr && Math.abs(dpr - lastDpr) > 0.01) size2d();
-        updateToolbar(st); updateHud(st); updatePill(st); updateCard(st, false); if (E.vin) renderVin(st);
+        updateToolbar(st); updateHud(st); updatePill(st); updateCard(st, false); if (E.vin) renderVin(st); if (E.cush) renderCushion(st, false);
         if (popGroup) updatePop(st);
         show(E.paused, !!(st && !st.running));
     }
@@ -2011,6 +2075,16 @@ function createController(vizEl, mopts) {
         hv('rB', R.bsw_pct, 'percent', 1); setText(E.h.rBA, trendArrow('bsw', R.bsw_pct, 100));
         // Cumulative
         hv('cO', C.oilIn_stb, 'oilVolume'); hv('cW', C.waterIn_bbl, 'volume'); hv('cG', C.gasIn_mmscf, 'gasVolume'); hv('cF', C.flare_mmscf, 'gasVolume');
+        // v1.5.0: totals to the production line (V-101 out, destination line) and to vent (FS-401 out as well)
+        var bl = bypLine(st), vo = ventOn(st);
+        if (E.h.cL) {
+            var wL = E.h.cL.closest ? E.h.cL.closest('.wtsl-hi') : null, wV = E.h.cV && E.h.cV.closest ? E.h.cV.closest('.wtsl-hi') : null;
+            show(wL, bl); show(wV, vo);
+            if (bl) { hv('cL', num(C.toLine_gas_mscf, 0) / 1000, 'gasVolume');
+                setAttr(wL, 'title', 'To production line: gas ' + fmtU(num(C.toLine_gas_mscf, 0) / 1000, 'gasVolume') + ' · oil ' + fmtU(num(C.toLine_oil_stb, 0), 'oilVolume') +
+                    ' · water ' + fmtU(num(C.toLine_water_bbl, 0), 'volume')); }
+            if (vo) hv('cV', num(C.toVent_gas_mscf, 0) / 1000, 'gasVolume');
+        }
         // Tanks and quality
         var ps2 = xferShort(st), SC = su.comps || [];
         var u2 = rigIn(st, 'surge2') && st.surge2 ? st.surge2 : null;      // T-202 part only while it is in the rig-up
@@ -2051,7 +2125,12 @@ function createController(vizEl, mopts) {
         if (rigOut(st, 'gauge')) setHTML(E.h.tGt, 'Gauge tank <b>out of rig-up</b>');
         else setHTML(E.h.tGt, gtxt + (isNum(sh) ? ' · shr ' + sh.toFixed(1) + '%' : ''));
         // the tank cell is 172 / 158 px (lg / md): long lines end in an ellipsis, so each carries its full text as a tooltip
-        [E.h.tSu, E.h.tGt, E.h.tDs].forEach(function (el) { if (el && !el.hidden) setAttr(el, 'title', el.__full || el.textContent); });
+        // v1.5.0 cushion line (while a cushion exists): "Cushion: phase · recovered x / V bbl · q bbl/d"
+        var cuOn = cushShown(st);
+        if (E.h.tCu) { show(E.h.tCu, cuOn); if (cuOn) setText(E.h.tCu, cushText(st)); }
+        var nL = 3 + (dIn ? 1 : 0) + (cuOn ? 1 : 0);
+        E.hud.classList.toggle('ds4', nL >= 4); E.hud.classList.toggle('l5', nL >= 5);
+        [E.h.tSu, E.h.tGt, E.h.tDs, E.h.tCu].forEach(function (el) { if (el && !el.hidden) setAttr(el, 'title', el.__full || el.textContent); });
         var c = alarmCount(st && st.alarms);
         setAttr(E.h.tAl, 'data-l', c.n ? c.level : 'ok');
         setText(E.h.tAl, c.n ? '⚠ ' + c.n + ' active' : '● No active alarms');
@@ -2257,7 +2336,12 @@ function createController(vizEl, mopts) {
                 ['Outlet T', function (s) { return T(N(s, 'heater').T); }, 't', function (s, f) { return isNum(F(f, ['inputs', 'Thtr'])) ? 'setpoint ' + T(f.inputs.Thtr) : null; }],
                 ['Firing', function (s) { var h = N(s, 'heater'); return h.bypass ? 'BYPASSED' : pctStr(h.firing); }, ''],
                 ['Duty', function (s) { return fmtU(N(s, 'heater').dutyMMBtuHr, 'powerLarge'); }, '', function (s, f) { return isNum(F(f, ['heater', 'dutyMMBtuHr'])) ? 'design ' + fmtU(f.heater.dutyMMBtuHr, 'powerLarge') : null; }],
-                ['Hydrate T', function (s) { return T(N(s, 'heater').th); }, 't']],
+                ['Hydrate T', function (s) { return T(N(s, 'heater').th); }, 't'],
+                // v1.5.0: CK-102 on the H-101 inlet (row only while CK-102 is in the rig-up)
+                ['Heater choke', function (s) { var c = N(s, 'heaterChoke'); return ck2Bypassed(s) ? 'CK-102 · ' + CK2_BYP :
+                    'CK-102 ' + (isNum(c.bean) && c.bean > 0 ? c.bean + '/64″ · ' : '') + String(c.regime || '—').toUpperCase(); }, '',
+                    function (s) { var c = N(s, 'heaterChoke'); return ck2Active(s) ? fmtParts(c.Pin, 'pressureG').v + ' → ' + P(c.P) : null; },
+                    function (s) { return rigIn(s, 'heaterChoke'); }]],
                 actions: 'bypass' };
             case 'separator': return { rows: [
                 ['Pressure', function (s) { return P(s && s.sep && s.sep.P); }, 'p'],
@@ -2315,8 +2399,38 @@ function createController(vizEl, mopts) {
                 ['Header P', function (s) { return P(N(s, 'flare').P); }, 'p'],
                 ['Line P (u/s)', function (s) { return P(N(s, 'flare').Pline); }, 'p'],
                 ['Line vel', function (s) { var g = s && s.segs && s.segs[4]; return g ? fmtU(g.vel, 'velocity') : '—'; }, ''],
-                ['Flared total', function (s) { return fmtU(s && s.cum && s.cum.flare_mmscf, 'gasVolume'); }, '']],
+                ['Flared total', function (s) { return fmtU(s && s.cum && s.cum.flare_mmscf, 'gasVolume'); }, ''],
+                // v1.5.0 V-101 out: the destination of the whole stream; with a production line the flame is out and the totals go
+                // to the line (NRV-501 / XV-501 at the tie-in), with FS-401 out too the tank relief goes to vent
+                ['Well stream to', function (s) { return bypLine(s) ? 'Production line' : 'Burner / flare line'; }, '', null, function (s) { return rigOut(s, 'separator'); }],
+                ['Production line', function (s) { return P(sepByOf(s).P_psig); }, 'p', function () { return 'NRV-501 / XV-501 at the tie-in · PSHH-104 on the bypass path'; }, bypLine],
+                ['To production line', function (s) { var c = (s && s.cum) || {}; return fmtU(num(c.toLine_gas_mscf, 0) / 1000, 'gasVolume'); }, '',
+                    function (s) { var c = (s && s.cum) || {}; return 'oil ' + fmtU(num(c.toLine_oil_stb, 0), 'oilVolume') + ' · water ' + fmtU(num(c.toLine_water_bbl, 0), 'volume'); }, bypLine],
+                ['To vent', function (s) { return fmtU(num(s && s.cum && s.cum.toVent_gas_mscf, 0) / 1000, 'gasVolume'); }, '', function () { return 'relief and vent gas of the tanks (FS-401 out)'; }, ventOn]],
                 spark: [{ keys: ['qgFlare'], label: 'Flared gas', cat: 'gasRate' }], widget: 'linevel' };
+            // v1.5.0 CK-102 heater inlet choke (on the H-101 inlet, downstream of the heater-bypass tee; in line only through H-101)
+            case 'heaterChoke': {
+                var K = function (s) { return N(s, 'heaterChoke'); };
+                return { rows: [
+                    ['Upstream P', function (s) { return P(K(s).Pin); }, 'p', function () { return 'between the chokes (PAH-102)'; }],
+                    ['Downstream P', function (s) { return P(K(s).P); }, 'p'],
+                    ['Regime', function (s) { var c = K(s); return (c.flowLimited ? 'LIMITED · ' : '') + String(c.regime || '—').toUpperCase(); }, ''],
+                    ['Bean', function (s) { var c = K(s); return isNum(c.bean) && c.bean > 0 ? c.bean + '/64″' : '—'; }, ''],
+                    ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, ''],
+                    ['ΔP', function (s) { var c = K(s); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressureG'); }, 'p'],
+                    ['J-T ΔT', function (s) { var v = K(s).dTjt; return isNum(v) ? fmtU(v, 'tempDelta', 1) : '—'; }, 't'],
+                    ['Outlet T', function (s) { return T(K(s).T); }, 't', function (s) { var c = K(s); return isNum(c.Tin) ? 'inlet ' + T(c.Tin) : null; }],
+                    ['Hydrate T / margin', function (s) { var c = K(s); return T(c.th) + (isNum(c.T) && isNum(c.th) ? ' · ' + fmtU(c.T - c.th, 'tempDelta', 1) : ''); }, 't',
+                        function (s) { var c = K(s); return c.hyd ? '⚠ CK-102 outlet in the hydrate region' : null; }],
+                    ['Pair capacity', function (s) { return fmtU(K(s).QmaxMMscfd, 'gasRate'); }, '', function () { return 'CK-101 and CK-102 in series'; }],
+                    ['Limiter', function (s) { var l = K(s).limiter; return l === 'both' ? 'CK-101 + CK-102' : l || '—'; }, ''],
+                    ['Design P (PAH-102)', function (s) { return P(num(K(s).designP_psig, 1440)); }, 'p',
+                        function (s) { var d = num(K(s).designP_psig, 1440); return 'PAH-102 at 90 % = ' + P(0.9 * d) + (K(s).pos === 'midcoil' ? ' · line and H-101 pass 1' : ' · line CK-101 → CK-102'); }],
+                    ['Note', function (s) { return K(s).note || ''; }, '', null, function (s) { return !!K(s).note; }]],
+                    spark: [{ keys: ['Pck2'], label: 'Pressure between the chokes', cat: 'pressureG' }], actions: 'bean2',
+                    note: 'CK-102 takes part of the pressure drop. It is in line only while the stream goes through H-101; with the heater ' +
+                        'bypassed it is bypassed too. The rate stays set by the steady choke check (a subcritical CK-101 does not change the rate here).' };
+            }
             // v3.3.1 DS-101 cyclonic desander (upstream of the choke)
             case 'desander': {
                 var D = function (s) { return (s && s.desander) || {}; }, DS = function (s) { return D(s).sand || {}; }, DM = function (s) { return D(s).dump || {}; };
@@ -2489,6 +2603,16 @@ function createController(vizEl, mopts) {
             h = '<button type="button" data-wts-ui class="wtsl-b" data-act="bean" data-v="-2" aria-label="Smaller bean" title="Bean − 2/64″">−</button>' +
                 '<span class="val">' + (isNum(b) ? b + '/64″' : '—') + '</span>' +
                 '<button type="button" data-wts-ui class="wtsl-b" data-act="bean" data-v="2" aria-label="Larger bean" title="Bean + 2/64″">+</button>';
+        } else if (a === 'bean2') {
+            // v1.5.0 CK-102 bean: host input wts_bean2 (-4 / +4, 4-128); the snapshot bean when the page has no input yet
+            var b2 = readHost('wts_bean2'), has2 = !!hostEl('wts_bean2'), inR2 = rigIn(st, 'heaterChoke');
+            var nb2 = st && st.nodes && st.nodes.heaterChoke ? st.nodes.heaterChoke.bean : NaN, bv = isNum(b2) ? b2 : (isNum(nb2) && nb2 > 0 ? nb2 : NaN);
+            var dis2 = !inR2 ? 'CK-102 is not in the rig-up' : !has2 ? 'Set the CK-102 bean on the page (Heater card)' : '';
+            sig = 'bean2' + bv + dis2;
+            h = '<span class="wtsl-hl" style="margin-right:4px">CK-102 bean</span>' +
+                '<button type="button" data-wts-ui class="wtsl-b" data-act="bean2" data-v="-4" aria-label="Smaller CK-102 bean"' + (dis2 ? bAttr(dis2) : ' title="CK-102 bean − 4/64″"') + '>−</button>' +
+                '<span class="val">' + (isNum(bv) ? bv + '/64″' : '—') + '</span>' +
+                '<button type="button" data-wts-ui class="wtsl-b" data-act="bean2" data-v="4" aria-label="Larger CK-102 bean"' + (dis2 ? bAttr(dis2) : ' title="CK-102 bean + 4/64″"') + '>+</button>';
         } else if (a === 'bypass') {
             var el = hostEl('wts_bypass'), on = el && el.value === '1';
             sig = 'byp' + on;
@@ -2604,9 +2728,10 @@ function createController(vizEl, mopts) {
         if (!cardId || !cardRefs) return;
         var spec = cardRefs.spec, flow = _lastFlowObj;
         var optOut = !!st && isOptKey(cardId) && eqOut(st, cardId);    // DS-101 / T-202 taken out: no last live values, no live widget
+        var ck2b = !!st && cardId === 'heaterChoke' && ck2Bypassed(st); // v1.5.0: CK-102 in the rig-up but bypassed with H-101
         for (var i = 0; i < spec.rows.length; i++) {
             var r = spec.rows[i], s;
-            if (optOut) { setText(cardRefs['v' + i], '—'); if (cardRefs['d' + i]) setText(cardRefs['d' + i], ''); continue; }
+            if (optOut || ck2b) { setText(cardRefs['v' + i], '—'); if (cardRefs['d' + i]) setText(cardRefs['d' + i], ''); continue; }
             if (r[4]) { var vis = false; try { vis = !!(st && r[4](st)); } catch (e0) {} show(cardRefs['r' + i], vis); if (!vis) continue; }
             try { s = st ? r[1](st) : '—'; } catch (e) { s = '—'; }
             setText(cardRefs['v' + i], s);
@@ -2615,12 +2740,14 @@ function createController(vizEl, mopts) {
         var stt = st ? statusOf(cardId, st.alarms) : 'ok';
         if (cardId === 'esd' && st && st.esd && st.esd.manual && stt === 'evt') stt = 'warn';
         var out = eqOut(st, cardId);                                   // optional items (DS-101, T-202): out unless strictly in
-        setAttr(cardRefs.chip, 'data-s', out ? 'evt' : stt);
-        setText(cardRefs.chip, out ? 'Out of rig-up' : stt === 'ok' ? 'Normal' : stt === 'evt' ? 'Info' : stt === 'hyd' ? 'Hydrate' : stt);
+        setAttr(cardRefs.chip, 'data-s', out || ck2b ? 'evt' : stt);
+        setText(cardRefs.chip, out ? 'Out of rig-up' : ck2b ? 'Bypassed' : stt === 'ok' ? 'Normal' : stt === 'evt' ? 'Info' : stt === 'hyd' ? 'Hydrate' : stt);
         if (cardRefs.rigout) {
-            show(cardRefs.rigout, out);
-            if (out) setText(cardRefs.rigout, (cardId === 'heater' ? 'Bypassed' : cardId === 'separator' ? 'Bypassed — the well stream goes to the flare / burner' :
+            show(cardRefs.rigout, out || ck2b);
+            if (out) setText(cardRefs.rigout, (cardId === 'heater' ? 'Bypassed' :
+                cardId === 'separator' ? 'Bypassed — the well stream goes to the ' + destTxt(st) + (bypLine(st) ? ' through NRV-501 / XV-501' : '') :
                 'Not in the rig-up') + ' — change it in the Rig-up card below the view.');
+            else if (ck2b) setText(cardRefs.rigout, CK2_BYP + ' — CK-102 is back in line when the stream goes through H-101 again (Heater card: Bypass OFF).');
         }
         if (cardRefs.wg) show(cardRefs.wg, !optOut);
         renderCardActions(st);                                         // while out: shown disabled, with the reason
@@ -3357,6 +3484,120 @@ function createController(vizEl, mopts) {
         renderVin(state());
     }
     function closeVin() { if (E.vin && E.vin.parentNode) E.vin.parentNode.removeChild(E.vin); E.vin = null; vinEq = null; }
+    // ── v1.5.0 Scenarios → Cushion unload (docs/SIM-FOLLOWUP-PLAN.md D5, §6.3, §8.3) ──
+    // A modal <dialog> (rp-skip, data-rp-nosnap, data-no-persist: not in reports, Quick Report snapshots or the page autosave);
+    // the form values are device prefs (h2viz3d_prefs.cushion), never host inputs. showModal() when the browser has it (top
+    // layer, page inert, Esc → cancel), else the open attribute. Controls carry ids with the prefix wtsl_cush_.
+    var CUSH_FIELDS = [['V', 'Cushion volume (bbl)', 1, 500, 1], ['SG', 'Cushion SG', 0.8, 1.5, 0.01], ['q', 'Unload rate (bbl/d)', 100, 6000, 50],
+        ['depth', 'Tubing depth (ft)', 500, 25000, 100]];
+    function cushOpen() { return !!(E.cush && E.cush.parentNode); }
+    function cushFieldId(k) { return 'wtsl_cush_' + k; }
+    function openCushion(opener) {
+        closeMenu(); closePop();
+        if (cushOpen()) { renderCushion(state(), true); return E.cush; }
+        var c = cushionPrefs(prefs.cushion), ov = mk('dialog', 'wtsl-cush-ov rp-skip');
+        ov.id = 'wtsl_cush_dlg';
+        ['data-rp-nosnap', 'data-no-persist', 'data-wts-ui'].forEach(function (a) { ov.setAttribute(a, ''); });
+        ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+        ov.setAttribute('aria-labelledby', 'wtsl_cush_title'); ov.setAttribute('aria-describedby', 'wtsl_cush_lead');
+        var f = CUSH_FIELDS.map(function (x) {
+            return '<label for="' + cushFieldId(x[0]) + '">' + esc(x[1]) + '</label><input id="' + cushFieldId(x[0]) + '" type="number" inputmode="decimal" min="' + x[2] +
+                '" max="' + x[3] + '" step="' + x[4] + '" value="' + esc(String(c[x[0]])) + '">';
+        });
+        f.splice(3, 0, '<label for="wtsl_cush_tbg">Tubing</label><select id="wtsl_cush_tbg">' + CUSH_TBG.map(function (t) {
+            return '<option value="' + esc(t[0]) + '"' + (t[0] === c.tbg ? ' selected' : '') + '>' + esc(t[2]) + '</option>';
+        }).join('') + '</select>');
+        ov.innerHTML = '<div class="wtsl-cush" tabindex="-1"><div class="wtsl-cush-hd"><h3 id="wtsl_cush_title">' + esc(CUSH_SCEN) + '</h3>' +
+            '<button type="button" data-wts-ui class="wtsl-b ic" id="wtsl_cush_x" data-act="cush-close" aria-label="Close" title="Close (Esc)">' + ICON.x + '</button></div>' +
+            '<div class="wtsl-cush-bd"><p class="wtsl-cush-lead" id="wtsl_cush_lead">Unload the completion cushion (brine, water or a light oil) before the formation flows. ' +
+            'The tubing column sets the wellhead pressure, the bean can limit the liquid rate, then comes gas breakthrough and the cushion tail. ' +
+            'With V-101 in the cushion goes through the separator; with V-101 out it goes to the destination set on the page. The values are kept on this device.</p>' +
+            '<div class="wtsl-cush-f">' + f.join('') + '</div>' +
+            '<div class="wtsl-cush-st" id="wtsl_cush_status" role="status" aria-live="polite"></div><div class="wtsl-cush-warn" id="wtsl_cush_warn"></div></div>' +
+            '<div class="wtsl-cush-ft"><button type="button" data-wts-ui class="wtsl-b" id="wtsl_cush_stop" data-act="cush-stop">Stop</button>' +
+            '<button type="button" data-wts-ui class="wtsl-b pri" id="wtsl_cush_start" data-act="cush-start">Start</button></div></div>';
+        vizEl.appendChild(ov);
+        E.cush = ov; E.cushOpener = opener || null; ov.__sig = '';
+        // listeners on the dialog itself (removed with it)
+        ov.addEventListener('change', function (ev) { if (ev && ev.target && /^wtsl_cush_/.test(ev.target.id || '')) cushSave(false); });
+        ov.addEventListener('cancel', function (ev) { if (ev && ev.preventDefault) ev.preventDefault(); closeCushion(); });
+        ov.addEventListener('click', function (ev) { if (ev && ev.target === ov) closeCushion(); });   // a click on the backdrop
+        ov.addEventListener('keydown', function (ev) { if (ev && (ev.key === 'Escape' || ev.key === 'Esc')) { if (ev.preventDefault) ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); closeCushion(); } });
+        var modal = false;
+        if (typeof ov.showModal === 'function') { try { ov.showModal(); modal = true; } catch (e) { modal = false; } }
+        if (!modal) ov.setAttribute('open', '');
+        E.cushModal = modal;
+        renderCushion(state(), true);
+        var first = q('#' + cushFieldId('V'), ov); if (first && typeof first.focus === 'function') { try { first.focus(); } catch (e) {} }
+        track('wts_cushion_form', {});
+        return ov;
+    }
+    function closeCushion() {
+        var ov = E.cush, op = E.cushOpener;
+        E.cush = null; E.cushOpener = null;
+        if (!ov) return false;
+        if (E.cushModal && ov.open && typeof ov.close === 'function') { try { ov.close(); } catch (e) {} }
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        if (op && op.isConnected !== false && typeof op.focus === 'function') { try { op.focus(); } catch (e) {} }
+        return true;
+    }
+    // read the form (sanitised by cushionPrefs: clamped to WTS_sim.DEFAULTS.cushion.lim, unknown tubing → 3-1/2″), write the
+    // sanitised values back into the form, keep them in the device prefs
+    function cushSave(reflect) {
+        var ov = E.cush, raw = {};
+        if (!ov) return cushionPrefs(prefs.cushion);
+        CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); var v = el ? parseFloat(el.value) : NaN; if (isNum(v)) raw[x[0]] = v; });
+        var sel = q('#wtsl_cush_tbg', ov); if (sel) raw.tbg = sel.value;
+        var c = cushionPrefs(raw);
+        prefs.cushion = c; writePrefs(prefs);
+        if (reflect !== false) {
+            CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); if (el && parseFloat(el.value) !== c[x[0]]) el.value = String(c[x[0]]); });
+            if (sel && sel.value !== c.tbg) sel.value = c.tbg;
+        }
+        return c;
+    }
+    function cushText(st) {
+        var c = cushOf(st);
+        if (!c || c.phase === 'off') return '';
+        return 'Cushion: ' + (CUSH_PHASE_TXT[c.phase] || c.phase) + ' · recovered ' + fmtParts(c.recovered_bbl, 'volume', 1).v + ' / ' + fmtU(c.V_bbl, 'volume', 1) +
+            ' · ' + fmtU(c.q_bpd, 'liquidRate');
+    }
+    function renderCushion(st, force) {
+        var ov = E.cush; if (!ov) return;
+        var c = cushOf(st), on = !!(c && c.on), has = !!(_sim && typeof _sim.startCushion === 'function');
+        var dest = rigOut(st, 'separator') ? 'Well stream to the ' + destTxt(st) + ' (V-101 out)' : 'Through V-101 (separator in)';
+        var es = esdState(st), why = !has ? 'Not available in this simulator version' : es !== 'open' ? 'Reset the ESD first' : on ? 'A cushion unload is running' : '';
+        var stat = (c && c.phase !== 'off' ? cushText(st) + (isNum(c.WHPtgt_psig) && c.WHPtgt_psig > 0 && on ? ' · WHP target ' + fmtU(c.WHPtgt_psig, 'pressureG') : '') + ' · ' : '') + dest;
+        var sig = stat + '|' + why + '|' + on + '|' + unitsSys();
+        if (!force && ov.__sig === sig) return;
+        ov.__sig = sig;
+        setText(q('#wtsl_cush_status', ov), stat);
+        var bs = q('#wtsl_cush_start', ov), bx = q('#wtsl_cush_stop', ov);
+        if (bs) { bs.disabled = !!why; bs.setAttribute('title', why || 'Start the cushion unload with these values'); }
+        if (bx) { bx.disabled = !on; bx.setAttribute('title', on ? 'Stop the cushion unload' : 'No cushion unload running'); }
+    }
+    function startCush() {
+        if (!_sim || typeof _sim.startCushion !== 'function') { toast('Cushion unload is not available in this simulator version', 'bad'); return null; }
+        var c = cushSave(true), r = null;
+        try { r = _sim.startCushion(cushionOpts(c)); } catch (e) { r = { ok: false, msg: String(e && e.message || e) }; }
+        r = r || { ok: false, msg: '' };
+        var w = E.cush ? q('#wtsl_cush_warn', E.cush) : null;
+        setText(w, r.ok ? String(r.warn || '') : String(r.msg || 'Cushion unload refused'));
+        if (r.ok) toast(String(r.msg || 'Cushion unload started') + (r.warn ? ' — ' + r.warn : ''), r.warn ? 'bad' : 'ok');
+        else toast('Cushion unload: ' + String(r.msg || 'refused'), 'bad');
+        track('wts_cushion', {});   // no payload (analytics allow list)
+        poke(); renderCushion(state(), true);
+        return r;
+    }
+    function stopCush() {
+        if (!_sim || typeof _sim.stopCushion !== 'function') return false;
+        var ok = false;
+        try { ok = !!_sim.stopCushion(); } catch (e) { ok = false; }
+        if (ok) toast('Cushion unload stopped');
+        setText(E.cush ? q('#wtsl_cush_warn', E.cush) : null, '');
+        poke(); renderCushion(state(), true);
+        return ok;
+    }
     function vinHead(t) {
         return '<h4><span>' + t + '</span><button type="button" data-wts-ui class="wtsl-b ic" data-act="vin-close" aria-label="Close" title="Close">' + ICON.x + '</button></h4>';
     }
@@ -3457,6 +3698,7 @@ function createController(vizEl, mopts) {
         } else if (kind === 'scen') {
             var f = (st && st.faults) || {};
             faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: faultMenuLabel(st, x), check: !!f[x[0]] }); });
+            it.push(cushItem(st));                                     // v1.5.0: after the existing entries (Q17)
         } else if (kind === 'view') {
             VIEWS.forEach(function (v) { it.push({ act: 'view', v: v[0], label: v[1], key: v[2] }); });
             it.push({ act: 'orbit', label: 'Auto-rotate', check: !!prefs.orbit, key: 'O' });
@@ -3471,6 +3713,7 @@ function createController(vizEl, mopts) {
             it.push({ h: 'Scenarios' });
             var f2 = (st && st.faults) || {};
             faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: faultMenuLabel(st, x), check: !!f2[x[0]] }); });
+            it.push(cushItem(st));
             if (mode === '3d') {
                 it.push({ h: 'View' });
                 VIEWS.forEach(function (v) { it.push({ act: 'view', v: v[0], label: v[1] }); });
@@ -3486,6 +3729,7 @@ function createController(vizEl, mopts) {
         }
         return it;
     }
+    function cushItem(st) { var c = cushOf(st); return { act: 'cush-open', label: CUSH_SCEN, check: !!(c && c.on) }; }
     function closePop() { if (E.pop && E.pop.parentNode) E.pop.parentNode.removeChild(E.pop); E.pop = null; popGroup = null; }
     function openPop(group, anchor) {
         if (popGroup === group) { closePop(); return; }
@@ -3511,6 +3755,9 @@ function createController(vizEl, mopts) {
                 ['Surge tank', fmtU(su.P, 'pressureTank')], ['Flare header', fmtU(N.flare && N.flare.P, 'pressureG')]];
             var pd = rigIn(st, 'desander') && st.desander;
             if (pd) rows.splice(1, 0, ['DS-101 in → out', fmtParts(pd.Pin, 'pressureG').v + ' → ' + fmtU(pd.Pout, 'pressureG')]);
+            var hk = ck2Active(st) && N.heaterChoke;                   // v1.5.0: CK-102 in line (between the chokes → H-101 inlet)
+            if (hk) rows.splice(rows.map(function (r) { return r[0]; }).indexOf('Choke out') + 1, 0, ['CK-102 in → out', fmtParts(hk.Pin, 'pressureG').v + ' → ' + fmtU(hk.P, 'pressureG')]);
+            if (bypLine(st)) rows.push(['Production line', fmtU(sepByOf(st).P_psig, 'pressureG')]);
             if (rigIn(st, 'surge2') && st.surge2) rows.splice(rows.length - 1, 0, ['Surge tank 2 (T-202)', fmtU(st.surge2.P, 'pressureTank')]);
         }
         else if (popGroup === 'rates' || popGroup === 'water') rows = [['Gas', fmtU(R.gas_mmscfd, 'gasRate')], ['Oil', fmtU(num(R.oilMeter_stbd, R.oil_stbd), 'oilRate')],
@@ -3661,7 +3908,19 @@ function createController(vizEl, mopts) {
             case 'card-close': closeCard(); break;
             case 'card-edit': editInputs(cardId); break;
             case 'bean': { var b = readHost('wts_bean'); if (isNum(b)) { setHostInput('wts_bean', clamp(b + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
-            case 'bypass': { var bel = hostEl('wts_bypass'); if (bel) setHostInput('wts_bypass', bel.value === '1' ? '0' : '1', null, 'change'); renderCardActions(state()); break; }
+            case 'bean2': { var b2 = readHost('wts_bean2'); if (isNum(b2) && rigIn(st, 'heaterChoke')) { setHostInput('wts_bean2', clamp(b2 + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
+            case 'bypass': {
+                var bel = hostEl('wts_bypass'), bOn = !!(bel && bel.value === '1');
+                var flipB = function () { var e2 = hostEl('wts_bypass'); if (e2) setHostInput('wts_bypass', e2.value === '1' ? '0' : '1', null, 'change'); renderCardActions(state()); };
+                // v1.5.0: with CK-102 in line the heater bypass takes it out of line too — confirm first
+                if (bel && !bOn && ck2Active(st)) confirmBox(el, 'Bypass H-101?', 'The well stream goes round the heater: CK-102 goes out of line with it.', 'Bypass', flipB, 'bypass');
+                else flipB();
+                break;
+            }
+            case 'cush-open': closeMenu(); openCushion(el); break;
+            case 'cush-start': startCush(); break;
+            case 'cush-stop': stopCush(); break;
+            case 'cush-close': closeCushion(); break;
             case 'sp': { var p = readHost('wts_Psep'); if (isNum(p)) setHostInput('wts_Psep', Math.max(5, p + (+v)), 'pressureG', 'input'); later(function () { renderCardActions(state()); }, 0); break; }
             case 'swap': if (_sim) { var ok = false; try { ok = _sim.switchGaugeTank(true); } catch (e) {} if (!ok) toast('Standby compartment not ready'); poke(); } break;
             // equipment comes from the EQV lookup: an unknown eq does nothing (never a T-301 valve for a T-202 click)
@@ -3726,9 +3985,19 @@ function createController(vizEl, mopts) {
         if (ctl.disposed || ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
         var t = ev.target, tn = t && t.tagName;
         if (tn === 'INPUT' || tn === 'SELECT' || tn === 'TEXTAREA' || (t && t.isContentEditable)) return;
+        var k = ev.key;
+        if (cushOpen()) {                                           // v1.5.0: the cushion form takes the keys while it is open
+            if (k === 'Escape' || k === 'Esc') { closeCushion(); ev.preventDefault(); return; }
+            if (k === 'Tab' && !E.cushModal) {                      // no top layer: keep Tab inside the dialog
+                var fs = Array.prototype.slice.call(E.cush.querySelectorAll('button,input,select')).filter(function (e) { return !e.disabled; });
+                var ix = fs.indexOf(document.activeElement);
+                if (fs.length && ev.shiftKey && ix <= 0) { fs[fs.length - 1].focus(); ev.preventDefault(); }
+                else if (fs.length && !ev.shiftKey && (ix < 0 || ix === fs.length - 1)) { fs[0].focus(); ev.preventDefault(); }
+            }
+            return;
+        }
         var inside = vizEl.contains(document.activeElement) || pointerInside || isMax;
         if (!inside) return;
-        var k = ev.key;
         if (k === 'Escape') {
             if (keysOpen) showKeys(false);
             else if (menu) closeMenu();
@@ -3837,7 +4106,7 @@ function createController(vizEl, mopts) {
         if (E.mqR && E.mqRFn) { try { if (E.mqR.removeEventListener) E.mqR.removeEventListener('change', E.mqRFn); else E.mqR.removeListener(E.mqRFn); } catch (e) {} }
         if (h3) { try { h3.dispose(); } catch (e) {} h3 = null; }
         unhookSim();
-        closeMenu(); closePop();
+        closeMenu(); closePop(); closeCushion();
         if (isMax) { vizEl.classList.remove('is-max'); if (document.body) document.body.classList.remove('wtsl-max'); isMax = false; }
         publishSummary(state());
         if (_ctl === api) _ctl = null;
@@ -3853,7 +4122,9 @@ function createController(vizEl, mopts) {
         _debug: { state: state, handle: function () { return h3; }, alarms: function () { return _alarmMap; }, openCard: openCard,
             closeCard: closeCard, prefs: function () { return prefs; }, loop: function () { return { raf: raf, wd: wd, lastTick: lastTick, now: nowMs(), mode: mode, h3: !!h3, loading: loading, onScreen: onScreen, disposed: ctl.disposed }; }, draw2d: function () { dirty2d = true; }, insets: computeInsets,
             // v3.3.1: the phone inset and the 3D / 2D action entry points (view tests)
-            openVin: openVin, closeVin: closeVin, onAction: function (a) { if (a) handleAction(a); }, askDump: askDump }
+            openVin: openVin, closeVin: closeVin, onAction: function (a) { if (a) handleAction(a); }, askDump: askDump,
+            // v1.5.0: the Scenarios → Cushion unload form (view tests)
+            openCushion: openCushion, closeCushion: closeCushion, startCush: startCush, stopCush: stopCush }
     };
     try {
         hookSession();

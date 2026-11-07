@@ -659,7 +659,16 @@ const SECTION_C = (G, src) => {
     }],
     ['38: no literal import(, no fetch/eval, prefs key h2viz3d_prefs, never wts_viz_prefs', () =>
       !/\bimport\s*\(|\beval\s*\(|new Function/.test(code) && /'h2viz3d_prefs'/.test(code) && !/wts_viz_prefs/.test(code) || 'rule broken'],
-    ['38: all HMI controls are buttons (no <input>/<select>/<textarea> markup)', () => !/<(input|select|textarea)\b/i.test(code) || 'found form control markup'],
+    // v1.5.0 (WP-L, docs/SIM-FOLLOWUP-PLAN.md §8.3): the one named exception is the Scenarios → Cushion unload form, a modal
+    // <dialog> with data-no-persist / data-rp-nosnap whose ids share the prefix wtsl_cush_ (device prefs, never host inputs)
+    ['38: all HMI controls are buttons (no <input>/<select>/<textarea> markup outside the cushion form)', () => {
+      const a = code.indexOf('function openCushion('), b = a < 0 ? -1 : code.indexOf('\n    function closeCushion(', a);
+      const form = a >= 0 && b > a ? code.slice(a, b) : '', rest = a >= 0 && b > a ? code.slice(0, a) + code.slice(b) : code;
+      if (/<(input|select|textarea)\b/i.test(rest)) return 'found form control markup';
+      if (!form) return true;
+      return (/'data-no-persist'/.test(form) && /'data-rp-nosnap'/.test(form) && /<input id="' \+ cushFieldId\(/.test(form) && /<select id="wtsl_cush_tbg"/.test(form) &&
+        /function cushFieldId\(k\) \{ return 'wtsl_cush_' \+ k; \}/.test(code)) || 'cushion form: ids / data-no-persist / nosnap rule broken';
+    }],
     ['38: liveNodes/liveSegs follow the live snapshot (host names, psig, MSCF/D)', () => {
       const s = simAt(600); const st = s.getState(); const n = L.liveNodes(st), g = L.liveSegs(st);
       return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank|Desander|Surge Tank 2|Heater Choke' &&
