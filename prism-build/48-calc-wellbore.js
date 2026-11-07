@@ -624,13 +624,13 @@
         var pN = [];
         var lo = Math.max(pMin, 0.1);
         if (pMax - lo < 1) pN = [lo, lo + 1];
-        else for (var k = 0; k < 7; k++) pN.push(lo + (pMax - lo) * k / 6);
+        else for (var k = 0; k < 5; k++) pN.push(lo + (pMax - lo) * k / 4);
         var noteRange = null, rangeHit = false;
         var cache = {};
         function hydroTable(Tf, fluidX) {
             var out = [];
             for (var j = 0; j < pN.length; j++) {
-                var h = hydrostatic(pN[j], gaugeTvd, datum, c, Tf, { fluid: fluidX });
+                var h = hydrostatic(pN[j], gaugeTvd, datum, c, Tf, { fluid: fluidX, stepFt: 25 });
                 if (h.rangeNote) { rangeHit = true; noteRange = h.rangeNote; }
                 out.push(h.p - pN[j]);
             }
@@ -648,22 +648,28 @@
         var fricBand = fl.nPrime && fl.kPrime ? 0.30 : (fl.fr > 0 || fl.kind === 'slickwater' ? 0.25 : 0.10);
         var sd = ctx.stepDown || ctx.nwb || null;
         var perfs = ctx.perfs || null;
+        var tables = {};   // column tables depend only on the density and the temperature model: shared by the band runs
+        function tablesFor(P, fluidX) {
+            var key = P.drho + '|' + P.model;
+            if (tables[key]) return tables[key];
+            var geoT = tempProfile(c, { model: 'static', surfF: temp.surfF, gradFper100: temp.gradFper100 }).T;
+            var out = { dpGeo: hydroTable(geoT, fluidX), vdN: null, dpDisp: null };
+            if (P.model === 'displaced') {
+                out.vdN = []; out.dpDisp = [];
+                (t[0] < ts ? [0, 0.25, 0.5, 0.75, 1] : [1]).forEach(function (f) {
+                    var V = f * Vinj;
+                    out.vdN.push(V);
+                    var prof = tempProfile(c, { model: 'displaced', surfF: temp.surfF, gradFper100: temp.gradFper100, tInjF: fluidX.tInjF, Vinj: V, t: 0 });
+                    out.dpDisp.push(hydroTable(prof.T, fluidX));
+                });
+            }
+            tables[key] = out;
+            return out;
+        }
         function once(P) {
             var fluidX = _fluid(fl);
             if (P.drho) { fluidX.rhoPpg = fl.rhoPpg + P.drho; fluidX.S = salinityFromPpg(fluidX.rhoPpg); }
-            var geoT = tempProfile(c, { model: 'static', surfF: temp.surfF, gradFper100: temp.gradFper100 }).T;
-            var dpGeo = hydroTable(geoT, fluidX), vdN = null, dpDisp = null, tau = P.tau;
-            if (P.model === 'displaced') {
-                var fr = [0, 0.25, 0.5, 0.75, 1];
-                vdN = []; dpDisp = [];
-                var hasPump = t[0] < ts;
-                (hasPump ? fr : [1]).forEach(function (f) {
-                    var V = f * Vinj;
-                    vdN.push(V);
-                    var prof = tempProfile(c, { model: 'displaced', surfF: temp.surfF, gradFper100: temp.gradFper100, tInjF: fluidX.tInjF, Vinj: V, t: 0 });
-                    dpDisp.push(hydroTable(prof.T, fluidX));
-                });
-            }
+            var TB = tablesFor(P, fluidX), dpGeo = TB.dpGeo, vdN = TB.vdN, dpDisp = TB.dpDisp, tau = P.tau;
             var pw = [], hyd = [], pipe = [], perf = [], nwb = [];
             for (var ii = 0; ii < n; ii++) {
                 var p0 = ps[ii];
