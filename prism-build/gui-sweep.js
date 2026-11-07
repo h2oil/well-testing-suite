@@ -675,7 +675,8 @@ function viewsFor(route) {
       await x.eval(() => { if (window.PRiSM_gotoStep) window.PRiSM_gotoStep(4); }); await sleep(300);
       await x.eval((k) => { const b = document.getElementById('prism_dfit_s4_' + k); if (b) b.click(); }, t);
     }) }));
-    DFIT_TOOLS.forEach((id) => v.push({ name: 'dfit-tool-' + id, scope: '#prism_tools_drawer', setup: (s) => dfitSetup(s, (x) => x.eval((k) => { if (window.PRiSM_openTools) window.PRiSM_openTools(k); }, id)) }));
+    // the Leak-off sandbox entry switches to DFIT mode, step ④ → Leak-off model (§7.1) and closes the drawer: swept on #pgBody
+    DFIT_TOOLS.forEach((id) => v.push({ name: 'dfit-tool-' + id, scope: id === 'dfit-sandbox' ? '#pgBody' : '#prism_tools_drawer', setup: (s) => dfitSetup(s, (x) => x.eval((k) => { if (window.PRiSM_openTools) window.PRiSM_openTools(k); }, id)) }));
     v.push(exp);
     return v;
   }

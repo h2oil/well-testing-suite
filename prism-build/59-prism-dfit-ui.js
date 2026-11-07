@@ -583,7 +583,8 @@
             }
             try { _apply(run, { fast: false, what: 'all', source: 'auto' }); } catch (e) { finish(); throw e; }
             finish();
-            _setStatus('✓ Analysis complete.', 'ok');
+            _nAnalyse++;
+            _setStatus('✓ Analysis ' + _nAnalyse + ' complete' + (run && run.counts && _isNum(run.counts.evals) ? ' (' + _f(run.counts.evals, 0) + ' evaluations)' : '') + '.', 'ok');
             return run;
         };
         var fail = function (err) {
@@ -1900,7 +1901,9 @@
             var T = test(), box = _byId('prism_dfit_survey'), txt = box ? String(box.value || '') : '';
             var rows = [];
             txt.split(/\r?\n/).forEach(function (ln) { var a = ln.split(/[\s;\t]+/).map(_parse); if (a.length >= 2 && _isNum(a[0]) && _isNum(a[1])) rows.push([a[0], a[1]]); });
+            if (!_need(rows.length > 0 || T.inputs.survey, 'Paste the survey first: one MD and TVD pair (ft) per line, ascending MD.')) return;
             var cl = _clampInputs((function () { var x = _clone(T.inputs); x.survey = rows.length ? rows : null; return x; })());
+            _setStatus(cl.survey ? '✓ Survey applied: ' + cl.survey.length + ' stations.' : 'Survey cleared: the well is treated as vertical.', 'ok');
             T.inputs.survey = cl.survey;
             logEntry(T, 'inputs.survey', null, cl.survey ? cl.survey.length : 0, 'Survey pasted');
             _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
@@ -2172,7 +2175,16 @@
             _esc(_f(d.p[i0], 0)) + ' psia</button><span id="prism_dfit_marker_help" class="prism-dfit-note">Arrow keys move the marker (Shift × 10); Enter keeps it.</span></div>';
         h.innerHTML = html;
         var mk = h.querySelector ? h.querySelector('#prism_dfit_marker') : null;
-        if (mk) mk.addEventListener('keydown', function (e) { _markerKey(mk, e); });
+        if (mk) {
+            mk.addEventListener('keydown', function (e) { _markerKey(mk, e); });
+            mk.addEventListener('click', function () {
+                var on = mk.getAttribute('aria-pressed') !== 'true';
+                mk.setAttribute('aria-pressed', on ? 'true' : 'false');
+                if (on && mk.focus) { try { mk.focus(); } catch (e) { /* ignore */ } }
+                var hp = _byId('prism_dfit_marker_help');
+                if (hp) hp.textContent = on ? 'Marker selected: ← → move it by one point (Shift × 10), Enter keeps it, Esc cancels.' : 'Arrow keys move the marker (Shift × 10); Enter keeps it.';
+            });
+        }
     };
     function _markerKey(mk, e) {
         var run = _run(), d = run && run.derivs;
@@ -2464,6 +2476,7 @@
         try { r = f1(ctx, opts); } catch (e) { r = { ok: false, errors: [_txt(e && e.message)] }; }
         return finish(r);
     }
+    var _nAnalyse = 0;   // ▶ Analyse runs in this session (status line)
     var _lkJob = null;
     function _sandboxCfg() {
         var f = _fn('PRiSM_dfit_lkDefaults'), cfg = null;
