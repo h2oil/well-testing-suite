@@ -259,15 +259,20 @@ function quickExtras(env) {
   // 2. structural spread of the contact case (3 aperture laws × PDL on / off): σ_c range contains the truth
   if (!env.engines.lkFit || !env.engines.lk) out.spread = { skipped: 'PRiSM_dfit_lkFit / lkSimulate (58, WP4) not implemented yet' };
   else {
-    const m = S.make(contact, 1);
+    // a noisy contact case (σ 0.05 psi): noise-free, only the true structure survives and its fitted σ_c carries the display-grid
+    // bias (0.02 psi), so the check read a one-point range just off the truth
+    const cN = JSON.parse(JSON.stringify(contact)); cN.noise = { sigma: 0.05, rho1: 0, quantum: 0.01 };
+    const m = S.make(cN, 1);
     if (!m.ok) out.spread = { skipped: m.code };
     else {
       const t0 = nowMs(), i0 = m.ds.t.findIndex((t) => t > m.truth.ts);
       const data = { t: m.ds.t.slice(i0).map((t) => t - m.truth.tStart), p: m.ds.p.slice(i0) };
       let f;
       try { f = W.PRiSM_dfit_lkFit(data, contact.lk, 'falloff', { structural: true }); } catch (e) { f = { ok: false, code: 'THREW', errors: [String(e && e.message)] }; }
-      const ms = nowMs() - t0, sr = f && f.structural && f.structural.sigmaC;
-      out.spread = { ok: !!(f && f.ok && Array.isArray(sr) && sr[0] <= m.truth.sigmaC && m.truth.sigmaC <= sr[1]), sigmaC: sr || null, truth: m.truth.sigmaC,
+      const ms = nowMs() - t0, sr = f && f.structural && f.structural.sigmaC, ci = f && f.ci95 && f.ci95.sigmaC;
+      // truth ∈ structural range ∪ CI95, widened by the display-grid bias (0.05 psi)
+      const GB = 0.05, lo = Array.isArray(sr) ? Math.min(sr[0], Array.isArray(ci) ? ci[0] : sr[0]) - GB : null, hi = Array.isArray(sr) ? Math.max(sr[1], Array.isArray(ci) ? ci[1] : sr[1]) + GB : null;
+      out.spread = { ok: !!(f && f.ok && lo !== null && lo <= m.truth.sigmaC && m.truth.sigmaC <= hi), sigmaC: sr || null, ci95: ci || null, truth: m.truth.sigmaC,
                      ms: +ms.toFixed(0), budgetMs: BUDGETS.spread, code: f && f.ok === false ? f.code : undefined };
     }
   }

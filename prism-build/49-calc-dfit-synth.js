@@ -369,6 +369,23 @@
         var dpCL = 0.5 * (isip + sc) - pr;
         return dpCL > 0 ? 1000 * Math.pow(CL / (0.0374 * dpCL), 2) * mu / (phi * ct) : null;
     }
+    // the pressure at the largest dP/dG (Bourdet, 0.05 ln G) among the falloff samples below σ_c and above p_r + 10 % of σ_c − p_r
+    function lkF2(tt, pp, ts, tp, sc, pr) {
+        if (!(tp > 0)) return null;
+        var Gs = [], ps = [], i;
+        for (i = 0; i < tt.length; i++) if (tt[i] > ts) { var gv = GFn((tt[i] - ts) / tp, 0.5); if (gv > 0) { Gs.push(gv); ps.push(pp[i]); } }
+        var n = Gs.length, best = null, bestV = -Infinity, Lw = 0.05;
+        for (i = 1; i < n - 1; i++) {
+            if (!(ps[i] <= sc && ps[i] >= pr + 0.1 * (sc - pr))) continue;
+            var l = i - 1, r = i + 1;
+            while (l > 0 && Math.log(Gs[i] / Gs[l]) < Lw) l--;
+            while (r < n - 1 && Math.log(Gs[r] / Gs[i]) < Lw) r++;
+            var d1 = (ps[l] - ps[i]) / (Gs[i] - Gs[l]), d2 = (ps[i] - ps[r]) / (Gs[r] - Gs[i]), wl = Math.log(Gs[r] / Gs[i]), wr = Math.log(Gs[i] / Gs[l]);
+            var dv = (d1 * wl + d2 * wr) / (wl + wr);
+            if (fin(dv) && dv > bestV) { bestV = dv; best = ps[i]; }
+        }
+        return best;
+    }
     function sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr) {        // end of stiffening: max of f_L(p)/C(p) below σ_c
         var best = sc, bestV = -1;
         for (var x = 0; x <= sc - pr; x += Math.max(0.5, (sc - pr) / 4000)) {
@@ -397,7 +414,11 @@
         var pStart = fin(gd.pStart) ? gd.pStart : gd.pr;
         if (!(gd.isip > gd.sigmaC && gd.sigmaC > gd.pr)) return fail('BAD_INPUT', 'gdomain needs isip > sigmaC > pr', ['gd']);
         var M = gdModel(gd, wb.VwCw, wb.cwOfP);
-        var Vstar = pos(gd.Vstar) ? gd.Vstar : M.X * (gd.Gc + 4 * (PI / 2) / PI);   // V_L(t_c) = X·(G_c + 4g0/π)
+        // V_L(t_c) = X·(G_c + 4g0/π·m): with PDL the pumping leak-off runs at the multiplier of the pumping pressure
+        // m = exp(C_d·(ISIP − p_fo)) (it used to be 1, so the PDL demo's truth assumed constant-CL pumping leak-off while its
+        // falloff had the PDL multiplier — the mini-model PDL case needs m ≈ 4, as the engine now does)
+        var mPump = ((gd.mechanism === 'pdl' || gd.Cd > 0) && gd.isip > M.pfo) ? Math.exp(gd.Cd * (gd.isip - M.pfo)) : 1;
+        var Vstar = pos(gd.Vstar) ? gd.Vstar : M.X * (gd.Gc + 4 * (PI / 2) / PI * mPump);
         var Vi = Vstar + M.vwcw(gd.sigmaC) * (gd.sigmaC - pStart);
         var sch = buildSchedule(gd.q, Vi, gd.stepDown);
         var tp = sch.tp;                                             // pump definition (t_s − t_start)
@@ -505,15 +526,26 @@
         var tpMin = te * 60;
         var CL = 2 * X * BBL / (PI * geom.rp * geom.Af * Math.sqrt(tpMin));
         var exEnd = acaExact(a, [te + dtEnd], { geometry: geo });
+        // gas: the record is the liquid response mapped through m(p), so the truth pressures are mapped the same way (ISIP and
+        // σ_c used to stay at the liquid values: the scorer marked the engine's mapped 8,068.7 / 7,478.1 wrong against 8,128.1 /
+        // 7,528.1), and k is the gas-convention value: the response's kh/μ_liq read at μ_g(p_i), k = k_liq·μ_g,i/μ_liq
+        var scT = gas ? gas(sc) : sc, isipT = gas ? gas(sc + pn) : sc + pn, kT = a.k;
+        if (gas) { var mugi = gasMuAt(a, a.pi); if (pos(mugi) && pos(a.mu)) kT = a.k * mugi / a.mu; }
         var truth = {
-            sigmaC: sc, sigmaCHyd: sc, sigmaCF2: sc, isip: sc + pn, pi: a.pi, k: a.k, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal',
+            sigmaC: scT, sigmaCHyd: scT, sigmaCF2: scT, isip: isipT, pi: a.pi, k: kT, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal', kLiquid: gas ? a.k : undefined,
             regimeAtEnd: exEnd.ok ? regimeFromSD(exEnd.sD[0], geo) : null, sDEnd: exEnd.ok && fin(exEnd.sD[0]) ? exEnd.sD[0] : null, tcInj: a.tcInj, eta: Gc / (Gc + 2), CL: CL, Gamma: 2 * mG / (PI * Math.sqrt(tpMin)),
             AfCf: AfCf, Rvis: AfCf / (AfCf + wb.VwCw), xf: geom.xf,
-            source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: pn, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
+            source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: isipT - scT, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
             kCL: kFromCL(CL, sc + pn, sc, a.pi, a.mu, a.phi, a.ct), kSolved: false, acaScored: true, geometry: geo, rampSlopePsiMin: pump.rampSlopePsiMin,
             rampScaled: pump.rampScaled, pb: pump.pb, tbInj: pump.tb, pfo: null, pHr: null, fluid: a.fluid === 'gas' ? 'gas' : 'water', gasApprox: !!gas
         };
         return { ok: true, p: p, seg: sch.seg, tp: te, dtEnd: dtEnd, pStart: a.pi, truth: truth, gd: gd, M: M, aca: a, pump: pump };
+    }
+    // μ_g at p (the correlations 57 uses: Sutton pseudo-criticals, Dranchuk–Abou-Kassem z, Lee–Gonzalez–Eakin μ), call time
+    function gasMuAt(a, p) {
+        var C = G.PRiSM_pvt_correlations, T = pos(a.T_F) ? a.T_F : 200, sg = pos(a.SG_g) ? a.SG_g : 0.65;
+        if (!C || !(p > 0)) return null;
+        try { var z = C.Z_dranchukAbouKassem((T + 459.67) / C.Tpc_sutton(sg), p / C.Ppc_sutton(sg)); return C.mu_g_leeGonzalezEakin(sg, T, z, p); } catch (e) { return null; }
     }
     // gas: the convolution gives the adjusted pressure p_a = p_i + (μz/p)_i·∫ p/(μz) dp; map back with PRiSM's own m(p)
     // (PRiSM_mpTable, call time). The clock is not stretched (pseudo-time not applied; truth.gasApprox).
@@ -586,7 +618,11 @@
             return ap.fres * Math.exp(-x / sr) + (1 - ap.fres) * Math.exp(-x / ap.sc);
         }
         var vwcw = function () { return VwCw; };
-        var sF2 = (law === 'none' || !AfCf) ? sc : sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr);
+        // F2 truth (end of stiffening): the mini-model's own dP/dG maximum below σ_c on its display grid (G with α = ½ on the
+        // pump time, a Bourdet window of 0.05 in ln G). The quasi-static f_L = (p − p_r)/(σ_c − p_r) of sigmaCF2From misses the
+        // Duhamel memory of the leak-off (§4.11), so the 436 psi median F2 "error" of the quick set came from the truth
+        var sF2 = (law === 'none' || !AfCf) ? sc : lkF2(tt, pp, ts, ts - tStartInj, sc, pr);
+        if (!fin(sF2)) sF2 = (law === 'none' || !AfCf) ? sc : sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr);
         var Gc05 = ev.Gc && fin(ev.Gc.a05) ? ev.Gc.a05 : null;
         var isip = fin(ev.isip) ? ev.isip : p(ts + 1e-6);
         var tpMin = (ts - tStartInj) * 60;

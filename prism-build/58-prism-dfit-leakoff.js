@@ -1570,7 +1570,7 @@
             return r;
         } catch (err) { return _fail('FIT_FAILED', err && err.message || err, []); }
     }
-    // structural spread: refit with each aperture law and PDL on/off; ranges over the structures with χ² ≤ 1.5 × the best
+    // structural spread: refit with each aperture law and PDL on/off; ranges over the structures with Δχ²/s² ≤ 4 + 2·|Δn_p|
     function _structural(fit, data, preset, opts) {
         var laws = ['none', 'exp', 'hyp'], rows = [];
         laws.forEach(function (law) {
@@ -1583,8 +1583,13 @@
                 if (f && f.ok) rows.push(f);
             });
         });
-        var bestChi = Infinity; rows.forEach(function (f) { if (f.chi2 < bestChi) bestChi = f.chi2; });
-        var keep = rows.filter(function (f) { return f.chi2 <= 1.5 * bestChi; });
+        // kept: Δχ²/s² ≤ 4 + 2·|Δn_p| against the best structure (s² = χ²_best/(n − n_p,best), the residual variance). The
+        // ratio rule χ² ≤ 1.5·χ²_best depended on n: noise-free it kept only the true structure (a one-point range), on noisy
+        // data with n ≈ 500 it admitted structures up to Δχ²/s² ≈ 250
+        var best = null; rows.forEach(function (f) { if (!best || f.chi2 < best.chi2) best = f; });
+        var nD = data && data.t ? data.t.length : 0, npB = best && best.free ? best.free.length : 0;
+        var s2B = best ? Math.max(best.chi2 / Math.max(1, nD - npB), 1e-30) : 1;
+        var keep = rows.filter(function (f) { var dnp = Math.abs((f.free ? f.free.length : 0) - npB); return (f.chi2 - best.chi2) / s2B <= 4 + 2 * dnp; });
         function rng(get) { var v = keep.map(get).filter(function (x) { return _isFinite(x); }); if (!v.length) return null; return [_min.apply(null, v), _max.apply(null, v)]; }
         fit.structural = { sigmaC: rng(function (f) { return f.params.sigmaC != null ? f.params.sigmaC : f.cfg.sigmaC; }), pr: rng(function (f) { return f.params.pr != null ? f.params.pr : f.cfg.pr; }),
                            k: rng(function (f) { return f.kEq; }), CLeq: rng(function (f) { return f.CLeq; }), n: keep.length };

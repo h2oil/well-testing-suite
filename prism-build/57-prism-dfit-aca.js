@@ -533,6 +533,7 @@
     };
 
     // Bounds on k when radial flow is not reached (§4.12), at the conservative ends of the input ranges
+    var KMEM = 1.3;                    // CL model-form factor of the leak-off-limit k bound (Duhamel memory, §4.11)
     G.PRiSM_dfit_acaBounds = function (ctx) {
         try {
             ctx = ctx || {};
@@ -566,15 +567,23 @@
                 his.push({ edge: 'hi', rule: 'radial-not-reached', value: rnd(ctx.Lmax, 1), k: 1.6 * phiHi * muHi * ctHi * ctx.Lmax * ctx.Lmax / (KC.etaC * xEnd) });
             }
             // k_lo, linear flow with the largest plausible area: k = (97.54·V/(A_max·m_L′))²·μ/(φc_t)
-            if (pos(ctx.Amax) && pos(ctx.mImpLin) && pos(VLo) && pos(muLo) && pos(phiHi) && pos(ctHi)) {
+            // (not under PDL: the opened fissures leak over an area that the main fracture's 2·L_max·h does not bound — the
+            // mini-model PDL case put k_lo 1.5 × above the true k)
+            if (ctx.classType !== 'pdl' && pos(ctx.Amax) && pos(ctx.mImpLin) && pos(VLo) && pos(muLo) && pos(phiHi) && pos(ctHi)) {
                 los.push({ edge: 'lo', rule: 'linear-Amax', value: rnd(ctx.Amax / (2 * (pos(h) ? h : 1)), 1), k: Math.pow(KC.lin * VLo / (ctx.Amax * ctx.mImpLin), 2) * muLo / (phiHi * ctHi) });
             }
             // k_lo, leak-off cannot exceed its reservoir-controlled limit: k ≥ μ/(φc_t)·(CL_lo/(1.1827e-3·Δp_hi)),
             // Δp_hi = p_mid,hi − p_i,lo (the Δp_CL convention ½·(ISIP + σ_c) − p_r at the conservative ends, §4.22)
+            // The G-analysis CL carries the Duhamel memory of the higher early Δp (§4.11): on reservoir-controlled leak-off it sits
+            // ~19 % above the reservoir-equivalent CL at the mean Δp (mini-model reference 2.267e-4 against 1.903e-4), so the
+            // "limit" was crossed by construction and k_lo missed the true k in every mini-model case. CL_lo is divided by the
+            // model-form factor KMEM = 1.3 (the 19 % plus margin, calibrated on the lk matrix cases). Under PDL or tip extension
+            // the observed CL is not matrix leak-off at all: the bound is not used (ctx.classType)
             var dpCL = (fin(ctx.pMidHi) && fin(ctx.piLo)) ? ctx.pMidHi - ctx.piLo : null;
             var CLlo = pos(ctx.CLlo) ? ctx.CLlo : (pos(ctx.CL) ? ctx.CL : null);
-            if (pos(dpCL) && CLlo && pos(muLo) && pos(phiHi) && pos(ctHi)) {
-                los.push({ edge: 'lo', rule: 'leakoff-limit', value: rnd(dpCL, 1), k: muLo / (phiHi * ctHi) * Math.pow(CLlo / (KC.invmL * dpCL), 2) });
+            var noLeakLim = ctx.classType === 'pdl' || ctx.classType === 'tip';
+            if (!noLeakLim && pos(dpCL) && CLlo && pos(muLo) && pos(phiHi) && pos(ctHi)) {
+                los.push({ edge: 'lo', rule: 'leakoff-limit', value: rnd(dpCL, 1), k: muLo / (phiHi * ctHi) * Math.pow(CLlo / (KMEM * KC.invmL * dpCL), 2) });
             }
             var kHi = null, kLo = null, bHi = null, bLo = null;
             his.forEach(function (b) { if (pos(b.k) && (kHi == null || b.k < kHi)) { kHi = b.k; bHi = b; } });
@@ -973,7 +982,7 @@
                 });
                 var b = G.PRiSM_dfit_acaBounds({ diag: dg, Lmax: Lmax, Amax: Amax, CL: CL, CLlo: CLlo, pMidHi: fin(isipHi) ? 0.5 * (isipHi + sigmaHi) : null,
                     piLo: core.pi.lo, piHi: fin(core.pi.hi) ? core.pi.hi : core.pi.value, tEnd: tInj[tInj.length - 1], t0: core._t0 != null ? core._t0 : t0, mImpLin: imp.lin ? imp.lin.m : null,
-                    phi: phi, mu: mu, ct: ct, h: h, V: V, ranges: opts.ranges || iop.ranges || null, props: well.fluid === 'gas' ? function (pp) { var g = gasProps(pp, well); return g ? { mu: g.mu, ct: ct } : null; } : null });
+                    phi: phi, mu: mu, ct: ct, h: h, V: V, ranges: opts.ranges || iop.ranges || null, classType: run.classification && run.classification.ok !== false ? run.classification.type : null, props: well.fluid === 'gas' ? function (pp) { var g = gasProps(pp, well); return g ? { mu: g.mu, ct: ct } : null; } : null });
                 if (b.ok && (b.kLo != null || b.kHi != null)) {
                     bounds = { kLo: b.kLo != null ? b.kLo : 0, kHi: b.kHi != null ? b.kHi : (b.kLo || 0), binding: b.binding, direction: b.direction, dpCL: b.dpCL };
                     if (b.warnings) warnings = warnings.concat(b.warnings);
@@ -1748,10 +1757,20 @@
             }
             var C = Z.cus, spacing = mode === 'fine' ? 2 * L / FINE : 2 * L;
             var lineVarOf = function (ln, Gv) { return ln.s2 * C.infl * (1 / ln.n + (Gv - ln.xb) * (Gv - ln.xb) / ln.sxx); };
+            // the reference line over the last 0.7 ln units before the candidate (less 2L): after a reservoir-controlled decline
+            // the closure is a departure from the declining trend, not from the early line (as 56's closed form, §4.11)
+            var lineWin = function (Gc0) {
+                var gHi = Gc0 * Math.exp(-2 * L), gLo = gHi * Math.exp(-0.7), p00 = K.p[0], Rw = _sums();
+                for (var kw = 0; kw < K.G.length && K.G[kw] <= gHi; kw++) {
+                    if (K.G[kw] < gLo) continue;
+                    var gx = K.G[kw], py = K.p[kw] - p00; Rw.n++; Rw.sx += gx; Rw.sy += py; Rw.sxx += gx * gx; Rw.sxy += gx * py; Rw.syy += py * py; Rw.fp = kw + 1;
+                }
+                return lineOf(Rw);
+            };
             var zOf = function (cd, R) {
                 var Gc0 = K.G[cd.k0];
                 addTo(R, Gc0 * Math.exp(-2 * L));
-                var ln = lineOf(R);
+                var ln = C.decline ? lineWin(Gc0) : lineOf(R);
                 // detection starts once the line spans G 0.05 … ≥ 2 and the candidate lies beyond G 3
                 if (!ln || ln.gMax < 2 || Gc0 < 3 || !(ln.m < 0)) return null;
                 counts.candidates++;
@@ -1768,8 +1787,13 @@
                 var R = commit ? C.R : { n: C.R.n, sx: C.R.sx, sy: C.R.sy, sxx: C.R.sxx, sxy: C.R.sxy, syy: C.R.syy, fp: C.R.fp };
                 var zz = zOf(cd, R); if (!zz) return null;
                 var Sp = Math.max(0, C.Sp + zz.z - kC), Sm = Math.max(0, C.Sm - zz.z - kC);
+                // only the closure sign raises a call: p below the line (dP/dG rising, the stiffening at closure). p above the line
+                // first is a reservoir-controlled (matrix) decline — dP/dG falling with p − p_r — and was called a closure about
+                // 5 h early on the mini-model reference: it switches the reference to the declining trend (lineWin) and restarts
+                if (!C.decline && Sp > C.h) { if (commit) { C.decline = true; C.Sp = 0; C.Sm = 0; C.seq++; } return null; }
+                if (C.decline) Sp = 0;
                 if (commit) { C.Sp = Sp; C.Sm = Sm; C.seq++; }
-                if (Sp > C.h || Sm > C.h) return { k1: cd.k1, sgn: Sp > C.h ? 1 : -1, line: zz.ln };
+                if (Sm > C.h) return { k1: cd.k1, sgn: -1, line: zz.ln };
                 return null;
             };
             var nK = K.G.length, k, al = null;
@@ -2702,13 +2726,17 @@
             if (uc && uc.mode === 'user' && fin(uc.p)) { pc = uc.p; fam = uc.family || null; method = uc.method || 'user'; }
             else if (uc && uc.mode === 'family' && uc.family && fams[uc.family] && fin(fams[uc.family].p50)) { pc = fams[uc.family].p50; fam = uc.family; method = uc.method || 'family'; }
             else if (c.mode === 'single' && fin(c.value)) pc = c.value;
-            var fctx = function (f, m) { return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, family: f, method: m }; };
-            if (fin(pc)) { var ch = _call('PRiSM_dfit_frac', [pc, r.derivs, fctx(fam, method)], P.W, 'FRAC_FAILED'); r.frac.chosen = ch && ch.ok !== false ? ch : null; }
-            ['F0', 'F1', 'F2', 'F3', 'F4'].forEach(function (F) {
-                var f = fams[F]; if (!f || !fin(f.p50)) return;
-                var o = _call('PRiSM_dfit_frac', [f.p50, r.derivs, fctx(F, F)], P.W, 'FRAC_FAILED');
-                if (o && o.ok !== false) r.frac.byFamily[F] = o;
-            });
+            var clsF = null;
+            var fctx = function (f, m) { return { events: r.events, isip: r.isip, inputs: P.inputs, well: P.well, family: f, method: m, classification: clsF }; };
+            var doFrac = function () {
+                if (fin(pc)) { var ch = _call('PRiSM_dfit_frac', [pc, r.derivs, fctx(fam, method)], P.W, 'FRAC_FAILED'); r.frac.chosen = ch && ch.ok !== false ? ch : null; }
+                ['F0', 'F1', 'F2', 'F3', 'F4'].forEach(function (F) {
+                    var f = fams[F]; if (!f || !fin(f.p50)) return;
+                    var o = _call('PRiSM_dfit_frac', [f.p50, r.derivs, fctx(F, F)], P.W, 'FRAC_FAILED');
+                    if (o && o.ok !== false) r.frac.byFamily[F] = o;
+                });
+            };
+            doFrac();
             var cands = [];
             if (c.mode === 'single' && fin(c.value)) cands.push({ label: 'Consensus', family: null, p: c.value, method: 'consensus' });
             ['F1', 'F2', 'F4'].forEach(function (F) { if (fams[F] && fin(fams[F].p50)) cands.push({ label: 'Family ' + F, family: F, p: fams[F].p50, method: F }); });
@@ -2730,6 +2758,9 @@
             if (r.classification && r.classification.ok !== false) {
                 r.classification.prSource = prSrc;
                 if (prSrc === 'hydrostatic' && arrOk(r.classification.evidence)) r.classification.evidence.push(_txt('p_r for the expected decline is assumed hydrostatic at the datum, ' + fmt(prC, 0) + ' psia (no p_i known).'));
+                // PDL: the fracture chain again with the PDL multiplier at the ISIP (56 frac: the pumping leak-off runs at that
+                // multiplier, so C_sys = V*/(p_n + (4g0/π)·m_G·m) instead of the constant-CL η·V*/p_n)
+                if (r.classification.type === 'pdl' && r.classification.pdl && fin(r.classification.pdl.multAtIsip)) { clsF = r.classification; doFrac(); }
             }
         } },
         { id: 'aca', fn: function (P) {

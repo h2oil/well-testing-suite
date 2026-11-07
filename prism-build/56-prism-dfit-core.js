@@ -1352,14 +1352,32 @@
             if (!(up || r0 < -t)) continue;
             var held = 0, j;
             for (j = i; j < n; j++) { var rj = rel(j), tj = thr(j); if (up ? rj > tj : rj < -tj) held++; else break; }
-            if (held >= nHold || (nHold <= 3 && held >= 2 && Math.log(x[i + held - 1] / x[i]) >= 0.05) || (j === n && held >= 2)) {
+            // a short excursion (fewer than nHold samples: nHold grows to 15 on smooth, correlated residuals) that then crosses to
+            // the other side of the line within 0.3 ln units is a sharp closure, not noise (see the persistence test below)
+            // (the excursion must also be far beyond the noise, Σ(r/σ_r)/√n_eff ≥ 8: correlated noise crosses the line too)
+            var crossH = false;
+            if (held >= 3 && held < nHold) {
+                var zH = 0; for (var jz = i; jz < i + held; jz++) zH += (y[jz] - yh(jz)) / Math.max(sigY, 1e-12);
+                if (Math.abs(zH) / Math.sqrt(_nEff(held, rr)) >= 8)
+                    for (var jc = i + held; jc < n && x[jc] <= x[i] * Math.exp(0.3); jc++) { var rc = rel(jc), tc = thr(jc); if (up ? rc < -tc : rc > tc) { crossH = true; break; } }
+            }
+            if (held >= nHold || crossH || (nHold <= 3 && held >= 2 && Math.log(x[i + held - 1] / x[i]) >= 0.05) || (j === n && held >= 2)) {
                 // persistence: a closure departure grows, a correlated-noise excursion reverts. The smoothed residual must
                 // stay beyond half the threshold, same sign, over max(0.05, 0.25·ρ1) in ln G and at least 6 samples after the
                 // crossing, and the raw residuals there must be significant together: Σ(r/σ_r)/√n_eff ≥ 4 (σ_r = σ_y/ŷ, n_eff
                 // = n·(1 − ρ)/(1 + ρ)). Many crossings are tested on a long falloff, so one 3σ crossing alone is not enough.
                 var span = Math.max(0.05, 0.25 * rr), persist = true, zs = 0, nz = 0;
                 for (j = i; j < n && (Math.log(x[j] / x[i]) <= span || nz < 6); j++) {
-                    var rp = rel(j); if (up ? rp <= 0.5 * thr(j) : rp >= -0.5 * thr(j)) { persist = false; break; }
+                    var rp = rel(j);
+                    if (up ? rp <= 0.5 * thr(j) : rp >= -0.5 * thr(j)) {
+                        // a sharp closure reverses ACROSS the line within 0.3 ln units (the excursion can be shorter than the span
+                        // on smooth, highly correlated data); a correlated-noise excursion only returns to it
+                        var crossE = false;
+                        if (nz > 0 && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) >= 8)
+                            for (var jj = j; jj < n && x[jj] <= x[i] * Math.exp(0.3); jj++) { var rq = rel(jj), tq = thr(jj); if (up ? rq < -tq : rq > tq) { crossE = true; break; } }
+                        if (!crossE) persist = false;
+                        break;
+                    }
                     zs += (y[j] - yh(j)) / Math.max(sigY, 1e-12); nz++;
                 }
                 if (persist && j < n && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) < 4 && sigY > 0) persist = false;
@@ -1598,8 +1616,77 @@
                 }
             }
         }
+        // PDL hump (§4.4, §4.11: fit after the hump). With pressure-dependent leak-off the earliest straight p-G piece lies on the
+        // hump (dP/dG still falling) and its slope is not m_G. A later straight window (≥ 0.5 ln units, ≥ 6 points, its own
+        // G·dP/dG line through the origin, |ι| < 0.05) with a dP/dG at least 10 % lower, reached by a dP/dG that only falls
+        // (2 % tolerance) and joins that window within 5 %, is the post-hump line: it sets m_G and the early window of the
+        // picks; the ISIP stays on the earliest line (the hump decays from the true ISIP)
+        var late = null;
+        if (el && !opts.noPostHump) {
+            var Pp = _prefix(Gv, p), smD = _movMed(Gv.map(function (g, k) { return _fin(yt[k]) && g > 0 ? yt[k] / g : null; }), 5);
+            var humpOK = function (e1, w2) {
+                if (!w2 || w2.n < 6 || Math.log(Gv[w2.i1] / Gv[w2.i0]) < 0.5 || !(-w2.b > 0) || !(-w2.b < 0.9 * -e1.b)) return false;
+                // ι over the window less one Bourdet window L at its end (the derivative there already sees what follows)
+                var j1L = w2.i0; while (j1L + 1 <= w2.i1 && Gv[j1L + 1] <= Gv[w2.i1] * Math.exp(-L)) j1L++;
+                var bL = -w2.b, lyL = j1L - w2.i0 >= 4 ? _linfit(Gv, yt, w2.i0, j1L, false) : null, ioL = lyL && lyL.b > 0 ? lyL.a / (lyL.b * Gv[j1L]) : 1;
+                if (!(Math.abs(ioL) < 0.05 && _fin(smD[w2.i0]) && Math.abs(smD[w2.i0] / bL - 1) <= 0.05)) return false;
+                for (var kk = e1.i0, mx = -INF; kk <= w2.i0; kk++) {
+                    if (!_fin(smD[kk])) continue;
+                    if (mx > -INF && smD[kk] > 1.02 * mx) return false;      // dP/dG rises again: not a decaying hump
+                    mx = mx === -INF ? smD[kk] : Math.min(mx, smD[kk]);
+                }
+                return _fin(smD[e1.i0]) && smD[e1.i0] >= 1.1 * bL;
+            };
+            var asLate = function (w2) { return { a: w2.a, b: w2.b, i0: w2.i0, i1: w2.i1, seA: w2.seA, s: w2.s, n: w2.n, postHump: true }; };
+            // the window _earlyLine chose (the one reaching the largest G) may itself be the post-hump line: the ISIP line is
+            // then the earliest window from G_min (on the hump, where the decline starts from the true ISIP)
+            var elF = _growLine(Gv, p, iG, iMax, sigEff, Pp, nzP.rho);
+            // — only when the hump carries a real pressure drop (the two intercepts differ by ≥ 15 % of the drop to the end of the
+            // later window): a short bleed-off of the near-well friction on a soft (gas-filled) wellbore also lifts the first
+            // samples, by a few psi, and there the later line's intercept is the ISIP
+            if (elF && elF.n >= 6 && el.i0 > elF.i1 && elF.a - el.a >= 0.15 * (elF.a - p[el.i1]) && humpOK(elF, el)) { late = asLate(el); el = { a: elF.a, b: elF.b, i0: elF.i0, i1: elF.i1, seA: elF.seA, s: elF.s, n: elF.n }; }
+            var st2 = el.i1, tr2 = 0;
+            while (!late && st2 <= iMax - 5 && tr2 < 24) {
+                var w2 = _growLine(Gv, p, st2, iMax, sigEff, Pp, nzP.rho);
+                if (humpOK(el, w2)) late = asLate(w2);
+                tr2++;
+                var gT2 = Gv[st2] * 1.25; while (st2 <= iMax && Gv[st2] < gT2) st2++;
+            }
+            var bEl = -el.b;
+            // second route: after the hump the leak-off can still decline gently with p − p_r (no exactly straight p-G piece). The
+            // hump ends where the smoothed dP/dG stops falling fast (log slope over the next 0.2 ln above −0.1, after a hump
+            // with dP/dG(start) ≥ 1.3 × its end value); the post-hump window runs on while dP/dG stays within 15 % of that end
+            // value (≥ 0.4 ln units, ≥ 6 points), its G·dP/dG line within |ι| < 0.15 of the origin
+            if (!late) {
+                var kAtG = function (gv, from) { var k = from; while (k + 1 <= iMax && Gv[k + 1] <= gv) k++; return k; };
+                var kh = -1;
+                for (var q = el.i1; q <= iMax - 3 && kh < 0; q++) {
+                    if (!_fin(smD[q]) || !(smD[q] > 0)) continue;
+                    var qn = kAtG(Gv[q] * Math.exp(0.2), q);
+                    if (qn <= q || !_fin(smD[qn]) || !(smD[qn] > 0)) continue;
+                    if (Math.log(smD[qn] / smD[q]) / Math.log(Gv[qn] / Gv[q]) > -0.1 && _fin(smD[el.i0]) && smD[el.i0] >= 1.3 * smD[q]) kh = q;
+                }
+                if (kh > 0) {
+                    var ref = smD[kh], kq = kh;
+                    while (kq + 1 <= iMax && _fin(smD[kq + 1]) && Math.abs(smD[kq + 1] / ref - 1) <= 0.15) kq++;
+                    var kqL = kq; while (kqL > kh && Gv[kqL] > Gv[kq] * Math.exp(-L)) kqL--;
+                    if (kq - kh >= 5 && Math.log(Gv[kq] / Gv[kh]) >= 0.4) {
+                        var wfL = _winFits(Pp, Gv, kh, kq), lyQ = kqL - kh >= 4 ? _linfit(Gv, yt, kh, kqL, false) : null;
+                        var ioQ = lyQ && lyQ.b > 0 ? lyQ.a / (lyQ.b * Gv[kqL]) : 1;
+                        for (var kk2 = el.i0, mx2 = -INF, okQ = true; kk2 <= kh; kk2++) {
+                            if (!_fin(smD[kk2])) continue;
+                            if (mx2 > -INF && smD[kk2] > 1.02 * mx2) okQ = false;
+                            mx2 = mx2 === -INF ? smD[kk2] : Math.min(mx2, smD[kk2]);
+                        }
+                        if (wfL && wfL.lin.b < 0 && -wfL.lin.b < 0.9 * bEl && Math.abs(ioQ) < 0.15 && okQ)
+                            late = { a: wfL.lin.a, b: wfL.lin.b, i0: kh, i1: kq, seA: wfL.lin.seA, s: wfL.lin.s, n: wfL.lin.n, postHump: true, plateau: true };
+                    }
+                }
+            }
+        }
         var isip = _fin(opts.isip) ? opts.isip : (el ? el.a : p[0]);
-        var mG = el ? -el.b : null;
+        var elM = late || el;
+        var mG = elM ? -elM.b : null;
         var dpI = p.map(function (v) { return isip - v; });
         var y = yt, Dd = _bourdet(dt, dpI, L);
         var GdPdG = new Array(n), dPdG = new Array(n), D = new Array(n), Dref = new Array(n), ppd = new Array(n), sdPds = new Array(n), dPds = new Array(n), sq = new Array(n), usable = new Array(n);
@@ -1630,7 +1717,7 @@
         return {
             ok: true, alpha: gc.alpha, gType: gc.gType, tp: tp, tpChoice: tpc.choice, dt: dt, dtD: dtD, G: Gv, p: p, dpIsip: dpI,
             GdPdG: GdPdG, dPdG: dPdG, sqrtDt: sq, sdPds: sdPds, dPds: dPds, D: D, Dref: Dref, ppd: ppd, mG: _nn(mG),
-            earlyWin: el ? [Gv[el.i0], Gv[el.i1]] : [gMin, gMin], h: null, axis: opts._inner ? { GdPdG: [0, 1], dPdG: [0, 1] } : { GdPdG: axis(GdPdG), dPdG: axis(dPdG) },
+            earlyWin: elM ? [Gv[elM.i0], Gv[elM.i1]] : [gMin, gMin], h: null, humpWin: late ? [Gv[el.i0], Gv[late.i0]] : null, axis: opts._inner ? { GdPdG: [0, 1], dPdG: [0, 1] } : { GdPdG: axis(GdPdG), dPdG: axis(dPdG) },
             L: L, gMin: gMin, gMinWhy: why, usable: usable, sigmaY: sigmaY, ev: ['G1'],
             // extras (not in the §3.5 table; read by 56's own pick, ISIP and frac functions and by 57)
             ts: ts, isip: isip, idx: idx, Gp: Gp, sigma: sigma, sigmaEff: sigEff, rho: _r(nzP.rho, 4), early: el ? { a: el.a, b: el.b, seA: el.seA, i0: el.i0, i1: el.i1, s: el.s, n: el.n } : null,
@@ -2113,7 +2200,12 @@
                     text: 'G·dP/dG first leaves the early line downward, so the compliance and tangent picks coincide at G ' + _f1(gP, 2) + '.' };
             } else res.noDeparture = true;
         }
+        // the pre-refinement detection pressure (the departure sample), read by the stability grid: the hinge / vertex refinement
+        // re-reads one pressure for every L / tp setting, so the grid spread g measured no sensitivity at all
+        // (an abrupt break is exact — the detection sample then already lies after the jump — so it keeps its reading)
+        if (res.picks.compliance) res.picks.compliance.pRaw = res.abrupt ? res.picks.compliance.p : v.p[iDep];
         if (tg) {
+            tg.pRaw = res.abrupt ? tg.p : (_fin(tg.iPk) && tg.iPk >= 0 && tg.iPk < n ? v.p[tg.iPk] : v.p[iDep]);
             tg.text = 'The tangent through the origin touches G·dP/dG up to G ' + _f1(tg.G, 2) + ' (largest dP/dG ' + _f1(tg.sStar, 2) + ' psi per unit G).';
             res.picks.tangent = tg;
             // dependent F2 members: the dP/dG maximum and the √t inflection (smoothed, vertex-refined), searched after the
@@ -2408,6 +2500,17 @@
         var pStart = _fin(ev.pStart) ? ev.pStart : (_fin(well.pi) ? well.pi : null);
         var ViStar = _fin(ctx.ViStar) ? ctx.ViStar : ((_fin(ev.Vi) && pStart !== null) ? ev.Vi - VwCw * (pClosure - pStart) - (ev.Vfill || 0) : null);
         var Csys = (ViStar !== null && pn > 0) ? eM * ViStar / pn : null;          // bbl/psi
+        // PDL (a hump before the post-hump early window, §4.11): the leak-off coefficient during pumping is the one at the pumping
+        // pressure, m = the PDL multiplier at the ISIP times the post-hump one. V* = C_sys·p_n (leak-off after shut-in, exact) +
+        // X·(4g0/π)·m (during pumping), X = C_sys·m_G, so C_sys = V*/(p_n + (4g0/π)·m_G·m). The constant-CL η = G_c/(G_c + 4g0/π)
+        // assumes m = 1 and overstated A_f·c_f by 36 % on the mini-model PDL case. m: the classifier's multiplier at the ISIP
+        // (only when the classifier calls the test PDL and gives its multiplier: a gas-filled wellbore also has a falling early
+        // dP/dG, from its pressure-dependent storage)
+        var mPdl = (ctx.classification && ctx.classification.type === 'pdl' && ctx.classification.pdl && _fin(ctx.classification.pdl.multAtIsip)) ? ctx.classification.pdl.multAtIsip : null;
+        if (_fin(mPdl) && mPdl > 1.05 && ViStar !== null && pn > 0 && _fin(mG) && mG > 0) {
+            Csys = ViStar / (pn + (4 * g0m / PI) * mG * mPdl);
+            eM = Csys * pn / ViStar;
+        }
         var AfCf = Csys !== null ? Csys - VwCw : null, Rvis = (Csys > 0 && AfCf !== null) ? AfCf / Csys : null;
         if (AfCf !== null && AfCf <= 0) msgs.push(_txt('The system compliance is below the wellbore storage: the fracture compliance is not positive (check V_w·c_w and the closure).'));
         var X = (Csys !== null && _fin(mG)) ? Csys * mG : null;                    // bbl per unit G
@@ -2662,6 +2765,20 @@
         var Rvis = frac && _fin(frac.Rvis) ? frac.Rvis : (_fin(ctx.Rvis) ? ctx.Rvis : null);
         var VwT = _fin(ctx.VwCwTheory) ? ctx.VwCwTheory : null, VwM = _fin(ctx.VwCwMeasured) ? ctx.VwCwMeasured : null;
         var VwR = (VwT > 0 && VwM > 0) ? VwM / VwT : null;
+        // no closure (R_vis not computable): an upper bound from the early slope. Closure is not reached by G_end, so
+        // V* = X·(G_c + 4g0/π) ≥ X·(G_end + 4g0/π), X = C_sys·m_G, hence C_sys ≤ V*/(m_G·(G_end + 4g0/π)) and
+        // R_vis ≤ 1 − V_w·c_w/C_sys,max. When storage explains ≥ 70 % of that C_sys (R_vis,max ≤ 0.3) the test is storage;
+        // without either number the type is never reported as 'normal' (q-storage-gas, R_vis 0.009, was normal 0.74)
+        var RvisMax = null, ev0 = ctx.events || {};
+        if (Rvis === null) {
+            var VwU = VwM > 0 ? VwM : (_fin(ev0.VwCwUsed) && ev0.VwCwUsed > 0 ? ev0.VwCwUsed : (VwT > 0 ? VwT : null));
+            var Vi0 = _fin(ev0.Vi) ? ev0.Vi - (_fin(ev0.Vfill) ? ev0.Vfill : 0) : null, gEnd0 = v.G[n - 1];
+            var g0c = d.gSpec ? d.gSpec.g0 : g0_(d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : d.alpha));
+            if (VwU && Vi0 > 0 && _fin(d.mG) && d.mG > 0 && gEnd0 > 0) {
+                var CsMax = Vi0 / (d.mG * (gEnd0 + 4 * g0c / PI));
+                if (CsMax > 0) RvisMax = Math.max(0, 1 - VwU / CsMax);
+            }
+        }
         // unit log-log slope past ΔtD ≈ 1 (a constant-rate sink, not storage)
         var unit = [], dtSpan = [];
         for (i = 0; i < d.G.length; i++) if (d.usable[i] && d.dtD[i] >= 1 && d.G[i] <= gC && _fin(d.D[i]) && d.dpIsip[i] > 0) { unit.push(d.D[i] / d.dpIsip[i]); dtSpan.push(d.dt[i]); }
@@ -2685,7 +2802,7 @@
             pdl: mean([_mg(hasHump ? iota : -1, 0.0, 1, 0.05), _mg(hasHump ? H : 0, 0.05, 1), hasHump && returns ? 0.9 : 0.1]),
             tip: mean([_mg(iota, 0.1, 1), _mg(curv, curvExp - 0.1, -1), (!returns && Hnr > 0.05) ? 0.9 : 0.1]),
             hrContact: mean([_mg(curv, 0.1, 1), _mg(curv, 0.1, 1), Math.max(_mg(iota, -0.05, -1), _mg(DlateRatio, 1.05, 1, 0.05))]),
-            storage: Rvis === null ? 0.1 : mean([(Rvis < 0.3 || (Rvis < 0.5 && VwR !== null && VwR > 2)) ? 0.95 : _mg(Rvis, 0.3, -1, 0.05), _mg(Math.abs(iota), 0.05, -1)])
+            storage: Rvis === null ? (RvisMax !== null && RvisMax <= 0.3 && cons && cons.mode === 'none' ? 0.9 : 0.1) : mean([(Rvis < 0.3 || (Rvis < 0.5 && VwR !== null && VwR > 2)) ? 0.95 : _mg(Rvis, 0.3, -1, 0.05), _mg(Math.abs(iota), 0.05, -1)])
         };
         if (!hasHump) sc.pdl = Math.min(sc.pdl, 0.2);
         if (Rvis !== null && Rvis > 0.7) sc.storage = Math.min(sc.storage, 0.2);
@@ -2695,7 +2812,12 @@
         var order = Object.keys(sc).sort(function (a, b) { return sc[b] - sc[a]; });
         var top = order[0];
         if (sc.storage >= 0.5 && Rvis !== null && Rvis <= 0.7) top = 'storage';
+        if (Rvis === null && RvisMax !== null && RvisMax <= 0.3 && cons && cons.mode === 'none') top = 'storage';
         var type = sc[top] >= 0.5 ? names[top] : 'undetermined';
+        // no closure visibility (R_vis not computable) and the bound does not show storage: never 'normal' — the test may still
+        // be storage-dominated, which is exactly when closure is not seen
+        var consNone = !!(cons && cons.mode === 'none') && !frac && !_fin(ctx.Gc);
+        if (consNone && Rvis === null && type === 'normal') type = 'undetermined';
         var alt = order.filter(function (k) { return k !== top && sc[k] >= 0.5 && sc[top] - sc[k] <= 0.15; }).map(function (k) { return names[k]; });
         // PDL block
         var pdl = null;
@@ -2718,7 +2840,7 @@
         if (hump && bleedExpl) evid.push('The early hump is explained by friction bleed-off or the water hammer (G_min moved), not by PDL.');
         return {
             ok: true, type: type, scores: sc, alt: alt,
-            features: { iota: _r(iota, 4), curv: _r(curv, 4), curvExp: _r(curvExp, 4), curvWb: _r(kwb, 4), H: _r(hasHump ? H : 0, 4), DoverDref: _r(DoverDref, 4), Rvis: _r(Rvis, 4), VwCwRatio: _r(VwR, 4),
+            features: { iota: _r(iota, 4), curv: _r(curv, 4), curvExp: _r(curvExp, 4), curvWb: _r(kwb, 4), H: _r(hasHump ? H : 0, 4), DoverDref: _r(DoverDref, 4), Rvis: _r(Rvis, 4), RvisMax: _r(RvisMax, 4), VwCwRatio: _r(VwR, 4),
                         unitSlopeSink: unitSlope, bleedOffExplained: bleedExpl },
             pdl: pdl, hr: hr, evidence: evid.map(_txt), ev: ['M1'], curvExpSource: ke.source, gcSource: gcSource
         };
@@ -2824,6 +2946,7 @@
             if (pk && _fin(pk.p)) {
                 st.samples[m].push(pk.p);
                 st.tags[m].push(it);
+                if (st.raw) (st.raw[m] = st.raw[m] || []).push(_fin(pk.pRaw) ? pk.pRaw : pk.p);
             }
         });
     }
@@ -2856,6 +2979,15 @@
             }
             samples[f] = arr.map(function (x) { return _r(x, 2); });
         });
+        // model-form floor of a voting family band: σ ≥ max(1 psi, 2σ_gauge, 0.25 % of p_n, 0.05 % of the closure). On noise-free
+        // data the band came only from the hinge se (≈ 0.5 psi) and missed the method's own model-form error (Example B +3.25 psi)
+        ['F1', 'F2'].forEach(function (f) {
+            var st0 = fams[f]; if (!st0 || !_fin(st0.p50)) return;
+            var pnF = _fin(isip) ? Math.max(0, isip - st0.p50) : 0, fl = Math.max(1, 2 * (sigG || 0), 0.0025 * pnF, 0.0005 * Math.abs(st0.p50)), e2 = 1.2816 * fl;
+            if (st0.p50 - st0.p10 < e2) st0.p10 = _r(st0.p50 - e2, 2);
+            if (st0.p90 - st0.p50 < e2) st0.p90 = _r(st0.p50 + e2, 2);
+            st0.sigma = _r(Math.max(st0.sigma || 0, fl), 3);
+        });
         // cross-check families (no vote): F0 fissure from its samples, F3 from the LM CI / model pick
         if (methods.fissure) fams.F0 = methods.fissure;
         (picks || []).forEach(function (pk) {
@@ -2879,10 +3011,11 @@
             var pk = vot[f], m = pk ? pk.method : null, cells = [];
             for (var li = 0; li < 3; li++) { var row = []; for (var ti = 0; ti < 3; ti++) row.push(null); cells.push(row); }
             if (m && st.tags[m]) {
-                var bucket = {};
-                st.tags[m].forEach(function (it, k) { if (it.kind !== 'grid') return; var key = it.li + '_' + it.ti; (bucket[key] = bucket[key] || []).push(st.samples[m][k]); });
+                // the cells show the family reading per setting; the spread g is taken on the pre-refinement detection points
+                var bucket = {}, bucketR = {}, rawM = st.raw && st.raw[m] && st.raw[m].length === st.samples[m].length ? st.raw[m] : st.samples[m];
+                st.tags[m].forEach(function (it, k) { if (it.kind !== 'grid') return; var key = it.li + '_' + it.ti; (bucket[key] = bucket[key] || []).push(st.samples[m][k]); (bucketR[key] = bucketR[key] || []).push(rawM[k]); });
                 var vals = [];
-                Object.keys(bucket).forEach(function (key) { var md = _median(bucket[key]), q = key.split('_'); cells[+q[0]][+q[1]] = _r(md, 1); vals.push(md); });
+                Object.keys(bucket).forEach(function (key) { var md = _median(bucket[key]), q = key.split('_'); cells[+q[0]][+q[1]] = _r(md, 1); vals.push(_median(bucketR[key])); });
                 if (vals.length) { var gg = (Math.max.apply(null, vals) - Math.min.apply(null, vals)) / 2; g = Math.max(g, gg); }
             }
             grid[f] = cells;
@@ -3044,8 +3177,8 @@
         var st = null, base = null;
         if (!bad) {
             var I = plan.I;
-            st = { I: I, counts: { evals: 0, refits: 0, cf: 0, cacheHits: 0, vcBefore: _vcCalls }, samples: {}, tags: {}, boot: null, cache: {} };
-            CF_METHODS.forEach(function (m) { st.samples[m] = []; st.tags[m] = []; });
+            st = { I: I, counts: { evals: 0, refits: 0, cf: 0, cacheHits: 0, vcBefore: _vcCalls }, samples: {}, tags: {}, raw: {}, boot: null, cache: {} };
+            CF_METHODS.forEach(function (m) { st.samples[m] = []; st.tags[m] = []; st.raw[m] = []; });
             base = { prep: ctx.prep, events: ctx.events, L: derivs.L, tp: derivs.tpChoice, alpha: I.options.alpha, alphaGeneral: I.options.alphaGeneral,
                      isip: _isipVal(ctx.isip) !== null ? _isipVal(ctx.isip) : derivs.isip, gMinUser: _fin(I.options.gMin) ? I.options.gMin : null,
                      hammer: ctx.hammer, bleed: ctx.bleed, eps: I.options.eps };
