@@ -240,6 +240,13 @@ module.exports = [
       for (let i = 0; i < n; i++) assert(Math.abs(r.VL[i] - (r.VLw[i] + r.VLc[i] + r.VS[i])) <= 1e-9 * Vi, 'leak-off parts at ' + i);
       const iS = r.t.findIndex((x) => x >= r.events.ts - 1e-12);
       assert(r.Vf[iS] / r.ViFrac[iS] > r.Vf[iS] / r.Vi[iS], 'η of the fracture volume exceeds η of the pumped volume');
+      // the series η(t) = V_f/V_i,frac (§5.5); the pumped-volume η at shut-in is the scalar etaS
+      for (let i = 0; i < n; i++) assert(r.ViFrac[i] > 0 ? Math.abs(r.eta[i] - r.Vf[i] / r.ViFrac[i]) <= 1e-12 : r.eta[i] === null, 'η(t) = V_f/V_i,frac at ' + i);
+      assert.near(r.etaS, r.Vf[iS] / r.Vi[iS], 1e-12, 'etaS = V_f/V_i at shut-in');
+      // the breakdown example of §5.5 (base case, p_bd 9,500 psi from 4,500 psi): V_f/V_i = 0.814 against V_f/V_i,frac = 0.916
+      const rb = W.PRiSM_dfit_lkSimulate(base(W, { pBd: 9500, p0: 4500 }), { grid: 'fit' }), jS = rb.t.findIndex((x) => x >= rb.events.ts - 1e-12);
+      assert.near(rb.etaS, 0.814, 1e-3, 'breakdown example: η of the pumped volume ' + rb.etaS);
+      assert.near(rb.eta[jS], 0.916, 1e-3, 'breakdown example: η(t_s) = V_f/V_i,frac ' + rb.eta[jS]);
       const sh = S.checkShape('LkResult', r); assert(sh.ok, 'shape: ' + sh.errors.slice(0, 3).join('; '));
       // optional surface pressure p_s = p_w − p_hyd + Δp_pipe(q) through WTS_wellbore (WP1; replaced here by a constant
       // 0.438 psi/ft column with 0.01·q² psi/ft friction until WP1 merges — plan §2.12 rule 4) — restored afterwards

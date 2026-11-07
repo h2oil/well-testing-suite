@@ -153,10 +153,23 @@ module.exports = [
       assert(/unrealistic/.test(lin.text) && lin.text.length < 300, 'hold sentence');
       const rad = W.PRiSM_dfit_leakBudget(25, 300, { tDL: 5, sigmaP: 0.05, VwCw: 7.91e-4 });
       assert.strictEqual(rad.regime, 'radial', 'radial'); within(assert, rad.theta, 4.509, 0.01, 'Θ(t_DL 5)'); assert.near(rad.qkMax, 0.022, 5e-4, 'q_k,max 0.022 bbl/d');
-      const below = W.PRiSM_dfit_leakBudget(25, 300, { kDraws: [0.1, 0.3, 0.5, 0.8, 0.9], sigmaP: 0.05 });
+      const below = W.PRiSM_dfit_leakBudget(25, 300, { tDLDraws: [0.1, 0.3, 0.5, 0.8, 0.9], sigmaP: 0.05 });
       assert.strictEqual(below.theta, 2, 'P90 t_DL < 1 → Θ = 2');
-      const above = W.PRiSM_dfit_leakBudget(25, 300, { kDraws: [0.1, 0.3, 0.5, 2, 3], sigmaP: 0.05 });
+      const above = W.PRiSM_dfit_leakBudget(25, 300, { tDLDraws: [0.1, 0.3, 0.5, 2, 3], sigmaP: 0.05 });
       assert(above.regime === 'radial' && above.theta > 2, 'P90 t_DL ≥ 1 → radial Θ');
+      // permeability draws (md) under the §3.7 name kDraws: converted to t_DL(t_end) = C_TDL·k·t_end/(φ·μ·c_t·L²) when φ, μ,
+      // c_t and L are given; without them they are not mistaken for t_DL values (warning, linear flow)
+      const kNo = W.PRiSM_dfit_leakBudget(25, 300, { kDraws: [1e-3, 5e-3, 0.01], sigmaP: 0.05 });
+      assert(kNo.ok && kNo.regime === 'linear' && kNo.theta === 2 && kNo.tDL === null, 'k draws without φ, μ, c_t, L: not read as t_DL');
+      assert(kNo.warnings.some((w) => w.code === 'LEAK_KDRAWS_UNUSED' && w.text.length < 300), 'k draws without φ, μ, c_t, L: warning');
+      const kTight = W.PRiSM_dfit_leakBudget(25, 300, { kDraws: [1e-3, 5e-3, 0.01], phi: 0.1, muRes: 0.5, ct: 1e-5, L: 100, sigmaP: 0.05 });
+      assert(kTight.regime === 'linear' && kTight.theta === 2, 'tight k draws converted → linear (t_DL ' + kTight.tDL + ')');
+      assert.near(kTight.tDL, 0.0002637 * 0.009 * 300 / (0.1 * 0.5 * 1e-5 * 1e4), 1e-9, 'P90 k 0.009 md → t_DL 0.142');
+      const kConv = W.PRiSM_dfit_leakBudget(25, 300, { kDraws: [1, 5, 10], phi: 0.1, muRes: 0.5, ct: 1e-5, L: 100, sigmaP: 0.05 });
+      assert(kConv.regime === 'radial' && kConv.warnings.length === 0, 'conventional k draws converted → radial');
+      within(assert, kConv.theta, W._PRiSM_dfit_lk.theta(0.0002637 * 9 * 300 / (0.1 * 0.5 * 1e-5 * 1e4)), 1e-9, 'Θ at the P90 t_DL of the converted draws');
+      const both = W.PRiSM_dfit_leakBudget(25, 300, { tDLDraws: [0.1, 0.2], kDraws: [1, 5, 10], phi: 0.1, muRes: 0.5, ct: 1e-5, L: 100 });
+      assert.strictEqual(both.regime, 'linear', 'tDLDraws take precedence over kDraws');
       const hot = W.PRiSM_dfit_leakBudget(25, 300, { sigmaP: 0.05, VwCw: 7.91e-4, tempF: 250 });
       assert.near(hot.dpdT, 105, 1e-9, 'sealed column ≈ 105 psi/°F at 250 °F');
       // in the designer: conventional oil reaches radial flow (radial Θ), tight gas stays linear (Θ = 2)

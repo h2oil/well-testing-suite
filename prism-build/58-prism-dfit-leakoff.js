@@ -63,10 +63,11 @@
     function _num(v) { return (typeof v === 'number' && _isFinite(v)) ? v : null; }
     function _w(code, level, text) { return { code: code, level: level, text: String(text).slice(0, 299), ev: [] }; }
     function _clone(o) { return JSON.parse(JSON.stringify(o)); }
-    function _sig(v, n) { if (!_isFinite(v)) return '-'; return (+v.toPrecision(n || 3)).toString(); }
-    function _fx(v, n) { if (!_isFinite(v)) return '-'; return v.toFixed(n == null ? 1 : n); }
+    function _okn(v) { return typeof v === 'number' && _isFinite(v); }   // isFinite(null) is true: guard the type too
+    function _sig(v, n) { if (!_okn(v)) return '-'; return (+v.toPrecision(n || 3)).toString(); }
+    function _fx(v, n) { if (!_okn(v)) return '-'; return v.toFixed(n == null ? 1 : n); }
     function _sci(v, n) {
-        if (!_isFinite(v) || v === 0) return _isFinite(v) ? '0' : '-';
+        if (!_okn(v) || v === 0) return _okn(v) ? '0' : '-';
         var e = _floor(_log(_abs(v)) / Math.LN10), m = v / _pow(10, e);
         if (_abs(+m.toFixed(n == null ? 2 : n)) >= 10) { e += 1; m = v / _pow(10, e); }
         return m.toFixed(n == null ? 2 : n) + 'e' + e;
@@ -715,7 +716,6 @@
             out.Vf.push(raw.VF[i] / bbl); out.Vi.push(raw.VI[i] / bbl); out.VL.push(raw.VL[i] / bbl);
             out.VLw.push(raw.VLw[i] / bbl); out.VLc.push(raw.VLc[i] / bbl); out.VS.push(raw.VS[i] / bbl);
             out.qL.push(i === 0 ? 0 : (raw.VL[i] - raw.VL[i - 1]) / (t[i] - t[i - 1]) / u.bpm);
-            out.eta.push(raw.VI[i] > 0 ? raw.VF[i] / raw.VI[i] : null);
             out.Bw.push(raw.BW[i]);
             var gg = (i >= iS && gS != null) ? (4 / PI) * (raw.BW[i] / (ALs * _sqrt(tp)) - gS) : null;
             out.Ggen.push(gg);
@@ -762,6 +762,9 @@
         out.validity = validity; out.warnings = warnings;
         out.Vw = []; for (i = 0; i < N; i++) out.Vw.push(e.VwCw * (raw.PW[i] - raw.PW[0]) / bbl);   // wellbore compression volume (partition)
         out.ViFrac = []; for (i = 0; i < N; i++) out.ViFrac.push(out.Vi[i] - out.Vw[i]);
+        // η(t) = V_f/V_i,frac (§5.5): the efficiency of the volume that entered the fracture and formation; the pumped-volume
+        // efficiency V_f/V_i at shut-in is the scalar etaS (0.814 against 0.916 in the breakdown example)
+        for (i = 0; i < N; i++) out.eta.push(out.ViFrac[i] > 0 ? out.Vf[i] / out.ViFrac[i] : null);
         out.parts = { qLw: [], qLc: [], qLs: [] };
         for (i = 0; i < N; i++) {
             if (i === 0) { out.parts.qLw.push(0); out.parts.qLc.push(0); out.parts.qLs.push(0); continue; }
@@ -966,20 +969,35 @@
             var tpMin = res.tp * 60, mG = Gamma != null ? Gamma * PI * _sqrt(tpMin) / 2 : null, Rvis = C > 0 ? res.Af * res.cf / C : null;
             return { ok: true, Gamma: Gamma, GammaPKN: GammaPKN, mG: mG, Rvis: Rvis, CL: res.CLeq,
                      text: 'This falloff fixes Γ = r_p·CL·A_f/C_sys = 2·m_G/(π·√tp) = ' + _sig(Gamma, 4) + ' psi/√min' +
-                           (GammaPKN != null ? ' (PKN form r_p·CL·E′/h_f = ' + _sig(GammaPKN, 5) + '); CL is conditional on E′ = ' + _sci(Ep, 2) + ' psi and h_f = ' + _sig(hf, 3) + ' ft.' : '.') };
+                           (GammaPKN != null ? ' (' + (res.geometry === 'PKN' ? 'PKN form' : 'PKN-equivalent') + ' r_p·CL·E′/h_f = ' + _sig(GammaPKN, 5) + '); CL is conditional on E′ = ' + _sci(Ep, 2) + ' psi and h_f = ' + _sig(hf, 3) + ' ft.' : '.') };
         } catch (err) { return _fail('GROUPS_FAILED', err && err.message || err, []); }
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // Leak budget (§6.4): q_k,max = ε·V/(Θ·t_end), Θ = p_D/p_D′ of the expected regime at t_end; pressure-test hold
+    // The regime comes from t_DL(t_end), in order of precedence:
+    //   ctx.tDLDraws  t_DL(t_end) per draw (dimensionless; the designer passes these) → the P90 is used
+    //   ctx.tDL       one t_DL(t_end)
+    //   ctx.kDraws    permeability draws in md (the §3.7 name): converted with t_DL = C_TDL·k·t_end/(φ·μ·c_t·L²), which needs
+    //                 ctx.phi, ctx.muRes (cp), ctx.ct (1/psi) and ctx.L (ft); without them the draws are not used (warning
+    //                 LEAK_KDRAWS_UNUSED) and the budget assumes linear flow
     // ─────────────────────────────────────────────────────────────────────
     function leakBudget(V, tEnd, ctx) {
         try {
             ctx = ctx || {};
             if (!(V > 0) || !(tEnd > 0)) return _fail('BAD_INPUT', 'Injected volume (bbl) and shut-in duration (h) are required.', ['V', 'tEnd']);
-            var eps = (+ctx.eps > 0) ? +ctx.eps : 0.05, tDL = null;
-            if (Array.isArray(ctx.kDraws) && ctx.kDraws.length) tDL = _p3(ctx.kDraws).p90;
-            else if (_isFinite(+ctx.tDL) && ctx.tDL != null) tDL = +ctx.tDL;
+            var eps = (+ctx.eps > 0) ? +ctx.eps : 0.05, tDL = null, warnings = [];
+            var finiteList = function (a) { return a.filter(function (v) { return _okn(v) && v >= 0; }); };
+            if (Array.isArray(ctx.tDLDraws) && finiteList(ctx.tDLDraws).length) tDL = _p3(finiteList(ctx.tDLDraws)).p90;
+            else if (_okn(ctx.tDL)) tDL = ctx.tDL;
+            else if (Array.isArray(ctx.kDraws) && finiteList(ctx.kDraws).length) {
+                var phi = +ctx.phi, mu = +ctx.muRes, ct = +ctx.ct, Lx = +ctx.L;
+                if (phi > 0 && mu > 0 && ct > 0 && Lx > 0) {
+                    tDL = _p3(finiteList(ctx.kDraws).map(function (k) { return C_TDL * k * tEnd / (phi * mu * ct * Lx * Lx); })).p90;
+                } else {
+                    warnings.push(_w('LEAK_KDRAWS_UNUSED', 'warn', 'Permeability draws need φ, μ, c_t and the leak-off length L to give t_DL; linear flow (Θ = 2) is assumed.'));
+                }
+            }
             var radial = tDL != null && tDL >= 1, th = radial ? theta(tDL) : 2;
             var tD = tEnd / 24, qkMax = eps * V / (th * tD);   // bbl/d
             var sigmaP = (+ctx.sigmaP > 0) ? +ctx.sigmaP : 0.05, VwCw = (+ctx.VwCw > 0) ? +ctx.VwCw : null;
@@ -990,7 +1008,7 @@
             var text = 'A leak below ' + _sig(qkMax, 2) + ' bbl/d biases the after-closure signal by less than ' + _fx(eps * 100, 0) + ' % at ' + _sig(tEnd, 3) + ' h (' + regime +
                        ' flow, Θ = ' + _fx(th, 2) + ').' + (holdMin != null ? ' A pressure-test hold of ' + _sig(holdMin, 2) + ' min proves it only if the column stays within ' + _sig(dTneeded, 1) + ' °F' +
                        (realistic ? '.' : ', which is unrealistic: prove the leak after the fact with the leak plot instead.') : '');
-            return { ok: true, qkMax: qkMax, theta: th, regime: regime, tDL: tDL, holdMin: holdMin, dTneeded: dTneeded, holdRealistic: realistic, dpdT: dpdT, text: text.slice(0, 299) };
+            return { ok: true, qkMax: qkMax, theta: th, regime: regime, tDL: tDL, holdMin: holdMin, dTneeded: dTneeded, holdRealistic: realistic, dpdT: dpdT, text: text.slice(0, 299), warnings: warnings };
         } catch (err) { return _fail('LEAK_BUDGET_FAILED', err && err.message || err, []); }
     }
 
@@ -1749,31 +1767,53 @@
     // ─────────────────────────────────────────────────────────────────────
     // "What this test can tell you" (§6.7)
     // ─────────────────────────────────────────────────────────────────────
+    // ctx (all optional):
+    //   extendTimesH       shut-in durations of the extension table (h; default 0.5, 1, 2, 3, 5, 7, 14 days)
+    //   tDLPerHourDraws    per designer / uncertainty draw, the t_DL rate C_TDL·k/(φ·μ·c_t·L²) in 1/h (t_DL(t_end) = value·t_end);
+    //                      P(radial) = share of draws with t_DL(t_end) ≥ 1.6. Without it P(radial) is 0 or 1 from the fitted model
+    //   profile, profileN  run the 1-D σ_c profile (≈ 10 refits) on demand
+    // The extension table's σ(p_i) comes from the Fisher matrix of the match's free set plus p_r (at its configured value, the
+    // linearisation point) when the match held p_r fixed, so a fall-off-preset match still reports how p_i narrows; a wall-only
+    // model (no reservoir term) cannot estimate p_r and flags its rows pFixed:true (σ(p_i) 0, no keep-or-pull comparison).
+    // The k range is the inflated Fisher interval of log k on the extended shut-in (kBasis 'fisher'); the §4.12 bounds with the
+    // forecast D belong to the after-closure analysis (57) and replace it once that engine is wired in.
     function identify(fit, ctx) {
         try {
             if (!fit || fit.ok !== true) return _fail('BAD_FIT', 'A successful history match (LkFit) is required.', ['fit']);
             ctx = ctx || {};
-            var rows = [], infl = fit.inflation || 1, sloppyKeys = {};
+            var rows = [], infl = fit.inflation || 1, sloppyKeys = {}, structural = fit.structural || {};
             fit.sloppy.forEach(function (s) { Object.keys(s.vec).forEach(function (k) { if (_abs(s.vec[k]) > 0.3) sloppyKeys[k] = true; }); });
+            var cfg = fit.cfg, sigma = fit.sigmaP || 0.5, tData = fit.design && fit.design.t, ts = lkToEngine(cfg).e.ts;
+            var tEndData = tData && tData.length ? tData[tData.length - 1] : cfg.tEnd, nPts = tData && tData.length ? tData.length : 250;
+            var keys = fit.free.slice(), priorsBase = {};   // the information content of THIS match: its free parameters only
+            var base = lkFisher(cfg, { tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase });
+            var res = lkSimulate(cfg, { grid: 'fit' }), xf = res && res.ok ? res.xf.ts : null;
             fit.free.forEach(function (k) {
-                var v = fit.params[k], ci = fit.ci95Inflated[k], d = PDEF[k], status, pm = null, text;
+                var v = fit.params[k], ci = fit.ci95Inflated[k], d = PDEF[k], status, pm = null, text, widened = false;
                 if (ci) pm = (ci[1] - ci[0]) / 2;
+                // widened by the structural spread (aperture law, PDL on/off) when lkFit computed it: linear sum (conservative)
+                var sr = (k === 'sigmaC' || k === 'pr' || k === 'k') ? structural[k] : null;
+                if (pm != null && sr && _okn(sr[0]) && _okn(sr[1])) { var dev = _max(_abs(sr[1] - v), _abs(v - sr[0])); if (dev > 0) { pm += dev; widened = true; } }
                 var relOk = ci && (d.pressure ? pm < _max(25, 0.01 * v) : pm / v < 0.25);
-                if (relOk && !sloppyKeys[k]) { status = 'determined'; text = _cap(LABEL[k]) + ' is determined to ±' + (d.pressure ? _sig(pm, 2) + ' psi' : _fx(100 * pm / v, 0) + ' %') + '.'; }
+                if (relOk && !sloppyKeys[k]) {
+                    status = 'determined';
+                    text = _cap(LABEL[k]) + ' is determined to ±' + (d.pressure ? _sig(pm, 2) + ' psi' : _sig(100 * pm / v, 2) + ' %') + (widened ? ' (including the structural spread).' : '.');
+                }
                 else if (sloppyKeys[k]) { status = 'group'; text = _cap(LABEL[k]) + ' is determined only as part of a group' + (k === 'Ep' || k === 'hf' ? '; a log-derived height or a core E′ would determine it.' : '.'); }
                 else { status = 'not'; text = _cap(LABEL[k]) + ' is not determined by this test' + (k === 'pr' ? '; a longer shut-in would determine it.' : '.'); }
                 rows.push({ param: k, status: status, pm: pm, text: text.slice(0, 299) });
             });
-            var gPm = fit.sloppy.length ? null : null;
-            rows.push({ param: 'Gamma', status: 'determined', pm: gPm, text: ('The group Γ = ' + _sig(fit.groups.Gamma, 3) + ' psi/√min is determined (PKN form ' + _sig(fit.groups.GammaPKN, 4) + ').').slice(0, 299) });
+            // the group Γ: relative 95 % half-width (%) of r_p·CL·E′/h_f from the match's Fisher covariance (inflated)
+            var gPm = (base.ok && base.C && res && res.ok) ? _groupPm(keys, cfg, res, base.C, 1, infl) : null;
+            if (gPm != null && !(gPm > 0)) gPm = null;
+            var pknWord = (res && res.ok && res.geometry !== 'PKN') ? 'PKN-equivalent' : 'PKN form';
+            rows.push({ param: 'Gamma', status: 'determined', pm: gPm, text: ('The group Γ = ' + _sig(fit.groups.Gamma, 3) + ' psi/√min is determined' + (gPm != null ? ' (±' + _sig(gPm, 2) + ' %)' : '') +
+                       ' (' + pknWord + ' ' + _sig(fit.groups.GammaPKN, 4) + ').').slice(0, 299) });
             var sloppyText = fit.sloppy.length ? fit.sloppy[0].text : 'No parameter combination is poorly determined by this test.';
-            // value of information and the extension table: Fisher on the fitted model with weak priors on E′ and h_f
-            var cfg = fit.cfg, sigma = fit.sigmaP || 0.5, tData = fit.design && fit.design.t, ts = lkToEngine(cfg).e.ts;
-            var tEndData = tData && tData.length ? tData[tData.length - 1] : cfg.tEnd, nPts = tData && tData.length ? tData.length : 250;
-            var keys = fit.free.slice(), priorsBase = {};   // the information content of THIS match: its free parameters only
+            // value of information: Fisher on the fitted model (its free set) with the candidate priors / designs
             var outs = ['sigmaC', 'pr', 'k', 'Cw'].filter(function (k) { return keys.indexOf(k) >= 0; });
             function varsOf(f) { var o = {}; outs.forEach(function (k) { var s = f.sd[k]; o[k] = s == null ? null : s * s; }); return o; }
-            var base = lkFisher(cfg, { tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase }), voi = [];
+            var voi = [];
             if (base.ok) {
                 var v0 = varsOf(base);
                 var cands = [
@@ -1797,23 +1837,27 @@
                 });
                 voi.sort(function (a, b) { return b.reduction - a.reduction; });
             }
+            // extension table
             var extend = [], times = Array.isArray(ctx.extendTimesH) ? ctx.extendTimesH : [0.5, 1, 2, 3, 5, 7, 14].map(function (d) { return d * 24; });
-            var kF = keys.indexOf('k') >= 0, res = lkSimulate(cfg, { grid: 'fit' }), xf = res && res.ok ? res.xf.ts : null;
-            var etaR = (cfg.k > 0) ? cfg.k * _units().md / (cfg.phi * cfg.muRes * _units().cp * cfg.ct) : 0;
+            var resCtl = cfg.k != null && +cfg.k > 0, extKeys = keys.slice();
+            if (resCtl && extKeys.indexOf('pr') < 0) extKeys.push('pr');   // p_r at its configured value is the linearisation point
+            var kF = extKeys.indexOf('k') >= 0, rateDraws = Array.isArray(ctx.tDLPerHourDraws) ? ctx.tDLPerHourDraws.filter(_okn) : null;
+            var etaR = resCtl ? cfg.k * _units().md / (cfg.phi * cfg.muRes * _units().cp * cfg.ct) : 0;
             times.forEach(function (th) {
-                var c = _clone(cfg);
-                var f = lkFisher(c, { tEnd: ts + th, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase });
+                var f = lkFisher(_clone(cfg), { tEnd: ts + th, sigma: sigma, nPts: nPts, free: extKeys, priors: priorsBase });
                 if (!f.ok) return;
-                var sdPi = f.sd.pr != null ? f.sd.pr * infl : 0, kr = null;
+                var pFixed = !(f.sd.pr != null && f.sd.pr > 0), sdPi = pFixed ? 0 : f.sd.pr * infl, kr = null;
                 if (kF && f.sd.k != null) kr = [cfg.k * _exp(-1.96 * f.sd.k * infl), cfg.k * _exp(1.96 * f.sd.k * infl)];
                 var tDL = (etaR > 0 && xf > 0) ? etaR * th / (xf * xf) : 0;
-                var pRad = Array.isArray(ctx.tDLdraws) ? ctx.tDLdraws.filter(function (v) { return v * th >= 1.6; }).length / _max(1, ctx.tDLdraws.length) : (tDL >= 1.6 ? 1 : 0);
-                extend.push({ tEndD: th / 24, tEndH: th, sdPi: sdPi, kRange: kr, pRadial: pRad });
+                var pRad = (rateDraws && rateDraws.length) ? rateDraws.filter(function (v) { return v * th >= 1.6; }).length / rateDraws.length : (tDL >= 1.6 ? 1 : 0);
+                extend.push({ tEndD: th / 24, tEndH: th, sdPi: sdPi, pFixed: pFixed, kRange: kr, kBasis: kr ? 'fisher' : null, pRadial: pRad });
             });
-            var keepText = null;
-            if (extend.length > 1) {
+            var keepText = null, anyFixed = extend.some(function (r) { return r.pFixed; });
+            if (extend.length > 1 && !anyFixed) {
                 var a0 = extend[0].sdPi, a1 = extend[extend.length - 1].sdPi;
                 keepText = a1 < 0.5 * a0 ? 'Keep the gauge in: p_i narrows from ±' + _sig(1.96 * a0, 2) + ' to ±' + _sig(1.96 * a1, 2) + ' psi over the table.' : 'Pulling the gauge early costs little: p_i barely narrows with a longer shut-in.';
+            } else if (anyFixed) {
+                keepText = 'This model has no reservoir term, so a longer shut-in cannot determine p_i here; the table gives the k range only.';
             }
             // on demand: a 1-D profile on σ_c (≈ 10 refits) checks the linearised interval (the UI runs lkProfileJob for progress)
             var profile = null;
@@ -1860,7 +1904,7 @@
         var pS, src;
         if (r && _isFinite(+r.pSurfAtPi)) { pS = +r.pSurfAtPi; src = 'column'; }
         else { pS = pi - 0.052 * ((ranges.fluid && +ranges.fluid.rhoPpg > 0) ? +ranges.fluid.rhoPpg : 8.43) * (+ranges.datumTvd || 0); src = 'constant gradient'; }
-        var risk = (pS - atm < 15) ? 'surface-zero' : 'none';
+        var risk = (r && (r.risk === 'none' || r.risk === 'surface-zero')) ? r.risk : ((pS - atm < 15) ? 'surface-zero' : 'none');   // the engine's own risk first
         var text = risk === 'none' ? ('The column stays liquid-supported at the expected p_i (surface ' + _fx(pS, 0) + ' psia): a surface gauge sees closure and after-closure.')
             : (pS - atm < 0 ? 'The surface goes on vacuum before p_i (surface ' + _fx(pS, 0) + ' psia at p_i): surface gauge sufficient for closure; BH gauge required for ACA.'
                             : 'The surface falls below 15 psig near p_i (surface ' + _fx(pS, 0) + ' psia): surface gauge sufficient for closure; BH gauge recommended for ACA.');
@@ -1952,6 +1996,7 @@
             var shutP = _p3(ok.map(function (d) { return d.shutIn; })), bindCount = {};
             ok.forEach(function (d) { bindCount[d.binding] = (bindCount[d.binding] || 0) + 1; });
             var binding = Object.keys(bindCount).sort(function (a, b) { return bindCount[b] - bindCount[a]; })[0];
+            var bindWords = { radial: 'radial confirmation', '3tc': 'three closure times', afterflow: 'afterflow', precision: 'p_i precision' }[binding] || binding;
             var tRad = _p3(ok.map(function (d) { return d.tRec; })), tConf = _p3(ok.map(function (d) { return d.tConf; })), sig = _p3(ok.map(function (d) { return d.signal; }));
             var sigConf = _p3(ok.map(function (d) { return d.signalConf; }));
             var kP = _p3(ok.map(function (d) { return d.d.k; })), days = function (h) { return h / 24; };
@@ -1970,7 +2015,7 @@
             var tEndLeak = _min(st.allowedH, shutP.p50 || st.allowedH);
             var tdl = ok.map(function (d) { return d.tDLat(tEndLeak); });
             var tempF = (R.fluid && _isFinite(+R.fluid.TF)) ? +R.fluid.TF : ((_isFinite(+R.tempF)) ? +R.tempF : 100);
-            var lb = leakBudget(st.V, tEndLeak, { kDraws: tdl, sigmaP: gSigma, VwCw: st.VwCw, tempF: tempF });
+            var lb = leakBudget(st.V, tEndLeak, { tDLDraws: tdl, sigmaP: gSigma, VwCw: st.VwCw, tempF: tempF });
             var leak = lb.ok ? { qkMax: lb.qkMax, theta: lb.theta, holdMin: lb.holdMin == null ? 0 : lb.holdMin, dTneeded: lb.dTneeded, regime: lb.regime, holdRealistic: lb.holdRealistic, text: lb.text }
                              : { qkMax: 0, theta: 2, holdMin: 0, dTneeded: 0 };
             var rates = [1, 0.8, 0.6, 0.4, 0.2].map(function (f) { return +(st.q * f).toPrecision(3); });
@@ -1980,10 +2025,13 @@
             var precision = [];
             if (opts.precision !== false && tcP.p50 != null) {
                 var mid = ok.slice().sort(function (a, b) { return a.d.k - b.d.k; })[_floor(n / 2)];
+                // the multiples of t_c are taken on the median-k draw's own closure time (its configuration is the one simulated),
+                // so "1.5 t_c" is never before that draw's closure; the ensemble P50 t_c only when the draw does not close
+                var tcMid = (mid.tc != null && mid.tc > 0) ? mid.tc : tcP.p50;
                 [1.5, 2, 3, 5, 10, 20].forEach(function (m) {
-                    var c = _clone(mid.cfg), tEndH = mid.cfg.schedule[1].t + m * tcP.p50;
+                    var c = _clone(mid.cfg), tEndH = mid.cfg.schedule[1].t + m * tcMid;
                     var f = lkFisher(c, { tEnd: tEndH, sigma: gSigma, nPts: 250, free: ['k', 'sigmaC', 'pr'], grid: 'coarse' });
-                    if (f.ok) { st.counts.fisherRuns += f.runs; if (f.sd.pr != null) precision.push({ tEndD: (m * tcP.p50) / 24, sdPi: f.sd.pr, tcMult: m }); }
+                    if (f.ok) { st.counts.fisherRuns += f.runs; if (f.sd.pr != null) precision.push({ tEndD: (m * tcMid) / 24, sdPi: f.sd.pr, tcMult: m }); }
                 });
             }
             var checklist = [
@@ -1994,8 +2042,8 @@
                 { id: 'C5', text: 'Shut in with the valve on the pump side of the gauge, then close in quickly and leave it closed.' },
                 { id: 'C6', text: 'Pump ' + _sig(st.V, 3) + ' bbl at ' + _sig(st.q, 3) + ' bbl/min; skip the step-down unless a friction split is needed.' },
                 { id: 'C7', text: 'Sample at ' + hz + ' Hz or faster around the shut-in to resolve the water hammer.' },
-                { id: 'C8', text: shutP.p50 <= st.allowedH ? 'Keep the gauge in for ' + _sig(days(shutP.p50), 2) + ' days (P50 recommendation, binding: ' + binding + ').'
-                                                            : 'Keep the gauge in for the full ' + _sig(R.allowedShutInD, 3) + ' days allowed; the P50 recommendation (' + _sig(days(shutP.p50), 2) + ' days, binding: ' + binding + ') exceeds it.' }
+                { id: 'C8', text: shutP.p50 <= st.allowedH ? 'Keep the gauge in for ' + _sig(days(shutP.p50), 2) + ' days (P50 recommendation, set by ' + bindWords + ').'
+                                                            : 'Keep the gauge in for the full ' + _sig(R.allowedShutInD, 3) + ' days allowed; the P50 recommendation (' + _sig(days(shutP.p50), 2) + ' days, set by ' + bindWords + ') exceeds it.' }
             ];
             var corridor = { t: st.tCorr.slice(), p10: [], p50: [], p90: [] };
             st.tCorr.forEach(function (x, m) {

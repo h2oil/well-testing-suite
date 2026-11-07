@@ -7,14 +7,19 @@
 //        derivative residuals on ln(G·dP/dG) (weight 0.2); the on-demand σ_c profile in identify (10 refits) agrees with the
 //        linearised interval; lkProfileJob = lkProfile
 //   LF2  Γ_PKN conserved: 14.904 to 1e-3 (relative) for the wall-only truth (runs B_w {C_w, σ_c, E′, h_f} and G_w
-//        {C_w, σ_c, K_Ic, E′}) and, reservoir-controlled, run B {k, σ_c, p_r, E′, h_f} equal to run A to 1e-3
+//        {C_w, σ_c, K_Ic, E′}) and, reservoir-controlled, run B {k, σ_c, p_r, E′, h_f} on a truth whose k (≈ 2.649e-3 md)
+//        gives CL_eq = 1.863e-4 at its own Δp_CL (≈ 2,794 psi)
 //   LF3  run J (h_f wrong at 40 ft, E′ fixed): rmse ≈ 19.6 psi, σ_c bias ≈ −78 psi, the geometry warning fires
-//   LF4  run B_w: the group sentence with Γ in psi/√min and Γ_PKN = 14.904 ± 1e-3; E′ and h_f "determined only as a group"
-//   LF5  the extension table: σ(p_i) ±7.9 / 2.8 / 1.5 / 0.9 / 0.56 / 0.39 psi at 1.5 / 2 / 3 / 5 / 10 / 20 t_c (± 10 %)
+//   LF4  run B_w: the group sentence with Γ in psi/√min and Γ_PKN = 14.904 ± 1e-3; E′ and h_f "determined only as a group";
+//        the Γ row's ± %; wall-only extension rows flagged pFixed; the structural spread widens a 'determined' row
+//   LF5  the extension table: σ(p_i) ±7.9 / 2.8 / 1.5 / 0.9 / 0.56 / 0.39 psi at 1.5 / 2 / 3 / 5 / 10 / 20 t_c (± 10 %);
+//        a 'falloff'-preset match (p_r held) still gets σ(p_i) > 0 falling with t_end (Fisher on free ∪ {p_r});
+//        P(radial) from ctx.tDLPerHourDraws
 //   LF6  the next-best-information ranking puts "longer shut-in" first for run F (data to 1.5 t_c)
 //   LF7  n_eff inflation ≈ × 4.4 for AR(1) residuals with ρ1 0.9; the fit's inflated intervals use it
 //   LF8  with log k as the parameter, moving σ_c or p_r by ± 200 psi leaves κ_k (the k column of the parameter map)
-//        unchanged to 1e-6 and the reported CL equivalent follows Δp_CL
+//        unchanged to 1e-6 and the reported CL equivalent follows Δp_CL; corr(k, p_r) re-measured from fit.corr
+//        (≈ 0.99 for run F, ≈ 0.88 for run A)
 'use strict';
 
 const fs = require('fs');
@@ -69,6 +74,14 @@ const dataA = (W) => cached('dataA', () => makeData(W, truth(W), 100, 250, 0.5, 
 const dataW = (W) => cached('dataW', () => makeData(W, truth(W, { Cw: CW_TRUE, k: null }), 100, 250, 0.5, 1));
 function startA(W, o) { return Object.assign(truth(W), { k: K_TRUE * 1.5, sigmaC: 7150, pr: 4300 }, o || {}); }
 function startW(W, o) { return Object.assign(truth(W, { Cw: CW_TRUE, k: null }), { Cw: 2.8e-4, sigmaC: 7150, Ep: 7e6 }, o || {}); }
+// run B data: the reservoir-controlled truth with k scaled until CL_eq = 1.863e-4 at the run's own Δp_CL (fixed point, 4 runs)
+const dataK = (W) => cached('dataK', () => {
+  let k = K_TRUE;
+  for (let it = 0; it < 4; it++) { const c = truth(W, { k }); c.tEnd = TP + 10; const r = W.PRiSM_dfit_lkSimulate(c, { grid: 'display' }); k *= Math.pow(CW_TRUE / r.CLeq, 2); }
+  const d = makeData(W, truth(W, { k }), 100, 250, 0.5, 1), g = W.PRiSM_dfit_lkGroups(Object.assign(truth(W, { k }), { tEnd: TP + 100 }));
+  d.k = k; d.Gamma = g.Gamma; d.GammaPKN = g.GammaPKN;
+  return d;
+});
 const fitA = (W) => cached('fitA', () => W.PRiSM_dfit_lkFit(dataA(W), startA(W), 'full', { free: ['k', 'sigmaC', 'pr'] }));
 const fitBw = (W) => cached('fitBw', () => W.PRiSM_dfit_lkFit(dataW(W), startW(W, { hf: 40 }), 'full', { free: ['Cw', 'sigmaC', 'Ep', 'hf'] }));
 const fitF = (W) => cached('fitF', () => {
@@ -126,7 +139,7 @@ module.exports = [
     },
   },
   {
-    name: 'DFIT LF2: Γ_PKN conserved — 14.904 to 1e-3 for the wall-only truth (B_w, G_w); run B (reservoir) equals run A to 1e-3', wp: WP, opts: false,
+    name: 'DFIT LF2: Γ_PKN conserved — 14.904 to 1e-3 for the wall-only truth (B_w, G_w); run B (reservoir, k for CL_eq 1.863e-4 at its own Δp_CL) too', wp: WP, opts: false,
     run(_a, assert, ctx) {
       const W = app(ctx), b = fitBw(W);
       okFit(assert, b, 'run B_w');
@@ -135,10 +148,14 @@ module.exports = [
       assert(rel(b.groups.GammaPKN, 14.904) <= 1e-3, 'B_w Γ_PKN ' + b.groups.GammaPKN);
       assert(rel(g.groups.GammaPKN, 14.904) <= 1e-3, 'G_w Γ_PKN ' + g.groups.GammaPKN);
       assert(rel(b.params.Ep, 5e6) > rel(b.groups.GammaPKN, 14.904) * 5, 'E′ itself moves more than the group');
-      const a = fitA(W), rb = W.PRiSM_dfit_lkFit(dataA(W), startA(W, { Ep: 7e6, hf: 40 }), 'full', { free: ['k', 'sigmaC', 'pr', 'Ep', 'hf'] });
+      // run B (reservoir-controlled): k_true chosen so that CL_eq = 1.863e-4 ft/√min at the run's own Δp_CL (≈ 2,794 psi →
+      // k ≈ 2.649e-3 md at μ 0.5 cp), so the truth has Γ_PKN = r_p·CL·E′/h_f = 0.8 × 1.863e-4 × 5e6 / 50 = 14.904
+      const dK = dataK(W), rb = W.PRiSM_dfit_lkFit(dK, startA(W, { k: dK.k * 1.5, Ep: 7e6, hf: 40 }), 'full', { free: ['k', 'sigmaC', 'pr', 'Ep', 'hf'] });
       okFit(assert, rb, 'run B');
-      assert(rel(rb.groups.GammaPKN, a.groups.GammaPKN) <= 1e-3, 'run B vs run A Γ_PKN ' + rb.groups.GammaPKN + ' / ' + a.groups.GammaPKN);
-      assert(rel(rb.groups.Gamma, a.groups.Gamma) <= 1e-3, 'Γ');
+      assert(rel(dK.k, 2.649e-3) <= 2e-3, 'k_true for CL_eq 1.863e-4 at the own Δp_CL: ' + dK.k);
+      assert(rel(rb.groups.GammaPKN, 14.904) <= 1e-3, 'run B Γ_PKN ' + rb.groups.GammaPKN);
+      assert(rel(rb.groups.Gamma, dK.Gamma) <= 1e-3, 'run B Γ ' + rb.groups.Gamma + ' vs the truth ' + dK.Gamma);
+      assert(rel(rb.params.Ep, 5e6) > rel(rb.groups.GammaPKN, 14.904) * 5, 'run B: E′ itself moves more than the group');
       assert(b.warnings.some((w) => w.code === 'GROUP_FREE'), 'E′ and h_f both free is flagged');
       // a MAP prior on h_f (log-derived height ± 2 %) pins the group member and keeps Γ_PKN
       const bp = W.PRiSM_dfit_lkFit(dataW(W), startW(W, { hf: 40 }), 'full', { free: ['Cw', 'sigmaC', 'Ep', 'hf'], priors: { hf: { value: 50, sdLn: 0.02 } } });
@@ -173,6 +190,18 @@ module.exports = [
       assert.strictEqual(st.Ep, 'group', 'E′ row'); assert.strictEqual(st.hf, 'group', 'h_f row'); assert.strictEqual(st.sigmaC, 'determined', 'σ_c row');
       assert(id.rows.every((r) => r.text.length < 300 && !/null|undefined|NaN|Infinity/.test(r.text)), 'plain row text');
       assert(b.sloppy.length >= 1 && Math.abs(b.sloppy[0].vec.Ep) > 0.3, 'sloppy vector loads on E′');
+      const gr = id.rows.find((r) => r.param === 'Gamma');
+      assert(gr && gr.pm > 0 && /is determined \(±[0-9.]+ %\)/.test(gr.text) && /PKN form/.test(gr.text), 'Γ row with its ± %: ' + (gr && gr.text));
+      assert(id.rows.every((r) => !/±0 %/.test(r.text)), 'no "±0 %" wording');
+      // wall-only model: no reservoir term, p_i cannot be estimated → rows flagged, no keep-or-pull comparison
+      assert(id.extend.length === 2 && id.extend.every((r) => r.pFixed === true && r.sdPi === 0), 'wall-only: p_i rows flagged pFixed');
+      assert(/no reservoir term/.test(id.keepText) && !/costs little/.test(id.keepText), 'wall-only keep sentence: ' + id.keepText);
+      // the structural spread (lkFit {structural:true}) widens the 'determined' half-width (linear sum)
+      const bs = clone(b), v = bs.params.sigmaC; bs.structural = { sigmaC: [v - 5, v + 3], pr: null, k: null, CLeq: null, n: 3 };
+      const is = W.PRiSM_dfit_identify(bs, { extendTimesH: [24] });
+      const r0 = id.rows.find((r) => r.param === 'sigmaC'), r1 = is.rows.find((r) => r.param === 'sigmaC');
+      assert.near(r1.pm, r0.pm + 5, 1e-9, 'σ_c half-width + the structural deviation');
+      assert(r1.status === 'determined' && /including the structural spread/.test(r1.text), 'widened wording: ' + r1.text);
     },
   },
   {
@@ -193,6 +222,22 @@ module.exports = [
       assert(rel(id.extend[2].sdPi, f1.sd.pr * F.inflation) <= 1e-9, 'table = Fisher × inflation');
       assert(id.extend.every((r) => r.kRange && r.kRange[0] < F.params.k && r.kRange[1] > F.params.k), 'k range brackets the fit');
       assert(typeof id.keepText === 'string' && id.keepText.length < 300, 'keep-or-pull sentence');
+      assert(id.extend.every((r) => r.pFixed === false && r.kBasis === 'fisher'), 'p_r free: rows not flagged; k range basis stated');
+      // a 'falloff'-preset match frees {k, σ_c, s_h} and holds p_r: the table adds p_r at its configured value (the
+      // linearisation point), so σ(p_i) stays > 0 and falls with t_end, and the sentence says to keep the gauge in
+      const FO = cached('fitFO', () => W.PRiSM_dfit_lkFit(dataA(W), startA(W, { pr: 4500 }), 'falloff', {}));
+      okFit(assert, FO, 'falloff-preset fit');
+      assert(FO.free.indexOf('pr') < 0, 'p_r held in the falloff preset (' + FO.free.join(', ') + ')');
+      const io = W.PRiSM_dfit_identify(FO, { extendTimesH: mult.map((m) => m * tc) });
+      assert(io.ok && io.extend.length === mult.length, 'falloff identify ok');
+      assert(io.extend.every((r) => r.sdPi > 0 && r.pFixed === false), 'σ(p_i) > 0 on every row: ' + io.extend.map((r) => r.sdPi.toFixed(2)).join(' / '));
+      for (let i = 1; i < io.extend.length; i++) assert(io.extend[i].sdPi < io.extend[i - 1].sdPi, 'falloff: σ(p_i) falls with the shut-in');
+      const fo3 = W.PRiSM_dfit_lkFisher(FO.cfg, { tEnd: TP + 3 * tc, sigma: FO.sigmaP, nPts: FO.design.t.length, free: FO.free.concat(['pr']) });
+      assert(rel(io.extend[2].sdPi, fo3.sd.pr * FO.inflation) <= 1e-9, 'falloff table = Fisher on free ∪ {p_r} × inflation');
+      assert(/^Keep the gauge in/.test(io.keepText), 'falloff keep sentence: ' + io.keepText);
+      // P(radial) from per-draw t_DL rates (1/h): share with rate·t_end ≥ 1.6
+      const ir = W.PRiSM_dfit_identify(F, { extendTimesH: [2, 20, 200], tDLPerHourDraws: [0.01, 0.1, 1] });
+      [1 / 3, 2 / 3, 1].forEach((want, i) => assert.near(ir.extend[i].pRadial, want, 1e-12, 'P(radial) from tDLPerHourDraws at ' + ir.extend[i].tEndH + ' h'));
     },
   },
   {
@@ -225,7 +270,7 @@ module.exports = [
     },
   },
   {
-    name: 'DFIT LF8: log k parameterisation — σ_c or p_r ± 200 psi leaves κ_k unchanged to 1e-6; CL equivalent follows Δp_CL', wp: WP, opts: false,
+    name: 'DFIT LF8: log k parameterisation — σ_c or p_r ± 200 psi leaves κ_k unchanged to 1e-6; CL equivalent follows Δp_CL; corr(k, p_r) re-measured', wp: WP, opts: false,
     run(_a, assert, ctx) {
       const W = app(ctx), c = truth(W, { aperture: { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null }, Sp: 0 });
       const kap = (o) => { const e = W.PRiSM_dfit_lkToEngine(Object.assign(clone(c), o)); assert(e.ok, 'engine config'); return e.e.kap; };
@@ -242,6 +287,12 @@ module.exports = [
       // the fit moves σ_c and p_r without dragging k: the k step of the forward Jacobian is a pure log-k step
       const conv = W.PRiSM_dfit_lkToEngine(Object.assign(clone(c), { CL: 1.863e-4, wc: 1, dpRef: 2500, k: null }));
       assert(conv.ok && conv.e.fromCL, 'CL / w_c inputs convert once, never as fit parameters');
+      // §5.7: corr(k, p_r) re-measured with log k (it was corr(CL, p_r) 0.993 in the CL / w_c parameterisation): it stays
+      // ≈ 0.99 with data to 1.5 t_c (run F) and falls to ≈ 0.88 with data to ≈ 21 t_c (run A) — the trade-off is physical
+      const cA = fitA(W).corr.k_pr, cF = fitF(W).corr.k_pr;
+      assert(Math.abs(cF) > 0.98 && Math.abs(cF) < 0.999, 'run F |corr(k, p_r)| ' + cF.toFixed(4));
+      assert(Math.abs(cA) > 0.8 && Math.abs(cA) < 0.95, 'run A |corr(k, p_r)| ' + cA.toFixed(4));
+      assert(Math.abs(cA) < Math.abs(cF), 'a longer shut-in decorrelates k and p_r');
     },
   },
 ];
