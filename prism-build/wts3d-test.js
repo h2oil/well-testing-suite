@@ -795,12 +795,12 @@ const SECTION_C = (G, src) => {
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; return c; };
-      // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation inputs
+      // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
+      // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);
-      // interim allowance (WP-E0 → WP-C; removed as a WP-C exit item): SAMPLE_FLOW.sim has the two v1.5.0 keys (sepByDest,
-      // sepByP_psig) before the host publishes them
-      if (f.sim && !('sepByDest' in f.sim) && !('sepByP_psig' in f.sim)) { delete ref.sim.sepByDest; delete ref.sim.sepByP_psig; }
       eqShape(strip(f), ref, 'flow', bad);
+      if (!f.sim || f.sim.sepByDest !== S.SAMPLE_FLOW.sim.sepByDest || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
+      if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'flare') bad.push('flow.ck2 / flow.sepBy blocks');
       ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
         if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
       const near = (a, b, t) => Math.abs(a - b) <= t;

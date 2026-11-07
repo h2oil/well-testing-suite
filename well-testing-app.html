@@ -133004,7 +133004,7 @@ G.WTS_modbusBridgeSetup = {
 // ══════════════════════════════════════════════════════════════
 const WTS_PIPES={'2':{'40':2.067,'80':1.939,'160':1.687},'3':{'40':3.068,'80':2.900,'160':2.624},'4':{'40':4.026,'80':3.826,'160':3.438},'6':{'40':6.065,'80':5.761,'160':5.187},'8':{'40':7.981,'80':7.625,'160':6.813},'10':{'40':10.020,'80':9.564,'160':8.500}};
 
-const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap'];
+const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap','wts_bean2','wts_ck2Pos','wts_sepByDest','wts_sepByP'];
 function renderWTS(body){
     $('pgTitle').textContent='Well Test Simulator';
     $('pgSub').textContent='Live 3D process simulation — P, T, levels & velocity from wellhead to gauge tank (API RP 14E)';
@@ -133037,6 +133037,8 @@ function renderWTS(body){
         <div class="fg-item"><label>Outlet Temp (&deg;F)</label><input type="number" id="wts_Thtr" value="150"></div>
         <div class="fg-item"><label>Efficiency (%)</label><input type="number" id="wts_htrEff" value="80" min="50" max="95"></div>
         <div class="fg-item"><label>Bypass</label><select id="wts_bypass"><option value="0">No</option><option value="1">Yes &mdash; Full Bypass</option></select></div>
+        <div class="fg-item rp-skip" style="display:none"><label>Heater choke CK-102 bean (64ths)</label><input type="number" id="wts_bean2" value="48" min="4" max="128"></div>
+        <div class="fg-item rp-skip" style="display:none"><label>CK-102 position</label><select id="wts_ck2Pos"><option value="inlet">On the heater inlet</option><option value="midcoil">Between the coil passes</option></select></div>
       </div></div>
       <div class="card"><div class="card-title">Separator</div><div class="fg">
         <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="wts_Psep" value="150"></div>
@@ -133054,6 +133056,8 @@ function renderWTS(body){
         <div class="fg-item"><label>Desander accumulator (gal)</label><input type="number" id="wts_dsAcc" value="50" min="10" max="200"></div>
         <div class="fg-item"><label>Max shut-in wellhead pressure (psig)</label><input type="number" id="wts_SITHP" value="" min="100" max="20000" placeholder="blank = 1.2 &times; WHP (estimated)"></div>
         <div class="fg-item"><label>Surge tank 2 capacity (bbl)</label><input type="number" id="wts_surge2Cap" value="100" min="20" max="500"></div>
+        <div class="fg-item"><label>With V-101 out, well stream to</label><select id="wts_sepByDest"><option value="flare">Burner / flare line</option><option value="line">Production line</option></select></div>
+        <div class="fg-item rp-skip"><label>Production line pressure (psig)</label><input type="number" id="wts_sepByP" value="150" min="0" max="1440" disabled></div>
       </div></div>
     </div><div>
       <div class="card"><div class="card-title">Pipe Segments</div>
@@ -133073,6 +133077,8 @@ function renderWTS(body){
       <div id="wts_res"></div>
     </div></div></div>`;
     loadInputs('wts',WTS_IDS);
+    // v3.3.3: the CK-102 bean is a count (no unit conversion); the destination inputs follow the card rule (untagged psig, D28)
+    if(window.WTS_units&&window.WTS_units.tagInput) window.WTS_units.tagInput('wts_bean2','count');
     let wtsT;const wtsAC=()=>{clearTimeout(wtsT);wtsT=setTimeout(calcWTS,250);};
     setTimeout(()=>{document.querySelectorAll('#pgBody input:not([data-wts-ui]),#pgBody select:not([data-wts-ui])').forEach(el=>{el.addEventListener('input',wtsAC);el.addEventListener('change',calcWTS);});calcWTS();
         try{ if(window.WTS_live) window.WTS_live.mount($('wts_viz')); }catch(e){ console.warn('[WTS] live view failed',e); }
@@ -133105,6 +133111,13 @@ window.calcWTS=function(){
           dsAcc=wtsClamp(gv('wts_dsAcc')||50,10,200),sithp=sithpTxt!==''&&!isNaN(sithpIn)?wtsClamp(sithpIn,100,20000):null,
           surge2Cap=wtsClamp(gv('wts_surge2Cap')||100,20,500);
     const P_FLARE_HDR=5;   // psig, flare header downstream of PCV-101 (= sim cfg.sep.pcv.P2_psig)
+    // v3.3.3 (docs/SIM-FOLLOWUP-PLAN.md §4.1): CK-102 bean / position (flow.ck2), the V-101-out destination (flow.sepBy, flow.sim);
+    // untagged imperial; an entered 0 psig is kept (isFinite clamp); a page without these inputs gets the defaults
+    const selV=id=>{const e=$(id);return e&&e.value!=null?String(e.value):'';};
+    const bean2In=gv('wts_bean2'),sepByPIn=gv('wts_sepByP');
+    const bean2=wtsClamp(isFinite(bean2In)?bean2In:48,4,128),ck2Pos=selV('wts_ck2Pos')==='midcoil'?'midcoil':'inlet',
+          sepByDest=selV('wts_sepByDest')==='line'?'line':'flare',sepByP=wtsClamp(isFinite(sepByPIn)?sepByPIn:150,0,1440);
+    const DESIGN_P_CK2=1440;   // psig, line CK-101 → CK-102 and the bypass path (ASME B16.5 Class 600 at ambient, ASSUMPTION; D16)
     // Gas props
     const Mg=28.97*SGg;
     const Ppc=756.8-131*SGg-3.6*SGg*SGg;
@@ -133119,23 +133132,27 @@ window.calcWTS=function(){
     const mdG=Qg_scfs*rhoGstd;
     const Qo_cfs=Qo*5.615/86400,mdO=Qo_cfs*rhoOil;
     const Qw_cfs=Qw*5.615/86400,mdW=Qw_cfs*rhoWat;
-    // Pipe segment calculator
-    const seg=(n,P0,T0,phase)=>{
+    // Pipe segment calculator (v3.3.3: qs scales the rates, default 1, so a walk can run at a trial rate; the pipe of each
+    // segment is read once per calc)
+    const segGeo=[];
+    const seg=(n,P0,T0,phase,qs)=>{
         // phase: 'multi' | 'gas' | 'liquid'
-        const nps=$('wts_nps'+n).value,sch=$('wts_sch'+n).value;
-        const ID=(WTS_PIPES[nps]&&WTS_PIPES[nps][sch])||4.026;
+        const g=segGeo[n]||(segGeo[n]=(()=>{const nps=$('wts_nps'+n).value,sch=$('wts_sch'+n).value;
+            return {nps,sch,ID:(WTS_PIPES[nps]&&WTS_PIPES[nps][sch])||4.026,L:gv('wts_len'+n)||0};})());
+        const nps=g.nps,sch=g.sch,ID=g.ID;
         const Dft=ID/12,A=Math.PI/4*Dft*Dft;
-        const L=gv('wts_len'+n)||0;
+        const L=g.L;
+        const q=qs===undefined?1:qs,qo=Qo_cfs*q,qw=Qw_cfs*q;
         const Pp=Math.max(P0+14.696,15),Tr=T0+459.67;
         const z=Z(Pp,Tr),rg=rhoG(Pp,Tr);
-        const Qga=Qg_scfs*(14.696/Pp)*(Tr/519.67)*z;
+        const Qga=Qg_scfs*q*(14.696/Pp)*(Tr/519.67)*z;
         let Qt,rhom;
         if(phase==='gas'){Qt=Qga;rhom=rg;}
         else if(phase==='liquid'){
-            Qt=Qo_cfs+Qw_cfs;
-            rhom=Qt>1e-12?(rhoOil*Qo_cfs+rhoWat*Qw_cfs)/Qt:rhoOil;
+            Qt=qo+qw;
+            rhom=Qt>1e-12?(rhoOil*qo+rhoWat*qw)/Qt:rhoOil;
         }
-        else{Qt=Qga+Qo_cfs+Qw_cfs;rhom=Qt>1e-12?(rg*Qga+rhoOil*Qo_cfs+rhoWat*Qw_cfs)/Qt:rg;}
+        else{Qt=Qga+qo+qw;rhom=Qt>1e-12?(rg*Qga+rhoOil*qo+rhoWat*qw)/Qt:rg;}
         const vel=A>0?Qt/A:0;
         const ve=rhom>0.01?Cfac/Math.sqrt(rhom):9999;
         const muCp=phase==='gas'?0.012:phase==='liquid'?1.5:0.05;
@@ -133180,16 +133197,87 @@ window.calcWTS=function(){
     const CpM=mdG*0.56+mdO*0.50+mdW*1.0;
     const wJT=CpM>0?mdG*0.56/CpM:1;                            // gas share of mixture heat capacity
     const jtOf=dp=>Math.min(150,0.07*wJT*Math.max(dp,0));      // °F; ≈7 °F/100 psi for gas, damped by liquids
-    let Pco=Psep+5,Tco=Tci,s3,s4,Phi,Thi,Pho,Tho;
-    for(let it=0;it<6;it++){                                    // fixed point: arrival pressure → Psep
+    // ── wtsWalk(o) (v3.3.3, docs/SIM-FOLLOWUP-PLAN.md §4.2-4.3): the steady choke walk from a downstream pressure P0 ──
+    // o = {P0, seg5:'none'|'multi', heater:true|false, ck2:null|{bean, pos}, qs}. seg5 'multi': the whole stream runs
+    // through seg 5 to P0 (V-101 out). heater: the 5 psi H-101 drop. qs scales every rate (trial-rate walks). Fixed iteration
+    // counts (no convergence tests): 6 passes as v3.3.1 without seg 5; with it 20 passes with a secant step (the low-pressure
+    // seg-5 loss makes the plain step oscillate), never below P0. Nothing outside the walk is changed.
+    const wtsWalk=o=>{
+        const qs=o.qs==null?1:o.qs,P0=o.P0,m5=o.seg5==='multi',hdP=o.heater===false?0:5;
+        if(o.ck2) return wtsWalk2(o,qs,P0,m5,hdP);
+        const nIt=m5?20:6;
+        let Pco=P0+5,Tco=Tci,s3,s4,s5=null,Phi,Thi,Pho,Tho,Pp=0,Rp=0;
+        for(let it=0;it<nIt;it++){                                  // fixed point: arrival pressure → P0
+            Tco=Tci-jtOf(Pci-Pco);
+            s3=seg(3,Pco,Tco,'multi',qs);Phi=s3.Pout;Thi=s3.Tout;
+            Pho=Phi-hdP;Tho=bypass?Thi:Math.max(Thtr,Thi);
+            s4=seg(4,Pho,Tho,'multi',qs);
+            if(m5){s5=seg(5,s4.Pout,s4.Tout,'multi',qs);const R=Pco-s3.dP-hdP-s4.dP-s5.dP-P0;
+                let st=R;if(it>0&&Pco!==Pp&&(R-Rp)/(Pco-Pp)>0.2)st=R*(Pco-Pp)/(R-Rp);
+                Pp=Pco;Rp=R;Pco=Math.max(P0,Pco-st);}
+            else Pco+=P0-s4.Pout;
+        }
         Tco=Tci-jtOf(Pci-Pco);
-        s3=seg(3,Pco,Tco,'multi');Phi=s3.Pout;Thi=s3.Tout;
-        Pho=Phi-5;Tho=bypass?Thi:Math.max(Thtr,Thi);
-        s4=seg(4,Pho,Tho,'multi');
-        Pco+=Psep-s4.Pout;
-    }
-    Tco=Tci-jtOf(Pci-Pco);
-    s3=seg(3,Pco,Tco,'multi');Phi=s3.Pout;Thi=s3.Tout;Pho=Phi-5;Tho=bypass?Thi:Math.max(Thtr,Thi);s4=seg(4,Pho,Tho,'multi');
+        s3=seg(3,Pco,Tco,'multi',qs);Phi=s3.Pout;Thi=s3.Tout;Pho=Phi-hdP;Tho=bypass?Thi:Math.max(Thtr,Thi);s4=seg(4,Pho,Tho,'multi',qs);
+        if(m5)s5=seg(5,s4.Pout,s4.Tout,'multi',qs);
+        return {Pco,Tco,s3,s4,s5,Phi,Thi,Pho,Tho};
+    };
+    // CK-101 regime and capacity at its outlet pressure (the v3.3.1 rule, at the rate Q·qs)
+    const ck1Of=(P2,qs)=>{
+        const Qreq=Q_mscfd*qs,pr=(P2+14.696)/P1a;let regime,fl=false,cap=Q_crit_max;
+        if(Qg<=0)regime='No Flow';
+        else if(P2>=Pci-0.5){regime='No Flow';fl=true;cap=0;}
+        else if(pr<=rCrit){regime='Critical';fl=Qreq>Q_crit_max*1.01;}
+        else{regime='Subcritical';cap=preFac*Math.sqrt(fInner(pr));fl=Qreq>cap*1.01;}
+        return {regime,flowLimited:fl,Qcap:cap,ratio:pr};
+    };
+    // Two-stage walk (CK-101 → seg 3 → CK-102 → H-101 → seg 4 [→ seg 5] → P0): the heater inlet Phi2 is walked back from P0,
+    // then a fixed 8-pass outer loop on (Pm, Pco2, T3, Z3); CK-102 by the CK-101 nozzle law (same Cd, k, r_crit) at the seg-3
+    // outlet temperature — closed form when critical, an Illinois solve on r (≤ 30 steps, 1e-9) otherwise
+    const sqC=Math.sqrt(fInner(rCrit));
+    const wtsWalk2=(o,qs,P0,m5,hdP)=>{
+        const b2=o.ck2.bean,A2=Math.PI/4*(b2/64)*(b2/64),Qreq=Q_mscfd*qs,nIt=m5?20:6;
+        const Tin0=Tci-jtOf(Pci-P0),ThoG=bypass?Tin0:Math.max(Thtr,Tin0);
+        let Pho2=P0,s4,s5=null,Pp=0,Rp=0;
+        for(let it=0;it<nIt;it++){
+            s4=seg(4,Pho2,ThoG,'multi',qs);
+            if(m5){s5=seg(5,s4.Pout,s4.Tout,'multi',qs);const R=Pho2-s4.dP-s5.dP-P0;
+                let st=R;if(it>0&&Pho2!==Pp&&(R-Rp)/(Pho2-Pp)>0.2)st=R*(Pho2-Pp)/(R-Rp);
+                Pp=Pho2;Rp=R;Pho2=Math.max(P0,Pho2-st);}
+            else Pho2+=P0-s4.Pout;
+        }
+        s4=seg(4,Pho2,ThoG,'multi',qs);if(m5)s5=seg(5,s4.Pout,s4.Tout,'multi',qs);
+        const Phi2=Pho2+hdP,Phi2a=Math.max(Phi2+14.696,15);
+        let Tco2=Tci-jtOf(Pci-Phi2),T3=Tco2,Z3=Z(Phi2a,T3+459.67),Pm=Phi2,Pma=Phi2a,Pco2=Phi2,s3=null,crit2=false;
+        for(let it=0;it<8;it++){
+            const pre2=879.77*Cd_ck*A2/Math.sqrt(SGg*(T3+459.67)*Z3);
+            const PmaC=Qreq/(pre2*sqC);
+            if(Phi2a/PmaC<=rCrit){Pma=PmaC;crit2=true;}
+            else{                                                   // Q = pre2·(Phi2a/r)·√fInner(r), r ∈ (r_crit, 1)
+                crit2=false;
+                const g=r=>pre2*Phi2a/r*Math.sqrt(Math.max(fInner(r),0))-Qreq;
+                let a=rCrit,b=1,fa=g(a),fb=-Qreq,side=0,r=a;
+                for(let k=0;k<30;k++){
+                    r=(a*fb-b*fa)/(fb-fa);
+                    const fr=g(r);
+                    if(fr===0||b-a<1e-9)break;
+                    if(fr*fb>0){b=r;fb=fr;if(side===-1)fa/=2;side=-1;}
+                    else{a=r;fa=fr;if(side===1)fb/=2;side=1;}
+                }
+                Pma=Phi2a/r;
+            }
+            Pm=Pma-14.696;
+            const sA=seg(3,it===0?Pm:Pco2,Tco2,'multi',qs);
+            Pco2=Pm+sA.dP;
+            Tco2=Tci-jtOf(Pci-Pco2);
+            s3=seg(3,Pco2,Tco2,'multi',qs);T3=s3.Tout;
+            Z3=Z(Pma,T3+459.67);
+        }
+        const noFlow=Pco2>=Pci-0.5;
+        return {Pco2,Tco2,s3,s4,s5,Pm,Pma,Phi2,Phi2a,Pho2,T3,crit2,noFlow,ck1:ck1Of(Pco2,qs)};
+    };
+    const W0=wtsWalk({P0:Psep,seg5:'none',heater:true,ck2:null,qs:1});
+    let Pco=W0.Pco,Tco=W0.Tco,s3=W0.s3,s4=W0.s4,Phi=W0.Phi,Thi=W0.Thi,Pho=W0.Pho,Tho=W0.Tho;
     const Pco_psia=Pco+14.696,pratio=Pco_psia/P1a;
     let regime,flowLimited=false,Qcap=Q_crit_max;
     if(Qg<=0)regime='No Flow';
@@ -133207,6 +133295,88 @@ window.calcWTS=function(){
     const s5=seg(5,Psep,Tsi,'gas');
     // Seg 6: Surge Tank → Atm Tank (liquid only, atmospheric)
     const s6=seg(6,Psurge,Tsi,'liquid');
+    // ── v3.3.3 flow blocks (docs/SIM-FOLLOWUP-PLAN.md §4.2-4.5): flow.ck2 (CK-102 in line, V-101 in), flow.sepBy (V-101 out,
+    //    walked from the destination through the whole-stream seg 5) and flow.sepBy.ck2 (both). Computed whenever their inputs
+    //    exist (the rig-up is never read, D2); the base walk above is read-only; their warnings stay in the blocks ──
+    let ck2Blk=null,sepByBlk=null;
+    try{
+        const CpMix=mdG*0.56+mdO*0.50+mdW*1.0;
+        const SEGM={3:['choke_heater','choke','heater','Choke→Heater'],4:['heater_sep','heater','separator','Heater→Sep'],
+                    5:['sep_flare','separator','flare','Sep→Flare']};
+        const segOut=(n,s)=>Object.assign({id:SEGM[n][0],from:SEGM[n][1],to:SEGM[n][2],label:SEGM[n][3]},s);
+        const sitV=sithp!=null?sithp:1.2*Pwh,sitEst=sithp==null;
+        const ck2Block=(P0,m5,regRef)=>{
+            if(!(Qg>0))return {v:1,bean:bean2,pos:ck2Pos,skipped:true,note:'no gas rate: the two-stage gas walk does not apply'};
+            const o={P0,seg5:m5?'multi':'none',heater:true,ck2:{bean:bean2,pos:ck2Pos},qs:1};
+            const W=wtsWalk(o),Q0=Qg,Qc=Q_crit_max/1000;
+            // pair capacity: the largest Q the two-stage walk passes (feasible, CK-101 passes Q at the ratio it gives)
+            const F=Q=>{const w=wtsWalk({P0,seg5:o.seg5,heater:true,ck2:o.ck2,qs:Q/Q0});return {w,f:(w.noFlow?0:w.ck1.Qcap/1000)-Q};};
+            let lo=0,flo=Qc,hi=-1,fhi=0;
+            for(let k=0;k<5;k++){const Qk=Q0*Math.pow(2,k),e=F(Qk);if(e.f<0){hi=Qk;fhi=e.f;break;}lo=Qk;flo=e.f;}
+            if(hi<0){hi=1.0001*Qc;fhi=F(hi).f;}
+            let Qp=lo,side=0;
+            if(hi>lo&&fhi<0&&flo>0){
+                for(let k=0;k<30;k++){
+                    Qp=(lo*fhi-hi*flo)/(fhi-flo);
+                    const f=F(Qp).f;
+                    if(f===0||hi-lo<1e-9*Qc)break;
+                    if(f*fhi>0){hi=Qp;fhi=f;if(side===-1)flo/=2;side=-1;}
+                    else{lo=Qp;flo=f;if(side===1)fhi/=2;side=1;}
+                }
+            }
+            const wq=Qp>0?F(Qp).w:W,cr1=wq.ck1.regime==='Critical',cr2=wq.crit2;
+            const limiter=cr2&&!cr1?'CK-102':cr1?'CK-101':'both';
+            const noFlow=W.noFlow,c1=W.ck1,flowLimited=noFlow||Q0>1.01*Qp;
+            const regime=noFlow?'No Flow':W.crit2?'Critical':'Subcritical';
+            // temperatures: J-T capped cumulatively from the CK-101 inlet (adiabatic chokes in series are isenthalpic overall)
+            const dT1=jtOf(Pci-W.Pco2),dT2=Math.max(0,Math.min(150-dT1,0.07*wJT*(W.Pm-W.Phi2))),T3=W.T3;
+            let Tp1=T3;
+            if(ck2Pos==='midcoil'&&!bypass){const ThoX=Math.max(Thtr,T3);Tp1=T3+Math.min(0.5*Math.max(0,ThoX-T3),Math.max(0,ThoX-25-T3));}
+            const TmIn=ck2Pos==='midcoil'?Tp1:T3,TmOut=TmIn-dT2,ToutH=bypass?TmOut:Math.max(Thtr,TmOut);
+            const htIn=ck2Pos==='midcoil'?T3:TmOut;
+            const Qd=CpMix*((ck2Pos==='midcoil'?Tp1-T3:0)+Math.max(ToutH-TmOut,0))*3600,duty=htrEff>0?Qd/htrEff/1e6:0;
+            const hydT=Thyd(W.Phi2a),margin=TmOut-hydT;
+            // §4.3-7 second check: seg 3 at the CK-102 inlet (Pm, T3); a warning only (the frozen hyd shape keeps {T, margin})
+            const hydT3=Thyd(W.Pma),margin3=T3-hydT3;
+            const ws=[];
+            if(flowLimited&&limiter==='CK-102')ws.push({t:'warn',msg:`CK-102 limits the rate: bean ${bean2}/64 passes ${fmt(Qp,2)} of ${fmt(Qg,2)} MMscf/d — open CK-102 or reduce the rate`});
+            if(flowLimited&&limiter==='both')ws.push({t:'warn',msg:`CK-101 and CK-102 together pass ${fmt(Qp,2)} of ${fmt(Qg,2)} MMscf/d — open either choke or reduce the rate`});
+            if(!noFlow&&c1.regime==='Subcritical'&&regRef==='Critical')ws.push({t:'warn',msg:`CK-101 subcritical with CK-102 in line (P2/P1 ${fmt(c1.ratio,3)} above ${fmt(rCrit,3)}): in a real well the rate and WHP would now respond to the downstream pressure (not simulated)`});
+            if(noFlow)ws.push({t:'warn',msg:'No flow at this rate: CK-102 back-pressure reaches the CK-101 inlet'});
+            if(sitV>DESIGN_P_CK2)ws.push({t:'warn',msg:ck2Pos==='midcoil'
+                ?`SITHP ${fmt(sitV,0)} psig above the 1,440 psig design pressure between the chokes: if CK-102 is closed or plugged the line and H-101 pass 1 see full SITHP`
+                :`SITHP ${fmt(sitV,0)} psig above the 1,440 psig design pressure of the line CK-101 → CK-102: if CK-102 is closed or plugged this line sees full SITHP; the coil is downstream of CK-102`});
+            if(!noFlow&&W.Pm>DESIGN_P_CK2)ws.push({t:'warn',msg:`Pressure between the chokes ${fmt(W.Pm,0)} psig above the 1,440 psig design pressure — open CK-102 or reduce the rate`});
+            if(!noFlow&&margin3<10)ws.push({t:'warn',msg:`Hydrate margin at the CK-102 inlet ${fmt(margin3,1)} °F (hydrate ${fmt(hydT3,0)} °F at ${fmt(W.Pm,0)} psig)`});
+            if(!noFlow&&margin<10)ws.push({t:'warn',msg:`Hydrate margin at the CK-102 outlet ${fmt(margin,1)} °F (hydrate ${fmt(hydT,0)} °F at ${fmt(W.Phi2,0)} psig)`});
+            return {v:1,bean:bean2,pos:ck2Pos,Cd:Cd_ck,skipped:false,note:'',
+                regime,noFlow,flowLimited,limiter,QmaxMMscfd:Qp,Pin:W.Pm,Pout:W.Phi2,dP:W.Pm-W.Phi2,dTjt:dT2,Tin:TmIn,Tout:TmOut,
+                hyd:{T:hydT,margin},
+                ck1:{regime:c1.regime,Pout:W.Pco2,ratio:c1.ratio,QmaxMMscfd:c1.Qcap/1000,Tout:W.Tco2,dTjt:dT1,wJT},
+                nodes:{choke:{P:W.Pco2,T:W.Tco2},heaterChoke:{P:W.Phi2,Pin:W.Pm,T:TmOut,Tin:TmIn},heater:{P:W.Pho2,T:ToutH,Tin:htIn,duty}},
+                segs:[segOut(3,W.s3),segOut(4,W.s4)],
+                heater:{dutyMMBtuHr:duty,Tin:htIn,Tout:ToutH},
+                sit_psig:sitV,sitEst,designP_psig:DESIGN_P_CK2,ratingOK:sitV<=DESIGN_P_CK2,
+                warnings:ws};
+        };
+        ck2Blk=ck2Block(Psep,false,regime);
+        // V-101 out: the whole stream to the burner / flare line (header P_FLARE_HDR) or a production line at P psig
+        const P0b=sepByDest==='line'?sepByP:P_FLARE_HDR;
+        const B=wtsWalk({P0:P0b,seg5:'multi',heater:true,ck2:null,qs:1}),cb=ck1Of(B.Pco,1);
+        const dPb=Pci-B.Pco,dThb=B.Tho-B.Thi,Qdb=CpMix*Math.max(dThb,0)*3600,dutyB=htrEff>0?Qdb/htrEff/1e6:0;
+        const nfB=Qg>0&&cb.regime==='No Flow',wb=[];
+        if(nfB)wb.push({t:'warn',msg:'No flow: destination pressure ≥ choke upstream pressure'});
+        else if(Qg>0&&cb.regime==='Subcritical')wb.push({t:'warn',msg:`Destination pressure makes CK-101 subcritical (P2/P1 ${fmt(cb.ratio,3)} above ${fmt(rCrit,3)})`});
+        if(sepByDest==='line'&&P0b+B.s5.dP>DESIGN_P_CK2)wb.push({t:'warn',msg:`Production line ${fmt(P0b,0)} psig plus line loss ${fmt(B.s5.dP,0)} psi above the 1,440 psig design pressure of the bypass path (blocked outlet not simulated)`});
+        sepByBlk={v:1,dest:sepByDest,P0_psig:P0b,noFlow:nfB,
+            choke:{regime:cb.regime,flowLimited:cb.flowLimited,QmaxMMscfd:cb.Qcap/1000,QcritMMscfd:Q_crit_max/1000,Pin:Pci,Pout:B.Pco,
+                   ratio:cb.ratio,rCrit,dP:dPb,dTjt:jtOf(dPb),wJT},
+            nodes:{choke:{P:B.Pco,T:B.Tco},heater:{P:B.Pho,T:B.Tho},sep:{P:B.s4.Pout,T:B.s4.Tout}},
+            segs:[segOut(3,B.s3),segOut(4,B.s4),segOut(5,B.s5)],
+            heater:{dP:5,dutyMMBtuHr:dutyB,Tin:B.Thi,Tout:B.Tho},
+            surgeP_psig:wtsClamp(PsurgeRaw,0,30),designP_psig:DESIGN_P_CK2,warnings:wb,
+            ck2:ck2Block(P0b,true,cb.regime)};
+    }catch(e){ck2Blk=null;sepByBlk=null;console.warn('[WTS] flow blocks',e);}
     // ── Build node array ──
     const nodes=[
         {nm:'Wellhead',P:Pwh,T:Twh,th:Thyd(Pwh+14.696)},
@@ -133236,20 +133406,9 @@ window.calcWTS=function(){
     if(flowLimited)warns.push({t:'error',m:`Choke is flow-limited — bean ${bean}/64" at Cd=${Cd_ck} can only pass ${fmt(Qcap/1000,2)} MMSCFD; requested ${fmt(Qg,2)} MMSCFD. Increase bean or reduce rate.`});
     if(regime==='No Flow'&&Qg>0)warns.push({t:'error',m:'Separator back-pressure exceeds the choke upstream pressure — no flow possible'});
     if(PsurgeRaw>30)warns.push({t:'warn',m:'Surge tank pressure limited to 30 psig (atmospheric-rated surge tank)'});
-    if(PsurgeRaw>Psep-10)warns.push({t:'warn',m:'Surge tank pressure too close to separator pressure — liquids cannot dump'});
+    if(PsurgeRaw>Psep-10)warns.push({t:'warn',m:'Surge tank pressure too close to separator pressure — liquids cannot dump',sepIn:true});
     if(s5.Pout<0)warns.push({t:'error',m:`Flare line &Delta;P ${fmt(s5.dP,0)} psi exceeds separator pressure ${Psep} psig`});
-    const wEl=$('wts_warn');
-    if(wEl){
-        if(warns.length>0){
-            wEl.style.display='block';
-            wEl.innerHTML=warns.map(w=>{
-                const c=w.t==='error'?'var(--red)':w.t==='warn'?'var(--yellow)':w.t==='info'?'var(--blue)':'var(--text2)';
-                const ic=w.t==='error'||w.t==='warn'?'&#9888;':w.t==='info'?'&#10052;':'&#8505;';
-                const bg=w.t==='error'?'rgba(248,81,73,.08)':w.t==='warn'?'rgba(210,153,34,.08)':w.t==='info'?'rgba(88,166,255,.08)':'rgba(139,148,158,.08)';
-                return `<div style="padding:6px 12px;background:${bg};border-left:3px solid ${c};margin-bottom:4px;border-radius:4px;font-size:12px;color:${c}">${ic} ${w.m}</div>`;
-            }).join('');
-        }else wEl.style.display='none';
-    }
+    // #wts_warn and #wts_res are painted by wtsPaint at the end (v3.3.3: the rig-dependent rows of wtsRenderResults)
     // Canvas
     wtsDrawDiag(nodes,segs);
     // ── Results HTML ──  (field-unit calc; display follows the unit system: UL = column unit label, UV = value)
@@ -133260,12 +133419,15 @@ window.calcWTS=function(){
     const UV=(v,c,dp,dpm)=>!isFinite(v)?'—':(_m?fmt(_U.format(v,c).value,dpm==null?dp:dpm):fmt(v,dp));
     let h='<div class="rbox" style="margin-top:12px"><div class="rbox-title">Node Conditions</div>';
     h+='<table class="dtable" style="font-size:11px"><tr><th>Node</th><th>P ('+UL('pressureG','psig')+')</th><th>T ('+UL('temperature','&deg;F')+')</th><th>T ('+(_m?'&deg;F':'&deg;C')+')</th><th>T<sub>hyd</sub> ('+UL('temperature','&deg;F')+')</th><th>Status</th></tr>';
-    nodes.forEach(nd=>{
+    let iRowCk=0;                                               // v3.3.3 insertion points for wtsPaint (display only)
+    nodes.forEach((nd,ni)=>{
         const Tc=(nd.T-32)*5/9;
         const hyd=nd.T<nd.th&&nd.P>10; // skip hydrate warning at atmospheric tanks
         const sc=hyd?'color:var(--blue);font-weight:700':'color:var(--green)';
         h+=`<tr><td style="font-weight:600">${nd.nm==='SSV'?'ESD / SSV':nd.nm==='Flare'?'Flare (header, d/s PCV-101)':nd.nm==='Atm Tank'?'Gauge Tank':nd.nm}</td><td>${UV(nd.P,'pressureG',0)}</td><td>${UV(nd.T,'temperature',1)}</td><td>${fmt(_m?nd.T:Tc,1)}</td><td>${UV(nd.th,'temperature',0)}</td><td style="${sc}">${hyd?'&#10052; HYDRATE RISK':'OK'}</td></tr>`;
+        if(ni===2)iRowCk=h.length;
     });
+    const iRowEnd=h.length;
     h+='</table></div>';
     h+='<div class="rbox" style="margin-top:10px"><div class="rbox-title">Pipe Segment Analysis</div>';
     h+='<table class="dtable" style="font-size:11px"><tr><th>Segment</th><th>Pipe</th><th>ID ('+UL('lengthSmall','in')+')</th><th>Vel ('+UL('velocity','ft/s')+')</th><th>Limit ('+UL('velocity','ft/s')+')</th><th>%Limit</th><th>&Delta;P ('+UL('pressure','psi')+')</th><th>&Delta;T ('+UL('tempDelta','&deg;F')+')</th><th>Status</th></tr>';
@@ -133284,6 +133446,7 @@ window.calcWTS=function(){
         <div class="rrow"><span class="rl">&Delta;P Choke</span><span class="rv">${uF(dPchk,'pressure',0,'psi')}</span></div>
         <div class="rrow"><span class="rl">J-T Cooling</span><span class="rv">${uF(dTjt,'tempDelta',1,'°F')}</span></div>
     </div>`;
+    const iChokeEnd=h.lastIndexOf('</div>'),iChokeAfter=h.length;
     h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Heater${bypass?' &mdash; BYPASSED':''}</div>`;
     if(bypass){
         h+=`<div class="rrow"><span class="rl">Status</span><span class="rv" style="color:var(--yellow)">Full bypass &mdash; no heating</span></div>`;
@@ -133304,7 +133467,7 @@ window.calcWTS=function(){
         <div class="rrow"><span class="rl">&rho;<sub>gas</sub> @ WH</span><span class="rv">${uF(rhoG(Pwh+14.696,Twh+459.67),'density',3,'lb/ft³')}</span></div>
         <div class="rrow"><span class="rl">&rho;<sub>gas</sub> @ Sep</span><span class="rv">${uF(rhoG(Psep+14.696,Tsi+459.67),'density',3,'lb/ft³')}</span></div>
     </div>`;
-    $('wts_res').innerHTML=h;
+    const paintCtx={flow:null,h,iRowCk,iRowEnd,iChokeEnd,iChokeAfter,warns,uF,UV,m:_m,Thyd,dest:sepByDest};
     // Publish the solved flow path so other modules (Pipe Service Life,
     // 3D view, reports) can consume it without re-running the walk.
     // Flow contract v1 (plain JSON; replaced on every calc, never mutated after publishing).
@@ -133332,7 +133495,8 @@ window.calcWTS=function(){
           warnings:warns.map(w=>({t:w.t,m:stripHtml(w.m)})),
           sim:{sepID_in:sepID,sepLss_ft:sepL,surgeP_psig:Psurge,surgeCap_bbl:surgeCap,gaugeCap_bbl:gtCap,
                sand_pptb:sandPptb,sand_lbmmscf:sandGas,sand_d50_um:sandD50,desRating_psi:dsRating,desAcc_gal:dsAcc,sithp_psig:sithp,
-               surge2Cap_bbl:surge2Cap}
+               surge2Cap_bbl:surge2Cap,sepByDest,sepByP_psig:sepByP},
+          ck2:ck2Blk, sepBy:sepByBlk                                 // v3.3.3 blocks (§4.4); null if they could not be solved
         };
         GW.WTS_state.flow=flow;
         GW.WTS_state.nodes=nodes.map((n,i)=>{const vi=[0,1,2,3,4,null,5,null][i];
@@ -133346,7 +133510,85 @@ window.calcWTS=function(){
         inputs:{Pwh,Twh,Qg,Qo,Qw,SGg,API,bean,Cd:Cd_ck,Thtr,htrEff,bypass,Psep,Cfac,eps:epsIn},
         heater:{Tin:Thi,Tout:Tho,dutyMMBtu:QMM},choke:{Pin:Pci,Pout:Pco,ratio:pratio,Qmax:Qcap,dTjt},
         flow};                                                      // additive fields only
+    paintCtx.flow=flow; wtsRC=paintCtx;
+    try{wtsPaint(paintCtx,wtsRig);}catch(e){console.warn('[WTS] results',e);}  // the last rig-up 38 handed over (null: the v3.3.1 view); the wts:calc dispatch always runs
     try{document.dispatchEvent(new CustomEvent('wts:calc',{detail:window.WTS_lastCalc}));}catch(_){}
+};
+// ── v3.3.3 display of the rig-dependent result rows (docs/SIM-FOLLOWUP-PLAN.md §4.5, D2) ──
+// calcWTS never reads the rig-up: it paints #wts_res / #wts_warn through wtsPaint with the last rig-up the live controller
+// (38) handed to window.wtsRenderResults (null until then = the v3.3.1 page). wtsRenderResults(flow, rig) is display only:
+// no input save, no wts:calc, no setFlow, no storage read; a flow other than the last calc's is not painted.
+let wtsRC=null,wtsRig=null;
+const wtsEsc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const wtsWarnHtml=ws=>ws.map(w=>{
+    const c=w.t==='error'?'var(--red)':w.t==='warn'?'var(--yellow)':w.t==='info'?'var(--blue)':'var(--text2)';
+    const ic=w.t==='error'||w.t==='warn'?'&#9888;':w.t==='info'?'&#10052;':'&#8505;';
+    const bg=w.t==='error'?'rgba(248,81,73,.08)':w.t==='warn'?'rgba(210,153,34,.08)':w.t==='info'?'rgba(88,166,255,.08)':'rgba(139,148,158,.08)';
+    return `<div style="padding:6px 12px;background:${bg};border-left:3px solid ${c};margin-bottom:4px;border-radius:4px;font-size:12px;color:${c}">${ic} ${w.m}</div>`;
+}).join('');
+function wtsPaint(C,rig){
+    const r=rig&&typeof rig==='object'?rig:{},fl=C.flow&&typeof C.flow==='object'?C.flow:null,uF=C.uF,UV=C.UV;
+    const sepOut=r.separator===false,inRig=r.heaterChoke===true;
+    const byp=inRig&&(r.heater===false||!!(fl&&fl.inputs&&fl.inputs.bypass)),act=inRig&&!byp;
+    const sb=sepOut&&fl&&fl.sepBy&&typeof fl.sepBy==='object'?fl.sepBy:null;
+    const kb0=act&&fl?(sepOut?(sb&&sb.ck2):fl.ck2):null,kb=kb0&&typeof kb0==='object'&&kb0.skipped===false?kb0:null;
+    const rrow=(l,v)=>`<div class="rrow"><span class="rl">${l}</span><span class="rv">${v}</span></div>`;
+    const nrow=(nm,P,T,th)=>{const hyd=T<th&&P>10,sc=hyd?'color:var(--blue);font-weight:700':'color:var(--green)';
+        return `<tr><td style="font-weight:600">${nm}</td><td>${UV(P,'pressureG',0)}</td><td>${UV(T,'temperature',1)}</td><td>${fmt(C.m?T:(T-32)*5/9,1)}</td><td>${UV(th,'temperature',0)}</td><td style="${sc}">${hyd?'&#10052; HYDRATE RISK':'OK'}</td></tr>`;};
+    const add={};
+    const put=(at,html)=>{add[at]=(add[at]||'')+html;};
+    if(kb)put(C.iRowCk,nrow('Heater choke (CK-102)',kb.Pout,kb.Tout,kb.hyd.T));
+    if(sb){const s5=sb.segs&&sb.segs[2];
+        put(C.iRowEnd,nrow(sb.dest==='line'?'→ production line':'→ burner line',sb.P0_psig,s5?s5.Tout:NaN,C.Thyd(sb.P0_psig+14.696)));
+        put(C.iChokeEnd,rrow('With V-101 out, to '+(sb.dest==='line'?'production line':'burner line'),
+            'downstream '+uF(sb.choke.Pout,'pressureG',0,'psig')+' &middot; '+sb.choke.regime+(sb.choke.flowLimited?' (flow-limited)':'')));}
+    if(kb)put(C.iChokeEnd,rrow('Two-stage with CK-102','P between chokes '+uF(kb.Pin,'pressureG',0,'psig')+' &middot; CK-101 '+kb.ck1.regime));
+    if(inRig){
+        let b='<div class="rbox" style="margin-top:10px"><div class="rbox-title">Heater choke CK-102 (API 14B)</div>';
+        if(byp)b+=rrow('Status','<span style="color:var(--yellow)">Bypassed with H-101</span> &mdash; in the rig-up, out of line while the stream does not go through the heater');
+        else if(!kb)b+=rrow('Status',kb0&&kb0.skipped?wtsEsc(kb0.note||''):'no heater-choke data in this flow (in line, &Delta;P 0)');
+        else{
+            const lc=kb.flowLimited?'var(--red)':kb.regime==='Critical'?'var(--purple)':kb.regime==='Subcritical'?'var(--green)':'var(--text3)';
+            b+=rrow('Bean / Cd',`${kb.bean}/64" (${fmt(kb.bean/64,3)}") &middot; Cd=${kb.Cd}`);
+            b+=rrow('Position',kb.pos==='midcoil'?'Between the coil passes':'On the heater inlet');
+            b+=rrow('Upstream P (between the chokes)',uF(kb.Pin,'pressureG',0,'psig'));
+            b+=rrow('Downstream P (H-101 inlet)',uF(kb.Pout,'pressureG',0,'psig'));
+            b+=`<div class="rrow"><span class="rl">Flow Regime</span><span class="rv" style="color:${lc};font-weight:700">${kb.regime}${kb.flowLimited?' (flow-limited)':''}</span></div>`;
+            b+=rrow('&Delta;P CK-102',uF(kb.dP,'pressure',0,'psi'));
+            b+=rrow('J-T Cooling (CK-102 stage)',uF(kb.dTjt,'tempDelta',1,'°F'));
+            b+=rrow('Outlet Temp',uF(kb.Tout,'temperature',1,'°F'));
+            b+=rrow('Hydrate T / margin',uF(kb.hyd.T,'temperature',0,'°F')+' / '+uF(kb.hyd.margin,'tempDelta',1,'°F'));
+            b+=rrow('Pair capacity (CK-101 + CK-102)',uF(kb.QmaxMMscfd,'gasRate',2,'MMSCFD'));
+            b+=rrow('Limiter',kb.limiter==='both'?'CK-101 and CK-102 together':kb.limiter);
+            b+=rrow('CK-101 with CK-102 in line',`P2/P1 ${fmt(kb.ck1.ratio,3)} &middot; ${kb.ck1.regime}`);
+            b+=rrow('Design P between the chokes (PAH-102)',uF(kb.designP_psig,'pressureG',0,'psig')+' &middot; SITHP '+uF(kb.sit_psig,'pressureG',0,'psig')+(kb.sitEst?' (estimated 1.2 &times; WHP)':''));
+        }
+        put(C.iChokeAfter,b+'</div>');
+    }
+    let h=C.h;
+    Object.keys(add).map(Number).sort((a,b)=>b-a).forEach(at=>{h=h.slice(0,at)+add[at]+h.slice(at);});
+    const res=$('wts_res');
+    if(res)res.innerHTML=h;
+    let ws=sepOut?C.warns.filter(w=>!w.sepIn):C.warns.slice();
+    [sb,kb].forEach(bk=>{if(bk&&Array.isArray(bk.warnings))bk.warnings.forEach(w=>ws.push({t:w.t,m:wtsEsc(w.msg)}));});
+    const wEl=$('wts_warn');
+    if(wEl){
+        if(ws.length>0){wEl.style.display='block';wEl.innerHTML=wtsWarnHtml(ws);}
+        else{wEl.style.display='none';wEl.innerHTML='';}
+    }
+    // input rows: CK-102 bean / position shown while CK-102 is in the rig-up; the line pressure while the destination is 'line'
+    const rowOf=id=>{const e=$(id);return e&&typeof e.closest==='function'?e.closest('.fg-item'):null;};
+    const tog=(id,on,hide)=>{const w=rowOf(id);if(!w)return;if(hide)w.style.display=on?'':'none';if(w.classList)w.classList.toggle('rp-skip',!on);};
+    tog('wts_bean2',inRig,true);tog('wts_ck2Pos',inRig,true);
+    const line=C.dest==='line',pe=$('wts_sepByP');
+    if(pe&&typeof pe.closest==='function')pe.disabled=!line;
+    tog('wts_sepByP',line,false);
+}
+window.wtsRenderResults=function(flow,rig){
+    if(rig&&typeof rig==='object'&&!Array.isArray(rig))wtsRig=Object.assign({},rig);
+    if(!wtsRC||!flow||flow!==wtsRC.flow)return false;
+    try{wtsPaint(wtsRC,wtsRig);}catch(e){console.warn('[WTS] results',e);return false;}
+    return true;
 };
 
 const WTS_DIAG_LAYOUT={W:1200,H:340,tx:[85,230,380,535,695,950],cy:130,bx:[695,1000],by:245,cl:[18,16,20,27,30,10],strip:{x:20,y:215,w:600,h:103},
