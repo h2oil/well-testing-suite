@@ -1448,12 +1448,21 @@
     // ═════════════════════════════════════════════════════════════════════
     // 7. Live engine and replay (§6.9)
     // ═════════════════════════════════════════════════════════════════════
-    // A session keeps the samples in time order (out-of-order and duplicate samples are merged; psig is converted with
-    // the test's atmPsia), resamples the falloff with the pressure-increment rule (|Δp| ≥ dpMin or Δln Δt ≥ 0.01), uses the
-    // closed-form G (α = ½), fits the early G line p = ISIP − m_G·G on the first third of the G range (frozen once a
-    // departure is called), and runs a one-sided CUSUM on the pressure residuals r = p − (ISIP − m_G·G), made close to
-    // independent by decimation to one point per 2L in ln G (default) or by lag-1 prewhitening when the decimated series
-    // has fewer than 30 points before the departure. σ includes the line's own parameter variance at G.
+    // A session is incremental. Samples are appended in place when they arrive in time order (spliced only when out of order;
+    // duplicates merged; psig converted with the test's atmPsia). The events come from PRiSM_dfit_events (56) when available,
+    // else from the record: the pump start from the pressure ramp back-extrapolated to the static pressure inside the bracket
+    // [last zero-rate sample, first pumping sample] (its midpoint when the ramp is not usable, then tp is refined inside the
+    // bracket as a nuisance parameter of the early G line), the shut-in at the last pumping sample. The falloff is resampled at
+    // push time with the pressure-increment rule (|Δp| ≥ dpMin or Δln Δt ≥ 0.01), G is closed-form (α = ½), and every later
+    // stage keeps its state between runs: the early G line on the first third of the G range, the running least-squares sums,
+    // the two-sided CUSUM on the pressure residuals r = p − (ISIP − m_G·G) (only candidates after the last processed one are
+    // evaluated; restarted when ρ or the mode changes), the confirmation counters, a two-pointer Bourdet dP/dG with the
+    // tangent-line (F2) detector, and the after-closure series (1 % in ln(t_inj − t0)) for the p_i bracket and the radial check.
+    // Candidates: white residuals (|ρ| ≤ 0.2) one point per 2L/5 in ln G with h raised so that the false-alarm rate per log
+    // cycle is that of 2L at h (finer timing); correlated residuals one point per 2L (decimation) or, when that series is short
+    // (< 30 points), 2L blocks of lag-1 prewhitened innovations. σ includes the line's own parameter variance at G.
+    // Calibration items (3.4b): (k, h), the spacing and the timing on densely, uniformly sampled records (0.1 Hz: provisional
+    // calls 2–20 % of t_c after closure on the reference signal, against ≤ 2 % on log-spaced records).
     function _G05(d) { return d > 0 ? 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2) : 0; }
     function _G05inv(Gv) { var lo = Math.log(1e-9), hi = Math.log(1e7); for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (_G05(Math.exp(m)) < Gv) lo = m; else hi = m; } return Math.exp(0.5 * (lo + hi)); }
     function _lagK(a, K) {
@@ -1464,188 +1473,387 @@
         return den > 0 ? num / den : null;
     }
     function _lag1(a) { return _lagK(a, 1); }
+    // ARL₀ of a one-sided CUSUM (Siegmund's approximation, unit-variance z): used to keep the false-alarm rate per log cycle of G
+    // when the candidate spacing is finer than 2L (white residuals, no decimation needed)
+    function _arl0(h, k) { var b = h + 1.166, x = 2 * k * b; return k > 0 ? (Math.exp(x) - x - 1) / (2 * k * k) : b * b; }
+    function _hFor(h, k, factor) {
+        var target = _arl0(h, k) * factor, lo = h, hi = h + 60;
+        for (var i = 0; i < 80; i++) { var m = 0.5 * (lo + hi); if (_arl0(m, k) < target) lo = m; else hi = m; }
+        return 0.5 * (lo + hi);
+    }
+    function _sums() { return { n: 0, sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0, fp: 0 }; }
     function _liveCreate(ctx) {
         ctx = ctx || {};
         var T = ctx.test || {}, inp = T.inputs || {}, ch = inp.channels || {}, opt = inp.options || {}, ev = inp.events || {};
         var atm = fin(ch.atmPsia) ? ch.atmPsia : 14.696, L = pos(opt.L) ? opt.L : 0.1;
         var cus = ctx.cusum || {}, kC = fin(cus.k) ? cus.k : 0.5, hC = fin(cus.h) ? cus.h : 5;
         var cal = G.PRiSM_dfit_cal; if (!ctx.cusum && cal && cal.cusum) { if (fin(cal.cusum.k)) kC = cal.cusum.k; if (fin(cal.cusum.h)) hC = cal.cusum.h; }
+        // fine candidate spacing for white residuals (|ρ| ≤ 0.2, no decimation needed): one point per 2L/5 in ln G with h raised so that ARL₀ per log cycle is that of 2L at h
+        var FINE = pos(ctx.fine) ? ctx.fine : 5, hFine = _hFor(hC, kC, FINE);
+        var tau = opt.tau || {}, tauAbs = fin(tau.abs) ? tau.abs : 15, tauF = fin(tau.fSigma) ? tau.fSigma : 0.003;
         var pri = inp.priors || {}, datum = inp.datumTvd;
         var prior = ctx.sigmaPrior || (pos(pri.sigmaGrad) && pos(datum) ? { p50: pri.sigmaGrad * datum, sd: (pos(pri.sigmaGradSd) ? pri.sigmaGradSd : 0.02) * datum } : null);
         if (!prior && ctx.plan && ctx.plan.ranges && ctx.plan.ranges.sigmaGrad && pos(ctx.plan.ranges.datumTvd)) prior = { p50: ctx.plan.ranges.sigmaGrad.p50 * ctx.plan.ranges.datumTvd, sd: ctx.plan.ranges.sigmaGrad.sd * ctx.plan.ranges.datumTvd };
-        var S = { t: [], p: [], q: [], T: [] }, timeline = [], last = null, frozen = null, closedAt = null, stats = null, firsts = {};
         var tStart0 = fin(ctx.tStart) ? ctx.tStart : (fin(ev.tStart) ? ev.tStart : null), ts0 = fin(ctx.ts) ? ctx.ts : (fin(ev.ts) ? ev.ts : null), tp0 = pos(ctx.tp) ? ctx.tp : null;
-        var sigmaG = fin(ctx.sigma) && ctx.sigma > 0 ? ctx.sigma : 0;
+        var sigmaG = fin(ctx.sigma) && ctx.sigma > 0 ? ctx.sigma : 0, gMin = 0.05;
+        var dpMin = fin(ctx.dpMin) ? ctx.dpMin : Math.max(0.05, 3 * sigmaG);
+        var S = { t: [], p: [], q: [], T: [] }, timeline = [], last = null, firsts = {}, closedAt = null;
+        var E = { tStart: null, ts: null, tp: null, src: null, bracket: null }, evDirty = true, Z = null, minDirtyT = Infinity;
+        var counts = { samples: 0, appends: 0, splices: 0, eventScans: 0, rebuilds: 0, resampled: 0, kept: 0, candidates: 0, derivs: 0, acaDiag: 0, acaPoints: 0, tpSearch: 0, runs: 0 };
+
+        // ── raw store: appended in place when in time order, spliced only when a sample is out of order ──
         function insert(t, p, q, Tm) {
-            var n = S.t.length, lo = 0, hi = n;
-            while (lo < hi) { var m = (lo + hi) >> 1; if (S.t[m] < t) lo = m + 1; else hi = m; }
-            if (lo < n && Math.abs(S.t[lo] - t) < 1e-12) { if (fin(q) && !fin(S.q[lo])) S.q[lo] = q; return false; }   // duplicate
-            S.t.splice(lo, 0, t); S.p.splice(lo, 0, p); S.q.splice(lo, 0, fin(q) ? q : null); S.T.splice(lo, 0, fin(Tm) ? Tm : null);
+            var n = S.t.length, at = n;
+            if (n && t <= S.t[n - 1] + 1e-12) {
+                if (Math.abs(S.t[n - 1] - t) < 1e-12) { if (fin(q) && !fin(S.q[n - 1])) { S.q[n - 1] = q; evDirty = true; } return false; }
+                var lo = 0, hi = n;
+                while (lo < hi) { var m = (lo + hi) >> 1; if (S.t[m] < t) lo = m + 1; else hi = m; }
+                if (lo < n && Math.abs(S.t[lo] - t) < 1e-12) { if (fin(q) && !fin(S.q[lo])) { S.q[lo] = q; evDirty = true; } return false; }
+                at = lo;
+            }
+            if (at === n) { S.t.push(t); S.p.push(p); S.q.push(fin(q) ? q : null); S.T.push(fin(Tm) ? Tm : null); counts.appends++; }
+            else {
+                S.t.splice(at, 0, t); S.p.splice(at, 0, p); S.q.splice(at, 0, fin(q) ? q : null); S.T.splice(at, 0, fin(Tm) ? Tm : null);
+                counts.splices++; if (t < minDirtyT) minDirtyT = t; evDirty = true;
+            }
+            if (fin(q) && (q > 0 || E.ts == null)) evDirty = true;
             return true;
         }
-        function events() {
-            var n = S.t.length, qmax = 0, i, tS = tStart0, tSh = ts0;
+        // ── events: 56's PRiSM_dfit_events when it is available (resolved at call time; it interpolates the rate step), else the
+        // pump start from the pressure ramp back-extrapolated to the static pressure between the last zero-rate and the first pumping
+        // sample (the midpoint of that bracket when the ramp is not usable), shut-in at the last pumping sample. Rescanned only when
+        // a pumping sample, a rate before the shut-in or an out-of-order sample arrives.
+        function scanEvents() {
+            counts.eventScans++;
+            var n = S.t.length, qmax = 0, i, tS = tStart0, tSh = ts0, src = tStart0 != null ? 'user' : null, tpE = null, bracket = null;
             for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > qmax) qmax = S.q[i];
+            if ((tS == null || tSh == null) && realFn(G.PRiSM_dfit_events) && n >= 3 && qmax > 0) {
+                try {
+                    var prep = { ok: true, t: S.t, pw: S.p, q: S.q.map(function (v) { return fin(v) ? v : 0; }), T: null, band: null, pSurf: null, idx: null,
+                                 src: 'bh', sigma: sigmaG, quantum: 0, applied: { atmDelta: 0, unitFix: null, clockOffsetH: 0, masked: 0 }, flags: [], hf: null };
+                    var r = G.PRiSM_dfit_events(prep, ev, {});
+                    if (r && r.ok !== false && fin(r.tStart) && fin(r.ts) && r.ts > r.tStart) {
+                        if (tS == null) { tS = r.tStart; src = 'events'; }
+                        if (tSh == null) tSh = r.ts;
+                        if (r.tp && pos(r.tp.pump) && tStart0 == null) tpE = r.tp.pump;
+                    }
+                } catch (e) { /* local rule below */ }
+            }
             if (qmax > 0) {
-                if (tS == null) for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.02 * qmax) { tS = S.t[i]; break; }
+                if (tS == null) {
+                    var iF = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.02 * qmax) { iF = i; break; }
+                    if (iF >= 0) {
+                        var iZ = -1; for (i = iF - 1; i >= 0; i--) if (fin(S.q[i])) { iZ = i; break; }
+                        if (iZ < 0) { tS = S.t[iF]; src = 'first-rate'; }
+                        else {
+                            var tLo = S.t[iZ], tHi = S.t[iF], est = null, pSt = S.p[iZ], i1 = iF + 1;
+                            if (i1 < n && fin(S.q[i1]) && S.q[i1] > 0.02 * qmax && S.t[i1] > S.t[iF]) {
+                                var sl = (S.p[i1] - S.p[iF]) / (S.t[i1] - S.t[iF]);
+                                if (sl > 0 && S.p[iF] > pSt) est = S.t[iF] - (S.p[iF] - pSt) / sl;
+                            }
+                            src = 'ramp';
+                            if (est == null || est < tLo - 1e-12 || est > tHi + 1e-12) { est = 0.5 * (tLo + tHi); src = 'midpoint'; }
+                            tS = est; bracket = [tLo, tHi];
+                        }
+                    }
+                }
                 if (tSh == null) {
                     var lastOn = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.05 * qmax) lastOn = i;
                     if (lastOn >= 0 && lastOn < n - 1) { for (i = lastOn + 1; i < n; i++) if (fin(S.q[i])) break; if (i < n) tSh = S.t[lastOn]; }
                 }
             }
-            var tp = tp0 || (tS != null && tSh != null && tSh > tS ? tSh - tS : null);
-            return { tStart: tS, ts: tSh, tp: tp };
+            var tp = tp0 || tpE || (tS != null && tSh != null && tSh > tS ? tSh - tS : null);
+            evDirty = false;
+            // the bracket (for the nuisance tp search) only when the pump start is the bracket midpoint (no usable ramp)
+            return { tStart: tS, ts: tSh, tp: tp, src: tp0 ? 'tp' : src, bracket: tp0 || tpE || src !== 'midpoint' ? null : bracket };
+        }
+        function evKey(e) { return [e.tStart, e.ts, e.tp].map(function (v) { return fin(v) ? v.toPrecision(15) : '-'; }).join('|'); }
+
+        // ── derived state, rebuilt only when the events or the tp change, or a sample arrives before the processed point ──
+        function newZ(tp) {
+            counts.rebuilds++;
+            return { tp: tp, iRaw: 0, tProc: -Infinity, lastP: null, lastL: null, F: { dt: [], p: [], t: [] },
+                     K: { G: [], lg: [], p: [], t: [] }, Lg: { dt: [], p: [], last: -Infinity }, nDec: 0, lastDecLG: -Infinity, decIdx: [],
+                     early: null, Ra: _sums(), cus: null, frozen: null, conf: null,
+                     bd: { kB: 0, jl: 0, jr: 0, D: [], tAt: [], f2: { Dmax: 0, kT: -1, kDep: null, below: 0, tot: 0, done: false, ssd: 0, nsd: 0, lastD: null, lastLGd: -Infinity, tProv: null, tConf: null, p: null, G: null } },
+                     A: { t: [], p: [], last: -Infinity, iF: 0 }, dgN: 0, dgRes: null, tpSearched: false };
+        }
+        function processRaw() {
+            var n = S.t.length, i;
+            for (i = Z.iRaw; i < n; i++) {
+                var dt = S.t[i] - E.ts; if (!(dt > 0)) continue;
+                var l = Math.log(dt);
+                // pressure increment |Δp| ≥ dpMin or 1 % in Δt (with rounding slack): O(1) per sample
+                if (Z.lastP == null || Math.abs(S.p[i] - Z.lastP) >= dpMin || l - Z.lastL >= 0.0099) {
+                    Z.F.dt.push(dt); Z.F.p.push(S.p[i]); Z.F.t.push(S.t[i]); Z.lastP = S.p[i]; Z.lastL = l; counts.resampled++;
+                    var Gv = _G05(dt / Z.tp);
+                    if (Gv >= gMin) {
+                        var lg = Math.log(Gv), K = Z.K; K.G.push(Gv); K.lg.push(lg); K.p.push(S.p[i]); K.t.push(S.t[i]); counts.kept++;
+                        if (lg >= Z.lastDecLG + 2 * L) { Z.nDec++; Z.lastDecLG = lg; Z.decIdx.push(K.G.length - 1); }
+                    }
+                    if (l >= Z.Lg.last + 0.01) { Z.Lg.dt.push(dt); Z.Lg.p.push(S.p[i]); Z.Lg.last = l; }
+                }
+            }
+            Z.iRaw = n; Z.tProc = n ? S.t[n - 1] : -Infinity;
+        }
+        function addTo(R, Gv) {
+            var K = Z.K, p00 = K.p[0];
+            while (R.fp < K.G.length && K.G[R.fp] <= Gv) { var gx = K.G[R.fp], py = K.p[R.fp] - p00; R.n++; R.sx += gx; R.sy += py; R.sxx += gx * gx; R.sxy += gx * py; R.syy += py * py; R.fp++; }
+        }
+        function lineOf(R) {
+            if (R.n < 20) return null;
+            var p00 = Z.K.p[0], mx = R.sx / R.n, my = R.sy / R.n, Sxx = R.sxx - R.n * mx * mx, Sxy = R.sxy - R.n * mx * my, Syy = R.syy - R.n * my * my;
+            if (!(Sxx > 0)) return null;
+            var m = Sxy / Sxx, b = my - m * mx + p00, s2v = Math.max(0, (Syy - m * Sxy) / Math.max(1, R.n - 2));
+            return { m: m, b: b, s2: Math.max(s2v, sigmaG * sigmaG, 1e-8), xb: mx, sxx: Sxx, n: R.n, gMax: R.fp > 0 ? Z.K.G[R.fp - 1] : 0 };
+        }
+        // early G line on G ≤ G0 = max(0.5, min(2, G_now/3)) and the lag-1 coefficient ρ of its residuals; frozen once G_now ≥ 6
+        function early() {
+            var K = Z.K, nK = K.G.length, Gnow = K.G[nK - 1], G0 = Math.max(0.5, Math.min(2, Gnow / 3));
+            if (Z.early && (Z.early.frozen || (Z.early.G0 === G0 && Z.early.nK === nK))) return Z.early;
+            var X0 = [], Y0 = [];
+            for (var i = 0; i < nK && K.G[i] <= G0; i++) { X0.push(K.G[i]); Y0.push(K.p[i]); }
+            var fit0 = X0.length >= 5 ? linfit(X0, Y0) : null, rho = 0;
+            if (fit0) {
+                var res0 = Y0.map(function (y, q) { return y - (fit0.b + fit0.m * X0[q]); });
+                var r1 = _lag1(res0), r2 = _lagK(res0, 2);                  // AR part under white gauge noise: ρ ≈ r₂/r₁
+                rho = r1; if (fin(r1) && fin(r2) && r1 > 0.2 && r2 > 0) rho = Math.max(r1, Math.min(0.95, r2 / r1));
+                rho = fin(rho) ? Math.max(-0.95, Math.min(0.95, rho)) : 0;
+            }
+            Z.early = { G0: G0, nK: nK, fit0: fit0, X0: X0, rho: rho, frozen: G0 === 2 && Gnow >= 6 };
+            return Z.early;
+        }
+        // nuisance tp (no logged pump start, no events engine, no usable pressure ramp): the tp inside the bracket that makes the
+        // early G line straight
+        // (least squares over G ≤ 2, golden section), searched once when the window is complete; then the state is rebuilt
+        function searchTp() {
+            Z.tpSearched = true;
+            if (!E.bracket || E.ts == null) return null;
+            var tpLo = E.ts - E.bracket[1], tpHi = E.ts - E.bracket[0];
+            if (!(tpLo > 0) || !(tpHi > tpLo * (1 + 1e-6))) return null;
+            var F = Z.F, dts = [], ps = [], dtMax = tpHi * _G05inv(2);
+            for (var i = 0; i < F.dt.length && F.dt[i] <= dtMax * 1.0001; i++) { dts.push(F.dt[i]); ps.push(F.p[i]); }
+            var rss = function (tp) {
+                counts.tpSearch++;
+                var X = [], Y = [];
+                for (var j = 0; j < dts.length; j++) { var g = _G05(dts[j] / tp); if (g >= gMin && g <= 2) { X.push(g); Y.push(ps[j]); } }
+                if (X.length < 8) return Infinity;
+                var f = linfit(X, Y); if (!f) return Infinity;
+                var s = 0; for (j = 0; j < X.length; j++) { var e = Y[j] - (f.b + f.m * X[j]); s += e * e; }
+                return s / X.length;
+            };
+            var gr = (Math.sqrt(5) - 1) / 2, a = tpLo, b = tpHi, c = b - gr * (b - a), d = a + gr * (b - a), fc = rss(c), fd = rss(d);
+            for (var it = 0; it < 40 && (b - a) > 1e-7 * tpLo; it++) {
+                if (fc < fd) { b = d; d = c; fd = fc; c = b - gr * (b - a); fc = rss(c); } else { a = c; c = d; fc = fd; d = a + gr * (b - a); fd = rss(d); }
+            }
+            var tpBest = 0.5 * (a + b), f0 = rss(E.tp);
+            // keep the ramp estimate unless the bracket search straightens the early line
+            return rss(tpBest) < f0 * (1 - 1e-6) ? tpBest : null;
+        }
+        // ── CUSUM over the candidate stream; the state is kept between runs and restarted only when ρ or the mode changes ──
+        function modeOf(rho) { return Math.abs(rho) <= 0.2 ? 'fine' : (Z.nDec >= 30 ? 'dec' : 'white'); }
+        function runCusum(eA) {
+            var K = Z.K, rho = eA.rho, mode = modeOf(rho), sig = rho.toPrecision(12) + '|' + mode + '|' + (eA.frozen ? 1 : 0);
+            if (!Z.cus || Z.cus.sig !== sig) {
+                Z.cus = { sig: sig, mode: mode, rho: rho, infl: rho > 0 ? Math.min(50, (1 + rho) / (1 - rho)) : 1, Sp: 0, Sm: 0, seq: 0, R: _sums(), scanK: mode === 'white' ? 1 : 0, lastLG: -Infinity, blk: null, h: mode === 'fine' ? hFine : hC };
+            }
+            var C = Z.cus, spacing = mode === 'fine' ? 2 * L / FINE : 2 * L;
+            var lineVarOf = function (ln, Gv) { return ln.s2 * C.infl * (1 / ln.n + (Gv - ln.xb) * (Gv - ln.xb) / ln.sxx); };
+            var zOf = function (cd, R) {
+                var Gc0 = K.G[cd.k0];
+                addTo(R, Gc0 * Math.exp(-2 * L));
+                var ln = lineOf(R);
+                // detection starts once the line spans G 0.05 … ≥ 2 and the candidate lies beyond G 3
+                if (!ln || ln.gMax < 2 || Gc0 < 3 || !(ln.m < 0)) return null;
+                counts.candidates++;
+                if (C.mode === 'white') {
+                    var s = 0, mm = 0, rPrev = K.p[cd.k0 - 1] - (ln.b + ln.m * K.G[cd.k0 - 1]);
+                    for (var kq = cd.k0; kq <= cd.k1; kq++) { var rq = K.p[kq] - (ln.b + ln.m * K.G[kq]); s += rq - rho * rPrev; rPrev = rq; mm++; }
+                    var Gm = K.G[cd.k1], vz = mm * ln.s2 * (1 - rho * rho) + mm * mm * (1 - rho) * (1 - rho) * lineVarOf(ln, Gm);
+                    return { z: s / Math.sqrt(Math.max(vz, 1e-12)), ln: ln };
+                }
+                var Gq = K.G[cd.k0], rq2 = K.p[cd.k0] - (ln.b + ln.m * Gq);
+                return { z: rq2 / Math.sqrt(ln.s2 + lineVarOf(ln, Gq)), ln: ln };
+            };
+            var step = function (cd, commit) {
+                var R = commit ? C.R : { n: C.R.n, sx: C.R.sx, sy: C.R.sy, sxx: C.R.sxx, sxy: C.R.sxy, syy: C.R.syy, fp: C.R.fp };
+                var zz = zOf(cd, R); if (!zz) return null;
+                var Sp = Math.max(0, C.Sp + zz.z - kC), Sm = Math.max(0, C.Sm - zz.z - kC);
+                if (commit) { C.Sp = Sp; C.Sm = Sm; C.seq++; }
+                if (Sp > C.h || Sm > C.h) return { k1: cd.k1, sgn: Sp > C.h ? 1 : -1, line: zz.ln };
+                return null;
+            };
+            var nK = K.G.length, k, al = null;
+            if (C.mode === 'white') {
+                // 2L blocks of prewhitened innovations: a block is committed once the next one starts; the open block is tried
+                for (k = C.scanK; k < nK && !al; k++) {
+                    if (!C.blk || K.lg[k] >= C.blk.lg0 + 2 * L) {
+                        if (C.blk) al = step(C.blk, true);
+                        if (al) break;
+                        C.blk = { lg0: K.lg[k], k0: k, k1: k };
+                    } else C.blk.k1 = k;
+                    C.scanK = k + 1;
+                }
+                if (!al && C.blk) al = step(C.blk, false);
+            } else {
+                for (k = C.scanK; k < nK && !al; k++) {
+                    C.scanK = k + 1;
+                    if (K.lg[k] >= C.lastLG + spacing) { C.lastLG = K.lg[k]; al = step({ k0: k, k1: k }, true); }
+                }
+            }
+            return al;
+        }
+        // ── two-pointer Bourdet dP/dG (window L in ln G) and the tangent-line (F2) detector ──
+        function runBourdet() {
+            var K = Z.K, B = Z.bd, f2 = B.f2, nK = K.G.length;
+            while (B.kB < nK) {
+                var k = B.kB, lgk = K.lg[k];
+                if (B.jr < k + 1) B.jr = k + 1;
+                while (B.jr < nK && K.lg[B.jr] < lgk + L) B.jr++;
+                if (B.jr >= nK) break;                                  // waits for the right-hand point
+                while (B.jl + 1 < k && K.lg[B.jl + 1] <= lgk - L) B.jl++;
+                var D = null;
+                if (k > 0 && K.lg[B.jl] <= lgk - L) {
+                    var dGl = K.G[k] - K.G[B.jl], dGr = K.G[B.jr] - K.G[k], sl = (K.p[k] - K.p[B.jl]) / dGl, sr = (K.p[B.jr] - K.p[k]) / dGr;
+                    D = -(sl * dGr + sr * dGl) / (dGl + dGr);
+                }
+                B.D.push(D); B.tAt.push(K.t[B.jr]); counts.derivs++; B.kB++;
+                if (f2.done || !(K.G[k] >= 1) || !fin(D) || !(D > 0)) continue;
+                // noise of dP/dG from 2L-spaced successive differences on G 1 … 3 (before any closure signal); detection from G 3
+                if (K.G[k] <= 3) { if (lgk >= f2.lastLGd + 2 * L) { if (f2.lastD != null) { f2.ssd += (D - f2.lastD) * (D - f2.lastD); f2.nsd++; } f2.lastD = D; f2.lastLGd = lgk; } continue; }
+                if (D > f2.Dmax) { f2.Dmax = D; f2.kT = k; f2.kDep = null; f2.below = 0; f2.tot = 0; f2.tProv = null; continue; }
+                var sdD = f2.nsd >= 3 ? Math.sqrt(f2.ssd / (2 * f2.nsd)) : 0, tol = Math.max(0.03, 4 * sdD / f2.Dmax), below = D < f2.Dmax * (1 - tol);
+                if (f2.kDep == null) { if (below && k > f2.kT) { f2.kDep = k; f2.below = 1; f2.tot = 1; f2.tProv = K.t[B.jr]; } continue; }
+                f2.tot++; if (below) f2.below++;
+                if (f2.below / f2.tot < 0.5) { f2.kDep = null; f2.below = 0; f2.tot = 0; f2.tProv = null; continue; }
+                if (Math.log10(K.G[k] / K.G[f2.kDep]) >= 0.05 && f2.below / f2.tot >= 0.9) {
+                    var kp = Math.max(f2.kT, f2.kDep - 1);
+                    f2.done = true; f2.tConf = K.t[B.jr]; f2.p = K.p[kp]; f2.G = K.G[kp]; f2.t = K.t[kp];
+                }
+            }
+        }
+        // ── after-closure series (1 % in ln(t_inj − t0) from the resampled falloff) and its p_i-free diagnosis ──
+        function runAfter(tDep) {
+            if (E.tStart == null) return Z.dgRes;
+            var A = Z.A, F = Z.F, tcInj = tDep - E.tStart, t0 = tcInj / 3;
+            for (var i = A.iF; i < F.t.length; i++) {
+                if (!(F.t[i] > tDep * 1.0001)) continue;
+                var x = F.t[i] - E.tStart - t0; if (!(x > 0)) continue;
+                var lx = Math.log(x);
+                if (lx >= A.last + 0.01) { A.t.push(F.t[i] - E.tStart); A.p.push(F.p[i]); A.last = lx; }
+            }
+            A.iF = F.t.length;
+            if (A.t.length === Z.dgN) return Z.dgRes;
+            Z.dgN = A.t.length;
+            if (A.t.length < 8 || Math.log10((A.t[A.t.length - 1] - t0) / (A.t[0] - t0)) < 0.3) return Z.dgRes;
+            counts.acaDiag++; counts.acaPoints += A.t.length;
+            var dg = G.PRiSM_dfit_acaDiag(A.t, A.p, { t0: t0, LB: 0.25, sigma: sigmaG });
+            if (!dg || dg.ok === false) return Z.dgRes;
+            var lo = null, hi = null;
+            for (i = dg.x.length - 1; i >= 0; i--) if (fin(dg.piLo[i])) { lo = dg.piLo[i]; hi = dg.piHi[i]; break; }
+            // radial flow seen: a radial regime (s_D in −1 ± 0.07) held over ≥ 0.3 log cycle (§4.12), not a steep end point
+            var radial = (dg.regimes || []).some(function (r) { return r.kind === 'radial' && r._span >= 0.3; }) && !dg.steepened && !dg.storage;
+            Z.dgRes = { lo: lo, hi: hi, radial: radial };
+            return Z.dgRes;
         }
         function verdictOf(state, t, fam, p, fc, text, evs) { return { t: t, state: state, family: fam, p: fin(p) ? p : null, forecast: fc, text: _txt(text), ev: evs || [] }; }
         function run() {
-            var E = events(), n = S.t.length, tNow = n ? S.t[n - 1] : 0;
+            counts.runs++;
+            if (evDirty) {
+                var E2 = scanEvents();
+                if (evKey(E2) !== evKey(E)) { E = E2; Z = null; } else E.bracket = E2.bracket;
+            }
+            var n = S.t.length, tNow = n ? S.t[n - 1] : 0;
             if (E.ts == null || !pos(E.tp) || n < 3) { last = verdictOf('none', tNow, null, n ? S.p[n - 1] : null, null, 'Waiting for the shut-in.', []); return record(last); }
-            // falloff, resampled (pressure increment or 1 % in ln Δt)
-            var dpMin = fin(ctx.dpMin) ? ctx.dpMin : Math.max(0.05, 3 * sigmaG), F = { dt: [], p: [], t: [] }, lastP = null, lastL = null, i;
-            for (i = 0; i < n; i++) {
-                var dt = S.t[i] - E.ts; if (!(dt > 0)) continue;
-                var l = Math.log(dt);
-                // 1 % in Δt, with rounding slack
-                if (lastP == null || Math.abs(S.p[i] - lastP) >= dpMin || l - lastL >= 0.0099) { F.dt.push(dt); F.p.push(S.p[i]); F.t.push(S.t[i]); lastP = S.p[i]; lastL = l; }
+            if (!Z || minDirtyT <= Z.tProc) { var tpKeep = Z && Z.tpRefined ? Z.tp : null; Z = newZ(tpKeep || E.tp); if (tpKeep) { Z.tpRefined = true; Z.tpSearched = true; } }
+            minDirtyT = Infinity;
+            processRaw();
+            var K = Z.K, nK = K.G.length;
+            if (Z.F.dt.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: too few falloff samples yet.', []); return record(last); }
+            if (nK < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: the early G line is not defined yet.', []); return record(last); }
+            // the nuisance tp, once the window G ≤ 2 is complete at every tp in the bracket
+            if (!Z.tpSearched && E.bracket && K.G[nK - 1] * (E.tp / (E.ts - E.bracket[0])) >= 2.05) {
+                var tpN = searchTp();
+                if (tpN != null) { Z = newZ(tpN); Z.tpRefined = true; Z.tpSearched = true; processRaw(); K = Z.K; nK = K.G.length; }
             }
-            if (F.dt.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: too few falloff samples yet.', []); return record(last); }
-            var Gs = F.dt.map(function (d) { return _G05(d / E.tp); }), Gnow = Gs[Gs.length - 1], gMin = 0.05;
-            // samples used from G ≥ 0.05; the initial line on G ≤ G0 = max(0.5, min(2, G_now/3)) gives ρ (lag-1 of its residuals)
-            var keep = [], i2;
-            for (i = 0; i < Gs.length; i++) if (Gs[i] >= gMin) keep.push(i);
-            if (keep.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: the early G line is not defined yet.', []); return record(last); }
-            var G0 = Math.max(0.5, Math.min(2, Gnow / 3)), X0 = [], Y0 = [];
-            keep.forEach(function (ii) { if (Gs[ii] <= G0) { X0.push(Gs[ii]); Y0.push(F.p[ii]); } });
-            var fit0 = X0.length >= 5 ? linfit(X0, Y0) : null;
+            var Gnow = K.G[nK - 1], eA = early(), fit0 = eA.fit0;
             if (!fit0 || !(fit0.m < 0)) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: no falling G line yet.', []); return record(last); }
-            var res0 = Y0.map(function (y, q) { return y - (fit0.b + fit0.m * X0[q]); });
-            var rho = _lag1(res0), rr2 = _lagK(res0, 2);                     // AR part under white gauge noise: ρ ≈ r₂/r₁
-            if (fin(rho) && fin(rr2) && rho > 0.2 && rr2 > 0) rho = Math.max(rho, Math.min(0.95, rr2 / rho));
-            rho = fin(rho) ? Math.max(-0.95, Math.min(0.95, rho)) : 0;
-            // the line's parameter variance is inflated by n/n_eff = (1 + ρ)/(1 − ρ) for serially correlated noise
-            var infl = rho > 0 ? Math.min(50, (1 + rho) / (1 - rho)) : 1, p00 = Y0[0];
-            // running least squares over the samples before a candidate point (recursive residuals: each candidate is predicted
-            // from the line through all earlier data, leaving a gap of one 2L block, so a line error does not accumulate)
-            var R = { n: 0, sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0 }, fp = 0;
-            var addTo = function (Gv) { while (fp < keep.length && Gs[keep[fp]] <= Gv) { var gx = Gs[keep[fp]], py = F.p[keep[fp]] - p00; R.n++; R.sx += gx; R.sy += py; R.sxx += gx * gx; R.sxy += gx * py; R.syy += py * py; fp++; } };
-            var lineOf = function () {
-                if (R.n < 20) return null;
-                var mx = R.sx / R.n, my = R.sy / R.n, Sxx = R.sxx - R.n * mx * mx, Sxy = R.sxy - R.n * mx * my, Syy = R.syy - R.n * my * my;
-                if (!(Sxx > 0)) return null;
-                var m = Sxy / Sxx, b = my - m * mx + p00, s2v = Math.max(0, (Syy - m * Sxy) / Math.max(1, R.n - 2));
-                return { m: m, b: b, s2: Math.max(s2v, sigmaG * sigmaG, 1e-8), xb: mx, sxx: Sxx, n: R.n, gMax: fp > 0 ? Gs[keep[fp - 1]] : 0 };
-            };
-            var lineVarOf = function (ln, Gv) { return ln.s2 * infl * (1 / ln.n + (Gv - ln.xb) * (Gv - ln.xb) / ln.sxx); };
-            // candidates: one point per 2L in ln G (decimation, the default) or 2L blocks of prewhitened innovations when the
-            // decimated series before the departure would be short (< 30 points) and the residuals are correlated
-            var dec = [], lastLG = -Infinity;
-            keep.forEach(function (ii, k) { var lg = Math.log(Gs[ii]); if (lg >= lastLG + 2 * L) { dec.push(k); lastLG = lg; } });
-            var useWhite = dec.length < 30 && Math.abs(rho) > 0.2;
-            var Sp = 0, Sm = 0, alarm = null, sgnA = 0, seqN = 0, lnA = null;
-            if (!frozen) {
-                var cands = [];
-                if (useWhite) {
-                    var blk = null;
-                    for (var k = 1; k < keep.length; k++) {
-                        var lgk = Math.log(Gs[keep[k]]);
-                        if (!blk || lgk >= blk.lg0 + 2 * L) { blk = { lg0: lgk, k0: k, k1: k }; cands.push(blk); }
-                        blk.k1 = k;
-                    }
-                } else dec.forEach(function (k) { cands.push({ k0: k, k1: k, lg0: Math.log(Gs[keep[k]]) }); });
-                for (var c = 0; c < cands.length && !alarm; c++) {
-                    var cd = cands[c], Gc0 = Gs[keep[cd.k0]];
-                    addTo(Gc0 * Math.exp(-2 * L));
-                    var ln = lineOf();
-                    // detection starts once the line spans G 0.05 … ≥ 2 and the candidate lies beyond G 3
-                    if (!ln || ln.gMax < 2 || Gc0 < 3 || !(ln.m < 0)) continue;
-                    var zc;
-                    if (useWhite) {
-                        var s = 0, mm = 0, rPrev = F.p[keep[cd.k0 - 1]] - (ln.b + ln.m * Gs[keep[cd.k0 - 1]]);
-                        for (var kq = cd.k0; kq <= cd.k1; kq++) { var rq = F.p[keep[kq]] - (ln.b + ln.m * Gs[keep[kq]]); s += rq - rho * rPrev; rPrev = rq; mm++; }
-                        var Gm = Gs[keep[cd.k1]], vz = mm * ln.s2 * (1 - rho * rho) + mm * mm * (1 - rho) * (1 - rho) * lineVarOf(ln, Gm);
-                        zc = s / Math.sqrt(Math.max(vz, 1e-12));
-                    } else {
-                        var Gq = Gs[keep[cd.k0]], rq2 = F.p[keep[cd.k0]] - (ln.b + ln.m * Gq);
-                        zc = rq2 / Math.sqrt(ln.s2 + lineVarOf(ln, Gq));
-                    }
-                    seqN++;
-                    Sp = Math.max(0, Sp + zc - kC); Sm = Math.max(0, Sm - zc - kC);
-                    if (Sp > hC || Sm > hC) { alarm = cd; sgnA = Sp > hC ? 1 : -1; lnA = ln; }
-                }
-                if (alarm) frozen = { line: lnA, tA: F.t[keep[alarm.k1]], sgn: sgnA, Gw: lnA.gMax };
+            if (!Z.frozen) {
+                var al = runCusum(eA);
+                if (al) Z.frozen = { line: al.line, kA: al.k1, tA: K.t[al.k1], sgn: al.sgn, infl: Z.cus.infl };
             }
-            // statistics of the pre-departure residuals (about the line through all of them): ρ, decimated and prewhitened lag-1
-            addTo(frozen ? frozen.line.gMax : Gnow);
-            var lnAll = frozen ? frozen.line : lineOf();
-            if (lnAll) {
-                var rPre = [], rDec = [];
-                keep.forEach(function (ii, k) { if (Gs[ii] <= lnAll.gMax) { var v0 = F.p[ii] - (lnAll.b + lnAll.m * Gs[ii]); rPre.push(v0); if (dec.indexOf(k) >= 0) rDec.push(v0); } });
-                stats = { rho1: rho, useWhite: useWhite, decLag1: _lag1(rDec), whiteLag1: _lag1(rPre.slice(1).map(function (v, q) { return v - rho * rPre[q]; })),
-                          nDec: rDec.length, isip: lnAll.b, mG: -lnAll.m, Gw: lnAll.gMax, candidates: seqN };
-            }
-            var lnF = frozen ? frozen.line : (lnAll || { b: fit0.b, m: fit0.m, s2: Math.max(fit0.sigma * fit0.sigma, 1e-8), xb: mean(X0), sxx: 1, n: X0.length, gMax: G0 });
+            runBourdet();
+            addTo(Z.Ra, Z.frozen ? Z.frozen.line.gMax : Gnow);
+            var lnAll = Z.frozen ? Z.frozen.line : lineOf(Z.Ra);
+            Z.lnAll = lnAll;
+            var infl = Z.frozen ? Z.frozen.infl : (Z.cus ? Z.cus.infl : 1);
+            var lnF = lnAll || { b: fit0.b, m: fit0.m, s2: Math.max(fit0.sigma * fit0.sigma, 1e-8), xb: mean(eA.X0), sxx: 1, n: eA.X0.length, gMax: eA.G0 };
             var isip = lnF.b, mG = -lnF.m, Gw = lnF.gMax;
-            var r = keep.map(function (ii) { return F.p[ii] - (isip - mG * Gs[ii]); });
-            var sigAt = function (Gv) { return Math.sqrt(Math.max(lnF.s2 + (lnF.sxx > 0 ? lineVarOf(lnF, Gv) : 0), sigmaG * sigmaG, 1e-6)); };
-            if (frozen) { sgnA = frozen.sgn; alarm = { k1: 0 }; for (var ka = 0; ka < keep.length; ka++) if (F.t[keep[ka]] >= frozen.tA - 1e-12) { alarm.k1 = ka; break; } }
+            var sigAt = function (Gv) { return Math.sqrt(Math.max(lnF.s2 + (lnF.sxx > 0 ? lnF.s2 * infl * (1 / lnF.n + (Gv - lnF.xb) * (Gv - lnF.xb) / lnF.sxx) : 0), sigmaG * sigmaG, 1e-6)); };
+            var rOf = function (k) { return K.p[k] - (isip - mG * K.G[k]); };
             // forecast before closure: G_c = (ISIP − σ_prior)/m_G at σ_prior ± sd
             var fc = null;
             if (prior && pos(mG)) {
                 var Ghi = (isip - (prior.p50 - prior.sd)) / mG, Glo = (isip - (prior.p50 + prior.sd)) / mG;
-                if (Glo > 0 && Ghi > 0) fc = { lo: E.tp * _G05inv(Glo), hi: E.tp * _G05inv(Ghi) };
+                if (Glo > 0 && Ghi > 0) fc = { lo: Z.tp * _G05inv(Glo), hi: Z.tp * _G05inv(Ghi) };
             }
-            if (!alarm) {
+            var f2 = Z.bd.f2, fam2 = { family: 'F2', state: f2.done ? 'confirmed' : (f2.kDep != null ? 'provisional' : 'continue'), p: f2.done ? f2.p : (f2.kDep != null ? K.p[Math.max(f2.kT, f2.kDep - 1)] : null), sameAsF1: false };
+            if (!Z.frozen) {
                 var txt = fc ? 'Continue: closure expected ' + fmt(fc.lo, 1) + '–' + fmt(fc.hi, 1) + ' h after shut-in.' : 'Continue: closure not yet seen.';
                 last = verdictOf('continue', tNow, null, S.p[n - 1], fc, txt, []);
+                last.families = [{ family: 'F1', state: 'continue', p: null }, fam2];
                 return record(last);
             }
-            // change point on the full-resolution residuals: back from the alarm while |r| > 2σ on the alarm side
-            var kA = alarm.k1, kD = kA;
-            while (kD > 0 && sgnA * r[kD - 1] > 2 * sigAt(Gs[keep[kD - 1]]) && Gs[keep[kD - 1]] > Gw) kD--;
-            // the departure starts where the residual leaves the line (first point of the run beyond 2σ, stepped back once)
-            if (kD > 0 && Gs[keep[kD - 1]] > Gw) kD--;
-            var iD = keep[kD], tDep = F.t[iD], pDep = F.p[iD], GD = Gs[iD];
-            // confirmed when the departure is held over ≥ 0.05 in log G (≥ 90 % of the points since beyond 2σ, on the same side)
-            var held = 0, tot2 = 0, tConf = null, tProv = F.t[keep[kA]];
-            for (var kk = kD; kk < r.length; kk++) {
-                tot2++; if (sgnA * r[kk] > 2 * sigAt(Gs[keep[kk]])) held++;
-                if (tConf == null && kk >= kA && Math.log10(Gs[keep[kk]] / GD) >= 0.05 && held / tot2 >= 0.9 && Math.log10(Gw / gMin) >= 0.3) tConf = F.t[keep[kk]];
+            var FZ = Z.frozen, sgnA = FZ.sgn, kA = FZ.kA;
+            if (!Z.conf) {
+                // change point on the full-resolution residuals: back from the alarm while |r| > 2σ on the alarm side
+                var kD = kA;
+                while (kD > 0 && sgnA * rOf(kD - 1) > 2 * sigAt(K.G[kD - 1]) && K.G[kD - 1] > Gw) kD--;
+                // the departure starts where the residual leaves the line (first point of the run beyond 2σ, stepped back once)
+                if (kD > 0 && K.G[kD - 1] > Gw) kD--;
+                Z.conf = { kD: kD, kc: kD, held: 0, tot: 0, tConf: null };
             }
-            var confirmed = tConf != null && held / tot2 >= 0.9;
+            // confirmed when the departure is held over ≥ 0.05 in log G (≥ 90 % of the points since beyond 2σ, on the same side)
+            var CF = Z.conf, GD = K.G[CF.kD], iniOk = Math.log10(Gw / gMin) >= 0.3;
+            for (; CF.kc < nK; CF.kc++) {
+                var kk = CF.kc; CF.tot++; if (sgnA * rOf(kk) > 2 * sigAt(K.G[kk])) CF.held++;
+                if (CF.tConf == null && kk >= kA && Math.log10(K.G[kk] / GD) >= 0.05 && CF.held / CF.tot >= 0.9 && iniOk) CF.tConf = K.t[kk];
+            }
+            var tDep = K.t[CF.kD], pDep = K.p[CF.kD], tProv = K.t[kA], tConf = CF.tConf;
+            var confirmed = tConf != null && CF.held / CF.tot >= 0.9;
             closedAt = { t: tDep, dt: tDep - E.ts, p: pDep, G: GD, tProvisional: tProv, tConfirmed: tConf };
+            var fam1 = { family: 'F1', state: confirmed ? 'confirmed' : 'provisional', p: pDep };
+            // a tangent touch within one derivative window (2L in ln G) of the F1 departure is not a separate stiffening interval:
+            // the end-of-stiffening reading is the F1 reading (the families agree)
+            if (f2.kT >= 0 && f2.kDep != null && Math.log(K.G[f2.kT] / GD) <= 2 * L + 1e-9) { fam2.p = pDep; fam2.sameAsF1 = true; }
+            var p2 = fam2.p, both = confirmed && f2.done && !fam2.sameAsF1 && fin(p2) && Math.abs(p2 - pDep) > Math.max(tauAbs, tauF * pDep);
             if (!confirmed) {
                 last = verdictOf('provisional', tNow, 'F1', pDep, fc, 'Contact reading (family F1) provisional at ' + fmt(pDep, 0) + ' psia.', ['C2']);
-                last.tProv = tProv;
+                last.tProv = tProv; last.families = [fam1, fam2];
                 return record(last);
             }
-            // after closure: p_i bracket (and the radial check) on the injection clock with the centroid origin
-            var out = verdictOf('confirmed', tNow, 'F1', pDep, null, 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia.', ['C2']);
-            out.tProv = tProv; out.tConf = tConf;
-            if (E.tStart != null) {
-                var tcInj = tDep - E.tStart, t0 = tcInj / 3, ta = [], pa = [];
-                for (i = 0; i < n; i++) if (S.t[i] > tDep * 1.0001) { ta.push(S.t[i] - E.tStart); pa.push(S.p[i]); }
-                if (ta.length >= 8 && Math.log10((ta[ta.length - 1] - t0) / (ta[0] - t0)) >= 0.3) {
-                    var dg = G.PRiSM_dfit_acaDiag(ta, pa, { t0: t0, LB: 0.25, sigma: sigmaG });
-                    if (dg && dg.ok !== false) {
-                        var lo = null, hi = null, sEnd = null;
-                        for (i = dg.x.length - 1; i >= 0; i--) { if (lo == null && fin(dg.piLo[i])) { lo = dg.piLo[i]; hi = dg.piHi[i]; } if (sEnd == null && fin(dg.sD[i])) sEnd = dg.sD[i]; if (lo != null && sEnd != null) break; }
-                        if (lo != null) {
-                            var hw = (hi - lo) / 2;
-                            out.piHalfWidth = hw; out.pi = { lo: lo, hi: hi };
-                            if (hw <= 25) { out = verdictOf('enough-pi', tNow, 'F1', 0.5 * (lo + hi), null, 'Enough for p_i ± ' + fmt(Math.max(1, Math.ceil(hw)), 0) + ' psi (' + fmt(lo, 0) + '–' + fmt(hi, 0) + ' psia).', ['A1']); out.piHalfWidth = hw; }
-                        }
-                        if (fin(sEnd) && sEnd <= -0.9) out.radialSeen = true;
-                    }
-                }
+            // after closure: p_i bracket and the radial check on the injection clock with the centroid origin
+            var out = verdictOf('confirmed', tNow, 'F1', pDep, null, both
+                ? 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia; end of stiffening (family F2) confirmed: ' + fmt(p2, 0) + ' psia (closure range ' + fmt(Math.min(pDep, p2), 0) + '–' + fmt(Math.max(pDep, p2), 0) + ' psia).'
+                : 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia.', ['C2']);
+            var dgR = runAfter(tDep);
+            if (dgR && dgR.lo != null) {
+                var hw = (dgR.hi - dgR.lo) / 2;
+                out.piHalfWidth = hw; out.pi = { lo: dgR.lo, hi: dgR.hi };
+                if (hw <= 25) { out = verdictOf('enough-pi', tNow, 'F1', 0.5 * (dgR.lo + dgR.hi), null, 'Enough for p_i ± ' + fmt(Math.max(1, Math.ceil(hw)), 0) + ' psi (' + fmt(dgR.lo, 0) + '–' + fmt(dgR.hi, 0) + ' psia).', ['A1']); out.piHalfWidth = hw; out.pi = { lo: dgR.lo, hi: dgR.hi }; }
             }
+            if (dgR && dgR.radial) out.radialSeen = true;
             var pl = ctx.plan;
             if (pl && pl.tRadial && pos(pl.allowedShutInD) && fin(pl.tRadial.p10) && pl.tRadial.p10 > pl.allowedShutInD * 24 && out.state === 'confirmed')
                 out = verdictOf('radial-unreachable', tNow, 'F1', pDep, null, 'Radial flow is not reachable in the allowed time: plan for bounds on k.', ['A1']);
             if (pl && pl.corridor && arrOk(pl.corridor.t) && pl.corridor.t.length > 1) {
-                var outN = 0, tot = 0, tLo = Math.max(1e-6, (tNow - E.ts) / 10);
-                for (i = 0; i < F.dt.length; i++) if (F.dt[i] >= tLo) { var c10 = interp(pl.corridor.t, pl.corridor.p10, F.dt[i]), c90 = interp(pl.corridor.t, pl.corridor.p90, F.dt[i]); tot++; if (F.p[i] < Math.min(c10, c90) || F.p[i] > Math.max(c10, c90)) outN++; }
+                // the last log cycle of the 1 %-in-Δt series (bounded work per run)
+                var outN = 0, tot = 0, tLo = Math.max(1e-6, (tNow - E.ts) / 10), Lg = Z.Lg, i;
+                for (i = Lg.dt.length - 1; i >= 0 && Lg.dt[i] >= tLo; i--) { var c10 = interp(pl.corridor.t, pl.corridor.p10, Lg.dt[i]), c90 = interp(pl.corridor.t, pl.corridor.p90, Lg.dt[i]); tot++; if (Lg.p[i] < Math.min(c10, c90) || Lg.p[i] > Math.max(c10, c90)) outN++; }
                 if (tot > 5 && outN / tot > 0.1) out = verdictOf('outside-corridor', tNow, null, S.p[n - 1], null, 'Outside the designer corridor: check the gauge.', []);
             }
+            out.families = [fam1, fam2];
+            if (both) out.range = { lo: Math.min(pDep, p2), hi: Math.max(pDep, p2) };
             out.tProv = tProv; out.tConf = tConf;
             last = out;
             return record(last);
@@ -1667,7 +1875,23 @@
             if (fin(v.piHalfWidth) && v.piHalfWidth <= 25 && firsts.piW25 == null) firsts.piW25 = v.t;
             if (fin(v.piHalfWidth) && v.piHalfWidth <= 10 && firsts.piW10 == null) firsts.piW10 = v.t;
             if (v.radialSeen && firsts.radialSeen == null) firsts.radialSeen = v.t;
+            if (Z && Z.bd.f2.tConf != null && firsts.f2Confirmed == null) firsts.f2Confirmed = Z.bd.f2.tConf;
             return v;
+        }
+        // statistics of the pre-departure residuals (about the line through all of them): ρ, decimated and prewhitened lag-1;
+        // computed on request (O(n) once), not in every run
+        function statsNow() {
+            if (!Z || !Z.early || !Z.lnAll) return null;
+            var K = Z.K, ln = Z.lnAll, rPre = [], rDec = [], d = 0, decSet = Z.decIdx;
+            for (var k = 0; k < K.G.length && K.G[k] <= ln.gMax; k++) {
+                var v0 = K.p[k] - (ln.b + ln.m * K.G[k]); rPre.push(v0);
+                while (d < decSet.length && decSet[d] < k) d++;
+                if (d < decSet.length && decSet[d] === k) rDec.push(v0);
+            }
+            var rho = Z.early.rho;
+            return { rho1: rho, useWhite: Z.cus ? Z.cus.mode === 'white' : false, mode: Z.cus ? Z.cus.mode : null, decLag1: _lag1(rDec),
+                     whiteLag1: _lag1(rPre.slice(1).map(function (v, q) { return v - rho * rPre[q]; })), nDec: rDec.length, isip: ln.b, mG: -ln.m, Gw: ln.gMax,
+                     candidates: Z.cus ? Z.cus.seq : 0, tp: Z.tp, tpRefined: !!Z.tpRefined, eventsSource: E.src };
         }
         return {
             push: function (samples) {
@@ -1675,6 +1899,7 @@
                 (samples || []).forEach(function (s) {
                     if (!s || !fin(s.t) || !fin(s.p)) return;
                     var p = s.p + ((s.unit === 'psig' || (ctx.psig && s.unit !== 'psia')) ? atm : 0);
+                    counts.samples++;
                     if (insert(s.t, p, s.q, s.T)) added++;
                 });
                 return { changed: added > 0, added: added };
@@ -1684,9 +1909,12 @@
             timeline: function () { return clone(timeline); },
             firsts: function () { return { closureProvisional: nn(firsts.closureProvisional), closureConfirmed: nn(firsts.closureConfirmed), piW25: nn(firsts.piW25), piW10: nn(firsts.piW10), radialSeen: nn(firsts.radialSeen) }; },
             closure: function () { return closedAt ? clone(closedAt) : null; },
-            stats: function () { return stats ? clone(stats) : null; },
+            f2: function () { var f = Z ? Z.bd.f2 : null; return f && (f.done || f.kDep != null) ? { state: f.done ? 'confirmed' : 'provisional', p: f.done ? f.p : null, tProvisional: f.tProv, tConfirmed: f.tConf, G: f.G } : null; },
+            events: function () { return { tStart: E.tStart, ts: E.ts, tp: Z ? Z.tp : E.tp, source: E.src }; },
+            stats: function () { var s = statsNow(); return s ? clone(s) : null; },
+            counts: function () { return clone(counts); },
             size: function () { return S.t.length; },
-            close: function () { S = { t: [], p: [], q: [], T: [] }; frozen = null; }
+            close: function () { S = { t: [], p: [], q: [], T: [] }; Z = null; E = { tStart: null, ts: null, tp: null, src: null, bracket: null }; evDirty = true; }
         };
     }
     G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
@@ -1700,7 +1928,7 @@
         return { ses: ses, rows: rows, block: block, i: 0 };
     }
     function _replayStep(R) { var end = Math.min(R.rows.length, R.i + R.block); R.ses.push(R.rows.slice(R.i, end)); R.i = end; R.ses.run(); return R.i >= R.rows.length; }
-    function _replayFinish(R) { return { ok: true, timeline: R.ses.timeline(), firsts: R.ses.firsts(), tEnd: R.rows.length ? R.rows[R.rows.length - 1].t : 0, closure: R.ses.closure(), verdict: R.ses.verdict() }; }
+    function _replayFinish(R) { return { ok: true, timeline: R.ses.timeline(), firsts: R.ses.firsts(), tEnd: R.rows.length ? R.rows[R.rows.length - 1].t : 0, closure: R.ses.closure(), verdict: R.ses.verdict(), f2: R.ses.f2(), events: R.ses.events(), stats: R.ses.stats(), counts: R.ses.counts() }; }
     G.PRiSM_dfit_replay = function (ds, ctx) {
         try { var R = _replaySetup(ds, ctx); if (R.err) return R.err; var guard = 0; while (!_replayStep(R) && guard++ < 1e6); return _replayFinish(R); }
         catch (e) { return fail('REPLAY_FAILED', e && e.message || e); }
