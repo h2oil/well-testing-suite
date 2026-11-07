@@ -1340,6 +1340,281 @@
     G.PRiSM_dfit_uncertainty.shares = function (xs, ys, nBins) { return _shares(xs, ys, nBins || 20); };
 
     // ═════════════════════════════════════════════════════════════════════
+    // 7. Live engine and replay (§6.9)
+    // ═════════════════════════════════════════════════════════════════════
+    // A session keeps the samples in time order (out-of-order and duplicate samples are merged; psig is converted with
+    // the test's atmPsia), resamples the falloff with the pressure-increment rule (|Δp| ≥ dpMin or Δln Δt ≥ 0.01), uses the
+    // closed-form G (α = ½), fits the early G line p = ISIP − m_G·G on the first third of the G range (frozen once a
+    // departure is called), and runs a one-sided CUSUM on the pressure residuals r = p − (ISIP − m_G·G), made close to
+    // independent by decimation to one point per 2L in ln G (default) or by lag-1 prewhitening when the decimated series
+    // has fewer than 30 points before the departure. σ includes the line's own parameter variance at G.
+    function _G05(d) { return d > 0 ? 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2) : 0; }
+    function _G05inv(Gv) { var lo = Math.log(1e-9), hi = Math.log(1e7); for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (_G05(Math.exp(m)) < Gv) lo = m; else hi = m; } return Math.exp(0.5 * (lo + hi)); }
+    function _lagK(a, K) {
+        var v = a.filter(fin), n = v.length; if (n < K + 3) return null;
+        var m = mean(v), num = 0, den = 0, i;
+        for (i = 0; i < n; i++) den += (v[i] - m) * (v[i] - m);
+        for (i = K; i < n; i++) num += (v[i] - m) * (v[i - K] - m);
+        return den > 0 ? num / den : null;
+    }
+    function _lag1(a) { return _lagK(a, 1); }
+    function _liveCreate(ctx) {
+        ctx = ctx || {};
+        var T = ctx.test || {}, inp = T.inputs || {}, ch = inp.channels || {}, opt = inp.options || {}, ev = inp.events || {};
+        var atm = fin(ch.atmPsia) ? ch.atmPsia : 14.696, L = pos(opt.L) ? opt.L : 0.1;
+        var cus = ctx.cusum || {}, kC = fin(cus.k) ? cus.k : 0.5, hC = fin(cus.h) ? cus.h : 5;
+        var cal = G.PRiSM_dfit_cal; if (!ctx.cusum && cal && cal.cusum) { if (fin(cal.cusum.k)) kC = cal.cusum.k; if (fin(cal.cusum.h)) hC = cal.cusum.h; }
+        var pri = inp.priors || {}, datum = inp.datumTvd;
+        var prior = ctx.sigmaPrior || (pos(pri.sigmaGrad) && pos(datum) ? { p50: pri.sigmaGrad * datum, sd: (pos(pri.sigmaGradSd) ? pri.sigmaGradSd : 0.02) * datum } : null);
+        if (!prior && ctx.plan && ctx.plan.ranges && ctx.plan.ranges.sigmaGrad && pos(ctx.plan.ranges.datumTvd)) prior = { p50: ctx.plan.ranges.sigmaGrad.p50 * ctx.plan.ranges.datumTvd, sd: ctx.plan.ranges.sigmaGrad.sd * ctx.plan.ranges.datumTvd };
+        var S = { t: [], p: [], q: [], T: [] }, timeline = [], last = null, frozen = null, closedAt = null, stats = null, firsts = {};
+        var tStart0 = fin(ctx.tStart) ? ctx.tStart : (fin(ev.tStart) ? ev.tStart : null), ts0 = fin(ctx.ts) ? ctx.ts : (fin(ev.ts) ? ev.ts : null), tp0 = pos(ctx.tp) ? ctx.tp : null;
+        var sigmaG = fin(ctx.sigma) && ctx.sigma > 0 ? ctx.sigma : 0;
+        function insert(t, p, q, Tm) {
+            var n = S.t.length, lo = 0, hi = n;
+            while (lo < hi) { var m = (lo + hi) >> 1; if (S.t[m] < t) lo = m + 1; else hi = m; }
+            if (lo < n && Math.abs(S.t[lo] - t) < 1e-12) { if (fin(q) && !fin(S.q[lo])) S.q[lo] = q; return false; }   // duplicate
+            S.t.splice(lo, 0, t); S.p.splice(lo, 0, p); S.q.splice(lo, 0, fin(q) ? q : null); S.T.splice(lo, 0, fin(Tm) ? Tm : null);
+            return true;
+        }
+        function events() {
+            var n = S.t.length, qmax = 0, i, tS = tStart0, tSh = ts0;
+            for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > qmax) qmax = S.q[i];
+            if (qmax > 0) {
+                if (tS == null) for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.02 * qmax) { tS = S.t[i]; break; }
+                if (tSh == null) {
+                    var lastOn = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.05 * qmax) lastOn = i;
+                    if (lastOn >= 0 && lastOn < n - 1) { for (i = lastOn + 1; i < n; i++) if (fin(S.q[i])) break; if (i < n) tSh = S.t[lastOn]; }
+                }
+            }
+            var tp = tp0 || (tS != null && tSh != null && tSh > tS ? tSh - tS : null);
+            return { tStart: tS, ts: tSh, tp: tp };
+        }
+        function verdictOf(state, t, fam, p, fc, text, evs) { return { t: t, state: state, family: fam, p: fin(p) ? p : null, forecast: fc, text: _txt(text), ev: evs || [] }; }
+        function run() {
+            var E = events(), n = S.t.length, tNow = n ? S.t[n - 1] : 0;
+            if (E.ts == null || !pos(E.tp) || n < 3) { last = verdictOf('none', tNow, null, n ? S.p[n - 1] : null, null, 'Waiting for the shut-in.', []); return record(last); }
+            // falloff, resampled (pressure increment or 1 % in ln Δt)
+            var dpMin = fin(ctx.dpMin) ? ctx.dpMin : Math.max(0.05, 3 * sigmaG), F = { dt: [], p: [], t: [] }, lastP = null, lastL = null, i;
+            for (i = 0; i < n; i++) {
+                var dt = S.t[i] - E.ts; if (!(dt > 0)) continue;
+                var l = Math.log(dt);
+                // 1 % in Δt, with rounding slack
+                if (lastP == null || Math.abs(S.p[i] - lastP) >= dpMin || l - lastL >= 0.0099) { F.dt.push(dt); F.p.push(S.p[i]); F.t.push(S.t[i]); lastP = S.p[i]; lastL = l; }
+            }
+            if (F.dt.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: too few falloff samples yet.', []); return record(last); }
+            var Gs = F.dt.map(function (d) { return _G05(d / E.tp); }), Gnow = Gs[Gs.length - 1], gMin = 0.05;
+            // samples used from G ≥ 0.05; the initial line on G ≤ G0 = max(0.5, min(2, G_now/3)) gives ρ (lag-1 of its residuals)
+            var keep = [], i2;
+            for (i = 0; i < Gs.length; i++) if (Gs[i] >= gMin) keep.push(i);
+            if (keep.length < 8) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: the early G line is not defined yet.', []); return record(last); }
+            var G0 = Math.max(0.5, Math.min(2, Gnow / 3)), X0 = [], Y0 = [];
+            keep.forEach(function (ii) { if (Gs[ii] <= G0) { X0.push(Gs[ii]); Y0.push(F.p[ii]); } });
+            var fit0 = X0.length >= 5 ? linfit(X0, Y0) : null;
+            if (!fit0 || !(fit0.m < 0)) { last = verdictOf('continue', tNow, null, S.p[n - 1], null, 'Continue: no falling G line yet.', []); return record(last); }
+            var res0 = Y0.map(function (y, q) { return y - (fit0.b + fit0.m * X0[q]); });
+            var rho = _lag1(res0), rr2 = _lagK(res0, 2);                     // AR part under white gauge noise: ρ ≈ r₂/r₁
+            if (fin(rho) && fin(rr2) && rho > 0.2 && rr2 > 0) rho = Math.max(rho, Math.min(0.95, rr2 / rho));
+            rho = fin(rho) ? Math.max(-0.95, Math.min(0.95, rho)) : 0;
+            // the line's parameter variance is inflated by n/n_eff = (1 + ρ)/(1 − ρ) for serially correlated noise
+            var infl = rho > 0 ? Math.min(50, (1 + rho) / (1 - rho)) : 1, p00 = Y0[0];
+            // running least squares over the samples before a candidate point (recursive residuals: each candidate is predicted
+            // from the line through all earlier data, leaving a gap of one 2L block, so a line error does not accumulate)
+            var R = { n: 0, sx: 0, sy: 0, sxx: 0, sxy: 0, syy: 0 }, fp = 0;
+            var addTo = function (Gv) { while (fp < keep.length && Gs[keep[fp]] <= Gv) { var gx = Gs[keep[fp]], py = F.p[keep[fp]] - p00; R.n++; R.sx += gx; R.sy += py; R.sxx += gx * gx; R.sxy += gx * py; R.syy += py * py; fp++; } };
+            var lineOf = function () {
+                if (R.n < 20) return null;
+                var mx = R.sx / R.n, my = R.sy / R.n, Sxx = R.sxx - R.n * mx * mx, Sxy = R.sxy - R.n * mx * my, Syy = R.syy - R.n * my * my;
+                if (!(Sxx > 0)) return null;
+                var m = Sxy / Sxx, b = my - m * mx + p00, s2v = Math.max(0, (Syy - m * Sxy) / Math.max(1, R.n - 2));
+                return { m: m, b: b, s2: Math.max(s2v, sigmaG * sigmaG, 1e-8), xb: mx, sxx: Sxx, n: R.n, gMax: fp > 0 ? Gs[keep[fp - 1]] : 0 };
+            };
+            var lineVarOf = function (ln, Gv) { return ln.s2 * infl * (1 / ln.n + (Gv - ln.xb) * (Gv - ln.xb) / ln.sxx); };
+            // candidates: one point per 2L in ln G (decimation, the default) or 2L blocks of prewhitened innovations when the
+            // decimated series before the departure would be short (< 30 points) and the residuals are correlated
+            var dec = [], lastLG = -Infinity;
+            keep.forEach(function (ii, k) { var lg = Math.log(Gs[ii]); if (lg >= lastLG + 2 * L) { dec.push(k); lastLG = lg; } });
+            var useWhite = dec.length < 30 && Math.abs(rho) > 0.2;
+            var Sp = 0, Sm = 0, alarm = null, sgnA = 0, seqN = 0, lnA = null;
+            if (!frozen) {
+                var cands = [];
+                if (useWhite) {
+                    var blk = null;
+                    for (var k = 1; k < keep.length; k++) {
+                        var lgk = Math.log(Gs[keep[k]]);
+                        if (!blk || lgk >= blk.lg0 + 2 * L) { blk = { lg0: lgk, k0: k, k1: k }; cands.push(blk); }
+                        blk.k1 = k;
+                    }
+                } else dec.forEach(function (k) { cands.push({ k0: k, k1: k, lg0: Math.log(Gs[keep[k]]) }); });
+                for (var c = 0; c < cands.length && !alarm; c++) {
+                    var cd = cands[c], Gc0 = Gs[keep[cd.k0]];
+                    addTo(Gc0 * Math.exp(-2 * L));
+                    var ln = lineOf();
+                    // detection starts once the line spans G 0.05 … ≥ 2 and the candidate lies beyond G 3
+                    if (!ln || ln.gMax < 2 || Gc0 < 3 || !(ln.m < 0)) continue;
+                    var zc;
+                    if (useWhite) {
+                        var s = 0, mm = 0, rPrev = F.p[keep[cd.k0 - 1]] - (ln.b + ln.m * Gs[keep[cd.k0 - 1]]);
+                        for (var kq = cd.k0; kq <= cd.k1; kq++) { var rq = F.p[keep[kq]] - (ln.b + ln.m * Gs[keep[kq]]); s += rq - rho * rPrev; rPrev = rq; mm++; }
+                        var Gm = Gs[keep[cd.k1]], vz = mm * ln.s2 * (1 - rho * rho) + mm * mm * (1 - rho) * (1 - rho) * lineVarOf(ln, Gm);
+                        zc = s / Math.sqrt(Math.max(vz, 1e-12));
+                    } else {
+                        var Gq = Gs[keep[cd.k0]], rq2 = F.p[keep[cd.k0]] - (ln.b + ln.m * Gq);
+                        zc = rq2 / Math.sqrt(ln.s2 + lineVarOf(ln, Gq));
+                    }
+                    seqN++;
+                    Sp = Math.max(0, Sp + zc - kC); Sm = Math.max(0, Sm - zc - kC);
+                    if (Sp > hC || Sm > hC) { alarm = cd; sgnA = Sp > hC ? 1 : -1; lnA = ln; }
+                }
+                if (alarm) frozen = { line: lnA, tA: F.t[keep[alarm.k1]], sgn: sgnA, Gw: lnA.gMax };
+            }
+            // statistics of the pre-departure residuals (about the line through all of them): ρ, decimated and prewhitened lag-1
+            addTo(frozen ? frozen.line.gMax : Gnow);
+            var lnAll = frozen ? frozen.line : lineOf();
+            if (lnAll) {
+                var rPre = [], rDec = [];
+                keep.forEach(function (ii, k) { if (Gs[ii] <= lnAll.gMax) { var v0 = F.p[ii] - (lnAll.b + lnAll.m * Gs[ii]); rPre.push(v0); if (dec.indexOf(k) >= 0) rDec.push(v0); } });
+                stats = { rho1: rho, useWhite: useWhite, decLag1: _lag1(rDec), whiteLag1: _lag1(rPre.slice(1).map(function (v, q) { return v - rho * rPre[q]; })),
+                          nDec: rDec.length, isip: lnAll.b, mG: -lnAll.m, Gw: lnAll.gMax, candidates: seqN };
+            }
+            var lnF = frozen ? frozen.line : (lnAll || { b: fit0.b, m: fit0.m, s2: Math.max(fit0.sigma * fit0.sigma, 1e-8), xb: mean(X0), sxx: 1, n: X0.length, gMax: G0 });
+            var isip = lnF.b, mG = -lnF.m, Gw = lnF.gMax;
+            var r = keep.map(function (ii) { return F.p[ii] - (isip - mG * Gs[ii]); });
+            var sigAt = function (Gv) { return Math.sqrt(Math.max(lnF.s2 + (lnF.sxx > 0 ? lineVarOf(lnF, Gv) : 0), sigmaG * sigmaG, 1e-6)); };
+            if (frozen) { sgnA = frozen.sgn; alarm = { k1: 0 }; for (var ka = 0; ka < keep.length; ka++) if (F.t[keep[ka]] >= frozen.tA - 1e-12) { alarm.k1 = ka; break; } }
+            // forecast before closure: G_c = (ISIP − σ_prior)/m_G at σ_prior ± sd
+            var fc = null;
+            if (prior && pos(mG)) {
+                var Ghi = (isip - (prior.p50 - prior.sd)) / mG, Glo = (isip - (prior.p50 + prior.sd)) / mG;
+                if (Glo > 0 && Ghi > 0) fc = { lo: E.tp * _G05inv(Glo), hi: E.tp * _G05inv(Ghi) };
+            }
+            if (!alarm) {
+                var txt = fc ? 'Continue: closure expected ' + fmt(fc.lo, 1) + '–' + fmt(fc.hi, 1) + ' h after shut-in.' : 'Continue: closure not yet seen.';
+                last = verdictOf('continue', tNow, null, S.p[n - 1], fc, txt, []);
+                return record(last);
+            }
+            // change point on the full-resolution residuals: back from the alarm while |r| > 2σ on the alarm side
+            var kA = alarm.k1, kD = kA;
+            while (kD > 0 && sgnA * r[kD - 1] > 2 * sigAt(Gs[keep[kD - 1]]) && Gs[keep[kD - 1]] > Gw) kD--;
+            // the departure starts where the residual leaves the line (first point of the run beyond 2σ, stepped back once)
+            if (kD > 0 && Gs[keep[kD - 1]] > Gw) kD--;
+            var iD = keep[kD], tDep = F.t[iD], pDep = F.p[iD], GD = Gs[iD];
+            // confirmed when the departure is held over ≥ 0.05 in log G (≥ 90 % of the points since beyond 2σ, on the same side)
+            var held = 0, tot2 = 0, tConf = null, tProv = F.t[keep[kA]];
+            for (var kk = kD; kk < r.length; kk++) {
+                tot2++; if (sgnA * r[kk] > 2 * sigAt(Gs[keep[kk]])) held++;
+                if (tConf == null && kk >= kA && Math.log10(Gs[keep[kk]] / GD) >= 0.05 && held / tot2 >= 0.9 && Math.log10(Gw / gMin) >= 0.3) tConf = F.t[keep[kk]];
+            }
+            var confirmed = tConf != null && held / tot2 >= 0.9;
+            closedAt = { t: tDep, dt: tDep - E.ts, p: pDep, G: GD, tProvisional: tProv, tConfirmed: tConf };
+            if (!confirmed) {
+                last = verdictOf('provisional', tNow, 'F1', pDep, fc, 'Contact reading (family F1) provisional at ' + fmt(pDep, 0) + ' psia.', ['C2']);
+                last.tProv = tProv;
+                return record(last);
+            }
+            // after closure: p_i bracket (and the radial check) on the injection clock with the centroid origin
+            var out = verdictOf('confirmed', tNow, 'F1', pDep, null, 'Contact reading (family F1) confirmed: ' + fmt(pDep, 0) + ' psia.', ['C2']);
+            out.tProv = tProv; out.tConf = tConf;
+            if (E.tStart != null) {
+                var tcInj = tDep - E.tStart, t0 = tcInj / 3, ta = [], pa = [];
+                for (i = 0; i < n; i++) if (S.t[i] > tDep * 1.0001) { ta.push(S.t[i] - E.tStart); pa.push(S.p[i]); }
+                if (ta.length >= 8 && Math.log10((ta[ta.length - 1] - t0) / (ta[0] - t0)) >= 0.3) {
+                    var dg = G.PRiSM_dfit_acaDiag(ta, pa, { t0: t0, LB: 0.25, sigma: sigmaG });
+                    if (dg && dg.ok !== false) {
+                        var lo = null, hi = null, sEnd = null;
+                        for (i = dg.x.length - 1; i >= 0; i--) { if (lo == null && fin(dg.piLo[i])) { lo = dg.piLo[i]; hi = dg.piHi[i]; } if (sEnd == null && fin(dg.sD[i])) sEnd = dg.sD[i]; if (lo != null && sEnd != null) break; }
+                        if (lo != null) {
+                            var hw = (hi - lo) / 2;
+                            out.piHalfWidth = hw; out.pi = { lo: lo, hi: hi };
+                            if (hw <= 25) { out = verdictOf('enough-pi', tNow, 'F1', 0.5 * (lo + hi), null, 'Enough for p_i ± ' + fmt(Math.max(1, Math.ceil(hw)), 0) + ' psi (' + fmt(lo, 0) + '–' + fmt(hi, 0) + ' psia).', ['A1']); out.piHalfWidth = hw; }
+                        }
+                        if (fin(sEnd) && sEnd <= -0.9) out.radialSeen = true;
+                    }
+                }
+            }
+            var pl = ctx.plan;
+            if (pl && pl.tRadial && pos(pl.allowedShutInD) && fin(pl.tRadial.p10) && pl.tRadial.p10 > pl.allowedShutInD * 24 && out.state === 'confirmed')
+                out = verdictOf('radial-unreachable', tNow, 'F1', pDep, null, 'Radial flow is not reachable in the allowed time: plan for bounds on k.', ['A1']);
+            if (pl && pl.corridor && arrOk(pl.corridor.t) && pl.corridor.t.length > 1) {
+                var outN = 0, tot = 0, tLo = Math.max(1e-6, (tNow - E.ts) / 10);
+                for (i = 0; i < F.dt.length; i++) if (F.dt[i] >= tLo) { var c10 = interp(pl.corridor.t, pl.corridor.p10, F.dt[i]), c90 = interp(pl.corridor.t, pl.corridor.p90, F.dt[i]); tot++; if (F.p[i] < Math.min(c10, c90) || F.p[i] > Math.max(c10, c90)) outN++; }
+                if (tot > 5 && outN / tot > 0.1) out = verdictOf('outside-corridor', tNow, null, S.p[n - 1], null, 'Outside the designer corridor: check the gauge.', []);
+            }
+            out.tProv = tProv; out.tConf = tConf;
+            last = out;
+            return record(last);
+        }
+        // timeline of state transitions; the "first available" times use the sample at which a call became true
+        // (inside a block), not the end of the block
+        function record(v) {
+            var prev = timeline.length ? timeline[timeline.length - 1] : null;
+            if (fin(v.tProv) && firsts.closureProvisional == null) firsts.closureProvisional = v.tProv;
+            if (fin(v.tConf) && firsts.closureConfirmed == null) firsts.closureConfirmed = v.tConf;
+            var vv = clone(v); delete vv.tProv; delete vv.tConf; delete vv.piHalfWidth; delete vv.radialSeen; delete vv.pi;
+            if (!prev || prev.state !== v.state) {
+                if (v.state !== 'provisional' && v.state !== 'continue' && v.state !== 'none' && prev && prev.state === 'continue' && fin(v.tProv))
+                    timeline.push(Object.assign(clone(vv), { t: v.tProv, state: 'provisional', text: _txt('Contact reading (family F1) provisional at ' + fmt(v.p, 0) + ' psia.') }));
+                timeline.push(vv);
+            }
+            if (v.state === 'provisional' && firsts.closureProvisional == null) firsts.closureProvisional = v.t;
+            if ((v.state === 'confirmed' || v.state === 'enough-pi' || v.state === 'radial-unreachable') && firsts.closureConfirmed == null) firsts.closureConfirmed = v.t;
+            if (fin(v.piHalfWidth) && v.piHalfWidth <= 25 && firsts.piW25 == null) firsts.piW25 = v.t;
+            if (fin(v.piHalfWidth) && v.piHalfWidth <= 10 && firsts.piW10 == null) firsts.piW10 = v.t;
+            if (v.radialSeen && firsts.radialSeen == null) firsts.radialSeen = v.t;
+            return v;
+        }
+        return {
+            push: function (samples) {
+                var added = 0;
+                (samples || []).forEach(function (s) {
+                    if (!s || !fin(s.t) || !fin(s.p)) return;
+                    var p = s.p + ((s.unit === 'psig' || (ctx.psig && s.unit !== 'psia')) ? atm : 0);
+                    if (insert(s.t, p, s.q, s.T)) added++;
+                });
+                return { changed: added > 0, added: added };
+            },
+            run: run,
+            verdict: function () { return last ? clone(last) : verdictOf('none', 0, null, null, null, 'No data yet.', []); },
+            timeline: function () { return clone(timeline); },
+            firsts: function () { return { closureProvisional: nn(firsts.closureProvisional), closureConfirmed: nn(firsts.closureConfirmed), piW25: nn(firsts.piW25), piW10: nn(firsts.piW10), radialSeen: nn(firsts.radialSeen) }; },
+            closure: function () { return closedAt ? clone(closedAt) : null; },
+            stats: function () { return stats ? clone(stats) : null; },
+            size: function () { return S.t.length; },
+            close: function () { S = { t: [], p: [], q: [], T: [] }; frozen = null; }
+        };
+    }
+    G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
+    G.PRiSM_dfit_live.create = function (ctx) { try { return _liveCreate(ctx); } catch (e) { return fail('LIVE_FAILED', e && e.message || e); } };
+
+    function _replaySetup(ds, ctx) {
+        ctx = ctx || {};
+        if (!ds || !arrOk(ds.t) || !arrOk(ds.p) || ds.t.length !== ds.p.length) return { err: fail('BAD_INPUT', 'Replay needs a dataset with t and p.', ['ds']) };
+        var ses = _liveCreate(ctx), block = pos(ctx.block) ? Math.round(ctx.block) : 50, rows = [];
+        for (var i = 0; i < ds.t.length; i++) rows.push({ t: ds.t[i], p: ds.p[i], q: ds.q && fin(ds.q[i]) ? ds.q[i] / 1440 : null, T: ds.T && fin(ds.T[i]) ? ds.T[i] : null, unit: ctx.unit || null });
+        return { ses: ses, rows: rows, block: block, i: 0 };
+    }
+    function _replayStep(R) { var end = Math.min(R.rows.length, R.i + R.block); R.ses.push(R.rows.slice(R.i, end)); R.i = end; R.ses.run(); return R.i >= R.rows.length; }
+    function _replayFinish(R) { return { ok: true, timeline: R.ses.timeline(), firsts: R.ses.firsts(), tEnd: R.rows.length ? R.rows[R.rows.length - 1].t : 0, closure: R.ses.closure(), verdict: R.ses.verdict() }; }
+    G.PRiSM_dfit_replay = function (ds, ctx) {
+        try { var R = _replaySetup(ds, ctx); if (R.err) return R.err; var guard = 0; while (!_replayStep(R) && guard++ < 1e6); return _replayFinish(R); }
+        catch (e) { return fail('REPLAY_FAILED', e && e.message || e); }
+    };
+    G.PRiSM_dfit_replayJob = function (ds, ctx) {
+        var R = null, done = false, cancelled = false, res = null;
+        try { R = _replaySetup(ds, ctx); } catch (e) { R = { err: fail('REPLAY_FAILED', e && e.message || e) }; }
+        if (R.err) { done = true; res = R.err; }
+        return {
+            step: function () {
+                if (done || cancelled) return { done: true, progress: 1, label: cancelled ? 'cancelled' : 'done' };
+                try { if (_replayStep(R)) { done = true; res = _replayFinish(R); } } catch (e) { done = true; res = fail('REPLAY_FAILED', e && e.message || e); }
+                return { done: done, progress: R.rows.length ? R.i / R.rows.length : 1, label: 'samples ' + R.i + ' of ' + R.rows.length };
+            },
+            result: function () { return res || fail('CANCELLED', 'The replay was cancelled.', []); },
+            cancel: function () { cancelled = true; }
+        };
+    };
+
+    // ═════════════════════════════════════════════════════════════════════
     // Stubs still to be replaced in later WP3 milestones
     // ═════════════════════════════════════════════════════════════════════
     function _ni(name) { return { ok: false, code: 'NOT_IMPLEMENTED', errors: [name + ' is not implemented yet (DFIT WP3 milestone).'], bad: [] }; }
@@ -1348,9 +1623,9 @@
         var f = function () { var r = _ni(name); return { step: function () { return { done: true, progress: 1, label: 'not implemented' }; }, result: function () { return r; }, cancel: function () {} }; };
         f._dfitStub = true; return f;
     }
-    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_replay', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel',
+    ['PRiSM_dfit_pipeline', 'PRiSM_dfit_summarise', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel',
      'PRiSM_dfit_checkQuoted', 'PRiSM_dfit_exportText', 'PRiSM_dfit_fracSheet', 'PRiSM_dfit_handoff'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _stub(n); });
-    ['PRiSM_dfit_pipelineJob', 'PRiSM_dfit_replayJob'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _jobStub(n); });
+    ['PRiSM_dfit_pipelineJob'].forEach(function (n) { if (!G[n] || G[n]._dfitStub) G[n] = _jobStub(n); });
     G.PRiSM_dfit_live = G.PRiSM_dfit_live || {};
     if (!G.PRiSM_dfit_live.create || G.PRiSM_dfit_live.create._dfitStub) G.PRiSM_dfit_live.create = _stub('PRiSM_dfit_live.create');
 
