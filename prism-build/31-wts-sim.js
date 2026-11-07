@@ -4095,14 +4095,21 @@ function create(flowIn, opts) {
   // alarm texts (§5.5; = tests/_wts-fu-shapes.js ALARM_TAGS / ALARM_TEXTS)
   function ck2Grp(v) { return isNum(v) ? String(mround(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '—'; }
   function ck2Q(v) { return isNum(v) ? v.toFixed(2) : '—'; }
+  // a value with its unit: through the host formatter (fmtHook, as uq()) when one is set, so the texts follow Metric mode like
+  // CHOKE_LIMIT; else the field-unit text of the fixture templates (imp: '8.92' / '1,440 psig')
+  function ck2U(v, cat, dp, imp) {
+    if (fmtHook && isNum(v)) { try { var t = fmtHook(v, cat, dp); if (typeof t === 'string' && t) return t; } catch (e) { /* fall back */ } }
+    return imp;
+  }
   MSG.CHOKE2_LIMIT = function (v, l) {
-    return CK2.limiter === 'both' ? 'CK-101 and CK-102 together pass ' + ck2Q(l) + ' of ' + ck2Q(v) + ' MMscf/d — open either choke or reduce the rate'
-      : 'CK-102 limits the rate: bean ' + CK2.bean + '/64 passes ' + ck2Q(l) + ' of ' + ck2Q(v) + ' MMscf/d — open CK-102 or reduce the rate';
+    var y = ck2U(l, 'gasRate', 2, ck2Q(l)), z = ck2U(v, 'gasRate', 2, ck2Q(v) + ' MMscf/d');
+    return CK2.limiter === 'both' ? 'CK-101 and CK-102 together pass ' + y + ' of ' + z + ' — open either choke or reduce the rate'
+      : 'CK-102 limits the rate: bean ' + CK2.bean + '/64 passes ' + y + ' of ' + z + ' — open CK-102 or reduce the rate';
   };
   MSG.CK1_SUBCRIT = function () { return 'CK-101 subcritical with CK-102 in line: in a real well the rate and WHP would now respond to the downstream pressure (not simulated)'; };
   MSG.PAH_CK2 = function (v) {
-    return TAGS.pahCk2 + ': pressure between the chokes ' + ck2Grp(v) + ' psig, ≥ ' + rnd0(CK2.pahFrac * 100) + ' % of the ' + ck2Grp(CK2.designP) +
-      ' psig design pressure of ' + (CK2.pos === 'midcoil' ? 'the line and H-101 pass 1' : 'the line CK-101 → CK-102') + ' — open CK-102';
+    return TAGS.pahCk2 + ': pressure between the chokes ' + ck2U(v, 'pressureG', 0, ck2Grp(v) + ' psig') + ', ≥ ' + rnd0(CK2.pahFrac * 100) + ' % of the ' +
+      ck2U(CK2.designP, 'pressureG', 0, ck2Grp(CK2.designP) + ' psig') + ' design pressure of ' + (CK2.pos === 'midcoil' ? 'the line and H-101 pass 1' : 'the line CK-101 → CK-102') + ' — open CK-102';
   };
   MSG.HYD_heaterChoke = function (v, l) {
     return NAMES.heaterChoke + ' (' + TAGS.heaterChoke + ') outlet: ' + uq(v, 'temperature') + ' below hydrate ' + uq(l, 'temperature') + ' at ' +
@@ -4115,7 +4122,7 @@ function create(flowIn, opts) {
     var lim2 = CK2.limiter === 'CK-102' || CK2.limiter === 'both';
     if (CK2.flowLimited && lim2 && !A.active) raise(A, Qg, CK2.Qmax, MSG.CHOKE2_LIMIT(Qg, CK2.Qmax));
     else if (A.active && (!lim2 || Qg <= CK2.Qmax)) clearA(A);
-    else if (A.active) { A.value = Qg; A.limit = CK2.Qmax; }
+    else if (A.active) { A.value = Qg; A.limit = CK2.Qmax; A.msg = MSG.CHOKE2_LIMIT(Qg, CK2.Qmax); }   // bean / limiter may change while raised
     // CK1_SUBCRIT: CK-101 no longer critical because of CK-102 (only when the CK-101-only walk was critical)
     A = aDef('CK1_SUBCRIT', TAGS.choke, 'warn', 'choke', 'd');
     on = chk.regime !== 'Critical' && chk.regimeBase === 'Critical';
@@ -4126,7 +4133,7 @@ function create(flowIn, opts) {
     var pl = CK2.pahFrac * CK2.designP, Pm = nk.Pin;
     if (Pm >= pl && !A.active) raise(A, Pm, pl, MSG.PAH_CK2(Pm));
     else if (A.active && Pm < 0.98 * pl) clearA(A);
-    else if (A.active) { A.value = Pm; A.limit = pl; }
+    else if (A.active) { A.value = Pm; A.limit = pl; A.msg = MSG.PAH_CK2(Pm); }
     // CK-102 hydrate at its outlet (after its own J-T drop), the rule of the other nodes
     A = aDef('HYD_heaterChoke', TAGS.heaterChoke, 'hyd', 'heaterChoke', 'd');
     if (nk.hyd && !A.active) raise(A, nk.T, nk.th, MSG.HYD_heaterChoke(nk.T, nk.th));

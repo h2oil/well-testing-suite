@@ -178,6 +178,50 @@ module.exports = [
     },
   },
   {
+    name: 'WTSHC E1 alarm texts follow a new flow while raised (bean2 32 → 28, limiter CK-102 → both; PAH-102 by position) and the host formatter (Metric)',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const S = X.loadEngine('work');
+      const s = mk(S, flowWith(S, block('bean32')));
+      adv(s, 120, 1);
+      let c2 = alarm(s.getState(), 'CHOKE2_LIMIT');
+      assert.ok(c2 && c2.msg.indexOf('bean 32/64 passes 8.92 of 10.00 MMscf/d') >= 0, c2 && c2.msg);
+      const since = c2.since;
+      // bean2 32 → 28 while the alarm stays raised: value / limit and the text follow (no clear / re-raise)
+      s.setFlow(flowWith(S, block('bean32', (b) => { b.bean = 28; b.QmaxMMscfd = 7.5; b.ck1.QmaxMMscfd = 7.5; })));
+      adv(s, 2, 1);
+      c2 = alarm(s.getState(), 'CHOKE2_LIMIT');
+      assert.ok(c2 && c2.since === since, 'still the same raise');
+      assert.near(c2.limit, 7.5, 1e-9, 'limit follows');
+      assert.ok(c2.msg.indexOf('bean 28/64 passes 7.50 of 10.00 MMscf/d') >= 0 && c2.msg.indexOf('32/64') < 0, c2.msg);
+      assert.match(c2.msg, X.textRe(X.ALARM_TEXTS.CHOKE2_LIMIT), 'CK-102 text');
+      // limiter CK-102 → both while raised: the pair text
+      s.setFlow(flowWith(S, block('bean32', (b) => { b.limiter = 'both'; b.QmaxMMscfd = 8.8438; })));
+      adv(s, 2, 1);
+      c2 = alarm(s.getState(), 'CHOKE2_LIMIT');
+      assert.ok(c2 && c2.since === since && c2.msg.indexOf('CK-101 and CK-102 together pass 8.84 of 10.00 MMscf/d') === 0, c2 && c2.msg);
+      assert.match(c2.msg, X.textRe(X.ALARM_TEXTS.CHOKE2_LIMIT_both), 'both text');
+      // PAH-102 (raised at 40/64 inlet): inlet text; field units by default
+      const p = mk(S, flowWith(S, block('bean40')));
+      adv(p, 300, 1);
+      let pa = alarm(p.getState(), 'PAH_CK2');
+      assert.ok(pa, 'PAH-102 raised');
+      assert.match(pa.msg, X.textRe(X.ALARM_TEXTS.PAH_CK2_inlet), pa.msg);
+      // a host formatter (Metric): CHOKE2_LIMIT and PAH-102 go through it as CHOKE_LIMIT does (no psig / MMscf/d left)
+      const fmt = (v, cat, dp) => cat === 'pressureG' ? (v * 0.0689476).toFixed(1) + ' barg' : cat === 'gasRate' ? (v * 28.3168).toFixed(1) + ' km3/d'
+        : v.toFixed(dp == null ? 1 : dp) + ' u';
+      s.setFormatter(fmt); p.setFormatter(fmt);
+      adv(s, 2, 1); adv(p, 2, 1);
+      c2 = alarm(s.getState(), 'CHOKE2_LIMIT'); pa = alarm(p.getState(), 'PAH_CK2');
+      assert.ok(c2.msg.indexOf('together pass 250.4 km3/d of 283.2 km3/d') >= 0 && c2.msg.indexOf('MMscf/d') < 0, c2.msg);
+      assert.ok(pa.msg.indexOf(' barg, ≥ 90 % of the 99.3 barg design pressure of the line CK-101 → CK-102') >= 0 && pa.msg.indexOf('psig') < 0, pa.msg);
+      // back to field units: the fixture texts again
+      p.setFormatter(null); adv(p, 2, 1);
+      assert.match(alarm(p.getState(), 'PAH_CK2').msg, X.textRe(X.ALARM_TEXTS.PAH_CK2_inlet), 'field units again');
+    },
+  },
+  {
     name: 'WTSHC E1 U7: a live pinch of CK-102 (No Flow block: 24/64, and 4/64) at WHP 3,000 raises PAH-102 from the live Pm; opening to 48/64 clears it; no throw, finite',
     wp: WP,
     opts: false,
