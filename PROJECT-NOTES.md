@@ -5,6 +5,61 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-07 — v3.4 release: DFIT analysis in PRiSM (increment 3.4a)
+
+Plan: docs/DFIT-PLAN.md (WPH, WP0–WP7; Appendix D = integration amendments; branch `df/int`). App and App Store version 3.4
+(`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static `#appVersionLabel` fallback).
+Request: the product owner ("Start building DFIT module").
+
+**What shipped**
+- PRiSM workspace mode `dfit` (Test → DFIT (fracture injection)) over the five steps through the generic `PRiSM_modeExt` hooks
+  (any-step step views, panel filter, rail, status, report header / plots / blocks, export items, undo extras and batches, tool
+  catalogue extras, `PRiSM_drawPlot`, `PRiSM_plot_overlay`, `PRiSM_rng`, `PRiSM_reportKeyLine` / `Ready`); built-in modes unchanged.
+- Round-8 files 56 (core: prepare, events, ISIP, O(n) derivatives, every closure pick, consensus F0–F4 single | range, leak-off
+  classifier, fracture outputs, what-if), 57 (after-closure, step tests, uncertainty, grade, evidence, report model, exports,
+  hand-offs, replay engine, pipeline + Job twin), 58 (leak-off mini-model, fit, identifiability, designer engine), 59 (UI);
+  Round-9 helpers 48-calc-wellbore (`WTS_wellbore`), 49-calc-dfit-triage / -info / -synth / -cal (placeholder); `dfit-validate.js`.
+- Triage (21 checks, blunder cards with Apply fix / It is real, re-pump verdict, grade A–D); several tests per well with
+  gradients against depth; P10/P50/P90; evidence-linked report, data + picks export, frac-design sheet, PTA / RTA hand-off,
+  Quick Report key line, `WTS_state.dfit`; Help: PRiSM guide DFIT parts, two tasks, 13 glossary terms, one FAQ, four shots.
+- O(n) Bourdet derivative in 02 / 33 (identical to the old loops, `dfit-hooks` H1).
+
+**Honest labels (WP7)** — the integration fix round measured the leak-off mechanism right in ≈ 19 % of the benchmark pre set
+(a q-tip case reads as PDL), a two-cycle p_i flagged low and quick-set targets missed on small counts; label calibration is 3.4b
+(WP8). So every closure / ISIP / p_i / step-down label and the grade say "provisional — not yet calibrated" in the cards, rail,
+plots, key line, report, export text, Quick Report and `WTS_state.dfit` (`labelsCalibrated:false`, `labelNote`); the leak-off type
+is shown without a confidence, with a provisional note and "rule score (not a probability)"; a calibrated table (3.4b) drops the
+suffix but not the type's. Wording only — no engine thresholds changed. Test: `dfit-review` RV20; key-line regexes in
+`dfit-report` R3 and `dfit-integration` I8, `dfit-closure` C1 label text.
+
+**Benchmarks and budgets** — see Appendix D: reference demo ISIP 7,599 psia, closure 7,003 psia (truth 7,000), p_i 4,496 psia;
+I11 matrix 6,998 psia single, I12 contact F1 7,002 / F2 6,736 range; live replay 0 of 20 early calls. File budgets above plan:
+dfit-integration ≈ 10 s for 17 tests (≤ 8 s), the 17 DFIT files ≈ 46 s in one run (≤ 60 s).
+
+**Gates** — smoke 339/339, acceptance 1615/1615 (`--html --integration`), wts3d 130/132 (the two CRLF checks on an LF checkout), help-shots --check and
+build-user-guide.js --check ok (216 shots, 7.97 MB). Perf baseline re-recorded in its own commit: html 8,625,783 → 9,956,802 bytes (+15.4 %), main script +15.6 %, www +15.4 %, html gzip 2,398,450 → 2,782,820 (+16.0 %; budget 10 %, intended: DFIT adds ≈ 1 MB of code); startup best 83.4 ms (was 82.5), recorded ratio 6.80 (was 5.58); check ratio 7.16 ≤ 9.18. The re-record was needed only for
+the byte budget: the startup ratio was already within the old ×1.35 limit (7.53).
+
+**Known limitations** — provisional labels and leak-off type (above); re-pumped test analysed on its last cycle; spurt not
+separable (η upper bound); KGD / radial viscous term uncalibrated; no re-pump acknowledgement control or salvage list on the page;
+3.4b items (live co-pilot, replay timeline UI, superposition step-rate, Hall plot, flowback / pulses, water-hammer fit,
+variable-storage ACA model, mini-model tip extension / multi-cycle, the h-function plot with its permeability and far-field
+extension reading (gate G6), the uncertainty tornado / input-share display) not in v3.4. Page issues seen at the help round and left for
+a follow-up: G-function default x-range, rail p_i label overlap, step ⑤ tables shown twice, designer
+default ranges (P50 shut-in far above the allowed time). Help allowance: a fuller DFIT guide needs ≈ +4 kB raw (owner decision, Q13).
+
+**Release review fixes** — the key line prints p_i with its bracket and label (`p_i 4,496 psia [4,491–4,721] (medium,
+provisional)`, 57 and 59; was ±half-width); closure / ISIP / p_i verdicts are ⚠ with "label high (provisional — not yet
+calibrated)" until `PRiSM_dfit_cal.calibrated`, the report headline too; the grade reads "B (provisional)" in the rail, the tests
+table and the report; the after-closure log-log noise band is clipped a decade below the data (y-axis follows D); psig blunder
+cards name their channel and repeat cards are dropped; a DFIT demo refreshes the Load Data card's active-dataset line (07 listener);
+the designer box, its shut-in verdict and outcome are one shot target (`#prism_dfit_design_head`); the help follows the app (demo
+analyses at once, step names, the four step-④ tabs, F1 / F2 hand-off, water hammer, the shut-in caveat, the p_i bracket in the
+example, RV21 checks the example against the reference demo); phone step numbers are no longer clipped (`.help-steps` padding);
+release notes / README no longer promise the h-function plot or the tornado (3.4b). Help caps: 0.4 kB of headroom to production.
+
+---
+
 ## 2026-11-07 — v3.3.3 release: simulator heater inlet choke, bypass destination & cushion unload
 
 Plan: docs/SIM-FOLLOWUP-PLAN.md (WP0, WP-E0, WP-C, WP-E1, WP-E2, WP-3D, WP-L, WP-2D, WP-HC, WP-I; branch `sim-fu`). App and

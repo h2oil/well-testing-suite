@@ -993,6 +993,11 @@
             _escapeHTML(ds.name || 'Data') + '</b> · ' + ds.t.length + ' points' +
             (ds.p ? '' : ' (rates only)') + '.</span>';
     }
+    // A dataset committed from elsewhere (e.g. a DFIT demo) refreshes the Load Data card's active-dataset line; this tab's
+    // own commits set their message after the commit, so theirs wins.
+    if (typeof W.addEventListener === 'function') {
+        W.addEventListener('prism:dataset-loaded', function () { if (_byId('prism_data_msg')) _setMsg(_activeStatusHTML()); });
+    }
 
 
     // =======================================================================

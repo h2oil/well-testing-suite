@@ -1,17 +1,17 @@
 {
   "date": "2026-11-07",
   "bytes": {
-    "html": 8625783,
-    "www": 8643349,
-    "mainScript": 8555858,
-    "htmlGzip": 2398450
+    "html": 9956802,
+    "www": 9976136,
+    "mainScript": 9886735,
+    "htmlGzip": 2782820
   },
-  "compileMs": 134.8,
-  "startupMs": 96.1,
-  "startupMinMs": 82.5,
+  "compileMs": 123.2,
+  "startupMs": 93.9,
+  "startupMinMs": 83.4,
   "firstIdleMs": 0,
-  "calibMs": 14.79,
-  "startupRatio": 5.58,
+  "calibMs": 12.27,
+  "startupRatio": 6.8,
   "runs": 7,
   "loadErrors": 0
 }

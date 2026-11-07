@@ -118,7 +118,7 @@ module.exports = [
       near(assert, c.tau, 21, 0.5, 'τ = max(15, 0.3 % σ_c, 3 % pn)');
       assert.strictEqual(c.confidence, 'high', 'label high; fired rules: ' + c.rules.filter((x) => x.fired).map((x) => x.id).join(','));
       assert(c.rules.length === 10 && c.rules.every((x) => /^K\d+$/.test(x.id)), 'ten K rules listed');
-      assert(c.calibrated === false && c.hitRate === null && /uncalibrated/.test(c.label), 'uncalibrated rule label (3.4a)');
+      assert(c.calibrated === false && c.hitRate === null && /provisional rule label — not yet calibrated/.test(c.label), 'provisional, not yet calibrated rule label (3.4a)');
       const lite = G.PRiSM_dfit_consensusLite(r.picks, r.d, r.cctx);
       okShape(assert, 'ConsensusLite', lite); assert(lite.mode === 'single' && Math.abs(lite.value - c.value) < 5, 'consensusLite agrees (single)');
     },

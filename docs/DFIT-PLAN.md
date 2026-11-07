@@ -1,6 +1,10 @@
 # DFIT module in PRiSM (v3.4) — implementation plan
 
-> **Status: WP0 landed — target v3.4** (2026-11-07, on top of v3.3.3). WP0 (contracts and skeleton, §9) is in: the frozen
+> **Status: shipped in v3.4 (3.4a); 3.4b open** (2026-11-07). 3.4a (WPH, WP0–WP7) is integrated, reviewed and released as v3.4;
+> Appendix D records the integration amendments. In 3.4a every closure / ISIP / p_i label, the grade and the leak-off type are shown as
+> "provisional — not yet calibrated" (WP7: the benchmark does not yet support more; the leak-off type in particular often differs from the
+> true mechanism); 3.4b (v3.4.1: WP8 calibration, WP9 live listeners, WP10 field tests, WP11 model extras, WP12 lenses, WP13) is open.
+> Earlier status (WP0, 2026-11-07, on top of v3.3.3): WP0 (contracts and skeleton, §9) is in: the frozen
 > fixtures `prism-build/tests/_dfit-shapes.js` (all §3.13 names, the §3.2 range table, `FIX.ds` / `.state` / `.run` / `.aca`,
 > `sharedApp`, `resetDfit`; resolutions at the end of §3.13), `tests/dfit-shapes.test.js` (SH1, SH2), the stub skeletons of
 > 56–59 and of the five Round-9 helpers, and 56–59 in the Round-8 FILES list. The engine and UI work packages (WPH, WP1–WP6,
@@ -3271,17 +3275,17 @@ v3.3 merged ──► WP0 contracts (1.5 d) ──► WPH generic hooks + O(n) B
 { ver:'v3.4', date:'<release date>', title:'DFIT analysis in PRiSM',
   note:'PRiSM gains a DFIT workspace: diagnostic fracture injection tests from data health to closure, after-closure analysis, a leak-off model and hand-off to PTA.',
   items:[
-   ['prism','DFIT workspace','Choose “DFIT (fracture injection)” in PRiSM: data and events, ISIP and friction, pre-closure, after-closure and model, report — with G-function, √t, log-log, compliance and h-function plots and every closure method.'],
+   ['prism','DFIT workspace','Choose “DFIT (fracture injection)” in PRiSM: data and events, ISIP and friction, pre-closure, after-closure and model, report — with G-function, √t, log-log and compliance plots and every closure method.'],
    ['new','Closure consensus','All closure methods on one strip, grouped into independent families (including the reopening pressure from a second cycle), giving one closure or a closure range with a confidence label, the reasons, a frictional-limit check and a logged override.'],
    ['new','Test triage','Data-health checks and an A–D grade within seconds of import: vacuum, air in the well, thermal effects, gauge resolution, clock alignment, unit and depth blunders, and an early re-pump verdict.'],
    ['new','Step tests','Step-down friction split with open perforations, and the step-rate fracture extension pressure with a band and a per-step stabilisation check.'],
    ['new','After-closure analysis','Reservoir pressure with a bracket that needs no guess, transmissibility or bounds on permeability when radial flow is not reached, gas in adjusted variables, a leak check that separates leaks from gauge drift, and matching with the PRiSM model library.'],
    ['new','Leak-off model','“What leak-off rate do I get?” with no data, from any PRiSM view, and history matching of a recorded DFIT that states which parameters the test actually determines.'],
    ['new','DFIT designer','Ranges in; shut-in length, volume, gauge and sampling, leak tolerance, vacuum check, checklist and the expected outcome out.'],
-   ['new','Uncertainty','P10/P50/P90 on every DFIT number, per closure reading when the closure is a range, with the share of each input, a tornado and a what-if closure marker.'],
+   ['new','Uncertainty','P10/P50/P90 on every DFIT number, per closure reading when the closure is a range, with the largest driver in the report and a what-if closure marker.'],
    ['new','Several DFITs per well','Stacked tests side by side, closure and pressure gradients against depth, and a stress-log calibration offset for each closure reading.'],
    ['report','DFIT report','Evidence column and appendix, a pick and override log, data + picks export with your own column layout and a frac-design sheet; PTA and RTA hand-off in one click.'],
-   ['ux','Faster derivatives','The pressure derivative is now computed in linear time: long falloffs redraw in milliseconds.'] ] }
+   ['ux','Faster derivatives','The plot and analysis-data pressure derivative is now computed in linear time (4,000 falloff points in tens of milliseconds); the auto-match and semilog loops follow later.'] ] }
 ```
 
   3.4b (`v3.4.1`): live DFIT co-pilot on the Modbus station and historian with a replay timeline; superposition step-rate and Hall

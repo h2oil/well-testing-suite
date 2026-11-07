@@ -60,7 +60,7 @@ const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[d
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
 const CAPS = {
   'desktop:viewport': 150 * 1000, 'desktop:crop': 90 * 1000, 'phone:viewport': 110 * 1000, 'phone:crop': 70 * 1000,
-  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.7 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC)
+  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.75 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7)
 };
 const capFor = (view, target) => CAPS[view + ':' + (isViewport(target) ? 'viewport' : 'crop')];
 const isViewport = (target) => target == null || target === 'viewport';
@@ -137,6 +137,23 @@ const ACTIONS = {
   } },
   prismStep: { clock: 'install', run: async (s, n) => {
     await s.page.evaluate((k) => { if (typeof window.PRiSM_gotoStep !== 'function') throw new Error('PRiSM_gotoStep missing'); window.PRiSM_gotoStep(k); }, +n);
+    await s.advance(500);
+  } },
+  // PRiSM DFIT mode: Test = DFIT, the demo DFIT (default 'reference'), Load demo DFIT, then ▶ Analyse DFIT until the status
+  // line reads "complete" (the pipeline runs on timers through PRiSM_autoInterp.drive, so the fake clock is advanced).
+  prismDfit: { clock: 'install', run: async (s, demo) => {
+    const pick = (id, v) => s.page.evaluate(([q, x]) => {
+      const e = document.getElementById(q);
+      if (!e) throw new Error('#' + q + ' missing');
+      e.value = x; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
+    }, [id, v]);
+    await pick('prism_testtype', 'dfit');
+    await s.advance(500);
+    await pick('prism_dfit_demo', demo || 'reference');
+    await mustClick(s, '#prism_dfit_demo_btn', 'Load demo DFIT');
+    await s.advance(1000);
+    await mustClick(s, '#prism_dfit_analyse', '▶ Analyse DFIT');
+    await until(s, () => s.page.evaluate(() => { const e = document.getElementById('prism_dfit_status'); return !!e && /complete/i.test(e.textContent); }), 'the DFIT analysis');
     await s.advance(500);
   } },
   // Source = Demo, then the demo kind ('oil' | 'gas'), Load demo, and run until the page settles.

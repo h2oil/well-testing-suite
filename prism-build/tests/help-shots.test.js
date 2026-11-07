@@ -228,14 +228,14 @@ module.exports = [
     name: 'named actions (§3.3) each declare a clock mode; shot clock: install for the simulator, PRiSM and live data, fixed Date elsewhere',
     wp: WP, opts: false,
     run(app, assert) {
-      const want = ['prismAnalyse', 'prismStep', 'buildupDemo', 'modbusSimDemo', 'wellosDemo', 'simReset', 'simRun', 'simFault', 'simRigup', 'simCard',
+      const want = ['prismAnalyse', 'prismStep', 'prismDfit', 'buildupDemo', 'modbusSimDemo', 'wellosDemo', 'simReset', 'simRun', 'simFault', 'simRigup', 'simCard',
         'simMenu', 'simView', 'quickReport', 'metric'];
       assert.deepStrictEqual(Object.keys(HS.ACTIONS).sort(), want.slice().sort(), 'the initial set of named actions');
       want.forEach((k) => {
         assert.ok(['install', 'fixed'].indexOf(HS.ACTIONS[k].clock) >= 0, k + ' clock mode');
         assert.strictEqual(typeof HS.ACTIONS[k].run, 'function', k + ' run');
       });
-      ['simRun', 'simView', 'prismAnalyse', 'simReset'].forEach((k) => assert.strictEqual(HS.ACTIONS[k].clock, 'install', k));
+      ['simRun', 'simView', 'prismAnalyse', 'prismDfit', 'simReset'].forEach((k) => assert.strictEqual(HS.ACTIONS[k].clock, 'install', k));
       assert.strictEqual(HS.ACTIONS.metric.clock, 'fixed');
       const s = (route, setup) => ({ route, recipe: { setup: setup || [] } });
       assert.strictEqual(HS.clockOf(s('orifice')), 'fixed');
