@@ -8,7 +8,7 @@
 <style>body{font:13px/1.5 sans-serif;max-width:860px;margin:auto;padding:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:4px}.help-book h2{border-bottom:2px solid #f0883e}.bk-ch,.bk-card,.bk-ws{break-before:page}.bk-n,.bk-k{color:#bc4c00;font-weight:700}.help-book figure img{width:60%;height:auto;border:.5px solid #999}.help-book figcaption,.help-book .help-note{color:#666;font-size:12px}.help-book .help-shot-missing{border:1px dashed #999;padding:8px}.help-book .help-enlarge{display:none}.help-book .help-co{display:inline-block;width:16px;border-radius:50%;background:#f0b429;font:700 10px/16px sans-serif;text-align:center}.help-v-ok{color:#1a7f37}.help-v-warn{color:#9a6700}.help-v-bad{color:#cf222e}.bk-x,.bk-toc a{color:inherit;text-decoration:none}.bk-toc ol{list-style:none}.bk-line{border-bottom:1px solid #999;height:24px}@page{size:A4;margin:14mm}@media print{body{padding:0}.help-book figure,.help-book tr{break-inside:avoid}.help-book h3,.help-book h4{break-after:avoid}}</style>
 </head>
 <body class="help-book">
-<section class="bk-front"><h1>Well Testing Suite — User Guide</h1><p>Version 3.3.3 · 2026-11-07</p>
+<section class="bk-front"><h1>Well Testing Suite — User Guide</h1><p>Version 3.4 · 2026-11-07</p>
 <p>welltest.h2oil.co.uk</p>
 <nav class="bk-toc"><h2>Contents</h2>
 <ol>
@@ -293,7 +293,7 @@
 <ul><li>After an update.</li><li>To check when a calculation changed.</li></ul>
 </section>
 <section class="help-sec" id="help-releasenotes-steps"><h4>Step by step</h4>
-<ol class="help-steps"><li>Select What’s new under the version label in the sidebar.<figure class="help-fig" data-help-shot="releasenotes/view"><picture><source media="(max-width: 600px)" srcset="img/releasenotes/view-p.webp?v=a2d554b7" width="780" height="1688"><img class="help-img" src="img/releasenotes/view-d.webp?v=ddd594cb" width="1280" height="800" alt="Release Notes with the category filters"></picture><figcaption>Release Notes</figcaption></figure>
+<ol class="help-steps"><li>Select What’s new under the version label in the sidebar.<figure class="help-fig" data-help-shot="releasenotes/view"><picture><source media="(max-width: 600px)" srcset="img/releasenotes/view-p.webp?v=e516c6f6" width="780" height="1688"><img class="help-img" src="img/releasenotes/view-d.webp?v=55bdbccf" width="1280" height="800" alt="Release Notes with the category filters"></picture><figcaption>Release Notes</figcaption></figure>
 </li><li>Select a category <span class="help-co" aria-label="call-out 1">1</span> to show only those changes; <b>All</b> shows every change.</li><li>Read the newest release, marked <b>Latest</b>.</li></ol>
 </section>
 <section class="help-sec" id="help-releasenotes-results"><h4>Results and verdicts</h4>
@@ -1011,13 +1011,13 @@
 <p>Fracture injection falloff: ISIP (see <a class="bk-x" href="#help-glossary-isip">Appendix B</a>), closure (see <a class="bk-x" href="#help-glossary-closure">Appendix B</a>), net pressure (see <a class="bk-x" href="#help-glossary-netp">Appendix B</a>), fluid efficiency (see <a class="bk-x" href="#help-glossary-fluideff">Appendix B</a>), leak-off, p_i and k. Field units only.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Select Test <b>DFIT (fracture injection)</b>.</li><li>Load the record (rate in bbl/min) or a demo: Load demo DFIT.</li><li>Enter the datum TVD and the wellbore; tick psig channels.</li><li>Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.<figure class="help-fig" data-help-shot="prism/dfit-tri"><picture><img class="help-img" src="img/prism/dfit-tri-d.webp?v=19cf1f9b" width="648" height="635" alt="Test triage"></picture><figcaption>Test triage</figcaption></figure>
+<ol class="help-steps"><li>Select Test <b>DFIT (fracture injection)</b>.</li><li>Load the record (rate in bbl/min) or a demo: Load demo DFIT.</li><li>Enter the datum TVD and wellbore; tick psig channels.</li><li>Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.<figure class="help-fig" data-help-shot="prism/dfit-tri"><picture><img class="help-img" src="img/prism/dfit-tri-d.webp?v=4c461fe5" width="648" height="635" alt="Test triage"></picture><figcaption>Test triage</figcaption></figure>
 </li><li>A blunder card: Apply fix or It is real (logged).</li></ol>
 </section>
 <section class="help-sec" id="help-prism-dfit-example"><h5>Worked example</h5>
 <p><b>Reference demo</b></p>
 <p>Result:</p>
-<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.</li></ul>
+<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.</li></ul>
 </section>
 <section class="help-sec" id="help-prism-dfit-refs"><h5>Standards and references</h5>
 <ul><li>Nolte (1979), SPE 8341</li><li>Barree, Barree and Craig (2009), SPE 107877</li><li>Nolte, Maniere and Owens (1997), SPE 38676</li></ul>
@@ -1025,11 +1025,11 @@
 </section>
 <section class="help-part" id="help-prism-dfit-closure"><h4>DFIT <span class="help-co" aria-label="call-out 2">2</span> ISIP, <span class="help-co" aria-label="call-out 3">3</span> closure</h4>
 <section class="help-sec" id="help-prism-dfit-closure-what"><h5>What it does</h5>
-<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Labels are uncalibrated rules.</p>
+<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-closure-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=ff588895" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
-</li><li>A pick below the frictional limit is vetoed.</li><li>Override with Use another value and a reason.</li><li>Read the leak-off type (PDL (see <a class="bk-x" href="#help-glossary-pdl">Appendix B</a>)…), η, pn, R_vis (see <a class="bk-x" href="#help-glossary-rvis">Appendix B</a>), CL, geometry, what-if.</li></ol>
+<ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=ecdfabd6" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
+</li><li>A pick under the frictional limit is vetoed.</li><li>Override with Use another value and a reason.</li><li>Read the provisional leak-off type (PDL (see <a class="bk-x" href="#help-glossary-pdl">Appendix B</a>)…), η, pn, R_vis (see <a class="bk-x" href="#help-glossary-rvis">Appendix B</a>), CL, geometry, what-if.</li></ol>
 </section>
 </section>
 <section class="help-part" id="help-prism-dfit-aca"><h4>DFIT <span class="help-co" aria-label="call-out 4">4</span> p_i and k</h4>
@@ -3216,7 +3216,7 @@
 <p>Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the <b>Rig-up</b> card (Well Test Simulator (see <a class="bk-x" href="#help-wts-top">Chapter 11.1</a>)), then follow exercise 9 (see <a class="bk-x" href="#help-course-ex9">Chapter 11</a>), exercise 10 (see <a class="bk-x" href="#help-course-ex10">Chapter 11</a>) and field scenario FS-3 (see <a class="bk-x" href="#help-fs-FS-3">Chapter 12</a>).</p>
 </section>
 <section class="help-sec" id="help-faq-dfitlabel"><h3>Why is the DFIT closure a range, and the label uncalibrated?</h3>
-<p>Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are rules, not yet calibrated.</p>
+<p>Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.</p>
 </section>
 <section class="help-sec" id="help-faq-saved"><h3>Is my work saved?</h3>
 <p>Yes, on this device, as you type. To keep a copy or move it, save a project file (Saving work (see <a class="bk-x" href="#help-start-saving">Chapter 1</a>)).</p>
