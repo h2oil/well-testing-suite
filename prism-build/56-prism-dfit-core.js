@@ -660,7 +660,9 @@
             while (k < n && lnx[k] - lnx[i] < L) k++;
             rgt[i] = k < n ? k : -1;
         }
-        var ext = _fn('PRiSM_compute_bourdet'), d = null;
+        // The host engine is used only on request (PRiSM_dfit_hostBourdet = true): its numbers are identical (same window and
+        // weights), but before WPH's O(n) rewrite it walks the window with Math.log at every step, ≈ 5 × slower here.
+        var ext = G.PRiSM_dfit_hostBourdet === true ? _fn('PRiSM_compute_bourdet') : null, d = null;
         if (ext) { try { d = ext(x, y, L); } catch (e) { d = null; } }
         for (i = 1; i < n - 1; i++) {
             var i1 = lft[i], i2 = rgt[i];
@@ -1165,13 +1167,20 @@
         return best;
     }
     // the longest straight early-G segment: starts at G_min, then later (× 3 steps in G) when the earliest samples are
-    // distorted (shut-in time off by a sample, bleed-off, hammer); the window reaching the largest G with ≥ 6 points wins
+    // distorted (shut-in time off by a sample, bleed-off, hammer, a PDL hump); among windows of ≥ 6 points and ≥ 0.5 ln
+    // units the one reaching the largest G wins
     function _earlyLine(Gv, p, i0, iMax, sigma) {
         if (i0 < 0 || iMax - i0 < 3) return null;
         var P = _prefix(Gv, p), best = null, start = i0, g0 = Gv[i0], tries = 0;
         while (start <= iMax - 5 && tries < 8) {
             var w = _growLine(Gv, p, start, iMax, sigma, P);
-            if (w && w.n >= 6 && (!best || Gv[w.i1] > Gv[best.i1] * 1.05)) best = w;
+            if (w && w.n >= 6) {
+                // prefer a window of at least 0.5 ln units that ends at the largest G; else the longest one
+                var span = Math.log(Gv[w.i1] / Gv[w.i0]), bspan = best ? Math.log(Gv[best.i1] / Gv[best.i0]) : -1;
+                if (!best) best = w;
+                else if (span >= 0.5 && (bspan < 0.5 || Gv[w.i1] > Gv[best.i1] * 1.05)) best = w;
+                else if (bspan < 0.5 && span > bspan) best = w;
+            }
             tries++;
             var gT = Math.max(g0, Gv[start]) * 3; while (start <= iMax && Gv[start] < gT) start++;
         }
@@ -1498,29 +1507,22 @@
         }
         return v;
     }
-    // PDL hump (§4.11 H): dP/dG above a later plateau early on, returning to it; → {iEnd, H, returns, s}
-    function _hump(v, eps, smIn) {
-        var n = v.G.length;
-        if (n < 8) return null;
-        var sm = smIn || _movMed(v.s, 5), iPk = 0;
-        for (var i = 0; i < n; i++) if (sm[i] > sm[iPk]) iPk = i;
-        // base slope: median dP/dG over the middle of the pre-peak region after the early 25 %
-        var lo = Math.floor(n * 0.25), j, base = [];
-        var gEnd = v.G[n - 1];
-        for (j = 0; j < n; j++) if (v.G[j] >= 0.3 * gEnd && v.G[j] <= 0.7 * gEnd) base.push(sm[j]);
-        var s = _median(base);
-        if (!_fin(s) || s <= 0) return null;
-        // the hump: the early run with dP/dG > (1 + ε)·s
-        var i0 = -1, iE = -1;
-        for (j = 0; j < n; j++) { if (sm[j] > (1 + eps) * s) { if (i0 < 0) i0 = j; iE = j; } else if (i0 >= 0) break; }
-        if (i0 !== 0 && i0 > 2) return null;
-        if (iE < 0) return null;
+    // PDL hump (§4.11 H): dP/dG above the early-line slope b at the start, returning to it before the straight segment
+    // → {iEnd (first index back within ε), H (max relative excess of G·dP/dG over b·G), returns, s: b, span (in G)}
+    function _hump(v, sm, b, e0, eps) {
+        var n = v.G.length, i0 = -1, iE = -1, j;
+        if (n < 8 || !(b > 0)) return null;
+        for (j = 0; j < Math.min(n, e0 + 2); j++) {
+            if (sm[j] > (1 + eps) * b) { if (i0 < 0) i0 = j; iE = j; }
+            else if (i0 >= 0 && j > iE + 2) break;
+        }
+        if (i0 < 0 || i0 > 3) return null;
         var H = 0;
-        for (j = 0; j <= iE; j++) H = Math.max(H, (v.y[j] - s * v.G[j]) / (s * v.G[j]));
-        var span = v.G[iE] - v.G[0];
-        var ret = iE + 1 < n && sm[iE + 1] <= (1 + eps) * s;
+        for (j = i0; j <= iE; j++) H = Math.max(H, (v.y[j] - b * v.G[j]) / (b * v.G[j]));
+        var span = v.G[iE] - v.G[i0], ret = false;
+        for (j = iE + 1; j < Math.min(n, iE + 10); j++) if (sm[j] <= (1 + eps) * b) { ret = true; break; }
         if (!(H > 0.05 && span >= 0.3)) return null;
-        return { iEnd: Math.min(n - 1, iE + 1), H: H, returns: ret, s: s, span: span };
+        return { iEnd: Math.min(n - 1, iE + 1), H: H, returns: ret, s: b, span: span };
     }
     // ι = a/(b·G_c) of y = a + bG over the lower 60 % of W
     function _iota(v, iA, iC) {
@@ -1588,125 +1590,138 @@
         o = o || {};
         var Lp = _fin(o.Lpick) ? o.Lpick : _pickWindow(d0), d = (Lp !== null && Lp < d0.L) ? _rederive(d0, Lp) : d0;
         var eps = o.eps || {}, epsC = _fin(eps.compliance) ? eps.compliance : 0.02, epsT = _fin(eps.tangent) ? eps.tangent : 0.02, epsL = _fin(eps.loglog) ? eps.loglog : 0.05;
-        var v = _usableView(d), n = v.G.length, res = { picks: {}, iota: 0, hump: null, view: v, Lpick: d.Lpick != null ? d.Lpick : d0.L };
+        var v = _usableView(d), n = v.G.length, res = { picks: {}, iota: 0, hump: null, view: v, Lpick: d.Lpick != null ? d.Lpick : d0.L, line: null, noDeparture: false };
         if (n < 6) return res;
-        var sigY = Math.max(d.sigmaY || 0, 1e-9), sigP = Math.max(d.sigma || 0, 1e-6);
-        var smM = _movMed(v.s, 5);
-        var hump = _hump(v, Math.max(epsC, 0.02), smM);
-        res.hump = hump;
-        var iA = hump ? hump.iEnd : 0;
-        var sm = smM, i;
-        // clean data: the raw dP/dG (a 5-point median would flatten a sharp peak); noisy data: the running median
-        var iPk0 = iA; for (i = iA; i < n; i++) if (smM[i] > smM[iPk0]) iPk0 = i;
-        if (smM[iPk0] > 0 && sigY / (smM[iPk0] * v.G[iPk0]) < 0.005) sm = v.s;
-        // tangent: s* = max dP/dG after the hump; the pick is the end of the touching run (a plateau: noise tolerance
-        // ≤ ε_tangent) or, for a peaked curve, the parabolic peak of dP/dG
-        var iPk = iA; for (i = iA; i < n; i++) if (sm[i] > sm[iPk]) iPk = i;
-        var sStar = sm[iPk];
-        if (sStar > 0) {
-            var tolT = Math.min(epsT, Math.max(0.002, 3 * sigY / (sStar * v.G[iPk])));
-            var iT = iPk; while (iT + 1 < n && sm[iT + 1] >= (1 - tolT) * sStar) iT++;
-            var gT = v.G[iT], pT = v.p[iT], sPk = sStar;
-            if (iT === iPk && iPk > iA && iPk + 1 < n) {
-                var x0 = Math.log(v.G[iPk - 1]), x1 = Math.log(v.G[iPk]), x2 = Math.log(v.G[iPk + 1]), y0 = sm[iPk - 1], y1 = sm[iPk], y2 = sm[iPk + 1];
-                var den = (x0 - x1) * (x0 - x2) * (x1 - x2);
-                if (den !== 0) {
-                    var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
-                    if (A2 < 0) {
-                        var xv = _clampN(-B2 / (2 * A2), x0, x2);
-                        gT = Math.exp(xv); pT = _pAtG(d, gT); sPk = Math.max(sStar, A2 * xv * xv + B2 * xv + (y0 - A2 * x0 * x0 - B2 * x0));
-                    }
-                }
-            } else if (iT + 1 < n && sm[iT] > sm[iT + 1]) {
-                var f = _clampN((sm[iT] - (1 - tolT) * sStar) / (sm[iT] - sm[iT + 1]), 0, 1);
-                gT = v.G[iT] + f * (v.G[iT + 1] - v.G[iT]); pT = v.p[iT] + f * (v.p[iT + 1] - v.p[iT]);
-            }
-            var noiseAt = sigY / (sStar * v.G[iT]);
-            res.picks.tangent = { k: iT, G: gT, p: pT, sStar: sPk, iPk: iPk, noise: noiseAt, tol: tolT,
-                text: 'The tangent through the origin touches G·dP/dG up to G ' + _f1(gT, 2) + ' (largest dP/dG ' + _f1(sPk, 2) + ' psi per unit G).' };
-            res.picks.maxdpdg = { k: iPk, G: v.G[iPk], p: v.p[iPk], text: 'dP/dG is largest at G ' + _f1(v.G[iPk], 2) + '.' };
-        }
-        // √t: maximum of dP/d√t over the same region (up to 1.5 × the tangent G)
-        var gLim = res.picks.tangent ? 1.5 * res.picks.tangent.G : INF, iS = -1;
-        for (i = iA; i < n; i++) { if (v.G[i] > gLim) break; if (_fin(v.sd[i]) && (iS < 0 || v.sd[i] > v.sd[iS])) iS = i; }
-        if (iS >= 0) res.picks.sqrt = { k: iS, G: v.G[iS], p: v.p[iS], text: 'The square-root-of-time derivative is largest at √Δt ' + _f1(Math.sqrt(v.dt[iS] * 60), 2) + ' min^½.' };
-        // compliance: the early line through the origin (|ι| < 0.05) or y = a + bG over the early window after the hump
-        var iC = res.picks.tangent ? res.picks.tangent.k : n - 1;
-        var iota = _iota(v, iA, iC);
-        res.iota = iota;
-        var gE0 = Math.max(d.earlyWin ? d.earlyWin[0] : 0, v.G[iA]), gE1 = d.earlyWin ? d.earlyWin[1] : v.G[iC];
-        var e0 = iA; while (e0 < n && v.G[e0] < gE0) e0++;
-        var Lw = _fin(d.Lpick) ? d.Lpick : d.L, e1 = e0; while (e1 + 1 < n && v.G[e1 + 1] <= gE1 * Math.exp(-Lw)) e1++;   // the derivative window ends L before the line's end
+        var sigY = Math.max(d.sigmaY || 0, 1e-9), sigP = Math.max(d.sigma || 0, 1e-6), Lw = _fin(d.Lpick) ? d.Lpick : d.L, i, j;
+        var sm = _movMed(v.s, 5);
+        var relN = 0;      // relative noise of dP/dG after the early window start (set once b is known)
+        function tolAt(k, base, cap) { return Math.min(cap, Math.max(0.001, 3 * relN)); }
+        // 1. the early window (from the straight p-G segment), trimmed by the pick window at its end
+        var gE0 = d.earlyWin ? d.earlyWin[0] : v.G[0], gE1 = d.earlyWin ? d.earlyWin[1] : v.G[n - 1];
+        var e0 = 0; while (e0 < n && v.G[e0] < gE0) e0++;
+        if (e0 > n - 4) return res;
+        var e1 = e0; while (e1 + 1 < n && v.G[e1 + 1] <= gE1 * Math.exp(-Lw)) e1++;
         if (e1 - e0 < 3) e1 = Math.min(n - 1, e0 + 3);
-        var origin = Math.abs(iota) < 0.05, lf = _linfit(v.G, v.y, e0, e1, origin);
-        if (lf && lf.b > 0) {   // one robust pass: points more than 3 ε off the first line are dropped, then refit
+        // 2. the G·dP/dG line over the early window: through the origin when |ι| < 0.05; one robust refit
+        var lfA = _linfit(v.G, v.y, e0, e1, false), iota0 = (lfA && lfA.b > 0) ? lfA.a / (lfA.b * v.G[e1]) : 0;
+        var origin = Math.abs(iota0) < 0.05, lf = _linfit(v.G, v.y, e0, e1, origin);
+        if (lf && lf.b > 0) {
             var keepG = [], keepY = [];
             for (i = e0; i <= e1; i++) { var yh0 = lf.a + lf.b * v.G[i]; if (Math.abs(v.y[i] - yh0) <= Math.max(3 * epsC * yh0, 3 * sigY)) { keepG.push(v.G[i]); keepY.push(v.y[i]); } }
             var lf2 = keepG.length >= 4 ? _linfit(keepG, keepY, 0, keepG.length - 1, origin) : null;
             if (lf2 && lf2.b > 0) lf = lf2;
         }
-        if (lf && lf.b > 0) {
-            var need = 3, iDep = -1, down = false;
-            for (i = Math.max(e0 + 1, e1); i < n; i++) {
-                var yh = lf.a + lf.b * v.G[i], ec = Math.max(epsC, 3 * sigY / Math.max(yh, 1e-9));
-                if (v.y[i] > (1 + ec) * yh || v.y[i] < (1 - ec) * yh) {
-                    var up = v.y[i] > yh, held = 0, j;
-                    for (j = i; j < n; j++) { var yj = lf.a + lf.b * v.G[j], ej = Math.max(epsC, 3 * sigY / Math.max(yj, 1e-9)); if (up ? v.y[j] > (1 + ej) * yj : v.y[j] < (1 - ej) * yj) held++; else break; }
-                    if (held >= need || (held >= 2 && Math.log(v.G[i + held - 1] / v.G[i]) >= 0.05) || (j === n && held >= 2)) { iDep = i; down = !up; break; }
+        if (!lf || !(lf.b > 0)) return res;
+        var b = lf.b;
+        res.line = lf; res.iota = iota0;
+        relN = _noise2(v.s.slice(e0)) / b; res.relNoise = relN;
+        function yh(k) { return lf.a + lf.b * v.G[k]; }
+        function ecAt(k) { return Math.max(epsC, 3 * relN); }
+        // 3. PDL hump before the early window: dP/dG above (1 + ε)·b at the start, returning to b
+        var hump = _hump(v, sm, b, e0, Math.max(epsC, 0.02));
+        res.hump = hump;
+        // 4. the first departure from the line after the early window (held ≥ 3 points or ≥ 0.05 in ln G)
+        // the search starts half a ln unit before the window end: the p-line window may run slightly past a gentle closure
+        var iBack = e0 + 1; while (iBack < e1 && v.G[iBack] < v.G[e1] * Math.exp(-0.5)) iBack++;
+        var iDep = -1, down = false;
+        for (i = iBack; i < n; i++) {
+            var ec = ecAt(i), up = v.y[i] > (1 + ec) * yh(i);
+            if (!(up || v.y[i] < (1 - ec) * yh(i))) continue;
+            var held = 0;
+            for (j = i; j < n; j++) { var ej = ecAt(j); if (up ? v.y[j] > (1 + ej) * yh(j) : v.y[j] < (1 - ej) * yh(j)) held++; else break; }
+            if (held >= 3 || (held >= 2 && Math.log(v.G[i + held - 1] / v.G[i]) >= 0.05) || (j === n && held >= 2)) { iDep = i; down = !up; break; }
+        }
+        if (iDep < 0) { res.noDeparture = true; return res; }
+        // 5. compliance (upward departure): the onset refined on the pressure residual from the local straight segment
+        if (!down) {
+            var l0 = iDep, l1 = iDep;
+            while (l0 > e0 && v.G[l0 - 1] >= v.G[iDep] * Math.exp(-0.4)) l0--;
+            while (l1 > l0 && v.G[l1] > v.G[iDep] * Math.exp(-(Lw + 0.01))) l1--;
+            var pl = (l1 - l0 >= 3) ? _linfit(v.G, v.p, l0, l1, false) : _linfit(v.G, v.p, e0, e1, false), gOn = v.G[iDep], pOn = v.p[iDep];
+            if (pl) {
+                var thr = Math.max(3 * sigP, 0.01, 3 * pl.s), gLo = v.G[iDep] * Math.exp(-2 * Lw - 0.02), kOn = iDep;
+                for (j = iDep; j >= e0 && v.G[j] >= gLo; j--) { if ((pl.a + pl.b * v.G[j]) - v.p[j] <= thr) { kOn = j; break; } kOn = j; }
+                for (j = kOn; j < Math.min(n, iDep + 50); j++) { if ((pl.a + pl.b * v.G[j]) - v.p[j] > thr) break; kOn = j; }
+                gOn = v.G[kOn]; pOn = v.p[kOn];
+                if (kOn + 2 < n) {   // the residual grows ~ quadratically from the onset: √r is linear in G → extrapolate √r to zero
+                    var r1 = (pl.a + pl.b * v.G[kOn + 1]) - v.p[kOn + 1], r2 = (pl.a + pl.b * v.G[kOn + 2]) - v.p[kOn + 2];
+                    if (r1 > 0 && r2 > r1) {
+                        var g0x = v.G[kOn + 1] - Math.sqrt(r1) * (v.G[kOn + 2] - v.G[kOn + 1]) / (Math.sqrt(r2) - Math.sqrt(r1));
+                        gOn = _clampN(g0x, v.G[kOn], v.G[kOn + 1]); pOn = pl.a + pl.b * gOn;
+                    }
                 }
             }
-            if (iDep >= 0) {
-                var cp;
-                if (down && res.picks.tangent) {
-                    cp = { k: res.picks.tangent.k, G: res.picks.tangent.G, p: res.picks.tangent.p, down: true,
-                        text: 'G·dP/dG first leaves the early line downward, so the compliance and tangent picks coincide at G ' + _f1(res.picks.tangent.G, 2) + '.' };
-                } else {
-                    // refine the onset on the pressure residual from the early line (the Bourdet window L smears the derivative)
-                    // the local straight segment just before the departure (falls back to the early window)
-                    var l0 = iDep, l1 = iDep;
-                    while (l0 > e0 && v.G[l0 - 1] >= v.G[iDep] * Math.exp(-0.4)) l0--;
-                    while (l1 > l0 && v.G[l1] > v.G[iDep] * Math.exp(-(Lw + 0.01))) l1--;
-                    var pl = (l1 - l0 >= 3) ? _linfit(v.G, v.p, l0, l1, false) : _linfit(v.G, v.p, e0, e1, false), gOn = v.G[iDep], pOn = v.p[iDep];
-                    if (pl) {
-                        var thr = Math.max(3 * sigP, 0.01, 3 * pl.s), gLo = v.G[iDep] * Math.exp(-2 * Lw - 0.02), kOn = iDep;
-                        for (j = iDep; j >= e0 && v.G[j] >= gLo; j--) { if ((pl.a + pl.b * v.G[j]) - v.p[j] <= thr) { kOn = j; break; } kOn = j; }
-                        for (j = kOn; j < Math.min(n, iDep + 50); j++) { if ((pl.a + pl.b * v.G[j]) - v.p[j] > thr) break; kOn = j; }
-                        gOn = v.G[kOn]; pOn = v.p[kOn];
-                        if (kOn + 2 < n) {
-                            // the residual grows ~ quadratically from the onset: √r is linear in G → extrapolate √r to zero
-                            var r1 = (pl.a + pl.b * v.G[kOn + 1]) - v.p[kOn + 1], r2 = (pl.a + pl.b * v.G[kOn + 2]) - v.p[kOn + 2];
-                            if (r1 > 0 && r2 > r1) {
-                                var g0x = v.G[kOn + 1] - Math.sqrt(r1) * (v.G[kOn + 2] - v.G[kOn + 1]) / (Math.sqrt(r2) - Math.sqrt(r1));
-                                gOn = _clampN(g0x, v.G[kOn], v.G[kOn + 1]); pOn = pl.a + pl.b * gOn;
-                            }
-                        }
+            res.picks.compliance = { k: iDep, G: gOn, p: pOn, down: false, line: lf, departRel: (v.y[iDep] - yh(iDep)) / Math.max(yh(iDep), 1e-9),
+                text: 'G·dP/dG leaves the early ' + (origin ? 'line through the origin' : 'straight line') + ' upward at G ' + _f1(gOn, 2) + ' (ε ' + _f1(epsC, 3) + ').' };
+        }
+        // 6. tangent through the origin: the end of the stiffening (peak of dP/dG after an upward departure) or, after a
+        //    downward departure, the end of the early plateau (s* = b); noise-local tolerance ≤ ε_tangent, two dips allowed
+        var tg = null;
+        if (!down) {
+            var cs = (relN < 0.005) ? v.s : sm, iPk = iDep;
+            for (i = iDep; i < n; i++) if (cs[i] > cs[iPk]) iPk = i;
+            if (iPk < n - 2) {
+                var sStar = cs[iPk], iT = iPk, dips = 0;
+                for (j = iPk + 1; j < n; j++) { if (cs[j] >= (1 - tolAt(j, sStar, epsT)) * sStar) { iT = j; dips = 0; } else if (++dips > 2) break; }
+                var gT = v.G[iT], pT = v.p[iT], sPk = sStar;
+                if (iT === iPk && iPk > 0) {
+                    var x0 = Math.log(v.G[iPk - 1]), x1 = Math.log(v.G[iPk]), x2 = Math.log(v.G[iPk + 1]), y0 = cs[iPk - 1], y1 = cs[iPk], y2 = cs[iPk + 1];
+                    var den = (x0 - x1) * (x0 - x2) * (x1 - x2);
+                    if (den !== 0) {
+                        var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
+                        if (A2 < 0) { var xv = _clampN(-B2 / (2 * A2), x0, x2); gT = Math.exp(xv); pT = _pAtG(d, gT); sPk = Math.max(sStar, A2 * xv * xv + B2 * xv + (y0 - A2 * x0 * x0 - B2 * x0)); }
                     }
-                    cp = { k: iDep, G: gOn, p: pOn, down: false, sigmaDep: sigY, departRel: (v.y[iDep] - (lf.a + lf.b * v.G[iDep])) / Math.max(lf.a + lf.b * v.G[iDep], 1e-9),
-                        text: 'G·dP/dG leaves the early ' + (origin ? 'line through the origin' : 'straight line') + ' upward at G ' + _f1(gOn, 2) + ' (ε ' + _f1(epsC, 3) + ').' };
+                } else if (iT + 1 < n && cs[iT] > cs[iT + 1]) {
+                    var f = _clampN((cs[iT] - (1 - tolAt(iT, sStar, epsT)) * sStar) / (cs[iT] - cs[iT + 1]), 0, 1);
+                    gT = v.G[iT] + f * (v.G[iT + 1] - v.G[iT]); pT = v.p[iT] + f * (v.p[iT + 1] - v.p[iT]);
                 }
-                cp.line = lf;
-                res.picks.compliance = cp;
-                // crel: first p where C_rel = b/(dP/dG) < 1 − ε for ≥ 3 points (same evidence)
-                for (i = e0 + 1; i < n; i++) {
-                    var ecr = function (k) { return Math.max(epsC, 3 * sigY / Math.max(lf.b * v.G[k], 1e-9)); };
-                    if (lf.b / Math.max(v.s[i], 1e-12) < 1 - ecr(i)) {
-                        var h2 = 0; for (j = i; j < n && lf.b / Math.max(v.s[j], 1e-12) < 1 - ecr(j); j++) h2++;
-                        if (h2 >= 3 || j === n) { res.picks.crel = { k: i, G: v.G[i], p: v.p[i], text: 'The relative compliance falls below ' + _f1(1 - epsC, 3) + ' at ' + _f0(v.p[i]) + ' psia.' }; break; }
-                    }
+                tg = { k: iT, G: gT, p: pT, sStar: sPk, iPk: iPk, noise: relN * b / sStar, tol: tolAt(iT, sStar, epsT) };
+            } else res.noDeparture = true;     // still stiffening at the end of the data
+        } else {
+            var cs2 = (relN < 0.005) ? v.s : sm, iP = iBack, dps = 0;
+            for (j = iBack; j < n; j++) { if (cs2[j] >= (1 - tolAt(j, b, epsT)) * b) { iP = j; dps = 0; } else if (++dps > 2) break; }
+            if (iP < n - 2) {
+                var gP = v.G[iP], pP = v.p[iP];
+                if (cs2[iP] > cs2[iP + 1]) {
+                    var fp = _clampN((cs2[iP] - (1 - tolAt(iP, b, epsT)) * b) / (cs2[iP] - cs2[iP + 1]), 0, 1);
+                    gP = v.G[iP] + fp * (v.G[iP + 1] - v.G[iP]); pP = v.p[iP] + fp * (v.p[iP + 1] - v.p[iP]);
+                }
+                tg = { k: iP, G: gP, p: pP, sStar: b, iPk: iP, noise: relN, tol: tolAt(iP, b, epsT) };
+                res.picks.compliance = { k: iP, G: gP, p: pP, down: true, line: lf, departRel: 0,
+                    text: 'G·dP/dG first leaves the early line downward, so the compliance and tangent picks coincide at G ' + _f1(gP, 2) + '.' };
+            } else res.noDeparture = true;
+        }
+        if (tg) {
+            tg.text = 'The tangent through the origin touches G·dP/dG up to G ' + _f1(tg.G, 2) + ' (largest dP/dG ' + _f1(tg.sStar, 2) + ' psi per unit G).';
+            res.picks.tangent = tg;
+            // dependent F2 members: the dP/dG maximum and the √t inflection, searched after the early window up to 1.5 × G_tangent
+            var iM = -1, iS2 = -1, gLim = 1.5 * tg.G;
+            for (i = Math.max(e1, 0); i < n && v.G[i] <= gLim; i++) {
+                if (iM < 0 || v.s[i] > v.s[iM]) iM = i;
+                if (_fin(v.sd[i]) && (iS2 < 0 || v.sd[i] > v.sd[iS2])) iS2 = i;
+            }
+            if (iM >= 0) res.picks.maxdpdg = { k: iM, G: v.G[iM], p: v.p[iM], text: 'dP/dG is largest at G ' + _f1(v.G[iM], 2) + '.' };
+            if (iS2 >= 0) res.picks.sqrt = { k: iS2, G: v.G[iS2], p: v.p[iS2], text: 'The square-root-of-time derivative is largest at √Δt ' + _f1(Math.sqrt(v.dt[iS2] * 60), 2) + ' min^½.' };
+        }
+        // crel (same evidence as compliance): the first p where C_rel = b/(dP/dG) < 1 − ε for ≥ 3 points
+        if (res.picks.compliance && !down) {
+            for (i = Math.max(e0 + 1, e1); i < n; i++) {
+                if (b / Math.max(v.s[i], 1e-12) < 1 - Math.max(epsC, tolAt(i, b, 1))) {
+                    var h2 = 0; for (j = i; j < n && b / Math.max(v.s[j], 1e-12) < 1 - Math.max(epsC, tolAt(j, b, 1)); j++) h2++;
+                    if (h2 >= 3 || j === n) { res.picks.crel = { k: i, G: v.G[i], p: v.p[i], text: 'The relative compliance falls below ' + _f1(1 - epsC, 3) + ' at ' + _f0(v.p[i]) + ' psia.' }; break; }
                 }
             }
         }
         // log-log departure: D/D_ref > 1 + ε_ll held ≥ 0.1 log cycle on Δt
-        for (i = e0; i < n; i++) {
+        for (i = Math.max(e0, e1 - 3); i < n; i++) {
             if (!_fin(v.D[i]) || !_fin(v.Dref[i]) || v.Dref[i] <= 0) continue;
             if (v.D[i] / v.Dref[i] > 1 + epsL) {
                 var ok2 = true, j2;
                 for (j2 = i; j2 < n && Math.log(v.dt[j2] / v.dt[i]) / LN10 < 0.1; j2++) if (!(v.D[j2] / v.Dref[j2] > 1 + epsL)) { ok2 = false; break; }
                 if (ok2 && j2 < n) { res.picks.loglog = { k: i, G: v.G[i], p: v.p[i], text: 'D leaves the reference curve upward (D/D_ref above ' + _f1(1 + epsL, 2) + ') at Δt ' + _f1(v.dt[i] * 60, 1) + ' min.' }; break; }
-                if (ok2 && j2 === n) break;
             }
         }
-        // fissure (F0): end of the PDL hump = p_fo
+        // fissure (F0): the end of the PDL hump = p_fo
         if (hump) res.picks.fissure = { k: hump.iEnd, G: v.G[hump.iEnd], p: v.p[hump.iEnd], text: 'The PDL hump ends at G ' + _f1(v.G[hump.iEnd], 2) + ': fissure opening pressure about ' + _f0(v.p[hump.iEnd]) + ' psia.' };
         return res;
     }
@@ -2216,6 +2231,12 @@
         var p10 = _pct(s, 0.1), p50 = _pct(s, 0.5), p90 = _pct(s, 0.9);
         return { p10: _r(p10, 2), p50: _r(p50, 2), p90: _r(p90, 2), sigma: _r(Math.max((p90 - p10) / 2.563, 1, 2 * (sigGauge || 0)), 3), n: s.length };
     }
+    // τ = max(τ_abs, f_σ·σ_c, f_n·p_n) (§4.8) and the family statistics with the σ_f floor max(1 psi, 2σ_gauge)
+    G.PRiSM_dfit_tau = function (sigmaC, pn, inputs) {
+        var I = G.PRiSM_dfit_inputRanges.clamp(inputs || {}).inputs;
+        return Math.max(I.options.tau.abs, I.options.tau.fSigma * (_fin(sigmaC) ? sigmaC : 0), I.options.tau.fN * (_fin(pn) && pn > 0 ? pn : 0));
+    };
+    G.PRiSM_dfit_familyStat = function (samples, sigmaGauge) { return _stat(Array.isArray(samples) ? samples : [], sigmaGauge); };
     function _voters(picks) {        // one voting member per family (admissible); user picks win in their family
         var fam = {};
         (picks || []).forEach(function (pk) {
