@@ -3164,7 +3164,7 @@
             calibrated: calibrated, hitRate: hitRate, rules: rules,
             stability: { L: GRID_L.slice(), tp: GRID_TP.slice(), grid: grid, unstable: unstable },
             samples: samples, counterfactual: counterfactual, frictional: { veto: fric.veto, warn: fric.warn }, forecast: forecast, ev: ['C1', 'K1'], vetoed: vetoed,
-            methods: methods, counts: { evals: st.counts.evals, refits: st.counts.refits, draws: 0 }, label: conf === 'not-estimable' ? conf : conf + ' (uncalibrated rule label)',
+            methods: methods, counts: { evals: st.counts.evals, refits: st.counts.refits, draws: 0 }, label: conf === 'not-estimable' || calibrated ? conf : conf + ' (provisional rule label — not yet calibrated)',
             chain: fr ? { Rvis: fr.Rvis, chi: fr.chi, pn: fr.pn } : null
         };
     }

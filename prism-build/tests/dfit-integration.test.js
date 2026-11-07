@@ -253,7 +253,7 @@ I[8] = {
     const { app } = await refRun(ctx, true);
     const w = app.win;
     const kl = w.PRiSM_reportKeyLine();
-    assert(/^DFIT · closure 7,0\d\d psia \(single, (high|medium|low)\)/.test(kl), 'key line: ' + kl);
+    assert(/^DFIT · closure 7,0\d\d psia \(single, (high|medium|low), provisional\)/.test(kl), 'key line: ' + kl);
     const html = w.WTS_quickReport.preview();
     assert(html.indexOf(kl) !== -1, 'Quick Report carries the DFIT key line');
   },

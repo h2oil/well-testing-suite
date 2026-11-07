@@ -20,6 +20,8 @@
 //   RV17 designer range inputs reach the design; shut-in in days with the binding words
 //   RV18 DFIT mode: the PTA/RTA tools leave the Tools drawer and the PTA exports leave the Export menu; no C1 defaults banner
 //   RV19 data + picks export header: test, datum and app version; setPick refuses a primitive; Analyse on a non-DFIT record says why
+//   RV20 honest labels (WP7): every shown closure / ISIP / p_i label and the grade say "provisional — not yet calibrated"; the
+//        leak-off type never carries a confidence; a calibrated table drops the closure suffix but not the type's
 'use strict';
 
 const WP = 'WP6';
@@ -359,6 +361,51 @@ T.push({
       const v = typeof w.WTS_appVersion === 'function' ? w.WTS_appVersion() : '';
       assert(v && e.text.indexOf('# app version: ' + v) !== -1, 'app version ' + v);
     }
+  },
+});
+T.push({
+  name: 'RV20 honest labels: closure, ISIP and p_i labels and the grade are marked provisional (not yet calibrated) in the UI, report, exports and WTS_state; the leak-off type never shows a confidence', wp: WP, integration: true, opts: { timers: 'manual' },
+  async run(app, assert) {
+    const w = dfitApp(app); if (!ready(w) || !w.PRiSM_dfit_ui) return;
+    const U = w.PRiSM_dfit_ui;
+    const run = await analyseDemo(app, 'reference');
+    assert(w.PRiSM_dfit_cal && w.PRiSM_dfit_cal.calibrated === false, '3.4a ships the uncalibrated placeholder');
+    // rail and key line
+    const rows = U.railRows(), row = (k) => (rows.find((r) => r[0] === k) || [])[1] || '';
+    assert(/\((high|medium|low), provisional/.test(row('Closure')), 'rail closure: ' + row('Closure'));
+    assert(/\((high|medium|low), provisional\)/.test(row('p_i')), 'rail p_i: ' + row('p_i'));
+    assert(row('Labels') === 'provisional — not yet calibrated', 'rail Labels row: ' + row('Labels'));
+    assert(/, provisional\)/.test(U.keyLine()) && /, provisional\)/.test(w.PRiSM_reportKeyLine()), 'key line: ' + U.keyLine());
+    // step ③ cards: closure label and the leak-off type
+    const h = app.document.createElement('div');
+    U.panels['dfit-board'].render(h);
+    assert(/provisional — not yet calibrated/.test(h.innerHTML) && !/uncalibrated rule label/.test(h.innerHTML), 'board label is provisional');
+    const hk = app.document.createElement('div');
+    U.panels['dfit-classify'].render(hk);
+    const kt = hk.innerHTML;
+    assert(/\(provisional\)/.test(kt) && /not yet calibrated/.test(kt) && /often differs from the true leak-off mechanism/.test(kt), 'leak-off type is provisional with the benchmark caveat');
+    assert(!/\b(high|medium) confidence\b/i.test(kt) && /not a probability/.test(kt), 'no confidence word on the type; scores are not probabilities');
+    // report model, export text, WTS_state, grade
+    const m = w.PRiSM_dfit_reportModel(run, {});
+    const kr = (k) => (m.keyRows.find((r) => r[0] === k) || [])[1] || '';
+    assert(/provisional — not yet calibrated/.test(kr('Closure')) && /provisional — not yet calibrated/.test(kr('p_i')), 'report key rows: ' + kr('Closure') + ' | ' + kr('p_i'));
+    const sT = m.sections.find((s) => s.id === 'dfit-type');
+    if (sT) assert(/provisional — the leak-off type is not yet calibrated/.test(sT.blocks[0].rows[0][1]), 'report type row: ' + sT.blocks[0].rows[0][1]);
+    const vd = m.sections.find((s) => s.id === 'dfit-headline').blocks.find((b) => b.kind === 'verdict');
+    if (run.consensus.mode === 'single') assert(/provisional — not yet calibrated/.test(vd.text) && vd.text.length < 300, 'headline verdict: ' + vd.text);
+    const ex = w.PRiSM_dfit_exportText(run, 'default', {});
+    assert(/# labels: rule labels, provisional — not yet calibrated/.test(ex.text) && /# leak-off type: \S+ \(provisional/.test(ex.text) && /p_i psia [^\n]*provisional\)/.test(ex.text), 'export text labels');
+    const ws = U.publish();
+    assert(ws.labelsCalibrated === false && /provisional — not yet calibrated/.test(ws.labelNote), 'WTS_state.dfit labelsCalibrated / labelNote');
+    if (/^[AB]$/.test(run.grade.letter)) assert(/labels provisional, not yet calibrated/.test(run.grade.why[0]), 'grade why: ' + run.grade.why[0]);
+    // a calibrated table (3.4b) drops the closure suffix, but the type stays provisional until it is calibrated itself
+    const cal0 = w.PRiSM_dfit_cal;
+    try {
+      w.PRiSM_dfit_cal = Object.assign({}, cal0, { calibrated: true });
+      assert(!/provisional/.test(U.keyLine()) && !U.railRows().some((r) => r[0] === 'Labels'), 'calibrated: no provisional suffix');
+      const m2 = w.PRiSM_dfit_reportModel(run, {}), s2 = m2.sections.find((s) => s.id === 'dfit-type');
+      if (s2) assert(/provisional/.test(s2.blocks[0].rows[0][1]), 'the type stays provisional');
+    } finally { w.PRiSM_dfit_cal = cal0; }
   },
 });
 module.exports = T;

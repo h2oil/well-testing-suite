@@ -1051,6 +1051,8 @@
     // grade A–D
     // ═══════════════════════════════════════════════════════════════════════
     var LRANK = { high: 3, medium: 2, low: 1 };
+    // the labels behind grades A and B are rule labels, not yet calibrated in 3.4a (WP8 calibrates them in 3.4b)
+    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
     function gradeCore(triage, consensus, aca, opts) {
         var why = [], light = triage && triage.light, verdict = triage && triage.verdict;
         var checks = triage && Array.isArray(triage.checks) ? triage.checks : [];
@@ -1081,12 +1083,12 @@
         }
         var piOk = (piLabel && LRANK[piLabel] >= 2) || closureOnly;
         if (light === 'green' && mode === 'single' && (label === 'high' || label === 'medium') && piOk)
-            return { letter: 'A', why: [clampTxt('Triage green; closure single with label ' + label + '; ' + (closureOnly && !(piLabel && LRANK[piLabel] >= 2) ? 'designed outcome closure only.' : 'p_i label ' + piLabel + '.'))] };
+            return { letter: 'A', why: [clampTxt('Triage green; closure single with label ' + label + '; ' + (closureOnly && !(piLabel && LRANK[piLabel] >= 2) ? 'designed outcome closure only' : 'p_i label ' + piLabel) + _provG())] };
         if (light !== 'green') why.push('triage ' + (light || 'not run'));
         if (mode === 'range') why.push('closure a range');
         else if (label) why.push('closure label ' + label);
         if (!piOk) why.push('p_i label ' + (piLabel || 'not available'));
-        return { letter: 'B', why: [clampTxt('Grade B: ' + why.join('; ') + '.')] };
+        return { letter: 'B', why: [clampTxt('Grade B: ' + why.join('; ') + (label || piLabel ? _provG() : '.'))] };
     }
 
     // ═══════════════════════════════════════════════════════════════════════

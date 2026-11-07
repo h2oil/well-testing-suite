@@ -174,7 +174,7 @@ var faq = [
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },
-{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and the label uncalibrated?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are rules, not yet calibrated.'] },
+{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and the label uncalibrated?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.'] },
 { id: 'saved', q: 'Is my work saved?', a: ['Yes, on this device, as you type. To keep a copy or move it, save a project file ([[start#saving|Saving work]]).'] },
 { id: 'device', q: 'How do I move my work to another device?', a: ['File → Save on the first device, then File → Open… on the other one.'] },
 { id: 'metric', q: 'Why does a value change when I select Metric?', a: ['It is the same value converted. Calculations always run in oilfield units ([[start#units|Units]]).'] },

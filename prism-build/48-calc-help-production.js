@@ -24,7 +24,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: '0192976d', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: '58db2a4b', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -88,14 +88,14 @@ var prism = {
   { id: 'tools', title: 'Tools drawer', what: ['PVT, tide, datasets, deconvolution, gas m(p), deliverability, rate-transient, plot tools, decline, saved fits.'],
     steps: ['Select **Tools**, then a panel; it opens on its own step.', 'Use deconvolution for multi-rate data.', 'Save and compare fits in the fit workspace.'] },
   { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
-    steps: ['Select Test **DFIT (fracture injection)**.', 'Load the record (rate in bbl/min) or a demo: Load demo DFIT.', 'Enter the datum TVD and the wellbore; tick psig channels.',
+    steps: ['Select Test **DFIT (fracture injection)**.', 'Load the record (rate in bbl/min) or a demo: Load demo DFIT.', 'Enter the datum TVD and wellbore; tick psig channels.',
       { t: 'Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
-    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.'],
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
-  { id: 'dfit-closure', title: 'DFIT ② ISIP, ③ closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels are uncalibrated rules.'],
-    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick below the frictional limit is vetoed.',
-      'Override with Use another value and a reason.', 'Read the leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
+  { id: 'dfit-closure', title: 'DFIT ② ISIP, ③ closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
+    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
+      'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
   { id: 'dfit-aca', title: 'DFIT ④ p_i and k', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
     steps: [{ t: 'Set the origin; read F_L, F_R, [[glossary#impulse|impulse]], log-log.', shot: 'dfit-aca' }, 'Leak-off model: sandbox, or Fit to the record.', 'Uncertainty: P10/P50/P90.'] },
   { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],

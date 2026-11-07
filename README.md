@@ -17,6 +17,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 - [Highlights](#highlights)
 - [Feature catalogue](#feature-catalogue)
 - [PRiSM: well test analysis](#prism-well-test-analysis)
+- [PRiSM DFIT: fracture injection tests](#prism-dfit-fracture-injection-tests)
 - [Build-up Surveillance](#build-up-surveillance)
 - [Live data: Mini WellOS, Modbus and the historian](#live-data-mini-wellos-modbus-and-the-historian)
 - [Units, standard conditions and standards](#units-standard-conditions-and-standards)
@@ -41,6 +42,8 @@ packaged as a free iOS app, **H2Oil Well Testing**.
   + heater inlet choke, bypass destination (burner line or production line) and a cushion-unload scenario.
 - **PRiSM:** pressure-transient and decline/rate-transient analysis with 46 models,
   Levenberg–Marquardt regression, auto-match, deconvolution, gas m(p), a skin check and a report.
+- **PRiSM DFIT:** diagnostic fracture injection tests from data health to closure, after-closure
+  reservoir pressure and permeability, a leak-off model, a pre-job designer and hand-off to PTA.
 - **Build-up Surveillance:** interprets the shut-ins in permanent-gauge data automatically and
   tracks skin, k, p* and productivity index over time, with alerts, a rule-based review and sign-off.
 - **Mini WellOS:** a live SCADA view driven by Modbus TCP/RTU or by the simulator, with alarms,
@@ -225,6 +228,38 @@ rate-transient workshop that works in field units.
 Known limitations are listed in [CLAUDE.md](CLAUDE.md#known-limitations-verified-not-yet-fixed)
 (for example, decline type-curve matching for k, S and re is not implemented, and horizontal-well
 fits are slow).
+
+---
+
+## PRiSM DFIT: fracture injection tests
+
+PRiSM's DFIT mode (Test → DFIT (fracture injection), new in v3.4) analyses a diagnostic fracture
+injection test in the same five steps, in field units.
+
+- **Data and triage:** bottomhole, surface, annulus and temperature channels (psig converted with the
+  test's atmospheric pressure), a wellbore set-up for surface-gauge conversion, and an A–D grade from
+  21 data-health checks within seconds of import: vacuum, air in the well, thermal effects, gauge
+  resolution, clock alignment, unit and depth blunders (with Apply fix or It is real) and a re-pump verdict.
+- **ISIP and step tests:** wave, falloff and friction ISIP families; step-down friction split with open
+  perforations; step-rate fracture extension pressure with a band and a stabilisation check.
+- **Closure:** G-function, √t, log-log, compliance and h-function plots and every closure method,
+  grouped into independent families. The consensus gives one closure or a closure range (every
+  downstream number is then shown for both readings), the reasons, a frictional-limit check and a
+  logged override; efficiency, net pressure, storage-consistent closure visibility, geometry and CL.
+- **After closure:** reservoir pressure with a bracket, kh/μ or bounds on k when radial flow is not
+  reached, gas in adjusted variables, a leak check against gauge drift, matching with the PRiSM models.
+- **Leak-off model and designer:** a mini-model sandbox (no data needed, from any PRiSM view), history
+  matching that states which parameters the test determines, and a pre-job designer.
+- **Uncertainty and report:** P10/P50/P90 on every number, several tests per well with gradients
+  against depth, an evidence-linked report, data + picks export, a frac-design sheet, PTA / RTA
+  hand-off and a Quick Report key line.
+
+**Limitations (v3.4):** the closure, ISIP and p_i labels, the grade and the leak-off type are
+*provisional*: they come from rules that are not yet calibrated (calibration is planned for 3.4.1), and
+the leak-off type often differs from the true mechanism on synthetic tests. A re-pumped test is analysed
+on its last cycle only; spurt is not separable, so efficiency is an upper bound. The live co-pilot,
+Hall plot, flowback analysis and water-hammer fit are planned for 3.4.1. See
+[docs/DFIT-PLAN.md](docs/DFIT-PLAN.md).
 
 ---
 
@@ -460,15 +495,18 @@ prism-build/              Module sources, build scripts and tests
   31-32, 38               Well Test Simulator and 3D view
   33-37, 39, 51-52        PRiSM workflow, semilog/skin, RTA/DCA, report, field tools, workspace, gas
   53-55                   PRiSM automatic interpretation, skin maths and Skin check, calibration table (55 is generated)
+  56-59                   PRiSM DFIT: core (events, ISIP, closure, consensus), after-closure and report, leak-off model, UI
   4N-calc-*.js            Plug-in calculators (auto-discovered), incl. 49-calc-buildup*.js (Build-up Surveillance)
+                          and the DFIT helpers 48-calc-wellbore.js, 49-calc-dfit-{triage,info,synth,cal}.js
   6N-*.js                 Live data: Modbus core/station/page, Mini WellOS, bridge pack and setup
   concat-*.js, inject-*.js  Build pipeline;  combined-*.js are generated
   smoke-test.js, accept-test.js, wts3d-test.js, tests/
   buildup-validate.js     Build-up Surveillance benchmark and calibration (writes file 55)
+  dfit-validate.js        DFIT benchmark (--quick, --perf); calibration and the cal file in 3.4.1
 tools/modbus-bridge/      Modbus TCP bridge and its installers
 ios-app/                  Capacitor 8 iOS wrapper (www/ is generated from the root HTML)
 docs/ROADMAP.md           Roadmap and open engineering decisions
-docs/*-PLAN.md            Module plans (Chemical Injection, Build-up Surveillance, DFIT for v3.4)
+docs/*-PLAN.md            Module plans (Chemical Injection, Build-up Surveillance, DFIT)
 wiki/                     Older per-module user notes (written before v1.3; partly out of date)
 CLAUDE.md                 Architecture, conventions, build pipeline and shared contracts
 PROJECT-NOTES.md          Running change log
@@ -489,7 +527,7 @@ The module sources in `prism-build/` are concatenated in numbered "rounds" and s
 | Round 5 | 23-27 (Test System Safety) | `concat-round5.js`, `inject-round5.js` |
 | Round 6 | 28, 29 (project save, multi-well), 30, 50 | `concat-round6.js`, `inject-round6.js` |
 | Round 7 | 31, 32, 38 (Well Test Simulator) | `concat-round7.js`, `inject-round7.js` |
-| Round 8 | 33-37, 39, 51-55 (PRiSM) | `concat-round8.js`, `inject-round8.js` |
+| Round 8 | 33-37, 39, 51-59 (PRiSM) | `concat-round8.js`, `inject-round8.js` |
 | Round 9 | every `4N-calc-*.js` | `concat-round9.js`, `inject-round9.js` |
 | Round 10 | every `6N-*.js` (runs `pack-modbus-bridge.js` first) | `concat-round10.js`, `inject-round10.js` |
 
@@ -510,9 +548,9 @@ mkdir -p prism-build/.tmp
 node -e "const fs=require('fs');const h=fs.readFileSync('well-testing-app.html','utf8');const m=h.match(/<script>\s*\/\* ═+\s*WELL TESTING SUITE([\s\S]+?)<\/script>/);fs.writeFileSync('prism-build/.tmp/wts-main.js','/* ═══ WELL TESTING SUITE'+m[1])"
 node --check prism-build/.tmp/wts-main.js
 
-node prism-build/smoke-test.js                          # 326 checks: namespaces, contracts, no running timers
-node prism-build/accept-test.js --html --integration    # 1162 numeric acceptance tests against the built HTML
-node prism-build/wts3d-test.js                          # 101 Well Test Simulator / 3D checks
+node prism-build/smoke-test.js                          # 339 checks: namespaces, contracts, no running timers
+node prism-build/accept-test.js --html --integration    # 1614 numeric acceptance tests against the built HTML
+node prism-build/wts3d-test.js                          # 132 Well Test Simulator / 3D checks
 ```
 
 `accept-test.js` builds from the sources by default (`--sources`); `--html` tests the built file.
@@ -547,6 +585,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.4 | 2026-11-07 | PRiSM DFIT mode: test triage and grade, ISIP and step tests, closure consensus (single value or range) with every method, after-closure p_i and k, leak-off model, designer, uncertainty, several tests per well, report and hand-offs; linear-time pressure derivative. Labels and the leak-off type are provisional (not yet calibrated) |
 | v3.3.2 | 2026-11-06 | Help & User Guide: a guide for every module with screenshots, search, a ? button on every page (F1), Getting started, "How do I…" tasks, a printable user guide and quick cards; Well Test Simulator training course (10 exercises, with trainer notes and worksheets) and field scenarios (unloading the cushion to the burner or a production line) |
 | v3.3 | 2026-11-01 | Build-up Surveillance (Production & Reservoir): shut-ins found in permanent-gauge data, each full build-up interpreted automatically, rates over the flowing hours, skin / k / p* / PI trends with delta and absolute alerts, onset and forecast, gas wells and injector fall-offs, rule-based review with an evidence check, audit trail and sign-off, Quick Report section; PRiSM Skin-check card with a calibrated confidence label and the closed-circle model (46 models) |
 | v3.2 | 2026-10-31 | Chemical Injection planner (Test System Safety): hydrate-inhibitor design with real-gas J-T cooling and a 10 °F margin, ppm treating chemicals, pump settings ranked for classified areas, discharge pressure and relief-valve band, calibration, tank and totes; links from Hydrate Management and Chemical & Dosage; Quick Report entries; ⓘ background and standards pop-ups; Multiphase Flowline flare line calculated from the flare tip back to the separator gas control valve (header pressure, valve drop, Mach, ρv²) and the choke from the separator pressure |

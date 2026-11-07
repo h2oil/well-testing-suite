@@ -99,7 +99,7 @@ module.exports = [
         assert(tb.rows[i][2] === e.who && tb.rows[i][1] === e.at, 'who and when');
       });
       assert(/0\.5 → 0\.6/.test(tb.rows[0][4]), 'old → new');
-      assert(/closure range 6,495–7,004 psia \(medians 6,507 \/ 6,998; medium\)/.test(m.keyLine), 'range key line: ' + m.keyLine);
+      assert(/closure range 6,495–7,004 psia \(medians 6,507 \/ 6,998; medium, provisional\)/.test(m.keyLine), 'range key line: ' + m.keyLine);
       assert(m.title === 'DFIT analysis — Zone B', 'title');
     },
   },

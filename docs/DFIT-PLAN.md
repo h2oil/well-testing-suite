@@ -1,6 +1,10 @@
 # DFIT module in PRiSM (v3.4) — implementation plan
 
-> **Status: WP0 landed — target v3.4** (2026-11-07, on top of v3.3.3). WP0 (contracts and skeleton, §9) is in: the frozen
+> **Status: shipped in v3.4 (3.4a); 3.4b open** (2026-11-07). 3.4a (WPH, WP0–WP7) is integrated, reviewed and released as v3.4;
+> Appendix D records the integration amendments. In 3.4a every closure / ISIP / p_i label, the grade and the leak-off type are shown as
+> "provisional — not yet calibrated" (WP7: the benchmark does not yet support more; the leak-off type in particular often differs from the
+> true mechanism); 3.4b (v3.4.1: WP8 calibration, WP9 live listeners, WP10 field tests, WP11 model extras, WP12 lenses, WP13) is open.
+> Earlier status (WP0, 2026-11-07, on top of v3.3.3): WP0 (contracts and skeleton, §9) is in: the frozen
 > fixtures `prism-build/tests/_dfit-shapes.js` (all §3.13 names, the §3.2 range table, `FIX.ds` / `.state` / `.run` / `.aca`,
 > `sharedApp`, `resetDfit`; resolutions at the end of §3.13), `tests/dfit-shapes.test.js` (SH1, SH2), the stub skeletons of
 > 56–59 and of the five Round-9 helpers, and 56–59 in the Round-8 FILES list. The engine and UI work packages (WPH, WP1–WP6,
