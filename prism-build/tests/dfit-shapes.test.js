@@ -50,8 +50,7 @@ const NAMES = {
   '58-prism-dfit-leakoff.js': ['PRiSM_dfit_lkDefaults', 'PRiSM_dfit_lkToEngine', 'PRiSM_dfit_lkSimulate', 'PRiSM_dfit_lkSample', 'PRiSM_dfit_lkQuick',
     'PRiSM_dfit_lkSolveCL', 'PRiSM_dfit_lkGoalSeek', 'PRiSM_dfit_lkFit', 'PRiSM_dfit_lkFisher', 'PRiSM_dfit_lkGroups', 'PRiSM_dfit_identify',
     'PRiSM_dfit_lkVerify', 'PRiSM_dfit_design', 'PRiSM_dfit_leakBudget'],
-  '59-prism-dfit-ui.js': ['PRiSM_dfit_renderStep2', 'PRiSM_dfit_renderStep4', 'PRiSM_renderDfitDesignerTool', 'PRiSM_renderDfitSandboxTool',
-    'PRiSM_renderDfitReplayTool', 'PRiSM_renderDfitHammerTool', 'PRiSM_renderDfitNotesTool', 'PRiSM_dfit_state', 'PRiSM_dfit_test', 'PRiSM_dfit_selectTest',
+  '59-prism-dfit-ui.js': ['PRiSM_dfit_renderStep2', 'PRiSM_dfit_renderStep4', 'PRiSM_dfit_state', 'PRiSM_dfit_test', 'PRiSM_dfit_selectTest',
     'PRiSM_dfit_addTest', 'PRiSM_dfit_setPick', 'PRiSM_dfit_applyHandoff', 'PRiSM_dfit_results', 'PRiSM_plot_dfitDual', 'PRiSM_plot_dfitStrip', 'PRiSM_plot_dfitStack'],
   '49-calc-dfit-triage.js': ['PRiSM_dfit_triage', 'PRiSM_dfit_blunders', 'PRiSM_dfit_repump', 'PRiSM_dfit_grade'],
 };
@@ -255,6 +254,8 @@ module.exports = [
         cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {} }, 'PRiSM_dfit_cal placeholder (§3.9)');
       assert(Object.isFrozen(G.PRiSM_dfit_cal.hitRate.single), 'cal table deep-frozen');
       assert(!G.PRiSM_modeExt || !G.PRiSM_modeExt.dfit, 'the skeleton registers no mode extension');
+      assert.deepStrictEqual(Object.keys(G).filter((k) => /^PRiSM_render[A-Za-z0-9_]*(Panel|Manager|Toolbar|Tool|Picker)$/.test(k)), [],
+        'no PRiSM_render*Tool export before WP6 (37 would list it under "More")');
       assert(!G.WTS_calcRegistry || Object.keys(G.WTS_calcRegistry).length === 0, 'helper modules add no page');
       // source rules
       SKELETONS.forEach((f) => {
