@@ -213,6 +213,7 @@ module.exports = [
       assert.ok(pah.tag === 'PAH-102' && pah.value >= 0.9 * X.DESIGN_P_CK2 && pah.limit === 0.9 * X.DESIGN_P_CK2, 'value / limit');
       assert.ok(nk.regime === 'No Flow' && nk.flowLimited && nk.limiter === 'CK-102', 'No Flow block');
       assert.ok(nk.Pin <= st.nodes.choke.Pin + 1e-9 && nk.Pin > 0.95 * st.nodes.choke.Pin, 'Pm at the CK-101 inlet (infeasible edge), never above it: ' + nk.Pin + ' / ' + st.nodes.choke.Pin);
+      assert.ok(st.nodes.choke.P <= st.nodes.choke.Pin + 1e-9, 'CK-101 outlet (Pm + seg-3 loss) never above its inlet: ' + st.nodes.choke.P + ' / ' + st.nodes.choke.Pin);
       assert.near(st.f, A.bean24.QmaxPair / 10, 0.002, 'rate at the pair capacity');
       assert.ok(ids(st).indexOf('CHOKE2_LIMIT') >= 0 && ids(st).indexOf('CHOKE_LIMIT') < 0, 'CHOKE2_LIMIT (CHOKE_LIMIT suppressed)');
       assert.deepStrictEqual(finiteBad(J(st), J(S.NULLABLE)), [], 'finite');
@@ -377,6 +378,63 @@ module.exports = [
       assert.ok(fu(s).CK2.act === false && s.getState().nodes.heaterChoke.note === X.RIG_NOTES.ck2NoBlock && fu(s).ck2dP > 0, 'block gone: note, lag decaying');
       adv(s, 300, 10);
       assert.strictEqual(fu(s).ck2dP, 0);
+    },
+  },
+
+  {
+    name: 'WTSHC E1 rig-up: CK-102 needs H-101, strict true, 11-character signature, extras; in line only through the heater (H-101 out / bypass → not active)',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const S = X.loadEngine('work');
+      const k = S.normRigup({ heaterChoke: true });
+      assert.ok(k.sig === X.SIG_DEFAULT.slice(0, 10) + '1' && k.sig.length === 11 && k.extras.join() === 'heaterChoke' && k.full === true, 'in: ' + JSON.stringify(k));
+      ['yes', 1, 'true', {}, null, false].forEach((v) => assert.strictEqual(S.normRigup({ heaterChoke: v }).rig.heaterChoke, false, 'strict true: ' + JSON.stringify(v)));
+      const kh = S.normRigup({ heaterChoke: true, heater: false });
+      assert.ok(kh.rig.heaterChoke === false && kh.notes.indexOf(X.RIG_NOTES.heaterChokeNeedsHeater) >= 0, 'needs H-101: ' + JSON.stringify(kh.notes));
+      // H-101 out of the rig-up: CK-102 out too (not active, no CK-102 alarm), the request kept for when H-101 comes back
+      const s = mk(S, flowWith(S, block('bean32')));
+      adv(s, 60, 1);
+      assert.ok(fu(s).CK2.act === true && ids(s.getState()).indexOf('CHOKE2_LIMIT') >= 0, 'in line, limited');
+      assert.strictEqual(s.setRigup({ heater: false }), true);
+      adv(s, 2, 1);
+      let st = s.getState();
+      assert.ok(st.rigup.heaterChoke === false && !st.nodes.heaterChoke.inRig && !st.nodes.heaterChoke.active && fu(s).CK2.act === false, 'H-101 out');
+      assert.deepStrictEqual(J(ids(st).filter((id) => X.Q_CK2.indexOf(id) >= 0)), [], 'CK-102 alarms released');
+      assert.strictEqual(s.setRigup({ heater: true }), true);
+      adv(s, 120, 1);
+      st = s.getState();
+      assert.ok(st.rigup.heaterChoke === true && st.nodes.heaterChoke.active && fu(s).CK2.act === true, 'H-101 back: CK-102 back in line');
+      assert.ok(ids(st).indexOf('CHOKE2_LIMIT') >= 0, 'its alarm again');
+    },
+  },
+  {
+    name: 'WTSHC E1 V-101 out with flow.sepBy.ck2: CK-102 in line on the walk from the destination (Phi from the destination law, Pm, CK-101 outlet = Pm + seg-3), finite, balanced',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const S = X.loadEngine('work');
+      const sb = X.EXAMPLES.flowSepBy, k2 = X.EXAMPLES.flowCk2, Phi = sb.nodes.heater.P + 5;
+      // a block consistent with the destination walk: CK-102 critical (Pm as at 48/64), its outlet = H-101 inlet of the sepBy walk
+      Object.assign(k2, { Pout: Phi, dP: k2.Pin - Phi });
+      k2.nodes.heaterChoke.P = Phi; k2.nodes.heater = { P: sb.nodes.heater.P, T: sb.nodes.heater.T, Tin: k2.Tout, duty: k2.heater.dutyMMBtuHr };
+      k2.segs[1] = J(sb.segs[1]);
+      sb.ck2 = k2;
+      const s = mk(S, flowWith(S, null, (f) => { f.sepBy = sb; }), { rig: { separator: false, heaterChoke: true } });
+      const f0 = fu(s);
+      assert.ok(f0.sel === 'sepBy+ck2' && f0.CK2.act === true && f0.Phi_ss === Phi, 'selection ' + f0.sel + ' Phi ' + f0.Phi_ss);
+      adv(s, 1800, 5);
+      const st = J(s.getState()), nk = st.nodes.heaterChoke, fi2 = st.fInst * st.fInst;
+      assert.ok(nk.active && !nk.bypassed && nk.note === '', 'in line');
+      // CK-102 outlet and H-101 outlet both on the destination law (pDown + (P_ss − Psep_ss)·fi²): they differ by the heater drop
+      assert.near(nk.P - st.nodes.heater.P, (Phi - sb.nodes.heater.P) * fi2, 1e-6, 'CK-102 outlet − H-101 outlet = the 5 psi heater drop');
+      assert.ok(nk.P < 0.1 * k2.Pin && st.nodes.heater.P > sb.P0_psig, 'low-pressure side on the destination walk: ' + nk.P.toFixed(2));
+      assert.near(nk.Pin, k2.Pin, 0.01 * k2.Pin, 'Pm');
+      assert.near(st.nodes.choke.P, nk.Pin + st.segs[2].dP, 1e-6, 'CK-101 outlet = Pm + seg-3 loss');
+      assert.ok(nk.Pin < st.nodes.choke.Pin, 'below the CK-101 inlet');
+      assert.deepStrictEqual(finiteBad(st, J(S.NULLABLE)), [], 'finite');
+      const m = st.health.massErr;
+      assert.ok(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9, 'mass balance ' + JSON.stringify(m));
     },
   },
 ];

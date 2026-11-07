@@ -4019,10 +4019,13 @@ function create(flowIn, opts) {
   //   • CK2 is reassigned from the block on every derive() and holds no lag state. CK2.act = ck2Act && a usable block.
   //   • Pm_ss = the block's CK-102 inlet (flow.ck2.Pin) at the requested rate. A 'No Flow' block (no feasible state at the
   //     requested rate, §4.3-3) runs at its pair capacity (limFac = QmaxPair / Qg): its Pm_ss is set so that the critical
-  //     CK-102 law gives Pm = Pci_ss − 0.5 (the infeasible edge, where the host's Illinois solve clamps) at that rate.
-  //   • Live target PmT = max(Phi + (Pm_ss − Phi_ss)·fi², (Pm_ss + PSC)·fInst − PSC) (D11), never above the live CK-101 inlet
-  //     X.PB (no reverse flow through CK-101). CK2.dPss = that ΔP at the steady flow fraction (limFac), so a 'steady' start
-  //     (fuInit) is steady at t = 0 also for a flow-limited pair.
+  //     CK-102 law gives a CK-101 outlet Pm + seg-3 loss = Pci_ss − 0.5 (the infeasible edge, where the host's Illinois solve
+  //     clamps) at that rate.
+  //   • Live target PmT = max(Phi + (Pm_ss − Phi_ss)·fi², (Pm_ss + PSC)·fInst − PSC) (D11), capped so that the CK-101 outlet
+  //     (PmT + the seg-3 loss) never exceeds the live CK-101 inlet X.PB (no reverse flow through CK-101). CK2.dPss = that ΔP at
+  //     the steady flow fraction (limFac), so a 'steady' start (fuInit) is steady at t = 0 also for a flow-limited pair.
+  //   • Entering the rig-up does not reset X.ck2dP (§3.3 says 0): from rest it is 0 anyway, and a re-entry while the ΔP of an
+  //     earlier exit still decays continues from there, so the CK-101 outlet has no step either way (U3).
   //   • J-T: N.choke.dTjt is the CK-101 stage (E0 refresh line); N.heaterChoke.dTjt = max(0, min(150 − N.choke.dTjt,
   //     0.07·wJTe·X.ck2dP)), the cap cumulative from the CK-101 inlet (D10). The CK-102 inlet temperature follows the block's
   //     Tin (T3, or Tp1 for midcoil) with the warm-up θ; its outlet is Tin − dTjt; the hydrate check is at the outlet (Phi).
@@ -4032,10 +4035,11 @@ function create(flowIn, opts) {
     Tin: 0, Tout: 0, noFlow: false, designP: 1440, note: '', Qmax: 0, pahFrac: 0.9 };
   var CK2_NOBLOCK = 'no heater-choke data in this flow (in line, ΔP 0)';
   function ck2Lim(x) { return (x === 'CK-101' || x === 'CK-102' || x === 'both') ? x : ''; }
-  // live CK-102 inlet target (psig) at the CK-102 outlet Phi and the flow fraction fi; capped at the CK-101 inlet PB
+  // live CK-102 inlet target (psig) at the CK-102 outlet Phi and the flow fraction fi; capped so that the CK-101 outlet
+  // (PmT + the seg-3 loss at fi) stays at or below the CK-101 inlet PB
   function ck2PmT(Phi, fi, PB) {
-    var PmT = mmax(Phi + (CK2.Pm_ss - Phi_ss) * fi * fi, (CK2.Pm_ss + PSC) * fi - PSC);
-    return PmT > PB ? mmax(Phi, PB) : PmT;
+    var fi2 = fi * fi, PmT = mmax(Phi + (CK2.Pm_ss - Phi_ss) * fi2, (CK2.Pm_ss + PSC) * fi - PSC), cap = PB - SS[2].dP * fi2;
+    return PmT > cap ? mmax(Phi, cap) : PmT;
   }
   function ck2Derive(sel) {
     var b = sel.ck2blk, wasAct = CK2.act;
@@ -4056,7 +4060,7 @@ function create(flowIn, opts) {
     CK2.Qmax = mmax(0, num(b.QmaxMMscfd, chk.QmaxMMscfd));
     CK2.Tin = num(b.Tin, Tck_ss); CK2.Tout = num(b.Tout, Tin_ss);
     var Pin = num(b.Pin, NaN), lf = limFac > 1e-9 ? limFac : 1e-9;
-    if (CK2.noFlow) CK2.Pm_ss = mmax(Phi_ss, (Pci_ss - 0.5 + PSC) / lf - PSC);
+    if (CK2.noFlow) CK2.Pm_ss = mmax(Phi_ss, (Pci_ss - 0.5 - SS[2].dP * lf * lf + PSC) / lf - PSC);
     else CK2.Pm_ss = isNum(Pin) ? mmax(Phi_ss, Pin) : Phi_ss;
     // steady ΔP at the steady flow fraction (limFac; the separator at Psep_ss): fuInit's t = 0 value in 'steady' mode
     var fs = mmin(1, limFac), PhiS = Psep_ss + (Phi_ss - Psep_ss) * fs * fs;
