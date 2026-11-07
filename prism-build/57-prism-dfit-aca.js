@@ -1298,7 +1298,9 @@
         if (tpv.length >= 2 && tpDiff) add('tp', 'empirical', { values: tpv, choices: tpc, weights: tpv.map(function () { return 1 / tpv.length; }), base: C.tp }, 'events');
         else add('tp', 'fixed', { choice: 'pump', mu: C.tp }, 'events');
         var byName = {}; inputs.forEach(function (it) { byName[it.name] = it; });
-        var rho = fin(opts.rhoPhiCt) ? opts.rhoPhiCt : -0.3;
+        // §6.6 rank correlation φ–c_t (Spearman, default −0.3) induced through a Gaussian copula (in place of Iman–Conover): the
+        // normal-space coefficient ρ_N = 2·sin(π·r_s/6) gives exactly the Spearman r_s for any monotone marginals
+        var rs = fin(opts.rhoPhiCt) ? Math.max(-0.99, Math.min(0.99, opts.rhoPhiCt)) : -0.3, rho = 2 * Math.sin(Math.PI * rs / 6);
         return { C: C, n: n, seed: seed, mode: mode, wF1: wF1, pools: pools, famCentre: famCentre, centre: centre, inputs: inputs, byName: byName, rho: rho,
                  draws: { all: [], F1: [], F2: [] }, rngs: mode === 'single' ? { all: makeRng(seed) } : { F1: makeRng(seed), F2: makeRng(seed + 7919) },
                  targets: mode === 'single' ? { all: n } : { F1: Math.ceil(n / 2), F2: Math.floor(n / 2) }, counts: { draws: 0, chainEvals: 0, ops: 0 },
