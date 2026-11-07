@@ -3679,7 +3679,7 @@ for soundness before recording them; none was reverted.
   table; Δt_c, CL, Γ, k_CL and G of the demo use this tp (stated in `ds.meta.note`). The §4.21 numbers stay the FIX.ds numbers.
 - **Budgets measured at integration** (Linux container, one file at a time, wall clock incl. the app load): `dfit-closure` 4.4 s for
   16 tests (≤ 4 s planned), `dfit-integration` 12.2 s for 17 tests (≤ 8 s planned), `dfit-ui` 7.4 s, `dfit-hooks` 4.3 s for 14,
-  `dfit-synth` 3.9 s for 7, `dfit-leakfit` 3.9 s for 8; the 17 DFIT files total ≈ 55 s for 225 tests (≤ 60 s planned). Accepted as
+  `dfit-synth` 3.9 s for 7, `dfit-leakfit` 3.9 s for 8; the 17 DFIT files total ≈ 55 s for 225 tests run file by file and 46 s in one `--html --integration --file dfit-` run (≤ 60 s planned). Accepted as
   exceptions for 3.4a.
 - **Demo binding (59).** `loadDemo` decides the dataset binding before the commit (the dataset-loaded listener binds an unbound test
   itself, which skipped the demo set-up); the surface-gauge demo now gets its datum and strings.
