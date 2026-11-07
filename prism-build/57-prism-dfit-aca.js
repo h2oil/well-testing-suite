@@ -574,6 +574,7 @@
     };
 
     // p_i consensus: intersect the brackets, weighted median of the candidates inside, label (§4.12)
+    var BR_TOL = 0.02;       // relative model-form allowance of the p_i bracket edges (see the brackets in PRiSM_dfit_aca)
     G.PRiSM_dfit_piConsensus = function (ctx) {
         try {
             ctx = ctx || {};
@@ -812,6 +813,15 @@
         if (deriv && i < n - 1 && (dg.storage || dg.steepened)) deriv = null;
         if (cart && !fin(cart[1])) cart = null;
         if (impB && !fin(impB[1])) impB = null;
+        // model-form allowance: the edges are exact for a Carter (constant-C_L) source; a reservoir-controlled or pressure-
+        // dependent leak-off history moves the late intercepts by up to about 1 % of the remaining Δp (the matrix integration
+        // case: F_L line 4,505.6 psia on a perfect fit, σ 0.2 psi, truth 4,500 with p_end 4,989). Each edge is widened outward by
+        // BR_TOL of its distance from the last pressure, so the bracket keeps the truth without changing a radial (small Δp) result.
+        var pEndB = p[p.length - 1], widen = function (b) {
+            if (!b || !fin(b[0]) || !fin(b[1]) || !fin(pEndB)) return b;
+            return [pEndB - (pEndB - b[0]) * (1 + BR_TOL), pEndB - (pEndB - b[1]) * (1 - BR_TOL)];
+        };
+        cart = widen(cart); impB = widen(impB); deriv = widen(deriv);
         // p_i candidates
         var cands = [], tr = null;
         if (summary === 'radial' || summary === 'linear-radial') { if (nol.rad) cands.push({ method: 'nolte-radial', value: nol.rad.pr, w: 2 }); if (imp.rad) cands.push({ method: 'impulse-radial', value: imp.rad.pi, w: 2 }); }
@@ -2623,8 +2633,9 @@
             var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad;
             if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) prC = pgC * P.inputs.datumTvd;
             var frC = r.frac.chosen || _firstFamily(r.frac.byFamily);
-            r.classification = _call('PRiSM_dfit_classify', [r.derivs, { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
-                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs }], P.W, 'CLASSIFY_FAILED');
+            P.clsCtx = { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
+                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs };
+            r.classification = _call('PRiSM_dfit_classify', [r.derivs, P.clsCtx], P.W, 'CLASSIFY_FAILED');
         } },
         { id: 'aca', fn: function (P) {
             var r = P.run;
@@ -2639,6 +2650,20 @@
                     P.triCtx.tide = { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
                     var tr2 = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
                     if (tr2 && tr2.ok !== false) r.triage = tr2;
+                }
+                // κ_exp needs p_r (§4.11). Without C1 p_i or a p_i-gradient prior the classifier had no estimate; the
+                // after-closure p_i (label high or medium) is the reservoir pressure of this test, so the classifier runs once
+                // more with it and says where p_r came from
+                var piA = a.pi;
+                if (P.clsCtx && !fin(P.clsCtx.pr) && piA && fin(piA.value) && (piA.label === 'high' || piA.label === 'medium') && r.classification && r.classification.ok !== false) {
+                    var cc2 = {}; for (var kc in P.clsCtx) cc2[kc] = P.clsCtx[kc];
+                    cc2.pr = piA.value;
+                    var cl2 = _call('PRiSM_dfit_classify', [r.derivs, cc2], P.W, 'CLASSIFY_FAILED');
+                    if (cl2 && cl2.ok !== false) {
+                        cl2.prSource = 'aca-pi';
+                        if (arrOk(cl2.evidence)) cl2.evidence.push(_txt('p_r for the expected decline is the after-closure p_i, ' + fmt(piA.value, 0) + ' psia (' + piA.label + ').'));
+                        r.classification = cl2;
+                    }
                 }
                 var chF = r.frac.chosen, gmF = chF && chF.geometry && chF.geometry.byModel ? chF.geometry.byModel[chF.geometry.model || 'PKN'] : null;
                 var wl = P.well || {}, Lf = gmF ? (pos(gmF.xf) ? gmF.xf : (pos(gmF.R) ? gmF.R : null)) : null;

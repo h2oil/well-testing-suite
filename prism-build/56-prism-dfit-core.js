@@ -1339,38 +1339,46 @@
     // that leaves its plateau linearly in G (contact onset, the post-closure damping) is exactly this shape at the onset,
     // and the fit uses every pressure sample instead of the first noisy derivative crossing. sgn = +1 needs C > 0 (the
     // decline slows: closure, downward departure), −1 needs C < 0 (stiffening). → {G, p (= A, on the line), C, B} or null
-    function _hingeAt(x, p, i0, i1, gc, pm) {
+    function _hingeAt(x, p, i0, i1, gc, pm, curved) {
         // basis 1, u, u₊², u₊³ (u = G − G_c): the cubic term absorbs the change of the departure rate over the window, so
-        // the onset is not pulled early or late by a curvature that is not exactly quadratic
-        var m = 4, M = [], k, c, r, q;
-        for (r = 0; r < m; r++) { M.push([0, 0, 0, 0, 0]); }
-        var bs = [1, 0, 0, 0];
+        // the onset is not pulled early or late by a curvature that is not exactly quadratic. curved adds u² over the whole
+        // window: a base trend that already bends (reservoir-controlled leak-off, dP/dG declining with p − p_r), so u₊² is
+        // the change of curvature at G_c
+        var m = curved ? 5 : 4, M = [], k, c, r, q;
+        for (r = 0; r < m; r++) { var row = []; for (c = 0; c <= m; c++) row.push(0); M.push(row); }
+        var bs = [1, 0, 0, 0, 0];
         for (k = i0; k <= i1; k++) {
             var u = x[k] - gc, h = u > 0 ? u * u : 0, yy = p[k] - pm;
-            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0;
+            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0; bs[4] = u * u;
             for (r = 0; r < m; r++) { var br = bs[r]; if (br === 0) continue; for (c = r; c < m; c++) M[r][c] += br * bs[c]; M[r][m] += br * yy; }
         }
         for (r = 1; r < m; r++) for (c = 0; c < r; c++) M[r][c] = M[c][r];
-        if (!(M[3][3] > 0)) { m = 3; M = M.slice(0, 3).map(function (row) { return [row[0], row[1], row[2], row[4]]; }); }
+        var idx = []; for (r = 0; r < m; r++) idx.push(r);
+        if (!(M[3][3] > 0)) {          // no point past G_c far enough for the cubic term: drop it
+            idx = idx.filter(function (z) { return z !== 3; });
+            M = idx.map(function (rr) { return idx.map(function (cc) { return M[rr][cc]; }).concat([M[rr][m]]); });
+            m = idx.length;
+        }
         for (c = 0; c < m; c++) {
             var piv = c; for (r = c + 1; r < m; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
             var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
             if (Math.abs(M[c][c]) < 1e-200) return null;
             for (r = c + 1; r < m; r++) { var f = M[r][c] / M[c][c]; for (q = c; q <= m; q++) M[r][q] -= f * M[c][q]; }
         }
-        var co = [0, 0, 0, 0];
-        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * co[c]; co[r] = sum / M[r][r]; }
+        var cs = []; for (r = 0; r < m; r++) cs.push(0);
+        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * cs[c]; cs[r] = sum / M[r][r]; }
+        var co = [0, 0, 0, 0, 0]; idx.forEach(function (z, j) { co[z] = cs[j]; });
         var ss = 0;
-        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
-        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], ssr: ss };
+        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + co[4] * u2 * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
+        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], E: co[4], ssr: ss };
     }
-    function _hinge(x, p, i0, i1, jMax, sgn) {
+    function _hinge(x, p, i0, i1, jMax, sgn, curved) {
         if (i1 - i0 < 10) return null;
         var pm = 0, k; for (k = i0; k <= i1; k++) pm += p[k]; pm /= (i1 - i0 + 1);
         var best = null, bj = -1, ss = {};
         var jS = i0 + 5; while (jS < jMax && x[jS] < x[Math.min(jMax, i1 - 3)] * Math.exp(-0.45)) jS++;
         for (var j = jS; j <= Math.min(jMax, i1 - 3); j++) {
-            var f = _hingeAt(x, p, i0, i1, x[j], pm);
+            var f = _hingeAt(x, p, i0, i1, x[j], pm, curved);
             if (!f) continue;
             ss[j] = f.ssr;
             if (sgn * f.C > 0 && (!best || f.ssr < best.ssr)) { best = f; bj = j; best.gc = x[j]; }
@@ -1382,7 +1390,7 @@
         var gl = x[Math.max(i0 + 5, bj - 1)], gh = x[Math.min(Math.min(jMax, i1 - 3), bj + 1)], fine = [], q;
         if (gh > gl) {
             for (q = 0; q <= 8; q++) {
-                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm);
+                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm, curved);
                 fine.push({ g: gq, f: fq });
                 if (fq && sgn * fq.C > 0 && fq.ssr < best.ssr) { best = fq; best.gc = gq; }
             }
@@ -1393,7 +1401,7 @@
                 if (den !== 0) {
                     var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
                     if (A2 > 0) {
-                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm);
+                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm, curved);
                         if (fv && sgn * fv.C > 0 && fv.ssr <= best.ssr) { best = fv; best.gc = gv; }
                     }
                 }
@@ -1402,9 +1410,9 @@
         // profile interval of G_c: the samples whose SSR stays within σ²·(1 + ρ)/(1 − ρ) of the minimum (χ²₁ = 1, the
         // residual σ² and lag-1 ρ of the best fit), contiguous around it → se(G_c) = half its width (≥ half a sample step)
         var r = [], num = 0, den = 0;
-        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
+        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (best.E || 0) * u * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
         for (k = 1; k < r.length; k++) { num += r[k] * r[k - 1]; den += r[k] * r[k]; }
-        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - 5), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - (curved ? 6 : 5)), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
         var jl = bj, jh = bj;
         while (ss[jl - 1] != null && ss[jl - 1] <= lim) jl--;
         while (ss[jh + 1] != null && ss[jh + 1] <= lim) jh++;
@@ -1918,6 +1926,33 @@
         var dep = _departure(v.G, v.y, lf, eS, epsC, sigY, rhoY);
         if (!dep) { res.noDeparture = true; return res; }
         var iDep = dep.i, down = dep.down, thrAt = dep.thr;
+        // 4b. a downward first departure followed by a strong stiffening is reservoir-controlled (matrix) leak-off, not a
+        //     closure: dP/dG declines smoothly as p − p_r falls (§4.11: 28-40 % to closure) and the closure is the later upward
+        //     departure from that declining trend. The trend is the straight G·dP/dG line over the last 0.7 ln units before the
+        //     dP/dG minimum; the search for the upward departure starts one Bourdet window L before that minimum.
+        if (down) {
+            var iMx = iDep, iMn = iDep;
+            for (i = iDep; i < n; i++) if (_fin(sm[i]) && sm[i] > sm[iMx]) iMx = i;
+            for (i = iDep; i <= iMx; i++) if (_fin(sm[i]) && sm[i] < sm[iMn]) iMn = i;
+            if (iMx - iMn >= 3 && sm[iMx] >= 1.3 * sm[iMn] && sm[iMn] < (1 - thrAt(iMn)) * b) {
+                var kT = function (gv) { var k = 0; while (k + 1 < n && v.G[k + 1] <= gv) k++; return k; };
+                var w0 = Math.max(e0, kT(v.G[iMn] * Math.exp(-0.7))), lf2 = (iMn - w0 >= 4) ? _linfit(v.G, v.y, w0, iMn, false) : null;
+                if (lf2 && lf2.b > 0) {
+                    lf2.iota = lf.iota; lf2.origin = false;
+                    var nz2 = _lineNoise(v.G, v.y, lf2, w0, iMn), q2s = Math.max(w0 + 1, kT(v.G[iMn] * Math.exp(-Lw))), dep2 = null;
+                    for (var tries = 0; tries < 6 && q2s < n - 3; tries++) {
+                        var dd2 = _departure(v.G, v.y, lf2, q2s, epsC, Math.max(nz2.sigma, sigY * 0.5, 1e-9), nz2.rho);
+                        if (!dd2) break;
+                        if (!dd2.down) { dep2 = dd2; break; }
+                        q2s = dd2.i + 1;
+                    }
+                    if (dep2) {
+                        dep = dep2; iDep = dep2.i; down = false; thrAt = dep2.thr; lf = lf2;
+                        res.matrixDecline = { gMin: _r(v.G[iMn], 3), drop: _r(1 - sm[iMn] / b, 3), trend: [_r(v.G[w0], 3), _r(v.G[iMn], 3)] };
+                    }
+                }
+            }
+        }
         // 5. the onset by the hinge fit on the pressure: from ln 0.7 before the departure (inside the early window) to where
         //    the derivative has moved by max(15 %, 2 thresholds) or ln 0.4 after it. A Bourdet window L shows a departure up
         //    to L early (the derivative at G sees G·e^L), so the onset is searched up to G_dep·e^L and the derivative
@@ -1927,7 +1962,7 @@
         var jMax = Math.max(iDep, kAt(v.G[iDep] * Math.exp(Lw))), h1 = jMax, gH = v.G[iDep] * Math.exp(0.4 + Lw);
         while (h1 + 1 < n && v.G[h1 + 1] <= gH && Math.abs(dep.rel(kAt(v.G[h1 + 1] * Math.exp(-Lw)))) <= Math.max(0.15, 2 * thrAt(h1))) h1++;
         h1 = Math.min(n - 1, Math.max(h1, jMax + 4));
-        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1);
+        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1, !!res.matrixDecline);
         if (hg && !(hg.G >= v.G[h0] && hg.G <= v.G[jMax])) hg = null;
         // an abrupt break (a pressure interval falling ≥ 3 × faster than the early slope while the interval before it falls
         // less than half as fast: a closure with an unbounded slope, as on an exact Carter after-closure line) is read at the start of
@@ -2509,7 +2544,18 @@
                     var j = 1; while (j < Gm.length - 1 && Gm[j] < g) j++;
                     return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
                 };
-                var sA = sl(Math.max(gA, Gm[1])), sC = sl(gC);
+                // the end of the window is the model's own closure when the model closes before the data's G_c: the expected
+                // change is the change up to σ_c (dP/dG ∝ p − p_r there), and past the model closure the slope is the
+                // after-closure one (it read +345 % on a matrix case whose model run closed at G 17.9 against the data's 19.3)
+                var gcm = run.events.Gc ? (_fin(run.events.Gc.gen) ? run.events.Gc.gen : run.events.Gc.a05) : null;
+                var gE = (_fin(gcm) && gcm > 0 && gcm < gC) ? 0.97 * gcm : gC;
+                // the end slope on the last model interval that ends at or before the window end (an interval that straddles
+                // the model closure mixes in the after-closure slope)
+                var slEnd = function (g) {
+                    var j = 1; while (j + 1 < Gm.length && Gm[j + 1] <= g) j++;
+                    return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
+                };
+                var sA = sl(Math.max(gA, Gm[1])), sC = slEnd(gE);
                 if (sA > 0) return { k: (sC - sA) / sA, source: 'model' };
             }
         }
@@ -2536,6 +2582,10 @@
         var dtCons = pCons !== null ? _dtAtP(d, pCons) : null, gCons = _fin(dtCons) ? _GatD(d, dtCons / d.tp) : null;
         var gC = _fin(ctx.Gc) ? ctx.Gc : (ctx.frac && _fin(ctx.frac.Gc) ? ctx.frac.Gc : (_fin(gCons) ? gCons : (P.tangent ? P.tangent.G : v.G[n - 1])));
         var gcSource = _fin(ctx.Gc) ? 'ctx' : (ctx.frac && _fin(ctx.frac.Gc) ? 'frac' : (_fin(gCons) ? 'consensus' : (P.tangent ? 'tangent' : 'end')));
+        // §4.11: W ends at the tangent (end of stiffening) G. When the tangent pick lies after the closure candidate (a
+        // concave-up closure range: the F1 onset first, the F2 end later), W runs to it, so the stiffening between the two
+        // is part of κ; on a single closure the two coincide.
+        if (!_fin(ctx.Gc) && P.tangent && _fin(P.tangent.G) && !cf.noDeparture && P.tangent.G > gC * Math.exp(0.02) && (gcSource === 'frac' || gcSource === 'consensus')) { gC = P.tangent.G; gcSource = 'tangent'; }
         var iA = 0, iC = n - 1; while (iC > 0 && v.G[iC] > gC) iC--;
         var iota = _iota(v, iA, iC), curv = _relChange(v, hump ? hump.iEnd : iA, iC);
         var frac = ctx.frac || null, isip = _isipVal(ctx.isip); if (isip === null) isip = d.isip;
