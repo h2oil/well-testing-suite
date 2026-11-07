@@ -966,6 +966,97 @@ function reportData() {
     return model;
 }
 
+// Workspace-mode extension (PRiSM_modeExt[PRiSM.mode], DFIT plan §3.12),
+// resolved at call time; null in the built-in modes.
+function _modeKey() { return (G.PRiSM && typeof G.PRiSM.mode === 'string') ? G.PRiSM.mode : 'transient'; }
+function _modeExt() {
+    if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+    var m = _modeKey(), X = G.PRiSM_modeExt;
+    if (m === 'transient' || m === 'decline' || m === 'combined') return null;
+    var e = (X && typeof X === 'object' && _own(X, m)) ? X[m] : null;
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+// ext.reportHeader(model) → {title, keyRows:[[label, text]], keyLine} (plain text), or null.
+function _extHeader(ext, model) {
+    if (!ext || typeof ext.reportHeader !== 'function') return null;
+    var h = null;
+    try { h = ext.reportHeader(model); } catch (e) { _warn('[report] reportHeader failed', e); h = null; }
+    if (!h || typeof h !== 'object') return null;
+    return {
+        title: String(h.title || ext.label),
+        keyRows: Array.isArray(h.keyRows) ? h.keyRows.filter(function (p) { return Array.isArray(p) && p.length >= 2; })
+            .map(function (p) { return [String(p[0]), String(p[1] == null ? '' : p[1])]; }) : [],
+        keyLine: typeof h.keyLine === 'string' ? h.keyLine : ''
+    };
+}
+// Section blocks: [{kind:'kv', pairs|kv:[[l, t]]} | {kind:'table', title?, head:[], rows:[[t]]} |
+// {kind:'verdict', level:'ok'|'warn'|'bad'|'info', text} | {kind:'notes', items:[t]|text} |
+// {kind:'plot', key, title}] — every string plain text.
+function _normBlocks(list) {
+    if (!Array.isArray(list)) return [];
+    var str = function (v) { return String(v == null ? '' : v); };
+    var out = [];
+    list.forEach(function (b) {
+        if (!b || typeof b !== 'object') return;
+        if (b.kind === 'kv') {
+            var pairs = Array.isArray(b.pairs) ? b.pairs : (Array.isArray(b.kv) ? b.kv : (Array.isArray(b.rows) ? b.rows : []));
+            out.push({ kind: 'kv', pairs: pairs.filter(function (p) { return Array.isArray(p) && p.length >= 2; }).map(function (p) { return [str(p[0]), str(p[1])]; }) });
+        } else if (b.kind === 'table' && Array.isArray(b.head) && Array.isArray(b.rows)) {
+            out.push({ kind: 'table', title: b.title ? str(b.title) : '', head: b.head.map(str),
+                       rows: b.rows.map(function (r) { return (Array.isArray(r) ? r : []).map(str); }) });
+        } else if (b.kind === 'verdict' && b.text) {
+            var lv = (b.level === 'ok' || b.level === 'warn' || b.level === 'bad') ? b.level : 'info';
+            out.push({ kind: 'verdict', level: lv, text: str(b.text) });
+        } else if (b.kind === 'notes') {
+            var items = Array.isArray(b.items) ? b.items.map(str) : (b.text ? [str(b.text)] : []);
+            if (items.length) out.push({ kind: 'notes', items: items });
+        } else if (b.kind === 'plot' && typeof b.key === 'string' && b.key) {
+            out.push({ kind: 'plot', key: b.key, title: str(b.title || b.key) });
+        }
+    });
+    return out;
+}
+var VERDICT_MARK = { ok: '✓ ', warn: '⚠ ', bad: '✗ ', info: '' };
+function _blockPlotURL(key) {
+    if (!_hasDoc) return '';
+    try {
+        var cv = null;
+        if (typeof G.PRiSM_renderPlotToCanvas === 'function') cv = G.PRiSM_renderPlotToCanvas(key, 900, 480);
+        if (!cv && typeof G.PRiSM_drawPlot === 'function') {
+            cv = document.createElement('canvas'); cv.width = 900; cv.height = 480;
+            if (!G.PRiSM_drawPlot(cv, key, { width: 900, height: 480, hover: false, dragZoom: false })) cv = null;
+        }
+        return cv && typeof cv.toDataURL === 'function' ? (cv.toDataURL('image/png') || '') : '';
+    } catch (e) { _warn('[report] block plot failed', e); return ''; }
+}
+function _blocksHTML(blocks, pdf, sid) {
+    var h = '';
+    blocks.forEach(function (b, i) {
+        if (b.kind === 'kv' && b.pairs.length) h += pdf ? _rpKV(b.pairs) : _kvHTML(b.pairs);
+        else if (b.kind === 'table') {
+            var rows = b.rows.map(function (r) { return r.map(_esc); });
+            if (b.title) h += pdf ? '<h3>' + _esc(b.title) + '</h3>' : '<div class="prism-rpt-sub">' + _esc(b.title) + '</div>';
+            h += pdf ? _rpTable(b.head, rows) : _tableHTML(b.head, rows);
+        } else if (b.kind === 'verdict') {
+            var t = VERDICT_MARK[b.level] + b.text;
+            if (pdf) h += '<div class="rp-note ' + (b.level === 'ok' ? 'n-green' : b.level === 'bad' ? 'n-red' : b.level === 'warn' ? 'n-amber' : 'n-blue') + '">' + _esc(t) + '</div>';
+            else h += b.level === 'ok' ? _okHTML(t) : (b.level === 'info' ? _infoHTML(t) : _warnHTML(t));
+        } else if (b.kind === 'notes') {
+            h += pdf ? '<div class="rp-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>'
+                     : '<div class="prism-rpt-note"><b>Notes</b> ' + b.items.map(_esc).join(' ') + '</div>';
+        } else if (b.kind === 'plot') {
+            if (pdf) {
+                var url = _blockPlotURL(b.key);
+                if (url) h += '<div class="rp-fig"><img src="' + _esc(url) + '" alt="' + _esc(b.title) + '"><div class="rp-modsub">' + _esc(b.title) + '</div></div>';
+            } else {
+                h += '<div class="prism-rpt-plot chart-wrap"><canvas id="prism_report_xp_' + sid + '_' + i + '" data-plot-key="' + _esc(b.key) +
+                     '" data-prism-block-plot="1" style="width:100%;height:280px;display:block;"></canvas><div>' + _esc(b.title) + '</div></div>';
+            }
+        }
+    });
+    return h;
+}
+
 // Sections contributed by other layers (fit workspace 51, gas 52):
 // window.PRiSM_reportSections = [fn(model) → null | {id, title, order,
 // kv:[[label, text]], table:{head:[], rows:[[text]]}, notes:[text]}].
@@ -973,8 +1064,13 @@ function reportData() {
 function _extraSections(model) {
     var reg = Array.isArray(G.PRiSM_reportSections) ? G.PRiSM_reportSections : [];
     var out = [];
+    var mode = _modeKey(), ext = _modeExt();
     reg.forEach(function (fn) {
         if (typeof fn !== 'function') return;
+        // fn.modes = ['dfit', …]: only in those modes; an ext mode with
+        // reportLegacySections:false skips sections without modes.
+        if (Array.isArray(fn.modes)) { if (fn.modes.indexOf(mode) === -1) return; }
+        else if (ext && ext.reportLegacySections === false) return;
         var s = null;
         try { s = fn(model); } catch (e) { _warn('[report] extra section failed', e); s = null; }
         if (!s || typeof s !== 'object' || !s.title) return;
@@ -985,7 +1081,8 @@ function _extraSections(model) {
                 head: s.table.head.map(String),
                 rows: s.table.rows.map(function (r) { return (Array.isArray(r) ? r : []).map(function (c) { return String(c == null ? '' : c); }); })
             } : null,
-            notes: Array.isArray(s.notes) ? s.notes.map(String) : []
+            notes: Array.isArray(s.notes) ? s.notes.map(String) : [],
+            blocks: _normBlocks(s.blocks)
         });
     });
     out.sort(function (a, b) { return a.order - b.order; });
@@ -1000,6 +1097,7 @@ function _extraHTML(m, pdf) {
             body += pdf ? _rpTable(s.table.head, rows) : _tableHTML(s.table.head, rows);
         }
         s.notes.forEach(function (n) { body += pdf ? '<p class="rp-modsub">' + _esc(n) + '</p>' : '<div class="prism-rpt-note">' + _esc(n) + '</div>'; });
+        if (s.blocks && s.blocks.length) body += _blocksHTML(s.blocks, pdf, String(s.id).replace(/[^A-Za-z0-9_-]/g, '_'));
         return pdf ? '<section class="rp-sec"><h2>' + _esc(s.title) + '</h2>' + body + '</section>'
                    : _card(s.title, body, 'prism_report_x_' + String(s.id).replace(/[^A-Za-z0-9_-]/g, '_'));
     }).join('');
@@ -1259,6 +1357,11 @@ function _semilogKey(c) {
     return (tt === 'buildup' || tt === 'falloff') ? 'horner' : 'mdh';
 }
 function _plotSpecs(c) {
+    var ext = _modeExt();
+    if (ext) {
+        return (Array.isArray(ext.reportPlots) ? ext.reportPlots : []).filter(function (p) { return p && typeof p.key === 'string' && p.key; })
+            .map(function (p) { return { id: 'x_' + p.key.replace(/[^A-Za-z0-9_-]/g, '_'), key: p.key, title: String(p.title || p.key), ext: true }; });
+    }
     var withModel = c.fit ? ' with the model' : '', withLine = c.semilog ? ' with the straight line' : '';
     if (c.kind === 'rate') {
         return [
@@ -1339,6 +1442,10 @@ function _plotPayload(c, spec) {
     return _withOverlay(c, spec, payload);
 }
 function _drawPlot(canvas, c, spec, size) {
+    if (spec.ext && typeof G.PRiSM_drawPlot === 'function') {
+        try { return !!G.PRiSM_drawPlot(canvas, spec.key, { width: size.width, height: size.height, hover: !!size.hover, dragZoom: false, showLegend: true }); }
+        catch (e) { _warn('[report] plot ' + spec.key + ' failed', e); return false; }
+    }
     var fn = _plotFn(spec.key);
     if (!fn) return false;
     var payload = _plotPayload(c, spec);
@@ -1419,9 +1526,62 @@ function _unresolved(m) {
     return bad;
 }
 
+// Ext-mode report: the mode's header and key rows, its sections (blocks) and
+// ext.reportPlots; the PTA blocks only when reportLegacySections is not false.
+function _extReportHTML(m, ext, pdf, opts) {
+    var hx = _extHeader(ext, m) || { title: ext.label, keyRows: [], keyLine: '' };
+    var hd = m.header, h = '';
+    var head = [['Client', hd.client], ['Well', hd.well], ['Field', hd.field], ['Analysis', hx.title],
+                ['Data points', hd.nPoints ? String(hd.nPoints) : ''], ['Report date', m.generatedAt]];
+    if (pdf) {
+        h += '<section class="rp-sec"><h2>' + _esc(hx.title) + '</h2>' + _rpKV(head) + '</section>';
+        if (hx.keyRows.length || hx.keyLine) {
+            h += '<section class="rp-sec rp-out"><h2>Key results (field units)</h2>' + _rpKV(hx.keyRows) +
+                 (hx.keyLine ? '<p class="rp-modsub">' + _esc(hx.keyLine) + '</p>' : '') + '</section>';
+        }
+    } else {
+        h += _card(hx.title, _kvHTML(head.filter(function (p) { return p[1]; })) +
+            '<div class="prism-rpt-actions">' +
+            '<button type="button" class="btn btn-primary" id="prism_report_pdf">Export PDF</button>' +
+            (typeof G.PRiSM_exportReportPDF === 'function' ? '<button type="button" class="btn btn-secondary" id="prism_report_pdf_hires">PDF with all plots</button>' : '') +
+            '</div><div id="prism_report_msg" style="margin-top:6px;font-size:12px;color:var(--text2);min-height:16px;"></div>', 'prism_report_head');
+        if (hx.keyRows.length || hx.keyLine) {
+            h += _card('Key results', _kvHTML(hx.keyRows) + (hx.keyLine ? '<div class="prism-rpt-note" id="prism_report_keyline">' + _esc(hx.keyLine) + '</div>' : ''), 'prism_report_results');
+        }
+    }
+    if (!m.hasData) {
+        h += pdf ? '<div class="rp-note n-amber"><b>No data.</b>Load data in PRiSM before issuing a report.</div>'
+                 : _card('Nothing to report yet', '<div class="prism-rpt-note">Load data on step ① to build a report.</div>');
+        return h;
+    }
+    h += _extraHTML(m, pdf);
+    var specs = _plotSpecs(m.ctx).filter(function (sp) { return !!(G.PRiSM_PLOT_REGISTRY && G.PRiSM_PLOT_REGISTRY[sp.key]); });
+    if (pdf) {
+        if (opts.plots !== false) {
+            var figs = '';
+            specs.forEach(function (sp) {
+                var url = _blockPlotURL(sp.key);
+                if (url) figs += '<div class="rp-fig"><img src="' + _esc(url) + '" alt="' + _esc(sp.title) + '"><div class="rp-modsub">' + _esc(sp.title) + '</div></div>';
+            });
+            if (figs) h += '<section class="rp-sec"><h2>Plots</h2>' + figs + '</section>';
+        }
+        if (m.notes) h += '<section class="rp-sec"><h2>Analyst comments</h2><p>' + _esc(m.notes).replace(/\n/g, '<br>') + '</p></section>';
+    } else {
+        if (specs.length) {
+            h += _card('Plots', '<div class="prism-rpt-plots" id="prism_report_plots">' + specs.map(function (sp) {
+                return '<div class="prism-rpt-plot chart-wrap"><canvas id="prism_report_plot_' + sp.id + '" data-plot-key="' + _esc(sp.key) + '" style="width:100%;height:280px;display:block;"></canvas><div>' + _esc(sp.title) + '</div></div>';
+            }).join('') + '</div>');
+        }
+        h += _card('Analyst comments', '<textarea id="prism_report_notes" placeholder="Comments to print with the report">' + _esc(m.notes) + '</textarea>');
+    }
+    return h;
+}
+
 function buildReportHTML(opts) {
     opts = opts || {};
     var m = opts.model || reportData();
+    var xm = _modeExt();
+    if (xm && xm.reportLegacySections === false) return _extReportHTML(m, xm, true, opts);
     var h = '', u = m.units;
     var hd = m.header;
     // Test & well summary
@@ -1685,6 +1845,8 @@ var RESULT_HELP = {
     DR: 'prism_help_DR', J: 'prism_help_J', J_ideal: 'prism_help_Jideal', rwa: 'prism_help_rwa'
 };
 function _tabHTML(m) {
+    var xm = _modeExt();
+    if (xm && xm.reportLegacySections === false) return '<div class="prism-rpt" id="prism_report_root">' + _extReportHTML(m, xm, false, {}) + '</div>';
     var hd = m.header, h = '<div class="prism-rpt" id="prism_report_root">';
     var tiles = [['Client', hd.client], ['Well', hd.well], ['Field', hd.field], ['Test', hd.testLabel],
                  ['Period', hd.periodLabel], ['Data', hd.nPoints ? hd.nPoints + ' points' : ''],
@@ -1842,6 +2004,36 @@ function _drawTabPlots(host, m) {
         if (!cv) return;
         _drawPlot(cv, c, spec, { width: _plotWidth(cv.parentNode), height: 280, hover: true });
     });
+    // plot blocks of contributed sections
+    var bl = host.querySelectorAll ? host.querySelectorAll('canvas[data-prism-block-plot]') : [];
+    Array.prototype.forEach.call(bl, function (cv) {
+        var key = cv.getAttribute('data-plot-key');
+        if (key) _drawPlot(cv, c, { key: key, ext: true }, { width: _plotWidth(cv.parentNode), height: 280, hover: true });
+    });
+}
+
+// Mode-aware key line for the job report / quick report: the ext mode's
+// reportHeader().keyLine; '' in the built-in modes (their key line stays
+// the host's / quick report's own).
+function reportKeyLine() {
+    var ext = _modeExt();
+    if (!ext) return '';
+    var m = null;
+    try { m = reportData(); } catch (e) { m = null; }
+    var hx = _extHeader(ext, m);
+    return (hx && hx.keyLine) ? hx.keyLine : '';
+}
+// Would the PRiSM report fragment be produced? Built-in modes: a fit, or a
+// model and data (the host's own rule); ext modes: ext.reportReady() or a key line.
+function reportReady() {
+    var ext = _modeExt();
+    if (ext) {
+        if (typeof ext.reportReady === 'function') { try { return !!ext.reportReady(); } catch (e) { return false; } }
+        return !!reportKeyLine();
+    }
+    var st = _state();
+    var fit = (typeof G.PRiSM_getLastFit === 'function' ? G.PRiSM_getLastFit() : null) || st.lastFit || null;
+    return !!((fit || (st.model && G.PRiSM_dataset)) && typeof G.PRiSM_buildReportHTML === 'function');
 }
 
 function renderReportTab(hostEl) {
@@ -1945,6 +2137,8 @@ G.PRiSM_buildReportCSV = buildReportCSV;
 G.PRiSM_exportCSV = exportCSV;
 G.PRiSM_reportData = reportData;
 G.PRiSM_reportResults = reportResults;
+G.PRiSM_reportKeyLine = reportKeyLine;
+G.PRiSM_reportReady = reportReady;
 G.PRiSM_exportReport = exportReportPDF;
 G.PRiSM_hostExportReport = hostExportReport;
 G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet: _bourdet, normFit: _normFit };

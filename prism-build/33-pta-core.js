@@ -1514,7 +1514,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
 // gasOpts / rateSkin / deliverability: gas & deliverability (52-prism-gas.js).
 var STATE_FIELDS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                     'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools',
-                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
+                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability', 'dfit'];
 
 G.PRiSM_saveState = function PRiSM_saveState() {
     var st = G.PRiSM_state;
@@ -1528,6 +1528,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     if (P) {
         if (P.mode != null) snap.mode = P.mode;
         if (P.tab != null) snap.tab = P.tab;
+        if (P.step != null) snap.step = P.step;
     }
     var ls = _storage();
     if (ls) {
@@ -1567,15 +1568,18 @@ G.PRiSM_restoreState = function PRiSM_restoreState(obj) {
     // Saved fits, compare selection and named branches (51); gas options,
     // rate-dependent skin and deliverability inputs (52).
     if (Array.isArray(snap.fits)) st.fits = snap.fits;
+    // Workspace-mode state (DFIT: tests, inputs, picks and summaries; plain object).
+    if (snap.dfit && typeof snap.dfit === 'object' && !Array.isArray(snap.dfit)) st.dfit = snap.dfit;
     ['fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'].forEach(function (k) {
         if (snap[k] && typeof snap[k] === 'object' && !Array.isArray(snap[k])) st[k] = snap[k];
     });
     // Legacy field stays neutral: fits never live in st.match.
     st.match = { timeShift: 0, pressShift: 0 };
-    if (snap.mode != null || snap.tab != null) {
+    if (snap.mode != null || snap.tab != null || snap.step != null) {
         if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
         if (typeof snap.mode === 'string') G.PRiSM.mode = snap.mode;
         if (_num(snap.tab)) G.PRiSM.tab = snap.tab;
+        if (_num(snap.step) && snap.step >= 1 && snap.step <= 5) G.PRiSM.step = snap.step;
     }
     return snap;
 };
@@ -1593,7 +1597,8 @@ function _scheduleSave() {
 if (typeof G.addEventListener === 'function' && !G.__PRiSM_ptaCoreListeners) {
     G.__PRiSM_ptaCoreListeners = true;
     ['prism:fit-updated', 'prism:model-changed', 'prism:plot-changed', 'prism:well-changed',
-     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded'].forEach(function (ev) {
+     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded',
+     'prism:dfit-updated', 'prism:dfit-model-updated', 'prism:mode-changed'].forEach(function (ev) {
         try { G.addEventListener(ev, _scheduleSave); } catch (e) { /* ignore */ }
     });
 }
