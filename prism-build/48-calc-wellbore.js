@@ -1291,16 +1291,18 @@
         }
         var iMin = 0; for (i = 1; i < dp.length; i++) if (dp[i] < dp[iMin]) iMin = i;
         var offEvent = tShQ != null ? tShQ - 0.5 * (Tp[iMin] + Tp[iMin + 1]) : null;
-        var centre = (offEvent != null && Math.abs(offEvent) > maxLag) ? Math.round(offEvent) : 0;
-        function score(lag) {
-            var s = 0, j = 0, qPrev = null;
-            for (var k = 0; k < nP; k++) {
+        // scan ±maxLag around 0 and, when the event offset lies outside that, around it too; the better score wins
+        var centres = [0];
+        if (offEvent != null && Math.abs(offEvent) > maxLag) centres.push(Math.round(offEvent));
+        function score(lag, k0, k1) {
+            var s = 0, j = 0, qPrev = null, ka = k0 || 0, kb = k1 || nP;
+            for (var k = ka; k < kb; k++) {
                 var tt = Tp[k] + lag;
                 while (j + 1 < nQ && Tq[j + 1] < tt) j++;
                 var qv;
                 if (tt <= Tq[0]) qv = Q[0]; else if (tt >= Tq[nQ - 1]) qv = Q[nQ - 1];
                 else { var f = (tt - Tq[j]) / (Tq[j + 1] - Tq[j]); qv = Q[j] + f * (Q[j + 1] - Q[j]); }
-                if (k > 0) s += dp[k - 1] * (qv - qPrev);
+                if (k > ka) s += dp[k - 1] * (qv - qPrev);
                 qPrev = qv;
             }
             return s;
@@ -1308,7 +1310,10 @@
         var dtP = _median(Tp.slice(1).map(function (v, k) { return v - Tp[k]; }));
         var coarse = Math.max(0.5, Math.min(5, _fin(dtP) ? dtP : 1));
         var best = null;
-        for (var lag = centre - maxLag; lag <= centre + maxLag + 1e-9; lag += coarse) { var sc = score(lag); if (!best || sc > best.s) best = { lag: lag, s: sc }; }
+        centres.forEach(function (centre) {
+            for (var lag = centre - maxLag; lag <= centre + maxLag + 1e-9; lag += coarse) { var sc = score(lag); if (!best || sc > best.s) best = { lag: lag, s: sc }; }
+        });
+        var lag;
         var fineStep = 0.1, fb = null, fineList = [];
         for (lag = best.lag - 2 * coarse; lag <= best.lag + 2 * coarse + 1e-9; lag += fineStep) { var sf = score(lag); fineList.push([lag, sf]); if (!fb || sf > fb.s) fb = { lag: lag, s: sf, k: fineList.length - 1 }; }
         var off = fb.lag;
@@ -1322,11 +1327,37 @@
         var norm = (sdp > 0 && sdq > 0) ? fb.s / Math.sqrt(sdp * sdq) : 0;
         var method = 'xcorr';
         if (!(fb.s > 0) && offEvent != null) { off = offEvent; method = 'event'; }
+        // clock drift: offsets of the two halves of the rate-change energy, when their centroids are ≥ 1 h apart
+        var drift = 0, driftEstimated = false;
+        if (method === 'xcorr') {
+            // split at the longest quiet gap between rate changes (pressure clock), each side carrying ≥ 20 % of the change energy
+            var ev = [], tot = 0, eMax = 0;
+            for (i = 1; i < nQ; i++) { var e = Math.abs(Q[i] - Q[i - 1]); if (e > eMax) eMax = e; }
+            for (i = 1; i < nQ; i++) { var e2 = Math.abs(Q[i] - Q[i - 1]); if (e2 > 0.1 * eMax) { ev.push({ t: 0.5 * (Tq[i] + Tq[i - 1]) - off, e: e2 }); tot += e2; } }
+            var tSplit = null, gap = 0, c1 = 0, w1 = 0, c2 = 0, w2 = 0;
+            for (i = 1; i < ev.length; i++) if (ev[i].t - ev[i - 1].t > gap) { gap = ev[i].t - ev[i - 1].t; tSplit = 0.5 * (ev[i].t + ev[i - 1].t); }
+            if (tSplit != null) ev.forEach(function (x) { if (x.t < tSplit) { c1 += x.e * x.t; w1 += x.e; } else { c2 += x.e * x.t; w2 += x.e; } });
+            if (!(w1 >= 0.2 * tot && w2 >= 0.2 * tot)) tSplit = null;
+            if (tSplit != null && w1 > 0 && w2 > 0 && (c2 / w2 - c1 / w1) >= 3600) {
+                var kS = 0; while (kS < nP && Tp[kS] < tSplit) kS++;
+                var fine = function (k0, k1) {
+                    var bc = null, lg;
+                    for (lg = off - 120; lg <= off + 120 + 1e-9; lg += coarse) { var vc = score(lg, k0, k1); if (!bc || vc > bc.s) bc = { lag: lg, s: vc }; }
+                    var bl = null, list = [];
+                    for (lg = bc.lag - 2 * coarse; lg <= bc.lag + 2 * coarse + 1e-9; lg += fineStep) { var v = score(lg, k0, k1); list.push([lg, v]); if (!bl || v > bl.s) bl = { lag: lg, s: v, k: list.length - 1 }; }
+                    var o2 = bl.lag;
+                    if (bl.k > 0 && bl.k + 1 < list.length) { var a1 = list[bl.k - 1][1], a2 = list[bl.k][1], a3 = list[bl.k + 1][1], dn = a1 - 2 * a2 + a3; if (dn < 0) o2 = bl.lag + 0.5 * fineStep * (a1 - a3) / dn; }
+                    return bl.s > 0 ? o2 : null;
+                };
+                var oA = fine(0, kS), oB = fine(Math.max(0, kS - 1), nP);
+                if (oA != null && oB != null) { drift = (oB - oA) / ((c2 / w2 - c1 / w1) / 86400); driftEstimated = true; }
+            }
+        }
         var hrs = Math.round(off / 3600);
         var hourShift = hrs !== 0 && Math.abs(off - 3600 * hrs) < 5;
         var events = [];
         if (tShQ != null) events.push({ kind: 'shut-in', tRate: tShQ / 3600, tPressure: 0.5 * (Tp[iMin] + Tp[iMin + 1]) / 3600, offsetS: offEvent });
-        return { ok: true, offsetS: off, driftSPerDay: 0, score: norm, events: events, hourShift: hourShift, method: method,
+        return { ok: true, offsetS: off, driftSPerDay: drift, driftEstimated: driftEstimated, score: norm, events: events, hourShift: hourShift, method: method,
                  confirm: Math.abs(off) > 2, text: (Math.abs(off) > 2 ? 'The rate clock is offset by ' + _f(off, 1) + ' s from the pressure clock' + (hourShift ? ' (a whole number of hours: time zone or daylight saving)' : '') + '; apply after confirmation.'
                      : 'The rate and pressure clocks agree within 2 s.') };
     }

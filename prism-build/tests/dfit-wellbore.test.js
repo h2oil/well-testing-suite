@@ -218,6 +218,7 @@ module.exports = [
       near(assert, geo.p, 3260.1, 0.1, 'ρ(p,T) geotherm');
       assert(typeof geo.rangeNote === 'string' && geo.rangeNote.length < 300, 'correlation-range note (7,600 psia > 5,000)');
       near(assert, w.hydrostatic(geo.p, 0, 10000, col, null).p, 7600, 0.05, 'downward integration inverts the upward one');
+      near(assert, w.hydrostatic(7000, 9950, 10000, col, null, { grad: 0.438 }).dp, 21.9, 1e-9, 'gauge to datum: +21.9 psi for 50 ft at 0.438 psi/ft');
       // convert: a pumping period then a falloff that runs the surface into vacuum
       const t = [], ps = [], q = [];
       for (let i = 0; i <= 40; i++) { const ti = i * 0.01; t.push(ti); q.push(ti < 0.1 ? 7200 : 0); ps.push(ti < 0.1 ? 3400 : 3260.1 - 400 * (ti - 0.1)); }
@@ -424,6 +425,17 @@ module.exports = [
       assert.strictEqual(b.hourShift, false, '3,637.4 s is not a whole number of hours');
       const c = w.align(tp, pp, tq.map((x) => x + 1 - off / 3600), qq);
       assert(c.hourShift === true && /time zone/.test(c.text), 'exactly one hour → time zone / daylight saving');
+      assert(a.driftEstimated === false && a.driftSPerDay === 0, 'one event group: no drift estimate');
+      // two event groups 2 h apart on a rate clock that gains 240 s/day: the drift is recovered
+      const n2 = nrmOf(lcg(4)), q2 = (t) => (t < 300 ? 5 : t < 330 ? 2.5 : t < 360 ? 4 : t < 7300 ? 0 : t < 7330 ? 3 : t < 7360 ? 1.5 : 0);
+      const tp2 = [], pp2 = [], tq2 = [], qq2 = [];
+      for (let t = 200; t <= 7600; t += 5) {
+        const q = q2(t); tp2.push(t / 3600); pp2.push(7600 + 1.505 * q * q + 140 * Math.sqrt(q) + 0.3 * n2());
+        tq2.push((t + 37.4 + 240 * t / 86400) / 3600); qq2.push(q + 0.01 * n2());
+      }
+      const dr = w.align(tp2, pp2, tq2, qq2);
+      assert(dr.ok && dr.driftEstimated === true, 'drift estimated');
+      near(assert, dr.driftSPerDay, 240, 15, 'clock drift s/day');
     },
   },
   {
