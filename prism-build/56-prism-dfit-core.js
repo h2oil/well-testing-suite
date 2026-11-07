@@ -1152,13 +1152,38 @@
         if (c2 !== 0) { var uv = -(c1 - b) / (2 * c2); if (uv > u0 && uv < u1) dev = Math.max(dev, dq(uv)); }
         return { lin: lin, dev: dev };
     }
-    function _growLine(Gv, p, i0, iMax, sigma, P) {
+    // per-sample noise of y[i0..i1] and its lag-1 correlation for AR(1)-like gauge noise, from the ratio of the robust
+    // variances of the second differences and of the (de-trended) first differences: var Δ² = 2σ²(1 − ρ)(3 − ρ) and
+    // var Δ¹ = 2σ²(1 − ρ), so ρ = 3 − var Δ²/var Δ¹ and σ² = var Δ¹/(2(1 − ρ)). The first differences are de-trended by
+    // their 21-sample moving median (the falloff slope), the second differences likewise (its change). Second differences alone read correlated noise ≈ 4 × low (ρ 0.9).
+    function _noiseAR(y, i0, i1) {
+        var d1 = [], d2 = [], k;
+        for (k = Math.max(1, i0 + 1); k <= i1; k++) if (_fin(y[k]) && _fin(y[k - 1])) d1.push(y[k] - y[k - 1]);
+        if (d1.length < 30) return { sigma: 0, rho: 0 };
+        var tr = _movMed(d1, 21), e1 = [], e2 = [];
+        for (k = 0; k < d1.length; k++) e1.push(d1[k] - tr[k]);
+        for (k = 1; k < d1.length; k++) d2.push(d1[k] - d1[k - 1]);
+        var tr2 = _movMed(d2, 21); for (k = 0; k < d2.length; k++) e2.push(d2[k] - tr2[k]);
+        var mad = function (a) { var m = _median(a); return 1.4826 * _median(a.map(function (v) { return Math.abs(v - m); })); };
+        var v1 = Math.pow(mad(e1), 2), v2 = Math.pow(mad(e2), 2);
+        if (!(v1 > 0) || !(v2 > 0)) return { sigma: Math.sqrt(Math.max(v2, 0) / 6), rho: 0 };
+        var rho = _clampN(3 - v2 / v1, 0, 0.97);
+        return { sigma: Math.sqrt(v1 / (2 * (1 - rho))), rho: rho };
+    }
+    // the noise used by the line tests: σ_eff ≥ the second-difference σ, and the effective sample count n·(1 − ρ)/(1 + ρ)
+    function _nEff(n, rho) { var r = _clampN(rho || 0, 0, 0.98); return Math.max(2, n * (1 - r) / (1 + r)); }
+    function _growLine(Gv, p, i0, iMax, sigma, P, rho) {
         if (i0 < 0 || iMax - i0 < 3) return null;
-        var thr = Math.max(3 * sigma, 0.05), best = null, j = Math.min(iMax, i0 + 5), fails = 0;
+        var thr0 = Math.max(3 * sigma, 0.05), best = null, j = Math.min(iMax, i0 + 5), fails = 0;
         while (j <= iMax) {
             var wf = _winFits(P, Gv, i0, j);
             if (!wf) break;
             var lf = wf.lin;
+            // curvature test: the quadratic-minus-line deviation of a pure-noise window is ≈ 1.68 σ/√n, so a window stops
+            // where the deviation exceeds 4 standard errors (never below the 0.05 psi resolution floor, never above 3σ).
+            // With correlated noise (ρ1 > 0.3) n_eff is too uncertain for that and the fixed 3σ deviation is kept; the
+            // derivative cap in _derivsCore then bounds the window either way.
+            var thr = (rho || 0) > 0.3 ? thr0 : Math.max(0.05, Math.min(thr0, 6.7 * sigma / Math.sqrt(_nEff(lf.n, rho))));
             if (wf.dev > thr || lf.s > Math.max(2 * sigma, 0.03)) { if (best || ++fails >= 2) break; }
             else best = { a: lf.a, b: lf.b, i0: i0, i1: j, seA: lf.seA, s: lf.s, n: lf.n };
             if (j === iMax) break;
@@ -1170,12 +1195,14 @@
     }
     // the longest straight early-G segment: starts at G_min, then later (× 3 steps in G) when the earliest samples are
     // distorted (shut-in time off by a sample, bleed-off, hammer, a PDL hump); among windows of ≥ 6 points and ≥ 0.5 ln
-    // units the one reaching the largest G wins
-    function _earlyLine(Gv, p, i0, iMax, sigma) {
+    // units the one reaching the largest G wins. Each window is grown only while its curvature is statistically absent
+    // (_growLine with σ_eff and ρ1), so with noise a window no longer runs past a gentle closure; _derivsCore then caps it
+    // at the provisional derivative departure (_departure).
+    function _earlyLine(Gv, p, i0, iMax, sigma, rho) {
         if (i0 < 0 || iMax - i0 < 3) return null;
         var P = _prefix(Gv, p), best = null, start = i0, g0 = Gv[i0], tries = 0;
         while (start <= iMax - 5 && tries < 8) {
-            var w = _growLine(Gv, p, start, iMax, sigma, P);
+            var w = _growLine(Gv, p, start, iMax, sigma, P, rho);
             if (w && w.n >= 6) {
                 // prefer a window of at least 0.5 ln units that ends at the largest G; else the longest one
                 var span = Math.log(Gv[w.i1] / Gv[w.i0]), bspan = best ? Math.log(Gv[best.i1] / Gv[best.i0]) : -1;
@@ -1187,6 +1214,193 @@
             var gT = Math.max(g0, Gv[start]) * 3; while (start <= iMax && Gv[start] < gT) start++;
         }
         return best;
+    }
+    // the early G·dP/dG line over [i0, i1]: through the origin when |ι| = |a/(b·G_end)| < 0.05 (§4.7), else free
+    function _yLine(x, y, i0, i1) {
+        var lfA = _linfit(x, y, i0, i1, false);
+        var iota0 = (lfA && lfA.b > 0) ? lfA.a / (lfA.b * x[i1]) : 0;
+        var lf = _linfit(x, y, i0, i1, Math.abs(iota0) < 0.05);
+        if (!lf || !(lf.b > 0)) return null;
+        lf.iota = iota0; lf.origin = Math.abs(iota0) < 0.05;
+        return lf;
+    }
+    // _yLine with one robust refit (samples within max(3ε·ŷ, 4σ_y) of the first line)
+    function _yLineRobust(x, y, i0, i1, epsC) {
+        var lf = _yLine(x, y, i0, i1);
+        if (!lf) return null;
+        var nz0 = _lineNoise(x, y, lf, i0, i1), keepG = [], keepY = [];
+        for (var i = i0; i <= i1; i++) { var yh0 = lf.a + lf.b * x[i]; if (Math.abs(y[i] - yh0) <= Math.max(3 * epsC * yh0, 4 * nz0.sigma)) { keepG.push(x[i]); keepY.push(y[i]); } }
+        var lf2 = keepG.length >= 4 ? _linfit(keepG, keepY, 0, keepG.length - 1, lf.origin) : null;
+        if (lf2 && lf2.b > 0) { lf2.iota = lf.iota; lf2.origin = lf.origin; return lf2; }
+        return lf;
+    }
+    // absolute per-sample noise of y about a line over the upper part of [i0, i1] (x ≥ x[i1]·e^−1.5, at least 8 samples):
+    // σ = 1.4826·MAD of the residuals, ρ1 their lag-1 correlation. G·dP/dG noise is nearly constant in absolute terms
+    // (≈ σ_p/(√2·L) for white pressure noise), so a relative tolerance is σ/ŷ at each sample, not one number.
+    function _lineNoise(x, y, lf, i0, i1) {
+        var j0 = i1; while (j0 > i0 && (x[j0 - 1] >= x[i1] * Math.exp(-1.5) || i1 - j0 < 7)) j0--;
+        var r = [], k;
+        for (k = j0; k <= i1; k++) if (_fin(y[k])) r.push(y[k] - (lf.a + lf.b * x[k]));
+        if (r.length < 4) return { sigma: 0, rho: 0 };
+        var m = _median(r), ad = r.map(function (v) { return Math.abs(v - m); }), num = 0, den = 0;
+        for (k = 0; k < r.length; k++) { var u = r[k] - m; den += u * u; if (k) num += u * (r[k - 1] - m); }
+        return { sigma: 1.4826 * _median(ad), rho: den > 0 ? _clampN(num / den, -0.99, 0.99) : 0 };
+    }
+    // the first held departure of y from the early line after index i0 (§4.7 compliance rule). The relative residual of a
+    // 5-point moving median must exceed thr(k) = max(ε, 3·c·σ_y/ŷ(k)) — ε is the floor, the noise term the local scale —
+    // and stay beyond it for nHold samples (more when the noise is correlated), ≥ 0.05 in ln G with two, or to the end.
+    // A moving median is the identity on monotone noise-free data, so clean departures are not shifted.
+    function _departure(x, y, lf, i0, eps, sigY, rho) {
+        var n = x.length, sm = _movMed(y, 5), rr = _clampN(rho || 0, 0, 0.95);
+        var c = Math.min(1, 0.6 * Math.sqrt((1 + rr) / (1 - rr))), nHold = Math.max(3, Math.min(15, Math.round(1 / (1 - rr))));
+        function yh(k) { return Math.max(lf.a + lf.b * x[k], 1e-9); }
+        function thr(k) { return Math.max(eps, 3 * c * sigY / yh(k)); }
+        function rel(k) { return (sm[k] - yh(k)) / yh(k); }
+        for (var i = Math.max(0, i0); i < n; i++) {
+            var t = thr(i), r0 = rel(i), up = r0 > t;
+            if (!(up || r0 < -t)) continue;
+            var held = 0, j;
+            for (j = i; j < n; j++) { var rj = rel(j), tj = thr(j); if (up ? rj > tj : rj < -tj) held++; else break; }
+            if (held >= nHold || (nHold <= 3 && held >= 2 && Math.log(x[i + held - 1] / x[i]) >= 0.05) || (j === n && held >= 2)) {
+                // persistence: a closure departure grows, a correlated-noise excursion reverts. The smoothed residual must
+                // stay beyond half the threshold, same sign, over max(0.05, 0.25·ρ1) in ln G and at least 6 samples after the
+                // crossing, and the raw residuals there must be significant together: Σ(r/σ_r)/√n_eff ≥ 4 (σ_r = σ_y/ŷ, n_eff
+                // = n·(1 − ρ)/(1 + ρ)). Many crossings are tested on a long falloff, so one 3σ crossing alone is not enough.
+                var span = Math.max(0.05, 0.25 * rr), persist = true, zs = 0, nz = 0;
+                for (j = i; j < n && (Math.log(x[j] / x[i]) <= span || nz < 6); j++) {
+                    var rp = rel(j); if (up ? rp <= 0.5 * thr(j) : rp >= -0.5 * thr(j)) { persist = false; break; }
+                    zs += (y[j] - yh(j)) / Math.max(sigY, 1e-12); nz++;
+                }
+                if (persist && j < n && Math.abs(zs) / Math.sqrt(_nEff(nz, rr)) < 4 && sigY > 0) persist = false;
+                // and still beyond the threshold 0.3 ln units later (a start-up distortion or a bump reverts; closure does not)
+                if (persist) {
+                    var kl = i; while (kl + 1 < n && x[kl + 1] <= x[i] * Math.exp(0.3)) kl++;
+                    if (kl + 1 < n) { var rl = rel(kl); if (up ? rl <= thr(kl) : rl >= -thr(kl)) persist = false; }
+                }
+                if (persist) return { i: i, down: !up, thr: thr, rel: rel, sm: sm, nHold: nHold, c: c };
+                i = Math.max(i, j - 1);
+                continue;
+            }
+        }
+        return null;
+    }
+    // hinge refinement of a departure on the pressure itself: p = A + B·(G − G_c) + C·(G − G_c)₊² by least squares over
+    // [i0, i1], G_c scanned over the samples in [i0 + 5, jMax] and refined by a parabola through the SSR minimum. A dP/dG
+    // that leaves its plateau linearly in G (contact onset, the post-closure damping) is exactly this shape at the onset,
+    // and the fit uses every pressure sample instead of the first noisy derivative crossing. sgn = +1 needs C > 0 (the
+    // decline slows: closure, downward departure), −1 needs C < 0 (stiffening). → {G, p (= A, on the line), C, B} or null
+    function _hingeAt(x, p, i0, i1, gc, pm) {
+        // basis 1, u, u₊², u₊³ (u = G − G_c): the cubic term absorbs the change of the departure rate over the window, so
+        // the onset is not pulled early or late by a curvature that is not exactly quadratic
+        var m = 4, M = [], k, c, r, q;
+        for (r = 0; r < m; r++) { M.push([0, 0, 0, 0, 0]); }
+        var bs = [1, 0, 0, 0];
+        for (k = i0; k <= i1; k++) {
+            var u = x[k] - gc, h = u > 0 ? u * u : 0, yy = p[k] - pm;
+            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0;
+            for (r = 0; r < m; r++) { var br = bs[r]; if (br === 0) continue; for (c = r; c < m; c++) M[r][c] += br * bs[c]; M[r][m] += br * yy; }
+        }
+        for (r = 1; r < m; r++) for (c = 0; c < r; c++) M[r][c] = M[c][r];
+        if (!(M[3][3] > 0)) { m = 3; M = M.slice(0, 3).map(function (row) { return [row[0], row[1], row[2], row[4]]; }); }
+        for (c = 0; c < m; c++) {
+            var piv = c; for (r = c + 1; r < m; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-200) return null;
+            for (r = c + 1; r < m; r++) { var f = M[r][c] / M[c][c]; for (q = c; q <= m; q++) M[r][q] -= f * M[c][q]; }
+        }
+        var co = [0, 0, 0, 0];
+        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * co[c]; co[r] = sum / M[r][r]; }
+        var ss = 0;
+        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
+        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], ssr: ss };
+    }
+    function _hinge(x, p, i0, i1, jMax, sgn) {
+        if (i1 - i0 < 10) return null;
+        var pm = 0, k; for (k = i0; k <= i1; k++) pm += p[k]; pm /= (i1 - i0 + 1);
+        var best = null, bj = -1, ss = {};
+        for (var j = i0 + 5; j <= Math.min(jMax, i1 - 3); j++) {
+            var f = _hingeAt(x, p, i0, i1, x[j], pm);
+            if (!f) continue;
+            ss[j] = f.ssr;
+            if (sgn * f.C > 0 && (!best || f.ssr < best.ssr)) { best = f; bj = j; best.gc = x[j]; }
+        }
+        if (!best) return null;
+        // sub-sample scan (4 steps per interval over the neighbouring intervals): the SSR is not convex at the sample
+        // resolution when the departure law is only approximately cubic; the best sub-sample G_c is then refined by a
+        // parabola through its neighbours
+        var gl = x[Math.max(i0 + 5, bj - 1)], gh = x[Math.min(Math.min(jMax, i1 - 3), bj + 1)], fine = [], q;
+        if (gh > gl) {
+            for (q = 0; q <= 8; q++) {
+                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm);
+                fine.push({ g: gq, f: fq });
+                if (fq && sgn * fq.C > 0 && fq.ssr < best.ssr) { best = fq; best.gc = gq; }
+            }
+            var qb = -1; for (q = 0; q < fine.length; q++) if (fine[q].f && fine[q].g === best.gc) qb = q;
+            if (qb > 0 && qb < fine.length - 1 && fine[qb - 1].f && fine[qb + 1].f) {
+                var x0 = fine[qb - 1].g, x1 = fine[qb].g, x2 = fine[qb + 1].g, y0 = fine[qb - 1].f.ssr, y1 = fine[qb].f.ssr, y2 = fine[qb + 1].f.ssr;
+                var den = (x0 - x1) * (x0 - x2) * (x1 - x2);
+                if (den !== 0) {
+                    var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
+                    if (A2 > 0) {
+                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm);
+                        if (fv && sgn * fv.C > 0 && fv.ssr <= best.ssr) { best = fv; best.gc = gv; }
+                    }
+                }
+            }
+        }
+        // profile interval of G_c: the samples whose SSR stays within σ²·(1 + ρ)/(1 − ρ) of the minimum (χ²₁ = 1, the
+        // residual σ² and lag-1 ρ of the best fit), contiguous around it → se(G_c) = half its width (≥ half a sample step)
+        var r = [], num = 0, den = 0;
+        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
+        for (k = 1; k < r.length; k++) { num += r[k] * r[k - 1]; den += r[k] * r[k]; }
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - 5), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
+        var jl = bj, jh = bj;
+        while (ss[jl - 1] != null && ss[jl - 1] <= lim) jl--;
+        while (ss[jh + 1] != null && ss[jh + 1] <= lim) jh++;
+        var seG = Math.max((x[jh] - x[jl]) / 2, 0.5 * (x[Math.min(bj + 1, i1)] - x[Math.max(bj - 1, i0)]) / 2);
+        return { G: best.gc, p: best.A, C: best.C, B: best.B, ssr: best.ssr, seG: seG, se: Math.abs(best.B) * seG, rho: rho };
+    }
+    function _inv3(A) {
+        var a = A[0][0], b = A[0][1], c = A[0][2], d = A[1][0], e = A[1][1], f = A[1][2], g = A[2][0], h = A[2][1], i = A[2][2];
+        var D = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+        if (!(Math.abs(D) > 1e-300)) return null;
+        return [[(e * i - f * h) / D, (c * h - b * i) / D, (b * f - c * e) / D], [(f * g - d * i) / D, (a * i - c * g) / D, (c * d - a * f) / D], [(d * h - e * g) / D, (b * g - a * h) / D, (a * e - b * d) / D]];
+    }
+    // the vertex of a peak of s (concave quadratic in ln G) over [k0, k1]; null when not concave or outside
+    function _vertex(x, s, k0, k1) {
+        var n = 0, sx = [0, 0, 0, 0, 0], sy = [0, 0, 0], k, xm = 0;
+        for (k = k0; k <= k1; k++) if (_fin(s[k]) && x[k] > 0) { xm += Math.log(x[k]); n++; }
+        if (n < 3) return null;
+        xm /= n;
+        for (k = k0; k <= k1; k++) {
+            if (!_fin(s[k]) || !(x[k] > 0)) continue;
+            var u = Math.log(x[k]) - xm, u2 = u * u;
+            sx[0]++; sx[1] += u; sx[2] += u2; sx[3] += u2 * u; sx[4] += u2 * u2; sy[0] += s[k]; sy[1] += u * s[k]; sy[2] += u2 * s[k];
+        }
+        var M = [[sx[0], sx[1], sx[2], sy[0]], [sx[1], sx[2], sx[3], sy[1]], [sx[2], sx[3], sx[4], sy[2]]], c, r, q;
+        for (c = 0; c < 3; c++) {
+            var piv = c; for (r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            if (Math.abs(M[c][c]) < 1e-300) return null;
+            for (r = c + 1; r < 3; r++) { var f = M[r][c] / M[c][c]; for (q = c; q < 4; q++) M[r][q] -= f * M[c][q]; }
+        }
+        var c2 = M[2][3] / M[2][2], c1 = (M[1][3] - M[1][2] * c2) / M[1][1], c0 = (M[0][3] - M[0][1] * c1 - M[0][2] * c2) / M[0][0];
+        if (!(c2 < 0)) return null;
+        var uv = -c1 / (2 * c2), lo = Math.log(x[k0]) - xm, hi = Math.log(x[k1]) - xm;
+        if (uv < lo || uv > hi) return null;
+        // se of the vertex (delta method on c1, c2 with the residual σ², inflated by the lag-1 correlation)
+        var rs = [], ss2 = 0, num = 0, den = 0;
+        for (k = k0; k <= k1; k++) { if (!_fin(s[k]) || !(x[k] > 0)) continue; var w = Math.log(x[k]) - xm; rs.push(s[k] - (c0 + c1 * w + c2 * w * w)); }
+        for (k = 0; k < rs.length; k++) { ss2 += rs[k] * rs[k]; if (k) num += rs[k] * rs[k - 1]; }
+        den = ss2;
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = n > 3 ? ss2 / (n - 3) * (1 + rho) / (1 - rho) : 0, seU = null;
+        var Sx = [[sx[0], sx[1], sx[2]], [sx[1], sx[2], sx[3]], [sx[2], sx[3], sx[4]]], Ci = n > 3 ? _inv3(Sx) : null;
+        if (Ci) {
+            var g1 = -1 / (2 * c2), g2 = c1 / (2 * c2 * c2);           // ∂u_v/∂c1, ∂u_v/∂c2
+            var vv = s2 * (g1 * g1 * Ci[1][1] + 2 * g1 * g2 * Ci[1][2] + g2 * g2 * Ci[2][2]);
+            seU = vv > 0 ? Math.sqrt(vv) : 0;
+        }
+        return { G: Math.exp(uv + xm), s: c0 + c1 * uv + c2 * uv * uv, seLn: seU };
     }
     function _tpOf(events, choice) {
         var tpc = events.tp || {};
@@ -1252,7 +1466,27 @@
         // early line (needs ≥ 6 points after G_min) → m_G and a provisional ISIP
         var iG = 0; while (iG < n && Gv[iG] < gMin) iG++;
         var iMax = n - 1;
-        var el = _earlyLine(Gv, p, iG, iMax, sigma);
+        // per-sample pressure noise with its lag-1 correlation (block quadratics), never below the second-difference σ
+        var nzP = _noiseAR(p, iG, iMax), sigEff = Math.max(sigma, nzP.sigma);
+        var el = _earlyLine(Gv, p, iG, iMax, sigEff, nzP.rho);
+        // cap the p-line window at the provisional derivative departure: the line must end one window L before G·dP/dG
+        // leaves the early line (a p-line can still run a little past a gentle closure within its noise)
+        if (el) {
+            var yt = _bourdet(Gv, p.map(function (v) { return -v; }), L), cx = [], cy = [], ci = [];
+            for (i = el.i0; i < n; i++) if (_fin(yt[i]) && Gv[i] > 0) { cx.push(Gv[i]); cy.push(yt[i]); ci.push(i); }
+            var gEnd = Gv[el.i1] * Math.exp(-L), ke = 0; while (ke + 1 < cx.length && ci[ke + 1] <= el.i1 && cx[ke + 1] <= gEnd) ke++;
+            var ly = ke >= 5 ? _yLineRobust(cx, cy, 0, ke, 0.02) : null;
+            if (ly) {
+                var kS = 1; while (kS < ke && cx[kS] < cx[0] * Math.exp(L + 0.02)) kS++;
+                var nzY = _lineNoise(cx, cy, ly, 0, ke), dpv = _departure(cx, cy, ly, kS, 0.02, nzY.sigma, nzY.rho);
+                if (dpv && ci[dpv.i] <= el.i1) {
+                    var gCap = cx[dpv.i] * Math.exp(-L), j1 = el.i0;
+                    while (j1 + 1 <= el.i1 && Gv[j1 + 1] <= gCap) j1++;
+                    var wfc = (j1 - el.i0 >= 5 && Math.log(Gv[j1] / Gv[el.i0]) >= 0.5) ? _winFits(_prefix(Gv, p), Gv, el.i0, j1) : null;
+                    if (wfc) el = { a: wfc.lin.a, b: wfc.lin.b, i0: el.i0, i1: j1, seA: wfc.lin.seA, s: wfc.lin.s, n: wfc.lin.n, capped: true };
+                }
+            }
+        }
         var isip = _fin(opts.isip) ? opts.isip : (el ? el.a : p[0]);
         var mG = el ? -el.b : null;
         var dpI = p.map(function (v) { return isip - v; });
@@ -1288,7 +1522,7 @@
             earlyWin: el ? [Gv[el.i0], Gv[el.i1]] : [gMin, gMin], h: null, axis: { GdPdG: axis(GdPdG), dPdG: axis(dPdG) },
             L: L, gMin: gMin, gMinWhy: why, usable: usable, sigmaY: sigmaY, ev: ['G1'],
             // extras (not in the §3.5 table; read by 56's own pick, ISIP and frac functions and by 57)
-            ts: ts, isip: isip, idx: idx, Gp: Gp, sigma: sigma, early: el ? { a: el.a, b: el.b, seA: el.seA, i0: el.i0, i1: el.i1, s: el.s, n: el.n } : null,
+            ts: ts, isip: isip, idx: idx, Gp: Gp, sigma: sigma, sigmaEff: sigEff, rho: _r(nzP.rho, 4), early: el ? { a: el.a, b: el.b, seA: el.seA, i0: el.i0, i1: el.i1, s: el.s, n: el.n } : null,
             gSpec: _isSpec(gc.fn) ? gc.fn : null, warnings: warnings
         };
     }
@@ -1598,10 +1832,7 @@
         var eps = o.eps || {}, epsC = _fin(eps.compliance) ? eps.compliance : 0.02, epsT = _fin(eps.tangent) ? eps.tangent : 0.02, epsL = _fin(eps.loglog) ? eps.loglog : 0.05;
         var v = _usableView(d), n = v.G.length, res = { picks: {}, iota: 0, hump: null, view: v, Lpick: d.Lpick != null ? d.Lpick : d0.L, line: null, noDeparture: false };
         if (n < 6) return res;
-        var sigY = Math.max(d.sigmaY || 0, 1e-9), sigP = Math.max(d.sigma || 0, 1e-6), Lw = _fin(d.Lpick) ? d.Lpick : d.L, i, j;
-        var sm = _movMed(v.s, 5);
-        var relN = 0;      // relative noise of dP/dG after the early window start (set once b is known)
-        function tolAt(k, base, cap) { return Math.min(cap, Math.max(0.001, 3 * relN)); }
+        var Lw = _fin(d.Lpick) ? d.Lpick : d.L, i, j;
         // 1. the early window (from the straight p-G segment), trimmed by the pick window at its end
         var gE0 = d.earlyWin ? d.earlyWin[0] : v.G[0], gE1 = d.earlyWin ? d.earlyWin[1] : v.G[n - 1];
         var e0 = 0; while (e0 < n && v.G[e0] < gE0) e0++;
@@ -1609,112 +1840,138 @@
         var e1 = e0; while (e1 + 1 < n && v.G[e1 + 1] <= gE1 * Math.exp(-Lw)) e1++;
         if (e1 - e0 < 3) e1 = Math.min(n - 1, e0 + 3);
         // 2. the G·dP/dG line over the early window: through the origin when |ι| < 0.05; one robust refit
-        var lfA = _linfit(v.G, v.y, e0, e1, false), iota0 = (lfA && lfA.b > 0) ? lfA.a / (lfA.b * v.G[e1]) : 0;
-        var origin = Math.abs(iota0) < 0.05, lf = _linfit(v.G, v.y, e0, e1, origin);
-        if (lf && lf.b > 0) {
-            var keepG = [], keepY = [];
-            for (i = e0; i <= e1; i++) { var yh0 = lf.a + lf.b * v.G[i]; if (Math.abs(v.y[i] - yh0) <= Math.max(3 * epsC * yh0, 3 * sigY)) { keepG.push(v.G[i]); keepY.push(v.y[i]); } }
-            var lf2 = keepG.length >= 4 ? _linfit(keepG, keepY, 0, keepG.length - 1, origin) : null;
-            if (lf2 && lf2.b > 0) lf = lf2;
-        }
-        if (!lf || !(lf.b > 0)) return res;
-        var b = lf.b;
+        var lf = _yLineRobust(v.G, v.y, e0, e1, epsC);
+        if (!lf) return res;
+        var iota0 = lf.iota, origin = lf.origin, b = lf.b;
         res.line = lf; res.iota = iota0;
-        relN = _noise2(v.s.slice(e0)) / b; res.relNoise = relN;
+        // absolute G·dP/dG noise (≈ constant in G) and its lag-1 correlation over the upper early window; the relative
+        // noise at a sample is σ_y/ŷ there (res.relNoise is its value at the window end)
+        var nz = _lineNoise(v.G, v.y, lf, e0, e1), sigY = Math.max(nz.sigma, 1e-9), rhoY = nz.rho;
         function yh(k) { return lf.a + lf.b * v.G[k]; }
-        function ecAt(k) { return Math.max(epsC, 3 * relN); }
+        var relN = sigY / Math.max(yh(e1), 1e-9); res.relNoise = relN; res.sigmaY = sigY; res.rhoY = rhoY;
+        var sm = _movMed(v.s, 5);
         // 3. PDL hump before the early window: dP/dG above (1 + ε)·b at the start, returning to b
         var hump = _hump(v, sm, b, e0, Math.max(epsC, 0.02));
         res.hump = hump;
-        // 4. the first departure from the line after the early window (held ≥ 3 points or ≥ 0.05 in ln G)
-        // the search starts half a ln unit before the window end: the p-line window may run slightly past a gentle closure
-        var iBack = e0 + 1; while (iBack < e1 && v.G[iBack] < v.G[e1] * Math.exp(-0.5)) iBack++;
-        var iDep = -1, down = false;
-        for (i = iBack; i < n; i++) {
-            var ec = ecAt(i), up = v.y[i] > (1 + ec) * yh(i);
-            if (!(up || v.y[i] < (1 - ec) * yh(i))) continue;
-            var held = 0;
-            for (j = i; j < n; j++) { var ej = ecAt(j); if (up ? v.y[j] > (1 + ej) * yh(j) : v.y[j] < (1 - ej) * yh(j)) held++; else break; }
-            if (held >= 3 || (held >= 2 && Math.log(v.G[i + held - 1] / v.G[i]) >= 0.05) || (j === n && held >= 2)) { iDep = i; down = !up; break; }
-        }
-        if (iDep < 0) { res.noDeparture = true; return res; }
-        // 5. compliance (upward departure): the onset refined on the pressure residual from the local straight segment
+        // 4. the first held departure from the line, searched from the window start (ε the floor, the local noise the scale)
+        // (from the first sample whose derivative window lies inside the early segment)
+        var eS = e0 + 1; while (eS < e1 && v.G[eS] < v.G[e0] * Math.exp(Lw + 0.02)) eS++;
+        var dep = _departure(v.G, v.y, lf, eS, epsC, sigY, rhoY);
+        if (!dep) { res.noDeparture = true; return res; }
+        var iDep = dep.i, down = dep.down, thrAt = dep.thr;
+        // 5. the onset by the hinge fit on the pressure: from ln 0.7 before the departure (inside the early window) to where
+        //    the derivative has moved by max(15 %, 2 thresholds) or ln 0.4 after it. A Bourdet window L shows a departure up
+        //    to L early (the derivative at G sees G·e^L), so the onset is searched up to G_dep·e^L and the derivative
+        //    criterion of the window end is read L back.
+        function kAt(gv) { var k = 0; while (k + 1 < n && v.G[k + 1] <= gv) k++; return k; }
+        var h0 = e0; while (h0 < iDep && v.G[h0] < v.G[iDep] * Math.exp(-0.7)) h0++;
+        var jMax = Math.max(iDep, kAt(v.G[iDep] * Math.exp(Lw))), h1 = jMax, gH = v.G[iDep] * Math.exp(0.4 + Lw);
+        while (h1 + 1 < n && v.G[h1 + 1] <= gH && Math.abs(dep.rel(kAt(v.G[h1 + 1] * Math.exp(-Lw)))) <= Math.max(0.15, 2 * thrAt(h1))) h1++;
+        h1 = Math.min(n - 1, Math.max(h1, jMax + 4));
+        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1);
+        if (hg && !(hg.G >= v.G[h0] && hg.G <= v.G[jMax])) hg = null;
+        // an abrupt break (a pressure interval falling ≥ 3 × faster than the early slope while the interval before it falls
+        // less than half as fast: a closure with an unbounded slope, as on an exact Carter after-closure line) is read at the start of
+        // that interval; neither the hinge shape nor a derivative peak can locate a jump between two samples
+        var brk = null;
         if (!down) {
-            var l0 = iDep, l1 = iDep;
-            while (l0 > e0 && v.G[l0 - 1] >= v.G[iDep] * Math.exp(-0.4)) l0--;
-            while (l1 > l0 && v.G[l1] > v.G[iDep] * Math.exp(-(Lw + 0.01))) l1--;
-            var pl = (l1 - l0 >= 3) ? _linfit(v.G, v.p, l0, l1, false) : _linfit(v.G, v.p, e0, e1, false), gOn = v.G[iDep], pOn = v.p[iDep];
-            if (pl) {
-                var thr = Math.max(3 * sigP, 0.01, 3 * pl.s), gLo = v.G[iDep] * Math.exp(-2 * Lw - 0.02), kOn = iDep;
-                for (j = iDep; j >= e0 && v.G[j] >= gLo; j--) { if ((pl.a + pl.b * v.G[j]) - v.p[j] <= thr) { kOn = j; break; } kOn = j; }
-                for (j = kOn; j < Math.min(n, iDep + 50); j++) { if ((pl.a + pl.b * v.G[j]) - v.p[j] > thr) break; kOn = j; }
-                gOn = v.G[kOn]; pOn = v.p[kOn];
-                if (kOn + 2 < n) {   // the residual grows ~ quadratically from the onset: √r is linear in G → extrapolate √r to zero
-                    var r1 = (pl.a + pl.b * v.G[kOn + 1]) - v.p[kOn + 1], r2 = (pl.a + pl.b * v.G[kOn + 2]) - v.p[kOn + 2];
-                    if (r1 > 0 && r2 > r1) {
-                        var g0x = v.G[kOn + 1] - Math.sqrt(r1) * (v.G[kOn + 2] - v.G[kOn + 1]) / (Math.sqrt(r2) - Math.sqrt(r1));
-                        gOn = _clampN(g0x, v.G[kOn], v.G[kOn + 1]); pOn = pl.a + pl.b * gOn;
-                    }
-                }
-            }
-            res.picks.compliance = { k: iDep, G: gOn, p: pOn, down: false, line: lf, departRel: (v.y[iDep] - yh(iDep)) / Math.max(yh(iDep), 1e-9),
+            var sl = function (k) { return (v.p[k] - v.p[k + 1]) / Math.max(v.G[k + 1] - v.G[k], 1e-12); }, kb = -1;
+            for (i = Math.max(e0, iDep - 2); i <= Math.min(n - 2, jMax + 1); i++) if (kb < 0 || sl(i) > sl(kb)) kb = i;
+            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) brk = { k: kb, G: v.G[kb], p: v.p[kb], se: b * (v.G[kb + 1] - v.G[kb]) / (2 * Math.sqrt(3)) };
+        }
+        res.abrupt = !!brk;
+        if (!down) {
+            var gOn = v.G[iDep], pOn = v.p[iDep], kOn = iDep, seOn = null;
+            if (brk) { gOn = brk.G; pOn = brk.p; kOn = brk.k; seOn = brk.se; }
+            else if (hg) { gOn = hg.G; pOn = hg.p; kOn = kAt(gOn); seOn = hg.se; }
+            res.picks.compliance = { k: kOn, G: gOn, p: pOn, se: seOn, down: false, line: lf, departRel: dep.rel(iDep), hinge: hg,
                 text: 'G·dP/dG leaves the early ' + (origin ? 'line through the origin' : 'straight line') + ' upward at G ' + _f1(gOn, 2) + ' (ε ' + _f1(epsC, 3) + ').' };
         }
-        // 6. tangent through the origin: the end of the stiffening (peak of dP/dG after an upward departure) or, after a
-        //    downward departure, the end of the early plateau (s* = b); noise-local tolerance ≤ ε_tangent, two dips allowed
+        // 6. tangent through the origin. After an upward departure: s* = max dP/dG and the touch point is where y/G is largest,
+        //    i.e. the vertex of a concave quadratic (ln G) fitted to dP/dG where it stays within (1 − δ)·s*,
+        //    δ = max(ε_tangent, 3σ_s/s*) (§4.7: ε the floor, the noise the scale). The vertex is read on a derivative with a
+        //    short window (L ≤ 0.02): a long Bourdet window drags an asymmetric peak late. A flat top longer than 0.5 ln
+        //    units keeps the §4.7 plateau-end rule. After a downward departure the compliance and tangent picks coincide at
+        //    the onset of the decline (the hinge).
         var tg = null;
         if (!down) {
-            var cs = (relN < 0.005) ? v.s : sm, iPk = iDep;
+            var cs = sm, iPk = iDep;
             for (i = iDep; i < n; i++) if (cs[i] > cs[iPk]) iPk = i;
             if (iPk < n - 2) {
-                var sStar = cs[iPk], iT = iPk, dips = 0;
-                for (j = iPk + 1; j < n; j++) { if (cs[j] >= (1 - tolAt(j, sStar, epsT)) * sStar) { iT = j; dips = 0; } else if (++dips > 2) break; }
-                var gT = v.G[iT], pT = v.p[iT], sPk = sStar;
-                if (iT === iPk && iPk > 0) {
-                    var x0 = Math.log(v.G[iPk - 1]), x1 = Math.log(v.G[iPk]), x2 = Math.log(v.G[iPk + 1]), y0 = cs[iPk - 1], y1 = cs[iPk], y2 = cs[iPk + 1];
-                    var den = (x0 - x1) * (x0 - x2) * (x1 - x2);
-                    if (den !== 0) {
-                        var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
-                        if (A2 < 0) { var xv = _clampN(-B2 / (2 * A2), x0, x2); gT = Math.exp(xv); pT = _pAtG(d, gT); sPk = Math.max(sStar, A2 * xv * xv + B2 * xv + (y0 - A2 * x0 * x0 - B2 * x0)); }
-                    }
-                } else if (iT + 1 < n && cs[iT] > cs[iT + 1]) {
-                    var f = _clampN((cs[iT] - (1 - tolAt(iT, sStar, epsT)) * sStar) / (cs[iT] - cs[iT + 1]), 0, 1);
-                    gT = v.G[iT] + f * (v.G[iT + 1] - v.G[iT]); pT = v.p[iT] + f * (v.p[iT + 1] - v.p[iT]);
+                // the vertex window: the smallest L in {0, 0.01, 0.02} (≤ the pick L) whose dP/dG noise near the peak is
+                // ≤ 0.3 % of s* — the vertex is read as unsmoothed as the noise allows, whatever the detection window L
+                var Lv = Math.min(Lw, 0.02), sv = v.s, csv = relN < 0.005 ? v.s : cs, negP = null, LvC = [0, 0.01, 0.02];
+                for (var lc = 0; lc < LvC.length; lc++) {
+                    var Lc = LvC[lc]; if (Lc >= Lw) break;
+                    negP = negP || v.p.map(function (x) { return -x; });
+                    var yc = _bourdet(v.G, negP, Lc), sc = yc.map(function (x, k) { return _fin(x) ? Math.max(0, x / v.G[k]) : NaN; });
+                    var w0 = Math.max(0, iPk - 15), w1 = Math.min(n - 1, iPk + 15), nzc = _noise2(sc, w0, w1);
+                    if (lc === LvC.length - 1 || (cs[iPk] > 0 && nzc / cs[iPk] <= 0.003)) { Lv = Lc; sv = sc; csv = Lc === 0 && nzc / cs[iPk] <= 0.0005 ? sc : _movMed(sc, 5); break; }
                 }
-                tg = { k: iT, G: gT, p: pT, sStar: sPk, iPk: iPk, noise: relN * b / sStar, tol: tolAt(iT, sStar, epsT) };
+                // the short-window peak near the smoothed one (the long window moves it later, never earlier by more than L)
+                var q0 = kAt(v.G[iPk] * Math.exp(-Lw - 0.05)), q1 = kAt(v.G[iPk] * Math.exp(0.05)), jPk = iPk;
+                for (i = Math.max(iDep, q0); i <= q1; i++) if (_fin(csv[i]) && (!_fin(csv[jPk]) || csv[i] > csv[jPk])) jPk = i;
+                var sStar = _fin(csv[jPk]) ? csv[jPk] : cs[iPk], sigS = sigY * (Lv > 0 && Lw > Lv ? Lw / Lv : 1);
+                var dl = function (k) { return Math.max(epsT, 3 * dep.c * sigS / Math.max(sStar * v.G[k], 1e-9)); };
+                var k0 = jPk, k1 = jPk, dips = 0;
+                while (k0 - 1 > iDep && _fin(csv[k0 - 1]) && csv[k0 - 1] >= (1 - dl(k0 - 1)) * sStar) k0--;
+                for (j = jPk + 1; j < n; j++) { if (_fin(csv[j]) && csv[j] >= (1 - dl(j)) * sStar) { k1 = j; dips = 0; } else if (++dips > 2) break; }
+                var gT = v.G[jPk], pT = v.p[jPk], sPk = sStar, vx = null, seT = null;
+                if (brk && jPk >= brk.k - 1 && jPk <= brk.k + 1) { gT = brk.G; pT = brk.p; seT = brk.se; }     // the peak is the break itself
+                else if (Math.log(v.G[k1] / v.G[k0]) > 0.5) {                 // a plateau: its end (§4.7)
+                    gT = v.G[k1]; pT = v.p[k1];
+                    if (k1 + 1 < n && csv[k1] > csv[k1 + 1]) {
+                        var f = _clampN((csv[k1] - (1 - dl(k1)) * sStar) / (csv[k1] - csv[k1 + 1]), 0, 1);
+                        gT = v.G[k1] + f * (v.G[k1 + 1] - v.G[k1]); pT = v.p[k1] + f * (v.p[k1 + 1] - v.p[k1]);
+                    }
+                } else {
+                    // at least ±1 sample (±3 when the derivative noise is above 0.2 %) around the peak; raw short-window values
+                    var hw = (sigS / Math.max(sStar * v.G[jPk], 1e-9) > 0.002) ? 2 : 1;
+                    var r0 = Math.max(iDep, Math.min(k0, jPk - hw)), r1 = Math.min(n - 1, Math.max(k1, jPk + hw));
+                    vx = _vertex(v.G, sv, r0, r1) || _vertex(v.G, csv, Math.max(0, jPk - 1), Math.min(n - 1, jPk + 1));
+                    if (vx) { gT = vx.G; pT = _pAtG(d, gT); sPk = Math.max(sStar, vx.s); seT = _fin(vx.seLn) ? sPk * gT * vx.seLn : null; }
+                }
+                tg = { k: kAt(gT), G: gT, p: pT, se: seT, sStar: sPk, iPk: jPk, noise: sigS / Math.max(sPk * gT, 1e-9), tol: dl(kAt(gT)) };
             } else res.noDeparture = true;     // still stiffening at the end of the data
         } else {
-            var cs2 = (relN < 0.005) ? v.s : sm, iP = iBack, dps = 0;
-            for (j = iBack; j < n; j++) { if (cs2[j] >= (1 - tolAt(j, b, epsT)) * b) { iP = j; dps = 0; } else if (++dps > 2) break; }
-            if (iP < n - 2) {
-                var gP = v.G[iP], pP = v.p[iP];
-                if (cs2[iP] > cs2[iP + 1]) {
-                    var fp = _clampN((cs2[iP] - (1 - tolAt(iP, b, epsT)) * b) / (cs2[iP] - cs2[iP + 1]), 0, 1);
-                    gP = v.G[iP] + fp * (v.G[iP + 1] - v.G[iP]); pP = v.p[iP] + fp * (v.p[iP + 1] - v.p[iP]);
-                }
-                tg = { k: iP, G: gP, p: pP, sStar: b, iPk: iP, noise: relN, tol: tolAt(iP, b, epsT) };
-                res.picks.compliance = { k: iP, G: gP, p: pP, down: true, line: lf, departRel: 0,
+            var gP = null, pP = null, kP = iDep, seP = null;
+            if (hg) { gP = hg.G; pP = hg.p; kP = kAt(gP); seP = hg.se; }
+            else {                                   // the plateau end with the §4.7 tolerance (no hinge)
+                var iP = e0 + 1, dps = 0;
+                for (j = e0 + 1; j < n; j++) { if (sm[j] >= (1 - thrAt(j)) * b) { iP = j; dps = 0; } else if (++dps > 2) break; }
+                if (iP < n - 2) { gP = v.G[iP]; pP = v.p[iP]; kP = iP; }
+            }
+            if (gP !== null) {
+                tg = { k: kP, G: gP, p: pP, se: seP, sStar: b, iPk: kP, noise: sigY / Math.max(b * gP, 1e-9), tol: thrAt(kP) };
+                res.picks.compliance = { k: kP, G: gP, p: pP, se: seP, down: true, line: lf, departRel: 0, hinge: hg,
                     text: 'G·dP/dG first leaves the early line downward, so the compliance and tangent picks coincide at G ' + _f1(gP, 2) + '.' };
             } else res.noDeparture = true;
         }
         if (tg) {
             tg.text = 'The tangent through the origin touches G·dP/dG up to G ' + _f1(tg.G, 2) + ' (largest dP/dG ' + _f1(tg.sStar, 2) + ' psi per unit G).';
             res.picks.tangent = tg;
-            // dependent F2 members: the dP/dG maximum and the √t inflection, searched after the early window up to 1.5 × G_tangent
-            var iM = -1, iS2 = -1, gLim = 1.5 * tg.G;
+            // dependent F2 members: the dP/dG maximum and the √t inflection (smoothed, vertex-refined), searched after the
+            // early window up to 1.5 × G_tangent
+            var iM = -1, iS2 = -1, gLim = 1.5 * tg.G, smd = _movMed(v.sd, 5);
             for (i = Math.max(e1, 0); i < n && v.G[i] <= gLim; i++) {
-                if (iM < 0 || v.s[i] > v.s[iM]) iM = i;
-                if (_fin(v.sd[i]) && (iS2 < 0 || v.sd[i] > v.sd[iS2])) iS2 = i;
+                if (_fin(sm[i]) && (iM < 0 || sm[i] > sm[iM])) iM = i;
+                if (_fin(smd[i]) && (iS2 < 0 || smd[i] > smd[iS2])) iS2 = i;
             }
-            if (iM >= 0) res.picks.maxdpdg = { k: iM, G: v.G[iM], p: v.p[iM], text: 'dP/dG is largest at G ' + _f1(v.G[iM], 2) + '.' };
-            if (iS2 >= 0) res.picks.sqrt = { k: iS2, G: v.G[iS2], p: v.p[iS2], text: 'The square-root-of-time derivative is largest at √Δt ' + _f1(Math.sqrt(v.dt[iS2] * 60), 2) + ' min^½.' };
+            if (iM >= 0) {
+                var vm = (iM > 0 && iM < n - 1) ? _vertex(v.G, sm, iM - 1, iM + 1) : null, gM = vm ? vm.G : v.G[iM];
+                res.picks.maxdpdg = { k: iM, G: gM, p: vm ? _pAtG(d, gM) : v.p[iM], text: 'dP/dG is largest at G ' + _f1(gM, 2) + '.' };
+            }
+            if (iS2 >= 0) {
+                var vs = (iS2 > 0 && iS2 < n - 1) ? _vertex(v.dt, smd, iS2 - 1, iS2 + 1) : null, gS = vs ? _GatD(d, vs.G / d.tp) : v.G[iS2];
+                res.picks.sqrt = { k: iS2, G: gS, p: vs ? _pAtG(d, gS) : v.p[iS2], text: 'The square-root-of-time derivative is largest at √Δt ' + _f1(Math.sqrt((vs ? vs.G : v.dt[iS2]) * 60), 2) + ' min^½.' };
+            }
         }
-        // crel (same evidence as compliance): the first p where C_rel = b/(dP/dG) < 1 − ε for ≥ 3 points
+        // crel (same evidence as compliance): the first p where C_rel = b/(dP/dG) < 1 − max(ε, local noise) for the hold count
         if (res.picks.compliance && !down) {
-            for (i = Math.max(e0 + 1, e1); i < n; i++) {
-                if (b / Math.max(v.s[i], 1e-12) < 1 - Math.max(epsC, tolAt(i, b, 1))) {
-                    var h2 = 0; for (j = i; j < n && b / Math.max(v.s[j], 1e-12) < 1 - Math.max(epsC, tolAt(j, b, 1)); j++) h2++;
-                    if (h2 >= 3 || j === n) { res.picks.crel = { k: i, G: v.G[i], p: v.p[i], text: 'The relative compliance falls below ' + _f1(1 - epsC, 3) + ' at ' + _f0(v.p[i]) + ' psia.' }; break; }
+            for (i = Math.max(e0 + 1, e1 < iDep ? e1 : iDep); i < n; i++) {
+                if (b / Math.max(sm[i], 1e-12) < 1 - thrAt(i)) {
+                    var h2 = 0; for (j = i; j < n && b / Math.max(sm[j], 1e-12) < 1 - thrAt(j); j++) h2++;
+                    if (h2 >= Math.max(3, dep.nHold) || j === n) { res.picks.crel = { k: i, G: v.G[i], p: v.p[i], text: 'The relative compliance falls below ' + _f1(1 - epsC, 3) + ' at ' + _f0(v.p[i]) + ' psia.' }; break; }
                 }
             }
         }
@@ -1743,14 +2000,15 @@
         var ov = { derivs: d };
         function mk(m, fam, src, o) { var oo = {}; for (var k in ov) oo[k] = ov[k]; for (k in o) oo[k] = o[k]; oo.G = src.G; oo.p = src.p; oo.dt = _dtAtG(d, src.G); oo.text = src.text; return _pick(m, fam, v, src.k, oo); }
         var dtDcT = P.tangent ? _dtAtG(d, P.tangent.G) / d.tp : null;
-        if (P.compliance) out.push(mk('compliance', 'F1', P.compliance, { vote: true, ev: 'C2', se: Math.max(d.sigma, 0.5) }));
+        var seOf = function (src) { return Math.max(d.sigma, 0.5, _fin(src.se) ? src.se : 0); };
+        if (P.compliance) out.push(mk('compliance', 'F1', P.compliance, { vote: true, ev: 'C2', se: seOf(P.compliance) }));
         if (P.crel) out.push(mk('crel', 'F1', P.crel, { vote: false, same: 'compliance', ev: 'C6' }));
         if (P.loglog) {
             var indep = Math.abs(cf.iota) >= 0.05;
             out.push(mk('loglog', 'F1', P.loglog, { vote: indep, same: indep ? null : 'compliance', ev: 'C7' }));
             if (!indep) out[out.length - 1].evidence.push({ text: _txt('iota ' + _f1(cf.iota, 3) + ' is below 0.05: the log-log departure is the compliance test with another ε (same evidence).'), ev: ['C7'] });
         }
-        if (P.tangent) out.push(mk('tangent', 'F2', P.tangent, { vote: true, ev: 'C3' }));
+        if (P.tangent) out.push(mk('tangent', 'F2', P.tangent, { vote: true, ev: 'C3', se: seOf(P.tangent) }));
         if (P.sqrt) out.push(mk('sqrt', 'F2', P.sqrt, { vote: false, same: (dtDcT !== null && dtDcT > 5) ? 'tangent' : null, ev: 'C4' }));
         if (P.maxdpdg) out.push(mk('maxdpdg', 'F2', P.maxdpdg, { vote: false, same: 'tangent', ev: 'C5' }));
         if (P.fissure) out.push(mk('fissure', 'F0', P.fissure, { vote: false, ev: 'C10' }));
@@ -1861,7 +2119,9 @@
         for (var j = 0; j < n; j++) { var e = []; for (var i = 0; i < n; i++) e.push(i === j ? 1 : 0); var x = _solve(A, e); if (!x) return null; cols.push(x); }
         return A.map(function (_, i) { return cols.map(function (c) { return c[i]; }); });
     }
+    var _vcCalls = 0;     // variable-compliance fits made (the consensus reads the count: none may run inside the grid)
     G.PRiSM_dfit_varComplianceFit = _safe(function (derivs, ctx, opts) {
+        _vcCalls++;
         ctx = ctx || {}; opts = opts || {};
         if (!_okRes(derivs) || !Array.isArray(derivs.G) || !_fin(derivs.mG)) return _fail('BAD_INPUT', 'Derivatives with an early slope are needed.', ['derivs']);
         var d = derivs, P = ctx.picks || (_closedForm(d, {}).picks);
@@ -2319,18 +2579,21 @@
         for (i = 3; i < n - 3; i++) mr += r[i];
         mr /= Math.max(1, n - 6);
         // winsorised at 3σ (σ from second differences): curvature left by the smoother at a closure kink is not noise
-        var sg = Math.max(prep.sigma || 0, 1e-9);
-        for (i = 0; i < n; i++) r[i] = (i >= 3 && i < n - 3) ? _clampN(r[i] - mr, -3 * sg, 3 * sg) : 0;
+        var sg = Math.max(prep.sigma || 0, derivs.sigmaEff || 0, 1e-9), keep = new Array(n);
+        // where the smoother misses by more than 5σ (a closure jump, a kink) the resamples keep the data (±3 samples, no
+        // residual): smoothing across a break would move the break in every resample
+        for (i = 3; i < n - 3; i++) if (Math.abs(r[i] - mr) > 5 * sg) for (j = i - 3; j <= i + 3; j++) keep[j] = 1;
+        for (i = 0; i < n; i++) { if (keep[i]) { sm[i] = p[i]; r[i] = 0; } else r[i] = (i >= 3 && i < n - 3) ? _clampN(r[i] - mr, -3 * sg, 3 * sg) : 0; }
         var num = 0, den = 0; for (i = 4; i < n - 3; i++) { num += r[i] * r[i - 1]; den += r[i] * r[i]; }
         var rho = den > 0 ? _clampN(num / den, -0.99, 0.99) : 0, bl = Math.min(50, Math.max(5, Math.round(2 / (1 - Math.max(rho, 0)))));
-        return { idx: idx, sm: sm, r: r, bl: bl, rng: _rng(seed == null ? 1 : seed), rho: rho };
+        return { idx: idx, sm: sm, r: r, keep: keep, bl: bl, rng: _rng(seed == null ? 1 : seed), rho: rho };
     }
     function _bootPrep(prep, bs) {
         var n = bs.idx.length, pw = prep.pw.slice(), pool = [], i;
-        for (i = 3; i < n - 3; i++) pool.push(bs.r[i]);
+        for (i = 3; i < n - 3; i++) if (!bs.keep[i]) pool.push(bs.r[i]);
         var out = [], m = pool.length;
         while (out.length < n && m > 0) { var st = Math.floor(bs.rng() * Math.max(1, m - bs.bl + 1)); for (i = 0; i < bs.bl && out.length < n; i++) out.push(pool[Math.min(m - 1, st + i)]); }
-        for (i = 0; i < n; i++) pw[bs.idx[i]] = bs.sm[i] + (out[i] || 0);
+        for (i = 0; i < n; i++) pw[bs.idx[i]] = bs.sm[i] + (bs.keep[i] ? 0 : (out[i] || 0));
         var cp = {}; for (var k in prep) cp[k] = prep[k];
         cp.pw = pw;
         return cp;
@@ -2342,14 +2605,18 @@
             e2.ts = it.ts;
             e2.tp = { pump: it.ts - ev.tStart, breakdown: _fin(ev.tb) ? it.ts - ev.tb : null, veq: ev.tp ? ev.tp.veq : null };
             var key = it.L + '|' + it.tp + '|' + it.sh;      // the two ε settings share one derivative
+            if (st.cache[key]) st.counts.cacheHits++;
             d = st.cache[key] || (st.cache[key] = _derivsCore(prep, e2, { L: it.L, tp: it.tp, alpha: base.alpha, alphaGeneral: base.alphaGeneral, isip: base.isip, gMin: base.gMinUser, hammer: base.hammer, bleed: base.bleed }));
             epsO.compliance = it.eps; epsO.tangent = it.eps;
         } else {
             d = _derivsCore(_bootPrep(prep, st.boot), ev, { L: base.L, tp: base.tp, alpha: base.alpha, alphaGeneral: base.alphaGeneral, isip: base.isip, gMin: base.gMinUser, hammer: base.hammer, bleed: base.bleed });
         }
-        st.counts.evals += CF_METHODS.length;
         if (!_okRes(d)) return;
-        var cf = _closedForm(d, { eps: epsO });
+        st.counts.evals += CF_METHODS.length;     // one closed-form evaluation reads all seven methods
+        // a grid setting is evaluated at its own L (Lpick = L): the noise-limited pick window of the nominal reading would
+        // collapse L ∈ {0.05, 0.1, 0.2} onto one derivative and hide the window sensitivity
+        var cf = _closedForm(d, it.kind === 'grid' ? { eps: epsO, Lpick: it.L } : { eps: epsO });
+        st.counts.cf++;
         CF_METHODS.forEach(function (m) {
             var pk = cf.picks[m];
             if (pk && _fin(pk.p)) {
@@ -2360,6 +2627,7 @@
     }
     function _consensusFinish(picks, derivs, ctx, st) {
         var I = st.I, sigG = _fin(ctx.sigmaGauge) ? ctx.sigmaGauge : (derivs.sigma || 0);
+        st.counts.vcInGrid = _vcCalls - (st.counts.vcBefore || 0);
         if (_isObj2(ctx._debug)) ctx._debug.st = st;
         var isip = _isipVal(ctx.isip); if (isip === null) isip = derivs.isip;
         var vot = _voters(picks), methods = {}, fams = { F0: null, F1: null, F2: null, F3: null, F4: null }, samples = { F1: [], F2: [], F4: [] };
@@ -2377,6 +2645,13 @@
             }
             var arr = st.samples[pk.method] && st.samples[pk.method].length ? st.samples[pk.method] : [pk.p];
             fams[f] = _stat(arr, sigG);
+            // the pick's own noise-limited uncertainty (hinge SSR profile or vertex se) is added in quadrature to the grid and
+            // bootstrap band: a residual bootstrap about a local smoother keeps the realisation's slow noise in every
+            // resample and so under-reports how far noise can move an onset that is only weakly curved
+            if (fams[f] && _fin(pk.se) && pk.se > 0) {
+                var e = 1.2816 * pk.se, m50 = fams[f].p50, lo = m50 - Math.sqrt(Math.pow(m50 - fams[f].p10, 2) + e * e), hi = m50 + Math.sqrt(Math.pow(fams[f].p90 - m50, 2) + e * e);
+                fams[f].p10 = _r(lo, 2); fams[f].p90 = _r(hi, 2); fams[f].sigma = _r(Math.max((hi - lo) / 2.563, 1, 2 * (sigG || 0)), 3);
+            }
             samples[f] = arr.map(function (x) { return _r(x, 2); });
         });
         // cross-check families (no vote): F0 fissure from its samples, F3 from the LM CI / model pick
@@ -2551,7 +2826,7 @@
         var st = null, base = null;
         if (!bad) {
             var I = plan.I;
-            st = { I: I, counts: { evals: 0, refits: 0 }, samples: {}, tags: {}, boot: null, cache: {} };
+            st = { I: I, counts: { evals: 0, refits: 0, cf: 0, cacheHits: 0, vcBefore: _vcCalls }, samples: {}, tags: {}, boot: null, cache: {} };
             CF_METHODS.forEach(function (m) { st.samples[m] = []; st.tags[m] = []; });
             base = { prep: ctx.prep, events: ctx.events, L: derivs.L, tp: derivs.tpChoice, alpha: I.options.alpha, alphaGeneral: I.options.alphaGeneral,
                      isip: _isipVal(ctx.isip) !== null ? _isipVal(ctx.isip) : derivs.isip, gMinUser: _fin(I.options.gMin) ? I.options.gMin : null,
