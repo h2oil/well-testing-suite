@@ -136,6 +136,29 @@ function _bourdetOnLn(lx, y, L) {
     var n = lx.length, d = new Array(n), i;
     for (i = 0; i < n; i++) d[i] = NaN;
     if (n < 3) return d;
+    // O(n) window: with every ln x finite and non-decreasing the two edges of
+    // the outward walk move monotonically (identical edges, identical result).
+    var mono = true;
+    for (i = 0; i < n; i++) if (!_num(lx[i]) || (i > 0 && !(lx[i] >= lx[i - 1]))) { mono = false; break; }
+    if (mono) {
+        var m = -1, r = 1;
+        for (i = 1; i < n - 1; i++) {
+            if (!_num(y[i])) continue;
+            var j1 = i - 1, j2 = i + 1;
+            if (L > 0) {
+                while (m + 1 <= i - 1 && lx[i] - lx[m + 1] >= L) m++;
+                j1 = m > 0 ? m : 0;
+                if (r < i + 1) r = i + 1;
+                while (r < n - 1 && lx[r] - lx[i] < L) r++;
+                j2 = r;
+            }
+            var e1 = lx[i] - lx[j1], e2 = lx[j2] - lx[i], eT = lx[j2] - lx[j1];
+            if (!_num(e1) || !_num(e2) || !_num(eT) || e1 === 0 || e2 === 0 || eT === 0) continue;
+            if (!_num(y[j1]) || !_num(y[j2])) continue;
+            d[i] = (y[i] - y[j1]) / e1 * (e2 / eT) + (y[j2] - y[i]) / e2 * (e1 / eT);
+        }
+        return d;
+    }
     for (i = 1; i < n - 1; i++) {
         if (!_num(lx[i]) || !_num(y[i])) continue;
         var i1 = i - 1, i2 = i + 1;

@@ -100,6 +100,17 @@
         return G.PRiSM_state;
     }
 
+    // Workspace-mode extension of the current mode (PRiSM_modeExt, §3.12 of the
+    // DFIT plan), resolved at call time; null in the built-in modes.
+    function curModeExt() {
+        if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+        var m = G.PRiSM && G.PRiSM.mode, X = G.PRiSM_modeExt;
+        if (typeof m !== 'string' || m === 'transient' || m === 'decline' || m === 'combined') return null;
+        var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, m)) ? X[m] : null;
+        return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+    }
+    function curModeKey() { return (G.PRiSM && typeof G.PRiSM.mode === 'string') ? G.PRiSM.mode : 'transient'; }
+
     function dispatch(type, detail) {
         if (typeof G.dispatchEvent !== 'function') return;
         try {
@@ -1064,6 +1075,13 @@
     function PRiSM_renderRail(railEl) {
         railEl = railEl || $('prism_rail');
         if (!railEl) return null;
+        syncUndoExtras();
+        var ext = curModeExt();
+        if (ext && typeof ext.rail === 'function') {
+            try { ext.rail(railEl); }
+            catch (e) { railEl.innerHTML = '<div class="prism-rail-body"><div class="prism-rail-warn prism-rail-warn--bad"><span>Results unavailable: ' + esc(e && e.message) + '</span></div></div>'; }
+            return null;
+        }
         ensureStyle();
         var info;
         try { info = railInfo(); } catch (e) {
@@ -1573,6 +1591,12 @@
     }
 
     function PRiSM_analyse(opts) {
+        var ext = curModeExt();
+        if (ext && typeof ext.analyse === 'function') {
+            var r;
+            try { r = ext.analyse(opts || {}); } catch (e) { return Promise.reject(e); }
+            return (r && typeof r.then === 'function') ? r : Promise.resolve(r);
+        }
         if (_analyseRun) return _analyseRun;
         opts = opts || {};
         var t0 = now();
@@ -2190,10 +2214,27 @@
     }
 
     function listTools() {
-        var out = [], seen = {};
+        var out = [], seen = {}, ids = {};
         TOOL_CATALOGUE.forEach(function (t) {
             seen[t.fn] = true;
+            ids[t.id] = true;
             out.push({ id: t.id, title: t.title, sub: t.sub, group: t.group, fn: t.fn, args: t.args, available: typeof G[t.fn] === 'function' });
+        });
+        // Extra catalogue entries (PRiSM_toolCatalogueExtra: {id, fn, group, title,
+        // sub, modes:[…]|'*'}). Every named fn is marked as seen BEFORE the mode
+        // filter, so the discovery below never lists it under "More".
+        var extra = isArr(G.PRiSM_toolCatalogueExtra) ? toArr(G.PRiSM_toolCatalogueExtra) : [];
+        extra.forEach(function (t) { if (t && typeof t.fn === 'string') seen[t.fn] = true; });
+        var mk = curModeKey();
+        extra.forEach(function (t) {
+            if (!t || t.id == null || ids[String(t.id)]) return;
+            var md = t.modes;
+            if (md !== undefined && md !== '*' && !(isArr(md) && toArr(md).indexOf(mk) !== -1)) return;
+            ids[String(t.id)] = true;
+            var item = { id: String(t.id), title: String(t.title || t.id), sub: String(t.sub || ''), group: String(t.group || 'More'), args: t.args };
+            if (typeof t.fn === 'function') { item.render = t.fn; item.available = true; }
+            else { item.fn = t.fn; item.available = typeof G[t.fn] === 'function'; }
+            out.push(item);
         });
         // Discover any other exported panel renderer so nothing is orphaned.
         var keys = [];
@@ -2219,6 +2260,7 @@
                 if (!isArr(arr)) return;
                 toArr(arr).forEach(function (spec) {
                     if (!spec || typeof spec.render !== 'function') return;
+                    if (!panelAllowedNow(n, spec)) return;
                     var title = String(spec.title || spec.id || 'Panel');
                     var hay = (String(spec.id || '') + ' ' + title).toLowerCase();
                     var dup = titles[title.toLowerCase()] || out.some(function (t) { return typeof G[t.fn] === 'function' && G[t.fn] === spec.render; }) ||
@@ -2233,6 +2275,18 @@
             });
         }
         return out;
+    }
+
+    // C7 panel filter for the drawer: spec.modes in every mode; when() too in
+    // an ext mode (built-in modes list every panel as before).
+    function panelAllowedNow(n, spec) {
+        if (typeof G.PRiSM_panelModeAllows === 'function') {
+            try { if (!G.PRiSM_panelModeAllows(parseInt(n, 10), spec)) return false; } catch (e) { return false; }
+        } else if (isArr(spec.modes) && toArr(spec.modes).indexOf(curModeKey()) === -1) return false;
+        if (curModeExt() && typeof spec.when === 'function') {
+            try { return !!spec.when(); } catch (e) { return false; }
+        }
+        return true;
     }
 
     function closeTools() {
@@ -2358,7 +2412,37 @@
     // =========================================================================
 
     var UNDO_CAP = 50;
-    var _undo = [], _redo = [], _cur = null, _restoring = false, _batch = 0;
+    var _undo = [], _redo = [], _cur = null, _restoring = false, _batch = 0, _userBatch = 0;
+    var _extraEvents = {};
+
+    // PRiSM_undoExtras = {key: {get() → JSON-safe, set(v), events?:[name]}},
+    // read at call time. Each extra's events become record triggers (installed
+    // once per event name; events with detail.source 'undo' / 'restore' are
+    // ignored). Called from the rail, snapshots, batches and undo / redo, so an
+    // extra registered after this file loaded is picked up on first use.
+    function undoExtras() {
+        var X = G.PRiSM_undoExtras;
+        if (!X || typeof X !== 'object') return [];
+        return Object.keys(X).filter(function (k) {
+            var e = X[k];
+            return e && typeof e.get === 'function' && typeof e.set === 'function';
+        }).map(function (k) { return { key: k, spec: X[k] }; });
+    }
+    function syncUndoExtras() {
+        if (typeof G.addEventListener !== 'function') return;
+        undoExtras().forEach(function (x) {
+            var evs = isArr(x.spec.events) ? toArr(x.spec.events) : [];
+            evs.forEach(function (type) {
+                if (typeof type !== 'string' || !type || _extraEvents[type]) return;
+                _extraEvents[type] = true;
+                G.addEventListener(type, function (ev) {
+                    var src = ev && ev.detail && ev.detail.source;
+                    if (src === 'undo' || src === 'restore') return;
+                    recordSnapshot(type);
+                });
+            });
+        });
+    }
 
     function snapObject() {
         var s = st(), pvt = G.PRiSM_pvt, well = null;
@@ -2366,7 +2450,7 @@
             well = {};
             for (var k in pvt) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(pvt, k)) well[k] = pvt[k];
         }
-        return {
+        var o = {
             model: s.model == null ? null : s.model,
             params: s.params || {},
             paramFreeze: s.paramFreeze || {},
@@ -2378,6 +2462,16 @@
             // Multi-rate table (rate history): seeded from the events log (39).
             multiRate: (G.PRiSM && Array.isArray(G.PRiSM.multiRate)) ? G.PRiSM.multiRate : []
         };
+        var xs = undoExtras();
+        if (xs.length) {
+            o.extras = {};
+            xs.forEach(function (x) {
+                var v;
+                try { v = x.spec.get(); } catch (e) { v = undefined; }
+                if (v !== undefined) o.extras[x.key] = v;
+            });
+        }
+        return o;
     }
     function snapString() {
         try { return JSON.stringify(snapObject()); } catch (e) { return null; }
@@ -2390,7 +2484,8 @@
     }
 
     function recordSnapshot(reason) {
-        if (_restoring || _batch > 0) return false;
+        if (_restoring || _batch > 0 || _userBatch > 0) return false;
+        syncUndoExtras();
         var s = snapString();
         if (s == null || s === _cur) return false;
         if (_cur != null) {
@@ -2434,6 +2529,15 @@
                 try { s.interp = G.PRiSM_interpretCurrentFit() || null; } catch (e) {}
             } else if (!s.lastFit) s.interp = null;
             if (typeof G.PRiSM_evalModelCurve === 'function') { try { G.PRiSM_evalModelCurve(s.model, s.params); } catch (e) {} }
+            // Undo extras: only the keys this snapshot carries (an older
+            // baseline without the key leaves the extra's state alone).
+            if (o.extras && typeof o.extras === 'object') {
+                undoExtras().forEach(function (x) {
+                    if (!Object.prototype.hasOwnProperty.call(o.extras, x.key)) return;
+                    try { x.spec.set(clone(o.extras[x.key])); }
+                    catch (e) { try { console.warn('PRiSM undo extra "' + x.key + '" failed:', e && e.message); } catch (_) {} }
+                });
+            }
             saveState();
             dispatch('prism:model-changed', { source: 'undo', modelKey: s.model });
             dispatch('prism:well-changed', { source: 'undo' });
@@ -2451,7 +2555,25 @@
         } catch (e) {}
         renderRailIfMounted();
         syncUndoButtons();
+        // Step views (any step) re-render with the restored state.
+        if (typeof G.PRiSM_refreshShell === 'function') { try { G.PRiSM_refreshShell({ stepView: true }); } catch (e) {} }
         return true;
+    }
+
+    // PRiSM_undoBatch('begin' | 'end'): nesting counter; the changes between the
+    // outermost begin and end are one undo step. The caller ends the batch on
+    // finish, cancel and reject. → the depth after the call.
+    function PRiSM_undoBatch(what) {
+        if (what === 'begin') {
+            if (_userBatch === 0) recordSnapshot('pre-batch');   // capture silent edits first
+            _userBatch++;
+        } else if (what === 'end') {
+            if (_userBatch > 0) {
+                _userBatch--;
+                if (_userBatch === 0) recordSnapshot('batch');
+            }
+        }
+        return _userBatch;
     }
 
     function PRiSM_undo() {
@@ -2547,6 +2669,10 @@
     G.PRiSM_canUndo = function () { return _undo.length > 0; };
     G.PRiSM_canRedo = function () { return _redo.length > 0; };
     G.PRiSM_recordSnapshot = recordSnapshot;
+    G.PRiSM_undoBatch = PRiSM_undoBatch;
+    G.PRiSM_undoExtrasSync = syncUndoExtras;
+    G.PRiSM_undoExtras = (G.PRiSM_undoExtras && typeof G.PRiSM_undoExtras === 'object') ? G.PRiSM_undoExtras : {};
+    G.PRiSM_toolCatalogueExtra = isArr(G.PRiSM_toolCatalogueExtra) ? G.PRiSM_toolCatalogueExtra : [];
     G.PRiSM_getReportPins = function () { return clone(isArr(st().reportPins) ? st().reportPins : []); };
     // Internal helpers, exposed for tests and for other layers' fallbacks.
     G.PRiSM_workflow = {
