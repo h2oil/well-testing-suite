@@ -7883,12 +7883,12 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
-    "prism": "dfit-aca-d 622 257 a72cc2e7,dfit-board-d 648 635 ecdfabd6,dfit-plan-d 549 223 f483ab3d,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
+    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
     "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 55bdbccf,view-p 780 1688 e516c6f6",
+    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -7909,7 +7909,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7972810;   // total size of the image files (the offline download label)
+  M.bytes = 7979112;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8243,7 +8243,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: '979c3468', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -8525,7 +8525,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: '58db2a4b', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -8563,8 +8563,8 @@ var prism = {
   { id: 'tools', view: 'desktop', target: 'viewport', alt: 'The Tools drawer', caption: 'The Tools drawer',
     setup: [{ click: '#prism_tools_btn' }, { waitFor: '#prism_tools_drawer' }] },
   df('dfit-tri', '#prism_panel_1_dfit-triage', 'Test triage', 1), df('dfit-board', '#prism_panel_2_dfit-board', 'Closure consensus', 3),
-  df('dfit-aca', '#prism_dfit_cv_dfitAcaLogLog', 'After-closure log-log, step ④', 4), df('dfit-plan', '#prism_dfit_design_out .rbox', 'DFIT designer (pre-job): the design', 0, [{ click: '#prism_tools_btn' },
-    { click: '[data-tool="dfit-designer"]' }, { click: '#prism_dfit_design_go' }, { waitFor: '#prism_dfit_design_out .rbox' }])],
+  df('dfit-aca', '#prism_dfit_cv_dfitAcaLogLog', 'After-closure log-log, step ④', 4), df('dfit-plan', '#prism_dfit_design_head', 'DFIT designer (pre-job): the design and its shut-in verdict', 0, [{ click: '#prism_tools_btn' },
+    { click: '[data-tool="dfit-designer"]' }, { click: '#prism_dfit_design_go' }, { waitFor: '#prism_dfit_design_head' }])],
   parts: [
   { id: 'step-1', title: '① Data', what: ['Load the record, check how it was read, enter the well and fluid.'],
     steps: ['Select **Load data** (file or paste) or **Try demo data**.', 'Check **Column Mapping** and **Units**, then **Apply mapping**.',
@@ -8589,18 +8589,19 @@ var prism = {
   { id: 'tools', title: 'Tools drawer', what: ['PVT, tide, datasets, deconvolution, gas m(p), deliverability, rate-transient, plot tools, decline, saved fits.'],
     steps: ['Select **Tools**, then a panel; it opens on its own step.', 'Use deconvolution for multi-rate data.', 'Save and compare fits in the fit workspace.'] },
   { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
-    steps: ['Select Test **DFIT (fracture injection)**.', 'Load the record (rate in bbl/min) or a demo: Load demo DFIT.', 'Enter the datum TVD and wellbore; tick psig channels.',
-      { t: 'Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
-    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.'],
+    steps: ['Select Test **DFIT (fracture injection)**.', 'Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.',
+      { t: 'Read the triage checks, re-pump verdict and grade A–D (provisional).', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
-  { id: 'dfit-closure', title: 'DFIT ② ISIP, ③ closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
+  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
     steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
       'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
-  { id: 'dfit-aca', title: 'DFIT ④ p_i and k', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
-    steps: [{ t: 'Set the origin; read F_L, F_R, [[glossary#impulse|impulse]], log-log.', shot: 'dfit-aca' }, 'Leak-off model: sandbox, or Fit to the record.', 'Uncertainty: P10/P50/P90.'] },
+  { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
+    steps: [{ t: 'Set the origin; read the log-log, F_L, F_R and [[glossary#impulse|impulse]] plots.', shot: 'dfit-aca' }, 'Tab Leak-off model: Simulate in the sandbox, or History match, Fit.',
+      'Tab Uncertainty: P10/P50/P90 of each output.', 'Tab What this test can tell (after a fit).'] },
   { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],
-    steps: ['Open in PTA (transient) hands over p_i unless its label is low.', { t: 'Tools: designer, sandbox, replay, notes.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
+    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
 };
 
 var oilgas = {
@@ -34104,7 +34105,7 @@ pipesz: {
             if (!flag && !near) return;
             out.push({ id: 'psig-' + ch, hypothesis: (ch === 'p' ? 'Primary' : 'Surface') + ' pressure recorded in psig but read as psia', score: flag && near ? 1 : 0.8, bf: null,
                        fix: { field: 'channels.psig.' + ch, from: false, to: true },
-                       text: clampTxt('Psig read as psia: ' + why.join(' and ') + '. Apply fix adds ' + fmt(C.atm, 3) + ' psi to the channel (dataset unchanged).') });
+                       text: clampTxt('Psig read as psia (' + (ch === 'p' ? 'primary' : 'surface') + ' channel): ' + why.join(' and ') + '. Apply fix adds ' + fmt(C.atm, 3) + ' psi to the channel (dataset unchanged).') });
         });
         // 2. kPa / bar / MPa read as psi (primary channel)
         if (base.isip === false || base.hydro === false) {
@@ -37937,7 +37938,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
     '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
     '.help-nw{white-space:nowrap}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '@media (max-width:700px){.help-steps{padding-left:1.6em}.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
     '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {

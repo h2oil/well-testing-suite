@@ -25415,8 +25415,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 blk.rows.push([label, text, _evOk(EVI, ev)]);
                 if (fin(val) && path) q(s, s.blocks.indexOf(blk), blk.rows.length - 1, 1, path, dp, label);
             }
-            var piHalf = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? Math.round((aca.pi.hi - aca.pi.lo) / 2) : null;
-            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + (piHalf != null ? ' ±' + piHalf : '') + ' psia' : 'p_i not available';
+            var piBr = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? ' [' + fmt(aca.pi.lo, 0) + '–' + fmt(aca.pi.hi, 0) + ']' : '';
+            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + ' psia' + piBr + (aca.pi.label ? ' (' + _pl(aca.pi.label) + ')' : '') : 'p_i not available';
             var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + _pl(cl.label) + ') · ' + piTxt
                 : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + _pl(cl.label) + ') · ' + piTxt
                 : 'DFIT · closure not estimable · ' + piTxt;
@@ -25425,7 +25425,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 ['ISIP', isip ? fmt(isip.value, 0) + ' psia' : '–'],
                 ['Net pressure', ch && fin(ch.pn) ? fmt(ch.pn, 0) + ' psi' : (cl.mode === 'range' ? 'per family (range mode)' : '–')],
                 ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + _plLong(aca.pi.label) + ')' : '–'],
-                ['Grade', grade.letter]
+                ['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)']
             ];
             // 10 headline
             if (want('dfit-headline')) {
@@ -25439,7 +25439,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 if (aca && aca.pi) kvRow(s1, kv, 'p_i', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
                 if (aca && aca.kh) kvRow(s1, kv, 'kh/μ (late radial)', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']);
                 else if (aca && aca.bounds) { kvRow(s1, kv, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s1, kv, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']); }
-                kv.rows.push(['Grade', grade.letter, []]);
+                kv.rows.push(['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)', []]);
                 if (unc) {
                     var outs = [['Closure', 'closure', 'C1'], ['Net pressure', 'pn', 'F1'], ['Efficiency', 'eta', 'F1'], ['xf (PKN)', 'xf', 'F1'], ['CL', 'CL', 'F1'], ['p_i', 'pi', 'A1']];
                     if (unc.mode === 'range') {
@@ -25454,7 +25454,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                         s1.blocks.push(tb2);
                     }
                 }
-                var vl = cl.mode === 'single' ? (cl.label === 'high' ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
+                var vl = cl.mode === 'single' ? (cl.label === 'high' && _calibrated() ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
                 var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label) + ').'
                     : cl.mode === 'range' ? '⚠ Closure is a range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia: every closure-dependent value is given per family.'
                     : '✗ No closure can be estimated from this falloff.';
@@ -29622,7 +29622,12 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!A) return { error: NEED_ACA };
         var D = A.diag, s = [{ x: D.x, y: D.D, color: C.d1, dots: true, r: 2, label: 'D' }];
         if (T.inputs.options && T.inputs.options.ppd) s.push({ x: D.x, y: D.x.map(function (x, i) { return (_isNum(D.D[i]) && x > 0) ? D.D[i] / x : null; }), color: C.v, dots: true, r: 1.5, label: 'PPD' });
-        var bands = _arr(D.noiseD) ? [{ x: D.x, lo: D.x.map(function () { return 1e-9; }), hi: D.noiseD, color: 'rgba(139,148,158,0.15)' }] : [];
+        // the noise band is clipped to a decade below the smallest positive D, so the y autoscale follows the data (a noise floor far
+        // below the data collapses to the plot floor instead of stretching the axis to 1e-9)
+        var dMin = Infinity;
+        D.D.forEach(function (v) { if (_isNum(v) && v > 0 && v < dMin) dMin = v; });
+        var bLo = isFinite(dMin) ? dMin / 10 : 1e-3;
+        var bands = _arr(D.noiseD) ? [{ x: D.x, lo: D.x.map(function () { return bLo; }), hi: D.noiseD.map(function (v) { return _isNum(v) ? Math.max(v, bLo) : v; }), color: 'rgba(139,148,158,0.15)' }] : [];
         var x0 = D.x[0], x1 = D.x[D.x.length - 1], y0 = null;
         for (var i = 0; i < D.D.length; i++) if (_isNum(D.D[i]) && D.D[i] > 0) { y0 = D.D[i]; break; }
         if (_isNum(y0) && x0 > 0) { s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -0.5)], color: C.y, dash: [4, 4], label: 'slope −½' }); s.push({ x: [x0, x1], y: [y0, y0 * Math.pow(x1 / x0, -1)], color: C.r, dash: [4, 4], label: 'slope −1' }); }
@@ -30127,6 +30132,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     var TYPE_NOTE = 'provisional — not yet calibrated: on the synthetic benchmark the type often differs from the true leak-off mechanism; read it with the evidence below';
     function _calOk() { var c = G.PRiSM_dfit_cal; return !!(c && c.calibrated === true); }
     function _lab(l) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || _calOk()) ? l : l + ', provisional'; }
+    function _gradeTxt(g) { return !g ? '—' : _calOk() ? g : g + ' (provisional)'; }
     function _labLong(l) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || _calOk()) ? l : l + ' (' + PROV + ')'; }
     function _rrow(label, value) { return '<div class="rrow"><span class="rl">' + _esc(label) + '</span><span class="rv">' + _esc(value) + '</span></div>'; }
     function _rbox(title, rows, extra) { return '<div class="rbox"><div class="rbox-title">' + _esc(title) + '</div>' + rows.join('') + (extra || '') + '</div>'; }
@@ -30386,7 +30392,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var cg = (c && c.mode === 'range' && c.families) ? [c.families.F1, c.families.F2].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return z ? _f(x.p50 / z, 3) : '—'; }).join(' / ') : (z ? _f((_closureP(s) || NaN) / z, 3) : '—');
             var status = !t.dsRef ? 'no data' : (_hasData(ds) && t.dsRef.hash === dsHash(ds) ? 'loaded' : 'other data');
             return [t.id + (t.id === d.active ? ' (active)' : ''), t.zone || '—', z ? _f(z, 0) : '—', (t.dsRef ? t.dsRef.name : '—') + ' · ' + status,
-                    s && s.isip && z ? _f(s.isip.value / z, 3) : '—', cg || '—', s && s.pi && z && _isNum(s.pi.value) ? _f(s.pi.value / z, 3) : '—', (s && s.grade) || '—'];
+                    s && s.isip && z ? _f(s.isip.value / z, 3) : '—', cg || '—', s && s.pi && z && _isNum(s.pi.value) ? _f(s.pi.value / z, 3) : '—', _gradeTxt(s && s.grade)];
         });
         html += _table(['Test', 'Zone', 'Datum TVD (ft)', 'Dataset', 'ISIP (psi/ft)', 'Closure (psi/ft)', 'p_i (psi/ft)', 'Grade'], rows, 'prism_dfit_tests_tbl');
         html += '<div class="prism-dfit-bar">' + _btn('prism_dfit_test_add', '+ Add test', 'addTest') + _btn('prism_dfit_zone', 'Rename zone', 'zone') +
@@ -30515,8 +30521,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             }), 'prism_dfit_triage_tbl');
             if (tr.repump) html += _rbox('Re-pump verdict', [_rrow('Verdict', tr.repump.verdict)].concat((tr.repump.rules || []).slice(0, 6).map(function (r) { return _rrow(r.id, r.text); })));
             var dis = _st()._dfitBlunderDismissed || {};
+            var seenB = {};   // one card per blunder id (and per text)
             (tr.blunders || []).slice(0, 4).forEach(function (b) {
-                if (!b || !b.text || dis[test().id + ':' + b.id]) return;
+                if (!b || !b.text || dis[test().id + ':' + b.id] || seenB['i' + b.id] || seenB['t' + b.text]) return;
+                seenB['i' + b.id] = seenB['t' + b.text] = true;
                 var arg = ' data-dfit-arg="' + _esc(b.id) + '"';
                 html += _verdict('warn', b.text) + '<div class="prism-dfit-bar">' +
                     (b.fix ? _btn('prism_dfit_blunder_apply_' + b.id, 'Apply fix', 'blunderApply').replace('data-dfit-act="blunderApply"', 'data-dfit-act="blunderApply"' + arg) : '') +
@@ -30538,7 +30546,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var cp = T.picks.closure;
         if (cp && cp.source === 'user') rows.push(_rrow('User override', (cp.mode === 'family' ? cp.family + ' end' : _f(cp.p, 0) + ' psia') + (cp.reason ? ' — ' + cp.reason : '')));
         html += _rbox('Closure', rows);
-        if (cl.mode === 'single') html += _verdict(lab === 'high' ? 'ok' : 'warn', 'Closure ' + _f(cl.value, 0) + ' psia' + (z ? ' (' + _f(cl.value / z, 3) + ' psi/ft)' : '') + ', ' + lab + ' confidence (' + (c.calibrated ? 'calibrated rule label' : 'provisional rule label — not yet calibrated') + '): ' + (c.preferredWhy || 'families agree') + ' (tolerance ' + _f(c.tau, 0) + ' psi).');
+        // a green tick only for a calibrated high label; until then every closure verdict is ⚠ (release review)
+        if (cl.mode === 'single') html += _verdict(lab === 'high' && c.calibrated && _calOk() ? 'ok' : 'warn', 'Closure ' + _f(cl.value, 0) + ' psia' + (z ? ' (' + _f(cl.value / z, 3) + ' psi/ft)' : '') + ', ' + (c.calibrated && _calOk() ? lab + ' confidence (calibrated rule label)' : 'label ' + lab + ' (' + PROV + ')') + ': ' + (c.preferredWhy || 'families agree') + ' (tolerance ' + _f(c.tau, 0) + ' psi).');
         else if (cl.mode === 'range') html += _verdict('warn', 'Closure range ' + _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' and ') + '; ' + (c.calibrated ? lab : _lab(lab)) + '): every downstream number is shown for both readings.');
         else html += _verdict('warn', 'No closure yet: dP/dG has not departed.' + (c.forecast && c.forecast.length ? ' Forecast: ' + c.forecast.map(function (f) { return _f(f.sigma, 0) + ' psia at ' + _f(f.dtc, 2) + ' h'; }).join(', ') + '.' : ''));
         html += _table(['Method', 'Family', 'Vote', 'Closure (psia)', 'G', 'Why', 'Ev.'], (run.picks || []).map(function (p) {
@@ -30714,7 +30723,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 return [c.method, c.family, _f(c.value, 1), _f(c.se, 1), !c.ok ? 'failed' : (c.upper ? 'upper estimate' : 'accepted'), _f(c.bleedAtEnd, 1)];
             }), 'prism_dfit_isip_tbl');
             html += _rbox('Consensus', [_rrow('ISIP (psia)', _f(I.value, 1) + ' ± ' + _f(I.spread, 1)), _rrow('Label', _labLong(I.confidence))]);
-            html += _verdict(I.confidence === 'high' ? 'ok' : 'warn', 'ISIP ' + _f(I.value, 0) + ' psia (' + _lab(I.confidence) + '): ' + ((I.why && I.why[0]) || ''));
+            html += _verdict(I.confidence === 'high' && _calOk() ? 'ok' : 'warn', 'ISIP ' + _f(I.value, 0) + ' psia (' + _lab(I.confidence) + '): ' + ((I.why && I.why[0]) || ''));
             (I.candidates || []).filter(function (c) { return c.upper; }).forEach(function (c) { html += _verdict('warn', 'The ' + c.method + ' ISIP ' + _f(c.value, 0) + ' psia is an upper estimate' + (_isNum(c.bleedAtEnd) ? ': the friction bleed-off had not died out at the end of the fit window (' + _f(c.bleedAtEnd, 0) + ' psi predicted).' : '.')); });
             var ip = T.picks.isip;
             if (ip && ip.source === 'user') html += _rrow('User ISIP', _f(ip.value, 1) + ' psia — ' + (ip.reason || ''));
@@ -30784,7 +30793,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                     _rrow('k bounds (md)', A.bounds ? _sig(A.bounds.kLo, 3) + ' – ' + _sig(A.bounds.kHi, 3) : '—')]);
         html += _table(['Bracket', 'Lower (psia)', 'Upper (psia)'], [['Cartesian', br(b.cart).split(' – ')[0], (br(b.cart).split(' – ')[1] || '—')], ['Impulse', br(b.imp).split(' – ')[0], (br(b.imp).split(' – ')[1] || '—')],
                     ['Derivative', br(b.deriv).split(' – ')[0], (br(b.deriv).split(' – ')[1] || '—')], ['Combined', br(b.combined).split(' – ')[0], (br(b.combined).split(' – ')[1] || '—')]], 'prism_dfit_brackets_tbl');
-        if (A.pi && A.pi.label === 'high') html += _verdict('ok', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong('high') + ').');
+        if (A.pi && A.pi.label === 'high') html += _verdict(_calOk() ? 'ok' : 'warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong('high') + ').');
         else if (A.pi) html += _verdict('warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong(A.pi.label || 'low') + ').');
         if (!A.kh && A.bounds) html += _verdict('warn', 'Radial flow not reached: k between ' + _sig(A.bounds.kLo, 3) + ' and ' + _sig(A.bounds.kHi, 3) + ' md.');
         (A.warnings || []).slice(0, 4).forEach(function (w) { if (w && w.text) html += _verdict(w.level === 'bad' ? 'bad' : 'warn', w.text); });
@@ -31189,7 +31198,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         rows.push([s.model === 'radial' ? 'R' : 'xf', _isNum(s.xf) ? _f(s.xf, 1) + ' ft (' + (s.model || '—') + ')' : (_isNum(s.R) ? _f(s.R, 1) + ' ft (radial)' : '—')]);
         rows.push(['p_i', s.pi && _isNum(s.pi.value) ? _f(s.pi.value, 0) + ' psia [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + '] (' + _lab(s.pi.label) + ')' : '—']);
         rows.push(['k', _isNum(s.khmu) ? 'kh/μ ' + _sig(s.khmu, 3) + ' md·ft/cp' : (_isNum(s.kLo) && _isNum(s.kHi) ? '[' + _sig(s.kLo, 3) + ', ' + _sig(s.kHi, 3) + '] md' : (_isNum(s.k) ? _sig(s.k, 3) + ' md' : '—'))]);
-        rows.push(['Triage / grade', (s.triage || '—') + ' / ' + (s.grade || '—')]);
+        rows.push(['Triage / grade', (s.triage || '—') + ' / ' + _gradeTxt(s.grade)]);
         if (!_calOk()) rows.push(['Labels', PROV]);
         var fr = run && run.frac && run.frac.chosen;
         if (fr && fr.stressCal && _isNum(fr.stressCal.dSigmaTect)) rows.push(['Stress-log offset', _f(fr.stressCal.dSigmaTect, 0) + ' psi']);
@@ -31288,7 +31297,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (c.mode === 'single') out += ' · closure ' + _f(c.value, 0) + ' psia (single, ' + _lab(c.label) + ')';
         else if (c.mode === 'range') out += ' · closure range ' + _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (medians ' + [c.families && c.families.F2, c.families && c.families.F1].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + '; ' + _lab(c.label) + ')';
         else out += ' · no closure yet';
-        if (s.pi && _isNum(s.pi.value)) out += ' · p_i ' + _f(s.pi.value, 0) + ' ±' + _f(_isNum(s.pi.hi) && _isNum(s.pi.lo) ? (s.pi.hi - s.pi.lo) / 2 : null, 0) + ' psia';
+        if (s.pi && _isNum(s.pi.value)) out += ' · p_i ' + _f(s.pi.value, 0) + ' psia' + (_isNum(s.pi.lo) && _isNum(s.pi.hi) ? ' [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + ']' : '') + (s.pi.label ? ' (' + _lab(s.pi.label) + ')' : '');
         return _txt(out);
     }
     var REPORT_PLOTS = [{ key: 'dfitHistory', title: 'DFIT history' }, { key: 'dfitG', title: 'G-function plot' }, { key: 'dfitSqrt', title: 'Square-root of time' },
@@ -31378,6 +31387,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (sh && _isNum(sh.p50) && _isNum(allow) && sh.p50 / 24 > allow)
             html += _verdict('warn', 'The P50 shut-in (' + _f(sh.p50 / 24, 1) + ' d, ' + (BIND_WORDS[sh.binding] || sh.binding) + ') is longer than the allowed ' + _f(allow, 1) + ' d.');
         if (D.outcome && D.outcome.text) html += _note(D.outcome.text);
+        html = '<div id="prism_dfit_design_head">' + html + '</div>';   // the design, its shut-in verdict and outcome (help shot dfit-plan)
         if (_arr(D.checklist)) html += _table(['#', 'Checklist'], D.checklist.map(function (c) { return [c.id, c.text]; }));
         return html;
     }

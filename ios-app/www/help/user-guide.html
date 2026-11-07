@@ -293,7 +293,7 @@
 <ul><li>After an update.</li><li>To check when a calculation changed.</li></ul>
 </section>
 <section class="help-sec" id="help-releasenotes-steps"><h4>Step by step</h4>
-<ol class="help-steps"><li>Select What’s new under the version label in the sidebar.<figure class="help-fig" data-help-shot="releasenotes/view"><picture><source media="(max-width: 600px)" srcset="img/releasenotes/view-p.webp?v=e516c6f6" width="780" height="1688"><img class="help-img" src="img/releasenotes/view-d.webp?v=55bdbccf" width="1280" height="800" alt="Release Notes with the category filters"></picture><figcaption>Release Notes</figcaption></figure>
+<ol class="help-steps"><li>Select What’s new under the version label in the sidebar.<figure class="help-fig" data-help-shot="releasenotes/view"><picture><source media="(max-width: 600px)" srcset="img/releasenotes/view-p.webp?v=e516c6f6" width="780" height="1688"><img class="help-img" src="img/releasenotes/view-d.webp?v=1e977bb3" width="1280" height="800" alt="Release Notes with the category filters"></picture><figcaption>Release Notes</figcaption></figure>
 </li><li>Select a category <span class="help-co" aria-label="call-out 1">1</span> to show only those changes; <b>All</b> shows every change.</li><li>Read the newest release, marked <b>Latest</b>.</li></ol>
 </section>
 <section class="help-sec" id="help-releasenotes-results"><h4>Results and verdicts</h4>
@@ -1011,34 +1011,34 @@
 <p>Fracture injection falloff: ISIP (see <a class="bk-x" href="#help-glossary-isip">Appendix B</a>), closure (see <a class="bk-x" href="#help-glossary-closure">Appendix B</a>), net pressure (see <a class="bk-x" href="#help-glossary-netp">Appendix B</a>), fluid efficiency (see <a class="bk-x" href="#help-glossary-fluideff">Appendix B</a>), leak-off, p_i and k. Field units only.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Select Test <b>DFIT (fracture injection)</b>.</li><li>Load the record (rate in bbl/min) or a demo: Load demo DFIT.</li><li>Enter the datum TVD and wellbore; tick psig channels.</li><li>Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.<figure class="help-fig" data-help-shot="prism/dfit-tri"><picture><img class="help-img" src="img/prism/dfit-tri-d.webp?v=4c461fe5" width="648" height="635" alt="Test triage"></picture><figcaption>Test triage</figcaption></figure>
+<ol class="help-steps"><li>Select Test <b>DFIT (fracture injection)</b>.</li><li>Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.</li><li>Read the triage checks, re-pump verdict and grade A–D (provisional).<figure class="help-fig" data-help-shot="prism/dfit-tri"><picture><img class="help-img" src="img/prism/dfit-tri-d.webp?v=4c461fe5" width="648" height="635" alt="Test triage"></picture><figcaption>Test triage</figcaption></figure>
 </li><li>A blunder card: Apply fix or It is real (logged).</li></ol>
 </section>
 <section class="help-sec" id="help-prism-dfit-example"><h5>Worked example</h5>
 <p><b>Reference demo</b></p>
 <p>Result:</p>
-<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.</li></ul>
+<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.</li></ul>
 </section>
 <section class="help-sec" id="help-prism-dfit-refs"><h5>Standards and references</h5>
 <ul><li>Nolte (1979), SPE 8341</li><li>Barree, Barree and Craig (2009), SPE 107877</li><li>Nolte, Maniere and Owens (1997), SPE 38676</li></ul>
 </section>
 </section>
-<section class="help-part" id="help-prism-dfit-closure"><h4>DFIT <span class="help-co" aria-label="call-out 2">2</span> ISIP, <span class="help-co" aria-label="call-out 3">3</span> closure</h4>
+<section class="help-part" id="help-prism-dfit-closure"><h4>DFIT <span class="help-co" aria-label="call-out 2">2</span> ISIP &amp; friction, <span class="help-co" aria-label="call-out 3">3</span> Pre-closure</h4>
 <section class="help-sec" id="help-prism-dfit-closure-what"><h5>What it does</h5>
 <p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-closure-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=ecdfabd6" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
+<ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=9031b4d9" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
 </li><li>A pick under the frictional limit is vetoed.</li><li>Override with Use another value and a reason.</li><li>Read the provisional leak-off type (PDL (see <a class="bk-x" href="#help-glossary-pdl">Appendix B</a>)…), η, pn, R_vis (see <a class="bk-x" href="#help-glossary-rvis">Appendix B</a>), CL, geometry, what-if.</li></ol>
 </section>
 </section>
-<section class="help-part" id="help-prism-dfit-aca"><h4>DFIT <span class="help-co" aria-label="call-out 4">4</span> p_i and k</h4>
+<section class="help-part" id="help-prism-dfit-aca"><h4>DFIT <span class="help-co" aria-label="call-out 4">4</span> After closure &amp; model</h4>
 <section class="help-sec" id="help-prism-dfit-aca-what"><h5>What it does</h5>
 <p>After-closure (see <a class="bk-x" href="#help-glossary-aca">Appendix B</a>) p_i with bracket; kh/μ or k bounds; leak check.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-aca-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Set the origin; read F_L, F_R, impulse (see <a class="bk-x" href="#help-glossary-impulse">Appendix B</a>), log-log.<figure class="help-fig" data-help-shot="prism/dfit-aca"><picture><img class="help-img" src="img/prism/dfit-aca-d.webp?v=a72cc2e7" width="622" height="257" alt="After-closure log-log, step ④"></picture><figcaption>After-closure log-log, step <span class="help-co" aria-label="call-out 4">4</span></figcaption></figure>
-</li><li>Leak-off model: sandbox, or Fit to the record.</li><li>Uncertainty: P10/P50/P90.</li></ol>
+<ol class="help-steps"><li>Set the origin; read the log-log, F_L, F_R and impulse (see <a class="bk-x" href="#help-glossary-impulse">Appendix B</a>) plots.<figure class="help-fig" data-help-shot="prism/dfit-aca"><picture><img class="help-img" src="img/prism/dfit-aca-d.webp?v=40b6b215" width="622" height="257" alt="After-closure log-log, step ④"></picture><figcaption>After-closure log-log, step <span class="help-co" aria-label="call-out 4">4</span></figcaption></figure>
+</li><li>Tab Leak-off model: Simulate in the sandbox, or History match, Fit.</li><li>Tab Uncertainty: P10/P50/P90 of each output.</li><li>Tab What this test can tell (after a fit).</li></ol>
 </section>
 </section>
 <section class="help-part" id="help-prism-dfit-report"><h4>DFIT <span class="help-co" aria-label="call-out 5">5</span> Report, Tools</h4>
@@ -1046,7 +1046,7 @@
 <p>PDF, picks, frac-design CSV; a Quick Report key line; Well Comparison (see <a class="bk-x" href="#help-wells-top">Chapter 2.4</a>) shows the closure gradient.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-report-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Open in PTA (transient) hands over p_i unless its label is low.</li><li>Tools: designer, sandbox, replay, notes.<figure class="help-fig" data-help-shot="prism/dfit-plan"><picture><img class="help-img" src="img/prism/dfit-plan-d.webp?v=f483ab3d" width="549" height="223" alt="DFIT designer (pre-job): the design"></picture><figcaption>DFIT designer (pre-job): the design</figcaption></figure>
+<ol class="help-steps"><li>Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.</li><li>Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.<figure class="help-fig" data-help-shot="prism/dfit-plan"><picture><img class="help-img" src="img/prism/dfit-plan-d.webp?v=824675a0" width="549" height="293" alt="DFIT designer (pre-job): the design and its shut-in verdict"></picture><figcaption>DFIT designer (pre-job): the design and its shut-in verdict</figcaption></figure>
 </li><li>Spurt is not separable: η is an upper bound.</li></ol>
 </section>
 </section>
