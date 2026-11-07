@@ -225,7 +225,9 @@
               rules). The full-screen <dialog> overlay keeps the title, × and the Start / Stop buttons clear of
               the status bar, notch / Dynamic Island and home indicator in portrait and landscape: each side keeps
               its web padding (16 px, 10 px below 600 px) or the inset plus a small gap, whichever is larger; the
-              form box scrolls within that padding. Inputs are 16 px (no zoom on focus), controls get 44 pt. */
+              form box scrolls within that padding. Inputs are 16 px (no zoom on focus), controls get 44 pt.
+              One section (five rule sets, down to "end of section 8"): when the Help-centre rules are merged,
+              move it whole after them and renumber it. */
         html.ios-app .wtsl-cush-ov {
             padding: max(16px, calc(8px + env(safe-area-inset-top))) max(16px, calc(8px + env(safe-area-inset-right)))
                      max(16px, calc(8px + env(safe-area-inset-bottom))) max(16px, calc(8px + env(safe-area-inset-left)));
@@ -246,3 +248,4 @@
         }
         html.ios-app .wtsl-cush-f input, html.ios-app .wtsl-cush-f select { font-size: 16px; min-height: 44px; }
         html.ios-app .wtsl-cush-ft .wtsl-b, html.ios-app .wtsl-cush-hd .wtsl-b { min-height: 44px; min-width: 44px; }
+        /* end of section 8 */

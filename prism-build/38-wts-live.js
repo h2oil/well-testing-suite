@@ -798,6 +798,7 @@ var CSS = [
 '.wtsl-cush-hd h3{flex:1;min-width:0;margin:0;font-size:15px;color:#e6edf3}',
 '.wtsl-cush-bd{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 14px}',
 '.wtsl-cush-lead{margin:0 0 8px;color:#8b949e;font-size:12px}',
+'.wtsl-cush-units{margin:0 0 8px;color:#8b949e;font-size:11px;font-style:italic}',
 '.wtsl-cush-f{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:6px 10px;align-items:center}',
 '.wtsl-cush-f label{color:#c9d1d9;font-size:12.5px}',
 '.wtsl-cush-f input,.wtsl-cush-f select{height:30px;box-sizing:border-box;width:100%;padding:0 8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font:inherit;font-size:13px}',
@@ -2106,7 +2107,6 @@ function createController(vizEl, mopts) {
         var dIn = rigIn(st, 'desander') && st.desander ? st.desander : null;
         if (E.h.tDs) {
             show(E.h.tDs, !!dIn);
-            E.hud.classList.toggle('ds4', !!dIn);
             if (dIn) {
                 var dsd = dIn.sand || {}, dph = dIn.dump && dIn.dump.phase;
                 // the state word first, so it stays inside the tank cell (the line ends in an ellipsis; the tooltip has it all)
@@ -2396,9 +2396,9 @@ function createController(vizEl, mopts) {
                 widget: 'gstrap', actions: 'swap' };
             case 'flare': return { rows: [
                 ['Flared gas', function (s) { return fmtU(N(s, 'flare').qMMscfd, 'gasRate'); }, ''],
-                ['Header P', function (s) { return P(N(s, 'flare').P); }, 'p'],
+                ['Header P', function (s) { return P(N(s, 'flare').P); }, 'p', null, function (s) { return !bypLine(s); }],   // flare-only rows: hidden while bypLine
                 ['Line P (u/s)', function (s) { return P(N(s, 'flare').Pline); }, 'p'],
-                ['Line vel', function (s) { var g = s && s.segs && s.segs[4]; return g ? fmtU(g.vel, 'velocity') : '—'; }, ''],
+                ['Line vel', function (s) { var g = s && s.segs && s.segs[4]; return g ? fmtU(g.vel, 'velocity') : '—'; }, '', null, function (s) { return !bypLine(s); }],
                 ['Flared total', function (s) { return fmtU(s && s.cum && s.cum.flare_mmscf, 'gasVolume'); }, ''],
                 // v1.5.0 V-101 out: the destination of the whole stream; with a production line the flame is out and the totals go
                 // to the line (NRV-501 / XV-501 at the tie-in), with FS-401 out too the tank relief goes to vent
@@ -2731,6 +2731,7 @@ function createController(vizEl, mopts) {
         var ck2b = !!st && cardId === 'heaterChoke' && ck2Bypassed(st); // v1.5.0: CK-102 in the rig-up but bypassed with H-101
         for (var i = 0; i < spec.rows.length; i++) {
             var r = spec.rows[i], s;
+            if (ck2b && r[4]) { show(cardRefs['r' + i], false); continue; }   // conditional rows (Note …) are hidden while bypassed
             if (optOut || ck2b) { setText(cardRefs['v' + i], '—'); if (cardRefs['d' + i]) setText(cardRefs['d' + i], ''); continue; }
             if (r[4]) { var vis = false; try { vis = !!(st && r[4](st)); } catch (e0) {} show(cardRefs['r' + i], vis); if (!vis) continue; }
             try { s = st ? r[1](st) : '—'; } catch (e) { s = '—'; }
@@ -3512,6 +3513,7 @@ function createController(vizEl, mopts) {
             '<div class="wtsl-cush-bd"><p class="wtsl-cush-lead" id="wtsl_cush_lead">Unload the completion cushion (brine, water or a light oil) before the formation flows. ' +
             'The tubing column sets the wellhead pressure, the bean can limit the liquid rate, then comes gas breakthrough and the cushion tail. ' +
             'With V-101 in the cushion goes through the separator; with V-101 out it goes to the destination set on the page. The values are kept on this device.</p>' +
+            '<p class="wtsl-cush-units" id="wtsl_cush_units" hidden>The scenario inputs are in field units (bbl, bbl/d, ft); the status line and the HUD follow the unit system.</p>' +
             '<div class="wtsl-cush-f">' + f.join('') + '</div>' +
             '<div class="wtsl-cush-st" id="wtsl_cush_status" role="status" aria-live="polite"></div><div class="wtsl-cush-warn" id="wtsl_cush_warn"></div></div>' +
             '<div class="wtsl-cush-ft"><button type="button" data-wts-ui class="wtsl-b" id="wtsl_cush_stop" data-act="cush-stop">Stop</button>' +
@@ -3538,6 +3540,8 @@ function createController(vizEl, mopts) {
         if (!ov) return false;
         if (E.cushModal && ov.open && typeof ov.close === 'function') { try { ov.close(); } catch (e) {} }
         if (ov.parentNode) ov.parentNode.removeChild(ov);
+        // focus goes back to the opener (the Scenarios button or the overflow anchor); if it is gone, to the toolbar Scenarios button
+        if (!op || op.isConnected === false) op = q('[data-act="scen"]', vizEl);
         if (op && op.isConnected !== false && typeof op.focus === 'function') { try { op.focus(); } catch (e) {} }
         return true;
     }
@@ -3572,6 +3576,7 @@ function createController(vizEl, mopts) {
         if (!force && ov.__sig === sig) return;
         ov.__sig = sig;
         setText(q('#wtsl_cush_status', ov), stat);
+        show(q('#wtsl_cush_units', ov), unitsSys() === 'metric');     // like #prism_units_note: the form stays in field units
         var bs = q('#wtsl_cush_start', ov), bx = q('#wtsl_cush_stop', ov);
         if (bs) { bs.disabled = !!why; bs.setAttribute('title', why || 'Start the cushion unload with these values'); }
         if (bx) { bx.disabled = !on; bx.setAttribute('title', on ? 'Stop the cushion unload' : 'No cushion unload running'); }
@@ -3917,7 +3922,7 @@ function createController(vizEl, mopts) {
                 else flipB();
                 break;
             }
-            case 'cush-open': closeMenu(); openCushion(el); break;
+            case 'cush-open': { var cAnc = (menu && menu.anchor) || null; closeMenu(); openCushion(cAnc || el); break; }   // the menu item goes with the menu: focus returns to its anchor
             case 'cush-start': startCush(); break;
             case 'cush-stop': stopCush(); break;
             case 'cush-close': closeCushion(); break;

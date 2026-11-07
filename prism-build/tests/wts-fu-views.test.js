@@ -438,6 +438,57 @@ const L = [
       const css = src.slice(src.indexOf('var CSS = ['), src.indexOf('].join', src.indexOf('var CSS = [')));
       assert.ok(/\.wtsl-cush-ov\{position:fixed/.test(css) && /padding:16px/.test(css) && /\.wtsl-cush-ov\{padding:10px\}/.test(css), 'web paddings 16 / 10 px (the iOS rule keeps them)');
       assert.ok(css.split('\n').filter((l) => /wtsl-cush/.test(l)).every((l) => l.indexOf('env(') === -1), 'no safe-area insets in the web form CSS');
+      assert.ok(/end of section 8/.test(blk), 'one commented section, closed by its end marker');
+    }
+  },
+  {
+    name: 'WTSFUV L review fixes: focus returns to Scenarios after the form closes; field-units note in Metric only; CK-102 Note row hidden while bypassed; Flare card hides Header P / Line vel with a production line',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app);
+      const t = installStub(app, { ck2: true });
+      let noteOn = true;
+      const g = t.stub.getState;
+      t.stub.getState = function () { const s = g.call(t.stub); if (noteOn && s && s.nodes && s.nodes.heaterChoke) s.nodes.heaterChoke.note = 'Gas only through CK-102'; return s; };
+      try {
+        app.flush(600);
+        // focus back to the toolbar Scenarios button (the menu item is removed with the menu)
+        const scen = app.find('[data-act="scen"]');
+        let focused = 0; scen.focus = function () { focused++; };
+        app.click(scen); app.flush(50);
+        const items = app.findAll('.wtsl-menu .wtsl-mi');
+        app.click(items[items.length - 1]); app.flush(50);
+        assert.ok(app.el('wtsl_cush_dlg'), 'form open');
+        assert.ok(app.el('wtsl_cush_units') && app.el('wtsl_cush_units').hidden, 'no units note in field units');
+        app.key('wtsl_cush_V', 'Escape'); app.flush(50);
+        assert.ok(!app.el('wtsl_cush_dlg') && focused === 1, 'Esc: focus back on Scenarios (' + focused + ')');
+        ctlOf(app)._debug.openCushion(null); app.flush(50);
+        app.click('wtsl_cush_x'); app.flush(50);
+        assert.strictEqual(focused, 2, '× with no opener: falls back to the Scenarios button');
+        // Metric: the inputs stay in field units and say so
+        app.win.WTS_units.setSystem('metric'); app.flush(50);
+        ctlOf(app)._debug.openCushion(null); app.flush(600);
+        assert.ok(!app.el('wtsl_cush_units').hidden && /field units \(bbl, bbl\/d, ft\)/.test(text(app.el('wtsl_cush_units'))), 'units note in Metric');
+        ctlOf(app)._debug.closeCushion();
+        app.win.WTS_units.setSystem('imperial'); app.flush(50);
+        // CK-102 Note row: shown while in line, hidden (not a stale '—') while bypassed
+        openCard(app, 'heaterChoke');
+        assert.ok(!cardRows(app).Note.hidden && cardRows(app).Note.v === 'Gas only through CK-102', 'note row while in line');
+        t.set({ bypassed: true }); app.flush(600);
+        assert.ok(cardRows(app).Note.hidden, 'note row hidden while bypassed');
+        noteOn = false;
+        // Flare card: flare-only rows hidden while the well stream goes to a production line
+        t.set({ bypassed: false, ck2: false }); openCard(app, 'flare');
+        let r = cardRows(app);
+        assert.ok(!r['Header P'].hidden && !r['Line vel'].hidden, 'flare rows with V-101 in');
+        t.set({ sepOut: true, dest: 'line', P: 300 }); app.flush(600);
+        r = cardRows(app);
+        assert.ok(r['Header P'].hidden && r['Line vel'].hidden && !r[X.LABELS.flareCardLine].hidden, 'flare-only rows hidden with a production line');
+        t.set({ dest: 'flare' }); app.flush(600);
+        r = cardRows(app);
+        assert.ok(!r['Header P'].hidden && !r['Line vel'].hidden, 'back to the burner line: rows again');
+      } finally { t.restore(); }
+      noErr(app, assert);
     }
   },
 ];
