@@ -22,6 +22,8 @@
 //   RV19 data + picks export header: test, datum and app version; setPick refuses a primitive; Analyse on a non-DFIT record says why
 //   RV20 honest labels (WP7): every shown closure / ISIP / p_i label and the grade say "provisional — not yet calibrated"; the
 //        leak-off type never carries a confidence; a calibrated table drops the closure suffix but not the type's
+//   RV21 the help's DFIT worked example (48-calc-help-production, PRiSM part 'dfit') matches the reference demo run end to end;
+//        the designer shot box holds the shut-in verdict; the surface-gauge demo shows one card per psig channel, named
 'use strict';
 
 const WP = 'WP6';
@@ -375,11 +377,15 @@ T.push({
     assert(/\((high|medium|low), provisional/.test(row('Closure')), 'rail closure: ' + row('Closure'));
     assert(/\((high|medium|low), provisional\)/.test(row('p_i')), 'rail p_i: ' + row('p_i'));
     assert(row('Labels') === 'provisional — not yet calibrated', 'rail Labels row: ' + row('Labels'));
+    assert(/ \/ [A-D] \(provisional\)$/.test(row('Triage / grade')), 'rail grade is provisional: ' + row('Triage / grade'));
     assert(/, provisional\)/.test(U.keyLine()) && /, provisional\)/.test(w.PRiSM_reportKeyLine()), 'key line: ' + U.keyLine());
+    const sp = w.PRiSM_dfit_results().pi, f0 = (x) => Math.round(x).toLocaleString('en-US');
+    assert(U.keyLine().indexOf('p_i ' + f0(sp.value) + ' psia [' + f0(sp.lo) + '–' + f0(sp.hi) + '] (' + sp.label + ', provisional)') !== -1 && !/±/.test(U.keyLine()), 'key line p_i = the rail bracket and label: ' + U.keyLine());
     // step ③ cards: closure label and the leak-off type
     const h = app.document.createElement('div');
     U.panels['dfit-board'].render(h);
     assert(/provisional — not yet calibrated/.test(h.innerHTML) && !/uncalibrated rule label/.test(h.innerHTML), 'board label is provisional');
+    assert(!/prism-dfit-verdict--ok/.test(h.innerHTML) && !/\b(high|medium|low) confidence\b/.test(h.innerHTML), 'no ✓ closure verdict and no confidence word while uncalibrated');
     const hk = app.document.createElement('div');
     U.panels['dfit-classify'].render(hk);
     const kt = hk.innerHTML;
@@ -392,7 +398,7 @@ T.push({
     const sT = m.sections.find((s) => s.id === 'dfit-type');
     if (sT) assert(/provisional — the leak-off type is not yet calibrated/.test(sT.blocks[0].rows[0][1]), 'report type row: ' + sT.blocks[0].rows[0][1]);
     const vd = m.sections.find((s) => s.id === 'dfit-headline').blocks.find((b) => b.kind === 'verdict');
-    if (run.consensus.mode === 'single') assert(/provisional — not yet calibrated/.test(vd.text) && vd.text.length < 300, 'headline verdict: ' + vd.text);
+    if (run.consensus.mode === 'single') assert(/provisional — not yet calibrated/.test(vd.text) && vd.text.length < 300 && vd.level !== 'ok' && vd.text.charAt(0) === '⚠', 'headline verdict (⚠ while uncalibrated): ' + vd.level + ' ' + vd.text);
     const ex = w.PRiSM_dfit_exportText(run, 'default', {});
     assert(/# labels: rule labels, provisional — not yet calibrated/.test(ex.text) && /# leak-off type: \S+ \(provisional/.test(ex.text) && /p_i psia [^\n]*provisional\)/.test(ex.text), 'export text labels');
     const ws = U.publish();
@@ -406,6 +412,39 @@ T.push({
       const m2 = w.PRiSM_dfit_reportModel(run, {}), s2 = m2.sections.find((s) => s.id === 'dfit-type');
       if (s2) assert(/provisional/.test(s2.blocks[0].rows[0][1]), 'the type stays provisional');
     } finally { w.PRiSM_dfit_cal = cal0; }
+  },
+});
+T.push({
+  name: 'RV21 help DFIT worked example = the reference demo (ISIP, closure, gradient, pn, η, p_i bracket and labels, grade); designer shot box; psig cards name their channel', wp: WP, integration: true, opts: { timers: 'manual' },
+  async run(app, assert) {
+    const w = dfitApp(app); if (!ready(w) || !w.PRiSM_dfit_ui || !w.WTS_help) return;
+    w.WTS_help.load();
+    const g = w.WTS_helpContent.guides.prism, part = (g.parts || []).find((p) => p.id === 'dfit');
+    assert(part && part.example && part.example.result && part.example.result[0], 'PRiSM help part dfit has a worked example');
+    const ex = part.example.result[0], num = (re) => { const m = ex.match(re); assert(m, 'example has ' + re + ': ' + ex); return m ? m.slice(1).map((x) => (/^[\d,.]+$/.test(x) ? Number(x.replace(/,/g, '')) : x)) : []; };
+    const run = await analyseDemo(app, 'reference'), s = w.PRiSM_dfit_results(), z = Number(w.PRiSM_dfit_state().tests[0].inputs.datumTvd);
+    const r0 = (x) => Math.round(x);
+    const [isip] = num(/ISIP ([\d,]+) psia/); assert.strictEqual(isip, r0(s.isip.value), 'ISIP');
+    const [cl, gr, cLab] = num(/closure ([\d,]+) psia \(([\d.]+) psi\/ft, (\w+), provisional\)/);
+    assert(s.closure.mode === 'single' && cl === r0(s.closure.value) && cLab === s.closure.label, 'closure ' + cl + ' ' + cLab + ' vs ' + JSON.stringify(s.closure));
+    assert.strictEqual(gr, Number((s.closure.value / z).toFixed(3)), 'closure gradient');
+    const [pn] = num(/pn ([\d,]+) psi/); assert.strictEqual(pn, r0(s.pn), 'net pressure');
+    const [eta] = num(/η ([\d.]+)/); const ch = run.frac && run.frac.chosen && run.frac.chosen.eta;
+    assert([s.eta, ch && ch.matched, ch && ch.a05].some((e) => typeof e === 'number' && Number(e.toFixed(3)) === eta), 'η ' + eta + ' vs ' + JSON.stringify(ch));
+    const [pi, lo, hi, pLab] = num(/p_i ([\d,]+) psia \[([\d,]+)–([\d,]+)\] \((\w+), provisional\)/);
+    assert(pi === r0(s.pi.value) && lo === r0(s.pi.lo) && hi === r0(s.pi.hi) && pLab === s.pi.label, 'p_i ' + [pi, lo, hi, pLab] + ' vs ' + JSON.stringify(s.pi));
+    const [gl] = num(/grade ([A-D]), provisional/); assert.strictEqual(gl, s.grade, 'grade');
+    // the designer shot target holds the design box and its shut-in verdict
+    const D = w.PRiSM_dfit_ui.design && w.PRiSM_dfit_ui.design();
+    if (D) {
+      const head = w.document.getElementById('prism_dfit_design_head');
+      if (head) assert(/class="rbox/.test(head.innerHTML), 'design head holds the design box');
+    }
+    // surface-gauge demo: psig cards name their channel and never repeat
+    const run2 = await analyseDemo(app, 'surface-gauge'), bl = (run2.triage && run2.triage.blunders) || [];
+    const ps = bl.filter((b) => /^psig-/.test(b.id));
+    ps.forEach((b) => assert(/Psig read as psia \((primary|surface) channel\)/.test(b.text), 'psig card names its channel: ' + b.text));
+    assert.strictEqual(new Set(bl.map((b) => b.text)).size, bl.length, 'no two blunder cards with the same text');
   },
 });
 module.exports = T;

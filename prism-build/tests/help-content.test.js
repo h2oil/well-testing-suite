@@ -29,9 +29,9 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.4, '48-calc-help-start.js': 18.88, '48-calc-help-overview.js': 10.05,
-  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.7, '48-calc-help-production.js': 36.02, '48-calc-help-livedata.js': 16.05,
-  '48-calc-help-safety.js': 35.45, '48-calc-help-process.js': 20.05, '48-calc-help-flare.js': 12.05, '48-calc-help-utilities.js': 20.05,
+  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.4, '48-calc-help-start.js': 18.88, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.6, '48-calc-help-production.js': 36.42, '48-calc-help-livedata.js': 16.05,
+  '48-calc-help-safety.js': 35.42, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 20,
   '48-calc-help-simcourse.js': 41.3, '48-calc-help-manifest.js': 8.75,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
@@ -47,6 +47,9 @@ const CAPS = {
 // start (+1.38: two tasks, 13 glossary terms, one FAQ) and the manifest module (+0.05: four shots; help-shots moduleBytes 8.75 too)
 // from welltest (1.9), print (0.6), overview (0.45), 49-calc-help (0.4), simcourse (0.2), safety (0.15) and metering, livedata,
 // process, flare and utilities (0.05 each); the sum stays 345 kB.
+// DFIT release review (2026-11-07): 0.4 kB of unused headroom to production (the DFIT steps as the app runs them, the step names,
+// the p_i bracket in the example, water hammer and the shut-in caveat) from welltest (0.1), process (0.08), flare (0.07), overview
+// (0.07), utilities (0.05) and safety (0.03); the sum stays 345 kB.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];

@@ -242,7 +242,7 @@ injection test in the same five steps, in field units.
   resolution, clock alignment, unit and depth blunders (with Apply fix or It is real) and a re-pump verdict.
 - **ISIP and step tests:** wave, falloff and friction ISIP families; step-down friction split with open
   perforations; step-rate fracture extension pressure with a band and a stabilisation check.
-- **Closure:** G-function, √t, log-log, compliance and h-function plots and every closure method,
+- **Closure:** G-function, √t, log-log and compliance plots and every closure method,
   grouped into independent families. The consensus gives one closure or a closure range (every
   downstream number is then shown for both readings), the reasons, a frictional-limit check and a
   logged override; efficiency, net pressure, storage-consistent closure visibility, geometry and CL.
@@ -258,7 +258,8 @@ injection test in the same five steps, in field units.
 *provisional*: they come from rules that are not yet calibrated (calibration is planned for 3.4.1), and
 the leak-off type often differs from the true mechanism on synthetic tests. A re-pumped test is analysed
 on its last cycle only; spurt is not separable, so efficiency is an upper bound. The live co-pilot,
-Hall plot, flowback analysis and water-hammer fit are planned for 3.4.1. See
+Hall plot, flowback analysis and water-hammer fit are planned for 3.4.1, with the h-function plot and its
+permeability and far-field extension reading (gate G6) and the uncertainty tornado / input-share display. See
 [docs/DFIT-PLAN.md](docs/DFIT-PLAN.md).
 
 ---
@@ -487,7 +488,7 @@ jsPDF, html2canvas, SheetJS Community Edition, SQLite WASM, sql.js).
 ### Repository layout
 
 ```
-well-testing-app.html     Single source of truth for the web app (~127k lines)
+well-testing-app.html     Single source of truth for the web app (~153k lines)
 sw.js                     Offline service worker (web only)
 prism-build/              Module sources, build scripts and tests
   01-21                   PRiSM core: engine, models, plots, regression, auto-match, PVT, deconvolution …
@@ -549,7 +550,7 @@ node -e "const fs=require('fs');const h=fs.readFileSync('well-testing-app.html',
 node --check prism-build/.tmp/wts-main.js
 
 node prism-build/smoke-test.js                          # 339 checks: namespaces, contracts, no running timers
-node prism-build/accept-test.js --html --integration    # 1614 numeric acceptance tests against the built HTML
+node prism-build/accept-test.js --html --integration    # 1615 numeric acceptance tests against the built HTML
 node prism-build/wts3d-test.js                          # 132 Well Test Simulator / 3D checks
 ```
 

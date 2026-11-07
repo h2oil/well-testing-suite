@@ -100,6 +100,8 @@ module.exports = [
       });
       assert(/0\.5 → 0\.6/.test(tb.rows[0][4]), 'old → new');
       assert(/closure range 6,495–7,004 psia \(medians 6,507 \/ 6,998; medium, provisional\)/.test(m.keyLine), 'range key line: ' + m.keyLine);
+      // p_i: the asymmetric bracket and the label, never ±half-width (release review)
+      assert(/· p_i [\d,]+ psia \[[\d,]+–[\d,]+\]( \([a-z -]+(, provisional)?\))?$/.test(m.keyLine) && !/±/.test(m.keyLine), 'p_i bracket in the key line: ' + m.keyLine);
       assert(m.title === 'DFIT analysis — Zone B', 'title');
     },
   },

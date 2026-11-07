@@ -2180,8 +2180,8 @@
                 blk.rows.push([label, text, _evOk(EVI, ev)]);
                 if (fin(val) && path) q(s, s.blocks.indexOf(blk), blk.rows.length - 1, 1, path, dp, label);
             }
-            var piHalf = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? Math.round((aca.pi.hi - aca.pi.lo) / 2) : null;
-            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + (piHalf != null ? ' ±' + piHalf : '') + ' psia' : 'p_i not available';
+            var piBr = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? ' [' + fmt(aca.pi.lo, 0) + '–' + fmt(aca.pi.hi, 0) + ']' : '';
+            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + ' psia' + piBr + (aca.pi.label ? ' (' + _pl(aca.pi.label) + ')' : '') : 'p_i not available';
             var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + _pl(cl.label) + ') · ' + piTxt
                 : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + _pl(cl.label) + ') · ' + piTxt
                 : 'DFIT · closure not estimable · ' + piTxt;
@@ -2190,7 +2190,7 @@
                 ['ISIP', isip ? fmt(isip.value, 0) + ' psia' : '–'],
                 ['Net pressure', ch && fin(ch.pn) ? fmt(ch.pn, 0) + ' psi' : (cl.mode === 'range' ? 'per family (range mode)' : '–')],
                 ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + _plLong(aca.pi.label) + ')' : '–'],
-                ['Grade', grade.letter]
+                ['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)']
             ];
             // 10 headline
             if (want('dfit-headline')) {
@@ -2204,7 +2204,7 @@
                 if (aca && aca.pi) kvRow(s1, kv, 'p_i', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
                 if (aca && aca.kh) kvRow(s1, kv, 'kh/μ (late radial)', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']);
                 else if (aca && aca.bounds) { kvRow(s1, kv, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s1, kv, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']); }
-                kv.rows.push(['Grade', grade.letter, []]);
+                kv.rows.push(['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)', []]);
                 if (unc) {
                     var outs = [['Closure', 'closure', 'C1'], ['Net pressure', 'pn', 'F1'], ['Efficiency', 'eta', 'F1'], ['xf (PKN)', 'xf', 'F1'], ['CL', 'CL', 'F1'], ['p_i', 'pi', 'A1']];
                     if (unc.mode === 'range') {
@@ -2219,7 +2219,7 @@
                         s1.blocks.push(tb2);
                     }
                 }
-                var vl = cl.mode === 'single' ? (cl.label === 'high' ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
+                var vl = cl.mode === 'single' ? (cl.label === 'high' && _calibrated() ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
                 var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label) + ').'
                     : cl.mode === 'range' ? '⚠ Closure is a range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia: every closure-dependent value is given per family.'
                     : '✗ No closure can be estimated from this falloff.';

@@ -899,7 +899,7 @@
             if (!flag && !near) return;
             out.push({ id: 'psig-' + ch, hypothesis: (ch === 'p' ? 'Primary' : 'Surface') + ' pressure recorded in psig but read as psia', score: flag && near ? 1 : 0.8, bf: null,
                        fix: { field: 'channels.psig.' + ch, from: false, to: true },
-                       text: clampTxt('Psig read as psia: ' + why.join(' and ') + '. Apply fix adds ' + fmt(C.atm, 3) + ' psi to the channel (dataset unchanged).') });
+                       text: clampTxt('Psig read as psia (' + (ch === 'p' ? 'primary' : 'surface') + ' channel): ' + why.join(' and ') + '. Apply fix adds ' + fmt(C.atm, 3) + ' psi to the channel (dataset unchanged).') });
         });
         // 2. kPa / bar / MPa read as psi (primary channel)
         if (base.isip === false || base.hydro === false) {

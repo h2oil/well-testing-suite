@@ -460,7 +460,8 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 | 48-calc-help-livedata.js | 16.5 kB | | |
 
 (The table is the v3.3.2 allocation. Later moves of unused headroom — simulator follow-up WP-HC and its review, and the v3.4 DFIT
-help of WP7: welltest, print, overview, the page and others to production 36.02 kB, start 18.88 kB and the manifest module 8.75 kB —
+help of WP7 and its release review: welltest, print, overview, the page and others to production 36.42 kB, start 18.88 kB and the
+manifest module 8.75 kB —
 are recorded in the CAPS comment of `help-content.test.js`, which holds the caps in force; the sum stays 345 kB.)
 
 (Owner decision, Q13 option 1: every cap rises by about 5 % from the content-round caps below; welltest 32 → 36 kB and

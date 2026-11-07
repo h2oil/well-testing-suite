@@ -418,7 +418,7 @@
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
     '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
     '.help-nw{white-space:nowrap}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '@media (max-width:700px){.help-steps{padding-left:1.6em}.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
     '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {

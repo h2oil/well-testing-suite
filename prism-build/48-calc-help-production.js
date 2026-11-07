@@ -24,7 +24,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: '58db2a4b', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -62,8 +62,8 @@ var prism = {
   { id: 'tools', view: 'desktop', target: 'viewport', alt: 'The Tools drawer', caption: 'The Tools drawer',
     setup: [{ click: '#prism_tools_btn' }, { waitFor: '#prism_tools_drawer' }] },
   df('dfit-tri', '#prism_panel_1_dfit-triage', 'Test triage', 1), df('dfit-board', '#prism_panel_2_dfit-board', 'Closure consensus', 3),
-  df('dfit-aca', '#prism_dfit_cv_dfitAcaLogLog', 'After-closure log-log, step ④', 4), df('dfit-plan', '#prism_dfit_design_out .rbox', 'DFIT designer (pre-job): the design', 0, [{ click: '#prism_tools_btn' },
-    { click: '[data-tool="dfit-designer"]' }, { click: '#prism_dfit_design_go' }, { waitFor: '#prism_dfit_design_out .rbox' }])],
+  df('dfit-aca', '#prism_dfit_cv_dfitAcaLogLog', 'After-closure log-log, step ④', 4), df('dfit-plan', '#prism_dfit_design_head', 'DFIT designer (pre-job): the design and its shut-in verdict', 0, [{ click: '#prism_tools_btn' },
+    { click: '[data-tool="dfit-designer"]' }, { click: '#prism_dfit_design_go' }, { waitFor: '#prism_dfit_design_head' }])],
   parts: [
   { id: 'step-1', title: '① Data', what: ['Load the record, check how it was read, enter the well and fluid.'],
     steps: ['Select **Load data** (file or paste) or **Try demo data**.', 'Check **Column Mapping** and **Units**, then **Apply mapping**.',
@@ -88,18 +88,19 @@ var prism = {
   { id: 'tools', title: 'Tools drawer', what: ['PVT, tide, datasets, deconvolution, gas m(p), deliverability, rate-transient, plot tools, decline, saved fits.'],
     steps: ['Select **Tools**, then a panel; it opens on its own step.', 'Use deconvolution for multi-rate data.', 'Save and compare fits in the fit workspace.'] },
   { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
-    steps: ['Select Test **DFIT (fracture injection)**.', 'Load the record (rate in bbl/min) or a demo: Load demo DFIT.', 'Enter the datum TVD and wellbore; tick psig channels.',
-      { t: 'Select ▶ Analyse DFIT. Read the triage checks, re-pump verdict and grade A–D.', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
-    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia; grade B.'],
+    steps: ['Select Test **DFIT (fracture injection)**.', 'Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.',
+      { t: 'Read the triage checks, re-pump verdict and grade A–D (provisional).', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
-  { id: 'dfit-closure', title: 'DFIT ② ISIP, ③ closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
+  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
     steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
       'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
-  { id: 'dfit-aca', title: 'DFIT ④ p_i and k', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
-    steps: [{ t: 'Set the origin; read F_L, F_R, [[glossary#impulse|impulse]], log-log.', shot: 'dfit-aca' }, 'Leak-off model: sandbox, or Fit to the record.', 'Uncertainty: P10/P50/P90.'] },
+  { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
+    steps: [{ t: 'Set the origin; read the log-log, F_L, F_R and [[glossary#impulse|impulse]] plots.', shot: 'dfit-aca' }, 'Tab Leak-off model: Simulate in the sandbox, or History match, Fit.',
+      'Tab Uncertainty: P10/P50/P90 of each output.', 'Tab What this test can tell (after a fit).'] },
   { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],
-    steps: ['Open in PTA (transient) hands over p_i unless its label is low.', { t: 'Tools: designer, sandbox, replay, notes.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
+    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
 };
 
 var oilgas = {
