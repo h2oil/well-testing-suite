@@ -8,7 +8,7 @@
 //   window.PRiSM_dfit_blunders(prep, events, ctx) → [{id, hypothesis, score, bf:null, fix:{field, from, to, also?}, text}]
 //   window.PRiSM_dfit_repump(triage, ctx)         → {verdict:'continue'|'caution'|'repump', rules:[{id, level, text}], ack:false}
 //   window.PRiSM_dfit_grade(triage, consensus, aca, opts?) → {letter:'A'|'B'|'C'|'D', why:[string]}
-// Pure: no DOM, storage, timers or events; no Math.random. Resolved at call time by the Round-8 DFIT pipeline (57), which
+// Pure: no DOM, storage, timers or events; no unseeded random numbers. Resolved at call time by the Round-8 DFIT pipeline (57), which
 // returns triage:null and shows "triage unavailable" when this file is absent. WTS_wellbore (48) is resolved at call time too,
 // only for the theory storage / wave speed / hydrostatic when ctx does not carry them; its WP0 stubs are skipped.
 //
@@ -119,6 +119,11 @@
         return { a: a, b: b, r2: r2, n: n, r: vy > 0 ? cxy / Math.sqrt(vx * vy) : 0 };
     }
     function corr(x, y) { var r = linreg(x, y); return r ? r.r : NaN; }
+    function ranks(a) {
+        var ix = a.map(function (_, i) { return i; }).sort(function (i, j) { return a[i] - a[j]; }), r = new Array(a.length), i = 0;
+        while (i < ix.length) { var j = i; while (j + 1 < ix.length && a[ix[j + 1]] === a[ix[i]]) j++; for (var k = i; k <= j; k++) r[ix[k]] = 0.5 * (i + j); i = j + 1; }
+        return r;
+    }
     function interp(xs, ys, x) {
         var n = xs.length;
         if (!n) return NaN;
@@ -252,8 +257,10 @@
     // negative pressure difference. Returns {ok, offsetS, uncS, stopS, stopUncS, slopePsiPerBbl, method}
     // ═══════════════════════════════════════════════════════════════════════
     function alignLocal(C) {
-        var t = C.t, p = C.pw, q = C.q, n = C.n;
-        if (!q || n < 8 || !(C.qMax > 0)) return { ok: false };
+        var t = C.t, p = C.pw, q = C.q, n = C.n, qMaxRec = 0, ii;
+        if (!q || n < 8) return { ok: false };
+        for (ii = 0; ii < n; ii++) if (fin(q[ii]) && q[ii] > qMaxRec) qMaxRec = q[ii];   // the record's own scale (a unit blunder)
+        if (!(qMaxRec > 0)) return { ok: false };
         // cumulative volume of the rate record (bbl; t h, q bbl/min)
         var V = new Array(n); V[0] = 0;
         for (var i = 1; i < n; i++) {
@@ -261,13 +268,13 @@
             V[i] = V[i - 1] + 0.5 * (qa + qb) * (t[i] - t[i - 1]) * 60;
         }
         // rate start (first up-crossing of 2 % of the maximum) and its sampling resolution
-        var lev = 0.02 * C.qMax, kq = -1;
+        var lev = 0.02 * qMaxRec, kq = -1;
         for (i = 1; i < n; i++) if (fin(q[i]) && q[i] >= lev && !(q[i - 1] >= lev)) { kq = i; break; }
         if (kq < 1) return { ok: false };
         var q0 = fin(q[kq - 1]) ? q[kq - 1] : 0;
         var tq0 = t[kq - 1] + (lev - q0) / (q[kq] - q0) * (t[kq] - t[kq - 1]);
         var uncQ = 0.5 * (t[kq] - t[kq - 1]) * 3600;
-        if (q[kq] - q0 < 0.5 * C.qMax) uncQ = Math.min(uncQ, 0.5);   // a resolved ramp, not a sampled step
+        if (q[kq] - q0 < 0.5 * qMaxRec) uncQ = Math.min(uncQ, 0.5);   // a resolved ramp, not a sampled step
         // pressure-up start: baseline from the samples before the first rise
         var m0 = Math.min(5, n), base = [];
         for (i = 0; i < m0; i++) base.push(p[i]);
@@ -316,7 +323,7 @@
         var offsetS = best.L * 3600;
         var uncS = Math.max(uncQ, uncP);
         // stop event: last down-crossing of 50 % of the last rate vs the largest negative pressure difference
-        var stopS = null, stopUnc = null, lvl = 0.5 * (fin(C.qLast) && C.qLast > 0 ? C.qLast : C.qMax), kd = -1;
+        var stopS = null, stopUnc = null, qlr = fin(q[C.iLastPump]) && q[C.iLastPump] > 0.05 * qMaxRec ? q[C.iLastPump] : qMaxRec, lvl = 0.5 * qlr, kd = -1;
         for (i = n - 1; i >= 1; i--) if (fin(q[i]) && q[i] < lvl && q[i - 1] >= lvl) { kd = i; break; }
         var iDrop = largestDrop(C);
         if (kd > 0 && iDrop >= 0) {
@@ -644,14 +651,14 @@
         return { level: 'pass', value: rnd(sd, 4), threshold: T.warn, text: txt + '.' };
     };
 
-    // residuals from a local quadratic in ln Δt over ±0.1 decade (at least 7 points)
+    // residuals from a local quadratic in ln Δt over ±0.05 decade (at least 5 points); the same linear filter on p and T
     function localResid(x, y) {
-        var n = x.length, out = new Array(n), lx = x.map(function (v) { return Math.log(v); }), hw = 0.1 * Math.LN10;
+        var n = x.length, out = new Array(n), lx = x.map(function (v) { return Math.log(v); }), hw = 0.05 * Math.LN10;
         for (var i = 0; i < n; i++) {
             var a = i, b = i;
             while (a > 0 && lx[i] - lx[a - 1] <= hw) a--;
             while (b < n - 1 && lx[b + 1] - lx[i] <= hw) b++;
-            while (b - a + 1 < 7 && (a > 0 || b < n - 1)) { if (a > 0) a--; if (b < n - 1 && b - a + 1 < 7) b++; }
+            while (b - a + 1 < 5 && (a > 0 || b < n - 1)) { if (a > 0) a--; if (b < n - 1 && b - a + 1 < 5) b++; }
             // quadratic least squares about lx[i]
             var S = [0, 0, 0, 0, 0], R = [0, 0, 0];
             for (var k = a; k <= b; k++) {
@@ -672,7 +679,12 @@
         var win = pickWindow(C), x = [], yp = [], yt = [];
         for (var i = C.iFall; i < C.n; i++) if (C.t[i] >= win[0] && C.t[i] <= win[1] && fin(C.pw[i]) && fin(C.T[i]) && C.t[i] > C.ts) { x.push(C.t[i] - C.ts); yp.push(C.pw[i]); yt.push(C.T[i]); }
         if (x.length < T.minN) return { level: 'na', value: null, threshold: T.warn, text: 'Too few samples with temperature in the pick window.' };
-        var rp = localResid(x, yp), rt = localResid(x, yt), r = corr(rt, rp), reg = linreg(rt, rp);
+        var rp0 = localResid(x, yp), rt0 = localResid(x, yt), lim = 3 * mad(rt0), rp = [], rt = [];
+        // only samples whose temperature departs from its trend by more than 3 robust sigmas carry a thermal signal;
+        // rank correlation, so a few residuals of a kink (closure, a step) cannot dominate it
+        for (i = 0; i < x.length; i++) if (Math.abs(rt0[i]) > lim) { rp.push(rp0[i]); rt.push(rt0[i]); }
+        if (rp.length < Math.max(5, T.minN / 2)) return { level: 'pass', value: 0, threshold: T.warn, text: 'No thermal signal in the pick window beyond the temperature noise.' };
+        var r = corr(ranks(rt), ranks(rp)), reg = linreg(rt, rp);
         if (!fin(r)) return { level: 'pass', value: 0, threshold: T.warn, text: 'Detrended pressure and temperature are uncorrelated.' };
         var a = Math.abs(r), txt = 'Detrended pressure and temperature correlate at r = ' + fmt(r, 2) + (reg ? ' (dp/dT ' + fmt(reg.b, 2) + ' psi/F)' : '');
         if (a > T.fail) return { level: 'fail', value: rnd(a, 3), threshold: T.fail, inWindow: true, text: txt + ' inside the pick window: thermal effects on the gauge or the column.' };
