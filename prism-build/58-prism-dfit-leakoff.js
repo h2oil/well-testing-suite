@@ -665,7 +665,7 @@
             out.Ggen.push(gg);
             var dD = (t[i] - e.ts) / tp;
             Xa05[i] = i >= iS ? Gf(_max(0, dD), 0.5) : null; Xa1[i] = i >= iS ? Gf(_max(0, dD), 1) : null; Xgen[i] = gg;
-            var b = _abs(raw.VI[i] - (raw.VF[i] + raw.VL[i] + e.VwCw * (raw.PW[i] - raw.PW[0])));
+            var b = _abs(raw.VI[i] - (raw.VF[i] - raw.VF[0] + raw.VL[i] + e.VwCw * (raw.PW[i] - raw.PW[0])));   // the initial flaw may hold a residual aperture
             if (b > bal) bal = b;
         }
         // ISIP: the fracture pressure once the wellbore over-pressure (viscous excess, friction) has redistributed — the first
@@ -1071,7 +1071,517 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // PLACEHOLDER: fit, Fisher, designer (later milestones)
+    // History match (§5.7): Levenberg–Marquardt in transformed parameters (log k, log C_w, …), forward-difference Jacobian
+    // (n_p + 1 runs per iteration), run budget, honest uncertainty (n_eff inflation, structural spread), sloppy directions.
+    // Exposed as a Job (one LM iteration per step) next to the synchronous function with the identical result.
+    // ─────────────────────────────────────────────────────────────────────
+    // parameter catalogue: transform, how to read / write it on an LkConfig, default bounds
+    var PDEF = {
+        k: { log: true, get: function (c) { return c.k; }, set: function (c, v) { c.k = v; }, lo: 1e-7, hi: 100, label: 'permeability', unit: 'md' },
+        Cw: { log: true, get: function (c) { return c.Cw; }, set: function (c, v) { c.Cw = v; }, lo: 1e-7, hi: 1e-1, label: 'the wall coefficient', unit: 'ft/√min' },
+        Sp: { log: true, get: function (c) { return c.Sp; }, set: function (c, v) { c.Sp = v; }, lo: 1e-3, hi: 20, label: 'spurt', unit: 'gal/100 ft²' },
+        sigmaC: { log: false, get: function (c) { return c.sigmaC; }, set: function (c, v) { c.sigmaC = v; }, lo: null, hi: null, label: 'closure stress', unit: 'psia', pressure: true },
+        pr: { log: false, get: function (c) { return c.pr; }, set: function (c, v) { c.pr = v; }, lo: 0, hi: null, label: 'pore pressure', unit: 'psia', pressure: true },
+        Ep: { log: true, get: function (c) { return c.Ep; }, set: function (c, v) { c.Ep = v; }, lo: 3e5, hi: 1e7, label: 'E′', unit: 'psi' },
+        hf: { log: true, get: function (c) { return c.hf; }, set: function (c, v) { c.hf = v; }, lo: null, hi: null, label: 'fracture height', unit: 'ft' },
+        KIc: { log: true, get: function (c) { return c.KIc; }, set: function (c, v) { c.KIc = v; }, lo: 500, hi: 50000, label: 'apparent toughness', unit: 'psi·√in' },
+        sh: { log: true, get: function (c) { return c.aperture.sh; }, set: function (c, v) { c.aperture.sh = v; }, lo: 1, hi: 2000, label: 'contact scale', unit: 'psi' },
+        sc: { log: true, get: function (c) { return c.aperture.sc; }, set: function (c, v) { c.aperture.sc = v; }, lo: 1, hi: 2000, label: 'contact scale', unit: 'psi' },
+        Cd: { log: false, get: function (c) { return c.pdl.Cd; }, set: function (c, v) { c.pdl.Cd = _max(0, v); }, lo: 0, hi: 0.05, label: 'the PDL coefficient', unit: '1/psi' },
+        pfo: { log: false, get: function (c) { return c.pdl.pfo == null ? c.sigmaC : c.pdl.pfo; }, set: function (c, v) { c.pdl.pfo = v; }, lo: null, hi: null, label: 'the fissure-opening pressure', unit: 'psia', pressure: true },
+        VwCw: { log: true, get: function (c) { return c.VwCw; }, set: function (c, v) { c.VwCw = v; }, lo: null, hi: null, label: 'wellbore storage', unit: 'bbl/psi' }
+    };
+    function _presetFree(preset, cfg) {
+        var res = (cfg.k != null && +cfg.k > 0) || (+cfg.Cw > 0 === false), lk = res ? 'k' : 'Cw', law = (cfg.aperture && cfg.aperture.law) || 'none';
+        var contact = law === 'hyp' ? ['sh'] : (law === 'exp' ? ['sc'] : []);
+        var wall = (+cfg.Cw > 0 && res) ? ['Cw'] : [];
+        var f;
+        if (preset === 'falloff') f = [lk, 'sigmaC'].concat(contact);
+        else if (preset === 'geometry') f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Ep']);
+        else if (preset === 'pdl') f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Cd', 'pfo']);
+        else if (preset === 'spurt') f = [lk, 'sigmaC'].concat(contact, res ? ['pr'] : [], wall, ['Sp']);
+        else f = [lk, 'KIc', 'sigmaC'].concat(contact, res ? ['pr'] : [], wall);
+        return f;
+    }
+    function _freeRules(free) {
+        var w = [];
+        if (free.indexOf('Ep') >= 0 && free.indexOf('hf') >= 0) w.push(_w('GROUP_FREE', 'warn', 'E′ and the fracture height are both free: only their group is determined; free one member, read σ_c from that fit and report Γ.'));
+        if (free.indexOf('KIc') >= 0 && free.indexOf('Ep') >= 0) w.push(_w('TOUGHNESS_EP', 'warn', 'Apparent toughness is best freed only with E′ fixed: the two trade off along the Γ direction.'));
+        return w;
+    }
+
+    // n_eff = n·(1 − ρ1)/(1 + ρ1) from the lag-1 autocorrelation of the residuals; intervals inflate by √(n/n_eff)
+    function _neff(e) {
+        var n = e.length, sumE2 = 0, sumL = 0;
+        for (var i = 0; i < n; i++) { sumE2 += e[i] * e[i]; if (i > 0) sumL += e[i] * e[i - 1]; }
+        var rho1 = sumE2 > 0 ? sumL / sumE2 : 0, nEff = rho1 > 0 ? n * (1 - rho1) / (1 + rho1) : n;
+        return { rho1: rho1, nEff: nEff, inflation: _sqrt(n / _max(nEff, 1)) };
+    }
+    function _median(a) { var b = a.slice().sort(function (x, y) { return x - y; }); return b.length ? _pct(b, 0.5) : 0; }
+    function _sigmaFromData(t, p) {   // late falloff: σ_p = 1.4826·MAD(second differences)/√6 over the last 30 % of the points
+        var n = p.length, i0 = _max(1, _floor(n * 0.7)), d = [];
+        for (var i = i0; i < n - 1; i++) d.push(p[i + 1] - 2 * p[i] + p[i - 1]);
+        if (d.length < 5) return null;
+        var m = _median(d), dev = d.map(function (x) { return _abs(x - m); });
+        var s = 1.4826 * _median(dev) / _sqrt(6);
+        return s > 0 ? s : null;
+    }
+    // falloff data → ≤ nMax log-spaced points after the shut-in (injection weight 0 by default)
+    function _prepData(data, ts, nMax) {
+        var t = [], p = [], w = [];
+        for (var i = 0; i < data.t.length; i++) {
+            var ti = +data.t[i], pi = +data.p[i], wi = data.w ? +data.w[i] : 1;
+            if (!_isFinite(ti) || !_isFinite(pi) || !(wi > 0)) continue;
+            if (ti <= ts + 1e-9 && !(data.w && wi > 0 && data.injection)) continue;
+            t.push(ti); p.push(pi); w.push(wi);
+        }
+        if (t.length > nMax) {
+            var lt0 = _log(t[0] - ts), lt1 = _log(t[t.length - 1] - ts), pick = [], j = 0;
+            for (var k = 0; k < nMax; k++) {
+                var target = ts + _exp(lt0 + (lt1 - lt0) * k / (nMax - 1));
+                while (j < t.length - 1 && _abs(t[j + 1] - target) <= _abs(t[j] - target)) j++;
+                if (!pick.length || pick[pick.length - 1] !== j) pick.push(j);
+            }
+            t = pick.map(function (q) { return t[q]; }); p = pick.map(function (q) { return p[q]; }); w = pick.map(function (q) { return w[q]; });
+        }
+        return { t: t, p: p, w: w };
+    }
+    function _solveLin(A, b) {   // Gaussian elimination with partial pivoting (small systems)
+        var n = b.length, M = A.map(function (r, i) { return r.slice().concat([b[i]]); });
+        for (var i = 0; i < n; i++) {
+            var pv = i; for (var k = i + 1; k < n; k++) if (_abs(M[k][i]) > _abs(M[pv][i])) pv = k;
+            var tmp = M[i]; M[i] = M[pv]; M[pv] = tmp;
+            if (!(_abs(M[i][i]) > 1e-300)) return null;
+            for (k = i + 1; k < n; k++) { var f = M[k][i] / M[i][i]; for (var j = i; j <= n; j++) M[k][j] -= f * M[i][j]; }
+        }
+        var x = new Array(n);
+        for (i = n - 1; i >= 0; i--) { var s = M[i][n]; for (j = i + 1; j < n; j++) s -= M[i][j] * x[j]; x[i] = s / M[i][i]; }
+        return x;
+    }
+    function _inv(A) {
+        var n = A.length, cols = [];
+        for (var j = 0; j < n; j++) { var e = new Array(n); for (var i = 0; i < n; i++) e[i] = i === j ? 1 : 0; var c = _solveLin(A, e); if (!c) return null; cols.push(c); }
+        var out = []; for (i = 0; i < n; i++) { out.push([]); for (j = 0; j < n; j++) out[i].push(cols[j][i]); }
+        return out;
+    }
+    function _jacobiEig(S) {
+        var n = S.length, a = S.map(function (r) { return r.slice(); }), V = [];
+        for (var i = 0; i < n; i++) { V.push([]); for (var j = 0; j < n; j++) V[i].push(i === j ? 1 : 0); }
+        for (var sweep = 0; sweep < 100; sweep++) {
+            var off = 0; for (i = 0; i < n; i++) for (j = i + 1; j < n; j++) off += a[i][j] * a[i][j];
+            if (off < 1e-24) break;
+            for (var p = 0; p < n; p++) for (var q = p + 1; q < n; q++) {
+                if (_abs(a[p][q]) < 1e-300) continue;
+                var th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = (th >= 0 ? 1 : -1) / (_abs(th) + _sqrt(th * th + 1)), c = 1 / _sqrt(t * t + 1), s = t * c, k;
+                for (k = 0; k < n; k++) { var akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+                for (k = 0; k < n; k++) { var apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
+                for (k = 0; k < n; k++) { var vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; }
+            }
+        }
+        var idx = []; for (i = 0; i < n; i++) idx.push(i);
+        idx.sort(function (x, y) { return a[x][x] - a[y][y]; });
+        return { vals: idx.map(function (i2) { return a[i2][i2]; }), vecs: idx.map(function (i2) { return V.map(function (r) { return r[i2]; }); }) };
+    }
+
+    // model: transformed vector → pressures at the data times (one forward run on the fixed grid)
+    function _makeModel(cfg0, keys, tData, opts, counts) {
+        var conv = lkToEngine(cfg0);
+        if (!conv.ok) return { ok: false, fail: conv };
+        var e0 = conv.e, gs = _gridSpec(opts.grid || 'fit'), grid = buildGrid(e0, gs);   // grid fixed by schedule and t_end only
+        function cfgOf(x) {
+            var c = _clone(cfg0); c.CL = null; c.wc = null;
+            for (var i = 0; i < keys.length; i++) { var d = PDEF[keys[i]], v = d.log ? _exp(x[i]) : x[i]; d.set(c, v); }
+            if (c.pr >= c.sigmaC - 1) c.pr = c.sigmaC - 1;
+            if (c.pdl && c.pdl.pfo != null && c.pdl.pfo < c.sigmaC) c.pdl.pfo = c.sigmaC;
+            return c;
+        }
+        function run(x) {
+            var c = cfgOf(x), cv = lkToEngine(c);
+            if (!cv.ok) return null;
+            var raw = _simulateEngine(cv.e, grid, opts.budgetMs == null ? 2000 : opts.budgetMs, 0, counts);
+            counts.runs++;
+            if (raw.why) return null;
+            var res = _pack(cv.e, raw, {});
+            return { res: res, p: lkSample(res, tData), cfg: c };
+        }
+        return { ok: true, cfgOf: cfgOf, run: run, e0: e0, grid: grid };
+    }
+
+    function _toX(keys, cfg) { return keys.map(function (k) { var v = PDEF[k].get(cfg); return PDEF[k].log ? _log(v) : v; }); }
+
+    function lkFitJob(data, cfg, preset, opts) {
+        var done = false, cancelled = false, result = null, st = null, lastLabel = 'starting';
+        opts = opts || {};
+        preset = preset || 'full';
+        function finish(r) { result = r; done = true; }
+        function init() {
+            if (!data || !Array.isArray(data.t) || !Array.isArray(data.p) || data.t.length !== data.p.length) return finish(_fail('BAD_DATA', 'data {t, p} arrays of equal length are required.', ['data']));
+            if (['falloff', 'full', 'geometry', 'pdl', 'spurt'].indexOf(preset) < 0) return finish(_fail('BAD_PRESET', "preset must be 'falloff', 'full', 'geometry', 'pdl' or 'spurt'.", ['preset']));
+            var c0 = _clone(cfg);
+            if (c0.CL != null) {   // CL / w_c display inputs → {C_w, k} once, never fitted as such
+                var cv0 = lkToEngine(c0); if (!cv0.ok) return finish(cv0);
+                _resolveCL(cv0.e, {});
+                c0.Cw = cv0.e.Cw / cv0.e.u.sqmin; c0.k = cv0.e.kMd > 0 ? cv0.e.kMd : null; c0.CL = null; c0.wc = null;
+            }
+            c0.aperture = c0.aperture || { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null };
+            c0.pdl = c0.pdl || { Cd: 0, pfo: null, fmax: 50 };
+            var keys = Array.isArray(opts.free) && opts.free.length ? opts.free.slice() : _presetFree(preset, c0);
+            for (var i = 0; i < keys.length; i++) if (!PDEF[keys[i]]) return finish(_fail('BAD_PARAM', 'Unknown free parameter ' + keys[i] + '.', ['free']));
+            if (keys.indexOf('Cd') >= 0 && !(c0.pdl.Cd > 0)) c0.pdl.Cd = 0.002;
+            if (keys.indexOf('k') >= 0 && !(c0.k > 0)) c0.k = 1e-3;
+            if (keys.indexOf('Cw') >= 0 && !(c0.Cw > 0)) c0.Cw = 1e-4;
+            if (keys.indexOf('Sp') >= 0 && !(c0.Sp > 0)) c0.Sp = 0.5;
+            var conv = lkToEngine(c0); if (!conv.ok) return finish(conv);
+            var ts = conv.e.ts, pd = _prepData(data, ts, opts.nMax || 300);
+            if (pd.t.length < keys.length + 3) return finish(_fail('TOO_FEW_POINTS', 'Too few falloff points for ' + keys.length + ' free parameters.', ['data']));
+            var tLast = pd.t[pd.t.length - 1];
+            c0.tEnd = tLast + 1e-6 * (tLast - ts) + 1e-6;   // the grid is fixed by the schedule and the data end
+            var pMax = -Infinity, pMin = Infinity; pd.p.forEach(function (v) { if (v > pMax) pMax = v; if (v < pMin) pMin = v; });
+            // bounds in transformed space
+            var lo = [], hi = [];
+            keys.forEach(function (k) {
+                var d = PDEF[k], v = d.get(c0), L = d.lo, H = d.hi;
+                if (k === 'sigmaC') { L = _max(+c0.pr + 10, 1); H = pMax; }
+                if (k === 'pr') { L = 1; H = (keys.indexOf('sigmaC') >= 0 ? pMax : +c0.sigmaC) - 1; }
+                if (k === 'pfo') { L = +c0.sigmaC; H = pMax + 500; }
+                if (k === 'hf') { L = +c0.hp; H = 10 * c0.hp; }
+                if (k === 'VwCw') { L = v * 0.5; H = v * 1.5; }
+                if (opts.bounds && opts.bounds[k]) { L = opts.bounds[k][0]; H = opts.bounds[k][1]; }
+                lo.push(d.log ? _log(L) : L); hi.push(d.log ? _log(H) : H);
+            });
+            var counts = { runs: 0, evals: 0 };
+            var model = _makeModel(c0, keys, pd.t, opts, counts);
+            if (!model.ok) return finish(model.fail);
+            var sigmaP = (+opts.sigmaP > 0) ? +opts.sigmaP : (_sigmaFromData(pd.t, pd.p) || 0.5);
+            // starts: the given one plus (optionally) 4 deterministic perturbations
+            var x0 = _toX(keys, c0).map(function (v, i) { return _min(hi[i], _max(lo[i], v)); });
+            var starts = [x0];
+            if (opts.multiStart) {
+                var band = (+opts.sigmaBand > 0) ? +opts.sigmaBand : 50, pert = [[4, 1, 3], [0.25, -1, 1 / 3], [4, -1, 1 / 3], [0.25, 1, 3]];
+                pert.forEach(function (pp) {
+                    var x = x0.slice();
+                    keys.forEach(function (k, i) {
+                        if (k === 'k' || k === 'Cw') x[i] += _log(pp[0]);
+                        else if (k === 'sigmaC') x[i] += pp[1] * band;
+                        else if (k === 'sh' || k === 'sc') x[i] += _log(pp[2]);
+                        x[i] = _min(hi[i], _max(lo[i], x[i]));
+                    });
+                    starts.push(x);
+                });
+            }
+            st = { keys: keys, lo: lo, hi: hi, model: model, pd: pd, sigmaP: sigmaP, counts: counts, starts: starts, iStart: -1, runsOut: [],
+                   maxRuns: (+opts.maxRuns > 0) ? +opts.maxRuns : 400, maxIter: (+opts.maxIter > 0) ? +opts.maxIter : 60, budgetMs: (+opts.budgetMs > 0) ? +opts.budgetMs : 5000,
+                   t0: _now(), cur: null, c0: c0 };
+        }
+        function resid(x) {
+            var r = st.model.run(x);
+            if (!r) return null;
+            var e = new Array(st.pd.t.length), S = 0;
+            for (var i = 0; i < e.length; i++) { var v = r.p[i]; if (v == null) return null; e[i] = (v - st.pd.p[i]) * _sqrt(st.pd.w[i]); S += e[i] * e[i]; }
+            return { e: e, S: S, r: r };
+        }
+        function jac(x, base) {
+            var J = [];
+            for (var j = 0; j < st.keys.length; j++) {
+                var d = PDEF[st.keys[j]], h = d.log ? 1e-4 : _max(1e-3, _abs(x[j]) * 1e-6) * 10;
+                if (x[j] + h > st.hi[j]) h = -h;
+                var x2 = x.slice(); x2[j] += h;
+                var r2 = resid(x2); if (!r2) return null;
+                var col = new Array(base.e.length);
+                for (var k = 0; k < col.length; k++) col[k] = (r2.e[k] - base.e[k]) / h;
+                J.push(col);
+            }
+            return J;
+        }
+        function normal(J, e) {
+            var np = J.length, A = [], g = [];
+            for (var i = 0; i < np; i++) {
+                A.push(new Array(np)); var gi = 0;
+                for (var k = 0; k < e.length; k++) gi += J[i][k] * e[k];
+                g.push(gi);
+                for (var j = 0; j < np; j++) { var s = 0; for (k = 0; k < e.length; k++) s += J[i][k] * J[j][k]; A[i][j] = s; }
+            }
+            return { A: A, g: g };
+        }
+        function startNext() {
+            st.iStart++;
+            if (st.iStart >= st.starts.length) return false;
+            var x = st.starts[st.iStart], r = resid(x);
+            if (!r) { st.runsOut.push({ ok: false }); return startNext(); }
+            st.cur = { x: x, r: r, lam: 1e-2, it: 0, stop: null };
+            return true;
+        }
+        function iterate() {   // one LM iteration of the current start
+            var c = st.cur;
+            if (st.counts.runs >= st.maxRuns) { c.stop = 'budget'; return; }
+            if (_now() - st.t0 > st.budgetMs) { c.stop = 'time budget'; return; }
+            if (c.it >= st.maxIter) { c.stop = 'maxIter'; return; }
+            var J = jac(c.x, c.r); if (!J) { c.stop = 'failed run'; return; }
+            var ne = normal(J, c.r.e), improved = false;
+            for (var tries = 0; tries < 12; tries++) {
+                var B = ne.A.map(function (row, i) { var r2 = row.slice(); r2[i] *= (1 + c.lam); if (!(r2[i] > 0)) r2[i] = c.lam; return r2; });
+                var dx = _solveLin(B, ne.g.map(function (v) { return -v; }));
+                if (!dx) { c.lam *= 4; continue; }
+                var xn = c.x.map(function (v, i) { return _min(st.hi[i], _max(st.lo[i], v + dx[i])); });
+                var rn = resid(xn);
+                if (rn && rn.S < c.r.S) {
+                    var rel = (c.r.S - rn.S) / _max(c.r.S, 1e-300), step = 0;
+                    for (var i = 0; i < dx.length; i++) step = _max(step, _abs(xn[i] - c.x[i]) / (PDEF[st.keys[i]].log ? 1 : _max(1, _abs(c.x[i]))));
+                    c.x = xn; c.r = rn; c.lam = _max(c.lam / 5, 1e-7); improved = true;
+                    if (rel < 1e-7 || step < 1e-8) c.stop = 'converged';
+                    break;
+                }
+                c.lam *= 4;
+                if (st.counts.runs >= st.maxRuns) break;
+            }
+            c.it++;
+            if (!improved && !c.stop) c.stop = 'converged';
+        }
+        function finalise() {
+            var best = null;
+            st.runsOut.forEach(function (o) { if (o.ok && (!best || o.S < best.S)) best = o; });
+            if (!best) return finish(_fail('FIT_FAILED', 'Every model run of the history match failed.', []));
+            var keys = st.keys, np = keys.length, n = st.pd.t.length, x = best.x, base = best.r;
+            var J = jac(x, base);
+            var warnings = _freeRules(keys).concat(base.r.res.warnings.filter(function (w) { return w.level !== 'info'; }));
+            var ne = J ? normal(J, base.e) : null, C = ne ? _inv(ne.A) : null;
+            var s2 = base.S / _max(1, n - np), sd = [], corr = {}, params = {}, ci95 = {}, ci95I = {};
+            var ne1 = _neff(base.e), rho1 = ne1.rho1, nEff = ne1.nEff, infl = ne1.inflation, i;
+            keys.forEach(function (k, j) {
+                var d = PDEF[k], v = d.log ? _exp(x[j]) : x[j];
+                params[k] = v;
+                var s = (C && C[j][j] > 0) ? _sqrt(C[j][j] * s2) : null; sd.push(s);
+                if (s == null) { ci95[k] = null; ci95I[k] = null; return; }
+                ci95[k] = d.log ? [v * _exp(-1.96 * s), v * _exp(1.96 * s)] : [v - 1.96 * s, v + 1.96 * s];
+                ci95I[k] = d.log ? [v * _exp(-1.96 * s * infl), v * _exp(1.96 * s * infl)] : [v - 1.96 * s * infl, v + 1.96 * s * infl];
+            });
+            if (C) for (i = 0; i < np; i++) for (var j = i + 1; j < np; j++) if (sd[i] && sd[j]) corr[keys[i] + '_' + keys[j]] = C[i][j] * s2 / (sd[i] * sd[j]);
+            // sloppy directions: correlation-scaled Fisher, λ_min/λ_max < 1e-4
+            var sloppy = [], eig = null;
+            if (ne) {
+                var Fs = ne.A.map(function (row, a) { return row.map(function (v, b) { return v / _sqrt(ne.A[a][a] * ne.A[b][b]); }); });
+                eig = _jacobiEig(Fs);
+                var lmax = eig.vals[eig.vals.length - 1];
+                eig.vals.forEach(function (lv, m) { if (lv / lmax < 1e-4) sloppy.push(_sloppyEntry(keys, eig.vecs[m], best.r.r.cfg, best.r.r.res, C, s2, infl)); });
+            }
+            var bestRes = best.r.r.res, bestCfg = best.r.r.cfg, grp = lkGroups(bestRes);
+            var rmse = _sqrt(base.S / n), chi2 = base.S / (st.sigmaP * st.sigmaP);
+            if (st.sigmaP > 0 && rmse > 5 * st.sigmaP) warnings.push(_w('FIT_MISFIT', 'warn', 'The model does not fit (rmse ' + _sig(rmse, 3) + ' psi against a noise of ' + _sig(st.sigmaP, 2) + ' psi): a fixed height or E′ may be wrong; free one member of the {E′, h_f} group.'));
+            var conv = st.runsOut.filter(function (o) { return o.ok && o.S <= best.S * 1.05; }).length;
+            var structural = { sigmaC: null, pr: null, k: null, CLeq: null };
+            var out = {
+                ok: true, preset: preset, params: params, ci95: ci95, ci95Inflated: ci95I, corr: corr, nEff: nEff, rho1: rho1, inflation: infl,
+                structural: structural, groups: grp.ok ? { Gamma: grp.Gamma, GammaPKN: grp.GammaPKN == null ? 0 : grp.GammaPKN, text: grp.text.slice(0, 299) } : { Gamma: 0, GammaPKN: 0, text: 'The identifiable group could not be computed.' },
+                sloppy: sloppy, starts: { n: st.starts.length, converged: conv }, runs: st.counts.runs, chi2: chi2, rmse: rmse, sigmaP: st.sigmaP,
+                stopReason: best.stop || 'converged', warnings: warnings,
+                free: keys.slice(), cfg: bestCfg, CLeq: bestRes.CLeq, dpCL: bestRes.dpCL, wcEq: bestRes.wcEq, kEq: bestRes.k, evals: st.counts.evals,
+                design: { t: st.pd.t.slice(), sigmaP: st.sigmaP }, eig: eig ? eig.vals : null
+            };
+            finish(out);
+        }
+        function step() {
+            if (done) return { done: true, progress: 1, label: lastLabel };
+            try {
+                if (!st) { init(); if (done) return { done: true, progress: 1, label: 'failed' }; startNext(); lastLabel = 'start 1'; return { done: false, progress: 0, label: lastLabel }; }
+                if (cancelled) { finish(_fail('CANCELLED', 'The history match was cancelled.', [])); return { done: true, progress: 1, label: 'cancelled' }; }
+                if (st.cur && !st.cur.stop) iterate();
+                if (st.cur && st.cur.stop) {
+                    st.runsOut.push({ ok: true, x: st.cur.x, r: st.cur.r, S: st.cur.r.S, stop: st.cur.stop });
+                    if (!startNext()) { finalise(); return { done: true, progress: 1, label: 'done' }; }
+                }
+                var prog = _min(0.99, (st.iStart + (st.cur ? st.cur.it / st.maxIter : 0)) / st.starts.length);
+                lastLabel = 'start ' + (st.iStart + 1) + ' of ' + st.starts.length + ', iteration ' + (st.cur ? st.cur.it : 0);
+                return { done: false, progress: prog, label: lastLabel };
+            } catch (err) { finish(_fail('FIT_FAILED', err && err.message || err, [])); return { done: true, progress: 1, label: 'failed' }; }
+        }
+        return { step: step, result: function () { return result; }, cancel: function () { cancelled = true; } };
+    }
+    function _drain(job, cap) { var n = 0, s; do { s = job.step(); n++; } while (!s.done && n < (cap || 100000)); return job.result(); }
+    function lkFit(data, cfg, preset, opts) {
+        try {
+            var r = _drain(lkFitJob(data, cfg, preset, opts));
+            if (r && r.ok && opts && opts.structural) _structural(r, data, preset, opts);
+            return r;
+        } catch (err) { return _fail('FIT_FAILED', err && err.message || err, []); }
+    }
+    // structural spread: refit with each aperture law and PDL on/off; ranges over the structures with χ² ≤ 1.5 × the best
+    function _structural(fit, data, preset, opts) {
+        var laws = ['none', 'exp', 'hyp'], rows = [];
+        laws.forEach(function (law) {
+            [false, true].forEach(function (pdl) {
+                var c = _clone(fit.cfg); c.aperture.law = law; c.pdl.Cd = pdl ? 0.002 : 0;
+                var free = fit.free.filter(function (k) { return k !== 'sh' && k !== 'sc' && k !== 'Cd'; });
+                if (law === 'hyp') free.push('sh'); if (law === 'exp') free.push('sc'); if (pdl) free.push('Cd');
+                var o = _clone(opts); o.free = free; o.structural = false; o.multiStart = false;
+                var f = _drain(lkFitJob(data, c, preset, o));
+                if (f && f.ok) rows.push(f);
+            });
+        });
+        var bestChi = Infinity; rows.forEach(function (f) { if (f.chi2 < bestChi) bestChi = f.chi2; });
+        var keep = rows.filter(function (f) { return f.chi2 <= 1.5 * bestChi; });
+        function rng(get) { var v = keep.map(get).filter(function (x) { return _isFinite(x); }); if (!v.length) return null; return [_min.apply(null, v), _max.apply(null, v)]; }
+        fit.structural = { sigmaC: rng(function (f) { return f.params.sigmaC != null ? f.params.sigmaC : f.cfg.sigmaC; }), pr: rng(function (f) { return f.params.pr != null ? f.params.pr : f.cfg.pr; }),
+                           k: rng(function (f) { return f.kEq; }), CLeq: rng(function (f) { return f.CLeq; }), n: keep.length };
+    }
+    var LABEL = { k: 'permeability', Cw: 'the wall coefficient', Sp: 'spurt', sigmaC: 'closure stress', pr: 'pore pressure', Ep: 'E′', hf: 'fracture height',
+                  KIc: 'apparent toughness', sh: 'the contact scale', sc: 'the contact scale', Cd: 'the PDL coefficient', pfo: 'the fissure-opening pressure', VwCw: 'wellbore storage' };
+    function _sloppyEntry(keys, vec, cfg, res, C, s2, infl) {
+        var comps = keys.map(function (k, i) { return { k: k, v: vec[i] }; }).sort(function (a, b) { return _abs(b.v) - _abs(a.v); });
+        var top = comps.filter(function (c) { return _abs(c.v) > 0.3; }).slice(0, 3), vobj = {};
+        keys.forEach(function (k, i) { vobj[k] = vec[i]; });
+        var names = top.map(function (c) { return c.k; }), text;
+        var geo = names.indexOf('Ep') >= 0 || names.indexOf('hf') >= 0 || names.indexOf('KIc') >= 0;
+        if (geo) {
+            var g = lkGroups(res), pm = _groupPm(keys, cfg, res, C, s2, infl);
+            text = (names.indexOf('Ep') >= 0 && names.indexOf('hf') >= 0 ? 'E′ and fracture height cannot be separated by this test' : top.map(function (c) { return LABEL[c.k]; }).join(', ').replace(/^./, function (m) { return m.toUpperCase(); }) + ' cannot be separated by this test') +
+                ': only Γ = ' + _sig(g.Gamma, 3) + ' psi/√min (r_p·CL·E′/h_f = ' + _sig(g.GammaPKN, 3) + ') is determined (±' + _sig(pm, 1) + ' %). CL = ' + _sci(res.CLeq, 2) +
+                ' ft/√min assumes E′ = ' + _sci(cfg.Ep, 1) + ' psi and h_f = ' + _sig(cfg.hf, 3) + ' ft.';
+        } else {
+            text = top.map(function (c) { return LABEL[c.k]; }).join(' and ').replace(/^./, function (m) { return m.toUpperCase(); }) + ' cannot be separated by this test; only their combination is determined.';
+        }
+        return { vec: vobj, text: text.slice(0, 299) };
+    }
+    // relative 95 % half-width (%) of Γ_PKN = r_p·CL·E′/h_f from the parameter covariance (linear propagation)
+    function _groupPm(keys, cfg, res, C, s2, infl) {
+        if (!C) return 0;
+        var dl = keys.map(function (k) {
+            if (k === 'Ep') return 1;
+            if (k === 'hf') return (cfg.hp < cfg.hf) ? -2 : -1;
+            if (k === 'Cw') return res.CLeq > 0 ? (cfg.Cw || 0) / res.CLeq : 0;
+            if (k === 'k') return res.CLeq > 0 ? 0.5 * (res.CLeq - (cfg.Cw || 0)) / res.CLeq : 0;
+            return 0;
+        });
+        var v = 0; for (var i = 0; i < keys.length; i++) for (var j = 0; j < keys.length; j++) v += dl[i] * dl[j] * C[i][j] * s2;
+        return 100 * 1.96 * _sqrt(_max(0, v)) * (infl || 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Fisher information on a planned design (noise only): {tEnd, sigma, nPts, free, priors?}
+    // ─────────────────────────────────────────────────────────────────────
+    function lkFisher(cfg, design) {
+        try {
+            design = design || {};
+            var c0 = _clone(cfg); c0.aperture = c0.aperture || { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null }; c0.pdl = c0.pdl || { Cd: 0, pfo: null, fmax: 50 };
+            var conv = lkToEngine(c0); if (!conv.ok) return conv;
+            var ts = conv.e.ts, tEnd = (+design.tEnd > ts) ? +design.tEnd : c0.tEnd, nPts = (+design.nPts >= 5) ? _floor(+design.nPts) : 250;
+            var sigma = (+design.sigma > 0) ? +design.sigma : 0.5;
+            var keys = Array.isArray(design.free) && design.free.length ? design.free.slice() : _presetFree('full', c0);
+            var t = [], t0 = 10 / 3600;
+            for (var i = 0; i < nPts; i++) t.push(ts + _exp(_log(t0) + (_log(tEnd - ts) - _log(t0)) * i / (nPts - 1)));
+            c0.tEnd = tEnd * (1 + 1e-9) + 1e-6;
+            var counts = { runs: 0, evals: 0 }, model = _makeModel(c0, keys, t, design, counts);
+            if (!model.ok) return model.fail;
+            var lin = {}; keys.forEach(function (k) { lin[k] = !PDEF[k].log || !(PDEF[k].get(c0) > 0); });
+            var x = keys.map(function (k) { var v = PDEF[k].get(c0); return lin[k] ? v : _log(v); });
+            var cfgOf = function (xx) { var c = _clone(c0); c.CL = null; c.wc = null; keys.forEach(function (k, j) { PDEF[k].set(c, lin[k] ? xx[j] : _exp(xx[j])); }); if (c.pr >= c.sigmaC - 1) c.pr = c.sigmaC - 1; return c; };
+            function runAt(xx) {
+                var c = cfgOf(xx), cv = lkToEngine(c); if (!cv.ok) return null;
+                var raw = _simulateEngine(cv.e, model.grid, 2000, 0, counts); counts.runs++;
+                if (raw.why) return null;
+                return lkSample(_pack(cv.e, raw, {}), t);
+            }
+            var p0 = runAt(x); if (!p0) return _fail('SIMULATION_FAILED', 'The base run failed.', []);
+            var J = [];
+            for (var j = 0; j < keys.length; j++) {
+                var hh = lin[keys[j]] ? (keys[j] === 'Cw' || keys[j] === 'k' ? _max(1e-9, _abs(x[j]) * 1e-3) : _max(1e-3, _abs(x[j]) * 1e-6) * 10) : 1e-4;
+                var x2 = x.slice(); x2[j] += hh;
+                var p2 = runAt(x2); if (!p2) return _fail('SIMULATION_FAILED', 'A perturbed run failed.', []);
+                J.push(p2.map(function (v, m) { return (v - p0[m]) / hh; }));
+            }
+            var F = keys.map(function (a, ia) { return keys.map(function (b, ib) { var s = 0; for (var m = 0; m < t.length; m++) s += J[ia][m] * J[ib][m]; return s / (sigma * sigma); }); });
+            var pri = design.priors || {};
+            keys.forEach(function (k, ia) { if (pri[k] > 0) F[ia][ia] += 1 / (pri[k] * pri[k]); });
+            if (design.gaugeFactor > 0) F = F.map(function (row) { return row.map(function (v) { return v * design.gaugeFactor; }); });
+            var C = _inv(F), ci = {}, corr = {}, sd = {};
+            keys.forEach(function (k, ia) {
+                var s = (C && C[ia][ia] > 0) ? _sqrt(C[ia][ia]) : null, v = PDEF[k].get(c0);
+                sd[k] = s;
+                ci[k] = s == null ? null : (lin[k] ? 1.96 * s : (_exp(1.96 * s) - 1) * v);
+            });
+            if (C) for (var a = 0; a < keys.length; a++) for (var b = a + 1; b < keys.length; b++) if (sd[keys[a]] && sd[keys[b]]) corr[keys[a] + '_' + keys[b]] = C[a][b] / (sd[keys[a]] * sd[keys[b]]);
+            var Fs = F.map(function (row, ia) { return row.map(function (v, ib) { return v / _sqrt(F[ia][ia] * F[ib][ib]); }); }), eg = _jacobiEig(Fs), sloppy = [];
+            var res0 = (function () { var cv = lkToEngine(cfgOf(x)); return _pack(cv.e, _simulateEngine(cv.e, model.grid, 2000, 0, counts), {}); })();
+            eg.vals.forEach(function (lv, m) { if (lv / eg.vals[eg.vals.length - 1] < 1e-4) sloppy.push(_sloppyEntry(keys, eg.vecs[m], c0, res0, C, 1, 1)); });
+            return { ok: true, ci: ci, sd: sd, corr: corr, eig: eg.vals, sloppy: sloppy, free: keys, logParam: keys.map(function (k) { return !lin[k]; }), F: F, C: C, runs: counts.runs, t: t, res: null };
+        } catch (err) { return _fail('FISHER_FAILED', err && err.message || err, []); }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // "What this test can tell you" (§6.7)
+    // ─────────────────────────────────────────────────────────────────────
+    function identify(fit, ctx) {
+        try {
+            if (!fit || fit.ok !== true) return _fail('BAD_FIT', 'A successful history match (LkFit) is required.', ['fit']);
+            ctx = ctx || {};
+            var rows = [], infl = fit.inflation || 1, sloppyKeys = {};
+            fit.sloppy.forEach(function (s) { Object.keys(s.vec).forEach(function (k) { if (_abs(s.vec[k]) > 0.3) sloppyKeys[k] = true; }); });
+            fit.free.forEach(function (k) {
+                var v = fit.params[k], ci = fit.ci95Inflated[k], d = PDEF[k], status, pm = null, text;
+                if (ci) pm = (ci[1] - ci[0]) / 2;
+                var relOk = ci && (d.pressure ? pm < _max(25, 0.01 * v) : pm / v < 0.25);
+                if (relOk && !sloppyKeys[k]) { status = 'determined'; text = _cap(LABEL[k]) + ' is determined to ±' + (d.pressure ? _sig(pm, 2) + ' psi' : _fx(100 * pm / v, 0) + ' %') + '.'; }
+                else if (sloppyKeys[k]) { status = 'group'; text = _cap(LABEL[k]) + ' is determined only as part of a group' + (k === 'Ep' || k === 'hf' ? '; a log-derived height or a core E′ would determine it.' : '.'); }
+                else { status = 'not'; text = _cap(LABEL[k]) + ' is not determined by this test' + (k === 'pr' ? '; a longer shut-in would determine it.' : '.'); }
+                rows.push({ param: k, status: status, pm: pm, text: text.slice(0, 299) });
+            });
+            var gPm = fit.sloppy.length ? null : null;
+            rows.push({ param: 'Gamma', status: 'determined', pm: gPm, text: ('The group Γ = ' + _sig(fit.groups.Gamma, 3) + ' psi/√min is determined (PKN form ' + _sig(fit.groups.GammaPKN, 4) + ').').slice(0, 299) });
+            var sloppyText = fit.sloppy.length ? fit.sloppy[0].text : 'No parameter combination is poorly determined by this test.';
+            // value of information and the extension table: Fisher on the fitted model with weak priors on E′ and h_f
+            var cfg = fit.cfg, sigma = fit.sigmaP || 0.5, tData = fit.design && fit.design.t, ts = lkToEngine(cfg).e.ts;
+            var tEndData = tData && tData.length ? tData[tData.length - 1] : cfg.tEnd, nPts = tData && tData.length ? tData.length : 250;
+            var keys = fit.free.slice(), priorsBase = {};   // the information content of THIS match: its free parameters only
+            var outs = ['sigmaC', 'pr', 'k', 'Cw'].filter(function (k) { return keys.indexOf(k) >= 0; });
+            function varsOf(f) { var o = {}; outs.forEach(function (k) { var s = f.sd[k]; o[k] = s == null ? null : s * s; }); return o; }
+            var base = lkFisher(cfg, { tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase }), voi = [];
+            if (base.ok) {
+                var v0 = varsOf(base);
+                var cands = [
+                    { source: 'height from logs ±10 %', d: { priors: Object.assign({}, priorsBase, { hf: 0.10 }) }, text: 'A log-derived fracture height (±10 %)', needs: 'hf' },
+                    { source: 'E′ from core ±15 %', d: { priors: Object.assign({}, priorsBase, { Ep: 0.15 }) }, text: 'A core E′ (±15 %)', needs: 'Ep' },
+                    { source: 'offset p_i ±50 psi', d: { priors: Object.assign({}, priorsBase, { pr: 50 }) }, text: 'An offset pore pressure (±50 psi)', needs: 'pr' },
+                    { source: 'gauge with half the noise', d: { priors: priorsBase, gaugeFactor: 4 }, text: 'A gauge with half the noise' },
+                    { source: 'longer shut-in', d: { priors: priorsBase, tEnd: ts + 2 * (tEndData - ts) }, text: 'Doubling the shut-in' }
+                ];
+                cands.forEach(function (cd) {
+                    if (cd.needs && keys.indexOf(cd.needs) < 0) {
+                        voi.push({ source: cd.source, reduction: 0, text: (cd.text + ' does not change this match: that quantity is fixed in it (the results are conditional on it).').slice(0, 299) });
+                        return;
+                    }
+                    var f = lkFisher(cfg, Object.assign({ tEnd: tEndData, sigma: sigma, nPts: nPts, free: keys }, cd.d));
+                    if (!f.ok) return;
+                    var v1 = varsOf(f), lsum = 0, m = 0;
+                    outs.forEach(function (k) { if (v0[k] > 0 && v1[k] > 0) { lsum += _log(v1[k] / v0[k]); m++; } });
+                    var red = m ? 1 - _exp(lsum / m) : 0;
+                    voi.push({ source: cd.source, reduction: red, text: (cd.text + ' narrows the key outputs by ' + _fx(100 * red, 0) + ' % (variance, geometric mean).').slice(0, 299) });
+                });
+                voi.sort(function (a, b) { return b.reduction - a.reduction; });
+            }
+            var extend = [], times = Array.isArray(ctx.extendTimesH) ? ctx.extendTimesH : [0.5, 1, 2, 3, 5, 7, 14].map(function (d) { return d * 24; });
+            var kF = keys.indexOf('k') >= 0, res = lkSimulate(cfg, { grid: 'fit' }), xf = res && res.ok ? res.xf.ts : null;
+            var etaR = (cfg.k > 0) ? cfg.k * _units().md / (cfg.phi * cfg.muRes * _units().cp * cfg.ct) : 0;
+            times.forEach(function (th) {
+                var c = _clone(cfg);
+                var f = lkFisher(c, { tEnd: ts + th, sigma: sigma, nPts: nPts, free: keys, priors: priorsBase });
+                if (!f.ok) return;
+                var sdPi = f.sd.pr != null ? f.sd.pr * infl : 0, kr = null;
+                if (kF && f.sd.k != null) kr = [cfg.k * _exp(-1.96 * f.sd.k * infl), cfg.k * _exp(1.96 * f.sd.k * infl)];
+                var tDL = (etaR > 0 && xf > 0) ? etaR * th / (xf * xf) : 0;
+                var pRad = Array.isArray(ctx.tDLdraws) ? ctx.tDLdraws.filter(function (v) { return v * th >= 1.6; }).length / _max(1, ctx.tDLdraws.length) : (tDL >= 1.6 ? 1 : 0);
+                extend.push({ tEndD: th / 24, tEndH: th, sdPi: sdPi, kRange: kr, pRadial: pRad });
+            });
+            var keepText = null;
+            if (extend.length > 1) {
+                var a0 = extend[0].sdPi, a1 = extend[extend.length - 1].sdPi;
+                keepText = a1 < 0.5 * a0 ? 'Keep the gauge in: p_i narrows from ±' + _sig(1.96 * a0, 2) + ' to ±' + _sig(1.96 * a1, 2) + ' psi over the table.' : 'Pulling the gauge early costs little: p_i barely narrows with a longer shut-in.';
+            }
+            return { ok: true, rows: rows, sloppyText: sloppyText.slice(0, 299), voi: voi, extend: extend, keepText: keepText };
+        } catch (err) { return _fail('IDENTIFY_FAILED', err && err.message || err, []); }
+    }
+    function _cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PLACEHOLDER: designer (later milestone)
     // ─────────────────────────────────────────────────────────────────────
 
     G.PRiSM_dfit_lkDefaults = lkDefaults;
@@ -1084,5 +1594,9 @@
     G.PRiSM_dfit_lkGroups = lkGroups;
     G.PRiSM_dfit_lkVerify = lkVerify;
     G.PRiSM_dfit_leakBudget = leakBudget;
-    G._PRiSM_dfit_lk = { erf: erf, erfcx: erfcx, E1: E1, pDuf: pDuf, theta: theta, gN: gN, GN: GN, KVISC: KVISC, units: _units, atT: _atT, qLAt: _qLAt };
+    G.PRiSM_dfit_lkFit = lkFit;
+    G.PRiSM_dfit_lkFitJob = lkFitJob;
+    G.PRiSM_dfit_lkFisher = lkFisher;
+    G.PRiSM_dfit_identify = identify;
+    G._PRiSM_dfit_lk = { erf: erf, erfcx: erfcx, E1: E1, pDuf: pDuf, theta: theta, gN: gN, GN: GN, KVISC: KVISC, units: _units, atT: _atT, qLAt: _qLAt, neff: _neff };
 })();
