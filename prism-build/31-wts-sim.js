@@ -2223,7 +2223,7 @@ function create(flowIn, opts) {
     nk.P = P; nk.Pin = P; nk.T = N.choke.T; nk.Tin = N.choke.T; nk.th = N.choke.th; nk.hyd = false; nk.dTjt = 0;
     nk.regime = ''; nk.bean = kb ? num(kb.bean, 0) : 0; nk.pos = kb && kb.pos === 'midcoil' ? 'midcoil' : 'inlet';
     nk.flowLimited = false; nk.limiter = ''; nk.QmaxMMscfd = 0; nk.designP_psig = num(cfg.heaterChoke.designP_psig, 1440);
-    nk.note = ck2Act && SEL.ck2Note ? SEL.ck2Note : '';
+    nk.note = CK2.note;                            // in line without a usable block: the no-block / skipped note (ck2Derive, §5.2)
     si.bean2 = kb ? num(kb.bean, null) : null; si.ck2Pos = kb ? (kb.pos === 'midcoil' ? 'midcoil' : 'inlet') : null;
     if (CK2.act || X.ck2dP !== 0) ck2Refresh(s);    // WP-E1: live CK-102 node (Pm, J-T per stage, hydrate) and the choke dTjt
     N.separator.P = X.Psep; N.separator.T = X.Tsep; hydOf(N.separator);
@@ -4012,29 +4012,128 @@ function create(flowIn, opts) {
   //   ck2Alarms()                  designAlarms       CHOKE2_LIMIT, CK1_SUBCRIT, PAH_CK2, HYD_heaterChoke (MSG entries here)
   //   ck2Rig(phase, old, r, parts) setRigNow / rigSideEffects: 'check' → refusal text ('' = allowed; pure: refresh re-runs it
   //                                while a refusal is stored); 'apply' when CK-102 enters / leaves the rig-up
-  //   Phi_ss (E0) = the steady CK-102 outlet (H-101 inlet). The E0 forms below are placeholders: CK2.act stays false (the
-  //   steady block values still reach the nodes through pickSteadyBlock), the lag only decays, the alarms are not raised.
-  //   Note for WP-E1 (§5.3 as amended on sim-fu-found): the lag is measured from the CK-102 outlet Phi (Pdn + (Phi_ss − Psep_ss)·fi²), so X.ck2dP is the CK-102
-  //   ΔP alone and its decay to 0 after CK-102 leaves is continuous with today's law (the H-101 5 psi drop is not in the lag).
+  //   Phi_ss (E0) = the steady CK-102 outlet (H-101 inlet). The lag is measured from the CK-102 outlet Phi (Pdn + (Phi_ss −
+  //   Psep_ss)·fi², §5.3 as amended on sim-fu-found), so X.ck2dP is the CK-102 ΔP alone and its decay to 0 after CK-102 leaves
+  //   is continuous with today's law (the H-101 5 psi drop is not in the lag).
+  //   Rules of this section (WP-E1):
+  //   • CK2 is reassigned from the block on every derive() and holds no lag state. CK2.act = ck2Act && a usable block.
+  //   • Pm_ss = the block's CK-102 inlet (flow.ck2.Pin) at the requested rate. A 'No Flow' block (no feasible state at the
+  //     requested rate, §4.3-3) runs at its pair capacity (limFac = QmaxPair / Qg): its Pm_ss is set so that the critical
+  //     CK-102 law gives Pm = Pci_ss − 0.5 (the infeasible edge, where the host's Illinois solve clamps) at that rate.
+  //   • Live target PmT = max(Phi + (Pm_ss − Phi_ss)·fi², (Pm_ss + PSC)·fInst − PSC) (D11), never above the live CK-101 inlet
+  //     X.PB (no reverse flow through CK-101). CK2.dPss = that ΔP at the steady flow fraction (limFac), so a 'steady' start
+  //     (fuInit) is steady at t = 0 also for a flow-limited pair.
+  //   • J-T: N.choke.dTjt is the CK-101 stage (E0 refresh line); N.heaterChoke.dTjt = max(0, min(150 − N.choke.dTjt,
+  //     0.07·wJTe·X.ck2dP)), the cap cumulative from the CK-101 inlet (D10). The CK-102 inlet temperature follows the block's
+  //     Tin (T3, or Tp1 for midcoil) with the warm-up θ; its outlet is Tin − dTjt; the hydrate check is at the outlet (Phi).
+  //   • Alarms only while CK2.act; released by quiet(Q_CK2) when CK-102 leaves the rig-up (ck2Rig) or drops out of line
+  //     (heater bypass, H-101 out, block gone: ck2Derive).
   var CK2 = { act: false, Pm_ss: 0, Ph_ss: 0, dPss: 0, regime: '', bean: 0, b1: 0, pos: 'inlet', flowLimited: false, limiter: '',
-    Tin: 0, Tout: 0, noFlow: false, designP: 1440, note: '' };
+    Tin: 0, Tout: 0, noFlow: false, designP: 1440, note: '', Qmax: 0, pahFrac: 0.9 };
+  var CK2_NOBLOCK = 'no heater-choke data in this flow (in line, ΔP 0)';
+  function ck2Lim(x) { return (x === 'CK-101' || x === 'CK-102' || x === 'both') ? x : ''; }
+  // live CK-102 inlet target (psig) at the CK-102 outlet Phi and the flow fraction fi; capped at the CK-101 inlet PB
+  function ck2PmT(Phi, fi, PB) {
+    var PmT = mmax(Phi + (CK2.Pm_ss - Phi_ss) * fi * fi, (CK2.Pm_ss + PSC) * fi - PSC);
+    return PmT > PB ? mmax(Phi, PB) : PmT;
+  }
   function ck2Derive(sel) {
-    CK2.act = false; CK2.b1 = bean; CK2.designP = num(cfg.heaterChoke.designP_psig, 1440);
-    CK2.note = ck2Act ? (sel.ck2Note || 'no heater-choke data in this flow (in line, ΔP 0)') : '';
+    var b = sel.ck2blk, wasAct = CK2.act;
+    CK2.act = ck2Act && b !== null; CK2.b1 = bean; CK2.designP = num(cfg.heaterChoke.designP_psig, 1440);
+    CK2.pahFrac = clamp(num(cfg.heaterChoke.pahFrac, 0.9), 0.1, 1);
+    CK2.note = ck2Act && b === null ? (sel.ck2Note || CK2_NOBLOCK) : '';
+    CK2.Ph_ss = Phi_ss;
+    if (!CK2.act) {
+      CK2.Pm_ss = Phi_ss; CK2.dPss = 0; CK2.regime = ''; CK2.bean = b ? num(b.bean, 0) : 0; CK2.pos = b && b.pos === 'midcoil' ? 'midcoil' : 'inlet';
+      CK2.flowLimited = false; CK2.limiter = ''; CK2.Tin = Tck_ss; CK2.Tout = Tck_ss; CK2.noFlow = false; CK2.Qmax = 0;
+      if (wasAct) quiet(Q_CK2);                                  // out of line (heater bypass, H-101 out, block gone): alarms clear
+      return;
+    }
+    CK2.bean = num(b.bean, 0); CK2.pos = b.pos === 'midcoil' ? 'midcoil' : 'inlet';
+    CK2.noFlow = b.noFlow === true || b.regime === 'No Flow';
+    CK2.regime = regimeOf(b.regime) || (CK2.noFlow ? 'No Flow' : 'Critical');
+    CK2.flowLimited = b.flowLimited === true || CK2.noFlow; CK2.limiter = ck2Lim(b.limiter);
+    CK2.Qmax = mmax(0, num(b.QmaxMMscfd, chk.QmaxMMscfd));
+    CK2.Tin = num(b.Tin, Tck_ss); CK2.Tout = num(b.Tout, Tin_ss);
+    var Pin = num(b.Pin, NaN), lf = limFac > 1e-9 ? limFac : 1e-9;
+    if (CK2.noFlow) CK2.Pm_ss = mmax(Phi_ss, (Pci_ss - 0.5 + PSC) / lf - PSC);
+    else CK2.Pm_ss = isNum(Pin) ? mmax(Phi_ss, Pin) : Phi_ss;
+    // steady ΔP at the steady flow fraction (limFac; the separator at Psep_ss): fuInit's t = 0 value in 'steady' mode
+    var fs = mmin(1, limFac), PhiS = Psep_ss + (Phi_ss - Psep_ss) * fs * fs;
+    CK2.dPss = mmax(0, ck2PmT(PhiS, fs, Pci_ss) - PhiS);
   }
   function ck2Step(h) {
+    var tgt = 0;
+    if (CK2.act) {
+      var fi = X.fInst, Phi = pDown() + (Phi_ss - Psep_ss) * fi * fi;
+      tgt = ck2PmT(Phi, fi, X.PB) - Phi;
+    }
     var tau = mmax(0.1, num(cfg.heaterChoke.lagS, 5));
-    X.ck2dP += (0 - X.ck2dP) * (1 - mexp(-h / tau));
-    if (mabs(X.ck2dP) < 1e-9) X.ck2dP = 0;
+    X.ck2dP += (tgt - X.ck2dP) * (1 - mexp(-h / tau));
+    if (!CK2.act && mabs(X.ck2dP) < 1e-9) X.ck2dP = 0;
   }
   function ck2Pck(Pdn, fi2) { return Pdn + (Phi_ss - Psep_ss) * fi2 + X.ck2dP + SS[2].dP * fi2; }
   function ck2Pm(Pdn, fi2) { return Pdn + (Phi_ss - Psep_ss) * fi2 + X.ck2dP; }
-  function ck2Refresh(s) { /* WP-E1: nodes.heaterChoke live values */ }
-  function ck2Alarms() { /* WP-E1 (§5.5) */ }
+  // refresh (after the E0 static values): the live CK-102 node while it is in line. Out of line with the lag still decaying the
+  // static values stay; the CK-101 outlet (N.choke.P, E0 pckLive) carries the decaying ΔP.
+  function ck2Refresh(s) {
+    if (!CK2.act) return;
+    var N = s.nodes, nk = N.heaterChoke, fi2 = X.fInst * X.fInst;
+    var Phi = pDown() + (Phi_ss - Psep_ss) * fi2, dP = X.ck2dP > 0 ? X.ck2dP : 0;
+    nk.active = true; nk.bypassed = false; nk.P = Phi; nk.Pin = Phi + X.ck2dP;
+    nk.Tin = Tamb + (CK2.Tin - Tamb) * X.theta;
+    var w = cushOn ? cushS.wJTe : chk.wJT;
+    nk.dTjt = X.f < 0.01 ? 0 : mmax(0, mmin(150 - N.choke.dTjt, 0.07 * w * dP));
+    nk.T = nk.Tin - nk.dTjt; hydOf(nk);
+    nk.regime = X.f < 0.01 ? 'No Flow' : CK2.regime; nk.bean = CK2.bean; nk.pos = CK2.pos;
+    nk.flowLimited = CK2.flowLimited; nk.limiter = CK2.limiter; nk.QmaxMMscfd = CK2.Qmax; nk.designP_psig = CK2.designP; nk.note = '';
+  }
+  // alarm texts (§5.5; = tests/_wts-fu-shapes.js ALARM_TAGS / ALARM_TEXTS)
+  function ck2Grp(v) { return isNum(v) ? String(mround(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '—'; }
+  function ck2Q(v) { return isNum(v) ? v.toFixed(2) : '—'; }
+  MSG.CHOKE2_LIMIT = function (v, l) {
+    return CK2.limiter === 'both' ? 'CK-101 and CK-102 together pass ' + ck2Q(l) + ' of ' + ck2Q(v) + ' MMscf/d — open either choke or reduce the rate'
+      : 'CK-102 limits the rate: bean ' + CK2.bean + '/64 passes ' + ck2Q(l) + ' of ' + ck2Q(v) + ' MMscf/d — open CK-102 or reduce the rate';
+  };
+  MSG.CK1_SUBCRIT = function () { return 'CK-101 subcritical with CK-102 in line: in a real well the rate and WHP would now respond to the downstream pressure (not simulated)'; };
+  MSG.PAH_CK2 = function (v) {
+    return TAGS.pahCk2 + ': pressure between the chokes ' + ck2Grp(v) + ' psig, ≥ ' + rnd0(CK2.pahFrac * 100) + ' % of the ' + ck2Grp(CK2.designP) +
+      ' psig design pressure of ' + (CK2.pos === 'midcoil' ? 'the line and H-101 pass 1' : 'the line CK-101 → CK-102') + ' — open CK-102';
+  };
+  MSG.HYD_heaterChoke = function (v, l) {
+    return NAMES.heaterChoke + ' (' + TAGS.heaterChoke + ') outlet: ' + uq(v, 'temperature') + ' below hydrate ' + uq(l, 'temperature') + ' at ' +
+      uq(snap.nodes.heaterChoke.P, 'pressureG');
+  };
+  function ck2Alarms() {
+    var nk = snap.nodes.heaterChoke, A, on;
+    // CHOKE2_LIMIT: CK-102 (or the pair) limits the rate; raised on the block's flag (1 % margin), cleared once Qg ≤ QmaxPair
+    A = aDef('CHOKE2_LIMIT', TAGS.heaterChoke, 'alarm', 'heaterChoke', 'd');
+    var lim2 = CK2.limiter === 'CK-102' || CK2.limiter === 'both';
+    if (CK2.flowLimited && lim2 && !A.active) raise(A, Qg, CK2.Qmax, MSG.CHOKE2_LIMIT(Qg, CK2.Qmax));
+    else if (A.active && (!lim2 || Qg <= CK2.Qmax)) clearA(A);
+    else if (A.active) { A.value = Qg; A.limit = CK2.Qmax; }
+    // CK1_SUBCRIT: CK-101 no longer critical because of CK-102 (only when the CK-101-only walk was critical)
+    A = aDef('CK1_SUBCRIT', TAGS.choke, 'warn', 'choke', 'd');
+    on = chk.regime !== 'Critical' && chk.regimeBase === 'Critical';
+    if (on && !A.active) raise(A, null, null, MSG.CK1_SUBCRIT());
+    else if (!on && A.active) clearA(A);
+    // PAH-102: live pressure between the chokes ≥ pahFrac × design pressure; clears 2 % below the limit
+    A = aDef('PAH_CK2', TAGS.pahCk2, 'warn', 'heaterChoke', 'd');
+    var pl = CK2.pahFrac * CK2.designP, Pm = nk.Pin;
+    if (Pm >= pl && !A.active) raise(A, Pm, pl, MSG.PAH_CK2(Pm));
+    else if (A.active && Pm < 0.98 * pl) clearA(A);
+    else if (A.active) { A.value = Pm; A.limit = pl; }
+    // CK-102 hydrate at its outlet (after its own J-T drop), the rule of the other nodes
+    A = aDef('HYD_heaterChoke', TAGS.heaterChoke, 'hyd', 'heaterChoke', 'd');
+    if (nk.hyd && !A.active) raise(A, nk.T, nk.th, MSG.HYD_heaterChoke(nk.T, nk.th));
+    else if (nk.hyd) { A.value = nk.T; A.limit = nk.th; }
+    else if (A.active) clearA(A);
+  }
   function ck2Rig(phase, old, r, parts) {
     if (phase === 'check') return '';
-    if (old.heaterChoke && !r.heaterChoke) quiet(Q_CK2);       // leaving: its alarms clear; X.ck2dP decays to 0 (no step, U3)
-    else if (!old.heaterChoke && r.heaterChoke) X.ck2dP = 0;   // entering: the lag starts from 0 (§3.3)
+    // leaving: its alarms clear; X.ck2dP decays to 0 (no step, U3). Entering: the lag runs from its present value to the steady
+    // ΔP — 0 from rest (§3.3); a re-entry while the ΔP of an earlier exit is still decaying continues from there (no step)
+    if (old.heaterChoke && !r.heaterChoke) quiet(Q_CK2);
     return '';
   }
 
