@@ -530,10 +530,12 @@
     }
 
     function _shouldCancelFactory(tok, hadShell) {
+        // leaving DFIT mode cancels a run started in DFIT mode; a run started from code outside DFIT mode (tests, scripts) runs on
+        var startedInDfit = !!(G.PRiSM && G.PRiSM.mode === 'dfit');
         return function () {
             if (!_job || _job.token !== tok || _job.cancelled || tok !== _token) return true;
             if (hadShell) { var sh = _shell(); if (!sh || sh.isConnected === false) return true; }
-            if (hooksReady() && G.PRiSM && G.PRiSM.mode !== 'dfit') return true;
+            if (startedInDfit && hooksReady() && G.PRiSM && G.PRiSM.mode !== 'dfit') return true;
             return false;
         };
     }
@@ -676,6 +678,36 @@
         for (var i = 0; i < ds.t.length; i++) lines.push(cols.map(function (c) { var v = c[1][i]; return _isNum(v) ? String(v) : ''; }).join(','));
         return lines.join('\n');
     }
+    // the demo's own well set-up (49-calc-dfit-synth inputsFor / wellFor): rock, string, fluid, perforations, datum and channel into
+    // the test inputs (logged), φ, c_t, μ, h, r_w into C1 as 'sample' values (never over a user value)
+    var DEMO_INPUT_PATHS = ['datumTvd', 'strings', 'fluid.kind', 'fluid.rhoPpg', 'perfs.n', 'perfs.dIn', 'perfs.cd', 'rock.Ep', 'rock.EpSource',
+                            'rock.hf', 'rock.hp', 'channels.primary'];
+    function _applyDemoSetup(T, S, name) {
+        if (!S || typeof S.demoSpec !== 'function' || typeof S.inputsFor !== 'function') return false;
+        var spec = null, inp = null, wl = null;
+        try { spec = S.demoSpec(name); spec = spec && spec.spec ? spec.spec : spec; inp = spec ? S.inputsFor(spec) : null; } catch (e) { inp = null; }
+        if (!_isObj(inp) || inp.ok === false) return false;
+        var changed = [];
+        DEMO_INPUT_PATHS.forEach(function (path) {
+            var v = _getPath(inp, path);
+            if (v === undefined || v === null) return;
+            var old = _getPath(T.inputs, path);
+            if (JSON.stringify(old) === JSON.stringify(v)) return;
+            _setPath(T.inputs, path, _clone(v));
+            changed.push(path);
+        });
+        // one log line for the whole set-up, in display text (the log is printed in the report)
+        if (changed.length) logEntry(T, 'inputs', 'previous set-up', changed.length + ' fields: ' + changed.join(', '), 'Demo DFIT ' + name + ' set-up');
+        if (typeof S.wellFor === 'function' && typeof G.PRiSM_setWell === 'function') {
+            try { wl = S.wellFor(spec); } catch (e) { wl = null; }
+            if (_isObj(wl)) {
+                var cur = _well(), prov = (cur && cur.provenance) || {}, patch = {}, n = 0;
+                ['phi', 'ct', 'mu', 'h', 'rw'].forEach(function (k) { if (_isNum(wl[k]) && prov[k] !== 'user') { patch[k] = wl[k]; n++; } });
+                if (n) { try { G.PRiSM_setWell(patch, { source: 'sample', origin: 'dfit-demo' }); } catch (e) { /* keep the well */ } }
+            }
+        }
+        return true;
+    }
     function loadDemo(name, o) {
         o = o || {};
         var S = G.PRiSM_dfit_synth, ds = null;
@@ -695,6 +727,7 @@
             if (!o.silentBind) logEntry(T, 'dsRef', T.dsRef ? T.dsRef.hash : null, dsHash(ds), 'Demo DFIT ' + name + ' loaded');
             T.dsRef = _dsRefOf(ds, 'demo', name);
             if (T.summary) { T.summary.forOtherDataset = false; T.summary.stale = true; }
+            if (o.inputs !== false) _applyDemoSetup(T, S, name);
         }
         _batch('end');
         _refreshUI();
@@ -816,6 +849,10 @@
     // data = {rows:[{fam, label, band:{p10,p50,p90}|null, members:[{p, method, vote, vetoed}]}], consensus:{mode, value, lo, hi, medians:[]},
     //         friction:{veto, warn}, whatIf:p|null, xRange?}
     var FAM_COLORS = { F0: '#8b949e', F1: '#58a6ff', F2: '#f0883e', F3: '#bc8cff', F4: '#3fb950' };
+    function _rgba(hex, a) {
+        var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+        return m ? 'rgba(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ',' + a + ')' : 'rgba(139,148,158,' + a + ')';
+    }
     function PRiSM_plot_dfitStrip(canvas, data, opts) {
         opts = opts || {};
         if (!canvas || typeof canvas.getContext !== 'function') return false;
@@ -1159,9 +1196,18 @@
             }
             s.push({ x: x, y: y, color: cols[j % cols.length], label: 'cycle ' + (j + 1) });
         });
-        var h = _pickVlines(run, function (p) { return p; }).map(function (v) { return { y: v.x, color: v.color, label: v.label }; });
+        // the falloff closure families (F1–F3, consensus P50 with its P10–P90 band) on the pressure axis; the picked closure lines
+        // when the consensus carries no families
+        var h = [], hb = [], fams = run.consensus && _isObj(run.consensus.families) ? run.consensus.families : null;
+        ['F1', 'F2', 'F3'].forEach(function (f) {
+            var st = fams && fams[f];
+            if (!_isObj(st) || !_isNum(st.p50)) return;
+            h.push({ y: st.p50, color: FAM_COLORS[f], dash: [6, 3], label: f + ' falloff ' + _f(st.p50, 0) });
+            if (_isNum(st.p10) && _isNum(st.p90) && st.p90 > st.p10) hb.push({ y0: st.p10, y1: st.p90, color: _rgba(FAM_COLORS[f], 0.10) });
+        });
+        if (!h.length) h = _pickVlines(run, function (p) { return p; }).map(function (v) { return { y: v.x, color: v.color, label: v.label }; });
         // the knee (F4 reopening pick) and its band, a marker where each cycle crosses it, and the wellbore line V/(V_w·c_w)
-        var hb = [], mk = [], knees = (_arr(run.picks) ? run.picks : []).filter(function (pk) { return pk && pk.method === 'reopening' && pk.ok !== false && _isNum(pk.p); });
+        var mk = [], knees = (_arr(run.picks) ? run.picks : []).filter(function (pk) { return pk && pk.method === 'reopening' && pk.ok !== false && _isNum(pk.p); });
         var uk = T && T.picks && T.picks.user ? T.picks.user.dfitRampKnee : null;
         if (uk && _isNum(uk.p)) knees.push({ p: uk.p, user: true, V: uk.V });
         var Vw = (_isNum(ev.VwCwMeasured) && ev.VwCwMeasured > 0) ? ev.VwCwMeasured : null;
@@ -1462,7 +1508,7 @@
     // else the same steps here (02 runs the post-draw hooks on paint because opts.plotKey is set).
     function drawPlot(canvas, key, extra) {
         if (!canvas) return false;
-        if (LINK_KEYS[key] && !(extra && _own(extra, 'hoverEvent'))) {
+        if ((LINK_KEYS[key] || LK_LINK[key]) && !(extra && _own(extra, 'hoverEvent'))) {
             var ex = {}; if (extra) for (var k0 in extra) if (_own(extra, k0)) ex[k0] = extra[k0];
             ex.hoverEvent = true; extra = ex;
         }
@@ -2525,8 +2571,61 @@
             html += _table(['Structural spread (aperture laws, PDL on/off; χ² ≤ 1.5 × best)', 'Range'], [rr('sigmaC', 'σ_c (psia)', 0), rr('pr', 'p_r (psia)', 0), rr('k', 'k (md)'), rr('CLeq', 'CL equivalent (ft/√min)')], 'prism_dfit_lk_struct_tbl');
         }
         if (fit && fit.groups && fit.groups.text) html += _note(_txt(fit.groups.text));
-        html += '</div>' + _chart('dfitLkP', 220) + _chart('dfitLkQ', 200) + _chart('dfitLkGeom', 200) + _chart('dfitLkRes', 180);
+        html += '</div>' + _chart('dfitLkP', 220) + _chart('dfitLkQ', 200) + _schemHTML() + _chart('dfitLkGeom', 200) + _chart('dfitLkRes', 180);
         return html;
+    }
+    // ── fracture schematic of the sandbox (§6.1): inline SVG (PKN ellipse section, KGD rectangle, radial disc) scaled by L(t) and w̄(t)
+    // at the hovered time of dfitLkP / dfitLkQ / dfitLkGeom (prism:plot-hover); shut-in by default. Only computed numbers go in.
+    function _schemIndex(r, t) {
+        if (_isNum(t)) return _nearestIdx(r.t, t);
+        var ts = r.events && _isNum(r.events.ts) ? r.events.ts : null;
+        return ts !== null ? _nearestIdx(r.t, ts) : r.t.length - 1;
+    }
+    function schematicSVG(t) {
+        var r = _lk();
+        if (!r || !_arr(r.L) || !r.L.length) return '';
+        var i = _schemIndex(r, t);
+        if (i < 0) return '';
+        var geo = (_st()._dfitLkGeo) || ((_sandboxCfg() || {}).geometry) || 'PKN';
+        var Lmax = 0, Wmax = 0;
+        r.L.forEach(function (v) { if (_isNum(v) && v > Lmax) Lmax = v; });
+        (r.W || []).forEach(function (v) { if (_isNum(v) && v > Wmax) Wmax = v; });
+        var L = _isNum(r.L[i]) ? Math.max(0, r.L[i]) : 0, W = _arr(r.W) && _isNum(r.W[i]) ? Math.max(0, r.W[i]) : 0;
+        var fL = Lmax > 0 ? L / Lmax : 0, fW = Wmax > 0 ? W / Wmax : 0;
+        var cx = 160, cy = 62, sh = '', geoTxt;
+        var col = 'rgba(88,166,255,' + _f(0.25 + 0.55 * fW, 2) + ')';
+        if (geo === 'radial') {
+            var R = 4 + 50 * fL;
+            sh = '<circle cx="' + cx + '" cy="' + cy + '" r="' + _f(R, 1) + '" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'radial disc';
+        } else if (geo === 'KGD') {
+            var hw = 4 + 140 * fL;
+            sh = '<rect x="' + _f(cx - hw, 1) + '" y="' + (cy - 32) + '" width="' + _f(2 * hw, 1) + '" height="64" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'KGD rectangle';
+        } else {
+            var rx = 4 + 140 * fL;
+            sh = '<ellipse cx="' + cx + '" cy="' + cy + '" rx="' + _f(rx, 1) + '" ry="32" fill="' + col + '" stroke="#58a6ff" stroke-width="1.5"/>';
+            geoTxt = 'PKN ellipse section';
+        }
+        // the width bar (w̄ relative to its largest value) and the well
+        var wb = '<rect x="296" y="' + _f(94 - 60 * fW, 1) + '" width="10" height="' + _f(60 * fW, 1) + '" fill="#f0883e"/><rect x="296" y="34" width="10" height="60" fill="none" stroke="#8b949e"/>';
+        var well = '<line x1="' + cx + '" y1="8" x2="' + cx + '" y2="116" stroke="#c9d1d9" stroke-width="2"/>';
+        var lab = 't ' + _f(r.t[i], 2) + ' h · ' + (geo === 'radial' ? 'R ' : 'L ') + _f(L, 1) + ' ft · w̄ ' + _f(W, 3) + ' in';
+        var aria = 'Fracture schematic (' + geoTxt + ') at ' + lab;
+        return '<svg id="prism_dfit_lk_schem_svg" class="prism-dfit-schem" viewBox="0 0 320 128" width="100%" height="128" role="img" aria-label="' + _esc(aria) + '" data-t="' + _f(r.t[i], 4) + '">' +
+               '<title>' + _esc(aria) + '</title>' + sh + well + wb +
+               '<text x="6" y="124" fill="#c9d1d9" font-size="11">' + _esc(lab) + '</text><text x="290" y="28" fill="#8b949e" font-size="9">w̄</text></svg>';
+    }
+    function _schemHTML() {
+        var svg = schematicSVG(null);
+        return '<div class="chart-wrap prism-dfit-chart" id="prism_dfit_lk_schem">' + (svg || _note('Run the leak-off model to see the fracture schematic.')) + '</div>';
+    }
+    function _schemUpdate(t) {
+        var host = _byId('prism_dfit_lk_schem');
+        if (!host) return false;
+        var svg = schematicSVG(t);
+        if (svg) host.innerHTML = svg;
+        return !!svg;
     }
     function _uncHTML() {
         var run = _run(), U = run && run.unc;
@@ -2560,7 +2659,7 @@
         var r = null;
         try { r = f(cfg, { grid: 'display' }); } catch (e) { r = null; }
         if (!_need(r && r.ok !== false, 'The leak-off model run failed: ' + _txt((r && (r.why || (r.errors && r.errors[0]))) || 'no result'))) return null;
-        _st()._dfitLk = r;
+        _st()._dfitLk = r; _st()._dfitLkGeo = cfg.geometry || 'PKN';
         _emit('prism:dfit-model-updated', { kind: 'simulate', ok: true });
         _refreshUI();
         return r;
@@ -2682,6 +2781,14 @@
         _download('dfit-frac-design.csv', r.csv, 'text/csv');
         return r;
     }
+    // the DFIT volumes and q_eq are barrels of the injected liquid: the transient analysis takes B = 1 bbl/bbl for them (gas keeps its
+    // own formation volume factor), so the PTA radial kh/μ and the after-closure kh/μ use the same volumes (I15)
+    function _handoffWell(sw, run) {
+        var out = _clone(sw) || {};
+        var w = _well(), gas = w.fluid === 'gas' || !!(run && run.aca && run.aca.gas && run.aca.gas.applied);
+        if (!gas && !_own(out, 'B')) out.B = 1;
+        return out;
+    }
     function applyHandoff(target, o) {
         o = o || {};
         var run = _run(), f = _fn('PRiSM_dfit_handoff');
@@ -2692,7 +2799,8 @@
         if (!pk || pk.ok === false) return { ok: false, code: 'HANDOFF_FAILED', errors: ['The hand-off packet could not be built.'], bad: [] };
         if ((target || 'pta') !== 'pta') return { ok: true, packet: pk };
         var lines = [];
-        if (pk.setWell) Object.keys(pk.setWell).forEach(function (k) { lines.push(k + ' = ' + (_isNum(pk.setWell[k]) ? _f(pk.setWell[k], 4) : pk.setWell[k])); });
+        var sw = pk.setWell ? _handoffWell(pk.setWell, run) : null;
+        if (sw) Object.keys(sw).forEach(function (k) { lines.push(k + ' = ' + (_isNum(sw[k]) ? _f(sw[k], 4) : sw[k])); });
         lines.push('model ' + pk.model);
         if (pk.blockers && pk.blockers.length) lines.push(pk.blockers.join(' '));
         var ok = (o.confirm === false || typeof G.confirm !== 'function') ? true : G.confirm('Open this DFIT in PTA (transient)?\n' + lines.join('\n'));
@@ -2700,7 +2808,7 @@
         var T = test();
         _batch('begin');
         try {
-            if (pk.setWell && typeof G.PRiSM_setWell === 'function') G.PRiSM_setWell(pk.setWell, { source: 'dfit' });
+            if (pk.setWell && typeof G.PRiSM_setWell === 'function') G.PRiSM_setWell(_handoffWell(pk.setWell, run), { source: 'dfit' });
             if (_arr(pk.multiRate) && pk.multiRate.length) { _P().multiRate = pk.multiRate.map(function (r) { return { t: r.t, q: r.q }; }); var ls = _ls(); if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(_P().multiRate)); } catch (e) { /* quota */ } } }
             if (pk.model && typeof G.PRiSM_setModel === 'function') { try { G.PRiSM_setModel(pk.model); } catch (e) { /* ignore */ } }
             var st = _st();
@@ -3086,7 +3194,7 @@
     function _onProject(e) {
         cancelAnalyse();
         _dropRun();
-        delete _st()._dfitLk;
+        delete _st()._dfitLk; delete _st()._dfitLkGeo;
         if (e && e.type === 'wts:project-new') { var st = _st(); delete st.dfit; }
         else if (_engaged()) { dstate(); _checkBinding(); }
         else return;
@@ -3097,6 +3205,8 @@
     // Linked cursor (§7.4): a hover on one shut-in plot draws the same shut-in time on the other DFIT canvases through 02's
     // overlay frame (no redraw). x ↔ Δt (h): dfitG nearest G, dfitSqrt √(Δt·60), dfitLogLog Δt·60, dfitHistory t_s + Δt.
     var LINK_KEYS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitHistory: 1 };
+    // the leak-off model plots share the model clock (t since pump start, h): a cursor on the others and the schematic follow
+    var LK_LINK = { dfitLkP: 1, dfitLkQ: 1, dfitLkGeom: 1 };
     function _dtOfX(key, x, run) {
         var d = run && run.derivs;
         if (!_isNum(x)) return null;
@@ -3115,8 +3225,19 @@
         if (key === 'dfitHistory') return (run.events && _isNum(run.events.ts)) ? run.events.ts + dt : null;
         return null;
     }
+    function _onLkHover(e, d) {
+        if (!_isNum(d.x)) return;
+        _schemUpdate(d.x);
+        if (typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC || !document.querySelectorAll) return;
+        Array.prototype.forEach.call(document.querySelectorAll('canvas[data-dfit-plot]'), function (cv) {
+            if (cv === e.target || cv.isConnected === false || cv._dfitDrag) return;
+            if (!LK_LINK[cv.getAttribute('data-dfit-plot')]) return;
+            try { G.PRiSM_plot_overlay(cv, function (ctx, ax) { if (ax && ax.toX) _vline(ctx, ax.plot || { x: 0, y: 0, w: 1, h: 1 }, ax.toX(d.x), '#c9d1d9', [2, 2], 't ' + _f(d.x, 2) + ' h'); }); } catch (err) { /* cosmetic */ }
+        });
+    }
     function _onHover(e) {
         var d = e && e.detail;
+        if (d && LK_LINK[d.plotKey]) { _onLkHover(e, d); return; }
         if (!d || !LINK_KEYS[d.plotKey] || typeof G.PRiSM_plot_overlay !== 'function' || !HAS_DOC || !document.querySelectorAll) return;
         var run = _run(), dt = _dtOfX(d.plotKey, d.x, run);
         if (!_isNum(dt)) return;
@@ -3228,7 +3349,8 @@
         lkSimulate: _lkSimulate, lkFit: _lkFit, design: _design, replay: _replay, exportText: _exportText, exportSheet: _exportSheet,
         publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
         statusText: function () { return _status.text; },
-        handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch
+        handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch,
+        schematic: schematicSVG, schematicAt: _schemUpdate, applyDemoSetup: function (name) { var S = G.PRiSM_dfit_synth; return _applyDemoSetup(test(), S, name); }
     };
 
     install();

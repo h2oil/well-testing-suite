@@ -259,11 +259,32 @@ module.exports = [
         admissible: true, vetoes: [], warnings: [], sameEvidenceAs: null, upperSide: false, evidence: [], ev: ['C1'] }));
       const cy = U.buildPlot('dfitCycles');
       if (cy.data) {
-        assert(cy.data.hbands.length === 1 && cy.data.hbands[0].y0 === 7120 && cy.data.hbands[0].y1 === 7185, 'knee band');
+        assert(cy.data.hbands.filter((b) => b.y0 === 7120 && b.y1 === 7185).length === 1, 'knee band');
         assert(cy.data.hlines.some((x) => /reopening 7,150/.test(x.label)), 'knee line');
         assert(cy.data.series.some((x) => /wellbore line/.test(x.label || '')), 'wellbore line');
+        // the falloff closure families on the pressure axis: a P50 line and a P10–P90 band per family with a P50
+        const fams = R2.consensus.families || {};
+        ['F1', 'F2', 'F3'].filter((f) => fams[f] && typeof fams[f].p50 === 'number').forEach((f) => {
+          assert(cy.data.hlines.some((x) => x.label.indexOf(f + ' falloff') === 0 && Math.abs(x.y - fams[f].p50) < 1e-9), f + ' falloff line');
+          if (fams[f].p90 > fams[f].p10) assert(cy.data.hbands.some((b) => b.y0 === fams[f].p10 && b.y1 === fams[f].p90), f + ' falloff band');
+        });
       } else assert(/rate channel|ramp/.test(cy.error), 'cycles: ' + cy.error);
       w.PRiSM_state._dfitRun = R;
+      // sandbox fracture schematic (§6.1): an SVG scaled by L(t) and w̄(t), shut-in by default, following the model-plot hover
+      w.PRiSM_state._dfitLk = app.toWin(JSON.parse(JSON.stringify(S.FIX.samples.LkResult)));
+      const sv0 = U.schematic(null);
+      assert(/^<svg[^>]+role="img"[^>]+aria-label="Fracture schematic \(PKN ellipse section\)/.test(sv0) && !BANNED.test(sv0), 'schematic SVG at shut-in');
+      const sb = app.document.createElement('div'); sb.id = 'prism_dfit_lk_schem'; h.appendChild(sb);
+      app.fire('window', 'prism:plot-hover', { plotKey: 'dfitLkGeom', x: 0, y: 0, index: 0 });
+      const svA = sb.innerHTML;
+      app.fire('window', 'prism:plot-hover', { plotKey: 'dfitLkP', x: 1e9, y: 0, index: 0 });
+      const svB = sb.innerHTML;
+      const rx = (t) => +((/<ellipse[^>]+rx="([\d.]+)"/.exec(t) || [])[1]);
+      assert(rx(svA) > 0 && rx(svB) > rx(svA), 'the schematic grows with L(t): ' + rx(svA) + ' → ' + rx(svB));
+      assert(/L 1\.0 ft/.test(svA) && /L 131\.0 ft/.test(svB), 'the schematic labels L at the hovered time');
+      w.PRiSM_state._dfitLkGeo = 'radial';
+      assert(/<circle/.test(U.schematic(0.05)), 'radial disc');
+      delete w.PRiSM_state._dfitLk; delete w.PRiSM_state._dfitLkGeo;
     },
   },
   {

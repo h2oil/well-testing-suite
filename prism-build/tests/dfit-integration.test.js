@@ -52,11 +52,22 @@ async function analyseDemo(app, name) {
   return run;
 }
 const near = (assert, a, b, tol, what) => assert(typeof a === 'number' && Math.abs(a - b) <= tol, what + ': ' + a + ' vs ' + b + ' ± ' + tol);
+// one app shared by the tests that change neither the well (C1 user values), the undo stack, the wells nor the timers
+// (budget): the DFIT state and storage keys are reset and the mode is set back to transient between them
+const SH = require('./_dfit-shapes');
+function shared(ctx) {
+  const app = SH.sharedApp(ctx, {});
+  const P = app.win.PRiSM;
+  if (P && typeof P.setMode === 'function' && P.mode && P.mode !== 'transient') { P.setMode('transient'); app.flush(20); }
+  SH.resetDfit(app);
+  return app;
+}
 
 module.exports = [
   {
-    name: 'I1 reference demo end to end (ISIP, closure, η_G, xf, R_vis)', wp: WP, integration: true,
-    async run(app, assert) {
+    name: 'I1 reference demo end to end (ISIP, closure, η_G, xf, R_vis)', wp: WP, integration: true, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, false)) return;
       const run = await analyseDemo(app, 'reference');
@@ -71,8 +82,9 @@ module.exports = [
     },
   },
   {
-    name: 'I2 surface-gauge demo: conversion band, vacuum masking after 31 h, closure within 30 psi of the bottomhole result', wp: WP, integration: true,
-    async run(app, assert) {
+    name: 'I2 surface-gauge demo: conversion band, vacuum masking after 31 h, closure within 30 psi of the bottomhole result', wp: WP, integration: true, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, false)) return;
       const ref = await analyseDemo(app, 'reference');
@@ -111,12 +123,21 @@ module.exports = [
     async run(app, assert) {
       const w = app.win;
       if (!gate(w, true, [[real(w.PRiSM_dfit_kConstraint), '57 kConstraint']])) return;
+      app.openPRiSM(); w.PRiSM.setMode('dfit'); app.flush(50);
       await analyseDemo(app, 'conventional-radial');
       const k = w.PRiSM_dfit_kConstraint();
       assert(k && k.k > 0 && /^(aca-radial|aca-match|bounds)$/.test(k.source), 'k constraint: ' + JSON.stringify(k));
-      w.PRiSM.setMode('decline'); app.flush(50);
-      app.renderTab(6); app.flush(50);
-      assert(/k from DFIT after-closure/.test(app.document.body.textContent), 'RTA panel names the DFIT k');
+      // a rate-transient linear-flow set (q ∝ 1/√t at constant pwf, as dfit-hooks H10) with no input k and no pressure fit:
+      // the 35 linear-flow analysis takes the DFIT after-closure k
+      const t = [], q = [], p = [];
+      for (let i = 1; i <= 60; i++) { t.push(i * 24); q.push(800 / Math.sqrt(i)); p.push(1500); }
+      w.PRiSM_dataset = app.toWin({ t, q, p, name: 'rta' });
+      w.PRiSM_setWell(app.toWin({ testType: 'drawdown', pi: 5000, B: 1.2, h: 40, mu: 0.8, phi: 0.08, ct: 1.5e-5, rw: 0.3, q: 800 }), app.toWin({ source: 'user' }));
+      w.PRiSM_state.lastFit = null;
+      if (typeof w.PRiSM_setLastFit === 'function') { try { w.PRiSM_setLastFit(null); } catch (e) { /* optional */ } }
+      const lin = w.PRiSM_rtaLinearFlow(w.PRiSM_rtaData(w.PRiSM_dataset), app.toWin({}));
+      assert(lin.ok && lin.kSource === 'DFIT after-closure', 'RTA linear flow k source: ' + JSON.stringify([lin.ok, lin.kSource, lin.k, lin.reason, lin.missing, w.PRiSM_rtaData(w.PRiSM_dataset).reason]));
+      assert(Math.abs(lin.k / k.k - 1) < 1e-9 && Math.abs(lin.xf - lin.xf_sqrt_k / Math.sqrt(k.k)) < 1e-6 * lin.xf, 'k and xf from the DFIT k');
     },
   },
   {
@@ -134,7 +155,8 @@ module.exports = [
       assert(/<img[^>]+data:image\/png/.test(html), 'PDF HTML: plots');
       assert(/Grade|grade/.test(html) && html.indexOf(w.PRiSM_reportKeyLine()) !== -1, 'grade and key line');
       assert(!/Semilog|Horner/.test(html), 'no PTA-only sections in DFIT mode');
-      assert(!BANNED.test(tab), 'no banned words on Tab 7');
+      const bad = tab.match(BANNED);
+      assert(!bad, 'no banned words on Tab 7: ' + (bad ? JSON.stringify(tab.slice(Math.max(0, bad.index - 120), bad.index + 60)) : ''));
     },
   },
   {
@@ -187,8 +209,9 @@ module.exports = [
     },
   },
   {
-    name: 'I8 header Quick Report and the 30-quick-report key line in DFIT mode', wp: WP, integration: true,
-    async run(app, assert) {
+    name: 'I8 header Quick Report and the 30-quick-report key line in DFIT mode', wp: WP, integration: true, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, true, [[typeof w.PRiSM_reportKeyLine === 'function', '36 PRiSM_reportKeyLine']])) return;
       app.openPRiSM(); w.PRiSM.setMode('dfit'); app.flush(50);
@@ -209,8 +232,9 @@ module.exports = [
     },
   },
   {
-    name: 'I10 DFIT → transient → DFIT keeps the picks', wp: WP, integration: true,
-    async run(app, assert) {
+    name: 'I10 DFIT → transient → DFIT keeps the picks', wp: WP, integration: true, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, true)) return;
       app.openPRiSM(); w.PRiSM.setMode('dfit'); app.flush(50);
@@ -224,16 +248,20 @@ module.exports = [
   },
 ].concat(['reference', 'contact', 'example-b'].map((id, j) => ({
   name: 'I' + (11 + j) + ' integration case "' + id + '" through PRiSM_dfit_pipeline and PRiSM_dfit_synth.score: closure and mechanism right or partial, p_i inside the bracket',
-  wp: WP, integration: true,
-  run(app, assert) {
+  wp: WP, integration: true, opts: false,
+  run(_app, assert, ctx) {
+    const app = shared(ctx);
     const w = app.win;
     if (!gate(w, false, [[w.PRiSM_dfit_synth && real(w.PRiSM_dfit_synth.cases), '49-calc-dfit-synth cases']])) return;
     const S = w.PRiSM_dfit_synth, cases = S.cases('integration');
     assert(Array.isArray(cases) && cases.length === 3, 'three integration cases');
-    const cs = cases[j], mk = S.make(cs, 1);
-    const inputs = mk.inputs || w.PRiSM_dfit_inputRanges.defaults();
+    const cs = cases[j], mk = S.make(cs, cs.seed || 1);
+    assert(mk && mk.ok !== false && mk.ds, cs.id + ': case made');
+    // the case's own inputs and well (what dfit-validate passes), never the app's C1 well
+    const inputs = real(S.inputsFor) ? S.inputsFor(cs, mk) : w.PRiSM_dfit_inputRanges.defaults();
+    const well = real(S.wellFor) ? S.wellFor(cs, mk) : w.PRiSM_getWell();
     if (inputs.datumTvd == null) inputs.datumTvd = 10000;
-    const run = w.PRiSM_dfit_pipeline(mk.ds, inputs, w.PRiSM_getWell(), null, { seed: 1 });
+    const run = w.PRiSM_dfit_pipeline(mk.ds, inputs, well, null, { seed: 1 });
     assert(run && run.ok === true, cs.id + ': pipeline ok');
     const sc = S.score(run, mk.truth);
     assert(sc.closure.right || sc.closure.inBand || /partial/.test(String(sc.closure.mode)), cs.id + ': closure ' + JSON.stringify(sc.closure));
@@ -243,8 +271,9 @@ module.exports = [
   },
 }))).concat([
   {
-    name: 'I14 a mini-model run with V_w·c_w 0.178 ft³/psi (gas-filled wellbore) analysed by the pre-closure chain recovers the model xf within 3 %; κ_exp from the coarse run', wp: WP, integration: true,
-    run(app, assert) {
+    name: 'I14 a mini-model run with V_w·c_w 0.178 ft³/psi (gas-filled wellbore) analysed by the pre-closure chain recovers the model xf within 3 %; κ_exp from the coarse run', wp: WP, integration: true, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, false, [[real(w.PRiSM_dfit_lkSimulate) && real(w.PRiSM_dfit_lkDefaults), '58 leak-off model']])) return;
       const cfg = w.PRiSM_dfit_lkDefaults();
@@ -273,17 +302,25 @@ module.exports = [
       const run = await analyseDemo(app, 'conventional-radial');
       assert(run.aca.kh && run.aca.kh.khmu > 0, 'ACA kh/μ');
       assert(w.PRiSM_dfit_applyHandoff('pta', { confirm: false }).ok, 'hand-off');
+      assert.strictEqual(w.PRiSM_getWell().B, 1, 'the hand-off takes B = 1 for the injected liquid volumes');
       const ad = w.PRiSM_getAnalysisData();
-      const n = ad.t.length, i = Math.floor(n * 0.9);
-      const r = w.PRiSM_runAnalysisKey('radialPlateau', [{ x: ad.t[i], y: ad.deriv[i] }], { plotKey: 'bourdet' });
+      // the plateau is read in the after-closure radial window (the window of the ACA kh/μ; Δt from the shut-in differs from the
+      // centroid-origin clock by less than tp, which is negligible at these times): the median Bourdet derivative there
+      const win = run.aca.nolte && run.aca.nolte.rad && run.aca.nolte.rad.win;
+      assert(win && win[1] > win[0], 'ACA radial window');
+      const idx = ad.t.map((t, j) => j).filter((j) => ad.t[j] >= win[0] && ad.t[j] <= win[1] && ad.deriv[j] > 0);
+      assert(idx.length >= 5, 'derivative points in the radial window: ' + idx.length);
+      const ys = idx.map((j) => ad.deriv[j]).sort((a, b) => a - b), ym = ys[Math.floor(ys.length / 2)];
+      const r = w.PRiSM_runAnalysisKey('radialPlateau', [{ x: Math.sqrt(win[0] * win[1]), y: ym }], { plotKey: 'bourdet' });
       assert(r.ok, 'radial plateau');
       const khmu = r.result.values.kh / w.PRiSM_getWell().mu;
       assert(Math.abs(khmu / run.aca.kh.khmu - 1) <= 0.02, 'kh/μ ' + khmu + ' vs ' + run.aca.kh.khmu);
     },
   },
   {
-    name: 'I16 two stacked tests on two demo datasets: switching keeps each test\'s picks, the gradient plot shows both', wp: WP, integration: true,
-    async run(app, assert) {
+    name: 'I16 two stacked tests on two demo datasets: switching keeps each test\'s picks, the gradient plot shows both', wp: WP, integration: true, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       if (!gate(w, false)) return;
       await analyseDemo(app, 'reference');
