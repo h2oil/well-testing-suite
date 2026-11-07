@@ -85,7 +85,8 @@
     function _shell() { return _byId('prism_shell'); }
     // the WPH generic hooks (§3.12) are in the build
     function hooksReady() {
-        return typeof G.PRiSM_drawPlot === 'function' && typeof G.PRiSM_undoBatch === 'function' && _isObj(G.PRiSM_modeExt);
+        // PRiSM_drawPlot (04) and PRiSM_undoBatch (37) come with the generic hooks; PRiSM_modeExt is created here when absent
+        return typeof G.PRiSM_drawPlot === 'function' && typeof G.PRiSM_undoBatch === 'function';
     }
     function _batch(which) { if (typeof G.PRiSM_undoBatch === 'function') { try { G.PRiSM_undoBatch(which); } catch (e) { /* ignore */ } } }
     function _well() { try { return (typeof G.PRiSM_getWell === 'function') ? (G.PRiSM_getWell() || {}) : {}; } catch (e) { return {}; } }
@@ -410,8 +411,8 @@
             T.summary = s;
         }
         if (!T.dsRef || !T.dsRef.hash) _checkBinding();
-        _writeSchedule(run);
-        _writeC1(run);
+        // an undo restores C1 and multiRate from its own snapshot: re-writing them here would undo the undo
+        if (o.source !== 'undo') { _writeSchedule(run); _writeC1(run); }
         if (!o.fast) { try { _storeHf(run); } catch (e) { /* the windows are optional */ } }
         _publish();
         _emit('prism:dfit-updated', { what: o.what || 'all', source: o.source || 'auto' });

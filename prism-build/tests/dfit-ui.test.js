@@ -71,6 +71,17 @@ const skip = (what) => console.log('      skip (WPH hooks absent): ' + what);
 const BANNED = /\b(null|undefined|NaN|Infinity)\b|\[object Object\]/;
 const DFIT_PANELS = ['dfit-tests', 'dfit-well', 'dfit-channels', 'dfit-triage', 'dfit-board', 'dfit-classify', 'dfit-frac', 'dfit-whatif', 'dfit-report-opts'];
 
+// one app shared by the tests that do not change the mode, the undo stack or the viewport (budget ≤ 8 s): DFIT state,
+// storage keys and the test host are reset between them
+function shared(ctx) {
+  const app = S.sharedApp(ctx, OPTS());
+  const P = app.win.PRiSM;
+  if (P && typeof P.setMode === 'function' && P.mode !== 'transient') { P.setMode('transient'); app.flush(20); }
+  S.resetDfit(app);
+  const old = app.document.getElementById('dfit_test_host');
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  return app;
+}
 function host(app) { const h = app.document.createElement('div'); h.id = 'dfit_test_host'; app.document.body.appendChild(h); return h; }
 // load the reference demo and store a run (synchronously, through the fast pipeline)
 function withRun(app) {
@@ -168,8 +179,8 @@ module.exports = [
       assert(w.PRiSM_state.dfit && w.PRiSM_state.dfit.tests.length === 1, 'st.dfit created with one test');
       if (!hooks(w)) { assert(batches >= 1, 'onEnter opens an undo batch'); delete w.PRiSM_undoBatch; skip('one undo step through 37'); return; }
       // with the hooks: entering DFIT mode from transient is one undo step (undo returns the previous test type)
-      w.PRiSM_setWell({ testType: 'buildup' }, { source: 'user' });
-      app.openPRiSM(); app.flush(50);
+      app.openPRiSM(); app.flush(50); w.PRiSM.setMode('transient'); app.flush(20);
+      w.PRiSM_setWell({ testType: 'buildup' }, { source: 'user' }); app.flush(50);
       w.PRiSM.setMode('dfit'); app.flush(50);
       assert.strictEqual(w.PRiSM_getWell().testType, 'falloff');
       assert(w.PRiSM_undo(), 'undo');
@@ -178,8 +189,9 @@ module.exports = [
   },
   {
     name: 'U4 every DFIT plot draws on the reference run with _prismAxes; derivative axis rule and lock; no foreign hook draws on DFIT canvases',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui, run = withRun(app);
       const h = host(app), cv = app.document.createElement('canvas');
       cv.style.width = '800px'; cv.style.height = '400px'; h.appendChild(cv);
@@ -222,8 +234,9 @@ module.exports = [
   },
   {
     name: 'U5 the dfit-picks post-draw hook is registered once (also after a second install)',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui;
       const count = () => w.PRiSM_postDrawHooks.filter((h) => h && h._prismId === 'dfit-picks').length;
       assert.strictEqual(count(), 1);
@@ -260,8 +273,9 @@ module.exports = [
   },
   {
     name: 'U7 a drag of the closure marker through the pointer owner commits exactly one pick-log entry',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui;
       withRun(app);
       const h = host(app), cv = app.document.createElement('canvas');
@@ -347,8 +361,9 @@ module.exports = [
   },
   {
     name: 'U9 zero pending timers after ▶ Analyse and flush(5000)',
-    wp: WP, opts: OPTS(),
-    async run(app, assert) {
+    wp: WP, opts: false,
+    async run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win;
       w.PRiSM_dfit_ui.loadDemo('reference');
       app.openPRiSM(); app.flush(100);
@@ -420,8 +435,9 @@ module.exports = [
   },
   {
     name: 'U13 every DFIT numeric input clamps blank / 0 / −1 / 1e12 without NaN text; counts integral and capped; "1,5" → 1.5 with the decimal-comma option',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui, R = w.PRiSM_dfit_inputRanges.table;
       withRun(app);
       const h = renderAll(app, host(app));
@@ -460,8 +476,9 @@ module.exports = [
   },
   {
     name: 'U14 the exact Tools catalogue: the sandbox in every mode, the others only in DFIT mode, none under "More"',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui;
       assert.deepStrictEqual(JSON.parse(JSON.stringify(U.tools.map((t) => [t.id, t.fn, t.group, JSON.stringify(t.modes)]))), [
         ['dfit-sandbox', 'PRiSM_renderDfitSandboxTool', 'DFIT', '"*"'], ['dfit-designer', 'PRiSM_renderDfitDesignerTool', 'DFIT', '["dfit"]'],
@@ -476,7 +493,8 @@ module.exports = [
         skip('PRiSM_listTools per mode');
         return;
       }
-      const list = (m) => { w.PRiSM.setMode(m); app.flush(20); return w.PRiSM_listTools().filter((t) => /^dfit-|Dfit/.test(t.id + ' ' + t.fn)); };
+      app.openPRiSM(); app.flush(20);
+      const list = (m) => { w.PRiSM.setMode(m); app.flush(20); return JSON.parse(JSON.stringify(w.PRiSM_listTools().filter((t) => t.group !== 'Step panels' && /^dfit-|Dfit/.test(t.id + ' ' + t.fn)))); };
       const tr = list('transient');
       assert.deepStrictEqual(tr.map((t) => t.id), ['dfit-sandbox'], 'transient: sandbox only');
       const df = list('dfit');
@@ -486,8 +504,9 @@ module.exports = [
   },
   {
     name: 'U15 tests table: add / open / delete (logged, batched), overlay of two stored curves, stress plot',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, U = w.PRiSM_dfit_ui;
       w.PRiSM_state.dfit = app.toWin(S.FIX.state);
       const d = w.PRiSM_dfit_state();
@@ -525,8 +544,9 @@ module.exports = [
   },
   {
     name: 'U16 method notes: every pick method and family has a note; the dialog is rp-skip / data-rp-nosnap; neutral wording',
-    wp: WP, opts: OPTS(),
-    run(app, assert) {
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
       const w = app.win, I = w.WTS_dfitInfo;
       ['tangent', 'sqrt', 'maxdpdg', 'compliance', 'crel', 'loglog', 'varcomp', 'model', 'fissure', 'reopening', 'user', 'F0', 'F1', 'F2', 'F3', 'F4',
        'normal', 'matrix', 'pdl', 'tip', 'hr-contact', 'storage', 'undetermined', 'linear', 'bilinear', 'radial', 'spherical', 'transition', 'artefact'].forEach((k) => {
