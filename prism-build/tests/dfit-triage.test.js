@@ -7,14 +7,19 @@
 //   T5  vacuum masks the converted data after p_s < 0 (excluded window, usable window, salvage)
 //   T6  a 37.4 s clock offset is recovered within 0.2 s; a 1 h offset is a blunder with its fix
 //   T7  re-pump verdict: air in the well (R4, both detectors) → repump; clean → continue; overpressured (ISIP 1.05, p_i 0.75,
-//       S_v 1.15 psi/ft) → not a repump
+//       S_v 1.15 psi/ft) → not a repump; overpressured with S_v at its default (ISIP 1.10, p_i 0.75, S_v not entered) → R2 warns
+//       (generic upper bound), not a repump; the same S_v marked entered by provenance → R2 fails
 //   T8  thresholds in inputs.options.triage change the levels
 //   T9  grade mapping A–D on four fixture combinations
 //   T10 the air cross-check fails only when both detectors exceed 2 × theory
+//   T11 the static hydrostatic check and the blunder bands use WTS_wellbore.hydrostatic with the column and the inputs' fluid
+//       (10 ppg case passes; a stand-in that honours opts.fluid, and the real 48 when it is loaded)
 //
 // Artefacts are built inline from the frozen fixtures (FIX.run, FIX.ds, FIX.samples); no dependency on the generator.
 // Stub (§2.12 rule 4): T2 applies the blunder fix through a test-local stand-in for PRiSM_dfit_prepare (stubPrepare below:
-// psig, unit fixes, surface → datum with the plain column); 56 is not called. Pure-engine file: opts:false, one shared app.
+// psig, unit fixes, surface → datum with the plain column); 56 is not called. T11 swaps in a WTS_wellbore stand-in (column +
+// hydrostatic that honours opts.fluid, else a 8.45 ppg default like 48) and restores the app's object. Pure-engine file:
+// opts:false, one shared app.
 'use strict';
 
 const fs = require('fs');
@@ -361,6 +366,20 @@ module.exports = [
       okTriage(assert, to, 'overpressured');
       assert(to.repump.verdict !== 'repump', 'overpressured is not a repump: ' + JSON.stringify(to.repump));
       assert.strictEqual(to.repump.rules.filter((r) => r.id === 'R2')[0].level, 'pass', 'R2 passes');
+      // overpressured with S_v not entered (the clamp leaves its default 1.0): ISIP 1.10 psi/ft, p_i 0.75 psi/ft
+      const od = base(), f2 = 11000 / 7600;
+      od.prep.pw = od.prep.pw.map((p) => p * f2); od.events.pb *= f2; od.ctx.isip.value = 11000;
+      od.ctx.inputs.priors.piGrad = 0.75; od.ctx.inputs.rock.sigmaVGrad = 1.0;
+      const tod = runT(g, od);
+      okTriage(assert, tod, 'overpressured, default S_v');
+      const r2d = tod.repump.rules.filter((r) => r.id === 'R2')[0];
+      assert(r2d.level === 'warn' && /generic prior/.test(r2d.text), 'R2 warns: the violated upper bound is the default S_v — ' + r2d.text);
+      assert(tod.repump.verdict !== 'repump' && tod.grade.letter !== 'D', 'overpressured with default S_v is not a repump: ' + JSON.stringify(tod.repump));
+      const odW = base(); odW.prep.pw = od.prep.pw.slice(); odW.events.pb = od.events.pb; odW.ctx.isip.value = 11000;
+      odW.ctx.well = { pi: 7500 };                                   // p_i from the well (C1), S_v still the default
+      assert(runT(g, odW).repump.verdict !== 'repump', 'well.pi + default S_v: not a repump');
+      od.ctx.inputs.provenance = { 'rock.sigmaVGrad': 'user' };      // the same 1.0 psi/ft, entered
+      assert.strictEqual(runT(g, od).repump.rules.filter((r) => r.id === 'R2')[0].level, 'fail', 'S_v entered (provenance user): R2 fails');
       // R2 outside the band: fail with priors, warn with generic priors only
       const lo = base(); lo.ctx.isip.value = 3000; lo.ctx.inputs.priors.piGrad = 0.45;
       assert.strictEqual(runT(g, lo).repump.rules.filter((r) => r.id === 'R2')[0].level, 'fail', 'R2 fails below the p_i gradient (priors given)');
@@ -416,6 +435,13 @@ module.exports = [
       tc.light = 'amber'; tc.verdict = 'partly';
       tc.checks.push({ id: 'sampling', title: 'Sampling vs hammer', level: 'fail', value: 2, threshold: 3, text: 'Too few samples per 2L/c.', ev: ['Q8'], inWindow: false });
       okG(g.PRiSM_dfit_grade(tc, run.consensus, run.aca), 'C', 'C (failed check outside)');
+      // a failed check inside an analysed window (red light): C (B excludes it; §6.3 gives no letter, the mapping chosen is C)
+      const ti = clone(run.triage);
+      ti.light = 'red'; ti.verdict = 'partly';
+      ti.checks.push({ id: 'hydrostatic', title: 'Static hydrostatic check', level: 'fail', value: 0.08, threshold: 0.05, text: 'Static column off by 8 %.', ev: ['Q6'], inWindow: true });
+      const gi = g.PRiSM_dfit_grade(ti, run.consensus, run.aca);
+      okG(gi, 'C', 'C (failed check inside a window)');
+      assert(/inside an analysed window/.test(gi.why[0]), 'the reason names the failed check inside the window');
       const lowC = clone(run.consensus); lowC.confidence = 'low';
       okG(g.PRiSM_dfit_grade(run.triage, lowC, run.aca), 'C', 'C (low closure label)');
       // D: a repump verdict, or uninterpretable
@@ -449,6 +475,63 @@ module.exports = [
       assert.strictEqual(lv(2.5, 2.5, 'unknown').level, 'na', 'unknown reflector → not applicable');
       const b = base(); b.ctx.hammer = null;
       assert.strictEqual(chk(runT(g, b), 'air').level, 'na', 'no hammer → not applicable');
+    },
+  },
+  {
+    name: 'T11 the static hydrostatic check uses WTS_wellbore.hydrostatic with the column and the inputs\' fluid (10 ppg passes)',
+    wp: WP,
+    opts: false,
+    run(app, assert, ctx) {
+      const g = G(ctx);
+      const real = g.WTS_wellbore;
+      const realOk = real && typeof real.hydrostatic === 'function' && !real.hydrostatic._dfitStub && typeof real.column === 'function' && !real.column._dfitStub;
+      // the 10 ppg case: p_s = p_w − the column of 10 ppg at the datum (before pumping)
+      const mk = (dp) => {
+        const b = base(); b.ctx.inputs.fluid.rhoPpg = 10;
+        b.prep.pSurf = b.prep.pw.map((p) => p - dp);
+        return b;
+      };
+      const calls = [];
+      const stub = {
+        column(spec) { return { ok: true, tvdAt: (md) => md, mdAt: (tvd) => tvd, segments: [], Vw: 0, warnings: [], fluid: spec.fluid, datumTvd: spec.datumTvd, datumMd: spec.datumMd }; },
+        hydrostatic(pKnown, tvdKnown, tvdTarget, col, T, opts) {
+          const fl = (opts && opts.fluid) || (col && col.fluid) || { rhoPpg: 8.45 };   // 48's default when no fluid reaches it
+          calls.push({ pKnown, tvdKnown, tvdTarget, col, fluid: fl });
+          const dp = 0.052 * fl.rhoPpg * (tvdTarget - tvdKnown);
+          return { ok: true, p: pKnown + dp, rhoBar: fl.rhoPpg, dp, rangeNote: null };
+        },
+      };
+      try {
+        g.WTS_wellbore = stub;
+        const b = mk(0.052 * 10 * REF.datumTvd);
+        const tr = runT(g, b);
+        okTriage(assert, tr, '10 ppg (stand-in)');
+        const h = chk(tr, 'hydrostatic');
+        assert.strictEqual(h.level, 'pass', '10 ppg static column passes: ' + h.text);
+        assert(h.value < 1e-6, 'the model matches the 10 ppg column: ' + h.value);
+        assert.strictEqual(tr.light, 'green', 'the light stays green on clean 10 ppg data');
+        assert(!tr.blunders.length, 'no blunder on clean 10 ppg data: ' + JSON.stringify(tr.blunders));
+        assert(calls.length >= 1, 'WTS_wellbore.hydrostatic is called');
+        const c0 = calls[0];
+        assert(c0.fluid.rhoPpg === 10 && c0.col && c0.col.ok === true && c0.col.datumTvd === REF.datumTvd, 'the column and the inputs\' fluid reach hydrostatic');
+        const psStatic = b.prep.pSurf[0];
+        assert(Math.abs(c0.pKnown - psStatic) < 1e-6 && c0.tvdKnown === 0 && c0.tvdTarget === REF.datumTvd, 'from the static surface pressure at 0 ft to the datum');
+        // the blunder bands use the same model: a 10 ppg gauge-depth case is still found (the column matches the gauge depth)
+        const gd = mk(0.052 * 10 * 9000); gd.ctx.inputs.gauge.bhTvd = 9000;
+        const tg = runT(g, gd);
+        assert.strictEqual(chk(tg, 'hydrostatic').level, 'fail', 'the gauge-depth column fails at the datum');
+        const bl = tg.blunders.filter((x) => x.id === 'gauge-as-datum')[0];
+        assert(bl && Math.abs(bl.fix.to.dpPsi - 0.052 * 10 * 1000) < 0.01, 'gauge-as-datum with the 10 ppg shift: ' + JSON.stringify(tg.blunders));
+      } finally { g.WTS_wellbore = real; }
+      // with the real 48 loaded (after integration): a column built from its own model at 10 ppg passes too
+      if (realOk) {
+        const inp = base().ctx.inputs, fl = Object.assign({}, inp.fluid, { rhoPpg: 10 });
+        const col = real.column({ survey: null, strings: inp.strings, fluid: fl, temp: inp.temp, datumTvd: REF.datumTvd, datumMd: null });
+        const ps0 = base().prep.pw[0] - 0.052 * 10 * REF.datumTvd;
+        const dpReal = real.hydrostatic(ps0, 0, REF.datumTvd, col, null, { fluid: fl }).dp;
+        const h = chk(runT(g, mk(dpReal)), 'hydrostatic');
+        assert.strictEqual(h.level, 'pass', 'real WTS_wellbore, 10 ppg: ' + h.text);
+      }
     },
   },
 ];

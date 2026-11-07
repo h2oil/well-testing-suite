@@ -16,6 +16,17 @@
 //   ds (the raw DfitDataset: units, raw channels, pAnn), stepRate, picks ([ClosurePick]), csys ({VwCw, waveSpeed}) or
 //   VwCwTheory, bleed (WTS_wellbore.bleedOff output, t1psi h), strapVolume (bbl), tCloseS (valve closing time, s), align
 //   (WTS_wellbore.align output, offsetS), tide ({ampPsi, dpPsi, removed}), classification, frac, consensus, aca.
+//   strapVolume is the volume pumped after the wellbore fill: the rate integral to shut-in minus Events.Vfill is compared with it.
+//   provenance (optional, inputs.provenance or ctx.provenance): {'rock.sigmaVGrad': 'user'|'logged'|…|'default'}. The input clamp
+//   always fills rock.sigmaVGrad, so at its default (1.0 psi/ft) it counts as entered only when a provenance says so.
+// Hydrostatics: one model for the static check and the blunder bands — WTS_wellbore.hydrostatic(p_s static, 0, TVD, column,
+//   null, {fluid}) with the column built once from the inputs (survey, strings, fluid, temp, datum), else 0.052·ρ·TVD.
+// R2 (ISIP-gradient band) is a warning, not a fail, when the violated bound is a generic prior: the lower bound when p_i comes
+//   from the fluid hydrostatic, the upper bound when S_v is the default and not entered.
+// Evidence ids: Q1–Q21 = the checks in CHECKS order; Q0 = the triage summary (Triage.ev).
+// Grade mapping choices (§6.3 leaves them open): a failed check inside an analysed window (red light) grades C, like a failed
+//   check outside the windows; a surface vacuum on a surface-converted analysis is masked (excluded window), so its fail is
+//   recorded inWindow:false; a gauge thermal transient above the limit outside the pick window is reported as a warning.
 // Thresholds: every value of DEFAULTS below is editable through inputs.options.triage[checkId][key] (finite numbers only).
 // Clock convention: a positive offsetS means the rate record lags the pressure record (rate events appear offsetS later on
 // the common clock); the fix writes channels.clockOffsetH = current − offsetS / 3600 (the shift applied to the rate clock).
@@ -201,15 +212,8 @@
         var rho = gp(C.inputs, 'fluid.rhoPpg', null);
         C.rho = fin(rho) && rho > 0 ? rho : 8.43;
         C.hydroGrad = PSI_PER_FT_PER_PPG * C.rho;
-        var piGrad = gp(C.inputs, 'priors.piGrad', null), wpi = gp(C.well, 'pi', null);
-        if (fin(piGrad)) { C.piGrad = piGrad; C.piGradSrc = 'prior'; }
-        else if (fin(wpi) && C.tvd) { C.piGrad = wpi / C.tvd; C.piGradSrc = 'well'; }
-        else { C.piGrad = C.hydroGrad; C.piGradSrc = 'hydrostatic'; }
-        var sv = gp(C.inputs, 'rock.sigmaVGrad', null);
-        C.svGrad = fin(sv) ? sv : 1.0;
-        var sg = gp(C.inputs, 'priors.sigmaGrad', null);
-        C.sigmaGrad = fin(sg) ? sg : null;
-        C.generic = C.piGradSrc === 'hydrostatic' && C.sigmaGrad == null;
+        C.fluid = fluidOf(C);
+        priorsInto(C);
         // ISIP: the ISIP stage, else the first falloff sample
         C.isipVal = C.isip && fin(C.isip.value) ? C.isip.value : (C.iFall < n ? pw[C.iFall] : NaN);
         C.gradIsip = C.tvd && fin(C.isipVal) ? C.isipVal / C.tvd : null;
@@ -219,6 +223,40 @@
         // theory storage and wave speed
         theory(C);
         return C;
+    }
+    // the fluid handed to WTS_wellbore: the inputs' fluid with the resolved density (its own default never replaces ours)
+    function fluidOf(C) {
+        var f = isObj(C.inputs.fluid) ? C.inputs.fluid : {}, out = {}, k;
+        for (k in f) if (Object.prototype.hasOwnProperty.call(f, k)) out[k] = f[k];
+        out.rhoPpg = C.rho;
+        return out;
+    }
+    // entered vs generic priors: a provenance other than an entered one (or none, with the value at its default) is generic
+    var SV_DEFAULT = 1.0, ENTERED = { user: 1, logged: 1, entered: 1, dataset: 1, dfit: 1, measured: 1 };
+    function provOf(C, path) {
+        var srcs = [gp(C.inputs, 'provenance', null), gp(C.raw, 'provenance', null)];
+        for (var i = 0; i < srcs.length; i++) {
+            var p = srcs[i];
+            if (!isObj(p)) continue;
+            var v = Object.prototype.hasOwnProperty.call(p, path) ? p[path] : gp(p, path, null);
+            if (typeof v === 'string') return v;
+        }
+        return null;
+    }
+    // p_i gradient (lower bound) and S_v gradient (upper bound) of the ISIP-gradient band, each with its generic flag
+    function priorsInto(C) {
+        var piGrad = gp(C.inputs, 'priors.piGrad', null), wpi = gp(C.well, 'pi', null);
+        if (fin(piGrad)) { C.piGrad = piGrad; C.piGradSrc = 'prior'; }
+        else if (fin(wpi) && C.tvd) { C.piGrad = wpi / C.tvd; C.piGradSrc = 'well'; }
+        else { C.piGrad = C.hydroGrad; C.piGradSrc = 'hydrostatic'; }
+        var sv = gp(C.inputs, 'rock.sigmaVGrad', null), svProv = provOf(C, 'rock.sigmaVGrad');
+        C.svGrad = fin(sv) ? sv : SV_DEFAULT;
+        // the input clamp always fills rock.sigmaVGrad: at its default it counts as entered only when a provenance says so
+        C.svGeneric = svProv ? !ENTERED[svProv] : (!fin(sv) || Math.abs(sv - SV_DEFAULT) < 1e-12);
+        C.piGeneric = C.piGradSrc === 'hydrostatic';
+        var sg = gp(C.inputs, 'priors.sigmaGrad', null);
+        C.sigmaGrad = fin(sg) ? sg : null;
+        C.generic = C.piGeneric && C.svGeneric && C.sigmaGrad == null;
     }
     function firstIndexAfter(t, x) { for (var i = 0; i < t.length; i++) if (t[i] > x) return i; return t.length; }
     function largestDrop(C) {
@@ -230,21 +268,23 @@
         return best;
     }
     function theory(C) {
-        var cs = C.raw.csys, vw = null, c = null;
+        var cs = C.raw.csys, vw = null, c = null, W = G.WTS_wellbore;
         if (isObj(cs)) { if (fin(cs.VwCw) && cs.VwCw > 0) vw = cs.VwCw; if (fin(cs.waveSpeed) && cs.waveSpeed > 0) c = cs.waveSpeed; }
         if (vw == null && fin(C.raw.VwCwTheory) && C.raw.VwCwTheory > 0) vw = C.raw.VwCwTheory;
-        if ((vw == null || c == null) && C.tvd) {
-            var W = G.WTS_wellbore;
-            if (W && isRealFn(W.column) && isRealFn(W.csys)) {
-                try {
-                    var col = W.column({ survey: C.inputs.survey || null, strings: C.inputs.strings || [], fluid: C.inputs.fluid || {},
-                                         temp: C.inputs.temp || {}, datumTvd: C.tvd, datumMd: C.md });
-                    if (okRes(col)) {
-                        var r = W.csys(col, C.inputs.fluid || {}, null);
-                        if (okRes(r)) { if (vw == null && fin(r.VwCw) && r.VwCw > 0) vw = r.VwCw; if (c == null && fin(r.waveSpeed) && r.waveSpeed > 0) c = r.waveSpeed; }
-                    }
-                } catch (e) { /* theory unavailable */ }
-            }
+        // the wellbore column, built once (survey, strings, fluid, temperature, datum); shared by the storage and the hydrostatics
+        C.col = null;
+        if (C.tvd && W && isRealFn(W.column)) {
+            try {
+                var col = W.column({ survey: C.inputs.survey || null, strings: C.inputs.strings || [], fluid: C.fluid,
+                                     temp: C.inputs.temp || {}, datumTvd: C.tvd, datumMd: C.md });
+                if (okRes(col)) C.col = col;
+            } catch (e) { C.col = null; }
+        }
+        if ((vw == null || c == null) && C.col && isRealFn(W.csys)) {
+            try {
+                var r = W.csys(C.col, C.fluid, null);
+                if (okRes(r)) { if (vw == null && fin(r.VwCw) && r.VwCw > 0) vw = r.VwCw; if (c == null && fin(r.waveSpeed) && r.waveSpeed > 0) c = r.waveSpeed; }
+            } catch (e) { /* theory unavailable */ }
         }
         if (c == null && C.hammer && fin(C.hammer.c) && C.hammer.c > 0) c = C.hammer.c;
         C.VwCwTheory = vw;
@@ -449,6 +489,30 @@
         return { level: 'pass', value: rnd(minPsig, 1), threshold: T.warnPsig, text: 'Surface pressure stays at or above ' + fmt(minPsig, 1) + ' psig.' };
     };
 
+    // median static surface pressure before pumping (psia), or null
+    function staticSurf(C) {
+        if (!C.pSurf || C.src !== 'bh') return null;
+        var d = [];
+        for (var i = 0; i < C.n && C.t[i] < C.tStart; i++) if (fin(C.pw[i]) && fin(C.pSurf[i])) d.push(C.pSurf[i]);
+        return d.length ? median(d) : null;
+    }
+    // model static column p(tvd) − p_s (psi): WTS_wellbore.hydrostatic with the column and the inputs' fluid when present,
+    // else 0.052·ρ·TVD. One model for the check and the blunder bands; cached per depth.
+    function hydroModel(C, tvd) {
+        if (!(tvd > 0)) return NaN;
+        C._hydroCache = C._hydroCache || {};
+        var key = String(tvd);
+        if (Object.prototype.hasOwnProperty.call(C._hydroCache, key)) return C._hydroCache[key];
+        var model = C.hydroGrad * tvd, W = G.WTS_wellbore, ps = staticSurf(C);
+        if (W && isRealFn(W.hydrostatic) && fin(ps)) {
+            try {
+                var h = W.hydrostatic(ps, 0, tvd, C.col, null, { fluid: C.fluid });
+                if (okRes(h) && fin(h.dp) && h.dp > 0) model = h.dp;
+            } catch (e) { /* simple model */ }
+        }
+        C._hydroCache[key] = model;
+        return model;
+    }
     // measured static p_w − p_s before pumping (psi), or null
     function staticDiff(C, pwScale, psScale) {
         if (!C.pSurf || C.src !== 'bh') return null;
@@ -459,10 +523,7 @@
     CK.hydrostatic = function (C, T) {
         var meas = staticDiff(C);
         if (meas == null || !C.tvd) return { level: 'na', value: null, threshold: T.warn, text: 'Needs a bottomhole and a surface channel before pumping and the datum TVD.' };
-        var model = C.hydroGrad * C.tvd, W = G.WTS_wellbore;
-        if (W && isRealFn(W.hydrostatic)) {
-            try { var h = W.hydrostatic(0, 0, C.tvd, null, null); if (okRes(h) && fin(h.dp) && h.dp > 0) model = h.dp; } catch (e) { /* simple model */ }
-        }
+        var model = hydroModel(C, C.tvd);
         var err = Math.abs(meas - model) / model;
         C._hydroErr = err;
         var txt = 'Static p_w - p_s is ' + fmt(meas, 0) + ' psi against ' + fmt(model, 0) + ' psi for the column (' + fmt(100 * err, 1) + ' %)';
@@ -578,6 +639,7 @@
         return { level: 'warn', value: rnd(dtG, 4), threshold: rnd(t1, 4), text: 'G_min at ' + fmt(dtG * 60, 1) + ' min is ' + (dtG >= t1 / T.warn ? 'within ' + fmt(T.warn, 0) + ' times' : 'well before') + ' the predicted bleed-off end (' + fmt(t1 * 60, 1) + ' min).' };
     };
 
+    // rate integral to shut-in with the wellbore fill excluded (Events.Vfill, when finite): the basis of ctx.strapVolume
     function pumpedVolume(C) {
         if (!C.q) return null;
         var v = 0;
@@ -585,6 +647,7 @@
             var qa = fin(C.q[i - 1]) ? C.q[i - 1] : 0, qb = fin(C.q[i]) ? C.q[i] : 0;
             v += 0.5 * (qa + qb) * (C.t[i] - C.t[i - 1]) * 60;
         }
+        if (C.ev && fin(C.ev.Vfill) && C.ev.Vfill > 0 && C.ev.Vfill < v) v -= C.ev.Vfill;
         return v;
     }
     CK.volume = function (C, T) {
@@ -760,7 +823,7 @@
         }
         if (tvd && o.hydro !== false) {
             var meas = staticDiff(C, f, 1);
-            if (meas != null) { var model = C.hydroGrad * tvd; res.hydroErr = Math.abs(meas + off - model) / model; res.hydro = res.hydroErr <= B.hydro; }
+            if (meas != null) { var model = hydroModel(C, tvd); res.hydroErr = Math.abs(meas + off - model) / model; res.hydro = res.hydroErr <= B.hydro; }
         }
         return res;
     }
@@ -825,7 +888,7 @@
         if (C.tvd && fin(gTvd) && Math.abs(gTvd - C.tvd) > 10 && base.hydro === false && C.inputs.channels && C.inputs.channels.depthFix == null) {
             var b3 = bands(C, { tvd: gTvd, hydro: true });
             if (b3.hydro === true) {
-                var dpShift = C.hydroGrad * (C.tvd - gTvd);
+                var dpShift = hydroModel(C, C.tvd) - hydroModel(C, gTvd);
                 out.push({ id: 'gauge-as-datum', hypothesis: 'Gauge pressure used as the datum pressure', score: 1, bf: null,
                            fix: { field: 'channels.depthFix', from: null, to: { kind: 'gauge-to-datum', fromTvd: gTvd, toTvd: C.tvd, dpPsi: rnd(dpShift, 2) } },
                            text: clampTxt('The static column matches the gauge depth ' + fmt(gTvd, 0) + ' ft, not the datum ' + fmt(C.tvd, 0) + ' ft: refer the pressure to the datum (' + fmt(dpShift, 1) + ' psi).') });
@@ -895,8 +958,10 @@
         if (g != null) {
             var lo = C.piGrad, hi = C.svGrad + B.sigmaVPlus;
             if (g < lo - 1e-9 || g > hi) {
-                var lvl = C.generic ? 'warn' : 'fail';
-                add('R2', lvl, 'ISIP gradient ' + fmt(g, 3) + ' psi/ft lies outside ' + fmt(lo, 3) + '-' + fmt(hi, 3) + ' psi/ft: a unit or depth blunder, or not a fracture' + (C.generic ? ' (generic priors only)' : '') + '.');
+                // downgraded to a warning when the violated bound is a generic prior (§6.3)
+                var below = g < lo - 1e-9, gen = below ? C.piGeneric : C.svGeneric;
+                var note = gen ? (below ? ' (generic prior: p_i gradient from the fluid hydrostatic)' : ' (generic prior: overburden ' + fmt(C.svGrad, 2) + ' psi/ft by default, not entered)') : '';
+                add('R2', gen ? 'warn' : 'fail', 'ISIP gradient ' + fmt(g, 3) + ' psi/ft lies ' + (below ? 'below' : 'above') + ' the band ' + fmt(lo, 3) + '-' + fmt(hi, 3) + ' psi/ft: a unit or depth blunder, or not a fracture' + note + '.');
             } else add('R2', 'pass', 'ISIP gradient ' + fmt(g, 3) + ' psi/ft lies between the pore (' + fmt(lo, 3) + ') and overburden (' + fmt(hi, 3) + ') gradients.');
         }
         // R3 near-wellbore (tortuosity) loss
@@ -1036,7 +1101,7 @@
             var verdict = (critical || !usable.length) ? 'uninterpretable' : ((failAny || excluded.length || blunders.length) ? 'partly' : 'interpretable');
             var out = { ok: true, version: VERSION, light: light, verdict: verdict, checks: checks,
                         windows: { usable: usable, excluded: excluded }, blunders: blunders,
-                        repump: { verdict: 'continue', rules: [], ack: false }, grade: { letter: 'D', why: [] }, salvage: [], ev: ['Q1'] };
+                        repump: { verdict: 'continue', rules: [], ack: false }, grade: { letter: 'D', why: [] }, salvage: [], ev: ['Q0'] };
             out.repump = repumpCore(out, C);
             out.grade = gradeCore(out, isObj(C.raw.consensus) ? C.raw.consensus : null, isObj(C.raw.aca) ? C.raw.aca : null, { closureOnly: gp(C.plan, 'outcome.label', null) === 'closure-only' });
             out.salvage = (verdict === 'interpretable' && !excluded.length) ? [] : salvageFor(C, checks, usable, excluded);
@@ -1064,12 +1129,7 @@
                       plan: isObj(ctx.plan) ? ctx.plan : null, src: 'bh', pLast: NaN };
                 var tvd = gp(C.inputs, 'datumTvd', null); C.tvd = fin(tvd) && tvd > 0 ? tvd : null;
                 var rho = gp(C.inputs, 'fluid.rhoPpg', null); C.hydroGrad = PSI_PER_FT_PER_PPG * (fin(rho) && rho > 0 ? rho : 8.43);
-                var pg = gp(C.inputs, 'priors.piGrad', null), wpi = gp(C.well, 'pi', null);
-                C.piGrad = fin(pg) ? pg : (fin(wpi) && C.tvd ? wpi / C.tvd : C.hydroGrad);
-                C.piGradSrc = fin(pg) ? 'prior' : (fin(wpi) && C.tvd ? 'well' : 'hydrostatic');
-                var sv = gp(C.inputs, 'rock.sigmaVGrad', null); C.svGrad = fin(sv) ? sv : 1.0;
-                var sg = gp(C.inputs, 'priors.sigmaGrad', null); C.sigmaGrad = fin(sg) ? sg : null;
-                C.generic = C.piGradSrc === 'hydrostatic' && C.sigmaGrad == null;
+                priorsInto(C);
                 C.isipVal = C.isip && fin(C.isip.value) ? C.isip.value : NaN;
                 C.gradIsip = C.tvd && fin(C.isipVal) ? C.isipVal / C.tvd : null;
                 if (fin(ctx.pLast)) C.pLast = ctx.pLast;
