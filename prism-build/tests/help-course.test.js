@@ -9,7 +9,8 @@
 //   • numbers: CHECKS below reproduce every number quoted in the text. 'page' checks run calcWTS on route wts now (host
 //     code, in the harness). 'sim' checks run the dynamic simulator; they run only when Round 7 is in the harness pipeline
 //     (sim-equip WP0) or with WTS_HELP_SIMCHECKS=1 (the HTML's injected Round 7), and are skipped with the reason otherwise;
-//   • FS-1 / FS-2 select the variant for WTS_sim.features (bypassDest); worksheets print without answers or trainer notes;
+//   • FS-1 / FS-2 select the variant for WTS_sim.features (bypassDest); since 31 v1.5.0 (SIM-FOLLOWUP WP-HC) afterSim is the
+//     main text and today a short note, and the references / bold checks cover the variant the engine shows; worksheets print without answers or trainer notes;
 //   • sim-equip content (exercises 9-10, FS-3, the §6.4 shot recipes) is added only when the engine has DS-101 and T-202
 //     (WTS_sim.RIG_OPTIONAL). Without it the course ships 8 exercises and 3 scenarios; the gated content is still checked
 //     for shape, size, CHECKS entries and recipes by building it against a stand-in engine. Checks marked needs: run only
@@ -109,7 +110,21 @@ const CHECKS = {
     { kind: 'sim', needs: 'desander', cfg: { sand: { pptb: 10 } }, run: 600, dt: 5, expect: [{ at: 600, path: 'sand.choke.band', v: 'warn' }, { at: 600, path: 'sand.choke.erosion_mild', v: 4.36, tol: 0.01 }] },
     { kind: 'sim', needs: 'desander', rig: { desander: true }, cfg: { sand: { pptb: 10 } }, run: 600, dt: 5, expect: [{ at: 600, path: 'sand.choke.band', v: 'ok' }, { at: 600, path: 'sand.choke.erosion_mild', v: 0.0650, tol: 0.02 }] },
   ],
-  // FS-1 (a)–(d) of plan §6.2; (e) is FS-2's default-spread check
+  // 31 v1.5.0: CK-102 staging (SIM-FOLLOWUP ANCHORS_CK2; the steady walk publishes flow.ck2 whatever the rig-up)
+  ex11: [
+    { kind: 'page', set: { wts_bean2: 48 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 1135.1, 'flow.ck2.ck1.ratio': 0.3816, 'flow.ck2.ck1.regime': 'Critical', 'flow.ck2.limiter': 'CK-101',
+      'flow.ck2.QmaxMMscfd': 10.71, 'flow.ck2.sit_psig': 3600, 'flow.ck2.sitEst': true, 'flow.ck2.ratingOK': false } },
+    { kind: 'page', set: { wts_bean2: 32 }, tol: 0.002, expectState: { 'flow.ck2.limiter': 'CK-102', 'flow.ck2.flowLimited': true, 'flow.ck2.QmaxMMscfd': 8.92, 'flow.ck2.Pin': 2401.6, 'flow.ck2.ck1.regime': 'Subcritical' } },
+    // review round: the page states the pair at its capacity, so page and live agree (about 2,400 psig); PAH-102 from 44/64 down
+    { kind: 'page', set: { wts_bean2: 44 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 1357.9, 'flow.ck2.flowLimited': false } },
+    { kind: 'page', set: { wts_bean2: 64 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 634.4, 'flow.ck2.ck1.regime': 'Critical' } },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 32 }, rig: { heaterChoke: true }, run: 120, expect: [{ alarm: 'CHOKE2_LIMIT', from: 0, to: 30 }, { alarm: 'CK1_SUBCRIT', from: 0, to: 30 }, { noAlarm: 'CHOKE_LIMIT' },
+      { at: 120, path: 'nodes.heaterChoke.Pin', v: 2400, tol: 0.01 }] },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 44 }, rig: { heaterChoke: true }, run: 60, expect: [{ alarm: 'PAH_CK2', from: 0, to: 30 }] },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 48 }, rig: { heaterChoke: true }, run: 60, expect: [{ noAlarm: 'PAH_CK2' }] },
+  ],
+  // FS-1 (a)–(d) of plan §6.2; (e) is FS-2's default-spread check. Since 31 v1.5.0 the main text is the cushion scenario (afterSim, the
+  // last three sim checks); the older checks stand for the short 'today' note (the order of the pressure changes) and the legacy V-101-out path.
   'FS-1': [
     { kind: 'page', set: mix(FS1, { wts_Psurge: 25 }), tol: 0.01, expectState: { 'flow.choke.Pout': 20.5, 'flow.choke.regime': 'Critical', 'flow.choke.flowLimited': false,
       'flow.choke.QmaxMMscfd': 1.78, 'flow.choke.ratio': 0.0684, 'flow.sim.surgeP_psig': 5 }, expectText: ['Surge tank pressure too close to separator pressure — liquids cannot dump'] },
@@ -128,7 +143,7 @@ const CHECKS = {
         { t: 2400, form: { wts_Qg: 0.3, wts_Qo: 0, wts_Qw: 2400, wts_Pwh: 500, wts_bean: 32 } }, { t: 7800, form: { wts_Qg: 5, wts_Qo: 500, wts_Qw: 300, wts_Pwh: 2000 } },
         { t: 9000, form: { wts_Psep: 150, wts_Psurge: 25 } }, { t: 10200, rigup: { separator: true } }],
       expect: [{ noAlarm: 'ESD_TRIPPED' }, { noAlarm: 'PSHH_SEP' }, { noAlarm: 'PSHH_SURGE' }, { at: 890, path: 'surge.P', v: 15, tol: 0.2 }, { at: 1490, path: 'surge.P', v: 5, tol: 0.3 },
-        { at: 2090, path: 'sep.P', v: 15, tol: 0.1 }, { at: 3000, path: 'nodes.choke.P', v: 10.5, tol: 0.05 }, { at: 3000, path: 'rigup.separator', v: false },
+        { at: 2090, path: 'sep.P', v: 15, tol: 0.1 }, { at: 3000, path: 'nodes.choke.P', v: 11.5, tol: 0.05 }, { at: 3000, path: 'rigup.separator', v: false },
         { at: 7800, path: 'cum.liquidToFlareWater_bbl', v: 150, tol: 0.05 }, { at: 12000, path: 'sep.P', v: 150, tol: 0.02 }, { at: 12000, path: 'rigup.separator', v: true }] },
     // the four things the warning names each trip the ESD
     { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Qg: 0.3, wts_Qo: 0, wts_Qw: 2400, wts_Pwh: 500 } }], expect: [{ alarm: 'PSHH_SEP', from: 60, to: 120 }, { alarm: 'ESD_TRIPPED', from: 60, to: 120 }] },
@@ -136,14 +151,38 @@ const CHECKS = {
       expect: [{ alarm: 'PSHH_SEP', from: 180, to: 300 }, { alarm: 'ESD_TRIPPED', from: 180, to: 300 }] },
     { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Psep: 15 } }], expect: [{ alarm: 'PSHH_SURGE', from: 60, to: 200 }, { alarm: 'ESD_TRIPPED', from: 60, to: 200 }] },
     { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Psurge: 5 } }], expect: [{ alarm: 'PSHH_SURGE', from: 60, to: 200 }, { alarm: 'ESD_TRIPPED', from: 60, to: 200 }] },
-    { kind: 'sim', set: FS1, rig: { separator: false }, run: 900, dt: 5, expect: [{ at: 900, path: 'nodes.choke.P', v: 10.5, tol: 0.03 }, { at: 900, path: 'rigup.flare', v: true }] },
+    // v1.5.0: the V-101-out back pressure uses the whole-stream line loss (11.5 psig here, 10.5 with the separator-gas loss of v3.3.1)
+    { kind: 'sim', set: FS1, rig: { separator: false }, run: 900, dt: 5, expect: [{ at: 900, path: 'nodes.choke.P', v: 11.5, tol: 0.03 }, { at: 900, path: 'rigup.flare', v: true }] },
     { kind: 'sim', run: 900, dt: 5, rig: { separator: false }, expect: [{ at: 900, path: 'nodes.choke.P', v: 14.3, tol: 0.03 }] },
+    // the cushion to the burner at the defaults (ANCHORS_CUSH): CUSH_BURNER at once, WHP target ≈ 1,700 at the start (the gauge bottoms ≈ 1,840
+    // 205 s after the start), choke outlet ≈ 5 psig while unloading, breakthrough 2,468 s (41 min) after the start, the WHP peak ≈ 3,460 at
+    // 41.75 min, done ≈ 3.2 h after the start, 50 bbl to the burner; at the full rate the choke outlet ≈ 35 psig, seg 4 / 5 above the erosional velocity (the FI VEL_* alarms; not while the column unloads)
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_sepByDest: 'flare' }, run: 12300, dt: 5, rig: { separator: false }, actions: [{ t: 300, cushion: {}, ok: true }],
+      expect: [{ alarm: 'CUSH_BURNER', from: 300, to: 320 }, { noAlarm: 'ESD_TRIPPED' }, { noAlarm: 'CUSH_LIMIT' }, { noAlarm: 'CUSH_NOLIFT' },
+        { first: { path: 'cushion.phase', v: 'unloading' }, path: 'cushion.WHPtgt_psig', v: 1700, tol: 0.01 }, { at: 1200, path: 'nodes.choke.P', v: 5.1, tol: 0.05 },
+        { first: { path: 'cushion.phase', v: 'breakthrough' }, path: 'cushion.tBreak', v: 300 + 2468, tol: 0.005 }, { at: 300 + 205, path: 'nodes.wellhead.P', v: 1840, tol: 0.01 },
+        { at: 300 + 2505, path: 'nodes.wellhead.P', v: 3460, tol: 0.01 }, { at: 300 + 5400, path: 'nodes.choke.P', v: 35, tol: 0.05 }, { at: 300 + 1200, path: 'segs.4.vSt', v: 'OK' }, { at: 300 + 5400, path: 'segs.3.vSt', v: 'EXCEED' }, { at: 300 + 5400, path: 'segs.4.vSt', v: 'EXCEED' },
+        { first: { path: 'cushion.phase', v: 'done' }, path: 't', v: 300 + 3.2 * 3600, tol: 0.04 }, { at: 12300, path: 'cushion.recovered_bbl', v: 50, tol: 0.002 },
+        { at: 12300, path: 'cushion.out.flare', v: 50, tol: 0.002 }] },
+    // through V-101: Start warns, CUSH_DUMP (≈ 790 bbl/d dump), LAHH-101 within 5 minutes, carry-over
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_sepByDest: 'flare' }, run: 1200, dt: 5, actions: [{ t: 300, cushion: {}, ok: true, warn: 'V-101 water dump passes 788 bbl/d' }],
+      expect: [{ alarm: 'CUSH_DUMP', from: 300, to: 330 }, { alarm: 'ISHH_SEP', from: 300, to: 600 }, { alarm: 'CARRYOVER', from: 300, to: 900 }] },
+    // the bean limits the liquid: 12/64 at 1 MMscf/d → CUSH_LIMIT, about 1,200 bbl/d
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean: 12, wts_Qg: 1 }, rig: { separator: false }, run: 600, dt: 5, actions: [{ t: 300, cushion: {}, ok: true }],
+      expect: [{ alarm: 'CUSH_LIMIT', from: 300, to: 400 }, { at: 600, path: 'cushion.q_bpd', v: 1200, tol: 0.02 }] },
   ],
   'FS-2': [
     { kind: 'page', set: {}, tol: 0.005, expectState: { 'flow.choke.Pout': 157.7, 'flow.choke.ratio': 0.0572, 'flow.choke.regime': 'Critical' } },
     { kind: 'sim', run: 300, rig: { flare: false, surge: false, gauge: false },
       expect: [{ at: 300, path: 'sep.pshh', v: 180 }, { at: 300, path: 'sep.psh', v: 165 }, { at: 300, path: 'sep.psl', v: 120 }, { at: 300, path: 'sep.mawp', v: 1440 }, { at: 300, path: 'rigup.flare', v: false }] },
     { kind: 'sim', run: 10, rig: { separator: false, flare: false }, expect: [{ at: 10, path: 'rigup.flare', v: true }] },
+    // 31 v1.5.0 (afterSim): V-101 out to a production line at 300 psig, FS-401 out too (relief to vent)
+    { kind: 'page', set: { wts_sepByDest: 'line', wts_sepByP: 300 }, tol: 0.005, expectState: { 'flow.sepBy.P0_psig': 300, 'flow.sepBy.choke.Pout': 308, 'flow.sepBy.choke.ratio': 0.107,
+      'flow.sepBy.choke.regime': 'Critical', 'flow.sepBy.warnings.length': 0 } },
+    { kind: 'page', set: { wts_Pwh: 1000, wts_sepByDest: 'line', wts_sepByP: 600 }, tol: 0.01, expectState: { 'flow.sepBy.choke.regime': 'Subcritical', 'flow.sepBy.choke.ratio': 0.61 } },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_sepByDest: 'line', wts_sepByP: 300 }, rig: { separator: false, flare: false }, run: 600, dt: 5,
+      expect: [{ at: 600, path: 'rigup.flare', v: false }, { at: 600, path: 'sepBy.vent', v: true }, { at: 600, path: 'sepBy.P0_psig', v: 300 }, { at: 600, path: 'nodes.choke.P', v: 308, tol: 0.005 },
+        { noAlarm: 'ESD_TRIPPED' }, { noAlarm: 'PSHH_SEPBY' }] },
   ],
   'FS-4': [
     { kind: 'page', set: { wts_Twh: 60, wts_bypass: '1' }, tol: 0.01, expectState: { 'flow.nodes.2.T': -51.3, 'flow.nodes.2.th': 36.5 },
@@ -206,6 +245,7 @@ const activeIds = (st) => A(st.alarms).filter((a) => a && a.active !== false).ma
 //   accumulate over the run, on top of `set`) · { t, rigup: { key: on } }
 //   { batch: n, from, to } the n-th gauge batch is listed (closed and settled) in [from, to] · { gap: [a, b], max } b first raised
 //   0…max s after a · sim-equip: { t, dump: 'start'|'resume'|'abort', ok } · { t, bypass } (DS-101) · { t, route } (T-202) ·
+//   v1.5.0: { t, cushion: {V, SG, q, cap, depth} | 'stop', ok, warn } (startCushion / stopCushion) ·
 //   cfg (setConfig at create) · needs: a rig-up item the engine must have (WTS_sim.RIG_OPTIONAL), else the check is skipped ·
 //   { first: { alarm } | { path, v }, path, v, tol } or { …, max } (value ≤ max) or { first, diff: [a, b], max } (|a − b| ≤ max): read
 //   once, on the first step where the condition holds
@@ -228,6 +268,11 @@ function simCheck(app, where, ck) {
     if (a.valve) s.setValve(a.valve[0], a.valve[1], !!a.valve[2]);
     if (a.bypass != null) s.setDesander(app.toWin({ bypass: !!a.bypass }));
     if (a.route) { const r = s.setSurgeRoute(a.route); if (!r || !r.ok) out.push(where + ': route ' + a.route + ' at ' + a.t + ' s refused (' + (r && r.msg) + ')'); }
+    if (a.cushion) {
+      const r = a.cushion === 'stop' ? { ok: s.stopCushion() } : s.startCushion(app.toWin(a.cushion));
+      if (a.ok != null && !!(r && r.ok) !== !!a.ok) out.push(where + ': cushion ' + JSON.stringify(a.cushion) + ' at ' + a.t + ' s gave ok=' + (r && r.ok) + ', text says ' + a.ok);
+      if (a.warn && String((r && r.warn) || '').indexOf(a.warn) === -1) out.push(where + ': cushion start warning "' + (r && r.warn) + '", text says "' + a.warn + '"');
+    }
     if (a.dump) { const r = s.dumpDesander(a.dump); if (!!(r && r.ok) !== !!a.ok) out.push(where + ': dump ' + a.dump + ' at ' + a.t + ' s gave ok=' + (r && r.ok) + ', text says ' + a.ok); }
     if (a.sp != null) { const f2 = JSON.parse(JSON.stringify(flow)); f2.separatorPressure = a.sp; f2.inputs.Psep = a.sp; f2.seq = (f2.seq || 1) + 1; s.setFlow(app.toWin(f2)); }
     if (a.resetESD != null) {
@@ -283,13 +328,14 @@ function engineVocab(app) {
   const local = new Map(), m = /var FAULTS = \[([\s\S]*?)\]\];/.exec(readSrc('38-wts-live.js'));
   ((m && m[1] + ']') || '').replace(/\['([A-Za-z0-9]+)', '([^']+)'\]/g, (x, id, l) => { local.set(id, l); return x; });
   const faults = new Map(A(S.FAULTS).map((f) => [local.get(f.id) || f.label, f.id]));
-  return { tags, alarms, faults, faultIds: new Set(A(S.FAULTS).map((f) => f.id)), rig: new Set(A(S.RIG_KEYS)), optional: new Set(A(S.RIG_OPTIONAL)) };
+  return { tags, alarms, faults, faultIds: new Set(A(S.FAULTS).map((f) => f.id)), rig: new Set(A(S.RIG_KEYS)), optional: new Set(A(S.RIG_OPTIONAL)), features: S.features || {} };
 }
+const shown = (F, x) => !!(x && x.feature && F && F[x.feature]);   // afterSim is the variant shown (and so checked) once the feature is in
 const TAG_RE = /\b[A-Z]{1,5}-\d{3}[A-Z]?\b/g, ALARM_RE = /\b[A-Z]{2,}(?:_[A-Z]+)+\b/g;
 function refIssues(items, V) {
   const out = [];
   items.forEach((x) => strings(x, x.id, (s, p) => {
-    if (/\.afterSim/.test(p)) return;   // describes a feature that is only shown once installed (WTS_sim.features)
+    if (/\.afterSim/.test(p) && !shown(V.features, x)) return;   // a variant for a feature the engine does not have (WTS_sim.features)
     (s.match(TAG_RE) || []).forEach((t) => { if (!V.tags.has(t)) out.push(p + ': tag ' + t + ' is not in the engine'); });
     (s.match(ALARM_RE) || []).forEach((t) => { if (!V.alarms.has(t)) out.push(p + ': alarm id ' + t + ' is not in the engine'); });
     (s.match(/\*\*Scenarios → ([^*]+)\*\*/g) || []).forEach((b) => { const l = b.slice(14, -2); if (!V.faults.has(l)) out.push(p + ': fault "' + l + '" is not in WTS_sim.FAULTS'); });
@@ -328,8 +374,9 @@ function boldIssues(app, items) {
   openWts(app, {});
   const vocab = boldVocab(app);
   const out = [];
+  const F = app.win.WTS_sim && app.win.WTS_sim.features;
   items.forEach((x) => strings(x, x.id, (s, p) => {
-    if (/\.afterSim/.test(p)) return;
+    if (/\.afterSim/.test(p) && !shown(F, x)) return;
     (s.match(/\*\*([^*]+)\*\*/g) || []).forEach((b) => {
       b.slice(2, -2).split('→').map((q) => q.trim().toLowerCase()).forEach((q) => { if (q && vocab.indexOf(q) === -1) out.push(p + ': bold "' + q + '" is not on the page or in the simulator'); });
     });
@@ -405,7 +452,7 @@ module.exports = [
         assert.strictEqual(ids(course), EX8, 'without DS-101 / T-202 in the engine: exercises 1–8');
         assert.strictEqual(ids(scenarios), 'FS-1,FS-2,FS-4', 'without DS-101 / T-202 in the engine: FS-1, FS-2, FS-4');
         assert.ok(!course.concat(scenarios).some((x) => /desander|DS-101|T-202/.test(JSON.stringify(x)) || x.shots), 'no sim-equip text or shot recipes on an engine without DS-101 and T-202');
-      } else assert.strictEqual(ids(course), EX8 + ',ex9,ex10', 'sim-equip engine: exercises 1–10');
+      } else assert.strictEqual(ids(course), EX8 + ',ex9,ex10' + (V.optional.has('heaterChoke') ? ',ex11' : ''), 'sim-equip engine: exercises 1–10 (11 with CK-102)');
       // the sim-equip content, built against a stand-in engine, so its shape is checked on any engine
       const E = equipContent(app);
       assert.strictEqual(ids(E.course), EX8 + ',ex9,ex10', 'exercises 9 and 10 follow 8');
@@ -421,7 +468,7 @@ module.exports = [
       fail(assert, unref, 'shots without a { shot } block');
       const phone = shots.filter((s) => s.recipe.view === 'phone' || s.recipe.view === 'both').map((s) => s.folder + '/' + s.stem);
       ['course/ex1-view', 'course/ex5-more'].forEach((k) => assert.ok(phone.indexOf(k) !== -1, 'phone shot ' + k + ' (' + phone + ')'));
-      ['course/ex2-ck101', 'course/ex4-scen', 'course/ex4-alarms', 'course/ex9-ds101', 'course/ex10-t202', 'scenarios/fs-1-rigup'].forEach((k) =>
+      ['course/ex2-ck101', 'course/ex4-scen', 'course/ex4-alarms', 'course/ex9-ds101', 'course/ex10-t202', 'scenarios/fs-1-rigup', 'scenarios/fs-1-cushion'].forEach((k) =>
         assert.ok(shots.some((s) => s.folder + '/' + s.stem === k), 'shot ' + k));
     },
   },
@@ -481,12 +528,12 @@ module.exports = [
       try {
         S.features = undefined;
         let h = plain(H.renderList('scenarios'));
-        assert.ok(h.indexOf('Rig-up: switch V-101') !== -1 && h.indexOf('Keep V-101 in and set') !== -1, 'today variants shown without the feature');
+        assert.ok(h.split('Without the bypass destination (an older simulator)').length === 3, 'today notes (FS-1, FS-2) shown without the feature');
         assert.ok(h.indexOf('With V-101 out, well stream to') === -1, 'after-WP-SIM text hidden');
         S.features = { bypassDest: true };
         h = plain(H.renderList('scenarios'));
         assert.ok(h.indexOf('With V-101 out, well stream to') !== -1, 'after-WP-SIM text shown with the feature');
-        assert.ok(h.indexOf('Rig-up: switch V-101') === -1 && h.indexOf('Keep V-101 in and set') === -1, 'today text replaced: ' + today('FS-1'));
+        assert.ok(h.indexOf('an older simulator') === -1 && h.indexOf('Cushion unload (clean-up)') !== -1 && h.indexOf('Production line pressure') !== -1, 'today text replaced: ' + today('FS-1'));
         assert.ok(h.indexOf('Which pressure goes where') !== -1 && h.indexOf('A well that has been shut in arrives cold') !== -1, 'intro and FS-4 unchanged');
       } finally { S.features = had; }
       course.forEach((x, i) => {

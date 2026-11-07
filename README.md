@@ -37,7 +37,8 @@ packaged as a free iOS app, **H2Oil Well Testing**.
   equipment, electrical and field conversions.
 - **Well Test Simulator:** a live process model of the test spread (wellhead → ESD valve → choke →
   heater → separator → surge tank → gauge tank, with gas to flare), in 3D or as a 2D schematic, with an
-  optional second surge tank and cyclonic desander (upstream of the choke) with sand and choke erosion screening.
+  optional second surge tank and cyclonic desander (upstream of the choke) with sand and choke erosion screening,
+  + heater inlet choke, bypass destination (burner line or production line) and a cushion-unload scenario.
 - **PRiSM:** pressure-transient and decline/rate-transient analysis with 46 models,
   Levenberg–Marquardt regression, auto-match, deconvolution, gas m(p), a skin check and a report.
 - **Build-up Surveillance:** interprets the shut-ins in permanent-gauge data automatically and

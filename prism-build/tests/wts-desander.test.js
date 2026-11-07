@@ -108,7 +108,7 @@ module.exports = [
       const sim = mk(app, { rig: { desander: true }, cfg: SAND10 });
       adv(sim, 600, 10);
       const st = J(sim.getState()), d = st.desander, sd = st.sand;
-      assert.ok(d.inRig && st.rigup.desander && st.rigup.sig === '1111111110', 'DS-101 in: ' + st.rigup.sig);
+      assert.ok(d.inRig && st.rigup.desander && st.rigup.sig === X.SIG_DEFAULT.slice(0, 8) + '1' + X.SIG_DEFAULT.slice(9), 'DS-101 in: ' + st.rigup.sig);
       assert.rel(d.vIn_fts, 20.7, 0.005, 'v_in');
       assert.near(d.gvf, 0.890, 0.001, 'GVF');
       assert.near(d.rhoMix, 14.17, 0.01, 'ρmix');

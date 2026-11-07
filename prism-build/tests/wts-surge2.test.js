@@ -67,7 +67,7 @@ module.exports = [
       b.advance(600);
       assert.strictEqual(b.setRigup({ surge2: true }), true);
       const sb = st(b);
-      assert.ok(sb.surge2.inRig && !sb.surge2.inlet && sb.surge2.frac === 0 && sb.rigup.sig === '1111111101', 'added from the card ' + sb.rigup.sig);
+      assert.ok(sb.surge2.inRig && !sb.surge2.inlet && sb.surge2.frac === 0 && sb.rigup.sig === X.SIG_DEFAULT.slice(0, 9) + '1' + X.SIG_DEFAULT.slice(10), 'added from the card ' + sb.rigup.sig);
       assert.strictEqual(b.setRigup({ surge: false }), true);
       assert.ok(!st(b).surge2.inRig && b.setSurgeRoute('surge2').ok === false && b.setValve('surge2', 0, true) === false, 'T-201 out → T-202 out, refused');
     },

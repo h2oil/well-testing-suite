@@ -60,7 +60,7 @@ const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[d
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
 const CAPS = {
   'desktop:viewport': 150 * 1000, 'desktop:crop': 90 * 1000, 'phone:viewport': 110 * 1000, 'phone:crop': 70 * 1000,
-  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.5 * 1000,   // 8.5 kB: owner decision Q13 option 1 (plan §3.6)
+  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.7 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC)
 };
 const capFor = (view, target) => CAPS[view + ':' + (isViewport(target) ? 'viewport' : 'crop')];
 const isViewport = (target) => target == null || target === 'viewport';
