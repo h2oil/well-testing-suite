@@ -3312,7 +3312,7 @@ function createHandle(THREE, container, opts) {
     labelsEl.appendChild(el);
     var q = function (s) { return el.querySelector(s); };
     q('.n').textContent = STEP[id] || ''; q('.tt').innerHTML = TAGS[id] + '<span class="tt2"> · ' + TITLES[id] + '</span>';
-    var ch = { id:id, el:el, n:q('.n'), s0:q('.s0'), u0:q('.u0'), ar:q('.ar'), s1:q('.s1'), u1:q('.u1'), rg:q('.rg'), g:q('.g'), rows:q('.rows'),
+    var ch = { id:id, el:el, n:q('.n'), tt2:q('.tt2'), s0:q('.s0'), u0:q('.u0'), ar:q('.ar'), s1:q('.s1'), u1:q('.u1'), rg:q('.rg'), g:q('.g'), rows:q('.rows'),
       txt:{}, st:'ok', w:120, h:44, measure:true, vis:false, lodVis:undefined, t2:false, x:-999, y:-999, op:-1, cls:'', anchor:new V3().fromArray(ANCHORS[id]),
       sx:0, sy:0, behind:false, dRel:1, dist:0, occ:false, flashT:0, path:null, dot:null, prio:0 };
     ch.path = doc.createElementNS(SVGNS, 'path'); ch.path.setAttribute('fill', 'none'); ch.path.setAttribute('stroke', 'rgba(139,148,158,.55)'); ch.path.setAttribute('stroke-width', '1');
@@ -3427,6 +3427,9 @@ function createHandle(THREE, container, opts) {
           break;
         case 'heaterChoke': {                           // CK-102 (v1.3.0): inlet (between the chokes) → outlet (H-101 inlet)
           var k2 = nd.heaterChoke, c2 = n.ck2;
+          // midcoil (D10, C): the body stays on the inlet stub and the label says where it is in the process ("between passes")
+          var tt2 = c2.pos === 'midcoil' ? ' · HEATER CHOKE (BETWEEN PASSES)' : ' · ' + TITLES.heaterChoke;
+          if (ch.tt2 && ch.txt.tt2 !== tt2) { ch.txt.tt2 = tt2; ch.tt2.textContent = tt2; ch.measure = true; }
           if (c2.bypassed) slot(ch, null, null, null, null, null, null, '', 'BYPASSED', 'a');
           else {
             var rg2 = c2.active && k2.flowLimited && c2.limiter !== 'CK-101' ? 'LIMITING' : k2.regime === 'Critical' ? 'CRITICAL' : k2.regime === 'Subcritical' ? 'SUBCRITICAL' :

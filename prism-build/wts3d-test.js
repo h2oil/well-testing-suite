@@ -797,7 +797,7 @@ const SECTION_B = (G /*, src */) => {
             [/S\.dyn\.heaterChoke = \{ wheel:hw/, 'dyn'], [/tr\.nextE\[I\.E3\] = byp \? I\.E3b : \(ck2B \? I\.E3c1 : I\.E3c\)/, 'tracer successor'],
             [/tr\.nextE\[I\.E3c1\] = I\.E3c2; tr\.nextE\[I\.E3c2\] = I\.E4a/, 'E3c1 → E3c2 → E4a'], [/g === 'separator' && S\.sepDest === 'line' \? LINE_SPOOL/, 'line spool'],
             [/pswitch\('PSHH-104'/, 'PSHH-104'], [/tagPlate\('NRV-501'/, 'NRV-501'], [/tagPlate\('XV-501'/, 'XV-501'], [/pswitch\('PAH-102'/, 'PAH-102'],
-            [/case 'heaterChoke':/, 'chip'], [/'bypassed with H-101'/, 'bypassed text']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
+            [/case 'heaterChoke':/, 'chip'], [/'bypassed with H-101'/, 'bypassed text'], [/HEATER CHOKE \(BETWEEN PASSES\)/, 'midcoil label (D10 fallback)']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
           if (/\b(let|const)\s/.test(src) || /=>/.test(src) || /\?\?|\?\./.test(src)) bad.push('ES5 style');
           return bad.length === 0 || bad.join(', ');
         }],
