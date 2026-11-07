@@ -3183,14 +3183,17 @@ function createController(vizEl, mopts) {
         // equipment out of the rig-up
         if (off('heater')) {
             mask(tx[3] - 26, cy - 20, 52, 40, ''); bypass([[tx[3] - 30, cy], [tx[3] + 30, cy]], 'NOT IN RIG-UP', tx[3], cy + 30);
-            if (ru.heaterChoke === true && L.ck2) mask(L.ck2.x - 12, cy - 12, 24, 24, '');   // CK-102 goes with H-101 (normRigup)
+            // no CK-102 mask: normRigup (31) sets heaterChoke false whenever heater is false, and the host draws CK-102 only
+            // with H-101 in, so CK-102 goes out with H-101 and seg 3 is drawn full length here
         }
         if (off('separator')) {
             mask(tx[4] - 30, cy - 17, 60, 34, '');
             mask(tx[4] - 7, cy + 18, 14, by - 13 - (cy + 18), '');
             // v1.5.0 (§8.2): the label follows the destination; the production-line text sits lower (clear of the pipe labels)
             var sb = st.sepBy || {};
-            if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4], cy + 40);
+            // (with a seg-3 hydrate mark, ❄ at x ≈ 613 cy + 31…42, the label moves right so it starts after x 620)
+            var hy3 = !!(st.segs && st.segs[3] && st.segs[3].hydR);
+            if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4] + (hy3 ? 60 : 0), cy + 40);
             else bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → BURNER LINE', tx[4], cy + 27);
             // PSHH-104 on the bypass path (D16: trips SDV-101), tagged while V-101 is out
             ctx.save(); ctx.fillStyle = GREY; ctx.font = 'bold 7.5px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('PSHH-104', tx[4], cy - 21); ctx.restore();

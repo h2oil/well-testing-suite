@@ -120,7 +120,7 @@ const D2 = [
       assert.deepStrictEqual(textAt(fr, '48/64"'), [[470, 208]], 'bean at cy + 78');
       const pAt = fr.filter((e) => e.op === 'fillText' && e.args[1] === 470 && e.args[2] === 180).map((e) => e.args[0]);
       assert.ok(pAt.length === 1 && /^156 psig$/.test(pAt[0]), 'CK-102 outlet P at cy + 50: ' + pAt);
-      assert.ok(textAt(fr, 'Multiphase').length === 4 && textAt(fr, 'Multiphase').some((p) => p[0] === 430), 'seg-3 phase label over the CK-101 → CK-102 part');
+      assert.ok(textAt(fr, 'Multiphase').length === 3 && !textAt(fr, 'Multiphase').some((p) => p[0] > 380 && p[0] < 535), 'no seg-3 phase label with CK-102 in (the regime texts sit there): ' + JSON.stringify(textAt(fr, 'Multiphase')));
       // seg 3 split at ck2.x: 403 … 457 (labelled, compact spec) and 483 … 505 (bare); glyph = the CK-101 glyph at 0.6 scale
       const ml = fr.filter((e) => e.op === 'moveTo' || e.op === 'lineTo').map((e) => e.op[0] + e.args.join(','));
       const has = (a, b) => ml.some((x, i) => x === a && ml[i + 1] === b);
@@ -138,6 +138,7 @@ const D2 = [
       // hydrate at the CK-102 outlet
       const hy = frame(nodes11(J(lc), ck2Node({ T: 30, th: 40 })), { rigup: { heaterChoke: true } });
       assert.deepStrictEqual(textAt(hy, '❄ HYDRATE').filter((p) => p[0] === 470), [[470, 206]], 'hydrate mark at cy + 76');
+      assert.strictEqual(textAt(hy, '48/64"').length, 0, 'CK-102 in hydrate: the flag replaces the bean (no overprint)');
       // regime '' (no block yet) → no regime text, no NaN; missing values → '—'
       const nb = frame(nodes11(J(lc), { nm: 'Heater Choke', regime: '', bean: 0 }), { rigup: { heaterChoke: true } });
       assert.ok(textAt(nb, '—').filter((p) => p[0] === 470).length === 2 && !textAt(nb, '0/64"').length, 'no values → "—", no bean');
@@ -170,7 +171,8 @@ const D2 = [
       assert.deepStrictEqual(textAt(fd, 'Choke'), [[400, 82]], 'DS-101 variant: CK-101 at 400');
       const ml = fd.filter((e) => e.op === 'moveTo' || e.op === 'lineTo').map((e) => e.op[0] + e.args.join(','));
       assert.ok(ml.some((x, i) => x === 'm423,130' && ml[i + 1] === 'l457,130'), 'DS-101 variant: seg 3 from 423 to the CK-102 inlet');
-      assert.strictEqual(textAt(fd, 'Multiphase').length, 4, 'four multiphase labels');
+      assert.strictEqual(textAt(fd, 'Multiphase').length, 3, 'three multiphase labels (none on seg 3 with CK-102 in)');
+      assert.ok(!textAt(fd, 'Multiphase').some((p) => p[0] > 400 && p[0] < 535), 'DS-101 variant: no seg-3 phase label under the two regime texts');
     }
   },
   {
@@ -237,7 +239,8 @@ const D2 = [
       fr = lastFrame(app, cv);
       const t = texts(fr);
       assert.deepStrictEqual(textAt(fr, 'CK-102'), [[470, 82]], 'CK-102 drawn from liveNodes[10]');
-      assert.ok(t.indexOf('48/64"') >= 0 && t.indexOf('Critical') >= 0, 'bean / regime from the snapshot: ' + t.join('|'));
+      // the fixture CK-102 outlet (30.4 °F) is below its hydrate temperature: the flag stands in for the bean at CK-102
+      assert.ok(textAt(fr, '❄ HYDRATE').some((p) => p[0] === 470) && t.indexOf('48/64"') < 0 && t.indexOf('Critical') >= 0, 'hydrate flag (not the bean) / regime from the snapshot: ' + t.join('|'));
       // the running stream's dashes go round the CK-102 body: one dash path ends at ck2.x − cl − 3, the next starts at + cl + 3
       const dashes = [];
       fr.forEach((e, i) => { if (e.op === 'setLineDash' && e.args[0] && e.args[0][0] === 6 && e.args[0][1] === 10) { const m = fr.slice(i).find((x) => x.op === 'moveTo'), l = fr.slice(i).find((x) => x.op === 'lineTo'); dashes.push([m.args[0], l.args[0], m.args[1]]); } });
@@ -286,6 +289,12 @@ const D2 = [
       stub.opts = { sepOut: true, dest: 'line', P: 300 }; redraw(app);
       fr = lastFrame(app, cv);
       assert.deepStrictEqual(textAt(fr, lineLabel(300)), [[L.tx[4], L.cy + 40]], 'production line label: ' + texts(fr).filter((x) => /BYPASSED/.test(x)));
+      // a seg-3 hydrate mark (❄ at the seg-3 midpoint, x ≈ 613, cy + 42): the label moves right, clear of it
+      stub.opts = { sepOut: true, dest: 'line', P: 300, patch: (s) => { s.segs[3].hydR = true; } }; redraw(app);
+      const frH = lastFrame(app, cv);
+      assert.deepStrictEqual(textAt(frH, lineLabel(300)), [[L.tx[4] + 60, L.cy + 40]], 'seg-3 hydrate: production line label at tx[4] + 60');
+      assert.ok(textAt(frH, '❄').some((p) => p[0] < L.tx[4] + 60 - 121 && p[1] === L.cy + 42), 'the seg-3 ❄ is left of the label start: ' + JSON.stringify(textAt(frH, '❄')));
+      stub.opts = { sepOut: true, dest: 'line', P: 300 };
       assert.ok(texts(fr).indexOf(FU.LABELS.diag2dBurner) < 0 && textAt(fr, 'PSHH-104').length === 1, 'one destination label + PSHH-104');
       assert.ok(texts(fr).indexOf('GAS → EXPORT LINE') < 0 && !/VENT/.test(texts(fr).join('|')), 'FS-401 in: no export / vent label');
       stub.opts = { sepOut: true, dest: 'line', P: 0 }; redraw(app);

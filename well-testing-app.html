@@ -129843,7 +129843,8 @@ function wtsDrawDiag(nodes,segs,opts){
         ctx.fillText(st8?String(st8):nDs&&fin(nDs.dP)?'\u0394P '+uF(nDs.dP,'pressure',1,'psi'):'\u0394P \u2014',ds.x,cy-37);
     }
     if(k2){
-        // CK-102: tag (cy \u2212 48), regime or "bypassed" (cy \u2212 34), outlet P / T (cy + 50 / 63), hydrate (cy + 76), bean (cy + 78)
+        // CK-102: tag (cy \u2212 48), regime or "bypassed" (cy \u2212 34), outlet P / T (cy + 50 / 63), then the hydrate flag (cy + 76)
+        // or else the bean (cy + 78): at CK-102 only one of the two, so they never overprint (cy + 90 would run into the strip)
         ctx.textAlign='center';
         ctx.fillStyle=k2Byp?'#6e7681':'#e6edf3';ctx.font='bold 11px sans-serif';
         ctx.fillText('CK-102',k2.x,cy-48);
@@ -129856,8 +129857,9 @@ function wtsDrawDiag(nodes,segs,opts){
         ctx.fillText(!k2Byp&&fin(nK2.P)?uF(nK2.P,'pressureG',0,'psig'):'\u2014',k2.x,cy+50);
         ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
         ctx.fillText(!k2Byp&&fin(nK2.T)?uF(nK2.T,'temperature',1,'\u00b0F'):'\u2014',k2.x,cy+63);
-        if(!k2Byp&&fin(nK2.T)&&fin(nK2.th)&&nK2.T<nK2.th&&nK2.P>10){ctx.fillStyle='#58a6ff';ctx.font='bold 9px sans-serif';ctx.fillText('\u2744 HYDRATE',k2.x,cy+76);}
-        if(fin(nK2.bean)&&nK2.bean>0){ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';ctx.fillText(nK2.bean+'/64"',k2.x,cy+78);}
+        const k2Hyd=!k2Byp&&fin(nK2.T)&&fin(nK2.th)&&nK2.T<nK2.th&&nK2.P>10;
+        if(k2Hyd){ctx.fillStyle='#58a6ff';ctx.font='bold 9px sans-serif';ctx.fillText('\u2744 HYDRATE',k2.x,cy+76);}
+        else if(fin(nK2.bean)&&nK2.bean>0){ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';ctx.fillText(nK2.bean+'/64"',k2.x,cy+78);}
     }
     if(t2){
         ctx.textAlign='center';
@@ -129885,8 +129887,10 @@ function wtsDrawDiag(nodes,segs,opts){
     // Phase labels above pipes (top row)
     ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='center';
     const phases=['Multiphase','Multiphase','Multiphase','Multiphase','Gas Only'];
+    // CK-102 in: no seg-3 phase label (the CK-101 and CK-102 regime texts at cy \u2212 34 leave no room above that short run)
     for(let i=0;i<5;i++){
-        ctx.fillText(phases[i],ds&&i===1?(tx[1]+cl[1]+3+ds.x-ds.cl-3)/2:k2&&i===2?(tx[2]+cl[2]+3+k2.x-k2.cl-3)/2:(tx[i]+tx[i+1])/2,cy-28);
+        if(k2&&i===2)continue;
+        ctx.fillText(phases[i],ds&&i===1?(tx[1]+cl[1]+3+ds.x-ds.cl-3)/2:(tx[i]+tx[i+1])/2,cy-28);
     }
     // Phase label for Surge→Atm pipe (T-202 variant: at segment 5's midpoint, clear of the riser)
     ctx.fillText('Liquid',t2?(t2.seg5X+bx[1]-20)/2:(bx[0]+bx[1])/2,by-20);
