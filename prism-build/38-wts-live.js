@@ -2881,6 +2881,11 @@ function createController(vizEl, mopts) {
         if (typeof f === 'function') { try { return f(st && st.rigup) || B; } catch (e) {} }
         return B;
     }
+    // v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §8.2): the CK-102 slot of the layout {x, cl} while CK-102 is in the rig-up with H-101 in
+    // (the host draws it from liveNodes[10] under the same rule), else null; bypassed (heater bypass) keeps its slot, greyed by the host
+    function k2of(L, st) {
+        return (L && L.ck2 && isNum(L.ck2.x) && rigIn(st, 'heaterChoke') && !rigOut(st, 'heater')) ? L.ck2 : null;
+    }
     // Calc-shaped nodes for the host diagram; DS-101 (nodes[8]) also carries ΔP, the LAH / LAHH set points and the state text
     function nodes2d(st) {
         var n = liveNodes(st), d = st && st.desander;
@@ -3029,11 +3034,13 @@ function createController(vizEl, mopts) {
             ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round';
             ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
         }
+        var k2 = k2of(L, st);
         for (var i = 0; i < 5; i++) {
             var sg = segs[i] || {}, v = num(sg.vel, 0), flowing = sg.flowing != null ? !!sg.flowing : v > 0.01;
             if (!flowing) continue;
             var dx1 = tx[i] + cl[i] + 3, dx2 = tx[i + 1] - cl[i + 1] - 3, DW = 'rgba(255,255,255,.38)';
-            if (ds && i === 1) {                           // ESD → DS-101 → choke, or round the HV-104 bypass
+            if (k2 && i === 2) { dashLine(2, dx1, cy, k2.x - k2.cl - 3, cy, v, DW); dashLine(14, k2.x + k2.cl + 3, cy, dx2, cy, v, DW); }   // CK-101 → CK-102 → H-101
+            else if (ds && i === 1) {                           // ESD → DS-101 → choke, or round the HV-104 bypass
                 if (dsd.bypass) { dashLine(1, dx1, cy, ds.x - 24, cy, v, DW); dashLine(12, ds.x - 24, cy - 29, ds.x + 24, cy - 29, v, DW); dashLine(13, ds.x + 24, cy, dx2, cy, v, DW); }
                 else { dashLine(1, dx1, cy, ds.x - ds.cl - 3, cy, v, DW); dashLine(12, ds.x + ds.cl + 3, cy, dx2, cy, v, DW); }
             } else dashLine(i, dx1, cy, dx2, cy, v, DW);
@@ -3174,11 +3181,17 @@ function createController(vizEl, mopts) {
             ctx.restore();
         }
         // equipment out of the rig-up
-        if (off('heater')) { mask(tx[3] - 26, cy - 20, 52, 40, ''); bypass([[tx[3] - 30, cy], [tx[3] + 30, cy]], 'NOT IN RIG-UP', tx[3], cy + 30); }
+        if (off('heater')) {
+            mask(tx[3] - 26, cy - 20, 52, 40, ''); bypass([[tx[3] - 30, cy], [tx[3] + 30, cy]], 'NOT IN RIG-UP', tx[3], cy + 30);
+            if (ru.heaterChoke === true && L.ck2) mask(L.ck2.x - 12, cy - 12, 24, 24, '');   // CK-102 goes with H-101 (normRigup)
+        }
         if (off('separator')) {
             mask(tx[4] - 30, cy - 17, 60, 34, '');
             mask(tx[4] - 7, cy + 18, 14, by - 13 - (cy + 18), '');
-            bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → FLARE', tx[4], cy + 27);
+            // v1.5.0 (§8.2): the label follows the destination; the production-line text sits lower (clear of the pipe labels)
+            var sb = st.sepBy || {};
+            if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4], cy + 40);
+            else bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → BURNER LINE', tx[4], cy + 27);
         }
         if (off('flare')) {
             mask(tx[5] - 18, cy - 44, 36, 68, '');
@@ -3197,6 +3210,7 @@ function createController(vizEl, mopts) {
             if (!off('surge')) bypass([[bx[1] - 34, by], [RIG2D.outX, by]], 'T-201 → EXPORT / BURNER', RIG2D.pumpX - 10, by - 8, true);
         }
     }
+    function pStr(v) { return isNum(v) ? String(Math.round(v * 10) / 10) : '—'; }   // line pressure in the label (untagged psig, Q3)
     function rrect(c, x, y, w, h, r) {
         c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r);
         c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
@@ -3311,6 +3325,8 @@ function createController(vizEl, mopts) {
         var z = [], ids = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare'];
         for (var i = 0; i < 6; i++) z.push({ id: ids[i], x: L.tx[i] - 36, y: L.cy - 44, w: 72, h: 76 });
         if (L.dsOn) z.push({ id: 'desander', x: L.ds.x - 30, y: L.cy - 44, w: 60, h: 76 });          // DS-101: x 260…320
+        var k2 = k2of(L, st);
+        if (k2) z.push({ id: 'heaterChoke', x: k2.x - 22, y: L.cy - 44, w: 44, h: 76 });                // CK-102: x 448…492
         z.push({ id: 'surge', x: L.bx[0] - 28, y: L.by - 30, w: 56, h: 58 });
         if (L.t2On) z.push({ id: 'surge2', x: L.t202.x - L.t202.w / 2, y: L.by - 30, w: L.t202.w, h: 58 });   // T-202: x 760…790
         z.push({ id: 'gauge', x: L.bx[1] - 30, y: L.by - 30, w: 60, h: 58 });
