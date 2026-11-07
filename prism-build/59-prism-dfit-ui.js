@@ -681,7 +681,8 @@
     // the demo's own well set-up (49-calc-dfit-synth inputsFor / wellFor): rock, string, fluid, perforations, datum and channel into
     // the test inputs (logged), φ, c_t, μ, h, r_w into C1 as 'sample' values (never over a user value)
     var DEMO_INPUT_PATHS = ['datumTvd', 'strings', 'fluid.kind', 'fluid.rhoPpg', 'perfs.n', 'perfs.dIn', 'perfs.cd', 'rock.Ep', 'rock.EpSource',
-                            'rock.hf', 'rock.hp', 'channels.primary'];
+                            'rock.hf', 'rock.hp', 'channels.primary',
+                            'temp.model', 'temp.tauLoH', 'temp.tauHiH'];
     function _applyDemoSetup(T, S, name) {
         if (!S || typeof S.demoSpec !== 'function' || typeof S.inputsFor !== 'function') return false;
         var spec = null, inp = null, wl = null;

@@ -969,11 +969,17 @@
             return v;
         }
         // pump start refined by the pressure ramp onset (back-extrapolated to the pre-pump level within (t[i0−1], t[i0]])
+        // The onset is read from the first sample that has risen above the pre-pump level (a pressure still at that level
+        // at t[i0] means the pumping began at t[i0], the end of the bracket, not at its start): the line through that sample
+        // and the next one, back to the pre-pump level, clamped to the rate bracket.
         cycles.forEach(function (c) {
             var i0 = c.i0, tA = i0 > 0 ? t[i0 - 1] : t[i0], tS = tA;
             if (i0 > 0 && i0 + 1 < n) {
-                var pPre = p[i0 - 1], s = (p[i0 + 1] - p[i0]) / (t[i0 + 1] - t[i0]);
-                if (s > 0 && p[i0] > pPre) { var tx = t[i0] - (p[i0] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+                var pPre = p[i0 - 1], thr = Math.max(5 * sig, 1), kR = i0;
+                while (kR < Math.min(n - 2, i0 + 3) && !(p[kR] - pPre > thr)) kR++;
+                var s = (p[kR + 1] - p[kR]) / (t[kR + 1] - t[kR]);
+                if (s > 0 && p[kR] - pPre > thr) { var tx = t[kR] - (p[kR] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+                else if (s > 0 && p[i0] > pPre) { tx = t[i0] - (p[i0] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
             }
             c.tStart = tS;
             c.ts = t[c.i1];
@@ -1930,7 +1936,16 @@
         if (!down) {
             var sl = function (k) { return (v.p[k] - v.p[k + 1]) / Math.max(v.G[k + 1] - v.G[k], 1e-12); }, kb = -1;
             for (i = Math.max(e0, iDep - 2); i <= Math.min(n - 2, jMax + 1); i++) if (kb < 0 || sl(i) > sl(kb)) kb = i;
-            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) brk = { k: kb, G: v.G[kb], p: v.p[kb], se: b * (v.G[kb + 1] - v.G[kb]) / (2 * Math.sqrt(3)) };
+            // the break starts in the first of the steep intervals: walk back from the steepest one while the interval before
+            // it still falls ≥ 3 × faster than the early slope (on an exact Carter line the slope keeps growing for a few samples
+            // after closure, so the steepest interval is not the one that holds the closure)
+            while (kb > Math.max(e0, 1) && sl(kb - 1) > 3 * b) kb--;
+            // the closure lies inside that interval, uniformly as far as the samples tell: its centre on the pre-closure line
+            // (p at the interval start minus the slope of the interval before it over half the interval), se = half-width / √3
+            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) {
+                var dGb = v.G[kb + 1] - v.G[kb], sPre = Math.max(0, sl(kb - 1));
+                brk = { k: kb, G: v.G[kb] + 0.5 * dGb, p: v.p[kb] - 0.5 * sPre * dGb, se: Math.max(sPre, b) * dGb / (2 * Math.sqrt(3)) };
+            }
         }
         res.abrupt = !!brk;
         if (!down) {
