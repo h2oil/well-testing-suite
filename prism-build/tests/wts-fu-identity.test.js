@@ -340,6 +340,7 @@ module.exports = [
       assert.ok(host.v === 1 && host.nodes.length === 8 && host.choke.regime === 'Critical', 'calcWTS default flow');
       // SAMPLE_FLOW has no ck2 / sepBy block (D3); a host flow may carry them once WP-C lands
       assert.ok(!('ck2' in sample) && !('sepBy' in sample), 'SAMPLE_FLOW has no flow blocks');
+      assert.ok(host.ck2 && host.ck2.skipped === false && host.sepBy && host.sepBy.dest === 'flare', 'the calcWTS default flow carries flow.ck2 and flow.sepBy (WP-C)');
       const scen = [
         { name: '(a) 4 h default dt 10', secs: 4 * 3600, dt: 10, every: 1200 },
         { name: '(c) T-201 A/B divert with auto-divert', secs: 2 * 3600, dt: 5, every: 600, setup: (s) => { s.setAutoDivert('surge', true, { sp: 0.6 }); s.setValve('surge', 1, false); } },
@@ -352,15 +353,20 @@ module.exports = [
       ];
       ['heater', 'separator', 'surge', 'gauge', 'pump', 'flare'].forEach((k) => {
         const rig = {}; rig[k] = false;
-        scen.push({ name: '(b) 1 h without ' + k, secs: 3600, dt: 10, every: 900, opts: { rigup: rig } });
+        scen.push({ name: '(b) 1 h without ' + k, secs: 3600, dt: 10, every: 900, opts: { rigup: rig }, sepOut: k === 'separator' });
       });
       // mid-run setRigup (log and 'rigup' event text, not only create-time rig-ups): V-101 out then in (dest 'flare': the
       // v1.4.0 separator text), H-101 out then in, V-101 and FS-401 out together (FS-401 re-forced, its note)
-      scen.push({ name: 'mid-run V-101 out, back in', secs: 2400, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ separator: false })], [1800, (s) => s.setRigup({ separator: true })]] });
+      scen.push({ name: 'mid-run V-101 out, back in', secs: 2400, dt: 10, every: 300, sepOut: true, mid: [[600, (s) => s.setRigup({ separator: false })], [1800, (s) => s.setRigup({ separator: true })]] });
       scen.push({ name: 'mid-run H-101 out, back in', secs: 2400, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ heater: false })], [1800, (s) => s.setRigup({ heater: true })]] });
-      scen.push({ name: 'mid-run V-101 + FS-401 out', secs: 1800, dt: 10, every: 300, mid: [[600, (s) => s.setRigup({ separator: false, flare: false })]] });
-      [['SAMPLE_FLOW', sample], ['calcWTS default flow', host]].forEach(([fn, flow]) => {
+      scen.push({ name: 'mid-run V-101 + FS-401 out', secs: 1800, dt: 10, every: 300, sepOut: true, mid: [[600, (s) => s.setRigup({ separator: false, flare: false })]] });
+      // V-101 out on a host flow: the D3 change (whole-stream back pressure from flow.sepBy) is intended for every host flow
+      // (plan Release row), so these scenarios run the calcWTS flow without its sepBy block (an old flow: the v3.3.1 law);
+      // the destination law itself is tested in wts-bypass-cushion (WP-C note)
+      const noSepBy = (f) => { const c = J(f); delete c.sepBy; return c; };
+      [['SAMPLE_FLOW', sample], ['calcWTS default flow', host]].forEach(([fn, flow0]) => {
         scen.forEach((sc) => {
+          const flow = sc.sepOut && 'sepBy' in flow0 ? noSepBy(flow0) : flow0;
           const a = runStates(A, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts, sc.mid);
           const b = runStates(B, sc.secs, sc.dt, sc.every, sc.setup, J(flow), sc.opts, sc.mid);
           sameStates(assert, a, b, sc.name + ' / ' + fn);
@@ -378,7 +384,8 @@ module.exports = [
         // re-derives with a bumpless controller re-initialisation, so the trajectory is not === after the first change (the
         // noise draws shift). Checked here: the log and event text, and the v3.3.1 log entries (type, id, message) in order
         const ck = [[600, (s) => s.setRigup({ heaterChoke: true })], [1500, (s) => s.setRigup({ heaterChoke: false })]];
-        const a = runStates(A, 2400, 10, 300, null, J(flow), null, ck), b = runStates(B, 2400, 10, 300, null, J(flow), null, ck);
+        const flowNoCk2 = J(flow0); delete flowNoCk2.ck2;   // the host flow carries flow.ck2 since WP-C: take it out here
+        const a = runStates(A, 2400, 10, 300, null, J(flowNoCk2), null, ck), b = runStates(B, 2400, 10, 300, null, J(flowNoCk2), null, ck);
         const tag = 'mid-run CK-102 in, out / ' + fn;
         assert.strictEqual(a.events.length, 0, tag + ': v3.3.1 ignores heaterChoke');
         assert.ok(b.events.length === 2 && /CK-102 in line on the H-101 inlet/.test(b.events[0].msg) && /CK-102 out of the rig-up/.test(b.events[1].msg),
