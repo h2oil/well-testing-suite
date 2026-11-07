@@ -2492,6 +2492,9 @@ function _pickNumeric(o) {
 (function _expose() {
     G.PRiSM_lm                    = PRiSM_lm;
     G.PRiSM_bootstrap             = PRiSM_bootstrap;
+    // Seeded generator shared with other layers (the bootstrap's mulberry32);
+    // a null / undefined seed means seed 1 — never Math.random.
+    G.PRiSM_rng = function (seed) { return _makeRng(seed == null ? 1 : seed); };
     G.PRiSM_superposition         = PRiSM_superposition;
     G.PRiSM_sandface_convolution  = PRiSM_sandface_convolution;
     G.PRiSM_agarwalTime           = PRiSM_agarwalTime;

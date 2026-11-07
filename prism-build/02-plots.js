@@ -1285,6 +1285,62 @@ function PRiSM_plot_zoomBox(S, cur, g) {
     return true;
 }
 
+// opts.hoverEvent: dispatch 'prism:plot-hover' {plotKey, x, y, index} from the
+// canvas on pointermove inside the plot (world x / y; index = the nearest
+// plotted point within 30 px, else null). No timer, no throttle object.
+function PRiSM_plot_emitHover(canvas, cur, pos) {
+    try {
+        const ax = canvas._prismAxes;
+        if (!ax || typeof ax.fromX !== 'function' || typeof ax.fromY !== 'function') return;
+        if (!PRiSM_plot_inPlot(cur.plot, pos)) return;
+        const x = ax.fromX(pos.x), y = ax.fromY(pos.y);
+        if (!isFinite(x) || !isFinite(y)) return;
+        let index = null, bd = 900;
+        const pts = cur.points || [];
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+            const px = ax.toX(p[0]), py = ax.toY(p[1]);
+            if (!isFinite(px) || !isFinite(py)) continue;
+            const dd = (px - pos.x) * (px - pos.x) + (py - pos.y) * (py - pos.y);
+            if (dd < bd) { bd = dd; index = i; }
+        }
+        const CE = PRiSM_PLOT_G.CustomEvent;
+        if (typeof CE !== 'function' || typeof canvas.dispatchEvent !== 'function') return;
+        canvas.dispatchEvent(new CE('prism:plot-hover', { bubbles: true,
+            detail: { plotKey: cur.plotKey || null, x: x, y: y, index: index } }));
+    } catch (_) { /* a read-out event is a nicety — never break a gesture */ }
+}
+
+// Draw on the cached overlay frame of a finished plot without a full redraw
+// (a linked cursor): the frame is restored, then drawFn(ctx, axes, plot) runs
+// inside save / restore. drawFn null only restores the frame. → true when drawn.
+function PRiSM_plot_overlay(canvas, drawFn) {
+    const S = PRiSM_plot_getState(canvas);
+    const cur = S && S.cur;
+    if (!cur || cur.empty || !cur.ctx) return false;
+    if (!S.snap) S.snap = PRiSM_plot_snapshot(cur.canvas);
+    if (!S.snap) return false;
+    const ctx = cur.ctx;
+    try {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(S.snap, 0, 0);
+        ctx.restore();
+    } catch (_) { return false; }
+    if (typeof drawFn !== 'function') return true;
+    try {
+        ctx.save();
+        drawFn(ctx, canvas._prismAxes || null, cur.plot);
+        ctx.restore();
+    } catch (e) {
+        try { ctx.restore(); } catch (_) { /* ignore */ }
+        try { console.warn('PRiSM plot overlay failed:', e && e.message); } catch (_) { /* ignore */ }
+        return false;
+    }
+    return true;
+}
+
 function PRiSM_plot_makeHandlers(canvas, S) {
     const G = PRiSM_PLOT_G;
     const LONG_PRESS_MS = 600, SLOP = 8;
@@ -1306,6 +1362,13 @@ function PRiSM_plot_makeHandlers(canvas, S) {
     };
 
     const down = function (e) {
+        // Pointer-owner hook (generic): a layer that owns the gesture (a
+        // draggable handle) returns true and the box / pan gesture is skipped.
+        if (typeof canvas._prismPointerOwner === 'function') {
+            let owned = false;
+            try { owned = canvas._prismPointerOwner(e) === true; } catch (_) { owned = false; }
+            if (owned) return;
+        }
         const cur = live();
         if (!cur || !S.pointers) return;
         const o = cur.opts || {};
@@ -1352,6 +1415,7 @@ function PRiSM_plot_makeHandlers(canvas, S) {
         if (!cur || !S.pointers) return;
         const o = cur.opts || {};
         const pos = PRiSM_plot_localXY(canvas, S, e);
+        if (o.hoverEvent) PRiSM_plot_emitHover(canvas, cur, pos);
         const rec = S.pointers.get(e.pointerId);
         if (rec) { rec.x = pos.x; rec.y = pos.y; }
         const g = S.gesture;
@@ -1510,7 +1574,7 @@ function PRiSM_plot_install(canvas, S) {
     if (!cur) return;
     const o = cur.opts || {};
     const pan = !!o.dragZoom && !cur.empty;
-    const hov = !!o.hover && !cur.empty;
+    const hov = (!!o.hover || !!o.hoverEvent) && !cur.empty;
     const st = canvas.style;
     if (st) {
         if (pan) {
@@ -1605,6 +1669,45 @@ function PRiSM_compute_bourdet(t, dp, L) {
     const n = t.length;
     const d = new Array(n).fill(NaN);
     if (n < 3) return d;
+    // O(n) path: ln t is computed once and the two window edges move
+    // monotonically. It needs every t finite, > 0 and non-decreasing (the
+    // outward walk of the old loop then stops at exactly these edges, and
+    // every difference below is the same double); otherwise the old loop runs.
+    const lnx = new Array(n);
+    let mono = true;
+    for (let k = 0; k < n; k++) {
+        const tk = t[k];
+        if (!isFinite(tk) || tk <= 0 || (k > 0 && !(tk >= t[k - 1]))) { mono = false; break; }
+        lnx[k] = Math.log(tk);
+    }
+    if (!mono) return PRiSM_compute_bourdet_loop(t, dp, L, d);
+    let m = -1, r = 1;     // m: largest j ≤ i-1 with lnT - lnx[j] >= L (-1 = none); r: right edge
+    for (let i = 1; i < n - 1; i++) {
+        if (!isFinite(dp[i])) continue;
+        let i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            const lnT = lnx[i];
+            while (m + 1 <= i - 1 && lnT - lnx[m + 1] >= L) m++;
+            i1 = m > 0 ? m : 0;
+            if (r < i + 1) r = i + 1;
+            while (r < n - 1 && lnx[r] - lnT < L) r++;
+            i2 = r;
+        }
+        const dl1 = lnx[i] - lnx[i1];
+        const dl2 = lnx[i2] - lnx[i];
+        const dlT = lnx[i2] - lnx[i1];
+        if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
+        const a = (dp[i] - dp[i1]) / dl1 * (dl2 / dlT);
+        const b = (dp[i2] - dp[i]) / dl2 * (dl1 / dlT);
+        d[i] = a + b;
+    }
+    return d;
+}
+
+// The original outward-walking loop: used when t is not finite, positive and
+// non-decreasing (NaN, t ≤ 0, unsorted), so those sets behave exactly as before.
+function PRiSM_compute_bourdet_loop(t, dp, L, d) {
+    const n = t.length;
     for (let i = 1; i < n - 1; i++) {
         if (!isFinite(t[i]) || t[i] <= 0 || !isFinite(dp[i])) continue;
         // Walk outward to find points that are at least L apart in ln t
@@ -2724,6 +2827,11 @@ function PRiSM_plot_typecurve_overlay(canvas, data, opts) {
         PRiSM_plot_message: PRiSM_plot_message,
         PRiSM_plot_cumulative: PRiSM_plot_cumulative,
         PRiSM_plot_superposition_x: PRiSM_plot_superposition_x,
+        PRiSM_plot_finish: PRiSM_plot_finish,
+        PRiSM_plot_straightLine: PRiSM_plot_straightLine,
+        PRiSM_plot_keyPoint: PRiSM_plot_keyPoint,
+        PRiSM_plot_clip: PRiSM_plot_clip,
+        PRiSM_plot_overlay: PRiSM_plot_overlay,
         PRiSM_plotResetView: PRiSM_plotResetView,
         PRiSM_plotSetView: PRiSM_plotSetView,
         PRiSM_plotGetView: PRiSM_plotGetView

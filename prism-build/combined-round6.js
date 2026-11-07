@@ -1531,7 +1531,9 @@
                       'autoMatch', 'fits', 'reportPins', 'periodFlags',
                       // fit workspace (51) and gas / deliverability (52): listed so
                       // they are never dropped by the EXTRA_MAX_CHARS limit.
-                      'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
+                      'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability',
+                      // workspace-mode state (DFIT tests, inputs, picks, summaries)
+                      'dfit'];
     var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
                        project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
     var EXTRA_MAX_CHARS = 200000;
@@ -1607,6 +1609,8 @@
         if (P && typeof P === 'object') {
             if (P.mode != null) out.mode = P.mode;
             if (P.tab != null) out.tab = P.tab;
+            var stp = parseInt(P.step, 10);
+            if (stp >= 1 && stp <= 5) out.step = stp;
             if (Array.isArray(P.multiRate)) out.multiRate = _clone(P.multiRate);
         }
         var cs = G.PRiSM_cropState;
@@ -1654,6 +1658,16 @@
             if (later[key] || !_own(state, key)) continue;
             st[key] = (state[key] === null) ? null : _clone(state[key]);
         }
+        // a workspace-mode extension's own state key (ext.stateKey, e.g. 'dfit') belongs to the project: a project without it
+        // must not keep the previous session's copy (built-in modes have none, so nothing changes for them)
+        var MX = G.PRiSM_modeExt;
+        if (MX && typeof MX === 'object') {
+            for (var mk in MX) {
+                if (!_own(MX, mk) || !_modeExt(mk)) continue;
+                var sk = MX[mk].stateKey;
+                if (typeof sk === 'string' && sk && !_own(state, sk) && !(state.extra && typeof state.extra === 'object' && _own(state.extra, sk))) delete st[sk];
+            }
+        }
         if (state.extra && typeof state.extra === 'object') {
             for (var x in state.extra) if (_own(state.extra, x) && !PRISM_SKIP[x] && PRISM_KEYS.indexOf(x) < 0) st[x] = _clone(state.extra[x]);
         }
@@ -1667,9 +1681,19 @@
         if (!st.interp && state.interp) st.interp = _clone(state.interp);
         // Shell state
         if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
-        if (['transient', 'decline', 'combined'].indexOf(state.mode) >= 0) G.PRiSM.mode = state.mode;
+        // a built-in mode, or a registered workspace-mode extension (DFIT): entering an extension goes through PRiSM.setMode so
+        // its onEnter runs; leaving one calls its onLeave first (cancels its running jobs, closes its dialogs)
+        var nm = typeof state.mode === 'string' && (PRISM_BUILTIN_MODES.indexOf(state.mode) >= 0 || _modeExt(state.mode)) ? state.mode : null;
+        if (nm && nm !== G.PRiSM.mode) {
+            if (_modeExt(nm) && typeof G.PRiSM.setMode === 'function') {
+                try { G.PRiSM.setMode(nm); } catch (e) { _warn('[WTS_project] PRiSM.setMode failed', e); }
+                if (G.PRiSM.mode !== nm) { _leaveExt(nm); G.PRiSM.mode = nm; }
+            } else { _leaveExt(nm); G.PRiSM.mode = nm; }
+        }
         var tab = parseInt(state.tab, 10);
         if (tab >= 1 && tab <= 7) G.PRiSM.tab = tab;
+        var step = parseInt(state.step, 10);
+        if (step >= 1 && step <= 5) G.PRiSM.step = step;
         if (Array.isArray(state.multiRate)) G.PRiSM.multiRate = _clone(state.multiRate) || [];
         var cs = G.PRiSM_cropState;
         if (cs && typeof cs === 'object') {
@@ -1680,6 +1704,17 @@
             cs.i_end = cr ? _numOrNull(cr.i_end) : null;
             cs.fullDataset = (cr && cr.fullDataset) ? _clone(cr.fullDataset) : null;
         }
+    }
+
+    var PRISM_BUILTIN_MODES = ['transient', 'decline', 'combined'];
+    function _modeExt(m) {
+        if (typeof G.PRiSM_modeExtFor !== 'function') return null;
+        try { return G.PRiSM_modeExtFor(m) || null; } catch (e) { return null; }
+    }
+    // leave the current workspace-mode extension (if any) before the mode is set to `next` directly
+    function _leaveExt(next) {
+        var P = G.PRiSM, ext = P && P.mode !== next ? _modeExt(P.mode) : null;
+        if (ext && typeof ext.onLeave === 'function') { try { ext.onLeave(next); } catch (e) { _warn('[WTS_project] mode onLeave failed', e); } }
     }
 
     // New: analysis state back to the UI layer's defaults (model presets kept).
@@ -1700,7 +1735,7 @@
         st.interp = null;
         ['semilog', 'tcMatch', 'autoMatch'].forEach(function (key) { if (key in st) st[key] = null; });
         if ('activePeriod' in st) st.activePeriod = null;
-        if (G.PRiSM && typeof G.PRiSM === 'object') { G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
+        if (G.PRiSM && typeof G.PRiSM === 'object') { _leaveExt('transient'); G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
         var cs = G.PRiSM_cropState;
         if (cs && typeof cs === 'object') { cs.t_start = cs.t_end = cs.i_start = cs.i_end = null; cs.fullDataset = null; }
     }
@@ -2787,8 +2822,27 @@
         // v3.3 Build-up Surveillance (49-calc-buildup.js publishes WTS_state.buildup)
         if (st.buildup) r.buildup = _ok(st.buildup) ? { S: _num(st.buildup.latest && st.buildup.latest.S), dS: _num(st.buildup.dS),
             alertCode: _ALERT_LABEL[st.buildup.alertCode] ? st.buildup.alertCode : null, k: _num(st.buildup.kMedian) } : null;
+        // v3.4 PRiSM DFIT (59-prism-dfit-ui.js publishes WTS_state.dfit after each analysis; docs/DFIT-PLAN.md §2.3, §2.9)
+        if (st.dfit) r.dfit = _dfitOf(st.dfit);
         return r;
     }
+    // Active DFIT test (closure gradient, label, p_i, k) and every test of the well (zone, datum, gradients) — numbers only.
+    var _DFIT_LABEL = { high: 'High', medium: 'Medium', low: 'Low', 'not-estimable': 'Not estimable' };
+    function _dfitOf(d) {
+        if (!d || typeof d !== 'object') return null;
+        var tests = (d.tests && typeof d.tests.length === 'number') ? Array.prototype.slice.call(d.tests, 0, 12).map(function (t) {
+            t = t || {};
+            var kr = (t.kRange && typeof t.kRange.length === 'number' && t.kRange.length === 2) ? [_num(t.kRange[0]), _num(t.kRange[1])] : null;
+            return { zone: typeof t.zone === 'string' ? t.zone.slice(0, 40) : '', datumTvd: _num(t.datumTvd), closureGrad: _num(t.closureGrad),
+                     closureLabel: _DFIT_LABEL[t.closureLabel] ? t.closureLabel : null, pi: _num(t.pi), k: _num(t.k), kRange: kr };
+        }) : [];
+        if (d.ok === false) return tests.length ? { ok: false, tests: tests } : null;
+        var c = (d.closure && typeof d.closure === 'object') ? d.closure : {};
+        return { ok: true, closureGrad: _num(d.closureGrad), closureLabel: _DFIT_LABEL[c.label] ? c.label : null, closureMode: (c.mode === 'single' || c.mode === 'range') ? c.mode : 'none',
+                 pi: _num(d.pi), k: _num(d.k), kLo: _num(d.kLo), kHi: _num(d.kHi), tests: tests };
+    }
+    function _dfitK(r) { var x = r.dfit; if (!x || !x.ok) return null; return x.k != null ? x.k : null; }
+    function _dfitNote(r) { var n = r.dfit && r.dfit.tests ? r.dfit.tests.length : 0; return n > 1 ? ' (active test of ' + n + ')' : ''; }
     // Skin-alert status codes → text (the comparison row shows a label, not a number).
     var _ALERT_LABEL = { none: 'No alert', possible: 'Possible', provisional: 'Provisional', confirmed: 'Confirmed' };
     function _fitOf(fit) {
@@ -2837,7 +2891,7 @@
         }
         return { gasdeliv: r.gasdeliv || null, oilipr: r.oilipr || null, rates: _pickRates(r),
                  flareghg: r.flareghg || null, h2sroe: r.h2sroe || null, wellkill: r.wellkill || null, fit: fit,
-                 buildup: r.buildup || null };
+                 buildup: r.buildup || null, dfit: r.dfit || null };
     }
 
     // Display: canonical field units → active unit system (22-units.js).
@@ -2870,14 +2924,23 @@
         { key: 'buS',  label: 'Latest skin (build-up surveillance)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.S; }, cat: null, dp: 2, imp: '' },
         { key: 'buDS', label: 'Skin change vs baseline', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.dS; }, cat: null, dp: 2, imp: '' },
         { key: 'buAlert', label: 'Skin alert',           src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.alertCode; }, text: function (v) { return _ALERT_LABEL[v] || '—'; } },
-        { key: 'buK',  label: 'Permeability k (build-up median)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.k; }, cat: 'permeability', dp: 2, imp: 'md' }
+        { key: 'buK',  label: 'Permeability k (build-up median)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.k; }, cat: 'permeability', dp: 2, imp: 'md' },
+        // PRiSM DFIT is field-unit only (docs/DFIT-PLAN.md §7.15): no unit category, values in psi/ft, psia and md
+        { key: 'dfGrad', label: 'Closure gradient (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.closureGrad : null; },
+          text: function (v, r) { return v == null ? '—' : _fmt(v, 3) + ' psi/ft' + _dfitNote(r); } },
+        { key: 'dfLabel', label: 'Closure label (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.closureLabel : null; },
+          text: function (v, r) { return v ? _DFIT_LABEL[v] + (r.dfit.closureMode === 'range' ? ' (range)' : '') : '—'; } },
+        { key: 'dfPi', label: 'Reservoir pressure p_i (DFIT)', src: 'PRiSM DFIT', get: function (r) { return r.dfit && r.dfit.ok ? r.dfit.pi : null; },
+          text: function (v) { return v == null ? '—' : _fmt(v, 0) + ' psia'; } },
+        { key: 'dfK', label: 'Permeability k (DFIT after-closure)', src: 'PRiSM DFIT', get: _dfitK,
+          text: function (v, r) { var x = r.dfit; var p3 = function (n) { return Number(n).toPrecision(3); }; if (v != null) return p3(v) + ' md'; return (x && x.ok && x.kLo != null && x.kHi != null) ? p3(x.kLo) + '–' + p3(x.kHi) + ' md' : '—'; } }
     ];
     // Comparison table: one row per result, one column per well.
     function table() {
         var reg = _readReg();
         var wells = reg.wells.map(function (w) { return { id: w.id, name: w.name, active: w.id === reg.active, r: results(w.id) || {} }; });
         var cells = ROWS.map(function (row) {
-            return wells.map(function (w) { var v = row.get(w.r); return row.text ? row.text(v) : _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
+            return wells.map(function (w) { var v = row.get(w.r); return row.text ? row.text(v, w.r) : _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
         });
         var srcRow = wells.map(function (w) { return (w.r.rates && w.r.rates.source) || '—'; });
         return { rows: ROWS.map(function (r) { return { key: r.key, label: r.label, src: r.src }; }), wells: wells, cells: cells, rateSource: srcRow };
@@ -3710,6 +3773,8 @@
             case 'liquidline': return !!(G.WTS_state && G.WTS_state.liquidline);
             case 'pipelife':   return !!(G.WTS_state && G.WTS_state.pipelife);
             case 'prism': {
+                // A workspace mode (PRiSM_modeExt) with a key line has results.
+                if (_prismExtKeyLine()) return true;
                 // A fit exists, or a model is chosen and data is loaded.
                 if (_prismFit()) return true;
                 var st = G.PRiSM_state, ds = G.PRiSM_dataset;
@@ -3746,6 +3811,21 @@
         var lbl = (e && (e.label || e.name)) || '';
         if (!lbl && key) lbl = String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, function (c) { return c.toUpperCase(); });
         return lbl;
+    }
+    // Workspace mode (PRiSM_modeExt[PRiSM.mode]) and its report key line
+    // (36: PRiSM_reportKeyLine), resolved at call time; '' in the built-in modes.
+    function _prismExt() {
+        if (typeof G.PRiSM_activeModeExt === 'function') { try { return G.PRiSM_activeModeExt() || null; } catch (e) { return null; } }
+        var m = G.PRiSM && G.PRiSM.mode, X = G.PRiSM_modeExt;
+        if (typeof m !== 'string' || m === 'transient' || m === 'decline' || m === 'combined') return null;
+        var e = (X && typeof X === 'object' && Object.prototype.hasOwnProperty.call(X, m)) ? X[m] : null;
+        return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+    }
+    function _prismExtKeyLine() {
+        if (!_prismExt() || typeof G.PRiSM_reportKeyLine !== 'function') return '';
+        var kl = '';
+        try { kl = G.PRiSM_reportKeyLine(); } catch (e) { _warn('reportKeyLine failed', e); kl = ''; }
+        return (typeof kl === 'string') ? kl : '';
     }
     // Key results: the report layer's summary when present, else computed
     // here from lastFit.phys and the well inputs (field units).
@@ -4025,6 +4105,12 @@
     }
     function _renderPRiSM() {
         if (!_hasState('prism')) return _placeholder('PRiSM Well Test Analysis');
+        var extLine = _prismExtKeyLine();
+        if (extLine) {
+            // ext mode: the mode's key line replaces the PTA fit line
+            return _section('PRiSM Well Test Analysis', '<table class="qr-kv">' +
+                _row('Analysis', _prismExt().label) + _row('Result', extLine) + '</table>');
+        }
         var ps = G.PRiSM_state || {};
         var fit = _prismFit();
         var key = (fit && fit.modelKey) || ps.model || '';

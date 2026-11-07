@@ -39,7 +39,7 @@
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 722652b2",
+    "help": "view-d 1280 800 3d1726b2,view-p 780 1688 ced6e746",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -52,12 +52,12 @@
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
-    "prism": "load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 a3d66ee7",
+    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
     "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 ddd594cb,view-p 780 1688 a2d554b7",
+    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -73,12 +73,12 @@
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
-    "wells": "view-d 1280 800 d9907e22,view-p 780 1688 7324b608",
+    "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
     "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 525 8336b23a,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 212;
-  M.bytes = 7914670;   // total size of the image files (the offline download label)
+  M.count = 216;
+  M.bytes = 7979112;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

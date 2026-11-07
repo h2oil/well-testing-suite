@@ -24,6 +24,7 @@
 //   • 48-calc-help-start
 //   • 48-calc-help-utilities
 //   • 48-calc-help-welltest
+//   • 48-calc-wellbore
 //   • 48-calc-wellkill
 //   • 49-calc-buildup-data
 //   • 49-calc-buildup-plot
@@ -36,6 +37,10 @@
 //   • 49-calc-cheminj-info
 //   • 49-calc-cheminj
 //   • 49-calc-chokeperf
+//   • 49-calc-dfit-cal
+//   • 49-calc-dfit-info
+//   • 49-calc-dfit-synth
+//   • 49-calc-dfit-triage
 //   • 49-calc-dispersion
 //   • 49-calc-flowline
 //   • 49-calc-fluids
@@ -7865,7 +7870,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 722652b2",
+    "help": "view-d 1280 800 3d1726b2,view-p 780 1688 ced6e746",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -7878,12 +7883,12 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
-    "prism": "load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 a3d66ee7",
+    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
     "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 ddd594cb,view-p 780 1688 a2d554b7",
+    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -7899,12 +7904,12 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
-    "wells": "view-d 1280 800 d9907e22,view-p 780 1688 7324b608",
+    "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
     "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 525 8336b23a,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 212;
-  M.bytes = 7914670;   // total size of the image files (the offline download label)
+  M.count = 216;
+  M.bytes = 7979112;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8238,7 +8243,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'f5b49cbb', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -8514,13 +8519,19 @@ function res(target, alt, caption, co, setup) { var o = { id: 'res', view: 'desk
 function crop(id, target, alt, caption, co) { return { id: id, view: 'desktop', target: target, alt: alt, caption: caption, callouts: co }; }
 function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir**.', shot: 'view' }; }
 
+// DFIT shot recipes
+function df(id, t, c, n, more) {
+  return { id: id, view: 'desktop', target: t, alt: c, caption: c,
+    setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
+}
 var prism = {
-  route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
-  keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
+  keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
   'The results rail shows the latest fit and straight line. **Tools** holds the specialist panels.'],
-  when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.'],
+  when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.',
+  'After a [[glossary#dfit|DFIT]] ([[prism#dfit|DFIT mode]]).'],
   steps: [open('PRiSM — Well Test Analysis'),
   { t: 'Select **Try demo data** ① or **Load data**.', shot: 'load' },
   'Fill in **Well & Test**: test type, rate, h, φ, B, μ, ct and rw.',
@@ -8550,7 +8561,10 @@ var prism = {
   { id: 'rail', view: 'desktop', target: '#prism_rail', alt: 'Results rail after Analyse: k, skin, storage, straight line', caption: 'The results rail after ▶ Analyse',
     setup: [{ action: 'prismAnalyse' }], callouts: [sel(3, '#prism_rail')] },
   { id: 'tools', view: 'desktop', target: 'viewport', alt: 'The Tools drawer', caption: 'The Tools drawer',
-    setup: [{ click: '#prism_tools_btn' }, { waitFor: '#prism_tools_drawer' }] }],
+    setup: [{ click: '#prism_tools_btn' }, { waitFor: '#prism_tools_drawer' }] },
+  df('dfit-tri', '#prism_panel_1_dfit-triage', 'Test triage', 1), df('dfit-board', '#prism_panel_2_dfit-board', 'Closure consensus', 3),
+  df('dfit-aca', '#prism_dfit_cv_dfitAcaLogLog', 'After-closure log-log, step ④', 4), df('dfit-plan', '#prism_dfit_design_head', 'DFIT designer (pre-job): the design and its shut-in verdict', 0, [{ click: '#prism_tools_btn' },
+    { click: '[data-tool="dfit-designer"]' }, { click: '#prism_dfit_design_go' }, { waitFor: '#prism_dfit_design_head' }])],
   parts: [
   { id: 'step-1', title: '① Data', what: ['Load the record, check how it was read, enter the well and fluid.'],
     steps: ['Select **Load data** (file or paste) or **Try demo data**.', 'Check **Column Mapping** and **Units**, then **Apply mapping**.',
@@ -8573,7 +8587,21 @@ var prism = {
   { id: 'step-5', title: '⑤ Report', what: ['Summary, results with source and 95 % range, plots, skin check.'],
     steps: ['Fit a model on step ④ first.', 'Select **Export PDF**, or export CSV or XML.', 'Client and well names come from [[clientinfo]].'] },
   { id: 'tools', title: 'Tools drawer', what: ['PVT, tide, datasets, deconvolution, gas m(p), deliverability, rate-transient, plot tools, decline, saved fits.'],
-    steps: ['Select **Tools**, then a panel; it opens on its own step.', 'Use deconvolution for multi-rate data.', 'Save and compare fits in the fit workspace.'] }]
+    steps: ['Select **Tools**, then a panel; it opens on its own step.', 'Use deconvolution for multi-rate data.', 'Save and compare fits in the fit workspace.'] },
+  { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
+    steps: ['Select Test **DFIT (fracture injection)**.', 'Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.',
+      { t: 'Read the triage checks, re-pump verdict and grade A–D (provisional).', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
+      check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
+    refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
+  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
+    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
+      'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
+  { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
+    steps: [{ t: 'Set the origin; read the log-log, F_L, F_R and [[glossary#impulse|impulse]] plots.', shot: 'dfit-aca' }, 'Tab Leak-off model: Simulate in the sandbox, or History match, Fit.',
+      'Tab Uncertainty: P10/P50/P90 of each output.', 'Tab What this test can tell (after a fit).'] },
+  { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],
+    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
 };
 
 var oilgas = {
@@ -9479,6 +9507,10 @@ S('cheminj', 'Pump and injection point for the inhibitor.', 'inhibitor rate')] }
 { id: 'buildup', title: 'Interpret a build-up', purpose: 'Get permeability k, skin and the extrapolated pressure p* from a shut-in.', steps: [
 S('buildup', 'Find and interpret the shut-ins in gauge data.', 'rate history; producing time'),
 S('prism', 'Or step by step: Data, Flow periods, Diagnose, Model & fit, Report.', 'k, skin, p*')] },
+{ id: 'dfit', title: 'Analyse a DFIT', purpose: 'Closure, leak-off and p_i.', steps: [
+S('prism', 'Test DFIT, load the record, datum TVD and wellbore, ▶ Analyse DFIT, steps ② to ⑤ ([[prism#dfit|DFIT mode]]).', 'closure gradient, p_i, k')] },
+{ id: 'dfitcheck', title: 'Check whether a DFIT is interpretable', purpose: 'Before trusting the numbers.', steps: [
+S('prism', 'Test triage on step ①: checks, blunder cards, re-pump verdict, grade.', 'grade A–D')] },
 { id: 'erosion', title: 'Size a flowline or check erosion', purpose: 'Pressure drop, velocity and sand erosion.', steps: [
 S('flowline', 'Pressure drop and velocities along the line.', 'rates; velocities'),
 S('pipesz', 'Pipe size for the velocity limits.', 'velocity against the API RP 14E limit'),
@@ -9506,7 +9538,20 @@ pstar: { term: 'p*', variants: ['p star', 'extrapolated pressure'], def: 'The pr
 fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },
-psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set pressure to protect a vessel or line.' } };
+psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set pressure to protect a vessel or line.' },
+dfit: { term: 'DFIT', variants: ['minifrac'], def: 'Diagnostic fracture injection test: a small injection that opens a fracture, then a falloff.' },
+isip: { term: 'ISIP', def: 'Instantaneous shut-in pressure, without friction.' },
+gfunction: { term: 'G-function', def: 'Dimensionless shut-in time for closure plots.' },
+closure: { term: 'closure', variants: ['closure stress', 'closure pressure'], def: 'The pressure at which the fracture closes: the minimum stress.' },
+netp: { term: 'net pressure', def: 'ISIP minus closure.' },
+fluideff: { term: 'fluid efficiency', def: 'Fracture volume over injected volume at shut-in (η).' },
+family: { term: 'families', variants: ['closure family'], def: 'Closure methods grouped by what they read, F0 to F4; one vote each.' },
+pdl: { term: 'PDL', variants: ['pressure-dependent leak-off'], def: 'Pressure-dependent leak-off: fissures open above their stress.' },
+tipext: { term: 'tip extension', def: 'The fracture grows after shut-in.' },
+hrecess: { term: 'height recession', def: 'The fracture closes on higher-stress layers first.' },
+rvis: { term: 'R_vis', def: 'Closure visibility: the fracture share of the storage.' },
+aca: { term: 'after-closure', def: 'The falloff after closure: reservoir flow, for p_i and k.' },
+impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' } };
 
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
@@ -9519,6 +9564,7 @@ var faq = [
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },
+{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and the label uncalibrated?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.'] },
 { id: 'saved', q: 'Is my work saved?', a: ['Yes, on this device, as you type. To keep a copy or move it, save a project file ([[start#saving|Saving work]]).'] },
 { id: 'device', q: 'How do I move my work to another device?', a: ['File → Save on the first device, then File → Open… on the other one.'] },
 { id: 'metric', q: 'Why does a value change when I select Metric?', a: ['It is the same value converted. Calculations always run in oilfield units ([[start#units|Units]]).'] },
@@ -10132,6 +10178,1460 @@ pipesz: {
 })();
 
 // ─── END 48-calc-help-welltest ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 48-calc-wellbore ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 48-calc-wellbore.js  (Round 9)
+// -----------------------------------------------------------------------------
+// helper module: does not add a page to window.WTS_calcRegistry
+//
+// window.WTS_wellbore — shared surface ↔ bottomhole, step-test, ramp and water-hammer engine (docs/DFIT-PLAN.md §3.4,
+// §4.1–§4.4, §4.14–§4.17; owner WP1). Pure: no DOM, storage, timers or events; no unseeded randomness. Resolved at call
+// time by the Round-8 DFIT files (Round 9 loads after Round 8). 3.4b items go into 48-calc-wellbore-field.js and merge
+// into this namespace.
+//
+// Units (§3.0): time h on the record clock (wave quantities T / tau in s), pressure psia (psi for differences), DFIT rates
+// bbl/min (dataset rates bbl/d), volumes bbl, storage bbl/psi, compressibility 1/psi, depths ft (TVD unless the name ends in
+// Md), pipe and perforation diameters in, density ppg, temperature °F. Engine internals: ft, s / min, psi, ft³ where stated.
+//
+// 3.4a functions (shapes: prism-build/tests/_dfit-shapes.js StepDown, StepRate, Ramp, Hammer):
+//   column(spec)                         survey + strings → TVD/MD maps, capacity, segments, V_w
+//   csys(column, fluid, T)               the one system compressibility c_fluid + ψ·D/(E_s·e), V_w·c_w, wave speed
+//   tempProfile(column, opts)            static geotherm or displaced (DFIT) column, relaxing with e^(−t/τ)
+//   hydrostatic(pK, tvdK, tvdT, col, T)  ρ(p,T) column, RK2 at 10 ft (or a constant gradient)
+//   pipeFriction(q, seg, fluid, T)       Newtonian / friction-reduced (Virk cap) / power law
+//   perfFriction, nwbLoss, bleedOff      perforation, near-wellbore and the friction bleed-off after shut-in
+//   convert(ds, prepCtx, opts)           surface → bottomhole with a first-order band and vacuum masking
+//   vacuum(pi, column, T, atm)           surface pressure at p_i
+//   stepDown, stepDownDesignCheck        step-down fit, identifiability, open perforations (seeded Monte Carlo)
+//   stepRate                             continuous hinge on end-of-step pressures, F-test, bootstrap, stabilisation
+//   ramp                                 pump-in ramp hinge in p vs V (knee, stiffness, onset, near-wellbore correction)
+//   hammerQuick                          water-hammer period, reflector, Joukowsky, bleed-aware midline ISIP (upper:true unless the
+//                                        bleed-off is fitted or predicted below max(2 psi, 3σ); ctx.fitBleed:true with no step-down
+//                                        fits b from a default seed); a matched ctx.reflectorMd calibrates c; delta = T/τ
+//   align                                rate ↔ pressure clock offset (cross-correlation of first differences, scored only over
+//                                        the pressure samples that can see a rate change)
+// Options beyond §3.4 rows: stepRate opts.dpdtMax (psi/h, extra stabilisation limit); ramp opts.VwCw → storageRatio;
+// stepDown / ramp / stepRate return their seed (§3.0); convert flips the perforation / near-wellbore signs in flowback.
+// Extra helpers (not in §3.4, used by the tests and by 56): pipeDp, perfConstant, salinityFromPpg, rhoScPpg, rhoAt,
+// vwcwFromPeriod, hinge.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    var BBL = 5.614583;                 // ft³ per bbl
+    var BPM = BBL / 60;                 // ft³/s per bbl/min (0.0935764)
+    var SLUG_PER_PPG = 7.48052 / 32.174;  // slug/ft³ per ppg (0.232502)
+    var GAL_PER_FT3 = 7.48052;
+    var E_STEEL = 30e6;                 // psi
+    var K_WATER = 3.2e5;                // psi, handbook bulk modulus of water (c_fluid 3.125e-6 1/psi)
+    var PERF_C = 0.2369;                // the field perforation constant (§4.2)
+    var Z1281 = 1.2815516;              // P10 / P90 of a normal
+    var DCHI2_95 = 3.841459;            // χ²(1) 95 % quantile: one-parameter profile interval
+
+    // ── small helpers ────────────────────────────────────────────────────────
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _num(v, d) {
+        var x = v;
+        if (typeof x === 'string' && x.trim() !== '' && /^[\s+-]*[0-9.eE+-]+\s*$/.test(x)) x = +x;
+        return _fin(x) ? x : d;
+    }
+    function _nn(v) { return _fin(v) ? v : null; }
+    function _fail(code, msg, bad) { return { ok: false, code: code, errors: [String(msg).slice(0, 299)], bad: bad || [] }; }
+    function _warn(code, level, text) { return { code: code, level: level, text: String(text).slice(0, 299), ev: [] }; }
+    function _f(x, dp) {
+        if (!_fin(x)) return '–';
+        var s = (dp == null ? x : +x.toFixed(dp)).toFixed(dp == null ? 0 : dp);
+        var neg = s.charAt(0) === '-'; if (neg) s = s.slice(1);
+        var parts = s.split('.'), ip = parts[0], out = '';
+        while (ip.length > 3) { out = ',' + ip.slice(-3) + out; ip = ip.slice(0, -3); }
+        return (neg ? '−' : '') + ip + out + (parts[1] ? '.' + parts[1] : '');
+    }
+    function _safe(name, fn) {
+        return function () {
+            try { return fn.apply(null, arguments); }
+            catch (e) { return _fail('INTERNAL', 'WTS_wellbore.' + name + ' failed: ' + (e && e.message ? e.message : 'error')); }
+        };
+    }
+    function _median(a) {
+        var b = []; for (var i = 0; i < a.length; i++) if (_fin(a[i])) b.push(a[i]);
+        if (!b.length) return NaN;
+        b.sort(function (x, y) { return x - y; });
+        var m = b.length >> 1;
+        return (b.length & 1) ? b[m] : 0.5 * (b[m - 1] + b[m]);
+    }
+    function _pct(sorted, f) {
+        if (!sorted.length) return null;
+        var i = Math.min(sorted.length - 1, Math.max(0, Math.floor(f * sorted.length)));
+        return sorted[i];
+    }
+    // seeded generator: PRiSM_rng (05, mulberry32) when present, else the same mulberry32 here
+    function _rng(seed) {
+        var s0 = (_fin(seed) ? seed : 1);
+        if (typeof G.PRiSM_rng === 'function') { var r = G.PRiSM_rng(s0); if (typeof r === 'function') return r; }
+        var s = (s0 | 0) || 1;
+        return function () {
+            s |= 0; s = (s + 0x6D2B79F5) | 0;
+            var t = s;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return (((t ^ (t >>> 14)) >>> 0) / 4294967296);
+        };
+    }
+    // m standard normals (Box–Muller) from an inline xorshift32 stream seeded by the seeded generator: one call, no
+    // closure call per draw (a call per draw is slow inside the vm-evaluated app script)
+    function _normals(seed, m) {
+        var out = (typeof Float64Array === 'function') ? new Float64Array(m) : new Array(m);
+        var x = ((_rng(seed)() * 4294967296) >>> 0) || 2463534242, i = 0;
+        while (i < m) {
+            x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+            var u = (x + 1) / 4294967297;
+            x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+            var v = x / 4294967296, rr = Math.sqrt(-2 * Math.log(u));
+            out[i++] = rr * Math.cos(2 * Math.PI * v);
+            if (i < m) out[i++] = rr * Math.sin(2 * Math.PI * v);
+        }
+        return out;
+    }
+
+    // dense linear algebra (small systems)
+    function _invert(M) {
+        var n = M.length, A = [], i, j, c, r;
+        for (i = 0; i < n; i++) { A.push(M[i].slice()); for (j = 0; j < n; j++) A[i].push(i === j ? 1 : 0); }
+        for (c = 0; c < n; c++) {
+            var piv = c;
+            for (r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+            var tmp = A[c]; A[c] = A[piv]; A[piv] = tmp;
+            var d = A[c][c];
+            if (!(Math.abs(d) > 1e-300)) return null;
+            for (j = 0; j < 2 * n; j++) A[c][j] /= d;
+            for (r = 0; r < n; r++) if (r !== c) { var f = A[r][c]; if (f) for (j = 0; j < 2 * n; j++) A[r][j] -= f * A[c][j]; }
+        }
+        var out = []; for (i = 0; i < n; i++) out.push(A[i].slice(n));
+        return out;
+    }
+    // weighted least squares: X rows, y, w (optional) → {beta, inv (XᵀWX)⁻¹, sse (weighted), fit}
+    function _lsq(X, y, w) {
+        var n = X.length, p = X[0].length, A = [], b = [], i, j, k;
+        for (j = 0; j < p; j++) { A.push([]); b.push(0); for (k = 0; k < p; k++) A[j].push(0); }
+        for (i = 0; i < n; i++) {
+            var wi = w ? w[i] : 1;
+            for (j = 0; j < p; j++) { b[j] += wi * X[i][j] * y[i]; for (k = 0; k < p; k++) A[j][k] += wi * X[i][j] * X[i][k]; }
+        }
+        var inv = _invert(A);
+        if (!inv) return null;
+        var beta = [];
+        for (j = 0; j < p; j++) { var s = 0; for (k = 0; k < p; k++) s += inv[j][k] * b[k]; beta.push(s); }
+        var sse = 0, fit = [];
+        for (i = 0; i < n; i++) {
+            var fv = 0; for (j = 0; j < p; j++) fv += X[i][j] * beta[j];
+            fit.push(fv); sse += (w ? w[i] : 1) * (y[i] - fv) * (y[i] - fv);
+        }
+        return { beta: beta, inv: inv, sse: sse, fit: fit };
+    }
+    // 3×3 symmetric solve by Cramer's rule (no allocation in the hinge scan)
+    function _solve3(A, b) {
+        var a = A[0][0], bb = A[0][1], c = A[0][2], d = A[1][1], e = A[1][2], f = A[2][2];
+        var c00 = d * f - e * e, c01 = c * e - bb * f, c02 = bb * e - c * d;
+        var det = a * c00 + bb * c01 + c * c02;
+        if (!(Math.abs(det) > 1e-300)) return null;
+        var c11 = a * f - c * c, c12 = bb * c - a * e, c22 = a * d - bb * bb;
+        return [(c00 * b[0] + c01 * b[1] + c02 * b[2]) / det, (c01 * b[0] + c11 * b[1] + c12 * b[2]) / det, (c02 * b[0] + c12 * b[1] + c22 * b[2]) / det];
+    }
+    // Levenberg–Marquardt on a residual vector (numeric Jacobian, box bounds); used for the hammer variable projection
+    function _lmVec(resFn, p0, lo, hi, opts) {
+        var o = opts || {}, maxIter = o.maxIter || 60, np = p0.length;
+        var p = p0.slice(), r = resFn(p), sse = _ss(r), lam = 1e-3, iter = 0, conv = false;
+        function _clip(v) { for (var i = 0; i < np; i++) { if (lo && _fin(lo[i]) && v[i] < lo[i]) v[i] = lo[i]; if (hi && _fin(hi[i]) && v[i] > hi[i]) v[i] = hi[i]; } return v; }
+        for (iter = 0; iter < maxIter; iter++) {
+            var J = [], i, j, k;
+            for (j = 0; j < np; j++) {
+                var h = 1e-6 * Math.max(Math.abs(p[j]), o.scale ? o.scale[j] : 1e-3);
+                var pj = p.slice(); pj[j] += h;
+                var rj = resFn(pj), col = [];
+                for (i = 0; i < r.length; i++) col.push((rj[i] - r[i]) / h);
+                J.push(col);
+            }
+            var JTJ = [], g = [];
+            for (j = 0; j < np; j++) {
+                JTJ.push([]); var gs = 0;
+                for (i = 0; i < r.length; i++) gs += J[j][i] * r[i];
+                g.push(gs);
+                for (k = 0; k < np; k++) { var s = 0; for (i = 0; i < r.length; i++) s += J[j][i] * J[k][i]; JTJ[j].push(s); }
+            }
+            var improved = false;
+            for (var tries = 0; tries < 12; tries++) {
+                var M = [];
+                for (j = 0; j < np; j++) { M.push(JTJ[j].slice()); M[j][j] *= (1 + lam); if (!(M[j][j] > 0)) M[j][j] = lam; }
+                var inv = _invert(M);
+                if (!inv) { lam *= 10; continue; }
+                var pn = p.slice();
+                for (j = 0; j < np; j++) { var dj = 0; for (k = 0; k < np; k++) dj -= inv[j][k] * g[k]; pn[j] += dj; }
+                _clip(pn);
+                var rn = resFn(pn), sn = _ss(rn);
+                if (_fin(sn) && sn < sse) {
+                    var rel = (sse - sn) / Math.max(sse, 1e-300);
+                    p = pn; r = rn; sse = sn; lam = Math.max(1e-12, lam * 0.2); improved = true;
+                    if (rel < 1e-10) conv = true;
+                    break;
+                }
+                lam *= 10;
+            }
+            if (!improved || conv) { conv = true; break; }
+        }
+        return { p: p, sse: sse, r: r, iter: iter, converged: conv };
+    }
+    function _ss(r) { var s = 0; for (var i = 0; i < r.length; i++) { if (!_fin(r[i])) return Infinity; s += r[i] * r[i]; } return s; }
+
+    // ── water properties (16-pvt resolved at call time; local copies of the same correlations otherwise) ──
+    function _pvt() { return G.PRiSM_pvt_correlations || null; }
+    function _BwLocal(P, T) {
+        var dT = -1.0001e-2 + 1.33391e-4 * T + 5.50654e-7 * T * T;
+        var dP = -1.95301e-9 * P * T - 1.72834e-13 * P * P * T - 3.58922e-7 * P - 2.25341e-10 * P * P;
+        return (1 + dT) * (1 + dP);
+    }
+    function _Bw(P, T) {
+        var c = _pvt();
+        if (c && typeof c.Bw_meehan === 'function') { var v = c.Bw_meehan(P, T); if (_fin(v) && v > 0) return v; }
+        return _BwLocal(P, T);
+    }
+    function _muWater(T, S, P) {
+        var c = _pvt();
+        if (c && typeof c.mu_w_meehan === 'function') { var v = c.mu_w_meehan(T, (S || 0) * 1e4, P); if (_fin(v) && v > 0) return v; }
+        return 1.0;
+    }
+    function rhoScLbFt3(S) { return 62.368 + 0.438603 * S + 1.60074e-3 * S * S; }
+    function rhoScPpg(S) { return rhoScLbFt3(_num(S, 0)) / GAL_PER_FT3; }
+    function salinityFromPpg(ppg) {
+        var c = 62.368 - GAL_PER_FT3 * ppg, a = 1.60074e-3, b = 0.438603, d = b * b - 4 * a * c;
+        if (!(d >= 0)) return 0;
+        var S = (-b + Math.sqrt(d)) / (2 * a);
+        return S > 0 ? S : 0;
+    }
+    function _fluid(f) {
+        f = f || {};
+        var kind = (f.kind === 'oil' || f.kind === 'gel' || f.kind === 'slickwater') ? f.kind : 'water';
+        var rho = _num(f.rhoPpg, 8.43);
+        var S = _fin(f.salinityWt) ? f.salinityWt : salinityFromPpg(rho);
+        return { kind: kind, rhoPpg: rho, S: S, muCp: _fin(f.muCp) && f.muCp > 0 ? f.muCp : null, fr: Math.max(0, Math.min(0.85, _num(f.fr, 0))),
+                 nPrime: _fin(f.nPrime) && f.nPrime > 0 ? f.nPrime : null, kPrime: _fin(f.kPrime) && f.kPrime > 0 ? f.kPrime : null,
+                 tInjF: _num(f.tInjF, 70), cFluid: _fin(f.cFluid) && f.cFluid > 0 ? f.cFluid : null, cFluidModel: f.cFluidModel || null };
+    }
+    // density (ppg) at p psia, T °F: ρ_sc(S)/B_w(p,T) for water-based fluids; oil keeps its stated density
+    function rhoAt(p, T, fluid) {
+        var fl = (fluid && fluid.S != null && fluid.kind) ? fluid : _fluid(fluid);
+        if (fl.kind === 'oil') return fl.rhoPpg;
+        return rhoScLbFt3(fl.S) / _Bw(p, T) / GAL_PER_FT3;
+    }
+
+    // ── column (§3.4) ────────────────────────────────────────────────────────
+    function _tubLookup(key) {
+        var T = G.WTS_tubulars;
+        if (!key || !T || typeof T.find !== 'function') return null;
+        var e = T.find(key);
+        return (e && _fin(e.id) && _fin(e.od)) ? e : null;
+    }
+    function column(spec) {
+        spec = spec || {};
+        var warnings = [];
+        var datumTvd = _num(spec.datumTvd, null);
+        if (!(_fin(datumTvd) && datumTvd > 0)) return _fail('NO_DATUM', 'The datum depth (mid-perforation TVD) is needed for the wellbore column.', ['datumTvd']);
+        // survey [[md, tvd]] ascending MD; [0, 0] prepended
+        var sv = [[0, 0]];
+        if (Array.isArray(spec.survey)) {
+            spec.survey.forEach(function (row) {
+                if (!row || !_fin(+row[0]) || !_fin(+row[1])) return;
+                var md = +row[0], tvd = +row[1], last = sv[sv.length - 1];
+                if (md > last[0] && tvd >= last[1] - 1e-9 && tvd - last[1] <= md - last[0] + 1e-6) sv.push([md, tvd]);
+                else if (md === 0 && tvd === 0) { /* the origin */ }
+                else warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'A survey row at ' + _f(md, 0) + ' ft MD was dropped (MD must rise and TVD may not rise faster than MD).'));
+            });
+        }
+        function tvdAt(md) {
+            if (!_fin(md)) return NaN;
+            if (sv.length === 1) return md;
+            for (var i = 1; i < sv.length; i++) if (md <= sv[i][0]) {
+                var a = sv[i - 1], b = sv[i];
+                return a[1] + (b[1] - a[1]) * (md - a[0]) / (b[0] - a[0]);
+            }
+            var p = sv[sv.length - 2], q = sv[sv.length - 1];
+            return q[1] + (md - q[0]) * (q[1] - p[1]) / (q[0] - p[0]);
+        }
+        function mdAt(tvd) {
+            if (!_fin(tvd)) return NaN;
+            if (sv.length === 1) return tvd;
+            for (var i = 1; i < sv.length; i++) if (tvd <= sv[i][1] && sv[i][1] > sv[i - 1][1]) {
+                var a = sv[i - 1], b = sv[i];
+                if (tvd < a[1]) continue;
+                return a[0] + (b[0] - a[0]) * (tvd - a[1]) / (b[1] - a[1]);
+            }
+            var p = sv[sv.length - 2], q = sv[sv.length - 1];
+            var dz = q[1] - p[1];
+            if (!(dz > 0)) return q[0];
+            return q[0] + (tvd - q[1]) * (q[0] - p[0]) / dz;
+        }
+        var datumMd = _num(spec.datumMd, null);
+        if (!_fin(datumMd)) datumMd = mdAt(datumTvd);
+        // strings top → perforations
+        var segs = [];
+        (Array.isArray(spec.strings) ? spec.strings : []).forEach(function (s, i) {
+            if (!s) return;
+            var e = _tubLookup(s.tubKey);
+            var id = _num(s.id, e ? e.id : null), od = _num(s.od, e ? e.od : null);
+            var wall = _num(s.wall, (e && _fin(e.wall)) ? e.wall : (_fin(id) && _fin(od) ? (od - id) / 2 : null));
+            var top = _num(s.topMd, i === 0 ? 0 : null), bot = _num(s.botMd, null);
+            if (!(_fin(id) && id > 0 && _fin(od) && od > id && _fin(wall) && wall > 0 && _fin(top) && _fin(bot) && bot > top)) {
+                warnings.push(_warn('STRING_DROPPED', 'warn', 'String row ' + (i + 1) + ' was dropped (it needs id < od, a wall and topMd < botMd).'));
+                return;
+            }
+            segs.push({ topMd: top, botMd: bot, id: id, od: od, wall: wall, area: Math.PI / 4 * id * id / 144, rough: _fin(s.rough) ? s.rough : null,
+                        tubKey: e ? s.tubKey : null });
+        });
+        segs.sort(function (a, b) { return a.topMd - b.topMd; });
+        var Vw = null;
+        if (segs.length) {
+            Vw = 0;
+            var covered = 0;
+            for (var k = 0; k < segs.length; k++) {
+                var s0 = segs[k], a0 = Math.max(s0.topMd, covered), b0 = Math.min(s0.botMd, datumMd);
+                if (s0.topMd > covered + 1) warnings.push(_warn('STRING_GAP', 'warn', 'The strings leave a gap between ' + _f(covered, 0) + ' and ' + _f(s0.topMd, 0) + ' ft MD.'));
+                if (b0 > a0) { Vw += (b0 - a0) * s0.area / BBL; covered = b0; }
+            }
+            if (covered < datumMd - 1) warnings.push(_warn('STRING_SHORT', 'warn', 'The strings end at ' + _f(covered, 0) + ' ft MD, above the datum at ' + _f(datumMd, 0) + ' ft MD; the last string is extended.'));
+            if (covered < datumMd) {
+                var last = segs[segs.length - 1];
+                Vw += (datumMd - covered) * last.area / BBL;
+                last.botMd = Math.max(last.botMd, datumMd);
+            }
+        } else {
+            warnings.push(_warn('NO_STRINGS', 'warn', 'No flow string is given: capacity, storage and pipe friction are not available.'));
+        }
+        function segAt(md) {
+            for (var i = 0; i < segs.length; i++) if (md >= segs[i].topMd - 1e-9 && md <= segs[i].botMd + 1e-9) return segs[i];
+            return segs.length ? segs[segs.length - 1] : null;
+        }
+        function capacityAt(md) { var s = segAt(md); return s ? s.area / BBL : null; }
+        // MD at which a cumulative volume (bbl) from the surface is reached (displaced column)
+        function mdAtVolume(V) {
+            if (!segs.length || !_fin(V) || V <= 0) return 0;
+            var acc = 0;
+            for (var i = 0; i < segs.length; i++) {
+                var s = segs[i], cap = s.area / BBL, len = Math.min(s.botMd, datumMd) - s.topMd;
+                if (len <= 0) continue;
+                if (acc + cap * len >= V) return s.topMd + (V - acc) / cap;
+                acc += cap * len;
+            }
+            return datumMd;
+        }
+        var fl = _fluid(spec.fluid);
+        var tp = spec.temp || {};
+        return {
+            ok: true, tvdAt: tvdAt, mdAt: mdAt, capacityAt: capacityAt, mdAtVolume: mdAtVolume, segAt: segAt,
+            segments: segs, Vw: _nn(Vw), warnings: warnings,
+            datumTvd: datumTvd, datumMd: datumMd, survey: sv, fluid: fl,
+            temp: { model: tp.model === 'displaced' ? 'displaced' : 'static', surfF: _num(tp.surfF, 70), gradFper100: _num(tp.gradFper100, 1.5),
+                    tauLoH: _num(tp.tauLoH, 0.5), tauHiH: _num(tp.tauHiH, 5) }
+        };
+    }
+    function _col(c) { if (c && typeof c.tvdAt === 'function') return c; if (c && typeof c === 'object') { var k = column(c); return k.ok ? k : null; } return null; }
+
+    // ── system compressibility (§4.3) ────────────────────────────────────────
+    function csys(col, fluid, T, opts) {
+        var c = _col(col);
+        if (!c) return _fail('NO_COLUMN', 'A wellbore column is needed for the system compressibility.', ['column']);
+        var o = opts || {};
+        var fl = _fluid(fluid || c.fluid);
+        var cFluid = fl.cFluid, src = 'given';
+        if (!cFluid) {
+            if (fl.kind === 'oil') { cFluid = 1e-5; src = 'default-oil'; }
+            else if (fl.cFluidModel === 'dodson' && _pvt() && typeof _pvt().cw_dodson === 'function') {
+                var Tm = _fin(T) ? T : c.temp.surfF + c.temp.gradFper100 / 100 * c.datumTvd / 2;
+                var pm = _num(o.pMean, 0.052 * fl.rhoPpg * c.datumTvd / 2 + 14.7);
+                cFluid = _pvt().cw_dodson(pm, Tm, 0); src = 'dodson';
+                if (!(_fin(cFluid) && cFluid > 0)) { cFluid = 1 / K_WATER; src = 'default-water'; }
+            } else { cFluid = 1 / K_WATER; src = 'default-water'; }
+        }
+        var psi = _num(o.psi, 1), Es = _num(o.Es, E_STEEL);
+        var vSum = 0, vcp = 0;
+        c.segments.forEach(function (s) {
+            var len = Math.min(s.botMd, c.datumMd) - s.topMd;
+            if (len <= 0) return;
+            var v = len * s.area;
+            vSum += v; vcp += v * psi * s.id / (Es * s.wall);
+        });
+        var cPipe = vSum > 0 ? vcp / vSum : 0;
+        var cS = cFluid + cPipe;
+        var rhoSlug = fl.rhoPpg * SLUG_PER_PPG;
+        var wave = Math.sqrt(144 / (rhoSlug * cS));
+        var Vw = c.Vw;
+        return { ok: true, cSys: cS, cFluid: cFluid, cPipe: cPipe, VwCw: _fin(Vw) ? Vw * cS : null, VwCwFt3: _fin(Vw) ? Vw * BBL * cS : null,
+                 waveSpeed: wave, rhoSlug: rhoSlug, cFluidSource: src };
+    }
+
+    // ── temperature profiles (§4.2) ──────────────────────────────────────────
+    function tempProfile(col, opts) {
+        var c = _col(col);
+        var o = opts || {};
+        var base = c ? c.temp : { surfF: 70, gradFper100: 1.5, tauLoH: 0.5, tauHiH: 5 };
+        var surfF = _num(o.surfF, base.surfF), grad = _num(o.gradFper100, base.gradFper100) / 100;
+        var model = o.model || (c ? c.temp.model : 'static');
+        function geo(tvd) { return surfF + grad * tvd; }
+        if (model === 'ramey') {
+            if (typeof G.WTS_wellbore._ramey === 'function') return G.WTS_wellbore._ramey(c, o);
+            return _fail('NOT_AVAILABLE', 'The Ramey temperature model belongs to the field tools (3.4b).', ['model']);
+        }
+        if (model !== 'displaced') return { ok: true, model: 'static', T: geo, Tmd: function (md) { return geo(c ? c.tvdAt(md) : md); } };
+        if (!c) return _fail('NO_COLUMN', 'The displaced temperature model needs the wellbore column.', ['column']);
+        var tInj = _num(o.tInjF, c.fluid.tInjF);
+        var Vinj = _num(o.Vinj, 0);
+        var D = c.mdAtVolume(Vinj);
+        var tau = _num(o.tauH, Math.sqrt(_num(o.tauLoH, base.tauLoH) * _num(o.tauHiH, base.tauHiH)));
+        var t = _num(o.t, 0);       // h since shut-in (≤ 0: at or before shut-in, fully displaced)
+        var r = t > 0 ? Math.exp(-t / Math.max(tau, 1e-6)) : 1;
+        function Tmd(md) {
+            var g0 = geo(c.tvdAt(md));
+            var td = md < D ? tInj : geo(c.tvdAt(md - D));
+            return g0 + r * (td - g0);
+        }
+        return { ok: true, model: 'displaced', T: function (tvd) { return Tmd(c.mdAt(tvd)); }, Tmd: Tmd, D: D, tau: tau, relax: r };
+    }
+    function _Tfn(T, c) {
+        if (typeof T === 'function') return T;
+        if (_fin(T)) return function () { return T; };
+        if (T && typeof T.T === 'function') return T.T;
+        if (c) return tempProfile(c, { model: 'static' }).T;
+        return function () { return 60; };
+    }
+
+    // ── hydrostatics (§4.2) ──────────────────────────────────────────────────
+    function hydrostatic(pKnown, tvdKnown, tvdTarget, col, T, opts) {
+        var o = opts || {};
+        pKnown = _num(pKnown, NaN); tvdKnown = _num(tvdKnown, NaN); tvdTarget = _num(tvdTarget, NaN);
+        if (!_fin(pKnown) || !_fin(tvdKnown) || !_fin(tvdTarget)) return _fail('BAD_INPUT', 'Hydrostatics needs a pressure and two depths.', ['pKnown']);
+        var c = _col(col);
+        var fl = _fluid(o.fluid || (c ? c.fluid : null));
+        var dz = tvdTarget - tvdKnown;
+        if (o.model === 'constant' || _fin(o.grad) || fl.kind === 'oil') {
+            var gr = _num(o.grad, 0.052 * fl.rhoPpg);
+            return { ok: true, p: pKnown + gr * dz, rhoBar: gr / 0.052, dp: gr * dz, rangeNote: null, model: 'constant' };
+        }
+        var Tf = _Tfn(T, c);
+        var n = Math.max(1, Math.ceil(Math.abs(dz) / _num(o.stepFt, 10))), h = dz / n, p = pKnown, pMax = p, tMax = -1e9;
+        var rhoSc = rhoScLbFt3(fl.S);
+        for (var k = 0; k < n; k++) {
+            var zm = tvdKnown + (k + 0.5) * h, Tm = Tf(zm);
+            var pm = p + 0.052 * rhoSc / _Bw(p, Tm) / GAL_PER_FT3 * h / 2;
+            p = p + 0.052 * rhoSc / _Bw(pm, Tm) / GAL_PER_FT3 * h;
+            if (p > pMax) pMax = p;
+            if (Tm > tMax) tMax = Tm;
+        }
+        var dp = p - pKnown;
+        var note = (pMax > 5000 || tMax > 260) ? 'Water density correlation used beyond its fitted range (p ≤ 5,000 psia, T ≤ 260 °F).' : null;
+        return { ok: true, p: p, rhoBar: dz !== 0 ? dp / (0.052 * dz) : rhoAt(pKnown, Tf(tvdKnown), fl), dp: dp, rangeNote: note, model: 'rho(p,T)' };
+    }
+
+    // ── pipe friction (§4.2) ─────────────────────────────────────────────────
+    function _fanColebrook(re, rr) {
+        if (re < 2100) return 16 / re;
+        var F = G.WTS_flowline_friction;
+        if (F && typeof F.colebrook === 'function') { var fd = F.colebrook(re, rr); if (_fin(fd) && fd > 0) return fd / 4; }
+        var x = -4 * Math.log10(rr / 3.7 + 5.74 / Math.pow(re, 0.9));
+        for (var k = 0; k < 80; k++) { var xn = -4 * Math.log10(rr / 3.7 + 1.255 * x / re); if (Math.abs(xn - x) < 1e-13) { x = xn; break; } x = xn; }
+        return 1 / (x * x);
+    }
+    function _virk(re) {
+        var f = 0.002;
+        for (var k = 0; k < 200; k++) { var x = 19 * Math.log10(re * Math.sqrt(f)) - 32.4; var fn = 1 / (x * x); if (Math.abs(fn - f) < 1e-14) return fn; f = fn; }
+        return f;
+    }
+    function _dodgeMetzner(re, n) {
+        var f = 0.005;
+        for (var k = 0; k < 200; k++) {
+            var rhs = (4 / Math.pow(n, 0.75)) * Math.log10(re * Math.pow(f, 1 - n / 2)) - 0.395 / Math.pow(n, 1.2);
+            var fn = 1 / (rhs * rhs);
+            if (Math.abs(fn - f) < 1e-12) { f = fn; break; }
+            f = fn;
+        }
+        return f;
+    }
+    function pipeFriction(q, seg, fluid, T) {
+        q = Math.abs(_num(q, NaN));
+        var d = seg ? _num(seg.id, NaN) : NaN;
+        if (!_fin(q) || !(d > 0)) return _fail('BAD_INPUT', 'Pipe friction needs a rate and a pipe inside diameter.', ['q', 'id']);
+        var fl = _fluid(fluid);
+        var rough = (seg && _fin(seg.rough) && seg.rough >= 0) ? seg.rough : 0.0018;
+        var v = 17.157 * q / (d * d);
+        var rho = fl.rhoPpg;
+        if (q === 0) return { ok: true, dpdl: 0, v: 0, re: 0, regime: 'laminar', f: null, model: fl.nPrime && fl.kPrime ? 'powerlaw' : (fl.fr > 0 ? 'fr' : 'newtonian') };
+        if (fl.nPrime && fl.kPrime) {
+            var n = fl.nPrime, Kcp = fl.kPrime * 47880.26;
+            var reMR = 89100 * rho * Math.pow(v, 2 - n) / Kcp * Math.pow(0.0416 * d / (3 + 1 / n), n);
+            var reC = 3470 - 1370 * n, grad, f;
+            if (reMR < reC) { grad = Kcp * Math.pow(v, n) * Math.pow((3 + 1 / n) / 0.0416, n) / (144000 * Math.pow(d, 1 + n)); f = 16 / reMR;
+                return { ok: true, dpdl: grad, v: v, re: reMR, regime: 'laminar', f: f, model: 'powerlaw', reCrit: reC }; }
+            f = _dodgeMetzner(reMR, n);
+            return { ok: true, dpdl: f * rho * v * v / (25.8 * d), v: v, re: reMR, regime: 'turbulent', f: f, model: 'powerlaw', reCrit: reC };
+        }
+        var mu = fl.muCp != null ? fl.muCp : _muWater(_fin(T) ? T : 70, fl.S, 14.7);
+        var re = 928 * rho * v * d / mu;
+        var fw = _fanColebrook(re, rough / d);
+        if (fl.fr > 0 && re >= 2100) {
+            var fv = _virk(re), ffr = Math.max((1 - fl.fr) * fw, fv);
+            return { ok: true, dpdl: ffr * rho * v * v / (25.8 * d), v: v, re: re, regime: 'turbulent', f: ffr, model: 'fr',
+                     fWater: fw, fVirk: fv, frEff: 1 - ffr / fw, frCapped: (1 - fl.fr) * fw < fv };
+        }
+        return { ok: true, dpdl: fw * rho * v * v / (25.8 * d), v: v, re: re, regime: re < 2100 ? 'laminar' : 'turbulent', f: fw,
+                 model: fl.fr > 0 ? 'fr' : 'newtonian' };
+    }
+    // total pipe friction (psi) along the strings from the surface to the datum, friction on MD
+    function pipeDp(q, col, fluid, T) {
+        var c = _col(col);
+        if (!c) return _fail('NO_COLUMN', 'Pipe friction along the well needs the column.', ['column']);
+        var fl = fluid || c.fluid, Tf = _Tfn(T, c), dp = 0, per = [];
+        for (var i = 0; i < c.segments.length; i++) {
+            var s = c.segments[i], len = Math.min(s.botMd, c.datumMd) - s.topMd;
+            if (len <= 0) continue;
+            var r = pipeFriction(q, s, fl, Tf(c.tvdAt(0.5 * (s.topMd + Math.min(s.botMd, c.datumMd)))));
+            if (!r.ok) return r;
+            dp += r.dpdl * len; per.push({ topMd: s.topMd, botMd: s.botMd, dp: r.dpdl * len, regime: r.regime, re: r.re });
+        }
+        return { ok: true, dp: dp, segments: per };
+    }
+
+    // ── perforations, near-wellbore loss, bleed-off (§4.2) ───────────────────
+    function perfConstant() {
+        // ρv²/(2·144) for 1 bbl/min through one 1-in hole, 1 ppg, C_d 1 (first principles)
+        var A = Math.PI / 4 / 144, v = BPM / A;
+        return SLUG_PER_PPG * v * v / 2 / 144;
+    }
+    function perfFriction(q, perfs, rhoPpg) {
+        var p = perfs || {};
+        var n = _num(p.n, NaN), d = _num(p.dIn, 0.40), cd = _num(p.cd, 0.62), rho = _num(rhoPpg, 8.43);
+        q = _num(q, NaN);
+        if (!(n > 0) || !(d > 0) || !(cd > 0) || !_fin(q)) return null;
+        return PERF_C * q * q * rho / (n * n * Math.pow(d, 4) * cd * cd);
+    }
+    function nwbLoss(q, o) {
+        o = o || {};
+        var b = _num(o.b, NaN), beta = _num(o.beta, 0.5), qt = _num(o.qt, 0.1);
+        q = _num(q, NaN);
+        if (!_fin(b) || !_fin(q)) return null;
+        var aq = Math.abs(q), s = q < 0 ? -1 : 1;
+        if (qt > 0 && aq < qt) return s * b * Math.pow(qt, beta) * (aq / qt);
+        return s * b * Math.pow(aq, beta);
+    }
+    // V_w·c_w·dΔ/dt = −q(Δ); Δ = b·q^β above q_t, linear below. VwCw bbl/psi, q bbl/min; curve(dt h) → psi
+    function bleedOff(o) {
+        o = o || {};
+        var b = _num(o.b, NaN), beta = _num(o.beta, 0.5), qt = Math.max(0, _num(o.qt, 0.1)), VC = _num(o.VwCw, NaN);
+        var d0 = _num(o.d0, _fin(o.q0) && _fin(b) ? b * Math.pow(Math.abs(o.q0), beta) : NaN);
+        if (!(b > 0) || !(VC > 0) || !(d0 >= 0) || !(beta > 0 && beta <= 1)) return _fail('BAD_INPUT', 'Bleed-off needs b, β in (0, 1], V_w·c_w and the loss at shut-in.', ['b', 'VwCw', 'd0']);
+        var k = 1 / beta;
+        var Dt = qt > 0 ? b * Math.pow(qt, beta) : 0;          // loss at the branch rate
+        var tau2 = qt > 0 ? VC * Dt / qt : null;                // min, linear branch
+        // time (min) on the power branch from d0 down to x (x ≥ Dt)
+        function tPow(x) {
+            if (k === 1) return VC * b * Math.log(d0 / x);
+            return VC * Math.pow(b, k) * (Math.pow(x, 1 - k) - Math.pow(d0, 1 - k)) / (k - 1);
+        }
+        var tA = (d0 > Dt) ? tPow(Math.max(Dt, 1e-300)) : 0;    // time to reach the branch
+        if (!(Dt > 0)) tA = Infinity;
+        function curveMin(t) {
+            if (!(t > 0)) return d0;
+            if (d0 > Dt && t < tA) {
+                if (k === 1) return d0 * Math.exp(-t / (VC * b));
+                var base = Math.pow(d0, 1 - k) + (k - 1) * Math.pow(b, -k) * t / VC;
+                return Math.pow(base, 1 / (1 - k));
+            }
+            var start = d0 > Dt ? Dt : d0, t0 = d0 > Dt ? tA : 0;
+            return start * Math.exp(-(t - t0) / tau2);
+        }
+        function tTo(x) {
+            if (!(x > 0)) return null;
+            if (d0 <= x) return 0;
+            if (x >= Dt) return tPow(x);
+            var start = d0 > Dt ? Dt : d0, t0 = d0 > Dt ? tA : 0;
+            return t0 + tau2 * Math.log(start / x);
+        }
+        var t1 = tTo(1), t10 = tTo(10);
+        return { ok: true, t1psi: _fin(t1) ? t1 / 60 : null, t10psi: _fin(t10) ? t10 / 60 : null,
+                 curve: function (dtH) { return curveMin(_num(dtH, 0) * 60); }, d0: d0, tauLinearMin: _nn(tau2), branch: { dPsi: Dt, tMin: _nn(tA) } };
+    }
+
+    // ── surface → bottomhole conversion (§4.2) ───────────────────────────────
+    function _interp1(xs, ys, x) {
+        if (xs.length === 1) return ys[0];
+        if (x <= xs[0]) return ys[0] + (ys[1] - ys[0]) * (x - xs[0]) / (xs[1] - xs[0]);
+        for (var i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+        var n = xs.length;
+        return ys[n - 2] + (ys[n - 1] - ys[n - 2]) * (x - xs[n - 2]) / (xs[n - 1] - xs[n - 2]);
+    }
+    // 3-point Lagrange interpolation on the pressure nodes (the column Δp is smooth in p)
+    function _interpQ(xs, ys, x) {
+        var n = xs.length;
+        if (n < 3) return _interp1(xs, ys, x);
+        var i = 1;
+        while (i < n - 2 && x > xs[i]) i++;
+        var x0 = xs[i - 1], x1 = xs[i], x2 = xs[i + 1];
+        return ys[i - 1] * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2)) + ys[i] * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2))
+             + ys[i + 1] * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1));
+    }
+    function convert(ds, prepCtx, opts) {
+        var ctx = prepCtx || {}, o = opts || {};
+        if (!ds || !Array.isArray(ds.t)) return _fail('BAD_INPUT', 'The dataset needs a time array.', ['t']);
+        var c = _col(ctx.column);
+        if (!c) return _fail('NO_COLUMN', 'Converting a surface pressure needs the wellbore column (datum, strings).', ['column']);
+        var ps = ds.pSurf || (o.channel === 'p' ? ds.p : null);
+        if (!Array.isArray(ps) || ps.length !== ds.t.length) return _fail('NO_SURFACE', 'The dataset has no surface-pressure channel of the same length as the time.', ['pSurf']);
+        var fl = _fluid(ctx.fluid || c.fluid);
+        var temp = ctx.temp || c.temp;
+        var tModel = temp.model === 'displaced' ? 'displaced' : 'static';
+        var atm = _num(ctx.atmPsia, 14.696), gaugeTvd = _num(ctx.gaugeTvd, 0), datum = c.datumTvd;
+        var n = ds.t.length, t = ds.t, flags = [], i;
+        var qm = [], qfb = [];
+        for (i = 0; i < n; i++) {
+            var qq = ds.q && _fin(ds.q[i]) ? ds.q[i] / 1440 : 0;
+            qm.push(qq > 0 ? qq : 0);
+            qfb.push(ds.qFb && _fin(ds.qFb[i]) && ds.qFb[i] > 0 ? ds.qFb[i] / 1440 : 0);
+        }
+        if (!ds.q) flags.push(_warn('NO_RATE', 'info', 'No rate channel: pipe friction and the column displacement are not applied.'));
+        // events
+        var qMax = 0; for (i = 0; i < n; i++) if (qm[i] > qMax) qMax = qm[i];
+        var ts = _num(ctx.ts, null);
+        if (!_fin(ts)) { ts = null; for (i = n - 1; i >= 0; i--) if (qm[i] > 0.05 * qMax && qMax > 0) { ts = i + 1 < n ? t[i + 1] : t[i]; break; } }
+        var Vcum = [0];
+        for (i = 1; i < n; i++) Vcum.push(Vcum[i - 1] + 0.5 * (qm[i] + qm[i - 1]) * (t[i] - t[i - 1]) * 60);
+        var Vinj = _num(ctx.Vinj, _fin(ts) ? _interp1(t, Vcum, ts) : Vcum[n - 1]);
+        if (!_fin(ts)) ts = t[0];
+        // p nodes
+        var pMin = Infinity, pMax = -Infinity;
+        for (i = 0; i < n; i++) if (_fin(ps[i])) { if (ps[i] < pMin) pMin = ps[i]; if (ps[i] > pMax) pMax = ps[i]; }
+        if (!_fin(pMin)) return _fail('NO_SURFACE', 'The surface-pressure channel has no finite sample.', ['pSurf']);
+        var pN = [];
+        var lo = Math.max(pMin, 0.1);
+        if (pMax - lo < 1) pN = [lo, lo + 1];
+        else for (var k = 0; k < 5; k++) pN.push(lo + (pMax - lo) * k / 4);
+        var noteRange = null, rangeHit = false;
+        var cache = {};
+        function hydroTable(Tf, fluidX) {
+            var out = [];
+            for (var j = 0; j < pN.length; j++) {
+                var h = hydrostatic(pN[j], gaugeTvd, datum, c, Tf, { fluid: fluidX, stepFt: 25 });
+                if (h.rangeNote) { rangeHit = true; noteRange = h.rangeNote; }
+                out.push(h.p - pN[j]);
+            }
+            return out;
+        }
+        function pipeQ(q, scale, fluidX) {
+            if (!(q > 0) || !c.segments.length) return 0;
+            var key = q.toFixed(5) + '|' + scale + '|' + fluidX.rhoPpg;
+            if (cache[key] == null) {
+                var r = pipeDp(q, c, fluidX, tempProfile(c, { model: 'static' }).T);
+                cache[key] = r.ok ? r.dp * scale : 0;
+            }
+            return cache[key];
+        }
+        var fricBand = fl.nPrime && fl.kPrime ? 0.30 : (fl.fr > 0 || fl.kind === 'slickwater' ? 0.25 : 0.10);
+        var sd = ctx.stepDown || ctx.nwb || null;
+        var perfs = ctx.perfs || null;
+        var tables = {};   // column tables depend only on the density and the temperature model: shared by the band runs
+        function tablesFor(P, fluidX) {
+            var key = P.drho + '|' + P.model;
+            if (tables[key]) return tables[key];
+            var geoT = tempProfile(c, { model: 'static', surfF: temp.surfF, gradFper100: temp.gradFper100 }).T;
+            var out = { dpGeo: hydroTable(geoT, fluidX), vdN: null, dpDisp: null };
+            if (P.model === 'displaced') {
+                out.vdN = []; out.dpDisp = [];
+                (t[0] < ts ? [0, 0.25, 0.5, 0.75, 1] : [1]).forEach(function (f) {
+                    var V = f * Vinj;
+                    out.vdN.push(V);
+                    var prof = tempProfile(c, { model: 'displaced', surfF: temp.surfF, gradFper100: temp.gradFper100, tInjF: fluidX.tInjF, Vinj: V, t: 0 });
+                    out.dpDisp.push(hydroTable(prof.T, fluidX));
+                });
+            }
+            tables[key] = out;
+            return out;
+        }
+        function once(P) {
+            var fluidX = _fluid(fl);
+            if (P.drho) { fluidX.rhoPpg = fl.rhoPpg + P.drho; fluidX.S = salinityFromPpg(fluidX.rhoPpg); }
+            var TB = tablesFor(P, fluidX), dpGeo = TB.dpGeo, vdN = TB.vdN, dpDisp = TB.dpDisp, tau = P.tau;
+            var pw = [], hyd = [], pipe = [], perf = [], nwb = [];
+            for (var ii = 0; ii < n; ii++) {
+                var p0 = ps[ii];
+                if (!_fin(p0)) { pw.push(null); hyd.push(null); pipe.push(null); perf.push(null); nwb.push(null); continue; }
+                var hg = _interpQ(pN, dpGeo, p0), hv = hg;
+                if (dpDisp) {
+                    var vd = t[ii] < ts ? Vcum[ii] : Vinj, rr = t[ii] <= ts ? 1 : Math.exp(-(t[ii] - ts) / tau);
+                    var col0 = [];
+                    for (var jj = 0; jj < dpDisp.length; jj++) col0.push(_interpQ(pN, dpDisp[jj], p0));
+                    var hd = vdN.length > 1 ? _interp1(vdN, col0, vd) : col0[0];
+                    hv = hg + rr * (hd - hg);
+                }
+                var fr0 = qm[ii] > 0 ? -pipeQ(qm[ii], P.fric, fluidX) : (qfb[ii] > 0 ? pipeQ(qfb[ii], P.fric, fluidX) : 0);
+                // perforation and near-wellbore terms: + while injecting (p_f = p_w − Δp), − during flowback (p_f = p_w + Δp(q_fb), §4.2, §4.16)
+                var qx = qm[ii] > 0 ? qm[ii] : (qfb[ii] > 0 ? qfb[ii] : 0), sgn = qm[ii] > 0 ? 1 : -1;
+                var pf = 0, nw = 0;
+                if (qx > 0) {
+                    var pfr = perfs && _fin(perfs.n) ? perfFriction(qx, { n: perfs.n, dIn: (perfs.dIn || 0.4) * P.dScale, cd: P.cd != null ? P.cd : perfs.cd }, fluidX.rhoPpg)
+                        : (sd && _fin(sd.a) ? sd.a * qx * qx * (P.aScale || 1) : 0);
+                    pf = sgn * (_fin(pfr) ? pfr : 0);
+                    nw = sgn * (sd && _fin(sd.b) ? nwbLoss(qx, { b: sd.b + (P.db || 0), beta: _num(sd.beta, 0.5), qt: _num(sd.qt, 0.1) }) : 0);
+                }
+                hyd.push(hv); pipe.push(fr0); perf.push(pf); nwb.push(nw);
+                pw.push(p0 + hv + fr0);
+            }
+            return { pw: pw, hyd: hyd, pipe: pipe, perf: perf, nwb: nwb };
+        }
+        var tauMid = Math.sqrt(_num(temp.tauLoH, 0.5) * _num(temp.tauHiH, 5));
+        var cdBase = perfs && _fin(perfs.cd) ? perfs.cd : 0.62;
+        var B0 = { model: tModel, tau: tauMid, fric: 1, drho: 0, dScale: 1, cd: cdBase, db: 0 };
+        var base = once(B0);
+        // vacuum: surface ≤ 0 psig → masked from then on
+        var vacuumAt = null, warnAt = null;
+        for (i = 0; i < n; i++) {
+            if (!_fin(ps[i])) continue;
+            if (ps[i] - atm < 15 && warnAt == null && t[i] >= ts) warnAt = t[i];
+            if (ps[i] - atm <= 0 && t[i] >= ts) { vacuumAt = t[i]; break; }
+        }
+        if (vacuumAt != null) {
+            flags.push(_warn('VACUUM', 'bad', 'The surface pressure reached 0 psig at ' + _f(vacuumAt, 2) + ' h: the column is no longer liquid-supported, so converted data after that time are masked (after-closure analysis needs a bottomhole gauge).'));
+        } else if (warnAt != null) {
+            flags.push(_warn('VACUUM_WARN', 'warn', 'The surface pressure fell below 15 psig at ' + _f(warnAt, 2) + ' h: the conversion is close to the vacuum limit.'));
+        }
+        if (rangeHit && noteRange) flags.push(_warn('CONVERT_RANGE', 'info', noteRange));
+        var pfArr = [];
+        for (i = 0; i < n; i++) {
+            if (vacuumAt != null && t[i] >= vacuumAt) { base.pw[i] = null; }
+            pfArr.push(base.pw[i] == null ? null : base.pw[i] - base.perf[i] - base.nwb[i]);
+        }
+        // index of the last pumping sample (shut-in)
+        var iS = 0; for (i = 0; i < n; i++) if (t[i] < ts) iS = i;
+        var terms = [{ name: 'hydrostatic', dpAtShutIn: _nn(base.hyd[iS]) }, { name: 'pipe friction', dpAtShutIn: _nn(base.pipe[iS]) },
+                     { name: 'perforation friction', dpAtShutIn: _nn(base.perf[iS]) }, { name: 'near-wellbore loss', dpAtShutIn: _nn(base.nwb[iS]) }];
+        var band = null, bandF = null, bandTerms = [];
+        if (o.band) {
+            var devW = [], devF = [];
+            function addDev(name, alt, affectsW) {
+                var dW = [], dF = [], mx = 0;
+                for (var ii = 0; ii < n; ii++) {
+                    if (base.pw[ii] == null || alt.pw[ii] == null) { dW.push(0); dF.push(0); continue; }
+                    var w1 = alt.pw[ii] - base.pw[ii];
+                    var f1 = (alt.pw[ii] - alt.perf[ii] - alt.nwb[ii]) - pfArr[ii];
+                    dW.push(affectsW ? w1 : 0); dF.push(f1);
+                }
+                mx = Math.abs(dF[iS] || 0);
+                if (affectsW) devW.push(dW);
+                devF.push(dF);
+                bandTerms.push({ name: name, dpAtShutIn: mx });
+            }
+            addDev('fluid density ±0.05 ppg', once(Object.assign({}, B0, { drho: 0.05 })), true);
+            addDev('temperature model', once(Object.assign({}, B0, { model: tModel === 'displaced' ? 'static' : 'displaced' })), true);
+            if (tModel === 'displaced') {
+                var aLo = once(Object.assign({}, B0, { tau: _num(temp.tauLoH, 0.5) })), aHi = once(Object.assign({}, B0, { tau: _num(temp.tauHiH, 5) }));
+                var pick = aLo;
+                var sLo = 0, sHi = 0;
+                for (i = 0; i < n; i++) if (base.pw[i] != null && aLo.pw[i] != null && aHi.pw[i] != null) { sLo += Math.abs(aLo.pw[i] - base.pw[i]); sHi += Math.abs(aHi.pw[i] - base.pw[i]); }
+                if (sHi > sLo) pick = aHi;
+                addDev('temperature relaxation time', pick, true);
+            }
+            if (c.segments.length && ds.q) addDev('pipe friction ±' + Math.round(fricBand * 100) + ' %', once(Object.assign({}, B0, { fric: 1 + fricBand })), true);
+            if (perfs && _fin(perfs.n)) {
+                addDev('perforation discharge coefficient', once(Object.assign({}, B0, { cd: cdBase + 0.04 })), false);
+                addDev('perforation diameter ±8 %', once(Object.assign({}, B0, { dScale: 1.08 })), false);
+            }
+            if (sd && _fin(sd.b) && sd.se && _fin(sd.se.b)) addDev('near-wellbore coefficient b', once(Object.assign({}, B0, { db: sd.se.b })), false);
+            band = { p10: [], p90: [] }; bandF = { p10: [], p90: [] };
+            for (i = 0; i < n; i++) {
+                if (base.pw[i] == null) { band.p10.push(null); band.p90.push(null); bandF.p10.push(null); bandF.p90.push(null); continue; }
+                var sw = 0, sf = 0, j;
+                for (j = 0; j < devW.length; j++) sw += devW[j][i] * devW[j][i];
+                for (j = 0; j < devF.length; j++) sf += devF[j][i] * devF[j][i];
+                sw = Math.sqrt(sw); sf = Math.sqrt(sf);
+                band.p10.push(base.pw[i] - Z1281 * sw); band.p90.push(base.pw[i] + Z1281 * sw);
+                bandF.p10.push(pfArr[i] - Z1281 * sf); bandF.p90.push(pfArr[i] + Z1281 * sf);
+            }
+        }
+        return { ok: true, pw: base.pw, pf: pfArr, parts: { hyd: base.hyd, pipe: base.pipe, perf: base.perf, nwb: base.nwb }, band: band, bandF: bandF,
+                 terms: terms, bandTerms: bandTerms, flags: flags, vacuumAt: vacuumAt, model: tModel, ts: ts, Vinj: Vinj };
+    }
+
+    // ── vacuum predictor (§4.2) ──────────────────────────────────────────────
+    function vacuum(piPsia, col, T, atm) {
+        var c = _col(col);
+        if (!c) return _fail('NO_COLUMN', 'The vacuum check needs the wellbore column.', ['column']);
+        var pi = _num(piPsia, NaN);
+        if (!(pi > 0)) return _fail('BAD_INPUT', 'The vacuum check needs the reservoir pressure.', ['pi']);
+        var a = _num(atm, 14.696);
+        var h = hydrostatic(pi, c.datumTvd, 0, c, T);
+        if (!h.ok) return h;
+        var ps = h.p, g = ps - a, risk = g < 15 ? 'surface-zero' : 'none', level = g < 0 ? 'fail' : (g < 15 ? 'warn' : 'ok');
+        var text = level === 'ok' ? 'At p_i the surface pressure stays at ' + _f(ps, 1) + ' psia: the column stays liquid-supported and a surface gauge can follow the falloff.'
+            : (level === 'warn' ? 'At p_i the surface pressure would be only ' + _f(g, 1) + ' psig: the surface gauge will be near the vacuum limit late in the falloff.'
+            : 'At p_i the column cannot be liquid-supported (surface ' + _f(g, 1) + ' psig): the surface gauge goes to vacuum before p_i, so after-closure analysis needs a bottomhole gauge.');
+        return { ok: true, risk: risk, level: level, pSurfAtPi: ps, text: text };
+    }
+
+    // ── step-down (§4.14) ────────────────────────────────────────────────────
+    function _sdCols(q, beta, hasDrift, dt) { var r = [1, q * q, Math.pow(q, beta)]; if (hasDrift) r.push(dt); return r; }
+    function stepDownDesignCheck(steps, opts) {
+        var o = opts || {}, sig = _num(o.sigma, 2), beta = _num(o.beta, 0.5);
+        var qs = (Array.isArray(steps) ? steps : []).map(function (s) { return _num(s && s.q != null ? s.q : s, NaN); }).filter(function (q) { return q > 0; });
+        var se = { pFrac: null, a: null, b: null };
+        if (qs.length >= 3) {
+            var r = _lsq(qs.map(function (q) { return _sdCols(q, beta, false, 0); }), qs.map(function () { return 0; }));
+            if (r) se = { pFrac: sig * Math.sqrt(r.inv[0][0]), a: sig * Math.sqrt(r.inv[1][1]), b: sig * Math.sqrt(r.inv[2][2]) };
+        }
+        var qMax = qs.length ? Math.max.apply(null, qs) : 0, qMin = qs.length ? Math.min.apply(null, qs) : 0;
+        var range = qMax > 0 ? (qMax - qMin) / qMax : 0, why = null;
+        if (qs.length < 3) why = 'A step-down needs at least three rate steps to split perforation and near-wellbore friction.';
+        else if (range < 0.3) why = 'The rate range is only ' + Math.round(range * 100) + ' % of the top rate (at least 30 % is needed): the split is not identifiable' + (_fin(se.pFrac) ? ' (standard error of the intercept ' + _f(se.pFrac, 0) + ' psi).' : '.');
+        if (why) return { ok: false, code: 'REFUSED', errors: [why], bad: ['steps'], se: se, why: why, range: range, n: qs.length };
+        return { ok: true, se: se, why: null, range: range, n: qs.length, sigma: sig };
+    }
+    function stepDown(steps, opts) {
+        var o = opts || {};
+        var st = (Array.isArray(steps) ? steps : []).filter(function (s) { return s && _fin(+s.q) && +s.q > 0 && _fin(+s.p); })
+            .map(function (s) { return { q: +s.q, p: +s.p, n: _fin(+s.n) && +s.n > 0 ? +s.n : 1, t: _fin(+s.t) ? +s.t : null, sigma: _fin(+s.sigma) && +s.sigma > 0 ? +s.sigma : null }; });
+        var sig = _num(o.sigma, 2);
+        var chk = stepDownDesignCheck(st, { sigma: sig });
+        var nullAt = { dpPerf: null, dpNwb: null, dpPipe: null };
+        if (!chk.ok) {
+            return { ok: true, pFrac: null, se: { pFrac: _nn(chk.se.pFrac), a: _nn(chk.se.a), b: _nn(chk.se.b) }, a: null, b: null, beta: 0.5, drift: 0, nOpen: null,
+                     nOpenBand: { p10: null, p50: null, p90: null, driver: 'not determinable' }, at: nullAt, label: 'refused', refused: chk.why, resid: [], corr: null,
+                     regime: null, notes: [], seed: _num(o.seed, 1), nMc: 0 };
+        }
+        var pipeFn = typeof o.pipe === 'function' ? o.pipe : null;
+        var y = st.map(function (s) { var pp = pipeFn ? pipeFn(s.q) : 0; return s.p - (_fin(pp) ? pp : 0); });
+        var w = st.map(function (s) { var sg = s.sigma != null ? s.sigma : sig; return s.n / (sg * sg); });
+        var tLast = null; st.forEach(function (s) { if (s.t != null && (tLast == null || s.t > tLast)) tLast = s.t; });
+        var hasDrift = o.drift !== false && st.every(function (s) { return s.t != null; }) && st.length >= 5;
+        var notes = [];
+        if (o.drift === true && !hasDrift) notes.push('The drift term needs five steps with times; it was not fitted.');
+        function fitBeta(beta) {
+            var X = st.map(function (s) { return _sdCols(s.q, beta, hasDrift, s.t != null ? s.t - tLast : 0); });
+            return _lsq(X, y, w);
+        }
+        var beta = 0.5, best = fitBeta(0.5), betaCI = null;
+        if (!best) return _fail('SINGULAR', 'The step-down fit is singular (repeated rates).', ['steps']);
+        if (o.beta === 'free') {
+            var bb = null, grid = [];
+            for (var kb = 20; kb <= 100; kb++) { var bt = kb / 100, rr = fitBeta(bt); grid.push({ bt: bt, sse: rr ? rr.sse : Infinity }); if (rr && (!bb || rr.sse < bb.r.sse)) bb = { bt: bt, r: rr }; }
+            if (bb) {
+                var dof = Math.max(1, st.length - (hasDrift ? 5 : 4));
+                var s2 = DCHI2_95 * Math.max(1, bb.r.sse / dof);       // profile Δχ² ≤ 3.84 (one parameter, 95 %), scaled by χ²_r
+                var inC = grid.filter(function (g) { return g.sse <= bb.r.sse + s2; });
+                var bLo = Math.min.apply(null, inC.map(function (g) { return g.bt; })), bHi = Math.max.apply(null, inC.map(function (g) { return g.bt; }));
+                betaCI = [bLo, bHi];
+                if ((bHi - bLo) / 2 <= 0.15) { beta = bb.bt; best = bb.r; }
+                else notes.push('β is not determined by these steps (95 % range ' + _f(bLo, 2) + '–' + _f(bHi, 2) + '); β = 0.5 is used.');
+            }
+        } else if (_fin(o.beta) && o.beta > 0 && o.beta <= 1) { beta = o.beta; best = fitBeta(beta) || best; }
+        var np = hasDrift ? 4 : 3, dofR = st.length - np;
+        var chi2r = dofR > 0 ? best.sse / dofR : 0;
+        var infl = Math.sqrt(Math.max(1, chi2r));
+        var se = { pFrac: Math.sqrt(best.inv[0][0]) * infl, a: Math.sqrt(best.inv[1][1]) * infl, b: Math.sqrt(best.inv[2][2]) * infl };
+        var pFrac = best.beta[0], a = best.beta[1], b = best.beta[2], drift = hasDrift ? best.beta[3] : 0;
+        var resid = st.map(function (s, i) { return y[i] - best.fit[i]; });
+        var corr = { ab: best.inv[1][2] / Math.sqrt(best.inv[1][1] * best.inv[2][2]), pa: best.inv[0][1] / Math.sqrt(best.inv[0][0] * best.inv[1][1]),
+                     pb: best.inv[0][2] / Math.sqrt(best.inv[0][0] * best.inv[2][2]) };
+        var qTop = Math.max.apply(null, st.map(function (s) { return s.q; }));
+        var dpPerf = a * qTop * qTop, dpNwb = b * Math.pow(qTop, beta), dpPipe = pipeFn ? pipeFn(qTop) : null;
+        // open perforations
+        var perfs = o.perfs || {}, rho = _num(o.rhoPpg, 8.43), dIn = _num(perfs.dIn, 0.40), cd = _num(perfs.cd, 0.62);
+        var nOpen = null, band = { p10: null, p50: null, p90: null, driver: 'not determinable' }, nText = null;
+        var mcSeed = _num(o.seed, 1), nMc = 0;          // the open-perforation Monte Carlo (§3.0 determinism: the seed is returned)
+        var pipeDominates = _fin(dpPipe) && dpPipe > 3 * Math.max(dpPerf, 0);
+        if (pipeDominates) {
+            nText = 'not determinable';
+            band.driver = 'not determinable: pipe friction at the top rate (' + _f(dpPipe, 0) + ' psi) exceeds three times the perforation term';
+            notes.push('Open perforations are not determinable: the pipe friction at the top rate is more than three times the perforation friction, and the two terms correlate (r ≈ 0.999).');
+        } else if (a > 0) {
+            nOpen = Math.sqrt(PERF_C * rho / (a * Math.pow(dIn, 4) * cd * cd));
+            var N = Math.max(500, Math.min(50000, _num(o.nMc, 20000) | 0)), arr = [], z = _normals(mcSeed, 3 * N);
+            nMc = N;
+            var cdM = _num(o.cdMean, 0.62), cdS = _num(o.cdSd, 0.04);
+            for (var k2 = 0; k2 < N; k2++) {
+                var cdk = Math.min(0.95, Math.max(0.5, cdM + cdS * z[3 * k2]));
+                var dk = dIn * (1 + 0.08 * z[3 * k2 + 1]);
+                var ak = Math.max(0.05, a + se.a * z[3 * k2 + 2]);
+                arr.push(Math.sqrt(PERF_C * rho / (ak * Math.pow(dk, 4) * cdk * cdk)));
+            }
+            arr.sort(function (x1, x2) { return x1 - x2; });
+            var cA = 0.5 * se.a / a, cD = 2 * 0.08, cC = cdS / cdM;
+            var drv = (cD >= cA && cD >= cC) ? 'perforation entrance-hole diameter (d⁴)' : (cA >= cC ? 'perforation coefficient a of the fit' : 'perforation discharge coefficient');
+            band = { p10: _pct(arr, 0.1), p50: _pct(arr, 0.5), p90: _pct(arr, 0.9), driver: drv };
+        } else {
+            nText = 'not determinable';
+            notes.push('The perforation coefficient a is not positive: the pipe friction may be overestimated.');
+        }
+        // connection regime and label
+        var invalid = a < 0 || b < 0 || resid.some(function (r, i) { return Math.abs(r) > 3 * Math.sqrt(1 / w[i]) * Math.max(1, infl); });
+        var regime;
+        if (invalid) regime = 'fit invalid';
+        else if (dpPerf + dpNwb < 100) regime = 'good connection';
+        else if (dpPerf > 200 && dpNwb > 200) regime = 'mixed';
+        else if (dpNwb > 200 && dpNwb > 2 * dpPerf) regime = 'tortuosity dominated';
+        else if (dpPerf > 2 * dpNwb && _fin(perfs.n) && _fin(band.p90) && band.p90 < 0.5 * perfs.n) regime = 'perforation limited';
+        else regime = 'mixed';
+        var label = invalid ? 'low' : (se.pFrac <= 15 ? 'high' : (se.pFrac <= 40 ? 'medium' : 'low'));
+        notes.push('The in-fracture viscous term (∝ q^¼) aliases into b·q^½; p_frac is the fracture-entrance pressure.');
+        return { ok: true, pFrac: pFrac, se: se, a: a, b: b, beta: beta, drift: drift, nOpen: _nn(nOpen),
+                 nOpenBand: { p10: _nn(band.p10), p50: _nn(band.p50), p90: _nn(band.p90), driver: band.driver }, nOpenText: nText,
+                 at: { dpPerf: dpPerf, dpNwb: dpNwb, dpPipe: _nn(dpPipe) }, label: label, refused: null, resid: resid, corr: corr,
+                 regime: regime, betaCI: betaCI, chi2r: chi2r, notes: notes, seed: mcSeed, nMc: nMc };
+    }
+
+    // ── shared hinge (step-rate §4.15, ramp §4.15b): y = α + b1·min(x, x*) + b2·max(0, x − x*) ──
+    function _hingeCore(x, y, w, nGrid) {
+        var n = x.length, i;
+        var x0 = x[0], xs = (x[n - 1] - x[0]) || 1, ym = 0, ws = 0;
+        for (i = 0; i < n; i++) { ym += w[i] * y[i]; ws += w[i]; }
+        ym /= ws;
+        var FA = (typeof Float64Array === 'function') ? Float64Array : Array;
+        var X = new FA(n), c = new FA(n + 1), cx = new FA(n + 1), cxx = new FA(n + 1), cy = new FA(n + 1), cxy = new FA(n + 1), cyy = new FA(n + 1);
+        c[0] = cx[0] = cxx[0] = cy[0] = cxy[0] = cyy[0] = 0;
+        for (i = 0; i < n; i++) {
+            var Xi = (x[i] - x0) / xs, Yi = y[i] - ym, wi = w[i];
+            X[i] = Xi;
+            c[i + 1] = c[i] + wi; cx[i + 1] = cx[i] + wi * Xi; cxx[i + 1] = cxx[i] + wi * Xi * Xi;
+            cy[i + 1] = cy[i] + wi * Yi; cxy[i + 1] = cxy[i] + wi * Xi * Yi; cyy[i + 1] = cyy[i] + wi * Yi * Yi;
+        }
+        var A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], rhs = [0, 0, 0];
+        // single line in the scaled coordinates (for the F-test)
+        var dL = c[n] * cxx[n] - cx[n] * cx[n];
+        var lb = dL > 0 ? (c[n] * cxy[n] - cx[n] * cy[n]) / dL : 0, la = (cy[n] - lb * cx[n]) / c[n];
+        var sse1 = Math.max(0, cyy[n] - la * cy[n] - lb * cxy[n]);
+        function fitAt(qs) {
+            // split index k = number of X ≤ qs (binary search)
+            var lo = 0, hi = n;
+            while (lo < hi) { var m = (lo + hi) >> 1; if (X[m] <= qs) lo = m + 1; else hi = m; }
+            var k = lo;
+            var nL = c[k], SxL = cx[k], SxxL = cxx[k], SyL = cy[k], SxyL = cxy[k];
+            var nR = c[n] - nL, SxR = cx[n] - SxL, SxxR = cxx[n] - SxxL, SyR = cy[n] - SyL, SxyR = cxy[n] - SxyL;
+            var Su = SxL + nR * qs, Suu = SxxL + nR * qs * qs, Sv = SxR - nR * qs, Svv = SxxR - 2 * qs * SxR + nR * qs * qs, Suv = qs * Sv;
+            var Sy = cy[n], Suy = SxyL + qs * SyR, Svy = SxyR - qs * SyR;
+            A[0][0] = c[n]; A[0][1] = Su; A[0][2] = Sv; A[1][1] = Suu; A[1][2] = Suv; A[2][2] = Svv;
+            rhs[0] = Sy; rhs[1] = Suy; rhs[2] = Svy;
+            var beta = _solve3(A, rhs);
+            if (!beta) return null;
+            var sse = cyy[n] - (beta[0] * Sy + beta[1] * Suy + beta[2] * Svy);
+            return { qs: qs, beta: beta, sse: Math.max(0, sse), k: k };
+        }
+        return { fitAt: fitAt, X: X, x0: x0, xs: xs, ym: ym, sse1: sse1, syy: cyy[n], line: { a: ym + la - lb / xs * x0, b: lb / xs } };
+    }
+    // x ascending; w weights (optional); opts {lo, hi} index-based scan range (default 2nd .. 2nd-to-last point)
+    function hinge(x, y, w, opts) {
+        var o = opts || {}, n = x.length, i;
+        if (n < 4) return null;
+        if (!w) { w = []; for (i = 0; i < n; i++) w.push(1); }
+        var core = _hingeCore(x, y, w);
+        var X = core.X, loX = X[_num(o.iLo, 1)], hiX = X[n - 1 - _num(o.iHiBack, 1)];
+        if (_fin(o.xLo)) loX = Math.max(loX, (o.xLo - core.x0) / core.xs);
+        if (_fin(o.xHi)) hiX = Math.min(hiX, (o.xHi - core.x0) / core.xs);
+        if (!(hiX > loX)) return null;
+        var nG = _num(o.nGrid, 256), bestF = null, bestI = -1, cand = [];
+        for (i = 0; i <= nG; i++) cand.push(loX + (hiX - loX) * i / nG);
+        for (i = 0; i < n; i++) if (X[i] > loX && X[i] < hiX && (o.nGrid == null || n <= 600)) cand.push(X[i]);
+        cand.sort(function (a, b) { return a - b; });
+        for (i = 0; i < cand.length; i++) { var f = core.fitAt(cand[i]); if (f && (!bestF || f.sse < bestF.sse)) { bestF = f; bestI = i; } }
+        if (!bestF) return null;
+        // golden-section refine between the neighbours
+        var a0 = cand[Math.max(0, bestI - 1)], b0 = cand[Math.min(cand.length - 1, bestI + 1)], gr = 0.6180339887;
+        var c1 = b0 - gr * (b0 - a0), c2 = a0 + gr * (b0 - a0), f1 = core.fitAt(c1), f2 = core.fitAt(c2);
+        for (var it = 0; it < 40 && f1 && f2; it++) {
+            if (f1.sse < f2.sse) { b0 = c2; c2 = c1; f2 = f1; c1 = b0 - gr * (b0 - a0); f1 = core.fitAt(c1); }
+            else { a0 = c1; c1 = c2; f1 = f2; c2 = a0 + gr * (b0 - a0); f2 = core.fitAt(c2); }
+        }
+        [f1, f2].forEach(function (ff) { if (ff && ff.sse < bestF.sse) bestF = ff; });
+        // back to physical units
+        var qStar = core.x0 + bestF.qs * core.xs;
+        var b1 = bestF.beta[1] / core.xs, b2 = bestF.beta[2] / core.xs;
+        var alpha = core.ym + bestF.beta[0] - b1 * core.x0;   // y = α + b1·min(x,x*) + b2·max(0,x−x*), α at x = 0
+        // single line
+        // round-off floor: an exact line must not produce a break from rounding noise
+        var floor = 1e-10 * core.syy + n * Math.pow(1e-9 * (Math.abs(core.ym) + Math.abs(y[n - 1] - y[0]) + 1), 2);
+        var sse1 = Math.max(core.sse1, floor), sse2 = Math.max(bestF.sse, floor), d2 = n - 4;
+        var F = d2 > 0 ? Math.max(0, (sse1 - sse2) / 2) / (sse2 / d2) : 0;
+        if (!(F >= 0)) F = 0;
+        var pF = d2 > 0 ? Math.pow(1 + 2 * F / d2, -d2 / 2) : 1;
+        var fitFn = function (v) { return alpha + b1 * Math.min(v, qStar) + b2 * Math.max(0, v - qStar); };
+        return { qStar: qStar, alpha: alpha, b1: b1, b2: b2, sse: sse2, sse1: sse1, F: F, p: Math.min(1, Math.max(0, pF)),
+                 breakFound: d2 > 0 && pF < 0.05 && b2 < b1, yStar: fitFn(qStar), fit: fitFn, line: core.line };
+    }
+    function _bootHinge(x, y, h, nBoot, seed, hopts) {
+        var rng = _rng(seed), res = [], i, n = x.length;
+        for (i = 0; i < n; i++) res.push(y[i] - h.fit(x[i]));
+        var ys = [], qs = [], fx = [];
+        for (i = 0; i < n; i++) fx.push(h.fit(x[i]));
+        var yb = (typeof Float64Array === 'function') ? new Float64Array(n) : new Array(n);
+        // resample indices from an inline xorshift32 stream seeded by the seeded generator (no call per draw)
+        var xs32 = ((rng() * 4294967296) >>> 0) || 2463534242;
+        for (var r = 0; r < nBoot; r++) {
+            for (i = 0; i < n; i++) {
+                xs32 ^= xs32 << 13; xs32 >>>= 0; xs32 ^= xs32 >>> 17; xs32 ^= xs32 << 5; xs32 >>>= 0;
+                yb[i] = fx[i] + res[(xs32 % n)];
+            }
+            var hb = hinge(x, yb, null, hopts);
+            if (hb) { ys.push(hb.yStar); qs.push(hb.qStar); }
+        }
+        ys.sort(function (a, b) { return a - b; }); qs.sort(function (a, b) { return a - b; });
+        if (!ys.length) return null;
+        return { y: { p10: _pct(ys, 0.1), p50: _pct(ys, 0.5), p90: _pct(ys, 0.9) }, x: { p10: _pct(qs, 0.1), p50: _pct(qs, 0.5), p90: _pct(qs, 0.9) }, n: ys.length };
+    }
+
+    // ── step-rate test (§4.15, 3.4a) ─────────────────────────────────────────
+    function _slope(ts, ps) {
+        var n = ts.length; if (n < 2) return 0;
+        var mt = 0, mp = 0, i; for (i = 0; i < n; i++) { mt += ts[i]; mp += ps[i]; } mt /= n; mp /= n;
+        var sxy = 0, sxx = 0; for (i = 0; i < n; i++) { sxy += (ts[i] - mt) * (ps[i] - mp); sxx += (ts[i] - mt) * (ts[i] - mt); }
+        return sxx > 0 ? sxy / sxx : 0;
+    }
+    function stepRate(steps, a2, a3, a4) {
+        var t = null, p = null, o;
+        if (Array.isArray(a2)) { t = a2; p = a3; o = a4 || {}; } else { o = a2 || {}; t = o.t || null; p = o.p || null; }
+        var stabFrac = _num(o.stabFrac, 0.3), stabPsi = _num(o.stabPsi, 5), stabRise = _num(o.stabRiseFrac, 0.1);
+        var nBoot = Math.max(50, Math.min(5000, _num(o.nBoot, 500) | 0)), seed = _num(o.seed, 1);
+        var dpdtMax = _fin(o.dpdtMax) && o.dpdtMax > 0 ? o.dpdtMax : null;
+        var rows = [];
+        (Array.isArray(steps) ? steps : []).forEach(function (s, i) {
+            if (!s || !_fin(+s.q)) return;
+            var q = +s.q, pEnd = _fin(+s.pEnd) ? +s.pEnd : null, dpdt = 0, stab = true, rise = null, pStart = null;
+            if (pEnd == null && Array.isArray(t) && Array.isArray(p) && _fin(+s.t0) && _fin(+s.t1) && s.t1 > s.t0) {
+                var tt = [], pp = [], j;
+                for (j = 0; j < t.length; j++) if (t[j] >= s.t0 && t[j] <= s.t1 && _fin(p[j])) { tt.push(t[j]); pp.push(p[j]); }
+                if (tt.length < 3) return;
+                var cut = s.t1 - stabFrac * (s.t1 - s.t0), lt = [], lp = [];
+                for (j = 0; j < tt.length; j++) if (tt[j] >= cut) { lt.push(tt[j]); lp.push(pp[j]); }
+                if (lt.length < 2) { lt = tt.slice(-2); lp = pp.slice(-2); }
+                pEnd = _median(lp); dpdt = _slope(lt, lp); pStart = pp[0];
+                var drift = Math.abs(dpdt) * (s.t1 - s.t0);
+                rows.push({ q: q, pEnd: pEnd, dpdt: dpdt, stabilised: true, _drift: drift, _pStart: pStart, t0: +s.t0, t1: +s.t1, idx: i });
+                return;
+            }
+            if (pEnd != null) rows.push({ q: q, pEnd: pEnd, dpdt: _num(s.dpdt, 0), stabilised: s.stabilised !== false, idx: i });
+        });
+        if (rows.length < 3) return _fail('TOO_FEW_STEPS', 'A step-rate test needs at least three steps with an end pressure.', ['steps']);
+        // stabilisation (needs the previous step's end pressure)
+        for (var r = 0; r < rows.length; r++) {
+            var R = rows[r];
+            if (R._drift != null) {
+                var prev = r > 0 ? rows[r - 1].pEnd : R._pStart;
+                var riseP = Math.abs(R.pEnd - prev);
+                R.stabilised = R._drift < Math.max(stabPsi, stabRise * riseP);
+            }
+            // optional extra limit on the end-of-step slope (psi/h)
+            if (dpdtMax != null && _fin(R.dpdt) && Math.abs(R.dpdt) > dpdtMax) R.stabilised = false;
+        }
+        var order = rows.slice().sort(function (a, b) { return a.q - b.q; });
+        function solve(list) {
+            var x = list.map(function (s) { return s.q; }), y = list.map(function (s) { return s.pEnd; });
+            if (x.length < 5) return { h: null, x: x, y: y };
+            return { h: hinge(x, y), x: x, y: y };
+        }
+        function pack(sol, seedX) {
+            var h = sol.h;
+            if (!h) return { qStar: null, fep: null, band: { p10: null, p50: null, p90: null }, qStarBand: null, b1: null, b2: null, fTest: { F: 0, p: 1 }, breakFound: false,
+                             why: 'At least five steps are needed for the hinge fit and its F-test.' };
+            var bt = h.breakFound ? _bootHinge(sol.x, sol.y, h, nBoot, seedX) : null;
+            var why = h.breakFound ? null : (h.b2 >= h.b1 ? 'No break: the upper slope is not below the lower one (matrix convexity, plugging or rising friction).'
+                : 'No break: a single line fits as well (F-test p = ' + _f(h.p, 3) + ').');
+            var nb = { p10: null, p50: null, p90: null };
+            return { qStar: h.breakFound ? h.qStar : null, fep: h.breakFound ? h.yStar : null, band: bt ? bt.y : nb, qStarBand: bt ? bt.x : null,
+                     b1: h.b1, b2: h.b2, fTest: { F: h.F, p: h.p }, breakFound: h.breakFound, why: why, alpha: h.alpha };
+        }
+        var all = pack(solve(order), seed);
+        var unst = order.filter(function (s) { return !s.stabilised; });
+        var stableOnly = null;
+        if (unst.length) {
+            stableOnly = pack(solve(order.filter(function (s) { return s.stabilised; })), seed);
+            stableOnly.excluded = unst.map(function (s) { return s.q; });
+        }
+        var why = all.why;
+        if (unst.length) why = (why ? why + ' ' : '') + unst.length + ' step' + (unst.length > 1 ? 's are' : ' is') + ' not stabilised (drawn hollow); the band is also given without ' + (unst.length > 1 ? 'them' : 'it') + '.';
+        return { ok: true, qStar: _nn(all.qStar), fep: _nn(all.fep), band: all.band, qStarBand: all.qStarBand, b1: _nn(all.b1), b2: _nn(all.b2),
+                 fTest: { F: _nn(all.fTest.F), p: _nn(all.fTest.p) }, breakFound: all.breakFound,
+                 steps: rows.map(function (s) { return { q: s.q, pEnd: s.pEnd, dpdt: s.dpdt, stabilised: s.stabilised }; }),
+                 stableOnly: stableOnly, why: why ? why.slice(0, 299) : null, seed: seed, nBoot: nBoot };
+    }
+
+    // ── pump-in ramp analyser (§4.15b) ───────────────────────────────────────
+    function ramp(t, p, q, win, opts) {
+        var o = opts || {};
+        var kind = (o.kind === 'reopening' || o.kind === 'lot' || o.kind === 'pump-in') ? o.kind : 'pre-breakdown';
+        if (!Array.isArray(t) || !Array.isArray(p) || t.length !== p.length) return _fail('BAD_INPUT', 'The ramp needs time and pressure arrays of one length.', ['t', 'p']);
+        var t0 = -Infinity, t1 = Infinity;
+        if (Array.isArray(win)) { t0 = _num(win[0], t0); t1 = _num(win[1], t1); } else if (win) { t0 = _num(win.t0, t0); t1 = _num(win.t1, t1); }
+        var qScale = o.qUnit === 'bbl/d' ? 1 / 1440 : 1;
+        var tt = [], pp = [], qq = [], i;
+        for (i = 0; i < t.length; i++) {
+            if (!(t[i] >= t0 && t[i] <= t1) || !_fin(p[i])) continue;
+            var qi = Array.isArray(q) ? q[i] : q;
+            if (!_fin(qi)) continue;
+            tt.push(t[i]); pp.push(p[i]); qq.push(qi * qScale);
+        }
+        if (tt.length < 8) return _fail('TOO_FEW_POINTS', 'The ramp window holds fewer than eight samples.', ['win']);
+        var V = [0];
+        for (i = 1; i < tt.length; i++) V.push(V[i - 1] + 0.5 * (qq[i] + qq[i - 1]) * (tt[i] - tt[i - 1]) * 60);
+        if (!(V[V.length - 1] > 0)) return _fail('NO_VOLUME', 'No volume was pumped in the ramp window.', ['q']);
+        var qRamp = _median(qq);
+        var h = hinge(V, pp, null, { iLo: Math.max(2, Math.floor(0.03 * V.length)), iHiBack: Math.max(2, Math.floor(0.03 * V.length)), nGrid: 256 });
+        var line = _lsq(V.map(function (v) { return [1, v]; }), pp);
+        var knee = null, band = null, s1, s2 = null, stiff = null, label, why = null;
+        var hasKnee = h && h.breakFound && h.b1 > 0;
+        var rampBoot = Math.max(50, Math.min(2000, _num(o.nBoot, 500) | 0)), rampSeed = _num(o.seed, 1);
+        if (hasKnee) {
+            s1 = h.b1; s2 = h.b2;
+            stiff = s2 > 0 ? s1 / s2 : null;
+            knee = { p: h.yStar, V: h.qStar, t: _interp1(V, tt, h.qStar) };
+            var bt = _bootHinge(V, pp, h, rampBoot, rampSeed,
+                { iLo: Math.max(2, Math.floor(0.03 * V.length)), iHiBack: Math.max(2, Math.floor(0.03 * V.length)), nGrid: 48,
+                  xLo: h.qStar - 0.25 * V[V.length - 1], xHi: h.qStar + 0.25 * V[V.length - 1] });
+            band = bt ? bt.y : null;
+            label = (stiff != null && stiff < 1.2) ? 'low visibility' : 'knee';
+        } else {
+            s1 = line ? line.beta[1] : null;
+            label = 'no knee';
+            why = 'No knee: one straight line describes the ramp (F-test).';
+        }
+        // σ from the s1 segment, onset = first of three consecutive points 3σ below the s1 line
+        var aLine = hasKnee ? h.alpha : (line ? line.beta[0] : 0), sL = s1;
+        var rs = [];
+        for (i = 0; i < V.length; i++) if (!hasKnee || V[i] <= knee.V) rs.push(pp[i] - (aLine + sL * V[i]));
+        var sig = 1.4826 * _median(rs.map(function (r) { return Math.abs(r - _median(rs)); }));
+        if (!(sig > 0)) sig = 1e-6;
+        var onset = null, run = 0;
+        for (i = 0; i < V.length; i++) {
+            var dv = pp[i] - (aLine + sL * V[i]);
+            if (dv < -3 * sig) { run++; if (run === 3) { var j0 = i - 2; onset = { p: pp[j0], V: V[j0], t: tt[j0] }; break; } } else run = 0;
+        }
+        var nwbCorr = null;
+        var sd = o.stepDown || null;
+        if (sd && (_fin(sd.a) || _fin(sd.b))) {
+            nwbCorr = (_fin(sd.a) ? sd.a * qRamp * qRamp : 0) + (_fin(sd.b) ? nwbLoss(qRamp, { b: sd.b, beta: _num(sd.beta, 0.5), qt: _num(sd.qt, 0.1) }) : 0);
+            if (knee) knee.pCorr = knee.p - nwbCorr;
+        } else if (knee && kind === 'reopening') {
+            why = 'Reopening reads high by the near-wellbore loss (no step-down to correct it): an upper bound on closure.';
+        }
+        var VwCwRamp = s1 > 0 ? 1 / s1 : null;
+        // opts.VwCw (bbl/psi, the theory value of csys): storage ratio ramp / theory (> 2 → air or gas in the column, triage §6.3)
+        var VCth = _fin(o.VwCw) && o.VwCw > 0 ? o.VwCw : null;
+        return { ok: true, kind: kind, VwCwRamp: _nn(VwCwRamp), knee: knee, band: band, slopes: { s1: _nn(s1), s2: _nn(s2) }, stiffRatio: _nn(stiff),
+                 nwbCorr: _nn(nwbCorr), label: label, why: why, onset: onset, sigma: sig, qRamp: qRamp, fTest: h ? { F: h.F, p: h.p } : null,
+                 AfCf: (hasKnee && s2 > 0 && s1 > 0) ? (1 / s2 - 1 / s1) : null,
+                 storageRatio: (VCth && _fin(VwCwRamp)) ? VwCwRamp / VCth : null, VwCwTheory: VCth,
+                 seed: rampSeed, nBoot: hasKnee ? rampBoot : 0 };
+    }
+
+    // ── water hammer (§4.17, §4.4 item 1) ────────────────────────────────────
+    function vwcwFromPeriod(T, L, Aft2, rhoPpg, mode) {
+        if (!(T > 0 && L > 0 && Aft2 > 0)) return null;
+        var c = (mode === 'half' ? 2 : 4) * L / T, rho = _num(rhoPpg, 8.43) * SLUG_PER_PPG;
+        return L * Aft2 * 144 / (rho * c * c) / BBL;
+    }
+    function _gHalf(dtD) {
+        if (!(dtD > 0)) return 0;
+        var a = 1 + dtD;
+        return (4 / Math.PI) * (a * Math.asin(1 / Math.sqrt(a)) + Math.sqrt(dtD) - Math.PI / 2);
+    }
+    function hammerQuick(tHz, p, ts, ctx) {
+        var cx = ctx || {};
+        if (!Array.isArray(tHz) || !Array.isArray(p) || tHz.length !== p.length) return _fail('BAD_INPUT', 'The high-rate window needs time and pressure arrays of one length.', ['tHz']);
+        ts = _num(ts, NaN);
+        if (!_fin(ts)) return _fail('BAD_INPUT', 'The shut-in time is needed.', ['ts']);
+        var c = _col(cx.column);
+        var fl = _fluid(cx.fluid || (c ? c.fluid : null));
+        var cs = c ? csys(c, fl) : null;
+        var cw = _fin(cx.c) && cx.c > 0 ? cx.c : (cs && cs.ok ? cs.waveSpeed : 4500);
+        var cSource = cx.cCalibrated ? 'calibrated' : 'korteweg';
+        // L = the expected reflector (a known packer / tubing tail / liner top when given, else the perforation datum): it sets the
+        // sampling test and the period seed; the match is always reported against the perforation datum (Ld)
+        var Lref = _fin(cx.reflectorMd) && cx.reflectorMd > 0 ? cx.reflectorMd : null;
+        var Ld = c ? c.datumMd : Lref;
+        var L = Lref || Ld;
+        var tClose = Math.max(0, _num(cx.tClose, 0));            // s
+        var winS = _num(cx.windowS, 60);
+        var s = [], y = [], i;
+        for (i = 0; i < tHz.length; i++) {
+            var si = (tHz[i] - ts) * 3600;
+            if (si > tClose && si <= tClose + winS && _fin(p[i])) { s.push(si); y.push(p[i]); }
+        }
+        var dts = []; for (i = 1; i < s.length; i++) dts.push(s[i] - s[i - 1]);
+        var hz = dts.length ? 1 / _median(dts) : 0;
+        var twoLc = L ? 2 * L / cw : null;
+        var per2Lc = twoLc ? hz * twoLc : 0;
+        var sampling = { hz: hz > 0 ? hz : 1e-6, per2Lc: per2Lc, ok: per2Lc >= 10 };
+        if (!sampling.ok || s.length < 40) {
+            var r0 = _fail('NOT_RESOLVABLE', 'Water hammer not resolvable: ' + (L ? 'fewer than 10 samples per 2L/c (' + _f(per2Lc, 1) + ').' : 'the reflector depth is unknown.'), ['tHz']);
+            r0.sampling = sampling; r0.why = r0.errors[0];
+            return r0;
+        }
+        // period seed: centred moving average over 4L/c removed, autocorrelation
+        var n = s.length, dtS = 1 / hz;
+        var W = Math.max(2, Math.round(2 * twoLc / dtS / 2));
+        var cum = [0]; for (i = 0; i < n; i++) cum.push(cum[i] + y[i]);
+        var d = [];
+        for (i = 0; i < n; i++) { var a0 = Math.max(0, i - W), b0 = Math.min(n, i + W + 1); d.push(y[i] - (cum[b0] - cum[a0]) / (b0 - a0)); }
+        var e0 = Math.min(n, Math.round(n - W)), st0 = Math.min(W, n >> 2);
+        var lagLo = Math.max(2, Math.round(0.6 * twoLc / dtS)), lagHi = Math.min(n >> 1, Math.round(2.6 * twoLc / dtS));
+        var ac = [], lag, bestLag = -1, bestR = -1;
+        var den = 0; for (i = st0; i < e0; i++) den += d[i] * d[i];
+        for (lag = lagLo; lag <= lagHi; lag++) {
+            var num = 0; for (i = st0; i + lag < e0; i++) num += d[i] * d[i + lag];
+            ac.push(den > 0 ? num / den : 0);
+        }
+        // the strongest peak; the quarter-wave (4L/c) peak is preferred when it is at least 80 % of a 2L/c peak
+        for (i = 1; i + 1 < ac.length; i++) if (ac[i] >= ac[i - 1] && ac[i] >= ac[i + 1] && ac[i] > bestR) { bestR = ac[i]; bestLag = lagLo + i; }
+        var T0 = bestLag > 0 ? bestLag * dtS : 2 * twoLc;
+        if (bestLag > 0) {
+            var k0 = bestLag - lagLo;
+            if (k0 > 0 && k0 + 1 < ac.length) { var den2 = ac[k0 - 1] - 2 * ac[k0] + ac[k0 + 1]; if (den2 < 0) T0 = (bestLag + 0.5 * (ac[k0 - 1] - ac[k0 + 1]) / den2) * dtS; }
+        }
+        var tpH = _fin(cx.tp) && cx.tp > 0 ? cx.tp : null;
+        var xS = s.map(function (v) { return tpH ? _gHalf(v / 3600 / tpH) : v / 60; });
+        // bleed term
+        var bl = cx.bleed || null, VC = _fin(cx.VwCw) ? cx.VwCw : (cs && cs.ok ? cs.VwCw : null);
+        var q0 = _num(cx.qShut, NaN);
+        // no step-down coefficients: fitBleed:true asks for a free fit of b from the default seed (b 100, β ½, q_t 0.1). It is opt-in
+        // (a seed far from the truth costs LM iterations); otherwise the wave ISIP cannot be accepted (§4.4) and is an upper estimate
+        var bleedSeeded = 'step-down';
+        if (!(bl && _fin(bl.b) && bl.b > 0) && cx.fitBleed === true) { bl = { b: 100, beta: 0.5, qt: 0.1 }; bleedSeeded = 'default'; }
+        var canBleed = !!(bl && _fin(bl.b) && bl.b > 0 && VC > 0 && q0 > 0);
+        var fitBleed = canBleed && cx.fitBleed !== false;
+        function bleedCurve(b) {
+            var bo = bleedOff({ b: b, beta: _num(bl.beta, 0.5), qt: _num(bl.qt, 0.1), VwCw: VC, q0: q0 });
+            return bo.ok ? bo : null;
+        }
+        function design(T, tau, b) {
+            var bo = fitBleed ? bleedCurve(b) : null, cols = [];
+            for (var k = 0; k < n; k++) {
+                var e = Math.exp(-s[k] / tau), w = 2 * Math.PI * s[k] / T;
+                var row = [1, -xS[k], e * Math.cos(w), -e * Math.sin(w)];
+                cols.push({ row: row, bleed: bo ? bo.curve(s[k] / 3600) : 0 });
+            }
+            return cols;
+        }
+        function proj(theta) {
+            var T = theta[0], tau = theta[1], b = fitBleed ? theta[2] : 0;
+            var D = design(T, tau, b), X = [], yy = [];
+            for (var k = 0; k < n; k++) { X.push(D[k].row); yy.push(y[k] - D[k].bleed); }
+            var r = _lsq(X, yy);
+            if (!r) return null;
+            var res = []; for (k = 0; k < n; k++) res.push(yy[k] - r.fit[k]);
+            return { lin: r.beta, res: res, sse: r.sse, D: D };
+        }
+        var th0 = [T0, 2 * T0], lo = [0.5 * T0, 0.2 * T0], hi = [2 * T0, 50 * T0], sc = [T0, T0];
+        if (fitBleed) { th0.push(bl.b); lo.push(0.05 * bl.b); hi.push(20 * bl.b); sc.push(bl.b); }
+        // τ seed grid
+        var bestTh = th0, bestS = Infinity;
+        [0.5, 1, 2, 4, 8].forEach(function (f) {
+            var th = th0.slice(); th[1] = f * T0;
+            var pr = proj(th);
+            if (pr && pr.sse < bestS) { bestS = pr.sse; bestTh = th; }
+        });
+        var lm = _lmVec(function (th) { var pr = proj(th); return pr ? pr.res : [Infinity]; }, bestTh, lo, hi, { maxIter: 60, scale: sc });
+        var fin = proj(lm.p);
+        if (!fin) return _fail('FIT_FAILED', 'The water-hammer fit did not converge.', ['tHz']);
+        var T = lm.p[0], tau = lm.p[1], bFit = fitBleed ? lm.p[2] : null;
+        var isip = fin.lin[0], mG = fin.lin[1], ac0 = fin.lin[2], as0 = fin.lin[3];
+        var A = Math.sqrt(ac0 * ac0 + as0 * as0), phi = Math.atan2(as0, ac0);
+        var sigmaFit = Math.sqrt(fin.sse / Math.max(1, n - (fitBleed ? 7 : 6)));
+        // gauge noise from second differences (independent of the model misfit): σ = 1.4826·MAD(Δ²p)/√6
+        var d2 = []; for (i = 1; i + 1 < n; i++) d2.push(y[i + 1] - 2 * y[i] + y[i - 1]);
+        var md2 = _median(d2), sigma = 1.4826 * _median(d2.map(function (v) { return Math.abs(v - md2); })) / Math.sqrt(6);
+        if (!(sigma > 0)) sigma = sigmaFit;
+        // acceptance of the wave ISIP (§4.4): bleed fitted, or predicted Δ at the window end below max(2 psi, 3σ)
+        var dEnd = null, upper = false, whyB = null;
+        if (fitBleed) { var bo2 = bleedCurve(bFit); dEnd = bo2 ? bo2.curve(s[n - 1] / 3600) : null; }
+        else if (canBleed) {
+            var bo3 = bleedCurve(bl.b); dEnd = bo3 ? bo3.curve(s[n - 1] / 3600) : null;
+            if (dEnd != null && dEnd >= Math.max(2, 3 * sigma)) {
+                upper = true;
+                whyB = 'Upper estimate: the friction bleed-off is not in the fit and still ' + _f(dEnd, 1) + ' psi at the end of the window.';
+            }
+        } else {
+            // §4.4: neither acceptance condition can be shown without the bleed-off law → upper estimate
+            upper = true;
+            whyB = 'Upper estimate: the friction bleed-off is not modelled (' + (!(bl && _fin(bl.b) && bl.b > 0) ? 'no step-down coefficients'
+                : (!(q0 > 0) ? 'no shut-in rate' : 'no wellbore storage V_w·c_w')) + '), so a decaying bleed-off may still lift the midline.';
+        }
+        // regime and reflector. 'staircase': the fitted period is ≈ 2L/c — a closed-end (Γ > 0) termination steps toward p_f every
+        // 2L/c, and with the midline removed those steps are a 2L/c-periodic component; 'ringing': ≈ 4L/c (open end, Γ < 0)
+        var regime, match = 'unknown';
+        if (A < 3 * sigma) regime = 'none';
+        else if (tau < T / 2) regime = 'single';
+        else regime = (L && Math.abs(T / (2 * twoLc) - 0.5) < Math.abs(T / (2 * twoLc) - 1)) ? 'staircase' : 'ringing';
+        var wf = regime === 'staircase' ? 2 : 4, Lr = cw * T / wf, onRef = false, onPerfs = false;
+        if (Ld && regime !== 'none') {
+            onPerfs = Math.abs(Lr - Ld) / Ld <= 0.1;
+            onRef = !onPerfs && Lref != null && Math.abs(Lr - Lref) / Lref <= 0.1;
+            match = onPerfs ? 'perfs' : (Lr < Ld ? 'shallower' : 'deeper');
+        }
+        // the depth that rings when it is known: the perforations, or the given reflector
+        var Lring = onPerfs ? Ld : (onRef ? Lref : null);
+        // a known reflector that the ring matches calibrates c (§4.17): c = 4L/T (2L/T for the half wave)
+        if (onRef) { cw = wf * Lref / T; cSource = 'calibrated'; }
+        var Lq = cw * T / 4, Lh = cw * T / 2;
+        var gDecay = regime === 'staircase' ? Math.exp(-T / tau) : Math.exp(-T / (2 * tau));
+        // Joukowsky (expected at the shut-in rate, scaled by the closure duration; measured = first peak-to-trough)
+        var seg0 = c && c.segments.length ? c.segments[0] : null, rho = fl.rhoPpg * SLUG_PER_PPG;
+        var jExp = null;
+        if (seg0 && q0 > 0) { jExp = rho * cw * (q0 * BPM / seg0.area) / 144; if (tClose > 0 && twoLc) jExp *= Math.min(1, twoLc / tClose); }
+        var mx = -Infinity, mn = Infinity;
+        for (i = 0; i < n && s[i] <= s[0] + T; i++) { var dd = A * Math.exp(-s[i] / tau) * Math.cos(2 * Math.PI * s[i] / T + phi); if (dd > mx) mx = dd; if (dd < mn) mn = dd; }
+        var jMeas = _fin(mx) ? mx - mn : null;
+        // V_w·c_w = L·A/(ρc²) from the period, over the section that rings (surface → the matched known depth) only
+        var VwCwH = null;
+        if (Lring && regime !== 'none') {
+            var cMeas = wf * Lring / T, Vft3 = null;
+            if (c && c.segments.length) {
+                Vft3 = 0;
+                c.segments.forEach(function (sg) { var len = Math.min(sg.botMd, Lring) - sg.topMd; if (len > 0) Vft3 += len * sg.area; });
+            } else if (seg0) Vft3 = seg0.area * Lring;
+            if (Vft3 > 0) VwCwH = Vft3 * 144 / (rho * cMeas * cMeas) / BBL;
+        }
+        var why = whyB;
+        if (regime === 'none') why = 'No water-hammer signal above the noise in the window.';
+        // delta = T/τ, the logarithmic decrement of the ring per fitted period
+        return { ok: true, why: why ? why.slice(0, 299) : null, c: cw, cSource: cSource, T: T, tau: tau, delta: T / tau, A: A, phi: phi, isip: isip,
+                 regime: regime, Lquarter: Lq, Lhalf: Lh, reflectorMatch: match, gammaDecay: gDecay,
+                 joukowsky: { expected: _nn(jExp), measured: _nn(jMeas), ratio: (_fin(jExp) && jExp > 0 && _fin(jMeas)) ? jMeas / jExp : null },
+                 VwCwHammer: _nn(VwCwH), tEnd: ts + s[n - 1] / 3600, sampling: sampling,
+                 upper: upper, bleed: { fitted: !!fitBleed, b: _nn(bFit), dEnd: _nn(dEnd), seed: canBleed ? bleedSeeded : null }, slope: mG, sigma: sigma, sigmaFit: sigmaFit, n: n, converged: lm.converged };
+    }
+
+    // ── rate ↔ pressure clock alignment (§4.1) ───────────────────────────────
+    function align(tp, p, tq, q, opts) {
+        var o = opts || {};
+        if (!Array.isArray(tp) || !Array.isArray(p) || !Array.isArray(tq) || !Array.isArray(q) || tp.length < 4 || tq.length < 4)
+            return _fail('BAD_INPUT', 'Clock alignment needs pressure and rate records.', ['tp', 'tq']);
+        var maxLag = _num(o.maxLagS, 1800), i;
+        var Tp = [], P = [], Tq = [], Q = [];
+        for (i = 0; i < tp.length; i++) if (_fin(tp[i]) && _fin(p[i])) { Tp.push(tp[i] * 3600); P.push(p[i]); }
+        for (i = 0; i < tq.length; i++) if (_fin(tq[i]) && _fin(q[i])) { Tq.push(tq[i] * 3600); Q.push(q[i]); }
+        var nP = Tp.length, nQ = Tq.length;
+        var dp = []; for (i = 1; i < nP; i++) dp.push(P[i] - P[i - 1]);
+        // event method: the last rate drop below 5 % of the preceding rate vs the largest negative pressure difference
+        var tShQ = null, qMx = 0;
+        for (i = 0; i < nQ; i++) if (Q[i] > qMx) qMx = Q[i];
+        for (i = nQ - 1; i >= 1; i--) {
+            var thr = Math.max(0.05 * Q[i - 1], 0.02 * qMx);
+            if (Q[i - 1] > 0.1 * qMx && Q[i] < thr) { tShQ = Tq[i - 1] + (Q[i - 1] - thr) / (Q[i - 1] - Q[i]) * (Tq[i] - Tq[i - 1]); break; }
+        }
+        var iMin = 0; for (i = 1; i < dp.length; i++) if (dp[i] < dp[iMin]) iMin = i;
+        var offEvent = tShQ != null ? tShQ - 0.5 * (Tp[iMin] + Tp[iMin + 1]) : null;
+        // scan ±maxLag around 0 and, when the event offset lies outside that, around it too; the better score wins
+        var centres = [0];
+        if (offEvent != null && Math.abs(offEvent) > maxLag) centres.push(Math.round(offEvent));
+        function lowerBound(arr, n, v) { var lo = 0, hi = n; while (lo < hi) { var m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; } return lo; }
+        function score(lag, k0, k1) {
+            var ka = k0 || 0, kb = k1 || nP, s = 0, qPrev = null;
+            var j = Math.max(0, lowerBound(Tq, nQ, Tp[ka] + lag) - 1);
+            for (var k = ka; k < kb; k++) {
+                var tt = Tp[k] + lag;
+                while (j + 1 < nQ && Tq[j + 1] < tt) j++;
+                var qv;
+                if (tt <= Tq[0]) qv = Q[0]; else if (tt >= Tq[nQ - 1]) qv = Q[nQ - 1];
+                else { var f = (tt - Tq[j]) / (Tq[j + 1] - Tq[j]); qv = Q[j] + f * (Q[j + 1] - Q[j]); }
+                if (k > ka) s += dp[k - 1] * (qv - qPrev);
+                qPrev = qv;
+            }
+            return s;
+        }
+        // the pressure-sample ranges that can see a rate change for some lag in [lagA, lagB]: outside them the interpolated rate is
+        // constant and adds nothing to the score, so scoring only these is exact and costs O(samples near changes) per lag
+        function ranges(lagA, lagB) {
+            var iv = [], j, out = [];
+            for (j = 0; j + 1 < nQ; j++) {
+                if (Q[j + 1] === Q[j]) continue;
+                var a = Tq[j] - lagB, b = Tq[j + 1] - lagA;
+                if (iv.length && a <= iv[iv.length - 1][1]) { if (b > iv[iv.length - 1][1]) iv[iv.length - 1][1] = b; } else iv.push([a, b]);
+            }
+            for (j = 0; j < iv.length; j++) {
+                var k0 = Math.max(0, lowerBound(Tp, nP, iv[j][0]) - 1), k1 = Math.min(nP, lowerBound(Tp, nP, iv[j][1]) + 1);
+                if (k1 - k0 < 2) continue;
+                if (out.length && k0 <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], k1); else out.push([k0, k1]);
+            }
+            return out;
+        }
+        function scoreR(lag, rs) { var s = 0; for (var r = 0; r < rs.length; r++) s += score(lag, rs[r][0], rs[r][1]); return s; }
+        var dtP = _median(Tp.slice(1).map(function (v, k) { return v - Tp[k]; }));
+        var coarse = Math.max(0.5, Math.min(5, _fin(dtP) ? dtP : 1));
+        var best = null;
+        centres.forEach(function (centre) {
+            var rs = ranges(centre - maxLag - 1, centre + maxLag + 1);
+            for (var lag = centre - maxLag; lag <= centre + maxLag + 1e-9; lag += coarse) { var sc = scoreR(lag, rs); if (!best || sc > best.s) best = { lag: lag, s: sc }; }
+        });
+        var lag;
+        var fineStep = 0.1, fb = null, fineList = [], rsF = ranges(best.lag - 2 * coarse - 1, best.lag + 2 * coarse + 1);
+        for (lag = best.lag - 2 * coarse; lag <= best.lag + 2 * coarse + 1e-9; lag += fineStep) { var sf = scoreR(lag, rsF); fineList.push([lag, sf]); if (!fb || sf > fb.s) fb = { lag: lag, s: sf, k: fineList.length - 1 }; }
+        var off = fb.lag;
+        if (fb.k > 0 && fb.k + 1 < fineList.length) {
+            var y0 = fineList[fb.k - 1][1], y1 = fineList[fb.k][1], y2 = fineList[fb.k + 1][1], den = y0 - 2 * y1 + y2;
+            if (den < 0) off = fb.lag + 0.5 * fineStep * (y0 - y2) / den;
+        }
+        // normalised score
+        var sdp = 0; for (i = 0; i < dp.length; i++) sdp += dp[i] * dp[i];
+        var sdq = 0; for (i = 1; i < nQ; i++) sdq += (Q[i] - Q[i - 1]) * (Q[i] - Q[i - 1]);
+        var norm = (sdp > 0 && sdq > 0) ? fb.s / Math.sqrt(sdp * sdq) : 0;
+        var method = 'xcorr';
+        if (!(fb.s > 0) && offEvent != null) { off = offEvent; method = 'event'; }
+        // clock drift: offsets of the two halves of the rate-change energy, when their centroids are ≥ 1 h apart
+        var drift = 0, driftEstimated = false;
+        if (method === 'xcorr') {
+            // split at the longest quiet gap between rate changes (pressure clock), each side carrying ≥ 20 % of the change energy
+            var ev = [], tot = 0, eMax = 0;
+            for (i = 1; i < nQ; i++) { var e = Math.abs(Q[i] - Q[i - 1]); if (e > eMax) eMax = e; }
+            for (i = 1; i < nQ; i++) { var e2 = Math.abs(Q[i] - Q[i - 1]); if (e2 > 0.1 * eMax) { ev.push({ t: 0.5 * (Tq[i] + Tq[i - 1]) - off, e: e2 }); tot += e2; } }
+            var tSplit = null, gap = 0, c1 = 0, w1 = 0, c2 = 0, w2 = 0;
+            for (i = 1; i < ev.length; i++) if (ev[i].t - ev[i - 1].t > gap) { gap = ev[i].t - ev[i - 1].t; tSplit = 0.5 * (ev[i].t + ev[i - 1].t); }
+            if (tSplit != null) ev.forEach(function (x) { if (x.t < tSplit) { c1 += x.e * x.t; w1 += x.e; } else { c2 += x.e * x.t; w2 += x.e; } });
+            if (!(w1 >= 0.2 * tot && w2 >= 0.2 * tot)) tSplit = null;
+            if (tSplit != null && w1 > 0 && w2 > 0 && (c2 / w2 - c1 / w1) >= 3600) {
+                var kS = 0; while (kS < nP && Tp[kS] < tSplit) kS++;
+                var fine = function (k0, k1) {
+                    var bc = null, lg;
+                    for (lg = off - 120; lg <= off + 120 + 1e-9; lg += coarse) { var vc = score(lg, k0, k1); if (!bc || vc > bc.s) bc = { lag: lg, s: vc }; }
+                    var bl = null, list = [];
+                    for (lg = bc.lag - 2 * coarse; lg <= bc.lag + 2 * coarse + 1e-9; lg += fineStep) { var v = score(lg, k0, k1); list.push([lg, v]); if (!bl || v > bl.s) bl = { lag: lg, s: v, k: list.length - 1 }; }
+                    var o2 = bl.lag;
+                    if (bl.k > 0 && bl.k + 1 < list.length) { var a1 = list[bl.k - 1][1], a2 = list[bl.k][1], a3 = list[bl.k + 1][1], dn = a1 - 2 * a2 + a3; if (dn < 0) o2 = bl.lag + 0.5 * fineStep * (a1 - a3) / dn; }
+                    return bl.s > 0 ? o2 : null;
+                };
+                var oA = fine(0, kS), oB = fine(Math.max(0, kS - 1), nP);
+                if (oA != null && oB != null) { drift = (oB - oA) / ((c2 / w2 - c1 / w1) / 86400); driftEstimated = true; }
+            }
+        }
+        var hrs = Math.round(off / 3600);
+        var hourShift = hrs !== 0 && Math.abs(off - 3600 * hrs) < 5;
+        var events = [];
+        if (tShQ != null) events.push({ kind: 'shut-in', tRate: tShQ / 3600, tPressure: 0.5 * (Tp[iMin] + Tp[iMin + 1]) / 3600, offsetS: offEvent });
+        return { ok: true, offsetS: off, driftSPerDay: drift, driftEstimated: driftEstimated, score: norm, events: events, hourShift: hourShift, method: method,
+                 confirm: Math.abs(off) > 2, text: (Math.abs(off) > 2 ? 'The rate clock is offset by ' + _f(off, 1) + ' s from the pressure clock' + (hourShift ? ' (a whole number of hours: time zone or daylight saving)' : '') + '; apply after confirmation.'
+                     : 'The rate and pressure clocks agree within 2 s.') };
+    }
+
+    // ── namespace (merge, never replace) ─────────────────────────────────────
+    var W = G.WTS_wellbore = G.WTS_wellbore || {};
+    var API = { column: column, csys: csys, tempProfile: tempProfile, hydrostatic: hydrostatic, pipeFriction: pipeFriction, perfFriction: perfFriction,
+                nwbLoss: nwbLoss, bleedOff: bleedOff, convert: convert, vacuum: vacuum, stepDown: stepDown, stepDownDesignCheck: stepDownDesignCheck,
+                stepRate: stepRate, ramp: ramp, hammerQuick: hammerQuick, align: align,
+                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod };
+    Object.keys(API).forEach(function (k) { W[k] = _safe(k, API[k]); });
+    W.perfConstant = perfConstant;
+    W.salinityFromPpg = salinityFromPpg;
+    W.rhoScPpg = rhoScPpg;
+    W.rhoAt = function (pp, T, fluid) { return rhoAt(pp, T, fluid); };
+    W.hinge = function (x, y, w, o) { try { return hinge(x, y, w, o); } catch (e) { return null; } };
+    W.version = '3.4a-1';
+})();
+
+// ─── END 48-calc-wellbore ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -29824,6 +31324,3091 @@ pipesz: {
 
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-dfit-cal ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-dfit-cal.js  (Round 9)
+// GENERATED by dfit-validate.js --write (3.4b, WP8) — do not edit by hand
+// placeholder (3.4a): written by WP0, uncalibrated
+// -----------------------------------------------------------------------------
+// helper module: does not add a page to window.WTS_calcRegistry
+//
+// window.PRiSM_dfit_cal — the DFIT confidence-label calibration table (docs/DFIT-PLAN.md §3.9, §8.4). In 3.4a it is the
+// uncalibrated placeholder of §3.9: labels say "uncalibrated" and no hit rate is shown. Loads with no document and no
+// other symbol; the table is deep-frozen.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    function freeze(o) { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); } return o; }
+    G.PRiSM_dfit_cal = freeze({
+        calibrated: false, version: null, generator: null, n: 0,
+        hitRate: { single: { high: null, medium: null, low: null }, range: { medium: null, low: null } },
+        intervalScore: { range: null },
+        cusum: { k: 0.5, h: 5, decimate: '2L' },
+        thresholds: {}
+    });
+})();
+
+// ─── END 49-calc-dfit-cal ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-dfit-info ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-dfit-info.js  (Round 9)
+// -----------------------------------------------------------------------------
+// helper module: does not add a page to window.WTS_calcRegistry
+//
+// DFIT method notes (docs/DFIT-PLAN.md §3.9, §6.13; owner WP6):
+//   window.WTS_dfitInfo = { notes, keys(), groups(), content(key), open(key, opener, mount), close(), isOpen(), css() }
+//
+//   notes[key] = { key, group, title, lead, assumptions:[text], failureModes:[text], distinguish, cites:[text] }
+//     one neutral note per closure method (tangent, sqrt, maxdpdg, compliance, crel, loglog, varcomp, model, fissure,
+//     reopening, user), per closure family (F0–F4), per leak-off type, per after-closure regime and per ISIP method,
+//     plus 'index' (the list the Tools entry "Method notes" opens). Notes are labelled by method, never by person or
+//     school, and present the closure dispute as open. Citations are author, year, title and SPE number only.
+//   open(key, opener, mount) → the <dialog id="wts_dfit_info" class="rp-skip" data-rp-nosnap> (never captured by reports
+//     or autosave), mounted in #pgBody (navigation removes it) or the body; Esc, the × / Close buttons and a backdrop
+//     click close it; focus returns to the opener. Unknown keys open the index. No document is needed to load this file;
+//     open() returns null without one.
+//
+// Pure data + one dialog; no timers, no storage, no events.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+    // ── References (author, year, title, SPE number; plan §13, verified numbers only) ──
+    var R = {
+        nolte79: 'Nolte, K.G. 1979. Determination of fracture parameters from fracturing pressure decline. SPE 8341.',
+        nolte86: 'Nolte, K.G. 1986. A general analysis of fracturing pressure decline with application to three models. SPE 12941.',
+        nolteSmith81: 'Nolte, K.G. and Smith, M.B. 1981. Interpretation of fracturing pressures. SPE 8297.',
+        castillo87: 'Castillo, J.L. 1987. Modified fracture pressure decline analysis including pressure-dependent leakoff. SPE 16417.',
+        barree98: 'Barree, R.D. 1998. Applications of pre-frac injection/falloff tests in fissured reservoirs — field examples. SPE 39932.',
+        barree09: 'Barree, R.D., Barree, V.L. and Craig, D.P. 2009. Holistic fracture diagnostics: consistent interpretation of prefrac injection tests using multiple analysis methods. SPE 107877.',
+        barree15: 'Barree, R.D., Miskimins, J.L. and Gilbert, J.V. 2015. Diagnostic fracture injection tests: common mistakes, misfires, and misdiagnoses. SPE 169539.',
+        barreeMuk96: 'Barree, R.D. and Mukherjee, H. 1996. Determination of pressure dependent leakoff and its effect on fracture geometry. SPE 36424.',
+        bachman12: 'Bachman, Walters and Hawkes 2012. Reappraisal of the G time concept in mini-frac analysis. SPE 160169.',
+        craig17: 'Craig, D.P., Barree, R.D., Warpinski, N.R. and Blasingame, T.A. 2017. Fracture closure stress: reexamining field and laboratory experiments of fracture closure using modern interpretation methodologies. SPE 187038.',
+        craigBla06: 'Craig, D.P. and Blasingame, T.A. 2006. Application of a new fracture-injection/falloff model accounting for propagating, dilated, and closing hydraulic fractures. SPE 100578.',
+        liu15: 'Liu and Ehlig-Economides 2015. Comprehensive global model for before-closure analysis of an injection falloff fracture calibration test. SPE 174906.',
+        mcclure16: 'McClure, M.W., Jung, H., Cramer, D.D. and Sharma, M.M. 2016. The fracture-compliance method for picking closure pressure from diagnostic fracture-injection tests. SPE 179725.',
+        mcclure17: 'McClure, M.W. 2017. The spurious deflection on log-log superposition-time derivative plots of diagnostic fracture-injection tests. SPE 186098.',
+        mcclure22: 'McClure, Fowler and Picone 2022. Best practices in DFIT interpretation: comparative analysis of 62 DFITs from nine different shale plays. SPE 205297.',
+        zanganeh17: 'Zanganeh, B., Clarkson, C.R. and Hawkes, R.V. 2017. Reinterpretation of fracture closure dynamics during diagnostic fracture injection tests. SPE 185649.',
+        hubbert57: 'Hubbert, M.K. and Willis, D.G. 1957. Mechanics of hydraulic fracturing. SPE 686-G.',
+        haimson67: 'Haimson, B. and Fairhurst, C. 1967. Initiation and extension of hydraulic fractures in rocks. SPE 1710.',
+        nolteACA97: 'Nolte, K.G., Maniere, J.L. and Owens, K.A. 1997. After-closure analysis of fracture calibration tests. SPE 38676.',
+        nolteBg97: 'Nolte, K.G. 1997. Background for after-closure analysis of fracture calibration tests. SPE 39407.',
+        talley99: 'Talley, G.R., Swindell, T.M., Waters, G.A. and Nolte, K.G. 1999. Field application of after-closure analysis of fracture calibration tests. SPE 52220.',
+        soliman05: 'Soliman, M.Y., Craig, D., Bartko, K., Rahim, Z. and Adams, D. 2005. After-closure analysis to determine formation permeability, reservoir pressure, and residual fracture properties. SPE 93419.',
+        gu93: 'Gu, H., Elbel, J.L., Nolte, K.G., Cheng, A.H.-D. and Abousleiman, Y. 1993. Formation permeability determination using impulse-fracture injection. SPE 25425.',
+        mohamed11: 'Mohamed, I.M. et al. 2011. Evaluation of after-closure analysis techniques for tight and shale gas formations. SPE 140136.',
+        marongiu11: 'Marongiu-Porcu, M., Ehlig-Economides, C.A. and Economides, M.J. 2011. Global model for fracture falloff analysis. SPE 144028.',
+        cinco81: 'Cinco-Ley, H. and Samaniego-V., F. 1981. Transient pressure analysis for fractured wells. SPE 7490.',
+        bourdet89: 'Bourdet, D., Ayoub, J.A. and Pirard, Y.M. 1989. Use of pressure derivative in well-test interpretation. SPE 12777.',
+        barker88: 'Barker, J.A. 1988. A generalized radial flow model for hydraulic tests in fractured rock.',
+        cramer13: 'Cramer, D.D. and Nguyen, D.H. 2013. Diagnostic fracture injection testing tactics in unconventional reservoirs. SPE 163863.',
+        nordgren72: 'Nordgren, R.P. 1972. Propagation of a vertical hydraulic fracture. SPE 3009.',
+        carey15: 'Carey, M.A., Mondal, S. and Sharma, M.M. 2015. Analysis of water hammer signatures for fracture diagnostics. SPE 174866.',
+        iriarte17: 'Iriarte, J., Merritt, J. and Kreyche, B. 2017. Using water hammer characteristics as a fracture treatment diagnostic. SPE 185087.',
+        holz85: 'Holzhausen, G.R. and Gooch, R.P. 1985. Impedance of hydraulic fractures: its measurement and use for estimating fracture closure pressure and dimensions. SPE 13892.',
+        crump88: 'Crump, J.B. and Conway, M.W. 1988. Effects of perforation-entry friction on bottomhole treating analysis. SPE 15474.',
+        romero95: 'Romero, J., Mack, M.G. and Elbel, J.L. 1995. Theoretical model and numerical investigation of near-wellbore effects in hydraulic fracturing. SPE 30506.',
+        bandis83: 'Bandis, S.C., Lumsden, A.C. and Barton, N.R. 1983. Fundamentals of rock joint deformation.'
+    };
+
+    // note(key, group, title, lead, assumptions, failureModes, distinguish, citeKeys)
+    var NOTES = {};
+    var ORDER = [];
+    function note(key, group, title, lead, ass, fail, dist, cites) {
+        NOTES[key] = { key: key, group: group, title: title, lead: lead, assumptions: ass, failureModes: fail, distinguish: dist,
+            cites: cites.map(function (c) { return R[c]; }) };
+        ORDER.push(key);
+    }
+
+    // ── Closure methods ──────────────────────────────────────────────────
+    note('tangent', 'method', 'Tangent to G·dP/dG (end of stiffening)',
+        'A straight line through the origin is drawn to touch the G·dP/dG curve; closure is read where the data leave that line for good.',
+        ['Leak-off is proportional to 1/√t over a fracture of constant area after shut-in (the G-function idealisation).',
+         'The fracture keeps a constant compliance until the reading point, so pressure falls linearly in G.',
+         'tp, the shut-in time and the efficiency exponent α are right; a wrong tp bends the curve at small G.'],
+        ['A pressure-dependent leak-off hump draws the tangent early and high unless the hump is excluded.',
+         'Concave-up data (contact or height recession) place the departure late and low if the first-stiffening reading is right.',
+         'Large wellbore storage (low closure visibility) gives a weak departure that is hard to place.'],
+        'The tangent marks the end of the concave-up section; the compliance method marks its start. Where the two differ, the data do not decide which is mechanical closure, and every downstream number is shown for both readings.',
+        ['nolte79', 'nolte86', 'castillo87', 'barree09', 'barree15']);
+    note('sqrt', 'method', 'Square-root-of-time inflection',
+        'Closure is read at the largest |dP/d√t| (or where √t·dP/d√t leaves a line through the origin).',
+        ['Linear flow from a closing fracture face before closure; the same leak-off idealisation as the G plot.'],
+        ['Several inflections (leak-off hump, water hammer, thermal drift) give several candidates.',
+         'The second derivative amplifies noise.',
+         'It only differs from the tangent when the dimensionless closure time is small; otherwise it repeats the same evidence.'],
+        'The √t pick is a dependent member of the end-of-stiffening family: it never confirms a tangent pick and never votes.',
+        ['nolteSmith81', 'barree09', 'barree15']);
+    note('maxdpdg', 'method', 'Maximum dP/dG',
+        'Closure is read at the G of the dP/dG maximum.',
+        ['As for the tangent: constant-area leak-off before closure.'],
+        ['As for the tangent; a noisy derivative moves the maximum.'],
+        'A dependent member of the end-of-stiffening family (it reads the same evidence as the tangent) and never votes.',
+        ['barree09', 'castillo87']);
+    note('compliance', 'method', 'Compliance method (first stiffening)',
+        'A straight line is fitted to the early G·dP/dG (through the origin when the intercept is small); closure is read where the data first rise above it for good.',
+        ['The early falloff reflects an open fracture of constant compliance plus the wellbore storage.',
+         'The first rise of G·dP/dG above the line is the onset of compliance loss as the faces start to touch.'],
+        ['Any other cause of a rising dP/dG (height recession, gas break-out, gauge thermal drift) triggers it.',
+         'A leak-off hump or tip extension biases the early line.',
+         'The departure tolerance and the noise level move the pick.'],
+        'The compliance pick marks the onset of stiffening; the tangent marks its end. On normal leak-off they coincide; on concave-up data they separate and the module reports a range.',
+        ['mcclure16', 'craig17', 'mcclure22']);
+    note('crel', 'method', 'Compliance drop',
+        'Closure is read at the first pressure where the relative system compliance falls below 1 − ε for several points.',
+        ['As for the compliance method: constant compliance above closure.'],
+        ['As for the compliance method.'],
+        'A dependent member of the first-stiffening family (it repeats the compliance evidence) and never votes.',
+        ['mcclure16']);
+    note('loglog', 'method', 'Log-log derivative departure',
+        'Closure is read at the first upward departure of the Bourdet derivative from the open-fracture reference curve, on Δt.',
+        ['The reference curve is the constant-compliance falloff for the chosen tp and α.',
+         'When the early line passes through the origin this test is the compliance test with another tolerance and smoothing variable.'],
+        ['The Bourdet smoothing window shifts the pick by about half the window in ln Δt.',
+         'A wrong tp shifts the reference curve.',
+         'Late-time deflections on log-log superposition plots can be spurious.'],
+        'It votes only when the early line does not pass through the origin (it then reads different evidence from the compliance method).',
+        ['bourdet89', 'mcclure17', 'barree09']);
+    note('varcomp', 'method', 'Variable-compliance fit',
+        'A forward model with a pressure-dependent aperture below closure is fitted to dp/dG; its closure stress is a cross-check.',
+        ['The aperture law below closure (hyperbolic or a decaying residual) describes the contact.',
+         'The wellbore storage and the reservoir pressure are known and held fixed.'],
+        ['The result depends on the aperture-law form.',
+         'Pressure-dependent leak-off and the contact law can trade off.',
+         'When the data stop soon after closure, closure stress and the contact scale correlate strongly (reported).'],
+        'A model-based cross-check: its band is its own confidence interval and it never enters the vote.',
+        ['mcclure16', 'zanganeh17', 'craig17']);
+    note('model', 'method', 'Leak-off model closure',
+        'Closure stress read from a history match of the leak-off mini-model (mechanical closure, contact onset).',
+        ['The mini-model geometry, contact law and leak-off law describe the test.'],
+        ['The contact law is built into the answer; a different law gives a different closure.'],
+        'A cross-check only: it never votes.',
+        ['craigBla06', 'nordgren72', 'liu15']);
+    note('fissure', 'method', 'Fissure opening (leak-off hump end)',
+        'The end of the pressure-dependent leak-off hump, where G·dP/dG returns to the line through the origin; read as the fissure-opening pressure.',
+        ['The hump comes from natural fissures that dilate above their opening pressure.'],
+        ['It is not the main closure; tip extension and storage changes can also bend the early curve.'],
+        'Family F0: a reading of the fissure-opening pressure, never a closure vote.',
+        ['barreeMuk96', 'barree98', 'castillo87']);
+    note('reopening', 'method', 'Reopening (re-pressurisation knee)',
+        'The knee of a later pressure-up ramp (a second cycle, a pump-in before flowback or a planned ramp after closure).',
+        ['Below the knee the wellbore alone is compressed; above it the fracture takes fluid.',
+         'The knee is corrected for the near-wellbore loss at the ramp rate when a step-down exists.'],
+        ['Near-wellbore stress concentration and tortuosity read high (an upper-side bound when uncorrected).',
+         'A ramp that starts above closure has no knee.',
+         'A soft (gas-cut) wellbore makes the knee faint.'],
+        'Family F4 is the only injection-side evidence; uncorrected it is an upper-side bound that can veto a single closure above it.',
+        ['hubbert57', 'haimson67', 'cramer13']);
+    note('user', 'method', 'User pick',
+        'A closure typed, clicked or dragged by the analyst, with a required reason in the pick log.',
+        ['The analyst sees evidence the automatic methods do not use (core, logs, offset tests).'],
+        ['A pick that is not checked against the frictional limits and the bounds can be inconsistent; the bounds check still runs.'],
+        'A user pick votes in the family it is assigned to; it is logged and can be undone.',
+        ['barree15', 'mcclure22']);
+
+    // ── Families ─────────────────────────────────────────────────────────
+    note('F0', 'family', 'Family F0 — fissure opening',
+        'Readings of the fissure-opening pressure (the end of the leak-off hump and the p vs dP/dt break).',
+        ['Pressure-dependent leak-off through natural fissures above their opening pressure.'],
+        ['Tip extension or a storage change can mimic a hump.'],
+        'Informational: F0 never votes.',
+        ['barreeMuk96', 'barree98']);
+    note('F1', 'family', 'Family F1 — first stiffening',
+        'Readings of the onset of compliance loss: contact of the faces or the start of height recession.',
+        ['Its one independent member is the compliance method; the compliance drop and (usually) the log-log departure repeat its evidence.'],
+        ['Other causes of a rising dP/dG trigger it early.'],
+        'F1 and F2 are two readings of the same falloff; the module shows both with every downstream number when they differ.',
+        ['mcclure16', 'craig17']);
+    note('F2', 'family', 'Family F2 — end of stiffening',
+        'Readings of the end of the concave-up section of G·dP/dG.',
+        ['Its one independent member is the tangent; the √t inflection and max dP/dG repeat its evidence.'],
+        ['A leak-off hump draws it early; concave-up data put it late.'],
+        'The dispute between the F1 and F2 readings is open; neither is assumed right.',
+        ['nolte86', 'barree09']);
+    note('F3', 'family', 'Family F3 — model-based cross-checks',
+        'The variable-compliance fit and the leak-off model closure.',
+        ['A forward model with an assumed aperture or contact law.'],
+        ['Model dependence; correlation between closure stress and the contact scale.'],
+        'Cross-checks: F3 never votes and never enters the consensus mean.',
+        ['mcclure16', 'craigBla06']);
+    note('F4', 'family', 'Family F4 — reopening',
+        'Knees of re-pressurisation ramps after closure.',
+        ['A clear knee and, for a mean, a near-wellbore correction.'],
+        ['Reads high without the correction (upper-side bound).'],
+        'The only family read from injection-side evidence; independent of the falloff families.',
+        ['hubbert57', 'haimson67']);
+
+    // ── Leak-off types ───────────────────────────────────────────────────
+    note('type-normal', 'type', 'Normal leak-off',
+        'G·dP/dG is a straight line through the origin up to closure.',
+        ['Constant fracture area and compliance after shut-in; leak-off controlled by the filtrate and wall.'],
+        ['Large wellbore storage hides small departures.'],
+        'The closure families agree; a single closure is expected.',
+        ['nolte79', 'barree09']);
+    note('type-matrix', 'type', 'Normal, reservoir-controlled (matrix)',
+        'dP/dG falls towards closure by the amount expected from reservoir-controlled leak-off at the reservoir pressure.',
+        ['The leak-off driving force (p − p_r) falls as the pressure falls.'],
+        ['A wrong reservoir pressure changes the expected decline.'],
+        'The decline of dP/dG is compared with the expectation from p_r before any other reading is made.',
+        ['barree09', 'nolteBg97']);
+    note('type-pdl', 'type', 'Pressure-dependent leak-off',
+        'A hump above the line through the origin early in the falloff, ending at the fissure-opening pressure.',
+        ['Natural fissures dilate above their opening pressure and leak-off rises.'],
+        ['Tip extension also gives an early hump; the hump biases the tangent.'],
+        'The fissure-opening pressure is reported in family F0; the tangent excludes the hump.',
+        ['barreeMuk96', 'castillo87']);
+    note('type-tip', 'type', 'Tip extension',
+        'G·dP/dG below the line through the origin early in the falloff: the fracture keeps growing after shut-in.',
+        ['Fluid in the fracture keeps moving to the tip after shut-in.'],
+        ['Can be confused with storage effects at small G.'],
+        'Efficiency and geometry are less reliable while the area grows.',
+        ['barree09', 'nolte86']);
+    note('type-hr-contact', 'type', 'Height recession or asperity contact',
+        'Concave-up G·dP/dG: the system stiffens before the end-of-stiffening reading.',
+        ['Either the fracture recedes from bounding layers or the faces start to touch on asperities.'],
+        ['The two causes fit equally well from the falloff alone.'],
+        'The closure range reflects this; independent evidence (logs, a reopening ramp) is needed to choose.',
+        ['craig17', 'mcclure16', 'bandis83']);
+    note('type-storage', 'type', 'Storage-dominated',
+        'The wellbore takes a large share of the falloff volume; the closure signature is faint.',
+        ['A soft wellbore (gas or air in the column) or a large wellbore volume against a small fracture.'],
+        ['Low closure visibility; departures are weak in every method.'],
+        'Closure visibility is checked before any label above low is given.',
+        ['mcclure16', 'barree15']);
+    note('type-undetermined', 'type', 'Undetermined leak-off type',
+        'No leak-off signature scores clearly above the others.',
+        ['The falloff is too short, too noisy or affected by an artefact.'],
+        ['Labels may be wrong in any direction.'],
+        'The scores and the evidence sentences are shown so the analyst can decide.',
+        ['barree15']);
+
+    // ── After-closure regimes ────────────────────────────────────────────
+    note('aca-linear', 'aca', 'After-closure linear flow',
+        'Slope −½ on the derivative after closure: pseudolinear flow from the closed fracture.',
+        ['The fracture behaves as a short impulse source of the leaked-off volume; the time origin is the closure-volume centroid by default.'],
+        ['An early time origin or residual conductivity changes the slope; a short shut-in gives a short window.'],
+        'Linear flow brackets p_i and gives the group of the fracture length and k; k alone needs the length.',
+        ['nolteACA97', 'nolteBg97', 'talley99']);
+    note('aca-bilinear', 'aca', 'After-closure bilinear flow',
+        'Slope −¾: a closed fracture with finite residual conductivity.',
+        ['Residual conductivity in the closed fracture.'],
+        ['Can be a transition between storage and linear flow.'],
+        'Hands off to a finite-conductivity fracture model.',
+        ['cinco81', 'soliman05']);
+    note('aca-radial', 'aca', 'After-closure pseudoradial flow',
+        'Slope −1: radial flow around the closed fracture, the regime that gives kh/μ.',
+        ['The shut-in is long enough for the pressure disturbance to become radial.'],
+        ['A penny-shaped fracture or a steepening trend can show −1 transiently (false radial).'],
+        'kh/μ is reported only when the slope holds and does not keep steepening.',
+        ['nolteACA97', 'gu93', 'soliman05']);
+    note('aca-spherical', 'aca', 'After-closure spherical flow',
+        'Slope −³⁄₂: flow converging in three dimensions (partial penetration or a small fracture).',
+        ['The fracture height is small against the formation thickness.'],
+        ['Noise at late time can steepen the derivative.'],
+        'The flow dimension n(t) is shown to check it.',
+        ['barker88', 'mohamed11']);
+    note('aca-storage', 'aca', 'After-closure storage',
+        'Unit slope after closure: the wellbore or a leak dominates.',
+        ['A near-constant leak (valve, casing, packer or another zone) or wellbore storage.'],
+        ['Masks the reservoir regimes.'],
+        'Check the leak plot and the annulus before reading p_i.',
+        ['soliman05', 'barree15']);
+    note('aca-transition', 'aca', 'After-closure transition',
+        'No constant slope: between regimes.',
+        ['The data have not reached a regime long enough to read.'],
+        ['Bounds on k and a p_i bracket are reported instead of point values.'],
+        'Bounds and brackets come from the trends of every method.',
+        ['marongiu11', 'mohamed11']);
+    note('aca-artefact', 'aca', 'After-closure artefact',
+        'A slope that no flow regime gives (tides, gauge drift, thermal effects, a leak).',
+        ['Gauge stability and a sealed wellbore.'],
+        ['Misread as a regime.'],
+        'Excluded from the regime summary and listed in triage.',
+        ['barree15']);
+
+    // ── ISIP methods ─────────────────────────────────────────────────────
+    note('isip-wh', 'isip', 'ISIP from the water-hammer midline',
+        'The midline of the damped pressure oscillation after shut-in, with the friction bleed-off term.',
+        ['A high-rate record (≥ 2.3 Hz at the wellhead) through shut-in.'],
+        ['An upper estimate while friction bleed-off has not died out at the end of the fit window.'],
+        'Independent of the falloff (wave family).',
+        ['carey15', 'iriarte17', 'holz85']);
+    note('isip-g', 'isip', 'ISIP from the early G line',
+        'The early straight line on the G plot extrapolated to G = 0.',
+        ['Normal leak-off in the early falloff.'],
+        ['A leak-off hump or tip extension bends the early line.'],
+        'Falloff family.',
+        ['nolte79', 'barree09']);
+    note('isip-sd', 'isip', 'ISIP from the step-down intercept',
+        'Intercept of the step-down fit of pressure against rate (perforation and near-wellbore terms removed).',
+        ['Settled steps and a stable fracture during the steps.'],
+        ['Unsettled steps make it an outlier.'],
+        'Friction family.',
+        ['crump88', 'romero95']);
+    note('isip-lp', 'isip', 'ISIP from the last pump pressure',
+        'The last pumping pressure minus the perforation, tortuosity and pipe-friction losses.',
+        ['Friction terms known from a step-down or the pipe model.'],
+        ['Fluid viscosity in the fracture adds a correction.'],
+        'Friction family.',
+        ['crump88', 'romero95']);
+
+    var INDEX_GROUPS = [
+        ['method', 'Closure methods'], ['family', 'Closure families'], ['type', 'Leak-off types'],
+        ['aca', 'After-closure regimes'], ['isip', 'ISIP methods']
+    ];
+
+    // key aliases: classification types and AcaDiag regimes as the engines spell them
+    function _resolve(key) {
+        key = String(key == null ? '' : key);
+        if (_own(NOTES, key)) return key;
+        if (_own(NOTES, 'type-' + key)) return 'type-' + key;
+        if (_own(NOTES, 'aca-' + key)) return 'aca-' + key;
+        if (_own(NOTES, 'isip-' + key)) return 'isip-' + key;
+        return 'index';
+    }
+
+    function content(key) {
+        var k = _resolve(key);
+        if (k === 'index') return { ok: true, key: 'index', title: 'DFIT method notes', lead: 'Neutral notes on every closure method and family, the leak-off types, the after-closure regimes and the ISIP methods: what each assumes, how it fails and what would distinguish it from the competing reading.', index: INDEX_GROUPS.map(function (g) {
+            return { group: g[0], title: g[1], items: ORDER.filter(function (x) { return NOTES[x].group === g[0]; }).map(function (x) { return { key: x, title: NOTES[x].title }; }) };
+        }) };
+        var n = NOTES[k];
+        return { ok: true, key: k, group: n.group, title: n.title, lead: n.lead, assumptions: n.assumptions.slice(),
+                 failureModes: n.failureModes.slice(), distinguish: n.distinguish, cites: n.cites.slice() };
+    }
+
+    var DISC = 'Closure readings are disputed in the literature; this note describes the method and its failure modes without endorsing one reading.';
+    function _bodyHTML(c) {
+        var h = '<p class="wdi-lead" id="wts_dfit_info_lead">' + _esc(c.lead) + '</p>';
+        if (c.index) {
+            c.index.forEach(function (g) {
+                h += '<h4>' + _esc(g.title) + '</h4><div class="wdi-idx">' + g.items.map(function (it) {
+                    return '<button type="button" class="btn btn-secondary wdi-go" data-dfit-note="' + _esc(it.key) + '">' + _esc(it.title) + '</button>';
+                }).join('') + '</div>';
+            });
+            return h;
+        }
+        h += '<h4>Assumptions</h4><ul>' + c.assumptions.map(function (a) { return '<li>' + _esc(a) + '</li>'; }).join('') + '</ul>';
+        h += '<h4>Failure modes</h4><ul>' + c.failureModes.map(function (a) { return '<li>' + _esc(a) + '</li>'; }).join('') + '</ul>';
+        h += '<h4>Against the competing reading</h4><p>' + _esc(c.distinguish) + '</p>';
+        h += '<h4>References</h4><ul class="wdi-refs">' + c.cites.map(function (a) { return '<li>' + _esc(a) + '</li>'; }).join('') + '</ul>';
+        h += '<p class="wdi-disc">' + _esc(DISC) + '</p>';
+        h += '<p><button type="button" class="btn btn-secondary wdi-go" data-dfit-note="index">All method notes</button></p>';
+        return h;
+    }
+
+    var CSS = '#wts_dfit_info{position:fixed;inset:0;z-index:10050;display:none;align-items:center;justify-content:center;box-sizing:border-box;width:auto;height:auto;max-width:none;max-height:none;margin:0;padding:16px;border:0;background:rgba(1,4,9,.72);color:var(--text)}' +
+        '#wts_dfit_info[open]{display:flex}#wts_dfit_info::backdrop{background:transparent}' +
+        '#wts_dfit_info .wdi-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.45)}' +
+        '#wts_dfit_info .wdi-hd{display:flex;gap:12px;align-items:flex-start;padding:14px 16px 10px;border-bottom:1px solid var(--border)}' +
+        '#wts_dfit_info .wdi-hd h3{flex:1;min-width:0;margin:0;font-size:16px;color:var(--accent);overflow-wrap:anywhere}' +
+        '#wts_dfit_info .wdi-x{flex:none;width:32px;height:32px;border:0;background:transparent;color:var(--text2);font-size:22px;cursor:pointer}' +
+        '#wts_dfit_info .wdi-bd{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 16px 4px;font-size:13px;line-height:1.55;overflow-wrap:anywhere}' +
+        '#wts_dfit_info .wdi-bd h4{margin:12px 0 4px;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)}' +
+        '#wts_dfit_info .wdi-bd ul{margin:4px 0 8px;padding-left:20px}' +
+        '#wts_dfit_info .wdi-idx{display:flex;flex-wrap:wrap;gap:6px}' +
+        '#wts_dfit_info .wdi-disc{margin:12px 0;padding:8px 10px;border-left:3px solid var(--yellow);background:rgba(210,153,34,.08)}' +
+        '#wts_dfit_info .wdi-ft{display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--border)}' +
+        '@media (max-width:600px){#wts_dfit_info{padding:10px}#wts_dfit_info .wdi-box{max-height:calc(100vh - 20px);max-height:calc(100dvh - 20px)}}';
+    function css() { return CSS; }
+    function _ensureCss() {
+        if (typeof document === 'undefined' || !document.getElementById || document.getElementById('wts_dfit_info_css')) return;
+        var s = document.createElement('style');
+        s.id = 'wts_dfit_info_css';
+        s.textContent = CSS;
+        var h = document.head || document.body;
+        if (h && h.appendChild) h.appendChild(s);
+    }
+
+    var _cur = null;   // {ov, opener, modal}
+    function isOpen() { return !!(_cur && _cur.ov && _cur.ov.parentNode); }
+    function close(noFocus) {
+        var c = _cur;
+        _cur = null;
+        if (!c) return false;
+        var ov = c.ov;
+        if (ov && c.modal && ov.open && typeof ov.close === 'function') { try { ov.close(); } catch (e) { /* removal below */ } }
+        if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+        if (noFocus !== true && c.opener && typeof c.opener.focus === 'function') { try { c.opener.focus(); } catch (e) { /* best effort */ } }
+        return true;
+    }
+    function _fill(ov, c) {
+        ov.setAttribute('data-note', c.key);
+        ov.innerHTML = '<div class="wdi-box" tabindex="-1"><div class="wdi-hd"><h3 id="wts_dfit_info_title">' + _esc(c.title) + '</h3>' +
+            '<button type="button" class="wdi-x" data-dfit-close aria-label="Close">×</button></div>' +
+            '<div class="wdi-bd" tabindex="0" role="document">' + _bodyHTML(c) + '</div>' +
+            '<div class="wdi-ft"><button type="button" class="btn btn-secondary" data-dfit-close>Close</button></div></div>';
+    }
+    function _onClick(e) {
+        if (!_cur) return;
+        var t = e.target;
+        if (t === _cur.ov) { close(); return; }
+        var go = (t && t.closest) ? t.closest('[data-dfit-note]') : null;
+        if (go && _cur.ov.contains(go)) { _fill(_cur.ov, content(go.getAttribute('data-dfit-note'))); return; }
+        var b = (t && t.closest) ? t.closest('[data-dfit-close]') : null;
+        if (b && _cur.ov.contains(b)) close();
+    }
+    function _onKey(e) {
+        if (!_cur) return;
+        if (e.key === 'Escape' || e.key === 'Esc') { if (e.preventDefault) e.preventDefault(); close(); }
+    }
+    function _onCancel(e) { if (_cur && e.target === _cur.ov) { if (e.preventDefault) e.preventDefault(); close(); } }
+
+    function open(key, opener, mount) {
+        if (typeof document === 'undefined' || !document || typeof document.createElement !== 'function') return null;
+        var c = content(key);
+        close(true);
+        _ensureCss();
+        var host = mount || document.getElementById('pgBody') || document.body;
+        if (!host || !host.appendChild) return null;
+        var ov = document.createElement('dialog');
+        ov.id = 'wts_dfit_info';
+        ov.className = 'rp-skip';
+        ov.setAttribute('data-rp-nosnap', '');
+        ov.setAttribute('role', 'dialog');
+        ov.setAttribute('aria-modal', 'true');
+        ov.setAttribute('aria-labelledby', 'wts_dfit_info_title');
+        ov.setAttribute('aria-describedby', 'wts_dfit_info_lead');
+        _fill(ov, c);
+        host.appendChild(ov);
+        _cur = { ov: ov, opener: opener || null, modal: false };
+        ov.addEventListener('click', _onClick);
+        ov.addEventListener('keydown', _onKey);
+        ov.addEventListener('cancel', _onCancel);
+        if (typeof ov.showModal === 'function') { try { ov.showModal(); _cur.modal = true; } catch (e) { _cur.modal = false; } }
+        if (!_cur.modal) ov.setAttribute('open', '');
+        var box = ov.querySelector('.wdi-bd');
+        if (box && typeof box.focus === 'function') { try { box.focus(); } catch (e) { /* best effort */ } }
+        return ov;
+    }
+
+    var I = G.WTS_dfitInfo = G.WTS_dfitInfo || {};   // merge, never replace
+    if (!I.notes || typeof I.notes !== 'object') I.notes = {};
+    ORDER.forEach(function (k) { I.notes[k] = NOTES[k]; });
+    I.keys = function () { return ORDER.slice(); };
+    I.groups = function () { return INDEX_GROUPS.map(function (g) { return g[0]; }); };
+    I.resolve = _resolve;
+    I.content = content;
+    I.open = open;
+    I.close = function () { return close(false); };
+    I.isOpen = isOpen;
+    I.css = css;
+    I.refs = R;
+})();
+
+// ─── END 49-calc-dfit-info ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-dfit-synth ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-dfit-synth.js  (Round 9)
+// -----------------------------------------------------------------------------
+// helper module: does not add a page to window.WTS_calcRegistry
+//
+// Synthetic DFIT generator and scorer: window.PRiSM_dfit_synth (docs/DFIT-PLAN.md §3.9, §8.1–§8.3; owner WP5).
+// Pure and seeded: no DOM, storage, timers or events; randomness only from PRiSM_rng(seed) (05, resolved at call time; the
+// identical mulberry32 stream is used when 05 is absent, so a case never depends on the load order). Field units, time in
+// hours, rates in bbl/min inside the generator (bbl/d in the dataset, §3.0).
+//
+//   version 'g1'
+//   make(caseSpec, seed)   → {ok:true, ds, truth, artefacts, caseSpec} | failure        (ds in the §3.1 format)
+//   demo(name)             → ds | failure      'reference' | 'tight-linear' | 'conventional-radial' | 'contact' | 'pdl' |
+//                                               'surface-gauge' | 'two-cycle'
+//   demoSpec(name)         → {spec, seed} (the case behind a demo; make(spec, seed).truth is its truth)
+//   demoCsv(name), toCsv(ds) → role-header CSV text (time_h, pressure_psia, rate_bbl_d, pressure_surf_psia, …) for the Data tab
+//   cases(kind)            → [CaseSpec]        'integration' (3) | 'quick' (12) | 'benchmark' (900) | 'artefact' (60)
+//   score(run, truth)      → {closure, isip, classify, pi, k, regime, frac, labels}   (§8.3)
+//   acaExact(aca, tInj, o) → {ok, dp, D, sD, t0}  exact convolution of a Carter source (§4.12 kernels; independent of 57)
+//   kernel(geometry, aca)  → K(s) psi per bbl (impulse kernels: 'full' uniform-flux full height, 'penny', 'box')
+//   artefacts              → {kind: {target, stage, levels, apply}} — the injectors (§8.1); inject(ds, art, ctx, seed)
+//   inputsFor(spec, made), wellFor(spec, made) → DfitInputs (through PRiSM_dfit_inputRanges, call time) / a C1-like well
+//   classOf(mechanism), g / G / Ginv (α = ½ and 1)
+//
+// Sources (§8.1): 'lk' calls PRiSM_dfit_lkSimulate (58) at call time (failure LK_UNAVAILABLE until it exists); 'gdomain'
+// integrates the variable-compliance G-domain decline (normal, matrix, PDL, storage, tip extension, height recession: hard
+// closure, then the exact after-closure convolution with k chosen for continuity; asperity contact hyp/exp: the damped
+// G-domain model throughout); 'aca-exact' is the closed-form Carter-source convolution (examples A and B, penny, box) after
+// a normal G-line falloff to the continuity closure p_i + Δp(t_c).
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var S = G.PRiSM_dfit_synth = G.PRiSM_dfit_synth || {};   // merge, never replace
+    S.version = 'g1';
+
+    var BBL = 5.614583;              // ft³ per bbl
+    var ETA_C = 2.63679e-4;          // η = ETA_C·k/(φμc_t) ft²/h
+    var ATM = 14.696;
+    var PI = Math.PI, SQRTPI = Math.sqrt(Math.PI);
+    var GRAD_W = 8.43 * 0.052;       // psi/ft, 8.43 ppg column
+    var MAX_PTS = 4000;
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 1. Small helpers
+    // ═════════════════════════════════════════════════════════════════════════
+    function fin(x) { return typeof x === 'number' && isFinite(x); }
+    function pos(x) { return fin(x) && x > 0; }
+    function num(x, d) { return fin(x) ? x : d; }
+    function rnd(x, d) { var m = Math.pow(10, d); return Math.round(x * m) / m; }
+    function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    function fail(code, msg, bad) { return { ok: false, code: code, errors: [String(msg)], bad: bad || [] }; }
+    function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+    function merge(dst, src) {
+        if (!isObj(src)) return dst;
+        Object.keys(src).forEach(function (k) {
+            if (isObj(src[k]) && isObj(dst[k])) merge(dst[k], src[k]);
+            else dst[k] = clone(src[k]);
+        });
+        return dst;
+    }
+    function seedOf(s) { s = Math.round(+s); return (fin(s) && s >= 1 && s <= 2147483647) ? s : 1; }
+    // independent sub-streams: one per purpose and artefact index
+    function subSeed(seed, k) {
+        var h = (Math.imul(seedOf(seed), 2654435761) ^ Math.imul(k + 1, 40503)) >>> 0;
+        h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
+        return (h % 2147483646) + 1;
+    }
+    function rng(seed) {
+        var s = seedOf(seed);
+        if (typeof G.PRiSM_rng === 'function') { try { var r = G.PRiSM_rng(s); if (typeof r === 'function') return r; } catch (e) { /* fall back */ } }
+        var a = s | 0;   // the 05 mulberry32 stream (PRiSM_rng → _makeRng)
+        return function () {
+            a |= 0; a = (a + 0x6D2B79F5) | 0;
+            var t = a;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return (((t ^ (t >>> 14)) >>> 0) / 4294967296);
+        };
+    }
+    function gauss(r) { var u = 0; while (u === 0) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * PI * r()); }
+    function interpLin(xs, ys, x) {
+        var n = xs.length;
+        if (!n) return NaN;
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) return ys[n - 1];
+        var lo = 0, hi = n - 1;
+        while (hi - lo > 1) { var m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; }
+        var f = (x - xs[lo]) / (xs[hi] - xs[lo]);
+        return ys[lo] + f * (ys[hi] - ys[lo]);
+    }
+    function bisect(fn, lo, hi, it) {           // root of a monotone fn on [lo, hi]
+        var flo = fn(lo);
+        for (var i = 0; i < (it || 80); i++) {
+            var m = 0.5 * (lo + hi), fm = fn(m);
+            if ((fm < 0) === (flo < 0)) { lo = m; flo = fm; } else hi = m;
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    // erf to ~1e-15 (series below 2.5, continued fraction above)
+    function erf(x) {
+        var s = x < 0 ? -1 : 1; x = Math.abs(x);
+        if (x > 6) return s;
+        if (x < 2.5) {
+            var sum = x, term = x, x2 = x * x, n = 0;
+            while (Math.abs(term) > 1e-17 * Math.abs(sum) && n < 300) { n++; term *= -x2 / n; sum += term / (2 * n + 1); }
+            return s * 2 / SQRTPI * sum;
+        }
+        var t = 0;
+        for (var k = 60; k >= 1; k--) t = k / 2 / (x + t);
+        return s * (1 - Math.exp(-x * x) / SQRTPI / (x + t));
+    }
+
+    // 12-point Gauss–Legendre on [-1, 1]
+    var GLX = [-0.9815606342467192, -0.9041172563704749, -0.7699026741943047, -0.5873179542866175, -0.3678314989981802, -0.1252334085114689,
+        0.1252334085114689, 0.3678314989981802, 0.5873179542866175, 0.7699026741943047, 0.9041172563704749, 0.9815606342467192];
+    var GLW = [0.0471753363865118, 0.1069393259953184, 0.1600783285433462, 0.2031674267230659, 0.2334925365383548, 0.2491470458134028,
+        0.2491470458134028, 0.2334925365383548, 0.2031674267230659, 0.1600783285433462, 0.1069393259953184, 0.0471753363865118];
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 2. G-function (§4.5; α = ½ and α = 1 closed forms — the generator's own copy)
+    // ═════════════════════════════════════════════════════════════════════════
+    function gFn(d, a) { return a === 1 ? 4 / 3 * (Math.pow(1 + d, 1.5) - Math.pow(d, 1.5)) : (1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d); }
+    function GFn(d, a) { return 4 / PI * (gFn(d, a) - (a === 1 ? 4 / 3 : PI / 2)); }
+    function GinvFn(Gv, a) {
+        if (!(Gv > 0)) return 0;
+        var lo = Math.log(1e-12), hi = Math.log(1e9);
+        for (var i = 0; i < 90; i++) { var m = 0.5 * (lo + hi); if (GFn(Math.exp(m), a) < Gv) lo = m; else hi = m; }
+        return Math.exp(0.5 * (lo + hi));
+    }
+    S.g = gFn; S.G = GFn; S.Ginv = GinvFn;
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 3. Impulse kernels and the exact Carter-source convolution (§4.12; independent of 57)
+    // ═════════════════════════════════════════════════════════════════════════
+    // aca: {k md, L ft (half-length or penny radius), h ft (zone height, 'full'), hf ft (box height), phi, ct 1/psi, mu cp}
+    function kernel(geometry, aca) {
+        var eta = ETA_C * aca.k / (aca.phi * aca.mu * aca.ct);
+        var L = aca.L, base = BBL / (aca.phi * aca.ct);
+        if (geometry === 'penny') {
+            var R2 = L * L;
+            return function (s) { var f = 4 * eta * s; return base * (1 - Math.exp(-R2 / f)) / (PI * R2 * Math.sqrt(PI * f)); };
+        }
+        if (geometry === 'box') {
+            var hb = pos(aca.hf) ? aca.hf : aca.h;
+            return function (s) { var r = Math.sqrt(4 * eta * s); return base * erf(L / r) / (2 * L) * erf(0.5 * hb / r) / hb / Math.sqrt(PI) / r; };
+        }
+        var h = aca.h;
+        return function (s) { var r = Math.sqrt(4 * eta * s); return base / h * erf(L / r) / (2 * L * SQRTPI * r); };
+    }
+    S.kernel = function (geometry, aca) { return kernel(geometry || 'full', aca); };
+
+    // Δp(t) for a Carter source (rate ∝ τ^-½ on 0 < τ < t_c, volume V) on the injection clock, t ≥ t_c.
+    // τ = t_c·cos²φ: Δp = V·∫₀^{π/2} K((t − t_c) + t_c·sin²φ)·sin φ dφ, graded panels near φ = 0 (the near-singular end).
+    function convAt(K, V, tc, t) {
+        var e = Math.max(0, t - tc), rt = Math.sqrt(e / tc);
+        var edges = [0];
+        if (rt < 0.3) {
+            var ph = Math.max(rt / 4, 1e-7);
+            edges.push(ph);
+            while (ph * 2 < PI / 2) { ph *= 2; edges.push(ph); }
+        } else { edges.push(PI / 6); edges.push(PI / 3); }
+        edges.push(PI / 2);
+        var sum = 0;
+        for (var i = 0; i < edges.length - 1; i++) {
+            var a = edges[i], b = edges[i + 1], hw = 0.5 * (b - a), c = 0.5 * (a + b);
+            for (var j = 0; j < 12; j++) {
+                var ph2 = c + hw * GLX[j], sp = Math.sin(ph2);
+                var s = e + tc * sp * sp;
+                if (s > 0) sum += GLW[j] * hw * K(s) * sp;
+            }
+        }
+        return V * sum;
+    }
+    // aca: {k, L, h, phi, ct, mu, V bbl, tcInj h, pi, geometry?, hf?}; tInj: times on the injection clock (≥ t_c).
+    // opts {geometry, t0 (origin for D; default t_c/3), dlnStep}. D = |dΔp/d ln(t − t0)|, sD = d ln D / d ln(t − t0).
+    function acaExact(aca, tInj, opts) {
+        opts = opts || {};
+        if (!isObj(aca)) return fail('BAD_INPUT', 'acaExact needs the aca block', ['aca']);
+        var bad = ['k', 'L', 'phi', 'ct', 'mu', 'V', 'tcInj'].filter(function (k) { return !pos(aca[k]); });
+        var geo = opts.geometry || aca.geometry || 'full';
+        if (geo === 'full' && !pos(aca.h)) bad.push('h');
+        if (bad.length) return fail('BAD_INPUT', 'acaExact: missing or non-positive ' + bad.join(', '), bad);
+        var K = kernel(geo, aca), tc = aca.tcInj, V = aca.V;
+        var t0 = fin(opts.t0) ? opts.t0 : tc / 3;
+        var dp = [], D = [], sD = [], i;
+        for (i = 0; i < tInj.length; i++) {
+            var t = tInj[i];
+            if (!(t >= tc)) { dp.push(null); D.push(null); sD.push(null); continue; }
+            var x = t - t0, d0 = convAt(K, V, tc, t);
+            dp.push(d0);
+            if (t - tc <= 0 || !(x > 0)) { D.push(null); sD.push(null); continue; }
+            var hstep = Math.min(1e-4 * (t - tc), 1e-4 * x);
+            var dpdt = (convAt(K, V, tc, t + hstep) - convAt(K, V, tc, t - hstep)) / (2 * hstep);
+            D.push(Math.abs(dpdt) * x);
+            // local slope of D over ±0.05 in ln x
+            var xl = x * Math.exp(-0.05), xh = x * Math.exp(0.05);
+            if (xl + t0 > tc * (1 + 1e-6)) {
+                var Dl = derivD(K, V, tc, xl + t0, xl), Dh = derivD(K, V, tc, xh + t0, xh);
+                sD.push(Dl > 0 && Dh > 0 ? (Math.log(Dh) - Math.log(Dl)) / 0.1 : null);
+            } else sD.push(null);
+        }
+        return { ok: true, geometry: geo, t0: t0, dp: dp, D: D, sD: sD };
+    }
+    function derivD(K, V, tc, t, x) {
+        var hstep = Math.min(1e-4 * (t - tc), 1e-4 * x);
+        return Math.abs((convAt(K, V, tc, t + hstep) - convAt(K, V, tc, t - hstep)) / (2 * hstep)) * x;
+    }
+    S.acaExact = acaExact;
+    // truth regime at t_end from s_D (§4.12 bands), in the AcaResult.regimeSummary vocabulary plus 'transition' (between bands) and
+    // 'artefact' (< −1.6, not scored). The uniform-flux / infinite-conductivity kernels used here (full, penny, box) have no bilinear
+    // flow: their linear-to-radial passage through s_D ≈ −0.75 is 'transition'. 'bilinear' is only returned for a finite-conductivity
+    // kernel (none in 3.4a; the argument is kept so a later kernel can use the band).
+    function regimeFromSD(s, kernelKind) {
+        if (!fin(s)) return null;
+        if (Math.abs(s + 0.5) <= 0.07) return 'linear';
+        if (kernelKind === 'finite-conductivity' && Math.abs(s + 0.75) <= 0.07) return 'bilinear';
+        if (Math.abs(s + 1) <= 0.07) return 'radial';
+        if (Math.abs(s + 1.5) <= 0.1) return 'spherical';
+        if (s < -1.6) return 'artefact';
+        return 'transition';
+    }
+    S.regimeFromSD = regimeFromSD;
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 4. Case defaults (the §4.21 reference well)
+    // ═════════════════════════════════════════════════════════════════════════
+    var REF = {
+        datumTvd: 10000, rhoPpg: 8.43, idIn: 4.778, odIn: 5.5, wallIn: 0.361, nPerf: 12, dPerf: 0.40, cdPerf: 0.6,
+        q: 5, Vstar: 25, tStartH: 2 / 60, pStart: 4500, isip: 7600, sigmaC: 7000, Gc: 18, Ep: 5.0e6, nu: 0.25, hf: 50, hp: 40,
+        pr: 4500, phi: 0.06, ct: 1e-5, mu: 0.5, VwCw: 7.91e-4, nwbA: 1.505, nwbB: 140.9, bdOver: 235, tauBdMin: 0.25,
+        sigmaGauge: 0.0029, quantum: 0.01, tEndShutH: 72
+    };
+    S.REF = REF;
+    function nwb(gd, q) { return q > 0 ? gd.nwbA * q * q + gd.nwbB * Math.sqrt(q) : 0; }
+
+    // gdomain parameter block (CaseSpec extra key `gd`; every field optional)
+    function gdDefaults() {
+        return {
+            mechanism: 'normal', isip: REF.isip, sigmaC: REF.sigmaC, pr: REF.pr, pStart: null, Gc: REF.Gc, alpha: 0.5,
+            AfCf: null, Rvis: null, VwCw: null, q: REF.q, Vstar: null, tStartH: REF.tStartH, stepDown: null,
+            nwbA: REF.nwbA, nwbB: REF.nwbB, bdOver: REF.bdOver,
+            Ep: REF.Ep, hf: REF.hf, hp: REF.hp, geometry: 'PKN', phi: REF.phi, ct: REF.ct, mu: REF.mu, k: null, kSolve: 'k',
+            matrixN: 1, Cd: 0, pfo: null, tipFrac: 0.6, tipG: 3, hrRs: 2.5, hrP: null, hrW: 40,
+            law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null, cwFrac: 0.9
+        };
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 5. gdomain: the variable-compliance decline integrated in G (§4.7 model; §8.1)
+    // ═════════════════════════════════════════════════════════════════════════
+    // C(p) [bbl/psi] = A_f·c_f(p) + V_w·c_w(p); dp/dG = −X·f_L(p)·f_PDL(p)·(1 + tip(G))/C(p).
+    function gdModel(gd, VwCw0, cwOfP) {
+        var mech = gd.mechanism, isip = gd.isip, sc = gd.sigmaC, pr = gd.pr;
+        var pn = isip - sc, AfCf;
+        if (pos(gd.AfCf)) AfCf = gd.AfCf;
+        else if (pos(gd.Rvis) && gd.Rvis < 1) AfCf = VwCw0 * gd.Rvis / (1 - gd.Rvis);
+        else AfCf = 0.2061 / BBL;                                     // the reference A_f·c_f (0.2061 ft³/psi)
+        if (pos(gd.Rvis) && gd.Rvis < 1 && pos(gd.AfCf)) VwCw0 = AfCf * (1 / gd.Rvis - 1);
+        var gas = cwOfP === 'gas' || cwOfP === 'air';
+        function vwcw(p) { return gas ? VwCw0 * ((1 - gd.cwFrac) + gd.cwFrac * sc / Math.max(p, 50)) : VwCw0; }
+        var contact = (gd.law === 'hyp' || gd.law === 'exp') || mech === 'contact-hyp' || mech === 'contact-exp';
+        var law = mech === 'contact-hyp' ? 'hyp' : mech === 'contact-exp' ? 'exp' : gd.law;
+        var hrP = fin(gd.hrP) ? gd.hrP : sc + 0.5 * pn;
+        function cfRatio(p) {                                         // fracture compliance / open compliance
+            var r = 1;
+            if (mech === 'height-recession') r *= 1 - (1 - 1 / gd.hrRs) / (1 + Math.exp(-(hrP - p) / gd.hrW));
+            if (contact && p < sc) {
+                var x = sc - p;
+                if (law === 'hyp') r *= Math.pow(gd.sh / (gd.sh + x), 2);
+                else { var sr = pos(gd.sr) ? gd.sr : 10 * gd.sc; r *= gd.fres * Math.exp(-x / sr) + (1 - gd.fres) * Math.exp(-x / gd.sc); }
+            }
+            return r;
+        }
+        function C(p) { return AfCf * cfRatio(p) + vwcw(p); }
+        var Cnom = AfCf + VwCw0;
+        var X = Cnom * pn / gd.Gc;                                    // nominal: a normal case closes at Gc
+        var pfo = fin(gd.pfo) ? gd.pfo : isip - 350;
+        function rhs(p, Gv) {
+            var f = 1;
+            if (mech === 'matrix') f *= Math.pow(Math.max(0, (p - pr) / (isip - pr)), gd.matrixN);
+            if ((mech === 'pdl' || gd.Cd > 0) && p > pfo) f *= Math.exp(gd.Cd * (p - pfo));
+            if (contact && p < sc) f *= Math.max(0, (p - pr) / (sc - pr));
+            if (mech === 'tip') f *= 1 + gd.tipFrac * Math.exp(-Gv / gd.tipG);
+            return -X * f / C(p);
+        }
+        return { AfCf: AfCf, VwCw0: VwCw0, vwcw: vwcw, C: C, X: X, rhs: rhs, contact: contact, law: law, cfRatio: cfRatio, hrP: hrP, pfo: pfo };
+    }
+    // integrate p(G) from ISIP; hard closure stops at σ_c. → {G:[], p:[], Gc|null}
+    function gdIntegrate(gd, M, Gmax) {
+        var N = 6000, dG = Gmax / N, Gs = [0], ps = [gd.isip], p = gd.isip, Gc = null;
+        for (var i = 0; i < N; i++) {
+            var g0 = i * dG;
+            var k1 = M.rhs(p, g0), k2 = M.rhs(p + 0.5 * dG * k1, g0 + 0.5 * dG), k3 = M.rhs(p + 0.5 * dG * k2, g0 + 0.5 * dG), k4 = M.rhs(p + dG * k3, g0 + dG);
+            var pn = p + dG / 6 * (k1 + 2 * k2 + 2 * k3 + k4);
+            if (!M.contact && pn <= gd.sigmaC) {
+                var f = (p - gd.sigmaC) / (p - pn);
+                Gc = g0 + f * dG;
+                Gs.push(Gc); ps.push(gd.sigmaC);
+                return { G: Gs, p: ps, Gc: Gc };
+            }
+            p = pn; Gs.push(g0 + dG); ps.push(p);
+        }
+        return { G: Gs, p: ps, Gc: null };
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 6. Record assembly: schedule, pumping pressure, sampling grid
+    // ═════════════════════════════════════════════════════════════════════════
+    // segments of the injection schedule in h from pump start: [{t0, t1, q}]
+    function buildSchedule(qMain, Vi, stepDown) {
+        var steps = [], Vsd = 0, dts = 0;
+        if (stepDown && Array.isArray(stepDown.rates) && stepDown.rates.length) {
+            dts = (pos(stepDown.dtS) ? stepDown.dtS : 10) / 3600;
+            stepDown.rates.forEach(function (r) { if (pos(r)) { steps.push(r); Vsd += r * dts * 60; } });
+        }
+        var tMain = Math.max(0.2 * Vi, Vi - Vsd) / qMain / 60;      // h
+        var seg = [{ t0: 0, t1: tMain, q: qMain }], t = tMain;
+        steps.forEach(function (r) { seg.push({ t0: t, t1: t + dts, q: r }); t += dts; });
+        return { seg: seg, tp: t, Vi: qMain * tMain * 60 + Vsd };
+    }
+    function qAt(seg, tInj) { for (var i = 0; i < seg.length; i++) if (tInj >= seg[i].t0 && tInj < seg[i].t1) return seg[i].q; return 0; }
+    // pumping-phase pressure (gdomain / aca-exact): wellbore ramp, breakdown, decay onto the propagation line + near-wellbore loss
+    function pumpModel(gd, sch, pStart, VwCw) {
+        var tp = sch.tp, q0 = sch.seg[0].q;
+        var pProp0 = gd.isip - 20, isip = gd.isip;
+        var pb = isip + nwb(gd, q0) + gd.bdOver;
+        var slope = q0 / VwCw * 60;                                   // psi/h
+        var tRamp = (pb - pStart) / slope, scaled = false;
+        if (tRamp > 0.5 * tp) { tRamp = 0.5 * tp; slope = (pb - pStart) / tRamp; scaled = true; }
+        var tau = (gd.tauBdMin || REF.tauBdMin) / 60;
+        function pFrac(tInj) { return pProp0 + (isip - pProp0) * Math.min(1, Math.max(0, (tInj - tRamp) / Math.max(1e-9, tp - tRamp))); }
+        function p(tInj) {
+            if (tInj <= 0) return pStart;
+            if (tInj <= tRamp) return pStart + slope * tInj;
+            var q = qAt(sch.seg, Math.min(tInj, tp - 1e-12));
+            var target = pFrac(tInj) + nwb(gd, q), target0 = pFrac(tInj) + nwb(gd, q0);
+            return target + (pb - target0) * Math.exp(-(tInj - tRamp) / tau);
+        }
+        return { p: p, tb: tRamp, pb: pb, rampSlopePsiMin: slope / 60, rampScaled: scaled };
+    }
+    // sampling grid (record clock): static samples, pumping at dtS, falloff uniform at dtS then log-spaced
+    function sampleGrid(tStart, ts, tEndRec, dtS, perDecade) {
+        var t = [], i;
+        for (i = 0; i < 10; i++) t.push(i * tStart / 10);
+        var dth = dtS / 3600;
+        for (i = 0; tStart + i * dth < ts - 1e-12; i++) t.push(tStart + i * dth);
+        var dtEnd = tEndRec - ts, step0 = dth, d = dth, f = Math.pow(10, 1 / perDecade) - 1;
+        while (d < dtEnd) { t.push(ts + d); d += Math.max(step0, d * f); }
+        t.push(tEndRec);
+        return t;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 7. Truth helpers (§4.9, §4.10 chain from the model's own parameters)
+    // ═════════════════════════════════════════════════════════════════════════
+    function geometryFromAfCf(AfCfBbl, Ep, hf, hp, geometry) {
+        var A = AfCfBbl * BBL, out = {};
+        if (geometry === 'KGD') { out.xf = Math.sqrt(A * Ep / (2 * PI * hf)); out.Af = 2 * out.xf * hf; out.rp = Math.min(1, hp / hf); }
+        else if (geometry === 'radial') {
+            out.xf = Math.pow(3 * Ep * A / 16, 1 / 3); out.Af = PI * out.xf * out.xf;
+            var u = Math.min(1, hp / (2 * out.xf)); out.rp = 2 / PI * (u * Math.sqrt(1 - u * u) + Math.asin(u));
+        } else { out.xf = A * Ep / (PI * hf * hf); out.Af = 2 * out.xf * hf; out.rp = Math.min(1, hp / hf); }
+        return out;
+    }
+    function kFromCL(CL, isip, sc, pr, mu, phi, ct) {
+        var dpCL = 0.5 * (isip + sc) - pr;
+        return dpCL > 0 ? 1000 * Math.pow(CL / (0.0374 * dpCL), 2) * mu / (phi * ct) : null;
+    }
+    // the pressure at the largest dP/dG (Bourdet, 0.05 ln G) among the falloff samples below σ_c and above p_r + 10 % of σ_c − p_r
+    function lkF2(tt, pp, ts, tp, sc, pr) {
+        if (!(tp > 0)) return null;
+        var Gs = [], ps = [], i;
+        for (i = 0; i < tt.length; i++) if (tt[i] > ts) { var gv = GFn((tt[i] - ts) / tp, 0.5); if (gv > 0) { Gs.push(gv); ps.push(pp[i]); } }
+        var n = Gs.length, best = null, bestV = -Infinity, Lw = 0.05;
+        for (i = 1; i < n - 1; i++) {
+            if (!(ps[i] <= sc && ps[i] >= pr + 0.1 * (sc - pr))) continue;
+            var l = i - 1, r = i + 1;
+            while (l > 0 && Math.log(Gs[i] / Gs[l]) < Lw) l--;
+            while (r < n - 1 && Math.log(Gs[r] / Gs[i]) < Lw) r++;
+            var d1 = (ps[l] - ps[i]) / (Gs[i] - Gs[l]), d2 = (ps[i] - ps[r]) / (Gs[r] - Gs[i]), wl = Math.log(Gs[r] / Gs[i]), wr = Math.log(Gs[i] / Gs[l]);
+            var dv = (d1 * wl + d2 * wr) / (wl + wr);
+            if (fin(dv) && dv > bestV) { bestV = dv; best = ps[i]; }
+        }
+        return best;
+    }
+    function sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr) {        // end of stiffening: max of f_L(p)/C(p) below σ_c
+        var best = sc, bestV = -1;
+        for (var x = 0; x <= sc - pr; x += Math.max(0.5, (sc - pr) / 4000)) {
+            var p = sc - x, v = ((p - pr) / (sc - pr)) / (AfCf * cfRatio(p) + vwcw(p));
+            if (v > bestV) { bestV = v; best = p; }
+        }
+        return best;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 8. Sources → a continuous record function {p(tInj), seg, ts, …} plus the truth
+    // ═════════════════════════════════════════════════════════════════════════
+    function caseWellbore(spec) {
+        var wb = spec.wellbore || {};
+        var VwCw = pos(wb.VwCw) ? wb.VwCw : REF.VwCw, cw = wb.cwOfP || null;
+        (spec.artefacts || []).forEach(function (a) { if (a && a.kind === 'air') { VwCw *= pos(a.factor) ? a.factor : 3; cw = 'air'; } });
+        return { VwCw: VwCw, cwOfP: cw };
+    }
+    function tEndFactor(spec) { return pos(spec.tEndFactor) ? spec.tEndFactor : 14; }
+
+    // gdomain (and the pre-closure half of aca-exact)
+    function srcGdomain(spec) {
+        var gd = merge(gdDefaults(), spec.gd || {});
+        if (spec.mechanism && !(spec.gd && spec.gd.mechanism)) gd.mechanism = spec.mechanism;
+        var wb = caseWellbore(spec);
+        var pStart = fin(gd.pStart) ? gd.pStart : gd.pr;
+        if (!(gd.isip > gd.sigmaC && gd.sigmaC > gd.pr)) return fail('BAD_INPUT', 'gdomain needs isip > sigmaC > pr', ['gd']);
+        var M = gdModel(gd, wb.VwCw, wb.cwOfP);
+        // V_L(t_c) = X·(G_c + 4g0/π·m): with PDL the pumping leak-off runs at the multiplier of the pumping pressure
+        // m = exp(C_d·(ISIP − p_fo)) (it used to be 1, so the PDL demo's truth assumed constant-CL pumping leak-off while its
+        // falloff had the PDL multiplier — the mini-model PDL case needs m ≈ 4, as the engine now does)
+        var mPump = ((gd.mechanism === 'pdl' || gd.Cd > 0) && gd.isip > M.pfo) ? Math.exp(gd.Cd * (gd.isip - M.pfo)) : 1;
+        var Vstar = pos(gd.Vstar) ? gd.Vstar : M.X * (gd.Gc + 4 * (PI / 2) / PI * mPump);
+        var Vi = Vstar + M.vwcw(gd.sigmaC) * (gd.sigmaC - pStart);
+        var sch = buildSchedule(gd.q, Vi, gd.stepDown);
+        var tp = sch.tp;                                             // pump definition (t_s − t_start)
+        var fac = tEndFactor(spec);
+        // integrate in G far enough for the record end
+        var GendGuess = GFn(Math.max(10, (gd.Gc > 0 ? GinvFn(gd.Gc, 0.5) : 60) * fac * 1.2), 0.5);
+        var I = gdIntegrate(gd, M, Math.max(GendGuess, 4 * gd.Gc));
+        var hard = !M.contact;
+        if (hard && !(I.Gc > 0)) return fail('NO_CLOSURE', 'gdomain: the decline does not reach closure', ['gd']);
+        var Gc = hard ? I.Gc : null;
+        var dtDc, dtc;
+        if (hard) { dtDc = GinvFn(Gc, 0.5); dtc = dtDc * tp; }
+        else {                                                       // contact: σ_c = contact onset (first p ≤ σ_c)
+            var gOn = interpLin(I.p.slice().reverse(), I.G.slice().reverse(), gd.sigmaC);
+            Gc = gOn; dtDc = GinvFn(gOn, 0.5); dtc = dtDc * tp;
+        }
+        var tcInj = tp + dtc, dtEnd = fac * dtc;
+        var geo = geometryFromAfCf(M.AfCf, gd.Ep, gd.hf, gd.hp, gd.geometry);
+        var tpMin = tp * 60, pn = gd.isip - gd.sigmaC;
+        var mG0 = -M.rhs(gd.isip, 0);
+        var CL = 2 * M.X * BBL / (PI * geo.rp * geo.Af * Math.sqrt(tpMin));
+        var kCL = kFromCL(CL, gd.isip, gd.sigmaC, gd.pr, gd.mu, gd.phi, gd.ct);
+        var etaG = Gc / (Gc + 2);
+        // after closure (hard closure): exact convolution, k chosen for continuity at closure (or p_i)
+        var aca = null, kTrue = kCL, pi = gd.pr, kSolved = false;
+        if (hard) {
+            aca = { k: kCL, L: geo.xf, h: gd.hp, phi: gd.phi, ct: gd.ct, mu: gd.mu, V: Vstar, tcInj: tcInj, pi: gd.pr, geometry: 'full' };
+            if (pos(gd.k) && gd.kSolve === 'pi') {
+                aca.k = gd.k; kTrue = gd.k;
+                pi = gd.sigmaC - convAt(kernel('full', aca), Vstar, tcInj, tcInj);
+                aca.pi = pi;
+            } else {
+                var target = gd.sigmaC - gd.pr;
+                var lk = bisect(function (lnk) { var a2 = clone(aca); a2.k = Math.exp(lnk); return convAt(kernel('full', a2), Vstar, tcInj, tcInj) - target; }, Math.log(1e-7), Math.log(1e3), 52);
+                aca.k = Math.exp(lk); kTrue = aca.k; kSolved = true;
+            }
+        }
+        var Kc = aca ? kernel('full', aca) : null;
+        var pump = pumpModel(gd, sch, pStart, M.vwcw(gd.isip));
+        // shut-in clock functions
+        function pFall(dt) {
+            var Gv = GFn(dt / tp, 0.5);
+            if (hard && Gv >= Gc) return pi + convAt(Kc, Vstar, tcInj, tp + dt);
+            return interpLin(I.G, I.p, Gv);
+        }
+        function p(tInj) { return tInj < tp ? pump.p(tInj) : pFall(tInj - tp); }
+        var sF2 = hard ? gd.sigmaC : sigmaCF2From(M.cfRatio, M.AfCf, M.vwcw, gd.sigmaC, gd.pr);
+        var sHyd = gd.sigmaC;
+        if (!hard) { for (var x = 0; x < gd.sigmaC - gd.pr; x += 1) { if (M.cfRatio(gd.sigmaC - x) <= 0.05) { sHyd = gd.sigmaC - x; break; } } }
+        var regimeAtEnd = null, sDEnd = null;
+        if (hard) {                                                  // s_D of the exact solution at the record end (injection clock tp + dtEnd)
+            var ex = acaExact(aca, [tp + dtEnd], { geometry: 'full' });
+            sDEnd = ex.ok && fin(ex.sD[0]) ? ex.sD[0] : null;
+            regimeAtEnd = ex.ok ? regimeFromSD(ex.sD[0], 'full') : null;
+        }
+        var truth = {
+            sigmaC: gd.sigmaC, sigmaCHyd: sHyd, sigmaCF2: sF2, isip: gd.isip, pi: pi, k: kTrue, khmu: kTrue * gd.hp / gd.mu, L: geo.xf,
+            mechanism: gd.mechanism, regimeAtEnd: regimeAtEnd, sDEnd: sDEnd, tcInj: tcInj, eta: etaG, CL: CL, Gamma: 2 * mG0 / (PI * Math.sqrt(tpMin)),
+            AfCf: M.AfCf, Rvis: M.AfCf / (M.AfCf + M.vwcw(gd.sigmaC)), xf: geo.xf,
+            // extras
+            source: 'gdomain', Gc: Gc, dtc: dtc, dtDc: dtDc, tp: tp, Vi: sch.Vi, ViStar: Vstar, pn: pn, mG: mG0, VwCw: M.vwcw(gd.sigmaC), Csys: M.AfCf + M.vwcw(gd.sigmaC),
+            kCL: kCL, kSolved: kSolved, acaScored: hard, geometry: gd.geometry, rampSlopePsiMin: pump.rampSlopePsiMin, rampScaled: pump.rampScaled,
+            pb: pump.pb, tbInj: pump.tb, pfo: (gd.mechanism === 'pdl' || gd.Cd > 0) ? M.pfo : null, pHr: gd.mechanism === 'height-recession' ? M.hrP : null,
+            fluid: 'water', gasApprox: false
+        };
+        return { ok: true, p: p, seg: sch.seg, tp: tp, dtEnd: dtEnd, pStart: pStart, truth: truth, gd: gd, M: M, aca: aca, pump: pump };
+    }
+
+    // aca-exact: given k, L, V, t_c, p_i → σ_c = p_i + Δp(t_c) (continuity), a normal G line before closure
+    function srcAca(spec) {
+        var a = clone(spec.aca);
+        if (!isObj(a)) return fail('BAD_INPUT', "source 'aca-exact' needs the aca block", ['aca']);
+        var geo = a.geometry || 'full';
+        var te = pos(a.te) ? a.te : 5 / 60;
+        if (!(a.tcInj > te)) return fail('BAD_INPUT', 'aca-exact: tcInj must exceed the pumping time te', ['aca.tcInj']);
+        var ex0 = acaExact(a, [a.tcInj], { geometry: geo });
+        if (!ex0.ok) return ex0;
+        var sc = a.pi + ex0.dp[0];
+        var pn = pos(a.pn) ? a.pn : 600;
+        var wb = caseWellbore(spec);
+        var gd = merge(gdDefaults(), {
+            mechanism: 'normal', isip: sc + pn, sigmaC: sc, pr: a.pi, pStart: a.pi, Gc: GFn((a.tcInj - te) / te, 0.5), q: a.V / (te * 60), Vstar: a.V,
+            Ep: pos(a.Ep) ? a.Ep : REF.Ep, hf: pos(a.hfrac) ? a.hfrac : (geo === 'box' && pos(a.hf) ? a.hf : a.h), hp: a.h, phi: a.phi, ct: a.ct, mu: a.mu,
+            geometry: geo === 'penny' ? 'radial' : 'PKN'
+        });
+        gd.Vstar = a.V;
+        var M = gdModel(gd, wb.VwCw, null);
+        // the pre-closure line closes exactly at the given t_c: X from the balance, A_f·c_f = X·G_c/p_n − V_w·c_w
+        var Gc = gd.Gc, X = a.V / (Gc + 2), Csys = X * Gc / pn, AfCf = Math.max(1e-9, Csys - wb.VwCw);
+        var Vi = a.V + wb.VwCw * (sc - a.pi);
+        var sch = { seg: [{ t0: 0, t1: te, q: Vi / (te * 60) }], tp: te, Vi: Vi };
+        var mG = pn / Gc;
+        var K = kernel(geo, a), fac = tEndFactor(spec);
+        var dtc = a.tcInj - te, dtEnd = pos(a.tEnd) ? a.tEnd - te : fac * dtc;
+        var pump = pumpModel(gd, sch, a.pi, wb.VwCw);
+        var gas = a.fluid === 'gas' ? gasMap(a) : null;
+        if (a.fluid === 'gas' && !gas) return fail('GAS_PVT_UNAVAILABLE', 'aca-exact gas case: PRiSM_mpTable is not available', ['aca.fluid']);
+        function pFall(dt) {
+            var Gv = GFn(dt / te, 0.5);
+            var pa = Gv < Gc ? (sc + pn) - mG * Gv : a.pi + convAt(K, a.V, a.tcInj, te + dt);
+            return gas ? gas(pa) : pa;
+        }
+        function p(tInj) { return tInj < te ? pump.p(tInj) : pFall(tInj - te); }
+        var geom = geometryFromAfCf(AfCf, gd.Ep, gd.hf, gd.hp, gd.geometry);
+        var tpMin = te * 60;
+        var CL = 2 * X * BBL / (PI * geom.rp * geom.Af * Math.sqrt(tpMin));
+        var exEnd = acaExact(a, [te + dtEnd], { geometry: geo });
+        // gas: the record is the liquid response mapped through m(p), so the truth pressures are mapped the same way (ISIP and
+        // σ_c used to stay at the liquid values: the scorer marked the engine's mapped 8,068.7 / 7,478.1 wrong against 8,128.1 /
+        // 7,528.1), and k is the gas-convention value: the response's kh/μ_liq read at μ_g(p_i), k = k_liq·μ_g,i/μ_liq
+        var scT = gas ? gas(sc) : sc, isipT = gas ? gas(sc + pn) : sc + pn, kT = a.k;
+        if (gas) { var mugi = gasMuAt(a, a.pi); if (pos(mugi) && pos(a.mu)) kT = a.k * mugi / a.mu; }
+        var truth = {
+            sigmaC: scT, sigmaCHyd: scT, sigmaCF2: scT, isip: isipT, pi: a.pi, k: kT, khmu: a.k * a.h / a.mu, L: a.L, mechanism: 'normal', kLiquid: gas ? a.k : undefined,
+            regimeAtEnd: exEnd.ok ? regimeFromSD(exEnd.sD[0], geo) : null, sDEnd: exEnd.ok && fin(exEnd.sD[0]) ? exEnd.sD[0] : null, tcInj: a.tcInj, eta: Gc / (Gc + 2), CL: CL, Gamma: 2 * mG / (PI * Math.sqrt(tpMin)),
+            AfCf: AfCf, Rvis: AfCf / (AfCf + wb.VwCw), xf: geom.xf,
+            source: 'aca-exact', Gc: Gc, dtc: dtc, dtDc: dtc / te, tp: te, Vi: Vi, ViStar: a.V, pn: isipT - scT, mG: mG, VwCw: wb.VwCw, Csys: AfCf + wb.VwCw,
+            kCL: kFromCL(CL, sc + pn, sc, a.pi, a.mu, a.phi, a.ct), kSolved: false, acaScored: true, geometry: geo, rampSlopePsiMin: pump.rampSlopePsiMin,
+            rampScaled: pump.rampScaled, pb: pump.pb, tbInj: pump.tb, pfo: null, pHr: null, fluid: a.fluid === 'gas' ? 'gas' : 'water', gasApprox: !!gas
+        };
+        return { ok: true, p: p, seg: sch.seg, tp: te, dtEnd: dtEnd, pStart: a.pi, truth: truth, gd: gd, M: M, aca: a, pump: pump };
+    }
+    // μ_g at p (the correlations 57 uses: Sutton pseudo-criticals, Dranchuk–Abou-Kassem z, Lee–Gonzalez–Eakin μ), call time
+    function gasMuAt(a, p) {
+        var C = G.PRiSM_pvt_correlations, T = pos(a.T_F) ? a.T_F : 200, sg = pos(a.SG_g) ? a.SG_g : 0.65;
+        if (!C || !(p > 0)) return null;
+        try { var z = C.Z_dranchukAbouKassem((T + 459.67) / C.Tpc_sutton(sg), p / C.Ppc_sutton(sg)); return C.mu_g_leeGonzalezEakin(sg, T, z, p); } catch (e) { return null; }
+    }
+    // gas: the convolution gives the adjusted pressure p_a = p_i + (μz/p)_i·∫ p/(μz) dp; map back with PRiSM's own m(p)
+    // (PRiSM_mpTable, call time). The clock is not stretched (pseudo-time not applied; truth.gasApprox).
+    function gasMap(a) {
+        if (typeof G.PRiSM_mpTable !== 'function') return null;
+        var tbl;
+        try { tbl = G.PRiSM_mpTable({ T_F: pos(a.T_F) ? a.T_F : 200, SG_g: pos(a.SG_g) ? a.SG_g : 0.65, pi: a.pi, pmax: 2.5 * a.pi + 3000 }); } catch (e) { return null; }
+        if (!tbl || typeof tbl.mOf !== 'function' || typeof tbl.pOf !== 'function') return null;
+        var mi = tbl.mOf(a.pi), dm = (tbl.mOf(a.pi + 0.5) - tbl.mOf(a.pi - 0.5));
+        return function (pa) { return tbl.pOf(mi + (pa - a.pi) * dm); };
+    }
+
+    // lk: the leak-off mini-model (58), resolved at call time
+    function lkAvailable() {
+        var f = G.PRiSM_dfit_lkSimulate;
+        return typeof f === 'function' && !f._dfitStub;
+    }
+    function srcLk(spec) {
+        if (!lkAvailable()) return fail('LK_UNAVAILABLE', 'The leak-off mini-model (PRiSM_dfit_lkSimulate) is not available.', ['source']);
+        var cfg = clone(spec.lk);
+        if (!isObj(cfg)) return fail('BAD_INPUT', "source 'lk' needs an LkConfig", ['lk']);
+        var wb = caseWellbore(spec);
+        cfg.VwCw = wb.VwCw;
+        if (wb.cwOfP) cfg.cwOfP = wb.cwOfP;
+        var res;
+        try { res = G.PRiSM_dfit_lkSimulate(cfg, { grid: 'display' }); } catch (e) { return fail('LK_FAILED', 'lkSimulate threw: ' + (e && e.message)); }
+        if (!res || res.ok !== true || !Array.isArray(res.t) || res.t.length < 3) return fail('LK_FAILED', 'lkSimulate failed: ' + ((res && (res.why || (res.errors && res.errors[0]))) || 'no result'), ['lk']);
+        var ev = res.events || {};
+        var ts = fin(ev.ts) ? ev.ts : cfg.schedule[cfg.schedule.length - 1].t;
+        var tcInj = fin(ev.tcMech) ? ev.tcMech : null;
+        var fac = tEndFactor(spec);
+        if (tcInj && ts + fac * (tcInj - ts) > res.t[res.t.length - 1] * 1.0001 && pos(spec.tEndFactor)) {
+            cfg.tEnd = ts + fac * (tcInj - ts);
+            try { var r2 = G.PRiSM_dfit_lkSimulate(cfg, { grid: 'display' }); if (r2 && r2.ok === true) res = r2; } catch (e2) { /* keep the first run */ }
+        }
+        var T = res.t, P = res.pw, tt = [], pp = [];
+        for (var i = 0; i < T.length; i++) if (fin(T[i]) && fin(P[i])) { tt.push(T[i]); pp.push(P[i]); }
+        var dtEnd = tcInj ? Math.min(tt[tt.length - 1] - ts, fac * (tcInj - ts)) : tt[tt.length - 1] - ts;
+        var seg = [];
+        for (var j = 0; j < cfg.schedule.length; j++) {
+            var s = cfg.schedule[j], nx = cfg.schedule[j + 1];
+            if (s.q > 0) seg.push({ t0: s.t, t1: nx ? nx.t : ts, q: s.q });
+        }
+        var tStartInj = seg.length ? seg[0].t0 : 0;
+        // log-time interpolation after shut-in (the display grid is log-spaced)
+        var lnT = [], lnP = [];
+        for (i = 0; i < tt.length; i++) if (tt[i] > ts) { lnT.push(Math.log(tt[i] - ts)); lnP.push(pp[i]); }
+        function p(tInj) {
+            if (tInj > ts && lnT.length && tInj - ts >= Math.exp(lnT[0])) return interpLin(lnT, lnP, Math.log(tInj - ts));
+            return interpLin(tt, pp, tInj);
+        }
+        var tsI = idxNear(tt, ts);
+        var ap = cfg.aperture || { law: 'none' };
+        var geoName = cfg.geometry || 'PKN';
+        var Ep = cfg.Ep, hf = cfg.hf, xf = res.xf && fin(res.xf.ts) ? res.xf.ts : null;
+        var Af = Array.isArray(res.A) && fin(res.A[tsI]) ? res.A[tsI] : (xf ? 2 * xf * hf : null);
+        var cfFt = geoName === 'KGD' ? PI * xf / Ep : geoName === 'radial' ? 16 * xf / (3 * PI * Ep) : PI * hf / (2 * Ep);
+        var AfCf = Af && cfFt ? Af * cfFt / BBL : null;
+        // storage-consistent V_w·c_w at σ_c: the gdomain truth uses vwcw(σ_c) of its c_w(p) law, so the lk truth does the same.
+        // 58 exposes no c_w(p) law in LkResult (§3.7); when it reports a per-sample V_w·c_w(p) series (res.VwCwP, aligned with
+        // res.pw) it is read at σ_c, otherwise the gdomain law is used (V_w·c_w(p) = V_w·c_w,0·((1 − f) + f·σ_c/p), f = cwFrac,
+        // which is V_w·c_w,0 at σ_c by construction of the case inputs).
+        var VwCw = lkVwcwAt(res, wb, cfg.sigmaC);
+        var law = ap.law || 'none', sc = cfg.sigmaC, pr = cfg.pr;
+        function cfRatio(pv) {
+            if (pv >= sc || law === 'none') return 1;
+            var x = sc - pv;
+            if (law === 'hyp') return Math.pow(ap.sh / (ap.sh + x), 2);
+            var sr = pos(ap.sr) ? ap.sr : 10 * ap.sc;
+            return ap.fres * Math.exp(-x / sr) + (1 - ap.fres) * Math.exp(-x / ap.sc);
+        }
+        var vwcw = function () { return VwCw; };
+        // F2 truth (end of stiffening): the mini-model's own dP/dG maximum below σ_c on its display grid (G with α = ½ on the
+        // pump time, a Bourdet window of 0.05 in ln G). The quasi-static f_L = (p − p_r)/(σ_c − p_r) of sigmaCF2From misses the
+        // Duhamel memory of the leak-off (§4.11), so the 436 psi median F2 "error" of the quick set came from the truth
+        var sF2 = (law === 'none' || !AfCf) ? sc : lkF2(tt, pp, ts, ts - tStartInj, sc, pr);
+        if (!fin(sF2)) sF2 = (law === 'none' || !AfCf) ? sc : sigmaCF2From(cfRatio, AfCf, vwcw, sc, pr);
+        var Gc05 = ev.Gc && fin(ev.Gc.a05) ? ev.Gc.a05 : null;
+        var isip = fin(ev.isip) ? ev.isip : p(ts + 1e-6);
+        var tpMin = (ts - tStartInj) * 60;
+        var mG = Gc05 ? (isip - sc) / Gc05 : null;
+        var grp = null;
+        if (typeof G.PRiSM_dfit_lkGroups === 'function') { try { grp = G.PRiSM_dfit_lkGroups(cfg); } catch (e3) { grp = null; } }
+        var CLeq = fin(res.CLeq) ? res.CLeq : null;
+        var k = pos(cfg.k) ? cfg.k : (CLeq ? kFromCL(CLeq, isip, sc, pr, cfg.muRes, cfg.phi, cfg.ct) : null);
+        var L = xf || (res.xf && res.xf.tc) || null;
+        var etaD = ETA_C * (k || 0) / (cfg.phi * cfg.muRes * cfg.ct);
+        var tDL = (k && L && tcInj) ? etaD * (ts + dtEnd - tcInj / 3) / (L * L) : null;
+        var reg = tDL == null ? null : tDL <= 0.051 ? 'linear' : tDL >= 2.32 ? 'radial' : 'transition';
+        var mech = spec.mechanism;
+        // §4.11 / R5: the storage class needs a storage-consistent R_vis < 0.3; a 'storage' case that is not storage-dominated
+        // (e.g. the I14 quick case, R_vis ≈ 0.54) carries the underlying leak-off mechanism of LK_MECH.storage (Carter normal)
+        if (mech === 'storage' && !(AfCf && AfCf / (AfCf + VwCw) < 0.3)) mech = 'normal';
+        var truth = {
+            sigmaC: sc, sigmaCHyd: fin(ev.tcHyd) ? p(ev.tcHyd) : sc, sigmaCF2: sF2, isip: isip, pi: pr, k: k, khmu: k ? k * cfg.hp / cfg.muRes : null, L: L,
+            mechanism: mech, mechanismSpec: spec.mechanism, regimeAtEnd: reg, sDEnd: null, tDLEnd: tDL, tcInj: tcInj != null ? tcInj - tStartInj : null,
+            eta: Gc05 ? Gc05 / (Gc05 + 2) : null, CL: CLeq, Gamma: grp && fin(grp.Gamma) ? grp.Gamma : (mG ? 2 * mG / (PI * Math.sqrt(tpMin)) : null),
+            AfCf: AfCf, Rvis: AfCf ? AfCf / (AfCf + VwCw) : null, xf: xf,
+            source: 'lk', Gc: Gc05, dtc: tcInj != null ? tcInj - ts : null, dtDc: (tcInj != null && tpMin > 0) ? (tcInj - ts) / (tpMin / 60) : null, tp: tpMin / 60,
+            Vi: seg.reduce(function (s2, g) { return s2 + g.q * (g.t1 - g.t0) * 60; }, 0), ViStar: null, pn: isip - sc, mG: mG, VwCw: VwCw,
+            Csys: AfCf ? AfCf + VwCw : null, kCL: CLeq ? kFromCL(CLeq, isip, sc, pr, cfg.muRes, cfg.phi, cfg.ct) : null, kSolved: false,
+            acaScored: true, geometry: geoName, rampSlopePsiMin: VwCw > 0 && seg.length ? seg[0].q / VwCw : null, rampScaled: false,
+            pb: fin(ev.pb) ? ev.pb : null, tbInj: fin(ev.tb) ? ev.tb - tStartInj : null, pfo: cfg.pdl && cfg.pdl.Cd > 0 ? cfg.pdl.pfo : null, pHr: null,
+            fluid: 'water', gasApprox: false
+        };
+        // shift the schedule clock so that pump start is 0
+        var seg0 = seg.map(function (g) { return { t0: g.t0 - tStartInj, t1: g.t1 - tStartInj, q: g.q }; });
+        return { ok: true, p: function (tInj) { return p(tInj + tStartInj); }, seg: seg0, tp: ts - tStartInj, dtEnd: dtEnd, pStart: p(tStartInj), truth: truth, lkRes: res, cfg: cfg };
+    }
+    function lkVwcwAt(res, wb, p) {
+        var base = wb.VwCw;
+        if (!wb.cwOfP || !fin(p)) return base;
+        if (res && Array.isArray(res.VwCwP) && Array.isArray(res.pw) && res.VwCwP.length === res.pw.length) {
+            var b = -1;                                              // the sample whose pressure is closest to p, after the peak
+            for (var i = 0; i < res.pw.length; i++) if (fin(res.pw[i]) && pos(res.VwCwP[i]) && (b < 0 || Math.abs(res.pw[i] - p) < Math.abs(res.pw[b] - p))) b = i;
+            if (b >= 0) return res.VwCwP[b];
+        }
+        var f = gdDefaults().cwFrac;
+        return base * ((1 - f) + f * p / Math.max(p, 50));
+    }
+    S.lkVwcwAt = lkVwcwAt;
+    function idxNear(a, x) { var b = 0; for (var i = 0; i < a.length; i++) if (Math.abs(a[i] - x) < Math.abs(a[b] - x)) b = i; return b; }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 9. Artefact injectors (§8.1): pure transforms ds → ds; each changes only its target channel
+    // ═════════════════════════════════════════════════════════════════════════
+    function copyDs(ds) {
+        var o = {};
+        Object.keys(ds).forEach(function (k) { o[k] = Array.isArray(ds[k]) ? ds[k].slice() : (isObj(ds[k]) ? clone(ds[k]) : ds[k]); });
+        return o;
+    }
+    var CH = ['p', 'q', 'pSurf', 'pBh', 'qFb', 'T', 'pAnn'];
+    function mapP(ds, ch, fn) { var o = copyDs(ds); if (Array.isArray(o[ch])) o[ch] = o[ch].map(function (v, i) { return fn(v, i, ds.t[i]); }); return o; }
+    function keepRows(ds, keep) {
+        var o = copyDs(ds);
+        ['t'].concat(CH).forEach(function (k) { if (Array.isArray(o[k])) o[k] = o[k].filter(function (_, i) { return keep[i]; }); });
+        return o;
+    }
+    function after(ctx, t) { return t - ctx.ts; }
+    var A = {};
+    A.white = { target: 'p', stage: 3, levels: [{ sigma: 0.01 }, { sigma: 0.1 }, { sigma: 0.3 }, { sigma: 1 }],
+        apply: function (ds, a, ctx, r) { return mapP(ds, a.channel || 'p', function (v) { return v + (a.sigma || 0.05) * gauss(r); }); } };
+    A.ar1 = { target: 'p', stage: 3, levels: [{ sigma: 0.05, rho1: 0.5 }, { sigma: 0.1, rho1: 0.9 }, { sigma: 0.3, rho1: 0.95 }, { sigma: 1, rho1: 0.99 }],
+        apply: function (ds, a, ctx, r) {
+            var rho = Math.min(0.99, Math.max(0, num(a.rho1, 0.9))), s = num(a.sigma, 0.1), e = s * gauss(r), w = s * Math.sqrt(1 - rho * rho);
+            return mapP(ds, a.channel || 'p', function (v, i) { if (i > 0) e = rho * e + w * gauss(r); return v + e; });
+        } };
+    A.quantise = { target: 'p', stage: 4, levels: [{ quantum: 0.01 }, { quantum: 0.05 }, { quantum: 0.2 }, { quantum: 1 }],
+        apply: function (ds, a) { var qn = num(a.quantum, 0.01); return mapP(ds, a.channel || 'p', function (v) { return Math.round(v / qn) * qn; }); } };
+    A.sampling = { target: 't', stage: 6, levels: [{ dtS: 1 }, { dtS: 5 }, { dtS: 30 }, { dtS: 120 }],
+        apply: function (ds, a) {      // keep samples no closer than dtS (thins the record; values unchanged)
+            var dth = num(a.dtS, 1) / 3600, last = -Infinity, keep = ds.t.map(function (t) { if (t - last >= dth - 1e-12) { last = t; return true; } return false; });
+            return keepRows(ds, keep);
+        } };
+    A.tides = { target: 'p', stage: 1, levels: [{ amp: 0.05 }, { amp: 0.15 }, { amp: 0.3 }, { amp: 0.5 }],
+        apply: function (ds, a, ctx, r) {
+            var amp = num(a.amp, 0.2), ph1 = 2 * PI * r(), ph2 = 2 * PI * r();
+            return mapP(ds, 'p', function (v, i, t) { return v + amp * (Math.cos(2 * PI * t / 12.4206 + ph1) + 0.58 * Math.cos(2 * PI * t / 23.9345 + ph2)); });
+        } };
+    A.barometric = { target: 'pSurf', stage: 1, levels: [{ amp: 0.02 }, { amp: 0.05 }, { amp: 0.1 }, { amp: 0.2 }],
+        apply: function (ds, a, ctx, r) {
+            if (!Array.isArray(ds.pSurf)) return copyDs(ds);
+            var amp = num(a.amp, 0.05), ph = 2 * PI * r();
+            return mapP(ds, 'pSurf', function (v, i, t) { return v + amp * Math.cos(2 * PI * t / 12 + ph); });
+        } };
+    // surface channel from the BH channel (§4.2). With WTS_wellbore (resolved at call time) the surface pressure is the exact
+    // inverse of WTS_wellbore.convert for the reference column: ρ(p,T) hydrostatics, the displaced (DFIT) temperature model with
+    // τ_T = a.tauT (the column cooled by the injection warms back after shut-in) and the pipe friction while pumping, so a
+    // converted surface gauge recovers the bottomhole record up to the gauge noise. Without it (or with a.grad given): the
+    // constant-gradient column plus an exponential warm-back of a.warm psi.
+    function surfaceCtx(tauT, tvd) {
+        var IR = G.PRiSM_dfit_inputRanges, inp = null;
+        try { if (IR && typeof IR.defaults === 'function') inp = IR.defaults(); } catch (e) { inp = null; }
+        inp = inp || { survey: null, fluid: { kind: 'water', rhoPpg: 8.43, salinityWt: null, muCp: 1.0, fr: 0, nPrime: null, kPrime: null, tInjF: 70 },
+                       temp: { model: 'static', surfF: 70, gradFper100: 1.5, tauLoH: 0.5, tauHiH: 5 }, datumMd: null };
+        surfaceInputs(inp, tauT, tvd);
+        var col = { survey: inp.survey, strings: inp.strings, fluid: inp.fluid, temp: { model: 'displaced', surfF: inp.temp.surfF, gradFper100: inp.temp.gradFper100, tauLoH: tauT, tauHiH: tauT },
+                    datumTvd: inp.datumTvd, datumMd: inp.datumMd };
+        return { column: col, fluid: inp.fluid, temp: col.temp, atmPsia: ATM, gaugeTvd: 0 };
+    }
+    // the column, fluid and temperature model of a surface-gauge case (shared by inputsFor and the surface artefact). The
+    // analysis band of the relaxation time is 1–4 h (its centre √(1·4) = 2 h is the default τ_T of the artefact).
+    function surfaceInputs(inp, tauT, tvd) {
+        inp.datumTvd = num(tvd, REF.datumTvd);
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
+        inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
+        inp.temp.model = 'displaced'; inp.temp.tauLoH = fin(tauT) ? tauT / 2 : 1; inp.temp.tauHiH = fin(tauT) ? tauT * 2 : 4;
+        return inp;
+    }
+    function surfaceOf(ds, a, ctx) {
+        var grad = num(a.grad, GRAD_W), tvd = num(a.tvd, ctx.datumTvd || REF.datumTvd), tauT = num(a.tauT, 2), W = num(a.warm, 18);
+        var WB = G.WTS_wellbore, conv = WB && typeof WB.convert === 'function' && !WB.convert._dfitStub ? WB.convert : null;
+        var ps0 = ds.p.map(function (v, i) {
+            var dt = ds.t[i] - ctx.ts, warm = dt > 0 ? W * (1 - Math.exp(-dt / tauT)) : 0;
+            return v - grad * tvd + warm;
+        });
+        if (!conv || fin(a.grad)) return ps0;
+        // fixed point p_s ← p_s + (p_w − convert(p_s)): convert is ≈ p_s + H(p_s, t), dH/dp_s ≪ 1, so a few passes converge to
+        // well below the 0.1 psi quantum. Samples the converter masks (surface at or below 0 psig) carry the last correction on.
+        var cx = surfaceCtx(tauT, tvd), ps = ps0.slice(), n = ps.length, it, i;
+        for (it = 0; it < 6; it++) {
+            var cv = null;
+            try { cv = conv({ t: ds.t, p: ps, q: ds.q || null }, cx, { band: false, channel: 'p' }); } catch (e) { cv = null; }
+            if (!cv || cv.ok === false || !Array.isArray(cv.pw)) return ps0;
+            var corr = 0, mx = 0;
+            for (i = 0; i < n; i++) {
+                if (fin(cv.pw[i])) corr = ds.p[i] - cv.pw[i];
+                ps[i] += corr; if (Math.abs(corr) > mx) mx = Math.abs(corr);
+            }
+            if (mx < 1e-3) break;
+        }
+        return ps;
+    }
+    A.surface = { target: 'pSurf', stage: 0, levels: [{ tauT: 0.5 }, { tauT: 1.5 }, { tauT: 3 }, { tauT: 5 }],
+        apply: function (ds, a, ctx) { var o = copyDs(ds); o.pSurf = surfaceOf(ds, a, ctx); return o; } };
+    A.vacuum = { target: 'pSurf', stage: 4, levels: [{ pVap: 0.4 }, { pVap: 1 }, { pVap: 3 }, { pVap: 8 }],
+        apply: function (ds, a, ctx, r) {
+            var ch = Array.isArray(ds.pSurf) ? 'pSurf' : 'p', pv = num(a.pVap, 0.4), hit = false;
+            return mapP(ds, ch, function (v, i, t) {    // the column hangs: the gauge reads the vapour pressure (sticky after shut-in)
+                if (t > ctx.ts && v <= pv + 0.5) hit = true;
+                return (hit || v < pv) ? Math.max(0.05, pv + 0.02 * gauss(r)) : v;
+            });
+        } };
+    A.leak = { target: 'p', stage: 1, levels: [{ qk: 0.02 }, { qk: 0.05 }, { qk: 0.1 }, { qk: 0.2 }],
+        apply: function (ds, a, ctx) {        // a constant-rate sink after shut-in: dp/dt = −q_k/C (C_sys before closure, 5·V_w·c_w after)
+            var qk = num(a.qk, 0.05) / 24, C1 = ctx.Csys || 0.0375, C2 = 5 * (ctx.VwCw || REF.VwCw), tc = ctx.tsRec + (ctx.dtc || 1);
+            return mapP(ds, 'p', function (v, i, t) {
+                if (t <= ctx.ts) return v;
+                var d1 = Math.min(t, tc) - ctx.ts, d2 = Math.max(0, t - tc);
+                return v - qk * (d1 / C1 + d2 / C2);
+            });
+        } };
+    A.clock = { target: 'q', stage: 5, levels: [{ offsetH: 10 / 3600 }, { offsetH: 37.4 / 3600 }, { offsetH: 0.1 }, { offsetH: 1 }],
+        apply: function (ds, a) {
+            if (!Array.isArray(ds.q)) return copyDs(ds);
+            var off = num(a.offsetH, 37.4 / 3600), t = ds.t, q = ds.q;
+            return mapP(ds, 'q', function (v, i, ti) { var tt = ti - off; if (tt < t[0]) return q[0]; var j = 0; while (j + 1 < t.length && t[j + 1] <= tt) j++; return q[j]; });
+        } };
+    A.psig = { target: 'p', stage: 5, levels: [{ atm: ATM }, { atm: ATM }, { atm: ATM }, { atm: ATM }],
+        apply: function (ds, a) { var at = num(a.atm, ATM); return mapP(ds, a.channel || 'p', function (v) { return v - at; }); } };
+    A.datum = { target: 'p', stage: 5, levels: [{ dz: 50 }, { dz: 200 }, { dz: 500 }, { dz: 1000 }],
+        apply: function (ds, a) { var d = num(a.dz, 200) * num(a.grad, GRAD_W); return mapP(ds, 'p', function (v) { return v - d; }); } };
+    A.units = { target: 'q', stage: 5, levels: [{ factor: 1440 }, { factor: 1440 }, { factor: 1440 }, { factor: 1440 }],
+        apply: function (ds, a) { if (!Array.isArray(ds.q)) return copyDs(ds); var f = num(a.factor, 1440); return mapP(ds, 'q', function (v) { return v * f; }); } };
+    A.hammer = { target: 'p', stage: 1, levels: [{ A: 30, Ts: 8.8, tau: 4 }, { A: 115, Ts: 8.8, tau: 6.5 }, { A: 200, Ts: 8.8, tau: 12 }, { A: 300, Ts: 8.8, tau: 25 }],
+        apply: function (ds, a, ctx) {
+            var Am = num(a.A, 115), T = num(a.Ts, 8.8) / 3600, tau = num(a.tau, 6.5) / 3600;
+            return mapP(ds, 'p', function (v, i, t) { var d = t - ctx.ts; return d > 0 ? v + Am * Math.exp(-d / tau) * Math.cos(2 * PI * d / T) : v; });
+        } };
+    A.bleed = { target: 'p', stage: 1, levels: [{ b: 60 }, { b: 140.9 }, { b: 250 }, { b: 400 }],
+        apply: function (ds, a, ctx) {        // pure q^½ friction bleed-off: 1/Δ = 1/Δ0 + t/(b²·V_w·c_w) (t in min)
+            var b = num(a.b, 140.9), VwCw = num(a.VwCw, ctx.VwCw || REF.VwCw), d0 = b * Math.sqrt(ctx.qLast || 5);
+            return mapP(ds, 'p', function (v, i, t) { var d = (t - ctx.ts) * 60; return d > 0 ? v + 1 / (1 / d0 + d / (b * b * VwCw)) : v; });
+        } };
+    A.thermal = { target: 'p', stage: 1, levels: [{ A: 1, tauH: 0.05 }, { A: 3, tauH: 0.1 }, { A: 6, tauH: 0.25 }, { A: 10, tauH: 0.5 }],
+        apply: function (ds, a, ctx) {
+            var Am = num(a.A, 3), tau = num(a.tauH, 0.1);
+            return mapP(ds, 'p', function (v, i, t) { var d = t - ctx.ts; return d > 0 ? v - Am * (1 - Math.exp(-d / tau)) * Math.exp(-d / (6 * tau)) * 2.5 : v; });
+        } };
+    A['early-stop'] = { target: 't', stage: 6, levels: [{ factor: 3 }, { factor: 1.5 }, { factor: 1 }, { factor: 0.5 }],
+        apply: function (ds, a, ctx) {
+            var tEnd = ctx.ts + num(a.factor, 1.5) * (ctx.dtc || 1);
+            return keepRows(ds, ds.t.map(function (t) { return t <= tEnd + 1e-12; }));
+        } };
+    A['closed-line'] = { target: 'p', stage: 2, levels: [{ afterH: 24 }, { afterH: 6 }, { afterH: 1 }, { afterH: 0.1 }],
+        apply: function (ds, a, ctx) {        // the gauge-side valve closes: the reading freezes and drifts slightly
+            var tv = ctx.ts + num(a.afterH, 2), frozen = null;
+            return mapP(ds, 'p', function (v, i, t) { if (t < tv) return v; if (frozen === null) frozen = v; return frozen - 0.02 * (t - tv); });
+        } };
+    A.air = { target: 'model', stage: -1, levels: [{ factor: 2 }, { factor: 3 }, { factor: 5 }, { factor: 10 }],
+        apply: function (ds) { return copyDs(ds); } };       // applied at generation (V_w·c_w × factor, c_w(p) of air)
+    S.artefacts = A;
+    S.ARTEFACT_KINDS = ['tides', 'barometric', 'surface', 'vacuum', 'leak', 'clock', 'psig', 'datum', 'units', 'hammer', 'bleed', 'thermal',
+        'early-stop', 'closed-line', 'air'];
+    S.inject = function (ds, art, ctx, seed) {
+        var inj = art && A[art.kind];
+        if (!inj) return fail('BAD_INPUT', 'unknown artefact kind', ['kind']);
+        return inj.apply(ds, art, ctx || {}, rng(seed));
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 10. make(caseSpec, seed)
+    // ═════════════════════════════════════════════════════════════════════════
+    function roundDs(ds) {
+        ds.t = ds.t.map(function (x) { return rnd(x, 9); });
+        ['p', 'pSurf', 'pBh', 'pAnn'].forEach(function (k) { if (Array.isArray(ds[k])) ds[k] = ds[k].map(function (x) { return rnd(x, 3); }); });
+        ['q', 'qFb'].forEach(function (k) { if (Array.isArray(ds[k])) ds[k] = ds[k].map(function (x) { return rnd(x, 4); }); });
+        if (Array.isArray(ds.T)) ds.T = ds.T.map(function (x) { return rnd(x, 3); });
+        return ds;
+    }
+    // the context the injectors read (shut-in time, closure time, compliances) from a truth object
+    function ctxOf(truth, qLast) {
+        return { ts: truth.ts, tsRec: truth.ts, tStart: truth.tStart, dtc: truth.dtc, Csys: truth.Csys, VwCw: truth.VwCw, qLast: pos(qLast) ? qLast : 5,
+                 datumTvd: REF.datumTvd };
+    }
+    S.ctxOf = ctxOf;
+    function make(caseSpec, seed) {
+        try {
+            if (!isObj(caseSpec)) return fail('BAD_INPUT', 'make needs a CaseSpec', ['caseSpec']);
+            var spec = clone(caseSpec), sd = seedOf(seed == null ? 1 : seed);
+            var src = spec.source === 'lk' ? srcLk(spec) : spec.source === 'aca-exact' ? srcAca(spec) : spec.source === 'gdomain' ? srcGdomain(spec) : fail('BAD_INPUT', 'unknown source', ['source']);
+            if (!src.ok) return src;
+            var tStart = pos(spec.gd && spec.gd.tStartH) ? spec.gd.tStartH : REF.tStartH;
+            var dtS = pos(spec.sampling && spec.sampling.dtS) ? spec.sampling.dtS : 2.5;
+            var ts = tStart + src.tp, tEndRec = ts + src.dtEnd;
+            var perDecade = 120, t = sampleGrid(tStart, ts, tEndRec, dtS, perDecade);
+            while (t.length > MAX_PTS && perDecade > 20) { perDecade = Math.round(perDecade * 0.75); t = sampleGrid(tStart, ts, tEndRec, Math.max(dtS, 1), perDecade); }
+            if (t.length > MAX_PTS) return fail('TOO_LONG', 'the record would exceed ' + MAX_PTS + ' samples', ['sampling']);
+            var p = [], q = [];
+            for (var i = 0; i < t.length; i++) {
+                var ti = t[i] - tStart;
+                p.push(ti < 0 ? src.pStart : src.p(ti));
+                q.push(ti >= 0 && ti < src.tp ? qAt(src.seg, ti) * 1440 : 0);
+            }
+            var ds = { t: t, p: p, q: q, name: spec.id, source: 'dfit-synth', timeUnit: 'h', timeUnitOriginal: 'h', rateUnit: 'bbl/d', ratePhase: 'water',
+                       meta: { synth: { version: S.version, caseId: spec.id, seed: sd, source: spec.source } } };
+            var truth = src.truth;
+            truth.tStart = tStart; truth.ts = ts; truth.tEnd = tEndRec; truth.dtEnd = src.dtEnd; truth.artefacts = (spec.artefacts || []).map(function (a) { return a.kind; });
+            var ctx = ctxOf(truth, src.seg.length ? src.seg[src.seg.length - 1].q : 5);
+            // artefacts in stage order; noise (caseSpec.noise) between the physical artefacts (stages 0–2) and the blunders (5–6)
+            var arts = (spec.artefacts || []).map(function (a, k) { return { a: a, k: k, st: A[a.kind] ? A[a.kind].stage : 99 }; })
+                .filter(function (x) { return x.st >= 0; }).sort(function (x, y) { return x.st - y.st || x.k - y.k; });
+            var applied = [], noiseDone = false;
+            function noise() {
+                var nz = spec.noise || {};
+                if (pos(nz.sigma)) {
+                    var r = rng(subSeed(sd, 0)), rho = Math.min(0.99, Math.max(0, num(nz.rho1, 0))), e = nz.sigma * gauss(r), w = nz.sigma * Math.sqrt(1 - rho * rho);
+                    ds.p = ds.p.map(function (v, k) { if (k > 0) e = rho * e + w * gauss(r); return v + e; });
+                    if (Array.isArray(ds.pSurf)) { var r2 = rng(subSeed(sd, 1)); ds.pSurf = ds.pSurf.map(function (v) { return v + nz.sigma * gauss(r2); }); }
+                }
+                if (pos(nz.quantum)) { ['p', 'pSurf'].forEach(function (ch) { if (Array.isArray(ds[ch])) ds[ch] = ds[ch].map(function (v) { return Math.round(v / nz.quantum) * nz.quantum; }); }); }
+                noiseDone = true;
+            }
+            arts.forEach(function (x) {
+                if (!noiseDone && x.st >= 3) noise();
+                var inj = A[x.a.kind];
+                if (!inj) return;
+                ds = inj.apply(ds, x.a, ctx, rng(subSeed(sd, 10 + x.k)));
+                applied.push({ kind: x.a.kind, target: inj.target });
+            });
+            if (!noiseDone) noise();
+            (spec.artefacts || []).forEach(function (a) { if (a.kind === 'air') applied.push({ kind: 'air', target: 'model' }); });
+            if (spec.primary === 'surface' && Array.isArray(ds.pSurf)) { ds.p = ds.pSurf; delete ds.pSurf; ds.meta.primary = 'surface'; }
+            else ds.meta.primary = 'bh';
+            roundDs(ds);
+            return { ok: true, ds: ds, truth: truth, artefacts: applied, caseSpec: spec };
+        } catch (e) {
+            return fail('SYNTH_FAILED', 'make failed: ' + (e && e.message ? e.message : 'error'));
+        }
+    }
+    S.make = make;
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 11. Case specifications
+    // ═════════════════════════════════════════════════════════════════════════
+    function baseSpec(id, source, mechanism) {
+        return { id: id, source: source, mechanism: mechanism, lk: null, aca: null, wellbore: { VwCw: REF.VwCw, cwOfP: null },
+                 noise: { sigma: 0, rho1: 0, quantum: 0 }, sampling: { dtS: 2.5 }, tEndFactor: 14, artefacts: [], tags: [] };
+    }
+    // the §5.4 / §4.21 base LkConfig (display units)
+    function lkBase() {
+        return {
+            mode: 'propagate', geometry: 'PKN', schedule: [{ t: 0, q: 5 }, { t: 5 / 60, q: 0 }],
+            Ep: REF.Ep, nu: 0.25, hf: REF.hf, hp: REF.hp, muCp: 1.0, KIc: 14000, viscCal: 1, Cw: 0, k: 2.75e-3, Sp: 0,
+            pdl: { Cd: 0, pfo: null, fmax: 50 }, sigmaC: 7000, pr: 4500, VwCw: REF.VwCw, nwb: { a: REF.nwbA, b: REF.nwbB, beta: 0.5 }, pBd: null, L0: 1,
+            aperture: { law: 'none', sh: 60, sc: 100, fres: 0.1, sr: null }, tip: { tauX: null }, farField: false,
+            tEnd: 72, phi: REF.phi, ct: REF.ct, muRes: REF.mu, CL: null, wc: null
+        };
+    }
+    function lkSpec(id, mechanism, patch, wb) {
+        var s = baseSpec(id, 'lk', mechanism);
+        s.lk = merge(lkBase(), patch || {});
+        if (wb) s.wellbore = merge(s.wellbore, wb);
+        return s;
+    }
+    // Example A states an 8,000 ft datum (σ_c 5,105.5 psia with p_i 4,500 psia is below the frictional limit deeper than ~8,900 ft)
+    var EXAMPLE_A = { k: 1, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 0.5, pi: 4500, te: 5 / 60, geometry: 'full', datumTvd: 8000 };
+    var EXAMPLE_B = { k: 0.01, L: 50, h: 40, phi: 0.12, ct: 1.2e-5, mu: 0.8, V: 15, tcInj: 2, pi: 4500, te: 5 / 60, geometry: 'full' };
+    S.EXAMPLE_A = EXAMPLE_A; S.EXAMPLE_B = EXAMPLE_B;
+    function acaSpec(id, aca, extra) {
+        var s = baseSpec(id, 'aca-exact', 'normal');
+        s.aca = merge(clone(aca), extra || {});
+        s.tEndFactor = 1;
+        s.aca.tEnd = pos(s.aca.tEnd) ? s.aca.tEnd : 300;
+        return s;
+    }
+    function gdSpec(id, mechanism, gd) {
+        var s = baseSpec(id, 'gdomain', mechanism);
+        s.gd = merge({ mechanism: mechanism }, gd || {});
+        return s;
+    }
+    // mechanism → LkConfig patch (the eight pre-closure strata, lk part)
+    var LK_MECH = {
+        normal: { Cw: 1.903e-4, k: 2.75e-3 },
+        matrix: { Cw: 0, k: 2.75e-3 },
+        pdl: { Cw: 1.0e-4, k: 2.75e-3, pdl: { Cd: 0.004, pfo: 7250, fmax: 50 } },
+        'contact-hyp': { aperture: { law: 'hyp', sh: 60, sc: 100, fres: 0.1, sr: null } },
+        'contact-exp': { aperture: { law: 'exp', sh: 60, sc: 100, fres: 0.1, sr: 1000 } },
+        // storage-dominated (§8.1): Carter normal leak-off under a large, pressure-dependent V_w·c_w — the wellbore block is set
+        // per case (STORAGE_RVIS / STORAGE_CW in benchPre; the quick case passes its own), never the matrix wellbore
+        storage: { Cw: 1.903e-4, k: 2.75e-3 }
+    };
+    // the storage stratum's three levels: storage-consistent R_vis below the §4.11 / R5 threshold 0.3, with gas or air in the well
+    var STORAGE_RVIS = [0.25, 0.15, 0.08], STORAGE_CW = ['gas', 'air', 'gas'];
+    S.STORAGE_RVIS = STORAGE_RVIS;
+    function caseRef(id) { var s = lkSpec(id || 'reference', 'matrix', {}); s.tags = ['reference']; s.sampling = { dtS: 1 }; return s; }
+    function cases(kind) {
+        var out = [];
+        if (kind === 'integration') {
+            out.push(caseRef('int-reference'));
+            out.push(lkSpec('int-contact', 'contact-hyp', LK_MECH['contact-hyp']));
+            out.push(acaSpec('int-example-b', EXAMPLE_B));
+            out.forEach(function (s) { s.tags.push('integration'); });
+            return out;
+        }
+        if (kind === 'quick') {
+            out.push(caseRef('q-reference'));
+            out.push(lkSpec('q-contact', 'contact-hyp', LK_MECH['contact-hyp']));
+            out.push(lkSpec('q-pdl', 'pdl', LK_MECH.pdl));
+            out.push(lkSpec('q-storage-gas', 'storage', LK_MECH.storage, { VwCw: 0.178 / BBL, cwOfP: 'gas' }));
+            out.push(lkSpec('q-matrix', 'matrix', LK_MECH.matrix));
+            out.push(gdSpec('q-tip', 'tip', {}));
+            out.push(gdSpec('q-height-recession', 'height-recession', {}));
+            out.push(acaSpec('q-example-a', EXAMPLE_A));
+            out.push(acaSpec('q-example-b', EXAMPLE_B));
+            out.push(acaSpec('q-penny', { k: 0.1, L: 60, h: 400, phi: 0.1, ct: 1e-5, mu: 0.6, V: 20, tcInj: 1, pi: 4500, te: 5 / 60, geometry: 'penny', datumTvd: 8000 }));
+            out.push(acaSpec('q-gas-linear', merge(clone(EXAMPLE_B), { fluid: 'gas', T_F: 200, SG_g: 0.65 })));
+            var sg = gdSpec('q-surface-vacuum', 'normal', { pr: vacuumPr(), pStart: vacuumPr() });
+            sg.artefacts = [{ kind: 'surface', tauT: 2, warm: 18 }, { kind: 'vacuum', pVap: 0.4 }];
+            sg.primary = 'surface'; sg.noise = { sigma: 0.2, rho1: 0, quantum: 0.1 };
+            out.push(sg);
+            out.forEach(function (s) { s.tags.push('quick'); });
+            return out;
+        }
+        if (kind === 'benchmark') return benchPre().concat(benchAca(), cases('artefact'));
+        if (kind === 'artefact') {
+            S.ARTEFACT_KINDS.forEach(function (k) {
+                A[k].levels.forEach(function (lv, j) {
+                    var s = gdSpec('art-' + k + '-' + (j + 1), 'normal', {});
+                    s.noise = { sigma: 0.05, rho1: 0, quantum: 0.01 };
+                    var a = merge({ kind: k }, lv);
+                    s.artefacts = k === 'vacuum' || k === 'barometric' ? [{ kind: 'surface' }, a] : [a];
+                    if (k === 'vacuum') { s.gd.pr = vacuumPr(); s.gd.pStart = s.gd.pr; }
+                    s.tags = ['artefact', k, 'severity-' + (j + 1)];
+                    out.push(s);
+                });
+            });
+            return out;
+        }
+        return fail('BAD_INPUT', "cases(kind): kind is 'integration', 'quick', 'benchmark' or 'artefact'", ['kind']);
+    }
+    // §8.2 pre-closure: 8 mechanisms × 3 storage × 3 noise × 2 shut-in × 5 seeds = 720
+    function benchPre() {
+        var out = [], RV = [0.95, 0.6, 0.3], NZ = [{ sigma: 0.05, rho1: 0 }, { sigma: 0.3, rho1: 0 }, { sigma: 1, rho1: 0.9 }], SH = [1.5, 5];
+        var AfCfRef = 0.2061 / BBL;
+        ['normal', 'matrix', 'pdl', 'contact-hyp', 'contact-exp', 'storage', 'tip', 'height-recession'].forEach(function (m) {
+            RV.forEach(function (rv, iv) {
+                NZ.forEach(function (nz, inz) {
+                    SH.forEach(function (sh) {
+                        for (var sdI = 1; sdI <= 5; sdI++) {
+                            var id = 'pre-' + m + '-r' + iv + '-n' + inz + '-s' + sh + '-' + sdI, s;
+                            var VwCw = AfCfRef * (1 / rv - 1), cw = iv === 2 ? 'gas' : null;
+                            // storage stratum: always storage-dominated (R_vis 0.25 / 0.15 / 0.08, c_w(p) of gas or air), so its
+                            // truth label 'storage' is reachable; the other mechanisms keep the R_vis 0.95 / 0.6 / 0.3 levels
+                            if (m === 'storage') { VwCw = AfCfRef * (1 / STORAGE_RVIS[iv] - 1); cw = STORAGE_CW[iv]; }
+                            if (m === 'tip' || m === 'height-recession') {
+                                s = gdSpec(id, m, { Rvis: rv, AfCf: AfCfRef });
+                                s.wellbore = { VwCw: VwCw, cwOfP: cw };
+                            } else s = lkSpec(id, m, LK_MECH[m], { VwCw: VwCw, cwOfP: cw });
+                            s.noise = { sigma: nz.sigma, rho1: nz.rho1, quantum: 0.01 };
+                            s.tEndFactor = sh; s.tags = ['benchmark', 'pre', m, 'seed-' + sdI]; s.seed = 1000 + out.length;
+                            out.push(s);
+                        }
+                    });
+                });
+            });
+        });
+        return out;
+    }
+    // §8.2 after-closure: k (6) × geometry (3) × shut-in (3) × fluid (2) = 108 cells, one seed, noise alternating; plus 12 second-noise
+    // copies of the full-height liquid cells → 120
+    function benchAca() {
+        var out = [], KS = [1e-4, 1e-3, 1e-2, 1e-1, 1, 10], GEO = ['full', 'penny', 'box'];
+        KS.forEach(function (k) {
+            GEO.forEach(function (g) {
+                ['linear', 'transition', 'radial'].forEach(function (reg) {
+                    ['water', 'gas'].forEach(function (fl) {
+                        var a = { k: k, L: 50, h: g === 'penny' ? 400 : 40, hf: 30, phi: 0.1, ct: 1e-5, mu: fl === 'gas' ? 0.025 : 0.6, V: 15, tcInj: 1, pi: 4500, te: 5 / 60, geometry: g };
+                        if (fl === 'gas') { a.fluid = 'gas'; a.T_F = 200; a.SG_g = 0.65; a.ct = 2e-4; }
+                        var eta = ETA_C * a.k / (a.phi * a.mu * a.ct), tDL = reg === 'linear' ? 0.03 : reg === 'transition' ? 0.4 : 5;
+                        a.tEnd = Math.min(2000, Math.max(3 * a.tcInj, a.tcInj / 3 + tDL * a.L * a.L / eta));
+                        var s = acaSpec('aca-k' + k + '-' + g + '-' + reg + '-' + fl, a);
+                        s.noise = { sigma: out.length % 2 ? 0.3 : 0.05, rho1: 0, quantum: 0.01 };
+                        s.tags = ['benchmark', 'aca', g, reg, fl]; s.seed = 5000 + out.length;
+                        out.push(s);
+                    });
+                });
+            });
+        });
+        var extra = out.filter(function (s) { return s.aca.geometry === 'full' && !s.aca.fluid; }).slice(0, 12).map(function (s) {
+            var c = clone(s); c.id += '-n2'; c.noise = { sigma: s.noise.sigma === 0.05 ? 0.3 : 0.05, rho1: 0, quantum: 0.01 }; c.seed += 1000; return c;
+        });
+        return out.concat(extra);
+    }
+    S.cases = cases;
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 12. Demo datasets (deterministic seeds)
+    // ═════════════════════════════════════════════════════════════════════════
+    function demoSpec(name) {
+        var s;
+        switch (name) {
+            case 'reference':
+                s = gdSpec('demo-reference', 'normal', { stepDown: { rates: [3.75, 2.5, 1.25], dtS: 10 } });
+                s.sampling = { dtS: 1 }; s.noise = { sigma: REF.sigmaGauge, rho1: 0, quantum: REF.quantum };
+                s.artefacts = [{ kind: 'hammer', A: 115, Ts: 8.81, tau: 6.5 }];
+                s.hf = { shutin: true, hz: 50 };
+                return { spec: s, seed: 41 };
+            case 'tight-linear':
+                s = acaSpec('demo-tight-linear', EXAMPLE_B); s.sampling = { dtS: 1 }; s.noise = { sigma: 0.01, rho1: 0, quantum: 0.01 };
+                return { spec: s, seed: 42 };
+            case 'conventional-radial':
+                s = acaSpec('demo-conventional-radial', EXAMPLE_A); s.sampling = { dtS: 1 }; s.noise = { sigma: 0.01, rho1: 0, quantum: 0.01 };
+                return { spec: s, seed: 43 };
+            case 'contact':
+                s = gdSpec('demo-contact', 'contact-hyp', { sh: 60 }); s.sampling = { dtS: 1 }; s.tEndFactor = 4;
+                s.noise = { sigma: 0.01, rho1: 0, quantum: 0.01 };
+                return { spec: s, seed: 44 };
+            case 'pdl':
+                s = gdSpec('demo-pdl', 'pdl', { Cd: 0.004 }); s.sampling = { dtS: 1 }; s.noise = { sigma: 0.01, rho1: 0, quantum: 0.01 };
+                return { spec: s, seed: 45 };
+            case 'surface-gauge':
+                s = gdSpec('demo-surface-gauge', 'normal', { pr: vacuumPr(), pStart: vacuumPr() });
+                s.sampling = { dtS: 1 }; s.noise = { sigma: 0.2, rho1: 0, quantum: 0.1 };
+                s.artefacts = [{ kind: 'surface', tauT: 2, warm: 18 }, { kind: 'vacuum', pVap: 0.4 }];
+                s.primary = 'surface';
+                return { spec: s, seed: 46 };
+            case 'two-cycle':
+                s = gdSpec('demo-two-cycle', 'normal', {}); s.sampling = { dtS: 1 }; s.tEndFactor = 2;
+                s.noise = { sigma: 0.01, rho1: 0, quantum: 0.01 };
+                s.cycle2 = { q: 2, V: 10, afterDtc: 2, pn: 300, Gc: 8, tEndFactor: 3 };
+                return { spec: s, seed: 47 };
+            default: return null;
+        }
+    }
+    // p_r for which the surface equivalent of the reference falls to 0.5 psia 31 h after shut-in (solved once by solveVacuumPr;
+    // S2 checks that the demo reaches vacuum 31 h after shut-in). Two columns, as surfaceOf: with WTS_wellbore the ρ(p,T) column
+    // (31 h is 15 relaxation times, so the geotherm column): 3,235.0 psia; without it the constant gradient plus the 18 psi
+    // warm-back: 3,323.9 psia.
+    var VAC_PR = 3323.9, VAC_PR_WB = 3235, _vacPr = {};
+    function _wbConv() { var WB = G.WTS_wellbore; return !!(WB && typeof WB.convert === 'function' && !WB.convert._dfitStub && typeof WB.hydrostatic === 'function' && typeof WB.column === 'function'); }
+    function vacuumPr() { return _wbConv() ? VAC_PR_WB : VAC_PR; }
+    S.solveVacuumPr = function () { _vacPr = {}; return solveVacuumPr(); };
+    function solveVacuumPr() {
+        var wb = _wbConv(), key = wb ? 'wb' : 'grad';
+        if (_vacPr[key] != null) return _vacPr[key];
+        var col = GRAD_W * REF.datumTvd, warm = 18, rel = 1 - Math.exp(-31 / 2);
+        if (wb) {
+            var cx = surfaceCtx(2, REF.datumTvd), c = G.WTS_wellbore.column(cx.column);
+            var Tg = G.WTS_wellbore.tempProfile(c, { model: 'static', surfF: cx.temp.surfF, gradFper100: cx.temp.gradFper100 }).T;
+            var h = G.WTS_wellbore.hydrostatic(0.5, 0, REF.datumTvd, c, Tg, { fluid: cx.fluid, stepFt: 25 });
+            col = h.dp; warm = 0;
+        }
+        _vacPr[key] = rnd(bisect(function (pr) {
+            var s = srcGdomain(gdSpec('vac', 'normal', { pr: pr, pStart: pr }));
+            if (!s.ok) return 1;
+            return s.p(s.tp + 31) - col + warm * rel - 0.5;
+        }, 2500, 4500, 24), 1);
+        return _vacPr[key];
+    }
+    S.demoSpec = function (name) { var d = demoSpec(name); return d ? clone(d) : null; };
+    S.DEMOS = ['reference', 'tight-linear', 'conventional-radial', 'contact', 'pdl', 'surface-gauge', 'two-cycle'];
+    var _demoCache = {};
+    function demo(name) {
+        var d = demoSpec(name);
+        if (!d) return fail('BAD_INPUT', "demo(name): one of " + S.DEMOS.join(', '), ['name']);
+        if (!_demoCache[name]) {
+            var r = d.spec.cycle2 ? makeTwoCycle(d.spec, d.seed) : make(d.spec, d.seed);
+            if (!r.ok) return r;
+            r.ds.name = 'DFIT demo — ' + name;
+            r.ds.source = 'dfit-demo';
+            r.ds.meta.demo = name;
+            if (d.spec.hf && d.spec.hf.shutin) r.ds.meta.hfWindows = [hfShutin(d.spec, d.seed, r.truth)];
+            if (name === 'reference') {
+                // the step-down lengthens the pump time: every tp-dependent value of this demo uses the full pump time (main stage +
+                // three 10 s steps), not the §4.21 5.0 min. ISIP, σ_c, η_G, C_sys, A_f·c_f, R_vis and xf are the §4.21 values;
+                // Δt_c, CL, Γ, k_CL and the G-time follow the longer tp (see truth.tp / truth.dtc / truth.CL / truth.Gamma / truth.kCL)
+                r.truth.tpNote = 'tp = ' + rnd(r.truth.tp * 60, 2) + ' min (main stage + step-down), not the §4.21 5.0 min: Δt_c, CL, Γ, k_CL and G use this tp';
+                r.ds.meta.tpMin = rnd(r.truth.tp * 60, 3);
+                r.ds.meta.note = r.truth.tpNote;
+            }
+            _demoCache[name] = r;
+        }
+        return clone(_demoCache[name].ds);
+    }
+    S.demo = demo;
+    S.demoTruth = function (name) { if (!demoSpec(name)) return null; demo(name); return _demoCache[name] ? clone(_demoCache[name].truth) : null; };
+
+    // 50 Hz shut-in window (−10 s … +120 s) with the water hammer, as 59 stores it (§3.11; plain arrays here)
+    function hfShutin(spec, seed, truth) {
+        var src = srcGdomain(spec), hz = spec.hf.hz || 50, dt = 1 / hz / 3600, r = rng(subSeed(seed, 99));
+        var ham = (spec.artefacts || []).filter(function (a) { return a.kind === 'hammer'; })[0] || { A: 115, Ts: 8.81, tau: 6.5 };
+        var p = [], t0 = truth.ts - 10 / 3600, n = Math.round(130 * hz);
+        for (var i = 0; i < n; i++) {
+            var t = t0 + i * dt, ti = t - truth.tStart, v = src.p(ti), d = t - truth.ts;
+            if (d > 0) v += ham.A * Math.exp(-d / (ham.tau / 3600)) * Math.cos(2 * PI * d / (ham.Ts / 3600));
+            p.push(rnd(v + REF.sigmaGauge * gauss(r), 3));
+        }
+        return { kind: 'shutin', t0: rnd(t0, 9), dtS: 1 / hz, n: n, p: p, pSurf: null, q: null };
+    }
+    // two cycles: the reference, then a second injection after closure with a reopening ramp (family F4), then its falloff
+    function makeTwoCycle(spec, seed) {
+        var c2 = spec.cycle2, base = clone(spec);
+        delete base.cycle2;
+        var src = srcGdomain(base);
+        if (!src.ok) return src;
+        var tr = src.truth, gd = src.gd, M = src.M;
+        var tStart = REF.tStartH, ts1 = tStart + src.tp;
+        var t2 = ts1 + c2.afterDtc * tr.dtc, tp2 = c2.V / c2.q / 60, ts2 = t2 + tp2;
+        var VwCw = tr.VwCw, AfCf = tr.AfCf, p0 = src.p(t2 - tStart);
+        var pK = gd.sigmaC + nwb(gd, c2.q), isip2 = gd.sigmaC + c2.pn, pProp = isip2 + nwb(gd, c2.q);
+        var s1 = c2.q / VwCw * 60, tK = t2 + Math.max(0, (pK - p0) / s1);
+        var tau2 = (VwCw + AfCf) * (pProp - pK) / (c2.q * 60);
+        var mG2 = c2.pn / c2.Gc, dtc2 = GinvFn(c2.Gc, 0.5) * tp2, tc2 = ts2 + dtc2;
+        var tEnd = ts2 + c2.tEndFactor * dtc2;
+        function pRec(t) {
+            if (t < t2) return t < tStart ? src.pStart : src.p(t - tStart);
+            if (t < ts2) { if (t < tK) return p0 + s1 * (t - t2); return pK + (pProp - pK) * (1 - Math.exp(-(t - tK) / tau2)); }
+            var pShut = (t < tK ? p0 + s1 * (ts2 - t2) : pK + (pProp - pK) * (1 - Math.exp(-(ts2 - tK) / tau2))) - nwb(gd, c2.q);
+            var dt = t - ts2, Gv = GFn(dt / tp2, 0.5);
+            if (t < tc2) return Math.max(gd.sigmaC, pShut - (pShut - gd.sigmaC) * Gv / c2.Gc);
+            var base1 = src.p(t - tStart), b1c = src.p(tc2 - tStart);
+            return base1 + (gd.sigmaC - b1c) * (2 / PI) * Math.asin(Math.sqrt(Math.min(1, (tc2 - t2) / (t - t2))));
+        }
+        var t = sampleGrid(tStart, ts1, t2, 1, 100);
+        t.pop();
+        var dth = 1 / 3600;
+        for (var x = t2; x < ts2 - 1e-12; x += dth) t.push(x);
+        var d = dth, f = Math.pow(10, 1 / 100) - 1;
+        while (ts2 + d < tEnd) { t.push(ts2 + d); d += Math.max(dth, d * f); }
+        t.push(tEnd);
+        var r = rng(subSeed(seed, 0)), nz = spec.noise || {};
+        var p = t.map(function (ti) { var v = pRec(ti); if (pos(nz.sigma)) v += nz.sigma * gauss(r); if (pos(nz.quantum)) v = Math.round(v / nz.quantum) * nz.quantum; return v; });
+        var q = t.map(function (ti) { if (ti >= tStart && ti < ts1) return qAt(src.seg, ti - tStart) * 1440; if (ti >= t2 && ti < ts2) return c2.q * 1440; return 0; });
+        var ds = roundDs({ t: t, p: p, q: q, name: spec.id, source: 'dfit-synth', timeUnit: 'h', timeUnitOriginal: 'h', rateUnit: 'bbl/d', ratePhase: 'water',
+                           meta: { synth: { version: S.version, caseId: spec.id, seed: seed, source: 'gdomain' }, primary: 'bh' } });
+        var truth = clone(tr);
+        truth.tStart = tStart; truth.ts = ts1; truth.tEnd = tEnd; truth.dtEnd = tEnd - ts1; truth.artefacts = [];
+        // the cycle-2 truth as the record realises it: the reopening ramp does not reach the nominal propagation pressure in V/q,
+        // so the shut-in pressure (and pn, m_G) are the realised ones; the G-domain chain of that falloff then gives η, C_sys,
+        // A_f·c_f and xf (V* = V − V_w·c_w·(σ_c − p_0), X = V*/(G_c + 2), C_sys = X/m_G). isipNominal keeps the spec value
+        var pShut2 = (ts2 < tK ? p0 + s1 * (ts2 - t2) : pK + (pProp - pK) * (1 - Math.exp(-(ts2 - tK) / tau2))) - nwb(gd, c2.q);
+        var pn2 = pShut2 - gd.sigmaC, mG2r = pn2 / c2.Gc, Vst2 = c2.V - VwCw * (gd.sigmaC - p0), X2 = Vst2 / (c2.Gc + 2);
+        var Csys2 = mG2r > 0 ? X2 / mG2r : null, AfCf2 = Csys2 !== null ? Csys2 - VwCw : null;
+        var geo2 = AfCf2 > 0 ? geometryFromAfCf(AfCf2, gd.Ep, gd.hf, gd.hp, gd.geometry) : null;
+        truth.cycle2 = { tStart: t2, ts: ts2, tp: tp2, q: c2.q, V: c2.V, reopenKnee: pK, tKnee: tK, isip: pShut2, isipNominal: isip2, pn: pn2, sigmaC: gd.sigmaC,
+                         dtc: dtc2, Gc: c2.Gc, mG: mG2r, eta: c2.Gc / (c2.Gc + 2), Vstar: Vst2, Csys: Csys2, AfCf: AfCf2, xf: geo2 ? geo2.xf : null };
+        return { ok: true, ds: ds, truth: truth, artefacts: [], caseSpec: spec };
+    }
+
+    // role-header CSV (the 07 roles time / pressure / rate and, once 07 knows them, pressure_surf, pressure_ann, temp, rate_fb)
+    var CSV_COLS = [['t', 'time_h'], ['p', 'pressure_psia'], ['q', 'rate_bbl_d'], ['pSurf', 'pressure_surf_psia'], ['pAnn', 'pressure_ann_psia'],
+                    ['T', 'temp_degF'], ['qFb', 'rate_fb_bbl_d']];
+    function toCsv(ds) {
+        if (!ds || !Array.isArray(ds.t)) return '';
+        var cols = CSV_COLS.filter(function (c) { return Array.isArray(ds[c[0]]); });
+        var lines = [cols.map(function (c) { return c[1]; }).join(',')];
+        for (var i = 0; i < ds.t.length; i++) lines.push(cols.map(function (c) { var v = ds[c[0]][i]; return fin(v) ? String(v) : ''; }).join(','));
+        return lines.join('\n');
+    }
+    S.toCsv = toCsv;
+    S.demoCsv = function (name) { var ds = demo(name); return ds && ds.ok === false ? '' : toCsv(ds); };
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 13. Inputs and well for a case (what dfit-validate and the integration tests pass to the pipeline)
+    // ═════════════════════════════════════════════════════════════════════════
+    S.inputsFor = function (spec, made) {
+        var IR = G.PRiSM_dfit_inputRanges;
+        if (!IR || typeof IR.defaults !== 'function' || typeof IR.clamp !== 'function') return fail('INPUTS_UNAVAILABLE', 'PRiSM_dfit_inputRanges is not available.', []);
+        var inp = IR.defaults(), lk = spec && spec.lk, gd = spec && spec.gd, aca = spec && spec.aca;
+        // an after-closure case may state its own datum (aca.datumTvd): Example A and the penny case close near 5,100 psia, below
+        // the conservative frictional limit at 10,000 ft (p_i 4,500, S_v 0.9 psi/ft, friction 1.0 → σ_h ≥ 0.9·T ≤ 8,027 psi…), so
+        // they sit at 8,000 ft where that closure is admissible
+        inp.datumTvd = aca && pos(aca.datumTvd) ? aca.datumTvd : REF.datumTvd;
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
+        inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
+        inp.perfs.n = REF.nPerf; inp.perfs.dIn = REF.dPerf; inp.perfs.cd = REF.cdPerf;
+        inp.rock.Ep = (lk && lk.Ep) || (gd && gd.Ep) || (aca && aca.Ep) || REF.Ep;
+        inp.rock.EpSource = 'static';
+        inp.rock.hf = (lk && lk.hf) || (gd && gd.hf) || (aca && (aca.hfrac || aca.h)) || REF.hf;
+        inp.rock.hp = (lk && lk.hp) || (gd && gd.hp) || (aca && aca.h) || REF.hp;
+        if (spec && spec.primary === 'surface') {
+            inp.channels.primary = 'surface';
+            var sa = (spec.artefacts || []).filter(function (a) { return a && a.kind === 'surface'; })[0] || {};
+            surfaceInputs(inp, num(sa.tauT, 2), REF.datumTvd);
+        }
+        var r = IR.clamp(inp);
+        return r && r.inputs ? r.inputs : r;
+    };
+    S.wellFor = function (spec) {
+        var lk = spec && spec.lk, aca = spec && spec.aca, gd = spec && spec.gd;
+        var src = aca || {};
+        var w = {
+            testType: 'falloff', fluid: aca && aca.fluid === 'gas' ? 'gas' : 'water',
+            phi: (lk && lk.phi) || src.phi || (gd && gd.phi) || REF.phi, ct: (lk && lk.ct) || src.ct || (gd && gd.ct) || REF.ct,
+            mu: (lk && lk.muRes) || src.mu || (gd && gd.mu) || REF.mu, h: (lk && lk.hp) || src.h || (gd && gd.hp) || REF.hp,
+            B: 1, rw: 0.354, pi: null, q: null
+        };
+        if (w.fluid === 'gas') { w.T_F = src.T_F || 200; w.SG_g = src.SG_g || 0.65; }
+        return w;
+    };
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 14. Scoring (§8.3)
+    // ═════════════════════════════════════════════════════════════════════════
+    var CLASS_OF = { normal: 'normal', matrix: 'matrix', pdl: 'pdl', tip: 'tip', storage: 'storage', spurt: 'normal',
+                     'contact-hyp': 'hr-contact', 'contact-exp': 'hr-contact', 'height-recession': 'hr-contact', contact: 'hr-contact' };
+    S.classOf = function (m) { return CLASS_OF[m] || 'undetermined'; };
+    function concaveUp(m) { return S.classOf(m) === 'hr-contact'; }
+    // §8.3 'none' closure: right when the truth closure is after the record end or within this many G-decades before it
+    var NONE_G_DECADES = 0.3;
+    // p_i label widths (the point must lie within the label's width of the truth, §8.3). high and medium are the §4.12 p_i-consensus
+    // label definitions (high: width ≤ max(10 psi, 0.5 % p_i); medium: width ≤ 50 psi). §4.12 gives low no width ("low otherwise"),
+    // so WP5 fixes one: twice the medium width (an ASSUMPTION of the scorer, not of the engine; WP8 may revise it).
+    var PI_WIDTH = { highPsi: 10, highFrac: 0.005, mediumPsi: 50, lowPsi: 100 };
+    S.PI_WIDTH = PI_WIDTH; S.NONE_G_DECADES = NONE_G_DECADES;
+    // regime adjacency for 'partial' (§8.3): truth regimes in s_D order; 'linear-radial' is read as 'radial' except for a 'transition'
+    // truth (and is adjacent to a 'linear' truth)
+    var REGIME_ORDER = ['linear', 'bilinear', 'transition', 'radial', 'spherical'];
+    function gDecades(dt, tp) { var g = GFn(dt / tp, 0.5); return g > 0 ? Math.log(g) / Math.LN10 : -Infinity; }
+    function score(run, truth) {
+        var out = { ok: !!(run && run.ok === true), closure: { mode: null, right: false, partial: false, err: null, inBand: null, intervalScore: null },
+                    isip: { right: false, partial: false, err: null }, classify: { right: false, partial: false, type: null, truth: truth ? S.classOf(truth.mechanism) : null },
+                    pi: { right: false, partial: false, err: null }, k: { right: false, partial: false }, regime: { right: false, partial: false, scored: false, value: null, truth: truth ? truth.regimeAtEnd : null },
+                    frac: { AfCf: null, Rvis: null, xf: null, sigmaCF2: null }, labels: { closure: null, mode: null, pi: null } };
+        if (!run || run.ok !== true || !truth) return out;
+        var sc = truth.sigmaC;
+        // closure
+        var cons = run.consensus || run.consensusLite || null;
+        if (cons) {
+            var mode = cons.mode;
+            out.closure.mode = mode; out.labels.mode = mode; out.labels.closure = cons.confidence || null;
+            if (mode === 'single' && fin(cons.value)) {
+                var err = cons.value - sc, tolR = Math.max(25, 0.005 * sc), tolP = Math.max(75, 0.015 * sc);
+                out.closure.err = err; out.closure.right = Math.abs(err) <= tolR; out.closure.partial = Math.abs(err) <= tolP;
+                var fam = cons.families || {}, lo = Infinity, hi = -Infinity;
+                ['F1', 'F2', 'F4'].forEach(function (f) { var s = fam[f]; if (s && fin(s.p10) && fin(s.p90)) { lo = Math.min(lo, s.p10); hi = Math.max(hi, s.p90); } });
+                out.closure.inBand = lo <= hi ? (sc >= lo && sc <= hi) : null;
+                if (fin(truth.sigmaCF2) && truth.sigmaCF2 !== sc) out.frac.sigmaCF2 = cons.value - truth.sigmaCF2;
+            } else if (mode === 'range' && cons.range && fin(cons.range.lo) && fin(cons.range.hi)) {
+                var l = cons.range.lo, u = cons.range.hi, aIS = 0.2, inR = sc >= l && sc <= u;
+                out.closure.inBand = inR; out.closure.partial = inR; out.closure.right = inR && concaveUp(truth.mechanism);
+                out.closure.err = sc < l ? sc - l : sc > u ? sc - u : 0;
+                out.closure.intervalScore = (u - l) + (2 / aIS) * (l - sc) * (sc < l ? 1 : 0) + (2 / aIS) * (sc - u) * (sc > u ? 1 : 0);
+                if (cons.range.medians && fin(truth.sigmaCF2)) out.frac.sigmaCF2 = cons.range.medians.low - truth.sigmaCF2;
+            } else if (mode === 'none') {
+                var dtEnd = truth.dtEnd, dtc = truth.dtc;
+                // §8.3: the truth closure is after the last point, or within 0.3 G-decade BEFORE it (closure inside the record
+                // earlier than that means the record did show closure, so 'none' is wrong)
+                var notReached = fin(dtc) && fin(dtEnd) && (dtc >= dtEnd || gDecades(dtEnd, truth.tp) - gDecades(dtc, truth.tp) <= NONE_G_DECADES);
+                out.closure.right = !!notReached; out.closure.partial = !!notReached;
+            }
+        }
+        // ISIP
+        if (run.isip && fin(run.isip.value) && fin(truth.isip)) {
+            var pn = fin(truth.pn) ? truth.pn : truth.isip - sc, ei = run.isip.value - truth.isip;
+            out.isip.err = ei; out.isip.right = Math.abs(ei) <= Math.max(10, 0.02 * pn); out.isip.partial = Math.abs(ei) <= Math.max(25, 0.05 * pn);
+        }
+        // mechanism
+        if (run.classification && run.classification.type) {
+            var tc = S.classOf(truth.mechanism), ty = run.classification.type;
+            out.classify.type = ty; out.classify.right = ty === tc;
+            out.classify.partial = out.classify.right || (Array.isArray(run.classification.alt) && run.classification.alt.indexOf(tc) !== -1);
+        }
+        // after closure
+        var aca = run.aca;
+        if (aca && aca.ok !== false && truth.acaScored) {
+            var pr = aca.pi;
+            if (pr && fin(pr.lo) && fin(pr.hi) && fin(truth.pi)) {
+                var inside = truth.pi >= pr.lo && truth.pi <= pr.hi;
+                var width = pr.label === 'high' ? Math.max(PI_WIDTH.highPsi, PI_WIDTH.highFrac * truth.pi) : pr.label === 'medium' ? PI_WIDTH.mediumPsi : PI_WIDTH.lowPsi;
+                out.pi.err = fin(pr.value) ? pr.value - truth.pi : null;
+                out.pi.partial = inside; out.pi.right = inside && fin(pr.value) && Math.abs(pr.value - truth.pi) <= width;
+                out.labels.pi = pr.label || null;
+            }
+            if (fin(truth.k) && truth.k > 0) {
+                if (aca.bounds && fin(aca.bounds.kLo) && fin(aca.bounds.kHi)) {
+                    out.k.right = truth.k >= aca.bounds.kLo && truth.k <= aca.bounds.kHi;
+                    out.k.partial = out.k.right || (truth.k >= aca.bounds.kLo / 2 && truth.k <= aca.bounds.kHi * 2);
+                } else {
+                    var kv = (aca.kh && fin(aca.kh.k) && aca.kh.k) || (aca.nolte && aca.nolte.lin && fin(aca.nolte.lin.k) && aca.nolte.lin.k) || null;
+                    var ci = aca.match && aca.match.ci95 && aca.match.ci95.k;
+                    // §8.3: right only inside a reported interval (bounds or the 95 % CI); a point estimate with no interval can
+                    // only be partial (within × 2)
+                    if (Array.isArray(ci) && fin(ci[0]) && fin(ci[1])) out.k.right = truth.k >= ci[0] && truth.k <= ci[1];
+                    if (kv) out.k.partial = out.k.right || Math.abs(Math.log(kv / truth.k)) <= Math.log(2);
+                }
+            }
+            // AcaResult.regimeSummary (§3.6): 'none'|'linear'|'linear-radial'|'radial'|'spherical'|'storage'
+            var rs = aca.regimeSummary || null, tr = truth.regimeAtEnd;
+            out.regime.value = rs;
+            if (tr && REGIME_ORDER.indexOf(tr) !== -1) {
+                out.regime.scored = true;
+                var sDe = truth.sDEnd;
+                if (tr === 'transition') {
+                    // between the linear and radial bands (incl. the −0.75 passage of the uniform-flux kernels): right only as
+                    // 'linear-radial' once the radial side is recognisable (s_D ≤ −0.90, §4.12), partial as 'linear' or 'linear-radial'
+                    var radialSide = (fin(sDe) && sDe <= -0.90) || (fin(truth.tDLEnd) && truth.tDLEnd >= 1.6);
+                    out.regime.right = rs === 'linear-radial' && radialSide;
+                    out.regime.partial = out.regime.right || rs === 'linear' || rs === 'linear-radial';
+                } else {
+                    var rv = rs === 'linear-radial' ? 'radial' : rs;
+                    out.regime.right = rv === tr;
+                    var i1 = REGIME_ORDER.indexOf(rv), i2 = REGIME_ORDER.indexOf(tr);
+                    out.regime.partial = out.regime.right || (i1 >= 0 && i2 >= 0 && Math.abs(i1 - i2) === 1) || (tr === 'linear' && rs === 'linear-radial');
+                }
+            } else out.regime.scored = false;                      // no truth, or 'artefact' (< −1.6): not scored
+        }
+        // pre-closure chain
+        var ch = run.frac && run.frac.chosen;
+        if (ch) {
+            function rel(v, t) { return (fin(v) && fin(t) && t !== 0) ? (v - t) / t : null; }
+            var xf = ch.geometry && ch.geometry.byModel && ch.geometry.byModel[ch.geometry.model || 'PKN'];
+            out.frac.AfCf = rel(ch.AfCf, truth.AfCf); out.frac.Rvis = rel(ch.Rvis, truth.Rvis);
+            out.frac.xf = rel(xf && (fin(xf.xf) ? xf.xf : xf.R), truth.xf);
+        }
+        return out;
+    }
+    S.score = score;
+})();
+
+// ─── END 49-calc-dfit-synth ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-dfit-triage ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-dfit-triage.js  (Round 9)
+// -----------------------------------------------------------------------------
+// helper module: does not add a page to window.WTS_calcRegistry
+//
+// DFIT triage and data-health gate (docs/DFIT-PLAN.md §3.5a, §4.18, §6.3; owner WPT):
+//   window.PRiSM_dfit_triage(prep, events, ctx)   → Triage  (21 checks Q1–Q21, windows, blunders, re-pump verdict, grade, salvage)
+//   window.PRiSM_dfit_blunders(prep, events, ctx) → [{id, hypothesis, score, bf:null, fix:{field, from, to, also?}, text}]
+//   window.PRiSM_dfit_repump(triage, ctx)         → {verdict:'continue'|'caution'|'repump', rules:[{id, level, text}], ack:false}
+//   window.PRiSM_dfit_grade(triage, consensus, aca, opts?) → {letter:'A'|'B'|'C'|'D', why:[string]}
+// Pure: no DOM, storage, timers or events; no unseeded random numbers. Resolved at call time by the Round-8 DFIT pipeline (57), which
+// returns triage:null and shows "triage unavailable" when this file is absent. WTS_wellbore (48) is resolved at call time too,
+// only for the theory storage / wave speed / hydrostatic when ctx does not carry them; its WP0 stubs are skipped.
+//
+// ctx (§3.5a): {isip, derivs, hammer, ramps, stepDown, inputs, well, plan}; optional extras read when present:
+//   ds (the raw DfitDataset: units, raw channels, pAnn), stepRate, picks ([ClosurePick]), csys ({VwCw, waveSpeed}) or
+//   VwCwTheory, bleed (WTS_wellbore.bleedOff output, t1psi h), strapVolume (bbl), tCloseS (valve closing time, s), align
+//   (WTS_wellbore.align output, offsetS), tide ({ampPsi, dpPsi, removed}), classification, frac, consensus, aca.
+//   strapVolume is the volume pumped after the wellbore fill: the rate integral to shut-in minus Events.Vfill is compared with it.
+//   provenance (optional, inputs.provenance or ctx.provenance): {'rock.sigmaVGrad': 'user'|'logged'|…|'default'}. The input clamp
+//   always fills rock.sigmaVGrad, so at its default (1.0 psi/ft) it counts as entered only when a provenance says so.
+// Hydrostatics: one model for the static check and the blunder bands — WTS_wellbore.hydrostatic(p_s static, 0, TVD, column,
+//   null, {fluid}) with the column built once from the inputs (survey, strings, fluid, temp, datum), else 0.052·ρ·TVD.
+// R2 (ISIP-gradient band) is a warning, not a fail, when the violated bound is a generic prior: the lower bound when p_i comes
+//   from the fluid hydrostatic, the upper bound when S_v is the default and not entered.
+// Evidence ids: Q1–Q21 = the checks in CHECKS order; Q0 = the triage summary (Triage.ev).
+// Grade mapping choices (§6.3 leaves them open): a failed check inside an analysed window (red light) grades C, like a failed
+//   check outside the windows; a surface vacuum on a surface-converted analysis is masked (excluded window), so its fail is
+//   recorded inWindow:false; a gauge thermal transient above the limit outside the pick window is reported as a warning.
+// Thresholds: every value of DEFAULTS below is editable through inputs.options.triage[checkId][key] (finite numbers only).
+// Clock convention: a positive offsetS means the rate record lags the pressure record (rate events appear offsetS later on
+// the common clock); the fix writes channels.clockOffsetH = current − offsetS / 3600 (the shift applied to the rate clock).
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    var VERSION = 't1';
+    var PSI_PER_FT_PER_PPG = 0.052;
+    var BANNED = /\b(null|undefined|NaN|Infinity)\b|\[object Object\]/g;
+
+    // ── thresholds (user-editable through inputs.options.triage[id]) ──
+    var DEFAULTS = {
+        units:       { gapFrac: 0.01, gapFactor: 5 },
+        clock:       { passS: 1, warnCorrS: 2, contradictS: 10 },
+        stiffness:   { lo: 0.5, warn: 2, fail: 4 },
+        air:         { pass: 0.25, warn: 1.5, fail: 2 },
+        surface:     { warnPsig: 15, failPsig: 0 },
+        hydrostatic: { warn: 0.02, fail: 0.05 },
+        isolation:   { flatPsi: 10, linR2: 0.995, curvRatio: 2 },
+        sampling:    { pass: 10, fail: 3 },
+        shutin:      { warn: 2, fail: 4 },
+        stepdown:    { passSteps: 4, warnSteps: 3, passRange: 0.6, failRange: 0.3 },
+        steprate:    { warn: 1, fail: 2 },
+        friction:    { warn: 1, fail: 3 },
+        bleed:       { warn: 2 },
+        volume:      { warn: 0.05, fail: 0.10 },
+        temperature: {},
+        gaugeThermal: { fail: 1 },
+        noise:       { warn: 0.05, fail: 0.15 },
+        thermal:     { warn: 0.3, fail: 0.6, minN: 20 },
+        sink:        { slopeMin: 0.9, slopeMax: 1.1, cycles: 0.3, dtDmin: 1 },
+        tides:       { warn: 0.10, fail: 0.30 },
+        annulus:     { dpMin: 50, corr: 0.6 },
+        blunders:    { psigZero: 2, sigmaVPlus: 0.05, hydro: 0.02, pumpMinLo: 1, pumpMinHi: 60, volTol: 0.10, hourTolS: 120, rampRatioTol: 1.5 },
+        repump:      { nwbFrac: 0.30, vwcw: 2, rvisLo: 0.3, rvisHi: 0.5, jouk: 0.5, breakdownPsi: 50 }
+    };
+    // check id → [evidence id, title]; the order is the order of Triage.checks
+    var CHECKS = [
+        ['units', 'Q1', 'Units and time base'],
+        ['clock', 'Q2', 'Clock alignment'],
+        ['stiffness', 'Q3', 'Wellbore stiffness'],
+        ['air', 'Q4', 'Air or gas cross-check'],
+        ['surface', 'Q5', 'Surface liquid-supported'],
+        ['hydrostatic', 'Q6', 'Static hydrostatic check'],
+        ['isolation', 'Q7', 'Gauge isolation'],
+        ['sampling', 'Q8', 'Sampling vs hammer'],
+        ['shutin', 'Q9', 'Shut-in duration'],
+        ['stepdown', 'Q10', 'Step-down quality'],
+        ['steprate', 'Q11', 'Step-rate stabilisation'],
+        ['friction', 'Q12', 'Surface-gauge friction share'],
+        ['bleed', 'Q13', 'Bleed-off window'],
+        ['volume', 'Q14', 'Volume reconciliation'],
+        ['temperature', 'Q15', 'Temperature channel'],
+        ['gaugeThermal', 'Q16', 'Gauge thermal transient'],
+        ['noise', 'Q17', 'Derivative noise'],
+        ['thermal', 'Q18', 'Thermal correlation'],
+        ['sink', 'Q19', 'Constant-rate sink'],
+        ['tides', 'Q20', 'Tides and barometric'],
+        ['annulus', 'Q21', 'Annulus communication']
+    ];
+    var CRITICAL = { units: 1, isolation: 1 };   // a fail here makes the test uninterpretable
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // small numeric helpers
+    // ═══════════════════════════════════════════════════════════════════════
+    function fin(v) { return typeof v === 'number' && isFinite(v); }
+    function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+    function arrLike(v) { return !!v && typeof v.length === 'number' && typeof v !== 'string'; }
+    function gp(o, path, def) {
+        var parts = path.split('.'), x = o;
+        for (var i = 0; i < parts.length; i++) { if (x == null || typeof x !== 'object') return def; x = x[parts[i]]; }
+        return x === undefined ? def : x;
+    }
+    function median(a) {
+        var b = [];
+        for (var i = 0; i < a.length; i++) if (fin(a[i])) b.push(a[i]);
+        if (!b.length) return NaN;
+        b.sort(function (x, y) { return x - y; });
+        var m = b.length >> 1;
+        return (b.length % 2) ? b[m] : 0.5 * (b[m - 1] + b[m]);
+    }
+    function mad(a) {
+        var m = median(a), d = [];
+        for (var i = 0; i < a.length; i++) if (fin(a[i])) d.push(Math.abs(a[i] - m));
+        return 1.4826 * median(d);
+    }
+    function linreg(x, y) {
+        var n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0, i;
+        for (i = 0; i < x.length; i++) {
+            if (!fin(x[i]) || !fin(y[i])) continue;
+            n++; sx += x[i]; sy += y[i]; sxx += x[i] * x[i]; sxy += x[i] * y[i]; syy += y[i] * y[i];
+        }
+        if (n < 2) return null;
+        var vx = sxx - sx * sx / n, vy = syy - sy * sy / n, cxy = sxy - sx * sy / n;
+        if (!(vx > 0)) return null;
+        var b = cxy / vx, a = (sy - b * sx) / n;
+        var r2 = vy > 0 ? (cxy * cxy) / (vx * vy) : 1;
+        return { a: a, b: b, r2: r2, n: n, r: vy > 0 ? cxy / Math.sqrt(vx * vy) : 0 };
+    }
+    function corr(x, y) { var r = linreg(x, y); return r ? r.r : NaN; }
+    function ranks(a) {
+        var ix = a.map(function (_, i) { return i; }).sort(function (i, j) { return a[i] - a[j]; }), r = new Array(a.length), i = 0;
+        while (i < ix.length) { var j = i; while (j + 1 < ix.length && a[ix[j + 1]] === a[ix[i]]) j++; for (var k = i; k <= j; k++) r[ix[k]] = 0.5 * (i + j); i = j + 1; }
+        return r;
+    }
+    function interp(xs, ys, x) {
+        var n = xs.length;
+        if (!n) return NaN;
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) return ys[n - 1];
+        var lo = 0, hi = n - 1;
+        while (hi - lo > 1) { var m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; }
+        var dx = xs[hi] - xs[lo];
+        return dx > 0 ? ys[lo] + (ys[hi] - ys[lo]) * (x - xs[lo]) / dx : ys[lo];
+    }
+    function clampTxt(s) {
+        s = String(s == null ? '' : s).replace(BANNED, 'n/a');
+        return s.length > 299 ? s.slice(0, 296) + '...' : s;
+    }
+    function fmt(v, dp) {
+        if (!fin(v)) return 'n/a';
+        dp = dp == null ? 0 : dp;
+        var neg = v < 0, s = Math.abs(v).toFixed(dp), parts = s.split('.');
+        if (parts[0].length > 3) parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        var out = parts.join('.');
+        return (neg && +s !== 0 ? '-' : '') + out;
+    }
+    function rnd(v, dp) { if (!fin(v)) return null; var f = Math.pow(10, dp); return Math.round(v * f) / f; }
+    function sig(v, n) { if (!fin(v) || v === 0) return fin(v) ? v : null; var d = Math.ceil(Math.log(Math.abs(v)) / Math.LN10); var f = Math.pow(10, n - d); return Math.round(v * f) / f; }
+    function failure(code, errors, bad) { return { ok: false, code: code, errors: errors || [], bad: bad || [] }; }
+    function isRealFn(f) { return typeof f === 'function' && !f._dfitStub; }
+    function okRes(r) { return r && typeof r === 'object' && r.ok === true; }
+
+    // threshold lookup: DEFAULTS[id] overridden by inputs.options.triage[id][key] (finite numbers only)
+    function thr(C, id) {
+        var d = DEFAULTS[id] || {}, o = gp(C.inputs, 'options.triage.' + id, null), out = {}, k;
+        for (k in d) if (Object.prototype.hasOwnProperty.call(d, k)) out[k] = d[k];
+        if (isObj(o)) for (k in o) if (Object.prototype.hasOwnProperty.call(o, k) && fin(o[k])) out[k] = o[k];
+        return out;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // context: resolved quantities shared by the checks, the blunders and the re-pump rules
+    // ═══════════════════════════════════════════════════════════════════════
+    function buildCtx(prep, events, ctx) {
+        ctx = isObj(ctx) ? ctx : {};
+        var C = {
+            prep: prep, ev: isObj(events) && events.ok !== false ? events : null, raw: ctx,
+            inputs: isObj(ctx.inputs) ? ctx.inputs : {}, well: isObj(ctx.well) ? ctx.well : {},
+            isip: okRes(ctx.isip) ? ctx.isip : null, derivs: okRes(ctx.derivs) ? ctx.derivs : null,
+            hammer: okRes(ctx.hammer) ? ctx.hammer : null, ramps: Array.isArray(ctx.ramps) ? ctx.ramps.filter(okRes) : [],
+            stepDown: okRes(ctx.stepDown) ? ctx.stepDown : null, stepRate: okRes(ctx.stepRate) ? ctx.stepRate : null,
+            plan: isObj(ctx.plan) ? ctx.plan : null, ds: isObj(ctx.ds) ? ctx.ds : null,
+            picks: Array.isArray(ctx.picks) ? ctx.picks.filter(function (p) { return p && p.ok !== false && fin(p.dt); }) : []
+        };
+        var t = prep.t, pw = prep.pw, n = t.length;
+        C.t = t; C.pw = pw; C.n = n;
+        C.q = arrLike(prep.q) && prep.q.length === n ? prep.q : null;
+        C.pSurf = arrLike(prep.pSurf) && prep.pSurf.length === n ? prep.pSurf : null;
+        C.T = arrLike(prep.T) && prep.T.length === n ? prep.T : null;
+        if (C.T) { var anyT = false; for (var i = 0; i < n; i++) if (fin(C.T[i])) { anyT = true; break; } if (!anyT) C.T = null; }
+        C.src = prep.src === 'surface-converted' ? 'surface-converted' : 'bh';
+        C.sigma = fin(prep.sigma) ? prep.sigma : 0;
+        C.atm = fin(gp(C.inputs, 'channels.atmPsia', null)) ? gp(C.inputs, 'channels.atmPsia') : 14.696;
+        // events (fallbacks from the record when the events stage failed)
+        var ev = C.ev;
+        C.tStart = ev && fin(ev.tStart) ? ev.tStart : t[0];
+        C.ts = ev && fin(ev.ts) ? ev.ts : NaN;
+        if (!fin(C.ts)) { var dropI = largestDrop(C); C.ts = dropI >= 0 ? t[dropI] : t[0]; }
+        C.tEnd = t[n - 1];
+        C.iFall = firstIndexAfter(t, C.ts);        // first sample after shut-in
+        C.qLast = ev && fin(ev.qLast) ? ev.qLast : null;
+        C.qMax = ev && fin(ev.qMax) ? ev.qMax : null;
+        if (C.q && !fin(C.qMax)) { var qm = 0; for (var j = 0; j < n; j++) if (fin(C.q[j]) && C.q[j] > qm) qm = C.q[j]; C.qMax = qm; }
+        // geometry, fluid, priors
+        var tvd = gp(C.inputs, 'datumTvd', null);
+        C.tvd = fin(tvd) && tvd > 0 ? tvd : null;
+        var md = gp(C.inputs, 'datumMd', null);
+        C.md = fin(md) && md > 0 ? md : C.tvd;
+        var rho = gp(C.inputs, 'fluid.rhoPpg', null);
+        C.rho = fin(rho) && rho > 0 ? rho : 8.43;
+        C.hydroGrad = PSI_PER_FT_PER_PPG * C.rho;
+        C.fluid = fluidOf(C);
+        priorsInto(C);
+        // ISIP: the ISIP stage, else the first falloff sample
+        C.isipVal = C.isip && fin(C.isip.value) ? C.isip.value : (C.iFall < n ? pw[C.iFall] : NaN);
+        C.gradIsip = C.tvd && fin(C.isipVal) ? C.isipVal / C.tvd : null;
+        // last pumping pressure
+        C.iLastPump = C.iFall > 0 ? C.iFall - 1 : 0;
+        C.pLast = pw[C.iLastPump];
+        // theory storage and wave speed
+        theory(C);
+        return C;
+    }
+    // the fluid handed to WTS_wellbore: the inputs' fluid with the resolved density (its own default never replaces ours)
+    function fluidOf(C) {
+        var f = isObj(C.inputs.fluid) ? C.inputs.fluid : {}, out = {}, k;
+        for (k in f) if (Object.prototype.hasOwnProperty.call(f, k)) out[k] = f[k];
+        out.rhoPpg = C.rho;
+        return out;
+    }
+    // entered vs generic priors: a provenance other than an entered one (or none, with the value at its default) is generic
+    var SV_DEFAULT = 1.0, ENTERED = { user: 1, logged: 1, entered: 1, dataset: 1, dfit: 1, measured: 1 };
+    function provOf(C, path) {
+        var srcs = [gp(C.inputs, 'provenance', null), gp(C.raw, 'provenance', null)];
+        for (var i = 0; i < srcs.length; i++) {
+            var p = srcs[i];
+            if (!isObj(p)) continue;
+            var v = Object.prototype.hasOwnProperty.call(p, path) ? p[path] : gp(p, path, null);
+            if (typeof v === 'string') return v;
+        }
+        return null;
+    }
+    // p_i gradient (lower bound) and S_v gradient (upper bound) of the ISIP-gradient band, each with its generic flag
+    function priorsInto(C) {
+        var piGrad = gp(C.inputs, 'priors.piGrad', null), wpi = gp(C.well, 'pi', null);
+        if (fin(piGrad)) { C.piGrad = piGrad; C.piGradSrc = 'prior'; }
+        else if (fin(wpi) && C.tvd) { C.piGrad = wpi / C.tvd; C.piGradSrc = 'well'; }
+        else { C.piGrad = C.hydroGrad; C.piGradSrc = 'hydrostatic'; }
+        var sv = gp(C.inputs, 'rock.sigmaVGrad', null), svProv = provOf(C, 'rock.sigmaVGrad');
+        C.svGrad = fin(sv) ? sv : SV_DEFAULT;
+        // the input clamp always fills rock.sigmaVGrad: at its default it counts as entered only when a provenance says so
+        C.svGeneric = svProv ? !ENTERED[svProv] : (!fin(sv) || Math.abs(sv - SV_DEFAULT) < 1e-12);
+        C.piGeneric = C.piGradSrc === 'hydrostatic';
+        var sg = gp(C.inputs, 'priors.sigmaGrad', null);
+        C.sigmaGrad = fin(sg) ? sg : null;
+        C.generic = C.piGeneric && C.svGeneric && C.sigmaGrad == null;
+    }
+    function firstIndexAfter(t, x) { for (var i = 0; i < t.length; i++) if (t[i] > x) return i; return t.length; }
+    function largestDrop(C) {
+        var best = -1, bd = 0;
+        for (var i = 0; i + 1 < C.n; i++) {
+            var d = C.pw[i] - C.pw[i + 1];
+            if (fin(d) && d > bd) { bd = d; best = i; }
+        }
+        return best;
+    }
+    // largest drop between consecutive samples within t[kd] ± max(60 s, 5 × the median sample interval before kd), kd = the rate
+    // down-crossing (a clock offset of up to a minute either way still finds the shut-in drop; a log-spaced late falloff
+    // interval never does)
+    function dropNear(C, kd) {
+        var t = C.t, dts = [], i;
+        for (i = Math.max(1, kd - 20); i <= kd; i++) if (fin(t[i]) && fin(t[i - 1]) && t[i] > t[i - 1]) dts.push(t[i] - t[i - 1]);
+        var md = dts.length ? median(dts) : 0, win = Math.max(60 / 3600, 5 * md);
+        var tMin = t[kd] - win, tMax = t[kd] + win, best = -1, bd = 0;
+        for (i = 0; i + 1 < C.n && t[i] <= tMax; i++) {
+            if (t[i + 1] < tMin) continue;
+            var d = C.pw[i] - C.pw[i + 1];
+            if (fin(d) && d > bd) { bd = d; best = i; }
+        }
+        return best;
+    }
+    function theory(C) {
+        var cs = C.raw.csys, vw = null, c = null, W = G.WTS_wellbore;
+        if (isObj(cs)) { if (fin(cs.VwCw) && cs.VwCw > 0) vw = cs.VwCw; if (fin(cs.waveSpeed) && cs.waveSpeed > 0) c = cs.waveSpeed; }
+        if (vw == null && fin(C.raw.VwCwTheory) && C.raw.VwCwTheory > 0) vw = C.raw.VwCwTheory;
+        // the wellbore column, built once (survey, strings, fluid, temperature, datum); shared by the storage and the hydrostatics
+        C.col = null;
+        if (C.tvd && W && isRealFn(W.column)) {
+            try {
+                var col = W.column({ survey: C.inputs.survey || null, strings: C.inputs.strings || [], fluid: C.fluid,
+                                     temp: C.inputs.temp || {}, datumTvd: C.tvd, datumMd: C.md });
+                if (okRes(col)) C.col = col;
+            } catch (e) { C.col = null; }
+        }
+        if ((vw == null || c == null) && C.col && isRealFn(W.csys)) {
+            try {
+                var r = W.csys(C.col, C.fluid, null);
+                if (okRes(r)) { if (vw == null && fin(r.VwCw) && r.VwCw > 0) vw = r.VwCw; if (c == null && fin(r.waveSpeed) && r.waveSpeed > 0) c = r.waveSpeed; }
+            } catch (e) { /* theory unavailable */ }
+        }
+        if (c == null && C.hammer && fin(C.hammer.c) && C.hammer.c > 0) c = C.hammer.c;
+        C.VwCwTheory = vw;
+        C.waveSpeed = c;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // clock alignment (local method; WTS_wellbore.align or ctx.align take precedence)
+    // pressure-up start fitted on the pre-breakdown ramp p − p0 = V(t + L)/C; stop event = rate stop vs the largest
+    // negative pressure difference. Returns {ok, offsetS, uncS, stopS, stopUncS, slopePsiPerBbl, method}
+    // ═══════════════════════════════════════════════════════════════════════
+    function alignLocal(C) {
+        var t = C.t, p = C.pw, q = C.q, n = C.n, qMaxRec = 0, ii;
+        if (!q || n < 8) return { ok: false };
+        for (ii = 0; ii < n; ii++) if (fin(q[ii]) && q[ii] > qMaxRec) qMaxRec = q[ii];   // the record's own scale (a unit blunder)
+        if (!(qMaxRec > 0)) return { ok: false };
+        // cumulative volume of the rate record (bbl; t h, q bbl/min)
+        var V = new Array(n); V[0] = 0;
+        for (var i = 1; i < n; i++) {
+            var qa = fin(q[i - 1]) ? q[i - 1] : 0, qb = fin(q[i]) ? q[i] : 0;
+            V[i] = V[i - 1] + 0.5 * (qa + qb) * (t[i] - t[i - 1]) * 60;
+        }
+        // rate start (first up-crossing of 2 % of the maximum) and its sampling resolution
+        var lev = 0.02 * qMaxRec, kq = -1;
+        for (i = 1; i < n; i++) if (fin(q[i]) && q[i] >= lev && !(q[i - 1] >= lev)) { kq = i; break; }
+        if (kq < 1) return { ok: false };
+        var q0 = fin(q[kq - 1]) ? q[kq - 1] : 0;
+        var tq0 = t[kq - 1] + (lev - q0) / (q[kq] - q0) * (t[kq] - t[kq - 1]);
+        var uncQ = 0.5 * (t[kq] - t[kq - 1]) * 3600;
+        if (q[kq] - q0 < 0.5 * qMaxRec) uncQ = Math.min(uncQ, 0.5);   // a resolved ramp, not a sampled step
+        // pressure-up start: baseline from the samples before the first rise
+        var m0 = Math.min(5, n), base = [];
+        for (i = 0; i < m0; i++) base.push(p[i]);
+        var p0 = median(base), thrP = Math.max(10, 10 * C.sigma), ku = -1;
+        for (i = 1; i < n; i++) if (p[i] - p0 > thrP) { ku = i; break; }
+        if (ku < 1 || ku + 1 >= n) return { ok: false };
+        var pre = [];
+        for (i = 0; i < ku; i++) pre.push(p[i]);
+        p0 = median(pre);
+        // peak (breakdown) after the rise
+        var kmax = ku;
+        for (i = ku; i < n; i++) { if (p[i] > p[kmax]) kmax = i; if (p[i] < p[kmax] - Math.max(50, 0.05 * (p[kmax] - p0))) break; }
+        var top = p0 + 0.9 * (p[kmax] - p0), kEnd = ku;
+        while (kEnd + 1 <= kmax && p[kEnd + 1] <= top) kEnd++;
+        var slope1 = (p[ku] - p[ku - 1]) / (t[ku] - t[ku - 1]);
+        // a resolved ramp: back-extrapolate with the ramp's own slope (the first interval may hold the start, so its slope is
+        // too low when the pre-pump sampling is coarse); never before the last baseline sample
+        if (ku + 1 <= kEnd) { var sR = (p[ku + 1] - p[ku]) / (t[ku + 1] - t[ku]); if (sR > slope1) slope1 = sR; }
+        var tp0 = slope1 > 0 ? Math.max(t[ku - 1], t[ku] - (p[ku] - p0) / slope1) : t[ku];
+        var uncP = 0.5 * (t[ku] - t[ku - 1]) * 3600;
+        if (kEnd - ku >= 1) uncP = Math.min(uncP, 0.5);
+        var L0 = (tq0 - tp0);                        // h
+        // fit window: a few baseline samples, then the ramp up to 90 % of the breakdown rise
+        var j0 = Math.max(0, ku - 3), idx = [];
+        for (i = j0; i <= kEnd; i++) idx.push(i);
+        var span = (Math.max(3 * (t[ku] - t[ku - 1]), 2 / 3600) + 2 / 3600), best = null;
+        function ssr(L) {
+            var sxy = 0, sxx = 0, syy = 0;
+            for (var k = 0; k < idx.length; k++) {
+                var x = interp(t, V, t[idx[k]] + L), y = p[idx[k]] - p0;
+                sxy += x * y; sxx += x * x; syy += y * y;
+            }
+            if (!(sxx > 0)) return { s: syy, b: NaN };
+            var b = sxy / sxx;
+            return { s: syy - b * sxy, b: b };
+        }
+        if (idx.length >= 3) {
+            var steps = 400, h = 2 * span / steps, sv = [];
+            for (var s = 0; s <= steps; s++) {
+                var L = L0 - span + s * h, r = ssr(L);
+                sv.push(r.s);
+                if (!best || r.s < best.s) best = { s: r.s, L: L, b: r.b, k: s };
+            }
+            if (best.k > 0 && best.k < steps) {           // parabolic refinement
+                var a1 = sv[best.k - 1], a2 = sv[best.k], a3 = sv[best.k + 1], den = a1 - 2 * a2 + a3;
+                if (den > 0) { var dl = 0.5 * (a1 - a3) / den * h; var rr = ssr(best.L + dl); if (rr.s <= best.s) best = { s: rr.s, L: best.L + dl, b: rr.b }; }
+            }
+        } else best = { L: L0, b: NaN };
+        var offsetS = best.L * 3600;
+        // a sampled rate step (0 → ≥ half the maximum between two samples) starts anywhere in (t[kq-1], t[kq]]: the trapezoid
+        // volume smears it over the whole interval, so a coarse pre-pump sampling (12 s on the reference demo) reads as a lag. The
+        // offset is then the distance from the pressure-up start to that interval (0 inside it)
+        if (q[kq] - q0 >= 0.5 * qMaxRec) {
+            var tA = t[kq - 1], tB = t[kq], tpS = tp0 < tA ? tA : (tp0 > tB ? tB : tp0);
+            offsetS = (tpS - tp0) * 3600;
+        }
+        var uncS = Math.max(uncQ, uncP);
+        // stop event: last down-crossing of 50 % of the last rate vs the largest negative pressure difference
+        var stopS = null, stopUnc = null, qlr = fin(q[C.iLastPump]) && q[C.iLastPump] > 0.05 * qMaxRec ? q[C.iLastPump] : qMaxRec, lvl = 0.5 * qlr, kd = -1;
+        for (i = n - 1; i >= 1; i--) if (fin(q[i]) && q[i] < lvl && q[i - 1] >= lvl) { kd = i; break; }
+        // the shut-in drop is looked for only near the rate stop (plan §4.1: last pumping sample → first falloff sample); a
+        // log-spaced late falloff interval can drop more than the shut-in step, so the whole record is never searched
+        var iDrop = kd > 0 ? dropNear(C, kd) : -1;
+        if (kd > 0 && iDrop >= 0) {
+            var tq1 = t[kd - 1] + (q[kd - 1] - lvl) / (q[kd - 1] - q[kd]) * (t[kd] - t[kd - 1]);
+            var tp1 = 0.5 * (t[iDrop] + t[iDrop + 1]);
+            stopS = (tq1 - tp1) * 3600;
+            stopUnc = 0.5 * (t[kd] - t[kd - 1]) * 3600 + 0.5 * (t[iDrop + 1] - t[iDrop]) * 3600;
+        }
+        // a surface gauge on vacuum at the rate start: the pumped volume first fills the void, so the pressure rise lags the rate
+        // by the fill time (a physical delay, not a clock error); the stop event then carries the clock check
+        var vac = false;
+        if (C.pSurf) {
+            var ps = [];
+            for (i = Math.max(0, kq - 5); i < kq; i++) if (fin(C.pSurf[i])) ps.push(C.pSurf[i]);
+            vac = ps.length > 0 && median(ps) < C.atm - 1;
+        }
+        return { ok: true, offsetS: offsetS, uncS: uncS, stopS: stopS, stopUncS: stopUnc, vacuumFill: vac && offsetS < 0,
+                 slopePsiPerBbl: fin(best.b) ? best.b : null, method: 'event', rampIdx: idx, p0: p0, tq0: tq0, tp0: tp0 };
+    }
+    function getAlign(C) {
+        if (C._align) return C._align;
+        var a = null, r = C.raw.align;
+        if (isObj(r) && fin(r.offsetS)) a = { ok: true, offsetS: r.offsetS, uncS: 0, stopS: null, stopUncS: null, method: r.method || 'xcorr', slopePsiPerBbl: null };
+        var loc = alignLocal(C);
+        if (!a) a = loc;
+        else if (loc.ok) { a.stopS = loc.stopS; a.stopUncS = loc.stopUncS; a.slopePsiPerBbl = loc.slopePsiPerBbl; }
+        if (loc && loc.ok) { a.rampIdx = loc.rampIdx; a.p0 = loc.p0; }
+        C._align = a;
+        return a;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // the checks (each returns {level, value, threshold, text, inWindow?, excluded?})
+    // ═══════════════════════════════════════════════════════════════════════
+    var CK = {};
+
+    CK.units = function (C, T) {
+        var ds = C.ds, reasons = [];
+        if (ds && arrLike(ds.t)) {
+            for (var i = 1; i < ds.t.length; i++) if (fin(ds.t[i]) && fin(ds.t[i - 1]) && ds.t[i] <= ds.t[i - 1]) { reasons.push('time reverses or repeats at row ' + (i + 1)); break; }
+            if (ds.timeUnit != null && ds.timeUnit !== 'h') reasons.push('time unit ' + String(ds.timeUnit).slice(0, 12) + ' is not converted to hours');
+            if (ds.q && ds.rateUnit != null && ds.rateUnit !== 'bbl/d' && ds.rateUnit !== 'STB/d') reasons.push('rate unit ' + String(ds.rateUnit).slice(0, 12) + ' is not recognised');
+        }
+        (C.prep.flags || []).forEach(function (f) { if (f && /REVERS|DUPLIC|UNKNOWN_UNIT/.test(String(f.code))) reasons.push(String(f.text || f.code).slice(0, 80)); });
+        for (var k = 1; k < C.n; k++) if (C.t[k] < C.t[k - 1]) { reasons.push('the prepared time is not monotonic'); break; }
+        if (reasons.length) return { level: 'fail', value: null, threshold: null, inWindow: true, text: 'Units or time base invalid: ' + reasons.join('; ') + '.' };
+        // gaps: an interval longer than gapFactor × the median of its neighbours (log spacing is not a gap)
+        var t = C.t, n = C.n, dts = [], gap = 0;
+        for (i = 1; i < n; i++) dts.push(t[i] - t[i - 1]);
+        for (i = 0; i < dts.length; i++) {
+            var nb = [];
+            for (var j = Math.max(0, i - 3); j <= Math.min(dts.length - 1, i + 3); j++) if (j !== i) nb.push(dts[j]);
+            var ref = median(nb);
+            if (fin(ref) && ref > 0 && dts[i] > T.gapFactor * ref) gap += dts[i] - ref;
+        }
+        var span = t[n - 1] - t[0], frac = span > 0 ? gap / span : 0;
+        if (frac > T.gapFrac) return { level: 'warn', value: rnd(frac, 4), threshold: T.gapFrac, text: 'Columns mapped and time monotonic, but gaps cover ' + fmt(100 * frac, 1) + ' % of the record (limit ' + fmt(100 * T.gapFrac, 1) + ' %).' };
+        return { level: 'pass', value: rnd(frac, 4), threshold: T.gapFrac, text: 'Columns mapped, time monotonic, no significant gaps.' };
+    };
+
+    CK.clock = function (C, T) {
+        if (!C.q) return { level: 'na', value: null, threshold: T.passS, text: 'No rate record: clock alignment not checked.' };
+        var a = getAlign(C);
+        if (!a || !a.ok) return { level: 'na', value: null, threshold: T.passS, text: 'Rate and pressure events could not both be found: clock alignment not checked.' };
+        var off = a.offsetS, applied = 3600 * (fin(gp(C.prep, 'applied.clockOffsetH', null)) ? C.prep.applied.clockOffsetH : 0);
+        if (a.vacuumFill) {
+            if (a.stopS == null) return { level: 'na', value: null, threshold: T.passS, text: 'The well was on vacuum at the rate start (the pressure rise lags by the fill time ' + fmt(-off, 1) + ' s) and no stop event was found: clock alignment not checked.' };
+            var tolS = Math.max(T.passS, a.stopUncS || 0);
+            if (Math.abs(a.stopS) > tolS)
+                return { level: 'warn', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate stop lags the shut-in drop by ' + fmt(a.stopS, 1) + ' s (the start is not used: the well was on vacuum); confirm and apply the clock offset before picking events.' };
+            return { level: 'pass', value: rnd(a.stopS, 1), threshold: T.passS, text: 'Rate and pressure clocks agree at the shut-in within ' + fmt(tolS, 1) + ' s (offset ' + fmt(a.stopS, 1) + ' s); the start lags by the vacuum fill time ' + fmt(-off, 1) + ' s.' };
+        }
+        if (a.stopS != null && Math.abs(a.stopS - off) > Math.max(T.contradictS, 2 * ((a.uncS || 0) + (a.stopUncS || 0))))
+            return { level: 'fail', value: rnd(off, 1), threshold: T.contradictS, inWindow: true,
+                     text: 'Events contradict: the rate starts ' + fmt(off, 1) + ' s after the pressure rise but stops ' + fmt(a.stopS, 1) + ' s after the shut-in drop.' };
+        var tol = Math.max(T.passS, a.uncS || 0);
+        if (Math.abs(off) > tol) {
+            var hours = Math.round(off / 3600);
+            var tz = hours !== 0 && Math.abs(off - 3600 * hours) < 120 ? ' (a whole number of hours: time zone or daylight saving)' : '';
+            return { level: 'warn', value: rnd(off, 1), threshold: T.passS,
+                     text: 'Rate events lag the pressure by ' + fmt(off, 1) + ' s' + tz + '; confirm and apply the clock offset before picking events.' };
+        }
+        if (Math.abs(applied) > T.warnCorrS)
+            return { level: 'warn', value: rnd(off, 1), threshold: T.warnCorrS, text: 'Clocks aligned after a correction of ' + fmt(applied, 1) + ' s; the residual offset is ' + fmt(off, 1) + ' s.' };
+        return { level: 'pass', value: rnd(off, 1), threshold: T.passS, text: 'Rate and pressure clocks agree within ' + fmt(tol, 1) + ' s (offset ' + fmt(off, 1) + ' s).' };
+    };
+
+    function measuredVwCw(C) {
+        for (var i = 0; i < C.ramps.length; i++) if (fin(C.ramps[i].VwCwRamp) && C.ramps[i].VwCwRamp > 0) return { v: C.ramps[i].VwCwRamp, src: 'ramp' };
+        if (C.ev && fin(C.ev.VwCwMeasured) && C.ev.VwCwMeasured > 0) return { v: C.ev.VwCwMeasured, src: 'events' };
+        var a = getAlign(C);
+        if (a && a.ok && fin(a.slopePsiPerBbl) && a.slopePsiPerBbl > 0) return { v: 1 / a.slopePsiPerBbl, src: 'record' };
+        return null;
+    }
+    CK.stiffness = function (C, T) {
+        var m = measuredVwCw(C);
+        if (!m || !C.VwCwTheory) return { level: 'na', value: null, threshold: T.warn, text: !m ? 'No pre-breakdown ramp: wellbore stiffness not checked.' : 'No theory storage (string and fluid inputs): wellbore stiffness not checked.' };
+        var r = m.v / C.VwCwTheory;
+        C._stiffRatio = r;
+        var txt = 'Ramp storage ' + fmt(m.v * 1e4, 3) + 'e-4 bbl/psi is ' + fmt(r, 2) + ' times the theory value';
+        if (r > T.fail) return { level: 'fail', value: rnd(r, 3), threshold: T.fail, inWindow: true, text: txt + ': air or gas in the well, a leak, or an open fracture.' };
+        if (r > T.warn) return { level: 'warn', value: rnd(r, 3), threshold: T.warn, text: txt + ': the wellbore is softer than expected.' };
+        if (r < T.lo) return { level: 'warn', value: rnd(r, 3), threshold: T.lo, text: txt + ': stiffer than theory; check the rate record and the string volume.' };
+        return { level: 'pass', value: rnd(r, 3), threshold: T.warn, text: txt + '.' };
+    };
+
+    CK.air = function (C, T) {
+        var m = measuredVwCw(C), h = C.hammer;
+        var known = h && fin(h.VwCwHammer) && h.VwCwHammer > 0 && h.reflectorMatch && h.reflectorMatch !== 'unknown';
+        if (!m || !C.VwCwTheory || !known) return { level: 'na', value: null, threshold: T.fail, text: 'The air cross-check needs the ramp storage, the theory value and a hammer period with a known reflector.' };
+        var r1 = m.v / C.VwCwTheory, r2 = h.VwCwHammer / C.VwCwTheory, mx = Math.max(r1, r2);
+        C._airRatios = [r1, r2];
+        var txt = 'Ramp ' + fmt(r1, 2) + ' and hammer ' + fmt(r2, 2) + ' times the theory storage';
+        if (r1 > T.fail && r2 > T.fail) return { level: 'fail', value: rnd(Math.min(r1, r2), 3), threshold: T.fail, inWindow: true, text: txt + ': air or gas confirmed by two independent detectors.' };
+        if (mx > T.warn) return { level: 'warn', value: rnd(mx, 3), threshold: T.warn, text: txt + ': one detector suggests air or gas; the other does not confirm it.' };
+        if (Math.abs(r1 - 1) <= T.pass && Math.abs(r2 - 1) <= T.pass) return { level: 'pass', value: rnd(mx, 3), threshold: T.warn, text: txt + ': both within ' + fmt(100 * T.pass, 0) + ' % of theory.' };
+        return { level: 'pass', value: rnd(mx, 3), threshold: T.warn, text: txt + ': no sign of air or gas.' };
+    };
+
+    CK.surface = function (C, T) {
+        if (!C.pSurf) return { level: 'na', value: null, threshold: T.warnPsig, text: 'No surface pressure channel.' };
+        var minPsig = Infinity, tVac = null;
+        for (var i = C.iFall; i < C.n; i++) {
+            var g = C.pSurf[i] - C.atm;
+            if (!fin(g)) continue;
+            if (g < minPsig) minPsig = g;
+            if (tVac == null && g < T.failPsig) tVac = C.t[i];
+        }
+        if (!fin(minPsig)) return { level: 'na', value: null, threshold: T.warnPsig, text: 'The surface channel has no data after shut-in.' };
+        if (C.src === 'surface-converted') {
+            if (tVac != null) return { level: 'fail', value: rnd(minPsig, 1), threshold: T.failPsig, inWindow: false,
+                                       excluded: { t0: tVac, t1: C.tEnd, why: 'surface gauge on vacuum: the converted bottomhole pressure is not valid' },
+                                       text: 'Surface pressure falls below ' + fmt(T.failPsig, 0) + ' psig at ' + fmt(tVac - C.ts, 2) + ' h of shut-in; the converted data after it are masked.' };
+            if (minPsig < T.warnPsig) return { level: 'warn', value: rnd(minPsig, 1), threshold: T.warnPsig, text: 'Surface pressure reaches ' + fmt(minPsig, 1) + ' psig; the column may not stay liquid-supported.' };
+            return { level: 'pass', value: rnd(minPsig, 1), threshold: T.warnPsig, text: 'Surface pressure stays above ' + fmt(T.warnPsig, 0) + ' psig throughout.' };
+        }
+        if (tVac != null) return { level: 'pass', value: rnd(minPsig, 1), threshold: T.warnPsig, text: 'The surface gauge goes on vacuum, but the analysis uses the bottomhole gauge.' };
+        return { level: 'pass', value: rnd(minPsig, 1), threshold: T.warnPsig, text: 'Surface pressure stays at or above ' + fmt(minPsig, 1) + ' psig.' };
+    };
+
+    // median static surface pressure before pumping (psia), or null
+    function staticSurf(C) {
+        if (!C.pSurf || C.src !== 'bh') return null;
+        var d = [];
+        for (var i = 0; i < C.n && C.t[i] < C.tStart; i++) if (fin(C.pw[i]) && fin(C.pSurf[i])) d.push(C.pSurf[i]);
+        return d.length ? median(d) : null;
+    }
+    // model static column p(tvd) − p_s (psi): WTS_wellbore.hydrostatic with the column and the inputs' fluid when present,
+    // else 0.052·ρ·TVD. One model for the check and the blunder bands; cached per depth.
+    function hydroModel(C, tvd) {
+        if (!(tvd > 0)) return NaN;
+        C._hydroCache = C._hydroCache || {};
+        var key = String(tvd);
+        if (Object.prototype.hasOwnProperty.call(C._hydroCache, key)) return C._hydroCache[key];
+        var model = C.hydroGrad * tvd, W = G.WTS_wellbore, ps = staticSurf(C);
+        if (W && isRealFn(W.hydrostatic) && fin(ps)) {
+            try {
+                var h = W.hydrostatic(ps, 0, tvd, C.col, null, { fluid: C.fluid });
+                if (okRes(h) && fin(h.dp) && h.dp > 0) model = h.dp;
+            } catch (e) { /* simple model */ }
+        }
+        C._hydroCache[key] = model;
+        return model;
+    }
+    // measured static p_w − p_s before pumping (psi), or null
+    function staticDiff(C, pwScale, psScale) {
+        if (!C.pSurf || C.src !== 'bh') return null;
+        var d = [];
+        for (var i = 0; i < C.n && C.t[i] < C.tStart; i++) if (fin(C.pw[i]) && fin(C.pSurf[i])) d.push(C.pw[i] * (pwScale || 1) - C.pSurf[i] * (psScale || 1));
+        return d.length ? median(d) : null;
+    }
+    CK.hydrostatic = function (C, T) {
+        var meas = staticDiff(C);
+        if (meas == null || !C.tvd) return { level: 'na', value: null, threshold: T.warn, text: 'Needs a bottomhole and a surface channel before pumping and the datum TVD.' };
+        var model = hydroModel(C, C.tvd);
+        var err = Math.abs(meas - model) / model;
+        C._hydroErr = err;
+        var txt = 'Static p_w - p_s is ' + fmt(meas, 0) + ' psi against ' + fmt(model, 0) + ' psi for the column (' + fmt(100 * err, 1) + ' %)';
+        if (err > T.fail) return { level: 'fail', value: rnd(err, 4), threshold: T.fail, inWindow: true, text: txt + ': check the datum depth, the gauge depth and the fluid density.' };
+        if (err > T.warn) return { level: 'warn', value: rnd(err, 4), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(err, 4), threshold: T.warn, text: txt + '.' };
+    };
+
+    CK.isolation = function (C, T) {
+        if (C.hammer && C.hammer.regime && C.hammer.regime !== 'none') return { level: 'pass', value: null, threshold: null, text: 'Water hammer is seen at shut-in, so the gauge sees the well.' };
+        var x = [], y = [];
+        for (var i = C.iFall; i < C.n; i++) if (fin(C.pw[i])) { x.push(C.t[i] - C.ts); y.push(C.pw[i]); }
+        if (x.length < 5) return { level: 'na', value: null, threshold: null, text: 'Too few falloff samples to check the gauge isolation.' };
+        var lo = Math.min.apply(null, y), hi = Math.max.apply(null, y), span = x[x.length - 1];
+        if (hi - lo < T.flatPsi) return { level: 'fail', value: rnd(hi - lo, 2), threshold: T.flatPsi, inWindow: true, text: 'The falloff is flat (' + fmt(hi - lo, 1) + ' psi over ' + fmt(span, 2) + ' h): is the gauge on the pump side of the valve?' };
+        var r = linreg(x, y);
+        var early = [], late = [];
+        for (i = 0; i < x.length; i++) { if (x[i] <= 0.1 * span) early.push(i); if (x[i] >= 0.5 * span) late.push(i); }
+        function rate(ix) { if (ix.length < 2) return NaN; var a = ix[0], b = ix[ix.length - 1]; return (y[a] - y[b]) / (x[b] - x[a]); }
+        var re = rate(early), rl = rate(late), ratio = fin(re) && fin(rl) && rl > 0 ? re / rl : NaN;
+        if (r && r.r2 >= T.linR2 && fin(ratio) && ratio < T.curvRatio)
+            return { level: 'fail', value: rnd(ratio, 3), threshold: T.curvRatio, inWindow: true, text: 'The falloff is a straight-line bleed (R2 ' + fmt(r.r2, 4) + '): is the gauge on the pump side of the valve?' };
+        return { level: 'pass', value: fin(ratio) ? rnd(ratio, 3) : null, threshold: T.curvRatio, text: 'The falloff has a decline shape.' };
+    };
+
+    function twoLc(C) {
+        if (C.hammer && fin(C.hammer.T) && C.hammer.T > 0 && fin(C.hammer.Lquarter) && C.hammer.Lquarter > 0 && fin(C.hammer.c) && C.hammer.c > 0) return 2 * C.hammer.Lquarter / C.hammer.c;
+        if (C.md && C.waveSpeed) return 2 * C.md / C.waveSpeed;
+        return null;
+    }
+    function shutinSampling(C) {
+        var d = [];
+        for (var i = C.iFall; i < Math.min(C.n, C.iFall + 6); i++) if (i > 0) d.push((C.t[i] - C.t[i - 1]) * 3600);
+        var m = median(d);
+        return fin(m) && m > 0 ? m : null;
+    }
+    CK.sampling = function (C, T) {
+        var per = null;
+        if (C.hammer && C.hammer.sampling && fin(C.hammer.sampling.per2Lc)) per = C.hammer.sampling.per2Lc;
+        else { var p2 = twoLc(C), dtS = shutinSampling(C); if (p2 && dtS) per = p2 / dtS; }
+        if (per == null) return { level: 'na', value: null, threshold: T.pass, text: 'Needs the well depth and wave speed (or a hammer window) to compare the sampling with 2L/c.' };
+        var txt = fmt(per, 1) + ' samples per 2L/c';
+        if (per < T.fail) return { level: 'fail', value: rnd(per, 2), threshold: T.fail, inWindow: false, text: txt + ': the water hammer cannot be analysed.' };
+        if (per < T.pass) return { level: 'warn', value: rnd(per, 2), threshold: T.pass, text: txt + ': the hammer period is resolved only coarsely.' };
+        return { level: 'pass', value: rnd(per, 2), threshold: T.pass, text: txt + '.' };
+    };
+
+    function closeTimeS(C) {
+        if (fin(C.raw.tCloseS) && C.raw.tCloseS >= 0) return C.raw.tCloseS;
+        if (!C.q || !(C.qLast > 0)) return null;
+        var hiL = 0.95 * C.qLast, loL = 0.05 * C.qLast, i, kd = -1;
+        for (i = C.n - 1; i >= 1; i--) if (fin(C.q[i]) && C.q[i] <= loL && C.q[i - 1] > loL) { kd = i; break; }
+        if (kd < 1) return null;
+        var t1 = C.t[kd - 1] + (C.q[kd - 1] - loL) / (C.q[kd - 1] - C.q[kd]) * (C.t[kd] - C.t[kd - 1]);
+        var k0 = kd - 1;
+        while (k0 > 0 && C.q[k0] < hiL) k0--;
+        var t0;
+        if (C.q[k0] >= hiL && C.q[k0 + 1] < hiL) t0 = C.t[k0] + (C.q[k0] - hiL) / (C.q[k0] - C.q[k0 + 1]) * (C.t[k0 + 1] - C.t[k0]);
+        else t0 = C.t[k0];
+        return Math.max(0, (t1 - t0) * 3600);
+    }
+    CK.shutin = function (C, T) {
+        var p2 = twoLc(C), tc = closeTimeS(C);
+        if (p2 == null || tc == null) return { level: 'na', value: null, threshold: null, text: 'Needs the valve closing time and 2L/c.' };
+        var Lc = p2 / 2, txt = 'Valve closed in ' + fmt(tc, 1) + ' s against 2L/c = ' + fmt(p2, 1) + ' s';
+        if (tc > T.fail * Lc) return { level: 'fail', value: rnd(tc, 2), threshold: rnd(T.fail * Lc, 2), inWindow: false, text: txt + ': the Joukowsky check is off.' };
+        if (tc >= T.warn * Lc) return { level: 'warn', value: rnd(tc, 2), threshold: rnd(T.warn * Lc, 2), text: txt + ': the hammer amplitude is reduced.' };
+        return { level: 'pass', value: rnd(tc, 2), threshold: rnd(T.warn * Lc, 2), text: txt + '.' };
+    };
+
+    CK.stepdown = function (C, T) {
+        var st = (C.ev && Array.isArray(C.ev.steps) ? C.ev.steps : []).filter(function (s) { return s && s.dir === 'down' && fin(s.q); });
+        if (!st.length) return { level: 'na', value: null, threshold: T.passSteps, text: 'No step-down in the record.' };
+        var qs = st.map(function (s) { return s.q; }), qmax = Math.max.apply(null, qs.concat(fin(C.qLast) ? [C.qLast] : [])), qmin = Math.min.apply(null, qs);
+        var range = qmax > 0 ? (qmax - qmin) / qmax : 0, n = st.length;
+        var txt = n + ' steps over ' + fmt(100 * range, 0) + ' % of the rate range';
+        if (n < T.warnSteps || range < T.failRange) return { level: 'fail', value: n, threshold: T.passSteps, inWindow: false, text: txt + ': the friction split is not determinable.' };
+        if (n < T.passSteps || range < T.passRange) return { level: 'warn', value: n, threshold: T.passSteps, text: txt + ': the friction split is weakly determined.' };
+        return { level: 'pass', value: n, threshold: T.passSteps, text: txt + '.' };
+    };
+
+    CK.steprate = function (C, T) {
+        var sr = C.stepRate;
+        if (!sr || !Array.isArray(sr.steps) || !sr.steps.length) return { level: 'na', value: null, threshold: T.warn, text: 'No step-rate test in the record.' };
+        var bad = 0;
+        sr.steps.forEach(function (s) { if (s && s.stabilised === false) bad++; });
+        if (bad >= T.fail) return { level: 'fail', value: bad, threshold: T.fail, inWindow: false, text: bad + ' steps did not stabilise: the parting pressure is not reliable.' };
+        if (bad >= T.warn) return { level: 'warn', value: bad, threshold: T.warn, text: bad + ' step did not stabilise.' };
+        return { level: 'pass', value: 0, threshold: T.warn, text: 'Every step stabilised.' };
+    };
+
+    CK.friction = function (C, T) {
+        var sd = C.stepDown, at = sd && sd.at;
+        if (!at || !fin(at.dpPipe) || !(at.dpPipe > 0) || !fin(at.dpPerf) || !(at.dpPerf > 0)) return { level: 'na', value: null, threshold: T.warn, text: 'No pipe friction in the step-down (bottomhole gauge or no step-down).' };
+        var r = at.dpPipe / at.dpPerf, txt = 'Pipe friction is ' + fmt(r, 2) + ' times the perforation friction at the top rate';
+        if (r > T.fail) return { level: 'fail', value: rnd(r, 3), threshold: T.fail, inWindow: false, text: txt + ': the number of open perforations is not determinable.' };
+        if (r >= T.warn) return { level: 'warn', value: rnd(r, 3), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(r, 3), threshold: T.warn, text: txt + '.' };
+    };
+
+    function dtAtGmin(C) {
+        var d = C.derivs;
+        if (!d || !arrLike(d.G) || !fin(d.gMin)) return null;
+        for (var i = 0; i < d.G.length; i++) if (d.G[i] >= d.gMin) return d.dt[i];
+        return null;
+    }
+    CK.bleed = function (C, T) {
+        var b = C.raw.bleed, t1 = isObj(b) && fin(b.t1psi) ? b.t1psi : null, dtG = dtAtGmin(C);
+        if (t1 == null || dtG == null) return { level: 'na', value: null, threshold: null, text: 'Needs the bleed-off prediction and G_min.' };
+        var inside = C.picks.filter(function (p) { return p.dt < t1; });
+        if (inside.length) return { level: 'fail', value: rnd(inside[0].dt, 4), threshold: rnd(t1, 4), inWindow: true, text: 'A closure pick at ' + fmt(inside[0].dt * 60, 1) + ' min lies inside the bleed-off (1 psi at ' + fmt(t1 * 60, 1) + ' min).' };
+        if (dtG >= t1) return { level: 'pass', value: rnd(dtG, 4), threshold: rnd(t1, 4), text: 'G_min at ' + fmt(dtG * 60, 1) + ' min is past the predicted bleed-off (' + fmt(t1 * 60, 1) + ' min).' };
+        return { level: 'warn', value: rnd(dtG, 4), threshold: rnd(t1, 4), text: 'G_min at ' + fmt(dtG * 60, 1) + ' min is ' + (dtG >= t1 / T.warn ? 'within ' + fmt(T.warn, 0) + ' times' : 'well before') + ' the predicted bleed-off end (' + fmt(t1 * 60, 1) + ' min).' };
+    };
+
+    // rate integral to shut-in with the wellbore fill excluded (Events.Vfill, when finite): the basis of ctx.strapVolume
+    function pumpedVolume(C) {
+        if (!C.q) return null;
+        var v = 0;
+        for (var i = 1; i < C.n && C.t[i - 1] < C.ts; i++) {
+            var qa = fin(C.q[i - 1]) ? C.q[i - 1] : 0, qb = fin(C.q[i]) ? C.q[i] : 0;
+            v += 0.5 * (qa + qb) * (C.t[i] - C.t[i - 1]) * 60;
+        }
+        if (C.ev && fin(C.ev.Vfill) && C.ev.Vfill > 0 && C.ev.Vfill < v) v -= C.ev.Vfill;
+        return v;
+    }
+    CK.volume = function (C, T) {
+        var strap = C.raw.strapVolume, v = pumpedVolume(C);
+        if (!fin(strap) || !(strap > 0) || v == null) return { level: 'na', value: null, threshold: T.warn, text: 'No strap or stroke volume entered.' };
+        var err = Math.abs(v - strap) / strap, txt = 'Rate integral ' + fmt(v, 1) + ' bbl against ' + fmt(strap, 1) + ' bbl from straps (' + fmt(100 * err, 1) + ' %)';
+        if (err > T.fail) return { level: 'fail', value: rnd(err, 4), threshold: T.fail, inWindow: true, text: txt + ': check the rate unit and the meter.' };
+        if (err > T.warn) return { level: 'warn', value: rnd(err, 4), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(err, 4), threshold: T.warn, text: txt + '.' };
+    };
+
+    CK.temperature = function (C) {
+        if (C.T && C.src === 'bh') return { level: 'pass', value: null, threshold: null, text: 'Bottomhole temperature recorded.' };
+        if (C.T) return { level: 'warn', value: null, threshold: null, text: 'Only a surface temperature is recorded.' };
+        if (C.src === 'surface-converted') return { level: 'fail', value: null, threshold: null, inWindow: false, text: 'No temperature channel with a surface-gauge analysis: the column density cannot be checked.' };
+        return { level: 'na', value: null, threshold: null, text: 'No temperature channel; the thermal checks are not run.' };
+    };
+
+    // pick window on the record clock: [t at G_min, ts + 1.5 × the latest pick Δt], else after G_min to the end
+    function pickWindow(C) {
+        var dtG = dtAtGmin(C), t0 = C.ts + (dtG != null ? dtG : 0), t1 = C.tEnd;
+        if (C.picks.length) { var mx = 0; C.picks.forEach(function (p) { if (p.dt > mx) mx = p.dt; }); t1 = Math.min(C.tEnd, C.ts + 1.5 * mx); }
+        return [t0, t1];
+    }
+    CK.gaugeThermal = function (C, T) {
+        if (!C.T) return { level: 'na', value: null, threshold: T.fail, text: 'No temperature channel.' };
+        var dtG = dtAtGmin(C), tFrom = C.ts + (dtG != null ? dtG : 0), win = pickWindow(C), worst = 0, tWorst = null;
+        for (var i = C.iFall; i < C.n; i++) {
+            if (C.t[i] < tFrom || !fin(C.T[i])) continue;
+            var j = i + 1;
+            while (j < C.n && (C.t[j] - C.t[i]) * 60 < 1) j++;      // differences over at least one minute
+            if (j >= C.n || !fin(C.T[j])) continue;
+            var r = Math.abs(C.T[j] - C.T[i]) / ((C.t[j] - C.t[i]) * 60);
+            if (r > worst) { worst = r; tWorst = C.t[i]; }
+        }
+        if (worst > T.fail && tWorst >= win[0] && tWorst <= win[1]) return { level: 'fail', value: rnd(worst, 3), threshold: T.fail, inWindow: true, text: 'Gauge temperature changes ' + fmt(worst, 2) + ' F/min inside the pick window.' };
+        if (worst > T.fail) return { level: 'warn', value: rnd(worst, 3), threshold: T.fail, text: 'Gauge temperature changes ' + fmt(worst, 2) + ' F/min, outside the pick window.' };
+        return { level: 'pass', value: rnd(worst, 3), threshold: T.fail, text: 'Gauge temperature settles below ' + fmt(T.fail, 1) + ' F/min after G_min.' };
+    };
+
+    CK.noise = function (C, T) {
+        var d = C.derivs;
+        if (!d || !arrLike(d.GdPdG) || d.GdPdG.length < 9) return { level: 'na', value: null, threshold: T.warn, text: 'No derivatives.' };
+        var y = d.GdPdG, n = y.length, ref = -1, i;
+        var votes = C.picks.filter(function (p) { return p.vote && fin(p.G); });
+        var Gt = votes.length ? median(votes.map(function (p) { return p.G; })) : NaN;
+        if (fin(Gt)) { var bd = Infinity; for (i = 0; i < n; i++) if (fin(d.G[i]) && Math.abs(d.G[i] - Gt) < bd) { bd = Math.abs(d.G[i] - Gt); ref = i; } }
+        var lo, hi;
+        if (ref >= 0) { lo = Math.max(0, ref - 10); hi = Math.min(n - 1, ref + 10); }
+        else { lo = 0; while (lo < n && !(d.G[lo] >= d.gMin)) lo++; hi = n - 1; }
+        var rel = [];
+        for (i = lo; i <= hi; i++) {
+            if (!fin(y[i])) continue;
+            var w = [];
+            for (var k = Math.max(0, i - 3); k <= Math.min(n - 1, i + 3); k++) if (fin(y[k])) w.push(y[k]);
+            var s = median(w);
+            if (fin(s) && s > 0) rel.push((y[i] - s) / s);
+        }
+        if (rel.length < 5) return { level: 'na', value: null, threshold: T.warn, text: 'Too few derivative points near the pick.' };
+        var sd = mad(rel);
+        var txt = 'Derivative noise ' + (ref >= 0 ? 'at the pick' : 'after G_min') + ' is ' + fmt(100 * sd, 1) + ' % of G dP/dG';
+        if (sd > T.fail) return { level: 'fail', value: rnd(sd, 4), threshold: T.fail, inWindow: true, text: txt + ': widen the window L or check the gauge.' };
+        if (sd > T.warn) return { level: 'warn', value: rnd(sd, 4), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(sd, 4), threshold: T.warn, text: txt + '.' };
+    };
+
+    // residuals from a local quadratic in ln Δt over ±0.05 decade (at least 5 points); the same linear filter on p and T
+    function localResid(x, y) {
+        var n = x.length, out = new Array(n), lx = x.map(function (v) { return Math.log(v); }), hw = 0.05 * Math.LN10;
+        for (var i = 0; i < n; i++) {
+            var a = i, b = i;
+            while (a > 0 && lx[i] - lx[a - 1] <= hw) a--;
+            while (b < n - 1 && lx[b + 1] - lx[i] <= hw) b++;
+            while (b - a + 1 < 5 && (a > 0 || b < n - 1)) { if (a > 0) a--; if (b < n - 1 && b - a + 1 < 5) b++; }
+            // quadratic least squares about lx[i]
+            var S = [0, 0, 0, 0, 0], R = [0, 0, 0];
+            for (var k = a; k <= b; k++) {
+                var u = lx[k] - lx[i], u2 = u * u;
+                S[0] += 1; S[1] += u; S[2] += u2; S[3] += u2 * u; S[4] += u2 * u2;
+                R[0] += y[k]; R[1] += u * y[k]; R[2] += u2 * y[k];
+            }
+            var M = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]];
+            var det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+            if (!(Math.abs(det) > 1e-30)) { out[i] = 0; continue; }
+            var c0 = (R[0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (R[1] * M[2][2] - M[1][2] * R[2]) + M[0][2] * (R[1] * M[2][1] - M[1][1] * R[2])) / det;
+            out[i] = y[i] - c0;
+        }
+        return out;
+    }
+    CK.thermal = function (C, T) {
+        if (!C.T) return { level: 'na', value: null, threshold: T.warn, text: 'No temperature channel.' };
+        var win = pickWindow(C), x = [], yp = [], yt = [];
+        for (var i = C.iFall; i < C.n; i++) if (C.t[i] >= win[0] && C.t[i] <= win[1] && fin(C.pw[i]) && fin(C.T[i]) && C.t[i] > C.ts) { x.push(C.t[i] - C.ts); yp.push(C.pw[i]); yt.push(C.T[i]); }
+        if (x.length < T.minN) return { level: 'na', value: null, threshold: T.warn, text: 'Too few samples with temperature in the pick window.' };
+        var rp0 = localResid(x, yp), rt0 = localResid(x, yt), lim = 3 * mad(rt0), rp = [], rt = [];
+        // only samples whose temperature departs from its trend by more than 3 robust sigmas carry a thermal signal;
+        // rank correlation, so a few residuals of a kink (closure, a step) cannot dominate it
+        for (i = 0; i < x.length; i++) if (Math.abs(rt0[i]) > lim) { rp.push(rp0[i]); rt.push(rt0[i]); }
+        if (rp.length < Math.max(5, T.minN / 2)) return { level: 'pass', value: 0, threshold: T.warn, text: 'No thermal signal in the pick window beyond the temperature noise.' };
+        var r = corr(ranks(rt), ranks(rp)), reg = linreg(rt, rp);
+        if (!fin(r)) return { level: 'pass', value: 0, threshold: T.warn, text: 'Detrended pressure and temperature are uncorrelated.' };
+        var a = Math.abs(r), txt = 'Detrended pressure and temperature correlate at r = ' + fmt(r, 2) + (reg ? ' (dp/dT ' + fmt(reg.b, 2) + ' psi/F)' : '');
+        if (a > T.fail) return { level: 'fail', value: rnd(a, 3), threshold: T.fail, inWindow: true, text: txt + ' inside the pick window: thermal effects on the gauge or the column.' };
+        if (a > T.warn) return { level: 'warn', value: rnd(a, 3), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(a, 3), threshold: T.warn, text: txt + '.' };
+    };
+
+    CK.sink = function (C, T) {
+        var cl = C.raw.classification, d = C.derivs;
+        if (cl && cl.features && cl.features.unitSlopeSink === true) return { level: 'warn', value: null, threshold: T.cycles, text: 'Constant-rate sink (leak?): unit log-log slope before closure; see the leak plot and the annulus check.' };
+        if (!d || !arrLike(d.D) || !arrLike(d.dt) || !arrLike(d.dtD)) return { level: 'na', value: null, threshold: T.cycles, text: 'No derivatives.' };
+        var dtc = Infinity;
+        var votes = C.picks.filter(function (p) { return p.vote; });
+        if (votes.length) dtc = median(votes.map(function (p) { return p.dt; }));
+        var best = 0, runStart = null, prev = null, n = d.dt.length;
+        for (var i = 0; i < n; i++) {
+            if (!(d.dtD[i] >= T.dtDmin) || !(d.dt[i] < dtc) || !fin(d.D[i]) || !(d.D[i] > 0)) { runStart = null; prev = null; continue; }
+            if (prev == null) { prev = i; continue; }
+            // slope over a span of at least 0.05 decade
+            if (Math.log(d.dt[i] / d.dt[prev]) / Math.LN10 < 0.05) continue;
+            var s = Math.log(d.D[i] / d.D[prev]) / Math.log(d.dt[i] / d.dt[prev]);
+            if (s >= T.slopeMin && s <= T.slopeMax) {
+                if (runStart == null) runStart = prev;
+                var cyc = Math.log(d.dt[i] / d.dt[runStart]) / Math.LN10;
+                if (cyc > best) best = cyc;
+            } else runStart = null;
+            prev = i;
+        }
+        if (best >= T.cycles) return { level: 'warn', value: rnd(best, 3), threshold: T.cycles, text: 'Constant-rate sink (leak?): unit log-log slope over ' + fmt(best, 2) + ' log cycles before closure; see the leak plot and the annulus check.' };
+        return { level: 'pass', value: rnd(best, 3), threshold: T.cycles, text: 'No constant-rate sink before closure.' };
+    };
+
+    CK.tides = function (C, T) {
+        var td = C.raw.tide;
+        if (isObj(td) && td.significant === false) return { level: 'pass', value: null, threshold: T.warn, text: 'No significant tide' + (fin(td.snr) ? ' (signal-to-noise ' + fmt(td.snr, 1) + ')' : '') + '.' };
+        if (!isObj(td) || !fin(td.ampPsi)) return { level: 'na', value: null, threshold: T.warn, text: 'No tidal or barometric analysis.' };
+        if (td.removed === true) return { level: 'pass', value: null, threshold: T.warn, text: 'Tidal and barometric signal removed.' };
+        var dp = fin(td.dpPsi) && td.dpPsi > 0 ? td.dpPsi : null;
+        if (!dp) return { level: 'na', value: null, threshold: T.warn, text: 'No after-closure pressure change to compare the tide with.' };
+        var f = td.ampPsi / dp, txt = 'Tidal amplitude ' + fmt(td.ampPsi, 2) + ' psi is ' + fmt(100 * f, 0) + ' % of the after-closure change';
+        if (f > T.fail) return { level: 'fail', value: rnd(f, 3), threshold: T.fail, inWindow: true, text: txt + ': remove it before the after-closure analysis.' };
+        if (f > T.warn) return { level: 'warn', value: rnd(f, 3), threshold: T.warn, text: txt + '.' };
+        return { level: 'pass', value: rnd(f, 3), threshold: T.warn, text: txt + '.' };
+    };
+
+    CK.annulus = function (C, T) {
+        var ds = C.ds, pa = ds && arrLike(ds.pAnn) ? ds.pAnn : null, idx = C.prep.idx;
+        if (!pa || !arrLike(idx)) return { level: 'na', value: null, threshold: T.dpMin, text: 'No annulus pressure channel.' };
+        var base = [], x = [], y = [], mx = -Infinity, tp = C.ts - C.tStart;
+        for (var i = 0; i < C.n; i++) {
+            var v = pa[idx[i]];
+            if (!fin(v)) continue;
+            if (C.t[i] < C.tStart) base.push(v);
+            if (C.t[i] >= C.tStart && C.t[i] <= C.ts && v > mx) mx = v;
+            if (C.t[i] >= C.tStart - tp && C.t[i] <= C.ts + tp && C.q) { x.push(fin(C.q[i]) ? C.q[i] : 0); y.push(v); }
+        }
+        if (!base.length || !fin(mx)) return { level: 'na', value: null, threshold: T.dpMin, text: 'The annulus channel does not cover the start of pumping.' };
+        var b0 = median(base), sd = mad(base), rise = mx - b0, r = x.length > 3 ? corr(x, y) : NaN;
+        if (rise > Math.max(T.dpMin, 5 * (fin(sd) ? sd : 0)) && (!fin(r) || r > T.corr))
+            return { level: 'fail', value: rnd(rise, 1), threshold: T.dpMin, inWindow: true, text: 'Annulus pressure rises ' + fmt(rise, 0) + ' psi with pumping: communication behind the pipe or a packer leak.' };
+        return { level: 'pass', value: rnd(rise, 1), threshold: T.dpMin, text: 'No annulus response to pumping (' + fmt(rise, 1) + ' psi).' };
+    };
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // blunder library (rule flags on the well's own bands; Bayes factors are on the slip list: bf null)
+    // ═══════════════════════════════════════════════════════════════════════
+    function bands(C, o) {
+        // o: {f (pressure factor on p), off (psi), tvd} → {isip:bool|null, hydro:bool|null}
+        var B = thr(C, 'blunders'), tvd = o.tvd || C.tvd, f = o.f || 1, off = o.off || 0, res = { isip: null, hydro: null };
+        if (tvd && fin(C.isipVal)) {
+            var g = (C.isipVal * f + off) / tvd;
+            res.grad = g;
+            res.isip = g >= C.piGrad - 1e-9 && g <= C.svGrad + B.sigmaVPlus;
+        }
+        if (tvd && o.hydro !== false) {
+            var meas = staticDiff(C, f, 1);
+            if (meas != null) { var model = hydroModel(C, tvd); res.hydroErr = Math.abs(meas + off - model) / model; res.hydro = res.hydroErr <= B.hydro; }
+        }
+        return res;
+    }
+    function allPass(b) { return b.isip !== false && b.hydro !== false && (b.isip === true || b.hydro === true); }
+    function anyFail(b) { return b.isip === false || b.hydro === false; }
+    function curUnitFix(C, ch) { var v = gp(C.inputs, 'channels.unitFix.' + ch, null); return v === undefined ? null : v; }
+    function rawChannel(C, ch) {
+        if (C.ds && arrLike(C.ds[ch])) return { arr: C.ds[ch], t: C.ds.t, raw: true };
+        if (ch === 'p') return { arr: C.pw, t: C.t, raw: false };
+        if (ch === 'pSurf' && C.pSurf) return { arr: C.pSurf, t: C.t, raw: false };
+        return null;
+    }
+
+    function blundersCore(C) {
+        var B = thr(C, 'blunders'), out = [], base = bands(C, {});
+        // 1. psig read as psia (per channel): the source unit flag, or a reading within ±2 psi of zero before pressure-up
+        ['p', 'pSurf'].forEach(function (ch) {
+            if (gp(C.inputs, 'channels.psig.' + ch, false) === true) return;
+            if (gp(C.ds, 'meta.psigConverted.' + ch, null) != null) return;
+            var flag = false, near = false, why = [];
+            var mu = gp(C.ds, 'meta.unit', null), mus = gp(C.ds, 'meta.units.' + ch, null);
+            if ((ch === 'p' && mu === 'psig') || mus === 'psig') { flag = true; why.push('the source marks the channel psig'); }
+            var rc = rawChannel(C, ch);
+            if (rc) {
+                var pre = [];
+                for (var i = 0; i < rc.arr.length && rc.t[i] < C.tStart; i++) if (fin(rc.arr[i])) pre.push(rc.arr[i]);
+                var m = median(pre);
+                if (pre.length && fin(m) && Math.abs(m) <= B.psigZero) { near = true; why.push('it reads ' + fmt(m, 1) + ' psi with the well open before pressure-up'); }
+            }
+            if (!flag && !near) return;
+            out.push({ id: 'psig-' + ch, hypothesis: (ch === 'p' ? 'Primary' : 'Surface') + ' pressure recorded in psig but read as psia', score: flag && near ? 1 : 0.8, bf: null,
+                       fix: { field: 'channels.psig.' + ch, from: false, to: true },
+                       text: clampTxt('Psig read as psia (' + (ch === 'p' ? 'primary' : 'surface') + ' channel): ' + why.join(' and ') + '. Apply fix adds ' + fmt(C.atm, 3) + ' psi to the channel (dataset unchanged).') });
+        });
+        // 2. kPa / bar / MPa read as psi (primary channel)
+        if (base.isip === false || base.hydro === false) {
+            var bestU = null;
+            [['kPa', 0.145038], ['bar', 14.5038], ['MPa', 145.038]].forEach(function (u) {
+                var b = bands(C, { f: u[1] });
+                if (allPass(b) && (!bestU || Math.abs(Math.log(b.grad / 0.75)) < Math.abs(Math.log(bestU.b.grad / 0.75)))) bestU = { u: u, b: b };
+            });
+            if (bestU) out.push({ id: 'unit-' + bestU.u[0], hypothesis: 'Pressure recorded in ' + bestU.u[0] + ' but read as psi', score: 1, bf: null,
+                                  fix: { field: 'channels.unitFix.p', from: curUnitFix(C, 'p'), to: { kind: bestU.u[0] + '->psi', factor: bestU.u[1], offset: 0 } },
+                                  text: clampTxt('The ISIP gradient ' + fmt(base.grad, 3) + ' psi/ft is outside the band; read as ' + bestU.u[0] + ' it is ' + fmt(bestU.b.grad, 3) + ' psi/ft.') });
+        }
+        // 3. MD used as TVD (deviated survey)
+        var sv = Array.isArray(C.inputs.survey) ? C.inputs.survey.filter(function (r) { return Array.isArray(r) && fin(r[0]) && fin(r[1]); }) : [];
+        if (C.tvd && sv.length >= 2 && (C.inputs.datumMd == null || C.inputs.datumMd === C.tvd)) {
+            var mdA = sv.map(function (r) { return r[0]; }), tvA = sv.map(function (r) { return r[1]; });
+            if (C.tvd <= mdA[mdA.length - 1] * 1.0001) {
+                var tvd2 = interp(mdA, tvA, C.tvd);
+                if (fin(tvd2) && Math.abs(tvd2 - C.tvd) > 0.01 * C.tvd) {
+                    var b2 = bands(C, { tvd: tvd2 });
+                    if (anyFail(base) && allPass(b2)) out.push({ id: 'md-as-tvd', hypothesis: 'Measured depth entered as the datum TVD', score: 1, bf: null,
+                        fix: { field: 'datumTvd', from: C.tvd, to: rnd(tvd2, 1), also: [{ field: 'datumMd', from: C.inputs.datumMd == null ? null : C.inputs.datumMd, to: C.tvd }] },
+                        text: clampTxt('The datum ' + fmt(C.tvd, 0) + ' ft looks like MD: the survey gives TVD ' + fmt(tvd2, 0) + ' ft, which ' + (b2.hydro ? 'matches the static column' : 'puts the ISIP gradient in the band') + '.') });
+                }
+            }
+        }
+        // 4. gauge depth used as datum (the pressure is at the gauge, not referred to the datum)
+        var gTvd = gp(C.inputs, 'gauge.bhTvd', null);
+        if (C.tvd && fin(gTvd) && Math.abs(gTvd - C.tvd) > 10 && base.hydro === false && C.inputs.channels && C.inputs.channels.depthFix == null) {
+            var b3 = bands(C, { tvd: gTvd, hydro: true });
+            if (b3.hydro === true) {
+                var dpShift = hydroModel(C, C.tvd) - hydroModel(C, gTvd);
+                out.push({ id: 'gauge-as-datum', hypothesis: 'Gauge pressure used as the datum pressure', score: 1, bf: null,
+                           fix: { field: 'channels.depthFix', from: null, to: { kind: 'gauge-to-datum', fromTvd: gTvd, toTvd: C.tvd, dpPsi: rnd(dpShift, 2) } },
+                           text: clampTxt('The static column matches the gauge depth ' + fmt(gTvd, 0) + ' ft, not the datum ' + fmt(C.tvd, 0) + ' ft: refer the pressure to the datum (' + fmt(dpShift, 1) + ' psi).') });
+            }
+        }
+        // 5. time unit s / min / h (pump time outside 1–60 min)
+        var tpMin = C.ev && C.ev.tp && fin(C.ev.tp.pump) ? C.ev.tp.pump * 60 : (fin(C.ts) && fin(C.tStart) ? (C.ts - C.tStart) * 60 : NaN);
+        if (fin(tpMin) && tpMin > 0 && (tpMin < B.pumpMinLo || tpMin > B.pumpMinHi)) {
+            var cand = [[1 / 60, 'min read as h'], [1 / 3600, 's read as h'], [60, 'h read as min'], [3600, 'h read as s']], bestT = null;
+            cand.forEach(function (c) { var v = tpMin * c[0]; if (v >= B.pumpMinLo && v <= B.pumpMinHi) { var d = Math.abs(Math.log(v / 8)); if (!bestT || d < bestT.d) bestT = { c: c, d: d, v: v }; } });
+            if (bestT) out.push({ id: 'time-unit', hypothesis: 'Time unit ' + bestT.c[1], score: 1, bf: null,
+                                  fix: { field: 'channels.unitFix.t', from: curUnitFix(C, 't'), to: { kind: bestT.c[1].replace(/ /g, '-'), factor: bestT.c[0], offset: 0 } },
+                                  text: clampTxt('The pump time ' + fmt(tpMin, 1) + ' min is outside ' + fmt(B.pumpMinLo, 0) + '-' + fmt(B.pumpMinHi, 0) + ' min; with the time ' + bestT.c[1] + ' it is ' + fmt(bestT.v, 1) + ' min.') });
+        }
+        // 6. bbl/d ↔ bbl/min (× 1440): volume vs straps, else the ramp-implied rate vs the recorded rate
+        var vol = pumpedVolume(C), strap = C.raw.strapVolume, rf = null, rWhy = '';
+        if (fin(strap) && strap > 0 && vol != null && vol > 0) {
+            var ratio = vol / strap;
+            if (Math.abs(ratio / 1440 - 1) <= B.volTol) { rf = 1 / 1440; rWhy = 'the rate integral is 1440 times the strap volume'; }
+            else if (Math.abs(ratio * 1440 - 1) <= B.volTol) { rf = 1440; rWhy = 'the rate integral is 1/1440 of the strap volume'; }
+        } else if (C.VwCwTheory && C.q) {
+            var a = getAlign(C);
+            if (a && a.ok && fin(a.slopePsiPerBbl) && a.slopePsiPerBbl > 0) {
+                var rr = (1 / a.slopePsiPerBbl) / C.VwCwTheory;     // implied storage / theory = recorded volume scale
+                if (rr / 1440 < B.rampRatioTol && rr / 1440 > 1 / B.rampRatioTol) { rf = 1 / 1440; rWhy = 'the ramp needs 1/1440 of the recorded volume for the theory storage'; }
+                else if (rr * 1440 < B.rampRatioTol && rr * 1440 > 1 / B.rampRatioTol) { rf = 1440; rWhy = 'the ramp needs 1440 times the recorded volume for the theory storage'; }
+            }
+        }
+        if (rf != null) out.push({ id: 'rate-unit', hypothesis: rf < 1 ? 'Rate in bbl/d read as bbl/min' : 'Rate in bbl/min read as bbl/d', score: 1, bf: null,
+                                   fix: { field: 'channels.unitFix.q', from: curUnitFix(C, 'q'), to: { kind: rf < 1 ? 'bbl/d->bbl/min' : 'bbl/min->bbl/d', factor: rf, offset: 0 } },
+                                   text: clampTxt('Rate unit: ' + rWhy + '; Apply fix scales the rate by ' + (rf < 1 ? '1/1440' : '1440') + '.') });
+        // 7. ± 1 h clock
+        if (C.q) {
+            var al = getAlign(C);
+            if (al && al.ok && Math.abs(al.offsetS) > 1800) {
+                var hrs = Math.round(al.offsetS / 3600);
+                if (hrs !== 0 && Math.abs(al.offsetS - 3600 * hrs) <= B.hourTolS) {
+                    var cur = fin(gp(C.inputs, 'channels.clockOffsetH', null)) ? C.inputs.channels.clockOffsetH : 0;
+                    out.push({ id: 'clock-hour', hypothesis: 'Rate logger clock off by ' + Math.abs(hrs) + ' h (time zone or daylight saving)', score: 1, bf: null,
+                               fix: { field: 'channels.clockOffsetH', from: cur, to: rnd(cur - al.offsetS / 3600, 6) },
+                               text: clampTxt('The rate events lag the pressure by ' + fmt(al.offsetS / 3600, 3) + ' h, a whole number of hours.') });
+                }
+            }
+        }
+        out.sort(function (a, b) { return b.score - a.score; });
+        return out;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // re-pump verdict (advisory; first hour; needs an acknowledgement in the UI)
+    // ═══════════════════════════════════════════════════════════════════════
+    function checkOf(triage, id) {
+        var a = triage && Array.isArray(triage.checks) ? triage.checks : [];
+        for (var i = 0; i < a.length; i++) if (a[i] && a[i].id === id) return a[i];
+        return null;
+    }
+    function repumpCore(triage, C) {
+        var R = thr(C, 'repump'), B = thr(C, 'blunders'), rules = [], g = C.gradIsip;
+        function add(id, level, text) { rules.push({ id: id, level: level, text: clampTxt(text) }); }
+        // R1 breakdown and the overburden
+        var pb = C.ev && fin(C.ev.pb) ? C.ev.pb : NaN;
+        var broke = fin(pb) && fin(C.pLast) && pb - C.pLast > Math.max(R.breakdownPsi, 0.02 * pb);
+        if (g == null) add('R1', 'pass', 'Datum TVD missing: the ISIP gradient rules are not assessed.');
+        else if (!broke && g >= C.svGrad) add('R1', 'warn', 'No breakdown and the ISIP gradient ' + fmt(g, 3) + ' psi/ft is at or above the overburden ' + fmt(C.svGrad, 3) + ' psi/ft: possible horizontal fracture or no fracture.');
+        else add('R1', 'pass', broke ? 'Breakdown seen at ' + fmt(pb, 0) + ' psia.' : 'No distinct breakdown, but the ISIP gradient is below the overburden.');
+        // R2 ISIP gradient band
+        if (g != null) {
+            var lo = C.piGrad, hi = C.svGrad + B.sigmaVPlus;
+            if (g < lo - 1e-9 || g > hi) {
+                // downgraded to a warning when the violated bound is a generic prior (§6.3)
+                var below = g < lo - 1e-9, gen = below ? C.piGeneric : C.svGeneric;
+                var note = gen ? (below ? ' (generic prior: p_i gradient from the fluid hydrostatic)' : ' (generic prior: overburden ' + fmt(C.svGrad, 2) + ' psi/ft by default, not entered)') : '';
+                add('R2', gen ? 'warn' : 'fail', 'ISIP gradient ' + fmt(g, 3) + ' psi/ft lies ' + (below ? 'below' : 'above') + ' the band ' + fmt(lo, 3) + '-' + fmt(hi, 3) + ' psi/ft: a unit or depth blunder, or not a fracture' + note + '.');
+            } else add('R2', 'pass', 'ISIP gradient ' + fmt(g, 3) + ' psi/ft lies between the pore (' + fmt(lo, 3) + ') and overburden (' + fmt(hi, 3) + ') gradients.');
+        }
+        // R3 near-wellbore (tortuosity) loss
+        if (C.sigmaGrad != null && C.tvd && fin(C.isipVal) && fin(C.pLast)) {
+            var pipe = C.src === 'surface-converted' && C.stepDown && C.stepDown.at && fin(C.stepDown.at.dpPipe) ? C.stepDown.at.dpPipe : 0;
+            var dNwb = C.pLast - C.isipVal - pipe, ref = C.isipVal - C.sigmaGrad * C.tvd;
+            if (ref > 0 && dNwb > R.nwbFrac * ref) add('R3', 'warn', 'Near-wellbore loss ' + fmt(dNwb, 0) + ' psi exceeds ' + fmt(100 * R.nwbFrac, 0) + ' % of the net pressure ' + fmt(ref, 0) + ' psi: tortuosity dominated; re-pump at a higher rate or with a viscous pill.');
+            else add('R3', 'pass', 'Near-wellbore loss ' + fmt(dNwb, 0) + ' psi is not dominant.');
+        }
+        // R4 air or gas in the well
+        var st = checkOf(triage, 'stiffness'), air = checkOf(triage, 'air');
+        var r1 = C._stiffRatio != null ? C._stiffRatio : (st && st.level !== 'na' && fin(st.value) ? st.value : null);
+        if (r1 != null && r1 > R.vwcw) {
+            var both = C._airRatios ? C._airRatios[1] > R.vwcw : (air && air.level === 'fail');
+            add('R4', both ? 'fail' : 'warn', 'Measured storage is ' + fmt(r1, 2) + ' times the theory value' + (both ? ', confirmed by the hammer: air or gas in the well; circulate and re-pump.' : '; the hammer does not confirm air or gas.'));
+        } else if (r1 != null) add('R4', 'pass', 'Measured storage ' + fmt(r1, 2) + ' times the theory value.');
+        // R5 closure visibility
+        var rvis = gp(C.raw, 'classification.features.Rvis', null);
+        if (!fin(rvis)) rvis = gp(C.raw, 'frac.Rvis', null);
+        if (fin(rvis)) {
+            if (rvis < R.rvisLo || (rvis < R.rvisHi && r1 != null && r1 > R.vwcw)) add('R5', 'warn', 'Storage-consistent closure visibility ' + fmt(rvis, 2) + ': closure may be invisible.');
+            else add('R5', 'pass', 'Closure visibility ' + fmt(rvis, 2) + '.');
+        }
+        // R6 Joukowsky
+        var jr = C.hammer && C.hammer.joukowsky && fin(C.hammer.joukowsky.ratio) ? C.hammer.joukowsky.ratio : null;
+        if (jr != null) {
+            if (Math.abs(jr - 1) > R.jouk) add('R6', 'warn', 'Hammer amplitude is ' + fmt(jr, 2) + ' times the Joukowsky value: check the rate record or the valve.');
+            else add('R6', 'pass', 'Hammer amplitude matches the Joukowsky value (' + fmt(jr, 2) + ').');
+        }
+        // R7 designer minimum volume
+        var vmin = C.plan ? (fin(C.plan.Vmin) ? C.plan.Vmin : gp(C.plan, 'summary.Vmin', null)) : null;
+        var vf = C.ev && fin(C.ev.ViFrac) ? C.ev.ViFrac : null;
+        if (fin(vmin) && vf != null) {
+            if (vf < vmin) add('R7', 'fail', 'Volume into the fracture ' + fmt(vf, 1) + ' bbl is below the designed minimum ' + fmt(vmin, 1) + ' bbl.');
+            else add('R7', 'pass', 'Volume into the fracture ' + fmt(vf, 1) + ' bbl meets the designed minimum ' + fmt(vmin, 1) + ' bbl.');
+        }
+        var hardFail = rules.some(function (r) { return r.level === 'fail' && (r.id === 'R2' || r.id === 'R4' || r.id === 'R7'); });
+        var nWarn = rules.filter(function (r) { return r.level === 'warn' || r.level === 'fail'; }).length;
+        var verdict = hardFail || nWarn >= 2 ? 'repump' : (nWarn === 1 ? 'caution' : 'continue');
+        return { verdict: verdict, rules: rules, ack: false };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // grade A–D
+    // ═══════════════════════════════════════════════════════════════════════
+    var LRANK = { high: 3, medium: 2, low: 1 };
+    // the labels behind grades A and B are rule labels, not yet calibrated in 3.4a (WP8 calibrates them in 3.4b)
+    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
+    function gradeCore(triage, consensus, aca, opts) {
+        var why = [], light = triage && triage.light, verdict = triage && triage.verdict;
+        var checks = triage && Array.isArray(triage.checks) ? triage.checks : [];
+        var failIn = checks.filter(function (c) { return c.level === 'fail' && c.inWindow !== false; });
+        var failOut = checks.filter(function (c) { return c.level === 'fail' && c.inWindow === false; });
+        var rp = triage && triage.repump ? triage.repump.verdict : 'continue';
+        if (verdict === 'uninterpretable') return { letter: 'D', why: ['Triage: the record is uninterpretable.'] };
+        if (rp === 'repump') return { letter: 'D', why: ['The re-pump verdict says re-pump.'] };
+        var mode = null, label = null;
+        if (isObj(consensus) && consensus.ok !== false) {
+            mode = consensus.mode || null;
+            label = consensus.confidence || consensus.label || null;
+            if (label === 'stale' || label === 'not-estimable') label = mode === 'none' ? 'not-estimable' : (label === 'stale' ? null : label);
+        }
+        var piLabel = isObj(aca) && aca.ok !== false && aca.pi ? aca.pi.label : null;
+        var closureOnly = !!(opts && opts.closureOnly);
+        var c = [];
+        if (failIn.length) c.push('a failed check inside an analysed window (' + failIn.map(function (x) { return x.title; }).join(', ') + ')');
+        if (failOut.length) c.push('a failed check outside the analysed windows (' + failOut.map(function (x) { return x.title; }).join(', ') + ')');
+        if (verdict === 'partly') c.push('the record is partly interpretable');
+        if (mode === 'none') c.push('closure is not estimable');
+        else if (label === 'low') c.push('the closure label is low');
+        if (c.length) return { letter: 'C', why: [clampTxt('Grade C: ' + c.join('; ') + '.')] };
+        if (mode == null) {
+            // triage-only grade (closure and p_i not yet graded)
+            if (light === 'green') return { letter: 'A', why: ['Triage green; closure and p_i not graded yet.'] };
+            return { letter: 'B', why: ['Triage amber; closure and p_i not graded yet.'] };
+        }
+        var piOk = (piLabel && LRANK[piLabel] >= 2) || closureOnly;
+        if (light === 'green' && mode === 'single' && (label === 'high' || label === 'medium') && piOk)
+            return { letter: 'A', why: [clampTxt('Triage green; closure single with label ' + label + '; ' + (closureOnly && !(piLabel && LRANK[piLabel] >= 2) ? 'designed outcome closure only' : 'p_i label ' + piLabel) + _provG())] };
+        if (light !== 'green') why.push('triage ' + (light || 'not run'));
+        if (mode === 'range') why.push('closure a range');
+        else if (label) why.push('closure label ' + label);
+        if (!piOk) why.push('p_i label ' + (piLabel || 'not available'));
+        return { letter: 'B', why: [clampTxt('Grade B: ' + why.join('; ') + (label || piLabel ? _provG() : '.'))] };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // public functions
+    // ═══════════════════════════════════════════════════════════════════════
+    function validPrep(prep) {
+        if (!isObj(prep) || prep.ok === false) return 'prep';
+        if (!arrLike(prep.t) || !arrLike(prep.pw) || prep.t.length < 3 || prep.t.length !== prep.pw.length) return 'prep.t';
+        return null;
+    }
+    function inWin(t, w) { return t >= w[0] && t <= w[1]; }
+    function salvageFor(C, checks, usable, excluded) {
+        var s = [];
+        usable.forEach(function (w) { s.push(clampTxt('Use ' + fmt(w[0] - C.ts, 2) + '-' + fmt(w[1] - C.ts, 2) + ' h of shut-in for closure' + (w[1] >= C.tEnd - 1e-9 ? ' and after-closure analysis.' : '.'))); });
+        excluded.forEach(function (x) { s.push(clampTxt('Data after ' + fmt(x.t0 - C.ts, 2) + ' h of shut-in are excluded: ' + x.why + '.')); });
+        if (excluded.some(function (x) { return x.t1 >= C.tEnd - 1e-9; }) && C.src === 'surface-converted') s.push('p_i not observable from this gauge.');
+        checks.forEach(function (c) { if (c.level === 'fail' && c.inWindow !== false) s.push(clampTxt('Fix before analysis: ' + c.title.toLowerCase() + '.')); });
+        return s;
+    }
+
+    function triage(prep, events, ctx) {
+        try {
+            var bad = validPrep(prep);
+            if (bad) return failure('BAD_PREPARED', ['Triage needs a prepared record (t and pw of equal length, at least three samples).'], [bad]);
+            var C = buildCtx(prep, events, ctx), checks = [], excluded = [];
+            CHECKS.forEach(function (row) {
+                var r;
+                try { r = CK[row[0]](C, thr(C, row[0])); }
+                catch (e) { r = { level: 'na', value: null, threshold: null, text: 'Check not run (internal error).' }; }
+                var item = { id: row[0], title: row[2], level: r.level, value: (fin(r.value) || typeof r.value === 'string') ? r.value : null,
+                             threshold: (fin(r.threshold) || typeof r.threshold === 'string') ? r.threshold : null, text: clampTxt(r.text), ev: [row[1]] };
+                if (r.level === 'fail') item.inWindow = r.inWindow !== false;
+                if (r.excluded) excluded.push({ t0: r.excluded.t0, t1: r.excluded.t1, why: clampTxt(r.excluded.why) });
+                checks.push(item);
+            });
+            // usable windows: the falloff minus the excluded spans
+            var usable = [[C.ts, C.tEnd]];
+            excluded.forEach(function (x) {
+                var next = [];
+                usable.forEach(function (w) {
+                    if (x.t1 <= w[0] || x.t0 >= w[1]) { next.push(w); return; }
+                    if (x.t0 > w[0]) next.push([w[0], x.t0]);
+                    if (x.t1 < w[1]) next.push([x.t1, w[1]]);
+                });
+                usable = next;
+            });
+            usable = usable.filter(function (w) { return w[1] > w[0]; });
+            var blunders = [];
+            try { blunders = blundersCore(C); } catch (e) { blunders = []; }
+            var failIn = checks.some(function (c) { return c.level === 'fail' && c.inWindow; });
+            var failAny = checks.some(function (c) { return c.level === 'fail'; });
+            var warnAny = checks.some(function (c) { return c.level === 'warn'; });
+            var critical = checks.some(function (c) { return c.level === 'fail' && CRITICAL[c.id]; });
+            var light = failIn ? 'red' : ((failAny || warnAny || blunders.length) ? 'amber' : 'green');
+            var verdict = (critical || !usable.length) ? 'uninterpretable' : ((failAny || excluded.length || blunders.length) ? 'partly' : 'interpretable');
+            var out = { ok: true, version: VERSION, light: light, verdict: verdict, checks: checks,
+                        windows: { usable: usable, excluded: excluded }, blunders: blunders,
+                        repump: { verdict: 'continue', rules: [], ack: false }, grade: { letter: 'D', why: [] }, salvage: [], ev: ['Q0'] };
+            out.repump = repumpCore(out, C);
+            out.grade = gradeCore(out, isObj(C.raw.consensus) ? C.raw.consensus : null, isObj(C.raw.aca) ? C.raw.aca : null, { closureOnly: gp(C.plan, 'outcome.label', null) === 'closure-only' });
+            out.salvage = (verdict === 'interpretable' && !excluded.length) ? [] : salvageFor(C, checks, usable, excluded);
+            return out;
+        } catch (e) {
+            return failure('TRIAGE_ERROR', ['Triage failed: ' + clampTxt(e && e.message ? e.message : 'internal error')], []);
+        }
+    }
+    function blunders(prep, events, ctx) {
+        try {
+            var bad = validPrep(prep);
+            if (bad) return failure('BAD_PREPARED', ['Blunder scoring needs a prepared record.'], [bad]);
+            return blundersCore(buildCtx(prep, events, ctx));
+        } catch (e) { return failure('BLUNDER_ERROR', ['Blunder scoring failed.'], []); }
+    }
+    function repump(tri, ctx) {
+        try {
+            if (!isObj(tri) || tri.ok === false) return failure('BAD_TRIAGE', ['The re-pump verdict needs a triage result.'], ['triage']);
+            ctx = isObj(ctx) ? ctx : {};
+            var prep = ctx.prep, C;
+            if (!validPrep(prep)) C = buildCtx(prep, ctx.events, ctx);
+            else {
+                C = { raw: ctx, inputs: isObj(ctx.inputs) ? ctx.inputs : {}, well: isObj(ctx.well) ? ctx.well : {}, ev: isObj(ctx.events) ? ctx.events : null,
+                      isip: okRes(ctx.isip) ? ctx.isip : null, hammer: okRes(ctx.hammer) ? ctx.hammer : null, stepDown: okRes(ctx.stepDown) ? ctx.stepDown : null,
+                      plan: isObj(ctx.plan) ? ctx.plan : null, src: 'bh', pLast: NaN };
+                var tvd = gp(C.inputs, 'datumTvd', null); C.tvd = fin(tvd) && tvd > 0 ? tvd : null;
+                var rho = gp(C.inputs, 'fluid.rhoPpg', null); C.hydroGrad = PSI_PER_FT_PER_PPG * (fin(rho) && rho > 0 ? rho : 8.43);
+                priorsInto(C);
+                C.isipVal = C.isip && fin(C.isip.value) ? C.isip.value : NaN;
+                C.gradIsip = C.tvd && fin(C.isipVal) ? C.isipVal / C.tvd : null;
+                if (fin(ctx.pLast)) C.pLast = ctx.pLast;
+            }
+            return repumpCore(tri, C);
+        } catch (e) { return failure('REPUMP_ERROR', ['The re-pump verdict failed.'], []); }
+    }
+    function grade(tri, consensus, aca, opts) {
+        try {
+            if (!isObj(tri) || tri.ok === false) return failure('BAD_TRIAGE', ['The grade needs a triage result.'], ['triage']);
+            return gradeCore(tri, consensus, aca, opts);
+        } catch (e) { return failure('GRADE_ERROR', ['Grading failed.'], []); }
+    }
+
+    function freezeDeep(o) { Object.keys(o).forEach(function (k) { if (o[k] && typeof o[k] === 'object') freezeDeep(o[k]); }); return Object.freeze(o); }
+    triage.version = VERSION;
+    triage.defaults = freezeDeep(JSON.parse(JSON.stringify(DEFAULTS)));
+    triage.checkIds = CHECKS.map(function (r) { return r[0]; });
+    G.PRiSM_dfit_triage = triage;
+    G.PRiSM_dfit_blunders = blunders;
+    G.PRiSM_dfit_repump = repump;
+    G.PRiSM_dfit_grade = grade;
+})();
+
+// ─── END 49-calc-dfit-triage ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 49-calc-dispersion ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
@@ -33166,7 +37751,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         return x + '</li>';
       }).join('') + '</ol>';
-      b += shots.filter(z => !used[z.id] && !z.hidden).map(z => shotHTML(folder, z, o)).join('');
+      // other shots once, at the guide level
+      arr(g.parts).forEach(p => arr(p && p.steps).forEach(z => { if (z && z.shot) used[z.shot] = 1; }));
+      if (!g._part) b += shots.filter(z => !used[z.id] && !z.hidden).map(z => shotHTML(folder, z, o)).join('');
       h += sec('steps', 2, b);
     }
     var ins = arr(g.inputs);
@@ -33206,7 +37793,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     arr(g.parts).forEach(p => {
       if (!p || !p.id) return;
       h += '<section class="help-part" id="' + idp + '-' + esc(p.id) + '"><h' + hl + '>' + md(p.title || p.id, o) + '</h' + hl + '>' +
-        guideBody(r, Object.assign({ units: g.units, shots: g.shots }, p), o, hl + 1, idp + '-' + esc(p.id)) + '</section>';
+        guideBody(r, Object.assign({ units: g.units, shots: g.shots, _part: 1 }, p), o, hl + 1, idp + '-' + esc(p.id)) + '</section>';
     });
     if (g.reviewed) h += '<p class="help-rev">Reviewed for ' + esc(g.reviewed) + '</p>';
     return h + '</article>';
@@ -33351,7 +37938,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
     '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
     '.help-nw{white-space:nowrap}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '@media (max-width:700px){.help-steps{padding-left:1.6em}.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
     '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {

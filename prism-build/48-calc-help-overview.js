@@ -25,7 +25,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'f5b49cbb', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',

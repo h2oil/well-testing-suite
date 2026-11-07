@@ -136,6 +136,29 @@ function _bourdetOnLn(lx, y, L) {
     var n = lx.length, d = new Array(n), i;
     for (i = 0; i < n; i++) d[i] = NaN;
     if (n < 3) return d;
+    // O(n) window: with every ln x finite and non-decreasing the two edges of
+    // the outward walk move monotonically (identical edges, identical result).
+    var mono = true;
+    for (i = 0; i < n; i++) if (!_num(lx[i]) || (i > 0 && !(lx[i] >= lx[i - 1]))) { mono = false; break; }
+    if (mono) {
+        var m = -1, r = 1;
+        for (i = 1; i < n - 1; i++) {
+            if (!_num(y[i])) continue;
+            var j1 = i - 1, j2 = i + 1;
+            if (L > 0) {
+                while (m + 1 <= i - 1 && lx[i] - lx[m + 1] >= L) m++;
+                j1 = m > 0 ? m : 0;
+                if (r < i + 1) r = i + 1;
+                while (r < n - 1 && lx[r] - lx[i] < L) r++;
+                j2 = r;
+            }
+            var e1 = lx[i] - lx[j1], e2 = lx[j2] - lx[i], eT = lx[j2] - lx[j1];
+            if (!_num(e1) || !_num(e2) || !_num(eT) || e1 === 0 || e2 === 0 || eT === 0) continue;
+            if (!_num(y[j1]) || !_num(y[j2])) continue;
+            d[i] = (y[i] - y[j1]) / e1 * (e2 / eT) + (y[j2] - y[i]) / e2 * (e1 / eT);
+        }
+        return d;
+    }
     for (i = 1; i < n - 1; i++) {
         if (!_num(lx[i]) || !_num(y[i])) continue;
         var i1 = i - 1, i2 = i + 1;
@@ -1491,7 +1514,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
 // gasOpts / rateSkin / deliverability: gas & deliverability (52-prism-gas.js).
 var STATE_FIELDS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                     'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools',
-                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
+                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability', 'dfit'];
 
 G.PRiSM_saveState = function PRiSM_saveState() {
     var st = G.PRiSM_state;
@@ -1505,6 +1528,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     if (P) {
         if (P.mode != null) snap.mode = P.mode;
         if (P.tab != null) snap.tab = P.tab;
+        if (P.step != null) snap.step = P.step;
     }
     var ls = _storage();
     if (ls) {
@@ -1544,15 +1568,18 @@ G.PRiSM_restoreState = function PRiSM_restoreState(obj) {
     // Saved fits, compare selection and named branches (51); gas options,
     // rate-dependent skin and deliverability inputs (52).
     if (Array.isArray(snap.fits)) st.fits = snap.fits;
+    // Workspace-mode state (DFIT: tests, inputs, picks and summaries; plain object).
+    if (snap.dfit && typeof snap.dfit === 'object' && !Array.isArray(snap.dfit)) st.dfit = snap.dfit;
     ['fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'].forEach(function (k) {
         if (snap[k] && typeof snap[k] === 'object' && !Array.isArray(snap[k])) st[k] = snap[k];
     });
     // Legacy field stays neutral: fits never live in st.match.
     st.match = { timeShift: 0, pressShift: 0 };
-    if (snap.mode != null || snap.tab != null) {
+    if (snap.mode != null || snap.tab != null || snap.step != null) {
         if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
         if (typeof snap.mode === 'string') G.PRiSM.mode = snap.mode;
         if (_num(snap.tab)) G.PRiSM.tab = snap.tab;
+        if (_num(snap.step) && snap.step >= 1 && snap.step <= 5) G.PRiSM.step = snap.step;
     }
     return snap;
 };
@@ -1570,7 +1597,8 @@ function _scheduleSave() {
 if (typeof G.addEventListener === 'function' && !G.__PRiSM_ptaCoreListeners) {
     G.__PRiSM_ptaCoreListeners = true;
     ['prism:fit-updated', 'prism:model-changed', 'prism:plot-changed', 'prism:well-changed',
-     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded'].forEach(function (ev) {
+     'prism:tab-open', 'prism:step-changed', 'prism:dataset-loaded',
+     'prism:dfit-updated', 'prism:dfit-model-updated', 'prism:mode-changed'].forEach(function (ev) {
         try { G.addEventListener(ev, _scheduleSave); } catch (e) { /* ignore */ }
     });
 }

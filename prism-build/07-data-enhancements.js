@@ -80,13 +80,26 @@
         { v: 'rate_o',  label: 'Oil rate' },
         { v: 'rate_g',  label: 'Gas rate' },
         { v: 'rate_w',  label: 'Water rate' },
-        { v: 'period',  label: 'Period marker' }
+        { v: 'period',  label: 'Period marker' },
+        // extra channels (DFIT and other special tests): ds.pSurf, ds.pAnn, ds.T, ds.qFb
+        { v: 'pressure_surf', label: 'Surface pressure' },
+        { v: 'pressure_ann',  label: 'Annulus pressure' },
+        { v: 'temp',          label: 'Temperature' },
+        { v: 'rate_fb',       label: 'Flowback rate' }
     ];
     var ROLE_LABELS = {
         time: 'Time (h)', pressure: 'Pressure (psia)', rate: 'Rate (STB/d)',
         rate_o: 'Oil (STB/d)', rate_g: 'Gas (Mscf/d)', rate_w: 'Water (STB/d)',
-        period: 'Period'
+        period: 'Period',
+        pressure_surf: 'Surface pressure (psia)', pressure_ann: 'Annulus pressure (psia)',
+        temp: 'Temperature (°F)', rate_fb: 'Flowback rate (STB/d)'
     };
+    // Extra channel roles → dataset field. A header that is the role name,
+    // optionally followed by _<unit> (e.g. pressure_surf_psia, rate_fb_bbl/min,
+    // temp_F), is recognised on re-parse, so CSV written with role headers
+    // round-trips.
+    var EXTRA_CHANNELS = { pressure_surf: 'pSurf', pressure_ann: 'pAnn', temp: 'T', rate_fb: 'qFb' };
+    var RE_ROLE_HEADER = /^\s*(pressure_surf|pressure_ann|rate_fb|temp)(?:_[A-Za-z0-9\/.%°]+)*\s*(?:[\(\[][^\)\]]*[\)\]])?\s*$/;
 
     // Canonical units: hours, psia, STB/d (liquid), Mscf/d (gas).
     var TIME_UNITS = [
@@ -109,7 +122,9 @@
         { v: 'bbl/d', label: 'STB/d (bbl/d)', factor: 1 },
         { v: 'stb/d', label: 'stb/d',         factor: 1 },
         { v: 'm3/d',  label: 'm³/d',          factor: 6.28981077 },
-        { v: 'L/min', label: 'L/min',         factor: 1440 * 0.00628981077 }   // 9.0573 bbl/d
+        { v: 'L/min', label: 'L/min',         factor: 1440 * 0.00628981077 },  // 9.0573 bbl/d
+        { v: 'bbl/min', label: 'bbl/min',     factor: 1440 },
+        { v: 'bbl/h', label: 'bbl/h',         factor: 24 }
     ];
     var RATE_UNITS_GAS = [
         { v: 'Mscf/d', label: 'Mscf/d',  factor: 1 },
@@ -480,6 +495,8 @@
     // Header → role scores ({} when unrecognised, {ignore:1} for
     // non-rate/pressure quantities such as GOR or water cut).
     function _headerRoles(h) {
+        var rm = RE_ROLE_HEADER.exec(String(h == null ? '' : h));
+        if (rm) { var rs = {}; rs[rm[1]] = 13; return rs; }
         var w = _normHeader(h).words;
         if (!w) return {};
         if (RE_EXCL.test(w)) return { ignore: 1 };
@@ -570,6 +587,8 @@
         }
         // 5. Period marker — header only.
         assign(best(function (k) { return hs[k].period; }), 'period');
+        // 5b. Extra channels — role headers only.
+        Object.keys(EXTRA_CHANNELS).forEach(function (r) { assign(best(function (k) { return hs[k][r]; }), r); });
         // 6. Header-less files keep the classic order time, pressure, rate.
         if (!headers) {
             if (!has(['time']) && !taken[0]) assign(0, 'time');
@@ -597,10 +616,14 @@
         else if (/\bkpa\b/.test(all)) hint.pressure = 'kPa';
         else if (/\bmpa\b/.test(all)) hint.pressure = 'MPa';
         else if (/\batm\b/.test(all)) hint.pressure = 'atm';
+        if (/\b(degc|deg c|celsius)\b/.test(all) || /°c/.test(all) || /^c$/.test(u) || /\btemp (c|degc)$/.test(w)) hint.temp = 'C';
+        else if (/\b(degf|deg f|fahrenheit)\b/.test(all) || /°f/.test(all) || /^f$/.test(u)) hint.temp = 'F';
         if (/\bmmscf|\bmmcf/.test(all)) hint.rateGas = 'MMscfd';
         else if (/\bmscf|\bmcf/.test(all)) hint.rateGas = 'Mscf/d';
         else if (/\bscf/.test(all)) hint.rateGas = 'scf/d';
         if (/\b(s?m3|m³)/.test(all)) { hint.rateLiq = 'm3/d'; if (!hint.rateGas) hint.rateGasM3 = true; }
+        else if (/\b(bpm|bbl min|bbls min)\b/.test(all) || /\bbbls?\/min\b/.test(u)) hint.rateLiq = 'bbl/min';
+        else if (/\b(bph|bbl h|bbls h)\b/.test(all) || /\bbbls?\/h\b/.test(u)) hint.rateLiq = 'bbl/h';
         else if (/\b(bbl|stb|bopd|bwpd|bpd|bfpd|blpd|stbd)\b/.test(all)) hint.rateLiq = 'bbl/d';
         else if (/\b(l min|lpm)\b/.test(all) || /\bl\/min\b/.test(u)) hint.rateLiq = 'L/min';
         return hint;
@@ -627,6 +650,12 @@
                 if (!units.rate_g) { units.rate_g = hint.rateGas; source.rate_g = 'header'; }
             } else if (role === 'rate' || role === 'rate_o' || role === 'rate_w') {
                 if (hint.rateLiq && !units.rate) { units.rate = hint.rateLiq; source.rate = 'header'; }
+            } else if (role === 'pressure_surf' || role === 'pressure_ann') {
+                if (hint.pressure && !units[role]) { units[role] = hint.pressure; source[role] = 'header'; }
+            } else if (role === 'rate_fb') {
+                if (hint.rateLiq && !units.rate_fb) { units.rate_fb = hint.rateLiq; source.rate_fb = 'header'; }
+            } else if (role === 'temp') {
+                if (hint.temp && !units.temp) { units.temp = hint.temp; source.temp = 'header'; }
             }
         });
         return { units: units, source: source, genericIsGas: genericIsGas };
@@ -963,6 +992,11 @@
         return '<span style="color:var(--text2);">Active dataset: <b style="color:var(--text);">' +
             _escapeHTML(ds.name || 'Data') + '</b> · ' + ds.t.length + ' points' +
             (ds.p ? '' : ' (rates only)') + '.</span>';
+    }
+    // A dataset committed from elsewhere (e.g. a DFIT demo) refreshes the Load Data card's active-dataset line; this tab's
+    // own commits set their message after the commit, so theirs wins.
+    if (typeof W.addEventListener === 'function') {
+        W.addEventListener('prism:dataset-loaded', function () { if (_byId('prism_data_msg')) _setMsg(_activeStatusHTML()); });
     }
 
 
@@ -1677,7 +1711,8 @@
         var rows = st.rawRows;
         var ncols = rows[0].length;
 
-        var idx = { time: -1, pressure: -1, rate: -1, rate_o: -1, rate_g: -1, rate_w: -1, period: -1 };
+        var idx = { time: -1, pressure: -1, rate: -1, rate_o: -1, rate_g: -1, rate_w: -1, period: -1,
+                    pressure_surf: -1, pressure_ann: -1, temp: -1, rate_fb: -1 };
         for (var c = 0; c < ncols; c++) {
             var role = st.mapping[c];
             if (role && idx[role] === -1) idx[role] = c;
@@ -1700,6 +1735,25 @@
         var rawG = col(idx.rate_g);
         var rawW = col(idx.rate_w);
         var rawPer = col(idx.period);
+
+        var psigConv = {};
+        var presUnit = function (u) { return PRESSURE_UNITS.find(function (x) { return x.v === u; }) || PRESSURE_UNITS[0]; };
+        if (rawP && presUnit(st.units.pressure).offset) psigConv.p = presUnit(st.units.pressure).offset;
+        var extra = {};
+        Object.keys(EXTRA_CHANNELS).forEach(function (role) {
+            var raw = col(idx[role]);
+            if (!raw) return;
+            var field = EXTRA_CHANNELS[role];
+            if (role === 'pressure_surf' || role === 'pressure_ann') {
+                var pu = st.units[role] || st.units.pressure;
+                extra[field] = PRiSM_convertPressure(raw, pu).values;
+                if (presUnit(pu).offset) psigConv[field] = presUnit(pu).offset;
+            } else if (role === 'rate_fb') {
+                extra[field] = PRiSM_convertRate(raw, st.units.rate_fb || st.units.rate, false).values;
+            } else {
+                extra[field] = (st.units.temp === 'C') ? raw.map(function (v) { return v * 1.8 + 32; }) : raw.slice();
+            }
+        });
 
         var tConv = PRiSM_convertTime(rawT, st.units.time);
         var t = tConv.hours;
@@ -1773,6 +1827,9 @@
             water: qw ? pickAt(qw) : null
         };
         if (rawPer) ds.period = pickAt(rawPer);
+        Object.keys(extra).forEach(function (field) { ds[field] = pickAt(extra[field]); });
+        // psig / barg columns converted with the fixed +14.696 psi offset
+        if (Object.keys(psigConv).length) ds.meta = { psigConverted: psigConv };
         ds.timeUnit = 'h';
         ds.timeUnitOriginal = st.units.time;
         if (ds.q) {

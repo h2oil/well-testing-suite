@@ -523,6 +523,77 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['WTS_help.load() without errors (' + detail + ')', okLoad]);
 })();
 
+// ── v3.4 DFIT (docs/DFIT-PLAN.md §9 WP6: 9 checks) ──
+// The engine checks fail with a clear message while 56 / 57 / 58 / 48-calc-wellbore / 49-calc-dfit-triage are still WP0
+// stubs and pass after integration; the shell checks (plot registry entries) need the WPH generic hooks.
+(function dfitChecks() {
+  const isFn = (f) => typeof f === 'function';
+  const real = (f) => isFn(f) && !f._dfitStub;
+  const API = ['PRiSM_dfit_dsHash', 'PRiSM_dfit_prepare', 'PRiSM_dfit_resample', 'PRiSM_dfit_events', 'PRiSM_dfit_g', 'PRiSM_dfit_gPrime', 'PRiSM_dfit_G',
+    'PRiSM_dfit_Ginv', 'PRiSM_dfit_gFromHistory', 'PRiSM_dfit_hFn', 'PRiSM_dfit_derivs', 'PRiSM_dfit_isip', 'PRiSM_dfit_closurePicks', 'PRiSM_dfit_varComplianceFit',
+    'PRiSM_dfit_vcModel', 'PRiSM_dfit_consensus', 'PRiSM_dfit_consensusJob', 'PRiSM_dfit_consensusLite', 'PRiSM_dfit_bounds', 'PRiSM_dfit_classify', 'PRiSM_dfit_frac',
+    'PRiSM_dfit_whatIf', 'PRiSM_dfit_leakoffRate', 'PRiSM_dfit_kBeforeClosure', 'PRiSM_dfit_farField', 'PRiSM_dfit_forecastClosure',
+    'PRiSM_dfit_pipeline', 'PRiSM_dfit_pipelineJob', 'PRiSM_dfit_summarise', 'PRiSM_dfit_timeFns', 'PRiSM_dfit_centroid', 'PRiSM_dfit_acaDiag', 'PRiSM_dfit_nolte',
+    'PRiSM_dfit_impulseLines', 'PRiSM_dfit_acaBounds', 'PRiSM_dfit_piConsensus', 'PRiSM_dfit_gasAdjust', 'PRiSM_dfit_crTransform', 'PRiSM_dfit_acaMatch',
+    'PRiSM_dfit_aca', 'PRiSM_dfit_leakPlot', 'PRiSM_dfit_uncertainty', 'PRiSM_dfit_replay', 'PRiSM_dfit_evidence', 'PRiSM_dfit_reportModel', 'PRiSM_dfit_checkQuoted',
+    'PRiSM_dfit_exportText', 'PRiSM_dfit_fracSheet', 'PRiSM_dfit_handoff', 'PRiSM_dfit_kConstraint',
+    'PRiSM_dfit_lkDefaults', 'PRiSM_dfit_lkToEngine', 'PRiSM_dfit_lkSimulate', 'PRiSM_dfit_lkSample', 'PRiSM_dfit_lkQuick', 'PRiSM_dfit_lkSolveCL', 'PRiSM_dfit_lkGoalSeek',
+    'PRiSM_dfit_lkFit', 'PRiSM_dfit_lkFitJob', 'PRiSM_dfit_lkFisher', 'PRiSM_dfit_lkGroups', 'PRiSM_dfit_identify', 'PRiSM_dfit_lkVerify', 'PRiSM_dfit_design',
+    'PRiSM_dfit_designJob', 'PRiSM_dfit_leakBudget',
+    'PRiSM_dfit_analyse', 'PRiSM_dfit_renderStep2', 'PRiSM_dfit_renderStep4', 'PRiSM_dfit_state', 'PRiSM_dfit_test', 'PRiSM_dfit_selectTest', 'PRiSM_dfit_addTest',
+    'PRiSM_dfit_setPick', 'PRiSM_dfit_applyHandoff', 'PRiSM_dfit_results', 'PRiSM_plot_dfitDual', 'PRiSM_plot_dfitStrip', 'PRiSM_plot_dfitStack'];
+  const missing = API.filter((n) => !isFn(win[n])), stubs = API.filter((n) => isFn(win[n]) && !real(win[n]));
+  if (missing.length || stubs.length) console.error('[dfit] API: ' + (missing.length ? 'missing ' + missing.join(', ') + '; ' : '') +
+    (stubs.length ? stubs.length + ' still WP0 NOT_IMPLEMENTED stubs (' + stubs.slice(0, 6).join(', ') + (stubs.length > 6 ? ', …' : '') + ') — passes once the engine work packages are merged' : ''));
+  checks.push(['DFIT API (§3.3a, §3.5–3.8): ' + API.length + ' functions, none a WP0 stub', !missing.length && !stubs.length]);
+  const X = win.PRiSM_modeExt && win.PRiSM_modeExt.dfit;
+  checks.push(['PRiSM_modeExt.dfit has label, steps, analyse, rail, showsPanel',
+    !!X && typeof X.label === 'string' && !!X.steps && isFn(X.analyse) && isFn(X.rail) && isFn(X.showsPanel)]);
+  const R = win.PRiSM_PLOT_REGISTRY || {}, keys = ['dfitG', 'dfitSqrt', 'dfitLogLog', 'dfitStrip', 'dfitAcaLogLog'];
+  const badPlots = keys.filter((k) => !(R[k] && R[k].mode === 'dfit' && R[k].kind === 'dfit' && (isFn(R[k].fn) || isFn(win[R[k].fn]))));
+  if (badPlots.length) console.error('[dfit] plot registry: ' + badPlots.join(', ') + ' not registered — 59 registers them once the WPH generic hooks (PRiSM_drawPlot, PRiSM_undoBatch, PRiSM_modeExt) are in the build');
+  checks.push(['DFIT plot keys ' + keys.join(' / ') + ' registered (mode / kind dfit, function fn)', !badPlots.length]);
+  checks.push(['dfit-picks post-draw hook registered exactly once',
+    Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((h) => h && h._prismId === 'dfit-picks').length === 1]);
+  const secs = (Array.isArray(win.PRiSM_reportSections) ? win.PRiSM_reportSections : []).filter((f) => f && /^dfit-/.test(f._prismId || ''));
+  checks.push(['every DFIT report section (' + secs.length + ') carries modes:[\'dfit\']',
+    secs.length >= 11 && secs.every((f) => Array.isArray(f.modes) && f.modes.length === 1 && f.modes[0] === 'dfit')]);
+  let okG = false;
+  try { okG = real(win.PRiSM_dfit_G) && Math.abs(win.PRiSM_dfit_G(1, 0.5) - 1.27324) < 1e-5 && Math.abs(win.PRiSM_dfit_G(1, 1) - 1.40638) < 1e-5; } catch (e) { okG = false; }
+  if (!okG) console.error('[dfit] G spot check: PRiSM_dfit_G(1, ½) = 1.27324 and (1, 1) = 1.40638 expected' + (real(win.PRiSM_dfit_G) ? '' : ' (56 is still the WP0 skeleton)'));
+  checks.push(['DFIT G spot check G(1, ½) 1.27324, G(1, 1) 1.40638', okG]);
+  const WB = win.WTS_wellbore || {}, wbFns = ['column', 'csys', 'hydrostatic', 'pipeFriction', 'convert', 'stepDown', 'stepRate', 'ramp', 'hammerQuick', 'align'];
+  const tri = ['PRiSM_dfit_triage', 'PRiSM_dfit_blunders', 'PRiSM_dfit_repump', 'PRiSM_dfit_grade'];
+  const wbBad = wbFns.filter((n) => !real(WB[n])).concat(tri.filter((n) => !real(win[n])));
+  if (wbBad.length) console.error('[dfit] WTS_wellbore / triage still stubs or missing: ' + wbBad.join(', '));
+  checks.push(['WTS_wellbore (' + wbFns.length + ' functions) and PRiSM_dfit_triage / blunders / repump / grade (real)', !wbBad.length]);
+  const IR = win.PRiSM_dfit_inputRanges;
+  let okR = false;
+  try { okR = !!IR && !!IR.table && IR.table.datumTvd.min === 100 && IR.table['options.unc.n'].max === 2000 && isFn(IR.clamp) && IR.clampValue('fluid.muCp', '1e12').value === 5000; } catch (e) { okR = false; }
+  checks.push(['DFIT range table loads (PRiSM_dfit_inputRanges: table, clamp, clampValue)', okR]);
+  let okT = false, detail = '';
+  try {
+    const harness = require('./tests/_harness');
+    const app = harness.loadApp({ fromSources: false, timers: 'manual', console: 'capture' });
+    app.hook.nav('prism');
+    const P = app.win.PRiSM;
+    if (P && typeof P.setMode === 'function') P.setMode('dfit');
+    if (app.win.PRiSM_dfit_ui) app.win.PRiSM_dfit_ui.refresh();
+    app.flush(5000);
+    okT = app.pendingTimers() === 0;
+    // with the WPH hooks in the build (the mode registry has dfit and the shell hooks exist) the mode MUST switch, else the
+    // check would pass without DFIT mode ever being opened; without them it is reported as skipped
+    const wphIn = !!(app.win.PRiSM_modeExt && app.win.PRiSM_modeExt.dfit) && isFn(app.win.PRiSM_drawPlot) && isFn(app.win.PRiSM_undoBatch);
+    if (!okT) detail = JSON.stringify(app.timers()).slice(0, 600);
+    else if (!(P && P.mode === 'dfit')) {
+      if (wphIn) { okT = false; detail = 'DFIT mode did not switch on (mode ' + (P && P.mode) + ') although PRiSM_modeExt.dfit and the WPH hooks exist'; }
+      else detail = '(skipped: mode stayed ' + (P && P.mode) + ', the WPH hooks are not in the build yet)';
+    }
+  } catch (e) { detail = e.message; okT = false; }
+  if (detail && !okT) console.error('[dfit] pending timers with DFIT mode open:', detail);
+  checks.push(['no pending timers 5 s after opening DFIT mode' + (detail && okT ? ' ' + detail : ''), okT]);
+})();
+
 console.log('\nNamespace checks:');
 let fails = 0;
 for (const [name, ok] of checks) {

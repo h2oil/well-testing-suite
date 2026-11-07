@@ -117,6 +117,10 @@ S('cheminj', 'Pump and injection point for the inhibitor.', 'inhibitor rate')] }
 { id: 'buildup', title: 'Interpret a build-up', purpose: 'Get permeability k, skin and the extrapolated pressure p* from a shut-in.', steps: [
 S('buildup', 'Find and interpret the shut-ins in gauge data.', 'rate history; producing time'),
 S('prism', 'Or step by step: Data, Flow periods, Diagnose, Model & fit, Report.', 'k, skin, p*')] },
+{ id: 'dfit', title: 'Analyse a DFIT', purpose: 'Closure, leak-off and p_i.', steps: [
+S('prism', 'Test DFIT, load the record, datum TVD and wellbore, ▶ Analyse DFIT, steps ② to ⑤ ([[prism#dfit|DFIT mode]]).', 'closure gradient, p_i, k')] },
+{ id: 'dfitcheck', title: 'Check whether a DFIT is interpretable', purpose: 'Before trusting the numbers.', steps: [
+S('prism', 'Test triage on step ①: checks, blunder cards, re-pump verdict, grade.', 'grade A–D')] },
 { id: 'erosion', title: 'Size a flowline or check erosion', purpose: 'Pressure drop, velocity and sand erosion.', steps: [
 S('flowline', 'Pressure drop and velocities along the line.', 'rates; velocities'),
 S('pipesz', 'Pipe size for the velocity limits.', 'velocity against the API RP 14E limit'),
@@ -144,7 +148,20 @@ pstar: { term: 'p*', variants: ['p star', 'extrapolated pressure'], def: 'The pr
 fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },
-psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set pressure to protect a vessel or line.' } };
+psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set pressure to protect a vessel or line.' },
+dfit: { term: 'DFIT', variants: ['minifrac'], def: 'Diagnostic fracture injection test: a small injection that opens a fracture, then a falloff.' },
+isip: { term: 'ISIP', def: 'Instantaneous shut-in pressure, without friction.' },
+gfunction: { term: 'G-function', def: 'Dimensionless shut-in time for closure plots.' },
+closure: { term: 'closure', variants: ['closure stress', 'closure pressure'], def: 'The pressure at which the fracture closes: the minimum stress.' },
+netp: { term: 'net pressure', def: 'ISIP minus closure.' },
+fluideff: { term: 'fluid efficiency', def: 'Fracture volume over injected volume at shut-in (η).' },
+family: { term: 'families', variants: ['closure family'], def: 'Closure methods grouped by what they read, F0 to F4; one vote each.' },
+pdl: { term: 'PDL', variants: ['pressure-dependent leak-off'], def: 'Pressure-dependent leak-off: fissures open above their stress.' },
+tipext: { term: 'tip extension', def: 'The fracture grows after shut-in.' },
+hrecess: { term: 'height recession', def: 'The fracture closes on higher-stress layers first.' },
+rvis: { term: 'R_vis', def: 'Closure visibility: the fracture share of the storage.' },
+aca: { term: 'after-closure', def: 'The falloff after closure: reservoir flow, for p_i and k.' },
+impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' } };
 
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
@@ -157,6 +174,7 @@ var faq = [
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },
+{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and the label uncalibrated?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.'] },
 { id: 'saved', q: 'Is my work saved?', a: ['Yes, on this device, as you type. To keep a copy or move it, save a project file ([[start#saving|Saving work]]).'] },
 { id: 'device', q: 'How do I move my work to another device?', a: ['File → Save on the first device, then File → Open… on the other one.'] },
 { id: 'metric', q: 'Why does a value change when I select Metric?', a: ['It is the same value converted. Calculations always run in oilfield units ([[start#units|Units]]).'] },

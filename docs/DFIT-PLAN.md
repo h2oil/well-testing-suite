@@ -1,7 +1,15 @@
 # DFIT module in PRiSM (v3.4) — implementation plan
 
-> **Status: plan, reviewed — target v3.4** (2026-10-31). No code has been written and no repository file other than this one was
-> changed. This revision resolves the theory, novelty and architecture review (every blocker, major and minor); Appendix C
+> **Status: shipped in v3.4 (3.4a); 3.4b open** (2026-11-07). 3.4a (WPH, WP0–WP7) is integrated, reviewed and released as v3.4;
+> Appendix D records the integration amendments. In 3.4a every closure / ISIP / p_i label, the grade and the leak-off type are shown as
+> "provisional — not yet calibrated" (WP7: the benchmark does not yet support more; the leak-off type in particular often differs from the
+> true mechanism); 3.4b (v3.4.1: WP8 calibration, WP9 live listeners, WP10 field tests, WP11 model extras, WP12 lenses, WP13) is open.
+> Earlier status (WP0, 2026-11-07, on top of v3.3.3): WP0 (contracts and skeleton, §9) is in: the frozen
+> fixtures `prism-build/tests/_dfit-shapes.js` (all §3.13 names, the §3.2 range table, `FIX.ds` / `.state` / `.run` / `.aca`,
+> `sharedApp`, `resetDfit`; resolutions at the end of §3.13), `tests/dfit-shapes.test.js` (SH1, SH2), the stub skeletons of
+> 56–59 and of the five Round-9 helpers, and 56–59 in the Round-8 FILES list. The engine and UI work packages (WPH, WP1–WP6,
+> WPT) start from here; test counts in this plan are relative to the v3.3.3 gates (smoke 330, acceptance 1,369).
+> Plan history: reviewed 2026-10-31. This revision resolves the theory, novelty and architecture review (every blocker, major and minor); Appendix C
 > ("Review notes") lists the points that were resolved differently from the reviewer's proposal and why. The module is our own
 > design. No other software product, vendor, company or website is named in it, cited by it or compared with it by name; the
 > state of the art is described generically ("commercial DFIT packages commonly …"). Literature is cited by author, year, title
@@ -312,7 +320,7 @@ Line numbers are from the audit at `29c2970`; WPH rebases them on v3.3, which ed
 | `05-regression.js` (3+4) | One export: `G.PRiSM_rng = function (seed) { return _makeRng(seed == null ? 1 : seed); };` (the seeded generator at 05:796, which returns `Math.random` for a null seed; the wrapper never does) | H8 (`PRiSM_rng(1)` reproduces the 05 bootstrap sequence; `PRiSM_rng(undefined)` is deterministic) |
 | `07-data-enhancements.js` (3+4) | Column roles `pressure_surf`, `pressure_ann`, `temp`, `rate_fb` (→ `ds.pSurf`, `ds.pAnn`, `ds.T`, `ds.qFb`) in `ROLES` (07:75) and the header sniffing (role headers such as `pressure_surf_psia` are recognised on re-parse, so CSV written by DFIT round-trips); liquid-rate units `bbl/min` (factor 1440) and `bbl/h` (24) in 07:108; hints `bpm`, `bbl/min`, `bbl/h`. When 07 converts a psig column (07:101, fixed +14.696) it records `ds.meta.psigConverted[channel] = 14.696` | H9 (a CSV with surface pressure in psig, bbl/min rate and temperature survives a reload with all channels and the psig record) |
 | `11-polish.js` (round 2) | `_defaultKinds` (11:2349) first reads `PRiSM_PLOT_REGISTRY[plotKey].axes = {x:'lin'\|'log', y:'lin'\|'log'}`. `_galleryHTML` (11:2989): in an ext mode list `ext.reportPlots` only; in every other mode, combined included, skip `mode:<ext>` entries. Analysis keys flagged `store:false` (11:2409–2410) skip `st.analysisKeyResults` and the `linetools-picks` hook | H4, H7 (gallery lists only `ext.reportPlots` in DFIT mode and no DFIT plot in combined mode) |
-| `29-project-save.js` (round 6) | `'dfit'` added to `PRISM_KEYS` (29:283), as for 51 and 52, so `st.dfit` never rides in `extra` (dropped above 200,000 characters, 29:291). `st._*` runtime caches stay skipped | I6 (project save/open restores `st.dfit` of two tests) |
+| `29-project-save.js` (round 6) | `'dfit'` added to `PRISM_KEYS` (29:283), as for 51 and 52, so `st.dfit` never rides in `extra` (dropped above 200,000 characters, 29:291). `st._*` runtime caches stay skipped. Integration review: `_readPRiSM` saves `step`; `_applyPRiSM` accepts a registered extension mode (`PRiSM_modeExtFor`) and enters it through `PRiSM.setMode` (its `onEnter` runs), leaving an extension mode calls its `onLeave` first (also in `_resetPRiSM`: New, well switch), restores `step` 1–5, and drops an extension's `stateKey` (`'dfit'`) when the opened project has none | I6 (project save/open restores `st.dfit` of two tests); `dfit-review` RV15 (DFIT mode and step after open and well switch; no stale DFIT state) |
 | `30-quick-report.js` (round 6) | `_prismResults` (30:173): when `PRiSM_modeExt[PRiSM.mode]` exists and `PRiSM_reportKeyLine` returns text, use it instead of the PTA fit line | I8 |
 | `33-pta-core.js` (round 8) | Same O(n) window in `_bourdetOnLn` (33:131). `'dfit'` in `STATE_FIELDS` (33:1404) and one restore line (33:1453); `P.step` saved and restored with mode and tab. Add `prism:dfit-updated`, `prism:dfit-model-updated` and `prism:mode-changed` to the debounced one-shot save list (33:1473–1488) | H1; H6 (reload restores `st.dfit` and step ④) |
 | `35-rta-dca.js` (round 8) | After the last-fit lookup (35:1566): `if (!k && typeof G.PRiSM_dfit_kConstraint === 'function') { var dk = G.PRiSM_dfit_kConstraint(); if (dk && _pos(+dk.k)) { k = +dk.k; kSrc = 'DFIT after-closure'; } }` | H10 |
@@ -324,7 +332,7 @@ Line numbers are from the audit at `29c2970`; WPH rebases them on v3.3, which ed
 | `gui-sweep.js` (WP6) | DFIT views with a set-up (load the reference demo, `PRiSM.setMode('dfit')`, await ▶ Analyse, go to the step): steps ①–⑤, step-④ sub-views, every DFIT Tools entry; DFIT variants of the Metric and decimal-comma passes (gui-sweep.js:1197); a DFIT pass in `--mobile` | sweep runs |
 | `ux-layout-check.js`, `ios-webkit-check.js` (WP6) | A DFIT-mode pass (demo loaded, steps ①–⑤, step-④ sub-views) at 390 px and 1280 px; one DFIT view in the WebKit check | tools run (reports, not gates) |
 | `well-testing-app.html` (host, outside sentinels) | `_rtPrismReady()` (≈ l.3444): `if (typeof window.PRiSM_reportReady === 'function') return window.PRiSM_reportReady();` first. `_rtPrism()` (≈ l.3448): `const _kl = (typeof window.PRiSM_reportKeyLine === 'function') ? window.PRiSM_reportKeyLine() : ''; if (_kl) return { html, key: _kl };` before the PTA key line. `RELEASE_NOTES` (WP7) | `platform-reports` unchanged in transient; I8 in DFIT mode |
-| `ios-app/ios-additions/ios-styles.css` (WP6) | `html.ios-app #prism_dfit_override, html.ios-app #wts_dfit_info { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); max-height: calc(100dvh - 20px); }` and 44 px min-height for `.prism-dfit-tile button` | `dfit-ui` U12 checks the CSS string |
+| `ios-app/ios-additions/ios-styles.css` (WP6) | `html.ios-app #prism_dfit_override, html.ios-app #wts_dfit_info { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }`; the dialog boxes `.prism-dfit-dlg` / `.wdi-box` capped at `calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)))` (a 100vh fallback first); 44 px for `.wdi-x`, the override `.btn` and `.prism-dfit-tile button`. Changed at the integration review: the first rule put `max-height: calc(100dvh - 20px)` on the `inset:0` overlay, which shortened the backdrop and left the inner box (its web cap 100dvh − 32 px) taller than the padded area, so a tall dialog's title and buttons sat under the Dynamic Island and the home indicator; the cheminj / buildup rules cap the inner box instead | `dfit-ui` U12 checks the CSS string |
 
 ### 2.4 Load order and feasibility
 
@@ -554,7 +562,7 @@ active plot). Step views ② and ④ render their own cards (they are not tabs).
   boundary or going to storage are plain arrays; work arrays may be `Float64Array`.
 - **Failure.** `{ok:false, code:'<UPPER_SNAKE>', errors:[string], bad:[fieldName]}`. Public functions never throw (they catch and
   convert). Partial success: `ok:true` with `warnings`.
-- **Warnings and verdicts.** `{code, level:'info'|'warn'|'bad', text, ev:[evidenceId]}`; `text` is plain, under 299 characters and
+- **Warnings and verdicts.** `{code, level:'info'|'warn'|'bad', text, ev:[evidenceId]}`; `text` is plain, under 300 characters (≤ 299) and
   never contains the words "null", "undefined", "NaN" or "Infinity" (GUI-sweep text scan).
 - **Purity.** 56, 57, 58, `WTS_wellbore`, `PRiSM_dfit_triage` and `PRiSM_dfit_synth` touch no DOM, no storage and no timers, and fire
   no events. **Only 59 (and in 3.4b the 59-* files) touches the DOM, writes `PRiSM.multiRate`, writes C1 (`PRiSM_setWell`), writes
@@ -633,7 +641,8 @@ DfitInputs = {
   events: { tStart:null, tb:null, ts:null, flowback:null },            // user overrides only (detected events live in the run)
   options: {
     alpha:'auto',            // 'auto'|0.5|1|'general'|'data' ('auto' = data-driven when rate history exists, else 0.5)
-    tp:'pump',               // 'pump'|'breakdown'|'veq' (pump start / breakdown / Vi ÷ q_last)
+    alphaGeneral:0.75,       // the α used when alpha = 'general' (PRiSM_dfit_g accepts (0.5, 1]; stored 0.51–1)
+    tp:'pump',               // 'pump'|'breakdown'|'veq' (pump start / breakdown / Vi ÷ q_last, or ÷ the main-stage rate after a step-down)
     L:0.1,                   // Bourdet window, ln units (0.05–0.4)
     gMin:'auto',             // 'auto' | number (G units)
     eps:{ compliance:0.02, tangent:0.02, loglog:0.05 },
@@ -678,6 +687,7 @@ it); text inputs are parsed with `WTS_parseNumber`.
 | `priors.sigmaGrad` / `priors.sigmaGradSd` / `priors.piGrad` | 0.4 / 0.005 / 0.2 | 1.3 / 0.2 / 1.0 | null / 0.02 / null | psi/ft |
 | `channels.atmPsia` | 10 | 15.2 | 14.696 | psia |
 | `channels.clockOffsetH` | −24 | 24 | 0 | h |
+| `options.alphaGeneral` (α for `alpha:'general'`, open at ½) | 0.51 | 1 | 0.75 | – |
 | `options.L` | 0.05 | 0.4 | 0.1 | ln units |
 | `options.gMin` | 0 | 50 | auto | G |
 | `options.eps.*` | 0.005 | 0.3 | 0.02 / 0.02 / 0.05 | – |
@@ -747,8 +757,9 @@ ConsensusLite = { mode:'single'|'range'|'none', value, range:{lo, hi}|null,
                   families:{F1:{p50}|null, F2:{p50}|null, F4:{p50}|null}, confidence:'stale' }   // fast pipeline (no grid)
 ```
 
-- `PRiSM_dfit_pipeline(ds, inputs, well, picks, opts) → DfitRun` — pure, synchronous; `opts {fast:false, seed, uncN, stages:'all',
-  whatIf:null|{p}}`. `fast:true` skips the stability grid, the bootstrap and the uncertainty (undo, drag preview, live, replay).
+- `PRiSM_dfit_pipeline(ds, inputs, well, picks, opts) → DfitRun` — pure, synchronous; `opts {fast:false, seed, uncN, stages:'all'
+  | [stage id…] (list form: prepare, events, isip, derivs, consensus, frac, aca, uncertainty, report), whatIf:null|{p},
+  strapVolume, tCloseS, tide}` (the last three also from `ds.meta`; Appendix D). `fast:true` skips the stability grid, the bootstrap and the uncertainty (undo, drag preview, live, replay).
   Stage order is §4.20 and exists only here.
 - `PRiSM_dfit_pipelineJob(...)` → `Job<DfitRun>` with the identical result (U8 and C8 check sync = job).
 - `PRiSM_dfit_summarise(run) → DfitTest.summary`.
@@ -788,7 +799,7 @@ ConsensusLite = { mode:'single'|'range'|'none', value, range:{lo, hi}|null,
 | `PRiSM_dfit_resample(t, p, ts, opts)` | `opts {perDecade:40, dpMin, keepPump:2000}` | `{idx:[], t:[], p:[]}` — O(n), log-spaced from shut-in plus a pressure-increment rule |
 | `PRiSM_dfit_events(prep, overrides, opts)` | `overrides` = `inputs.events`, `opts {qStartFrac:0.02, qStopFrac:0.05}` | `Events` (below) |
 | `PRiSM_dfit_g(dtD, alpha)`, `PRiSM_dfit_gPrime(dtD, alpha)`, `PRiSM_dfit_G(dtD, alpha \| gSpec)`, `PRiSM_dfit_Ginv(G, alpha \| gSpec)` | `alpha` 0.5, 1 or any value in (0.5, 1]; `gSpec` from `gFromHistory` | numbers (closed forms, 64-point Gauss–Legendre, data-driven) |
-| `PRiSM_dfit_gFromHistory(schedule, ts, tp, opts)` | `opts {alpha, area:'volume'\|'model', modelHist:{t:[], AL:[], Bw:[]}}` | `gSpec {kind:'data'\|'model', g0, G(dt), Gp(dt), tauNodes}` |
+| `PRiSM_dfit_gFromHistory(schedule, ts, tp, opts)` | `opts {alpha, area:'volume'\|'model', modelHist:{t:[], AL:[], Bw:[]}}` | `gSpec {kind:'data'\|'model', g0, G(dt), Gp(dt), GD(dtD), GpD(dtD), gD(dtD), tauNodes}` — `G` / `Gp` take Δt in **hours** (§3.0), `Gp` = dG/dΔt_D; the engine works on Δt_D through `GD` / `GpD` / `gD` (Appendix D) |
 | `PRiSM_dfit_hFn(dtD, spec)` | (gate G6, §4.6) | h(ΔtD) and dh/dΔtD, or `null` until the definition is verified |
 | `PRiSM_dfit_derivs(prep, events, opts)` | `opts {alpha, tp, L, gMin, isip}` | `Derivs` (below) |
 | `PRiSM_dfit_isip(prep, events, derivs, ctx)` | `ctx {hammer, stepDown, bleed, lumped:{lambda, pVisc}\|null}` | `IsipResult` |
@@ -896,7 +907,7 @@ Triage = { ok, light:'green'|'amber'|'red', verdict:'interpretable'|'partly'|'un
 | `PRiSM_dfit_reportModel(run, opts)` | `opts {groups, familyColumns, log, appendix}` | `ReportModel` |
 | `PRiSM_dfit_checkQuoted(model, run)` | | `{ok, nChecked, nFailed, failures:[{ref, quoted, recomputed}]}` (a self-check; the report prints a line only on failure) |
 | `PRiSM_dfit_exportText(run, template)` | `template {columns:[…], header:[…], sep, decimals}` or `'default'` | `{text, filename:'dfit-<name>-<hash8>.txt'}` (§6.10) |
-| `PRiSM_dfit_fracSheet(run)` | | `{rows:[[name, family, p10, p50, p90, unit, lens, ev]], csv}` |
+| `PRiSM_dfit_fracSheet(run)` | | `{rows:[[name, family, p10, value, p90, unit, lens, ev, p50]], csv, head}` — `value` is the point estimate and p10 / p50 / p90 the uncertainty ensemble (p50 appended; changed at integration review: the point estimate used to sit in a column headed p50, so P10 > P50 was printed for p_i) |
 | `PRiSM_dfit_handoff(run, target, opts)` | `'pta'\|'rta'\|'frac'`, `opts {family}` | `HandoffPacket` |
 | `PRiSM_dfit_kConstraint()` | — | `{k, kLo, kHi, source:'aca-radial'\|'aca-match'\|'bounds'}` or `null` (reads `T.summary`) |
 
@@ -942,14 +953,15 @@ HandoffPacket = { target, family, setWell:{…}, multiRate:[{t, q (bbl/d)}], qEq
 | `PRiSM_dfit_lkSample(res, t)` | | p_w at data times (linear in t) |
 | `PRiSM_dfit_lkQuick(cfg)` | | `{rows:[{label, dtMin, qL}], VL, eta, tc, xf, wAvg, partition:{frac, form, wb}, CLeq}` |
 | `PRiSM_dfit_lkSolveCL(cfg, dtcObserved)` | h | `{ok, CL, k\|null, runs}` (bisection on log CL or log k, ≈ 25 runs) |
-| `PRiSM_dfit_lkGoalSeek(cfg, goal)` | `{kind:'visibleClosureBy', tH}` | `{ok, V, q, table:[…]}` (V × q grid scan, coarse grid) |
+| `PRiSM_dfit_lkGoalSeek(cfg, goal)` / `…Job` | `{kind:'visibleClosureBy', tH}` | `{ok, V, q, table:[…]}` (V × q grid scan, coarse grid) |
+| `PRiSM_dfit_lkProfile(fit, key, opts)` / `…Job` | `key` 'sigmaC' \| 'pr', `opts {n:10}` | profile likelihood of one free parameter, one refit per step (Appendix D) |
 | `PRiSM_dfit_lkFit(data, cfg, preset, opts)` / `…Job` | `data {t, p, w?}`, preset `'falloff'\|'full'\|'geometry'\|'pdl'\|'spurt'` | `LkFit` (below) |
 | `PRiSM_dfit_lkFisher(cfg, design)` | `{tEnd, sigma, nPts, free}` | `{ci, corr, eig, sloppy:[{vec, text}]}` |
 | `PRiSM_dfit_lkGroups(cfg)` | | `{Gamma, GammaPKN, mG, text}` |
-| `PRiSM_dfit_identify(fit, ctx)` | | `Identify {rows:[{param, status:'determined'\|'group'\|'not', pm, text}], sloppyText, voi:[{source, reduction, text}], extend:[{tEndD, sdPi, kRange, pRadial}]}` |
+| `PRiSM_dfit_identify(fit, ctx)` | | `Identify {rows:[{param, status:'determined'\|'group'\|'not', pm, text}], sloppyText, voi:[{source, reduction, text}], extend:[{tEndD, tEndH, sdPi (1 sd), pFixed, kRange, kBasis, pRadial}]}` (Appendix D) |
 | `PRiSM_dfit_lkVerify()` | — | V1–V14 numbers (tests and a hidden self-check button) |
 | `PRiSM_dfit_design(ranges, opts)` / `…Job` | `DesignRanges`, `opts {n:500, seed, grid:'coarse'}` | `Design` (below) |
-| `PRiSM_dfit_leakBudget(V, tEnd, ctx)` | `ctx {tDL\|null, kDraws\|null, sigmaP, VwCw, dpdT, driftSpec}` | `{qkMax, theta, regime, holdMin, dTneeded, holdRealistic:bool, text}` (§6.4) |
+| `PRiSM_dfit_leakBudget(V, tEnd, ctx)` | `ctx {tDLDraws\|null, tDL\|null, kDraws\|null, phi, muRes, ct, L, sigmaP, VwCw, dpdT, tempF, driftSpec}` (t_DL = P90 of `tDLDraws`, else `tDL`, else from `kDraws` with φ, μ, c_t, L — Appendix D) | `{qkMax, theta, regime, holdMin, dTneeded, holdRealistic:bool, text, warnings:[]}` (§6.4) |
 
 ```js
 LkConfig = { mode:'propagate'|'prescribed'|'constP', geometry:'PKN'|'KGD'|'radial',
@@ -1081,6 +1093,56 @@ Exports `checkShape(name, obj) → {ok, errors:[path]}` for `DfitDataset`, `Dfit
 keys between tests. Every WP asserts `checkShape` on its outputs; WP6 builds against the fixtures (and fake engines returning
 `FIX.run`) until the engines land. The helper changes only through the lead, together with this section.
 
+**WP0 resolutions** (frozen with the helper; the file header repeats them):
+- Derivative arrays in `Derivs` (`GdPdG`, `dPdG`, `sdPds`, `dPds`, `D`, `Dref`, `ppd`) are magnitudes (≥ 0 for a falling
+  pressure); `dpIsip = ISIP − p`. `AcaResult.t0`, `tcInj` and `diag.x` are on the injection clock (`x = t_inj − t0`).
+  `Hammer.T` and `Hammer.tau` are seconds (wave quantities). Areas ft², widths in.
+- The range table stores `rock.Ep` in psi (`display:{unit:'1e6 psi', scale:1e6}`); `datumTvd` / `datumMd` have min 100 ft and the
+  gauge depths min 0. Row caps (survey 2,000, strings 10, tests 12) are table entries with `rows:true`; designer, synth and sandbox
+  fields carry their own `scope`. Clamp rule: blank → default (no warning when the default is null or `'auto'`), unparsable →
+  default with `INPUT_DEFAULT`, outside → nearest bound with `INPUT_CLAMPED`, integers rounded (`INPUT_ROUNDED`); invalid enums →
+  default. `PRiSM_dfit_inputRanges` in 56 carries the same table, `enums`, `defaults()`, `clamp()` and `clampValue()` (SH2
+  compares them).
+- Hashes: `dsHash(ds) = hash16(canon({t, p, q}, 'inputs'))`; `inputHash` / `picksHash` = `hash16(canon(x, 'inputs'))`;
+  `resultHash` = `hash16(canon(summary result fields, 'display'))` (53's frozen canon + hash16).
+- The failure form passes every engine-output shape; `{}` and `null` never pass. Stored `DfitInputs` must lie inside the table.
+- `FIX.run` follows §4.21's convention that the 25 bbl is V_i\* (an engine run on `FIX.ds` gives V_i\* 23.02 bbl): it is a shape
+  and consistency fixture, not regression truth. The ISIP candidates are the §4.4 P3a given numbers.
+- **WP0 fix round** (review of WP0):
+  - **Votes.** Voting members are F1 `compliance`, F1 `loglog` when it is independent (|ι| ≥ 0.05, `sameEvidenceAs:null`),
+    F2 `tangent`, F4 `reopening` and a `user` pick in F1 / F2 / F4. `crel`, `sqrt` and `maxdpdg` never vote — `sqrt` not even
+    when ΔtD,c ≤ 5 and it carries no `sameEvidenceAs` (a √t pick never confirms a tangent pick); F0 and F3 never vote; a member
+    with `sameEvidenceAs` set never votes.
+  - **Clamp.** `clamp` / `clampInputs` always return inputs that pass `DfitInputs`: a non-object group → its defaults
+    (`INPUT_DEFAULT`); survey rows `[md, tvd]` finite with MD strictly ascending and string rows with id, od, wall > 0, id < od,
+    finite topMd < botMd (an invalid `tubKey` → null), others dropped (`ROWS_DROPPED`), then the row caps; flags (`psig.*`,
+    `axisLock`, `ppd`, `aca.carterExactFR`) keep true / false, coerce 'true' / 1 and 'false' / 0, else the default; each
+    `unitFix.*` is null or `{kind, factor, offset}`; `depthFix` null or an object; `mask` rows `[t0, t1, why]` with finite
+    t0 < t1 (why '' when not a string); `events.tStart / tb / ts` finite or null; `events.flowback` null or finite t0 ≤ t1.
+  - **Numeric strings.** A string with a comma is read with `WTS_parseNumber` (resolved at call time) when that parser follows the
+    decimal-comma option; otherwise '1,5' → 1.5, '1,500' (1–3 digits, comma, exactly three digits) is ambiguous → default with
+    `INPUT_DEFAULT` (never 1.5, never 1,500), '1,500,000' / '1,500.5' → thousands groups. Strings without a comma must match a
+    strict decimal pattern.
+  - **Modes.** Consensus: `single` ⇒ value, range null, confidence not `'not-estimable'`; `range` ⇒ value null, a range, not
+    `'high'`; `none` ⇒ value and range null, `'not-estimable'`. ConsensusLite: the same value / range rules. Summary.closure:
+    `single` ⇒ value, label not `'not-estimable'`; `range` ⇒ lo < hi and value null; `none` ⇒ value, lo and hi null.
+  - `HandoffPacket.model` adds `'radialComposite'` (an `acaMatch` candidate, §3.6 / §6.8). `options.alphaGeneral` (0.51–1,
+    default 0.75) holds the general α.
+  - Enumerations frozen without an earlier §3 source: `AcaDiag.regimes[].kind` `'linear'|'bilinear'|'radial'|'spherical'|
+    'storage'|'transition'|'artefact'`; `Uncertainty.inputs[].dist` `'normal'|'lognormal'|'uniform'|'triangular'|'fixed'|
+    'empirical'`; `Consensus.counterfactual.knob` `'L'|'tp'|'ts'|'eps'`; `DfitDataset.rateUnit` `'bbl/d'|'STB/d'`;
+    `channels.primary` `'bh'|'surface'`; `options.aca.origin` (and `AcaResult.origin`, `picks.aca.origin`) `'centroid'|'total'|
+    'midInjection'|'sinceClosure'`; `options.aca.tideRemove` `'auto'|'on'|'off'`. Text fields are < 300 characters (§3.0).
+  - `resetDfit` also runs the pending debounced C8 save (manual timers, `flush(400)`) and removes the `dfit` field of the
+    persisted `wts_prism_state`. Because the failure form passes every engine-output shape, **WP tests assert `result.ok === true`
+    next to `checkShape`**.
+  - `FIX.ds` / `FIX.run.aca`: the after-closure line has m_L = σ_c − p_r = 2,500 psi for continuity, not from CL, so its F_L-line k
+    (3.46e-3 md) differs from the CL k of `FIX.run.frac` (2.75e-3 md) by ≈ 26 %; it is not a physical consistency check.
+- The 59 skeleton registers no `PRiSM_modeExt.dfit`, panels, plots, tools or undo extras (a stub mode would appear in the header
+  select as soon as WPH lands); WP6 registers them. It also does not export the five `PRiSM_renderDfit…Tool` functions: 37's
+  `listTools` discovers every `window.PRiSM_render*Tool` by name and would list them under "More" until WPH marks catalogue
+  functions as seen. `PRiSM_dfit_kConstraint` returns `null` until WP3.
+
 ---
 
 ## 4. Algorithms
@@ -1174,7 +1236,10 @@ p_f = p_w − Δp_perf(q) − Δp_nwb(q)                  fracture entrance; aft
   - **V_i\* = V_i − V_w·c_w·(σ_c − p_start) − V_fill** (volume that has left the wellbore by closure; it depends on the closure
     candidate and is recomputed per candidate). It is the volume in the closure balance η_G·V_i\* = C_sys·p_n (§4.6).
 - **tp definitions** (all stored, default `pump`, sensitivity shown): pump = t_s − t_start; breakdown = t_s − t_b;
-  volume-equivalent = V_i / q_last. CL and xf hardly move with tp; Gc and η do (tp 5.0 / 3.5 / 6.0 min → Gc 18.00 / 21.87 / 16.28).
+  volume-equivalent = V_i / q_last — or V_i / q_main when the injection ends below the main stage (a step-down, or a last rate under
+  90 % of q_max), q_main = Σq²Δt / ΣqΔt of the cycle (amended at the integration review: after the reference step-down V_i/q_last was
+  21.5 min against a 5.6 min pump time, and it fed a third of the stability grid, the uncertainty tp draws, the C2 schedule and the
+  PTA hand-off). CL and xf hardly move with tp; Gc and η do (tp 5.0 / 3.5 / 6.0 min → Gc 18.00 / 21.87 / 16.28).
 - **Ramp-down** > 10 % of tp makes the instantaneous shut-in undefined: the data-driven G (§4.5) becomes the default.
 - **Idealised schedule** for C2 and the PTA hand-off: one step at **q_eq = (V_i − V_fill − V_fb)/tp_veq** from t_s − tp_veq to t_s,
   then 0 (59 writes it to `PRiSM.multiRate` in bbl/d). The wellbore-compression volume V_w·c_w·(p_shut-in − p_start) enters the
@@ -1306,7 +1371,7 @@ All methods run on the same resampled data and derivatives; each returns a `Clos
 
 | Method (`method`) | Family | Algorithm | Main failure modes |
 |---|---|---|---|
-| Tangent (`tangent`) | F2 (votes) | The line y = s·G through the origin touches G·dP/dG where y/G is largest ⇔ **s\* = max dP/dG** (robust: smoothed, or the 95th percentile in a sliding window), over [G_start, G_peak], excluding G < G_min and the PDL hump. Pick = the last G with y ≥ (1 − ε)·s\*·G before y falls permanently below; ε = max(0.02, 3σ_y/(s\*·G)) | tangent drawn to a PDL hump (too early, too high); concave-up data (late, low if the compliance reading is right); wrong tp or t_s; low closure visibility (no clear departure) |
+| Tangent (`tangent`) | F2 (votes) | The line y = s·G through the origin touches G·dP/dG where y/G is largest ⇔ **s\* = max dP/dG** (robust: smoothed, or the 95th percentile in a sliding window), over [G_start, G_peak], excluding G < G_min and the PDL hump. Pick = the touch point (the vertex of dP/dG, d(dP/dG)/dG = 0); a flat top longer than 0.5 ln units keeps the last G with y ≥ (1 − ε)·s\*·G before y falls permanently below; ε = max(0.02, 3σ_y/(s\*·G)) (amended at the integration review, Appendix D) | tangent drawn to a PDL hump (too early, too high); concave-up data (late, low if the compliance reading is right); wrong tp or t_s; low closure visibility (no clear departure) |
 | √t inflection (`sqrt`) | F2 (`sameEvidenceAs:'tangent'` when ΔtD,c > 5) | max \|dP/d√t\| (or departure of √t·dP/d√t from a line through the origin) | multiple inflections (PDL, hammer, thermal); second-derivative noise; diverges from the tangent only when ΔtD,c is small |
 | Max dP/dG (`maxdpdg`) | F2 (same evidence) | the G of the dP/dG maximum | as tangent |
 | Compliance (`compliance`) | F1 (votes) | Fit y = a + b·G (through the origin when \|ι\| < 0.05) over the longest early window with unstructured residuals after G_min and after any hump; pick = first G after which y − (a + bG) > ε·(a + bG), ε = max(0.02, 3σ), held ≥ N points or ≥ 0.05 in log G. If the first departure is downward, the compliance and tangent picks coincide (families agree) | any other rising-dP/dG cause (height recession, gas break-out, gauge thermal drift); early line biased by PDL or tip extension; ε and noise sensitivity |
@@ -2700,7 +2765,7 @@ rail is the existing bottom sheet.
   asks for the value, method or family and a reason (required).
 - Linked cursor across the visible DFIT canvases through `prism:plot-hover` and `PRiSM_plot_overlay`.
 
-### 7.11 Verdict lines (plain text, each under 299 characters; numbers filled from results)
+### 7.11 Verdict lines (plain text, each under 300 characters; numbers filled from results)
 
 | Code | Level | Text |
 |---|---|---|
@@ -3210,17 +3275,17 @@ v3.3 merged ──► WP0 contracts (1.5 d) ──► WPH generic hooks + O(n) B
 { ver:'v3.4', date:'<release date>', title:'DFIT analysis in PRiSM',
   note:'PRiSM gains a DFIT workspace: diagnostic fracture injection tests from data health to closure, after-closure analysis, a leak-off model and hand-off to PTA.',
   items:[
-   ['prism','DFIT workspace','Choose “DFIT (fracture injection)” in PRiSM: data and events, ISIP and friction, pre-closure, after-closure and model, report — with G-function, √t, log-log, compliance and h-function plots and every closure method.'],
+   ['prism','DFIT workspace','Choose “DFIT (fracture injection)” in PRiSM: data and events, ISIP and friction, pre-closure, after-closure and model, report — with G-function, √t, log-log and compliance plots and every closure method.'],
    ['new','Closure consensus','All closure methods on one strip, grouped into independent families (including the reopening pressure from a second cycle), giving one closure or a closure range with a confidence label, the reasons, a frictional-limit check and a logged override.'],
    ['new','Test triage','Data-health checks and an A–D grade within seconds of import: vacuum, air in the well, thermal effects, gauge resolution, clock alignment, unit and depth blunders, and an early re-pump verdict.'],
    ['new','Step tests','Step-down friction split with open perforations, and the step-rate fracture extension pressure with a band and a per-step stabilisation check.'],
    ['new','After-closure analysis','Reservoir pressure with a bracket that needs no guess, transmissibility or bounds on permeability when radial flow is not reached, gas in adjusted variables, a leak check that separates leaks from gauge drift, and matching with the PRiSM model library.'],
    ['new','Leak-off model','“What leak-off rate do I get?” with no data, from any PRiSM view, and history matching of a recorded DFIT that states which parameters the test actually determines.'],
    ['new','DFIT designer','Ranges in; shut-in length, volume, gauge and sampling, leak tolerance, vacuum check, checklist and the expected outcome out.'],
-   ['new','Uncertainty','P10/P50/P90 on every DFIT number, per closure reading when the closure is a range, with the share of each input, a tornado and a what-if closure marker.'],
+   ['new','Uncertainty','P10/P50/P90 on every DFIT number, per closure reading when the closure is a range, with the largest driver in the report and a what-if closure marker.'],
    ['new','Several DFITs per well','Stacked tests side by side, closure and pressure gradients against depth, and a stress-log calibration offset for each closure reading.'],
    ['report','DFIT report','Evidence column and appendix, a pick and override log, data + picks export with your own column layout and a frac-design sheet; PTA and RTA hand-off in one click.'],
-   ['ux','Faster derivatives','The pressure derivative is now computed in linear time: long falloffs redraw in milliseconds.'] ] }
+   ['ux','Faster derivatives','The plot and analysis-data pressure derivative is now computed in linear time (4,000 falloff points in tens of milliseconds); the auto-match and semilog loops follow later.'] ] }
 ```
 
   3.4b (`v3.4.1`): live DFIT co-pilot on the Modbus station and historian with a replay timeline; superposition step-rate and Hall
@@ -3544,3 +3609,202 @@ v3.3 merged ──► WP0 contracts (1.5 d) ──► WPH generic hooks + O(n) B
    cut the benchmark to three cases: the three cases (reference, contact, example B) run in `dfit-integration` I11–I13 and the 12-case
    set in `dfit-validate.js --quick`; `dfit-benchmark.test.js` is dropped.
 14. **Pad fraction.** Two forms are in common use; the plan shows both as a range and labels it indicative rather than choosing one.
+
+## Appendix D. Integration amendments (3.4a, lead)
+
+Recorded by the integrator after the work packages were merged in the §9.0 order (WPH → WP1 → WP2 → WPT → WP4 → WP3 → WP5 → WP6).
+Each item says what changed against the text above and why. Items marked **reviewed** are work-package deviations the lead checked
+for soundness before recording them; none was reverted.
+
+**Interfaces**
+
+- **§3.5 `gSpec`.** `G(dt)` / `Gp(dt)` take the shut-in time in hours like every public time field (§3.0); `Gp` is dG/dΔt_D; the
+  engine-side forms `GD` / `GpD` / `gD` take Δt_D. Reason: one public time unit. No file outside 56 calls `gSpec.G` / `Gp` (57 reads
+  only `g0`; 58 uses `PRiSM_dfit_G(Δt_D, gSpec)`), so no consumer needed a change.
+- **§3.7 `leakBudget`.** `ctx` gains `tDLDraws` (the P90 is used), `phi`, `muRes`, `ct`, `L` (with `kDraws`) and `tempF`; the result
+  gains `warnings[]` (e.g. `LEAK_KDRAWS_UNUSED`). 57's leak plot now passes t_DL draws built from the after-closure k (bounds and
+  estimate), φ, μ, c_t and the fracture length, so the budget uses this test's leak-off regime (Θ) instead of the linear default.
+- **§3.7 names.** `PRiSM_dfit_lkGoalSeekJob`, `PRiSM_dfit_lkProfile` and `PRiSM_dfit_lkProfileJob` (profile likelihood of σ_c or p_r,
+  one refit per step) are part of the 3.4a surface.
+- **§6.5 / §6.7 `Identify.extend[]`.** Rows are `{tEndD, tEndH, sdPi, pFixed, kRange, kBasis, pRadial}`. `sdPi` is **one standard
+  deviation**; the ± figures quoted in §6.5 (7.9 / 2.8 / 1.5 / 0.9 / 0.56 / 0.39 psi) are 95 % half-widths (1.96·sd), which is how
+  `dfit-leakfit` checks them. `pFixed:true` marks a wall-only model that cannot estimate p_r (sd 0, no keep-or-pull comparison);
+  `kBasis 'fisher'` names the source of the k range.
+- **§3.3a `opts.stages`.** `'all'` or a list of stage ids (prepare, events, isip, derivs, consensus, frac, aca, uncertainty, report).
+- **§3.4 `StepRate`.** `band` is the fracture-extension-pressure band (psia) and `qStarBand` the q\* band (bbl/min), both from the
+  bootstrap (FIX: 7,470 / 7,480 / 7,492 psia and 2.9 / 3.2 / 3.5 bbl/min). `Hammer.delta` = T/τ, the logarithmic decrement per fitted
+  period (the FIX value is computed from T and τ instead of a free 0.11).
+- **§4.3 / §4.17 fluid compressibility.** c_fluid = 1/K with the handbook water bulk modulus K = 3.2e5 psi by default (3.125e-6 1/psi);
+  `fluid.cFluid` (given) or `fluid.cFluidModel 'dodson'` (`cw_dodson` at the mid-column p, T) are optional; oil defaults to 1e-5 1/psi.
+  Reason: the default must not depend on a PVT module being loaded; the 3.57e-6 1/psi reference of §4.3 is unchanged to rounding.
+- **§4.22 L_max.** The default L_max of the k_hi bound (§4.12) is 2·xf of the chosen geometry when no input (`options.aca.Lmax`,
+  `rock.Lmax`) is given.
+
+**Algorithms**
+
+- **§4.7 / §4.8 closure picks under noise (WP2, reviewed).** (1) The early p–G window grows while its curvature is statistically
+  absent (σ_eff and ρ1 from the lag-1 / lag-2 difference variances), capped one Bourdet window before the provisional departure — a
+  standard nested-model test, sound. (2) The departure threshold is max(ε, 3σ_y/ŷ): **ε is a floor**, the local noise sets the
+  scale, with persistence (joint z ≥ 4, still beyond 0.3 ln units later). **Corrected at the integration review:** the claim that
+  this "can only delay a pick under noise" was false — a sharp (compliance-drop) closure reverts by crossing the line (G·dP/dG jumps
+  above it at G_c and falls below it as the decline slows), so the reversion test moved a noise-free closure 140–190 psi late
+  (Example A 4,963.6 against 5,105.5; penny 4,976 against 5,164). A departure that crosses to the other side within 0.3 ln units, or
+  is far beyond the noise (Σ(r/σ_r)/√n_eff ≥ 8), is now kept and read at its start (abrupt-break rule), also when it is shorter than
+  n_hold; the crossing needs the same joint z ≥ 8, so correlated noise (C14, σ 1, ρ1 0.9) still cannot cross its way in. (3) The compliance onset is refined by a hinge fit p = A + B·u + C·u₊² + D·u₊³ with an SSR-profile standard error, and an
+  abrupt break is read at the start of its interval — a change-point refinement of a pick the §4.7 rule has already made; sound.
+  (4) The tangent after an upward departure is the vertex of dP/dG: the line through the origin touches y = G·dP/dG where
+  y′ = y/G, i.e. d(dP/dG)/dG = 0, so the vertex is exactly the **touch point**. **Corrected at the integration review:** it is not the
+  §4.7 reading, which is the plateau end (the last G with y ≥ (1 − ε)·s*·G, after the touch point); F2 is now read at the touch point
+  (earlier and higher than §4.7 as first written; §4.7 is amended accordingly), which makes 'tangent' the same reading as the
+  dependent 'maxdpdg' member. A flat top longer than 0.5 ln units keeps the plateau-end rule. The quick-set median F2 error of 436 psi
+  came from the truth, not the engine: `sigmaCF2From`'s quasi-static f_L = (p − p_r)/(σ_c − p_r) misses the Duhamel memory (§4.11);
+  lk cases now take truth.sigmaCF2 from the mini-model's own dP/dG maximum below σ_c on its display grid (q-contact F2 error 46 psi). (5) The family band adds the voting pick's own se in quadrature — conservative
+  (never narrower).
+- **§4.7 abrupt break (integration fix).** The break is located in the **first** of the steep intervals (walking back from the
+  steepest while the interval before still falls ≥ 3 × the early slope) and read at the centre of that interval on the pre-closure
+  line, se = half-width/√3. Reason: on an exact Carter after-closure line the slope keeps growing for a few samples after closure, so
+  the steepest interval lies one sample past it, and its start pressure is already after-closure (reference demo: 6,936.8 psia →
+  7,002.6, truth 7,000).
+- **§4.7 reservoir-controlled decline (integration fix; was open).** A downward first departure followed by a stiffening of dP/dG
+  by ≥ 30 % is reservoir-controlled (matrix) leak-off, not closure: dP/dG falls with p − p_r (the 28–40 % of §4.11). The compliance
+  departure is then searched upward from the declining trend (the G·dP/dG line over the last 0.7 ln units before the dP/dG minimum,
+  starting one Bourdet window before it), and the hinge carries a u² base term (`closedForm.matrixDecline`). `dfit-integration`
+  I11 (matrix): 6,998.3 psia, single (was 7,569); I12 (contact): F1 7,002.2 / F2 6,736, range (truth 7,000 / 6,301; was 7,582).
+- **§4.3 events (integration fix).** The pump start is read from the first sample above the pre-pump level (a sample still at that
+  level puts the onset at the end of the rate bracket). The last pumping sample is taken from the pressure when the largest drop
+  within the next three samples follows a sample that has not fallen (a forward-held rate column writes q = 0 at the shut-in sample);
+  the volume carries the last rate to it. Reference demo tp 5.63 min against the true 5.65 (was 5.83); I14 V_i 25.00 bbl (was 24.32).
+  I14 then recovers A_f·c_f, xf and R_vis 2.8 % low (limit 3 %): the remainder is the ramp V_w·c_w, 1 % high because the model's
+  initial 1 ft fracture takes fluid during the ramp, amplified by R_vis 0.26 in A_f·c_f = C_sys − V_w·c_w.
+- **§4.11 κ_exp.** The coarse run is 58's `'prescribed'` mode with the frac candidate's geometry `{Ap = A_f, c_f, α, r_p, tp}` and a
+  fully reservoir-controlled leak-off (CL with w_c = 1); without a geometry or p_r the quasi-static form is used, and without 58 too.
+  The model is read up to its own closure when it closes before the data's G_c, on the last model interval ending there (an interval
+  straddling the closure read the after-closure slope: +345 % instead of −31 %). W ends at the tangent G when that lies after the
+  closure candidate (§4.11 as written), so a closure range's stiffening is part of κ. p_r (57): C1 p_i, else the p_i-gradient prior,
+  else the injected fluid's hydrostatic at the datum (assumed, said in the evidence); after the ACA the classifier runs once more with
+  the after-closure p_i when that is labelled high or medium (`classification.prSource` 'well' | 'prior' | 'hydrostatic' |
+  'aca-pi').
+- **§4.4 ISIP acceptance.** 56 accepts the wave ISIP on `hammerQuick`'s own §4.4 verdict (`bleed.fitted`, `upper:false`, `bleed.dEnd`).
+  57 runs the step tests first and passes the column, q_shut, V_w·c_w, tp, the valve closing time (`ds.meta.tCloseS`) and the
+  step-down `{b, β, q_t}` — or `fitBleed:true` without a step-down — to `hammerQuick`, and builds the `bleedOff` law used by the ISIP
+  and by the triage bleed-off window (Q13).
+- **§4.1 depth fix.** `PRiSM_dfit_prepare` applies `channels.depthFix.dpPsi` (an applied gauge-to-datum blunder fix) to the bottomhole
+  channel, records `applied.depthFixPsi` and a `DEPTH_FIX` flag, and then skips the constant-gradient gauge-to-datum shift. A surface
+  primary channel is converted with `WTS_wellbore.convert`'s own contract (column, fluid, temperature, atmPsia, channel 'p'), which
+  gives the P10–P90 band and the vacuum time.
+- **§4.12 p_i bracket allowance.** Each bracket edge (Cartesian, impulse, derivative) is widened outward by 2 % of its distance from
+  the last pressure (`BR_TOL`). Reason: the edges are exact for a Carter source; a reservoir-controlled history moves the late
+  intercepts by about 1 % of the remaining Δp (I11: the F_L line fits 27–81 h with σ 0.2 psi and extrapolates to 4,505.6 psia against
+  the model's 4,500, p_end 4,989). On a radial record (small Δp) the change is a fraction of a psi.
+- **§6.6 rank correlation.** A Gaussian copula replaces Iman–Conover for the φ–c_t pair: with ρ_N = 2·sin(π·r_s/6) in normal space the
+  Spearman coefficient of the drawn pair is exactly r_s (−0.3 by default) for any monotone marginals, which is the property
+  Iman–Conover was chosen for. (The WP3 code used r_s directly as ρ_N, giving −0.287; corrected at integration.)
+- **§6.3 triage (WPT deviations, recorded).** Evidence ids Q1–Q21 follow the CHECKS order, Q0 is the triage summary. A failed check
+  inside an analysed window grades C like one outside; a surface vacuum on a surface-converted analysis is masked and recorded
+  `inWindow:false`; a gauge thermal transient above the limit outside the pick window is a warning. Context sources (57): `ds`,
+  `stepRate`, `bleed`; `strapVolume` and `tCloseS` from `opts` or `ds.meta` (no input field in 3.4a); `tide` from `opts` or from the
+  ACA tide fit (largest constituent amplitude against the after-closure change), with the triage re-run once after the ACA stage.
+- **§6.3 blunder cards.** "Apply fix" writes `fix.field` and every `fix.also[]` entry (MD-as-TVD moves `datumTvd` and `datumMd`
+  together) in one undo batch and logs each field; "It is real" dismisses and logs (`dfit-integration` I17).
+- **§6.9 live events.** The session uses 56's events when present, but takes the shut-in only once a zero-rate sample follows it
+  (while pumping, 56 puts t_s at the end of the record, which moved t_s and rebuilt the state every block); without a usable ramp
+  56's pump start keeps the bracket and the nuisance tp search (`dfit-live` V1b, V8).
+
+**Demos and budgets**
+
+- **Surface-gauge demo and §4.2.** The demo's surface channel is the fixed-point inverse of `WTS_wellbore.convert` for the
+  reference column (ρ(p,T), the displaced temperature model with τ_T 2 h, pipe friction while pumping), so a converted analysis
+  recovers the bottomhole record to the gauge noise (closure 6,999.9 against 7,002.6 bottomhole); the constant-gradient column plus
+  warm-back stays as the fallback without the wellbore engine. Its inputs carry the displaced model with a 1–4 h τ band, and its
+  p_r is re-solved for that column (3,235.0 psia: vacuum 31 h after shut-in; 3,323.9 with the fallback column). Reason: the constant
+  0.438 psi/ft column is ≈ 40 psi off the ρ(p,T) column (§4.2) and drifts with the warm-back, which moved the converted closure by
+  196 psi.
+- **34 semilog recompute in DFIT mode.** The semilog listener defers its recompute while `PRiSM.mode === 'dfit'` and runs it on the
+  next change to another mode (the IARF search on every DFIT dataset commit and C1 write took ≈ 0.3 s and is neither shown nor
+  reported in DFIT mode).
+- **Appendix A / §4.21 reference demo.** The demo's tp is 5.65 min (main stage plus the step-down), not the 5.0 min of the §4.21
+  table; Δt_c, CL, Γ, k_CL and G of the demo use this tp (stated in `ds.meta.note`). The §4.21 numbers stay the FIX.ds numbers.
+- **Budgets measured at integration** (Linux container, one file at a time, wall clock incl. the app load): `dfit-closure` 4.4 s for
+  16 tests (≤ 4 s planned), `dfit-integration` 12.2 s for 17 tests at the first integration and ≈ 10.2 s after the engine cuts of the
+  second round (≤ 8 s planned: the leak-plot bootstrap's IRLS without the finiteness filter and with selection medians, the
+  per-draw finiteness check of the uncertainty propagator done once per context, the deferred semilog recompute; what remains is
+  eight demo analyses on cold app contexts — ≈ 0.35–0.55 s each, the stability grid ≈ 0.15 s of it — the Tab-7 render and the reload
+  and project tests), `dfit-ui` 7.4 s, `dfit-hooks` 4.3 s for 14,
+  `dfit-synth` 3.9 s for 7, `dfit-leakfit` 3.9 s for 8; the 17 DFIT files total ≈ 55 s for 225 tests run file by file and 46 s in one `--html --integration --file dfit-` run (≤ 60 s planned). Accepted as
+  exceptions for 3.4a.
+- **Demo binding (59).** `loadDemo` decides the dataset binding before the commit (the dataset-loaded listener binds an unbound test
+  itself, which skipped the demo set-up); the surface-gauge demo now gets its datum and strings.
+
+**Integration review fixes (3.4a, after the three reviews of fc4ac5c; `tests/dfit-review.test.js` RV1–RV19)**
+
+- **Live co-pilot (57, §6.9).** Only the closure sign raises a call: p below the early line (dP/dG rising). A first departure above it
+  is a reservoir-controlled decline; the reference then follows the declining trend (the line over the last 0.7 ln units before the
+  candidate, less 2L) and the CUSUM restarts. Reason: on the mini-model reference every replay seed called closure 5 h early at
+  7,462 psia. Now 0 of 20 early (quick replay), the reference call 7,001 psia.
+- **High-rate windows (56 prepare).** Each `prep.hf.windows[i]` carries `t` (h) and `p` (psia, converted like the main bottomhole
+  channel) from the main record when it is ≥ 2 Hz, else from `ds.meta.hfWindows`; 57 passes them to `hammerQuick`, 59 stores them.
+  The reference demo's wave ISIP is 7,599.0 against the falloff 7,599.1 psia.
+- **ISIP_lp.** The friction is a·q_last² + b·q_last^β from the step-down coefficients (not `sd.at`, which is at the top step rate).
+- **Re-pump after closure (§4.5).** 57 re-runs the events with σ_prior = the last cycle's F4 reopening knee (else σ_grad·TVD), so
+  `closedBefore` is decided from the data; the last cycle is then analysed alone and p_i is labelled low (earlier cycles not
+  superposed). The two-cycle demo truth is now the realised cycle-2 falloff (the ramp does not reach the nominal propagation pressure
+  in V/q: realised ISIP 7,163 psia, pn 163, m_G 20.4, A_f·c_f 0.0433 bbl/psi, xf 155 ft); the engine reads 164 / 0.0431 / 154.
+- **k lower bound (§4.12).** The leak-off-limit bound divides CL_lo by KMEM = 1.3 (Duhamel memory, §4.11); it is not used under PDL or
+  tip extension, and the linear-A_max bound not under PDL (the fissure area is not bounded by the main fracture).
+- **Departure persistence (56).** See WP2 change (2) above: a reversion that crosses the line (with joint z ≥ 8) is a sharp closure.
+- **Vetoed-only consensus.** K1 says "all closure candidates vetoed (…) by the … limit", K10 is read at the vetoed picks,
+  `consensus.vetoed[]` lists them. Example A and the penny case state an 8,000 ft datum (`aca.datumTvd`): σ_c ≈ 5,100 psia with
+  p_i 4,500 psia is below the conservative frictional limit deeper than ≈ 8,900 ft.
+- **PDL (56).** A post-hump window sets m_G and the picks' early window when a later straight (or ≤ 15 % flat) window with a
+  ≥ 10 % lower dP/dG is reached by a dP/dG that only falls; the ISIP stays on the earliest line when the hump carries ≥ 15 % of the
+  drop (a gas wellbore's bleed-off lifts the first samples by a few psi only, I14). Classified PDL, the fracture chain uses
+  C_sys = V*/(p_n + (4g0/π)·m_G·m), m = the PDL multiplier at the ISIP. The G-domain generator's PDL pumping leak-off now runs at the
+  same multiplier (V* = X·(G_c + 4g0/π·m)); before, the PDL demo's truth assumed constant-CL pumping leak-off.
+- **tp_veq** (§4.3 amended above), **closure draws** (N(0, s_j) with s_j² = σ_family² − var(pool), own seeded stream; `_shares` 0
+  for a constant output), **family σ floor** max(1 psi, 2σ_gauge, 0.25 % p_n, 0.05 % σ_c), **stability grid g** on the
+  pre-refinement detection points (an abrupt break keeps its exact reading).
+- **Classifier.** With consensus mode none and no R_vis the type is never 'normal' (storage when R_vis,max ≤ 0.3 from the early
+  slope bound, else undetermined).
+- **Benchmark truths (49-calc-dfit-synth).** Gas aca-exact: ISIP and σ_c mapped through m(p) like the record, k = k_liq·μ_g,i/μ_liq.
+  lk cases: σ_c,F2 from the model's dP/dG maximum. `dfit-validate --quick`: spread on a σ 0.05 contact case, truth ∈ structural
+  range ∪ CI95 ± 0.05 psi; 58's structural rule is Δχ²/s² ≤ 4 + 2·|Δn_p|.
+- **Triage.** Q2 looks for the shut-in drop within t[kd] ± max(60 s, 5 × the pre-shut-in sample interval) of the rate stop, reads a
+  sampled rate step against its interval, back-extrapolates the pressure rise on the ramp slope and, on a vacuum start, checks the
+  clocks at the stop. Q20 gets an amplitude only from a significant (SNR ≥ 3) or applied tide fit.
+- **UI (59, 01, 04, 11, 37).** Undo / redo reinstates a cached full run for the same inputs and picks (else marks the summary
+  stale); the designer has id'd range inputs (field units, as all DFIT inputs) and shows the shut-in in days with the binding words;
+  `ext.toolAllow` (37) and the PTA CSV / XML left out of Export in an extension mode (01); no C1 defaults banner or chip in an
+  extension mode (04, 11); `ext.panelsFirst` mounts the Tests / demo card above the data cards; the export header gets the test,
+  inputs, well and `WTS_appVersion()`; `setPick` refuses a primitive; a failed Analyse says why. Frac-design sheet columns:
+  name, family, p10, value, p90, unit, lens, ev, p50 (§3.13 amended).
+- **iOS (ios-styles.css §10).** The overlay keeps its full-screen backdrop; the dialog boxes are capped to the padded area; 44 pt
+  close / override buttons (§2.3 amended).
+- **Help.** The PRiSM guide's `reviewedSrc` is bumped to the new page-source hash for the generic shell edits only (the transient,
+  decline and combined text is unchanged and was re-checked); the DFIT guide section stays WP7 (below).
+
+**Help content needed for the v3.4 release (WP7; not written in the integration round)** — in `48-calc-help-production.js` (the
+PRiSM guide parts) plus shots recipes, within the `help-content.test.js` byte caps:
+
+1. A "DFIT mode" section of the PRiSM guide: entering the mode (test-type select), the five steps in DFIT terms, the tests table
+   (several tests per well, zones), the rail rows and the grade.
+2. Step ① data: channel roles (bottomhole / surface / annulus / temperature / flowback), psig and the test atmospheric pressure,
+   the wellbore set-up (survey, strings, fluid, temperature, datum, gauge depth), demos, high-rate windows.
+3. Triage and data health: the 21 checks with their pass / warn / fail meaning, blunder cards ("Apply fix", "It is real", the
+   undo), the re-pump verdict and its acknowledgement, the salvage list.
+4. Step ② events and ISIP: pump start / breakdown / shut-in, tp choices, the ISIP families (wave, falloff, friction) and when the
+   wave ISIP is an upper estimate; step-down, step-rate and the pump-in ramp (F4).
+5. Step ③ closure: the method families F0–F4, the consensus (single vs range, τ), confidence labels marked uncalibrated in 3.4a,
+   the frictional-limit check, overrides with a reason, "Why …?" and the method notes dialog.
+6. Fracture outputs: efficiency, net pressure, storage-consistent R_vis, geometry (PKN / KGD / radial), CL, leak-off rate, the
+   what-if closure, the stress-log calibration.
+7. Step ④ after-closure: origin choice, regimes, p_i consensus and bracket, kh/μ and k bounds, the leak plot and leak budget,
+   tides, gas.
+8. Uncertainty, the leak-off mini-model sandbox and the pre-job designer (goal-seek, extension table, keep or pull the gauge).
+9. Live / replay: provisional and confirmed calls, the forecast band.
+10. Step ⑤ report and hand-offs: Tab-7 sections, PDF / CSV / text export, frac sheet, PTA / RTA hand-offs, Quick Report key line,
+    `WTS_state.dfit` values used by other pages.
+11. Glossary entries (ISIP, G-function, closure, net pressure, efficiency, PDL, tip extension, height recession, R_vis, F-families,
+    after-closure, impulse), two "How do I…" tasks (analyse a DFIT; check whether a test is interpretable) and FAQ items on the
+    labels being uncalibrated and on closure ranges.
+12. Screenshots: step ① with triage, step ③ closure board on the reference demo, step ④ after-closure, the designer; then
+    `help-shots.js --route prism` and `build-user-guide.js`.

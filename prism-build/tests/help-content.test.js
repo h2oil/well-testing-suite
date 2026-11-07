@@ -29,10 +29,10 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 48, '49-calc-help-print.js': 16, '48-calc-help-start.js': 17.5, '48-calc-help-overview.js': 10.5,
-  '48-calc-help-metering.js': 27.7, '48-calc-help-welltest.js': 37.6, '48-calc-help-production.js': 33.5, '48-calc-help-livedata.js': 16.1,
-  '48-calc-help-safety.js': 35.6, '48-calc-help-process.js': 20.1, '48-calc-help-flare.js': 12.1, '48-calc-help-utilities.js': 20.1,
-  '48-calc-help-simcourse.js': 41.5, '48-calc-help-manifest.js': 8.7,
+  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.4, '48-calc-help-start.js': 18.88, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.6, '48-calc-help-production.js': 36.42, '48-calc-help-livedata.js': 16.05,
+  '48-calc-help-safety.js': 35.42, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 20,
+  '48-calc-help-simcourse.js': 41.3, '48-calc-help-manifest.js': 8.75,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
 // per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
@@ -43,6 +43,13 @@ const CAPS = {
 // FS-1 / FS-2 proper procedures, FS-4 staging, exercise 11) and the manifest module (+0.2: three shots); the sum stays 345 kB.
 // Review round (lead, WP-I): 0.7 kB of welltest's unused headroom to simcourse (FS-1 values as measured and the velocity alarms after
 // breakthrough, FS-2 PSHH-104 line limit, exercise 11 pair-capacity value and the expected PAH-102 / blocked-in warnings); sum unchanged.
+// DFIT 3.4a help (WP7, 2026-11-07): 3.95 kB of unused headroom to production (+2.52: the PRiSM guide's DFIT parts and four shots),
+// start (+1.38: two tasks, 13 glossary terms, one FAQ) and the manifest module (+0.05: four shots; help-shots moduleBytes 8.75 too)
+// from welltest (1.9), print (0.6), overview (0.45), 49-calc-help (0.4), simcourse (0.2), safety (0.15) and metering, livedata,
+// process, flare and utilities (0.05 each); the sum stays 345 kB.
+// DFIT release review (2026-11-07): 0.4 kB of unused headroom to production (the DFIT steps as the app runs them, the step names,
+// the p_i bracket in the example, water hammer and the shut-in caveat) from welltest (0.1), process (0.08), flare (0.07), overview
+// (0.07), utilities (0.05) and safety (0.03); the sum stays 345 kB.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
@@ -259,7 +266,7 @@ SRC_OVERRIDE.cheminj = ['49-calc-cheminj.js'];
 SRC_OVERRIDE.hydrate = ['25-hydrate.js'];
 // PRiSM: the files that render or wire the steps the guide documents; buildup (key: PG_KEY): the page and its engines
 SRC_OVERRIDE.prism = ['01-foundation.js', '04-ui-wiring.js', '07-data-enhancements.js', '12-data-crop.js', '16-pvt.js', '33-pta-core.js',
-  '34-semilog-skin.js', '36-report.js', '37-prism-workflow.js', '39-prism-fieldtools.js', '54-prism-skin.js'];
+  '34-semilog-skin.js', '36-report.js', '37-prism-workflow.js', '39-prism-fieldtools.js', '54-prism-skin.js', '59-prism-dfit-ui.js'];
 SRC_OVERRIDE.buildup = fs.readdirSync(BUILD).filter((f) => /^49-calc-buildup.*\.js$/.test(f)).sort();
 function srcTexts(route) {
   if (SRC_OVERRIDE[route]) return SRC_OVERRIDE[route].map((f) => ({ name: f, text: readSrc(f) }));

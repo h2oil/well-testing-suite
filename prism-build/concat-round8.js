@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Round-8 concatenator — PRiSM gap-closure layer (PTA core, semilog/skin,
 // RTA + DCA results, report, workflow shell content, automatic build-up
-// interpretation and skin checks).
+// interpretation and skin checks, DFIT analysis).
 //
 // Run with:  node prism-build/concat-round8.js
 // Writes:    prism-build/combined-round8.js
@@ -28,7 +28,11 @@ const FILES = [
   '53-prism-autointerp.js',      // Build-up Surveillance (v3.3): automatic interpretation engine
   '54-prism-skin.js',            // Build-up Surveillance (v3.3): skin maths + Skin-check card
   '55-prism-autointerp-cal.js',  // Build-up Surveillance (v3.3): GENERATED calibration table
-  // DFIT workstream files take 56 upwards (plan D25); only the lead edits this list.
+  '56-prism-dfit-core.js',       // DFIT (v3.4): pre-closure core (docs/DFIT-PLAN.md §3.5)
+  '57-prism-dfit-aca.js',        // DFIT (v3.4): after-closure, pipeline and results layer (§3.3a, §3.6)
+  '58-prism-dfit-leakoff.js',    // DFIT (v3.4): leak-off mini-model, history match, designer (§3.7)
+  '59-prism-dfit-ui.js',         // DFIT (v3.4): mode extension, step views, panels, plots, report (§3.8)
+  // DFIT owns 56-59 (docs/DFIT-PLAN.md §2.2); 3.4b adds its Round-8 files here by name. Only the lead edits this list.
 ];
 
 const ROOT = __dirname;
@@ -102,6 +106,10 @@ function build(opts) {
     '//   • 53-prism-autointerp  (automatic build-up interpretation engine, canon / hash16)\n' +
     '//   • 54-prism-skin        (skin decomposition, PI and skin products, Skin-check card)\n' +
     '//   • 55-prism-autointerp-cal (generated confidence-label calibration table)\n' +
+    '//   • 56-prism-dfit-core   (DFIT pre-closure core: events, G family, ISIP, closure, efficiency, geometry)\n' +
+    '//   • 57-prism-dfit-aca    (DFIT after-closure, pure pipeline, uncertainty, report model, hand-offs)\n' +
+    '//   • 58-prism-dfit-leakoff (DFIT leak-off mini-model, history match, designer, leak budget)\n' +
+    '//   • 59-prism-dfit-ui     (DFIT mode extension, step views, panels, plots, report sections)\n' +
     '// ═══════════════════════════════════════════════════════════════════════\n';
   let included = 0;
   for (const f of FILES) {

@@ -643,6 +643,20 @@ async function navTo(s, route) {
 // Views: what to sweep on each route
 // ─────────────────────────────────────────────────────────────────────────────
 // view = { name, scope, excl?, setup?(s), sweep? (default true), order? }
+const DFIT_S4 = ['aca', 'lk', 'unc', 'tell'];
+const DFIT_TOOLS = ['dfit-sandbox', 'dfit-designer', 'dfit-replay', 'dfit-hammer', 'dfit-notes'];
+// DFIT set-up (in the page): reference demo → setMode('dfit') → await ▶ Analyse, then `after` (a step, sub-view or tool)
+async function dfitSetup(s, after) {
+  await s.eval(async () => {
+    const U = window.PRiSM_dfit_ui;
+    if (!U) return;
+    U.loadDemo('reference');
+    if (window.PRiSM && typeof window.PRiSM.setMode === 'function') window.PRiSM.setMode('dfit');
+    try { await window.PRiSM_dfit_analyse(); } catch (e) { /* reported by the sweep's error capture */ }
+  });
+  await sleep(600);
+  if (after) { await after(s); await sleep(500); }
+}
 function viewsFor(route) {
   const main = { name: 'main', scope: '#pgBody' };
   const exp = { name: 'export', scope: '#exportBtns', slow: true };
@@ -654,6 +668,14 @@ function viewsFor(route) {
     for (let t = 1; t <= 7; t++) v.push({ name: 'tab' + t, scope: '#pgBody', setup: async (s) => { await s.eval((n) => { const b = document.querySelector('[data-prism-tab="' + n + '"]'); if (b) b.click(); }, t); await sleep(500); } });
     for (let st = 1; st <= 5; st++) v.push({ name: 'step' + st, scope: '#pgBody', setup: async (s) => { await s.eval((n) => { if (window.PRiSM_gotoStep) window.PRiSM_gotoStep(n); }, st); await sleep(500); } });
     v.push({ name: 'tools', scope: '#prism_tools_drawer', setup: async (s) => { await s.eval(() => { if (window.PRiSM_openTools) window.PRiSM_openTools(); }); await sleep(500); } });
+    // DFIT workspace mode (docs/DFIT-PLAN.md §7.14): each view loads the reference demo, enters DFIT mode and waits for
+    // ▶ Analyse, so result controls exist; steps ①–⑤, the four step-④ sub-views and every DFIT Tools entry.
+    for (let st = 1; st <= 5; st++) v.push({ name: 'dfit-step' + st, scope: '#pgBody', setup: (s) => dfitSetup(s, (x) => x.eval((n) => { if (window.PRiSM_gotoStep) window.PRiSM_gotoStep(n); }, st)) });
+    DFIT_S4.forEach((t) => v.push({ name: 'dfit-s4-' + t, scope: '#pgBody', setup: (s) => dfitSetup(s, async (x) => {
+      await x.eval(() => { if (window.PRiSM_gotoStep) window.PRiSM_gotoStep(4); }); await sleep(300);
+      await x.eval((k) => { const b = document.getElementById('prism_dfit_s4_' + k); if (b) b.click(); }, t);
+    }) }));
+    DFIT_TOOLS.forEach((id) => v.push({ name: 'dfit-tool-' + id, scope: '#prism_tools_drawer', setup: (s) => dfitSetup(s, (x) => x.eval((k) => { if (window.PRiSM_openTools) window.PRiSM_openTools(k); }, id)) }));
     v.push(exp);
     return v;
   }
@@ -989,6 +1011,7 @@ async function passJob(browser, name, routes, opts) {
     for (const r of routes) {
       try {
         await navTo(s, r);
+        if (opts.afterNav) await opts.afterNav(s, r);
         eventsToFindings(await s.take(), { route: r, view: name, control: { label: '(' + name + ' render)' }, action: name + ' render' });
         if (opts.layout) {
           layoutFindings(r, 'phone ' + vp.width, await s.eval(() => window.__sweep.layout()));
@@ -1408,6 +1431,13 @@ function writeReport(meta) {
     jobs.push({ w: 20, name: 'phone layout', run: () => passJob(browser, 'phone', pageRoutes, { vp: PHONE, layout: true }) });
     jobs.push({ w: 20, name: 'metric', run: () => passJob(browser, 'metric', pageRoutes, { tokens: true, imperial: true, label: 'Metric', before: async (s) => { await s.page.click('#wts_units_metric'); await sleep(300); } }) });
     jobs.push({ w: 20, name: 'deccomma', run: () => passJob(browser, 'deccomma', pageRoutes, { tokens: true, label: 'decimal comma', before: async (s) => { await s.page.click('#wts_dec_comma'); await sleep(300); } }) });
+    // DFIT variants (§7.14): the same Metric / decimal-comma / phone passes on PRiSM in DFIT mode with the demo analysed
+    if (!ONLY.length || ONLY.includes('prism')) {
+      const dfitNav = async (s, r) => { if (r === 'prism') await dfitSetup(s); };
+      jobs.push({ w: 20, name: 'metric-dfit', run: () => passJob(browser, 'metric-dfit', ['prism'], { tokens: true, imperial: false, label: 'Metric (DFIT; field units by design, §7.15)', afterNav: dfitNav, before: async (s) => { await s.page.click('#wts_units_metric'); await sleep(300); } }) });
+      jobs.push({ w: 20, name: 'deccomma-dfit', run: () => passJob(browser, 'deccomma-dfit', ['prism'], { tokens: true, label: 'decimal comma (DFIT)', afterNav: dfitNav, before: async (s) => { await s.page.click('#wts_dec_comma'); await sleep(300); } }) });
+      jobs.push({ w: 20, name: 'phone-dfit', run: () => passJob(browser, 'phone-dfit', ['prism'], { vp: PHONE, layout: true, afterNav: dfitNav }) });
+    }
   }
   // PRiSM views are the long pole — split its view list across workers.
   for (const big of ['prism', 'wts']) {
