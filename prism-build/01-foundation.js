@@ -528,6 +528,46 @@ function PRiSM_registerTabPanel(n, spec) {
     return true;
 }
 
+// ── Workspace-mode extensions (generic; resolved at call time) ──
+// window.PRiSM_modeExt[key] = { label, … } adds a workspace mode next to the
+// built-in transient / decline / combined modes (docs: §3.12 of the DFIT
+// plan). Built-in keys are never taken from the registry.
+const PRiSM_BUILTIN_MODES = ['transient', 'decline', 'combined'];
+function PRiSM_modeExtFor(mode) {
+    if (typeof window === 'undefined' || typeof mode !== 'string' || PRiSM_BUILTIN_MODES.indexOf(mode) !== -1) return null;
+    const X = window.PRiSM_modeExt;
+    if (!X || typeof X !== 'object' || !Object.prototype.hasOwnProperty.call(X, mode)) return null;
+    const e = X[mode];
+    return (e && typeof e === 'object' && typeof e.label === 'string' && e.label) ? e : null;
+}
+function PRiSM_modeExtKeys() {
+    const X = (typeof window !== 'undefined') ? window.PRiSM_modeExt : null;
+    if (!X || typeof X !== 'object') return [];
+    return Object.keys(X).filter(k => !!PRiSM_modeExtFor(k));
+}
+function PRiSM_activeModeExt() {
+    const P = (typeof window !== 'undefined') ? window.PRiSM : null;
+    return PRiSM_modeExtFor(P && P.mode);
+}
+// C7 mode filter: in an ext mode a panel mounts only when ext.showsPanel(n,
+// spec) is true (default: spec.modes lists the mode or the id is in
+// ext.panelAllow); in a built-in mode a spec whose modes list leaves the
+// mode out is skipped. Specs without modes mount as before.
+function PRiSM_panelModeAllows(n, spec) {
+    const P = (typeof window !== 'undefined') ? window.PRiSM : null;
+    const mode = (P && typeof P.mode === 'string') ? P.mode : 'transient';
+    const ext = PRiSM_modeExtFor(mode);
+    if (ext) {
+        if (typeof ext.showsPanel === 'function') {
+            try { return !!ext.showsPanel(n, spec); } catch (e) { return false; }
+        }
+        if (Array.isArray(spec.modes) && spec.modes.indexOf(mode) !== -1) return true;
+        return Array.isArray(ext.panelAllow) && ext.panelAllow.indexOf(String(spec.id)) !== -1;
+    }
+    if (Array.isArray(spec.modes)) return spec.modes.indexOf(mode) !== -1;
+    return true;
+}
+
 // Collapsed/expanded choice per "tab:id", kept for the session.
 const PRiSM_panelCollapsed = {};
 
@@ -559,6 +599,7 @@ function PRiSM_mountTabPanels(n) {
             try { show = !!spec.when(); } catch (e) { show = false; }
             if (!show) return;
         }
+        if (!PRiSM_panelModeAllows(n, spec)) return;
         const id = String(spec.id);
         const safe = id.replace(/[^A-Za-z0-9_-]/g, '_');
         const key = n + ':' + id;
@@ -692,7 +733,23 @@ const PRiSM_SHELL = (function () {
         { tab: 6, label: 'Regression' }
     ];
     const STEP_FOR_TAB = { 1: 1, 2: 3, 3: 4, 4: 4, 5: 4, 6: 4, 7: 5 };
-    const MODES = ['transient', 'decline', 'combined'];
+    const MODES = PRiSM_BUILTIN_MODES;
+    const modes = () => MODES.concat(PRiSM_modeExtKeys());
+    const extOf = (m) => PRiSM_modeExtFor(m);
+    const curExt = () => extOf(hasWin() && window.PRiSM ? window.PRiSM.mode : null);
+    // ext.stepView[n] → the renderer of step n (into #prism_stepview), else null
+    const extStepView = (n, ext) => {
+        ext = ext === undefined ? curExt() : ext;
+        const sv = ext && ext.stepView;
+        return (sv && typeof sv[n] === 'function') ? sv[n] : null;
+    };
+    function stepLabel(n, ext) {
+        ext = ext === undefined ? curExt() : ext;
+        const v = ext && ext.steps ? ext.steps[n] : null;
+        if (typeof v === 'string' && v) return v;
+        if (v && typeof v === 'object' && typeof v.label === 'string' && v.label) return v.label;
+        return STEPS[n].label;
+    }
     const TEST_TYPES = ['auto', 'drawdown', 'buildup', 'injection', 'falloff'];
     const TEST_LABELS = { auto: 'Auto-detect', drawdown: 'Drawdown', buildup: 'Buildup', injection: 'Injection',
                           falloff: 'Falloff', rate: 'Rate only (decline)', combined: 'Pressure + rate' };
@@ -723,6 +780,12 @@ const PRiSM_SHELL = (function () {
     }
 
     function tabForStep(n, P) {
+        const ext = curExt();
+        if (ext) {
+            if (extStepView(n, ext)) return null;
+            const et = ext.tabs ? parseInt(ext.tabs[n], 10) : NaN;
+            if (et >= 1 && et <= 7) return et;
+        }
         if (n === 4) return (P && [3, 4, 5, 6].indexOf(P.sub4) !== -1) ? P.sub4 : 3;
         return STEPS[n] ? STEPS[n].tab : null;
     }
@@ -732,13 +795,17 @@ const PRiSM_SHELL = (function () {
         if (!hasWin()) return { mode: 'transient', tab: 1, step: 1, sub4: 3, multiRate: [] };
         let P = window.PRiSM;
         if (!P || typeof P !== 'object') P = window.PRiSM = {};
-        if (MODES.indexOf(P.mode) === -1) P.mode = 'transient';
+        if (modes().indexOf(P.mode) === -1) P.mode = 'transient';
         let t = parseInt(P.tab, 10);
         if (!(t >= 1 && t <= 7)) t = 1;
         P.tab = t;
         let s = parseInt(P.step, 10);
         if (!(s >= 1 && s <= 5)) s = STEP_FOR_TAB[t];
-        if (s !== 2 && STEP_FOR_TAB[t] !== s) s = STEP_FOR_TAB[t];
+        const ext = extOf(P.mode);
+        if (ext) {
+            // ext mode: keep a step that has a step view; else the step of the tab
+            if (!extStepView(s, ext) && tabForStep(s, P) !== t) s = stepForTabExt(t, ext);
+        } else if (s !== 2 && STEP_FOR_TAB[t] !== s) s = STEP_FOR_TAB[t];
         P.step = s;
         if ([3, 4, 5, 6].indexOf(P.sub4) === -1) P.sub4 = (t >= 3 && t <= 6) ? t : 3;
         if (!Array.isArray(P.multiRate)) P.multiRate = [];
@@ -761,6 +828,13 @@ const PRiSM_SHELL = (function () {
         if (typeof P.getState !== 'function') P.getState = function () { return getState(); };
         if (typeof P.gotoStep !== 'function') P.gotoStep = function (n, o) { return gotoStep(n, o); };
         return P;
+    }
+
+    function stepForTabExt(t, ext) {
+        if (ext && ext.tabs) {
+            for (let n = 1; n <= 5; n++) if (parseInt(ext.tabs[n], 10) === t && !extStepView(n, ext)) return n;
+        }
+        return STEP_FOR_TAB[t];
     }
 
     function getState() {
@@ -859,10 +933,11 @@ const PRiSM_SHELL = (function () {
     function markup(P) {
         const steps = [1, 2, 3, 4, 5].map(n => {
             const s = STEPS[n];
+            const lbl = stepLabel(n);
             return '<button type="button" class="prism-step" id="prism_step_btn_' + n + '" data-prism-step="' + n + '"' +
-                   ' title="' + PRiSM_escHTML(s.label) + '">' +
+                   ' title="' + PRiSM_escHTML(lbl) + '">' +
                    '<span class="prism-step-num" aria-hidden="true">' + s.num + '</span>' +
-                   '<span class="prism-step-label">' + PRiSM_escHTML(s.label) + '</span>' +
+                   '<span class="prism-step-label">' + PRiSM_escHTML(lbl) + '</span>' +
                    '<span class="prism-step-tick" id="prism_step_tick_' + n + '"></span></button>';
         }).join('');
         const sub = SUBTABS.map(t =>
@@ -870,6 +945,8 @@ const PRiSM_SHELL = (function () {
         ).join('');
         const tt = ['auto', 'drawdown', 'buildup', 'injection', 'falloff', 'rate', 'combined'].map(v =>
             '<option value="' + v + '">' + PRiSM_escHTML(TEST_LABELS[v]) + '</option>'
+        ).join('') + PRiSM_modeExtKeys().map(k =>
+            '<option value="' + PRiSM_escHTML(k) + '">' + PRiSM_escHTML(extOf(k).label) + '</option>'
         ).join('');
         let tabs = '';
         for (let i = 1; i <= 7; i++) {
@@ -905,6 +982,8 @@ const PRiSM_SHELL = (function () {
             '<div class="prism-workspace" id="prism_workspace">' +
               '<div class="tabs prism-subtabs" id="prism_tabs" role="tablist" aria-label="Model and fit" style="display:none;">' + sub + '</div>' +
               '<div id="prism_step2" class="prism-stepview" style="display:none;"></div>' +
+              // generic step-view host, only in a workspace mode (built-in markup unchanged)
+              (curExt() ? '<div id="prism_stepview" class="prism-stepview" style="display:none;"></div>' : '') +
               tabs +
             '</div>' +
             '<div class="prism-railwrap" id="prism_railwrap">' +
@@ -1009,7 +1088,7 @@ const PRiSM_SHELL = (function () {
         }
         if (!shellPresent()) return;
         const P = state();
-        if (P.step === 2 && (t === 'prism:dataset-loaded' || t === 'prism:dataset-cleared') &&
+        if (P.step === 2 && !extStepView(2) && (t === 'prism:dataset-loaded' || t === 'prism:dataset-cleared') &&
             !(hasWin() && window.PRiSM_stepViews && typeof window.PRiSM_stepViews[2] === 'function')) {
             renderStep2();
         }
@@ -1077,6 +1156,16 @@ const PRiSM_SHELL = (function () {
 
     function stepStatus(snap) {
         snap = snap || snapshot();
+        const ext = curExt();
+        if (ext && typeof ext.status === 'function') {
+            let r = null;
+            try { r = ext.status(snap); } catch (e) { r = null; }
+            if (r && typeof r === 'object') {
+                const o = {};
+                for (let n = 1; n <= 5; n++) o[n] = (n === 5 && r[5] === undefined) ? true : !!r[n];
+                return o;
+            }
+        }
         const s = { 1: snap.has, 2: false, 3: false, 4: false, 5: true };
         if (snap.has) {
             s[2] = snap.activePeriod != null || snap.nPeriods <= 1;
@@ -1119,6 +1208,7 @@ const PRiSM_SHELL = (function () {
         const P = state();
         if (P.mode === 'decline') return 'rate';
         if (P.mode === 'combined') return 'combined';
+        if (extOf(P.mode)) return P.mode;
         return storedTestType(snap);
     }
 
@@ -1130,7 +1220,7 @@ const PRiSM_SHELL = (function () {
 
     function compactLabel(n) {
         const s = STEPS[n];
-        return s.num + ' ' + s.label + ' · ' + n + '/5' + (n < 5 ? ' ›' : '');
+        return s.num + ' ' + stepLabel(n) + ' · ' + n + '/5' + (n < 5 ? ' ›' : '');
     }
 
     function fmtNum(v) {
@@ -1160,7 +1250,7 @@ const PRiSM_SHELL = (function () {
         const compact = byId('prism_step_compact');
         if (compact) {
             compact.textContent = compactLabel(P.step);
-            compact.setAttribute('aria-label', 'Step ' + P.step + ' of 5, ' + STEPS[P.step].label + (P.step < 5 ? '. Go to the next step' : '. Go to step 1'));
+            compact.setAttribute('aria-label', 'Step ' + P.step + ' of 5, ' + stepLabel(P.step) + (P.step < 5 ? '. Go to the next step' : '. Go to step 1'));
         }
         const hist = (fnName, canName, id) => {
             const b = byId(id);
@@ -1187,7 +1277,7 @@ const PRiSM_SHELL = (function () {
             if (active) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
             const tick = byId('prism_step_tick_' + n);
             if (tick) tick.textContent = (n < 5 && done[n]) ? '✓' : '';
-            b.title = STEPS[n].label + (n < 5 ? (done[n] ? ' — done' : ' — to do') : '');
+            b.title = stepLabel(n) + (n < 5 ? (done[n] ? ' — done' : ' — to do') : '');
         }
     }
 
@@ -1241,11 +1331,19 @@ const PRiSM_SHELL = (function () {
             }
             return;
         }
+        const ext = curExt();
+        if (ext && typeof ext.rail === 'function') {
+            try { ext.rail(rail); return; } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode rail failed:', e); }
+        }
         fallbackRail(rail, snap || snapshot());
     }
 
-    function refresh() {
+    function refresh(opts) {
         if (!shellPresent()) return;
+        if (opts && opts.stepView) {
+            const P0 = state();
+            if (extStepView(P0.step)) renderStepView(P0.step);
+        }
         if (refreshing) { refreshAgain = true; return; }
         const railNow = byId('prism_rail');
         if (railNow && isNarrow() !== railNow.classList.contains('prism-rail--sheet')) applyViewport();
@@ -1274,11 +1372,15 @@ const PRiSM_SHELL = (function () {
             const p = byId('prism_tab_' + i + '_panels');
             if (p) p.style.display = (i === tab) ? '' : 'none';
         }
+        const ext = curExt();
+        const sv = extStepView(n, ext);
         const s2 = byId('prism_step2');
-        if (s2) s2.style.display = (n === 2) ? 'block' : 'none';
+        if (s2) s2.style.display = (n === 2 && !sv && !tab) ? 'block' : 'none';
+        const hostV = byId('prism_stepview');
+        if (hostV) hostV.style.display = sv ? 'block' : 'none';
         const sub = byId('prism_tabs');
         if (sub) {
-            sub.style.display = (n === 4) ? 'flex' : 'none';
+            sub.style.display = (n === 4 && !ext) ? 'flex' : 'none';
             const btns = sub.querySelectorAll ? sub.querySelectorAll('[data-prism-tab]') : [];
             Array.prototype.forEach.call(btns, b => {
                 const on = parseInt(b.getAttribute('data-prism-tab'), 10) === tab;
@@ -1286,6 +1388,26 @@ const PRiSM_SHELL = (function () {
                 b.setAttribute('aria-selected', on ? 'true' : 'false');
             });
         }
+    }
+
+    // ext step views render into #prism_stepview (any step n)
+    function renderStepView(n) {
+        const host = byId('prism_stepview');
+        const fn = extStepView(n);
+        if (!host || !fn) return false;
+        try { fn(host); }
+        catch (e) {
+            if (typeof console !== 'undefined') console.warn('PRiSM step view ' + n + ' failed:', e);
+            PRiSM_renderTabError(host, 0, e);
+            const title = host.querySelector ? host.querySelector('.card-title') : null;
+            if (title) title.textContent = stepLabel(n) + ' could not be displayed';
+        }
+        return true;
+    }
+    function renderStepHost(n, tab) {
+        if (extStepView(n)) renderStepView(n);
+        else if (tab) PRiSM_renderTab(tab);
+        else renderStep2();
     }
 
     function renderStep2() {
@@ -1348,8 +1470,7 @@ const PRiSM_SHELL = (function () {
         closeMenu();
         if (!shellPresent()) return true;
         showStep(n, tab);
-        if (tab) PRiSM_renderTab(tab);
-        else renderStep2();
+        renderStepHost(n, tab);
         const before = refreshCount;
         PRiSM_emit('prism:step-changed', { step: n, prev: prev, tab: tab });
         if (refreshCount === before) refresh();   // no listener reached (e.g. events unavailable)
@@ -1363,11 +1484,20 @@ const PRiSM_SHELL = (function () {
     }
 
     function setMode(m) {
-        if (MODES.indexOf(m) === -1) return false;
+        if (modes().indexOf(m) === -1) return false;
         const P = state();
-        const changed = P.mode !== m;
+        const prev = P.mode;
+        const changed = prev !== m;
+        const prevExt = changed ? extOf(prev) : null;
+        if (prevExt && typeof prevExt.onLeave === 'function') {
+            try { prevExt.onLeave(m); } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode onLeave failed:', e); }
+        }
         P.mode = m;
         if (body && body.querySelector && body.querySelector('#prism_shell')) renderPRiSM(body);
+        const ext = changed ? extOf(m) : null;
+        if (ext && typeof ext.onEnter === 'function') {
+            try { ext.onEnter(prev); } catch (e) { if (typeof console !== 'undefined') console.warn('PRiSM mode onEnter failed:', e); }
+        }
         if (changed) PRiSM_emit('prism:mode-changed', { mode: m });
         return true;
     }
@@ -1376,6 +1506,7 @@ const PRiSM_SHELL = (function () {
         const P = state();
         if (v === 'rate') { setMode('decline'); return; }
         if (v === 'combined') { setMode('combined'); return; }
+        if (extOf(v)) { setMode(v); return; }
         if (TEST_TYPES.indexOf(v) === -1) return;
         if (typeof window.PRiSM_setWell === 'function') {
             try { window.PRiSM_setWell({ testType: v }, { source: 'user' }); }
@@ -1397,6 +1528,14 @@ const PRiSM_SHELL = (function () {
             if (r && typeof r.then === 'function') {
                 r.then(() => refresh(), (e) => { setStatus('Analysis failed: ' + (e && e.message ? e.message : e), 'bad'); refresh(); });
             } else refresh();
+            return;
+        }
+        const ext = curExt();
+        if (ext && typeof ext.analyse === 'function') {
+            let r2;
+            try { r2 = ext.analyse({}); }
+            catch (e) { setStatus('Analysis failed: ' + (e && e.message ? e.message : e), 'bad'); return; }
+            if (r2 && typeof r2.then === 'function') r2.then(() => refresh(), () => refresh()); else refresh();
             return;
         }
         // Without the one-click pipeline, open the regression view.
@@ -1441,6 +1580,13 @@ const PRiSM_SHELL = (function () {
         if (typeof W.PRiSM_exportCSV === 'function') items.push({ label: 'Results as CSV', run: () => W.PRiSM_exportCSV() });
         if (typeof W.PRiSM_exportPlotPNG === 'function') items.push({ label: 'Current plot as PNG', run: () => W.PRiSM_exportPlotPNG(st.activePlot || 'bourdet') });
         if (typeof W.PRiSM_exportXMLDownload === 'function') items.push({ label: 'Data and results as XML', run: () => W.PRiSM_exportXMLDownload() });
+        // ext mode: its own export items [{id, label, fn}] after the built-in ones
+        const ext = curExt();
+        if (ext && Array.isArray(ext.exportItems)) {
+            ext.exportItems.forEach(x => {
+                if (x && typeof x.fn === 'function' && x.label) items.push({ label: String(x.label), run: () => x.fn() });
+            });
+        }
         return items;
     }
 
@@ -1530,8 +1676,7 @@ const PRiSM_SHELL = (function () {
         // and their persistence exist whichever step is open.
         if (tab !== 1) PRiSM_renderTab(1, { silent: true });
         showStep(P.step, tab);
-        if (tab) PRiSM_renderTab(tab);
-        else renderStep2();
+        renderStepHost(P.step, tab);
         refresh();
     }
 
@@ -1562,7 +1707,11 @@ if (typeof window !== 'undefined') {
     window.PRiSM_gotoStep = function (n, opts) { return PRiSM_SHELL.gotoStep(n, opts); };
     window.PRiSM_currentStep = function () { return PRiSM_SHELL.currentStep(); };
     window.PRiSM_stepStatus = function () { return PRiSM_SHELL.stepStatus(); };
-    window.PRiSM_refreshShell = function () { return PRiSM_SHELL.refresh(); };
+    window.PRiSM_refreshShell = function (opts) { return PRiSM_SHELL.refresh(opts); };
+    window.PRiSM_activeModeExt = PRiSM_activeModeExt;
+    window.PRiSM_modeExtFor = PRiSM_modeExtFor;
+    window.PRiSM_panelModeAllows = PRiSM_panelModeAllows;
+    window.PRiSM_modes = function () { return PRiSM_BUILTIN_MODES.concat(PRiSM_modeExtKeys()); };
 }
 
 

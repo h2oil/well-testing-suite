@@ -3465,6 +3465,7 @@ function _rtPrismFit() {
 }
 // Cheap check (the picker preview): would the PRiSM fragment be produced?
 function _rtPrismReady() {
+    if (typeof window.PRiSM_reportReady === 'function') return window.PRiSM_reportReady();
     const _pst = window.PRiSM_state || {};
     return !!((_rtPrismFit() || (_pst.model && window.PRiSM_dataset)) && typeof window.PRiSM_buildReportHTML === 'function');
 }
@@ -3475,6 +3476,8 @@ function _rtPrism() {
     if(_rtPrismReady()) {
         try { html = window.PRiSM_buildReportHTML() || ''; } catch(e) { html = ''; }
     }
+    const _kl = (typeof window.PRiSM_reportKeyLine === 'function') ? window.PRiSM_reportKeyLine() : '';
+    if (_kl) return { html, key: _kl };
     const _pNum = (v, d) => (typeof v === 'number' && isFinite(v)) ? v.toFixed(d) : null;
     const _pPhys = (_pFit && _pFit.phys) || {};
     const key = [_pNum(_pPhys.k, 1) != null ? 'k = ' + _pNum(_pPhys.k, 1) + ' md' : '', _pNum(_pPhys.S, 2) != null ? 'S = ' + _pNum(_pPhys.S, 2) : '']
