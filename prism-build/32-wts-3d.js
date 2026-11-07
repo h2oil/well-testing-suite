@@ -853,7 +853,8 @@ function normalize(state, out) {
   sb.dest = SB.dest === 'line' ? 'line' : 'flare'; sb.P = num(SB.P_psig, 150); sb.P0 = num(SB.P0_psig, sb.dest === 'line' ? sb.P : 5);
   sb.active = N.rig.separator === false; sb.vent = sb.active && sb.dest === 'line' && N.rig.flare === false;
   N.rigKey = rigKeyOf(N.rig, sb.dest);
-  // CK-102: in the rig-up, in line (active), or bypassed with H-101 (heater bypass or H-101 out — greyed, not hidden)
+  // CK-102: in the rig-up, in line (active), or greyed while bypassed with H-101 (heater bypass; with H-101 out the engine
+  // takes CK-102 out of the rig-up, RIG_NOTES.heaterChokeNeedsHeater, so it is hidden — !N.rig.heater only guards odd snapshots)
   var HC = ND.heaterChoke || {}, c2 = N.ck2;
   c2.inRig = N.rig.heaterChoke; c2.bypassed = c2.inRig && (HC.bypassed === true || ip.bypass || !N.rig.heater);
   c2.active = c2.inRig && !c2.bypassed && HC.active !== false; c2.pos = HC.pos === 'midcoil' ? 'midcoil' : 'inlet';
@@ -911,7 +912,7 @@ function saw(t, period, upFrac) {    // 0→1 over upFrac·period, back to 0 ove
   return ph < upFrac ? { v:ph / upFrac, up:true } : { v:1 - (ph - upFrac) / (1 - upFrac), up:false };
 }
 // ── v1.3.0 pure view rules (Node-testable; the frame loop reads them) ──
-// CK-102 look per frame: grey 1 while bypassed with H-101 (heater bypass / H-101 out), frost 1 while in line with its outlet in
+// CK-102 look per frame: grey 1 while bypassed with H-101 (heater bypass; the engine takes CK-102 out with H-101), frost 1 while in line with its outlet in
 // the hydrate region, handwheel target bean2/64 × 6π (as CK-101); null while CK-102 is out of the rig-up (nothing is built)
 function ck2Look(n) {
   if (!n || !n.ck2 || !n.ck2.inRig) return null;
@@ -919,14 +920,21 @@ function ck2Look(n) {
   return { grey:n.ck2.bypassed ? 1 : 0, frost:n.ck2.active && hn.hyd ? 1 : 0, wheel:clamp(num(hn.bean, 0), 0, 128) / 64 * 6 * Math.PI };
 }
 // well-stream rates for the multiphase display colour: the inputs, or while a cushion unloads the cushion water plus the gas
-// (formation oil / water join at breakthrough) — the cushion has no geometry, only the stream colour follows it (§8.1)
+// (formation oil / water join at breakthrough) — the cushion has no geometry, only the stream colour follows it (§8.1).
+// While unloading every term is an actual rate (inputs × flow fraction f, cushion water as reported): the gas is the well-stream
+// gas, never the flare meter (that is 0 with V-101 out to the production line)
 function streamRates(n, out) {
   out = out || { g:0, o:0, w:0 };
-  var c = n.cush, cq = c && c.on && c.q > 0, br = cq && c.tBreak >= 0;
-  out.g = cq ? Math.max(0, num(n.rates.gas_mmscfd, 0)) : n.inp.Qg;
-  out.o = cq ? (br ? n.inp.Qo : 0) : n.inp.Qo;
-  out.w = cq ? (br ? n.inp.Qw : 0) + c.q : n.inp.Qw;
+  var c = n.cush, cq = c && c.on && c.q > 0, br = cq && c.tBreak >= 0, f = Math.max(0, num(n.f, 1));
+  out.g = cq ? n.inp.Qg * f : n.inp.Qg;
+  out.o = cq ? (br ? n.inp.Qo * f : 0) : n.inp.Qo;
+  out.w = cq ? (br ? n.inp.Qw * f : 0) + c.q : n.inp.Qw;
   return out;
+}
+// flare gas the 3D shows (flame length, FS-401 chip): 0 while V-101 is out to the production line — the whole well stream goes
+// to the line and nothing reaches the flare (§8.1 'the flame stays off'), the engine's flare node otherwise
+function flareQ(n) {
+  return n.sepBy && n.sepBy.active && n.sepBy.dest === 'line' ? 0 : Math.max(0, num(n.nodes.flare.qMMscfd, 0));
 }
 // snap.cushion for fakeSnapshot: off (all zeros, phase 'off'), or a phase with illustrative numbers (D7 defaults)
 var CUSH_PHASES = ['off', 'unloading', 'stalled', 'breakthrough', 'tail', 'done'];
@@ -956,7 +964,7 @@ function fakeSnapshot(t, o) {
   var ck2In = o.heaterChoke === true, ck2Act = ck2In && !bypass, ck2Pos = o.pos === 'midcoil' ? 'midcoil' : 'inlet';
   var sepOut = o.sepOut === true, dest = o.dest === 'line' ? 'line' : 'flare', lineP = num(o.P, 150), flareOut = sepOut && dest === 'line' && o.flareOut === true;
   var Pco = Psep + (157.66 - 150) * fi * fi, Pci = f > 0.01 ? Pwh - (3000 - 2999.26) * fi * fi : Psep;
-  var Pck2o = Pco, Pm = Psep + (1135.12 - 150) * fi * fi;                // CK-102 at 48/64 (ANCHORS_CK2): CK-101 discharges at Pm + seg-3 loss
+  var Pck2o = Psep + (156.01 - 150) * fi * fi, Pm = Psep + (1135.12 - 150) * fi * fi;                // CK-102 at 48/64 (ANCHORS_CK2): CK-101 discharges at Pm + seg-3 loss
   if (ck2Act) Pco = Pm + 0.25 * fi * fi;
   var bucket = saw(t, 124, 0.75), iface = saw(t + 300, 1260, 0.75);
   var bfrac = f > 0.01 ? 0.20 + 0.25 * bucket.v : 0.22;
@@ -1016,7 +1024,7 @@ function fakeSnapshot(t, o) {
       wellhead:{ tag:'WH-101', P:Pwh, T:180, th:75.14, hyd:false },
       esd:{ tag:'SDV-101', P:dsIn ? dsPin : (f > 0.01 ? Pwh - 0.25 * fi * fi : Pwh * 0.5 + Psep * 0.5), T:180, th:75.14, hyd:false },
       choke:{ tag:'CK-101', P:Pco, Pin:Pci, T:bypass ? 58 : (ck2Act ? 107.02 : 68.74), th:36.59, hyd:bypass, regime:f < 0.01 ? 'No Flow' : 'Critical', bean:bean, flowLimited:false, QmaxMMscfd:10.71, dTjt:f < 0.01 ? 0 : (ck2Act ? 72.98 : 111.3) },
-      heater:{ tag:'H-101', P:Psep + 1.01 * fi * fi, T:bypass ? 58 : 150, Tin:bypass ? 58 : 68.74, th:36.06, hyd:bypass, bypass:bypass, dutyMMBtuHr:bypass ? 0 : 2.103 * f, firing:bypass ? 0 : clamp(f, 0, 1) },
+      heater:{ tag:'H-101', P:Psep + 1.01 * fi * fi, T:bypass ? 58 : 150, Tin:bypass ? 58 : (ck2Act ? (ck2Pos === 'midcoil' ? 107.02 : 68.68) : 68.74), th:36.06, hyd:bypass, bypass:bypass, dutyMMBtuHr:bypass ? 0 : 2.103 * f, firing:bypass ? 0 : clamp(f, 0, 1) },
       separator:{ tag:'V-101', P:Psep, T:bypass ? 60 : 149.997, th:35.98, hyd:false },
       flare:{ tag:'FS-401', P:5, Pline:Psep - 1.674 * f * f, T:149.99, qMMscfd:gasFlare, flame:clamp(Math.sqrt(gasFlare / 10), 0, 1.5) },
       surge:{ tag:'T-201', P:25 + 0.8 * nz(19, 43), T:149.997 },
@@ -2510,6 +2518,7 @@ function buildScene(F, renderer, tier, env, rig, dest) {
       if (!OFF[g]) return;
       if (g === 'surge' && OFF.separator) return;                    // nothing reaches the tanks without the separator
       if (g === 'gauge' && OFF.surge) return;                        // (no surge tank: the separator spool feeds the fill line)
+      if (g === 'flare' && OFF.separator && S.sepDest === 'line') return;   // LINE_SPOOL already runs the export spool to the tie-in
       var pts = g === 'separator' && S.sepDest === 'line' ? LINE_SPOOL : BYPASS_SPOOLS[g];
       for (var i = 0; i < pts.length - 1; i++) add('yellow', F.cylAB(pts[i], pts[i + 1], rS, 12));
       for (i = 0; i < pts.length; i++) add('yellow', F.place(new THREE.SphereGeometry(rS * 1.25, 12, 8), pts[i][0], pts[i][1], pts[i][2]));
@@ -2931,7 +2940,7 @@ function clearancePrims(rig, dest) {
     var line = dest === 'line';
     caps('V-101 bypass spool', line ? LINE_SPOOL : BYPASS_SPOOLS.separator, 0.12, true);
     cp(SPOOL_PRIMS.pshh104); if (line) SPOOL_PRIMS.line.forEach(cp);
-    if (!rigIn(rig, 'flare')) caps('export spool', BYPASS_SPOOLS.flare, 0.12, false);
+    if (!rigIn(rig, 'flare') && !line) caps('export spool', BYPASS_SPOOLS.flare, 0.12, false);   // ('line': LINE_SPOOL covers that run)
   }
   return out;
 }
@@ -3420,7 +3429,7 @@ function createHandle(THREE, container, opts) {
             'Oil dump', FV(sp.oil.q_bpd, 'liquidRate'), 'Water dump', FV(sp.wat.q_bpd, 'liquidRate'), 'Residence', sp.tRes_min < 9000 ? fmtNum(sp.tRes_min, 1) + ' min' : '—']);
           break;
         case 'flare':
-          slot(ch, nd.flare.qMMscfd, 'gasRate', 'P', nd.flare.P, 'pressureG', 'P', ' · ', nd.flare.qMMscfd < 0.01 ? 'PILOT' : '', 's');
+          slot(ch, flareQ(n), 'gasRate', 'P', nd.flare.P, 'pressureG', 'P', ' · ', flareQ(n) < 0.01 ? 'PILOT' : '', 's');
           setCls(ch.s0, ch.txt, 's0c', 'l');
           if (t2) rows(ch, ['Line P (u/s hdr)', FV(nd.flare.Pline, 'pressureG'), 'Line velocity', Math.round(n.segs[4].vPct) + ' % of limit', 'Flared', FV(n.cum.flare_mmscf, 'gasVolume', 3)]
             .concat(n.sepBy.active && n.sepBy.dest === 'line' ? ['Well stream', 'to the production line (V-101 out)'] : []));
@@ -4218,7 +4227,7 @@ function createHandle(THREE, container, opts) {
   // ── flare ───────────────────────────────────────────────────────────────
   var _right = new V3(), _up = new V3(0, 1, 0), _toCam = new V3();
   function updateFlame(dt, tNow, anim) {
-    var fl = S.dyn.flame, q = N.nodes.flare.qMMscfd, Lt = flameLength(q);
+    var fl = S.dyn.flame, q = flareQ(N), Lt = flameLength(q);
     fl.Lv = ease('flameL', Lt, dt, 1.2, snapNextLocal); var L = fl.Lv;
     fl.fph = (fl.fph + dt * 8 * anim) % 256; var flick = 0.85 + 0.15 * (0.5 + 0.5 * Math.sin(fl.fph) * Math.sin(fl.fph * 0.37 + 1.3)) * (reducedMotion ? 0.5 : 1);
     fl.ph = (fl.ph + dt * 1.7 * anim) % 6.2832; fl.scroll = (fl.scroll + dt * 2.4 * anim) % 256;
@@ -4799,7 +4808,7 @@ var _internals = {
   PROPS:PROPS, EXTRA_PIPES:EXTRA_PIPES, OPT_PRIMS:OPT_PRIMS, clearancePrims:clearancePrims, clearanceCheck:clearanceCheck, primGap:primGap,
   // v1.3.0 — CK-102 heater inlet choke, bypass destination, cushion (docs/SIM-FOLLOWUP-PLAN.md §8.1)
   OPT_IDS:OPT_IDS, CK2_AT:CK2_AT, CK2_BODY:CK2_BODY, LINE_SPOOL:LINE_SPOOL, TAG_PTS:TAG_PTS, SPOOL_PRIMS:SPOOL_PRIMS, rigKeyOf:rigKeyOf,
-  fakeCushion:fakeCushion, CUSH_PHASES:CUSH_PHASES, ck2Look:ck2Look, streamRates:streamRates
+  fakeCushion:fakeCushion, CUSH_PHASES:CUSH_PHASES, ck2Look:ck2Look, streamRates:streamRates, flareQ:flareQ, flameLength:flameLength
 };
 WTS_3d.version = VERSION;
 WTS_3d.THREE_URLS = ['https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',

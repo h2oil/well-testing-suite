@@ -744,12 +744,26 @@ const SECTION_B = (G /*, src */) => {
           const bad = [], n0 = I.normalize(I.fakeSnapshot(60), I.makeNorm()), r0 = I.streamRates(n0);
           if (!(r0.g === n0.inp.Qg && r0.o === n0.inp.Qo && r0.w === n0.inp.Qw && n0.cush.on === false)) bad.push('off ' + J(r0));
           const nu = I.normalize(I.fakeSnapshot(60, { cushion: 'unloading' }), I.makeNorm()), ru = I.streamRates(nu);
-          if (!(nu.cush.on && ru.o === 0 && ru.w === 1500 && ru.g === nu.rates.gas_mmscfd)) bad.push('unloading ' + J(ru));
-          const nt = I.normalize(I.fakeSnapshot(60, { cushion: 'tail' }), I.makeNorm()), rt = I.streamRates(nt);
-          if (!(rt.o === nt.inp.Qo && rt.w === nt.inp.Qw + nt.cush.q)) bad.push('tail ' + J(rt));
+          if (!(nu.cush.on && ru.o === 0 && ru.w === 1500 && ru.g === nu.inp.Qg * nu.f && ru.g > 0)) bad.push('unloading ' + J(ru));
+          // V-101 out to the production line: the flare meter reads 0, the stream colour still carries the well gas (same basis)
+          const nl = I.normalize(I.fakeSnapshot(600, { cushion: 'unloading', sepOut: true, dest: 'line' }), I.makeNorm()), rl = I.streamRates(nl);
+          if (!(nl.rates.gas_mmscfd === 0 && nl.sepBy.dest === 'line' && rl.g === nl.inp.Qg * nl.f && rl.g > 0 && rl.w === 1500 && rl.o === 0)) bad.push('line ' + J(rl));
+          const nf = I.normalize(I.fakeSnapshot(600, { cushion: 'unloading', sepOut: true, dest: 'flare' }), I.makeNorm()), rf = I.streamRates(nf);
+          if (rf.g !== rl.g) bad.push('line vs flare gas ' + rl.g + ' / ' + rf.g);
+          const nt = I.normalize(I.fakeSnapshot(60, { cushion: 'tail', flowFrac: 0.5 }), I.makeNorm()), rt = I.streamRates(nt);
+          if (!(rt.o === nt.inp.Qo * 0.5 && rt.w === nt.inp.Qw * 0.5 + nt.cush.q && rt.g === nt.inp.Qg * 0.5)) bad.push('tail ' + J(rt));
           const ns = I.normalize(I.fakeSnapshot(60, { cushion: 'stalled' }), I.makeNorm()), rs = I.streamRates(ns);
           if (!(rs.g === ns.inp.Qg && rs.w === ns.inp.Qw)) bad.push('stalled (no flow: inputs) ' + J(rs));
           const up = I.phaseFractions(ru.g, ru.o, ru.w, 3000, 180); if (!(up.w > up.o && up.o === 0)) bad.push('fractions ' + J(up));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.3.0: V-101 out to the production line — the flame stays off and the FS-401 chip reads PILOT, whatever the flare node says; the flare destination keeps the flame', () => {
+          const bad = [], st = I.fakeSnapshot(600, { sepOut: true, dest: 'line' }); st.nodes.flare.qMMscfd = 9.85;
+          const nl = I.normalize(st, I.makeNorm()); if (!(I.flareQ(nl) === 0 && I.flameLength(I.flareQ(nl)) === 0)) bad.push('line ' + I.flareQ(nl));
+          const nf = I.normalize(I.fakeSnapshot(600, { sepOut: true, dest: 'flare' }), I.makeNorm()); if (!(I.flareQ(nf) > 5 && I.flameLength(I.flareQ(nf)) > 1.5)) bad.push('flare ' + I.flareQ(nf));
+          const n0 = I.normalize(I.fakeSnapshot(600), I.makeNorm()); if (I.flareQ(n0) !== n0.nodes.flare.qMMscfd) bad.push('default');
+          const SRC32 = fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8');
+          if (!/q = flareQ\(N\)/.test(SRC32) || !/flareQ\(n\) < 0\.01 \? 'PILOT'/.test(SRC32)) bad.push('flame / chip not on flareQ');
           return bad.length === 0 || bad.join(', ');
         }],
         ['32 v1.3.0: fakeSnapshot carries the follow-up contract (nodes.heaterChoke / sepBy / cushion, strict) for every option; fakeFuSnapshot over it normalizes finite with the line-up it asks for', () => {
@@ -786,6 +800,7 @@ const SECTION_B = (G /*, src */) => {
           if (!(nb.ck2.bypassed && I.ck2Look(nb).grey === 1 && nb.rigKey === n.rigKey)) bad.push('heater bypass');
           s.setRigup({ separator: false }); if (typeof s.setConfig === 'function') s.setConfig({ sep: { bypass: { dest: 'line', P_psig: 300 } } }); s.advance(20); n = nrm();
           if (!(n.rigKey === '101111001|line' && n.sepBy.dest === 'line' && n.sepBy.P === 300)) bad.push('line ' + n.rigKey);
+          if (!(I.flareQ(n) === 0 && I.flameLength(I.flareQ(n)) === 0)) bad.push('line: flame on ' + I.flareQ(n));
           s.setRigup({ flare: false }); s.advance(10); n = nrm();
           if (!(n.rigKey === '101110001|line' && n.sepBy.vent)) bad.push('FS-401 out ' + n.rigKey);
           if (typeof s.setConfig === 'function') { s.setConfig({ sep: { bypass: { dest: 'flare' } } }); s.advance(10); n = nrm(); if (n.rigKey !== '101111001|flare') bad.push('back to flare ' + n.rigKey); }
