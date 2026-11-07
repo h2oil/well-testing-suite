@@ -1279,7 +1279,7 @@ function create(flowIn, opts) {
       oil_stb: oil, water_bbl: water, gov_bbl: gov, bsw_pct: oil < 1e-6 ? null : water / (oil + water) * 100,
       oilRate_stbd: oil / (hours / 24), waterRate_bpd: water / (hours / 24), gas_mscf: gasM,
       gor_scf_stb: oil < 1e-6 ? null : gasM * 1000 / oil, avgT: w.avgT, settled: !unsettled };
-    if (cushHas) cushBatch(b, w);                  // v1.5.0 (WP-E2, §6.3): a batch whose window w overlaps the cushion is tagged cushion:true
+    if (cushHas || lastCushWin) cushBatch(b, w);   // v1.5.0 (WP-E2, §6.3): a batch whose window w overlaps the cushion is tagged cushion:true
     batches.push(b); if (batches.length > 20) batches.shift();
     var p = { type: 'batch', t: X.t }; for (var kk in b) p[kk] = b[kk];
     emit('batch', p);
@@ -4046,7 +4046,7 @@ function create(flowIn, opts) {
   //   bypDerive(sel)               derive(), always     bypP0 / bypDP from sel (E2: Bg5, the P0-mismatch note)
   //   bypPDown(fg)                 pDown, sepByBlk      P0 + seg-5 loss · f² (E2: the cushion mixture-rate fraction cushFm)
   //   bypAccount(h, byG, byO, byW, qRel)  substep, bypLine || ventOn   line totals; relief / vent gas (qRel) to vent with ventOn
-  //   bypRefresh(s, fg)            refresh, sepByBlk    flare node Pline / flame / label, snap.sepBy.note
+  //   bypRefresh(s, fg)            refresh, sepByBlk    flare node P / Pline / flame, snap.sepBy.note
   //   bypFlareQ(qFl)               refresh, bypLine     flare-node gas (scf/s → N.flare.qMMscfd): byG goes to the line, and with
   //                                                     ventOn the relief / vent gas goes to vent (returns the flare share)
   //   bypVentHist(q)               histSample, ventOn   history qgFlare (MMscf/d) without the relief gas that goes to vent
@@ -4062,6 +4062,7 @@ function create(flowIn, opts) {
   //                                                     dutyMax = htrRatedFactor·duty_ss cap → lower n.T (HTR_FULL, D8 (3))
   //   cushTsep(T)                  algebraic, cushOn    separator temperature X.Tsep from the capped heater outlet (returns T)
   //   cushBatch(b, w)              recordBatch, cushHas a gauge-tank batch b (window w) closed: tag b.cushion = true when w
+  //                                or lastCushWin    overlaps the cushion or a stopped one's window (note (7))
   //                                                     overlaps the cushion (§6.3; before the batch is stored / emitted)
   //   cushAlarms()                 processAlarms, cushOn CUSH_LIMIT, CUSH_NOLIFT, CUSH_BURNER, CUSH_DUMP, HTR_FULL
   //   cushBalance(op, o)           zeroCum ('zero', o = cum) / setRef ('ref', o = ref)
@@ -4083,6 +4084,11 @@ function create(flowIn, opts) {
   //       chatter on its own hysteresis.
   //   (5) No N.flare.label: nodes.flare keeps its v1.4.0 keys (the frozen snapshot shape); the views name the destination from
   //       snap.sepBy.dest (LABELS.flareCardLine).
+  //   (6) Before breakthrough the main-slug target is capped at (V − Vprod − τf·qDel)/τf, so ∫qDel dt never passes V when the
+  //       tail V·tailFrac is smaller than the in-flight volume τf·qDel (tailFrac 0, a small V at a high rate); breakthrough is
+  //       then declared once that remainder falls to 10⁻³·V, and the tail delivers the rest.
+  //   (7) A gauge batch is tagged against the last cushion window lastCushWin {tStart, tEnd}: stopCushion() closes it at the
+  //       stop time, so a batch that closes after a stop is still tagged; the window is cleared by reset only.
   var cushS = { phase: 'off', V: 0, SG: 1, qSet: 0, cap: 0, depth: 0, Gr: 0, gasFrac: 0, tailFrac: 0, tailTau: 0, breakTau: 0, Vmain: 0, Vtail: 0,
     Vprod: 0, qNow: 0, qDel: 0, fUnload: 0, WHPcol: 0, wJTc: 0, wJTe: 1, tStart: 0, tBreak: null, tPhase: 0, out: { flare: 0, line: 0, sep: 0 },
     // WP-E2 working values: delivered rate of the substep (bbl/s), liquid cap (bbl/d), column (ft), blend w, SIT / floor / WHP
@@ -4091,6 +4097,7 @@ function create(flowIn, opts) {
     qIn: 0, qLcap: 0, hc: 0, w: 0, SIT: 0, floor: 0, WHPtgt: 0, Bgwh: 0, qRes: 0, mcpSs: 0, eff: 1, Cd: 0.85, cpL: 1, stallM: 50,
     hyst: 25, htrF: 1.25, burnerSG: 0.95, duty: 0, dutyCapped: false, ThCap: 0, ThSet: 0, dTch: 0, dThi: 0, kT: 0, tEnd: null };
   var cushFm = 0;
+  var lastCushWin = null;                         // the window {tStart, tEnd} of a stopped cushion (note (7))
   // seg 5 with V-101 out (bypDerive): Bg5 (ft³/scf at the seg-5 mean pressure and the steady line T), the steady mixture rate
   // (ft³/s) of the cushion mixture-rate fraction, and the P0-mismatch note
   var Bg5 = 0, bypMix = 0, bypNote = '';
@@ -4197,9 +4204,11 @@ function create(flowIn, opts) {
   }
   function cushStop() {
     if (!cushHas) return false;
+    var win = { tStart: cushS.tStart, tEnd: cushS.tEnd !== null ? cushS.tEnd : X.t };
     cushOn = false; cushHas = false; cushFm = 0;
     quiet(Q_CUSH);
     cushReset();
+    lastCushWin = win;                             // batches still open at the stop are tagged against it (note (7))
     emit('cushion', { type: 'cushion', t: X.t, phase: 'off', msg: 'Cushion unload stopped' });
     logEntry('event', 'CUSHION', null, TAGS.wellhead, 'Cushion unload stopped');
     return true;
@@ -4249,20 +4258,24 @@ function create(flowIn, opts) {
     c.Vprod += dv; c.out[cushDest()] += dv;
     if (SEL.sepByBlk !== null) cushFm = cushMix();
     cushEval(false);
-    if (c.tBreak === null && c.Vprod >= c.Vmain - 1e-9) {          // breakthrough: Vmain delivered (located by cushChooseH)
+    var tauF = cfg.ramp.tauFlow, Vfly = c.V - c.Vprod - tauF * c.qDel;   // cushion not yet produced nor in flight in the lag (bbl)
+    // breakthrough: Vmain delivered (located by cushChooseH), or the whole cushion already produced / in flight (a short tail,
+    // V·tailFrac < τf·qDel: the main-slug target was capped below, note (6))
+    if (c.tBreak === null && (c.Vprod >= c.Vmain - 1e-9 || Vfly <= 1e-3 * c.V)) {
       c.tBreak = tEnd; c.hc = 0; X.tFlow = 0;
-      c.Vtail = mmax(0, c.V - c.Vprod - cfg.ramp.tauFlow * c.qDel);
+      c.Vtail = mmax(0, Vfly);
       cushEvent('breakthrough', 'Cushion gas breakthrough: ' + c.Vprod.toFixed(1) + ' bbl recovered, tail ' + c.Vtail.toFixed(1) + ' bbl to come');
     }
     if (c.tBreak === null) {
       c.w = 0;
-      if (c.phase === 'stalled') { qcT = 0; tg = 0; } else { qcT = c.qNow / 86400; tg = c.gasFrac * qgE * sCk; }
+      if (c.phase === 'stalled') { qcT = 0; tg = 0; }
+      else { qcT = mmin(c.qNow / 86400, mmax(0, Vfly) / mmax(1e-6, tauF)); tg = c.gasFrac * qgE * sCk; }   // never past V (note (6))
       to = 0; tw = 0;
     } else {
       var s = tEnd - c.tBreak, w = 1 - mexp(-s / c.breakTau);
       c.w = w;
       tg = (c.gasFrac + w * (1 - c.gasFrac)) * qgE * sCk; to = w * qoE * sCk; tw = w * qwE * sCk;
-      qcT = mmax(0, c.V - c.Vprod - cfg.ramp.tauFlow * c.qDel) / c.tailTau;    // volume-balanced tail (feedback form)
+      qcT = mmax(0, Vfly) / c.tailTau;            // volume-balanced tail (feedback form)
       if (c.phase !== 'done') {
         if (c.Vprod >= c.V * (1 - 1e-3) || s >= 10 * c.tailTau) cushEvent('done', 'Cushion recovered: ' + c.Vprod.toFixed(1) + ' of ' + fmtK(c.V) + ' bbl (' + cushOutTxt() + ')');
         else if (c.phase === 'breakthrough' && w >= 0.95) cushEvent('tail', 'Cushion tail: ' + mmax(0, c.V - c.Vprod).toFixed(1) + ' bbl left');
@@ -4343,8 +4356,9 @@ function create(flowIn, opts) {
     return T + (cushHtr(mmax(Th, Tin), Tin) - Th);
   }
   function cushBatch(b, w) {
-    var c = cushS;
-    if (w.tClose >= c.tStart && (c.tEnd === null || w.tOpen <= c.tEnd)) b.cushion = true;
+    var c = cushS, L = lastCushWin;
+    if (cushHas && w.tClose >= c.tStart && (c.tEnd === null || w.tOpen <= c.tEnd)) b.cushion = true;
+    if (L && w.tClose >= L.tStart && w.tOpen <= L.tEnd) b.cushion = true;
   }
   function cushAlarms() {
     var c = cushS, A, on;
@@ -4378,7 +4392,7 @@ function create(flowIn, opts) {
     c.Vmain = 0; c.Vtail = 0; c.Vprod = 0; c.qNow = 0; c.qDel = 0; c.fUnload = 0; c.WHPcol = 0; c.wJTc = 0; c.wJTe = 1; c.tStart = 0; c.tBreak = null;
     c.tPhase = 0; c.out.flare = 0; c.out.line = 0; c.out.sep = 0;
     c.qIn = 0; c.qLcap = 0; c.hc = 0; c.w = 0; c.SIT = 0; c.floor = 0; c.WHPtgt = 0; c.duty = 0; c.dutyCapped = false; c.ThCap = 0; c.ThSet = 0;
-    c.dTch = 0; c.dThi = 0; c.kT = 0; c.tEnd = null;
+    c.dTch = 0; c.dThi = 0; c.kT = 0; c.tEnd = null; lastCushWin = null;
   }
 
   Object.defineProperty(api, 'disposed', { get: function () { return disposed; } });

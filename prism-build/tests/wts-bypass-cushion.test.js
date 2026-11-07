@@ -36,10 +36,11 @@ function mk(S, flow, o) {
 }
 function run(sim, sec, dt, each) { for (let t = 0; t < sec - 1e-9; t += dt) { sim.advance(dt); if (each) each(sim.getState()); } }
 // a cold spread: steady temperatures from the flow nodes (the engine's steady inputs), choke outlet below its hydrate point
-function coldFlow(S, heaterWarm) {
-  const f = J(S.SAMPLE_FLOW), n = f.nodes;
-  n[0].T = 80; n[1].T = 80; n[2].T = 25;
-  f.heater.Tin = 25;
+// (Tck: choke-outlet T, default 25 °F; a warm Tck = a wellhead stream with no hydrates before the start)
+function coldFlow(S, heaterWarm, Tck) {
+  const f = J(S.SAMPLE_FLOW), n = f.nodes, tc = Tck === undefined ? 25 : Tck;
+  n[0].T = 80; n[1].T = 80; n[2].T = tc;
+  f.heater.Tin = tc;
   if (heaterWarm) { n[3].T = 150; } else { f.inputs.bypass = true; f.heater.bypass = true; n[3].T = 25; n[4].T = 25; n[5].T = 25; n[6].T = 25; n[7].T = 25; }
   return f;
 }
@@ -180,7 +181,7 @@ module.exports = [
           const s = sim.getState(), c = s.cushion;
           if (c.phase === 'unloading') { if (c.WHPtgt_psig < tgtPrev - 1e-9) mono = false; tgtPrev = c.WHPtgt_psig; }
           if (c.tBreak !== null && tB === null) tB = c.tBreak - t0;
-          if (tB !== null && s.t - t0 > tB - 30 && s.t - t0 < tB + 60) maxBreakStep = Math.max(maxBreakStep, Math.abs(s.nodes.wellhead.P - prevP) / dt);
+          if (tB !== null && s.t - t0 > tB - 30 && s.t - t0 < tB + 60) maxBreakStep = Math.max(maxBreakStep, Math.abs(s.nodes.wellhead.P - prevP));
           if (tB !== null && recAt10 === null && s.t - t0 >= tB + 10 * 1800) recAt10 = c.recovered_bbl;
           prevP = s.nodes.wellhead.P;
         }
@@ -204,7 +205,8 @@ module.exports = [
       const s1 = d1.st;
       assert.ok(s1.cushion.out.sep === s1.cushion.recovered_bbl && s1.cushion.out.flare === 0 && s1.cushion.out.line === 0, 'all to V-101');
       assert.ok(d1.mono, 'WHP target monotonic while unloading');
-      assert.ok(d1.maxBreakStep * 1 < 50, 'no WHP step at breakthrough (' + d1.maxBreakStep.toFixed(2) + ' psi/s)');
+      assert.ok(d1.maxBreakStep < 50, 'no WHP step at breakthrough (' + d1.maxBreakStep.toFixed(2) + ' psi per 1 s step)');
+      assert.ok(d10.maxBreakStep < 50, 'no WHP step at breakthrough (' + d10.maxBreakStep.toFixed(2) + ' psi per 10 s step)');
       assert.ok(s1.cushion.on === false && s1.cushion.phase === 'done' && s1.alarms.every((a) => X.Q_CUSH.indexOf(a.id) < 0), 'scenario ended, its alarms quiet');
       assert.ok(Math.abs(s1.nodes.wellhead.P - 3000) < 400 && s1.f > 0.95, 'back on the formation flow');
       balanced(assert, s1, 'cushion through V-101');
@@ -212,6 +214,36 @@ module.exports = [
       assert.ok(cl.every((y) => y >= 0 && y <= 50) && cl[cl.length - 1] < 0.05, 'history cushionLeft');
       // column law at the end of the main slug (hc = 0)
       assert.ok(X.near(anc('WHPendMain'), d1.sim._internal().fu.cushS.WHPcol), 'WHPcol at the end of the main slug ' + d1.sim._internal().fu.cushS.WHPcol);
+    },
+  },
+  {
+    name: 'WTSFU E2 cushion short tail: ∫qDel dt = V when V·tailFrac is below the in-flight volume τf·qDel (V 1, tailFrac 0, V 5 at 6,000 bbl/d), cushionLeft ≥ 0',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const S = X.loadEngine('work');
+      const f64 = J(S.SAMPLE_FLOW); f64.inputs.bean = 64;
+      [['V 1 at 1,500 bbl/d', { V: 1 }, null, {}], ['tailFrac 0', { tailFrac: 0 }, null, {}],
+        ['V 5 at 6,000 bbl/d (64/64, V-101 out)', { V: 5, q: 6000 }, f64, { separator: false }]].forEach(([lab, p, f, rig]) => {
+        const sim = mk(S, f, { rigup: rig }), ev = [];
+        sim.advance(600);
+        sim.on('cushion', (e) => ev.push(e));
+        assert.ok(sim.startCushion(p).ok, lab + ': started');
+        const V = sim.getCushion().V_bbl;
+        let minLeft = Infinity, maxRec = 0;
+        run(sim, 30000, 10, (s) => {
+          const c = sim._internal().fu.cushS;
+          minLeft = Math.min(minLeft, c.V - c.Vprod); maxRec = Math.max(maxRec, s.cushion.recovered_bbl);
+        });
+        const st = sim.getState(), hl = sim.getHistory('cushionLeft').y;
+        assert.ok(maxRec <= V * (1 + 1e-3) && st.cushion.recovered_bbl >= V * (1 - 1e-3), lab + ': recovered ' + st.cushion.recovered_bbl + ' (max ' + maxRec + ') of ' + V);
+        assert.ok(minLeft >= 0 && hl.every((y) => y >= 0), lab + ': cushionLeft ≥ 0 throughout (min ' + minLeft + ')');
+        const ph = ev.map((e) => e.phase);
+        assert.ok(ph[0] === 'unloading' && ph.indexOf('breakthrough') > 0 && ph[ph.length - 1] === 'done' && st.cushion.phase === 'done', lab + ': phases ' + ph.join());
+        const done = ev[ev.length - 1].msg, m = /recovered: ([0-9.]+) of/.exec(done);
+        assert.ok(m && Math.abs(+m[1] - V) <= 0.05, lab + ': done text ' + done);
+        balanced(assert, st, lab, 1e-6);
+      });
     },
   },
   {
@@ -259,6 +291,7 @@ module.exports = [
         run(b, 120, 10);
         const B = alarm(b.getState(), 'CUSH_BURNER');
         assert.ok(B && B.tag === 'FS-401' && B.msg === X.ALARM_TEXTS[key] && b.getCushion().out.flare > 0, 'CUSH_BURNER SG ' + SG + ': ' + (B && B.msg));
+        balanced(assert, b.getState(), 'cushion to the burner (legacy path, SG ' + SG + ')');
       });
       const bl = mk(S, sepByFlow(S, 'line', 300), { rigup: { separator: false } });
       bl.startCushion({});
@@ -274,12 +307,19 @@ module.exports = [
       run(v, 300, 10);
       const vr = v.startCushion({});
       assert.ok(vr.ok && vr.warn !== '', 'dump warning');
-      let dump = null, cvMid = null;
-      run(v, 1500, 10, (s) => { if (!dump && alarm(s, 'CUSH_DUMP')) dump = alarm(s, 'CUSH_DUMP'); });
+      let dump = null, cvMid = null, lah = null;
+      run(v, 1500, 10, (s) => {
+        if (!dump && alarm(s, 'CUSH_DUMP')) dump = alarm(s, 'CUSH_DUMP');
+        if (!lah && alarm(s, 'CUSH_DUMP') && alarm(s, 'ISHH_SEP')) lah = alarm(s, 'ISHH_SEP');
+      });
       cvMid = v._internal().Cv.w;
       st = v.getState();
       assert.ok(dump && dump.tag === 'LCV-101' && dump.sev === 'warn', 'CUSH_DUMP');
-      assert.ok(st.alarms.some((A) => /^(ISHH_SEP|CARRYOVER|LSHH_SEP)$/.test(A.id)), 'V-101 floods: ' + st.alarms.map((A) => A.id).join());
+      // the water side floods: its level alarm is LAHH-101 (ISHH_SEP, interface level; the water compartment has no separate LAH —
+      // LAH-102 / LSH_SEP is the oil bucket, which the carry-over water does not reach while LCV-102 keeps up), raised while
+      // CUSH_DUMP is active; carry-over at the weir follows
+      assert.ok(lah && lah.tag === 'LAHH-101' && lah.sev === 'alarm', 'LAHH-101 (ISHH_SEP) raised while CUSH_DUMP is active: ' + (lah && lah.tag));
+      assert.ok(st.alarms.some((A) => A.id === 'CARRYOVER'), 'carry-over at the weir: ' + st.alarms.map((A) => A.id).join());
       v.stopCushion(); run(v, 60, 10);
       assert.ok(cv0 === cvMid && v._internal().Cv.w === cv0, 'Cv_w unchanged before / during / after');
       // refusals: while running, while the ESD is tripped
@@ -310,7 +350,8 @@ module.exports = [
         let lateUnload = [], afterBreak = new Set();
         run(sim, 6000, 10, (s) => {
           const dt = s.t - t0;
-          if (s.cushion.phase === 'unloading' && dt > 1500) lateUnload = lateUnload.concat(HYD(s));
+          // grace 120 s: the kT lag on warmTau and the alarm off-delay of the hydrate alarms present at the start
+          if (s.cushion.phase === 'unloading' && dt > 120) lateUnload = lateUnload.concat(HYD(s));
           if (s.cushion.tBreak !== null) HYD(s).forEach((id) => afterBreak.add(id));
         });
         assert.strictEqual(lateUnload.length, 0, (warm ? 'warm' : 'cold') + ' heater: no hydrate alarm while unloading ' + lateUnload.join());
@@ -318,6 +359,14 @@ module.exports = [
         if (warm) assert.ok(!afterBreak.has('HYD_heater') && !afterBreak.has('HYD_separator'), 'warm heater: nothing downstream of H-101');
         else assert.ok(afterBreak.has('HYD_heater'), 'cold heater: H-101 outlet hydrates at breakthrough');
       });
+      // a warm wellhead stream (no hydrates before the start): no HYD_* at any point while unloading
+      const ww = mk(S, coldFlow(S, true, 150));
+      ww.advance(300);
+      assert.strictEqual(HYD(ww.getState()).length, 0, 'warm wellhead: no hydrates before the cushion ' + HYD(ww.getState()).join());
+      ww.startCushion({});
+      let wwUnload = [], wwN = 0;
+      run(ww, 6000, 10, (s) => { if (s.cushion.phase === 'unloading') { wwN++; wwUnload = wwUnload.concat(HYD(s)); } });
+      assert.ok(wwN > 100 && wwUnload.length === 0, 'warm wellhead + warm heater: no hydrate alarm at any point while unloading (' + wwN + ' samples) ' + wwUnload.join());
       // J-T weight: the unload stream cools ~ wJTc / wJT less across CK-101 than the gas
       const j = mk(S);
       const dT0 = j.getState().nodes.choke.dTjt;
@@ -389,6 +438,18 @@ module.exports = [
       run(g, 4 * 3600, 30);
       const bt = g.getState().gauge.batches;
       assert.ok(bt.length > 0 && bt.every((x) => x.cushion === true), 'batches tagged ' + bt.length);
+      // a batch still open when the unload is stopped is tagged against the stopped window; a batch opened after it is not
+      const gs = mk(S);
+      gs.startCushion({ V: 500, depth: 5000 });
+      let nb = 0, tStop;
+      run(gs, 4 * 3600, 30, (s) => { if (nb === 0 && s.gauge.batches.length > 0) { nb = s.gauge.batches.length; tStop = s.t + 1800; } else if (nb > 0 && tStop !== null && s.t >= tStop && gs.getCushion().on) { gs.stopCushion(); } });
+      run(gs, 6 * 3600, 30);
+      const bs = gs.getState().gauge.batches;
+      const across = bs.filter((x) => x.tOpen < tStop && x.tClose > tStop), later = bs.filter((x) => x.tOpen > tStop + 1);
+      assert.ok(nb > 0 && tStop !== undefined && across.length > 0 && across.every((x) => x.cushion === true), 'batch across the stop tagged ' + J(across.map((x) => [x.tOpen, x.tClose, x.cushion])));
+      assert.ok(later.length > 0 && later.every((x) => !('cushion' in x)), 'batches after the stop not tagged ' + later.length);
+      gs.reset();
+      assert.ok(gs._internal().fu.cushS.phase === 'off', 'reset clears the stopped window too');
       const g2 = mk(S); run(g2, 4 * 3600, 30);
       assert.ok(g2.getState().gauge.batches.every((x) => !('cushion' in x)), 'no tag without a cushion');
       // the default spread: the cushion closure never moves (cushOn false), cushionLeft 0
