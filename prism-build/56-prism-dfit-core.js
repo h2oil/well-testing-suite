@@ -1897,9 +1897,24 @@
             else if (res.corr.sigmaC && _fin(res.corr.sigmaC.sc)) corrSS = res.corr.sigmaC.sc;
         }
         var fit = model(Gf, pp2), resid = Pf.map(function (v, j) { return _r(v - fit[j], 3); });
+        // profile of σ_c on demand (opts.profile): σ_c held at 9 values across ±max(3 se, 50 psi), the others refitted
+        var profile = null;
+        if (opts.profile) {
+            profile = [];
+            var seS = (Array.isArray(ciS) && _fin(ciS[0]) && _fin(ciS[1])) ? (ciS[1] - ciS[0]) / 3.92 : 0, half = Math.max(3 * seS, 50);
+            var kp = keys.filter(function (k) { return k !== 'sigmaC'; });
+            for (var q = -4; q <= 4; q++) {
+                var sv = pp2.sigmaC + half * q / 4, b2 = {}; for (var bk in base) b2[bk] = base[bk];
+                b2.sigmaC = sv;
+                var p1 = {}; kp.forEach(function (k) { p1[k] = pp2[k]; });
+                var m2 = function (Garr, pp) { var qq = {}; for (var k in b2) qq[k] = b2[k]; for (k in pp) if (_fin(pp[k])) qq[k] = pp[k]; if (qq.law === 'hyp') qq.sh = qq.sc; return _vcIntegrate(Garr, qq, 0.05); };
+                var rr = _lmLocal(m2, { t: Gf, p: Pf }, p1, bounds, kp, 20);
+                profile.push({ sigmaC: _r(sv, 2), rmse: _r(rr.rmse, 4) });
+            }
+        }
         return { ok: true, sigmaC: _r(pp2.sigmaC, 2), ci95: (Array.isArray(ciS) && _fin(ciS[0]) && _fin(ciS[1])) ? [_r(ciS[0], 2), _r(ciS[1], 2)] : null,
                  sc: _r(pp2.sc, 3), fres: _r(_fin(pp2.fres) ? pp2.fres : base.fres, 4), K: _sf(pp2.K, 6), isip: _r(pp2.isip, 2), corrSigmaSc: _nn(corrSS),
-                 resid: resid, rmse: _r(res.rmse, 4), profile: null, law: base.law, n: Gf.length };
+                 resid: resid, rmse: _r(res.rmse, 4), profile: profile, law: base.law, n: Gf.length };
     });
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2074,18 +2089,36 @@
     // §4.10 leak-off rate from the data: q_L = C_sys·|dP/dG|·dG/dt (bbl/min), V_L = V_L(t_s) + X·G, V_f = A_f·c_f·(p − σ_c)
     G.PRiSM_dfit_leakoffRate = _safe(function (derivs, frac) {
         if (!_okRes(derivs) || !_okRes(frac) || !_fin(frac.Csys)) return _fail('BAD_INPUT', 'Derivatives and frac outputs (with C_sys) are needed.', ['frac']);
-        var d = derivs, tp = d.tp, X = frac.Csys * (_fin(frac.mG) ? frac.mG : d.mG), dtc = frac.dtc, out = { dt: [0], qL: [], VL: [], Vf: [] };
+        var d = derivs, tp = d.tp, X = frac.Csys * (_fin(frac.mG) ? frac.mG : d.mG), dtc = frac.dtc, out = { dt: [0], qL: [], VL: [], Vf: [], qLData: [null], pdl: _fin(frac.pdlMult) };
         var VL0 = frac.ViStar !== null && frac.eta ? frac.ViStar * (1 - frac.eta.matched) : 0;
         function dGdt(dtD) { return (d.gSpec ? d.gSpec.Gp(dtD) : Gp_(dtD, d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : d.alpha))) / (tp * 60); }   // per minute
         out.qL.push(_sf(X * dGdt(0), 6)); out.VL.push(_r(VL0, 4)); out.Vf.push(_r(frac.AfCf * frac.pn, 4));
         for (var i = 0; i < d.dt.length && d.dt[i] <= dtc * (1 + 1e-9); i++) {
             out.dt.push(d.dt[i]);
-            out.qL.push(_sf(X * dGdt(d.dtD[i]), 6));
+            // normal leak-off: q_L = X·dG/dt; with PDL (frac.pdlMult set) the data slope: q_L = C_sys·|dP/dG|·dG/dt
+            var qd = (d.dPdG[i] !== null && _fin(d.dPdG[i])) ? frac.Csys * d.dPdG[i] * dGdt(d.dtD[i]) : null;
+            out.qLData.push(_sf(qd, 6));
+            out.qL.push(_sf(out.pdl && qd !== null ? qd : X * dGdt(d.dtD[i]), 6));
             out.VL.push(_r(VL0 + X * d.G[i], 4));
             out.Vf.push(_r(Math.max(0, frac.AfCf * (d.p[i] - frac.pClosure)), 4));
         }
-        out.dt.push(dtc); out.qL.push(_sf(X * dGdt(dtc / tp), 6)); out.VL.push(_r(VL0 + X * frac.Gc, 4)); out.Vf.push(0);
+        out.dt.push(dtc); out.qL.push(_sf(X * dGdt(dtc / tp), 6)); out.qLData.push(null); out.VL.push(_r(VL0 + X * frac.Gc, 4)); out.Vf.push(0);
         out.ok = true;
+        return out;
+    });
+    // §6.12 overlay curve: G·dP/dG normalised by m_G·G against G/G_c, ≤ 60 points log-spaced (DfitTest.summary.gdpdgN)
+    G.PRiSM_dfit_gdpdgN = _safe(function (derivs, frac, maxN) {
+        if (!_okRes(derivs) || !_fin(derivs.mG) || derivs.mG <= 0) return _fail('BAD_INPUT', 'Derivatives with an early slope are needed.', ['derivs']);
+        var Gc = _okRes(frac) && _fin(frac.Gc) ? frac.Gc : null, m = _fin(maxN) ? Math.min(60, Math.max(2, maxN)) : 60, d = derivs, xs = [], ys = [], i;
+        for (i = 0; i < d.G.length; i++) if (d.usable[i] && d.GdPdG[i] !== null && d.G[i] > 0) { xs.push(Gc ? d.G[i] / Gc : d.G[i]); ys.push(d.GdPdG[i] / (d.mG * d.G[i])); }
+        if (!xs.length) return { x: [], y: [] };
+        var lo = Math.log(xs[0]), hi = Math.log(xs[xs.length - 1]), out = { x: [], y: [] }, k = 0;
+        for (var j = 0; j < m; j++) {
+            var target = m === 1 ? lo : lo + (hi - lo) * j / (m - 1);
+            while (k + 1 < xs.length && Math.log(xs[k + 1]) <= target) k++;
+            if (out.x.length && out.x[out.x.length - 1] === _r(xs[k], 5)) continue;
+            out.x.push(_r(xs[k], 5)); out.y.push(_r(ys[k], 5));
+        }
         return out;
     });
 
@@ -2588,6 +2621,56 @@
         if (_fin(whatIfP)) out.push({ label: 'What-if ' + _f0(whatIfP) + ' psia', family: null, p: whatIfP, method: 'user' });
         return out;
     };
+
+    // ═════════════════════════════════════════════════════════════════════
+    // §4.10 extras: spurt with independent geometry, thermal sensitivity, injection net-pressure slope
+    // ═════════════════════════════════════════════════════════════════════
+    // S_p = [V_i* − C_sys·p_n − 2·r_p·A_f·g0·CL·√tp] / (2·r_p·A_f), with C_sys = A_f·c_f + V_w·c_w and CL from m_G (gal/100 ft²);
+    // negative → "geometry inconsistent" (never clipped). geo {Af (ft², one face), cf (ft/psi), rp}
+    G.PRiSM_dfit_spurt = _safe(function (frac, derivs, geo) {
+        if (!_okRes(frac) || !_okRes(derivs) || !_isObj2(geo) || !_fin(geo.Af) || !_fin(geo.cf) || geo.Af <= 0) return _fail('BAD_INPUT', 'Frac outputs, derivatives and an independent geometry (A_f, c_f) are needed.', ['geo']);
+        var rp = _fin(geo.rp) && geo.rp > 0 ? geo.rp : 1, tpMin = derivs.tp * 60;
+        var VwCwFt = (_fin(frac.VwCw) ? frac.VwCw : 0) * BBL, Csys = geo.Af * geo.cf + VwCwFt;               // ft³/psi
+        var mG = _fin(frac.mG) ? frac.mG : derivs.mG, pn = frac.pn, Vstar = (_fin(frac.ViStar) ? frac.ViStar : 0) * BBL;
+        var CL = 2 * mG * Csys / (PI * rp * geo.Af * Math.sqrt(tpMin));                                          // ft/√min
+        var g0 = derivs.gSpec ? derivs.gSpec.g0 : g0_(derivs.gType === 'a1' ? 1 : (derivs.gType === 'a05' ? 0.5 : derivs.alpha));
+        var Sp = (Vstar - Csys * pn - 2 * rp * geo.Af * g0 * CL * Math.sqrt(tpMin)) / (2 * rp * geo.Af) * 748.05;
+        if (Math.abs(Sp) < 1e-3) Sp = 0;      // rounding of the inputs
+        return { ok: true, value: _r(Sp, 4), CL: _sf(CL, 5), Csys: _sf(Csys / BBL, 5), consistent: Sp >= 0,
+                 note: _txt(Sp >= 0 ? 'Spurt from the independent geometry: ' + _f1(Sp, 3) + ' gal/100 ft².' : 'Negative spurt (' + _f1(Sp, 3) + ' gal/100 ft²): the geometry is inconsistent with the falloff.') };
+    });
+    // dp/dT ≈ V_w·β/C_sys before closure and β/c_sys after (C_sys → V_w·c_sys), β = ∂ln B_w/∂T (Meehan, 16, at call time)
+    G.PRiSM_dfit_thermal = _safe(function (frac, ctx) {
+        ctx = ctx || {};
+        var T = _fin(ctx.TmeanF) ? ctx.TmeanF : 100, p = _fin(ctx.pMean) ? ctx.pMean : (_okRes(frac) && _fin(frac.pClosure) ? frac.pClosure : 5000);
+        var pv = G.PRiSM_pvt_correlations, beta = null, src = 'default';
+        if (pv && typeof pv.Bw_meehan === 'function') {
+            var b1 = pv.Bw_meehan(p, T - 1), b2 = pv.Bw_meehan(p, T + 1);
+            if (_fin(b1) && _fin(b2) && b1 > 0 && b2 > 0) { beta = (Math.log(b2) - Math.log(b1)) / 2; src = 'Bw correlation'; }
+        }
+        if (!_fin(beta)) beta = 2.3e-4;
+        var notes = [];
+        if (p > 5000 || T > 260) notes.push('The water formation-volume correlation is fitted to p ≤ 5,000 psia and T ≤ 260 °F: correlation range exceeded.');
+        var cSys = _fin(ctx.cSys) ? ctx.cSys : null, Vw = _fin(ctx.VwFt3) ? ctx.VwFt3 : null;     // 1/psi, ft³
+        var before = (Vw !== null && _okRes(frac) && _fin(frac.Csys)) ? Vw * beta / (frac.Csys * BBL) : null;
+        var after = cSys ? beta / cSys : null;
+        return { ok: true, beta: _sf(beta, 4), betaSource: src, beforeClosure: _r(before, 3), afterClosure: _r(after, 2), notes: notes };
+    });
+    // injection net-pressure slope (indicative): d ln(p − σ_c)/d ln(t − t_start) over the propagation period after breakdown
+    G.PRiSM_dfit_netPressureSlope = _safe(function (prep, events, sigmaC) {
+        if (!_okRes(prep) || !_okRes(events) || !_fin(sigmaC)) return _fail('BAD_INPUT', 'Prepared data, events and a closure stress are needed.', ['sigmaC']);
+        var t0 = _fin(events.tb) ? events.tb : events.tStart, xs = [], ys = [];
+        for (var i = 0; i < prep.t.length; i++) {
+            var t = prep.t[i];
+            if (t <= t0 || t > events.ts || prep.pw[i] <= sigmaC) continue;
+            if (t - t0 < 0.2 * (events.ts - t0)) continue;                    // past the breakdown transient
+            xs.push(Math.log(t - events.tStart)); ys.push(Math.log(prep.pw[i] - sigmaC));
+        }
+        if (xs.length < 4) return _fail('SHORT', 'Too few pumping samples above the closure stress.', ['p']);
+        var lf = _linfit(xs, ys, 0, xs.length - 1, false), s = lf ? lf.b : null;
+        var reading = !_fin(s) ? 'undetermined' : (s >= 0.15 && s <= 0.3 ? 'contained height (PKN-like)' : (s < -0.02 ? 'KGD / radial or height growth' : (Math.abs(s) <= 0.05 ? 'barrier or fissures (near-constant)' : (s > 0.5 ? 'restriction' : 'transitional'))));
+        return { ok: true, slope: _r(s, 4), n: xs.length, reading: reading, note: 'Indicative: the injection net-pressure slope reading (Nolte and Smith).' };
+    });
   })(Math, isFinite, Array, Object, JSON, String);
 })();
 

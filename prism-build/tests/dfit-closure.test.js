@@ -237,6 +237,12 @@ module.exports = [
       assert(c.stability.grid.F1.length === 3 && c.stability.grid.F1.every((row) => row.length === 3), '3 × 3 heat map per family');
       assert(c.families.F1.n === 104 && c.families.F2.n === 104, '54 settings + 50 bootstrap samples per family');
       assert(c.families.F3 !== null, 'F3 shows its own LM band');
+      // the variable-compliance band is its own LM CI, with the σ_c profile on demand (never inside the grid)
+      const vc = G.PRiSM_dfit_varComplianceFit(r.d, { VwCw, AfCf, pr: 4500 }, { profile: true });
+      assert(vc.ok === true && Array.isArray(vc.profile) && vc.profile.length === 9, 'profile on demand (9 rows)');
+      const best = vc.profile.reduce((a, b) => (b.rmse < a.rmse ? b : a));
+      assert(Math.abs(best.sigmaC - vc.sigmaC) <= (vc.profile[1].sigmaC - vc.profile[0].sigmaC) + 1e-9, 'the profile minimum sits at the fitted σ_c');
+      assert(G.PRiSM_dfit_varComplianceFit(r.d, { VwCw, AfCf, pr: 4500 }, {}).profile === null, 'no profile unless asked');
     },
   },
   {

@@ -209,6 +209,10 @@ module.exports = [
       d.G.forEach((g, i) => { if (d.usable[i] && g >= 0.5 && g <= 18 * Math.exp(-2 * d.L)) { cnt++; worst = Math.max(worst, Math.abs(d.GdPdG[i] / (REF.mG * g) - 1)); } });
       assert(cnt > 50 && worst <= 0.005, cnt + ' samples, worst relative difference ' + worst.toFixed(5));
       okShape(assert, 'Derivs', d); assert(d.ok === true && d.gType === 'a05', 'Derivs ok, α ½');
+      // the stored overlay curve (summary.gdpdgN): ≤ 60 points, y = G·dP/dG/(m_G·G) ≈ 1 before closure, x = G/G_c
+      const f = fracRef(G, fixRun(G), 7000), ov = G.PRiSM_dfit_gdpdgN(d, f);
+      assert(ov.x.length <= 60 && ov.x.length === ov.y.length && ov.x.length > 30, 'overlay ≤ 60 points (' + ov.x.length + ')');
+      ov.x.forEach((x, i) => { if (x > 0.05 && x < 0.8) near(assert, ov.y[i], 1, 0.005, 'normalised G·dP/dG at G/G_c ' + x); });
       // the derivative does not depend on the ISIP value
       const r2 = fixRun(G, { dOpts: { isip: 7650 } });
       const i = r2.d.G.findIndex((g) => g > 5);
@@ -254,6 +258,13 @@ module.exports = [
     run(_a, assert, ctx) {
       const G = app(ctx), f = fracRef(G, fixRun(G), 7000);
       ['PKN', 'KGD', 'radial'].forEach((m) => near(assert, f.geometry.byModel[m].VLpump * BBL, 14.04, 0.01, m + ' V_L pumping (ft³)'));
+      // spurt is not separable from the falloff (default null, η an upper bound); with the independent reference geometry
+      // the closure balance leaves no spurt; a larger area gives a negative spurt flagged as inconsistent (never clipped)
+      assert(f.spurt.value === null && /upper bound/.test(f.spurt.note), 'default: no spurt, η upper-bound note');
+      const P = f.geometry.byModel.PKN, sp = G.PRiSM_dfit_spurt(f, fixRun(G).d, { Af: P.Af, cf: P.cf, rp: P.rp });
+      assert(sp.ok === true && Math.abs(sp.value) < 1e-3 && sp.consistent === true, 'reference geometry: spurt 0 (' + sp.value + ')');
+      const sp2 = G.PRiSM_dfit_spurt(f, fixRun(G).d, { Af: P.Af * 1.2, cf: P.cf, rp: P.rp }), sp3 = G.PRiSM_dfit_spurt(f, fixRun(G).d, { Af: P.Af * 0.8, cf: P.cf, rp: P.rp });
+      assert(sp2.value < 0 && sp2.consistent === false && /inconsistent/.test(sp2.note), 'larger area: negative spurt, inconsistent'); assert(sp3.value > 0 && sp3.consistent === true, 'smaller area: positive spurt');
     },
   },
   {
@@ -342,6 +353,10 @@ module.exports = [
       const fg = fracRef(G, r, 7000, { VwCw: VwG, ViStar });
       near(assert, fg.Csys * BBL, 0.388, 5e-4, 'C_sys'); near(assert, fg.Rvis, 0.54, 0.005, 'gas-filled');
       assert(fg.eta.etaF < fg.eta.matched, 'η_f shown below η_G when R_vis < 0.95');
+      // thermal sensitivity with the same system compressibility (§4.10): ≈ 1.4 psi/°F before closure, ≈ 65 psi/°F after (100 °F)
+      const th = G.PRiSM_dfit_thermal(fracRef(G, r, 7000), { TmeanF: 100, pMean: 5000, cSys: REF.cSys, VwFt3: REF.Vw });
+      near(assert, th.beforeClosure, 1.4, 0.1, 'dp/dT before closure'); near(assert, th.afterClosure, 65, 3, 'dp/dT after closure');
+      assert(th.betaSource === 'Bw correlation' && th.beta > 2e-4 && th.beta < 4e-4, 'β from the water correlation');
     },
   },
   {
