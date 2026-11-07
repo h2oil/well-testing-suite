@@ -418,11 +418,12 @@ module.exports = [
         assert.deepEqual(now.labels, base[m].labels, m + ' labels');
         assert.equal(now.plots, base[m].plots, m + ' plot list (no mode:test entry)');
         assert.equal(now.panels1, base[m].panels1, m + ' tab-1 panels');
+        assert.equal(now.hasStepview, false, m + ': built-in markup unchanged');
       }
       // step hosts (the same code path in all three built-in modes; checked in transient)
       W.PRiSM.setMode('transient');
       W.PRiSM_gotoStep(4);
-      assert.equal(app.el('prism_stepview').style.display, 'none', 'step view host stays hidden');
+      assert(!app.el('prism_stepview'), 'no step-view host in the built-in markup');
       assert.equal(app.el('prism_tabs').style.display, 'flex', 'model sub-tabs shown on step 4');
       W.PRiSM.setMode('transient');
       W.PRiSM_gotoStep(2);

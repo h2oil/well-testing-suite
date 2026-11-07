@@ -982,7 +982,8 @@ const PRiSM_SHELL = (function () {
             '<div class="prism-workspace" id="prism_workspace">' +
               '<div class="tabs prism-subtabs" id="prism_tabs" role="tablist" aria-label="Model and fit" style="display:none;">' + sub + '</div>' +
               '<div id="prism_step2" class="prism-stepview" style="display:none;"></div>' +
-              '<div id="prism_stepview" class="prism-stepview" style="display:none;"></div>' +
+              // generic step-view host, only in a workspace mode (built-in markup unchanged)
+              (curExt() ? '<div id="prism_stepview" class="prism-stepview" style="display:none;"></div>' : '') +
               tabs +
             '</div>' +
             '<div class="prism-railwrap" id="prism_railwrap">' +
