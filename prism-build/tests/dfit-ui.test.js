@@ -496,6 +496,14 @@ module.exports = [
       app.openPRiSM(); app.flush(50);
       const rail = app.el('prism_rail');
       assert(rail && /prism-rail--sheet/.test(rail.className), 'rail sheet below 1,024 px');
+      // the DFIT rail in the sheet: one summary bar, the body opens on a tap (it never covers the step content collapsed)
+      const sh = app.document.createElement('div'); sh.className = 'prism-rail--sheet'; h.appendChild(sh);
+      w.PRiSM_dfit_ui.rail(sh);
+      const bar = sh.querySelector('#prism_dfit_rail_bar'), body = sh.querySelector('#prism_dfit_rail_body');
+      assert(bar && body && body.style.display === 'none' && /^DFIT · Closure/.test(bar.textContent.replace(/^\s+/, '')), 'collapsed sheet bar: ' + (bar && bar.textContent));
+      app.click(bar);
+      assert.strictEqual(sh.querySelector('#prism_dfit_rail_body').style.display, 'block', 'tap opens the sheet');
+      app.click(sh.querySelector('#prism_dfit_rail_bar'));
       assert(/max-width:600px/.test(w.PRiSM_dfit_ui.css()) && /#prism_dfit_cv_dfitStrip\{height:160px/.test(w.PRiSM_dfit_ui.css()), 'phone rules (strip 160 px)');
     },
   },

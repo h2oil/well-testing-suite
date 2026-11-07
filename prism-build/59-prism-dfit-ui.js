@@ -81,6 +81,10 @@
     function _st() { if (!G.PRiSM_state || typeof G.PRiSM_state !== 'object') G.PRiSM_state = {}; return G.PRiSM_state; }
     function _P() { if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] }; return G.PRiSM; }
     function _inDfit() { return !!(G.PRiSM && G.PRiSM.mode === 'dfit'); }
+    // st.dfit exists and is this module's (v 2): outside DFIT mode, listeners and the undo snapshot leave any other st.dfit
+    // alone and never create one (a transient-mode session gets no DFIT state until DFIT mode or a DFIT API call needs it)
+    function _ownState() { var d = G.PRiSM_state && G.PRiSM_state.dfit; return !!(d && typeof d === 'object' && d.v === 2 && (d.tests instanceof Array || _arr(d.tests))); }
+    function _engaged() { return _inDfit() || _ownState(); }
     function _ls() { try { return G.localStorage || null; } catch (e) { return null; } }
     function _shell() { return _byId('prism_shell'); }
     // the WPH generic hooks (§3.12) are in the build
@@ -1749,7 +1753,7 @@
         return r.ok ? { values: {}, note: (which === 'lin' ? 'Linear' : 'Radial') + ' window ' + _f(pv[which + 'Win'][0], 2) + '–' + _f(pv[which + 'Win'][1], 2) + ' h stored.' } : { error: r.errors[0] };
     }
     var LINE_TOOLS = {
-        dfitIsipLine: { label: 'ISIP from the early G line', plot: 'dfitG', clicks: 2, prompts: ['Click the start of the early straight line', 'Click its end'],
+        dfitIsipLine: { label: 'Shut-in pressure from the early G line', plot: 'dfitG', clicks: 2, prompts: ['Click the start of the early straight line', 'Click its end'],
             action: _toolAction('dfitIsipLine', function (d, pts) {
                 var a = _pickAtG(d, pts[0].x), b = _pickAtG(d, pts[1].x);
                 if (!a || !b || a.G === b.G) return null;
@@ -1959,6 +1963,11 @@
         design: function () { _design(); },
         replay: function () { _replay(); },
         sandbox: function () { openSandbox(); },
+        sandboxShow: function () {
+            if (typeof G.PRiSM_closeTools === 'function') { try { G.PRiSM_closeTools(); } catch (e) { /* ignore */ } }
+            var el = _byId('prism_dfit_sb_V');
+            if (el && el.focus) { try { el.focus(); } catch (e) { /* ignore */ } }
+        },
         plan: function () { if (typeof G.PRiSM_openTools === 'function') { try { G.PRiSM_openTools('dfit-designer'); return; } catch (e) { /* ignore */ } } _toast('Open Tools → DFIT designer.'); },
         gauge: function () { _toast('Build the analysis set from gauge records in the Data step (gauge manager), then press ▶ Analyse.'); }
     };
@@ -2737,11 +2746,24 @@
         (H && _arr(H.railRows) ? H.railRows : []).forEach(function (fn) { if (typeof fn !== 'function') return; try { var r = fn(s, run); if (_arr(r) && r.length === 2) rows.push([_txt(r[0]), _txt(r[1])]); } catch (e) { /* 3.4b */ } });
         return rows;
     }
+    // Below 1024 px 37 gives the rail the bottom-sheet class: the DFIT rail then shows one summary bar (closure, grade) and
+    // expands on a tap, so it never covers the step content (37's own sheet bar is not used in an ext mode).
+    var _railOpen = false;
     function rail(el) {
         if (!el) return false;
         var rows = railRows();
-        el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail"><div class="prism-rail-title">DFIT results</div>' + rows.map(function (r) { return _rrow(r[0], r[1]); }).join('') +
-                       '<div class="prism-dfit-bar">' + _btn('prism_dfit_rail_analyse', '▶ Analyse', 'analyse', 'btn-primary') + _btn('prism_dfit_rail_copy', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_rail_copy_isip', 'Copy ISIP gradient', 'copyIsipGrad') + '</div></div>';
+        var sheet = !!(el.classList && el.classList.contains('prism-rail--sheet'));
+        var body = rows.map(function (r) { return _rrow(r[0], r[1]); }).join('') +
+                   '<div class="prism-dfit-bar">' + _btn('prism_dfit_rail_analyse', '▶ Analyse', 'analyse', 'btn-primary') + _btn('prism_dfit_rail_copy', 'Copy closure gradient', 'copyGrad') + _btn('prism_dfit_rail_copy_isip', 'Copy ISIP gradient', 'copyIsipGrad') + '</div>';
+        if (sheet) {
+            var sum = 'DFIT results';
+            rows.forEach(function (r) { if (/^Closure/.test(r[0]) && sum === 'DFIT results') sum = 'DFIT · ' + r[0].replace(/\s*\(.*\)$/, '') + ' ' + _txt(r[1]); });
+            el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail prism-dfit-rail--sheet"><button type="button" class="prism-rail-sheetbar" id="prism_dfit_rail_bar" aria-expanded="' + (_railOpen ? 'true' : 'false') + '" aria-controls="prism_dfit_rail_body">' +
+                           '<span class="prism-rail-grip" aria-hidden="true"></span><span class="prism-rail-sum">' + _esc(sum) + '</span><span aria-hidden="true">' + (_railOpen ? '▾' : '▴') + '</span></button>' +
+                           '<div id="prism_dfit_rail_body" class="prism-dfit-rail-body" style="display:' + (_railOpen ? 'block' : 'none') + ';max-height:60vh;overflow-y:auto;"><div class="prism-rail-title">DFIT results</div>' + body + '</div></div>';
+            var bar = el.querySelector ? el.querySelector('#prism_dfit_rail_bar') : null;
+            if (bar) bar.onclick = function () { _railOpen = !_railOpen; rail(el); };
+        } else el.innerHTML = '<div id="prism_dfit_rail" class="prism-dfit-rail"><div class="prism-rail-title">DFIT results</div>' + body + '</div>';
         _wire(el.firstChild || el);
         return true;
     }
@@ -2872,7 +2894,11 @@
     function renderSandboxTool(host) {
         // switches to DFIT mode (one undo step) and opens step ④ → Leak-off model
         openSandbox();
-        if (host) host.innerHTML = '<div id="prism_dfit_sandbox_tool" class="prism-dfit-tool">' + _note('The leak-off sandbox opened in step ④ → Leak-off model.') + '</div>';
+        if (host) {
+            host.innerHTML = '<div id="prism_dfit_sandbox_tool" class="prism-dfit-tool">' + _note('The leak-off sandbox is open in DFIT mode, step ④ → Leak-off model, behind this drawer: set the volume and rate there and press Simulate.') +
+                             '<div class="prism-dfit-bar">' + _btn('prism_dfit_sandbox_show', 'Show the sandbox', 'sandboxShow', 'btn-primary') + '</div></div>';
+            _wire(host.firstChild);
+        }
         return host ? host.firstChild : null;
     }
     function openSandbox() {
@@ -2880,7 +2906,7 @@
         if (hooksReady() && G.PRiSM && typeof G.PRiSM.setMode === 'function') {
             _batch('begin');
             try { if (G.PRiSM.mode !== 'dfit') G.PRiSM.setMode('dfit'); if (typeof G.PRiSM_gotoStep === 'function') G.PRiSM_gotoStep(4); } finally { _batch('end'); }
-            if (typeof G.PRiSM_closeTools === 'function') { try { G.PRiSM_closeTools(); } catch (e) { /* ignore */ } }
+            // the drawer stays open on the sandbox card (its note and the step-④ sub-view behind it); Back / Esc closes it
         }
         var h = _byId('prism_dfit_step4');
         if (h) _renderStep4Into(h);
@@ -3026,6 +3052,7 @@
     try { Object.defineProperty(EXT, 'reportPlots', { enumerable: true, configurable: true, get: reportPlots }); } catch (e) { EXT.reportPlots = REPORT_PLOTS; }
     var UNDO_EXTRA = {
         get: function () {
+            if (!_engaged()) return undefined;   // 37 skips an extra that returns undefined
             var d = dstate(), T = test();
             return { active: d.active, test: { id: T.id, inputs: _clone(T.inputs), picks: _clone(T.picks) } };
         },
@@ -3050,6 +3077,7 @@
         events: ['prism:dfit-updated']
     };
     function _onDatasetLoaded() {
+        if (!_engaged()) return;
         var b = _checkBinding();
         if (b === 'other' || b === 'none') { _dropRun(); _refreshUI(); return; }
         if (_inDfit()) runFast('dataset');
@@ -3060,7 +3088,8 @@
         _dropRun();
         delete _st()._dfitLk;
         if (e && e.type === 'wts:project-new') { var st = _st(); delete st.dfit; }
-        else { dstate(); _checkBinding(); }
+        else if (_engaged()) { dstate(); _checkBinding(); }
+        else return;
         _publish();
     }
     function _onPage() { var sh = _shell(); if (!sh || sh.isConnected === false) { cancelAnalyse(); if (_lkJob) _lkJob.cancelled = true; } }
