@@ -117,9 +117,11 @@ module.exports = [
       const pc = sim.getHistory('Pchoke').y, p2 = sim.getHistory('Pck2').y;
       assert.ok(p2.every((y, i) => y === pc[i]) && sim.getHistory('cushionLeft').y.every((y) => y === 0), 'Pck2 = CK-101 outlet while CK-102 is out; cushionLeft 0');
       X.API_INSTANCE_NEW.forEach((k) => assert.strictEqual(typeof sim[k], 'function', 'api ' + k));
+      // WP-E2 replaced the E0 stubs (refused, 'not available yet'): the cushion engine is tested in wts-bypass-cushion
+      assert.strictEqual(sim.stopCushion(), false, 'stopCushion with no cushion');
       const r = sim.startCushion({});
-      assert.ok(r && r.ok === false && r.msg === 'not available yet', 'startCushion stub: ' + JSON.stringify(r));
-      assert.strictEqual(sim.stopCushion(), false);
+      assert.ok(r && r.ok === true && typeof r.msg === 'string' && typeof r.warn === 'string', 'startCushion: ' + JSON.stringify(r));
+      assert.strictEqual(sim.stopCushion(), true);
       assert.deepStrictEqual(J(sim.getCushion()), X.EXAMPLES.cushionOff, 'getCushion copy');
       assert.ok(sim.getCushion() !== sim.getState().cushion, 'getCushion is a copy');
     },

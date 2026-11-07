@@ -4081,6 +4081,8 @@ function create(flowIn, opts) {
   //       temperatures return with the formation flow at breakthrough (the course point: warm the heater before it).
   //   (4) While stalled, fUnload uses the rate the well tries to take (min(qSet, qLcap)), not 0, so the stall test does not
   //       chatter on its own hysteresis.
+  //   (5) No N.flare.label: nodes.flare keeps its v1.4.0 keys (the frozen snapshot shape); the views name the destination from
+  //       snap.sepBy.dest (LABELS.flareCardLine).
   var cushS = { phase: 'off', V: 0, SG: 1, qSet: 0, cap: 0, depth: 0, Gr: 0, gasFrac: 0, tailFrac: 0, tailTau: 0, breakTau: 0, Vmain: 0, Vtail: 0,
     Vprod: 0, qNow: 0, qDel: 0, fUnload: 0, WHPcol: 0, wJTc: 0, wJTe: 1, tStart: 0, tBreak: null, tPhase: 0, out: { flare: 0, line: 0, sep: 0 },
     // WP-E2 working values: delivered rate of the substep (bbl/s), liquid cap (bbl/d), column (ft), blend w, SIT / floor / WHP
@@ -4138,7 +4140,7 @@ function create(flowIn, opts) {
   function bypRefresh(s, fg) {
     var Nf = s.nodes.flare;
     Nf.P = bypP0; Nf.Pline = pDown();             // the inlet pDown uses, and the same expression for the line (§6.2)
-    if (bypLine) { Nf.flame = 0; Nf.label = 'production line'; } else Nf.label = 'burner / flare line';
+    if (bypLine) Nf.flame = 0;                    // the destination label is the views' (snap.sepBy.dest; note (5))
     s.sepBy.note = bypLine && shut ? SEPBY_SHUTIN : bypNote;
   }
   // flare-node gas with V-101 out to a production line: the well stream goes to the line; with FS-401 out too the relief and
@@ -5014,9 +5016,16 @@ test('30 v1.5.0 foundation', function () {
   assert(s3.getState().rigup.flare === true, 'setFlow line → flare re-forces FS-401');
   var s4 = S.create(F0, { seed: 32, rigup: { heaterChoke: true } }), st = s4.getState();
   assert(st.nodes.heaterChoke.inRig && !st.nodes.heaterChoke.active && st.nodes.heaterChoke.P === st.nodes.choke.P && st.inputs.bean2 === null, 'static CK-102 node');
-  assert(s4.startCushion({}).ok === false && s4.stopCushion() === false && s4.getCushion().phase === 'off', 'cushion stubs');
+  assert(s4.stopCushion() === false && s4.getCushion().phase === 'off', 'cushion off');
   run(s4, 600, 10);
   assert(s4.getHistory('Pck2').y.length > 0 && s4.getHistory('cushionLeft').y.every(function (y) { return y === 0; }), 'history keys');
+  // v1.5.0 (WP-E2, §6.3): a cushion unload starts, delivers to V-101 and stops (the scenario lives in the closure, not in X)
+  var cr = s4.startCushion({});
+  assert(cr.ok === true && s4.getCushion().phase === 'unloading' && s4.startCushion({}).ok === false, 'cushion start / refused while running ' + JSON.stringify(cr));
+  run(s4, 120, 10);
+  var cu = s4.getCushion();
+  assert(cu.recovered_bbl > 0 && cu.out.sep === cu.recovered_bbl && s4.getHistory('cushionLeft').y.some(function (y) { return y > 0; }), 'cushion delivers to V-101');
+  assert(s4.stopCushion() === true && s4.getCushion().phase === 'off', 'cushion stop');
   var bad = schemaOK(s4.getState()); assert(bad.length === 0, 'schema ' + bad.join(';'));
   assert(s4.setRigup({ heater: false }) === true && s4.getState().rigup.heaterChoke === false && s4.getRigup().heaterChoke === true, 'H-101 out takes CK-102 out');
 });
