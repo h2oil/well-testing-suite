@@ -19,3 +19,15 @@ the tests set it explicitly.
 ```bash
 cd server && npm ci && node test/run.js
 ```
+
+## Operations (WP-OPS)
+
+`RUNBOOK.md` is the operations handbook (owner's activation checklist, releases, alerts, kill switches, incidents, security
+reset, key rotation and compromise, backups and restore, support). `site/` holds the functions-only site: `handler.js` (the
+host adapter for `/api/v1/*`), `isolation.js` (preview isolation), `monitor.js` (access lines and the §13.6 alert table),
+`adapters.js` (blob store and e-mail bindings), `backup.js` (weekly encrypted export and restore drill), `build.js`
+(`server/dist`, functions only) and `site.json`. `ops/` adds `weekly-export.js`, `restore-drill.js`, `monitor-check.js`,
+`call-daily.js` and `sql/backup-role.sql`; `ci/secret-scan.js` is the secret scan. The release workflow
+`.github/workflows/server-release.yml` runs only on `server-v*` tags and skips its migration and deploy steps until the owner
+adds their secrets. The static site's allow-list is `prism-build/publish-site.js` (`--check`), the account-block digest
+`prism-build/acct-hash.js`.
