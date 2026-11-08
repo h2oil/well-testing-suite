@@ -174,7 +174,7 @@
     if (useMem) return Promise.resolve(null);
     if (dbP) return dbP;
     var f = factory();
-    if (!f || typeof f.open !== 'function') { useMem = true; return Promise.resolve(null); }
+    if (!f || typeof f.open !== 'function') return Promise.resolve(null);   // no store (yet): memory for this call only
     dbP = new Promise(function (res) {
       var r;
       try { r = f.open('wts-sync', 1); } catch (e) { useMem = true; res(null); return; }
@@ -214,6 +214,7 @@
   var readyP = null;
   function init() {
     if (readyP) return readyP;
+    if (!factory()) return Promise.resolve(false);    // no store yet (a test seam not configured): nothing is cached; try later
     var first = S.pendingWipe ? wipeStores({ reason: 'expiry', historian: true }).then(function () { S.pendingWipe = false; }) : Promise.resolve();
     readyP = first.then(function () { return Promise.all([kvGet('device'), kvGet('binding'), kvGet('base'), kvGet('outbox')]); }).then(function (r) {
       S.device = r[0]; S.binding = r[1]; S.base = r[2]; S.outbox = r[3];
@@ -292,7 +293,13 @@
     }
     return true;
   }
-  function hasLocalWork() { return lsKeys().some(isWorkKey); }
+  // A fresh New / Start empty leaves a few default keys (PRiSM writes its empty state); their values are remembered in the
+  // device record (emptyMark) so an emptied browser still counts as empty.
+  function hasLocalWork() {
+    var mark = (S.device && S.device.emptyMark) || {};
+    return lsKeys().some(function (k) { return isWorkKey(k) && !(own(mark, k) && mark[k] === lsGet(k)); });
+  }
+  function emptyMark() { var m = {}; lsKeys().forEach(function (k) { if (isWorkKey(k)) m[k] = lsGet(k); }); return m; }
   function buildPayload() {
     var p = P(); if (!p || typeof p._buildPayload !== 'function') throw AErr('unavailable', { message: 'project layer missing' });
     var meta;
@@ -1041,6 +1048,7 @@
       S.applying = false;
       S.binding = null; S.base = null;
       S.device.workOwner = user.id; S.device.workOwnerAt = now(); S.device.signedOutAfterOwner = false;
+      S.device.emptyMark = emptyMark();
       return Promise.all([kvDel('binding'), kvDel('base'), saveDevice()]);
     });
   }
@@ -1074,7 +1082,8 @@
     var i = I();
     return init().then(function () {
       var st = status();
-      if (!S.outbox && st.state !== 'dirty') return 'proceed';
+      // blocked while a change waits or the local work is not the synced cloud version (unlinked work counts)
+      if (!S.outbox && (st.state === 'idle' || !hasLocalWork())) return 'proceed';
       function ask() {
         return i.choose({ title: 'Changes are waiting', text: 'This project has changes that are not in the cloud yet. This shared computer keeps nothing of your work after you sign out.',
           buttons: [{ id: 'upload', label: 'Try to upload now', primary: true }, { id: 'download', label: 'Download .h2oilproj' },
@@ -1155,10 +1164,11 @@
       }).then(function () {
         S.binding = null; S.base = null; S.outbox = null; S.outboxKey = null; S.error = null; S.lastSyncAt = null;
         S.device = trustedRemove && dev ? dev : { deviceId: null, lastUserId: null, workOwner: null, workOwnerAt: now(), signedOutAfterOwner: false };
+        S.device.emptyMark = emptyMark();
         if (!trustedRemove) { var a = A(); if (a) a.configure({ deviceId: null }); }
         return saveDevice();
       });
-    }).then(function () { return hist; }).then(function () { changed(); return true; });
+    }).then(function () { changed(); return true; });   // the historian purge runs on; it never holds the wipe or init()
   }
   // At load (no timer): a public session past its absolute expiry, or idle for 12 h since the last activity, is wiped before
   // anything is shown (§5.5, §10.8). Reads only the hint.

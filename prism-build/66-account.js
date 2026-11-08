@@ -65,6 +65,8 @@
   function configure(o) {
     o = o || {};
     Object.keys(o).forEach(function (k) { if (Object.prototype.hasOwnProperty.call(seams, k)) seams[k] = o[k]; });
+    // a store seam set after the mount: let 67 open it now (the load-time public expiry wipe finishes there)
+    if (o.idb && mounted && G.WTS_cloudSync && typeof G.WTS_cloudSync._init === 'function') G.WTS_cloudSync._init();
     return api;
   }
   function seam(k) { return Object.prototype.hasOwnProperty.call(seams, k) ? seams[k] : undefined; }
