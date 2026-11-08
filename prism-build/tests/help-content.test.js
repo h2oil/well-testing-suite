@@ -30,7 +30,7 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
 const KB = 1000;
 const CAPS = {
   '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.4, '48-calc-help-start.js': 18.88, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.6, '48-calc-help-production.js': 36.42, '48-calc-help-livedata.js': 16.05,
+  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.65, '48-calc-help-production.js': 36.42, '48-calc-help-livedata.js': 16,
   '48-calc-help-safety.js': 35.42, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 20,
   '48-calc-help-simcourse.js': 41.3, '48-calc-help-manifest.js': 8.75,
 };
@@ -50,6 +50,8 @@ const CAPS = {
 // DFIT release review (2026-11-07): 0.4 kB of unused headroom to production (the DFIT steps as the app runs them, the step names,
 // the p_i bracket in the example, water hammer and the shut-in caveat) from welltest (0.1), process (0.08), flare (0.07), overview
 // (0.07), utilities (0.05) and safety (0.03); the sum stays 345 kB.
+// Simulator 3.4.1 (2026-11-08): 0.05 kB of livedata's unused headroom to welltest (the CK-101 legs, the T-201 A / B filling, the
+// toolbar Rig-up menu); the sum stays 345 kB.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];

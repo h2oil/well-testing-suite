@@ -693,6 +693,9 @@ const D2 = [
     name: 'WTSFUV 2D live, CK-102 out: the live frame equals the v3.3.1 live frame command for command (legacy row)',
     wp: WP,
     integration: true,
+    // v3.4.1: the live engine's default T-201 line-up changed (A fills / B transfers); the frame identity is about the 2D painter,
+    // so the app under test runs the v3.3.1 line-up as its default (tests/_wts-lineup-pin.js legacyEngineOverrides)
+    opts: { sourceOverrides: require('./_wts-lineup-pin.js').legacyEngineOverrides() },
     run(app, assert, ctx) {
       const html = v331Html();
       openWts(app);

@@ -400,6 +400,24 @@ module.exports = [
         try {
           assert.deepStrictEqual(J(openWts(a3).getControls()).surge, want, 'hand-set T-201 line-up restored');
         } finally { if (a3.dispose) a3.dispose(); }
+        // 5. review round 2: an automatic divert followed by a hand change to ANOTHER group (the gauge tank) must not save the
+        //    auto-diverted T-201 line-up — the reload restores the operator's hand line-up
+        live.setValve('surge', 0, true); live.setValve('surge', 1, false); live.setSuction('B');
+        live.setAutoDivert('surge', true, a1.toWin({ sp: 0.4 })); a1.flush(50);
+        for (let i = 0; i < 3; i++) live.advance(10);           // valves at their limits
+        const hand = J(live.getControls()).surge;
+        let dv = 0; live.on('divert', (e) => { if (e.eq === 'surge') dv++; });
+        for (let i = 0; i < 720 && !dv; i++) live.advance(10);
+        assert.ok(dv > 0, 'an automatic T-201 divert happened');
+        const after = J(live.getControls()).surge;
+        assert.notDeepStrictEqual(after.inlet, hand.inlet, 'the divert changed the live inlets');
+        live.setValveOptions('gauge', a1.toWin({ strokeS: 12 })); a1.flush(50);
+        const a4 = ctx.loadApp({ storage: a1.storage });
+        try {
+          const c4 = J(openWts(a4).getControls());
+          assert.deepStrictEqual(c4.surge, hand, 'hand T-201 line-up restored, not the auto-diverted one: ' + JSON.stringify(c4.surge));
+          assert.strictEqual(c4.gauge.strokeS, 12, 'the later gauge hand change is restored');
+        } finally { if (a4.dispose) a4.dispose(); }
       } finally { if (a1.dispose) a1.dispose(); }
     }
   },

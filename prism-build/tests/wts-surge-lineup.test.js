@@ -247,10 +247,11 @@ module.exports = [
   {
     // review [engine 0]: a set point below LSH (0.70) used to move the suction to the compartment at SP and leave LCV-201 shut
     // (level control starts at LSH), ending in LSHH-201 → ESD. The transfer now starts with the move.
-    name: 'WTSLU auto-divert SP below LSH (0.65, 0.50): 4 h under the default line-up with no ESD; LCV-201 starts on the compartment the divert moved the suction to',
+    name: 'WTSLU auto-divert SP below LSH (0.65, 0.50, 0.40, 0.34, 0.30): 4 h under the default line-up with no ESD; LCV-201 starts on the compartment the divert moved the suction to',
     wp: WP, opts: false,
     run(app, assert) {
-      [0.65, 0.50].forEach((sp) => {
+      // 0.34 / 0.30: SP − hyst at or below LSL — the single suction parks at LSL and must still count as having room (review round 2)
+      [0.65, 0.50, 0.40, 0.34, 0.30].forEach((sp) => {
         const sim = mk({ config: NOISE_OFF });
         assert.ok(sim.setControls({ surge: { sp } }), 'sp ' + sp);
         assert.strictEqual(J(sim.getControls()).surge.sp, sp, 'sp applied');
@@ -270,7 +271,10 @@ module.exports = [
         }
         const s = st(sim);
         assert.ok(!s.esd.tripped, 'sp ' + sp + ': no ESD in 4 h (alarms ' + raised.join() + ')');
-        assert.ok(raised.indexOf('LSHH_SURGE') < 0 && raised.indexOf('LAH_SURGE_BOTH') < 0, 'sp ' + sp + ': no LSHH-201 / LAH-201: ' + raised.join());
+        assert.ok(raised.indexOf('LSHH_SURGE') < 0, 'sp ' + sp + ': no LSHH-201: ' + raised.join());
+        // below SP 0.50 the filling side can reach SP before the transferring side is drawn below its room level: LAH-201
+        // (auto-divert has no room yet) is a true alarm there; from 0.50 up it never fires
+        if (sp >= 0.5) assert.ok(raised.indexOf('LAH_SURGE_BOTH') < 0, 'sp ' + sp + ': no LAH-201: ' + raised.join());
         assert.ok(dv.length >= 4, 'sp ' + sp + ': the inlet keeps diverting (' + dv.length + ' diverts)');
         assert.ok(dv.every((e) => /LCV-201 suction →/.test(e.msg)), 'sp ' + sp + ': every divert moved the suction');
         assert.ok(checked >= 4 && afterMove === checked, 'sp ' + sp + ': LCV-201 transferring after each divert (' + afterMove + ' / ' + checked + ')');

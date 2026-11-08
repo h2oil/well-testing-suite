@@ -12,7 +12,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.3.3', reviewedSrc: 'ac541233', units: 'dual',
+  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: '27cbdcee', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
@@ -116,7 +116,7 @@ wts: {
       tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 can both be out only to a production line. P-201 needs T-301.', 'Optional, out by default: DS-101 (desander, upstream of CK-101), T-202 (needs T-201), CK-102 (needs H-101), also in the toolbar **Rig-up** menu. Restore full rig-up leaves them.', 'V-101 out: to the burner line or a production line ([[fs#FS-2|FS-2]]); no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches. Unload a [[glossary#cushion|cushion]] from Scenarios ([[fs#FS-1|FS-1]]).', 'Saved in project files; the steady check ignores it.'] },
     { id: 'toolbar', title: 'Toolbar and keys',
       steps: ['**3D** / **2D** (V). Play / pause (Space). Speed ×1, ×10, ×60, ×600 ([ and ]).', '**Reset → Reset to steady** (R) or **Reset → Start from empty**. After a minute it asks first: clock, totals and levels clear.',
-        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off (on an item that is out it acts once it is in) and holds the cushion unload.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
+        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off (on an item that is out it acts once it is in) and holds the cushion unload.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**; tap a CK-101 leg to use it. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
     { id: 'hud', title: 'HUD',
       what: ['T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±{{5|pressure}} of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&W, totals since T+0, tank and alarm lines. T-202, DS-101 and a cushion add lines.'] },
     { id: 'cards', title: 'Equipment cards',

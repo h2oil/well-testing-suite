@@ -22,4 +22,15 @@ function legacyOpts(opts) {
   return o;
 }
 
-module.exports = { LEGACY_LINEUP, legacyCfg, legacyOpts };
+// legacyEngineOverrides(): harness sourceOverrides whose 31-wts-sim.js has the v3.3.1 line-up as its DEFAULT, for app-level
+// tests that compare the live view (whose engine the app creates itself) with a v3.3 / v3.3.1 frame. The default line
+// is replaced exactly once (throws if 31 no longer has it).
+function legacyEngineOverrides() {
+  const fs = require('fs'), path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '31-wts-sim.js'), 'utf8');
+  const re = /var SURGE_LINEUP_DEF = deepFreeze\(\{[^\n]*\}\);/;
+  if (!re.test(src)) throw new Error('_wts-lineup-pin: SURGE_LINEUP_DEF line not found in 31-wts-sim.js');
+  return { '31-wts-sim.js': src.replace(re, 'var SURGE_LINEUP_DEF = deepFreeze(' + JSON.stringify(LEGACY_LINEUP) + ');') };
+}
+
+module.exports = { LEGACY_LINEUP, legacyCfg, legacyOpts, legacyEngineOverrides };

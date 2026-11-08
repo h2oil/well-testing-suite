@@ -582,6 +582,9 @@ const D2 = [
     name: 'WTSEQV 2D both items out: the live 2D frame equals the v3.3 frame command for command (legacy variants)',
     wp: WP,
     integration: true,
+    // v3.4.1: the live engine's default T-201 line-up changed (A fills / B transfers); the frame identity is about the 2D painter,
+    // so the app under test runs the v3.3.1 line-up as its default (tests/_wts-lineup-pin.js legacyEngineOverrides)
+    opts: { sourceOverrides: require('./_wts-lineup-pin.js').legacyEngineOverrides() },
     run(app, assert, ctx) {
       const html = v33Html();
       openWts(app);

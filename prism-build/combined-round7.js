@@ -1275,10 +1275,17 @@ function create(flowIn, opts) {
       for (k = 0; k < 2; k++) {
         o = 1 - k;
         if (!uv[k] || compVliq(k) < C.sp * capK - 1e-9) continue;
-        if (!(compVliq(o) < (C.sp - C.hyst) * capK)) continue;
+        // v1.6.0 review: while o is the single LCV-201 suction its level parks at LSL (the transfer stops there), so with SP − hyst
+        // at or below LSL it would never count as having room and the line-up would run on to LSHH-201: o has room once it is
+        // drawn down to just above LSL. Suction 'both' (the v3.3.1 line-up) keeps the plain SP − hyst test (identity).
+        if (!(compVliq(o) < roomFrac(C, o) * capK)) continue;
         uv[o] = true; hold.surge[o] = false; uv[k] = false; armClose('surge', k);
         var sucMoved = C.suction === letter(o);
         if (sucMoved) C.suction = letter(k);             // pump the full compartment down while the other fills
+        // v1.6.0 review: a set point below LSH would leave LCV-201 shut on the compartment it just moved to (level control
+        // starts at LSH) and the line-up would end at LSHH-201 — the transfer starts with the move. With SP ≥ LSH the
+        // compartment is already at LSH, so level control starts it on the next substep exactly as before (v3.3.1 identity).
+        if (sucMoved && rSurge) { var fK = compVliq(k) / capK; if (fK < cfg.surge.lsh - 1e-12 && fK > cfg.surge.lsl + 1e-12) pumpOn = true; }
         msg = TAGS.surge + ' auto-divert: ' + sideTag('surge', k) + ' at ' + rnd0(compVliq(k) / capK * 100) + '% → inlet to ' + sideTag('surge', o) +
           ' (' + valveTag('surge', o) + ' open, ' + valveTag('surge', k) + ' closed)' + (sucMoved ? ' · ' + TAGS.xfer + ' suction → ' + sideTag('surge', k) : '');
         logEntry('switch', 'AUTO_DIVERT', null, TAGS.surge, msg);
@@ -1493,9 +1500,19 @@ function create(flowIn, opts) {
   }
   var surgeHiK = 0, gaugeHiK = 0, gaugeLahK = 0, FG2 = [0, 0];
   // both-high (auto-divert on): a filling side at/above SP while the other side has no room (≥ SP − hysteresis)
+  function roomFrac(C, o) { return C.suction === letter(o) ? mmax(C.sp - C.hyst, cfg.surge.lsl + 0.02) : C.sp - C.hyst; }
   function bothHigh(C, open, fA, fB, db) {
     if (!C.auto) return false;
-    return (open[0] && fA >= C.sp - db && fB >= C.sp - C.hyst - db) || (open[1] && fB >= C.sp - db && fA >= C.sp - C.hyst - db);
+    // the room test is the one autoDivert uses (roomFrac: a single suction parks at LSL; suction 'both' = SP − hyst, v3.3.1)
+    return (open[0] && fA >= C.sp - db && fB >= roomFrac(C, 1) - db) || (open[1] && fB >= C.sp - db && fA >= roomFrac(C, 0) - db);
+  }
+  // v1.6.0 review — LAH-201 with auto-divert OFF: the compartment whose inlet is open but which is not on the LCV-201 suction
+  // has no level control, so it rises to LSHH-201 (ESD); it alarms at the auto set point. Returns that compartment (0 | 1)
+  // or -1. Suction 'both' (the v3.3.1 line-up) or the inlet compartment on the suction never alarms here (identity).
+  function uncontrolledHigh(C, open, fA, fB, db) {
+    if (C.auto || C.suction === 'both') return -1;
+    var s = C.suction === 'B' ? 1 : 0, o = 1 - s;
+    return open[o] && (o ? fB : fA) >= C.sp - db ? o : -1;
   }
   // equipment out of the rig-up raises nothing: its (non-latched) alarms clear at once
   function quiet(ids) {
@@ -1591,9 +1608,19 @@ function create(flowIn, opts) {
       A = aDef('PUMP_BLOCKED', TAGS.xfer, 'alarm', 'surge', 'b');
       evalA(A, pumpBlocked, !pumpBlocked, null, null, MSG.PUMP_BLOCKED, true);
       var bU = bothHigh(ctl.surge, uv, fUA, fUB, 0), bUc = !bothHigh(ctl.surge, uv, fUA, fUB, dbLu);
+      var msgU = MSG.LAH_SURGE_BOTH, vU = fracHiU, kU = 'both';
+      if (!ctl.surge.auto) {                        // auto-divert off: LAH-201 = the inlet-open compartment off the suction at SP
+        var uK = uncontrolledHigh(ctl.surge, uv, fUA, fUB, 0), uKc = uncontrolledHigh(ctl.surge, uv, fUA, fUB, dbLu);
+        bU = uK >= 0; bUc = uKc < 0;
+        if (uKc >= 0) { vU = uKc ? fUB : fUA; msgU = uKc ? MSG.LAH_SURGE_B : MSG.LAH_SURGE_A; kU = uKc ? 'B' : 'A'; }
+      }
       if (rSurge2 && ctl.surge2.auto && X2.VliqU / cap2 < ctl.surge2.sp - ctl.surge2.hyst) { bU = false; bUc = true; }   // the auto route has room (WP-E2)
       A = aDef('LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l');
-      evalA(A, bU, bUc, fracHiU * 100, ctl.surge.sp * 100, MSG.LAH_SURGE_BOTH, true);
+      evalA(A, bU, bUc, vU * 100, ctl.surge.sp * 100, msgU, true);
+      if (!A.active) A.lahKind = kU;                // raised with this meaning; while raised, a change of meaning (auto-divert
+      else if (A.lahKind !== kU && !bUc) {          // toggled, other compartment) refreshes the text (never on the v3.3.1 paths)
+        A.lahKind = kU; A.msg = msgU(A.value, A.limit); alarmsDirty = true;
+      }
     } else { quiet(Q_SURGE); surgeBlocked(); }
     // v1.4.0 optional items: evaluated only while the item is in (sand alarms while sand is on); released on removal
     if (rDes || sandOn) desAlarms();
@@ -2233,8 +2260,18 @@ function create(flowIn, opts) {
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
     var flLim = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited;   // DS-101 in: the dynamic flag of the capacity coupling (§4.6)
     if (CK2.act && AL.CHOKE2_LIMIT && AL.CHOKE2_LIMIT.active) flLim = false;  // v1.5.0: CHOKE_LIMIT is suppressed while CHOKE2_LIMIT is raised
-    if (flLim && !A.active) raise(A, Qg, chk.QmaxMMscfd, chk.flowLimited ? 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
-      : 'CK-101 flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs');
+    // v1.6.0 review: the text names the positive leg only while it is in service (adjustable leg / no flow.ck1: the v3.3.1 text);
+    // while raised, a bean / leg / capacity / requested-rate change refreshes the value, limit and text (the DS-101 ΔP text is
+    // refreshed only on those changes, not on every ΔP move)
+    var posLeg = isPlainObj(flow.ck1) && flow.ck1.leg === 'fixed';
+    var ckKey = (chk.flowLimited ? 'c' : 'd') + '|' + bean + '|' + chk.QmaxMMscfd + '|' + Qg + '|' + (posLeg ? 'pos' : 'adj');
+    if (flLim && (!A.active || A.ckKey !== ckKey)) {
+      var ckMsg = chk.flowLimited ? 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
+        : 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs';
+      if (!A.active) raise(A, Qg, chk.QmaxMMscfd, ckMsg);
+      else { A.value = Qg; A.limit = chk.QmaxMMscfd; if (A.msg !== ckMsg) { A.msg = ckMsg; alarmsDirty = true; } }
+      A.ckKey = ckKey;
+    }
     else if (!flLim && A.active) clearA(A);
   }
 
@@ -3487,6 +3524,13 @@ function create(flowIn, opts) {
     return 'LAH-201 both surge compartments high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — auto-divert has no room' +
       (rSurge2 && !ctl.surge2.auto ? ' — route the dumps to ' + TAGS.surge2 : '');
   };
+  // v1.6.0 review: auto-divert off, the filling compartment is not on the LCV-201 suction (no level control → LSHH-201 ESD)
+  function lahUnctl(k, v, l) {
+    return 'LAH-201 ' + sideTag('surge', k) + ' high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — inlet open, not on the ' + TAGS.xfer +
+      ' suction and auto-divert off: divert the inlet or move the suction before LSHH-201 (ESD)';
+  }
+  MSG.LAH_SURGE_A = function (v, l) { return lahUnctl(0, v, l); };
+  MSG.LAH_SURGE_B = function (v, l) { return lahUnctl(1, v, l); };
 
   function mawp2Of(x) {
     var C = cfg.surge2;
@@ -4940,7 +4984,9 @@ function valveOf(id) {
 }
 
 // Pipe routes (orthogonal waypoints; fillets added automatically) — §5.3
-// aSeg: 0–5 main segments, 6 LW, 7 LO, 8 LM, 9 BLK, 10 VENT, 11 XA/XB, 12 DD (sand dump; E2b until v1.3.0), 13 DRA/DRB
+// aSeg: 0–5 main segments, 6 LW, 7 LO, 8 LM, 9 BLK, 10 VENT, 11 XA/XB, 12 DD (sand dump; E2b until v1.3.0), 13 DRA/DRB,
+// 14–17 the CK-101 legs (CK_LEG_SLOTS: 14 E2a / 15 E2b upstream, 16 E3 / 17 E3f downstream; fed per frame from segment 1 / 2
+// while that leg is in service, else the isolated look of slot 12 with no alert, frost or chevron motion)
 // v1.2.0: E2 keeps its index but starts at the DS-101 bypass tee (D0a + D0b + E2 = the v3.3 E2); LM keeps its index as LMa
 // (LMa + LMb = the v3.3 LM). Routes tagged rig:'desander' / rig:'surge2' are built only while that item is in (ROUTE_IDX stays).
 var ROUTES = [
@@ -4949,8 +4995,8 @@ var ROUTES = [
   // choke, E2b = leg B (down the inlet side) to the positive choke; E3 = leg A downstream (to the outlet tee), E3f (appended) = leg
   // B downstream; E3o (appended) = outlet tee → heater tee. The corners inside the manifold blocks use a tight bend (rb)
   { id:'E2',  aSeg:1, seg:1, line:'esd_choke',    phase:'multi', pts:[[-9.3,1.2,0],[-8.95,1.2,0],[-8.95,1.2,0.7],[-8.3,1.2,0.7]] },
-  { id:'E2b', aSeg:1, seg:1, line:'esd_choke',    phase:'multi', rb:0.05, pts:[[-8.3,1.2,0.7],[-8.3,1.2,-0.7],[-7.05,1.2,-0.7]] },
-  { id:'E3',  aSeg:2, seg:2, rSeg:1, line:'choke_heater', phase:'multi', rb:0.05, pts:[[-7.05,1.2,0.7],[-5.8,1.2,0.7],[-5.8,1.2,-0.7]] },
+  { id:'E2b', aSeg:15, seg:1, line:'esd_choke',    phase:'multi', rb:0.05, pts:[[-8.3,1.2,0.7],[-8.3,1.2,-0.7],[-7.05,1.2,-0.7]] },
+  { id:'E3',  aSeg:16, seg:2, rSeg:1, line:'choke_heater', phase:'multi', rb:0.05, pts:[[-7.05,1.2,0.7],[-5.8,1.2,0.7],[-5.8,1.2,-0.7]] },
   { id:'E3c', aSeg:2, seg:2, line:'choke_heater', phase:'multi', unless:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.15,1.9,0.4]] },
   { id:'E3b', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-4.3,1.2,0],[-4.3,1.2,1.5],[1.0,1.2,1.5],[1.0,1.2,0]] },
   { id:'E4a', aSeg:3, seg:3, line:'heater_sep',   phase:'multi', pts:[[0.35,1.9,-0.4],[1.0,1.9,-0.4],[1.0,1.2,-0.4],[1.0,1.2,0]] },
@@ -4990,10 +5036,17 @@ var ROUTES = [
   { id:'E3c1', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.65,1.9,0.4]] },
   { id:'E3c2', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-3.25,1.9,0.4],[-3.15,1.9,0.4]] },
   // ── v1.4.0 (appended) — CK-101 manifold legs (see E2 / E2b / E3 above) ──
-  { id:'E2a', aSeg:1, seg:1, line:'esd_choke', phase:'multi', pts:[[-8.3,1.2,0.7],[-7.05,1.2,0.7]] },
-  { id:'E3f', aSeg:2, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.05,1.2,-0.7],[-5.8,1.2,-0.7]] },
+  { id:'E2a', aSeg:14, seg:1, line:'esd_choke', phase:'multi', pts:[[-8.3,1.2,0.7],[-7.05,1.2,0.7]] },
+  { id:'E3f', aSeg:17, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.05,1.2,-0.7],[-5.8,1.2,-0.7]] },
   { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-5.8,1.2,-0.7],[-5.0,1.2,-0.7],[-5.0,1.2,0],[-4.3,1.2,0]] }
 ];
+// CK-101 leg shader slots (v1.4.0): slot → { src segment, leg }. The in-service leg's slots copy their segment's colour, alert,
+// frost and chevron phase each frame; the standby leg's slots show the isolated look (slot 12), alert 0, frost 0, phase frozen
+var CK_LEG_SLOTS = { 14:{ src:1, leg:'adj' }, 15:{ src:1, leg:'fixed' }, 16:{ src:2, leg:'adj' }, 17:{ src:2, leg:'fixed' } };
+var SEG_SLOTS = 18;                                                     // shader uniform array length (aSeg 0–17)
+// one slot's look this frame: its source segment while its leg is in service, else isolated (slot 12) (pure; Node-testable)
+function ckLegSlot(slot, leg) { var d = CK_LEG_SLOTS[slot]; if (!d) return null; var live = d.leg === (leg === 'fixed' ? 'fixed' : 'adj');
+  return { src:d.src, live:live, look:live ? d.src : 12 }; }
 var NEW_ROUTES = ['D0a', 'D0b', 'D1', 'D2', 'DD', 'LM2', 'X0', 'VENT2', 'BLK2', 'PSV2', 'E3c1', 'E3c2'];
 // CK-102 body: the CK-101 block (angle body, bonnet, handwheel) at 0.8 scale, except that the body is sized for the 6-inch
 // line (0.40 m along the flow × 0.46 m, wider than the pipe it sits on). It sits on the last horizontal stub of the inlet leg
@@ -6258,7 +6311,7 @@ function factory(THREE) {
           .replace('#include <begin_vertex>', '#include <begin_vertex>\nwSeg = aSeg; wS = aS; wWP = (modelMatrix*vec4(position,1.0)).xyz;');
       }
       var pre = '#include <common>\nuniform vec3 uRim,uAlertCol;uniform float uRimMax,uRimPow,uAlert;';
-      if (seg) pre += '\nvarying float wSeg; varying float wS; varying vec3 wWP; uniform vec3 uSegCol[14]; uniform vec3 uSegColOld[14]; uniform float uSegAlert[14]; uniform float uSegFrost[14]; uniform float uSegPh[14]; uniform float uPulse; uniform float uChev; uniform float uWaveS;' +
+      if (seg) pre += '\nvarying float wSeg; varying float wS; varying vec3 wWP; uniform vec3 uSegCol[' + SEG_SLOTS + ']; uniform vec3 uSegColOld[' + SEG_SLOTS + ']; uniform float uSegAlert[' + SEG_SLOTS + ']; uniform float uSegFrost[' + SEG_SLOTS + ']; uniform float uSegPh[' + SEG_SLOTS + ']; uniform float uPulse; uniform float uChev; uniform float uWaveS;' +
         '\nfloat wHash(vec3 p){ uvec3 q = uvec3(ivec3(floor(mod(p,256.0)))); uint h = q.x*1597334677u ^ q.y*3812015801u ^ q.z*2798796415u; h = (h ^ (h >> 16u))*2246822519u; return float(h >> 8u)/16777215.0; }';
       var body = '';
       if (seg) body = '\nint wi = int(wSeg+0.5); vec3 wSc = wS < uWaveS ? uSegCol[wi] : uSegColOld[wi];' +
@@ -7884,7 +7937,7 @@ function buildPipes(F, S, nps) {
         }
       } else {
         var tg = new THREE.TubeGeometry(new F.FilletArc(pr), 8, rvis * 1.07, T.radP, false);
-        (def.aSeg === 2 && def.id !== 'E3b' ? frost : steel).push(tg);
+        (def.seg === 2 && def.id !== 'E3b' ? frost : steel).push(tg);
       }
     }
     // flanges at the route ends (nozzle / equipment faces), except at tees
@@ -7893,7 +7946,7 @@ function buildPipes(F, S, nps) {
       var d0 = f0.type === 'L' ? f0.dir : f0.dIn, d1 = fl.type === 'L' ? fl.dir : fl.dOut;
       var endTee = function (pt) { for (var t = 0; t < TEES.length; t++) if (Math.abs(TEES[t][0] - pt[0]) + Math.abs(TEES[t][1] - pt[1]) + Math.abs(TEES[t][2] - pt[2]) < 0.05) return true;
         for (t = 0; t < CK_JOINTS.length; t++) if (Math.abs(CK_JOINTS[t][0] - pt[0]) + Math.abs(CK_JOINTS[t][1] - pt[1]) + Math.abs(CK_JOINTS[t][2] - pt[2]) < 0.05) return true; return false; };
-      if (!endTee(def.pts[0])) flangeP(v3add(def.pts[0], v3scale(d0, 0.04)), d0, rvis, def.aSeg === 2 ? frost : steel);
+      if (!endTee(def.pts[0])) flangeP(v3add(def.pts[0], v3scale(d0, 0.04)), d0, rvis, def.seg === 2 ? frost : steel);
       if (!endTee(def.pts[def.pts.length - 1])) flangeP(v3add(def.pts[def.pts.length - 1], v3scale(d1, -0.04)), d1, rvis, steel);
     }
   }
@@ -7907,9 +7960,9 @@ function buildPipes(F, S, nps) {
   var meshes = [];
   var gm = S.pipeGlassMat;
   if (!gm) {
-    var su = S.segU = { col:{ value:[] }, colOld:{ value:[] }, alert:{ value:new Array(14).fill(0) }, frost:{ value:new Array(14).fill(0) }, ph:{ value:new Array(14).fill(0) },
+    var su = S.segU = { col:{ value:[] }, colOld:{ value:[] }, alert:{ value:new Array(SEG_SLOTS).fill(0) }, frost:{ value:new Array(SEG_SLOTS).fill(0) }, ph:{ value:new Array(SEG_SLOTS).fill(0) },
       pulse:{ value:0 }, chev:{ value:T.tracers < 600 ? 1 : 0 }, wave:{ value:1e6 } };
-    for (i = 0; i < 14; i++) { su.col.value.push(new THREE.Color(0.6, 0.7, 0.8)); su.colOld.value.push(new THREE.Color(0.6, 0.7, 0.8)); }
+    for (i = 0; i < SEG_SLOTS; i++) { su.col.value.push(new THREE.Color(0.6, 0.7, 0.8)); su.colOld.value.push(new THREE.Color(0.6, 0.7, 0.8)); }
     gm = S.pipeGlassMat = F.makeGlass({ side:THREE.FrontSide, opacity:0.16, tier:S.tier, envTex:S.scene.environment, seg:su, rimMax:0.6, envI:1.3 });
   }
   var gmesh = new THREE.Mesh(F.mergeGeos(glass, { seg:true }), gm); gmesh.renderOrder = 900; scene.add(gmesh); meshes.push(gmesh);
@@ -8455,6 +8508,16 @@ function createHandle(THREE, container, opts) {
     for (var q = 0; q < 14; q++) K.phaseSeg[q].set(q <= 3 ? '#9fc3dd' : (q === 4 || q === 9 || q === 10) ? '#cfe6ff' : q === 6 ? PALETTE.waterBody : q === 7 ? oc.surface : q === 12 ? '#5a6470' : mixHex(oc.surface, PALETTE.waterBody, 0.3));
     if (S.dyn.cascade) S.dyn.cascade.material.uniforms.uCol.value.set(oc.surface);
     if (S.dyn.sight) S.dyn.sight.o.material.color.set(oc.body), S.dyn.sight.o.material.emissive.set(oc.body);
+  }
+  // CK-101 leg slots 14–17 (v1.4.0): 'look' = colour + alert + chevron phase (after the main slots each frame), 'frost' = frost
+  // (after the CK-101 frost ramp). The standby leg keeps its last phase (no chevron motion) and shows the isolated colour
+  function updateCkLegSlots(su, leg, what) {
+    for (var sl = 14; sl < SEG_SLOTS; sl++) {
+      var c = ckLegSlot(sl, leg);
+      if (what === 'frost') { su.frost.value[sl] = c.live ? su.frost.value[c.src] : 0; continue; }
+      if (c.live) { su.col.value[sl].copy(su.col.value[c.src]); su.alert.value[sl] = su.alert.value[c.src]; su.ph.value[sl] = su.ph.value[c.src]; }
+      else { su.col.value[sl].copy(K.phaseSeg[12]); su.alert.value[sl] = 0; }
+    }
   }
   // pipe tint / tracer colours per overlay
   function segColour(i, out) {
@@ -9062,6 +9125,7 @@ function createHandle(THREE, container, opts) {
     var fz = n.nodes.choke.hyd || n.segs[2].hydR ? 1 : 0; S.frostU.uFrost.value = clamp(S.frostU.uFrost.value + (fz ? dt / 4 : -dt / 4), 0, 1);
     if (snap) S.frostU.uFrost.value = fz;
     S.segU.frost.value[2] = S.frostU.uFrost.value; S.segU.frost.value[11] = 0;
+    updateCkLegSlots(S.segU, n.nodes.choke.leg, 'frost');     // CK-101 legs: frost only on the in-service downstream leg
     if (D.choke.fu) { var lbF = D.choke.lb < 0 ? 0 : D.choke.lb; D.choke.fu[0].uFrost.value = S.frostU.uFrost.value * (1 - lbF); D.choke.fu[1].uFrost.value = S.frostU.uFrost.value * lbF; }
   }
 
@@ -9474,6 +9538,7 @@ function createHandle(THREE, container, opts) {
       su.pulse.value = 0.5 + 0.5 * Math.sin(t0 * 0.006);
       if (waveOld) { waveOld.t += dt; su.wave.value = reducedMotion ? 1e6 : S.pipes.totalS * clamp(waveOld.t / 1.2, 0, 1); if (waveOld.t > 1.3) { waveOld = null; su.wave.value = 1e6; } }
       for (si = 0; si < 14; si++) { var sv = si <= 5 ? si : -1, velS = sv >= 0 ? velToScene(N.segs[sv].vel) : 0.6; su.ph.value[si] = (su.ph.value[si] + velS * dt * flowGain) % 256; }
+      updateCkLegSlots(su, N.nodes.choke.leg, 'look');
       edgeState();
       updateVessels(dt, snap, anim);
       updateTracers(dt); updateJetEmbersFrost(dt, t0); updateVesselParticles(dt);
@@ -9506,7 +9571,7 @@ function createHandle(THREE, container, opts) {
   H.setPaused = guard(function (b) { b = !!b; if (paused === b) return; paused = b; if (!b) { resize(); snapNext = true; labelDirty = true; } else clearPointers(); });
   H.setOverlay = guard(function (m) {
     if (!/^(phase|pressure|temperature|erosion)$/.test(m) || m === overlay) return;
-    if (S && S.segU) { for (var i = 0; i < 14; i++) S.segU.colOld.value[i].copy(S.segU.col.value[i]); S.segU.wave.value = 0; }
+    if (S && S.segU) { for (var i = 0; i < SEG_SLOTS; i++) S.segU.colOld.value[i].copy(S.segU.col.value[i]); S.segU.wave.value = 0; }
     overlay = m; waveOld = { t:0 }; labelDirty = true; layoutDirty = true;
   });
   H.setLabels = guard(function (m) { if (/^(all|equip|off)$/.test(m)) { labelMode = m; layoutDirty = true; labelsEl.style.display = m === 'off' ? 'none' : ''; svg.style.display = m === 'off' ? 'none' : ''; } });
@@ -9629,7 +9694,7 @@ function mount(container, opts) {
 // §G PUBLIC
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
-  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES,
+  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
   TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,
@@ -9777,12 +9842,15 @@ var PREF_DEFAULTS = { mode: '3d', labels: 'all', overlay: 'phase', quality: 'aut
 // A fills while B transfers, auto-divert on) reaches a user who never touched T-201. Prefs written before v3.3.4 have no ctlUser:
 // their T-201 part counts as a deliberate choice only when it differs from the v3.3.1 default (both inlets open, suction A + B,
 // auto-divert off, set point 80 %, hysteresis 10 %, stroke 6 s); the other groups' defaults did not change and are kept.
+// Old prefs stored every control event, automatic ones too (auto-divert, an LSHH-201 closure), so they cannot tell a hand change
+// from an automatic one: the inlet states are ignored for them (a part that differs from the v3.3.1 default only by its inlets
+// counts as untouched), and a saved T-201 line-up with both inlets shut is never restored (that start would be blocked).
 var CTL_GROUPS = ['surge', 'gauge', 'surge2', 'desander'];
 var CTL_USER_WHAT = { inlet: 1, suction: 1, auto: 1, options: 1, bypass: 1, route: 1 };
-function legacySurgeDefault(su) {
+function legacySurgeDefault(su, anyInlet) {
     if (!su || typeof su !== 'object') return true;
     var inl = su.inlet, eq = function (v, d) { return v === undefined || v === null || (typeof v === 'number' && Math.abs(v - d) < 1e-9); };
-    return (inl === undefined || (Array.isArray(inl) && inl.length === 2 && inl[0] === true && inl[1] === true)) &&
+    return (anyInlet || inl === undefined || (Array.isArray(inl) && inl.length === 2 && inl[0] === true && inl[1] === true)) &&
         (su.suction === undefined || su.suction === 'both') && (su.auto === undefined || su.auto === false) &&
         eq(su.sp, 0.8) && eq(su.hyst, 0.1) && eq(su.strokeS, 6);
 }
@@ -9791,6 +9859,9 @@ function ctlRestore(p) {
     if (!p || !p.ctl || !p.ctlUser) return null;
     var out = {}, n = 0;
     CTL_GROUPS.forEach(function (g) { if (p.ctlUser[g] === true && p.ctl[g] && typeof p.ctl[g] === 'object') { out[g] = deepClone(p.ctl[g]); n++; } });
+    // never restore T-201 with both inlets shut (an LSHH-201 closure, or a stop that left it so): the engine default inlets apply
+    var si = out.surge && out.surge.inlet;
+    if (Array.isArray(si) && si.length === 2 && si[0] === false && si[1] === false) delete out.surge.inlet;
     return n ? out : null;
 }
 
@@ -10229,6 +10300,9 @@ var CSS = [
 '.wtsl-viz[data-bp=sm] .wtsl-hide-sm{display:none!important}',
 '.wtsl-viz[data-bp=md] .wtsl-hide-md{display:none!important}',
 '.wtsl-viz[data-bp=md] .wtsl-txt-md{display:none}',
+// v3.3.4 review: the Rig-up button keeps its text at md (the icon alone reads as a chart control); at sm the button is hidden and
+// the More menu carries Rig-up
+
 '.wtsl-viz[data-bp=lg] .wtsl-only-mdsm,.wtsl-viz[data-bp=lg] .wtsl-speedchip{display:none!important}',
 '.wtsl-viz:not([data-bp=lg]) .wtsl-speeds{display:none}',
 '.wtsl-viz[data-mode="2d"] .wtsl-only3d{display:none!important}',
@@ -10373,6 +10447,7 @@ var CSS = [
 '.wtsl-viz[data-bp=sm][data-mode="2d"]:not(.is-max) .wtsl-stage{height:auto;min-height:clamp(320px,58vh,480px)}',
 '.wtsl-toasts{position:absolute;z-index:30;left:10px;bottom:10px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;pointer-events:none;max-width:calc(100% - 20px)}',
 '.wtsl-viz[data-mode="3d"]:not([data-bp=sm]) .wtsl-toasts{bottom:76px}',
+'.wtsl-viz[data-menu] .wtsl-toasts{z-index:19}',
 '.wtsl-toast{pointer-events:auto;max-width:380px;padding:7px 11px;border-radius:8px;background:var(--hmi-solid);border:1px solid var(--hmi-line);',
 ' font-size:12px;color:#e6edf3;box-shadow:0 8px 22px rgba(0,0,0,.45);animation:wtsl-in .18s ease-out;display:flex;gap:8px;align-items:center;flex-wrap:wrap}',
 '.wtsl-toast.bad{border-color:rgba(248,81,73,.6)}.wtsl-toast.ok{border-color:rgba(63,185,80,.5)}',
@@ -10396,6 +10471,7 @@ var CSS = [
 '.wtsl-kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}',
 '.wtsl-kv div{min-width:0}.wtsl-kv .l{font:600 9.5px/1.2 system-ui;letter-spacing:.6px;text-transform:uppercase;color:#6e7681}',
 '.wtsl-kv .v{font:600 13.5px/1.3 var(--hmi-mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.wtsl-kv>div.f{grid-column:1/-1}.wtsl-kv .v.f,.wtsl-kv div.f .d{white-space:normal;overflow-wrap:anywhere}'+
 '.wtsl-kv .v.w{white-space:normal;font-size:12px}.wtsl-kv .v.p{color:#f0883e}.wtsl-kv .v.t{color:#58a6ff}.wtsl-kv .d{font:500 10px/1.2 var(--hmi-mono);color:#6e7681;white-space:nowrap}',
 '.wtsl-sk{display:block;width:100%;height:56px;border-radius:6px;background:rgba(1,4,9,.55)}',
 '.wtsl-skl{display:flex;justify-content:space-between;font:10px/1.2 system-ui;color:#6e7681;margin-top:-4px}',
@@ -10568,7 +10644,7 @@ function readPrefs() {
                 p.ctl = deepClone(o.ctl);
                 var cu = {};
                 if (o.ctlUser && typeof o.ctlUser === 'object' && !Array.isArray(o.ctlUser)) CTL_GROUPS.forEach(function (g) { if (o.ctlUser[g] === true) cu[g] = true; });
-                else CTL_GROUPS.forEach(function (g) { if (g !== 'surge' || !legacySurgeDefault(o.ctl.surge)) cu[g] = true; });   // pre-v3.3.4 prefs
+                else CTL_GROUPS.forEach(function (g) { if (g !== 'surge' || !legacySurgeDefault(o.ctl.surge, true)) cu[g] = true; });   // pre-v3.3.4 prefs (inlets ignored)
                 p.ctlUser = cu;
             }
             if (o.cushion !== undefined) p.cushion = cushionPrefs(o.cushion);
@@ -10681,7 +10757,6 @@ function hostResults(rig) {
 // #wts_beanFix; leg is 'adj' unless strictly 'fixed'; bean = the in-service leg's bean (NaN when unknown); has = the snapshot or the
 // page knows the two-leg manifold (else the v3.3.3 single bean is shown unchanged)
 var CK_LEGS = { adj: 'Adjustable choke', fixed: 'Positive (fixed) choke' };
-var CK_LEG_SHORT = { adj: 'ADJ', fixed: 'POS' };
 function ckLegs(st) {
     var c = (st && st.nodes && st.nodes.choke) || {}, hasN = typeof c.leg === 'string';
     var lEl = hostEl('wts_ckLeg'), hv = lEl ? String(lEl.value) : '';
@@ -10895,7 +10970,7 @@ function createController(vizEl, mopts) {
             '<span class="wtsl-sep wtsl-hide-sm"></span>' +
             btn('esd', 'ESD', { cls: 'wtsl-esd', label: 'ESD', title: 'Trip the ESD valve SDV-101 (E)' }) +
             btn('scen', ICON.scen + '<span class="wtsl-txt-md">Scenarios</span>' + ICON.caret, { cls: 'wtsl-hide-sm', label: 'Scenarios', title: 'Fault scenarios', menu: 1 }) +
-            btn('rigmenu', ICON.rig + '<span class="wtsl-txt-md">Rig-up</span>' + ICON.caret, { cls: 'wtsl-hide-sm', label: 'Rig-up', title: 'Rig-up: equipment in or out of the spread', menu: 1 }) +
+            btn('rigmenu', ICON.rig + '<span class="wtsl-txt-rig">Rig-up</span>' + ICON.caret, { cls: 'wtsl-hide-sm', label: 'Rig-up', title: 'Rig-up: equipment in or out of the spread', menu: 1 }) +
             btn('alarms', ICON.bell + '<span class="wtsl-txt-md wtsl-hide-sm">Alarms</span><span class="wtsl-badge" hidden>0</span>', { label: 'Alarms', title: 'Alarms and events' }) +
             '<span class="wtsl-sep wtsl-hide-sm wtsl-only3d"></span>' +
             btn('viewmenu', ICON.cam + '<span class="wtsl-txt-md">View</span>' + ICON.caret, { cls: 'wtsl-hide-sm wtsl-only3d', label: 'View', title: 'Camera views (0–5)', menu: 1 }) +
@@ -11188,7 +11263,20 @@ function createController(vizEl, mopts) {
         // a hand change (not automatic; a line-up item, not a trip reset) marks its group as the operator's choice
         if (p && !p.auto && CTL_GROUPS.indexOf(p.eq) >= 0 && CTL_USER_WHAT[p.what]) { if (!prefs.ctlUser) prefs.ctlUser = {}; prefs.ctlUser[p.eq] = true; }
         if (!prefs.ctlUser) prefs.ctlUser = {};
-        try { prefs.ctl = _sim.getControls(); writePrefs(prefs); } catch (e) {}
+        try {
+            var c = _sim.getControls(), old = prefs.ctl;
+            // v3.3.4: automatic changes (auto-divert, an LSHH-201 closure, a trip) do not persist: the saved part of that group
+            // stays the operator's last hand line-up, so a reload restores what the operator chose, not where the automation left it
+            // (a group never set by hand is not restored anyway, so its part simply follows the engine)
+            // Per group: only a hand change to that group replaces its saved part; any other event (an automatic one, or a hand
+            // change to another group) keeps the saved part as it was (review round 2: a later gauge toggle used to save the
+            // auto-diverted T-201 line-up)
+            if (old && typeof old === 'object') CTL_GROUPS.forEach(function (g) {
+                var own = p && !p.auto && p.eq === g;
+                if (!own && old[g] && typeof old[g] === 'object') c[g] = deepClone(old[g]);
+            });
+            prefs.ctl = c; writePrefs(prefs);
+        } catch (e) {}
     }
     // Valve / suction / auto-divert operations (3D tap, 2D click, info-card buttons)
     // valve operations go through the EQV lookup: an unknown eq (or the desander, which has no inlet valve) does nothing
@@ -11885,7 +11973,7 @@ function createController(vizEl, mopts) {
             setHTML(E.h.tSu, SC.length === 2 ? 'Surge ' + [0, 1].map(function (i) {
                 return (SC[i].inlet ? '<span class="a">▸' : '<span>') + (i ? 'B ' : 'A ') + '</span><b>' + pctStr(SC[i].frac) + '</b>' + (SC[i].suction ? '<span class="x">▾</span>' : '');
             }).join(' · ') + ' · LCV-201 ' + esc(ps2) : 'Surge <b>' + pctStr(su.frac) + '</b> · LCV-201 ' + esc(ps2));
-            if (SC.length === 2) E.h.tSu.__full = 'Surge T-201: ' + surgeRoles(SC) + ' · LCV-201 ' + ps2;
+            if (SC.length === 2) E.h.tSu.__full = 'Surge T-201: ' + surgeRoles(SC, su, st) + ' · LCV-201 ' + ps2;
         }
         // DS-101 line (only while in): sand in the accumulator, ΔP, dump state — a fourth line in the same 56 px HUD
         var dIn = rigIn(st, 'desander') && st.desander ? st.desander : null;
@@ -12106,8 +12194,8 @@ function createController(vizEl, mopts) {
                 ['Downstream P', function (s) { return P(N(s, 'choke').P); }, 'p', function (s, f) { return isNum(F(f, ['choke', 'Pout'])) ? 'design ' + P(f.choke.Pout) : null; }],
                 ['Regime', function (s) { var c = N(s, 'choke'); return (c.flowLimited ? 'LIMITED · ' : '') + String(c.regime || '—').toUpperCase(); }, ''],
                 // v3.3.4: the in-service leg (rows only while the snapshot or the page has the two-leg manifold); Bean = the effective bean
-                ['In service', function (s) { var K = ckLegs(s); return 'Leg ' + (K.leg === 'fixed' ? 'B · ' : 'A · ') + CK_LEGS[K.leg]; }, '', null, function (s) { return ckLegs(s).has; }],
-                ['Bean', function (s) { var c = N(s, 'choke'); return isNum(c.bean) ? c.bean + '/64″' : '—'; }, '',
+                ['In service', function (s) { var K = ckLegs(s); return 'Leg ' + (K.leg === 'fixed' ? 'B · ' : 'A · ') + CK_LEGS[K.leg]; }, 'f', null, function (s) { return ckLegs(s).has; }],
+                ['Bean', function (s) { var c = N(s, 'choke'); return isNum(c.bean) ? c.bean + '/64″' : '—'; }, 'f',
                     function (s) { var K = ckLegs(s); if (!K.has) return null; var f = function (v) { return isNum(v) ? v + '/64″' : '—'; };
                         return (K.leg === 'adj' ? '▸ ' : '') + 'Adjustable ' + f(K.beanAdj) + ' · ' + (K.leg === 'fixed' ? '▸ ' : '') + 'Positive ' + f(K.beanFix); }],
                 ['ΔP', function (s) { var c = N(s, 'choke'); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressureG'); }, 'p'],
@@ -12152,10 +12240,10 @@ function createController(vizEl, mopts) {
             case 'surge': return { rows: [
                 ['Level (A+B)', function (s) { return pctStr(s && s.surge && s.surge.frac); }, ''],
                 // v3.3.4: the two compartments fill independently — which side fills (inlet open) and which transfers (LCV-201 suction)
-                ['Line-up', function (s) { var C = s && s.surge && s.surge.comps; return C && C.length === 2 ? surgeRoles(C) : '—'; }, '',
+                ['Line-up', function (s) { var C = s && s.surge && s.surge.comps; return C && C.length === 2 ? surgeRoles(C, s.surge, s) : '—'; }, 'f',
                     function () { return 'Each side has its own inlet; ▸ inlet open (filling) · ▾ LCV-201 suction (transferring to T-301)'; }],
-                ['T-201A', function (s) { return surgeRow(s, 0); }, ''],
-                ['T-201B', function (s) { return surgeRow(s, 1); }, ''],
+                ['T-201A', function (s) { return surgeRow(s, 0); }, 'f'],
+                ['T-201B', function (s) { return surgeRow(s, 1); }, 'f'],
                 ['Pressure', function (s) { return fmtU(s && s.surge && s.surge.P, 'pressureTank'); }, 'p', function (s, f) { return isNum(F(f, ['sim', 'surgeP_psig'])) ? 'SP ' + fmtU(f.sim.surgeP_psig, 'pressureTank') : null; }],
                 ['Liquid', function (s) { var u = s && s.surge; return u ? fmtU(num(u.Vo_bbl, 0) + num(u.Vw_bbl, 0), 'volume') : '—'; }, '', function (s) { return s && s.surge && isNum(s.surge.cap_bbl) ? 'of ' + fmtU(s.surge.cap_bbl, 'volume') : null; }],
                 ['Water cut', function (s) { var u = s && s.surge; return u && isNum(u.frac) && u.frac > 0.001 ? pctStr(num(u.fracW, 0) / u.frac) : '—'; }, ''],
@@ -12299,10 +12387,26 @@ function createController(vizEl, mopts) {
         return pctStr(c.frac) + (isNum(c.T) ? ' · ' + fmtU(c.T, 'temperature') : '') + ' · inlet ' + vState(c) + (c.suction ? ' · suction' : '');
     }
     // 'A filling · B transferring' (inlet open = filling, LCV-201 suction = transferring; both, or idle)
-    function surgeRoles(C) {
+    // v3.3.4 review: the words come from the flows, not from the commands. 'filling' = inlet open and liquid reached that side
+    // in the last FILL_HOLD_S of sim time (the separator dumps in batches, so fill_bpd is zero between dumps) while SDV-101 is
+    // open; 'transferring' = LCV-201 suction on that side and LCV-201 open (drawing). A side lined up with no flow says what is
+    // lined up instead: 'inlet open, no flow' (ESD, stopped well, no dump for a while) / 'suction, LCV-201 shut' (or stuck shut).
+    var FILL_HOLD_S = 600, fillSeen = [0, 0], fillSeenT = Infinity;
+    function surgeRoles(C, su, st) {
+        var pump = su && (su.transfer || su.pump), pOn = !pump || pump.on !== false;
+        var t = st && isNum(st.t) ? st.t : null, esd = st && st.esd, shut = !!(esd && (esd.tripped || esd.open === false));
+        if (t != null && t < fillSeenT) fillSeen = [t, t];                // a new run (reset / new sim): the run start counts as a dump
+        if (t != null) fillSeenT = t;
         return [0, 1].map(function (i) {
-            var c = C[i] || {}, r = [];
-            if (c.inlet) r.push('filling'); if (c.suction) r.push('transferring');
+            var c = C[i] || {}, r = [], fills, draws;
+            if (isNum(c.fill_bpd)) {
+                if (c.fill_bpd > 0.5 && t != null) fillSeen[i] = t;
+                fills = !!c.inlet && !shut && (c.fill_bpd > 0.5 || (t != null && t - fillSeen[i] <= FILL_HOLD_S));
+            } else fills = !!c.inlet && !shut;
+            draws = !!c.suction && pOn && (!isNum(c.draw_bpd) || c.draw_bpd > 0.5);
+            if (fills) r.push('filling'); else if (c.inlet) r.push('inlet open, no flow');
+            if (draws) r.push('transferring');
+            else if (c.suction) r.push(pump && pump.failed ? 'suction, LCV-201 stuck shut' : pOn ? 'suction, no draw' : 'suction, LCV-201 shut');
             return (i ? 'B ' : 'A ') + (r.length ? r.join(' + ') : 'idle') + ' ' + pctStr(c.frac);
         }).join(' · ');
     }
@@ -12358,7 +12462,7 @@ function createController(vizEl, mopts) {
             '<div class="wtsl-cb"><div class="wtsl-kv">';
         spec.rows.forEach(function (r, i) {
             var vis = true; if (r[4]) { try { vis = !!r[4](st); } catch (e) { vis = false; } }
-            h += '<div data-cref="r' + i + '"' + (vis ? '' : ' hidden') + '><div class="l">' + esc(r[0]) + '</div><div class="v ' + (r[2] || '') + '" data-cref="v' + i + '">—</div>' + (r[3] ? '<div class="d" data-cref="d' + i + '"></div>' : '') + '</div>';
+            h += '<div data-cref="r' + i + '"' + (/(^| )f( |$)/.test(r[2] || '') ? ' class="f"' : '') + (vis ? '' : ' hidden') + '><div class="l">' + esc(r[0]) + '</div><div class="v ' + (r[2] || '') + '" data-cref="v' + i + '">—</div>' + (r[3] ? '<div class="d" data-cref="d' + i + '"></div>' : '') + '</div>';
         });
         h += '</div>';
         (spec.spark || []).forEach(function (sp, i) {
@@ -12536,6 +12640,13 @@ function createController(vizEl, mopts) {
         if (!inset) h += autoRow('surge2', u.auto, 'Auto route', 'Route the dumps between T-201 and T-202 at the high-level set point (open new, then close old)') + strokeRow('surge2', u);
         return h;
     }
+    // v3.3.4 review: a key row that can still be cut (ellipsis) carries its full text as the tooltip
+    function kvTitle(el, s) {
+        s = s == null ? '' : String(s);
+        if (!el || el.__tt === s || typeof el.setAttribute !== 'function') return;
+        el.__tt = s;
+        if (s) el.setAttribute('title', s); else if (typeof el.removeAttribute === 'function') el.removeAttribute('title');
+    }
     function updateCard(st, slow) {
         if (!cardId || !cardRefs) return;
         var spec = cardRefs.spec, flow = _lastFlowObj;
@@ -12547,8 +12658,8 @@ function createController(vizEl, mopts) {
             if (optOut || ck2b) { setText(cardRefs['v' + i], '—'); if (cardRefs['d' + i]) setText(cardRefs['d' + i], ''); continue; }
             if (r[4]) { var vis = false; try { vis = !!(st && r[4](st)); } catch (e0) {} show(cardRefs['r' + i], vis); if (!vis) continue; }
             try { s = st ? r[1](st) : '—'; } catch (e) { s = '—'; }
-            setText(cardRefs['v' + i], s);
-            if (r[3] && cardRefs['d' + i]) { var d = null; try { d = r[3](st, flow); } catch (e2) {} setText(cardRefs['d' + i], d || ''); }
+            setText(cardRefs['v' + i], s); kvTitle(cardRefs['v' + i], s);
+            if (r[3] && cardRefs['d' + i]) { var d = null; try { d = r[3](st, flow); } catch (e2) {} setText(cardRefs['d' + i], d || ''); kvTitle(cardRefs['d' + i], d || ''); }
         }
         var stt = st ? statusOf(cardId, st.alarms) : 'ok';
         if (cardId === 'esd' && st && st.esd && st.esd.manual && stt === 'evt') stt = 'warn';
@@ -12829,9 +12940,11 @@ function createController(vizEl, mopts) {
     // Calc-shaped nodes for the host diagram; DS-101 (nodes[8]) also carries ΔP, the LAH / LAHH set points and the state text
     function nodes2d(st) {
         var n = liveNodes(st), d = st && st.desander;
-        // v3.3.4: CK-101 label = in-service leg + bean ('ADJ 32/64"' / 'POS 24/64"'; the host prints bean + '/64"')
+        // v3.3.4: CK-101 = the bean of the leg in service plus that leg; the host painter (wtsDrawDiag) prints the one prefix
+        // ('positive 24/64"' while the positive leg is in service). The default adjustable leg keeps the plain v3.3 label ('32/64"'),
+        // so the 2D frame is unchanged. The bean stays numeric here: a second prefix would read 'positive POS 24/64"'.
         var K = ckLegs(st);
-        if (n[2] && K.has) n[2].bean = CK_LEG_SHORT[K.leg] + ' ' + (isNum(n[2].bean) ? n[2].bean : '—');
+        if (n[2]) n[2].leg = K.leg;
         if (n[8] && d && rigIn(st, 'desander')) {
             var dm = d.dump || {}, sd = d.sand || {}, lah = num(sd.lah, 0.8);
             n[8].dP = num(d.dP_psi, 0); n[8].lah = lah; n[8].lahh = num(sd.lahh, 0.95);
@@ -13508,6 +13621,7 @@ function createController(vizEl, mopts) {
         if (menu.el && menu.el.parentNode) menu.el.parentNode.removeChild(menu.el);
         if (menu.anchor) menu.anchor.setAttribute('aria-expanded', 'false');
         menu = null;
+        if (vizEl && vizEl.removeAttribute) vizEl.removeAttribute('data-menu');
     }
     function placeAt(el, anchor) {
         var vr = vizEl.getBoundingClientRect(), ar = anchor ? anchor.getBoundingClientRect() : { left: vr.left + 10, bottom: vr.top + 50, right: vr.left + 10 };
@@ -13515,9 +13629,18 @@ function createController(vizEl, mopts) {
         vizEl.appendChild(el);
         var w = el.offsetWidth, h = el.offsetHeight;
         var left = clamp(ar.left - vr.left, 8, Math.max(8, vr.width - w - 8));
-        var top = ar.bottom - vr.top + 6;
-        if (top + h > vr.height - 8) top = Math.max(8, (ar.top != null ? ar.top - vr.top : top) - h - 6);
+        // v3.3.4 review: a menu taller than the space below its anchor stays below it with max-height = the space left (it
+        // scrolls), so it never covers its own toolbar button; it opens above only when there is clearly more room there
+        var below = ar.bottom - vr.top + 6, room = vr.height - below - 8;
+        var roomUp = ar.top != null ? ar.top - vr.top - 6 - 8 : -1;
+        var top = below;
+        if (h > room) {
+            if (room >= Math.min(h, 160) || room >= roomUp) el.style.maxHeight = Math.max(80, room) + 'px';
+            else { if (h > roomUp) el.style.maxHeight = Math.max(80, roomUp) + 'px'; top = Math.max(8, ar.top - vr.top - Math.min(h, roomUp) - 6); }
+        }
         el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.visibility = '';
+        // the toast stack goes under an open menu (it is back on top when the menu closes): a toast never covers a menu row
+        if (vizEl.setAttribute) vizEl.setAttribute('data-menu', '1');
     }
     function openMenu(anchor, items, key) {
         if (menu && menu.key === key) { closeMenu(); return; }

@@ -1264,7 +1264,10 @@ function create(flowIn, opts) {
       for (k = 0; k < 2; k++) {
         o = 1 - k;
         if (!uv[k] || compVliq(k) < C.sp * capK - 1e-9) continue;
-        if (!(compVliq(o) < (C.sp - C.hyst) * capK)) continue;
+        // v1.6.0 review: while o is the single LCV-201 suction its level parks at LSL (the transfer stops there), so with SP − hyst
+        // at or below LSL it would never count as having room and the line-up would run on to LSHH-201: o has room once it is
+        // drawn down to just above LSL. Suction 'both' (the v3.3.1 line-up) keeps the plain SP − hyst test (identity).
+        if (!(compVliq(o) < roomFrac(C, o) * capK)) continue;
         uv[o] = true; hold.surge[o] = false; uv[k] = false; armClose('surge', k);
         var sucMoved = C.suction === letter(o);
         if (sucMoved) C.suction = letter(k);             // pump the full compartment down while the other fills
@@ -1486,9 +1489,11 @@ function create(flowIn, opts) {
   }
   var surgeHiK = 0, gaugeHiK = 0, gaugeLahK = 0, FG2 = [0, 0];
   // both-high (auto-divert on): a filling side at/above SP while the other side has no room (≥ SP − hysteresis)
+  function roomFrac(C, o) { return C.suction === letter(o) ? mmax(C.sp - C.hyst, cfg.surge.lsl + 0.02) : C.sp - C.hyst; }
   function bothHigh(C, open, fA, fB, db) {
     if (!C.auto) return false;
-    return (open[0] && fA >= C.sp - db && fB >= C.sp - C.hyst - db) || (open[1] && fB >= C.sp - db && fA >= C.sp - C.hyst - db);
+    // the room test is the one autoDivert uses (roomFrac: a single suction parks at LSL; suction 'both' = SP − hyst, v3.3.1)
+    return (open[0] && fA >= C.sp - db && fB >= roomFrac(C, 1) - db) || (open[1] && fB >= C.sp - db && fA >= roomFrac(C, 0) - db);
   }
   // v1.6.0 review — LAH-201 with auto-divert OFF: the compartment whose inlet is open but which is not on the LCV-201 suction
   // has no level control, so it rises to LSHH-201 (ESD); it alarms at the auto set point. Returns that compartment (0 | 1)

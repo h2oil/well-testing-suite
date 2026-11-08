@@ -1526,7 +1526,13 @@ function createController(vizEl, mopts) {
             // v3.3.4: automatic changes (auto-divert, an LSHH-201 closure, a trip) do not persist: the saved part of that group
             // stays the operator's last hand line-up, so a reload restores what the operator chose, not where the automation left it
             // (a group never set by hand is not restored anyway, so its part simply follows the engine)
-            if (p && p.auto && CTL_GROUPS.indexOf(p.eq) >= 0 && prefs.ctlUser[p.eq] === true && old && old[p.eq] && typeof old[p.eq] === 'object') c[p.eq] = deepClone(old[p.eq]);
+            // Per group: only a hand change to that group replaces its saved part; any other event (an automatic one, or a hand
+            // change to another group) keeps the saved part as it was (review round 2: a later gauge toggle used to save the
+            // auto-diverted T-201 line-up)
+            if (old && typeof old === 'object') CTL_GROUPS.forEach(function (g) {
+                var own = p && !p.auto && p.eq === g;
+                if (!own && old[g] && typeof old[g] === 'object') c[g] = deepClone(old[g]);
+            });
             prefs.ctl = c; writePrefs(prefs);
         } catch (e) {}
     }
