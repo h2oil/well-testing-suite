@@ -1,6 +1,6 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Status: revision 4; Phase 1 build started; foundation landed (WP0 technical part) — target v3.5 / v3.5.x / v3.6 (web only)**
+**Status: revision 4; Phase 1 build started; foundation landed (WP0 technical part); host and shared-file hooks landed (WP-H: H1–H18 incl. H4 applyChanges) — target v3.5 / v3.5.x / v3.6 (web only)**
 (2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
 `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
 `acct-contract.test.js` and the §9 iOS strip steps 0c / 0d in `sync-from-main.js`. Refinements to §3 / §3.4: a `wts_definer`
