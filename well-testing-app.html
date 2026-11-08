@@ -11758,7 +11758,7 @@ function renderPrivacy(body){
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Other network requests</div>' + li([
         'Some optional features download a public code library the first time they are used: the 3D engine for the Well Test Simulator and Mini WellOS, the historian database engine (SQLite) and the spreadsheet library for .xlsx import/export (web version).',
-        'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; each one is checked against a pinned SHA-384 hash before it is used.'
+        'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; the 3D engine is checked against a pinned SHA-384 hash before it is used.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Live data (Modbus) and the historian</div>' + li([
         'Modbus connects only to the devices you configure. On the web it goes through a bridge program you run yourself on your own network (bound to this computer by default); in the iOS app it connects directly on your local network, after iOS asks for Local Network permission.',
@@ -11768,7 +11768,7 @@ function renderPrivacy(body){
       '<div class="card"><div class="card-title">Open-source components</div>' + li([
         'three.js (MIT) — 3D views; jsPDF and html2canvas (MIT) — PDF / PNG export; SheetJS Community Edition (Apache-2.0) — Excel import/export.',
         'SQLite (public domain) with the official SQLite WebAssembly build (@sqlite.org/sqlite-wasm, Apache-2.0) and sql.js (MIT), both built with Emscripten (MIT) — historian database.',
-        'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them; the iOS app bundles them (the spreadsheet library is not bundled, so .xlsx import needs a connection there).'
+        'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them (the spreadsheet library excepted); the iOS app bundles them.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Contact</div>' +
         '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +

@@ -24,7 +24,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'c711440f', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -258,7 +258,7 @@ var gaslift = {
 };
 
 var buildup = {
-  route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
+  route: 'buildup', reviewed: V, reviewedSrc: '700970d3', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
   purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
   what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
