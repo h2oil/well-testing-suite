@@ -33,20 +33,31 @@ production), the kill switches and the provider client ids / secrets* (WP-O). Th
 cd server && npm ci && node test/run.js
 ```
 
-## WP-O open items (for the lead; recorded at the WP-O fix round)
+## Provider sign-in open items (lead decisions, kept at the integration)
 
 - **Provider sign-out link (§11.2)**: the blocking provider sign-out step gives text instructions only. A link needs a
   `signOutUrl` per provider in `core/oidc-providers.js` carried in `GET /auth/providers` (a contract change), or §11.2 is
-  amended to accept the text. Lead decision.
+  amended to accept the text.
 - **Resend in the provider code step**: there is no "Send again" (the finish contract has no resend body). The step shows the
-  "Didn't get the code?" help and a Close; a new code comes from a new provider start. A resend needs a lead-approved finish body.
-- **Finish dialog host**: 66 keeps its own focus move, Tab trap and focus return on the `#acct_oauth_dlg` div until WP-C1's
-  `<dialog>` lands; then these steps move into it (WP-C1 owns focus handling). The A → B hand-over dialog, the 390 px layout
-  check beyond style strings and "analytics guard skipped on the return" (the guard is WP-C1 / WP-H code) are asserted then.
-- **Audit chain at the WP-S1 merge**: the one hash is `sha256(prev ‖ action|canonical(detail)|toISOString(at))`
-  (`core/wpo-s1.js` `auditHash` / `verifyAuditChain`; `support_retire_identities` writes the same form). WP-S1's audit writer
-  must use it, or both move to WP-S1's definer; `oauth-api.test.js` verifies a chain across the SQL and JS writers.
-- **Outbox contract at the WP-S1 merge**: `support_retire_identities` queues its notice through `wts.mail_queue` with
-  `to_enc` = the account's `users.email_enc` envelope; WP-S1's drainer must open `to_enc` with that AAD (tested against the shim).
-- **Signing-key refetch limit**: one fetch per provider per fixed 5-minute window across instances (`oidc_fetch_claim`, a
-  `rate_counters` row), plus each instance's in-memory limit (§4.11).
+  "Didn't get the code?" help and a Close; a new code comes from a new provider start.
+- **Finish dialog host**: the provider finish steps keep their own `#acct_oauth_dlg` (focus move, Tab trap, focus return; the
+  blocking sign-out step ignores Escape). A done sign-in closes it and completes through WP-C1's `completeSignIn`, whose
+  dialog asks the hand-over question; the `providerEmailDiffers` note reopens it afterwards.
+- **Settled at the integration**: one audit hash — the `audit_chain` trigger of `002-core.sql` (every writer, also
+  `support_retire_identities`, inserts an empty hash and the trigger chains it); the retire-client notices are queued by
+  `ops/retire-client.js` with the jobs credential (`keys.system.seal('mail.to', …)`, the one outbox format) and sent by the
+  daily job; the signing-key refetch limit is one fetch per provider per fixed 5-minute window across instances
+  (`oidc_fetch_claim`) plus each instance's in-memory limit (§4.11).
+
+## Operations (WP-OPS)
+
+`RUNBOOK.md` is the operations handbook (owner's activation checklist, releases, alerts, kill switches, incidents, security
+reset, key rotation and compromise, backups and restore, support). `site/` holds the functions-only site: `handler.js` (the
+host adapter for `/api/v1/*`), `isolation.js` (preview isolation), `monitor.js` (access lines and the §13.6 alert table),
+`adapters.js` (blob store and e-mail bindings), `objects-loader.js` (the one blob-store choice for the API, the weekly
+export and the ledger replay), `backup.js` (weekly encrypted export and restore drill), `build.js`
+(`server/dist`, one function in `dist/entry/`) and `site.json`. `ops/` adds `weekly-export.js`, `restore-drill.js`, `monitor-check.js`,
+`call-daily.js` and `sql/backup-role.sql`; `ci/secret-scan.js` is the secret scan. The release workflow
+`.github/workflows/server-release.yml` runs only on `server-v*` tags and skips its migration and deploy steps until the owner
+adds their secrets. The static site's allow-list is `prism-build/publish-site.js` (`--check`), the account-block digest
+`prism-build/acct-hash.js`.

@@ -1,0 +1,26 @@
+{
+  "_comment": "The functions-only site of docs/ACCOUNTS-PLAN.md §2, §13.1, §13.8 (D19). Host-neutral description used by server/site/build.js and checked by the tests; the owner maps it to the host's own settings once (server/RUNBOOK.md, Activation checklist). It lives in server/ on purpose: the repository root carries no host configuration, so the static site keeps deploying exactly as v3.4.",
+  "name": "wts-accounts-api",
+  "runtime": { "node": "22" },
+  "static": null,
+  "build": { "command": "node site/build.js", "baseDir": "server", "output": "server/dist" },
+  "functions": [
+    { "name": "api", "entry": "dist/entry/api.js", "functionsDir": "dist/entry", "export": "default", "paths": ["/api/v1/*"], "region": "UK (else EU)", "maxBodyBytes": 4195328, "timeoutSeconds": 26 }
+  ],
+  "schedules": [
+    { "name": "ops-daily", "how": "POST /api/v1/ops/daily signed with WTS_OPS_HMAC (server/ops/call-daily.js) — or the host scheduler invoking the same", "cron": "17 3 * * *" },
+    { "name": "weekly-export", "how": "node server/ops/weekly-export.js (jobs host or the owner's machine; never from the static site)", "cron": "41 4 * * 0" },
+    { "name": "monitor-check", "how": "node server/ops/monitor-check.js (hourly)", "cron": "7 * * * *" }
+  ],
+  "deploy": { "from": "tags server-v*", "workflow": ".github/workflows/server-release.yml", "environments": ["server-migrations", "server-production"] },
+  "rewrite": {
+    "_comment": "Configured on the STATIC site by the owner (host settings or the generated publish directory), never in this repository's root.",
+    "from": "/api/v1/*",
+    "to": "https://<functions-site-host>/api/v1/:splat",
+    "status": 200,
+    "proxy": true,
+    "addRequestHeaders": { "X-WTS-Proxy-Sig": "<the current value of WTS_PROXY_SIG — set in the host, never committed>" },
+    "preserve": ["Cookie", "Origin", "Content-Type", "X-WTS-Req", "X-WTS-App", "X-WTS-Device"],
+    "trustedHeaders": { "originalHost": "WTS_HOST_HEADER", "clientAddress": "WTS_CLIENT_IP_HEADER" }
+  }
+}
