@@ -12,7 +12,9 @@
 // microtasks (no timers, so the harness's virtual clock and its pending-timer checks are not disturbed); a
 // transaction completes once every request it issued has settled. Values are stored as structured clones.
 // Failure paths: failOpen → open() fires onerror; failWrites → put / delete / clear fire onerror and the
-// transaction's onerror.
+// transaction's onerror. Also (for the PRiSM gauge store of 19-data-managers.js): createObjectStore(n, {keyPath}) with
+// put(value) taking the key from value[keyPath], createIndex (recorded), and index(name).openCursor(range) where range is
+// fake.IDBKeyRange.only(v) (pass it to the page as the global IDBKeyRange); the cursor walks the matching values in key order.
 'use strict';
 
 function domErr(name, msg) { const e = new Error(msg || name); e.name = name; return e; }
@@ -26,6 +28,7 @@ function createFakeIDB(opts) {
   const fake = { failOpen: !!opts.failOpen, failWrites: !!opts.failWrites, opens: 0, writes: 0 };
 
   function makeStore(map, tx, mode) {
+    const kp = map.__keyPath || null;
     const op = (fn, write) => {
       const r = request();
       tx._pending++;
@@ -52,7 +55,35 @@ function createFakeIDB(opts) {
       return r;
     };
     return {
-      put: (v, k) => op(() => { map.set(String(k), clone(v)); return k; }, true),
+      put: (v, k) => op(() => { const key = k === undefined && kp && v ? v[kp] : k; map.set(String(key), clone(v)); return key; }, true),
+      createIndex: (name, path) => { map.__indexes = map.__indexes || {}; map.__indexes[name] = path; return {}; },
+      index: (name) => {
+        const path = (map.__indexes || {})[name] || name;
+        return {
+          openCursor: (range) => {
+            const r = request();
+            const vals = Array.from(map.keys()).sort().map((k) => map.get(k))
+              .filter((v) => !range || !('only' in range) || (v && v[path] === range.only));
+            let i = 0;
+            tx._pending++;
+            const step = () => later(() => {
+              if (i < vals.length) {
+                const v = clone(vals[i++]);
+                r.result = { value: v, key: v && kp ? v[kp] : undefined, continue: step };
+                r.readyState = 'done';
+                if (typeof r.onsuccess === 'function') r.onsuccess({ target: r });
+              } else {
+                r.result = null; r.readyState = 'done';
+                tx._pending--;
+                if (typeof r.onsuccess === 'function') r.onsuccess({ target: r });
+                tx._finish();
+              }
+            });
+            step();
+            return r;
+          },
+        };
+      },
       get: (k) => op(() => clone(map.get(String(k)))),
       delete: (k) => op(() => { map.delete(String(k)); }, true),
       clear: () => op(() => { map.clear(); }, true),
@@ -64,7 +95,10 @@ function createFakeIDB(opts) {
     return {
       get version() { return d.version; },
       objectStoreNames: { contains: (n) => d.stores.has(n), get length() { return d.stores.size; } },
-      createObjectStore(n) { if (!d.stores.has(n)) d.stores.set(n, new Map()); return makeStore(d.stores.get(n), { _pending: 0, _finish() {} }, 'versionchange'); },
+      createObjectStore(n, o) {
+        if (!d.stores.has(n)) { const m = new Map(); if (o && o.keyPath) m.__keyPath = o.keyPath; d.stores.set(n, m); }
+        return makeStore(d.stores.get(n), { _pending: 0, _finish() {} }, 'versionchange');
+      },
       transaction(names, mode) {
         const list = Array.isArray(names) ? names : [names];
         list.forEach((n) => { if (!d.stores.has(n)) throw domErr('NotFoundError', 'no object store ' + n); });
@@ -82,6 +116,7 @@ function createFakeIDB(opts) {
       close() {},
     };
   }
+  fake.IDBKeyRange = { only: (v) => ({ only: v }) };
   fake.indexedDB = {
     open(name, version) {
       const r = request();

@@ -12,7 +12,7 @@
 // Passkeys are Phase 3: their routes answer 501 not_implemented, as the WP0 server does.
 //
 //   const F = require('./_acct-fake-server');
-//   const fake = F.createFakeServer({ now, switches:{ACCOUNTS_SIGNUP:'open', OAUTH_GOOGLE:'on', …}, allow:[emails],
+//   const fake = F.createFakeServer({ now, switches:{ACCOUNTS_SIGNUP:'open', OAUTH_GOOGLE:'on', …}, allow:[emails], mailDelay,
 //                                     latency:{ms, schedule:(fn, ms) => app.win.setTimeout(fn, ms)}, origin });
 //   loadApp({ globals: { fetch: fake.fetch, location: F.prodLocation() } })     // one browser = one cookie jar
 //   fake.browser()           → another browser {fetch, navigate, visit, jar, cookie, restart}   (a second device);
@@ -60,7 +60,7 @@ function createFakeServer(o) {
   const now = o.now || (() => Date.now());
   const iso = (ms) => new Date(ms == null ? now() : ms).toISOString();
   const origin = o.origin || PROD;
-  const mail = memoryTransport();
+  const mail = memoryTransport(o.mailDelay ? { delay: o.mailDelay } : {});   // mailDelay(resolve): a slow or stuck mailer
   const oidc = {
     google: createFakeOidc({ provider: 'google', now }),
     linkedin: createFakeOidc({ provider: 'linkedin', now, enforcePkce: o.linkedinPkce !== false }),

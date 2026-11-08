@@ -709,7 +709,9 @@ async function decorate(s, shot) {
   const masks = DEFAULT_MASK.concat(shot.recipe.mask || []);
   return s.page.evaluate(([mk, cos]) => {
     const st = document.createElement('style'); st.id = '__hs_style';
+    // the web-only account controls (docs/ACCOUNTS-PLAN.md §9) never appear in a shot: the shots are copied to the iOS bundle
     st.textContent = mk.join(',') + '{visibility:hidden!important}*{caret-color:transparent!important}' +
+      '#wts_account_host,#sbAccountLine,.acct-sync-bar,.acct-ov,.acct-toast{display:none!important}' +
       '.__hs_co{position:fixed;z-index:2147483647;width:22px;height:22px;box-sizing:border-box;border-radius:50%;background:#ffb300;color:#111;' +
       'border:2px solid #111;font:700 13px/18px sans-serif;text-align:center;pointer-events:none;box-shadow:0 0 0 2px #ffb300}';
     document.head.appendChild(st);

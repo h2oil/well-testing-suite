@@ -413,7 +413,10 @@ module.exports = [
       }
       for (const [what, o] of [['production https', { location: Object.assign({}, PROD_LOC, { search: '?cloud=1' }) }], ['DEV localhost', { dev: true }]]) {
         const b = bare(o);
-        assert.deepStrictEqual(b.counts, { fetch: 0, timers: 0, doc: 0 }, what + ': no request, timer or DOM at load');
+        // the eligible files probe `typeof document` once each (undefined here, so no DOM can be touched); no request, no timer
+        assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': no request or timer at load');
+        assert(b.counts.doc <= 4, what + ': only document probes at load');
+        const doc0 = b.counts.doc;
         for (const f of FILES) {
           const spec = S.CLIENT_NAMES[f]; const obj = b.win[spec.global];
           assert(obj, what + ': ' + spec.global);
@@ -425,16 +428,16 @@ module.exports = [
         assert.deepStrictEqual(clone(A.PROVIDERS), ['google', 'linkedin']);
         assert(S.CLIENT_STATES.includes(A.state().status) && A.state().status === 'signedOut');
         assert(S.SYNC_STATES.includes(b.win.WTS_cloudSync.status().state) && b.win.WTS_cloudSync.status().state === 'off');
-        for (const n of ['refresh', 'openSignIn', 'signOut']) {
-          await assert.rejects(A[n](), (e) => e.code === 'not_implemented' && e instanceof A.Error, 'WTS_account.' + n);
-        }
-        // WP-O built the provider names (signInWith, finishProviderSignIn, methods, linkProvider, unlinkMethod); with no
-        // provider a start is refused before any request
+        // WP-C1 and WP-O built the client; automatic sync (Phase 2) is still a stub. With no provider a start is refused
+        // before any request; with no document there is no dialog
         await assert.rejects(A.signInWith(), (e) => e.code === 'bad_request' && e instanceof A.Error, 'WTS_account.signInWith()');
-        for (const n of ['saveToCloud', 'openFromCloud', 'snapshot', 'syncNow']) await assert.rejects(b.win.WTS_cloudSync[n](), (e) => e.code === 'not_implemented', 'WTS_cloudSync.' + n);
+        assert.strictEqual(await A.openSignIn(), null, 'no dialog without a document');
+        await assert.rejects(b.win.WTS_cloudSync.saveToCloud(), (e) => e.code === 'signed_out', 'saveToCloud needs a session');
+        for (const n of ['syncNow']) await assert.rejects(b.win.WTS_cloudSync[n](), (e) => e.code === 'not_implemented', 'WTS_cloudSync.' + n);
         assert.strictEqual(b.win.WTS_accountPage.register(), false, 'the account page is not registered before host H7');
         assert.strictEqual(b.win.WTS_accountPage.entry.navHidden, true);
-        assert.deepStrictEqual(b.counts, { fetch: 0, timers: 0, doc: 0 }, what + ': stubs make no request');
+        assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': stubs make no request');
+        assert(b.counts.doc - doc0 <= 4, what + ': no DOM work without a document');
         if (what === 'production https') assert.strictEqual(b.store.wtspref_cloud_beta, '1', '?cloud=1 sets the beta flag');
       }
       const off = bare({ location: Object.assign({}, PROD_LOC, { search: '?x=1&cloud=0' }) });
@@ -446,10 +449,11 @@ module.exports = [
         const end = src.indexOf('// ── ACCT:END ──'); const st = src.indexOf('// === SELF-TEST ===');
         assert(end > 0 && st > end, f + ': ACCT:END sits before the self-test');
         assert.strictEqual((src.match(/ACCT:START/g) || []).length, 1); assert.strictEqual((src.match(/ACCT:END/g) || []).length, 1);
-        // provider brand names only inside the ACCT block (WP-O put them in 66 / 68); never in the cloud-sync file
+        // provider brand names (naming exception) only inside the ACCT block (WP-O put them in 66 / 68); never in the cloud-sync file
         assert(!/LinkedIn|Google/.test(src.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '')), f + ': provider brand names only inside the ACCT block');
         if (f === '67-cloud-sync.js') assert(!/LinkedIn|Google/.test(src), f + ': no provider brand names');
-        assert(!/setInterval|setTimeout|addEventListener/.test(src.slice(0, st)), f + ': no timers or listeners in the skeleton');
+        assert(!/setInterval\s*\(/.test(src), f + ': no setInterval');
+        assert(((src.slice(0, st).match(/setTimeout\(/g) || []).length) <= (f === '66-account.js' ? 2 : 0), f + ': only the one-shot mount timers');
       }
       const R10 = require(path.join(BUILD, 'concat-round10.js'));
       const names = R10.listFiles();
