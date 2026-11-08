@@ -1046,7 +1046,8 @@ const SECTION_C = (G, src) => {
       if (!f) return 'no flow';
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
-      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; return c; };
+      // (CK-101 manifold, after v3.3.3: the host flow.ck1 block {v, leg, beanAdj, beanFix, bean} is stripped the same way)
+      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
       // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);

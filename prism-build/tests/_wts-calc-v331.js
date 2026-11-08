@@ -14,7 +14,8 @@ module.exports = {
   "ck2",
   "sepBy",
   "sim.sepByDest",
-  "sim.sepByP_psig"
+  "sim.sepByP_psig",
+  "ck1"
  ],
  "sets": [
   {

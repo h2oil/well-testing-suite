@@ -63,18 +63,22 @@ var SETS = [
   { name: 'bean64', note: 'default spread on a 64/64 bean', vals: mix(BASE, { wts_bean: '64' }) },
   { name: 'heaterBypass', note: 'heater bypassed (wts_bypass 1)', vals: mix(BASE, { wts_bypass: '1' }) }];
 // the four new inputs of §4.1 (WP-C adds them to the page); present in --check with these values the base must not move
+// (CK-101 manifold, after v3.3.3: the adjustable leg in service with any positive-choke bean must not move the base either)
 var NEW_INPUTS = [
-  { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepByDest: 'flare', wts_sepByP: '150' },
-  { wts_bean2: '24', wts_ck2Pos: 'midcoil', wts_sepByDest: 'line', wts_sepByP: '0' },
-  { wts_bean2: '4', wts_ck2Pos: 'inlet', wts_sepByDest: 'line', wts_sepByP: '1400' }];
+  { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepByDest: 'flare', wts_sepByP: '150', wts_ckLeg: 'adj', wts_beanFix: '24' },
+  { wts_bean2: '24', wts_ck2Pos: 'midcoil', wts_sepByDest: 'line', wts_sepByP: '0', wts_ckLeg: 'adj', wts_beanFix: '4' },
+  { wts_bean2: '4', wts_ck2Pos: 'inlet', wts_sepByDest: 'line', wts_sepByP: '1400', wts_ckLeg: 'adj', wts_beanFix: '128' }];
 // a stored rig-up with CK-102 in and V-101 out (calcWTS never reads it, D2)
 var RIG_CK2_V101OUT = JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: true,
   desander: false, surge2: false, heaterChoke: true });
 // the timing set for the ≤ 6.0 gate: CK-102 and the production-line destination inputs present
 var TIME_CK2_SEPBY = mix(BASE, { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepByDest: 'line', wts_sepByP: '300' });
 
-// ─── BASE_FIELDS (§9.2): all of flow minus ts, seq, ck2, sepBy, sim.sepByDest, sim.sepByP_psig ────────────────────────
-var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig'];
+// ─── BASE_FIELDS (§9.2): all of flow minus ts, seq, ck2, sepBy, sim.sepByDest, sim.sepByP_psig, ck1 ───────────────────
+// ck1 (CK-101 choke manifold: leg in service, adjustable / positive beans, effective bean) is a new block added after v3.3.3;
+// it is omitted like ck2 / sepBy so the strict no-extra-keys compare still guards every v3.3.1 field (no golden value changes;
+// with the adjustable leg in service flow.inputs.bean / flow.chokeBean are the v3.3.1 wts_bean, checked as before)
+var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig', 'ck1'];
 
 // encode: JSON-safe copy keeping -0, NaN and ±Infinity ({$n: '-0' | 'NaN' | 'Infinity' | '-Infinity'}); undefined values
 // become {$u: 1} so a key that is present but undefined is not lost
@@ -106,7 +110,7 @@ function decode(x) {
 function baseFields(flow) {
   if (!flow || typeof flow !== 'object') return flow;
   var c = decode(encode(flow));
-  delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy;
+  delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1;
   if (c.sim && typeof c.sim === 'object') { delete c.sim.sepByDest; delete c.sim.sepByP_psig; }
   return c;
 }
