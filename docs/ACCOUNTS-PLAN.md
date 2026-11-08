@@ -1,5 +1,11 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
+**Build status (2026-11-08): Phase 1 build started; foundation landed** (WP0, technical part: `server/` skeleton with the
+§3.4 schema and `server/core/contract.js`, `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`,
+inert skeletons 66–68, `acct-contract.test.js`; refinements to §3/§3.4: a `wts_definer` role owns the definer functions, `email` is
+optional for a step-up code, `sharedBrowser` on oauth start, `mail_queue` / `deletion_request` definers, `gone` on signed-in routes,
+`501 not_implemented` for foundation stubs only). Owner items of WP0 / §13.10 are still open.
+
 **Status: plan, revision 4 — target v3.5 / v3.5.x / v3.6 (web only)** (2026-11-08; revision 2: 2026-11-07). No code yet; this
 file and one CLAUDE.md line (the naming exception below) are all the planning step changes. **Revision 3** adds two sign-in
 methods, **Google** and **LinkedIn**, beside the e-mail code (D3, D4, D22–D24, §4.10–4.15, §13.10, Q24–Q30; Appendix B.3 lists
