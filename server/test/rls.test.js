@@ -20,6 +20,9 @@ const DEFINERS = {
   challenge_issue: 'wts_api', challenge_take: 'wts_api', rate_hit: 'wts_api', allowlist_has: 'wts_api', mail_queue: 'wts_api',
   deletion_request: 'wts_api', email_move: 'wts_api', recovery_set: 'wts_api', audit_system: 'wts_api', ops_nonce_claim: 'wts_api',
   support_lookup: 'wts_support', support_recover: 'wts_support', support_security_reset: 'wts_support',
+  // WP-O additions (040-oauth.sql)
+  oauth_attempt_drop: 'wts_api', oauth_attempt_close: 'wts_api', oauth_exchange_hit: 'wts_api', oauth_breaker_open: 'wts_api',
+  oauth_breaker_note: 'wts_api', session_revoke_presented: 'wts_api', support_retire_identities: 'wts_support',
 };
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 
@@ -41,7 +44,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
 
   test('migration recorded; every §3.4 table exists in schema wts', async () => {
     const m = await H.admin.sql`select name from public.wts_schema_migrations`;
-    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql']);
+    assert.strictEqual(m.map((r) => r.name).sort()[0], '001-schema.sql');
     const t = (await H.admin.sql`select tablename from pg_tables where schemaname = 'wts'`).map((r) => r.tablename).sort();
     assert.deepStrictEqual(t, USER_TABLES.concat(SYSTEM_TABLES).sort());
   });
