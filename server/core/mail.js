@@ -18,6 +18,7 @@ const TEMPLATES = {
   notice_new_device: { kind: 'notice', params: ['browser', 'os', 'at'] },
   notice_email_changed: { kind: 'notice', params: ['at', 'revertCode'] },
   notice_email_reverted: { kind: 'notice', params: ['at'] },
+  notice_email_added: { kind: 'notice', params: ['at'] },                 // to the NEW address of an e-mail change (WP-S1)
   notice_recovery_set: { kind: 'notice', params: ['at'] },
   notice_recovery_removed: { kind: 'notice', params: ['at'] },
   notice_identity_linked: { kind: 'notice', params: ['provider', 'browser', 'os', 'at'] },
@@ -31,6 +32,9 @@ const TEMPLATES = {
   notice_delete_cancelled: { kind: 'notice', params: ['at'] },
   notice_read_burst: { kind: 'notice', params: ['at'] },
   notice_commit_burst: { kind: 'notice', params: ['at'] },
+  notice_codes_paused: { kind: 'notice', params: ['at'] },                // 10 failed codes in 24 h (§8.3; WP-S1)
+  notice_inactivity: { kind: 'notice', params: ['deleteAt'] },            // 23 / 23.5 months without a sign-in (§8.5; WP-S1)
+  notice_delete_done: { kind: 'notice', params: ['at'] },                 // the purge ran (§4.9; WP-S1)
 };
 
 function checkMessage(msg) {

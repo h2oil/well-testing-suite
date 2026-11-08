@@ -20,7 +20,12 @@ const DEFINERS = {
   challenge_issue: 'wts_api', challenge_take: 'wts_api', rate_hit: 'wts_api', allowlist_has: 'wts_api', mail_queue: 'wts_api',
   deletion_request: 'wts_api', email_move: 'wts_api', recovery_set: 'wts_api', audit_system: 'wts_api', ops_nonce_claim: 'wts_api',
   support_lookup: 'wts_support', support_recover: 'wts_support', support_security_reset: 'wts_support',
+  // WP-S1 (002-core.sql): new definers, and definer helpers / triggers that no role may call directly (null)
+  rate_add: 'wts_api', mail_mark: 'wts_api', email_revert: 'wts_api', identities_remove_since: 'wts_api', deletion_cancel: 'wts_api',
+  support_allowlist_add: 'wts_support', address_in_use: null, audit_chain_trg: null, audit_guard_trg: null, revisions_refs_trg: null,
 };
+// still WP0 stubs after WP-S1: the provider definers (WP-O)
+const WPO_STUBS = ['user_by_identity', 'oauth_attempt_take', 'oidc_key_get'];
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 
 const skip = !D.available() && 'no throwaway database (run through server/test/run.js)';
@@ -41,7 +46,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
 
   test('migration recorded; every §3.4 table exists in schema wts', async () => {
     const m = await H.admin.sql`select name from public.wts_schema_migrations`;
-    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql']);
+    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql']);
     const t = (await H.admin.sql`select tablename from pg_tables where schemaname = 'wts'`).map((r) => r.tablename).sort();
     assert.deepStrictEqual(t, USER_TABLES.concat(SYSTEM_TABLES).sort());
   });
@@ -100,7 +105,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
     await assert.rejects(api.sql`create table wts.x (a int)`, /permission denied/);
   });
 
-  test('definer functions: SECURITY DEFINER, fixed search_path, owned by wts_definer, EXECUTE for their one role only, stub bodies', async () => {
+  test('definer functions: SECURITY DEFINER, fixed search_path, owned by wts_definer, EXECUTE for their one role only (helpers: none)', async () => {
     const fns = await H.admin.sql`select p.proname, p.prosecdef, p.proconfig, pg_get_userbyid(p.proowner) as owner, p.oid::regprocedure::text as sig
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'wts' and p.prosecdef`;
     assert.deepStrictEqual(fns.map((f) => f.proname).sort(), Object.keys(DEFINERS).sort());
@@ -115,8 +120,10 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
       }
     }
     const api = H.as('wts_api');
-    await assert.rejects(api.sql`select * from wts.resolve_session(${Buffer.alloc(32)})`, (e) => e.code === '0A000' && /not_implemented/.test(e.message));
-    await assert.rejects(api.sql`select wts.allowlist_has(${Buffer.alloc(32)})`, (e) => e.code === '0A000');
+    assert.strictEqual((await api.sql`select * from wts.resolve_session(${Buffer.alloc(32)})`).length, 0, 'WP-S1 bodies: no such session');
+    assert.strictEqual((await api.sql`select wts.allowlist_has(${Buffer.alloc(32)}) as ok`)[0].ok, false);
+    await assert.rejects(api.sql`select * from wts.user_by_identity('google', ${Buffer.alloc(32)})`, (e) => e.code === '0A000', 'the provider definers stay with WP-O');
+    void WPO_STUBS;
     const sup = H.as('wts_support');
     await assert.rejects(sup.sql`select * from wts.resolve_session(${Buffer.alloc(32)})`, /permission denied/);
   });
@@ -141,9 +148,12 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
     assert.strictEqual((await api.asUser(A, (tx) => tx`update wts.users set opt_historian = true returning id`)).length, 1);
     // a pre-auth audit row (user_id NULL) is refused to wts_api directly; the definer exists for it
     await assert.rejects(api.asUser(A, (tx) => tx`insert into wts.audit (user_id, actor, action, at, hash) values (null, 'system', 'x', now(), '\\x00')`), /row-level security/);
-    await assert.rejects(api.sql`select wts.email_move(${A}, ${Buffer.alloc(32)}, ${Buffer.from('e')})`, (e) => e.code === '0A000');
-    await assert.rejects(api.sql`select wts.recovery_set(${A}, ${null}, ${null})`, (e) => e.code === '0A000');
-    await assert.rejects(api.sql`select wts.audit_system('x', null, null, null, null, '{}'::jsonb)`, (e) => e.code === '0A000');
+    // the address definers act only on the transaction's own account
+    await assert.rejects(api.sql`select wts.email_move(${A}, ${Buffer.alloc(32)}, ${Buffer.from('e')})`, (e) => e.code === '42501', 'no app.user_id');
+    await assert.rejects(api.asUser(uid(), (tx) => tx`select wts.recovery_set(${A}, ${null}, ${null})`), (e) => e.code === '42501', 'another account');
+    assert.strictEqual((await api.asUser(A, (tx) => tx`select wts.recovery_set(${A}, ${null}, ${null}) as ok`))[0].ok, true);
+    const sys = (await api.sql`select wts.audit_system('probe', null, null, null, null, '{}'::jsonb) as id`)[0].id;
+    assert.ok(Number(sys) > 0, 'a pre-auth audit row through the definer');
   });
 
   test('cross-tenant references: a revision or conflict row cannot point at another account\'s project (no existence probe)', async () => {
