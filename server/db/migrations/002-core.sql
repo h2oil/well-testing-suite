@@ -524,3 +524,5 @@ GRANT DELETE ON wts.identities, wts.historian_backups, wts.deletion_ledger, wts.
 GRANT SELECT ON wts.identities, wts.historian_backups TO wts_jobs;
 GRANT UPDATE (refcount, unref_at) ON wts.blobs TO wts_jobs;
 GRANT UPDATE (is_conflict_of) ON wts.projects TO wts_jobs;
+-- master-key rotation (§13.4): the jobs credential re-wraps every key ring before an old kid is retired (core/ops.js rewrapAll)
+GRANT UPDATE (data_key_wrapped, data_key_kid) ON wts.users TO wts_jobs;

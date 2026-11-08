@@ -12,7 +12,7 @@ function hostOf(u) {
   const s = String(u || '').trim().toLowerCase();
   if (!s) return 'none';
   if (/^(inline|eval|wasm-eval|data|blob|self|trusted-types-policy|trusted-types-sink)$/.test(s)) return s;
-  try { const h = new URL(s).host; return /^[a-z0-9.:[\]-]{1,100}$/.test(h) ? h : 'other'; } catch (e) { return /^[a-z-]{1,20}:?$/.test(s) ? s.replace(/:$/, '') : 'other'; }
+  try { const u = new URL(s); return /^(https?|wss?):$/.test(u.protocol) && /^[a-z0-9.:[\]-]{1,100}$/.test(u.host) ? u.host : 'other'; } catch (e) { return 'other'; }
 }
 function reports(body) {
   const out = [];
