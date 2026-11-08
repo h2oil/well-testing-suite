@@ -1,7 +1,9 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Status: plan, revision 2 — target v3.5 / v3.5.x / v3.6 (web only)** (2026-11-07). No code yet; this file is the only
-repository file changed by the planning step. Revision 2 answers three reviews of revision 1 (security and privacy; architecture
+**Status: plan, revision 3 — target v3.5 / v3.5.x / v3.6 (web only)** (2026-11-08; revision 2: 2026-11-07). No code yet; this
+file and one CLAUDE.md line (the naming exception below) are all the planning step changes. **Revision 3** adds two sign-in
+methods, **Google** and **LinkedIn**, beside the e-mail code (D3, D4, D22–D24, §4.10–4.15, §13.10, Q24–Q30; Appendix B.3 lists
+every changed section). Revision 2 answers three reviews of revision 1 (security and privacy; architecture
 against the code; product and operations). Every blocker and major is resolved in the body; Appendix B lists what was resolved
 differently from the reviewers' suggestions, and why. The release numbers are provisional: DFIT is v3.4 (`docs/DFIT-PLAN.md`, a
 separate workstream that this plan does not touch), so accounts ship in the releases after it unless the owner and the DFIT lead
@@ -14,17 +16,31 @@ agree otherwise (Q14).
 > page input, PRiSM state, multi-well projects, the build-up surveillance store, report snapshots and templates, libraries, and
 > historian data on request) is kept in a per-user cloud database of projects that they can open on any device. The **iOS app
 > stays account-free and unchanged**: the account code is stripped from `ios-app/www` and is inert even if a strip were missed.
+>
+> **Request (product owner, 2026-11-08).** *"continue plan - create a email login also with google and linkedin login too"*.
+>
+> So: three sign-in methods on one account — the **e-mail one-time code** (the root method that every account has),
+> **Sign in with Google** and **Sign in with LinkedIn** (OpenID Connect, full-page redirect, no provider script on the page).
+> Web only; the iOS app stays unchanged.
+
+**Naming exception (owner, 2026-11-08).** The repository never names other companies. For this feature the owner approved one
+exception: this plan, and later the code and UI of the web accounts feature, may name exactly two identity providers, **Google**
+and **LinkedIn**, as sign-in options (their button branding rules require the names). No other company, vendor, product or
+website is named; the host, database, e-mail service etc. stay generic. The providers' endpoint addresses will appear only in
+the one provider configuration file (`server/core/oidc-providers.js`); console steps, links and brand colours stay in the owner's
+scratch vendor notes, never in the repository. CLAUDE.md records the exception in its TL;DR naming rule.
 
 | | |
 |---|---|
-| Releases | Three phases (§14). **v3.5** (Phase 1): sign-in, manual *Save to cloud* / *Open from cloud*, history, account page with export, delete, e-mail change and security notices — invite-only beta, then on for the web. **v3.5.x** (Phase 2): automatic sync and the key-level merge, after 4 weeks of Phase 1 telemetry. **v3.6** (Phase 3): passkeys, historian backup, live-data settings, field-level merge. Without signing in, the app behaves exactly as v3.4: nothing leaves the device |
-| What | (1) **Passwordless sign-in**: an 8-digit e-mail code (base and recovery; an optional second recovery address), passkeys as the fast path in Phase 3. (2) **Server-side sessions** in an HttpOnly `__Host-` cookie, never visible to page script. (3) **Cloud projects**: the existing `.h2oilproj` payload, normalised per well, as the sync unit: a small *core document* plus content-addressed *parts*, committed with compare-and-swap on a revision number. (4) **Event-driven sync** (Phase 2): one coalescing debounced push, pulls on focus / online / visible and before the first edit; offline-first, no polling. (5) **Conflicts never lose work and never move it off the screen**: disjoint keys merge; an overlap keeps the local version on screen as a conflict copy. (6) **Account page**: projects, history, devices, security, export everything, delete account. (7) UK GDPR: export, deletion with a 7-day grace, retention, privacy-page text |
+| Releases | Three phases (§14). **v3.5** (Phase 1): sign-in (e-mail code, Google, LinkedIn; link and unlink), manual *Save to cloud* / *Open from cloud*, history, account page with export, delete, e-mail change and security notices — invite-only beta, then on for the web. **v3.5.x** (Phase 2): automatic sync and the key-level merge, after 4 weeks of Phase 1 telemetry. **v3.6** (Phase 3): passkeys, historian backup, live-data settings, field-level merge. Without signing in, the app behaves exactly as v3.4: nothing leaves the device |
+| What | (1) **Passwordless sign-in, three ways into one account**: an 8-digit e-mail code (the root method: every account has a verified address; an optional second recovery address), **Sign in with Google** and **Sign in with LinkedIn** (OpenID Connect, full-page redirect, no stored provider token, never linked on an e-mail match alone), passkeys as the fast path in Phase 3. (2) **Server-side sessions** in an HttpOnly `__Host-` cookie, never visible to page script. (3) **Cloud projects**: the existing `.h2oilproj` payload, normalised per well, as the sync unit: a small *core document* plus content-addressed *parts*, committed with compare-and-swap on a revision number. (4) **Event-driven sync** (Phase 2): one coalescing debounced push, pulls on focus / online / visible and before the first edit; offline-first, no polling. (5) **Conflicts never lose work and never move it off the screen**: disjoint keys merge; an overlap keeps the local version on screen as a conflict copy. (6) **Account page**: projects, history, devices, security, export everything, delete account. (7) UK GDPR: export, deletion with a 7-day grace, retention, privacy-page text |
 | Where | Client: three new Round-10 files `prism-build/66-account.js`, `67-cloud-sync.js`, `68-account-page.js` (auto-discovered; 60–65 are taken, DFIT owns Round-8 56–59). Neutral host and shared-file edits H1–H18 (§5.4). Server: a new top-level `server/` folder (functions, shared core, ops scripts, migrations, tests) that is never published as static content and never copied into `ios-app/www`. Build: `ios-app/scripts/sync-from-main.js` (strip step, extended to `www/help/**`), a publish allow-list (§13.2). Tests in `prism-build/tests/` and `server/test/` |
 | Not touched | DFIT (`docs/DFIT-PLAN.md`, its branches, Round-8 files 56–59). The iOS native project. The simulator (31/32/38): its one direct write (`wts_sim_rigup`) is detected by the key-hash check instead of an edit (§5.4 H2). Calculation engines. `sw.js` code (only its header comment changes) |
-| Inputs | Session notes: the persistence map, the web delivery and security surface map, the options research, three candidate designs and three judge reviews (revision 1); three reviews of revision 1 (revision 2). Vendor names, prices and links are kept out of the repository, in the owner's scratch vendor notes |
+| Inputs | Session notes: the persistence map, the web delivery and security surface map, the options research, three candidate designs and three judge reviews (revision 1); three reviews of revision 1 (revision 2); the provider research of 2026-11-08 (both providers' live discovery documents and documentation; revision 3). Vendor names, prices and links are kept out of the repository, in the owner's scratch vendor notes |
 
 **Conventions.**
-- No other company, product, vendor, cloud service or website is named in this plan, the code, the tests or the UI text.
+- No other company, product, vendor, cloud service or website is named in this plan, the code, the tests or the UI text,
+  except the two identity providers Google and LinkedIn under the naming exception above.
   Services are described generically: "our static host", "its serverless functions", "a managed Postgres database", "the
   host's blob store", "a transactional e-mail service", "the spreadsheet library", "the analytics tag". The only web address is
   welltest.h2oil.co.uk; the only e-mails are software@h2oil.co.uk (user-facing) and no-reply@h2oil.co.uk (sender). Example data
@@ -44,8 +60,8 @@ agree otherwise (Q14).
 |---|---|---|---|
 | D1 | Scope | Web only. The account code is wrapped in `ACCT:START/END` markers that `sync-from-main.js` strips; every reference to account identifiers lives inside those markers (static test); a load-time guard (https or http only, host name, native bridge, frame) makes it inert anywhere else; the API refuses any Origin but `https://welltest.h2oil.co.uk` (§9) | Owner: "for webversion only". The iOS app stays free, local and unchanged (CLAUDE.md iOS rules) |
 | D2 | Backend | **Our own minimal API** in serverless functions, reached at same-origin `/api/v1/*` (UK region). A **managed Postgres** (UK, else EU) holds accounts, sessions, devices, the project index, revisions, blob index, rate counters, the mail outbox and the audit log. Project bodies go to the **host's blob store** in its EU region (set explicitly on every call). A **transactional e-mail service** sends codes and notices | Same origin: first-party cookies, no CORS. Standard Postgres and WebAuthn keep lock-in low; we own the sync protocol an offline-first app needs. Alternatives (Q1): a managed identity service of the host (no passkeys or codes, data region not stated) or a hosted auth-plus-database service (large client SDK, free tier pauses when idle) |
-| D3 | Sign-in | **Passwordless.** E-mail code (8 digits, 15 min, at most two live codes per address and purpose, 5 tries each, stored as an HMAC bound to purpose and, for step-up, to the session); an optional verified **recovery address** that can receive sign-in codes; passkeys (discoverable, user verification required) in Phase 3. No passwords, no magic links, no social sign-in | Nothing to steal or reset; a code in the mail body cannot be burnt by a link-scanning gateway; the recovery address covers a lost work mailbox (contractors change employer) |
-| D4 | Session | Opaque 32-byte id in `__Host-wts_sid` (Secure, HttpOnly, **SameSite=Strict**, Path=/); the database stores SHA-256(id). Rotated on sign-in and step-up (the previous id stays valid for 30 s). **Trusted device**: 35 days idle / 180 days absolute (covers a 28-day rotation offline). **Public or shared computer** (tick box): 12 h idle / 7 days absolute; the local working set is wiped on sign-out and at the first load after expiry (§10.8). A 401 never drops queued changes (§6.9). Step-up (code or UV passkey within 10 min) for delete, purge, add / remove passkey, change e-mail or recovery address, sign out everywhere, and to unlock the export read rate | No token is ever reachable from script (the page cannot run a strict CSP today). Strict works because every API call is a same-origin fetch. Rig and office PCs are often shared; rigs are offline for weeks |
+| D3 | Sign-in | **Passwordless, three methods on one account.** (a) **E-mail code** — the root method: 8 digits, 15 min, at most two live codes per address and purpose, 5 tries each, stored as an HMAC bound to purpose and, for step-up, to the session; every account has a verified primary address; an optional verified **recovery address** can receive sign-in codes. (b) **Sign in with Google** and (c) **Sign in with LinkedIn** (OpenID Connect; D22–D24, §4.10–4.15). Passkeys (discoverable, user verification required) in Phase 3. No passwords, no magic links, no other identity provider | Nothing to steal or reset; a code in the mail body cannot be burnt by a link-scanning gateway; the recovery address covers a lost work mailbox (contractors change employer); the two provider buttons save a mail round trip for the many users who already have those accounts (owner request of 2026-11-08), and the e-mail code still works when a provider is down or lost |
+| D4 | Session | Opaque 32-byte id in `__Host-wts_sid` (Secure, HttpOnly, **SameSite=Strict**, Path=/); the database stores SHA-256(id). Rotated on sign-in and step-up (the previous id stays valid for 30 s). **Trusted device**: 35 days idle / 180 days absolute (covers a 28-day rotation offline). **Public or shared computer** (tick box): 12 h idle / 7 days absolute; the local working set is wiped on sign-out and at the first load after expiry (§10.8). A 401 never drops queued changes (§6.9). Step-up (code or UV passkey within 10 min) for delete, purge, add / remove passkey, change e-mail or recovery address, sign out everywhere, link / unlink a provider, and to unlock the export read rate (step-up is always the code or a passkey, never a provider, Q29). **Provider sign-in leaves the session cookie Strict**: the provider's return is a cross-site navigation that carries only the short-lived Lax attempt cookie `__Host-wts_oa`; the callback never reads or sets the session cookie, and the session is issued by a same-origin `POST /auth/oauth/finish` from the page (§4.13) | No token is ever reachable from script (the page cannot run a strict CSP today). Strict works because every API call is a same-origin fetch. Rig and office PCs are often shared; rigs are offline for weeks |
 | D5 | Sync unit | The existing **`.h2oilproj` payload**, **normalised per well**: every well, the active one included, is a part `well/<id>` built by a new `WTS_wells.captureWell(id)`; its bulk data (`prism_gauges`, `buildup_raw`, `buildup_analysis`, any key over 64 kB) are sub-parts `well/<id>/<name>`. The **core** holds the well list `{id, name, created}`, the job keys and the part hashes; which well is active is device-local. Parts are **content-addressed** (SHA-256 of canonical JSON), gzip, uploaded in **4 MB chunks only when missing**, deduplicated within the account, immutable once complete. A core-only commit carries the core **inline** (≤ 48 kB gzip) | Reuses the tested project format. Two devices on different wells no longer touch each other's data. A page edit uploads kilobytes; pagehide becomes one request; conflict copies only reference blobs |
 | D6 | Write rule | A **commit** `{pushId, baseRev, core, parts}` to `/api/v1/projects/:id/commit` is accepted only if `baseRev == head_rev` (compare-and-swap, row lock), else `409 stale`. `pushId` makes a retry idempotent. A commit whose normalised core hash (`vhash`) equals the head is a no-op. **Pull before push** | Changes are never silently overwritten; a retry after a timeout cannot fork a revision |
 | D7 | Conflicts | **Phase 1** (manual): Save to cloud that hits a 409 asks *Overwrite (old head kept in history) / Save as a new project / Cancel*. **Phase 2 (WP-C2)**: a **key-level three-way merge** against the base stored on the device (each key changed on one side only goes through; the PRiSM bundle is atomic; wells merge independently). An **overlap** keeps the local version **on screen**, uploads it as a conflict copy and links this device to the copy; the cloud head is unchanged; the bar offers *Show differences / Use cloud / Keep both*. **Phase 3 (WP-M, S)**: field-level rules for `wts_page_<route>`, client info, PVT provenance, report templates, libraries; true clashes become a copied well or a PRiSM workspace branch | The most common two-device case (different pages) merges silently; offline work never disappears from the screen |
@@ -55,21 +71,25 @@ agree otherwise (Q14).
 | D11 | Encryption at rest | Platform encryption **plus** envelope encryption: a per-user AES-256-GCM data key wrapped by a versioned master key in host secrets. AAD binds `userId \| hash \| chunk n \| kid`; the header `{v, alg, kid, dkv, iv}` allows dual reads during re-encryption and a later opt-in end-to-end vault (Q4). Rotation **re-wraps every data key before an old master key is retired**; a compromise re-keys and re-encrypts (§13.4). The client verifies the SHA-256 of every part | A bucket, backup or preview copy alone exposes no well data; rotation can never orphan data |
 | D12 | Database isolation | Row-level security **enabled and forced** on every user table. Request handlers connect as `wts_api` (no `BYPASSRLS`, no DDL) and run `SET LOCAL app.user_id` per transaction; the pre-auth lookups go only through named `SECURITY DEFINER` functions (`resolve_session`, `user_by_email`, `user_by_credential`, `create_user`, code and challenge functions) with a fixed `search_path`, minimal columns and `EXECUTE` for `wts_api` only. Cross-user jobs run as **`wts_jobs`**, a separate credential loaded only by the scheduled function. Support uses **audited ops scripts** as `wts_support` | Gives the pre-auth path a defined way in, so nobody adds a bypass role |
 | D13 | What syncs | Everything a project file carries (§7), minus device preferences and the units module, minus `wts_modbus_config` (opt-in), minus the library keys (they live only in the account **library document** and are put back when a file is assembled). The **historian** is a manual opt-in backup (Phase 3) | The historian is device-wide and large; libraries must not make every project dirty |
-| D14 | UI | A header **account chip** (`#wts_account_host`, first in `.page-actions`); a **`☁ ▾` toolbar button** after Save As in the project toolbar (*Save to cloud / Save to cloud as… / Open from cloud… / Import files to cloud…*) through `WTS_project.registerToolbarItems`; **Ctrl+S** saves to the cloud while linked; an **`account` page with a route but no sidebar row** (`navHidden:true`) holding its own help; a bottom status bar for conflicts, sign-out, offline and outages. Overview stays at 5 rows | Sidebar must fit 1280×800; nothing account-related appears on iOS |
+| D14 | UI | A header **account chip** (`#wts_account_host`, first in `.page-actions`); a **`☁ ▾` toolbar button** after Save As in the project toolbar (*Save to cloud / Save to cloud as… / Open from cloud… / Import files to cloud…*) through `WTS_project.registerToolbarItems`; **Ctrl+S** saves to the cloud while linked; an **`account` page with a route but no sidebar row** (`navHidden:true`) holding its own help; a bottom status bar for conflicts, sign-out, offline and outages; a sign-in dialog with the e-mail code first, then *Continue with Google* and *Sign in with LinkedIn* at equal size (official assets, unmodified, inline); a *Sign-in methods* card on the account page. Overview stays at 5 rows | Sidebar must fit 1280×800; nothing account-related appears on iOS |
 | D15 | First sign-in and hand-over | Ask, never assume. The device records **which user its local work belongs to**; work from another account (or from an unknown session after a sign-out) is never uploaded by default (§10). Own work: *Upload as a new cloud project* (default) / *Open a cloud project instead* (local work uploaded first with `reason:'migrate'`, plus the pinned pre-account snapshot) / *Not now* | Existing users have months of work in browser storage; shared office PCs must not leak one user's client data into another's account |
 | D16 | Free accounts | Free; default quota **250 MB** per user, project ≤ 64 MB compressed, historian backup ≤ 100 MB (Q5). No payments | The app is free; a quota caps cost and abuse |
 | D17 | Hosting plan | **Leave the host's free plan before the beta** | On the free plan, running out of monthly credits pauses the whole public site |
 | D18 | Admin and support | No admin console. Support works through audited ops scripts (`server/ops/`, actor `support:<id>`, one audit row per lookup); ad-hoc production console sessions only in a declared incident. A documented recovery path for a lost mailbox (§13.7, Q20) | Less attack surface; every support access is logged |
-| D19 | Delivery hygiene | Server functions deploy as a **separate functions-only site** of the same team, reached through a same-origin rewrite, **only from `server-v*` tags** with an owner-signed checklist; migrations are applied by a manual tagged job, never by an ordinary master push; the static site keeps auto-deploying from master (CLAUDE.md branch rule unchanged). Previews get no production database or secrets. Kill switches `ACCOUNTS_SIGNUP=open\|invite\|off`, `SYNC_MODE=readonly\|off`, `ACCOUNTS_OFF`. Independent review of `server/` and 66–68 (Q19). SHA-384 of the account block in the release notes (S) | One owner plus an assistant cannot meet a two-person, tagged-master rule as first written; this keeps server risk off the auto-merge path |
-| D20 | Third-party scripts | Every external script loads through a hash-pinned loader (the spreadsheet library joins the historian and 3D loaders); **the analytics tag is not loaded while signed in** (a head guard reads `wtsacct_hint`; a page that loaded it reloads once after sign-in) (Q18) | Third-party code runs in the session's origin and can make credentialed API calls |
+| D19 | Delivery hygiene | Server functions deploy as a **separate functions-only site** of the same team, reached through a same-origin rewrite, **only from `server-v*` tags** with an owner-signed checklist; migrations are applied by a manual tagged job, never by an ordinary master push; the static site keeps auto-deploying from master (CLAUDE.md branch rule unchanged). Previews get no production database or secrets. Kill switches `ACCOUNTS_SIGNUP=open\|invite\|off`, `SYNC_MODE=readonly\|off`, `ACCOUNTS_OFF`, and per provider `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` `=on\|signin\|off` (`signin`: identities already linked still sign in; no new account or link). Independent review of `server/` and 66–68 (Q19). SHA-384 of the account block in the release notes (S) | One owner plus an assistant cannot meet a two-person, tagged-master rule as first written; this keeps server risk off the auto-merge path |
+| D20 | Third-party scripts | Every external script loads through a hash-pinned loader (the spreadsheet library joins the historian and 3D loaders); **the analytics tag is not loaded while signed in** (a head guard reads `wtsacct_hint`; a page that loaded it reloads once after sign-in) (Q18). **No identity-provider script**: no provider SDK, one-tap prompt, iframe or popup; provider sign-in is a full-page redirect and its buttons are inline assets | Third-party code runs in the session's origin and can make credentialed API calls |
 | D21 | Abuse limits | Per user **and** per session, never per client-supplied id: blob reads 100 MB/h and 300 MB/day per user (export after step-up: 300 MB/h), commits 120/h and 600/day per user, 60/h per session; per IP prefix soft limits (delay, alert) so a rig or an office behind one address is never locked out (§8.3) | Limits must be below the quota and not bypassable by rotating a header |
+| D22 | Provider protocol | **OpenID Connect authorization-code flow with a confidential server-side client** per provider. The page `POST`s `/auth/oauth/:provider/start`; the server stores an **attempt** (state, nonce, PKCE verifier, provider, purpose; 10 min) behind a `__Host-wts_oa` cookie (HttpOnly, Secure, Path=/, **SameSite=Lax**) and returns the authorization URL; the page navigates there (full page, never a popup); the provider returns to `GET /auth/oauth/:provider/callback`, which checks cookie and `state`, burns the attempt, exchanges the code server to server with the client secret, validates the id_token and 303s to a **constant** app URL; the page completes with `POST /auth/oauth/finish`. Scopes: Google `openid email`; LinkedIn `openid profile email` (it requires the three together; only `sub` and the e-mail are kept). **No provider access or refresh token is stored** (discarded after the exchange; no offline access asked) | Smallest surface: no provider code in the page's origin, no token to steal, no redirect parameter to abuse, and the Strict session cookie needs no change |
+| D23 | Identity model | Table **`identities`**: one user, many identities; **`UNIQUE (provider, subject)`**; looked up **only** by provider + subject (`sub`), never by e-mail; the provider e-mail and its verified flag are recorded **at link time** as information, with `linked_at` and `last_used_at`. Every account keeps a verified primary e-mail (the root method), so losing a provider never loses the account | Provider e-mails change and are not always verified; keying on them is the classic account takeover |
+| D24 | Linking | **Never link on an e-mail match alone.** A known (provider, subject) signs its user in. A new identity creates an account only with a verified e-mail — the provider's flag where it is trusted (Google), else our e-mail code (LinkedIn always; any missing or unverified address). If an account already uses that address, the identity is linked only after the user **proves control of that account** with an e-mail code sent to its address. Linking from the account page needs a fresh session (step-up). Unlink needs step-up and is refused if it would leave no method (the e-mail code always remains). Every link and unlink is audited and mailed to the account address (§4.12) | Stops pre-registration and unverified-claim takeovers; the common case costs at most one extra code, once |
 
 ---
 
 ## 1. Goal and scope
 
 ### 1.1 In scope
-1. Sign-up / sign-in with an e-mail code; optional recovery address; passkeys (Phase 3); sign-out, sign out everywhere, device list,
+1. Sign-up / sign-in with an e-mail code, **Sign in with Google** or **Sign in with LinkedIn** (one account, several methods; link and
+   unlink on the account page); optional recovery address; passkeys (Phase 3); sign-out, sign out everywhere, device list,
    security notices for every security change, e-mail change with a 7-day revert.
 2. Cloud projects: create, save, open, rename, duplicate, move to trash (30 days), restore, purge, revision history and restore a
    revision, download as `.h2oilproj`, import several `.h2oilproj` files at once.
@@ -87,7 +107,10 @@ agree otherwise (Q14).
 - End-to-end-encrypted vault (later, opt-in; D11, Q4).
 - Server-side search of content, previews or server-side reports.
 - Continuous historian streaming, Modbus data to the cloud.
-- Passwords, social sign-in, SMS codes, payments, an admin console.
+- Passwords, identity providers other than Google and LinkedIn, provider sign-in on iOS, provider re-authentication as step-up
+  (Q29), SMS codes, payments, an admin console.
+- Any use of provider data beyond sign-in: no contacts, no profile import, no posting, no stored provider token, no account merge
+  tool for two accounts created by mistake (support macro instead, §13.7).
 
 ### 1.3 User stories
 | # | As a … | I want to … | So that … | Acceptance |
@@ -104,6 +127,13 @@ agree otherwise (Q14).
 | U10 | owner | switch sync off in an incident | users keep working locally | `SYNC_MODE=off` → chip "Cloud sync paused — your work is saved on this device" |
 | U11 | contractor who changed employer | get back into my account | my projects are not lost with the old mailbox | A recovery address receives sign-in codes; without one, the documented support recovery path (§13.7) |
 | U12 | engineer on a shared office PC | sign in after a colleague used the browser | their client data never lands in my account | "This browser holds work from another account" — *Start empty (keep it local)* / *Sign out*; upload only after an explicit confirmation naming the client and wells |
+| U13 | engineer with a Google work or personal account | sign up and sign in with *Continue with Google* | I skip the code mail | First time: Google → back on the page → consent step → signed in; the account e-mail is the Google address (verified by Google); later one click. No Google script loads on the page |
+| U14 | engineer who uses LinkedIn | sign up and sign in with *Sign in with LinkedIn* | I use the account I already have | First time: one e-mail code to the LinkedIn address (or to an address I type when LinkedIn sends none), then consent; afterwards LinkedIn alone signs me in |
+| U15 | existing e-mail-code user | press *Continue with Google* with the same address | I don't get a second account | "An account already uses n•••@company.example. Enter the code we sent to it to add Google." After the code Google is linked and I am signed in; it is never linked without that code |
+| U16 | user | see, link and unlink my sign-in methods | I control how I get in | Account → *Sign-in methods*: e-mail (always on), recovery address, Google, LinkedIn, passkeys (Phase 3), each with linked date and last use; link and unlink need step-up; every change is mailed to my account address |
+| U17 | user whose Google or LinkedIn account was deleted or locked | still get into my account | my projects are not lost with it | The e-mail code always works; the dead method shows its last use and can be unlinked; a new provider account links through U15 |
+| U18 | user who changed the e-mail address at Google or LinkedIn | keep signing in with that provider | nothing breaks | Sign-in follows the provider's subject, not the address; my account e-mail never changes by itself; the dialog notes the new address once and offers *Change account e-mail* (the normal step-up flow) |
+| U19 | user during a provider outage | sign in anyway | work is not blocked | The button reports "Google sign-in is not available right now — use the e-mail code"; the code path is unchanged; the owner can switch a provider off (`OAUTH_*=off`) without a release |
 
 ---
 
@@ -139,6 +169,10 @@ agree otherwise (Q14).
   the two sites); requests without it get `404`, and the functions read the client address and the original host only from the
   host's trusted forwarding headers (§3.2). Whether the host's rewrite can add a header is a WP0 check (vendor notes); the
   fallback is one site with functions deployed from the same tags through a protected deploy branch.
+- **Identity providers (Google, LinkedIn)** sit outside this picture. The browser visits them only by a full-page redirect and
+  comes back to `/api/v1/auth/oauth/<provider>/callback`; the functions talk to them server to server (code exchange, signing
+  keys) with client secrets held in the functions' environment. The page loads nothing from them, and nothing in the database
+  depends on them being reachable: the e-mail code is the root method (§4.10–4.15).
 
 ---
 
@@ -147,18 +181,25 @@ agree otherwise (Q14).
 ### 3.1 Folder layout (new, top level)
 ```
 server/
-  functions/            one file per route group (auth, me, projects, blobs, library, account, health, csp-report, ops-daily)
+  functions/            one file per route group (auth, oauth, me, projects, blobs, library, account, health, csp-report, ops-daily)
   core/                 pure logic shared with the test fake server: validate.js, rate.js, revisions.js (CAS, squash, prune),
                         quota.js, envelope.js (AES-GCM wrap/unwrap, AAD, dual read by kid), canon.js (canonical JSON + SHA-256),
-                        merge.js (key-level merge in Phase 2, field rules in Phase 3), mail.js (templates, plain text only), errors.js
+                        merge.js (key-level merge in Phase 2, field rules in Phase 3), mail.js (templates, plain text only), errors.js,
+                        oidc.js (authorization URL, PKCE, code exchange, id_token checks, signing-key cache), oidc-providers.js
+                        (the two provider configurations: endpoints, accepted issuers, scopes, nonce / PKCE behaviour,
+                        trustEmailVerified — the only file with provider addresses)
   ops/                  audited support and incident scripts (lookup, recover, security-reset, rewrap, rekey, ledger-replay)
   db/migrations/        NNN-*.sql, applied by the manual tagged migration job in order, never edited after release
   db/schema.sql         generated snapshot for review
-  test/                 node tests: core units, API against an in-memory adapter, rls.test.js against a local Postgres (CI)
+  test/                 node tests: core units, API against an in-memory adapter, fake-oidc.js (a fake OpenID provider: test-time
+                        RSA keys, JWKS, token endpoint, fault modes), rls.test.js against a local Postgres (CI)
   RUNBOOK.md            incidents, security reset, restore and ledger replay, key rotation and compromise, support macros
 ```
 Dependencies: one well-maintained server-side WebAuthn verification library (Phase 3) and one Postgres driver, pinned with a
-lockfile, reviewed monthly. The browser bundle gets no dependency. `server/` is never in the published static set (§13.2).
+lockfile, reviewed monthly. Provider sign-in adds **no** dependency: RS256 id_token verification uses the runtime's built-in
+crypto (`crypto.verify` with the provider's JWK imported as a public key) under the full check list of §4.11; if the
+independent review prefers a library, one pinned, maintained JOSE library is the only alternative. The browser bundle gets no
+dependency. `server/` is never in the published static set (§13.2).
 
 ### 3.2 Common rules for every endpoint
 - Base path **`/api/v1`**. No path has a file extension (the service worker's static pattern must never match it).
@@ -169,7 +210,11 @@ lockfile, reviewed monthly. The browser bundle gets no dependency. `server/` is 
   and `Content-Type: application/json` (or `application/octet-stream` for a chunk PUT); else `403 origin`. **Exceptions**, each
   with its own rule: `POST /csp-report` (no auth, no cookie read, `application/csp-report` or `application/reports+json`,
   body ≤ 16 kB, strict per-IP limit, stored only as aggregate counts per directive and blocked host); `POST /ops/daily`
-  (no cookie; HMAC over method, path, timestamp and nonce with a key used only for this call; ±5 min window; nonce kept 10 min).
+  (no cookie; HMAC over method, path, timestamp and nonce with a key used only for this call; ±5 min window; nonce kept 10 min);
+  `GET /auth/oauth/:provider/callback` (the provider's cross-site top-level return, so no Origin or custom header can be
+  required: it reads only the Lax `__Host-wts_oa` cookie, never the session cookie; it changes only the attempt that cookie and
+  `state` name; it always answers `303` to the constant app URL with `Referrer-Policy: no-referrer` and no data in the URL;
+  §4.10).
 - The original host (from the trusted forwarding header) must be the production host; otherwise `404`.
 - **Client address**: taken only from the host's trusted client-address header; client-supplied `X-Forwarded-For` is ignored
   (server test). Stored as a prefix (IPv4 /24, IPv6 /48).
@@ -179,7 +224,8 @@ lockfile, reviewed monthly. The browser bundle gets no dependency. `server/` is 
 - **Device id**: issued by the server at sign-in (`device.id`), stored in `wts-sync`, sent back as `X-WTS-Device`. The server
   resolves it only against `(user_id, device_id)` of the session's user; an unknown or foreign id is ignored (treated as "no
   device"), never an error. Rate limits never use it.
-- GET never changes state (sibling subdomains are same-site, §8.1 T3). Bodies over the route's limit get `413` before parsing.
+- GET never changes state (sibling subdomains are same-site, §8.1 T3), except the provider callback above, which changes only
+  its own attempt. Bodies over the route's limit get `413` before parsing.
 - Error envelope: `{"error":"<code>", "message":"<plain text>", "retryAfter":<s>?, ...extra}`.
 
 | HTTP | `error` | Meaning | Client reaction |
@@ -187,6 +233,12 @@ lockfile, reviewed monthly. The browser bundle gets no dependency. `server/` is 
 | 400 | `bad_request` | schema check failed (`field` names it) | log, show "Sync error", keep dirty |
 | 401 | `signed_out` | no / expired / revoked session | re-read `/me` once (step-up rotation race), then chip "Signed out — sign in"; outbox kept (§6.9); public device: wipe (§10.8) |
 | 401 | `invalid_or_expired` | wrong or expired code / passkey | generic message in the dialog |
+| 400 | `oauth_state` | `finish` without a valid attempt cookie, or with an attempt of another provider or purpose | dialog "Sign-in was interrupted — try again"; never retried automatically |
+| 401 | `oauth_failed` (`reason`: `cancelled` \| `expired` \| `provider` \| `token`) | the provider leg failed: cancelled at the provider, attempt over 10 min, code exchange failed, id_token refused | one plain message per reason; the e-mail field stays offered |
+| 409 | `identity_in_use` | the provider identity is linked to another account | "This Google / LinkedIn account is linked to another Well Testing Suite account" (no address shown) |
+| 409 | `provider_linked` | the account already has an identity of that provider (one per provider; unlink first) | message on the account page |
+| 409 | `last_method` | unlink would leave no sign-in method | guard; the UI never offers it |
+| 503 | `provider_off` (`provider`) | `OAUTH_<P>=off`, `signin` mode for a new account or link, or the provider breaker open (§8.3) | "<Provider> sign-in is not available right now — use the e-mail code" |
 | 403 | `origin` | Origin / header / content-type check failed | developer error; never retried |
 | 403 | `reauth` | step-up needed | code / passkey in place, then repeat |
 | 403 | `locked` | account locked by support | message with contact address |
@@ -224,13 +276,32 @@ dialog, Open from cloud and the account page.
 | `POST /auth/passkey/register/verify` | `{credential, name}` | `201 {id, name, created}` | Notice mail |
 | `POST /auth/passkey/rename` / `remove` | `{id, name?}` (remove: step-up) | `200 {ok}` | Remove: notice mail |
 | `POST /auth/signout` | `{}` | `200 {ok}` + cookie cleared | |
-| `POST /auth/signout-all` | `{alsoPasskeysAddedDays?:n}` (step-up) | `200 {ok, sessions, passkeysRemoved}` | Notice mail |
+| `POST /auth/signout-all` | `{alsoRecentMethodsDays?:n}` (step-up) | `200 {ok, sessions, passkeysRemoved, identitiesRemoved}` | Notice mail; optionally removes passkeys and provider links added in the last n days |
+| `POST /auth/oauth/:provider/start` | `{purpose:'signin'\|'link', publicDevice:bool, deviceLabel?}`; `:provider` = `google` \| `linkedin`; `link` needs a session with step-up | `200 {url}` + `__Host-wts_oa` (HttpOnly, Secure, Path=/, SameSite=Lax, Max-Age=600) | Creates the attempt (§4.10). `url` = the provider's authorization URL with `response_type=code`, `client_id`, the fixed `redirect_uri`, `scope`, `state`, `nonce`, `code_challenge` (S256) and, for Google, `prompt=select_account`. Normal Origin / header rules. A new start replaces this browser's earlier attempt |
+| `GET /auth/oauth/:provider/callback` | `?code&state[&iss]` or `?error&state` from the provider | always `303 Location: <APP_URL>#acct-oauth` | §3.2 exception. Finds the attempt by its cookie hash, checks `state` (constant time) and provider, marks it used **before** the exchange, exchanges the code, validates the id_token (§4.11), stores the outcome `{sub, email, emailVerified}` or the failure reason in the attempt for 5 min; never sets the session cookie |
+| `POST /auth/oauth/finish` | `{}` first; then, when asked, `{email}`, `{code}` and / or `{consent:{terms, privacy}}` | see below | Same origin, normal header rules; needs the `__Host-wts_oa` cookie; a `link` attempt also needs the session that started it. Clears the attempt cookie when it ends (signed in, linked or failed) |
+| `GET /auth/methods` | — (signed in) | `{email:{masked}, recovery?:{masked}, identities:[{id, provider, emailMasked, linkedAt, lastUsedAt}], passkeys:[{id, name, created, lastUsed}]}` | |
+| `POST /auth/methods/unlink` | `{id}` (step-up) | `200 {ok, methods}` / `409 last_method` | Notice mail; audit `identity_unlink` |
+
+`finish` answers (one per call; the dialog follows `next`):
+```json
+{ "next": "done", "user": {…}, "firstSignIn": false, "device": {…}, "session": {…}, "method": "google",
+  "providerEmailDiffers": false }                 // + __Host-wts_sid (Strict); a link ends {"next":"done","linked":{…}}
+{ "next": "email", "reason": "missing" }        // or "unverified": ask for an address (prefilled), then {email}
+{ "next": "code", "emailMasked": "n•••@company.example", "reason": "verify" }
+                                                 // or "link_existing"; code sent, purpose oauth_verify, bound to the attempt
+{ "next": "consent" }                            // new account: current Terms / Privacy, then {consent}
+```
+Errors: `400 oauth_state`, `401 oauth_failed {reason}`, `401 invalid_or_expired` (wrong code; 5 tries), `403 reauth` (link with
+a stale session), `409 identity_in_use`, `409 provider_linked`, `409 consent_required`, `503 provider_off`. The `{email}` step
+always answers `next:"code"` whether or not an account uses that address (no enumeration); `link_existing` is said only when
+the provider itself vouched for an address that an account uses (the user controls that address already).
 
 **Me, devices, library**
 
 | Method, path | Request | Response |
 |---|---|---|
-| `GET /me` | — | `{user:{id, emailMasked, recoveryMasked?, created, status, deleteAt?, terms, privacy}, session:{publicDevice, authAt, idleExpires, absExpires}, quota:{limit, used}, opts:{historian, liveCfg}, projects:n, passkeys:[…], devices:[{id, label, lastSeen, current}], minClient}` |
+| `GET /me` | — | `{user:{id, emailMasked, recoveryMasked?, created, status, deleteAt?, terms, privacy}, session:{publicDevice, authAt, idleExpires, absExpires}, quota:{limit, used}, opts:{historian, liveCfg}, projects:n, passkeys:[…], identities:[{id, provider, linkedAt, lastUsedAt}], devices:[{id, label, lastSeen, current}], minClient}` |
 | `GET /me/outbox-key` | — | `{k}` — 32 random bytes per user, used only to encrypt a public device's waiting changes (§10.8) |
 | `POST /me/opts` | `{historian?:bool, liveCfg?:bool}` | `{opts}` |
 | `POST /devices/rename` / `revoke` | `{id, label?}` | `{ok}` (revoke deletes that device's sessions; notice mail) |
@@ -290,7 +361,7 @@ corrupt (gzip-bomb guard). Read limits: §8.3.
 
 | Method, path | Request | Response |
 |---|---|---|
-| `POST /account/export` | `{}` (step-up) | `{user, consents, devices, passkeys:[names, dates], audit:[own rows, 12 months], projects:[{id, name, meta, headRev, revs}]}`; also raises **this session's** blob read limit to 300 MB/h for 2 h and sends a security notice. The client adds the bodies (§8.5) |
+| `POST /account/export` | `{}` (step-up) | `{user, consents, devices, passkeys:[names, dates], identities:[provider, emailMasked, linkedAt, lastUsedAt], audit:[own rows, 12 months], projects:[{id, name, meta, headRev, revs}]}`; also raises **this session's** blob read limit to 300 MB/h for 2 h and sends a security notice. The client adds the bodies (§8.5) |
 | `POST /account/delete` | `{confirm:'DELETE', immediate?:bool}` (step-up; `immediate` needs a second step-up) | `200 {ok, deleteAt}`; status `deleting`, every session revoked, everything hidden; purge after 7 days unless cancelled |
 | `POST /account/delete/cancel` | `{}` (a sign-in during the grace period offers it) | `200 {ok}` |
 | `GET /health` | — | `{ok:true, db:true, ver}` (no auth) |
@@ -316,12 +387,15 @@ and no row matches. `enc` columns hold envelope-encrypted bytes.
 | `user_by_email(email_bidx)` | `user_id, status` (matches the primary or the recovery index) |
 | `user_by_credential(credential_id)` | `user_id, passkey_id, public_key, sign_count` |
 | `create_user(email_bidx, email_enc, consent…, data_key_wrapped, kid)` | `user_id` |
+| `user_by_identity(provider, subject_bidx)` | `user_id, identity_id, status` |
+| `oauth_attempt_create(…)`, `oauth_attempt_take(cookie_hash, state_hash, provider)`, `oauth_attempt_result(…)`, `oauth_attempt_finish(cookie_hash, sid_hash?)`, `identity_link(user_id, …)`, `identity_touch(identity_id)` | the minimum each step needs; an attempt is reachable only through the hash of its own cookie |
 | `code_issue(…)`, `code_check(…)`, `challenge_issue(…)`, `challenge_take(…)`, `rate_hit(bucket, window, limit)`, `allowlist_has(email_bidx)` | the minimum each flow needs |
 
 `rls.test.js` (CI, local Postgres): `wts_api` cannot `SELECT` from `sessions` or `users` without `app.user_id`; user A cannot read
 or write B's rows; every user table has FORCE RLS; `wts_api` has no `BYPASSRLS` and no DDL;
 `current_setting('app.user_id', true)` is NULL at the start of every pooled transaction; each definer function returns only its
-listed columns.
+listed columns; `wts_api` cannot read `oauth_attempts` at all, nor `identities` of another user, nor look an identity up except
+through `user_by_identity`.
 
 ```sql
 CREATE TABLE users (
@@ -332,6 +406,7 @@ CREATE TABLE users (
   recovery_bidx bytea UNIQUE, recovery_enc bytea,        -- optional recovery address
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','locked','deleting')),
   created_at timestamptz NOT NULL DEFAULT now(), last_sign_in_at timestamptz,
+  signup_method text NOT NULL DEFAULT 'code',            -- code | google | linkedin; the primary address is always verified
   terms_version text NOT NULL, privacy_version text NOT NULL, consented_at timestamptz NOT NULL,
   quota_bytes bigint NOT NULL DEFAULT 250000000, used_bytes bigint NOT NULL DEFAULT 0,
   opt_historian boolean NOT NULL DEFAULT false, opt_livecfg boolean NOT NULL DEFAULT false,
@@ -345,8 +420,29 @@ CREATE TABLE passkeys (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES use
   credential_id bytea UNIQUE NOT NULL, public_key bytea NOT NULL, sign_count bigint NOT NULL,
   transports text[], backup_eligible boolean, backup_state boolean, aaguid uuid,
   name_enc bytea, created_at timestamptz NOT NULL, last_used_at timestamptz);
+CREATE TABLE identities (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  provider text NOT NULL CHECK (provider IN ('google','linkedin')),
+  issuer text NOT NULL,                                  -- the accepted iss at link time
+  subject_bidx bytea NOT NULL,                           -- HMAC-SHA256(index_pepper, provider ‖ sub): the lookup key
+  subject_enc bytea NOT NULL,                            -- sub itself, encrypted (index re-computation at pepper rotation)
+  email_link_enc bytea,                                  -- the provider's e-mail at link time (shown masked)
+  email_verified_at_link boolean NOT NULL,               -- the flag as received (LinkedIn: recorded, never trusted)
+  linked_at timestamptz NOT NULL, linked_via text NOT NULL CHECK (linked_via IN ('signup','code_confirm','account_page')),
+  last_used_at timestamptz,
+  UNIQUE (provider, subject_bidx), UNIQUE (user_id, provider));   -- one user, many identities; one per provider
+CREATE TABLE oauth_attempts (id uuid PRIMARY KEY, cookie_hash bytea UNIQUE NOT NULL,   -- SHA-256 of the __Host-wts_oa value
+  provider text NOT NULL, purpose text NOT NULL CHECK (purpose IN ('signin','link')),
+  state_hash bytea NOT NULL, nonce bytea NOT NULL, pkce_verifier_enc bytea NOT NULL,
+  bound_sid bytea, bound_user uuid,                      -- link only: the session and user that started it
+  public_device boolean NOT NULL, device_label_enc bytea,
+  created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,             -- 10 min
+  used_at timestamptz, result_enc bytea, result_expires_at timestamptz,          -- {sub, email, emailVerified} | {fail}; 5 min
+  finished_at timestamptz, ip_prefix inet);             -- pre-auth: no user_id; reached only through definer functions
+CREATE TABLE oidc_keys (provider text, kid text, jwk jsonb NOT NULL, fetched_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL, PRIMARY KEY (provider, kid));                 -- signing-key cache, public keys only
 CREATE TABLE email_codes (id uuid PRIMARY KEY, email_bidx bytea NOT NULL, code_hmac bytea NOT NULL, pepper_kid int NOT NULL,
-  purpose text NOT NULL, bound_user uuid, bound_sid bytea, expires_at timestamptz NOT NULL,
+  purpose text NOT NULL, bound_user uuid, bound_sid bytea, bound_attempt uuid,   -- purpose oauth_verify: bound to the attempt
+  expires_at timestamptz NOT NULL,
   attempts int NOT NULL DEFAULT 0, used_at timestamptz, invalidated_at timestamptz, ip_prefix inet);
 CREATE TABLE webauthn_challenges (id uuid PRIMARY KEY, challenge bytea NOT NULL, purpose text NOT NULL,
   user_id uuid, expires_at timestamptz NOT NULL, used_at timestamptz);
@@ -357,7 +453,8 @@ CREATE TABLE devices (user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE, 
 CREATE TABLE sessions (sid_hash bytea PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
   device_id uuid, public_device boolean NOT NULL, created_at timestamptz NOT NULL,
   auth_at timestamptz NOT NULL, last_seen_at timestamptz NOT NULL, idle_expires_at timestamptz NOT NULL,
-  abs_expires_at timestamptz NOT NULL, replaced_by bytea, replaced_at timestamptz, ip_prefix inet, ua_family text);
+  abs_expires_at timestamptz NOT NULL, auth_method text NOT NULL,   -- code | google | linkedin | passkey
+  replaced_by bytea, replaced_at timestamptz, ip_prefix inet, ua_family text);
 CREATE TABLE projects (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
   meta_enc bytea NOT NULL, well_count int NOT NULL DEFAULT 0,
   head_rev bigint NOT NULL DEFAULT 0, head_core bytea, head_vhash bytea, head_bytes bigint NOT NULL DEFAULT 0,
@@ -398,7 +495,7 @@ CREATE TABLE audit (id bigserial PRIMARY KEY, user_id uuid, actor text NOT NULL,
 
 ### 3.5 Server jobs
 One daily scheduled function, running as `wts_jobs` (server-side scheduling does not touch the client's no-timer rule): purge
-used / expired codes and challenges (24 h), expired sessions, rate counters (7 days), push receipts (24 h), sent mail (24 h),
+used / expired codes, challenges and provider sign-in attempts (24 h), signing-key cache rows past their expiry, expired sessions, rate counters (7 days), push receipts (24 h), sent mail (24 h),
 unreferenced blobs (7 days), trashed projects (30 days); purge accounts whose `delete_at` has passed and stamp the ledger; squash
 and prune revisions; send inactivity warnings; recompute `used_bytes`; write the day's audit chain heads to the anchor object
 (§13.5). The mail outbox is drained after each request by the background facility and re-tried by the daily job. If the host plan
@@ -437,10 +534,153 @@ has no scheduler, the CI workflow calls `POST /api/v1/ops/daily` (HMAC rule, §3
    401 re-reads `/me` once before it shows "Signed out".
 8. **Public computer.** 12 h idle / 7 days absolute; device row labelled "public"; the wipe rules of §10.8; new-device notices as
    usual.
-9. **Security notices** (plain text, no client-supplied text): new-device sign-in, passkey added / removed, e-mail change (to
+9. **Security notices** (plain text, no client-supplied text): new-device sign-in, passkey added / removed, Google or LinkedIn
+   linked / unlinked, e-mail change (to
    both), recovery address set / removed, sign out everywhere, device revoked, export started, deletion requested / cancelled /
-   done, a counter going backwards, a read burst (§8.3), a commit burst. *Sign out everywhere* can also remove passkeys added in
-   the last 14 days (a tick box).
+   done, a counter going backwards, a read burst (§8.3), a commit burst. *Sign out everywhere* can also remove passkeys and Google /
+   LinkedIn links added in the last 14 days (a tick box).
+
+
+### 4.10 Sign in with Google or LinkedIn — the flow
+
+```
+ page (welltest.h2oil.co.uk)               our API (/api/v1)                          provider (Google | LinkedIn)
+ 1 flush autosave; hint.oauth = {p, route, at}
+ 2 POST /auth/oauth/p/start ─────────────▶ attempt {state, nonce, PKCE, p, purpose}, 10 min
+   ◀── 200 {url} + __Host-wts_oa (Lax)
+ 3 location.assign(url) ──────────────────────────────────────────────────────────▶ sign-in and consent there
+ 4                                         GET /auth/oauth/p/callback?code&state ◀── 303 (cross-site top-level GET:
+                                           cookie + state + provider checked           the Lax cookie is sent,
+                                           attempt marked used; code exchange ──────▶  a Strict one would not be)
+                                           id_token checks (§4.11) ◀──────────────── id_token (access token dropped)
+                                           outcome kept 5 min in the attempt
+   ◀── 303 <APP_URL>#acct-oauth  (constant; nothing in the URL)
+ 5 page loads (same origin), sees #acct-oauth and hint.oauth, history.replaceState
+ 6 POST /auth/oauth/finish ──────────────▶ linking rules (§4.12) → next: done | email | code | consent
+   ◀── done: __Host-wts_sid (Strict) set on this same-origin response; attempt cookie cleared
+ 7 restore hint.oauth.route (a known route key, else home); hand-over and migration (§10)
+```
+
+1. **Before leaving** (steps 1–3): `WTS_pageAutosave.flush()`; in Phase 2 the outbox entry is prepared as on
+   `visibilitychange→hidden`. The hint records `oauth {provider, route, at}` so that the returning page knows to finish and the
+   head guard skips the analytics tag on it (D20, H17). Offline: the provider buttons are disabled ("needs a connection").
+2. **`fetch` then `location.assign`, never a form**: the CSP keeps `form-action 'self'`, and browsers that apply `form-action` to
+   the redirect after a form post would block the jump to the provider. A top-level navigation is not governed by the CSP, so no
+   CSP change is needed (§8.2).
+3. **Attempt** (`oauth_attempts`): a random 32-byte cookie value (the database keeps its SHA-256), `state` of 32 random bytes
+   (hash kept), `nonce` of 32 random bytes, a PKCE verifier (43–128 characters, challenge S256, stored encrypted), provider,
+   purpose, the dialog's public-computer tick and device label and, for `link`, the session hash and user. One live attempt per
+   browser (a new start replaces it); it expires 10 minutes after the start; the callback outcome is readable for 5 more minutes.
+4. **Callback**: refuse unless the cookie's attempt exists, is unused and unexpired, belongs to this provider path, and `state`
+   matches; mark it used first (a replayed callback or code finds it used). A provider `error` (Google `access_denied`, LinkedIn
+   `user_cancelled_login` / `user_cancelled_authorize`) records `cancelled`. When the provider sends `iss` on the callback (Google
+   does), it must equal the configured issuer (mix-up defence). Exchange the code at the configured token endpoint with
+   `client_id`, `client_secret`, the fixed `redirect_uri` and the PKCE verifier (LinkedIn: sent but not relied on — the client
+   secret and the cookie-bound `state` still bind the exchange; WP0 test). Validate the id_token (§4.11) and drop the access
+   token. Then `303` to the constant `APP_URL` (`https://welltest.h2oil.co.uk` plus the app path confirmed in WP0) with the
+   fragment `#acct-oauth` (a fragment never reaches the server or the service worker's cache key). **There is no return-path
+   parameter at all**: the page keeps the route in its own hint and checks it against the route table on return, so no open
+   redirect can exist.
+5. **Finish** applies the linking rules of §4.12; when it ends signed in it behaves like `code/verify` (consent, invite allow-list,
+   device row, new session with `auth_method`, audit `signin {method}`, new-device notice).
+6. **Redirect URIs**: exactly `https://welltest.h2oil.co.uk/api/v1/auth/oauth/google/callback` and
+   `https://welltest.h2oil.co.uk/api/v1/auth/oauth/linkedin/callback` in production; a separate **development client** per
+   provider with the localhost URI where the provider accepts one (Google does; LinkedIn is checked in WP0). Deploy previews get no
+   client: on any host but production the provider buttons are not shown, and DEV mode on localhost shows them only against the
+   fake provider (§12.1).
+
+### 4.11 id_token checks (`server/core/oidc.js`)
+The token comes from our own back-channel exchange over TLS, and it is still fully verified:
+- **Algorithm and signature**: RS256 only — `none`, `HS256` or anything else is refused before any key lookup; the key is chosen
+  by `kid` from the provider's signing keys (JWKS), cached in memory and in `oidc_keys` for the response's cache lifetime; an
+  unknown `kid` causes at most **one refetch per provider per 5 minutes**; still unknown → `oauth_failed {reason:'token'}`.
+- **`iss`**: exactly one configured value. Google: its two documented forms of the same issuer (with and without the `https://` scheme; the exact strings live in
+  `oidc-providers.js`). LinkedIn: its live
+  discovery document and its documentation page give different values; the accepted value is fixed in `oidc-providers.js`
+  after the WP0 test with a real token, and any other value is refused.
+- **`aud`** contains our client id (a list with any other unknown audience is refused); **`azp`**, when present, equals our
+  client id.
+- **`exp`** in the future and **`iat`** not in the future, each with **60 s** clock skew; `iat` at most 10 minutes old.
+- **`nonce`** equals the attempt's nonce (constant time). Google: required. LinkedIn does not advertise nonce support: it is
+  always sent and required whenever it comes back; if WP0 shows that LinkedIn never returns it, its absence is accepted for
+  LinkedIn only (the code was redeemed by us with the secret, and the attempt was bound to this browser by the cookie and
+  `state`), and that is recorded in `oidc-providers.js`.
+- **`sub`**: a non-empty string of at most 255 characters. Google's subject is the same for every app; LinkedIn's is **pairwise**
+  (per app), so re-creating the LinkedIn app would change every LinkedIn user's subject (§4.14, §13.10).
+- **`email` / `email_verified`**: `email` normalised as in §4.1; `email_verified` counts as true only for the boolean `true` or the
+  string `"true"`; anything else, or no `email`, is unverified. Provider setting `trustEmailVerified`: Google **true**, LinkedIn
+  **false** (LinkedIn documents both claims as optional and states that it does not verify user identities) (Q27).
+- Nothing else is read. LinkedIn's `name`, `given_name`, `family_name`, `picture` and `locale` arrive (its scope set requires
+  `profile`) and are dropped in memory; Google is asked only for `openid email` (Q30). Codes, `state`, tokens and claims are never
+  logged.
+
+### 4.12 Linking and takeover rules (in `finish`)
+Let *I* = (provider, subject) from the callback and *E* = the provider's e-mail, *trusted* when §4.11 says so.
+1. **Known identity**: *I* is linked to user U → sign U in and update `last_used_at`. If *E* differs from the address recorded at
+   link time, the answer carries `providerEmailDiffers:true` and the dialog offers *Change account e-mail* (the normal step-up
+   flow); the account e-mail never follows the provider by itself (U18). A `link` attempt with a known *I*: same user → `done`;
+   another user → `409 identity_in_use`.
+2. **Link from the account page** (`purpose:'link'`): only from a session with a step-up in the last 10 minutes, and `finish`
+   must come with that same session (`bound_sid`); *I* is added to that user whatever *E* is — the user proved the account by
+   step-up and the provider account by signing in to it (`linked_via:'account_page'`). The account may hold one identity per
+   provider (`409 provider_linked`).
+3. **New identity, *E* trusted, no account uses *E*** (primary or recovery) → consent → create the account with *E* as its verified
+   primary address and link *I* (`signup_method` = the provider, `linked_via:'signup'`). Invite mode: *E* must be on the allow-list
+   (Q26).
+4. **New identity, *E* trusted, an account uses *E*** → **never linked automatically**: an e-mail code (purpose `oauth_verify`,
+   bound to the attempt) goes to that account's address (`next:'code', reason:'link_existing'`, address masked); after the code,
+   *I* is linked (`linked_via:'code_confirm'`) and the user is signed in (U15, Q28).
+5. **New identity, *E* missing or not trusted** (LinkedIn always; Google without a verified address) → `next:'email'`, prefilled
+   with *E* when present: the user confirms or types an address, a code goes to it (uniform reply); after the code, an account
+   using that address gets *I* linked and is signed in; otherwise consent, then a new account with that address and *I* linked.
+   An unverified provider e-mail never links or creates anything on its own.
+6. **Unlink**: step-up; refused (`409 last_method`) if it would leave the account with no method. The e-mail code cannot be removed
+   (only changed), so in practice a provider can always be unlinked; the rule guards a later passkey-only mode.
+7. **Audit and notices**: `identity_link {provider, via}` and `identity_unlink {provider}` rows (never the subject or the provider
+   e-mail); a mail to the account address: *"Google was added as a way to sign in to your Well Testing Suite account on <date>
+   from <browser family> on <OS family>. If this was not you, sign in with an e-mail code, remove it under Account → Sign-in
+   methods and choose Sign out everywhere."* A mail also goes out when a provider is unlinked.
+8. **Codes in these flows** follow §4.1–4.2 (8 digits, 15 min, 5 tries, at most two live) and are bound to their attempt, so a
+   code requested in one attempt cannot finish another.
+
+### 4.13 Session cookie and attempt cookie
+| Cookie | Attributes | Why |
+|---|---|---|
+| `__Host-wts_sid` (session) | Secure, HttpOnly, **SameSite=Strict**, Path=/ | unchanged (D4): every API call is a same-origin fetch, so Strict costs nothing and keeps the session off every cross-site request |
+| `__Host-wts_oa` (attempt) | Secure, HttpOnly, **SameSite=Lax**, Path=/, Max-Age=600 | the provider sends the browser back with a **cross-site top-level GET**; browsers send Lax cookies on such a navigation but **not** Strict ones, so a Strict attempt cookie would never reach the callback. `response_mode=form_post` is not used: a cross-site POST would not carry even a Lax cookie |
+
+The callback therefore never sees the session cookie, by design: it issues no session (a Strict cookie set on the response to a
+cross-site navigation would also be withheld from the page load that the redirect starts, so the page could look signed out).
+The session is issued by `finish`, a same-origin POST from the page, under the normal Origin and header checks, and a link is
+bound to the session that started it. The `__Host-` prefix stops sibling subdomains from planting or overwriting an attempt
+cookie (T3). The round trip is tested in the three main browser engines (WP-I1).
+
+### 4.14 Recovery when a provider is lost
+- Every account has a verified primary address, so the e-mail code (and the recovery address, §4.4) always opens it; the dialog
+  shows "Can't use Google or LinkedIn? Use the e-mail code."
+- A deleted, locked or suspended provider account just fails at the provider; nothing changes on our side; the user unlinks the
+  dead method, whose *last used* date shows it is stale (U17).
+- A provider outage or a provider switched off: `start` answers `503 provider_off`; the e-mail code is untouched (U19).
+- **LinkedIn app re-created** (a new client means new pairwise subjects): every LinkedIn sign-in then looks like a new identity;
+  rules 4 and 5 re-link each user after one e-mail code, and an ops script removes the orphaned rows. Avoided by never re-creating
+  the app (§13.10).
+- **Lost work mailbox**: the recovery address, else the audited support recovery (§13.7), where a sign-in by a still-working linked
+  provider counts as one of the identity-check items. A provider sign-in alone never changes the account address.
+
+### 4.15 Provider settings (`server/core/oidc-providers.js`)
+| | Google | LinkedIn |
+|---|---|---|
+| Protocol | OpenID Connect code flow, confidential web client | same |
+| Scopes | `openid email` (`profile` not asked, Q30) | `openid profile email` (required together) |
+| PKCE | S256, together with the client secret | sent (S256); not advertised for web apps, not relied on |
+| `nonce` | required | sent; required when returned (WP0) |
+| `iss` on the callback | checked | not sent |
+| Prompt | `select_account`; no `access_type=offline`, so no refresh token | default |
+| `trustEmailVerified` | true | false (always our e-mail code) |
+| `sub` | the same for every app | pairwise (per app) |
+| Tokens kept | none | none (its 60-day access token is dropped at once) |
+| At account deletion | nothing to revoke; the user removes the grant in their Google Account | nothing to revoke; the user removes the app in LinkedIn's settings |
+| Development | test-user list while the consent screen is in testing mode (grants expire after 7 days); a development client | no test-user list; a development client or app |
 
 ---
 
@@ -449,9 +689,9 @@ has no scheduler, the CI workflow calls `POST /api/v1/ops/daily` (HMAC rule, §3
 ### 5.1 Files
 | File | Contents | ≈ LOC |
 |---|---|---|
-| `prism-build/66-account.js` | `WTS_account`: guard, `configure`, API client (one `call()` with headers, error mapping, `retryAfter`, outage rule), session state machine, sign-in dialog (with "Didn't get the code?"), consent step, step-up helper, passkey ceremonies (Phase 3), header chip and menu, toolbar items, Ctrl+S, status bar, analytics reload after sign-in | 1,100 |
+| `prism-build/66-account.js` | `WTS_account`: guard, `configure`, API client (one `call()` with headers, error mapping, `retryAfter`, outage rule), session state machine, sign-in dialog (with "Didn't get the code?"), consent step, step-up helper, passkey ceremonies (Phase 3), header chip and menu, toolbar items, Ctrl+S, status bar, analytics reload after sign-in, **provider sign-in** (Google / LinkedIn buttons as inline official assets, start → `location.assign`, the `#acct-oauth` return and the finish steps, return-route restore) | 1,450 |
 | `prism-build/67-cloud-sync.js` | `WTS_cloudSync`: `wts-sync` store, ownership record, snapshot (normalised, per well), canonical hash with a per-part hash cache, gzip, chunked upload, commit (inline core), pull, apply, key-level merge (Phase 2, from `server/core/merge.js`), safety / pre-account snapshots, conflicts, migration and hand-over, bulk import, library document, wipe, encrypted public outbox, historian backup (Phase 3) | 1,400 |
-| `prism-build/68-account-page.js` | Registry page `account` (`navHidden:true`, group Overview): profile and security, projects (list, history, trash), devices, passkeys, sync options, storage, data (export, delete), activity, **account help** (the web-only guide and FAQ, kept here so it is stripped with the page) | 900 |
+| `prism-build/68-account-page.js` | Registry page `account` (`navHidden:true`, group Overview): profile and security, projects (list, history, trash), devices, **sign-in methods** (e-mail, recovery, Google, LinkedIn, passkeys; link / unlink), sync options, storage, data (export, delete), activity, **account help** (the web-only guide and FAQ, kept here so it is stripped with the page) | 1,000 |
 
 Every file:
 ```js
@@ -485,6 +725,9 @@ WTS_account = {
   refresh(),                    // Promise<state>: GET /me
   openSignIn(opts), signOut({everywhere, clearLocal}), stepUp(),
   changeEmail(), setRecovery(email), addPasskey(name), removePasskey(id), renamePasskey(id, name),
+  signInWith(provider, {publicDevice}),  // 'google' | 'linkedin': flush, hint, start, location.assign
+  finishProviderSignIn(),       // on a load with #acct-oauth: POST finish and drive the next steps in the dialog
+  methods(), linkProvider(provider), unlinkMethod(id),  // account page; link and unlink run a step-up first
   call(method, path, body, opts),// Promise<{status, json|bytes}>; errors → WTS_account.Error {code, status, retryAfter}
   on(evt, fn), off(evt, fn)     // 'state' | 'error' — plain listener list, no wrapping
 };
@@ -510,10 +753,11 @@ Events on `document` (plain data): `wts:account-changed {status}`, `wts:sync-sta
 | Name | Where | Contents | In project files? |
 |---|---|---|---|
 | `wts-sync` | IndexedDB (device) | `device {deviceId (server-issued), lastUserId, workOwner: userId\|'unowned'\|null, workOwnerAt, signedOutAfterOwner:bool}`; `binding {userId, projectId, baseRev, boundAt, activeWell}`; `base` (last-synced core, `vhash` and part hashes per well: the merge base); `outbox {fmt, pushId, userId, entry}` (plain on a trusted device, AES-GCM with the server outbox key on a public one); `safety[]` (last 2 payloads); `preAccount` (pinned, never rotated); `stash {userId: payload}` (work kept local at a hand-over); `recent[]` (≤ 3 cached cloud projects, ≤ 50 MB, Phase 2); `conflicts[]`; `retry {nextRetryAt, step}`; `lastPullAt`; `migratedFor:[userId]`; `hashCache {part: {gen, hash}}` | no |
-| `wtsacct_hint` | localStorage | `{signedIn, initial, public, absExpires, lastSeenAt, v:2}` — paints the chip, drives the analytics guard and the public expiry wipe; no token, no e-mail | no |
+| `wtsacct_hint` | localStorage | `{signedIn, initial, public, absExpires, lastSeenAt, oauth?:{provider, route, at}, v:3}` — paints the chip, drives the analytics guard (also skipped while `oauth` is under 10 minutes old), the provider return and the public expiry wipe; no token, no e-mail | no |
 | `wtspref_cloud_beta` | localStorage | `1` after `?cloud=1` (shows the chip during the invite beta; the server enforces who may sign up) | no |
 | `wtspref_cloud_open` | localStorage | "Open as a new cloud project" without asking (*Don't ask again*) | no |
-| `__Host-wts_sid` | cookie | session (HttpOnly) | — |
+| `__Host-wts_sid` | cookie | session (HttpOnly, Strict) | — |
+| `__Host-wts_oa` | cookie | provider sign-in attempt, 10 min (HttpOnly, Lax; §4.13) | — |
 | `PREF_RE` | 29-project-save.js:151 | adds `^wts_acct_|^wts_sync_` | — |
 
 Outbox format: `fmt` is a version number; each release reads the outbox of at least the two previous formats (`acct-sync`
@@ -538,7 +782,7 @@ fixture written by N−1 and N−2).
 | H14 | 29-project-save | `WTS_project.registerGuard(fn)`: New, Open and Open-from-file call `fn({action})` **before** changing anything; it returns `Promise<'proceed'\|'cancel'>` and may push or snapshot first. With no guard registered the behaviour is exactly today's | 1 |
 | H15 | host autosave | `WTS_pageAutosave.flushIfDirty()` (writes only when a page has unsaved control changes; no `t` rewrite otherwise) | 1 |
 | H16 | 07 `PRiSM_loadXLSX` (l.395; built l.25062) | load the spreadsheet library through the hash-pinned loader pattern of 47 (fetch → SHA-384 → blob URL), pinned version and hash; `acct-thirdparty.test.js` asserts every external script load in the built HTML goes through a pinned loader, the analytics tag being the only exception | 1 |
-| H17 | host head GA block (inside `GA:START/END`, so stripped on iOS) | skip loading the analytics tag when `wtsacct_hint.signedIn` is true; expose `window.__wtsGaLoaded` so 66 can reload once after sign-in | 1 |
+| H17 | host head GA block (inside `GA:START/END`, so stripped on iOS) | skip loading the analytics tag when `wtsacct_hint.signedIn` is true or `wtsacct_hint.oauth` is under 10 minutes old (a provider return); expose `window.__wtsGaLoaded` so 66 can reload once after sign-in | 1 |
 | H18 | any file the sink audit flags | escape fixes from the storage-to-HTML sink audit (§8.7) | 1 |
 
 Edits on the CRLF host file use node scripts or the Edit tool, never `sed -i` (CLAUDE.md). H2 and H18 touch many files; each moved
@@ -547,7 +791,9 @@ site gets one `acct-host` assertion that `wts:ls-write` fires.
 ### 5.5 Module wiring
 - **Mount**: 66 mounts the chip into `#wts_account_host` like the project toolbar (`data-mounted`, on DOMContentLoaded or a
   one-shot `setTimeout(0)`), registers its toolbar items (H5) and guard (H14), and calls `refresh()` only when
-  `wtsacct_hint.signedIn` (a signed-out first visit makes **no** network request).
+  `wtsacct_hint.signedIn` (a signed-out first visit makes **no** network request). A load whose URL fragment is `#acct-oauth`
+  **and** whose hint holds a fresh `oauth` entry removes the fragment (`history.replaceState`), opens the dialog at its finish
+  step and calls `finishProviderSignIn()`; the fragment without that hint entry is ignored (no request).
 - **Public expiry check at load** (no timer): when the hint says `public` and `now > absExpires` or `now > lastSeenAt + 12 h`,
   run the expiry wipe before anything paints (§10.8); a `/me` 401 on a public device does the same.
 - **First sync after restore**: the first `sync()` runs only after DOMContentLoaded and, where they apply, the first
@@ -797,7 +1043,7 @@ so the local copies are never removed. The project layer's 2 MB per-key skip sti
 | T3 | CSRF and same-site siblings | low / high | SameSite=Strict, exact Origin (missing refused), `X-WTS-Req`, JSON content type, GET never mutates, `frame-ancestors 'none'`. Other `h2oil.co.uk` subdomains count as **same-site**: they can send cookie-bearing GETs but cannot read the responses (no CORS) and cannot pass the Origin check; they can set parent-domain cookies, so the server reads only the `__Host-` names | a sibling subdomain taken over could make GETs that change nothing |
 | T4 | Account enumeration | high / low | uniform 202 through the queued send and a fixed floor (also for throttled, paused and invite-refused addresses); e-mail change replies the same for taken addresses; empty `allowCredentials` at sign-in; generic verify errors | — |
 | T5 | Code guessing / mail bombing | medium / medium | 10⁸ space, 5 tries per code, ≤ 2 live codes, per-address limits, soft per-IP limits, site-wide breaker | — |
-| T6 | Lockout used against a user | medium / medium | no hard account lock; only the code channel is throttled; passkeys and the recovery address keep working | — |
+| T6 | Lockout used against a user | medium / medium | no hard account lock; only the code channel is throttled; passkeys, linked providers and the recovery address keep working | — |
 | T7 | Cross-tenant access through a bug | low / high | forced RLS, named definer functions, `wts_jobs` separate, server-built blob keys, `(user_id, device_id)` keys, same 404 for absent and foreign | — |
 | T8 | Database / bucket / backup leak | low / high | envelope encryption of bodies and `meta`; e-mail stored only as an HMAC index plus an encrypted display form; hashes for codes and session ids; master key only in host secrets | sizes and times; addresses need the index pepper and the master key |
 | T9 | Blob swap, replay or overwrite | low / medium | AES-GCM AAD; client SHA-256 check; blobs immutable once complete; decompression size cap | — |
@@ -812,6 +1058,15 @@ so the local copies are never removed. The project layer's 2 MB per-key skip sti
 | T18 | **Takeover persistence** (a short-lived session holder changes the e-mail or adds a passkey) | low / high | step-up; e-mail change confirmed at the new address, notice and 7-day revert at the old; notices for every security change; sign out everywhere can remove recent passkeys; security reset in the runbook | 7 days after an unnoticed change |
 | T19 | **Device hand-over** (one user's client data uploaded into another's account) | medium / high | device ownership record, no default upload of foreign or unowned work, explicit confirmation naming client and wells (§10) | — |
 | T20 | **Publish leak** (`server/`, `docs/`, fixtures or keys served as static files) | medium / high | publish allow-list, CI check of the published set, `.env*` ignored, secret scan, fixtures generate fake keys at test time (§13.2) | — |
+| T21 | **Login CSRF through a provider** (an attacker feeds the victim a callback URL with the attacker's code, so the victim works inside the attacker's account) | medium / high | `state` bound to the victim's own `__Host-wts_oa` attempt; a callback without the matching cookie fails; the session is issued only by the page's own `finish` | — |
+| T22 | **Takeover by e-mail linking** (an attacker makes a provider account with the victim's address, unverified or pre-registered, and signs in) | medium / critical | identities keyed by (provider, subject) only; never linked on an e-mail match; an existing account is linked only after an e-mail code to its address; LinkedIn's verified flag never trusted; link notices | — |
+| T23 | **Authorization-code interception or replay** (callback URL in history, logs or a referrer) | low / high | attempt marked used before the exchange; the code is redeemable only with our client secret (and PKCE where supported); `Referrer-Policy: no-referrer` on the callback; codes never logged | — |
+| T24 | **id_token forgery or substitution** (`alg:none`, HS256 with the public key, wrong audience, another app's token, an old token) | low / critical | RS256 only, key by `kid` from the provider's JWKS, exact `iss`, `aud` / `azp`, `exp` / `iat` with 60 s skew, ≤ 10 min age, `nonce`; a fake-provider test for each (§12.4) | — |
+| T25 | **Provider mix-up** (a response meant for one provider presented at the other) | low / high | one callback path per provider; the attempt records its provider; callback `iss` checked where sent; issuers and keys per provider | — |
+| T26 | **Open redirect after sign-in** | medium / medium | the callback redirects only to one constant URL; the route to return to is held by the page and checked against the route table | — |
+| T27 | **Client secret leak** | low / high | secrets only in the functions' environment, never in the bundle, logs, previews or the repository (publish check and secret scan know their names, §13.2); rotation (§13.3); a secret alone cannot sign anyone in without that user's own sign-in at the provider | — |
+| T28 | **Provider account compromise** | medium / medium | the provider is one way in, not the account: link notices, *Sign out everywhere* also removes recent links, per-provider kill switch, `sessions.auth_method` lets an incident revoke one method's sessions | a compromised provider account signs in as its linked user until it is unlinked |
+| T29 | **Provider script in the page** | — | none is loaded (D20); the buttons are inline assets; no popup or iframe | — |
 
 ### 8.2 Headers and CSP (host headers config)
 Report-Only first (WP-OPS, reports to `/api/v1/csp-report`), enforced at the end of Phase 1:
@@ -821,7 +1076,10 @@ worker-src 'self' blob:; connect-src 'self' <CDN hosts> <analytics hosts> ws://1
 http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob: <analytics hosts>; style-src 'self' 'unsafe-inline';
 font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
 ```
-(The exact host list is in the owner's vendor notes. The localhost entries keep the Modbus bridge working.) **This CSP limits
+(The exact host list is in the owner's vendor notes. The localhost entries keep the Modbus bridge working.) **Provider sign-in
+needs no CSP change**: the page talks only to `/api/v1` (`connect-src 'self'`), the buttons are inline images, and the jump to
+the provider is a top-level navigation by `location.assign`, which the CSP does not govern; `form-action 'self'` stays, which is
+why `start` is a fetch and not a form (§4.10). **This CSP limits
 only casual exfiltration**: `'unsafe-inline'` and `'unsafe-eval'` remain, analytics collection endpoints accept arbitrary
 parameters, and top-level navigation is not governed by CSP. Neither the privacy text nor the release notes may imply that
 script injection is contained. The planned fix is the **hardening track** — remove the six direct `eval` uses, `new Function`
@@ -836,6 +1094,9 @@ publickey-credentials-create=(self)`, `Cache-Control: no-cache` on the page and 
 | code start | 5/h and 20/day per address; per IP prefix **300/h soft** (responses padded, owner alerted, never refused); site-wide 1,000/h → sending pauses for unknown addresses, owner alerted |
 | code verify | 5 tries per code; 10 failures per address per 24 h → codes for that address paused 1 h (notice mail) |
 | passkey verify | 30/min per IP prefix (soft above 10) |
+| provider start | 60/h per IP prefix **soft** (delayed, never refused); one live attempt per browser |
+| provider finish | 10 failed finishes per IP prefix per 10 min → soft delay; `oauth_verify` codes count in the code start / verify limits of their address |
+| provider breaker | > 50 % failed code exchanges or key fetches for one provider over 10 min → that provider answers `503 provider_off` for 10 min (checked on the next request, no timer); owner alerted |
 | commit | 120/h and 600/day per user; 60/h per session; a burst (> 10 in 10 min) pins the previous revision and sends one notice per day |
 | chunk PUT | 2 GB/day per user |
 | blob GET | **100 MB/h and 300 MB/day per user; 100 MB/h per session**; 300 MB/h for 2 h in one session after an export step-up. A session that reads > 10 distinct projects or > 50 % of the account's used bytes in a day → security notice + audit row |
@@ -851,6 +1112,11 @@ limits do the real work (§15).
   database, blob store) and the e-mail service, each with a DPA and a contractual breach-notice time; a record of processing; a
   DPIA (commercially confidential well data, client and engineer contact data); data-protection fee registration checked. Data
   stays in the UK or the EU (UK adequacy); any transfer outside needs the UK transfer addendum.
+- **Identity providers**: Google and LinkedIn are **independent controllers** of their own sign-in, not our processors. Per
+  provider sign-in we receive the provider's identifier for the user and the e-mail claims (LinkedIn also sends name,
+  profile-picture link and locale, which we drop at once) and keep only the identifier and the e-mail at link time. The record
+  of processing, the DPIA and the privacy notice list both; the lawful basis is **contract** (the user chooses the method to
+  use the account service). The provider learns that the user signed in to the Well Testing Suite.
 - **Lawful basis**: contract (the account service under the Terms of Use); **legitimate interests** (security, fraud and abuse
   prevention) for the audit log, IP prefixes, new-device and security notices and rate limits, with a balancing note in the DPIA;
   explicit opt-in for historian backups and live-data settings. No marketing mail. No use of project data for analytics,
@@ -862,14 +1128,18 @@ limits do the real work (§15).
 
 ### 8.5 Export, deletion and retention
 - **Export everything** (step-up) = a zip built in the browser with the 65 zip writer: one `.h2oilproj` per cloud project
-  (assembled), `library.json`, `account.json` (profile, consents, devices, passkey names and dates, own audit rows). The writer is
+  (assembled), `library.json`, `account.json` (profile, consents, devices, passkey names and dates, linked providers with masked e-mail and dates, own
+  audit rows). The writer is
   store-only with no ZIP64 and builds in memory, so **above 200 MB in total the export is offered as one download per project**
   (plus the account file).
 - **Deletion**: step-up → status `deleting`, every session revoked, everything hidden at once, a confirmation mail with a cancel
   code; signing in during the 7 days offers *Cancel deletion*; after 7 days (or at once with *Delete immediately* and a second
   step-up) the daily job purges rows and blobs and stamps the **deletion ledger**. Audit rows are kept 12 months with `user_id`
   replaced by a random tombstone. Backups age out within 30 days of the purge; after any database restore the ledger is replayed
-  (§13.5). Local data on devices is not touched; the dialog offers "Also clear this browser" (the wipe of §10.8).
+  (§13.5). Local data on devices is not touched; the dialog offers "Also clear this browser" (the wipe of §10.8). Linked Google / LinkedIn identities go with
+  the account (inert while it is `deleting`, removed at the purge); we hold no provider token, so nothing is revoked at the
+  provider — the deletion mail tells the user where to remove the app's access in their Google Account and in LinkedIn's
+  settings.
 
 | Data | Kept |
 |---|---|
@@ -877,6 +1147,8 @@ limits do the real work (§15).
 | revisions | named saves 30 days; automatic: 10-minute points for 24 h, one per day for 30 days; those behind conflict copies and device bases |
 | trash | 30 days |
 | codes, challenges, sent mail | 24 h |
+| provider sign-in attempts | 24 h (the outcome readable for 5 min) |
+| linked identities (provider, subject, e-mail at link time) | while linked; removed on unlink or with the account |
 | sessions | until expiry |
 | rate counters | 7 days |
 | push receipts | 24 h |
@@ -894,13 +1166,25 @@ New card *"Accounts and cloud projects (web version, optional)"*:
 > data, report snapshots and templates, your curve and preset library, and, only if you turn them on, historian backups and
 > live-data connection settings — are stored in our cloud database in the UK / EU, encrypted at rest with a key for your
 > account. We store your e-mail address (and a recovery address if you add one), the public keys of any passkeys you add (never
-> a password), the devices you sign in on and a security log (shortened IP address, browser type) for 12 months, which we keep
+> a password), the identifier and the e-mail address that Google or LinkedIn gave when you linked it (if you use them), the
+> devices you sign in on and a security log (shortened IP address, browser type) for 12 months, which we keep
 > to protect your account. We do not load the analytics tag while you are signed in. We never use your project data for
 > analytics, advertising or training, and we do not share it. You can export everything or delete your account at any time from
 > Account; a deletion can be cancelled for 7 days, then removes your data from our live systems, and from backups within 30 days
 > after that. Data on your devices stays until you clear it. If you store data for your employer or a client, a data processing
 > agreement is available. The iOS app has no accounts and keeps everything on your device.
 > Questions and data requests: software@h2oil.co.uk.
+
+New card *"Signing in with Google or LinkedIn (web version, optional)"*:
+> If you choose *Continue with Google*, Google sends us an identifier for your Google account, your e-mail address and whether
+> Google has verified it; we ask for nothing else. If you choose *Sign in with LinkedIn*, LinkedIn sends us an identifier, your
+> name, profile-photo link, language setting, e-mail address and whether it is verified; we keep only the identifier and the
+> e-mail address and discard the rest at once. We use them only to sign you in: we never post, read your contacts or keep
+> access to your Google or LinkedIn account (we store no access token). Google or LinkedIn learns that you signed in to the
+> Well Testing Suite, under its own privacy policy. You can unlink either under Account → Sign-in methods; your e-mail address
+> always still works. Deleting your account removes these links; to remove the app from your Google or LinkedIn account too,
+> use that account's security or data-privacy settings. On a shared computer, also sign out of Google or LinkedIn in the
+> browser when you finish.
 
 Also updated (web / iOS variants where the text is shared): `48-calc-help-start.js:16` ("Nothing is sent to a server…" →
 "Nothing leaves your device unless you sign in and save to the cloud (web version)" on web only), the host "Where your data is"
@@ -923,7 +1207,8 @@ it from the fake server into a second app and asserts the same.
    - step 0c (JS): `/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g` → `// (accounts and cloud sync: web only — stripped from the iOS bundle)`;
    - step 0d (HTML): `/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g` → `<!-- account control: web only -->`;
    - the sync **fails** if the start / end marker counts differ, or if `WTS_account`, `WTS_cloudSync`, `/api/v1`,
-     `wts_account_host` or `wtsacct_` remain in `www/index.html`, **or** if `www/help/**` contains an account chapter, an
+     `wts_account_host`, `wtsacct_`, `/auth/oauth`, `wts_oa`, "Continue with Google", "Sign in with Google" or
+     "Sign in with LinkedIn" remain in `www/index.html`, **or** if `www/help/**` contains an account chapter, an
      `account` shot folder or the strings "Sign in" / `wts_account_host` in `user-guide.html`.
    - A static test asserts that those identifiers appear **only between ACCT markers** in the built HTML (the GA block's
      `wtsacct_hint` read is inside `GA:START/END`, also stripped), so neutral code (a11y rules, CSS, help text) cannot break the
@@ -939,6 +1224,11 @@ printed guide never see an `account` route. `help-shots.js` hides `#wts_account_
 in every shot, so the screenshots copied to `ios-app/www/help` show no account control. `server/` is never copied by
 `sync-from-main.js` and `ios-sync.yml` does not watch it. Tests: §12.2 `acct-ios`.
 
+**Provider sign-in** is excluded like the rest: the buttons, their inline assets and the finish handler are inside the ACCT
+blocks; the redirect URIs and `APP_URL` name the production web host only, so a provider can never return into the app shell.
+Third-party sign-in in the iOS app would also bring the app store's rules for apps that offer it — one more reason the app
+stays account-free (D1).
+
 ---
 
 ## 10. Migration of local data and device hand-over
@@ -947,7 +1237,7 @@ in every shot, so the screenshots copied to `ios-app/www/help` show no account c
    sign-out) and `workOwner` — set to the user when the working set is created, opened from the cloud or linked while signed in;
    set to `'unowned'` on a device that has never had a signed-in user; marked `signedOutAfterOwner` when work is edited after a
    sign-out.
-2. **When**: after a successful sign-in, if `migratedFor` lacks the user id or the working set is not linked.
+2. **When**: after a successful sign-in by any method (e-mail code, Google, LinkedIn, passkey), if `migratedFor` lacks the user id or the working set is not linked.
 3. **Classify**:
    - *empty* (no project key, no wells) → offer to open the most recently saved cloud project;
    - *own work* (`workOwner` = this user) → Phase 1/2 flow below;
@@ -998,30 +1288,48 @@ in every shot, so the screenshots copied to `ios-app/www/help` show no account c
 | paused / read-only | "Cloud sync paused" / "Cloud read-only" | grey dot |
 | unlinked | initial + "Not in cloud" | initial, hollow dot |
 
-Chip menu: masked e-mail · Sync now (Phase 2) · Save to cloud · Open from cloud… · Account & projects · Sign out · Sign out
+Chip menu: masked e-mail (with "via Google" / "via LinkedIn" when this session came from a provider) · Sync now (Phase 2) · Save to cloud · Open from cloud… · Account & projects · Sign out · Sign out
 everywhere. Status text is `aria-live="polite"`; 66 labels its own controls (no a11y-file reference). The project toolbar gets the
 `☁ ▾` button (Save to cloud / Save to cloud as… / Open from cloud… / Import files to cloud…), checked at 390 px.
 
 ### 11.2 Sign-in dialog
 `<dialog>` with `role=dialog`, `aria-modal`, focus return, Escape closes; `.rp-skip data-rp-nosnap`. Steps: (1) e-mail
-(`autocomplete="username webauthn"`, `inputmode=email`) + "Send code" (+ "Use a passkey" in Phase 3) + tick box "This is a public
-or shared computer"; (2) code (`autocomplete="one-time-code"`, `inputmode=numeric`, 8 digits, paste-friendly) + "Send again"
+(`autocomplete="username webauthn"`, `inputmode=email`) + "Send code" (+ "Use a passkey" in Phase 3), then an "or" divider and
+the two provider buttons (below), then the tick box "This is a public or shared computer" (it applies to every method); (2) code (`autocomplete="one-time-code"`, `inputmode=numeric`, 8 digits, paste-friendly) + "Send again"
 (enabled from the server's reply, no countdown timer) + **"Didn't get the code?"**: check spam / quarantine, allow-list
 no-reply@h2oil.co.uk, codes last 15 minutes and the previous one still works, "Send the code to my recovery address"; (3) consent
 for a new account; (4) Phase 3: "Add a passkey"; (5) migration / hand-over (§10); (6) if the analytics tag ran in this page: "Finishing
 sign-in…" and one reload after the autosave flush. Offline or outage: "Sign-in needs a connection. Your work keeps saving on this
 device." At 390 px a full-width sheet with 16 px gutters; controls ≥ 16 px.
 
+**Provider buttons.** *Continue with Google* and *Sign in with LinkedIn*, stacked, the full width of the dialog, the **same size**
+and weight (Google's rules want its button at least as prominent as any other third-party button; the e-mail field stays first
+because it is the root method). Each is the provider's **official button asset, unmodified** (Google: the full-colour "G" on its
+light or dark theme with an approved label; LinkedIn: its "in" mark in its own colour with "Sign in with LinkedIn"), embedded
+**inline** as SVG in 66 — the page loads no outside font, image or script, so the label is part of the asset rather than drawn
+in a provider font; `prefers-color-scheme` picks the light or dark asset. At least 40 px high (44 px on coarse pointers), 16 px
+gutters at 390 px, `aria-label` equal to the visible text, the focus ring outside the asset. The exact assets and the current
+rules are checked in WP0 and WP-HC (vendor notes). Pressing one shows "Taking you to Google…" and navigates; the return shows
+"Finishing sign-in…", then the same consent, code, hand-over and analytics steps as above. With the public-computer tick the
+dialog adds: "You will also be signed in to Google / LinkedIn in this browser — sign out of it too when you finish" (repeated at
+public sign-out). Errors use the `oauth_failed` reasons in plain words ("Sign-in with LinkedIn was cancelled", "That took too
+long — try again", "Google sign-in is not available right now — use the e-mail code"). The buttons are hidden off the
+production host (previews) and absent on iOS.
+
 ### 11.3 Account page (route `account`, `#acct_root`, `navHidden`)
 Cards (plain `.card` markup; the route is in every skip table):
-1. **Profile and security** — masked e-mail, change e-mail (step-up), recovery address (add / remove), created, Terms / Privacy
+1. **Profile and security** — masked e-mail, change e-mail (step-up), how this session signed in (method, time), created, Terms / Privacy
    versions, a pending deletion with *Cancel*.
 2. **Cloud projects** — `table.dtable`: name, client / well, wells, last saved (device, time), size; Open, Rename, Duplicate,
    History (*Restore*), Download `.h2oilproj`, Move to trash; Import files…; Trash (Restore, Delete forever with step-up);
    conflict copies flagged. Client-side filter box.
 3. **Devices** — label, last seen, "this device", public flag; Rename, Sign out device; Sign out everywhere (with "also remove
    passkeys added in the last 14 days").
-4. **Passkeys** (Phase 3) — name, created, last used; Add, Rename, Remove.
+4. **Sign-in methods** — *E-mail code* (always on; the masked primary address; *Change e-mail*); *Recovery address* (add /
+   remove); *Google* and *LinkedIn* (linked: the masked provider e-mail at link time, linked date, last used, *Unlink*; not linked:
+   the provider's official button for linking, which runs a step-up and then the redirect with `purpose:'link'`); *Passkeys*
+   (Phase 3: name, created, last used; Add, Rename, Remove). A note: "Your e-mail address always works as a way in, even if you
+   lose your Google or LinkedIn account." At 390 px each method is one stacked row with full-width buttons.
 5. **On this device** — the pre-account snapshot and any stash: *Restore* / *Discard*.
 6. **Sync options** (Phase 3) — historian backup (*Back up now*, *Restore…* merge / replace); live-data settings (opt-in).
 7. **Storage** — used / quota bar.
@@ -1059,6 +1367,13 @@ through the fake lock manager, and IndexedDB through the fake (extending `_build
 branch is tested only through the seam** (and in the GUI sweep). Two apps with separate storage = two devices; two apps sharing
 storage = two tabs.
 
+**Fake OpenID provider** (`server/test/fake-oidc.js`, shared by the fake server and the server tests): an RSA key pair generated
+at test time, a JWKS document, an authorization step that the harness "visits" by reading the URL given to `location.assign`
+and answering with a callback URL, a token endpoint that checks client id, secret, redirect URI, code and PKCE, and fault modes
+(wrong `iss`, `aud`, `azp` or `nonce`, `alg:none`, HS256 signed with the public key, unknown `kid`, expired or future token,
+stale `iat`, missing / string / false `email_verified`, no e-mail, user cancelled, token endpoint 5xx, slow key fetch). Two
+profiles, `google` and `linkedin`, follow §4.15 (pairwise subjects, no callback `iss` and optional nonce for the latter).
+
 ### 12.2 New acceptance files (budget = test count / wall time)
 | File | Phase | Covers | Budget |
 |---|---|---|---|
@@ -1069,14 +1384,15 @@ storage = two tabs.
 | `acct-signin.test.js` | 1 | code flow, two live codes, consent, invite allow-list, uniform responses (with a slow mailer), generic errors, rate reply, step-up and the 30 s rotation grace, sign-out, everywhere, e-mail change and revert, recovery address, outage rule (5xx and network error on `/me`), 401 → signed-out chip | 22 / 6 s |
 | `acct-cloud.test.js` | 1 | Save to cloud (inline core), Open from cloud (guard, safety snapshot, refusal when dirty and offline), Phase 1 409 choices, list, rename, trash, history, restore revision, download, import files, export split above 200 MB, escape of names, outage on list / open | 18 / 7 s |
 | `acct-migrate.test.js` | 1 | §10: empty, own, unowned, **foreign** (A signs out keeping the copy, B signs in → no default upload, stash, confirmation naming client and wells), size cap, pre-account snapshot pinned after many applies, public sign-out while offline (blocked; locked outbox), **public expiry at load** (after expiry and reload no key, IndexedDB record or store with client data is left; only the encrypted outbox), same user unlocks and pushes | 14 / 6 s |
-| `acct-ios.test.js` | 1 | sync into `WTS_SYNC_OUT_DIR`: no ACCT code, identifiers, `/api/v1` or account help in `www` and `www/help`; strip comments present; unbalanced markers fail; identifiers only between markers; `capacitor:` (also with `WTS_ACCOUNT_DEV = 1`), `file:`, framed, other host → `eligible === false`, no DOM, no fetch; iOS privacy text unchanged; web-only release note hidden on iOS | 11 / 8 s |
+| `acct-ios.test.js` | 1 | sync into `WTS_SYNC_OUT_DIR`: no ACCT code, identifiers, `/api/v1` or account help in `www` and `www/help`; strip comments present; unbalanced markers fail; identifiers only between markers; no provider strings or assets; `capacitor:` (also with `WTS_ACCOUNT_DEV = 1`), `file:`, framed, other host → `eligible === false`, no DOM, no fetch; iOS privacy text unchanged; web-only release note hidden on iOS | 11 / 8 s |
 | `acct-privacy.test.js` | 1 | web / iOS privacy texts, help start text, no account analytics events | 5 / 2 s |
+| `acct-oauth.test.js` | 1 | buttons only on the production host (hidden on a preview host, on iOS and in the vm stub; DEV shows them only with the fake provider); same size, inline assets, no external request on render; start → `location.assign` with the fake URL; `#acct-oauth` return with and without the hint (ignored without); analytics guard skipped on the return; finish steps `done` / `email` / `code` / `consent`; U15 (code to the existing address); LinkedIn always asks for a code; `identity_in_use`, `provider_linked`; return route restored only for a known route key; *Sign-in methods* card (link and unlink need step-up, notices); public-computer warning; provider e-mails escaped; 390 px layout | 18 / 6 s |
 | `acct-sync.test.js` | 2 | snapshot split / assemble round trip (= v3.4 opens it); **E10** (two snapshots, same `vhash`; after one edit and 10 s of manual time no timer pending); units module stripped (a Metric device pulls an Imperial commit and stays Metric with correct values); library keys outside the core hash; derived keys never dirty; debounce (one timer, settles), 2 min cap, pull-before-edit gate (two apps, A pushes, B types without a focus event, B merges with no conflict), triggers, echo guard, `source:'well'` never prompts, keepalive rule, `nextRetryAt`, pushId replay, 422 path, chunking, dedup, hash cache, focus-deferred apply, first sync after restore, outbox kept on 401 and pushed after the same user signs in, never pushed for another user, outbox format N−1 / N−2 read | 34 / 12 s |
 | `acct-conflict.test.js` | 2 | E3 (merge), E4 (overlap: local stays on screen, linked to the copy, head unchanged, *Show differences*, *Use cloud*, *Keep both*), E5, E7, E8, E9 (two wells, no overlap, no well switch), pruned server base still merges from the device base | 12 / 6 s |
 | `acct-account.test.js` | 3 | passkey add / remove (stub; resident key required, UV), account page cards, devices, export contents, delete with grace and cancel, historian backup / restore, `wts_modbus_config` opt-in | 14 / 6 s |
 | `acct-merge.test.js` | 3 | field rules of §6.7, audit-chain prefix, PVT provenance, library union | 14 / 4 s |
 
-About **183 tests, under 75 s**. Existing tests that change: `privacy-analytics.test.js` (l.297, strip regex list),
+About **201 tests, under 81 s**. Existing tests that change: `privacy-analytics.test.js` (l.297, strip regex list),
 `platform-export.test.js` (ACCT beside SW), `calc-registry.test.js` (`navHidden`), `sidebar-nav.test.js` (count unchanged),
 `help-shots` `--check` (chip hidden); `help-content.test.js` does **not** change (no account guide in `WTS_helpContent`).
 
@@ -1087,7 +1403,9 @@ About **183 tests, under 75 s**. Existing tests that change: `privacy-analytics.
 3. Signed in and linked (fake fetch), one change event: exactly one pending timer, none after 25 s of idle manual time; a snapshot
    with no edit arms none.
 4. `WTS_calcRegistry.account` is well-formed with `navHidden:true`.
-Counts: 330 → 334 smoke checks; 1369 → about 1550 acceptance tests (CLAUDE.md updated at each phase's integration).
+5. No provider button is rendered in the vm stub or on a non-production https host; a `#acct-oauth` fragment without the hint
+   makes no fetch.
+Counts: 330 → 335 smoke checks; 1369 → about 1570 acceptance tests (CLAUDE.md updated at each phase's integration).
 
 ### 12.4 Server tests (`server/test/`)
 Core units (validation, canonical hash, envelope round trip, AAD tamper, dual read by kid, rate windows, revision CAS, squash and
@@ -1097,9 +1415,20 @@ restore); Origin / header refusal and the csp-report / ops-daily exceptions (rep
 ignored; enumeration timing with a slow mailer; `rls.test.js` (§3.4). Test keys are generated at test time; no key material is
 committed. About 110 tests.
 
+**Provider sign-in** (`oidc.test.js`, `oauth-api.test.js`, with `fake-oidc.js`): start (Origin rules; cookie `__Host-`, Lax,
+HttpOnly, Secure, Max-Age; one live attempt; `link` needs step-up); callback — missing or foreign cookie, bad `state`, the other
+provider's path, expired attempt, **replayed callback and replayed code**, provider `error`, callback `iss` mismatch, token
+endpoint failure; id_token — wrong `iss` / `aud` / `azp` / `nonce`, missing nonce (Google refused, LinkedIn per config),
+`alg:none`, HS256, unknown `kid` (one refetch, then refused; refetch limit), `exp` past or `iat` future beyond 60 s, `iat` older
+than 10 min, every `email_verified` form; linking rules 1–8 incl. U15 (never linked without the code), an unverified e-mail
+never links or creates without a code, `identity_in_use`, `provider_linked`, `last_method`, a code bound to its attempt; the
+callback never sets `__Host-wts_sid`; the 303 `Location` is the constant whatever the query holds (open-redirect payloads);
+breaker and `OAUTH_*` switches; no token, code or claim in the logs; account deletion removes identities; `rls.test.js` gains
+`identities` and `oauth_attempts`. About 45 more tests (≈ 155 in all).
+
 ### 12.5 GUI sweep and help
 `gui-sweep.js`: `serve()` answers `/api/v1/me` with `401` and other `/api/v1/*` with a minimal fake so the signed-out and sign-in
-paths are swept; the destructive regex gains `sign out|log out|delete account|revoke|delete forever`; `account` is added to the
+paths are swept (provider `start` answers with a fake URL that the sweep records as a navigation and blocks); the destructive regex gains `sign out|log out|delete account|revoke|delete forever`; `account` is added to the
 routes (with `WTS_ACCOUNT_DEV = 1`). Help screenshots: re-shot with the chip hidden (§9) in the Linux container, then Round 9,
 the user guide and sync (CLAUDE.md 4f).
 
@@ -1117,12 +1446,17 @@ The static site publishes an explicit allow-list — `well-testing-app.html`, `s
 privacy and legal pages — from a publish directory built by `prism-build/publish-site.js`, or through the host configuration's
 publish setting; functions are never part of the static output. A CI check fails if the published set contains `server/`,
 `docs/`, `tools/`, `prism-build/`, `*.sql`, `.env*`, PEM / JWK keys, or any of the environment-variable names of the master key,
-peppers, outbox key, proxy signature or e-mail credential. `.env*` is added to `.gitignore`; a secret scan runs on `server/` in
+peppers, outbox key, proxy signature, e-mail credential or provider client secrets. `.env*` is added to `.gitignore`; a secret scan runs on `server/` in
 CI. WP0 checks what the host publishes today (it may already serve the whole tree).
 
 ### 13.3 Secrets
 Host environment secrets, never in the repository: master key(s) with key ids, index pepper, code pepper(s), session pepper, the
-proxy-signature secret, the ops-job HMAC key, the e-mail sending credential. Peppers and the proxy and ops keys rotate every 12
+proxy-signature secret, the ops-job HMAC key, the e-mail sending credential, and the **Google and LinkedIn client secrets**
+(client ids are non-secret configuration in the same environment; separate production and development clients). Provider secrets
+rotate every 12 months, on any suspected leak and when someone with console access leaves: where the console allows two live
+secrets, add the new one, deploy, check sign-ins, then delete the old one; otherwise rotate in an announced few-minute window in
+which that provider's sign-in fails and the e-mail code is unaffected. They never reach the browser bundle, logs, previews or the
+repository. Peppers and the proxy and ops keys rotate every 12
 months with one previous version accepted until the next rotation (codes live 15 min, so nothing is lost). Master-key escrow kept
 offline by the owner. The functions site and the jobs credential are separate (D12).
 
@@ -1144,16 +1478,19 @@ offline by the owner. The functions site and the jobs credential are separate (D
 ### 13.6 Monitoring, kill switches and incidents
 - **Monitoring**: `/api/v1/health` by an external uptime check; alerts by mail to the owner for 5xx > 2 % over 10 min, p95 > 2 s,
   code sends above 300/h, failed verifies > 5 × baseline, 429 spikes, per-IP soft-limit hits, read anomalies, commit bursts,
-  storage > 80 % of plan, mail bounce / complaint rates, deletion-job lag, mail outbox age > 5 min. Logs hold request id, user id,
-  route, status, latency and an IP prefix — never e-mail addresses, codes, cookies or bodies.
-- **Kill switches**: `ACCOUNTS_SIGNUP=open|invite|off`, `SYNC_MODE=readonly|off`, `ACCOUNTS_OFF`.
+  storage > 80 % of plan, mail bounce / complaint rates, deletion-job lag, mail outbox age > 5 min, per-provider failed callbacks or code exchanges > 20 % over 30 min,
+  signing-key fetch failures, unknown-`kid` refetches, a provider breaker opening, link / unlink spikes. Logs hold request id, user id,
+  route, status, latency and an IP prefix — never e-mail addresses, codes, cookies, bodies, provider codes, `state`, tokens or claims.
+- **Kill switches**: `ACCOUNTS_SIGNUP=open|invite|off`, `SYNC_MODE=readonly|off`, `ACCOUNTS_OFF`,
+  `OAUTH_GOOGLE=on|signin|off`, `OAUTH_LINKEDIN=on|signin|off`.
 - **Incident runbook** (`server/RUNBOOK.md`):
   1. **Severity** S1 (data exposure or takeover), S2 (integrity or loss), S3 (outage); detection signals = the alerts above.
   2. **Preserve logs** within 24 h (export the host's function and database logs before they roll over).
   3. **Contain**: kill switch; sign everyone out; for affected users the **security reset** script (`server/ops/security-reset`,
-     per user or bulk): revoke sessions, list and remove passkeys and recovery addresses added in the incident window, revert
-     e-mail changes made in the window (audit rows `passkey_add`, `email_change`, `recovery_set`, `signin` from a new device);
-     rotate peppers and, if exposed, the master key (§13.4).
+     per user or bulk): revoke sessions, list and remove passkeys, provider links and recovery addresses added in the incident window, revert
+     e-mail changes made in the window (audit rows `passkey_add`, `identity_link`, `email_change`, `recovery_set`, `signin` from a new device);
+     rotate peppers and, if exposed, the master key (§13.4). For a provider-side incident or a leaked provider secret:
+     `OAUTH_<P>=off`, rotate that secret, revoke the sessions with that `auth_method` created in the window.
   4. **Assess**: what personal data (e-mails need the index pepper and master key; bodies are encrypted).
   5. **Notify**: a decision tree for the ICO (72 h when a risk to people is likely); pre-drafted user and ICO notices; the
      processors' contractual notice times on file; affected business customers under their DPA.
@@ -1161,13 +1498,14 @@ offline by the owner. The functions site and the jobs credential are separate (D
 
 ### 13.7 Support (in `RUNBOOK.md`)
 - **Lost mailbox**: the recovery address first. Otherwise a one-off audited ops function (`server/ops/recover`, actor
-  `support:<id>`) after a documented identity check: control of a new address (a code) **and** two of — the account's creation
+  `support:<id>`) after a documented identity check: control of a new address (a code) **and** two of — a sign-in by a linked Google or LinkedIn identity during the recovery, the account's creation
   month, the names of two projects (checked by the ops function against the encrypted metadata, which returns only match / no
   match), the masked old address's domain confirmed by the employer. A recovery adds the new address with the 7-day revert notice
   to the old one, never silently (Q20).
 - **"I didn't get the code"** is expected to be the main ticket: macros for quarantine, allow-listing no-reply@h2oil.co.uk, the
   15-minute validity and the recovery address.
-- Other macros: conflict copies, a public-computer locked outbox, storage full, deletion cancel, export of a large account, a DPA
+- Other macros: "I can't sign in with Google / LinkedIn" (use the e-mail code; a deleted provider account; link again after
+  a code), "I have two accounts" (no merge tool: export one, import it into the other, delete the first), conflict copies, a public-computer locked outbox, storage full, deletion cancel, export of a large account, a DPA
   request.
 
 ### 13.8 Releases and deploys
@@ -1192,7 +1530,43 @@ day); about 30 % of users are active on a working day (22 a month); sensitivity 
 Revision rows stay small (squashing caps automatic revisions at ~144 a day per project, pruned to 24 h); the database holds
 metadata only (< 1 GB at 10,000 users). Cost levers: inline core (one request per push), head-only checks, `vhash`
 short-circuit, coalescing and server squash, gzip, dedup, pulls only on events, the database sleeping when idle, quotas. Set a
-spend alert at 80 % of the plan. Per-tier figures are in the owner's vendor notes.
+spend alert at 80 % of the plan. Per-tier figures are in the owner's vendor notes. Provider sign-in adds no running cost (both providers are free for this use; one
+code exchange and an occasional key fetch per sign-in).
+
+
+### 13.10 Owner's setup checklist for Google and LinkedIn (WP0; console steps and links in the vendor notes)
+**First, for both**
+1. Publish the privacy notice (with the provider card of §8.6) and the Terms of Use at stable URLs on welltest.h2oil.co.uk. The
+   app's home page must describe the app and link the same privacy notice (Google's brand check does not accept a page that only
+   signs people in); WP0 confirms the app page qualifies or adds a short "About" view.
+2. Use an owner-controlled company login for both consoles and add a second administrator (a lost console login means no secret
+   rotation); record the client ids, where the secrets live and the console owners in `RUNBOOK.md`.
+
+**Google**
+3. Create the project and the consent screen: external, app name **Well Testing Suite**, support e-mail software@h2oil.co.uk, logo,
+   home page, privacy and terms URLs, authorised domain `h2oil.co.uk` (ownership proven by DNS), developer contact.
+4. Scopes `openid` and `email` only (non-sensitive: no security assessment, only brand verification).
+5. A web client with the production redirect URI `https://welltest.h2oil.co.uk/api/v1/auth/oauth/google/callback` (exact, https,
+   no wildcard); a separate development client with the localhost URI.
+6. Testing mode while building (at most 100 named test users; their grants expire after 7 days); **publish to production and
+   complete brand verification before the invite beta** (allow 1–3 weeks).
+7. Client ids and secrets into the functions' environment (production and development separately).
+
+**LinkedIn**
+8. A company Page for H2Oil with a Page administrator; create the app under that Page; the Page administrator approves the app's
+   verification request.
+9. Add the self-serve product **Sign In with LinkedIn using OpenID Connect**; scopes `openid profile email`.
+10. Redirect URL `https://welltest.h2oil.co.uk/api/v1/auth/oauth/linkedin/callback`; check whether a localhost URL is accepted for
+    development (else a second, development app).
+11. Client id and secret into the environment. **Never delete and re-create the production app**: LinkedIn subjects are per app,
+    so a new app breaks every LinkedIn link (§4.14).
+12. Read the current API terms (we keep only the subject and the e-mail and delete on request) and the current button rules;
+    record both in the vendor notes.
+
+**Then, for both**
+13. WP0 live tests with a real account per provider: the LinkedIn issuer value, nonce and PKCE behaviour, the `email_verified`
+    forms, and the round trip with the Lax attempt cookie in the three main browser engines; results fixed in `oidc-providers.js`.
+14. Update the record of processing and the DPIA for the two providers (§8.4).
 
 ---
 
@@ -1205,13 +1579,15 @@ phase's integration. DFIT branches and `docs/DFIT-PLAN.md` are never touched; th
 
 | WP | Phase | Content | Days (base) |
 |---|---|---|---|
-| WP0 | 1 | answer §16; leave the free host plan; regions; publish check; HSTS check; rewrite-header check; e-mail sender + SPF / DKIM / DMARC; processor DPAs; DPIA; Terms of Use, privacy notice, business DPA template; spend alert. **Legal items take 6–10 calendar weeks with outside parties and start now** | 3 + owner time |
+| WP0 | 1 | answer §16; leave the free host plan; regions; publish check; HSTS check; rewrite-header check; e-mail sender + SPF / DKIM / DMARC; **Google and LinkedIn apps** (§13.10: consent screen and brand verification, company Page
+verification, redirect URIs, development clients, live tests); processor DPAs; DPIA; Terms of Use, privacy notice, business DPA template; spend alert. **Legal items take 6–10 calendar weeks with outside parties and start now** | 4 + owner time |
 | WP-H | 1 | H1–H18: ls-write and scan test, `loadFromObject` source / keep / ready, `registerGuard`, `registerToolbarItems`, `flushIfDirty`, `captureWell`, `NO_COPY` in 29-multiwell, privacy branches, pinned spreadsheet loader, analytics guard, sink audit and fixes; `acct-host`, `acct-lswrite-scan`, `acct-thirdparty`, `acct-fuzz` | 8 |
 | WP-S1 | 1 | schema, migrations, roles and definer functions, forced RLS and `rls.test.js`; envelope encryption with kid / dkv; code auth (queued mail, two live codes, binding), sessions with rotation grace, devices `(user, id)`, e-mail change and revert, recovery address, invite allow-list; rate limits; audit chain and anchor; projects, revisions (CAS, squash, pins), blobs (immutable), inline-core commit, pushId, quotas; library; export with read-rate unlock; delete with grace, ledger; security notices; health, csp-report, ops-daily; kill switches; `server/test` | 16 |
+| WP-O | 1 | provider sign-in: `oidc.js` and `oidc-providers.js` (authorization URL, PKCE, code exchange, RS256 checks on built-in crypto, signing-key cache and refetch limit), `identities` / `oauth_attempts` / `oidc_keys`, `sessions.auth_method`, definer functions, start / callback / finish / methods / unlink, linking rules 1–8, notices, breaker and `OAUTH_*` switches; client buttons and assets, the return hand-off, finish steps, *Sign-in methods* card; `fake-oidc.js`; `acct-oauth`, `oidc.test.js`, `oauth-api.test.js` | 10 |
 | WP-C1 | 1 | 66 (guard, API client, outage rule, dialog with FAQ, consent, step-up, chip, toolbar, Ctrl+S, bar, analytics reload), 67 Phase-1 part (snapshot, assemble, push, open, ownership, migration, hand-over, wipe, locked outbox, import files), 68 (profile and security, projects, devices, on this device, storage, data, activity, help), `sync-from-main` strip 0c / 0d and `www/help` check, help-shots chip hiding, fake server; `acct-signin`, `acct-cloud`, `acct-migrate`, `acct-ios`, `acct-privacy` | 9 |
 | WP-OPS | 1 | publish allow-list and CI check, secret scan, functions-only site and rewrite, tagged server deploy and migration job, CSP Report-Only → report endpoint, headers, preview isolation, weekly encrypted export, ledger and anchor objects, monitoring and alerts, RUNBOOK (incidents, security reset, rotation, compromise, support), first restore drill, `acct-hash.js` | 5 |
-| WP-HC | 1 | privacy page and help-start texts, `privacy` hash, screenshots re-shot, GUI-sweep fake API | 3 |
-| WP-I1 | 1 | security review against the session / authentication / access-control chapters of a recognised application-security verification standard; abuse and load test; invite beta (5–10 users, 2 weeks); CSP enforce; RELEASE_NOTES (`platform:'web'`); CLAUDE.md; full rebuild, smoke, acceptance, sync; merge; `server-v1` tag | 5 |
+| WP-HC | 1 | privacy page (with the provider card) and help-start texts, `privacy` hash, account help on providers, button assets checked against the providers' current rules, screenshots re-shot, GUI-sweep fake API | 4 |
+| WP-I1 | 1 | security review against the session / authentication / access-control chapters of a recognised application-security verification standard; abuse and load test; the provider round trip in the three main browser engines; invite beta (5–10 users, 2 weeks); CSP enforce; RELEASE_NOTES (`platform:'web'`); CLAUDE.md; full rebuild, smoke, acceptance, sync; merge; `server-v1` tag | 6 |
 | WP-C2 | 2 | automatic sync: triggers, coalescing, pull-before-edit gate, `applyChanges` path and `wts:project-changed`, `applyRemote`, `_applying` / `_snapshotting`, focus deferral, locks, outbox format, 401 / 426 rules, key-level merge (`merge.js` + concat step, ≈ 2 d), overlap conflict UX with *Show differences*, recent-project cache, library document sync; `acct-sync`, `acct-conflict` | 12 |
 | WP-I2 | 2 | after **4 weeks of Phase 1 telemetry**: beta of auto sync (2 weeks), review, release v3.5.x | 3 |
 | WP-C3 | 3 | passkeys (register, sign-in, conditional UI, UV step-up), historian backup / restore, live-config opt-in; `acct-account` | 8 |
@@ -1220,26 +1596,31 @@ phase's integration. DFIT branches and `docs/DFIT-PLAN.md` are never touched; th
 
 | Phase | Release | Scope | Estimate (base → with 30 % contingency) |
 |---|---|---|---|
-| 1 | **v3.5** (invite beta, then on for the web) | sign-in (codes, recovery address), sessions, manual Save / Open from cloud, history and restore, import files, account page, export, delete with grace, e-mail change, security notices, migration and hand-over, public-computer wipe, ops (publish allow-list, separate server deploys, backups, ledger, runbook) | 49 → **≈ 64 person-days** (~13 weeks for one full-time builder), plus 6–10 calendar weeks of legal work in parallel |
+| 1 | **v3.5** (invite beta, then on for the web) | sign-in (e-mail codes, recovery address, **Google, LinkedIn**; link / unlink), sessions, manual Save / Open from cloud, history and restore, import files, account page, export, delete with grace, e-mail change, security notices, migration and hand-over, public-computer wipe, ops (publish allow-list, separate server deploys, backups, ledger, runbook) | 62 → **≈ 81 person-days** (~16 weeks for one full-time builder; revision 2 without providers: 49 → ≈ 64), plus 6–10 calendar weeks of legal work and 1–3 weeks of provider verification in parallel |
 | 2 | **v3.5.x** | automatic sync, pull-before-edit, key-level merge, overlap conflicts kept on screen, offline outbox rules, recent-project cache | 15 → **≈ 20 person-days** (~4 weeks), shipped no earlier than 4 weeks after v3.5 |
 | 3 | **v3.6** | passkeys, historian backup, live-data settings, field-level merge, CSP hardening checkpoint | 15 → **≈ 20 person-days** (~4 weeks) |
-| | | **Total** | 79 → **≈ 104 person-days** (≈ 92 without WP-M) |
+| | | **Total** | 92 → **≈ 120 person-days** (≈ 113 without WP-M; providers add 13 → ≈ 17) |
+
+**If the providers move out of v3.5** (Q24 alternative): v3.5 keeps the revision-2 estimate and date, and the providers ship as
+v3.5.1 (WP-O plus a day each of WP0, WP-HC and WP-I1, ≈ 17 person-days) with no data migration, because every account already
+has the e-mail root method and `identities` is a new table.
 
 **Calendar** (one full-time builder; weeks from the owner's go):
 
 | Weeks | Work | Critical path |
 |---|---|---|
 | 1–10 | WP0 legal: processor DPAs, DPIA, Terms of Use, privacy notice, business DPA template | **yes** — the invite beta needs Terms and the privacy notice |
-| 1–2 | WP0 technical checks; WP-H start | |
+| 1–3 | WP0 technical checks; **Google and LinkedIn apps registered, consent screen, Page verification, development clients** (owner); WP-H start | |
 | 2–4 | WP-H | |
 | 3–7 | WP-S1 (after WP0 technical) | yes |
-| 7–9 | WP-C1 | yes |
-| 8–9 | WP-OPS, WP-HC | |
-| 10–11 | WP-I1 review and load test | yes |
-| 11–13 | invite beta (2 weeks), fixes, **v3.5** | yes |
-| 13–17 | Phase 1 telemetry (4 weeks); WP-C2 built in parallel from week 13 | |
-| 17–19 | auto-sync beta and WP-I2, **v3.5.x** | |
-| 19–23 | WP-C3, WP-M, WP-I3, **v3.6** | |
+| 7–9 | WP-O (needs the development clients) | yes |
+| 9–11 | WP-C1 | yes |
+| 10–11 | WP-OPS, WP-HC; Google consent screen published and brand-verified | yes, for Google in the beta |
+| 12–13 | WP-I1 review, load test, provider round trip in three browser engines | yes |
+| 13–15 | invite beta (2 weeks, all three methods), fixes, **v3.5** | yes |
+| 15–19 | Phase 1 telemetry (4 weeks); WP-C2 built in parallel from week 15 | |
+| 19–21 | auto-sync beta and WP-I2, **v3.5.x** | |
+| 21–25 | WP-C3, WP-M, WP-I3, **v3.6** | |
 
 Each WP ends with the build incantation, smoke and acceptance green and the iOS strip test green.
 
@@ -1267,6 +1648,13 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | DFIT in the same window | merge conflicts in host and CLAUDE.md | separate branches; small isolated host edits; release numbers agreed (Q14) |
 | Regulator or client asks for UK-only storage | blob store has no UK region | Q6: database UK, bodies EU by default; a UK object store later (the key scheme does not change) |
 | Host rewrite cannot add the proxy header | functions reachable directly | fallback of §2 (one site, functions deployed from tags via a protected deploy branch) |
+| Provider verification or app review late or refused | a provider not ready for the beta | start in week 1 (§13.10); ship it dark (`OAUTH_<P>=off`) and switch it on later without a client release (Q24) |
+| LinkedIn's e-mail claims unreliable; its issuer, nonce or PKCE behaviour differs from its documents | wrong links or failed sign-ins | its e-mail is never trusted (always our code); behaviour fixed by WP0 live tests in one config file; a test profile per provider |
+| LinkedIn app re-created | every LinkedIn link breaks (pairwise subjects) | never re-create (§13.10); re-link by one e-mail code (§4.14) |
+| Button branding refused, or the rules change | verification refused | official assets unmodified; checked in WP0 and WP-HC |
+| A second account by mistake (code with one address, a provider with another) | work split over two accounts | the dialog names the account address after a provider sign-up; the account page lists every method; support macro (export, import, delete) |
+| Provider sign-in leaves the user signed in to the provider on a shared PC | the next person can use their provider account | warning in the dialog and at public sign-out |
+| Cookie SameSite behaviour differs in a browser | the callback or finish fails | the design never needs a Strict cookie on a cross-site request; three-engine round trip (WP-I1); the e-mail code still works |
 
 ---
 
@@ -1275,7 +1663,7 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | # | Question | Recommended default | Alternatives |
 |---|---|---|---|
 | Q1 | Backend option | **Own minimal API in serverless functions + managed Postgres + the host's blob store** (D2) | a managed identity service of the host (no passkeys or codes, data region not stated); a hosted auth-plus-database service (large client SDK, free tier pauses when idle) |
-| Q2 | Sign-in methods | **E-mail code + optional recovery address now; passkeys in v3.6**; no passwords | add passwords (more support, credential stuffing); social sign-in (third-party dependency) |
+| Q2 | Sign-in methods | **E-mail code (root, on every account) + optional recovery address + Sign in with Google + Sign in with LinkedIn in v3.5; passkeys in v3.6**; no passwords (owner request of 2026-11-08) | e-mail code only (revision 2); passwords (more support, credential stuffing); more providers (each adds a console, a secret and a branding review) |
 | Q3 | Sessions | **trusted 35 d idle / 180 d absolute; public 12 h / 7 d; "public computer" unticked by default** | 14 d / 90 d (signs out rig users after a hitch); public ticked by default |
 | Q4 | Encryption level | **server-side envelope encryption** now; optional end-to-end vault later (format ready) | end-to-end from day one (a lost key loses data for good; ~+25 days; no support recovery) |
 | Q5 | Free vs paid accounts | **free**, 250 MB quota, 64 MB per project, 100 MB historian backup | paid tiers (needs payments and terms; not planned) |
@@ -1297,6 +1685,13 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | Q21 | Business users' data | **offer a standard data processing agreement; H2Oil as processor for business data, controller for accounts** | controller only, no DPA (may block business use) |
 | Q22 | Waiting changes on a public computer at expiry | **wipe everything except the outbox encrypted with the server-held per-user key, kept 7 days** | wipe everything (loses a shift's unsynced work); keep local data until the next sign-in (exposes it) |
 | Q23 | CSP hardening track | **remove `eval` / `new Function` / inline handlers and move to a nonce-based `script-src` in v3.6** | leave the CSP as allow-list only (accepted residual risk) |
+| Q24 | Which methods ship when | **all three in v3.5**, each provider behind its own switch: a provider whose verification is not done by the beta ships dark and is switched on later without a client release | e-mail code in v3.5 and providers in v3.5.1 (keeps the revision-2 date, ≈ 17 person-days later, §14); providers in v3.6 with passkeys |
+| Q25 | Passkeys | **still follow in v3.6** (fastest, phishing-resistant, no third party; the provider buttons do not replace them) | drop passkeys now that providers exist (less work, the strongest method lost); bring them into v3.5 (+8 days) |
+| Q26 | Sign-up through a provider during the invite beta | **allowed under the same allow-list**: the account address (provider-verified or confirmed by our code) must be on it | providers sign in only to existing accounts during the beta (`OAUTH_*=signin`); providers hidden during the beta |
+| Q27 | Trusting a provider's "e-mail verified" for a new account | **Google trusted; LinkedIn never** (always our e-mail code) | our code for both (one more step for Google users, one rule); trust both (not recommended: LinkedIn's claim is optional and it does not verify identities) |
+| Q28 | Provider e-mail matches an existing account | **link only after an e-mail code to that account's address** (D24, §4.12 rule 4) | refuse and ask the user to link from the account page (safest, more friction); auto-link on a verified e-mail (not recommended: the classic takeover) |
+| Q29 | Step-up through the provider | **no**: step-up stays the e-mail code (a passkey from v3.6); a provider only signs in | a fresh Google re-authentication as step-up (a forced re-login and a second redirect in the middle of an action) |
+| Q30 | Provider profile data | **none kept**: Google asked only for `openid email`; LinkedIn's name and photo dropped | ask Google for `profile` and keep a display name for the chip (more personal data, little benefit) |
 
 ---
 
@@ -1442,3 +1837,26 @@ answered.
 | Operations | two-person review vs the branch model | D19, §13.8, Q19 |
 | Operations | lost mailbox, support | D3, §4.4, §13.7, Q20, U11 |
 | Operations | minors: invite gate; backend down; deletion grace; one linked project friction; neutral vendor wording | Q13, §3.3; §3.2 outage rule, §11; §8.5; §6.8, §2; D2, Q1 |
+
+### B.3 Revision 3 (Google and LinkedIn sign-in, 2026-11-08)
+Owner request of 2026-11-08 (header). Changed: the header (request, naming exception), D3, D4, D14, D19, D20 and new D22–D24;
+§1.1–1.3 (U13–U19); §2; §3.1–3.5 (endpoints with `finish` answers, error codes, `identities`, `oauth_attempts`, `oidc_keys`,
+`users.signup_method`, `sessions.auth_method`, `email_codes.bound_attempt`, definer functions, jobs); §4.9 and new §4.10–4.15;
+§5.1–5.5 (incl. H17); §8.1 (T6, T21–T29), §8.2–8.6; §9; §10; §11.1–11.3; §12.1–12.5; §13.2, §13.3, §13.6, §13.7, §13.9 and new
+§13.10; §14; §15; §16 (Q2, Q24–Q30). Points decided differently from the provider research notes, and why:
+1. **Return path.** The research proposed a validated relative return path kept in the attempt. Here the server keeps none: the
+   callback always redirects to one constant URL and the page restores its own route after checking it against the route table,
+   so the open-redirect class is removed rather than filtered.
+2. **Where the session is issued.** The research left open whether the session cookie should become Lax or the callback should
+   finish on a same-origin page. The session stays **Strict** and is issued by `POST /auth/oauth/finish` from the page; the
+   callback only records the outcome. This also gives the dialog a place for the consent, e-mail and code steps without more
+   redirects, and binds a link to the session that started it, which the callback cannot see.
+3. **Start by fetch, not by form**: a form post to `start` that redirects to the provider could be blocked by `form-action 'self'`.
+4. **Google's verified e-mail is trusted for a new account; LinkedIn's never is** — not only when absent — because LinkedIn
+   documents the claim as optional and says it does not verify identities (Q27).
+5. **No JWT library**: RS256 checks on the runtime's built-in crypto keep the server's dependency list as in revision 2; one
+   pinned library is the review's alternative.
+6. **Subjects** are stored as an HMAC index plus an encrypted copy, like e-mail addresses (T8); uniqueness is on (provider,
+   subject index), which is (provider, subject).
+7. **Step-up stays the e-mail code** (and passkeys later); provider re-authentication is an owner alternative (Q29), because it
+   would need a second redirect in the middle of an action.
