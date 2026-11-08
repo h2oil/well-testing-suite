@@ -483,6 +483,20 @@ module.exports = [
         live.setAutoDivert('surge', true, a5.toWin({ sp: 0.75 })); a5.flush(50);
         assert.deepStrictEqual(reloadSurge(a5), Object.assign({}, hand, { sp: 0.75 }), 'set point merged into the hand line-up');
       } finally { if (a5.dispose) a5.dispose(); }
+      // 9. fresh prefs, T-201 never set by hand: the first saved event is the engine's own auto-divert, then a hand stroke time →
+      //    the reload starts from the engine default line-up (the run's start), with stroke 9 s — never the diverted inlets
+      a5 = ctx.loadApp({});
+      try {
+        const live = openWts(a5);
+        const start = J(live.getControls()).surge;
+        let dv = 0; live.on('divert', (e) => { if (e.eq === 'surge') dv++; });
+        for (let i = 0; i < 720 && !dv; i++) live.advance(10);
+        a5.flush(50);
+        assert.ok(dv > 0, 'the default line-up auto-diverted');
+        assert.notDeepStrictEqual(J(live.getControls()).surge.inlet, start.inlet, 'the live inlets are the diverted ones');
+        live.setValveOptions('surge', a5.toWin({ strokeS: 9 })); a5.flush(50);
+        assert.deepStrictEqual(reloadSurge(a5), Object.assign({}, start, { strokeS: 9 }), 'run-start line-up with the stroke, not the diverted one');
+      } finally { if (a5.dispose) a5.dispose(); }
     }
   },
   {

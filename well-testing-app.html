@@ -71714,7 +71714,12 @@ var PREF_DEFAULTS = { mode: '3d', labels: 'all', overlay: 'phase', quality: 'aut
 // from an automatic one: the inlet states are ignored for them (a part that differs from the v3.3.1 default only by its inlets
 // counts as untouched), and a saved T-201 line-up with both inlets shut is never restored (that start would be blocked).
 var CTL_GROUPS = ['surge', 'gauge', 'surge2', 'desander'];
+// the toast shown when T-202 enters the rig-up (empty, XV-202 shut, separator dumps still to T-201)
+var U2_IN_TXT = 'T-202 in (standby, XV-202 shut): set Route to T-202 or Both on its card';
 var CTL_USER_WHAT = { inlet: 1, suction: 1, auto: 1, options: 1, bypass: 1, route: 1 };
+// the fields a hand 'options' / 'auto' event changes (31 setOptsNow / surge2Opts, setAutoNow / surge2Auto, the desander auto-dump);
+// the other line-up events ('inlet', 'suction', 'bypass', 'route') replace the group's saved part
+var CTL_MERGE_KEYS = { options: ['strokeS', 'allowInterrupt'], auto: ['auto', 'sp', 'hyst'] };
 function legacySurgeDefault(su, anyInlet) {
     if (!su || typeof su !== 'object') return true;
     var inl = su.inlet, eq = function (v, d) { return v === undefined || v === null || (typeof v === 'number' && Math.abs(v - d) < 1e-9); };
@@ -72279,6 +72284,7 @@ var CSS = [
 '.wtsl-sepbar .tk{position:absolute;top:-2px;width:2px;height:10px;border-radius:1px}',
 '.wtsl-sepbar .mk{position:absolute;top:-3px;width:3px;height:12px;border-radius:1px;background:#fff;box-shadow:0 0 4px rgba(255,255,255,.6);margin-left:-1px}',
 '.wtsl-tl{font:500 11px/1.28 var(--hmi-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#c9d1d9}',
+'.wtsl-tl.u2{font-size:10.5px}',   // final pass: the T-201 + T-202 line fits the 1280 px tank cell
 '.wtsl-tl b{color:#e6edf3;font-weight:600}.wtsl-tl .a{color:var(--hmi-sel)}.wtsl-tl .x{color:#3fb950;margin-left:1px}',
 '.wtsl-tl.al{color:#6e7681}.wtsl-tl.al[data-l=alarm]{color:#ff7b72}.wtsl-tl.al[data-l=warn]{color:#e3b341}.wtsl-tl.al[data-l=hyd]{color:#79c0ff}',
 '.wtsl-tiles{display:none;grid-template-columns:repeat(3,1fr);grid-template-rows:64px 64px;height:128px}',
@@ -72478,7 +72484,8 @@ var CSS = [
 // ═══════════════════════════════════════════════════════════════════
 // §D SESSION STATE (survives navigation within the page session, D10)
 // ═══════════════════════════════════════════════════════════════════
-var _sim = null;            // the live sim instance
+var _sim = null, _ctlBase = null;   // _ctlBase: the line-up the run started from (saveCtl fallback)
+                            // _sim: the live sim instance
 var _lastFlowObj = null;    // identity of the last flow handed to the sim (K57: never compare seq/ts)
 var _resetPending = false;  // project Open/New → reset on the next applied flow
 var _alarmMap = {};         // operator lifecycle map (UNACK/ACK/RTN)
@@ -72625,6 +72632,9 @@ function hostResults(rig) {
 // #wts_beanFix; leg is 'adj' unless strictly 'fixed'; bean = the in-service leg's bean (NaN when unknown); has = the snapshot or the
 // page knows the two-leg manifold (else the v3.3.3 single bean is shown unchanged)
 var CK_LEGS = { adj: 'Adjustable choke', fixed: 'Positive (fixed) choke' };
+// final pass: the HUD Gas / Oil / Water figures are the separator meters (smoothed), so a bean or leg change moves them slowly
+var SETTLE_TXT = ' — metered rates settle over a few minutes';
+var HUD_GAS_TIP = 'separator gas meter (smoothed); the choke rate is on the CK-101 card';
 function ckLegs(st) {
     var c = (st && st.nodes && st.nodes.choke) || {}, hasN = typeof c.leg === 'string';
     var lEl = hostEl('wts_ckLeg'), hv = lEl ? String(lEl.value) : '';
@@ -72774,7 +72784,7 @@ function createController(vizEl, mopts) {
     var raf = 0, rafIsTimer = false, last = 0, t2d = 0, tHud = 0, tPub = 0, tSr = 0, tSlow = 0, tDraw = 0;
     var onScreen = true, dirty2d = true, flowGain = 1, dash = [0, 0, 0, 0, 0, 0, 0, 0];
     var bp = 'lg', isMax = false, reduced = false, lastDpr = 0;
-    var listeners = [], timers = [], simHooks = [];
+    var listeners = [], timers = [], simHooks = [], lastU2 = false;   // lastU2: T-202 in the rig-up at the last rigup event
     var E = {};                          // DOM refs
     var cardId = null, cardRefs = null, menu = null, drawerOpen = false, drawerTab = 'alarms', drawerSig = '';
     var popGroup = null, keysOpen = false;
@@ -73014,8 +73024,8 @@ function createController(vizEl, mopts) {
         var all = q('.wtsl-rig-all', c); if (all) all.disabled = !_sim || !!(ru && ru.full && (!req || items.filter(function (it) { return !it.optional; }).every(function (it) { return req[it.key] !== false; })));
     }
     function hudHtml() {
-        function item(k, label, cls) {
-            return '<div class="wtsl-hi ' + (cls || '') + '"><span class="wtsl-hl"><span data-h="' + k + 'L">' + label + '</span><i data-h="' + k + 'U"></i></span>' +
+        function item(k, label, cls, tip) {
+            return '<div class="wtsl-hi ' + (cls || '') + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '><span class="wtsl-hl"><span data-h="' + k + 'L">' + label + '</span><i data-h="' + k + 'U"></i></span>' +
                 '<span class="wtsl-hv' + (/^p/.test(k) ? ' p' : '') + '"><span data-h="' + k + '">—</span>' +
                 (/^r/.test(k) ? '<span class="wtsl-ha" data-h="' + k + 'A"></span>' : '') + '</span></div>';
         }
@@ -73027,7 +73037,7 @@ function createController(vizEl, mopts) {
                 '<div class="wtsl-hi wtsl-hsep"><span class="wtsl-hl"><span data-h="pSepL">Sep</span><i data-h="pSepU"></i></span><span class="wtsl-hv p"><span data-h="pSep">—</span></span>' +
                 '<div class="wtsl-sepbar" data-h="sepbar" title="Separator pressure vs setpoint: green ±5 psi band, amber = PAH, red = PSHH"><div class="band"></div><div class="tk" style="background:#d29922"></div><div class="tk" style="background:#f85149"></div><div class="mk"></div></div></div>' +
                 item('pSu', 'Surge') + '</div></div>' +
-            '<div class="wtsl-hg"><div class="wtsl-hrow">' + item('rG', 'Gas') + item('rO', 'Oil') + item('rW', 'Water') + item('rR', 'GOR', 'h-gor') + item('rB', 'BS&amp;W', 'h-bsw') + '</div></div>' +
+            '<div class="wtsl-hg"><div class="wtsl-hrow">' + item('rG', 'Gas', '', HUD_GAS_TIP) + item('rO', 'Oil') + item('rW', 'Water') + item('rR', 'GOR', 'h-gor') + item('rB', 'BS&amp;W', 'h-bsw') + '</div></div>' +
             '<div class="wtsl-hg g-cum" title="Totals since test start (T+0)"><div class="wtsl-hrow">' + item('cO', 'Cum oil') + item('cW', 'Water') + item('cG', 'Gas') + item('cF', 'Flared') +
                 // v1.5.0: V-101 out to a production line / FS-401 out (hidden otherwise)
                 (item('cL', 'To production line', 'h-line') + item('cV', 'To vent', 'h-vent')).replace(/<div class="wtsl-hi /g, '<div hidden class="wtsl-hi ') + '</div></div>' +
@@ -73067,6 +73077,7 @@ function createController(vizEl, mopts) {
     // ── sim wiring ──────────────────────────────────────────────────
     function hookSim() {
         if (!_sim || simHooks.length) return;
+        lastU2 = rigIn(state(), 'surge2');
         function h(evt, fn) { try { _sim.on(evt, fn); simHooks.push([evt, fn]); } catch (e) {} }
         h('alarm', function (p, s) {
             var list = (s && s.alarms) ? s.alarms.slice() : [];
@@ -73118,7 +73129,11 @@ function createController(vizEl, mopts) {
         h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'LCV-201 trip reset', 'ok'); poke(); resig(); });
         h('rigup', function (p) { if (p && p.rig && typeof _sim.getRigup === 'function') { try { writeRig(_sim.getRigup()); } catch (e) {} }
             if (p && p.rig) hostResults(p.rig);           // v1.5.0: display only — never calcWTS (no wts:calc, no setFlow; §4.5)
-            if (p && p.msg) toast(p.msg.replace(/^Rig-up: /, 'Rig-up — ')); poke(); resig(); renderRig(state(), true); refreshMenu(); });
+            // final pass: T-202 enters empty, XV-202 shut, route T-201 — say how to use it (an action opens its card)
+            var u2 = rigIn(state(), 'surge2'), u2New = u2 && !lastU2; lastU2 = u2;
+            if (u2New) toast(U2_IN_TXT, '', [['Open T-202', 'toast-card', 'surge2']], 8000);
+            else if (p && p.msg) toast(p.msg.replace(/^Rig-up: /, 'Rig-up — '));
+            poke(); resig(); renderRig(state(), true); refreshMenu(); });
     }
     function unhookSim() {
         if (_sim) simHooks.forEach(function (x) { try { _sim.off(x[0], x[1]); } catch (e) {} });
@@ -73139,9 +73154,25 @@ function createController(vizEl, mopts) {
             // Per group: only a hand change to that group replaces its saved part; any other event (an automatic one, or a hand
             // change to another group) keeps the saved part as it was (review round 2: a later gauge toggle used to save the
             // auto-diverted T-201 line-up)
-            if (old && typeof old === 'object') CTL_GROUPS.forEach(function (g) {
-                var own = p && !p.auto && p.eq === g;
-                if (!own && old[g] && typeof old[g] === 'object') c[g] = deepClone(old[g]);
+            // Only a hand line-up event (CTL_USER_WHAT: not a trip reset, a dump or an automatic change) is the group's own. A hand
+            // 'options' / 'auto' change merges only its fields into the saved part (its saved inlets / suction / route / bypass stay:
+            // after an auto-divert the live inlets are the automation's); 'inlet', 'suction', 'bypass', 'route' replace the whole
+            // part.
+            // A group with no saved part falls back to the line-up the run started from (_ctlBase), never to the live part: the first
+            // event of a run may be an auto-divert, and a later hand 'options' / 'auto' change must not adopt the diverted inlets
+            // (final review). Only an 'inlet' / 'suction' / 'bypass' / 'route' hand change takes the live part as it is.
+            CTL_GROUPS.forEach(function (g) {
+                var own = !!(p && !p.auto && p.eq === g && CTL_USER_WHAT[p.what]);
+                var sv = old && typeof old === 'object' && old[g] && typeof old[g] === 'object' ? old[g]
+                    : (_ctlBase && _ctlBase[g] && typeof _ctlBase[g] === 'object' ? _ctlBase[g] : null);
+                if (!sv) return;
+                if (!own) { c[g] = deepClone(sv); return; }
+                var keys = CTL_MERGE_KEYS[p.what];
+                if (keys && c[g] && typeof c[g] === 'object') {
+                    var m = deepClone(sv);
+                    keys.forEach(function (k) { if (Object.prototype.hasOwnProperty.call(c[g], k)) m[k] = deepClone(c[g][k]); });
+                    c[g] = m;
+                }
             });
             prefs.ctl = c; writePrefs(prefs);
         } catch (e) {}
@@ -73264,7 +73295,7 @@ function createController(vizEl, mopts) {
         var el = hostEl('wts_ckLeg');
         if (!el) { toast('No "Choke in service" input on the page', 'bad'); return false; }
         var cur = String(el.value) === 'fixed' ? 'fixed' : 'adj';
-        if (cur !== leg) { setHostInput('wts_ckLeg', leg, null, 'change'); toast('CK-101 in service: ' + CK_LEGS[leg]); }
+        if (cur !== leg) { setHostInput('wts_ckLeg', leg, null, 'change'); toast('CK-101 in service: ' + CK_LEGS[leg] + SETTLE_TXT); }
         if (cardRefs && cardRefs.act) cardRefs.act.__sig = '';
         later(function () { renderCardActions(state()); }, 0);
         return true;
@@ -73314,6 +73345,8 @@ function createController(vizEl, mopts) {
         _rigPending = false;
         var rc = ctlRestore(prefs);                // only the groups the operator set by hand (v3.3.4)
         if (rc && typeof _sim.setControls === 'function') { try { _sim.setControls(rc, { initial: true }); } catch (e) {} }
+        // the line-up the run starts from (restored hand parts + engine defaults): the base a group with no saved part falls back to
+        try { _ctlBase = typeof _sim.getControls === 'function' ? deepClone(_sim.getControls()) : null; } catch (e) { _ctlBase = null; }
         _lastFlowObj = flow;
         _resetPending = false;
         _alarmMap = {};
@@ -73578,7 +73611,7 @@ function createController(vizEl, mopts) {
         if (!E.toasts) return;
         var t = mk('div', 'wtsl-toast' + (kind ? ' ' + kind : ''));
         t.innerHTML = '<span>' + esc(msg) + '</span>' + (actions || []).map(function (a) {
-            return '<button type="button" data-wts-ui class="wtsl-b" data-act="' + a[1] + '">' + esc(a[0]) + '</button>';
+            return '<button type="button" data-wts-ui class="wtsl-b" data-act="' + esc(a[1]) + '"' + (a[2] != null ? ' data-v="' + esc(a[2]) + '"' : '') + '>' + esc(a[0]) + '</button>';
         }).join('');
         E.toasts.appendChild(t);
         while (E.toasts.children.length > 3) E.toasts.removeChild(E.toasts.firstChild);
@@ -73827,13 +73860,14 @@ function createController(vizEl, mopts) {
         var u2 = rigIn(st, 'surge2') && st.surge2 ? st.surge2 : null;      // T-202 part only while it is in the rig-up
         var t2 = u2 ? ' · ' + (u2.inlet ? '<span class="a">▸' : '<span>') + 'T-202 </span><b>' + pctStr(u2.frac) + '</b>' : '';
         E.h.tSu.__full = null;
+        E.h.tSu.classList.toggle('u2', !!u2 && !rigOut(st, 'surge'));
         if (rigOut(st, 'surge')) setHTML(E.h.tSu, 'Surge tank <b>out of rig-up</b>');
         else if (u2) {
             // T-202 in: the short form fits the tank cell (an open inlet is highlighted, no ▸); the full line, with LCV-201, is
             // the tooltip
             var cmp = function (on, lbl, fr) { return '<span' + (on ? ' class="a"' : '') + '>' + lbl + '</span> <b>' + pctStr(fr) + '</b>'; };
             setHTML(E.h.tSu, (SC.length === 2 ? cmp(SC[0].inlet, 'A', SC[0].frac) + ' · ' + cmp(SC[1].inlet, 'B', SC[1].frac)
-                : cmp(true, 'T-201', su.frac)) + ' · ' + cmp(u2.inlet, 'T-202', u2.frac));
+                : cmp(true, 'T-201', su.frac)) + ' · ' + cmp(u2.inlet, 'T2', u2.frac));   // final pass: 'T2' fits the 1280 px cell (title = full text)
             E.h.tSu.__full = 'Surge ' + (SC.length === 2 ? (SC[0].inlet ? '▸' : '') + 'A ' + pctStr(SC[0].frac) + (SC[0].suction ? '▾' : '') + ' · ' + (SC[1].inlet ? '▸' : '') + 'B ' + pctStr(SC[1].frac) + (SC[1].suction ? '▾' : '')
                 : pctStr(su.frac)) + ' · ' + (u2.inlet ? '▸' : '') + 'T-202 ' + pctStr(u2.frac) + ' · LCV-201 ' + ps2;
         } else {
@@ -74373,12 +74407,13 @@ function createController(vizEl, mopts) {
             var b = readHost('wts_bean'), K1 = ckLegs(st), hasLeg = !!hostEl('wts_ckLeg'), hasFix = !!hostEl('wts_beanFix');
             var bF = readHost('wts_beanFix'); if (!isNum(bF)) bF = K1.beanFix;
             var dLeg = hasLeg ? '' : 'No "Choke in service" input on the page', dFix = hasFix ? '' : 'No "Positive choke bean (64ths)" input on the page';
-            sig = 'bean' + b + '|' + bF + '|' + K1.leg + dLeg + dFix;
+            sig = 'bean' + b + '|' + bF + '|' + K1.leg + dLeg + dFix + '|' + mode;
             h = '<div class="wtsl-actr"><span class="wtsl-hl">In service</span>' + ['adj', 'fixed'].map(function (lg) {
                     var on = K1.leg === lg;
                     return '<button type="button" data-wts-ui class="wtsl-b' + (on ? ' on' : '') + '" data-act="ckleg" data-v="' + lg + '" aria-pressed="' + on + '"' +
                         (dLeg ? bAttr(dLeg) : ' title="' + esc((on ? 'In service: ' : 'Put in service: ') + CK_LEGS[lg]) + '"') + '>' + (lg === 'adj' ? 'Adjustable' : 'Positive') + '</button>';
                 }).join('') + '</div>' +
+                (mode === '3d' && !dLeg ? '<div class="wtsl-note" data-k="ckleg-hint">or tap a leg in the 3D view</div>' : '') +   // final pass
                 '<div class="wtsl-actr"><span class="wtsl-hl">Adjustable' + (K1.leg === 'adj' ? ' ▸' : '') + '</span>' +
                 '<button type="button" data-wts-ui class="wtsl-b" data-act="bean" data-v="-4" aria-label="Smaller adjustable bean" title="Adjustable bean − 4/64″">−</button>' +
                 '<span class="val">' + (isNum(b) ? b + '/64″' : '—') + '</span>' +
@@ -75554,7 +75589,11 @@ function createController(vizEl, mopts) {
     }
     function rigMenuItems(st) {
         var M = rigModel(st), it = [];
-        M.rows.forEach(function (m) { it.push({ rig: m }); });
+        M.rows.forEach(function (m) {
+            // final pass: the T-202 row says where the separator dumps go (the card row keeps its text: page report unchanged)
+            if (m.it.key === 'surge2' && m.inRig && st && st.surge2) { var m2 = {}; for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) m2[k] = m[k]; m2.txt = m.txt + ' · route ' + routeTxt(st.surge2.route); m = m2; }
+            it.push({ rig: m });
+        });
         var core = M.items.filter(function (x) { return !x.optional; });
         var full = !!(M.ru && M.ru.full && (!M.req || core.every(function (x) { return M.req[x.key] !== false; })));
         it.push({ act: 'rigall', label: 'Restore full rig-up', disabled: !_sim || full });
@@ -75788,6 +75827,7 @@ function createController(vizEl, mopts) {
             case 'retry': retry3d(); break;
             case 'notice-close': hideNotice(); break;
             case 'toast-close': closeToast(el); break;
+            case 'toast-card': closeToast(el); if (v && EQ_IDS.indexOf(v) >= 0) { closeMenu(); closeVin(); if (h3) { try { h3.focus(v); } catch (e) {} } openCard(v); } break;
             case 'ack': if (ev) ev.stopPropagation(); ack([v]); break;
             case 'ackall': ackAll(); break;
             case 'dtab': drawerTab = v; renderDrawer(st, true); break;
@@ -75795,9 +75835,9 @@ function createController(vizEl, mopts) {
             case 'focus': if (v && EQ_IDS.indexOf(v) >= 0) { closeVin(); if (h3) { try { h3.focus(v); } catch (e) {} } openCard(v); } break;
             case 'card-close': closeCard(); break;
             case 'card-edit': editInputs(cardId); break;
-            case 'bean': { var b = readHost('wts_bean'); if (isNum(b)) { setHostInput('wts_bean', clamp(b + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
+            case 'bean': { var b = readHost('wts_bean'); if (isNum(b)) { var nb = clamp(b + (+v), 4, 128); setHostInput('wts_bean', nb, null, 'input'); toast('CK-101 adjustable bean ' + nb + '/64″' + SETTLE_TXT); } later(function () { renderCardActions(state()); }, 0); break; }
             case 'ckleg': setLeg(v); break;
-            case 'beanFix': { var bx = readHost('wts_beanFix'); if (isNum(bx)) { setHostInput('wts_beanFix', clamp(bx + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
+            case 'beanFix': { var bx = readHost('wts_beanFix'); if (isNum(bx)) { var nx = clamp(bx + (+v), 4, 128); setHostInput('wts_beanFix', nx, null, 'input'); toast('CK-101 positive bean ' + nx + '/64″' + SETTLE_TXT); } later(function () { renderCardActions(state()); }, 0); break; }
             case 'bean2': { var b2 = readHost('wts_bean2'); if (isNum(b2) && rigIn(st, 'heaterChoke')) { setHostInput('wts_bean2', clamp(b2 + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
             case 'bypass': {
                 var bel = hostEl('wts_bypass'), bOn = !!(bel && bel.value === '1');
@@ -117722,7 +117762,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: '27cbdcee', units: 'dual',
+  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: 'd19e6a3e', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
@@ -117774,8 +117814,8 @@ wts: {
         { label: 'Gas SG', id: 'wts_SGg', def: '0.65' },
         { label: 'Oil API Gravity', id: 'wts_API', def: '35' },
         { label: 'Choke in service', id: 'wts_ckLeg', def: 'Adjustable choke' },
-        { label: 'Adjustable choke bean', id: 'wts_bean', def: '32/64', text: 'Checked against the gas rate.' },
-        { label: 'Positive (fixed) choke bean', id: 'wts_beanFix', def: '24/64', cat: 'count', text: 'Switch legs to change rate; change it on standby.' },
+        { label: 'Adjustable choke bean', id: 'wts_bean', def: '32/64', text: 'Checked against the gas.' },
+        { label: 'Positive (fixed) choke bean', id: 'wts_beanFix', def: '24/64', cat: 'count', text: 'Applies at once here; in the field change it on standby.' },
         { label: 'Discharge Coef', id: 'wts_Cd', def: '0.85' },
         { label: 'Outlet Temp', id: 'wts_Thtr', def: '{{150|temperature}}', text: 'Heater set point.' },
         { label: 'Efficiency', id: 'wts_htrEff', def: '80 %' },

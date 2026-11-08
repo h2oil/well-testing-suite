@@ -9797,7 +9797,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: '27cbdcee', units: 'dual',
+  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: 'd19e6a3e', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
@@ -9849,8 +9849,8 @@ wts: {
         { label: 'Gas SG', id: 'wts_SGg', def: '0.65' },
         { label: 'Oil API Gravity', id: 'wts_API', def: '35' },
         { label: 'Choke in service', id: 'wts_ckLeg', def: 'Adjustable choke' },
-        { label: 'Adjustable choke bean', id: 'wts_bean', def: '32/64', text: 'Checked against the gas rate.' },
-        { label: 'Positive (fixed) choke bean', id: 'wts_beanFix', def: '24/64', cat: 'count', text: 'Switch legs to change rate; change it on standby.' },
+        { label: 'Adjustable choke bean', id: 'wts_bean', def: '32/64', text: 'Checked against the gas.' },
+        { label: 'Positive (fixed) choke bean', id: 'wts_beanFix', def: '24/64', cat: 'count', text: 'Applies at once here; in the field change it on standby.' },
         { label: 'Discharge Coef', id: 'wts_Cd', def: '0.85' },
         { label: 'Outlet Temp', id: 'wts_Thtr', def: '{{150|temperature}}', text: 'Heater set point.' },
         { label: 'Efficiency', id: 'wts_htrEff', def: '80 %' },

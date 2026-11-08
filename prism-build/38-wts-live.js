@@ -874,7 +874,8 @@ var CSS = [
 // ═══════════════════════════════════════════════════════════════════
 // §D SESSION STATE (survives navigation within the page session, D10)
 // ═══════════════════════════════════════════════════════════════════
-var _sim = null;            // the live sim instance
+var _sim = null, _ctlBase = null;   // _ctlBase: the line-up the run started from (saveCtl fallback)
+                            // _sim: the live sim instance
 var _lastFlowObj = null;    // identity of the last flow handed to the sim (K57: never compare seq/ts)
 var _resetPending = false;  // project Open/New → reset on the next applied flow
 var _alarmMap = {};         // operator lifecycle map (UNACK/ACK/RTN)
@@ -1546,10 +1547,14 @@ function createController(vizEl, mopts) {
             // Only a hand line-up event (CTL_USER_WHAT: not a trip reset, a dump or an automatic change) is the group's own. A hand
             // 'options' / 'auto' change merges only its fields into the saved part (its saved inlets / suction / route / bypass stay:
             // after an auto-divert the live inlets are the automation's); 'inlet', 'suction', 'bypass', 'route' replace the whole
-            // part. A group with no saved part yet takes the live part.
-            if (old && typeof old === 'object') CTL_GROUPS.forEach(function (g) {
+            // part.
+            // A group with no saved part falls back to the line-up the run started from (_ctlBase), never to the live part: the first
+            // event of a run may be an auto-divert, and a later hand 'options' / 'auto' change must not adopt the diverted inlets
+            // (final review). Only an 'inlet' / 'suction' / 'bypass' / 'route' hand change takes the live part as it is.
+            CTL_GROUPS.forEach(function (g) {
                 var own = !!(p && !p.auto && p.eq === g && CTL_USER_WHAT[p.what]);
-                var sv = old[g] && typeof old[g] === 'object' ? old[g] : null;
+                var sv = old && typeof old === 'object' && old[g] && typeof old[g] === 'object' ? old[g]
+                    : (_ctlBase && _ctlBase[g] && typeof _ctlBase[g] === 'object' ? _ctlBase[g] : null);
                 if (!sv) return;
                 if (!own) { c[g] = deepClone(sv); return; }
                 var keys = CTL_MERGE_KEYS[p.what];
@@ -1730,6 +1735,8 @@ function createController(vizEl, mopts) {
         _rigPending = false;
         var rc = ctlRestore(prefs);                // only the groups the operator set by hand (v3.3.4)
         if (rc && typeof _sim.setControls === 'function') { try { _sim.setControls(rc, { initial: true }); } catch (e) {} }
+        // the line-up the run starts from (restored hand parts + engine defaults): the base a group with no saved part falls back to
+        try { _ctlBase = typeof _sim.getControls === 'function' ? deepClone(_sim.getControls()) : null; } catch (e) { _ctlBase = null; }
         _lastFlowObj = flow;
         _resetPending = false;
         _alarmMap = {};

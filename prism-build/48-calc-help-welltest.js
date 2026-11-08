@@ -12,7 +12,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: '27cbdcee', units: 'dual',
+  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: 'd19e6a3e', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
