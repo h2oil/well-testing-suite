@@ -104,10 +104,22 @@
     function _set(k, v) {
         if (typeof G.WTS_lsSet === 'function') return G.WTS_lsSet(k, v) !== false;
         var ls = _ls();
-        try { ls.setItem(k, v); return true; } catch (e) { return false; }
+        try { ls.setItem(k, v); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     // Plain write used mid-switch (no snapshot eviction into the half-swapped store).
-    function _rawSet(ls, k, v) { try { ls.setItem(k, v); return true; } catch (e) { return false; } }
+    // H2 (docs/ACCOUNTS-PLAN.md §5.4): WTS_lsSet(k, v, {raw:true}) is the plain write (throws like setItem, no eviction) that
+    // also fires the host's 'wts:ls-write'.
+    function _rawSet(ls, k, v) {
+        try {
+            if (typeof G.WTS_lsSet === 'function') G.WTS_lsSet(k, v, { raw: true });
+            else ls.setItem(k, v);   /* ls-raw: fallback */
+            return true;
+        } catch (e) { return false; }
+    }
+    function _del(ls, k) {
+        if (typeof G.WTS_lsRemove === 'function') return G.WTS_lsRemove(k) !== false;
+        try { ls.removeItem(k); return true; } catch (e) { return false; }   /* ls-raw: fallback */
+    }
     function _isWellKey(k) {
         var I = _I();
         if (!I) return false;
@@ -328,7 +340,7 @@
         if (ls && pvt && typeof pvt === 'object') {
             var copy = {};
             for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
-            try { ls.setItem('wts_prism_pvt', JSON.stringify(copy)); } catch (e) {}
+            try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy))); } catch (e) {}   /* ls-raw: fallback */
         }
     }
     function _capture() {
@@ -352,7 +364,7 @@
         return { v: 1, savedAt: _nowISO(), keys: keys, modules: mods };
     }
     function _clearActive(ls) {
-        _keys(ls).filter(_isWellKey).forEach(function (k) { try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).filter(_isWellKey).forEach(function (k) { _del(ls, k); });
     }
     // In-memory state back to "no well loaded" (keeps the unit system).
     function _resetMemory() {
@@ -423,7 +435,7 @@
         var cur = _park(reg);
         if (!cur) return { ok: false, error: 'quota', message: _quotaMsg() };
         _cancelAutosave();
-        try { ls.removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(ls, BLOB_PREFIX + id);
         _clearActive(ls);
         _resetMemory();
         var failed = _writeKeys(ls, target.keys);
@@ -432,7 +444,7 @@
             _clearActive(ls);
             if (targetRaw != null) _rawSet(ls, BLOB_PREFIX + id, targetRaw);
             _writeKeys(ls, cur.keys);
-            try { ls.removeItem(BLOB_PREFIX + from); } catch (e) {}
+            _del(ls, BLOB_PREFIX + from);
             _resetMemory();
             _applyModules(cur.modules);
             _after('well-switch', from);
@@ -524,7 +536,7 @@
             if (!sw.ok) return sw;
             reg = _readReg();
         }
-        try { _ls().removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(_ls(), BLOB_PREFIX + id);
         reg.wells = reg.wells.filter(function (w) { return w.id !== id; });
         _writeReg(reg);
         _emit('wts:well-changed', { id: reg.active, list: list() });
@@ -581,7 +593,7 @@
     // ───────────────────────────────────────────────────────────────
     var _loadWarnings = [];
     function _removeWellsKeys(ls) {
-        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) _del(ls, k); });
     }
     function _registerModule() {
         if (!G.WTS_project || typeof G.WTS_project.registerModule !== 'function') return;

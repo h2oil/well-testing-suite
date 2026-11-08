@@ -33,7 +33,7 @@
   function pref(k, v) {
     try {
       if (v === undefined) return G.localStorage ? G.localStorage.getItem(k) : null;
-      if (G.localStorage) G.localStorage.setItem(k, v);
+      if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : G.localStorage.setItem(k, v));   /* ls-raw: fallback */
     } catch (e) { /* storage blocked */ }
     return null;
   }

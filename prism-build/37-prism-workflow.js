@@ -358,7 +358,7 @@
             if (!s || !G.localStorage) return;
             var o = {};
             for (var k in s) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(s, k)) o[k] = s[k];
-            G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(o), { raw: true }) : G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) {}
     }
 
@@ -2544,7 +2544,7 @@
             if (isArr(o.multiRate)) {
                 if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
                 G.PRiSM.multiRate = clone(o.multiRate) || [];
-                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) {}
+                try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate), { raw: true }) : G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate))); } catch (e) {}   /* ls-raw: fallback */
                 try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) {}   // eslint-disable-line no-undef
             }
             if (o.well && typeof o.well === 'object') {

@@ -411,7 +411,7 @@
         if (typeof G.WTS_lsSet === 'function') { try { return G.WTS_lsSet(key, txt) !== false; } catch (e) { return false; } }
         var ls = _ls();
         if (!ls) return false;
-        try { ls.setItem(key, txt); return true; } catch (e) { return false; }
+        try { ls.setItem(key, txt); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
     // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)

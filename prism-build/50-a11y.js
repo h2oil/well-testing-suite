@@ -441,7 +441,7 @@
     function _prefGet() { try { return G.localStorage && G.localStorage.getItem(PREF_KEY) === '1'; } catch (e) { return false; } }
     function decimalComma(on) {
         if (on === undefined) return _prefGet();
-        try { if (on) G.localStorage.setItem(PREF_KEY, '1'); else G.localStorage.removeItem(PREF_KEY); } catch (e) { /* storage blocked */ }
+        try { if (on) (typeof WTS_lsSet === 'function' ? WTS_lsSet(PREF_KEY, '1', { raw: true }) : G.localStorage.setItem(PREF_KEY, '1')); else (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(PREF_KEY) : G.localStorage.removeItem(PREF_KEY)); } catch (e) { /* storage blocked */ }   /* ls-raw: fallback */
         _renderDecimalToggle();
         return !!on;
     }

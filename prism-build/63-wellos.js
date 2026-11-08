@@ -52,7 +52,7 @@ function readUi() {
         } } catch (e) {}
     return u;
 }
-function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
+function writeUi(u) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(UI_KEY, JSON.stringify(u), { raw: true }) : G.localStorage.setItem(UI_KEY, JSON.stringify(u))); } catch (e) {} }   /* ls-raw: fallback */
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
 // pump_running = LCV-201 transfer valve (legacy key); p201_running = the gauge tank pump P-201

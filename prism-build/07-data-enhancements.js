@@ -888,9 +888,10 @@
         var ls = _ls();
         if (!ls || !st.hash) return;
         try {
-            ls.setItem('wts_prism_mapping_' + st.hash, JSON.stringify({
+            var mapTxt = JSON.stringify({
                 v: 2, mapping: st.mapping, units: st.units, ratePhase: st.ratePhase, cleanup: st.cleanup
-            }));
+            });
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mapping_' + st.hash, mapTxt, { raw: true }) : ls.setItem('wts_prism_mapping_' + st.hash, mapTxt));   /* ls-raw: fallback */
         } catch (e) { /* ignore */ }
     }
 
@@ -899,7 +900,7 @@
         var st = _getState();
         st.nameFor = { hash: _fnv(String(text || '')), name: name };
         var ls = _ls();
-        if (ls) { try { ls.setItem('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash })); } catch (e) { /* ignore */ } }
+        if (ls) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash }), { raw: true }) : ls.setItem('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash }))); } catch (e) { /* ignore */ } }   /* ls-raw: fallback */
     }
     function _nameForText(text) {
         var st = _getState();
@@ -925,7 +926,7 @@
             if (raw) { try { o = JSON.parse(raw); } catch (e) { o = {}; } }
             if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
             o.prism_data_paste = String(text == null ? '' : text);
-            ls.setItem('wts_prism', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(o), { raw: true }) : ls.setItem('wts_prism', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) { /* ignore */ }
     }
 
@@ -1224,7 +1225,7 @@
         if (typeof W.PRiSM_loadDemoData === 'function') {
             ds = W.PRiSM_loadDemoData();
         } else if (typeof W.PRiSM_DEFAULT_SAMPLE_CSV === 'string') {
-            try { var ls = _ls(); if (ls) ls.removeItem('wts_prism_sample_suppress'); } catch (e) { /* ignore */ }
+            try { var ls = _ls(); if (ls) (typeof WTS_lsRemove === 'function' ? WTS_lsRemove('wts_prism_sample_suppress') : ls.removeItem('wts_prism_sample_suppress')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
             var ta = _byId('prism_data_paste');
             if (ta) ta.value = W.PRiSM_DEFAULT_SAMPLE_CSV;
             _persistText(W.PRiSM_DEFAULT_SAMPLE_CSV);
@@ -1257,7 +1258,7 @@
         });
         W.PRiSM_dataset = null;
         _resetState();
-        try { var ls = _ls(); if (ls) ls.setItem('wts_prism_sample_suppress', '1'); } catch (e) { /* ignore */ }
+        try { var ls = _ls(); if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_sample_suppress', '1', { raw: true }) : ls.setItem('wts_prism_sample_suppress', '1')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         if (ta) _save('prism', ['prism_data_paste']);
         else _persistText('');
         _renderRateOnlyBanner(null);

@@ -2002,7 +2002,7 @@ function _wireTab(host, m) {
     on('prism_report_goto_fit', function () { _goto(4, 6); });
     var notes = host.querySelector('#prism_report_notes');
     if (notes) notes.oninput = function () {
-        try { var ls = _ls(); if (ls) ls.setItem('wts_prism_report_notes', String(notes.value || '')); } catch (e) {}
+        try { var ls = _ls(); if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_report_notes', String(notes.value || ''), { raw: true }) : ls.setItem('wts_prism_report_notes', String(notes.value || ''))); } catch (e) {}   /* ls-raw: fallback */
     };
 }
 

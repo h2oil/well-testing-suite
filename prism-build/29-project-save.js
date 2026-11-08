@@ -203,14 +203,14 @@
         for (var i = 0; i < keys.length; i++) {
             var k = keys[i];
             if (!_isProjectKey(k) || _isLibraryKey(k) || _isWellsKey(k)) continue;
-            try { ls.removeItem(k); removed.push(k); } catch (e) {}
+            try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(k) : ls.removeItem(k)); removed.push(k); } catch (e) {}   /* ls-raw: fallback */
         }
         var keep = {}, any = false;
         for (var j = 0; j < PREPARER_FIELDS.length; j++) {
             var f = PREPARER_FIELDS[j];
             if (ci[f]) { keep[f] = ci[f]; any = true; }
         }
-        if (any) { try { ls.setItem('h2oil_client_info', JSON.stringify(keep)); } catch (e) {} }
+        if (any) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('h2oil_client_info', JSON.stringify(keep), { raw: true }) : ls.setItem('h2oil_client_info', JSON.stringify(keep))); } catch (e) {} }   /* ls-raw: fallback */
         return removed;
     }
 
@@ -522,7 +522,7 @@
             try {
                 var copy = {};
                 for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
-                ls.setItem('wts_prism_pvt', JSON.stringify(copy));
+                (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy)));   /* ls-raw: fallback */
             } catch (e) {}
         }
         _emitWin('prism:well-changed', { source: source });
@@ -733,7 +733,7 @@
                     if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
                     if (!_isProjectKey(k) || _isWellsKey(k) || typeof keys[k] !== 'string') continue;
                     if (_isLibraryKey(k) && ls.getItem(k) != null) continue;  // keep local library
-                    try { ls.setItem(k, keys[k]); }
+                    try { ls.setItem(k, keys[k]); }   /* ls-raw: storage.write (load path; wts:project-loaded follows) */
                     catch (e) { _warn('[WTS_project] storage: could not write ' + k, e); }
                 }
             }

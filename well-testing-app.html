@@ -922,8 +922,8 @@ function __evictOldestReportSnapshot(keepSnap) {
     const keys = Object.keys(snaps).filter(k => k !== keepSnap).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
     if(!keys.length) return false;
     delete snaps[keys[0]];
-    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); }
-    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); } catch(_) {} }
+    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); __lsNotify('wts_report_snapshots', false); }   /* ls-raw: H1 eviction inside __lsSet */
+    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); __lsNotify('wts_report_snapshots', true); } catch(_) {} }   /* ls-raw: H1 eviction */
     return true;
 }
 let __lsFullWarned = false;
@@ -942,9 +942,25 @@ function __lsFullNotice(key, err) {
         setTimeout(() => t.remove(), 8000);
     } catch(_) {}
 }
+// H1 (docs/ACCOUNTS-PLAN.md §5.4): every successful write / remove through these helpers fires document 'wts:ls-write'
+// {key} ({key, removed:true} for a remove) — plain data; nothing listens in the local app.
+function __lsNotify(key, removed) {
+    try { document.dispatchEvent(new CustomEvent('wts:ls-write', { detail: removed ? { key: String(key), removed: true } : { key: String(key) } })); } catch(_) {}
+}
+// Plain write: throws like setItem (no eviction, no notice) and fires 'wts:ls-write' on success — for sites that were raw.
+function __lsSetRaw(key, value) {
+    localStorage.setItem(key, value);   /* ls-raw: H1 plain write */
+    __lsNotify(key, false);
+    return true;
+}
+function __lsRemove(key) {
+    try { localStorage.removeItem(key); } catch(e) { return false; }   /* ls-raw: H1 */
+    __lsNotify(key, true);
+    return true;
+}
 function __lsSet(key, value, keepSnap) {
     for(let i = 0; i < 200; i++) {
-        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); return true; }
+        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); __lsNotify(key, false); return true; }   /* ls-raw: H1 */
         catch(e) {
             if(__isQuotaError(e) && __evictOldestReportSnapshot(keepSnap)) continue;
             __lsFullNotice(key, e);
@@ -954,7 +970,10 @@ function __lsSet(key, value, keepSnap) {
     return false;
 }
 // Shared with the injected modules (PRiSM, project files): WTS_lsSet(key, value) → boolean.
-window.WTS_lsSet = (key, value) => __lsSet(key, value);
+// WTS_lsSet(key, value, {raw:true}) is the plain write (throws like setItem; no eviction) — used where a raw setItem was.
+window.WTS_lsSet = (key, value, opts) => (opts && opts.raw) ? __lsSetRaw(key, value) : __lsSet(key, value);
+// WTS_lsRemove(key) → boolean (false only when the remove threw); fires 'wts:ls-write' {key, removed:true}.
+window.WTS_lsRemove = (key) => __lsRemove(key);
 // Track which calculator key the current page belongs to so the global
 // auto-save listener knows where to write changes.
 let __currentCalcKey = null;
@@ -1540,7 +1559,7 @@ function __uiList(k) {
         return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.length > 0 && x.length <= 64) : [];
     } catch(e) { return []; }
 }
-function __uiSetList(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch(e) {} }
+function __uiSetList(k, a) { try { __lsSetRaw(k, JSON.stringify(a)); } catch(e) {} }
 function __uiTokens(q) { return String(q == null ? '' : q).toLowerCase().split(/\s+/).filter(Boolean); }
 function __uiMatch(tokens, hay) { hay = String(hay || '').toLowerCase(); return tokens.every(t => hay.indexOf(t) !== -1); }
 function __uiRecordRecent(p) {
@@ -1599,7 +1618,7 @@ function __hubRemember(h, p) {
     const o = __hubLast();
     if(o[h] === p) return;
     o[h] = p;
-    try { localStorage.setItem(__UI_HUB, JSON.stringify(o)); } catch(e) {}
+    try { __lsSetRaw(__UI_HUB, JSON.stringify(o)); } catch(e) {}
 }
 function __hubOpen(h) { const t = __hubTarget(h); if(t) nav(t); }
 function __sidebarFilter() {
@@ -1637,7 +1656,7 @@ let __navShownFor = null;      // page whose group was last revealed
 function __navOpenRead() {
     try { const v = localStorage.getItem(__UI_NAVO); return typeof v === 'string' && v.length <= 64 ? v : null; } catch(e) { return null; }
 }
-function __navOpenStore(k) { try { localStorage.setItem(__UI_NAVO, k); } catch(e) {} }
+function __navOpenStore(k) { try { __lsSetRaw(__UI_NAVO, k); } catch(e) {} }
 // Collapse every group but the open one. A remembered group that no longer exists (renamed,
 // or a plug-in group not mounted yet) falls back to the active page's group.
 function __sidebarApply() {
@@ -2385,7 +2404,7 @@ window.clearClientLogo = function() {
 };
 
 window.clearClientInfo = function() {
-    localStorage.removeItem('h2oil_client_info');
+    __lsRemove('h2oil_client_info');
     nav('clientinfo');
 };
 
@@ -7432,7 +7451,7 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
         const raw = localStorage.getItem('wts_flare');
         if (raw) {
             const o = JSON.parse(raw);
-            if (o && 'fl_V' in o) { delete o.fl_V; localStorage.setItem('wts_flare', JSON.stringify(o)); }
+            if (o && 'fl_V' in o) { delete o.fl_V; __lsSetRaw('wts_flare', JSON.stringify(o)); }
         }
     } catch(_) {}
 
@@ -18154,10 +18173,10 @@ if (typeof renderPRiSM === "function" && !renderPRiSM.__h2oilMigrated) {
                         pta: pta ? JSON.parse(pta) : null,
                         migratedAt: new Date().toISOString()
                     };
-                    localStorage.setItem("wts_prism", JSON.stringify(existing));
+                    __lsSetRaw("wts_prism", JSON.stringify(existing));
                     console.log("[PRiSM] Migrated legacy DCA/PTA inputs into wts_prism._legacy");
                 }
-                localStorage.setItem("wts_prism_migrated", "1");
+                __lsSetRaw("wts_prism_migrated", "1");
             }
         } catch (e) { console.warn("[PRiSM] migration failed:", e); }
         return __origRenderPRiSM(body);

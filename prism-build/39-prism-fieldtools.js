@@ -548,7 +548,7 @@
     function persistMultiRate(rows) {
         try {
             var ls = G.localStorage || (typeof localStorage !== 'undefined' ? localStorage : null);
-            if (ls) ls.setItem('wts_prism_mrate', JSON.stringify(rows || []));
+            if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows || []), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows || [])));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
 
