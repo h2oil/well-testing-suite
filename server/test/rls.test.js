@@ -23,6 +23,7 @@ const DEFINERS = {
   // WP-O additions (040-oauth.sql)
   oauth_attempt_drop: 'wts_api', oauth_attempt_close: 'wts_api', oauth_exchange_hit: 'wts_api', oauth_breaker_open: 'wts_api',
   oauth_breaker_note: 'wts_api', session_revoke_presented: 'wts_api', support_retire_identities: 'wts_support',
+  oauth_attempt_claim: 'wts_api', oauth_attempt_release: 'wts_api', oauth_finish_fail: 'wts_api', oidc_fetch_claim: 'wts_api',
 };
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 

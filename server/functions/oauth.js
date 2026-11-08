@@ -5,12 +5,16 @@
 //
 //   handlers                       the production handlers (global fetch, pinned configuration)
 //   createOauthHandlers(deps)      deps: {fetch, override:{google?, linkedin?} (test / dev endpoints; refused on the production
-//                                  host), keyCache, breaker} — the server tests pass the fake provider here
+//                                  host), keyCache, breaker, delay(ms) → Promise (the soft delay; tests pass a recorder)} — the
+//                                  server tests pass the fake provider here
 //
 // Rules kept here (see the plan for each): the attempt cookie __Host-wts_oa (Lax to the callback, re-issued Strict by finish
 // for a code / e-mail / consent step); the callback reads only that cookie, burns the attempt BEFORE the exchange, never
 // reads or sets the session cookie and always ends in the constant 303 (core/app.js); provider errors through the allow-list
-// (the description is never read); per-prefix ceilings (20 live attempts, 30 exchanges per 10 min); the provider-side breaker;
+// (the description is never read); per-prefix ceilings (20 live attempts, 30 exchanges per 10 min; in production a request
+// whose client address cannot be resolved is refused, elsewhere it shares one 'unknown' bucket); more than 10 failed finishes
+// per prefix per 10 min → each further failure answers after a soft delay; one finish per attempt at a time (a claim); the
+// provider-side breaker;
 // the linking rules 1–8 of §4.12; stepup_at is set only by an oauth_verify code (rules 4 and 5, cancel-deletion), never by a
 // provider sign-in and never by a link_confirm code; a sign-in finish revokes the session id the request carried; unlink
 // revokes every session the identity created. No code, state, token, claim or e-mail is ever logged.
@@ -26,6 +30,7 @@ const { ApiError, fail } = require('../core/errors');
 const { createOauthStore } = require('../core/oauth-store');
 
 const MIN = 60 * 1000;
+const SOFT_DELAY_MS = 2000;
 
 function createOauthHandlers(deps) {
   deps = deps || {};
@@ -64,11 +69,20 @@ function createOauthHandlers(deps) {
     return v && /^[A-Za-z0-9_-]{40,64}$/.test(v) ? v : null;
   };
   const AAD = (id) => 'oauth-attempt|' + id;
+  const delay = deps.delay || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  // production: no client address → no per-prefix bucket to count in → refuse (and say so in the log, the owner's alert)
+  const noPrefix = (ctx) => !!ctx.config.production && !ctx.ipPrefix;
   function needDb(ctx) { if (!ctx.db) throw new ApiError('not_implemented'); return store(ctx); }
 
   // ── finish helpers ───────────────────────────────────────────────────────────────────────────────────────────────
   async function end(ctx, st, a) { await st.attempts.close(a.id); ctx.setCookie(C.COOKIES.attemptLax, null); }
-  async function endFail(ctx, st, a, code, extra) { await end(ctx, st, a); fail(code, extra); }
+  // a failed finish counts towards the soft limit of §8.3 (10 per prefix per 10 min); beyond it the answer is delayed
+  async function noteFail(ctx, st) {
+    let over = false;
+    try { over = await st.finishFail(ctx.ipPrefix); } catch (e) { over = false; }
+    if (over) { ctx.log.warn('oauth finish: failed-finish soft limit for a prefix'); await delay(SOFT_DELAY_MS); }
+  }
+  async function endFail(ctx, st, a, code, extra) { await end(ctx, st, a); await noteFail(ctx, st); fail(code, extra); }
   // next email | code | consent: new cookie value (Strict, 20 min), expiry = live code + 5 min, ≤ 30 min from start
   async function advance(ctx, st, a, oldHash, state, next, body, codeExpiresAt) {
     const v = O.randomToken(32);
@@ -108,12 +122,22 @@ function createOauthHandlers(deps) {
     await S1.audit(ctx, tx, userId, 'identity_link', { provider: a.provider, via, identity_id: id, subject_bidx: S1.bidx(ctx.config, a.provider + '|' + out.sub).toString('hex') });
     return id;
   }
-  // signs `userId` in through identity `identityId` (existing or `link` = {via} to create it first)
+  // signs `userId` in through identity `identityId` (existing or `link` = {via} to create it first). o.create = {email}
+  // creates the account first, IN THE SAME transaction (userId is then ignored): a failed link leaves no account behind.
   async function signIn(ctx, st, a, state, userId, o) {
     const out = state.out;
     let res = null; let linkedNotice = null; let email = null; let newDevice = false;
+    const run = (fn) => (o.create
+      ? ctx.db.anon(async (tx) => {
+        const uid = await S1.createUserIn(ctx, tx, { email: o.create.email, method: a.provider });
+        if (!uid) throw new ApiError('oauth_state');                        // the address was taken meanwhile
+        await tx`select set_config('app.user_id', ${uid}, true)`;
+        await S1.audit(ctx, tx, uid, 'signup', { method: a.provider });
+        return fn(tx, uid);
+      })
+      : ctx.db.asUser(userId, (tx) => fn(tx, userId)));
     try {
-      res = await ctx.db.asUser(userId, async (tx) => {
+      res = await run(async (tx, userId) => {
         let identityId = o.identityId;
         if (o.link) { identityId = await linkIn(ctx, tx, st, userId, a, out, o.link); linkedNotice = a.provider; }
         const acc = await S1.userEmail(tx, ctx.config, userId);
@@ -179,6 +203,7 @@ function createOauthHandlers(deps) {
         if (sw === 'signin') fail('provider_off', { provider: p });
         bound = await S1.requireSession(ctx, { stepup: true });        // the only step-up check of a link (§3.3)
       }
+      if (noPrefix(ctx)) { ctx.log.warn('oauth start: no client address (check WTS_CLIENT_IP_HEADER)'); fail('provider_off', { provider: p }); }
       const cfg = providerConfig(ctx, p);
       const fresh = !!(b.publicDevice || b.sharedBrowser);
       if (fresh && !cfg.freshLogin) fail('oauth_failed', { reason: 'reauth_stale' });
@@ -217,6 +242,11 @@ function createOauthHandlers(deps) {
       }
       if (cfg.callbackIss && q.iss !== cfg.issuers[0]) { await put({ fail: 'provider' }); return { status: 303 }; }
       if (typeof q.code !== 'string' || !q.code || q.code.length > 2048) { await put({ fail: 'provider' }); return { status: 303 }; }
+      if (noPrefix(ctx)) {
+        ctx.log.warn('oauth callback: no client address (check WTS_CLIENT_IP_HEADER)');
+        await put({ fail: 'provider' });
+        return { status: 303 };
+      }
       if (!(await st.exchangeHit(ctx.ipPrefix))) {
         ctx.log.warn('oauth callback: exchange ceiling for a prefix');
         await put({ fail: 'provider' });
@@ -249,124 +279,132 @@ function createOauthHandlers(deps) {
       const presented = ctx.cookies[C.COOKIES.session.name];
       const a = await st.attempts.finish(oldHash, presented ? S1.sidHash(presented) : null);
       if (!a) { ctx.setCookie(C.COOKIES.attemptLax, null); fail('oauth_state'); }
-      const state = S1.openJson(ctx.config, a.result_enc, AAD(a.id));
-      if (!state || !state.out) await endFail(ctx, st, a, 'oauth_state');
-      const out = state.out; const p = a.provider;
-      if (out.fail) await endFail(ctx, st, a, 'oauth_failed', { reason: out.fail });
-      let linkSession = null;
-      if (a.purpose === 'link') {
-        linkSession = await S1.resolveSession(ctx);
-        if (!linkSession || linkSession.userId !== a.bound_user) await endFail(ctx, st, a, 'oauth_state');
-      }
-      const b = ctx.body || {};
-      const bodyKeys = ['email', 'code', 'consent'].filter((k) => b[k] !== undefined);
-
-      // ── later steps ──
-      if (b.email !== undefined) {
-        if (state.step !== 'email') fail('oauth_state');
-        const e = V.normEmail(b.email);
-        if (!e) fail('bad_request', { field: 'email' });
-        state.pending = { email: e, reason: 'verify' };
-        const c = await S1.issueCode(ctx, { email: e, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p } });
-        return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(e), reason: 'verify' }, c.expiresAt);   // uniform: always next code
-      }
-      if (b.code !== undefined) {
-        if (state.step !== 'code' || !state.pending) fail('oauth_state');
-        const pend = state.pending;
-        const link = pend.reason === 'link_confirm';
-        const ok = await S1.checkCode(ctx, { email: pend.email, purpose: link ? 'link_confirm' : 'oauth_verify', code: b.code,
-          bind: link ? { attempt: a.id, user: a.bound_user, sid: a.bound_sid } : { attempt: a.id } });
-        if (!ok) fail('invalid_or_expired');
-        if (link) {
-          // rule 2: linked after the link-confirm code; the code does not set stepup_at
-          let linked;
-          try {
-            linked = await ctx.db.asUser(a.bound_user, async (tx) => {
-              const id = await linkIn(ctx, tx, st, a.bound_user, a, out, 'account_page');
-              const acc = await S1.userEmail(tx, ctx.config, a.bound_user);
-              return { brief: await identityBrief(ctx, tx, st, a.bound_user, id), email: acc.email };
-            });
-          } catch (e) { if (e instanceof ApiError) await endFail(ctx, st, a, e.code); throw e; }
-          await end(ctx, st, a);
-          await S1.sendMail(ctx, linked.email, 'notice_identity_linked', { provider: p });
-          return { status: 200, body: { next: 'done', linked: linked.brief } };
-        }
-        if (pend.reason === 'cancel_deletion') {
-          // the code to the account's own address: same proof as a code sign-in (stepup_at = now); the page then offers
-          // Cancel deletion (POST /account/delete/cancel)
-          const known = await st.identities.bySubject(p, S1.bidx(ctx.config, p + '|' + out.sub));
-          if (known && known.userId === pend.userId) return signIn(ctx, st, a, state, pend.userId, { identityId: known.identityId, stepup: true });
-          return signIn(ctx, st, a, state, pend.userId, { link: 'code_confirm', stepup: true });
-        }
-        const acc = await S1.userByEmail(ctx, pend.email);
-        if (acc) {
-          // rules 4 and 5: the code proved the address an account uses → link and sign in (stepup_at = now)
-          if (acc.status === 'locked') await endFail(ctx, st, a, 'locked');
-          if (acc.status === 'deleting') return statusGate(ctx, st, a, oldHash, state, acc.userId, 'deleting');
-          return signIn(ctx, st, a, state, acc.userId, { link: 'code_confirm', stepup: true });
-        }
-        const why = signupRefusal(ctx, await S1.allowlistHas(ctx, pend.email));
-        if (why) await endFail(ctx, st, a, why);
-        if ((await providerState(ctx, p)) === 'signin') await endFail(ctx, st, a, 'provider_off', { provider: p });
-        state.pending = { email: pend.email, reason: 'signup', proved: true };
-        return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(pend.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
-      }
-      if (b.consent !== undefined) {
-        if (state.step !== 'consent' || !state.pending) fail('oauth_state');
-        if (b.consent.terms !== ctx.config.terms || b.consent.privacy !== ctx.config.privacy) fail('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
-        const email = state.pending.email;
-        const why = signupRefusal(ctx, await S1.allowlistHas(ctx, email));
-        if (why) await endFail(ctx, st, a, why);
-        const uid = await S1.createUser(ctx, { email, method: p });
-        if (!uid) await endFail(ctx, st, a, 'oauth_state');               // the address was taken meanwhile
-        await ctx.db.asUser(uid, (tx) => S1.audit(ctx, tx, uid, 'signup', { method: p }));
-        return signIn(ctx, st, a, state, uid, { link: 'signup', stepup: !!state.pending.proved, first: true });
-      }
-      if (state.step || bodyKeys.length) fail('oauth_state');
-
-      // ── first call: the linking rules of §4.12 ──
-      const subjectBidx = S1.bidx(ctx.config, p + '|' + out.sub);
-      const known = await st.identities.bySubject(p, subjectBidx);
-      if (a.purpose === 'link') {
-        if (known) {
-          if (known.userId !== a.bound_user) await endFail(ctx, st, a, 'identity_in_use');
-          const brief = await ctx.db.asUser(a.bound_user, (tx) => identityBrief(ctx, tx, st, a.bound_user, known.identityId));
-          await end(ctx, st, a);
-          return { status: 200, body: { next: 'done', linked: brief } };
-        }
-        const info = await ctx.db.asUser(a.bound_user, async (tx) => ({ acc: await S1.userEmail(tx, ctx.config, a.bound_user),
-          has: (await st.identities.list(tx, a.bound_user)).some((i) => i.provider === p) }));
-        if (info.has) await endFail(ctx, st, a, 'provider_linked');
-        state.pending = { email: info.acc.email, reason: 'link_confirm' };
-        const c = await S1.issueCode(ctx, { email: info.acc.email, purpose: 'link_confirm', bind: { attempt: a.id, user: a.bound_user, sid: a.bound_sid },
-          template: 'code_link_confirm', params: { provider: p, providerEmailMasked: out.email ? V.maskEmail(out.email) : '(none)' } });
-        return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(info.acc.email), reason: 'link_confirm' }, c.expiresAt);
-      }
-      if (known) {                                                         // rule 1
-        const g = await statusGate(ctx, st, a, oldHash, state, known.userId, known.status); if (g) return g;
-        return signIn(ctx, st, a, state, known.userId, { identityId: known.identityId, stepup: false });
-      }
-      const cfg = providerConfig(ctx, p);
-      if (O.emailTrusted(cfg, out)) {
-        const acc = await S1.userByEmail(ctx, out.email);
-        if (acc) {                                                         // rule 4: never linked without the code
-          const g = await statusGate(ctx, st, a, oldHash, state, acc.userId, acc.status); if (g) return g;
-          state.pending = { email: out.email, reason: 'link_existing' };
-          const c = await S1.issueCode(ctx, { email: out.email, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p } });
-          return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(out.email), reason: 'link_existing' }, c.expiresAt);
-        }
-        // rule 3
-        if ((await providerState(ctx, p)) === 'signin') await endFail(ctx, st, a, 'provider_off', { provider: p });
-        const why = signupRefusal(ctx, await S1.allowlistHas(ctx, out.email));
-        if (why) await endFail(ctx, st, a, why);
-        state.pending = { email: out.email, reason: 'signup', proved: false };
-        return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(out.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
-      }
-      // rule 5: missing, unverified or unmanaged → ask for an address, then our code
-      const reason = !out.email ? 'missing' : (!out.emailVerified ? 'unverified' : 'unmanaged');
-      return advance(ctx, st, a, oldHash, state, 'email', { reason, emailPrefill: out.email || null });
+      // one finish per attempt at a time: a second call with the same cookie while one runs is refused (its cookie is left
+      // alone — the running call answers for the browser)
+      if (!(await st.attempts.claim(a.id))) fail('oauth_state');
+      try { return await finishStep(ctx, st, a, oldHash); }
+      finally { try { await st.attempts.release(a.id); } catch (e) { /* release is best effort; the claim expires in 30 s */ } }
     },
+  };
 
+  // the body of POST /auth/oauth/finish, run while this request holds the attempt's claim
+  async function finishStep(ctx, st, a, oldHash) {
+    const state = S1.openJson(ctx.config, a.result_enc, AAD(a.id));
+    if (!state || !state.out) await endFail(ctx, st, a, 'oauth_state');
+    const out = state.out; const p = a.provider;
+    if (out.fail) await endFail(ctx, st, a, 'oauth_failed', { reason: out.fail });
+    let linkSession = null;
+    if (a.purpose === 'link') {
+      linkSession = await S1.resolveSession(ctx);
+      if (!linkSession || linkSession.userId !== a.bound_user) await endFail(ctx, st, a, 'oauth_state');
+    }
+    const b = ctx.body || {};
+    const bodyKeys = ['email', 'code', 'consent'].filter((k) => b[k] !== undefined);
+
+    // ── later steps ──
+    if (b.email !== undefined) {
+      if (state.step !== 'email') fail('oauth_state');
+      const e = V.normEmail(b.email);
+      if (!e) fail('bad_request', { field: 'email' });
+      state.pending = { email: e, reason: 'verify' };
+      const c = await S1.issueCode(ctx, { email: e, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p } });
+      return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(e), reason: 'verify' }, c.expiresAt);   // uniform: always next code
+    }
+    if (b.code !== undefined) {
+      if (state.step !== 'code' || !state.pending) fail('oauth_state');
+      const pend = state.pending;
+      const link = pend.reason === 'link_confirm';
+      const ok = await S1.checkCode(ctx, { email: pend.email, purpose: link ? 'link_confirm' : 'oauth_verify', code: b.code,
+        bind: link ? { attempt: a.id, user: a.bound_user, sid: a.bound_sid } : { attempt: a.id } });
+      if (!ok) { await noteFail(ctx, st); fail('invalid_or_expired'); }
+      if (link) {
+        // rule 2: linked after the link-confirm code; the code does not set stepup_at
+        let linked;
+        try {
+          linked = await ctx.db.asUser(a.bound_user, async (tx) => {
+            const id = await linkIn(ctx, tx, st, a.bound_user, a, out, 'account_page');
+            const acc = await S1.userEmail(tx, ctx.config, a.bound_user);
+            return { brief: await identityBrief(ctx, tx, st, a.bound_user, id), email: acc.email };
+          });
+        } catch (e) { if (e instanceof ApiError) await endFail(ctx, st, a, e.code); throw e; }
+        await end(ctx, st, a);
+        await S1.sendMail(ctx, linked.email, 'notice_identity_linked', { provider: p });
+        return { status: 200, body: { next: 'done', linked: linked.brief } };
+      }
+      if (pend.reason === 'cancel_deletion') {
+        // the code to the account's own address: same proof as a code sign-in (stepup_at = now); the page then offers
+        // Cancel deletion (POST /account/delete/cancel)
+        const known = await st.identities.bySubject(p, S1.bidx(ctx.config, p + '|' + out.sub));
+        if (known && known.userId === pend.userId) return signIn(ctx, st, a, state, pend.userId, { identityId: known.identityId, stepup: true });
+        return signIn(ctx, st, a, state, pend.userId, { link: 'code_confirm', stepup: true });
+      }
+      const acc = await S1.userByEmail(ctx, pend.email);
+      if (acc) {
+        // rules 4 and 5: the code proved the address an account uses → link and sign in (stepup_at = now)
+        if (acc.status === 'locked') await endFail(ctx, st, a, 'locked');
+        if (acc.status === 'deleting') return statusGate(ctx, st, a, oldHash, state, acc.userId, 'deleting');
+        return signIn(ctx, st, a, state, acc.userId, { link: 'code_confirm', stepup: true });
+      }
+      const why = signupRefusal(ctx, await S1.allowlistHas(ctx, pend.email));
+      if (why) await endFail(ctx, st, a, why);
+      if ((await providerState(ctx, p)) === 'signin') await endFail(ctx, st, a, 'provider_off', { provider: p });
+      state.pending = { email: pend.email, reason: 'signup', proved: true };
+      return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(pend.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
+    }
+    if (b.consent !== undefined) {
+      if (state.step !== 'consent' || !state.pending) fail('oauth_state');
+      if (b.consent.terms !== ctx.config.terms || b.consent.privacy !== ctx.config.privacy) fail('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+      const email = state.pending.email;
+      const why = signupRefusal(ctx, await S1.allowlistHas(ctx, email));
+      if (why) await endFail(ctx, st, a, why);
+      return signIn(ctx, st, a, state, null, { create: { email }, link: 'signup', stepup: !!state.pending.proved, first: true });
+    }
+    if (state.step || bodyKeys.length) fail('oauth_state');
+
+    // ── first call: the linking rules of §4.12 ──
+    const subjectBidx = S1.bidx(ctx.config, p + '|' + out.sub);
+    const known = await st.identities.bySubject(p, subjectBidx);
+    if (a.purpose === 'link') {
+      if (known) {
+        if (known.userId !== a.bound_user) await endFail(ctx, st, a, 'identity_in_use');
+        const brief = await ctx.db.asUser(a.bound_user, (tx) => identityBrief(ctx, tx, st, a.bound_user, known.identityId));
+        await end(ctx, st, a);
+        return { status: 200, body: { next: 'done', linked: brief } };
+      }
+      const info = await ctx.db.asUser(a.bound_user, async (tx) => ({ acc: await S1.userEmail(tx, ctx.config, a.bound_user),
+        has: (await st.identities.list(tx, a.bound_user)).some((i) => i.provider === p) }));
+      if (info.has) await endFail(ctx, st, a, 'provider_linked');
+      state.pending = { email: info.acc.email, reason: 'link_confirm' };
+      const c = await S1.issueCode(ctx, { email: info.acc.email, purpose: 'link_confirm', bind: { attempt: a.id, user: a.bound_user, sid: a.bound_sid },
+        template: 'code_link_confirm', params: { provider: p, providerEmailMasked: out.email ? V.maskEmail(out.email) : '(none)' } });
+      return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(info.acc.email), reason: 'link_confirm' }, c.expiresAt);
+    }
+    if (known) {                                                         // rule 1
+      const g = await statusGate(ctx, st, a, oldHash, state, known.userId, known.status); if (g) return g;
+      return signIn(ctx, st, a, state, known.userId, { identityId: known.identityId, stepup: false });
+    }
+    const cfg = providerConfig(ctx, p);
+    if (O.emailTrusted(cfg, out)) {
+      const acc = await S1.userByEmail(ctx, out.email);
+      if (acc) {                                                         // rule 4: never linked without the code
+        const g = await statusGate(ctx, st, a, oldHash, state, acc.userId, acc.status); if (g) return g;
+        state.pending = { email: out.email, reason: 'link_existing' };
+        const c = await S1.issueCode(ctx, { email: out.email, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p } });
+        return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(out.email), reason: 'link_existing' }, c.expiresAt);
+      }
+      // rule 3
+      if ((await providerState(ctx, p)) === 'signin') await endFail(ctx, st, a, 'provider_off', { provider: p });
+      const why = signupRefusal(ctx, await S1.allowlistHas(ctx, out.email));
+      if (why) await endFail(ctx, st, a, why);
+      state.pending = { email: out.email, reason: 'signup', proved: false };
+      return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(out.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
+    }
+    // rule 5: missing, unverified or unmanaged → ask for an address, then our code
+    const reason = !out.email ? 'missing' : (!out.emailVerified ? 'unverified' : 'unmanaged');
+    return advance(ctx, st, a, oldHash, state, 'email', { reason, emailPrefill: out.email || null });
+  }
+
+  Object.assign(handlers, {
     async methods(ctx) {
       const st = needDb(ctx);
       const s = await S1.requireSession(ctx);
@@ -387,14 +425,14 @@ function createOauthHandlers(deps) {
         if (remaining < 1) throw new ApiError('last_method');
         const n = await st.identities.unlink(tx, i.id);
         if (n === null) throw new ApiError('not_found');
-        await S1.audit(ctx, tx, s.userId, 'identity_unlink', { provider: i.provider, identity_id: i.id });
+        await S1.audit(ctx, tx, s.userId, 'identity_unlink', { provider: i.provider, identity_id: i.id, subject_bidx: Buffer.from(i.subject_bidx).toString('hex') });
         const acc = await S1.userEmail(tx, ctx.config, s.userId);
         return { n, provider: i.provider, email: acc.email, methods: await methodsOf(ctx, tx, st, s.userId) };
       });
       await S1.sendMail(ctx, r.email, 'notice_identity_unlinked', { provider: r.provider });
       return { status: 200, body: { ok: true, methods: r.methods, sessionsRevoked: r.n } };
     },
-  };
+  });
 
   async function methodsOf(ctx, tx, st, userId) {
     const acc = await S1.userEmail(tx, ctx.config, userId);

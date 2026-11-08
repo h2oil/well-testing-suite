@@ -12,7 +12,8 @@
 //     op.token(form)         → {status, json}: grant_type, client_id + client_secret, redirect_uri, single-use code ≤ 10 min,
 //                            PKCE S256 (Google always; LinkedIn when op.enforcePkce) → {id_token, access_token, …}
 //     op.fetch(url, init)    a fetch for the token and JWKS endpoints (Response-like), for code that takes a fetch seam
-//     op.setFault(mode|null) one of FAULTS (applies to every following token until cleared)
+//     op.setFault(mode|null) one of FAULTS (applies to every following token until cleared); 'jwks_slow' instead makes the
+//                            signing-key endpoint hang until the caller's AbortSignal fires (or op.slowMs, default 30 s)
 //     op.sign(claims, {alg, kid, key}) → a compact JWT (also used to forge tokens in tests)
 //     op.rotateKey()         new signing key and kid (the old kid disappears from the JWKS)
 //     op.subjectFor(key)     the subject this provider gives a user key (LinkedIn: pairwise per client id)
@@ -26,7 +27,8 @@
 const crypto = require('crypto');
 
 const FAULTS = ['iss', 'aud', 'aud_extra', 'azp', 'nonce', 'no_nonce', 'alg_none', 'hs256', 'unknown_kid', 'expired', 'future_iat',
-  'stale_iat', 'no_email', 'ev_missing', 'ev_string', 'ev_false', 'no_auth_time', 'old_auth_time', 'token_5xx', 'token_400', 'bad_sig'];
+  'stale_iat', 'no_email', 'ev_missing', 'ev_string', 'ev_false', 'no_auth_time', 'old_auth_time', 'token_5xx', 'token_400', 'bad_sig',
+  'jwks_slow'];
 const CANCEL = { google: 'access_denied', linkedin: 'user_cancelled_login' };
 
 let SHARED_KEY = null;
@@ -56,7 +58,7 @@ function createFakeOidc(o) {
   const calls = { authorize: 0, token: 0, jwks: 0 };
   const issuer = provider === 'google' ? host : host + '/oauth';
   const op = {
-    provider, issuer, clientId, clientSecret, redirectUri, calls,
+    provider, issuer, clientId, clientSecret, redirectUri, calls, slowMs: 30000,
     authorizationEndpoint: host + '/authorize', tokenEndpoint: host + '/token', jwksUri: host + '/jwks',
     enforcePkce: provider === 'google' || !!o.enforcePkce,
     returnsNonce: o.returnsNonce !== false,
@@ -172,6 +174,18 @@ function createFakeOidc(o) {
     async fetch(url, init) {
       init = init || {};
       const resp = (status, body) => ({ status, ok: status >= 200 && status < 300, headers: { get: (n) => (/content-type/i.test(n) ? 'application/json' : (/cache-control/i.test(n) ? 'public, max-age=3600' : null)) }, json: async () => body, text: async () => JSON.stringify(body) });
+      if (url === op.jwksUri && fault === 'jwks_slow') {
+        // a slow signing-key endpoint: answers only after op.slowMs, or fails when the caller gives up (AbortSignal)
+        return new Promise((resolve, reject) => {
+          const tm = setTimeout(() => resolve(resp(200, op.jwks())), op.slowMs);   // kept referenced: the caller's own timeout
+                                                                                   // timer is unreferenced
+          const sig = init.signal;
+          if (sig) {
+            const stop = () => { clearTimeout(tm); reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })); };
+            if (sig.aborted) stop(); else sig.addEventListener('abort', stop, { once: true });
+          }
+        });
+      }
       if (url === op.jwksUri) return resp(200, op.jwks());
       if (url === op.tokenEndpoint && String(init.method || 'GET').toUpperCase() === 'POST') {
         const form = Object.fromEntries(new URLSearchParams(typeof init.body === 'string' ? init.body : String(init.body || '')));

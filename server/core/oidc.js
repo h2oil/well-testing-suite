@@ -17,7 +17,9 @@
 //                                              The access token (and any refresh token) is dropped here.
 //   createKeyCache({fetch, now, store, log, refetchMs}) → {getKey(cfg, kid) → {key|null, providerFailure}, clear()}
 //                                              memory + the `oidc_keys` store (definer functions); an unknown kid causes
-//                                              at most ONE JWKS fetch per provider per 5 minutes (§4.11)
+//                                              at most ONE JWKS fetch per provider per 5 minutes (§4.11): in memory per
+//                                              instance, and across instances through store.claimFetch(provider) (a
+//                                              5-minute window in the database) when the store has it
 //   verifyIdToken(token, {cfg, clientId, nonce, freshLogin, attemptCreatedAt, now, getKey})
 //                                            → {ok:true, claims:{iss, sub, email, emailVerified, hd, authTime}}
 //                                            | {ok:false, reason:'token'|'reauth_stale', providerFailure?}
@@ -180,6 +182,11 @@ function createKeyCache(o) {
       }
       const last = lastFetch.get(cfg.provider);
       if (last !== undefined && now() - last < refetchMs) return { key: null, providerFailure: false };   // refetch limit
+      if (o.store && typeof o.store.claimFetch === 'function') {
+        let claimed = true;
+        try { claimed = await o.store.claimFetch(cfg.provider); } catch (e) { claimed = true; }      // the memory limit still holds
+        if (!claimed) { stats.claimRefused = (stats.claimRefused || 0) + 1; return { key: null, providerFailure: false }; }
+      }
       const ok = await fetchJwks(cfg);
       if (!ok) return { key: null, providerFailure: true };
       key = fromMem(cfg.provider, kid);

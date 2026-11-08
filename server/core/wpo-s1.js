@@ -15,13 +15,15 @@
 //   issueSession(ctx, tx, userId, o)       new session row + cookie (Max-Age = seconds to abs_expires_at)
 //   ensureDevice(ctx, tx, userId, label, publicDevice) → {id, label, isNew}
 //   issueCode(ctx, o) / checkCode(ctx, o)  e-mail codes through code_issue / code_check (purpose and binding in the HMAC)
-//   userByEmail(ctx, email), createUser(ctx, o), userEmail(tx, config, userId), allowlistHas(ctx, email)
-//   audit(ctx, tx, userId, action, detail), sendMail(ctx, to, template, params), softLimit(ctx, bucket, seconds, limit)
+//   userByEmail(ctx, email), createUser(ctx, o), createUserIn(ctx, tx, o), userEmail(tx, config, userId), allowlistHas(ctx, email)
+//   audit(ctx, tx, userId, action, detail), auditHash(prev, action, detail, at), verifyAuditChain(rows) → {ok, badId}
+//   sendMail(ctx, to, template, params), softLimit(ctx, bucket, seconds, limit)
 
 const crypto = require('crypto');
 const C = require('./contract');
 const V = require('./validate');
 const { ApiError } = require('./errors');
+const { canonical } = require('./canon');
 
 const MIN = 60 * 1000; const HOUR = 60 * MIN; const DAY = 24 * HOUR;
 
@@ -162,14 +164,16 @@ async function allowlistHas(ctx, email) {
   const r = await ctx.db.anon((tx) => tx`select wts.allowlist_has(${bidx(ctx.config, email)}) as ok`);
   return !!(r[0] && r[0].ok);
 }
-// → user id, or null when the address is already some account's primary or recovery address
-async function createUser(ctx, o) {
+// → user id, or null when the address is already some account's primary or recovery address. createUserIn runs in the
+// caller's transaction (a provider sign-up creates the account and links the identity in ONE transaction).
+async function createUserIn(ctx, tx, o) {
   const mk = masterKey(ctx.config);
   const wrapped = seal(ctx.config, crypto.randomBytes(32), 'data-key');
-  const r = await ctx.db.anon((tx) => tx`select wts.create_user(${bidx(ctx.config, o.email)}, ${seal(ctx.config, o.email, 'email')}, ${o.method},
-    ${ctx.config.terms}, ${ctx.config.privacy}, now(), ${wrapped}, ${mk.kid}) as id`);
-  return r[0] && r[0].id;
+  const r = await tx`select wts.create_user(${bidx(ctx.config, o.email)}, ${seal(ctx.config, o.email, 'email')}, ${o.method},
+    ${ctx.config.terms}, ${ctx.config.privacy}, now(), ${wrapped}, ${mk.kid}) as id`;
+  return (r[0] && r[0].id) || null;
 }
+function createUser(ctx, o) { return ctx.db.anon((tx) => createUserIn(ctx, tx, o)); }
 async function userEmail(tx, config, userId) {
   const r = await tx`select email_enc, recovery_enc, status, created_at, terms_version, privacy_version from wts.users where id = ${userId}`;
   if (!r.length) return null;
@@ -177,13 +181,31 @@ async function userEmail(tx, config, userId) {
   const rec = r[0].recovery_enc ? open(config, r[0].recovery_enc, 'email') : null;
   return { email: e ? e.toString() : null, recovery: rec ? rec.toString() : null, status: r[0].status, created: iso(r[0].created_at) };
 }
+// The ONE hash of the per-user audit chain (the SQL writer support_retire_identities in 040-oauth.sql uses the same form):
+//   sha256(prev_hash ‖ action ‖ '|' ‖ canonical(detail) ‖ '|' ‖ at.toISOString()), at in whole milliseconds.
+// canonical() sorts the keys, so the hash can be recomputed from the stored jsonb detail.
+function auditHash(prev, action, detail, at) {
+  const t = at instanceof Date ? at : new Date(at);
+  return crypto.createHash('sha256').update(Buffer.concat([prev || Buffer.alloc(0),
+    Buffer.from(action + '|' + canonical(detail || {}) + '|' + t.toISOString(), 'utf8')])).digest();
+}
+// rows of ONE user in id order: {id, action, detail, at, prev_hash, hash} → {ok, badId|null}
+function verifyAuditChain(rows) {
+  let prev = null;
+  for (const r of rows) {
+    const same = (a, b) => (a == null && b == null) || (a != null && b != null && Buffer.compare(a, b) === 0);
+    if (!same(r.prev_hash, prev) || !same(r.hash, auditHash(prev, r.action, r.detail, r.at))) return { ok: false, badId: r.id };
+    prev = r.hash;
+  }
+  return { ok: true, badId: null };
+}
 // one audit row per user, hash-chained (prev_hash = the user's last row)
 async function audit(ctx, tx, userId, action, detail) {
   const prev = await tx`select hash from wts.audit where user_id = ${userId} order by id desc limit 1`;
   const p = prev.length ? prev[0].hash : null;
   const at = new Date();
   const d = detail || {};
-  const hash = crypto.createHash('sha256').update(Buffer.concat([p || Buffer.alloc(0), Buffer.from(action + '|' + JSON.stringify(d) + '|' + at.toISOString())])).digest();
+  const hash = auditHash(p, action, d, at);
   await tx`insert into wts.audit (user_id, actor, action, device_id, ip_prefix, at, detail, prev_hash, hash)
            values (${userId}, 'user', ${action}, ${d.device_id || null}, ${ctx.ipPrefix || null}::inet, ${at}, ${tx.json(d)}, ${p}, ${hash})`;
 }
@@ -206,5 +228,5 @@ async function softLimit(ctx, bucket, seconds, limit) {
 
 module.exports = {
   bidx, seal, open, sealJson, openJson, sidHash, resolveSession, requireSession, issueSession, ensureDevice, issueCode, checkCode,
-  userByEmail, allowlistHas, createUser, userEmail, audit, sendMail, softLimit, iso, toMs,
+  userByEmail, allowlistHas, createUser, createUserIn, userEmail, audit, auditHash, verifyAuditChain, sendMail, softLimit, iso, toMs,
 };

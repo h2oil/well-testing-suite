@@ -399,4 +399,68 @@ module.exports = [
       assert.strictEqual(page({ fake }).A.providerSignOutNeeded(), null, 'a fresh page without a provider session');
     },
   },
+  {
+    name: 'OA9 finish dialog focus (§11.2): focus moves in, Tab stays inside, closing returns it; the blocking step traps Tab too', wp: WP, opts: false,
+    async run(app, assert) {
+      const fake = F.createFakeServer({});
+      const p = page({ fake });
+      const opener = p.doc.createElement('button'); opener.id = 'opener'; p.doc.body.appendChild(opener); opener.focus();
+      p.store.wtsacct_hint = JSON.stringify({ oauth: { provider: 'google', route: 'cheminj', at: Date.now() } });
+      const calls = [];
+      p.A.finishProviderSignIn = (b) => { calls.push(b); return Promise.resolve({ next: 'code', reason: 'verify', emailMasked: 'a•••@company.example' }); };
+      p.A.oauthUI.openFinish(); await settle();
+      const tab = (shift) => p.q('#acct_oauth_dlg').onkeydown({ key: 'Tab', shiftKey: !!shift, preventDefault() {} });
+      assert.strictEqual(p.doc.activeElement, p.q('#acct_oauth_code'), 'focus moves to the code input');
+      assert.deepStrictEqual(p.qa('#acct_oauth_body button').map((b) => b.id), ['acct_oauth_verify', 'acct_oauth_close']);
+      tab(); assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_verify');
+      tab(); assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_close');
+      tab(); assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_code', 'Tab wraps inside the dialog');
+      tab(true); assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_close', 'Shift+Tab wraps backwards');
+      assert(/Didn't get the code\?/.test(p.q('.acct-oauth-help').textContent), "the Didn't-get-the-code help");
+      assert(/choose Google again/.test(p.q('.acct-oauth-help').textContent));
+      click(p.q('#acct_oauth_close'));
+      assert.strictEqual(p.q('#acct_oauth_dlg'), null);
+      assert.strictEqual(p.doc.activeElement, opener, 'focus returns to the control that opened it');
+      assert.strictEqual(hint(p).oauth, undefined, 'closing the code step drops the attempt hint');
+      // the blocking provider sign-out step: Escape stays, Tab stays inside
+      opener.focus();
+      const done = p.A.oauthUI.providerSignOutStep('google');
+      assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_signedout');
+      p.q('#acct_oauth_dlg').onkeydown({ key: 'Escape' }); assert(p.q('#acct_oauth_dlg'), 'Escape does not close it');
+      tab(); assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_signedout');
+      click(p.q('#acct_oauth_signedout')); assert.strictEqual(await done, true);
+      assert.strictEqual(p.doc.activeElement, opener);
+    },
+  },
+  {
+    name: 'OA10 consent without versions sends nothing; a finished link restores the route; done steps close cleanly', wp: WP, opts: false,
+    async run(app, assert) {
+      const fake = F.createFakeServer({});
+      const p = page({ fake });
+      p.store.wtsacct_hint = JSON.stringify({ oauth: { provider: 'google', route: 'cheminj', at: Date.now(), purpose: 'signin' } });
+      const calls = [];
+      p.A.finishProviderSignIn = (b) => { calls.push(b); return Promise.resolve({ next: 'consent', newAccountEmailMasked: 'n•••@company.example' }); };
+      p.A.oauthUI.openFinish(); await settle();
+      assert.strictEqual(p.q('#acct_oauth_create'), null, 'no Create account without the server versions');
+      assert(p.q('.acct-oauth-error'), 'the server-error message');
+      assert.strictEqual(JSON.stringify(calls), '[{}]', 'no consent body was sent (never made-up versions)');
+      click(p.q('#acct_oauth_close'));
+      // with the versions: they are sent as the server gave them
+      p.store.wtsacct_hint = JSON.stringify({ oauth: { provider: 'google', route: 'cheminj', at: Date.now(), purpose: 'signin' } });
+      calls.length = 0;
+      p.A.finishProviderSignIn = (b) => { calls.push(b); return Promise.resolve(b.consent ? { next: 'oauth_state' } : { next: 'consent', newAccountEmailMasked: 'n•••@company.example', terms: '2026-11', privacy: '2026-10' }); };
+      p.A.oauthUI.openFinish(); await settle();
+      click(p.q('#acct_oauth_create')); await settle();
+      assert.strictEqual(JSON.stringify(calls[1]), JSON.stringify({ consent: { terms: '2026-11', privacy: '2026-10' } }));
+      // a finished link goes back to the page it started from
+      p.store.wtsacct_hint = JSON.stringify({ oauth: { provider: 'linkedin', route: 'cheminj', at: Date.now(), purpose: 'link' } });
+      p.rec.navs.length = 0;
+      p.A.finishProviderSignIn = () => Promise.resolve({ next: 'done', linked: { id: crypto.randomUUID(), provider: 'linkedin', emailMasked: null, linkedAt: '2026-11-08T00:00:00Z', lastUsedAt: null } });
+      p.A.oauthUI.openFinish(); await settle();
+      assert(/LinkedIn was added/.test(p.q('.acct-oauth-linked').textContent));
+      assert.strictEqual(JSON.stringify(p.rec.navs), '["cheminj"]', 'route restored after a link as after a sign-in');
+      assert.strictEqual(p.doc.activeElement.id, 'acct_oauth_close');
+      click(p.q('#acct_oauth_close')); assert.strictEqual(p.q('#acct_oauth_dlg'), null);
+    },
+  },
 ];

@@ -4,6 +4,12 @@
 --   oauth_attempt_drop(cookie_hash)        a new start replaces this browser's earlier attempt (§4.10 item 3)
 --   oauth_attempt_close(id)                ends an attempt (signed in, linked or failed); the row stays for the daily purge
 --   oauth_exchange_hit(ip_prefix)          30 callbacks per IP prefix per 10 min may reach a token endpoint (§8.3)
+--   oauth_attempt_claim(id) / oauth_attempt_release(id)   one finish per attempt at a time (a 30 s claim; extend / close /
+--                                          release clear it), so two finish calls with one cookie never both run a step
+--   oauth_finish_fail(ip_prefix)           counts a failed finish: 10 per IP prefix per 10 min → soft delay (§8.3)
+--   oidc_fetch_claim(provider)             at most one signing-key fetch per provider per 5-minute window, shared by every
+--                                          instance of the functions host (§4.11)
+--   _iso_ms(at)                            the audit time as JavaScript's toISOString() writes it (the audit hash input)
 --   oauth_breaker_note(provider, bad) / oauth_breaker_open(provider)   the provider-side breaker (§8.3), fixed 10-min windows
 --   session_revoke_presented(sid_hash)     a provider finish revokes the session id the request carried, whoever owns it
 --                                          (§4.10 item 5; the caller holds that cookie)
@@ -74,7 +80,8 @@ BEGIN
 END $$;
 
 -- ── provider sign-in attempts (pre-auth; reachable only through the hash of their own cookie) ────────────────────────
--- NULL when the per-prefix ceiling of 20 live attempts is reached (§8.3, 503 provider_off).
+-- NULL when the per-prefix ceiling of 20 live attempts is reached (§8.3, 503 provider_off). An unknown prefix (NULL: no
+-- client address; refused by the handler in production) is one shared 'unknown' bucket, the same way as oauth_exchange_hit.
 CREATE OR REPLACE FUNCTION wts.oauth_attempt_create(p_cookie_hash bytea, p_provider text, p_purpose text, p_state_hash bytea,
                                                     p_nonce bytea, p_pkce_verifier_enc bytea, p_bound_sid bytea, p_bound_user uuid,
                                                     p_public_device boolean, p_fresh_login boolean, p_device_label_enc bytea,
@@ -84,8 +91,8 @@ CREATE OR REPLACE FUNCTION wts.oauth_attempt_create(p_cookie_hash bytea, p_provi
   AS $$
 DECLARE v_id uuid := gen_random_uuid();
 BEGIN
-  IF p_ip_prefix IS NOT NULL AND (SELECT count(*) FROM wts.oauth_attempts
-      WHERE ip_prefix = p_ip_prefix AND used_at IS NULL AND finished_at IS NULL AND expires_at > now()) >= 20 THEN
+  IF (SELECT count(*) FROM wts.oauth_attempts
+      WHERE ip_prefix IS NOT DISTINCT FROM p_ip_prefix AND used_at IS NULL AND finished_at IS NULL AND expires_at > now()) >= 20 THEN
     RETURN NULL;
   END IF;
   INSERT INTO wts.oauth_attempts (id, cookie_hash, provider, purpose, state_hash, nonce, pkce_verifier_enc, bound_sid, bound_user,
@@ -164,12 +171,34 @@ BEGIN
       AND a.result_expires_at > now() AND a.created_at > now() - interval '30 minutes';
 END $$;
 
+-- One finish at a time per attempt: a 30-second claim (a crashed request frees it by expiry). Returns false while another
+-- finish of the same attempt holds it, or when the attempt has ended.
+ALTER TABLE wts.oauth_attempts ADD COLUMN busy_until timestamptz;
+
+CREATE FUNCTION wts.oauth_attempt_claim(p_id uuid)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$
+BEGIN
+  UPDATE wts.oauth_attempts SET busy_until = now() + interval '30 seconds'
+    WHERE id = p_id AND finished_at IS NULL AND (busy_until IS NULL OR busy_until <= now());
+  RETURN FOUND;
+END $$;
+
+CREATE FUNCTION wts.oauth_attempt_release(p_id uuid)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$
+BEGIN
+  UPDATE wts.oauth_attempts SET busy_until = NULL WHERE id = p_id;
+END $$;
+
 CREATE FUNCTION wts.oauth_attempt_close(p_id uuid)
   RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
   AS $$
 BEGIN
-  UPDATE wts.oauth_attempts SET finished_at = now(), result_enc = NULL, pkce_verifier_enc = '\x'::bytea
+  UPDATE wts.oauth_attempts SET finished_at = now(), result_enc = NULL, pkce_verifier_enc = '\x'::bytea, busy_until = NULL
     WHERE id = p_id AND finished_at IS NULL;
 END $$;
 
@@ -188,6 +217,35 @@ BEGIN
     ON CONFLICT (bucket, window_start) DO UPDATE SET n = r.n + 1
     RETURNING r.n INTO v_n;
   RETURN v_n <= 30;
+END $$;
+
+-- A failed provider finish (ended with an error, or a wrong code): true once the prefix has more than 10 in the window (the
+-- handler then delays its answer — soft, never refused). NULL prefix = the shared 'unknown' bucket.
+CREATE FUNCTION wts.oauth_finish_fail(p_ip_prefix inet)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$
+DECLARE v_n bigint;
+BEGIN
+  INSERT INTO wts.rate_counters AS r (bucket, window_start, n)
+    VALUES ('oauth_finfail:' || COALESCE(host(p_ip_prefix) || '/' || masklen(p_ip_prefix), 'unknown'), wts._window10(), 1)
+    ON CONFLICT (bucket, window_start) DO UPDATE SET n = r.n + 1
+    RETURNING r.n INTO v_n;
+  RETURN v_n > 10;
+END $$;
+
+-- The signing-key refetch limit across instances (§4.11): true for the first caller in a fixed 5-minute window per
+-- provider, false for every later one (each instance also keeps its own in-memory limit).
+CREATE FUNCTION wts.oidc_fetch_claim(p_provider text)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$
+BEGIN
+  IF p_provider NOT IN ('google', 'linkedin') THEN RETURN false; END IF;
+  INSERT INTO wts.rate_counters (bucket, window_start, n)
+    VALUES ('oidc_fetch:' || p_provider, date_bin(interval '5 minutes', now(), timestamptz '2000-01-01 00:00:00+00'), 1)
+    ON CONFLICT DO NOTHING;
+  RETURN FOUND;
 END $$;
 
 CREATE FUNCTION wts.oauth_breaker_open(p_provider text)
@@ -259,11 +317,24 @@ BEGIN
 END $$;
 
 -- ── support: retire a provider client (§4.14, server/ops/retire-client.js) ─────────────────────────────────────────
+-- The audit time as JavaScript's Date.prototype.toISOString() writes it (UTC, milliseconds, 'Z').
+CREATE FUNCTION wts._iso_ms(p_at timestamptz) RETURNS text LANGUAGE sql IMMUTABLE
+  AS $$ SELECT to_char(p_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') $$;
+
+-- The audit rows use the ONE hash of the per-user chain (core/wpo-s1.js auditHash; WP-S1's audit writer at the merge):
+--   hash = sha256(prev_hash ‖ action ‖ '|' ‖ canonical(detail) ‖ '|' ‖ toISOString(at)), at in whole milliseconds,
+-- canonical() = core/canon.js (keys sorted, no whitespace). The detail here has a fixed shape whose values need no escaping
+-- (an allowed provider, a uuid, hex, an integer, a constant), so its canonical text is written out in sorted key order;
+-- oauth-api.test.js verifies the chain across this writer and the JavaScript one.
+-- The notice is queued through WP-S1's own outbox writer wts.mail_queue (not a direct insert), with to_enc = the account's
+-- users.email_enc envelope as it is and params_enc = UTF-8 JSON {provider} (no personal data). This relies on the outbox
+-- drainer opening to_enc with the users.email_enc AAD — WP-S1's outbox contract; checked at the WP-S1 merge (oauth-api.test.js
+-- opens the queued row with that AAD).
 CREATE FUNCTION wts.support_retire_identities(p_actor text, p_provider text)
   RETURNS TABLE (user_id uuid, identities integer, sessions integer)
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
   AS $$
-DECLARE r record; v_s integer; v_prev bytea; v_detail jsonb; v_at timestamptz := now();
+DECLARE r record; v_s integer; v_prev bytea; v_canon text; v_at timestamptz := date_trunc('milliseconds', now());
 BEGIN
   IF p_actor IS NULL OR p_actor !~ '^support:[A-Za-z0-9_.-]{1,64}$' THEN
     RAISE EXCEPTION 'support_retire_identities: actor support:<id> required' USING ERRCODE = '22023';
@@ -273,14 +344,13 @@ BEGIN
     SELECT count(*) INTO v_s FROM wts.sessions s WHERE s.identity_id = r.id;
     DELETE FROM wts.sessions s WHERE s.identity_id = r.id;
     DELETE FROM wts.identities i WHERE i.id = r.id;
-    v_detail := jsonb_build_object('provider', p_provider, 'identity_id', r.id, 'subject_bidx', encode(r.subject_bidx, 'hex'),
-                                   'sessions', v_s, 'reason', 'retire_client');
+    v_canon := '{"identity_id":"' || r.id::text || '","provider":"' || p_provider || '","reason":"retire_client","sessions":' || v_s::text
+               || ',"subject_bidx":"' || encode(r.subject_bidx, 'hex') || '"}';
     SELECT a.hash INTO v_prev FROM wts.audit a WHERE a.user_id = r.uid ORDER BY a.id DESC LIMIT 1;
     INSERT INTO wts.audit (user_id, actor, action, target, at, detail, prev_hash, hash)
-      VALUES (r.uid, p_actor, 'identity_unlink', p_provider, v_at, v_detail, v_prev,
-              sha256(COALESCE(v_prev, '\x'::bytea) || convert_to('identity_unlink|' || v_detail::text || '|' || v_at::text, 'UTF8')));
-    INSERT INTO wts.mail_outbox (id, to_enc, template, params_enc, created_at)
-      SELECT gen_random_uuid(), u.email_enc, 'notice_identity_unlinked', convert_to(jsonb_build_object('provider', p_provider)::text, 'UTF8'), v_at
+      VALUES (r.uid, p_actor, 'identity_unlink', p_provider, v_at, v_canon::jsonb, v_prev,
+              sha256(COALESCE(v_prev, '\x'::bytea) || convert_to('identity_unlink|' || v_canon || '|' || wts._iso_ms(v_at), 'UTF8')));
+    PERFORM wts.mail_queue(u.email_enc, 'notice_identity_unlinked', convert_to('{"provider":"' || p_provider || '"}', 'UTF8'))
       FROM wts.users u WHERE u.id = r.uid;
     user_id := r.uid; identities := 1; sessions := v_s;
     RETURN NEXT;
@@ -297,11 +367,18 @@ ALTER FUNCTION wts.oauth_breaker_open(text) OWNER TO wts_definer;
 ALTER FUNCTION wts.oauth_breaker_note(text, boolean) OWNER TO wts_definer;
 ALTER FUNCTION wts.session_revoke_presented(bytea) OWNER TO wts_definer;
 ALTER FUNCTION wts.support_retire_identities(text, text) OWNER TO wts_definer;
+ALTER FUNCTION wts.oauth_attempt_claim(uuid) OWNER TO wts_definer;
+ALTER FUNCTION wts.oauth_attempt_release(uuid) OWNER TO wts_definer;
+ALTER FUNCTION wts.oauth_finish_fail(inet) OWNER TO wts_definer;
+ALTER FUNCTION wts.oidc_fetch_claim(text) OWNER TO wts_definer;
 ALTER FUNCTION wts._window10() OWNER TO wts_owner;
+ALTER FUNCTION wts._iso_ms(timestamptz) OWNER TO wts_owner;
 REVOKE EXECUTE ON FUNCTION wts.oauth_attempt_drop(bytea), wts.oauth_attempt_close(uuid), wts.oauth_exchange_hit(inet),
   wts.oauth_breaker_open(text), wts.oauth_breaker_note(text, boolean), wts.session_revoke_presented(bytea),
-  wts.support_retire_identities(text, text), wts._window10() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION wts._window10() TO wts_definer;
+  wts.support_retire_identities(text, text), wts._window10(), wts.oauth_attempt_claim(uuid), wts.oauth_attempt_release(uuid),
+  wts.oauth_finish_fail(inet), wts.oidc_fetch_claim(text), wts._iso_ms(timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wts._window10(), wts._iso_ms(timestamptz) TO wts_definer;
 GRANT EXECUTE ON FUNCTION wts.oauth_attempt_drop(bytea), wts.oauth_attempt_close(uuid), wts.oauth_exchange_hit(inet),
-  wts.oauth_breaker_open(text), wts.oauth_breaker_note(text, boolean), wts.session_revoke_presented(bytea) TO wts_api;
+  wts.oauth_breaker_open(text), wts.oauth_breaker_note(text, boolean), wts.session_revoke_presented(bytea),
+  wts.oauth_attempt_claim(uuid), wts.oauth_attempt_release(uuid), wts.oauth_finish_fail(inet), wts.oidc_fetch_claim(text) TO wts_api;
 GRANT EXECUTE ON FUNCTION wts.support_retire_identities(text, text) TO wts_support;

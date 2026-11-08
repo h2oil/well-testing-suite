@@ -44,10 +44,11 @@ function makeEnv(o) {
   const dbg = (m) => { if (process.env.WPO_DEBUG) process.stderr.write('[log] ' + m + '\n'); };
   const log = { info: (m) => { dbg(m); logs.push(String(m)); }, warn: (m) => { dbg(m); logs.push(String(m)); } };
   const fetch = (url, init) => (String(url).startsWith('https://google.') ? g : l).fetch(url, init);
-  const oauth = createOauthHandlers({ fetch, override: { google: g.override, linkedin: l.override } });
+  const delays = [];
+  const oauth = createOauthHandlers({ fetch, override: { google: g.override, linkedin: l.override }, delay: async (ms) => { delays.push(ms); } });
   const app = createApp({ config, db: api, mail, log, handlers: Object.assign({}, baseHandlers, oauth) });
   const ctxLike = { db: api, config, cookies: {}, req: { headers: {} }, ipPrefix: null, log, mail, setCookie() {} };
-  return { g, l, config, mail, logs, app, op: { google: g, linkedin: l }, ctxLike };
+  return { g, l, config, mail, logs, app, op: { google: g, linkedin: l }, ctxLike, oauth, delays };
 }
 
 // a browser: cookie jar with SameSite; same-origin calls send every cookie, the provider's cross-site return only Lax ones
@@ -475,7 +476,14 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     assert.strictEqual((await p1.call('GET', '/auth/methods')).json.error, 'signed_out', 'the identity sessions are gone');
     assert.strictEqual((await owner.call('GET', '/auth/methods')).status, 200, 'the code session stays');
     assert(E.mail.sent.some((x) => x.to === email && x.template === 'notice_identity_unlinked'));
-    assert((await H.admin.sql`select action from wts.audit where action = 'identity_unlink'`).length === 1);
+    const ua = await H.admin.sql`select action, detail from wts.audit where action = 'identity_unlink'`;
+    assert.strictEqual(ua.length, 1);
+    const la = (await H.admin.sql`select detail from wts.audit where action = 'identity_link' and user_id = ${uid}`)[0];
+    assert.deepStrictEqual(Object.keys(ua[0].detail).sort(), ['identity_id', 'provider', 'subject_bidx'], '§4.12 rule 7 unlink row');
+    assert.match(ua[0].detail.subject_bidx, /^[0-9a-f]{64}$/);
+    assert.strictEqual(ua[0].detail.subject_bidx, la.detail.subject_bidx, 'the same subject index as the link row (incident queries)');
+    assert.strictEqual(ua[0].detail.identity_id, m.json.identities[0].id);
+    assert(!JSON.stringify(ua[0].detail).includes('@'), 'no address in the unlink row');
     // a provider session that unlinks its own identity is signed out too
     okFinish(await round(E, owner, 'linkedin', { key: 'M2', email: 'm2@company.example' }, { purpose: 'link' }));
     okFinish(await finish(owner, { code: E.mail.last(email).params.code }));
@@ -521,6 +529,85 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     assert(E.logs.some((m) => /breaker open for google/.test(m)));
   });
 
+  test('finish: one call per attempt at a time (claim); a sign-up whose link fails leaves no account (one transaction)', async () => {
+    const E = makeEnv();
+    const signups0 = (await H.admin.sql`select count(*)::int as n from wts.audit where action = 'signup'`)[0].n;
+    const email = consumer(E, 'race');
+    const br = browser(E);
+    assert.strictEqual(okFinish(await round(E, br, 'google', { key: 'R1', email })).next, 'consent');
+    // another finish of this attempt is running (its claim is held) → refused, and this browser's cookie is left alone
+    await H.admin.sql`update wts.oauth_attempts set busy_until = now() + interval '30 seconds' where finished_at is null`;
+    const busy = await finish(br, { consent: { terms: '1', privacy: '1' } });
+    assert.strictEqual(busy.json.error, 'oauth_state');
+    assert(br.cookie('__Host-wts_oa'), 'the attempt cookie is not cleared by the refused call');
+    await H.admin.sql`update wts.oauth_attempts set busy_until = null`;
+    // meanwhile another account links the same provider subject (two attempts for one subject finishing together)
+    const uidB = await codeAccount(E, 'b.owner@company.example');
+    const ob = browser(E); await codeSession(ob, uidB);
+    okFinish(await round(E, ob, 'google', { key: 'R1', email }, { purpose: 'link' }));
+    okFinish(await finish(ob, { code: E.mail.last('b.owner@company.example').params.code }));
+    const lost = await finish(br, { consent: { terms: '1', privacy: '1' } });
+    assert.strictEqual(lost.json.error, 'identity_in_use');
+    assert.strictEqual(await S1.userByEmail(E.ctxLike, email), null, 'the new account was rolled back with the failed link');
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.users`)[0].n, 1);
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.audit where action = 'signup'`)[0].n, signups0, 'no orphan signup row');
+    // two finish calls at once with one cookie: exactly one runs the step
+    const br2 = browser(E);
+    const email2 = consumer(E, 'twice');
+    assert.strictEqual(okFinish(await round(E, br2, 'google', { key: 'R2', email: email2 })).next, 'consent');
+    const both = await Promise.all([finish(br2, { consent: { terms: '1', privacy: '1' } }), finish(br2, { consent: { terms: '1', privacy: '1' } })]);
+    assert.strictEqual(both.filter((r) => r.json && r.json.next === 'done').length, 1, JSON.stringify(both.map((r) => r.json)));
+    assert.strictEqual(both.filter((r) => r.json && r.json.error === 'oauth_state').length, 1);
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.sessions s join wts.identities i on i.id = s.identity_id`)[0].n, 1, 'one session');
+  });
+
+  test('failed finishes: more than 10 per prefix per 10 min → soft delay; an unknown client address: one bucket, refused in production', async () => {
+    const E = makeEnv();
+    const email = consumer(E, 'soft');
+    await codeAccount(E, email);
+    const br = browser(E, '192.0.2.50');
+    const c = okFinish(await round(E, br, 'google', { key: 'S1', email }));
+    assert.strictEqual(c.reason, 'link_existing');
+    for (let i = 0; i < 10; i++) assert.strictEqual((await finish(br, { code: '00000000' })).json.error, 'invalid_or_expired');
+    assert.strictEqual(E.delays.length, 0, 'no delay up to 10 failures');
+    assert.strictEqual((await finish(br, { code: '00000000' })).json.error, 'invalid_or_expired', 'soft: still answered');
+    assert.deepStrictEqual(E.delays, [2000], 'the 11th failure is delayed');
+    assert(E.logs.some((m) => /failed-finish soft limit/.test(m)));
+    const other = browser(E, '198.18.7.1');
+    okFinish(await round(E, other, 'google', { key: 'S1', email }));
+    await finish(other, { code: '00000000' });
+    assert.strictEqual(E.delays.length, 1, 'another prefix is not delayed');
+    // an unknown address (null prefix, outside production): one shared 'unknown' bucket for the live-attempt ceiling
+    const ctx = (o) => Object.assign({}, E.ctxLike, { params: { provider: 'google' }, body: { purpose: 'signin', publicDevice: false }, query: {}, ipPrefix: null }, o || {});
+    for (let i = 0; i < 20; i++) assert.strictEqual((await E.oauth.oauthStart(ctx())).status, 200);
+    await assert.rejects(E.oauth.oauthStart(ctx()), (e) => e.code === 'provider_off', 'the unknown bucket has the same ceiling of 20');
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.oauth_attempts where ip_prefix is null`)[0].n, 20);
+    // production: a request whose client address cannot be resolved is refused, with a log line for the owner
+    const prod = Object.assign(Object.create(Object.getPrototypeOf(E.config)), E.config, { production: true });
+    await H.admin.sql`truncate wts.oauth_attempts`;
+    await assert.rejects(E.oauth.oauthStart(ctx({ config: prod })), (e) => e.code === 'provider_off');
+    assert(E.logs.some((m) => /oauth start: no client address/.test(m)));
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.oauth_attempts`)[0].n, 0);
+  });
+
+  test('signing-key refetch limit is shared by instances (oidc_fetch_claim, 5-minute window)', async () => {
+    const { createKeyCache } = require('../core/oidc');
+    const { createOauthStore } = require('../core/oauth-store');
+    const PINS = require('../core/oidc-providers');
+    const E = makeEnv();
+    const cfg = PINS.resolve('google', { override: E.g.override });
+    const store = createOauthStore(api).keys;
+    const a = createKeyCache({ fetch: E.g.fetch, store }); const b = createKeyCache({ fetch: E.g.fetch, store });
+    const before = E.g.calls.jwks;
+    await a.getKey(cfg, 'k-unknown');
+    assert.strictEqual(E.g.calls.jwks - before, 1);
+    assert.deepStrictEqual(await b.getKey(cfg, 'k-unknown'), { key: null, providerFailure: false });
+    assert.strictEqual(E.g.calls.jwks - before, 1, 'a second instance (cold start) does not refetch within the window');
+    assert.strictEqual(b.stats.claimRefused, 1);
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.rate_counters where bucket = 'oidc_fetch:google'`)[0].n, 1);
+    assert.strictEqual((await api.anon((tx) => tx`select wts.oidc_fetch_claim('other') as ok`))[0].ok, false, 'providers only');
+  });
+
   test('signing keys are cached in oidc_keys (public only); logs carry no code, state, token, claim or e-mail', async () => {
     const E = makeEnv();
     const br = browser(E);
@@ -558,7 +645,20 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     assert(await sessionRow(own.cookie('__Host-wts_sid')), 'other sessions stay');
     const a = (await H.admin.sql`select actor, action, detail from wts.audit where actor like 'support:%'`)[0];
     assert.strictEqual(a.action, 'identity_unlink'); assert.strictEqual(a.detail.reason, 'retire_client'); assert(!JSON.stringify(a.detail).includes('@'));
-    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.mail_outbox where template = 'notice_identity_unlinked'`)[0].n, 1);
+    assert.match(a.detail.subject_bidx, /^[0-9a-f]{64}$/); assert.strictEqual(a.detail.sessions, 1);
+    // one hash chain per user across both writers: JavaScript rows (signup, link, sign-in …), the SQL retire row, and a
+    // JavaScript row written after it
+    await api.asUser(uid, (tx) => S1.audit(E.ctxLike, tx, uid, 'signin', { method: 'code' }));
+    const chain = await H.admin.sql`select id, action, detail, at, prev_hash, hash from wts.audit where user_id = ${uid} order by id`;
+    assert(chain.length >= 3 && chain.some((x) => x.detail && x.detail.reason === 'retire_client'), 'rows of both writers');
+    assert.deepStrictEqual(S1.verifyAuditChain(chain), { ok: true, badId: null }, 'the audit chain verifies across the SQL and JS writers');
+    const tampered = chain.map((x) => (x.detail && x.detail.reason === 'retire_client' ? Object.assign({}, x, { detail: Object.assign({}, x.detail, { sessions: 9 }) }) : x));
+    assert.strictEqual(S1.verifyAuditChain(tampered).ok, false, 'the verifier notices a changed detail');
+    // the notice went through mail_queue; its address opens with the users.email_enc AAD (the outbox contract)
+    const ob = await H.admin.sql`select to_enc, params_enc from wts.mail_outbox where template = 'notice_identity_unlinked'`;
+    assert.strictEqual(ob.length, 1);
+    assert.strictEqual(String(S1.open(E.config, ob[0].to_enc, 'email')), email);
+    assert.deepStrictEqual(JSON.parse(Buffer.from(ob[0].params_enc).toString('utf8')), { provider: 'linkedin' });
     // the new client: new pairwise subjects → rule 5, one code, linked again
     const E2 = makeEnv();
     const nb = browser(E2);

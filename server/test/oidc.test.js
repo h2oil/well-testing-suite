@@ -268,3 +268,43 @@ test('production pins: the pinned configuration passes; a localhost issuer or a 
   assert.strictEqual(loadConfig({ WTS_ENV: 'test', OAUTH_GOOGLE: 'signin', OAUTH_GOOGLE_CLIENT_ID: 'a', OAUTH_GOOGLE_CLIENT_SECRET: 'b' }).providerSwitches().google, 'signin');
   assert(!JSON.stringify(loadConfig({ WTS_ENV: 'test', OAUTH_GOOGLE: 'on', OAUTH_GOOGLE_CLIENT_ID: 'a', OAUTH_GOOGLE_CLIENT_SECRET: 'top-secret' }).redacted()).includes('top-secret'));
 });
+
+test('a slow signing-key endpoint: the fetch gives up at its timeout, counts as a provider-side failure, and is limited', async () => {
+  let t = Date.now();
+  const op = createFakeOidc({ provider: 'google', now: () => t, freshKey: true });
+  const cfg = PINS.resolve('google', { override: op.override });
+  op.setFault('jwks_slow');
+  const keys = O.createKeyCache({ fetch: op.fetch, now: () => t, timeoutMs: 60 });
+  const t0 = Date.now();
+  const r = await keys.getKey(cfg, 'k-any');
+  const took = Date.now() - t0;
+  assert.deepStrictEqual(r, { key: null, providerFailure: true }, 'a timeout is a provider-side failure (the breaker counts it)');
+  assert(took < 2000, 'gave up at the timeout, not at the slow answer (' + took + ' ms)');
+  // the token check passes the failure up
+  const tok = op.sign({ iss: op.issuer, aud: op.clientId, azp: op.clientId, sub: '1', iat: Math.floor(t / 1000), exp: Math.floor(t / 1000) + 60, nonce: 'n' });
+  t += 5 * MIN + 1;
+  const v = await O.verifyIdToken(tok, { cfg, clientId: op.clientId, nonce: 'n', now: t, attemptCreatedAt: t, getKey: (c, kid) => keys.getKey(c, kid) });
+  assert.strictEqual(v.ok, false); assert.strictEqual(v.providerFailure, true);
+  // and within 5 minutes no second fetch is tried
+  const again = await keys.getKey(cfg, 'k-other');
+  assert.deepStrictEqual(again, { key: null, providerFailure: false });
+  assert.strictEqual(keys.stats.fetches, 2);
+  op.setFault(null);
+});
+
+test('signing-key refetch limit across instances: store.claimFetch (the database window) refuses a second instance', async () => {
+  let t = Date.now();
+  const op = createFakeOidc({ provider: 'google', now: () => t });
+  const cfg = PINS.resolve('google', { override: op.override });
+  let window = new Set();
+  const store = { async get() { return null; }, async put() {}, async claimFetch(p) { if (window.has(p)) return false; window.add(p); return true; } };
+  const a = O.createKeyCache({ fetch: op.fetch, now: () => t, store });
+  const b = O.createKeyCache({ fetch: op.fetch, now: () => t, store });
+  await a.getKey(cfg, 'k-unknown');
+  assert.strictEqual(a.stats.fetches, 1);
+  assert.deepStrictEqual(await b.getKey(cfg, 'k-unknown'), { key: null, providerFailure: false }, 'another instance does not refetch');
+  assert.strictEqual(b.stats.fetches, 0); assert.strictEqual(b.stats.claimRefused, 1);
+  window = new Set();                                         // the next 5-minute window
+  await b.getKey(cfg, 'k-unknown');
+  assert.strictEqual(b.stats.fetches, 1);
+});

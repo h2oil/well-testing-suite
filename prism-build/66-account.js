@@ -344,28 +344,55 @@
     }
 
     // ── the finish dialog (the return from the provider) ──
-    var dlg = null;
+    // Until WP-C1's <dialog> hosts these steps, this div keeps the focus rules of §11.2 itself: focus moves into it, Tab
+    // stays inside it, and closing returns focus to the control that was focused before it opened.
+    var dlg = null; var dlgOpener = null; var dlgEscape = true;
+    function focusables() {
+      return dlg ? Array.prototype.filter.call(dlg.querySelectorAll('button, input'), function (n) { return !n.disabled; }) : [];
+    }
+    function dlgKey(ev) {
+      if (!ev) return;
+      if (ev.key === 'Escape' && dlgEscape) { closeDialog(); return; }
+      if (ev.key !== 'Tab') return;
+      var f = focusables(); if (!f.length) return;
+      var i = f.indexOf(doc().activeElement);
+      var n = ev.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i === -1 || i === f.length - 1 ? 0 : i + 1);
+      if (ev.preventDefault) ev.preventDefault();
+      try { f[n].focus(); } catch (e) { /* focus */ }
+    }
     function dialog() {
       var d = doc();
       if (!d || !d.body) return null;
       if (dlg && dlg.isConnected) return dlg;
+      dlgOpener = d.activeElement && d.activeElement !== d.body ? d.activeElement : null;
+      dlgEscape = true;
       dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
         'aria-labelledby': 'acct_oauth_title', style: 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.45);display:block;overflow:auto;padding:16px' });
       var box = el('div', { 'class': 'acct-oauth-box', style: 'max-width:420px;margin:8vh auto 0 auto;background:#ffffff;color:#1f1f1f;border-radius:8px;padding:20px 16px;box-sizing:border-box' });
       box.appendChild(el('h2', { id: 'acct_oauth_title', text: 'Sign in', style: 'font-size:18px;margin:0 0 12px 0' }));
       box.appendChild(el('div', { id: 'acct_oauth_body' }));
       dlg.appendChild(box);
-      dlg.onkeydown = function (ev) { if (ev && ev.key === 'Escape') closeDialog(); };
+      dlg.onkeydown = dlgKey;
       d.body.appendChild(dlg);
       return dlg;
     }
-    function closeDialog() { if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg); dlg = null; }
+    function closeDialog() {
+      if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
+      dlg = null;
+      var o = dlgOpener; dlgOpener = null;
+      try { if (o && o.isConnected !== false && typeof o.focus === 'function') o.focus(); } catch (e) { /* focus return */ }
+    }
     function dbody() { var d = dialog(); return d ? d.querySelector('#acct_oauth_body') : null; }
     function btn(id, txt, primary, fn) {
       return el('button', { type: 'button', id: id, 'class': primary ? 'btn btn-primary' : 'btn btn-secondary', onclick: fn,
         style: 'min-height:44px;font-size:16px;margin:8px 8px 0 0', text: txt });
     }
-    function show(nodes) { var b = dbody(); if (!b) return; b.textContent = ''; nodes.forEach(function (n) { if (n) b.appendChild(n); }); }
+    function show(nodes) {
+      var b = dbody(); if (!b) return;
+      b.textContent = ''; nodes.forEach(function (n) { if (n) b.appendChild(n); });
+      var f = b.querySelector('input') || b.querySelector('.btn-primary') || b.querySelector('button');   // focus moves into the step
+      try { if (f && typeof f.focus === 'function') f.focus(); } catch (e) { /* focus */ }
+    }
     function showError(msg) {
       show([el('p', { 'class': 'acct-oauth-error', role: 'alert', text: msg }),
         el('p', { style: 'font-size:13px', text: "Can't use Google or LinkedIn? Use the e-mail code." }),
@@ -394,6 +421,7 @@
       var N = NAME[p] || '';
       if (j.next === 'done') {
         if (j.linked) {
+          restoreRoute(oa);                                  // back to the page the link started from (the account page)
           show([el('p', { 'class': 'acct-oauth-linked', text: N + ' was added as a way to sign in.' }), btn('acct_oauth_close', 'Close', true, function () { closeDialog(); })]);
           return j;
         }
@@ -422,11 +450,16 @@
             drive(p, { code: String(ci.value || '').replace(/\s/g, '') }, oa).then(function (r) {
               if (reason === 'cancel_deletion' && r && r.next === 'done') offerCancelDeletion();
             });
-          })]);
+          }),
+          btn('acct_oauth_close', 'Close', false, function () { dropOauth(); closeDialog(); }),
+          // no resend in this step (open item): the way to a new code is a new start with the provider
+          el('p', { 'class': 'acct-oauth-help', style: 'font-size:13px', text: "Didn't get the code? It can take a minute — check your spam or junk folder. A code works for 15 minutes and 5 tries. For a new code, close this and choose " + (N || 'the provider') + ' again.' })]);
         return j;
       }
       if (j.next === 'consent') {
-        var c = { terms: j.terms || '1', privacy: j.privacy || '1' };
+        // the versions come from the server; without them nothing is sent (never made-up versions)
+        if (typeof j.terms !== 'string' || !j.terms || typeof j.privacy !== 'string' || !j.privacy) { showError(text('server', p)); return j; }
+        var c = { terms: j.terms, privacy: j.privacy };
         show([el('p', { 'class': 'acct-oauth-consent', text: 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.' }),
           el('p', { style: 'font-size:13px', text: 'Creating an account means you accept the Terms of Use and the Privacy notice.' }),
           btn('acct_oauth_create', 'Create account', true, function () { drive(p, { consent: c }, oa); }),
@@ -460,7 +493,7 @@
         var N = NAME[p] || 'the provider';
         show([el('p', { 'class': 'acct-oauth-signout', text: 'Now sign out of ' + N + ' in this browser: open ' + N + ', choose your account picture or name, then Sign out. This computer is shared, so the next person must not find you signed in there.' }),
           btn('acct_oauth_signedout', 'I have signed out', true, function () { closeDialog(); resolve(true); })]);
-        if (dlg) dlg.onkeydown = null;
+        dlgEscape = false;                                   // Escape does not close it; Tab still stays inside
       });
     }
 
