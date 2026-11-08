@@ -1470,7 +1470,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
             var raw = ls.getItem('wts_prism'), box = raw ? JSON.parse(raw) : {};
             if (!box || typeof box !== 'object') box = {};
             box.prism_data_paste = o.pasteText;
-            ls.setItem('wts_prism', JSON.stringify(box));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(box), { raw: true }) : ls.setItem('wts_prism', JSON.stringify(box)));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
     // 2. the multi-rate table (positive rates; C2 signs injection internally)
@@ -1478,7 +1478,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
         .map(function (r) { return { t: +r.t, q: Math.abs(+r.q) }; });
     if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
     G.PRiSM.multiRate = rows;
-    if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e2) { /* ignore */ } }
+    if (ls) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows))); } catch (e2) { /* ignore */ } }   /* ls-raw: fallback */
     // 3. C1 well inputs: a water injector's fall-off is fluid water / testType falloff
     var w = o.well || {};
     var inj = w.fluid === 'water_inj' || w.testType === 'falloff';
@@ -1555,7 +1555,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     }
     var ls = _storage();
     if (ls) {
-        try { ls.setItem(STATE_KEY, JSON.stringify(snap)); } catch (e) { /* quota / private mode */ }
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(STATE_KEY, JSON.stringify(snap), { raw: true }) : ls.setItem(STATE_KEY, JSON.stringify(snap))); } catch (e) { /* quota / private mode */ }   /* ls-raw: fallback */
     }
     return snap;
 };
@@ -3444,7 +3444,7 @@ function _lsGet(key) {
     catch (e) { return null; }
 }
 function _lsSet(key, val) {
-    try { if (G.localStorage) G.localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* quota / privacy */ }
+    try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, JSON.stringify(val), { raw: true }) : G.localStorage.setItem(key, JSON.stringify(val))); } catch (e) { /* quota / privacy */ }   /* ls-raw: fallback */
 }
 function _models() { return G.PRiSM_MODELS || {}; }
 function _isRateModel(key) {
@@ -7931,7 +7931,7 @@ function _wireTab(host, m) {
     on('prism_report_goto_fit', function () { _goto(4, 6); });
     var notes = host.querySelector('#prism_report_notes');
     if (notes) notes.oninput = function () {
-        try { var ls = _ls(); if (ls) ls.setItem('wts_prism_report_notes', String(notes.value || '')); } catch (e) {}
+        try { var ls = _ls(); if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_report_notes', String(notes.value || ''), { raw: true }) : ls.setItem('wts_prism_report_notes', String(notes.value || ''))); } catch (e) {}   /* ls-raw: fallback */
     };
 }
 
@@ -8457,7 +8457,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (!s || !G.localStorage) return;
             var o = {};
             for (var k in s) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(s, k)) o[k] = s[k];
-            G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(o), { raw: true }) : G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) {}
     }
 
@@ -10643,7 +10643,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (isArr(o.multiRate)) {
                 if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
                 G.PRiSM.multiRate = clone(o.multiRate) || [];
-                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) {}
+                try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate), { raw: true }) : G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate))); } catch (e) {}   /* ls-raw: fallback */
                 try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) {}   // eslint-disable-line no-undef
             }
             if (o.well && typeof o.well === 'object') {
@@ -11371,7 +11371,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function persistMultiRate(rows) {
         try {
             var ls = G.localStorage || (typeof localStorage !== 'undefined' ? localStorage : null);
-            if (ls) ls.setItem('wts_prism_mrate', JSON.stringify(rows || []));
+            if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows || []), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows || [])));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
 
@@ -12618,7 +12618,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (!s || !ls) return;
             var o = {};
             for (var k in s) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(s, k)) o[k] = s[k];
-            ls.setItem('wts_prism_pvt', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(o), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) { /* storage optional */ }
     }
     var _applying = false;
@@ -12640,7 +12640,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (isArr(o.multiRate)) {
                 if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
                 G.PRiSM.multiRate = clone(o.multiRate) || [];
-                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) { /* ignore */ }
+                try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate), { raw: true }) : G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate))); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
                 try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) { /* host-scope helper (07) */ }   // eslint-disable-line no-undef
             }
             if (o.well && typeof o.well === 'object') {
@@ -18278,7 +18278,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var txt = JSON.stringify({ v: 1, completion: normComp(c) });
         try {
             if (typeof G.WTS_lsSet === 'function') { G.WTS_lsSet(LS_KEY, txt); return; }
-            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);
+            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);   /* ls-raw: fallback */
         } catch (e) { /* storage optional */ }
     }
     function completionFor(c, h) {

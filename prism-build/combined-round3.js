@@ -189,7 +189,7 @@
                 if (k === '_computed') continue;
                 if (Object.prototype.hasOwnProperty.call(s, k)) clone[k] = s[k];
             }
-            ls.setItem(LS_KEY, JSON.stringify(clone));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_KEY, JSON.stringify(clone), { raw: true }) : ls.setItem(LS_KEY, JSON.stringify(clone)));   /* ls-raw: fallback */
         } catch (e) { /* quota / privacy mode */ }
     }
 
@@ -5457,8 +5457,8 @@ function _hasLS() {
     try {
         if (typeof localStorage === 'undefined' || localStorage === null) return false;
         var k = '__prism_ls_probe__';
-        localStorage.setItem(k, '1');
-        localStorage.removeItem(k);
+        localStorage.setItem(k, '1');   /* ls-raw: availability probe (not a wts_ key) */
+        localStorage.removeItem(k);   /* ls-raw: availability probe */
         return true;
     } catch (e) { return false; }
 }
@@ -5639,7 +5639,7 @@ function _lsIndex() {
     } catch (e) { return []; }
 }
 function _lsSetIndex(idx) {
-    try { localStorage.setItem(LS_INDEX_KEY, JSON.stringify(idx)); }
+    try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_INDEX_KEY, JSON.stringify(idx), { raw: true }) : localStorage.setItem(LS_INDEX_KEY, JSON.stringify(idx))); }   /* ls-raw: fallback */
     catch (e) { /* ignore */ }
 }
 
@@ -5690,7 +5690,8 @@ function _deserialiseRec(o) {
 
 function _lsPut(rec) {
     try {
-        localStorage.setItem(LS_PREFIX + rec.id, JSON.stringify(_serialiseRec(rec)));
+        var recTxt = JSON.stringify(_serialiseRec(rec));
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_PREFIX + rec.id, recTxt, { raw: true }) : localStorage.setItem(LS_PREFIX + rec.id, recTxt));   /* ls-raw: fallback */
         var idx = _lsIndex();
         var found = false;
         for (var i = 0; i < idx.length; i++) {
@@ -5716,7 +5717,7 @@ function _lsGet(id) {
 }
 function _lsDelete(id) {
     try {
-        localStorage.removeItem(LS_PREFIX + id);
+        (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(LS_PREFIX + id) : localStorage.removeItem(LS_PREFIX + id));   /* ls-raw: fallback */
         var idx = _lsIndex().filter(function (e) { return e.id !== id; });
         _lsSetIndex(idx);
         if (_memStore) _memStore.delete(id);
@@ -5765,7 +5766,7 @@ function _putMeta(meta) {
         return _idbPut({ id: META_KEY, kind: 'meta', createdAt: _now(), metadata: meta, data: null });
     }
     if (_backend === 'localStorage') {
-        try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* ignore */ }
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(META_KEY, JSON.stringify(meta), { raw: true }) : localStorage.setItem(META_KEY, JSON.stringify(meta))); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         return _resolved();
     }
     if (!_memStore) _memStore = new Map();
@@ -6809,17 +6810,19 @@ function _registerProjectModule() {
             }
             return { activeAnalysisId: _activeAnalysisId, gaugeData: g.map(_recToFile), analysisData: a.map(_recToFile) };
         },
+        // write() returns its Promise (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3). A load that keeps
+        // this module local (opts.keep) never calls it, so the records on this device stay as they are.
         write: function (state) {
             if (!_Promise) return;
             if (state === null) {                                     // New
-                _ensureInit().then(function () { return _wipeAll(); }).then(function () {
+                return _ensureInit().then(function () { return _wipeAll(); }).then(function () {
                     _activeAnalysisId = null;
                     _refreshMounted();
                 }).catch(function () { /* ignore */ });
                 return;
             }
             if (!state || typeof state !== 'object' || state.truncated) return;
-            _restoreRecords(state).then(function () {
+            return _restoreRecords(state).then(function () {
                 _activeAnalysisId = state.activeAnalysisId || null;
                 _refreshMounted();
             }).catch(function () { /* ignore */ });
