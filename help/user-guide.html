@@ -2772,7 +2772,7 @@
 <p>The form feeds a steady calculation from the wellhead through the choke, back-walked from the separator <b>Operating Pressure</b>. The live view runs the spread in time: valves, levels, pressures, alarms and trips. Training: course (see <a class="bk-x" href="#bk-ch-11">Chapter 11</a>) and scenarios (see <a class="bk-x" href="#bk-ch-12">Chapter 12</a>).</p>
 </section>
 <section class="help-sec" id="help-wts-when"><h4>When to use it</h4>
-<ul><li>Train a crew before a job, or brief a client.</li><li>Check a line-up: which equipment is in, where gas and liquids go.</li><li>Practise upsets: dump valve failure, ESD, hydrates, tank overfill.</li></ul>
+<ul><li>Train a crew before a job.</li><li>Check a line-up: which equipment is in, where gas and liquids go.</li><li>Practise upsets: dump valve failure, ESD, hydrates, tank overfill.</li></ul>
 </section>
 <section class="help-sec" id="help-wts-steps"><h4>Step by step</h4>
 <ol class="help-steps"><li>Select <b>Well Test Simulator</b> in <b>Well Test &amp; Flowlines</b>: the live view <span class="help-co" aria-label="call-out 1">1</span> opens.<figure class="help-fig" data-help-shot="wts/view"><picture><source media="(max-width: 600px)" srcset="img/wts/view-p.webp?v=4ece66ab" width="780" height="1688"><img class="help-img" src="img/wts/view-d.webp?v=2c844dde" width="1280" height="800" alt="Toolbar, 2D schematic, HUD and the form"></picture><figcaption>The page as it opens</figcaption></figure>
@@ -2790,7 +2790,7 @@
 </section>
 <section class="help-sec" id="help-wts-tips"><h4>Tips and pitfalls</h4>
 <p><b>Tips</b></p>
-<ul><li>Use 2D on a projector or an older device: it always works.</li><li>Form and rig-up changes apply live, without a Reset, and are logged in Events.</li></ul>
+<ul><li>Use 2D on a projector or an older device.</li><li>Form and rig-up changes apply live, without a Reset, and are logged in Events.</li></ul>
 <p><b>Pitfalls</b></p>
 <ul><li>It does not predict what a well makes on a bean: the rates are inputs.</li></ul>
 </section>
@@ -2802,33 +2802,33 @@
 </section>
 <section class="help-part" id="help-wts-reference"><h4>Key idea</h4>
 <section class="help-sec" id="help-wts-reference-what"><h5>What it does</h5>
-<p>A <b>dynamic replay around a steady design calculation</b>. The rates are inputs. The bean is checked against the <b>gas</b> rate only: too small, and all three rates are cut by the same factor and CK-101 raises CHOKE_LIMIT. Practise operating the spread; do not predict a well with it.</p>
+<p>A <b>dynamic replay around a steady design calculation</b>. The bean is checked against the <b>gas</b> rate only: too small, and all three rates are cut by the same factor and CK-101 raises CHOKE_LIMIT.</p>
 </section>
 </section>
 <section class="help-part" id="help-wts-layout"><h4>Page layout</h4>
 <section class="help-sec" id="help-wts-layout-what"><h5>What it does</h5>
-<p>Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the <b>Rig-up</b> card. Below: the form cards, <b>Pipe Segments</b>, <b>API RP 14E Settings</b> and the steady results. Steady warnings show above the form.</p>
+<p>Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the <b>Rig-up</b> card. Below: the form cards, <b>Pipe Segments</b>, <b>API RP 14E Settings</b> and the steady results.</p>
 </section>
 </section>
 <section class="help-part" id="help-wts-inputs"><h4>Form inputs</h4>
 <section class="help-sec" id="help-wts-inputs-what"><h5>What it does</h5>
-<p>Flowing wellhead or tubing pressure: <b>Wellhead Pressure</b>. A production line: <b>Operating Pressure</b> plus the line loss through V-101, or <b>Production line pressure</b> with V-101 out (FS-2 (see <a class="bk-x" href="#help-fs-FS-2">Chapter 12</a>)). Burner boom: FS-1 (see <a class="bk-x" href="#help-fs-FS-1">Chapter 12</a>).</p>
+<p>A production line: <b>Operating Pressure</b> plus the line loss through V-101, or <b>Production line pressure</b> with V-101 out (FS-2 (see <a class="bk-x" href="#help-fs-FS-2">Chapter 12</a>)). Burner boom: FS-1 (see <a class="bk-x" href="#help-fs-FS-1">Chapter 12</a>).</p>
 </section>
 <section class="help-sec" id="help-wts-inputs-inputs"><h5>Inputs</h5>
-<div class="help-tbl"><table><thead><tr><th>Input</th><th>Default</th><th>What to enter</th></tr></thead><tbody><tr><td>Wellhead Pressure</td><td>3000 psig (20684 kPa(g))</td><td>Flowing (tubing) pressure.</td></tr><tr><td>Wellhead Temp</td><td>180 °F (82.2 °C)</td><td></td></tr><tr><td>Gas Rate</td><td>10 MMSCFD (283 10³ m³/d)</td><td></td></tr><tr><td>Condensate / Oil</td><td>1000 BPD (159 m³/d)</td><td></td></tr><tr><td>Water Rate</td><td>200 BPD (31.8 m³/d)</td><td></td></tr><tr><td>Gas SG</td><td>0.65</td><td></td></tr><tr><td>Oil API Gravity</td><td>35</td><td></td></tr><tr><td>Bean Size</td><td>32/64</td><td>Checked against the gas rate.</td></tr><tr><td>Discharge Coef</td><td>0.85</td><td></td></tr><tr><td>Outlet Temp</td><td>150 °F (65.6 °C)</td><td>Heater set point.</td></tr><tr><td>Efficiency</td><td>80 %</td><td></td></tr><tr><td>Bypass</td><td>No</td><td>No heating; <span class="help-nw">CK-102</span> bypassed too.</td></tr><tr><td>Heater choke <span class="help-nw">CK-102</span> bean</td><td>48/64</td><td>While <span class="help-nw">CK-102</span> is in.</td></tr><tr><td><span class="help-nw">CK-102</span> position</td><td>On the heater inlet</td><td></td></tr><tr><td>Operating Pressure</td><td>150 psig (1034 kPa(g))</td><td><span class="help-nw">PCV-101</span> set point.</td></tr><tr><td>Separator ID</td><td>36</td><td>Inches (field units).</td></tr><tr><td>Separator Length S/S</td><td>10</td><td>Feet.</td></tr><tr><td>Surge Tank Pressure</td><td>25</td><td>psig; at most 30, and 10 below Operating Pressure through <span class="help-nw">V-101</span>.</td></tr><tr><td>Surge Tank Capacity</td><td>100</td><td>bbl.</td></tr><tr><td>Gauge Tank Compartment</td><td>100</td><td>bbl, each of two.</td></tr><tr><td>Sand rate, liquid</td><td>0</td><td>lb per thousand barrels.</td></tr><tr><td>Sand rate, gas</td><td>0</td><td>lb/MMscf of gas.</td></tr><tr><td>Sand median size</td><td>150</td><td>µm.</td></tr><tr><td>Desander rating</td><td>10,000</td><td>psi; no relief valve.</td></tr><tr><td>Desander accumulator</td><td>50</td><td>Gallons.</td></tr><tr><td>Max shut-in wellhead pressure</td><td>blank</td><td>psig, SITHP (see <a class="bk-x" href="#help-glossary-sithp">Appendix B</a>); blank = 1.2 × WHP.</td></tr><tr><td>Surge tank 2 capacity</td><td>100</td><td>bbl.</td></tr><tr><td>With <span class="help-nw">V-101 out</span>, well stream to</td><td>Burner / flare line</td><td></td></tr><tr><td>Production line pressure</td><td>150</td><td>psig, 0 to 1,440.</td></tr><tr><td>Pipe Segments</td><td></td><td>NPS, schedule, length.</td></tr><tr><td>C-Factor</td><td>100</td><td>100 clean; 125 to 150 inhibited.</td></tr><tr><td>Pipe Roughness</td><td>0.0018 in (0.046 mm)</td><td></td></tr></tbody></table>
+<div class="help-tbl"><table><thead><tr><th>Input</th><th>Default</th><th>What to enter</th></tr></thead><tbody><tr><td>Wellhead Pressure</td><td>3000 psig (20684 kPa(g))</td><td>Flowing (tubing) pressure.</td></tr><tr><td>Wellhead Temp</td><td>180 °F (82.2 °C)</td><td></td></tr><tr><td>Gas Rate</td><td>10 MMSCFD (283 10³ m³/d)</td><td></td></tr><tr><td>Condensate / Oil</td><td>1000 BPD (159 m³/d)</td><td></td></tr><tr><td>Water Rate</td><td>200 BPD (31.8 m³/d)</td><td></td></tr><tr><td>Gas SG</td><td>0.65</td><td></td></tr><tr><td>Oil API Gravity</td><td>35</td><td></td></tr><tr><td>Choke in service</td><td>Adjustable choke</td><td></td></tr><tr><td>Adjustable choke bean</td><td>32/64</td><td>Checked against the gas rate.</td></tr><tr><td>Positive (fixed) choke bean</td><td>24/64</td><td>Switch legs to change rate; change it on standby.</td></tr><tr><td>Discharge Coef</td><td>0.85</td><td></td></tr><tr><td>Outlet Temp</td><td>150 °F (65.6 °C)</td><td>Heater set point.</td></tr><tr><td>Efficiency</td><td>80 %</td><td></td></tr><tr><td>Bypass</td><td>No</td><td>No heating; <span class="help-nw">CK-102</span> bypassed too.</td></tr><tr><td>Heater choke <span class="help-nw">CK-102</span> bean</td><td>48/64</td><td>While <span class="help-nw">CK-102</span> is in.</td></tr><tr><td><span class="help-nw">CK-102</span> position</td><td>On the heater inlet</td><td></td></tr><tr><td>Operating Pressure</td><td>150 psig (1034 kPa(g))</td><td><span class="help-nw">PCV-101</span> set point.</td></tr><tr><td>Separator ID</td><td>36</td><td>Inches (field units).</td></tr><tr><td>Separator Length S/S</td><td>10</td><td>Feet.</td></tr><tr><td>Surge Tank Pressure</td><td>25</td><td>psig; at most 30, and 10 below Operating Pressure through <span class="help-nw">V-101</span>.</td></tr><tr><td>Surge Tank Capacity</td><td>100</td><td>bbl.</td></tr><tr><td>Gauge Tank Compartment</td><td>100</td><td>bbl, each of two.</td></tr><tr><td>Sand rate, liquid</td><td>0</td><td>lb per thousand barrels.</td></tr><tr><td>Sand rate, gas</td><td>0</td><td>lb/MMscf of gas.</td></tr><tr><td>Sand median size</td><td>150</td><td>µm.</td></tr><tr><td>Desander rating</td><td>10,000</td><td>psi; no relief valve.</td></tr><tr><td>Desander accumulator</td><td>50</td><td>Gallons.</td></tr><tr><td>Max shut-in wellhead pressure</td><td>blank</td><td>psig, SITHP (see <a class="bk-x" href="#help-glossary-sithp">Appendix B</a>); blank = 1.2 × WHP.</td></tr><tr><td>Surge tank 2 capacity</td><td>100</td><td>bbl.</td></tr><tr><td>With <span class="help-nw">V-101 out</span>, well stream to</td><td>Burner / flare line</td><td></td></tr><tr><td>Production line pressure</td><td>150</td><td>psig, 0 to 1,440.</td></tr><tr><td>Pipe Segments</td><td></td><td>NPS, schedule, length.</td></tr><tr><td>C-Factor</td><td>100</td><td>100 clean; 125 to 150 inhibited.</td></tr><tr><td>Pipe Roughness</td><td>0.0018 in (0.046 mm)</td><td></td></tr></tbody></table>
 </div></section>
 <section class="help-sec" id="help-wts-inputs-results"><h5>Results and verdicts</h5>
-<div class="help-tbl"><table><thead><tr><th>Result</th><th>Meaning</th></tr></thead><tbody><tr><td>Node Conditions</td><td>P, T and hydrate temperature per node.</td></tr><tr><td>Pipe Segment Analysis</td><td>Velocity against the limit: OK, WARNING above 80 %, EXCEED.</td></tr><tr><td>Choke (API 14B nozzle equation)</td><td>Downstream pressure, P2/P1, regime, maximum rate, J-T cooling.</td></tr><tr><td>❄ Hydrate risk</td><td>A line is below its hydrate temperature: heat (<span class="help-nw">H-101</span> lined up, not bypassed) or inhibit; see Hydrate Management (see <a class="bk-x" href="#help-hydrate-top">Chapter 7.3</a>).</td></tr></tbody></table>
+<div class="help-tbl"><table><thead><tr><th>Result</th><th>Meaning</th></tr></thead><tbody><tr><td>Node Conditions</td><td>P, T and hydrate temperature per node.</td></tr><tr><td>Pipe Segment Analysis</td><td>Velocity against the limit: OK, WARNING above 80 %, EXCEED.</td></tr><tr><td>Choke (API 14B nozzle equation)</td><td>Downstream pressure, P2/P1, regime, maximum rate, J-T cooling.</td></tr><tr><td>❄ Hydrate risk</td><td>A line is below its hydrate temperature: heat or inhibit; see Hydrate Management (see <a class="bk-x" href="#help-hydrate-top">Chapter 7.3</a>).</td></tr></tbody></table>
 </div><ul class="help-verdicts"><li><span class="help-v help-v-warn">⚠</span> A line is over its limit: larger line, lower rate or higher pressure.</li><li><span class="help-v help-v-warn">⚠</span> A line is above 80 % of its limit.</li><li><span class="help-v help-v-warn">⚠</span> The bean cannot pass the gas: larger bean or lower rate.</li><li><span class="help-v help-v-warn">⚠</span> Separator pressure at or above the choke inlet pressure.</li><li><span class="help-v help-v-warn">⚠</span> The surge tank is atmospheric-rated.</li><li><span class="help-v help-v-warn">⚠</span> Surge Tank Pressure must be 10 below Operating Pressure.</li><li><span class="help-v help-v-warn">⚠</span> The flare line loss exceeds the separator pressure.</li><li><span class="help-v help-v-warn">⚠</span> Open CK-102 or cut the rate.</li><li><span class="help-v help-v-warn">⚠</span> Open CK-102.</li><li><span class="help-v help-v-warn">⚠</span> SITHP above the rating between the chokes.</li><li><span class="help-v help-v-warn">⚠</span> A real rate would follow it.</li><li><span class="help-v help-v-warn">⚠</span> Above the bypass-path rating.</li></ul>
 </section>
 </section>
 <section class="help-part" id="help-wts-rigup"><h4>Rig-up</h4>
 <section class="help-sec" id="help-wts-rigup-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Select a switch in <b>Rig-up</b> to take an item out or put it back.</li><li>Read the <b>Note</b> lines: they say what changes.</li><li>Select <b>Restore full rig-up</b> to put all back.</li></ol>
+<ol class="help-steps"><li>Select a switch in <b>Rig-up</b> to take an item out or put it back.</li><li>Read the <b>Note</b> lines.</li><li>Select <b>Restore full rig-up</b> to put all back.</li></ol>
 </section>
 <section class="help-sec" id="help-wts-rigup-tips"><h5>Tips and pitfalls</h5>
 <p><b>Tips</b></p>
-<ul><li>SDV-101 and CK-101 stay in. V-101 and FS-401 can both be out only to a production line. P-201 needs T-301.</li><li>Optional, out by default: DS-101 (desander, upstream of CK-101), T-202 (needs T-201), CK-102 (needs H-101). Restore full rig-up leaves them.</li><li>V-101 out: to the burner line or a production line (FS-2 (see <a class="bk-x" href="#help-fs-FS-2">Chapter 12</a>)); no meter rates, GOR (see <a class="bk-x" href="#help-glossary-gor">Appendix B</a>), BS&amp;W (see <a class="bk-x" href="#help-glossary-bsw">Appendix B</a>) or batches. Unload a cushion (see <a class="bk-x" href="#help-glossary-cushion">Appendix B</a>) from Scenarios (FS-1 (see <a class="bk-x" href="#help-fs-FS-1">Chapter 12</a>)).</li><li>Saved in project files; the steady check ignores it.</li></ul>
+<ul><li>SDV-101 and CK-101 stay in. V-101 and FS-401 can both be out only to a production line. P-201 needs T-301.</li><li>Optional, out by default: DS-101 (desander, upstream of CK-101), T-202 (needs T-201), CK-102 (needs H-101), also in the toolbar <b>Rig-up</b> menu. Restore full rig-up leaves them.</li><li>V-101 out: to the burner line or a production line (FS-2 (see <a class="bk-x" href="#help-fs-FS-2">Chapter 12</a>)); no meter rates, GOR (see <a class="bk-x" href="#help-glossary-gor">Appendix B</a>), BS&amp;W (see <a class="bk-x" href="#help-glossary-bsw">Appendix B</a>) or batches. Unload a cushion (see <a class="bk-x" href="#help-glossary-cushion">Appendix B</a>) from Scenarios (FS-1 (see <a class="bk-x" href="#help-fs-FS-1">Chapter 12</a>)).</li><li>Saved in project files; the steady check ignores it.</li></ul>
 </section>
 </section>
 <section class="help-part" id="help-wts-toolbar"><h4>Toolbar and keys</h4>
@@ -2838,12 +2838,12 @@
 </section>
 <section class="help-part" id="help-wts-hud"><h4>HUD</h4>
 <section class="help-sec" id="help-wts-hud-what"><h5>What it does</h5>
-<p>T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±5 psi (34.5 kPa) of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&amp;W, totals since T+0, tank and alarm lines. T-202, DS-101 and a cushion add lines. On a phone: tiles.</p>
+<p>T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±5 psi (34.5 kPa) of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&amp;W, totals since T+0, tank and alarm lines. T-202, DS-101 and a cushion add lines.</p>
 </section>
 </section>
 <section class="help-part" id="help-wts-cards"><h4>Equipment cards</h4>
 <section class="help-sec" id="help-wts-cards-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Select equipment in the 2D or 3D view: live readings, design values, a trend.</li><li>SDV-101 <b>Trip ESD</b> / <b>Reset ESD</b>; CK-101 bean −/+ 2/64; H-101 <b>Bypass ON</b>; V-101 set point −/+ 5 psi (34.5 kPa).</li><li>T-201, T-301: inlet valves A and B, <b>Auto-divert</b>, valve stroke; T-301 <b>Swap tank</b>. T-201 also sets the LCV-201 suction and resets its trip. Bean and set point write the form. Esc closes.</li></ol>
+<ol class="help-steps"><li>Select equipment in the 2D or 3D view: live readings, design values, a trend.</li><li>SDV-101 <b>Trip ESD</b> / <b>Reset ESD</b>; CK-101 leg and beans; H-101 <b>Bypass ON</b>; V-101 set point −/+ 5 psi (34.5 kPa).</li><li>T-201: A fills, B transfers; at 80 % auto-divert swaps them. T-201, T-301: inlet valves A and B, <b>Auto-divert</b>, valve stroke; T-301 <b>Swap tank</b>. T-201 also sets the LCV-201 suction and resets its trip. Bean and set point write the form.</li></ol>
 </section>
 </section>
 <section class="help-part" id="help-wts-desander"><h4>DS-101 desander and sand</h4>
@@ -2881,7 +2881,7 @@
 </section>
 <section class="help-sec" id="help-wts-alarms-tips"><h5>Tips and pitfalls</h5>
 <p><b>Tips</b></p>
-<ul><li>Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.</li><li>Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).</li><li>Separator set points follow <b>Operating Pressure</b>: PAH = SP + max(10 %, 15 psi (103 kPa)), PSHH = SP + max(20 %, 25 psi (172 kPa)). Live with V-101 out too.</li></ul>
+<ul><li>Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.</li><li>Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).</li><li>Separator set points follow <b>Operating Pressure</b>: PAH = SP + max(10 %, 15 psi (103 kPa)), PSHH = SP + max(20 %, 25 psi (172 kPa)).</li></ul>
 </section>
 </section>
 <section class="help-part" id="help-wts-reports"><h4>Reports and saving</h4>
@@ -2891,7 +2891,7 @@
 </section>
 <section class="help-part" id="help-wts-views"><h4>2D and 3D</h4>
 <section class="help-sec" id="help-wts-views-what"><h5>What it does</h5>
-<p>2D: a schematic with live values and a Levels &amp; Pressures strip; select a tank valve to operate it. Works everywhere.</p>
+<p>2D: a schematic with live values and a Levels &amp; Pressures strip; select a tank valve to operate it.</p>
 <p>3D: camera views, Colour overlays (Phase, Pressure, Temperature, Erosion) and labels. It needs WebGL 2; without it the page shows 2D, with <b>Retry</b> and <b>Use 2D</b>.</p>
 </section>
 </section>
@@ -3076,7 +3076,7 @@
 <ul><li>What would make this choke go subcritical?</li><li>Which readings would you log every 15 minutes?</li><li>Where would you look first if GOR jumped?</li></ul>
 <h4>2 Choke capacity and bean selection</h4>
 <p><b>Duration:</b> 15–20 minutes.</p>
-<p><b>Fault to inject:</b> Variant: before the session set <b>Bean Size</b> to 28 in the form, so the trainee finds CHOKE_LIMIT active and diagnoses it.</p>
+<p><b>Fault to inject:</b> Variant: before the session set <b>Adjustable choke bean</b> to 28, so the trainee finds CHOKE_LIMIT active and diagnoses it.</p>
 <p><b>A good response:</b> Reads Capacity against the gas rate and clears the alarm with the smallest bean that passes it.</p>
 <p><b>Common mistakes:</b></p>
 <ul><li>Raising the bean far past the need.</li><li>Thinking the liquid rate sets the bean.</li></ul>

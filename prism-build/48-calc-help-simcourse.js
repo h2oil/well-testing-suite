@@ -40,7 +40,7 @@
             'Capacity follows the bean area: 10.71 × (30/32)² ≈ 9.41.', 'The design warnings in **Alarms** say “Choke is flow-limited — bean 30/64”.'],
             questions: ['What capacity do you expect on 28/64?', 'Why does the oil rate fall when only the gas capacity is short?', 'Can this check limit a liquid-only flow?'],
             answers: ['10.71 × (28/32)² ≈ {{8.2|gasRate}}.', 'The model scales the whole stream to the gas capacity.', 'No. The check compares the gas rate only, so the bean never limits a liquid rate.'],
-            form: DEF, trainer: { duration: '15–20 minutes.', fault: 'Variant: before the session set **Bean Size** to 28 in the form, so the trainee finds CHOKE_LIMIT active and diagnoses it.',
+            form: DEF, trainer: { duration: '15–20 minutes.', fault: 'Variant: before the session set **Adjustable choke bean** to 28, so the trainee finds CHOKE_LIMIT active and diagnoses it.',
             good: 'Reads Capacity against the gas rate and clears the alarm with the smallest bean that passes it.',
             mistakes: ['Raising the bean far past the need.', 'Thinking the liquid rate sets the bean.'],
             debrief: ['How do you size a bean before the test?', 'What does a flow-limited choke do to the test data?', 'What else changes on a larger bean?'] } },

@@ -151890,7 +151890,7 @@ G.WTS_modbusBridgeSetup = {
 // ══════════════════════════════════════════════════════════════
 const WTS_PIPES={'2':{'40':2.067,'80':1.939,'160':1.687},'3':{'40':3.068,'80':2.900,'160':2.624},'4':{'40':4.026,'80':3.826,'160':3.438},'6':{'40':6.065,'80':5.761,'160':5.187},'8':{'40':7.981,'80':7.625,'160':6.813},'10':{'40':10.020,'80':9.564,'160':8.500}};
 
-const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap','wts_bean2','wts_ck2Pos','wts_sepByDest','wts_sepByP'];
+const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap','wts_bean2','wts_ck2Pos','wts_sepByDest','wts_sepByP','wts_ckLeg','wts_beanFix'];
 function renderWTS(body){
     $('pgTitle').textContent='Well Test Simulator';
     $('pgSub').textContent='Live 3D process simulation — P, T, levels & velocity from wellhead to gauge tank (API RP 14E)';
@@ -151915,7 +151915,9 @@ function renderWTS(body){
         <div class="fg-item"><label>Oil API Gravity</label><input type="number" id="wts_API" value="35" step="0.1"></div>
       </div></div>
       <div class="card"><div class="card-title">Choke</div><div class="fg">
-        <div class="fg-item"><label>Bean Size (64ths)</label><input type="number" id="wts_bean" value="32" min="4" max="128"></div>
+        <div class="fg-item"><label>Choke in service</label><select id="wts_ckLeg"><option value="adj">Adjustable choke</option><option value="fixed">Positive (fixed) choke</option></select></div>
+        <div class="fg-item"><label>Adjustable choke bean (64ths)</label><input type="number" id="wts_bean" value="32" min="4" max="128"></div>
+        <div class="fg-item"><label>Positive (fixed) choke bean (64ths)</label><input type="number" id="wts_beanFix" value="24" min="4" max="128"></div>
         <div class="fg-item"><label>Discharge Coef (Cd)</label><input type="number" id="wts_Cd" value="0.85" step="0.01" min="0.5" max="1.0"></div>
         <div class="fg-item"><label>Regime</label><span id="wts_regime" style="font-size:12px;color:var(--text2)">auto</span></div>
       </div></div>
@@ -151971,12 +151973,15 @@ function renderWTS(body){
      if(dEl){dEl.addEventListener('change',lineTog);dEl.addEventListener('input',lineTog);}lineTog();}
     // v3.3.3: the CK-102 bean is a count (no unit conversion); the destination inputs follow the card rule (untagged psig, D28)
     if(window.WTS_units&&window.WTS_units.tagInput) window.WTS_units.tagInput('wts_bean2','count');
+    // CK-101 manifold: the positive (fixed) choke leg's bean is a count too (wts_bean is in the units MANIFEST)
+    if(window.WTS_units&&window.WTS_units.tagInput) window.WTS_units.tagInput('wts_beanFix','count');
     let wtsT;const wtsAC=()=>{clearTimeout(wtsT);wtsT=setTimeout(calcWTS,250);};
     setTimeout(()=>{document.querySelectorAll('#pgBody input:not([data-wts-ui]),#pgBody select:not([data-wts-ui])').forEach(el=>{el.addEventListener('input',wtsAC);el.addEventListener('change',calcWTS);});calcWTS();
         try{ if(window.WTS_live) window.WTS_live.mount($('wts_viz')); }catch(e){ console.warn('[WTS] live view failed',e); }
     },50);
 }
 
+let wtsCkLegNow='adj';   // CK-101 leg in service of the last calcWTS ('adj' | 'fixed'), read by wtsDrawDiag
 window.calcWTS=function(){
     saveInputs('wts',WTS_IDS);
     const gv=id=>{const e=$(id);return e?parseFloat(e.value):NaN;};
@@ -151984,7 +151989,14 @@ window.calcWTS=function(){
     const Pwh=gv('wts_Pwh')||3000,Twh=gv('wts_Twh')||180;
     const Qg=gv('wts_Qg')||0,Qo=gv('wts_Qo')||0,Qw=gv('wts_Qw')||0;
     const SGg=gv('wts_SGg')||0.65,API=gv('wts_API')||35;
-    const bean=gv('wts_bean')||32,Cd_ck=gv('wts_Cd')||0.85;
+    // CK-101 choke manifold: two legs, the adjustable choke (wts_bean, the v3.3.3 input) and the positive (fixed) choke (wts_beanFix,
+    // 4-128, default 24); the bean of the leg in service (wts_ckLeg; missing or any other value = 'adj') is the bean of the walk, so
+    // with the adjustable leg in service everything is exactly v3.3.3 (flow.ck1 is the only new block)
+    const ckLeg=(()=>{const e=$('wts_ckLeg');return e&&String(e.value)==='fixed'?'fixed':'adj';})();
+    const beanAdj=gv('wts_bean')||32,beanFixIn=gv('wts_beanFix'),
+          beanFix=isFinite(beanFixIn)&&beanFixIn>0?Math.min(128,Math.max(4,beanFixIn)):24;
+    const bean=ckLeg==='fixed'?beanFix:beanAdj,Cd_ck=gv('wts_Cd')||0.85;
+    const ckFix=ckLeg==='fixed';wtsCkLegNow=ckLeg;   // the 2D diagram label (wtsDrawDiag) names the leg in service
     const Thtr=gv('wts_Thtr')||150,htrEff=(gv('wts_htrEff')||80)/100;
     const bypass=$('wts_bypass').value==='1';
     const Psep=gv('wts_Psep')||150;
@@ -152309,7 +152321,7 @@ window.calcWTS=function(){
         else if(s.vSt==='WARNING')warns.push({t:'warn',seg:i,m:`${segNm[i]}: Velocity ${fmt(s.vel,0)} ft/s is ${fmt(s.vPct,0)}% of limit — consider upsizing`});
         if(s.hydR)warns.push({t:'info',m:`${segNm[i]}: Hydrate risk — ${fmt(s.T0,0)}&deg;F &lt; hydrate ${fmt(s.Thyd,0)}&deg;F`});
     });
-    if(flowLimited)warns.push({t:'error',m:`Choke is flow-limited — bean ${bean}/64" at Cd=${Cd_ck} can only pass ${fmt(Qcap/1000,2)} MMSCFD; requested ${fmt(Qg,2)} MMSCFD. Increase bean or reduce rate.`});
+    if(flowLimited)warns.push({t:'error',m:ckFix?`Choke is flow-limited — positive choke ${bean}/64" at Cd=${Cd_ck} can only pass ${fmt(Qcap/1000,2)} MMSCFD; requested ${fmt(Qg,2)} MMSCFD. Switch to the adjustable choke (change the positive bean while its leg is on standby) or reduce rate.`:`Choke is flow-limited — bean ${bean}/64" at Cd=${Cd_ck} can only pass ${fmt(Qcap/1000,2)} MMSCFD; requested ${fmt(Qg,2)} MMSCFD. Increase bean or reduce rate.`});
     if(regime==='No Flow'&&Qg>0)warns.push({t:'error',m:'Separator back-pressure exceeds the choke upstream pressure — no flow possible'});
     if(PsurgeRaw>30)warns.push({t:'warn',m:'Surge tank pressure limited to 30 psig (atmospheric-rated surge tank)'});
     if(PsurgeRaw>Psep-10)warns.push({t:'warn',m:'Surge tank pressure too close to separator pressure — liquids cannot dump',sepIn:true});
@@ -152346,7 +152358,8 @@ window.calcWTS=function(){
     });
     h+='</table></div>';
     h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Choke (API 14B nozzle equation)</div>
-        <div class="rrow"><span class="rl">Bean / Cd</span><span class="rv">${bean}/64" (${fmt(bean/64,3)}") &middot; Cd=${Cd_ck}</span></div>
+        <div class="rrow"><span class="rl">Bean / Cd</span><span class="rv">${ckFix?'positive choke ':''}${bean}/64" (${fmt(bean/64,3)}") &middot; Cd=${Cd_ck}</span></div>${ckFix?`
+        <div class="rrow"><span class="rl">Choke in service</span><span class="rv">Positive (fixed) choke ${bean}/64" &middot; adjustable choke on standby at ${beanAdj}/64"</span></div>`:''}
         <div class="rrow"><span class="rl">Upstream P</span><span class="rv">${uF(Pci,'pressureG',0,'psig')} (${uF(P1a,'pressure',0,'psia')}${_m?' abs':''})</span></div>
         <div class="rrow"><span class="rl">Downstream P (separator back-pressure)</span><span class="rv" style="color:var(--accent);font-weight:700">${uF(Pco,'pressureG',0,'psig')}</span></div>
         <div class="rrow"><span class="rl">P Ratio (P2/P1)</span><span class="rv">${fmt(pratio,3)}</span></div>
@@ -152405,7 +152418,8 @@ window.calcWTS=function(){
           sim:{sepID_in:sepID,sepLss_ft:sepL,surgeP_psig:Psurge,surgeCap_bbl:surgeCap,gaugeCap_bbl:gtCap,
                sand_pptb:sandPptb,sand_lbmmscf:sandGas,sand_d50_um:sandD50,desRating_psi:dsRating,desAcc_gal:dsAcc,sithp_psig:sithp,
                surge2Cap_bbl:surge2Cap,sepByDest,sepByP_psig:sepByP},
-          ck2:ck2Blk, sepBy:sepByBlk                                 // v3.3.3 blocks (§4.4); null if they could not be solved
+          ck2:ck2Blk, sepBy:sepByBlk,                                // v3.3.3 blocks (§4.4); null if they could not be solved
+          ck1:{v:1,leg:ckLeg,beanAdj,beanFix,bean}                  // CK-101 manifold: leg in service, both beans, the effective bean
         };
         GW.WTS_state.flow=flow;
         GW.WTS_state.nodes=nodes.map((n,i)=>{const vi=[0,1,2,3,4,null,5,null][i];
@@ -152416,7 +152430,7 @@ window.calcWTS=function(){
     // Publish the solved flow path so other modules (Pipe Service Life,
     // live 3D view, reports) can consume it without re-running the walk.
     window.WTS_lastCalc={nodes,segs,segNames:segNm,regime,flowLimited,
-        inputs:{Pwh,Twh,Qg,Qo,Qw,SGg,API,bean,Cd:Cd_ck,Thtr,htrEff,bypass,Psep,Cfac,eps:epsIn},
+        inputs:{Pwh,Twh,Qg,Qo,Qw,SGg,API,bean,Cd:Cd_ck,Thtr,htrEff,bypass,Psep,Cfac,eps:epsIn,leg:ckLeg,beanAdj,beanFix},
         heater:{Tin:Thi,Tout:Tho,dutyMMBtu:QMM},choke:{Pin:Pci,Pout:Pco,ratio:pratio,Qmax:Qcap,dTjt},
         flow};                                                      // additive fields only
     paintCtx.flow=flow; wtsRC=paintCtx;
@@ -152674,7 +152688,8 @@ function wtsDrawDiag(nodes,segs,opts){
         ctx.font='bold 9px sans-serif';ctx.textAlign='center';
         ctx.fillText(nodes[2].regime,tx[2],cy-34);
         ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';
-        ctx.fillText(nodes[2].bean+'/64"',tx[2],cy+78);
+        const ckLegD=nodes[2].leg==='fixed'||nodes[2].leg==='adj'?nodes[2].leg:wtsCkLegNow;   // CK-101 leg in service
+        ctx.fillText((ckLegD==='fixed'?'positive ':'')+nodes[2].bean+'/64"',tx[2],cy+78);
     }
     // Heater info (node 3)
     if(nodes[3].bypass){
