@@ -1,7 +1,12 @@
 'use strict';
 // server/core/app.js — the request pipeline shared by every deployment adapter (the host's functions, server/dev.js):
-//   createApp({config, handlers?, db?, mail?, now?, log?, opsNonces?}) → { handle(req) → Promise<{status, headers, cookies, body}> }
+//   createApp({config, handlers?, db?, mail?, now?, log?, opsNonces?, keys?, objects?, jobs?, background?})
+//     → { handle(req) → Promise<{status, headers, cookies, body}>, idle() → Promise (every after-response task settled) }
 // req = {method, url ('/api/v1/…?q'), headers (lower-case names), body: Buffer|null, remoteAddress}.
+// After-response work (WP-S1): a handler calls ctx.after(fn) — the queued mail send, for example — and the pipeline runs
+// it once the response is built, through o.background(promise) (the host's background facility, e.g. a waitUntil); without
+// one the promise runs detached. keys = core/keys.js (built from config.secrets when not given); objects = the blob store
+// (core/objects.js); jobs = the daily job runner for ops-daily (its own wts_jobs credential, never the request one).
 //
 // Order (docs/ACCOUNTS-PLAN.md §3.2): base path → proxy signature and original host (else 404) → route (else 404) → body cap
 // (413 before parsing) → Origin / X-WTS-Req / Content-Type for writes (403 origin; csp-report, ops-daily and the callback have
@@ -25,6 +30,15 @@ function createApp(o) {
   // ops-daily replay guard: shared through the database when there is one; the in-memory store is test-only and never used
   // in production (there a call without a shared store is refused).
   const opsNonces = o.opsNonces || (o.db ? H.dbNonceStore(o.db) : (config.production ? null : H.memoryNonceStore()));
+  const keys = o.keys || require('./keys').createKeys(config);
+  const pending = new Set();
+  function runAfter(tasks) {
+    if (!tasks.length) return;
+    const p = (async () => { for (const t of tasks) { try { await t(); } catch (e) { log.warn('after-response task failed: ' + ((e && e.message) || e)); } } })();
+    pending.add(p); p.then(() => pending.delete(p));
+    if (typeof o.background === 'function') { try { o.background(p); } catch (e) { /* the promise still runs */ } }
+  }
+  async function idle() { while (pending.size) await Promise.all(Array.from(pending)); }
 
   function respond(status, body, extra) {
     extra = extra || {};
@@ -87,15 +101,18 @@ function createApp(o) {
       const ip = H.clientIp(req, config);
       const cookies = H.parseCookies(H.header(req, 'cookie'));
       const setCookies = [];
+      const afterTasks = [];
       const ctx = {
         req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip, ipPrefix: ipPrefix(ip),
-        db: o.db || null, mail: o.mail || null,
+        db: o.db || null, mail: o.mail || null, keys, objects: o.objects || null, jobs: o.jobs || null,
+        after(task) { afterTasks.push(task); },
         // opts.maxAge (seconds) — required for the session cookie: seconds to abs_expires_at (contract COOKIES.session)
         setCookie(def, value, opts) { setCookies.push(H.serializeCookie(def, value, opts)); },
       };
       const fn = handlers[ep.id];
       if (typeof fn !== 'function') throw new ApiError('not_implemented');
-      const r = (await fn(ctx)) || {};
+      let r;
+      try { r = (await fn(ctx)) || {}; } finally { runAfter(afterTasks.splice(0)); }
       if (isCallback) return callbackRedirect(setCookies);
       return respond(r.status || 200, r.body, { headers: r.headers, cookies: setCookies });
     } catch (e) {
@@ -104,7 +121,7 @@ function createApp(o) {
       return fromError(e);
     }
   }
-  return { config, handle };
+  return { config, handle, idle, keys };
 }
 
 module.exports = { createApp, PAUSE_EXEMPT };

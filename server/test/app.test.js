@@ -85,13 +85,13 @@ test('common rules (§3.2): headers, Origin / X-WTS-Req / Content-Type, host, bo
     [req('POST', '/auth/code/start', { body: { email: 'x', purpose: 'signin' } }), 400, 'bad_request'],
     [req('POST', '/auth/code/start', { body: Object.assign({ extra: 1 }, ok) }), 400, 'bad_request'],
     [req('POST', '/auth/code/start', { body: Buffer.alloc(70 * 1024, 32) }), 413, 'too_large'],
-    [req('POST', '/auth/code/start', { body: ok }), 501, 'not_implemented'],
+    [req('POST', '/auth/code/start', { body: ok }), 503, 'paused'],          // passes every rule; no database configured here
     [req('GET', '/nope'), 404, 'not_found'],
     [req('GET', '/health.json'), 404, 'not_found'],
     [req('GET', '/health', { headers: { host: 'other.example' } }), 404, 'not_found'],
     [req('DELETE', '/health'), 404, 'not_found'],
     [req('PUT', '/blobs/' + 'a'.repeat(64) + '/0', { body: Buffer.from([1, 2]), ct: 'application/json' }), 403, 'origin'],
-    [req('PUT', '/blobs/' + 'a'.repeat(64) + '/0', { body: Buffer.from([1, 2]), ct: 'application/octet-stream' }), 501, 'not_implemented'],
+    [req('PUT', '/blobs/' + 'a'.repeat(64) + '/0', { body: Buffer.from([1, 2]), ct: 'application/octet-stream' }), 400, 'bad_request'],   // reaches the handler (no ?of)
     [req('POST', '/auth/oauth/other/start', { body: { purpose: 'signin', publicDevice: false } }), 404, 'not_found'],
     [req('POST', '/auth/oauth/google/start', { body: { purpose: 'signin', publicDevice: false } }), 503, 'provider_off'],
   ];
@@ -123,7 +123,9 @@ test('exceptions: callback is a constant 303; csp-report; ops-daily HMAC with on
   const ts = String(Math.floor(t / 1000)); const nonce = crypto.randomBytes(12).toString('hex');
   const sig = H.opsSignature(opsKey, 'POST', C.BASE + '/ops/daily', ts, nonce);
   const ops = () => req('POST', '/ops/daily', { bare: true, headers: { 'content-type': 'application/json', 'x-wts-ts': ts, 'x-wts-nonce': nonce, 'x-wts-sig': sig } });
-  assert.strictEqual((await app.handle(ops())).status, 501, 'signed call reaches the handler');
+  const first = await app.handle(ops());
+  assert.strictEqual(first.status, 200, 'signed call reaches the handler');
+  assert.ok(C.checkShape('OpsDailyRes', json(first)).ok, 'no jobs credential here: skipped, nothing touched');
   assert.strictEqual((await app.handle(ops())).status, 403, 'replayed nonce refused');
   t += 6 * 60 * 1000;
   const n2 = crypto.randomBytes(12).toString('hex');
@@ -158,7 +160,7 @@ test('dev runner serves the pipeline on 127.0.0.1 and refuses production', async
     assert.strictEqual(r.status, 200); assert.strictEqual(r.headers.get('cache-control'), 'no-store');
     assert.deepStrictEqual(await r.json(), { ok: true, db: false, ver: 'wp0' });
     const w = await fetch(s.url + '/api/v1/auth/code/start', { method: 'POST', headers: { origin: 'http://localhost:8080', 'x-wts-req': '1', 'content-type': 'application/json' }, body: JSON.stringify({ email: 'a@b.example', purpose: 'signin' }) });
-    assert.strictEqual(w.status, 501);
+    assert.strictEqual(w.status, 503, 'no database in this runner: paused');
     const big = await fetch(s.url + '/api/v1/auth/code/start', { method: 'POST', headers: { origin: 'http://localhost:8080', 'x-wts-req': '1', 'content-type': 'application/json' }, body: 'x'.repeat(80000) });
     assert.strictEqual(big.status, 413);
   } finally { await s.close(); }
@@ -239,7 +241,7 @@ test('ops-daily nonces: a shared store is used; production without one refuses; 
   const ts = String(Math.floor(t / 1000)); const nonce = crypto.randomBytes(12).toString('hex');
   const sig = H.opsSignature(opsKey, 'POST', C.BASE + '/ops/daily', ts, nonce);
   const ops = () => req('POST', '/ops/daily', { bare: true, headers: { 'content-type': 'application/json', 'x-wts-ts': ts, 'x-wts-nonce': nonce, 'x-wts-sig': sig } });
-  assert.strictEqual((await a1.handle(ops())).status, 501);
+  assert.strictEqual((await a1.handle(ops())).status, 200);
   assert.strictEqual((await a2.handle(ops())).status, 403, 'a replay on another instance is refused');
   assert.strictEqual(calls, 2);
   const prod = createApp({ config: loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'p', WTS_OPS_HMAC: opsKey.toString('base64') }), now: () => t });

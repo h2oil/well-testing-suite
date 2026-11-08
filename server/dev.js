@@ -5,7 +5,7 @@
 // address only. The host's functions adapter (WP-OPS) calls the same core/app.js pipeline.
 //
 //   node server/dev.js                         WTS_ENV=local, port WTS_DEV_PORT (8787)
-//   require('./dev').start({config, port, db}) → Promise<{port, url, close()}>   (port 0 = any free port)
+//   require('./dev').start({config, port, db, mail, objects}) → Promise<{port, url, close()}>   (port 0 = any free port)
 //
 // For a page served on localhost, set WTS_DEV_ORIGIN=http://localhost:8080 so its Origin is accepted (config.js).
 
@@ -27,7 +27,12 @@ function start(o) {
   o = o || {};
   const config = o.config || loadConfig(Object.assign({ WTS_ENV: 'local' }, process.env));
   if (config.production) return Promise.reject(new Error('dev.js: refused with WTS_ENV=production'));
-  const app = createApp({ config, db: o.db || null, mail: o.mail || null, now: o.now, log: o.log, handlers: o.handlers });
+  // WP-S1: a local database when WTS_DB_URL is set (wts_api of a local cluster), an in-process blob store, and a mail
+  // transport only when one is given (queued mail then waits in the outbox; codes are never printed)
+  let db = o.db || null;
+  if (!db && config.secrets.dbUrl) db = require('./core/db').createDb(config.secrets.dbUrl, { max: 4 });
+  const objects = o.objects || require('./core/objects').memoryObjects();
+  const app = createApp({ config, db, mail: o.mail || null, objects, now: o.now, log: o.log, handlers: o.handlers });
   const server = http.createServer(async (req, res) => {
     try {
       const got = await readBody(req, bodyLimit('blobPut'));

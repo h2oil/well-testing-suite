@@ -32,7 +32,7 @@ const SECRET_ENV = [
 ];
 const CONFIG_ENV = [
   'WTS_ENV', 'WTS_OIDC_MODE', 'WTS_MASTER_KID', 'WTS_APP_PATH', 'WTS_DEV_ORIGIN', 'WTS_DEV_PORT', 'WTS_CLIENT_IP_HEADER',
-  'WTS_HOST_HEADER', 'WTS_MAIL_FROM', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
+  'WTS_HOST_HEADER', 'WTS_MAIL_FROM', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
   'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_LINKEDIN_CLIENT_ID',
 ].concat(Object.keys(SWITCHES));
 const ENVS = ['production', 'preview', 'local', 'test'];
@@ -152,6 +152,8 @@ function loadConfig(env) {
     terms: String(env.WTS_TERMS_VERSION || '1'), privacy: String(env.WTS_PRIVACY_VERSION || '1'),
     minClient: String(env.WTS_MIN_CLIENT || '3.5'), version: String(env.WTS_VERSION || 'wp0'),
     devPort: env.WTS_DEV_PORT ? Number(env.WTS_DEV_PORT) : 8787,
+    // code/start answers no sooner than this (§3.3: padded to a fixed floor, so response time never tells an address apart)
+    codeFloorMs: /^\d{1,5}$/.test(String(env.WTS_CODE_FLOOR_MS || '')) ? Number(env.WTS_CODE_FLOOR_MS) : (production ? 400 : 0),
     warnings, alerts,
   };
   Object.defineProperty(cfg, 'secrets', { value: Object.freeze(secrets), enumerable: false });
