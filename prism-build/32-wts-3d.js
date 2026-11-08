@@ -224,7 +224,9 @@ function valveOf(id) {
 }
 
 // Pipe routes (orthogonal waypoints; fillets added automatically) — §5.3
-// aSeg: 0–5 main segments, 6 LW, 7 LO, 8 LM, 9 BLK, 10 VENT, 11 XA/XB, 12 DD (sand dump; E2b until v1.3.0), 13 DRA/DRB
+// aSeg: 0–5 main segments, 6 LW, 7 LO, 8 LM, 9 BLK, 10 VENT, 11 XA/XB, 12 DD (sand dump; E2b until v1.3.0), 13 DRA/DRB,
+// 14–17 the CK-101 legs (CK_LEG_SLOTS: 14 E2a / 15 E2b upstream, 16 E3 / 17 E3f downstream; fed per frame from segment 1 / 2
+// while that leg is in service, else the isolated look of slot 12 with no alert, frost or chevron motion)
 // v1.2.0: E2 keeps its index but starts at the DS-101 bypass tee (D0a + D0b + E2 = the v3.3 E2); LM keeps its index as LMa
 // (LMa + LMb = the v3.3 LM). Routes tagged rig:'desander' / rig:'surge2' are built only while that item is in (ROUTE_IDX stays).
 var ROUTES = [
@@ -233,8 +235,8 @@ var ROUTES = [
   // choke, E2b = leg B (down the inlet side) to the positive choke; E3 = leg A downstream (to the outlet tee), E3f (appended) = leg
   // B downstream; E3o (appended) = outlet tee → heater tee. The corners inside the manifold blocks use a tight bend (rb)
   { id:'E2',  aSeg:1, seg:1, line:'esd_choke',    phase:'multi', pts:[[-9.3,1.2,0],[-8.95,1.2,0],[-8.95,1.2,0.7],[-8.3,1.2,0.7]] },
-  { id:'E2b', aSeg:1, seg:1, line:'esd_choke',    phase:'multi', rb:0.05, pts:[[-8.3,1.2,0.7],[-8.3,1.2,-0.7],[-7.05,1.2,-0.7]] },
-  { id:'E3',  aSeg:2, seg:2, rSeg:1, line:'choke_heater', phase:'multi', rb:0.05, pts:[[-7.05,1.2,0.7],[-5.8,1.2,0.7],[-5.8,1.2,-0.7]] },
+  { id:'E2b', aSeg:15, seg:1, line:'esd_choke',    phase:'multi', rb:0.05, pts:[[-8.3,1.2,0.7],[-8.3,1.2,-0.7],[-7.05,1.2,-0.7]] },
+  { id:'E3',  aSeg:16, seg:2, rSeg:1, line:'choke_heater', phase:'multi', rb:0.05, pts:[[-7.05,1.2,0.7],[-5.8,1.2,0.7],[-5.8,1.2,-0.7]] },
   { id:'E3c', aSeg:2, seg:2, line:'choke_heater', phase:'multi', unless:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.15,1.9,0.4]] },
   { id:'E3b', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-4.3,1.2,0],[-4.3,1.2,1.5],[1.0,1.2,1.5],[1.0,1.2,0]] },
   { id:'E4a', aSeg:3, seg:3, line:'heater_sep',   phase:'multi', pts:[[0.35,1.9,-0.4],[1.0,1.9,-0.4],[1.0,1.2,-0.4],[1.0,1.2,0]] },
@@ -274,10 +276,17 @@ var ROUTES = [
   { id:'E3c1', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.65,1.9,0.4]] },
   { id:'E3c2', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-3.25,1.9,0.4],[-3.15,1.9,0.4]] },
   // ── v1.4.0 (appended) — CK-101 manifold legs (see E2 / E2b / E3 above) ──
-  { id:'E2a', aSeg:1, seg:1, line:'esd_choke', phase:'multi', pts:[[-8.3,1.2,0.7],[-7.05,1.2,0.7]] },
-  { id:'E3f', aSeg:2, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.05,1.2,-0.7],[-5.8,1.2,-0.7]] },
+  { id:'E2a', aSeg:14, seg:1, line:'esd_choke', phase:'multi', pts:[[-8.3,1.2,0.7],[-7.05,1.2,0.7]] },
+  { id:'E3f', aSeg:17, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.05,1.2,-0.7],[-5.8,1.2,-0.7]] },
   { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-5.8,1.2,-0.7],[-5.0,1.2,-0.7],[-5.0,1.2,0],[-4.3,1.2,0]] }
 ];
+// CK-101 leg shader slots (v1.4.0): slot → { src segment, leg }. The in-service leg's slots copy their segment's colour, alert,
+// frost and chevron phase each frame; the standby leg's slots show the isolated look (slot 12), alert 0, frost 0, phase frozen
+var CK_LEG_SLOTS = { 14:{ src:1, leg:'adj' }, 15:{ src:1, leg:'fixed' }, 16:{ src:2, leg:'adj' }, 17:{ src:2, leg:'fixed' } };
+var SEG_SLOTS = 18;                                                     // shader uniform array length (aSeg 0–17)
+// one slot's look this frame: its source segment while its leg is in service, else isolated (slot 12) (pure; Node-testable)
+function ckLegSlot(slot, leg) { var d = CK_LEG_SLOTS[slot]; if (!d) return null; var live = d.leg === (leg === 'fixed' ? 'fixed' : 'adj');
+  return { src:d.src, live:live, look:live ? d.src : 12 }; }
 var NEW_ROUTES = ['D0a', 'D0b', 'D1', 'D2', 'DD', 'LM2', 'X0', 'VENT2', 'BLK2', 'PSV2', 'E3c1', 'E3c2'];
 // CK-102 body: the CK-101 block (angle body, bonnet, handwheel) at 0.8 scale, except that the body is sized for the 6-inch
 // line (0.40 m along the flow × 0.46 m, wider than the pipe it sits on). It sits on the last horizontal stub of the inlet leg
@@ -1542,7 +1551,7 @@ function factory(THREE) {
           .replace('#include <begin_vertex>', '#include <begin_vertex>\nwSeg = aSeg; wS = aS; wWP = (modelMatrix*vec4(position,1.0)).xyz;');
       }
       var pre = '#include <common>\nuniform vec3 uRim,uAlertCol;uniform float uRimMax,uRimPow,uAlert;';
-      if (seg) pre += '\nvarying float wSeg; varying float wS; varying vec3 wWP; uniform vec3 uSegCol[14]; uniform vec3 uSegColOld[14]; uniform float uSegAlert[14]; uniform float uSegFrost[14]; uniform float uSegPh[14]; uniform float uPulse; uniform float uChev; uniform float uWaveS;' +
+      if (seg) pre += '\nvarying float wSeg; varying float wS; varying vec3 wWP; uniform vec3 uSegCol[' + SEG_SLOTS + ']; uniform vec3 uSegColOld[' + SEG_SLOTS + ']; uniform float uSegAlert[' + SEG_SLOTS + ']; uniform float uSegFrost[' + SEG_SLOTS + ']; uniform float uSegPh[' + SEG_SLOTS + ']; uniform float uPulse; uniform float uChev; uniform float uWaveS;' +
         '\nfloat wHash(vec3 p){ uvec3 q = uvec3(ivec3(floor(mod(p,256.0)))); uint h = q.x*1597334677u ^ q.y*3812015801u ^ q.z*2798796415u; h = (h ^ (h >> 16u))*2246822519u; return float(h >> 8u)/16777215.0; }';
       var body = '';
       if (seg) body = '\nint wi = int(wSeg+0.5); vec3 wSc = wS < uWaveS ? uSegCol[wi] : uSegColOld[wi];' +
@@ -3168,7 +3177,7 @@ function buildPipes(F, S, nps) {
         }
       } else {
         var tg = new THREE.TubeGeometry(new F.FilletArc(pr), 8, rvis * 1.07, T.radP, false);
-        (def.aSeg === 2 && def.id !== 'E3b' ? frost : steel).push(tg);
+        (def.seg === 2 && def.id !== 'E3b' ? frost : steel).push(tg);
       }
     }
     // flanges at the route ends (nozzle / equipment faces), except at tees
@@ -3177,7 +3186,7 @@ function buildPipes(F, S, nps) {
       var d0 = f0.type === 'L' ? f0.dir : f0.dIn, d1 = fl.type === 'L' ? fl.dir : fl.dOut;
       var endTee = function (pt) { for (var t = 0; t < TEES.length; t++) if (Math.abs(TEES[t][0] - pt[0]) + Math.abs(TEES[t][1] - pt[1]) + Math.abs(TEES[t][2] - pt[2]) < 0.05) return true;
         for (t = 0; t < CK_JOINTS.length; t++) if (Math.abs(CK_JOINTS[t][0] - pt[0]) + Math.abs(CK_JOINTS[t][1] - pt[1]) + Math.abs(CK_JOINTS[t][2] - pt[2]) < 0.05) return true; return false; };
-      if (!endTee(def.pts[0])) flangeP(v3add(def.pts[0], v3scale(d0, 0.04)), d0, rvis, def.aSeg === 2 ? frost : steel);
+      if (!endTee(def.pts[0])) flangeP(v3add(def.pts[0], v3scale(d0, 0.04)), d0, rvis, def.seg === 2 ? frost : steel);
       if (!endTee(def.pts[def.pts.length - 1])) flangeP(v3add(def.pts[def.pts.length - 1], v3scale(d1, -0.04)), d1, rvis, steel);
     }
   }
@@ -3191,9 +3200,9 @@ function buildPipes(F, S, nps) {
   var meshes = [];
   var gm = S.pipeGlassMat;
   if (!gm) {
-    var su = S.segU = { col:{ value:[] }, colOld:{ value:[] }, alert:{ value:new Array(14).fill(0) }, frost:{ value:new Array(14).fill(0) }, ph:{ value:new Array(14).fill(0) },
+    var su = S.segU = { col:{ value:[] }, colOld:{ value:[] }, alert:{ value:new Array(SEG_SLOTS).fill(0) }, frost:{ value:new Array(SEG_SLOTS).fill(0) }, ph:{ value:new Array(SEG_SLOTS).fill(0) },
       pulse:{ value:0 }, chev:{ value:T.tracers < 600 ? 1 : 0 }, wave:{ value:1e6 } };
-    for (i = 0; i < 14; i++) { su.col.value.push(new THREE.Color(0.6, 0.7, 0.8)); su.colOld.value.push(new THREE.Color(0.6, 0.7, 0.8)); }
+    for (i = 0; i < SEG_SLOTS; i++) { su.col.value.push(new THREE.Color(0.6, 0.7, 0.8)); su.colOld.value.push(new THREE.Color(0.6, 0.7, 0.8)); }
     gm = S.pipeGlassMat = F.makeGlass({ side:THREE.FrontSide, opacity:0.16, tier:S.tier, envTex:S.scene.environment, seg:su, rimMax:0.6, envI:1.3 });
   }
   var gmesh = new THREE.Mesh(F.mergeGeos(glass, { seg:true }), gm); gmesh.renderOrder = 900; scene.add(gmesh); meshes.push(gmesh);
@@ -3739,6 +3748,16 @@ function createHandle(THREE, container, opts) {
     for (var q = 0; q < 14; q++) K.phaseSeg[q].set(q <= 3 ? '#9fc3dd' : (q === 4 || q === 9 || q === 10) ? '#cfe6ff' : q === 6 ? PALETTE.waterBody : q === 7 ? oc.surface : q === 12 ? '#5a6470' : mixHex(oc.surface, PALETTE.waterBody, 0.3));
     if (S.dyn.cascade) S.dyn.cascade.material.uniforms.uCol.value.set(oc.surface);
     if (S.dyn.sight) S.dyn.sight.o.material.color.set(oc.body), S.dyn.sight.o.material.emissive.set(oc.body);
+  }
+  // CK-101 leg slots 14–17 (v1.4.0): 'look' = colour + alert + chevron phase (after the main slots each frame), 'frost' = frost
+  // (after the CK-101 frost ramp). The standby leg keeps its last phase (no chevron motion) and shows the isolated colour
+  function updateCkLegSlots(su, leg, what) {
+    for (var sl = 14; sl < SEG_SLOTS; sl++) {
+      var c = ckLegSlot(sl, leg);
+      if (what === 'frost') { su.frost.value[sl] = c.live ? su.frost.value[c.src] : 0; continue; }
+      if (c.live) { su.col.value[sl].copy(su.col.value[c.src]); su.alert.value[sl] = su.alert.value[c.src]; su.ph.value[sl] = su.ph.value[c.src]; }
+      else { su.col.value[sl].copy(K.phaseSeg[12]); su.alert.value[sl] = 0; }
+    }
   }
   // pipe tint / tracer colours per overlay
   function segColour(i, out) {
@@ -4346,6 +4365,7 @@ function createHandle(THREE, container, opts) {
     var fz = n.nodes.choke.hyd || n.segs[2].hydR ? 1 : 0; S.frostU.uFrost.value = clamp(S.frostU.uFrost.value + (fz ? dt / 4 : -dt / 4), 0, 1);
     if (snap) S.frostU.uFrost.value = fz;
     S.segU.frost.value[2] = S.frostU.uFrost.value; S.segU.frost.value[11] = 0;
+    updateCkLegSlots(S.segU, n.nodes.choke.leg, 'frost');     // CK-101 legs: frost only on the in-service downstream leg
     if (D.choke.fu) { var lbF = D.choke.lb < 0 ? 0 : D.choke.lb; D.choke.fu[0].uFrost.value = S.frostU.uFrost.value * (1 - lbF); D.choke.fu[1].uFrost.value = S.frostU.uFrost.value * lbF; }
   }
 
@@ -4758,6 +4778,7 @@ function createHandle(THREE, container, opts) {
       su.pulse.value = 0.5 + 0.5 * Math.sin(t0 * 0.006);
       if (waveOld) { waveOld.t += dt; su.wave.value = reducedMotion ? 1e6 : S.pipes.totalS * clamp(waveOld.t / 1.2, 0, 1); if (waveOld.t > 1.3) { waveOld = null; su.wave.value = 1e6; } }
       for (si = 0; si < 14; si++) { var sv = si <= 5 ? si : -1, velS = sv >= 0 ? velToScene(N.segs[sv].vel) : 0.6; su.ph.value[si] = (su.ph.value[si] + velS * dt * flowGain) % 256; }
+      updateCkLegSlots(su, N.nodes.choke.leg, 'look');
       edgeState();
       updateVessels(dt, snap, anim);
       updateTracers(dt); updateJetEmbersFrost(dt, t0); updateVesselParticles(dt);
@@ -4790,7 +4811,7 @@ function createHandle(THREE, container, opts) {
   H.setPaused = guard(function (b) { b = !!b; if (paused === b) return; paused = b; if (!b) { resize(); snapNext = true; labelDirty = true; } else clearPointers(); });
   H.setOverlay = guard(function (m) {
     if (!/^(phase|pressure|temperature|erosion)$/.test(m) || m === overlay) return;
-    if (S && S.segU) { for (var i = 0; i < 14; i++) S.segU.colOld.value[i].copy(S.segU.col.value[i]); S.segU.wave.value = 0; }
+    if (S && S.segU) { for (var i = 0; i < SEG_SLOTS; i++) S.segU.colOld.value[i].copy(S.segU.col.value[i]); S.segU.wave.value = 0; }
     overlay = m; waveOld = { t:0 }; labelDirty = true; layoutDirty = true;
   });
   H.setLabels = guard(function (m) { if (/^(all|equip|off)$/.test(m)) { labelMode = m; layoutDirty = true; labelsEl.style.display = m === 'off' ? 'none' : ''; svg.style.display = m === 'off' ? 'none' : ''; } });
@@ -4913,7 +4934,7 @@ function mount(container, opts) {
 // §G PUBLIC
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
-  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES,
+  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
   TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,

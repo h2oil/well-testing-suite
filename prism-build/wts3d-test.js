@@ -319,6 +319,25 @@ const SECTION_B = (G /*, src */) => {
         !/tb = tabs\[N\.nodes\.choke\.leg === 'fixed' \? ROUTE_IDX\.E3f : ROUTE_IDX\.E3\]/.test(code) || !/'ADJ ' \+ Math\.round\(c\.bean\)|\(cFix \? 'POS ' : 'ADJ '\)/.test(code)) bad.push('source');
       return bad.length === 0 || bad.join('; ');
     }],
+    ['32 v1.4.0: CK-101 legs have their own shader slots (E2a 14 / E2b 15 upstream, E3 16 / E3f 17 downstream); the inlet run and the outlet tee run stay shared; the standby leg\'s slots are isolated (slot 12 look, no alert / frost / chevron motion)', () => {
+      const bad = [], aS = id => (I.ROUTES.find(r => r.id === id) || {}).aSeg, code = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+      if (!(aS('E2a') === 14 && aS('E2b') === 15 && aS('E3') === 16 && aS('E3f') === 17)) bad.push('leg slots ' + ['E2a', 'E2b', 'E3', 'E3f'].map(aS).join());
+      if (!(aS('E2') === 1 && aS('E3o') === 2)) bad.push('shared runs');
+      if (I.SEG_SLOTS !== 18 || I.ROUTES.some(r => !(r.aSeg >= 0 && r.aSeg < I.SEG_SLOTS))) bad.push('slot range');
+      // every leg slot is used only by its own leg's route, and its source segment equals that route's seg
+      const legOf = { E2a:'adj', E3:'adj', E2b:'fixed', E3f:'fixed' };
+      I.ROUTES.filter(r => r.aSeg >= 14).forEach(r => { const d = I.CK_LEG_SLOTS[r.aSeg]; if (!d || d.leg !== legOf[r.id] || d.src !== r.seg) bad.push('slot ' + r.id); });
+      [['adj', [14, 16], [15, 17]], ['fixed', [15, 17], [14, 16]], [undefined, [14, 16], [15, 17]]].forEach(([leg, live, stby]) => {
+        live.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && c.live && c.look === c.src && c.src === (sl < 16 ? 1 : 2))) bad.push('live ' + leg + ' ' + sl); });
+        stby.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && !c.live && c.look === 12)) bad.push('standby ' + leg + ' ' + sl); });
+      });
+      if (I.ckLegSlot(2, 'adj') !== null || I.ckLegSlot(12, 'fixed') !== null) bad.push('non-leg slot');
+      // the shader arrays are SEG_SLOTS long; the standby branch copies slot 12 and zeroes alert / frost without advancing the phase
+      if (!/uSegCol\[' \+ SEG_SLOTS \+ '\]/.test(code) || /uSeg\w+\[14\]/.test(code)) bad.push('shader arrays');
+      if (!/else \{ su\.col\.value\[sl\]\.copy\(K\.phaseSeg\[12\]\); su\.alert\.value\[sl\] = 0; \}/.test(code) || !/su\.frost\.value\[sl\] = c\.live \? su\.frost\.value\[c\.src\] : 0/.test(code)) bad.push('standby branch');
+      if (!/updateCkLegSlots\(su, N\.nodes\.choke\.leg, 'look'\)/.test(code) || !/updateCkLegSlots\(S\.segU, n\.nodes\.choke\.leg, 'frost'\)/.test(code)) bad.push('per-frame feed');
+      return bad.length === 0 || bad.join('; ');
+    }],
     ['32: fixture physics shows in the visual mapping (flame ≈ 5.1 m at 10 MMSCFD; stream whitens downstream of CK-101)', () => {
       if (!F) return true;
       const up = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[0].P0, F.segs[0].T0), dn = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[2].P0, F.segs[2].T0);
@@ -471,7 +490,7 @@ const SECTION_B = (G /*, src */) => {
           ['LM2', 'X0', 'VENT2', 'BLK2', 'PSV2'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { surge2: true }) || route(id).rig !== 'surge2') bad.push('rig tag ' + id); });
           ['D0a', 'D0b', 'LMa', 'LMb', 'E2'].forEach(id => { if (!I.routeBuilt(route(id), {})) bad.push('core route ' + id); });
           if (I.TEES.filter(t => !t[4]).length !== 7) bad.push('v3.3 tees changed');
-          const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2,E2a,E2b') bad.push('aSeg ' + D);
+          const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2') bad.push('aSeg ' + D);
           return bad.length === 0 || bad.join(',');
         }],
         ['32: nextS[X0] = X2\'s arc length to the elbow (13.4, 0.45, 4.0); VENT2 joins VENT at (13.0, 6.1, 2.3)', () => {
