@@ -738,7 +738,7 @@
                 if (!ls) return;
                 if (state === null) { _clearProjectKeys(); return; }        // New
                 if (!state || typeof state !== 'object' || !state.keys ||
-                    typeof state.keys !== 'object') return;
+                    typeof state.keys !== 'object' || Array.isArray(state.keys)) return;   // shape check (§8.7)
                 _clearProjectKeys();
                 var keys = state.keys;
                 for (var k in keys) {
@@ -815,10 +815,10 @@
         var mods = payload.modules || {};
         // A project with PRiSM state but no dataset must not inherit the
         // dataset that is open now (it is re-read from the restored inputs).
-        if (_own(mods, 'prism') && !isKept('prism') && !_own(mods, 'prism_dataset') && !isKept('prism_dataset')) G.PRiSM_dataset = null;
+        if (_own(mods, 'prism') && mods.prism != null && !isKept('prism') && !_own(mods, 'prism_dataset') && !isKept('prism_dataset')) G.PRiSM_dataset = null;
         // A project saved before multi-well projects (or with a single well)
         // replaces the well list too: it opens as one well.
-        if (_own(mods, 'storage') && !isKept('storage') && !_own(mods, 'wells') && !isKept('wells') && MODULES.wells) {
+        if (_own(mods, 'storage') && mods.storage != null && !isKept('storage') && !_own(mods, 'wells') && !isKept('wells') && MODULES.wells) {
             try { MODULES.wells.write(null); } catch (e) { _warn('[WTS_project] wells reset failed', e); }
         }
         // Apply in registry order (inputs → dataset → analysis → storage), not
@@ -829,6 +829,9 @@
             var key = order[i];
             if (!_own(mods, key)) continue;
             if (isKept(key)) { kept.push(key); continue; }   // H3: the local module stays as it is
+            // null is New's "clear" value and never written to a file (read() null → omitted): a loaded null is refused,
+            // so a damaged or hostile file cannot wipe a module (docs/ACCOUNTS-PLAN.md §8.7 shape checks).
+            if (mods[key] == null) { skipped.push(key); continue; }
             try {
                 var w = MODULES[key].write(mods[key]);
                 if (_isThenable(w)) waits.push(w);
