@@ -53,15 +53,15 @@ const CHECKS = {
       expect: [{ at: 606, path: 'esd.travel', v: 0, tol: 0.001 }, { at: 900, path: 'nodes.wellhead.P', v: 3298, tol: 0.01 }, { at: 917, path: 'esd.travel', v: 1, tol: 0.001 }] },
   ],
   ex6: [
-    { kind: 'sim', run: 5400, dt: 5, expect: [{ batch: 1, from: 4600, to: 5800 }, { at: 5400, path: 'gauge.batches.0.tClose', v: 4680, tol: 0.1 }, { at: 5400, path: 'gauge.batches.0.settled', v: true }] },
-    { kind: 'sim', run: 11000, dt: 10, actions: [{ t: 600, fault: 'surgePumpFail', on: true }], expect: [{ alarm: 'LAH_GT', from: 8000, to: 10800 }, { alarm: 'LSHH_GT', from: 8000, to: 11000 }, { noAlarm: 'ESD_TRIPPED' }] },
+    { kind: 'sim', run: 5400, dt: 5, expect: [{ batch: 1, from: 4000, to: 5000 }, { at: 5400, path: 'gauge.batches.0.tClose', v: 3834, tol: 0.05 }, { at: 5400, path: 'gauge.batches.0.settled', v: true }] },
+    { kind: 'sim', run: 12000, dt: 10, actions: [{ t: 600, fault: 'surgePumpFail', on: true }], expect: [{ alarm: 'LAH_GT', from: 8000, to: 11000 }, { alarm: 'LSHH_GT', from: 10000, to: 12000 }, { noAlarm: 'ESD_TRIPPED' }] },
   ],
   ex7: [
-    { kind: 'sim', run: 150, dt: 1, actions: [{ t: 60, valve: ['surge', 1, false] }, { t: 120, valve: ['surge', 1, true] }, { t: 120, valve: ['surge', 0, false] }],
+    { kind: 'sim', run: 150, dt: 1, actions: [{ t: 120, valve: ['surge', 1, true] }, { t: 120, valve: ['surge', 0, false] }],
       expect: [{ at: 100, path: 'surge.comps.1.pos', v: 0 }, { at: 123, path: 'surge.comps.0.pos', v: 1 }, { at: 123, path: 'surge.comps.0.hold', v: true }, { at: 140, path: 'surge.comps.0.pos', v: 0 },
         { at: 140, path: 'surge.comps.1.pos', v: 1 }, { noAlarm: 'SURGE_BLOCKED' }] },
     { kind: 'sim', run: 4800, dt: 5, actions: [{ t: 600, fault: 'xferStuckClosed', on: true }], expect: [{ alarm: 'XFER_FAIL', from: 600, to: 640 }, { alarm: 'LSHH_SURGE', from: 3600, to: 4800 }, { alarm: 'ESD_TRIPPED', from: 3600, to: 4800 }] },
-    { kind: 'sim', set: { wts_Psurge: 2 }, run: 3600, dt: 10, expect: [{ alarm: 'XFER_LOW_DP', from: 600, to: 3600 }] },
+    { kind: 'sim', set: { wts_Psurge: 2 }, run: 3600, dt: 10, expect: [{ alarm: 'XFER_LOW_DP', from: 300, to: 3600 }] },
   ],
   ex8: [
     { kind: 'page', set: { wts_Twh: 60 }, tol: 0.01, expectState: { 'flow.nodes.2.T': -51.3, 'flow.nodes.2.th': 36.6, 'flow.choke.dTjt': 111.3, 'flow.nodes.0.th': 75.1 },
@@ -93,7 +93,7 @@ const CHECKS = {
   ex10: [
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 660, dt: 1, actions: [{ t: 60, route: 'both' }],
       expect: [{ at: 10, path: 'surge2.inlet', v: false }, { at: 10, path: 'surge2.frac', v: 0, tol: 1e-6 }, { at: 10, path: 'surge2.route', v: 'surge' }, { at: 660, path: 'surge2.route', v: 'both' },
-        { at: 660, path: 'surge2.share', v: 0, tol: 1e-6 }] },
+        { at: 240, path: 'surge.pump.on', v: true }, { at: 240, path: 'surge2.share', v: 0, tol: 1e-6 }, { at: 660, path: 'surge.pump.on', v: false }, { at: 660, path: 'surge2.share', v: 0.5, tol: 0.1 }] },
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 5200, dt: 5, actions: [{ t: 60, route: 'surge2' }],
       expect: [{ at: 90, path: 'surge.comps.0.inlet', v: false }, { at: 90, path: 'surge2.lsh', v: 0.7 }, { at: 90, path: 'surge2.inlet', v: true }, { at: 4800, path: 'surge2.transfer.on', v: false }, { at: 5100, path: 'surge2.transfer.on', v: true }, { noAlarm: 'ESD_TRIPPED' }] },
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 7000, dt: 5, actions: [{ t: 0, route: 'surge2' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],

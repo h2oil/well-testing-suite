@@ -205,6 +205,46 @@ module.exports = [
     },
   },
   {
+    // T-202 route 'both' under the default line-up. The split is pressure-driven (check-valved branches into two gas spaces, §5.2):
+    // while LCV-201 transfers, T-201 is drawn below its set point (PCV-201 shut, PCV-202 blanket P-only band), so the small water
+    // dumps and the blow-by go to T-201 and the instantaneous share reads 0 between the oil dumps; the oil-dump slugs still split.
+    // That is physical and the same with the v3.3.1 line-up; the default only runs the transfer after each auto-divert (≈ hourly),
+    // so a single sample at ≈ 1 h can read 0. Over 2 h the dump-volume share stays shared and never sticks at 0.
+    name: 'WTSLU T-202 route both under the default line-up: dump share stays shared over 2 h (20-min windows, overall = v3.3.1 line-up), never stuck at 0',
+    wp: WP, opts: false,
+    run(app, assert) {
+      function runBoth(legacy) {
+        const S = eng(), o = { seed: 7, rigup: { surge2: true }, config: NOISE_OFF };
+        const sim = S.create(S.SAMPLE_FLOW, legacy ? legacyOpts(o) : o);
+        assert.ok(sim.setSurgeRoute('both').ok, 'route both');
+        const r = { wins: [], v1: 0, v2: 0, run0: 0, max0: 0, xferLow: 0, diverts: 0, s: null };
+        sim.on('divert', (e) => { if (e.eq === 'surge') r.diverts++; });
+        let w1 = 0, w2 = 0;
+        for (let t = 5; t <= 7200; t += 5) {
+          sim.advance(5);
+          const s = st(sim), f1 = comp(s, 0).fill_bpd + comp(s, 1).fill_bpd, f2 = s.surge2.fill_bpd;
+          assert.ok(s.surge2.route === 'both' && s.surge2.share >= 0 && s.surge2.share <= 1, 't ' + t + ': route ' + s.surge2.route + ', share ' + s.surge2.share);
+          w1 += f1; w2 += f2;
+          if (s.surge2.share < 0.05) { r.run0 += 5; r.max0 = Math.max(r.max0, r.run0); } else r.run0 = 0;
+          if (s.surge.pump.on && s.surge.pump.q_bpd > 0 && s.surge.P < s.surge2.P - 0.5) r.xferLow++;
+          if (t % 1200 === 0) { r.wins.push(w2 / (w1 + w2)); r.v1 += w1; r.v2 += w2; w1 = 0; w2 = 0; }
+          r.s = s;
+        }
+        r.share = r.v2 / (r.v1 + r.v2);
+        return r;
+      }
+      const n = runBoth(false), l = runBoth(true), f = (x) => x.toFixed(3);
+      assert.strictEqual(n.wins.length, 6, 'six 20-min windows');
+      n.wins.forEach((w, i) => assert.ok(w > 0.35 && w < 0.6, 'default line-up window ' + i + ': T-202 share of the dumped volume ' + f(w)));
+      assert.ok(n.share > 0.43 && n.share < 0.53, 'default line-up 2 h share ' + f(n.share));
+      assert.ok(Math.abs(n.share - l.share) < 0.03, 'default ' + f(n.share) + ' vs v3.3.1 line-up ' + f(l.share));
+      assert.ok(n.diverts >= 1 && n.xferLow > 0, 'T-201 transferred below T-202 (auto-divert ' + n.diverts + ', samples ' + n.xferLow + ')');
+      assert.ok(n.max0 <= 600, 'instantaneous share never stuck at 0: longest ' + n.max0 + ' s (v3.3.1 line-up ' + l.max0 + ' s)');
+      assert.ok(!n.s.esd.tripped && !l.s.esd.tripped, 'no ESD');
+      balanced(assert, n.s, 'default line-up, route both, 2 h');
+    },
+  },
+  {
     name: 'WTSLU in the app built from sources: default line-up, snapshot shape (strict) and the choke keys',
     wp: WP,
     run(app, assert) {
