@@ -425,9 +425,12 @@ module.exports = [
         assert.deepStrictEqual(clone(A.PROVIDERS), ['google', 'linkedin']);
         assert(S.CLIENT_STATES.includes(A.state().status) && A.state().status === 'signedOut');
         assert(S.SYNC_STATES.includes(b.win.WTS_cloudSync.status().state) && b.win.WTS_cloudSync.status().state === 'off');
-        for (const n of ['refresh', 'openSignIn', 'signOut', 'signInWith', 'finishProviderSignIn', 'methods']) {
+        for (const n of ['refresh', 'openSignIn', 'signOut']) {
           await assert.rejects(A[n](), (e) => e.code === 'not_implemented' && e instanceof A.Error, 'WTS_account.' + n);
         }
+        // WP-O built the provider names (signInWith, finishProviderSignIn, methods, linkProvider, unlinkMethod); with no
+        // provider a start is refused before any request
+        await assert.rejects(A.signInWith(), (e) => e.code === 'bad_request' && e instanceof A.Error, 'WTS_account.signInWith()');
         for (const n of ['saveToCloud', 'openFromCloud', 'snapshot', 'syncNow']) await assert.rejects(b.win.WTS_cloudSync[n](), (e) => e.code === 'not_implemented', 'WTS_cloudSync.' + n);
         assert.strictEqual(b.win.WTS_accountPage.register(), false, 'the account page is not registered before host H7');
         assert.strictEqual(b.win.WTS_accountPage.entry.navHidden, true);
@@ -443,7 +446,9 @@ module.exports = [
         const end = src.indexOf('// ── ACCT:END ──'); const st = src.indexOf('// === SELF-TEST ===');
         assert(end > 0 && st > end, f + ': ACCT:END sits before the self-test');
         assert.strictEqual((src.match(/ACCT:START/g) || []).length, 1); assert.strictEqual((src.match(/ACCT:END/g) || []).length, 1);
-        assert(!/LinkedIn|Google/.test(src), f + ': no provider brand names in the skeleton (they arrive inside the ACCT block with WP-O)');
+        // provider brand names only inside the ACCT block (WP-O put them in 66 / 68); never in the cloud-sync file
+        assert(!/LinkedIn|Google/.test(src.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '')), f + ': provider brand names only inside the ACCT block');
+        if (f === '67-cloud-sync.js') assert(!/LinkedIn|Google/.test(src), f + ': no provider brand names');
         assert(!/setInterval|setTimeout|addEventListener/.test(src.slice(0, st)), f + ': no timers or listeners in the skeleton');
       }
       const R10 = require(path.join(BUILD, 'concat-round10.js'));

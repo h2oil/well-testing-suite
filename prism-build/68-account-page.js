@@ -33,6 +33,14 @@
     VERSION: VERSION, entry: entry, render: render,
     // true once the entry is in WTS_calcRegistry; WP0 never registers (host H7 first)
     register: function () { return false; },
+    // WP-O: card 4 "Sign-in methods" (§11.3) — e-mail, recovery, Google, LinkedIn, passkeys; link (official button, step-up,
+    // redirect, link-confirm code on return) and unlink (step-up; reports the sessions signed out). The card itself lives
+    // in 66 (WTS_account.oauthUI.renderMethods) beside the provider assets; WP-C1's page render calls this for card 4.
+    renderSignInMethods: function (host) {
+      var A = G.WTS_account;
+      if (!A || !A.oauthUI || typeof A.oauthUI.renderMethods !== 'function') return Promise.resolve(null);
+      return A.oauthUI.renderMethods(host);
+    },
   };
 })();
 // ── ACCT:END ──
