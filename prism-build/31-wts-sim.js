@@ -1268,6 +1268,10 @@ function create(flowIn, opts) {
         uv[o] = true; hold.surge[o] = false; uv[k] = false; armClose('surge', k);
         var sucMoved = C.suction === letter(o);
         if (sucMoved) C.suction = letter(k);             // pump the full compartment down while the other fills
+        // v1.6.0 review: a set point below LSH would leave LCV-201 shut on the compartment it just moved to (level control
+        // starts at LSH) and the line-up would end at LSHH-201 — the transfer starts with the move. With SP ≥ LSH the
+        // compartment is already at LSH, so level control starts it on the next substep exactly as before (v3.3.1 identity).
+        if (sucMoved && rSurge) { var fK = compVliq(k) / capK; if (fK < cfg.surge.lsh - 1e-12 && fK > cfg.surge.lsl + 1e-12) pumpOn = true; }
         msg = TAGS.surge + ' auto-divert: ' + sideTag('surge', k) + ' at ' + rnd0(compVliq(k) / capK * 100) + '% → inlet to ' + sideTag('surge', o) +
           ' (' + valveTag('surge', o) + ' open, ' + valveTag('surge', k) + ' closed)' + (sucMoved ? ' · ' + TAGS.xfer + ' suction → ' + sideTag('surge', k) : '');
         logEntry('switch', 'AUTO_DIVERT', null, TAGS.surge, msg);
@@ -1486,6 +1490,14 @@ function create(flowIn, opts) {
     if (!C.auto) return false;
     return (open[0] && fA >= C.sp - db && fB >= C.sp - C.hyst - db) || (open[1] && fB >= C.sp - db && fA >= C.sp - C.hyst - db);
   }
+  // v1.6.0 review — LAH-201 with auto-divert OFF: the compartment whose inlet is open but which is not on the LCV-201 suction
+  // has no level control, so it rises to LSHH-201 (ESD); it alarms at the auto set point. Returns that compartment (0 | 1)
+  // or -1. Suction 'both' (the v3.3.1 line-up) or the inlet compartment on the suction never alarms here (identity).
+  function uncontrolledHigh(C, open, fA, fB, db) {
+    if (C.auto || C.suction === 'both') return -1;
+    var s = C.suction === 'B' ? 1 : 0, o = 1 - s;
+    return open[o] && (o ? fB : fA) >= C.sp - db ? o : -1;
+  }
   // equipment out of the rig-up raises nothing: its (non-latched) alarms clear at once
   function quiet(ids) {
     for (var i = 0; i < ids.length; i++) { var A = AL[ids[i]]; if (!A) continue; A.onT = -1; A.offT = -1; if (A.active && !A.act) clearA(A); }
@@ -1580,9 +1592,19 @@ function create(flowIn, opts) {
       A = aDef('PUMP_BLOCKED', TAGS.xfer, 'alarm', 'surge', 'b');
       evalA(A, pumpBlocked, !pumpBlocked, null, null, MSG.PUMP_BLOCKED, true);
       var bU = bothHigh(ctl.surge, uv, fUA, fUB, 0), bUc = !bothHigh(ctl.surge, uv, fUA, fUB, dbLu);
+      var msgU = MSG.LAH_SURGE_BOTH, vU = fracHiU, kU = 'both';
+      if (!ctl.surge.auto) {                        // auto-divert off: LAH-201 = the inlet-open compartment off the suction at SP
+        var uK = uncontrolledHigh(ctl.surge, uv, fUA, fUB, 0), uKc = uncontrolledHigh(ctl.surge, uv, fUA, fUB, dbLu);
+        bU = uK >= 0; bUc = uKc < 0;
+        if (uKc >= 0) { vU = uKc ? fUB : fUA; msgU = uKc ? MSG.LAH_SURGE_B : MSG.LAH_SURGE_A; kU = uKc ? 'B' : 'A'; }
+      }
       if (rSurge2 && ctl.surge2.auto && X2.VliqU / cap2 < ctl.surge2.sp - ctl.surge2.hyst) { bU = false; bUc = true; }   // the auto route has room (WP-E2)
       A = aDef('LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l');
-      evalA(A, bU, bUc, fracHiU * 100, ctl.surge.sp * 100, MSG.LAH_SURGE_BOTH, true);
+      evalA(A, bU, bUc, vU * 100, ctl.surge.sp * 100, msgU, true);
+      if (!A.active) A.lahKind = kU;                // raised with this meaning; while raised, a change of meaning (auto-divert
+      else if (A.lahKind !== kU && !bUc) {          // toggled, other compartment) refreshes the text (never on the v3.3.1 paths)
+        A.lahKind = kU; A.msg = msgU(A.value, A.limit); alarmsDirty = true;
+      }
     } else { quiet(Q_SURGE); surgeBlocked(); }
     // v1.4.0 optional items: evaluated only while the item is in (sand alarms while sand is on); released on removal
     if (rDes || sandOn) desAlarms();
@@ -2222,8 +2244,18 @@ function create(flowIn, opts) {
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
     var flLim = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited;   // DS-101 in: the dynamic flag of the capacity coupling (§4.6)
     if (CK2.act && AL.CHOKE2_LIMIT && AL.CHOKE2_LIMIT.active) flLim = false;  // v1.5.0: CHOKE_LIMIT is suppressed while CHOKE2_LIMIT is raised
-    if (flLim && !A.active) raise(A, Qg, chk.QmaxMMscfd, chk.flowLimited ? 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
-      : 'CK-101 flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs');
+    // v1.6.0 review: the text names the positive leg only while it is in service (adjustable leg / no flow.ck1: the v3.3.1 text);
+    // while raised, a bean / leg / capacity / requested-rate change refreshes the value, limit and text (the DS-101 ΔP text is
+    // refreshed only on those changes, not on every ΔP move)
+    var posLeg = isPlainObj(flow.ck1) && flow.ck1.leg === 'fixed';
+    var ckKey = (chk.flowLimited ? 'c' : 'd') + '|' + bean + '|' + chk.QmaxMMscfd + '|' + Qg + '|' + (posLeg ? 'pos' : 'adj');
+    if (flLim && (!A.active || A.ckKey !== ckKey)) {
+      var ckMsg = chk.flowLimited ? 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
+        : 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs';
+      if (!A.active) raise(A, Qg, chk.QmaxMMscfd, ckMsg);
+      else { A.value = Qg; A.limit = chk.QmaxMMscfd; if (A.msg !== ckMsg) { A.msg = ckMsg; alarmsDirty = true; } }
+      A.ckKey = ckKey;
+    }
     else if (!flLim && A.active) clearA(A);
   }
 
@@ -3476,6 +3508,13 @@ function create(flowIn, opts) {
     return 'LAH-201 both surge compartments high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — auto-divert has no room' +
       (rSurge2 && !ctl.surge2.auto ? ' — route the dumps to ' + TAGS.surge2 : '');
   };
+  // v1.6.0 review: auto-divert off, the filling compartment is not on the LCV-201 suction (no level control → LSHH-201 ESD)
+  function lahUnctl(k, v, l) {
+    return 'LAH-201 ' + sideTag('surge', k) + ' high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — inlet open, not on the ' + TAGS.xfer +
+      ' suction and auto-divert off: divert the inlet or move the suction before LSHH-201 (ESD)';
+  }
+  MSG.LAH_SURGE_A = function (v, l) { return lahUnctl(0, v, l); };
+  MSG.LAH_SURGE_B = function (v, l) { return lahUnctl(1, v, l); };
 
   function mawp2Of(x) {
     var C = cfg.surge2;

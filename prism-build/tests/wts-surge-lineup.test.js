@@ -245,6 +245,128 @@ module.exports = [
     },
   },
   {
+    // review [engine 0]: a set point below LSH (0.70) used to move the suction to the compartment at SP and leave LCV-201 shut
+    // (level control starts at LSH), ending in LSHH-201 → ESD. The transfer now starts with the move.
+    name: 'WTSLU auto-divert SP below LSH (0.65, 0.50): 4 h under the default line-up with no ESD; LCV-201 starts on the compartment the divert moved the suction to',
+    wp: WP, opts: false,
+    run(app, assert) {
+      [0.65, 0.50].forEach((sp) => {
+        const sim = mk({ config: NOISE_OFF });
+        assert.ok(sim.setControls({ surge: { sp } }), 'sp ' + sp);
+        assert.strictEqual(J(sim.getControls()).surge.sp, sp, 'sp applied');
+        const dv = [], raised = [];
+        let afterMove = 0, checked = 0;
+        sim.on('divert', (e) => { if (e.eq === 'surge') dv.push(J(e)); });
+        sim.on('alarm', (e) => raised.push(e.id));
+        let nDv = 0;
+        for (let i = 0; i < 1440; i++) {
+          sim.advance(10);
+          if (dv.length > nDv) {                          // just after a divert: the transfer runs from the moved-to compartment
+            nDv = dv.length;
+            const s = st(sim);
+            checked++;
+            if (s.surge.pump.on && s.surge.pump.q_bpd > 0 && s.surge.pump.suction === s.surge.suction) afterMove++;
+          }
+        }
+        const s = st(sim);
+        assert.ok(!s.esd.tripped, 'sp ' + sp + ': no ESD in 4 h (alarms ' + raised.join() + ')');
+        assert.ok(raised.indexOf('LSHH_SURGE') < 0 && raised.indexOf('LAH_SURGE_BOTH') < 0, 'sp ' + sp + ': no LSHH-201 / LAH-201: ' + raised.join());
+        assert.ok(dv.length >= 4, 'sp ' + sp + ': the inlet keeps diverting (' + dv.length + ' diverts)');
+        assert.ok(dv.every((e) => /LCV-201 suction →/.test(e.msg)), 'sp ' + sp + ': every divert moved the suction');
+        assert.ok(checked >= 4 && afterMove === checked, 'sp ' + sp + ': LCV-201 transferring after each divert (' + afterMove + ' / ' + checked + ')');
+        const mx = Math.max(comp(s, 0).frac, comp(s, 1).frac);
+        assert.ok(mx < sp + 0.03, 'sp ' + sp + ': levels held near the set point (max ' + mx.toFixed(3) + ')');
+        balanced(assert, s, 'sp ' + sp + ' 4 h');
+      });
+      // SP ≥ LSH is unchanged: the default 0.80 still diverts about every 30 min with no alarm
+      const d = mk({ config: NOISE_OFF });
+      let n = 0, al = 0;
+      d.on('divert', (e) => { if (e.eq === 'surge') n++; });
+      d.on('alarm', () => al++);
+      for (let i = 0; i < 1440; i++) d.advance(10);
+      assert.ok(n >= 6 && al === 0 && !st(d).esd.tripped, 'sp 0.80: ' + n + ' diverts, ' + al + ' alarms');
+    },
+  },
+  {
+    // review [engine 1]: with auto-divert off the inlet-open compartment that is not on the LCV-201 suction has no level control;
+    // LAH-201 now alarms on it at the auto set point, well before LSHH-201. Suction 'both' (the v3.3.1 line-up) never raises it.
+    name: 'WTSLU auto-divert off: LAH-201 on the uncontrolled inlet compartment (at the auto SP) raised before LSHH-201; the v3.3.1 pin stays silent',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const sim = mk({ config: NOISE_OFF });
+      assert.ok(sim.setControls({ surge: { auto: false } }), 'auto off');
+      const ev = [];
+      sim.on('alarm', (e) => ev.push(J(e)));
+      for (let i = 0; i < 1440 && !st(sim).esd.tripped; i++) sim.advance(10);
+      const ids = ev.map((e) => e.id), iL = ids.indexOf('LAH_SURGE_BOTH'), iH = ids.indexOf('LSHH_SURGE');
+      assert.ok(iL >= 0, 'LAH-201 raised: ' + ids.join());
+      assert.ok(iH < 0 || (iL < iH && ev[iH].t - ev[iL].t >= 240), 'LAH-201 at least 4 min before LSHH-201 (' + (iH >= 0 ? (ev[iH].t - ev[iL].t).toFixed(0) + ' s' : 'no LSHH') + ')');
+      const a = ev[iL];
+      assert.ok(a.tag === 'LAH-201' && /^LAH-201 T-201A high \(80(\.\d)?% ≥ 80(\.0)?%\)/.test(a.msg) && /not on the LCV-201 suction/.test(a.msg) && /auto-divert off/.test(a.msg), a.msg);
+      assert.ok(a.value >= 80 && a.value < 81 && a.limit === 80, 'value / limit ' + a.value + ' / ' + a.limit);
+      // moving the suction to the filling compartment clears it (that compartment is under level control again)
+      const b = mk({ config: NOISE_OFF });
+      b.setControls({ surge: { auto: false } });
+      for (let i = 0; i < 1440 && !st(b).alarms.some((x) => x.id === 'LAH_SURGE_BOTH'); i++) b.advance(10);
+      assert.ok(st(b).alarms.some((x) => x.id === 'LAH_SURGE_BOTH'), 'raised on the second run');
+      assert.ok(b.setSuction('A'), 'suction A');
+      for (let i = 0; i < 360; i++) b.advance(10);
+      const sb = st(b);
+      assert.ok(!sb.alarms.some((x) => x.id === 'LAH_SURGE_BOTH') && !sb.esd.tripped, 'cleared with the suction on A: ' + sb.alarms.map((x) => x.id).join());
+      // the v3.3.1 pin (both inlets, suction both, auto off): 4 h, no alarm at all (suction 'both' never takes this LAH-201 path)
+      const S = eng(), q = S.create(S.SAMPLE_FLOW, legacyOpts({ seed: 7, config: NOISE_OFF })), seen = [];
+      q.on('alarm', (e) => seen.push(e.id));
+      for (let i = 0; i < 1440; i++) q.advance(10);
+      assert.ok(seen.length === 0 && !st(q).esd.tripped, 'v3.3.1 pin: ' + seen.join());
+    },
+  },
+  {
+    // review [ux 0]: the CK-101 flow-limited alarm refreshes its value, limit and text while raised; the positive leg is named only
+    // while it is in service (the adjustable leg / no flow.ck1 keeps the v3.3.1 text)
+    name: 'WTSLU CHOKE_LIMIT text follows a bean change and a leg switch while raised; positive leg named only while in service',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const S = eng();
+      const fl = (b, q, leg, ba, bf) => {
+        const f = J(S.SAMPLE_FLOW);
+        f.inputs.bean = b; f.chokeBean = b; f.choke.flowLimited = true; f.choke.QmaxMMscfd = q;
+        if (leg) f.ck1 = { v: 1, leg, beanAdj: ba, beanFix: bf, bean: b };
+        return f;
+      };
+      const sim = mk({ config: NOISE_OFF });
+      let raises = 0;
+      sim.on('alarm', (e) => { if (e.id === 'CHOKE_LIMIT') raises++; });
+      const cur = () => { const s = st(sim); return { a: s.alarms.find((x) => x.id === 'CHOKE_LIMIT'), v: s.alarmVersion }; };
+      // positive leg at 24/64
+      sim.setFlow(fl(24, 6.02, 'fixed', 32, 24)); sim.advance(30);
+      let c = cur();
+      assert.ok(c.a && c.a.msg === 'CK-101 positive leg flow-limited — bean 24/64″ passes 6.02 MMSCFD of 10.00 MMSCFD requested', c.a && c.a.msg);
+      assert.ok(c.a.value === 10 && c.a.limit === 6.02, 'value / limit');
+      // positive bean 24 → 30 while raised: refreshed, not re-raised, banner version bumped
+      const v0 = c.v;
+      sim.setFlow(fl(30, 9.41, 'fixed', 32, 30)); sim.advance(30);
+      c = cur();
+      assert.ok(c.a.msg === 'CK-101 positive leg flow-limited — bean 30/64″ passes 9.41 MMSCFD of 10.00 MMSCFD requested', c.a.msg);
+      assert.ok(c.a.limit === 9.41 && c.v > v0 && raises === 1, 'limit ' + c.a.limit + ', version ' + v0 + ' → ' + c.v + ', raises ' + raises);
+      // a steady flow does not bump the version again
+      const v1 = c.v; sim.advance(60);
+      assert.strictEqual(cur().v, v1, 'no refresh without a change');
+      // switch to the adjustable leg (20/64): the v3.3.1 text
+      sim.setFlow(fl(20, 4.2, 'adj', 20, 30)); sim.advance(30);
+      c = cur();
+      assert.ok(c.a.msg === 'CK-101 flow-limited — bean 20/64″ passes 4.20 MMSCFD of 10.00 MMSCFD requested' && c.a.limit === 4.2, c.a.msg);
+      // no flow.ck1 block: the v3.3.1 text as well (the frozen v3.3.1 engine raises the same string)
+      const q = mk({ config: NOISE_OFF }), F = v331(), r = F.create(F.SAMPLE_FLOW, { seed: 7, config: NOISE_OFF });
+      q.setFlow(fl(24, 6.02)); r.setFlow(fl(24, 6.02)); q.advance(30); r.advance(30);
+      const m1 = J(q.getState()).alarms.find((x) => x.id === 'CHOKE_LIMIT'), m0 = J(r.getState()).alarms.find((x) => x.id === 'CHOKE_LIMIT');
+      assert.ok(m1 && m0 && m1.msg === m0.msg && m1.value === m0.value && m1.limit === m0.limit, 'no ck1 = v3.3.1: ' + (m1 && m1.msg) + ' | ' + (m0 && m0.msg));
+      // cleared once not flow-limited
+      const ok = fl(32, 10.71, 'adj', 32, 30); ok.choke.flowLimited = false;
+      sim.setFlow(ok); sim.advance(60);
+      assert.ok(!cur().a, 'cleared');
+    },
+  },
+  {
     name: 'WTSLU in the app built from sources: default line-up, snapshot shape (strict) and the choke keys',
     wp: WP,
     run(app, assert) {
