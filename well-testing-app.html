@@ -4493,112 +4493,128 @@ window.exportSession = async function() {
 window.importSession = function(inp) {
     const f = inp.files[0]; if(!f) return;
     const reader = new FileReader();
+    // H14 guard: WTS_project.guarded runs synchronously when no guard is registered (v3.4 behaviour); with a guard
+    // it returns a Promise and a 'cancel' answer leaves every key untouched.
+    const guarded = (run, then) => {
+        const g = window.WTS_project && window.WTS_project.guarded;
+        if(typeof g !== 'function') { then(run()); return; }
+        const r = g('open-file', run);
+        const fin = v => { if(v && v.cancelled) { inp.value = ''; return; } then(v); };
+        if(r && typeof r.then === 'function') r.then(fin, err => alert('Error reading session file: ' + ((err && err.message) || err)));
+        else fin(r);
+    };
     reader.onload = function(e) {
         try {
             const session = JSON.parse(e.target.result);
             // Project files (.h2oilproj from the top-right File toolbar) → project loader
             if(session && session.format === 'h2oilproj' && window.WTS_project) {
-                const res = window.WTS_project.loadFromObject(session) || {};
-                const st = $('ci_import_status');
-                if(st) {
-                    st.innerHTML = res.error
-                        ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
-                        : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
-                    setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
-                }
-                inp.value = '';
+                guarded(() => window.WTS_project.loadFromObject(session), r => {
+                    const res = r || {};
+                    const st = $('ci_import_status');
+                    if(st) {
+                        st.innerHTML = res.error
+                            ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
+                            : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
+                        setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
+                    }
+                    inp.value = '';
+                });
                 return;
             }
             if(session._format !== 'H2Oil_WTS_Session_v1') {
                 alert('Invalid session file. Expected H2Oil Well Testing Suite export.');
                 return;
             }
-            try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
+            // H14: the import replaces the open work, so it asks the registered guard first (none → runs now, as before)
+            guarded(() => {
+                try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
 
-            let count = 0;
-            // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
-            Object.keys(session).forEach(k => {
-                if(k.startsWith('wts_')) {
-                    if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
-                }
-            });
-
-            // Restore client info (preserve existing logo if any)
-            if(session['h2oil_client_info']) {
-                const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
-                const imported = session['h2oil_client_info'];
-                // Keep existing logo if import didn't have one
-                if(existing.clientLogo && !imported.clientLogo) {
-                    imported.clientLogo = existing.clientLogo;
-                }
-                delete imported._hasLogo;
-                if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
-            }
-
-            // Restore live page snapshots — bridge any wts_<key> gap so the
-            // first re-render of those pages picks up every typed value.
-            // We merge _live_<page> entries into the matching wts_<key> entry.
-            Object.keys(session).forEach(k => {
-                if(!k.startsWith('_live_')) return;
-                const live = session[k] || {};
-                // Find any existing wts_ key whose data overlaps these IDs and merge
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || !lk.startsWith('wts_')) continue;
-                    try {
-                        const data = JSON.parse(localStorage.getItem(lk)) || {};
-                        let merged = false;
-                        Object.keys(live).forEach(id => {
-                            if(id in data) { data[id] = live[id]; merged = true; }
-                        });
-                        if(merged) __lsSet(lk, JSON.stringify(data));
-                    } catch(e) {}
-                }
-            });
-
-            // Sessions exported before the universal autosave carry no wts_page_*
-            // records. Those records win on re-render, so drop the ids this file
-            // provides (legacy keys) and fold its _live_ snapshots in instead.
-            if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
-                const ids = {};
+                let count = 0;
+                // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
                 Object.keys(session).forEach(k => {
-                    if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    if(k.startsWith('wts_')) {
+                        if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
+                    }
                 });
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || lk.indexOf('wts_page_') !== 0) continue;
-                    try {
-                        const rec = JSON.parse(localStorage.getItem(lk));
-                        if(!rec || !rec.f) continue;
-                        let hit = false;
-                        Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
-                        if(hit) __lsSet(lk, JSON.stringify(rec));
-                    } catch(e) {}
+
+                // Restore client info (preserve existing logo if any)
+                if(session['h2oil_client_info']) {
+                    const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
+                    const imported = session['h2oil_client_info'];
+                    // Keep existing logo if import didn't have one
+                    if(existing.clientLogo && !imported.clientLogo) {
+                        imported.clientLogo = existing.clientLogo;
+                    }
+                    delete imported._hasLogo;
+                    if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
                 }
+
+                // Restore live page snapshots — bridge any wts_<key> gap so the
+                // first re-render of those pages picks up every typed value.
+                // We merge _live_<page> entries into the matching wts_<key> entry.
                 Object.keys(session).forEach(k => {
-                    if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
-                    if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
-                    const pk = 'wts_page_' + k.slice(6);
-                    let rec = null;
-                    try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
-                    if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
-                    rec.f = Object.assign(rec.f || {}, session[k]);
-                    rec.t = Date.now();
-                    __lsSet(pk, JSON.stringify(rec));
+                    if(!k.startsWith('_live_')) return;
+                    const live = session[k] || {};
+                    // Find any existing wts_ key whose data overlaps these IDs and merge
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || !lk.startsWith('wts_')) continue;
+                        try {
+                            const data = JSON.parse(localStorage.getItem(lk)) || {};
+                            let merged = false;
+                            Object.keys(live).forEach(id => {
+                                if(id in data) { data[id] = live[id]; merged = true; }
+                            });
+                            if(merged) __lsSet(lk, JSON.stringify(data));
+                        } catch(e) {}
+                    }
                 });
-            }
 
-            // Refresh the current page to show imported values
-            const status = $('ci_import_status');
-            if(status) {
-                status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
-                setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
-            }
+                // Sessions exported before the universal autosave carry no wts_page_*
+                // records. Those records win on re-render, so drop the ids this file
+                // provides (legacy keys) and fold its _live_ snapshots in instead.
+                if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
+                    const ids = {};
+                    Object.keys(session).forEach(k => {
+                        if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    });
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || lk.indexOf('wts_page_') !== 0) continue;
+                        try {
+                            const rec = JSON.parse(localStorage.getItem(lk));
+                            if(!rec || !rec.f) continue;
+                            let hit = false;
+                            Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
+                            if(hit) __lsSet(lk, JSON.stringify(rec));
+                        } catch(e) {}
+                    }
+                    Object.keys(session).forEach(k => {
+                        if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
+                        if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
+                        const pk = 'wts_page_' + k.slice(6);
+                        let rec = null;
+                        try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
+                        if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
+                        rec.f = Object.assign(rec.f || {}, session[k]);
+                        rec.t = Date.now();
+                        __lsSet(pk, JSON.stringify(rec));
+                    });
+                }
 
-            // Re-render current page to pick up new values
-            render();
-            // If on client info, re-navigate to refresh fields
-            if(page === 'clientinfo') nav('clientinfo');
+                // Refresh the current page to show imported values
+                const status = $('ci_import_status');
+                if(status) {
+                    status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
+                    setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
+                }
+
+                // Re-render current page to pick up new values
+                render();
+                // If on client info, re-navigate to refresh fields
+                if(page === 'clientinfo') nav('clientinfo');
+            return { done: true };
+            }, () => {});
 
         } catch(err) {
             alert('Error reading session file: ' + err.message);
@@ -11698,7 +11714,7 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function';
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
     const build = ios ? 'iOS app — no analytics code is included in this build.'
         : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';

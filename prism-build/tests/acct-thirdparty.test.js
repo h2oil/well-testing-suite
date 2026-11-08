@@ -112,6 +112,67 @@ module.exports = [
     },
   },
   {
+    name: 'TP2b H16 SheetJS on the native shell: the bundled copy first (same origin), checked when WebCrypto is there; without WebCrypto only the local copy', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const src07 = fs.readFileSync(path.join(BUILD, '07-data-enhancements.js'), 'utf8');
+      const pin = /var XLSX_SHA384 = '([A-Za-z0-9+/]{64})';/.exec(src07);
+      // the bundled iOS copy is the pinned file (sync-from-main.js copies it to www/)
+      const bundled = fs.readFileSync(path.join(ROOT, 'ios-app', 'ios-additions', 'libs', 'xlsx.full.min.js'));
+      assert.strictEqual(bundled.length, 881727, 'bundled size');
+      assert.strictEqual(crypto.createHash('sha384').update(bundled).digest('base64'), pin[1], 'bundled copy = pinned SHA-384');
+      const fakeLib = 'window.XLSX = { version: "native", read: function () { return { SheetNames: [], Sheets: {} }; } };';
+      const fakeHash = crypto.createHash('sha384').update(fakeLib).digest('base64');
+      const ov = { '07-data-enhancements.js': src07.replace(pin[0], "var XLSX_SHA384 = '" + fakeHash + "';") };
+      const run = async (globals, respond) => {
+        const calls = [];
+        const fetch = (url, init) => {
+          calls.push({ url, init });
+          const r = respond(url);
+          if (!r) return Promise.reject(new Error('offline'));
+          const buf = Buffer.from(r);
+          return Promise.resolve({ ok: true, status: 200, arrayBuffer: () => Promise.resolve(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length)) });
+        };
+        const a = ctx.loadApp({ globals: Object.assign({ fetch, Capacitor: { isNativePlatform: () => true, Plugins: {} } }, globals || {}), sourceOverrides: ov });
+        const scripts = () => a.findAll('script').map((s) => String(s.src || s.getAttribute('src') || '')).filter(Boolean);
+        const before = scripts().length;
+        let err = null, done = false;
+        a.win.PRiSM_loadXLSX().then(() => { done = true; }, (e) => { err = e; done = true; });
+        for (let i = 0; i < 200 && !(done || scripts().length > before); i++) { await a.flushAsync(0); await new Promise((r) => setImmediate(r)); }
+        return { a, calls, added: scripts().slice(before), get err() { return err; } };
+      };
+      // 1. WebCrypto present: one same-origin fetch of the bundled copy, verified, run from a blob: URL
+      const srcs = await run(null, () => fakeLib);
+      try {
+        const list = srcs.a.win.PRiSM_loadXLSX.sources();
+        assert.ok(list[0].local === true && /\/xlsx\.full\.min\.js$/.test(list[0].url) && srcs.a.win.PRiSM_loadXLSX.PINNED.urls.indexOf(list[0].url) === -1, 'local first: ' + list[0].url);
+        assert.strictEqual(list.length, 3, 'local + two pinned remote');
+        assert.strictEqual(srcs.calls.length, 1, 'only the bundled copy fetched');
+        assert.strictEqual(srcs.calls[0].url, list[0].url);
+        assert.ok(srcs.calls[0].init && srcs.calls[0].init.mode !== 'cors' && srcs.calls[0].init.credentials === 'same-origin', 'same-origin fetch');
+        assert.ok(srcs.added.length === 1 && /^blob:/.test(srcs.added[0]), 'one blob: script');
+      } finally { srcs.a.dispose(); }
+      // 2. a damaged bundled copy is not run; the remote copies are tried next
+      const dmg = await run(null, (u) => (/^https:/.test(u) ? fakeLib : 'window.XLSX = { evil: true };'));
+      try {
+        assert.strictEqual(dmg.calls.length, 2, 'local (mismatch) then the first remote');
+        assert.ok(dmg.added.length === 1 && /^blob:/.test(dmg.added[0]), 'the verified remote bytes run');
+      } finally { dmg.a.dispose(); }
+      // 3. no WebCrypto: the bundled copy is accepted (unverified, as the historian and 3D loaders); a remote copy never
+      const noWc = { crypto: { getRandomValues: (x) => crypto.randomFillSync(x) } };
+      const nw = await run(noWc, () => 'window.XLSX = { version: "unverified-local" };');
+      try {
+        assert.strictEqual(nw.calls.length, 1, 'local only');
+        assert.ok(nw.added.length === 1 && /^blob:/.test(nw.added[0]), 'local bytes run');
+      } finally { nw.a.dispose(); }
+      const off = await run(noWc, () => null);
+      try {
+        assert.strictEqual(off.calls.length, 1, 'remote copies skipped without WebCrypto');
+        assert.deepStrictEqual(off.added, [], 'nothing run');
+        assert.ok(off.err && /no WebCrypto/.test(off.err.message), 'rejects: ' + (off.err && off.err.message));
+      } finally { off.a.dispose(); }
+    },
+  },
+  {
     name: 'TP3 H17 analytics guard: no hint → loaded; signed in / fresh provider return → skipped; stale or unreadable → loaded; one pinned "Google" on iOS', wp: WP, opts: false,
     run(app, assert) {
       const html = fs.readFileSync(HTML, 'utf8');

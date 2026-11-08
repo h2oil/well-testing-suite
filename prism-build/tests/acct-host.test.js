@@ -581,6 +581,83 @@ module.exports = [
       assert.strictEqual(JSON.parse(app.storage.getItem('wts_page_choke') || '{}').f.from, 'file', 'opened after the guard');
     },
   },
+  {
+    name: 'HO32 H14 Client Info "Import session" asks the guard: cancel changes no key (project file and legacy session); no guard = applied at once', wp: WP,
+    async run(app, assert) {
+      const W = app.win, P = W.WTS_project;
+      assert.strictEqual(typeof P.guarded, 'function', 'public WTS_project.guarded');
+      const pay = P._buildPayload();
+      pay.modules.storage = { keys: { wts_page_choke: '{"v":1,"f":{"from":"proj"}}' }, skipped: [] };
+      const legacy = { _format: 'H2Oil_WTS_Session_v1', wts_page_flareghg: { v: 1, f: { fe_qg: 'LEGACY' } } };
+      const imp = (obj, name) => {
+        const inp = { files: [{ name, _text: JSON.stringify(obj), size: 1, type: 'application/json' }], value: name };
+        const w = app.toWin(inp);
+        W.importSession(w);
+        return w;
+      };
+      const snap = () => { const o = []; for (let i = 0; i < app.storage.length; i++) { const k = app.storage.key(i); o.push([k, app.storage.getItem(k)]); } return JSON.stringify(o.sort()); };
+      const settle = async () => { for (let i = 0; i < 6; i++) { app.flush(50); await app.flushAsync(0); } };
+      // no guard: today's flow (applied as soon as the file is read)
+      imp(pay, 'a.h2oilproj'); app.flush(50);
+      assert.strictEqual(JSON.parse(app.storage.getItem('wts_page_choke')).f.from, 'proj', 'no guard → project loaded');
+      W.WTS_lsSet('wts_page_choke', '{"v":1,"f":{"from":"local"}}');
+      W.WTS_lsSet('wts_page_flareghg', '{"v":1,"f":{"fe_qg":"LOCAL"}}');
+      // a cancelling guard: neither branch touches storage
+      const seen = [];
+      let answer = 'cancel';
+      const un = P.registerGuard((o) => { seen.push(o.action); return Promise.resolve(answer); });
+      app.flush(5000); await app.flushAsync(0);   // let earlier one-shot saves (PRiSM state debounce) run first
+      const before = snap();
+      const i1 = imp(pay, 'b.h2oilproj'); await settle();
+      const i2 = imp(legacy, 'c.txt'); await settle();
+      assert.deepStrictEqual(seen, ['open-file', 'open-file'], 'both branches asked the guard');
+      assert.strictEqual(snap(), before, 'cancel → no key changed');
+      assert.strictEqual(i1.value, '', 'input reset after a cancel');
+      assert.strictEqual(i2.value, '');
+      // proceed: both apply after the guard resolved
+      answer = 'proceed';
+      imp(pay, 'd.h2oilproj'); await settle();
+      assert.strictEqual(JSON.parse(app.storage.getItem('wts_page_choke')).f.from, 'proj', 'proceed → project loaded');
+      imp(legacy, 'e.txt'); await settle();
+      assert.strictEqual(JSON.parse(app.storage.getItem('wts_page_flareghg')).f.fe_qg, 'LEGACY', 'proceed → legacy session restored');
+      un();
+    },
+  },
+  {
+    name: 'HO33 H4 applyChanges to the open page\'s legacy list (wts_flare on flare) cancels the pending legacy write', wp: WP,
+    run(app, assert) {
+      const W = app.win, P = W.WTS_project;
+      assert.strictEqual(W.WTS_project._internals.pageKeyMatch('flare', 'wts_flare'), true);
+      assert.strictEqual(W.WTS_project._internals.pageKeyMatch('pipelife', 'wts_pl_x'), true);
+      assert.strictEqual(W.WTS_project._internals.pageKeyMatch('flare', 'wts_flareghg'), false, 'another route');
+      assert.strictEqual(W.WTS_project._internals.pageKeyMatch('flare', 'wts_page_flareghg'), false);
+      app.hook.nav('flare');
+      app.input(app.el('fl_flow'), '111');      // schedules the 300 ms legacy write of wts_flare
+      const remote = JSON.stringify({ fl_flow: '999' });
+      const r = P.applyChanges(app.toWin({ set: { wts_flare: remote } }), app.toWin({ source: 'cloud' }));
+      assert.deepStrictEqual(Array.from(r.applied), ['wts_flare']);
+      app.flush(1000);
+      assert.strictEqual(JSON.parse(app.storage.getItem('wts_flare')).fl_flow, '999', 'the pending legacy write did not overwrite the applied value');
+    },
+  },
+  {
+    name: 'HO34 H3 keep rule: keep:[prism] alone still lets storage replace wts_prism_* keys; keeping every PRiSM module and storage leaves them', wp: WP,
+    run(app, assert) {
+      const W = app.win, P = W.WTS_project;
+      W.WTS_lsSet('wts_prism_state', '{"local":true}');
+      const pay = P._buildPayload();
+      pay.modules.storage = { keys: { wts_prism_state: '{"file":true}' }, skipped: [] };
+      const ALL = ['prism', 'pvt', 'prism_dataset', 'storage'];
+      const r1 = P.loadFromObject(app.toWin(JSON.parse(JSON.stringify(pay))), app.toWin({ keep: ALL }));
+      assert.ok(['prism', 'storage'].every((m) => Array.from(r1.kept).indexOf(m) !== -1), 'kept: ' + Array.from(r1.kept).join(','));
+      app.flush(5000);
+      assert.strictEqual(JSON.parse(app.storage.getItem('wts_prism_state') || 'null').local, true, 'PRiSM modules + storage kept → PRiSM keys untouched');
+      const src = fs.readFileSync(path.join(ROOT, 'prism-build', '29-project-save.js'), 'utf8');
+      assert.ok(/keeping prism, pvt or\s*\n\s*\/\/ prism_dataset leaves PRiSM untouched only when 'storage' is kept too, and with it every PRiSM module/.test(src), 'rule documented at loadFromObject');
+      P.loadFromObject(app.toWin(JSON.parse(JSON.stringify(pay))), app.toWin({ keep: ['prism'] }));
+      assert.ok(!/"local":true/.test(app.storage.getItem('wts_prism_state') || ''), 'prism kept, storage loaded → storage replaced the key');
+    },
+  },
   // ── H15 ─────────────────────────────────────────────────────────────────────────────
   {
     name: 'HO24 H15 flushIfDirty writes only with unsaved edits (no `t` rewrite otherwise); flush always rewrites', wp: WP,
@@ -735,17 +812,24 @@ module.exports = [
       const t = app.el('pgBody').textContent;
       assert.ok(t.indexOf('Your well data never leaves your device.') !== -1 && t.indexOf('no user accounts') !== -1);
       assert.ok(!app.el('privacy_accounts'), 'no account card');
+      // H17: "This build" follows __wtsGaLoaded (gtag is defined even when the guard skipped the tag)
+      assert.ok(t.indexOf('anonymous usage analytics are active') !== -1, 'no hint → analytics active (v3.4 line)');
+      app.win.__wtsGaLoaded = false;
+      app.hook.nav('home'); app.hook.nav('privacy');
+      const tg = app.el('pgBody').textContent;
+      assert.ok(tg.indexOf('analytics are not loaded') !== -1 && tg.indexOf('analytics are active') === -1, 'tag skipped → not loaded');
+      app.win.__wtsGaLoaded = true;
       // production web location with the beta flag: the cards and the web banner
       const st = ctx.createStorage ? ctx.createStorage() : null;
       const web = ctx.loadApp(Object.assign({ globals: { location: Object.assign({}, PROD, { search: '?cloud=1' }), fetch: () => Promise.reject(new Error('offline')) } }, st ? { storage: st } : {}));
       try {
-        if (web.win.WTS_account && web.win.WTS_account.eligible) {
-          web.hook.nav('privacy');
-          const tw = web.el('pgBody').textContent;
-          assert.ok(web.el('privacy_accounts') && web.el('privacy_providers'), 'account and provider cards');
-          assert.ok(tw.indexOf('Your well data stays on this device unless you sign in to the cloud.') !== -1, 'web banner');
-          assert.ok(tw.indexOf('no user accounts') === -1, 'no "no accounts" claim while accounts exist');
-        }
+        const A = web.win.WTS_account;
+        assert.ok(A && A.eligible === true && typeof A.betaEnabled === 'function' && A.betaEnabled() === true, 'web client eligible under PROD + ?cloud=1');
+        web.hook.nav('privacy');
+        const tw = web.el('pgBody').textContent;
+        assert.ok(web.el('privacy_accounts') && web.el('privacy_providers'), 'account and provider cards');
+        assert.ok(tw.indexOf('Your well data stays on this device unless you sign in to the cloud.') !== -1, 'web banner');
+        assert.ok(tw.indexOf('no user accounts') === -1, 'no "no accounts" claim while accounts exist');
       } finally { web.dispose(); }
       // the iOS branch never shows them, even with an eligible-looking client
       const ios = ctx.loadApp({ globals: { isIOSApp: true, location: Object.assign({}, PROD, { search: '?cloud=1' }), fetch: () => Promise.reject(new Error('offline')) } });

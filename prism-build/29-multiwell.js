@@ -562,16 +562,10 @@
     }
 
     // Keys holding one page's inputs: the universal autosave record plus the
-    // legacy per-calculator lists of that page.
-    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
+    // legacy per-calculator lists of that page (one table, in 29-project-save.js).
     var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1, account: 1 };
     function _isPrismRoute(r) { return r === 'prism' || r === 'dca' || r === 'pta'; }
-    function _pageKeyMatch(route, k) {
-        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
-        var extra = LEGACY_PREFIX[route] || [];
-        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
-        return false;
-    }
+    function _pageKeyMatch(route, k) { var I = _I(); return !!(I && I.pageKeyMatch && I.pageKeyMatch(route, k)); }
     function copyPage(fromId, route) {
         if (!_I()) return { ok: false, error: 'unavailable' };
         var reg = _readReg(), ls = _ls();

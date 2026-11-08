@@ -237,6 +237,9 @@ module.exports = [
         reached(assert, seen, 2, 'cloud open');
       } finally { b.dispose(); }
       // device C: the key-level apply (fast-forward of changed keys and the PRiSM modules)
+      // TODO(WP-C2, Phase 2): plan §8.7 asks for the hostile project to be fast-forwarded from tests/_acct-fake-server.js
+      // into this second app through 67's real sync; while 67's sync is a stub, applyChanges is driven directly here.
+      // Replace this block with that fast-forward when WP-C2 lands.
       const c = ctx.loadApp({});
       try {
         const keys = pay.modules.storage.keys;
@@ -273,6 +276,15 @@ module.exports = [
       for (const bad of [null, 'x', 5, [], { format: 'other' }]) {
         const r = Pj.loadFromObject(app.toWin(bad));
         assert.ok(r && (r.error || (r.loaded && r.loaded.length === 0)), 'refused: ' + JSON.stringify(bad));
+      }
+      // applyChanges (the Phase 2 fast-forward path): a null / non-object PRiSM module is refused like in _applyPayload
+      const pvtBefore = JSON.stringify(W.PRiSM_pvt || null);
+      for (const j of [null, 'x', 42, [1, 2], true]) {
+        let r;
+        assert.doesNotThrow(() => { r = Pj.applyChanges(app.toWin({ modules: { prism: j, prism_dataset: j, pvt: j } })); }, 'applyChanges junk ' + JSON.stringify(j));
+        assert.deepStrictEqual(Array.from(r.applied), [], 'nothing applied for ' + JSON.stringify(j));
+        assert.deepStrictEqual(Array.from(r.skipped).sort(), ['prism', 'prism_dataset', 'pvt'], 'all three skipped for ' + JSON.stringify(j));
+        assert.strictEqual(JSON.stringify(W.PRiSM_pvt || null), pvtBefore, 'PRiSM inputs not wiped by ' + JSON.stringify(j));
       }
       // the app still renders every core page after the junk
       for (const r of ['home', 'choke', 'clientinfo', 'wells', 'prism']) assert.doesNotThrow(() => app.hook.nav(r), r);

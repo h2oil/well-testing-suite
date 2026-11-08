@@ -404,11 +404,17 @@
     // =======================================================================
     // Loads SheetJS once on first XLSX upload; caches on window.XLSX. The file is fetched (CORS, no credentials), its
     // SHA-384 checked against the pinned hash and only then run from a blob: URL — the pattern of the historian (47)
-    // and 3D (32) loaders (docs/ACCOUNTS-PLAN.md H16). Bytes that do not match are never run. If the load fails
-    // (offline iOS, no WebCrypto, a mismatch), the caller shows a friendly notice and asks for CSV.
+    // and 3D (32) loaders (docs/ACCOUNTS-PLAN.md H16). Bytes that do not match are never run. Like the historian's
+    // libSources (47), a local copy comes first: in the iOS app the copy bundled in ios-app/ios-additions/libs
+    // (capacitor://localhost/xlsx.full.min.js, copied by sync-from-main.js), or window.WTS_XLSX_LIB_BASE + the file
+    // name for a self-hosted copy. The local copy is checked too when WebCrypto is there; without WebCrypto only the
+    // local copy is accepted (unverified, as the historian and 3D loaders do), never a remote one. If every source
+    // fails (no local copy, offline, a mismatch), the caller shows a friendly notice and asks for CSV.
     // =======================================================================
 
-    // xlsx@0.18.5 dist/xlsx.full.min.js — 881,727 bytes, identical on jsDelivr, unpkg and the npm tarball (2026-11-08)
+    // xlsx@0.18.5 dist/xlsx.full.min.js — 881,727 bytes, identical on both pinned mirrors and in the published package
+    // (checked 2026-11-08); the same file is bundled for the iOS app.
+    var XLSX_FILE = 'xlsx.full.min.js';
     var XLSX_URLS = ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
                      'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'];
     var XLSX_SHA384 = 'vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw';
@@ -417,18 +423,36 @@
         for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
         return W.btoa(s);
     }
-    // → Promise<ArrayBuffer> of the first URL whose bytes match the pinned SHA-384
+    function _isNativeShell() {
+        try {
+            if (W.location && W.location.protocol === 'capacitor:') return true;
+            var C = W.Capacitor;
+            return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+        } catch (e) { return false; }
+    }
+    function _absUrl(u) { try { return new W.URL(u, W.location && W.location.href).href; } catch (e) { return u; } }
+    // Sources in order: the local copy (native shell, or WTS_XLSX_LIB_BASE), then the pinned remote URLs.
+    function _xlsxSources() {
+        var src = [], base = W.WTS_XLSX_LIB_BASE != null ? String(W.WTS_XLSX_LIB_BASE) : (_isNativeShell() ? '' : null);
+        if (base !== null) src.push({ url: _absUrl(base + XLSX_FILE), local: true });
+        XLSX_URLS.forEach(function (u) { src.push({ url: u, local: false }); });
+        return src;
+    }
+    // → Promise<ArrayBuffer> of the first source whose bytes match the pinned SHA-384 (a local copy without WebCrypto:
+    // accepted unverified; a remote one without WebCrypto: skipped)
     function _xlsxFetchVerified() {
         var subtle = (W.crypto && W.crypto.subtle && typeof W.crypto.subtle.digest === 'function') ? W.crypto.subtle : null;
-        if (!subtle) return Promise.reject(new Error('SheetJS needs WebCrypto to check its SHA-384 (use https)'));
         if (typeof W.fetch !== 'function') return Promise.reject(new Error('fetch is not available'));
-        var tried = [], i = 0;
+        var srcs = _xlsxSources(), tried = [], i = 0;
         function next() {
-            if (i >= XLSX_URLS.length) return Promise.reject(new Error('SheetJS could not be loaded — ' + tried.join('; ')));
-            var url = XLSX_URLS[i++];
-            return Promise.resolve(W.fetch(url, { mode: 'cors', credentials: 'omit' }))
+            if (i >= srcs.length) return Promise.reject(new Error('SheetJS could not be loaded — ' + tried.join('; ')));
+            var s = srcs[i++], url = s.url;
+            if (!s.local && !subtle) { tried.push(url + ' (skipped: no WebCrypto to check its SHA-384)'); return next(); }
+            var init = s.local ? { credentials: 'same-origin' } : { mode: 'cors', credentials: 'omit' };
+            return Promise.resolve(W.fetch(url, init))
                 .then(function (r) { if (!r || !r.ok) throw new Error('HTTP ' + (r ? r.status : '?')); return r.arrayBuffer(); })
                 .then(function (buf) {
+                    if (!subtle) return buf;   // local copy only (checked above)
                     return subtle.digest('SHA-384', buf).then(function (d) {
                         if (_b64(d) !== XLSX_SHA384) { tried.push(url + ' (SHA-384 mismatch — not used)'); return next(); }
                         return buf;
@@ -462,7 +486,8 @@
         _xlsxLoadPromise.then(null, function () { _xlsxLoadPromise = null; });
         return _xlsxLoadPromise;
     }
-    PRiSM_loadXLSX.PINNED = { urls: XLSX_URLS.slice(), sha384: XLSX_SHA384, bytes: 881727, version: '0.18.5' };
+    PRiSM_loadXLSX.PINNED = { urls: XLSX_URLS.slice(), sha384: XLSX_SHA384, bytes: 881727, version: '0.18.5', file: XLSX_FILE };
+    PRiSM_loadXLSX.sources = function () { return _xlsxSources().map(function (x) { return { url: x.url, local: x.local }; }); };
 
     // Parse a workbook ArrayBuffer with SheetJS. Returns
     // { sheets: [{name, rows, headers, dateCols}], defaultIdx }.

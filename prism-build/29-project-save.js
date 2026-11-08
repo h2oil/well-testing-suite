@@ -1128,6 +1128,12 @@
     // when every module write (the gauge and build-up IndexedDB writes) and every 'wts:project-loaded' listener's pending
     // work (the build-up prune) has finished. Without opts the behaviour and the event detail are exactly as before
     // (the detail gains only the `pending` list).
+    // keep rule: `keep` leaves a MODULE as it is, not the localStorage keys behind it. The storage module owns every
+    // wts_* project key, PRiSM's own included (wts_prism_state, wts_prism_pvt, wts_prism_*), so keeping prism, pvt or
+    // prism_dataset leaves PRiSM untouched only when 'storage' is kept too, and with it every PRiSM module (a loaded
+    // prism / pvt / prism_dataset / storage re-saves the PRiSM state through _prismSync):
+    // {keep:['prism','pvt','prism_dataset','storage']}. With storage loaded, storage.write replaces those keys from the
+    // file (acct-host HO34 codes against this rule).
     function loadFromObject(obj, opts) {
         opts = (opts && typeof opts === 'object') ? opts : {};
         var res = _applyPayload(obj, opts);
@@ -1159,7 +1165,18 @@
     //   diff = {set:{key:raw}, remove:[keys], modules:{prism?, prism_dataset?, pvt?}}  → {applied:[keys|modules], skipped}
     // ───────────────────────────────────────────────────────────────
     var APPLY_MODULES = { pvt: 1, prism_dataset: 1, prism: 1 };
-    function _pageOfKey(k) { var m = /^wts_page_([a-z][a-z0-9_]{0,63})$/.exec(String(k)); return m ? m[1] : null; }
+    // Keys holding one page's inputs: the universal autosave record plus the legacy per-calculator lists of that page
+    // (shared with 29-multiwell.js copyPage through _internals.pageKeyMatch).
+    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
+    function _pageKeyMatch(route, k) {
+        route = String(route || ''); k = String(k);
+        if (!route) return false;
+        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
+        var extra = _own(LEGACY_PREFIX, route) ? LEGACY_PREFIX[route] : [];
+        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
+        return false;
+    }
+    function _isPlainObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
     function applyChanges(diff, opts) {
         opts = (opts && typeof opts === 'object') ? opts : {};
         var applied = [], skipped = [], keys = [];
@@ -1168,10 +1185,11 @@
         var rem = Array.isArray(diff.remove) ? diff.remove : [];
         var mods = (diff.modules && typeof diff.modules === 'object') ? diff.modules : {};
         var ok = function (k) { return typeof k === 'string' && _isProjectKey(k) && !_isLibraryKey(k) && !_isWellsKey(k); };
-        // The pending autosave of the open page is dropped only when that page's own record changes.
+        // The pending autosave of the open page is dropped only when one of that page's own keys changes (its
+        // wts_page_<route> record or one of its legacy per-calculator lists), so a debounced write cannot overwrite them.
         var curPage = null;
         try { curPage = (G.WTS_pageAutosave && typeof G.WTS_pageAutosave.page === 'function') ? G.WTS_pageAutosave.page() : null; } catch (e) { curPage = null; }
-        var touchesPage = Object.keys(set).concat(rem).some(function (k) { return curPage && _pageOfKey(k) === curPage; });
+        var touchesPage = !!curPage && Object.keys(set).concat(rem).some(function (k) { return ok(k) && _pageKeyMatch(curPage, k); });
         if (touchesPage) { try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {} }
         var ls = _ls();
         Object.keys(set).forEach(function (k) {
@@ -1188,6 +1206,9 @@
         listModules().forEach(function (m) {
             if (!_own(mods, m)) return;
             if (!APPLY_MODULES[m]) { skipped.push(m); return; }
+            // As in _applyPayload: null is New's "clear" value and a module state is a plain object, so a damaged or
+            // hostile diff cannot wipe or corrupt a module (docs/ACCOUNTS-PLAN.md §8.7 shape checks).
+            if (!_isPlainObj(mods[m])) { skipped.push(m); return; }
             try { MODULES[m].write(mods[m]); applied.push(m); prismTouched = true; }
             catch (e) { _warn('[WTS_project] applyChanges: module write failed for ' + m, e); skipped.push(m); }
         });
@@ -1515,6 +1536,8 @@
         loadFromObject:   loadFromObject,
         applyChanges:     applyChanges,
         registerGuard:    registerGuard,
+        // guarded(action, run): run() now when no guard is registered, else a Promise of its result or {cancelled:true}
+        guarded:          _guarded,
         registerToolbarItems: registerToolbarItems,
         unregisterToolbarItem: unregisterToolbarItem,
         refreshToolbarItems: refreshToolbarItems,
@@ -1534,7 +1557,7 @@
             applyPayload: _applyPayload,
             ls: _ls, lsKeys: _lsKeys,
             isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey, isPrefKey: _isPrefKey,
-            guarded: _guarded,
+            guarded: _guarded, pageKeyMatch: _pageKeyMatch,
             flushAutosave: _flushAutosave, prismSync: _prismSync, emit: _emit, rerender: _rerender,
             fileName: _fileName
         }

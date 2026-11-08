@@ -145,6 +145,7 @@ fs.writeFileSync(path.join(WWW, 'capacitor.js'), capStub, 'utf8');
 //                          window.WTS3D_LOCAL_URL to it; 32-wts-3d.js still checks its SHA-384)
 //   sqlite3.mjs + sqlite3.wasm   — official SQLite WASM build (historian, 47-calc-historian.js)
 //   sql-wasm.js + sql-wasm.wasm  — sql.js (historian fallback engine; also reads .sqlite backups)
+//   xlsx.full.min.js     — SheetJS 0.18.5 for PRiSM .xlsx import (07 PRiSM_loadXLSX, SHA-384 checked)
 const LIBS_DIR = path.join(IOS_ADDITIONS, 'libs');
 const LIB_RE = /\.(js|mjs|wasm)$/;
 if (fs.existsSync(LIBS_DIR)) {
@@ -182,6 +183,19 @@ if (histPins) {
         else { bad++; console.warn('[sync] WARNING: www/' + m[1] + ' SHA-384 ' + got + ' does not match the pinned ' + m[2] + ' — re-bundle ios-additions/libs/' + m[1] + '.'); }
     }
     if (ok && !bad) console.log('[sync] historian SQLite libraries: ' + ok + ' files match their pinned SHA-384 (offline SQLite ready)');
+}
+
+// ── 7b. SheetJS (PRiSM .xlsx import, 07-data-enhancements.js PRiSM_loadXLSX): the bundled xlsx.full.min.js must match
+// XLSX_SHA384, or the app falls back to the pinned remote copies (network + WebCrypto).
+const XLSX_LIB = path.join(WWW, 'xlsx.full.min.js');
+const xlsxPin = /XLSX_SHA384\s*=\s*'([A-Za-z0-9+/=]+)'/.exec(html);
+if (fs.existsSync(XLSX_LIB) && xlsxPin) {
+    const got = crypto.createHash('sha384').update(fs.readFileSync(XLSX_LIB)).digest('base64');
+    if (got === xlsxPin[1]) console.log('[sync] xlsx.full.min.js SHA-384 matches the pinned hash (offline .xlsx import ready)');
+    else console.warn('[sync] WARNING: www/xlsx.full.min.js SHA-384 ' + got + ' does not match the pinned ' + xlsxPin[1] +
+                      ' — the app will reject it. Re-bundle ios-additions/libs/xlsx.full.min.js.');
+} else if (!fs.existsSync(XLSX_LIB)) {
+    console.warn('[sync] WARNING: xlsx.full.min.js not bundled — .xlsx import in the app will need the network.');
 }
 
 // ── 8. Help centre files (docs/HELP-GUIDE-PLAN.md §3.2): served at capacitor://localhost/help/… so the guides'
