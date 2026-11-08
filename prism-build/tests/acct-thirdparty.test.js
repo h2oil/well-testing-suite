@@ -80,8 +80,10 @@ module.exports = [
         const before = scripts().length;
         const p = a.win.PRiSM_loadXLSX();
         let res = null, err = null;
-        p.then((x) => { res = x; }, (e) => { err = e; });
-        for (let i = 0; i < 8; i++) await a.flushAsync(0);
+        let done = false;
+        p.then((x) => { res = x; done = true; }, (e) => { err = e; done = true; });
+        const settled = () => done || scripts().length > before;
+        for (let i = 0; i < 200 && !settled(); i++) { await a.flushAsync(0); await new Promise((r) => setImmediate(r)); }
         const added = scripts().slice(before);
         return { a, calls, added, p, get res() { return res; }, get err() { return err; } };
       };
@@ -104,7 +106,7 @@ module.exports = [
         const el = good.a.findAll('script').find((s) => /^blob:/.test(String(s.src || '')));
         good.a.evalInApp(fakeLib);
         el.onload();
-        for (let i = 0; i < 4; i++) await good.a.flushAsync(0);
+        for (let i = 0; i < 200 && !good.res; i++) { await good.a.flushAsync(0); await new Promise((r) => setImmediate(r)); }
         assert.ok(good.res && good.res.version === 'fake', 'resolved with window.XLSX');
       } finally { good.a.dispose(); }
     },
