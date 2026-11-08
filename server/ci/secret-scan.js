@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // server/ci/secret-scan.js — the secret scan of docs/ACCOUNTS-PLAN.md §13.2 / T27 (WP-OPS). Runs in the tagged release
-// workflow and in server/test (ops-ci.test.js). It fails (exit 1) when a scanned file contains key material or a secret
+// workflow and in server/test (ops-site.test.js). It fails (exit 1) when a scanned file contains key material or a secret
 // value — never when it only NAMES a secret variable (code reads them from process.env).
 //
 //   node server/ci/secret-scan.js [path …]     default: server/ and .github/workflows/ (tracked files when git is there)

@@ -172,6 +172,10 @@ module.exports = [
         assert(/not configured/.test(s) && /exit 0/.test(s), 'step skips without its secret: ' + s.split('\n')[0]);
       });
       assert(/environment:\s*server-migrations/.test(wf) && /environment:\s*server-production/.test(wf), 'protected environments');
+      // a skipped migration never lets new code go live when the migrations changed since the previous server tag
+      const deploy = steps.find((s) => /secrets\.WTS_DEPLOY_TOKEN/.test(s)) || '';
+      assert(/MIGRATE_RESULT/.test(deploy) && /MIGRATIONS_CHANGED/.test(deploy) && /exit 1/.test(deploy), 'deploy refuses an unmigrated schema');
+      assert(/result=skipped/.test(wf) && /result=applied/.test(wf) && /migrations_changed=/.test(wf), 'migrate and verify publish their outputs');
       assert(!/WTS_MASTER_KEYS|WTS_INDEX_PEPPER|WTS_SESSION_PEPPER|CLIENT_SECRET/.test(wf), 'runtime secrets never pass through the workflow');
       const ios = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ios-sync.yml'), 'utf8');
       assert(!/server\//.test(ios), 'ios-sync does not watch server/');

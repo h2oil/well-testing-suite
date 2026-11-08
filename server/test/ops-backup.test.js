@@ -106,14 +106,55 @@ test.describe('export, restore drill and ledger replay (§13.5)', { skip }, () =
     await assert.rejects(drillScript.main(['--latest', path.join(tmp, 'none')], env), /no export file/);
   });
 
+  test('the dump and the manifest come from one snapshot: rows written meanwhile appear in neither, the drill stays clean', async () => {
+    const keys = [key(2)];
+    const conn = Object.assign({}, H.conn, { user: 'wts_backup' });
+    const sql = H.admin.sql;
+    const before = Number((await sql`select count(*)::int as n from wts.audit`)[0].n);
+    const r = await B.exportDatabase({ conn, pgBin: bin, objects: store, afterDump: async () => {
+      // production keeps writing while the export runs: a new account, audit rows, rate counters and outbox mail
+      const id = crypto.randomUUID();
+      await sql`insert into wts.users (id, email_bidx, email_enc, terms_version, privacy_version, consented_at, data_key_wrapped, data_key_kid, used_bytes)
+                values (${id}, ${crypto.randomBytes(32)}, ${Buffer.from('enc')}, '1', '1', now(), ${Buffer.from('k')}, 1, 0)`;
+      for (let i = 0; i < 3; i++) await sql`insert into wts.audit (user_id, actor, action, at, hash) values (${id}, 'user', 'signin', now(), ${crypto.randomBytes(32)})`;
+      await sql`insert into wts.rate_counters (bucket, window_start, n) values (${'probe:' + id}, now(), 1)`;
+      await sql`insert into wts.mail_outbox (id, to_enc, template, created_at, sent_at) values (${crypto.randomUUID()}, ${Buffer.from('t')}, 'code_signin', now(), now())`;
+    } });
+    assert.strictEqual(r.manifest.counts.users, 3, 'the manifest describes the snapshot, not the later state');
+    assert.strictEqual(r.manifest.counts.audit, before);
+    assert.strictEqual(Number((await sql`select count(*)::int as n from wts.users`)[0].n), 4, 'the concurrent writes did land');
+    const w = B.writeExport({ entries: r.entries, keys, dir: path.join(tmp, 'concurrent') });
+    const report = await B.restoreDrill({ file: w.file, keys, adminUrl: Object.assign({}, H.conn), pgBin: bin, env: {} });
+    assert.ok(report.ok, JSON.stringify(report.mismatches));
+    assert.deepStrictEqual(report.mismatches, []);
+    // without an object store (weekly-export --no-objects) the manifest says so
+    const r2 = await B.exportDatabase({ conn, pgBin: bin, objects: null });
+    assert.strictEqual(r2.manifest.objects, 'none'); assert.strictEqual(r2.manifest.blobKeys, 0);
+  });
+
   test('monitor-check reads aggregate metrics with the jobs credential and alerts on an old outbox', async () => {
     const MC = require('../ops/monitor-check');
     const jobs = H.as('wts_jobs');
+    const sql = H.admin.sql;
+    // provider ceilings and an open breaker (the counters of the provider sign-in), link spike, undeliverable mail
+    await sql`insert into wts.rate_counters (bucket, window_start, n) values ('oauth_ex:203.0.113.0/24', now() - interval '5 minutes', ${MC.CEILINGS.exchanges10min})`;
+    await sql`insert into wts.rate_counters (bucket, window_start, n) values ('oauth_ex:198.51.100.0/24', now() - interval '5 minutes', 3)`;
+    await sql`insert into wts.rate_counters (bucket, window_start, n) values ('oauth_brk_open:google', now() + interval '6 minutes', 1)`;
+    for (let i = 0; i < 12; i++) await sql`insert into wts.audit (user_id, actor, action, at, hash) values (${ids[0]}, 'user', 'identity_link', now(), ${crypto.randomBytes(32)})`;
+    for (let i = 0; i < 24; i++) {
+      await sql`insert into wts.mail_outbox (id, to_enc, template, created_at, sent_at, tries) values (${crypto.randomUUID()}, ${Buffer.from('t')}, 'code_signin', now() - interval '2 hours', ${i < 4 ? null : new Date()}, ${i < 4 ? 5 : 1})`;
+    }
     const log = []; const r = await MC.check({ db: jobs, env: { WTS_EXPORT_DIR: tmp }, dry: true, log: { warn: (m) => log.push(m) } });
     assert.ok(r.metrics.outboxAgeMin > 5, JSON.stringify(r.metrics));
     assert.ok(r.alerts.includes('outboxAge'), JSON.stringify(r.alerts));
     assert.ok(r.metrics.exportAgeDays < 1, 'a fresh export exists');
     assert.strictEqual(r.metrics.codeSendsHour, 0);
+    assert.strictEqual(r.metrics.ceilingReached, 1, JSON.stringify(r.metrics));
+    assert.strictEqual(r.metrics.breakerOpen, 1);
+    assert.strictEqual(r.metrics.linksHour, 12);
+    assert.ok(r.metrics.mailDay >= 24 && r.metrics.mailBounceRate > 0.05 && r.metrics.mailBounceRate < 0.2, JSON.stringify(r.metrics));
+    assert.strictEqual(typeof r.metrics.pinsFailed, 'number');
+    ['ceiling', 'breaker', 'linkSpike', 'bounce'].forEach((id) => assert.ok(r.alerts.includes(id), id + ' fires: ' + JSON.stringify(r.alerts)));
     assert.ok(!JSON.stringify(r).includes('@'), 'counts only');
   });
 });

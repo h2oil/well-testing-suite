@@ -7,7 +7,11 @@ name: Server release (accounts API — server-v* tags only)
 #   environment server-production (required reviewer = the owner): secret WTS_DEPLOY_TOKEN, variables WTS_DEPLOY_SITE,
 #     WTS_DEPLOY_COMMAND (the host CLI deploy invocation, run inside server/dist) and optionally WTS_HEALTH_URL
 # Without them the verify job still runs (tests, secret scan, publish check, account-block digest, bundle) and the migrate /
-# deploy steps print a notice and skip. The request handlers' own secrets (master keys, peppers, provider secrets …) live
+# deploy steps print a notice and skip — EXCEPT that deploy fails when it is configured, the migrate job was skipped and
+# server/db/migrations changed since the previous server tag (new code never goes live on an unmigrated schema). The secrets
+# must be ENVIRONMENT secrets of the two environments, which must exist with the owner as required reviewer before the first
+# tag (repository-level secrets or auto-created environments would skip the manual approval; server/RUNBOOK.md §3 step 8).
+# The request handlers' own secrets (master keys, peppers, provider secrets …) live
 # only in the functions site's environment and never pass through this workflow.
 
 on:
@@ -25,6 +29,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      migrations_changed: ${{ steps.checklist.outputs.migrations_changed }}
     steps:
       - name: Checkout (full history, for the master check and the pin diff)
         uses: actions/checkout@v4
@@ -58,7 +64,11 @@ jobs:
         run: node prism-build/publish-site.js --check
 
       - name: Account block digest and pinned-file changes (for the owner's release checklist)
+        id: checklist
         run: |
+          prev=$(git describe --tags --abbrev=0 --match 'server-v*' "$GITHUB_SHA^" 2>/dev/null || true)
+          if [ -n "$prev" ] && git diff --quiet "$prev" "$GITHUB_SHA" -- server/db/migrations; then changed=false; else changed=true; fi
+          echo "migrations_changed=$changed" >> "$GITHUB_OUTPUT"
           {
             echo "### Release checklist inputs for $GITHUB_REF_NAME"
             node prism-build/acct-hash.js --release || echo "account block: none in this build"
@@ -88,6 +98,8 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     environment: server-migrations
+    outputs:
+      result: ${{ steps.apply.outputs.result }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,13 +110,15 @@ jobs:
           node-version: '22'
 
       - name: Apply migrations (manual approval; expand-then-contract)
+        id: apply
         working-directory: server
         env:
           WTS_MIGRATE_DB_URL: ${{ secrets.WTS_MIGRATE_DB_URL }}
         run: |
-          if [ -z "$WTS_MIGRATE_DB_URL" ]; then echo "::notice::migration credential not configured — skipped"; exit 0; fi
+          if [ -z "$WTS_MIGRATE_DB_URL" ]; then echo "::notice::migration credential not configured — skipped"; echo "result=skipped" >> "$GITHUB_OUTPUT"; exit 0; fi
           npm ci --ignore-scripts
           node db/migrate.js
+          echo "result=applied" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: [verify, migrate]
@@ -123,8 +137,14 @@ jobs:
           WTS_DEPLOY_TOKEN: ${{ secrets.WTS_DEPLOY_TOKEN }}
           WTS_DEPLOY_SITE: ${{ vars.WTS_DEPLOY_SITE }}
           WTS_DEPLOY_COMMAND: ${{ vars.WTS_DEPLOY_COMMAND }}
+          MIGRATE_RESULT: ${{ needs.migrate.outputs.result }}
+          MIGRATIONS_CHANGED: ${{ needs.verify.outputs.migrations_changed }}
         run: |
           if [ -z "$WTS_DEPLOY_TOKEN" ] || [ -z "$WTS_DEPLOY_SITE" ] || [ -z "$WTS_DEPLOY_COMMAND" ]; then echo "::notice::deploy not configured — skipped"; exit 0; fi
+          if [ "$MIGRATE_RESULT" != "applied" ] && [ "$MIGRATIONS_CHANGED" = "true" ]; then
+            echo "::error::server/db/migrations changed since the previous server tag but the migrate job did not apply them — refusing to deploy"
+            exit 1
+          fi
           bash -c "$WTS_DEPLOY_COMMAND"
 
       - name: Health check after the deploy

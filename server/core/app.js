@@ -7,6 +7,10 @@
 // (413 before parsing) → Origin / X-WTS-Req / Content-Type for writes (403 origin; csp-report, ops-daily and the callback have
 // their own rules) → JSON parse and the contract request shape (400 bad_request) → ACCOUNTS_OFF (503 paused) → handler.
 // Every response carries the common headers; JSON bodies are application/json; the callback is always a 303.
+// Monitoring metadata (site/monitor.js access lines, §13.6): every response carries res.meta {provider?, uid?, outcome?,
+// error?}, never sent to the client. The pipeline fills provider (a valid :provider), error (the envelope code) and, for the
+// callback, outcome ('ok' | 'state' | 'exchange_failed'); a handler adds what only it knows through ctx.req.meta (the
+// session's uid, the provider of a finish, the outcome of a callback that answered 303 after a failed exchange).
 
 const C = require('./contract');
 const H = require('./http');
@@ -46,13 +50,31 @@ function createApp(o) {
   // Any throw — also from URL splitting or route matching — ends as an envelope with the common headers (or the 303).
   async function handle(req) {
     let isCallback = false;
+    const meta = req && typeof req.meta === 'object' && req.meta ? req.meta : {};
+    if (req && typeof req === 'object') req.meta = meta;
+    let res;
     try {
-      return await pipeline(req, (v) => { isCallback = v; });
+      res = await pipeline(req, (v) => { isCallback = v; });
     } catch (e) {
-      if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); return callbackRedirect(); }
-      if (!(e instanceof ApiError)) log.warn('request threw: ' + ((e && e.message) || e));
-      return fromError(e);
+      noteError(meta, e);
+      if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); res = callbackRedirect(); }
+      else {
+        if (!(e instanceof ApiError)) log.warn('request threw: ' + ((e && e.message) || e));
+        res = fromError(e);
+      }
     }
+    if (isCallback && !meta.outcome) meta.outcome = !meta.error ? 'ok' : (meta.error === 'oauth_state' ? 'state' : 'exchange_failed');
+    res.meta = cleanMeta(meta);
+    return res;
+  }
+  function noteError(meta, e) { if (meta && !meta.error) meta.error = (e instanceof ApiError && e.code) || 'server'; }
+  function cleanMeta(m) {
+    const out = {};
+    if (C.PROVIDERS.indexOf(m.provider) !== -1) out.provider = m.provider;
+    if (/^[0-9a-f-]{36}$/.test(String(m.uid || ''))) out.uid = m.uid;
+    if (/^[a-z_]{1,24}$/.test(String(m.outcome || ''))) out.outcome = m.outcome;
+    if (/^[a-z_]{1,32}$/.test(String(m.error || ''))) out.error = m.error;
+    return out;
   }
 
   async function pipeline(req, markCallback) {
@@ -64,7 +86,7 @@ function createApp(o) {
     const callbackPath = req.method === 'GET' && CALLBACK_RE.test(path);
     markCallback(callbackPath);
     const m = C.matchRoute(req.method, path);
-    if (!m) return callbackPath ? callbackRedirect() : notFound();
+    if (!m) { if (callbackPath) { req.meta.outcome = 'state'; return callbackRedirect(); } return notFound(); }
     const ep = m.endpoint;
     const isCallback = ep.id === 'oauthCallback';
     markCallback(isCallback);
@@ -75,9 +97,10 @@ function createApp(o) {
       if (ep.auth === 'hmac' && !(await H.verifyOps(req, full, config, now(), opsNonces))) throw new ApiError('origin');
       if (!H.writeHeadersOk(req, ep, config)) throw new ApiError('origin');
       if (m.params.provider !== undefined && C.PROVIDERS.indexOf(m.params.provider) === -1) {
-        if (isCallback) return callbackRedirect();
+        if (isCallback) { req.meta.outcome = 'state'; return callbackRedirect(); }
         throw new ApiError('not_found');
       }
+      if (m.params.provider !== undefined) req.meta.provider = m.params.provider;
       let body = null;
       if (ep.body === 'json' && req.method !== 'GET') {
         try { body = raw && raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch (e) { throw new ApiError('bad_request'); }
@@ -99,6 +122,7 @@ function createApp(o) {
       if (isCallback) return callbackRedirect(setCookies);
       return respond(r.status || 200, r.body, { headers: r.headers, cookies: setCookies });
     } catch (e) {
+      noteError(req.meta, e);
       if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); return callbackRedirect(); }
       if (!(e instanceof ApiError)) log.warn('handler ' + ep.id + ' threw: ' + ((e && e.message) || e));
       return fromError(e);

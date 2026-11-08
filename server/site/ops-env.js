@@ -20,6 +20,7 @@ const OPS_SECRET_ENV = [
 const OPS_CONFIG_ENV = [
   'WTS_EXPORT_DIR',          // weekly export target folder (a mounted, separate store) — non-secret
   'WTS_OBJECTS_DIR',         // filesystem blob store for local runs and restore drills
+  'WTS_OBJECTS_BINDING',     // the host blob-store binding module (a .js path inside server/; default site/objects-binding.js)
   'WTS_EXPORT_RETAIN_DAYS',  // 28 by default (§13.5)
   'WTS_PG_BIN',              // folder of the database engine's dump / restore tools (export and drill)
   'WTS_DRILL_ADMIN_URL',     // restore drill: administrator of an ISOLATED scratch cluster (never production)

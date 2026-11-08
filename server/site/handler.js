@@ -12,11 +12,15 @@
 // Per instance, once: the configuration from the environment ONLY (core/config.js; secrets never in the bundle), the
 // isolation check (site/isolation.js — on failure nothing but /health is served, every other route answers 503 paused,
 // and "alert:" lines are logged), the database (WTS_DB_URL, created lazily on the first request that needs it), the blob
-// store (the host store passed as `store`, else WTS_OBJECTS_DIR, else none → data routes answer 503 paused), the mail
-// transport (WTS_MAIL_API_URL + WTS_MAIL_CREDENTIAL, else none: mail waits in the outbox).
-// Per request: the body cap BEFORE reading (Content-Length) and after; one access log line (site/monitor.js — endpoint id,
-// status, latency, IP prefix; nothing else); HSTS and Referrer-Policy added to every API response; on a preview without
-// WTS_PREVIEW_SIGNIN=1 every sign-in route answers 503 paused. No timers.
+// store (the host store passed as `store`, else site/objects-loader.js: the binding module, else WTS_OBJECTS_DIR, else none
+// → data routes answer 503 paused), the mail transport (WTS_MAIL_API_URL + WTS_MAIL_CREDENTIAL, else none: mail waits in
+// the outbox).
+// Per request, in this order: the base path, then the proxy signature and the original host (else 404 — exactly as
+// core/app.js, so a request sent straight to the functions site learns nothing, plan §2), then the isolation gate (503
+// paused), the preview sign-in gate (503 paused) and the body cap measured BEFORE reading (Content-Length, 413), then the
+// pipeline. A request id is generated here, passed to the pipeline as req.rid and returned as X-WTS-Request-Id; one
+// access log line (site/monitor.js — request id, endpoint id, status, latency, IP prefix, and from res.meta the user id,
+// provider, callback outcome and error code; nothing else); HSTS and Referrer-Policy on every API response. No timers.
 
 const { loadConfig } = require('../core/config');
 const { createApp } = require('../core/app');
@@ -26,6 +30,8 @@ const { envelope } = require('../core/errors');
 const { checkIsolation } = require('./isolation');
 const M = require('./monitor');
 const A = require('./adapters');
+const { loadObjects } = require('./objects-loader');
+const crypto = require('crypto');
 
 const SITE_HEADERS = Object.freeze({
   'Strict-Transport-Security': 'max-age=31536000',
@@ -42,7 +48,8 @@ function createHandler(o) {
   const now = o.now || (() => Date.now());
   const config = loadConfig(env);
   const iso = checkIsolation(config, env);
-  config.alerts.forEach((a) => log.warn('alert: config — ' + a));
+  // standard "alert: <id> — text" lines for the host's log alerting (site/monitor.js LOG_ALERTS, RUNBOOK §5)
+  config.alerts.forEach((a) => log.warn('alert: ' + (/pins|WTS_OIDC_MODE/i.test(a) ? 'pins' : 'config') + ' — ' + a));
   iso.problems.forEach((p) => log.warn('alert: isolation — ' + p));
   config.warnings.concat(iso.warnings).forEach((w) => log.info('config: ' + w));
 
@@ -54,8 +61,8 @@ function createHandler(o) {
   }
   let objects = null;
   if (o.store) objects = A.hostObjects(o.store);
-  else if (env.WTS_OBJECTS_DIR) {
-    try { objects = require('../core/objects').fsObjects(env.WTS_OBJECTS_DIR); } catch (e) { log.warn('config: WTS_OBJECTS_DIR set but no folder store in this build'); }
+  else {
+    try { objects = loadObjects(env).objects; } catch (e) { log.warn('alert: objects — ' + M.redactLine(e && e.message)); }
   }
   let mail = o.mail || null;
   if (!mail && env.WTS_MAIL_API_URL && env.WTS_MAIL_CREDENTIAL && iso.signinAllowed) {
@@ -79,21 +86,28 @@ function createHandler(o) {
 
   async function invoke(req) {
     const t0 = now();
+    const rid = crypto.randomBytes(9).toString('base64url');
     let route = 'unmatched'; let res;
     try {
       const { path: full } = H.splitUrl(req.url || '/');
-      const sub = full.indexOf(C.BASE) === 0 ? full.slice(C.BASE.length) || '/' : null;
+      const sub = full === C.BASE || full.indexOf(C.BASE + '/') === 0 ? full.slice(C.BASE.length) || '/' : null;
       const m = sub !== null ? C.matchRoute(req.method, sub) : null;
       if (m) route = m.endpoint.id;
-      if (!iso.ok && route !== 'health') res = plain(503, 'paused');
+      // plan §2: without the proxy signature and the production host nothing but 404 — before any other gate
+      if (sub === null || !H.proxyOk(req, config) || !H.hostAllowed(req, config)) res = plain(404, 'not_found');
+      else if (!iso.ok && route !== 'health') res = plain(503, 'paused');
       else if (!iso.signinAllowed && SIGNIN_IDS.has(route)) res = plain(503, 'paused');
       else if (req.tooLarge) res = plain(413, 'too_large', { limit: H.bodyLimit(route) });
-      else res = withSite(await getApp().handle(req));
+      else res = withSite(await getApp().handle(Object.assign({}, req, { rid, meta: {} })));
     } catch (e) {
-      log.warn('alert: adapter error — ' + M.redactLine(e && e.message));
+      log.warn('alert: adapter — ' + M.redactLine(e && e.message));
       res = plain(500, 'server');
     }
-    log.info(M.accessLine({ route, status: res.status, ms: now() - t0, ip: H.clientIp(req, config) }));
+    const meta = res.meta || {};
+    res = Object.assign({}, res, { headers: Object.assign({}, res.headers, { 'X-WTS-Request-Id': rid }) });
+    delete res.meta;
+    log.info(M.accessLine({ rid, route, status: res.status, ms: now() - t0, ip: H.clientIp(req, config),
+      uid: meta.uid, provider: meta.provider, outcome: meta.outcome, err: meta.error }));
     return res;
   }
 

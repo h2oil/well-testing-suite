@@ -5,7 +5,7 @@
   "static": null,
   "build": { "command": "node site/build.js", "baseDir": "server", "output": "server/dist" },
   "functions": [
-    { "name": "api", "entry": "dist/functions/api.js", "export": "default", "paths": ["/api/v1/*"], "region": "UK (else EU)", "maxBodyBytes": 4195328, "timeoutSeconds": 26 }
+    { "name": "api", "entry": "dist/entry/api.js", "functionsDir": "dist/entry", "export": "default", "paths": ["/api/v1/*"], "region": "UK (else EU)", "maxBodyBytes": 4195328, "timeoutSeconds": 26 }
   ],
   "schedules": [
     { "name": "ops-daily", "how": "POST /api/v1/ops/daily signed with WTS_OPS_HMAC (server/ops/call-daily.js) — or the host scheduler invoking the same", "cron": "17 3 * * *" },

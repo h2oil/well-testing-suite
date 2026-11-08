@@ -17,7 +17,8 @@
 //   parseKeys(raw) → [{kid, key}]                         "kid:base64,…" (32-byte keys), the first one encrypts
 //   seal(payload, keys) / open(buf, keys) → Buffer        file format: "WTSX1\n" + header JSON + "\n" + ciphertext + tag
 //   pack(entries:[{name, data}]) / unpack(buf) → entries  (length-prefixed; names checked)
-//   exportDatabase({conn, pgBin, objects, log, now}) → {archive: entries, manifest}
+//   exportDatabase({conn, pgBin, objects, log, now}) → {entries, manifest}   (one snapshot for dump and manifest; objects null
+//        → manifest.objects = 'none', only when the caller passed --no-objects)
 //   writeExport({entries, keys, dir, now, retainDays}) → {file, pruned:[…]}
 //   restoreDrill({file|buf, keys, adminUrl, pgBin, allowRemote, env, log}) → report
 
@@ -113,37 +114,63 @@ function run(cmd, args, o) {
   if (r.status !== 0) throw new Error(path.basename(cmd) + ' failed (' + r.status + '): ' + String(r.stderr || '').slice(-600));
   return r.stdout;
 }
+// the same, without blocking the event loop (the export keeps a database transaction open while the dump runs)
+function runAsync(cmd, args, o) {
+  return new Promise((resolve, reject) => {
+    const ch = cp.spawn(cmd, args, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'], timeout: 30 * 60 * 1000, killSignal: 'SIGKILL' }, o || {}));
+    const out = []; const err = [];
+    ch.stdout.on('data', (b) => out.push(b));
+    ch.stderr.on('data', (b) => err.push(b));
+    ch.on('error', (e) => { reject(new Error(path.basename(cmd) + ': ' + e.message)); });
+    ch.on('close', (code) => {
+      if (code !== 0) reject(new Error(path.basename(cmd) + ' failed (' + code + '): ' + Buffer.concat(err).toString().slice(-600)));
+      else resolve(Buffer.concat(out));
+    });
+  });
+}
+// inside a transaction a failed statement aborts it: each optional read runs in its own savepoint when there is one
+function guarded(sql, fn) { return typeof sql.savepoint === 'function' ? sql.savepoint((sp) => fn(sp)) : fn(sql); }
 async function stats(sql) {
   const counts = {};
   for (const t of TABLES) {
-    try { counts[t] = Number((await sql.unsafe('select count(*)::bigint as n from wts.' + t))[0].n); } catch (e) { counts[t] = null; }
+    try { counts[t] = await guarded(sql, async (s) => Number((await s.unsafe('select count(*)::bigint as n from wts.' + t))[0].n)); } catch (e) { counts[t] = null; }
   }
   let audit = null;
   try {
-    const r = (await sql.unsafe("select coalesce(string_agg(encode(hash, 'hex'), ',' order by id), '') as s from wts.audit"))[0];
+    const r = await guarded(sql, async (s) => (await s.unsafe("select coalesce(string_agg(encode(hash, 'hex'), ',' order by id), '') as s from wts.audit"))[0]);
     audit = crypto.createHash('sha256').update(r.s).digest('hex');
   } catch (e) { audit = null; }
   let migrations = [];
-  try { migrations = (await sql.unsafe('select name, sha256 from public.wts_schema_migrations order by name')).map((r) => r.name + ':' + r.sha256); } catch (e) { migrations = []; }
+  try { migrations = await guarded(sql, async (s) => (await s.unsafe('select name, sha256 from public.wts_schema_migrations order by name')).map((r) => r.name + ':' + r.sha256)); } catch (e) { migrations = []; }
   return { counts, audit, migrations };
 }
 
+// The dump and the manifest describe the SAME moment: one REPEATABLE READ, READ ONLY transaction exports its snapshot,
+// pg_dump runs with --snapshot=<id> while that transaction stays open, and the row counts, audit digest, migration list and
+// user list are read inside the same transaction before it ends. Writes that land meanwhile (rate counters, sessions, audit,
+// outbox) are in neither. o.afterDump (tests only) runs between the dump and the stats.
 async function exportDatabase(o) {
   const log = o.log || { log() {} };
   const now = o.now || (() => Date.now());
   const ca = connArgs(o.conn);
   const t0 = now();
-  const dump = run(tool(o.pgBin, 'pg_dump'), ca.args.concat(['-Fc', '--no-password', '-d', ca.db]), { env: Object.assign({}, process.env, { PGPASSWORD: ca.password }) });
   const { createDb } = require('../core/db');
   const db = createDb(o.conn, { max: 1 });
-  let st; let userIds = [];
+  let st; let userIds = []; let dump = null;
   try {
-    st = await stats(db.sql);
-    try { userIds = (await db.sql.unsafe('select id::text as id from wts.users order by id')).map((r) => r.id); } catch (e) { userIds = []; }
+    await db.sql.begin('isolation level repeatable read read only', async (tx) => {
+      const snap = (await tx`select pg_export_snapshot() as id`)[0].id;
+      if (!/^[0-9A-Fa-f-]{1,64}$/.test(String(snap))) throw new Error('backup: unexpected snapshot id');
+      dump = await runAsync(tool(o.pgBin, 'pg_dump'), ca.args.concat(['-Fc', '--no-password', '--snapshot=' + snap, '-d', ca.db]),
+        { env: Object.assign({}, process.env, { PGPASSWORD: ca.password }) });
+      if (typeof o.afterDump === 'function') await o.afterDump();
+      st = await stats(tx);
+      try { userIds = await guarded(tx, async (s) => (await s.unsafe('select id::text as id from wts.users order by id')).map((r) => r.id)); } catch (e) { userIds = []; }
+    });
   } finally { await db.close(); }
   const entries = [{ name: 'db.dump', data: dump }];
   let blobKeys = [];
-  const objs = { ledger: 0, chain: 0 };
+  const objs = o.objects ? { ledger: 0, chain: 0 } : 'none';
   if (o.objects) {
     for (const p of ['ledger/', 'chain/']) {
       for (const k of await o.objects.list(p)) { const b = await o.objects.get(k); if (b) { entries.push({ name: 'objects/' + k, data: b }); objs[p.slice(0, -1)]++; } }
@@ -156,7 +183,7 @@ async function exportDatabase(o) {
     counts: st.counts, auditDigest: st.audit, migrations: st.migrations, objects: objs, blobKeys: blobKeys.length, ms: now() - t0,
   };
   entries.unshift({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest)) });
-  log.log('[export] dump ' + dump.length + ' bytes, ' + objs.ledger + ' ledger and ' + objs.chain + ' anchor objects');
+  log.log('[export] dump ' + dump.length + ' bytes, ' + (o.objects ? objs.ledger + ' ledger and ' + objs.chain + ' anchor objects' : 'no object store (--no-objects)'));
   return { entries, manifest };
 }
 

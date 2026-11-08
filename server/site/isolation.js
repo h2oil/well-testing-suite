@@ -24,6 +24,14 @@ function dbNameOf(url) {
   try { const u = new URL(String(url)); return decodeURIComponent(u.pathname.replace(/^\//, '')); } catch (e) { return ''; }
 }
 const NON_PROD_DB = /(preview|test|drill|scratch)/i;
+const OFF_SITE_CREDENTIALS = [
+  { name: 'WTS_DRILL_ADMIN_URL', text: 'a restore-drill credential' },
+  { name: 'WTS_MIGRATE_DB_URL', text: 'the migration (administrator) credential' },
+  { name: 'WTS_SUPPORT_DB_URL', text: 'the support credential' },
+  { name: 'WTS_BACKUP_DB_URL', text: 'the backup (export) database credential' },
+  { name: 'WTS_BACKUP_KEY', text: 'the weekly export key' },
+  { name: 'WTS_EXPORT_CREDENTIAL', text: 'the export storage credential' },
+];
 
 function checkIsolation(config, env) {
   env = env || process.env;
@@ -40,8 +48,8 @@ function checkIsolation(config, env) {
     if (pepperKids.some((k) => k >= PREVIEW_KID_MIN)) problems.push('a code pepper with a non-production kid (≥ 9000) is loaded in production');
     if (db && NON_PROD_DB.test(db)) problems.push('the production database name looks like a preview / test / drill database');
     if (previewFlag) problems.push('WTS_PREVIEW_SIGNIN is set in production');
-    if (env.WTS_DRILL_ADMIN_URL) problems.push('a restore-drill credential is present in the production functions environment');
-    if (env.WTS_MIGRATE_DB_URL) problems.push('the migration (administrator) credential is present in the production functions environment');
+    // credentials D12 / §13.3 keep off the functions site (operations scripts, jobs host or the release workflow only)
+    OFF_SITE_CREDENTIALS.forEach((c) => { if (env[c.name]) problems.push(c.text + ' (' + c.name + ') is present in the production functions environment'); });
   } else {
     if (masterKids.some((k) => k < PREVIEW_KID_MIN)) problems.push(mode + ': a master key with a production kid (< 9000) is loaded — use a ' + mode + ' key (kid ≥ 9000)');
     if (pepperKids.some((k) => k < PREVIEW_KID_MIN)) problems.push(mode + ': a code pepper with a production kid (< 9000) is loaded');
@@ -58,4 +66,4 @@ function checkIsolation(config, env) {
   return { ok: problems.length === 0, env: mode, signinAllowed, problems, warnings };
 }
 
-module.exports = { checkIsolation, kidsOf, dbNameOf, PREVIEW_KID_MIN };
+module.exports = { checkIsolation, kidsOf, dbNameOf, PREVIEW_KID_MIN, OFF_SITE_CREDENTIALS };

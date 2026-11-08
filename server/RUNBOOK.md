@@ -41,9 +41,11 @@ the repository root carries no host configuration, so the static site's deploy i
 | local / test | throwaway cluster (`server/test/run.js`) or the in-memory fake | generated at test time | fake providers only |
 
 `site/isolation.js` enforces these rules at start-up: production refuses kids ≥ 9000, a preview-looking database name,
-`WTS_PREVIEW_SIGNIN`, a restore-drill or migration credential in the functions environment; every other environment refuses
-production kids (< 9000). On a failure the site serves only `/health` and logs `alert: isolation — …`. The API also answers
-`404` to any host other than `welltest.h2oil.co.uk` and to any request without the proxy signature in production.
+`WTS_PREVIEW_SIGNIN`, and the credentials that belong off the functions site (`WTS_DRILL_ADMIN_URL`, `WTS_MIGRATE_DB_URL`,
+`WTS_SUPPORT_DB_URL`, `WTS_BACKUP_DB_URL`, `WTS_BACKUP_KEY`, `WTS_EXPORT_CREDENTIAL`); every other environment refuses
+production kids (< 9000). On a failure the site serves only `/health` and logs `alert: isolation — …`. The API answers
+`404` to any host other than `welltest.h2oil.co.uk` and to any request without the proxy signature in production — before
+every other check, so a request sent straight to the functions site never sees `503` or `413`.
 
 **Functions-site environment** (secrets marked \*): `WTS_ENV=production`, `WTS_DB_URL`\* (the `wts_api` role),
 `WTS_MASTER_KEYS`\* (`kid:base64,…`), `WTS_MASTER_KID`, `WTS_INDEX_PEPPER`\*, `WTS_CODE_PEPPERS`\* (`kid:base64,…`),
@@ -53,13 +55,13 @@ production kids (< 9000). On a failure the site serves only `/health` and logs `
 `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`\*. **Never** set `WTS_OIDC_MODE` in production.
 
 **Jobs host** (scheduled scripts; a separate credential set, D12): `WTS_JOBS_DB_URL`\* (`wts_jobs`), `WTS_BACKUP_DB_URL`\*
-(`wts_backup`), `WTS_BACKUP_KEY`\*, `WTS_EXPORT_DIR` (separate storage in another region), `WTS_OBJECTS_DIR` or the blob
-store binding, `WTS_ALERT_WEBHOOK`\*, `WTS_ALERT_EMAIL`, `WTS_HEALTH_URL`, `WTS_STORAGE_PLAN_BYTES`, `WTS_OPS_HMAC`\* (for
+(`wts_backup`), `WTS_BACKUP_KEY`\*, `WTS_EXPORT_DIR` (separate storage in another region), the blob store binding (the same
+module as the functions site, §3 step 6, with its own `WTS_OBJECTS_CREDENTIAL`\*) or `WTS_OBJECTS_DIR`, `WTS_ALERT_WEBHOOK`\*, `WTS_ALERT_EMAIL`, `WTS_HEALTH_URL`, `WTS_STORAGE_PLAN_BYTES`, `WTS_OPS_HMAC`\* (for
 `call-daily.js`). **Support machine** (owner only, on demand): `WTS_SUPPORT_DB_URL`\*.
 
 **Repository (release workflow)**: environment `server-migrations` → secret `WTS_MIGRATE_DB_URL`; environment
 `server-production` → secret `WTS_DEPLOY_TOKEN`, variables `WTS_DEPLOY_SITE`, `WTS_DEPLOY_COMMAND`, `WTS_HEALTH_URL`. Both
-environments require the owner as reviewer.
+environments require the owner as reviewer. These are **environment** secrets, never repository-level ones (§3 step 8).
 
 Secrets never go into the repository, the static bundle, logs, previews or chat. `.env*` is git-ignored; the publish check
 and the secret scan refuse files that contain key material or name a secret variable in published content.
@@ -90,14 +92,20 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
    for the master key (kid 1), index pepper, code pepper (kid 1), session pepper, proxy signature, ops HMAC and backup key
    (kid 1). Store each in the vault; write the master key and the backup key to the offline escrow too.
 4. **Functions site**: create a second site of the same team for `server/` only (`site/site.json`): build command
-   `node site/build.js` in `server/`, function entry `dist/functions/api.js` for `/api/v1/*`, **no static publish
-   directory** beyond `dist/static` (robots.txt only), UK region if offered. Disable deploy previews and branch deploys for
-   this site (it deploys only from the release workflow).
+   `node site/build.js` in `server/`, functions folder `dist/entry` with its single function `dist/entry/api.js` for
+   `/api/v1/*` (never point the host at `dist/functions/`: those are route-table modules, not host functions, and a host that
+   deploys every file of its functions folder would publish them as broken functions), **no static publish directory**
+   beyond `dist/static` (robots.txt only), UK region if offered. Disable deploy previews and branch deploys for this site (it
+   deploys only from the release workflow).
 5. **Environment**: set the functions-site variables of §2. Leave `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` unset (= off) and
    `ACCOUNTS_SIGNUP=invite` until the beta.
-6. **Blob store binding**: write `server/dist/functions/objects-binding.js` (generated bundles keep it if the deploy command
-   copies it) exporting `createStore()` that returns the host's blob store with `get / set / delete / list({prefix})`;
-   `site/adapters.js hostObjects()` validates every key. Without it data routes answer `503 paused`.
+6. **Blob store binding**: commit `server/site/objects-binding.js` through a reviewed server release, exporting
+   `createStore(env)` that returns the host's blob store with `get / set / delete / list({prefix})` and reads its credential
+   from the environment (`WTS_OBJECTS_CREDENTIAL`, never a literal — the secret scan and the bundle build refuse one). Every
+   build copies it into `dist/site/`, so it survives each release; a different module path can be named with the non-secret
+   variable `WTS_OBJECTS_BINDING` (a `.js` path inside `server/`). `site/objects-loader.js` loads it for the API entry, the
+   weekly export and the ledger replay alike; `site/adapters.js hostObjects()` validates every key. Without it data routes
+   answer `503 paused` and the weekly export fails (unless run with `--no-objects`).
 7. **Rewrite on the static site** (host settings of the existing static site, not this repository's root):
    `/api/v1/*` → `https://<functions-site-host>/api/v1/:splat`, status 200, proxied, adding the request header
    `X-WTS-Proxy-Sig: <WTS_PROXY_SIG current value>`; pass `Cookie`, `Origin`, `Content-Type` and the `X-WTS-*` headers through.
@@ -105,8 +113,11 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
    URL answered directly gives `404`; through the static site `GET /api/v1/health` gives `{"ok":true,"db":true,…}`. If the
    host's rewrite cannot add a header, use the fallback of plan §2 (one site, functions deployed from the same tags through a
    protected deploy branch) — ask for a plan update first.
-8. **Repository**: create the environments `server-migrations` and `server-production` (required reviewer: owner), add the
-   secret and variables of §2. `WTS_DEPLOY_COMMAND` is the host CLI's deploy call for the functions site, run inside
+8. **Repository**: BEFORE the first tag, create the environments `server-migrations` and `server-production` with the owner
+   as **required reviewer**, then add the secrets and variables of §2 **to those environments** (environment secrets, not
+   repository secrets: a repository-level secret, or an environment the first workflow run creates on its own without
+   reviewers, would let the jobs run without the manual approval). The deploy job refuses to run when the migrate job was
+   skipped (no `WTS_MIGRATE_DB_URL` in its environment) while `server/db/migrations` changed since the previous server tag. `WTS_DEPLOY_COMMAND` is the host CLI's deploy call for the functions site, run inside
    `server/dist`, reading `WTS_DEPLOY_TOKEN` and `WTS_DEPLOY_SITE` from the environment (pin the CLI version in it).
 9. **First release**: follow §4 with tag `server-v1`.
 10. **Schedules** (jobs host or the host scheduler): daily `node server/ops/call-daily.js` (or the host scheduler calling
@@ -149,9 +160,29 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
 
 ## 5. Monitoring and alerts
 
-Access lines (`{"t":"access","rid","route","status","ms","ipp"}`) are the only per-request log; handlers log no addresses,
-codes, cookies, bodies, provider codes, `state`, tokens or claims (`site/monitor.js redactLine` masks free text). Alerts are
-log lines starting `alert:` plus one POST per run to `WTS_ALERT_WEBHOOK`.
+Access lines (`{"t":"access","rid","route","status","ms","ipp"}` plus, when known, `uid`, `provider`, `outcome` (the
+provider callback: `ok` / `state` / `exchange_failed`) and `err` (the envelope error code)) are the only per-request log;
+handlers log no addresses, codes, cookies, bodies, provider codes, `state`, tokens or claims (`site/monitor.js redactLine`
+masks free text). `rid` is also returned to the browser as the `X-WTS-Request-Id` response header: ask a user who reports a
+problem for it and search the access lines by it. Alerts are log lines `alert: <id> — <text>` plus one POST per
+`monitor-check.js` run to `WTS_ALERT_WEBHOOK`.
+
+**Where each alert comes from** (`site/monitor.js` RULES `source`; the test `ops-site.test.js` checks every rule has one):
+- **monitor-check (database, jobs credential)**: codeSends, ipSoft, readAnomaly, commitBurst (rate counters; thresholds from
+  `core/rate.js` LIMITS), outboxAge and bounce (outbox messages of the last 24 h still unsent after every retry), deletionLag,
+  storage (`WTS_STORAGE_PLAN_BYTES`), subjectMulti, linkSpike (audit `identity_link` / `identity_unlink`, baseline = mean per
+  hour over 7 days), ceiling (provider exchange counters at the per-prefix ceiling and prefixes at the live-attempt ceiling),
+  breaker (breakers opened in the last hour), auditChain (the daily job's chain check re-run read-only).
+- **monitor-check (code / export)**: pins (`core/oidc-providers.js checkPins()`), exportAge (`WTS_EXPORT_DIR`).
+- **Access lines** (the host's log alerting with the same thresholds, or `monitor-check.js --lines <exported log>`):
+  http5xx, latency, verifyFails (`codeVerify` answered `invalid_or_expired`), rate429, providerGoogle / providerLinkedin
+  (callbacks with an outcome other than `ok`, and finishes answering 5xx, `oauth_failed` or `oauth_state`).
+- **Log lines only** (set the host's log alerting on lines starting `alert: `): isolation and pins (`site/handler.js` at
+  start-up), jwksFetch and unknownKid (the provider signing-key cache), breaker (when it opens), auditChain (the daily job),
+  plus the site's own `alert: config`, `alert: objects` (a configured blob store binding that cannot be loaded) and
+  `alert: adapter`.
+- **The e-mail service's own alerting**: complaint (and asynchronous bounces after acceptance) — enable it in the service's
+  console with the owner's address.
 
 | Alert id | Rule (plan §13.6) | First response |
 |---|---|---|
@@ -217,7 +248,9 @@ incident note.
 - The platform's daily database backups (30 days).
 - The **weekly encrypted export** (`ops/weekly-export.js`): dump + blob manifest + `ledger/` + `chain/` objects + manifest,
   AES-256-GCM under `WTS_BACKUP_KEY` (not a master key; header authenticated; `kid` for rotation), in separate storage in
-  another region, kept **28 days**.
+  another region, kept **28 days**. The dump and the manifest's row counts, audit digest and migration list come from one
+  exported database snapshot (a read-only repeatable-read transaction held open while the dump runs), so the drill compares
+  like with like even though production writes all the time.
 - **Deletion ledger** objects `ledger/<user id>` (ids and dates only) written by the daily job outside the restorable database.
 - **Audit anchor** objects `chain/<date>` (each user's chain head and a Merkle root) written daily.
 
@@ -226,9 +259,13 @@ incident note.
 2. Restore the platform backup (or `pg_restore` of the newest weekly export's `db.dump` after decrypting with
    `site/backup.js open`) into a **new** database; never over the damaged one.
 3. Point `WTS_DB_URL` / `WTS_JOBS_DB_URL` at it.
-4. **Replay the ledger before re-opening**: `WTS_OBJECTS_DIR=… node server/ops/ledger-replay.js` (credential
-   `WTS_JOBS_DB_URL`) — deleted accounts never come back. Also replay the ledger objects inside the export if the blob store
-   was lost.
+4. **Replay the ledger before re-opening**: `node server/ops/ledger-replay.js` (credential `WTS_JOBS_DB_URL`) on the jobs
+   host, where `site/objects-loader.js` reaches the production blob store through the same binding as the API
+   (`site/objects-binding.js` or `WTS_OBJECTS_BINDING`, with `WTS_OBJECTS_CREDENTIAL`) — deleted accounts never come back.
+   If the blob store was lost, decrypt the newest weekly export, write its `objects/ledger/*` entries into a folder as
+   `ledger/<id>` and run the replay with `WTS_OBJECTS_DIR=<that folder>` (no binding configured) as well. Every weekly
+   export carries the ledger and the anchors: `weekly-export.js` fails when no object store is configured, unless it is run
+   with `--no-objects` on purpose (its manifest then says `objects: "none"` and it is not a complete §13.5 export).
 5. Compare the audit chain heads with the newest `chain/<date>` anchor.
 6. `ACCOUNTS_OFF` unset; incident note (§7).
 
