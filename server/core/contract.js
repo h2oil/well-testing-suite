@@ -318,7 +318,7 @@ S.OpsDailyRes = { ok: 'true', 'did?': 'any' };
 
 // ── endpoints (§3.3; '/api/v1' omitted) ─────────────────────────────────────────────────────────────────────────
 const COMMON = ['bad_request', 'origin', 'rate', 'paused', 'upgrade'];
-const SIGNED = COMMON.concat(['signed_out', 'locked']);
+const SIGNED = COMMON.concat(['signed_out', 'locked', 'gone']);   // gone: the account is deleting (§3.2)
 const E = [];
 function ep(id, method, path, o) {
   E.push(Object.assign({ id, method, path, group: path.split('/')[1], auth: 'session', phase: 1, req: null, res: {}, errors: [], body: method === 'GET' ? 'none' : 'json', notes: '' }, o));
