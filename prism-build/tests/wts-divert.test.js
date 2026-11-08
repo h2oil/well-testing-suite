@@ -10,11 +10,13 @@
 // Most checks drive WTS_sim directly (deterministic seeds, noise off where exactness matters); the UI checks
 // open the Well Test Simulator page, which falls back to the live 2D schematic in the harness (no WebGL).
 'use strict';
+// the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSDV';
 const NOISE_OFF = { noise: { on: false } };
 
-function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(Object.assign({ seed: 7 }, o || {}))); }
+function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
 function run(s, secs, dt, cb) { const n = Math.round(secs / dt); for (let i = 0; i < n; i++) { s.advance(dt); if (cb && cb(s.getState(), i) === false) return; } }
 function balanced(assert, st, where) {
   const m = st.health.massErr;
