@@ -1,2 +1,5 @@
 .claude/
 prism-build/.tmp/
+.env
+.env.*
+server/node_modules/

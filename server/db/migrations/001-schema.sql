@@ -1,0 +1,345 @@
+-- server/db/migrations/001-schema.sql — the first v3.5 schema (docs/ACCOUNTS-PLAN.md §3.4, D11, D12, D22–D24).
+-- Applied by server/db/migrate.js as the database administrator, in one transaction, never edited after release
+-- (expand-then-contract in later files). Roles are cluster-wide and created only when absent; no role gets a password here
+-- (set by the operator out of band).
+--
+-- Roles (§3.4; one refinement noted in the plan status line):
+--   wts_owner    owns the schema and tables; never used at run time. FORCE ROW LEVEL SECURITY applies to it.
+--   wts_definer  NOLOGIN, BYPASSRLS: owns the SECURITY DEFINER functions, so the pre-auth path has one defined way in
+--                that does not depend on the table owner bypassing its own forced policies.
+--   wts_api      request handlers: DML on user tables under RLS (app.user_id), EXECUTE on the definer functions, nothing else.
+--   wts_jobs     the daily scheduled function only (own credential): BYPASSRLS, limited by grants.
+--   wts_support  server/ops scripts: EXECUTE on the audited support functions only.
+--
+-- WP0 foundation: every definer function has its final signature, SECURITY DEFINER, SET search_path = wts, pg_temp and
+-- EXECUTE for its one role only; the bodies raise 'not_implemented' (SQLSTATE 0A000) until WP-S1 / WP-O fill them in.
+
+DO $roles$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wts_owner')   THEN CREATE ROLE wts_owner   NOLOGIN NOBYPASSRLS; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wts_definer') THEN CREATE ROLE wts_definer NOLOGIN BYPASSRLS; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wts_api')     THEN CREATE ROLE wts_api     LOGIN NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wts_jobs')    THEN CREATE ROLE wts_jobs    LOGIN BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wts_support') THEN CREATE ROLE wts_support LOGIN NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT; END IF;
+END
+$roles$;
+
+CREATE SCHEMA wts AUTHORIZATION wts_owner;
+REVOKE ALL ON SCHEMA wts FROM PUBLIC;
+GRANT USAGE ON SCHEMA wts TO wts_definer, wts_api, wts_jobs, wts_support;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+SET LOCAL ROLE wts_owner;
+SET LOCAL search_path = wts, pg_temp;
+
+-- app.user_id of the current transaction, or NULL. set_config(…, true) is transaction-local; after the first use on a
+-- connection the setting reads '' between transactions, hence NULLIF.
+CREATE FUNCTION wts.current_user_id() RETURNS uuid LANGUAGE sql STABLE
+  AS $$ SELECT NULLIF(current_setting('app.user_id', true), '')::uuid $$;
+
+-- ── user tables (RLS on user_id, enabled and forced) ──────────────────────────────────────────────────────────────
+CREATE TABLE users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid GENERATED ALWAYS AS (id) STORED,
+  email_bidx bytea UNIQUE NOT NULL,
+  email_enc bytea NOT NULL,
+  recovery_bidx bytea UNIQUE, recovery_enc bytea,
+  status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','locked','deleting')),
+  created_at timestamptz NOT NULL DEFAULT now(), last_sign_in_at timestamptz,
+  signup_method text NOT NULL DEFAULT 'code' CHECK (signup_method IN ('code','google','linkedin')),
+  terms_version text NOT NULL, privacy_version text NOT NULL, consented_at timestamptz NOT NULL,
+  quota_bytes bigint NOT NULL DEFAULT 250000000, used_bytes bigint NOT NULL DEFAULT 0,
+  opt_historian boolean NOT NULL DEFAULT false, opt_livecfg boolean NOT NULL DEFAULT false,
+  data_key_wrapped bytea NOT NULL, data_key_kid int NOT NULL, data_key_ver int NOT NULL DEFAULT 1,
+  outbox_key_enc bytea,
+  lib_rev bigint NOT NULL DEFAULT 0, lib_hash bytea,
+  delete_requested_at timestamptz, delete_at timestamptz, inactivity_warned_at timestamptz,
+  email_changed_at timestamptz, email_prev_bidx bytea, email_prev_enc bytea, email_revert_until timestamptz
+);
+CREATE TABLE passkeys (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  credential_id bytea UNIQUE NOT NULL, public_key bytea NOT NULL, sign_count bigint NOT NULL,
+  transports text[], backup_eligible boolean, backup_state boolean, aaguid uuid,
+  name_enc bytea, created_at timestamptz NOT NULL, last_used_at timestamptz);
+CREATE TABLE identities (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  provider text NOT NULL CHECK (provider IN ('google','linkedin')),
+  issuer text NOT NULL,
+  subject_bidx bytea NOT NULL,
+  subject_enc bytea NOT NULL,
+  email_link_enc bytea,
+  email_verified_at_link boolean NOT NULL,
+  linked_at timestamptz NOT NULL, linked_via text NOT NULL CHECK (linked_via IN ('signup','code_confirm','account_page')),
+  last_used_at timestamptz,
+  email_ack_bidx bytea,
+  UNIQUE (provider, subject_bidx), UNIQUE (user_id, provider));
+CREATE TABLE devices (user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE, device_id uuid NOT NULL,
+  label_enc bytea, ua_family text, first_seen timestamptz, last_seen timestamptz, last_sync_at timestamptz,
+  last_base_rev jsonb,
+  revoked_at timestamptz, PRIMARY KEY (user_id, device_id));
+CREATE TABLE sessions (sid_hash bytea PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  device_id uuid, public_device boolean NOT NULL, created_at timestamptz NOT NULL,
+  auth_at timestamptz NOT NULL,
+  stepup_at timestamptz,
+  last_seen_at timestamptz NOT NULL, idle_expires_at timestamptz NOT NULL,
+  abs_expires_at timestamptz NOT NULL,
+  auth_method text NOT NULL DEFAULT 'code' CHECK (auth_method IN ('code','google','linkedin','passkey')),
+  identity_id uuid REFERENCES identities ON DELETE CASCADE,
+  replaced_by bytea, replaced_at timestamptz, ip_prefix inet, ua_family text);
+CREATE INDEX sessions_user ON sessions (user_id);
+CREATE INDEX sessions_identity ON sessions (identity_id) WHERE identity_id IS NOT NULL;
+CREATE TABLE projects (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  meta_enc bytea NOT NULL, well_count int NOT NULL DEFAULT 0,
+  head_rev bigint NOT NULL DEFAULT 0, head_core bytea, head_vhash bytea, head_bytes bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL, modified_at timestamptz NOT NULL, deleted_at timestamptz,
+  is_conflict_of uuid REFERENCES projects);
+CREATE INDEX projects_user ON projects (user_id);
+CREATE TABLE revisions (project_id uuid REFERENCES projects ON DELETE CASCADE, user_id uuid NOT NULL,
+  rev bigint NOT NULL, core_hash bytea NOT NULL, vhash bytea NOT NULL, parts jsonb NOT NULL,
+  bytes bigint NOT NULL, device_id uuid, session_hash bytea, reason text NOT NULL
+    CHECK (reason IN ('auto','save','migrate','conflict','restore','overwrite','import')), app_ver text,
+  saved_at timestamptz NOT NULL, pinned boolean NOT NULL DEFAULT false, squashed_into bigint,
+  PRIMARY KEY (project_id, rev));
+CREATE TABLE blobs (user_id uuid NOT NULL, hash bytea NOT NULL, zsha bytea NOT NULL, bytes bigint NOT NULL,
+  chunks int NOT NULL, complete boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL,
+  refcount int NOT NULL DEFAULT 0, dkv int NOT NULL DEFAULT 1, PRIMARY KEY (user_id, hash));
+CREATE TABLE push_receipts (user_id uuid NOT NULL, push_id uuid NOT NULL, result jsonb NOT NULL,
+  at timestamptz NOT NULL, PRIMARY KEY (user_id, push_id));
+CREATE TABLE historian_backups (id uuid PRIMARY KEY, user_id uuid NOT NULL, blob_hash bytea NOT NULL,
+  bytes bigint, t_from timestamptz, t_to timestamptz, saved_at timestamptz);
+CREATE TABLE audit (id bigserial PRIMARY KEY, user_id uuid, actor text NOT NULL,
+  action text NOT NULL, target text, device_id uuid, ip_prefix inet, ua_family text, at timestamptz NOT NULL,
+  detail jsonb,
+  prev_hash bytea, hash bytea NOT NULL);
+CREATE INDEX audit_user_at ON audit (user_id, at);
+CREATE INDEX audit_subject ON audit ((detail->>'subject_bidx')) WHERE detail ? 'subject_bidx';
+
+-- ── pre-auth and system tables (no user_id policy: reached only through definer functions or by wts_jobs) ─────────
+CREATE TABLE oauth_attempts (id uuid PRIMARY KEY, cookie_hash bytea UNIQUE NOT NULL,
+  provider text NOT NULL CHECK (provider IN ('google','linkedin')), purpose text NOT NULL CHECK (purpose IN ('signin','link')),
+  state_hash bytea NOT NULL, nonce bytea NOT NULL, pkce_verifier_enc bytea NOT NULL,
+  bound_sid bytea, bound_user uuid,
+  public_device boolean NOT NULL, fresh_login boolean NOT NULL, device_label_enc bytea,
+  created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL,
+  used_at timestamptz, result_enc bytea, result_expires_at timestamptz,
+  finished_at timestamptz, ip_prefix inet);
+CREATE INDEX oauth_attempts_prefix ON oauth_attempts (ip_prefix, expires_at);
+CREATE TABLE oidc_keys (provider text, kid text, jwk jsonb NOT NULL, fetched_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL, PRIMARY KEY (provider, kid));
+CREATE TABLE email_codes (id uuid PRIMARY KEY, email_bidx bytea NOT NULL, code_hmac bytea NOT NULL, pepper_kid int NOT NULL,
+  purpose text NOT NULL CHECK (purpose IN ('signin','stepup','email_change','recovery_add','oauth_verify','link_confirm')),
+  bound_user uuid, bound_sid bytea, bound_attempt uuid,
+  expires_at timestamptz NOT NULL,
+  attempts int NOT NULL DEFAULT 0, used_at timestamptz, invalidated_at timestamptz, ip_prefix inet);
+CREATE INDEX email_codes_live ON email_codes (email_bidx, purpose) WHERE used_at IS NULL AND invalidated_at IS NULL;
+CREATE TABLE webauthn_challenges (id uuid PRIMARY KEY, challenge bytea NOT NULL, purpose text NOT NULL,
+  user_id uuid, expires_at timestamptz NOT NULL, used_at timestamptz);
+CREATE TABLE mail_outbox (id uuid PRIMARY KEY, to_enc bytea NOT NULL, template text NOT NULL, params_enc bytea,
+  created_at timestamptz NOT NULL, sent_at timestamptz, tries int NOT NULL DEFAULT 0);
+CREATE TABLE signup_allowlist (email_bidx bytea PRIMARY KEY, added_at timestamptz NOT NULL, note text);
+CREATE TABLE deletion_ledger (user_id uuid PRIMARY KEY, requested_at timestamptz NOT NULL, purge_at timestamptz NOT NULL,
+  purged_at timestamptz);
+CREATE TABLE rate_counters (bucket text, window_start timestamptz, n bigint NOT NULL, PRIMARY KEY (bucket, window_start));
+
+-- ── row-level security ───────────────────────────────────────────────────────────────────────────────────────────
+DO $rls$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['users','passkeys','identities','devices','sessions','projects','revisions','blobs',
+                           'push_receipts','historian_backups','audit'] LOOP
+    EXECUTE format('ALTER TABLE wts.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE wts.%I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('CREATE POLICY own_rows ON wts.%I USING (user_id = wts.current_user_id()) WITH CHECK (user_id = wts.current_user_id())', t);
+  END LOOP;
+  -- system tables: RLS on with no policy at all, so nobody without BYPASSRLS sees a row even if a grant slips in
+  FOREACH t IN ARRAY ARRAY['oauth_attempts','oidc_keys','email_codes','webauthn_challenges','mail_outbox','signup_allowlist',
+                           'deletion_ledger','rate_counters'] LOOP
+    EXECUTE format('ALTER TABLE wts.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE wts.%I FORCE ROW LEVEL SECURITY', t);
+  END LOOP;
+END
+$rls$;
+
+-- ── SECURITY DEFINER functions (signatures final; bodies are WP0 stubs) ─────────────────────────────────────────
+CREATE FUNCTION wts._not_implemented(fn text) RETURNS void LANGUAGE plpgsql
+  AS $$ BEGIN RAISE EXCEPTION 'not_implemented: %', fn USING ERRCODE = '0A000'; END $$;
+
+CREATE FUNCTION wts.resolve_session(p_sid_hash bytea)
+  RETURNS TABLE (user_id uuid, device_id uuid, public_device boolean, auth_at timestamptz, stepup_at timestamptz,
+                 auth_method text, identity_id uuid, idle_expires_at timestamptz, abs_expires_at timestamptz, status text)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('resolve_session'); END $$;
+CREATE FUNCTION wts.user_by_email(p_email_bidx bytea)
+  RETURNS TABLE (user_id uuid, status text, role text)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('user_by_email'); END $$;
+CREATE FUNCTION wts.user_by_credential(p_credential_id bytea)
+  RETURNS TABLE (user_id uuid, passkey_id uuid, public_key bytea, sign_count bigint)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('user_by_credential'); END $$;
+CREATE FUNCTION wts.create_user(p_email_bidx bytea, p_email_enc bytea, p_signup_method text, p_terms_version text,
+                                p_privacy_version text, p_consented_at timestamptz, p_data_key_wrapped bytea, p_kid int)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('create_user'); RETURN NULL; END $$;
+CREATE FUNCTION wts.user_by_identity(p_provider text, p_subject_bidx bytea)
+  RETURNS TABLE (user_id uuid, identity_id uuid, status text)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('user_by_identity'); END $$;
+CREATE FUNCTION wts.oauth_attempt_create(p_cookie_hash bytea, p_provider text, p_purpose text, p_state_hash bytea,
+                                         p_nonce bytea, p_pkce_verifier_enc bytea, p_bound_sid bytea, p_bound_user uuid,
+                                         p_public_device boolean, p_fresh_login boolean, p_device_label_enc bytea,
+                                         p_expires_at timestamptz, p_ip_prefix inet)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oauth_attempt_create'); RETURN NULL; END $$;
+CREATE FUNCTION wts.oauth_attempt_take(p_cookie_hash bytea, p_state_hash bytea, p_provider text)
+  RETURNS TABLE (id uuid, purpose text, nonce bytea, pkce_verifier_enc bytea, public_device boolean, fresh_login boolean,
+                 created_at timestamptz)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oauth_attempt_take'); END $$;
+CREATE FUNCTION wts.oauth_attempt_result(p_id uuid, p_result_enc bytea, p_result_expires_at timestamptz)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oauth_attempt_result'); END $$;
+CREATE FUNCTION wts.oauth_attempt_extend(p_cookie_hash bytea, p_new_cookie_hash bytea, p_until timestamptz)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oauth_attempt_extend'); RETURN NULL; END $$;
+CREATE FUNCTION wts.oauth_attempt_finish(p_cookie_hash bytea, p_sid_hash bytea)
+  RETURNS TABLE (id uuid, provider text, purpose text, result_enc bytea, result_expires_at timestamptz, bound_sid bytea,
+                 bound_user uuid, public_device boolean, device_label_enc bytea, created_at timestamptz)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oauth_attempt_finish'); END $$;
+CREATE FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea,
+                                  p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('identity_link'); RETURN NULL; END $$;
+CREATE FUNCTION wts.identity_touch(p_identity_id uuid)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('identity_touch'); END $$;
+CREATE FUNCTION wts.identity_unlink(p_identity_id uuid)
+  RETURNS integer
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('identity_unlink'); RETURN NULL; END $$;
+CREATE FUNCTION wts.oidc_key_get(p_provider text, p_kid text)
+  RETURNS jsonb
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oidc_key_get'); RETURN NULL; END $$;
+CREATE FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb, p_expires_at timestamptz)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('oidc_key_put'); END $$;
+CREATE FUNCTION wts.code_issue(p_email_bidx bytea, p_code_hmac bytea, p_pepper_kid int, p_purpose text, p_bound_user uuid,
+                               p_bound_sid bytea, p_bound_attempt uuid, p_expires_at timestamptz, p_ip_prefix inet)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('code_issue'); RETURN NULL; END $$;
+CREATE FUNCTION wts.code_check(p_email_bidx bytea, p_purpose text, p_code_hmacs bytea[], p_bound_user uuid, p_bound_sid bytea,
+                               p_bound_attempt uuid)
+  RETURNS TABLE (ok boolean, code_id uuid, attempts_left int)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('code_check'); END $$;
+CREATE FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamptz)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('challenge_issue'); RETURN NULL; END $$;
+CREATE FUNCTION wts.challenge_take(p_id uuid, p_purpose text)
+  RETURNS TABLE (challenge bytea, user_id uuid)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('challenge_take'); END $$;
+CREATE FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint)
+  RETURNS TABLE (allowed boolean, n bigint, retry_after int)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('rate_hit'); END $$;
+CREATE FUNCTION wts.allowlist_has(p_email_bidx bytea)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('allowlist_has'); RETURN NULL; END $$;
+-- two additions for tables with no wts_api grant: the queued mail (§4.1) and the deletion request in the ledger (§8.5)
+CREATE FUNCTION wts.mail_queue(p_to_enc bytea, p_template text, p_params_enc bytea)
+  RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('mail_queue'); RETURN NULL; END $$;
+CREATE FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamptz, p_purge_at timestamptz)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('deletion_request'); END $$;
+-- audited support functions (wts_support only; each writes an audit row with actor support:<id>)
+CREATE FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea)
+  RETURNS TABLE (user_id uuid, status text, created_at timestamptz)
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('support_lookup'); END $$;
+CREATE FUNCTION wts.support_recover(p_actor text, p_user_id uuid, p_new_email_bidx bytea, p_new_email_enc bytea)
+  RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('support_recover'); END $$;
+CREATE FUNCTION wts.support_security_reset(p_actor text, p_user_id uuid, p_since timestamptz)
+  RETURNS jsonb
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('support_security_reset'); RETURN NULL; END $$;
+
+RESET ROLE;
+
+-- definer functions run as wts_definer (BYPASSRLS), never as the table owner
+DO $own$
+DECLARE f record;
+BEGIN
+  FOR f IN SELECT p.oid::regprocedure AS sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'wts' AND p.prosecdef LOOP
+    EXECUTE format('ALTER FUNCTION %s OWNER TO wts_definer', f.sig);
+  END LOOP;
+END
+$own$;
+
+-- ── privileges ───────────────────────────────────────────────────────────────────────────────────────────────────
+REVOKE ALL ON ALL TABLES IN SCHEMA wts FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA wts FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA wts FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE wts_owner IN SCHEMA wts REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE wts_definer IN SCHEMA wts REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+-- helpers every role may call (invoker rights; no data)
+GRANT EXECUTE ON FUNCTION wts.current_user_id() TO wts_definer, wts_api, wts_jobs, wts_support;
+GRANT EXECUTE ON FUNCTION wts._not_implemented(text) TO wts_definer;
+
+-- the definer role: what the function bodies need (WP-S1 narrows this per function as the bodies land)
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA wts TO wts_definer;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA wts TO wts_definer;
+
+-- request handlers: user tables under RLS
+GRANT SELECT, UPDATE (last_sign_in_at, terms_version, privacy_version, consented_at, used_bytes, opt_historian, opt_livecfg,
+  outbox_key_enc, lib_rev, lib_hash, delete_requested_at, delete_at, email_bidx, email_enc, recovery_bidx, recovery_enc,
+  email_changed_at, email_prev_bidx, email_prev_enc, email_revert_until) ON wts.users TO wts_api;
+GRANT SELECT, INSERT, UPDATE, DELETE ON wts.passkeys, wts.devices, wts.sessions, wts.projects, wts.revisions, wts.blobs,
+  wts.push_receipts, wts.historian_backups TO wts_api;
+GRANT SELECT, UPDATE (email_ack_bidx) ON wts.identities TO wts_api;
+GRANT SELECT, INSERT ON wts.audit TO wts_api;
+GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_api;
+GRANT EXECUTE ON FUNCTION
+  wts.resolve_session(bytea), wts.user_by_email(bytea), wts.user_by_credential(bytea),
+  wts.create_user(bytea, bytea, text, text, text, timestamptz, bytea, int), wts.user_by_identity(text, bytea),
+  wts.oauth_attempt_create(bytea, text, text, bytea, bytea, bytea, bytea, uuid, boolean, boolean, bytea, timestamptz, inet),
+  wts.oauth_attempt_take(bytea, bytea, text), wts.oauth_attempt_result(uuid, bytea, timestamptz),
+  wts.oauth_attempt_extend(bytea, bytea, timestamptz), wts.oauth_attempt_finish(bytea, bytea),
+  wts.identity_link(uuid, text, text, bytea, bytea, bytea, boolean, text), wts.identity_touch(uuid), wts.identity_unlink(uuid),
+  wts.oidc_key_get(text, text), wts.oidc_key_put(text, text, jsonb, timestamptz),
+  wts.code_issue(bytea, bytea, int, text, uuid, bytea, uuid, timestamptz, inet),
+  wts.code_check(bytea, text, bytea[], uuid, bytea, uuid),
+  wts.challenge_issue(bytea, text, uuid, timestamptz), wts.challenge_take(uuid, text),
+  wts.rate_hit(text, interval, bigint), wts.allowlist_has(bytea),
+  wts.mail_queue(bytea, text, bytea), wts.deletion_request(uuid, timestamptz, timestamptz)
+  TO wts_api;
+
+-- support scripts: the audited functions only
+GRANT EXECUTE ON FUNCTION wts.support_lookup(text, bytea), wts.support_recover(text, uuid, bytea, bytea),
+  wts.support_security_reset(text, uuid, timestamptz) TO wts_support;
+
+-- the daily job (§3.5): purge, prune, quota recompute, deletion purge, mail outbox send, ledger write
+GRANT SELECT, DELETE ON wts.email_codes, wts.webauthn_challenges, wts.oauth_attempts, wts.oidc_keys, wts.sessions,
+  wts.rate_counters, wts.push_receipts, wts.mail_outbox, wts.projects, wts.revisions, wts.blobs, wts.users, wts.audit TO wts_jobs;
+GRANT UPDATE (used_bytes, inactivity_warned_at, status) ON wts.users TO wts_jobs;
+GRANT UPDATE (sent_at, tries) ON wts.mail_outbox TO wts_jobs;
+GRANT UPDATE (squashed_into, pinned) ON wts.revisions TO wts_jobs;
+GRANT SELECT, INSERT, UPDATE ON wts.deletion_ledger TO wts_jobs;
+GRANT SELECT ON wts.devices TO wts_jobs;
