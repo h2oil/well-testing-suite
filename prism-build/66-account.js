@@ -338,7 +338,7 @@
       '.acct-list{list-style:none;padding:0;margin:8px 0;max-height:46vh;overflow:auto}.acct-list li{padding:6px 0;border-bottom:1px solid var(--border,#333)}',
       '.acct-sync-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10040;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 10px 8px 14px;display:block;font-size:13px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.4);box-sizing:border-box}',
       '.acct-sync-bar .acct-bar-in{display:flex;gap:10px;align-items:center;flex-wrap:wrap}',
-      // class selectors only (no id, no inline position): the iOS safe-area rules (html.ios-app .acct-*) must be able to win
+      // class selectors only (no id, no inline position): the iOS safe-area rules of ios-styles.css (scoped to the app's root class) must be able to win
       '.acct-toast{position:fixed;right:16px;top:16px;z-index:10055;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 12px;font-size:13px;max-width:calc(100vw - 32px);box-sizing:border-box}',
       // the account page drawn in its own overlay (no host route): under the choice dialogs, wider than a dialog
       '.acct-ov.acct-page-ov{z-index:10058}.acct-dlg.acct-page-dlg{max-width:980px}',
