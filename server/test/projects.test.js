@@ -29,7 +29,7 @@ async function upload(br, p, chunkSize) {
     const c = p.z.subarray(n * size, (n + 1) * size);
     const r = await br.call('PUT', '/blobs/' + p.hash + '/' + n + '?of=' + of, null, { raw: c, ct: 'application/octet-stream',
       headers: { 'x-wts-zsha': p.zsha, 'x-wts-chunk-sha': sha(c) } });
-    if (r.status !== 204) { if (process.env.DBG) console.log('upload', r.status, JSON.stringify(r.json)); return r; }
+    if (r.status !== 204) return r;
   }
   return { status: 204 };
 }

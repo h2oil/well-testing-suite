@@ -3,7 +3,7 @@
 // wts.rate_add), no timers. Per user AND per session, never per client-supplied id; per IP prefix only SOFT (alert, never a
 // refusal), so a rig or an office behind one address is never locked out. Buckets carry keyed indexes (never an address).
 //
-//   LIMITS            {name: {window (s), limit, soft?}}
+//   LIMITS            {name: {window (s), limit, soft?, bucket?}}   (bucket: count in another limit's bucket)
 //   hit(sql, name, key, amount=1) → {allowed, n, retryAfter, limit}   (soft limits: allowed is always true, over = n > limit)
 //   peek(sql, name, key)          → the same without counting
 //   enforce(sql, name, key, amount) → throws 429 rate {retryAfter} when a hard limit is exceeded
@@ -25,10 +25,10 @@ const LIMITS = {
   commitBurst: { window: 600, limit: 10, soft: true },              // > 10 in 10 min pins the previous revision
   chunkPutUserDay: { window: D, limit: 2000 * MB },
   blobReadUserHour: { window: H, limit: 100 * MB },
-  blobReadUserHourUnlocked: { window: H, limit: 300 * MB },        // the session that ran an export step-up (2 h)
+  blobReadUserHourUnlocked: { window: H, limit: 300 * MB, bucket: 'blobReadUserHour' },   // the session that ran an export step-up (2 h)
   blobReadUserDay: { window: D, limit: 300 * MB },
   blobReadSessionHour: { window: H, limit: 100 * MB },
-  blobReadSessionHourUnlocked: { window: H, limit: 300 * MB },
+  blobReadSessionHourUnlocked: { window: H, limit: 300 * MB, bucket: 'blobReadSessionHour' },
   blobReadSessionDay: { window: D, limit: 1e15, soft: true },       // only for the read-anomaly notice (§8.3)
   projectReadSessionDay: { window: D, limit: 1, soft: true },       // first read of a project today (distinct count)
   projectsReadSessionDay: { window: D, limit: 10, soft: true },     // > 10 distinct projects → notice
@@ -42,7 +42,7 @@ const LIMITS = {
 async function call(sql, name, key, amount) {
   const L = LIMITS[name];
   if (!L) throw new Error('rate: unknown limit ' + name);
-  const bucket = name + ':' + key;
+  const bucket = (L.bucket || name) + ':' + key;            // an unlocked variant counts in the same bucket, with a higher limit
   const r = (await sql`select * from wts.rate_add(${bucket}, ${L.window + ' seconds'}::interval, ${L.limit}, ${amount})`)[0];
   const n = Number(r.n);
   return { allowed: L.soft ? true : r.allowed, over: n > L.limit, n, retryAfter: r.retry_after, limit: L.limit };

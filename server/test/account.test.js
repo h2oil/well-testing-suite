@@ -54,6 +54,14 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.ok(T.lastMail(email, 'notice_export'));
     const s = await T.db.sql`select extract(epoch from read_unlock_until - now())::int as d from wts.sessions where user_id = ${await T.userId(email)} and replaced_by is null`;
     assert.ok(s.some((x) => x.d > 7100 && x.d <= 7200), 'this session is unlocked for 2 hours');
+    // the unlock: this session may read past the normal 100 MB/h (per user and per session) — up to 300 MB/h
+    const uid = await T.userId(email);
+    const head = (await br.call('GET', '/projects/' + (await br.call('GET', '/projects')).json[0].id + '/head')).json;
+    const win = 'to_timestamp(floor(extract(epoch from now()) / 3600) * 3600)';
+    await T.db.sql.unsafe("insert into wts.rate_counters (bucket, window_start, n) values ('blobReadUserHour:" + uid + "', " + win + ", 100000000) on conflict do nothing");
+    assert.strictEqual((await br.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 200, 'unlocked: 300 MB/h');
+    const other = T.browser(); await T.signIn(other, email, { consent: false });
+    assert.strictEqual((await other.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 429, 'another session of the account stays at 100 MB/h');
     for (let i = 0; i < 4; i++) assert.strictEqual((await br.call('POST', '/account/export', {})).status, 200);
     const sixth = await br.call('POST', '/account/export', {});
     assert.strictEqual(sixth.status, 429, '5 exports a day');

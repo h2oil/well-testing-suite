@@ -54,12 +54,14 @@ async function issueCode(unit, ctx, o) {
   if (o.template) await unit.mail(o.email, o.template, Object.assign(mailParams(unit), { code }, o.params || {}));
   return code;
 }
-async function noteFailure(unit, ctx, bidx) {
+async function noteFailure(unit, ctx, bidx, email) {
   const k = addrKey(bidx);
   const f = await R.hit(unit.sql, 'codeVerifyFailDay', k);
   if (f.n === f.limit) {                                    // the 10th failure in 24 h: codes for the address pause for 1 h
     await R.hit(unit.sql, 'codePauseHour', k);
     ctx.log.warn('alert: an address reached 10 failed codes in 24 h — its codes are paused for 1 h');
+    // the notice goes only to an address that belongs to an account (never a mail to an address nobody registered)
+    if (email && (await unit.sql`select 1 from wts.user_by_email(${bidx})`).length) await unit.mail(email, 'notice_codes_paused', { at: S.whenText(Date.now()) });
   }
   return f;
 }
@@ -135,7 +137,11 @@ async function codeVerify(ctx) {
       if (b.email !== undefined) { const e = V.normEmail(b.email); cands = cands.filter((x) => x === e); if (!cands.length) return null; }
       const hm = ctx.keys.codeCandidates('stepup', cands, code, { user: s.userId, sid: s.hash });
       const r = (await unit.sql`select * from wts.code_check(${null}, 'stepup', ${arr(unit.sql, hm)}, ${s.userId}, ${s.hash}, ${null})`)[0];
-      if (!r.ok) { await noteFailure(unit, ctx, ctx.keys.emailBidx(cands[0])); return b.email === undefined ? unit.failAfterCommit('invalid_or_expired') : null; }
+      if (!r.ok) {
+        if (b.email !== undefined) return null;               // not a step-up code: try it as a sign-in code below
+        await noteFailure(unit, ctx, ctx.keys.emailBidx(cands[0]), cands[0]);
+        return unit.failAfterCommit('invalid_or_expired');
+      }
       const n = await SE.rotate(unit, ctx, s, { stepup: true });
       const d = (await unit.sql`select device_id, label_enc from wts.devices where user_id = ${s.userId} and device_id = ${s.deviceId}`)[0];
       const device = d ? { id: d.device_id, label: a.u.open('device.label', d.label_enc) || '' } : await S.deviceFor(unit, ctx, s.userId, { publicDevice: s.publicDevice });
@@ -162,7 +168,7 @@ async function codeVerify(ctx) {
         return 'hit';
       });
     } catch (e) { if (e === CONSENT) outcome = 'consent'; else throw e; }
-    if (outcome === 'miss') { await noteFailure(unit, ctx, bidx); return unit.failAfterCommit('invalid_or_expired'); }
+    if (outcome === 'miss') { await noteFailure(unit, ctx, bidx, email); return unit.failAfterCommit('invalid_or_expired'); }
     if (outcome === 'consent') return unit.failAfterCommit('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
     let userId; let first = false;
     if (acc) {

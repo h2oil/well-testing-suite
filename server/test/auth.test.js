@@ -311,12 +311,17 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
     assert.strictEqual((await br.call('GET', '/projects')).json.error, 'locked');
     await T.db.sql`update wts.users set status = 'active' where id = ${id}`;
     const p = 'pause@company.example';
+    await T.signIn(T.browser(), p);
     const b2 = T.browser();
     for (let i = 0; i < 10; i++) await b2.call('POST', '/auth/code/verify', { email: p, code: '00000000', publicDevice: false });
     const n = T.mailsTo(p).length;
     await b2.call('POST', '/auth/code/start', { email: p, purpose: 'signin' });
     assert.strictEqual(T.mailsTo(p).length, n, 'paused after 10 failures');
     assert.ok(T.logs.some((l) => /10 failed codes/.test(l)));
+    assert.ok(T.lastMail(p, 'notice_codes_paused'), 'the account address is told');
+    const nobody = 'nobody.paused@company.example';
+    for (let i = 0; i < 10; i++) await b2.call('POST', '/auth/code/verify', { email: nobody, code: '00000000', publicDevice: false });
+    assert.strictEqual(T.mailsTo(nobody).length, 0, 'no mail to an address without an account');
   });
 
   test('enumeration: the reply of code start does not depend on the mailer (queued) and is padded to the floor', async () => {

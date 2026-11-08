@@ -10,7 +10,6 @@
 const S = require('../core/service');
 const SE = require('../core/session');
 const R = require('../core/rate');
-const V = require('../core/validate');
 const { _internal: A } = require('./auth');
 const { _internal: P } = require('./projects');
 
@@ -78,5 +77,4 @@ async function accountDeleteCancel(ctx) {
   return { status: 200, body: { ok: true } };
 }
 
-void V;
 module.exports = { handlers: { accountExport, accountDelete, accountDeleteCancel } };
