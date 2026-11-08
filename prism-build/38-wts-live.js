@@ -3152,9 +3152,10 @@ function createController(vizEl, mopts) {
     // Calc-shaped nodes for the host diagram; DS-101 (nodes[8]) also carries ΔP, the LAH / LAHH set points and the state text
     function nodes2d(st) {
         var n = liveNodes(st), d = st && st.desander;
-        // v3.3.4: CK-101 label = in-service leg + bean ('ADJ 32/64"' / 'POS 24/64"'; the host prints bean + '/64"')
+        // v3.3.4: CK-101 label = bean, prefixed 'POS ' while the positive (fixed) leg is in service ('POS 24/64"'); the default
+        // adjustable leg keeps the plain v3.3 label ('32/64"', the host prints bean + '/64"'), so the 2D frame is unchanged
         var K = ckLegs(st);
-        if (n[2] && K.has) n[2].bean = CK_LEG_SHORT[K.leg] + ' ' + (isNum(n[2].bean) ? n[2].bean : '—');
+        if (n[2] && K.has && K.leg === 'fixed') n[2].bean = CK_LEG_SHORT.fixed + ' ' + (isNum(n[2].bean) ? n[2].bean : '—');
         if (n[8] && d && rigIn(st, 'desander')) {
             var dm = d.dump || {}, sd = d.sand || {}, lah = num(sd.lah, 0.8);
             n[8].dP = num(d.dP_psi, 0); n[8].lah = lah; n[8].lahh = num(sd.lahh, 0.95);

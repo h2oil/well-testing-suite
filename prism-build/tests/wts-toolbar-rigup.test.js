@@ -292,7 +292,7 @@ module.exports = [
     }
   },
   {
-    name: 'WTSTBR CK-101 2D label: the in-service leg and its bean (ADJ / POS)',
+    name: 'WTSTBR CK-101 2D label: the bean, POS-prefixed while the positive leg is in service (adjustable = the plain v3.3 label)',
     wp: WP, integration: true,
     run(app, assert) {
       const live = openWts(app);
@@ -302,7 +302,7 @@ module.exports = [
       const cv = app.el('wts_viz').querySelector('canvas');
       const nc = live.getState().nodes.choke;
       const legNow = typeof nc.leg === 'string' ? nc.leg : 'adj';
-      const exp = (legNow === 'fixed' ? 'POS ' : 'ADJ ') + nc.bean + '/64"';
+      const exp = (legNow === 'fixed' ? 'POS ' : '') + nc.bean + '/64"';
       const texts = app.canvasTexts(cv);
       assert.ok(texts.indexOf(exp) >= 0, '2D label ' + exp + ' in ' + texts.filter((t) => /64"/.test(t)).join(' | '));
       noErr(app, assert);
