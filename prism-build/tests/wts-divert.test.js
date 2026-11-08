@@ -286,6 +286,10 @@ module.exports = [
     integration: true,
     run(app, assert) {
       const live = openWts(app);
+      // v3.3.4: the live sim starts on the new default T-201 line-up (A fills, B transfers, auto-divert on); this test drives the
+      // schematic from the v3.3.1 line-up it was written for, so it sets that line-up first (both inlets, suction A + B, auto off)
+      live.setValve('surge', 0, true); live.setValve('surge', 1, true); live.setSuction('both'); live.setAutoDivert('surge', false);
+      assert.deepStrictEqual([live.getState().surge.suction, live.getState().surge.auto.on], ['both', false], 'v3.3.1 line-up set');
       const cv = app.el('wts_viz').querySelector('canvas');
       assert.ok(cv, 'schematic canvas');
       app.flush(1000);

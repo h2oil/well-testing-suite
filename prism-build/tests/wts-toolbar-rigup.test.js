@@ -292,19 +292,35 @@ module.exports = [
     }
   },
   {
-    name: 'WTSTBR CK-101 2D label: the bean, POS-prefixed while the positive leg is in service (adjustable = the plain v3.3 label)',
+    // review: the host painter (wtsDrawDiag) prints the one prefix from nodes[2].leg; 38 passes the leg and a numeric bean, so the
+    // positive leg reads 'positive 20/64"' (never 'positive POS 20/64"') and the adjustable leg keeps the plain v3.3 label
+    name: 'WTSTBR CK-101 2D label: one prefix — "positive 20/64\"" while the positive leg is in service (change event), back to the plain adjustable label',
     wp: WP, integration: true,
     run(app, assert) {
       const live = openWts(app);
-      hostInput(app, 'wts_ckLeg', 'adj');
-      app.el('wtsl_tb').querySelector('[data-act="mode2d"]') && app.click(app.el('wtsl_tb').querySelector('[data-act="mode2d"]'));
-      live.advance(5); app.flush(600);
+      const leg = app.el('wts_ckLeg'), bf = app.el('wts_beanFix'), ba = app.el('wts_bean');
+      assert.ok(leg && bf && ba, 'host CK-101 inputs on the page');
+      const m2 = app.el('wtsl_tb').querySelector('[data-act="mode2d"]');
+      if (m2) app.click(m2);
       const cv = app.el('wts_viz').querySelector('canvas');
-      const nc = live.getState().nodes.choke;
-      const legNow = typeof nc.leg === 'string' ? nc.leg : 'adj';
-      const exp = (legNow === 'fixed' ? 'POS ' : '') + nc.bean + '/64"';
-      const texts = app.canvasTexts(cv);
-      assert.ok(texts.indexOf(exp) >= 0, '2D label ' + exp + ' in ' + texts.filter((t) => /64"/.test(t)).join(' | '));
+      const labels = () => app.canvasTexts(cv).filter((t) => /64"/.test(t));
+      // the recording canvas log is cumulative: clear it after each change so only the frames drawn since then are read
+      const drive = (id, v) => { const el = app.el(id); el.value = String(v); app.fire(el, 'input'); app.fire(el, 'change'); app.flush(2000); if (cv._log) cv._log.length = 0; live.advance(5); app.flush(600); };
+      // positive leg in service, bean 20
+      drive('wts_beanFix', 20);
+      drive('wts_ckLeg', 'fixed');
+      assert.strictEqual(live.getState().nodes.choke.leg, 'fixed', 'snapshot: positive leg in service');
+      assert.strictEqual(live.getState().nodes.choke.bean, 20, 'snapshot: bean = the positive bean');
+      let L = labels();
+      assert.ok(L.length > 0 && L.indexOf('positive 20/64"') >= 0, '2D label "positive 20/64\"" in ' + L.join(' | '));
+      assert.ok(!L.some((t) => /POS |positive positive/.test(t)), 'one prefix only: ' + L.join(' | '));
+      // back to the adjustable leg: the plain v3.3 label
+      drive('wts_ckLeg', 'adj');
+      assert.strictEqual(live.getState().nodes.choke.leg, 'adj', 'snapshot: adjustable leg in service');
+      const bAdj = +ba.value;
+      L = labels();
+      assert.ok(L.length > 0 && L.indexOf(bAdj + '/64"') >= 0, '2D label "' + bAdj + '/64\"" in ' + L.join(' | '));
+      assert.ok(!L.some((t) => /positive|POS|ADJ/.test(t)), 'adjustable leg: no prefix: ' + L.join(' | '));
       noErr(app, assert);
     }
   },
@@ -385,6 +401,121 @@ module.exports = [
           assert.deepStrictEqual(J(openWts(a3).getControls()).surge, want, 'hand-set T-201 line-up restored');
         } finally { if (a3.dispose) a3.dispose(); }
       } finally { if (a1.dispose) a1.dispose(); }
+    }
+  },
+  {
+    // review (live 1): pre-v3.3.4 prefs stored automatic events too, so they cannot tell an automatic LSHH-201 closure or auto-divert
+    // from a hand change: a T-201 part that differs from the v3.3.1 default only by its inlets counts as untouched, and a saved
+    // line-up with both inlets shut is never restored (new prefs: the other hand-set parts are kept, the inlets follow the engine)
+    name: 'WTSTBR line-up prefs migration: inlet-only differences (an automatic LSHH-201 closure) are untouched; both inlets shut is never restored',
+    wp: WP, integration: true,
+    run(app, assert, ctx) {
+      const def = J(fresh(app).getControls());
+      const load = (prefs) => {
+        const a = ctx.loadApp({});
+        a.win.localStorage.setItem('h2viz3d_prefs', JSON.stringify(prefs));
+        const b = ctx.loadApp({ storage: a.storage });
+        if (a.dispose) a.dispose();
+        return b;
+      };
+      const legacy = (inlet) => ({ inlet, suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 });
+      [[false, false], [true, false], [false, true]].forEach((inl) => {
+        const a1 = load({ mode: '2d', ctl: { surge: legacy(inl), gauge: def.gauge, v: 1 } });
+        try {
+          const live = openWts(a1);
+          const c = J(live.getControls());
+          assert.deepStrictEqual(c.surge, def.surge, 'old prefs, inlets ' + JSON.stringify(inl) + ' only → engine default');
+          assert.ok(!live.getState().surge.comps.every((k) => !k.inlet), 'the start is not blocked (an inlet is open)');
+        } finally { if (a1.dispose) a1.dispose(); }
+      });
+      // new prefs, T-201 set by hand, saved with both inlets shut: suction / set point kept, inlets = the engine default
+      const a2 = load({ mode: '2d', ctl: { surge: { inlet: [false, false], suction: 'A', auto: true, sp: 0.7, hyst: 0.1, strokeS: 6 }, gauge: def.gauge, v: 1 },
+        ctlUser: { surge: true } });
+      try {
+        const c = J(openWts(a2).getControls());
+        assert.deepStrictEqual(c.surge.inlet, def.surge.inlet, 'both-shut inlets never restored: ' + JSON.stringify(c.surge.inlet));
+        assert.strictEqual(c.surge.sp, 0.7, 'the rest of the hand line-up kept (set point)');
+      } finally { if (a2.dispose) a2.dispose(); }
+      noErr(app, assert);
+    }
+  },
+  {
+    // review (live 2): the Line-up words come from the flows (fill / draw, LCV-201 on), not from the inlet and suction commands
+    name: 'WTSTBR T-201 Line-up row: LCV-201 stuck shut → "suction, LCV-201 stuck shut"; after an ESD → "inlet open, no flow"; normal → filling / transferring',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const live = openWts(app);
+      live.setValve('surge', 0, true); live.setValve('surge', 1, false); live.setSuction('B');
+      live.advance(20); app.flush(800);
+      ctlOf(app)._debug.openCard('surge'); app.flush(400);
+      const card = app.el('wtsl_card');
+      const row = () => Array.from(card.querySelectorAll('.wtsl-kv > div')).find((r) => text(r.querySelector('.l')) === 'Line-up');
+      const val = () => text(row() && row().querySelector('.v'));
+      const hud = () => app.el('wtsl_hud').querySelector('[data-h="tSu"]').getAttribute('title') || '';
+      assert.ok(/^A filling \d+% · B transferring \d+%$/.test(val()), 'normal: ' + val());
+      live.setFault('xferStuckClosed', true); live.advance(20); app.flush(800);
+      assert.strictEqual(live.getState().surge.transfer ? live.getState().surge.transfer.on : live.getState().surge.pump.on, false, 'LCV-201 not drawing');
+      assert.ok(/^A filling \d+% · B suction, LCV-201 stuck shut \d+%$/.test(val()), 'stuck shut: ' + val());
+      assert.ok(!/transferring/.test(hud()), 'HUD tooltip says no transfer: ' + hud());
+      live.setFault('xferStuckClosed', false);
+      live.tripESD('test'); live.advance(30); app.flush(800);
+      assert.ok(/^A inlet open, no flow \d+%/.test(val()), 'after an ESD: ' + val());
+      assert.ok(!/A filling/.test(hud()), 'HUD tooltip after an ESD: ' + hud());
+      noErr(app, assert);
+    }
+  },
+  {
+    // review (live 3): a menu taller than the space below its toolbar button stays below it (max-height = the space left, it
+    // scrolls) instead of flipping over the toolbar; an open menu puts the toast stack under it
+    name: 'WTSTBR Rig-up menu placement: stays below its button with max-height = the space left; toasts go under an open menu',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app); app.flush(200);
+      const btn = rigBtn(app);
+      const viz = btn.closest('.wtsl-viz');
+      assert.ok(viz, 'viz element');
+      viz.getBoundingClientRect = () => ({ left: 0, top: 0, width: 965, height: 460, right: 965, bottom: 460 });
+      btn.getBoundingClientRect = () => ({ left: 614, top: 12, width: 50, height: 32, right: 664, bottom: 44 });
+      const m = openRigMenu(app);
+      assert.strictEqual(m.parentNode, viz, 'menu in the viz');
+      assert.strictEqual(m.style.top, '50px', 'menu stays below its button (top ' + m.style.top + ')');
+      assert.strictEqual(m.style.maxHeight, '402px', 'max-height = the space left below the button (' + m.style.maxHeight + ')');
+      assert.ok(m.offsetHeight <= 402, 'menu height within the space left');
+      assert.ok(viz.hasAttribute('data-menu'), 'viz marks the open menu');
+      const css = Array.from(app.document.querySelectorAll('style')).map((x) => x.textContent).join('\n');
+      assert.ok(/\.wtsl-viz\[data-menu\] \.wtsl-toasts\{z-index:19\}/.test(css) && /\.wtsl-menu,\.wtsl-pop\{position:absolute;z-index:20/.test(css), 'toasts (z 19) under an open menu (z 20)');
+      app.click(btn); app.flush(20);
+      assert.ok(!menuEl(app) && !viz.hasAttribute('data-menu'), 'closed: toasts back on top');
+      noErr(app, assert);
+    }
+  },
+  {
+    // review (ux 1, ux 2): long key rows get a full-width cell, wrap and carry their full text as a tooltip; the Rig-up button
+    // keeps its text at md (hidden only at sm, where the More menu carries Rig-up)
+    name: 'WTSTBR key rows: CK-101 In service / Bean and T-201 Line-up / T-201A / T-201B are full width with a title; Rig-up text not hidden at md',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app); app.flush(400);
+      const css = Array.from(app.document.querySelectorAll('style')).map((x) => x.textContent).join('\n');
+      assert.ok(/\.wtsl-kv>div\.f\{grid-column:1\/-1\}/.test(css) && /\.wtsl-kv \.v\.f,\.wtsl-kv div\.f \.d\{white-space:normal/.test(css), 'full-width wrapping rows in the CSS');
+      const rows = (id) => { ctlOf(app)._debug.openCard(id); app.flush(400); return Array.from(app.el('wtsl_card').querySelectorAll('.wtsl-kv > div')); };
+      const check = (id, labels) => {
+        const R = rows(id);
+        labels.forEach((l) => {
+          const r = R.find((x) => text(x.querySelector('.l')) === l);
+          assert.ok(r, id + ': row ' + l);
+          assert.ok(r.classList.contains('f'), id + ' ' + l + ': full-width row');
+          const v = r.querySelector('.v');
+          assert.ok(v.classList.contains('f'), id + ' ' + l + ': wrapping value');
+          assert.strictEqual(v.getAttribute('title'), text(v), id + ' ' + l + ': title = the full text');
+        });
+      };
+      check('choke', ['In service', 'Bean']);
+      check('surge', ['Line-up', 'T-201A', 'T-201B']);
+      const b = rigBtn(app), sp = b.querySelector('span');
+      assert.ok(sp && text(sp) === 'Rig-up' && !sp.classList.contains('wtsl-txt-md'), 'Rig-up text not hidden at md');
+      assert.ok(b.classList.contains('wtsl-hide-sm'), 'the button is hidden at sm (More carries Rig-up)');
+      noErr(app, assert);
     }
   }
 ];

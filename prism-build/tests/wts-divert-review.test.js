@@ -202,7 +202,10 @@ module.exports = [
     }
   },
   {
-    name: 'WTSDV-R live view: an automatic divert updates the saved lineup (restored after reload); 375 px phone layout valve glyphs toggle the right valve',
+    // v3.3.4 rule change (review): automatic diverts no longer persist. Before v3.3.4 every control event, automatic ones included,
+    // was saved, so a reload restored where the auto-divert had left T-201. Now the saved part of a group set by hand stays the
+    // operator's last hand line-up (wts-toolbar-rigup: auto events never mark a group), so the reload restores that line-up.
+    name: 'WTSDV-R live view: an automatic divert does not change the saved lineup (the hand line-up is restored after reload); 375 px phone layout valve glyphs toggle the right valve',
     wp: WP,
     integration: true,
     opts: { viewport: { width: 375, height: 812 } },
@@ -240,6 +243,9 @@ module.exports = [
       app.click(inset().querySelector('[data-act="vin-close"]'));
       // lineup now: surge A+B inlets, suction A; gauge A+B open. Make an automatic divert happen in the live sim.
       live.setValve('surge', 1, false); live.setSuction('B'); live.setAutoDivert('surge', true, app.toWin({ sp: 0.6 }));
+      app.flush(50);
+      const hand = JSON.parse(JSON.stringify(live.getControls()));      // the operator's hand line-up
+      assert.deepStrictEqual([hand.surge.inlet, hand.surge.suction, hand.surge.auto, hand.surge.sp], [[true, false], 'B', true, 0.6], 'hand line-up');
       let n = 0; live.on('divert', () => { n++; });
       for (let i = 0; i < 2000 && !n; i++) live.advance(10);
       assert.ok(n >= 1, 'automatic divert happened');
@@ -247,11 +253,15 @@ module.exports = [
       const now = JSON.parse(JSON.stringify(live.getControls()));
       assert.deepStrictEqual(now.surge.inlet, [false, true], 'auto moved the inlet to B');
       const prefs = JSON.parse(app.win.localStorage.getItem('h2viz3d_prefs') || '{}');
-      assert.deepStrictEqual(prefs.ctl, now, 'prefs follow the automatic divert');
+      assert.deepStrictEqual(prefs.ctl.surge, hand.surge, 'the saved T-201 line-up stays the hand line-up (the automatic divert is not saved)');
+      assert.deepStrictEqual(prefs.ctl.gauge, now.gauge, 'the hand-set gauge line-up is saved');
+      assert.strictEqual(prefs.ctlUser && prefs.ctlUser.surge, true, 'T-201 marked as set by hand');
       const app2 = ctx.loadApp({ storage: app.storage, viewport: { width: 375, height: 812 } });
       try {
         const live2 = openWts(app2);
-        assert.deepStrictEqual(JSON.parse(JSON.stringify(live2.getControls())), now, 'restored after reload');
+        const c2 = JSON.parse(JSON.stringify(live2.getControls()));
+        assert.deepStrictEqual(c2.surge, hand.surge, 'the hand line-up is restored after reload, not the auto-diverted one');
+        assert.deepStrictEqual(c2.gauge, now.gauge, 'gauge restored after reload');
       } finally { if (app2.dispose) app2.dispose(); }
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     }
