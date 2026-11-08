@@ -23,6 +23,10 @@ const DEFINERS = {
   // WP-S1 (002-core.sql): new definers, and definer helpers / triggers that no role may call directly (null)
   rate_add: 'wts_api', mail_mark: 'wts_api', email_revert: 'wts_api', identities_remove_since: 'wts_api', deletion_cancel: 'wts_api',
   support_allowlist_add: 'wts_support', address_in_use: null, audit_chain_trg: null, audit_guard_trg: null, revisions_refs_trg: null,
+  // WP-O additions (040-oauth.sql)
+  oauth_attempt_drop: 'wts_api', oauth_attempt_close: 'wts_api', oauth_exchange_hit: 'wts_api', oauth_breaker_open: 'wts_api',
+  oauth_breaker_note: 'wts_api', session_revoke_presented: 'wts_api', support_retire_identities: 'wts_support',
+  oauth_attempt_claim: 'wts_api', oauth_attempt_release: 'wts_api', oauth_finish_fail: 'wts_api', oidc_fetch_claim: 'wts_api',
 };
 // still WP0 stubs after WP-S1: the provider definers (WP-O)
 const WPO_STUBS = ['user_by_identity', 'oauth_attempt_take', 'oidc_key_get'];
@@ -46,7 +50,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
 
   test('migration recorded; every §3.4 table exists in schema wts', async () => {
     const m = await H.admin.sql`select name from public.wts_schema_migrations`;
-    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql']);
+    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql', '040-oauth.sql']);
     const t = (await H.admin.sql`select tablename from pg_tables where schemaname = 'wts'`).map((r) => r.tablename).sort();
     assert.deepStrictEqual(t, USER_TABLES.concat(SYSTEM_TABLES).sort());
   });

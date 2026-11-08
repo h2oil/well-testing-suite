@@ -82,6 +82,7 @@ function createApp(o) {
     const ep = m.endpoint;
     const isCallback = ep.id === 'oauthCallback';
     markCallback(isCallback);
+    const setCookies = [];
     try {
       const raw = req.body || null;
       if (raw && raw.length > H.bodyLimit(ep.id)) throw new ApiError('too_large', { limit: H.bodyLimit(ep.id) });
@@ -100,7 +101,6 @@ function createApp(o) {
       if (config.accountsOff && !PAUSE_EXEMPT.has(ep.id)) throw new ApiError('paused');
       const ip = H.clientIp(req, config);
       const cookies = H.parseCookies(H.header(req, 'cookie'));
-      const setCookies = [];
       const afterTasks = [];
       const ctx = {
         req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip, ipPrefix: ipPrefix(ip),
@@ -118,7 +118,10 @@ function createApp(o) {
     } catch (e) {
       if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); return callbackRedirect(); }
       if (!(e instanceof ApiError)) log.warn('handler ' + ep.id + ' threw: ' + ((e && e.message) || e));
-      return fromError(e);
+      // an error answer still carries the cookies the handler CLEARED (e.g. the attempt cookie of a failed provider
+      // finish, WP-O); never one it set
+      const r = toResponse(e);
+      return respond(r.status, r.body, { cookies: setCookies.filter((c) => /; Max-Age=0$/.test(c)) });
     }
   }
   return { config, handle, idle, keys };

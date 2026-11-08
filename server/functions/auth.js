@@ -1,8 +1,8 @@
 'use strict';
 // server/functions/auth.js — Auth (docs/ACCOUNTS-PLAN.md §3.3, §4.1–4.9): e-mail codes (sign-in and step-up), e-mail change
 // and 7-day revert, recovery address, sign-out and sign-out everywhere. WP-S1.
-// Left to other work packages: GET /auth/methods and /auth/methods/unlink (WP-O, provider sign-in), passkeys (WP-C3, Phase 3)
-// — those still answer 501 not_implemented.
+// GET /auth/methods and POST /auth/methods/unlink are in functions/oauth.js (WP-O); passkeys (WP-C3, Phase 3) still answer
+// 501 not_implemented.
 //
 // Rules kept here:
 //   • code/start ALWAYS answers 202 after a fixed floor (config.codeFloorMs); unknown, throttled, paused, locked and
@@ -384,8 +384,7 @@ module.exports = {
     // Phase 3 (WP-C3)
     passkeyOptions: notImplemented, passkeyVerify: notImplemented, passkeyRegisterOptions: notImplemented,
     passkeyRegisterVerify: notImplemented, passkeyRename: notImplemented, passkeyRemove: notImplemented,
-    // provider sign-in methods (WP-O)
-    methods: notImplemented, unlink: notImplemented,
+    // methods / unlink live in functions/oauth.js (WP-O)
   },
   _internal: { signInBody, addresses, issueCode, mailParams, ADDR },
 };
