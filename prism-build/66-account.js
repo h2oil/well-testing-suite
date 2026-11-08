@@ -45,6 +45,8 @@
     Object.keys(o).forEach(function (k) { if (Object.prototype.hasOwnProperty.call(seams, k)) seams[k] = o[k]; });
     return api;
   }
+  // seam(name) → the configured seam (null when unset); 67 reads 'crypto' through it
+  function seam(k) { return Object.prototype.hasOwnProperty.call(seams, k) ? seams[k] : undefined; }
   function doFetch() { var f = seams.fetch || G.fetch; return f.apply(G, arguments); }
 
   // call(method, path, body, opts) → Promise<{status, json|bytes, headers}>; any non-2xx → WTS_account.Error {code, status,
@@ -69,7 +71,10 @@
       if (r.status >= 200 && r.status < 300) {
         if (r.status === 204) return { status: r.status, json: null, headers: r.headers };
         if (opts.bytes || /octet-stream/.test(ct)) return r.arrayBuffer().then(function (b) { return { status: r.status, bytes: b, headers: r.headers }; });
-        return r.json().then(function (j) { return { status: r.status, json: j, headers: r.headers }; });
+        // a 2xx that is not JSON (e.g. the static host's page fallback while no server is configured) is 'server'
+        if (!/^application\/json\b/i.test(String(ct).trim())) throw new AccountError('server', r.status, null);
+        return r.json().then(function (j) { return { status: r.status, json: j, headers: r.headers }; },
+          function () { throw new AccountError('server', r.status, null); });
       }
       return r.json().then(function (j) {
         if (!j || typeof j.error !== 'string') throw new AccountError('server', r.status, null);
@@ -79,7 +84,8 @@
   }
 
   // GET /auth/providers when the sign-in dialog or the Sign-in methods card opens (a user action). On a network error both
-  // buttons show and start decides (§3.3).
+  // buttons show and start decides (§3.3); a reply that is not the API's ('server': no envelope, not JSON) means no server
+// answers, so both are off.
   function providers() {
     return call('GET', '/auth/providers').then(function (r) {
       var o = {};
@@ -87,6 +93,7 @@
       return o;
     }, function (e) {
       if (e && e.code === 'network') return { google: 'on', linkedin: 'on' };
+      if (e && e.code === 'server') return { google: 'off', linkedin: 'off' };
       throw e;
     });
   }
@@ -111,7 +118,7 @@
   }
   var api = {
     eligible: true, VERSION: VERSION, PROVIDERS: PROVIDERS.slice(), Error: AccountError, KEYS: KEYS,
-    configure: configure, state: state, call: call, providers: providers, on: on, off: off, betaEnabled: betaEnabled,
+    configure: configure, seam: seam, state: state, call: call, providers: providers, on: on, off: off, betaEnabled: betaEnabled,
     refresh: notYet('refresh'), openSignIn: notYet('openSignIn'), signOut: notYet('signOut'), stepUp: notYet('stepUp'),
     changeEmail: notYet('changeEmail'), setRecovery: notYet('setRecovery'), addPasskey: notYet('addPasskey'),
     removePasskey: notYet('removePasskey'), renamePasskey: notYet('renamePasskey'), signInWith: notYet('signInWith'),

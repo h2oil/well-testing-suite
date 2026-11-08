@@ -29,6 +29,13 @@ CREATE FUNCTION wts.allowlist_has(p_email_bidx bytea) RETURNS boolean
 
 ALTER FUNCTION wts.allowlist_has(p_email_bidx bytea) OWNER TO wts_definer;
 
+CREATE FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ BEGIN PERFORM wts._not_implemented('audit_system'); RETURN NULL; END $$;
+
+ALTER FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) OWNER TO wts_definer;
+
 CREATE FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamp with time zone) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
@@ -76,6 +83,13 @@ CREATE FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp wi
     AS $$ BEGIN PERFORM wts._not_implemented('deletion_request'); END $$;
 
 ALTER FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ BEGIN PERFORM wts._not_implemented('email_move'); RETURN NULL; END $$;
+
+ALTER FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
@@ -154,12 +168,32 @@ CREATE FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb, p_exp
 
 ALTER FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb, p_expires_at timestamp with time zone) OWNER TO wts_definer;
 
+CREATE FUNCTION wts.ops_nonce_claim(p_nonce text) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $_$
+BEGIN
+  IF p_nonce IS NULL OR p_nonce !~ '^[A-Za-z0-9_-]{16,64}$' THEN RETURN false; END IF;
+  DELETE FROM wts.ops_nonces WHERE seen_at < now() - interval '10 minutes';
+  INSERT INTO wts.ops_nonces (nonce, seen_at) VALUES (p_nonce, now()) ON CONFLICT (nonce) DO NOTHING;
+  RETURN FOUND;
+END $_$;
+
+ALTER FUNCTION wts.ops_nonce_claim(p_nonce text) OWNER TO wts_definer;
+
 CREATE FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) RETURNS TABLE(allowed boolean, n bigint, retry_after integer)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
     AS $$ BEGIN PERFORM wts._not_implemented('rate_hit'); END $$;
 
 ALTER FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ BEGIN PERFORM wts._not_implemented('recovery_set'); RETURN NULL; END $$;
+
+ALTER FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.resolve_session(p_sid_hash bytea) RETURNS TABLE(user_id uuid, device_id uuid, public_device boolean, auth_at timestamp with time zone, stepup_at timestamp with time zone, auth_method text, identity_id uuid, idle_expires_at timestamp with time zone, abs_expires_at timestamp with time zone, status text)
     LANGUAGE plpgsql SECURITY DEFINER
@@ -395,6 +429,15 @@ ALTER TABLE ONLY wts.oidc_keys FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE wts.oidc_keys OWNER TO wts_owner;
 
+CREATE TABLE wts.ops_nonces (
+    nonce text NOT NULL,
+    seen_at timestamp with time zone NOT NULL
+);
+
+ALTER TABLE ONLY wts.ops_nonces FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE wts.ops_nonces OWNER TO wts_owner;
+
 CREATE TABLE wts.passkeys (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -603,11 +646,17 @@ ALTER TABLE ONLY wts.oauth_attempts
 ALTER TABLE ONLY wts.oidc_keys
     ADD CONSTRAINT oidc_keys_pkey PRIMARY KEY (provider, kid);
 
+ALTER TABLE ONLY wts.ops_nonces
+    ADD CONSTRAINT ops_nonces_pkey PRIMARY KEY (nonce);
+
 ALTER TABLE ONLY wts.passkeys
     ADD CONSTRAINT passkeys_credential_id_key UNIQUE (credential_id);
 
 ALTER TABLE ONLY wts.passkeys
     ADD CONSTRAINT passkeys_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY wts.projects
+    ADD CONSTRAINT projects_id_user_id_key UNIQUE (id, user_id);
 
 ALTER TABLE ONLY wts.projects
     ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
@@ -663,13 +712,13 @@ ALTER TABLE ONLY wts.passkeys
     ADD CONSTRAINT passkeys_user_id_fkey FOREIGN KEY (user_id) REFERENCES wts.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY wts.projects
-    ADD CONSTRAINT projects_is_conflict_of_fkey FOREIGN KEY (is_conflict_of) REFERENCES wts.projects(id);
+    ADD CONSTRAINT projects_is_conflict_of_user_id_fkey FOREIGN KEY (is_conflict_of, user_id) REFERENCES wts.projects(id, user_id);
 
 ALTER TABLE ONLY wts.projects
     ADD CONSTRAINT projects_user_id_fkey FOREIGN KEY (user_id) REFERENCES wts.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY wts.revisions
-    ADD CONSTRAINT revisions_project_id_fkey FOREIGN KEY (project_id) REFERENCES wts.projects(id) ON DELETE CASCADE;
+    ADD CONSTRAINT revisions_project_id_user_id_fkey FOREIGN KEY (project_id, user_id) REFERENCES wts.projects(id, user_id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY wts.sessions
     ADD CONSTRAINT sessions_identity_id_fkey FOREIGN KEY (identity_id) REFERENCES wts.identities(id) ON DELETE CASCADE;
@@ -696,6 +745,8 @@ ALTER TABLE wts.mail_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wts.oauth_attempts ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE wts.oidc_keys ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE wts.ops_nonces ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY own_rows ON wts.audit USING ((user_id = wts.current_user_id())) WITH CHECK ((user_id = wts.current_user_id()));
 
@@ -748,6 +799,9 @@ GRANT ALL ON FUNCTION wts._not_implemented(fn text) TO wts_definer;
 REVOKE ALL ON FUNCTION wts.allowlist_has(p_email_bidx bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.allowlist_has(p_email_bidx bytea) TO wts_api;
 
+REVOKE ALL ON FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) TO wts_api;
+
 REVOKE ALL ON FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamp with time zone) TO wts_api;
 
@@ -771,6 +825,9 @@ GRANT ALL ON FUNCTION wts.current_user_id() TO wts_support;
 
 REVOKE ALL ON FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) TO wts_api;
@@ -805,8 +862,14 @@ GRANT ALL ON FUNCTION wts.oidc_key_get(p_provider text, p_kid text) TO wts_api;
 REVOKE ALL ON FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb, p_expires_at timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb, p_expires_at timestamp with time zone) TO wts_api;
 
+REVOKE ALL ON FUNCTION wts.ops_nonce_claim(p_nonce text) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.ops_nonce_claim(p_nonce text) TO wts_api;
+
 REVOKE ALL ON FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.resolve_session(p_sid_hash bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.resolve_session(p_sid_hash bytea) TO wts_api;
@@ -871,6 +934,9 @@ GRANT SELECT,DELETE ON TABLE wts.oauth_attempts TO wts_jobs;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.oidc_keys TO wts_definer;
 GRANT SELECT,DELETE ON TABLE wts.oidc_keys TO wts_jobs;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.ops_nonces TO wts_definer;
+GRANT SELECT,DELETE ON TABLE wts.ops_nonces TO wts_jobs;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.passkeys TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.passkeys TO wts_api;
 
@@ -902,14 +968,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.signup_allowlist TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.users TO wts_definer;
 GRANT SELECT ON TABLE wts.users TO wts_api;
 GRANT SELECT,DELETE ON TABLE wts.users TO wts_jobs;
-
-GRANT UPDATE(email_bidx) ON TABLE wts.users TO wts_api;
-
-GRANT UPDATE(email_enc) ON TABLE wts.users TO wts_api;
-
-GRANT UPDATE(recovery_bidx) ON TABLE wts.users TO wts_api;
-
-GRANT UPDATE(recovery_enc) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(status) ON TABLE wts.users TO wts_jobs;
 

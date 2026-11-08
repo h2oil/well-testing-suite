@@ -12,7 +12,8 @@
 --   wts_support  server/ops scripts: EXECUTE on the audited support functions only.
 --
 -- WP0 foundation: every definer function has its final signature, SECURITY DEFINER, SET search_path = wts, pg_temp and
--- EXECUTE for its one role only; the bodies raise 'not_implemented' (SQLSTATE 0A000) until WP-S1 / WP-O fill them in.
+-- EXECUTE for its one role only; the bodies raise 'not_implemented' (SQLSTATE 0A000) until WP-S1 / WP-O fill them in
+-- (ops_nonce_claim alone has its final body: the ops-daily replay guard).
 
 DO $roles$
 BEGIN
@@ -90,14 +91,19 @@ CREATE TABLE projects (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES use
   meta_enc bytea NOT NULL, well_count int NOT NULL DEFAULT 0,
   head_rev bigint NOT NULL DEFAULT 0, head_core bytea, head_vhash bytea, head_bytes bigint NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL, modified_at timestamptz NOT NULL, deleted_at timestamptz,
-  is_conflict_of uuid REFERENCES projects);
+  is_conflict_of uuid,
+  -- composite keys: a foreign-key check bypasses RLS, so a reference must also match the row's own user_id (no probing of
+  -- another account's project ids, no rows tied across accounts)
+  UNIQUE (id, user_id),
+  FOREIGN KEY (is_conflict_of, user_id) REFERENCES projects (id, user_id));
 CREATE INDEX projects_user ON projects (user_id);
-CREATE TABLE revisions (project_id uuid REFERENCES projects ON DELETE CASCADE, user_id uuid NOT NULL,
+CREATE TABLE revisions (project_id uuid NOT NULL, user_id uuid NOT NULL,
   rev bigint NOT NULL, core_hash bytea NOT NULL, vhash bytea NOT NULL, parts jsonb NOT NULL,
   bytes bigint NOT NULL, device_id uuid, session_hash bytea, reason text NOT NULL
     CHECK (reason IN ('auto','save','migrate','conflict','restore','overwrite','import')), app_ver text,
   saved_at timestamptz NOT NULL, pinned boolean NOT NULL DEFAULT false, squashed_into bigint,
-  PRIMARY KEY (project_id, rev));
+  PRIMARY KEY (project_id, rev),
+  FOREIGN KEY (project_id, user_id) REFERENCES projects (id, user_id) ON DELETE CASCADE);
 CREATE TABLE blobs (user_id uuid NOT NULL, hash bytea NOT NULL, zsha bytea NOT NULL, bytes bigint NOT NULL,
   chunks int NOT NULL, complete boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL,
   refcount int NOT NULL DEFAULT 0, dkv int NOT NULL DEFAULT 1, PRIMARY KEY (user_id, hash));
@@ -138,6 +144,8 @@ CREATE TABLE signup_allowlist (email_bidx bytea PRIMARY KEY, added_at timestampt
 CREATE TABLE deletion_ledger (user_id uuid PRIMARY KEY, requested_at timestamptz NOT NULL, purge_at timestamptz NOT NULL,
   purged_at timestamptz);
 CREATE TABLE rate_counters (bucket text, window_start timestamptz, n bigint NOT NULL, PRIMARY KEY (bucket, window_start));
+-- ops-daily replay guard (§3.5): a signed call's nonce is accepted once; shared by every function instance; purged daily
+CREATE TABLE ops_nonces (nonce text PRIMARY KEY, seen_at timestamptz NOT NULL);
 
 -- ── row-level security ───────────────────────────────────────────────────────────────────────────────────────────
 DO $rls$
@@ -151,7 +159,7 @@ BEGIN
   END LOOP;
   -- system tables: RLS on with no policy at all, so nobody without BYPASSRLS sees a row even if a grant slips in
   FOREACH t IN ARRAY ARRAY['oauth_attempts','oidc_keys','email_codes','webauthn_challenges','mail_outbox','signup_allowlist',
-                           'deletion_ledger','rate_counters'] LOOP
+                           'deletion_ledger','rate_counters','ops_nonces'] LOOP
     EXECUTE format('ALTER TABLE wts.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE wts.%I FORCE ROW LEVEL SECURITY', t);
   END LOOP;
@@ -265,6 +273,34 @@ CREATE FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamptz,
   RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
   AS $$ BEGIN PERFORM wts._not_implemented('deletion_request'); END $$;
+-- the account's own addresses: one address, one role, one account (§3.3) is checked across BOTH indexes of ALL accounts in
+-- one transaction, so wts_api has no UPDATE on email_bidx / email_enc / recovery_bidx / recovery_enc. Return false when the
+-- address is already some account's primary or recovery address. email_move keeps the previous address for the revert window.
+CREATE FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('email_move'); RETURN NULL; END $$;
+-- p_bidx NULL clears the recovery address
+CREATE FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('recovery_set'); RETURN NULL; END $$;
+-- pre-auth audit rows (user_id NULL, actor 'system'), which the own_rows policy refuses to wts_api; returns the row id
+CREATE FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb)
+  RETURNS bigint
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$ BEGIN PERFORM wts._not_implemented('audit_system'); RETURN NULL; END $$;
+-- ops-daily nonce: true the first time a nonce is seen in 10 minutes, false on a replay (any function instance). Final body.
+CREATE FUNCTION wts.ops_nonce_claim(p_nonce text)
+  RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
+  AS $$
+BEGIN
+  IF p_nonce IS NULL OR p_nonce !~ '^[A-Za-z0-9_-]{16,64}$' THEN RETURN false; END IF;
+  DELETE FROM wts.ops_nonces WHERE seen_at < now() - interval '10 minutes';
+  INSERT INTO wts.ops_nonces (nonce, seen_at) VALUES (p_nonce, now()) ON CONFLICT (nonce) DO NOTHING;
+  RETURN FOUND;
+END $$;
 -- audited support functions (wts_support only; each writes an audit row with actor support:<id>)
 CREATE FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea)
   RETURNS TABLE (user_id uuid, status text, created_at timestamptz)
@@ -309,7 +345,7 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA wts TO wts_definer;
 
 -- request handlers: user tables under RLS
 GRANT SELECT, UPDATE (last_sign_in_at, terms_version, privacy_version, consented_at, used_bytes, opt_historian, opt_livecfg,
-  outbox_key_enc, lib_rev, lib_hash, delete_requested_at, delete_at, email_bidx, email_enc, recovery_bidx, recovery_enc,
+  outbox_key_enc, lib_rev, lib_hash, delete_requested_at, delete_at,
   email_changed_at, email_prev_bidx, email_prev_enc, email_revert_until) ON wts.users TO wts_api;
 GRANT SELECT, INSERT, UPDATE, DELETE ON wts.passkeys, wts.devices, wts.sessions, wts.projects, wts.revisions, wts.blobs,
   wts.push_receipts, wts.historian_backups TO wts_api;
@@ -328,7 +364,9 @@ GRANT EXECUTE ON FUNCTION
   wts.code_check(bytea, text, bytea[], uuid, bytea, uuid),
   wts.challenge_issue(bytea, text, uuid, timestamptz), wts.challenge_take(uuid, text),
   wts.rate_hit(text, interval, bigint), wts.allowlist_has(bytea),
-  wts.mail_queue(bytea, text, bytea), wts.deletion_request(uuid, timestamptz, timestamptz)
+  wts.mail_queue(bytea, text, bytea), wts.deletion_request(uuid, timestamptz, timestamptz),
+  wts.email_move(uuid, bytea, bytea), wts.recovery_set(uuid, bytea, bytea),
+  wts.audit_system(text, text, uuid, inet, text, jsonb), wts.ops_nonce_claim(text)
   TO wts_api;
 
 -- support scripts: the audited functions only
@@ -337,7 +375,7 @@ GRANT EXECUTE ON FUNCTION wts.support_lookup(text, bytea), wts.support_recover(t
 
 -- the daily job (§3.5): purge, prune, quota recompute, deletion purge, mail outbox send, ledger write
 GRANT SELECT, DELETE ON wts.email_codes, wts.webauthn_challenges, wts.oauth_attempts, wts.oidc_keys, wts.sessions,
-  wts.rate_counters, wts.push_receipts, wts.mail_outbox, wts.projects, wts.revisions, wts.blobs, wts.users, wts.audit TO wts_jobs;
+  wts.rate_counters, wts.ops_nonces, wts.push_receipts, wts.mail_outbox, wts.projects, wts.revisions, wts.blobs, wts.users, wts.audit TO wts_jobs;
 GRANT UPDATE (used_bytes, inactivity_warned_at, status) ON wts.users TO wts_jobs;
 GRANT UPDATE (sent_at, tries) ON wts.mail_outbox TO wts_jobs;
 GRANT UPDATE (squashed_into, pinned) ON wts.revisions TO wts_jobs;

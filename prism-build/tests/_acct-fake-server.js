@@ -15,7 +15,8 @@
 //   const fake = F.createFakeServer({ now, switches:{ACCOUNTS_SIGNUP:'open', OAUTH_GOOGLE:'on', …}, allow:[emails],
 //                                     latency:{ms, schedule:(fn, ms) => app.win.setTimeout(fn, ms)}, origin });
 //   loadApp({ globals: { fetch: fake.fetch, location: F.prodLocation() } })     // one browser = one cookie jar
-//   fake.browser()           → another browser {fetch, navigate, visit, jar}   (a second device)
+//   fake.browser()           → another browser {fetch, navigate, visit, jar, cookie, restart}   (a second device);
+//   fake.restart() / br.restart() — a browser restart: cookies without Max-Age are dropped (the session cookie has one)
 //   fake.visit(url, {as:{key, email, email_verified, hd}} | {cancel:true})  → the provider round trip of a location.assign(url):
 //                              authorize at the fake provider, then the cross-site callback (Lax cookies only) → {status, location}
 //   fake.mail.sent / fake.codeFor(email, template?) / fake.lastMail(email)
@@ -121,6 +122,8 @@ function createFakeServer(o) {
     return { d, isNew };
   }
   function revokeSession(sid) { S.sessions.delete(sid); }
+  // the session cookie's Max-Age = whole seconds to abs_expires_at (contract COOKIES.session), at least 1
+  function sessionMaxAge(s) { return Math.max(1, Math.ceil((s.absExp - now()) / 1000)); }
   function revokeWhere(f) { let n = 0; for (const [sid, s] of S.sessions) if (f(s)) { S.sessions.delete(sid); n++; } return n; }
   function newSession(ctx, u, o2) {
     const presented = ctx.cookies[C.COOKIES.session.name];
@@ -131,7 +134,7 @@ function createFakeServer(o) {
       stepupAt: o2.stepup ? now() : null, authMethod: o2.method || 'code', identityId: o2.identityId || null,
       lastSeen: now(), idleExp: now() + (pub ? 12 * HOUR : 35 * DAY), absExp: now() + (pub ? 7 * DAY : 180 * DAY), replacedAt: null };
     S.sessions.set(sid, s);
-    ctx.setCookie(C.COOKIES.session, sid);
+    ctx.setCookie(C.COOKIES.session, sid, { maxAge: sessionMaxAge(s) });
     u.lastSignInAt = iso();
     return s;
   }
@@ -140,7 +143,7 @@ function createFakeServer(o) {
     const n = Object.assign({}, s, { sid, replacedAt: null });
     S.sessions.set(sid, n);
     s.replacedAt = now(); s.replacedBy = sid;
-    ctx.setCookie(C.COOKIES.session, sid);
+    ctx.setCookie(C.COOKIES.session, sid, { maxAge: sessionMaxAge(n) });
     return n;
   }
   function sessionOf(ctx, opt) {
@@ -779,7 +782,8 @@ function createFakeServer(o) {
         const [k, ...rest] = parts[0].split('='); const v = rest.join('=');
         const attrs = {}; parts.slice(1).forEach((x) => { const [a, b2] = x.split('='); attrs[a.toLowerCase()] = b2 === undefined ? true : b2; });
         if (attrs['max-age'] === '0' || v === '') { jar.delete(k); return; }
-        jar.set(k, { value: v, sameSite: attrs.samesite || 'Lax', expires: attrs['max-age'] ? now() + Number(attrs['max-age']) * 1000 : null, attrs });
+        // no Max-Age = a browser-session cookie (persistent: false): gone after restart()
+        jar.set(k, { value: v, sameSite: attrs.samesite || 'Lax', expires: attrs['max-age'] ? now() + Number(attrs['max-age']) * 1000 : null, persistent: !!attrs['max-age'], attrs });
       });
     }
     function cookieHeader(crossSiteNav) {
@@ -831,13 +835,15 @@ function createFakeServer(o) {
         return br.navigate(back);
       },
       cookie(name2) { const c = jar.get(name2); return c ? Object.assign({ name: name2 }, c) : null; },
+      // a simulated browser restart: cookies without Max-Age (browser-session cookies) are dropped, expired ones too
+      restart() { const t = now(); for (const [k, c] of jar) if (!c.persistent || (c.expires && c.expires <= t)) jar.delete(k); },
     };
     return br;
   }
 
   const main = browser('main');
   const fake = {
-    fetch: main.fetch, navigate: main.navigate, visit: main.visit, jar: main.jar, cookie: main.cookie, browser,
+    fetch: main.fetch, navigate: main.navigate, visit: main.visit, jar: main.jar, cookie: main.cookie, restart: main.restart, browser,
     mail, oidc, state: S, requests,
     get config() { return config; },
     handle: (req) => app.handle(req),

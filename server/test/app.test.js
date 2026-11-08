@@ -163,3 +163,87 @@ test('dev runner serves the pipeline on 127.0.0.1 and refuses production', async
     assert.strictEqual(big.status, 413);
   } finally { await s.close(); }
 });
+
+test('fail closed: a missing or unknown WTS_ENV is production (no proxy secret → 404; alerts on); ACCOUNTS_OFF allow-list', async () => {
+  const c = loadConfig({});
+  assert.strictEqual(c.env, 'production'); assert.strictEqual(c.production, true);
+  assert.ok(c.warnings.some((w) => /WTS_ENV: not set/.test(w)));
+  assert.ok(c.alerts.some((a) => /WTS_PROXY_SIG missing/.test(a)), 'the production alerts are raised');
+  const app = createApp({ config: c });
+  assert.strictEqual((await app.handle(req('GET', '/health'))).status, 404, 'the production Host with no proxy signature → 404');
+  assert.strictEqual((await app.handle(req('GET', '/health', { headers: { host: 'localhost:8787' } }))).status, 404, 'localhost refused');
+  const u = loadConfig({ WTS_ENV: 'staging' });
+  assert.strictEqual(u.production, true); assert.ok(u.warnings.some((w) => /WTS_ENV: unknown value — treated as production/.test(w)));
+  assert.strictEqual(loadConfig({ WTS_ENV: '  ' }).production, true);
+  // ACCOUNTS_OFF: unknown non-empty values pause the accounts and warn
+  for (const v of ['', '0', 'false', 'off', 'no', 'OFF']) assert.strictEqual(cfg({ ACCOUNTS_OFF: v }).accountsOff, false, JSON.stringify(v));
+  for (const v of ['1', 'true', 'on', 'yes']) assert.strictEqual(cfg({ ACCOUNTS_OFF: v }).accountsOff, true, v);
+  for (const v of ['2', 'enable', 'maybe']) {
+    const x = cfg({ ACCOUNTS_OFF: v });
+    assert.strictEqual(x.accountsOff, true, v + ' fails closed');
+    assert.ok(x.warnings.some((w) => /ACCOUNTS_OFF: unknown value/.test(w)), v + ' warns');
+  }
+});
+
+test('malformed percent escapes: 404 envelope with the common headers; the callback still answers 303; nothing throws', async () => {
+  const app = createApp({ config: cfg() });
+  assert.strictEqual(C.matchRoute('GET', '/projects/%E0%A4%A/head'), null);
+  const r = await app.handle(req('GET', '/projects/%E0%A4%A/head'));
+  assert.strictEqual(r.status, 404);
+  assert.ok(C.checkError('not_found', json(r)).ok);
+  ['Cache-Control', 'Vary', 'X-Content-Type-Options', 'Content-Security-Policy'].forEach((k) => assert.strictEqual(r.headers[k], H.COMMON_HEADERS[k]));
+  for (const p of ['/auth/oauth/%E0%A4%A/callback?code=a&state=b', '/auth/oauth/%/callback', '/auth/oauth/goo%ZZgle/callback']) {
+    const cb = await app.handle(req('GET', p));
+    assert.strictEqual(cb.status, 303, p); assert.strictEqual(cb.headers.Location, 'https://welltest.h2oil.co.uk/#acct-oauth');
+    assert.strictEqual(cb.headers['Cache-Control'], 'no-store');
+  }
+  // a handler that throws a plain error ends as a 500 envelope with the common headers
+  const boom = createApp({ config: cfg(), handlers: Object.assign({}, fns.handlers, { health: () => { throw new TypeError('x'); } }) });
+  const b = await boom.handle(req('GET', '/health'));
+  assert.strictEqual(b.status, 500); assert.deepStrictEqual(json(b), { error: 'server', message: 'Server error.' });
+  assert.strictEqual(b.headers['Cache-Control'], 'no-store');
+  const weird = await app.handle({ method: 'GET', url: null, headers: null, body: null });
+  assert.strictEqual(weird.status, 404, 'no url / headers → 404, not a throw');
+});
+
+test('proxy signature rotation: both comma-separated values are accepted, others refused', async () => {
+  const config = loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'sig-new, sig-old' });
+  assert.deepStrictEqual(config.alerts.filter((a) => /PROXY/.test(a)), []);
+  const app = createApp({ config });
+  for (const [sig, st] of [['sig-new', 200], ['sig-old', 200], ['sig-other', 404], ['sig-new,sig-old', 404], ['', 404]]) {
+    assert.strictEqual((await app.handle(req('GET', '/health', { headers: { 'x-wts-proxy-sig': sig } }))).status, st, JSON.stringify(sig));
+  }
+  assert.ok(!JSON.stringify(config.redacted()).includes('sig-old'));
+});
+
+test('session cookie: Max-Age through ctx.setCookie(def, value, {maxAge}); never without one', async () => {
+  const handlers = Object.assign({}, fns.handlers, {
+    health: (ctx) => { ctx.setCookie(C.COOKIES.session, 'sid1', { maxAge: 180 * 86400 }); return { status: 200, body: { ok: true, db: false, ver: 'x' } }; },
+    providers: (ctx) => { ctx.setCookie(C.COOKIES.session, 'sid2'); return { status: 200, body: { google: 'off', linkedin: 'off' } }; },
+  });
+  const app = createApp({ config: cfg(), handlers });
+  const r = await app.handle(req('GET', '/health'));
+  assert.deepStrictEqual(r.cookies, ['__Host-wts_sid=sid1; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=15552000']);
+  const bad = await app.handle(req('GET', '/auth/providers'));
+  assert.strictEqual(bad.status, 500, 'a session cookie without a lifetime is a server bug, never sent');
+  assert.deepStrictEqual(bad.cookies, []);
+});
+
+test('ops-daily nonces: a shared store is used; production without one refuses; the memory store is test-only', async () => {
+  const opsKey = crypto.randomBytes(32);
+  const t = Date.UTC(2026, 10, 8, 12, 0, 0);
+  const claimed = new Set(); let calls = 0;
+  const shared = { async claim(n) { calls++; if (claimed.has(n)) return false; claimed.add(n); return true; } };
+  const mk = (store) => createApp({ config: cfg({ WTS_OPS_HMAC: opsKey.toString('base64') }), now: () => t, opsNonces: store });
+  const a1 = mk(shared); const a2 = mk(shared);                 // two function instances, one store
+  const ts = String(Math.floor(t / 1000)); const nonce = crypto.randomBytes(12).toString('hex');
+  const sig = H.opsSignature(opsKey, 'POST', C.BASE + '/ops/daily', ts, nonce);
+  const ops = () => req('POST', '/ops/daily', { bare: true, headers: { 'content-type': 'application/json', 'x-wts-ts': ts, 'x-wts-nonce': nonce, 'x-wts-sig': sig } });
+  assert.strictEqual((await a1.handle(ops())).status, 501);
+  assert.strictEqual((await a2.handle(ops())).status, 403, 'a replay on another instance is refused');
+  assert.strictEqual(calls, 2);
+  const prod = createApp({ config: loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'p', WTS_OPS_HMAC: opsKey.toString('base64') }), now: () => t });
+  const pr = ops(); pr.headers['x-wts-proxy-sig'] = 'p';
+  assert.strictEqual((await prod.handle(pr)).status, 403, 'production without a shared nonce store refuses ops-daily');
+  assert.strictEqual(await H.verifyOps(ops(), C.BASE + '/ops/daily', cfg({ WTS_OPS_HMAC: opsKey.toString('base64') }), t, null), false);
+});

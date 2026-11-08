@@ -1,6 +1,6 @@
 'use strict';
 // server/core/app.js — the request pipeline shared by every deployment adapter (the host's functions, server/dev.js):
-//   createApp({config, handlers?, db?, mail?, now?, log?}) → { handle(req) → Promise<{status, headers, cookies, body}> }
+//   createApp({config, handlers?, db?, mail?, now?, log?, opsNonces?}) → { handle(req) → Promise<{status, headers, cookies, body}> }
 // req = {method, url ('/api/v1/…?q'), headers (lower-case names), body: Buffer|null, remoteAddress}.
 //
 // Order (docs/ACCOUNTS-PLAN.md §3.2): base path → proxy signature and original host (else 404) → route (else 404) → body cap
@@ -22,7 +22,9 @@ function createApp(o) {
   const handlers = o.handlers || require('../functions').handlers;
   const now = o.now || (() => Date.now());
   const log = o.log || { info() {}, warn() {} };
-  const opsSeen = new Map();
+  // ops-daily replay guard: shared through the database when there is one; the in-memory store is test-only and never used
+  // in production (there a call without a shared store is refused).
+  const opsNonces = o.opsNonces || (o.db ? H.dbNonceStore(o.db) : (config.production ? null : H.memoryNonceStore()));
 
   function respond(status, body, extra) {
     extra = extra || {};
@@ -38,21 +40,39 @@ function createApp(o) {
     return respond(303, null, { headers: { Location: config.appUrl + '#acct-oauth', 'Referrer-Policy': 'no-referrer' }, cookies: cookies || [] });
   }
 
+  // the provider callback answers 303 whatever happens, even before its route is matched (a malformed segment)
+  const CALLBACK_RE = /^\/auth\/oauth\/[^/]+\/callback$/;
+
+  // Any throw — also from URL splitting or route matching — ends as an envelope with the common headers (or the 303).
   async function handle(req) {
+    let isCallback = false;
+    try {
+      return await pipeline(req, (v) => { isCallback = v; });
+    } catch (e) {
+      if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); return callbackRedirect(); }
+      if (!(e instanceof ApiError)) log.warn('request threw: ' + ((e && e.message) || e));
+      return fromError(e);
+    }
+  }
+
+  async function pipeline(req, markCallback) {
     const { path: full, query } = H.splitUrl(req.url || '/');
     if (full !== C.BASE && full.indexOf(C.BASE + '/') !== 0) return notFound();
     if (!H.proxyOk(req, config) || !H.hostAllowed(req, config)) return notFound();
     const path = full.slice(C.BASE.length) || '/';
     if (/\.[A-Za-z0-9]+$/.test(path)) return notFound();            // no API path has a file extension (§3.2)
+    const callbackPath = req.method === 'GET' && CALLBACK_RE.test(path);
+    markCallback(callbackPath);
     const m = C.matchRoute(req.method, path);
-    if (!m) return notFound();
+    if (!m) return callbackPath ? callbackRedirect() : notFound();
     const ep = m.endpoint;
     const isCallback = ep.id === 'oauthCallback';
+    markCallback(isCallback);
     try {
       const raw = req.body || null;
       if (raw && raw.length > H.bodyLimit(ep.id)) throw new ApiError('too_large', { limit: H.bodyLimit(ep.id) });
       if (ep.auth === 'report' && !H.cspContentTypeOk(req)) throw new ApiError('origin');
-      if (ep.auth === 'hmac' && !H.verifyOps(req, full, config, now(), opsSeen)) throw new ApiError('origin');
+      if (ep.auth === 'hmac' && !(await H.verifyOps(req, full, config, now(), opsNonces))) throw new ApiError('origin');
       if (!H.writeHeadersOk(req, ep, config)) throw new ApiError('origin');
       if (m.params.provider !== undefined && C.PROVIDERS.indexOf(m.params.provider) === -1) {
         if (isCallback) return callbackRedirect();
@@ -70,7 +90,8 @@ function createApp(o) {
       const ctx = {
         req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip, ipPrefix: ipPrefix(ip),
         db: o.db || null, mail: o.mail || null,
-        setCookie(def, value) { setCookies.push(H.serializeCookie(def, value)); },
+        // opts.maxAge (seconds) — required for the session cookie: seconds to abs_expires_at (contract COOKIES.session)
+        setCookie(def, value, opts) { setCookies.push(H.serializeCookie(def, value, opts)); },
       };
       const fn = handlers[ep.id];
       if (typeof fn !== 'function') throw new ApiError('not_implemented');

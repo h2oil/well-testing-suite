@@ -46,9 +46,16 @@
     for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
     return a;
   }
-  // sha256Hex(text | Uint8Array) → Promise<64 lowercase hex> (crypto.subtle; a seam from WTS_account.configure({crypto}))
+  // sha256Hex(text | Uint8Array) → Promise<64 lowercase hex>. Crypto: the seam WTS_account.configure({crypto}) when set (an
+  // object with .subtle, or a SubtleCrypto-like object with .digest), else window.crypto.subtle.
+  function subtle() {
+    var A = G.WTS_account; var s = A && typeof A.seam === 'function' ? A.seam('crypto') : null;
+    if (s && s.subtle && typeof s.subtle.digest === 'function') return s.subtle;
+    if (s && typeof s.digest === 'function') return s;
+    return G.crypto && G.crypto.subtle;
+  }
   function sha256Hex(data) {
-    var c = G.crypto && G.crypto.subtle;
+    var c = subtle();
     if (!c) return Promise.reject(new Error('sha256: no crypto.subtle'));
     var bytes = typeof data === 'string' ? utf8(data) : data;
     return Promise.resolve(c.digest('SHA-256', bytes)).then(function (buf) {

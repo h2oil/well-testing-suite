@@ -68,7 +68,10 @@ const OAUTH_FAIL_REASONS = ['cancelled', 'expired', 'provider', 'token', 'reauth
 const COMMIT_REASONS = ['auto', 'save', 'migrate', 'conflict', 'restore', 'overwrite', 'import'];
 
 const COOKIES = {
-  session: { name: '__Host-wts_sid', secure: true, httpOnly: true, sameSite: 'Strict', path: '/' },
+  // session: no lifetime in the definition ON PURPOSE — every Set-Cookie for it passes {maxAge} = whole seconds from now to
+  // the session's abs_expires_at (public devices 7 days, trusted 180 days; D4), so a trusted device keeps its session across
+  // browser restarts and offline days. serializeCookie(def, value, {maxAge}) / ctx.setCookie(def, value, {maxAge}).
+  session: { name: '__Host-wts_sid', secure: true, httpOnly: true, sameSite: 'Strict', path: '/', maxAgeRequired: true },
   attemptLax: { name: '__Host-wts_oa', secure: true, httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 600 },
   attemptStrict: { name: '__Host-wts_oa', secure: true, httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 1200 },
   challenge: { name: '__Host-wts_chal', secure: true, httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 300 },
@@ -392,7 +395,7 @@ function matchRoute(method, path) {
     const m = r.re.exec(path);
     if (!m) continue;
     const params = {};
-    r.names.forEach((n, i) => { params[n] = decodeURIComponent(m[i + 1]); });
+    try { r.names.forEach((n, i) => { params[n] = decodeURIComponent(m[i + 1]); }); } catch (e) { return null; }   // malformed escape → 404
     return { endpoint: r.e, params };
   }
   return null;

@@ -2,6 +2,8 @@
 
 The functions-only site of docs/ACCOUNTS-PLAN.md (§2, §3, §13). It is never published as static content and never copied to
 `ios-app/www`. Configuration comes only from environment variables (`core/config.js`; secrets never in the repository).
+A missing or unknown `WTS_ENV` is treated as `production` (proxy signature required, production host only); `dev.js` and
+the tests set it explicitly.
 
 | Path | Contents |
 |---|---|

@@ -8,9 +8,13 @@
 //        cancel / switches / signin mode
 //   AC4  the skeletons 66–68 in bare contexts: ineligible everywhere but the production https host (or DEV on localhost):
 //        http, capacitor (also with WTS_ACCOUNT_DEV), file:, framed, another host; eligible → every planned name, stubs reject
-//        not_implemented, nothing at load (no fetch, timer, DOM); ACCT markers survive concat-round10, files after 65
-//   AC5  the skeleton's call() / providers() / canonical() / sha256Hex() agree with the fake server and the shared vectors
+//        not_implemented, nothing at load (no fetch, timer, DOM); ACCT markers survive concat-round10, files after 65; the
+//        REAL ios-app/scripts/sync-from-main.js (steps 0c / 0d) on the built page + Round 10 strips every account identifier
+//        and fails on unbalanced markers or a leaked identifier
+//   AC5  the skeleton's call() / providers() / canonical() / sha256Hex() agree with the fake server and the shared vectors; a
+//        2xx that is not JSON is code 'server' (providers off); sha256Hex uses the configured crypto seam
 //   AC6  the app from sources on the harness (http://localhost) — accounts inert, no errors, no timer left
+//   AC8  the session cookie's Max-Age (seconds to abs_expires_at, trusted and public devices) and the fake browser's restart
 //   AC7  the app on the production https location with the fake fetch — eligible, zero requests and zero timers after 5 s,
 //        no account page registered, providers() reaches the fake from the app realm
 'use strict';
@@ -109,7 +113,7 @@ module.exports = [
       assert(!S.checkResponse('me', 403, S.ERROR_EXAMPLES.not_invited).ok, 'an error not listed for the endpoint fails');
       assert(S.checkResponse('me', 501, S.ERROR_EXAMPLES.not_implemented).ok, 'the foundation stub code is accepted everywhere');
       assert(!S.checkResponse('me', 418, {}).ok);
-      assert.deepStrictEqual(S.COOKIES.session, { name: '__Host-wts_sid', secure: true, httpOnly: true, sameSite: 'Strict', path: '/' });
+      assert.deepStrictEqual(S.COOKIES.session, { name: '__Host-wts_sid', secure: true, httpOnly: true, sameSite: 'Strict', path: '/', maxAgeRequired: true });
       assert.strictEqual(S.COOKIES.attemptLax.sameSite, 'Lax'); assert.strictEqual(S.COOKIES.attemptStrict.maxAge, 1200);
       const canon = require(path.join(S.SERVER_DIR, 'core', 'canon'));
       S.CANON_VECTORS.forEach((v) => { assert.strictEqual(canon.canonical(v.value), v.canonical); assert.strictEqual(canon.hashOf(v.value), v.sha256); });
@@ -450,6 +454,41 @@ module.exports = [
       const stripped = out.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '// (accounts and cloud sync: web only — stripped from the iOS bundle)');
       assert(!/WTS_account|WTS_cloudSync|\/api\/v1|wtsacct_/.test(stripped), 'the planned strip of §9 removes every account identifier');
       assert(!/SELF-TEST/.test(out.split('66-account')[1] || ''), 'self-tests stripped');
+      // the REAL iOS sync (§9 layer 1, steps 0c / 0d) on the built page with Round 10 rebuilt in memory
+      const REPO = path.join(BUILD, '..');
+      const SYNC = path.join(REPO, 'ios-app', 'scripts', 'sync-from-main.js');
+      const I10 = require(path.join(BUILD, 'inject-round10.js'));
+      const page = I10.inject(fs.readFileSync(path.join(REPO, 'well-testing-app.html'), 'utf8'), out).out;
+      assert(page.includes('WTS_account') && page.includes('/api/v1'), 'the scratch page carries the account files');
+      const os = require('os'); const cp = require('child_process');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acct-sync-'));
+      const runSync = (html, extraHtml) => {
+        const src = path.join(tmp, 'main-' + Math.random().toString(36).slice(2) + '.html');
+        fs.writeFileSync(src, html + (extraHtml || ''));
+        const dir = fs.mkdtempSync(path.join(tmp, 'www-'));
+        const r = cp.spawnSync(process.execPath, [SYNC], { encoding: 'utf8', timeout: 120000,
+          env: Object.assign({}, process.env, { WTS_SYNC_MAIN_HTML: src, WTS_SYNC_OUT_DIR: dir, WTS_SYNC_HELP_DIR: path.join(tmp, 'no-help') }) });
+        const f = path.join(dir, 'index.html');
+        return { status: r.status, log: r.stdout + r.stderr, html: fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null };
+      };
+      try {
+        // the HTML form (0d) next to the JS form (0c)
+        const withHost = page.replace('</body>', '<!-- ACCT:START --><div id="wts_account_host"></div><!-- ACCT:END -->\n</body>');
+        const ok = runSync(withHost);
+        assert.strictEqual(ok.status, 0, 'sync passes: ' + ok.log.slice(-400));
+        for (const t of ['WTS_account', 'WTS_cloudSync', '/api/v1', 'wtsacct_', 'wts_oa', '/auth/oauth', 'wts_account_host', 'ACCT:START', 'ACCT:END']) {
+          assert(!ok.html.includes(t), 'www/index.html has no ' + t);
+        }
+        assert(ok.html.includes('// (accounts and cloud sync: web only — stripped from the iOS bundle)'), 'step 0c comment');
+        assert(ok.html.includes('<!-- account control: web only -->'), 'step 0d comment');
+        // unbalanced markers and a leaked identifier make the sync fail without writing index.html
+        const bad1 = runSync(page + '\n// ── ACCT:START dangling');
+        assert.notStrictEqual(bad1.status, 0, 'unbalanced markers fail'); assert.strictEqual(bad1.html, null); assert(/unbalanced/.test(bad1.log));
+        const bad2 = runSync(page.replace('</body>', '<script>var x = "/api/v1/me";</script></body>'));
+        assert.notStrictEqual(bad2.status, 0, 'a leaked identifier fails'); assert.strictEqual(bad2.html, null); assert(/\/api\/v1/.test(bad2.log));
+        const bad3 = runSync(page.replace('</body>', '<p>LinkedIn</p></body>'));
+        assert.notStrictEqual(bad3.status, 0, 'LinkedIn outside the markers fails');
+      } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     },
   },
   {
@@ -482,6 +521,21 @@ module.exports = [
         assert.strictEqual(await CS.sha256Hex(v.canonical), v.sha256);
       }
       assert.throws(() => CS.canonical({ x: NaN }), /non-finite/);
+      // a 2xx that is not JSON (the static host's page fallback while no server is configured) → code 'server'
+      const html = () => Promise.resolve({ status: 200, ok: true, headers: { get: (n) => (/content-type/i.test(n) ? 'text/html; charset=utf-8' : null) },
+        json: () => Promise.reject(new SyntaxError('Unexpected token <')), text: () => Promise.resolve('<!doctype html>') });
+      const h2 = bare({ location: PROD_LOC, fetch: html });
+      await assert.rejects(h2.win.WTS_account.call('GET', '/me'), (e) => e.code === 'server' && e.status === 200 && e instanceof h2.win.WTS_account.Error);
+      assert.deepStrictEqual(clone(await h2.win.WTS_account.providers()), { google: 'off', linkedin: 'off' }, 'no API answering → providers off');
+      const badJson = () => Promise.resolve({ status: 200, ok: true, headers: { get: () => 'application/json' }, json: () => Promise.reject(new SyntaxError('bad')) });
+      const h3 = bare({ location: PROD_LOC, fetch: badJson });
+      await assert.rejects(h3.win.WTS_account.call('GET', '/me'), (e) => e.code === 'server');
+      // the crypto seam of WTS_account.configure({crypto}) is used by sha256Hex
+      let digests = 0;
+      b.win.WTS_account.configure({ crypto: { subtle: { digest: (alg, bytes) => { digests++; return crypto.webcrypto.subtle.digest(alg, bytes); } } } });
+      assert.strictEqual(await CS.sha256Hex(S.CANON_VECTORS[0].canonical), S.CANON_VECTORS[0].sha256);
+      assert.strictEqual(digests, 1, 'sha256Hex goes through the configured crypto seam');
+      b.win.WTS_account.configure({ crypto: null });
     },
   },
   {
@@ -518,6 +572,38 @@ module.exports = [
         assert.strictEqual(fake.requests.length, 1);
         assert.deepStrictEqual(a.errors.map((e) => e.message), []);
       } finally { if (a.dispose) a.dispose(); }
+    },
+  },
+  {
+    name: 'AC8 session cookie lifetime: Max-Age = seconds to abs_expires_at (trusted 180 d, public 7 d), survives a browser restart', wp: WP, opts: false,
+    async run(app, assert) {
+      const H = require(path.join(S.SERVER_DIR, 'core', 'http'));
+      assert.throws(() => H.serializeCookie(S.COOKIES.session, 'abc'), /maxAge/, 'the session cookie cannot be set without a lifetime');
+      assert.match(H.serializeCookie(S.COOKIES.session, 'abc', { maxAge: 3600 }), /; Max-Age=3600$/);
+      assert.match(H.serializeCookie(S.COOKIES.session, null), /Max-Age=0/, 'clearing needs no lifetime');
+      assert.match(H.serializeCookie(S.COOKIES.attemptLax, 'x'), /Max-Age=600/, 'definition lifetimes still apply');
+      assert.throws(() => H.serializeCookie(S.COOKIES.session, 'abc', { maxAge: 0 }), /positive/);
+      const DAY = 86400;
+      for (const [what, pub, days] of [['trusted', false, 180], ['public', true, 7]]) {
+        const fake = F.createFakeServer({});
+        const br = fake.browser(what);
+        const r = await F.signIn(fake, br, what + '@company.example', { publicDevice: pub });
+        assert.strictEqual(r.status, 200, what + ' sign-in');
+        const c = br.cookie(S.COOKIES.session.name);
+        assert(c && c.persistent, what + ': the session cookie is persistent');
+        assert.strictEqual(Number(c.attrs['max-age']), days * DAY, what + ': Max-Age = ' + days + ' days');
+        br.restart();
+        assert(br.cookie(S.COOKIES.session.name), what + ': the session survives a browser restart');
+        const me = await br.fetch(B + '/me');
+        assert.strictEqual(me.status, 200, what + ': still signed in after the restart');
+      }
+      // the fake browser drops a cookie without Max-Age on restart
+      const fake = F.createFakeServer({});
+      const br = fake.browser('x');
+      await br.fetch(B + '/health');
+      br.jar.set('tmp', { value: '1', sameSite: 'Strict', expires: null, persistent: false, attrs: {} });
+      br.restart();
+      assert.strictEqual(br.cookie('tmp'), null, 'a browser-session cookie is gone after a restart');
     },
   },
 ];

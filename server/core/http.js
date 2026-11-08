@@ -45,10 +45,14 @@ function clientIp(req, cfg) {
   return req.remoteAddress || null;
 }
 // The rewrite from the static site adds X-WTS-Proxy-Sig; without the shared secret configured only non-production accepts.
+// WTS_PROXY_SIG may hold two comma-separated values during a rotation (§13.3); each is compared in constant time.
 function proxyOk(req, cfg) {
-  const want = cfg.secrets && cfg.secrets.proxySig;
-  if (!want) return !cfg.production;
-  return safeEqual(header(req, 'x-wts-proxy-sig'), want);
+  const want = (cfg.secrets && cfg.secrets.proxySigs) || [];
+  if (!want.length) return !cfg.production;
+  const got = header(req, 'x-wts-proxy-sig');
+  let ok = false;
+  want.forEach((w) => { if (safeEqual(got, w)) ok = true; });       // no early exit: every value is compared
+  return ok;
 }
 // Origin / X-WTS-Req / Content-Type for a non-GET endpoint (exceptions: csp-report, ops-daily; the callback is a GET).
 function writeHeadersOk(req, ep, cfg) {
@@ -64,21 +68,34 @@ function cspContentTypeOk(req) {
   return ct === 'application/csp-report' || ct === 'application/reports+json';
 }
 // ops-daily: HMAC-SHA256(key, method \n path \n ts \n nonce) in X-WTS-Sig (hex); ±5 min; a nonce is accepted once in 10 min.
+// The nonce store is shared by every function instance: dbNonceStore(db) (definer wts.ops_nonce_claim, table ops_nonces).
+// memoryNonceStore() is TEST-ONLY (one process); createApp uses it only outside production.
 function opsSignature(key, method, path, ts, nonce) {
   return crypto.createHmac('sha256', key).update(method + '\n' + path + '\n' + ts + '\n' + nonce).digest('hex');
 }
-function verifyOps(req, path, cfg, nowMs, seen) {
+function memoryNonceStore() {
+  const seen = new Map();
+  return {
+    async claim(nonce, nowMs) {
+      for (const [n, at] of seen) if (nowMs - at > 10 * 60 * 1000) seen.delete(n);
+      if (seen.has(nonce)) return false;
+      seen.set(nonce, nowMs);
+      return true;
+    },
+  };
+}
+function dbNonceStore(db) {
+  return { async claim(nonce) { const r = await db.anon((tx) => tx`select wts.ops_nonce_claim(${nonce}) as ok`); return !!(r[0] && r[0].ok); } };
+}
+// → Promise<boolean>; without a nonce store the call is refused (never accepted unguarded)
+async function verifyOps(req, path, cfg, nowMs, nonces) {
   const key = cfg.secrets && cfg.secrets.opsHmac;
   if (!key) return false;
   const ts = Number(header(req, 'x-wts-ts')); const nonce = String(header(req, 'x-wts-nonce') || '');
   if (!isFinite(ts) || Math.abs(nowMs - ts * 1000) > 5 * 60 * 1000 || !/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) return false;
   if (!safeEqual(header(req, 'x-wts-sig'), opsSignature(key, req.method, path, String(ts), nonce))) return false;
-  if (seen) {
-    for (const [n, at] of seen) if (nowMs - at > 10 * 60 * 1000) seen.delete(n);
-    if (seen.has(nonce)) return false;
-    seen.set(nonce, nowMs);
-  }
-  return true;
+  if (!nonces || typeof nonces.claim !== 'function') return false;
+  return !!(await nonces.claim(nonce, nowMs));
 }
 
 function parseCookies(raw) {
@@ -91,14 +108,22 @@ function parseCookies(raw) {
   });
   return out;
 }
-// def = one of contract.COOKIES; value null clears it (Max-Age=0).
-function serializeCookie(def, value) {
+// def = one of contract.COOKIES; value null clears it (Max-Age=0). opts.maxAge (seconds, integer ≥ 1) overrides the
+// definition's lifetime — the session cookie has none in its definition and MUST be given one: seconds to abs_expires_at,
+// for public and trusted devices alike (contract COOKIES.session note); a cookie without Max-Age dies with the browser.
+function serializeCookie(def, value, opts) {
+  opts = opts || {};
   const parts = [def.name + '=' + (value == null ? '' : value), 'Path=' + def.path];
   if (def.secure) parts.push('Secure');
   if (def.httpOnly) parts.push('HttpOnly');
   parts.push('SameSite=' + def.sameSite);
   if (value == null) parts.push('Max-Age=0');
-  else if (def.maxAge) parts.push('Max-Age=' + def.maxAge);
+  else {
+    const ma = opts.maxAge != null ? Math.floor(Number(opts.maxAge)) : def.maxAge;
+    if (opts.maxAge != null && !(ma >= 1)) throw new Error('serializeCookie: maxAge must be a positive number of seconds');
+    if (!ma && def.maxAgeRequired) throw new Error('serializeCookie: ' + def.name + ' needs {maxAge} (seconds to abs_expires_at)');
+    if (ma) parts.push('Max-Age=' + ma);
+  }
   return parts.join('; ');
 }
 function splitUrl(url) {
@@ -111,5 +136,5 @@ function splitUrl(url) {
 
 module.exports = {
   COMMON_HEADERS, BODY_LIMITS, bodyLimit, header, safeEqual, originalHost, hostAllowed, clientIp, proxyOk, writeHeadersOk,
-  cspContentTypeOk, opsSignature, verifyOps, parseCookies, serializeCookie, splitUrl,
+  cspContentTypeOk, opsSignature, verifyOps, memoryNonceStore, dbNonceStore, parseCookies, serializeCookie, splitUrl,
 };

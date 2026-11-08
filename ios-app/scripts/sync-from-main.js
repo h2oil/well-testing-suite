@@ -17,7 +17,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const MAIN_HTML = path.join(ROOT, 'well-testing-app.html');
+// WTS_SYNC_MAIN_HTML lets tests sync a scratch copy of the built page (e.g. with Round 10 rebuilt in memory).
+const MAIN_HTML = process.env.WTS_SYNC_MAIN_HTML ? path.resolve(process.env.WTS_SYNC_MAIN_HTML) : path.join(ROOT, 'well-testing-app.html');
 const IOS_ADDITIONS = path.join(__dirname, '..', 'ios-additions');
 // WTS_SYNC_OUT_DIR lets tests write the bundle to a scratch folder instead of ios-app/www.
 const WWW = process.env.WTS_SYNC_OUT_DIR ? path.resolve(process.env.WTS_SYNC_OUT_DIR) : path.join(__dirname, '..', 'www');
@@ -53,6 +54,41 @@ const swBefore = html.length;
 html = html.replace(/\/\/ ── SW:START[\s\S]*?\/\/ ── SW:END ──/g, '// (offline service worker: web only — stripped from the iOS bundle)');
 if (html.length !== swBefore) {
     console.log(`[sync] Stripped the web service-worker block (${swBefore - html.length} chars)`);
+}
+
+// ── 0c / 0d. Strip the web-only accounts and cloud-sync code (docs/ACCOUNTS-PLAN.md §9, layer 1). The account
+// client files (prism-build/66-68) and the host hooks sit between ACCT markers; the iOS app is free, local and has no
+// accounts. 0c = the JS form, 0d = the HTML form. The sync FAILS (no www/index.html is written) when the START / END
+// counts differ or when any account identifier survives the strip.
+const ACCT_JS_RE = /\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g;
+const ACCT_HTML_RE = /<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g;
+let acctWrote = false;
+function acctFail(msg) {
+    if (acctWrote) { try { fs.rmSync(OUTPUT, { force: true }); } catch (e) { /* ignore */ } }
+    console.error('[sync] ERROR: ' + msg + ' — www/index.html NOT written (docs/ACCOUNTS-PLAN.md §9)');
+    process.exit(1);
+}
+{
+    const jsStarts = (html.match(/\/\/ ── ACCT:START/g) || []).length;
+    const jsEnds = (html.match(/\/\/ ── ACCT:END ──/g) || []).length;
+    const htStarts = (html.match(/<!--\s*ACCT:START/g) || []).length;
+    const htEnds = (html.match(/ACCT:END\s*-->/g) || []).length;
+    if (jsStarts !== jsEnds) acctFail('ACCT JS markers unbalanced (' + jsStarts + ' START, ' + jsEnds + ' END)');
+    if (htStarts !== htEnds) acctFail('ACCT HTML markers unbalanced (' + htStarts + ' START, ' + htEnds + ' END)');
+    const acctBefore = html.length;
+    html = html.replace(ACCT_JS_RE, '// (accounts and cloud sync: web only — stripped from the iOS bundle)');
+    html = html.replace(ACCT_HTML_RE, '<!-- account control: web only -->');
+    if (/ACCT:START|ACCT:END/.test(html)) acctFail('an ACCT marker survived the strip (nested or malformed block)');
+    if (html.length !== acctBefore) {
+        console.log(`[sync] Stripped the web-only accounts blocks (${jsStarts} JS, ${htStarts} HTML; ${acctBefore - html.length} chars)`);
+    }
+    const ACCT_IDS = ['WTS_account', 'WTS_cloudSync', '/api/v1', 'wts_account_host', 'wtsacct_', '/auth/oauth', 'wts_oa',
+        'Continue with Google', 'Sign in with Google', 'Sign in with LinkedIn', 'LinkedIn'];
+    const left = ACCT_IDS.filter((t) => html.indexOf(t) !== -1);
+    if (left.length) acctFail('account identifiers remain outside ACCT markers: ' + left.join(', '));
+    // "Google" may appear once: the analytics sentence of the privacy text (baseline pinned; WP-H checks the sentence).
+    const google = (html.match(/Google/g) || []).length;
+    if (google > 1) acctFail('"Google" appears ' + google + ' times (the baseline is the one analytics sentence)');
 }
 
 // (The in-app Release Notes are engineering-only and identical on web and
@@ -94,6 +130,7 @@ html = html.replace(
 // ── 4. Ensure output dir exists ──
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
 fs.writeFileSync(OUTPUT, html, 'utf8');
+acctWrote = true;
 
 // ── 5. Copy Capacitor stub + bundled libs (offline PDF export) ──
 const capStub = `// Capacitor runtime bridge — replaced by Capacitor at build time.
@@ -174,6 +211,17 @@ if (fs.existsSync(HELP_SRC)) {
     if (fs.existsSync(path.join(HELP_SRC, 'img', 'manifest.json'))) copy('img/manifest.json');
     if (fs.existsSync(path.join(HELP_SRC, 'user-guide.html'))) copy('user-guide.html');
     console.log(`[sync] Copied help/ → www/help/ (${copied.length} files)`);
+}
+
+// ── 9. www/help must carry no account material (docs/ACCOUNTS-PLAN.md §9, layer 1).
+if (fs.existsSync(HELP_OUT)) {
+    if (fs.existsSync(path.join(HELP_OUT, 'img', 'account'))) acctFail('www/help/img/account/ (an account shot folder) was copied');
+    const guide = path.join(HELP_OUT, 'user-guide.html');
+    if (fs.existsSync(guide)) {
+        const g = fs.readFileSync(guide, 'utf8');
+        const bad = ['Google', 'LinkedIn', 'Sign in', 'wts_account_host'].filter((t) => g.indexOf(t) !== -1);
+        if (bad.length) acctFail('www/help/user-guide.html contains account material: ' + bad.join(', '));
+    }
 }
 
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);

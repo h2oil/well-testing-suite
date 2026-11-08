@@ -9,6 +9,8 @@
 //   SECRET_ENV                    names of every secret variable (the publish check of §13.2 refuses a bundle that names them)
 //   CONFIG_ENV                    names of the non-secret variables
 //
+// WTS_ENV=production|preview|local|test — missing or unknown = production (fail closed). WTS_PROXY_SIG may list two values
+// (current,previous) during a rotation.
 // Kill switches (§13.6): ACCOUNTS_SIGNUP=open|invite|off · SYNC_MODE=on|readonly|off · ACCOUNTS_OFF=1 ·
 // OAUTH_GOOGLE=on|signin|off · OAUTH_LINKEDIN=on|signin|off (both off unless set AND the client id and secret are configured).
 
@@ -68,13 +70,24 @@ function loadConfig(env) {
   env = env || process.env;
   const warnings = [];
   const alerts = [];
-  let wtsEnv = String(env.WTS_ENV || 'local').trim().toLowerCase();
-  if (ENVS.indexOf(wtsEnv) === -1) { warnings.push('WTS_ENV: unknown value — treated as preview'); wtsEnv = 'preview'; }
+  // Fail closed: a missing or unknown WTS_ENV is production (proxy signature required, production Host only, alerts on).
+  // dev.js and the tests always pass WTS_ENV explicitly.
+  let wtsEnv = String(env.WTS_ENV == null ? '' : env.WTS_ENV).trim().toLowerCase();
+  if (!wtsEnv) { warnings.push('WTS_ENV: not set — treated as production'); wtsEnv = 'production'; }
+  else if (ENVS.indexOf(wtsEnv) === -1) { warnings.push('WTS_ENV: unknown value — treated as production'); wtsEnv = 'production'; }
   const production = wtsEnv === 'production';
 
   const signup = pick(env, 'ACCOUNTS_SIGNUP', SWITCHES.ACCOUNTS_SIGNUP, 'invite', warnings);
   const syncMode = pick(env, 'SYNC_MODE', SWITCHES.SYNC_MODE, 'on', warnings);
-  const accountsOff = truthy(env.ACCOUNTS_OFF);
+  // ACCOUNTS_OFF fails closed too: unset / '0' / 'false' / 'off' / 'no' = accounts on; '1' / 'true' / 'on' / 'yes' = off;
+  // any other non-empty value = off with a warning.
+  let accountsOff = false;
+  {
+    const raw = env.ACCOUNTS_OFF == null ? '' : String(env.ACCOUNTS_OFF).trim().toLowerCase();
+    if (raw === '' || /^(0|false|off|no)$/.test(raw)) accountsOff = false;
+    else if (truthy(raw)) accountsOff = true;
+    else { accountsOff = true; warnings.push('ACCOUNTS_OFF: unknown value — treated as 1 (accounts paused)'); }
+  }
 
   const oidcMode = String(env.WTS_OIDC_MODE || '').trim().toLowerCase();
   const providers = {};
@@ -120,11 +133,12 @@ function loadConfig(env) {
     indexPepper: oneKey(env.WTS_INDEX_PEPPER, 'WTS_INDEX_PEPPER', warnings),
     codePeppers: parseKeyList(env.WTS_CODE_PEPPERS, 'WTS_CODE_PEPPERS', warnings),
     sessionPepper: oneKey(env.WTS_SESSION_PEPPER, 'WTS_SESSION_PEPPER', warnings),
-    proxySig: env.WTS_PROXY_SIG || '',
+    // comma-separated: the current value first, the previous one still accepted during a rotation (§13.3)
+    proxySigs: String(env.WTS_PROXY_SIG || '').split(',').map((v) => v.trim()).filter(Boolean),
     opsHmac: oneKey(env.WTS_OPS_HMAC, 'WTS_OPS_HMAC', warnings),
     mailCredential: env.WTS_MAIL_CREDENTIAL || '',
   };
-  if (production && !secrets.proxySig) alerts.push('WTS_PROXY_SIG missing on the production host — every request answers 404');
+  if (production && !secrets.proxySigs.length) alerts.push('WTS_PROXY_SIG missing on the production host — every request answers 404');
 
   const cfg = {
     env: wtsEnv, production, prodHost: PROD_HOST, prodOrigin: PROD_ORIGIN, devOrigin,

@@ -10,7 +10,7 @@ const D = require('./_db');
 const USER_TABLES = ['users', 'passkeys', 'identities', 'devices', 'sessions', 'projects', 'revisions', 'blobs', 'push_receipts',
   'historian_backups', 'audit'];
 const SYSTEM_TABLES = ['oauth_attempts', 'oidc_keys', 'email_codes', 'webauthn_challenges', 'mail_outbox', 'signup_allowlist',
-  'deletion_ledger', 'rate_counters'];
+  'deletion_ledger', 'rate_counters', 'ops_nonces'];
 // definer function → the one role that may execute it
 const DEFINERS = {
   resolve_session: 'wts_api', user_by_email: 'wts_api', user_by_credential: 'wts_api', create_user: 'wts_api',
@@ -18,7 +18,8 @@ const DEFINERS = {
   oauth_attempt_extend: 'wts_api', oauth_attempt_finish: 'wts_api', identity_link: 'wts_api', identity_touch: 'wts_api',
   identity_unlink: 'wts_api', oidc_key_get: 'wts_api', oidc_key_put: 'wts_api', code_issue: 'wts_api', code_check: 'wts_api',
   challenge_issue: 'wts_api', challenge_take: 'wts_api', rate_hit: 'wts_api', allowlist_has: 'wts_api', mail_queue: 'wts_api',
-  deletion_request: 'wts_api', support_lookup: 'wts_support', support_recover: 'wts_support', support_security_reset: 'wts_support',
+  deletion_request: 'wts_api', email_move: 'wts_api', recovery_set: 'wts_api', audit_system: 'wts_api', ops_nonce_claim: 'wts_api',
+  support_lookup: 'wts_support', support_recover: 'wts_support', support_security_reset: 'wts_support',
 };
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 
@@ -128,6 +129,60 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
     const uq = await H.admin.sql`select pg_get_constraintdef(c.oid) as d from pg_constraint c join pg_class t on t.oid = c.conrelid
       where t.relname = 'identities' and c.contype = 'u'`;
     assert.deepStrictEqual(uq.map((r) => r.d).sort(), ['UNIQUE (provider, subject_bidx)', 'UNIQUE (user_id, provider)']);
+  });
+
+  test('addresses only through definers: wts_api cannot write email / recovery index columns; pre-auth audit via audit_system', async () => {
+    const A = uid(); await mkUser(H.admin.sql, A);
+    const api = H.as('wts_api');
+    for (const col of ['email_bidx', 'email_enc', 'recovery_bidx', 'recovery_enc']) {
+      await assert.rejects(api.asUser(A, (tx) => tx.unsafe('update wts.users set ' + col + " = '\\x01'::bytea")), /permission denied/, col);
+    }
+    // own columns stay writable
+    assert.strictEqual((await api.asUser(A, (tx) => tx`update wts.users set opt_historian = true returning id`)).length, 1);
+    // a pre-auth audit row (user_id NULL) is refused to wts_api directly; the definer exists for it
+    await assert.rejects(api.asUser(A, (tx) => tx`insert into wts.audit (user_id, actor, action, at, hash) values (null, 'system', 'x', now(), '\\x00')`), /row-level security/);
+    await assert.rejects(api.sql`select wts.email_move(${A}, ${Buffer.alloc(32)}, ${Buffer.from('e')})`, (e) => e.code === '0A000');
+    await assert.rejects(api.sql`select wts.recovery_set(${A}, ${null}, ${null})`, (e) => e.code === '0A000');
+    await assert.rejects(api.sql`select wts.audit_system('x', null, null, null, null, '{}'::jsonb)`, (e) => e.code === '0A000');
+  });
+
+  test('cross-tenant references: a revision or conflict row cannot point at another account\'s project (no existence probe)', async () => {
+    const A = uid(); const B = uid(); await mkUser(H.admin.sql, A); await mkUser(H.admin.sql, B);
+    const [bp] = await H.admin.sql`select id from wts.projects where user_id = ${B}`;
+    const [ap] = await H.admin.sql`select id from wts.projects where user_id = ${A}`;
+    const api = H.as('wts_api');
+    const rev = (tx, pid) => tx`insert into wts.revisions (project_id, user_id, rev, core_hash, vhash, parts, bytes, reason, saved_at)
+      values (${pid}, ${A}, 1, '\\x00', '\\x00', '{}'::jsonb, 1, 'save', now())`;
+    const errB = await api.asUser(A, (tx) => rev(tx, bp.id)).then(() => null, (e) => e);
+    const errNone = await api.asUser(A, (tx) => rev(tx, uid())).then(() => null, (e) => e);
+    assert.ok(errB && errNone, 'both refused');
+    assert.strictEqual(errB.code, '23503'); assert.strictEqual(errNone.code, '23503');
+    assert.strictEqual(errB.constraint_name, errNone.constraint_name, 'another account\'s id fails exactly like a missing id');
+    assert.ok(!String(errB.detail || '').includes(B), 'the error never names the other account');
+    await api.asUser(A, (tx) => rev(tx, ap.id));                    // own project: fine
+    const conflict = (tx, of) => tx`insert into wts.projects (id, user_id, meta_enc, created_at, modified_at, is_conflict_of)
+      values (${uid()}, ${A}, ${Buffer.from('m')}, now(), now(), ${of})`;
+    await assert.rejects(api.asUser(A, (tx) => conflict(tx, bp.id)), (e) => e.code === '23503');
+    await api.asUser(A, (tx) => conflict(tx, ap.id));
+    const fks = await H.admin.sql`select pg_get_constraintdef(c.oid) as d from pg_constraint c join pg_class t on t.oid = c.conrelid
+      where t.relname in ('projects', 'revisions') and c.contype = 'f' and pg_get_constraintdef(c.oid) like '%REFERENCES wts.projects%'`;
+    assert.strictEqual(fks.length, 2);
+    fks.forEach((f) => assert.match(f.d, /user_id\) REFERENCES wts\.projects\(id, user_id\)/));
+  });
+
+  test('ops-daily nonce store: claimed once across connections; wts_api cannot read the table', async () => {
+    const api = H.as('wts_api'); const api2 = H.as('wts_api');
+    const n = crypto.randomBytes(12).toString('hex');
+    assert.strictEqual((await api.sql`select wts.ops_nonce_claim(${n}) as ok`)[0].ok, true);
+    assert.strictEqual((await api2.sql`select wts.ops_nonce_claim(${n}) as ok`)[0].ok, false, 'a replay on another instance');
+    assert.strictEqual((await api.sql`select wts.ops_nonce_claim('short') as ok`)[0].ok, false);
+    await assert.rejects(api.sql`select * from wts.ops_nonces`, /permission denied/);
+    const H2 = require('../core/http');
+    const store = H2.dbNonceStore(api);
+    const n2 = crypto.randomBytes(12).toString('hex');
+    assert.strictEqual(await store.claim(n2), true); assert.strictEqual(await store.claim(n2), false);
+    await H.admin.sql`update wts.ops_nonces set seen_at = now() - interval '11 minutes' where nonce = ${n}`;
+    assert.strictEqual((await api.sql`select wts.ops_nonce_claim(${n}) as ok`)[0].ok, true, 'expired after 10 minutes');
   });
 
   test('a changed migration file is refused once applied', async () => {

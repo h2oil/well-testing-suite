@@ -1,13 +1,17 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Build status (2026-11-08): Phase 1 build started; foundation landed** (WP0, technical part: `server/` skeleton with the
-§3.4 schema and `server/core/contract.js`, `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`,
-inert skeletons 66–68, `acct-contract.test.js`; refinements to §3/§3.4: a `wts_definer` role owns the definer functions, `email` is
-optional for a step-up code, `sharedBrowser` on oauth start, `mail_queue` / `deletion_request` definers, `gone` on signed-in routes,
-`501 not_implemented` for foundation stubs only). Owner items of WP0 / §13.10 are still open.
-
-**Status: plan, revision 4 — target v3.5 / v3.5.x / v3.6 (web only)** (2026-11-08; revision 2: 2026-11-07). No code yet; this
-file and one CLAUDE.md line (the naming exception below) are all the planning step changes. **Revision 3** adds two sign-in
+**Status: revision 4; Phase 1 build started; foundation landed (WP0 technical part) — target v3.5 / v3.5.x / v3.6 (web only)**
+(2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
+`prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
+`acct-contract.test.js` and the §9 iOS strip steps 0c / 0d in `sync-from-main.js`. Refinements to §3 / §3.4: a `wts_definer`
+role owns the definer functions; `email` is optional for a step-up code; `sharedBrowser` on oauth start; `mail_queue` /
+`deletion_request` / `email_move` / `recovery_set` / `audit_system` / `ops_nonce_claim` definers (wts_api has no UPDATE on the
+address index columns; ops-daily nonces live in `ops_nonces`); composite `(id, user_id)` project keys; `gone` on signed-in
+routes; `501 not_implemented` for foundation stubs only; a missing or unknown `WTS_ENV` is production; `WTS_PROXY_SIG` takes
+two comma-separated values during a rotation; the session cookie always carries Max-Age = seconds to `abs_expires_at`. Owner
+items of WP0 / §13.10 are still open, and so is a naming exception for the server's pinned database-driver package (its name,
+registry URL and lockfile links; confined to `server/package.json`, `server/package-lock.json` and `server/core/db.js`).
+The planning step itself changed only this file and one CLAUDE.md line (the naming exception below). **Revision 3** adds two sign-in
 methods, **Google** and **LinkedIn**, beside the e-mail code (D3, D4, D22–D24, §4.10–4.15, §13.10, Q24–Q30; Appendix B.3 lists
 every changed section). **Revision 4** answers three reviews of revision 3 (provider security; product and operations;
 consistency): a separate step-up timestamp that no provider sign-in sets, the iOS strip of the web privacy and release-note

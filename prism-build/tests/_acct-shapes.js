@@ -142,7 +142,7 @@ const CANON_VECTORS = [
 const CLIENT_NAMES = {
   '66-account.js': { global: 'WTS_account', always: ['eligible'],
     fns: ['configure', 'state', 'refresh', 'openSignIn', 'signOut', 'stepUp', 'changeEmail', 'setRecovery', 'addPasskey', 'removePasskey',
-      'renamePasskey', 'providers', 'signInWith', 'finishProviderSignIn', 'methods', 'linkProvider', 'unlinkMethod', 'call', 'on', 'off'],
+      'renamePasskey', 'providers', 'signInWith', 'finishProviderSignIn', 'methods', 'linkProvider', 'unlinkMethod', 'call', 'on', 'off', 'seam'],
     props: ['VERSION', 'Error', 'PROVIDERS'] },
   '67-cloud-sync.js': { global: 'WTS_cloudSync',
     fns: ['status', 'link', 'unlink', 'saveToCloud', 'openFromCloud', 'importFiles', 'syncNow', 'listProjects', 'history', 'restoreRevision',
