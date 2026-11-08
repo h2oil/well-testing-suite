@@ -18,6 +18,8 @@ const { execFileSync } = require('child_process');
 const X = require('./_wts-fu-shapes');
 const EQ = require('./_wts-equip-shapes');
 const GOLD = require('../wts-calc-golden.js');
+// v1.6.0 changed the T-201 default line-up; runs against a frozen engine pin the v3.3.1 one on the working engine (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSFU';
 const BUILD_DIR = path.resolve(__dirname, '..');
@@ -30,7 +32,7 @@ function gitShow(spec) {
 
 // mid: [[t_s, fn(sim)], …] calls made during the run (mid-run setRigup); the 'rigup' events are collected (payload JSON)
 function runStates(S, secs, dt, every, setup, flow, opts, mid) {
-  const sim = S.create(flow, Object.assign({ seed: 7 }, opts || {})), events = [];
+  const sim = S.create(flow, Object.assign({ seed: 7 }, S.SURGE_LINEUP ? legacyOpts(opts) : (opts || {}))), events = [];   // pin on the working engine only
   sim.on('rigup', (p) => events.push(J(p)));
   if (setup) setup(sim);
   const states = [J(sim.getState())];

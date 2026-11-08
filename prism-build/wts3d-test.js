@@ -180,9 +180,10 @@ const SECTION_A = (G, src) => {
       const c0 = JSON.stringify(s.getControls());
       // v3.0: the lineup also carries the divert valve stroke (s) and the gauge 'allow interrupting batches' option
       // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
-      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
+      // v1.6.0 (WTS_sim): default T-201 line-up XV-201A open, XV-201B shut, LCV-201 suction B, auto-divert on
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
         surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
-      if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
+      if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== true) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
       const c1 = s.getControls(), st1 = s.getState();
@@ -319,7 +320,8 @@ const SECTION_B = (G /*, src */) => {
       const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
       if (def !== 'suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
       if (!S || !F) return true;
-      const s = S.create(F, { seed: 6 }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
+      // v3.3.1 T-201 line-up pinned (WTS_sim 1.6.0 starts with XV-201B shut, suction B, auto-divert on)
+      const s = S.create(F, { seed: 6, config: { surge: { lineup: { inlet: [true, true], suction: 'both', auto: false, initFrac: [0.55, 0.55] } } } }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
       for (let i = 0; i < 30; i++) s.advance(10);
       const st = s.getState(), n = I.normalize(st, I.makeNorm());
       const old = I.normalize({ sep: {}, surge: { frac: 0.4, fracW: 0.1 }, gauge: { active: 1, tanks: [{}, {}] } }, I.makeNorm());   // pre-divert snapshot shape

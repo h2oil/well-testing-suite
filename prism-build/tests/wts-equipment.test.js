@@ -12,6 +12,8 @@ const { execFileSync } = require('child_process');
 const X = require('./_wts-equip-shapes');
 // the SIM-FOLLOWUP contract (v1.5.0, CK-102 appended): the working engine's rig-up keys, defaults and node order (§3.6)
 const FU = require('./_wts-fu-shapes');
+// v1.6.0 changed the T-201 default line-up; identity runs pin the v3.3.1 one on the working engine (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSEQ';
 const BUILD_DIR = path.resolve(__dirname, '..');
@@ -51,7 +53,8 @@ function round7Bodies(html) {
 }
 
 function runStates(S, secs, dt, every, setup, flow, opts) {
-  const sim = S.create(flow || S.SAMPLE_FLOW, Object.assign({ seed: 7 }, opts || {}));
+  // the working engine (it exports SURGE_LINEUP) runs with the v3.3.1 T-201 line-up pinned; the frozen engines ignore the pin
+  const sim = S.create(flow || S.SAMPLE_FLOW, Object.assign({ seed: 7 }, S.SURGE_LINEUP ? legacyOpts(opts) : (opts || {})));
   if (setup) setup(sim);
   const states = [JSON.parse(JSON.stringify(sim.getState()))];
   const n = Math.round(secs / dt), k = Math.round(every / dt);
@@ -433,7 +436,9 @@ module.exports = [
       assert.ok(Math.abs(st.desander.sithp_psi - A('sithpEst').value) <= A('sithpEst').rel * A('sithpEst').value && st.desander.sithpEst === true && st.desander.ratingOK, 'SITHP estimate');
       X.HIST_KEYS.forEach((k) => { const h = sim.getHistory(k); assert.ok(h.t.length > 0 && h.y.every((y) => isFinite(y)), 'history ' + k); });
       // controls (§6.9, exact JSON key order) and the API stubs of WP-E1 / WP-E2
-      assert.strictEqual(JSON.stringify(sim.getControls()), X.CONTROLS_DEFAULT_JSON, 'getControls default');
+      // v1.6.0: the T-201 default line-up changed (XV-201A open, XV-201B shut, suction B, auto-divert on); the rest is the v3.3.1 contract
+      const CD = J(X.CONTROLS_DEFAULT); CD.surge.inlet = [true, false]; CD.surge.suction = 'B'; CD.surge.auto = true;
+      assert.strictEqual(JSON.stringify(sim.getControls()), JSON.stringify(CD), 'getControls default');
       assert.ok(X.checkShape('controls', J(sim.getControls()), { strict: true }).ok);
       X.API_INSTANCE_NEW.forEach((k) => assert.strictEqual(typeof sim[k], 'function', 'api ' + k));
       assert.strictEqual(sim.dumpDesander().ok, false); assert.strictEqual(sim.setSurgeRoute('both').ok, false);

@@ -11,6 +11,8 @@
 // Expected values are configuration set points, conservation, hand calculations (valve equation, hydrostatic head,
 // heater temperature rise from the steady flow) or event order — never numbers taken from the code under test.
 'use strict';
+// the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSRIG';
 // SIM-FOLLOWUP §3.6: signatures derive from the contract's default (11 characters since v1.5.0, CK-102 appended)
@@ -19,7 +21,7 @@ const NOISE_OFF = { noise: { on: false } };
 const WGRAD = 0.4331;                  // psi/ft of fresh water
 const GPM_BPD = 34.2857;               // 1 US gal/min = 34.2857 bbl/d
 
-function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(Object.assign({ seed: 7 }, o || {}))); }
+function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
 function run(s, secs, dt, cb) { const n = Math.round(secs / dt); for (let i = 0; i < n; i++) { s.advance(dt); if (cb && cb(s.getState(), i) === false) return false; } return true; }
 function runUntil(s, maxSec, dt, pred) { for (let i = 0; i < Math.ceil(maxSec / dt); i++) { s.advance(dt); if (pred(s.getState())) return true; } return false; }
 function alarmIds(st) { return st.alarms.map((a) => a.id); }
