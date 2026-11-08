@@ -53,10 +53,13 @@ const KNOWN_ERRORS = ['access_denied', 'user_cancelled_login', 'user_cancelled_a
 
 function isHttps(u) { return typeof u === 'string' && /^https:\/\/[a-z0-9.-]+(\/[^\s]*)?$/.test(u); }
 // Every production address https and present; issuers https or the documented bare form of Google's issuer.
-function checkPins() {
+// `candidate` (tests only) checks another configuration object of the same form instead of the pins.
+function checkPins(candidate) {
   const errs = [];
+  const all = candidate || CONFIG;
   PROVIDERS.forEach((p) => {
-    const c = CONFIG[p];
+    const c = all[p];
+    if (!c) { errs.push(p + ' has no configuration'); return; }
     ['authorization', 'token', 'jwks'].forEach((k) => { if (!isHttps(c[k])) errs.push(p + '.' + k + ' is not a pinned https address'); });
     c.issuers.forEach((i) => { if (!(isHttps(i) || /^[a-z0-9.-]+\.[a-z]{2,}$/.test(i))) errs.push(p + '.issuer ' + i + ' is not acceptable'); });
     if (/localhost|127\.0\.0\.1|\.test(\/|$)/.test(JSON.stringify(c))) errs.push(p + ' names a local or test host');
