@@ -5,6 +5,29 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-08 — v3.4.1 release: simulator choke manifold legs, T-201 inlets, Rig-up menu
+
+App and App Store version 3.4.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
+`#appVersionLabel` fallback). Simulator change: 1c09d0a (integration).
+
+**What shipped**
+- CK-101 choke manifold with an adjustable leg and a positive (fixed-bean) leg. Host inputs `wts_ckLeg` ('adj' | 'fixed'),
+  `wts_bean` (adjustable bean), `wts_beanFix` (positive bean) → `flow.ck1`; engine snapshot `nodes.choke.leg / beanAdj /
+  beanFix` (no `flow.ck1` → 'adj', bean, null); leg picked on the Choke card, the CK-101 card (38 buttons) or a 3D tap
+  (`{type:'ckleg'}`). 32 VERSION 1.4.0: manifold geometry table `CK_M` after a 3-1/16" 10K two-choke manifold (4 gate valves,
+  studded tees, hammer-union inlet / outlet, skid).
+- T-201 compartments A and B with their own side inlets (one each side of the baffle), filling independently. New engine default
+  line-up `SURGE_LINEUP_DEF`: XV-201A open, XV-201B shut, LCV-201 suction from B, auto-divert on at 80 %, steady start A 0.35 /
+  B 0.60; `cfg.surge.lineup` pins another line-up (`SURGE_LINEUP_V331`; identity tests pin it via tests/_wts-lineup-pin.js).
+  38 migrates an untouched stored line-up pref (no `ctlUser.surge`) so the new default applies.
+- Toolbar Rig-up menu in 38 (`rigModel` / `rigToggle`) for the optional items T-202, DS-101 and CK-102.
+- Help screenshots load on the website: the `help/` folder is deployed with the page.
+
+**Notes** — `accept-test.js --integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help
+tests). Code comments in 31 / 38 say v1.6.0 / v3.3.4 for these changes; `WTS_sim.VERSION` is still '1.5.0'.
+
+---
+
 ## 2026-11-07 — v3.4 release: DFIT analysis in PRiSM (increment 3.4a)
 
 Plan: docs/DFIT-PLAN.md (WPH, WP0–WP7; Appendix D = integration amendments; branch `df/int`). App and App Store version 3.4
