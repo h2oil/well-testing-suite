@@ -208,6 +208,63 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
     assert.ok(audit.some((a) => a.action === 'email_change') && audit.some((a) => a.action === 'email_revert'));
   });
 
+  test('T18: a second change inside the revert window is refused; the first revert code still works and removes everything since the FIRST change', async () => {
+    const victim = 'hal@company.example'; const b = 'hal.attacker@company.example'; const c = 'hal.third@company.example';
+    const br = T.browser();
+    await T.signIn(br, victim);
+    await br.call('POST', '/auth/email/change', { newEmail: b });
+    assert.strictEqual((await br.call('POST', '/auth/email/confirm', { code: T.codeFor(b, 'code_email_change') })).status, 200);
+    const revertCode = T.lastMail(victim, 'notice_email_changed').params.revertCode;
+    const id = await T.userId(b);
+    const changedAt = (await T.db.sql`select email_changed_at from wts.users where id = ${id}`)[0].email_changed_at;
+    // the attacker adds a provider identity and a passkey between the two changes
+    await T.db.sql`insert into wts.identities (id, user_id, provider, issuer, subject_bidx, subject_enc, email_verified_at_link, linked_at, linked_via)
+      values (gen_random_uuid(), ${id}, 'linkedin', 'https://issuer.example', ${Buffer.alloc(32, 21)}, ${Buffer.from('s')}, true, now(), 'account_page')`;
+    await T.db.sql`insert into wts.passkeys (id, user_id, credential_id, public_key, sign_count, created_at)
+      values (gen_random_uuid(), ${id}, ${Buffer.alloc(32, 22)}, ${Buffer.from('pk')}, 0, now())`;
+    // a step-up with a code to B (the attacker's own mailbox), then B → C: the same uniform 202, but no code goes out
+    await T.stepUp(br);
+    const n = T.mail.sent.length;
+    assert.strictEqual((await br.call('POST', '/auth/email/change', { newEmail: c })).status, 202);
+    assert.strictEqual(T.mail.sent.length, n, 'no code to the third address while the revert window is open');
+    assert.strictEqual((await br.call('POST', '/auth/email/confirm', { code: '12345678' })).json.error, 'invalid_or_expired');
+    // the definer refuses it too (defence in depth)
+    const moved = await T.api.asUser(id, (tx) => tx`select wts.email_move(${id}, ${T.keys.emailBidx(c)}, ${Buffer.from('x')}) as ok`);
+    assert.strictEqual(moved[0].ok, false);
+    const u = (await T.db.sql`select email_prev_bidx, email_changed_at from wts.users where id = ${id}`)[0];
+    assert.ok(Buffer.from(u.email_prev_bidx).equals(T.keys.emailBidx(victim)), 'the original address stays revertible');
+    assert.strictEqual(+u.email_changed_at, +changedAt, 'the change time does not move');
+    const rev = await T.browser().call('POST', '/auth/email/revert', { email: victim, code: revertCode });
+    assert.strictEqual(rev.status, 200, JSON.stringify(rev.json));
+    assert.strictEqual(rev.json.identitiesRemoved, 1); assert.strictEqual(rev.json.passkeysRemoved, 1);
+    assert.strictEqual(await T.userId(victim), id);
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.identities where user_id = ${id}`)[0].n, 0);
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.passkeys where user_id = ${id}`)[0].n, 0);
+    assert.strictEqual((await br.call('GET', '/me')).json.error, 'signed_out');
+    // after the revert a change is possible again
+    const b3 = T.browser(); await T.signIn(b3, victim);
+    await b3.call('POST', '/auth/email/change', { newEmail: c });
+    assert.ok(T.codeFor(c, 'code_email_change'), 'a new change starts once the window is closed');
+  });
+
+  test('revert: junk tries never burn the revert code; they are throttled per old address and prefix (429), elsewhere the real code works', async () => {
+    const owner = 'ida@company.example'; const neu = 'ida.new@company.example';
+    const br = T.browser();
+    await T.signIn(br, owner);
+    await br.call('POST', '/auth/email/change', { newEmail: neu });
+    await br.call('POST', '/auth/email/confirm', { code: T.codeFor(neu, 'code_email_change') });
+    const code = T.lastMail(owner, 'notice_email_changed').params.revertCode;
+    const attacker = T.browser({ ip: '198.51.100.7' });
+    for (let i = 0; i < 5; i++) assert.strictEqual((await attacker.call('POST', '/auth/email/revert', { email: owner, code: String(10000000 + i) })).json.error, 'invalid_or_expired');
+    const sixth = await attacker.call('POST', '/auth/email/revert', { email: owner, code });
+    assert.strictEqual(sixth.status, 429, 'throttled: the code is not even checked'); assert.ok(sixth.json.retryAfter >= 1);
+    const live = await T.db.sql`select count(*)::int as n from wts.email_codes where purpose = 'email_revert' and email_bidx = ${T.keys.emailBidx(owner)} and used_at is null and invalidated_at is null`;
+    assert.strictEqual(live[0].n, 1, 'the revert code is still live');
+    const ok = await T.browser({ ip: '192.0.2.44' }).call('POST', '/auth/email/revert', { email: owner, code });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.json));
+    assert.ok(await T.userId(owner), 'the owner has the address back');
+  });
+
   test('recovery address: code to it (step-up), one address one role, sign-in and step-up codes can go there, remove', async () => {
     const br = T.browser();
     const email = 'gina@company.example'; const rec = 'gina@personal.example';

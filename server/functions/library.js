@@ -27,14 +27,18 @@ async function library(ctx) {
 
 async function libraryBody(ctx) {
   S.syncGate(ctx, false);
-  const buf = await SE.withSession(ctx, {}, async (unit) => {
+  const buf = await SE.withSession(ctx, {}, async (unit, s) => {
     const u = await unit.user();
     if (!Number(u.row.lib_rev) || !u.row.lib_hash) fail('not_found');
     const h = hex(u.row.lib_hash);
     const obj = await store(ctx).get(KEYS.library(unit.userId, h));
     if (!obj) fail('not_found');
     const plain = E.openChunk(u.keys, { userId: unit.userId, hash: 'lib:' + h, n: 0 }, obj);
-    await R.enforce(unit.sql, 'blobReadUserDay', unit.userId, plain.length);
+    // the library body counts in the same read buckets as blob chunks: hourly user and session, daily user (§8.3)
+    const len = plain.length; const sk = s.hash.toString('hex').slice(0, 32);
+    await R.enforce(unit.sql, s.readUnlocked ? 'blobReadUserHourUnlocked' : 'blobReadUserHour', unit.userId, len);
+    await R.enforce(unit.sql, s.readUnlocked ? 'blobReadUserDayUnlocked' : 'blobReadUserDay', unit.userId, len);
+    await R.enforce(unit.sql, s.readUnlocked ? 'blobReadSessionHourUnlocked' : 'blobReadSessionHour', sk, len);
     return plain;
   });
   return { status: 200, body: buf };

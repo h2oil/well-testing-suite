@@ -207,18 +207,29 @@ async function codeVerify(ctx) {
 // a sign-in revokes the session the request carried (same user: replaced by the new one; another user: revoked)
 async function revokeOther(ctx) { try { await SE.revokePresented(ctx); } catch (e) { ctx.log.warn('revoke presented session failed'); } }
 
+// the uniform 202 of e-mail change and recovery add is padded to the same floor as code/start (T4): a taken address, an
+// address inside the revert window and a sent code take the same time
+async function padded(ctx, fn) {
+  const t0 = Date.now();
+  try { return await fn(); } finally { await S.pad(ctx.config.codeFloorMs, t0); }
+}
+
 async function emailChange(ctx) {
-  await SE.withSession(ctx, { stepup: true }, async (unit, s) => {
+  await padded(ctx, () => SE.withSession(ctx, { stepup: true }, async (unit, s) => {
     const e = V.normEmail(ctx.body.newEmail);
     if (!e) fail('bad_request', { field: 'newEmail' });
     await R.enforce(unit.sql, 'mailEmailChangeHour', s.userId);
     const a = await addresses(unit);
     if (e === a.primary) return;
+    // inside the 7-day revert window of an earlier change no further change starts (wts.email_move refuses it too), so the
+    // first address keeps its revert code (T18); the reply stays uniform
+    const w = a.u.row.email_revert_until;
+    if (w && new Date(w).getTime() > Date.now()) return;
     const bidx = ctx.keys.emailBidx(e);
     if ((await unit.sql`select 1 from wts.user_by_email(${bidx})`).length) return;   // uniform: nothing is said or sent
     await unit.sql`update wts.users set email_pending_enc = ${a.u.seal(ADDR, e)} where id = ${s.userId}`;
     await issueCode(unit, ctx, { purpose: 'email_change', email: e, bind: { user: s.userId, sid: s.hash }, template: 'code_email_change' });
-  });
+  }));
   return { status: 202, body: { ok: true } };
 }
 
@@ -249,9 +260,24 @@ async function emailRevert(ctx) {
   const old = V.normEmail(ctx.body.email);
   if (!old) fail('invalid_or_expired');
   const out = await S.unitOf(ctx, null, async (unit) => {
+    const bidx = ctx.keys.emailBidx(old);
+    const ak = addrKey(bidx);
+    if (ctx.ipPrefix) {
+      const ip = await R.hit(unit.sql, 'revertIpHour', ctx.ipPrefix);
+      if (ip.over && ip.n === ip.limit + 1) ctx.log.warn('alert: revert tries above the soft per-prefix limit');
+    }
+    // throttled: the code is not even checked (and never burnt), so a flood of junk tries cannot remove the owner's way back
+    const k = ak + ':' + (ctx.ipPrefix || '-');
+    const f1 = await R.peek(unit.sql, 'revertFailAddrIpHour', k);
+    const f2 = await R.peek(unit.sql, 'revertFailAddrDay', ak);
+    if (f1.n >= f1.limit || f2.n >= f2.limit) return unit.failAfterCommit('rate', { retryAfter: Math.max(1, Number(f1.n >= f1.limit ? f1.retryAfter : f2.retryAfter) || 60) });
     const hm = ctx.keys.codeCandidates('email_revert', old, V.normCode(ctx.body.code));
-    const r = (await unit.sql`select * from wts.email_revert(${ctx.keys.emailBidx(old)}, ${arr(unit.sql, hm)})`)[0];
-    if (!r) return unit.failAfterCommit('invalid_or_expired');
+    const r = (await unit.sql`select * from wts.email_revert(${bidx}, ${arr(unit.sql, hm)})`)[0];
+    if (!r) {
+      await R.hit(unit.sql, 'revertFailAddrIpHour', k);
+      await R.hit(unit.sql, 'revertFailAddrDay', ak);
+      return unit.failAfterCommit('invalid_or_expired');
+    }
     await unit.setUser(r.user_id);
     const a = await addresses(unit);
     const device = await S.deviceFor(unit, ctx, r.user_id, {});
@@ -266,6 +292,10 @@ async function emailRevert(ctx) {
 
 async function recoverySet(ctx) {
   const b = ctx.body;
+  if (b.email !== undefined) return padded(ctx, () => recoverySetWith(ctx, b));
+  return recoverySetWith(ctx, b);
+}
+async function recoverySetWith(ctx, b) {
   return SE.withSession(ctx, { stepup: true }, async (unit, s) => {
     const a = await addresses(unit);
     if (b.email !== undefined) {

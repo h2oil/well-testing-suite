@@ -62,6 +62,12 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.strictEqual((await br.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 200, 'unlocked: 300 MB/h');
     const other = T.browser(); await T.signIn(other, email, { consent: false });
     assert.strictEqual((await other.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 429, 'another session of the account stays at 100 MB/h');
+    // the daily cap rises with the unlock too (600 MB = two hours at 300 MB/h); other sessions keep 300 MB/day
+    const day = 'to_timestamp(floor(extract(epoch from now()) / 86400) * 86400)';
+    await T.db.sql.unsafe("update wts.rate_counters set n = 0 where bucket = 'blobReadUserHour:" + uid + "'");
+    await T.db.sql.unsafe("insert into wts.rate_counters (bucket, window_start, n) values ('blobReadUserDay:" + uid + "', " + day + ", 400000000) on conflict (bucket, window_start) do update set n = 400000000");
+    assert.strictEqual((await br.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 200, 'unlocked: past 300 MB in the day');
+    assert.strictEqual((await other.call('GET', '/blobs/' + head.parts[0].hash + '/0')).status, 429, 'not unlocked: 300 MB/day');
     for (let i = 0; i < 4; i++) assert.strictEqual((await br.call('POST', '/account/export', {})).status, 200);
     const sixth = await br.call('POST', '/account/export', {});
     assert.strictEqual(sixth.status, 429, '5 exports a day');
@@ -96,6 +102,9 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.strictEqual((await b2.call('GET', '/projects')).json.length, 1, 'the projects are back');
     assert.ok(T.lastMail(email, 'notice_delete_cancelled'));
     assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.deletion_ledger where user_id = ${id}`)[0].n, 0);
+    // a cancel that did not happen is never reported as one
+    const again = await b2.call('POST', '/account/delete/cancel', {});
+    assert.strictEqual(again.status, 410); assert.strictEqual(again.json.error, 'gone');
   });
 
   test('the daily job purges an account after its grace: rows, objects, tombstoned audit, ledger row and ledger object; replay after a restore', async () => {
@@ -177,6 +186,29 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.strictEqual(d2.inactive.started, 1);
     const u = (await T.db.sql`select status, delete_at from wts.users where id = ${id}`)[0];
     assert.strictEqual(u.status, 'deleting'); assert.ok(+u.delete_at > Date.now() + 6 * 86400e3);
+    const a = await T.db.sql`select actor, detail from wts.audit where user_id = ${id} and action = 'delete_request'`;
+    assert.strictEqual(a.length, 1); assert.strictEqual(a[0].actor, 'system'); assert.strictEqual(a[0].detail.reason, 'inactivity');
+    const m = T.lastMail(email, 'notice_delete_requested');
+    assert.ok(m && /cancel/i.test(m.text) && /LinkedIn/.test(m.text), 'the deletion notice, with how to cancel');
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.mail_outbox where sent_at is null`)[0].n, 0, 'queued and sent');
+    assert.ok((await J.auditVerify(T.db.sql)).bad.length === 0, 'the system row keeps the chain valid');
+  });
+
+  test('purge: the rows are committed before the objects go; a failed object delete is finished from the ledger by the next run', async () => {
+    const br = T.browser(); const email = 'yara@company.example';
+    const s = await T.signIn(br, email); const id = s.user.id;
+    await project(br, 'Purge later', 1);
+    await T.stepUp(br);
+    assert.strictEqual((await br.call('POST', '/account/delete', { confirm: 'DELETE', immediate: true })).status, 200);
+    const flaky = Object.assign({}, T.objects, { delPrefix() { return Promise.reject(new Error('store down')); } });
+    const d1 = await J.runDaily({ db: T.jobsDb, keys: T.keys, objects: flaky, mail: T.mail, log: T.log, only: ['accounts'] });
+    assert.strictEqual(d1.accounts.purged, 1, JSON.stringify(d1));
+    assert.strictEqual(await T.userId(email), null, 'the rows are gone');
+    assert.ok((await T.objects.list('u/' + id + '/')).length >= 1, 'the objects are still there');
+    assert.ok(await T.objects.get('ledger/' + id), 'the ledger object was written before the object delete');
+    const d2 = await T.jobs.run({ only: ['accounts'] });
+    assert.ok(d2.accounts.retried >= 1, JSON.stringify(d2));
+    assert.deepStrictEqual(await T.objects.list('u/' + id + '/'), [], 'finished from the ledger');
   });
 
   test('audit: a hash chain per account, append-only for wts_api, verified and anchored daily (chain/<date> with a Merkle root); tamper is found', async () => {
@@ -259,7 +291,14 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.strictEqual(await T.userId('sue.new@company.example'), id);
     const b3 = T.browser(); const s3 = await T.signIn(b3, 'sue.new@company.example', { consent: false });
     assert.strictEqual(s3.user.id, id);
-    assert.ok((await T.db.sql`select email_revert_until from wts.users where id = ${id}`)[0].email_revert_until);
+    const w1 = (await T.db.sql`select email_prev_bidx, email_changed_at, email_revert_until from wts.users where id = ${id}`)[0];
+    assert.ok(w1.email_revert_until);
+    // a second recovery inside the window keeps the ORIGINAL address revertible (same rule as email_move, T18)
+    await O.recover({ db: sup, jobsDb: T.jobsDb, keys: T.keys, actor: 'support:owner', userId: id, newEmail: 'sue.third@company.example' });
+    const w2 = (await T.db.sql`select email_prev_bidx, email_changed_at, email_revert_until from wts.users where id = ${id}`)[0];
+    assert.ok(Buffer.from(w2.email_prev_bidx).equals(T.keys.emailBidx(email)), 'still the first address');
+    assert.strictEqual(+w2.email_changed_at, +w1.email_changed_at); assert.strictEqual(+w2.email_revert_until, +w1.email_revert_until);
+    assert.strictEqual(await T.userId('sue.third@company.example'), id);
   });
 
   test('master-key rotation: rewrap every key ring with a new kid, data stays readable, the old kid can then be retired', async () => {

@@ -63,6 +63,15 @@ async function withSession(ctx, opts, fn) {
   });
 }
 
+// the per-user outbox key of a public device (§10.8) is created at sign-in, so GET /me/outbox-key never writes (§3.2)
+async function ensureOutboxKey(unit, ctx, userId) {
+  if (unit.userId !== userId || typeof ctx.keys.outboxKey !== 'function') return;
+  const u = await unit.user();
+  if (u.row.outbox_key_enc) return;
+  const key = ctx.keys.outboxKey();
+  await unit.sql`update wts.users set outbox_key_enc = ${u.seal('user.outbox_key', key.toString('base64'))} where id = ${userId} and outbox_key_enc is null`;
+}
+
 async function issue(unit, ctx, o) {
   const sid = randomToken(32);
   const h = ctx.keys.sidHash(sid);
@@ -74,6 +83,7 @@ async function issue(unit, ctx, o) {
       now(), now() + ${life.idle}::interval, now() + ${life.abs}::interval, ${method}, ${o.identityId || null}, ${ctx.ipPrefix}, ${unit.ua.family})
     returning idle_expires_at, abs_expires_at, ceil(extract(epoch from abs_expires_at - now()))::int as secs`)[0];
   await unit.sql`update wts.users set last_sign_in_at = now() where id = ${o.userId}`;
+  await ensureOutboxKey(unit, ctx, o.userId);
   ctx.setCookie(C.COOKIES.session, sid, { maxAge: Math.max(1, r.secs) });
   return { sid, hash: h, idleExpires: r.idle_expires_at, absExpires: r.abs_expires_at, publicDevice: !!o.publicDevice };
 }

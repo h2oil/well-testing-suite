@@ -2,7 +2,7 @@
 // server/functions/blobs.js — content-addressed, immutable, chunked parts (docs/ACCOUNTS-PLAN.md §3.3 Blobs, D5, D11, §8.3).
 // WP-S1. Object keys are built from the session's user id only. A PUT to a complete blob, or a different body for a stored
 // chunk, is 409 immutable (a byte-identical repeat is 204). Reads count against 100 MB/h and 300 MB/day per user and
-// 100 MB/h per session (300 MB/h for 2 h after an export step-up); a session that reads more than half the account in a day
+// 100 MB/h per session (after an export step-up: 300 MB/h for 2 h and 600 MB/day for that session); a session that reads more than half the account in a day
 // gets a security notice.
 
 const { fail } = require('../core/errors');
@@ -13,7 +13,7 @@ const SE = require('../core/session');
 const R = require('../core/rate');
 const B = require('../core/blobstore');
 
-const MAX_CHUNKS = 64;          // 64 × 4 MB covers the 64 MB project cap (D16)
+const MAX_CHUNKS = 16;          // 16 × 4 MB = the 64 MB project cap (D16); a larger blob is refused before it is stored
 
 async function blobsHas(ctx) {
   S.syncGate(ctx, false);
@@ -56,7 +56,7 @@ async function blobGet(ctx) {
     const len = plain.length;
     const sk = s.hash.toString('hex').slice(0, 32);
     await R.enforce(unit.sql, s.readUnlocked ? 'blobReadUserHourUnlocked' : 'blobReadUserHour', unit.userId, len);
-    await R.enforce(unit.sql, 'blobReadUserDay', unit.userId, len);
+    await R.enforce(unit.sql, s.readUnlocked ? 'blobReadUserDayUnlocked' : 'blobReadUserDay', unit.userId, len);
     await R.enforce(unit.sql, s.readUnlocked ? 'blobReadSessionHourUnlocked' : 'blobReadSessionHour', sk, len);
     const day = await R.hit(unit.sql, 'blobReadSessionDay', sk, len);
     const used = Number(u.row.used_bytes);

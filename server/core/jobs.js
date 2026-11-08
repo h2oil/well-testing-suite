@@ -9,10 +9,12 @@
 //     mail    retry unsent outbox rows (tries < 5)
 //     trash   purge projects trashed > 30 days ago
 //     prune   squash and prune revisions of every project (core/revisions.js)
-//     blobs   delete blobs unreferenced for 7 days (objects first, then the row)
-//     accounts purge accounts whose delete_at has passed: objects, rows; audit rows keep a random tombstone id; the ledger row
-//             is stamped and an append-only ledger/<user id> object written outside the restorable database (ids and dates only)
-//     inactive warnings at 23 and 23.5 months without a sign-in, a deletion request (7-day grace) at 24 months
+//     blobs   delete blobs unreferenced for 7 days and unfinished uploads older than 24 h (the row first, then the objects)
+//     accounts purge accounts whose delete_at has passed: rows (committed), then the append-only ledger/<user id> object
+//             outside the restorable database (ids and dates only) and the account's objects; audit rows keep a random
+//             tombstone id; the ledger row is stamped. Object deletes that failed are retried from the ledger (30 days)
+//     inactive warnings at 23 and 23.5 months without a sign-in, a deletion request (7-day grace) at 24 months: audited
+//             (actor system) with the deletion notice queued in the outbox
 //     quota   recompute users.used_bytes from complete blobs
 //     retain  audit rows > 12 months, ledger rows purged > 12 months ago
 //     anchor  verify the audit hash chains and write each chain head plus a Merkle root to chain/<YYYY-MM-DD>
@@ -23,6 +25,7 @@ const crypto = require('crypto');
 const { KEYS } = require('./objects');
 const { planPrune } = require('./revisions');
 const E = require('./envelope');
+const { compose } = require('./mail');
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 function merkle(leaves) {
@@ -48,10 +51,11 @@ async function auditVerify(sql) {
   return { rows, bad, broken, heads };
 }
 
-async function purgeAccount(sql, objects, uid, o) {
+// the rows of one account, in the caller's transaction (no object-store call inside it: a failed transaction must not leave
+// rows whose objects are already gone)
+async function purgeAccountRows(sql, uid) {
   const tomb = crypto.randomUUID();
   await sql`update wts.audit set user_id = ${tomb} where user_id = ${uid}`;
-  if (objects) await objects.delPrefix(KEYS.user(uid));
   await sql`delete from wts.push_receipts where user_id = ${uid}`;
   await sql`delete from wts.historian_backups where user_id = ${uid}`;
   await sql`delete from wts.revisions where user_id = ${uid}`;
@@ -60,11 +64,34 @@ async function purgeAccount(sql, objects, uid, o) {
   await sql`delete from wts.projects where user_id = ${uid}`;
   await sql`delete from wts.users where id = ${uid}`;
   const l = (await sql`update wts.deletion_ledger set purged_at = coalesce(purged_at, now()) where user_id = ${uid} returning requested_at, purge_at, purged_at`)[0];
-  const rec = { v: 1, userId: uid, requestedAt: l ? l.requested_at.toISOString() : null, purgeAt: l ? l.purge_at.toISOString() : null,
+  return { v: 1, userId: uid, requestedAt: l ? l.requested_at.toISOString() : null, purgeAt: l ? l.purge_at.toISOString() : null,
     purgedAt: l ? l.purged_at.toISOString() : new Date().toISOString() };
-  if (objects && !(o && o.noLedgerObject)) await objects.put(KEYS.ledger(uid), Buffer.from(JSON.stringify(rec)));
+}
+// purge one account: the rows in one transaction and commit, THEN the append-only ledger object and the account's objects.
+// A failed object delete is retried by the next daily run from the ledger (step 'accounts', rows purged in the last 30 days).
+async function purgeAccount(sql, objects, uid, o) {
+  const rec = await sql.begin((tx) => purgeAccountRows(tx, uid));
+  if (objects) {
+    if (!(o && o.noLedgerObject)) await objects.put(KEYS.ledger(uid), Buffer.from(JSON.stringify(rec)));
+    await objects.delPrefix(KEYS.user(uid));
+  }
   return rec;
 }
+
+// queue a mail from the job in the outbox (in the caller's transaction); sendOutbox sends it after the commit
+async function queueMail(tx, keys, to, template, params) {
+  const id = crypto.randomUUID();
+  await tx`insert into wts.mail_outbox (id, to_enc, template, params_enc, created_at)
+    values (${id}, ${keys.system.seal('mail.to', to)}, ${template}, ${keys.system.seal('mail.params', JSON.stringify({ template, params }))}, now())`;
+  return { id, to, template, params };
+}
+async function sendOutbox(sql, mail, m, log) {
+  let ok = false;
+  try { await mail.send(compose({ to: m.to, template: m.template, params: m.params })); ok = true; } catch (e) { log.warn('jobs: ' + m.template + ' send failed'); }
+  await sql`update wts.mail_outbox set sent_at = ${ok ? sql`now()` : null}, tries = tries + 1 where id = ${m.id}`;
+  return ok;
+}
+const whenText = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
 async function runDaily(o) {
   const db = o.db; const sql = db.sql; const log = o.log || { info() {}, warn() {} };
@@ -97,7 +124,7 @@ async function runDaily(o) {
       try {
         const to = keys.system.open('mail.to', m.to_enc).toString('utf8');
         const p = JSON.parse(keys.system.open('mail.params', m.params_enc).toString('utf8'));
-        await mail.send({ to, template: m.template, params: p.params });
+        await mail.send(compose({ to, template: m.template, params: p.params }));
         ok = true; sent++;
       } catch (e) { failed++; }
       await sql`update wts.mail_outbox set sent_at = ${ok ? sql`now()` : null}, tries = tries + 1 where id = ${m.id}`;
@@ -131,12 +158,22 @@ async function runDaily(o) {
   });
 
   await step('blobs', async () => {
-    let removed = 0;
-    for (const b of await sql`select user_id, encode(hash, 'hex') as h, chunks from wts.blobs where refcount = 0 and unref_at is not null and unref_at < now() - interval '7 days' limit 5000`) {
-      if (objects) for (let i = 0; i < b.chunks; i++) await objects.del(KEYS.blob(b.user_id, b.h, i));
-      removed += await n(sql`delete from wts.blobs where user_id = ${b.user_id} and hash = decode(${b.h}, 'hex') and refcount = 0`);
+    // the ROW goes first, in its own statement (a commit referencing the blob holds it FOR SHARE: the delete waits and then
+    // skips it, or finished first and the commit answers missing_blobs), and only then the objects (T15). Unfinished
+    // uploads older than 24 h go the same way (they count against the quota while they exist).
+    const gone = await sql`delete from wts.blobs b where (b.user_id, b.hash) in (
+        select user_id, hash from wts.blobs where (refcount = 0 and unref_at is not null and unref_at < now() - interval '7 days')
+          or (not complete and created_at < now() - interval '24 hours') limit 5000)
+      and ((b.refcount = 0 and b.unref_at is not null and b.unref_at < now() - interval '7 days') or (not b.complete and b.created_at < now() - interval '24 hours'))
+      returning b.user_id, encode(b.hash, 'hex') as h, b.chunks, b.complete`;
+    let failed = 0;
+    if (objects) {
+      for (const b of gone) {
+        for (let i = 0; i < b.chunks; i++) { try { await objects.del(KEYS.blob(b.user_id, b.h, i)); } catch (e) { failed++; } }
+      }
     }
-    return { blobs: removed };
+    if (failed) log.warn('jobs: ' + failed + ' blob objects could not be deleted (no row refers to them)');
+    return { blobs: gone.filter((b) => b.complete).length, unfinished: gone.filter((b) => !b.complete).length };
   });
 
   await step('accounts', async () => {
@@ -144,11 +181,28 @@ async function runDaily(o) {
     for (const u of await sql`select id, email_enc, data_key_wrapped from wts.users where status = 'deleting' and delete_at <= now()`) {
       let to = null;
       try { to = E.openField(keys.ring.open(u.data_key_wrapped), 'user.address', u.email_enc).toString('utf8'); } catch (e) { to = null; }
-      await sql.begin((tx) => purgeAccount(tx, objects, u.id));
+      try { await purgeAccount(sql, objects, u.id); } catch (e) {
+        // rows committed but an object call failed: the ledger retry below (next run) finishes it
+        if ((await sql`select 1 from wts.users where id = ${u.id}`).length) throw e;
+        log.warn('jobs: account objects not yet deleted; retried from the ledger');
+      }
       purged++;
-      if (to && mail) { try { await mail.send({ to, template: 'notice_delete_done', params: { at: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC' } }); } catch (e) { log.warn('jobs: deletion notice failed'); } }
+      if (to && mail) { try { await mail.send(compose({ to, template: 'notice_delete_done', params: { at: whenText(Date.now()) } })); } catch (e) { log.warn('jobs: deletion notice failed'); } }
     }
-    return { purged };
+    // retry from the ledger: the objects of every account purged in the last 30 days (idempotent; the ledger object too)
+    let retried = 0;
+    if (objects) {
+      for (const l of await sql`select user_id, requested_at, purge_at, purged_at from wts.deletion_ledger where purged_at is not null and purged_at > now() - interval '30 days'`) {
+        try {
+          if (!(await objects.get(KEYS.ledger(l.user_id)))) {
+            await objects.put(KEYS.ledger(l.user_id), Buffer.from(JSON.stringify({ v: 1, userId: l.user_id, requestedAt: l.requested_at.toISOString(),
+              purgeAt: l.purge_at.toISOString(), purgedAt: l.purged_at.toISOString() })));
+          }
+          if (await objects.delPrefix(KEYS.user(l.user_id))) retried++;
+        } catch (e) { log.warn('jobs: ledger retry failed'); }
+      }
+    }
+    return { purged, retried };
   });
 
   await step('inactive', async () => {
@@ -159,13 +213,21 @@ async function runDaily(o) {
       const warnedSinceSignIn = u.warned && u.warned > u.last;
       const ageMonths = (Date.now() - u.last) / (30.44 * 86400e3);
       if (ageMonths >= 24) {
-        await sql.begin(async (tx) => {
-          await tx`update wts.users set status = 'deleting', delete_requested_at = now(), delete_at = now() + interval '7 days' where id = ${u.id}`;
-          await tx`delete from wts.identities where user_id = ${u.id}`;
-          await tx`delete from wts.sessions where user_id = ${u.id}`;
+        let to = null;
+        if (keys) { try { to = E.openField(keys.ring.open(u.data_key_wrapped), 'user.address', u.email_enc).toString('utf8'); } catch (e) { to = null; } }
+        const queued = await sql.begin(async (tx) => {
+          const r = (await tx`update wts.users set status = 'deleting', delete_requested_at = now(), delete_at = now() + interval '7 days'
+            where id = ${u.id} returning delete_at`)[0];
+          const ni = (await tx`delete from wts.identities where user_id = ${u.id} returning 1`).length;
+          const ns = (await tx`delete from wts.sessions where user_id = ${u.id} returning 1`).length;
           await tx`insert into wts.deletion_ledger (user_id, requested_at, purge_at) values (${u.id}, now(), now() + interval '7 days')
             on conflict (user_id) do update set requested_at = excluded.requested_at, purge_at = excluded.purge_at, purged_at = null`;
+          // audited on the account's own chain (actor system) like a user's own request
+          await tx`insert into wts.audit (user_id, actor, action, at, detail, hash)
+            values (${u.id}, 'system', 'delete_request', now(), ${tx.json({ reason: 'inactivity', identities: ni, sessions: ns })}, '\\x'::bytea)`;
+          return to && keys ? queueMail(tx, keys, to, 'notice_delete_requested', { deleteAt: whenText(+r.delete_at) }) : null;
         });
+        if (queued && mail) await sendOutbox(sql, mail, queued, log);
         started++;
         continue;
       }
@@ -214,8 +276,10 @@ async function ledgerReplay(o) {
     if (!rec || !rec.userId) continue;
     const exists = (await sql`select 1 from wts.users where id = ${rec.userId}`).length > 0;
     if (exists) {
-      await sql.begin((tx) => purgeAccount(tx, o.objects, rec.userId, { noLedgerObject: true }));
+      await purgeAccount(sql, o.objects, rec.userId, { noLedgerObject: true });
       replayed++;
+    } else {
+      await o.objects.delPrefix(KEYS.user(rec.userId));              // objects a failed purge left behind
     }
     await sql`insert into wts.deletion_ledger (user_id, requested_at, purge_at, purged_at)
       values (${rec.userId}, ${rec.requestedAt || rec.purgedAt}, ${rec.purgeAt || rec.purgedAt}, ${rec.purgedAt})
@@ -224,4 +288,4 @@ async function ledgerReplay(o) {
   return { replayed };
 }
 
-module.exports = { runDaily, ledgerReplay, auditVerify, merkle, purgeAccount };
+module.exports = { runDaily, ledgerReplay, auditVerify, merkle, purgeAccount, purgeAccountRows };

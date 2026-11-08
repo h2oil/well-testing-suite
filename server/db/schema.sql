@@ -150,6 +150,9 @@ BEGIN
   IF p_purpose IS NULL OR p_code_hmacs IS NULL OR (p_email_bidx IS NULL AND (p_bound_user IS NULL OR p_bound_sid IS NULL)) THEN
     RETURN QUERY SELECT false, NULL::uuid, 0; RETURN;
   END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_check: not this account' USING ERRCODE = '42501';
+  END IF;
   SELECT * INTO v_hit FROM wts.email_codes c
     WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
       AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
@@ -188,6 +191,9 @@ BEGIN
     RAISE EXCEPTION 'code_issue: % needs a user and a session', p_purpose USING ERRCODE = '22023';
   END IF;
   IF p_purpose = 'email_revert' AND p_bound_user IS NULL THEN RAISE EXCEPTION 'code_issue: email_revert needs a user' USING ERRCODE = '22023'; END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_issue: not this account' USING ERRCODE = '42501';
+  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.code:' || encode(p_email_bidx, 'hex') || ':' || p_purpose, 0));
   UPDATE wts.email_codes SET invalidated_at = now() WHERE id IN (
     SELECT c.id FROM wts.email_codes c WHERE c.email_bidx = p_email_bidx AND c.purpose = p_purpose
@@ -266,6 +272,9 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_bidx, 'hex'), 0));
   IF wts.address_in_use(p_new_bidx, p_user_id) THEN RETURN false; END IF;
   IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND (u.email_bidx = p_new_bidx OR u.recovery_bidx = p_new_bidx)) THEN RETURN false; END IF;
+  IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND u.email_revert_until IS NOT NULL AND u.email_revert_until > now()) THEN
+    RETURN false;
+  END IF;
   UPDATE wts.users SET email_prev_bidx = email_bidx, email_prev_enc = email_enc, email_bidx = p_new_bidx, email_enc = p_new_enc,
     email_changed_at = now(), email_revert_until = now() + interval '7 days', email_pending_enc = NULL WHERE id = p_user_id;
   RETURN FOUND;
@@ -283,11 +292,7 @@ BEGIN
   IF p_prev_bidx IS NULL OR p_code_hmacs IS NULL THEN RETURN; END IF;
   SELECT * INTO c FROM wts.email_codes x WHERE x.email_bidx = p_prev_bidx AND x.purpose = 'email_revert' AND x.used_at IS NULL
     AND x.invalidated_at IS NULL AND x.expires_at > now() AND x.code_hmac = ANY (p_code_hmacs) ORDER BY x.expires_at DESC LIMIT 1 FOR UPDATE;
-  IF NOT FOUND THEN
-    UPDATE wts.email_codes x SET attempts = x.attempts + 1, invalidated_at = CASE WHEN x.attempts + 1 >= 5 THEN now() END
-      WHERE x.email_bidx = p_prev_bidx AND x.purpose = 'email_revert' AND x.used_at IS NULL AND x.invalidated_at IS NULL AND x.expires_at > now();
-    RETURN;
-  END IF;
+  IF NOT FOUND THEN RETURN; END IF;
   SELECT * INTO u FROM wts.users x WHERE x.id = c.bound_user FOR UPDATE;
   IF NOT FOUND OR u.email_prev_bidx IS DISTINCT FROM p_prev_bidx OR u.email_revert_until IS NULL OR u.email_revert_until <= now() THEN RETURN; END IF;
   UPDATE wts.email_codes SET used_at = now() WHERE id = c.id;
@@ -548,8 +553,13 @@ BEGIN
   PERFORM wts._support_actor(p_actor);
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_email_bidx, 'hex'), 0));
   IF wts.address_in_use(p_new_email_bidx, p_user_id) THEN RAISE EXCEPTION 'support_recover: address in use' USING ERRCODE = '23505'; END IF;
-  UPDATE wts.users SET email_prev_bidx = email_bidx, email_prev_enc = email_enc, email_bidx = p_new_email_bidx, email_enc = p_new_email_enc,
-    email_changed_at = now(), email_revert_until = now() + interval '7 days' WHERE id = p_user_id AND status <> 'deleting';
+  UPDATE wts.users SET
+    email_prev_bidx = CASE WHEN email_revert_until > now() THEN email_prev_bidx ELSE email_bidx END,
+    email_prev_enc = CASE WHEN email_revert_until > now() THEN email_prev_enc ELSE email_enc END,
+    email_changed_at = CASE WHEN email_revert_until > now() THEN email_changed_at ELSE now() END,
+    email_revert_until = CASE WHEN email_revert_until > now() THEN email_revert_until ELSE now() + interval '7 days' END,
+    email_bidx = p_new_email_bidx, email_enc = p_new_email_enc, email_pending_enc = NULL
+    WHERE id = p_user_id AND status <> 'deleting';
   IF NOT FOUND THEN RAISE EXCEPTION 'support_recover: no such active account' USING ERRCODE = '02000'; END IF;
   DELETE FROM wts.sessions WHERE user_id = p_user_id;
   INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (p_user_id, p_actor, 'support_recover', now(), '{}'::jsonb, ''::bytea);
@@ -1325,12 +1335,13 @@ GRANT ALL ON FUNCTION wts.user_by_identity(p_provider text, p_subject_bidx bytea
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.audit TO wts_definer;
 GRANT SELECT,INSERT ON TABLE wts.audit TO wts_api;
-GRANT SELECT,DELETE ON TABLE wts.audit TO wts_jobs;
+GRANT SELECT,INSERT,DELETE ON TABLE wts.audit TO wts_jobs;
 
 GRANT UPDATE(user_id) ON TABLE wts.audit TO wts_jobs;
 
 GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_definer;
 GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_api;
+GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.blobs TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.blobs TO wts_api;
@@ -1361,7 +1372,7 @@ GRANT SELECT,DELETE ON TABLE wts.identities TO wts_jobs;
 GRANT UPDATE(email_ack_bidx) ON TABLE wts.identities TO wts_api;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.mail_outbox TO wts_definer;
-GRANT SELECT,DELETE ON TABLE wts.mail_outbox TO wts_jobs;
+GRANT SELECT,INSERT,DELETE ON TABLE wts.mail_outbox TO wts_jobs;
 
 GRANT UPDATE(sent_at) ON TABLE wts.mail_outbox TO wts_jobs;
 

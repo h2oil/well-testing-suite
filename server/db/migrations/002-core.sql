@@ -157,7 +157,10 @@ BEGIN
 EXCEPTION WHEN unique_violation THEN RETURN NULL;
 END $$;
 
--- one-address-one-role moves (§3.3): the caller's own account only
+-- one-address-one-role moves (§3.3): the caller's own account only. While a 7-day revert window is open a further change
+-- is refused (the handler gives the uniform reply): the original address, its revert code and the change time stay as they
+-- are, so a session holder who moves A → B → C cannot strand the owner of A (T18; the revert still removes everything
+-- added since the FIRST change).
 CREATE OR REPLACE FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea)
   RETURNS boolean
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
@@ -167,6 +170,9 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_bidx, 'hex'), 0));
   IF wts.address_in_use(p_new_bidx, p_user_id) THEN RETURN false; END IF;
   IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND (u.email_bidx = p_new_bidx OR u.recovery_bidx = p_new_bidx)) THEN RETURN false; END IF;
+  IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND u.email_revert_until IS NOT NULL AND u.email_revert_until > now()) THEN
+    RETURN false;
+  END IF;
   UPDATE wts.users SET email_prev_bidx = email_bidx, email_prev_enc = email_enc, email_bidx = p_new_bidx, email_enc = p_new_enc,
     email_changed_at = now(), email_revert_until = now() + interval '7 days', email_pending_enc = NULL WHERE id = p_user_id;
   RETURN FOUND;
@@ -191,7 +197,9 @@ END $$;
 
 -- §4.3 revert, pre-auth: the old address and its 7-day revert code. Restores the address, clears the recovery address,
 -- removes every passkey and provider identity added since the change (their sessions go with them: sessions.identity_id
--- cascades) and revokes every session. Returns nothing for a wrong / expired code (one try counted).
+-- cascades) and revokes every session. Returns nothing for a wrong / expired code. A miss never counts against or
+-- invalidates the live revert code (the person who changed the address knows the old one, so failures must not be able to
+-- burn the owner's only way back); guessing is throttled per old address in the handler instead (core/rate.js revert*).
 CREATE FUNCTION wts.email_revert(p_prev_bidx bytea, p_code_hmacs bytea[])
   RETURNS TABLE (user_id uuid, sessions int, passkeys int, identities int)
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
@@ -202,11 +210,7 @@ BEGIN
   IF p_prev_bidx IS NULL OR p_code_hmacs IS NULL THEN RETURN; END IF;
   SELECT * INTO c FROM wts.email_codes x WHERE x.email_bidx = p_prev_bidx AND x.purpose = 'email_revert' AND x.used_at IS NULL
     AND x.invalidated_at IS NULL AND x.expires_at > now() AND x.code_hmac = ANY (p_code_hmacs) ORDER BY x.expires_at DESC LIMIT 1 FOR UPDATE;
-  IF NOT FOUND THEN
-    UPDATE wts.email_codes x SET attempts = x.attempts + 1, invalidated_at = CASE WHEN x.attempts + 1 >= 5 THEN now() END
-      WHERE x.email_bidx = p_prev_bidx AND x.purpose = 'email_revert' AND x.used_at IS NULL AND x.invalidated_at IS NULL AND x.expires_at > now();
-    RETURN;
-  END IF;
+  IF NOT FOUND THEN RETURN; END IF;
   SELECT * INTO u FROM wts.users x WHERE x.id = c.bound_user FOR UPDATE;
   IF NOT FOUND OR u.email_prev_bidx IS DISTINCT FROM p_prev_bidx OR u.email_revert_until IS NULL OR u.email_revert_until <= now() THEN RETURN; END IF;
   UPDATE wts.email_codes SET used_at = now() WHERE id = c.id;
@@ -269,7 +273,8 @@ END $$;
 
 -- ── definer bodies: e-mail codes (§4.1–4.2) ─────────────────────────────────────────────────────────────────────
 -- At most two live codes per address, purpose and attempt: a third invalidates the oldest. Lifetime 15 min (the revert
--- code: 7 days); a caller may ask for less, never more.
+-- code: 7 days); a caller may ask for less, never more. A code bound to a user can only be issued inside that user's own
+-- transaction (p_bound_user = app.user_id), like every other definer that acts on one account.
 CREATE OR REPLACE FUNCTION wts.code_issue(p_email_bidx bytea, p_code_hmac bytea, p_pepper_kid int, p_purpose text, p_bound_user uuid,
                                           p_bound_sid bytea, p_bound_attempt uuid, p_expires_at timestamptz, p_ip_prefix inet)
   RETURNS uuid
@@ -283,6 +288,9 @@ BEGIN
     RAISE EXCEPTION 'code_issue: % needs a user and a session', p_purpose USING ERRCODE = '22023';
   END IF;
   IF p_purpose = 'email_revert' AND p_bound_user IS NULL THEN RAISE EXCEPTION 'code_issue: email_revert needs a user' USING ERRCODE = '22023'; END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_issue: not this account' USING ERRCODE = '42501';
+  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.code:' || encode(p_email_bidx, 'hex') || ':' || p_purpose, 0));
   UPDATE wts.email_codes SET invalidated_at = now() WHERE id IN (
     SELECT c.id FROM wts.email_codes c WHERE c.email_bidx = p_email_bidx AND c.purpose = p_purpose
@@ -297,7 +305,8 @@ END $$;
 -- Check a code: p_code_hmacs = the HMAC of the entered code under every live pepper (and every candidate address for a
 -- step-up). Bindings match exactly (IS NOT DISTINCT FROM). p_email_bidx NULL matches by binding only and needs a user and a
 -- session (a step-up whose address the page did not send). A hit marks the code used and invalidates the other live codes
--- of that address, purpose and binding; a miss counts one try on each live code (5 tries each).
+-- of that address, purpose and binding; a miss counts one try on each live code (5 tries each). A user-bound check runs only
+-- inside that user's own transaction (p_bound_user = app.user_id).
 CREATE OR REPLACE FUNCTION wts.code_check(p_email_bidx bytea, p_purpose text, p_code_hmacs bytea[], p_bound_user uuid, p_bound_sid bytea,
                                           p_bound_attempt uuid)
   RETURNS TABLE (ok boolean, code_id uuid, attempts_left int)
@@ -308,6 +317,9 @@ DECLARE v_hit wts.email_codes%ROWTYPE; v_left int;
 BEGIN
   IF p_purpose IS NULL OR p_code_hmacs IS NULL OR (p_email_bidx IS NULL AND (p_bound_user IS NULL OR p_bound_sid IS NULL)) THEN
     RETURN QUERY SELECT false, NULL::uuid, 0; RETURN;
+  END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_check: not this account' USING ERRCODE = '42501';
   END IF;
   SELECT * INTO v_hit FROM wts.email_codes c
     WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
@@ -440,7 +452,9 @@ BEGIN
   INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (v_u, p_actor, 'support_lookup', now(), jsonb_build_object('found', v_u IS NOT NULL), ''::bytea);
   IF v_u IS NOT NULL THEN RETURN QUERY SELECT v_u, v_s, v_c; END IF;
 END $$;
--- §13.7 recovery: the new (code-checked) address becomes the primary, the old one keeps its 7-day revert window
+-- §13.7 recovery: the new (code-checked) address becomes the primary, the old one keeps its 7-day revert window. Inside an
+-- open revert window the ORIGINAL previous address, change time and window are kept (same rule as email_move: the owner of
+-- the first address can still revert and remove everything added since the first change).
 CREATE OR REPLACE FUNCTION wts.support_recover(p_actor text, p_user_id uuid, p_new_email_bidx bytea, p_new_email_enc bytea)
   RETURNS void
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = wts, pg_temp
@@ -449,8 +463,13 @@ BEGIN
   PERFORM wts._support_actor(p_actor);
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_email_bidx, 'hex'), 0));
   IF wts.address_in_use(p_new_email_bidx, p_user_id) THEN RAISE EXCEPTION 'support_recover: address in use' USING ERRCODE = '23505'; END IF;
-  UPDATE wts.users SET email_prev_bidx = email_bidx, email_prev_enc = email_enc, email_bidx = p_new_email_bidx, email_enc = p_new_email_enc,
-    email_changed_at = now(), email_revert_until = now() + interval '7 days' WHERE id = p_user_id AND status <> 'deleting';
+  UPDATE wts.users SET
+    email_prev_bidx = CASE WHEN email_revert_until > now() THEN email_prev_bidx ELSE email_bidx END,
+    email_prev_enc = CASE WHEN email_revert_until > now() THEN email_prev_enc ELSE email_enc END,
+    email_changed_at = CASE WHEN email_revert_until > now() THEN email_changed_at ELSE now() END,
+    email_revert_until = CASE WHEN email_revert_until > now() THEN email_revert_until ELSE now() + interval '7 days' END,
+    email_bidx = p_new_email_bidx, email_enc = p_new_email_enc, email_pending_enc = NULL
+    WHERE id = p_user_id AND status <> 'deleting';
   IF NOT FOUND THEN RAISE EXCEPTION 'support_recover: no such active account' USING ERRCODE = '02000'; END IF;
   DELETE FROM wts.sessions WHERE user_id = p_user_id;
   INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (p_user_id, p_actor, 'support_recover', now(), '{}'::jsonb, ''::bytea);
@@ -524,5 +543,8 @@ GRANT DELETE ON wts.identities, wts.historian_backups, wts.deletion_ledger, wts.
 GRANT SELECT ON wts.identities, wts.historian_backups TO wts_jobs;
 GRANT UPDATE (refcount, unref_at) ON wts.blobs TO wts_jobs;
 GRANT UPDATE (is_conflict_of) ON wts.projects TO wts_jobs;
+-- the inactivity deletion (§8.5) is audited (actor system, on the account's chain) and its notice queued in the outbox
+GRANT INSERT ON wts.audit, wts.mail_outbox TO wts_jobs;
+GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_jobs;
 -- master-key rotation (§13.4): the jobs credential re-wraps every key ring before an old kid is retired (core/ops.js rewrapAll)
 GRANT UPDATE (data_key_wrapped, data_key_kid) ON wts.users TO wts_jobs;

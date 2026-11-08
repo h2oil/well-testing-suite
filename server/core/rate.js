@@ -27,6 +27,7 @@ const LIMITS = {
   blobReadUserHour: { window: H, limit: 100 * MB },
   blobReadUserHourUnlocked: { window: H, limit: 300 * MB, bucket: 'blobReadUserHour' },   // the session that ran an export step-up (2 h)
   blobReadUserDay: { window: D, limit: 300 * MB },
+  blobReadUserDayUnlocked: { window: D, limit: 600 * MB, bucket: 'blobReadUserDay' },     // two hours at 300 MB/h (§8.3, §8.5)
   blobReadSessionHour: { window: H, limit: 100 * MB },
   blobReadSessionHourUnlocked: { window: H, limit: 300 * MB, bucket: 'blobReadSessionHour' },
   blobReadSessionDay: { window: D, limit: 1e15, soft: true },       // only for the read-anomaly notice (§8.3)
@@ -37,6 +38,12 @@ const LIMITS = {
   cspIpHour: { window: H, limit: 120 },
   cspCountDay: { window: D, limit: 1e15, soft: true },              // aggregate counts per directive and blocked host
   mailEmailChangeHour: { window: H, limit: 5 },
+  // the pre-auth revert (§4.3): failures never burn the revert code; instead wrong tries are throttled per old address and
+  // IP prefix (5/h; an attacker elsewhere cannot block the owner), per old address in all (100/day, bounding a guess at
+  // ≈ 700 of 10^8 over the 7 days) and softly per IP prefix (alert only)
+  revertFailAddrIpHour: { window: H, limit: 5 },
+  revertFailAddrDay: { window: D, limit: 100 },
+  revertIpHour: { window: H, limit: 300, soft: true },
 };
 
 async function call(sql, name, key, amount) {

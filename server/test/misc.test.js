@@ -31,11 +31,16 @@ test.describe('smaller rules (§3.2, §3.3, §8.3)', { skip }, () => {
   test('outbox key: 32 bytes, stable for the user, different per user, encrypted at rest; opts', async () => {
     const a = T.browser(); const b = T.browser();
     await T.signIn(a, 'ok1@company.example'); await T.signIn(b, 'ok2@company.example');
+    // created at sign-in, so the GET only reads (§3.2: GET never changes state)
+    const id1 = await T.userId('ok1@company.example');
+    const before = (await T.db.sql`select outbox_key_enc from wts.users where id = ${id1}`)[0].outbox_key_enc;
+    assert.ok(before, 'the key exists right after sign-in');
     const k1 = (await a.call('GET', '/me/outbox-key')).json.k; const k1b = (await a.call('GET', '/me/outbox-key')).json.k;
     const k2 = (await b.call('GET', '/me/outbox-key')).json.k;
     assert.strictEqual(Buffer.from(k1, 'base64').length, 32); assert.strictEqual(k1, k1b); assert.notStrictEqual(k1, k2);
     const raw = (await T.db.sql`select outbox_key_enc from wts.users where outbox_key_enc is not null`).map((r) => r.outbox_key_enc.toString('base64'));
     assert.ok(!raw.some((x) => x.includes(k1)));
+    assert.ok(Buffer.from((await T.db.sql`select outbox_key_enc from wts.users where id = ${id1}`)[0].outbox_key_enc).equals(Buffer.from(before)), 'the GETs wrote nothing');
     const o = await a.call('POST', '/me/opts', { historian: true });
     assert.deepStrictEqual(o.json, { opts: { historian: true, liveCfg: false } });
     assert.ok(C.checkShape('OptsRes', o.json).ok);

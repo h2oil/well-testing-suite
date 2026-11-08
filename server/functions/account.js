@@ -69,7 +69,8 @@ async function accountDelete(ctx) {
 async function accountDeleteCancel(ctx) {
   await SE.withSession(ctx, { allowDeleting: true }, async (unit, s) => {
     const ok = (await unit.sql`select wts.deletion_cancel(${s.userId}) as ok`)[0].ok;
-    if (!ok) return;
+    // not cancelled (the account is not deleting, or its grace has passed and the purge is due): never report a cancel
+    if (!ok) return unit.failAfterCommit('gone');
     const a = await A.addresses(unit);
     await unit.mail(a.primary, 'notice_delete_cancelled', { at: S.whenText(Date.now()) });
     await unit.audit('delete_cancel', { deviceId: s.deviceId });

@@ -1,6 +1,6 @@
 'use strict';
 // server/functions/me.js — Me and devices (docs/ACCOUNTS-PLAN.md §3.3): the account summary, the per-user outbox key of a
-// public device (§10.8), the opt-ins, device rename and revoke (revoke deletes that device's sessions; notice mail). WP-S1.
+// public device (§10.8; created at sign-in, read-only here), the opt-ins, device rename and revoke (revoke deletes that device's sessions; notice mail). WP-S1.
 // GET /me and the outbox key answer for an account in its deletion grace period too (the page offers Cancel deletion).
 
 const { fail } = require('../core/errors');
@@ -41,10 +41,10 @@ async function me(ctx) {
 async function outboxKey(ctx) {
   const k = await SE.withSession(ctx, { allowDeleting: true }, async (unit, s) => {
     const u = await unit.user();
-    if (u.row.outbox_key_enc) return Buffer.from(u.open('user.outbox_key', u.row.outbox_key_enc), 'base64');
-    const key = ctx.keys.outboxKey();
-    await unit.sql`update wts.users set outbox_key_enc = ${u.seal('user.outbox_key', key.toString('base64'))} where id = ${s.userId}`;
-    return key;
+    // GET never changes state (§3.2): the key is created at sign-in (core/session.js issue); an account without one has
+    // not signed in since, so the session is not usable for it
+    if (!u.row.outbox_key_enc) fail('signed_out');
+    return Buffer.from(u.open('user.outbox_key', u.row.outbox_key_enc), 'base64');
   });
   return { status: 200, body: { k: k.toString('base64') } };
 }

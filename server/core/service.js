@@ -15,7 +15,7 @@
 //   pad(ms, startedAt)              wait until a fixed floor has passed (code start, §3.3)
 
 const { ApiError } = require('./errors');
-const { checkMessage } = require('./mail');
+const { checkMessage, compose, render } = require('./mail');
 const H = require('./http');
 
 function need(ctx) {
@@ -45,7 +45,7 @@ function pad(ms, startedAt) {
 async function sendQueued(ctx, m) {
   if (!ctx.mail || typeof ctx.mail.send !== 'function') return;          // no transport here: the daily job sends it
   let ok = false;
-  try { await ctx.mail.send({ to: m.to, template: m.template, params: m.params }); ok = true; } catch (e) { ctx.log.warn('mail: send failed (' + m.template + ')'); }
+  try { await ctx.mail.send(compose({ to: m.to, template: m.template, params: m.params })); ok = true; } catch (e) { ctx.log.warn('mail: send failed (' + m.template + ')'); }
   try { await ctx.db.anon((tx) => tx`select wts.mail_mark(${m.id}, ${ok})`); } catch (e) { ctx.log.warn('mail: mark failed'); }
 }
 
@@ -78,6 +78,7 @@ async function unitOf(ctx, userId, fn) {
         const msg = { to, template, params: Object.assign({}, params || {}) };
         const e = checkMessage(msg);
         if (e) throw new Error('mail: ' + e);
+        render(template, msg.params);                     // a malformed parameter fails the request, not the later send
         const toEnc = ctx.keys.system.seal('mail.to', to);
         const pEnc = ctx.keys.system.seal('mail.params', JSON.stringify({ template, params: msg.params }));
         const id = (await tx`select wts.mail_queue(${toEnc}, ${template}, ${pEnc}) as id`)[0].id;

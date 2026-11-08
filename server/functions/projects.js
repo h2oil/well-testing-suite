@@ -55,9 +55,11 @@ function revBody(r, inline) {
 async function headBody(unit, ctx, u, p) {
   if (!Number(p.head_rev)) return revBody(null);
   const r = (await unit.sql`select * from wts.revisions where project_id = ${p.id} and rev = ${p.head_rev}`)[0];
-  const inline = p.head_core ? u.open(CORE, p.head_core) : null;
+  // coreInline whenever the core is ≤ 48 kB gzip: committed inline, or uploaded as a one-chunk blob
+  const inline = p.head_core ? u.open(CORE, p.head_core) : (r ? await B.inlineOf(unit, ctx, u, hex(r.core_hash)) : null);
   return revBody(r, inline);
 }
+const revHashes = (r) => [hex(r.core_hash)].concat((r.parts || []).map((p) => p && p.hash).filter((h) => /^[0-9a-f]{64}$/.test(String(h))));
 const revItem = (r) => ({ rev: Number(r.rev), savedAt: iso(r.saved_at), device: r.device_id || null, reason: r.reason, bytes: Number(r.bytes), coreHash: hex(r.core_hash) });
 
 // keep ≤ max rows per call (§3.4): the plan of core/revisions.js over this project's revisions
@@ -144,7 +146,8 @@ async function projectHead(ctx) {
       const d = await R.hit(unit.sql, 'projectsReadSessionDay', s.hash.toString('hex').slice(0, 24));
       if (d.n === d.limit + 1) await readNotice(unit, u, s, 'projects');
     }
-    if (Number(p.head_rev)) await noteBase(unit, s, p.id, Number(p.head_rev));
+    // GET never changes state (§3.2): the device base is recorded by commit / restore-rev (§6.5: 200 → last_base_rev), and
+    // a base pruned before the next commit still merges from the device's own copy
     return headBody(unit, ctx, u, p);
   });
   return { status: 200, body };
@@ -194,16 +197,18 @@ async function projectCommit(ctx) {
       const h = (await unit.sql`select saved_at from wts.revisions where project_id = ${p.id} and rev = ${headRev}`)[0];
       return { rev: headRev, savedAt: iso(h && h.saved_at) };          // nothing changed in the normalised view: a no-op
     }
-    let inline = null;
+    let inline = null; let z = null;
     if (b.core.inline !== undefined) {
-      const z = Buffer.from(b.core.inline, 'base64');
+      z = Buffer.from(b.core.inline, 'base64');
       if (z.length > B.INLINE_MAX || B.sha(z) !== b.core.zsha) fail('bad_request', { field: 'core' });
-      await B.putInline(unit, ctx, u, { hash: b.core.hash, zsha: b.core.zsha, z });
       inline = b.core.inline;
     }
-    const miss = await B.missing(unit, unit.userId, [b.core.hash].concat(b.parts.map((x) => x.hash)));
+    // the referenced blobs are locked FOR SHARE, so the daily clean-up cannot delete one under this revision (T15)
+    const miss = await B.missing(unit, unit.userId, (z ? [] : [b.core.hash]).concat(b.parts.map((x) => x.hash)), { lock: true });
     if (miss.length) fail('missing_blobs', { missing: miss.slice(0, 200) });
     await B.quotaCheck(unit, unit.userId, 0);
+    // the inline core last among the refusals: no object is written for a commit that is refused
+    if (z) await B.putInline(unit, ctx, u, { hash: b.core.hash, zsha: b.core.zsha, z });
     const parts = b.parts.map((x) => ({ name: x.name, hash: x.hash, bytes: x.bytes }));
     const bytes = parts.reduce((n, x) => n + x.bytes, b.core.bytes);
     const rev = headRev + 1;
@@ -272,6 +277,7 @@ async function projectRestoreRev(ctx) {
     const p = await projectRow(unit, ctx.params.id, { lock: true });
     const src = (await unit.sql`select * from wts.revisions where project_id = ${p.id} and rev = ${b.rev}`)[0];
     if (!src) fail('not_found');
+    await B.missing(unit, unit.userId, revHashes(src), { lock: true });        // FOR SHARE: no clean-up under the new revision
     const rev = Number(p.head_rev) + 1;
     await unit.sql`insert into wts.revisions (project_id, user_id, rev, core_hash, vhash, parts, bytes, device_id, session_hash, reason, app_ver, saved_at)
       values (${p.id}, ${unit.userId}, ${rev}, ${src.core_hash}, ${src.vhash}, ${unit.sql.json(src.parts)}, ${src.bytes}, ${s.deviceId || null}, ${s.hash}, 'restore', ${src.app_ver}, now())`;
@@ -298,6 +304,7 @@ async function projectDuplicate(ctx) {
       values (gen_random_uuid(), ${unit.userId}, ${sealMeta(u, ctx.body.name, m.meta)}, ${p.well_count}, ${head ? 1 : 0}, ${head ? p.head_core : null},
               ${head ? p.head_vhash : null}, ${head ? p.head_bytes : 0}, now(), now()) returning id`)[0].id;
     if (head) {
+      await B.missing(unit, unit.userId, revHashes(head), { lock: true });     // FOR SHARE: no clean-up under the copy
       await unit.sql`insert into wts.revisions (project_id, user_id, rev, core_hash, vhash, parts, bytes, device_id, session_hash, reason, app_ver, saved_at)
         values (${id}, ${unit.userId}, 1, ${head.core_hash}, ${head.vhash}, ${unit.sql.json(head.parts)}, ${head.bytes}, ${s.deviceId || null}, ${s.hash}, ${head.reason}, ${head.app_ver}, now())`;
     }

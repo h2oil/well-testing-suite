@@ -197,6 +197,82 @@ test.describe('projects, revisions, blobs, library (§3.3)', { skip }, () => {
     assert.strictEqual(over.status, 413); assert.strictEqual(over.json.error, 'quota');
   });
 
+  test('quota counts unfinished uploads in the chunk PUT; the daily job drops unfinished uploads after 24 h (row and objects)', async () => {
+    const q = T.browser(); await T.signIn(q, 'una@company.example');
+    const uid = await T.userId('una@company.example');
+    await T.db.sql`update wts.users set quota_bytes = 2500 where id = ${uid}`;
+    const a = part({ a: crypto.randomBytes(3000).toString('base64') });
+    const b = part({ b: crypto.randomBytes(3000).toString('base64') });
+    const put = (p, n, size) => {
+      const of = Math.ceil(p.z.length / size); const c = p.z.subarray(n * size, (n + 1) * size);
+      return q.call('PUT', '/blobs/' + p.hash + '/' + n + '?of=' + of, null, { raw: c, ct: 'application/octet-stream', headers: { 'x-wts-zsha': p.zsha, 'x-wts-chunk-sha': sha(c) } });
+    };
+    assert.strictEqual((await put(a, 0, 1000)).status, 204);
+    assert.strictEqual((await put(b, 0, 1000)).status, 204);
+    const third = await put(b, 1, 1000);
+    assert.strictEqual(third.status, 413, 'used 0 + unfinished 2000 + 1000 > 2500'); assert.strictEqual(third.json.error, 'quota');
+    assert.strictEqual(Number((await T.db.sql`select used_bytes from wts.users where id = ${uid}`)[0].used_bytes), 0, 'nothing is complete');
+    await T.age`update wts.blobs set created_at = now() - interval '25 hours' where user_id = ${uid} and not complete`;
+    const d = await T.jobs.run({ only: ['blobs'] });
+    assert.strictEqual(d.blobs.unfinished, 2);
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.blobs where user_id = ${uid}`)[0].n, 0);
+    assert.deepStrictEqual(await T.objects.list('u/' + uid + '/b/'), [], 'their objects are gone too');
+    // more than 16 chunks (64 MB) is refused before anything is stored
+    const r = await q.call('PUT', '/blobs/' + a.hash + '/0?of=17', null, { raw: a.z.subarray(0, 10), ct: 'application/octet-stream', headers: { 'x-wts-zsha': a.zsha, 'x-wts-chunk-sha': sha(a.z.subarray(0, 10)) } });
+    assert.strictEqual(r.status, 400); assert.strictEqual(r.json.field, 'of');
+  });
+
+  test('T15: the blob clean-up deletes the row first; a commit after it answers missing_blobs; a commit holding the blob makes it skip', async () => {
+    const q = T.browser(); await T.signIn(q, 'vic@company.example');
+    const uid = await T.userId('vic@company.example');
+    const p1 = part({ race: 1, pad: crypto.randomBytes(400).toString('hex') });
+    assert.strictEqual((await upload(q, p1)).status, 204);
+    const hb = Buffer.from(p1.hash, 'hex');
+    await T.age`update wts.blobs set unref_at = now() - interval '8 days' where user_id = ${uid} and hash = ${hb}`;
+    // the client's has says present …
+    assert.deepStrictEqual((await q.call('POST', '/blobs/has', { hashes: [p1.hash] })).json.missing, []);
+    // … the job runs in between …
+    assert.strictEqual((await T.jobs.run({ only: ['blobs'] })).blobs.blobs, 1);
+    // … and the commit is refused, so the client uploads again (no head over missing chunks)
+    const pid = (await q.call('POST', '/projects', { name: 'Race', meta: { client: '', well: '', field: '', operator: '' } })).json.id;
+    const core = part({ race: 'core' });
+    const c1 = await q.call('POST', '/projects/' + pid + '/commit', commitBody(0, core, [p1]));
+    assert.strictEqual(c1.status, 422); assert.deepStrictEqual(c1.json.missing, [p1.hash]);
+    assert.strictEqual((await upload(q, p1)).status, 204);
+    assert.strictEqual((await q.call('POST', '/projects/' + pid + '/commit', commitBody(0, core, [p1]))).status, 200);
+    assert.ok(await T.objects.get('u/' + uid + '/b/' + p1.hash + '/0'));
+    // a commit holding the row FOR SHARE: the job's delete waits, then skips the row that is referenced again
+    const p2 = part({ race: 2, pad: crypto.randomBytes(400).toString('hex') });
+    assert.strictEqual((await upload(q, p2)).status, 204);
+    const hb2 = Buffer.from(p2.hash, 'hex');
+    await T.age`update wts.blobs set unref_at = now() - interval '8 days' where user_id = ${uid} and hash = ${hb2}`;
+    let job = null;
+    await T.db.sql.begin(async (tx) => {
+      assert.strictEqual((await tx`select 1 from wts.blobs where user_id = ${uid} and hash = ${hb2} and complete for share`).length, 1);
+      job = T.jobs.run({ only: ['blobs'] });
+      await new Promise((r) => setTimeout(r, 300));
+      await tx`update wts.blobs set refcount = 1, unref_at = null where user_id = ${uid} and hash = ${hb2}`;
+    });
+    const d = await job;
+    assert.strictEqual(d.blobs.blobs, 0, 'skipped');
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.blobs where user_id = ${uid} and hash = ${hb2}`)[0].n, 1);
+    assert.ok(await T.objects.get('u/' + uid + '/b/' + p2.hash + '/0'), 'its chunks are still there');
+  });
+
+  test('head: coreInline also for a small core uploaded as a blob; GET head does not write the device base', async () => {
+    const q = T.browser(); await T.signIn(q, 'wes@company.example');
+    const uid = await T.userId('wes@company.example');
+    const pid = (await q.call('POST', '/projects', { name: 'Small', meta: { client: '', well: '', field: '', operator: '' } })).json.id;
+    const core = part({ small: 'core' });
+    assert.strictEqual((await upload(q, core)).status, 204);
+    assert.strictEqual((await q.call('POST', '/projects/' + pid + '/commit', commitBody(0, core, [], { inline: false }))).status, 200);
+    await T.db.sql`update wts.devices set last_base_rev = '{}'::jsonb where user_id = ${uid}`;
+    const h = (await q.call('GET', '/projects/' + pid + '/head')).json;
+    assert.strictEqual(h.coreInline, core.z.toString('base64'));
+    const dev = await T.db.sql`select last_base_rev from wts.devices where user_id = ${uid}`;
+    assert.ok(dev.every((d) => !d.last_base_rev || d.last_base_rev[pid] === undefined), 'a GET changes no state (§3.2)');
+  });
+
   test('revision retention: squash in the commit transaction, named saves kept, device bases kept, burst pins the previous head', async () => {
     const pid = (await br.call('POST', '/projects', { name: 'R', meta: { client: '', well: '', field: '', operator: '' } })).json.id;
     let rev = 0;
