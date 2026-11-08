@@ -195,7 +195,7 @@ function _lsGet(key) {
     catch (e) { return null; }
 }
 function _lsSet(key, val) {
-    try { if (G.localStorage) G.localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* quota / privacy */ }
+    try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, JSON.stringify(val), { raw: true }) : G.localStorage.setItem(key, JSON.stringify(val))); } catch (e) { /* quota / privacy */ }   /* ls-raw: fallback */
 }
 function _models() { return G.PRiSM_MODELS || {}; }
 function _isRateModel(key) {

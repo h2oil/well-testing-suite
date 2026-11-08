@@ -21,7 +21,7 @@ return o;
 function N(p, w) { return { pattern: p, why: w || 'label and default on the page' }; }
 return { guides: {
 
-flare: Q('flare', '33dcd62c', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
+flare: Q('flare', '9d010033', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
 notDocumented: [N('^fl_(t1|t2|he|hp|np|ns|mw|eff|nhv|F|V|tau|clbl|ambN)$|^fl_bg', 'tabs, drawing settings, or label and default on the page')],
 purpose: 'Flame length, radiation distances and noise around a flare or burner.',
 what: ['API 521 point-source method. Inputs are not converted: MMSCFD, BTU/SCF, m, m/s, Celsius.'],

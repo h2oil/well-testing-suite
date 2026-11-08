@@ -1828,7 +1828,7 @@ function PRiSM_persistPaste(text) {
         if (raw) { try { o = JSON.parse(raw); } catch (e) { o = {}; } }
         if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
         o.prism_data_paste = String(text == null ? '' : text);
-        localStorage.setItem('wts_prism', JSON.stringify(o));
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(o), { raw: true }) : localStorage.setItem('wts_prism', JSON.stringify(o)));   /* ls-raw: fallback */
     } catch (e) { /* ignore quota / private mode */ }
 }
 
@@ -1945,7 +1945,7 @@ function PRiSM_seedDefaultSample(textareaId, opts) {
     try {
         const ta = (typeof document !== 'undefined') ? document.getElementById(textareaId || 'prism_data_paste') : null;
         if (opts.force) {
-            try { localStorage.removeItem('wts_prism_sample_suppress'); } catch (e) { /* ignore */ }
+            try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove('wts_prism_sample_suppress') : localStorage.removeItem('wts_prism_sample_suppress')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         } else {
             if (localStorage.getItem('wts_prism_sample_suppress')) return false;       // user cleared
             const cur = window.PRiSM_dataset;
@@ -2076,7 +2076,7 @@ function PRiSM_renderTabData(host) {
         $('prism_data_stats').innerHTML   = '<div style="color:var(--text3); font-size:12px;">No data parsed yet.</div>';
         $('prism_data_msg').textContent   = '';
         window.PRiSM_dataset = null;
-        try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_sample_suppress', '1', { raw: true }) : localStorage.setItem('wts_prism_sample_suppress', '1')); } catch (e) {}   /* ls-raw: fallback */
         saveInputs('prism', PERSIST_IDS);
         PRiSM_emit('prism:dataset-cleared', { source: 'clear' });
     };
@@ -2274,7 +2274,7 @@ function PRiSM_renderMultiRateRows() {
 }
 
 function PRiSM_persistMultiRate() {
-    try { localStorage.setItem('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || [])); }
+    try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || []), { raw: true }) : localStorage.setItem('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || []))); }   /* ls-raw: fallback */
     catch (e) { /* ignore quota errors */ }
 }
 

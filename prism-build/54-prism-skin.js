@@ -932,7 +932,7 @@
         var txt = JSON.stringify({ v: 1, completion: normComp(c) });
         try {
             if (typeof G.WTS_lsSet === 'function') { G.WTS_lsSet(LS_KEY, txt); return; }
-            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);
+            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);   /* ls-raw: fallback */
         } catch (e) { /* storage optional */ }
     }
     function completionFor(c, h) {

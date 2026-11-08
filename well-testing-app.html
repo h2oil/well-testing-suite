@@ -9,7 +9,6 @@
 <head>
     <!-- GA:START — Google Analytics 4 (web only; stripped from iOS bundle
          by ios-app/scripts/sync-from-main.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function __gtagRaw(){dataLayer.push(arguments);}
@@ -54,6 +53,28 @@
       }
       gtag('js', new Date());
       gtag('config', 'G-6QKCBNWHYB', { send_page_view: false });
+    </script>
+    <script>
+      // The analytics tag itself (async). docs/ACCOUNTS-PLAN.md H17: it is NOT loaded while the web account hint says
+      // signed in, or within 10 minutes of starting a provider sign-in (the return from the provider). No hint (every
+      // visitor without an account) = loaded exactly as before. __wtsGaLoaded tells the account client whether it ran.
+      (function () {
+        var skip = false;
+        try {
+          var h = JSON.parse(window.localStorage.getItem('wtsacct_hint') || 'null');
+          if (h && typeof h === 'object') {
+            var age = (h.oauth && typeof h.oauth.at === 'number') ? Date.now() - h.oauth.at : -1;
+            if (h.signedIn === true || (age >= 0 && age < 600000)) skip = true;
+          }
+        } catch (e) { /* storage blocked: no hint */ }
+        window.__wtsGaLoaded = false;
+        if (skip) return;
+        window.__wtsGaLoaded = true;
+        var s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB';
+        (document.head || document.documentElement).appendChild(s);
+      })();
     </script>
     <!-- GA:END -->
     <!-- GA:START — Custom event tracker (web only). Documented at
@@ -800,7 +821,7 @@
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
             <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
-        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk<br><a href="#" id="sbPrivacyLink" style="color:var(--text3)">Privacy — your data stays on this device</a></div>
+        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk<br><a href="#" id="sbPrivacyLink" style="color:var(--text3)">Privacy — how your data is stored</a><!-- ACCT:START --><div id="sbAccountLine"></div><!-- ACCT:END --></div>
     </div>
 
     <!-- Save flash -->
@@ -811,6 +832,7 @@
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div class="pg-head"><!--help-host-patch:H3--><div><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div><button type="button" id="pgHelpBtn" class="pg-help" aria-label="Help for this page" title="Help for this page (F1)" hidden>?</button></div>
           <div class="page-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
+            <!-- ACCT:START --><div id="wts_account_host"></div><!-- ACCT:END -->
             <!-- Well switcher (multi-well projects). Wired by prism-build/29-multiwell.js. -->
             <div id="wts_well_host"></div>
             <!-- Project File toolbar (New / Open / Save). Wired by prism-build/29-project-save.js. -->
@@ -922,8 +944,8 @@ function __evictOldestReportSnapshot(keepSnap) {
     const keys = Object.keys(snaps).filter(k => k !== keepSnap).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
     if(!keys.length) return false;
     delete snaps[keys[0]];
-    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); }
-    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); } catch(_) {} }
+    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); __lsNotify('wts_report_snapshots', false); }   /* ls-raw: H1 eviction inside __lsSet */
+    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); __lsNotify('wts_report_snapshots', true); } catch(_) {} }   /* ls-raw: H1 eviction */
     return true;
 }
 let __lsFullWarned = false;
@@ -942,9 +964,25 @@ function __lsFullNotice(key, err) {
         setTimeout(() => t.remove(), 8000);
     } catch(_) {}
 }
+// H1 (docs/ACCOUNTS-PLAN.md §5.4): every successful write / remove through these helpers fires document 'wts:ls-write'
+// {key} ({key, removed:true} for a remove) — plain data; nothing listens in the local app.
+function __lsNotify(key, removed) {
+    try { document.dispatchEvent(new CustomEvent('wts:ls-write', { detail: removed ? { key: String(key), removed: true } : { key: String(key) } })); } catch(_) {}
+}
+// Plain write: throws like setItem (no eviction, no notice) and fires 'wts:ls-write' on success — for sites that were raw.
+function __lsSetRaw(key, value) {
+    localStorage.setItem(key, value);   /* ls-raw: H1 plain write */
+    __lsNotify(key, false);
+    return true;
+}
+function __lsRemove(key) {
+    try { localStorage.removeItem(key); } catch(e) { return false; }   /* ls-raw: H1 */
+    __lsNotify(key, true);
+    return true;
+}
 function __lsSet(key, value, keepSnap) {
     for(let i = 0; i < 200; i++) {
-        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); return true; }
+        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); __lsNotify(key, false); return true; }   /* ls-raw: H1 */
         catch(e) {
             if(__isQuotaError(e) && __evictOldestReportSnapshot(keepSnap)) continue;
             __lsFullNotice(key, e);
@@ -954,7 +992,10 @@ function __lsSet(key, value, keepSnap) {
     return false;
 }
 // Shared with the injected modules (PRiSM, project files): WTS_lsSet(key, value) → boolean.
-window.WTS_lsSet = (key, value) => __lsSet(key, value);
+// WTS_lsSet(key, value, {raw:true}) is the plain write (throws like setItem; no eviction) — used where a raw setItem was.
+window.WTS_lsSet = (key, value, opts) => (opts && opts.raw) ? __lsSetRaw(key, value) : __lsSet(key, value);
+// WTS_lsRemove(key) → boolean (false only when the remove threw); fires 'wts:ls-write' {key, removed:true}.
+window.WTS_lsRemove = (key) => __lsRemove(key);
 // Track which calculator key the current page belongs to so the global
 // auto-save listener knows where to write changes.
 let __currentCalcKey = null;
@@ -1025,7 +1066,7 @@ document.addEventListener('change', e => {
 // Unit-tagged inputs (22-units.js) are stored canonical (imperial), like the
 // legacy wts_<key> records. PRiSM routes keep their own persistence.
 const PAGE_LS_PREFIX = 'wts_page_';
-const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1 };
+const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
 let __pageState = null;       // live record of the page currently rendered
 let __pageRestoring = false;  // true while render() re-applies saved values
 let __pageDirty = false;
@@ -1359,6 +1400,8 @@ function __restorePageState() {
 window.WTS_pageAutosave = {
     prefix: PAGE_LS_PREFIX,
     flush: () => __flushPageState(true),            // snapshot current page → localStorage now
+    // H15: write only when the page has unsaved control changes (no `t` rewrite otherwise) → true when it wrote
+    flushIfDirty: () => (__pageDirty ? __flushPageState(false) : false),
     cancel: () => {                                  // drop pending (debounced) writes
         clearTimeout(__pageSaveTimer); __pageSaveTimer = null; __pageDirty = false;
         clearTimeout(window.__h2oilSaveTimer);
@@ -1464,6 +1507,7 @@ function __mountCalcNav(builtins) {
             return;
         }
         if(e.hooks && typeof e.hooks === 'object' && !PAGE_HOOKS[key]) PAGE_HOOKS[key] = e.hooks;
+        if(e.navHidden === true) return;   // H7: a routed page with no sidebar button and no home tile (e.g. the web account page)
         if(sb.querySelector('.nav-btn[data-p="' + key + '"]')) return;
         const label = String(e.group || 'Calculators').trim();
         const findGrp = want => Array.from(sb.querySelectorAll('.nav-group')).find(g => {
@@ -1509,7 +1553,7 @@ function __renderRegistryCalc(p, body) {
 function __calcHomeTiles(mods) {
     const order = Array.from(document.querySelectorAll('.nav-btn[data-p]')).map(b => b.getAttribute('data-p'));
     __calcEntries().forEach(({ key, e }) => {
-        if(mods.some(m => m.id === key)) return;
+        if(e.navHidden === true || mods.some(m => m.id === key)) return;
         const g = __CALC_GROUP_TILE[String(e.group || '').trim().toLowerCase()] || [];
         const tile = {
             id: key, icon: __calcIcon(e.icon),
@@ -1532,7 +1576,7 @@ function __calcHomeTiles(mods) {
 // never saved into project files). Event-driven only — no timers or polling.
 const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVO = 'wts_ui_nav_open', __UI_HUB = 'wts_ui_hub_last';
 const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
-const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1 };
+const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1 };
 let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
 function __uiList(k) {
     try {
@@ -1540,7 +1584,7 @@ function __uiList(k) {
         return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.length > 0 && x.length <= 64) : [];
     } catch(e) { return []; }
 }
-function __uiSetList(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch(e) {} }
+function __uiSetList(k, a) { try { __lsSetRaw(k, JSON.stringify(a)); } catch(e) {} }
 function __uiTokens(q) { return String(q == null ? '' : q).toLowerCase().split(/\s+/).filter(Boolean); }
 function __uiMatch(tokens, hay) { hay = String(hay || '').toLowerCase(); return tokens.every(t => hay.indexOf(t) !== -1); }
 function __uiRecordRecent(p) {
@@ -1599,7 +1643,7 @@ function __hubRemember(h, p) {
     const o = __hubLast();
     if(o[h] === p) return;
     o[h] = p;
-    try { localStorage.setItem(__UI_HUB, JSON.stringify(o)); } catch(e) {}
+    try { __lsSetRaw(__UI_HUB, JSON.stringify(o)); } catch(e) {}
 }
 function __hubOpen(h) { const t = __hubTarget(h); if(t) nav(t); }
 function __sidebarFilter() {
@@ -1637,7 +1681,7 @@ let __navShownFor = null;      // page whose group was last revealed
 function __navOpenRead() {
     try { const v = localStorage.getItem(__UI_NAVO); return typeof v === 'string' && v.length <= 64 ? v : null; } catch(e) { return null; }
 }
-function __navOpenStore(k) { try { localStorage.setItem(__UI_NAVO, k); } catch(e) {} }
+function __navOpenStore(k) { try { __lsSetRaw(__UI_NAVO, k); } catch(e) {} }
 // Collapse every group but the open one. A remembered group that no longer exists (renamed,
 // or a plug-in group not mounted yet) falls back to the active page's group.
 function __sidebarApply() {
@@ -2385,7 +2429,7 @@ window.clearClientLogo = function() {
 };
 
 window.clearClientInfo = function() {
-    localStorage.removeItem('h2oil_client_info');
+    __lsRemove('h2oil_client_info');
     nav('clientinfo');
 };
 
@@ -3237,7 +3281,7 @@ window.exportPagePNG = async function() {
 // model is cached (memory + localStorage 'wts_report_snapshots', so it also
 // travels in project files). The job report stitches every captured
 // calculator into one document with a summary table.
-const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1 };
+const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
 const _reportSnaps = (function() {
     try { return JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}; } catch(e) { return {}; }
 })();
@@ -3257,6 +3301,14 @@ function _snapshotPage() {
 window.WTS_snapshotNow = function () { clearTimeout(_snapTimer); _snapshotPage(); };
 document.addEventListener('h2oil:pagechange', e => { _snapPage = e.detail && e.detail.page; clearTimeout(_snapTimer); });
 // Project File → New / Open replace localStorage; re-sync the in-memory cache.
+// A key-level apply (WTS_project.applyChanges → 'wts:project-changed') that rewrote the snapshot cache does the same.
+document.addEventListener('wts:project-changed', e => {
+    const keys = (e && e.detail && Array.isArray(e.detail.keys)) ? e.detail.keys : [];
+    if(keys.indexOf('wts_report_snapshots') === -1) return;
+    clearTimeout(_snapTimer);
+    Object.keys(_reportSnaps).forEach(k => delete _reportSnaps[k]);
+    try { Object.assign(_reportSnaps, JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}); } catch(_) {}
+});
 ['wts:project-new', 'wts:project-loaded'].forEach(t => document.addEventListener(t, () => {
     clearTimeout(_snapTimer);
     Object.keys(_reportSnaps).forEach(k => delete _reportSnaps[k]);
@@ -4441,112 +4493,128 @@ window.exportSession = async function() {
 window.importSession = function(inp) {
     const f = inp.files[0]; if(!f) return;
     const reader = new FileReader();
+    // H14 guard: WTS_project.guarded runs synchronously when no guard is registered (v3.4 behaviour); with a guard
+    // it returns a Promise and a 'cancel' answer leaves every key untouched.
+    const guarded = (run, then) => {
+        const g = window.WTS_project && window.WTS_project.guarded;
+        if(typeof g !== 'function') { then(run()); return; }
+        const r = g('open-file', run);
+        const fin = v => { if(v && v.cancelled) { inp.value = ''; return; } then(v); };
+        if(r && typeof r.then === 'function') r.then(fin, err => alert('Error reading session file: ' + ((err && err.message) || err)));
+        else fin(r);
+    };
     reader.onload = function(e) {
         try {
             const session = JSON.parse(e.target.result);
             // Project files (.h2oilproj from the top-right File toolbar) → project loader
             if(session && session.format === 'h2oilproj' && window.WTS_project) {
-                const res = window.WTS_project.loadFromObject(session) || {};
-                const st = $('ci_import_status');
-                if(st) {
-                    st.innerHTML = res.error
-                        ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
-                        : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
-                    setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
-                }
-                inp.value = '';
+                guarded(() => window.WTS_project.loadFromObject(session), r => {
+                    const res = r || {};
+                    const st = $('ci_import_status');
+                    if(st) {
+                        st.innerHTML = res.error
+                            ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
+                            : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
+                        setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
+                    }
+                    inp.value = '';
+                });
                 return;
             }
             if(session._format !== 'H2Oil_WTS_Session_v1') {
                 alert('Invalid session file. Expected H2Oil Well Testing Suite export.');
                 return;
             }
-            try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
+            // H14: the import replaces the open work, so it asks the registered guard first (none → runs now, as before)
+            guarded(() => {
+                try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
 
-            let count = 0;
-            // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
-            Object.keys(session).forEach(k => {
-                if(k.startsWith('wts_')) {
-                    if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
-                }
-            });
-
-            // Restore client info (preserve existing logo if any)
-            if(session['h2oil_client_info']) {
-                const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
-                const imported = session['h2oil_client_info'];
-                // Keep existing logo if import didn't have one
-                if(existing.clientLogo && !imported.clientLogo) {
-                    imported.clientLogo = existing.clientLogo;
-                }
-                delete imported._hasLogo;
-                if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
-            }
-
-            // Restore live page snapshots — bridge any wts_<key> gap so the
-            // first re-render of those pages picks up every typed value.
-            // We merge _live_<page> entries into the matching wts_<key> entry.
-            Object.keys(session).forEach(k => {
-                if(!k.startsWith('_live_')) return;
-                const live = session[k] || {};
-                // Find any existing wts_ key whose data overlaps these IDs and merge
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || !lk.startsWith('wts_')) continue;
-                    try {
-                        const data = JSON.parse(localStorage.getItem(lk)) || {};
-                        let merged = false;
-                        Object.keys(live).forEach(id => {
-                            if(id in data) { data[id] = live[id]; merged = true; }
-                        });
-                        if(merged) __lsSet(lk, JSON.stringify(data));
-                    } catch(e) {}
-                }
-            });
-
-            // Sessions exported before the universal autosave carry no wts_page_*
-            // records. Those records win on re-render, so drop the ids this file
-            // provides (legacy keys) and fold its _live_ snapshots in instead.
-            if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
-                const ids = {};
+                let count = 0;
+                // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
                 Object.keys(session).forEach(k => {
-                    if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    if(k.startsWith('wts_')) {
+                        if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
+                    }
                 });
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || lk.indexOf('wts_page_') !== 0) continue;
-                    try {
-                        const rec = JSON.parse(localStorage.getItem(lk));
-                        if(!rec || !rec.f) continue;
-                        let hit = false;
-                        Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
-                        if(hit) __lsSet(lk, JSON.stringify(rec));
-                    } catch(e) {}
+
+                // Restore client info (preserve existing logo if any)
+                if(session['h2oil_client_info']) {
+                    const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
+                    const imported = session['h2oil_client_info'];
+                    // Keep existing logo if import didn't have one
+                    if(existing.clientLogo && !imported.clientLogo) {
+                        imported.clientLogo = existing.clientLogo;
+                    }
+                    delete imported._hasLogo;
+                    if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
                 }
+
+                // Restore live page snapshots — bridge any wts_<key> gap so the
+                // first re-render of those pages picks up every typed value.
+                // We merge _live_<page> entries into the matching wts_<key> entry.
                 Object.keys(session).forEach(k => {
-                    if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
-                    if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
-                    const pk = 'wts_page_' + k.slice(6);
-                    let rec = null;
-                    try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
-                    if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
-                    rec.f = Object.assign(rec.f || {}, session[k]);
-                    rec.t = Date.now();
-                    __lsSet(pk, JSON.stringify(rec));
+                    if(!k.startsWith('_live_')) return;
+                    const live = session[k] || {};
+                    // Find any existing wts_ key whose data overlaps these IDs and merge
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || !lk.startsWith('wts_')) continue;
+                        try {
+                            const data = JSON.parse(localStorage.getItem(lk)) || {};
+                            let merged = false;
+                            Object.keys(live).forEach(id => {
+                                if(id in data) { data[id] = live[id]; merged = true; }
+                            });
+                            if(merged) __lsSet(lk, JSON.stringify(data));
+                        } catch(e) {}
+                    }
                 });
-            }
 
-            // Refresh the current page to show imported values
-            const status = $('ci_import_status');
-            if(status) {
-                status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
-                setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
-            }
+                // Sessions exported before the universal autosave carry no wts_page_*
+                // records. Those records win on re-render, so drop the ids this file
+                // provides (legacy keys) and fold its _live_ snapshots in instead.
+                if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
+                    const ids = {};
+                    Object.keys(session).forEach(k => {
+                        if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    });
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || lk.indexOf('wts_page_') !== 0) continue;
+                        try {
+                            const rec = JSON.parse(localStorage.getItem(lk));
+                            if(!rec || !rec.f) continue;
+                            let hit = false;
+                            Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
+                            if(hit) __lsSet(lk, JSON.stringify(rec));
+                        } catch(e) {}
+                    }
+                    Object.keys(session).forEach(k => {
+                        if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
+                        if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
+                        const pk = 'wts_page_' + k.slice(6);
+                        let rec = null;
+                        try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
+                        if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
+                        rec.f = Object.assign(rec.f || {}, session[k]);
+                        rec.t = Date.now();
+                        __lsSet(pk, JSON.stringify(rec));
+                    });
+                }
 
-            // Re-render current page to pick up new values
-            render();
-            // If on client info, re-navigate to refresh fields
-            if(page === 'clientinfo') nav('clientinfo');
+                // Refresh the current page to show imported values
+                const status = $('ci_import_status');
+                if(status) {
+                    status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
+                    setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
+                }
+
+                // Re-render current page to pick up new values
+                render();
+                // If on client info, re-navigate to refresh fields
+                if(page === 'clientinfo') nav('clientinfo');
+            return { done: true };
+            }, () => {});
 
         } catch(err) {
             alert('Error reading session file: ' + err.message);
@@ -7432,7 +7500,7 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
         const raw = localStorage.getItem('wts_flare');
         if (raw) {
             const o = JSON.parse(raw);
-            if (o && 'fl_V' in o) { delete o.fl_V; localStorage.setItem('wts_flare', JSON.stringify(o)); }
+            if (o && 'fl_V' in o) { delete o.fl_V; __lsSetRaw('wts_flare', JSON.stringify(o)); }
         }
     } catch(_) {}
 
@@ -11436,12 +11504,16 @@ function renderReleaseNotes(body){
     if (ttl) ttl.textContent = 'Release Notes';
     if (sub) sub.textContent = 'Engineering changes to the Well Testing Suite, newest first.';
     const cats = Object.keys(RN_CATS);
-    const used = cats.filter(c => RELEASE_NOTES.some(r => r.items.some(it => it[0] === c)));
+    // H12 (docs/ACCOUNTS-PLAN.md §5.4): an entry or an item marked {platform:'web'} (an item's 4th element) is hidden in the
+    // iOS app; web-only items also sit between ACCT markers so the iOS bundle never carries their text.
+    const rnShown = x => !(window.isIOSApp && x && ((Array.isArray(x) && x[3] && x[3].platform === 'web') || (!Array.isArray(x) && x.platform === 'web')));
+    const used = cats.filter(c => RELEASE_NOTES.some(r => rnShown(r) && r.items.some(it => it[0] === c && rnShown(it))));
     const latest = RELEASE_NOTES[0], first = RELEASE_NOTES[RELEASE_NOTES.length - 1];
     const chip = c => '<span class="rn-chip" style="color:' + RN_CATS[c].color + ';background:' + RN_CATS[c].bg + '">' + RN_CATS[c].label + '</span>';
     const releases = RELEASE_NOTES.map((r, i) => {
+        if (!rnShown(r)) return '';
         const groups = cats.map(c => {
-            const its = r.items.filter(it => it[0] === c);
+            const its = r.items.filter(it => it[0] === c && rnShown(it));
             if (!its.length) return '';
             return '<div class="rn-group" data-cat="' + c + '" style="--rn-c:' + RN_CATS[c].color + '">' + chip(c) +
                 '<ul class="rn-list">' + its.map(it => '<li><b>' + it[1] + '</b> — ' + it[2] + '</li>').join('') + '</ul></div>';
@@ -11642,19 +11714,49 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function';
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
     const build = ios ? 'iOS app — no analytics code is included in this build.'
         : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
     const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
         a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
+    // H11 (docs/ACCOUNTS-PLAN.md §8.6): web / iOS branches. The web-only text (banner, account and sign-in cards) is inside
+    // the ACCT markers below, so the iOS bundle carries only today's text. The account wording shows only while the web
+    // account client is eligible and switched on (the invite beta); otherwise the page is exactly the v3.4 page.
+    let acct = null;
+    // ── ACCT:START — web only; sync-from-main.js strips this block ──
+    if (!ios) {
+        try {
+            const A = window.WTS_account;
+            if (A && A.eligible === true && typeof A.betaEnabled === 'function' && A.betaEnabled()) acct = {
+                banner: '<strong>Your well data stays on this device unless you sign in to the cloud.</strong> This build: ' + build,
+                noAccounts: 'Accounts are optional (web version only): without one there is no sign-in and no H2Oil server receives your inputs, results or files.',
+                cards: '<div class="card" id="privacy_accounts"><div class="card-title">Accounts and cloud projects (web version, optional)</div>' +
+                    '<p style="font-size:13px;color:var(--text2);line-height:1.65">You can use the Well Testing Suite without an account: everything then stays in this browser on this device, as before. ' +
+                    'If you create an account, the projects you save to the cloud — page inputs, PRiSM analyses, wells, build-up surveillance data, report snapshots and templates, your curve and preset library, and, only if you turn them on, historian backups and live-data connection settings — are stored in our cloud database in the UK / EU, encrypted at rest with a key for your account. ' +
+                    'We store your e-mail address (and a recovery address if you add one), the public keys of any passkeys you add (never a password), the identifier and the e-mail address that Google or LinkedIn gave when you linked it (if you use them), the devices you sign in on and a security log (shortened IP address, browser type) for 12 months, which we keep to protect your account. ' +
+                    'We do not load the analytics tag while you are signed in. We never use your project data for analytics, advertising or training, and we do not share it. ' +
+                    'You can export everything or delete your account at any time from Account; a deletion can be cancelled for 7 days, then removes your data from our live systems, and from backups within 30 days after that. ' +
+                    'Data on your devices stays until you clear it. If you store data for your employer or a client, a data processing agreement is available. The iOS app has no accounts and keeps everything on your device. ' +
+                    'Questions and data requests: software@h2oil.co.uk.</p></div>' +
+                    '<div class="card" id="privacy_providers"><div class="card-title">Signing in with Google or LinkedIn (web version, optional)</div>' +
+                    '<p style="font-size:13px;color:var(--text2);line-height:1.65">If you choose <em>Sign in with Google</em>, Google sends us an identifier for your Google account, your e-mail address and whether Google has verified it; we ask for nothing else. ' +
+                    'If you choose <em>Sign in with LinkedIn</em>, LinkedIn sends us an identifier, your name, profile-photo link, language setting, e-mail address and whether it is verified; we keep only the identifier and the e-mail address and discard the rest at once. ' +
+                    'We use them only to sign you in: we never post, read your contacts or keep access to your Google or LinkedIn account (we store no access token). Google or LinkedIn learns that you signed in to the Well Testing Suite, under its own privacy policy. ' +
+                    'You can unlink either under Account → Sign-in methods; your e-mail address always still works. Deleting your account removes these links; to remove the app from your Google or LinkedIn account too, use that account’s security or data-privacy settings. ' +
+                    'On a shared computer, also sign out of Google or LinkedIn in the browser when you finish.</p></div>'
+            };
+        } catch (e) { acct = null; }
+    }
+    // ── ACCT:END ──
     body.innerHTML = '<div id="privacy_root" style="max-width:860px">' +
       '<div class="info-bar" style="background:rgba(63,185,80,.06);border-color:rgba(63,185,80,.2);color:var(--green)">' +
-        '<strong>Your well data never leaves your device.</strong> This build: ' + build + '</div>' +
+        (acct ? acct.banner : '<strong>Your well data never leaves your device.</strong> This build: ' + build) + '</div>' +
       '<div class="card"><div class="card-title">Calculations run on your device</div>' + li([
         'Every calculator, PRiSM analysis, simulation and report is computed in your browser or in the app on your device. There is no server-side calculation.',
-        'There are no user accounts, no sign-in and no H2Oil server that receives your inputs, results or files.'
+        acct ? acct.noAccounts : 'There are no user accounts, no sign-in and no H2Oil server that receives your inputs, results or files.'
       ]) + '</div>' +
+      (acct ? acct.cards : '') +
       '<div class="card"><div class="card-title">Where your data is stored</div>' + li([
         'Inputs, client &amp; well details, loaded gauge data and results are kept in this browser’s local storage (in the iOS app: the app’s own local storage on the device).',
         'Clearing the browser’s site data (or deleting the app) removes them. We cannot see or recover them.',
@@ -18154,10 +18256,10 @@ if (typeof renderPRiSM === "function" && !renderPRiSM.__h2oilMigrated) {
                         pta: pta ? JSON.parse(pta) : null,
                         migratedAt: new Date().toISOString()
                     };
-                    localStorage.setItem("wts_prism", JSON.stringify(existing));
+                    __lsSetRaw("wts_prism", JSON.stringify(existing));
                     console.log("[PRiSM] Migrated legacy DCA/PTA inputs into wts_prism._legacy");
                 }
-                localStorage.setItem("wts_prism_migrated", "1");
+                __lsSetRaw("wts_prism_migrated", "1");
             }
         } catch (e) { console.warn("[PRiSM] migration failed:", e); }
         return __origRenderPRiSM(body);

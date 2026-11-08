@@ -175,7 +175,7 @@
                 if (k === '_computed') continue;
                 if (Object.prototype.hasOwnProperty.call(s, k)) clone[k] = s[k];
             }
-            ls.setItem(LS_KEY, JSON.stringify(clone));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_KEY, JSON.stringify(clone), { raw: true }) : ls.setItem(LS_KEY, JSON.stringify(clone)));   /* ls-raw: fallback */
         } catch (e) { /* quota / privacy mode */ }
     }
 

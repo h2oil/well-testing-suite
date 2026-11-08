@@ -251,4 +251,29 @@ module.exports = [
       assert(app.el('zp_res') && app.el('zp_res').querySelector('.rrow'), 'rendered at 375 px');
     },
   },
+  {
+    name: 'navHidden entries (docs/ACCOUNTS-PLAN.md H7) are routed with their title but get no sidebar button and no dashboard tile',
+    wp: WP,
+    opts: { fromSources: true, sourceOverrides: Object.assign({}, OVERRIDES, { '49-calc-zzhidden.js': [
+      '(function () {',
+      "    'use strict';",
+      '    var R = window.WTS_calcRegistry = window.WTS_calcRegistry || {};',
+      "    R.zzhidden = { key: 'zzhidden', title: 'Hidden Probe', sub: 'Routed only', group: 'Overview', icon: '&#9729;', navHidden: true,",
+      "                   render: function (body) { body.innerHTML = '<div id=\"zh_root\"></div>'; } };",
+      '})();',
+      '',
+      '// === SELF-TEST ===',
+      '',
+    ].join('\n') }) },
+    run(app, assert) {
+      assert(navBtn(app, 'zzprobe'), 'a normal entry still gets its button');
+      assert(!navBtn(app, 'zzhidden'), 'no sidebar button');
+      app.hook.nav('home');
+      assert(!app.find('[data-fav="zzhidden"]'), 'no dashboard tile');
+      assert(app.find('[data-fav="zzprobe"]'), 'normal tile present');
+      app.hook.nav('zzhidden');
+      assert.strictEqual(text(app.el('pgTitle')), 'Hidden Probe');
+      assert(app.el('zh_root'), 'rendered through the registry fallback');
+    },
+  },
 ];

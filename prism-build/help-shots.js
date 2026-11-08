@@ -430,6 +430,8 @@ function serialise(app, el) {
     const tag = String(n.tagName || '').toLowerCase();
     if (tag === 'script' || tag === 'style' || tag === 'template') return;
     if (n.getAttribute('hidden') != null || (n.style && n.style.display === 'none')) return;
+    // the web-only account hosts (docs/ACCOUNTS-PLAN.md H8 / H9, ACCT markers) are never part of a shot
+    if (n.id === 'wts_account_host' || n.id === 'sbAccountLine') return;
     const cls = String(n.className || '').split(/\s+/).filter(Boolean).sort().join('.');
     let line = depth + '<' + tag + (n.id ? '#' + n.id : '') + (cls ? '.' + cls : '');
     if (tag === 'input' || tag === 'select' || tag === 'textarea') line += ' =' + String(n.value == null ? '' : n.value);
