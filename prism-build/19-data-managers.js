@@ -1450,17 +1450,19 @@ function _registerProjectModule() {
             }
             return { activeAnalysisId: _activeAnalysisId, gaugeData: g.map(_recToFile), analysisData: a.map(_recToFile) };
         },
+        // write() returns its Promise (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3). A load that keeps
+        // this module local (opts.keep) never calls it, so the records on this device stay as they are.
         write: function (state) {
             if (!_Promise) return;
             if (state === null) {                                     // New
-                _ensureInit().then(function () { return _wipeAll(); }).then(function () {
+                return _ensureInit().then(function () { return _wipeAll(); }).then(function () {
                     _activeAnalysisId = null;
                     _refreshMounted();
                 }).catch(function () { /* ignore */ });
                 return;
             }
             if (!state || typeof state !== 'object' || state.truncated) return;
-            _restoreRecords(state).then(function () {
+            return _restoreRecords(state).then(function () {
                 _activeAnalysisId = state.activeAnalysisId || null;
                 _refreshMounted();
             }).catch(function () { /* ignore */ });

@@ -2096,6 +2096,14 @@
                 if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
                 _baseLast = cur;
             });
+            // A key-level apply (WTS_project.applyChanges, docs/ACCOUNTS-PLAN.md H4) that changed the basis does the same.
+            document.addEventListener('wts:project-changed', function (e) {
+                var keys = (e && e.detail && Array.isArray(e.detail.keys)) ? e.detail.keys : [];
+                if (keys.indexOf(BASE_KEY) === -1) return;
+                var cur = _baseKey();
+                if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
+                _baseLast = cur;
+            });
         } catch (e) {}
     }
     _baseLast = _baseKey();

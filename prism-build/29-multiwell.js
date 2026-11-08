@@ -343,11 +343,15 @@
             try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy))); } catch (e) {}   /* ls-raw: fallback */
         }
     }
-    function _capture() {
+    function _capture(opts) {
         var I = _I(), ls = _ls();
-        I.flushAutosave();
+        var light = !!(opts && opts.light);
+        // light (captureWell): flush the page only when it has unsaved edits and leave the results cache alone, so two
+        // captures with no edit between them are equal apart from savedAt (docs/ACCOUNTS-PLAN.md H13, §6.1)
+        var PA = G.WTS_pageAutosave;
+        if (light && PA && typeof PA.flushIfDirty === 'function') { try { PA.flushIfDirty(); } catch (e) {} } else I.flushAutosave();
         _persistPrism();
-        _writeResultsCache();
+        if (!light) _writeResultsCache();
         var keys = {}, all = _keys(ls);
         for (var i = 0; i < all.length; i++) {
             if (!_isWellKey(all[i])) continue;
@@ -411,6 +415,19 @@
         if (w) w.modified = cur.savedAt;
         if (!_set(BLOB_PREFIX + reg.active, JSON.stringify(cur))) return null;
         return cur;
+    }
+
+    // captureWell(id) (H13) → the _capture() shape {v, savedAt, keys, modules} for any well: the active one from live
+    // storage and modules, a parked one from its blob (a copy); null for an unknown id. Writes nothing but the pending
+    // page edits and the PRiSM state the active capture always flushes.
+    function captureWell(id) {
+        if (!_I()) return null;
+        var reg = _readReg();
+        id = id == null ? reg.active : String(id);
+        if (id === reg.active || (!reg.wells.length && id === reg.active)) return _capture({ light: true });
+        if (!_find(reg, id)) return null;
+        var b = _blob(id);
+        return b ? JSON.parse(JSON.stringify(b)) : null;
     }
 
     function list() {
@@ -547,7 +564,7 @@
     // Keys holding one page's inputs: the universal autosave record plus the
     // legacy per-calculator lists of that page.
     var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
-    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1 };
+    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1, account: 1 };
     function _isPrismRoute(r) { return r === 'prism' || r === 'dca' || r === 'pta'; }
     function _pageKeyMatch(route, k) {
         if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
@@ -1000,6 +1017,7 @@
     G.WTS_wells = {
         list: list, active: active, switchTo: switchTo, create: create, rename: rename, remove: remove,
         copyPage: copyPage, results: results, table: table, renderPage: renderPage, renderSwitcher: renderSwitcher,
+        captureWell: captureWell,
         loadWarnings: function () { return _loadWarnings.slice(); },
         _isWellKey: _isWellKey
     };

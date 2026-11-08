@@ -33,7 +33,16 @@
 //       open(fileInput?)        → showOpenFilePicker where available, else
 //                                 clicks the given <input type=file>
 //       load(file: File)        → Promise<{ loaded: [...], skipped: [...] }>
-//       loadFromObject(obj)     → synchronous; same shape as load result
+//       loadFromObject(obj, opts?) → synchronous; same shape as load result plus `ready`
+//                                 (a Promise for every module write, IndexedDB included).
+//                                 opts.source → the 'wts:project-loaded' detail; opts.keep:[module
+//                                 names] leaves those local modules untouched (docs/ACCOUNTS-PLAN.md H3)
+//       applyChanges(diff, {source}) → key-level apply without a project load (H4):
+//                                 fires 'wts:project-changed' {source, keys}, never 'wts:project-loaded'
+//       registerGuard(fn)       → New / Open / Open-from-file await fn({action}) → 'proceed'|'cancel'
+//                                 before changing anything (H14); none registered = today's flow
+//       registerToolbarItems([{id, label, run, when?, title?}]) → extra File-toolbar buttons after
+//                                 Save As (H5); refreshToolbarItems() re-evaluates `when`
 //       new()                   → wipe project state (keeps preferences)
 //       currentFile()           → { name, hasHandle } | null
 //       info()                  → { modules: [...], modifiedAt, size }
@@ -53,7 +62,9 @@
 //   'wts:autosaved' event            — drives the "● Autosaved hh:mm" status
 //
 // EVENTS (document)
-//   'wts:project-loaded' {loaded, skipped} — after Open replaced storage
+//   'wts:project-loaded' {loaded, skipped, source?, keep?, pending} — after Open replaced storage
+//                        (listeners may push a Promise into `pending`; loadFromObject's `ready` waits for it)
+//   'wts:project-changed' {source, keys} — after applyChanges wrote / removed keys
 //   'wts:project-new'    {cleared}         — after New cleared storage
 //   'wts:projectfile'    {name, hasHandle} — current file name changed
 //   Layers that cache localStorage in memory should re-read on these.
@@ -148,7 +159,8 @@
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
     // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
+    // wts_acct_* / wts_sync_*: web account and cloud-sync device state (docs/ACCOUNTS-PLAN.md H6).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_|^wts_acct_|^wts_sync_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
@@ -785,9 +797,13 @@
         return payload;
     }
 
-    function _applyPayload(payload) {
+    function _isThenable(v) { return !!v && (typeof v === 'object' || typeof v === 'function') && typeof v.then === 'function'; }
+    function _applyPayload(payload, opts) {
         var loaded = [];
         var skipped = [];
+        var kept = [], waits = [];
+        var keep = (opts && Array.isArray(opts.keep)) ? opts.keep.map(String) : [];
+        var isKept = function (k) { return keep.indexOf(k) !== -1; };
         if (!payload || typeof payload !== 'object') {
             return { loaded: loaded, skipped: skipped, error: 'empty payload' };
         }
@@ -799,10 +815,10 @@
         var mods = payload.modules || {};
         // A project with PRiSM state but no dataset must not inherit the
         // dataset that is open now (it is re-read from the restored inputs).
-        if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        if (_own(mods, 'prism') && !isKept('prism') && !_own(mods, 'prism_dataset') && !isKept('prism_dataset')) G.PRiSM_dataset = null;
         // A project saved before multi-well projects (or with a single well)
         // replaces the well list too: it opens as one well.
-        if (_own(mods, 'storage') && !_own(mods, 'wells') && MODULES.wells) {
+        if (_own(mods, 'storage') && !isKept('storage') && !_own(mods, 'wells') && !isKept('wells') && MODULES.wells) {
             try { MODULES.wells.write(null); } catch (e) { _warn('[WTS_project] wells reset failed', e); }
         }
         // Apply in registry order (inputs → dataset → analysis → storage), not
@@ -812,15 +828,19 @@
         for (var i = 0; i < order.length; i++) {
             var key = order[i];
             if (!_own(mods, key)) continue;
+            if (isKept(key)) { kept.push(key); continue; }   // H3: the local module stays as it is
             try {
-                MODULES[key].write(mods[key]);
+                var w = MODULES[key].write(mods[key]);
+                if (_isThenable(w)) waits.push(w);
                 loaded.push(key);
             } catch (e) {
                 _warn('module write failed for ' + key, e);
                 skipped.push(key);
             }
         }
-        return { loaded: loaded, skipped: skipped, error: null };
+        var out = { loaded: loaded, skipped: skipped, error: null, _waits: waits };
+        if (keep.length) out.kept = kept;
+        return out;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -1030,7 +1050,8 @@
             var h = handles && handles[0];
             if (!h) return { cancelled: true };
             return h.getFile().then(function (file) {
-                return load(file).then(function (r) {
+                return G.Promise.resolve(_guarded('open', function () { return load(file); })).then(function (r) {
+                    if (r && r.cancelled) return r;
                     if (r && !r.error) _setCurrent(h, file.name);
                     if (r) r.filename = file.name;
                     return r;
@@ -1100,16 +1121,109 @@
         } catch (e) {}
     }
 
-    function loadFromObject(obj) {
-        var res = _applyPayload(obj);
+    // loadFromObject(obj, opts?) — opts {source, keep:[module]} (H3). The result carries `ready`: a Promise that settles
+    // when every module write (the gauge and build-up IndexedDB writes) and every 'wts:project-loaded' listener's pending
+    // work (the build-up prune) has finished. Without opts the behaviour and the event detail are exactly as before
+    // (the detail gains only the `pending` list).
+    function loadFromObject(obj, opts) {
+        opts = (opts && typeof opts === 'object') ? opts : {};
+        var res = _applyPayload(obj, opts);
+        var waits = (res && res._waits) || [];
+        if (res) delete res._waits;
         if (res && !res.error && res.loaded.length) {
             var touched = ['prism', 'prism_dataset', 'pvt', 'storage'].some(function (m) { return res.loaded.indexOf(m) !== -1; });
             if (touched) _prismSync('project-load');
-            _emit('wts:project-loaded', { loaded: res.loaded.slice(), skipped: res.skipped.slice() });
+            var detail = { loaded: res.loaded.slice(), skipped: res.skipped.slice() };
+            if (opts.source != null) detail.source = String(opts.source);
+            if (res.kept && res.kept.length) detail.keep = res.kept.slice();
+            if (Array.isArray(opts.keep) && opts.keep.length) detail.keep = opts.keep.map(String);
+            detail.pending = [];
+            _emit('wts:project-loaded', detail);
+            detail.pending.forEach(function (p) { if (_isThenable(p)) waits.push(p); });
             _rerender();
+        }
+        if (res && typeof G.Promise === 'function') {
+            var all = waits.map(function (p) { return G.Promise.resolve(p).then(null, function (e) { _warn('[WTS_project] module write failed', e); }); });
+            res.ready = G.Promise.all(all).then(function () { return true; });
         }
         return res;
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // applyChanges (H4) — write / remove project keys and selected modules without a project load: no key is cleared
+    // first, no 'wts:project-loaded' (whose listeners prune the build-up store and reset the simulator), the open page
+    // re-renders keeping its pending edits. Library keys and device preferences are refused.
+    //   diff = {set:{key:raw}, remove:[keys], modules:{prism?, prism_dataset?, pvt?}}  → {applied:[keys|modules], skipped}
+    // ───────────────────────────────────────────────────────────────
+    var APPLY_MODULES = { pvt: 1, prism_dataset: 1, prism: 1 };
+    function _pageOfKey(k) { var m = /^wts_page_([a-z][a-z0-9_]{0,63})$/.exec(String(k)); return m ? m[1] : null; }
+    function applyChanges(diff, opts) {
+        opts = (opts && typeof opts === 'object') ? opts : {};
+        var applied = [], skipped = [], keys = [];
+        diff = (diff && typeof diff === 'object') ? diff : {};
+        var set = (diff.set && typeof diff.set === 'object') ? diff.set : {};
+        var rem = Array.isArray(diff.remove) ? diff.remove : [];
+        var mods = (diff.modules && typeof diff.modules === 'object') ? diff.modules : {};
+        var ok = function (k) { return typeof k === 'string' && _isProjectKey(k) && !_isLibraryKey(k) && !_isWellsKey(k); };
+        // The pending autosave of the open page is dropped only when that page's own record changes.
+        var curPage = null;
+        try { curPage = (G.WTS_pageAutosave && typeof G.WTS_pageAutosave.page === 'function') ? G.WTS_pageAutosave.page() : null; } catch (e) { curPage = null; }
+        var touchesPage = Object.keys(set).concat(rem).some(function (k) { return curPage && _pageOfKey(k) === curPage; });
+        if (touchesPage) { try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {} }
+        var ls = _ls();
+        Object.keys(set).forEach(function (k) {
+            if (!ok(k) || typeof set[k] !== 'string' || !ls) { skipped.push(k); return; }
+            var w = (typeof G.WTS_lsSet === 'function') ? G.WTS_lsSet(k, set[k]) !== false : (function () { try { ls.setItem(k, set[k]); return true; } catch (e) { return false; } })();   /* ls-raw: fallback */
+            if (w) { applied.push(k); keys.push(k); } else skipped.push(k);
+        });
+        rem.forEach(function (k) {
+            if (!ok(k) || !ls) { skipped.push(String(k)); return; }
+            if (typeof G.WTS_lsRemove === 'function') G.WTS_lsRemove(k); else { try { ls.removeItem(k); } catch (e) {} }   /* ls-raw: fallback */
+            applied.push(k); keys.push(k);
+        });
+        var prismTouched = false;
+        listModules().forEach(function (m) {
+            if (!_own(mods, m)) return;
+            if (!APPLY_MODULES[m]) { skipped.push(m); return; }
+            try { MODULES[m].write(mods[m]); applied.push(m); prismTouched = true; }
+            catch (e) { _warn('[WTS_project] applyChanges: module write failed for ' + m, e); skipped.push(m); }
+        });
+        Object.keys(mods).forEach(function (m) { if (!MODULES[m] && skipped.indexOf(m) === -1) skipped.push(m); });
+        if (prismTouched || keys.some(function (k) { return /^wts_prism/.test(k); })) _prismSync(opts.source != null ? String(opts.source) : 'project-change');
+        if (applied.length) {
+            _emit('wts:project-changed', { source: opts.source != null ? String(opts.source) : null, keys: keys.slice(), modules: applied.filter(function (k) { return !!APPLY_MODULES[k]; }) });
+            try { if (typeof G.WTS_rerender === 'function') G.WTS_rerender({ discardPending: false }); } catch (e) { _warn('[WTS_project] re-render failed', e); }
+        }
+        return { applied: applied, skipped: skipped };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Guards (H14): New, Open and Open-from-file ask every registered guard first. A guard returns (a Promise of)
+    // 'proceed' or 'cancel' and may push or snapshot before answering. With no guard the action runs synchronously,
+    // exactly as before.
+    // ───────────────────────────────────────────────────────────────
+    var _guards = [];
+    function registerGuard(fn) {
+        if (typeof fn !== 'function') return function () {};
+        if (_guards.indexOf(fn) === -1) _guards.push(fn);
+        return function unregister() { _guards = _guards.filter(function (g) { return g !== fn; }); };
+    }
+    // _guarded(action, run) → run() directly when no guard; else a Promise of run()'s result or {cancelled:true, guard:true}
+    function _guarded(action, run) {
+        if (!_guards.length) return run();
+        var list = _guards.slice(), i = 0;
+        function next() {
+            if (i >= list.length) return G.Promise.resolve(run());
+            var g = list[i++], r;
+            try { r = g({ action: action }); } catch (e) { r = G.Promise.reject(e); }
+            return G.Promise.resolve(r).then(function (v) {
+                if (v === 'cancel') return { cancelled: true, guard: true };
+                return next();
+            }, function (e) { _warn('[WTS_project] guard failed — ' + action + ' cancelled', e); return { cancelled: true, guard: true, error: (e && e.message) || String(e) }; });
+        }
+        return next();
+    }
+    function _hasGuards() { return _guards.length > 0; }
 
     // ───────────────────────────────────────────────────────────────
     // New — clear every registered module's state + project keys in
@@ -1171,6 +1285,67 @@
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // Extra toolbar items (H5): rendered after Save As in every mounted toolbar. Labels are text (escaped); `when()`
+    // false hides an item; refreshToolbarItems() re-evaluates. No items registered = the toolbar is exactly as before.
+    // ───────────────────────────────────────────────────────────────
+    var _toolbarItems = [], _toolbars = [];
+    var ITEM_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+    function registerToolbarItems(items) {
+        var n = 0;
+        (Array.isArray(items) ? items : [items]).forEach(function (it) {
+            if (!it || typeof it !== 'object' || !ITEM_ID_RE.test(String(it.id || '')) || typeof it.run !== 'function') return;
+            _toolbarItems = _toolbarItems.filter(function (x) { return x.id !== it.id; });
+            _toolbarItems.push({ id: String(it.id), label: String(it.label == null ? it.id : it.label), title: it.title == null ? '' : String(it.title),
+                                 run: it.run, when: typeof it.when === 'function' ? it.when : null });
+            n++;
+        });
+        refreshToolbarItems();
+        return n;
+    }
+    function unregisterToolbarItem(id) {
+        var before = _toolbarItems.length;
+        _toolbarItems = _toolbarItems.filter(function (x) { return x.id !== String(id); });
+        refreshToolbarItems();
+        return _toolbarItems.length !== before;
+    }
+    function refreshToolbarItems() {
+        _toolbars = _toolbars.filter(function (w) { return !!w && w.isConnected !== false; });
+        _toolbars.forEach(_renderToolbarItems);
+    }
+    function _renderToolbarItems(wrap) {
+        if (!wrap || !wrap.querySelector) return;
+        var box = wrap.querySelector('[data-role="items"]');
+        if (!_toolbarItems.length) { if (box && box.parentNode) box.parentNode.removeChild(box); return; }
+        if (!box) {
+            box = document.createElement('span');
+            box.setAttribute('data-role', 'items');
+            box.style.cssText = 'display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap';
+            var after = wrap.querySelector('[data-act="saveas"]');
+            if (after && after.parentNode === wrap) wrap.insertBefore(box, after.nextSibling); else wrap.appendChild(box);
+        }
+        var btnStyle =
+            'padding:4px 10px;background:var(--bg4,#21262d);border:1px solid var(--border,#30363d);' +
+            'border-radius:4px;color:var(--text,#e6edf3);font-size:12px;cursor:pointer;line-height:1.4;' +
+            'font-family:inherit';
+        box.innerHTML = '';
+        _toolbarItems.forEach(function (it) {
+            var show = true;
+            if (it.when) { try { show = it.when() !== false; } catch (e) { show = false; } }
+            if (!show) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('data-item', it.id);
+            b.style.cssText = btnStyle;
+            b.textContent = it.label;
+            if (it.title) b.title = it.title;
+            b.addEventListener('click', function (ev) {
+                try { it.run(ev, b); } catch (e) { _warn('[WTS_project] toolbar item ' + it.id + ' failed', e); }
+            });
+            box.appendChild(b);
+        });
+    }
+
     function renderProjectToolbar(container) {
         if (!_hasDoc || !container || !('innerHTML' in container)) return;
 
@@ -1211,6 +1386,8 @@
             'style="display:none">';
 
         try { container.appendChild(wrap); } catch (e) { return; }
+        _toolbars.push(wrap);
+        _renderToolbarItems(wrap);
 
         var msgEl  = wrap.querySelector('[data-role="msg"]');
         var fileEl = wrap.querySelector('[data-role="file"]');
@@ -1271,8 +1448,10 @@
                                'Save first if you want to keep the current project.');
             }
             if (!ok) return;
-            newProject();
-            _setStatus('New project started.', 'ok');
+            if (!_hasGuards()) { newProject(); _setStatus('New project started.', 'ok'); return; }
+            G.Promise.resolve(_guarded('new', function () { newProject(); return { done: true }; })).then(function (r) {
+                if (r && r.done) _setStatus('New project started.', 'ok');
+            });
         });
 
         if (btnOpen && picker) {
@@ -1289,7 +1468,8 @@
                 var f = ev.target && ev.target.files && ev.target.files[0];
                 if (!f) return;
                 _setStatus('Opening ' + f.name + '…');
-                load(f).then(function (res) {
+                G.Promise.resolve(_guarded('open-file', function () { return load(f); })).then(function (res) {
+                    if (res && res.cancelled) { _setStatus(''); picker.value = ''; return; }
                     if (res && res.error) {
                         _setStatus('Open failed: ' + res.error, 'err');
                     } else {
@@ -1330,6 +1510,11 @@
         open:             open,
         load:             load,
         loadFromObject:   loadFromObject,
+        applyChanges:     applyChanges,
+        registerGuard:    registerGuard,
+        registerToolbarItems: registerToolbarItems,
+        unregisterToolbarItem: unregisterToolbarItem,
+        refreshToolbarItems: refreshToolbarItems,
         'new':            newProject,   // reserved word — bracket-access from callers
         clearAll:         newProject,   // friendlier alias
         currentFile:      currentFile,
@@ -1345,7 +1530,8 @@
             modules: function () { return MODULES; },
             applyPayload: _applyPayload,
             ls: _ls, lsKeys: _lsKeys,
-            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey,
+            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey, isPrefKey: _isPrefKey,
+            guarded: _guarded,
             flushAutosave: _flushAutosave, prismSync: _prismSync, emit: _emit, rerender: _rerender,
             fileName: _fileName
         }
