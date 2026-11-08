@@ -538,6 +538,38 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     }
   });
 
+  test('retire-client: removes every identity of the provider with its sessions, audited and mailed; users re-link with one code', async () => {
+    const { retireClient, parseArgs } = require('../ops/retire-client');
+    const E = makeEnv();
+    const email = 'li.owner@company.example';
+    const uid = await codeAccount(E, email);
+    const own = browser(E); await codeSession(own, uid);
+    okFinish(await round(E, own, 'linkedin', { key: 'RC1', email: 'li@company.example' }, { purpose: 'link' }));
+    okFinish(await finish(own, { code: E.mail.last(email).params.code }));
+    const ps = browser(E);
+    okFinish(await round(E, ps, 'linkedin', { key: 'RC1', email: 'li@company.example' }));
+    const sup = H.as('wts_support');
+    await assert.rejects(retireClient(sup, { provider: 'linkedin', actor: 'nobody' }), /actor/);
+    await assert.rejects(retireClient(api, { provider: 'linkedin', actor: 'support:ops1' }), /permission denied/, 'support credential only');
+    const r = await retireClient(sup, { provider: 'linkedin', actor: 'support:ops1' });
+    assert.deepStrictEqual(r, { users: 1, identities: 1, sessions: 1 });
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.identities where provider = 'linkedin'`)[0].n, 0);
+    assert.strictEqual(await sessionRow(ps.cookie('__Host-wts_sid')), null, 'its sessions are gone');
+    assert(await sessionRow(own.cookie('__Host-wts_sid')), 'other sessions stay');
+    const a = (await H.admin.sql`select actor, action, detail from wts.audit where actor like 'support:%'`)[0];
+    assert.strictEqual(a.action, 'identity_unlink'); assert.strictEqual(a.detail.reason, 'retire_client'); assert(!JSON.stringify(a.detail).includes('@'));
+    assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.mail_outbox where template = 'notice_identity_unlinked'`)[0].n, 1);
+    // the new client: new pairwise subjects → rule 5, one code, linked again
+    const E2 = makeEnv();
+    const nb = browser(E2);
+    const e = okFinish(await round(E2, nb, 'linkedin', { key: 'RC1', email: 'li@company.example' }));
+    assert.strictEqual(e.next, 'email');
+    okFinish(await finish(nb, { email }));
+    const d = okFinish(await finish(nb, { code: codeFor(E2, email) }));
+    assert.strictEqual(d.user.id, uid);
+    assert.deepStrictEqual(parseArgs(['--provider', 'linkedin', '--actor', 'support:x', '--yes']), { yes: true, provider: 'linkedin', actor: 'support:x' });
+  });
+
   test('RLS: wts_api reaches attempts and keys only through definers; identities of another user are invisible', async () => {
     const E = makeEnv();
     const a = await codeAccount(E, 'r1@company.example'); const b = await codeAccount(E, 'r2@company.example');
