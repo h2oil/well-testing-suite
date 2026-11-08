@@ -262,7 +262,7 @@ const HMI = [
       const t = installStub(app);
       try {
         app.flush(800);
-        assert.ok(/T-202 0%/.test(text(h('tSu'))), 'surge line names T-202: ' + text(h('tSu')));
+        assert.ok(/ · T2 0%/.test(text(h('tSu'))), 'surge line names T-202 (short form T2, v3.4.1 final pass): ' + text(h('tSu')));
         assert.ok(!h('tDs').hidden && hud.classList.contains('ds4') && /^DS-101 sand 0% · ΔP 3\.9 psi$/.test(text(h('tDs'))), 'DS-101 line: ' + text(h('tDs')));
         // the 172 / 158 px tank cell ends long lines in an ellipsis: each line carries its full text as a tooltip
         assert.ok(/T-202 0%.*LCV-201/.test(h('tSu').getAttribute('title') || ''), 'surge line tooltip: ' + h('tSu').getAttribute('title'));
@@ -415,7 +415,7 @@ const HMI = [
         let ds = text(h('tDs')), su = text(h('tSu'));
         assert.ok(/^DS-101 DUMPING · sand \d+% · ΔP/.test(ds), 'state first: ' + ds);
         assert.ok(ds.indexOf('DUMPING') + 'DUMPING'.length <= FIT, 'DUMPING inside the cell: ' + ds);
-        assert.ok(su.length <= FIT && /T-202 0%$/.test(su) && !/LCV-201/.test(su), 'short surge line with T-202 (' + su.length + ' chars): ' + su);
+        assert.ok(su.length <= FIT && / · T2 0%$/.test(su) && !/LCV-201/.test(su), 'short surge line with T-202 (' + su.length + ' chars): ' + su);
         assert.ok(/^Surge .*T-202 0% · LCV-201 /.test(h('tSu').getAttribute('title') || ''), 'full surge line as tooltip: ' + h('tSu').getAttribute('title'));
         t.set({ flushing: false, held: true }); app.flush(800);
         ds = text(h('tDs'));

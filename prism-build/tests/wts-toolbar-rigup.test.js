@@ -49,6 +49,17 @@ function hostInput(app, id, value, tag) {
   if (value != null) el.value = String(value);
   return el;
 }
+// WTS_3d's WebGL parts replaced by a fake so the live view mounts 3D in the harness (as ios-app-3d-layout.test.js)
+function fake3d(app) {
+  const W = app.win, noop = () => {};
+  const handle = () => ({ dispose: noop, focus: noop, frame: noop, legend: noop, refreshUnits: noop, resize: noop, select: noop,
+    setAutoOrbit: noop, setInsets: noop, setInteraction: noop, setLabels: noop, setOverlay: noop, setPaused: noop,
+    setQuality: noop, setReducedMotion: noop, view: noop, stats: {} });
+  W.WTS_3d = Object.assign({}, W.WTS_3d, {
+    isSupported: () => true, loadThree: () => Promise.resolve({}), hasLocalCopy: () => Promise.resolve(true),
+    mount: () => Promise.resolve(handle()),
+  });
+}
 function fresh(app, o) { const S = app.win.WTS_sim; return S.create(S.SAMPLE_FLOW, app.toWin(Object.assign({ seed: 5 }, o || {}))); }
 const noErr = (app, assert) => assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().map((l) => l.text || l).join(' | '));
 
@@ -419,6 +430,59 @@ module.exports = [
           assert.strictEqual(c4.gauge.strokeS, 12, 'the later gauge hand change is restored');
         } finally { if (a4.dispose) a4.dispose(); }
       } finally { if (a1.dispose) a1.dispose(); }
+      // 6-8. final pass: a T-201 event that is not a line-up item (a trip reset) keeps the saved hand line-up, and a hand
+      //      'options' / 'auto' change after an auto-divert merges only its own fields into the saved part
+      const handThenDivert = (a) => {
+        const live = openWts(a);
+        // the opposite of the engine default line-up (B fills, A transfers), so a reload that fell back to the default would show
+        live.setValve('surge', 1, true); live.setValve('surge', 0, false); live.setSuction('A');
+        // set point above B's start level (0.60), so the reloaded line-up does not divert in its first seconds
+        live.setAutoDivert('surge', true, a.toWin({ sp: 0.7 })); a.flush(50);
+        for (let i = 0; i < 3; i++) live.advance(10);
+        const hand = J(live.getControls()).surge;
+        let dv = 0; live.on('divert', (e) => { if (e.eq === 'surge') dv++; });
+        for (let i = 0; i < 720 && !dv; i++) live.advance(10);
+        assert.ok(dv > 0, 'an automatic T-201 divert happened');
+        assert.notDeepStrictEqual(J(live.getControls()).surge.inlet, hand.inlet, 'the divert changed the live inlets');
+        return { live, hand };
+      };
+      const reloadSurge = (a) => {
+        const b = ctx.loadApp({ storage: a.storage });
+        try { return J(openWts(b).getControls()).surge; } finally { if (b.dispose) b.dispose(); }
+      };
+      // 6. hand line-up, auto-divert, an LSHH-301 trip (both gauge inlets open) and its reset → the hand line-up is restored
+      let a5 = ctx.loadApp({});
+      try {
+        const { live, hand } = handThenDivert(a5);
+        live.setValve('gauge', 0, true); live.setValve('gauge', 1, true); a5.flush(50);
+        const hasA = (id) => (live.getState().alarms || []).some((x) => (x.id || x) === id);
+        let n = 0; while (!hasA('LSHH_GT') && n++ < 4000) live.advance(10);
+        assert.ok(hasA('LSHH_GT'), 'LSHH-301 tripped');
+        let resets = 0; live.on('control', (e) => { if (e.what === 'reset' && !e.auto) resets++; });
+        let r = null; n = 0;
+        // reset only while the live T-201 line-up is not the hand one (the automation moves it on its own), so saving the live
+        // part at the reset would show
+        const off = () => JSON.stringify(J(live.getControls()).surge) !== JSON.stringify(hand);
+        while (!(r && r.ok && r.reset.indexOf('LSHH_GT') >= 0) && n++ < 8000) { live.advance(10); if (off()) r = live.resetTrip('LSHH_GT'); }
+        assert.ok(r && r.ok && resets > 0, 'trip reset (a hand reset control event): ' + JSON.stringify(r));
+        assert.ok(off(), 'the live line-up at the reset is not the hand one');
+        a5.flush(50);
+        assert.deepStrictEqual(reloadSurge(a5), hand, 'trip reset → the hand T-201 line-up is restored, not the diverted one');
+      } finally { if (a5.dispose) a5.dispose(); }
+      // 7. hand line-up, auto-divert, then a hand stroke time → the hand inlets / suction with stroke 8 s
+      a5 = ctx.loadApp({});
+      try {
+        const { live, hand } = handThenDivert(a5);
+        live.setValveOptions('surge', a5.toWin({ strokeS: 8 })); a5.flush(50);
+        assert.deepStrictEqual(reloadSurge(a5), Object.assign({}, hand, { strokeS: 8 }), 'stroke merged into the hand line-up');
+      } finally { if (a5.dispose) a5.dispose(); }
+      // 8. the same with a hand auto-divert set point → the hand inlets / suction with the new set point
+      a5 = ctx.loadApp({});
+      try {
+        const { live, hand } = handThenDivert(a5);
+        live.setAutoDivert('surge', true, a5.toWin({ sp: 0.75 })); a5.flush(50);
+        assert.deepStrictEqual(reloadSurge(a5), Object.assign({}, hand, { sp: 0.75 }), 'set point merged into the hand line-up');
+      } finally { if (a5.dispose) a5.dispose(); }
     }
   },
   {
@@ -533,6 +597,73 @@ module.exports = [
       const b = rigBtn(app), sp = b.querySelector('span');
       assert.ok(sp && text(sp) === 'Rig-up' && !sp.classList.contains('wtsl-txt-md'), 'Rig-up text not hidden at md');
       assert.ok(b.classList.contains('wtsl-hide-sm'), 'the button is hidden at sm (More carries Rig-up)');
+      noErr(app, assert);
+    }
+  },
+  {
+    // final pass: T-202 enters the rig-up empty with XV-202 shut and the dumps still to T-201 — a toast says how to use it and its
+    // button opens the T-202 card; the Rig-up menu row carries the route; the HUD tank cell uses 'T2' (full text in its title)
+    name: 'WTSTBR T-202 in: guidance toast with an Open T-202 button (opens the card), route in the menu row, HUD "T2" with the full title',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const live = openWts(app); app.flush(400);
+      const tSu = () => app.el('wtsl_hud').querySelector('[data-h="tSu"]');
+      assert.ok(!/T2/.test(text(tSu())) && !/T-202/.test(text(tSu())), 'T-202 out: tank cell unchanged: ' + text(tSu()));
+      openRigMenu(app);
+      assert.ok(!/route/.test(text(menuRow(app, 'surge2'))), 'T-202 out: no route in its row');
+      app.click(menuRow(app, 'surge2')); app.flush(50);
+      assert.strictEqual(live.getState().rigup.surge2, true, 'T-202 in');
+      const tst = app.el('wtsl_toast');
+      assert.ok(text(tst).indexOf('T-202 in (standby, XV-202 shut): set Route to T-202 or Both on its card') >= 0, 'guidance toast: ' + text(tst));
+      assert.ok(/route T-201/.test(text(menuRow(app, 'surge2'))), 'menu row has the route: ' + text(menuRow(app, 'surge2')));
+      app.flush(800);
+      assert.ok(/ · T2 \d+%/.test(text(tSu())), 'HUD short form: ' + text(tSu()));
+      assert.ok(/T-202 \d+%/.test(tSu().getAttribute('title') || ''), 'HUD title has the full text: ' + tSu().getAttribute('title'));
+      const ob = Array.from(tst.querySelectorAll('button')).find((b) => text(b) === 'Open T-202');
+      assert.ok(ob, 'Open T-202 button in the toast');
+      app.click(ob); app.flush(300);
+      const card = app.el('wtsl_card');
+      assert.ok(card && !card.hidden && text(card.querySelector('.tt b')) === 'T-202', 'T-202 card opened: ' + text(card && card.querySelector('.tt b')));
+      assert.ok(!Array.from(tst.querySelectorAll('button')).some((b) => text(b) === 'Open T-202'), 'that toast closed');
+      // a later rig-up change (not T-202 entering) keeps the plain rig-up toast
+      app.click(cardSw(app, 'heater')); app.flush(50);
+      const last = tst.lastElementChild;
+      assert.ok(last && !/standby/.test(text(last)), 'other change: plain toast ' + text(last));
+      noErr(app, assert);
+    }
+  },
+  {
+    // final pass: the HUD Gas / Oil / Water figures are the separator meters (smoothed): a bean or leg change says so, and the Gas
+    // cell has a title; the CK-101 card hints the 3D leg tap in 3D mode only
+    name: 'WTSTBR bean / leg change toasts say the metered rates settle; HUD gas title; CK-101 "tap a leg" hint only in 3D',
+    wp: WP, integration: true,
+    async run(app, assert) {
+      fake3d(app);                                            // the live view mounts 3D in the harness
+      app.click(app.find('.nav-btn[data-p="wts"]')); await app.flushAsync(500);
+      const leg = app.el('wts_ckLeg') || hostInput(app, 'wts_ckLeg', 'adj');
+      if (leg.tagName === 'SELECT' && !leg.querySelector('option')) ['adj', 'fixed'].forEach((v) => { const o = app.document.createElement('option'); o.value = v; o.textContent = v; leg.appendChild(o); });
+      leg.value = 'adj';
+      hostInput(app, 'wts_beanFix', 24); hostInput(app, 'wts_bean', 32);
+      const D = ctlOf(app)._debug;
+      assert.strictEqual(D.loop().mode, '3d', '3D mounted (fake)');
+      const gasCell = app.el('wtsl_hud').querySelector('[data-h="rG"]').closest('.wtsl-hi');
+      assert.strictEqual(gasCell.getAttribute('title'), 'separator gas meter (smoothed); the choke rate is on the CK-101 card', 'HUD gas title');
+      D.openCard('choke'); app.flush(300);
+      const card = app.el('wtsl_card'), tst = app.el('wtsl_toast');
+      const lastT = () => text(tst.lastElementChild);
+      app.click(card.querySelector('[data-act="bean"][data-v="4"]')); app.flush(50);
+      assert.strictEqual(lastT(), 'CK-101 adjustable bean 36/64″ — metered rates settle over a few minutes', 'bean toast');
+      app.click(card.querySelector('[data-act="beanFix"][data-v="2"]')); app.flush(50);
+      assert.strictEqual(lastT(), 'CK-101 positive bean 26/64″ — metered rates settle over a few minutes', 'beanFix toast');
+      D.onAction(app.toWin({ type: 'ckleg', eq: 'choke', leg: 'fixed' })); app.flush(50);
+      assert.strictEqual(lastT(), 'CK-101 in service: Positive (fixed) choke — metered rates settle over a few minutes', 'leg toast');
+      app.flush(400);
+      const hint = () => app.el('wtsl_card').querySelector('[data-k="ckleg-hint"]');
+      assert.ok(hint() && text(hint()) === 'or tap a leg in the 3D view', '3D: hint under In service');
+      app.click(app.el('wtsl_tb').querySelector('[data-act="mode2d"]')); await app.flushAsync(800);
+      assert.strictEqual(D.loop().mode, '2d', '2D now');
+      D.openCard('choke'); app.flush(400);
+      assert.ok(!hint(), '2D: no hint');
       noErr(app, assert);
     }
   }
