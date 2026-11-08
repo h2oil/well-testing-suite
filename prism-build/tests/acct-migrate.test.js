@@ -265,13 +265,23 @@ module.exports = [
   {
     name: 'MG11 public expiry at load: the reload leaves no client data (only the encrypted outbox) and makes no request', wp: WP, opts: false,
     async run(app, assert, ctx) {
-      const t = T.boot(ctx, { seed: true });
+      // one IndexedDB for the whole origin, as in a browser: wts-sync, the PRiSM gauge records and the build-up stores
+      const host = require('./_buildup-idb-fake').createFakeIDB();
+      const t = T.boot(ctx, { seed: true, idb: host, globals: { indexedDB: host.indexedDB, IDBKeyRange: host.IDBKeyRange } });
       try {
         await signInPlain(t, E1, { publicDevice: true });
         await t.choose('upload');
         await t.until(() => t.sync().status().state === 'idle');
         await t.sync().lockOutbox(t.acct().state().user);
         assert(kvKeys(t).length >= 4);
+        // client data in the page's IndexedDB stores: a gauge record and a build-up raw record
+        let seeded = false;
+        Promise.all([t.w.PRiSM_gaugeData.add(t.a.toWin({ name: 'G-1' }), t.a.toWin([0, 1, 2]), t.a.toWin([3000, 3010, 3020])),
+          t.w.WTS_buildup.store.putRaw('w1', t.a.toWin({ v: 1, n: 1, tB64: 'AAAAAA==', pB64: 'AAAAAA==' }))]).then(() => { seeded = true; }, (e) => { seeded = e; });
+        await t.until(() => seeded !== false, 'stores seeded');
+        assert.strictEqual(seeded, true, String(seeded));
+        assert(host.keys('wts_prism', 'records').length >= 1, 'a gauge record is stored');
+        assert(host.keys('wts_buildup', 'raw').length >= 1, 'a build-up raw record is stored');
         const h = JSON.parse(t.storage.getItem('wtsacct_hint'));
         t.storage.setItem('wtsacct_hint', JSON.stringify(Object.assign(h, { absExpires: '2000-01-01T00:00:00.000Z' })));
         t.dispose();
@@ -281,7 +291,11 @@ module.exports = [
           assert.deepStrictEqual(projectKeys(t2), [], 'wiped before anything is shown');
           assert.strictEqual(t2.storage.getItem('wtsacct_hint'), null);
           await t2.until(() => kvKeys(t2).filter((k) => k !== 'device').join() === 'lockedOutbox', 'IndexedDB: only the locked outbox');
-          assert.strictEqual(t.fake.requests.length, n, 'no request');
+          await t2.until(() => host.keys('wts_prism', 'records').length === 0, 'the gauge store is empty');
+          await t2.until(() => host.keys('wts_buildup', 'raw').length === 0 && host.keys('wts_buildup', 'tests').length === 0, 'the build-up stores are empty');
+          // no account API request (the historian purge may load its own database library; that is not the account server)
+          const api = t.fake.requests.slice(n).filter((r) => /^\/api\//.test(r.path));
+          assert.strictEqual(api.length, 0, 'no request ' + JSON.stringify(api));
           assert(/Sign in/.test(t2.text('acct_chip')));
         } finally { t2.dispose(); }
       } finally { t.dispose(); }

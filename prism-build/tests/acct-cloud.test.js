@@ -21,6 +21,14 @@
 //   CL14 a shape check refuses a cloud core of the wrong type (never applied); a part whose hash does not match is refused
 //   CL15 host hooks (WP-H): the ☁ toolbar button (Save / Save as / Open / Import) and the New / Open-file guard
 //   CL16 chip states: Not in cloud → Synced hh:mm → Not saved to cloud after an edit → Synced after Save
+//   CL17 the account page: devices, On this device restore / discard, activity rows
+//   CL18 Open from cloud on the linked project with unsaved changes: asks (default Cancel); Discard keeps a safety copy that
+//        On this device lists and restores (still linked, Not saved to cloud)
+//   CL19 the linked project was trashed (410) or purged (404) on another device: Save unlinks and offers a new cloud project
+//   CL20 Show my activity: the account JSON only (no project body fetched), rows of the last 90 days; the phone-width rule for
+//        the account tables (stacked rows, data-label cells, full-width buttons)
+//   CL21 the account library pulled at an Open does not mark the project "Not saved to cloud"; the commit's appVer is the
+//        release-notes version
 'use strict';
 
 const zlib = require('zlib');
@@ -340,7 +348,7 @@ module.exports = [
       try {
         await t.sync().saveToCloud({});
         const u = t.fake.user(E1);
-        t.fake.state.identities.set('i1', { id: 'i1', userId: u.id, provider: 'google', issuer: 'x', subject: 's', email: 'a@gmail.example', emailVerifiedAtLink: true, linkedAt: '2026-11-01T00:00:00.000Z', lastUsedAt: null });
+        t.fake.state.identities.set('i1', { id: 'i1', userId: u.id, provider: 'google', issuer: 'x', subject: 's', email: 'a@personal.example', emailVerifiedAtLink: true, linkedAt: '2026-11-01T00:00:00.000Z', lastUsedAt: null });
         t.w.WTS_accountPage.open();
         await t.until(() => t.el('acct_delete'));
         t.click('acct_delete');
@@ -519,9 +527,147 @@ module.exports = [
         t.click('acct_stash_restore_0');
         await t.until(() => t.storage.getItem('wts_page_choke') && /"44"/.test(t.storage.getItem('wts_page_choke')), 'stash restored');
         await t.settle();
-        t.w.WTS_accountPage.open();   // the load re-rendered the page (without host H7 the host draws its own page)
-        await t.until(() => t.el('acct_local_none'), 'nothing left on this device');
+        t.w.WTS_accountPage.open();   // re-open the account page (without host H7 it is drawn in its own overlay)
+        await t.until(() => t.el('acct_local') && !/Loading/.test(t.text('acct_local')), 'On this device drawn');
+        assert(!t.el('acct_stash_restore_0'), 'the stash is gone');
+        assert(t.el('acct_safety_restore_0'), 'the work open before the restore is a safety copy');
+        assert(!t.el('pgBody') || !t.el('pgBody').querySelector || !t.el('pgBody').querySelector('#acct_root'), 'never drawn inside #pgBody without the account route');
       } finally { t.dispose(); t2.dispose(); }
+    },
+  },
+  {
+    name: 'CL18 Open on the linked project while changed: asks (default Cancel); Discard keeps a safety copy that can be restored', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        await t.sync().saveToCloud({});
+        const id = t.sync().status().projectId;
+        edit(t, 'wts_page_hydrate', JSON.stringify({ v: 1, t: 7, f: { hy_T: '77' } }));
+        assert.strictEqual(t.sync().status().state, 'dirty');
+        const n = commits(t.fake).length;
+        let res = null;
+        t.sync().openFromCloud(id).then((r) => { res = r; }, (e) => { res = e; });
+        await t.until(() => t.el('acct_ch_discard'), 'the discard question');
+        assert(/Discard the changes on this device/.test(t.dialogText()));
+        assert.strictEqual(t.choices()[0], 'cancel', 'Cancel is the default');
+        t.click('acct_ch_cancel');
+        await t.until(() => res !== null);
+        assert.strictEqual(res.code, 'cancelled');
+        assert.strictEqual(JSON.parse(t.storage.getItem('wts_page_hydrate')).f.hy_T, '77', 'nothing discarded');
+        assert.strictEqual(t.sync().status().state, 'dirty');
+        res = null;
+        t.sync().openFromCloud(id).then((r) => { res = r; }, (e) => { res = e; });
+        await t.choose('discard');
+        await t.until(() => res !== null);
+        assert.strictEqual(res.projectId, id);
+        assert.strictEqual(commits(t.fake).length, n, 'nothing pushed');
+        assert.strictEqual(JSON.parse(t.storage.getItem('wts_page_hydrate')).f.hy_T, '38', 'the cloud version is loaded');
+        const saf = await t.sync().local.safety();
+        assert(saf.length >= 1 && JSON.stringify(saf[0].payload).includes('77') && saf[0].projectId === id, 'the edits are in the safety copy');
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_safety_restore_0'), 'On this device lists the safety copy');
+        t.click('acct_safety_restore_0');
+        await t.until(() => /"77"/.test(t.storage.getItem('wts_page_hydrate') || ''), 'restored');
+        await t.settle();
+        const st = t.sync().status();
+        assert.strictEqual(st.projectId, id, 'still linked');
+        assert.strictEqual(st.state, 'dirty', 'and Not saved to cloud');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL19 linked project trashed (410) or purged (404) elsewhere: Save unlinks and offers Save as a new cloud project', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        await t.sync().saveToCloud({});
+        const id = t.sync().status().projectId;
+        t.fake.state.projects.get(id).trashed = Date.now();
+        edit(t);
+        let res = null;
+        t.sync().saveToCloud({}).then((r) => { res = r; }, (e) => { res = e; });
+        await t.until(() => t.el('acct_ch_saveas'), 'the gone choice');
+        assert(/no longer available/.test(t.dialogText()));
+        assert.strictEqual(t.sync().status().projectId, null, 'unlinked');
+        t.click('acct_ch_cancel');
+        await t.until(() => res !== null);
+        assert(res.cancelled && res.unlinked && res.error === 'gone');
+        // linked again, then purged: not_found → Save as a new cloud project
+        await t.sync().saveToCloud({ as: true, name: 'Again' });
+        const id2 = t.sync().status().projectId;
+        t.fake.state.projects.get(id2).purged = true;
+        edit(t);
+        res = null;
+        t.sync().saveToCloud({}).then((r) => { res = r; }, (e) => { res = e; });
+        await t.choose('saveas');
+        await t.until(() => res !== null);
+        assert(res.projectId && res.projectId !== id2 && res.rev === 1, 'a new cloud project');
+        assert.strictEqual(t.sync().status().projectId, res.projectId, 'linked to it');
+        const r2 = await t.sync().saveToCloud({});
+        assert(r2.unchanged, 'later saves work again');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL20 Show my activity: account JSON only, last 90 days; phone-width stacked tables', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        await t.sync().saveToCloud({});
+        const u = t.fake.user(E1);
+        const now = t.w.Date.now();
+        t.fake.state.audit.push({ userId: u.id, actor: 'user', action: 'old_entry', at: new Date(now - 120 * 86400e3).toISOString(), detail: {} });
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_projects_table'), 'projects table');
+        assert(t.a.find('#acct_projects_table td[data-label="Name"]'), 'cells carry data-label');
+        const css = t.text('acct_css');
+        assert(/@media \(max-width:600px\)\{#acct_root table\.dtable/.test(css), 'stacked rows at phone width');
+        assert(/#acct_root \.btn\{display:block;width:100%/.test(css), 'full-width buttons');
+        assert(/td\[data-label\]:before\{content:attr\(data-label\)/.test(css));
+        assert(/security notice/.test(t.text('acct_card_activity')), 'the card says a notice is sent');
+        const before = t.fake.requests.length;
+        t.click('acct_show_activity');
+        await t.until(() => t.el('acct_activity_table') || t.el('acct_ch_cancel') || t.el('acct_code'), 'activity or step-up');
+        if (!t.el('acct_activity_table')) {
+          const code = t.fake.codeFor(E1);
+          if (t.el('acct_code')) { t.a.input('acct_code', code); t.click('acct_verify'); }
+          await t.until(() => t.el('acct_activity_table'), 'activity');
+        }
+        const reqs = t.fake.requests.slice(before);
+        assert(reqs.some((r) => r.path.endsWith('/account/export')));
+        assert(!reqs.some((r) => /\/blobs\/|\/head$|\/rev\//.test(r.path)), 'no project body fetched');
+        const txt = t.text('acct_activity_table');
+        assert(/signup|signin/.test(txt));
+        assert(!/old_entry/.test(txt), 'rows older than 90 days are left out');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL21 a library pull at Open does not mark the project changed; commit appVer = the release-notes version', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const a = await ready(ctx);
+      const b = T.device(ctx, a.fake, {});
+      try {
+        a.storage.setItem('wts_prism_user_curves', JSON.stringify([{ name: 'curve-A' }]));
+        let commitBody = null;
+        const wf = a.w.fetch;
+        a.acct().configure({ fetch: (u, i) => { if (/\/commit$/.test(String(u)) && !/library/.test(String(u)) && i && typeof i.body === 'string') commitBody = JSON.parse(i.body); return wf(u, i); } });
+        a.w.RELEASE_NOTES = [{ ver: '9.8' }];
+        a.acct().configure({ appVer: '' });
+        await a.sync().saveToCloud({});
+        assert(commitBody, 'the commit body was seen');
+        assert.strictEqual(commitBody.appVer, '9.8', 'appVer from RELEASE_NOTES[0].ver, never a hard-coded value');
+        const id = a.sync().status().projectId;
+        await a.until(() => a.fake.requests.some((r) => /\/library\/commit$/.test(r.path)), 'library pushed');
+        await b.signIn(E1, { handover: 'later' });
+        await b.until(() => b.acct().state().status === 'signedIn' && !b.el('acct_dlg_ov'));
+        await b.sync().openFromCloud(id);
+        await b.until(() => /curve-A/.test(b.storage.getItem('wts_prism_user_curves') || ''), 'library pulled');
+        await b.settle();
+        b.a.fire('document', 'wts:ls-write', { key: 'wts_prism_user_curves' });
+        b.a.fire('document', 'wts:ls-write', { key: 'wts_unit_system' });
+        assert.strictEqual(b.sync().status().state, 'idle', 'library / device keys do not dirty the project');
+      } finally { a.dispose(); b.dispose(); }
     },
   },
 ];

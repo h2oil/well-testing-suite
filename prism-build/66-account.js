@@ -153,9 +153,11 @@
   }
   function deviceLabel() {
     var ua = ''; try { ua = String((G.navigator && G.navigator.userAgent) || ''); } catch (e) { /* none */ }
-    var os = /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : 'Computer';
-    var br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-    return (os + ' ' + br).replace(/[^A-Za-z0-9 _.()-]/g, '').slice(0, 40);
+    var os = /Windows/.test(ua) ? 'Windows' : /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Computer';
+    // a neutral label (no browser product names, §3.3 lets the server derive the family for its mails)
+    var phone = /Mobi|Android|iPhone|iPad/.test(ua);
+    try { if (!phone && G.matchMedia && G.matchMedia('(pointer: coarse)').matches) phone = true; } catch (e) { /* none */ }
+    return (os + (phone ? ' phone browser' : ' desktop browser')).replace(/[^A-Za-z0-9 _.()-]/g, '').slice(0, 40);
   }
   var EMAIL_RE = /^[^\s@<>()[\]\\,;:"]{1,64}@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
   function sync() { return G.WTS_cloudSync || null; }
@@ -334,13 +336,22 @@
       '.acct-faq{margin-top:12px;font-size:13px}.acct-faq ul{padding-left:18px;margin:6px 0}.acct-faq li{margin:4px 0}',
       '.acct-x{background:none;border:0;color:var(--text2,#ccc);font-size:20px;cursor:pointer;min-width:36px;min-height:36px}',
       '.acct-list{list-style:none;padding:0;margin:8px 0;max-height:46vh;overflow:auto}.acct-list li{padding:6px 0;border-bottom:1px solid var(--border,#333)}',
-      '#wts_sync_bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10040;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 10px 8px 14px;display:block;font-size:13px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.4);box-sizing:border-box}',
-      '#wts_sync_bar .acct-bar-in{display:flex;gap:10px;align-items:center;flex-wrap:wrap}',
+      '.acct-sync-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10040;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 10px 8px 14px;display:block;font-size:13px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.4);box-sizing:border-box}',
+      '.acct-sync-bar .acct-bar-in{display:flex;gap:10px;align-items:center;flex-wrap:wrap}',
+      // class selectors only (no id, no inline position): the iOS safe-area rules (html.ios-app .acct-*) must be able to win
+      '.acct-toast{position:fixed;right:16px;top:16px;z-index:10055;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 12px;font-size:13px;max-width:calc(100vw - 32px);box-sizing:border-box}',
+      // the account page drawn in its own overlay (no host route): under the choice dialogs, wider than a dialog
+      '.acct-ov.acct-page-ov{z-index:10058}.acct-dlg.acct-page-dlg{max-width:980px}',
+      // §11.3: at phone width the account tables become stacked rows with full-width buttons
+      '@media (max-width:600px){#acct_root table.dtable,#acct_root table.dtable tbody,#acct_root table.dtable tr,#acct_root table.dtable td{display:block;width:100%;box-sizing:border-box}',
+      '#acct_root table.dtable thead{display:none}#acct_root table.dtable tr{border-bottom:1px solid var(--border,#444);padding:8px 0}',
+      '#acct_root table.dtable td{border:0;padding:3px 0}#acct_root table.dtable td[data-label]:before{content:attr(data-label);display:block;font-size:12px;color:var(--text2,#bbb)}',
+      '#acct_root .btn{display:block;width:100%;min-height:44px;font-size:16px;margin:4px 0}#acct_root .acct-btns input{width:100%;font-size:16px}}',
       '@media (max-width:600px){.acct-chip .acct-txt{display:none}.acct-chip{min-width:44px;min-height:44px;justify-content:center;padding:4px}',
       '.acct-ov{padding:0;align-items:stretch}.acct-dlg{max-width:none;min-height:100%;border-radius:0;padding:16px}',
       '.acct-btns .btn{flex:1 1 100%;min-height:44px;font-size:16px}.acct-menu button,.acct-cloud-menu button{min-height:44px;font-size:16px}',
       '.acct-menu,.acct-cloud-menu{position:fixed;left:16px;right:16px;top:auto;min-width:0}',
-      '#wts_sync_bar{left:16px;right:16px;transform:none;max-width:none}}',
+      '.acct-sync-bar{left:16px;right:16px;transform:none;max-width:none}}',
     ].join('\n');
     (document.head || document.body).appendChild(st);
   }
@@ -655,6 +666,7 @@
     var S = sync();
     var pub = !!current.publicDevice || !!(readHint() || {}).public;
     var user = current.user;
+    var method = current.authMethod || (current.me && current.me.session && current.me.session.authMethod) || null;   // captured now: setState below clears it before WP-O's hook runs
     var guard = Promise.resolve('proceed');
     if (pub && S && typeof S.publicSignOutGuard === 'function') guard = S.publicSignOutGuard(user);
     return guard.then(function (g) {
@@ -671,7 +683,7 @@
           return p.then(function () {
             writeHint(null);
             setState({ status: 'signedOut', user: null, publicDevice: false, me: null, opts: null, authMethod: null, reason: 'signout' });
-            if (typeof hooks.onPublicSignOut === 'function') { try { return Promise.resolve(hooks.onPublicSignOut({ authMethod: current.authMethod })).then(state); } catch (e) { /* WP-O */ } }
+            if (typeof hooks.onPublicSignOut === 'function') { try { return Promise.resolve(hooks.onPublicSignOut({ authMethod: method })).then(state); } catch (e) { /* WP-O */ } }
             return state();
           });
         }
@@ -819,7 +831,6 @@
       ensureCss();
       t = document.createElement('div'); t.id = 'acct_toast'; t.className = 'acct-toast rp-skip'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite');
       t.setAttribute('data-rp-nosnap', '1');
-      t.style.cssText = 'position:fixed;right:16px;top:16px;z-index:10055;background:var(--bg3,#222);color:var(--text,#eee);border:1px solid var(--border,#555);border-radius:8px;padding:8px 12px;font-size:13px;max-width:calc(100vw - 32px);box-sizing:border-box';
       document.body.appendChild(t);
     }
     t.textContent = text;
@@ -978,7 +989,9 @@
   function openRevert() { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert'); }
   function boot() {
     if (!HAS_DOC) return;
-    if (String(L.hash || '') === '#account-revert') {   // a user action (the notice's link); no request until submitted
+    // #account-revert (the notice's link): a user action, no request until submitted; during the Phase 1 beta only with the
+    // beta flag, so the live site shows no account UI while no server is configured
+    if (String(L.hash || '') === '#account-revert' && betaEnabled()) {
       var go = function () { ensureCss(); openRevert(); };
       if (document.readyState === 'loading' && document.addEventListener) document.addEventListener('DOMContentLoaded', go, { once: true });
       else if (typeof G.setTimeout === 'function') G.setTimeout(go, 0);
@@ -1005,7 +1018,7 @@
     _i: { completeSignIn: completeSignIn, choose: choose, setStep: setStep, message: message, openDialog: openDialog, closeDialog: closeDialog,
       readHint: readHint, writeHint: writeHint, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
       signedOutLocal: signedOutLocal, renderChip: renderChip, renderBar: renderBar, cloudAction: cloudAction, isOnline: isOnline, now: now,
-      deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, dialogOpen: function () { return dlg.open; } },
+      deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; } },
   };
   G.WTS_account = api;
   boot();

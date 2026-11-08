@@ -14,6 +14,7 @@
 //   IO7  the iOS privacy page text is today's (no account wording reaches renderPrivacy in www)
 //   IO8  ios-styles.css: the ACCOUNTS block gives every fixed account overlay its safe-area rule and names no account identifier
 //   IO9  help-shots: every shot hides the account controls (display:none on #wts_account_host / #sbAccountLine / bar / dialog)
+//   IO10 66 styles the bar and the toast by class (no id rule, no inline position), so the IO8 safe-area rules can apply
 'use strict';
 
 const fs = require('fs');
@@ -193,6 +194,17 @@ module.exports = [
       // the classes are the ones the client really uses
       const c66 = fs.readFileSync(path.join(BUILD, '66-account.js'), 'utf8');
       ['acct-ov', 'acct-sync-bar', 'acct-menu', 'acct-cloud-menu', 'acct-toast'].forEach((k) => assert(c66.includes("'" + k) || c66.includes(k + ' ') || c66.includes(k + "'"), k + ' used by 66'));
+    },
+  },
+  {
+    name: 'IO10 the iOS safe-area rules can win: 66 styles the bar and the toast by class, never by id or inline position', wp: WP, opts: false,
+    run(app, assert) {
+      const c66 = fs.readFileSync(path.join(BUILD, '66-account.js'), 'utf8');
+      assert(!/#wts_sync_bar\s*\{/.test(c66), 'no id-level rule for the bar (it would outrank html.ios-app .acct-sync-bar)');
+      assert(/'\.acct-sync-bar\{position:fixed;/.test(c66), 'the bar is styled through its class');
+      assert(/'\.acct-toast\{position:fixed;/.test(c66), 'the toast is styled through its class');
+      assert(!/style\.cssText\s*=\s*'[^']*(position|top|bottom|left|right)\s*:/.test(c66), 'no inline position (it would outrank the class rules)');
+      assert(!/#acct_toast\s*\{/.test(c66), 'no id-level rule for the toast');
     },
   },
   {

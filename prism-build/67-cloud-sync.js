@@ -13,7 +13,8 @@
 // stored). Automatic sync, the merge and conflict copies are Phase 2 (WP-C2): syncNow / conflicts / resolve / diff reject.
 //
 // Nothing runs at load except the public expiry check (it reads the hint; no request). No polling, no setInterval, no
-// function wrapping; the change listeners are attached only while signed in (66 calls _attach / _detach).
+// function wrapping; the change listeners are attached only while signed in and linked (66 calls _attach / _detach; bindTo,
+// unlink and init re-check).
 (function () {
   'use strict';
   var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -215,17 +216,22 @@
   function init() {
     if (readyP) return readyP;
     if (!factory()) return Promise.resolve(false);    // no store yet (a test seam not configured): nothing is cached; try later
-    var first = S.pendingWipe ? wipeStores({ reason: 'expiry', historian: true }).then(function () { S.pendingWipe = false; }) : Promise.resolve();
+    // the load-time expiry wipe cleared localStorage while the page scripts were still loading; the project modules that keep
+    // client data in IndexedDB (PRiSM gauge records, build-up raw data and tests) register only once the page is ready, so
+    // New runs again here (init runs from the mount) before the sync store is cleared
+    var first = S.pendingWipe ? Promise.resolve().then(function () { wipeLocalSync({ reason: 'expiry' }); })
+      .then(function () { return wipeStores({ reason: 'expiry', historian: true }); }).then(function () { S.pendingWipe = false; }) : Promise.resolve();
     readyP = first.then(function () { return Promise.all([kvGet('device'), kvGet('binding'), kvGet('base'), kvGet('outbox')]); }).then(function (r) {
       S.device = r[0]; S.binding = r[1]; S.base = r[2]; S.outbox = r[3];
       if (!S.device) {
-        S.device = { deviceId: null, lastUserId: null, workOwner: hasLocalWork() ? 'unowned' : null, workOwnerAt: now(), signedOutAfterOwner: false, signedOutVhash: null };
+        S.device = { deviceId: null, lastUserId: null, workOwner: hasLocalWork() ? 'unowned' : null, workOwnerAt: now() };
         return kvPut('device', S.device);
       }
     }).then(function () {
       if (S.device && S.device.deviceId && A() && !A().seam('deviceId')) A().configure({ deviceId: S.device.deviceId });
       if (S.binding && S.binding.lastSyncAt) S.lastSyncAt = S.binding.lastSyncAt;
       S.loaded = true;
+      attach();   // 66 may have asked before the binding was read: listen now if signed in and linked
       return true;
     }, function () { S.loaded = true; return true; });
     return readyP;
@@ -269,10 +275,16 @@
   function onChange(ev) {
     var d = ev && ev.detail;
     if (ev && ev.type === 'wts:project-loaded' && d && (d.source === 'cloud' || d.origin === 'cloud')) return;   // echo guard
-    if (ev && ev.type === 'wts:ls-write' && d && /^(wtsacct_|wtspref_)/.test(String(d.key || ''))) return;
+    if (ev && ev.type === 'wts:ls-write' && d) {
+      var key = String(d.key || '');
+      // account / device keys and the account library (synced on its own, not in the snapshot) never dirty the project
+      if (/^(wtsacct_|wtspref_)/.test(key) || LIBRARY_RE.test(key) || DEVICE_PREF_RE.test(key)) return;
+    }
     markDirty();
   }
+  // attach() — called by 66 on sign-in and here on bindTo / unlink: the listeners run only while signed in AND linked (§5.5)
   function attach() {
+    if (!linkedFor(signedInUser())) { detach(); return; }
     if (attached || !HAS_DOC) return;
     attached = true;
     EVENTS.forEach(function (n) { document.addEventListener(n, onChange); });
@@ -585,7 +597,7 @@
     return { pushId: pushId, baseRev: baseRev, reason: reason, core: core,
       parts: snap.parts.map(function (p) { return { name: p.name, hash: p.hash, bytes: p.bytes }; }),
       meta: metaOf(snap.payload || { meta: snap.meta }, name), wells: (snap.wells || []).map(function (w) { return { id: w.id, name: w.name }; }),
-      fmt: FMT, appVer: String((A() && A().seam('appVer')) || '') || '3.5' };
+      fmt: FMT, appVer: (I() && typeof I().appVer === 'function') ? String(I().appVer() || '') : String((A() && A().seam('appVer')) || '') };
   }
   function encryptOutbox(obj) {
     var c = subtle(); var k = S.outboxKey;
@@ -647,7 +659,8 @@
       dirty: false, lastSyncAt: now() };
     S.base = snap ? { vhash: snap.vhash, coreHash: snap.hash, parts: snap.parts.reduce(function (o, p) { o[p.name] = p.hash; return o; }, {}) } : null;
     S.lastSyncAt = now();
-    S.device.workOwner = user.id; S.device.workOwnerAt = now(); S.device.signedOutAfterOwner = false;
+    S.device.workOwner = user.id; S.device.workOwnerAt = now();
+    attach();
     return Promise.all([saveBinding(), S.base ? kvPut('base', S.base) : kvDel('base'), saveDevice()]);
   }
   function requireUser() {
@@ -686,7 +699,25 @@
             return staleChoice(u, pr.id, snap, res, name);
           });
         });
-      }).then(null, fail);
+      }).then(null, function (e) {
+        // §3.2: the linked project was trashed or purged on another device — unlink and offer a new cloud project
+        var code = e && e.code;
+        if ((code === 'not_found' || code === 'gone') && linkedFor(u) && !o.as) return goneChoice(u, e);
+        return fail(e);
+      });
+    });
+  }
+  function goneChoice(u, e) {
+    var oldName = S.binding ? S.binding.name : null;
+    S.busy = false; S.error = null;
+    return unlink().then(function () {
+      var i = I();
+      var ch = i ? i.choose({ title: 'Cloud project not available', text: 'That cloud project is no longer available (it was moved to the trash or deleted on another device). This device is no longer linked to it.',
+        buttons: [{ id: 'saveas', label: 'Save as a new cloud project', primary: true }, { id: 'cancel', label: 'Cancel' }] }) : Promise.resolve('cancel');
+      return ch.then(function (c) {
+        if (c === 'saveas') return saveToCloud({ as: true, name: oldName || undefined });
+        return { cancelled: true, unlinked: true, error: e && e.code };
+      });
     });
   }
   // Phase 1 409 (§6.6): Overwrite (the replaced revision stays in history) / Save as a new project / Cancel
@@ -718,7 +749,13 @@
     o = o || {};
     return requireUser().then(function (u) {
       var pre = Promise.resolve();
-      if (linkedFor(u) && S.binding.dirty && S.binding.projectId !== projectId) {
+      if (linkedFor(u) && S.binding.dirty && S.binding.projectId === projectId) {
+        // §6.8 never discard silently: the same project with unsaved changes → ask (default Cancel); a safety copy is kept
+        var ci = I();
+        var ask = ci ? ci.choose({ title: 'Open from cloud', text: 'This device has changes that are not saved to the cloud. Discard the changes on this device and load the cloud version? (A safety copy is kept on this device.)',
+          buttons: [{ id: 'cancel', label: 'Cancel', primary: true }, { id: 'discard', label: 'Discard and load the cloud version' }] }) : Promise.resolve('cancel');
+        pre = ask.then(function (c) { if (c !== 'discard') throw AErr('cancelled'); });
+      } else if (linkedFor(u) && S.binding.dirty) {
         var i = I();
         if (i && !i.isOnline()) return Promise.reject(AErr('offline_dirty'));
         pre = saveToCloud({}).then(function (r) { if (r && r.cancelled) throw AErr('cancelled'); }, function (e) {
@@ -759,8 +796,24 @@
     try { flushPage(); pl = buildPayload(); } catch (e) { return Promise.resolve(); }
     return kvGet('safety').then(function (list) {
       list = Array.isArray(list) ? list : [];
-      list.unshift({ at: now(), payload: pl });
+      list.unshift({ at: now(), payload: pl, projectId: S.binding ? S.binding.projectId : null, name: (S.binding && S.binding.name) || metaOf(pl).name || null });
       return kvPut('safety', list.slice(0, 2));
+    });
+  }
+  // restoreSafety(n) — load safety copy n (the current work becomes the newest safety copy). A copy taken from the project this
+  // device is still linked to keeps the link and is marked "Not saved to cloud"; any other copy unlinks.
+  function restoreSafety(n) {
+    return init().then(function () { return kvGet('safety'); }).then(function (list) {
+      list = Array.isArray(list) ? list : [];
+      var item = list[n]; if (!item || !item.payload) return false;
+      var cur = null;
+      try { flushPage(); cur = buildPayload(); } catch (e) { cur = null; }
+      var rest = list.filter(function (x, k) { return k !== n; });
+      if (cur) rest.unshift({ at: now(), payload: cur, projectId: S.binding ? S.binding.projectId : null, name: (S.binding && S.binding.name) || metaOf(cur).name || null });
+      return kvPut('safety', rest.slice(0, 2)).then(function () { return apply(item.payload); }).then(function () {
+        if (S.binding && item.projectId && item.projectId === S.binding.projectId) { S.binding.dirty = true; return saveBinding().then(function () { changed(); return true; }); }
+        return unlink().then(function () { return true; });
+      });
     });
   }
 
@@ -799,6 +852,7 @@
   function link(id) { return openFromCloud(id); }
   function unlink() {
     S.binding = null; S.base = null;
+    detach();
     return Promise.all([kvDel('binding'), kvDel('base')]).then(function () { changed(); return true; });
   }
   function fileName(name) {
@@ -934,10 +988,12 @@
       wellNames: (snap.wells || []).map(function (w) { return w.name; }), pages: pages, prism: prism, buildup: buildup, bytes: bytes, large: large };
   }
   function mb(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1000)) + ' kB'; }
-  function classify(user) {
+  function classify(user, migrated) {
     var d = S.device || {};
     if (!hasLocalWork()) return 'empty';
     if (d.workOwner === user.id) return 'own';
+    // work this user already put into the account from this device (§10.2 migratedFor) and nobody else claimed since
+    if ((!d.workOwner || d.workOwner === 'unowned') && Array.isArray(migrated) && migrated.indexOf(user.id) !== -1 && (!d.lastUserId || d.lastUserId === user.id)) return 'own';
     if (d.workOwner && d.workOwner !== 'unowned') return 'foreign';
     // 'unowned' (or never recorded): a personal device's pre-account work, unless another user signed in here before
     if (d.lastUserId && d.lastUserId !== user.id) return 'unknown';
@@ -955,10 +1011,9 @@
       var keyP = pub ? call('GET', '/me/outbox-key').then(function (r) { S.outboxKey = r.json && r.json.k; }, function () { S.outboxKey = null; }) : Promise.resolve();
       return keyP.then(function () { return unlockOutbox(user); }).then(function () { return restoreStash(user); }).then(function () {
         if (linkedFor(user)) return { kind: 'linked', choice: null };
-        var kind = classify(user);
-        return handover(user, kind);
+        return kvGet('migratedFor').then(function (mf) { return handover(user, classify(user, mf)); });
       }).then(function (res) {
-        S.device.lastUserId = user.id; S.device.signedOutVhash = null;
+        S.device.lastUserId = user.id;
         return saveDevice().then(function () { changed(); return res; });
       });
     }).then(null, function (e) { if (i) i.message(i.cloudErrText(e), 'err'); return { kind: 'error', error: e && e.code }; });
@@ -1047,7 +1102,7 @@
       try { var p = P(); if (p && typeof p['new'] === 'function') p['new'](); } catch (e) { /* none */ }
       S.applying = false;
       S.binding = null; S.base = null;
-      S.device.workOwner = user.id; S.device.workOwnerAt = now(); S.device.signedOutAfterOwner = false;
+      S.device.workOwner = user.id; S.device.workOwnerAt = now();
       S.device.emptyMark = emptyMark();
       return Promise.all([kvDel('binding'), kvDel('base'), saveDevice()]);
     });
@@ -1063,8 +1118,9 @@
       });
     });
   }
-  // 66 calls this when the page is signed out (sign-out or a 401): remember who owned the work and its vhash, so an edit
-  // made while signed out is detected at the next sign-in (signedOutAfterOwner).
+  // 66 calls this when the page is signed out (sign-out or a 401): remember the last user (lastUserId), so work found at the
+  // next sign-in by another user is classified 'unknown' (§10.1). The edited-after-sign-out mark is not kept in Phase 1:
+  // work owned by another user is 'foreign' whether or not it was edited, and the owner's own work is 'own'.
   function noteSignedOut(user) {
     return init().then(function () {
       if (user && user.id) S.device.lastUserId = user.id;
@@ -1163,7 +1219,7 @@
         return Promise.all(keep);
       }).then(function () {
         S.binding = null; S.base = null; S.outbox = null; S.outboxKey = null; S.error = null; S.lastSyncAt = null;
-        S.device = trustedRemove && dev ? dev : { deviceId: null, lastUserId: null, workOwner: null, workOwnerAt: now(), signedOutAfterOwner: false };
+        S.device = trustedRemove && dev ? dev : { deviceId: null, lastUserId: null, workOwner: null, workOwnerAt: now() };
         S.device.emptyMark = emptyMark();
         if (!trustedRemove) { var a = A(); if (a) a.configure({ deviceId: null }); }
         return saveDevice();
@@ -1237,6 +1293,8 @@
   }
 
   // ── export (§8.5): the account JSON plus every project as .h2oilproj ──────────────────────────────────────────────────
+  // exportAll({accountOnly}) — accountOnly: the account JSON only (POST /account/export, no project bodies fetched), as used
+  // by the account page's activity list.
   function exportAll(o) {
     o = o || {};
     var a = A();
@@ -1245,6 +1303,7 @@
     }).then(function (r) {
       var acc = r.json;
       var files = [{ name: 'account.json', text: JSON.stringify(acc, null, 2) }];
+      if (o.accountOnly) return { account: acc, files: files };
       var used = {};
       return (acc.projects || []).reduce(function (p, pr) {
         return p.then(function () {
@@ -1266,7 +1325,7 @@
     link: link, unlink: unlink, saveToCloud: saveToCloud, openFromCloud: openFromCloud, importFiles: importFiles,
     listProjects: listProjects, history: history, restoreRevision: restoreRevision, rename: rename, duplicate: duplicate,
     trash: trash, restore: restore, purge: purge, download: download, projectFile: projectFile, snapshot: snapshot, assemble: assemble,
-    migrateLocal: function (choice) { var u = signedInUser(); if (!u) return Promise.reject(AErr('signed_out')); return init().then(function () { return handover(u, classify(u)); }); },
+    migrateLocal: function (choice) { var u = signedInUser(); if (!u) return Promise.reject(AErr('signed_out')); return init().then(function () { return kvGet('migratedFor'); }).then(function (mf) { return handover(u, classify(u, mf)); }); },
     wipeDevice: wipeDevice, exportAll: exportAll, openPicker: openPicker, pickAndImport: pickAndImport,
     afterSignIn: afterSignIn, publicSignOutGuard: publicSignOutGuard, lockOutbox: lockOutbox,
     syncNow: notYet('syncNow'), conflicts: function () { return Promise.resolve([]); }, resolve: notYet('resolve'), diff: notYet('diff'),
@@ -1277,6 +1336,8 @@
       restorePreAccount: function () { return kvGet('preAccount').then(function (p) { if (!p) return false; return safety().then(function () { return apply(p.payload); }).then(function () { return unlink(); }).then(function () { return true; }); }); },
       discardPreAccount: function () { return kvDel('preAccount'); },
       restoreStash: function (owner) { return kvGet('stash').then(function (st) { if (!st || !st[owner]) return false; var pl = st[owner].payload; delete st[owner]; return safety().then(function () { return apply(pl); }).then(function () { return kvPut('stash', st); }).then(function () { return unlink(); }).then(function () { return true; }); }); },
+      restoreSafety: restoreSafety,
+      discardSafety: function (n) { return kvGet('safety').then(function (l) { l = Array.isArray(l) ? l : []; l.splice(n, 1); return kvPut('safety', l); }); },
       discardStash: function (owner) { return kvGet('stash').then(function (st) { if (!st) return true; delete st[owner]; return kvPut('stash', st); }); },
     },
     _split: splitPayload, _hashSplit: hashSplit, _classify: classify, _store: { get: kvGet, put: kvPut, del: kvDel },

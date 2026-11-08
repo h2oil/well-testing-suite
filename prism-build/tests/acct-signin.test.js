@@ -24,6 +24,9 @@
 //   SI20 dialog a11y: role / aria-modal / labels, Escape closes and returns focus, phone layout rules, offline text
 //   SI21 Ctrl+S saves to the cloud only while signed in and linked
 //   SI22 paused (ACCOUNTS_OFF) → "Cloud sync paused" chip; locked account message
+//   SI23 public computer after a provider sign-in: sign-out hands WP-O's onPublicSignOut the provider that was used
+//   SI24 a mailer that never finishes: a known and an unknown address still get the same reply and the code step
+//   SI25 the device label is neutral (system + desktop / phone browser), never a browser product name
 'use strict';
 
 const T = require('./_acct-app');
@@ -372,10 +375,17 @@ module.exports = [
         t.a.flush(1000);
         const idId = addIdentity(t.fake, 'new@company.example', 'google');
         t.fake.state.sessions.forEach((s) => { if (s.userId === t.fake.user('new@company.example').id) s.identityId = idId; });
-        // the notice's link on another browser
-        const t2 = T.device(ctx, t.fake, { beta: false, hash: '#account-revert' });
+        // during the Phase 1 beta the link shows nothing without the beta flag (the live site has no account UI)
+        const t0 = T.device(ctx, t.fake, { beta: false, hash: '#account-revert' });
         try {
-          await t2.until(() => t2.el('acct_rev_email'), 'revert step opens without the beta flag');
+          await t0.settle(50);
+          assert(!t0.el('acct_rev_email') && !t0.el('acct_dlg'), 'no revert dialog without the beta flag');
+          assert.strictEqual(t0.fake.requests.filter((r) => r.browser === t0.br.name).length, 0, 'and no request');
+        } finally { t0.dispose(); }
+        // the notice's link on another browser of a beta user
+        const t2 = T.device(ctx, t.fake, { hash: '#account-revert' });
+        try {
+          await t2.until(() => t2.el('acct_rev_email'), 'revert step opens from the link');
           assert.strictEqual(t2.fake.requests.filter((r) => r.browser === t2.br.name).length, 0, 'no request until submitted');
           t2.a.input('acct_rev_email', E1); t2.a.input('acct_rev_code', notice.params.revertCode);
           t2.click('acct_rev_go');
@@ -547,6 +557,67 @@ module.exports = [
         t.a.input('acct_email', E1); t.click('acct_send');
         await t.until(() => t.el('acct_code'));
         assert.strictEqual(t.fake.mail.sent.filter((m) => m.template === 'code_signin').length, 1, 'a locked account gets no code (same reply)');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'SI23 public computer after a provider sign-in: onPublicSignOut receives the provider (google)', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = T.boot(ctx, {});
+      try {
+        await t.signIn(E1, { publicDevice: true });
+        await t.until(() => t.acct().state().status === 'signedIn');
+        // the session was created by a Google sign-in (WP-O): the server reports authMethod 'google'
+        t.fake.sessionsOf(E1).forEach((s) => { s.authMethod = 'google'; });
+        await t.acct().refresh();
+        assert.strictEqual(t.acct().state().authMethod, 'google');
+        const seen = [];
+        let release = null;
+        t.acct().hooks.onPublicSignOut = (info) => { seen.push(info && info.authMethod); return new Promise((r) => { release = r; }); };
+        let done = false;
+        t.acct().signOut().then(() => { done = true; });
+        await t.until(() => seen.length === 1, 'the hook ran');
+        assert.strictEqual(seen[0], 'google', 'the hook is told which provider was used');
+        assert.strictEqual(t.acct().state().status, 'signedOut', 'already signed out locally when the hook runs');
+        await t.settle(20);
+        assert.strictEqual(done, false, 'sign-out waits for the hook (the blocking provider sign-out step)');
+        release();
+        await t.until(() => done, 'sign-out finished');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'SI24 a stuck mailer: known and unknown addresses get the same reply and reach the code step', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = T.boot(ctx, { mailDelay: () => { /* never delivers */ } });
+      try {
+        const F = require('./_acct-fake-server');
+        await F.signIn(t.fake, t.fake.browser('seed-dev'), E1);   // E1 has an account
+        const replies = [];
+        for (const em of [E1, 'nobody@company.example']) {
+          t.acct().openSignIn();
+          await t.until(() => t.el('acct_email'));
+          t.a.input('acct_email', em); t.click('acct_send');
+          await t.until(() => t.el('acct_code'), 'code step for ' + em);
+          assert(t.dialogText().includes(em));
+          replies.push(t.dialogText().replace(em, '<e>'));
+          t.click('acct_dlg_x'); await t.settle(20);
+        }
+        assert.strictEqual(replies[0], replies[1], 'the same reply text for both');
+        const starts = t.fake.requests.filter((r) => r.path.endsWith('/auth/code/start') && r.browser !== 'seed-dev');
+        assert.strictEqual(starts.length, 2);
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'SI25 the device label sent at sign-in is neutral (no browser product names)', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = T.boot(ctx, {});
+      try {
+        const label = t.acct()._i.deviceLabel();
+        assert(/(desktop|phone) browser$/.test(label), label);
+        const src = require('fs').readFileSync(require('path').join(__dirname, '..', '66-account.js'), 'utf8');
+        ['Edge', 'Firefox', 'Chrome', 'Safari', 'Opera'].forEach((n) => assert(!new RegExp('\\b' + n + '\\b').test(src), 'no product name ' + n + ' in 66'));
       } finally { t.dispose(); }
     },
   },

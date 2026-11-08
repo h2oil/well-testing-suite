@@ -22,7 +22,7 @@ function abs(u) { u = String(u); return u.startsWith('/') ? F.PROD + u : u; }
 function boot(ctx, o) {
   o = o || {};
   const clock = { a: null };
-  const fake = o.fake || F.createFakeServer({ now: () => (clock.a ? clock.a.win.Date.now() : Date.now()), switches: o.switches, allow: o.allow, quota: o.quota });
+  const fake = o.fake || F.createFakeServer({ now: () => (clock.a ? clock.a.win.Date.now() : Date.now()), switches: o.switches, allow: o.allow, quota: o.quota, mailDelay: o.mailDelay });
   const br = o.browser || (o.fake ? fake.browser('dev-' + Math.random().toString(36).slice(2, 7)) : fake);
   const storage = o.storage || createStorage(o.beta === false ? {} : { wtspref_cloud_beta: '1' });
   if (o.seed) seedStorage(storage, o.seed);

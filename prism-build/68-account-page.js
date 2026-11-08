@@ -79,12 +79,12 @@
       (u.status === 'deleting' ? '<div id="acct_p_deleting">&#9888; Your account is being deleted on ' + day(u.deleteAt) + '. <button type="button" class="btn btn-primary" id="acct_cancel_delete">Cancel deletion</button></div>' : '') +
       '<div class="fg-item"><label for="acct_new_email">Change e-mail address</label><input type="email" id="acct_new_email" maxlength="254" autocomplete="off" data-acct-skip="1"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_change_email">Send a code to the new address</button></div>' +
-      '<div class="fg-item" id="acct_email_code_row" hidden><label for="acct_email_code">Code from the new address</label><input type="text" id="acct_email_code" inputmode="numeric" maxlength="11" autocomplete="one-time-code"></div>' +
+      '<div class="fg-item" id="acct_email_code_row" hidden><label for="acct_email_code">Code from the new address</label><input type="text" id="acct_email_code" inputmode="numeric" maxlength="11" autocomplete="one-time-code" data-acct-skip="1"></div>' +
       '<div class="acct-btns" id="acct_email_confirm_row" hidden><button type="button" class="btn btn-primary" id="acct_confirm_email">Confirm the new address</button></div>' +
-      '<div class="fg-item"><label for="acct_recovery">' + (u.recoveryMasked ? 'Replace the recovery address' : 'Add a recovery address (a personal address helps if you lose your work mailbox)') + '</label><input type="email" id="acct_recovery" maxlength="254" autocomplete="off"></div>' +
+      '<div class="fg-item"><label for="acct_recovery">' + (u.recoveryMasked ? 'Replace the recovery address' : 'Add a recovery address (a personal address helps if you lose your work mailbox)') + '</label><input type="email" id="acct_recovery" maxlength="254" autocomplete="off" data-acct-skip="1"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_set_recovery">Send a code to it</button>' +
       (u.recoveryMasked ? '<button type="button" class="btn btn-secondary" id="acct_remove_recovery">Remove the recovery address</button>' : '') + '</div>' +
-      '<div class="fg-item" id="acct_recovery_code_row" hidden><label for="acct_recovery_code">Code from the recovery address</label><input type="text" id="acct_recovery_code" inputmode="numeric" maxlength="11"></div>' +
+      '<div class="fg-item" id="acct_recovery_code_row" hidden><label for="acct_recovery_code">Code from the recovery address</label><input type="text" id="acct_recovery_code" inputmode="numeric" maxlength="11" data-acct-skip="1"></div>' +
       '<div class="acct-btns" id="acct_recovery_confirm_row" hidden><button type="button" class="btn btn-primary" id="acct_confirm_recovery">Confirm the recovery address</button></div>' +
       '<div id="acct_profile_msg" role="status" aria-live="polite"></div></div>' +
 
@@ -117,14 +117,14 @@
       '<p>Delete account: everything is hidden at once and deleted for good after 7 days. Signing in again during those days lets you cancel.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_delete">Delete account…</button></div><div id="acct_data_msg" role="status" aria-live="polite"></div></div>' +
 
-      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes are listed in Export everything (12 months).</p>' +
+      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation and sends a security notice to your e-mail address.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_show_activity">Show my activity</button></div><div id="acct_activity"></div></div>';
   }
   function devicesHtml(list) {
     if (!list.length) return '<p>No devices.</p>';
     return '<table class="dtable" id="acct_devices_table"><thead><tr><th>Device</th><th>Last seen</th><th></th></tr></thead><tbody>' +
       list.map(function (d) {
-        return '<tr data-id="' + esc(d.id) + '"><td>' + esc(d.label || 'Device') + (d.current ? ' <b>(this device)</b>' : '') + '</td><td>' + when(d.lastSeen) + '</td><td>' +
+        return '<tr data-id="' + esc(d.id) + '"><td data-label="Device">' + esc(d.label || 'Device') + (d.current ? ' <b>(this device)</b>' : '') + '</td><td data-label="Last seen">' + when(d.lastSeen) + '</td><td>' +
           '<button type="button" class="btn btn-secondary acct-dev-rename" data-id="' + esc(d.id) + '">Rename</button> ' +
           (d.current ? '' : '<button type="button" class="btn btn-secondary acct-dev-revoke" data-id="' + esc(d.id) + '">Sign out device</button>') + '</td></tr>';
       }).join('') + '</tbody></table>';
@@ -146,8 +146,8 @@
           : ['open:Open', 'rename:Rename', 'duplicate:Duplicate', 'history:History', 'download:Download', 'trash:Move to trash'].map(function (x) {
             var k = x.split(':'); return '<button type="button" class="btn btn-secondary" data-act="' + k[0] + '" data-id="' + esc(p.id) + '">' + k[1] + '</button>';
           }).join(' ');
-        return '<tr data-id="' + esc(p.id) + '"><td>' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + '</td>' +
-          '<td>' + esc([m.client, m.well].filter(Boolean).join(' / ')) + '</td><td>' + esc(p.wells) + '</td><td>' + when(p.savedAt) + '</td><td>' + mb(p.bytes) + '</td><td>' + acts + '</td></tr>';
+        return '<tr data-id="' + esc(p.id) + '"><td data-label="Name">' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + '</td>' +
+          '<td data-label="Client / well">' + esc([m.client, m.well].filter(Boolean).join(' / ')) + '</td><td data-label="Wells">' + esc(p.wells) + '</td><td data-label="Last saved">' + when(p.savedAt) + '</td><td data-label="Size">' + mb(p.bytes) + '</td><td>' + acts + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
   function helpHtml() {
@@ -242,7 +242,11 @@
       return A().signOut({ everywhere: true, alsoRecentMethodsDays: recent ? 14 : 0, keep: true }).then(rerender);
     });
   }
-  function rerender() { var b = $('pgBody'); var r = $('acct_root'); render(r && r.parentNode ? r.parentNode : b); }
+  function rerender() {
+    var r = $('acct_root');
+    if (r && r.parentNode) return render(r.parentNode);
+    return registered ? render($('pgBody')) : false;   // never draw into #pgBody outside the account route
+  }
   function loadProjects() {
     var c = C(); if (!c) return Promise.resolve([]);
     return c.listProjects({ trash: view.trash }).then(function (list) { view.projects = list; drawProjects(); return list; }, function (e) {
@@ -288,9 +292,16 @@
   }
   function drawLocal() {
     var c = C(); var el = $('acct_local'); if (!c || !el) return Promise.resolve();
-    return Promise.all([c.local.preAccount(), c.local.stash()]).then(function (r) {
-      var pre = r[0], st = r[1] || {};
+    return Promise.all([c.local.preAccount(), c.local.stash(), c.local.safety ? c.local.safety() : null]).then(function (r) {
+      var pre = r[0], st = r[1] || {}, saf = Array.isArray(r[2]) ? r[2] : [];
       var rows = [];
+      // the 2-slot safety list (§6.8): the work that was open before an Open from cloud or a restore
+      saf.forEach(function (x, n) {
+        if (!x || !x.payload) return;
+        rows.push('<div class="rrow"><span class="rl">Safety copy' + (x.name ? ' of ' + esc(x.name) : '') + ' (' + when(new Date(x.at).toISOString()) + ' UTC)</span><span class="rv">' +
+          '<button type="button" class="btn btn-secondary acct-safety" data-act="restore" data-n="' + n + '" id="acct_safety_restore_' + n + '">Restore</button> ' +
+          '<button type="button" class="btn btn-secondary acct-safety" data-act="discard" data-n="' + n + '" id="acct_safety_discard_' + n + '">Discard</button></span></div>');
+      });
       if (pre) rows.push('<div class="rrow"><span class="rl">Work from before you signed in (' + day(new Date(pre.at).toISOString()) + ')</span><span class="rv">' +
         '<button type="button" class="btn btn-secondary" id="acct_pre_restore">Restore</button> <button type="button" class="btn btn-secondary" id="acct_pre_discard">Discard</button></span></div>');
       Object.keys(st).forEach(function (k, n) {
@@ -301,7 +312,15 @@
       el.innerHTML = rows.length ? rows.join('') : '<p id="acct_local_none">Nothing is kept on this device besides the open project.</p>';
       on('acct_pre_restore', function () { c.local.restorePreAccount().then(drawLocal); });
       on('acct_pre_discard', function () { c.local.discardPreAccount().then(drawLocal); });
+      if (el.getAttribute('data-acct-wired')) return;   // one delegated listener; drawLocal runs again after every action
+      el.setAttribute('data-acct-wired', '1');
       el.addEventListener('click', function (ev) {
+        var sf = ev.target && ev.target.closest ? ev.target.closest('button.acct-safety') : null;
+        if (sf) {
+          var n = Number(sf.getAttribute('data-n'));
+          (sf.getAttribute('data-act') === 'restore' ? c.local.restoreSafety(n) : c.local.discardSafety(n)).then(drawLocal);
+          return;
+        }
         var t = ev.target && ev.target.closest ? ev.target.closest('button.acct-stash') : null; if (!t) return;
         var o = t.getAttribute('data-owner');
         (t.getAttribute('data-act') === 'restore' ? c.local.restoreStash(o) : c.local.discardStash(o)).then(drawLocal);
@@ -382,11 +401,13 @@
   }
   function showActivity() {
     var c = C();
-    return c.exportAll().then(function (res) {
-      var rows = (res.account.audit || []).slice(-90);
+    // the account JSON only — no project bodies are downloaded (§11.3: the user's own audit rows, 90 days)
+    return c.exportAll({ accountOnly: true }).then(function (res) {
+      var since = (I() && I().now ? I().now() : Date.now()) - 90 * 24 * 3600 * 1000;
+      var rows = (res.account.audit || []).filter(function (r) { var t = Date.parse(r && r.at); return isFinite(t) && t >= since; });
       var el = $('acct_activity');
       if (el) el.innerHTML = rows.length ? '<table class="dtable" id="acct_activity_table"><thead><tr><th>When</th><th>What</th></tr></thead><tbody>' +
-        rows.map(function (r) { return '<tr><td>' + when(r.at) + '</td><td>' + esc(r.action) + (r.detail && r.detail.method ? ' (' + esc(r.detail.method) + ')' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
+        rows.map(function (r) { return '<tr><td data-label="When">' + when(r.at) + '</td><td data-label="What">' + esc(r.action) + (r.detail && r.detail.method ? ' (' + esc(r.detail.method) + ')' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
       return rows.length;
     }, function (e) { if (!e || e.code !== 'cancelled') say('acct_data_msg', errText(e), 'err'); return 0; });
   }
@@ -410,11 +431,23 @@
     registered = true;
     return true;
   }
+  // open() — the registered route when the host has the account hooks; otherwise the page is drawn in its own overlay OUTSIDE
+  // #pgBody, so the host autosave never stores the e-mail / code inputs in wts_page_<route> (project files, cloud snapshots).
   function open() {
     if (registered && typeof G.WTS_nav === 'function') return G.WTS_nav('account');
-    var b = $('pgBody'); if (!b) return null;
-    var t = $('pgTitle'), s = $('pgSub'); if (t) t.textContent = entry.title; if (s) s.textContent = entry.sub;
-    return render(b);
+    if (!HAS_DOC || !document.body) return null;
+    var i = I(); if (i && i.ensureCss) i.ensureCss();
+    var ov = $('acct_page_ov');
+    if (!ov) {
+      ov = document.createElement('div'); ov.id = 'acct_page_ov'; ov.className = 'acct-ov acct-page-ov rp-skip';
+      ov.setAttribute('data-rp-nosnap', '1'); ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-label', entry.title);
+      ov.innerHTML = '<div class="acct-dlg acct-page-dlg"><h3><span>' + esc(entry.title) + '</span><button type="button" class="acct-x" id="acct_page_close" aria-label="Close">&times;</button></h3>' +
+        '<div id="acct_page_body"></div></div>';
+      document.body.appendChild(ov);
+      var x = $('acct_page_close');
+      if (x) x.addEventListener('click', function () { var o = $('acct_page_ov'); if (o && o.parentNode) o.parentNode.removeChild(o); });
+    }
+    return render($('acct_page_body'));
   }
   G.WTS_accountPage = { VERSION: VERSION, entry: entry, render: render, register: register, open: open, hooks: hooks,
     _zip: zip, _splitFiles: splitFiles, _export: exportEverything, _reload: loadProjects };
