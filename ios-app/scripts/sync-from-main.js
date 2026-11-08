@@ -83,7 +83,9 @@ function acctFail(msg) {
         console.log(`[sync] Stripped the web-only accounts blocks (${jsStarts} JS, ${htStarts} HTML; ${acctBefore - html.length} chars)`);
     }
     const ACCT_IDS = ['WTS_account', 'WTS_cloudSync', '/api/v1', 'wts_account_host', 'wtsacct_', '/auth/oauth', 'wts_oa',
-        'Continue with Google', 'Sign in with Google', 'Sign in with LinkedIn', 'LinkedIn'];
+        'Continue with Google', 'Sign in with Google', 'Sign in with LinkedIn', 'LinkedIn',
+        // WP-C1: the account page, dialog, status bar, device store and beta flag (docs/ACCOUNTS-PLAN.md §9, §11.4)
+        'WTS_accountPage', 'wts_sync_bar', 'acct_root', 'acct_dlg', 'wts-sync', 'wtspref_cloud'];
     const left = ACCT_IDS.filter((t) => html.indexOf(t) !== -1);
     if (left.length) acctFail('account identifiers remain outside ACCT markers: ' + left.join(', '));
     // "Google" may appear once: the analytics sentence of the privacy text (baseline pinned; WP-H checks the sentence).
