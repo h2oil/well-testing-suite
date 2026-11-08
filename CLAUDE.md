@@ -78,6 +78,15 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   wts_bean2, wts_ck2Pos, wts_sepByDest, wts_sepByP; flow-limited pair = states at QmaxPair) and
                                   never reads wts_sim_rigup (the rig-up only picks the block shown, wtsRenderResults); with
                                   CK-102 out, V-101 in and no cushion the engine and the page are exactly v3.3.1
+                                  v3.4.1 (code comments say v1.6.0 / v3.3.4): 31 default T-201 line-up SURGE_LINEUP_DEF = XV-201A
+                                  open, XV-201B shut, LCV-201 suction from B, auto-divert on at 80 %, steady start A 0.35 / B 0.60;
+                                  cfg.surge.lineup pins another one (SURGE_LINEUP_V331 = the old line-up; identity tests pin it,
+                                  tests/_wts-lineup-pin.js). CK-101 legs adjustable | positive: host inputs wts_ckLeg ('adj' |
+                                  'fixed'), wts_bean, wts_beanFix → flow.ck1; snapshot nodes.choke.leg / beanAdj / beanFix (no
+                                  flow.ck1 → 'adj', bean, null). 32 VERSION 1.4.0: manifold table CK_M (3-1/16" 10K, 4 gate valves,
+                                  studded tees, hammer unions, skid), leg taps send {type:'ckleg'}. 38: toolbar Rig-up menu
+                                  (rigModel / rigToggle) for T-202 / DS-101 / CK-102; an untouched stored T-201 line-up pref
+                                  (no ctlUser.surge) is migrated so the new default applies
   33-pta-core.js                ← C1 getWell, C2 getAnalysisData/rateHistory, C3 physicalModel, C4 lastFit,
                                   C5 type-curve match, C8 save/restore state          (Round-8)
   34-semilog-skin.js            ← MDH/Horner/superposition straight lines, skin summary + decomposition (Round-8)
@@ -269,6 +278,7 @@ via numbered "rounds":
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
    (339/339 must pass), `node prism-build/accept-test.js --html --integration` (1615/1615) and
    `node prism-build/wts3d-test.js` (132 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
+   `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -642,7 +652,12 @@ Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.0
 Generated HTML:               ~152.9k lines (9.96 MB); www bundle ~10.0 MB (+ www/help 8.0 MB images and the guide)
 ```
 
-Latest release: v3.4 (PRiSM DFIT mode, increment 3.4a of docs/DFIT-PLAN.md: Test → DFIT (fracture injection) — channels and
+Latest release: v3.4.1 (Well Test Simulator: CK-101 choke manifold with an adjustable and a positive (fixed-bean) leg — leg in
+service picked on the Choke card, the CK-101 card or a 3D tap, a bean per leg; 3D manifold after a 3-1/16" 10K two-choke manifold;
+T-201 compartments A / B with their own side inlets filling independently — by default A fills while LCV-201 transfers from B,
+auto-divert at 80 %; toolbar Rig-up menu for T-202 / DS-101 / CK-102; help screenshots deployed with the page; App Store 3.4.1),
+dated 2026-11-08, on top of
+v3.4 (PRiSM DFIT mode, increment 3.4a of docs/DFIT-PLAN.md: Test → DFIT (fracture injection) — channels and
 wellbore conversion, triage with 21 checks, blunder cards, re-pump verdict and grade A–D, ISIP families, step-down / step-rate,
 closure from every method in families F0–F4 with a single value or a range, frictional-limit veto and logged override,
 efficiency / net pressure / R_vis / geometry / CL and the what-if table, after-closure p_i bracket and kh/μ or k bounds with a leak
@@ -670,7 +685,7 @@ as the 8th row of Test System Safety, THI hydrate design with real-gas J-T × 1.
 chemicals, pump settings ranked for classified areas with the air-driven liquid pump as the H1 default, surface discharge
 pressure / relief band, drive gas, calibration, tank; Hydrate-page rp-skip banner and Chemical & Dosage cross-link; Quick
 Report final + daily entries; 3.2b — H2S scavenger card, downhole capillary, LDHI screening, second expansion, batch — still
-to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **3.4**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
+to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **3.4.1**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
 
 **Shared engines (reuse, never duplicate):** `PRiSM_dfit_pipeline` (57; the only place that knows the DFIT stage order, with a
 Job twin), `WTS_wellbore` (48-calc-wellbore: survey, strings, column, `convert`, `csys`, `stepRate`, `ramp`, `hammerQuick`),
