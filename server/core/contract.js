@@ -200,7 +200,7 @@ const enumOf = (list) => list.map((x) => "'" + x + "'").join('|');
 
 // ── shapes ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const S = SHAPES;
-S.Ok = { ok: true };
+S.Ok = { ok: 'true' };
 S.Consent = { terms: 'nestr', privacy: 'nestr' };
 S.UserBrief = { id: 'uuid', emailMasked: 'masked', created: 'iso' };
 S.Device = { id: 'uuid', label: 'label' };
@@ -214,8 +214,11 @@ S.Providers = { google: enumOf(SWITCH_VALUES), linkedin: enumOf(SWITCH_VALUES) }
 S.ErrorEnvelope = { error: 'nestr', message: 'str', 'retryAfter?': 'uint' };
 
 // auth requests
-S.CodeStartReq = { email: 'email', purpose: "'signin'|'stepup'|'email_change'|'recovery_add'", 'to?': "'primary'|'recovery'" };
-S.CodeVerifyReq = { email: 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent' };
+// A step-up code goes to the session user's own address (the page knows only the masked form), so `email` may be left out
+// for purpose 'stepup' (start) and for a step-up verify, which the server matches through the session (WP0 refinement of §3.3).
+S.CodeStartReq = all({ 'email?': 'email', purpose: "'signin'|'stepup'|'email_change'|'recovery_add'", 'to?': "'primary'|'recovery'" },
+  rule((v) => (v.email === undefined && v.purpose !== 'stepup') ? 'email: missing (required unless purpose is stepup)' : null));
+S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent' };
 S.EmailChangeReq = { newEmail: 'email' };
 S.EmailConfirmReq = { code: 'code8' };
 S.EmailRevertReq = { email: 'email', code: 'code8' };
@@ -229,13 +232,15 @@ S.PasskeyRenameReq = { id: 'uuid', name: 'str' };
 S.PasskeyRemoveReq = { id: 'uuid' };
 S.SignOutReq = {};
 S.SignOutAllReq = { 'alsoRecentMethodsDays?': 'uint' };
-S.OAuthStartReq = { purpose: "'signin'|'link'", publicDevice: 'bool', 'deviceLabel?': 'label' };
+// sharedBrowser: the page's wtspref_shared_browser flag (T30) — with publicDevice it makes the attempt a fresh-login attempt
+// (§4.10 item 3); the plan names the flag but not the field (WP0 refinement).
+S.OAuthStartReq = { purpose: "'signin'|'link'", publicDevice: 'bool', 'sharedBrowser?': 'bool', 'deviceLabel?': 'label' };
 S.OAuthFinishReq = all({ 'email?': 'email', 'code?': 'code8', 'consent?': '@Consent' },
   rule((v) => (['email', 'code', 'consent'].filter((k) => v[k] !== undefined).length > 1) ? 'expected at most one of email | code | consent' : null));
 S.UnlinkReq = { id: 'uuid' };
 // auth responses
 S.EmailConfirmRes = { emailMasked: 'masked' };
-S.RevokeRes = { ok: true, sessions: 'uint', passkeysRemoved: 'uint', identitiesRemoved: 'uint' };
+S.RevokeRes = { ok: 'true', sessions: 'uint', passkeysRemoved: 'uint', identitiesRemoved: 'uint' };
 S.PasskeyOptionsRes = { publicKey: { challenge: 'b64|str', rpId: "'welltest.h2oil.co.uk'", userVerification: "'required'", allowCredentials: arr('any') } };
 S.PasskeyRegisterOptionsRes = { publicKey: 'any' };
 S.PasskeyCreatedRes = { id: 'uuid', name: 'str', created: 'iso' };
@@ -249,7 +254,7 @@ S.FinishRes = oneOf('next', {
   done: (v, p, ctx) => checkNamed(v && v.linked !== undefined ? 'FinishLinked' : 'FinishDone', v, p, ctx),
   email: '@FinishEmail', code: '@FinishCode', consent: '@FinishConsent',
 });
-S.UnlinkRes = { ok: true, methods: '@Methods', sessionsRevoked: 'uint' };
+S.UnlinkRes = { ok: 'true', methods: '@Methods', sessionsRevoked: 'uint' };
 
 // me, devices, library
 S.Me = {
@@ -307,9 +312,9 @@ S.ExportRes = {
   audit: arr('any'), projects: arr({ id: 'uuid', name: 'str', meta: '@ProjectMeta', headRev: 'uint', revs: arr('@RevItem') }),
 };
 S.DeleteReq = { confirm: "'DELETE'", 'immediate?': 'bool' };
-S.DeleteRes = { ok: true, deleteAt: 'iso' };
+S.DeleteRes = { ok: 'true', deleteAt: 'iso' };
 S.Health = { ok: 'bool', db: 'bool', ver: 'str' };
-S.OpsDailyRes = { ok: true, 'did?': 'any' };
+S.OpsDailyRes = { ok: 'true', 'did?': 'any' };
 
 // ── endpoints (§3.3; '/api/v1' omitted) ─────────────────────────────────────────────────────────────────────────
 const COMMON = ['bad_request', 'origin', 'rate', 'paused', 'upgrade'];
