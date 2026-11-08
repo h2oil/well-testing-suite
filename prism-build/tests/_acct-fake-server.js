@@ -738,108 +738,9 @@ function createFakeServer(o) {
   };
   rebuild();
 
-  // ── transport: a browser with a cookie jar ───────────────────────────────────────────────────────────────────────
-  function takeFault(method, p) {
-    for (let i = 0; i < faults.length; i++) {
-      const f = faults[i];
-      const pm = f.path === '*' || (f.path instanceof RegExp ? f.path.test(p) : p === f.path || p === C.BASE + f.path);
-      if (pm && (!f.method || f.method === method)) { if (--f.times <= 0) faults.splice(i, 1); return f; }
-    }
-    return null;
-  }
-  function toBuffer(body) {
-    if (body == null) return null;
-    if (typeof body === 'string') return Buffer.from(body, 'utf8');
-    if (Buffer.isBuffer(body)) return body;
-    if (body instanceof ArrayBuffer || Object.prototype.toString.call(body) === '[object ArrayBuffer]') return Buffer.from(new Uint8Array(body));
-    if (ArrayBuffer.isView(body) || (body && typeof body.byteLength === 'number' && body.buffer)) return Buffer.from(body.buffer, body.byteOffset || 0, body.byteLength);
-    if (body && typeof body._text === 'string') return Buffer.from(body._text, 'utf8');      // harness Blob (text-only)
-    return Buffer.from(String(body), 'utf8');
-  }
-  function makeResponse(out, url) {
-    const headers = {};
-    Object.keys(out.headers || {}).forEach((k) => { headers[k.toLowerCase()] = String(out.headers[k]); });
-    const buf = out.body == null ? Buffer.alloc(0) : (Buffer.isBuffer(out.body) ? out.body : Buffer.from(out.body, 'utf8'));
-    return {
-      status: out.status, ok: out.status >= 200 && out.status < 300, statusText: String(out.status), url, redirected: false, type: 'basic',
-      headers: { get: (n) => (headers[String(n).toLowerCase()] !== undefined ? headers[String(n).toLowerCase()] : null), has: (n) => headers[String(n).toLowerCase()] !== undefined, forEach: (fn) => Object.keys(headers).forEach((k) => fn(headers[k], k)) },
-      json: () => Promise.resolve().then(() => JSON.parse(buf.toString('utf8'))),
-      text: () => Promise.resolve(buf.toString('utf8')),
-      arrayBuffer: () => Promise.resolve(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)),
-      clone() { return makeResponse(out, url); },
-    };
-  }
-  function delay(v) {
-    const L = o.latency;
-    if (!L || !L.ms) return Promise.resolve(v);
-    return new Promise((res) => L.schedule(() => res(v), L.ms));
-  }
-  function browser(name) {
-    const jar = new Map();
-    function applyCookies(list) {
-      (list || []).forEach((line) => {
-        const parts = line.split(';').map((s) => s.trim());
-        const [k, ...rest] = parts[0].split('='); const v = rest.join('=');
-        const attrs = {}; parts.slice(1).forEach((x) => { const [a, b2] = x.split('='); attrs[a.toLowerCase()] = b2 === undefined ? true : b2; });
-        if (attrs['max-age'] === '0' || v === '') { jar.delete(k); return; }
-        // no Max-Age = a browser-session cookie (persistent: false): gone after restart()
-        jar.set(k, { value: v, sameSite: attrs.samesite || 'Lax', expires: attrs['max-age'] ? now() + Number(attrs['max-age']) * 1000 : null, persistent: !!attrs['max-age'], attrs });
-      });
-    }
-    function cookieHeader(crossSiteNav) {
-      const t = now(); const out = [];
-      for (const [k, c] of jar) {
-        if (c.expires && c.expires <= t) { jar.delete(k); continue; }
-        if (crossSiteNav && c.sameSite === 'Strict') continue;
-        out.push(k + '=' + c.value);
-      }
-      return out.join('; ');
-    }
-    async function raw(method, url, headers, body, crossSiteNav) {
-      const u = new URL(url, origin);
-      const p = u.pathname + u.search;
-      const hdrs = { host: new URL(origin).host };
-      Object.keys(headers || {}).forEach((k) => { hdrs[k.toLowerCase()] = String(headers[k]); });
-      if (!crossSiteNav && method !== 'GET' && method !== 'HEAD') hdrs.origin = origin;
-      const ck = cookieHeader(crossSiteNav); if (ck) hdrs.cookie = ck; else delete hdrs.cookie;
-      const req = { method, url: p, headers: hdrs, body: toBuffer(body), remoteAddress: o.ip || '203.0.113.9' };
-      requests.push({ browser: name, method, path: u.pathname, query: u.search, at: now() });
-      const f = takeFault(method, u.pathname);
-      if (f && f.mode === 'network') throw new TypeError('Failed to fetch');
-      let out;
-      if (f && f.mode !== 'lost') {
-        if (f.mode === 'server') out = { status: 500, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), body: JSON.stringify({ error: 'server', message: 'Server error.' }), cookies: [] };
-        else { const e = require(path.join(SRV, 'core', 'errors')).envelope(f.mode, f.extra || (f.mode === 'rate' ? { retryAfter: 30 } : {})); out = { status: e.status, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), body: JSON.stringify(e.body), cookies: [] }; }
-      } else out = await app.handle(req);
-      applyCookies(out.cookies);
-      if (f && f.mode === 'lost') throw new TypeError('Failed to fetch');
-      return out;
-    }
-    const br = {
-      name, jar,
-      fetch(input, init) {
-        init = init || {};
-        const url = typeof input === 'string' ? input : (input && input.url) || String(input);
-        const method = String(init.method || 'GET').toUpperCase();
-        let headers = init.headers || {};
-        if (headers && typeof headers.forEach === 'function' && !Array.isArray(headers) && typeof headers.get === 'function') { const h2 = {}; headers.forEach((v, k) => { h2[k] = v; }); headers = h2; }
-        return delay().then(() => raw(method, url, headers, init.body, false)).then((out) => delay(makeResponse(out, url)));
-      },
-      navigate(url) { return raw('GET', url, {}, null, true).then((out) => ({ status: out.status, location: out.headers && out.headers.Location })); },
-      visit(url, v) {
-        v = v || {};
-        const u = new URL(url);
-        const p = Object.keys(oidc).find((k) => u.origin + u.pathname === oidc[k].authorizationEndpoint);
-        if (!p) throw new Error('fake: not a provider authorization URL: ' + url);
-        const back = oidc[p].authorize(url, { user: v.as, cancel: v.cancel, error: v.error });
-        return br.navigate(back);
-      },
-      cookie(name2) { const c = jar.get(name2); return c ? Object.assign({ name: name2 }, c) : null; },
-      // a simulated browser restart: cookies without Max-Age (browser-session cookies) are dropped, expired ones too
-      restart() { const t = now(); for (const [k, c] of jar) if (!c.persistent || (c.expires && c.expires <= t)) jar.delete(k); },
-    };
-    return br;
-  }
+  // ── transport: a browser with a cookie jar (createBrowser below; shared with the end-to-end test's real server) ──────
+  const T = { handle: (req) => app.handle(req), now, origin, oidc, requests, faults, ip: o.ip, latency: o.latency };
+  function browser(name) { return createBrowser(T, name); }
 
   const main = browser('main');
   const fake = {
@@ -860,6 +761,112 @@ function createFakeServer(o) {
   return fake;
 }
 
+// ── a browser with a cookie jar over a request handler ────────────────────────────────────────────────────────────
+// createBrowser(T, name): T = {handle(req) → Promise<{status, headers, cookies, body}>, now, origin, oidc: {google, linkedin}
+// (fake providers, for visit), requests?: [] (recorded), faults?: [] (fake.fault), ip?, latency?}. The fake server uses it with
+// its in-memory handlers; server/test/e2e.test.js with the real core on a database.
+function takeFault(faults, method, p) {
+  for (let i = 0; i < faults.length; i++) {
+    const f = faults[i];
+    const pm = f.path === '*' || (f.path instanceof RegExp ? f.path.test(p) : p === f.path || p === C.BASE + f.path);
+    if (pm && (!f.method || f.method === method)) { if (--f.times <= 0) faults.splice(i, 1); return f; }
+  }
+  return null;
+}
+function toBuffer(body) {
+  if (body == null) return null;
+  if (typeof body === 'string') return Buffer.from(body, 'utf8');
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof ArrayBuffer || Object.prototype.toString.call(body) === '[object ArrayBuffer]') return Buffer.from(new Uint8Array(body));
+  if (ArrayBuffer.isView(body) || (body && typeof body.byteLength === 'number' && body.buffer)) return Buffer.from(body.buffer, body.byteOffset || 0, body.byteLength);
+  if (body && typeof body._text === 'string') return Buffer.from(body._text, 'utf8');      // harness Blob (text-only)
+  return Buffer.from(String(body), 'utf8');
+}
+function makeResponse(out, url) {
+  const headers = {};
+  Object.keys(out.headers || {}).forEach((k) => { headers[k.toLowerCase()] = String(out.headers[k]); });
+  const buf = out.body == null ? Buffer.alloc(0) : (Buffer.isBuffer(out.body) ? out.body : Buffer.from(out.body, 'utf8'));
+  return {
+    status: out.status, ok: out.status >= 200 && out.status < 300, statusText: String(out.status), url, redirected: false, type: 'basic',
+    headers: { get: (n) => (headers[String(n).toLowerCase()] !== undefined ? headers[String(n).toLowerCase()] : null), has: (n) => headers[String(n).toLowerCase()] !== undefined, forEach: (fn) => Object.keys(headers).forEach((k) => fn(headers[k], k)) },
+    json: () => Promise.resolve().then(() => JSON.parse(buf.toString('utf8'))),
+    text: () => Promise.resolve(buf.toString('utf8')),
+    arrayBuffer: () => Promise.resolve(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)),
+    clone() { return makeResponse(out, url); },
+  };
+}
+function delay(L, v) {
+  if (!L || !L.ms) return Promise.resolve(v);
+  return new Promise((res) => L.schedule(() => res(v), L.ms));
+}
+function createBrowser(T, name) {
+  const now = T.now || (() => Date.now()); const origin = T.origin || PROD; const oidc = T.oidc || {};
+  const jar = new Map();
+  function applyCookies(list) {
+    (list || []).forEach((line) => {
+      const parts = line.split(';').map((s) => s.trim());
+      const [k, ...rest] = parts[0].split('='); const v = rest.join('=');
+      const attrs = {}; parts.slice(1).forEach((x) => { const [a, b2] = x.split('='); attrs[a.toLowerCase()] = b2 === undefined ? true : b2; });
+      if (attrs['max-age'] === '0' || v === '') { jar.delete(k); return; }
+      // no Max-Age = a browser-session cookie (persistent: false): gone after restart()
+      jar.set(k, { value: v, sameSite: attrs.samesite || 'Lax', expires: attrs['max-age'] ? now() + Number(attrs['max-age']) * 1000 : null, persistent: !!attrs['max-age'], attrs });
+    });
+  }
+  function cookieHeader(crossSiteNav) {
+    const t = now(); const out = [];
+    for (const [k, c] of jar) {
+      if (c.expires && c.expires <= t) { jar.delete(k); continue; }
+      if (crossSiteNav && c.sameSite === 'Strict') continue;
+      out.push(k + '=' + c.value);
+    }
+    return out.join('; ');
+  }
+  async function raw(method, url, headers, body, crossSiteNav) {
+    const u = new URL(url, origin);
+    const p = u.pathname + u.search;
+    const hdrs = { host: new URL(origin).host };
+    Object.keys(headers || {}).forEach((k) => { hdrs[k.toLowerCase()] = String(headers[k]); });
+    if (!crossSiteNav && method !== 'GET' && method !== 'HEAD') hdrs.origin = origin;
+    const ck = cookieHeader(crossSiteNav); if (ck) hdrs.cookie = ck; else delete hdrs.cookie;
+    const req = { method, url: p, headers: hdrs, body: toBuffer(body), remoteAddress: T.ip || '203.0.113.9' };
+    if (T.requests) T.requests.push({ browser: name, method, path: u.pathname, query: u.search, at: now() });
+    const f = T.faults ? takeFault(T.faults, method, u.pathname) : null;
+    if (f && f.mode === 'network') throw new TypeError('Failed to fetch');
+    let out;
+    if (f && f.mode !== 'lost') {
+      if (f.mode === 'server') out = { status: 500, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), body: JSON.stringify({ error: 'server', message: 'Server error.' }), cookies: [] };
+      else { const e = require(path.join(SRV, 'core', 'errors')).envelope(f.mode, f.extra || (f.mode === 'rate' ? { retryAfter: 30 } : {})); out = { status: e.status, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), body: JSON.stringify(e.body), cookies: [] }; }
+    } else out = await T.handle(req);
+    applyCookies(out.cookies);
+    if (f && f.mode === 'lost') throw new TypeError('Failed to fetch');
+    return out;
+  }
+  const br = {
+    name, jar,
+    fetch(input, init) {
+      init = init || {};
+      const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+      const method = String(init.method || 'GET').toUpperCase();
+      let headers = init.headers || {};
+      if (headers && typeof headers.forEach === 'function' && !Array.isArray(headers) && typeof headers.get === 'function') { const h2 = {}; headers.forEach((v, k) => { h2[k] = v; }); headers = h2; }
+      return delay(T.latency).then(() => raw(method, url, headers, init.body, false)).then((out) => delay(T.latency, makeResponse(out, url)));
+    },
+    navigate(url) { return raw('GET', url, {}, null, true).then((out) => ({ status: out.status, location: out.headers && out.headers.Location })); },
+    visit(url, v) {
+      v = v || {};
+      const u = new URL(url);
+      const p = Object.keys(oidc).find((k) => u.origin + u.pathname === oidc[k].authorizationEndpoint);
+      if (!p) throw new Error('fake: not a provider authorization URL: ' + url);
+      const back = oidc[p].authorize(url, { user: v.as, cancel: v.cancel, error: v.error });
+      return br.navigate(back);
+    },
+    cookie(name2) { const c = jar.get(name2); return c ? Object.assign({ name: name2 }, c) : null; },
+    // a simulated browser restart: cookies without Max-Age (browser-session cookies) are dropped, expired ones too
+    restart() { const t = now(); for (const [k, c] of jar) if (!c.persistent || (c.expires && c.expires <= t)) jar.delete(k); },
+  };
+  return br;
+}
+
 // A code sign-in through a browser of the fake, for tests that need a session (consent included for a new account).
 async function signIn(fake, br, email, o) {
   o = o || {};
@@ -872,4 +879,4 @@ async function signIn(fake, br, email, o) {
   return { status: r.status, json: await r.json() };
 }
 
-module.exports = { createFakeServer, prodLocation, signIn, PROD };
+module.exports = { createFakeServer, createBrowser, prodLocation, signIn, PROD };

@@ -22,7 +22,7 @@ no server configured behaves exactly as v3.4 (the page's cloud UI stays hidden u
 | `ops/` | audited support / incident scripts (`lookup`, `allowlist-add`, `security-reset`, `recover`, `rewrap`, `ledger-replay`, `retire-client` — remove every identity of a provider before a new client goes live, §4.14) — credentials from the environment only, output ids and counts only |
 | `db/migrations/` | `NNN-*.sql`, applied by `db/migrate.js` (`001-schema.sql` WP0, `002-core.sql` WP-S1, `040-oauth.sql` WP-O); `db/schema.sql` is a generated snapshot for review |
 | `dev.js` | local runner on 127.0.0.1 (refuses `WTS_ENV=production`; a local database when `WTS_DB_URL` is set) |
-| `test/` | `node test/run.js` boots a throwaway database cluster (port `WTS_TEST_DB_PORT`, default 54010), runs `node --test`, stops it; `--no-db` skips the database tests; `--schema` regenerates `db/schema.sql` |
+| `test/` | `node test/run.js` boots a throwaway database cluster (port `WTS_TEST_DB_PORT`, default 54010), runs `node --test`, stops it; `--no-db` skips the database tests; `--schema` regenerates `db/schema.sql`; `test/e2e.test.js` runs the real page (built in memory by the acceptance harness) against the real pipeline on the database with the fake providers and mail (sign-up, cloud save / open / history / restore / export, Google and LinkedIn sign-in, link / unlink, public-computer wipe, deletion grace and purge, the dev server over HTTP, no-server behaviour and the iOS strip) |
 
 Environment (secrets marked *): `WTS_DB_URL`*, `WTS_JOBS_DB_URL`* (the scheduled function only), `WTS_MASTER_KEYS`*
 (`kid:base64,…`), `WTS_MASTER_KID`, `WTS_INDEX_PEPPER`*, `WTS_CODE_PEPPERS`* (`kid:base64,…`, the previous one kept during a
