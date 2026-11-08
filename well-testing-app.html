@@ -1081,7 +1081,7 @@ function __isPersistableCtrl(el) {
     const t = __ctrlType(el);
     if(t==='file'||t==='button'||t==='submit'||t==='reset'||t==='hidden'||t==='image'||t==='password') return false;
     if(el.readOnly || el.disabled) return false;
-    if(typeof el.closest === 'function' && el.closest('[data-no-persist]')) return false;
+    if(typeof el.closest === 'function' && el.closest('[data-no-persist],[data-acct-skip]')) return false;
     return true;
 }
 function __unitsApi() {

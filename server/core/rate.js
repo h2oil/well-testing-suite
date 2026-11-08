@@ -44,6 +44,7 @@ const LIMITS = {
   revertFailAddrIpHour: { window: H, limit: 5 },
   revertFailAddrDay: { window: D, limit: 100 },
   revertIpHour: { window: H, limit: 300, soft: true },
+  oauthStartIpHour: { window: H, limit: 60, soft: true },           // provider starts per IP prefix (alert only, §8.3)
 };
 
 async function call(sql, name, key, amount) {

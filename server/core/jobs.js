@@ -288,4 +288,4 @@ async function ledgerReplay(o) {
   return { replayed };
 }
 
-module.exports = { runDaily, ledgerReplay, auditVerify, merkle, purgeAccount, purgeAccountRows };
+module.exports = { runDaily, ledgerReplay, auditVerify, merkle, purgeAccount, purgeAccountRows, queueMail };

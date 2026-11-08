@@ -84,7 +84,7 @@ module.exports = [
         assert.strictEqual(em.getAttribute('autocomplete'), 'username webauthn');
         assert.strictEqual(em.getAttribute('inputmode'), 'email');
         assert(t.el('acct_provider_buttons') && t.el('acct_provider_buttons').getAttribute('data-owner') === 'WP-O', 'the WP-O provider mount point');
-        assert(!t.fake.requests.some((r) => r.path.endsWith('/auth/providers')), 'no providers request without WP-O');
+        assert.strictEqual(t.fake.requests.filter((r) => r.path.endsWith('/auth/providers')).length, 1, 'one providers request: the e-mail step draws the provider buttons (WP-O)');
         const r = await t.signIn(E1, { consent: false });
         assert(r.consentShown, 'consent step for a new account');
         assert(t.dialogText().includes(E1), 'the consent step names the new account address');

@@ -25,11 +25,9 @@ const DEFINERS = {
   support_allowlist_add: 'wts_support', address_in_use: null, audit_chain_trg: null, audit_guard_trg: null, revisions_refs_trg: null,
   // WP-O additions (040-oauth.sql)
   oauth_attempt_drop: 'wts_api', oauth_attempt_close: 'wts_api', oauth_exchange_hit: 'wts_api', oauth_breaker_open: 'wts_api',
-  oauth_breaker_note: 'wts_api', session_revoke_presented: 'wts_api', support_retire_identities: 'wts_support',
+  oauth_breaker_note: 'wts_api', support_retire_identities: 'wts_support',
   oauth_attempt_claim: 'wts_api', oauth_attempt_release: 'wts_api', oauth_finish_fail: 'wts_api', oidc_fetch_claim: 'wts_api',
 };
-// still WP0 stubs after WP-S1: the provider definers (WP-O)
-const WPO_STUBS = ['user_by_identity', 'oauth_attempt_take', 'oidc_key_get'];
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 
 const skip = !D.available() && 'no throwaway database (run through server/test/run.js)';
@@ -126,8 +124,8 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
     const api = H.as('wts_api');
     assert.strictEqual((await api.sql`select * from wts.resolve_session(${Buffer.alloc(32)})`).length, 0, 'WP-S1 bodies: no such session');
     assert.strictEqual((await api.sql`select wts.allowlist_has(${Buffer.alloc(32)}) as ok`)[0].ok, false);
-    await assert.rejects(api.sql`select * from wts.user_by_identity('google', ${Buffer.alloc(32)})`, (e) => e.code === '0A000', 'the provider definers stay with WP-O');
-    void WPO_STUBS;
+    assert.strictEqual((await api.sql`select * from wts.user_by_identity('google', ${Buffer.alloc(32)})`).length, 0, 'WP-O bodies: no such identity');
+    assert.strictEqual((await api.sql`select wts.oidc_key_get('google', 'none') as jwk`)[0].jwk, null, 'WP-O bodies: no such key');
     const sup = H.as('wts_support');
     await assert.rejects(sup.sql`select * from wts.resolve_session(${Buffer.alloc(32)})`, /permission denied/);
   });

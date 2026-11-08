@@ -531,7 +531,11 @@ module.exports = [
         await t.until(() => t.el('acct_local') && !/Loading/.test(t.text('acct_local')), 'On this device drawn');
         assert(!t.el('acct_stash_restore_0'), 'the stash is gone');
         assert(t.el('acct_safety_restore_0'), 'the work open before the restore is a safety copy');
-        assert(!t.el('pgBody') || !t.el('pgBody').querySelector || !t.el('pgBody').querySelector('#acct_root'), 'never drawn inside #pgBody without the account route');
+        // with the host's account hooks (H7 / H8) the page is the registered route 'account', which autosave and reports skip;
+        // without them it is drawn in its own overlay — never inside #pgBody on another route
+        const pg = t.el('pgBody'); const inBody = !!(pg && pg.querySelector && pg.querySelector('#acct_root'));
+        const route = t.w.WTS_pageAutosave && typeof t.w.WTS_pageAutosave.page === 'function' ? t.w.WTS_pageAutosave.page() : null;
+        assert(!inBody || route === 'account', 'inside #pgBody only on the account route (now: ' + route + ')');
       } finally { t.dispose(); t2.dispose(); }
     },
   },

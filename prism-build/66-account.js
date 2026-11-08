@@ -977,12 +977,10 @@
     var S = sync(); if (S && typeof S._mount === 'function') S._mount();
     if (h && h.signedIn) refresh().then(null, function () { /* outage handled */ });
     else current.status = 'signedOut';
-    // a provider return (#acct-oauth) with a fresh hint entry → the provider block's finish dialog (it strips the fragment);
-    // without the hint entry it is ignored (no request)
+    // a provider return with a fresh hint entry was finished at load by the provider block (WTS_account.oauthReturn, which
+    // strips the fragment); a #acct-oauth still here had no hint entry: it is ignored (no request) and removed
     if (String(L.hash || '') === '#acct-oauth') {
-      var ret = typeof api.oauthReturn === 'function' ? api.oauthReturn() : null;
-      if (ret && ret.then) ret.then(null, function () { /* the finish dialog shows its own errors */ });
-      else { try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '')); } catch (e) { /* none */ } }
+      try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '')); } catch (e) { /* none */ }
     }
   }
   function openRevert() { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert'); }
@@ -1073,6 +1071,16 @@
       try { var d = G.document; return !!(d && d.querySelector && d.querySelector('.nav-btn[data-p="' + r + '"]')); } catch (e) { return false; }
     }
     function offline() { return !isOnline(); }
+    // a reauth answer runs the public WTS_account.stepUp (the code step-up of WP-C1; tests may replace it), then repeats once
+    function stepUpThen(fn, reason) {
+      return Promise.resolve().then(fn).then(null, function (e) {
+        if (!e || e.code !== 'reauth') throw e;
+        return Promise.resolve(api.stepUp({ reason: reason })).then(function (ok) {
+          if (ok === false || ok === null) throw new AccountError('cancelled', 0, null);
+          return fn();
+        });
+      });
+    }
 
     // start → location.assign (never a form, never a popup: §4.10 items 1–2)
     function startProvider(p, purpose, o) {
@@ -1094,7 +1102,7 @@
       }, function (e) { dropOauth(); throw e; });
     }
     api.signInWith = function (p, o) { return startProvider(p, 'signin', o); };
-    api.linkProvider = function (p) { return withStepUp(function () { return startProvider(p, 'link', {}); }, 'Adding a sign-in method needs a fresh confirmation.'); };
+    api.linkProvider = function (p) { return stepUpThen(function () { return startProvider(p, 'link', {}); }, 'Adding a sign-in method needs a fresh confirmation.'); };
 
     var TERMINAL = ['oauth_state', 'oauth_failed', 'locked', 'not_invited', 'signup_closed', 'identity_in_use', 'provider_linked', 'provider_off', 'paused'];
     // POST finish (first call with {}; later {email} | {code} | {consent}) → the server's answer; done signs the page in
@@ -1114,7 +1122,7 @@
     };
     api.methods = function () { return call('GET', '/auth/methods').then(function (r) { return r.json; }); };
     api.unlinkMethod = function (id) {
-      return withStepUp(function () { return call('POST', '/auth/methods/unlink', { id: id }); }, 'Removing a sign-in method needs a fresh confirmation.').then(function (r) { return r.json; });
+      return stepUpThen(function () { return call('POST', '/auth/methods/unlink', { id: id }); }, 'Removing a sign-in method needs a fresh confirmation.').then(function (r) { return r.json; });
     };
     api.providerSignOutNeeded = function () {
       return current.publicDevice && PROVIDERS.indexOf(current.authMethod) !== -1 ? current.authMethod : null;
@@ -1216,8 +1224,9 @@
     }
 
     // ── the finish dialog (the return from the provider) ──
-    // Until WP-C1's <dialog> hosts these steps, this div keeps the focus rules of §11.2 itself: focus moves into it, Tab
-    // stays inside it, and closing returns focus to the control that was focused before it opened.
+    // This div keeps the focus rules of §11.2 itself: focus moves into it, Tab stays inside it, and closing returns focus to
+    // the control that was focused before it opened. A done sign-in closes it before WP-C1's completion, whose own dialog asks
+    // the hand-over question.
     var dlg = null; var dlgOpener = null; var dlgEscape = true;
     function focusables() {
       return dlg ? Array.prototype.filter.call(dlg.querySelectorAll('button, input'), function (n) { return !n.disabled; }) : [];
@@ -1432,6 +1441,8 @@
       var p = info && info.authMethod;
       return PROVIDERS.indexOf(p) !== -1 ? providerSignOutStep(p) : null;
     };
+    // the provider return is handled at load (the fragment is stripped here, so the later mount does not see it again)
+    if (L.hash === '#acct-oauth') api.oauthReturn();
   }
   boot();
 })();

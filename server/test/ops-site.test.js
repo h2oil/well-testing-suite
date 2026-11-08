@@ -137,13 +137,13 @@ test('adapters: host blob store binding validates keys and normalises list shape
   assert.throws(() => A.hostObjects({}), /get \/ set \/ delete \/ list/);
   const sent = [];
   const mail = A.httpMail({ url: 'https://mail.example/send', credential: 'cred', from: 'no-reply@h2oil.co.uk', fetch: async (u, o) => { sent.push({ u, o }); return { ok: true }; } });
-  await mail.send({ to: 'user@corp.example', template: 'code_signin', params: { code: '123456', browser: 'B', os: 'O', at: 'now' } });
+  await mail.send({ to: 'user@corp.example', template: 'code_signin', params: { code: '12345678', browser: 'B', os: 'O', at: 'now' } });
   const body = JSON.parse(sent[0].o.body);
   assert.strictEqual(sent[0].o.headers.Authorization, 'Bearer cred');
-  assert.strictEqual(body.to, 'user@corp.example'); assert.ok(body.text.includes('123456')); assert.ok(!/<[a-z]/i.test(body.text), 'plain text only');
+  assert.strictEqual(body.to, 'user@corp.example'); assert.ok(body.text.includes('1234 5678') || body.text.includes('12345678')); assert.ok(!/<[a-z]/i.test(body.text), 'plain text only');
   await assert.rejects(mail.send({ to: 'user@corp.example', template: 'nope', params: {} }));
   const failing = A.httpMail({ url: 'https://mail.example/send', credential: 'c', fetch: async () => ({ ok: false, status: 503 }) });
-  await assert.rejects(failing.send({ to: 'u@corp.example', template: 'code_signin', params: { code: '1', browser: 'b', os: 'o', at: 'a' } }), /503/);
+  await assert.rejects(failing.send({ to: 'u@corp.example', template: 'code_signin', params: { code: '12345678', browser: 'b', os: 'o', at: 'a' } }), /503/);
   assert.throws(() => A.httpMail({ url: 'http://mail.example', credential: 'c' }), /https/);
 });
 
@@ -239,7 +239,8 @@ test('handler: request id shared by the response and the access line; res.meta f
   const cb = await h.handle(webReq('GET', '/auth/oauth/google/callback?code=x&state=y'));
   assert.strictEqual(cb.status, 303);
   let l = access().pop();
-  assert.deepStrictEqual([l.route, l.provider, l.outcome], ['oauthCallback', 'google', 'ok']);
+  // no attempt cookie: the callback handler records a state failure (functions/oauth.js sets ctx.req.meta.outcome)
+  assert.deepStrictEqual([l.route, l.provider, l.outcome], ['oauthCallback', 'google', 'state']);
   await h.handle(webReq('GET', '/auth/oauth/other/callback?code=x'));
   l = access().pop();
   assert.strictEqual(l.outcome, 'state', 'an unknown provider is a state failure'); assert.strictEqual(l.provider, undefined);

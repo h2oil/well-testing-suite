@@ -16,17 +16,20 @@ CREATE SCHEMA wts;
 
 ALTER SCHEMA wts OWNER TO wts_owner;
 
-CREATE FUNCTION wts._iso_ms(p_at timestamp with time zone) RETURNS text
-    LANGUAGE sql IMMUTABLE
-    AS $$ SELECT to_char(p_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') $$;
-
-ALTER FUNCTION wts._iso_ms(p_at timestamp with time zone) OWNER TO wts_owner;
-
 CREATE FUNCTION wts._not_implemented(fn text) RETURNS void
     LANGUAGE plpgsql
     AS $$ BEGIN RAISE EXCEPTION 'not_implemented: %', fn USING ERRCODE = '0A000'; END $$;
 
 ALTER FUNCTION wts._not_implemented(fn text) OWNER TO wts_owner;
+
+CREATE FUNCTION wts._support_actor(p_actor text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO 'wts', 'pg_temp'
+    AS $_$ BEGIN
+    IF p_actor IS NULL OR p_actor !~ '^support:[a-z0-9_-]{1,32}$' THEN RAISE EXCEPTION 'support: actor must be support:<id>' USING ERRCODE = '22023'; END IF;
+    RETURN p_actor; END $_$;
+
+ALTER FUNCTION wts._support_actor(p_actor text) OWNER TO wts_owner;
 
 CREATE FUNCTION wts._window10() RETURNS timestamp with time zone
     LANGUAGE sql STABLE
@@ -34,52 +37,197 @@ CREATE FUNCTION wts._window10() RETURNS timestamp with time zone
 
 ALTER FUNCTION wts._window10() OWNER TO wts_owner;
 
-CREATE FUNCTION wts.allowlist_has(p_email_bidx bytea) RETURNS boolean
-    LANGUAGE plpgsql SECURITY DEFINER
+CREATE FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('allowlist_has'); RETURN NULL; END $$;
+    AS $$ SELECT EXISTS (SELECT 1 FROM wts.users u WHERE u.id IS DISTINCT FROM p_except AND (u.email_bidx = p_bidx OR u.recovery_bidx = p_bidx
+                        OR (u.email_prev_bidx = p_bidx AND u.email_revert_until > now()))) $$;
+
+ALTER FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.allowlist_has(p_email_bidx bytea) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ SELECT EXISTS (SELECT 1 FROM wts.signup_allowlist a WHERE a.email_bidx = p_email_bidx) $$;
 
 ALTER FUNCTION wts.allowlist_has(p_email_bidx bytea) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.audit_chain_trg() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $_$
+DECLARE v_prev bytea;
+BEGIN
+  IF NEW.actor IS NULL OR NEW.actor !~ '^(user|system|support:[a-z0-9_-]{1,32})$' THEN
+    RAISE EXCEPTION 'audit: bad actor' USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.audit:' || coalesce(NEW.user_id::text, 'system'), 0));
+  SELECT a.hash INTO v_prev FROM wts.audit a WHERE a.user_id IS NOT DISTINCT FROM NEW.user_id
+    AND NOT EXISTS (SELECT 1 FROM wts.audit b WHERE b.prev_hash = a.hash AND b.user_id IS NOT DISTINCT FROM NEW.user_id)
+    ORDER BY a.id DESC LIMIT 1;
+  NEW.at := coalesce(NEW.at, now());
+  NEW.prev_hash := v_prev;
+  NEW.hash := wts.audit_row_hash(v_prev, NEW.actor, NEW.action, NEW.target, NEW.device_id, NEW.ip_prefix, NEW.ua_family, NEW.at, NEW.detail);
+  RETURN NEW;
+END $_$;
+
+ALTER FUNCTION wts.audit_chain_trg() OWNER TO wts_definer;
+
+CREATE FUNCTION wts.audit_guard_trg() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+BEGIN
+  IF NEW.actor IS DISTINCT FROM OLD.actor OR NEW.action IS DISTINCT FROM OLD.action OR NEW.target IS DISTINCT FROM OLD.target
+     OR NEW.device_id IS DISTINCT FROM OLD.device_id OR NEW.ip_prefix IS DISTINCT FROM OLD.ip_prefix
+     OR NEW.ua_family IS DISTINCT FROM OLD.ua_family OR NEW.at IS DISTINCT FROM OLD.at OR NEW.detail IS DISTINCT FROM OLD.detail
+     OR NEW.prev_hash IS DISTINCT FROM OLD.prev_hash OR NEW.hash IS DISTINCT FROM OLD.hash THEN
+    RAISE EXCEPTION 'audit: rows are append-only (only the purge tombstone may change user_id)' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+ALTER FUNCTION wts.audit_guard_trg() OWNER TO wts_definer;
+
+CREATE FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) RETURNS bytea
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ SELECT sha256(coalesce(p_prev, ''::bytea) || convert_to(wts.audit_row_text(p_actor, p_action, p_target, p_device_id,
+                         p_ip_prefix, p_ua_family, p_at, p_detail), 'UTF8')) $$;
+
+ALTER FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) OWNER TO wts_owner;
+
+CREATE FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ SELECT concat_ws('|', 'wts-audit-1', p_actor, p_action, coalesce(p_target, ''), coalesce(p_device_id::text, ''),
+                         coalesce(p_ip_prefix::text, ''), coalesce(p_ua_family, ''),
+                         to_char(p_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), coalesce(p_detail::text, '')) $$;
+
+ALTER FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) OWNER TO wts_owner;
 
 CREATE FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) RETURNS bigint
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('audit_system'); RETURN NULL; END $$;
+    AS $_$
+DECLARE v_id bigint;
+BEGIN
+  IF p_action IS NULL OR p_action !~ '^[a-z_]{1,40}$' THEN RAISE EXCEPTION 'audit_system: bad action' USING ERRCODE = '22023'; END IF;
+  INSERT INTO wts.audit (user_id, actor, action, target, device_id, ip_prefix, ua_family, at, detail, hash)
+    VALUES (NULL, 'system', p_action, p_target, p_device_id, p_ip_prefix, p_ua_family, now(), p_detail, ''::bytea) RETURNING id INTO v_id;
+  RETURN v_id;
+END $_$;
 
 ALTER FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamp with time zone) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('challenge_issue'); RETURN NULL; END $$;
+    AS $$
+DECLARE v_id uuid := gen_random_uuid();
+BEGIN
+  IF p_user_id IS NOT NULL AND p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'challenge_issue: not this account' USING ERRCODE = '42501'; END IF;
+  INSERT INTO wts.webauthn_challenges (id, challenge, purpose, user_id, expires_at)
+    VALUES (v_id, p_challenge, p_purpose, p_user_id, least(coalesce(p_expires_at, now() + interval '5 minutes'), now() + interval '5 minutes'));
+  RETURN v_id;
+END $$;
 
 ALTER FUNCTION wts.challenge_issue(p_challenge bytea, p_purpose text, p_user_id uuid, p_expires_at timestamp with time zone) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.challenge_take(p_id uuid, p_purpose text) RETURNS TABLE(challenge bytea, user_id uuid)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('challenge_take'); END $$;
+    AS $$
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY UPDATE wts.webauthn_challenges c SET used_at = now()
+    WHERE c.id = p_id AND c.purpose = p_purpose AND c.used_at IS NULL AND c.expires_at > now() RETURNING c.challenge, c.user_id;
+END $$;
 
 ALTER FUNCTION wts.challenge_take(p_id uuid, p_purpose text) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.code_check(p_email_bidx bytea, p_purpose text, p_code_hmacs bytea[], p_bound_user uuid, p_bound_sid bytea, p_bound_attempt uuid) RETURNS TABLE(ok boolean, code_id uuid, attempts_left integer)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('code_check'); END $$;
+    AS $$
+#variable_conflict use_column
+DECLARE v_hit wts.email_codes%ROWTYPE; v_left int;
+BEGIN
+  IF p_purpose IS NULL OR p_code_hmacs IS NULL OR (p_email_bidx IS NULL AND (p_bound_user IS NULL OR p_bound_sid IS NULL)) THEN
+    RETURN QUERY SELECT false, NULL::uuid, 0; RETURN;
+  END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_check: not this account' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_hit FROM wts.email_codes c
+    WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
+      AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
+      AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt
+      AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now() AND c.code_hmac = ANY (p_code_hmacs)
+    ORDER BY c.expires_at DESC LIMIT 1 FOR UPDATE;
+  IF FOUND THEN
+    UPDATE wts.email_codes SET used_at = now() WHERE id = v_hit.id;
+    UPDATE wts.email_codes c SET invalidated_at = now() WHERE c.id <> v_hit.id AND c.email_bidx = v_hit.email_bidx AND c.purpose = p_purpose
+      AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
+      AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt AND c.used_at IS NULL AND c.invalidated_at IS NULL;
+    RETURN QUERY SELECT true, v_hit.id, 5 - v_hit.attempts; RETURN;
+  END IF;
+  WITH u AS (
+    UPDATE wts.email_codes c SET attempts = c.attempts + 1, invalidated_at = CASE WHEN c.attempts + 1 >= 5 THEN now() END
+      WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
+        AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
+        AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt
+        AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()
+      RETURNING c.attempts)
+  SELECT max(5 - u.attempts) INTO v_left FROM u;
+  RETURN QUERY SELECT false, NULL::uuid, greatest(coalesce(v_left, 0), 0);
+END $$;
 
 ALTER FUNCTION wts.code_check(p_email_bidx bytea, p_purpose text, p_code_hmacs bytea[], p_bound_user uuid, p_bound_sid bytea, p_bound_attempt uuid) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.code_issue(p_email_bidx bytea, p_code_hmac bytea, p_pepper_kid integer, p_purpose text, p_bound_user uuid, p_bound_sid bytea, p_bound_attempt uuid, p_expires_at timestamp with time zone, p_ip_prefix inet) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('code_issue'); RETURN NULL; END $$;
+    AS $$
+DECLARE v_id uuid := gen_random_uuid();
+        v_max timestamptz := now() + CASE WHEN p_purpose = 'email_revert' THEN interval '7 days' ELSE interval '15 minutes' END;
+BEGIN
+  IF p_email_bidx IS NULL OR p_code_hmac IS NULL OR p_purpose IS NULL THEN RAISE EXCEPTION 'code_issue: missing argument' USING ERRCODE = '22023'; END IF;
+  IF p_purpose IN ('stepup', 'email_change', 'recovery_add') AND (p_bound_user IS NULL OR p_bound_sid IS NULL) THEN
+    RAISE EXCEPTION 'code_issue: % needs a user and a session', p_purpose USING ERRCODE = '22023';
+  END IF;
+  IF p_purpose = 'email_revert' AND p_bound_user IS NULL THEN RAISE EXCEPTION 'code_issue: email_revert needs a user' USING ERRCODE = '22023'; END IF;
+  IF p_bound_user IS NOT NULL AND p_bound_user IS DISTINCT FROM wts.current_user_id() THEN
+    RAISE EXCEPTION 'code_issue: not this account' USING ERRCODE = '42501';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.code:' || encode(p_email_bidx, 'hex') || ':' || p_purpose, 0));
+  UPDATE wts.email_codes SET invalidated_at = now() WHERE id IN (
+    SELECT c.id FROM wts.email_codes c WHERE c.email_bidx = p_email_bidx AND c.purpose = p_purpose
+      AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()
+      ORDER BY c.expires_at DESC OFFSET 1);
+  INSERT INTO wts.email_codes (id, email_bidx, code_hmac, pepper_kid, purpose, bound_user, bound_sid, bound_attempt, expires_at, ip_prefix)
+    VALUES (v_id, p_email_bidx, p_code_hmac, p_pepper_kid, p_purpose, p_bound_user, p_bound_sid, p_bound_attempt,
+            least(coalesce(p_expires_at, v_max), v_max), p_ip_prefix);
+  RETURN v_id;
+END $$;
 
 ALTER FUNCTION wts.code_issue(p_email_bidx bytea, p_code_hmac bytea, p_pepper_kid integer, p_purpose text, p_bound_user uuid, p_bound_sid bytea, p_bound_attempt uuid, p_expires_at timestamp with time zone, p_ip_prefix inet) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.create_user(p_email_bidx bytea, p_email_enc bytea, p_signup_method text, p_terms_version text, p_privacy_version text, p_consented_at timestamp with time zone, p_data_key_wrapped bytea, p_kid integer) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('create_user'); RETURN NULL; END $$;
+    AS $$
+DECLARE v_id uuid;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_email_bidx, 'hex'), 0));
+  IF wts.address_in_use(p_email_bidx, NULL) THEN RETURN NULL; END IF;
+  INSERT INTO wts.users (email_bidx, email_enc, signup_method, terms_version, privacy_version, consented_at, data_key_wrapped,
+                         data_key_kid, data_key_ver, last_sign_in_at)
+    VALUES (p_email_bidx, p_email_enc, p_signup_method, p_terms_version, p_privacy_version, now(), p_data_key_wrapped, p_kid, 1, now())
+    RETURNING id INTO v_id;
+  RETURN v_id;
+EXCEPTION WHEN unique_violation THEN RETURN NULL;
+END $$;
 
 ALTER FUNCTION wts.create_user(p_email_bidx bytea, p_email_enc bytea, p_signup_method text, p_terms_version text, p_privacy_version text, p_consented_at timestamp with time zone, p_data_key_wrapped bytea, p_kid integer) OWNER TO wts_definer;
 
@@ -89,19 +237,99 @@ CREATE FUNCTION wts.current_user_id() RETURNS uuid
 
 ALTER FUNCTION wts.current_user_id() OWNER TO wts_owner;
 
+CREATE FUNCTION wts.deletion_cancel(p_user_id uuid) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+BEGIN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'deletion_cancel: not this account' USING ERRCODE = '42501'; END IF;
+  UPDATE wts.users SET status = 'active', delete_requested_at = NULL, delete_at = NULL
+    WHERE id = p_user_id AND status = 'deleting' AND delete_at > now();
+  IF NOT FOUND THEN RETURN false; END IF;
+  DELETE FROM wts.deletion_ledger WHERE user_id = p_user_id AND purged_at IS NULL;
+  RETURN true;
+END $$;
+
+ALTER FUNCTION wts.deletion_cancel(p_user_id uuid) OWNER TO wts_definer;
+
 CREATE FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('deletion_request'); END $$;
+    AS $$
+DECLARE v_grace interval := greatest(interval '0', least(coalesce(p_purge_at - p_requested_at, interval '7 days'), interval '7 days'));
+BEGIN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'deletion_request: not this account' USING ERRCODE = '42501'; END IF;
+  UPDATE wts.users SET status = 'deleting', delete_requested_at = now(), delete_at = now() + v_grace WHERE id = p_user_id AND status <> 'locked';
+  IF NOT FOUND THEN RAISE EXCEPTION 'deletion_request: account not active' USING ERRCODE = '42501'; END IF;
+  DELETE FROM wts.identities WHERE user_id = p_user_id;
+  DELETE FROM wts.sessions WHERE user_id = p_user_id;
+  INSERT INTO wts.deletion_ledger (user_id, requested_at, purge_at) VALUES (p_user_id, now(), now() + v_grace)
+    ON CONFLICT (user_id) DO UPDATE SET requested_at = EXCLUDED.requested_at, purge_at = EXCLUDED.purge_at, purged_at = NULL;
+END $$;
 
 ALTER FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('email_move'); RETURN NULL; END $$;
+    AS $$
+BEGIN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'email_move: not this account' USING ERRCODE = '42501'; END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_bidx, 'hex'), 0));
+  IF wts.address_in_use(p_new_bidx, p_user_id) THEN RETURN false; END IF;
+  IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND (u.email_bidx = p_new_bidx OR u.recovery_bidx = p_new_bidx)) THEN RETURN false; END IF;
+  IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND u.email_revert_until IS NOT NULL AND u.email_revert_until > now()) THEN
+    RETURN false;
+  END IF;
+  UPDATE wts.users SET email_prev_bidx = email_bidx, email_prev_enc = email_enc, email_bidx = p_new_bidx, email_enc = p_new_enc,
+    email_changed_at = now(), email_revert_until = now() + interval '7 days', email_pending_enc = NULL WHERE id = p_user_id;
+  RETURN FOUND;
+END $$;
 
 ALTER FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.email_revert(p_prev_bidx bytea, p_code_hmacs bytea[]) RETURNS TABLE(user_id uuid, sessions integer, passkeys integer, identities integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE c wts.email_codes%ROWTYPE; u wts.users%ROWTYPE; n_s int; n_p int; n_i int;
+BEGIN
+  IF p_prev_bidx IS NULL OR p_code_hmacs IS NULL THEN RETURN; END IF;
+  SELECT * INTO c FROM wts.email_codes x WHERE x.email_bidx = p_prev_bidx AND x.purpose = 'email_revert' AND x.used_at IS NULL
+    AND x.invalidated_at IS NULL AND x.expires_at > now() AND x.code_hmac = ANY (p_code_hmacs) ORDER BY x.expires_at DESC LIMIT 1 FOR UPDATE;
+  IF NOT FOUND THEN RETURN; END IF;
+  SELECT * INTO u FROM wts.users x WHERE x.id = c.bound_user FOR UPDATE;
+  IF NOT FOUND OR u.email_prev_bidx IS DISTINCT FROM p_prev_bidx OR u.email_revert_until IS NULL OR u.email_revert_until <= now() THEN RETURN; END IF;
+  UPDATE wts.email_codes SET used_at = now() WHERE id = c.id;
+  SELECT count(*) INTO n_s FROM wts.sessions s WHERE s.user_id = u.id;
+  WITH d AS (DELETE FROM wts.passkeys p WHERE p.user_id = u.id AND p.created_at > u.email_changed_at RETURNING 1) SELECT count(*) INTO n_p FROM d;
+  WITH d AS (DELETE FROM wts.identities i WHERE i.user_id = u.id AND i.linked_at > u.email_changed_at RETURNING 1) SELECT count(*) INTO n_i FROM d;
+  DELETE FROM wts.sessions s WHERE s.user_id = u.id;
+  UPDATE wts.users x SET email_bidx = u.email_prev_bidx, email_enc = u.email_prev_enc, email_prev_bidx = NULL, email_prev_enc = NULL,
+    email_revert_until = NULL, email_changed_at = NULL, email_pending_enc = NULL,
+    recovery_bidx = NULL, recovery_enc = NULL, recovery_pending_enc = NULL WHERE x.id = u.id;
+  RETURN QUERY SELECT u.id, n_s, n_p, n_i;
+END $$;
+
+ALTER FUNCTION wts.email_revert(p_prev_bidx bytea, p_code_hmacs bytea[]) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.identities_remove_since(p_user_id uuid, p_since timestamp with time zone) RETURNS TABLE(identities integer, sessions integer)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE n_i int; n_s int;
+BEGIN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'identities_remove_since: not this account' USING ERRCODE = '42501'; END IF;
+  SELECT count(*) INTO n_s FROM wts.sessions s JOIN wts.identities i ON i.id = s.identity_id
+    WHERE i.user_id = p_user_id AND (p_since IS NULL OR i.linked_at >= p_since);
+  WITH d AS (DELETE FROM wts.identities i WHERE i.user_id = p_user_id AND (p_since IS NULL OR i.linked_at >= p_since) RETURNING 1)
+    SELECT count(*) INTO n_i FROM d;
+  RETURN QUERY SELECT n_i, n_s;
+END $$;
+
+ALTER FUNCTION wts.identities_remove_since(p_user_id uuid, p_since timestamp with time zone) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
@@ -152,10 +380,24 @@ END $$;
 
 ALTER FUNCTION wts.identity_unlink(p_identity_id uuid) OWNER TO wts_definer;
 
+CREATE FUNCTION wts.mail_mark(p_id uuid, p_sent boolean) RETURNS void
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ UPDATE wts.mail_outbox SET sent_at = CASE WHEN p_sent THEN now() ELSE sent_at END, tries = tries + 1
+        WHERE id = p_id AND sent_at IS NULL $$;
+
+ALTER FUNCTION wts.mail_mark(p_id uuid, p_sent boolean) OWNER TO wts_definer;
+
 CREATE FUNCTION wts.mail_queue(p_to_enc bytea, p_template text, p_params_enc bytea) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('mail_queue'); RETURN NULL; END $$;
+    AS $_$
+DECLARE v_id uuid := gen_random_uuid();
+BEGIN
+  IF p_to_enc IS NULL OR p_template IS NULL OR p_template !~ '^(code|notice)_[a-z_]{1,40}$' THEN RAISE EXCEPTION 'mail_queue: bad message' USING ERRCODE = '22023'; END IF;
+  INSERT INTO wts.mail_outbox (id, to_enc, template, params_enc, created_at) VALUES (v_id, p_to_enc, p_template, p_params_enc, now());
+  RETURN v_id;
+END $_$;
 
 ALTER FUNCTION wts.mail_queue(p_to_enc bytea, p_template text, p_params_enc bytea) OWNER TO wts_definer;
 
@@ -398,101 +640,215 @@ END $_$;
 
 ALTER FUNCTION wts.ops_nonce_claim(p_nonce text) OWNER TO wts_definer;
 
-CREATE FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) RETURNS TABLE(allowed boolean, n bigint, retry_after integer)
+CREATE FUNCTION wts.rate_add(p_bucket text, p_window interval, p_limit bigint, p_amount bigint) RETURNS TABLE(allowed boolean, n bigint, retry_after integer)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('rate_hit'); END $$;
+    AS $$
+#variable_conflict use_column
+DECLARE v_w double precision := extract(epoch FROM p_window); v_start timestamptz; v_n bigint;
+BEGIN
+  IF p_bucket IS NULL OR length(p_bucket) > 200 OR v_w IS NULL OR v_w < 1 THEN RAISE EXCEPTION 'rate_add: bad bucket or window' USING ERRCODE = '22023'; END IF;
+  v_start := to_timestamp(floor(extract(epoch FROM now()) / v_w) * v_w);
+  IF coalesce(p_amount, 0) = 0 THEN
+    SELECT r.n INTO v_n FROM wts.rate_counters r WHERE r.bucket = p_bucket AND r.window_start = v_start;
+    v_n := coalesce(v_n, 0);
+  ELSE
+    INSERT INTO wts.rate_counters AS r (bucket, window_start, n) VALUES (p_bucket, v_start, p_amount)
+      ON CONFLICT (bucket, window_start) DO UPDATE SET n = r.n + EXCLUDED.n RETURNING r.n INTO v_n;
+  END IF;
+  RETURN QUERY SELECT v_n <= p_limit, v_n, greatest(1, ceil(extract(epoch FROM (v_start + p_window - now())))::int);
+END $$;
+
+ALTER FUNCTION wts.rate_add(p_bucket text, p_window interval, p_limit bigint, p_amount bigint) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) RETURNS TABLE(allowed boolean, n bigint, retry_after integer)
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$ SELECT * FROM wts.rate_add(p_bucket, p_window, p_limit, 1) $$;
 
 ALTER FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('recovery_set'); RETURN NULL; END $$;
+    AS $$
+BEGIN
+  IF p_user_id IS NULL OR p_user_id IS DISTINCT FROM wts.current_user_id() THEN RAISE EXCEPTION 'recovery_set: not this account' USING ERRCODE = '42501'; END IF;
+  IF p_bidx IS NULL THEN
+    UPDATE wts.users SET recovery_bidx = NULL, recovery_enc = NULL, recovery_pending_enc = NULL WHERE id = p_user_id;
+    RETURN FOUND;
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_bidx, 'hex'), 0));
+  IF wts.address_in_use(p_bidx, p_user_id) THEN RETURN false; END IF;
+  IF EXISTS (SELECT 1 FROM wts.users u WHERE u.id = p_user_id AND u.email_bidx = p_bidx) THEN RETURN false; END IF;
+  UPDATE wts.users SET recovery_bidx = p_bidx, recovery_enc = p_enc, recovery_pending_enc = NULL WHERE id = p_user_id;
+  RETURN FOUND;
+END $$;
 
 ALTER FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.resolve_session(p_sid_hash bytea) RETURNS TABLE(user_id uuid, device_id uuid, public_device boolean, auth_at timestamp with time zone, stepup_at timestamp with time zone, auth_method text, identity_id uuid, idle_expires_at timestamp with time zone, abs_expires_at timestamp with time zone, status text)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('resolve_session'); END $$;
+    AS $$
+#variable_conflict use_column
+DECLARE s wts.sessions%ROWTYPE;
+BEGIN
+  IF p_sid_hash IS NULL OR length(p_sid_hash) <> 32 THEN RETURN; END IF;
+  SELECT * INTO s FROM wts.sessions x WHERE x.sid_hash = p_sid_hash;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF s.replaced_by IS NOT NULL THEN                       -- a rotated id stays valid for 30 s (§4.7)
+    IF s.replaced_at IS NULL OR s.replaced_at < now() - interval '30 seconds' THEN RETURN; END IF;
+    SELECT * INTO s FROM wts.sessions x WHERE x.sid_hash = s.replaced_by;
+    IF NOT FOUND OR s.replaced_by IS NOT NULL THEN RETURN; END IF;
+  END IF;
+  IF s.idle_expires_at <= now() OR s.abs_expires_at <= now() THEN RETURN; END IF;
+  RETURN QUERY SELECT s.user_id, s.device_id, s.public_device, s.auth_at, s.stepup_at, s.auth_method, s.identity_id,
+    s.idle_expires_at, s.abs_expires_at, u.status FROM wts.users u WHERE u.id = s.user_id;
+END $$;
 
 ALTER FUNCTION wts.resolve_session(p_sid_hash bytea) OWNER TO wts_definer;
 
-CREATE FUNCTION wts.session_revoke_presented(p_sid_hash bytea) RETURNS uuid
+CREATE FUNCTION wts.revisions_refs_trg() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $_$
+DECLARE r record; d int; h bytea;
+BEGIN
+  IF TG_OP = 'INSERT' THEN r := NEW; d := 1; ELSE r := OLD; d := -1; END IF;
+  FOR h IN SELECT DISTINCT x FROM (SELECT r.core_hash AS x
+             UNION SELECT decode(p->>'hash', 'hex') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.parts) = 'array' THEN r.parts ELSE '[]'::jsonb END) p
+             WHERE jsonb_typeof(p) = 'object' AND p->>'hash' ~ '^[0-9a-f]{64}$') s LOOP
+    UPDATE wts.blobs b SET refcount = greatest(0, b.refcount + d),
+      unref_at = CASE WHEN b.refcount + d <= 0 THEN now() ELSE NULL END
+      WHERE b.user_id = r.user_id AND b.hash = h;
+  END LOOP;
+  RETURN NULL;
+END $_$;
+
+ALTER FUNCTION wts.revisions_refs_trg() OWNER TO wts_definer;
+
+CREATE FUNCTION wts.support_allowlist_add(p_actor text, p_email_bidx bytea, p_note text) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
     AS $$
-DECLARE v_user uuid;
 BEGIN
-  IF p_sid_hash IS NULL THEN RETURN NULL; END IF;
-  DELETE FROM wts.sessions WHERE sid_hash = p_sid_hash RETURNING user_id INTO v_user;
-  RETURN v_user;
+  PERFORM wts._support_actor(p_actor);
+  INSERT INTO wts.signup_allowlist (email_bidx, added_at, note) VALUES (p_email_bidx, now(), left(p_note, 200)) ON CONFLICT DO NOTHING;
+  INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (NULL, p_actor, 'support_allowlist_add', now(), jsonb_build_object('added', FOUND), ''::bytea);
+  RETURN FOUND;
 END $$;
 
-ALTER FUNCTION wts.session_revoke_presented(p_sid_hash bytea) OWNER TO wts_definer;
+ALTER FUNCTION wts.support_allowlist_add(p_actor text, p_email_bidx bytea, p_note text) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea) RETURNS TABLE(user_id uuid, status text, created_at timestamp with time zone)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('support_lookup'); END $$;
+    AS $$
+#variable_conflict use_column
+DECLARE v_u uuid; v_s text; v_c timestamptz;
+BEGIN
+  PERFORM wts._support_actor(p_actor);
+  SELECT u.id, u.status, u.created_at INTO v_u, v_s, v_c FROM wts.users u WHERE u.email_bidx = p_email_bidx OR u.recovery_bidx = p_email_bidx LIMIT 1;
+  INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (v_u, p_actor, 'support_lookup', now(), jsonb_build_object('found', v_u IS NOT NULL), ''::bytea);
+  IF v_u IS NOT NULL THEN RETURN QUERY SELECT v_u, v_s, v_c; END IF;
+END $$;
 
 ALTER FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.support_recover(p_actor text, p_user_id uuid, p_new_email_bidx bytea, p_new_email_enc bytea) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('support_recover'); END $$;
+    AS $$
+BEGIN
+  PERFORM wts._support_actor(p_actor);
+  PERFORM pg_advisory_xact_lock(hashtextextended('wts.addr:' || encode(p_new_email_bidx, 'hex'), 0));
+  IF wts.address_in_use(p_new_email_bidx, p_user_id) THEN RAISE EXCEPTION 'support_recover: address in use' USING ERRCODE = '23505'; END IF;
+  UPDATE wts.users SET
+    email_prev_bidx = CASE WHEN email_revert_until > now() THEN email_prev_bidx ELSE email_bidx END,
+    email_prev_enc = CASE WHEN email_revert_until > now() THEN email_prev_enc ELSE email_enc END,
+    email_changed_at = CASE WHEN email_revert_until > now() THEN email_changed_at ELSE now() END,
+    email_revert_until = CASE WHEN email_revert_until > now() THEN email_revert_until ELSE now() + interval '7 days' END,
+    email_bidx = p_new_email_bidx, email_enc = p_new_email_enc, email_pending_enc = NULL
+    WHERE id = p_user_id AND status <> 'deleting';
+  IF NOT FOUND THEN RAISE EXCEPTION 'support_recover: no such active account' USING ERRCODE = '02000'; END IF;
+  DELETE FROM wts.sessions WHERE user_id = p_user_id;
+  INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (p_user_id, p_actor, 'support_recover', now(), '{}'::jsonb, ''::bytea);
+END $$;
 
 ALTER FUNCTION wts.support_recover(p_actor text, p_user_id uuid, p_new_email_bidx bytea, p_new_email_enc bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.support_retire_identities(p_actor text, p_provider text) RETURNS TABLE(user_id uuid, identities integer, sessions integer)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $_$
-DECLARE r record; v_s integer; v_prev bytea; v_canon text; v_at timestamptz := date_trunc('milliseconds', now());
+    AS $$
+DECLARE r record; v_s integer;
 BEGIN
-  IF p_actor IS NULL OR p_actor !~ '^support:[A-Za-z0-9_.-]{1,64}$' THEN
-    RAISE EXCEPTION 'support_retire_identities: actor support:<id> required' USING ERRCODE = '22023';
-  END IF;
+  PERFORM wts._support_actor(p_actor);
   IF p_provider NOT IN ('google', 'linkedin') THEN RAISE EXCEPTION 'unknown provider' USING ERRCODE = '22023'; END IF;
   FOR r IN SELECT i.id, i.user_id AS uid, i.subject_bidx FROM wts.identities i WHERE i.provider = p_provider ORDER BY i.user_id LOOP
     SELECT count(*) INTO v_s FROM wts.sessions s WHERE s.identity_id = r.id;
     DELETE FROM wts.sessions s WHERE s.identity_id = r.id;
     DELETE FROM wts.identities i WHERE i.id = r.id;
-    v_canon := '{"identity_id":"' || r.id::text || '","provider":"' || p_provider || '","reason":"retire_client","sessions":' || v_s::text
-               || ',"subject_bidx":"' || encode(r.subject_bidx, 'hex') || '"}';
-    SELECT a.hash INTO v_prev FROM wts.audit a WHERE a.user_id = r.uid ORDER BY a.id DESC LIMIT 1;
-    INSERT INTO wts.audit (user_id, actor, action, target, at, detail, prev_hash, hash)
-      VALUES (r.uid, p_actor, 'identity_unlink', p_provider, v_at, v_canon::jsonb, v_prev,
-              sha256(COALESCE(v_prev, '\x'::bytea) || convert_to('identity_unlink|' || v_canon || '|' || wts._iso_ms(v_at), 'UTF8')));
-    PERFORM wts.mail_queue(u.email_enc, 'notice_identity_unlinked', convert_to('{"provider":"' || p_provider || '"}', 'UTF8'))
-      FROM wts.users u WHERE u.id = r.uid;
+    INSERT INTO wts.audit (user_id, actor, action, target, at, detail, hash)
+      VALUES (r.uid, p_actor, 'identity_unlink', p_provider, now(),
+              jsonb_build_object('identity_id', r.id, 'provider', p_provider, 'reason', 'retire_client', 'sessions', v_s,
+                                 'subject_bidx', encode(r.subject_bidx, 'hex')), ''::bytea);
     user_id := r.uid; identities := 1; sessions := v_s;
     RETURN NEXT;
   END LOOP;
-END $_$;
+END $$;
 
 ALTER FUNCTION wts.support_retire_identities(p_actor text, p_provider text) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.support_security_reset(p_actor text, p_user_id uuid, p_since timestamp with time zone) RETURNS jsonb
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('support_security_reset'); RETURN NULL; END $$;
+    AS $$
+DECLARE u wts.users%ROWTYPE; n_s int; n_p int; n_i int; v_rev boolean := false; v_out jsonb;
+BEGIN
+  PERFORM wts._support_actor(p_actor);
+  SELECT * INTO u FROM wts.users WHERE id = p_user_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'support_security_reset: no such account' USING ERRCODE = '02000'; END IF;
+  SELECT count(*) INTO n_s FROM wts.sessions WHERE user_id = p_user_id;
+  WITH d AS (DELETE FROM wts.passkeys WHERE user_id = p_user_id AND created_at >= p_since RETURNING 1) SELECT count(*) INTO n_p FROM d;
+  WITH d AS (DELETE FROM wts.identities WHERE user_id = p_user_id AND linked_at >= p_since RETURNING 1) SELECT count(*) INTO n_i FROM d;
+  DELETE FROM wts.sessions WHERE user_id = p_user_id;
+  IF u.email_changed_at IS NOT NULL AND u.email_changed_at >= p_since AND u.email_prev_bidx IS NOT NULL AND u.email_revert_until > now() THEN
+    UPDATE wts.users SET email_bidx = email_prev_bidx, email_enc = email_prev_enc, email_prev_bidx = NULL, email_prev_enc = NULL,
+      email_revert_until = NULL, email_changed_at = NULL WHERE id = p_user_id;
+    v_rev := true;
+  END IF;
+  UPDATE wts.users SET recovery_bidx = NULL, recovery_enc = NULL, recovery_pending_enc = NULL, email_pending_enc = NULL WHERE id = p_user_id;
+  v_out := jsonb_build_object('sessions', n_s, 'passkeys', n_p, 'identities', n_i, 'emailReverted', v_rev);
+  INSERT INTO wts.audit (user_id, actor, action, at, detail, hash) VALUES (p_user_id, p_actor, 'support_security_reset', now(), v_out, ''::bytea);
+  RETURN v_out;
+END $$;
 
 ALTER FUNCTION wts.support_security_reset(p_actor text, p_user_id uuid, p_since timestamp with time zone) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.user_by_credential(p_credential_id bytea) RETURNS TABLE(user_id uuid, passkey_id uuid, public_key bytea, sign_count bigint)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('user_by_credential'); END $$;
+    AS $$
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY SELECT p.user_id, p.id, p.public_key, p.sign_count FROM wts.passkeys p WHERE p.credential_id = p_credential_id;
+END $$;
 
 ALTER FUNCTION wts.user_by_credential(p_credential_id bytea) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.user_by_email(p_email_bidx bytea) RETURNS TABLE(user_id uuid, status text, role text)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
-    AS $$ BEGIN PERFORM wts._not_implemented('user_by_email'); END $$;
+    AS $$
+#variable_conflict use_column
+BEGIN
+  IF p_email_bidx IS NULL THEN RETURN; END IF;
+  RETURN QUERY SELECT u.id, u.status, 'primary'::text FROM wts.users u WHERE u.email_bidx = p_email_bidx
+    UNION ALL SELECT u.id, u.status, 'recovery'::text FROM wts.users u WHERE u.recovery_bidx = p_email_bidx
+    LIMIT 1;
+END $$;
 
 ALTER FUNCTION wts.user_by_email(p_email_bidx bytea) OWNER TO wts_definer;
 
@@ -548,7 +904,10 @@ CREATE TABLE wts.blobs (
     complete boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone NOT NULL,
     refcount integer DEFAULT 0 NOT NULL,
-    dkv integer DEFAULT 1 NOT NULL
+    dkv integer DEFAULT 1 NOT NULL,
+    chunk_sha text[] DEFAULT '{}'::text[] NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    unref_at timestamp with time zone
 );
 
 ALTER TABLE ONLY wts.blobs FORCE ROW LEVEL SECURITY;
@@ -596,7 +955,7 @@ CREATE TABLE wts.email_codes (
     used_at timestamp with time zone,
     invalidated_at timestamp with time zone,
     ip_prefix inet,
-    CONSTRAINT email_codes_purpose_check CHECK ((purpose = ANY (ARRAY['signin'::text, 'stepup'::text, 'email_change'::text, 'recovery_add'::text, 'oauth_verify'::text, 'link_confirm'::text])))
+    CONSTRAINT email_codes_purpose_check CHECK ((purpose = ANY (ARRAY['signin'::text, 'stepup'::text, 'email_change'::text, 'recovery_add'::text, 'oauth_verify'::text, 'link_confirm'::text, 'email_revert'::text])))
 );
 
 ALTER TABLE ONLY wts.email_codes FORCE ROW LEVEL SECURITY;
@@ -776,6 +1135,7 @@ CREATE TABLE wts.revisions (
     saved_at timestamp with time zone NOT NULL,
     pinned boolean DEFAULT false NOT NULL,
     squashed_into bigint,
+    pinned_until timestamp with time zone,
     CONSTRAINT revisions_reason_check CHECK ((reason = ANY (ARRAY['auto'::text, 'save'::text, 'migrate'::text, 'conflict'::text, 'restore'::text, 'overwrite'::text, 'import'::text])))
 );
 
@@ -800,6 +1160,7 @@ CREATE TABLE wts.sessions (
     replaced_at timestamp with time zone,
     ip_prefix inet,
     ua_family text,
+    read_unlock_until timestamp with time zone,
     CONSTRAINT sessions_auth_method_check CHECK ((auth_method = ANY (ARRAY['code'::text, 'google'::text, 'linkedin'::text, 'passkey'::text])))
 );
 
@@ -848,6 +1209,9 @@ CREATE TABLE wts.users (
     email_prev_bidx bytea,
     email_prev_enc bytea,
     email_revert_until timestamp with time zone,
+    email_pending_enc bytea,
+    recovery_pending_enc bytea,
+    lib_saved_at timestamp with time zone,
     CONSTRAINT users_signup_method_check CHECK ((signup_method = ANY (ARRAY['code'::text, 'google'::text, 'linkedin'::text]))),
     CONSTRAINT users_status_check CHECK ((status = ANY (ARRAY['active'::text, 'locked'::text, 'deleting'::text])))
 );
@@ -962,9 +1326,17 @@ CREATE INDEX oauth_attempts_prefix ON wts.oauth_attempts USING btree (ip_prefix,
 
 CREATE INDEX projects_user ON wts.projects USING btree (user_id);
 
+CREATE INDEX revisions_user ON wts.revisions USING btree (user_id);
+
 CREATE INDEX sessions_identity ON wts.sessions USING btree (identity_id) WHERE (identity_id IS NOT NULL);
 
 CREATE INDEX sessions_user ON wts.sessions USING btree (user_id);
+
+CREATE TRIGGER audit_chain BEFORE INSERT ON wts.audit FOR EACH ROW EXECUTE FUNCTION wts.audit_chain_trg();
+
+CREATE TRIGGER audit_guard BEFORE UPDATE ON wts.audit FOR EACH ROW EXECUTE FUNCTION wts.audit_guard_trg();
+
+CREATE TRIGGER revisions_refs AFTER INSERT OR DELETE ON wts.revisions FOR EACH ROW EXECUTE FUNCTION wts.revisions_refs_trg();
 
 ALTER TABLE ONLY wts.devices
     ADD CONSTRAINT devices_user_id_fkey FOREIGN KEY (user_id) REFERENCES wts.users(id) ON DELETE CASCADE;
@@ -1057,17 +1429,38 @@ GRANT USAGE ON SCHEMA wts TO wts_api;
 GRANT USAGE ON SCHEMA wts TO wts_jobs;
 GRANT USAGE ON SCHEMA wts TO wts_support;
 
-REVOKE ALL ON FUNCTION wts._iso_ms(p_at timestamp with time zone) FROM PUBLIC;
-GRANT ALL ON FUNCTION wts._iso_ms(p_at timestamp with time zone) TO wts_definer;
-
 REVOKE ALL ON FUNCTION wts._not_implemented(fn text) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts._not_implemented(fn text) TO wts_definer;
+
+REVOKE ALL ON FUNCTION wts._support_actor(p_actor text) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts._support_actor(p_actor text) TO wts_definer;
+GRANT ALL ON FUNCTION wts._support_actor(p_actor text) TO wts_api;
+GRANT ALL ON FUNCTION wts._support_actor(p_actor text) TO wts_jobs;
+GRANT ALL ON FUNCTION wts._support_actor(p_actor text) TO wts_support;
 
 REVOKE ALL ON FUNCTION wts._window10() FROM PUBLIC;
 GRANT ALL ON FUNCTION wts._window10() TO wts_definer;
 
+REVOKE ALL ON FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) FROM PUBLIC;
+
 REVOKE ALL ON FUNCTION wts.allowlist_has(p_email_bidx bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.allowlist_has(p_email_bidx bytea) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.audit_chain_trg() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION wts.audit_guard_trg() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_definer;
+GRANT ALL ON FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_api;
+GRANT ALL ON FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_jobs;
+GRANT ALL ON FUNCTION wts.audit_row_hash(p_prev bytea, p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_support;
+
+REVOKE ALL ON FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_definer;
+GRANT ALL ON FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_api;
+GRANT ALL ON FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_jobs;
+GRANT ALL ON FUNCTION wts.audit_row_text(p_actor text, p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_at timestamp with time zone, p_detail jsonb) TO wts_support;
 
 REVOKE ALL ON FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.audit_system(p_action text, p_target text, p_device_id uuid, p_ip_prefix inet, p_ua_family text, p_detail jsonb) TO wts_api;
@@ -1093,11 +1486,20 @@ GRANT ALL ON FUNCTION wts.current_user_id() TO wts_api;
 GRANT ALL ON FUNCTION wts.current_user_id() TO wts_jobs;
 GRANT ALL ON FUNCTION wts.current_user_id() TO wts_support;
 
+REVOKE ALL ON FUNCTION wts.deletion_cancel(p_user_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.deletion_cancel(p_user_id uuid) TO wts_api;
+
 REVOKE ALL ON FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.deletion_request(p_user_id uuid, p_requested_at timestamp with time zone, p_purge_at timestamp with time zone) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.email_move(p_user_id uuid, p_new_bidx bytea, p_new_enc bytea) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.email_revert(p_prev_bidx bytea, p_code_hmacs bytea[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.email_revert(p_prev_bidx bytea, p_code_hmacs bytea[]) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.identities_remove_since(p_user_id uuid, p_since timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.identities_remove_since(p_user_id uuid, p_since timestamp with time zone) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.identity_link(p_user_id uuid, p_provider text, p_issuer text, p_subject_bidx bytea, p_subject_enc bytea, p_email_link_enc bytea, p_email_verified_at_link boolean, p_linked_via text) TO wts_api;
@@ -1107,6 +1509,9 @@ GRANT ALL ON FUNCTION wts.identity_touch(p_identity_id uuid) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.identity_unlink(p_identity_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.identity_unlink(p_identity_id uuid) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.mail_mark(p_id uuid, p_sent boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.mail_mark(p_id uuid, p_sent boolean) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.mail_queue(p_to_enc bytea, p_template text, p_params_enc bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.mail_queue(p_to_enc bytea, p_template text, p_params_enc bytea) TO wts_api;
@@ -1162,6 +1567,9 @@ GRANT ALL ON FUNCTION wts.oidc_key_put(p_provider text, p_kid text, p_jwk jsonb,
 REVOKE ALL ON FUNCTION wts.ops_nonce_claim(p_nonce text) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.ops_nonce_claim(p_nonce text) TO wts_api;
 
+REVOKE ALL ON FUNCTION wts.rate_add(p_bucket text, p_window interval, p_limit bigint, p_amount bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.rate_add(p_bucket text, p_window interval, p_limit bigint, p_amount bigint) TO wts_api;
+
 REVOKE ALL ON FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.rate_hit(p_bucket text, p_window interval, p_limit bigint) TO wts_api;
 
@@ -1171,8 +1579,10 @@ GRANT ALL ON FUNCTION wts.recovery_set(p_user_id uuid, p_bidx bytea, p_enc bytea
 REVOKE ALL ON FUNCTION wts.resolve_session(p_sid_hash bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.resolve_session(p_sid_hash bytea) TO wts_api;
 
-REVOKE ALL ON FUNCTION wts.session_revoke_presented(p_sid_hash bytea) FROM PUBLIC;
-GRANT ALL ON FUNCTION wts.session_revoke_presented(p_sid_hash bytea) TO wts_api;
+REVOKE ALL ON FUNCTION wts.revisions_refs_trg() FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION wts.support_allowlist_add(p_actor text, p_email_bidx bytea, p_note text) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.support_allowlist_add(p_actor text, p_email_bidx bytea, p_note text) TO wts_support;
 
 REVOKE ALL ON FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.support_lookup(p_actor text, p_email_bidx bytea) TO wts_support;
@@ -1197,17 +1607,24 @@ GRANT ALL ON FUNCTION wts.user_by_identity(p_provider text, p_subject_bidx bytea
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.audit TO wts_definer;
 GRANT SELECT,INSERT ON TABLE wts.audit TO wts_api;
-GRANT SELECT,DELETE ON TABLE wts.audit TO wts_jobs;
+GRANT SELECT,INSERT,DELETE ON TABLE wts.audit TO wts_jobs;
+
+GRANT UPDATE(user_id) ON TABLE wts.audit TO wts_jobs;
 
 GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_definer;
 GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_api;
+GRANT USAGE ON SEQUENCE wts.audit_id_seq TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.blobs TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.blobs TO wts_api;
 GRANT SELECT,DELETE ON TABLE wts.blobs TO wts_jobs;
 
+GRANT UPDATE(refcount) ON TABLE wts.blobs TO wts_jobs;
+
+GRANT UPDATE(unref_at) ON TABLE wts.blobs TO wts_jobs;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.deletion_ledger TO wts_definer;
-GRANT SELECT,INSERT,UPDATE ON TABLE wts.deletion_ledger TO wts_jobs;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.deletion_ledger TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.devices TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.devices TO wts_api;
@@ -1218,14 +1635,16 @@ GRANT SELECT,DELETE ON TABLE wts.email_codes TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.historian_backups TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.historian_backups TO wts_api;
+GRANT SELECT,DELETE ON TABLE wts.historian_backups TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.identities TO wts_definer;
 GRANT SELECT ON TABLE wts.identities TO wts_api;
+GRANT SELECT,DELETE ON TABLE wts.identities TO wts_jobs;
 
 GRANT UPDATE(email_ack_bidx) ON TABLE wts.identities TO wts_api;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.mail_outbox TO wts_definer;
-GRANT SELECT,DELETE ON TABLE wts.mail_outbox TO wts_jobs;
+GRANT SELECT,INSERT,DELETE ON TABLE wts.mail_outbox TO wts_jobs;
 
 GRANT UPDATE(sent_at) ON TABLE wts.mail_outbox TO wts_jobs;
 
@@ -1247,6 +1666,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.projects TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.projects TO wts_api;
 GRANT SELECT,DELETE ON TABLE wts.projects TO wts_jobs;
 
+GRANT UPDATE(is_conflict_of) ON TABLE wts.projects TO wts_jobs;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.push_receipts TO wts_definer;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.push_receipts TO wts_api;
 GRANT SELECT,DELETE ON TABLE wts.push_receipts TO wts_jobs;
@@ -1267,6 +1688,7 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.sessions TO wts_api;
 GRANT SELECT,DELETE ON TABLE wts.sessions TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.signup_allowlist TO wts_definer;
+GRANT DELETE ON TABLE wts.signup_allowlist TO wts_jobs;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.users TO wts_definer;
 GRANT SELECT ON TABLE wts.users TO wts_api;
@@ -1289,6 +1711,10 @@ GRANT UPDATE(opt_historian) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(opt_livecfg) ON TABLE wts.users TO wts_api;
 
+GRANT UPDATE(data_key_wrapped) ON TABLE wts.users TO wts_jobs;
+
+GRANT UPDATE(data_key_kid) ON TABLE wts.users TO wts_jobs;
+
 GRANT UPDATE(outbox_key_enc) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(lib_rev) ON TABLE wts.users TO wts_api;
@@ -1296,8 +1722,10 @@ GRANT UPDATE(lib_rev) ON TABLE wts.users TO wts_api;
 GRANT UPDATE(lib_hash) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(delete_requested_at) ON TABLE wts.users TO wts_api;
+GRANT UPDATE(delete_requested_at) ON TABLE wts.users TO wts_jobs;
 
 GRANT UPDATE(delete_at) ON TABLE wts.users TO wts_api;
+GRANT UPDATE(delete_at) ON TABLE wts.users TO wts_jobs;
 
 GRANT UPDATE(inactivity_warned_at) ON TABLE wts.users TO wts_jobs;
 
@@ -1308,6 +1736,12 @@ GRANT UPDATE(email_prev_bidx) ON TABLE wts.users TO wts_api;
 GRANT UPDATE(email_prev_enc) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(email_revert_until) ON TABLE wts.users TO wts_api;
+
+GRANT UPDATE(email_pending_enc) ON TABLE wts.users TO wts_api;
+
+GRANT UPDATE(recovery_pending_enc) ON TABLE wts.users TO wts_api;
+
+GRANT UPDATE(lib_saved_at) ON TABLE wts.users TO wts_api;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.webauthn_challenges TO wts_definer;
 GRANT SELECT,DELETE ON TABLE wts.webauthn_challenges TO wts_jobs;

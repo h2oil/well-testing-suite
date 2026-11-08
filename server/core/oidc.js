@@ -181,14 +181,17 @@ function createKeyCache(o) {
         if (key) { stats.storeHits++; memOf(cfg.provider).set(kid, { key, expiresAt: now() + REFETCH_MS }); return { key, providerFailure: false }; }
       }
       const last = lastFetch.get(cfg.provider);
-      if (last !== undefined && now() - last < refetchMs) return { key: null, providerFailure: false };   // refetch limit
+      if (last !== undefined && now() - last < refetchMs) {                                            // refetch limit
+        log.warn('alert: unknownKid — an unknown signing key for ' + cfg.provider + ' within the refetch limit');
+        return { key: null, providerFailure: false };
+      }
       if (o.store && typeof o.store.claimFetch === 'function') {
         let claimed = true;
         try { claimed = await o.store.claimFetch(cfg.provider); } catch (e) { claimed = true; }      // the memory limit still holds
         if (!claimed) { stats.claimRefused = (stats.claimRefused || 0) + 1; return { key: null, providerFailure: false }; }
       }
       const ok = await fetchJwks(cfg);
-      if (!ok) return { key: null, providerFailure: true };
+      if (!ok) { log.warn('alert: jwksFetch — the signing-key fetch for ' + cfg.provider + ' failed'); return { key: null, providerFailure: true }; }
       key = fromMem(cfg.provider, kid);
       return { key, providerFailure: false };
     },

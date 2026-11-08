@@ -11,7 +11,7 @@
 //   httpMail({url, credential, from, fetch}) → transport {send({to, template, params}) → Promise}
 //        POSTs {from, to, subject, text} as JSON with "Authorization: Bearer <credential>" to the e-mail service's HTTPS
 //        endpoint (WTS_MAIL_API_URL). Plain text only; the message never carries client-supplied text (core/mail.js rules).
-//   renderPlain(msg) → {subject, text}   (core/mail.js render() is used instead when it exists)
+//   renderPlain(msg) → {subject, text}   (core/mail.js render(); a composed message already carries both)
 
 const KEY_RE = /^(u\/[0-9a-f-]{36}\/(b\/[0-9a-f]{64}\/\d{1,6}|lib\/[0-9a-f]{64})|ledger\/[0-9a-f-]{36}|chain\/\d{4}-\d{2}-\d{2}|export\/[0-9A-Za-z._-]{1,120})$/;
 const PREFIX_RE = /^(u\/[0-9a-f-]{36}\/((b\/([0-9a-f]{64}\/)?)|lib\/)?|ledger\/|chain\/|export\/)$/;
@@ -54,26 +54,8 @@ function hostObjects(store) {
   return api;
 }
 
-const SUBJECTS = {
-  code: 'Your Well Testing Suite sign-in code',
-  notice: 'Well Testing Suite account notice',
-};
-function renderPlain(msg) {
-  let mail = null; try { mail = require('../core/mail'); } catch (e) { mail = null; }
-  if (mail && typeof mail.render === 'function') return mail.render(msg);
-  const t = (mail && mail.TEMPLATES && mail.TEMPLATES[msg.template]) || null;
-  if (!t) throw new Error('mail: unknown template');
-  const p = msg.params || {};
-  const lines = [];
-  if (t.kind === 'code') {
-    lines.push('Your code: ' + String(p.code || ''), '', 'It is valid for 15 minutes. If you did not ask for it, you can ignore this message.');
-  } else {
-    lines.push('There was a change to your Well Testing Suite account (' + String(msg.template).replace(/^notice_/, '').replace(/_/g, ' ') + ').');
-  }
-  Object.keys(p).filter((k) => k !== 'code').forEach((k) => lines.push(k + ': ' + String(p[k]).replace(/[\r\n]+/g, ' ').slice(0, 200)));
-  lines.push('', 'If this was not you, sign in at https://welltest.h2oil.co.uk and review your account, or reply to this message.');
-  return { subject: SUBJECTS[t.kind] || SUBJECTS.notice, text: lines.join('\n') };
-}
+// the §4.1 / §4.3 / §8.5 wording of core/mail.js (plain text, generic browser / OS words only)
+function renderPlain(msg) { return require('../core/mail').render(msg.template, msg.params); }
 function httpMail(o) {
   o = o || {};
   if (!/^https:\/\//.test(String(o.url || ''))) throw new Error('httpMail: an https endpoint is required');
@@ -82,10 +64,10 @@ function httpMail(o) {
   return {
     kind: 'http',
     async send(msg) {
-      let mail = null; try { mail = require('../core/mail'); } catch (e) { mail = null; }
-      const bad = mail && typeof mail.checkMessage === 'function' ? mail.checkMessage(msg) : null;
+      const bad = require('../core/mail').checkMessage(msg);
       if (bad) throw new Error('mail: ' + bad);
-      const r = renderPlain(msg);
+      // every send path hands over a composed message (core/mail.js compose: subject + plain text); render it otherwise
+      const r = typeof msg.subject === 'string' && typeof msg.text === 'string' ? { subject: msg.subject, text: msg.text } : renderPlain(msg);
       const res = await f(o.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + o.credential },

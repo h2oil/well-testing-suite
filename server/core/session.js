@@ -42,6 +42,7 @@ async function withSession(ctx, opts, fn) {
   opts = opts || {};
   const s = await resolve(ctx);
   if (!s) { if (opts.optional) return fn ? S.unitOf(ctx, null, (u) => fn(u, null)) : null; throw new ApiError('signed_out'); }
+  if (ctx.req && ctx.req.meta) ctx.req.meta.uid = s.userId;          // the access line's user id (site/monitor.js)
   if (s.status === 'locked') throw new ApiError('locked');
   if (s.status === 'deleting' && !opts.allowDeleting) throw new ApiError('gone');
   return S.unitOf(ctx, s.userId, async (unit) => {
@@ -85,6 +86,7 @@ async function issue(unit, ctx, o) {
   await unit.sql`update wts.users set last_sign_in_at = now() where id = ${o.userId}`;
   await ensureOutboxKey(unit, ctx, o.userId);
   ctx.setCookie(C.COOKIES.session, sid, { maxAge: Math.max(1, r.secs) });
+  if (ctx.req && ctx.req.meta) ctx.req.meta.uid = o.userId;
   return { sid, hash: h, idleExpires: r.idle_expires_at, absExpires: r.abs_expires_at, publicDevice: !!o.publicDevice };
 }
 

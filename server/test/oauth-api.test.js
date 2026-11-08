@@ -2,9 +2,7 @@
 // server/test/oauth-api.test.js — provider sign-in through the REAL pipeline (core/app.js), the REAL handlers
 // (functions/oauth.js) and a freshly migrated database (docs/ACCOUNTS-PLAN.md §3.3, §4.10–4.14, §8.3, §12.4), with the fake
 // OpenID providers of test/fake-oidc.js. Skips without the throwaway cluster (run through server/test/run.js).
-//
-// WP-S1 definer bodies that are still WP0 stubs (resolve_session, create_user, codes, …) are filled for these tests only by
-// test/_s1-shim.js; it does nothing once WP-S1's bodies are migrated.
+// Sessions, codes, accounts, audit and mail are the shared core (WP-S1); every request waits for the after-response mail.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,8 +14,8 @@ const { loadConfig } = require('../core/config');
 const { createDb } = require('../core/db');
 const { memoryTransport } = require('../core/mail');
 const { createFakeOidc } = require('./fake-oidc');
-const { applyS1Shim } = require('./_s1-shim');
-const S1 = require('../core/wpo-s1');
+const E_ = require('../core/envelope');
+const { auditVerify } = require('../core/jobs');
 const { createOauthHandlers } = require('../functions/oauth');
 const baseHandlers = require('../functions').handlers;
 
@@ -47,8 +45,9 @@ function makeEnv(o) {
   const delays = [];
   const oauth = createOauthHandlers({ fetch, override: { google: g.override, linkedin: l.override }, delay: async (ms) => { delays.push(ms); } });
   const app = createApp({ config, db: api, mail, log, handlers: Object.assign({}, baseHandlers, oauth) });
-  const ctxLike = { db: api, config, cookies: {}, req: { headers: {} }, ipPrefix: null, log, mail, setCookie() {} };
-  return { g, l, config, mail, logs, app, op: { google: g, linkedin: l }, ctxLike, oauth, delays };
+  // a bare handler context (no pipeline) for direct handler calls
+  const ctxLike = { db: api, config, keys: app.keys, cookies: {}, req: { headers: {}, meta: {} }, ipPrefix: null, log, mail, setCookie() {}, after() {} };
+  return { g, l, config, mail, logs, app, keys: app.keys, op: { google: g, linkedin: l }, ctxLike, oauth, delays };
 }
 
 // a browser: cookie jar with SameSite; same-origin calls send every cookie, the provider's cross-site return only Lax ones
@@ -70,6 +69,7 @@ function browser(E, ip) {
     if (method !== 'GET') Object.assign(headers, { origin: o2.origin === undefined ? PROD : o2.origin, 'x-wts-req': '1', 'content-type': 'application/json' });
     if (o2.origin === null) delete headers.origin;
     const r = await E.app.handle({ method, url: C.BASE + path, headers, body: method === 'GET' ? null : Buffer.from(JSON.stringify(body || {})), remoteAddress: ip || '198.51.100.7' });
+    await E.app.idle();                                    // the queued mail is sent after the response
     apply(r.cookies);
     return { status: r.status, json: r.body ? JSON.parse(r.body) : null, cookies: r.cookies, headers: r.headers };
   }
@@ -99,14 +99,20 @@ const okFinish = (r) => { const c = C.checkShape('FinishRes', r.json); assert(c.
 const CONSUMER = require('../core/oidc-providers').CONFIG.google.consumerDomains[0];
 const consumer = (E, name) => name + '@' + CONSUMER;
 const codeFor = (E, email, tpl) => E.mail.codeFor(email, tpl);
-async function sessionRow(sid) { return (await H.admin.sql`select * from wts.sessions where sid_hash = ${S1.sidHash(sid)}`)[0] || null; }
-// an account created the e-mail-code way (WP-S1 path), and a code session for it in a browser
-async function codeAccount(E, email) { return S1.createUser(E.ctxLike, { email, method: 'code' }); }
+const sidHash = (sid) => crypto.createHash('sha256').update(String(sid), 'utf8').digest();
+async function sessionRow(sid) { return (await H.admin.sql`select * from wts.sessions where sid_hash = ${sidHash(sid)}`)[0] || null; }
+// an account created the e-mail-code way (the definer and envelope of functions/auth.js), and a code session for it in a browser
+async function codeAccount(E, email) {
+  const ring = E.keys.ring.create();
+  const enc = E_.sealField(ring.keys.get(1), 1, 'user.address', email);
+  return (await api.anon((tx) => tx`select wts.create_user(${E.keys.emailBidx(email)}, ${enc}, 'code', ${E.config.terms}, ${E.config.privacy}, now(), ${ring.wrapped}, ${ring.kid}) as id`))[0].id;
+}
+async function userByEmail(E, email) { return (await api.anon((tx) => tx`select * from wts.user_by_email(${E.keys.emailBidx(email)})`))[0] || null; }
 async function codeSession(br, userId, o) {
   o = o || {};
   const sid = crypto.randomBytes(32).toString('base64url');
   await H.admin.sql`insert into wts.sessions (sid_hash, user_id, public_device, created_at, auth_at, stepup_at, last_seen_at, idle_expires_at, abs_expires_at, auth_method)
-    values (${S1.sidHash(sid)}, ${userId}, false, now(), now(), ${o.stepup === false ? null : new Date()}, now(), now() + interval '1 day', now() + interval '2 days', 'code')`;
+    values (${sidHash(sid)}, ${userId}, false, now(), now(), ${o.stepup === false ? null : new Date()}, now(), now() + interval '1 day', now() + interval '2 days', 'code')`;
   br.setCookie('__Host-wts_sid', sid, 'Strict');
   return sid;
 }
@@ -120,7 +126,6 @@ async function age(cookieless, minutes) {
 test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
   test.before(async () => {
     H = await D.freshDatabase('oauth');
-    await applyS1Shim(H.admin);
     api = H.as('wts_api');
   });
   test.after(async () => { if (H) await H.close(); });
@@ -384,7 +389,7 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     assert.deepStrictEqual([c.next, c.reason, c.emailMasked], ['code', 'link_confirm', 'a•••@company.example']);
     const m = E.mail.last(email);
     assert.strictEqual(m.template, 'code_link_confirm'); assert.strictEqual(m.params.provider, 'google'); assert.match(m.params.providerEmailMasked, /^m•••@/);
-    await H.admin.sql`update wts.sessions set stepup_at = null where sid_hash = ${S1.sidHash(sid)}`;
+    await H.admin.sql`update wts.sessions set stepup_at = null where sid_hash = ${sidHash(sid)}`;
     const d = okFinish(await finish(br, { code: m.params.code }));
     assert.strictEqual(d.next, 'done'); assert.strictEqual(d.linked.provider, 'google'); assert.match(d.linked.emailMasked, /^m•••@/);
     assert.strictEqual((await sessionRow(sid)).stepup_at, null, 'the link-confirm code does not set stepup_at');
@@ -438,7 +443,7 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     // invite beta and closed sign-up: only after the provider vouched for the address
     const inv = makeEnv({ env: { ACCOUNTS_SIGNUP: 'invite' } });
     assert.strictEqual((await round(inv, browser(inv), 'google', { key: 'I1', email: consumer(inv, 'stranger') })).json.error, 'not_invited');
-    await H.admin.sql`insert into wts.signup_allowlist (email_bidx, added_at) values (${S1.bidx(inv.config, consumer(inv, 'friend'))}, now())`;
+    await H.admin.sql`insert into wts.signup_allowlist (email_bidx, added_at) values (${inv.keys.emailBidx(consumer(inv, 'friend'))}, now())`;
     assert.strictEqual(okFinish(await round(inv, browser(inv), 'google', { key: 'I2', email: consumer(inv, 'friend') })).next, 'consent');
     const closed = makeEnv({ env: { ACCOUNTS_SIGNUP: 'off' } });
     assert.strictEqual((await round(closed, browser(closed), 'google', { key: 'I3', email: consumer(closed, 'x') })).json.error, 'signup_closed');
@@ -489,7 +494,7 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     okFinish(await finish(owner, { code: E.mail.last(email).params.code }));
     const p3 = browser(E);
     okFinish(await round(E, p3, 'linkedin', { key: 'M2', email: 'm2@company.example' }));
-    await H.admin.sql`update wts.sessions set stepup_at = now() where sid_hash = ${S1.sidHash(p3.cookie('__Host-wts_sid'))}`;
+    await H.admin.sql`update wts.sessions set stepup_at = now() where sid_hash = ${sidHash(p3.cookie('__Host-wts_sid'))}`;
     const id2 = (await p3.call('GET', '/auth/methods')).json.identities[0].id;
     assert.strictEqual((await p3.call('POST', '/auth/methods/unlink', { id: id2 })).json.sessionsRevoked, 1);
     assert.strictEqual((await p3.call('GET', '/auth/methods')).json.error, 'signed_out');
@@ -548,7 +553,7 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     okFinish(await finish(ob, { code: E.mail.last('b.owner@company.example').params.code }));
     const lost = await finish(br, { consent: { terms: '1', privacy: '1' } });
     assert.strictEqual(lost.json.error, 'identity_in_use');
-    assert.strictEqual(await S1.userByEmail(E.ctxLike, email), null, 'the new account was rolled back with the failed link');
+    assert.strictEqual(await userByEmail(E, email), null, 'the new account was rolled back with the failed link');
     assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.users`)[0].n, 1);
     assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.audit where action = 'signup'`)[0].n, signups0, 'no orphan signup row');
     // two finish calls at once with one cookie: exactly one runs the step
@@ -635,30 +640,35 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     okFinish(await finish(own, { code: E.mail.last(email).params.code }));
     const ps = browser(E);
     okFinish(await round(E, ps, 'linkedin', { key: 'RC1', email: 'li@company.example' }));
-    const sup = H.as('wts_support');
+    const sup = H.as('wts_support'); const jobs = H.as('wts_jobs');
     await assert.rejects(retireClient(sup, { provider: 'linkedin', actor: 'nobody' }), /actor/);
     await assert.rejects(retireClient(api, { provider: 'linkedin', actor: 'support:ops1' }), /permission denied/, 'support credential only');
-    const r = await retireClient(sup, { provider: 'linkedin', actor: 'support:ops1' });
-    assert.deepStrictEqual(r, { users: 1, identities: 1, sessions: 1 });
+    const r = await retireClient(sup, { provider: 'linkedin', actor: 'support:ops1', jobs, keys: E.keys });
+    assert.deepStrictEqual(r, { users: 1, identities: 1, sessions: 1, notices: 1 });
     assert.strictEqual((await H.admin.sql`select count(*)::int as n from wts.identities where provider = 'linkedin'`)[0].n, 0);
     assert.strictEqual(await sessionRow(ps.cookie('__Host-wts_sid')), null, 'its sessions are gone');
     assert(await sessionRow(own.cookie('__Host-wts_sid')), 'other sessions stay');
     const a = (await H.admin.sql`select actor, action, detail from wts.audit where actor like 'support:%'`)[0];
     assert.strictEqual(a.action, 'identity_unlink'); assert.strictEqual(a.detail.reason, 'retire_client'); assert(!JSON.stringify(a.detail).includes('@'));
     assert.match(a.detail.subject_bidx, /^[0-9a-f]{64}$/); assert.strictEqual(a.detail.sessions, 1);
-    // one hash chain per user across both writers: JavaScript rows (signup, link, sign-in …), the SQL retire row, and a
-    // JavaScript row written after it
-    await api.asUser(uid, (tx) => S1.audit(E.ctxLike, tx, uid, 'signin', { method: 'code' }));
-    const chain = await H.admin.sql`select id, action, detail, at, prev_hash, hash from wts.audit where user_id = ${uid} order by id`;
-    assert(chain.length >= 3 && chain.some((x) => x.detail && x.detail.reason === 'retire_client'), 'rows of both writers');
-    assert.deepStrictEqual(S1.verifyAuditChain(chain), { ok: true, badId: null }, 'the audit chain verifies across the SQL and JS writers');
-    const tampered = chain.map((x) => (x.detail && x.detail.reason === 'retire_client' ? Object.assign({}, x, { detail: Object.assign({}, x.detail, { sessions: 9 }) }) : x));
-    assert.strictEqual(S1.verifyAuditChain(tampered).ok, false, 'the verifier notices a changed detail');
-    // the notice went through mail_queue; its address opens with the users.email_enc AAD (the outbox contract)
+    // one hash chain per user across every writer (request handlers, the support definer, a row written after it): the
+    // audit_chain trigger hashes each row; the daily job's check finds no bad row and no broken link
+    await api.asUser(uid, (tx) => tx`insert into wts.audit (user_id, actor, action, at, detail, hash) values (${uid}, 'user', 'signin', now(), ${tx.json({ method: 'code' })}, '\\x'::bytea)`);
+    const chain = await H.admin.sql`select id, prev_hash, hash, detail from wts.audit where user_id = ${uid} order by id`;
+    assert(chain.length >= 3 && chain.some((x) => x.detail && x.detail.reason === 'retire_client'), 'rows of every writer');
+    for (let k = 1; k < chain.length; k++) assert(chain[k].prev_hash && chain[k].prev_hash.equals(chain[k - 1].hash), 'linked in order');
+    const v = await auditVerify(H.admin.sql);
+    assert.deepStrictEqual([v.bad, v.broken], [[], []], 'the audit chain verifies');
+    await H.admin.sql`alter table wts.audit disable trigger user`;
+    await H.admin.sql`update wts.audit set detail = jsonb_set(detail, '{sessions}', '9') where detail->>'reason' = 'retire_client'`;
+    await H.admin.sql`alter table wts.audit enable trigger user`;
+    assert.strictEqual((await auditVerify(H.admin.sql)).bad.length, 1, 'the check notices a changed detail');
+    // the notice is in the outbox in the one format (system-sealed address and parameters); the daily job sends it
     const ob = await H.admin.sql`select to_enc, params_enc from wts.mail_outbox where template = 'notice_identity_unlinked'`;
     assert.strictEqual(ob.length, 1);
-    assert.strictEqual(String(S1.open(E.config, ob[0].to_enc, 'email')), email);
-    assert.deepStrictEqual(JSON.parse(Buffer.from(ob[0].params_enc).toString('utf8')), { provider: 'linkedin' });
+    assert.strictEqual(E.keys.system.open('mail.to', ob[0].to_enc).toString('utf8'), email);
+    const pj = JSON.parse(E.keys.system.open('mail.params', ob[0].params_enc).toString('utf8'));
+    assert.strictEqual(pj.template, 'notice_identity_unlinked'); assert.strictEqual(pj.params.provider, 'linkedin');
     // the new client: new pairwise subjects → rule 5, one code, linked again
     const E2 = makeEnv();
     const nb = browser(E2);
@@ -668,6 +678,7 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     const d = okFinish(await finish(nb, { code: codeFor(E2, email) }));
     assert.strictEqual(d.user.id, uid);
     assert.deepStrictEqual(parseArgs(['--provider', 'linkedin', '--actor', 'support:x', '--yes']), { yes: true, provider: 'linkedin', actor: 'support:x' });
+    await H.admin.sql`truncate wts.audit`;                    // the tampered row above stays out of later tests
   });
 
   test('RLS: wts_api reaches attempts and keys only through definers; identities of another user are invisible', async () => {
