@@ -863,7 +863,7 @@
     if (!HAS_DOC) return;
     var old = $('acct_cloud_menu'); if (old) { old.parentNode.removeChild(old); return; }
     ensureCss();
-    var anchor = (ev && ev.currentTarget) || $('acct_tb_cloud') || null;
+    var anchor = (ev && ev.currentTarget) || (document.querySelector && document.querySelector('[data-item="acct_tb_cloud"]')) || null;
     var m = document.createElement('div');
     m.id = 'acct_cloud_menu'; m.className = 'acct-cloud-menu rp-skip'; m.setAttribute('role', 'menu'); m.setAttribute('data-rp-nosnap', '1');
     var items = [['acct_c_save', 'Save to cloud', 'save'], ['acct_c_saveas', 'Save to cloud as…', 'saveas'], ['acct_c_open', 'Open from cloud…', 'open'], ['acct_c_import', 'Import files to cloud…', 'import']];

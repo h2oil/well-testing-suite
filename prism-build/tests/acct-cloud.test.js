@@ -455,8 +455,9 @@ module.exports = [
       const t = await ready(ctx);
       try {
         if (!T.hostReady(t)) { T.skip('CL15', 'WP-H host hooks absent (H5 registerToolbarItems, H14 registerGuard): the toolbar button and the guard are not checked'); return; }
-        await t.until(() => t.el('acct_tb_cloud'), 'cloud toolbar button');
-        t.click('acct_tb_cloud');
+        const tb = () => t.a.find('[data-item="acct_tb_cloud"]');
+        await t.until(tb, 'cloud toolbar button after Save As');
+        t.click(tb());
         await t.until(() => t.el('acct_c_save'));
         assert.deepStrictEqual(T.J(t.a.findAll('#acct_cloud_menu button').map((b) => b.textContent)), ['Save to cloud', 'Save to cloud as…', 'Open from cloud…', 'Import files to cloud…']);
         t.click('acct_c_save');
@@ -488,6 +489,39 @@ module.exports = [
         t.click('acct_m_page');
         await t.until(() => t.el('acct_root'), 'the menu opens the account page');
       } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL17 account page: devices (rename, sign out a device), On this device restore / discard, activity rows', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx, { prompt: 'Rig laptop (2)' });
+      const t2 = T.device(ctx, t.fake, {});
+      try {
+        await t2.signIn(E1);
+        await t2.until(() => t2.acct().state().status === 'signedIn');
+        await t.acct().refresh();
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_devices_table'));
+        assert.strictEqual(t.a.findAll('#acct_devices_table tbody tr').length, 2);
+        assert(/\(this device\)/.test(t.text('acct_devices_table')));
+        t.click(t.a.find('#acct_devices_table button.acct-dev-rename'));
+        await t.until(() => /Rig laptop \(2\)/.test(t.text('acct_devices_table')), 'renamed');
+        t.click(t.a.find('#acct_devices_table button.acct-dev-revoke'));
+        await t.until(() => Array.from(t.fake.state.devices.values()).some((d) => d.revoked), 'revoked');
+        await t2.acct().refresh();
+        assert.strictEqual(t2.acct().state().status, 'signedOut', 'the revoked device is signed out');
+        t.click('acct_show_activity');
+        await t.until(() => t.el('acct_activity_table'), 'activity');
+        assert(/signup|signin/.test(t.text('acct_activity_table')));
+        await t.sync()._store.put('stash', t.a.toWin({ 'some-user': { at: 1, payload: { format: 'h2oilproj', version: '1.0', modules: { storage: { keys: { wts_page_choke: JSON.stringify({ v: 1, t: 1, f: { bean: '44' } }) } } } } } }));
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_stash_restore_0'));
+        t.click('acct_stash_restore_0');
+        await t.until(() => t.storage.getItem('wts_page_choke') && /"44"/.test(t.storage.getItem('wts_page_choke')), 'stash restored');
+        await t.settle();
+        t.w.WTS_accountPage.open();   // the load re-rendered the page (without host H7 the host draws its own page)
+        await t.until(() => t.el('acct_local_none'), 'nothing left on this device');
+      } finally { t.dispose(); t2.dispose(); }
     },
   },
 ];
