@@ -5,6 +5,8 @@
 // function of 16-pvt.js, and the frozen v3.3 engine (tests/_wts-sim-v33.js) for the identity check with DS-101 out.
 // Every test builds Round 7 in memory from 31/32/38 (accept-test.js --sources).
 'use strict';
+// v1.6.0 changed the T-201 default line-up; runs against a frozen engine pin the v3.3.1 one on the working engine (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const X = require('./_wts-equip-shapes');
 
@@ -868,7 +870,7 @@ module.exports = [
     timeoutMs: 300000,
     run(app, assert) {
       const A = X.loadEngine('v33'), B = X.loadEngine('work');
-      const a = A.create(A.SAMPLE_FLOW, { seed: 7 }), b = B.create(B.SAMPLE_FLOW, { seed: 7, config: { sand: { pptb: 3 } } });
+      const a = A.create(A.SAMPLE_FLOW, { seed: 7 }), b = B.create(B.SAMPLE_FLOW, legacyOpts({ seed: 7, config: { sand: { pptb: 3 } } }));
       b.setFault('sandFlowback', false);
       for (let i = 1; i <= 720; i++) {
         a.advance(10); b.advance(10);

@@ -173,7 +173,7 @@ refs: [{ std: 'API 520 Part I', note: 'critical gas flow' }],
 related: ['sep', 'tank', 'esdhi'],
 shots: [Sh('view', 'both', 'Liquid Line / RO inputs', '', ['#wts_ll_sep_p~1']), Sh('res', 'desktop', 'Results', RES, ['#wts_ll_results table~2'], T('#wts_ll_results table'))]
 }),
-pipelife: Gd('pipelife', '90d58266', 'wts_pl_', {
+pipelife: Gd('pipelife', 'cd99e45b', 'wts_pl_', {
 keywords: ['erosion', 'sand'],
 notDocumented: ['import~step 2', '^wts_pl_seg\\d_~segment table cells: the Pipe Segments row'],
 purpose: 'Sand-erosion rate and remaining service life of each pipe segment from the wellhead to the flare.',

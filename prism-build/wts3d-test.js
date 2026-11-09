@@ -180,9 +180,10 @@ const SECTION_A = (G, src) => {
       const c0 = JSON.stringify(s.getControls());
       // v3.0: the lineup also carries the divert valve stroke (s) and the gauge 'allow interrupting batches' option
       // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
-      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
+      // v1.6.0 (WTS_sim): default T-201 line-up XV-201A open, XV-201B shut, LCV-201 suction B, auto-divert on
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
         surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
-      if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
+      if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== true) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
       const c1 = s.getControls(), st1 = s.getState();
@@ -306,6 +307,37 @@ const SECTION_B = (G /*, src */) => {
       const b = size(I.V101_BOX, I.fitView(I.PROCESS_BOX, -10, 30, 36, 375, 471, {}), 375, 471);
       return (a.h >= 55 && a.w >= 170 && b.h >= 22) || JSON.stringify({ a, b });
     }],
+    ['32 v1.4.0: CK-101 legs — normalize reads nodes.choke.leg / beanAdj / beanFix (older snapshot = adjustable at the bean); tracers and jet follow the in-service leg', () => {
+      const bad = [], out = I.makeNorm(), code = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+      let r = I.normalize(I.fakeSnapshot(100, { bean: 40 }), out);
+      if (!(r.nodes.choke.leg === 'adj' && r.nodes.choke.beanAdj === 40 && r.nodes.choke.beanFix === null)) bad.push('legacy ' + JSON.stringify([r.nodes.choke.leg, r.nodes.choke.beanAdj, r.nodes.choke.beanFix]));
+      r = I.normalize(I.fakeSnapshot(100, { bean: 24, leg: 'fixed' }), out);
+      if (!(r.nodes.choke.leg === 'fixed' && r.nodes.choke.beanAdj === 32 && r.nodes.choke.beanFix === 24 && r.nodes.choke.bean === 24)) bad.push('fixed');
+      r = I.normalize(I.fakeSnapshot(100, { bean: 36, leg: 'adj', beanFix: 20 }), out);
+      if (!(r.nodes.choke.leg === 'adj' && r.nodes.choke.beanAdj === 36 && r.nodes.choke.beanFix === 20)) bad.push('adj');
+      if (!/tr\.nextE\[I\.E2\] = ckB \? I\.E2b : I\.E2a/.test(code) || !/case 'E2b': act = L\.esd_choke\.active && ckB/.test(code) ||
+        !/tb = tabs\[N\.nodes\.choke\.leg === 'fixed' \? ROUTE_IDX\.E3f : ROUTE_IDX\.E3\]/.test(code) || !/'ADJ ' \+ Math\.round\(c\.bean\)|\(cFix \? 'POS ' : 'ADJ '\)/.test(code)) bad.push('source');
+      return bad.length === 0 || bad.join('; ');
+    }],
+    ['32 v1.4.0: CK-101 legs have their own shader slots (E2a 14 / E2b 15 upstream, E3 16 / E3f 17 downstream); the inlet run and the outlet tee run stay shared; the standby leg\'s slots are isolated (slot 12 look, no alert / frost / chevron motion)', () => {
+      const bad = [], aS = id => (I.ROUTES.find(r => r.id === id) || {}).aSeg, code = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+      if (!(aS('E2a') === 14 && aS('E2b') === 15 && aS('E3') === 16 && aS('E3f') === 17)) bad.push('leg slots ' + ['E2a', 'E2b', 'E3', 'E3f'].map(aS).join());
+      if (!(aS('E2') === 1 && aS('E3o') === 2)) bad.push('shared runs');
+      if (I.SEG_SLOTS !== 18 || I.ROUTES.some(r => !(r.aSeg >= 0 && r.aSeg < I.SEG_SLOTS))) bad.push('slot range');
+      // every leg slot is used only by its own leg's route, and its source segment equals that route's seg
+      const legOf = { E2a:'adj', E3:'adj', E2b:'fixed', E3f:'fixed' };
+      I.ROUTES.filter(r => r.aSeg >= 14).forEach(r => { const d = I.CK_LEG_SLOTS[r.aSeg]; if (!d || d.leg !== legOf[r.id] || d.src !== r.seg) bad.push('slot ' + r.id); });
+      [['adj', [14, 16], [15, 17]], ['fixed', [15, 17], [14, 16]], [undefined, [14, 16], [15, 17]]].forEach(([leg, live, stby]) => {
+        live.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && c.live && c.look === c.src && c.src === (sl < 16 ? 1 : 2))) bad.push('live ' + leg + ' ' + sl); });
+        stby.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && !c.live && c.look === 12)) bad.push('standby ' + leg + ' ' + sl); });
+      });
+      if (I.ckLegSlot(2, 'adj') !== null || I.ckLegSlot(12, 'fixed') !== null) bad.push('non-leg slot');
+      // the shader arrays are SEG_SLOTS long; the standby branch copies slot 12 and zeroes alert / frost without advancing the phase
+      if (!/uSegCol\[' \+ SEG_SLOTS \+ '\]/.test(code) || /uSeg\w+\[14\]/.test(code)) bad.push('shader arrays');
+      if (!/else \{ su\.col\.value\[sl\]\.copy\(K\.phaseSeg\[12\]\); su\.alert\.value\[sl\] = 0; \}/.test(code) || !/su\.frost\.value\[sl\] = c\.live \? su\.frost\.value\[c\.src\] : 0/.test(code)) bad.push('standby branch');
+      if (!/updateCkLegSlots\(su, N\.nodes\.choke\.leg, 'look'\)/.test(code) || !/updateCkLegSlots\(S\.segU, n\.nodes\.choke\.leg, 'frost'\)/.test(code)) bad.push('per-frame feed');
+      return bad.length === 0 || bad.join('; ');
+    }],
     ['32: fixture physics shows in the visual mapping (flame ≈ 5.1 m at 10 MMSCFD; stream whitens downstream of CK-101)', () => {
       if (!F) return true;
       const up = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[0].P0, F.segs[0].T0), dn = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[2].P0, F.segs[2].T0);
@@ -315,11 +347,16 @@ const SECTION_B = (G /*, src */) => {
       const VP = I.VALVE_PROXIES || [];
       const ids = VP.map(v => v[0]).sort().join(',');
       // v1.2.0: + XV-202 (valve:surge2:0), XV-103 (dump:desander), HV-104 (bypass:desander); the six v3.3 targets are tappable with both items out
-      if (ids !== 'bypass:desander,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable)
+      if (ids !== 'bypass:desander,ckleg:adj,ckleg:fixed,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
       const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
-      if (def !== 'suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
+      if (def !== 'ckleg:adj,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
+      // XV-201B (v1.4.0) sits on B's side nozzle (+X side, same height as XV-201A on A's −X nozzle)
+      const vB = VP.filter(v => v[0] === 'valve:surge:1')[0], vA = VP.filter(v => v[0] === 'valve:surge:0')[0];
+      if (!(vB[1][0] > 11.4 && vA[1][0] < 9.0 && vB[1][1] === vA[1][1])) return 'XV-201B not on the +X side nozzle';
       if (!S || !F) return true;
-      const s = S.create(F, { seed: 6 }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
+      // v3.3.1 T-201 line-up pinned (WTS_sim 1.6.0 starts with XV-201B shut, suction B, auto-divert on)
+      const s = S.create(F, { seed: 6, config: { surge: { lineup: { inlet: [true, true], suction: 'both', auto: false, initFrac: [0.55, 0.55] } } } }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
       for (let i = 0; i < 30; i++) s.advance(10);
       const st = s.getState(), n = I.normalize(st, I.makeNorm());
       const old = I.normalize({ sep: {}, surge: { frac: 0.4, fracW: 0.1 }, gauge: { active: 1, tanks: [{}, {}] } }, I.makeNorm());   // pre-divert snapshot shape
@@ -369,7 +406,8 @@ const SECTION_B = (G /*, src */) => {
         ['choke', [-7.2, 0.9, 0], [3.8, 1.4, 2.0]], ['heater', [-1.4, 1.6, 0], [3.4, 1.7, 1.7]], ['heater', [0.55, 3.5, 0.28], [0.5, 3.6, 0.5]],
         ['separator', [5.6, 2.0, 0], [6.9, 1.8, 1.8]], ['surge', [10.2, 3.3, 4.0], [2.5, 4.9, 2.5]], ['pump', [20.35, 0.55, 5.95], [0.9, 1.1, 1.7]],
         ['gauge', [16.4, 1.55, 4.0], [5.0, 2.6, 2.6]], ['flare', [19.5, 3.9, -4.5], [0.8, 7.8, 0.8]], ['flare', [19.5, 0.2, -4.5], [1.6, 0.4, 1.6]]];
-      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1'];
+      // v1.4.0: the core tap targets = the six v3.3 valves + the two CK-101 legs (always in)
+      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1', 'ckleg:adj', 'ckleg:fixed'];
       const VIEW_GROUPS_V33 = { wellhead: ['wellhead', 'esd', 'choke'], tanks: ['surge', 'pump', 'gauge'], process: ['separator', 'surge', 'gauge'], separator: ['heater', 'separator'] };
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
       // default overview camera at w × h → {pos, target, fov} for project()
@@ -407,6 +445,9 @@ const SECTION_B = (G /*, src */) => {
           const bad = [];
           if (EQ) Object.keys(EQ.ACTIONS).forEach(k => { const a = EQ.ACTIONS[k]; if (JSON.stringify(I.valveOf(a.proxy)) !== JSON.stringify(a.action)) bad.push(k); });
           if (JSON.stringify(I.valveOf('valve:surge:1')) !== JSON.stringify({ type: 'valve', eq: 'surge', idx: 1 }) || I.valveOf('dump:surge') !== null || I.valveOf('bypass:surge2') !== null) bad.push('regex');
+          // v1.4.0: CK-101 legs → {type:'ckleg', eq:'choke', leg}
+          if (JSON.stringify(I.valveOf('ckleg:adj')) !== JSON.stringify({ type: 'ckleg', eq: 'choke', leg: 'adj' }) || JSON.stringify(I.valveOf('ckleg:fixed')) !== JSON.stringify({ type: 'ckleg', eq: 'choke', leg: 'fixed' }) ||
+            I.valveOf('ckleg:other') !== null || I.proxyEq('ckleg:adj') !== 'choke') bad.push('ckleg');
           const ids = (rig) => I.rigValveProxies(rig).map(v => v[0]);
           if (ids({}).join() !== VALVES_V33.join()) bad.push('default ' + ids({}).join());
           if (ids({ desander: true }).indexOf('dump:desander') < 0 || ids({ desander: true }).indexOf('bypass:desander') < 0 || ids({ desander: true }).indexOf('valve:surge2:0') >= 0) bad.push('desander');
@@ -437,15 +478,19 @@ const SECTION_B = (G /*, src */) => {
               const sdvOut = id === 'D0a' && !e && JSON.stringify(p) === JSON.stringify([-11.2, 1.2, 0]);      // SDV-101 outlet = the v3.3 E2 start
               if (!onRoute && !onTee && !onNoz && !sdvOut) bad.push(id + (e ? ' end' : ' start'));
             }); });
-          // both out: D0a + D0b + E2 = the v3.3 E2 polyline, LMa + LMb = the v3.3 LM polyline
+          // both out: D0a + D0b + E2 (+ E2a, v1.4.0 manifold leg A) = the inlet line to the adjustable choke, LMa + LMb = the v3.3 LM polyline
           const cat = ids => ids.map(route).reduce((a, r, i) => a.concat(i ? r.pts.slice(1) : r.pts), []);
-          if (JSON.stringify(cat(['D0a', 'D0b', 'E2'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.65, 1.2, 0], [-8.65, 1.2, 0.6], [-7.4, 1.2, 0.6]])) bad.push('E2 split');
+          if (JSON.stringify(cat(['D0a', 'D0b', 'E2', 'E2a'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.95, 1.2, 0], [-8.95, 1.2, 0.7], [-8.3, 1.2, 0.7], [-7.05, 1.2, 0.7]])) bad.push('E2 split');
+          // v1.4.0 CK-101 legs: A = E2a → E3, B = E2b → E3f; both start at the inlet tee (E2 end), meet at the outlet tee (E3o start)
+          const e2 = route('E2'), e3o = route('E3o'), J = x => JSON.stringify(x), first = id => route(id).pts[0], last = id => route(id).pts[route(id).pts.length - 1];
+          if (!(J(first('E2a')) === J(last('E2')) && J(first('E2b')) === J(last('E2')) && J(last('E2a')) === J(first('E3')) && J(last('E2b')) === J(first('E3f')) &&
+            J(last('E3')) === J(first('E3o')) && J(last('E3f')) === J(first('E3o')) && J(last('E3o')) === J([-4.3, 1.2, 0]) && e2 && e3o)) bad.push('CK-101 legs');
           if (JSON.stringify(cat(['LMa', 'LMb'])) !== JSON.stringify([[8.1, 0.55, 2.4], [8.1, 0.55, 4.0], [8.1, 2.9, 4.0], [8.1, 4.2, 4.0], [9.0, 4.2, 4.0]])) bad.push('LM split');
           ['D1', 'D2', 'DD'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { desander: true }) || route(id).rig !== 'desander') bad.push('rig tag ' + id); });
           ['LM2', 'X0', 'VENT2', 'BLK2', 'PSV2'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { surge2: true }) || route(id).rig !== 'surge2') bad.push('rig tag ' + id); });
           ['D0a', 'D0b', 'LMa', 'LMb', 'E2'].forEach(id => { if (!I.routeBuilt(route(id), {})) bad.push('core route ' + id); });
           if (I.TEES.filter(t => !t[4]).length !== 7) bad.push('v3.3 tees changed');
-          const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2,E2b') bad.push('aSeg ' + D);
+          const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2') bad.push('aSeg ' + D);
           return bad.length === 0 || bad.join(',');
         }],
         ['32: nextS[X0] = X2\'s arc length to the elbow (13.4, 0.45, 4.0); VENT2 joins VENT at (13.0, 6.1, 2.3)', () => {
@@ -528,8 +573,9 @@ const SECTION_B = (G /*, src */) => {
         }],
         ['32: tracer allocation per chain is unchanged with both items out (v3.3 rule; DR keeps the remainder); optional chains empty', () => {
           const L = I.routeLenFn(I.DEF_NPS), bad = [];
+          // v1.4.0: the main chain runs E2 → E2a (leg A) → E3 → E3o (leg B edges are reached by successor only)
           const OLD = [['E1', 'E2', 'E3', 'E3c', 'E4a', 'E4'], ['G1'], ['VENT'], ['BLK'], ['LW', 'LM'], ['LO', 'LM'], ['X1', 'X2', 'XA'], ['DRA']];
-          const len = id => id === 'E2' ? L('D0a') + L('D0b') + L('E2') : id === 'LM' ? L('LMa') + L('LMb') : L(id);
+          const len = id => id === 'E2' ? L('D0a') + L('D0b') + L('E2') + L('E2a') : id === 'E3' ? L('E3') + L('E3o') : id === 'LM' ? L('LMa') + L('LMb') : L(id);
           const w = OLD.map((e, c) => e.reduce((a, id) => a + len(id), 0) * (c === 0 ? 1.6 : 1)), tw = w.reduce((a, b) => a + b, 0);
           [700, 1200, 2400, 4000].forEach(nT => {
             let k = 0; const v33 = w.map((x, c) => { const n = c === w.length - 1 ? nT - k : Math.round(nT * x / tw); k += n; return n; });
@@ -652,13 +698,13 @@ const SECTION_B = (G /*, src */) => {
             const t = J(rig);
             if (I.rigProxies(rig).some(p => p[0] === 'heaterChoke') || I.rigEqIds(rig).indexOf('heaterChoke') >= 0 || I.fitPts(rig) !== I.FIT_PTS) bad.push(t + ' tables');
             if (J(I.viewBox('separator', rig)) !== J(I.viewBox('separator', {}))) bad.push(t + ' separator view');
-            if (I.chainEdges(0, rig).join() !== 'E1,D0a,D0b,E2,E3,E3c,E4a,E4') bad.push(t + ' chain ' + I.chainEdges(0, rig).join());
+            if (I.chainEdges(0, rig).join() !== 'E1,D0a,D0b,E2,E2a,E3,E3o,E3c,E4a,E4') bad.push(t + ' chain ' + I.chainEdges(0, rig).join());
             if (I.ROUTES.some(r => (r.id === 'E3c') !== I.routeBuilt(r, rig) && /^E3c/.test(r.id))) bad.push(t + ' routes');
             if (I.clearancePrims(rig).some(p => /CK-102|PAH-102/.test(p.id) || /^E3c[12]/.test(p.route || ''))) bad.push(t + ' prims');
             if (J(I.tracerCounts(1200, I.chainWeights(rig, L))) !== J(I.tracerCounts(1200, I.chainWeights({}, L)))) bad.push(t + ' tracers');
           });
           const ck = { heaterChoke: true };
-          if (!I.rigProxies(ck).some(p => p[0] === 'heaterChoke') || I.rigEqIds(ck).indexOf('heaterChoke') < 0 || I.chainEdges(0, ck).join() !== 'E1,D0a,D0b,E2,E3,E3c1,E3c2,E4a,E4') bad.push('in');
+          if (!I.rigProxies(ck).some(p => p[0] === 'heaterChoke') || I.rigEqIds(ck).indexOf('heaterChoke') < 0 || I.chainEdges(0, ck).join() !== 'E1,D0a,D0b,E2,E2a,E3,E3o,E3c1,E3c2,E4a,E4') bad.push('in');
           if (I.viewBox('separator', ck).min[0] > I.EQ_BOX.heaterChoke[0][0] || I.viewBox('separator', {}).min[0] <= I.EQ_BOX.heaterChoke[0][0]) bad.push('separator view frames CK-102 only while in');
           const nT = I.tracerCounts(1200, I.chainWeights(ck, L)); if (nT.reduce((a, b) => a + b, 0) !== 1200) bad.push('allocation');
           return bad.length === 0 || bad.join('; ');
@@ -809,7 +855,7 @@ const SECTION_B = (G /*, src */) => {
         ['32 v1.3.0 source: CK-102 built only while in (own materials, frost uniform, wheel), tracers E3 → E3c1 → E3c2 while in, the V-101 spool by destination with PSHH-104 / NRV-501 / XV-501 plates', () => {
           const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || ''), bad = [];
           [[/if \(IN\.heaterChoke\) \{\s*beginGrp\('heaterChoke'\)/, 'group only while in'], [/frostMat\(frostU2\)/, 'own frost uniform'],
-            [/S\.dyn\.heaterChoke = \{ wheel:hw/, 'dyn'], [/tr\.nextE\[I\.E3\] = byp \? I\.E3b : \(ck2B \? I\.E3c1 : I\.E3c\)/, 'tracer successor'],
+            [/S\.dyn\.heaterChoke = \{ wheel:hw/, 'dyn'], [/tr\.nextE\[I\.E3o\] = byp \? I\.E3b : \(ck2B \? I\.E3c1 : I\.E3c\)/, 'tracer successor'],
             [/tr\.nextE\[I\.E3c1\] = I\.E3c2; tr\.nextE\[I\.E3c2\] = I\.E4a/, 'E3c1 → E3c2 → E4a'], [/g === 'separator' && S\.sepDest === 'line' \? LINE_SPOOL/, 'line spool'],
             [/pswitch\('PSHH-104'/, 'PSHH-104'], [/tagPlate\('NRV-501'/, 'NRV-501'], [/tagPlate\('XV-501'/, 'XV-501'], [/pswitch\('PAH-102'/, 'PAH-102'],
             [/case 'heaterChoke':/, 'chip'], [/'bypassed with H-101'/, 'bypassed text'], [/HEATER CHOKE \(BETWEEN PASSES\)/, 'midcoil label (D10 fallback)']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
@@ -1019,7 +1065,8 @@ const SECTION_C = (G, src) => {
       if (!f) return 'no flow';
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
-      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; return c; };
+      // (CK-101 manifold, after v3.3.3: the host flow.ck1 block {v, leg, beanAdj, beanFix, bean} is stripped the same way)
+      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
       // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);

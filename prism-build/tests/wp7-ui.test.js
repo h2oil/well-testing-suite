@@ -525,6 +525,14 @@ module.exports = [
       app.flush(100);
       assert.equal(app.el('prism_regress_status').getAttribute('data-prism-status'), 'bad');
       assert.equal(JSON.stringify(st.params), before, 'params restored after a failed fit');
+      // A fit the engine did NOT adopt (runRegression's settled rule) is red even with R² ≥ 0.9, names the engine's reason
+      // and keeps the parameters (branch fix 18bbb47: Tab 6 follows fit.adopted instead of converged || R² ≥ 0.9).
+      app.evalInApp('window.PRiSM_runRegression = function () { window.PRiSM_state.params = { Cd: 7e-11, S: 9 }; return { source: "regression", converged: false, adopted: false, r2: 0.94, warnings: ["Fit not adopted (still moving after 3 iterations) — previous parameters and result kept."], params: { Cd: 7e-11, S: 9 } }; };');
+      app.click('prism_regress_run');
+      app.flush(100);
+      assert.equal(app.el('prism_regress_status').getAttribute('data-prism-status'), 'bad', 'not adopted → red');
+      assert.includes(app.el('prism_regress_status').textContent, 'Fit not adopted (still moving after 3 iterations)');
+      assert.equal(JSON.stringify(st.params), before, 'params restored after a fit that was not adopted');
       // The original engine: with the legacy (HEAD 05) fitter a bad fit is never shown green, and
       // no engine can write st.match.
       app.win.PRiSM_runRegression = legacy;

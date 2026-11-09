@@ -2304,7 +2304,7 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     _wireResetView('prism_params_reset_view', 'prism_params_canvas');
 }
 function _persistPresets() {
-    try { if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || [])); }
+    try { if (typeof localStorage !== 'undefined' && localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_presets', JSON.stringify(_st().presets || []), { raw: true }) : localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || []))); }   /* ls-raw: fallback */
     catch (e) { /* quota — ignore */ }
 }
 function _drawParamPreview(units) {
@@ -2637,6 +2637,11 @@ function _statusOf(fit, err) {
     var r2 = _num(fit && fit.r2);
     if (!fit) return { cls: 'prism-bad', text: 'No result.' };
     if (_isNum(r2) && r2 < 0.9) return { cls: 'prism-bad', text: 'Fit failed (R² ' + _fixed(r2, 4) + ') — parameters were not changed.' };
+    if (fit.adopted === false) {
+        var why = '';
+        (fit.warnings || []).forEach(function (m) { var mm = /Fit not adopted \((.*)\)/.exec(String(m)); if (mm) why = mm[1]; });
+        return { cls: 'prism-bad', text: 'Fit not adopted' + (why ? ' (' + why + ')' : '') + ' — R² ' + (_isNum(r2) ? _fixed(r2, 4) : '—') + '; parameters were not changed.' };
+    }
     if (fit.converged === true && _isNum(r2) && r2 >= 0.99) return { cls: 'prism-ok', text: 'Fit converged — R² ' + _fixed(r2, 5) };
     return { cls: 'prism-warn', text: 'Fit finished ' + (fit.converged ? '' : 'without converging ') + '(R² ' + (_isNum(r2) ? _fixed(r2, 4) : '—') + ') — treat as a starting point.' };
 }
@@ -2832,7 +2837,8 @@ function _runRegressionNow(extra) {
         if (!fit.modelKey) { fit.modelKey = st.model; fit.model = st.model; }
         if (!fit.kind) fit.kind = entry.kind === 'rate' ? 'rate' : 'pressure';
         if (!fit.source) fit.source = 'regression';
-        var good = fit.converged === true || (_isNum(fit.r2) && fit.r2 >= 0.9);
+        // runRegression decides adoption (R², bounds, settled); legacy engines fall back.
+        var good = typeof fit.adopted === 'boolean' ? fit.adopted : (fit.converged === true || (_isNum(fit.r2) && fit.r2 >= 0.9));
         if (!good) { st.params = snap.params; st.phys = snap.phys; st.tcMatch = snap.tcMatch; }
         if (legacy) {
             if (good) _setLastFit(fit);

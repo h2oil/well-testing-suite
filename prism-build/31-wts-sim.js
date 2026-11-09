@@ -18,6 +18,9 @@
 // v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md): optional CK-102 heater inlet choke (out by default; in line only through the heater),
 // the V-101-out bypass destination (burner / flare line or a production line) and the cushion-unload scenario. With CK-102
 // out, the destination 'flare', V-101 in and no cushion the engine is v1.4.0 (frozen copy tests/_wts-sim-v331.js).
+// T-201 line-up (SURGE_LINEUP_DEF): XV-201A open, XV-201B shut, LCV-201 suction from B, auto-divert on — A fills while B
+// transfers; steady start A 0.35 / B 0.60. cfg.surge.lineup = SURGE_LINEUP_V331 (both open, suction both, auto off, 0.55 / 0.55)
+// is the v3.3.1 engine exactly. nodes.choke.leg / beanAdj / beanFix = the CK-101 manifold legs from flow.ck1 (none → adj, bean, null).
 //
 // Contents
 //   • geometry (horizontal 2:1-head vessel compartments, vertical tanks), LUTs
@@ -130,7 +133,9 @@ var NULLABLE = deepFreeze(['esd.cause', 'esd.tripT', 'surge.tFull_s', 'surge.pum
   'gauge.batches[*].gor_scf_stb', 'gauge.batches[*].bsw_pct',
   'desander.dump.lastT', 'surge2.tFull_s', 'surge2.transfer.trip',
   // v1.5.0: CK-102 bean / position from the flow block (no block → null); cushion breakthrough time (none yet → null)
-  'inputs.bean2', 'inputs.ck2Pos', 'cushion.tBreak']);
+  'inputs.bean2', 'inputs.ck2Pos', 'cushion.tBreak',
+  // v1.6.0: CK-101 positive (fixed) bean from flow.ck1 (no block → null)
+  'nodes.choke.beanFix']);
 // surgePumpFail keeps its id: it is the transfer pump P-201, now downstream of the gauge tank (gauge tank → export / burner)
 // (append only: the v1.4.0 ids follow the v1.3.0 ones; faults on equipment out of the rig-up are accepted and act once it is in)
 var FAULT_IDS = ['pcvStuckClosed', 'pcvStuckOpen', 'oilDumpStuckOpen', 'oilDumpStuckClosed', 'waterDumpStuckClosed', 'surgePumpFail', 'slugging', 'xferStuckClosed',
@@ -232,6 +237,18 @@ var HIST_KEYS = ['Psep', 'PsepSP', 'bucketFrac', 'ifaceFrac', 'c1Frac', 'surgeFr
   'surgeFracA', 'surgeFracB', 'surge2Frac', 'surge2P', 'dsAccFrac', 'dsDP', 'sandChoke',
   'Pck2', 'cushionLeft'];                      // v1.5.0: CK-102 inlet (psig; the CK-101 outlet while CK-102 is not in line), cushion left (bbl)
 var SUCTIONS = ['A', 'B', 'both'];
+// T-201 operator line-up at creation (v1.6.0): XV-201A open, XV-201B shut, LCV-201 suction from B, auto-divert on; steady start
+// A at 0.35 and B at 0.60 of a compartment. cfg.surge.lineup = { inlet:[a,b], suction, auto, initFrac:[a,b] } overrides it per key;
+// the v3.3.1 line-up is { inlet:[true,true], suction:'both', auto:false, initFrac:[0.55,0.55] } (SURGE_LINEUP_V331)
+var SURGE_LINEUP_DEF = deepFreeze({ inlet: [true, false], suction: 'B', auto: true, initFrac: [0.35, 0.60] });
+var SURGE_LINEUP_V331 = deepFreeze({ inlet: [true, true], suction: 'both', auto: false, initFrac: [0.55, 0.55] });
+function surgeLineup(c) {                    // resolved line-up (a fresh object) from cfg.surge.lineup and the defaults
+  var L = isPlainObj(c) && isPlainObj(c.surge) && isPlainObj(c.surge.lineup) ? c.surge.lineup : {}, D = SURGE_LINEUP_DEF;
+  var inl = Array.isArray(L.inlet) && L.inlet.length === 2 ? [!!L.inlet[0], !!L.inlet[1]] : [D.inlet[0], D.inlet[1]];
+  var fr = [D.initFrac[0], D.initFrac[1]];
+  if (Array.isArray(L.initFrac) && L.initFrac.length === 2) for (var i = 0; i < 2; i++) { var v = +L.initFrac[i]; if (isFin(v)) fr[i] = clamp(v, 0, 0.95); }
+  return { inlet: inl, suction: SUCTIONS.indexOf(L.suction) >= 0 ? L.suction : D.suction, auto: typeof L.auto === 'boolean' ? L.auto : D.auto, initFrac: fr };
+}
 
 // ─── DEFAULTS (§4.12, deep-frozen) ───────────────────────────────────────────
 var DEFAULTS = deepFreeze({ seed: 12345, speed: 10, speeds: [1, 10, 60, 600], hMax: 0.25, hMin: 0.005, maxSubsteps: 6000, maxAdvance: 3600,
@@ -612,7 +629,8 @@ function create(flowIn, opts) {
   // gauge
   var tanks, active, batches, batchN;
   // operator lineup (persists across reset): inlet divert valves, pump suction, auto-divert
-  var ctl = { surge: { inlet: [true, true], suction: 'both', auto: false, sp: num(cfg.surge.autoSp, 0.8), hyst: num(cfg.surge.autoHyst, 0.1),
+  var LU0 = surgeLineup(cfg);                   // v1.6.0 creation line-up (cfg.surge.lineup over SURGE_LINEUP_DEF)
+  var ctl = { surge: { inlet: LU0.inlet, suction: LU0.suction, auto: LU0.auto, sp: num(cfg.surge.autoSp, 0.8), hyst: num(cfg.surge.autoHyst, 0.1),
       strokeS: clamp(num(cfg.surge.xvStrokeS, 6), 0, 60) },
     gauge: { inlet: [true, false], auto: false, sp: num(cfg.gauge.autoSp, 0.9), hyst: num(cfg.gauge.autoHyst, 0.1),
       strokeS: clamp(num(cfg.gauge.xvStrokeS, 6), 0, 60), allowInterrupt: !!cfg.gauge.allowInterrupt },
@@ -624,7 +642,7 @@ function create(flowIn, opts) {
   // Divert valve travel: uv / gv are the commands, upos / gpos the actual positions (0 shut … 1 open) moving at
   // 1/strokeS per second. Flow splits follow the positions; a compartment's fill window closes when its valve is
   // fully shut (limit switch), and open-new-before-close-old sequences wait for the new valve's open limit.
-  var upos = [1, 1], gpos = [1, 0];
+  var upos = [uv[0] ? 1 : 0, uv[1] ? 1 : 0], gpos = [1, 0];
   var Tuk = [80, 80];                           // per-compartment surge liquid temperature (°F); Tu = volume-weighted mean
   var ptrip = { LSHH_GT: false, PUMP_DRYRUN: false }, hhK = [false, false], dryMsg = '';
   // accumulators (base units) + meters
@@ -967,11 +985,12 @@ function create(flowIn, opts) {
       var vg = BBL * (Vves - X.Vw1 - X.Vo1 * X.Bs - X.Vo2 * X.Bs);
       X.n_s = Pa * vg * TSC / (Zf(Pa, TR) * TR * PSC);
       X.Ipcv = 0; X.upcv = 0.5;
-      // surge at 0.55, pump running (mid-drawdown), at its setpoint
+      // surge compartments at the line-up's initFrac (default A 0.35 / B 0.60; v3.3.1 both 0.55), transfer running, at its setpoint
       X.Tu = X.Tsep; var PuA0 = PspU + PSC; X.PuA = PuA0; X.Bu = BoR(PuA0, X.Tu);
       var ao = qoE * X.Bu, aw = qwE, ro = (ao + aw) > 1e-15 ? ao / (ao + aw) : 0.8;
-      var VlU = 0.55 * capU;
-      for (var j = 0; j < 2; j++) { uo[j] = 0.55 * capK * ro / X.Bu; uw[j] = 0.55 * capK * (1 - ro); }
+      var ifr = surgeLineup(cfg).initFrac;
+      var VlU = ifr[0] === ifr[1] ? ifr[0] * capU : (ifr[0] + ifr[1]) * capK;   // equal fractions: the v3.3.1 expression (bit-identical)
+      for (var j = 0; j < 2; j++) { uo[j] = ifr[j] * capK * ro / X.Bu; uw[j] = ifr[j] * capK * (1 - ro); }
       X.n_u = PuA0 * mmax(1, (capU - VlU) * BBL) * TSC / (Zf(PuA0, X.Tu + RANK) * (X.Tu + RANK) * PSC);
       pumpOn = true;
       // gauge A filling at 30 % (0.8/0.2 oil/water), B ready and empty
@@ -1245,10 +1264,17 @@ function create(flowIn, opts) {
       for (k = 0; k < 2; k++) {
         o = 1 - k;
         if (!uv[k] || compVliq(k) < C.sp * capK - 1e-9) continue;
-        if (!(compVliq(o) < (C.sp - C.hyst) * capK)) continue;
+        // v1.6.0 review: while o is the single LCV-201 suction its level parks at LSL (the transfer stops there), so with SP − hyst
+        // at or below LSL it would never count as having room and the line-up would run on to LSHH-201: o has room once it is
+        // drawn down to just above LSL. Suction 'both' (the v3.3.1 line-up) keeps the plain SP − hyst test (identity).
+        if (!(compVliq(o) < roomFrac(C, o) * capK)) continue;
         uv[o] = true; hold.surge[o] = false; uv[k] = false; armClose('surge', k);
         var sucMoved = C.suction === letter(o);
         if (sucMoved) C.suction = letter(k);             // pump the full compartment down while the other fills
+        // v1.6.0 review: a set point below LSH would leave LCV-201 shut on the compartment it just moved to (level control
+        // starts at LSH) and the line-up would end at LSHH-201 — the transfer starts with the move. With SP ≥ LSH the
+        // compartment is already at LSH, so level control starts it on the next substep exactly as before (v3.3.1 identity).
+        if (sucMoved && rSurge) { var fK = compVliq(k) / capK; if (fK < cfg.surge.lsh - 1e-12 && fK > cfg.surge.lsl + 1e-12) pumpOn = true; }
         msg = TAGS.surge + ' auto-divert: ' + sideTag('surge', k) + ' at ' + rnd0(compVliq(k) / capK * 100) + '% → inlet to ' + sideTag('surge', o) +
           ' (' + valveTag('surge', o) + ' open, ' + valveTag('surge', k) + ' closed)' + (sucMoved ? ' · ' + TAGS.xfer + ' suction → ' + sideTag('surge', k) : '');
         logEntry('switch', 'AUTO_DIVERT', null, TAGS.surge, msg);
@@ -1463,9 +1489,19 @@ function create(flowIn, opts) {
   }
   var surgeHiK = 0, gaugeHiK = 0, gaugeLahK = 0, FG2 = [0, 0];
   // both-high (auto-divert on): a filling side at/above SP while the other side has no room (≥ SP − hysteresis)
+  function roomFrac(C, o) { return C.suction === letter(o) ? mmax(C.sp - C.hyst, cfg.surge.lsl + 0.02) : C.sp - C.hyst; }
   function bothHigh(C, open, fA, fB, db) {
     if (!C.auto) return false;
-    return (open[0] && fA >= C.sp - db && fB >= C.sp - C.hyst - db) || (open[1] && fB >= C.sp - db && fA >= C.sp - C.hyst - db);
+    // the room test is the one autoDivert uses (roomFrac: a single suction parks at LSL; suction 'both' = SP − hyst, v3.3.1)
+    return (open[0] && fA >= C.sp - db && fB >= roomFrac(C, 1) - db) || (open[1] && fB >= C.sp - db && fA >= roomFrac(C, 0) - db);
+  }
+  // v1.6.0 review — LAH-201 with auto-divert OFF: the compartment whose inlet is open but which is not on the LCV-201 suction
+  // has no level control, so it rises to LSHH-201 (ESD); it alarms at the auto set point. Returns that compartment (0 | 1)
+  // or -1. Suction 'both' (the v3.3.1 line-up) or the inlet compartment on the suction never alarms here (identity).
+  function uncontrolledHigh(C, open, fA, fB, db) {
+    if (C.auto || C.suction === 'both') return -1;
+    var s = C.suction === 'B' ? 1 : 0, o = 1 - s;
+    return open[o] && (o ? fB : fA) >= C.sp - db ? o : -1;
   }
   // equipment out of the rig-up raises nothing: its (non-latched) alarms clear at once
   function quiet(ids) {
@@ -1561,9 +1597,19 @@ function create(flowIn, opts) {
       A = aDef('PUMP_BLOCKED', TAGS.xfer, 'alarm', 'surge', 'b');
       evalA(A, pumpBlocked, !pumpBlocked, null, null, MSG.PUMP_BLOCKED, true);
       var bU = bothHigh(ctl.surge, uv, fUA, fUB, 0), bUc = !bothHigh(ctl.surge, uv, fUA, fUB, dbLu);
+      var msgU = MSG.LAH_SURGE_BOTH, vU = fracHiU, kU = 'both';
+      if (!ctl.surge.auto) {                        // auto-divert off: LAH-201 = the inlet-open compartment off the suction at SP
+        var uK = uncontrolledHigh(ctl.surge, uv, fUA, fUB, 0), uKc = uncontrolledHigh(ctl.surge, uv, fUA, fUB, dbLu);
+        bU = uK >= 0; bUc = uKc < 0;
+        if (uKc >= 0) { vU = uKc ? fUB : fUA; msgU = uKc ? MSG.LAH_SURGE_B : MSG.LAH_SURGE_A; kU = uKc ? 'B' : 'A'; }
+      }
       if (rSurge2 && ctl.surge2.auto && X2.VliqU / cap2 < ctl.surge2.sp - ctl.surge2.hyst) { bU = false; bUc = true; }   // the auto route has room (WP-E2)
       A = aDef('LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l');
-      evalA(A, bU, bUc, fracHiU * 100, ctl.surge.sp * 100, MSG.LAH_SURGE_BOTH, true);
+      evalA(A, bU, bUc, vU * 100, ctl.surge.sp * 100, msgU, true);
+      if (!A.active) A.lahKind = kU;                // raised with this meaning; while raised, a change of meaning (auto-divert
+      else if (A.lahKind !== kU && !bUc) {          // toggled, other compartment) refreshes the text (never on the v3.3.1 paths)
+        A.lahKind = kU; A.msg = msgU(A.value, A.limit); alarmsDirty = true;
+      }
     } else { quiet(Q_SURGE); surgeBlocked(); }
     // v1.4.0 optional items: evaluated only while the item is in (sand alarms while sand is on); released on removal
     if (rDes || sandOn) desAlarms();
@@ -2072,7 +2118,8 @@ function create(flowIn, opts) {
     nodes: {
       wellhead: { tag: TAGS.wellhead, P: 0, T: 0, th: 0, hyd: false },
       esd: { tag: TAGS.esd, P: 0, T: 0, th: 0, hyd: false },
-      choke: { tag: TAGS.choke, P: 0, Pin: 0, T: 0, th: 0, hyd: false, regime: 'Critical', bean: 0, flowLimited: false, QmaxMMscfd: 0, dTjt: 0 },
+      choke: { tag: TAGS.choke, P: 0, Pin: 0, T: 0, th: 0, hyd: false, regime: 'Critical', bean: 0, flowLimited: false, QmaxMMscfd: 0, dTjt: 0,
+        leg: 'adj', beanAdj: 0, beanFix: null },     // v1.6.0 CK-101 manifold legs from flow.ck1 (no block: 'adj', inputs.bean, null)
       heater: { tag: TAGS.heater, P: 0, T: 0, Tin: 0, th: 0, hyd: false, bypass: false, dutyMMBtuHr: 0, firing: 0 },
       separator: { tag: TAGS.separator, P: 0, T: 0, th: 0, hyd: false },
       flare: { tag: TAGS.flare, P: 0, Pline: 0, T: 0, qMMscfd: 0, flame: 0 },
@@ -2202,8 +2249,18 @@ function create(flowIn, opts) {
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
     var flLim = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited;   // DS-101 in: the dynamic flag of the capacity coupling (§4.6)
     if (CK2.act && AL.CHOKE2_LIMIT && AL.CHOKE2_LIMIT.active) flLim = false;  // v1.5.0: CHOKE_LIMIT is suppressed while CHOKE2_LIMIT is raised
-    if (flLim && !A.active) raise(A, Qg, chk.QmaxMMscfd, chk.flowLimited ? 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
-      : 'CK-101 flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs');
+    // v1.6.0 review: the text names the positive leg only while it is in service (adjustable leg / no flow.ck1: the v3.3.1 text);
+    // while raised, a bean / leg / capacity / requested-rate change refreshes the value, limit and text (the DS-101 ΔP text is
+    // refreshed only on those changes, not on every ΔP move)
+    var posLeg = isPlainObj(flow.ck1) && flow.ck1.leg === 'fixed';
+    var ckKey = (chk.flowLimited ? 'c' : 'd') + '|' + bean + '|' + chk.QmaxMMscfd + '|' + Qg + '|' + (posLeg ? 'pos' : 'adj');
+    if (flLim && (!A.active || A.ckKey !== ckKey)) {
+      var ckMsg = chk.flowLimited ? 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
+        : 'CK-101 ' + (posLeg ? 'positive leg ' : '') + 'flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs';
+      if (!A.active) raise(A, Qg, chk.QmaxMMscfd, ckMsg);
+      else { A.value = Qg; A.limit = chk.QmaxMMscfd; if (A.msg !== ckMsg) { A.msg = ckMsg; alarmsDirty = true; } }
+      A.ckKey = ckKey;
+    }
     else if (!flLim && A.active) clearA(A);
   }
 
@@ -2223,6 +2280,9 @@ function create(flowIn, opts) {
     P = pckLive(Pdn, fi2);                          // CK-101 outlet (v1.5.0: the CK-102 law while it is in line / its lag runs)
     N.choke.P = P; N.choke.Pin = X.PB; N.choke.T = Tamb + (Tck_ss - Tamb) * th; hydOf(N.choke);
     N.choke.regime = X.f < 0.01 ? 'No Flow' : chk.regime; N.choke.bean = bean; N.choke.flowLimited = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited; N.choke.QmaxMMscfd = chk.QmaxMMscfd;
+    var c1 = flow.ck1;                              // v1.6.0 CK-101 manifold: in-service leg and both beans (64ths)
+    if (isPlainObj(c1)) { N.choke.leg = c1.leg === 'fixed' ? 'fixed' : 'adj'; var ba = simNum(c1.beanAdj); N.choke.beanAdj = ba === null ? I.bean : ba; N.choke.beanFix = simNum(c1.beanFix); }
+    else { N.choke.leg = 'adj'; N.choke.beanAdj = I.bean; N.choke.beanFix = null; }
     N.choke.dTjt = X.f < 0.01 ? 0 : mmin(150, 0.07 * (cushOn ? cushS.wJTe : chk.wJT) * mmax(X.PB - P, 0));   // cushion: blended J-T weight (D8)
     N.heater.P = Pdn + (Ph_ss - Psep_ss) * fi2; N.heater.T = Tamb + (Th_ss - Tamb) * th; N.heater.Tin = Tamb + (Tin_ss - Tamb) * th;
     N.heater.bypass = bypass; N.heater.dutyMMBtuHr = duty_ss * X.f;
@@ -3453,6 +3513,13 @@ function create(flowIn, opts) {
     return 'LAH-201 both surge compartments high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — auto-divert has no room' +
       (rSurge2 && !ctl.surge2.auto ? ' — route the dumps to ' + TAGS.surge2 : '');
   };
+  // v1.6.0 review: auto-divert off, the filling compartment is not on the LCV-201 suction (no level control → LSHH-201 ESD)
+  function lahUnctl(k, v, l) {
+    return 'LAH-201 ' + sideTag('surge', k) + ' high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — inlet open, not on the ' + TAGS.xfer +
+      ' suction and auto-divert off: divert the inlet or move the suction before LSHH-201 (ESD)';
+  }
+  MSG.LAH_SURGE_A = function (v, l) { return lahUnctl(0, v, l); };
+  MSG.LAH_SURGE_B = function (v, l) { return lahUnctl(1, v, l); };
 
   function mawp2Of(x) {
     var C = cfg.surge2;
@@ -4655,6 +4722,8 @@ G.WTS_sim = {
   RIGUP: RIG_ITEMS,
   RIG_DEFAULTS: RIG_DEFAULTS,
   RIG_OPTIONAL: RIG_OPTIONAL,
+  SURGE_LINEUP: SURGE_LINEUP_DEF,             // v1.6.0 default T-201 line-up; SURGE_LINEUP_V331 = the v3.3.1 one (cfg.surge.lineup pin)
+  SURGE_LINEUP_V331: SURGE_LINEUP_V331,
   normRigup: normRigup,
   NODE_IDS: deepFreeze(NODE_IDS.slice()),
   HIST_KEYS: deepFreeze(HIST_KEYS.slice()),

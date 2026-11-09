@@ -191,18 +191,33 @@ module.exports = [
       st = b.getState();
       assert.ok(alarmIds(st).indexOf('SURGE_BLOCKED') < 0 && alarmIds(st).indexOf('PUMP_BLOCKED') < 0, 'cleared: ' + alarmIds(st));
       assert.ok(!st.esd.tripped, 'short block does not trip');
-      // LAH-201 both-high clears when auto-divert is switched off (the alarm belongs to the auto-divert function)
-      const h = sim(app, { config: NOISE_OFF, seed: 73 });
-      h.setValve('surge', 1, false); h.setAutoDivert('surge', true); h.setFault('xferStuckClosed', true);   // no transfer out of T-201
-      let seen = false;
-      for (let i = 0; i < 3 * 720 && !seen; i++) { h.advance(5); seen = alarmIds(h.getState()).indexOf('LAH_SURGE_BOTH') >= 0; }
-      assert.ok(seen, 'LAH_SURGE_BOTH raised');
-      h.setAutoDivert('surge', false); h.advance(D.offDelay + 1);
-      assert.ok(alarmIds(h.getState()).indexOf('LAH_SURGE_BOTH') < 0, 'cleared with auto-divert off');
+      // LAH-201 both-high belongs to the auto-divert function: switched off with suction 'both' it clears. With auto-divert off
+      // and a single suction, LAH-201 instead means the inlet-open compartment that is not on the LCV-201 suction (v1.6.0 review):
+      // it stays raised with its text refreshed to name the inlet compartment; moving the suction there clears it.
+      [['both', false], ['B', true]].forEach(([suc, keeps]) => {
+        const h = sim(app, { config: NOISE_OFF, seed: 73 });
+        h.setValve('surge', 1, false); h.setAutoDivert('surge', true); h.setFault('xferStuckClosed', true);   // no transfer out of T-201
+        h.setSuction(suc);
+        let seen = false;
+        for (let i = 0; i < 3 * 720 && !seen; i++) { h.advance(5); seen = alarmIds(h.getState()).indexOf('LAH_SURGE_BOTH') >= 0; }
+        assert.ok(seen, suc + ': LAH_SURGE_BOTH raised');
+        h.setAutoDivert('surge', false); h.advance(D.offDelay + 1);
+        const a = h.getState().alarms.find((x) => x.id === 'LAH_SURGE_BOTH');
+        if (!keeps) { assert.ok(!a, 'suction both: cleared with auto-divert off'); return; }
+        const c = h.getState().surge, k = c.comps[0].inlet ? 0 : 1, L = k ? 'B' : 'A';
+        assert.ok(c.comps[k].inlet && !c.comps[1 - k].inlet && c.suction === (k ? 'A' : 'B'), 'one inlet, suction on the other ' + c.suction);
+        assert.ok(a && a.msg.indexOf('LAH-201 T-201' + L + ' high') === 0 && /auto-divert off/.test(a.msg) && !/both surge/.test(a.msg),
+          'single suction: text refreshed to the inlet compartment T-201' + L + ': ' + (a && a.msg));
+        h.setSuction(L); h.advance(D.offDelay + 1);
+        assert.ok(alarmIds(h.getState()).indexOf('LAH_SURGE_BOTH') < 0, 'suction ' + L + ': cleared');
+      });
     }
   },
   {
-    name: 'WTSDV-R live view: an automatic divert updates the saved lineup (restored after reload); 375 px phone layout valve glyphs toggle the right valve',
+    // v3.3.4 rule change (review): automatic diverts no longer persist. Before v3.3.4 every control event, automatic ones included,
+    // was saved, so a reload restored where the auto-divert had left T-201. Now the saved part of a group set by hand stays the
+    // operator's last hand line-up (wts-toolbar-rigup: auto events never mark a group), so the reload restores that line-up.
+    name: 'WTSDV-R live view: an automatic divert does not change the saved lineup (the hand line-up is restored after reload); 375 px phone layout valve glyphs toggle the right valve',
     wp: WP,
     integration: true,
     opts: { viewport: { width: 375, height: 812 } },
@@ -240,6 +255,9 @@ module.exports = [
       app.click(inset().querySelector('[data-act="vin-close"]'));
       // lineup now: surge A+B inlets, suction A; gauge A+B open. Make an automatic divert happen in the live sim.
       live.setValve('surge', 1, false); live.setSuction('B'); live.setAutoDivert('surge', true, app.toWin({ sp: 0.6 }));
+      app.flush(50);
+      const hand = JSON.parse(JSON.stringify(live.getControls()));      // the operator's hand line-up
+      assert.deepStrictEqual([hand.surge.inlet, hand.surge.suction, hand.surge.auto, hand.surge.sp], [[true, false], 'B', true, 0.6], 'hand line-up');
       let n = 0; live.on('divert', () => { n++; });
       for (let i = 0; i < 2000 && !n; i++) live.advance(10);
       assert.ok(n >= 1, 'automatic divert happened');
@@ -247,11 +265,15 @@ module.exports = [
       const now = JSON.parse(JSON.stringify(live.getControls()));
       assert.deepStrictEqual(now.surge.inlet, [false, true], 'auto moved the inlet to B');
       const prefs = JSON.parse(app.win.localStorage.getItem('h2viz3d_prefs') || '{}');
-      assert.deepStrictEqual(prefs.ctl, now, 'prefs follow the automatic divert');
+      assert.deepStrictEqual(prefs.ctl.surge, hand.surge, 'the saved T-201 line-up stays the hand line-up (the automatic divert is not saved)');
+      assert.deepStrictEqual(prefs.ctl.gauge, now.gauge, 'the hand-set gauge line-up is saved');
+      assert.strictEqual(prefs.ctlUser && prefs.ctlUser.surge, true, 'T-201 marked as set by hand');
       const app2 = ctx.loadApp({ storage: app.storage, viewport: { width: 375, height: 812 } });
       try {
         const live2 = openWts(app2);
-        assert.deepStrictEqual(JSON.parse(JSON.stringify(live2.getControls())), now, 'restored after reload');
+        const c2 = JSON.parse(JSON.stringify(live2.getControls()));
+        assert.deepStrictEqual(c2.surge, hand.surge, 'the hand line-up is restored after reload, not the auto-diverted one');
+        assert.deepStrictEqual(c2.gauge, now.gauge, 'gauge restored after reload');
       } finally { if (app2.dispose) app2.dispose(); }
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     }

@@ -29,6 +29,10 @@
 //   --mobile  run the click sweep at 390 px (phone, touch) and save phone screenshots too
 //   --no-stub block the CDN libraries too (three.js, sql.js, SQLite WASM, html2canvas, jsPDF are served
 //             from ios-app/ios-additions/libs by default so 3D / historian / PDF paths are exercised)
+//   --accounts   the account UI (docs/ACCOUNTS-PLAN.md §12.5; on by default when --route names `account`): every page gets
+//             WTS_ACCOUNT_DEV = 1 and the beta flag, /api/v1/* is answered by the in-memory fake API
+//             (prism-build/tests/_acct-fake-server.js; /me is 401 until signed in), each account view signs in once with the fake
+//             mail code first, and the `account` route is swept. Sign out / delete account / revoke … count as destructive.
 //   --self-test  run the sweep's own parser checks (no browser) and exit 0 / 1
 // Needs Playwright (+ Chromium). Prints "[skip] …" and exits 0 without it. Never runs `playwright install`.
 // Exit code: 0 (the sweep is a report, not a gate); 2 if the sweep itself crashed.
@@ -50,6 +54,9 @@ const HTML = path.join(ROOT, 'well-testing-app.html');
 const LIBS = path.join(ROOT, 'ios-app', 'ios-additions', 'libs');
 const QUICK = has('--quick'), MOBILE = has('--mobile'), STUB = !has('--no-stub'), VERBOSE = has('--verbose');
 const ONLY = args('--route').join(',').split(',').map((s) => s.trim()).filter(Boolean);
+const ACCOUNTS = has('--accounts') || ONLY.includes('account');
+let ACCT_FAKE = null;                                   // the in-memory fake API (accounts mode), created once BASE is known
+const ACCT_EMAIL = 'sweep.user@company.example';
 const OUT = path.resolve(arg('--out', path.join(os.tmpdir(), 'wts-gui-sweep')));
 const WORKERS = Math.max(1, parseInt(arg('--workers', String(Math.min(4, Math.max(2, os.cpus().length)))), 10));
 const BUDGET_MS = parseInt(arg('--budget', QUICK ? '60' : '300'), 10) * 1000;   // per (route, view) job
@@ -66,6 +73,18 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
   '.webmanifest': 'application/manifest+json', '.pdf': 'application/pdf', '.txt': 'text/plain' };
 function serve() {
   return http.createServer((q, s) => {
+    if (ACCOUNTS && ACCT_FAKE && /^\/api\/v1\//.test(q.url)) {
+      // accounts mode: the in-memory fake API of the client tests answers the page's /api/v1 calls (/me → 401 until signed in)
+      const chunks = []; q.on('data', (c) => chunks.push(c));
+      q.on('end', () => {
+        ACCT_FAKE.handle({ method: q.method, url: q.url, headers: q.headers, body: chunks.length ? Buffer.concat(chunks) : null, remoteAddress: '127.0.0.1' }).then((r) => {
+          const h = Object.assign({}, r.headers || {});
+          if (r.cookies && r.cookies.length) h['set-cookie'] = r.cookies;
+          s.writeHead(r.status, h); s.end(r.body == null ? '' : r.body);
+        }, () => { s.writeHead(500, { 'content-type': 'application/json' }); s.end('{"error":"server","message":"sweep fake"}'); });
+      });
+      return;
+    }
     const rel = decodeURIComponent(q.url.split('?')[0]).replace(/^\/+/, '') || 'well-testing-app.html';
     const f = path.join(ROOT, rel);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
@@ -132,7 +151,7 @@ function pageHelper() {
   const CTRL = 'button, [role=button], [role=tab], [role=switch], [role=menuitem], [role=menuitemradio], [role=checkbox], [role=radio], ' +
     'input[type=checkbox], input[type=radio], input[type=button], input[type=submit], input[type=reset], summary, a[href], [onclick], ' +
     '.dash-card, .dash-mini, .nav-group-label, [data-prism-tab]';
-  const DESTRUCTIVE = /\b(delete|remove|clear|reset|wipe|erase|purge|discard|forget|drop|new project|new well|restore defaults|start over)\b|^new$|^new\b.*…$|🗑|✕ all/i;
+  const DESTRUCTIVE = /\b(delete|remove|clear|reset|wipe|erase|purge|discard|forget|drop|new project|new well|restore defaults|start over|sign out|log out|delete account|revoke|delete forever|delete for ever|unlink)\b|^new$|^new\b.*…$|🗑|✕ all/i;
   const vis = (e) => {
     if (!e || !e.getClientRects || !e.getClientRects().length) return false;
     const cs = getComputedStyle(e);
@@ -544,6 +563,10 @@ class Session {
       }
       noteExternal(u, 'blocked', this.route); return r.abort('blockedbyclient');
     });
+    if (ACCOUNTS && ACCT_FAKE) {
+      // accounts mode: the dev guard + beta flag (/api/v1/* is answered by serve() from the in-memory fake API)
+      await this.ctx.addInitScript(() => { window.WTS_ACCOUNT_DEV = 1; try { localStorage.setItem('wtspref_cloud_beta', '1'); } catch (e) { /* ignore */ } });
+    }
     this._main = true;
     this.ctx.on('page', (p) => { if (this._main) { this._main = false; return; } this._popup(p); });
     this.page = await this.ctx.newPage();
@@ -575,6 +598,25 @@ class Session {
     await p.waitForFunction(() => typeof window.WTS_nav === 'function' && document.querySelector('.nav-btn'), null, { timeout: 30000 });
     await p.waitForTimeout(500);
     this.rejSeen = 0;
+    if (ACCOUNTS && ACCT_FAKE && this.route === 'account') await this.accountSignIn();
+  }
+  // accounts mode: sign in once with the fake mail code (the API calls of the dialog, then the client's own completion)
+  async accountSignIn() {
+    const p = this.page;
+    const ok = await p.evaluate(() => !!(window.WTS_account && window.WTS_account.eligible && window.WTS_account.call)).catch(() => false);
+    if (!ok) { addFinding({ severity: 'warning', kind: 'accounts', route: 'account', message: 'accounts mode: the account client is not eligible on the sweep page (WTS_ACCOUNT_DEV guard)' }); return; }
+    await p.evaluate((email) => window.WTS_account.call('POST', '/auth/code/start', { email, purpose: 'signin' }), ACCT_EMAIL).catch(() => null);
+    const code = ACCT_FAKE.codeFor(ACCT_EMAIL, 'code_signin');
+    if (!code) { addFinding({ severity: 'warning', kind: 'accounts', route: 'account', message: 'accounts mode: no fake sign-in code' }); return; }
+    // the completion may wait on the hand-over choice: it is not awaited here (the choice is answered below)
+    await p.evaluate(({ email, code }) => window.WTS_account.call('POST', '/auth/code/verify', { email, code, publicDevice: false, consent: { terms: '1', privacy: '1' } })
+      .then((r) => { window.WTS_account._i.completeSignIn(r.json); return true; }).catch(() => null), { email: ACCT_EMAIL, code });
+    for (let i = 0; i < 20; i++) {
+      await p.waitForTimeout(250);
+      const st = await p.evaluate(() => { const b = document.getElementById('acct_ch_later'); if (b) { b.click(); return 'chose'; } return window.WTS_account.state().status; }).catch(() => 'err');
+      if (st === 'signedIn' && i > 2) break;
+    }
+    await p.evaluate(() => { try { window.WTS_nav('account'); } catch (e) { /* none */ } }).catch(() => null);
   }
   _popup(p) {
     const rec = { url: '', errors: [], textLen: 0 }; this.popups.push(rec); stats.popups++;
@@ -1388,6 +1430,10 @@ function writeReport(meta) {
   const t0 = Date.now();
   const srv = serve(); await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   BASE = 'http://127.0.0.1:' + srv.address().port + '/';
+  if (ACCOUNTS) {
+    try { ACCT_FAKE = require('./tests/_acct-fake-server').createFakeServer({ origin: BASE.replace(/\/$/, '') }); }
+    catch (e) { say('[gui-sweep] accounts mode: the fake API did not load (' + e.message + ') — the account UI is not swept'); }
+  }
   let browser;
   try { browser = await pw.chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] }); }
   catch (e) { say('[skip] chromium not available: ' + String(e.message).split('\n')[0]); srv.close(); return; }
@@ -1397,6 +1443,7 @@ function writeReport(meta) {
   const d = await disc.eval(() => ({
     nav: Array.from(document.querySelectorAll('.nav-btn[data-p]')).map((b) => [b.dataset.p, b.innerText.replace(/\s+/g, ' ').trim()]),
     reg: Object.keys(window.WTS_calcRegistry || {}).map((k) => [k, window.WTS_calcRegistry[k].title]),
+    hidden: Object.keys(window.WTS_calcRegistry || {}).filter((k) => window.WTS_calcRegistry[k].navHidden === true),
   }));
   await navTo(disc, 'home');
   const tiles = await disc.eval(() => Array.from(document.querySelectorAll('#pgBody .dash-card h3')).map((h) => h.innerText.trim()));
@@ -1408,10 +1455,16 @@ function writeReport(meta) {
   let routes = Array.from(new Set(d.nav.map((x) => x[0]).concat(d.reg.map((x) => x[0]), hostKeys)));
   const navSet = new Set(d.nav.map((x) => x[0]));
   hostKeys.filter((k) => !navSet.has(k) && !/^(dca|pta)$/.test(k)).forEach((k) => addFinding({ severity: 'info', kind: 'orphan-route', route: k, message: 'route "' + k + '" is in the host pages table but has no sidebar button' }));
-  d.reg.filter(([k]) => !navSet.has(k)).forEach(([k]) => addFinding({ severity: 'warning', kind: 'registry', route: k, message: 'calculator "' + k + '" is registered but has no sidebar button' }));
+  d.reg.filter(([k]) => !navSet.has(k) && !d.hidden.includes(k)).forEach(([k]) => addFinding({ severity: 'warning', kind: 'registry', route: k, message: 'calculator "' + k + '" is registered but has no sidebar button' }));
   routes.push('_header', '_sidebar');
   if (ONLY.length) routes = routes.filter((r) => ONLY.includes(r));
   const pageRoutes = routes.filter((r) => !r.startsWith('_'));
+  // a requested route that does not exist is said loudly (it used to sweep nothing and report 0 findings)
+  const unknown = ONLY.filter((r) => !routes.includes(r));
+  if (unknown.length) {
+    say('[gui-sweep] WARNING: requested route(s) not found: ' + unknown.join(', ') + (unknown.includes('account') ? ' (the account route needs accounts mode and the beta guard)' : ''));
+    unknown.forEach((r) => addFinding({ severity: 'warning', kind: 'route', route: r, message: 'requested route "' + r + '" was not found — nothing swept for it' }));
+  }
   say('[gui-sweep] ' + pageRoutes.length + ' routes (' + d.nav.length + ' sidebar, ' + d.reg.length + ' registry, ' + hostKeys.length + ' host table, ' + tiles.length + ' dashboard tiles); ' + WORKERS + ' workers; out ' + OUT);
 
   // Jobs: longest first.

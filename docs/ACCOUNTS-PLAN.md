@@ -1,7 +1,28 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Status: plan, revision 4 — target v3.5 / v3.5.x / v3.6 (web only)** (2026-11-08; revision 2: 2026-11-07). No code yet; this
-file and one CLAUDE.md line (the naming exception below) are all the planning step changes. **Revision 3** adds two sign-in
+**Status: revision 4; Phase 1 integrated (ac/int: WP0 technical part, WP-H H1–H18, WP-S1, WP-O, WP-C1, WP-OPS, the end-to-end
+test) and its integration review fixed — target v3.5 / v3.5.x / v3.6 (web only)**
+*Integration (2026-11-09).* Deliberate deviations: gauges and build-up travel as **job-level** parts `well/job/<module>`
+(29-multiwell keeps those stores per job, not per well; well ids are `w\d+`, so they never collide with `job`); the
+e-mail-revert proof is a **130-bit revert key** (26 of A–Z / 2–7, link `#account-revert=<key>`), not an 8-digit code;
+e-mail-code send limits are hard **per address AND client range** (5/h, 20/day; per address only an alert), session-bound
+codes are limited per session, wrong codes count toward the 1-hour pause only while a code is live and only for that range
+(migration `050-code-scope.sql`), and provider address codes obey the same limits and the sign-up switch; `WTS_MIN_CLIENT` is
+unset by default (no 426 gate until a security fix needs one); the iOS section-11 CSS is a recorded exception (§9).
+Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — the consent tick names
+the versions but links to no text yet), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
+(security review, invite beta, CSP enforce, RELEASE_NOTES 3.5 entry).
+(2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
+`prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
+`acct-contract.test.js` and the §9 iOS strip steps 0c / 0d in `sync-from-main.js`. Refinements to §3 / §3.4: a `wts_definer`
+role owns the definer functions; `email` is optional for a step-up code; `sharedBrowser` on oauth start; `mail_queue` /
+`deletion_request` / `email_move` / `recovery_set` / `audit_system` / `ops_nonce_claim` definers (wts_api has no UPDATE on the
+address index columns; ops-daily nonces live in `ops_nonces`); composite `(id, user_id)` project keys; `gone` on signed-in
+routes; `501 not_implemented` for foundation stubs only; a missing or unknown `WTS_ENV` is production; `WTS_PROXY_SIG` takes
+two comma-separated values during a rotation; the session cookie always carries Max-Age = seconds to `abs_expires_at`. Owner
+items of WP0 / §13.10 are still open, and so is a naming exception for the server's pinned database-driver package (its name,
+registry URL and lockfile links; confined to `server/package.json`, `server/package-lock.json` and `server/core/db.js`).
+The planning step itself changed only this file and one CLAUDE.md line (the naming exception below). **Revision 3** adds two sign-in
 methods, **Google** and **LinkedIn**, beside the e-mail code (D3, D4, D22–D24, §4.10–4.15, §13.10, Q24–Q30; Appendix B.3 lists
 every changed section). **Revision 4** answers three reviews of revision 3 (provider security; product and operations;
 consistency): a separate step-up timestamp that no provider sign-in sets, the iOS strip of the web privacy and release-note
@@ -1318,7 +1339,10 @@ it from the fake server into a second app and asserts the same.
      `wts_account_host` in `user-guide.html`.
    - A static test asserts that those identifiers appear **only between ACCT markers** in the built HTML (the GA block's
      `wtsacct_hint` read is inside `GA:START/END`, also stripped), so neutral code (a11y rules, CSS, help text) cannot break the
-     iOS sync. Chip and bar CSS is injected by 66, not added to host CSS.
+     iOS sync. Chip and bar CSS is injected by 66, not added to host CSS. **Recorded exception (integration review):**
+     `ios-app/ios-additions/ios-styles.css` section 11 keeps neutral `html.ios-app .acct-*` safe-area rules for the account
+     overlays, bar, menus and toast. They never match in the app (the client is stripped and inert there); they exist because
+     CLAUDE.md asks every fixed overlay for its safe-area rule, and they name no account identifier (`acct-ios` IO8 / IO10).
 2. **Runtime guard** (§5.1): exact host over https, or DEV over http(s) on localhost only (never `capacitor:` or `file:`); no
    native bridge; not framed.
 3. **Server**: refuses every Origin other than `https://welltest.h2oil.co.uk`.
@@ -1516,10 +1540,10 @@ profiles, `google` and `linkedin`, follow §4.15 (pairwise subjects, no callback
 ### 12.2 New acceptance files (budget = test count / wall time)
 | File | Phase | Covers | Budget |
 |---|---|---|---|
-| `acct-host.test.js` | 1 | `wts:ls-write` from every moved site and `WTS_lsRemove`; `applyChanges` → `wts:project-changed` (build-up `hasRaw` still true, simulator state unchanged); `loadFromObject` source / `keep` / `ready`; `registerToolbarItems`; `registerGuard` (no guard = today's behaviour); `flushIfDirty`; `captureWell`; `navHidden`; `PREF_RE`; RELEASE_NOTES `platform:'web'` | 30 / 7 s |
+| `acct-host.test.js` | 1 | `wts:ls-write` from every moved site and `WTS_lsRemove`; `applyChanges` → `wts:project-changed` (build-up `hasRaw` still true, simulator state unchanged); `loadFromObject` source / `keep` / `ready`; `registerToolbarItems`; `registerGuard` (no guard = today's behaviour); `flushIfDirty`; `captureWell`; `navHidden`; `PREF_RE`; RELEASE_NOTES `platform:'web'`; Client Info import guarded; open-page legacy keys; keep rule | 30 / 7 s (measured at WP-H: 34 tests ≈ 11 s — over budget) |
 | `acct-lswrite-scan.test.js` | 1 | static scan: no raw `setItem` / `removeItem` on `wts_` / `h2oil_` keys outside the allow-list | 2 / 1 s |
-| `acct-thirdparty.test.js` | 1 | every external script load in the built HTML goes through a pinned loader (analytics excepted); the analytics guard skips the tag when the hint says signed in | 3 / 1 s |
-| `acct-fuzz.test.js` | 1 | §8.7 on every route, then through a fast-forward; shape checks refuse a wrong module type | 4 / 8 s |
+| `acct-thirdparty.test.js` | 1 | every external script load in the built HTML goes through a pinned loader (analytics excepted); the analytics guard skips the tag when the hint says signed in; the bundled iOS spreadsheet copy | 3 / 1 s (measured at WP-H: 4 tests ≈ 5 s with the app loads) |
+| `acct-fuzz.test.js` | 1 | §8.7 on every route, then through a fast-forward; shape checks refuse a wrong module type (load and `applyChanges`) | 4 / 8 s (measured at WP-H: ≈ 19 s — over budget; FZ3 drives `applyChanges` directly until WP-C2 replaces it with the real fast-forward through `tests/_acct-fake-server.js`) |
 | `acct-signin.test.js` | 1 | code flow, two live codes, consent, invite allow-list, uniform responses (with a slow mailer), generic errors, rate reply, step-up and the 30 s rotation grace, step-up code to the recovery address, sign-out, everywhere (incl. recent provider links removed), e-mail change and revert (**revert removes identities linked since the change and their sessions**), recovery address (refused when it is another account's address), outage rule (5xx and network error on `/me`), only `401 signed_out` → signed-out chip (a `400 invalid_or_expired` changes nothing) | 25 / 7 s |
 | `acct-cloud.test.js` | 1 | Save to cloud (inline core), Open from cloud (guard, safety snapshot, refusal when dirty and offline), Phase 1 409 choices, list, rename, trash, history, restore revision, download, import files, export contents (incl. the identities section with full provider e-mail and subject) and split above 200 MB, delete with grace and cancel (identities removed at the request; a provider sign-in during the grace reaches *Cancel deletion* only after a code), escape of names, outage on list / open | 22 / 8 s |
 | `acct-migrate.test.js` | 1 | §10: empty, own, unowned, **foreign** (A signs out keeping the copy, B signs in → no default upload, stash, confirmation naming client and wells), size cap, pre-account snapshot pinned after many applies, public sign-out while offline (blocked; locked outbox), **public expiry at load** (after expiry and reload no key, IndexedDB record or store with client data is left; only the encrypted outbox), same user unlocks and pushes | 14 / 6 s |

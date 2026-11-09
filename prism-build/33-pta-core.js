@@ -1447,7 +1447,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
             var raw = ls.getItem('wts_prism'), box = raw ? JSON.parse(raw) : {};
             if (!box || typeof box !== 'object') box = {};
             box.prism_data_paste = o.pasteText;
-            ls.setItem('wts_prism', JSON.stringify(box));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(box), { raw: true }) : ls.setItem('wts_prism', JSON.stringify(box)));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
     // 2. the multi-rate table (positive rates; C2 signs injection internally)
@@ -1455,7 +1455,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
         .map(function (r) { return { t: +r.t, q: Math.abs(+r.q) }; });
     if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
     G.PRiSM.multiRate = rows;
-    if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e2) { /* ignore */ } }
+    if (ls) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows))); } catch (e2) { /* ignore */ } }   /* ls-raw: fallback */
     // 3. C1 well inputs: a water injector's fall-off is fluid water / testType falloff
     var w = o.well || {};
     var inj = w.fluid === 'water_inj' || w.testType === 'falloff';
@@ -1532,7 +1532,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     }
     var ls = _storage();
     if (ls) {
-        try { ls.setItem(STATE_KEY, JSON.stringify(snap)); } catch (e) { /* quota / private mode */ }
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(STATE_KEY, JSON.stringify(snap), { raw: true }) : ls.setItem(STATE_KEY, JSON.stringify(snap))); } catch (e) { /* quota / private mode */ }   /* ls-raw: fallback */
     }
     return snap;
 };

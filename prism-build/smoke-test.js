@@ -594,19 +594,92 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['no pending timers 5 s after opening DFIT mode' + (detail && okT ? ' ' + detail : ''), okT]);
 })();
 
-console.log('\nNamespace checks:');
-let fails = 0;
-for (const [name, ok] of checks) {
-  console.log('  ' + (ok ? '✓' : '✗') + ' ' + name);
-  if (!ok) fails++;
-}
-console.log('\nPRiSM_MODELS total: ' + modelCount + ' entries');
-if (modelCount > 0) {
-  console.log('  ' + Object.keys(win.PRiSM_MODELS).sort().join(', '));
+// ── v3.5 accounts (docs/ACCOUNTS-PLAN.md §12.3: 5 checks) ──
+// 1 runs in this vm stub (an http location: the guard leaves the inert stub); 2–5 load the BUILT page in the test harness with
+// manual timers, a production https location, a counting fetch and the in-memory fake API.
+checks.push(['accounts: vm stub (http) → WTS_account.eligible === false, no WTS_cloudSync, no account page entry',
+  !!win.WTS_account && win.WTS_account.eligible === false && Object.keys(win.WTS_account).length === 1 && !win.WTS_cloudSync &&
+  !(win.WTS_calcRegistry && win.WTS_calcRegistry.account)]);
+async function accountChecks() {
+  const out = [];
+  let H, F, T;
+  try { H = require('./tests/_harness'); F = require('./tests/_acct-fake-server'); T = require('./tests/_acct-app'); }
+  catch (e) { ['2', '3', '4', '5'].forEach((n) => out.push(['accounts ' + n + ': harness unavailable (' + e.message + ')', false])); return out; }
+  const ctx = { loadApp: (o) => H.loadApp(Object.assign({ fromSources: false }, o)) };
+  const counting = (o) => {
+    const calls = [];
+    const app = H.loadApp({ fromSources: false, timers: 'manual', console: 'capture',
+      storage: H.createStorage(Object.assign({ wtspref_cloud_beta: '1' }, o.store || {})),
+      globals: { location: o.loc || F.prodLocation(), fetch: (u) => { calls.push(String(u)); return Promise.reject(new TypeError('Failed to fetch')); } } });
+    return { app, calls };
+  };
+  // 2. production https, fetch rejecting, signed out: loads, eligible, no fetch, no timer after 5 s
+  try {
+    const { app, calls } = counting({});
+    app.flush(5000); await new Promise((r) => setImmediate(r)); app.flush(5000);
+    const ok = app.win.WTS_account.eligible === true && calls.length === 0 && app.pendingTimers() === 0;
+    if (!ok) console.error('[accounts] check 2:', JSON.stringify({ eligible: app.win.WTS_account.eligible, calls, timers: app.pendingTimers() }));
+    out.push(['accounts: production https, signed out → eligible, no fetch, no timer after 5 s', ok]);
+    // 4. the account page entry
+    const e = app.win.WTS_calcRegistry && app.win.WTS_calcRegistry.account;
+    out.push(['accounts: WTS_calcRegistry.account well-formed with navHidden:true',
+      !!e && e.key === 'account' && e.navHidden === true && typeof e.render === 'function' && typeof e.title === 'string' && e.group === 'Overview']);
+    app.dispose && app.dispose();
+  } catch (err) { out.push(['accounts check 2/4 threw: ' + err.message, false]); }
+  // 3. signed in and linked: one change → at most one timer, none after 25 s idle; a snapshot with no edit arms none
+  let t = null;
+  try {
+    t = T.boot(ctx, { seed: true });
+    await t.signIn('smoke@company.example', { handover: 'later' });
+    await t.until(() => t.acct().state().status === 'signedIn', 'signed in');
+    await t.sync().saveToCloud({});
+    t.a.flush(25000); await t.settle(50);
+    const idle0 = t.a.pendingTimers();
+    t.storage.setItem('wts_page_pipelife', JSON.stringify({ v: 1, t: 2, f: { pl_x: '7' } }));
+    t.a.fire('document', 'wts:autosaved', {});
+    await t.settle(50);
+    const afterChange = t.a.pendingTimers();
+    t.a.flush(25000); await t.settle(50);
+    const afterIdle = t.a.pendingTimers();
+    await t.sync().snapshot(); await t.settle(50);
+    const afterSnap = t.a.pendingTimers();
+    const ok = idle0 === 0 && afterChange <= 1 && afterIdle === 0 && afterSnap === 0 && t.sync().status().projectId;
+    if (!ok) console.error('[accounts] check 3:', JSON.stringify({ idle0, afterChange, afterIdle, afterSnap, timers: t.a.timers() }).slice(0, 600));
+    out.push(['accounts: signed in and linked → a change arms ≤ 1 timer, none after 25 s idle; a snapshot arms none', !!ok]);
+  } catch (err) { out.push(['accounts check 3 threw: ' + err.message, false]); }
+  finally { if (t) t.dispose(); }
+  // 5. no provider button off the production host; #acct-oauth without the hint makes no fetch
+  try {
+    const off = counting({ loc: Object.assign(F.prodLocation(), { hostname: 'preview.example', host: 'preview.example', origin: 'https://preview.example', href: 'https://preview.example/well-testing-app.html' }) });
+    off.app.flush(5000);
+    const noBtnOff = off.app.win.WTS_account.eligible === false && !off.app.find('.acct-prov-btn') && off.calls.length === 0;
+    const loc = F.prodLocation(); loc.hash = '#acct-oauth'; loc.href += '#acct-oauth';
+    const frag = counting({ loc });
+    frag.app.flush(5000); await new Promise((r) => setImmediate(r)); frag.app.flush(5000);
+    const ok = noBtnOff && !win.WTS_account.oauthUI && frag.calls.length === 0 && frag.app.pendingTimers() === 0;
+    if (!ok) console.error('[accounts] check 5:', JSON.stringify({ noBtnOff, offCalls: off.calls, fragCalls: frag.calls }));
+    out.push(['accounts: no provider button in the vm stub or off the production host; #acct-oauth without the hint → no fetch', ok]);
+  } catch (err) { out.push(['accounts check 5 threw: ' + err.message, false]); }
+  return out;
 }
 
-if (fails) {
-  console.error('\n[FAIL] ' + fails + ' check(s) failed');
-  process.exit(1);
+accountChecks().then((extra) => { extra.forEach((c) => checks.push(c)); finish(); }, (e) => { checks.push(['accounts checks threw: ' + e.message, false]); finish(); });
+
+function finish() {
+  console.log('\nNamespace checks:');
+  let fails = 0;
+  for (const [name, ok] of checks) {
+    console.log('  ' + (ok ? '✓' : '✗') + ' ' + name);
+    if (!ok) fails++;
+  }
+  console.log('\nPRiSM_MODELS total: ' + modelCount + ' entries');
+  if (modelCount > 0) {
+    console.log('  ' + Object.keys(win.PRiSM_MODELS).sort().join(', '));
+  }
+  
+  if (fails) {
+    console.error('\n[FAIL] ' + fails + ' check(s) failed');
+    process.exit(1);
+  }
+  console.log('\n[ok] all ' + checks.length + ' smoke-test checks passed');
 }
-console.log('\n[ok] all ' + checks.length + ' smoke-test checks passed');

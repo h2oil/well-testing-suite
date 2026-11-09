@@ -4442,7 +4442,7 @@ function esc(s) {
 }
 function errMsg(e) { return String((e && e.message) || e || 'error'); }
 function lsGet(k) { try { return G.localStorage ? G.localStorage.getItem(k) : null; } catch (e) { return null; } }
-function lsSet(k, v) { try { if (G.localStorage) G.localStorage.setItem(k, v); } catch (e) { /* quota / private mode */ } }
+function lsSet(k, v) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : G.localStorage.setItem(k, v)); } catch (e) { /* quota / private mode */ } }   /* ls-raw: fallback */
 function lsJSON(k) { try { var s = lsGet(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
@@ -7494,7 +7494,7 @@ return o;
 function N(p, w) { return { pattern: p, why: w || 'label and default on the page' }; }
 return { guides: {
 
-flare: Q('flare', '33dcd62c', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
+flare: Q('flare', '9d010033', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
 notDocumented: [N('^fl_(t1|t2|he|hp|np|ns|mw|eff|nhv|F|V|tau|clbl|ambN)$|^fl_bg', 'tabs, drawing settings, or label and default on the page')],
 purpose: 'Flame length, radiation distances and noise around a flare or burner.',
 what: ['API 521 point-source method. Inputs are not converted: MMSCFD, BTU/SCF, m, m/s, Celsius.'],
@@ -7630,7 +7630,7 @@ var LIVE = 'Live values; read from the page for v3.3.2.';
 return { guides: {
 
 wellos: {
-route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '9fe0919f', units: 'dual', notDocumented: [],
+route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '0b9912af', units: 'dual', notDocumented: [],
 keywords: ['SCADA', 'control room', 'live view', 'alarm', 'acknowledge', 'CSV log', 'quality', 'stale'],
 boldExempt: ['Use the Modbus simulator demo', 'Pause polling', 'Ack'],
 purpose: 'A live control-room view of the spread: tiles, process view, trends, alarms, a CSV log and a pressure trend for PRiSM.',
@@ -7759,7 +7759,7 @@ setup: [{ action: 'modbusSimDemo' }], callouts: [{ sel: '#mbc_res .rbox-title', 
 },
 
 historian: {
-route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '27ab1ca9', units: 'field',
+route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '161061ef', units: 'field',
 notice: 'Values keep the unit they were recorded in; Metric mode does not convert them.',
 keywords: ['history', 'database', 'backup', 'restore', 'retention', 'rollup', 'xlsx'],
 notDocumented: nd('button, in the steps', 'demo_btn demohist_btn refresh_btn modbus_btn modbus_btn2 custom_apply live_btn reset_btn png_btn prev_btn next_btn copy_btn sort_btn export_btn import_btn ret_btn engine_btn persist_btn purge_btn clear_btn'),
@@ -7853,7 +7853,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex11-ck102-d 296 349 3baded14,ex11-ck2d-d 980 481 5c4ed169,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 23d43e51,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 4dc3a26b,ex5-viewmenu-d 213 253 989985ac,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 12c37a0b,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 7adb445c,ex1-view-p 780 1688 0f3caedd,ex10-t202-d 296 349 5b47eba5,ex11-ck102-d 296 349 3589fd27,ex11-ck2d-d 980 481 1db85eb6,ex2-ck101-d 296 313 bb3a7eb4,ex4-alarms-d 476 258 1db3d749,ex4-scen-d 531 423 d5b23b09,ex4-v101-d 296 307 7c715086,ex5-more-p 780 1688 e5d8e03c,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 1280 800 cc60a6cd,ex5-viewmenu-d 213 253 f29ce39c,ex6-events-d 476 294 81843ac1,ex6-t301-d 296 349 96700d4a,ex7-t201-d 296 349 c0a0e376,ex8-temp3d-d 1280 800 5800bc03,ex9-ds101-d 296 349 cb35f801",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -7877,7 +7877,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "lineheat": "res-d 987 416 7e6d3aaa,view-d 1280 800 afd8cd76,view-p 780 1688 2bd22587",
     "liquidline": "res-d 454 229 7f858d73,view-d 1280 800 883a1884,view-p 780 1688 f0f9f951",
     "mcfshr": "view-d 1280 800 e90bec41,view-p 780 1688 b5ae245d",
-    "modbus": "devs-d 945 82 749f6aa5,sum-d 982 255 83e4c1e6,view-d 1280 800 bba2f1fc,view-p 780 1688 41e008d5",
+    "modbus": "devs-d 945 82 749f6aa5,sum-d 982 255 83e4c1e6,view-d 1280 800 bba2f1fc,view-p 780 1688 66e4776e",
     "oilgas": "gas-d 491 492 c67003c7,res-d 491 395 eaced952,view-d 1280 800 7b5e57a7,view-p 780 1688 4f70cdef",
     "oilipr": "points-d 491 416 c3bb4800,res-d 491 619 9d465f6a,view-d 1280 800 1abd2256,view-p 780 1688 0c6c865e",
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
@@ -7888,9 +7888,9 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
+    "releasenotes": "view-d 1280 800 e53e176d,view-p 780 1688 9f485086",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
-    "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
+    "scenarios": "fs-1-cushion-d 980 481 143a6d68,fs-1-rigup-d 982 525 1bfdebef,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
     "sephand": "res-d 491 217 e112f798,view-d 1280 800 e238ce1a,view-p 780 1688 5cc8127e",
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
@@ -7903,13 +7903,13 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
-    "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
+    "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 34125103,view-p 780 1688 971b8778",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
-    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 525 8336b23a,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
+    "wts": "card-d 296 349 259c15f2,card-p 752 858 e50f812d,rigup-d 982 525 5c45841c,tb-d 980 481 82b266c5,view-d 1280 800 fc8170bb,view-p 780 1688 29d75965"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7979112;   // total size of the image files (the offline download label)
+  M.bytes = 7984432;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8243,7 +8243,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: '438f32c4', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -8292,7 +8292,7 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '69e92717', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
@@ -8303,7 +8303,7 @@ outputs: [{ label: 'This build', text: 'Says whether usage analytics are active.
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'fecd72c4', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -8525,7 +8525,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
+  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '6b4639d3', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -8759,7 +8759,7 @@ var gaslift = {
 };
 
 var buildup = {
-  route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
+  route: 'buildup', reviewed: V, reviewedSrc: '700970d3', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
   purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
   what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
@@ -8996,7 +8996,7 @@ refs: [{ std: 'API 520 Part I', note: 'critical gas flow' }],
 related: ['sep', 'tank', 'esdhi'],
 shots: [Sh('view', 'both', 'Liquid Line / RO inputs', '', ['#wts_ll_sep_p~1']), Sh('res', 'desktop', 'Results', RES, ['#wts_ll_results table~2'], T('#wts_ll_results table'))]
 }),
-pipelife: Gd('pipelife', '90d58266', 'wts_pl_', {
+pipelife: Gd('pipelife', 'cd99e45b', 'wts_pl_', {
 keywords: ['erosion', 'sand'],
 notDocumented: ['import~step 2', '^wts_pl_seg\\d_~segment table cells: the Pipe Segments row'],
 purpose: 'Sand-erosion rate and remaining service life of each pipe segment from the wellhead to the flare.',
@@ -9154,7 +9154,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             'Capacity follows the bean area: 10.71 × (30/32)² ≈ 9.41.', 'The design warnings in **Alarms** say “Choke is flow-limited — bean 30/64”.'],
             questions: ['What capacity do you expect on 28/64?', 'Why does the oil rate fall when only the gas capacity is short?', 'Can this check limit a liquid-only flow?'],
             answers: ['10.71 × (28/32)² ≈ {{8.2|gasRate}}.', 'The model scales the whole stream to the gas capacity.', 'No. The check compares the gas rate only, so the bean never limits a liquid rate.'],
-            form: DEF, trainer: { duration: '15–20 minutes.', fault: 'Variant: before the session set **Bean Size** to 28 in the form, so the trainee finds CHOKE_LIMIT active and diagnoses it.',
+            form: DEF, trainer: { duration: '15–20 minutes.', fault: 'Variant: before the session set **Adjustable choke bean** to 28, so the trainee finds CHOKE_LIMIT active and diagnoses it.',
             good: 'Reads Capacity against the gas rate and clears the alarm with the smallest bean that passes it.',
             mistakes: ['Raising the bean far past the need.', 'Thinking the liquid rate sets the bean.'],
             debrief: ['How do you size a bean before the test?', 'What does a flow-limited choke do to the test data?', 'What else changes on a larger bean?'] } },
@@ -9205,7 +9205,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             steps: ['Run at **×60** for about 2 hours of sim time.', 'Open the T-301 card. Watch T-301A fill to 90 %, then the inlet change to B.',
             'Watch A go to SETTLING, then DRAINING through P-201.', 'Read **Last batch**, **BS&W** and **Shrinkage**, and the batch entry in **Events**.',
             'Variant: the trainer sets **Scenarios → P-201 failed (gauge tank pump)**; run on until LAH-301 and LSHH-301.'],
-            observe: ['The first batch closes after about 1.3 hours at the default rates and settles for 10 minutes.', 'The tank oil rate is below the meter oil rate: gas flashes off in the tanks (shrinkage).',
+            observe: ['The first batch closes after about 1.1 hours at the default rates and settles for 10 minutes.', 'Gas flashes off in the tanks (shrinkage), but LCV-201 transfers in bursts, so a batch can read above the meter.',
             'LSHH-301 shuts the LCV-201 transfer but does not trip the ESD.'],
             questions: ['Why do the tank and the meter disagree?', 'Why wait before you gauge?', 'What happens to the separator when T-301 is full?'],
             answers: ['The meter reads live oil at separator conditions; the tank holds stock-tank oil after flash.', 'Gas and water need time to separate before a dip or a strap is taken.',
@@ -9218,7 +9218,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             goal: 'Run the surge tank transfer, change compartments safely and spot a transfer problem.',
             setup: [BASE],
             steps: ['Open the T-201 card. Read **Level (A+B)**, **Pressure**, **Transfer** and **Transfer ΔP**.',
-            'Under **Inlet** select B to shut it, so only A fills. Now change over: select B, then A at once. A stays open until B is fully open (open new, then close old). Select A again so both are open.',
+            'Under **Inlet** A is open, B shut: A fills while LCV-201 draws B down; auto-divert changes over at 80 %. By hand: select B, then A at once. A stays open until B is fully open (open new, then close old).',
             'The trainer sets **Scenarios → LCV-201 stuck closed (surge transfer)**. Watch the level rise and **Time to HH**.', 'Clear the fault before LSHH-201, or watch it trip the ESD.',
             'Pause, set **Surge Tank Pressure** to {{2|pressureG||imp}} in the form, select **Reset → Reset to steady**, then play and watch **Transfer ΔP**. Lowered by {{23|pressure||imp}} while running, PSHH-201 would trip the ESD.'],
             observe: ['LCV-201 has no pump: it transfers on the surge tank pressure plus the liquid head.', 'With LCV-201 stuck closed, LSHH-201 trips the ESD about an hour later at the default rates.',
@@ -9313,9 +9313,9 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
         goal: 'Route the separator dumps between two surge tanks and learn which T-202 trips shut the well in.',
         setup: [BASE, 'In the **Rig-up** card switch **Second surge tank** in (it needs T-201). T-202 starts empty with XV-202 shut.'],
         steps: ['Open the T-202 card. Read **Level**, **Pressure**, **Inlet XV-202**, **Route** and **LCV-202**.', 'Under **Route** select **Both**. Watch **Share of dumps** and both tank pressures.',
-            'Select **T-202**: XV-202 opens, then XV-201A and B close (open new, then close old). Run at **×60**.', 'The trainer sets **Scenarios → LCV-202 stuck closed (T-202 transfer)**. Run to LSHH-202 on T-202 only, then again on **Both**.',
+            'Select **T-202**: XV-202 opens, then XV-201A closes (open new, then close old). Run at **×60**.', 'The trainer sets **Scenarios → LCV-202 stuck closed (T-202 transfer)**. Run to LSHH-202 on T-202 only, then again on **Both**.',
             'Reset, route to T-202 and let the trainer set **Scenarios → PCV-203 stuck closed (T-202 back-pressure)**.', OUT('Second surge tank')],
-        observe: ['With both open the tank at the lower pressure takes the dumps (check valves): T-202 at the set point may take nothing.', 'On T-202 only, LCV-202 opens at about 70 % level, about 80 minutes later, on the tank pressure (no pump).',
+        observe: ['At equal pressures the dumps split evenly; while LCV-201 transfers, the lower T-201 takes most (check valves).', 'On T-202 only, LCV-202 opens at about 70 % level, about 80 minutes later, on the tank pressure (no pump).',
             'LCV-202 stuck, T-202 only: LSHH-202 shuts XV-202 without an ESD, the dumps are blocked and LSHH-102 trips the ESD within a minute. On **Both** the dumps go on into T-201 and nothing trips.',
             'PCV-203 stuck closed: PAH-202 after about 5 minutes; PSHH-202 shuts XV-202 and PCV-204 and trips the ESD about 15 minutes after the fault.'],
         questions: ['Why does the lower-pressure tank take the dumps?', 'Why does LSHH-202 not trip the ESD itself?', 'What protects T-202 from overpressure?'],
@@ -9797,14 +9797,14 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.3.3', reviewedSrc: 'ac541233', units: 'dual',
+  route: 'wts', reviewed: 'v3.4.1', reviewedSrc: 'd19e6a3e', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
   boldExempt: ['Note', 'Trip ESD', 'Reset ESD', 'Ack', 'Ack all', 'Swap tank', 'Auto-divert', 'Bypass ON', 'Events', 'Dump sand', 'Resume dump', 'Abort dump', 'Auto-dump', 'Route', 'Both', 'Auto route', 'Reset LCV-202'],
   purpose: 'A live replay of a surface well test spread around a steady design calculation: practise line-ups, levels, alarms, ESD, tank gauging and upsets.',
   what: ['The form feeds a steady calculation from the wellhead through the choke, back-walked from the separator **Operating Pressure**. The live view runs the spread in time: valves, levels, pressures, alarms and trips. Training: [[course]] and [[scenarios]].'],
-  when: ['Train a crew before a job, or brief a client.', 'Check a line-up: which equipment is in, where gas and liquids go.', 'Practise upsets: dump valve failure, ESD, hydrates, tank overfill.'],
+  when: ['Train a crew before a job.', 'Check a line-up: which equipment is in, where gas and liquids go.', 'Practise upsets: dump valve failure, ESD, hydrates, tank overfill.'],
   steps: [
     { t: 'Select **Well Test Simulator** in **Well Test & Flowlines**: the live view ① opens.', shot: 'view' },
     { t: 'Enter the data in **Well Parameters**, **Choke**, **Heater** and **Separator**.' },
@@ -9819,7 +9819,7 @@ wts: {
     result: ['Choke downstream {{157.7|pressureG|1}}, P2/P1 0.057: **Critical**.', 'Maximum rate at this ratio {{10.71|gasRate|2}}: no flow limit. Fired duty {{2.103|powerLarge|3}}.'],
     check: { kind: 'page', calc: 'calcWTS', tol: 0.002,
       expectState: { 'flow.choke.Pout': 157.66, 'flow.choke.regime': 'Critical', 'flow.choke.flowLimited': false, 'flow.choke.QmaxMMscfd': 10.71, 'flow.choke.ratio': 0.05719, 'flow.heater.dutyMMBtuHr': 2.1031 } } },
-  tips: ['Use 2D on a projector or an older device: it always works.', 'Form and rig-up changes apply live, without a Reset, and are logged in Events.'],
+  tips: ['Use 2D on a projector or an older device.', 'Form and rig-up changes apply live, without a Reset, and are logged in Events.'],
   pitfalls: ['It does not predict what a well makes on a bean: the rates are inputs.'],
   refs: [{ std: 'API RP 14E', note: 'erosional velocity, C-factor' }],
   related: ['choke', 'chokeperf', 'flowline', 'hydrate', 'sep', 'flare'],
@@ -9835,11 +9835,11 @@ wts: {
   ],
   parts: [
     { id: 'reference', title: 'Key idea',
-      what: ['A **dynamic replay around a steady design calculation**. The rates are inputs. The bean is checked against the **gas** rate only: too small, and all three rates are cut by the same factor and CK-101 raises CHOKE_LIMIT. Practise operating the spread; do not predict a well with it.'] },
+      what: ['A **dynamic replay around a steady design calculation**. The bean is checked against the **gas** rate only: too small, and all three rates are cut by the same factor and CK-101 raises CHOKE_LIMIT.'] },
     { id: 'layout', title: 'Page layout',
-      what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results. Steady warnings show above the form.'] },
+      what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results.'] },
     { id: 'inputs', title: 'Form inputs',
-      what: ['Flowing wellhead or tubing pressure: **Wellhead Pressure**. A production line: **Operating Pressure** plus the line loss through V-101, or **Production line pressure** with V-101 out ([[fs#FS-2|FS-2]]). Burner boom: [[fs#FS-1|FS-1]].'],
+      what: ['A production line: **Operating Pressure** plus the line loss through V-101, or **Production line pressure** with V-101 out ([[fs#FS-2|FS-2]]). Burner boom: [[fs#FS-1|FS-1]].'],
       inputs: [
         { label: 'Wellhead Pressure', id: 'wts_Pwh', def: '{{3000|pressureG}}', text: 'Flowing (tubing) pressure.' },
         { label: 'Wellhead Temp', id: 'wts_Twh', def: '{{180|temperature}}' },
@@ -9848,7 +9848,9 @@ wts: {
         { label: 'Water Rate', id: 'wts_Qw', def: '{{200|liquidRate}}' },
         { label: 'Gas SG', id: 'wts_SGg', def: '0.65' },
         { label: 'Oil API Gravity', id: 'wts_API', def: '35' },
-        { label: 'Bean Size', id: 'wts_bean', def: '32/64', text: 'Checked against the gas rate.' },
+        { label: 'Choke in service', id: 'wts_ckLeg', def: 'Adjustable choke' },
+        { label: 'Adjustable choke bean', id: 'wts_bean', def: '32/64', text: 'Checked against the gas.' },
+        { label: 'Positive (fixed) choke bean', id: 'wts_beanFix', def: '24/64', cat: 'count', text: 'Applies at once here; in the field change it on standby.' },
         { label: 'Discharge Coef', id: 'wts_Cd', def: '0.85' },
         { label: 'Outlet Temp', id: 'wts_Thtr', def: '{{150|temperature}}', text: 'Heater set point.' },
         { label: 'Efficiency', id: 'wts_htrEff', def: '80 %' },
@@ -9878,7 +9880,7 @@ wts: {
         { label: 'Node Conditions', text: 'P, T and hydrate temperature per node.' },
         { label: 'Pipe Segment Analysis', text: 'Velocity against the limit: OK, WARNING above 80 %, EXCEED.' },
         { label: 'Choke (API 14B nozzle equation)', text: 'Downstream pressure, P2/P1, regime, maximum rate, J-T cooling.' },
-                { label: '❄ Hydrate risk', text: 'A line is below its hydrate temperature: heat (H-101 lined up, not bypassed) or inhibit; see [[hydrate]].' },
+                { label: '❄ Hydrate risk', text: 'A line is below its hydrate temperature: heat or inhibit; see [[hydrate]].' },
       ],
       verdicts: [
         { mark: '⚠', match: 'EXCEEDS', text: 'A line is over its limit: larger line, lower rate or higher pressure.' },
@@ -9895,15 +9897,15 @@ wts: {
         { mark: '⚠', match: 'design pressure of the bypass path', text: 'Above the bypass-path rating.' },
       ] },
     { id: 'rigup', title: 'Rig-up',
-      steps: ['Select a switch in **Rig-up** to take an item out or put it back.', 'Read the **Note** lines: they say what changes.', 'Select **Restore full rig-up** to put all back.'],
-      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 can both be out only to a production line. P-201 needs T-301.', 'Optional, out by default: DS-101 (desander, upstream of CK-101), T-202 (needs T-201), CK-102 (needs H-101). Restore full rig-up leaves them.', 'V-101 out: to the burner line or a production line ([[fs#FS-2|FS-2]]); no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches. Unload a [[glossary#cushion|cushion]] from Scenarios ([[fs#FS-1|FS-1]]).', 'Saved in project files; the steady check ignores it.'] },
+      steps: ['Select a switch in **Rig-up** to take an item out or put it back.', 'Read the **Note** lines.', 'Select **Restore full rig-up** to put all back.'],
+      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 can both be out only to a production line. P-201 needs T-301.', 'Optional, out by default: DS-101 (desander, upstream of CK-101), T-202 (needs T-201), CK-102 (needs H-101), also in the toolbar **Rig-up** menu. Restore full rig-up leaves them.', 'V-101 out: to the burner line or a production line ([[fs#FS-2|FS-2]]); no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches. Unload a [[glossary#cushion|cushion]] from Scenarios ([[fs#FS-1|FS-1]]).', 'Saved in project files; the steady check ignores it.'] },
     { id: 'toolbar', title: 'Toolbar and keys',
       steps: ['**3D** / **2D** (V). Play / pause (Space). Speed ×1, ×10, ×60, ×600 ([ and ]).', '**Reset → Reset to steady** (R) or **Reset → Start from empty**. After a minute it asks first: clock, totals and levels clear.',
-        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off (on an item that is out it acts once it is in) and holds the cushion unload.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
+        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off (on an item that is out it acts once it is in) and holds the cushion unload.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**; tap a CK-101 leg to use it. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
     { id: 'hud', title: 'HUD',
-      what: ['T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±{{5|pressure}} of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&W, totals since T+0, tank and alarm lines. T-202, DS-101 and a cushion add lines. On a phone: tiles.'] },
+      what: ['T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±{{5|pressure}} of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&W, totals since T+0, tank and alarm lines. T-202, DS-101 and a cushion add lines.'] },
     { id: 'cards', title: 'Equipment cards',
-      steps: ['Select equipment in the 2D or 3D view: live readings, design values, a trend.', 'SDV-101 **Trip ESD** / **Reset ESD**; CK-101 bean −/+ 2/64; H-101 **Bypass ON**; V-101 set point −/+ {{5|pressure}}.', 'T-201, T-301: inlet valves A and B, **Auto-divert**, valve stroke; T-301 **Swap tank**. T-201 also sets the LCV-201 suction and resets its trip. Bean and set point write the form. Esc closes.'] },
+      steps: ['Select equipment in the 2D or 3D view: live readings, design values, a trend.', 'SDV-101 **Trip ESD** / **Reset ESD**; CK-101 leg and beans; H-101 **Bypass ON**; V-101 set point −/+ {{5|pressure}}.', 'T-201: A fills, B transfers; at 80 % auto-divert swaps them. T-201, T-301: inlet valves A and B, **Auto-divert**, valve stroke; T-301 **Swap tank**. T-201 also sets the LCV-201 suction and resets its trip. Bean and set point write the form.'] },
     { id: 'desander', title: 'DS-101 desander and sand',
       what: ['Catches sand upstream of the bean, where erosion is worst. Sand: the Dynamic Simulation sand rates or Scenarios → Sand / proppant flow-back (clean-up). The steady check leaves out its ΔP.'],
       steps: ['Switch **Cyclonic desander (upstream of the choke)** in, in **Rig-up**. Its card: ΔP, Cut size, Capture, Accumulator, To choke, Choke erosion, Rating.',
@@ -9921,11 +9923,11 @@ wts: {
       steps: ['Switch **Heater inlet choke** in, in **Rig-up** (H-101 must be in).', 'Set **Heater choke CK-102 bean** and **CK-102 position** in the Heater card.', 'Its card: pressure between the chokes (PAH-102 at 90 % of an assumed {{1440|pressureG}}: on from 44/64 down), pair capacity, limiter; [[course#ex11|exercise 11]].'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
-      tips: ['Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },
+      tips: ['Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
     { id: 'reports', title: 'Reports and saving',
       what: ['The page export and the Quick Report hold the form, the **Rig-up** card and the steady results, not the live view. Inputs autosave; trends keep the last 4 h of sim time. [[wellos]] can log the form and live rates.'] },
     { id: 'views', title: '2D and 3D',
-      what: ['2D: a schematic with live values and a Levels & Pressures strip; select a tank valve to operate it. Works everywhere.',
+      what: ['2D: a schematic with live values and a Levels & Pressures strip; select a tank valve to operate it.',
         '3D: camera views, Colour overlays (Phase, Pressure, Temperature, Erosion) and labels. It needs WebGL 2; without it the page shows 2D, with **Retry** and **Use 2D**.'] },
   ],
 },
@@ -20145,7 +20147,7 @@ pipesz: {
         if (typeof G.WTS_lsSet === 'function') { try { return G.WTS_lsSet(key, txt) !== false; } catch (e) { return false; } }
         var ls = _ls();
         if (!ls) return false;
-        try { ls.setItem(key, txt); return true; } catch (e) { return false; }
+        try { ls.setItem(key, txt); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
     // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)
@@ -20417,7 +20419,8 @@ pipesz: {
     var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
     function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
-        if (state === null) { _loaded[store] = []; _clear(store); return; }
+        // Returns a Promise for the IndexedDB writes (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3).
+        if (state === null) { _loaded[store] = []; return _clear(store); }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
         var ids = [], total = 0;
         Object.keys(state.wells).forEach(function (id) {
@@ -20433,7 +20436,9 @@ pipesz: {
             _mem[store][id] = v; ids.push(id);
         });
         _loaded[store] = ids;
-        ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var puts = ids.map(function (wid) { var v = _mem[store][wid]; return _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var P = _P();
+        return P ? P.all(puts) : undefined;
     }
     function _prune(store, keepIds) {
         Object.keys(_mem[store]).forEach(function (id) { if (keepIds.indexOf(id) === -1) delete _mem[store][id]; });
@@ -20464,15 +20469,19 @@ pipesz: {
         if (d.source === 'well') { _loaded.raw = null; _loaded.tests = null; return; }   // a well switch is not a project Open
         var keepRaw = _loaded.raw || [], keepTests = _loaded.tests || [];
         _loaded.raw = null; _loaded.tests = null;
-        _prune('raw', keepRaw);
-        _prune('tests', keepTests);
+        // H3: a module the load kept local (detail.keep) is not pruned; the prune Promises join detail.pending (`ready`).
+        var kept = Array.isArray(d.keep) ? d.keep : [];
+        var pend = [];
+        if (kept.indexOf('buildup_raw') === -1) pend.push(_prune('raw', keepRaw));
+        if (kept.indexOf('buildup_analysis') === -1) pend.push(_prune('tests', keepTests));
+        if (Array.isArray(d.pending)) pend.forEach(function (p) { if (p) d.pending.push(p); });
     }
     var _modsRegistered = false;
     function registerModules() {
         var P = G.WTS_project;
         if (_modsRegistered || !P || typeof P.registerModule !== 'function') return _modsRegistered;
-        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { _modWrite('raw', s); } });
-        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { _modWrite('tests', s); } });
+        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { return _modWrite('raw', s); } });
+        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { return _modWrite('tests', s); } });
         _modsRegistered = true;
         return true;
     }
@@ -37553,7 +37562,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   function pref(k, v) {
     try {
       if (v === undefined) return G.localStorage ? G.localStorage.getItem(k) : null;
-      if (G.localStorage) G.localStorage.setItem(k, v);
+      (G.WTS_lsSet || function(a,b) { G.localStorage.setItem(a, b); })(k, v, {raw:1}); //ls-raw: fallback
     } catch (e) { /* storage blocked */ }
     return null;
   }
