@@ -182,7 +182,9 @@ const SECTION_A = (G, src) => {
       // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
       // v1.6.0 (WTS_sim): default T-201 line-up XV-201A open, XV-201B shut, LCV-201 suction B, auto-divert on
       if (c0 !== JSON.stringify({ surge: { inlet: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
-        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
+        // v1.7.0 (WTS_sim 1.5.0, 4.1): + surge2.comp (T-202 compartments; dual default = CONTROLS_SURGE2_COMP_DUAL: empty, both inlets shut)
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6, comp: { inlet: [false, false], fill: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1 } },
+        desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== true) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
@@ -323,10 +325,11 @@ const SECTION_B = (G /*, src */) => {
       const bad = [], aS = id => (I.ROUTES.find(r => r.id === id) || {}).aSeg, code = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
       if (!(aS('E2a') === 14 && aS('E2b') === 15 && aS('E3') === 16 && aS('E3f') === 17)) bad.push('leg slots ' + ['E2a', 'E2b', 'E3', 'E3f'].map(aS).join());
       if (!(aS('E2') === 1 && aS('E3o') === 2)) bad.push('shared runs');
-      if (I.SEG_SLOTS !== 18 || I.ROUTES.some(r => !(r.aSeg >= 0 && r.aSeg < I.SEG_SLOTS))) bad.push('slot range');
+      // v1.5.0: slot 18 = the LP flare line (SEG_SLOTS 19), fed from the snapshot lp, not a CK-101 leg slot
+      if (I.SEG_SLOTS !== 19 || I.ROUTES.some(r => !(r.aSeg >= 0 && r.aSeg < I.SEG_SLOTS)) || I.ROUTES.filter(r => r.aSeg === 18).map(r => r.id).join() !== 'LP') bad.push('slot range');
       // every leg slot is used only by its own leg's route, and its source segment equals that route's seg
       const legOf = { E2a:'adj', E3:'adj', E2b:'fixed', E3f:'fixed' };
-      I.ROUTES.filter(r => r.aSeg >= 14).forEach(r => { const d = I.CK_LEG_SLOTS[r.aSeg]; if (!d || d.leg !== legOf[r.id] || d.src !== r.seg) bad.push('slot ' + r.id); });
+      I.ROUTES.filter(r => r.aSeg >= 14 && r.aSeg < 18).forEach(r => { const d = I.CK_LEG_SLOTS[r.aSeg]; if (!d || d.leg !== legOf[r.id] || d.src !== r.seg) bad.push('slot ' + r.id); });
       [['adj', [14, 16], [15, 17]], ['fixed', [15, 17], [14, 16]], [undefined, [14, 16], [15, 17]]].forEach(([leg, live, stby]) => {
         live.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && c.live && c.look === c.src && c.src === (sl < 16 ? 1 : 2))) bad.push('live ' + leg + ' ' + sl); });
         stby.forEach(sl => { const c = I.ckLegSlot(sl, leg); if (!(c && !c.live && c.look === 12)) bad.push('standby ' + leg + ' ' + sl); });
@@ -347,10 +350,11 @@ const SECTION_B = (G /*, src */) => {
       const VP = I.VALVE_PROXIES || [];
       const ids = VP.map(v => v[0]).sort().join(',');
       // v1.2.0: + XV-202 (valve:surge2:0), XV-103 (dump:desander), HV-104 (bypass:desander); the six v3.3 targets are tappable with both items out
-      // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable)
-      if (ids !== 'bypass:desander,ckleg:adj,ckleg:fixed,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable); v1.5.0: two boxes per leg (one per side of its L)
+      // v1.5.0 (T-202 twin): + XV-202B (valve:surge2:1), SV-202A / SV-202B (suction:surge2:0 / 1)
+      if (ids !== 'bypass:desander,ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,dump:desander,suction:surge2:0,suction:surge2:1,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge2:1,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
       const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
-      if (def !== 'ckleg:adj,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
+      if (def !== 'ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
       // XV-201B (v1.4.0) sits on B's side nozzle (+X side, same height as XV-201A on A's −X nozzle)
       const vB = VP.filter(v => v[0] === 'valve:surge:1')[0], vA = VP.filter(v => v[0] === 'valve:surge:0')[0];
       if (!(vB[1][0] > 11.4 && vA[1][0] < 9.0 && vB[1][1] === vA[1][1])) return 'XV-201B not on the +X side nozzle';
@@ -407,7 +411,7 @@ const SECTION_B = (G /*, src */) => {
         ['separator', [5.6, 2.0, 0], [6.9, 1.8, 1.8]], ['surge', [10.2, 3.3, 4.0], [2.5, 4.9, 2.5]], ['pump', [20.35, 0.55, 5.95], [0.9, 1.1, 1.7]],
         ['gauge', [16.4, 1.55, 4.0], [5.0, 2.6, 2.6]], ['flare', [19.5, 3.9, -4.5], [0.8, 7.8, 0.8]], ['flare', [19.5, 0.2, -4.5], [1.6, 0.4, 1.6]]];
       // v1.4.0: the core tap targets = the six v3.3 valves + the two CK-101 legs (always in)
-      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1', 'ckleg:adj', 'ckleg:fixed'];
+      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1', 'ckleg:adj', 'ckleg:adj', 'ckleg:fixed', 'ckleg:fixed'];
       const VIEW_GROUPS_V33 = { wellhead: ['wellhead', 'esd', 'choke'], tanks: ['surge', 'pump', 'gauge'], process: ['separator', 'surge', 'gauge'], separator: ['heater', 'separator'] };
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
       // default overview camera at w × h → {pos, target, fov} for project()
@@ -478,9 +482,9 @@ const SECTION_B = (G /*, src */) => {
               const sdvOut = id === 'D0a' && !e && JSON.stringify(p) === JSON.stringify([-11.2, 1.2, 0]);      // SDV-101 outlet = the v3.3 E2 start
               if (!onRoute && !onTee && !onNoz && !sdvOut) bad.push(id + (e ? ' end' : ' start'));
             }); });
-          // both out: D0a + D0b + E2 (+ E2a, v1.4.0 manifold leg A) = the inlet line to the adjustable choke, LMa + LMb = the v3.3 LM polyline
+          // both out: D0a + D0b + E2 + E2a = the inlet line to the adjustable choke (v1.5.0 GA plan: 45° into the inlet tee), LMa + LMb = the v3.3 LM polyline
           const cat = ids => ids.map(route).reduce((a, r, i) => a.concat(i ? r.pts.slice(1) : r.pts), []);
-          if (JSON.stringify(cat(['D0a', 'D0b', 'E2', 'E2a'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.95, 1.2, 0], [-8.95, 1.2, 0.7], [-8.3, 1.2, 0.7], [-7.05, 1.2, 0.7]])) bad.push('E2 split');
+          if (JSON.stringify(cat(['D0a', 'D0b', 'E2', 'E2a'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.95, 1.2, 0], [-8.95, 1.2, 1.35], [-8.4, 1.2, 1.35], [-7.8, 1.2, 0.75], [-6.3, 1.2, 0.75]])) bad.push('E2 split');
           // v1.4.0 CK-101 legs: A = E2a → E3, B = E2b → E3f; both start at the inlet tee (E2 end), meet at the outlet tee (E3o start)
           const e2 = route('E2'), e3o = route('E3o'), J = x => JSON.stringify(x), first = id => route(id).pts[0], last = id => route(id).pts[route(id).pts.length - 1];
           if (!(J(first('E2a')) === J(last('E2')) && J(first('E2b')) === J(last('E2')) && J(last('E2a')) === J(first('E3')) && J(last('E2b')) === J(first('E3f')) &&
@@ -489,7 +493,7 @@ const SECTION_B = (G /*, src */) => {
           ['D1', 'D2', 'DD'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { desander: true }) || route(id).rig !== 'desander') bad.push('rig tag ' + id); });
           ['LM2', 'X0', 'VENT2', 'BLK2', 'PSV2'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { surge2: true }) || route(id).rig !== 'surge2') bad.push('rig tag ' + id); });
           ['D0a', 'D0b', 'LMa', 'LMb', 'E2'].forEach(id => { if (!I.routeBuilt(route(id), {})) bad.push('core route ' + id); });
-          if (I.TEES.filter(t => !t[4]).length !== 7) bad.push('v3.3 tees changed');
+          if (I.TEES.filter(t => !t[4] || t[4] === '!lpLine').length !== 7) bad.push('v3.3 tees changed');      // (v1.5.0: the VENT tee on G1 only while the LP line is off)
           const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2') bad.push('aSeg ' + D);
           return bad.length === 0 || bad.join(',');
         }],
@@ -582,14 +586,17 @@ const SECTION_B = (G /*, src */) => {
             const now = I.tracerCounts(nT, I.chainWeights({}, L));
             if (now.slice(0, 8).join() !== v33.join() || now.slice(8).some(n => n !== 0)) bad.push(nT + ': ' + now.join() + ' vs ' + v33.join());
             const both = I.tracerCounts(nT, I.chainWeights({ desander: true, surge2: true }, L));
-            if (both.reduce((a, b) => a + b, 0) !== nT || both.slice(8).some(n => n <= 0)) bad.push('both ' + nT + ': ' + both.join());
+            if (both.reduce((a, b) => a + b, 0) !== nT || both.slice(8, 13).some(n => n <= 0) || both[13] !== 0) bad.push('both ' + nT + ': ' + both.join());
+            // v1.5.0: with the LP flare line on, the VENT chain is empty and the LP chain (VENTL → LP) carries the tank gas
+            const lp = I.tracerCounts(nT, I.chainWeights({ lpLine: true }, L));
+            if (lp[2] !== 0 || !(lp[13] > 0) || lp.reduce((a, b) => a + b, 0) !== nT) bad.push('lp ' + nT + ': ' + lp.join());
           });
           if (I.chainEdges(0, {}).indexOf('D1') >= 0 || I.chainEdges(0, { desander: true }).indexOf('D1') < 0 || I.CHAIN_DEF[7].id !== 'DR' || I.CHAIN_DEF[8].id !== 'SAND') bad.push('chains');
           return bad.length === 0 || bad.join('; ');
         }],
         ['32: label layout — default overview at 1380×700 with DS-101 and T-202 in hides no equipment chip', () => {
           const bad = [];
-          [{ desander: true, surge2: true }, {}].forEach(rig => {
+          [{ desander: true, surge2: true }, {}, { lpLine: true }, { desander: true, surge2: true, lpLine: true }].forEach(rig => {
             const cam = camOf(overview(rig, 1380, 700)), ids = I.rigEqIds(rig), rects = [], anchors = [];
             ids.forEach((id, i) => { const p = I.project(I.ANCHORS[id], cam, 1380, 700); rects.push({ w: 168, h: 44, prio: 3 + I.EQ_IDS.indexOf(id) * 0.01, pref: I.PREF_SIDE[id], seg: false }); anchors.push({ x: p.x, y: p.y, hide: false }); });
             const obs = I.rigObst(rig).map(o => { let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
@@ -597,7 +604,7 @@ const SECTION_B = (G /*, src */) => {
               const sx = (x1 - x0) * 0.12, sy = (y1 - y0) * 0.12; return { x0: x0 + sx, x1: x1 - sx, y0: y0 + sy, y1: y1 - sy, on: true }; });
             const out = I.layoutLabels(rects, anchors, { w: 1380, h: 700 }, { top: 98, bottom: 76, left: 0, right: 0, card: null, obs });
             ids.forEach((id, i) => { if (!out[i].vis) bad.push(JSON.stringify(rig) + ' ' + id + ' hidden'); });
-            if (rig.surge2 && I.rigObst(rig).length !== 4) bad.push('T-202 obstacle missing'); if (!rig.surge2 && I.rigObst(rig).length !== 3) bad.push('obstacles out');
+            if (I.rigObst(rig).length !== 3 + (rig.surge2 ? 1 : 0) + (rig.lpLine ? 1 : 0)) bad.push(JSON.stringify(rig) + ' obstacles ' + I.rigObst(rig).length);
           });
           return bad.length === 0 || bad.join(',');
         }],
@@ -837,7 +844,8 @@ const SECTION_B = (G /*, src */) => {
           if (!S || !F || typeof S.create !== 'function') return true;
           const s = S.create(F, { seed: 13 }); s.advance(60);
           const bad = [], nrm = () => I.normalize(s.getState(), I.makeNorm());
-          if (nrm().rigKey !== '111111000' || nrm().ck2.inRig) bad.push('default ' + nrm().rigKey);
+          // 4.1 (C12): the LP flare line is on by default (lp.on with T-201 in) → the scene key ends in '|lp'
+          if (nrm().rigKey !== '111111000|lp' || nrm().ck2.inRig) bad.push('default ' + nrm().rigKey);
           if (!s.setRigup({ heaterChoke: true })) return 'setRigup heaterChoke refused';
           s.advance(20); let n = nrm();
           if (!(n.rigSig === '111111001' && n.ck2.inRig && !n.ck2.bypassed && I.ck2Look(n) && I.ck2Look(n).grey === 0)) bad.push('in ' + n.rigSig + ' ' + J(n.ck2));
@@ -845,11 +853,11 @@ const SECTION_B = (G /*, src */) => {
           const st = s.getState(); st.inputs.bypass = true; const nb = I.normalize(st, I.makeNorm());
           if (!(nb.ck2.bypassed && I.ck2Look(nb).grey === 1 && nb.rigKey === n.rigKey)) bad.push('heater bypass');
           s.setRigup({ separator: false }); if (typeof s.setConfig === 'function') s.setConfig({ sep: { bypass: { dest: 'line', P_psig: 300 } } }); s.advance(20); n = nrm();
-          if (!(n.rigKey === '101111001|line' && n.sepBy.dest === 'line' && n.sepBy.P === 300)) bad.push('line ' + n.rigKey);
+          if (!(n.rigKey === '101111001|line|lp' && n.sepBy.dest === 'line' && n.sepBy.P === 300)) bad.push('line ' + n.rigKey);
           if (!(I.flareQ(n) === 0 && I.flameLength(I.flareQ(n)) === 0)) bad.push('line: flame on ' + I.flareQ(n));
           s.setRigup({ flare: false }); s.advance(10); n = nrm();
-          if (!(n.rigKey === '101110001|line' && n.sepBy.vent)) bad.push('FS-401 out ' + n.rigKey);
-          if (typeof s.setConfig === 'function') { s.setConfig({ sep: { bypass: { dest: 'flare' } } }); s.advance(10); n = nrm(); if (n.rigKey !== '101111001|flare') bad.push('back to flare ' + n.rigKey); }
+          if (!(n.rigKey === '101110001|line|lp' && n.sepBy.vent)) bad.push('FS-401 out ' + n.rigKey);
+          if (typeof s.setConfig === 'function') { s.setConfig({ sep: { bypass: { dest: 'flare' } } }); s.advance(10); n = nrm(); if (n.rigKey !== '101111001|flare|lp') bad.push('back to flare ' + n.rigKey); }
           return bad.length === 0 || bad.join(', ');
         }],
         ['32 v1.3.0 source: CK-102 built only while in (own materials, frost uniform, wheel), tracers E3 → E3c1 → E3c2 while in, the V-101 spool by destination with PSHH-104 / NRV-501 / XV-501 plates', () => {
@@ -864,6 +872,331 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
+    // ── v1.5.0 (4.1): CK-101 as the GA drawing plan (chokes in the corners, a gate per side, 45° unions) ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0], M = I.CK_M;
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const inBox = (p, b, e) => [0, 1, 2].every(i => Math.abs(p[i] - b[1][i]) <= b[2][i] / 2 + (e || 0));
+      const unit = (a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      // frozen v1.4.0 buildRoute (90° fillets only) — reference for the byte identity of every orthogonal route
+      const v3 = { sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sc: (a, k) => [a[0] * k, a[1] * k, a[2] * k],
+        len: a => Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]), dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+        cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] };
+      v3.norm = a => { const l = v3.len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+      const anyPerp = d => { const up = Math.abs(d[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0]; return v3.norm(v3.sub(up, v3.sc(d, v3.dot(up, d)))); };
+      const rotAxis = (v, k, a) => { const c = Math.cos(a), s = Math.sin(a), kv = v3.cross(k, v), kd = v3.dot(k, v);
+        return [v[0] * c + kv[0] * s + k[0] * kd * (1 - c), v[1] * c + kv[1] * s + k[1] * kd * (1 - c), v[2] * c + kv[2] * s + k[2] * kd * (1 - c)]; };
+      const buildRouteV140 = (pts, rVis, opts) => {
+        const prims = [], n = pts.length; let len = 0;
+        if (n < 2) return { prims, length: 0, rVis };
+        const rbMax = (opts && opts.rb != null) ? opts.rb : 3 * rVis;
+        let cur = pts[0].slice(), nrm = null;
+        for (let k = 1; k < n; k++) {
+          const p = pts[k], dIn = v3.norm(v3.sub(p, pts[k - 1])), legIn = v3.len(v3.sub(p, pts[k - 1]));
+          let hasCorner = false, rb = 0, dOut = null;
+          if (k < n - 1) { dOut = v3.norm(v3.sub(pts[k + 1], p)); const legOut = v3.len(v3.sub(pts[k + 1], p));
+            if (Math.abs(v3.dot(dIn, dOut)) < 0.999 && legIn > 1e-6 && legOut > 1e-6) { hasCorner = true; rb = Math.min(rbMax, 0.45 * Math.min(legIn, legOut)); } }
+          const s = hasCorner ? v3.sub(p, v3.sc(dIn, rb)) : p.slice(), L = v3.len(v3.sub(s, cur));
+          if (!nrm) nrm = anyPerp(dIn);
+          if (L > 1e-6) { prims.push({ type: 'L', a: cur.slice(), b: s.slice(), len: L, dir: dIn, n0: nrm.slice(), s0: len }); len += L; }
+          if (hasCorner) { const c = v3.add(s, v3.sc(dOut, rb)), u = v3.norm(v3.sub(s, c)), axis = v3.norm(v3.cross(dIn, dOut)), al = rb * Math.PI / 2;
+            prims.push({ type: 'A', c, u, v: dIn, R: rb, ang: Math.PI / 2, len: al, n0: nrm.slice(), axis, dIn, dOut, s0: len });
+            len += al; nrm = rotAxis(nrm, axis, Math.PI / 2); cur = v3.add(p, v3.sc(dOut, rb)); } else cur = s;
+        }
+        return { prims, length: len, rVis };
+      };
+      const ckBoxes = id => I.VALVE_PROXIES.filter(v => v[0] === id);
+      return [
+        ['32 v1.5.0 (a): CK-101 GA plan — inlet tee front-left, outlet tee back-right, 45° unions on E2 / E3o, four straight legs, chokes in the other corners, a gate at each side midpoint', () => {
+          const bad = [], first = id => route(id).pts[0], last = id => route(id).pts[route(id).pts.length - 1];
+          if (!(M && M.xW < M.xE && M.zF > 0 && M.zB < 0)) return 'CK_M ' + J(M);
+          const e2 = route('E2').pts, e3o = route('E3o').pts, dg = M.dg;
+          const dl = unit(e2[e2.length - 2], e2[e2.length - 1]), ll = Math.hypot(...v3.sub(e2[e2.length - 1], e2[e2.length - 2]));
+          if (!(dl.every((v, i) => Math.abs(v - dg[i]) < 1e-9) && ll >= 0.8)) bad.push('E2 last run ' + J(dl) + ' ' + ll);
+          if (J(last('E2')) !== J([M.xW, M.y, M.zF])) bad.push('E2 end');
+          const d0 = unit(e3o[0], e3o[1]); if (!d0.every((v, i) => Math.abs(v - dg[i]) < 1e-9) || J(first('E3o')) !== J([M.xE, M.y, M.zB]) || J(last('E3o')) !== J([-4.3, 1.2, 0])) bad.push('E3o');
+          const runs = { E2a: [[1, 0, 0], 'z', M.zF], E3: [[0, 0, -1], 'x', M.xE], E2b: [[0, 0, -1], 'x', M.xW], E3f: [[1, 0, 0], 'z', M.zB] };
+          Object.keys(runs).forEach(id => { const r = route(id), [d, ax, v] = runs[id], u = unit(r.pts[0], r.pts[1]), k = ax === 'x' ? 0 : 2;
+            if (!(r.pts.length === 2 && u.every((q, i) => Math.abs(q - d[i]) < 1e-12) && r.pts.every(p => p[k] === v && p[1] === M.y))) bad.push('leg ' + id); });
+          if (J(last('E2a')) !== J([M.legs.adj.c[0], M.y, M.legs.adj.c[1]]) || J(last('E2b')) !== J([M.legs.fixed.c[0], M.y, M.legs.fixed.c[1]])) bad.push('choke corners');
+          if (J(I.CK_JOINTS) !== J([[M.xW, M.y, M.zF], [M.xE, M.y, M.zB], [M.xE, M.y, M.zF], [M.xW, M.y, M.zB]])) bad.push('CK_JOINTS');
+          // the adjustable choke is the front-right corner (owner decision 4), the positive one the back-left
+          if (!(M.legs.adj.c[0] === M.xE && M.legs.adj.c[1] === M.zF && M.legs.fixed.c[0] === M.xW && M.legs.fixed.c[1] === M.zB)) bad.push('leg corners');
+          const gates = [].concat(M.legs.adj.gates, M.legs.fixed.gates), mid = (a, b) => (a + b) / 2;
+          const want = [[mid(M.xW, M.xE), M.zF, 'x'], [M.xE, mid(M.zF, M.zB), 'z'], [M.xW, mid(M.zF, M.zB), 'z'], [mid(M.xW, M.xE), M.zB, 'x']];
+          if (J(gates) !== J(want)) bad.push('gates ' + J(gates));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (b): CK-101 pick boxes — two per leg, disjoint, each leg\'s gates and choke inside its own boxes only, tees outside; rays from the Wellhead & Choke and overview cameras pick the right leg and the tee picks the card', () => {
+          const bad = [], A = ckBoxes('ckleg:adj'), B = ckBoxes('ckleg:fixed'), all = A.concat(B);
+          if (A.length !== 2 || B.length !== 2) return 'box count ' + A.length + '/' + B.length;
+          const pt = (x, z) => [x, 1.2, z], gOf = L => L.gates.map(g => pt(g[0], g[1])).concat([pt(L.c[0], L.c[1])]);
+          gOf(M.legs.adj).forEach(p => { if (!A.some(b => inBox(p, b)) || B.some(b => inBox(p, b))) bad.push('adj part ' + J(p)); });
+          gOf(M.legs.fixed).forEach(p => { if (!B.some(b => inBox(p, b)) || A.some(b => inBox(p, b))) bad.push('fixed part ' + J(p)); });
+          [pt(M.xW, M.zF), pt(M.xE, M.zB)].forEach(p => { if (all.some(b => inBox(p, b))) bad.push('tee inside a leg box ' + J(p)); });
+          for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) if ([0, 1, 2].every(k => Math.abs(all[i][1][k] - all[j][1][k]) < (all[i][2][k] + all[j][2][k]) / 2)) bad.push('overlap ' + i + '/' + j);
+          const wv = I.viewFor('wellhead', {}, 1380, 700, INS), WH = I.VIEWS.wellhead, OV = I.VIEWS.overview;
+          const cams = { wellhead: camOf({ az: WH.az, el: WH.el, radius: wv.r, target: wv.tgt }), overview: camOf(I.fitView(I.fitPts({}), OV.az, OV.el, 36, 1380, 700, INS)) };
+          const P = I.rigProxies({}), V = I.rigValveProxies({});
+          Object.keys(cams).forEach(cn => { const cam = cams[cn];
+            [[[-7.05, 1.72, 0.75], 'ckleg:adj'], [[-6.3, 1.72, 0], 'ckleg:adj'], [[-6.3, 1.9, 0.75], 'ckleg:adj'],
+              [[-7.8, 1.72, 0], 'ckleg:fixed'], [[-7.05, 1.72, -0.75], 'ckleg:fixed'], [[-7.8, 1.6, -0.75], 'ckleg:fixed'],
+              [[M.xW, 1.2, M.zF], 'choke']].forEach(([p, want]) => { const got = I.pickRay(cam.pos, rayTo(cam, p), P, V); if (got !== want) bad.push(cn + ' ' + J(p) + ' → ' + got); }); });
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (c): buildRoute general fillets — every orthogonal route is byte-identical to v1.4.0; E2 / E3o (45° unions) are continuous, arcs end on dOut, lengths add up', () => {
+          const bad = [], nps = I.DEF_NPS;
+          I.ROUTES.forEach(r => { if (r.id === 'E2' || r.id === 'E3o') return; const rv = I.routeRVis(r, nps), o = r.rb != null ? { rb: r.rb } : null;
+            if (J(I.buildRoute(r.pts, rv, o)) !== J(buildRouteV140(r.pts, rv, o))) bad.push('identity ' + r.id); });
+          [I.PSV_ROUTE, I.LINE_SPOOL].concat(Object.keys(I.BYPASS_SPOOLS).map(k => I.BYPASS_SPOOLS[k])).forEach((pts, i) => { if (J(I.buildRoute(pts, 0.1)) !== J(buildRouteV140(pts, 0.1))) bad.push('identity spool ' + i); });
+          ['E2', 'E3o'].forEach(id => {
+            const r = route(id), rt = I.buildRoute(r.pts, I.routeRVis(r, nps), { rb: r.rb });
+            let prev = null, jump = 0, tdot = 1;
+            for (let s = 0; s <= rt.length; s += 0.01) { const q = I.routeSample(rt, s, { p: [0, 0, 0], t: [1, 0, 0] }), c = { p: q.p.slice(), t: q.t.slice() };
+              if (prev) { jump = Math.max(jump, Math.hypot(...v3.sub(c.p, prev.p))); tdot = Math.min(tdot, v3.dot(c.t, prev.t)); } prev = c; }
+            if (jump > 0.015 || tdot < 0.99) bad.push(id + ' continuity ' + jump.toFixed(4) + ' / ' + tdot.toFixed(4));
+            let sumLeg = 0, sumT = 0, sumArc = 0;
+            for (let k = 1; k < r.pts.length; k++) sumLeg += v3.len(v3.sub(r.pts[k], r.pts[k - 1]));
+            rt.prims.filter(p => p.type === 'A').forEach(a => {
+              const end = [0, 1, 2].map(j => -a.u[j] * Math.sin(a.ang) + a.v[j] * Math.cos(a.ang));
+              if (!end.every((v, j) => Math.abs(v - a.dOut[j]) < 1e-9)) bad.push(id + ' arc end tangent');
+              sumT += 2 * a.R * Math.tan(a.ang / 2); sumArc += a.R * a.ang;
+            });
+            if (Math.abs(rt.length - (sumLeg - sumT + sumArc)) > 1e-9) bad.push(id + ' length ' + rt.length + ' vs ' + (sumLeg - sumT + sumArc));
+            if (!rt.prims.some(p => p.type === 'A' && Math.abs(p.ang - Math.PI / 4) < 1e-9)) bad.push(id + ' no 45° arc');
+            const e = I.routeSample(rt, rt.length).p, w = r.pts[r.pts.length - 1]; if (Math.hypot(...v3.sub(e, w)) > 1e-9) bad.push(id + ' end point');
+          });
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (d): CK-101 internal clearance — every manifold pipe keeps ≥ 0.05 m from the CK-101 tees / chokes it does not end in, E2 / E3o clear the skid; a planted probe on the E2 diagonal is found', () => {
+          const bad = [], ids = ['E2', 'E2a', 'E2b', 'E3', 'E3f', 'E3o'];
+          const boxes = I.PROPS.filter(p => /^CK-101|choke skid/.test(p[0])).map(p => ({ id: p[0], k: 'box', min: p[1], max: p[2] }));
+          if (boxes.length !== 5) return 'PROPS rows ' + boxes.map(b => b.id).join();
+          const inside = (p, b) => [0, 1, 2].every(i => p[i] >= b.min[i] - 0.01 && p[i] <= b.max[i] + 0.01);
+          const check = (bx) => { const out = [];
+            ids.forEach(id => { const r = route(id), rv = I.routeRVis(r, I.DEF_NPS), ends = [r.pts[0], r.pts[r.pts.length - 1]];
+              bx.forEach(b => { if (ends.some(p => inside(p, b))) return;
+                for (let i = 0; i < r.pts.length - 1; i++) { const g = I.primGap({ k: 'cap', a: r.pts[i], b: r.pts[i + 1], r: rv }, b); if (g < 0.05) { out.push(id + '~' + b.id + ' ' + g.toFixed(3)); break; } } }); });
+            return out; };
+          const c = check(boxes); if (c.length) bad.push(c.join(', '));
+          const probe = { id: 'probe', k: 'box', min: [-8.15, 1.15, 1.05], max: [-8.05, 1.25, 1.15] };
+          if (!check(boxes.concat([probe])).some(x => /probe/.test(x))) bad.push('probe on the E2 diagonal not found');
+          return bad.length === 0 || bad.join(' | ');
+        }],
+        ['32 v1.5.0 (e): clearance stays clean around the new CK-101 for DS-101 / CK-102 combinations', () => {
+          const bad = [];
+          [{ desander: true }, { heaterChoke: true }, { desander: true, heaterChoke: true }].forEach(rig => { const c = I.clearanceCheck(rig, 0.05); if (c.length) bad.push(J(rig) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          return bad.length === 0 || bad.join(' | ');
+        }],
+      ];
+    })(),
+    // ── v1.5.0 (4.1): T-202 twin of T-201 (baffle, A | B caps, XV-202A / XV-202B, SV-202A / SV-202B on the LCV-202 suction) ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const near = (p, q, e) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < (e || 0.02);
+      return [
+        ['32 v1.5.0 T-202 twin: normalize maps comps A | B (frac, fracW, inlet, suction, pos, moving, hold, fill), suction, divert; an older single-tank snapshot shows both halves at the tank level', () => {
+          const bad = [], fk = I.fakeSnapshot(9000, { surge2: true, comps: true }), n = I.normalize(fk, I.makeNorm());
+          if (!(n.surge2.n === 2 && n.surge2.comps[0].frac === fk.surge2.comps[0].frac && n.surge2.comps[1].frac === fk.surge2.comps[1].frac && n.surge2.comps[0].inlet === true &&
+            n.surge2.comps[1].inlet === false && n.surge2.comps[1].suction === true && n.surge2.comps[0].suction === false && n.surge2.suction === 'B' && n.surge2.divertOn === true &&
+            n.surge2.comps[0].fill === fk.surge2.comps[0].fill_bpd)) bad.push('dual ' + J(n.surge2.comps));
+          const mean = (fk.surge2.comps[0].frac + fk.surge2.comps[1].frac) / 2; if (Math.abs(mean - fk.surge2.frac) > 1e-9) bad.push('fake halves do not average to the tank');
+          const old = JSON.parse(J(fk)); delete old.surge2.comps; delete old.surge2.compartments; delete old.surge2.suction; delete old.surge2.divert;
+          const no = I.normalize(old, I.makeNorm());
+          if (!(no.surge2.n === 1 && no.surge2.comps.every(c => c.frac === no.surge2.frac && c.inlet === no.surge2.inlet && c.pos === no.surge2.pos) && no.surge2.divertOn === false)) bad.push('old ' + J(no.surge2.comps));
+          const single = JSON.parse(J(fk)); single.surge2.compartments = 1; const ns = I.normalize(single, I.makeNorm());
+          if (!(ns.surge2.n === 1 && ns.surge2.comps[1].frac === ns.surge2.frac)) bad.push('legacy single mode');
+          if (I.normalize(fk, I.makeNorm()).rigSig !== '111111010') bad.push('rigSig ' + I.normalize(fk, I.makeNorm()).rigSig);
+          const out = I.normalize(I.fakeSnapshot(60, { comps: true }), I.makeNorm()); if (out.surge2.comps.some(c => !isFinite(c.frac) || c.inlet)) bad.push('out');
+          if (S && S.features && S.features.surge2Comps && F) {             // the real engine (ENGINE lane): T-202 in → two compartments
+            const s = S.create(F, { seed: 3, rigup: { surge2: true } }); s.advance(60); const nr = I.normalize(s.getState(), I.makeNorm());
+            if (!(nr.surge2.n === 2 && nr.surge2.comps.length === 2)) bad.push('engine ' + nr.surge2.n);
+          }
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 T-202 twin: picks XV-202B → valve idx 1, SV-202A / SV-202B → suction idx 0 / 1; only while T-202 is in; the B branch and the suction header end on a tee / nozzle', () => {
+          const bad = [];
+          if (J(I.valveOf('valve:surge2:1')) !== J({ type: 'valve', eq: 'surge2', idx: 1 }) || J(I.valveOf('suction:surge2:0')) !== J({ type: 'suction', eq: 'surge2', idx: 0 }) ||
+            J(I.valveOf('suction:surge2:1')) !== J({ type: 'suction', eq: 'surge2', idx: 1 }) || I.proxyEq('suction:surge2:1') !== 'surge2') bad.push('payloads');
+          const ids = rig => I.rigValveProxies(rig).map(v => v[0]);
+          ['valve:surge2:0', 'valve:surge2:1', 'suction:surge2:0', 'suction:surge2:1'].forEach(id => { if (ids({}).indexOf(id) >= 0 || ids({ surge2: true }).indexOf(id) < 0) bad.push('rig filter ' + id); });
+          // static geometry ends: B branch from the LM2 tee to B's nozzle, the suction stubs from A's / B's bottom nozzle to the X0 tee
+          const tee = p => I.TEES.some(t => near(t, p) && t[4] === 'surge2'), noz = p => (I.NOZZLES.surge2 || []).some(q => near(q, p));
+          const ep = n => I.EXTRA_PIPES.filter(e => e[0] === n)[0];
+          const br = ep('T-202 B branch'), su = ep('T-202 suction'), sb = ep('T-202 suction B');
+          if (!br || !su || !sb || br[3] !== 'surge2' || su[3] !== 'surge2' || sb[3] !== 'surge2') return 'EXTRA_PIPES rows';
+          if (!tee(br[1][0]) || !noz(br[1][br[1].length - 1])) bad.push('B branch ends');
+          if (!noz(su[1][0]) || !noz(sb[1][0]) || !near(sb[1][sb[1].length - 1], su[1][su[1].length - 1])) bad.push('suction ends');
+          if (!tee(route('X0').pts[0]) || !(su[1][1][0] < route('X0').pts[0][0] && su[1][2][0] > route('X0').pts[0][0] && su[1][1][1] === route('X0').pts[0][1])) bad.push('X0 start on the header tee');
+          if (I.clearancePrims({}).some(p => /^T-202 /.test(p.route || '') || /^(XV|SV)-202/.test(p.id))) bad.push('present while out');
+          ['XV-202A', 'XV-202B', 'SV-202A', 'SV-202B'].forEach(id => { if (!I.clearancePrims({ surge2: true }).some(p => p.id === id && p.isNew)) bad.push('missing ' + id); });
+          // taps from the Tanks view and the overview reach the new valves (no other tap target in front of them)
+          const TV = I.VIEWS.tanks, tv = I.viewFor('tanks', { surge2: true }, 1380, 700, INS), OV = I.VIEWS.overview;
+          const cams = { tanks: camOf({ az: TV.az, el: TV.el, radius: tv.r, target: tv.tgt }), overview: camOf(I.fitView(I.fitPts({ surge2: true }), OV.az, OV.el, 36, 1380, 700, INS)) };
+          const P = I.rigProxies({ surge2: true }), V = I.rigValveProxies({ surge2: true });
+          Object.keys(cams).forEach(cn => [[[9.25, 3.22, 1.55], 'valve:surge2:1'], [[9.6, 3.22, 2.0], 'valve:surge2:0'], [[12.3, 0.62, 2.41], 'suction:surge2:0'], [[12.7, 0.62, 2.41], 'suction:surge2:1']]
+            .forEach(([p, want]) => { const got = I.pickRay(cams[cn].pos, rayTo(cams[cn], p), P, V); if (got !== want) bad.push(cn + ' ' + J(p) + ' → ' + got); }));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 T-202 twin source: baffle + two half-disc caps (uSplitX 0), each half follows its compartment, LG-202 shows B; XV-202B / SV-202 lamps and handwheels; dual chip line-up', () => {
+          const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || ''), bad = [];
+          [[/translate\(X - 0\.015, 0\.915, Z\)/, 'baffle'], [/v\.caps = capsU; v\.U\.uSplitX\.value = 0;/, 'two caps'], [/surgeCap\(v, 0, y2, t2A, t2AW\); surgeCap\(v, 1, y2B, t2B, t2BW\)/, 'per-compartment caps'],
+            [/yT2 = clamp\(0\.915 \+ y2B,/, 'LG-202 on B'], [/D2\.xvMB\.color/, 'XV-202B lamp'], [/D2\.sucM\[1\]\.color/, 'SV-202B lamp'], [/D2\.xwB\.rotation\.y/, 'XV-202B handwheel'],
+            [/tagPlate\('T-202A'/, 'T-202A plate'], [/tagPlate\('T-202B'/, 'T-202B plate'], [/'Line-up', 'A ▸ '/, 'chip line-up'], [/in2B = lm2 && two2/, 'B splash']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
+          if (/\b(let|const)\s/.test(src) || /=>/.test(src)) bad.push('ES5 style');
+          return bad.length === 0 || bad.join(', ');
+        }],
+      ];
+    })(),
+    // ── v1.5.0 (4.1): LP flare line (VENTL → LP → FT-201 → LP riser / tip on FS-401; pseudo rig item lpLine from snapshot lp.on) ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const dSeg = (p, a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L2)) : 0;
+        return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]); };
+      const onRoute = (p, id) => { const r = route(id); for (let i = 0; i < r.pts.length - 1; i++) if (dSeg(p, r.pts[i], r.pts[i + 1]) < 0.02) return true; return false; };
+      const builtIds = rig => I.ROUTES.filter(r => I.routeBuilt(r, rig)).map(r => r.id).join();
+      const tees = rig => I.TEES.filter(t => I.teeBuilt(t, rig)).map(t => J(t.slice(0, 3))).join();
+      return [
+        ['32 v1.5.0 LP: an older snapshot (no lp) and lp.on false give the v1.4.0 scene — same routes, tees, proxies, chains and scene key', () => {
+          const bad = [], old = I.normalize(I.fakeSnapshot(600), I.makeNorm()), off = I.normalize(I.fakeSnapshot(600, { lp: true, lpTo: 'hp' }), I.makeNorm());
+          [['old', old], ['lp off (hp)', off]].forEach(([nm, n]) => {
+            if (n.lp.on || n.rig.lpLine) bad.push(nm + ' lp on');
+            if (builtIds(n.rig) !== builtIds({}) || tees(n.rig) !== tees({}) || J(I.rigProxies(n.rig)) !== J(I.rigProxies({}))) bad.push(nm + ' tables');
+            if (n.rigKey !== '111111000') bad.push(nm + ' key ' + n.rigKey);
+          });
+          if (builtIds({}).indexOf('VENTL') >= 0 || builtIds({}).split(',').indexOf('LP') >= 0 || builtIds({}).split(',').indexOf('VENT') < 0) bad.push('default routes');
+          if (I.rigKeyOf({}, 'flare') !== '111111000' || I.rigKeyOf({ separator: false }, 'line') !== '101111000|line' || I.rigKeyOf({}, 'flare', true) !== '111111000|lp' ||
+            I.rigKeyOf({ separator: false }, 'surge', true) !== '101111000|surge|lp') bad.push('rigKeyOf');
+          if (I.clearancePrims({}).some(p => /^(LP|VENTL|PSV2L)$/.test(p.route || '') || /^(FT-201|LP )/.test(p.id))) bad.push('LP primitives while off');
+          if (I.flareQ(off) !== off.nodes.flare.qMMscfd || I.lpFlareQ(old) !== 0) bad.push('flare q');
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 LP: with lp.on — VENT, its G1 tee, PSV2 and the PSV header tee absent; VENTL / LP / PSV2L present and joined (VENT2 and PSV2L on the LP z-run); riser / FT-201 / boot / tip clear (≥ 0.05 m) in every combination', () => {
+          const bad = [], n = I.normalize(I.fakeSnapshot(600, { lp: true, surge2: true }), I.makeNorm()), rig = n.rig;
+          if (!(n.lp.on && rig.lpLine && n.rigKey === '111111010|lp')) bad.push('normalize ' + n.rigKey);
+          const b = builtIds(rig).split(',');
+          if (b.indexOf('VENT') >= 0 || b.indexOf('PSV2') >= 0 || ['VENTL', 'LP', 'PSV2L', 'VENT2'].some(id => b.indexOf(id) < 0)) bad.push('routes ' + b.join());
+          const tb = tees(rig); if (tb.indexOf(J([13.0, 3.6, 0])) >= 0 || tb.indexOf(J([11.35, 4.1, 0])) >= 0 || tb.indexOf(J([13.0, 6.1, 1.6])) < 0) bad.push('tees');
+          if (!(J(route('VENTL').pts[route('VENTL').pts.length - 1]) === J(route('LP').pts[0]) && J(route('VENTL').pts.slice(0, 2)) === J(route('VENT').pts.slice(0, 2)))) bad.push('VENTL → LP');
+          if (!onRoute(route('VENT2').pts[2], 'LP') || !onRoute(route('PSV2L').pts[route('PSV2L').pts.length - 1], 'LP') || J(route('PSV2L').pts[0]) !== J(route('PSV2').pts[0])) bad.push('joins');
+          if (!onRoute(I.FT201_AT, 'LP') || J(I.LP_RISER[0]) !== J(route('LP').pts[route('LP').pts.length - 1])) bad.push('FT-201 / riser foot');
+          if (Math.abs(I.joinS('LP', [13.0, 6.1, 2.3]) - I.joinS('LP', [13.0, 6.1, 1.6])) > 0.75 || !(I.joinS('LP', [13.0, 6.1, 2.3]) > 0.5)) bad.push('join s');
+          [{ lpLine: true }, { lpLine: true, surge2: true }, { lpLine: true, surge2: true, desander: true, heaterChoke: true }].forEach(r => {
+            const c = I.clearanceCheck(r, 0.05); if (c.length) bad.push(J(r) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          [[{ lpLine: true, separator: false }, 'line'], [{ lpLine: true, separator: false, flare: false, surge2: true }, 'line'], [{ lpLine: true, separator: false }, 'flare']].forEach(([r, d]) => {
+            const c = I.clearanceCheck(r, 0.05, d); if (c.length) bad.push(J(r) + d + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          const P = I.clearancePrims({ lpLine: true }); ['FT-201', 'LP drain boot', 'LP tip'].forEach(id => { if (!P.some(p => p.id === id && p.isNew)) bad.push('missing ' + id); });
+          if (!P.some(p => p.route === 'LP riser' && p.isNew)) bad.push('riser');
+          // the check is not vacuous: a probe on the riser is found
+          const sav = I.PROPS.length; I.PROPS.push(['probe', [19.0, 3.0, -3.55], [19.1, 3.1, -3.45]]); const hit = I.clearanceCheck({ lpLine: true }, 0.05); I.PROPS.length = sav;
+          if (!hit.some(x => x.a === 'probe' || x.b === 'probe')) bad.push('probe not found');
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 4.1 round 2: focusRadius (landscape unchanged, portrait backs off by 1.6 / aspect, capped at 0.4, zero size = landscape); FOCUS.lp keeps FT-201, its tag plate, the LP tip and the riser foot inside the 98 / 76 px insets on 1064×496 … 1380×700 and 360×480, FT-201 picks \'lp\'', () => {
+          const bad = [], cl = (a, b) => Math.abs(a - b) < 1e-9;
+          if (!(I.FOCUS_ASP === 1.6 && cl(I.focusRadius(5, 1380, 700), 5) && cl(I.focusRadius(5, 1600, 1000), 5) && cl(I.focusRadius(5, 360, 480), 5 * 1.6 / 0.75) &&
+            cl(I.focusRadius(5, 0, 0), 5) && cl(I.focusRadius(5, 100, 1000), 20) && cl(I.focusRadius(5, 900, 640), 5 * 1.6 / (900 / 640)))) bad.push('focusRadius');
+          const f = I.FOCUS.lp, on = { lpLine: true }, el = ph => 90 - ph * 180 / Math.PI;
+          const pts = { 'FT-201 plate': [I.FT201_AT[0], I.FT201_AT[1] + 0.8, I.FT201_AT[2]], 'FT-201': I.FT201_AT, 'LP tip': I.LP_TIP, 'riser foot': I.LP_RISER[0], 'ground run': [17.5, 0.35, 0.6] };
+          [[1064, 496], [1280, 640], [1380, 700], [360, 480]].forEach(([w, h]) => [0.95, 1.3].forEach(ph => {
+            const c = camOf({ az: I.FOCUS_TH.lp, el: el(ph), target: f[0], radius: I.focusRadius(f[1], w, h) });
+            Object.keys(pts).forEach(k => { const q = I.project(pts[k], c, w, h); if (q.behind || q.x < 0 || q.x > w || q.y < INS.top + 4 || q.y > h - INS.bottom) bad.push(w + 'x' + h + '/' + ph + ' ' + k + ' ' + Math.round(q.x) + ',' + Math.round(q.y)); });
+            const g = I.pickRay(c.pos, rayTo(c, [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]]), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(w + 'x' + h + '/' + ph + ' pick ' + g); }));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 4.1 round 2: P-201 card rows follow the pump mode (booster: T-201 → P-201 → export, no \'no pump\'); the chip state reads BOOSTER · …', () => {
+          const b = I.pumpRows({ pumpMode: 'booster' }), p = I.pumpRows({ pumpMode: 'pump' }), bad = [];
+          if (J(b) !== J(['Service', 'T-201 → P-201 → export (booster)', 'Surge transfer', 'LCV-201 → P-201 booster']) || /no pump|T-301/.test(b.join(' '))) bad.push('booster ' + J(b));
+          if (J(p) !== J(['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)'])) bad.push('pump ' + J(p));
+          const src = fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8');
+          if (!/if \(t2\) rows\(ch, pumpRows\(ga\)\);/.test(src) || !/if \(ga\.pumpMode === 'booster'\) pst = 'BOOSTER · ' \+ pst;/.test(src)) bad.push('card wiring');
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 LP: tap on FT-201 / the ground run → \'lp\' (only while on); slot 18 = LP; chain VENTL → LP; the LP tip flame follows qLP (none to the vent), the HP flame burns qHP', () => {
+          // (from the front the ground run sits behind T-301 / T-201, which take the tap: look from behind, above the gas rack)
+          const bad = [], on = { lpLine: true }, cam = camOf({ az: 160, el: 55, target: [16.0, 0.5, 0.6], radius: 14 });
+          const ft = [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]], got = I.pickRay(cam.pos, rayTo(cam, ft), I.rigProxies(on), I.rigValveProxies(on)), got2 = I.pickRay(cam.pos, rayTo(cam, [17.5, 0.35, 0.6]), I.rigProxies(on), I.rigValveProxies(on));
+          if (got !== 'lp' || got2 !== 'lp') bad.push('pick ' + got + ' / ' + got2);
+          // 4.1 review: FT-201 sits on the high crossover, so the Tanks / Process presets (front) reach it with a tap too
+          ['tanks', 'process'].forEach(v => { const w = I.viewFor(v, on, 1380, 700, { top: 98, bottom: 76, left: 0, right: 0, card: null }), c = camOf({ az: w.th * 180 / Math.PI, el: 90 - w.ph * 180 / Math.PI, target: w.tgt, radius: w.r });
+            const g = I.pickRay(c.pos, rayTo(c, ft), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(v + ' FT-201 pick ' + g); });
+          if (I.rigProxies({}).some(p => p[0] === 'lp')) bad.push('lp proxy while off');
+          if (route('LP').aSeg !== 18 || route('VENTL').aSeg !== 10 || route('PSV2L').aSeg !== 10 || J(I.CHAIN_DEF[I.CHAIN_DEF.length - 1]) !== J({ id: 'LP', entry: 'VENTL', phase: 'gas', edges: ['VENTL', 'LP'] })) bad.push('slots / chain');
+          const q = x => { const n = I.normalize(I.fakeSnapshot(600, { lp: true, qLP: x }), I.makeNorm()); return [I.lpFlareQ(n), I.flareQ(n), n]; };
+          const a = q(50), b = q(400), v = I.normalize(I.fakeSnapshot(600, { lp: true, lpTo: 'vent', qLP: 400 }), I.makeNorm());
+          if (!(a[0] > 0 && b[0] > a[0] && I.flameLength(b[0]) >= I.flameLength(a[0]) && Math.abs(b[1] - b[2].nodes.flare.qMMscfd + b[0]) < 1e-9)) bad.push('LP flame ' + J([a[0], b[0], b[1]]));
+          if (I.lpFlareQ(v) !== 0 || !v.lp.on || v.lp.to !== 'vent') bad.push('vent');
+          const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+          [[/if \(sl === LP_SLOT\) continue;/, 'CK leg loop skips slot 18'], [/su\.col\.value\[LP_SLOT\]\.copy\(su\.col\.value\[10\]\)/, 'slot 18 feed'],
+            [/tr\.nextE\[I\.VENT2\] = lpB \? I\.LP : I\.VENT/, 'VENT2 successor'], [/tr\.nextE\[I\.VENTL\] = I\.LP; tr\.nextE\[I\.PSV2L\] = I\.LP/, 'VENTL / PSV2L successor'],
+            [/if \(IN\.lpLine\) \{ lpCore = new THREE\.Mesh/, 'LP flame only while on'], [/tagPlate\('FT-201'/, 'FT-201 plate']].forEach(([re, nm]) => { if (!re.test(src)) bad.push(nm); });
+          if (S && S.features && S.features.lpFlare && F) {                   // the real engine (ENGINE lane): lp on by default
+            const s = S.create(F, { seed: 2 }); s.advance(120); const n = I.normalize(s.getState(), I.makeNorm());
+            if (!(n.lp.on && n.rig.lpLine && /\|lp$/.test(n.rigKey))) bad.push('engine ' + n.rigKey);
+          }
+          return bad.length === 0 || bad.join(', ');
+        }],
+      ];
+    })(),
+    // ── v1.5.0 (4.1): rig chain — V-101 out to the surge tank (SURGE_SPOOL to a new LMa tee), chips from the chain ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
+      const dSeg = (p, a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L2)) : 0;
+        return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]); };
+      const onRoute = (p, id) => { const r = route(id); for (let i = 0; i < r.pts.length - 1; i++) if (dSeg(p, r.pts[i], r.pts[i + 1]) < 0.02) return true; return false; };
+      return [
+        ['32 v1.5.0 chain: SURGE_SPOOL leaves the heater outlet (E4) and lands horizontally on the new LMa tee (8.1, 2.3, 4.0), drawn only with V-101 out to the surge tank; clear (≥ 0.05 m) in every combination; a planted probe is found', () => {
+          const bad = [], sp = I.SURGE_SPOOL, end = sp[sp.length - 1], pre = sp[sp.length - 2];
+          if (!onRoute(sp[0], 'E4') || !onRoute(end, 'LMa') || J(end) !== J([8.1, 2.3, 4.0]) || !(pre[0] < end[0] && pre[1] === end[1] && pre[2] === end[2])) bad.push('ends');
+          if (J(sp[0]) !== J(I.BYPASS_SPOOLS.separator[0])) bad.push('start differs from the flare spool');
+          const tee = I.TEES.filter(t => J(t.slice(0, 3)) === J(end))[0];
+          if (!tee || tee[4] !== 'sepSurge' || I.teeBuilt(tee, {}) || I.teeBuilt(tee, { separator: false }) || !I.teeBuilt(tee, { separator: false, sepSurge: true })) bad.push('tee');
+          if (onRoute(end, 'LMb') && !onRoute(end, 'LMa')) bad.push('tee on LMb');
+          if (!onRoute(I.TAG_PTS.pshh104s, 'E4') && !sp.some((p, i) => i && dSeg(I.TAG_PTS.pshh104s, sp[i - 1], p) < 0.02)) bad.push('PSHH-104 not on the spool');
+          [{}, { surge2: true }, { lpLine: true, surge2: true }, { lpLine: true, surge2: true, desander: true, heaterChoke: true }, { flare: false, lpLine: true }].forEach(r => {
+            const rig = Object.assign({ separator: false, sepSurge: true }, r), c = I.clearanceCheck(rig, 0.05, 'surge');
+            if (c.length) bad.push(J(r) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          const P = I.clearancePrims({ separator: false, sepSurge: true }, 'surge');
+          if (!P.some(p => p.route === 'V-101 bypass spool' && J(p.endB) === J(end)) || !P.some(p => p.id === 'PSHH-104' && p.min[2] > 1)) bad.push('primitives');
+          const sav = I.PROPS.length; I.PROPS.push(['probe', [5.0, 2.25, 1.2], [5.1, 2.35, 1.3]]); const hit = I.clearanceCheck({ separator: false, sepSurge: true }, 0.05, 'surge'); I.PROPS.length = sav;
+          if (!hit.some(x => x.a === 'probe' || x.b === 'probe')) bad.push('probe not found');
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 chain: normalize — sepBy.dest three-valued, receiver, rig.sepSurge, routing; scene key \'|surge\' (V-101 out only); older / v341 snapshots keep the v1.4.0 keys; chip texts per §2.6', () => {
+          const bad = [], nz = o => I.normalize(I.fakeSnapshot(600, o), I.makeNorm());
+          const s = nz({ sepOut: true, dest: 'surge' }), l = nz({ sepOut: true, dest: 'line', P: 300 }), f = nz({ sepOut: true }), d = nz({ dest: 'surge' });
+          if (!(s.sepBy.dest === 'surge' && s.sepBy.recv === 'T-201' && s.rig.sepSurge && s.sepBy.qAct && s.ru.routing === 'chain' && s.rigKey === '101111000|surge')) bad.push('surge ' + J(s.sepBy) + ' ' + s.rigKey);
+          if (!(l.rigKey === '101111000|line' && !l.rig.sepSurge && f.rigKey === '101111000|flare' && f.ru.routing === '')) bad.push('line / flare');
+          if (!(d.rigKey === '111111000' && !d.rig.sepSurge && d.sepBy.dest === 'surge' && !d.sepBy.qAct)) bad.push('V-101 in: destination ignored ' + d.rigKey);
+          const sv = nz({ sepOut: true, dest: 'surge', flareOut: true }); if (!(sv.sepBy.vent && sv.rigKey === '101110000|surge')) bad.push('FS-401 out ' + sv.rigKey);
+          // chips
+          if (I.rigChipTxt('separator', s) !== 'well stream → surge tank T-201' || I.rigChipTxt('separator', l) !== 'well stream → production line' || I.rigChipTxt('separator', f) !== 'well stream → flare / burner') bad.push('separator chip');
+          const c2 = JSON.parse(J(s)); c2.sepBy.recv = 'T-202'; if (I.rigChipTxt('separator', c2) !== 'well stream → surge tank T-202') bad.push('T-202 receiver');
+          if (I.rigChipTxt('flare', s) !== 'HP gas → export line · LP / relief → vent' || I.rigChipTxt('flare', f) !== 'gas → export line') bad.push('flare chip');
+          const g = JSON.parse(J(s)); g.gauge.pumpMode = 'booster'; if (I.rigChipTxt('gauge', g) !== 'transfer → P-201 → export' || I.rigChipTxt('gauge', f) !== 'transfer → export / burner') bad.push('gauge chip');
+          const t = JSON.parse(J(s)); t.rig.surge2 = true; if (I.rigChipTxt('surge', t) !== 'dumps → surge tank T-202' || I.rigChipTxt('surge', f) !== 'dumps → gauge tank / export') bad.push('surge chip');
+          const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+          [[/'BYPASSED → V-101'/, 'heater out label'], [/'whole stream in \(V-101 out\)'/, 'surge chip row'], [/g === 'separator' && S\.sepDest === 'surge' \? SURGE_SPOOL/, 'spool by destination'],
+            [/if \(n\.sepBy\.qAct\) \{ tr\.chainEntry\[4\] = I\.LMb; tr\.chainEntry\[5\] = I\.LMb; \}/, 'tracers enter at the LMa tee'], [/n\.sepBy\.qAct \? n\.sepBy\.qVel : 0/, 'LMb carries the whole stream']]
+            .forEach(([re, nm]) => { if (!re.test(src)) bad.push(nm); });
+          if (S && S.features && S.features.rigChain && F) {                 // the real engine (ENGINE lane): V-101 out to the surge tank
+            try { const e = S.create(F, { seed: 4, rigup: { separator: false }, config: { sep: { bypass: { dest: 'surge' } } } }); e.advance(30);
+              const n = I.normalize(e.getState(), I.makeNorm()); if (!(n.sepBy.dest === 'surge' && n.rig.sepSurge && /\|surge/.test(n.rigKey))) bad.push('engine ' + n.rigKey); } catch (err) { bad.push('engine threw ' + err.message); }
+          }
+          return bad.length === 0 || bad.join(', ');
+        }],
+      ];
+    })(),
   ];
 };
 
@@ -872,7 +1205,7 @@ const SECTION_B = (G /*, src */) => {
 const SECTION_C = (G, src) => {
   const L = G.WTS_live, S = G.WTS_sim, F = G.WTS_TEST_FIXTURE, I = L._internals || {};
   const code = stripComments(stripSelfTest(src) || '');
-  const simAt = (secs, mut) => { const s = S.create(F || S.SAMPLE_FLOW, { seed: 11 }); if (mut) mut(s); for (let i = 0; i < secs / 10; i++) s.advance(10); return s; };
+  const simAt = (secs, mut, config) => { const s = S.create(F || S.SAMPLE_FLOW, config ? { seed: 11, config } : { seed: 11 }); if (mut) mut(s); for (let i = 0; i < secs / 10; i++) s.advance(10); return s; };
   const HOST = path.join(ROOT, '..', 'well-testing-app.html');
   let patched = null;
   const patchedHtml = () => {                     // host HTML with wts-host-patch applied in memory (never written)
@@ -1037,13 +1370,17 @@ const SECTION_C = (G, src) => {
         if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || o1.heaterChoke !== false || Object.keys(o1).length !== 11) bad.push('optional-only request stored ' + store.wts_sim_rigup);
         I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
         if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
-        if (I.EQV.surge2.valves.join() !== 'XV-202' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
+        // 4.1: T-202 has two compartments (XV-202A / XV-202B, suction) like T-201
+        if (I.EQV.surge2.valves.join() !== 'XV-202A,XV-202B' || I.EQV.surge2.kind !== 'comps' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
         if (JSON.stringify(I.stepFor({})) !== JSON.stringify(I.STEP) || I.stepFor({ desander: true }).choke !== '④') bad.push('stepFor fallback');
         const st = simAt(600), st0 = st.getState();
         if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
         if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
         const s2 = simAt(60, (x) => x.setRigup({ gauge: false })).getState();
-        if (I.pumpShort(s2) !== 'OUT (no gauge tank)' || !I.rigOut(s2, 'gauge') || !I.rigOut(s2, 'pump')) bad.push('out texts');
+        // 4.1 rig-up chain: T-301 out keeps P-201 in as a booster (T-201 → P-201 → export); the legacy 'v341' routing takes it out
+        if (!/^BOOSTER · (RUNNING|STANDBY)$/.test(I.pumpShort(s2)) || !I.rigOut(s2, 'gauge') || I.rigOut(s2, 'pump') || s2.gauge.pump.mode !== 'booster') bad.push('out texts ' + I.pumpShort(s2));
+        const s3 = simAt(60, (x) => x.setRigup({ gauge: false }), { rig: { routing: 'v341' } }).getState();
+        if (I.pumpShort(s3) !== 'OUT (no gauge tank)' || !I.rigOut(s3, 'gauge') || !I.rigOut(s3, 'pump')) bad.push('v341 out texts ' + I.pumpShort(s3));
         return bad.length === 0 || bad.join('; ');
       } finally { G.localStorage = keep; }
     }],
@@ -1066,13 +1403,17 @@ const SECTION_C = (G, src) => {
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
       // (CK-101 manifold, after v3.3.3: the host flow.ck1 block {v, leg, beanAdj, beanFix, bean} is stripped the same way)
-      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; return c; };
+      // (4.1: the host flow.lp block {v, gor1, gor2, gorTot, …} and flow.sim.lpNps / lpSch / lpLen_ft are host-only too, C17)
+      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; delete c.lp;
+        if (c.sim) { delete c.sim.lpNps; delete c.sim.lpSch; delete c.sim.lpLen_ft; } return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
       // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);
       eqShape(strip(f), ref, 'flow', bad);
-      if (!f.sim || f.sim.sepByDest !== S.SAMPLE_FLOW.sim.sepByDest || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
-      if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'flare') bad.push('flow.ck2 / flow.sepBy blocks');
+      // 4.1 (DECISIONS 1): the PAGE default V-101-out destination is 'surge'; the engine SAMPLE_FLOW stays 'flare' (identity)
+      if (!f.sim || f.sim.sepByDest !== 'surge' || S.SAMPLE_FLOW.sim.sepByDest !== 'flare' || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
+      if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'surge') bad.push('flow.ck2 / flow.sepBy blocks');
+      if (!f.lp || f.lp.v !== 1 || !(f.lp.gorTot > 0) || f.sim.lpNps !== 3 || f.sim.lpSch !== 40 || f.sim.lpLen_ft !== 150) bad.push('flow.lp ' + JSON.stringify(f.lp && [f.lp.v, f.lp.gorTot, f.sim.lpNps, f.sim.lpSch, f.sim.lpLen_ft]));
       ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
         if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
       const near = (a, b, t) => Math.abs(a - b) <= t;

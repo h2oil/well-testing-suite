@@ -32,7 +32,8 @@ const HOST = [
     wp: WP,
     opts: false,
     run(app, assert) {
-      const fl = flowOf({}).flow, sb = fl.sepBy;
+      // v4.1 (2026-11-09): the page default destination is the surge tank T-201; this test is about the burner line (pinned)
+      const fl = flowOf({ wts_sepByDest: 'flare' }).flow, sb = fl.sepBy;
       const sh = X.checkShape('flow.sepBy', sb, { strict: true });
       assert.ok(sh.ok, 'shape: ' + sh.errors.slice(0, 4).join('; '));
       assert.ok(sb.dest === 'flare' && sb.P0_psig === X.P_FLARE_HDR && sb.noFlow === false && sb.designP_psig === 1440, 'burner line P0 = the header');
@@ -94,7 +95,7 @@ const HOST = [
       assert.ok(!warnHas(flowOf(LINE(300)).flow.sepBy, X.WARN_TEXTS.sepByRating) && flowOf(LINE(300)).flow.sepBy.warnings.length === 0, 'no warnings at line 300');
       // the burner line at the defaults: the whole stream runs above the erosional velocity on seg 4 and seg 5 (review round), so the
       // block carries exactly the segment velocity warnings in the base text form (the engine raises VEL_* live)
-      const dw = flowOf({}).flow.sepBy;
+      const dw = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;   // v4.1: the burner line pinned (page default 'surge')
       const vel = dw.warnings.filter((w) => X.textRe(X.WARN_TEXTS.segVelExceed).test(w.msg) || X.textRe(X.WARN_TEXTS.segVelWarn).test(w.msg));
       assert.ok(vel.length === dw.warnings.length && dw.segs.filter((g) => g.vSt !== 'OK').length === vel.length, 'defaults: velocity warnings only ' + JSON.stringify(dw.warnings));
       ['Heater→Sep', 'Sep→Flare'].forEach((nm) => assert.ok(dw.warnings.some((w) => w.t === 'error' && w.msg.indexOf(nm + ': Velocity ') === 0 && /EXCEEDS erosional limit/.test(w.msg)), nm + ' EXCEED'));
@@ -108,10 +109,10 @@ const HOST = [
     opts: false,
     run(app, assert) {
       const C = GOLD.makeCalc(GOLD.hostRegion()), W = C.sandbox.window, $ = C.sandbox.$;
-      const r = C.run(mix(BASE, { wts_Psep: '30', wts_Psurge: '25' }));
+      const r = C.run(mix(BASE, { wts_Psep: '30', wts_Psurge: '25', wts_sepByDest: 'flare' }));   // v4.1: burner line pinned
       assert.ok(/Surge tank pressure too close to separator pressure/.test(r.page.warn), 'base surge warning (V-101 in)');
       W.wtsRenderResults(r.flow, mix(X.RIG_DEFAULTS, { separator: false }));
-      const res = $('wts_res').innerHTML, warn = $('wts_warn').innerHTML;
+      const res = $('wts_res').innerHTML, warn = $('wts_warn').innerHTML;   // (v4.1: BASE has no destination input → 'surge')
       assert.ok(res.indexOf('>' + X.LABELS.nodeRowBurner + '</td>') >= 0 && res.indexOf(X.LABELS.nodeRowLine) < 0, 'burner-line row');
       assert.ok(/With V-101 out, to burner line<\/span><span class="rv">downstream \d+ psig &middot; Critical/.test(res), 'V-101-out choke line');
       assert.ok(!/Surge tank pressure too close to separator pressure/.test(warn), 'surge-vs-separator warning hidden while V-101 is out');
@@ -120,7 +121,9 @@ const HOST = [
       assert.ok(/Bypass path 1,44\d psig at the CK-101 outlet \(production line 1,440 psig plus line loss/.test(rl.page.warn) && /PSHH-104 trips SDV-101 at 1,296 psig/.test(rl.page.warn), 'rating and PSHH-104 warnings shown');
       W.wtsRenderResults(rl.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
-      assert.ok($('wts_res').innerHTML === g.res && $('wts_warn').innerHTML === g.warn, 'V-101 back in: the v3.3.1 page');
+      // v4.1 (2026-11-09): with T-201 in the LP flare line box follows the v3.3.1 rows (only that)
+      const noLp = (h) => { const i = h.indexOf('<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line'); return i < 0 ? h : h.slice(0, i); };
+      assert.ok(noLp($('wts_res').innerHTML) === g.res && $('wts_warn').innerHTML === g.warn, 'V-101 back in: the v3.3.1 page (+ the LP box)');
       // V-101 out and CK-102 in: the CK-102 rbox reads flow.sepBy.ck2
       W.wtsRenderResults(rl.flow, mix(X.RIG_DEFAULTS, { separator: false, heaterChoke: true }));
       const res2 = $('wts_res').innerHTML;
@@ -140,7 +143,9 @@ const HOST = [
       assert.strictEqual(lab('wts_sepByP'), X.LABELS.sepByP);
       assert.ok(app.el('wts_sepByDest').closest('.card').querySelector('.card-title').textContent === 'Dynamic Simulation', 'in the Dynamic Simulation card');
       const opts = Array.from(app.el('wts_sepByDest').querySelectorAll('option')).map((o) => [o.getAttribute('value'), String(o.textContent)]);
-      assert.deepStrictEqual(opts, Object.keys(X.LABELS.sepByDestOptions).map((k) => [k, X.LABELS.sepByDestOptions[k]]), 'destination options');
+      // v4.1 (2026-11-09, DECISIONS 1): the surge tank T-201 first and selected, then the v3.3.3 options
+      assert.deepStrictEqual(opts, [['surge', 'Surge tank T-201']].concat(Object.keys(X.LABELS.sepByDestOptions).map((k) => [k, X.LABELS.sepByDestOptions[k]])), 'destination options');
+      assert.strictEqual(app.el('wts_sepByDest').value, 'surge', 'page default: the surge tank');
       assert.ok(!item('wts_sepByDest').classList.contains('rp-skip'), 'destination always shown');
       assert.ok(app.el('wts_sepByP').disabled && item('wts_sepByP').classList.contains('rp-skip'), 'line pressure disabled / rp-skip with the burner line');
       assert.ok(!app.el('wts_sepByP').getAttribute('data-wts-unit-cat'), 'line pressure untagged (card rule)');
@@ -353,7 +358,7 @@ const ENGINE = [
       assert.ok(X.near(anc('fUnload0'), d1.c0.fUnload) && X.near(anc('column0'), d1.c0.column_ft) && X.near(anc('WHPstart'), d1.c0.WHPtgt_psig) && X.near(anc('wJTc'), d1.c0.wJT),
         'start: ' + JSON.stringify([d1.c0.fUnload, d1.c0.column_ft, d1.c0.WHPtgt_psig, d1.c0.wJT]));
       assert.ok(Math.abs(d1.c0.WHPtgt_psig - ref.WHPtgt) / ref.WHPtgt < 0.005, 'start WHP = the closed form ' + ref.WHPtgt);
-      const ck = X.checkShape('cushion', J(d1.c0), { strict: true }); assert.ok(ck.ok, 'snap.cushion shape: ' + ck.errors.join('; '));
+      const ck = X.checkShape('cushion', J(d1.c0), { strict: true, engine: 'work' }); assert.ok(ck.ok, 'snap.cushion shape: ' + ck.errors.join('; '));
       d1.ev.forEach((p) => { const r = X.checkShape('cushionEvent', J(p), { strict: true }); assert.ok(r.ok, 'event shape: ' + r.errors.join('; ')); });
       assert.deepStrictEqual(d1.ev.map((p) => p.phase), ['unloading', 'breakthrough', 'tail', 'done'], 'phase sequence');
       assert.deepStrictEqual(d10.ev.map((p) => p.phase), ['unloading', 'breakthrough', 'tail', 'done'], 'phase sequence (dt 10)');

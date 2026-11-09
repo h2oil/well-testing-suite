@@ -29,10 +29,10 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.4, '48-calc-help-start.js': 18.88, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.65, '48-calc-help-welltest.js': 35.65, '48-calc-help-production.js': 36.42, '48-calc-help-livedata.js': 16,
-  '48-calc-help-safety.js': 35.42, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 20,
-  '48-calc-help-simcourse.js': 41.3, '48-calc-help-manifest.js': 8.75,
+  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 18.85, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 36.41, '48-calc-help-livedata.js': 16.03,
+  '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
+  '48-calc-help-simcourse.js': 41.72, '48-calc-help-manifest.js': 8.75,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
 // per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
@@ -52,6 +52,20 @@ const CAPS = {
 // (0.07), utilities (0.05) and safety (0.03); the sum stays 345 kB.
 // Simulator 3.4.1 (2026-11-08): 0.05 kB of livedata's unused headroom to welltest (the CK-101 legs, the T-201 A / B filling, the
 // toolbar Rig-up menu); the sum stays 345 kB.
+// Simulator 4.1 (host lane, 2026-11-09): 0.18 kB of unused headroom from print (0.07), metering (0.04), start (0.03), safety (0.02),
+// utilities (0.01) and production (0.01) to simcourse (+0.1: exercise 10 for the two T-202 compartments, FS-5 clean-up to the tanks, the
+// exercise 3 variant, the flow-back row, the ck3d shot), welltest (+0.06: T-202 like T-201, the LP flare line and GOR2, the rig-up chain,
+// the surge tank destination, the CK-101 legs in 3D, the LP inputs) and livedata (+0.02: the Mini WellOS GOR tiles); both files were
+// tightened (about 2.1 kB) to fit, and the sum stays 345 kB.
+// Simulator 4.1 integration (2026-11-09): 0.31 kB of welltest's unused headroom to simcourse (FS-5 re-measured on the final engine:
+// the low-gas well, the cushion start before V-101 goes out, the PCV-201 rate, the water in T-301, the PSHH-201 time; the three 3D
+// course shots cropped to the simulator view so the image total stays under 8 MB); sum unchanged.
+// Release 4.1 review fixes (host lane, 2026-11-09): 0.02 kB of welltest's unused headroom to simcourse (+0.01: the Surge Tank
+// Pressure row for V-101 out to the tank, the FS-5 steady PSHH-201 TRIP verdict) and livedata (+0.01: tank gas / total GOR are form
+// data only); welltest lists the LP flare line inputs instead of exempting them; the files were tightened to fit; sum unchanged.
+// Release 4.1 review round 2 (host lane, 2026-11-09): the round-1 wording trims are restored (welltest: the desander sand sources,
+// the 3D Colour overlay list; simcourse: CUSH_BURNER and the cushion column answer) and the LP inputs carry the page labels with unit
+// tokens; no file had 10 bytes of unused headroom to move, so short entries were joined onto one line (layout only); caps unchanged.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];

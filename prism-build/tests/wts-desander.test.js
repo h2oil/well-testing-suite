@@ -848,7 +848,7 @@ module.exports = [
       assert.rel(lastOf(hd), st.desander.dP_psi, 0.01, 'dsDP history');
       assert.ok(lastOf(ha) > 0 && lastOf(ha) < 0.01, 'dsAccFrac history');
       assert.rel(lastOf(hs), st.sand.toChoke_lbd, 0.01, 'sandChoke history');
-      ['desander', 'sand'].forEach((n) => assert.ok(X.checkShape(n, st[n], { strict: true }).ok, n + ' shape: ' + JSON.stringify(X.checkShape(n, st[n], { strict: true }))));
+      ['desander', 'sand'].forEach((n) => assert.ok(X.checkShape(n, st[n], { strict: true, engine: 'work' }).ok, n + ' shape: ' + JSON.stringify(X.checkShape(n, st[n], { strict: true, engine: 'work' }))));
       sim.setRigup(app.toWin({ desander: false }));
       adv(sim, 60, 10);
       assert.strictEqual(lastOf(J(sim.getHistory('dsDP'))), 0, 'dsDP 0 while out');
