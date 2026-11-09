@@ -454,7 +454,10 @@ function surgeDestTxt(rig) {
 }
 // review round 2 ([32]): why a V-101-out-to-the-tank run trips — the static SEPBY_SURGE_CAP warning (well gas above the receiving
 // tank's back-pressure valve capacity at its PSHH), for the ESD banner and the trip toast; '' when it is not raised
-function capWhy(st) {
+// The over-capacity explanation belongs only to the trips it causes: the surge tanks' PSHH (PSHH-201 / PSHH-202). Any other trip
+// (LSHH, PSHH-104, a fault, ...) is not explained by it, even while SEPBY_SURGE_CAP stands (it is static).
+function capWhy(st, cause) {
+    if (cause !== 'PSHH_SURGE' && cause !== 'PSHH_SURGE2') return '';
     var A = (st && st.alarms) || [];
     for (var i = 0; i < A.length; i++) {
         var a = A[i];
@@ -1633,7 +1636,7 @@ function createController(vizEl, mopts) {
         });
         h('clear', function (p, s) { _alarmMap = alarmReduce(_alarmMap, (s && s.alarms) || [], s ? s.t : 0, null); poke(); refreshNow(s); });
         h('trip', function (p, s) {
-            var why = p && p.manual ? '' : capWhy(s);
+            var why = p && p.manual ? '' : capWhy(s, p && p.cause);
             toast(p && p.manual ? 'ESD closed manually' : 'ESD TRIPPED — ' + (p && p.msg ? p.msg : '') + (why ? ' (' + why + ')' : ''), p && p.manual ? '' : 'bad');
             poke(); refreshNow(s);
         });
@@ -2588,7 +2591,7 @@ function createController(vizEl, mopts) {
         var el = E.alarm, e = st && st.esd;
         if (e && e.tripped) {
             var manual = !!e.manual;
-            var why = manual ? '' : capWhy(st);
+            var why = manual ? '' : capWhy(st, e.cause);
             var sig = 'b|' + manual + '|' + e.causeMsg + '|' + e.canReset + '|' + why;
             if (el.__sig !== sig) {
                 el.__sig = sig;

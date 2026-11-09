@@ -107,8 +107,10 @@ module.exports = [
       assert.strictEqual(L.surgeDestTxt(W({ surge: false, surge2: false })), 'the surge tank (none in the rig-up: burner / flare line)');
       // capWhy: the active static SEPBY_SURGE_CAP warning (MMscf/d), named by its valve tag; nothing when absent or returned to normal
       const cap = { id: 'SEPBY_SURGE_CAP', tag: 'PCV-203', state: 'UNACK', value: 10, limit: 2.5 };
-      assert.strictEqual(L.capWhy(W({ alarms: [cap] })), 'why: well gas 10.0 MMSCFD is over the PCV-203 capacity 2.50 MMSCFD with V-101 out to the surge tank');
-      assert.strictEqual(L.capWhy(W({ alarms: [Object.assign({}, cap, { state: 'RTN' })] })), '');
+      assert.strictEqual(L.capWhy(W({ alarms: [cap] }), 'PSHH_SURGE2'), 'why: well gas 10.0 MMSCFD is over the PCV-203 capacity 2.50 MMSCFD with V-101 out to the surge tank');
+      // only the surge tanks' PSHH trips are explained by the over-capacity: any other cause gets no 'why'
+      assert.strictEqual(L.capWhy(W({ alarms: [cap] }), 'LSHH_SURGE'), ''); assert.strictEqual(L.capWhy(W({ alarms: [cap] })), '');
+      assert.strictEqual(L.capWhy(W({ alarms: [Object.assign({}, cap, { state: 'RTN' })] }), 'PSHH_SURGE'), '');
       assert.strictEqual(L.capWhy(W({ alarms: [] })), ''); assert.strictEqual(L.capWhy(null), '');
       // [34] the reused seg-5 run: 'Sep→Flare' shown under the route it carries while V-101 is bypassed
       const a = W({ id: 'VEL_SEG4', tag: 'FI-Sep→Flare', msg: 'Sep→Flare velocity 80 ft/s', sev: 'warn' });
@@ -291,7 +293,7 @@ module.exports = [
     run(app, assert) {
       openWts(app);
       const cap = { id: 'SEPBY_SURGE_CAP', tag: 'PCV-201', eq: 'separator', sev: 'warn', state: 'UNACK', tOn: 1, value: 10, limit: 2.5, msg: 'Whole stream to T-201' };
-      const t = installStub(app, { rig: { separator: false }, dest: 'surge', alarms: [cap], esd: { tripped: true, manual: false, causeMsg: 'PSHH-201 surge tank pressure high', canReset: false, blocking: [] } });
+      const t = installStub(app, { rig: { separator: false }, dest: 'surge', alarms: [cap], esd: { tripped: true, manual: false, cause: 'PSHH_SURGE', causeMsg: 'PSHH-201 surge tank pressure high', canReset: false, blocking: [] } });
       try {
         app.flush(600);
         const el = app.el('wtsl_alarm') || app.find('.wtsl-alarm');
@@ -299,6 +301,8 @@ module.exports = [
         assert.ok(/why: well gas 10\.0 MMSCFD is over the PCV-201 capacity 2\.50 MMSCFD/.test(text(el)), 'banner names the cause: ' + text(el));
         t.set({ rig: { separator: false }, dest: 'surge', esd: { tripped: true, manual: true, causeMsg: 'ESD closed by the operator', canReset: true, blocking: [] }, alarms: [cap] }); app.flush(600);
         assert.ok(!/why:/.test(text(el)), 'manual close: no cause line');
+        t.set({ rig: { separator: false }, dest: 'surge', esd: { tripped: true, manual: false, cause: 'LSHH_SURGE', causeMsg: 'LSHH-201 surge tank level high-high', canReset: false, blocking: [] }, alarms: [cap] }); app.flush(600);
+        assert.ok(/ESD TRIPPED/.test(text(el)) && !/why:/.test(text(el)), 'a trip with another cause is not explained by the over-capacity: ' + text(el));
         const flow = app.toWin({ warnings: [{ t: 'warn', m: 'Base warning' }], sepBy: { warnings: [{ t: 'error', k: 'surge', msg: 'Whole well stream into the surge tank: over capacity' }, { t: 'warn', msg: 'Base warning' }] } });
         let W = J(D(app).designWarnings(D(app).state(), flow));
         assert.deepStrictEqual(W, [{ t: 'warn', m: 'Base warning' }, { t: 'error', m: 'Whole well stream into the surge tank: over capacity' }], 'V-101 out: block warnings added once, {msg} → {m}');
