@@ -38,6 +38,7 @@ const { code8 } = require('../core/keys');
 const { ApiError, fail } = require('../core/errors');
 const { createOauthStore } = require('../core/oauth-store');
 const AU = require('./auth')._internal;
+const I = require('../core/insight');
 
 const MIN = 60 * 1000;
 const SOFT_DELAY_MS = 2000;
@@ -234,6 +235,7 @@ function createOauthHandlers(deps) {
           }
         }
         if (o.create) await unit.audit('signup', { deviceId: dev.id, detail: { method: a.provider } });
+        if (o.create && o.create.profile && !I.isEmptyProfile(o.create.profile)) await I.storeProfile(unit, o.create.profile, 'signup', dev.id);
         await unit.audit('signin', { deviceId: dev.id, detail: { method: a.provider, identity_id: identityId, newDevice: dev.isNew } });
         if (o.link) await unit.mail(acc.email, 'notice_identity_linked', Object.assign(AU.mailParams(unit), { provider: a.provider }));
         if (dev.isNew && !o.create) await unit.mail(acc.email, 'notice_new_device', AU.mailParams(unit));
@@ -445,10 +447,12 @@ function createOauthHandlers(deps) {
     if (b.consent !== undefined) {
       if (state.step !== 'consent' || !state.pending) fail('oauth_state');
       if (b.consent.terms !== ctx.config.terms || b.consent.privacy !== ctx.config.privacy) fail('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+      // the optional profile (insight follow-up), stored with the new account in the same transaction
+      const profile = b.profile !== undefined ? I.normProfile(b.profile) : null;
       const email = state.pending.email;
       const why = signupRefusal(ctx, await S.unitOf(ctx, null, (unit) => allowlistHas(unit, ctx, email)));
       if (why) await endFail(ctx, st, a, why);
-      return signIn(ctx, st, a, state, null, { create: { email }, link: 'signup', stepup: !!state.pending.proved, first: true });
+      return signIn(ctx, st, a, state, null, { create: { email, profile }, link: 'signup', stepup: !!state.pending.proved, first: true });
     }
     if (state.step || bodyKeys.length) fail('oauth_state');
 
