@@ -1121,6 +1121,56 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
+    // ── v1.5.0 (3.4.2): rig chain — V-101 out to the surge tank (SURGE_SPOOL to a new LMa tee), chips from the chain ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
+      const dSeg = (p, a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L2)) : 0;
+        return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]); };
+      const onRoute = (p, id) => { const r = route(id); for (let i = 0; i < r.pts.length - 1; i++) if (dSeg(p, r.pts[i], r.pts[i + 1]) < 0.02) return true; return false; };
+      return [
+        ['32 v1.5.0 chain: SURGE_SPOOL leaves the heater outlet (E4) and lands horizontally on the new LMa tee (8.1, 2.3, 4.0), drawn only with V-101 out to the surge tank; clear (≥ 0.05 m) in every combination; a planted probe is found', () => {
+          const bad = [], sp = I.SURGE_SPOOL, end = sp[sp.length - 1], pre = sp[sp.length - 2];
+          if (!onRoute(sp[0], 'E4') || !onRoute(end, 'LMa') || J(end) !== J([8.1, 2.3, 4.0]) || !(pre[0] < end[0] && pre[1] === end[1] && pre[2] === end[2])) bad.push('ends');
+          if (J(sp[0]) !== J(I.BYPASS_SPOOLS.separator[0])) bad.push('start differs from the flare spool');
+          const tee = I.TEES.filter(t => J(t.slice(0, 3)) === J(end))[0];
+          if (!tee || tee[4] !== 'sepSurge' || I.teeBuilt(tee, {}) || I.teeBuilt(tee, { separator: false }) || !I.teeBuilt(tee, { separator: false, sepSurge: true })) bad.push('tee');
+          if (onRoute(end, 'LMb') && !onRoute(end, 'LMa')) bad.push('tee on LMb');
+          if (!onRoute(I.TAG_PTS.pshh104s, 'E4') && !sp.some((p, i) => i && dSeg(I.TAG_PTS.pshh104s, sp[i - 1], p) < 0.02)) bad.push('PSHH-104 not on the spool');
+          [{}, { surge2: true }, { lpLine: true, surge2: true }, { lpLine: true, surge2: true, desander: true, heaterChoke: true }, { flare: false, lpLine: true }].forEach(r => {
+            const rig = Object.assign({ separator: false, sepSurge: true }, r), c = I.clearanceCheck(rig, 0.05, 'surge');
+            if (c.length) bad.push(J(r) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          const P = I.clearancePrims({ separator: false, sepSurge: true }, 'surge');
+          if (!P.some(p => p.route === 'V-101 bypass spool' && J(p.endB) === J(end)) || !P.some(p => p.id === 'PSHH-104' && p.min[2] > 1)) bad.push('primitives');
+          const sav = I.PROPS.length; I.PROPS.push(['probe', [5.0, 2.25, 1.2], [5.1, 2.35, 1.3]]); const hit = I.clearanceCheck({ separator: false, sepSurge: true }, 0.05, 'surge'); I.PROPS.length = sav;
+          if (!hit.some(x => x.a === 'probe' || x.b === 'probe')) bad.push('probe not found');
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 chain: normalize — sepBy.dest three-valued, receiver, rig.sepSurge, routing; scene key \'|surge\' (V-101 out only); older / v341 snapshots keep the v1.4.0 keys; chip texts per §2.6', () => {
+          const bad = [], nz = o => I.normalize(I.fakeSnapshot(600, o), I.makeNorm());
+          const s = nz({ sepOut: true, dest: 'surge' }), l = nz({ sepOut: true, dest: 'line', P: 300 }), f = nz({ sepOut: true }), d = nz({ dest: 'surge' });
+          if (!(s.sepBy.dest === 'surge' && s.sepBy.recv === 'T-201' && s.rig.sepSurge && s.sepBy.qAct && s.ru.routing === 'chain' && s.rigKey === '101111000|surge')) bad.push('surge ' + J(s.sepBy) + ' ' + s.rigKey);
+          if (!(l.rigKey === '101111000|line' && !l.rig.sepSurge && f.rigKey === '101111000|flare' && f.ru.routing === '')) bad.push('line / flare');
+          if (!(d.rigKey === '111111000' && !d.rig.sepSurge && d.sepBy.dest === 'surge' && !d.sepBy.qAct)) bad.push('V-101 in: destination ignored ' + d.rigKey);
+          const sv = nz({ sepOut: true, dest: 'surge', flareOut: true }); if (!(sv.sepBy.vent && sv.rigKey === '101110000|surge')) bad.push('FS-401 out ' + sv.rigKey);
+          // chips
+          if (I.rigChipTxt('separator', s) !== 'well stream → surge tank T-201' || I.rigChipTxt('separator', l) !== 'well stream → production line' || I.rigChipTxt('separator', f) !== 'well stream → flare / burner') bad.push('separator chip');
+          const c2 = JSON.parse(J(s)); c2.sepBy.recv = 'T-202'; if (I.rigChipTxt('separator', c2) !== 'well stream → surge tank T-202') bad.push('T-202 receiver');
+          if (I.rigChipTxt('flare', s) !== 'HP gas → export line · LP / relief → vent' || I.rigChipTxt('flare', f) !== 'gas → export line') bad.push('flare chip');
+          const g = JSON.parse(J(s)); g.gauge.pumpMode = 'booster'; if (I.rigChipTxt('gauge', g) !== 'transfer → P-201 → export' || I.rigChipTxt('gauge', f) !== 'transfer → export / burner') bad.push('gauge chip');
+          const t = JSON.parse(J(s)); t.rig.surge2 = true; if (I.rigChipTxt('surge', t) !== 'dumps → surge tank T-202' || I.rigChipTxt('surge', f) !== 'dumps → gauge tank / export') bad.push('surge chip');
+          const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || '');
+          [[/'BYPASSED → V-101'/, 'heater out label'], [/'whole stream in \(V-101 out\)'/, 'surge chip row'], [/g === 'separator' && S\.sepDest === 'surge' \? SURGE_SPOOL/, 'spool by destination'],
+            [/if \(n\.sepBy\.qAct\) \{ tr\.chainEntry\[4\] = I\.LMb; tr\.chainEntry\[5\] = I\.LMb; \}/, 'tracers enter at the LMa tee'], [/n\.sepBy\.qAct \? n\.sepBy\.qVel : 0/, 'LMb carries the whole stream']]
+            .forEach(([re, nm]) => { if (!re.test(src)) bad.push(nm); });
+          if (S && S.features && S.features.rigChain && F) {                 // the real engine (ENGINE lane): V-101 out to the surge tank
+            try { const e = S.create(F, { seed: 4, rigup: { separator: false }, config: { sep: { bypass: { dest: 'surge' } } } }); e.advance(30);
+              const n = I.normalize(e.getState(), I.makeNorm()); if (!(n.sepBy.dest === 'surge' && n.rig.sepSurge && /\|surge/.test(n.rigKey))) bad.push('engine ' + n.rigKey); } catch (err) { bad.push('engine threw ' + err.message); }
+          }
+          return bad.length === 0 || bad.join(', ');
+        }],
+      ];
+    })(),
   ];
 };
 
