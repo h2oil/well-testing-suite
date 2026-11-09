@@ -371,6 +371,8 @@ module.exports = [
       const sb = J(s.sepBy); delete sb.recv;
       assert.ok(FU.checkShape('sepBy', s.sepBy, { strict: true, engine: 'work' }).ok && !FU.checkShape('sepBy', sb, { strict: true }).ok, 'sepBy.recv missing');
       delete sb.gasCap_mmscfd;
+      assert.ok(!FU.checkShape('sepBy', sb, { strict: true }).ok, 'sepBy: round-2 gasCap1 / gasCap2 still there (partly missing)');
+      delete sb.gasCap1_mmscfd; delete sb.gasCap2_mmscfd;   // 3.4.2 round 2 keys
       assert.ok(!FU.checkShape('sepBy', sb, { strict: true, engine: 'work' }).ok && FU.checkShape('sepBy', sb, { strict: true }).ok && FU.checkShape('sepBy', sb, { legacy: true }).ok, 'sepBy old / working');
       // a frozen v3.4.1 snapshot still passes (no 3.4.2 key at all)
       const F = frozen(), fs = J(F.create(F.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } }).getState());

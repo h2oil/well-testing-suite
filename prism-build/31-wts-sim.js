@@ -31,6 +31,10 @@
 // critical flow at the tip); OVP_SURGE / OVP_SURGE2 (> 110 % of MAWP) and SEPBY_PSV_CAP (whole stream above PCV + PSV at 110 % of
 // MAWP) annunciate the over-pressure of the whole-stream surge destination; SURGE_BLOCKED, SEPBY_SURGE_CAP, the V-101-out rig note
 // and segment 5 ('V-101 bypass→T-20x') name the receiving tank; an nps / sch override sets the LP line's hydraulic ID.
+// 3.4.2 round 2: the LP exit head is one ρv²/2gc (stray /144 removed: ≈ 5 psig at 1.2 MMscf/d, the tip chokes from ≈ 4.4); an explicit
+// ID_in always wins; segment 5 to a production line is 'V-101 bypass→line' and a standing FI- alarm re-tags on a route change; the
+// FS-401 out message and routes follow the chain (routes.surge '' with V-101 to the burner / line); a 'surge' flow.sepBy block with no
+// tank in the rig-up gives way to sepBy.alt; snap.sepBy.gasCap1 / gasCap2_mmscfd = each tank's PCV capacity at PSHH.
 //
 // Contents
 //   • geometry (horizontal 2:1-head vessel compartments, vertical tanks), LUTs
@@ -244,7 +248,8 @@ function normRigupV341(req, o) {
 //   stay selectable; no pressurised tank in → 'flare') · T-201 → T-202 (when in) or T-301 · T-301 → P-201 as a booster to export
 //   (a surge tank in; else P-201 has nothing to pump) · P-201 → gravity drain · FS-401 → HP gas to the export line, LP gas and relief
 //   to the vent (V-101 + FS-401 out allowed for 'line' and 'surge'). Appended return keys: dest (effective V-101-out destination),
-//   routes ({key: the receiver of an item that is out, '' when in}) and routing. Pure.
+//   routes ({key: the receiver of an item that is out, '' when in or, T-201 with V-101 bypassed to the burner / production line,
+//   receiving nothing}) and routing. Pure.
 function normRigup(req, o) {
   var chain = isPlainObj(o) && o.routing === 'chain';
   if (!chain) {
@@ -289,7 +294,10 @@ function normRigup(req, o) {
   }
   return { rig: r, notes: notes, sig: sig, full: full, extras: extras, dest: dest, routes: rigRoutes(r, dest, true), routing: 'chain' };
 }
-// the receiver of each item that is out ('' for an item in): the next item downstream that takes its flow (pure)
+// the receiver of each item that is out ('' for an item in): the next item downstream that takes its flow (pure). Round 2 (chain
+// only): T-201 out while V-101 is bypassed to the burner / production line receives nothing ('' — the tanks get no liquid), and the
+// FS-401 receiver follows the gas: 'vent' with V-101 out (to the tanks: their gas and relief cold-vent; to a line: tank relief),
+// 'export + vent' with V-101 in (HP gas to export, LP / relief gas to vent)
 function rigRoutes(r, dest, chain) {
   var o = {}, i, tank = r.surge ? TAGS.surge : (chain && r.surge2 ? TAGS.surge2 : '');
   for (i = 0; i < RIG_KEYS.length; i++) o[RIG_KEYS[i]] = '';
@@ -298,11 +306,11 @@ function rigRoutes(r, dest, chain) {
   if (!r.heaterChoke) o.heaterChoke = TAGS.heater;
   if (!r.heater) o.heater = r.separator ? TAGS.separator : sepTo;
   if (!r.separator) o.separator = sepTo;
-  if (!r.surge) o.surge = chain && r.surge2 ? TAGS.surge2 : (r.gauge ? TAGS.gauge : 'export / burner line');
+  if (!r.surge) o.surge = chain && !r.separator && dest !== 'surge' ? '' : chain && r.surge2 ? TAGS.surge2 : (r.gauge ? TAGS.gauge : 'export / burner line');
   if (!r.surge2) o.surge2 = r.surge ? TAGS.surge : '';
   if (!r.gauge) o.gauge = chain && r.pump ? TAGS.pump + ' → export' : 'export / burner line';
   if (!r.pump) o.pump = r.gauge ? 'gravity' : '';
-  if (!r.flare) o.flare = 'export + vent';
+  if (!r.flare) o.flare = chain && !r.separator ? 'vent' : 'export + vent';
   return o;
 }
 // stepFor(rig) → { eqId: '①' … }: equipment step numbers in process order. Core items are always counted, optional items
@@ -641,7 +649,15 @@ function create(flowIn, opts) {
   var overrides = {};
   if (isPlainObj(opts.config)) mergeOverrides(overrides, deepClone(opts.config));
   var cfg = null;
-  function buildCfg() { cfg = deepMerge(deepMerge(deepClone(DEFAULTS), flowDerived(flow.sim)), overrides); }
+  // lpIdX (3.4.2 round 2): the LP line's explicit hydraulic ID — an ID_in of the user's overrides wins; overrides with nps / sch and no
+  // ID_in → the table; else the host's flow.sim size (flowDerived sets ID_in with nps / sch); null → the table of the merged nps / sch.
+  // The DEFAULTS' ID_in (3.068) never counts as explicit, so an explicit 3.068 is honoured whatever nps / sch are
+  var lpIdX = null;
+  function buildCfg() {
+    var fd = flowDerived(flow.sim), ov = plain(plain(overrides.surge).vent), fv = plain(plain(fd.surge).vent);
+    cfg = deepMerge(deepMerge(deepClone(DEFAULTS), fd), overrides);
+    lpIdX = ov.ID_in != null ? num(ov.ID_in, null) : (ov.nps != null || ov.sch != null) ? null : fv.ID_in != null ? num(fv.ID_in, null) : null;
+  }
   buildCfg();
   // rig-up: rigReq = the requested items, RG = normRigup(rigReq); the hot path reads the effective flags below
   var rigReq = {}, RG = null, rigVersion = 0;
@@ -972,8 +988,16 @@ function create(flowIn, opts) {
   //              f = lf); pressures / temperatures at the CK-101 outlet and the regimes stand as published
   //   A skipped block (no gas rate) counts as none and leaves its note in SEL.ck2Note. WP-E1 / WP-E2 read SEL (ck2Derive,
   //   bypDerive) and never edit these lines. Phi_ss = the steady CK-102 outlet (base: the CK-101 outlet less the seg-3 loss).
+  // round 2 ([22]): the flow.sepBy block that stands for the effective destination. A 'surge' block while the chain has demoted
+  // the destination to the burner / flare line (no surge tank in the rig-up) gives way to its burner-line twin sepBy.alt (the host
+  // builds it with the 'surge' block; alt.ck2 is a skipped block); without alt → no block (the legacy law from bypF0)
+  function sepByEff() {
+    var sb = isPlainObj(flow.sepBy) ? flow.sepBy : null;
+    if (sb && rChain && sb.dest === 'surge' && RG && RG.dest !== 'surge') sb = isPlainObj(sb.alt) ? sb.alt : null;
+    return sb;
+  }
   function pickSteadyBlock() {
-    var S = SEL, sb = (!rSep && isPlainObj(flow.sepBy)) ? flow.sepBy : null, cb = null, b, i;
+    var S = SEL, sb = !rSep ? sepByEff() : null, cb = null, b, i;
     if (ck2Act) cb = rSep ? flow.ck2 : (sb ? sb.ck2 : null);
     if (!isPlainObj(cb)) cb = null;
     S.ck2Note = '';
@@ -2420,7 +2444,7 @@ function create(flowIn, opts) {
     // ── v1.5.0 (always present; static values while not in use; §6.2, §6.3) ──
     // V-101-out destination: dest, the production-line pressure, the destination inlet P0, V-101 out (active), FS-401 out too (vent)
     sepBy: { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '',
-      recv: '', gasCap_mmscfd: null },             // v1.7.0: the receiving surge tank(s) of dest 'surge' and their gas capacity at PSHH
+      recv: '', gasCap_mmscfd: null, gasCap1_mmscfd: 0, gasCap2_mmscfd: 0 },             // v1.7.0: the receiving surge tank(s) of dest 'surge' and their gas capacity at PSHH
     // cushion unload (off: zeros, phase 'off', tBreak null)
     cushion: { on: false, phase: 'off', V_bbl: 0, SG: 0, q_set_bpd: 0, q_bpd: 0, qcap_bpd: 0, WHPtgt_psig: 0, column_ft: 0, Vleft_bbl: 0,
       recovered_bbl: 0, fUnload: 0, wJT: 0, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0, surge: 0 } }
@@ -2447,6 +2471,8 @@ function create(flowIn, opts) {
     L.q = q; L.frac = design > 1e-9 ? q / design : 0; L.vel = vel; L.ID_in = ID; L.active = !!act && q > 1e-6;
   }
   // 3.4.2 review: with V-101 out to the surge tank(s) segment 5 carries the whole stream to them, not to FS-401 (label + alarm tag)
+  // round 2: dest 'line' under the chain rules names the production line run (as 38's alias; 'v341' keeps the v3.3.1 'Sep→Flare')
+  var SEG4_LINE = 'V-101 bypass→line';
   function seg4SurgeLabel() { var r = surgeRecv() || 1; return 'V-101 bypass→' + (r === 3 ? TAGS.surge + ' / ' + TAGS.surge2 : r === 2 ? TAGS.surge2 : TAGS.surge); }
   function designAlarms() {
     var sg = snap.segs, i, A;
@@ -2454,7 +2480,9 @@ function create(flowIn, opts) {
       var s = sg[i], id = 'VEL_' + s.id;
       var sev = s.vPct >= 100 ? 'alarm' : 'warn';
       A = aDef(id, 'FI-' + s.label, sev, 'seg:' + s.id, 'd');
-      if (i === 4 && !A.active && A.lbl !== s.label) { A.lbl = s.label; A.tag = A.pub.tag = 'FI-' + s.label; }   // the label follows the bypass route
+      // the label follows the bypass route; a route change mid-run (rig-up / destination) clears a standing alarm first, so the
+      // re-raise below carries the new tag and text (round 2: a standing alarm no longer keeps the old route's tag)
+      if (i === 4 && A.lbl !== s.label) { if (A.active) clearA(A); A.lbl = s.label; A.tag = A.pub.tag = 'FI-' + s.label; }
       var on = s.flowing && s.vPct >= 80;
       if (on && A.active && A.sev !== sev) { clearA(A); }
       if (A.sev !== sev) { A.sev = sev; A.pub.sev = sev; alarmsDirty = true; }
@@ -2549,7 +2577,7 @@ function create(flowIn, opts) {
     var nodeT1 = [N.esd.T, N.choke.T, N.heater.T, X.Tsep, N.flare.T, tanks[active].T];
     for (i = 0; i < 6; i++) {
       var ss = SS[i], o = s.segs[i];
-      o.id = ss.id; o.from = ss.from; o.to = ss.to; o.label = i === 4 && bypSurge ? seg4SurgeLabel() : ss.label; o.phase = ss.phase; o.nps = ss.nps; o.sch = ss.sch; o.ID = ss.ID; o.L = ss.L;
+      o.id = ss.id; o.from = ss.from; o.to = ss.to; o.label = i === 4 && bypSurge ? seg4SurgeLabel() : i === 4 && bypLine && rChain ? SEG4_LINE : ss.label; o.phase = ss.phase; o.nps = ss.nps; o.sch = ss.sch; o.ID = ss.ID; o.L = ss.L;
       var vel = i < 4 ? ss.vel * X.fInst : (i === 4 ? ss.vel * fg : pumpVel);
       if (cushOn && i < 5) vel += cushVel(i, ss);    // v1.5.0 (WP-E2, D8): the cushion liquid's own velocity term
       o.vel = vel; o.ve = ss.ve;
@@ -3084,9 +3112,15 @@ function create(flowIn, opts) {
       if (old[k] === r[k]) continue;
       if (k === 'separator' && !r[k] && bypLine) parts.push(TAGS.separator + ' bypassed (well stream to the production line at ' + fmtLineP(cfg.sep.bypass.P_psig) + ' psig through NRV-501 / XV-501)');
       else if (k === 'separator' && !r[k] && bypSurge) parts.push(TAGS.separator + ' bypassed (well stream to the surge tank ' + (r.surge ? TAGS.surge : TAGS.surge2) + ')');   // v1.7.0
+      else if (k === 'flare' && !r[k] && rChain) parts.push(TAGS.flare + ' ' + rigFlareOutTxt(r));   // round 2: the chain's receiver
       else parts.push(RIG_TXT[k][0] + ' ' + RIG_TXT[k][r[k] ? 2 : 1]);
     }
     return parts;
+  }
+  // round 2: FS-401 out under the chain rules — where its gas goes (RIG_TXT.flare 'gas to export' stays the 'v341' text)
+  function rigFlareOutTxt(r) {
+    return r.separator ? 'out of the rig-up (HP gas to export, LP / relief to vent)'
+      : bypSurge ? 'out of the rig-up (tank gas and relief to the atmospheric vent)' : 'out of the rig-up (relief of the tanks to vent)';
   }
   // side effects of an effective rig-up change (setRigNow and rigRenorm share them): optional items entering / leaving (dump
   // abort, route snap, CK-102 lag / quiet list — WP-E1 / WP-E2 hooks), latch release, quiet lists of equipment that left
@@ -4785,7 +4819,8 @@ function create(flowIn, opts) {
   //   P_t²  = P_b² + kEx · q²   (one exit velocity head)  or  P_t = q / kCh  (critical flow at the open tip), whichever is higher
   //   P_in² = P_t² + (kL · f(Re)/f_D + kM) · q²                     Darcy line loss (Swamee-Jain at the actual Re) + FT-201 meter ΔP
   // kL / kM put the design line loss / meter ΔP at qD into the squared form (2·P0a·ΔP_D / qD²); at qD the law gives the design
-  // back pressure P2d (+ the exit head, < 0.01 psi), so the steady default barely moves; relief rates now give a few psig, not tens
+  // back pressure P2d (+ the exit head, < 0.001 psi), so the steady default barely moves; relief rates now give a few psig, not tens
+  // (≈ 5 psig at 1.2 MMscf/d, ≈ 20 at 3; the open 3" tip chokes from ≈ 4.4 MMscf/d)
   // (the old P0 + K·q² extrapolated the tip ΔP of the design flow incompressibly). Capped at the highest feeding tank pressure.
   // cfg.surge.vent.to = 'hp' (SURGE_VENT_DEF pin) is the legacy HP-header path: every v1.6.0 number unchanged.
   //   lpDerive(TRs)   derive, always          lpOn, geometry (cfg.surge.vent / flow.sim.lp*), design back pressure LP.P2d, K, low-cut
@@ -4809,9 +4844,9 @@ function create(flowIn, opts) {
     var V = plain(cfg.surge.vent), M = plain(V.meter), was = lpOn;
     lpOn = V.to !== 'hp';
     LP.nps = LP_ID[num(V.nps, 3)] ? num(V.nps, 3) : 3; LP.sch = num(V.sch, 40) === 80 ? 80 : 40;
-    // 3.4.2 review: the default ID_in (3.068 = 3" SCH 40) gives way to the table when nps / sch alone are overridden
-    var idD = V.ID_in == null || (+V.ID_in === SURGE_VENT_DEF.ID_in && (LP.nps !== SURGE_VENT_DEF.nps || LP.sch !== 40));
-    LP.ID = mmax(0.5, idD ? LP_ID[LP.nps][LP.sch] : num(V.ID_in, LP_ID[LP.nps][LP.sch])); LP.L = mmax(1, num(V.L_ft, 150));
+    // 3.4.2 review (round 2): an explicit ID_in (lpIdX, see buildCfg) wins; otherwise the table ID of nps / sch (the DEFAULTS' 3.068
+    // is the table value of the default 3" SCH 40, so the default run is unchanged)
+    LP.ID = mmax(0.5, lpIdX !== null ? lpIdX : LP_ID[LP.nps][LP.sch]); LP.L = mmax(1, num(V.L_ft, 150));
     LP.P0 = mmax(0, num(V.P0_psig, 0.2)); LP.tip = mmax(0, num(V.tipDP_psi, 0.25));
     LP.type = hasOwn(LP_METERS, M.type) ? M.type : 'usm';
     var mt = LP_METERS[LP.type];
@@ -4832,7 +4867,7 @@ function create(flowIn, opts) {
     var A = PI / 4 * Dft * Dft, Mw = 28.97 * LP.SG, kk = num(cfg.sep.pcv.k, 1.28);
     LP.P0a = Pa; LP.ReD = Re; LP.qF = LP.qD; LP.fr = 1;
     LP.kL = 2 * Pa * LP.dPd / (LP.qD * LP.qD); LP.kM = 2 * Pa * LP.mdP / (LP.qD * LP.qD);
-    LP.kEx = 2 * Mw * PSC * PSC * TRs * z / (1545.35 * TSC * TSC * A * A * 2 * 32.174 * 144);
+    LP.kEx = 2 * Mw * PSC * PSC * TRs * z / (1545.35 * TSC * TSC * A * A * 2 * 32.174);   // 3.4.2 round 2: 2·P·ρv²/(2·gc) in psia² (no /144: ρ carries the 144)
     LP.kCh = A * 144 * msqrt(kk * 32.174 * Mw / (z * 1545.35 * TRs)) * mpow(2 / (kk + 1), (kk + 1) / (2 * (kk - 1))) / (PSC * 144 * Mw / (1545.35 * TSC));
     LP.cutV = M.lowCut_fts != null && isNum(+M.lowCut_fts) ? mmax(0, +M.lowCut_fts) : (mt.lowCut_fts != null ? mt.lowCut_fts : 0.25 * v);
     LP.qCut = LP.cutV * PI / 4 * Dft * Dft * (Pa / PSC) * (TSC / TRs) / z;   // the low-cut as a flow (scf/s) at P0 and the steady T
@@ -4861,7 +4896,7 @@ function create(flowIn, opts) {
   }
   // 3.4.2 review: PSV-201 / PSV-202 against the LP line. Each tank's PSV at its rated relief (1.10 × MAWP, sized against the HP
   // header back pressure cfg.sep.pcv.P2_psig) with its PCV wide open discharges into the line. At the defaults the 3" line builds
-  // ≈ 22 psig at PSV-201's rated flow (≈ 45 % of set; PSV-202 ≈ 8 psig): above the 10 % of a conventional valve, so the run treats
+  // ≈ 24 psig at PSV-201's rated flow (≈ 47 % of set; PSV-202 ≈ 8.5 psig; round 2: exit head corrected): above the 10 % of a conventional valve, so the run treats
   // the PSVs as balanced-bellows valves — their flow is always gq(Cv, P_tank, P_in) at the live LP back pressure, and with the flow
   // still critical the capacity stays within a few % of the rating (ok = ≥ 90 % retained; bellows = built-up > 10 % of set)
   function lpPsvCheck() {
@@ -4961,7 +4996,7 @@ function create(flowIn, opts) {
   // Lead-owned: the rig-up rules (normRigup, rigRenorm, rigSideEffects), the steady-case selection (pickSteadyBlock), the live
   // CK-101 outlet (pckLive), the hook sites and the snapshot blocks. The two sections below are WP-E1's and WP-E2's.
   // the CK-102 block of the flow whatever the rig-up (inputs.bean2 / ck2Pos and the static node bean / position read it)
-  function ck2BlockOf() { var b = rSep ? flow.ck2 : (isPlainObj(flow.sepBy) ? flow.sepBy.ck2 : null); return isPlainObj(b) ? b : null; }
+  function ck2BlockOf() { var sb = rSep ? null : sepByEff(), b = rSep ? flow.ck2 : (sb ? sb.ck2 : null); return isPlainObj(b) ? b : null; }
   // ck2Info(): all WP-E2 reads of CK-102 (the cushion liquid cap, §6.3) — in line, CK-101 / CK-102 beans (64ths), lagged ΔP (psi)
   var CK2I = { act: false, b1: 0, b2: 0, dP: 0 };
   function ck2Info() { CK2I.act = CK2.act; CK2I.b1 = bean; CK2I.b2 = CK2.bean; CK2I.dP = X.ck2dP; return CK2I; }
@@ -4985,6 +5020,10 @@ function create(flowIn, opts) {
     var o1 = F.byS > 0 && rSurge && !(rSurge2 && F2.act && !(F2.s1 > 0)), o2 = F.byS > 0 && rSurge2 && F2.act && F2.s2 > 0;
     sb.recv = !bypSurge ? '' : (o1 && o2 ? 'both' : o2 ? TAGS.surge2 : (rSurge ? TAGS.surge : TAGS.surge2));
     sb.gasCap_mmscfd = bypSurge ? surgeGasCapNow() * 0.0864 : null;
+    // round 2: each tank's own capacity, always (PCV-201 / PCV-203 wide open at PSHH-201 / PSHH-202 against the design back pressure,
+    // whether or not the tank is in the rig-up or receiving); gasCap = the sum of the receiving ones. For the host's steady page, which
+    // has no live route: one tank, or both on route 'both'
+    sb.gasCap1_mmscfd = gasCap1 * 0.0864; sb.gasCap2_mmscfd = gasCap2 * 0.0864;
     if (bypSurge && SEL.sepByBlk === null) sb.P0_psig = bypRecvP();
     s.surge.wellStream = o1; s.surge2.wellStream = o2;
     c.toSurge_gas_mscf = cum.toSurgeGas / 1e3; c.toSurge_oil_stb = cum.toSurgeOil; c.toSurge_water_bbl = cum.toSurgeWater;
