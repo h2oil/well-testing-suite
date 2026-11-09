@@ -335,7 +335,7 @@ module.exports = [
       assert.ok(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9, 'balances ' + JSON.stringify(m));
       const bad = finiteBad(s, J(S.NULLABLE));
       assert.ok(bad.length === 0, 'finite: ' + bad.slice(0, 6).join(', '));
-      assert.ok(X.checkShape('surge2', s.surge2, { strict: true }).ok, X.checkShape('surge2', s.surge2, { strict: true }).errors.join('; '));
+      assert.ok(X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).ok, X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).errors.join('; '));
       const one = S.create(S.SAMPLE_FLOW, { seed: 1, rigup: { surge2: true }, config: { surge2: { compartments: 1 } } });
       one.setSurgeRoute('both'); run(one, 600, 10);
       const s1 = st(one);
@@ -344,6 +344,37 @@ module.exports = [
       const out = S.create(S.SAMPLE_FLOW, { seed: 1 });
       assert.ok(st(out).surge2.comps.length === 2 && finiteBad(st(out), J(S.NULLABLE)).length === 0, 'out: static, finite');
       ['surge2FracA', 'surge2FracB'].forEach((k) => { const h = sim.getHistory(k); assert.ok(h.y.length > 0 && h.y.every(isFinite) && h.y.some((y) => y > 0), 'history ' + k); });
+    },
+  },
+  {
+    name: 'WTSS2C (d) 3.4.2 review: checkShape requires the 3.4.2 keys of a working-engine snapshot (engine work; a partly missing set always fails) and excuses them only for an old object (all missing, or legacy)',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const FU = require('./_wts-fu-shapes');
+      const S = work(), sim = S.create(S.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true }, config: { noise: { on: false } } });
+      run(sim, 60, 10);
+      const s = st(sim);
+      assert.ok(X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).ok && X.checkShape('rigup', s.rigup, { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok, 'complete snapshot');
+      // one key dropped (a regression of the 3.4.2 snapshot): fails with and without engine 'work'
+      const one = J(s.surge2); delete one.comps;
+      assert.ok(!X.checkShape('surge2', one, { strict: true, engine: 'work' }).ok && !X.checkShape('surge2', one, { strict: true }).ok && !X.checkShape('surge2', one).ok, 'surge2.comps missing');
+      const r1 = J(s.rigup); delete r1.routes;
+      assert.ok(!X.checkShape('rigup', r1, { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup.routes missing');
+      // every 3.4.2 key dropped (the review's reproduction): an old-looking object — fails for the working engine, passes as legacy
+      const all = J(s.surge2);
+      ['comps', 'compartments', 'suction', 'divert', 'fill', 'wellStream'].forEach((k) => delete all[k]); delete all.transfer.suction; delete all.transfer.T;
+      assert.ok(!X.checkShape('surge2', all, { strict: true, engine: 'work' }).ok, 'working engine: all 3.4.2 keys required');
+      assert.ok(X.checkShape('surge2', all, { strict: true, legacy: true }).ok && X.checkShape('surge2', all, { strict: true }).ok, 'an old object passes');
+      const ra = J(s.rigup); delete ra.routing; delete ra.routes; delete ra.dest;
+      assert.ok(!X.checkShape('rigup', ra, { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok && X.checkShape('rigup', ra, { strict: true, legacy: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup all three');
+      // _wts-fu-shapes: sepBy.recv / gasCap_mmscfd, cushion.out.surge
+      const sb = J(s.sepBy); delete sb.recv;
+      assert.ok(FU.checkShape('sepBy', s.sepBy, { strict: true, engine: 'work' }).ok && !FU.checkShape('sepBy', sb, { strict: true }).ok, 'sepBy.recv missing');
+      delete sb.gasCap_mmscfd;
+      assert.ok(!FU.checkShape('sepBy', sb, { strict: true, engine: 'work' }).ok && FU.checkShape('sepBy', sb, { strict: true }).ok && FU.checkShape('sepBy', sb, { legacy: true }).ok, 'sepBy old / working');
+      // a frozen v3.4.1 snapshot still passes (no 3.4.2 key at all)
+      const F = frozen(), fs = J(F.create(F.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } }).getState());
+      assert.ok(X.checkShape('surge2', fs.surge2, { strict: true }).ok && X.checkShape('rigup', fs.rigup, { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'v3.4.1 snapshot');
     },
   },
 ];

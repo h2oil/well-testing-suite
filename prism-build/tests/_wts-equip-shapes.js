@@ -455,6 +455,16 @@ function walkShape(tpl, act, p, errs, strict) {
     if (strict) Object.keys(act).forEach(function (k) { if (!hasOwn(tpl, k)) errs.push(p + '.' + k + ': unexpected key'); });
   }
 }
+// the 3.4.2 excusal shared with _wts-fu-shapes.js: errs filtered of the "missing" errors of `list` paths (pathOf(e) → path | null)
+function excuse342(errs, list, root, opts, pathOf) {
+  if (opts && opts.engine === 'work') return errs;
+  var own = list.filter(function (p) { return p === root || p.indexOf(root + '.') === 0; });
+  var miss = {};
+  errs.forEach(function (e) { var p = pathOf(e); if (p !== null && own.indexOf(p) >= 0) miss[p] = true; });
+  var all = own.length > 0 && own.every(function (p) { return miss[p]; });
+  if (!(opts && opts.legacy) && !all) return errs;
+  return errs.filter(function (e) { var p = pathOf(e); return !(p !== null && miss[p]); });
+}
 function checkShape(name, obj, opts) {
   if (!hasOwn(SHAPES, name)) throw new Error('_wts-equip-shapes: unknown shape ' + name + ' (known: ' + SHAPE_NAMES.join(', ') + ')');
   var errs = [], S = SHAPES[name];
@@ -476,8 +486,10 @@ function checkShape(name, obj, opts) {
     else rk.forEach(function (k, i) { if (typeof obj[k] === 'boolean' && (obj.sig.charAt(i) === '1') !== obj[k]) errs.push('rigup.sig: character ' + i + ' disagrees with ' + k); });
   }
   if (name === 'line' && obj && typeof obj.q === 'number' && obj.q < 0) errs.push('line.q: negative');
-  // release 3.4.2 appended keys may be missing in an older engine's snapshot (v3.3 / v3.3.1 / v3.4.1): only "missing" is excused
-  errs = errs.filter(function (e) { var m = /^(.*): missing$/.exec(e); return !(m && OPTIONAL_342.indexOf(m[1].replace(/\[\d+\]/g, '')) >= 0); });
+  // release 3.4.2 appended keys may be missing in an older engine's snapshot (v3.3 / v3.3.1 / v3.4.1): only "missing" is excused,
+  // and only for an old object (3.4.2 review): opts.legacy, or every 3.4.2 key of this shape missing at once. opts.engine 'work'
+  // (a snapshot of the working engine) never excuses, and a partly missing set (a 3.4.2 object that lost keys) is never excused.
+  errs = excuse342(errs, OPTIONAL_342, S.root, opts, function (e) { var m = /^(.*): missing$/.exec(e); return m ? m[1].replace(/\[\d+\]/g, '') : null; });
   return { ok: errs.length === 0, errors: errs };
 }
 
@@ -621,7 +633,7 @@ module.exports = deepFreeze({
   ACT_ALARMS: ACT_ALARMS, LOG_TYPES: LOG_TYPES, LOG_EVENT_IDS_NEW: LOG_EVENT_IDS_NEW,
   FAULT_IDS_V33: FAULT_IDS_V33, FAULTS_NEW: FAULTS_NEW, FAULT_IDS: FAULT_IDS,
   LINE_NAMES_V33: LINE_NAMES_V33, LINES_NEW: LINES_NEW, LINE_NAMES: LINE_NAMES, LINE_FIELDS: LINE_FIELDS,
-  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS, HIST_KEYS_342: HIST_KEYS_342, FEATURES_342: FEATURES_342, LINES_342: LINES_342,
+  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS, HIST_KEYS_342: HIST_KEYS_342, FEATURES_342: FEATURES_342, LINES_342: LINES_342, excuse342: excuse342,
   NULLABLE_NEW: NULLABLE_NEW, NODE_IDS_V33: NODE_IDS_V33, NODE_IDS: NODE_IDS, SEG_COUNT: SEG_COUNT,
   DEFAULTS_NEW: DEFAULTS_NEW, FLOW_SIM: FLOW_SIM, SAMPLE_FLOW_SIM: SAMPLE_FLOW_SIM,
   DUMP_PHASES: DUMP_PHASES, DUMP_CMDS: DUMP_CMDS, SURGE_ROUTES: SURGE_ROUTES, SURGE2_ROUTE_VALUES: SURGE2_ROUTE_VALUES, ENUMS: ENUMS,

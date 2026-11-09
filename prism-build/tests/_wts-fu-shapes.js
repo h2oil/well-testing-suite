@@ -539,8 +539,10 @@ function checkShape(name, obj, opts) {
   walkShape(tpl, obj, S.root, errs, !!(opts && opts.strict));
   if (name === 'flow.ck2' && obj && obj.skipped !== true && Array.isArray(obj.segs) && obj.segs.length !== 2) errs.push('flow.ck2.segs: expected [seg3, seg4]');
   if (name === 'flow.sepBy' && obj && Array.isArray(obj.segs) && obj.segs.length !== 3) errs.push('flow.sepBy.segs: expected [seg3, seg4, seg5]');
-  // release 3.4.2 appended keys may be missing in an older engine's / view's snapshot: only "missing" (undefined) is excused
-  errs = errs.filter(function (e) { var m = /^([^:]*): (missing|expected .*, got undefined)$/.exec(e); return !(m && OPTIONAL_342.indexOf(m[1]) >= 0); });
+  // release 3.4.2 appended keys may be missing in an older engine's / view's snapshot: only "missing" (undefined) is excused, and
+  // only for an old object (3.4.2 review; the rule of _wts-equip-shapes.js excuse342: opts.legacy or all of the shape's 3.4.2 keys
+  // missing; never with opts.engine 'work')
+  errs = EQ.excuse342(errs, OPTIONAL_342, S.root, opts, function (e) { var m = /^([^:]*): (missing|expected .*, got undefined)$/.exec(e); return m ? m[1] : null; });
   return { ok: errs.length === 0, errors: errs };
 }
 var OPTIONAL_342 = ['sepBy.recv', 'sepBy.gasCap_mmscfd', 'cushion.out.surge'];

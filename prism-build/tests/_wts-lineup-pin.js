@@ -14,6 +14,9 @@
 // sep.bypass.dest (tests that use the production line keep it).
 //   legacyCfg / legacyOpts / legacyEngineOverrides()  all four pins → compare with the frozen v3.3 / v3.3.1 engines
 //   v341Cfg / v341Opts / v341EngineOverrides()        every pin but the line-up → compare with the frozen v3.4.1 engine
+//   lineupCfg / lineupOpts                            the T-201 line-up pin only (3.4.2 review): suites whose subject is the T-201
+//                                                    divert / rig-up behaviour on the v3.3.1 line-up and that compare with no
+//                                                    frozen engine — T-202, the LP line and the rig-up chain run as shipped
 //   pinCfg(cfg, which) / pinOpts(opts, which) / pinEngineOverrides(which)   which = {lineup, surge2, vent, routing} (missing = true)
 'use strict';
 
@@ -24,6 +27,7 @@ const LEGACY_VENT = Object.freeze({ to: 'hp' });
 const LEGACY_ROUTING = 'v341';
 const ALL = Object.freeze({ lineup: true, surge2: true, vent: true, routing: true });
 const V341 = Object.freeze({ lineup: false, surge2: true, vent: true, routing: true });
+const LINEUP = Object.freeze({ lineup: true, surge2: false, vent: false, routing: false });
 
 function plainCopy(x) { return x == null ? x : JSON.parse(JSON.stringify(x)); }
 function on(which, k) { return !which || which[k] !== false; }
@@ -47,6 +51,8 @@ function pinOpts(opts, which) {
 function legacyCfg(cfg) { return pinCfg(cfg, ALL); }
 function legacyOpts(opts) { return pinOpts(opts, ALL); }
 function v341Cfg(cfg) { return pinCfg(cfg, V341); }
+function lineupCfg(cfg) { return pinCfg(cfg, LINEUP); }
+function lineupOpts(opts) { return pinOpts(opts, LINEUP); }
 function v341Opts(opts) { return pinOpts(opts, V341); }
 
 // pinEngineOverrides(which?): harness sourceOverrides whose 31-wts-sim.js has the selected pins as its DEFAULTS, for app-level
@@ -75,5 +81,5 @@ function pinEngineOverrides(which) {
 function legacyEngineOverrides() { return pinEngineOverrides(ALL); }
 function v341EngineOverrides() { return pinEngineOverrides(V341); }
 
-module.exports = { LEGACY_LINEUP, LEGACY_SURGE2, LEGACY_LINEUP2, LEGACY_VENT, LEGACY_ROUTING, PIN_ALL: ALL, PIN_V341: V341,
-  pinCfg, pinOpts, pinSource, pinEngineOverrides, legacyCfg, legacyOpts, v341Cfg, v341Opts, legacyEngineOverrides, v341EngineOverrides };
+module.exports = { LEGACY_LINEUP, LEGACY_SURGE2, LEGACY_LINEUP2, LEGACY_VENT, LEGACY_ROUTING, PIN_ALL: ALL, PIN_V341: V341, PIN_LINEUP: LINEUP,
+  pinCfg, pinOpts, pinSource, pinEngineOverrides, legacyCfg, legacyOpts, v341Cfg, v341Opts, lineupCfg, lineupOpts, legacyEngineOverrides, v341EngineOverrides };

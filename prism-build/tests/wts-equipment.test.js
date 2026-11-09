@@ -339,7 +339,7 @@ module.exports = [
       const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 2, config: { noise: { on: false } } }));
       assert.strictEqual(JSON.stringify(sim.getRigup()), FU.GETRIGUP_DEFAULT_JSON, 'getRigup default (11 keys)');
       let st = sim.getState();
-      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup), { rigKeys: FU.RIG_KEYS }).errors.join('; '));
+      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup), { rigKeys: FU.RIG_KEYS }).errors.join('; '));
       // RIG_TXT: every key has an entry (toggle each non-locked key and read the message)
       const msgs = []; sim.on('rigup', (p) => msgs.push(p.msg));
       [['desander', true], ['surge2', true], ['heater', false], ['separator', false], ['gauge', false], ['pump', false], ['flare', false], ['surge', false]].forEach(([k, v]) => {
@@ -373,7 +373,7 @@ module.exports = [
       const sim = S.create(S.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } });
       let st = sim.getState();
       assert.strictEqual(st.rigup.refused, '', 'nothing refused yet');
-      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup), { rigKeys: FU.RIG_KEYS }).errors.join('; '));
+      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup), { rigKeys: FU.RIG_KEYS }).errors.join('; '));
       const log = []; sim.on('event', (p) => log.push(p.msg));
       assert.strictEqual(sim.setRigup({ surge2: false }), false, 'refused → false');
       st = sim.getState();
@@ -415,19 +415,19 @@ module.exports = [
       const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));
       sim.advance(600);
       const st = J(sim.getState());
-      ['desander', 'sand', 'surge2'].forEach((n) => { const r = X.checkShape(n, st[n], { strict: true }); assert.ok(r.ok, n + ': ' + r.errors.join('; ')); });
-      ['desander', 'surge2'].forEach((n) => { const r = X.checkShape('nodes.' + n, st.nodes[n], { strict: true }); assert.ok(r.ok, 'nodes.' + n + ': ' + r.errors.join('; ')); });
+      ['desander', 'sand', 'surge2'].forEach((n) => { const r = X.checkShape(n, st[n], { strict: true, engine: 'work' }); assert.ok(r.ok, n + ': ' + r.errors.join('; ')); });
+      ['desander', 'surge2'].forEach((n) => { const r = X.checkShape('nodes.' + n, st.nodes[n], { strict: true, engine: 'work' }); assert.ok(r.ok, 'nodes.' + n + ': ' + r.errors.join('; ')); });
       assert.deepStrictEqual(Object.keys(st.nodes), FU.NODE_IDS, 'node order (desander 8, surge2 9, heaterChoke 10)');
       assert.strictEqual(st.segs.length, X.SEG_COUNT);
       assert.deepStrictEqual(Object.keys(st.lines).slice(0, X.LINE_NAMES.length), X.LINE_NAMES, '20 line names');
       assert.deepStrictEqual(Object.keys(st.lines).slice(X.LINE_NAMES.length), X.LINES_342.slice(0, Object.keys(st.lines).length - X.LINE_NAMES.length), 'release 3.4.2 lines appended');
       Object.keys(X.LINES_NEW).forEach((k) => {
-        const r = X.checkShape('line', st.lines[k], { strict: true }); assert.ok(r.ok, 'line ' + k + ': ' + r.errors.join('; '));
+        const r = X.checkShape('line', st.lines[k], { strict: true, engine: 'work' }); assert.ok(r.ok, 'line ' + k + ': ' + r.errors.join('; '));
         assert.strictEqual(st.lines[k].unit, X.LINES_NEW[k].unit, k + ' unit'); assert.strictEqual(st.lines[k].phase, X.LINES_NEW[k].phase, k + ' phase');
       });
       X.FAULTS_NEW.forEach((f) => assert.strictEqual(st.faults[f.id], false, 'fault key ' + f.id));
       assert.strictEqual(st.health.massErr.sand, 0, 'massErr.sand');
-      assert.ok(X.checkShape('rigup', st.rigup, { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup');
+      assert.ok(X.checkShape('rigup', st.rigup, { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok, 'rigup');
       // static values while out: the desander follows the choke inlet; T-202 follows T-201's set point
       assert.ok(st.desander.inRig === false && st.desander.Pin === st.nodes.choke.Pin && st.desander.dP_psi === 0 && st.nodes.desander.P === st.nodes.choke.Pin, 'DS-101 out');
       assert.strictEqual(st.nodes.esd.P, st.nodes.choke.Pin, 'ESD node = choke inlet with DS-101 out (as v3.3)');

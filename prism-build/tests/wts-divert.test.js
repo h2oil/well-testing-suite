@@ -11,12 +11,12 @@
 // open the Well Test Simulator page, which falls back to the live 2D schematic in the harness (no WebGL).
 'use strict';
 // the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
-const { legacyOpts } = require('./_wts-lineup-pin.js');
+const { lineupOpts } = require('./_wts-lineup-pin.js');   // 3.4.2 review: the T-201 line-up pin only (T-202, LP line, chain as shipped)
 
 const WP = 'WTSDV';
 const NOISE_OFF = { noise: { on: false } };
 
-function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
+function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(lineupOpts(Object.assign({ seed: 7 }, o || {})))); }
 function run(s, secs, dt, cb) { const n = Math.round(secs / dt); for (let i = 0; i < n; i++) { s.advance(dt); if (cb && cb(s.getState(), i) === false) return; } }
 function balanced(assert, st, where) {
   const m = st.health.massErr;
@@ -245,8 +245,8 @@ module.exports = [
       assert.deepStrictEqual(c, { surge: { inlet: [false, true], suction: 'A', auto: true, sp: 0.75, hyst: 0.15, strokeS: 6 },
         gauge: { inlet: [false, true], auto: true, sp: 0.9, hyst: 0.1, strokeS: 8, allowInterrupt: true },
         // v3.3.1 (sim 1.4.0): T-202 inlet / auto route and DS-101 bypass / auto-dump join the lineup (defaults here)
-        // release 3.4.2: the T-202 compartment line-up appended (single-compartment values: legacyOpts pins compartments 1)
-        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6, comp: { inlet: [false, false], fill: [true, false], suction: 'A', auto: false, sp: 0.8, hyst: 0.1 } },
+        // release 3.4.2: the T-202 compartment line-up appended (the shipped dual T-202: lineupOpts pins only the T-201 line-up)
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6, comp: JSON.parse(JSON.stringify(require('./_wts-equip-shapes.js').CONTROLS_SURGE2_COMP_DUAL)) },
         desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 });
       // a fresh sim restored at t = 0: same lineup, the initial gauge fill sits in B (no batch side effects)
       const s2 = sim(app, { seed: 41 });
