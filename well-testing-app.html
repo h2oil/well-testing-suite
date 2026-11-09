@@ -156250,6 +156250,25 @@ G.WTS_modbusBridgeSetup = {
 const WTS_PIPES={'2':{'40':2.067,'80':1.939,'160':1.687},'3':{'40':3.068,'80':2.900,'160':2.624},'4':{'40':4.026,'80':3.826,'160':3.438},'6':{'40':6.065,'80':5.761,'160':5.187},'8':{'40':7.981,'80':7.625,'160':6.813},'10':{'40':10.020,'80':9.564,'160':8.500}};
 
 const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap','wts_bean2','wts_ck2Pos','wts_sepByDest','wts_sepByP','wts_ckLeg','wts_beanFix','wts_lpNps','wts_lpSch','wts_lpLen'];
+// v3.4.2 (DECISIONS 1): the V-101-out destination defaults to the surge tank T-201 on the page (the engine DEFAULTS stay 'flare').
+// One-time migration of the autosave: a stored 'flare' (legacy list wts_wts and the page record wts_page_wts) becomes 'surge'
+// unless the marker wts_sepByDest_m1 is set, then the marker is written. Project files keep their value: opening one, New and a
+// project change write the marker first (their keys replace the autosave), so what they hold is never migrated.
+const WTS_SEPBY_MARK='wts_sepByDest_m1';
+const wtsLsPut=(ls,k,v)=>{if(typeof __lsSet==='function')__lsSet(k,v);else ls.setItem(k,v);};
+function wtsSepByMigrate(){
+    try{
+        const ls=window.localStorage;if(!ls||ls.getItem(WTS_SEPBY_MARK))return;
+        [[LS_PREFIX+'wts',o=>o],[PAGE_LS_PREFIX+'wts',o=>o&&o.f]].forEach(([k,pick])=>{
+            const raw=ls.getItem(k);if(!raw)return;let o;try{o=JSON.parse(raw);}catch(e){return;}
+            const f=o&&typeof o==='object'?pick(o):null;
+            if(f&&typeof f==='object'&&f.wts_sepByDest==='flare'){f.wts_sepByDest='surge';wtsLsPut(ls,k,JSON.stringify(o));}});
+        wtsLsPut(ls,WTS_SEPBY_MARK,'1');
+    }catch(e){}
+}
+if(typeof document!=='undefined'&&document&&typeof document.addEventListener==='function')
+    ['wts:project-loaded','wts:project-new','wts:project-changed'].forEach(t=>document.addEventListener(t,()=>{
+        try{const ls=window.localStorage;if(ls&&!ls.getItem(WTS_SEPBY_MARK))wtsLsPut(ls,WTS_SEPBY_MARK,'1');}catch(e){}}));
 function renderWTS(body){
     $('pgTitle').textContent='Well Test Simulator';
     $('pgSub').textContent='Live 3D process simulation — P, T, levels & velocity from wellhead to gauge tank (API RP 14E)';
@@ -156303,7 +156322,7 @@ function renderWTS(body){
         <div class="fg-item"><label>Desander accumulator (gal)</label><input type="number" id="wts_dsAcc" value="50" min="10" max="200"></div>
         <div class="fg-item"><label>Max shut-in wellhead pressure (psig)</label><input type="number" id="wts_SITHP" value="" min="100" max="20000" placeholder="blank = 1.2 &times; WHP (estimated)"></div>
         <div class="fg-item"><label>Surge tank 2 capacity (bbl)</label><input type="number" id="wts_surge2Cap" value="100" min="20" max="500"></div>
-        <div class="fg-item"><label>With V-101 out, well stream to</label><select id="wts_sepByDest"><option value="flare">Burner / flare line</option><option value="line">Production line</option></select></div>
+        <div class="fg-item"><label>With V-101 out, well stream to</label><select id="wts_sepByDest"><option value="surge" selected>Surge tank T-201</option><option value="flare">Burner / flare line</option><option value="line">Production line</option></select></div>
         <div class="fg-item rp-skip wts-dis"><label>Production line pressure (psig)</label><input type="number" id="wts_sepByP" value="150" min="0" max="1440" disabled></div>
         <div class="fg-item"><label>LP flare line size (FT-201)</label><select id="wts_lpNps"><option value="2">2"</option><option value="3" selected>3"</option><option value="4">4"</option></select></div>
         <div class="fg-item"><label>LP flare line schedule</label><select id="wts_lpSch"><option value="40">SCH 40</option><option value="80">SCH 80</option></select></div>
@@ -156326,6 +156345,7 @@ function renderWTS(body){
       </div></div>
       <div id="wts_res"></div>
     </div></div></div>`;
+    wtsSepByMigrate();
     loadInputs('wts',WTS_IDS);
     // v3.3.3: Production line pressure applies to the 'line' destination only. Set here, synchronously on the destination's own events
     // (not the 50 ms page listeners), so the autosave restore — which fires the destination's change first, in DOM order — finds the
@@ -156382,7 +156402,7 @@ window.calcWTS=function(){
     const selV=id=>{const e=$(id);return e&&e.value!=null?String(e.value):'';};
     const bean2In=gv('wts_bean2'),sepByPIn=gv('wts_sepByP');
     const bean2=wtsClamp(isFinite(bean2In)?bean2In:48,4,128),ck2Pos=selV('wts_ck2Pos')==='midcoil'?'midcoil':'inlet',
-          sepByDest=selV('wts_sepByDest')==='line'?'line':'flare',sepByP=wtsClamp(isFinite(sepByPIn)?sepByPIn:150,0,1440);
+          sepByDest=(d=>d==='line'?'line':d==='surge'||d===''?'surge':'flare')(selV('wts_sepByDest')),sepByP=wtsClamp(isFinite(sepByPIn)?sepByPIn:150,0,1440);
     // v3.4.2 LP flare line of the surge-tank gas (FT-201; untagged imperial, D28): NPS 2 | 3 | 4 (default 3), SCH 40 | 80, length ft
     // (10-5,000, the engine clamp; blank / 0 → 150); flow.sim carries them to the simulator (cfg.surge.vent), flow.lp the steady block
     const lpNpsIn=selV('wts_lpNps'),lpLenIn=gv('wts_lpLen');
@@ -156640,8 +156660,10 @@ window.calcWTS=function(){
                 warnings:ws};
         };
         ck2Blk=ck2Block(Psep,false,regime);
-        // V-101 out: the whole stream to the burner / flare line (header P_FLARE_HDR) or a production line at P psig
-        const P0b=sepByDest==='line'?sepByP:P_FLARE_HDR;
+        // V-101 out: the whole stream to the burner / flare line (header P_FLARE_HDR), a production line at P psig or (v3.4.2, the
+        // page default; a page without the input too) the surge tank T-201 at its set point (0-30 psig, no Psep − 10 bound), walked
+        // through seg 5 'multi' with the flare-line geometry like 'line' (ASSUMPTION); an unknown value → the burner line
+        const P0b=sepByDest==='line'?sepByP:sepByDest==='surge'?wtsClamp(PsurgeRaw,0,30):P_FLARE_HDR;
         const B=wtsWalk({P0:P0b,seg5:'multi',heater:true,ck2:null,qs:1}),cb=ck1Of(B.Pco,1);
         const dPb=Pci-B.Pco,dThb=B.Tho-B.Thi,Qdb=CpMix*Math.max(dThb,0)*3600,dutyB=htrEff>0?Qdb/htrEff/1e6:0;
         const nfB=Qg>0&&cb.regime==='No Flow',wb=[];
@@ -156653,6 +156675,7 @@ window.calcWTS=function(){
         if(Qg>0&&!nfB&&B.Pho>=pshhB)wb.push({t:'error',msg:`PSHH-104 trips SDV-101 at ${fmt(pshhB,0)} psig (H-101 outlet ${fmt(B.Pho,0)} psig): this line pressure shuts the well in — lower the line pressure or go to the burner line`});
         if(sepByDest==='line'&&!nfB&&B.Pco>DESIGN_P_CK2)wb.push({t:'warn',msg:`Bypass path ${fmt(B.Pco,0)} psig at the CK-101 outlet (production line ${fmt(P0b,0)} psig plus line loss ${fmt(B.Pco-P0b,1)} psi) above the 1,440 psig design pressure (blocked outlet not simulated)`});
         if(Qg>0&&!nfB)vws(wb,[B.s3,B.s4,B.s5],[3,4,5]);
+        if(sepByDest==='surge')wb.push({t:'info',msg:`Whole well stream into the surge tank at ${fmt(P0b,0)} psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in — for liquid-dominated flow-back`});
         sepByBlk={v:1,dest:sepByDest,P0_psig:P0b,noFlow:nfB,
             choke:{regime:cb.regime,flowLimited:cb.flowLimited,QmaxMMscfd:cb.Qcap/1000,QcritMMscfd:Q_crit_max/1000,Pin:Pci,Pout:B.Pco,
                    ratio:cb.ratio,rCrit,dP:dPb,dTjt:jtOf(dPb),wJT},
@@ -156870,8 +156893,9 @@ function wtsPaint(C,rig){
         if(n.heater)rowAt(3,nrow('Heater (with CK-102)',n.heater.P,n.heater.T,thOf(n.heater.P)));}
     if(kb)put(C.iRowCk,nrow('Heater choke (CK-102)',kb.Pout,kb.Tout,kb.hyd.T));
     if(sb){const s5=sb.segs&&sb.segs[2];
-        put(C.iRowEnd,nrow(sb.dest==='line'?'→ production line':'→ burner line',sb.P0_psig,s5?s5.Tout:NaN,C.Thyd(sb.P0_psig+14.696)));
-        put(C.iChokeEnd,rrow('With V-101 out, to '+(sb.dest==='line'?'production line':'burner line'),
+        const dTx=sb.dest==='line'?'production line':sb.dest==='surge'?'surge tank T-201':'burner line';
+        put(C.iRowEnd,nrow('→ '+dTx,sb.P0_psig,s5?s5.Tout:NaN,C.Thyd(sb.P0_psig+14.696)));
+        put(C.iChokeEnd,rrow('With V-101 out, to '+dTx,
             'downstream '+uF(sb.choke.Pout,'pressureG',0,'psig')+' &middot; '+sb.choke.regime+(sb.choke.flowLimited?' (flow-limited)':'')));}
     if(kb)put(C.iChokeEnd,rrow('Two-stage with CK-102','P between chokes '+uF(kb.Pin,'pressureG',0,'psig')+' &middot; CK-101 '+kb.ck1.regime));
     if(inRig){

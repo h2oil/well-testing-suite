@@ -148,13 +148,14 @@ const HOST = [
       assert.strictEqual(stored.page.res, plain.page.res, 'page unchanged');
       // v3.4.2 (2026-11-09): the three LP flare line inputs are appended after the v3.3.3 keys
       assert.deepStrictEqual(Object.keys(plain.flow.sim).slice(5), X.SAMPLE_FLOW_SIM_KEYS.concat(['lpNps', 'lpSch', 'lpLen_ft']), 'flow.sim: the 9 keys after the v3.3 five, then the v3.4.2 LP inputs');
-      assert.ok(plain.flow.sim.sepByDest === 'flare' && plain.flow.sim.sepByP_psig === 150 && !('bean2' in plain.flow.sim), 'flow.sim destination defaults; bean2 travels in flow.ck2');
+      // v3.4.2 (2026-11-09): a page without the destination input gets the page default, the surge tank T-201
+      assert.ok(plain.flow.sim.sepByDest === 'surge' && plain.flow.sim.sepByP_psig === 150 && !('bean2' in plain.flow.sim), 'flow.sim destination defaults; bean2 travels in flow.ck2');
       // input clamps (§4.1): the bean 4–128 (blank → 48), the position (anything else → inlet)
       [['', 48], ['2', 4], ['500', 128], ['56', 56], ['1e400', 48]].forEach(([v, w]) => assert.strictEqual(flowOf({ wts_bean2: v }).flow.ck2.bean, w, 'bean2 ' + v));
       assert.strictEqual(flowOf({ wts_ck2Pos: 'between' }).flow.ck2.pos, 'inlet');
       // a page without the new inputs (stub DOM returns null) still publishes the blocks with the defaults
       const old = flowOf({});
-      assert.ok(old.flow.ck2.bean === 48 && old.flow.ck2.pos === 'inlet' && old.flow.sepBy.dest === 'flare', 'defaults without the inputs');
+      assert.ok(old.flow.ck2.bean === 48 && old.flow.ck2.pos === 'inlet' && old.flow.sepBy.dest === 'surge', 'defaults without the inputs (v3.4.2: dest surge)');
     },
   },
   {

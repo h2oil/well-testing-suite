@@ -102,9 +102,7 @@ module.exports = [
       const rs = C.run(mix(BASE, { wts_sepByDest: 'surge' }));
       W.wtsRenderResults(rs.flow, mix(RIG_ALL_IN, { separator: false }));
       h = $('wts_res').innerHTML;
-      if (rs.flow.sepBy && rs.flow.sepBy.dest === 'surge') {
-        assert.ok(h.indexOf('GOR not measured') > 0 && h.indexOf('GOR1 (separator)') < 0 && h.indexOf('Whole well gas to the tanks') > 0, 'V-101 out to T-201: no GOR rows, whole-well row');
-      }
+      assert.ok(h.indexOf('GOR not measured') > 0 && h.indexOf('GOR1 (separator)') < 0 && h.indexOf('Whole well gas to the tanks') > 0, 'V-101 out to T-201: no GOR rows, whole-well row');
       const rf = C.run(mix(BASE, { wts_sepByDest: 'flare' }));
       W.wtsRenderResults(rf.flow, mix(RIG_ALL_IN, { separator: false }));
       h = $('wts_res').innerHTML;
@@ -145,6 +143,61 @@ module.exports = [
       const h = app.el('wts_res').innerHTML;
       assert.ok(h.indexOf(LP_TITLE) > 0 && /sm³\/sm³/.test(h) && /m³\/d/.test(h) && !/SCF\/STB|Mscf\/d/.test(h.slice(h.indexOf(LP_TITLE))), 'Metric LP box');
       U.setSystem('imperial'); app.flush(200);
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
+    },
+  },
+  {
+    name: 'WTSLPH surge destination (DECISIONS 1): page default and a page without the input → the surge tank T-201 at its set point (0-30 psig), the same block shape as the burner line, choke outlet = P0 + seg 3 + 5 psi + seg 4 + seg 5, Critical, the info warning; unknown → burner line; display rows name the surge tank',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const f = flowOf({}).flow, sb = f.sepBy, fb = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;
+      assert.ok(f.sim.sepByDest === 'surge' && sb.dest === 'surge' && sb.P0_psig === 25 && sb.P0_psig === sb.surgeP_psig, 'surge at 25 psig');
+      const keys = (o) => JSON.stringify(Object.keys(o).concat(Object.keys(o.choke), Object.keys(o.nodes)));
+      assert.strictEqual(keys(sb), keys(fb), 'same block shape as the burner line');
+      const sum = (b) => b.P0_psig + b.segs[0].dP + 5 + b.segs[1].dP + b.segs[2].dP;
+      assert.ok(Math.abs(sb.choke.Pout - sum(sb)) < 0.5 && Math.abs(sb.segs[2].Pout - 25) < 0.2 && sb.segs[2].phase === 'multi', 'walk closes on 25 psig: ' + sb.choke.Pout);
+      assert.ok(sb.choke.regime === 'Critical' && sb.choke.Pout > fb.choke.Pout, 'Critical, above the burner-line outlet');
+      assert.ok(sb.warnings.some((w) => w.t === 'info' && /^Whole well stream into the surge tank at 25 psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in/.test(w.msg)), 'info warning');
+      assert.ok(!fb.warnings.some((w) => /surge tank at/.test(w.msg)), 'no surge warning on the burner line');
+      assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psurge: '40' }).flow.sepBy.P0_psig === 30 && flowOf({ wts_sepByDest: 'surge', wts_Psurge: '0' }).flow.sepBy.P0_psig === 0, 'set point 0-30');
+      assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psep: '20', wts_Psurge: '25' }).flow.sepBy.P0_psig === 25, 'no Psep − 10 bound');
+      assert.strictEqual(flowOf({ wts_sepByDest: 'export' }).flow.sepBy.dest, 'flare', 'unknown → burner line');
+      assert.deepStrictEqual(J(GOLD.baseFields(f)), J(GOLD.baseFields(flowOf({ wts_sepByDest: 'flare' }).flow)), 'base fields do not depend on the destination');
+      const C = GOLD.makeCalc(GOLD.hostRegion()), W = C.sandbox.window, $ = C.sandbox.$;
+      const r = C.run(mix(BASE, { wts_sepByDest: 'surge' }));
+      W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false }));
+      const h = $('wts_res').innerHTML, w = $('wts_warn').innerHTML;
+      assert.ok(h.indexOf('>→ surge tank T-201</td>') > 0 && /With V-101 out, to surge tank T-201<\/span><span class="rv">downstream [\d,]+ psig &middot; Critical/.test(h), 'surge rows');
+      assert.ok(/Whole well stream into the surge tank at 25 psig/.test(w), 'info warning painted');
+    },
+  },
+  {
+    name: 'WTSLPH page: destination select surge | flare | line (surge selected); the one-time autosave migration flare → surge with the marker wts_sepByDest_m1 (runs once; a later flare stays); a project open writes the marker first, so its value is kept',
+    wp: WP,
+    integration: true,
+    run(app, assert) {
+      const ls = app.win.localStorage, M = 'wts_sepByDest_m1';
+      const go = () => { const h = app.find('.nav-btn[data-p="home"]') || app.find('.nav-btn[data-p="clientinfo"]'); if (h) { app.click(h); app.flush(200); } app.click(app.find('.nav-btn[data-p="wts"]')); app.flush(600); };
+      ls.removeItem(M);
+      ls.setItem('wts_page_wts', JSON.stringify({ f: { wts_sepByDest: 'flare', wts_Psurge: '20' } }));
+      ls.setItem('wts_wts', JSON.stringify({ wts_sepByDest: 'flare' }));
+      go();
+      assert.strictEqual(app.el('wts_sepByDest').value, 'surge', 'migrated to the surge tank');
+      assert.strictEqual(app.el('wts_Psurge').value, '20', 'other values restored');
+      assert.strictEqual(ls.getItem(M), '1', 'marker written');
+      assert.strictEqual(JSON.parse(ls.getItem('wts_wts')).wts_sepByDest !== 'flare', true, 'legacy list migrated');
+      assert.strictEqual(app.win.WTS_state.flow.sepBy.dest, 'surge', 'flow follows');
+      app.change('wts_sepByDest', 'flare'); app.flush(600);
+      go();
+      assert.strictEqual(app.el('wts_sepByDest').value, 'flare', 'a later burner-line choice stays (runs once)');
+      // a project open: its keys replace the autosave (marker cleared with them); the open writes the marker before the page re-renders
+      ls.removeItem(M);
+      ls.setItem('wts_page_wts', JSON.stringify({ f: { wts_sepByDest: 'flare' } }));
+      app.win.document.dispatchEvent(new app.win.CustomEvent('wts:project-loaded', { detail: { loaded: ['storage'] } }));
+      assert.strictEqual(ls.getItem(M), '1', 'project open writes the marker');
+      go();
+      assert.strictEqual(app.el('wts_sepByDest').value, 'flare', 'the project value is kept');
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     },
   },

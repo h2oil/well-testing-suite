@@ -78,7 +78,8 @@ function sameStates(assert, a, b, tag) {
 let HOST_FLOW = null;   // harness-calcWTS default flow (blocks present once WP-C lands; V-101 in, CK-102 out)
 function hostDefaultFlow() {
   if (!HOST_FLOW) {
-    const r = GOLD.runSet(GOLD.hostRegion(), GOLD.SETS[0].vals);
+    // v3.4.2 (2026-11-09): the page default destination is now the surge tank T-201; this identity flow pins the burner line (C7)
+    const r = GOLD.runSet(GOLD.hostRegion(), Object.assign({}, GOLD.SETS[0].vals, { wts_sepByDest: 'flare' }));
     if (!r.flow) throw new Error('calcWTS published no flow');
     HOST_FLOW = J(r.flow);
   }

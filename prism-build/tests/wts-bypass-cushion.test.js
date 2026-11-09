@@ -32,7 +32,8 @@ const HOST = [
     wp: WP,
     opts: false,
     run(app, assert) {
-      const fl = flowOf({}).flow, sb = fl.sepBy;
+      // v3.4.2 (2026-11-09): the page default destination is the surge tank T-201; this test is about the burner line (pinned)
+      const fl = flowOf({ wts_sepByDest: 'flare' }).flow, sb = fl.sepBy;
       const sh = X.checkShape('flow.sepBy', sb, { strict: true });
       assert.ok(sh.ok, 'shape: ' + sh.errors.slice(0, 4).join('; '));
       assert.ok(sb.dest === 'flare' && sb.P0_psig === X.P_FLARE_HDR && sb.noFlow === false && sb.designP_psig === 1440, 'burner line P0 = the header');
@@ -94,7 +95,7 @@ const HOST = [
       assert.ok(!warnHas(flowOf(LINE(300)).flow.sepBy, X.WARN_TEXTS.sepByRating) && flowOf(LINE(300)).flow.sepBy.warnings.length === 0, 'no warnings at line 300');
       // the burner line at the defaults: the whole stream runs above the erosional velocity on seg 4 and seg 5 (review round), so the
       // block carries exactly the segment velocity warnings in the base text form (the engine raises VEL_* live)
-      const dw = flowOf({}).flow.sepBy;
+      const dw = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;   // v3.4.2: the burner line pinned (page default 'surge')
       const vel = dw.warnings.filter((w) => X.textRe(X.WARN_TEXTS.segVelExceed).test(w.msg) || X.textRe(X.WARN_TEXTS.segVelWarn).test(w.msg));
       assert.ok(vel.length === dw.warnings.length && dw.segs.filter((g) => g.vSt !== 'OK').length === vel.length, 'defaults: velocity warnings only ' + JSON.stringify(dw.warnings));
       ['Heater→Sep', 'Sep→Flare'].forEach((nm) => assert.ok(dw.warnings.some((w) => w.t === 'error' && w.msg.indexOf(nm + ': Velocity ') === 0 && /EXCEEDS erosional limit/.test(w.msg)), nm + ' EXCEED'));
@@ -108,10 +109,10 @@ const HOST = [
     opts: false,
     run(app, assert) {
       const C = GOLD.makeCalc(GOLD.hostRegion()), W = C.sandbox.window, $ = C.sandbox.$;
-      const r = C.run(mix(BASE, { wts_Psep: '30', wts_Psurge: '25' }));
+      const r = C.run(mix(BASE, { wts_Psep: '30', wts_Psurge: '25', wts_sepByDest: 'flare' }));   // v3.4.2: burner line pinned
       assert.ok(/Surge tank pressure too close to separator pressure/.test(r.page.warn), 'base surge warning (V-101 in)');
       W.wtsRenderResults(r.flow, mix(X.RIG_DEFAULTS, { separator: false }));
-      const res = $('wts_res').innerHTML, warn = $('wts_warn').innerHTML;
+      const res = $('wts_res').innerHTML, warn = $('wts_warn').innerHTML;   // (v3.4.2: BASE has no destination input → 'surge')
       assert.ok(res.indexOf('>' + X.LABELS.nodeRowBurner + '</td>') >= 0 && res.indexOf(X.LABELS.nodeRowLine) < 0, 'burner-line row');
       assert.ok(/With V-101 out, to burner line<\/span><span class="rv">downstream \d+ psig &middot; Critical/.test(res), 'V-101-out choke line');
       assert.ok(!/Surge tank pressure too close to separator pressure/.test(warn), 'surge-vs-separator warning hidden while V-101 is out');
@@ -142,7 +143,9 @@ const HOST = [
       assert.strictEqual(lab('wts_sepByP'), X.LABELS.sepByP);
       assert.ok(app.el('wts_sepByDest').closest('.card').querySelector('.card-title').textContent === 'Dynamic Simulation', 'in the Dynamic Simulation card');
       const opts = Array.from(app.el('wts_sepByDest').querySelectorAll('option')).map((o) => [o.getAttribute('value'), String(o.textContent)]);
-      assert.deepStrictEqual(opts, Object.keys(X.LABELS.sepByDestOptions).map((k) => [k, X.LABELS.sepByDestOptions[k]]), 'destination options');
+      // v3.4.2 (2026-11-09, DECISIONS 1): the surge tank T-201 first and selected, then the v3.3.3 options
+      assert.deepStrictEqual(opts, [['surge', 'Surge tank T-201']].concat(Object.keys(X.LABELS.sepByDestOptions).map((k) => [k, X.LABELS.sepByDestOptions[k]])), 'destination options');
+      assert.strictEqual(app.el('wts_sepByDest').value, 'surge', 'page default: the surge tank');
       assert.ok(!item('wts_sepByDest').classList.contains('rp-skip'), 'destination always shown');
       assert.ok(app.el('wts_sepByP').disabled && item('wts_sepByP').classList.contains('rp-skip'), 'line pressure disabled / rp-skip with the burner line');
       assert.ok(!app.el('wts_sepByP').getAttribute('data-wts-unit-cat'), 'line pressure untagged (card rule)');
