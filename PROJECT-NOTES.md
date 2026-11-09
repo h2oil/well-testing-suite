@@ -7,6 +7,23 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ## 2026-11-09 — v3.4.2 release: T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout
 
+**Integration (lead, after the four lanes merged)**
+- wts3d-test expectations moved to the 3.4.2 contract: default controls carry `surge2.comp` (dual, empty, both inlets shut); the 3D
+  scene key ends in '|lp' with the LP line on; 38 `EQV.surge2` = XV-202A / XV-202B; T-301 out keeps P-201 as a booster under the chain
+  (38 pumpShort now reads "BOOSTER · RUNNING / STANDBY"; the 'v341' routing still reads "OUT (no gauge tank)"); the host flow.lp block
+  and flow.sim.lp* are host-only like ck1 / ck2 / sepBy, page destination default 'surge'. 32 NULLABLE += rates.gor1 / gor2 /
+  gorTot_scf_stb, sepBy.gasCap_mmscfd (= WTS_sim.NULLABLE). 147 checks, 145 on this LF checkout (the two CRLF checks).
+- Help FS-5 re-measured on the integrated engine: at the default 10 MMscf/d PCV-201 (≈ 0.15 MMscf/d) cannot take the gas, so the
+  scenario is a low-gas well (1 MMscf/d), the cushion is started first and V-101 goes out at once; ≈ 26 bbl of water in T-301 by
+  breakthrough (2,468 s), PAH-201 2,650 s, PSHH-201 / ESD 2,715 s; V-101 back in at 35 min → no trip. Exercise 10 windows hold as
+  measured by the engine lane. The 3D course shots ck3d / trends / temp3d are cropped to #wts_viz (image total 7.97 MB of 8 MB).
+- Host: the wts_sepByDest migration writes through `__lsSet` (acct LS2: no raw host writes). acct-ops OP5 / acct-host HO31 accept the
+  privacy.html / terms.html pages and footer links of 19d8287 (they were on the publish allow-list already).
+- wts-fu-views / wts-equipment app tests: the stubs set rigup.dest from the fake destination and may pin routing 'v341' for the
+  v3.3.3 texts; the chain label and the T-202-without-T-201 switch are asserted for the default routing.
+- Gates: smoke 344/344; accept --html --integration 1847/1847; wts-calc-golden --check --time ≈ 2.54 / 2.52; wts-sim-perf (2nd run;
+  the 1st pooled 1.071 on a busy box) min 1.018 / pooled 1.035, both 1.550, ck2 1.015, cushion 1.089, line 0.963, surge 0.996.
+
 App and App Store version 3.4.2 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks). Built in four
 lanes against one contract (scratchpad designs INTEGRATION.md): ENGINE (31), VIEW3D (32), LIVE (38), HOST (calcWTS, 30, 47, 63,
 help, docs). `WTS_sim.VERSION` stays '1.5.0' (code comments v1.7.0) with `features.surge2Comps / lpFlare / rigChain`; 32 VERSION

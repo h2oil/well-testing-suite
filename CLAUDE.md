@@ -206,7 +206,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (344/344; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1765 tests; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1847 tests; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -315,8 +315,8 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1765/1765) and
-   `node prism-build/wts3d-test.js` (132 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
+   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1847/1847) and
+   `node prism-build/wts3d-test.js` (147 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
    after server/ or accounts (66-68) changes also `node server/test/run.js` (178 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
@@ -616,7 +616,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 344 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 1765 acceptance tests passed"
+# Expect: "[ok] all 1847 acceptance tests passed"
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -688,11 +688,11 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
-Acceptance tests:             1765/1765 pass (accept-test.js --html --integration; acct-* = v3.5 accounts client)
+Acceptance tests:             1847/1847 pass (accept-test.js --html --integration; acct-* = v3.5 accounts client)
 Server tests:                 178/178 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 5 field scenarios (FS-5 3.4.2),
-                              216 screenshots (7.97 MB)
-3D simulator tests:           132 checks (wts3d-test.js; 130/132 on a Linux LF checkout — the two CRLF checks)
+                              217 screenshots (7.97 MB)
+3D simulator tests:           147 checks (wts3d-test.js; 145/147 on a Linux LF checkout — the two CRLF checks)
 Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.00-1.01, both items in ≈ 1.45 / 1.6, ck2 ≈ 1.0 / 1.10,
                               cushion ≈ 1.10 / 1.15, line ≈ 0.9 / 1.05); wts-calc-golden.js --check --time
 Generated HTML:               ~152.9k lines (9.96 MB); www bundle ~10.0 MB (+ www/help 8.0 MB images and the guide)

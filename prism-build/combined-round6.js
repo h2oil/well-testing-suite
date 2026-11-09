@@ -4170,6 +4170,17 @@
         rows += _row('Gas Rate',  _fmt(fp.gasRate, 2),  'MMscf/d');
         rows += _row('Oil Rate',  _fmtInt(fp.oilRate),  'STB/d');
         rows += _row('Water Rate', _fmtInt(fp.waterRate), 'bbl/d');
+        // v3.4.2: GOR1 (separator) / GOR2 (tank flash, Standing PVT estimate) / total from the steady flow.lp block, and the
+        // simulator's metered GOR1 / GOR2 (FE-101 / FT-201 over the oil meter) when the live view has published WTS_state.sim
+        var lp = (fp.lp && typeof fp.lp === 'object') ? fp.lp : null;
+        if (lp) {
+            rows += _row('GOR1 (separator)', _fmtInt(lp.gor1), 'scf/STB');
+            rows += _row('GOR2 (tank, PVT est.)', _fmtInt(lp.gor2), 'scf/STB');
+            rows += _row('Total GOR', _fmtInt(lp.gorTot), 'scf/STB');
+        }
+        var sr = (s.sim && s.sim.rates && typeof s.sim.rates === 'object') ? s.sim.rates : null;
+        if (sr && (_isNum(sr.gor1) || _isNum(sr.gor2)))
+            rows += _row('Simulator GOR1 / GOR2 (metered)', _fmtInt(sr.gor1) + ' / ' + _fmtInt(sr.gor2), 'scf/STB');
         // CK-101 manifold: the bean is the in-service leg's; the positive (fixed) choke leg is named (the adjustable leg reads as before)
         rows += _row(fp.ck1 && fp.ck1.leg === 'fixed' ? 'Choke Bean (positive choke)' : 'Choke Bean', _fmt(fp.chokeBean, 0), '/64"');
         rows += _row('Separator Pressure', _fmt(fp.separatorPressure, 0), 'psig');
