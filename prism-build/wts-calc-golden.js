@@ -65,9 +65,9 @@ var SETS = [
 // the four new inputs of §4.1 (WP-C adds them to the page); present in --check with these values the base must not move
 // (CK-101 manifold, after v3.3.3: the adjustable leg in service with any positive-choke bean must not move the base either)
 var NEW_INPUTS = [
-  { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepByDest: 'flare', wts_sepByP: '150', wts_ckLeg: 'adj', wts_beanFix: '24' },
-  { wts_bean2: '24', wts_ck2Pos: 'midcoil', wts_sepByDest: 'line', wts_sepByP: '0', wts_ckLeg: 'adj', wts_beanFix: '4' },
-  { wts_bean2: '4', wts_ck2Pos: 'inlet', wts_sepByDest: 'line', wts_sepByP: '1400', wts_ckLeg: 'adj', wts_beanFix: '128' }];
+  { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepByDest: 'flare', wts_sepByP: '150', wts_ckLeg: 'adj', wts_beanFix: '24', wts_lpNps: '3', wts_lpSch: '40', wts_lpLen: '150' },
+  { wts_bean2: '24', wts_ck2Pos: 'midcoil', wts_sepByDest: 'line', wts_sepByP: '0', wts_ckLeg: 'adj', wts_beanFix: '4', wts_lpNps: '2', wts_lpSch: '80', wts_lpLen: '10' },
+  { wts_bean2: '4', wts_ck2Pos: 'inlet', wts_sepByDest: 'surge', wts_sepByP: '1400', wts_ckLeg: 'adj', wts_beanFix: '128', wts_lpNps: '4', wts_lpSch: '40', wts_lpLen: '5000' }];
 // a stored rig-up with CK-102 in and V-101 out (calcWTS never reads it, D2)
 var RIG_CK2_V101OUT = JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: true,
   desander: false, surge2: false, heaterChoke: true });
@@ -78,7 +78,9 @@ var TIME_CK2_SEPBY = mix(BASE, { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepBy
 // ck1 (CK-101 choke manifold: leg in service, adjustable / positive beans, effective bean) is a new block added after v3.3.3;
 // it is omitted like ck2 / sepBy so the strict no-extra-keys compare still guards every v3.3.1 field (no golden value changes;
 // with the adjustable leg in service flow.inputs.bean / flow.chokeBean are the v3.3.1 wts_bean, checked as before)
-var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig', 'ck1'];
+// v3.4.2 (2026-11-09): lp (the LP flare line / tank gas block) and the three LP line inputs in flow.sim are new blocks, omitted the
+// same way (the golden file is not edited; the LP box is painted only once a rig-up is handed over, so the page stays exact)
+var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig', 'ck1', 'lp', 'sim.lpNps', 'sim.lpSch', 'sim.lpLen_ft'];
 
 // encode: JSON-safe copy keeping -0, NaN and ±Infinity ({$n: '-0' | 'NaN' | 'Infinity' | '-Infinity'}); undefined values
 // become {$u: 1} so a key that is present but undefined is not lost
@@ -110,8 +112,11 @@ function decode(x) {
 function baseFields(flow) {
   if (!flow || typeof flow !== 'object') return flow;
   var c = decode(encode(flow));
-  delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1;
-  if (c.sim && typeof c.sim === 'object') { delete c.sim.sepByDest; delete c.sim.sepByP_psig; }
+  BASE_FIELDS_OMIT.forEach(function (p) {                       // every omitted path (top-level keys and 'sim.<key>')
+    var i = p.indexOf('.');
+    if (i < 0) delete c[p];
+    else if (c[p.slice(0, i)] && typeof c[p.slice(0, i)] === 'object') delete c[p.slice(0, i)][p.slice(i + 1)];
+  });
   return c;
 }
 // compare(g, a): strict, every path of g in a with === (NaN equals NaN; -0 and 0 must match by sign too), no extra keys in a

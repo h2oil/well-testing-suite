@@ -2163,6 +2163,9 @@ function simSamples(t) {
     var add = function (tag, v, unit) { if (v !== null && v !== undefined && isFinite(+v)) out.push({ tag: tag, device: 'simulator', unit: unit, t: t, v: +v, q: 'good' }); };
     add('SIM.QG', R.gas_mmscfd, 'MMscf/d'); add('SIM.QO', R.oil_stbd, 'STB/d'); add('SIM.QW', R.water_bpd, 'bbl/d');
     add('SIM.GOR', R.gor, 'scf/STB'); add('SIM.BSW', R.bsw_pct, '%'); add('SIM.CUM_OIL', C.oil_stb, 'STB'); add('SIM.CUM_GAS', C.gas_mmscf, 'MMscf');
+    // v3.4.2: GOR1 (separator, FE-101) and GOR2 (tank, FT-201) beside the total SIM.GOR, and the tank gas on the LP flare line
+    // (blank while the simulator has none: V-101 out, below 0.1 STB/d oil, an older simulator)
+    add('SIM.GOR1', R.gor1, 'scf/STB'); add('SIM.GOR2', R.gor2, 'scf/STB'); add('SIM.QG_LP', R.lpGas_mscfd, 'Mscf/d');
     return out;
 }
 function setFormLogging(on) {
