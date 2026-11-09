@@ -32,7 +32,7 @@ const SECRET_ENV = [
 ];
 const CONFIG_ENV = [
   'WTS_ENV', 'WTS_OIDC_MODE', 'WTS_MASTER_KID', 'WTS_APP_PATH', 'WTS_DEV_ORIGIN', 'WTS_DEV_PORT', 'WTS_CLIENT_IP_HEADER',
-  'WTS_HOST_HEADER', 'WTS_MAIL_FROM', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
+  'WTS_HOST_HEADER', 'WTS_DB_ROLE', 'WTS_MAIL_FROM', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
   'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_LINKEDIN_CLIENT_ID',
 ].concat(Object.keys(SWITCHES));
 const ENVS = ['production', 'preview', 'local', 'test'];
@@ -121,6 +121,9 @@ function loadConfig(env) {
   }
   let ipHeader = env.WTS_CLIENT_IP_HEADER ? String(env.WTS_CLIENT_IP_HEADER).trim().toLowerCase() : '';
   if (ipHeader === 'x-forwarded-for') { warnings.push('WTS_CLIENT_IP_HEADER: the client-supplied X-Forwarded-For is never trusted — ignored'); ipHeader = ''; }
+  // one-login hosting (core/db.js): the request role every transaction switches to; only wts_api is accepted
+  let dbRole = env.WTS_DB_ROLE ? String(env.WTS_DB_ROLE).trim() : '';
+  if (dbRole && dbRole !== 'wts_api') { warnings.push('WTS_DB_ROLE: only wts_api is accepted for request handlers — the database is not used'); dbRole = 'invalid'; }
   const hostHeader = env.WTS_HOST_HEADER ? String(env.WTS_HOST_HEADER).trim().toLowerCase() : '';
   let appPath = String(env.WTS_APP_PATH || '/').trim();
   if (!/^\/[A-Za-z0-9._\/-]*$/.test(appPath) || appPath.indexOf('//') !== -1) { warnings.push('WTS_APP_PATH: not a plain path — "/" used'); appPath = '/'; }
@@ -150,7 +153,7 @@ function loadConfig(env) {
     signup, syncMode, accountsOff, oidcMode: production ? '' : oidcMode,
     providers: Object.freeze(providers),
     providerSwitches() { const o = {}; Object.keys(providers).forEach((p) => { o[p] = providers[p].effective; }); return o; },
-    ipHeader, hostHeader,
+    ipHeader, hostHeader, dbRole,
     mailFrom: env.WTS_MAIL_FROM || 'no-reply@h2oil.co.uk',
     terms: String(env.WTS_TERMS_VERSION || '1'), privacy: String(env.WTS_PRIVACY_VERSION || '1'),
     // the security minimum of X-WTS-App (§3.2): unset = no gate; raised only for a security fix, never for a format change

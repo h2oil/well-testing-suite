@@ -11,7 +11,9 @@
 // package.json + package-lock.json (production dependencies are installed by the workflow with `npm ci --omit=dev` in dist),
 // entry/api.js — the ONLY host function, alone in its own folder so a host that deploys every file of its functions folder
 // deploys just this one (default export for fetch-style runtimes, `handler` for event-style runtimes) — and
-// static/robots.txt (the only static file: "Disallow: /"; the site publishes no app content), build-info.json (the tag,
+// static/robots.txt (the only static file: "Disallow: /"; the site publishes no app content), and for Netlify (v4.0) the
+// site's own layout — netlify.toml, netlify/functions/*.mjs (the six functions of site/netlify.js) and public/robots.txt —
+// checked by site/netlify-check.js, so the release workflow deploys dist/ with the platform CLI (RUNBOOK), build-info.json (the tag,
 // the commit and the SHA-256 of every file). It never contains test/, ops/ scripts, ci/, the RUNBOOK, .env* or keys; the build
 // fails if a file in dist names a secret VALUE pattern (server/ci/secret-scan.js rules) or if the static folder holds
 // anything but robots.txt.
@@ -52,7 +54,8 @@ function build(o) {
   fs.rmSync(out, { recursive: true, force: true });
   const list = [];
   COPY.forEach((d) => copyTree(path.join(SERVER, d), path.join(out, d), d, list));
-  ['package.json', 'package-lock.json'].forEach((f) => { fs.copyFileSync(path.join(SERVER, f), path.join(out, f)); list.push(f); });
+  ['package.json', 'package-lock.json', 'netlify.toml'].forEach((f) => { fs.copyFileSync(path.join(SERVER, f), path.join(out, f)); list.push(f); });
+  ['netlify', 'public'].forEach((d) => copyTree(path.join(SERVER, d), path.join(out, d), d, list));
   fs.mkdirSync(path.join(out, 'entry'), { recursive: true });
   fs.writeFileSync(path.join(out, 'entry', 'api.js'), ENTRY); list.push('entry/api.js');
   const entries = fs.readdirSync(path.join(out, 'entry'));
@@ -63,12 +66,13 @@ function build(o) {
   const bad = [];
   list.forEach((r) => {
     const f = path.join(out, r);
-    if (/\.(js|json|sql|txt)$/.test(r)) scan.scanText(fs.readFileSync(f, 'utf8')).forEach((x) => bad.push(r + ':' + x.line + ' ' + x.rule));
+    if (/\.(m?js|json|sql|txt|toml)$/.test(r)) scan.scanText(fs.readFileSync(f, 'utf8')).forEach((x) => bad.push(r + ':' + x.line + ' ' + x.rule));
     if (scan.KEY_FILE.test(r)) bad.push(r + ' key-file');
   });
   const statics = fs.readdirSync(path.join(out, 'static'));
   if (statics.length !== 1 || statics[0] !== 'robots.txt') bad.push('static/ holds more than robots.txt');
   if (entries.length !== 1 || entries[0] !== 'api.js') bad.push('entry/ holds more than api.js');
+  require('./netlify-check').check(out).forEach((x) => bad.push('netlify: ' + x));
   if (bad.length) { fs.rmSync(out, { recursive: true, force: true }); throw new Error('site/build: refused — ' + bad.join('; ')); }
   const files = list.sort().map((r) => ({ path: r, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(out, r))).digest('hex') }));
   const info = { tag: process.env.GITHUB_REF_NAME || o.tag || null, commit: process.env.GITHUB_SHA || o.commit || null, files };

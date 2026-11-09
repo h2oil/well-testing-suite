@@ -512,6 +512,9 @@ BEGIN
 END $$;
 
 -- ── ownership and privileges of the new functions ───────────────────────────────────────────────────────────────
+-- a non-superuser migrator (one-login hosting, db/migrate.js --platform) may only hand a function to a role that can create in
+-- the schema: CREATE is lent to wts_definer for the ownership change and taken back at once (a superuser migrator: no change)
+GRANT CREATE ON SCHEMA wts TO wts_definer;
 DO $own$
 DECLARE f record;
 BEGIN
@@ -525,6 +528,7 @@ BEGIN
   END LOOP;
 END
 $own$;
+REVOKE CREATE ON SCHEMA wts FROM wts_definer;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA wts FROM PUBLIC;
 -- helpers (invoker rights, no data)
 GRANT EXECUTE ON FUNCTION wts.current_user_id(), wts.audit_row_text(text, text, text, uuid, inet, text, timestamptz, jsonb),

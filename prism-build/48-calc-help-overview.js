@@ -85,7 +85,7 @@ outputs: [{ label: 'This build', text: 'Says whether analytics are active. The w
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'b8c6ebd2', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'a148cd51', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],

@@ -39,9 +39,11 @@ function hostAllowed(req, cfg) {
   if (cfg.production) return false;
   return /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(h);
 }
-// Client address: only the trusted header named by WTS_CLIENT_IP_HEADER (never X-Forwarded-For), else the socket.
+// Client address: only the trusted header named by WTS_CLIENT_IP_HEADER (never X-Forwarded-For), else the socket. When the
+// header holds a list, the LAST value is used: it is the one the host's own edge appended, while earlier values may have been
+// sent by the client itself (RUNBOOK §3N step 12.5 checks a forged header once on the live site).
 function clientIp(req, cfg) {
-  if (cfg.ipHeader) return String(header(req, cfg.ipHeader) || '').split(',')[0].trim() || null;
+  if (cfg.ipHeader) return String(header(req, cfg.ipHeader) || '').split(',').map((v) => v.trim()).filter(Boolean).pop() || null;
   return req.remoteAddress || null;
 }
 // The rewrite from the static site adds X-WTS-Proxy-Sig; without the shared secret configured only non-production accepts.

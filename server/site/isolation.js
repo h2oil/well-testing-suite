@@ -10,6 +10,8 @@
 //     name ends in "_preview".
 //
 //   checkIsolation(config, env) → {ok, env, signinAllowed, problems:[text], warnings:[text]}
+//     production + NETLIFY_DB_URL as the request database → the standing ONE_LOGIN_WARNING (logged as a "config:" line):
+//     the platform's single login is administrator-equivalent and cannot be refused by name like the credentials below.
 //     ok:false → the adapter (site/handler.js) serves nothing but /health (503 paused elsewhere) and logs "alert:" lines.
 //   kidsOf(raw)  → [kid] from a "kid:base64,…" list (values never returned)
 //   dbNameOf(url) → the database name of a connection URL ('' when none)
@@ -30,8 +32,13 @@ const OFF_SITE_CREDENTIALS = [
   { name: 'WTS_SUPPORT_DB_URL', text: 'the support credential' },
   { name: 'WTS_BACKUP_DB_URL', text: 'the backup (export) database credential' },
   { name: 'WTS_BACKUP_KEY', text: 'the weekly export key' },
+  { name: 'WTS_BACKUP_PRIVATE_KEY', text: 'the private key that opens the weekly exports' },
   { name: 'WTS_EXPORT_CREDENTIAL', text: 'the export storage credential' },
 ];
+
+const ONE_LOGIN_WARNING = 'one-login database: this site holds the database owner credential (NETLIFY_DB_URL, BYPASSRLS — the '
+  + 'same value as the migration credential); role separation and the read-only export role are not enforced by credentials '
+  + 'here (plan B.4); set a dedicated WTS_DB_URL / WTS_JOBS_DB_URL if the platform allows it';
 
 function checkIsolation(config, env) {
   env = env || process.env;
@@ -50,6 +57,11 @@ function checkIsolation(config, env) {
     if (previewFlag) problems.push('WTS_PREVIEW_SIGNIN is set in production');
     // credentials D12 / §13.3 keep off the functions site (operations scripts, jobs host or the release workflow only)
     OFF_SITE_CREDENTIALS.forEach((c) => { if (env[c.name]) problems.push(c.text + ' (' + c.name + ') is present in the production functions environment'); });
+    // one-login hosting: the platform's database login is the database OWNER (BYPASSRLS) — the same value as the migration
+    // credential. It cannot be refused by name, so it is a standing warning instead of a silent pass (plan B.4 item 1)
+    if (env.NETLIFY_DB_URL && (!env.WTS_DB_URL || env.WTS_DB_URL === env.NETLIFY_DB_URL)) {
+      warnings.push(ONE_LOGIN_WARNING);
+    }
   } else {
     if (masterKids.some((k) => k < PREVIEW_KID_MIN)) problems.push(mode + ': a master key with a production kid (< 9000) is loaded — use a ' + mode + ' key (kid ≥ 9000)');
     if (pepperKids.some((k) => k < PREVIEW_KID_MIN)) problems.push(mode + ': a code pepper with a production kid (< 9000) is loaded');
@@ -66,4 +78,4 @@ function checkIsolation(config, env) {
   return { ok: problems.length === 0, env: mode, signinAllowed, problems, warnings };
 }
 
-module.exports = { checkIsolation, kidsOf, dbNameOf, PREVIEW_KID_MIN, OFF_SITE_CREDENTIALS };
+module.exports = { checkIsolation, kidsOf, dbNameOf, PREVIEW_KID_MIN, OFF_SITE_CREDENTIALS, ONE_LOGIN_WARNING };

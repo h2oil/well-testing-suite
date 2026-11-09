@@ -39,7 +39,7 @@ const commitReq = {
   core: { hash: H1, vhash: H2, zsha: H3, bytes: 48213, inline: 'H4sIAAAAAAAAA6uuBQBDv6ajAgAAAA==' },
   parts: [{ name: 'well/w1', hash: H3, bytes: 61230 }, { name: 'well/w1/prism_gauges', hash: H2, bytes: 9120344 }],
   meta: { name: 'Example-1 DST', client: 'Operator Energy Ltd', well: 'Example-1', field: '', operator: '' },
-  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '3.5',
+  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0',
 };
 
 const EXAMPLES = {
@@ -68,7 +68,7 @@ const EXAMPLES = {
     user: { id: U1, emailMasked: MASK, created: T0, status: 'active', terms: '1', privacy: '1' },
     session: { publicDevice: false, authAt: T0, authMethod: 'google', stepupAt: null, idleExpires: T1, absExpires: T1 },
     quota: { limit: 250000000, used: 1200 }, opts: { historian: false, liveCfg: false }, projects: 1, passkeys: [],
-    identities: [{ id: I1, provider: 'google', linkedAt: T0, lastUsedAt: T0 }], devices: [{ id: D1, label: 'Office PC', lastSeen: T0, current: true }], minClient: '3.5',
+    identities: [{ id: I1, provider: 'google', linkedAt: T0, lastUsedAt: T0 }], devices: [{ id: D1, label: 'Office PC', lastSeen: T0, current: true }], minClient: '4.0',
   } } },
   outboxKey: { res: { 200: { k: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' } } },
   opts: { req: { historian: true }, res: { 200: { opts: { historian: true, liveCfg: false } } } },

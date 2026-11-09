@@ -81,7 +81,7 @@ if (require.main === module) {
   const { createKeys } = require('../core/keys');
   const keys = createKeys(loadJobsConfig(Object.assign({}, process.env)));
   if (!keys.ready || keys.ephemeral) { console.error('[retire-client] keys are not configured: ' + keys.missing.join(', ')); process.exit(2); }
-  const db = createDb(url, { max: 1 }); const jobs = createDb(jurl, { max: 1 });
+  const db = createDb(url, { max: 1, role: 'wts_support', sessionRole: true }); const jobs = createDb(jurl, { max: 1, role: 'wts_jobs', sessionRole: true });
   const close = () => Promise.all([db.close(), jobs.close()]);
   retireClient(db, { provider: o.provider, actor: o.actor, jobs, keys })
     .then((r) => { console.log('[retire-client] ' + o.provider + ': ' + r.identities + ' identities removed for ' + r.users + ' users; ' + r.sessions + ' sessions revoked; ' + r.notices + ' notices queued'); return close(); })

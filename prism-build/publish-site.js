@@ -2,7 +2,8 @@
 'use strict';
 // prism-build/publish-site.js — the static site's PUBLISH ALLOW-LIST (docs/ACCOUNTS-PLAN.md §13.2, §8.2; WP-OPS).
 //
-// The static site publishes only an explicit allow-list from a publish directory built here — the app page, sw.js, help/**,
+// The static site publishes only an explicit allow-list from a publish directory built here — the app page (also as
+// index.html, a byte copy, when the tree has none, so / keeps working), sw.js, help/**,
 // and, when they exist, the icons, the web manifest and the privacy / legal pages. Functions are never part of the static
 // output (the server lives in server/ as a separate functions-only site, server/site/). Nothing changes for the live site
 // until the owner points the static site's publish directory at the folder this script writes (server/RUNBOOK.md,
@@ -114,6 +115,8 @@ function collect(root) {
     out.push({ rel: f, abs });
   });
   ALLOW.optional.forEach((f) => { const abs = path.join(root, f); if (fs.existsSync(abs) && fs.statSync(abs).isFile()) out.push({ rel: f, abs }); });
+  // the site root (/ and /index.html) always serves the app: without an index.html in the tree it is a byte copy of the page
+  if (!out.some((e) => e.rel === 'index.html')) out.push({ rel: 'index.html', abs: path.join(root, 'well-testing-app.html') });
   ALLOW.dirs.forEach((d) => {
     walk(path.join(root, d.dir), d.dir, []).filter((e) => d.ext.test(e.rel)).forEach((e) => out.push(e));
   });

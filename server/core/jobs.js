@@ -88,7 +88,7 @@ async function queueMail(tx, keys, to, template, params) {
 async function sendOutbox(sql, mail, m, log) {
   let ok = false;
   try { await mail.send(compose({ to: m.to, template: m.template, params: m.params })); ok = true; } catch (e) { log.warn('jobs: ' + m.template + ' send failed'); }
-  await sql`update wts.mail_outbox set sent_at = ${ok ? sql`now()` : null}, tries = tries + 1 where id = ${m.id}`;
+  await sql`update wts.mail_outbox set sent_at = case when ${!!ok}::boolean then now() end, tries = tries + 1 where id = ${m.id}`;
   return ok;
 }
 const whenText = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
@@ -127,7 +127,7 @@ async function runDaily(o) {
         await mail.send(compose({ to, template: m.template, params: p.params }));
         ok = true; sent++;
       } catch (e) { failed++; }
-      await sql`update wts.mail_outbox set sent_at = ${ok ? sql`now()` : null}, tries = tries + 1 where id = ${m.id}`;
+      await sql`update wts.mail_outbox set sent_at = case when ${!!ok}::boolean then now() end, tries = tries + 1 where id = ${m.id}`;
     }
     return { sent, failed };
   });
