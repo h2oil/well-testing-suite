@@ -199,7 +199,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (344/344; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1813 tests; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1824 tests; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -326,10 +326,10 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1813/1813) and
+   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1824/1824) and
    `node prism-build/wts3d-test.js` (134 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
-   after server/ or accounts (66-68) changes also `node server/test/run.js` (252 tests on a throwaway cluster);
+   after server/ or accounts (66-69) changes also `node server/test/run.js` (278 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -596,8 +596,10 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   now includes the whole-stream line loss (a v3.3.1 / v3.3.2 V-101-out rig-up runs slightly differently: ≈ 14 → ≈ 35 psig on the
   default burner line at the full rate, with velocity alarms); SEPBY_RATING rounds a small line loss; after `done` the cushion tail
   runs on, so CUSH_BURNER stays until the formation blend ends.
-- **Accounts (v4.0, Phase 1)** (docs/ACCOUNTS-PLAN.md §14, Appendix B.4; server/README.md "Hosting"): web only and inert until the
-  server is configured and the beta flag is on; manual Save / Open from cloud only (automatic sync and the key-level merge are
+- **Accounts (v4.0 / v4.2, Phase 1)** (docs/ACCOUNTS-PLAN.md §14, Appendix B.4; server/README.md "Hosting"): web only and inert until the
+  server is configured and the beta flag is on (still true in v4.2: the welcome prompt and the chip mount only with ?cloud=1;
+  whether a new address may sign up is the server's ACCOUNTS_SIGNUP — the live setting is open, but the sign-up dialog, the
+  Privacy notice, the Terms and RUNBOOK §3L still describe an invitation-only trial: reconcile before announcing open sign-up); manual Save / Open from cloud only (automatic sync and the key-level merge are
   v4.0.x, passkeys / historian backup / live-data settings / field-level merge v4.1); no merge tool for two accounts; the server
   minimum client is 4.0 on our hosting platform (an older page gets 426 on project writes); LinkedIn stays switched off in
   production until its live tests (plan §13.10 step 13) are recorded; the weekly export stays in the same EU region; the
@@ -606,11 +608,11 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   Privacy notice and Terms of Use (v3.4.2) still have owner facts pending (see their top comments). Live set-up (owner decision
   2026-11-09, server/RUNBOOK.md §3L): same-site mode on the live site on the Free plan — the account database is in the United
   States (Ohio) permanently and the functions are not pinned to London; Blobs (larger project files, weekly exports) stay in
-  eu-central-1; the privacy notice and the in-app cards say so (privacy version stays 1: accounts were not open under it and the
-  analytics text is unchanged); the daily job and the export run in background functions (offered on the Free plan; a scheduled function has only 30 s —
+  eu-central-1; the privacy notice and the in-app cards say so (Privacy notice version 2 since v4.2: country / city, the optional
+  profile and project summaries; WTS_PRIVACY_VERSION=2 and the analytics consent VER 2 change together with it); the daily job and the export run in background functions (offered on the Free plan; a scheduled function has only 30 s —
   the opt-in --inline-jobs fallback runs them in place under a 25 s budget that stops with an alert); same-site mode refuses
   any WTS_ENV but production / staging;
-  no Report-Only CSP on the live site (quota); the invite list is WTS_INVITE_BOOTSTRAP (env, redeploy to change); processor
+  no Report-Only CSP on the live site (quota); the invite list is WTS_INVITE_BOOTSTRAP (env, redeploy to change; also the admins when WTS_ADMIN_EMAILS is unset); processor
   contracts with transfer safeguards are promised before anyone outside H2Oil is invited; the e2e test E2 (link LinkedIn) is
   flaky on the base branch too ("linkProvider rejected before the step-up code: cancelled", about 1 run in 3).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
@@ -639,7 +641,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 344 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 1813 acceptance tests passed"
+# Expect: "[ok] all 1824 acceptance tests passed"
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -700,7 +702,7 @@ node prism-build/gui-sweep.js --mobile                       # click sweep at 39
 
 ---
 
-## Cumulative stats (as of 2026-11-09, v4.0)
+## Cumulative stats (as of 2026-11-09, v4.2)
 
 ```
 PRiSM source files:           01-21 + 33-37, 39, 51-59 (Round-8; 56-59 = DFIT) + tooling
@@ -711,8 +713,8 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
-Acceptance tests:             1813/1813 pass (accept-test.js --html --integration; acct-* = v4.0 accounts client)
-Server tests:                 252/252 (node server/test/run.js; throwaway database cluster)
+Acceptance tests:             1824/1824 pass (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client)
+Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 4 field scenarios,
                               216 screenshots (7.98 MB)
 3D simulator tests:           134 checks (wts3d-test.js; 132/134 on a Linux LF checkout — the two CRLF checks)
@@ -721,7 +723,14 @@ Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.0
 Generated HTML:               ~157.3k lines (10.3 MB); www bundle ~10.0 MB (+ www/help 8.0 MB images and the guide)
 ```
 
-Latest release: v4.0 (cloud accounts, web only and an invite beta, Phase 1 of docs/ACCOUNTS-PLAN.md: sign in with an e-mail
+Latest release: v4.2 (accounts follow-up, web only: sign-in chip at the bottom-left of the sidebar (menu opens upward),
+welcome prompt (Create free account / Sign in / Continue as guest, a guest asked again after 30 days), optional profile at
+sign-up and on the Account page, a project summary with each Save to cloud, an updated Terms / Privacy step for existing accounts,
+the owner admin dashboard (file 69); server: same-site mode live, esbuild pre-bundled functions, country / city capture, admin
+API, profile / summary encrypted at rest, migrations 060 / 070, platform migrations from 080 without transaction control; neutral
+item on both platforms: Privacy notice version 2 (analytics consent asked again on the web); App Store 4.2 with only that item;
+PROJECT-NOTES.md has the live environment settings), dated 2026-11-09, on top of
+v4.0 (cloud accounts, web only and an invite beta, Phase 1 of docs/ACCOUNTS-PLAN.md: sign in with an e-mail
 code, Google or LinkedIn, save / open projects in the account, history, export, delete, account page; files 66-68 inert unless the
 beta flag and the exact host; the account API in server/ as a separate functions-only site on our hosting platform, owner guide
 server/RUNBOOK.md §3N / §3P; release-notes account items are web only (ACCT markers + platform:'web'); neutral items on both
@@ -762,7 +771,7 @@ as the 8th row of Test System Safety, THI hydrate design with real-gas J-T × 1.
 chemicals, pump settings ranked for classified areas with the air-driven liquid pump as the H1 default, surface discharge
 pressure / relief band, drive gas, calibration, tank; Hydrate-page rp-skip banner and Chemical & Dosage cross-link; Quick
 Report final + daily entries; 3.2b — H2S scavenger card, downhole capillary, LDHI screening, second expansion, batch — still
-to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.0**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
+to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.2**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
 
 **Shared engines (reuse, never duplicate):** `PRiSM_dfit_pipeline` (57; the only place that knows the DFIT stage order, with a
 Job twin), `WTS_wellbore` (48-calc-wellbore: survey, strings, column, `convert`, `csys`, `stepRate`, `ramp`, `hammerQuick`),

@@ -5,6 +5,80 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-09 — v4.2 release: accounts follow-up (sidebar sign-in, welcome prompt, profile, project summaries, admin dashboard), Privacy notice v2
+
+App and App Store version 4.2 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
+`#appVersionLabel` fallback, help/user-guide.html stamp). Owner request: "merge all branches to main and release 4.2" and
+"update the change log too on 4.2". Every branch was already contained in master / Dev / dev-87qwkg (e706c94, PR #27); the
+release is cut on `rel/4.2` from e706c94. The owner named the release 4.2; there is no 4.1.
+
+**What shipped (web only: ACCT blocks, stripped from the iOS bundle)**
+- Sign-in chip moved into the sidebar footer (`#sbAccountLine`), bottom-left, full sidebar width, "Sign in / Sign up" while
+  signed out; the footer is sticky (also in the phone drawer); the signed-in menu opens upward (fixed, bottom-anchored, capped
+  by the room above the chip), Esc closes it; an "Admin dashboard" item when GET /me says `admin:true`.
+- Welcome prompt for signed-out visitors (modal, focus-trapped; Esc / × = guest): Create free account (sign-up path of the
+  sign-in dialog), Sign in, Continue as guest. Device pref `wtspref_acct_welcome` (never synced, not in project files),
+  re-offered after 30 days; waits for the consent banner and the Terms notice; skips the account / admin / privacy / help /
+  release-notes routes; `window.WTS_ACCOUNT_WELCOME = 0` switches it off (client-test default).
+- Who sees accounts: the client guard is unchanged — the account UI (chip, welcome prompt, dialogs) mounts only on the exact
+  host with the beta flag (`?cloud=1` → `wtspref_cloud_beta`). Whether a new address may create an account is the server's
+  `ACCOUNTS_SIGNUP` (open | invite | off). The sign-up dialog, the Privacy notice v2 and the Terms still describe an
+  invitation-only trial, so the release notes do not announce open sign-up.
+- Optional profile (full name, company, job title, country from an ISO 3166-1 list, phone): on the new-account step of the
+  e-mail-code dialog and of the provider consent step, and as the "Your profile" card (Save / Clear) on the Account page
+  (PUT /account/profile; the country defaults from /me `countryHint`). Text NFKC-normalised and capped; phone rule shared
+  with the server.
+- Project summary with every Save to cloud (`WTS_cloudSync.projectSummary`): well names (≤ 50), client, operator, company,
+  field, rig, country, job reference (active well first) and the modules used (≤ 40); plain text ≤ 120 characters each; the
+  default company is not reported; not part of the vhash; a refused summary is resent once without it, so it never blocks a save.
+- Updated Terms and Privacy step: an account on an older privacy version gets `consent_required {existing:true}` (code path)
+  or the next consent `{existingAccount:true}` (provider path); the step shows no profile fields. Profiles and summaries are
+  stored and shown only for accounts on the current privacy version.
+- Owner admin dashboard (69-account-admin.js, route `admin`, navHidden; "Not available" unless /me `admin:true`): KPIs,
+  users by country (flag, country name; city of the last sign-in in the user rows), sign-ups per day (90-day canvas chart),
+  top companies / clients / fields, users table with search, Load more (cursor) and a formula-safe CSV export, a user detail
+  panel (GET /admin/users/:id: profile, account, work, projects with their summaries), invite form and list. Host: `admin` in
+  PAGE_AUTOSAVE_SKIP, _REPORT_SKIP, __UI_NOT_TILE and the export-bar rule.
+- Privacy notice version 2 (privacy.html; `WTS_PRIVACY_VERSION` default 2; analytics consent `VER = 2`, so web visitors are
+  asked for the analytics choice once more): country / city statistics, the optional profile, project summaries, the US
+  account database (larger files in the EU), retention rows, the v2-acceptance rule. Terms text: invitation-only trial wording.
+
+**Server (server/; RUNBOOK §3L)**
+- Same-site mode on the live site (`WTS_SITE_MODE=same`: no proxy / signature, exact production Host, client address from the
+  platform's client-connection header; refused unless `WTS_ENV` is production or staging). One upload folder from
+  `node server/site/build-live.js --out <dir>` (`--check --dir <dir>`): static allow-list under public/, generated config and
+  functions, default layout `live` (background functions for the daily job and the weekly export; `--inline-jobs` fallback).
+- Functions pre-bundled with esbuild 0.24.2 (upload deploys install no node_modules): build-info.json records the version,
+  options, lockfile hash and per-function SHA-256; the live build command verifies the pre-bundled files; run-time paths through
+  core/root.js.
+- Country / city capture at sign-up and sign-in (from the platform's geolocation headers, same-site mode only; the IP address itself is not stored), admin API
+  (GET /api/v1/admin/*, admins = `WTS_ADMIN_EMAILS`, else the invite-bootstrap addresses; refusals on admin routes answer 404
+  like an unknown route; a non-admin's probes audited at most 30 an hour), profile and project summaries encrypted at rest,
+  account export carries signupCountry / lastCountry / lastCity.
+- Migrations 060-admin and 070-insight (platform files 0600_admin / 0700_insight). Migration transaction rule: the platform
+  runner applies all pending files in ONE transaction and commits it itself, so a generated file must not carry
+  BEGIN / COMMIT. 0600 / 0700 were applied live in their old form (their own COMMIT) and are kept byte for byte (the platform
+  refuses a changed applied file); every file from 080 on uses the in-runner form (session-level search_path, no
+  transaction control). No new migration in 4.2 (the live bundle's migrations folder equals e706c94's eight files).
+- `WTS_MAIL_KEY` accepted as an alias of `WTS_MAIL_CREDENTIAL`; refusal logs name the gate (path / proxy / host, site mode,
+  hostname) and the bundle commit.
+- Live environment settings needed with this release: `WTS_SITE_MODE=same`, `WTS_ENV=production`, `WTS_DB_ROLE_MODE=local`
+  (the pooled endpoint refuses the start-up role setting), `ACCOUNTS_SIGNUP=open` (owner's live setting; RUNBOOK §3L's table
+  still shows the beta default `invite`), `WTS_PRIVACY_VERSION=2`, `WTS_ADMIN_EMAILS` optional (unset = the
+  `WTS_INVITE_BOOTSTRAP` addresses). Redeploy after a change.
+
+**Neutral (both platforms)** — the only non-account change is the Privacy notice v2 (linked from the footer and the Privacy
+page on both platforms; the in-app Help privacy guide says accounts are an optional web trial). The App Store 4.2 entry shows
+the "Privacy notice version 2" item only.
+
+**Release mechanics** — Release Notes help shots re-taken (help-shots.js --route releasenotes --html; web-only items are left
+out of the shots), Round 9 rebuilt, user guide regenerated (Version 4.2 · 2026-11-09), iOS www synced. Gates: see the commit.
+
+**Notes** — Open owner items: reconcile the sign-up wording (dialog, Privacy notice, Terms, Help privacy guide, RUNBOOK §3L)
+with the live `ACCOUNTS_SIGNUP` setting; the 4.0 items still listed as open (go-live probe, LinkedIn live tests).
+
+---
+
 ## 2026-11-09 — v4.0 release: cloud accounts (beta, web only), on top of v3.4.2
 
 App and App Store version 4.0 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
