@@ -50,6 +50,13 @@ const rigRow = (app, k) => app.el('wtsl_rigup').querySelector('[data-k="' + k + 
 const rigTxt = (app, k) => text(rigRow(app, k) && rigRow(app, k).querySelector('.rv'));
 const rigSw = (app, k) => app.el('wtsl_rigup').querySelector('[data-rig="' + k + '"]');
 function rerender(app) { app.win.WTS_live._internals.ctl()._debug.closeCard(); app.flush(1500); }
+function lastOps(app, cv) {
+  const log = app.canvasLog(cv);
+  let i = log.length - 1;
+  while (i >= 0 && !(log[i].op === 'clearRect' && log[i].args[0] === 0 && log[i].args[1] === 0)) i--;
+  return log.slice(Math.max(0, i));
+}
+const textAt = (fr, s) => fr.filter((e) => e.op === 'fillText' && String(e.args[0]) === s).map((e) => [e.args[1], e.args[2]]);
 function frameTexts(app, cv) {
   const log = app.canvasLog(cv);
   let i = log.length - 1;
@@ -128,14 +135,27 @@ module.exports = [
         app.flush(600);
         let tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('BYPASSED → V-101') >= 0, 'heater: ' + tx.filter((x) => /BYPASS|RIG-UP/.test(x)).join('|'));
-        assert.ok(tx.indexOf('BYPASSED → T-201 (WHOLE STREAM) · PSHH-104') >= 0, 'V-101 → T-201: ' + tx.filter((x) => /BYPASS/.test(x)).join('|'));
+        // review 3.4.2: two rows right of the dump pipe, inside the cleared P / T block (no stale separator values under it)
+        assert.ok(tx.indexOf('BYPASSED → T-201') >= 0 && tx.indexOf('WHOLE STREAM · PSHH-104') >= 0, 'V-101 → T-201: ' + tx.filter((x) => /BYPASS|WHOLE/.test(x)).join('|'));
+        const L0 = app.win.WTS_DIAG_LAYOUT, fr0 = lastOps(app, cv);
+        assert.deepStrictEqual(textAt(fr0, 'BYPASSED → T-201'), [[L0.tx[4] + 7, L0.cy + 46]], 'row 1 position');
+        assert.deepStrictEqual(textAt(fr0, 'WHOLE STREAM · PSHH-104'), [[L0.tx[4] + 7, L0.cy + 57]], 'row 2 position');
+        assert.ok(fr0.some((e) => e.op === 'clearRect' && e.args[0] === L0.tx[4] - 62 && e.args[1] === L0.cy + 33 && e.args[3] === 33), 'the stale P / T block is cleared');
         assert.ok(tx.indexOf('BYPASSED → BURNER LINE') < 0 && tx.indexOf('PSHH-104') < 0, 'no burner label / separate PSHH-104 tag');
         t.set({ rig: { surge: false, surge2: true }, routes: { surge: 'T-202' } }); app.flush(600);
         tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('DUMPS → T-202') >= 0 && tx.indexOf('DUMPS → T-301 (no surge tank)') < 0, 'T-201 out: ' + tx.filter((x) => /DUMPS/.test(x)).join('|'));
+        // review 3.4.2: T-202 is drawn at its slot (the host draws the base row in this rig-up) with LCV-202 on the T-301 line
+        const L1 = app.win.WTS_DIAG_LAYOUT, fr1 = lastOps(app, cv);
+        assert.ok(textAt(fr1, 'T-202').some((p) => p[0] === L1.t202.x && p[1] === L1.by + 38), 'T-202 drawn at its slot: ' + JSON.stringify(textAt(fr1, 'T-202')));
+        assert.ok(textAt(fr1, 'T-202').some((p) => p[1] > L1.strip.y), 'T-202 strip bar shown while it stands in for T-201');
+        assert.ok(tx.indexOf('LCV-202') >= 0 && tx.indexOf('T-201') >= 0, 'LCV-202 and the T-201 name under its mask');
+        assert.ok(app.win.WTS_live._internals.t2Alone(app.win.WTS_live.getSim().getState()), 't2Alone');
         t.set({ rig: { gauge: false }, booster: true, routes: { gauge: 'P-201 → export' } }); app.flush(600);
         tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('T-201 → P-201 → EXPORT') >= 0 && tx.indexOf('P-201') >= 0, 'booster: ' + tx.filter((x) => /P-201|EXPORT/.test(x)).join('|'));
+        const L2 = app.win.WTS_DIAG_LAYOUT, bl = textAt(lastOps(app, cv), 'T-201 → P-201 → EXPORT')[0];
+        assert.ok(bl && bl[1] <= L2.by - 13, 'booster label clear above the P-201 circle (top at by − 9.5): ' + JSON.stringify(bl));
         t.set({ rig: { flare: false }, routes: { flare: 'export + vent' } }); app.flush(600);
         tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('HP GAS → EXPORT LINE · LP / RELIEF → VENT') >= 0, 'flare out: ' + tx.filter((x) => /GAS/.test(x)).join('|'));

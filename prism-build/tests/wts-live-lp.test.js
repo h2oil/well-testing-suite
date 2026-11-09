@@ -78,7 +78,18 @@ module.exports = [
       assert.strictEqual(L.gorOf({ rates: { separated: false, gor_scf_stb: 777, gor1_scf_stb: 5 } }, 'tot'), null, 'V-101 out: no GOR');
       assert.strictEqual(L.gorOf({ rates: { separated: false, gor1_scf_stb: 5 } }, 1), null);
       assert.strictEqual(L.lpOn(st), true); assert.strictEqual(L.lpOn({ lp: { on: false } }), false); assert.strictEqual(L.lpOn({}), false);
-      assert.strictEqual(L.gorLine(st), 'GOR 1 900 · 2 40 · Σ 940 scf/STB');
+      assert.strictEqual(L.gorLine(st), 'GOR1 sep 900 · GOR2 tank 40 · total 940 scf/STB');
+      // review 3.4.2: the HUD sub-line is labelled and five-digit values shrink to thousands so it fits the GOR cell
+      assert.strictEqual(L.gorSub(st), 'G1 900 · G2 40');
+      assert.strictEqual(L.gorSub(app.toWin({ rates: { gor1_scf_stb: 10132, gor2_scf_stb: 16, gorTot_scf_stb: 10148 } })), 'G1 10.1k · G2 16');
+      assert.strictEqual(L.gorSub(app.toWin({ rates: { separated: false } })), 'G1 — · G2 —');
+      // LP meter texts: the FT-201 reading vs what flows now; metric low-cut with 2 decimals and the turndown range converted
+      const ln = (o) => L.lpNowTxt(app.toWin({ lp: Object.assign({ on: true, q_mscfd: 42.5, belowCut: false }, o) }), true);
+      assert.strictEqual(ln({}), '10-min average · now 42.5 MSCFD');
+      assert.strictEqual(ln({ q_mscfd: 0, belowCut: true }), '10-min average · no flow now (back-pressure valves shut)');
+      assert.strictEqual(ln({ q_mscfd: 3, belowCut: true }), '10-min average · below the meter low-cut now (FT-201 reads 0)');
+      assert.strictEqual(L.lpNowTxt(app.toWin({ lp: { on: false } })), null);
+      assert.strictEqual(L.lpCutTxt(0.1), '0.1 ft/s'); assert.strictEqual(L.lpTurndownTxt('≈1000:1 (0.1–300 ft/s)'), '≈1000:1 (0.1–300 ft/s)');
       const sm = J(L.summaryOf(app.toWin(Object.assign({ t: 0, cum: {}, gauge: {}, alarms: [] }, st))));
       assert.deepStrictEqual([sm.rates.gor, sm.rates.gor1, sm.rates.gor2, sm.rates.gorTot, sm.rates.lpGas_mscfd], [940, 900, 40, 940, 40], 'summaryOf rates');
       const sm0 = J(L.summaryOf(app.toWin({ t: 0, cum: {}, rates: { gor_scf_stb: 5 }, gauge: {}, alarms: [] })));
@@ -97,6 +108,8 @@ module.exports = [
           assert.ok(/^LP flare line back pressure high [\d.,]+ kPa.* ≥ [\d.,]+ kPa/.test(t1), 'PAH_LP metric: ' + t1);
           const t2 = L.alarmText(app.toWin({ id: 'VEL_LP', tag: 'FT-201', msg: 'x', value: 85, limit: 80 }));
           assert.strictEqual(t2, 'LP flare line velocity 85 % ≥ 80 % of the limit', 'VEL_LP metric (percent of the limit)');
+          assert.strictEqual(L.lpCutTxt(0.1), '0.03 m/s', 'metric low-cut not rounded to 0.0');
+          assert.ok(/^≈1000:1 \(0\.03–91 m\/s\)$/.test(L.lpTurndownTxt('≈1000:1 (0.1–300 ft/s)')), 'metric turndown: ' + L.lpTurndownTxt('≈1000:1 (0.1–300 ft/s)'));
         } finally { app.win.WTS_units.setSystem('imperial'); }
       }
     }
@@ -111,7 +124,7 @@ module.exports = [
         app.flush(600);
         const hud = app.el('wtsl_hud'), rR = hud.querySelector('[data-h="rR"]'), sub = hud.querySelector('[data-h="rRs"]');
         assert.strictEqual(text(rR), '9,542', 'HUD GOR = total');
-        assert.ok(sub && !sub.hidden && text(sub) === '1 9,500 · 2 42', 'sub-line: ' + text(sub));
+        assert.ok(sub && !sub.hidden && text(sub) === 'G1 9,500 · G2 42', 'sub-line: ' + text(sub));
         assert.ok(/GOR1 separator \(FE-101\) \+ GOR2 tank \(FT-201\)/.test(rR.closest('.wtsl-hi').getAttribute('title')), 'GOR tooltip');
         let card = openCard(app, 'separator');
         assert.strictEqual(rowVal(card, 'GOR1'), '9,500 scf/STB');
@@ -119,6 +132,7 @@ module.exports = [
         assert.ok(rowLabels(card).indexOf('Flash (calc, PVT)') >= 0 && rowLabels(card).indexOf('Flash gas') < 0, 'flash row renamed');
         assert.ok(/ MSCFD$/.test(rowVal(card, 'Flash (calc, PVT)')) || rowVal(card, 'Flash (calc, PVT)') === '—', 'flash: ' + rowVal(card, 'Flash (calc, PVT)'));
         assert.strictEqual(rowVal(card, 'Tank gas FT-201'), '41.9 MSCFD');
+        assert.strictEqual(rowSub(card, 'Tank gas FT-201'), '10-min average · now 42.5 MSCFD', 'the reading and the flow now are named');
         assert.strictEqual(rowVal(card, 'GOR2'), '42 scf/STB');
         assert.ok(/^0\.6 psig$/.test(rowVal(card, 'LP back P')) && rowSub(card, 'LP back P') === 'PSV lifting into the LP line', 'LP back P: ' + rowVal(card, 'LP back P') + ' / ' + rowSub(card, 'LP back P'));
         card = openCard(app, 'flare');
@@ -129,13 +143,22 @@ module.exports = [
         card = openCard(app, 'lp');
         assert.strictEqual(text(card.querySelector('.tt b')), 'FT-201');
         const ls = rowLabels(card);
-        ['Service', 'Line', 'Flow', 'Meter', 'Inlet P', 'ΔP', 'Velocity', 'Sources', 'GOR1 (separator)', 'GOR2 (tank)', 'Total GOR', 'Cumulative', 'Note'].forEach((l) => assert.ok(ls.indexOf(l) >= 0, 'lp row ' + l + ': ' + ls.join(',')));
+        ['Service', 'Line', 'Flow (now)', 'FT-201 (10-min avg)', 'Meter', 'Inlet P', 'ΔP', 'Velocity', 'Sources', 'GOR1 (separator)', 'GOR2 (tank)', 'Total GOR', 'Cumulative', 'Note'].forEach((l) => assert.ok(ls.indexOf(l) >= 0, 'lp row ' + l + ': ' + ls.join(',')));
         assert.strictEqual(rowVal(card, 'Service'), 'To the LP tip on FS-401');
         assert.ok(/^3″ SCH 40 · 150 ft$/.test(rowVal(card, 'Line')), 'Line: ' + rowVal(card, 'Line'));
         assert.strictEqual(rowVal(card, 'Meter'), 'Insertion ultrasonic · ±3 % of reading');
+        assert.strictEqual(rowVal(card, 'Flow (now)'), '42.5 MSCFD'); assert.strictEqual(rowSub(card, 'Flow (now)'), '');
+        assert.strictEqual(rowVal(card, 'FT-201 (10-min avg)'), '41.9 MSCFD');
+        ['Line', 'Meter'].forEach((l) => assert.ok(row(card, l).classList.contains('f'), l + ' spans the card (no truncation)'));
         assert.strictEqual(rowVal(card, 'Sources'), 'T-201 40.1 MSCFD · T-202 0.0 MSCFD · PSV 2.4 MSCFD');
         assert.strictEqual(rowVal(card, 'Note'), 'T-301 vent, not metered');
         assert.strictEqual(card.querySelectorAll('canvas.wtsl-sk').length, 2, 'two sparks (tank gas, GOR1 · GOR2)');
+        // PCV-201 shut now: the flow row says so; the reading (10-min average) stays and is not flagged as below the low-cut
+        t.set({ lp: { q_mscfd: 0, belowCut: true } }); app.flush(400);
+        card = openCard(app, 'lp');
+        assert.strictEqual(rowVal(card, 'Flow (now)'), '0.0 MSCFD'); assert.strictEqual(rowSub(card, 'Flow (now)'), 'no flow now (back-pressure valves shut)');
+        assert.strictEqual(rowVal(card, 'FT-201 (10-min avg)'), '41.9 MSCFD');
+        assert.ok(!/below the low-cut/.test(text(card)), 'no "below the low-cut" next to a non-zero reading');
         // FS-401 out with the surge destination: LP gas to the vent
         t.set({ psv: false, lp: { to: 'vent', note: 'LP gas to the atmospheric vent (FS-401 out)' } }); app.flush(400);
         card = openCard(app, 'lp');
@@ -170,10 +193,10 @@ module.exports = [
         if (cv) {
           app.flush(400);
           let tx = frameTexts(app, cv);
-          assert.ok(!tx.some((x) => /^GOR 1 /.test(x)) && tx.indexOf('FT-201') < 0, '2D: no GOR line / FT-201 while off');
+          assert.ok(!tx.some((x) => /^GOR1 /.test(x)) && tx.indexOf('FT-201') < 0, '2D: no GOR line / FT-201 while off');
           t.set({}); app.flush(600);
           tx = frameTexts(app, cv);
-          assert.ok(tx.some((x) => x === 'GOR 1 9,500 · 2 42 · Σ 9,542 scf/STB'), '2D strip GOR line: ' + tx.filter((x) => /GOR/.test(x)).join('|'));
+          assert.ok(tx.some((x) => x === 'GOR1 sep 9,500 · GOR2 tank 42 · total 9,542 scf/STB'), '2D strip GOR line: ' + tx.filter((x) => /GOR/.test(x)).join('|'));
           assert.ok(tx.indexOf('FT-201') >= 0, '2D dashed LP line labelled FT-201');
         }
       } finally { t.restore(); }
@@ -195,7 +218,7 @@ module.exports = [
       assert.strictEqual(rowVal(card, 'Service'), 'To the LP tip on FS-401');
       assert.ok(!/NaN|undefined|Infinity/.test(text(card)), 'no NaN in the lp card');
       const sub = app.el('wtsl_hud').querySelector('[data-h="rRs"]');
-      assert.ok(!sub.hidden && /^1 [\d,]+ · 2 [\d,]+$/.test(text(sub)), 'sub-line: ' + text(sub));
+      assert.ok(!sub.hidden && /^G1 [\d,.]+k? · G2 [\d,.]+k?$/.test(text(sub)), 'sub-line: ' + text(sub));
       const sm = J(I(app).summaryOf(st));
       assert.ok(sm.rates.gor1 > 0 && sm.rates.gorTot >= sm.rates.gor1, 'summaryOf GOR split: ' + JSON.stringify(sm.rates));
       noErr(app, assert);
