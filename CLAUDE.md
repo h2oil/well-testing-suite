@@ -164,7 +164,8 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   dialog, e-mail codes, step-up, Google / LinkedIn provider block, revert key link
                                   #account-revert=<key>), 67-cloud-sync (WTS_cloudSync: snapshot / vhash, save / open / history,
                                   library, guard follow-ups via registerGuard {decision, after}), 68-account-page (route account,
-                                  navHidden, H10 report skip, no page-export bar). Inert unless the beta flag (?cloud=1 /
+                                  navHidden, H10 report skip, no page-export bar), 69-account-admin (route admin, navHidden, owner
+                                  dashboard over GET /api/v1/admin/*, shown only when GET /me says admin:true; admins = WTS_ADMIN_EMAILS). Inert unless the beta flag (?cloud=1 /
                                   wtspref_cloud_beta) and the exact host (or WTS_ACCOUNT_DEV on localhost)
                                   (use a free number; two files with the same number still load, ties by name)
   48-calc-help-*.js             ← Help content (Round-9 data modules, v3.3.2; docs/HELP-GUIDE-PLAN.md §4): start (Getting
@@ -198,7 +199,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (344/344; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1805 tests; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1813 tests; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -321,10 +322,10 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1805/1805) and
+   (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1813/1813) and
    `node prism-build/wts3d-test.js` (134 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
-   after server/ or accounts (66-68) changes also `node server/test/run.js` (238 tests on a throwaway cluster);
+   after server/ or accounts (66-68) changes also `node server/test/run.js` (252 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -634,7 +635,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 344 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 1805 acceptance tests passed"
+# Expect: "[ok] all 1813 acceptance tests passed"
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -706,8 +707,8 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
-Acceptance tests:             1805/1805 pass (accept-test.js --html --integration; acct-* = v4.0 accounts client)
-Server tests:                 238/238 (node server/test/run.js; throwaway database cluster)
+Acceptance tests:             1813/1813 pass (accept-test.js --html --integration; acct-* = v4.0 accounts client)
+Server tests:                 252/252 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 4 field scenarios,
                               216 screenshots (7.98 MB)
 3D simulator tests:           134 checks (wts3d-test.js; 132/134 on a Linux LF checkout — the two CRLF checks)
