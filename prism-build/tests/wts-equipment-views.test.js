@@ -833,7 +833,8 @@ const ENG = [
       assert.ok(st.desander.dP_psi > 0 && Math.abs(st.nodes.esd.P - st.nodes.choke.Pin - st.desander.dP_psi) < 1e-6, 'choke inlet = ESD node − desander ΔP');
       const ds = text(card.querySelector('[data-k="ds-status"] .rv')), t2 = text(card.querySelector('[data-k="t202-status"] .rv'));
       assert.ok(/^ΔP [\d.]+ psi/.test(ds) && /capture [\d.]+ %/.test(ds) && /rating 10,000 psi/.test(ds), 'DS-101 status: ' + ds);
-      assert.ok(/route T-201/.test(t2) && /XV-202 SHUT/.test(t2), 'T-202 status: ' + t2);
+      // release 3.4.2: a two-compartment T-202 shows XV-202A / XV-202B (standby: both shut); one compartment the single XV-202
+      assert.ok(/route T-201/.test(t2) && (st.surge2.compartments === 2 ? / · XV-202A SHUT · XV-202B SHUT · /.test(t2) : /XV-202 SHUT/.test(t2)), 'T-202 status: ' + t2);
       const hud = app.el('wtsl_hud').querySelector('[data-h="tDs"]');
       assert.ok(!hud.hidden && /^DS-101 sand \d+% · ΔP [\d.]+ psi$/.test(text(hud)), 'HUD DS-101 line: ' + text(hud));
       const cv = app.el('wts_cv'); app.flush(1200);

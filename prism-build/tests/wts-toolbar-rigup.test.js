@@ -628,7 +628,10 @@ module.exports = [
       app.click(menuRow(app, 'surge2')); app.flush(50);
       assert.strictEqual(live.getState().rigup.surge2, true, 'T-202 in');
       const tst = app.el('wtsl_toast');
-      assert.ok(text(tst).indexOf('T-202 in (standby, XV-202 shut): set Route to T-202 or Both on its card') >= 0, 'guidance toast: ' + text(tst));
+      // release 3.4.2: the two-compartment T-202 (A fills first, B on LCV-202); one compartment keeps the v3.4.1 text
+      const g2 = live.getState().surge2.compartments === 2 ? 'T-202 in (standby, XV-202A/B shut — A fills first, B on LCV-202): set Route to T-202 or Both on its card'
+        : 'T-202 in (standby, XV-202 shut): set Route to T-202 or Both on its card';
+      assert.ok(text(tst).indexOf(g2) >= 0, 'guidance toast: ' + text(tst));
       assert.ok(/route T-201/.test(text(menuRow(app, 'surge2'))), 'menu row has the route: ' + text(menuRow(app, 'surge2')));
       app.flush(800);
       assert.ok(/ · T2 \d+%/.test(text(tSu())), 'HUD short form: ' + text(tSu()));
