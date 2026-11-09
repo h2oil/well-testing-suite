@@ -145,7 +145,7 @@ if (require.main === module) {
     const li = a.indexOf('--lines');
     const lines = li !== -1 ? fs.readFileSync(a[li + 1], 'utf8').split('\n').filter(Boolean) : null;
     let db = null;
-    if (process.env.WTS_JOBS_DB_URL) db = require('../core/db').createDb(process.env.WTS_JOBS_DB_URL, { max: 1 });
+    if (process.env.WTS_JOBS_DB_URL) db = require('../core/db').createDb(process.env.WTS_JOBS_DB_URL, { max: 1, role: 'wts_jobs', sessionRole: true });
     try {
       const r = await check({ db, lines, dry: a.includes('--dry'), fetch: typeof fetch === 'function' ? fetch : null, log: { warn: (m) => console.error(m) } });
       process.stdout.write(JSON.stringify(r) + '\n');

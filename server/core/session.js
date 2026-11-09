@@ -10,8 +10,10 @@
 //        s = {sid, hash (the current row), presentedHash, userId, deviceId, publicDevice, authAt, stepupAt, authMethod,
 //             identityId, idleExpires, absExpires, status, readUnlockUntil}
 //   resolve(ctx) → s | null      (no transaction work; used by sign-out and by the presented-session revocation)
-//   issue(unit, ctx, {userId, deviceId, publicDevice, method, identityId, stepup}) → {sid, hash, idleExpires, absExpires}
-//        sets the cookie with Max-Age = seconds to abs_expires_at (contract COOKIES.session)
+//   issue(unit, ctx, {userId, deviceId, publicDevice, method, identityId, stepup, signup}) → {sid, hash, idleExpires, absExpires}
+//        sets the cookie with Max-Age = seconds to abs_expires_at (contract COOKIES.session); records the sign-in time and
+//        the platform's country / city (ctx.geo) as last_*; signup:true (the account was created in this transaction) also
+//        records signup_country
 //   rotate(unit, ctx, s, {stepup}) → the new session (the old id stays valid for 30 s: replaced_by / replaced_at)
 //   revoke(unit, hash)            delete one session and the rotated ids that point at it
 //   revokePresented(ctx)          a sign-in revokes the session the request carried, whoever it belongs to (§4.10 item 5)
@@ -83,7 +85,14 @@ async function issue(unit, ctx, o) {
     values (${h}, ${o.userId}, ${o.deviceId || null}, ${!!o.publicDevice}, now(), now(), ${o.stepup ? unit.sql`now()` : null},
       now(), now() + ${life.idle}::interval, now() + ${life.abs}::interval, ${method}, ${o.identityId || null}, ${ctx.ipPrefix}, ${unit.ua.family})
     returning idle_expires_at, abs_expires_at, ceil(extract(epoch from abs_expires_at - now()))::int as secs`)[0];
-  await unit.sql`update wts.users set last_sign_in_at = now() where id = ${o.userId}`;
+  // the connection's country / city from the platform (ctx.geo; same-site mode only): last_* at every sign-in, and
+  // signup_country once, by the sign-up (o.signup); an unknown location keeps the previous last_* values
+  const g = (ctx.geo && ctx.geo.country) ? ctx.geo : null;
+  await unit.sql`update wts.users set last_sign_in_at = now(),
+      last_country = coalesce(${g ? g.country : null}::text, last_country),
+      last_city = case when ${g ? g.country : null}::text is null then last_city else ${g ? g.city : null}::text end,
+      signup_country = case when ${!!o.signup}::boolean then ${g ? g.country : null}::text else signup_country end
+    where id = ${o.userId}`;
   await ensureOutboxKey(unit, ctx, o.userId);
   ctx.setCookie(C.COOKIES.session, sid, { maxAge: Math.max(1, r.secs) });
   if (ctx.req && ctx.req.meta) ctx.req.meta.uid = o.userId;

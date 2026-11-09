@@ -94,7 +94,7 @@ test.describe('smaller rules (§3.2, §3.3, §8.3)', { skip }, () => {
       const h = sha('{"n":' + n + '}');
       return a.call('POST', '/projects/' + pid + '/commit', { pushId: crypto.randomUUID(), baseRev: base, reason: reason || 'save',
         core: { hash: h, vhash: h, zsha: sha(z), bytes: 7, inline: z.toString('base64') }, parts: [], meta: { name: 'OW', client: '', well: '', field: '', operator: '' },
-        wells: [], fmt: 2, appVer: '3.5' });
+        wells: [], fmt: 2, appVer: '4.0' });
     };
     assert.strictEqual((await commit(0, 1)).json.rev, 1);
     assert.strictEqual((await commit(1, 2)).json.rev, 2);

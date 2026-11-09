@@ -5,11 +5,11 @@
 
 const { ENDPOINTS } = require('../core/contract');
 
-const FILES = ['auth', 'oauth', 'me', 'projects', 'blobs', 'library', 'account', 'health', 'csp-report', 'ops-daily'];
+const FILES = ['auth', 'oauth', 'me', 'projects', 'blobs', 'library', 'account', 'health', 'csp-report', 'ops-daily', 'admin'];
 const ids = new Set(ENDPOINTS.map((e) => e.id));
 const handlers = {};
 FILES.forEach((f) => {
-  const mod = require('./' + f);
+  const mod = require('./' + f + '.js');   // with the extension: the live bundler (site/build-live.js) maps this dynamic require by file name
   Object.keys(mod.handlers).forEach((id) => {
     if (!ids.has(id)) throw new Error('functions/' + f + ': unknown endpoint id ' + id);
     if (handlers[id]) throw new Error('functions/' + f + ': ' + id + ' defined twice');

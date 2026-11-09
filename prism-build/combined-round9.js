@@ -7888,7 +7888,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 878e52a0,view-p 780 1688 bb6ff234",
+    "releasenotes": "view-d 1280 800 78fd9cc2,view-p 780 1688 16d9c67d",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 143a6d68,fs-1-rigup-d 982 525 1bfdebef,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -7909,7 +7909,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7981494;   // total size of the image files (the offline download label)
+  M.bytes = 7972402;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8292,9 +8292,9 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '1105b5be', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: 'c7d00214', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
-what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
+what: ['No account needed: inputs stay on this device. Optional web accounts (invite trial) keep encrypted projects in the US and EU.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
 steps: [{ t: 'Select **Privacy** in **Overview**, or the privacy line under the sidebar.', shot: 'view' },
 { t: 'Read **Where your data is stored** ① and **Other network requests**.' },
@@ -8303,7 +8303,7 @@ outputs: [{ label: 'This build', text: 'Says whether analytics are active. The w
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'b8c6ebd2', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'a148cd51', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],

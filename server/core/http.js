@@ -28,25 +28,60 @@ function safeEqual(a, b) {
   if (x.length !== y.length) { crypto.timingSafeEqual(x, x); return false; }
   return crypto.timingSafeEqual(x, y);
 }
-// The original host from the host's trusted forwarding header (WTS_HOST_HEADER) or, without one, the Host header.
+// The original host from the host's trusted forwarding header (WTS_HOST_HEADER) or, without one, the Host header. Same-site
+// mode (core/config.js WTS_SITE_MODE=same) always reads the Host header itself: no forwarding header is trusted there.
 function originalHost(req, cfg) {
-  const raw = cfg.hostHeader ? header(req, cfg.hostHeader) : header(req, 'host');
+  const raw = cfg.hostHeader && !cfg.sameSite ? header(req, cfg.hostHeader) : header(req, 'host');
   return String(raw || '').split(',')[0].trim().toLowerCase();
 }
 function hostAllowed(req, cfg) {
   const h = originalHost(req, cfg);
+  if (cfg.sameSite) return !!cfg.prodHost && h === cfg.prodHost;      // exactly the production host, in every WTS_ENV
   if (h === cfg.prodHost) return true;
   if (cfg.production) return false;
   return /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(h);
 }
-// Client address: only the trusted header named by WTS_CLIENT_IP_HEADER (never X-Forwarded-For), else the socket.
+// Client address: only the trusted header named by WTS_CLIENT_IP_HEADER (never X-Forwarded-For), else the socket. When the
+// header holds a list, the LAST value is used: it is the one the host's own edge appended, while earlier values may have been
+// sent by the client itself (RUNBOOK §3N step 12.5 checks a forged header once on the live site).
 function clientIp(req, cfg) {
-  if (cfg.ipHeader) return String(header(req, cfg.ipHeader) || '').split(',')[0].trim() || null;
+  if (cfg.ipHeader) return String(header(req, cfg.ipHeader) || '').split(',').map((v) => v.trim()).filter(Boolean).pop() || null;
   return req.remoteAddress || null;
+}
+// Client location from the hosting platform's geolocation headers (x-nf-geo: base64 JSON {city, country:{code}, …}; x-country:
+// the ISO 3166-1 alpha-2 code). Read ONLY in same-site mode, where the platform's edge sets them (or with the tests' explicit
+// WTS_GEO_HEADERS flag, core/config.js); in every other mode → {country:null, city:null}. Every value is untrusted input:
+// country must be exactly /^[A-Z]{2}$/ (x-nf-geo first, then x-country), city ≤ 80 characters of letters, spaces and . - '
+// only (anything else → null; a city only from the record that also gave the country). The address is never kept for this.
+const GEO_CITY_RE = /^[\p{L}\p{M}][\p{L}\p{M} .'-]{0,79}$/u;
+function geoCountry(v) { return typeof v === 'string' && /^[A-Z]{2}$/.test(v) ? v : null; }
+function geoCity(v) {
+  if (typeof v !== 'string' || v.length > 400) return null;
+  const s = v.normalize('NFC').trim();
+  return s.length <= 80 && GEO_CITY_RE.test(s) ? s : null;
+}
+function clientGeo(req, cfg) {
+  const none = { country: null, city: null };
+  if (!cfg || !(cfg.sameSite || cfg.geoHeaders)) return none;
+  let geo = null;
+  const raw = String(header(req, 'x-nf-geo') || '').trim();
+  if (raw && raw.length <= 4096 && /^[A-Za-z0-9+/_-]+={0,2}$/.test(raw)) {
+    try {
+      const j = JSON.parse(Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+      if (j && typeof j === 'object' && !Array.isArray(j)) geo = j;
+    } catch (e) { geo = null; }
+  }
+  const fromGeo = geo && geo.country && typeof geo.country === 'object' ? geoCountry(geo.country.code) : null;
+  const country = fromGeo || geoCountry(header(req, 'x-country'));
+  if (!country) return none;
+  return { country, city: fromGeo ? geoCity(geo.city) : null };
 }
 // The rewrite from the static site adds X-WTS-Proxy-Sig; without the shared secret configured only non-production accepts.
 // WTS_PROXY_SIG may hold two comma-separated values during a rotation (§13.3); each is compared in constant time.
+// Same-site mode has no proxy: the request reaches the function straight from the platform's edge, so there is no signature to
+// check (hostAllowed then demands the exact production Host).
 function proxyOk(req, cfg) {
+  if (cfg.sameSite) return true;
   const want = (cfg.secrets && cfg.secrets.proxySigs) || [];
   if (!want.length) return !cfg.production;
   const got = header(req, 'x-wts-proxy-sig');
@@ -135,6 +170,6 @@ function splitUrl(url) {
 }
 
 module.exports = {
-  COMMON_HEADERS, BODY_LIMITS, bodyLimit, header, safeEqual, originalHost, hostAllowed, clientIp, proxyOk, writeHeadersOk,
+  COMMON_HEADERS, BODY_LIMITS, bodyLimit, header, safeEqual, originalHost, hostAllowed, clientIp, clientGeo, proxyOk, writeHeadersOk,
   cspContentTypeOk, opsSignature, verifyOps, memoryNonceStore, dbNonceStore, parseCookies, serializeCookie, splitUrl,
 };

@@ -9,6 +9,7 @@ const OPS_SECRET_ENV = [
   'WTS_SUPPORT_DB_URL',      // wts_support credential (server/ops support scripts)
   'WTS_MIGRATE_DB_URL',      // database administrator (the manual tagged migration job only)
   'WTS_BACKUP_KEY',          // weekly export encryption key(s) "kid:base64,…" — separate from the master keys (§13.5)
+  'WTS_BACKUP_PRIVATE_KEY',  // "kid:base64" X25519 private key that opens the exports the functions site writes (offline + drill only)
   'WTS_BACKUP_DB_URL',       // read-only credential for the weekly logical export
   'WTS_OBJECTS_CREDENTIAL',  // the blob store credential (when the host's store needs one)
   'WTS_EXPORT_CREDENTIAL',   // the separate export storage (another region, §13.5)
@@ -19,6 +20,9 @@ const OPS_SECRET_ENV = [
 ];
 const OPS_CONFIG_ENV = [
   'WTS_EXPORT_DIR',          // weekly export target folder (a mounted, separate store) — non-secret
+  'WTS_BACKUP_PUBLIC_KEY',   // "kid:base64" X25519 public key the functions site seals the weekly export to (not secret)
+  'WTS_BLOBS_SITE_ID',       // operations scripts outside the site: the functions site's id for the blob store (not secret)
+  'WTS_BLOBS_STORE',         // the blob store name (default wts-objects)
   'WTS_OBJECTS_DIR',         // filesystem blob store for local runs and restore drills
   'WTS_OBJECTS_BINDING',     // the host blob-store binding module (a .js path inside server/; default site/objects-binding.js)
   'WTS_EXPORT_RETAIN_DAYS',  // 28 by default (§13.5)
@@ -28,6 +32,7 @@ const OPS_CONFIG_ENV = [
   'WTS_DEPLOY_SITE',         // release workflow: the functions site id (repository variable)
   'WTS_DEPLOY_COMMAND',      // release workflow: the host CLI deploy command (repository variable)
   'WTS_PREVIEW_SIGNIN',      // preview only: 1 allows sign-in on a preview deployment (synthetic database only)
+  'WTS_SMOKE_BASE',          // ops/remote-smoke.js: the deployed functions site's https address (not secret)
 ];
 
 module.exports = { OPS_SECRET_ENV, OPS_CONFIG_ENV };

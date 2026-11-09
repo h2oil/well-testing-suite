@@ -5,7 +5,9 @@
 // restore a revision, duplicate. WP-S1.
 //
 // The server never parses well data: it stores encrypted bodies, checks sizes, ownership, revisions and quotas, and keeps
-// the project list metadata envelope-encrypted (projects.meta_enc). Every row is reached under RLS as the session's user;
+// the project list metadata envelope-encrypted (projects.meta_enc). A commit may carry the page's project summary (well
+// names, client, operator, company, field, rig, country, job reference, modules, name — insight follow-up): the latest one is
+// kept per project, sealed with the owner's data key (projects.summary_enc); the admin routes read it (functions/admin.js). Every row is reached under RLS as the session's user;
 // a project of another account answers exactly like a missing one (404).
 
 const { fail, ApiError } = require('../core/errors');
@@ -14,6 +16,7 @@ const SE = require('../core/session');
 const R = require('../core/rate');
 const B = require('../core/blobstore');
 const { planPrune, BURST_PIN } = require('../core/revisions');
+const I = require('../core/insight');
 
 const META = 'project.meta';
 const CORE = 'project.core';
@@ -22,7 +25,7 @@ const iso = (d) => (d == null ? null : new Date(d).toISOString());
 const hex = (b) => (b == null ? null : Buffer.from(b).toString('hex'));
 
 // X-WTS-App below the security minimum → 426 (only ever raised for a security fix, never for a format change; §3.2)
-function verNum(v) { const m = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v || '')); return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)] : null; }
+function verNum(v) { const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v || '')); return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)] : null; }
 function clientGate(ctx) {
   const got = verNum(require('../core/http').header(ctx.req, 'x-wts-app')); const min = verNum(ctx.config.minClient);
   if (!got || !min) return;
@@ -185,6 +188,8 @@ async function projectCommit(ctx) {
   S.syncGate(ctx, true);
   clientGate(ctx);
   const b = ctx.body;
+  // the optional project summary (insight follow-up; core/insight.js): checked before anything is written
+  const summary = b.summary !== undefined ? I.normSummary(b.summary) : null;
   const body = await SE.withSession(ctx, {}, async (unit, s) => {
     const done = await receipt(unit, b.pushId);
     if (done) return done;                                     // a retry after a lost response: the same answer, no new revision
@@ -193,6 +198,9 @@ async function projectCommit(ctx) {
     const p = await projectRow(unit, ctx.params.id, { lock: true });
     const headRev = Number(p.head_rev);
     if (b.baseRev !== headRev) fail('stale', { headRev, head: await headBody(unit, ctx, u, p) });
+    // the latest summary is kept per project (a commit without one keeps the stored one), also on a no-op commit; an account
+    // that has not accepted the current Privacy notice (which describes the summary) stores none — the commit itself goes on
+    if (summary && I.consentCurrent(u.row, ctx.config)) await unit.sql`update wts.projects set summary_enc = ${I.sealSummary(u, summary)}, summary_at = now() where id = ${p.id} and user_id = ${unit.userId}`;
     if (headRev && b.reason === 'auto' && hex(p.head_vhash) === b.core.vhash) {
       const h = (await unit.sql`select saved_at from wts.revisions where project_id = ${p.id} and rev = ${headRev}`)[0];
       return { rev: headRev, savedAt: iso(h && h.saved_at) };          // nothing changed in the normalised view: a no-op
@@ -300,9 +308,9 @@ async function projectDuplicate(ctx) {
     if (n >= MAX_PROJECTS) fail('quota', { limit: MAX_PROJECTS, used: n });
     const m = openMeta(u, p.meta_enc);
     const head = Number(p.head_rev) ? (await unit.sql`select * from wts.revisions where project_id = ${p.id} and rev = ${p.head_rev}`)[0] : null;
-    const id = (await unit.sql`insert into wts.projects (id, user_id, meta_enc, well_count, head_rev, head_core, head_vhash, head_bytes, created_at, modified_at)
+    const id = (await unit.sql`insert into wts.projects (id, user_id, meta_enc, well_count, head_rev, head_core, head_vhash, head_bytes, summary_enc, summary_at, created_at, modified_at)
       values (gen_random_uuid(), ${unit.userId}, ${sealMeta(u, ctx.body.name, m.meta)}, ${p.well_count}, ${head ? 1 : 0}, ${head ? p.head_core : null},
-              ${head ? p.head_vhash : null}, ${head ? p.head_bytes : 0}, now(), now()) returning id`)[0].id;
+              ${head ? p.head_vhash : null}, ${head ? p.head_bytes : 0}, ${p.summary_enc}, ${p.summary_at}, now(), now()) returning id`)[0].id;
     if (head) {
       await B.missing(unit, unit.userId, revHashes(head), { lock: true });     // FOR SHARE: no clean-up under the copy
       await unit.sql`insert into wts.revisions (project_id, user_id, rev, core_hash, vhash, parts, bytes, device_id, session_hash, reason, app_ver, saved_at)
@@ -318,5 +326,5 @@ module.exports = {
     projectList, projectCreate, projectHead, projectRevs, projectRev, projectCommit, projectRename, projectTrash, projectRestore,
     projectPurge, projectRestoreRev, projectDuplicate,
   },
-  _internal: { openMeta, revItem, clientGate, prune },
+  _internal: { openMeta, revItem, clientGate, prune, META },
 };

@@ -604,14 +604,123 @@
     if (!ok) throw AErr('corrupt', { message: 'unexpected project shape' });
   }
 
+  // ── project summary (user insight; contract ProjectSummary, sent as the commit's summary?) ────────────────────────────
+  // projectSummary(snapshotOrPayload, name?) — pure: a small, plain-text summary of the project being saved, which the
+  // operator's admin page shows: the well names (the multi-well list and each well's Client & Well Info well name, ≤ 50, each
+  // ≤ 80 characters), client, operator, company, field, rig, country and job reference (Client & Well Info, h2oil_client_info;
+  // the active well first, then the first other well that has the field; the project meta as the last fallback), the modules
+  // used (route keys of the pages with saved data, ≤ 40) and the project name. Every string is plain text (control characters
+  // become spaces), trimmed and capped at 120 characters; empty fields are left out. Nothing else of the project is read.
+  var SUM_MAX = 120;
+  var MODULE_ALIAS = { prism_dataset: 'prism', pvt: 'prism', prism_gauges: 'prism', buildup_raw: 'buildup', buildup_analysis: 'buildup' };
+  // plain text exactly as the server checks it (core/contract.js textUpTo, core/insight.js normSummary): NFKC first, then the
+  // control characters the server refuses (C0, DEL, C1, U+2028 / U+2029) become spaces, then trimmed and capped — the length
+  // counted on the normalised text and cut on a code-point boundary (review fix: a C1 control or a value that NFKC expands
+  // made the server refuse the whole commit)
+  var SUM_CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  function nfkc(t) { try { return typeof t.normalize === 'function' ? t.normalize('NFKC') : t; } catch (e) { return t; } }
+  function capText(t, max) {
+    for (var guard = 0; guard < 8; guard++) {
+      t = nfkc(t).replace(SUM_CTRL, ' ').replace(/\s+/g, ' ').trim();
+      if (t.length <= max) return t;
+      t = t.slice(0, max);
+      if (/[\ud800-\udbff]$/.test(t)) t = t.slice(0, -1);       // never half a surrogate pair
+    }
+    return t.length <= max ? t : '';
+  }
+  function sumText(v, max) {
+    if (typeof v !== 'string' && typeof v !== 'number') return null;
+    var t = capText(String(v), max || SUM_MAX);
+    return t || null;
+  }
+  function objOf(raw) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+    if (typeof raw !== 'string') return {};
+    try { var o = JSON.parse(raw); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; }
+  }
+  // the Client & Well Info of one well's keys: h2oil_client_info, else the page record's ci_<key> fields
+  function clientInfoOf(keys, extra) {
+    var ci = {};
+    var rec = objOf(keys && keys.wts_page_clientinfo); var fl = objOf(rec.f);
+    Object.keys(fl).forEach(function (id) { if (/^ci_[a-z_]+$/.test(id)) ci[id.slice(3)] = fl[id]; });
+    var ex = objOf(extra); Object.keys(ex).forEach(function (k) { if (ex[k] != null && ex[k] !== '') ci[k] = ex[k]; });
+    var main = objOf(keys && keys.h2oil_client_info); Object.keys(main).forEach(function (k) { if (main[k] != null && main[k] !== '') ci[k] = main[k]; });
+    return ci;
+  }
+  function modulesOf(keys, mods, into) {
+    Object.keys(keys || {}).forEach(function (k) {
+      var m = /^wts_page_([a-z][a-z0-9_]{0,39})$/.exec(k);
+      if (m) into[MODULE_ALIAS[m[1]] || m[1]] = 1;
+      else if (/^wts_prism_/.test(k)) into.prism = 1;
+      else if (/^wts_buildup_/.test(k)) into.buildup = 1;
+      else if (k === 'h2oil_client_info' && ['client', 'well', 'field', 'operator', 'rig', 'country', 'ref'].some(function (x) { return sumText(objOf(keys[k])[x]); })) into.clientinfo = 1;
+    });
+    Object.keys(mods || {}).forEach(function (m) {
+      if (m === 'storage' || m === 'wells' || m === 'units' || mods[m] == null || !/^[a-z][a-z0-9_]{0,39}$/.test(m)) return;
+      if (m === 'clientinfo' || m === 'wts') return;               // in-memory mirrors: counted from their keys
+      into[MODULE_ALIAS[m] || m] = 1;
+    });
+  }
+  function projectSummary(snap, name) {
+    var pl = snap && snap.payload && typeof snap.payload === 'object' ? snap.payload : snap;
+    if (!pl || typeof pl !== 'object') return {};
+    var mods = objOf(pl.modules);
+    var meta = objOf(pl.meta);
+    var keys = objOf(mods.storage && mods.storage.keys);
+    var wm = mods.wells && Array.isArray(mods.wells.wells) && mods.wells.wells.length ? mods.wells : null;
+    var activeId = wm ? String(wm.active || (wm.wells[0] && wm.wells[0].id) || '') : '';
+    // the wells: [{name, ci, keys, modules}] with the active well first (its live keys are in storage; the others in their blobs)
+    var wells = [];
+    var active = { name: null, ci: clientInfoOf(keys, mods.clientinfo), keys: keys, modules: mods };
+    if (wm) {
+      wm.wells.forEach(function (w) {
+        if (!w || typeof w !== 'object') return;
+        if (String(w.id) === activeId) { active.name = w.name; wells.unshift(active); return; }
+        var d = objOf(w.data);
+        var k = objOf(d.keys);
+        wells.push({ name: w.name, ci: clientInfoOf(k, d.modules && d.modules.clientinfo), keys: k, modules: objOf(d.modules) });
+      });
+      if (wells.indexOf(active) === -1) wells.unshift(active);
+    } else wells.push(active);
+    var out = {};
+    var nm = sumText(name) || sumText(meta.name) || sumText(active.ci.well) || sumText(meta.well) || sumText(active.ci.client) || sumText(meta.client);
+    if (nm) out.name = nm;
+    // well names: unique (case-insensitive), the registry name and the Client & Well Info well name of each well
+    var seen = {}; var list = [];
+    function addWell(v) { var t = sumText(v, 80); if (!t || seen[t.toLowerCase()] || list.length >= 50) return; seen[t.toLowerCase()] = 1; list.push(t); }
+    wells.forEach(function (w) { addWell(w.ci.well); if (wm) addWell(w.name); });
+    addWell(meta.well);
+    if (list.length) out.wells = list;
+    var FIELDS = [['client', 'client'], ['operator', 'operator'], ['company', 'company'], ['field', 'field'], ['rig', 'rig'], ['country', 'country'], ['jobRef', 'ref']];
+    FIELDS.forEach(function (fd) {
+      // Client & Well Info prefills "Report prepared by → Company" with the app's own default: that is not the user's company
+      var val = function (x) { var t = sumText(x); return t && fd[0] === 'company' && /^h2oil engineering$/i.test(t) ? null : t; };
+      var v = null;
+      for (var i = 0; i < wells.length && !v; i++) v = val(wells[i].ci[fd[1]]);
+      if (!v) v = val(meta[fd[1]]);
+      if (v) out[fd[0]] = v;
+    });
+    var used = {};
+    wells.forEach(function (w) { modulesOf(w.keys, w.modules, used); });
+    Object.keys(mods).forEach(function (m) { if (BULK_MODULES.indexOf(m) !== -1 && mods[m] != null) used[MODULE_ALIAS[m] || m] = 1; });
+    var ml = Object.keys(used).filter(function (m) { return /^[a-z][a-z0-9_]{0,39}$/.test(m); }).sort().slice(0, 40);
+    if (ml.length) out.modules = ml;
+    return out;
+  }
+
   // ── commits ────────────────────────────────────────────────────────────────────────────────────────────────────────
   function commitBody(snap, baseRev, reason, pushId, name, gz) {
     var core = { hash: snap.hash, vhash: snap.vhash, zsha: gz.zsha, bytes: snap.coreBytes };
     if (gz.bytes.length <= INLINE_MAX) core.inline = b64(gz.bytes);
-    return { pushId: pushId, baseRev: baseRev, reason: reason, core: core,
+    var meta = metaOf(snap.payload || { meta: snap.meta }, name);
+    var body = { pushId: pushId, baseRev: baseRev, reason: reason, core: core,
       parts: snap.parts.map(function (p) { return { name: p.name, hash: p.hash, bytes: p.bytes }; }),
-      meta: metaOf(snap.payload || { meta: snap.meta }, name), wells: (snap.wells || []).map(function (w) { return { id: w.id, name: w.name }; }),
+      meta: meta, wells: (snap.wells || []).map(function (w) { return { id: w.id, name: w.name }; }),
       fmt: FMT, appVer: (I() && typeof I().appVer === 'function') ? String(I().appVer() || '') : String((A() && A().seam('appVer')) || '') };
+    // user insight: the project summary (well names, client, …) rides with every commit; a summary that cannot be made is left out
+    var sum = null; try { sum = projectSummary(snap.payload || { meta: snap.meta }, meta.name); } catch (e) { sum = null; }
+    if (sum && Object.keys(sum).length) body.summary = sum;
+    return body;
   }
   function encryptOutbox(obj) {
     var c = subtle(); var k = S.outboxKey;
@@ -660,6 +769,11 @@
           tries++;
           return call('POST', '/projects/' + projectId + '/commit', bodyC).then(function (r) { return clearOutbox().then(function () { return r.json; }); }, function (e) {
             if (e && e.code === 'missing_blobs' && tries < 2) return uploadList(snap, (e.body && e.body.missing) || []).then(commit);
+            // the summary is informational: a server that refuses it (an older or stricter rule) never blocks the save — the
+            // commit is sent once more without it (review fix)
+            if (e && e.code === 'bad_request' && bodyC.summary && /^summary(\.|\[|$)/.test(String((e.body && e.body.field) || ''))) {
+              delete bodyC.summary; return commit();
+            }
             if (e && e.code === 'stale') return clearOutbox().then(function () { return { stale: true, head: e.body && e.body.head, headRev: e.body && e.body.headRev }; });
             throw e;
           });
@@ -1355,6 +1469,7 @@
     link: link, unlink: unlink, saveToCloud: saveToCloud, openFromCloud: openFromCloud, importFiles: importFiles,
     listProjects: listProjects, history: history, restoreRevision: restoreRevision, rename: rename, duplicate: duplicate,
     trash: trash, restore: restore, purge: purge, download: download, projectFile: projectFile, snapshot: snapshot, assemble: assemble,
+    projectSummary: projectSummary,
     migrateLocal: function (choice) { var u = signedInUser(); if (!u) return Promise.reject(AErr('signed_out')); return init().then(function () { return kvGet('migratedFor'); }).then(function (mf) { return handover(u, classify(u, mf)); }); },
     wipeDevice: wipeDevice, exportAll: exportAll, openPicker: openPicker, pickAndImport: pickAndImport,
     afterSignIn: afterSignIn, publicSignOutGuard: publicSignOutGuard, lockOutbox: lockOutbox,

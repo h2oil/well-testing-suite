@@ -28,7 +28,7 @@ const F = require('./_acct-fake-server');
 
 const WP = 'AC0';
 const BUILD = path.join(__dirname, '..');
-const FILES = ['66-account.js', '67-cloud-sync.js', '68-account-page.js'];
+const FILES = ['66-account.js', '67-cloud-sync.js', '68-account-page.js', '69-account-admin.js'];
 const B = F.PROD + S.BASE;
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -82,7 +82,7 @@ module.exports = [
   {
     name: 'AC1 shared fixture: examples, envelopes, broken copies, strict requests, canonical vectors', wp: WP, opts: false,
     run(app, assert) {
-      assert.strictEqual(S.ENDPOINTS.length, 50);
+      assert.strictEqual(S.ENDPOINTS.length, 56);   // 50 + the four admin dashboard routes + profileUpdate, adminUser (insight)
       assert.deepStrictEqual(S.ENDPOINTS.map((e) => e.id).filter((id, i, a) => a.indexOf(id) !== i), [], 'endpoint ids are unique');
       for (const e of S.ENDPOINTS) {
         const ex = S.EXAMPLES[e.id];
@@ -166,7 +166,7 @@ module.exports = [
       const core = require('zlib').gzipSync('{"core":1}');
       const commit = (o) => post(br, '/projects/' + pc.id + '/commit', Object.assign({ pushId: crypto.randomUUID(), baseRev: 0, reason: 'save',
         core: { hash: sha('core-1'), vhash: sha('v-1'), zsha: sha(core), bytes: 10, inline: core.toString('base64') },
-        parts: [{ name: 'well/w1', hash: ph, bytes: part.length }], meta: Object.assign({ name: 'Example-1 DST' }, meta), wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '3.5' }, o));
+        parts: [{ name: 'well/w1', hash: ph, bytes: part.length }], meta: Object.assign({ name: 'Example-1 DST' }, meta), wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0' }, o));
       const miss = expect(assert, 'projectCommit', await commit({}), 422);
       assert.deepStrictEqual(miss.missing, [ph]);
       expect(assert, 'blobPut', await put(1, z2, 2, sha(whole)), 204);
@@ -215,6 +215,15 @@ module.exports = [
       expect(assert, 'recoverySet', await post(br, '/auth/recovery/set', { email: 'me@personal.example' }), 202);
       expect(assert, 'recoverySet', await post(br, '/auth/recovery/set', { code: fake.codeFor('me@personal.example', 'code_recovery_add') }), 200);
       assert(expect(assert, 'me', await get(br, '/me'), 200).user.recoveryMasked);
+      // the optional profile (user insight): PUT, empty strings → null, unknown keys refused, GET /me carries it
+      const putJ = (p, body) => br.fetch(B + p, { method: 'PUT', headers: { 'X-WTS-Req': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(async (r) => ({ status: r.status, json: await r.json() }));
+      const pr = expect(assert, 'profileUpdate', await putJ('/account/profile', { fullName: ' Sam Example ', company: 'Operator Energy Ltd', phone: '', country: 'AE' }), 200);
+      assert.deepStrictEqual(pr.profile, { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: null, country: 'AE', phone: null });
+      expect(assert, 'profileUpdate', await putJ('/account/profile', { fullName: 'x', role: 'admin' }), 400, 'unknown keys are refused');
+      expect(assert, 'profileUpdate', await putJ('/account/profile', { country: 'Dubai' }), 400, 'country is an ISO code');
+      expect(assert, 'profileUpdate', await putJ('/account/profile', { fullName: 'x'.repeat(81) }), 400, 'name ≤ 80');
+      assert.strictEqual(expect(assert, 'me', await get(br, '/me'), 200).profile.company, 'Operator Energy Ltd');
       expect(assert, 'recoveryRemove', await post(br, '/auth/recovery/remove', {}), 200);
       // passkeys are Phase 3
       expect(assert, 'passkeyOptions', await post(br, '/auth/passkey/options', { purpose: 'signin' }), 501);
@@ -262,7 +271,8 @@ module.exports = [
       assert.strictEqual(noHdr.headers.get('cache-control'), 'no-store');
       // every Phase 1 endpoint was exercised (callback / finish / start / unlink / devices are in AC3)
       const hit = new Set(fake.requests.map((q) => { const m = S.matchRoute(q.method, q.path.slice(S.BASE.length)); return m && m.endpoint.id; }));
-      const left = S.ENDPOINTS.filter((e) => e.phase === 1 && !hit.has(e.id) && ['oauthStart', 'oauthCallback', 'oauthFinish', 'unlink', 'emailRevert', 'cspReport', 'opsDaily'].indexOf(e.id) === -1).map((e) => e.id);
+      // (the admin routes are exercised against the real server: server/test/admin.test.js)
+      const left = S.ENDPOINTS.filter((e) => e.phase === 1 && !hit.has(e.id) && e.group !== 'admin' && ['oauthStart', 'oauthCallback', 'oauthFinish', 'unlink', 'emailRevert', 'cspReport', 'opsDaily'].indexOf(e.id) === -1).map((e) => e.id);
       assert.deepStrictEqual(left, [], 'Phase 1 endpoints not exercised');
       fake.mail.sent.forEach((m) => { assert(!/</.test(JSON.stringify(m.params)), 'plain-text mail params'); });
     },
@@ -408,14 +418,14 @@ module.exports = [
         const b = bare(o);
         assert.deepStrictEqual(Object.keys(b.win.WTS_account || {}), ['eligible'], what + ': only the ineligible stub');
         assert.strictEqual(b.win.WTS_account.eligible, false, what);
-        assert.strictEqual(b.win.WTS_cloudSync, undefined, what); assert.strictEqual(b.win.WTS_accountPage, undefined, what);
+        assert.strictEqual(b.win.WTS_cloudSync, undefined, what); assert.strictEqual(b.win.WTS_accountPage, undefined, what); assert.strictEqual(b.win.WTS_accountAdmin, undefined, what);
         assert.deepStrictEqual(b.counts, { fetch: 0, timers: 0, doc: 0 }, what + ': nothing at load');
       }
       for (const [what, o] of [['production https', { location: Object.assign({}, PROD_LOC, { search: '?cloud=1' }) }], ['DEV localhost', { dev: true }]]) {
         const b = bare(o);
         // the eligible files probe `typeof document` once each (undefined here, so no DOM can be touched); no request, no timer
         assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': no request or timer at load');
-        assert(b.counts.doc <= 4, what + ': only document probes at load');
+        assert(b.counts.doc <= 5, what + ': only document probes at load');
         const doc0 = b.counts.doc;
         for (const f of FILES) {
           const spec = S.CLIENT_NAMES[f]; const obj = b.win[spec.global];
@@ -436,6 +446,8 @@ module.exports = [
         for (const n of ['syncNow']) await assert.rejects(b.win.WTS_cloudSync[n](), (e) => e.code === 'not_implemented', 'WTS_cloudSync.' + n);
         assert.strictEqual(b.win.WTS_accountPage.register(), false, 'the account page is not registered before host H7');
         assert.strictEqual(b.win.WTS_accountPage.entry.navHidden, true);
+        assert.strictEqual(b.win.WTS_accountAdmin.register(), false, 'the admin page is not registered before host H7');
+        assert.strictEqual(b.win.WTS_accountAdmin.entry.navHidden, true);
         assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': stubs make no request');
         assert(b.counts.doc - doc0 <= 4, what + ': no DOM work without a document');
         if (what === 'production https') assert.strictEqual(b.store.wtspref_cloud_beta, '1', '?cloud=1 sets the beta flag');
@@ -453,13 +465,13 @@ module.exports = [
         assert(!/LinkedIn|Google/.test(src.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '')), f + ': provider brand names only inside the ACCT block');
         if (f === '67-cloud-sync.js') assert(!/LinkedIn|Google/.test(src), f + ': no provider brand names');
         assert(!/setInterval\s*\(/.test(src), f + ': no setInterval');
-        assert(((src.slice(0, st).match(/setTimeout\(/g) || []).length) <= (f === '66-account.js' ? 2 : 0), f + ': only the one-shot mount timers');
+        assert(((src.slice(0, st).match(/setTimeout\(/g) || []).length) <= (f === '66-account.js' ? 2 : f === '69-account-admin.js' ? 1 : 0), f + ': only the one-shot mount timers');
       }
       const R10 = require(path.join(BUILD, 'concat-round10.js'));
       const names = R10.listFiles();
-      assert.deepStrictEqual(names.slice(-3), FILES, 'Round 10 discovers 66–68 after 65');
+      assert.deepStrictEqual(names.slice(-FILES.length), FILES, 'Round 10 discovers 66–69 after 65');
       const out = R10.build({ log: { log() {}, warn() {} } });
-      assert.strictEqual((out.match(/\/\/ ── ACCT:START/g) || []).length, 3); assert.strictEqual((out.match(/\/\/ ── ACCT:END ──/g) || []).length, 3);
+      assert.strictEqual((out.match(/\/\/ ── ACCT:START/g) || []).length, FILES.length); assert.strictEqual((out.match(/\/\/ ── ACCT:END ──/g) || []).length, FILES.length);
       const stripped = out.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '// (accounts and cloud sync: web only — stripped from the iOS bundle)');
       assert(!/WTS_account|WTS_cloudSync|\/api\/v1|wtsacct_/.test(stripped), 'the planned strip of §9 removes every account identifier');
       assert(!/SELF-TEST/.test(out.split('66-account')[1] || ''), 'self-tests stripped');

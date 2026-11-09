@@ -174,8 +174,9 @@ test('fail closed: a missing or unknown WTS_ENV is production (no proxy secret �
   const app = createApp({ config: c });
   assert.strictEqual((await app.handle(req('GET', '/health'))).status, 404, 'the production Host with no proxy signature → 404');
   assert.strictEqual((await app.handle(req('GET', '/health', { headers: { host: 'localhost:8787' } }))).status, 404, 'localhost refused');
-  const u = loadConfig({ WTS_ENV: 'staging' });
-  assert.strictEqual(u.production, true); assert.ok(u.warnings.some((w) => /WTS_ENV: unknown value — treated as production/.test(w)));
+  // (an unknown name such as 'qa'; 'staging' is the test backend since v4.0 — production for every rule, test-backend.test.js)
+  const u = loadConfig({ WTS_ENV: 'qa' });
+  assert.strictEqual(u.production, true); assert.strictEqual(u.env, 'production'); assert.ok(u.warnings.some((w) => /WTS_ENV: unknown value — treated as production/.test(w)));
   assert.strictEqual(loadConfig({ WTS_ENV: '  ' }).production, true);
   // ACCOUNTS_OFF: unknown non-empty values pause the accounts and warn
   for (const v of ['', '0', 'false', 'off', 'no', 'OFF']) assert.strictEqual(cfg({ ACCOUNTS_OFF: v }).accountsOff, false, JSON.stringify(v));
