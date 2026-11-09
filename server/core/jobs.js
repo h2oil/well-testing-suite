@@ -85,10 +85,19 @@ async function queueMail(tx, keys, to, template, params) {
     values (${id}, ${keys.system.seal('mail.to', to)}, ${template}, ${keys.system.seal('mail.params', JSON.stringify({ template, params }))}, now())`;
   return { id, to, template, params };
 }
+// A transport error with err.retry === false (site/adapters.js MAIL_ERRORS: a wrong token, an unconfirmed sender, a recipient
+// that cannot get mail, a service configuration problem) is permanent: the row gets the last try (tries = MAIL_TRIES) at once,
+// so the daily retry never sends it again and the purge removes it after 24 h. Any other failure counts one try.
+const MAIL_TRIES = 5;
+const permanent = (e) => !!(e && e.retry === false);
+async function markOutbox(sql, id, ok, final) {
+  await sql`update wts.mail_outbox set sent_at = case when ${!!ok}::boolean then now() end,
+    tries = case when ${!!final}::boolean then greatest(tries + 1, ${MAIL_TRIES}::int) else tries + 1 end where id = ${id}`;
+}
 async function sendOutbox(sql, mail, m, log) {
-  let ok = false;
-  try { await mail.send(compose({ to: m.to, template: m.template, params: m.params })); ok = true; } catch (e) { log.warn('jobs: ' + m.template + ' send failed'); }
-  await sql`update wts.mail_outbox set sent_at = case when ${!!ok}::boolean then now() end, tries = tries + 1 where id = ${m.id}`;
+  let ok = false; let final = false;
+  try { await mail.send(compose({ to: m.to, template: m.template, params: m.params })); ok = true; } catch (e) { final = permanent(e); log.warn('jobs: ' + m.template + ' send failed' + (final ? ' (permanent: ' + e.code + ')' : '')); }
+  await markOutbox(sql, m.id, ok, final);
   return ok;
 }
 const whenText = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
@@ -117,19 +126,19 @@ async function runDaily(o) {
   }));
 
   await step('mail', async () => {
-    let sent = 0; let failed = 0;
-    if (!mail || !keys) return { sent, failed, skipped: true };
-    for (const m of await sql`select * from wts.mail_outbox where sent_at is null and tries < 5 and created_at < now() - interval '5 minutes' order by created_at limit 500`) {
-      let ok = false;
+    let sent = 0; let failed = 0; let dropped = 0;
+    if (!mail || !keys) return { sent, failed, dropped, skipped: true };
+    for (const m of await sql`select * from wts.mail_outbox where sent_at is null and tries < ${MAIL_TRIES}::int and created_at < now() - interval '5 minutes' order by created_at limit 500`) {
+      let ok = false; let final = false;
       try {
         const to = keys.system.open('mail.to', m.to_enc).toString('utf8');
         const p = JSON.parse(keys.system.open('mail.params', m.params_enc).toString('utf8'));
         await mail.send(compose({ to, template: m.template, params: p.params }));
         ok = true; sent++;
-      } catch (e) { failed++; }
-      await sql`update wts.mail_outbox set sent_at = case when ${!!ok}::boolean then now() end, tries = tries + 1 where id = ${m.id}`;
+      } catch (e) { final = permanent(e); if (final) dropped++; else failed++; }
+      await markOutbox(sql, m.id, ok, final);
     }
-    return { sent, failed };
+    return { sent, failed, dropped };
   });
 
   await step('trash', async () => {

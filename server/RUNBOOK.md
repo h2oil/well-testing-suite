@@ -66,9 +66,11 @@ every other check, so a request sent straight to the functions site never sees `
 module as the functions site, §3 step 6, with its own `WTS_OBJECTS_CREDENTIAL`\*) or `WTS_OBJECTS_DIR`, `WTS_ALERT_WEBHOOK`\*, `WTS_ALERT_EMAIL`, `WTS_HEALTH_URL`, `WTS_STORAGE_PLAN_BYTES`, `WTS_OPS_HMAC`\* (for
 `call-daily.js`). **Support machine** (owner only, on demand): `WTS_SUPPORT_DB_URL`\*.
 
-**Repository (release workflow)**: environment `server-migrations` → secret `WTS_MIGRATE_DB_URL`; environment
-`server-production` → secret `WTS_DEPLOY_TOKEN`, variables `WTS_DEPLOY_SITE`, `WTS_DEPLOY_COMMAND`, `WTS_HEALTH_URL`. Both
-environments require the owner as reviewer. These are **environment** secrets, never repository-level ones (§3 step 8).
+**Repository (release workflow)**: environment `server-production` → secret `WTS_DEPLOY_TOKEN`, variables `WTS_DEPLOY_SITE`,
+`WTS_DEPLOY_COMMAND`, `WTS_HEALTH_URL`; it requires the owner as reviewer. These are **environment** secrets, never
+repository-level ones (§3 step 8). The workflow holds no database credential: the platform applies the migrations at the
+deploy, and the workflow only checks, read-only, that `netlify/database/migrations/` is in sync (`db/platform-migrations.js
+--check`) and that no file released under an earlier server tag changed or disappeared.
 
 Secrets never go into the repository, the static bundle, logs, previews or chat. `.env*` is git-ignored; the publish check
 and the secret scan refuse files that contain key material or name a secret variable in published content.
@@ -279,10 +281,9 @@ on master; today's main-site set-up already hides them — confirm `https://well
    4. Redeploy the main site; the deploy summary lists the edge function `wts-api-proxy` on `/api/v1/*`. Do step 12 as written.
 
 ### Step 11 — GitHub release environments
-GitHub → repository **Settings → Environments**:
-1. **New environment** `server-migrations` → **Required reviewers**: you → Save → **Add environment secret**
-   `WTS_MIGRATE_DB_URL`\* = the connection string of step 6.
-2. **New environment** `server-production` → **Required reviewers**: you → Save →
+GitHub → repository **Settings → Environments** (no migrations environment: the platform applies the migrations at the
+deploy, so the connection string of step 6 never goes into GitHub):
+1. **New environment** `server-production` → **Required reviewers**: you → Save →
    - secret `WTS_DEPLOY_TOKEN`\*: Netlify → your avatar → **User settings → Applications → Personal access tokens → New access
      token** (description "server releases", expiry 1 year; put a renewal date in the calendar — a password reset also cancels
      it);
@@ -301,9 +302,9 @@ GitHub → repository **Settings → Environments**:
 1. Make sure the accounts work and this runbook's version are on master (after step 10).
 2. GitHub → **Releases → Draft a new release → Choose a tag**: `server-v4.0.0` (new tag, target `master`) → **Publish release**
    (or `git tag server-v4.0.0 <master commit> && git push origin server-v4.0.0`).
-3. GitHub → **Actions → Server release** → the run for the tag: `verify` runs the tests (about 5 minutes); then **Review
-   deployments → server-migrations → Approve** (prints `0 applied` after step 7); then approve **server-production** (the
-   deploy, then the health check).
+3. GitHub → **Actions → Server release** → the run for the tag: `verify` runs the tests and the read-only platform
+   migrations check (about 5 minutes); then **Review deployments → server-production → Approve** (the deploy — the platform
+   applies any new migration file before it publishes — then the health check).
 4. Checks:
    - `https://welltest.h2oil.co.uk/api/v1/health` → `{"ok":true,"db":true,"ver":"4.0.0"}`.
    - `https://h2oil-accounts-api.netlify.app/api/v1/health` (the functions site directly) → 404. If it answers 200, the
@@ -476,6 +477,17 @@ depends on `@netlify/database`, the platform provisions the database on this dep
 - Never "fix" the database by hand or with `db/migrate.js` (it refuses a platform-migrated database), never edit or delete a
   file in `netlify/database/migrations/`: a correction is a new `db/migrations/NNN-*.sql` + `node db/platform-migrations.js --write`.
 - If the function region pin (`lhr`) is refused on the Free plan, stop and tell the developer.
+- **Record the platform's migration runner (developer, before production).** Each generated file carries its own
+  `BEGIN … COMMIT`. Local tests cover a runner with no transaction and one that wraps each file in its own transaction; two
+  behaviours cannot be checked without a deploy: (1) a runner that wraps a file AND records it in the same transaction after
+  the body — the file's own `COMMIT` would end that transaction early, so a failure to record would leave the body applied
+  but unrecorded and the next deploy would fail on `CREATE SCHEMA wts`; (2) a runner using the extended query protocol, which
+  rejects multi-statement files outright. After the first test deploy read the deploy log for `0000` … `0501` and the
+  platform's migration record (Data & Storage → Database → Migrations, or the deploy summary), compare it with
+  `select name from public.wts_schema_migrations` (a read-only query in the platform's database console; no DDL), and write
+  the observed behaviour here:
+  > Observed runner behaviour: _not yet recorded (first test deploy pending)_.
+  If (1) or (2) is seen, stop: the generator (`db/platform-migrations.js`) must change before production.
 
 ### Step T6 — Smoke test (from the developer's container or your computer)
 ```
@@ -493,6 +505,8 @@ arrives. Failures:
 - 6 `jobs role local` (row 6.1) → add `WTS_DB_ROLE_MODE` = `local` (T4) and redeploy; `refused` → tell the developer.
 - 7 `mail_sender` → the From address is not a confirmed sender signature; `mail_auth` → wrong token (use the Server token);
   `mail_rejected` → the address is invalid / inactive, or the account is still pending and the address is off-domain.
+  `mail_config` → the request or the Postmark set-up is wrong (server, message stream `outbound`, an IP restriction): check
+  the Postmark server settings. These refusals are permanent: the daily job does not retry such a message.
 
 ### Step T7 — Tear down
 Delete the site (its database and blob stores go with it), delete the Postmark server (or revoke its token), delete the "TEST
@@ -500,10 +514,11 @@ backend" password-manager entry. Production is then set up from §3N with `node 
 `WTS_ENV=production`.
 
 **Note for production (§3N):** with `@netlify/database` as a dependency the production deploy applies the migrations itself,
-so §3N step 7 (`migrate.js --platform` from your computer) and the release workflow's migrate job must NOT run against the
-Netlify database (`migrate.js` refuses a database the platform migrated; the opposite order — `migrate.js` first — makes the
-platform's `0010_schema.sql` fail and blocks the deploy). The workflow's migration gate has to be adapted before the first
-production tag (developer item).
+so §3N step 7 (`migrate.js --platform` from your computer) must NOT run against the Netlify database (`migrate.js` refuses a
+database the platform migrated; the opposite order — `migrate.js` first — makes the platform's `0010_schema.sql` fail and
+blocks the deploy). The release workflow has no migrate job: its verify job runs `db/platform-migrations.js --check` and
+refuses a change to, or removal of, a file released under an earlier server tag, and the deploy job refuses unless that check
+passed.
 
 ## 3P. Google and LinkedIn console set-up (plan §13.10)
 
@@ -603,11 +618,13 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
    URL answered directly gives `404`; through the static site `GET /api/v1/health` gives `{"ok":true,"db":true,…}`. If the
    host's rewrite cannot add a header, use the fallback of plan §2 (one site, functions deployed from the same tags through a
    protected deploy branch) — ask for a plan update first.
-8. **Repository**: BEFORE the first tag, create the environments `server-migrations` and `server-production` with the owner
-   as **required reviewer**, then add the secrets and variables of §2 **to those environments** (environment secrets, not
-   repository secrets: a repository-level secret, or an environment the first workflow run creates on its own without
-   reviewers, would let the jobs run without the manual approval). The deploy job refuses to run when the migrate job was
-   skipped (no `WTS_MIGRATE_DB_URL` in its environment) while `server/db/migrations` changed since the previous server tag. `WTS_DEPLOY_COMMAND` is the host CLI's deploy call for the functions site, run inside
+8. **Repository**: BEFORE the first tag, create the environment `server-production` with the owner as **required
+   reviewer**, then add the secrets and variables of §2 **to that environment** (environment secrets, not repository
+   secrets: a repository-level secret, or an environment the first workflow run creates on its own without reviewers, would
+   let the jobs run without the manual approval). The workflow assumes platform migrations: the deploy job refuses unless
+   the verify job confirmed the generated migrations folder in sync. On a host WITHOUT platform migrations, add a migrate job
+   (`node db/migrate.js --platform` with `WTS_MIGRATE_DB_URL` in a protected `server-migrations` environment) back before the
+   first tag — ask the developer. `WTS_DEPLOY_COMMAND` is the host CLI's deploy call for the functions site, run inside
    `server/dist`, reading `WTS_DEPLOY_TOKEN` and `WTS_DEPLOY_SITE` from the environment (pin the CLI version in it).
 9. **First release**: follow §4 with tag `server-v1`.
 10. **Schedules** (jobs host or the host scheduler): daily `node server/ops/call-daily.js` (or the host scheduler calling
@@ -642,8 +659,8 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
      `oidc-providers.js` unchanged or reviewed, `WTS_OIDC_MODE` unset in production.
   3. `git tag server-vN <master commit> && git push origin server-vN`.
   4. The workflow verifies (tag format, master ancestry, server tests on a throwaway cluster, secret scan, publish check,
-     digest and pin diff in the run summary, bundle), then waits for approval of `server-migrations` (migrations) and
-     `server-production` (deploy, then the health check).
+     digest and pin diff in the run summary, the read-only platform migrations check, bundle), then waits for approval of
+     `server-production` (deploy — the platform applies new migration files before publishing — then the health check).
 - **Rollback**: re-run the deploy job of the previous tag (migrations are additive, so the old code still works). Never edit
   a released migration; correct it with a new `NNN-*.sql`.
 

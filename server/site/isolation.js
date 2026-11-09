@@ -6,7 +6,9 @@
 // database with synthetic data, its own keys, no mail credential and no provider secrets, and sign-in only when
 // WTS_PREVIEW_SIGNIN=1. Because a value cannot be recognised as "the production one", the separation is made checkable by
 // two conventions the owner follows when creating secrets (server/RUNBOOK.md, "Environments"):
-//   • key ids: production master-key and code-pepper kids are 1–8999; every other environment uses kids 9000–999999.
+//   • key ids: production master-key, code-pepper and backup public-key kids are 1–8999; every other environment uses kids
+//     9000–999999 (ops/keygen.js: 1 for production, 9001 with --preview). Production and staging check all three, so the
+//     test backend can never seal its weekly export to the production recovery key (or the reverse).
 //   • database names: the production database name never contains preview / test / drill / scratch; a preview database
 //     name ends in "_preview".
 //
@@ -47,6 +49,7 @@ function checkIsolation(config, env) {
   const mode = config.env;                                 // production | staging | preview | local | test (config.js fails closed)
   const masterKids = kidsOf(env.WTS_MASTER_KEYS);
   const pepperKids = kidsOf(env.WTS_CODE_PEPPERS);
+  const backupKids = kidsOf(env.WTS_BACKUP_PUBLIC_KEY);
   const db = dbNameOf(env.WTS_DB_URL);
   const previewFlag = String(env.WTS_PREVIEW_SIGNIN || '').trim() === '1';
   let signinAllowed = true;
@@ -58,11 +61,13 @@ function checkIsolation(config, env) {
     if (mode === 'production') {
       if (masterKids.some((k) => k >= PREVIEW_KID_MIN)) problems.push('a master key with a non-production kid (≥ 9000) is loaded in production');
       if (pepperKids.some((k) => k >= PREVIEW_KID_MIN)) problems.push('a code pepper with a non-production kid (≥ 9000) is loaded in production');
+      if (backupKids.some((k) => k >= PREVIEW_KID_MIN)) problems.push('WTS_BACKUP_PUBLIC_KEY has a non-production kid (≥ 9000) in production — the weekly export would be sealed to a test key');
       if (db && NON_PROD_DB.test(db)) problems.push('the production database name looks like a preview / test / drill database');
     } else {
       if (masterKids.some((k) => k < PREVIEW_KID_MIN)) problems.push('staging: a master key with a production kid (< 9000) is loaded — use a test key (kid ≥ 9000, ops/keygen.js --preview)');
       if (pepperKids.some((k) => k < PREVIEW_KID_MIN)) problems.push('staging: a code pepper with a production kid (< 9000) is loaded');
       if (env.WTS_MASTER_KID && Number(env.WTS_MASTER_KID) < PREVIEW_KID_MIN) problems.push('staging: WTS_MASTER_KID is a production kid (< 9000)');
+      if (backupKids.some((k) => k < PREVIEW_KID_MIN)) problems.push('staging: WTS_BACKUP_PUBLIC_KEY has a production kid (< 9000) — the test export would be sealed to the production recovery key; use the test key (ops/keygen.js --preview)');
     }
     if (previewFlag) problems.push('WTS_PREVIEW_SIGNIN is set in ' + where);
     // credentials D12 / §13.3 keep off the functions site (operations scripts, jobs host or the release workflow only)

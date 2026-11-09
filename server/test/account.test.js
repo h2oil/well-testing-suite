@@ -139,6 +139,33 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.deletion_ledger where user_id = ${id} and purged_at is not null`)[0].n, 1);
   });
 
+  test('daily job: a permanent mail refusal (err.retry false) gets its last try at once; a temporary one counts one try', async () => {
+    const failing = { send() { return Promise.reject(new Error('down')); } };
+    const saved = T.app; T.app = require('../core/app').createApp({ config: T.config, db: T.api, mail: failing, objects: T.objects, keys: T.keys, log: T.log });
+    await T.browser().call('POST', '/auth/code/start', { email: 'perm@company.example', purpose: 'signin' });
+    T.app = saved;
+    await T.age`update wts.mail_outbox set created_at = now() - interval '6 minutes' where sent_at is null`;
+    const rows = async () => (await T.db.sql`select id, tries, sent_at from wts.mail_outbox where sent_at is null order by created_at`);
+    const ids = (await rows()).map((r) => r.id);
+    assert.ok(ids.length >= 1);
+    const tries0 = new Map((await rows()).map((r) => [r.id, r.tries]));
+    const A = require('../site/adapters');
+    let calls = 0;
+    const temp = { send() { calls++; return Promise.reject(A.mailError(503, 'mail_unavailable')); } };
+    const d1 = await J.runDaily({ db: T.jobsDb, keys: T.keys, mail: temp, log: T.log, only: ['mail'] });
+    assert.ok(d1.mail.failed >= 1 && d1.mail.dropped === 0, JSON.stringify(d1.mail));
+    for (const r of await rows()) if (tries0.has(r.id)) assert.strictEqual(r.tries, tries0.get(r.id) + 1, 'a temporary failure counts one try');
+    const perm = { send() { calls++; return Promise.reject(A.mailError(422, 'mail_sender')); } };
+    const d2 = await J.runDaily({ db: T.jobsDb, keys: T.keys, mail: perm, log: T.log, only: ['mail'] });
+    assert.ok(d2.mail.dropped >= 1 && d2.mail.failed === 0, JSON.stringify(d2.mail));
+    for (const r of await rows()) if (tries0.has(r.id)) assert.strictEqual(r.tries, 5, 'a permanent refusal is the last try');
+    const before = calls;
+    const d3 = await J.runDaily({ db: T.jobsDb, keys: T.keys, mail: perm, log: T.log, only: ['mail'] });
+    assert.strictEqual(calls, before, 'never retried'); assert.deepStrictEqual(d3.mail, { sent: 0, failed: 0, dropped: 0 });
+    // the purge removes them after 24 h; clear them now so later tests start with an empty outbox
+    await T.age`delete from wts.mail_outbox where sent_at is null and tries >= 5`;
+  });
+
   test('daily job: expired codes / sessions / receipts / counters purged, mail retried, old trash purged, unreferenced blobs dropped, quota recomputed', async () => {
     const br = T.browser(); const email = 'amy@company.example';
     const s = await T.signIn(br, email); const id = s.user.id;

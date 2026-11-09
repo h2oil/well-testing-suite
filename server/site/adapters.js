@@ -91,18 +91,27 @@ function httpMail(o) {
 
 // ── Postmark (WTS_MAIL_PROVIDER=postmark) ─────────────────────────────────────────────────────────────────────────
 const POSTMARK_URL = 'https://api.postmarkapp.com/email';
-// the transport error kinds (err.code); retry = whether the daily job's outbox retry can help
+// the transport error kinds (err.code); retry = whether another try can help. core/jobs.js reads it: a row whose send failed
+// with retry false gets its last try at once (never retried by the daily job); any other failure counts one try of five.
 const MAIL_ERRORS = Object.freeze({
   mail_auth: { retry: false },          // the token is wrong or not a server token (401, ErrorCode 10)
   mail_sender: { retry: false },        // the From address is not a confirmed sender, or the account is pending / paused
   mail_rejected: { retry: false },      // this recipient cannot get mail (invalid address, inactive / suppressed recipient)
-  mail_rate: { retry: true },           // too many requests (429)
+  mail_config: { retry: false },        // the request or the service set-up is wrong (invalid JSON / fields, server or
+                                        // account, message stream, sending IP not authorised) — fix the configuration
+  mail_rate: { retry: true },           // too many requests (HTTP 429)
   mail_unavailable: { retry: true },    // the service failed (5xx) or could not be reached
   mail_failed: { retry: true },         // any other refusal
 });
-// Postmark's documented API error codes → kind (anything else: by HTTP status)
-const POSTMARK_CODES = { 10: 'mail_auth', 300: 'mail_rejected', 406: 'mail_rejected', 400: 'mail_sender', 401: 'mail_sender',
-  405: 'mail_sender', 412: 'mail_sender', 413: 'mail_sender', 429: 'mail_rate' };
+// Postmark API ErrorCode → kind (anything else: by HTTP status). Current codes (API overview): 10 bad token; 11 / 402 / 403
+// the request is invalid (no permission, invalid JSON, incompatible fields); 300 invalid e-mail request (treated as the
+// recipient); 406 inactive recipient; 412 account pending; 413 account paused; 422 invalid server or account; 1235 / 1236
+// message stream missing or unsupported; 1480 sending IP not authorised. 400 / 401 / 405 are older sender-signature codes
+// kept for safety; 429 is only an HTTP status (handled below), not an ErrorCode.
+const POSTMARK_CODES = { 10: 'mail_auth', 300: 'mail_rejected', 406: 'mail_rejected',
+  400: 'mail_sender', 401: 'mail_sender', 405: 'mail_sender', 412: 'mail_sender', 413: 'mail_sender',
+  11: 'mail_config', 402: 'mail_config', 403: 'mail_config', 422: 'mail_config', 1235: 'mail_config', 1236: 'mail_config',
+  1480: 'mail_config' };
 function mailError(status, kind) {
   const k = MAIL_ERRORS[kind] ? kind : 'mail_failed';
   const e = new Error('mail: the service answered ' + (status == null ? 'nothing' : status) + ' (' + k + ')');

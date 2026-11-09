@@ -81,6 +81,19 @@ test.describe('WTS_ENV=staging (disposable test backend)', () => {
     const asProd = Object.assign({}, env, { WTS_ENV: 'production' });
     const pr = checkIsolation(loadConfig(asProd), asProd);
     assert.ok(!pr.ok && pr.problems.some((p) => /non-production kid/.test(p)), 'the staging keys refused by production');
+    // the weekly export key follows the same kid rule: the test backend never seals to the production recovery key
+    const B = require('../site/backup');
+    const testBk = B.generateBackupKeys(9001).publicKey; const prodBk = B.generateBackupKeys(1).publicKey;
+    const sOk = Object.assign({}, env, { WTS_BACKUP_PUBLIC_KEY: testBk });
+    assert.ok(checkIsolation(loadConfig(sOk), sOk).ok, 'staging accepts the test backup key');
+    const sBad = Object.assign({}, env, { WTS_BACKUP_PUBLIC_KEY: prodBk });
+    const rb = checkIsolation(loadConfig(sBad), sBad);
+    assert.ok(!rb.ok && rb.problems.some((p) => /WTS_BACKUP_PUBLIC_KEY has a production kid/.test(p)), 'staging refuses the production backup key');
+    const pBad = Object.assign({}, env, { WTS_ENV: 'production', WTS_MASTER_KEYS: key(1), WTS_CODE_PEPPERS: key(1), WTS_MASTER_KID: '1', WTS_BACKUP_PUBLIC_KEY: testBk });
+    const rp = checkIsolation(loadConfig(pBad), pBad);
+    assert.ok(!rp.ok && rp.problems.length === 1 && /WTS_BACKUP_PUBLIC_KEY has a non-production kid/.test(rp.problems[0]), JSON.stringify(rp.problems));
+    const pOk = Object.assign({}, pBad, { WTS_BACKUP_PUBLIC_KEY: prodBk });
+    assert.ok(checkIsolation(loadConfig(pOk), pOk).ok, 'production accepts the production backup key');
   });
 
   test('deploys: only the published production deploy runs (staging is production mode)', () => {
@@ -121,7 +134,15 @@ test.describe('mail transport: Postmark mode (WTS_MAIL_PROVIDER=postmark)', () =
       [401, { ErrorCode: 10, Message: 'bad token' }, 'mail_auth', false],
       [422, { ErrorCode: 400, Message: 'Sender signature not found' }, 'mail_sender', false],
       [422, { ErrorCode: 412, Message: 'account pending' }, 'mail_sender', false],
-      [429, { ErrorCode: 429, Message: 'rate' }, 'mail_rate', true],
+      [429, { ErrorCode: 0, Message: 'rate' }, 'mail_rate', true],
+      [422, { ErrorCode: 402, Message: 'Invalid JSON' }, 'mail_config', false],
+      [422, { ErrorCode: 403, Message: 'Incompatible JSON' }, 'mail_config', false],
+      [422, { ErrorCode: 422, Message: 'Invalid server' }, 'mail_config', false],
+      [422, { ErrorCode: 1235, Message: 'Message stream not found' }, 'mail_config', false],
+      [422, { ErrorCode: 1236, Message: 'Message stream unsupported' }, 'mail_config', false],
+      [422, { ErrorCode: 1480, Message: 'IP not authorised' }, 'mail_config', false],
+      [422, { ErrorCode: 11, Message: 'no permission' }, 'mail_config', false],
+      [422, { ErrorCode: 413, Message: 'account paused' }, 'mail_sender', false],
       [500, null, 'mail_unavailable', true],
       [422, { ErrorCode: 999, Message: 'other' }, 'mail_failed', true],
       [200, { ErrorCode: 300, Message: 'odd: a 200 with an error code' }, 'mail_rejected', false],

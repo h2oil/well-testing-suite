@@ -233,6 +233,14 @@ server/                         ← v4.0 accounts API: a SEPARATE functions-only
                                   `node server/test/run.js [substr]` (throwaway cluster from /usr/lib/postgresql/<n>/bin, as a
                                   non-root OS user; port WTS_TEST_DB_PORT, 54000 + a per-agent number); providers faked
                                   (server/test/fake-oidc.js), mail to a memory transport
+  db/platform-migrations.js     ← GENERATES the platform's migrations folder (server/<platform>/database/migrations/, its OUT; the
+                                  platform applies it at each production deploy) from db/migrations (`--write`; `--check` in the
+                                  release workflow's verify job, which also refuses a change to a file released under an earlier
+                                  server tag). The generated folder is GENERATED — never edit, rename or remove a file in it; a
+                                  correction is a new db/migrations/NNN-*.sql + `--write`. db/migrate.js refuses a platform-migrated
+                                  database
+  ops/remote-smoke.js           ← pass/fail table against a deployed accounts site (base URL and secrets from env only; the signed
+                                  ops self-test; `--mail-to` sends one test e-mail) — RUNBOOK §3T step T6
 prism-build/publish-site.js     ← static publish allow-list + _headers/CSP (`--check` in CI); prism-build/acct-hash.js = account
                                   block SHA-384 for server releases
 PRISM-PLAN.md                   ← Phasing plan + model catalogue + decisions
@@ -307,7 +315,7 @@ via numbered "rounds":
    (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1805/1805) and
    `node prism-build/wts3d-test.js` (134 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
-   after server/ or accounts (66-68) changes also `node server/test/run.js` (201 tests on a throwaway cluster);
+   after server/ or accounts (66-68) changes also `node server/test/run.js` (222 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -681,7 +689,7 @@ Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
 Acceptance tests:             1805/1805 pass (accept-test.js --html --integration; acct-* = v4.0 accounts client)
-Server tests:                 201/201 (node server/test/run.js; throwaway database cluster)
+Server tests:                 222/222 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 4 field scenarios,
                               216 screenshots (7.98 MB)
 3D simulator tests:           134 checks (wts3d-test.js; 132/134 on a Linux LF checkout — the two CRLF checks)

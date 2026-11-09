@@ -84,8 +84,10 @@ is never applied to the platform database through a direct connection (no agent,
   migration replacing the BYPASSRLS attribute with permissive policies `TO wts_definer` / `TO wts_jobs` (and `TO wts_backup`
   SELECT policies), generated into the folder like any other — written only if a deploy reports this; (b) if role switching at
   connection start-up is refused, `WTS_DB_ROLE_MODE=local` on the site (the self-test's `jobsRole` says `local`).
-- Production path: with this dependency the platform applies the migrations, so the release workflow's migrate job must stay
-  unconfigured (no `WTS_MIGRATE_DB_URL`) on a Netlify site — see RUNBOOK "3T", last note.
+- Production path: with this dependency the platform applies the migrations, so the release workflow has no migrate job and no
+  database credential; its verify job runs `node server/db/platform-migrations.js --check` and refuses a change to or removal
+  of a file released under an earlier server tag, and the deploy job refuses unless that check passed — see RUNBOOK "3T",
+  last note.
 
 ### Deviations from the plan (recorded in docs/ACCOUNTS-PLAN.md, Appendix B.4)
 
@@ -156,6 +158,6 @@ host adapter for `/api/v1/*`), `isolation.js` (preview isolation), `monitor.js` 
 export and the ledger replay), `backup.js` (weekly encrypted export and restore drill), `build.js`
 (`server/dist`, one function in `dist/entry/`) and `site.json`. `ops/` adds `weekly-export.js`, `restore-drill.js`, `monitor-check.js`,
 `call-daily.js` and `sql/backup-role.sql`; `ci/secret-scan.js` is the secret scan. The release workflow
-`.github/workflows/server-release.yml` runs only on `server-v*` tags and skips its migration and deploy steps until the owner
-adds their secrets. The static site's allow-list is `prism-build/publish-site.js` (`--check`), the account-block digest
+`.github/workflows/server-release.yml` runs only on `server-v*` tags and skips its deploy steps until the owner adds their secrets
+(migrations: the platform applies them; the workflow checks the generated folder read-only). The static site's allow-list is `prism-build/publish-site.js` (`--check`), the account-block digest
 `prism-build/acct-hash.js`.
