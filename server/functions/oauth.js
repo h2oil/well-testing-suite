@@ -30,6 +30,7 @@ const V = require('../core/validate');
 const O = require('../core/oidc');
 const PINS = require('../core/oidc-providers');
 const S = require('../core/service');
+const { inviteListed } = require('../core/config');
 const SE = require('../core/session');
 const R = require('../core/rate');
 const E = require('../core/envelope');
@@ -86,8 +87,9 @@ async function userByEmail(unit, ctx, email) {
   const r = (await unit.sql`select * from wts.user_by_email(${ctx.keys.emailBidx(email)})`)[0];
   return r ? { userId: r.user_id, status: r.status, role: r.role } : null;
 }
+// the invite allow-list: WTS_INVITE_BOOTSTRAP (core/config.js) or the database list
 async function allowlistHas(unit, ctx, email) {
-  return !!(await unit.sql`select wts.allowlist_has(${ctx.keys.emailBidx(email)}) as ok`)[0].ok;
+  return inviteListed(ctx.config, email, async () => (await unit.sql`select wts.allowlist_has(${ctx.keys.emailBidx(email)}) as ok`)[0].ok);
 }
 // a new account in the caller's transaction (a provider sign-up creates it and links the identity in ONE transaction)
 async function createUserIn(unit, ctx, email, method) {

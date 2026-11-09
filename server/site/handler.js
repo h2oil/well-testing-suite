@@ -25,7 +25,8 @@
 // → data routes answer 503 paused), the mail transport (site/adapters.js mailFromEnv: WTS_MAIL_PROVIDER, WTS_MAIL_API_URL,
 // WTS_MAIL_CREDENTIAL; else none: mail waits in the outbox).
 // Per request, in this order: the base path, then the proxy signature and the original host (else 404 — exactly as
-// core/app.js, so a request sent straight to the functions site learns nothing, plan §2), then the isolation gate (503
+// core/app.js, so a request sent straight to the functions site learns nothing, plan §2; in same-site mode, WTS_SITE_MODE=same,
+// there is no proxy and the Host header itself must be the production host, so the platform address answers 404), then the isolation gate (503
 // paused), the preview sign-in gate (503 paused) and the body cap measured BEFORE reading (Content-Length, 413), then the
 // pipeline. A request id is generated here, passed to the pipeline as req.rid and returned as X-WTS-Request-Id; one
 // access log line (site/monitor.js — request id, endpoint id, status, latency, IP prefix, and from res.meta the user id,
@@ -184,6 +185,10 @@ function createHandler(o) {
   async function handle(request, context) {
     const u = new URL(request.url);
     const headers = lowerHeaders(request.headers);
+    // same-site mode: the platform gives the function the public URL; when its Host header is not passed on, the URL's host
+    // (the address the platform routed, never a client forwarding header) stands in for it — hostAllowed still demands the
+    // exact production host
+    if (config.sameSite && !headers.host) headers.host = u.host;
     const url = u.pathname + u.search;
     const cap = capFor(request.method, url);
     const declared = Number(headers['content-length'] || 0);

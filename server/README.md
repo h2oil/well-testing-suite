@@ -59,6 +59,22 @@ billing first); the credit-based **Pro** plan gives the London function region a
 | Defaults on the platform | `WTS_MIN_CLIENT` 4.0, `WTS_VERSION` = `package.json` version (4.0.0), `WTS_HOST_HEADER` x-wts-host, `WTS_CLIENT_IP_HEADER` x-nf-client-connection-ip (`site/netlify.js platformEnv`) |
 | Tests | `test/netlify.test.js` (entries, configs, blobs region / consistency, kick, proxy rule, keygen, URL rules — no network) and `test/netlify-db.test.js` (a non-superuser owner login on the throwaway cluster: migration, role switching under forced RLS, jobs, COPY export and restore drill) |
 
+### Live site, same-site mode (owner decision 2026-11-09; RUNBOOK §3L)
+
+The API now runs **on the live site itself** (welltest.h2oil.co.uk, Free plan) instead of a second functions-only site:
+`WTS_SITE_MODE=same` (`core/config.js`) turns the proxy-signature check off (there is no proxy), demands the exact production
+Host header in every `WTS_ENV` (the platform address and previews answer 404; no forwarding header is trusted) and reads the
+client address only from `x-nf-client-connection-ip`; every other control is unchanged. Missing or unknown = `separate` (the
+signature is required), and the separate-site layout and tests stay as they were. `node site/build-live.js --out <dir>` builds
+the one upload folder (static allow-list under `public/`, `netlify.toml` = `site/netlify-check.js LIVE_TOML` whose build command
+`node site/netlify-check.js --live` refuses a broken bundle, the pinned runtime dependencies, the functions without a region pin
+— layout `live-inline` by default: `api` on `/api/v1/*` only plus the three scheduled functions running their jobs in place —
+the platform migrations and the server code; nothing else); `--check --dir <dir>` lists it and fails on anything outside the
+allow-list or any secret-looking file. On the Free plan the database is in the platform's default region (United States, Ohio)
+for good; Blobs stay in `eu-central-1`. `WTS_INVITE_BOOTSTRAP` (addresses, run time) stands in for the database allow-list so
+the owner can be invited without a direct database connection. `ops/remote-smoke.js` has a same-site mode (`WTS_SMOKE_MODE=same`,
+no signature, `WTS_SMOKE_ALT_BASE` = the platform address that must answer 404). Tests: `test/same-site.test.js`.
+
 ### Platform migrations
 
 Netlify applies `server/netlify/database/migrations/<digits>_<slug>.sql` itself at each **production** deploy, in lexicographic

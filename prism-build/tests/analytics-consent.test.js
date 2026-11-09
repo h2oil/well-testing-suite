@@ -264,11 +264,14 @@ module.exports = [
       const p = pages['privacy.html'];
       // nothing the owner has not done yet is stated as done (DPAs, breach plan); link labels are disclosed
       assert.ok(!/We have a plan for handling security incidents|Our contracts with processors include|It acts as our processor/.test(p), 'no unconfirmed present-tense claims');
-      assert.ok(/Before accounts launch, our contracts with the hosting and e-mail processors will include/.test(p) && /visible label of the menu item or link clicked/.test(p), 'future-tense safeguards; link labels disclosed');
+      assert.ok(/Before we invite anyone outside H2Oil to the account trial, our contracts with the hosting and e-mail processors will include/.test(p) && /visible label of the menu item or link clicked/.test(p), 'future-tense safeguards; link labels disclosed');
       for (const s of ['id="cookies"', '<code>_ga</code>', '<code>' + KEY + '</code>', '<code>__Host-wts_sid</code>', 'Limited Use requirements',
         'id="retention"', 'id="rights"', 'id="complaints"', 'Information Commission', 'Cookie settings', 'only if you accept',
         'the data-protection law of the United Arab Emirates that applies to us', 'the UAE data-protection authority that supervises us',
-        'Up to 14 months', 'then up to 2 years', 'will be stored in the UK or the EU']) assert.includes(p, s);
+        'Up to 14 months', 'then up to 2 years', 'Our account database is in the United States', 'file storage in the European Union (Frankfurt, Germany)',
+        'storing your account data in the United States is a transfer outside the UK and the EU', 'invitation-only trial']) assert.includes(p, s);
+      // the account trial is running: no "when accounts launch" future tense left, and no UK / EU-only storage claim
+      assert.ok(!/when (accounts|they) launch|accounts are not open yet|stored in the UK or the EU/i.test(p), 'storage and status match the live set-up');
       assert.ok(!/we have appointed|switched off Google signals|Arabic version/i.test(p.replace(/<!--[\s\S]*?-->/g, '')), 'no unconfirmed claim in the visible text');
       // cross-page anchors used by terms.html exist in privacy.html
       const pids = new Set(Array.from(p.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));

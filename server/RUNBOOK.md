@@ -19,6 +19,7 @@ the repository root carries no host configuration, so the static site's deploy i
 |---|---|
 | Request pipeline, contract, config | `core/app.js`, `core/contract.js`, `core/config.js` |
 | Functions-site adapter (the one function for `/api/v1/*`) | `site/handler.js`; bundle `node site/build.js` → `server/dist/` |
+| Live site, same-site mode (§3L) | `site/build-live.js` (the upload folder: static app + API; `--check`), `site/netlify-check.js --live` (its build command), `WTS_SITE_MODE=same` in `core/config.js` / `core/http.js`, `ops/remote-smoke.js` (`WTS_SMOKE_MODE=same`) |
 | Netlify site (v4.0) | `netlify.toml`, `netlify/functions/*.mjs`, `site/netlify.js` (functions, defaults, jobs, kick), `site/netlify-blobs.js`, `site/netlify-check.js` (build command), `site/proxy-rule.js` (main site rule), `ops/keygen.js` (secrets) |
 | Site description and the static site's rewrite | `site/site.json` |
 | Preview isolation | `site/isolation.js` |
@@ -85,6 +86,114 @@ and the secret scan refuse files that contain key material or name a secret vari
 | Master-key escrow location (offline) | |
 | Backup-key escrow location (offline) | |
 | Processors' breach-notice times (contracts) | |
+
+---
+
+## 3L. Live site (same-site) setup — the accounts API on welltest.h2oil.co.uk itself (owner decision 2026-11-09)
+
+**Decision.** The accounts API runs ON the existing live site (project **h2oil**, welltest.h2oil.co.uk) instead of a separate
+functions-only site (§3N), on the **Free plan**. Consequences, all accepted by the owner:
+- **Database in the United States (Ohio), permanently.** On the Free plan the database is created in the platform's default
+  region, next to the site's functions, and never moves. Blobs stay in `eu-central-1` (Frankfurt) — passed on every call
+  (`site/netlify-blobs.js`). The privacy notice (section 13) and the in-app account / privacy cards say exactly this: account
+  database in the United States, larger project files and the encrypted weekly backups in the EU.
+- **No London pin.** The live bundle's functions carry no `region` (the separate-site files keep `lhr`); they run in the site's
+  default functions region, next to the database.
+- **No proxy, no signature.** `WTS_SITE_MODE=same` (core/config.js): requests arrive straight at
+  `welltest.h2oil.co.uk/api/v1/*`; the proxy signature is not used, the **Host header must be exactly
+  `welltest.h2oil.co.uk`** (the site's platform address `<site>.netlify.app`, deploy permalinks and previews answer 404), no
+  forwarding header is trusted, and the client address comes only from the platform's `x-nf-client-connection-ip`. Origin,
+  `X-WTS-Req`, Content-Type, the `__Host-` cookies (Secure, HttpOnly, SameSite), the code floor, the published-production-deploy
+  rule and every other control are unchanged.
+- **One upload carries both.** The site is deployed by uploading a folder; `node server/site/build-live.js` assembles that
+  folder: the static app (publish allow-list of `prism-build/publish-site.js`) under `public/`, the API functions, the platform
+  migrations and the pinned runtime dependencies. A deploy whose build or migration fails never replaces the live version.
+- **Jobs without background functions.** The default bundle layout `live-inline` has four functions: `api` (`/api/v1/*` only —
+  static files win for every other path), `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sunday 04:41 UTC);
+  the daily job and the weekly export run inside their scheduled function (its own time limit; ample for the invite beta). On a
+  plan with background functions, `--background-jobs` builds the six-function layout instead.
+- **CSP reports off.** The bundle's `_headers` carries the security headers but no Report-Only CSP (each report would be a
+  function call and a database write on the Free plan's quotas); `--csp-report` switches it on later.
+- **Accounts stay an invite beta:** `ACCOUNTS_SIGNUP=invite`; providers (Google, LinkedIn) off; the page shows the account UI only
+  with the beta flag (`https://welltest.h2oil.co.uk/?cloud=1`, stored as `wtspref_cloud_beta`).
+
+### Step L1 — Secrets (the lead's computer; never in chat, a ticket or the repository)
+```
+cd server && npm ci && node ops/keygen.js
+```
+Use the production values (key ids 1). Set on the site: `WTS_MASTER_KEYS`\*, `WTS_MASTER_KID`, `WTS_INDEX_PEPPER`\*,
+`WTS_CODE_PEPPERS`\*, `WTS_SESSION_PEPPER`\*, `WTS_OPS_HMAC`\*, `WTS_BACKUP_PUBLIC_KEY`. **Not** on the site: `WTS_PROXY_SIG` (not
+used in same-site mode — a warning if present) and `WTS_BACKUP_PRIVATE_KEY` (password manager + offline escrow only; it opens
+the weekly exports). `WTS_MASTER_KEYS` also goes to the offline escrow.
+
+### Step L2 — Postmark
+As §3T step T2, but a server named "WTS production" and a confirmed sender for `no-reply@h2oil.co.uk` (domain verification
+with DKIM + Return-Path preferred). Until Postmark approves the account it delivers only to addresses on the sender's domain.
+
+### Step L3 — Environment variables of the live site (before the first deploy that carries the API)
+Deploy context **Production**, scope **Functions** (on the Free plan the platform may offer only "all scopes": then that; the
+build command needs no secret either way); tick **Contains secret values** for every \*:
+
+| Key | Value |
+|---|---|
+| `WTS_ENV` | `production` |
+| `WTS_SITE_MODE` | `same` |
+| `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` (`1`) · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_BACKUP_PUBLIC_KEY` | step L1 |
+| `WTS_MAIL_PROVIDER` | `postmark` |
+| `WTS_MAIL_CREDENTIAL`\* | the Postmark **Server** API token (step L2) |
+| `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` (the confirmed sender) |
+| `ACCOUNTS_SIGNUP` | `invite` |
+| `WTS_INVITE_BOOTSTRAP` | the owner's e-mail address (comma-separated for more than one) — see "The invite list" below |
+| `SYNC_MODE` | `on` |
+| `WTS_MIN_CLIENT` | `4.0` |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `1` |
+| `WTS_DB_ROLE_MODE` | only if step L5 says so: `local` |
+
+Do **not** set: `WTS_PROXY_SIG`, `WTS_HOST_HEADER`, `WTS_CLIENT_IP_HEADER` (same-site mode fixes both), `WTS_DB_URL`,
+`WTS_JOBS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_DEV_ORIGIN`, `WTS_MIGRATE_DB_URL`,
+`WTS_SUPPORT_DB_URL`, `WTS_BACKUP_PRIVATE_KEY`, `WTS_MAIL_API_URL`, any `OAUTH_*`. The platform sets `NETLIFY_DB_URL`; the code
+defaults `WTS_VERSION` (4.0.0). Check the site's **Build settings**: base directory, publish directory and functions directory
+EMPTY (the bundle's `netlify.toml` sets them); deploy previews and branch deploys cannot happen on an upload-only site, keep it so.
+
+### Step L4 — Build the bundle and deploy
+From a checkout of the branch to release (repository root; Node 22.12 or newer; no `npm ci` needed for the build):
+```
+node server/site/build-live.js --out <folder outside the repository>
+node server/site/build-live.js --check --dir <that folder>
+```
+The check lists every file and fails on anything outside the allow-list (`site/netlify-check.js checkLive`) or any
+secret-looking file. Upload the folder as a **production** deploy of the live site (the platform runs the build: it installs
+`package.json` / `package-lock.json`, runs `node site/netlify-check.js --live`, bundles the functions and, because
+`@netlify/database` is a dependency, provisions the database on the first such deploy and applies
+`netlify/database/migrations/` before publishing). Read the deploy log for `0000` … `0501` and the migration notes of §3T step
+T5 (never edit or remove an applied file; never apply DDL through a direct connection; record the observed runner behaviour
+there). A failed build or migration leaves the previous version live.
+
+### Step L5 — Smoke test
+```
+cd server
+WTS_SMOKE_MODE=same WTS_SMOKE_BASE='https://welltest.h2oil.co.uk' WTS_SMOKE_ALT_BASE='https://<site>.netlify.app' WTS_OPS_HMAC='<value>' node ops/remote-smoke.js
+… the same with --mail-to <the owner's address>
+```
+(`WTS_PROXY_SIG` must be unset.) Expected: 1 health `db true`, `ver 4.0.0`; 2 the platform address → 404; 3 `/` → the app
+(text/html); 4 write without Origin → 403 origin; 5 self-test without the HMAC → 404; 6 self-test signed (isolation true, keys
+true, db true, request role `wts_api`, jobs role `session` or `local`, mail transport `postmark`); 7 test e-mail `sent`. Failures
+as in §3T step T6; isolation problems name the variable to fix (a key id ≥ 9000, an off-site credential …). Then open
+`https://welltest.h2oil.co.uk/?cloud=1` and sign in with the owner's address (an e-mail code).
+
+### The invite list (no direct database connection)
+`ACCOUNTS_SIGNUP=invite` lets an address create an account only when it is on the invite list. `WTS_INVITE_BOOTSTRAP` is that
+list kept in the site's environment: read at run time (`core/config.js`), normalised like every address, checked before the
+database allow-list, never logged (the redacted config shows only the count). To invite someone: add the address (comma-separated)
+and redeploy (variables reach the functions on the next deploy). Removing an address later stops NEW sign-ups only; an existing
+account keeps working (lock it with `ops/security-reset.js` if needed). The database allow-list (`ops/allowlist-add.js`) needs
+the support credential and is not used on the live site for now. Before anyone outside H2Oil is invited, the processor
+contracts with the transfer safeguards must be in place (privacy notice sections 12 and 13 promise this).
+
+### Rollback
+Publish the previous deploy (Deploys → the last static-only deploy → Publish deploy): the page is static again and the API
+paths answer the static 404. The database and its applied migrations stay (they are never rolled back); the next deploy of a
+bundle picks them up. Kill switches (§6) work as environment variables: `ACCOUNTS_OFF=1` + a redeploy pauses every account route.
 
 ---
 

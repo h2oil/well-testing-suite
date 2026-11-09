@@ -18,6 +18,7 @@
 const { fail, ApiError } = require('../core/errors');
 const V = require('../core/validate');
 const S = require('../core/service');
+const { inviteListed } = require('../core/config');
 const SE = require('../core/session');
 const R = require('../core/rate');
 const E = require('../core/envelope');
@@ -128,7 +129,7 @@ async function startSignin(ctx, email) {
     if (acc) { if (acc.status === 'locked') return; }
     else {
       if (site.over || ctx.config.signup === 'off') return;
-      if (ctx.config.signup === 'invite' && !(await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok) return;
+      if (ctx.config.signup === 'invite' && !(await inviteListed(ctx.config, email, async () => (await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok))) return;
     }
     await issueCode(unit, ctx, { purpose: 'signin', email, template: 'code_signin' });
   });
@@ -206,7 +207,7 @@ async function codeVerify(ctx) {
       userId = acc.user_id;
     } else {
       if (ctx.config.signup === 'off') return unit.failAfterCommit('invalid_or_expired');
-      if (ctx.config.signup === 'invite' && !(await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok) return unit.failAfterCommit('invalid_or_expired');
+      if (ctx.config.signup === 'invite' && !(await inviteListed(ctx.config, email, async () => (await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok))) return unit.failAfterCommit('invalid_or_expired');
       const ring = ctx.keys.ring.create();
       const enc = E.sealField(ring.keys.get(1), 1, ADDR, email);
       userId = (await unit.sql`select wts.create_user(${bidx}, ${enc}, 'code', ${ctx.config.terms}, ${ctx.config.privacy}, now(), ${ring.wrapped}, ${ring.kid}) as id`)[0].id;

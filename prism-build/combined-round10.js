@@ -4559,7 +4559,7 @@ G.WTS_modbusBridgeSetup = {
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
       '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
-      '<p class="acct-note">Your projects are stored encrypted in the UK / EU. You can export everything or delete your account at any time.</p>' +
+      '<p class="acct-note">Your account and projects are stored encrypted in the United States (larger project files in the EU). You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
     $('acct_create').addEventListener('click', function () {

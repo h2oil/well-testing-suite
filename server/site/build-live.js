@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+'use strict';
+// server/site/build-live.js — assembles the ONE folder the lead uploads to the live site welltest.h2oil.co.uk: the static app
+// and the web accounts API in same-site mode (WTS_SITE_MODE=same; server/RUNBOOK.md "Live site (same-site) setup").
+//
+//   node server/site/build-live.js --out <dir> [--background-jobs] [--csp-report]
+//                                                     writes the bundle (the folder is replaced; it must not be inside the
+//                                                     repository tree, except server/dist-live/, which git ignores).
+//                                                     --csp-report adds the Report-Only CSP reporting to /api/v1/csp-report
+//                                                     (publish-site --api). OFF by default on the live site: every report is
+//                                                     a function call and a database write on the Free plan's quotas, and
+//                                                     the analytics tag (loaded after consent) would be reported on every
+//                                                     visit; the security headers are in _headers either way.
+//                                                     --background-jobs: the six-function layout 'live' (ops-daily and
+//                                                     weekly-export start background functions, 15 min each) — only on a
+//                                                     plan that offers background functions. Default 'live-inline': four
+//                                                     functions, the daily job and the weekly export run inside their
+//                                                     scheduled function (its own time limit; ample for the invite beta)
+//   node server/site/build-live.js --check --dir <dir>  lists the bundle and fails (exit 1) on anything outside the allow-list
+//                                                     or any secret-looking file (site/netlify-check.js checkLive, uploaded)
+//   require('./build-live') → { build({out, root?}) → {out, files, info}, checkDir(dir) → {problems, files} }
+//
+// The bundle (its root is the site's base: netlify.toml there, no base directory in the site settings):
+//   public/                       the static allow-list of prism-build/publish-site.js: index.html (a copy of the page),
+//                                 well-testing-app.html, sw.js, help/**, privacy.html, terms.html, any icons / manifests
+//                                 that exist, _headers (the security headers; with --csp-report also the Report-Only CSP)
+//                                 and publish-manifest.json (path, bytes, sha256 of every file)
+//   netlify.toml                  site/netlify-check.js LIVE_TOML: publish public, functions netlify/functions, Node 22, the
+//                                 build command = the bundle check (no secret needed; a broken bundle fails the deploy)
+//   package.json + package-lock.json   the server's pinned runtime dependencies (@netlify/database → the platform provisions
+//                                 the database on the first production deploy and applies the migrations before publishing)
+//   netlify/functions/*.mjs       api on /api/v1/* only; ops-purge, ops-daily, weekly-export scheduled (and, with
+//                                 --background-jobs, the two background functions), generated from site/netlify.js
+//                                 functionsFor('live-inline' | 'live')
+//   netlify/database/migrations/  the platform migrations (copied byte for byte; never edited after a release)
+//   core/, functions/, db/migrate.js, site/<runtime files>, ci/secret-scan.js   the code the functions and the check load
+//   build-info.json               the commit and the SHA-256 of every file (not published: outside public/)
+// Nothing else: no docs/, prism-build/, tests, ops scripts, .env, keys or node_modules. The build refuses (and deletes its
+// output) when publish-site's check or the live bundle check fails.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const cp = require('child_process');
+
+const SERVER = path.join(__dirname, '..');
+const REPO = path.join(SERVER, '..');
+const NC = require('./netlify-check');
+const NF = require('./netlify');
+
+function copyFile(src, dst, list, rel) {
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(src, dst);
+  list.push(rel);
+}
+function jsFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && /^[a-z0-9-]+\.js$/.test(d.name)).map((d) => d.name).sort();
+}
+function livePackage() {
+  const src = JSON.parse(fs.readFileSync(path.join(SERVER, 'package.json'), 'utf8'));
+  return {
+    name: src.name, version: src.version, private: true,
+    description: 'Well Testing Suite live site: the static app and the web accounts API (same-site mode). GENERATED by server/site/build-live.js.',
+    license: src.license, engines: src.engines, dependencies: src.dependencies,
+  };
+}
+function gitCommit() {
+  try { return cp.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (e) { return null; }
+}
+function safeOut(out, root) {
+  const o = path.resolve(out);
+  const r = path.resolve(root || REPO);
+  if (o === r || r.startsWith(o + path.sep)) throw new Error('build-live: --out must not be the repository or a parent of it');
+  const inside = o.startsWith(r + path.sep);
+  if (inside && !o.startsWith(path.join(r, 'server', 'dist-live'))) throw new Error('build-live: --out inside the repository must be server/dist-live (git-ignored)');
+  return o;
+}
+
+function build(o) {
+  o = o || {};
+  if (!o.out) throw new Error('build-live: give --out <dir>');
+  const root = o.root || REPO;
+  const out = safeOut(o.out, root);
+  const pub = require(path.join(root, 'prism-build', 'publish-site.js'));
+  fs.rmSync(out, { recursive: true, force: true });
+  const list = [];
+  try {
+    // 1. the static allow-list (publish-site runs its own check: forbidden folders, key material, secret names)
+    const r = pub.build({ root, out: path.join(out, 'public'), api: !!o.cspReport });
+    if (!r.ok) throw new Error('publish-site refused: ' + r.errors.map((e) => e.path + ': ' + e.why).join('; '));
+    // 2. the site configuration and the dependencies
+    fs.writeFileSync(path.join(out, 'netlify.toml'), NC.LIVE_TOML); list.push('netlify.toml');
+    fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify(livePackage(), null, 2) + '\n'); list.push('package.json');
+    copyFile(path.join(SERVER, 'package-lock.json'), path.join(out, 'package-lock.json'), list, 'package-lock.json');
+    // 3. the functions (generated live sources) and the platform migrations
+    const layout = o.backgroundJobs ? 'live' : 'live-inline';
+    const LF = NF.functionsFor(layout);
+    Object.keys(LF).forEach((name) => {
+      const rel = 'netlify/functions/' + LF[name].file;
+      fs.mkdirSync(path.join(out, 'netlify', 'functions'), { recursive: true });
+      fs.writeFileSync(path.join(out, rel), NF.functionSource(name, layout)); list.push(rel);
+    });
+    const migDir = path.join(SERVER, 'netlify', 'database', 'migrations');
+    fs.readdirSync(migDir).filter((f) => /\.sql$/.test(f)).sort().forEach((f) => copyFile(path.join(migDir, f), path.join(out, 'netlify', 'database', 'migrations', f), list, 'netlify/database/migrations/' + f));
+    // 4. the code
+    ['core', 'functions'].forEach((d) => jsFiles(path.join(SERVER, d)).forEach((f) => copyFile(path.join(SERVER, d, f), path.join(out, d, f), list, d + '/' + f)));
+    NC.LIVE_SITE_FILES.forEach((f) => copyFile(path.join(SERVER, 'site', f), path.join(out, 'site', f), list, 'site/' + f));
+    copyFile(path.join(SERVER, 'db', 'migrate.js'), path.join(out, 'db', 'migrate.js'), list, 'db/migrate.js');
+    copyFile(path.join(SERVER, 'ci', 'secret-scan.js'), path.join(out, 'ci', 'secret-scan.js'), list, 'ci/secret-scan.js');
+    // 5. build-info.json (outside public/: never published)
+    const files = list.concat(r.files.map((f) => 'public/' + f), ['public/_headers', 'public/publish-manifest.json']).sort()
+      .map((rel) => ({ path: rel, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(out, rel))).digest('hex') }));
+    const info = { generated: 'server/site/build-live.js', mode: 'same-site', layout, cspReport: !!o.cspReport, commit: o.commit || gitCommit(), server: livePackage().version, files };
+    fs.writeFileSync(path.join(out, 'build-info.json'), JSON.stringify(info, null, 1) + '\n');
+    // 6. the bundle check, as uploaded
+    const chk = checkDir(out);
+    if (chk.problems.length) throw new Error('bundle check refused:\n  ' + chk.problems.join('\n  '));
+    return { out, files: chk.files.length, info };
+  } catch (e) {
+    fs.rmSync(out, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+// the uploaded bundle: the live allow-list and, for public/, publish-site's own check as well
+function checkDir(dir) {
+  const r = NC.checkLive(path.resolve(dir), { uploaded: true });
+  const problems = r.problems.slice();
+  try {
+    const pub = require(path.join(REPO, 'prism-build', 'publish-site.js'));
+    const c = pub.checkSet(pub.readDir(path.join(path.resolve(dir), 'public')));
+    c.errors.forEach((e) => problems.push('public/' + e.path + ': ' + e.why));
+  } catch (e) { if (fs.existsSync(path.join(REPO, 'prism-build', 'publish-site.js'))) problems.push('publish-site check failed: ' + e.message); }
+  return { problems, files: r.files };
+}
+
+module.exports = { build, checkDir, livePackage };
+
+if (require.main === module) {
+  const a = process.argv.slice(2);
+  const val = (k) => { const i = a.indexOf(k); return i !== -1 && a[i + 1] && !a[i + 1].startsWith('--') ? a[i + 1] : null; };
+  try {
+    if (a.includes('--check')) {
+      const dir = val('--dir');
+      if (!dir) throw new Error('give --dir <bundle folder>');
+      const r = checkDir(dir);
+      r.files.forEach((f) => console.log('  ' + f));
+      if (r.problems.length) { console.error('[build-live] check FAILED (' + r.problems.length + '):\n  ' + r.problems.join('\n  ')); process.exit(1); }
+      console.log('[build-live] check ok — ' + r.files.length + ' files, all in the live allow-list, no secret-looking file');
+    } else {
+      const r = build({ out: val('--out'), cspReport: a.includes('--csp-report'), backgroundJobs: a.includes('--background-jobs') });
+      console.log('[build-live] ' + r.files + ' files, layout ' + r.info.layout + ' → ' + r.out + ' (commit ' + (r.info.commit || 'unknown').slice(0, 12) + ')');
+    }
+  } catch (e) { console.error('[build-live] ' + e.message); process.exit(1); }
+}

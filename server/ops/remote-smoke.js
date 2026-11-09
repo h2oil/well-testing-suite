@@ -19,7 +19,16 @@
 //                              transport → checks.mail = 'sent' (else the transport error kind, e.g. mail_sender)
 // Exit 0 when every check passed, 1 otherwise, 2 on a usage error.
 //
-//   require('./remote-smoke').run({base, sig, hmac, mailTo?, fetch?, now?}) → Promise<{ok, rows:[{id, name, ok, detail}]}>
+// SAME-SITE mode (the live site, WTS_SITE_MODE=same; RUNBOOK "Live site (same-site) setup"): set WTS_SMOKE_MODE=same and
+// leave WTS_PROXY_SIG unset — there is no proxy and no signature:
+//   WTS_SMOKE_MODE=same WTS_SMOKE_BASE=https://welltest.h2oil.co.uk WTS_SMOKE_ALT_BASE=https://<site>.netlify.app WTS_OPS_HMAC=<value> node server/ops/remote-smoke.js
+//   1  health                  GET /api/v1/health → 200 {ok:true, db:true, ver}
+//   2  platform address → 404  the same through WTS_SMOKE_ALT_BASE (the site's platform address: its Host is not the
+//                              production host); without WTS_SMOKE_ALT_BASE the row FAILS with a note (it must be checked)
+//   3  static page wins        GET / → 200 text/html (the app, not the API)
+//   4–7                        as above, without the signature
+//
+//   require('./remote-smoke').run({base, sig, hmac, mode?, altBase?, mailTo?, fetch?, now?}) → Promise<{ok, rows:[{id, name, ok, detail}]}>
 
 const crypto = require('crypto');
 const { opsSignature } = require('../core/http');
@@ -39,30 +48,46 @@ async function readJson(res) { try { return await res.json(); } catch (e) { retu
 async function run(o) {
   o = o || {};
   const base = checkBase(o.base);
+  const same = String(o.mode || '').trim().toLowerCase() === 'same';
   const sig = String(o.sig || '').split(',')[0].trim();
-  if (!sig) throw new Error('WTS_PROXY_SIG is not set');
+  if (!same && !sig) throw new Error('WTS_PROXY_SIG is not set (for the live site in same-site mode set WTS_SMOKE_MODE=same)');
+  if (same && sig) throw new Error('same-site mode sends no signature: unset WTS_PROXY_SIG');
+  const altBase = same && o.altBase ? checkBase(o.altBase) : null;
   const key = Buffer.from(String(o.hmac || ''), 'base64');
   if (key.length < 32) throw new Error('WTS_OPS_HMAC is not set (32 bytes, base64)');
   const f = o.fetch || fetch;
   const now = o.now || Date.now;
   const rows = [];
   const add = (id, name, ok, detail) => rows.push({ id, name, ok: !!ok, detail: String(detail == null ? '' : detail) });
-  const signed = (extra) => Object.assign({ 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': PROD_HOST }, extra || {});
+  const signed = (extra) => Object.assign(same ? {} : { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': PROD_HOST }, extra || {});
   async function step(id, name, fn) {
     try { await fn(); } catch (e) { add(id, name, false, 'request failed: ' + String((e && e.message) || e).replace(/https?:\/\/\S+/g, '<url>').slice(0, 120)); }
   }
 
-  await step(1, 'health, signed', async () => {
+  const H1 = same ? 'health' : 'health, signed';
+  await step(1, H1, async () => {
     const res = await f(base + '/api/v1/health', { headers: signed() });
     const b = await readJson(res);
     const ok = res.status === 200 && b && b.ok === true && b.db === true && typeof b.ver === 'string' && b.ver.length > 0;
-    add(1, 'health, signed', ok, 'status ' + res.status + (b ? ', ok ' + b.ok + ', db ' + b.db + ', ver ' + b.ver : ''));
+    add(1, H1, ok, 'status ' + res.status + (b ? ', ok ' + b.ok + ', db ' + b.db + ', ver ' + b.ver : ''));
   });
-  await step(2, 'health, no signature → 404', async () => {
+  if (same) {
+    await step(2, 'platform address → 404', async () => {
+      if (!altBase) { add(2, 'platform address → 404', false, 'set WTS_SMOKE_ALT_BASE to the site\'s platform address and run again'); return; }
+      const res = await f(altBase + '/api/v1/health', { headers: { 'X-WTS-Host': PROD_HOST, 'X-Forwarded-Host': PROD_HOST } });
+      add(2, 'platform address → 404', res.status === 404, 'status ' + res.status);
+    });
+    await step(3, 'static page wins at /', async () => {
+      const res = await f(base + '/', {});
+      const ct = String((res.headers && res.headers.get && res.headers.get('content-type')) || '');
+      add(3, 'static page wins at /', res.status === 200 && /text\/html/i.test(ct), 'status ' + res.status + ', ' + (ct || 'no type'));
+    });
+  }
+  if (!same) await step(2, 'health, no signature → 404', async () => {
     const res = await f(base + '/api/v1/health', { headers: { 'X-WTS-Host': PROD_HOST } });
     add(2, 'health, no signature → 404', res.status === 404, 'status ' + res.status);
   });
-  await step(3, 'health, wrong signature → 404', async () => {
+  if (!same) await step(3, 'health, wrong signature → 404', async () => {
     const res = await f(base + '/api/v1/health', { headers: signed({ 'X-WTS-Proxy-Sig': crypto.randomBytes(32).toString('base64url') }) });
     add(3, 'health, wrong signature → 404', res.status === 404, 'status ' + res.status);
   });
@@ -113,7 +138,8 @@ if (require.main === module) {
   const mailTo = i !== -1 ? argv[i + 1] : null;
   if (i !== -1 && !(mailTo && /@/.test(mailTo))) { console.error('[remote-smoke] --mail-to needs an address'); process.exit(2); }
   if (argv.some((a, k) => !(i !== -1 && (k === i || k === i + 1)))) { console.error('[remote-smoke] the base URL and secrets come from WTS_SMOKE_BASE, WTS_PROXY_SIG and WTS_OPS_HMAC only'); process.exit(2); }
-  run({ base: process.env.WTS_SMOKE_BASE, sig: process.env.WTS_PROXY_SIG, hmac: process.env.WTS_OPS_HMAC, mailTo }).then((r) => {
+  run({ base: process.env.WTS_SMOKE_BASE, sig: process.env.WTS_PROXY_SIG, hmac: process.env.WTS_OPS_HMAC, mode: process.env.WTS_SMOKE_MODE,
+    altBase: process.env.WTS_SMOKE_ALT_BASE, mailTo }).then((r) => {
     console.log('[remote-smoke] ' + checkBase(process.env.WTS_SMOKE_BASE).replace(/^https?:\/\//, '') + '\n' + table(r.rows));
     console.log('[remote-smoke] ' + (r.ok ? 'all checks passed' : 'FAILED: ' + r.rows.filter((x) => !x.ok).map((x) => x.id).join(', ')));
     process.exitCode = r.ok ? 0 : 1;
