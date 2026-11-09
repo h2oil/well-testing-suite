@@ -235,7 +235,7 @@ function loadConfig(env) {
     providerSwitches() { const o = {}; Object.keys(providers).forEach((p) => { o[p] = providers[p].effective; }); return o; },
     ipHeader, hostHeader, dbRole,
     mailFrom: env.WTS_MAIL_FROM || 'no-reply@h2oil.co.uk',
-    terms: String(env.WTS_TERMS_VERSION || '1'), privacy: String(env.WTS_PRIVACY_VERSION || '1'),
+    terms: String(env.WTS_TERMS_VERSION || '1'), privacy: String(env.WTS_PRIVACY_VERSION || '2'),
     // the security minimum of X-WTS-App (§3.2): unset = no gate; raised only for a security fix, never for a format change
     minClient: String(env.WTS_MIN_CLIENT || ''), version: String(env.WTS_VERSION || 'wp0'),
     devPort: env.WTS_DEV_PORT ? Number(env.WTS_DEV_PORT) : 8787,

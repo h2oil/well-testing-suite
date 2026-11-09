@@ -109,7 +109,7 @@ module.exports = [
       assert.strictEqual(p.appended.length, 1, 'tag appended once');
       assert.ok(/^https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-/.test(p.appended[0].src) && p.appended[0].async === true);
       assert.strictEqual(p.sb.__wtsGaLoaded, true);
-      assert.deepStrictEqual(JSON.parse(st.m[KEY]), { choice: 'granted', v: 1, at: p.now }, 'stored with the notice version');
+      assert.deepStrictEqual(JSON.parse(st.m[KEY]), { choice: 'granted', v: 2, at: p.now }, 'stored with the notice version');
       assert.strictEqual(p.box.hidden, true, 'banner hidden');
       p.sb.WTS_consent.set('granted');
       assert.strictEqual(p.appended.length, 1, 'never twice');
@@ -141,14 +141,14 @@ module.exports = [
     name: 'CB4-CB6 choice persists; re-asked after 12 months / new notice version; storage blocked; signed in → no banner, no tag; open / Escape', wp: WP, opts: false,
     run(app, assert) {
       const now = Date.UTC(2026, 10, 9, 12, 0, 0);
-      let p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 1, at: now - 30 * 864e5 }) }));
+      let p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 2, at: now - 30 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 1, 'granted earlier → tag at start'); assert.strictEqual(p.box.hidden, true, 'no banner');
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 1, at: now - 30 * 864e5 }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 2, at: now - 30 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 0, 'denied earlier → none'); assert.strictEqual(p.box.hidden, true, 'no banner');
       // CB5 expiry and version
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 1, at: now - 366 * 864e5 }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 2, at: now - 366 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 0, 'expired → no tag'); assert.strictEqual(p.box.hidden, false, 'expired → asked again');
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 0, at: now }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 1, at: now }) }));
       assert.strictEqual(p.appended.length, 0, 'older notice version → no tag'); assert.strictEqual(p.box.hidden, false, 'asked again');
       p = makePage(memStore({ [KEY]: '{not json' }));
       assert.strictEqual(p.appended.length, 0); assert.strictEqual(p.box.hidden, false, 'unreadable → asked');
@@ -166,7 +166,7 @@ module.exports = [
       assert.strictEqual(p.appended.length, 0, 'signed in → no tag even after accepting');
       assert.strictEqual(JSON.parse(st.m[KEY]).choice, 'granted', 'the choice is still stored for later');
       // open / Escape / focus
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 1, at: now }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 2, at: now }) }));
       assert.strictEqual(p.box.hidden, true);
       p.sb.WTS_consent.open();
       assert.strictEqual(p.box.hidden, false, 'open() shows it'); assert.ok(p.acc.focused >= 1, 'focus on Accept');
@@ -241,7 +241,7 @@ module.exports = [
         const urls = (body.match(/https?:\/\/[^\s"'<),]+/g) || []);
         assert.deepStrictEqual(urls.filter((u) => !/^https:\/\/welltest\.h2oil\.co\.uk(\/|$)/.test(u)), [], f + ': only the app address');
         assert.includes(s, 'Last updated: 9 November 2026');
-        assert.ok(/(Privacy notice|Terms of Use) version 1/.test(s), f + ' version string');
+        assert.ok(f === 'privacy.html' ? /Privacy notice version 2/.test(s) : /Terms of Use version 1/.test(s), f + ' version string');
         assert.includes(s, 'prefers-color-scheme: light');
         assert.includes(s, 'href="well-testing-app.html"');
         assert.includes(s, f === 'privacy.html' ? 'href="terms.html"' : 'href="privacy.html"');
@@ -253,7 +253,7 @@ module.exports = [
         assert.includes(s, 'H2Oil Engineering, a company licensed in Dubai, United Arab Emirates', f);
         // the public source comment is only the version line (open items live in docs/LEGAL-OWNER-NOTES.md, not published)
         const cm = (s.match(/<!--([\s\S]*?)-->/) || [])[1] || '';
-        assert.ok(/version 1 \(9 November 2026\)/.test(cm) && /Change together/.test(cm), f + ': version comment');
+        assert.ok(new RegExp('version ' + (f === 'privacy.html' ? '2' : '1') + ' \\(9 November 2026\\)').test(cm) && /Change together/.test(cm), f + ': version comment');
         assert.ok(!/DRAFT|LEGAL ADVICE|dev-87qwkg|LICENSE|DMCC|JAFZA|DSO|ADGM/.test(cm), f + ': no review notes in the public comment');
         // every in-page anchor exists
         const ids = new Set(Array.from(s.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));

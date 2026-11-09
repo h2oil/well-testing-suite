@@ -42,7 +42,10 @@ async function accountExport(ctx) {
     await unit.audit('export', { deviceId: s.deviceId, detail: { projects: projects.length } });
     return {
       user: { id: r.id, email: a.primary, recovery: a.recovery, created: iso(r.created_at), status: r.status, signupMethod: r.signup_method,
-        lastSignIn: iso(r.last_sign_in_at), quota: { limit: Number(r.quota_bytes), used: Number(r.used_bytes) },
+        lastSignIn: iso(r.last_sign_in_at),
+        // the country / city the hosting platform gave for the sign-up and the last sign-in (privacy notice: profile data)
+        signupCountry: r.signup_country || null, lastCountry: r.last_country || null, lastCity: r.last_city || null,
+        quota: { limit: Number(r.quota_bytes), used: Number(r.used_bytes) },
         opts: { historian: r.opt_historian, liveCfg: r.opt_livecfg } },
       consents: { terms: r.terms_version, privacy: r.privacy_version, at: iso(r.consented_at) },
       devices, passkeys, identities, audit, projects,

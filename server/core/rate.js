@@ -53,6 +53,7 @@ const LIMITS = {
   // the admin routes (functions/admin.js): per admin account
   adminReadUserHour: { window: H, limit: 600 },
   adminInviteUserDay: { window: D, limit: 200 },
+  adminDeniedUserHour: { window: H, limit: 30, soft: true },       // a non-admin's probes: audited up to 30 an hour, always 404
 };
 
 async function call(sql, name, key, amount) {

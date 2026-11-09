@@ -44,10 +44,13 @@ test.describe('account, jobs, ops (§3.3, §3.5, §8.5, §13)', { skip }, () => 
     const br = T.browser(); const email = 'xena@company.example';
     await T.signIn(br, email, { deviceLabel: 'Laptop' });
     await project(br, 'Export me');
+    await T.age`update wts.users set signup_country = 'AE', last_country = 'GB', last_city = 'London' where email_bidx = ${T.keys.emailBidx(email)}`;
     const r = await br.call('POST', '/account/export', {});
     assert.strictEqual(r.status, 200, JSON.stringify(r.json));
     assert.ok(C.checkShape('ExportRes', r.json).ok, JSON.stringify(C.checkShape('ExportRes', r.json).errors));
     assert.strictEqual(r.json.user.email, email);
+    // the stored country / city are personal data too: the access / portability copy carries them (review fix)
+    assert.deepStrictEqual([r.json.user.signupCountry, r.json.user.lastCountry, r.json.user.lastCity], ['AE', 'GB', 'London']);
     assert.strictEqual(r.json.projects.length, 1); assert.strictEqual(r.json.projects[0].name, 'Export me'); assert.strictEqual(r.json.projects[0].revs.length, 1);
     assert.ok(r.json.audit.some((a) => a.action === 'signin'));
     assert.ok(!JSON.stringify(r.json.audit).includes('@'), 'no address in audit rows');

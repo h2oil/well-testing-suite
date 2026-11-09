@@ -40,11 +40,14 @@
   function int(n) { return String(Math.round(num(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function day(iso) { return iso ? esc(String(iso).slice(0, 10)) : '—'; }
   function when(iso) { if (!iso) return '—'; var s = String(iso); return esc(s.slice(0, 10) + ' ' + s.slice(11, 16)); }
+  // the app's decimal-comma setting (50-a11y) for every decimal on the page
+  function dec(t) {
+    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
+    return dc ? String(t).replace('.', ',') : String(t);
+  }
   function bytes(n) {
     n = num(n);
-    var t = n >= 1e9 ? (Math.round(n / 1e8) / 10) + ' GB' : n >= 1e6 ? (Math.round(n / 1e5) / 10) + ' MB' : n >= 1e3 ? Math.round(n / 1e3) + ' kB' : Math.round(n) + ' B';
-    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
-    return dc ? t.replace('.', ',') : t;
+    return dec(n >= 1e9 ? (Math.round(n / 1e8) / 10) + ' GB' : n >= 1e6 ? (Math.round(n / 1e5) / 10) + ' MB' : n >= 1e3 ? Math.round(n / 1e3) + ' kB' : Math.round(n) + ' B');
   }
   function isAdmin() { var a = A(); return !!(a && typeof a.isAdmin === 'function' && a.isAdmin()); }
   function say(id, text, kind) { var e = $(id); if (e) { e.textContent = text || ''; e.setAttribute('data-kind', kind || ''); } }
@@ -71,7 +74,7 @@
   function methodName(m) { return METHOD[m] || String(m || '—'); }
 
   // ── state ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  var view = { summary: null, users: [], next: null, q: '', loading: false, invites: null };
+  var view = { summary: null, users: [], next: null, q: '', loading: false, seq: 0, invites: null };
 
   // ── render ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   function ensureCss() {
@@ -115,7 +118,7 @@
       '<span class="adm-sub" id="adm_generated" aria-live="polite">Loading…</span></div>' +
       '<div class="adm-kpis" id="adm_kpis"></div><div id="adm_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
       '<div class="card" id="adm_card_countries"><div class="card-title">Users by country</div><div id="adm_countries" class="adm-scroll"><p>Loading…</p></div>' +
-      '<p class="adm-sub">Country of the last sign-in (from the hosting edge; no IP address is stored). Unknown = not sent or not valid.</p></div>' +
+      '<p class="adm-sub">Country of the last sign-in, else of the sign-up (from the hosting edge; no IP address is stored). Unknown = not sent or not valid.</p></div>' +
       '<div class="card" id="adm_card_signups"><div class="card-title">Sign-ups per day (last 90 days)</div>' +
       '<div class="chart-wrap"><canvas id="adm_chart" width="900" height="220" role="img" aria-label="Sign-ups per day, last 90 days"></canvas></div>' +
       '<p class="adm-sub" id="adm_signups_total"></p><div id="adm_methods" class="adm-sub"></div></div>' +
@@ -192,7 +195,7 @@
         var code = cc(r.country);
         return '<tr data-country="' + esc(code || '') + '"><td data-label="Country"><span class="adm-flag" aria-hidden="true">' + esc(flag(code)) + '</span>' + esc(countryName(code)) +
           (code ? ' <span class="adm-sub">' + esc(code) + '</span>' : '') + '</td><td data-label="Users">' + int(r.users) + '</td><td data-label="Active 30 days">' + int(r.active30d) +
-          '</td><td data-label="Share"><span class="adm-share" style="width:' + Math.max(2, Math.round(pct)) + 'px"></span>' + esc(String(pct)) + ' %</td></tr>';
+          '</td><td data-label="Share"><span class="adm-share" style="width:' + Math.max(2, Math.round(pct)) + 'px"></span>' + esc(dec(pct)) + ' %</td></tr>';
       }).join('') + '</tbody></table>' : '<p>No users yet.</p>';
     var m = $('adm_methods');
     var ms = Array.isArray(s.byMethod) ? s.byMethod : [];
@@ -253,15 +256,19 @@
   }
 
   // ── users ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // a new first page (Search, Refresh, open) always starts a request and supersedes any pending one: each request carries a
+  // sequence number and only the latest one's answer is used, so the rows, view.q and view.next always belong together.
+  // Load more waits while any request is pending (its cursor belongs to the list on screen).
   function loadUsers(more) {
     var a = A(); if (!a) return Promise.resolve(null);
-    if (view.loading) return Promise.resolve(null);
-    if (more && !view.next) return Promise.resolve(null);
+    if (more && (view.loading || !view.next)) return Promise.resolve(null);
+    var seq = ++view.seq;
     view.loading = true;
     var qs = '?limit=' + PAGE + (more && view.next ? '&cursor=' + encodeURIComponent(view.next) : '') + (view.q ? '&q=' + encodeURIComponent(view.q) : '');
     var btn = $('adm_more'); if (btn) btn.disabled = true;
     say('adm_users_msg', more ? 'Loading more…' : '');
     return a.call('GET', '/admin/users' + qs).then(function (r) {
+      if (seq !== view.seq) return null;   // superseded by a newer search / refresh
       view.loading = false;
       var j = (r && r.json) || {};
       var list = Array.isArray(j.users) ? j.users : [];
@@ -271,6 +278,7 @@
       drawUsers();
       return view.users;
     }, function (e) {
+      if (seq !== view.seq) return null;
       view.loading = false;
       if (btn) btn.disabled = false;
       if (e && e.code === 'not_found') { failed(e); return null; }

@@ -475,8 +475,8 @@
     setTitle(dlg.signup ? 'Create your free account' : 'Sign in to Well Testing Suite');
     b.innerHTML =
       (dlg.signup
-        ? '<p>Enter your e-mail address: we send you an 8-digit code. There is no password. Your projects are then kept in your own secure cloud database, with full history, on any device.</p>' +
-          '<p class="acct-note" id="acct_signup_note">New accounts are by invitation during the beta. If your code is not accepted, write to ' + SUPPORT + ' for an invitation. Already have an account? The same steps sign you in.</p>'
+        ? '<p>Enter your e-mail address: we send you an 8-digit code. There is no password. Then save projects to your account with Save to cloud: they are encrypted with a key for your account and open on any device, with full history. Work you have not saved to the cloud stays only in this browser.</p>' +
+          '<p class="acct-note" id="acct_signup_note">New accounts are by invitation during the beta. If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation. Already have an account? The same steps sign you in.</p>'
         : '<p>Use your e-mail address: we send you an 8-digit code. There is no password. Without signing in, your work stays on this device only.</p>') +
       (data.note ? '<p class="acct-note">' + esc(data.note) + '</p>' : '') +
       '<label for="acct_email">E-mail address</label>' +
@@ -539,7 +539,11 @@
       '<input type="text" id="acct_code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false">' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Sign in</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
-      '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' + codeFaq(false);
+      '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' +
+      // sign-up path in invite mode: an address that is not invited gets the same answer but no e-mail (server auth.js),
+      // so say where an invitation comes from before the visitor waits for a code that is never sent
+      (dlg.signup ? '<p class="acct-note" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
+      codeFaq(false);
     $('acct_verify').addEventListener('click', function () { verifyCode(); });
     $('acct_code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') verifyCode(); });
     $('acct_resend').addEventListener('click', function () {
@@ -1113,7 +1117,7 @@
       '<h3><span id="acct_welcome_t">Keep your work safe</span><button type="button" class="acct-x" id="acct_welcome_x" aria-label="Continue as guest">&#215;</button></h3>' +
       '<p class="acct-wc-lead" id="acct_welcome_lead">Well Testing Suite now offers free accounts.</p>' +
       '<div class="acct-wc-opt acct-wc-opt--pri"><button type="button" class="btn btn-primary" id="acct_welcome_signup">Create free account</button>' +
-      '<p>Sign up and all your projects are kept in your own secure cloud database — open them on any device, with full history, and never lose work if this browser is cleared.</p>' +
+      '<p>Sign up to save your projects to your account in the cloud with Save to cloud — encrypted with a key for your account, open on any device, with full history, even if this browser is cleared. Work you have not saved to the cloud stays only in this browser.</p>' +
       '<p>Already have an account? <button type="button" class="acct-link" id="acct_welcome_signin">Sign in</button></p></div>' +
       '<div class="acct-wc-opt"><button type="button" class="btn btn-secondary" id="acct_welcome_guest">Continue as guest</button>' +
       '<p>Your work is saved only in this browser on this device.</p></div></div>';

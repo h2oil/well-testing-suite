@@ -6,7 +6,7 @@ qualified lawyer (UAE, DIFC and UK / EU data-protection and consumer law) — th
 
 ## Versions (change together)
 
-- Privacy notice version 1 = the server's `WTS_PRIVACY_VERSION` default ("1") = the analytics consent version
+- Privacy notice version 2 = the server's `WTS_PRIVACY_VERSION` default ("2") = the analytics consent version
   (`WTS_consent.version` in `well-testing-app.html`).
 - Terms of Use version 1 = the server's `WTS_TERMS_VERSION` default ("1").
 

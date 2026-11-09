@@ -92,6 +92,48 @@ test.describe('platform geolocation headers (no database)', () => {
   });
 });
 
+test.describe('admin routes stay hidden before the gate (no database)', () => {
+  const { createApp } = require('../core/app');
+  const ORIGIN = 'https://welltest.h2oil.co.uk';
+  const mk = (method, path, o) => {
+    o = o || {};
+    const headers = Object.assign({ host: 'welltest.h2oil.co.uk' }, o.write ? { origin: ORIGIN, 'x-wts-req': '1', 'content-type': 'application/json' } : {}, o.headers || {});
+    const body = o.body === undefined ? null : Buffer.from(typeof o.body === 'string' ? o.body : JSON.stringify(o.body));
+    return { method, url: C.BASE + path, headers, body, remoteAddress: '203.0.113.7' };
+  };
+  // review fix: bad parameters, a bad body, missing write headers, a large body or the pause switch never answer 400 / 403 /
+  // 413 / 503 on an admin route for a caller who has not passed the admin gate — always the 404 of an unknown route
+  for (const env of [{}, { ACCOUNTS_OFF: 'true' }]) {
+    test('signed-out probes get 404 not_found, the same envelope as an unknown route' + (env.ACCOUNTS_OFF ? ' (accounts paused)' : ''), async () => {
+      const app = createApp({ config: loadConfig(Object.assign({ WTS_ENV: 'test', WTS_ADMIN_EMAILS: 'boss@company.example' }, env)) });
+      const unknown = await app.handle(mk('GET', '/admin/nosuch'));
+      assert.strictEqual(unknown.status, 404);
+      const probes = [
+        mk('GET', '/admin/users?limit=999'), mk('GET', '/admin/users?limit=0'), mk('GET', '/admin/users?cursor=@@'),
+        mk('GET', '/admin/users?q=' + 'a'.repeat(300)),
+        mk('POST', '/admin/invites', { body: { email: 'x@company.example' } }),                       // no write headers
+        mk('POST', '/admin/invites', { write: true, body: { email: 'x' } }),
+        mk('POST', '/admin/invites', { write: true, body: {} }),
+        mk('POST', '/admin/invites', { write: true, body: { email: 'x@company.example', extra: 1 } }),
+        mk('POST', '/admin/invites', { write: true, body: '{not json' }),
+        mk('POST', '/admin/invites', { write: true, body: { email: 'x@company.example', note: 'n'.repeat(2e6) } }),
+      ];
+      for (const p of probes) {
+        const r = await app.handle(p);
+        assert.strictEqual(r.status, 404, p.method + ' ' + p.url.slice(0, 80) + ' → ' + r.status + ' ' + r.body);
+        assert.strictEqual(r.body, unknown.body, 'same body as an unknown route');
+      }
+    });
+  }
+  test('the handlers check parameters only behind the gate', async () => {
+    const { handlers } = require('../functions/admin');
+    const ctx = { query: { limit: '0', cursor: '@@' }, body: { email: 'bad' }, config: { adminEmails: new Set() }, endpoint: { id: 'x' } };
+    for (const n of ['adminSummary', 'adminUsers', 'adminInviteAdd', 'adminInvites']) {
+      await assert.rejects(handlers[n](ctx), (e) => e.code === 'not_found', n);
+    }
+  });
+});
+
 test.describe('admin dashboard and country capture (database)', { skip }, () => {
   let T = null;
   const ADMIN = 'boss@company.example';
@@ -147,8 +189,13 @@ test.describe('admin dashboard and country capture (database)', { skip }, () => 
     const me = await u1.call('GET', '/me');
     assert.strictEqual(me.status, 200); assert.strictEqual(me.json.admin, false);
     assert.ok(S.checkResponse('me', 200, me.json).ok);
+    // a signed-in non-admin's bad parameters or body also get 404 (checked only behind the gate) and are audited
+    for (const [m, p, b] of [['GET', '/admin/users?limit=999'], ['GET', '/admin/users?cursor=@@'], ['POST', '/admin/invites', { email: 'x' }], ['POST', '/admin/invites', { email: 'x@company.example', extra: 1 }]]) {
+      const r = await u1.call(m, p, b);
+      assert.strictEqual(r.status, 404, m + ' ' + p); assert.strictEqual(r.json.error, 'not_found');
+    }
     const denied = await rowsAudit('gb.user@company.example', 'admin.denied');
-    assert.strictEqual(denied.length, 4); assert.ok(denied.every((a) => a.actor === 'user'));
+    assert.strictEqual(denied.length, 8); assert.ok(denied.every((a) => a.actor === 'user'));
     assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.signup_allowlist`)[0].n, 0, 'a non-admin cannot invite');
     // the database refuses a non-admin too, whatever list it is handed
     const uid = await T.userId('gb.user@company.example');
@@ -248,7 +295,8 @@ test.describe('admin dashboard and country capture (database)', { skip }, () => 
     assert.strictEqual((await admin.call('POST', '/admin/invites', { email: 'not an address' })).status, 400);
     assert.strictEqual((await admin.call('POST', '/admin/invites', { email: 'a@company.example', note: 'x'.repeat(201) })).status, 400);
     assert.strictEqual((await admin.call('POST', '/admin/invites', { email: 'a@company.example', extra: 1 })).status, 400);
-    assert.strictEqual((await admin.call('POST', '/admin/invites', { email: 'a@company.example' }, { headers: { origin: 'https://evil.example' } })).status, 403, 'write rules');
+    assert.strictEqual((await admin.call('POST', '/admin/invites', { email: 'a@company.example' }, { headers: { origin: 'https://evil.example' } })).status, 404, 'write rules (refused like an unknown route)');
+    assert.strictEqual((await T.db.sql`select count(*)::int as n from wts.signup_allowlist where email_bidx = ${T.keys.emailBidx('a@company.example')}`)[0].n, 0, 'nothing added');
     const l = await admin.call('GET', '/admin/invites');
     assert.ok(S.checkResponse('adminInvites', 200, l.json).ok);
     assert.strictEqual(l.json.invites.length, 2);
@@ -263,6 +311,21 @@ test.describe('admin dashboard and country capture (database)', { skip }, () => 
     assert.deepStrictEqual(inv.filter((x) => x.detail.op === 'add').map((x) => x.detail.added), [true, true, false]);
     assert.ok(!inv.some((x) => JSON.stringify(x.detail).includes('@')), 'no address in the audit');
     // the hash chain still verifies with the admin rows in it
+    const v = await auditVerify(T.db.sql);
+    assert.deepStrictEqual(v.bad, []);
+  });
+
+  test('a non-admin\'s probes are counted: the first 30 an hour are audited, then still 404 (never 429) and no audit row', async () => {
+    const before = (await rowsAudit('gb.user@company.example', 'admin.denied')).length;
+    for (let i = 0; i < 40; i++) {
+      const r = await u1.call('GET', '/admin/summary');
+      assert.strictEqual(r.status, 404, 'probe ' + i); assert.strictEqual(r.json.error, 'not_found');
+    }
+    const after = (await rowsAudit('gb.user@company.example', 'admin.denied')).length;
+    assert.strictEqual(after, 30, 'audited up to the hourly limit (' + before + ' before)');
+    const uid = await T.userId('gb.user@company.example');
+    const n = (await T.db.sql`select sum(n)::int as n from wts.rate_counters where bucket = ${'adminDeniedUserHour:' + uid}`)[0].n;
+    assert.strictEqual(n, before + 40);
     const v = await auditVerify(T.db.sql);
     assert.deepStrictEqual(v.bad, []);
   });

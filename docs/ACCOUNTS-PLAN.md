@@ -1326,7 +1326,8 @@ by the `publish-site.js` allow-list at `https://welltest.h2oil.co.uk/privacy.htm
 consent screen, the LinkedIn app form and the iOS store listing). The operator is a company licensed in Dubai (UAE); its name,
 licence, licensing authority and address are placeholders. The consent ticks of 66 link both pages; the in-app Privacy page and
 the Release Notes meta line link them (the iOS app uses the absolute web URLs; `sync-from-main.js` does not copy them).
-**Versions:** the server's `WTS_TERMS_VERSION` and `WTS_PRIVACY_VERSION` stay at their default `1`, matching the pages. When a
+**Versions:** the server's `WTS_TERMS_VERSION` and `WTS_PRIVACY_VERSION` stay at their defaults (`1` and, since the country / city
+statistics of the admin dashboard, `2`), matching the pages. When a
 page's version changes, set the matching variable to the same value in the same release (users are then asked to accept again at
 sign-in); a new Privacy notice version also bumps `VER` of the analytics consent (`WTS_consent.version`, head GA block of
 `well-testing-app.html`), so the banner asks again.

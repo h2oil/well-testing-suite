@@ -13,6 +13,8 @@
 //        and flags, the sign-up chart, the users table, Load more (cursor), search (q), CSV, invite POST and its list
 //   AW7  every server string is escaped: a malicious e-mail / note / city never becomes markup (page and CSV)
 //   AW8  a load with #admin opens the admin route ("Not available" for a normal account); the route is in the host skip tables
+//   AW9  a Search while the first users page is still loading wins (the late unfiltered answer is dropped, view.q / next agree);
+//        the country caption names the sign-up fallback; the share column follows the decimal-comma setting
 'use strict';
 
 const T = require('./_acct-app');
@@ -54,6 +56,11 @@ function boot(ctx, o) {
       if (!admin.on) return json(404, { error: 'not_found' });
       const q = new URL(url).searchParams;
       if (p === '/api/v1/admin/summary') return json(200, SUMMARY);
+      if (p === '/api/v1/admin/users' && admin.hold) {
+        // a held answer (AW9): resolved by the test, so a later request can overtake it
+        const h = admin.hold; admin.hold = null;
+        return h.then(() => json(200, { users: PAGE1, next: 'c1' }));
+      }
       if (p === '/api/v1/admin/users') {
         if (q.get('q')) return json(200, { users: PAGE1.concat(PAGE2).filter((x) => x.email.indexOf(q.get('q')) !== -1), next: null });
         return json(200, q.get('cursor') === 'c1' ? { users: PAGE2, next: null } : { users: PAGE1, next: 'c1' });
@@ -74,7 +81,7 @@ function boot(ctx, o) {
 // a storage where the consent banner and the Terms notice are already dealt with
 function settledStore(extra) {
   return T.createStorage(Object.assign({ wtspref_cloud_beta: '1', wtspref_terms_seen: JSON.stringify({ v: 1, at: Date.now() }),
-    wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 1, at: Date.now() }) }, extra || {}));
+    wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) }, extra || {}));
 }
 async function signedIn(ctx, o) {
   const t = boot(ctx, o);
@@ -158,7 +165,8 @@ module.exports = [
         assert.strictEqual(t.text('acct_welcome_t'), 'Keep your work safe');
         const txt = d.textContent;
         assert(/Create free account/.test(txt) && /Continue as guest/.test(txt) && /Sign in/.test(txt));
-        assert(/all your projects are kept in your own secure cloud database — open them on any device, with full history, and never lose work if this browser is cleared/.test(txt));
+        assert(/save your projects to your account in the cloud with Save to cloud/.test(txt) && /Work you have not saved to the cloud stays only in this browser\./.test(txt), 'Phase 1 wording: manual save, no automatic-keep claim');
+        assert(!/all your projects are kept|never lose work|own secure cloud database/.test(txt), 'no claim of automatic keeping or a database of one\'s own');
         assert(/Your work is saved only in this browser on this device\./.test(txt));
         assert(/rp-skip/.test(ov.className) && ov.getAttribute('data-rp-nosnap') === '1', 'never in a report');
         assert.strictEqual(t.w.document.activeElement && t.w.document.activeElement.id, 'acct_welcome_signup', 'focus on the primary choice');
@@ -219,7 +227,7 @@ module.exports = [
         }
       } finally { t.dispose(); }
       // Terms notice open → waits; OK → shows
-      const s2 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 1, at: Date.now() }) });
+      const s2 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
       const t2 = boot(ctx, { welcome: true, storage: s2 });
       try {
         t2.a.flush(10);
@@ -231,7 +239,7 @@ module.exports = [
       } finally { t2.dispose(); }
       // excluded routes: the Terms notice holds the prompt, the visitor goes to Help and presses OK there → still waits (route);
       // Privacy and Account wait too; the next page change to another route shows it
-      const s3 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 1, at: Date.now() }) });
+      const s3 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
       const t3 = boot(ctx, { welcome: true, storage: s3 });
       try {
         t3.a.flush(10);
@@ -275,12 +283,16 @@ module.exports = [
         assert(!t.el('acct_welcome_ov'));
         assert.strictEqual(t.text('acct_dlg_t'), 'Create your free account');
         assert(/by invitation during the beta/.test(t.text('acct_signup_note')));
+        assert(/If no code arrives within a few minutes, your address may not be invited yet/.test(t.text('acct_signup_note')));
+        assert(/save projects to your account with Save to cloud/.test(t.text('acct_dlg_body')) && /Work you have not saved to the cloud stays only in this browser/.test(t.text('acct_dlg_body')), 'sign-up text: Phase 1 manual save');
+        assert(!/own secure cloud database/.test(t.text('acct_dlg_body')));
         assert.strictEqual(t.text('acct_send'), 'Send my code');
         assert(t.el('acct_provider_buttons'), 'Google / LinkedIn mount point is there too');
         assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup');
         // a wrong code on the sign-up path names the invitation route
         t.a.input('acct_email', 'new@company.example'); t.click('acct_send');
         await t.until(() => t.el('acct_code'), 'code step');
+        assert(/your address may not be invited yet: write to software@h2oil\.co\.uk/.test(t.text('acct_code_invite')), 'code step: invitation hint on the sign-up path');
         t.a.input('acct_code', '00000000'); t.click('acct_verify');
         await t.until(() => /acct-msg--err/.test(t.el('acct_msg').className), 'error');
         assert(/New accounts are by invitation during the beta/.test(t.text('acct_msg')), t.text('acct_msg'));
@@ -433,6 +445,38 @@ module.exports = [
       for (const re of [/const PAGE_AUTOSAVE_SKIP = \{[^}]*admin:1/, /const _REPORT_SKIP = \{[^}]*admin:1/, /const __UI_NOT_TILE = \{[^}]*admin:1/, /page==='account'\|\|page==='admin'\) \? 'none'/]) {
         assert(re.test(html), String(re));
       }
+    },
+  },
+  {
+    name: 'AW9 a Search during a pending users load supersedes it; country caption; share with the decimal comma', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await signedIn(ctx, { admin: true });
+      try {
+        let release = null;
+        t.admin.hold = new Promise((r) => { release = r; });
+        t.w.WTS_nav('admin');
+        await t.until(() => t.el('adm_countries_table') && t.el('adm_q'), 'page drawn, users pending');
+        assert(!t.el('adm_users_table'), 'first page still loading');
+        t.a.input('adm_q', 'b@company'); t.click('adm_search');
+        await t.until(() => t.a.findAll('#adm_users_table tbody tr').length === 1, 'the search answer');
+        release();
+        await t.settle(20);
+        const v = t.w.WTS_accountAdmin._view();
+        assert.strictEqual(v.q, 'b@company');
+        assert.strictEqual(t.a.findAll('#adm_users_table tbody tr').length, 1, 'the late unfiltered answer is dropped');
+        assert(/b@company\.example/.test(t.text('adm_users_table')) && t.text('adm_users_table').indexOf(EVIL) === -1, t.text('adm_users_table'));
+        assert.strictEqual(v.next, null, 'the cursor belongs to the filtered list');
+        assert.strictEqual(v.loading, false);
+        // caption and decimal comma
+        assert(/Country of the last sign-in, else of the sign-up/.test(t.text('adm_card_countries')));
+        t.w.WTS_a11y.decimalComma(true);
+        t.click('adm_refresh');
+        await t.settle(20);
+        const ct = t.text('adm_countries_table');
+        assert(/66,7 %/.test(ct) && /33,3 %/.test(ct) && !/66\.7/.test(ct), ct);
+        assert(/2,5 MB/.test(t.text('adm_k_storage')), t.text('adm_k_storage'));
+        t.w.WTS_a11y.decimalComma(false);
+      } finally { t.dispose(); }
     },
   },
 ];

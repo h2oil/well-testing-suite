@@ -105,6 +105,11 @@ function createApp(o) {
     const isCallback = ep.id === 'oauthCallback';
     markCallback(isCallback);
     const setCookies = [];
+    // the admin routes (functions/admin.js) must look like an unknown route to everyone but an admin: a refusal before the
+    // handler's admin gate (write headers, size, body shape, the pause switch) answers 404 not_found, and the body shape is checked by the
+    // handler inside the gate (ctx.checkBody), so a non-admin can never tell the route exists from a 400 or a 403
+    const hidden = /^admin[A-Z]/.test(ep.id);
+    let inHandler = false;
     try {
       const raw = req.body || null;
       if (raw && raw.length > H.bodyLimit(ep.id)) throw new ApiError('too_large', { limit: H.bodyLimit(ep.id) });
@@ -117,10 +122,15 @@ function createApp(o) {
       }
       if (m.params.provider !== undefined) req.meta.provider = m.params.provider;
       let body = null;
+      let bodyErr = null;
       if (ep.body === 'json' && req.method !== 'GET') {
-        try { body = raw && raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch (e) { throw new ApiError('bad_request'); }
-        if (ep.req) requireShape(ep.req, body);
+        try { body = raw && raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch (e) { bodyErr = new ApiError('bad_request'); }
+        if (!hidden) {
+          if (bodyErr) throw bodyErr;
+          if (ep.req) requireShape(ep.req, body);
+        }
       }
+      const checkBody = () => { if (bodyErr) throw bodyErr; if (ep.req) requireShape(ep.req, body); return body; };
       if (config.accountsOff && !PAUSE_EXEMPT.has(ep.id)) throw new ApiError('paused');
       const ip = H.clientIp(req, config);
       const cookies = H.parseCookies(H.header(req, 'cookie'));
@@ -132,6 +142,7 @@ function createApp(o) {
         // production without WTS_CLIENT_IP_HEADER: the socket address is the proxy's, so there is no client range (null)
         ipPrefix: config.production && !config.ipHeader ? null : ipPrefix(ip),
         db: o.db || null, mail: o.mail || null, keys, objects: o.objects || null, jobs: o.jobs || null,
+        checkBody,
         after(task) { afterTasks.push(task); },
         // opts.maxAge (seconds) — required for the session cookie: seconds to abs_expires_at (contract COOKIES.session)
         setCookie(def, value, opts) { setCookies.push(H.serializeCookie(def, value, opts)); },
@@ -139,10 +150,13 @@ function createApp(o) {
       const fn = handlers[ep.id];
       if (typeof fn !== 'function') throw new ApiError('not_implemented');
       let r;
+      inHandler = true;
       try { r = (await fn(ctx)) || {}; } finally { runAfter(afterTasks.splice(0)); }
       if (isCallback) return callbackRedirect(setCookies);
       return respond(r.status || 200, r.body, { headers: r.headers, cookies: setCookies });
-    } catch (e) {
+    } catch (e0) {
+      const e = hidden && !inHandler && e0 instanceof ApiError && ['origin', 'too_large', 'bad_request', 'paused'].indexOf(e0.code) !== -1
+        ? new ApiError('not_found') : e0;
       noteError(req.meta, e);
       if (isCallback) { log.warn('callback: ' + ((e && e.code) || 'error')); return callbackRedirect(); }
       if (!(e instanceof ApiError)) log.warn('handler ' + ep.id + ' threw: ' + ((e && e.message) || e));

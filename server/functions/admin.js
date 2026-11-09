@@ -13,7 +13,8 @@
 // exactly like an unknown route. The database repeats the check (every admin definer refuses unless app.user_id is an active
 // account whose address index is in the list the handler passes). Every admin call is rate-limited per admin and writes an
 // audit row on the admin's chain (actor 'admin', action admin.summary / admin.users / admin.invite — add and list); a signed-in non-admin's
-// call writes 'admin.denied' (actor 'user'). The search text and invited addresses are never written to the audit.
+// call writes 'admin.denied' (actor 'user'; the first 30 an hour, rate adminDeniedUserHour, still 404 after). Parameters and
+// bodies are checked only behind the gate, and core/app.js answers 404 for any refusal before the handler. The search text and invited addresses are never written to the audit.
 
 const { fail, ApiError } = require('../core/errors');
 const V = require('../core/validate');
@@ -36,13 +37,16 @@ async function asAdmin(ctx, fn) {
     return await SE.withSession(ctx, {}, async (unit, s) => {
       const a = await A.addresses(unit);
       if (!ctx.config.adminEmails.has(a.primary)) {
-        await unit.audit('admin.denied', { deviceId: s.deviceId, detail: { route: ctx.endpoint.id } });
+        // a non-admin's probes are counted (soft: the answer stays 404, never 429, so the routes stay hidden) and only the
+        // first adminDeniedUserHour of them each hour are audited, so one account cannot grow its audit chain without bound
+        const h = await R.hit(unit.sql, 'adminDeniedUserHour', s.userId);
+        if (!h.over) await unit.audit('admin.denied', { deviceId: s.deviceId, detail: { route: ctx.endpoint.id } });
         return unit.failAfterCommit('not_found');
       }
       return fn(unit, s, arr(unit.sql, adminBidxs(ctx)));
     });
   } catch (e) {
-    if (e instanceof ApiError && ['signed_out', 'locked', 'gone', 'reauth'].indexOf(e.code) !== -1) fail('not_found');
+    if (e instanceof ApiError && ['signed_out', 'locked', 'gone', 'reauth', 'paused'].indexOf(e.code) !== -1) fail('not_found');
     throw e;
   }
 }
@@ -92,10 +96,11 @@ async function adminSummary(ctx) {
 }
 
 async function adminUsers(ctx) {
-  const limit = parseLimit(ctx.query);
-  const cursor = parseCursor(ctx.query);
-  const q = parseSearch(ctx.query);
+  // the parameters are checked only behind the gate: a non-admin gets 404 whatever they send
   const body = await asAdmin(ctx, async (unit, s, admins) => {
+    const limit = parseLimit(ctx.query);
+    const cursor = parseCursor(ctx.query);
+    const q = parseSearch(ctx.query);
     await R.enforce(unit.sql, 'adminReadUserHour', s.userId);
     const out = [];
     let before = cursor;
@@ -131,10 +136,12 @@ async function adminUsers(ctx) {
 }
 
 async function adminInviteAdd(ctx) {
-  const email = V.normEmail(ctx.body.email);
-  if (!email) fail('bad_request', { field: 'email' });
-  const note = ctx.body.note === undefined ? '' : String(ctx.body.note).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 200);
   await asAdmin(ctx, async (unit, s, admins) => {
+    // the body (shape included: core/app.js defers it for the admin routes) is checked only behind the gate
+    const b = ctx.checkBody ? ctx.checkBody() : ctx.body;
+    const email = V.normEmail(b.email);
+    if (!email) fail('bad_request', { field: 'email' });
+    const note = b.note === undefined ? '' : String(b.note).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 200);
     await R.enforce(unit.sql, 'adminInviteUserDay', s.userId);
     const added = (await unit.sql`select wts.admin_invite_add(${admins}, ${ctx.keys.emailBidx(email)}, ${note}) as ok`)[0].ok;
     await unit.audit('admin.invite', { actor: 'admin', deviceId: s.deviceId, detail: { op: 'add', added: !!added, note: !!note } });

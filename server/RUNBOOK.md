@@ -151,7 +151,7 @@ build command needs no secret either way); tick **Contains secret values** for e
 | `WTS_ADMIN_EMAILS` | optional: the admin addresses (comma-separated); unset = the `WTS_INVITE_BOOTSTRAP` addresses — see "Admin dashboard" below |
 | `SYNC_MODE` | `on` |
 | `WTS_MIN_CLIENT` | `4.0` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `1` |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (Privacy notice version 2 adds the country / city statistics) |
 | `WTS_DB_ROLE_MODE` | only if step L5 says so: `local` |
 
 Do **not** set: `WTS_PROXY_SIG`, `WTS_HOST_HEADER`, `WTS_CLIENT_IP_HEADER` (same-site mode fixes both), `WTS_DB_URL`,
@@ -357,7 +357,7 @@ the next deploy (step 12, or step 16 "apply a change").
 | `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_PROXY_SIG`\* · `WTS_BACKUP_PUBLIC_KEY` | from step 3 (`WTS_BACKUP_PUBLIC_KEY` is not secret; `WTS_BACKUP_PRIVATE_KEY` is **never** set here — the site refuses to start with it) |
 | `WTS_MAIL_API_URL`\* · `WTS_MAIL_CREDENTIAL`\* | step 9 |
 | `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `1` (raise when the published texts change; users then re-consent) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (raise when the published texts change; users then re-consent) |
 | `ACCOUNTS_SIGNUP` | `invite` (beta: only allow-listed addresses can create an account) |
 | `SYNC_MODE` | `on` |
 | `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | leave unset (= off) until §3P is done |
@@ -613,7 +613,7 @@ Deploy context **Production** (on Free all scopes; tick **Contains secret values
 | `WTS_MAIL_FROM` | the confirmed sender (step T2), e.g. `no-reply@h2oil.co.uk` |
 | `ACCOUNTS_SIGNUP` | `open` |
 | `SYNC_MODE` | `on` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | the values production will use (today `1` · `1`) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | the values production will use (today `1` · `2`) |
 | `WTS_DB_ROLE_MODE` | only if step T6 says so: `local` |
 
 Do **not** set: `WTS_DB_URL`, `WTS_JOBS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_DEV_ORIGIN`,
