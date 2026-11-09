@@ -153,8 +153,8 @@ module.exports = [
     run(app, assert) {
       const f = flowOf({}).flow, sb = f.sepBy, fb = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;
       assert.ok(f.sim.sepByDest === 'surge' && sb.dest === 'surge' && sb.P0_psig === 25 && sb.P0_psig === sb.surgeP_psig, 'surge at 25 psig');
-      // 3.4.2 review: 'surge' adds alt (the burner-line block), gasCapEst_mmscfd and overCap to the shared shape
-      const XK = ['alt', 'gasCapEst_mmscfd', 'overCap'];
+      // 3.4.2 review: 'surge' adds alt (the burner-line block), gasCapEst_mmscfd, overCap and (round 2) gasQ_mmscfd to the shared shape
+      const XK = ['alt', 'gasCapEst_mmscfd', 'overCap', 'gasQ_mmscfd'];
       const keys = (o) => JSON.stringify(Object.keys(o).filter((k) => XK.indexOf(k) < 0).concat(Object.keys(o.choke), Object.keys(o.nodes)));
       assert.strictEqual(keys(sb), keys(fb), 'same block shape as the burner line');
       assert.ok(XK.every((k) => k in sb) && !XK.some((k) => k in fb), 'review keys only on surge');
@@ -175,7 +175,7 @@ module.exports = [
       W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false }));
       const h = $('wts_res').innerHTML, w = $('wts_warn').innerHTML;
       assert.ok(h.indexOf('>→ surge tank T-201</td>') > 0 && /With V-101 out, to surge tank T-201<\/span><span class="rv">downstream [\d,]+ psig &middot; Critical/.test(h), 'surge rows');
-      assert.ok(/Whole well stream into the surge tank T-201 at 25 psig: 10\.00 MMSCFD of gas against the capacity of PCV-201, about 0\.15 MMSCFD at PSHH — PSHH-201 shuts the well in/.test(w), 'warning painted with the T-201 names');
+      assert.ok(/Whole well stream into the surge tank T-201 at 25 psig: 10\.00 MMSCFD of gas against the capacity of PCV-201, about 0\.15 MMSCFD at PSHH-201 — PSHH-201 shuts the well in/.test(w) && !/PSHH[ ,)]/.test(w), 'warning painted with the T-201 names');
       assert.ok(/>→ surge tank T-201<\/td>(<td>[^<]*<\/td>){4}<td style="color:var\(--red\);font-weight:700">&#9888; PSHH-201 TRIP \(gas over PCV-201\)<\/td>/.test(h), 'destination row verdict: PSHH-201 TRIP');
       assert.ok(/PCV-201 gas capacity at PSHH-201<\/span><span class="rv"><span style="color:var\(--red\);font-weight:700">about 152 Mscf\/d &middot; well gas 10,000 Mscf\/d &mdash; over: the well is shut in/.test(h), 'LP box capacity row');
     },
@@ -242,6 +242,16 @@ module.exports = [
       assert.strictEqual(ls.getItem(M), '1', 'project open writes the marker');
       go();
       assert.strictEqual(app.el('wts_sepByDest').value, 'flare', 'the project value is kept');
+      // review round 2: the 'surge' option names the receiving tank(s) of the rig-up handed over (route Both: both tanks)
+      app.change('wts_sepByDest', 'surge'); app.flush(600);
+      const opt = () => Array.prototype.find.call(app.el('wts_sepByDest').options, (o) => o.value === 'surge');
+      const RG = { esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: true, desander: false, surge2: true, heaterChoke: false };
+      app.win.wtsRenderResults(app.win.WTS_lastCalc.flow, Object.assign({}, RG, { recv: 'both' }));
+      assert.ok(opt().textContent === 'Surge tanks T-201 + T-202' && !opt().disabled, 'option: both tanks — ' + opt().textContent);
+      app.win.wtsRenderResults(app.win.WTS_lastCalc.flow, Object.assign({}, RG, { surge: false, surge2: false }));
+      assert.ok(opt().textContent === 'Surge tank (none in the rig-up: burner line)' && opt().disabled, 'option: no tank');
+      app.win.wtsRenderResults(app.win.WTS_lastCalc.flow, Object.assign({}, RG, { surge2: false }));
+      assert.ok(opt().textContent === 'Surge tank T-201' && !opt().disabled, 'option: T-201');
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     },
   },
@@ -276,6 +286,64 @@ module.exports = [
         assert.ok(kp.indexOf('GOR (sep)') >= 0, 'GOR relabelled');
       }
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
+    },
+  },
+  {
+    name: 'WTSLPH 3.4.2 review round 2: T-201 + T-202 both receiving → twice the capacity (= the engine with route Both), names in both surge warnings, from rig.recv or the live simulator; the PSHH TRIP verdict is built with the row (kept with a hydrate risk); the no-tank note is neutral and names the CK-102 fallback; seg 5 of the line route is Bypass→Line',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const C = GOLD.makeCalc(GOLD.hostRegion()), W = C.sandbox.window, $ = C.sandbox.$;
+      const RIG2 = mix(RIG_ALL_IN, { separator: false, surge2: true });
+      // 0.2 MMSCFD: over one PCV-201 (about 0.14), under PCV-201 + PCV-203 (about 0.29)
+      const r = C.run(mix(BASE, { wts_sepByDest: 'surge', wts_Qg: '0.2' })), sb = r.flow.sepBy, cap = sb.gasCapEst_mmscfd;
+      assert.ok(sb.gasQ_mmscfd === 0.2 && cap < 0.2 && 2 * cap > 0.2 && sb.overCap === true, 'one tank over, two under: ' + cap);
+      const paint = (rig) => { W.wtsRenderResults(r.flow, rig); return { h: $('wts_res').innerHTML, w: $('wts_warn').innerHTML }; };
+      // T-201 alone (T-202 in, on standby): PSHH-201 named in the over-capacity error (both places), the row verdict TRIP
+      let p = paint(RIG2);
+      assert.ok(/surge tank T-201 at 25 psig: 0\.20 MMSCFD of gas against the capacity of PCV-201, about 0\.14 MMSCFD at PSHH-201 — PSHH-201 shuts the well in \(ESD\)/.test(p.w) && !/PSHH[ ,)]/.test(p.w), 'T-201 over: ' + p.w);
+      assert.ok(/>→ surge tank T-201<\/td>(<td>[^<]*<\/td>){4}<td style="color:var\(--red\);font-weight:700">&#9888; PSHH-201 TRIP \(gas over PCV-201\)<\/td>/.test(p.h), 'T-201 TRIP row');
+      // route Both (rig.recv 'both'): the two receivers' capacity, no trip, the names of both tanks in the warning
+      p = paint(mix(RIG2, { recv: 'both' }));
+      assert.ok(/Whole well stream into the surge tanks T-201 \+ T-202 at 25 psig: PCV-201 \+ PCV-203 vent the gas \(about 0\.29 MMSCFD at PSHH-201 \/ PSHH-202, 0\.20 MMSCFD now\); above their capacity PSHH-201 \/ PSHH-202 shuts the well in/.test(p.w), 'both: warning ' + p.w);
+      assert.ok(!/PSHH[ ,)]/.test(p.w) && !/TRIP/.test(p.h) && p.h.indexOf('>→ surge tanks T-201 + T-202</td>') > 0, 'both: no trip, row names both tanks');
+      assert.ok(/PCV-201 \+ PCV-203 gas capacity at PSHH-201 \/ PSHH-202<\/span><span class="rv"><span>about 285 Mscf\/d &middot; well gas 200 Mscf\/d<\/span>/.test(p.h), 'both: LP box capacity row');
+      // rig.recv names a tank outside the rig-up → the rig-up decides; T-202 alone by route
+      assert.ok(/PSHH-201 TRIP/.test(paint(mix(RIG_ALL_IN, { separator: false, recv: 'both' })).h), 'both without T-202 in → T-201');
+      p = paint(mix(RIG2, { recv: 'T-202' }));
+      assert.ok(/PSHH-202 TRIP \(gas over PCV-203\)/.test(p.h) && /surge tank T-202 at 25 psig: .*at PSHH-202 — PSHH-202 shuts/.test(p.w), 'route T-202');
+      // no rig.recv: the live simulator's sepBy.recv (read only)
+      W.WTS_live = { getSim: () => ({ getState: () => ({ sepBy: { recv: 'both' } }) }) };
+      assert.ok(!/TRIP/.test(paint(RIG2).h), 'live simulator route Both');
+      W.WTS_live = { getSim: () => { throw new Error('x'); } };
+      assert.ok(/PSHH-201 TRIP/.test(paint(RIG2).h), 'a failing live read → the rig-up');
+      delete W.WTS_live;
+      // the engine with route Both passes exactly twice the host's one-tank estimate
+      const S = EQ.loadEngine('work'), sim = S.create(J(r.flow), { seed: 1, rigup: { separator: false, surge2: true } });
+      assert.ok(sim.setSurgeRoute('both').ok, 'route both'); sim.advance(30);
+      const st = sim.getState();
+      assert.ok(st.sepBy.recv === 'both' && Math.abs(st.sepBy.gasCap_mmscfd / (2 * cap) - 1) < 1e-6, 'engine both: ' + st.sepBy.gasCap_mmscfd + ' vs ' + 2 * cap);
+      // under the capacity: the warn text names PSHH-201 in both places
+      const lo = C.run(mix(BASE, { wts_sepByDest: 'surge', wts_Qg: '0.1' }));
+      W.wtsRenderResults(lo.flow, mix(RIG_ALL_IN, { separator: false }));
+      const lw = $('wts_warn').innerHTML;
+      assert.ok(/PCV-201 vents the gas \(about 0\.14 MMSCFD at PSHH-201, 0\.10 MMSCFD now\); above its capacity PSHH-201 shuts the well in/.test(lw) && !/PSHH[ ,)]/.test(lw), 'under capacity: ' + lw);
+      // TRIP and a hydrate risk on the destination row: both verdicts shown (the row is built, not patched)
+      const r2 = C.run(mix(BASE, { wts_sepByDest: 'surge', wts_Qg: '0.2' }));
+      r2.flow.sepBy.segs[2].Tout = -40;
+      W.wtsRenderResults(r2.flow, RIG2);
+      assert.ok(/>→ surge tank T-201<\/td>(<td>[^<]*<\/td>){4}<td style="color:var\(--red\);font-weight:700">&#9888; PSHH-201 TRIP \(gas over PCV-201\) &middot; &#10052; HYDRATE RISK<\/td>/.test($('wts_res').innerHTML), 'TRIP kept with a hydrate risk');
+      // no surge tank in: a neutral note (ℹ, not the hydrate ❄ style); with CK-102 in line it says CK-102 is not walked there
+      W.wtsRenderResults(r2.flow, mix(RIG_ALL_IN, { separator: false, surge: false }));
+      let w = $('wts_warn').innerHTML;
+      assert.ok(/&#8505; No surge tank in the rig-up, so the whole stream goes to the burner \/ flare line\.<\/div>/.test(w) && w.indexOf('&#10052; No surge') < 0 && !/CK-102/.test(w), 'neutral note: ' + w);
+      W.wtsRenderResults(r2.flow, mix(RIG_ALL_IN, { separator: false, surge: false, heaterChoke: true }));
+      w = $('wts_warn').innerHTML;
+      assert.ok(/&#8505; No surge tank in the rig-up, so the whole stream goes to the burner \/ flare line\. CK-102 is not walked on this fallback: choose the burner line for its two-stage results\./.test(w), 'CK-102 fallback note: ' + w);
+      // the production-line route names its seg-5 run (block, velocity warning text); the burner line keeps Sep→Flare
+      const ln = flowOf({ wts_sepByDest: 'line', wts_sepByP: '0', wts_Qg: '30' }).flow.sepBy;
+      assert.ok(ln.segs[2].label === 'Bypass→Line' && ln.segs[2].id === 'sep_flare' && !ln.warnings.some((x) => /Sep→Flare/.test(x.msg)), 'line seg 5: ' + JSON.stringify(ln.warnings));
+      assert.ok(ln.warnings.some((x) => /^Bypass→Line: Velocity /.test(x.msg)), 'line velocity warning named: ' + JSON.stringify(ln.warnings));
     },
   },
 ];

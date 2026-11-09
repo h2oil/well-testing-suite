@@ -63,6 +63,9 @@ const CAPS = {
 // Release 3.4.2 review fixes (host lane, 2026-11-09): 0.02 kB of welltest's unused headroom to simcourse (+0.01: the Surge Tank
 // Pressure row for V-101 out to the tank, the FS-5 steady PSHH-201 TRIP verdict) and livedata (+0.01: tank gas / total GOR are form
 // data only); welltest lists the LP flare line inputs instead of exempting them; the files were tightened to fit; sum unchanged.
+// Release 3.4.2 review round 2 (host lane, 2026-11-09): the round-1 wording trims are restored (welltest: the desander sand sources,
+// the 3D Colour overlay list; simcourse: CUSH_BURNER and the cushion column answer) and the LP inputs carry the page labels with unit
+// tokens; no file had 10 bytes of unused headroom to move, so short entries were joined onto one line (layout only); caps unchanged.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
