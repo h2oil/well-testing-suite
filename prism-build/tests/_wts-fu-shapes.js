@@ -460,9 +460,10 @@ var EX_CUSHION = { on: true, phase: 'unloading', V_bbl: 50, SG: 1.03, q_set_bpd:
   Vleft_bbl: 50, recovered_bbl: 0, fUnload: 0.1825, wJT: 0.025, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0, surge: 0 } };   // 3.4.2: + out.surge
 var EX_CUSHION_OFF = { on: false, phase: 'off', V_bbl: 0, SG: 0, q_set_bpd: 0, q_bpd: 0, qcap_bpd: 0, WHPtgt_psig: 0, column_ft: 0,
   Vleft_bbl: 0, recovered_bbl: 0, fUnload: 0, wJT: 0, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0, surge: 0 } };
-// release 3.4.2 (appended): recv ('' | 'T-201' | 'T-202' | 'both') and gasCap_mmscfd (null unless V-101 is out to 'surge')
-var EX_SEPBY = { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '', recv: '', gasCap_mmscfd: null };
-var EX_SEPBY_LINE = { dest: 'line', P_psig: 300, P0_psig: 300, active: true, vent: true, note: '', recv: '', gasCap_mmscfd: null };
+// release 3.4.2 (appended): recv ('' | 'T-201' | 'T-202' | 'both') and gasCap_mmscfd (null unless V-101 is out to 'surge');
+// 3.4.2 round 2 (appended): gasCap1_mmscfd / gasCap2_mmscfd = PCV-201 / PCV-203 each at PSHH (always a number)
+var EX_SEPBY = { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '', recv: '', gasCap_mmscfd: null, gasCap1_mmscfd: 0.152, gasCap2_mmscfd: 0.152 };
+var EX_SEPBY_LINE = { dest: 'line', P_psig: 300, P0_psig: 300, active: true, vent: true, note: '', recv: '', gasCap_mmscfd: null, gasCap1_mmscfd: 0.152, gasCap2_mmscfd: 0.152 };
 var EXAMPLES = {};
 [['flowCk2', EX_FLOW_CK2], ['flowCk2Skipped', EX_FLOW_CK2_SKIPPED], ['flowSepBy', EX_FLOW_SEPBY], ['nodesHeaterChoke', EX_NODES_HC],
   ['nodesHeaterChokeOut', EX_NODES_HC_OUT], ['cushion', EX_CUSHION], ['cushionOff', EX_CUSHION_OFF], ['sepBy', EX_SEPBY], ['sepByLine', EX_SEPBY_LINE]].forEach(function (p) {
@@ -545,7 +546,7 @@ function checkShape(name, obj, opts) {
   errs = EQ.excuse342(errs, OPTIONAL_342, S.root, opts, function (e) { var m = /^([^:]*): (missing|expected .*, got undefined)$/.exec(e); return m ? m[1] : null; });
   return { ok: errs.length === 0, errors: errs };
 }
-var OPTIONAL_342 = ['sepBy.recv', 'sepBy.gasCap_mmscfd', 'cushion.out.surge'];
+var OPTIONAL_342 = ['sepBy.recv', 'sepBy.gasCap_mmscfd', 'sepBy.gasCap1_mmscfd', 'sepBy.gasCap2_mmscfd', 'cushion.out.surge'];
 
 // ─── fakeFuSnapshot (§7.3) ───────────────────────────────────────────────────
 // base: a snapshot-like object (a real getState(), 32's fakeSnapshot(), fakeEquipSnapshot(), or null); deep-copied, never

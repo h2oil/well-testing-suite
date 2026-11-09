@@ -116,7 +116,10 @@ module.exports = [
       assert.ok(!nk.inRig && !nk.active && !nk.bypassed && nk.P === st.nodes.choke.P && nk.Pin === st.nodes.choke.P && nk.T === st.nodes.choke.T &&
         nk.dTjt === 0 && nk.regime === '' && nk.limiter === '' && nk.bean === 0 && nk.pos === 'inlet' && nk.designP_psig === X.DESIGN_P_CK2, 'static CK-102 node');
       assert.ok(st.inputs.bean2 === null && st.inputs.ck2Pos === null, 'no block → null inputs');
-      assert.deepStrictEqual(st.sepBy, X.EXAMPLES.sepBy, 'snap.sepBy default (burner line, V-101 in)');
+      // 3.4.2 round 2: gasCap1 / gasCap2_mmscfd are each tank's PCV capacity (always a number, ≈ the fixture's 0.152)
+      const sbx = Object.assign({}, st.sepBy), sbe = X.EXAMPLES.sepBy;
+      ['gasCap1_mmscfd', 'gasCap2_mmscfd'].forEach((k) => { assert.ok(Math.abs(sbx[k] / sbe[k] - 1) < 0.01, 'sepBy.' + k + ' ' + sbx[k]); sbx[k] = sbe[k]; });
+      assert.deepStrictEqual(sbx, sbe, 'snap.sepBy default (burner line, V-101 in)');
       assert.deepStrictEqual(st.cushion, X.EXAMPLES.cushionOff, 'snap.cushion off');
       X.SNAP_CUM_NEW.forEach((k) => assert.strictEqual(st.cum[k], 0, 'cum.' + k));
       X.HIST_KEYS_NEW.forEach((k) => { const h = sim.getHistory(k); assert.ok(h.t.length > 0 && h.y.every((y) => isFinite(y)), 'history ' + k); });

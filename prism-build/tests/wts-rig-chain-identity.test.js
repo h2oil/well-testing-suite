@@ -31,6 +31,8 @@ function pair(Fz, pinFn, c, assert, skipNotes) {
         assert.ok(h(sa).length === h(sb).length, c.name + ': the H-101 note on both sides or neither');
         sa.rigup.notes = sa.rigup.notes.filter((t) => !H101_NOTE.test(t)); sb.rigup.notes = sb.rigup.notes.filter((t) => !H101_NOTE.test(t));
       }
+      // round 2: under the chain the production-line run of segment 5 is named for its route ('Sep→Flare' in v3.4.1)
+      if (c.lineLabel) { assert.strictEqual(sb.segs[4].label, 'V-101 bypass→line', c.name + ': seg-5 label'); sb.segs[4].label = sa.segs[4].label; }
       const d = X.identityDiff(sa, sb, 6);
       assert.ok(d.length === 0, c.name + ' t ' + i * 10 + ': ' + d.join(' | '));
     }
@@ -51,7 +53,7 @@ const CASES_V341 = [
   { name: 'V-101 out with destination surge requested (v341: flare)', opts: { rigup: { separator: false } }, sim: { sepByDest: 'surge' } }];
 const CASES_UNPINNED = [
   { name: 'default' }, { name: 'H-101 out', opts: { rigup: { heater: false } } }, { name: 'V-101 out (flare)', opts: { rigup: { separator: false } } },
-  { name: 'V-101 out (line)', opts: { rigup: { separator: false } }, sim: { sepByDest: 'line', sepByP_psig: 150 } },
+  { name: 'V-101 out (line)', opts: { rigup: { separator: false } }, sim: { sepByDest: 'line', sepByP_psig: 150 }, lineLabel: true },
   { name: 'T-201 + T-202 out', opts: { rigup: { surge: false } } }, { name: 'P-201 out', opts: { rigup: { pump: false } } },
   { name: 'T-202 in, both', opts: { rigup: { surge2: true } }, setup: (s) => s.setSurgeRoute('both') },
   { name: 'DS-101 in', opts: { rigup: { desander: true } } }, { name: 'CK-102 in', opts: { rigup: { heaterChoke: true } } }];

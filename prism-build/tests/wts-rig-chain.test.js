@@ -60,12 +60,14 @@ module.exports = [
           assert.strictEqual(typeof v, 'string', tag + ' route ' + k);
           if (g[k] && v !== '') assert.fail(tag + ' route of an item in must be empty: ' + k + ' = ' + v);
         });
-        CORE.forEach((k) => { if (!g[k] && k !== 'pump') assert.ok(r.routes[k] !== '', tag + ' receiver of ' + k); });
+        // round 2: T-201 out with V-101 bypassed to the burner / production line receives nothing ('')
+        const noTank = !g.separator && r.dest !== 'surge';
+        CORE.forEach((k) => { if (!g[k] && k !== 'pump' && !(k === 'surge' && noTank)) assert.ok(r.routes[k] !== '', tag + ' receiver of ' + k); });
         if (!g.separator) assert.strictEqual(r.routes.separator, r.dest === 'surge' ? (g.surge ? 'T-201' : 'T-202') : r.dest === 'line' ? 'production line' : 'burner / flare line', tag);
-        if (!g.surge) assert.strictEqual(r.routes.surge, g.surge2 ? 'T-202' : (g.gauge ? 'T-301' : 'export / burner line'), tag);
+        if (!g.surge) assert.strictEqual(r.routes.surge, noTank ? '' : g.surge2 ? 'T-202' : (g.gauge ? 'T-301' : 'export / burner line'), tag);
         if (!g.heater) assert.strictEqual(r.routes.heater, g.separator ? 'V-101' : r.routes.separator, tag);
         if (!g.gauge) assert.strictEqual(r.routes.gauge, g.pump ? 'P-201 → export' : 'export / burner line', tag);
-        if (!g.flare) assert.strictEqual(r.routes.flare, 'export + vent', tag);
+        if (!g.flare) assert.strictEqual(r.routes.flare, g.separator ? 'export + vent' : 'vent', tag);
         assert.strictEqual(r.sig.length, 11, tag + ' sig');
       }
       assert.strictEqual(n, 64 * 3 * 2);
@@ -78,6 +80,13 @@ module.exports = [
       assert.deepStrictEqual(pick(S.normRigup({ surge: false, surge2: true }, o)), CH.ROUTES.surgeWithT202);
       assert.deepStrictEqual(pick(S.normRigup({ gauge: false }, o)), CH.ROUTES.gauge);
       assert.deepStrictEqual(pick(S.normRigup({ flare: false }, o)), CH.ROUTES.flare);
+      // round 2: FS-401 out with V-101 out → 'vent'; V-101 out to the burner / production line with T-201 out → T-201 receives nothing
+      assert.strictEqual(S.normRigup({ separator: false, flare: false }, o).routes.flare, CH.ROUTES.flareSepOut.flare, 'FS-401 out, V-101 out (surge)');
+      assert.strictEqual(S.normRigup({ separator: false, flare: false }, { sepByDest: 'line', P: 150, routing: 'chain' }).routes.flare, CH.ROUTES.flareSepOut.flare, 'FS-401 out, V-101 out (line)');
+      assert.strictEqual(S.normRigup({ separator: false, surge: false }, o).routes.surge, '', 'no tank (fallback flare): T-201 receives nothing');
+      assert.strictEqual(S.normRigup({ separator: false, surge: false }, { sepByDest: 'line', P: 150, routing: 'chain' }).routes.surge, '', 'line: T-201 receives nothing');
+      assert.strictEqual(S.normRigup({ separator: false, surge: false, surge2: true }, o).routes.surge, 'T-202', 'surge to T-202: T-201 → T-202');
+      assert.strictEqual(S.normRigup({ separator: false, flare: false }, { sepByDest: 'line', P: 150, routing: 'v341' }).routes.flare, 'export + vent', 'v341 keeps its text');
       assert.ok(S.normRigup({ heater: false }, o).notes.indexOf(CH.NOTES.heater) >= 0, 'H-101 note');
       assert.ok(S.normRigup({ gauge: false }, o).notes.indexOf(CH.NOTES.booster) >= 0, 'booster note');
       assert.ok(S.normRigup({ gauge: false, surge: false }, o).notes.indexOf(CH.NOTES.nothingToPump) >= 0, 'nothing to pump');
@@ -331,6 +340,96 @@ module.exports = [
       // the default rig (V-101 in): the alarm table has neither id until needed
       const d = mk({}); run(d, 600, 10);
       assert.ok(!st(d).alarmLog.some((x) => /^OVP_|SEPBY_PSV_CAP/.test(x.id)), 'default: none');
+    },
+  },
+  {
+    name: 'WTSRC (o) 3.4.2 round 2: the FS-401 out rig-up message follows the chain (V-101 in / out to the tanks / out to a line; v341 keeps "gas to export"); a standing segment-5 velocity alarm takes the new route tag after a mid-run rig change (both ways), the production-line run is named',
+    wp: WP, opts: false, timeoutMs: 300000,
+    run(app, assert) {
+      const msgOf = (sim, patch) => { let m = null; const h = (e) => { m = e.msg; }; sim.on('rigup', h); sim.setRigup(patch); sim.off('rigup', h); return m; };
+      const lo = { inputs: { Qg: 0.05, Qo: 1000, Qw: 200 }, config: { noise: { on: false } } };
+      let m = msgOf(mk({ config: { noise: { on: false } } }), { flare: false });
+      assert.ok(m && m.indexOf(CH.LOG.rigTxtFlareIn) >= 0 && m.indexOf('(gas to export)') < 0, 'V-101 in: ' + m);
+      m = msgOf(mk(Object.assign({ sim: { sepByDest: 'surge' }, rigup: { separator: false } }, lo)), { flare: false });
+      assert.ok(m && m.indexOf(CH.LOG.rigTxtFlareSurge) >= 0, 'V-101 out to the tanks: ' + m);
+      m = msgOf(mk(Object.assign({ sim: { sepByDest: 'line', sepByP_psig: 150 }, rigup: { separator: false } }, lo)), { flare: false });
+      assert.ok(m && m.indexOf(CH.LOG.rigTxtFlareLine) >= 0, 'V-101 out to a line: ' + m);
+      m = msgOf(mk({ config: { noise: { on: false }, rig: { routing: 'v341' } } }), { flare: false });
+      assert.ok(m && m.indexOf('FS-401 out of the rig-up (gas to export)') >= 0, 'v341: ' + m);
+      // the effective routes in the snapshot: FS-401 → vent with V-101 out; T-201 out and V-101 to the burner line → T-201 receives nothing
+      const r1 = st(mk(Object.assign({ sim: { sepByDest: 'surge' }, rigup: { separator: false, flare: false } }, lo))).rigup;
+      assert.strictEqual(r1.routes.flare, 'vent', 'routes.flare (surge)');
+      const r2 = st(mk(Object.assign({ sim: { sepByDest: 'surge' }, rigup: { separator: false, surge: false } }, lo))).rigup;
+      assert.ok(r2.dest === 'flare' && r2.routes.surge === '', 'no tank: routes.surge ' + JSON.stringify(r2.routes));
+      // segment 5 above 80 % of its limit with V-101 in (FI-Sep→Flare), then V-101 out to a production line and back again
+      const f = J(work().SAMPLE_FLOW); f.sim.sepByDest = 'line'; f.segs[4].vel = 180;
+      const sim = work().create(f, { seed: 3, config: { noise: { on: false } } });
+      const vel = () => st(sim).alarms.find((a) => a.id === 'VEL_sep_flare');
+      sim.advance(5); let a = vel();
+      assert.ok(a && a.tag === 'FI-Sep→Flare' && /^Sep→Flare: /.test(a.msg), 'V-101 in ' + JSON.stringify(a));
+      sim.setRigup({ separator: false }); sim.advance(5); a = vel();
+      assert.strictEqual(st(sim).segs[4].label, 'V-101 bypass→line', 'line run label');
+      assert.ok(a && a.tag === 'FI-V-101 bypass→line' && /^V-101 bypass→line: /.test(a.msg), 'V-101 out (standing alarm re-tagged) ' + JSON.stringify(a));
+      // back in with the alarm standing: the bypass tag does not stay on the separator run
+      const g = J(work().SAMPLE_FLOW); g.sim.sepByDest = 'line'; g.segs[4].vel = 180;
+      const s2 = work().create(g, { seed: 3, rigup: { separator: false }, config: { noise: { on: false } } });
+      s2.advance(5);
+      assert.strictEqual((st(s2).alarms.find((x) => x.id === 'VEL_sep_flare') || {}).tag, 'FI-V-101 bypass→line', 'out at create');
+      s2.setRigup({ separator: true });
+      // V-101 comes back in at the line pressure history (PSHH-102 ESD): reset once it has settled, then the run flows again
+      run(s2, 120, 5);
+      assert.ok(!st(s2).alarms.some((x) => x.id === 'VEL_sep_flare'), 'cleared on the trip');
+      if (st(s2).esd.tripped) assert.ok(s2.resetESD().ok, 'ESD reset');
+      let z = null;
+      run(s2, 600, 5, (x) => { z = x.alarms.find((y) => y.id === 'VEL_sep_flare') || null; return !!z; });
+      assert.ok(z && z.tag === 'FI-Sep→Flare' && /^Sep→Flare: /.test(z.msg), 'back in ' + JSON.stringify(z));
+      const log = st(s2).alarmLog.filter((x) => x.id === 'VEL_sep_flare' && x.type === 'raise').map((x) => x.tag);
+      assert.ok(log[0] === 'FI-V-101 bypass→line' && log.length > 1 && log.slice(1).every((t) => t === 'FI-Sep→Flare'), 'raise log ' + log);
+      // v341: the production-line run keeps 'Sep→Flare'
+      const v = work().create(f, { seed: 3, rigup: { separator: false }, config: { noise: { on: false }, rig: { routing: 'v341' } } });
+      assert.strictEqual(st(v).segs[4].label, 'Sep→Flare', 'v341 label');
+    },
+  },
+  {
+    name: 'WTSRC (p) 3.4.2 round 2 [22]: a flow.sepBy "surge" block with no surge tank in the rig-up — the engine walks its burner-line twin sepBy.alt (P0 5 psig, the alt choke outlet; alt.ck2 skipped → ck2Note), without alt the legacy law from 5 psig, never the 25 psig of the tank; with a tank in the block itself',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const FU = require('./_wts-fu-shapes');
+      const ex = FU.EXAMPLES.flowSepBy, blk = J(ex);
+      blk.dest = 'surge'; blk.P0_psig = 25; blk.nodes.choke.P = 47.9; blk.nodes.heater.P = 40; blk.nodes.sep.P = 32;
+      const alt = J(ex); alt.ck2 = { v: 1, bean: 48, pos: 'inlet', skipped: true, note: 'alt skipped' }; blk.alt = alt;
+      const make = (b, rig) => { const f = J(work().SAMPLE_FLOW); f.sim.sepByDest = 'surge'; if (b) f.sepBy = b; return work().create(f, { seed: 3, rigup: rig, config: { noise: { on: false } } }); };
+      const noTank = { separator: false, surge: false };
+      let sim = make(blk, noTank), s = st(sim), I = sim._internal().fu;
+      assert.ok(s.rigup.dest === 'flare' && s.sepBy.dest === 'flare' && s.sepBy.P0_psig === 5 && I.sel === 'sepBy', 'alt: ' + JSON.stringify([s.rigup.dest, s.sepBy.P0_psig, I.sel]));
+      assert.ok(Math.abs(I.P0 - 5) < 1e-12 && Math.abs(s.nodes.choke.P - ex.nodes.choke.P) < 0.5, 'alt choke outlet ' + s.nodes.choke.P + ' vs ' + ex.nodes.choke.P);
+      const sim2 = make(blk, { separator: false, surge: false, heaterChoke: true });
+      assert.strictEqual(sim2._internal().fu.ck2Note, 'alt skipped', 'alt.ck2 (skipped) note');
+      const nb = J(blk); delete nb.alt;
+      sim = make(nb, noTank); s = st(sim); I = sim._internal().fu;
+      assert.ok(I.sel === 'base' && Math.abs(I.P0 - 5) < 1e-12 && s.nodes.choke.P < 30, 'no alt: legacy law ' + JSON.stringify([I.sel, I.P0, s.nodes.choke.P]));
+      sim = make(blk, { separator: false }); I = sim._internal().fu;
+      assert.ok(I.sel === 'sepBy' && Math.abs(I.P0 - 25) < 1e-12, 'tank in: the surge block ' + I.P0);
+      // v341 keeps the v3.4.1 reading of the block (identity with the frozen engines)
+      const f = J(work().SAMPLE_FLOW); f.sim.sepByDest = 'surge'; f.sepBy = blk;
+      I = work().create(f, { seed: 3, rigup: noTank, config: { noise: { on: false }, rig: { routing: 'v341' } } })._internal().fu;
+      assert.ok(Math.abs(I.P0 - 25) < 1e-12, 'v341 ' + I.P0);
+    },
+  },
+  {
+    name: 'WTSRC (q) 3.4.2 round 2: each receiver\'s gas capacity in the snapshot (sepBy.gasCap1 / gasCap2_mmscfd, always numbers) — gasCap = the receiving sum (T-201, T-202, both), null with V-101 in',
+    wp: WP, opts: false, timeoutMs: 300000,
+    run(app, assert) {
+      const base = { inputs: { Qg: 0.05, Qo: 1000, Qw: 200 }, sim: { sepByDest: 'surge' }, config: { noise: { on: false } } };
+      let s = st(mk(Object.assign({ rigup: { separator: false } }, base))).sepBy;
+      assert.ok(s.gasCap1_mmscfd > 0 && s.gasCap2_mmscfd > 0 && Math.abs(s.gasCap_mmscfd - s.gasCap1_mmscfd) < 1e-12, 'T-201 ' + JSON.stringify(s));
+      s = st(mk(Object.assign({ rigup: { separator: false, surge: false, surge2: true } }, base))).sepBy;
+      assert.ok(s.recv === 'T-202' && Math.abs(s.gasCap_mmscfd - s.gasCap2_mmscfd) < 1e-12, 'T-202 ' + JSON.stringify(s));
+      const b = mk(Object.assign({ rigup: { separator: false, surge2: true } }, base));
+      assert.ok(b.setSurgeRoute('both').ok); run(b, 20, 0.5); s = st(b).sepBy;
+      assert.ok(s.recv === 'both' && Math.abs(s.gasCap_mmscfd - (s.gasCap1_mmscfd + s.gasCap2_mmscfd)) < 1e-12, 'both = the sum ' + JSON.stringify(s));
+      s = st(mk({ config: { noise: { on: false } } })).sepBy;
+      assert.ok(s.gasCap_mmscfd === null && s.gasCap1_mmscfd > 0 && Math.abs(s.gasCap1_mmscfd - CH.GAS_CAP.lp_mmscfd) / CH.GAS_CAP.lp_mmscfd < 0.02, 'V-101 in: gasCap null, each tank listed ' + JSON.stringify(s));
     },
   },
 ];

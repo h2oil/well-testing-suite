@@ -210,6 +210,16 @@ module.exports = [
       assert.ok(L.kCh > 2.2 && L.kCh < 2.8, 'tip critical-flow coefficient ' + L.kCh);
       const qc = 4500 / 86.4;
       assert.ok(at(qc, true) + 14.696 >= qc / L.kCh - 1e-9, 'never below the choked-tip pressure');
+      // round 2: the exit term is one velocity head ρv²/(2·gc) at the tip (kEx had a stray /144): at 1.2 MMscf/d on 3.068 in at
+      // ≈ 15.15 psia the direct head is ≈ 0.4–0.5 psi, and P_t² − P_b² = kEx·q² must give it within 5 %
+      const q12 = 1200 / 86.4, Pb = L.P0a + L.tip, Pt = Math.sqrt(Pb * Pb + L.kEx * q12 * q12);
+      const TR = 150 + 459.67, Mw = 28.97 * L.SG, A = Math.PI / 4 * Math.pow(L.ID / 12, 2);
+      const vt = q12 * (14.696 / Pb) * (TR / 519.67) / A, rho = Pb * 144 * Mw / (1545.35 * TR), head = rho * vt * vt / (2 * 32.174 * 144);
+      assert.ok(head > 0.3 && head < 0.6 && Math.abs((Pt - Pb) / head - 1) < 0.05, 'exit head ' + (Pt - Pb) + ' psi vs ρv²/2gc ' + head);
+      assert.ok(p12 > 4.8 && p12 < 5.3, '1.2 MMscf/d ≈ 5 psig: ' + p12);
+      // the open tip chokes (q / kCh above the subsonic tip pressure) between 4 and 5 MMscf/d, not ≈ 3.3
+      const choked = (m) => { const q = m / 86.4, P2 = Pb * Pb + L.kEx * q * q; return (q / L.kCh) * (q / L.kCh) > P2; };
+      assert.ok(!choked(4000) && choked(5000), 'tip chokes between 4 and 5 MMscf/d');
       // PSV-201 / PSV-202 against the LP line: rated relief with the PCV wide open; the flow stays critical so each keeps ≥ 90 %
       // of its rating at the built-up back pressure (bellows: built-up > 10 % of set, as the live run uses gq at the live P_in)
       const c = I.psvCheck;
@@ -218,7 +228,7 @@ module.exports = [
         assert.ok(v && v.set_psig === 50 && v.Pb_psig > 0 && v.Pb_psig < v.set_psig && v.ok && v.psvAtPb_mscfd <= v.psv_mscfd + 1e-9, k + ' ' + JSON.stringify(v));
         assert.strictEqual(v.bellows, v.Pb_psig > 0.1 * v.set_psig, k + ' bellows flag');
       });
-      assert.ok(c['PSV-201'].Pb_psig < 30 && c['PSV-202'].Pb_psig < 15, 'built-up back pressures ' + c['PSV-201'].Pb_psig + ' / ' + c['PSV-202'].Pb_psig);
+      assert.ok(c['PSV-201'].Pb_psig > 22.5 && c['PSV-201'].Pb_psig < 30 && c['PSV-202'].Pb_psig > 8 && c['PSV-202'].Pb_psig < 15, 'built-up back pressures ' + c['PSV-201'].Pb_psig + ' / ' + c['PSV-202'].Pb_psig);
       assert.strictEqual(mk({ config: { surge: { vent: { to: 'hp' } } } })._internal().lp.psvCheck, null, 'hp: no LP check');
       // the default-mode dump-stuck relief: P_in stays a few psig below the tank, not ≈ the tank pressure
       const d = mk({ seed: 3, config: { noise: { on: false } } });
@@ -227,11 +237,17 @@ module.exports = [
       run(d, 300, 1, (x) => { if (x.lp.q_mscfd > 500) gap = Math.min(gap, x.surge.P - x.lp.P_in_psig); pk = Math.max(pk, x.lp.P_in_psig); });
       assert.ok(gap > 10 && pk < 30, 'relief: tank − P_in ≥ ' + gap + ' psi, peak P_in ' + pk);
       // [5] cfg nps / sch alone: the hydraulic ID follows the table (an explicit ID_in still wins; flow.sim.lpSch alone is applied)
-      [[{ nps: 4 }, 4.026], [{ nps: 2 }, 2.067], [{ sch: 80 }, 2.900], [{ nps: 4, sch: 80 }, 3.826], [{ ID_in: 2.5 }, 2.5], [{ nps: 4, ID_in: 3.5 }, 3.5]].forEach(([v, id]) => {
+      [[{ nps: 4 }, 4.026], [{ nps: 2 }, 2.067], [{ sch: 80 }, 2.900], [{ nps: 4, sch: 80 }, 3.826], [{ ID_in: 2.5 }, 2.5], [{ nps: 4, ID_in: 3.5 }, 3.5],
+        // round 2: an explicit ID_in equal to the default 3.068 still wins (no longer read as "not given")
+        [{ nps: 4, ID_in: 3.068 }, 3.068], [{ nps: 3, sch: 80, ID_in: 3.068 }, 3.068], [{ ID_in: 3.068 }, 3.068], [{}, 3.068]].forEach(([v, id]) => {
         const x = mk({ config: { surge: { vent: v } } }), s = st(x);
         assert.ok(Math.abs(x._internal().lp.LP.ID - id) < 1e-12 && Math.abs(s.lp.ID_in - id) < 1e-12, JSON.stringify(v) + ' → ' + x._internal().lp.LP.ID);
       });
       assert.strictEqual(st(mk({ sim: { lpSch: 80 } })).lp.ID_in, 2.900, 'flow.sim.lpSch alone');
+      // the host size (flow.sim) with a cfg override on top: cfg ID_in wins; cfg nps alone → the table, not the host's ID
+      assert.strictEqual(st(mk({ sim: { lpNps: 2 }, config: { surge: { vent: { ID_in: 3.068 } } } })).lp.ID_in, 3.068, 'cfg ID_in over the host size');
+      assert.strictEqual(st(mk({ sim: { lpNps: 2 }, config: { surge: { vent: { nps: 4 } } } })).lp.ID_in, 4.026, 'cfg nps over the host size');
+      assert.strictEqual(st(mk({ sim: { lpNps: 4, lpSch: 80 } })).lp.ID_in, 3.826, 'host size');
       assert.ok(st(mk({ sim: { lpSch: 80 } })).lp.sch === 80, 'flow.sim.lpSch alone: sch');
     },
   },

@@ -23,7 +23,8 @@ var ROUTES = {
   surgeWithT202: { surge: 'T-202' },
   gauge: { gauge: 'P-201 → export' },
   pump: { pump: 'gravity' },
-  flare: { flare: 'export + vent' },
+  flare: { flare: 'export + vent' },                                // V-101 in (round 2: with V-101 out the receiver is 'vent')
+  flareSepOut: { flare: 'vent' },
   separatorNoTank: { separator: 'burner / flare line' },           // V-101 + T-201 out (no pressurised tank): dest falls back to 'flare'
   separatorLine: { separator: 'production line' },
   separatorFlare: { separator: 'burner / flare line' } };
@@ -41,7 +42,11 @@ var LOG = {
   standIn: 'Separator dumps routed to T-202 (T-201 out of the rig-up)',
   routeRefused: 'route to T-201 refused — T-201 is out of the rig-up',
   bypassDestSurge: 'V-101 bypass destination: surge tank T-201 (whole well stream)',
-  rigTxtSurge: 'V-101 bypassed (well stream to the surge tank T-201)' };
+  rigTxtSurge: 'V-101 bypassed (well stream to the surge tank T-201)',
+  // round 2: FS-401 out under the chain rules (the 'v341' text stays 'FS-401 out of the rig-up (gas to export)')
+  rigTxtFlareIn: 'FS-401 out of the rig-up (HP gas to export, LP / relief to vent)',
+  rigTxtFlareSurge: 'FS-401 out of the rig-up (tank gas and relief to the atmospheric vent)',
+  rigTxtFlareLine: 'FS-401 out of the rig-up (relief of the tanks to vent)' };
 var SEPBY_ALARMS = {
   SEPBY_SURGE_CAP: { tag: 'PCV-201', sev: 'warn', eq: 'separator', note: 'V-101 out to the surge tank and the gas rate above what PCV-201 (+ PCV-203 on route both) passes at PSHH' },
   SEPBY_VENT: { tag: 'FS-401', sev: 'warn', eq: 'flare', note: 'V-101 out to the surge tank with FS-401 out: cold vent' },
@@ -53,7 +58,7 @@ var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT', 'S
 var OVP_ALARMS = {
   OVP_SURGE: { tag: 'T-201', sev: 'alarm', eq: 'surge' },
   OVP_SURGE2: { tag: 'T-202', sev: 'alarm', eq: 'surge2' } };
-var SNAP_NEW = ['rigup.routing', 'rigup.dest', 'rigup.routes', 'sepBy.recv', 'sepBy.gasCap_mmscfd', 'gauge.pump.suction', 'cushion.out.surge',
+var SNAP_NEW = ['rigup.routing', 'rigup.dest', 'rigup.routes', 'sepBy.recv', 'sepBy.gasCap_mmscfd', 'sepBy.gasCap1_mmscfd', 'sepBy.gasCap2_mmscfd', 'gauge.pump.suction', 'cushion.out.surge',
   'sand.cum.toSurge_lb', 'surge.wellStream', 'surge2.wellStream', 'cum.toSurge_gas_mscf', 'cum.toSurge_oil_stb', 'cum.toSurge_water_bbl', 'lines.sepby_surge'];
 var NULLABLE_NEW = ['sepBy.gasCap_mmscfd'];
 var ENUMS = { 'rigup.routing': ROUTINGS, 'rigup.dest': DESTS, 'sepBy.dest': DESTS, 'sepBy.recv': ['', 'T-201', 'T-202', 'both'],
@@ -74,14 +79,17 @@ function fakeRig(base, o) {
   Object.keys(ROUTES_DEFAULT_OPTIONAL).forEach(function (k) { if (!ru[k]) ru.routes[k] = ROUTES_DEFAULT_OPTIONAL[k]; });
   if (!ru.heater) ru.routes.heater = ru.separator ? 'V-101' : (dest === 'surge' ? 'T-201' : dest === 'line' ? 'production line' : 'burner / flare line');
   if (!ru.separator) ru.routes.separator = dest === 'surge' ? (o.recv === 'T-202' ? 'T-202' : 'T-201') : dest === 'line' ? 'production line' : 'burner / flare line';
-  if (!ru.surge) ru.routes.surge = ru.surge2 ? 'T-202' : (ru.gauge ? 'T-301' : 'export / burner line');
+  // round 2: V-101 out to the burner / production line — T-201 receives nothing (''); FS-401 out with V-101 out → 'vent'
+  if (!ru.surge) ru.routes.surge = ru.routing === 'chain' && !ru.separator && dest !== 'surge' ? '' : ru.surge2 ? 'T-202' : (ru.gauge ? 'T-301' : 'export / burner line');
   if (!ru.gauge) ru.routes.gauge = ru.pump ? 'P-201 → export' : 'export / burner line';
   if (!ru.pump) ru.routes.pump = ru.gauge ? 'gravity' : '';
-  if (!ru.flare) ru.routes.flare = 'export + vent';
+  if (!ru.flare) ru.routes.flare = ru.routing !== 'chain' || ru.separator ? 'export + vent' : 'vent';
   var surgeOn = !ru.separator && dest === 'surge';
   s.sepBy = s.sepBy || { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '' };
   s.sepBy.dest = dest; s.sepBy.active = !ru.separator; s.sepBy.vent = !ru.flare;
   s.sepBy.recv = surgeOn ? (o.recv || 'T-201') : ''; s.sepBy.gasCap_mmscfd = surgeOn ? (typeof o.gasCap === 'number' ? o.gasCap : GAS_CAP.lp_mmscfd) : null;
+  // round 2: each tank's own capacity, always a number (the fixture: GAS_CAP.lp each; o.gasCap is the receiving sum)
+  s.sepBy.gasCap1_mmscfd = GAS_CAP.lp_mmscfd; s.sepBy.gasCap2_mmscfd = GAS_CAP.lp_mmscfd;
   s.gauge = s.gauge || {}; s.gauge.pump = s.gauge.pump || { tag: 'P-201', inRig: true, mode: 'pump', on: false, failed: false, q_bpd: 0, design_bpd: 0, dest: 'export' };
   s.gauge.pump.suction = 'gauge';
   if (o.booster === true || (!ru.gauge && ru.pump)) { s.gauge.pump.mode = 'booster'; s.gauge.pump.suction = 'transfer'; s.gauge.pump.inRig = true; }
