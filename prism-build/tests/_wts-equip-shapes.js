@@ -29,7 +29,7 @@
 //   SHAPE_NAMES, checkShape(name, obj, {strict, rigKeys}) → {ok, errors:['<path>: <reason>', …]} (rigKeys: RIG_KEYS of the module under test)
 //   fakeEquipSnapshot(base, {desander, surge2, flushing, held, sand}) → a snapshot with every §6.4 path, for view builders
 //   identityDiff(v33, now) → ['<path>: a !== b', …] — exact (===) check of every v3.3 path (§7 sig rule for rigup.sig)
-//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'v331' (tests/_wts-sim-v331.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
+//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'v331' (tests/_wts-sim-v331.js), 'v341' (tests/_wts-sim-v341.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
 //            strips it) or a source string, each in its own vm context
 //
 // Conventions encoded here
@@ -88,7 +88,9 @@ function sigDefaultOf(S) { return (S && S.VERSION === VERSION_NEW) ? SIG_DEFAULT
 var GETRIGUP_DEFAULT_JSON = JSON.stringify(RIG_DEFAULTS);
 var RIG_TXT_NEW = {
   desander: ['DS-101', 'out of the rig-up (well stream straight to the choke)', 'in line upstream of the choke'],
-  surge2: ['T-202', 'out of the rig-up', 'in the rig-up (standby: XV-202 shut)'] };
+  // release 3.4.2: the default T-202 has two compartments (dual text); the single-compartment pin keeps RIG_TXT_SURGE2_V341
+  surge2: ['T-202', 'out of the rig-up', 'in the rig-up (standby: XV-202A/B shut)'] };
+var RIG_TXT_SURGE2_V341 = ['T-202', 'out of the rig-up', 'in the rig-up (standby: XV-202 shut)'];   // cfg.surge2.compartments = 1
 var RIG_NOTES = {
   surge2NeedsSurge: 'T-202 works alongside T-201, so with T-201 out of the rig-up T-202 is out too.',
   surge2OnlyRouteRefused: 'T-202 is the only open route and T-201 cannot take the dumps (LSHH-201): open a T-201 inlet first.',
@@ -98,7 +100,9 @@ var RIG_NOTES = {
 
 // ─── tags and names (§2.2) ───────────────────────────────────────────────────
 var TAGS_NEW = { desander: 'DS-101', dsDump: 'XV-103', dsBypass: 'HV-104', surge2: 'T-202', xvSurge2: 'XV-202', bpv2: 'PCV-203',
-  blanket2: 'PCV-204', psvSurge2: 'PSV-202', lgSurge2: 'LG-202', xfer2: 'LCV-202' };
+  blanket2: 'PCV-204', psvSurge2: 'PSV-202', lgSurge2: 'LG-202', xfer2: 'LCV-202',
+  // release 3.4.2: T-202 compartments and their inlet valves
+  surge2A: 'T-202A', surge2B: 'T-202B', xvSurge2A: 'XV-202A', xvSurge2B: 'XV-202B' };
 var ALARM_TAGS_NEW = ['PDAH-103', 'PDAL-103', 'LAH-103', 'LAHH-103', 'PSHH-103', 'DS-101A',
   'LSHH-202', 'LSLL-202', 'PAH-202', 'PSHH-202', 'LAH-202'];
 var NAMES_NEW = { desander: 'Cyclonic Desander', surge2: 'Surge Tank 2', xfer2: 'T-202 Transfer Valve' };
@@ -128,13 +132,15 @@ var ALARMS = {
   XFER2_DRYRUN:  { tag: 'LCV-202', sev: 'trip', eq: 'surge2', act: 'xfer2' },
   XFER2_FAIL:    { tag: 'LCV-202', sev: 'alarm', eq: 'surge2' },
   XFER2_LOW_DP:  { tag: 'LCV-202', sev: 'warn', eq: 'surge2' },
-  LAH_SURGE_ALL: { tag: 'LAH-202', sev: 'alarm', eq: 'surge2' } };
+  LAH_SURGE_ALL: { tag: 'LAH-202', sev: 'alarm', eq: 'surge2' },
+  // release 3.4.2 (dual T-202 only): both T-202 compartments high / the uncontrolled compartment (same tag as LAH_SURGE_ALL)
+  LAH_SURGE2_BOTH: { tag: 'LAH-202', sev: 'alarm', eq: 'surge2' } };
 var ALARM_IDS = Object.keys(ALARMS);
 var Q_DES = ['DES_DP_HIGH', 'DES_DP_LOW', 'DES_LAH', 'DES_LAHH', 'DES_DUMP_FAIL', 'DES_RATING', 'DES_PSHH', 'DES_RATE',
   'HYD_desander', 'HYD_dsAcc', 'HYD_dsBleed'];
 var Q_SAND = ['SAND_CHOKE', 'SAND_SEP'];
 var Q_SURGE2 = ['PSHH_SURGE2', 'PSH_SURGE2', 'PSV_SURGE2', 'LSHH_SURGE2', 'LSLL_SURGE2', 'XFER2_DRYRUN', 'XFER2_FAIL',
-  'XFER2_LOW_DP', 'LAH_SURGE_ALL'];
+  'XFER2_LOW_DP', 'LAH_SURGE_ALL', 'LAH_SURGE2_BOTH'];   // release 3.4.2: + LAH_SURGE2_BOTH
 var ESD_TRIP_IDS = ['DES_PSHH', 'PSHH_SURGE2'];
 var ACT_ALARMS = { LSHH_SURGE2: 'xv202', XFER2_DRYRUN: 'xfer2' };
 var LOG_TYPES = ['raise', 'clear', 'trip', 'reset', 'switch', 'batch', 'fault', 'event'];   // unchanged (§6.8)
@@ -170,6 +176,13 @@ var HIST_KEYS_V33 = ['Psep', 'PsepSP', 'bucketFrac', 'ifaceFrac', 'c1Frac', 'sur
   'qgFlare', 'qoMeter', 'Pwh', 'Pchoke', 'Twh', 'surgeFracA', 'surgeFracB'];
 var HIST_KEYS_NEW = ['surge2Frac', 'surge2P', 'dsAccFrac', 'dsDP', 'sandChoke'];
 var HIST_KEYS = HIST_KEYS_V33.concat(HIST_KEYS_NEW);
+// release 3.4.2 history keys, appended after the v1.5.0 keys (tests/_wts-fu-shapes.js HIST_KEYS) in this order: T-202 compartment
+// levels, then the LP line (tests/_wts-lp-shapes.js). An engine has a prefix of this list.
+var HIST_KEYS_342 = ['surge2FracA', 'surge2FracB', 'qgLP', 'gor1', 'gor2'];
+// release 3.4.2 feature flags appended to WTS_sim.features (each true once its part has landed): T-202 twin, LP line, rig chain
+var FEATURES_342 = ['surge2Comps', 'lpFlare', 'rigChain'];
+// release 3.4.2 snapshot lines appended after LINE_NAMES (in this order): the LP flare line, the V-101-out stream to the surge tank
+var LINES_342 = ['lp_flare', 'sepby_surge'];
 var NULLABLE_NEW = ['desander.dump.lastT', 'surge2.tFull_s', 'surge2.transfer.trip'];
 var NODE_IDS_V33 = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge'];
 var NODE_IDS = NODE_IDS_V33.concat(['desander', 'surge2']);   // positional readers: desander = 8, surge2 = 9
@@ -192,7 +205,8 @@ var DEFAULTS_NEW = {
       highFrac: 0.50 } },
   surge2: { cap_bbl: 100, D_ft: 6, Psp: null, psh: null, pshh: null, mawp: null, lsll: 0.05, lsl: 0.25, lsh: 0.70, lshh: 0.90,
     pumpBpd: null, pumpMinBpd: 500, pumpVelFrac: 0.7, psvMinMscfd: 50, xferMinDP: 1, inletDP_psi: 3,
-    bpv: { tauCl: 10, Ti: 30 }, blanket: { on: true, deadband: 1, band: 2 }, autoSp: 0.80, autoHyst: 0.10, xvStrokeS: 6 } };
+    bpv: { tauCl: 10, Ti: 30 }, blanket: { on: true, deadband: 1, band: 2 }, autoSp: 0.80, autoHyst: 0.10, xvStrokeS: 6,
+    compartments: 2, lineup: null, divSp: 0.80, divHyst: 0.10 } };   // release 3.4.2: T-202 compartments A | B, its line-up, compartment auto-divert
 
 // ─── flow.sim keys and host inputs (§6.3) ────────────────────────────────────
 // lo/hi: clamp range (host wtsClamp and engine flowDerived); choices: allowed values (else def); blankOk: blank = null (estimate)
@@ -222,7 +236,10 @@ var ENUMS = {
   'sand.choke.band': ['none', 'ok', 'warn', 'high'],
   'surge2.route': SURGE2_ROUTE_VALUES,
   'surge2.transfer.dest': ['gauge', 'export'],
-  'rigup.extras[*]': RIG_OPTIONAL };
+  'surge2.valveTag': ['XV-202', 'XV-202A/B'],                     // release 3.4.2: single | dual
+  'surge2.suction': ['A', 'B', 'both'], 'surge2.transfer.suction': ['A', 'B', 'both'],
+  'rigup.extras[*]': RIG_OPTIONAL,
+  'rigup.routing': ['chain', 'v341'], 'rigup.dest': ['flare', 'line', 'surge'] };
 var API_STATIC_NEW = ['RIG_DEFAULTS', 'RIG_OPTIONAL', 'stepFor', 'sand'];
 var SAND_HELPERS = ['etot', 'cut', 'dp', 'erosionReducer', 'muDeadOil', 'muGas', 'c2', 'mixSound'];
 var API_INSTANCE_NEW = ['dumpDesander', 'setDesander', 'setSurgeRoute'];
@@ -232,10 +249,14 @@ var EVENT_DUMP_EXAMPLE = { type: 'dump', t: 0, phase: 'isolate', msg: 'DS-101 du
 var CONTROLS_DEFAULT = {
   surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 },
   gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
-  surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 },
+  surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6,
+    // release 3.4.2 (appended): the T-202 compartment line-up; these are the single-compartment (pinned) values — the dual default
+    // is CONTROLS_SURGE2_COMP_DUAL
+    comp: { inlet: [false, false], fill: [true, false], suction: 'A', auto: false, sp: 0.8, hyst: 0.1 } },
   desander: { bypass: false, auto: false, sp: 0.8 },
   v: 1 };
 var CONTROLS_DEFAULT_JSON = JSON.stringify(CONTROLS_DEFAULT);
+var CONTROLS_SURGE2_COMP_DUAL = { inlet: [false, false], fill: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1 };
 
 // ─── step numbers (§3.5, D17) ────────────────────────────────────────────────
 var STEP_ORDER = ['wellhead', 'esd', 'desander', 'choke', 'heater', 'separator', 'flare', 'surge', 'surge2', 'gauge', 'pump'];
@@ -319,7 +340,7 @@ var EX_SAND = {
   flowback: { on: false, W0_lbph: 200, tau_h: 6, t_h: 0, d50_um: 400, sigmaG: 1.5 },
   choke: { Up_fts: 888, C2: 0.110, erosion_mpy: 23.6, erosion_mild: 0.065, band: 'ok', warn_mild: 2.08, high_mild: 20.8, loss_mil: 0 },
   sep: { lb: 0, ft3: 0, frac: 0 },
-  cum: { in_lb: 0, capt_lb: 0, toChoke_lb: 0, toSep_lb: 0, toFlare_lb: 0, dumped_lb: 0 } };
+  cum: { in_lb: 0, capt_lb: 0, toChoke_lb: 0, toSep_lb: 0, toFlare_lb: 0, dumped_lb: 0, toSurge_lb: 0 } };   // 3.4.2: + toSurge_lb
 // T-202 in the rig-up, standby (XV-202 shut), empty, gas at T-201's set pressure (Psp null → follows T-201's 25 psig).
 var EX_SURGE2 = {
   tag: 'T-202', inRig: true, P: 25, SP: 25, SPeff: 25, T: 80, psh: 32, pshh: 40, mawp: 50, cap_bbl: 100, D: 6, H: 19.8575,
@@ -328,8 +349,17 @@ var EX_SURGE2 = {
   auto: { on: false, sp: 0.80, hyst: 0.10 }, strokeS: 6,
   bpv: { tag: 'PCV-203', u: 0 }, blanket: { tag: 'PCV-204', u: 0, held: false }, psv: { tag: 'PSV-202', lifting: false, Cv: 0.5 },
   transfer: { tag: 'LCV-202', on: false, tripped: false, failed: false, blocked: false, q_bpd: 0, design_bpd: 3752, x: 0,
-    dP_psi: 0, dPdesign_psi: 24.5, Cv: 20.65, sg: 0.873, lowDP: false, dest: 'gauge', trip: null, canReset: false, resetBlock: '' },
-  lsll: 0.05, lsl: 0.25, lsh: 0.70, lshh: 0.90 };
+    dP_psi: 0, dPdesign_psi: 24.5, Cv: 20.65, sg: 0.873, lowDP: false, dest: 'gauge', trip: null, canReset: false, resetBlock: '',
+    suction: 'A', T: 80 },
+  lsll: 0.05, lsl: 0.25, lsh: 0.70, lshh: 0.90,
+  // release 3.4.2 (appended): compartments (1 = this single-compartment example; dual default 2), comps rows (surge.comps shape),
+  // LCV-202 suction, compartment auto-divert, the fill line-up, whole well stream into T-202 (V-101 out to 'surge')
+  compartments: 1,
+  comps: [{ tag: 'T-202', valveTag: 'XV-202', cap_bbl: 100, h: 0, frac: 0, hW: 0, fracW: 0, Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, inlet: false,
+    suction: true, fill_bpd: 0, draw_bpd: 0, T: 80, pos: 0, moving: false, hold: false },
+    { tag: 'T-202B', valveTag: 'XV-202B', cap_bbl: 0, h: 0, frac: 0, hW: 0, fracW: 0, Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, inlet: false,
+      suction: false, fill_bpd: 0, draw_bpd: 0, T: 80, pos: 0, moving: false, hold: false }],   // fixed length 2 (single: a zero row)
+  suction: 'A', divert: { on: false, sp: 0.8, hyst: 0.1 }, fill: [true, false], wellStream: false };
 var EX_NODES_DESANDER = { tag: 'DS-101', P: 2995.0, Pin: 2998.9, dP: 3.93, T: 180, Tout: 179.9, Tacc: 80, th: 75, hyd: false };
 var EX_NODES_SURGE2 = { P: 25, T: 80 };
 // Static values while the item is out (Pin / Pout / P of the desander follow X.PB = the choke inlet; fakeEquipSnapshot copies it).
@@ -361,7 +391,10 @@ var EXAMPLES = {};
 
 var EX_LINE = { q: 0, unit: 'BPD', frac: 0, vel: 0, ID_in: 3.068, phase: 'liquid', active: false };
 var EX_RIGUP = { esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true,
-  desander: false, surge2: false, full: true, sig: SIG_DEFAULT_V331, notes: [], extras: [], refused: '', v: 1 };
+  desander: false, surge2: false, full: true, sig: SIG_DEFAULT_V331, notes: [], extras: [], refused: '', v: 1,
+  // release 3.4.2 (appended): the rig-up rules, the effective V-101-out destination, the receiver of each item that is out ('' = in)
+  routing: 'chain', dest: 'flare', routes: { esd: '', choke: '', heater: '', separator: '', surge: '', gauge: '', pump: '', flare: '', desander: 'CK-101',
+    surge2: 'T-201', heaterChoke: 'H-101' } };
 // rigup.refused (§3.3, added after WP-E0 review): '' or the note of the last refused setRigup while the same change would still
 // be refused (RIG_NOTES.surge2OnlyRouteRefused for T-202); 38 shows it and disables T-202's switch with that reason
 
@@ -381,9 +414,11 @@ var SHAPES = {
 var SHAPE_NAMES = Object.keys(SHAPES);
 var FIXED = {   // exact string values
   'desander.tag': 'DS-101', 'desander.bypassTag': 'HV-104', 'desander.dump.tag': 'XV-103', 'nodes.desander.tag': 'DS-101',
-  'surge2.tag': 'T-202', 'surge2.valveTag': 'XV-202', 'surge2.bpv.tag': 'PCV-203', 'surge2.blanket.tag': 'PCV-204',
+  'surge2.tag': 'T-202', 'surge2.bpv.tag': 'PCV-203', 'surge2.blanket.tag': 'PCV-204',
   'surge2.psv.tag': 'PSV-202', 'surge2.transfer.tag': 'LCV-202', 'dumpEvent.type': 'dump' };
 
+var OPTIONAL_342 = ['rigup.routing', 'rigup.dest', 'rigup.routes', 'surge2.compartments', 'surge2.comps', 'surge2.suction', 'surge2.divert', 'surge2.fill',
+  'surge2.wellStream', 'surge2.transfer.suction', 'surge2.transfer.T', 'sand.cum.toSurge_lb'];
 function typeName(v) {
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'array';
@@ -441,6 +476,8 @@ function checkShape(name, obj, opts) {
     else rk.forEach(function (k, i) { if (typeof obj[k] === 'boolean' && (obj.sig.charAt(i) === '1') !== obj[k]) errs.push('rigup.sig: character ' + i + ' disagrees with ' + k); });
   }
   if (name === 'line' && obj && typeof obj.q === 'number' && obj.q < 0) errs.push('line.q: negative');
+  // release 3.4.2 appended keys may be missing in an older engine's snapshot (v3.3 / v3.3.1 / v3.4.1): only "missing" is excused
+  errs = errs.filter(function (e) { var m = /^(.*): missing$/.exec(e); return !(m && OPTIONAL_342.indexOf(m[1].replace(/\[\d+\]/g, '')) >= 0); });
   return { ok: errs.length === 0, errors: errs };
 }
 
@@ -473,6 +510,11 @@ function fakeEquipSnapshot(base, o) {
   if (!Array.isArray(ru.notes)) ru.notes = [];
   ru.refused = (uIn && o.refused === true) ? RIG_NOTES.surge2OnlyRouteRefused : (typeof ru.refused === 'string' && uIn ? ru.refused : '');
   if (typeof ru.v !== 'number') ru.v = 1;
+  // release 3.4.2 keys (a v3.3 / v3.4.1 base has none): rules, effective destination, receivers of the items that are out
+  if (typeof ru.routing !== 'string') ru.routing = 'chain';
+  if (typeof ru.dest !== 'string') ru.dest = 'flare';
+  if (!ru.routes || typeof ru.routes !== 'object') { ru.routes = clone(EX_RIGUP.routes); }
+  ru.routes.desander = dIn ? '' : 'CK-101'; ru.routes.surge2 = uIn ? '' : 'T-201';
   s.rigup = ru;
   // desander
   var d = dIn ? clone(EX_DESANDER) : clone(EX_DESANDER_OUT);
@@ -551,19 +593,20 @@ function identityDiff(a, b, max) {
 }
 
 // ─── engines in their own vm contexts ────────────────────────────────────────
-// which: 'v33' (frozen v3.3 copy), 'v331' (frozen v3.3.1 copy, SIM-FOLLOWUP D13), 'work' (prism-build/31-wts-sim.js,
+// which: 'v33' (frozen v3.3 copy), 'v331' (frozen v3.3.1 copy, SIM-FOLLOWUP D13), 'v341' (frozen v3.4.1 copy, release 3.4.2), 'work' (prism-build/31-wts-sim.js,
 // self-test stripped as Round 7 strips it) or a source string.
 // Returns the context's WTS_sim (values live in that realm: compare numbers / strings, or JSON-copy objects).
 function loadEngine(which, ctxExtra) {
   var src;
   if (which === 'v33') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v33.js'), 'utf8');
   else if (which === 'v331') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v331.js'), 'utf8');
+  else if (which === 'v341') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v341.js'), 'utf8');   // release 3.4.2: frozen v3.4.1
   else if (which === 'work' || which === undefined) {
     src = require(path.join(BUILD_DIR, 'concat-round7.js')).stripSelfTest(
       fs.readFileSync(path.join(BUILD_DIR, '31-wts-sim.js'), 'utf8'), '31-wts-sim.js', { log: function () {}, warn: function () {} });
   } else src = String(which);
   var ctx = vm.createContext(Object.assign({ console: console }, ctxExtra || {}));
-  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : which === 'v331' ? '_wts-sim-v331.js' : '31-wts-sim.js' });
+  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : which === 'v331' ? '_wts-sim-v331.js' : which === 'v341' ? '_wts-sim-v341.js' : '31-wts-sim.js' });
   if (!ctx.WTS_sim) throw new Error('_wts-equip-shapes.loadEngine: WTS_sim not defined by ' + (typeof which === 'string' && which.length < 8 ? which : 'source'));
   return ctx.WTS_sim;
 }
@@ -572,18 +615,18 @@ module.exports = deepFreeze({
   PLAN: PLAN, VERSION_V33: VERSION_V33, VERSION_NEW: VERSION_NEW, PROBE_VERSION: PROBE_VERSION,
   RIG_KEYS_V33: RIG_KEYS_V33, RIG_KEYS: RIG_KEYS, RIG_ORDER: RIG_ORDER, RIG_ITEMS_NEW: RIG_ITEMS_NEW, RIG_DEFAULTS: RIG_DEFAULTS,
   RIG_OPTIONAL: RIG_OPTIONAL, SIG_V33: SIG_V33, SIG_DEFAULT: SIG_DEFAULT, SIG_DEFAULT_V331: SIG_DEFAULT_V331, sigDefaultOf: sigDefaultOf, GETRIGUP_DEFAULT_JSON: GETRIGUP_DEFAULT_JSON,
-  RIG_TXT_NEW: RIG_TXT_NEW, RIG_NOTES: RIG_NOTES,
+  RIG_TXT_NEW: RIG_TXT_NEW, RIG_TXT_SURGE2_V341: RIG_TXT_SURGE2_V341, RIG_NOTES: RIG_NOTES,
   TAGS_NEW: TAGS_NEW, ALARM_TAGS_NEW: ALARM_TAGS_NEW, NAMES_NEW: NAMES_NEW,
   ALARMS: ALARMS, ALARM_IDS: ALARM_IDS, Q_DES: Q_DES, Q_SAND: Q_SAND, Q_SURGE2: Q_SURGE2, ESD_TRIP_IDS: ESD_TRIP_IDS,
   ACT_ALARMS: ACT_ALARMS, LOG_TYPES: LOG_TYPES, LOG_EVENT_IDS_NEW: LOG_EVENT_IDS_NEW,
   FAULT_IDS_V33: FAULT_IDS_V33, FAULTS_NEW: FAULTS_NEW, FAULT_IDS: FAULT_IDS,
   LINE_NAMES_V33: LINE_NAMES_V33, LINES_NEW: LINES_NEW, LINE_NAMES: LINE_NAMES, LINE_FIELDS: LINE_FIELDS,
-  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS,
+  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS, HIST_KEYS_342: HIST_KEYS_342, FEATURES_342: FEATURES_342, LINES_342: LINES_342,
   NULLABLE_NEW: NULLABLE_NEW, NODE_IDS_V33: NODE_IDS_V33, NODE_IDS: NODE_IDS, SEG_COUNT: SEG_COUNT,
   DEFAULTS_NEW: DEFAULTS_NEW, FLOW_SIM: FLOW_SIM, SAMPLE_FLOW_SIM: SAMPLE_FLOW_SIM,
   DUMP_PHASES: DUMP_PHASES, DUMP_CMDS: DUMP_CMDS, SURGE_ROUTES: SURGE_ROUTES, SURGE2_ROUTE_VALUES: SURGE2_ROUTE_VALUES, ENUMS: ENUMS,
   API_STATIC_NEW: API_STATIC_NEW, SAND_HELPERS: SAND_HELPERS, API_INSTANCE_NEW: API_INSTANCE_NEW, EVENT_DUMP_EXAMPLE: EVENT_DUMP_EXAMPLE,
-  CONTROLS_DEFAULT: CONTROLS_DEFAULT, CONTROLS_DEFAULT_JSON: CONTROLS_DEFAULT_JSON,
+  CONTROLS_DEFAULT: CONTROLS_DEFAULT, CONTROLS_DEFAULT_JSON: CONTROLS_DEFAULT_JSON, CONTROLS_SURGE2_COMP_DUAL: CONTROLS_SURGE2_COMP_DUAL,
   STEP_ORDER: STEP_ORDER, STEP_V33: STEP_V33, STEP_COMBOS: STEP_COMBOS, stepForRef: stepForRef,
   ACTIONS: ACTIONS, ANCHORS: ANCHORS, EXAMPLES: EXAMPLES,
   SHAPE_NAMES: SHAPE_NAMES, checkShape: checkShape, fakeEquipSnapshot: fakeEquipSnapshot, identityDiff: identityDiff,
