@@ -15,6 +15,11 @@
  *     (out by default and then absent; greyed "bypassed" per frame while the heater is bypassed), PAH-102 tag between the
  *     chokes; with V-101 out the bypass spool follows the destination (burner / flare line, or the production line through
  *     PSHH-104, NRV-501 and XV-501); the scene is rebuilt on rigSig + the destination (V-101 out only)
+ *   · v1.5.0 (release 3.4.2): CK-101 as the plan of the two-choke manifold GA drawing (adjustable choke front-right, positive
+ *     back-left, a gate valve per side, 45° hammer unions; general-angle route fillets, two pick boxes per leg); T-202 the twin
+ *     of T-201 (baffle, A | B, XV-202A / XV-202B, SV-202A / SV-202B); the LP flare line (VENTL → LP → FT-201 → LP riser and
+ *     tip on FS-401, from snapshot lp.on); the rig chain's V-101-out destination 'surge' (spool to the LMa tee) and chips; the
+ *     scene key is rigSig + the destination (V-101 out) + '|lp'
  *   · Fresnel glass vessels with phase-banded, luminous fluids and animated
  *     interfaces (water / emulsion / oil / gas cap), weir cascade, bubbles
  *   · glass pipes with flow tracers walking an edge graph (real-time clock)
@@ -38,7 +43,7 @@ var G = (typeof window !== 'undefined') ? window : globalThis;
 // ═════════════════════════════════════════════════════════════════════════
 // §A CONSTANTS
 // ═════════════════════════════════════════════════════════════════════════
-var VERSION = '1.4.0';
+var VERSION = '1.5.0';
 
 var PALETTE = {
   skyZenith:'#04070c', skyHorizon:'#0f1826', skyBelow:'#07090c', warmGlow:'#2a160c', fog:'#0b111a',
@@ -184,9 +189,10 @@ function proxyEq(id) { if (/^ckleg:/.test(id)) return 'choke'; var m = /^(?:valv
 // Framing boxes per equipment group (view presets only, never picking)
 var EQ_BOX = {
   wellhead:[[-16.6,0,-1.6],[-13.4,2.6,1.9]], esd:[[-12.9,0,-0.6],[-11.0,3.4,1.8]], choke:[[-9.15,0,-1.6],[-4.9,2.05,1.6]],
-  heater:[[-3.3,0,-0.9],[1.0,5.4,1.6]], separator:[[2.1,0,-0.9],[9.1,3.1,1.2]], flare:[[18.6,0,-5.3],[20.4,7.8,-3.7]],
+  heater:[[-3.3,0,-0.9],[1.0,5.4,1.6]], separator:[[2.1,0,-0.9],[9.1,3.1,1.2]], flare:[[18.6,0,-5.3],[20.4,7.8,-3.35]],           // (v1.5.0: + the LP riser at z −3.5)
   surge:[[8.9,0,2.7],[11.5,6.2,5.3]], pump:[[19.8,0,5.0],[22.3,1.4,6.8]], gauge:[[13.8,0,1.9],[19.4,3.9,5.5]],
-  desander:FIT_OPT.desander, surge2:FIT_OPT.surge2, heaterChoke:FIT_OPT.heaterChoke
+  desander:FIT_OPT.desander, surge2:FIT_OPT.surge2, heaterChoke:FIT_OPT.heaterChoke,
+  lp:[[10.0, 0, -4.3], [19.3, 7.7, 4.2]]                         // v1.5.0 LP flare line (VENTL + LP + riser; not an EQ_IDS group)
 };
 var VIEWS = {
   overview:{ groups:null, az:-18, el:20, margin:1 },
@@ -199,7 +205,7 @@ var VIEWS = {
 var FOCUS = {
   wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.05,1.35,0],5.0], heater:[[-1.4,1.7,0.3],8],
   separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
-  flare:[[19.5,5,-4.5],18], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
+  flare:[[19.5,5,-4.5],18], lp:[[16.0,1.2,-0.5],16], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
 };
 // fixed focus azimuth (deg) for items that another vessel hides from the usual -18° side: T-202 sits behind T-201 there,
 // so it is framed from +3° (between T-201 and T-301; wts3d framing check)
@@ -1227,14 +1233,8 @@ function fakeSnapshot(t, o) {
       fill_bpd:u2Fill, route:u2In ? 'both' : 'surge', share:u2In ? 0.5 : 0, Ph:25, auto:{ on:false, sp:0.8, hyst:0.1 }, strokeS:6,
       bpv:{ tag:'PCV-203', u:u2In ? 0.4 : 0 }, blanket:{ tag:'PCV-204', u:0, held:false }, psv:{ tag:'PSV-202', lifting:false, Cv:0.5 },
       transfer:{ tag:'LCV-202', on:u2X > 0, tripped:false, failed:false, blocked:false, q_bpd:u2X, design_bpd:3752, x:u2X > 0 ? 1 : 0, dP_psi:u2X > 0 ? 24.5 : 0,
-        dPdesign_psi:24.5, Cv:20.65, sg:0.873, lowDP:false, dest:'gauge', trip:null, canReset:false, resetBlock:'', suction:'B', T:u2In ? 140 : 80 },
-      lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9,
-      // v1.5.0 (T-202 twin, contract §2.4): A fills through XV-202A, B on the LCV-202 suction; the halves average to the tank level
-      compartments:2, comps:[0, 1].map(function (k) { var fr = k ? 0.75 * u2Frac : Math.min(1, 1.25 * u2Frac), fw = fr * 0.17;
-        return { tag:k ? 'T-202B' : 'T-202A', valveTag:k ? 'XV-202B' : 'XV-202A', cap_bbl:50, h:fr * 19.8575, frac:fr, hW:fw * 19.8575, fracW:fw,
-          Vo_bbl:fr * 41.5, Vo_stb:fr * 39.5, Vw_bbl:fr * 8.5, inlet:!k && u2In, suction:!!k, fill_bpd:k ? 0 : u2Fill, draw_bpd:k ? u2X : 0, T:u2In ? 140 : 80,
-          pos:!k && u2In ? 1 : 0, moving:false, hold:false }; }),
-      suction:'B', divert:{ on:true, sp:0.8, hyst:0.1 }, fill:[true, false], wellStream:false },
+        dPdesign_psi:24.5, Cv:20.65, sg:0.873, lowDP:false, dest:'gauge', trip:null, canReset:false, resetBlock:'' },
+      lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9 },
     sep:{ tag:'V-101', D:3, R:1.5, Lss:10, xWeir:7.5, hWeir:1.65, xWeirFrac:0.75, hWeirFrac:0.55, headDepth:0.75, vol_bbl:13.85,
       P:Psep, SP:150, SPeff:150, T:149.997, psh:165, pshh:180, psl:120, mawp:1440, lahhTotal:0.8,
       pcv:{ tag:'PCV-101', u:0.5 + 0.05 * nz(3, 7), Cv:135 }, psv:{ tag:'PSV-101', lifting:false },
@@ -1281,6 +1281,18 @@ function fakeSnapshot(t, o) {
   // v1.4.0: CK-101 legs only when asked (o.leg 'adj' | 'fixed'; o.beanFix): without them the snapshot is the v1.3.0 shape
   if (o.leg) { var ckF = o.leg === 'fixed', bF = num(o.beanFix, 24); st.nodes.choke.leg = ckF ? 'fixed' : 'adj'; st.nodes.choke.beanAdj = ckF ? 32 : bean;
     st.nodes.choke.beanFix = ckF ? bean : bF; }
+  // v1.5.0 T-202 twin (contract §2.4: compartments, comps A | B, suction, divert, fill, transfer.suction / T, wellStream) — A fills
+  // through XV-202A, B on the LCV-202 suction, the halves average to the tank level. Emitted when asked (o.comps), without an
+  // engine, or when the loaded engine has the twin (features.surge2Comps), so the fake never carries paths the engine lacks
+  var SIM = G.WTS_sim;
+  if (o.comps === true || (o.comps !== false && (!SIM || (SIM.features && SIM.features.surge2Comps)))) {
+    var U2s = st.surge2; U2s.transfer.suction = 'B'; U2s.transfer.T = u2In ? 140 : 80;
+    U2s.compartments = 2; U2s.comps = [0, 1].map(function (k) { var fr = k ? 0.75 * u2Frac : Math.min(1, 1.25 * u2Frac), fw = fr * 0.17;
+      return { tag:k ? 'T-202B' : 'T-202A', valveTag:k ? 'XV-202B' : 'XV-202A', cap_bbl:50, h:fr * 19.8575, frac:fr, hW:fw * 19.8575, fracW:fw,
+        Vo_bbl:fr * 41.5, Vo_stb:fr * 39.5, Vw_bbl:fr * 8.5, inlet:!k && u2In, suction:!!k, fill_bpd:k ? 0 : u2Fill, draw_bpd:k ? u2X : 0, T:u2In ? 140 : 80,
+        pos:!k && u2In ? 1 : 0, moving:false, hold:false }; });
+    U2s.suction = 'B'; U2s.divert = { on:true, sp:0.8, hyst:0.1 }; U2s.fill = [true, false]; U2s.wellStream = false;
+  }
   // v1.5.0 rig chain only when asked (o.chain, or o.dest 'surge'): rigup.routing / dest / routes, sepBy.recv / gasCap, lines.sepby_surge
   if (o.chain || dest === 'surge') {
     var toS = sepOut && dest === 'surge', qS = toS ? (1000 + 200) * f : 0;

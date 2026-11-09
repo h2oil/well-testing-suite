@@ -998,7 +998,7 @@ const SECTION_B = (G /*, src */) => {
       const near = (p, q, e) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < (e || 0.02);
       return [
         ['32 v1.5.0 T-202 twin: normalize maps comps A | B (frac, fracW, inlet, suction, pos, moving, hold, fill), suction, divert; an older single-tank snapshot shows both halves at the tank level', () => {
-          const bad = [], fk = I.fakeSnapshot(9000, { surge2: true }), n = I.normalize(fk, I.makeNorm());
+          const bad = [], fk = I.fakeSnapshot(9000, { surge2: true, comps: true }), n = I.normalize(fk, I.makeNorm());
           if (!(n.surge2.n === 2 && n.surge2.comps[0].frac === fk.surge2.comps[0].frac && n.surge2.comps[1].frac === fk.surge2.comps[1].frac && n.surge2.comps[0].inlet === true &&
             n.surge2.comps[1].inlet === false && n.surge2.comps[1].suction === true && n.surge2.comps[0].suction === false && n.surge2.suction === 'B' && n.surge2.divertOn === true &&
             n.surge2.comps[0].fill === fk.surge2.comps[0].fill_bpd)) bad.push('dual ' + J(n.surge2.comps));
@@ -1009,7 +1009,7 @@ const SECTION_B = (G /*, src */) => {
           const single = JSON.parse(J(fk)); single.surge2.compartments = 1; const ns = I.normalize(single, I.makeNorm());
           if (!(ns.surge2.n === 1 && ns.surge2.comps[1].frac === ns.surge2.frac)) bad.push('legacy single mode');
           if (I.normalize(fk, I.makeNorm()).rigSig !== '111111010') bad.push('rigSig ' + I.normalize(fk, I.makeNorm()).rigSig);
-          const out = I.normalize(I.fakeSnapshot(60), I.makeNorm()); if (out.surge2.comps.some(c => !isFinite(c.frac) || c.inlet)) bad.push('out');
+          const out = I.normalize(I.fakeSnapshot(60, { comps: true }), I.makeNorm()); if (out.surge2.comps.some(c => !isFinite(c.frac) || c.inlet)) bad.push('out');
           if (S && S.features && S.features.surge2Comps && F) {             // the real engine (ENGINE lane): T-202 in → two compartments
             const s = S.create(F, { seed: 3, rigup: { surge2: true } }); s.advance(60); const nr = I.normalize(s.getState(), I.makeNorm());
             if (!(nr.surge2.n === 2 && nr.surge2.comps.length === 2)) bad.push('engine ' + nr.surge2.n);
