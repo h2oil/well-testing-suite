@@ -12,12 +12,12 @@
 // the code under test.
 'use strict';
 // the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
-const { legacyOpts } = require('./_wts-lineup-pin.js');
+const { lineupOpts } = require('./_wts-lineup-pin.js');   // 4.1 review: the T-201 line-up pin only (T-202, LP line, chain as shipped)
 
 const WP = 'WTS31';
 const NOISE_OFF = { noise: { on: false } };
 
-function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
+function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(lineupOpts(Object.assign({ seed: 7 }, o || {})))); }
 function runUntil(s, maxSec, dt, pred) { for (let i = 0; i < Math.ceil(maxSec / dt); i++) { s.advance(dt); if (pred(s.getState())) return true; } return false; }
 function balanced(assert, st, where) {
   const m = st.health.massErr;

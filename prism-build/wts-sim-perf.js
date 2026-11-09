@@ -23,13 +23,17 @@
 //   • ck2   — CK-102 in on a calcWTS flow that carries flow.ck2 (wts_bean2 48) ≤ 1.10 (SIM-FOLLOWUP §10)
 //   • cushion — Scenarios → Cushion unload with the defaults started at t = 0 ≤ 1.15
 //   • line  — V-101 out, destination production line 150 psig, against the default spread ≤ 1.05
+//   • surge — release 4.1: V-101 out, destination surge tank T-201, low gas (Qg 0.1 MMscf/d, 1,000 STB/d, 200 bbl/d — no ESD; an
+//             ESD'd sim is cheap and proves nothing) ≤ 1.10; skipped until WTS_sim.features.rigChain
+// Release 4.1: the working default includes the LP flare line (cfg.surge.vent 'lp') and the rig chain — the default gate covers
+// their cost (the tool pins nothing on the working side; the frozen engine runs its own default)
 // A secondary case is skipped (with the reason) until the working engine has it (WTS_sim.features, startCushion, a flow.ck2
 // block from the host calcWTS); --case ck2|cushion|line|both|all (default all) limits which run.
 // --probe hist: the working source gets the two SIM-FOLLOWUP history keys (Pck2, cushionLeft) stubbed in as constant number
 // writes on every sample, so the A/A run of WP0 measures them (§10); skipped once the engine has its own Pck2 key.
 // No absolute millisecond budget (a cold vm or a slow box would break one).
 //
-// Usage: node prism-build/wts-sim-perf.js [--base v331|v33] [--case all|both|ck2|cushion|line] [--probe hist]
+// Usage: node prism-build/wts-sim-perf.js [--base v331|v33] [--case all|both|ck2|cushion|line|surge] [--probe hist]
 //          [--pairs n (default 10, minimum 10)] [--rounds n (default 7)] [--json] [--hours h (default 4)]
 // Exit: 0 pass, 1 gate failed, 2 tool error.
 'use strict';
@@ -39,8 +43,8 @@ var path = require('path');
 var shapes = require(path.join(__dirname, 'tests', '_wts-equip-shapes.js'));
 
 var GATE_AB = 1.05, WARMUPS = 2, DT = 10, SEED = 14;
-var GATES = { both: 1.6, ck2: 1.10, cushion: 1.15, line: 1.05 };
-var CASES = ['both', 'ck2', 'cushion', 'line'];
+var GATES = { both: 1.6, ck2: 1.10, cushion: 1.15, line: 1.05, surge: 1.10 };
+var CASES = ['both', 'ck2', 'cushion', 'line', 'surge'];
 
 function arg(name, def) {
   var i = process.argv.indexOf(name);
@@ -108,6 +112,12 @@ function variantOf(S, v, ck2Flow) {
     if (!F.bypassDest) return 'features.bypassDest is false';
     var fl = JSON.parse(JSON.stringify(S.SAMPLE_FLOW)); fl.sim.sepByDest = 'line'; fl.sim.sepByP_psig = 150;
     return { flow: fl, opts: { rigup: { separator: false } } };
+  }
+  if (v === 'surge') {
+    if (!F.rigChain) return 'features.rigChain is false (release 4.1 rig chain)';
+    var fs2 = JSON.parse(JSON.stringify(S.SAMPLE_FLOW)); fs2.sim.sepByDest = 'surge';
+    fs2.inputs.Qg = 0.1; fs2.inputs.Qo = 1000; fs2.inputs.Qw = 200; fs2.gasRate = 0.1;
+    return { flow: fs2, opts: { rigup: { separator: false } } };
   }
   return 'unknown case ' + v;
 }

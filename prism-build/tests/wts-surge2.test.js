@@ -18,9 +18,12 @@ function flow(o) {
   Object.keys(o || {}).forEach((k) => { f.sim[k] = o[k]; });
   return f;
 }
+// the pins of mk(): every legacy pin (single-compartment T-202, HP vent, v341 rules, v3.3.1 T-201 line-up) — the identity frame of
+// this suite; the default-mode re-runs at the end (4.1 review) set PIN to none, so those tests run on the shipped engine
+let PIN = legacyOpts;
 function mk(o) {
   o = o || {};
-  return eng().create(flow(o.sim), legacyOpts(Object.assign({ seed: o.seed || 3, rigup: Object.assign({ surge2: true }, o.rigup || {}) }, o.config ? { config: o.config } : {})));
+  return eng().create(flow(o.sim), PIN(Object.assign({ seed: o.seed || 3, rigup: Object.assign({ surge2: true }, o.rigup || {}) }, o.config ? { config: o.config } : {})));
 }
 const st = (sim) => J(sim.getState());
 // advance in steps of dt (s); cb(state) → true stops early (returns true)
@@ -45,13 +48,13 @@ function finiteBad(o, nullable, p, bad) {
   return bad;
 }
 
-module.exports = [
+const T = [
   {
     name: 'WTSS2 T-202 enters the rig-up empty with XV-202 shut; standby snapshot matches the contract example (§5.1, §6.4)',
     wp: WP, opts: false,
     run(app, assert) {
       const sim = mk(), s = st(sim);
-      const r = X.checkShape('surge2', s.surge2, { strict: true });
+      const r = X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' });
       assert.ok(r.ok, r.errors.join('; '));
       const E = X.EXAMPLES.surge2;
       assert.ok(s.surge2.inRig && !s.surge2.inlet && s.surge2.pos === 0 && s.surge2.frac === 0 && s.surge2.Vo_bbl === 0 && s.surge2.route === 'surge', 'standby');
@@ -162,17 +165,21 @@ module.exports = [
       const sim = mk({ sim: { surge2Cap_bbl: 40 }, config: { noise: { on: false } } });
       sim.setSurgeRoute('surge2');
       let on = null, off = null, law = 0, cycles = 0, last = false;
+      // single T-202: the tank level, on at LSH 70 %; dual (shipped default, 4.1 review run): the suction compartment's level —
+      // LCV-202 opens on the compartment divert at 80 % (suction → the full side) and stops at LSL 25 % of that compartment
+      const dual = st(sim).surge2.compartments === 2, onSp = dual ? 0.80 : 0.70;
+      const lvl = (x) => dual ? x.surge2.comps[x.surge2.suction === 'B' ? 1 : 0].frac : x.surge2.frac;
       run(sim, 4 * 3600, 2, (x) => {
         const tr = x.surge2.transfer;
-        if (tr.on && !last) { cycles++; if (on === null) on = x.surge2.frac; }
-        if (!tr.on && last && off === null) off = x.surge2.frac;
+        if (tr.on && !last) { cycles++; if (on === null) on = lvl(x); }
+        if (!tr.on && last && off === null) off = lvl(x);
         if (tr.on && tr.q_bpd > 0) {
           const q = tr.Cv * Math.sqrt(tr.dP_psi / Math.max(tr.sg, 0.1)) * GPM_BPD;
           law = Math.max(law, Math.abs(q - tr.q_bpd) / q);
         }
         last = tr.on; return false;
       });
-      assert.ok(on !== null && on >= 0.70 - 0.01 && on < 0.72, 'on at LSH ' + on);
+      assert.ok(on !== null && on >= onSp - 0.01 && on < onSp + 0.02, 'on at ' + onSp + ': ' + on);
       assert.ok(off !== null && off <= 0.25 + 0.01 && off > 0.23, 'off at LSL ' + off);
       assert.ok(cycles >= 2 && law < 0.05, 'cycles ' + cycles + ', law error ' + law);
       // T-201 (LCV-201) and T-202 (LCV-202) both feeding T-301: the gauge inflow is the sum
@@ -277,7 +284,7 @@ module.exports = [
       const s = st(sim);
       const bad = finiteBad(s, J(eng().NULLABLE));
       assert.ok(bad.length === 0, 'finite ' + bad.slice(0, 5).join(', '));
-      assert.ok(X.checkShape('surge2', s.surge2, { strict: true }).ok, 'shape');
+      assert.ok(X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).ok, 'shape');
     },
   },
   {
@@ -548,6 +555,7 @@ module.exports = [
       a.setControls({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }, { initial: true });
       assert.strictEqual(JSON.stringify(a.getControls()), X.CONTROLS_DEFAULT_JSON, 'v3.3 prefs');
       const c = J(a.getControls()); c.surge2.inlet = true; c.surge2.strokeS = 4;
+      c.surge2.comp.inlet = [true, false];   // release 4.1: the appended command array, consistent with the derived inlet
       const b = mk();
       b.setControls(c, { initial: true });
       let s = st(b);
@@ -624,7 +632,7 @@ module.exports = [
       for (let i = 0; i < 180; i++) sim.advance(10);
       const s = J(sim.getState());
       assert.ok(s.surge2.route === 'both' && s.surge2.frac > 0, 'filling');
-      assert.ok(X.checkShape('surge2', s.surge2, { strict: true }).ok, 'shape');
+      assert.ok(X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).ok, 'shape');
       balanced(assert, s, 1e-9, 'app');
     },
   },
@@ -634,15 +642,31 @@ module.exports = [
     run(app, assert) {
       const sim = mk({ config: { noise: { on: false } } });
       sim.setSurgeRoute('both');
-      let worst = -Infinity, n = 0;
+      let worst = -Infinity, n = 0, sh = 0;
       run(sim, 3600, 10, (x) => {
-        if (x.surge2.route === 'both') { n++; worst = Math.max(worst, x.surge2.Ph - Math.min(x.surge.P, x.surge2.P)); }
+        if (x.surge2.route === 'both') { n++; sh += x.surge2.share; worst = Math.max(worst, x.surge2.Ph - Math.min(x.surge.P, x.surge2.P)); }
         return false;
       });
       assert.ok(n > 300 && worst <= 0.05, 'Ph − min(P) worst ' + worst.toFixed(3) + ' psi over ' + n + ' samples');
       const s = st(sim);
-      assert.ok(s.surge2.share > 0.3 && s.surge2.share < 0.7, 'still shared: ' + s.surge2.share);
+      // legacy frame: the share at the end; default line-up (4.1 review run): the instant can fall on a T-201 transfer dip, so the mean
+      if (PIN === legacyOpts) assert.ok(s.surge2.share > 0.3 && s.surge2.share < 0.7, 'still shared: ' + s.surge2.share);
+      assert.ok(sh / n > 0.3 && sh / n < 0.7, 'shared on average: ' + sh / n);
       balanced(assert, s, 1e-9, 'both');
     },
   },
 ];
+
+// 4.1 review: the behaviour of T-202 (PSV-202 sizing / relief, PCV-203 hold, LCV-202 law, split, gas accounting, balances) is not
+// a legacy subject, so these tests also run on the SHIPPED defaults — dual T-202 (A fills, B on LCV-202, auto-divert), the LP flare
+// line through FT-201 and the rig-up chain — with no pin at all. (The identity frame above keeps every pin.)
+const DEFAULT_RUNS = [/^WTSS2 pressure-driven split/, /^WTSS2 LCV-202: q = Cv/, /^WTSS2 oil \/ water \/ gas balances/, /^WTSS2 gas accounting/,
+  /^WTSS2 PCV-203 holds the set point/, /^WTSS2 PCV-203 stuck closed/, /^WTSS2 PSV-202: Cv_psvU2/, /^WTSS2 review: a second open path/];
+module.exports = T.concat(T.filter((t) => DEFAULT_RUNS.some((re) => re.test(t.name))).map((t) => Object.assign({}, t, {
+  name: t.name.replace(/^WTSS2 /, 'WTSS2 [default: dual T-202 + LP line + chain] '),
+  async run(app, assert, ctx) {
+    const was = PIN; PIN = (o) => o;
+    try { return await t.run(app, assert, ctx); } finally { PIN = was; }
+  },
+})));
+
