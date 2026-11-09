@@ -37,7 +37,9 @@ var IMP = { pressureG: 'psig', pressureTank: 'psig', temperature: '°F', gasRate
     oilRate: 'STB/d', volume: 'bbl', oilVolume: 'STB', gasVolume: 'MMSCF', velocity: 'ft/s', length: 'ft',
     lengthSmall: 'in', percent: '%', gor: 'scf/STB', powerLarge: 'MMBtu/hr', count: '', pressure: 'psi', tempDelta: '°F',
     // v3.3.1 equipment (DS-101 sand, accumulator; steel-equivalent choke erosion screening)
-    mass: 'lb', volumeSmall: 'gal', erosionRate: 'mpy', erosionDay: 'mil/d' };
+    mass: 'lb', volumeSmall: 'gal', erosionRate: 'mpy', erosionDay: 'mil/d',
+    // release 3.4.2: tank gas on the LP flare line (FT-201) in MSCFD
+    gasRateSmall: 'MSCFD' };
 var CAT_BASE = { pressureTank: 'pressureG', oilRate: 'liquidRate', oilVolume: 'volume' };
 var UNITLESS = { percent: 1, count: 1 };          // gor converts (scf/STB → sm³/sm³ in Metric)
 var STATUS_MAP_LOCAL = { trip: 'alarm', alarm: 'alarm', warn: 'warn', hyd: 'hyd', info: 'evt' };
@@ -46,17 +48,18 @@ var SEV_RANK = { info: 1, hyd: 2, warn: 3, alarm: 4, trip: 5 };
 // v3.3.1: the optional rig-up items DS-101 (cyclonic desander upstream of the choke) and T-202 (second surge tank) are
 // appended; they are out by default and every view hides them while out (docs/SIM-EQUIPMENT-PLAN.md D18)
 // v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md): CK-102 heater inlet choke appended (optional, out by default)
-var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2', 'heaterChoke'];
+// release 3.4.2: 'lp' = the LP flare line with FT-201 (a card and a 3D pick, not a rig-up item)
+var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2', 'heaterChoke', 'lp'];
 // STEP: the v3.3 numbering, kept as the fallback when WTS_sim.stepFor is missing (see stepMap)
 var STEP = { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤',
     flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' };          // P-201 is downstream of the gauge tank (T-301 → export)
 var TAG = { wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', heater: 'H-101', separator: 'V-101',
-    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301', desander: 'DS-101', surge2: 'T-202', heaterChoke: 'CK-102' };
+    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301', desander: 'DS-101', surge2: 'T-202', heaterChoke: 'CK-102', lp: 'FT-201' };
 var NAME = { wellhead: 'Wellhead', esd: 'ESD Valve (SSV)', choke: 'Choke Manifold', heater: 'Line Heater',
     separator: 'Test Separator', flare: 'Flare Stack', surge: 'Surge Tank', pump: 'Transfer Pump', gauge: 'Gauge Tank',
-    desander: 'Desander (cyclonic)', surge2: 'Surge Tank 2', heaterChoke: 'Heater inlet choke' };
+    desander: 'Desander (cyclonic)', surge2: 'Surge Tank 2', heaterChoke: 'Heater inlet choke', lp: 'LP flare line' };
 var EQ_ABBR = { wellhead: 'WH', esd: 'ESD', choke: 'CHK', heater: 'HTR', separator: 'SEP', flare: 'FLR',
-    surge: 'SURGE', pump: 'PUMP', gauge: 'GT', desander: 'DSND', surge2: 'T-202', heaterChoke: 'CK2' };
+    surge: 'SURGE', pump: 'PUMP', gauge: 'GT', desander: 'DSND', surge2: 'T-202', heaterChoke: 'CK2', lp: 'LP' };
 // host-node names / snapshot keys of liveNodes (append only: positional readers use the first 8; desander = 8, surge2 = 9,
 // heaterChoke = 10)
 var HOST_NM = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2', 'Heater Choke'];
@@ -99,7 +102,7 @@ var QUALS = [['auto', 'Auto'], ['high', 'High'], ['medium', 'Medium'], ['low', '
 var LABEL_MODES = [['all', 'All'], ['equip', 'Equipment'], ['off', 'Off']];
 var INPUT_FOR = { wellhead: 'wts_Pwh', esd: 'wts_Pwh', choke: 'wts_bean', heater: 'wts_Thtr', separator: 'wts_Psep',
     surge: 'wts_Psurge', pump: 'wts_nps6', gauge: 'wts_gtCap', flare: 'wts_nps5', desander: 'wts_sandPptb', surge2: 'wts_surge2Cap',
-    heaterChoke: 'wts_bean2' };
+    heaterChoke: 'wts_bean2', lp: 'wts_lpNps' };
 var DEF_COL = { gas: '#b8d4f0', oil: '#c98a2b', water: '#1f7fe0', emulsion: '#a08650', sand: '#c4a46b' };
 var PREF_DEFAULTS = { mode: '3d', labels: 'all', overlay: 'phase', quality: 'auto', speed: 10,
     legend: false, trends: false, orbit: false, ctl: null, ctlUser: null };
@@ -154,7 +157,9 @@ var ALM_T = {
     PSHH_SEP: ['separator', ' ≥ ', 'pressureG'], PSH_SEP: ['separator pressure high', ' ≥ ', 'pressureG'],
     PSL_SEP: ['separator pressure low', ' ≤ ', 'pressureG'], PSV_SEP: ['lifting — separator', ' (set ', 'pressureG', ')'],
     PSHH_SURGE: ['surge tank', ' ≥ ', 'pressureG'], PSH_SURGE: ['surge tank pressure high', ' ≥ ', 'pressureG'],
-    PSV_SURGE: ['lifting — surge tank', ' (set ', 'pressureG', ')']
+    PSV_SURGE: ['lifting — surge tank', ' (set ', 'pressureG', ')'],
+    // release 3.4.2: LP flare line (FT-201)
+    PAH_LP: ['LP flare line back pressure high', ' ≥ ', 'pressureG'], VEL_LP: ['LP flare line velocity', ' ≥ ', 'velocity']
 };
 
 // Inline 16 px icons (stroke 1.6, currentColor). No <title> children (they leak into textContent).
@@ -206,7 +211,8 @@ function unitsSys() {
 // day, cumulative metal loss), plus imperial labels for units-layer categories that IMP does not list. f = imperial →
 // metric factor (none: the units layer converts).
 var EQ_CAT = { massDay: { imp: 'lb/d', met: 'kg/d', f: 0.45359237 }, erosionDay: { imp: 'mil/d', met: 'mm/d', f: 0.0254 },
-    lossMil: { imp: 'mil', met: 'mm', f: 0.0254 }, volumeFt3: { imp: 'ft³' } };
+    lossMil: { imp: 'mil', met: 'mm', f: 0.0254 }, volumeFt3: { imp: 'ft³' },
+    gasRateSmall: { imp: 'MSCFD', met: 'm³/d', f: 28.316846592 } };   // 1 Mscf = 28.3168 m³ (standard)
 // Numeric conversion for display (also handed to 32 as opts.units.conv).
 function unitsConv(v, cat) {
     var base = CAT_BASE[cat] || cat;
@@ -450,6 +456,27 @@ function ck2Of(f) {
     return b;
 }
 function posTxt(p) { return p === 'midcoil' ? 'between the coil passes' : 'on the heater inlet'; }
+// release 3.4.2 GOR split: GOR1 = separator gas (FE-101), GOR2 = tank gas (FT-201), Total = rates.gor_scf_stb; null while V-101 is
+// out of the rig-up (no separator meters) or the engine has no such key
+function gorOf(st, k) {
+    var R = st && st.rates; if (!R || R.separated === false) return null;
+    if (k === 'tot') return isNum(R.gorTot_scf_stb) ? R.gorTot_scf_stb : isNum(R.gor_scf_stb) ? R.gor_scf_stb : null;
+    var v = R[k === 1 ? 'gor1_scf_stb' : 'gor2_scf_stb']; return isNum(v) ? v : null;
+}
+function gorTxt(v) { return isNum(v) ? fmtU(v, 'gor') : '—'; }
+function lpOn(st) { return !!(st && st.lp && st.lp.on === true); }
+// a snapshot with the LP flare line keys (an older engine has none: its rows stay hidden)
+function lpHas(st) { return !!(st && st.lp && typeof st.lp === 'object'); }
+var LP_METER_TXT = { usm: 'Insertion ultrasonic', thermal: 'Thermal dispersion', vortex: 'Vortex', orifice: 'Orifice run (DP)' };
+function lpSrcTxt(lp) {
+    var sr = (lp && lp.sources) || {}, f = function (v) { return fmtU(num(v, 0), 'gasRateSmall', 1); };
+    return 'T-201 ' + f(sr.t201) + ' · T-202 ' + f(sr.t202) + ' · PSV ' + f(sr.psv);
+}
+// the 2D strip line "GOR 1 n · 2 n · Σ n" (only while the LP line is in service)
+function gorLine(st) {
+    var g = function (k) { return fmtParts(gorOf(st, k), 'gor').v; };
+    return 'GOR 1 ' + g(1) + ' · 2 ' + g(2) + ' · Σ ' + g('tot') + ' ' + fmtParts(0, 'gor').u;
+}
 // Plain-JSON summary for WTS_state.sim (§6.12); deep-copied, never a live reference.
 function summaryOf(st) {
     if (!st) return null;
@@ -462,7 +489,10 @@ function summaryOf(st) {
             flared_mmscf: num(C.flare_mmscf, 0) },
         rates: { gas_mmscfd: num(R.gas_mmscfd, 0), oil_stbd: num(R.oilMeter_stbd, num(R.oil_stbd, 0)),
             water_bpd: num(R.waterMeter_bpd, num(R.water_bpd, 0)),
-            gor: isNum(R.gor_scf_stb) ? R.gor_scf_stb : null, bsw_pct: isNum(R.bsw_pct) ? R.bsw_pct : null },
+            gor: isNum(R.gor_scf_stb) ? R.gor_scf_stb : null, bsw_pct: isNum(R.bsw_pct) ? R.bsw_pct : null,
+            // release 3.4.2 (appended): GOR1 separator, GOR2 tank (FT-201), total; tank gas on the LP flare line
+            gor1: isNum(R.gor1_scf_stb) ? R.gor1_scf_stb : null, gor2: isNum(R.gor2_scf_stb) ? R.gor2_scf_stb : null,
+            gorTot: isNum(R.gorTot_scf_stb) ? R.gorTot_scf_stb : null, lpGas_mscfd: isNum(R.lpGas_mscfd) ? R.lpGas_mscfd : null },
         shrink_pct: isNum(R.shrink_pct) ? R.shrink_pct : null,
         batches: B.slice(Math.max(0, B.length - 10)),
         alarms: ids,
@@ -682,6 +712,7 @@ var CSS = [
 '.wtsl-ha{font-size:9px;color:#8b949e;margin-left:2px;display:inline-block;width:8px}',
 '.wtsl-hrow{display:flex;gap:8px;min-width:0}',
 '.wtsl-hi{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}.wtsl-hsep{flex:1.4 1 auto}',
+'.wtsl-hsub{font:9px/1.1 var(--hmi-mono);color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
 '.wtsl-clock{font:600 18px/1.1 var(--hmi-mono);font-variant-numeric:tabular-nums;letter-spacing:.3px;white-space:nowrap}',
 '.wtsl-clock small{font-size:11px;color:#6e7681;margin-right:3px}',
 '.wtsl-hst{display:flex;align-items:center;gap:7px;margin-top:2px}',
@@ -1046,6 +1077,7 @@ var CK_LEGS = { adj: 'Adjustable choke', fixed: 'Positive (fixed) choke' };
 // final pass: the HUD Gas / Oil / Water figures are the separator meters (smoothed), so a bean or leg change moves them slowly
 var SETTLE_TXT = ' — metered rates settle over a few minutes';
 var HUD_GAS_TIP = 'separator gas meter (smoothed); the choke rate is on the CK-101 card';
+var HUD_GOR_TIP = 'Total GOR = GOR1 separator (FE-101) + GOR2 tank (FT-201) ÷ oil meter';
 function ckLegs(st) {
     var c = (st && st.nodes && st.nodes.choke) || {}, hasN = typeof c.leg === 'string';
     var lEl = hostEl('wts_ckLeg'), hv = lEl ? String(lEl.value) : '';
@@ -1201,7 +1233,7 @@ function createController(vizEl, mopts) {
     var cardId = null, cardRefs = null, menu = null, drawerOpen = false, drawerTab = 'alarms', drawerSig = '';
     var popGroup = null, keysOpen = false;
     var pointerInside = false, loadingVisMs = 0, loadStepT = 0, loadStep = 0;
-    var trendBuf = { gas: [], oil: [], water: [], gor: [], bsw: [] };
+    var trendBuf = { gas: [], oil: [], water: [], gor: [], bsw: [], gor2: [] };
     var stats = null, lowFpsSince = 0, lowFpsShown = false, lastLowPerf = false;
     var lastFlowInvalid = false, lastAlarmVersion = -1;
     var injected = [], orig = null, cssInjected = false;
@@ -1449,7 +1481,7 @@ function createController(vizEl, mopts) {
                 '<div class="wtsl-hi wtsl-hsep"><span class="wtsl-hl"><span data-h="pSepL">Sep</span><i data-h="pSepU"></i></span><span class="wtsl-hv p"><span data-h="pSep">—</span></span>' +
                 '<div class="wtsl-sepbar" data-h="sepbar" title="Separator pressure vs setpoint: green ±5 psi band, amber = PAH, red = PSHH"><div class="band"></div><div class="tk" style="background:#d29922"></div><div class="tk" style="background:#f85149"></div><div class="mk"></div></div></div>' +
                 item('pSu', 'Surge') + '</div></div>' +
-            '<div class="wtsl-hg"><div class="wtsl-hrow">' + item('rG', 'Gas', '', HUD_GAS_TIP) + item('rO', 'Oil') + item('rW', 'Water') + item('rR', 'GOR', 'h-gor') + item('rB', 'BS&amp;W', 'h-bsw') + '</div></div>' +
+            '<div class="wtsl-hg"><div class="wtsl-hrow">' + item('rG', 'Gas', '', HUD_GAS_TIP) + item('rO', 'Oil') + item('rW', 'Water') + item('rR', 'GOR', 'h-gor', HUD_GOR_TIP).replace(/<\/div>$/, '<span class="wtsl-hsub" data-h="rRs" hidden></span></div>') + item('rB', 'BS&amp;W', 'h-bsw') + '</div></div>' +
             '<div class="wtsl-hg g-cum" title="Totals since test start (T+0)"><div class="wtsl-hrow">' + item('cO', 'Cum oil') + item('cW', 'Water') + item('cG', 'Gas') + item('cF', 'Flared') +
                 // v1.5.0: V-101 out to a production line / FS-401 out (hidden otherwise)
                 (item('cL', 'To production line', 'h-line') + item('cV', 'To vent', 'h-vent')).replace(/<div class="wtsl-hi /g, '<div hidden class="wtsl-hi ') + '</div></div>' +
@@ -2284,7 +2316,12 @@ function createController(vizEl, mopts) {
         var oil = num(R.oilMeter_stbd, R.oil_stbd), wat = num(R.waterMeter_bpd, R.water_bpd);
         hv('rO', oil, 'oilRate'); setText(E.h.rOA, trendArrow('oil', oil, 1.5 * Qo));
         hv('rW', wat, 'liquidRate'); setText(E.h.rWA, trendArrow('water', wat, 1.5 * Qw));
-        hv('rR', R.gor_scf_stb, 'gor'); setText(E.h.rRA, trendArrow('gor', R.gor_scf_stb, Qo > 0 ? 1.5 * Qg * 1e6 / Qo : 0));
+        // release 3.4.2: the headline is the total GOR; the sub-line '1 n · 2 n' (GOR1 separator · GOR2 tank) while the LP line is in service
+        var gT = gorOf(st, 'tot'), gSpan = Qo > 0 ? 1.5 * Qg * 1e6 / Qo : 0;
+        hv('rR', gT, 'gor'); setText(E.h.rRA, trendArrow('gor', gT, gSpan));
+        var g2v = gorOf(st, 2), subOn = lpOn(st) && !(st.rates && st.rates.separated === false);
+        trendArrow('gor2', g2v, gSpan);
+        if (E.h.rRs) { show(E.h.rRs, subOn); if (subOn) setText(E.h.rRs, '1 ' + fmtParts(gorOf(st, 1), 'gor').v + ' · 2 ' + fmtParts(g2v, 'gor').v); }
         hv('rB', R.bsw_pct, 'percent', 1); setText(E.h.rBA, trendArrow('bsw', R.bsw_pct, 100));
         // Cumulative
         hv('cO', C.oilIn_stb, 'oilVolume'); hv('cW', C.waterIn_bbl, 'volume'); hv('cG', C.gasIn_mmscf, 'gasVolume'); hv('cF', C.flare_mmscf, 'gasVolume');
@@ -2525,7 +2562,7 @@ function createController(vizEl, mopts) {
                 ['Gas', function (s) { return fmtU(num(s && s.inputs && s.inputs.Qg, NaN) * num(s && s.f, 1), 'gasRate'); }, ''],
                 ['Oil', function (s) { return fmtU(num(s && s.inputs && s.inputs.Qo, NaN) * num(s && s.f, 1), 'oilRate'); }, ''],
                 ['Water', function (s) { return fmtU(num(s && s.inputs && s.inputs.Qw, NaN) * num(s && s.f, 1), 'liquidRate'); }, ''],
-                ['GOR', function (s) { return fmtU(s && s.rates && s.rates.gor_scf_stb, 'gor'); }, '']],
+                ['GOR', function (s) { return gorTxt(gorOf(s, 'tot')); }, '', function (s) { return lpOn(s) ? 'total (GOR1 + GOR2)' : null; }]],
                 spark: [{ keys: ['Pwh'], label: 'WHP', cat: 'pressureG' }, { keys: ['Twh'], label: 'Wellhead T', cat: 'temperature' }] };
             case 'esd': return { rows: [
                 ['State', function (s) { var e = s && s.esd; return !e ? '—' : e.tripped ? (e.manual ? 'CLOSED (manual)' : 'TRIPPED') : e.moving ? 'MOVING' : 'OPEN'; }, ''],
@@ -2573,6 +2610,8 @@ function createController(vizEl, mopts) {
                 ['Interface', function (s) { return pctStr(s && s.sep && s.sep.c1 && s.sep.c1.fracW); }, ''],
                 ['Oil bucket', function (s) { return pctStr(s && s.sep && s.sep.bucket && s.sep.bucket.frac); }, ''],
                 ['Gas out', function (s) { return fmtU(s && s.sep && s.sep.gasOut_mmscfd, 'gasRate'); }, ''],
+                // release 3.4.2: GOR1 = separator gas meter FE-101 ÷ oil meter (row only with an engine that splits the GOR)
+                ['GOR1', function (s) { return gorTxt(gorOf(s, 1)); }, '', function () { return 'separator (FE-101 ÷ oil meter)'; }, lpHas],
                 ['Residence', function (s) { var v = s && s.sep && s.sep.tRes_min; return isNum(v) && v < 9999 ? v.toFixed(1) + ' min' : '—'; }, ''],
                 ['Oil dump', function (s) { var d = s && s.sep && s.sep.oilDump; return d ? fmtU(d.q_bpd, 'liquidRate') + (d.x > 0.02 ? ' · open' : '') : '—'; }, ''],
                 ['Water dump', function (s) { var d = s && s.sep && s.sep.waterDump; return d ? fmtU(d.q_bpd, 'liquidRate') + (d.x > 0.02 ? ' · open' : '') : '—'; }, ''],
@@ -2597,7 +2636,12 @@ function createController(vizEl, mopts) {
                 ['Transfer ΔP', function (s) { var p = xferOf(s); return p && isNum(p.dP_psi) ? fmtU(p.dP_psi, 'pressure', 1) : '—'; }, 'p',
                     function (s) { var p = xferOf(s); return p ? 'LCV-201 by vessel pressure (no pump)' + (isNum(p.dPdesign_psi) ? ' · design ' + fmtU(p.dPdesign_psi, 'pressure', 1) : '') : null; }],
                 ['Time to HH', function (s) { var v = s && s.surge && s.surge.tFull_s; return isNum(v) ? fmtClockLocal(v) : '—'; }, ''],
-                ['Flash gas', function (s) { var v = s && s.surge && s.surge.flash_mscfd; return isNum(v) ? v.toFixed(1) + ' MSCFD' : '—'; }, ''],
+                ['Flash (calc, PVT)', function (s) { var v = s && s.surge && s.surge.flash_mscfd; return isNum(v) ? fmtU(v, 'gasRateSmall', 1) : '—'; }, ''],
+                // release 3.4.2: the tank gas metered on the LP flare line (FT-201), GOR2 and the LP back pressure
+                ['Tank gas FT-201', function (s) { var R = s.rates || {}; return fmtU(isNum(R.lpGas_mscfd) ? R.lpGas_mscfd : s.lp.meter_mscfd, 'gasRateSmall', 1); }, '',
+                    function (s) { return s.lp.belowCut ? 'below the meter low-cut' : null; }, lpOn],
+                ['GOR2', function (s) { return gorTxt(gorOf(s, 2)); }, '', function () { return 'tank gas (FT-201 ÷ oil meter)'; }, lpOn],
+                ['LP back P', function (s) { return P(s.lp.P_in_psig); }, 'p', function (s) { return s.lp.psvIn ? 'PSV lifting into the LP line' : null; }, lpOn],
                 ['Auto-divert', function (s) { return autoTxt(s && s.surge && s.surge.auto); }, '']],
                 spark: [{ keys: ['surgeFracA', 'surgeFracB'], label: 'A · B level', cat: 'frac', lim: 'surgeL' }, { keys: ['surgeP'], label: 'Pressure', cat: 'pressureG' }],
                 widget: 'strap', actions: 'surge' };
@@ -2631,7 +2675,12 @@ function createController(vizEl, mopts) {
                 ['Production line', function (s) { return P(sepByOf(s).P_psig); }, 'p', function () { return 'NRV-501 / XV-501 at the tie-in · PSHH-104 on the bypass path'; }, bypLine],
                 ['To production line', function (s) { var c = (s && s.cum) || {}; return fmtU(num(c.toLine_gas_mscf, 0) / 1000, 'gasVolume'); }, '',
                     function (s) { var c = (s && s.cum) || {}; return 'oil ' + fmtU(num(c.toLine_oil_stb, 0), 'oilVolume') + ' · water ' + fmtU(num(c.toLine_water_bbl, 0), 'volume'); }, bypLine],
-                ['To vent', function (s) { return fmtU(num(s && s.cum && s.cum.toVent_gas_mscf, 0) / 1000, 'gasVolume'); }, '', function () { return 'relief and vent gas of the tanks (FS-401 out)'; }, ventOn]],
+                ['To vent', function (s) { return fmtU(num(s && s.cum && s.cum.toVent_gas_mscf, 0) / 1000, 'gasVolume'); }, '', function () { return 'relief and vent gas of the tanks (FS-401 out)'; }, ventOn],
+                // release 3.4.2: HP tip (separator gas) and LP tip (tank gas through FT-201) on FS-401
+                ['HP tip', function (s) { return fmtU(N(s, 'flare').qHP_mmscfd, 'gasRate'); }, '', null, lpOn],
+                ['LP tip', function (s) { return fmtU(N(s, 'flare').qLP_mmscfd, 'gasRate'); }, '', function (s) { return s.lp.to === 'vent' ? 'to the atmospheric vent (no LP flame)' : null; }, lpOn],
+                ['LP line vel', function (s) { var l = s.lp; return fmtU(l.vel_fts, 'velocity') + (isNum(l.vPct) ? ' · ' + Math.round(l.vPct) + '%' : ''); }, '',
+                    function (s) { return s.lp.vSt && s.lp.vSt !== 'OK' ? String(s.lp.vSt) : null; }, lpOn]],
                 spark: [{ keys: ['qgFlare'], label: 'Flared gas', cat: 'gasRate' }], widget: 'linevel' };
             // v1.5.0 CK-102 heater inlet choke (on the H-101 inlet, downstream of the heater-bypass tee; in line only through H-101)
             case 'heaterChoke': {
@@ -2655,6 +2704,32 @@ function createController(vizEl, mopts) {
                     spark: [{ keys: ['Pck2'], label: 'Pressure between the chokes', cat: 'pressureG' }], actions: 'bean2',
                     note: 'CK-102 takes part of the pressure drop. It is in line only while the stream goes through H-101; with the heater ' +
                         'bypassed it is bypassed too. The rate stays set by the steady choke check (a subcritical CK-101 does not change the rate here).' };
+            }
+            // release 3.4.2: LP flare line — PCV-201 / PCV-203 and PSV-201 / PSV-202 through FT-201 to the LP tip on FS-401
+            case 'lp': {
+                var Lp = function (s) { return (s && s.lp) || {}; }, on = function (s) { return lpOn(s); };
+                return { rows: [
+                    ['Service', function (s) { var l = Lp(s); return !lpHas(s) ? '—' : !l.on ? 'Not in service' : l.to === 'vent' ? 'To the atmospheric vent (FS-401 out)' : 'To the LP tip on FS-401'; }, 'w',
+                        function (s) { return lpHas(s) && !Lp(s).on ? 'tank gas to the HP flare header' : null; }],
+                    ['Line', function (s) { var l = Lp(s); return (l.nps != null ? l.nps + '″' : '—') + (l.sch != null ? ' SCH ' + l.sch : '') + ' · ' + fmtU(l.L_ft, 'length', 0); }, '',
+                        function (s) { var l = Lp(s); return isNum(l.ID_in) ? 'ID ' + fmtU(l.ID_in, 'lengthSmall', 3) : null; }, on],
+                    ['Flow', function (s) { return fmtU(Lp(s).q_mscfd, 'gasRateSmall', 1); }, '',
+                        function (s) { var l = Lp(s); return 'FT-201 reads ' + fmtU(l.meter_mscfd, 'gasRateSmall', 1) + (l.belowCut ? ' · below the low-cut' : ''); }, on],
+                    ['Meter', function (s) { var l = Lp(s); return (LP_METER_TXT[l.meterType] || String(l.meterType || '—')) + (l.unc_txt ? ' · ' + l.unc_txt : ''); }, 'w',
+                        function (s) { var l = Lp(s); return (l.turndown_txt ? 'turndown ' + l.turndown_txt + ' · ' : '') + 'low-cut ' + fmtU(l.lowCut_fts, 'velocity', 1); }, on],
+                    ['Inlet P', function (s) { return P(Lp(s).P_in_psig); }, 'p', function (s) { return 'tip ' + P(Lp(s).P0_psig); }, on],
+                    ['ΔP', function (s) { return fmtU(Lp(s).dP_psi, 'pressure', 2); }, 'p', null, on],
+                    ['Velocity', function (s) { var l = Lp(s); return fmtU(l.vel_fts, 'velocity') + (isNum(l.vPct) ? ' · ' + Math.round(l.vPct) + '%' : '') + (l.vSt && l.vSt !== 'OK' ? ' · ' + l.vSt : ''); }, '',
+                        function (s) { var l = Lp(s); return 'limit ' + fmtU(l.ve_fts, 'velocity') + (isNum(l.mach) ? ' · Mach ' + l.mach.toFixed(2) : ''); }, on],
+                    ['Sources', function (s) { return lpSrcTxt(Lp(s)); }, 'f', function (s) { return Lp(s).psvIn ? 'PSV lifting into the LP line' : null; }, on],
+                    ['GOR1 (separator)', function (s) { return gorTxt(gorOf(s, 1)); }, '', null, on],
+                    ['GOR2 (tank)', function (s) { return gorTxt(gorOf(s, 2)); }, '', null, on],
+                    ['Total GOR', function (s) { return gorTxt(gorOf(s, 'tot')); }, '', function (s) { return s && s.rates && s.rates.separated === false ? 'V-101 out: no separator meters' : null; }, on],
+                    ['Cumulative', function (s) { return fmtU(num(s && s.cum && s.cum.lpGas_mscf, 0) / 1000, 'gasVolume'); }, '', null, on],
+                    ['Note', function (s) { return String(Lp(s).note || ''); }, 'w', null, function (s) { return !!Lp(s).note; }]],
+                    spark: [{ keys: ['qgLP'], label: 'Tank gas (FT-201)', cat: 'gasRateSmall' }, { keys: ['gor1', 'gor2'], label: 'GOR1 · GOR2', cat: 'gor' }],
+                    note: 'FT-201 meters the surge tank gas (PCV-201 / PCV-203) and PSV-201 / PSV-202 relief on the LP flare line. The meter uncertainty is a ' +
+                        'display text, not a simulated bias. T-301 vents to atmosphere and is not metered.' };
             }
             // v3.3.1 DS-101 cyclonic desander (upstream of the choke)
             case 'desander': {
@@ -3447,6 +3522,14 @@ function createController(vizEl, mopts) {
             ctx.fillText('LCV-202 TRIP' + tripTag(xp2.trip), (t2.seg5X + bx[1] - 20) / 2, by + 56);
         }
         if (ga.auto && ga.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[1] + 28, by - 26); }
+        // release 3.4.2: the LP flare line (dashed) from the surge tank top to the flare, with FT-201 — only while it is in service
+        if (lpOn(st) && !rigOut(st, 'surge')) {
+            var lpX = bx[0] + 14, lpY = cy + 30, lpE = tx[5] + 10;
+            ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = st.lp.vSt && st.lp.vSt !== 'OK' ? '#d29922' : '#8b949e'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(lpX, by - 19); ctx.lineTo(lpX, lpY); ctx.lineTo(lpE, lpY); ctx.lineTo(lpE, cy + 14); ctx.stroke(); ctx.restore();
+            ctx.fillStyle = '#8b949e'; ctx.font = '7px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('FT-201', (lpX + lpE) / 2, lpY - 3); ctx.fillText(st.lp.to === 'vent' ? 'LP → VENT' : 'LP', lpE + 12, cy + 26);
+        }
         // ESD ball: green open, amber moving/manual, red tripped
         (function () {
             var e = st.esd || {}, x = tx[1], y = cy, trv = clamp(num(e.travel, 1), 0, 1);
@@ -3680,6 +3763,7 @@ function createController(vizEl, mopts) {
         ctx.fillStyle = 'rgba(13,17,23,.6)'; rrect(ctx, S.x, S.y, S.w, S.h, 6); ctx.fill();
         ctx.fillStyle = '#6e7681'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'left';
         ctx.fillText('LEVELS & PRESSURES', S.x + 8, S.y + 12);
+        if (lpOn(st)) { ctx.fillStyle = '#8b949e'; ctx.font = '8px sans-serif'; ctx.fillText(gorLine(st), S.x + 310, S.y + 11); }   // release 3.4.2
         var sep = st.sep || {}, c1 = sep.c1 || {}, bk = sep.bucket || {}, su = st.surge || {}, T = (st.gauge && st.gauge.tanks) || [], act = num(st.gauge && st.gauge.active, 0);
         var od = sep.oilDump || {}, wd = sep.waterDump || {};
         var A = '#d29922', R = '#f85149', top = S.y + 20, bh = 58, bw = 14;
@@ -4167,7 +4251,7 @@ function createController(vizEl, mopts) {
             if (rigIn(st, 'surge2') && st.surge2) rows.splice(rows.length - 1, 0, ['Surge tank 2 (T-202)', fmtU(st.surge2.P, 'pressureTank')]);
         }
         else if (popGroup === 'rates' || popGroup === 'water') rows = [['Gas', fmtU(R.gas_mmscfd, 'gasRate')], ['Oil', fmtU(num(R.oilMeter_stbd, R.oil_stbd), 'oilRate')],
-            ['Water', fmtU(num(R.waterMeter_bpd, R.water_bpd), 'liquidRate')], ['GOR', fmtU(R.gor_scf_stb, 'gor')], ['BS&W', fmtU(R.bsw_pct, 'percent', 1)],
+            ['Water', fmtU(num(R.waterMeter_bpd, R.water_bpd), 'liquidRate')], ['GOR', fmtU(R.separated === false ? null : isNum(R.gorTot_scf_stb) ? R.gorTot_scf_stb : R.gor_scf_stb, 'gor')], ['BS&W', fmtU(R.bsw_pct, 'percent', 1)],
             ['Cum oil', fmtU(C.oilIn_stb, 'oilVolume')], ['Cum water', fmtU(C.waterIn_bbl, 'volume')], ['Cum gas', fmtU(C.gasIn_mmscf, 'gasVolume')], ['Flared', fmtU(C.flare_mmscf, 'gasVolume')]];
         else if (popGroup === 'tanks') {
             var T = (st && st.gauge && st.gauge.tanks) || [];
@@ -4639,7 +4723,7 @@ G.WTS_live = {
         cushionPrefs: cushionPrefs, cushionCap: cushionCap, CUSH_TBG: CUSH_TBG, hostResults: hostResults, writePrefs: writePrefs,
         // release 3.4.2: T-202 twin (two compartments), prefs merge keys
         EQV_U2_SINGLE: EQV_U2_SINGLE, u2Dual: u2Dual, eqvOf: eqvOf, mergeKey: mergeKey, CTL_USER_WHAT: CTL_USER_WHAT, CTL_MERGE_KEYS: CTL_MERGE_KEYS,
-        U2_IN_TXT: U2_IN_TXT, U2_IN_TXT1: U2_IN_TXT1,
+        U2_IN_TXT: U2_IN_TXT, U2_IN_TXT1: U2_IN_TXT1, gorOf: gorOf, lpOn: lpOn, gorLine: gorLine, ALM_T: ALM_T, EQ_CAT: EQ_CAT,
         // test hooks: the current engine, and a recording stub for view tests (useSim(null) restores nothing — it clears)
         sim: function () { return _sim; },
         useSim: function (stub) { _sim = (stub && typeof stub === 'object') ? stub : null; return _sim; },
