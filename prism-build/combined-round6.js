@@ -1286,7 +1286,8 @@
 //       applyChanges(diff, {source}) → key-level apply without a project load (H4):
 //                                 fires 'wts:project-changed' {source, keys}, never 'wts:project-loaded'
 //       registerGuard(fn)       → New / Open / Open-from-file await fn({action}) → 'proceed'|'cancel'
-//                                 before changing anything (H14); none registered = today's flow
+//                                 or {decision, after(result)} (after runs only when that action
+//                                 succeeded) before changing anything (H14); none registered = today's flow
 //       registerToolbarItems([{id, label, run, when?, title?}]) → extra File-toolbar buttons after
 //                                 Save As (H5); refreshToolbarItems() re-evaluates `when`
 //       new()                   → wipe project state (keeps preferences)
@@ -2299,7 +2300,7 @@
             var h = handles && handles[0];
             if (!h) return { cancelled: true };
             return h.getFile().then(function (file) {
-                return G.Promise.resolve(_guarded('open', function () { return load(file); })).then(function (r) {
+                return G.Promise.resolve(_guarded('open', function () { return _named(load(file), file.name); })).then(function (r) {
                     if (r && r.cancelled) return r;
                     if (r && !r.error) _setCurrent(h, file.name);
                     if (r) r.filename = file.name;
@@ -2478,22 +2479,34 @@
         if (_guards.indexOf(fn) === -1) _guards.push(fn);
         return function unregister() { _guards = _guards.filter(function (g) { return g !== fn; }); };
     }
-    // _guarded(action, run) → run() directly when no guard; else a Promise of run()'s result or {cancelled:true, guard:true}
+    // _guarded(action, run) → run() directly when no guard; else a Promise of run()'s result or {cancelled:true, guard:true}.
+    // A guard may also answer {decision:'proceed'|'cancel', after(result)}: `after` runs once with the action's own result,
+    // and only when the action succeeded (not cancelled, no error, a load that loaded something) — never on a later,
+    // unrelated action (accounts review fix: no follow-up armed on a free-floating event).
+    function _succeeded(res) {
+        return !!res && !res.cancelled && !res.error && !(Array.isArray(res.loaded) && !res.loaded.length);
+    }
     function _guarded(action, run) {
         if (!_guards.length) return run();
-        var list = _guards.slice(), i = 0;
+        var list = _guards.slice(), i = 0, afters = [];
         function next() {
-            if (i >= list.length) return G.Promise.resolve(run());
+            if (i >= list.length) return G.Promise.resolve(run()).then(function (res) {
+                if (_succeeded(res)) afters.forEach(function (fn) { try { fn(res); } catch (e) { _warn('[WTS_project] guard follow-up failed', e); } });
+                return res;
+            });
             var g = list[i++], r;
             try { r = g({ action: action }); } catch (e) { r = G.Promise.reject(e); }
             return G.Promise.resolve(r).then(function (v) {
-                if (v === 'cancel') return { cancelled: true, guard: true };
+                if (v === 'cancel' || (v && v.decision === 'cancel')) return { cancelled: true, guard: true };
+                if (v && typeof v.after === 'function') afters.push(v.after);
                 return next();
             }, function (e) { _warn('[WTS_project] guard failed — ' + action + ' cancelled', e); return { cancelled: true, guard: true, error: (e && e.message) || String(e) }; });
         }
         return next();
     }
     function _hasGuards() { return _guards.length > 0; }
+    // the file name travels on the load result, so a guard's follow-up sees it
+    function _named(p, name) { return G.Promise.resolve(p).then(function (r) { if (r && typeof r === 'object' && !r.filename) r.filename = name; return r; }); }
 
     // ───────────────────────────────────────────────────────────────
     // New — clear every registered module's state + project keys in
@@ -2738,7 +2751,7 @@
                 var f = ev.target && ev.target.files && ev.target.files[0];
                 if (!f) return;
                 _setStatus('Opening ' + f.name + '…');
-                G.Promise.resolve(_guarded('open-file', function () { return load(f); })).then(function (res) {
+                G.Promise.resolve(_guarded('open-file', function () { return _named(load(f), f.name); })).then(function (res) {
                     if (res && res.cancelled) { _setStatus(''); picker.value = ''; return; }
                     if (res && res.error) {
                         _setStatus('Open failed: ' + res.error, 'err');

@@ -4275,11 +4275,14 @@ G.WTS_modbusBridgeSetup = {
     setStep('busy', { text: 'Signing in…' });
     return refresh().then(function () {
       if (current.status !== 'signedIn') { closeDialog(); return state(); }
+      // the reload below needs the page's pending autosave written first: write it BEFORE the hand-over, so the upload
+      // includes it and no rewrite after the binding marks a just-saved project dirty (review fix)
+      var reloads = G.__wtsGaLoaded === true;
+      if (reloads) { try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.flush) G.WTS_pageAutosave.flush(); } catch (e) { /* none */ } }
       var p = (S && typeof S.afterSignIn === 'function') ? S.afterSignIn(current.user, { firstSignIn: !!(body && body.firstSignIn), method: o.method || 'code' }) : Promise.resolve(null);
       return Promise.resolve(p).then(null, function () { return null; }).then(function () {
-        if (G.__wtsGaLoaded === true) {
+        if (reloads) {
           setStep('busy', { text: 'Finishing sign-in…' });
-          try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.flush) G.WTS_pageAutosave.flush(); } catch (e) { /* none */ }
           var rl = seams.reload || function () { try { L.reload(); } catch (e) { /* none */ } };
           rl();
           return state();
@@ -4346,6 +4349,8 @@ G.WTS_modbusBridgeSetup = {
       '.acct-or.acct-or--none{display:none}',
       '.acct-msg{min-height:1.2em;margin-top:10px;font-size:13px}.acct-msg--err{color:#ff8a80}.acct-msg--ok{color:#8bd48b}',
       '.acct-note{font-size:12px;color:var(--text3,#aaa);margin-top:8px}',
+      // the host's .fg-item / .acct-btns display rules must not override the hidden attribute on account rows (review fix)
+      '#acct_root [hidden],.acct-dlg [hidden],.acct-ov[hidden]{display:none!important}',
       '.acct-faq{margin-top:12px;font-size:13px}.acct-faq ul{padding-left:18px;margin:6px 0}.acct-faq li{margin:4px 0}',
       '.acct-x{background:none;border:0;color:var(--text2,#ccc);font-size:20px;cursor:pointer;min-width:36px;min-height:36px}',
       '.acct-list{list-style:none;padding:0;margin:8px 0;max-height:46vh;overflow:auto}.acct-list li{padding:6px 0;border-bottom:1px solid var(--border,#333)}',
@@ -4424,23 +4429,25 @@ G.WTS_modbusBridgeSetup = {
     if (name === 'busy') { b.innerHTML = '<p>' + esc(data.text || 'Working…') + '</p>'; return; }
     if (name === 'revert') return drawRevert(b, data);
   }
-  // #account-revert (the link in the "your e-mail address was changed" notice, §4.3): the old address and the 7-day revert code
-  function drawRevert(b) {
+  // #account-revert (the link in the "your e-mail address was changed" notice, §4.3): the old address and the 7-day revert key
+  // (26 letters and digits; the notice's link #account-revert=<key> fills it in)
+  function drawRevert(b, data) {
     setTitle('Undo an e-mail change');
     b.innerHTML = '<p>Your account\'s e-mail address was changed. If that was not you, enter your previous address and the code from the notice. ' +
       'This signs out every session and removes sign-in methods added since the change.</p>' +
       '<label for="acct_rev_email">Previous e-mail address</label><input type="email" id="acct_rev_email" maxlength="254" autocomplete="username">' +
-      '<label for="acct_rev_code">Code from the notice</label><input type="text" id="acct_rev_code" inputmode="numeric" maxlength="11" autocomplete="one-time-code">' +
+      '<label for="acct_rev_code">Revert key from the notice</label><input type="text" id="acct_rev_code" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_rev_go">Undo the change</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_rev_cancel">Cancel</button></div>';
     $('acct_rev_cancel').addEventListener('click', function () { closeDialog(true); });
     $('acct_rev_go').addEventListener('click', function () {
-      var em = String($('acct_rev_email').value || '').trim(); var code = String($('acct_rev_code').value || '').replace(/\s/g, '');
-      if (!EMAIL_RE.test(em) || !/^\d{8}$/.test(code)) { message('Enter the previous address and the 8-digit code.', 'err'); return; }
+      var em = String($('acct_rev_email').value || '').trim(); var code = String($('acct_rev_code').value || '').replace(/[\s-]/g, '').toUpperCase();
+      if (!EMAIL_RE.test(em) || !/^[A-Z2-7]{26}$/.test(code)) { message('Enter the previous address and the 26-character revert key from the notice.', 'err'); return; }
       revertEmail(em, code).then(function (r) {
         message('Done: your previous address is back and ' + r.sessions + ' session' + (r.sessions === 1 ? ' was' : 's were') + ' signed out.', 'ok');
       }, function (e) { message(errText(e), 'err'); });
     });
+    if (data && data.key) $('acct_rev_code').value = data.key;
     focusFirst('acct_rev_email');
   }
   function revertEmail(email, code) {
@@ -4716,7 +4723,15 @@ G.WTS_modbusBridgeSetup = {
     }).then(null, function (e) { if (e && e.code === 'cancelled') return state(); throw e; });
   }
 
+  // changeEmail() with no address (the Sign-in methods card, the provider dialog): never a request with an empty address — the
+  // account page's "Change e-mail address" field gets the focus instead (sweep finding: it used to answer 400 silently)
+  function focusChangeEmail() {
+    var go = function () { var e = $('acct_new_email'); if (!e) return; try { if (e.scrollIntoView) e.scrollIntoView({ block: 'center' }); e.focus(); } catch (x) { /* focus */ } };
+    if (!$('acct_new_email') && G.WTS_accountPage && typeof G.WTS_accountPage.open === 'function') { try { G.WTS_accountPage.open(); } catch (x) { /* none */ } }
+    go();
+  }
   function changeEmail(newEmail) {
+    if (newEmail == null || String(newEmail).trim() === '') { focusChangeEmail(); return Promise.resolve(false); }
     return withStepUp(function () { return call('POST', '/auth/email/change', { newEmail: String(newEmail || '') }); }, 'Changing your e-mail address needs a fresh confirmation.')
       .then(function () { return true; });
   }
@@ -4818,9 +4833,14 @@ G.WTS_modbusBridgeSetup = {
     });
     var f = $(items[0].id); try { if (f && f.focus) f.focus(); } catch (e) { /* none */ }
   }
+  // passkeys are named only when the account has any (Phase 1 has none: they answer 501)
+  function recentMethodsText() {
+    var me = current.me || {};
+    return (me.passkeys && me.passkeys.length ? 'passkeys and ' : '') + 'Google / LinkedIn links';
+  }
   function signOutEverywhereAsk() {
     return choose({ title: 'Sign out everywhere', text: 'Sign out of every browser and device that uses your account? This one is signed out too.',
-      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove passkeys and Google / LinkedIn links added in the last 14 days</label>',
+      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove ' + recentMethodsText() + ' added in the last 14 days</label>',
       buttons: [{ id: 'all', label: 'Sign out everywhere', primary: true }, { id: 'cancel', label: 'Cancel' }], keepOpen: true })
       .then(function (c) {
         var tick = $('acct_recent_methods'); var recent = !!(tick && tick.checked);
@@ -4881,6 +4901,8 @@ G.WTS_modbusBridgeSetup = {
     if (e.code === 'offline_dirty') return 'You are offline: save this project to a file first, or wait for the connection.';
     if (e.code === 'signed_out') return 'Signed out — sign in to keep using the cloud. Nothing is lost on this device.';
     if (e.code === 'not_found' || e.code === 'gone') return 'That cloud project is no longer available.';
+    if (e.code === 'upgrade') return 'Reload to update the app. Your work is saved on this device.';
+    if (e.code === 'bad_request') return 'Please check what you entered and try again. Your work is saved on this device.';
     return 'Cloud action failed (' + String(e.code || 'error') + '). Your work is saved on this device.';
   }
   function openCloudMenu(ev) {
@@ -4948,7 +4970,7 @@ G.WTS_modbusBridgeSetup = {
       btns = [['acct_bar_signin', 'Sign in', function () { openSignIn(); }]];
     } else if (current.status === 'unavailable' && current.reason === 'paused') {
       kind = 'paused'; text = 'Cloud sync paused — your work is saved on this device.';
-    } else if (current.status === 'unavailable' && current.reason === 'outage') {
+    } else if ((current.status === 'unavailable' || current.status === 'signedIn') && current.reason === 'outage') {
       kind = 'unavailable'; text = 'Cloud unavailable — your work is saved on this device.' + (st.lastSyncAt ? ' Last cloud save ' + hhmm(st.lastSyncAt) + '.' : '');
       btns = [['acct_bar_retry', 'Try again', function () { refresh(); }]];
     } else if (current.status === 'signedIn' && current.user && current.user.status === 'deleting') {
@@ -4988,6 +5010,12 @@ G.WTS_modbusBridgeSetup = {
     renderChip();
     registerToolbar();
     var S = sync(); if (S && typeof S._mount === 'function') S._mount();
+    // the browser's own connection events (one-off listeners, no polling): back online → clear a network error and re-read
+    // /me once, so the chip and bar never stay at "Cloud unavailable"; offline → re-render (review fix)
+    if (typeof G.addEventListener === 'function') {
+      G.addEventListener('online', onOnline);
+      G.addEventListener('offline', function () { renderChip(); renderBar(); });
+    }
     if (h && h.signedIn) refresh().then(null, function () { /* outage handled */ });
     else current.status = 'signedOut';
     // a provider return with a fresh hint entry was finished at load by the provider block (WTS_account.oauthReturn, which
@@ -4996,13 +5024,28 @@ G.WTS_modbusBridgeSetup = {
       try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '')); } catch (e) { /* none */ }
     }
   }
-  function openRevert() { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert'); }
+  function onOnline() {
+    var S = sync(); if (S && typeof S._netBack === 'function') S._netBack();
+    var h = readHint();
+    if (current.status === 'signedIn' || current.status === 'unavailable' || (h && h.signedIn)) {
+      refresh().then(function () { renderChip(); renderBar(); }, function () { renderChip(); renderBar(); });
+    } else { renderChip(); renderBar(); }
+  }
+  function openRevert(key) { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert', { key: key || '' }); }
+  // '#account-revert' or '#account-revert=<key>' (the notice's link) → {key} | null
+  function revertHash(h) {
+    var m = /^#account-revert(?:=([A-Za-z2-7]{26}))?$/.exec(String(h || ''));
+    return m ? { key: (m[1] || '').toUpperCase() } : null;
+  }
   function boot() {
     if (!HAS_DOC) return;
     // #account-revert (the notice's link): a user action, no request until submitted; during the Phase 1 beta only with the
     // beta flag, so the live site shows no account UI while no server is configured
-    if (String(L.hash || '') === '#account-revert' && betaEnabled()) {
-      var go = function () { ensureCss(); openRevert(); };
+    var rh = revertHash(L.hash);
+    if (rh && betaEnabled()) {
+      // the key leaves the address bar and the history entry at once (it stays only in the dialog's field)
+      if (rh.key) { try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '') + '#account-revert'); } catch (e) { /* none */ } }
+      var go = function () { ensureCss(); openRevert(rh.key); };
       if (document.readyState === 'loading' && document.addEventListener) document.addEventListener('DOMContentLoaded', go, { once: true });
       else if (typeof G.setTimeout === 'function') G.setTimeout(go, 0);
     }
@@ -5025,7 +5068,7 @@ G.WTS_modbusBridgeSetup = {
     // the provider block below (WP-O)
     // shared internals for 67 / 68 and WP-O (not a public contract)
     _i: { completeSignIn: completeSignIn, choose: choose, setStep: setStep, message: message, openDialog: openDialog, closeDialog: closeDialog,
-      readHint: readHint, writeHint: writeHint, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
+      readHint: readHint, writeHint: writeHint, recentMethodsText: recentMethodsText, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
       signedOutLocal: signedOutLocal, renderChip: renderChip, renderBar: renderBar, cloudAction: cloudAction, isOnline: isOnline, now: now,
       deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; } },
   };
@@ -5260,9 +5303,11 @@ G.WTS_modbusBridgeSetup = {
       if (dlg && dlg.isConnected) return dlg;
       dlgOpener = d.activeElement && d.activeElement !== d.body ? d.activeElement : null;
       dlgEscape = true;
-      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
-        'aria-labelledby': 'acct_oauth_title', style: 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.45);display:block;overflow:auto;padding:16px' });
-      var box = el('div', { 'class': 'acct-oauth-box', style: 'max-width:420px;margin:8vh auto 0 auto;background:#ffffff;color:#1f1f1f;border-radius:8px;padding:20px 16px;box-sizing:border-box' });
+      // the same look as the sign-in dialog (#acct_dlg): its overlay and box classes and theme tokens (review fix)
+      try { ensureCss(); } catch (e) { /* none */ }
+      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-ov acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'acct_oauth_title' });
+      var box = el('div', { 'class': 'acct-dlg acct-oauth-box' });
       box.appendChild(el('h2', { id: 'acct_oauth_title', text: 'Sign in', style: 'font-size:18px;margin:0 0 12px 0' }));
       box.appendChild(el('div', { id: 'acct_oauth_body' }));
       dlg.appendChild(box);
@@ -5277,6 +5322,9 @@ G.WTS_modbusBridgeSetup = {
       try { if (o && o.isConnected !== false && typeof o.focus === 'function') o.focus(); } catch (e) { /* focus return */ }
     }
     function dbody() { var d = dialog(); return d ? d.querySelector('#acct_oauth_body') : null; }
+    // the heading names the step (never "Sign in" on the blocking public sign-out step)
+    function title(t) { var d = dialog(); var h = d && d.querySelector('#acct_oauth_title'); if (h) h.textContent = t; }
+    function para(cls, txt, extra) { return el('p', Object.assign({ 'class': cls, text: txt, style: 'margin:0 0 12px 0' }, extra || {})); }
     function btn(id, txt, primary, fn) {
       return el('button', { type: 'button', id: id, 'class': primary ? 'btn btn-primary' : 'btn btn-secondary', onclick: fn,
         style: 'min-height:44px;font-size:16px;margin:8px 8px 0 0', text: txt });
@@ -5330,15 +5378,19 @@ G.WTS_modbusBridgeSetup = {
         return j;
       }
       if (j.next === 'email') {
-        var inp = el('input', { id: 'acct_oauth_email', type: 'email', inputmode: 'email', autocomplete: 'email', 'aria-label': 'E-mail address', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px' });
+        title('Confirm your e-mail address');
+        var inp = el('input', { id: 'acct_oauth_email', type: 'email', inputmode: 'email', autocomplete: 'email', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px' });
         inp.value = j.emailPrefill || '';
-        show([el('p', { 'class': 'acct-oauth-msg', text: (j.reason === 'missing' ? N + ' did not share an e-mail address. ' : '') + 'Confirm the e-mail address for this account — we will send a code to it.' }), inp,
+        show([para('acct-oauth-msg', (j.reason === 'missing' ? N + ' did not share an e-mail address. ' : '') + 'Confirm the e-mail address for this account — we will send a code to it.'),
+          el('label', { 'for': 'acct_oauth_email', text: 'E-mail address' }), inp,
           btn('acct_oauth_send', 'Send code', true, function () { drive(p, { email: String(inp.value || '').trim() }, oa); })]);
         return j;
       }
       if (j.next === 'code') {
-        var ci = el('input', { id: 'acct_oauth_code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '9', 'aria-label': 'Code', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px;letter-spacing:2px' });
-        show([el('p', { 'class': 'acct-oauth-msg', 'data-reason': j.reason || 'verify', 'data-masked': j.emailMasked || '', text: codeText(j.reason, j.emailMasked, p) }), ci,
+        title(j.reason === 'link_confirm' ? 'Confirm adding ' + N : j.reason === 'cancel_deletion' ? 'Cancel the account deletion' : 'Confirm your e-mail address');
+        var ci = el('input', { id: 'acct_oauth_code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '9', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px;letter-spacing:2px' });
+        show([para('acct-oauth-msg', codeText(j.reason, j.emailMasked, p), { 'data-reason': j.reason || 'verify', 'data-masked': j.emailMasked || '' }),
+          el('label', { 'for': 'acct_oauth_code', text: 'Code' }), ci,
           btn('acct_oauth_verify', 'Continue', true, function () {
             var reason = j.reason;
             drive(p, { code: String(ci.value || '').replace(/\s/g, '') }, oa).then(function (r) {
@@ -5354,9 +5406,17 @@ G.WTS_modbusBridgeSetup = {
         // the versions come from the server; without them nothing is sent (never made-up versions)
         if (typeof j.terms !== 'string' || !j.terms || typeof j.privacy !== 'string' || !j.privacy) { showError(text('server', p)); return j; }
         var c = { terms: j.terms, privacy: j.privacy };
-        show([el('p', { 'class': 'acct-oauth-consent', text: 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.' }),
-          el('p', { style: 'font-size:13px', text: 'Creating an account means you accept the Terms of Use and the Privacy notice.' }),
-          btn('acct_oauth_create', 'Create account', true, function () { drive(p, { consent: c }, oa); }),
+        title('Create your account');
+        // the same explicit tick as the e-mail path, naming the versions (review fix): Create is refused until it is ticked
+        var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
+        var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
+        show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          cerr,
+          btn('acct_oauth_create', 'Create account', true, function () {
+            if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }
+            drive(p, { consent: c }, oa);
+          }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);
         return j;
       }
@@ -5364,6 +5424,7 @@ G.WTS_modbusBridgeSetup = {
       return j;
     }
     function offerCancelDeletion() {
+      title('Cancel the account deletion');
       show([el('p', { 'class': 'acct-oauth-undelete-msg', text: 'This account is being deleted. You can cancel the deletion now.' }),
         btn('acct_oauth_undelete', 'Cancel deletion', true, function () {
           call('POST', '/account/delete/cancel', {}).then(function () { closeDialog(); }, function (e) { showError(text(e && e.code)); });
@@ -5385,6 +5446,7 @@ G.WTS_modbusBridgeSetup = {
         if (!doc() || !doc().body) { resolve(false); return; }
         dialog();
         var N = NAME[p] || 'the provider';
+        title('Sign out of ' + N);
         show([el('p', { 'class': 'acct-oauth-signout', text: 'Now sign out of ' + N + ' in this browser: open ' + N + ', choose your account picture or name, then Sign out. This computer is shared, so the next person must not find you signed in there.' }),
           btn('acct_oauth_signedout', 'I have signed out', true, function () { closeDialog(); resolve(true); })]);
         dlgEscape = false;                                   // Escape does not close it; Tab still stays inside
@@ -5396,7 +5458,8 @@ G.WTS_modbusBridgeSetup = {
     function renderMethods(host) {
       if (!host || !doc()) return Promise.resolve(null);
       host.textContent = '';
-      var card = el('div', { 'class': 'card acct-methods', id: 'acct_methods' }, [el('div', { 'class': 'card-title', text: 'Sign-in methods' })]);
+      // filled into the account page's own "Sign-in methods" card (68): no second card, title or note (review fix)
+      var card = el('div', { 'class': 'acct-methods', id: 'acct_methods' });
       host.appendChild(card);
       var list = el('div', { 'class': 'acct-methods-list' });
       card.appendChild(list);
@@ -5404,7 +5467,7 @@ G.WTS_modbusBridgeSetup = {
       return Promise.all([api.methods(), api.providers().catch(function () { return { google: 'off', linkedin: 'off' }; })]).then(function (r) {
         var m = r[0] || {}; var st = r[1] || {};
         function row(title, detail, actions, p) {
-          var d = el('div', { 'class': 'acct-method-row', 'data-method': p || title, style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e0e0e0' });
+          var d = el('div', { 'class': 'acct-method-row', 'data-method': p || title, style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border,#3a3a3a)' });
           d.appendChild(el('div', { style: 'flex:1 1 220px' }, [el('div', { 'class': 'acct-method-title', text: title, style: 'font-weight:600' }), el('div', { 'class': 'acct-method-detail', text: detail, style: 'font-size:14px' })]));
           var a = el('div', { 'class': 'acct-method-actions', style: 'flex:1 1 200px' });
           (actions || []).forEach(function (x) { if (x) a.appendChild(x); });
@@ -5412,7 +5475,7 @@ G.WTS_modbusBridgeSetup = {
           list.appendChild(d);
           return a;
         }
-        row('E-mail code', ((m.email && m.email.masked) || '') + ' — always on', [typeof api.changeEmail === 'function' ? btn('acct_m_email', 'Change e-mail', false, function () { api.changeEmail().catch(function () {}); }) : null], 'email');
+        row('E-mail code', ((m.email && m.email.masked) || '') + ' — always on', [typeof api.changeEmail === 'function' ? btn('acct_m_email', 'Change e-mail', false, function () { msg.textContent = 'Type the new address under "Change e-mail address" in Profile and security, then send the code.'; api.changeEmail().catch(function () {}); }) : null], 'email');
         row('Recovery address', m.recovery ? m.recovery.masked : 'Not set', [], 'recovery');
         PROVIDERS.forEach(function (p) {
           var i = (m.identities || []).filter(function (x) { return x.provider === p; })[0];
@@ -5731,12 +5794,25 @@ G.WTS_modbusBridgeSetup = {
     var st = status();
     try { if (HAS_DOC && typeof G.CustomEvent === 'function') document.dispatchEvent(new G.CustomEvent('wts:sync-status', { detail: st })); } catch (e) { /* none */ }
   }
+  // back online (66's 'online' listener): a network / outage error of the last action no longer stands
+  function netBack() { if (S.error && (S.error.code === 'network' || S.error.code === 'server')) { S.error = null; changed(); } }
   function setBusy(v, err) { S.busy = v; if (err !== undefined) S.error = err; changed(); }
+  // a change → dirty at once; then ONE snapshot compares with the last saved state, and a rewrite that changed nothing (the
+  // same value written again, e.g. an autosave flush) turns the binding clean again (review fix). changeGen guards a real
+  // edit that arrives while the check runs.
+  var changeGen = 0;
   function markDirty() {
     if (S.applying || S.snapshotting || !S.binding) return;
+    changeGen++;
     var u = signedInUser(); if (!u || S.binding.userId !== u.id) return;
     if (S.binding.dirty) return;
     S.binding.dirty = true; saveBinding(); changed();
+    if (!S.base || !S.base.vhash) return;
+    var gen = changeGen; var b = S.binding; var base = S.base.vhash;
+    snapshot({}).then(function (snap) {
+      if (gen !== changeGen || S.busy || S.binding !== b || !b.dirty || !S.base || S.base.vhash !== base || snap.vhash !== base) return;
+      b.dirty = false; saveBinding(); changed();
+    }, function () { /* stays dirty */ });
   }
   var EVENTS = ['wts:autosaved', 'wts:ls-write', 'wts:project-loaded', 'wts:project-new', 'wts:project-changed', 'prism:fit-updated',
     'prism:well-changed', 'prism:model-changed', 'wts:buildup-updated', 'wts:well-changed'];
@@ -5746,8 +5822,9 @@ G.WTS_modbusBridgeSetup = {
     if (ev && ev.type === 'wts:project-loaded' && d && (d.source === 'cloud' || d.origin === 'cloud')) return;   // echo guard
     if (ev && ev.type === 'wts:ls-write' && d) {
       var key = String(d.key || '');
-      // account / device keys and the account library (synced on its own, not in the snapshot) never dirty the project
-      if (/^(wtsacct_|wtspref_)/.test(key) || LIBRARY_RE.test(key) || DEVICE_PREF_RE.test(key)) return;
+      // account / device keys, the account library (synced on its own, not in the snapshot) and derived keys (report
+      // snapshots, multi-well results: rebuilt on any click, outside vhash, §6.1 / §7) never dirty the project
+      if (/^(wtsacct_|wtspref_)/.test(key) || LIBRARY_RE.test(key) || DEVICE_PREF_RE.test(key) || DERIVED_KEYS[key]) return;
     }
     markDirty();
   }
@@ -6159,11 +6236,24 @@ G.WTS_modbusBridgeSetup = {
           S.binding.dirty = false; saveBinding(); setBusy(false, null);
           return { rev: S.binding.baseRev, projectId: S.binding.projectId, unchanged: true };
         }
+        // a first save whose upload failed after the project was created left an empty project (no revision): the next
+        // first save reuses it instead of creating another (review fix; S.device.pendingCreate, cleared once bound)
+        var pend = !linked && S.device && S.device.pendingCreate && S.device.pendingCreate.userId === u.id ? S.device.pendingCreate : null;
         var create = linked ? Promise.resolve({ id: S.binding.projectId, rev: S.binding.baseRev })
-          : call('POST', '/projects', { name: name, meta: (function (m) { delete m.name; return m; })(metaOf(snap.payload, name)) }).then(function (r) { return { id: r.json.id, rev: r.json.headRev }; });
+          : pend ? (pend.name === name ? Promise.resolve() : call('POST', '/projects/' + encodeURIComponent(pend.id) + '/rename', { name: name }).then(function () { pend.name = name; }))
+            .then(function () { return { id: pend.id, rev: 0, pending: true }; })
+          : call('POST', '/projects', { name: name, meta: (function (m) { delete m.name; return m; })(metaOf(snap.payload, name)) }).then(function (r) {
+            if (!S.device) S.device = {};
+            S.device.pendingCreate = { userId: u.id, id: r.json.id, name: name };
+            return Promise.resolve(saveDevice()).then(function () { return { id: r.json.id, rev: r.json.headRev }; });
+          });
+        var clearPending = function (id) {
+          if (!S.device || !S.device.pendingCreate || S.device.pendingCreate.id !== id) return Promise.resolve();
+          delete S.device.pendingCreate; return Promise.resolve(saveDevice());
+        };
         return create.then(function (pr) {
           return pushSnap(pr.id, snap, pr.rev, reason, name).then(function (res) {
-            if (!res.stale) return bindTo(u, pr.id, name, res.rev, snap).then(function () { setBusy(false, null); libraryPush(); return { rev: res.rev, projectId: pr.id }; });
+            if (!res.stale) return clearPending(pr.id).then(function () { return bindTo(u, pr.id, name, res.rev, snap); }).then(function () { setBusy(false, null); libraryPush(); return { rev: res.rev, projectId: pr.id }; });
             setBusy(false, null);
             return staleChoice(u, pr.id, snap, res, name);
           });
@@ -6172,6 +6262,8 @@ G.WTS_modbusBridgeSetup = {
         // §3.2: the linked project was trashed or purged on another device — unlink and offer a new cloud project
         var code = e && e.code;
         if ((code === 'not_found' || code === 'gone') && linkedFor(u) && !o.as) return goneChoice(u, e);
+        // the remembered empty project is gone (trashed or purged elsewhere): forget it, so the next save creates a new one
+        if ((code === 'not_found' || code === 'gone') && S.device && S.device.pendingCreate && !linkedFor(u)) { delete S.device.pendingCreate; saveDevice(); }
         return fail(e);
       });
     });
@@ -6456,7 +6548,12 @@ G.WTS_modbusBridgeSetup = {
     return { name: metaOf(snap.payload).name, client: (snap.meta && snap.meta.client) || '', wells: wells,
       wellNames: (snap.wells || []).map(function (w) { return w.name; }), pages: pages, prism: prism, buildup: buildup, bytes: bytes, large: large };
   }
-  function mb(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1000)) + ' kB'; }
+  function mb(n) {
+    n = Number(n) || 0;
+    var t = n >= 1e6 ? String(Math.round(n / 1e5) / 10) + ' MB' : Math.max(1, Math.round(n / 1000)) + ' kB';
+    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
+    return dc ? t.replace('.', ',') : t;      // 250 MB, 1.5 MB (1,5 MB with the decimal-comma setting)
+  }
   function classify(user, migrated) {
     var d = S.device || {};
     if (!hasLocalWork()) return 'empty';
@@ -6716,8 +6813,7 @@ G.WTS_modbusBridgeSetup = {
       return i.choose({ title: 'New project', text: 'Start a new cloud project, or a local-only one? The cloud project you are linked to is not changed.',
         buttons: [{ id: 'cloud', label: 'New cloud project', primary: true }, { id: 'local', label: 'Local only' }, { id: 'cancel', label: 'Cancel' }] }).then(function (c) {
         if (c !== 'cloud' && c !== 'local') return 'cancel';
-        afterAction('wts:project-new', function () { return unlink().then(function () { if (c === 'cloud') return saveToCloud({ as: true, name: 'New project' }); }); });
-        return 'proceed';
+        return { decision: 'proceed', after: followUp(function () { return unlink().then(function () { if (c === 'cloud') return saveToCloud({ as: true, name: 'New project' }); }); }) };
       });
     }
     if (action === 'open' || action === 'open-file') {
@@ -6733,27 +6829,24 @@ G.WTS_modbusBridgeSetup = {
       });
       return pre.then(function (c) {
         if (c !== 'new' && c !== 'local' && c !== 'replace') return 'cancel';
-        afterAction('wts:project-loaded', function () {
+        return { decision: 'proceed', after: followUp(function (res) {
           if (c === 'local') return unlink();
           if (c === 'replace') { if (S.binding) { S.binding.dirty = true; } return saveToCloud({}); }
           var f = P() && P().currentFile && P().currentFile();
-          return unlink().then(function () { return saveToCloud({ as: true, name: f && f.name ? String(f.name).replace(/\.h2oilproj$/i, '') : undefined }); });
-        });
-        return 'proceed';
+          var name = (res && res.filename) || (f && f.name) || '';
+          return unlink().then(function () { return saveToCloud({ as: true, name: name ? String(name).replace(/\.h2oilproj$/i, '') : undefined }); });
+        }) };
       });
     }
     return 'proceed';
   }
   function lsSetPref(k, v) { try { G.localStorage.setItem(k, v); } catch (e) { /* blocked */ } }   /* ls-raw: wtspref_ device preference */
-  function afterAction(evt, fn) {
-    if (!HAS_DOC) return;
-    var h = function (ev) {
-      var d = ev && ev.detail;
-      if (d && (d.source === 'cloud' || d.source === 'well')) return;
-      document.removeEventListener(evt, h);
-      Promise.resolve().then(fn).then(null, function (e) { var i = I(); if (i) i.toast(i.cloudErrText(e), 'err'); });
+  // the follow-up of a guarded New / Open: 29 calls it with that action's own result, and only when it succeeded (a corrupt
+  // or empty file arms nothing that a later, unrelated open could fire)
+  function followUp(fn) {
+    return function (res) {
+      Promise.resolve(res).then(fn).then(null, function (e) { var i = I(); if (i) i.toast(i.cloudErrText(e), 'err'); });
     };
-    document.addEventListener(evt, h);
   }
   function mount() {
     init();
@@ -6810,7 +6903,7 @@ G.WTS_modbusBridgeSetup = {
       discardStash: function (owner) { return kvGet('stash').then(function (st) { if (!st) return true; delete st[owner]; return kvPut('stash', st); }); },
     },
     _split: splitPayload, _hashSplit: hashSplit, _classify: classify, _store: { get: kvGet, put: kvPut, del: kvDel },
-    _attach: attach, _detach: detach, _mount: mount, _noteSignedOut: noteSignedOut, _setDevice: setDevice, _init: init,
+    _attach: attach, _detach: detach, _mount: mount, _netBack: netBack, _noteSignedOut: noteSignedOut, _setDevice: setDevice, _init: init,
     _hasLocalWork: hasLocalWork, _state: function () { return { binding: clone(S.binding), base: clone(S.base), device: clone(S.device), outbox: clone(S.outbox) }; },
   };
   G.WTS_cloudSync = api;
@@ -6864,8 +6957,25 @@ G.WTS_modbusBridgeSetup = {
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function day(iso) { return iso ? esc(String(iso).slice(0, 10)) : '—'; }
   function when(iso) { if (!iso) return '—'; var s = String(iso); return esc(s.slice(0, 10) + ' ' + s.slice(11, 16)); }
-  function mb(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.round(n / 1000) + ' kB'; }
+  function mb(n) {
+    n = Number(n) || 0;
+    var t = n >= 1e6 ? String(Math.round(n / 1e5) / 10) + ' MB' : Math.round(n / 1000) + ' kB';
+    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
+    return dc ? t.replace('.', ',') : t;      // 250 MB, 1.5 MB (1,5 MB with the decimal-comma setting)
+  }
   function say(id, text, kind) { var e = $(id); if (e) { e.textContent = text || ''; e.setAttribute('data-kind', kind || ''); } }
+  // a new action clears the page's earlier status messages (review fix: an old error never lingers under a later action)
+  var MSG_IDS = ['acct_profile_msg', 'acct_projects_msg', 'acct_devices_msg', 'acct_data_msg'];
+  function clearMsgs() { MSG_IDS.forEach(function (id) { say(id, ''); }); }
+  // the profile forms: a bad address is caught before any request; the server's bad_request gets the same plain words
+  var BAD_ADDRESS = 'Enter a valid e-mail address.';
+  function addressOk(id) {
+    var el = $(id); var v = el ? String(el.value || '').trim() : '';
+    if (!v) return false;
+    if (el && typeof el.checkValidity === 'function' && !el.checkValidity()) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+  function profileErr(e) { return e && e.code === 'bad_request' ? BAD_ADDRESS : errText(e); }
   function errText(e) { var i = I(); return i ? i.cloudErrText(e) : String((e && e.code) || e); }
 
   var view = { trash: false, filter: '', projects: [], me: null, root: null };
@@ -6875,6 +6985,7 @@ G.WTS_modbusBridgeSetup = {
     if (!body) return false;
     var a = A();
     var st = a ? a.state() : { status: 'signedOut' };
+    var ii = I(); if (ii && ii.ensureCss) ii.ensureCss();
     body.innerHTML = '<div id="acct_root">' + (st.status === 'signedIn' ? signedInHtml(st) : signedOutHtml(st)) + helpHtml() + '</div>';
     view.root = $('acct_root');
     wire(st);
@@ -6918,17 +7029,18 @@ G.WTS_modbusBridgeSetup = {
       '<div class="acct-btns"><input type="text" id="acct_filter" placeholder="Filter by name, client or well" aria-label="Filter projects" data-acct-skip="1">' +
       '<button type="button" class="btn btn-secondary" id="acct_toggle_trash">' + (view.trash ? 'Show projects' : 'Show trash') + '</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_import">Import files…</button>' +
-      '<button type="button" class="btn btn-primary" id="acct_save_new">Save this device\'s project to the cloud</button></div>' +
+      // linked: Save to cloud (a new revision of the open project); unlinked: the first save creates a cloud project
+      '<button type="button" class="btn btn-primary" id="acct_save_new">' + (cloudLinked() ? 'Save to cloud' : 'Save this device\'s project to the cloud') + '</button></div>' +
       '<div id="acct_projects" aria-live="polite"><p>Loading…</p></div><div id="acct_projects_msg" role="status" aria-live="polite"></div></div>' +
 
       '<div class="card" id="acct_card_devices"><div class="card-title">Devices</div><div id="acct_devices">' + devicesHtml(me.devices || []) + '</div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_signout_all">Sign out everywhere…</button></div><div id="acct_devices_msg" role="status"></div></div>' +
 
       // WP-O mount point: the Sign-in methods card (e-mail, recovery, Google, LinkedIn, passkeys; link / unlink)
+      // (the provider block fills the mount with every row and the note; without it, the e-mail row below stands alone)
       '<div class="card" id="acct_methods_card" data-owner="WP-O"><div class="card-title">Sign-in methods</div>' +
-      '<div class="rrow"><span class="rl">E-mail code</span><span class="rv">always on — ' + esc(u.emailMasked) + '</span></div>' +
-      '<div id="acct_methods_mount"></div>' +
-      '<p class="acct-note">Your e-mail address always works as a way in, even if you lose your Google or LinkedIn account.</p></div>' +
+      '<div id="acct_methods_mount"><div class="rrow"><span class="rl">E-mail code</span><span class="rv">always on — ' + esc(u.emailMasked) + '</span></div>' +
+      '<p class="acct-note">Your e-mail address always works as a way in, even if you lose your Google or LinkedIn account.</p></div></div>' +
 
       '<div class="card" id="acct_card_local"><div class="card-title">On this device</div><div id="acct_local"><p>Loading…</p></div></div>' +
 
@@ -6943,9 +7055,10 @@ G.WTS_modbusBridgeSetup = {
       '<p>Delete account: everything is hidden at once and deleted for good after 7 days. Signing in again during those days lets you cancel.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_delete">Delete account…</button></div><div id="acct_data_msg" role="status" aria-live="polite"></div></div>' +
 
-      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation and sends a security notice to your e-mail address.</p>' +
+      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation; the list comes from an export of your account data, so your e-mail address also gets the "your data was exported" notice.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_show_activity">Show my activity</button></div><div id="acct_activity"></div></div>';
   }
+  function cloudLinked() { var c = C(); return !!(c && c.status && c.status().projectId); }
   function devicesHtml(list) {
     if (!list.length) return '<p>No devices.</p>';
     return '<table class="dtable" id="acct_devices_table"><thead><tr><th>Device</th><th>Last seen</th><th></th></tr></thead><tbody>' +
@@ -6969,10 +7082,10 @@ G.WTS_modbusBridgeSetup = {
         var m = p.meta || {};
         var acts = view.trash
           ? '<button type="button" class="btn btn-secondary" data-act="restore" data-id="' + esc(p.id) + '">Restore</button> <button type="button" class="btn btn-secondary" data-act="purge" data-id="' + esc(p.id) + '">Delete for ever</button>'
-          : ['open:Open', 'rename:Rename', 'duplicate:Duplicate', 'history:History', 'download:Download', 'trash:Move to trash'].map(function (x) {
+          : (Number(p.headRev) ? ['open:Open', 'rename:Rename', 'duplicate:Duplicate', 'history:History', 'download:Download', 'trash:Move to trash'] : ['trash:Move to trash']).map(function (x) {
             var k = x.split(':'); return '<button type="button" class="btn btn-secondary" data-act="' + k[0] + '" data-id="' + esc(p.id) + '">' + k[1] + '</button>';
           }).join(' ');
-        return '<tr data-id="' + esc(p.id) + '"><td data-label="Name">' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + '</td>' +
+        return '<tr data-id="' + esc(p.id) + '"><td data-label="Name">' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + (Number(p.headRev) ? '' : ' <span class="acct-incomplete">(incomplete upload — Save to cloud again to finish it)</span>') + '</td>' +
           '<td data-label="Client / well">' + esc([m.client, m.well].filter(Boolean).join(' / ')) + '</td><td data-label="Wells">' + esc(p.wells) + '</td><td data-label="Last saved">' + when(p.savedAt) + '</td><td data-label="Size">' + mb(p.bytes) + '</td><td>' + acts + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
@@ -6988,7 +7101,7 @@ G.WTS_modbusBridgeSetup = {
   }
 
   // ── wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-  function on(id, fn) { var e = $(id); if (e) e.addEventListener('click', fn); }
+  function on(id, fn) { var e = $(id); if (e) e.addEventListener('click', function (ev) { clearMsgs(); return fn(ev); }); }
   function wire(st) {
     var a = A();
     if (st.status !== 'signedIn') {
@@ -7002,10 +7115,11 @@ G.WTS_modbusBridgeSetup = {
     on('acct_change_email', function () {
       var v = String($('acct_new_email').value || '').trim();
       if (!v) { say('acct_profile_msg', 'Type the new address first.', 'err'); return; }
+      if (!addressOk('acct_new_email')) { say('acct_profile_msg', BAD_ADDRESS, 'err'); return; }
       a.changeEmail(v).then(function () {
         $('acct_email_code_row').hidden = false; $('acct_email_confirm_row').hidden = false;
         say('acct_profile_msg', 'If the address can be used, a code is on its way to it.', 'ok');
-      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', errText(e), 'err'); });
+      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', profileErr(e), 'err'); });
     });
     on('acct_confirm_email', function () {
       a.confirmEmail(String($('acct_email_code').value || '').replace(/\s/g, '')).then(function () { rerender(); }, function (e) { say('acct_profile_msg', e && e.code === 'invalid_or_expired' ? 'That code is wrong or has expired.' : errText(e), 'err'); });
@@ -7013,10 +7127,11 @@ G.WTS_modbusBridgeSetup = {
     on('acct_set_recovery', function () {
       var v = String($('acct_recovery').value || '').trim();
       if (!v) { say('acct_profile_msg', 'Type the recovery address first.', 'err'); return; }
+      if (!addressOk('acct_recovery')) { say('acct_profile_msg', BAD_ADDRESS, 'err'); return; }
       a.setRecovery(v).then(function () {
         $('acct_recovery_code_row').hidden = false; $('acct_recovery_confirm_row').hidden = false;
         say('acct_profile_msg', 'If the address can be used, a code is on its way to it.', 'ok');
-      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', errText(e), 'err'); });
+      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', profileErr(e), 'err'); });
     });
     on('acct_confirm_recovery', function () {
       a.confirmRecovery(String($('acct_recovery_code').value || '').replace(/\s/g, '')).then(function () { rerender(); }, function (e) { say('acct_profile_msg', e && e.code === 'invalid_or_expired' ? 'That code is wrong or has expired.' : errText(e), 'err'); });
@@ -7027,7 +7142,7 @@ G.WTS_modbusBridgeSetup = {
     if (filt) filt.addEventListener('input', function () { view.filter = String(filt.value || ''); drawProjects(); });
     on('acct_toggle_trash', function () { view.trash = !view.trash; $('acct_toggle_trash').textContent = view.trash ? 'Show projects' : 'Show trash'; loadProjects(); });
     on('acct_import', function () { C().pickAndImport().then(function () { loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
-    on('acct_save_new', function () { C().saveToCloud({ as: true }).then(function (r) { if (r && !r.cancelled) say('acct_projects_msg', 'Saved to the cloud.', 'ok'); loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
+    on('acct_save_new', function () { C().saveToCloud({ as: !C().status().projectId }).then(function (r) { if (r && !r.cancelled) say('acct_projects_msg', 'Saved to the cloud.', 'ok'); loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
     var pj = $('acct_projects');
     if (pj) pj.addEventListener('click', function (ev) {
       var t = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
@@ -7060,7 +7175,7 @@ G.WTS_modbusBridgeSetup = {
   function signOutAll() {
     var i = I();
     return i.choose({ title: 'Sign out everywhere', text: 'Sign out of every browser and device that uses your account? This one is signed out too.',
-      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove passkeys and Google / LinkedIn links added in the last 14 days</label>',
+      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove ' + (i.recentMethodsText ? i.recentMethodsText() : 'Google / LinkedIn links') + ' added in the last 14 days</label>',
       buttons: [{ id: 'all', label: 'Sign out everywhere', primary: true }, { id: 'cancel', label: 'Cancel' }], keepOpen: true }).then(function (c) {
       var t = $('acct_recent_methods'); var recent = !!(t && t.checked);
       i.closeDialog(false);
@@ -7225,6 +7340,20 @@ G.WTS_modbusBridgeSetup = {
       }, function (e) { if (!e || e.code !== 'cancelled') say('acct_data_msg', errText(e), 'err'); return null; });
     });
   }
+  // the audit action codes in plain words (§11.3)
+  var ACTIONS = { signup: 'Account created', signin: 'Signed in', stepup: 'Confirmed with a code', signout: 'Signed out', signout_all: 'Signed out everywhere',
+    email_change: 'E-mail address changed', email_revert: 'E-mail change undone', recovery_set: 'Recovery address set', recovery_remove: 'Recovery address removed',
+    identity_link: 'Sign-in method linked', identity_unlink: 'Sign-in method removed', export: 'Data exported', delete_request: 'Account deletion requested',
+    delete_cancel: 'Account deletion cancelled', device_revoke: 'Device signed out', device_rename: 'Device renamed', passkey_add: 'Passkey added',
+    passkey_remove: 'Passkey removed', project_purge: 'Project deleted for ever', commit_burst: 'Many cloud saves in a short time',
+    read_burst: 'Many cloud reads in a short time' };
+  var METHODS = { code: 'e-mail code', google: 'Google', linkedin: 'LinkedIn', passkey: 'passkey' };
+  function actionText(r) {
+    var a = String((r && r.action) || '');
+    var t = ACTIONS[a] || a.replace(/_/g, ' ');
+    var m = r && r.detail && r.detail.method;
+    return t + (m ? ' (' + (METHODS[m] || String(m)) + ')' : '');
+  }
   function showActivity() {
     var c = C();
     // the account JSON only — no project bodies are downloaded (§11.3: the user's own audit rows, 90 days)
@@ -7233,7 +7362,7 @@ G.WTS_modbusBridgeSetup = {
       var rows = (res.account.audit || []).filter(function (r) { var t = Date.parse(r && r.at); return isFinite(t) && t >= since; });
       var el = $('acct_activity');
       if (el) el.innerHTML = rows.length ? '<table class="dtable" id="acct_activity_table"><thead><tr><th>When</th><th>What</th></tr></thead><tbody>' +
-        rows.map(function (r) { return '<tr><td data-label="When">' + when(r.at) + '</td><td data-label="What">' + esc(r.action) + (r.detail && r.detail.method ? ' (' + esc(r.detail.method) + ')' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
+        rows.map(function (r) { return '<tr><td data-label="When">' + when(r.at) + '</td><td data-label="What">' + esc(actionText(r)) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
       return rows.length;
     }, function (e) { if (!e || e.code !== 'cancelled') say('acct_data_msg', errText(e), 'err'); return 0; });
   }
