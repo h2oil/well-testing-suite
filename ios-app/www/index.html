@@ -1148,7 +1148,7 @@ document.addEventListener('change', e => {
 // Unit-tagged inputs (22-units.js) are stored canonical (imperial), like the
 // legacy wts_<key> records. PRiSM routes keep their own persistence.
 const PAGE_LS_PREFIX = 'wts_page_';
-const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
+const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1, admin:1 };
 let __pageState = null;       // live record of the page currently rendered
 let __pageRestoring = false;  // true while render() re-applies saved values
 let __pageDirty = false;
@@ -1658,7 +1658,7 @@ function __calcHomeTiles(mods) {
 // never saved into project files). Event-driven only — no timers or polling.
 const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVO = 'wts_ui_nav_open', __UI_HUB = 'wts_ui_hub_last';
 const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
-const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1 };
+const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1, admin:1 };
 let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
 function __uiList(k) {
     try {
@@ -2099,7 +2099,7 @@ function render() {
     try { __restorePageState(); } catch(e) { __pageRestoring = false; console.warn('[autosave] restore failed', e); }
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
-    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help'||page==='account') ? 'none' : 'flex';   /* help-host-patch:H4 */ /* accounts: no page export on the account page (H10) */
+    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help'||page==='account'||page==='admin') ? 'none' : 'flex';   /* help-host-patch:H4 */ /* accounts: no page export on the account / admin pages (H10) */
     try { if(window.WTS_help && typeof window.WTS_help.syncHeader === 'function') window.WTS_help.syncHeader(page); } catch(e) {}   /* help-host-patch:H3 */
     // Notify analytics + any other listeners that the SPA has navigated.
     // Used by the GA4 tracker for virtual page_view + scroll-depth reset.
@@ -3382,7 +3382,7 @@ window.exportPagePNG = async function() {
 // model is cached (memory + localStorage 'wts_report_snapshots', so it also
 // travels in project files). The job report stitches every captured
 // calculator into one document with a summary table.
-const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
+const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1, admin:1 };
 const _reportSnaps = (function() {
     try { return JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}; } catch(e) { return {}; }
 })();
@@ -118115,7 +118115,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 7adb445c,ex1-view-p 780 1688 0f3caedd,ex10-t202-d 296 349 5b47eba5,ex11-ck102-d 296 349 3589fd27,ex11-ck2d-d 980 481 1db85eb6,ex2-ck101-d 296 313 bb3a7eb4,ex2-ck3d-d 980 481 4ce44ea2,ex4-alarms-d 476 258 1db3d749,ex4-scen-d 531 423 d5b23b09,ex4-v101-d 296 307 7c715086,ex5-more-p 780 1688 e5d8e03c,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 72179dff,ex5-viewmenu-d 213 253 f29ce39c,ex6-events-d 476 294 81843ac1,ex6-t301-d 296 349 96700d4a,ex7-t201-d 296 349 c0a0e376,ex8-temp3d-d 980 481 b0b0ea5a,ex9-ds101-d 296 349 cb35f801",
+    "course": "ex1-view-d 1280 800 bd7f2d5a,ex1-view-p 780 1688 a5daa59e,ex10-t202-d 296 349 8e6572a1,ex11-ck102-d 296 349 04183165,ex11-ck2d-d 980 481 f85a4898,ex2-ck101-d 296 313 ecc60528,ex2-ck3d-d 980 481 d7104508,ex4-alarms-d 476 258 2e861243,ex4-scen-d 531 423 6d462477,ex4-v101-d 296 307 018fd267,ex5-more-p 780 1688 f52d00b0,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 cd7e8da1,ex5-viewmenu-d 213 253 1816fecb,ex6-events-d 476 294 8028137f,ex6-t301-d 296 349 d670c1bb,ex7-t201-d 296 349 37899a01,ex8-temp3d-d 980 481 6531ccd6,ex9-ds101-d 296 349 c0f844c7",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -118165,13 +118165,13 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
-    "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 4eff3e06,view-p 780 1688 3276d78d",
+    "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
-    "wts": "card-d 296 349 259c15f2,card-p 752 858 e50f812d,rigup-d 982 525 5c45841c,tb-d 980 481 82b266c5,view-d 1280 800 fc8170bb,view-p 780 1688 29d75965"
+    "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 217;
-  M.bytes = 7968246;   // total size of the image files (the offline download label)
+  M.bytes = 7979246;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -118554,9 +118554,9 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '1105b5be', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: 'c7d00214', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
-what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
+what: ['No account needed: inputs stay on this device. Optional web accounts (invite trial) keep encrypted projects in the US and EU.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
 steps: [{ t: 'Select **Privacy** in **Overview**, or the privacy line under the sidebar.', shot: 'view' },
 { t: 'Read **Where your data is stored** ① and **Other network requests**.' },
@@ -150683,6 +150683,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   • 66-account
 //   • 67-cloud-sync
 //   • 68-account-page
+//   • 69-account-admin
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -154724,6 +154725,14 @@ G.WTS_modbusBridgeSetup = {
 // (accounts and cloud sync: web only — stripped from the iOS bundle)
 
 // ─── END 68-account-page ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 69-account-admin ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// (accounts and cloud sync: web only — stripped from the iOS bundle)
+
+// ─── END 69-account-admin ─────────────────────────────────────────────
 
 
 // ── Round-10 (live data) injection END ──

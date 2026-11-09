@@ -48,7 +48,7 @@ const ERRORS = {
   signup_closed:      { status: 403, extra: [], text: 'New accounts are not open right now.' },
   not_found:          { status: 404, extra: [], text: 'Not found.' },
   stale:              { status: 409, extra: ['headRev?', 'head?', 'rev?', 'hash?'], text: 'The cloud copy changed.' },
-  consent_required:   { status: 409, extra: ['terms?', 'privacy?'], text: 'Accept the current Terms of Use and Privacy notice.' },
+  consent_required:   { status: 409, extra: ['terms?', 'privacy?', 'countryHint?', 'existing?'], text: 'Accept the current Terms of Use and Privacy notice.' },
   immutable:          { status: 409, extra: [], text: 'That part is already stored.' },
   identity_in_use:    { status: 409, extra: [], text: 'That sign-in is linked to another account.' },
   provider_linked:    { status: 409, extra: [], text: 'The account already has a sign-in of that provider.' },
@@ -66,6 +66,19 @@ const ERRORS = {
 };
 const OAUTH_FAIL_REASONS = ['cancelled', 'expired', 'provider', 'token', 'reauth_stale'];
 const COMMIT_REASONS = ['auto', 'save', 'migrate', 'conflict', 'restore', 'overwrite', 'import'];
+// ISO 3166-1 alpha-2 (the 249 assigned codes) + XK — the profile's self-declared country (a <select> on the page)
+const COUNTRIES = ('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
+  'CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF ' +
+  'GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW ' +
+  'KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL ' +
+  'NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST ' +
+  'SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW').split(' ');
+// the optional profile (PUT /account/profile, sign-up) and the project summary sent with a Save to cloud (commit): the
+// longest text of each field AFTER Unicode NFKC normalisation and trimming (the server stores empty text as null)
+const PROFILE_KEYS = ['fullName', 'company', 'jobTitle', 'country', 'phone'];
+const PROFILE_LIMITS = { fullName: 80, company: 120, jobTitle: 80, phone: 40 };
+const SUMMARY_LIMITS = { text: 120, well: 80, wells: 50, modules: 40 };
+const SUMMARY_TEXT = ['name', 'client', 'operator', 'company', 'field', 'rig', 'country', 'jobRef'];
 
 const COOKIES = {
   // session: no lifetime in the definition ON PURPOSE — every Set-Cookie for it passes {maxAge} = whole seconds from now to
@@ -222,7 +235,8 @@ S.ErrorEnvelope = { error: 'nestr', message: 'str', 'retryAfter?': 'uint' };
 // for purpose 'stepup' (start) and for a step-up verify, which the server matches through the session (WP0 refinement of §3.3).
 S.CodeStartReq = all({ 'email?': 'email', purpose: "'signin'|'stepup'|'email_change'|'recovery_add'", 'to?': "'primary'|'recovery'" },
   rule((v) => (v.email === undefined && v.purpose !== 'stepup') ? 'email: missing (required unless purpose is stepup)' : null));
-S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent' };
+// profile (insight follow-up): used only when this request creates the account; ignored for an existing one
+S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent', 'profile?': '@ProfileReq' };
 S.EmailChangeReq = { newEmail: 'email' };
 S.EmailConfirmReq = { code: 'code8' };
 S.EmailRevertReq = { email: 'email', code: 'revertKey' };
@@ -239,8 +253,10 @@ S.SignOutAllReq = { 'alsoRecentMethodsDays?': 'uint' };
 // sharedBrowser: the page's wtspref_shared_browser flag (T30) — with publicDevice it makes the attempt a fresh-login attempt
 // (§4.10 item 3); the plan names the flag but not the field (WP0 refinement).
 S.OAuthStartReq = { purpose: "'signin'|'link'", publicDevice: 'bool', 'sharedBrowser?': 'bool', 'deviceLabel?': 'label' };
-S.OAuthFinishReq = all({ 'email?': 'email', 'code?': 'code8', 'consent?': '@Consent' },
-  rule((v) => (['email', 'code', 'consent'].filter((k) => v[k] !== undefined).length > 1) ? 'expected at most one of email | code | consent' : null));
+// profile (insight follow-up): only together with consent — the step that creates the account
+S.OAuthFinishReq = all({ 'email?': 'email', 'code?': 'code8', 'consent?': '@Consent', 'profile?': '@ProfileReq' },
+  rule((v) => (['email', 'code', 'consent'].filter((k) => v[k] !== undefined).length > 1) ? 'expected at most one of email | code | consent' : null),
+  rule((v) => (v.profile !== undefined && v.consent === undefined) ? 'profile: only together with consent' : null));
 S.UnlinkReq = { id: 'uuid' };
 // auth responses
 S.EmailConfirmRes = { emailMasked: 'masked' };
@@ -253,7 +269,10 @@ S.FinishDone = { next: "'done'", user: '@UserBrief', firstSignIn: 'bool', device
 S.FinishLinked = { next: "'done'", linked: '@IdentityMethod' };
 S.FinishEmail = { next: "'email'", reason: "'missing'|'unverified'|'unmanaged'", 'emailPrefill?': orNull('email') };
 S.FinishCode = { next: "'code'", emailMasked: 'masked', reason: "'verify'|'link_existing'|'link_confirm'|'cancel_deletion'" };
-S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr' };
+// countryHint? (user insight): the country the platform detected for this connection, the sign-up profile's default
+// existingAccount? (review fix): an existing account whose accepted Terms / Privacy versions are older than the current ones is
+// asked to accept them before it is signed in (no newAccountEmailMasked, no profile)
+S.FinishConsent = { next: "'consent'", 'newAccountEmailMasked?': 'masked', 'existingAccount?': 'bool', 'terms?': 'nestr', 'privacy?': 'nestr', 'countryHint?': orNull('str') };
 S.FinishRes = oneOf('next', {
   done: (v, p, ctx) => checkNamed(v && v.linked !== undefined ? 'FinishLinked' : 'FinishDone', v, p, ctx),
   email: '@FinishEmail', code: '@FinishCode', consent: '@FinishConsent',
@@ -271,6 +290,13 @@ S.Me = {
   identities: arr('@IdentityBrief', { max: 2 }),
   devices: [{ id: 'uuid', label: 'label', lastSeen: orNull('iso'), current: 'bool' }],
   minClient: 'str',
+  // the admin dashboard (v4.0 follow-up): true when the account may use the /admin routes (always sent by the server)
+  'admin?': 'bool',
+  // the optional profile (insight follow-up; always sent by the server, every field null when none was given)
+  'profile?': '@Profile',
+  // countryHint? (review fix): the country of this connection as the platform detected it, else the last one recorded — the
+  // default of the profile's country on the Account page; null when unknown
+  'countryHint?': orNull('str'),
 };
 S.OutboxKeyRes = { k: 'b64' };
 S.OptsReq = { 'historian?': 'bool', 'liveCfg?': 'bool' };
@@ -298,6 +324,8 @@ S.CommitReq = {
   meta: { name: 'str', client: 'str', well: 'str', field: 'str', operator: 'str' },
   wells: arr({ id: 'nestr', name: 'str' }, { max: 200 }),
   fmt: 'uint', appVer: 'str',
+  // the project summary (insight follow-up): optional; the latest one is kept per project (a commit without it keeps it)
+  'summary?': '@SummaryReq',
 };
 S.CommitRes = { rev: 'uint', savedAt: 'iso' };
 S.RenameReq = { name: 'nestr', 'meta?': '@ProjectMeta' };
@@ -313,14 +341,80 @@ S.BlobsHasRes = { missing: arr('hex64', { max: 200 }) };
 S.ExportRes = {
   user: 'any', consents: 'any', devices: arr('any'), passkeys: arr({ name: 'str', created: 'iso' }),
   identities: arr({ provider: enumOf(PROVIDERS), subject: 'nestr', email: orNull('str'), emailVerifiedAtLink: 'bool', linkedAt: 'iso', lastUsedAt: orNull('iso') }),
-  audit: arr('any'), projects: arr({ id: 'uuid', name: 'str', meta: '@ProjectMeta', headRev: 'uint', revs: arr('@RevItem') }),
+  audit: arr('any'), projects: arr({ id: 'uuid', name: 'str', meta: '@ProjectMeta', headRev: 'uint', revs: arr('@RevItem'),
+    'summary?': orNull('@ProjectSummary'), 'summaryAt?': orNull('iso') }),
+  // the optional profile (insight follow-up; null when none was given) — always sent by the server
+  'profile?': orNull('@Profile'),
 };
 S.DeleteReq = { confirm: "'DELETE'", 'immediate?': 'bool' };
 S.DeleteRes = { ok: 'true', deleteAt: 'iso' };
 S.Health = { ok: 'bool', db: 'bool', ver: 'str' };
 S.OpsDailyRes = { ok: 'true', 'did?': 'any' };
 
-// ── endpoints (§3.3; '/api/v1' omitted) ─────────────────────────────────────────────────────────────────────────
+// admin dashboard (v4.0 follow-up; server/functions/admin.js): country = ISO 3166-1 alpha-2 from the hosting platform, or null
+const country = (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && /^[A-Z]{2}$/.test(v))) err(ctx, p, 'expected a country code or null, got ' + describe(v)); };
+const SIGNUP_METHODS = ['code', 'google', 'linkedin'];
+S.AdminSummary = {
+  generatedAt: 'iso',
+  totals: { users: 'uint', active7d: 'uint', active30d: 'uint', projects: 'uint', storageBytes: 'uint', invitesPending: 'uint' },
+  byCountry: arr({ country, users: 'uint', active30d: 'uint' }, { max: 300 }),
+  byMethod: arr({ method: enumOf(SIGNUP_METHODS), users: 'uint' }, { max: 3 }),
+  signupsByDay: arr({ day: (v, p, ctx) => { if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) err(ctx, p, 'expected YYYY-MM-DD, got ' + describe(v)); }, n: 'uint' }, { max: 90 }),
+  // insight follow-up (always sent by the server): top 20 each, counted case-insensitively, the most common spelling shown
+  'byCompany?': arr({ company: 'nestr', users: 'uint' }, { max: 20 }),
+  'topClients?': arr({ client: 'nestr', projects: 'uint' }, { max: 20 }),
+  'topFields?': arr({ field: 'nestr', projects: 'uint' }, { max: 20 }),
+};
+S.AdminUser = {
+  id: 'uuid', email: 'str', method: enumOf(SIGNUP_METHODS), status: "'active'|'locked'|'deleting'", createdAt: 'iso', lastSignInAt: orNull('iso'),
+  signupCountry: country, lastCountry: country,
+  lastCity: (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && v.length >= 1 && v.length <= 80)) err(ctx, p, 'expected a city of ≤ 80 characters or null, got ' + describe(v)); },
+  projects: 'uint', usedBytes: 'uint',
+  // insight follow-up (always sent by the server): the profile (null when none) and what the account's live projects are
+  // about, from their latest summaries — unique values (case-insensitive, first spelling kept), newest project first, ≤ 20 each
+  'profile?': orNull('@Profile'),
+  'work?': {
+    wells: arr('nestr', { max: 20 }), clients: arr('nestr', { max: 20 }), operators: arr('nestr', { max: 20 }),
+    fields: arr('nestr', { max: 20 }), countries: arr('nestr', { max: 20 }), lastProjectAt: orNull('iso'),
+  },
+};
+S.AdminUsers = { users: arr('@AdminUser', { max: 200 }), next: orNull('nestr') };
+S.AdminUserProject = { id: 'uuid', name: 'str', updatedAt: 'iso', bytes: 'uint', summary: orNull('@ProjectSummary'), summaryAt: orNull('iso') };
+S.AdminUserDetail = { user: '@AdminUser', projects: arr('@AdminUserProject', { max: 200 }) };
+S.AdminInviteReq = { email: 'email', 'note?': (v, p, ctx) => { if (typeof v !== 'string' || v.length > 200) err(ctx, p, 'expected a note of ≤ 200 characters, got ' + describe(v)); } };
+S.AdminInvites = { invites: arr({ addedAt: 'iso', note: orNull('str') }, { max: 1000 }) };
+
+// profile and project summary (insight follow-up). Requests: every key optional (a missing key = null), unknown keys refused,
+// text without control characters and within the limit counted after NFKC normalisation and trimming. Responses: every key
+// present, null when not given. A summary's wells and modules: empty or repeated entries are dropped by the server.
+const textUpTo = (max, o) => (v, p, ctx) => {
+  if (v === null && !(o && o.notNull)) return;
+  if (typeof v !== 'string') return err(ctx, p, 'expected text or null, got ' + describe(v));
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(v)) return err(ctx, p, 'control characters are not allowed');
+  const n = v.normalize('NFKC').trim();
+  if (n.length > max) return err(ctx, p, 'expected at most ' + max + ' characters, got ' + n.length);
+};
+const profileCountry = (v, p, ctx) => { if (v !== null && v !== '' && COUNTRIES.indexOf(v) === -1) err(ctx, p, 'expected an ISO 3166-1 alpha-2 country code, empty or null, got ' + describe(v)); };
+const phoneText = (v, p, ctx) => {
+  const n = ctx.errors.length;
+  textUpTo(PROFILE_LIMITS.phone)(v, p, ctx);
+  if (ctx.errors.length > n || typeof v !== 'string' || !v.trim()) return;
+  const t = v.trim();
+  if (!/^[0-9+() ./-]+$/.test(t) || (t.match(/[0-9]/g) || []).length < 3) err(ctx, p, 'expected a phone number (digits, spaces and + ( ) . / -), got ' + describe(v));
+};
+const moduleKey = (v, p, ctx) => { if (typeof v !== 'string' || !/^[a-z][a-z0-9_]{0,39}$/.test(v)) err(ctx, p, 'expected a page key (a-z, 0-9, _; ≤ 40), got ' + describe(v)); };
+S.ProfileReq = { 'fullName?': textUpTo(PROFILE_LIMITS.fullName), 'company?': textUpTo(PROFILE_LIMITS.company), 'jobTitle?': textUpTo(PROFILE_LIMITS.jobTitle),
+  'country?': profileCountry, 'phone?': phoneText };
+S.Profile = { fullName: orNull('str'), company: orNull('str'), jobTitle: orNull('str'), country: orNull(profileCountry), phone: orNull('str') };
+S.ProfileRes = { profile: '@Profile' };
+S.SummaryReq = Object.assign({}, ...SUMMARY_TEXT.map((k) => ({ [k + '?']: textUpTo(SUMMARY_LIMITS.text) })), {
+  'wells?': arr(textUpTo(SUMMARY_LIMITS.well, { notNull: true }), { max: SUMMARY_LIMITS.wells }),
+  'modules?': arr(moduleKey, { max: SUMMARY_LIMITS.modules }),
+});
+S.ProjectSummary = Object.assign({}, ...SUMMARY_TEXT.map((k) => ({ [k]: orNull('str') })),
+  { wells: arr('str', { max: SUMMARY_LIMITS.wells }), modules: arr('str', { max: SUMMARY_LIMITS.modules }) });
+
+// ── endpoints (§3.3; '/api/v1' omitted)─────────────────────────────────────────────────────────────────────────
 const COMMON = ['bad_request', 'origin', 'rate', 'paused', 'upgrade'];
 const SIGNED = COMMON.concat(['signed_out', 'locked', 'gone']);   // gone: the account is deleting (§3.2)
 const E = [];
@@ -380,9 +474,17 @@ ep('blobGet', 'GET', '/blobs/:hash/:n', { res: { 200: null }, errors: SIGNED.con
 ep('accountExport', 'POST', '/account/export', { auth: 'stepup', req: 'EmptyReq', res: { 200: 'ExportRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDelete', 'POST', '/account/delete', { auth: 'stepup', req: 'DeleteReq', res: { 200: 'DeleteRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDeleteCancel', 'POST', '/account/delete/cancel', { req: 'EmptyReq', res: { 200: 'Ok' }, errors: SIGNED });
+ep('profileUpdate', 'PUT', '/account/profile', { req: 'ProfileReq', res: { 200: 'ProfileRes' }, errors: SIGNED.concat(['consent_required']), notes: 'replaces the whole profile (a missing key = null); audited with the field names only' });
 ep('health', 'GET', '/health', { auth: 'none', res: { 200: 'Health' }, errors: [] });
 ep('cspReport', 'POST', '/csp-report', { auth: 'report', body: 'csp', res: { 204: null }, errors: ['too_large', 'rate'] });
 ep('opsDaily', 'POST', '/ops/daily', { auth: 'hmac', req: 'EmptyReq', res: { 200: 'OpsDailyRes' }, errors: ['origin'] });
+// admin dashboard (v4.0 follow-up): an account in WTS_ADMIN_EMAILS only; everyone else (signed out included) → 404 not_found
+const ADMIN = COMMON.concat(['not_found']);
+ep('adminSummary', 'GET', '/admin/summary', { res: { 200: 'AdminSummary' }, errors: ADMIN, notes: 'admin only, else 404; audited' });
+ep('adminUser', 'GET', '/admin/users/:id', { res: { 200: 'AdminUserDetail' }, errors: ADMIN, notes: 'one account and its live projects with their latest summaries; admin only, else 404 (an unknown id: 404 too)' });
+ep('adminUsers', 'GET', '/admin/users', { res: { 200: 'AdminUsers' }, errors: ADMIN, notes: '?limit=50 (1–200) &cursor=<opaque> &q=<part of an address>; newest first; admin only, else 404' });
+ep('adminInviteAdd', 'POST', '/admin/invites', { req: 'AdminInviteReq', res: { 201: 'Ok' }, errors: ADMIN, notes: 'idempotent; admin only, else 404' });
+ep('adminInvites', 'GET', '/admin/invites', { res: { 200: 'AdminInvites' }, errors: ADMIN, notes: 'keyed indexes only: no address comes back; admin only, else 404' });
 
 const ENDPOINTS = E;
 const ROUTES = E.map((e) => {
@@ -421,5 +523,6 @@ function checkError(code, value) {
 
 module.exports = {
   BASE, PROVIDERS, SWITCH_VALUES, FOUNDATION_ONLY, ERRORS, OAUTH_FAIL_REASONS, COMMIT_REASONS, COOKIES,
+  COUNTRIES, PROFILE_KEYS, PROFILE_LIMITS, SUMMARY_LIMITS, SUMMARY_TEXT,
   SHAPES, ENDPOINTS, TYPES, checkShape, checkError, matchRoute, pathExists,
 };

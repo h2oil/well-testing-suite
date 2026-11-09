@@ -17,15 +17,25 @@
 //        Last, the role switch of the jobs (wts_jobs) is probed both ways (probeRoleModes): "start-up role ok" (the default
 //        works), or "start-up role refused … transaction role ok — set WTS_DB_ROLE_MODE=local on the functions site" (a
 //        connection endpoint that refuses start-up parameters; core/db.js roleMode 'local'), or both refused (stop).
+//
+// Netlify Database (server/README.md "Hosting", "Platform migrations"): there the DEPLOY applies the generated folder
+// server/netlify/database/migrations (db/platform-migrations.js, from this folder) — never this script through a direct
+// connection. The platform's first file marks public.wts_schema_migrations (a table comment, PLATFORM_MARK); the command line
+// below refuses such a database. migrate() itself (the library) stays the path of the tests, the restore drill's scratch
+// database and a host without platform migrations.
 //   probeRoleModes(url, role?) → {session: true | 'message', local: true | 'message'}
+//   platformManaged(sql) → Promise<boolean>   true when the platform deploy migrates this database
 //   loginReport(sql) → {user, superuser, createrole, bypassrls, ok, problems:[text]}
 //   prepareLogin(sql, {backupRole}) → [granted roles]
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { serverPath } = require('../core/root');
 
-const DIR = path.join(__dirname, 'migrations');
+// from the server root (core/root.js), never path.join(__dirname, 'migrations'): right in the repository and in a pre-bundled
+// live function alike
+const DIR = serverPath('db', 'migrations');
 
 function listMigrations(dir) {
   dir = dir || DIR;
@@ -64,6 +74,12 @@ async function migrate(sql, o) {
     applied.push(m.name);
   }
   return applied;
+}
+
+// the table comment written by server/netlify/database/migrations/0000_platform_roles.sql (db/platform-migrations.js)
+async function platformManaged(sql) {
+  const r = await sql`select obj_description(to_regclass('public.wts_schema_migrations'), 'pg_class') as c`;
+  return /migrated by the platform deploy/.test(String((r[0] && r[0].c) || ''));
 }
 
 const RUN_ROLES = ['wts_owner', 'wts_definer', 'wts_api', 'wts_jobs', 'wts_support'];
@@ -115,7 +131,7 @@ async function probeRoleModes(url, role) {
   return out;
 }
 
-module.exports = { migrate, listMigrations, loginReport, prepareLogin, probeRoleModes, RUN_ROLES, DIR };
+module.exports = { migrate, listMigrations, loginReport, prepareLogin, probeRoleModes, platformManaged, RUN_ROLES, DIR };
 
 if (require.main === module) {
   const url = process.env.WTS_MIGRATE_DB_URL;
@@ -124,6 +140,10 @@ if (require.main === module) {
   const { createDb } = require('../core/db');
   const db = createDb(url, { max: 1 });
   (async () => {
+    if (await platformManaged(db.sql)) {
+      console.error('[migrate] this database is migrated by the platform deploy (server/netlify/database/migrations) — refused; never apply DDL to it through a direct connection');
+      process.exitCode = 2; await db.close(); return;
+    }
     if (platform) {
       const rep = await loginReport(db.sql);
       console.log('[migrate] login ' + rep.user + ': superuser ' + rep.superuser + ', createrole ' + rep.createrole + ', bypassrls ' + rep.bypassrls);
@@ -133,7 +153,7 @@ if (require.main === module) {
     const a = await migrate(db.sql, { log: console });
     console.log('[migrate] ' + a.length + ' applied');
     if (platform) {
-      await db.sql.unsafe(fs.readFileSync(path.join(__dirname, '..', 'ops', 'sql', 'backup-role.sql'), 'utf8'));
+      await db.sql.unsafe(fs.readFileSync(serverPath('ops', 'sql', 'backup-role.sql'), 'utf8'));
       const g = await prepareLogin(db.sql, { backupRole: true });
       console.log('[migrate] export role ready' + (g.length ? ' (granted: ' + g.join(', ') + ')' : ''));
       const p = await probeRoleModes(url);

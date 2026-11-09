@@ -34,12 +34,17 @@ const signIn = { user: userBrief, firstSignIn: false, device: { id: D1, label: '
 const methods = { email: { masked: MASK }, identities: [{ id: I1, provider: 'google', emailMasked: 'x•••@personal.example', linkedAt: T0, lastUsedAt: null }], passkeys: [] };
 const head = { rev: 41, savedAt: T0, device: D1, coreHash: H1, vhash: H2, parts: [{ name: 'well/w1', hash: H3, bytes: 61230 }], bytes: 109443 };
 const revItem = { rev: 41, savedAt: T0, device: D1, reason: 'save', bytes: 109443, coreHash: H1 };
+const PROFILE_REQ = { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: 'Well Test Engineer', country: 'AE', phone: '' };
+const PROFILE = { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: 'Well Test Engineer', country: 'AE', phone: null };
+const SUMMARY = { name: 'Example-1 DST', wells: ['Example-1', 'Example-2'], client: 'Operator Energy Ltd', operator: 'Operator Energy Ltd', company: 'Service Co Example',
+  field: 'Alpha Field', rig: 'Rig A', country: 'United Arab Emirates', jobRef: 'PO-2026-0042', modules: ['clientinfo', 'wts', 'prism'] };
+const WORK = { wells: ['Example-1', 'Example-2'], clients: ['Operator Energy Ltd'], operators: ['Operator Energy Ltd'], fields: ['Alpha Field'], countries: ['United Arab Emirates'], lastProjectAt: T0 };
 const commitReq = {
   pushId: '6f1c2a3b-0000-4000-8000-000000000001', baseRev: 41, reason: 'auto',
   core: { hash: H1, vhash: H2, zsha: H3, bytes: 48213, inline: 'H4sIAAAAAAAAA6uuBQBDv6ajAgAAAA==' },
   parts: [{ name: 'well/w1', hash: H3, bytes: 61230 }, { name: 'well/w1/prism_gauges', hash: H2, bytes: 9120344 }],
   meta: { name: 'Example-1 DST', client: 'Operator Energy Ltd', well: 'Example-1', field: '', operator: '' },
-  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0',
+  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0', summary: SUMMARY,
 };
 
 const EXAMPLES = {
@@ -98,6 +103,26 @@ const EXAMPLES = {
   health: { res: { 200: { ok: true, db: true, ver: '1.0.0' } } },
   cspReport: { res: { 204: null } },
   opsDaily: { req: {}, res: { 200: { ok: true } } },
+  // admin dashboard (v4.0 follow-up; server/functions/admin.js)
+  adminSummary: { res: { 200: { generatedAt: T0,
+    totals: { users: 3, active7d: 2, active30d: 3, projects: 4, storageBytes: 109443, invitesPending: 1 },
+    byCountry: [{ country: 'AE', users: 2, active30d: 2 }, { country: null, users: 1, active30d: 1 }],
+    byMethod: [{ method: 'code', users: 2 }, { method: 'google', users: 1 }],
+    signupsByDay: [{ day: '2026-11-08', n: 2 }, { day: '2026-11-09', n: 1 }] } } },
+  adminUsers: { res: { 200: { users: [{ id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
+    signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200 }], next: null } } },
+  // insight follow-up (server/core/insight.js): the optional profile and the admin user detail
+  profileUpdate: { req: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: 'Well test engineer', country: 'AE', phone: '+971 4 123 4567' },
+    res: { 200: { profile: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: 'Well test engineer', country: 'AE', phone: '+971 4 123 4567' } } } },
+  adminUser: { res: { 200: { user: { id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
+    signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200,
+    profile: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: null, country: 'AE', phone: null },
+    work: { wells: ['Example-1'], clients: ['Operator Energy Ltd'], operators: [], fields: ['North Field'], countries: [], lastProjectAt: T0 } },
+    projects: [{ id: P1, name: 'Example-1 DST', updatedAt: T0, bytes: 1200, summaryAt: T0,
+      summary: { name: 'Example-1 DST', client: 'Operator Energy Ltd', operator: null, company: null, field: 'North Field', rig: null, country: null, jobRef: null,
+        wells: ['Example-1'], modules: ['prism'] } }] } } },
+  adminInviteAdd: { req: { email: 'name@company.example', note: 'Example-1 crew' }, res: { 201: { ok: true } } },
+  adminInvites: { res: { 200: { invites: [{ addedAt: T0, note: 'Example-1 crew' }] } } },
 };
 const FINISH_EXAMPLES = [
   EXAMPLES.oauthFinish.res[200],
@@ -105,6 +130,7 @@ const FINISH_EXAMPLES = [
   { next: 'email', reason: 'unmanaged', emailPrefill: 'name@company.example' },
   { next: 'code', emailMasked: MASK, reason: 'link_existing' },
   { next: 'consent', newAccountEmailMasked: 'x•••@personal.example' },
+  { next: 'consent', existingAccount: true, terms: '1', privacy: '2' },
 ];
 const ERROR_EXTRA = { bad_request: { field: 'email' }, oauth_failed: { reason: 'cancelled' }, stale: { headRev: 42, head },
   consent_required: { terms: '1', privacy: '1' }, too_large: { limit: 65536 }, quota: { limit: 250000000, used: 250000001 },
@@ -149,6 +175,7 @@ const CLIENT_NAMES = {
       'conflicts', 'resolve', 'diff', 'snapshot', 'migrateLocal', 'wipeDevice', 'historianBackup', 'historianRestore', 'exportAll', 'canonical', 'sha256Hex'],
     props: ['VERSION'] },
   '68-account-page.js': { global: 'WTS_accountPage', fns: ['render', 'register'], props: ['VERSION', 'entry'] },
+  '69-account-admin.js': { global: 'WTS_accountAdmin', fns: ['render', 'register', 'open'], props: ['VERSION', 'entry'] },
 };
 const CLIENT_STATES = ['signedOut', 'signingIn', 'signedIn', 'unavailable'];
 const SYNC_STATES = ['off', 'idle', 'dirty', 'syncing', 'offline', 'unavailable', 'conflict', 'quota', 'paused', 'readonly', 'signedOut'];

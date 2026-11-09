@@ -22,7 +22,7 @@
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 7adb445c,ex1-view-p 780 1688 0f3caedd,ex10-t202-d 296 349 5b47eba5,ex11-ck102-d 296 349 3589fd27,ex11-ck2d-d 980 481 1db85eb6,ex2-ck101-d 296 313 bb3a7eb4,ex2-ck3d-d 980 481 4ce44ea2,ex4-alarms-d 476 258 1db3d749,ex4-scen-d 531 423 d5b23b09,ex4-v101-d 296 307 7c715086,ex5-more-p 780 1688 e5d8e03c,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 72179dff,ex5-viewmenu-d 213 253 f29ce39c,ex6-events-d 476 294 81843ac1,ex6-t301-d 296 349 96700d4a,ex7-t201-d 296 349 c0a0e376,ex8-temp3d-d 980 481 b0b0ea5a,ex9-ds101-d 296 349 cb35f801",
+    "course": "ex1-view-d 1280 800 bd7f2d5a,ex1-view-p 780 1688 a5daa59e,ex10-t202-d 296 349 8e6572a1,ex11-ck102-d 296 349 04183165,ex11-ck2d-d 980 481 f85a4898,ex2-ck101-d 296 313 ecc60528,ex2-ck3d-d 980 481 d7104508,ex4-alarms-d 476 258 2e861243,ex4-scen-d 531 423 6d462477,ex4-v101-d 296 307 018fd267,ex5-more-p 780 1688 f52d00b0,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 cd7e8da1,ex5-viewmenu-d 213 253 1816fecb,ex6-events-d 476 294 8028137f,ex6-t301-d 296 349 d670c1bb,ex7-t201-d 296 349 37899a01,ex8-temp3d-d 980 481 6531ccd6,ex9-ds101-d 296 349 c0f844c7",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -72,13 +72,13 @@
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
-    "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 4eff3e06,view-p 780 1688 3276d78d",
+    "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
-    "wts": "card-d 296 349 259c15f2,card-p 752 858 e50f812d,rigup-d 982 525 5c45841c,tb-d 980 481 82b266c5,view-d 1280 800 fc8170bb,view-p 780 1688 29d75965"
+    "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 217;
-  M.bytes = 7968246;   // total size of the image files (the offline download label)
+  M.bytes = 7979246;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

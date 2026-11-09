@@ -5,3 +5,4 @@ prism-build/.tmp/
 server/node_modules/
 /dist-site/
 server/dist/
+server/dist-live/

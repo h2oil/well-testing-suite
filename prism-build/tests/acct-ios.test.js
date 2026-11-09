@@ -91,7 +91,7 @@ module.exports = [
     run(app, assert) {
       const rest = stripAcct(page());
       IDS.forEach((t) => assert(!rest.includes(t), t + ' appears outside the ACCT markers'));
-      const src = ['66-account.js', '67-cloud-sync.js', '68-account-page.js'].map((f) => fs.readFileSync(path.join(BUILD, f), 'utf8'));
+      const src = ['66-account.js', '67-cloud-sync.js', '68-account-page.js', '69-account-admin.js'].map((f) => fs.readFileSync(path.join(BUILD, f), 'utf8'));
       src.forEach((s, i) => {
         const end = s.indexOf('// ── ACCT:END ──'); const st = s.indexOf('// === SELF-TEST ===');
         assert(s.startsWith('// ── ACCT:START') && end > 0 && st > end, 'file ' + (66 + i) + ' is one ACCT block, then the self-test (stripped by concat)');

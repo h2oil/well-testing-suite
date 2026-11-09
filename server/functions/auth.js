@@ -18,10 +18,12 @@
 const { fail, ApiError } = require('../core/errors');
 const V = require('../core/validate');
 const S = require('../core/service');
+const { inviteListed } = require('../core/config');
 const SE = require('../core/session');
 const R = require('../core/rate');
 const E = require('../core/envelope');
 const { code8, revertKey } = require('../core/keys');
+const I = require('../core/insight');
 
 const ADDR = 'user.address';     // one envelope field label for every address column (they move between columns in SQL)
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
@@ -128,7 +130,7 @@ async function startSignin(ctx, email) {
     if (acc) { if (acc.status === 'locked') return; }
     else {
       if (site.over || ctx.config.signup === 'off') return;
-      if (ctx.config.signup === 'invite' && !(await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok) return;
+      if (ctx.config.signup === 'invite' && !(await inviteListed(ctx.config, email, async () => (await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok))) return;
     }
     await issueCode(unit, ctx, { purpose: 'signin', email, template: 'code_signin' });
   });
@@ -182,6 +184,8 @@ async function codeVerify(ctx) {
   // 2. a sign-in (or sign-up) with an e-mail code
   const email = V.normEmail(b.email);
   if (!email) fail('invalid_or_expired');
+  // the optional profile (insight follow-up) is stored only when this request creates the account; checked before any try
+  const profile = b.profile !== undefined ? I.normProfile(b.profile) : null;
   const bidx = ctx.keys.emailBidx(email);
   const CONSENT = {};
   const res = await S.unitOf(ctx, null, async (unit) => {
@@ -199,14 +203,15 @@ async function codeVerify(ctx) {
       });
     } catch (e) { if (e === CONSENT) outcome = 'consent'; else throw e; }
     if (outcome === 'miss') { await noteFailure(unit, ctx, bidx, email, left); return unit.failAfterCommit('invalid_or_expired'); }
-    if (outcome === 'consent') return unit.failAfterCommit('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+    // countryHint (user insight): the platform-detected country, the default of the optional sign-up profile (only when known)
+    if (outcome === 'consent') return unit.failAfterCommit('consent_required', Object.assign({ terms: ctx.config.terms, privacy: ctx.config.privacy }, countryHint(ctx)));
     let userId; let first = false;
     if (acc) {
       if (acc.status === 'locked') return unit.failAfterCommit('locked');
       userId = acc.user_id;
     } else {
       if (ctx.config.signup === 'off') return unit.failAfterCommit('invalid_or_expired');
-      if (ctx.config.signup === 'invite' && !(await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok) return unit.failAfterCommit('invalid_or_expired');
+      if (ctx.config.signup === 'invite' && !(await inviteListed(ctx.config, email, async () => (await unit.sql`select wts.allowlist_has(${bidx}) as ok`)[0].ok))) return unit.failAfterCommit('invalid_or_expired');
       const ring = ctx.keys.ring.create();
       const enc = E.sealField(ring.keys.get(1), 1, ADDR, email);
       userId = (await unit.sql`select wts.create_user(${bidx}, ${enc}, 'code', ${ctx.config.terms}, ${ctx.config.privacy}, now(), ${ring.wrapped}, ${ring.kid}) as id`)[0].id;
@@ -221,15 +226,17 @@ async function codeVerify(ctx) {
     }
     if (!first && consentOk(ctx, b.consent)) await unit.sql`update wts.users set terms_version = ${ctx.config.terms}, privacy_version = ${ctx.config.privacy}, consented_at = now() where id = ${userId}`;
     const device = await S.deviceFor(unit, ctx, userId, { label: b.deviceLabel, publicDevice: b.publicDevice });
-    const sess = await SE.issue(unit, ctx, { userId, deviceId: device.id, publicDevice: b.publicDevice, method: 'code', stepup: true });
+    const sess = await SE.issue(unit, ctx, { userId, deviceId: device.id, publicDevice: b.publicDevice, method: 'code', stepup: true, signup: first });
     if (first) await unit.audit('signup', { deviceId: device.id, detail: { method: 'code' } });
+    if (first && profile && !I.isEmptyProfile(profile)) await I.storeProfile(unit, profile, 'signup', device.id);
     await unit.audit('signin', { deviceId: device.id, detail: { method: 'code', newDevice: device.isNew, via: acc && acc.role === 'recovery' ? 'recovery' : 'primary' } });
     if (device.isNew && !first) await unit.mail(a.primary, 'notice_new_device', mailParams(unit));
     return signInBody(a.u.row, a.primary, sess, device, first);
   }).catch(async (e) => {
     if (e !== CONSENT) throw e;
-    // stale consent of an existing account: the whole transaction rolled back, so the code was not burnt
-    throw new ApiError('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+    // stale consent of an existing account: the whole transaction rolled back, so the code was not burnt; existing tells the
+    // page to ask for the updated versions (not a new-account step)
+    throw new ApiError('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy, existing: true });
   });
   await revokeOther(ctx);
   return { status: 200, body: res };
@@ -410,6 +417,7 @@ async function signOutAll(ctx) {
 
 const notImplemented = () => fail('not_implemented');
 
+function countryHint(ctx) { return ctx.geo && ctx.geo.country ? { countryHint: ctx.geo.country } : {}; }
 module.exports = {
   handlers: {
     codeStart, codeVerify, emailChange, emailConfirm, emailRevert, recoverySet, recoveryRemove, signOut, signOutAll,

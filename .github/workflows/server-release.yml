@@ -3,17 +3,20 @@ name: Server release (accounts API — server-v* tags only)
 # docs/ACCOUNTS-PLAN.md §13.8 / D19 (WP-OPS). The functions-only site in server/ is released ONLY from a server-v* tag on a
 # master commit, never by an ordinary push (the static site keeps auto-deploying from master as before). The workflow is
 # inert until the owner adds the secrets and variables below (server/RUNBOOK.md, "Activation checklist"):
-#   environment server-migrations (required reviewer = the owner): secret WTS_MIGRATE_DB_URL
 #   environment server-production (required reviewer = the owner): secret WTS_DEPLOY_TOKEN, variables WTS_DEPLOY_SITE,
 #     WTS_DEPLOY_COMMAND (the host CLI deploy invocation, run inside <runner temp>/rel/server — the bundle placed in a
 #     repository layout, so a host whose site settings name the base directory `server` finds it — with the pinned CLI of
 #     server/ci/deploy-cli on PATH; the token reaches the CLI through its environment, never its command line) and
 #     optionally WTS_HEALTH_URL
-# Without them the verify job still runs (tests, secret scan, publish check, account-block digest, bundle) and the migrate /
-# deploy steps print a notice and skip — EXCEPT that deploy fails when it is configured, the migrate job was skipped and
-# server/db/migrations changed since the previous server tag (new code never goes live on an unmigrated schema). The secrets
-# must be ENVIRONMENT secrets of the two environments, which must exist with the owner as required reviewer before the first
-# tag (repository-level secrets or auto-created environments would skip the manual approval; server/RUNBOOK.md §3 step 8).
+# Migrations: the hosting platform applies the generated folder server/<platform>/database/migrations itself at the production
+# deploy (server/README.md "Platform migrations"); this workflow never opens a database connection and holds no database
+# credential. The verify job checks, read-only, that the generated folder equals what server/db/platform-migrations.js
+# --write produces from server/db/migrations and that no file already released under a previous server tag changed or
+# disappeared; the deploy job refuses unless that check said in-sync (new code never goes live without its migrations).
+# Without the secrets the verify job still runs (tests, secret scan, publish check, migrations check, account-block digest,
+# bundle) and the deploy steps print a notice and skip. The secrets must be ENVIRONMENT secrets of server-production, which
+# must exist with the owner as required reviewer before the first tag (repository-level secrets or an auto-created
+# environment would skip the manual approval; server/RUNBOOK.md §3 step 8).
 # The request handlers' own secrets (master keys, peppers, provider secrets …) live
 # only in the functions site's environment and never pass through this workflow.
 
@@ -34,6 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       migrations_changed: ${{ steps.checklist.outputs.migrations_changed }}
+      platform_migrations: ${{ steps.pmig.outputs.platform_migrations }}
     steps:
       - name: Checkout (full history, for the master check and the pin diff)
         uses: actions/checkout@v4
@@ -66,6 +70,18 @@ jobs:
       - name: Publish allow-list check
         run: node prism-build/publish-site.js --check
 
+      - name: Platform migrations in sync, released files unchanged (read-only; no database connection)
+        id: pmig
+        run: |
+          node server/db/platform-migrations.js --check
+          dir=$(node -e "process.stdout.write(require('path').relative(process.cwd(), require('./server/db/platform-migrations').OUT))")
+          prev=$(git describe --tags --abbrev=0 --match 'server-v*' "$GITHUB_SHA^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            bad=$(git diff --name-only --diff-filter=MDR "$prev" "$GITHUB_SHA" -- "$dir")
+            if [ -n "$bad" ]; then echo "::error::platform migrations released under $prev changed or were removed: $bad"; exit 1; fi
+          fi
+          echo "platform_migrations=in-sync" >> "$GITHUB_OUTPUT"
+
       - name: Account block digest and pinned-file changes (for the owner's release checklist)
         id: checklist
         run: |
@@ -97,34 +113,8 @@ jobs:
           path: server/dist
           retention-days: 30
 
-  migrate:
-    needs: verify
-    runs-on: ubuntu-latest
-    environment: server-migrations
-    outputs:
-      result: ${{ steps.apply.outputs.result }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Apply migrations (manual approval; expand-then-contract)
-        id: apply
-        working-directory: server
-        env:
-          WTS_MIGRATE_DB_URL: ${{ secrets.WTS_MIGRATE_DB_URL }}
-        run: |
-          if [ -z "$WTS_MIGRATE_DB_URL" ]; then echo "::notice::migration credential not configured — skipped"; echo "result=skipped" >> "$GITHUB_OUTPUT"; exit 0; fi
-          npm ci --ignore-scripts
-          node db/migrate.js --platform
-          echo "result=applied" >> "$GITHUB_OUTPUT"
-
   deploy:
-    needs: [verify, migrate]
+    needs: verify
     runs-on: ubuntu-latest
     environment: server-production
     steps:
@@ -134,12 +124,12 @@ jobs:
           WTS_DEPLOY_TOKEN: ${{ secrets.WTS_DEPLOY_TOKEN }}
           WTS_DEPLOY_SITE: ${{ vars.WTS_DEPLOY_SITE }}
           WTS_DEPLOY_COMMAND: ${{ vars.WTS_DEPLOY_COMMAND }}
-          MIGRATE_RESULT: ${{ needs.migrate.outputs.result }}
+          PLATFORM_MIGRATIONS: ${{ needs.verify.outputs.platform_migrations }}
           MIGRATIONS_CHANGED: ${{ needs.verify.outputs.migrations_changed }}
         run: |
           if [ -z "$WTS_DEPLOY_TOKEN" ] || [ -z "$WTS_DEPLOY_SITE" ] || [ -z "$WTS_DEPLOY_COMMAND" ]; then echo "::notice::deploy not configured — skipped"; echo "configured=false" >> "$GITHUB_OUTPUT"; exit 0; fi
-          if [ "$MIGRATE_RESULT" != "applied" ] && [ "$MIGRATIONS_CHANGED" = "true" ]; then
-            echo "::error::server/db/migrations changed since the previous server tag but the migrate job did not apply them — refusing to deploy"
+          if [ "$PLATFORM_MIGRATIONS" != "in-sync" ]; then
+            echo "::error::the generated platform migrations were not confirmed in sync with server/db/migrations (migrations changed since the previous server tag: $MIGRATIONS_CHANGED) — refusing to deploy"
             exit 1
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"

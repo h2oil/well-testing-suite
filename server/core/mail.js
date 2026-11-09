@@ -39,6 +39,7 @@ const TEMPLATES = {
   notice_codes_paused: { kind: 'notice', params: ['at'] },                // 10 failed codes in 24 h (§8.3; WP-S1)
   notice_inactivity: { kind: 'notice', params: ['deleteAt'] },            // 23 / 23.5 months without a sign-in (§8.5; WP-S1)
   notice_delete_done: { kind: 'notice', params: ['at'] },                 // the purge ran (§4.9; WP-S1)
+  notice_ops_test: { kind: 'notice', params: ['at'] },                    // the operator's delivery test (site/handler.js ops self-test)
 };
 
 // ── plain-text bodies (§4.1, §4.3, §4.9, §8.5) ──────────────────────────────────────────────────────────────────
@@ -131,6 +132,9 @@ const BODIES = {
     'Nobody has signed in to your Well Testing Suite account for 23 months. It will be deleted after ' + fmtWhen(p.deleteAt) + ' unless you sign in at ' + SITE + ' before then.']],
   notice_delete_done: (p) => ['Your Well Testing Suite account was deleted', [
     'Your Well Testing Suite account and its cloud projects were deleted at ' + fmtWhen(p.at) + '. Backups age out within 30 days. Data on your own devices is not touched.']],
+  notice_ops_test: (p) => ['Well Testing Suite e-mail delivery test', [
+    'This is a test message from the Well Testing Suite account service at ' + SITE + ', sent at ' + fmtWhen(p.at) + ' by its operator to check that e-mail is delivered.',
+    'No account was created or changed. If you did not expect it, ignore this e-mail.']],
 };
 
 // render(template, params) → {subject, text}; throws on an unknown template or a missing / malformed parameter

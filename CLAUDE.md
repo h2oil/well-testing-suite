@@ -10,7 +10,7 @@
 
 - **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~157k lines as of v4.0). Zero external runtime deps; pure `Math.*` for all engineering modules. Hosted at `https://welltest.h2oil.co.uk`; runs on `localhost:8080` via `npx http-server` for development. **Never mention another company's name, site or domain anywhere** (code, docs, tests, commits, placeholders/examples — use neutral examples such as 'Operator Energy Ltd', 'name@company.example') — the only web address for the app is welltest.h2oil.co.uk (user instruction).
   Exception (owner, 2026-11-08): the web accounts feature (docs/ACCOUNTS-PLAN.md, server/, files 66-68, their tests, UI, help, privacy text, e-mails, commits and the web-only release-notes items inside ACCT markers) may name exactly two identity providers, Google and LinkedIn, as sign-in methods; their endpoint addresses appear only in server/core/oidc-providers.js; console details stay out of the repo; no other company is named, and the names never ship in the iOS bundle.
-  Exception (owner, 2026-11-09): the accounts server's hosting platform, Netlify, may be named inside server/ only (code, package names, server/netlify.toml, server/README.md, server/RUNBOOK.md) — everywhere else (app, help, docs/, tests outside server/, release notes, commits) it is "our hosting platform".
+  Exception (owner, 2026-11-09): the accounts server's hosting platform, Netlify, and the e-mail service, Postmark, may be named inside server/ only (code, package names, server/netlify.toml, server/README.md, server/RUNBOOK.md, and the live-site deploy bundle that server/site/build-live.js generates — its netlify.toml and function files) — everywhere else (app, help, docs/, tests outside server/, release notes, commits) they are "our hosting platform" and "our e-mail service".
 - **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; Capacitor 8 (SPM). The iOS app is free — no in-app purchases / subscription SDK.
 - **PRiSM module** is the flagship advanced Well Test Analysis tab, ~32k LOC of its own (pressure-transient + decline-curve workshop with 46 type-curve models, LM regression, auto-match, deconvolution, PVT, tide analysis, multi-dataset project files, etc.). Built across 21 numbered source files in `prism-build/` then concatenated and injected into `well-testing-app.html`.
 
@@ -179,7 +179,8 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   dialog, e-mail codes, step-up, Google / LinkedIn provider block, revert key link
                                   #account-revert=<key>), 67-cloud-sync (WTS_cloudSync: snapshot / vhash, save / open / history,
                                   library, guard follow-ups via registerGuard {decision, after}), 68-account-page (route account,
-                                  navHidden, H10 report skip, no page-export bar). Inert unless the beta flag (?cloud=1 /
+                                  navHidden, H10 report skip, no page-export bar), 69-account-admin (route admin, navHidden, owner
+                                  dashboard over GET /api/v1/admin/*, shown only when GET /me says admin:true; admins = WTS_ADMIN_EMAILS). Inert unless the beta flag (?cloud=1 /
                                   wtspref_cloud_beta) and the exact host (or WTS_ACCOUNT_DEV on localhost)
                                   (use a free number; two files with the same number still load, ties by name)
   48-calc-help-*.js             ← Help content (Round-9 data modules, v3.3.2; docs/HELP-GUIDE-PLAN.md §4): start (Getting
@@ -242,15 +243,36 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   wts-sim-perf.js               ← simulator A/B perf gate vs the frozen engine (--base v331 default | v33; default spread ≤ 1.05;
                                   both items in ≤ 1.6, ck2 ≤ 1.10, cushion ≤ 1.15, line ≤ 1.05; --case)
   .tmp/                         ← Extracted main script for syntax checks (gitignored)
-server/                         ← v4.0 accounts API: a SEPARATE functions-only site (never published as static content, never
-                                  copied to ios-app/www). core/ (config from env only, keys, rate limits, mail, OIDC), functions/,
+server/                         ← v4.0 accounts API (never published as static content, never copied to ios-app/www). Two
+                                  layouts: a separate functions-only site (WTS_SITE_MODE unset = separate, proxy signature) or,
+                                  LIVE since 2026-11-09, same-site mode ON welltest.h2oil.co.uk (WTS_SITE_MODE=same: no proxy /
+                                  signature, exact production Host header, client address only from the platform's
+                                  x-nf-client-connection-ip, every other control unchanged; RUNBOOK §3L). The lead uploads ONE
+                                  folder built by `node server/site/build-live.js --out <dir>` (static allow-list under public/,
+                                  generated netlify.toml + functions without a region pin — default layout live: api on /api/v1/*,
+                                  ops-purge, ops-daily / weekly-export starting background functions; --inline-jobs = fallback
+                                  live-inline, jobs in place under a 25 s budget — platform migrations, pinned
+                                  runtime deps, server code; `--check --dir <dir>` fails on anything else or a secret-looking
+                                  file); invite list without a database connection: WTS_INVITE_BOOTSTRAP. core/ (config from env only, keys, rate limits, mail, OIDC), functions/,
                                   db/migrations/NNN-*.sql (never edited after release; db/schema.sql GENERATED by
                                   `node server/test/run.js --schema`), site/ (handler, build, monitor), ops/, RUNBOOK.md (activation
                                   step 0: the static publish allow-list BEFORE server/ reaches master). npm deps pinned in
-                                  server/package.json + lockfile only (the web app keeps zero runtime deps). Tests:
+                                  server/package.json + lockfile only (the web app keeps zero runtime deps). Live bundle
+                                  (site/build-live.js, needs `npm ci` in server/): upload deploys install no node_modules, so
+                                  each netlify/functions/*.mjs is PRE-BUNDLED with esbuild 0.24.2 (devDependency; __dirname
+                                  defined as <bundle>/site — run-time paths via core/root.js, never path.join(__dirname, …));
+                                  build command `netlify-check.js --live --prebundled`. Tests:
                                   `node server/test/run.js [substr]` (throwaway cluster from /usr/lib/postgresql/<n>/bin, as a
                                   non-root OS user; port WTS_TEST_DB_PORT, 54000 + a per-agent number); providers faked
                                   (server/test/fake-oidc.js), mail to a memory transport
+  db/platform-migrations.js     ← GENERATES the platform's migrations folder (server/<platform>/database/migrations/, its OUT; the
+                                  platform applies it at each production deploy) from db/migrations (`--write`; `--check` in the
+                                  release workflow's verify job, which also refuses a change to a file released under an earlier
+                                  server tag). The generated folder is GENERATED — never edit, rename or remove a file in it; a
+                                  correction is a new db/migrations/NNN-*.sql + `--write`. db/migrate.js refuses a platform-migrated
+                                  database
+  ops/remote-smoke.js           ← pass/fail table against a deployed accounts site (base URL and secrets from env only; the signed
+                                  ops self-test; `--mail-to` sends one test e-mail) — RUNBOOK §3T step T6
 prism-build/publish-site.js     ← static publish allow-list + _headers/CSP (`--check` in CI); prism-build/acct-hash.js = account
                                   block SHA-384 for server releases
 PRISM-PLAN.md                   ← Phasing plan + model catalogue + decisions
@@ -325,7 +347,7 @@ via numbered "rounds":
    (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1847/1847) and
    `node prism-build/wts3d-test.js` (147 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
-   after server/ or accounts (66-68) changes also `node server/test/run.js` (201 tests on a throwaway cluster);
+   after server/ or accounts (66-68) changes also `node server/test/run.js` (252 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -604,7 +626,16 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   production until its live tests (plan §13.10 step 13) are recorded; the weekly export stays in the same EU region; the
   one-login database keeps separate roles by `SET LOCAL ROLE` (go-live probe `migrate.js --platform`, RUNBOOK step 7); proxy
   signature and client-IP header to be confirmed live (RUNBOOK steps 10 and 12); the CSP stays allow-list only until v4.1; the
-  Privacy notice and Terms of Use (v3.4.2) still have owner facts pending (see their top comments).
+  Privacy notice and Terms of Use (v3.4.2) still have owner facts pending (see their top comments). Live set-up (owner decision
+  2026-11-09, server/RUNBOOK.md §3L): same-site mode on the live site on the Free plan — the account database is in the United
+  States (Ohio) permanently and the functions are not pinned to London; Blobs (larger project files, weekly exports) stay in
+  eu-central-1; the privacy notice and the in-app cards say so (privacy version stays 1: accounts were not open under it and the
+  analytics text is unchanged); the daily job and the export run in background functions (offered on the Free plan; a scheduled function has only 30 s —
+  the opt-in --inline-jobs fallback runs them in place under a 25 s budget that stops with an alert); same-site mode refuses
+  any WTS_ENV but production / staging;
+  no Report-Only CSP on the live site (quota); the invite list is WTS_INVITE_BOOTSTRAP (env, redeploy to change); processor
+  contracts with transfer safeguards are promised before anyone outside H2Oil is invited; the e2e test E2 (link LinkedIn) is
+  flaky on the base branch too ("linkProvider rejected before the step-up code: cancelled", about 1 run in 3).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
   on the benchmark pre set the leak-off mechanism is right in only ≈ 19 % of cases (a q-tip case reads as PDL), so the type is
@@ -704,7 +735,7 @@ Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
 Acceptance tests:             1847/1847 pass (accept-test.js --html --integration; acct-* = v4.0 accounts client)
-Server tests:                 201/201 (node server/test/run.js; throwaway database cluster)
+Server tests:                 252/252 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 5 field scenarios (FS-5 4.1),
                               217 screenshots (7.97 MB)
 3D simulator tests:           147 checks (wts3d-test.js; 145/147 on a Linux LF checkout — the two CRLF checks)

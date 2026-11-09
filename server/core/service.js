@@ -7,7 +7,7 @@
 //                                   unit.failAfterCommit(code) is thrown once the transaction has committed (so a wrong code's
 //                                   counted try is kept).
 //   unit: {sql, userId, setUser(id), user() → {row, keys, dkv, seal(field, v), open(field, buf)}, mail(to, template, params),
-//          audit(action, {target, detail}), system(action, …)}
+//          audit(action, {target, detail, actor?}) (actor 'user', or 'admin' for the admin routes), system(action, …)}
 //   syncGate(ctx, write)            SYNC_MODE: off → 503 paused; readonly → 503 readonly on writes
 //   uaFamily(ua)                    {browser, os, family} — generic words only (mails never carry a client-supplied string)
 //   deviceFor(unit, ctx, userId, {label, publicDevice}) → {id, label, isNew}   (user, device id) only; a foreign id is ignored
@@ -88,7 +88,7 @@ async function unitOf(ctx, userId, fn) {
       async audit(action, o) {
         o = o || {};
         await tx`insert into wts.audit (user_id, actor, action, target, device_id, ip_prefix, ua_family, at, detail, hash)
-          values (${o.userId || unit.userId}, 'user', ${action}, ${o.target || null}, ${o.deviceId || null}, ${ctx.ipPrefix}, ${ua.family},
+          values (${o.userId || unit.userId}, ${o.actor === 'admin' ? 'admin' : 'user'}, ${action}, ${o.target || null}, ${o.deviceId || null}, ${ctx.ipPrefix}, ${ua.family},
                   now(), ${tx.json(o.detail || {})}, '\\x'::bytea)`;
       },
       async system(action, o) {

@@ -119,5 +119,40 @@
     "deployPreviews": "off",
     "branchDeploys": "none",
     "builds": "stopped (releases from server-v* tags with the CLI: RUNBOOK)"
+  },
+  "netlifyLive": {
+    "_comment": "Same-site mode on the LIVE site (owner decision 2026-11-09, RUNBOOK §3L): the API functions run on welltest.h2oil.co.uk itself (WTS_SITE_MODE=same; no proxy rule, no signature). Built by `node server/site/build-live.js --out <dir>` and uploaded as one folder.",
+    "site": "h2oil (welltest.h2oil.co.uk)",
+    "plan": "Free",
+    "siteMode": "same",
+    "config": "generated netlify.toml (site/netlify-check.js LIVE_TOML)",
+    "publish": "public",
+    "functionsDir": "netlify/functions",
+    "functionsRegion": "the site's default functions region (no pin; next to the database)",
+    "database": "Netlify Database in the platform's default region (United States, Ohio) — permanent",
+    "blobs": {
+      "region": "eu-central-1",
+      "consistency": "strong"
+    },
+    "defaultLayout": "live",
+    "layouts": {
+      "live-inline": [
+        "api",
+        "ops-purge",
+        "ops-daily",
+        "weekly-export"
+      ],
+      "live": [
+        "api",
+        "ops-purge",
+        "ops-daily",
+        "ops-daily-background",
+        "weekly-export",
+        "weekly-export-background"
+      ]
+    },
+    "apiPath": "/api/v1/*",
+    "clientIpHeader": "x-nf-client-connection-ip",
+    "host": "welltest.h2oil.co.uk (exact Host header)"
   }
 }
