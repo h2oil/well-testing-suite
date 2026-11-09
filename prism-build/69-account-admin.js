@@ -2,7 +2,7 @@
 // prism-build/69-account-admin.js — the `admin` page: who has signed up, from where and how (owner only). Round-10.
 //
 // Same guard as 66 / 68; outside it nothing is defined. The registry entry has navHidden:true (a route, no sidebar button, no
-// home tile), registered only with the invite-beta flag on a host that carries the account hooks, like the account page. The
+// home tile), registered only while accounts are on (not after ?cloud=0) on a host that carries the account hooks, like the account page. The
 // page shows its content only when GET /me says admin:true (the server decides: WTS_ADMIN_EMAILS); anyone else — signed out,
 // a normal account, or the server answering 404 not_found — sees "Not available". It is opened from the account chip menu
 // ("Admin dashboard"), the account page, or a load with #admin.

@@ -3,8 +3,8 @@
 //
 //   const T = require('./_acct-app');
 //   const t = T.boot(ctx, { fake?, storage?, idb?, browser?, beta: true, switches, quota, welcome })  — one browser tab on the
-//         production location with the fake API (docs/ACCOUNTS-PLAN.md §12.1), the IndexedDB fake, node zlib for gzip and the beta
-//         flag; the signed-out welcome prompt is off unless welcome: true
+//         production location with the fake API (docs/ACCOUNTS-PLAN.md §12.1), the IndexedDB fake and node zlib for gzip (accounts
+//         on by default; beta: false = the ?cloud=0 opt-out); the first-open sign-in dialog is off unless welcome: true
 //   t.a (the harness app), t.w (its window), t.fake, t.br (this device's fake browser), t.idb, t.storage
 //   await t.settle()                      — microtasks + due timers until the promise chains have run
 //   await t.signIn(email, {publicDevice, consent, handover})  — the e-mail-code flow through the dialog
@@ -25,13 +25,14 @@ function boot(ctx, o) {
   const clock = { a: null };
   const fake = o.fake || F.createFakeServer({ now: () => (clock.a ? clock.a.win.Date.now() : Date.now()), switches: o.switches, allow: o.allow, quota: o.quota, mailDelay: o.mailDelay });
   const br = o.browser || (o.fake ? fake.browser('dev-' + Math.random().toString(36).slice(2, 7)) : fake);
-  const storage = o.storage || createStorage(o.beta === false ? {} : { wtspref_cloud_beta: '1' });
+  // accounts are on by default on the production host (v4.2); beta: false = the device opted out with ?cloud=0
+  const storage = o.storage || createStorage(o.beta === false ? { wtspref_cloud_off: '1' } : {});
   if (o.seed) seedStorage(storage, o.seed);
   if (o.hint) storage.setItem('wtsacct_hint', JSON.stringify(o.hint));
   const idb = o.idb || createFakeIDB();
   const loc = F.prodLocation(o.path);
   if (o.hash) { loc.hash = o.hash; loc.href += o.hash; }
-  // the signed-out welcome prompt is off in the client tests unless o.welcome (the mount runs inside loadApp, before configure)
+  // the first-open sign-in dialog is off in the client tests unless o.welcome (the mount runs inside loadApp, before configure)
   const globals = Object.assign({ fetch: (u, i) => br.fetch(abs(u), i), location: loc, WTS_ACCOUNT_WELCOME: o.welcome ? 1 : 0 }, o.globals || {});
   const a = ctx.loadApp({ timers: 'manual', console: 'capture', storage, viewport: o.viewport, globals, confirm: o.confirm, prompt: o.prompt });
   clock.a = a;

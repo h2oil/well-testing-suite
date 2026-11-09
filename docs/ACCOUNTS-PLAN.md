@@ -873,7 +873,9 @@ Events on `document` (plain data): `wts:account-changed {status}`, `wts:sync-sta
 |---|---|---|---|
 | `wts-sync` | IndexedDB (device) | `device {deviceId (server-issued), lastUserId, workOwner: userId\|'unowned'\|null, workOwnerAt, signedOutAfterOwner:bool}`; `binding {userId, projectId, baseRev, boundAt, activeWell}`; `base` (last-synced core, `vhash` and part hashes per well: the merge base); `outbox {fmt, pushId, userId, entry}` (plain on a trusted device, AES-GCM with the server outbox key on a public one); `safety[]` (last 2 payloads); `preAccount` (pinned, never rotated); `stash {userId: payload}` (work kept local at a hand-over); `recent[]` (≤ 3 cached cloud projects, ≤ 50 MB, Phase 2); `conflicts[]`; `retry {nextRetryAt, step}`; `lastPullAt`; `migratedFor:[userId]`; `hashCache {part: {gen, hash}}` | no |
 | `wtsacct_hint` | localStorage | `{signedIn, initial, public, absExpires, lastSeenAt, oauth?:{provider, route, at}, v:3}` — paints the chip, drives the analytics guard (also skipped while `oauth` is under 10 minutes old), the provider return and the public expiry wipe; no token, no e-mail | no |
-| `wtspref_cloud_beta` | localStorage | `1` after `?cloud=1` (shows the chip during the invite beta; the server enforces who may sign up) | no |
+| `wtspref_cloud_beta` | localStorage | `1` after `?cloud=1` (v4.0 invite beta; no longer read since v4.2, when accounts became on by default on the production host) | no |
+| `wtspref_cloud_off` | localStorage | `1` after `?cloud=0` (v4.2 device kill switch: nothing is mounted, registered or requested); `?cloud=1` removes it | no |
+| `wtspref_acct_welcome` | localStorage | `{choice: 'guest'\|'signin'\|'signup', at}` — the first-open sign-in dialog's answer; not offered again for 30 days | no |
 | `wtspref_cloud_open` | localStorage | "Open as a new cloud project" without asking (*Don't ask again*) | no |
 | `wtspref_shared_browser` | localStorage | `1` once any public-computer session has been used in this browser; **kept by the wipe** (it identifies no one); every later provider attempt from this browser is a fresh-login attempt (T30) | no |
 | `__Host-wts_sid` | cookie | session (HttpOnly, Strict) | — |
@@ -921,7 +923,8 @@ site gets one `acct-host` assertion that `wts:ls-write` fires.
   `prism:dataset-loaded` of the restore commit and a resolved `WTS_buildup.store.init()` — so neither a fast-forward nor a
   snapshot races `PRiSM_restoreState` / `PRiSM_restorePersistedCrop` or reads cold mirrors.
 - **Listeners** are attached only while signed in **and** linked, and removed on sign-out / unlink.
-- **Beta gate**: without `wtspref_cloud_beta` the chip is not mounted and nothing is registered (Phase 1 beta only).
+- **Default-on gate (since release 4.2)**: on the production host the chip is mounted for every visitor; with `wtspref_cloud_off`
+  (`?cloud=0`) nothing is mounted or registered. (Phase 1 beta: without `wtspref_cloud_beta` the chip was not mounted.)
 
 ---
 
@@ -1725,8 +1728,8 @@ offline by the owner. The functions site and the jobs credential are separate (D
   green, independent review done, migration reviewed, SHA-384 of the account block noted, the provider pins in
   `oidc-providers.js` unchanged or reviewed, `WTS_OIDC_MODE` unset in production); migrations `server/db/migrations/NNN-*.sql`
   run in a manual tagged job, expand-then-contract so the previous server tag keeps working; API versioned `/api/v1`.
-- The client code (66–68) ships with the static site, so a merge to master ships it: it is gated by the beta flag and the server
-  kill switches, and its review happens before the merge (Q19).
+- The client code (66–68) ships with the static site, so a merge to master ships it: since release 4.2 it is on by default on the
+  production host (`?cloud=0` = device kill switch) and gated by the server kill switches, and its review happens before the merge (Q19).
 
 ### 13.9 Load and cost model
 Assumptions (revised): an **active user commits up to ~250 times a day** (the 20 s / 2 min coalescing allows at most ~30 an hour

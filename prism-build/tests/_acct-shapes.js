@@ -180,7 +180,7 @@ const CLIENT_NAMES = {
 const CLIENT_STATES = ['signedOut', 'signingIn', 'signedIn', 'unavailable'];
 const SYNC_STATES = ['off', 'idle', 'dirty', 'syncing', 'offline', 'unavailable', 'conflict', 'quota', 'paused', 'readonly', 'signedOut'];
 const EVENTS = ['wts:account-changed', 'wts:sync-status', 'wts:sync-applied', 'wts:sync-conflict'];
-const KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser', idb: 'wts-sync' };
+const KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', off: 'wtspref_cloud_off', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser', idb: 'wts-sync' };
 
 module.exports = Object.assign({}, C, {
   EXAMPLES, FINISH_EXAMPLES, ERROR_EXAMPLES, checkResponse, CANON_VECTORS, CLIENT_NAMES, CLIENT_STATES, SYNC_STATES, EVENTS, KEYS, SERVER_DIR,

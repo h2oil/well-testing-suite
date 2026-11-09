@@ -450,10 +450,18 @@ module.exports = [
         assert.strictEqual(b.win.WTS_accountAdmin.entry.navHidden, true);
         assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': stubs make no request');
         assert(b.counts.doc - doc0 <= 4, what + ': no DOM work without a document');
-        if (what === 'production https') assert.strictEqual(b.store.wtspref_cloud_beta, '1', '?cloud=1 sets the beta flag');
+        if (what === 'production https') {
+          assert.strictEqual(b.store.wtspref_cloud_off, undefined, '?cloud=1 is harmless: no opt-out stored');
+          assert.strictEqual(A.enabled(), true, 'accounts on');
+        }
       }
+      // accounts are on by default on the production host; ?cloud=0 is the device kill switch, ?cloud=1 clears it again
+      const def = bare({ location: Object.assign({}, PROD_LOC) });
+      assert.strictEqual(def.win.WTS_account.betaEnabled(), true, 'on by default on the production host');
+      assert.strictEqual(def.win.WTS_account.enabled(), true);
       const off = bare({ location: Object.assign({}, PROD_LOC, { search: '?x=1&cloud=0' }) });
       assert.strictEqual(off.win.WTS_account.betaEnabled(), false);
+      assert.strictEqual(off.store.wtspref_cloud_off, '1', '?cloud=0 stores the opt-out');
       // markers, file order, concat
       for (const f of FILES) {
         const src = fs.readFileSync(path.join(BUILD, f), 'utf8');
@@ -573,7 +581,7 @@ module.exports = [
     },
   },
   {
-    name: 'AC7 app on the production https location with the fake fetch: eligible, zero requests and timers, no page registered', wp: WP,
+    name: 'AC7 app on the production https location with the fake fetch: on by default (chip, page registered), zero requests and timers; ?cloud=0 = nothing', wp: WP,
     opts: false,
     async run(app, assert, ctx) {
       const fake = F.createFakeServer({});
@@ -584,15 +592,25 @@ module.exports = [
         Object.keys(S.CLIENT_NAMES).forEach((f) => assert(w[S.CLIENT_NAMES[f].global], S.CLIENT_NAMES[f].global));
         a.flush(5000);
         assert.strictEqual(a.pendingTimers(), 0, 'no timer after 5 s idle');
-        assert.strictEqual(fake.requests.length, 0, 'a signed-out first visit makes no request');
-        assert(!(w.WTS_calcRegistry && w.WTS_calcRegistry.account), 'no account page in the registry');
-        assert(!a.el('wts_account_host') || !a.el('wts_account_host').firstChild, 'no chip mounted');
+        // the first-open sign-in dialog waits behind the Terms notice / consent banner of a fresh browser: no request yet
+        assert.strictEqual(fake.requests.length, 0, 'a signed-out first visit makes no request while the Terms notice is up');
+        assert(w.WTS_calcRegistry && w.WTS_calcRegistry.account, 'accounts on by default: the account page is registered');
+        assert(a.el('acct_chip'), 'the chip is mounted');
         const p = w.WTS_account.providers();
         a.flush(10);
         assert.deepStrictEqual(clone(await p), { google: 'on', linkedin: 'on' });
         assert.strictEqual(fake.requests.length, 1);
         assert.deepStrictEqual(a.errors.map((e) => e.message), []);
       } finally { if (a.dispose) a.dispose(); }
+      const fake2 = F.createFakeServer({});
+      const b = ctx.loadApp({ timers: 'manual', console: 'capture', globals: { fetch: (u, i) => fake2.fetch(String(u).startsWith('/') ? F.PROD + u : u, i), location: Object.assign(F.prodLocation(), { search: '?cloud=0' }) } });
+      try {
+        b.flush(5000);
+        assert.strictEqual(b.win.WTS_account.enabled(), false, '?cloud=0: off on this device');
+        assert(!(b.win.WTS_calcRegistry && b.win.WTS_calcRegistry.account), '?cloud=0: no account page');
+        assert(!b.el('acct_chip') && !b.el('acct_dlg_ov'), '?cloud=0: no chip, no dialog');
+        assert.strictEqual(fake2.requests.length, 0); assert.strictEqual(b.pendingTimers(), 0);
+      } finally { if (b.dispose) b.dispose(); }
     },
   },
   {

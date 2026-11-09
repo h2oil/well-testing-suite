@@ -4016,10 +4016,12 @@ G.WTS_modbusBridgeSetup = {
 // prism-build/66-account.js — WTS_account: web accounts (docs/ACCOUNTS-PLAN.md §3.2, §4, §5, §10, §11). Round-10, auto-discovered.
 //
 // It loads everywhere and does nothing unless the page is the production web host over https (or DEV on localhost with
-// window.WTS_ACCOUNT_DEV === 1), outside the iOS native shell and not framed (§5.1 guard). Even then nothing is mounted,
-// registered or requested unless the invite-beta flag is set (?cloud=1 → wtspref_cloud_beta, §5.5), and a signed-out first
-// visit makes no request at all: GET /me runs only when the device hint says a session exists. So while no server answers,
-// the live site behaves exactly as v3.4.
+// window.WTS_ACCOUNT_DEV === 1), outside the iOS native shell and not framed (§5.1 guard). On such a host accounts are ON by
+// default (from release 4.2; v4.0 showed them only with the invite-beta flag ?cloud=1): the kill switch ?cloud=0 stores the device opt-out
+// wtspref_cloud_off = '1' (nothing is mounted, registered or requested, as before v4.0) and ?cloud=1 clears it again.
+// GET /me runs only when the device hint says a session exists. A signed-out first visit opens the sign-in dialog itself in
+// its welcome form (first-open, §11.2): that dialog asks GET /auth/providers for its Google / LinkedIn buttons; "Use as
+// guest", Esc, × or a click on the backdrop store the guest choice (device pref, offered again after 30 days).
 //
 // WP-C1 (this file): the guard, configure() seams, the one API client call() (headers, error envelope → WTS_account.Error,
 // the §3.2 outage rule: only code 'signed_out' signs the page out), the session state machine and the device hint, the
@@ -4057,9 +4059,10 @@ G.WTS_modbusBridgeSetup = {
 
   var VERSION = '1.0.0';
   var PROVIDERS = ['google', 'linkedin'];
-  // welcome: the device preference of the signed-out welcome prompt, {choice: 'guest'|'signup'|'signin', at} — a wtspref_ key,
+  // welcome: the device preference of the first-open sign-in dialog, {choice: 'guest'|'signup'|'signin', at} — a wtspref_ key,
   // so it is never synced and never in project files (29 PREF / 67 skip wtspref_*)
-  var KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser',
+  // beta: the v4.0 invite-beta flag (no longer read; kept so an old value is recognised); off: the device opt-out (?cloud=0)
+  var KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', off: 'wtspref_cloud_off', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser',
     welcome: 'wtspref_acct_welcome' };
   var SUPPORT = 'software@h2oil.co.uk';
   var HAS_DOC = typeof document !== 'undefined' && !!document && typeof document.createElement === 'function';
@@ -4079,7 +4082,7 @@ G.WTS_modbusBridgeSetup = {
   // reload / assign: page navigation (the analytics reload, WP-O's redirect); online: () → bool (navigator.onLine).
   var seams = { fetch: null, now: null, base: '/api/v1', idb: null, crypto: null, gzip: null, gunzip: null, locks: null, minDelayMs: 0,
     appVer: '', deviceId: null, reload: null, assign: null, online: null, maxProjectBytes: 64 * 1000 * 1000,
-    // welcome: false switches the signed-out welcome prompt off. The mount can run before a configure() call, so a page (the
+    // welcome: false switches the first-open sign-in dialog off. The mount can run before a configure() call, so a page (the
     // client tests' harness) can also switch it off before load with window.WTS_ACCOUNT_WELCOME = 0
     welcome: G.WTS_ACCOUNT_WELCOME !== 0 };
   function configure(o) {
@@ -4187,10 +4190,12 @@ G.WTS_modbusBridgeSetup = {
     try { var o = JSON.parse(lsGet(KEYS.hint) || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
   }
   function writeHint(h) { lsSet(KEYS.hint, h ? JSON.stringify(h) : null); }
-  function betaEnabled() { return lsGet(KEYS.beta) === '1'; }
-  (function readBetaFlag() {
+  // enabled() / betaEnabled() (the v4.0 name, still read by 68 / 69 and the host's privacy page): accounts are on for this
+  // eligible page unless the device opted out with ?cloud=0
+  function betaEnabled() { return lsGet(KEYS.off) !== '1'; }
+  (function readCloudSwitch() {
     var m = /[?&]cloud=([01])(?:&|$)/.exec(L.search || '');
-    if (m) lsSet(KEYS.beta, m[1] === '1' ? '1' : null);
+    if (m) lsSet(KEYS.off, m[1] === '0' ? '1' : null);
   })();
 
   // ── state ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -4279,6 +4284,7 @@ G.WTS_modbusBridgeSetup = {
     writeHint({ signedIn: true, initial: (String((body && body.user && body.user.emailMasked) || '?')[0] || '?').toUpperCase(),
       public: !!(body && body.session && body.session.publicDevice), absExpires: body && body.session ? body.session.absExpires : null,
       lastSeenAt: now(), v: 3 });
+    dlg.welcome = false; dlg.welcomeChoice = null;    // signing in: the first-open form stores no guest choice on close
     setStep('busy', { text: 'Signing in…' });
     return refresh().then(function () {
       if (current.status !== 'signedIn') { closeDialog(); return state(); }
@@ -4320,7 +4326,7 @@ G.WTS_modbusBridgeSetup = {
     if (e.code === 'rate') return 'Too many attempts. Try again in ' + Math.max(1, Math.round(e.retryAfter || 30)) + ' s.';
     // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
     // revealed), so the text says what a new visitor can do
-    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts are by invitation during the beta: if you have no invitation yet, write to ' + SUPPORT + '.';
+    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts may need an invitation: if you have none yet, write to ' + SUPPORT + '.';
     if (isProfileErr(e)) return profileErrText(e);
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
@@ -4393,12 +4399,6 @@ G.WTS_modbusBridgeSetup = {
       '.acct-caret{font-size:10px;color:var(--text3,#999)}',
       '.acct-menu.acct-menu--up{position:fixed;top:auto;right:auto;overflow-y:auto;box-sizing:border-box}',
       '@media (max-width:768px){.acct-host-sb .acct-chip{min-height:44px;font-size:15px}}',
-      // the welcome prompt (signed-out first visit): two choices, sign up (primary) or continue as a guest
-      '.acct-welcome h3{font-size:20px}.acct-welcome .acct-wc-lead{margin:0 0 12px;color:var(--text2,#ccc);font-size:13px}',
-      '.acct-wc-opt{border:1px solid var(--border,#444);border-radius:8px;padding:12px 14px;margin:10px 0}',
-      '.acct-wc-opt--pri{border-color:var(--accent,#f0883e);background:rgba(240,136,62,.06)}',
-      '.acct-wc-opt p{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--text2,#ccc)}',
-      '.acct-wc-opt .btn{width:100%;min-height:42px;font-size:15px}',
       '.acct-link{background:none;border:0;padding:0;color:var(--blue,#58a6ff);text-decoration:underline;cursor:pointer;font:inherit}',
       // the optional profile (sign-up step, provider consent step, Account page): two columns, one at phone width
       '.acct-pf-set{border:1px solid var(--border,#444);border-radius:8px;padding:6px 12px 12px;margin:12px 0}.acct-pf-set legend{font-size:13px;font-weight:600;padding:0 4px;color:var(--text,#eee)}',
@@ -4408,6 +4408,57 @@ G.WTS_modbusBridgeSetup = {
       '.acct-pf input,.acct-pf select{width:100%;box-sizing:border-box;font-size:16px;min-height:40px;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#555);background:var(--bg,#111);color:var(--text,#eee)}',
       '#acct_root .acct-pf{max-width:640px}',
       '@media (max-width:600px){.acct-pf{grid-template-columns:1fr}}',
+      // ── the modal dialogs (sign-in incl. its first-open welcome form, code, profile / consent, step-up, choices, the provider
+      // finish): one centred card, symmetric 12 px grid, 44 px controls. The overlay is a flex box whose child has margin:auto,
+      // so a card taller than the screen scrolls from its top (never clipped). Theme tokens of the app (dark).
+      '.acct-ov.acct-ov--modal{display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto;background:rgba(1,4,9,.66);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:acctFade .16s ease-out}',
+      '.acct-dlg.acct-modal{position:relative;margin:auto;width:min(420px,calc(100vw - 32px));max-width:420px;min-height:0;padding:28px 28px 24px;border-radius:16px;border:1px solid var(--border-light,#3d444d);background:var(--bg2,#161b22);color:var(--text,#e6edf3);box-shadow:0 24px 64px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35);font-size:14px;line-height:1.5;animation:acctPop .18s ease-out}',
+      '@keyframes acctFade{from{opacity:0}}@keyframes acctPop{from{opacity:0;transform:translateY(8px) scale(.98)}}',
+      '@media (prefers-reduced-motion:reduce){.acct-ov.acct-ov--modal,.acct-dlg.acct-modal{animation:none}}',
+      '.acct-dlg.acct-modal:focus{outline:none}',
+      '.acct-modal .acct-x{position:absolute;top:12px;right:12px;width:36px;height:36px;min-width:36px;min-height:36px;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;color:var(--text2,#8b949e)}',
+      '.acct-modal .acct-x:hover{background:var(--bg4,#21262d);color:var(--text,#e6edf3)}',
+      '.acct-modal button:focus-visible,.acct-modal a:focus-visible,.acct-modal input:focus-visible,.acct-modal select:focus-visible,.acct-modal summary:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:2px}',
+      '.acct-hd{text-align:center;margin:0 0 20px;padding:0 24px}',
+      '.acct-mark{display:flex;justify-content:center;margin:0 0 12px}.acct-mark:empty{display:none}.acct-mark img{display:block;height:44px;width:auto}',
+      '.acct-modal .acct-title{display:block;margin:0;font-size:20px;font-weight:700;line-height:1.3;color:var(--text,#e6edf3);text-wrap:balance}',
+      '.acct-sub{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--text2,#8b949e);text-wrap:balance}',
+      '.acct-modal a{color:var(--blue,#58a6ff)}',
+      '.acct-modal .acct-body{display:flex;flex-direction:column;gap:12px}.acct-modal .acct-body>*{margin:0}',
+      '.acct-modal p{margin:0}.acct-modal b{color:var(--text,#e6edf3)}',
+      '.acct-field{display:flex;flex-direction:column;gap:6px}',
+      '.acct-modal label{margin:0;font-size:13px;font-weight:600;color:var(--text2,#8b949e)}',
+      '.acct-modal input[type=email],.acct-modal input[type=text],.acct-modal input[type=tel],.acct-modal select{width:100%;height:44px;min-height:44px;margin:0;padding:0 14px;box-sizing:border-box;border-radius:10px;border:1px solid var(--border-light,#3d444d);background:var(--bg1,#0d1117);color:var(--text,#e6edf3);font-size:16px}',
+      '.acct-modal input[type=email]:focus,.acct-modal input[type=text]:focus,.acct-modal input[type=tel]:focus,.acct-modal select:focus{border-color:var(--focus,#58a6ff);box-shadow:0 0 0 3px rgba(88,166,255,.22);outline:none}',
+      '.acct-modal input.acct-code-in{text-align:center;font-size:20px;letter-spacing:6px;font-variant-numeric:tabular-nums}',
+      '.acct-modal .acct-btns{display:flex;flex-direction:column;gap:12px;margin:0}',
+      '.acct-modal .btn{display:flex;width:100%;min-height:44px;margin:0;padding:10px 16px;box-sizing:border-box;justify-content:center;align-items:center;text-align:center;border-radius:10px;font-size:15px;font-weight:600}',
+      '.acct-modal .btn:disabled{opacity:.6;cursor:default}',
+      '.acct-modal .acct-or{margin:0;gap:12px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3,#848d97)}',
+      '.acct-modal .acct-providers,.acct-prov{display:flex;flex-direction:column;gap:12px}',
+      '.acct-prov-btn{display:grid;grid-template-columns:24px 1fr 24px;align-items:center;column-gap:12px;width:100%;min-height:44px;margin:0;padding:0 14px;box-sizing:border-box;border:1px solid #8e918f;border-radius:10px;background:#131314;color:#e3e3e3;font-family:inherit;font-size:15px;font-weight:500;line-height:1.2;cursor:pointer;transition:background .15s,border-color .15s}',
+      '.acct-prov-btn:hover{background:#202124;border-color:#b0b3b1}.acct-prov-btn:disabled{opacity:.55;cursor:default}',
+      '.acct-prov-btn:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:2px}',
+      '.acct-prov-mark{justify-self:center;align-items:center;justify-content:center}.acct-prov-label{text-align:center}',
+      '.acct-prov-note{font-size:13px;color:var(--text2,#8b949e);text-align:center}.acct-modal .acct-prov-note{margin:0!important}',
+      '.acct-prov-status{text-align:center;color:var(--text2,#8b949e)}.acct-modal .acct-prov-status{margin:0!important}',
+      '.acct-modal .acct-tick{display:flex;gap:10px;align-items:flex-start;margin:0;font-size:13px;font-weight:400;line-height:1.45;color:var(--text2,#8b949e);cursor:pointer}',
+      '.acct-modal .acct-tick input{flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;accent-color:var(--accent,#f0883e)}',
+      '.acct-modal .acct-tick--c{justify-content:center;align-items:center}.acct-modal .acct-tick--c input{margin:0}',
+      '.acct-foot{text-align:center;font-size:13px;color:var(--text2,#8b949e)}',
+      '.acct-modal .acct-note{margin:0;font-size:12px;line-height:1.5;color:var(--text3,#848d97)}.acct-modal .acct-note.acct-c{text-align:center}',
+      '.acct-modal .acct-msg{margin:12px 0 0;min-height:0;text-align:center}.acct-modal .acct-msg:empty{display:none}',
+      '.acct-modal .acct-faq{margin:0;font-size:13px;color:var(--text2,#8b949e)}.acct-modal .acct-faq summary{cursor:pointer;text-align:center;color:var(--blue,#58a6ff)}',
+      '.acct-modal .acct-faq .btn{min-height:36px;font-size:13px;margin-top:6px}',
+      '.acct-modal .acct-pf-set{margin:0;padding:8px 14px 14px;border-radius:10px}',
+      '.acct-modal .acct-pf label{margin:10px 0 6px}',
+      '.acct-modal .acct-pf input,.acct-modal .acct-pf select{height:44px}',
+      '.acct-modal .acct-list{margin:0}',
+      // the account page's phone sheet rule (.acct-ov / .acct-dlg above) does not apply to the modal cards
+      '@media (max-width:600px){.acct-ov.acct-ov--modal{padding:16px;align-items:center}.acct-dlg.acct-modal{width:calc(100vw - 32px);max-width:420px;min-height:0;border-radius:14px;padding:24px 20px 20px}',
+      '.acct-hd{padding:0 24px}.acct-modal .acct-title{font-size:19px}.acct-modal .btn{font-size:16px}.acct-modal .acct-pf{grid-template-columns:1fr}',
+      // narrow phones (320 px): the provider labels keep one line, centred like the wider layout
+      '.acct-prov-btn{column-gap:8px;padding:0 10px;font-size:14px}.acct-prov-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}',
     ].join('\n');
     (document.head || document.body).appendChild(st);
   }
@@ -4418,14 +4469,27 @@ G.WTS_modbusBridgeSetup = {
     if (!ov) {
       ov = document.createElement('div');
       ov.id = 'acct_dlg_ov';
-      ov.className = 'acct-ov rp-skip';
+      ov.className = 'acct-ov acct-ov--modal rp-skip';
       ov.setAttribute('data-rp-nosnap', '1');
-      ov.innerHTML = '<div class="acct-dlg" id="acct_dlg" role="dialog" aria-modal="true" aria-labelledby="acct_dlg_t">' +
-        '<h3><span id="acct_dlg_t">Sign in</span><button type="button" class="acct-x" id="acct_dlg_x" aria-label="Close">&#215;</button></h3>' +
-        '<div id="acct_dlg_body"></div><div id="acct_msg" class="acct-msg" role="status" aria-live="polite"></div></div>';
+      // a centred card: × top-right, a centred header (the app mark, the title, a one-line subtitle), the step body, the message
+      ov.innerHTML = '<div class="acct-dlg acct-modal" id="acct_dlg" role="dialog" aria-modal="true" aria-labelledby="acct_dlg_t" tabindex="-1">' +
+        '<button type="button" class="acct-x" id="acct_dlg_x" aria-label="Close">&#215;</button>' +
+        '<div class="acct-hd"><div class="acct-mark" id="acct_dlg_mark"></div><h3 class="acct-title"><span id="acct_dlg_t">Sign in</span></h3>' +
+        '<p class="acct-sub" id="acct_dlg_sub" hidden></p></div>' +
+        '<div id="acct_dlg_body" class="acct-body"></div><div id="acct_msg" class="acct-msg" role="status" aria-live="polite"></div></div>';
       document.body.appendChild(ov);
+      appMark($('acct_dlg_mark'));
       $('acct_dlg_x').addEventListener('click', function () { closeDialog(true); });
-      dlg.onKey = function (ev) { if (ev && ev.key === 'Escape' && dlg.open) { ev.preventDefault && ev.preventDefault(); closeDialog(true); } };
+      // a click on the backdrop closes the sign-in entry step only (never a code, consent or choice step in progress)
+      ov.addEventListener('click', function (ev) {
+        if (ev && ev.target === ov && dlg.open && (dlg.step === 'email' || dlg.step === 'revert')) closeDialog(true);
+      });
+      // modal: Esc closes; Tab / Shift+Tab stay inside the card
+      dlg.onKey = function (ev) {
+        if (!ev || !dlg.open) return;
+        if (ev.key === 'Escape') { if (ev.preventDefault) ev.preventDefault(); closeDialog(true); return; }
+        if (ev.key === 'Tab') trapTab(ev, $('acct_dlg'));
+      };
       document.addEventListener('keydown', dlg.onKey);
       try { dlg.opener = document.activeElement; } catch (e) { dlg.opener = null; }
     }
@@ -4433,8 +4497,46 @@ G.WTS_modbusBridgeSetup = {
     if (opts && opts.title) $('acct_dlg_t').textContent = opts.title;
     return ov;
   }
-  // closeDialog(cancelled): removes the overlay, returns focus, settles a pending choose() with null.
+  // trapTab(ev, box): keeps Tab / Shift+Tab inside box (the enabled, visible buttons, inputs, selects, links and summaries)
+  function trapTab(ev, box) {
+    if (!box || !box.querySelectorAll) return;
+    var f = Array.prototype.filter.call(box.querySelectorAll('button, input, select, a[href], summary'), function (n) {
+      if (n.disabled) return false;
+      for (var e = n; e && e !== box; e = e.parentNode) {
+        if (e.hidden) return false;
+        // a control inside a closed <details> is not rendered (only that details' own <summary> is)
+        if (e.tagName === 'DETAILS' && !e.open && n.parentNode !== e) return false;
+      }
+      return true;
+    });
+    if (!f.length) return;
+    var i = f.indexOf(document.activeElement);
+    var next = ev.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1);
+    if (ev.preventDefault) ev.preventDefault();
+    try { f[next].focus(); } catch (e) { /* none */ }
+  }
+  // appMark(el): the app's own logo (the sidebar's image, copied by property — no new asset, nothing loaded)
+  function appMark(el) {
+    if (!el || !HAS_DOC) return;
+    try {
+      var src = document.querySelector && document.querySelector('.sidebar-brand img');
+      var u = src && (src.getAttribute('src') || '');
+      if (!/^data:image\/(png|svg\+xml|webp|jpeg);base64,/.test(u)) return;
+      var im = document.createElement('img');
+      im.alt = ''; im.setAttribute('aria-hidden', 'true'); im.src = u;
+      el.appendChild(im);
+    } catch (e) { /* no mark */ }
+  }
+  function setSub(t) { var e = $('acct_dlg_sub'); if (!e) return; e.textContent = t || ''; e.hidden = !t; }
+  // closeDialog(cancelled): removes the overlay, returns focus, settles a pending choose() with null. The first-open (welcome)
+  // form closed without a sign-in stores the visitor's choice (guest unless they started a sign-in), so it is not offered again
+  // for 30 days.
   function closeDialog(cancelled) {
+    if (dlg.welcome) {
+      dlg.welcome = false;
+      if (current.status !== 'signedIn') lsSet(KEYS.welcome, JSON.stringify({ choice: dlg.welcomeChoice || 'guest', at: now() }));
+    }
+    dlg.welcomeChoice = null;
     var ov = $('acct_dlg_ov');
     if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
     if (dlg.onKey && HAS_DOC) document.removeEventListener('keydown', dlg.onKey);
@@ -4460,6 +4562,7 @@ G.WTS_modbusBridgeSetup = {
     dlg.step = name;
     var b = body(); if (!b) return;
     message('');
+    setSub('');
     if (name === 'email') return drawEmail(b, data);
     if (name === 'code') return drawCode(b, data);
     if (name === 'consent') return drawConsent(b, data);
@@ -4473,8 +4576,8 @@ G.WTS_modbusBridgeSetup = {
     setTitle('Undo an e-mail change');
     b.innerHTML = '<p>Your account\'s e-mail address was changed. If that was not you, enter your previous address and the code from the notice. ' +
       'This signs out every session and removes sign-in methods added since the change.</p>' +
-      '<label for="acct_rev_email">Previous e-mail address</label><input type="email" id="acct_rev_email" maxlength="254" autocomplete="username">' +
-      '<label for="acct_rev_code">Revert key from the notice</label><input type="text" id="acct_rev_code" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
+      '<div class="acct-field"><label for="acct_rev_email">Previous e-mail address</label><input type="email" id="acct_rev_email" maxlength="254" autocomplete="username"></div>' +
+      '<div class="acct-field"><label for="acct_rev_code">Revert key from the notice</label><input type="text" id="acct_rev_code" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_rev_go">Undo the change</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_rev_cancel">Cancel</button></div>';
     $('acct_rev_cancel').addEventListener('click', function () { closeDialog(true); });
@@ -4494,45 +4597,99 @@ G.WTS_modbusBridgeSetup = {
       return refresh().then(function () { return r.json; });
     });
   }
+  // The sign-in entry step — also the first-open (welcome) form. Top to bottom: Google / LinkedIn (only those the server's
+  // GET /auth/providers says are on), "or", the e-mail field and Send code, "Use as guest", the create-account / sign-in
+  // switch and the public-computer tick. The provider area keeps its height while the answer is pending (no layout shift).
+  var SUB = {
+    welcome: 'Save your projects to your account in the cloud and open them on any device, with full history.',
+    signin: 'Use Google, LinkedIn or a one-time code sent to your e-mail — no password needed.',
+    signup: 'It is free. Use Google, LinkedIn or your e-mail address — no password needed.',
+  };
   function drawEmail(b, data) {
-    setTitle(dlg.signup ? 'Create your free account' : 'Sign in to Well Testing Suite');
+    setTitle(dlg.signup ? 'Create your free account' : dlg.welcome ? 'Sign in to keep your work safe' : 'Sign in to Well Testing Suite');
+    setSub(dlg.signup ? SUB.signup : dlg.welcome ? SUB.welcome : SUB.signin);
     b.innerHTML =
-      (dlg.signup
-        ? '<p>Enter your e-mail address: we send you an 8-digit code. There is no password. Then save projects to your account with Save to cloud: they are encrypted with a key for your account and open on any device, with full history. Work you have not saved to the cloud stays only in this browser.</p>' +
-          '<p class="acct-note" id="acct_signup_note">New accounts are by invitation during the beta. If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation. Already have an account? The same steps sign you in.</p>'
-        : '<p>Use your e-mail address: we send you an 8-digit code. There is no password. Without signing in, your work stays on this device only.</p>') +
-      (data.note ? '<p class="acct-note">' + esc(data.note) + '</p>' : '') +
-      '<label for="acct_email">E-mail address</label>' +
-      '<input type="email" id="acct_email" inputmode="email" autocomplete="username webauthn" maxlength="254" spellcheck="false" value="' + esc(dlg.email) + '">' +
-      '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_send">' + (dlg.signup ? 'Send my code' : 'Send code') + '</button></div>' +
-      '<div class="acct-or acct-or--none" id="acct_or">or</div>' +
       '<div id="acct_provider_buttons" class="acct-providers" data-owner="WP-O"></div>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_public"' + (dlg.publicDevice ? ' checked' : '') + '> This is a public or shared computer</label>' +
-      '<p class="acct-note">On a public computer you are signed out after 12 hours and this browser keeps nothing of your work.</p>';
+      '<div class="acct-or" id="acct_or">or</div>' +
+      (data.note ? '<p class="acct-note acct-c">' + esc(data.note) + '</p>' : '') +
+      '<div class="acct-field"><label for="acct_email">E-mail address</label>' +
+      '<input type="email" id="acct_email" inputmode="email" autocomplete="username webauthn" maxlength="254" spellcheck="false" placeholder="name@company.example" value="' + esc(dlg.email) + '"></div>' +
+      '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_send">' + (dlg.signup ? 'Send my code' : 'Send code') + '</button>' +
+      '<button type="button" class="btn btn-secondary" id="acct_guest">Use as guest</button></div>' +
+      '<p class="acct-foot" id="acct_guest_note">We e-mail you an 8-digit code. As a guest, your work stays in this browser only.</p>' +
+      '<p class="acct-foot">' + (dlg.signup ? 'Already have an account? <button type="button" class="acct-link" id="acct_mode">Sign in</button>'
+        : 'New here? <button type="button" class="acct-link" id="acct_mode">Create a free account</button>') + '</p>' +
+      '<label class="acct-tick acct-tick--c" title="On a public computer you are signed out after 12 hours and this browser keeps nothing of your work.">' +
+      '<input type="checkbox" id="acct_public"' + (dlg.publicDevice ? ' checked' : '') + '> This is a public or shared computer</label>' +
+      '<p class="acct-note acct-c" id="acct_public_note"' + (dlg.publicDevice ? '' : ' hidden') + '>On a public computer you are signed out after 12 hours and this browser keeps nothing of your work.</p>';
     $('acct_send').addEventListener('click', sendCode);
     $('acct_email').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') sendCode(); });
-    $('acct_public').addEventListener('change', function () { dlg.publicDevice = !!$('acct_public').checked; drawProviders(); });
+    $('acct_guest').addEventListener('click', function () { if (dlg.welcome) dlg.welcomeChoice = 'guest'; else rememberGuest(); closeDialog(true); });
+    $('acct_mode').addEventListener('click', function () {
+      dlg.signup = !dlg.signup;
+      var inp = $('acct_email'); if (inp) dlg.email = String(inp.value || '');
+      setStep('email'); focusFirst('acct_email');
+    });
+    $('acct_public').addEventListener('change', function () {
+      dlg.publicDevice = !!$('acct_public').checked;
+      var n = $('acct_public_note'); if (n) n.hidden = !dlg.publicDevice;
+      drawProviders();
+    });
+    // a provider button pressed from the first-open form: the visitor chose to sign in (the page then leaves for the provider)
+    $('acct_provider_buttons').addEventListener('click', function () { if (dlg.welcome) noteWelcomeChoice(dlg.signup ? 'signup' : 'signin'); });
     drawProviders();
-    focusFirst('acct_email');
+    // the first-open form does not put the cursor in the field (no on-screen keyboard popping up on a phone): the card takes
+    // the focus; the chip's dialog focuses the field as before
+    // preventScroll: on a short screen the card is taller than the overlay; focusing it must not scroll the card's top (and the ×)
+    // off the screen — the overlay starts at its top, with the 16 px gutter that margin:auto gives
+    if (dlg.welcome && !data.focusField) {
+      var d = $('acct_dlg');
+      try { if (d && d.focus) d.focus({ preventScroll: true }); } catch (e) { /* none */ }
+      var o = $('acct_dlg_ov'); if (o) { try { o.scrollTop = 0; } catch (e) { /* none */ } }
+    }
+    else focusFirst('acct_email');
+  }
+  // "Use as guest" outside the first-open form: the same device pref (not offered again for 30 days)
+  function rememberGuest() { if (current.status !== 'signedIn') lsSet(KEYS.welcome, JSON.stringify({ choice: 'guest', at: now() })); }
+  function noteWelcomeChoice(c) {
+    dlg.welcomeChoice = c;
+    lsSet(KEYS.welcome, JSON.stringify({ choice: c, at: now() }));
   }
   // WP-O mount: provider buttons are drawn by hooks.renderProviders after GET /auth/providers (only when WP-O is present).
+  // While the answer is pending the area keeps the height of the buttons, so nothing below moves when they appear; with no
+  // provider on, the area and the "or" divider collapse.
+  var PROV_ROW = 44, GAP = 12;
   function drawProviders() {
     var el = $('acct_provider_buttons');
-    if (!el || typeof hooks.renderProviders !== 'function') return;
+    var or = $('acct_or');
+    if (!el || typeof hooks.renderProviders !== 'function') { if (or) or.className = 'acct-or acct-or--none'; if (el) el.hidden = true; return; }
     var pubNow = dlg.publicDevice;
+    el.style.minHeight = (PROVIDERS.length * PROV_ROW + (PROVIDERS.length - 1) * GAP) + 'px';
+    el.setAttribute('aria-busy', 'true');
     providers().then(function (prov) {
       var el2 = $('acct_provider_buttons');
       if (!el2 || dlg.step !== 'email') return;
       el2.innerHTML = '';
-      try { hooks.renderProviders(el2, prov, { publicDevice: pubNow, sharedBrowser: lsGet(KEYS.shared) === '1' }); } catch (e) { /* WP-O */ }
-      var or = $('acct_or'); if (or) or.className = 'acct-or' + (el2.firstChild ? '' : ' acct-or--none');
-    }, function () { /* the code path is unchanged */ });
+      var drawn = null;
+      try { drawn = hooks.renderProviders(el2, prov, { publicDevice: pubNow, sharedBrowser: lsGet(KEYS.shared) === '1', compact: true, signup: !!dlg.signup }); } catch (e) { /* WP-O */ }
+      return Promise.resolve(drawn).then(null, function () { return null; }).then(function () {
+        var el3 = $('acct_provider_buttons'); if (!el3) return;
+        var any = !!(el3.querySelector && el3.querySelector('.acct-prov-btn'));
+        el3.style.minHeight = ''; el3.removeAttribute('aria-busy');
+        el3.hidden = !any;
+        var or2 = $('acct_or'); if (or2) or2.className = 'acct-or' + (any ? '' : ' acct-or--none');
+      });
+    }, function () {
+      var el3 = $('acct_provider_buttons'); if (el3) { el3.style.minHeight = ''; el3.removeAttribute('aria-busy'); el3.hidden = true; }
+      var or2 = $('acct_or'); if (or2) or2.className = 'acct-or acct-or--none';
+    });
   }
   function sendCode() {
     var inp = $('acct_email');
     var email = String(inp ? inp.value : dlg.email).trim();
     if (!EMAIL_RE.test(email) || email.length > 254) { message('Please enter one e-mail address.', 'err'); return Promise.resolve(false); }
     dlg.email = email;
+    if (dlg.welcome) noteWelcomeChoice(dlg.signup ? 'signup' : 'signin');
     var pub = $('acct_public'); if (pub) dlg.publicDevice = !!pub.checked;
     var btn = $('acct_send'); if (btn) btn.disabled = true;
     message('Sending…');
@@ -4556,16 +4713,17 @@ G.WTS_modbusBridgeSetup = {
   }
   function drawCode(b, data) {
     setTitle('Enter your code');
+    setSub('We sent an 8-digit code to ' + dlg.email + '.');
     b.innerHTML =
-      '<p>We sent an 8-digit code to <b>' + esc(dlg.email) + '</b>. It expires in 15 minutes. Only enter it here, at welltest.h2oil.co.uk.</p>' +
-      '<label for="acct_code">Code</label>' +
-      '<input type="text" id="acct_code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false">' +
+      '<p class="acct-note acct-c">It expires in 15 minutes. Only enter it here, at welltest.h2oil.co.uk.</p>' +
+      '<div class="acct-field"><label for="acct_code">Code</label>' +
+      '<input type="text" id="acct_code" class="acct-code-in" inputmode="numeric" autocomplete="one-time-code" maxlength="11" spellcheck="false" placeholder="12345678"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Sign in</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' +
       // sign-up path in invite mode: an address that is not invited gets the same answer but no e-mail (server auth.js),
       // so say where an invitation comes from before the visitor waits for a code that is never sent
-      (dlg.signup ? '<p class="acct-note" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
+      (dlg.signup ? '<p class="acct-note acct-c" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
       codeFaq(false);
     $('acct_verify').addEventListener('click', function () { verifyCode(); });
     $('acct_code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') verifyCode(); });
@@ -4766,9 +4924,10 @@ G.WTS_modbusBridgeSetup = {
     if (current.status === 'signedIn' && !opts.force) return Promise.resolve(state());
     return new Promise(function (resolve) {
       if (dlg.resolve) { var old = dlg.resolve; dlg.resolve = null; old(null); }
-      closeWelcome(false);                 // never two modals: the sign-in dialog replaces the welcome prompt
       openDialog('signin');
       dlg.resolve = resolve;
+      // opts.welcome: the first-open form (one dialog, never a second modal over it); any other open is the ordinary form
+      dlg.welcome = !!opts.welcome; dlg.welcomeChoice = null;
       dlg.signup = !!opts.signup;
       if (opts.email) dlg.email = String(opts.email);
       if (!isOnline()) { setStep('email'); message(MSG.network, 'err'); return; }
@@ -4795,7 +4954,7 @@ G.WTS_modbusBridgeSetup = {
     b.innerHTML =
       '<p>' + esc(data.reason || 'This action needs a fresh confirmation.') + ' We sent an 8-digit code to your account address' +
       (current.user && current.user.emailMasked ? ' <b>' + esc(current.user.emailMasked) + '</b>' : '') + '.</p>' +
-      '<label for="acct_code">Code</label><input type="text" id="acct_code" inputmode="numeric" autocomplete="one-time-code" maxlength="11">' +
+      '<div class="acct-field"><label for="acct_code">Code</label><input type="text" id="acct_code" class="acct-code-in" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="12345678"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Confirm</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_stepup_cancel">Cancel</button></div>' + codeFaq(true);
@@ -5230,14 +5389,16 @@ G.WTS_modbusBridgeSetup = {
     return call('POST', '/account/delete/cancel', {}).then(function () { return refresh(); }, handleError);
   }
 
-  // ── welcome prompt (signed-out visitors) ───────────────────────────────────────────────────────────────────────────
-  // A modal offer to create a free account or continue as a guest. Shown once per visit at most, only while accounts are
-  // mounted (eligible host + beta flag), signed out with no session hint, after the analytics consent banner and the Terms
-  // notice are dealt with (never stacked over them), never on the account / admin / privacy / help / release-notes routes, never
-  // over the sign-in dialog, and to a visitor who already chose at most once every 30 days. Esc / × = continue as guest.
+  // ── first-open sign-in (signed-out visitors) ───────────────────────────────────────────────────────────────────────
+  // On a first signed-out visit the sign-in dialog itself opens in its welcome form (title "Sign in to keep your work safe",
+  // the value line, Google / LinkedIn, the e-mail code and "Use as guest"): one dialog, never a second modal. Shown once per
+  // visit at most, only while accounts are mounted, signed out with no session hint, after the analytics consent banner and the
+  // Terms notice are dealt with (never stacked over them; re-checked on their own events, no timer), never on the account /
+  // admin / privacy / terms / help / release-notes routes, never over another account dialog, and to a visitor who already
+  // chose at most once every 30 days. "Use as guest", Esc, × or the backdrop store the guest choice (wtspref_acct_welcome).
   var WELCOME_EVERY = 30 * 24 * 3600 * 1000;
-  var WELCOME_SKIP_ROUTES = { account: 1, admin: 1, privacy: 1, help: 1, releasenotes: 1, gaevents: 1 };
-  var welcome = { shown: false, onKey: null, opener: null, wired: false };
+  var WELCOME_SKIP_ROUTES = { account: 1, admin: 1, privacy: 1, terms: 1, help: 1, releasenotes: 1, gaevents: 1 };
+  var welcome = { shown: false, wired: false };
   function welcomePref() {
     try { var o = JSON.parse(lsGet(KEYS.welcome) || 'null'); return o && typeof o === 'object' && typeof o.at === 'number' ? o : null; } catch (e) { return null; }
   }
@@ -5246,23 +5407,24 @@ G.WTS_modbusBridgeSetup = {
     return '';
   }
   function visibleBlocker(id) { var e = $(id); return !!(e && !e.hidden); }
-  // welcomeDue() → null when the prompt may open now, else the reason it waits / is skipped
+  function welcomeOpen() { return !!(dlg.open && dlg.welcome && $('acct_dlg_ov')); }
+  // welcomeDue() → null when the first-open dialog may open now, else the reason it waits / is skipped
   function welcomeDue() {
     if (!mounted || !HAS_DOC) return 'unmounted';
     if (seams.welcome === false) return 'off';
-    if (welcome.shown || $('acct_welcome_ov')) return 'shown';
+    if (welcome.shown || welcomeOpen()) return 'shown';
     var h = readHint();
     if (current.status !== 'signedOut' || (h && h.signedIn)) return 'signed-in';
     var p = welcomePref();
     if (p && now() - p.at < WELCOME_EVERY) return 'answered';
-    if (dlg.open) return 'dialog';
+    if (dlg.open || $('acct_oauth_dlg')) return 'dialog';
     if (/^#(acct-oauth|account-revert)/.test(String(L.hash || ''))) return 'hash';
     if (WELCOME_SKIP_ROUTES[currentRoute()]) return 'route';
     if (visibleBlocker('wtsConsent')) return 'consent';
     if (visibleBlocker('wtsTermsNote')) return 'terms';
     return null;
   }
-  function maybeWelcome() { if (welcomeDue() === null) openWelcome(); return !!$('acct_welcome_ov'); }
+  function maybeWelcome() { if (welcomeDue() === null) openWelcome(); return welcomeOpen(); }
   // the follow-ups that re-check: the consent choice (or Esc on the banner), OK on the Terms notice, a page change (one-off
   // listeners on the host's own elements and events; no timer)
   function wireWelcome() {
@@ -5273,55 +5435,17 @@ G.WTS_modbusBridgeSetup = {
     var ok = $('wtsTermsNoteOk'); if (ok) ok.addEventListener('click', maybeWelcome);
     document.addEventListener('h2oil:pagechange', maybeWelcome);
   }
+  // openWelcome() → the overlay: the sign-in dialog in its first-open form
   function openWelcome() {
-    if (!HAS_DOC || !document.body || $('acct_welcome_ov')) return null;
-    ensureCss();
+    if (!HAS_DOC || !document.body || welcomeOpen()) return null;
+    if (current.status === 'signedIn') return null;
     welcome.shown = true;
-    try { welcome.opener = document.activeElement; } catch (e) { welcome.opener = null; }
-    var ov = document.createElement('div');
-    ov.id = 'acct_welcome_ov'; ov.className = 'acct-ov acct-welcome-ov rp-skip'; ov.setAttribute('data-rp-nosnap', '1');
-    // iOS safe area: web only (stripped from the app bundle with this block); a scrolling block overlay like .acct-ov
-    ov.innerHTML = '<div class="acct-dlg acct-welcome" id="acct_welcome" role="dialog" aria-modal="true" aria-labelledby="acct_welcome_t" aria-describedby="acct_welcome_lead">' +
-      '<h3><span id="acct_welcome_t">Keep your work safe</span><button type="button" class="acct-x" id="acct_welcome_x" aria-label="Continue as guest">&#215;</button></h3>' +
-      '<p class="acct-wc-lead" id="acct_welcome_lead">Well Testing Suite now offers free accounts.</p>' +
-      '<div class="acct-wc-opt acct-wc-opt--pri"><button type="button" class="btn btn-primary" id="acct_welcome_signup">Create free account</button>' +
-      '<p>Sign up to save your projects to your account in the cloud with Save to cloud — encrypted with a key for your account, open on any device, with full history, even if this browser is cleared. Work you have not saved to the cloud stays only in this browser.</p>' +
-      '<p>Already have an account? <button type="button" class="acct-link" id="acct_welcome_signin">Sign in</button></p></div>' +
-      '<div class="acct-wc-opt"><button type="button" class="btn btn-secondary" id="acct_welcome_guest">Continue as guest</button>' +
-      '<p>Your work is saved only in this browser on this device.</p></div></div>';
-    document.body.appendChild(ov);
-    function answer(choice) {
-      lsSet(KEYS.welcome, JSON.stringify({ choice: choice, at: now() }));
-      closeWelcome(choice === 'guest');
-      if (choice === 'signup') openSignIn({ signup: true });
-      else if (choice === 'signin') openSignIn();
-    }
-    $('acct_welcome_signup').addEventListener('click', function () { answer('signup'); });
-    $('acct_welcome_signin').addEventListener('click', function () { answer('signin'); });
-    $('acct_welcome_guest').addEventListener('click', function () { answer('guest'); });
-    $('acct_welcome_x').addEventListener('click', function () { answer('guest'); });
-    // modal: Esc = guest; Tab / Shift+Tab stay inside the dialog
-    welcome.onKey = function (ev) {
-      if (!ev || !$('acct_welcome_ov')) return;
-      if (ev.key === 'Escape') { if (ev.preventDefault) ev.preventDefault(); answer('guest'); return; }
-      if (ev.key !== 'Tab') return;
-      var f = ['acct_welcome_x', 'acct_welcome_signup', 'acct_welcome_signin', 'acct_welcome_guest'].map($).filter(Boolean);
-      if (!f.length) return;
-      var i = f.indexOf(document.activeElement);
-      var next = ev.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1);
-      if (ev.preventDefault) ev.preventDefault();
-      try { f[next].focus(); } catch (e) { /* none */ }
-    };
-    document.addEventListener('keydown', welcome.onKey, true);
-    focusFirst('acct_welcome_signup');
-    return ov;
+    openSignIn({ welcome: true });
+    return $('acct_dlg_ov');
   }
-  function closeWelcome(returnFocus) {
-    var ov = $('acct_welcome_ov'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
-    if (welcome.onKey && HAS_DOC) document.removeEventListener('keydown', welcome.onKey, true);
-    welcome.onKey = null;
-    if (returnFocus) { try { if (welcome.opener && welcome.opener.focus) welcome.opener.focus(); } catch (e) { /* gone */ } }
-    welcome.opener = null;
+  // closeWelcome(): closes the first-open form while it is still on its entry step (a sign-in under way is left alone)
+  function closeWelcome() {
+    if (welcomeOpen() && (dlg.step === 'email' || dlg.step == null)) closeDialog(true);
   }
 
   // ── mount (§5.5) ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -5365,8 +5489,7 @@ G.WTS_modbusBridgeSetup = {
   }
   function boot() {
     if (!HAS_DOC) return;
-    // #account-revert (the notice's link): a user action, no request until submitted; during the Phase 1 beta only with the
-    // beta flag, so the live site shows no account UI while no server is configured
+    // #account-revert (the notice's link): a user action, no request until submitted; not on a device that opted out (?cloud=0)
     var rh = revertHash(L.hash);
     if (rh && betaEnabled()) {
       // the key leaves the address bar and the history entry at once (it stays only in the dialog's field)
@@ -5385,7 +5508,7 @@ G.WTS_modbusBridgeSetup = {
   }
   var api = {
     eligible: true, VERSION: VERSION, PROVIDERS: PROVIDERS.slice(), Error: AccountError, KEYS: KEYS, hooks: hooks,
-    configure: configure, seam: seam, state: state, call: call, providers: providers, on: on, off: off, betaEnabled: betaEnabled,
+    configure: configure, seam: seam, state: state, call: call, providers: providers, on: on, off: off, betaEnabled: betaEnabled, enabled: betaEnabled,
     refresh: refresh, openSignIn: openSignIn, signOut: signOut, stepUp: stepUp, withStepUp: withStepUp,
     changeEmail: changeEmail, confirmEmail: confirmEmail, setRecovery: setRecovery, confirmRecovery: confirmRecovery, removeRecovery: removeRecovery,
     cancelDeletion: cancelDeletion, revertEmail: revertEmail, openRevert: openRevert, mount: mount, isAdmin: isAdmin,
@@ -5433,11 +5556,12 @@ G.WTS_modbusBridgeSetup = {
       linkedin: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">' +
         '<path fill="#0A66C2" d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0z"/></svg>',
     };
-    var BTN_STYLE = 'display:flex;align-items:center;justify-content:center;gap:10px;width:100%;box-sizing:border-box;min-height:44px;' +
-      'padding:8px 12px;margin:0 0 8px 0;border:1px solid #747775;border-radius:4px;background:#ffffff;color:#1f1f1f;font-size:16px;' +
-      'font-weight:500;line-height:1.2;cursor:pointer';
+    // the size is inline (the same for both providers wherever the buttons are drawn); the look — a neutral dark button with the
+    // provider's own mark in a fixed icon column, the label centred — is the .acct-prov-btn rule of ensureCss (WP-C1)
+    var BTN_STYLE = 'width:100%;min-height:44px;box-sizing:border-box';
 
-    function label(p) { return 'Sign in with ' + NAME[p]; }
+    // label(p, signup): "Sign in with Google" — "Sign up with …" on the dialog's create-account path (the providers' own wording)
+    function label(p, signup) { return (signup ? 'Sign up with ' : 'Sign in with ') + NAME[p]; }
     function nowMs() { return seams.now ? seams.now() : Date.now(); }
     function readHint() { try { var h = JSON.parse(lsGet(KEYS.hint) || 'null'); return h && typeof h === 'object' ? h : {}; } catch (e) { return {}; } }
     function writeHint(h) { h.v = 3; lsSet(KEYS.hint, JSON.stringify(h)); }
@@ -5559,12 +5683,13 @@ G.WTS_modbusBridgeSetup = {
       (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
       return n;
     }
-    function providerButton(p, purpose, onPress) {
-      var b = el('button', { type: 'button', 'class': 'acct-prov-btn', 'data-provider': p, 'data-purpose': purpose, 'aria-label': label(p), style: BTN_STYLE });
+    function providerButton(p, purpose, onPress, signup) {
+      var b = el('button', { type: 'button', 'class': 'acct-prov-btn', 'data-provider': p, 'data-purpose': purpose, 'aria-label': label(p, signup), style: BTN_STYLE });
+      try { ensureCss(); } catch (e) { /* none */ }
       var mark = el('span', { 'class': 'acct-prov-mark', 'aria-hidden': 'true', style: 'display:inline-flex;width:20px;height:20px' });
       mark.innerHTML = ASSETS[p];                          // a constant asset, never data
       b.appendChild(mark);
-      b.appendChild(el('span', { 'class': 'acct-prov-label', text: label(p) }));
+      b.appendChild(el('span', { 'class': 'acct-prov-label', text: label(p, signup) }));
       b.onclick = onPress;
       return b;
     }
@@ -5594,7 +5719,7 @@ G.WTS_modbusBridgeSetup = {
             api.signInWith(p, { publicDevice: !!o.publicDevice }).catch(function (e) {
               statusLine(wrap, text(e && e.code, p, e && e.body && e.body.reason));
             });
-          }));
+          }, !!o.signup));
           if (st[p] === 'signin') wrap.appendChild(el('div', { 'class': 'acct-prov-note', text: 'existing accounts only', style: 'margin:-4px 0 8px 0;font-size:13px' }));
         });
         var any = !!wrap.querySelector('.acct-prov-btn');
@@ -5602,7 +5727,8 @@ G.WTS_modbusBridgeSetup = {
           wrap.appendChild(el('div', { 'class': 'acct-prov-note acct-prov-public', style: 'font-size:13px;margin:0 0 8px 0',
             text: 'You will also be signed in to Google / LinkedIn in this browser — sign out of it too when you finish.' }));
         }
-        if (any) wrap.appendChild(el('div', { 'class': 'acct-prov-note', style: 'font-size:13px', text: "Can't use Google or LinkedIn? Use the e-mail code." }));
+        // o.compact (the sign-in dialog, whose e-mail field follows right below): no "use the e-mail code" line
+        if (any && !o.compact) wrap.appendChild(el('div', { 'class': 'acct-prov-note', style: 'font-size:13px', text: "Can't use Google or LinkedIn? Use the e-mail code." }));
         if (offline()) Array.prototype.forEach.call(wrap.querySelectorAll('.acct-prov-btn'), function (b) { b.disabled = true; b.setAttribute('title', 'needs a connection'); });
         host.appendChild(wrap);
         return st;
@@ -5635,11 +5761,11 @@ G.WTS_modbusBridgeSetup = {
       dlgEscape = true;
       // the same look as the sign-in dialog (#acct_dlg): its overlay and box classes and theme tokens (review fix)
       try { ensureCss(); } catch (e) { /* none */ }
-      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-ov acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
+      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-ov acct-ov--modal acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
         'aria-labelledby': 'acct_oauth_title' });
-      var box = el('div', { 'class': 'acct-dlg acct-oauth-box' });
-      box.appendChild(el('h2', { id: 'acct_oauth_title', text: 'Sign in', style: 'font-size:18px;margin:0 0 12px 0' }));
-      box.appendChild(el('div', { id: 'acct_oauth_body' }));
+      var box = el('div', { 'class': 'acct-dlg acct-modal acct-oauth-box' });
+      box.appendChild(el('div', { 'class': 'acct-hd' }, [el('h2', { id: 'acct_oauth_title', 'class': 'acct-title', text: 'Sign in' })]));
+      box.appendChild(el('div', { id: 'acct_oauth_body', 'class': 'acct-body' }));
       dlg.appendChild(box);
       dlg.onkeydown = dlgKey;
       d.body.appendChild(dlg);
@@ -5654,10 +5780,11 @@ G.WTS_modbusBridgeSetup = {
     function dbody() { var d = dialog(); return d ? d.querySelector('#acct_oauth_body') : null; }
     // the heading names the step (never "Sign in" on the blocking public sign-out step)
     function title(t) { var d = dialog(); var h = d && d.querySelector('#acct_oauth_title'); if (h) h.textContent = t; }
-    function para(cls, txt, extra) { return el('p', Object.assign({ 'class': cls, text: txt, style: 'margin:0 0 12px 0' }, extra || {})); }
+    function para(cls, txt, extra) { return el('p', Object.assign({ 'class': cls, text: txt }, extra || {})); }
+    // full-width stacked 44 px buttons in the modal card (.acct-modal .btn); on the account page's methods card the same size
     function btn(id, txt, primary, fn) {
       return el('button', { type: 'button', id: id, 'class': primary ? 'btn btn-primary' : 'btn btn-secondary', onclick: fn,
-        style: 'min-height:44px;font-size:16px;margin:8px 8px 0 0', text: txt });
+        style: 'min-height:44px;font-size:16px', text: txt });
     }
     function show(nodes) {
       var b = dbody(); if (!b) return;
@@ -5874,7 +6001,7 @@ G.WTS_modbusBridgeSetup = {
     api.oauthUI = { renderButtons: renderButtons, renderMethods: renderMethods, openFinish: openFinish, providerSignOutStep: providerSignOutStep,
       label: label, ASSETS: ASSETS, text: text, FRESH_OK: FRESH_OK };
     // WP-C1 mount points
-    hooks.renderProviders = function (host, states, ctx) { return renderButtons(host, { publicDevice: !!(ctx && ctx.publicDevice), states: states }); };
+    hooks.renderProviders = function (host, states, ctx) { return renderButtons(host, { publicDevice: !!(ctx && ctx.publicDevice), states: states, compact: !!(ctx && ctx.compact), signup: !!(ctx && ctx.signup) }); };
     hooks.onPublicSignOut = function (info) {
       var p = info && info.authMethod;
       return PROVIDERS.indexOf(p) !== -1 ? providerSignOutStep(p) : null;
@@ -7401,7 +7528,7 @@ G.WTS_modbusBridgeSetup = {
 // everything, delete account), activity and the account help (web only; kept here so it is stripped with the page). Round-10.
 //
 // Same guard as 66; outside it nothing is defined. The registry entry has navHidden:true (host H7: a route, no sidebar
-// button, no home tile). It is registered only with the invite-beta flag and only on a host that carries the account hooks
+// button, no home tile). It is registered only while accounts are on (66 enabled(): on by default, off after ?cloud=0) and only on a host that carries the account hooks
 // (the ACCT-marked #wts_account_host of H8 lands with H7), so on an older host the page can never appear as a sidebar row.
 // Every server string is put on the page escaped. Plain .card / .rbox / table.dtable markup, so reports work unchanged; the
 // route is in the host skip tables (H10). No timers, polling or function wrapping.
@@ -7890,7 +8017,7 @@ G.WTS_modbusBridgeSetup = {
     navHidden: true, render: render,
   };
   var registered = false;
-  // register({force}) → true once the entry is in WTS_calcRegistry: only with the beta flag and a host that has the account
+  // register({force}) → true once the entry is in WTS_calcRegistry: only while accounts are on and on a host that has the account
   // hooks (H7 navHidden lands with H8's ACCT-marked #wts_account_host), unless forced (tests).
   function register(o) {
     o = o || {};
@@ -7946,7 +8073,7 @@ G.WTS_modbusBridgeSetup = {
 // prism-build/69-account-admin.js — the `admin` page: who has signed up, from where and how (owner only). Round-10.
 //
 // Same guard as 66 / 68; outside it nothing is defined. The registry entry has navHidden:true (a route, no sidebar button, no
-// home tile), registered only with the invite-beta flag on a host that carries the account hooks, like the account page. The
+// home tile), registered only while accounts are on (not after ?cloud=0) on a host that carries the account hooks, like the account page. The
 // page shows its content only when GET /me says admin:true (the server decides: WTS_ADMIN_EMAILS); anyone else — signed out,
 // a normal account, or the server answering 404 not_found — sees "Not available". It is opened from the account chip menu
 // ("Admin dashboard"), the account page, or a load with #admin.
