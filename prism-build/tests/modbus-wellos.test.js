@@ -159,6 +159,8 @@ module.exports = [
       assert.deepStrictEqual(kpis, ['Wellhead pressure', 'Bottom-hole gauge pressure', 'Separator pressure', 'Gas rate', 'Oil rate', 'Water rate', 'GOR (sep)', 'Water cut', 'Flare gas rate', 'Tank gas (FT-201)', 'Total GOR']);
       // Modbus without a linked tank_gas tag: tank gas and the total GOR are not linked (unmapped), the separator GOR is good
       assert.ok(C.current().q.tank_gas === 'unmapped' && C.current().q.gor_total === 'unmapped' && C.current().vals.gor_total === null && C.current().q.gor === 'good', 'tank gas quality: ' + JSON.stringify(C.current().q));
+      // 3.4.2 review: no Modbus app variable carries FT-201 yet, so tank gas is form data only (a tag cannot keep a tank_gas link)
+      assert.ok(/^form data only/.test(C.current().src.tank_gas || ''), 'tank gas source: ' + C.current().src.tank_gas);
       // GOR = gas × 10^6 / oil (hand formula) from the displayed values
       assert.near(C.current().vals.gor, C.current().vals.gas_rate * 1e6 / C.current().vals.oil_rate, 1e-6);
       // pause / resume from the Mini WellOS header

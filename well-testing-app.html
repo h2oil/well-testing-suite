@@ -158030,7 +158030,8 @@ window.calcWTS=function(){
         const segOut=(n,s)=>Object.assign({id:SEGM[n][0],from:SEGM[n][1],to:SEGM[n][2],label:SEGM[n][3]},s);
         const sitV=sithp!=null?sithp:1.2*Pwh,sitEst=sithp==null;
         // erosional-velocity warnings of a block's segments, in the text form of the base segment warnings
-        const vws=(ws,ss,ns)=>ss.forEach((g,j)=>{if(!g)return;const nm=SEGM[ns[j]][3];
+        const SEG5S='Bypass→Surge Tank';
+        const vws=(ws,ss,ns,nm5)=>ss.forEach((g,j)=>{if(!g)return;const nm=ns[j]===5&&nm5?nm5:SEGM[ns[j]][3];
             if(g.vSt==='EXCEED')ws.push({t:'error',msg:`${nm}: Velocity ${fmt(g.vel,0)} ft/s EXCEEDS erosional limit ${fmt(g.ve,0)} ft/s`});
             else if(g.vSt==='WARNING')ws.push({t:'warn',msg:`${nm}: Velocity ${fmt(g.vel,0)} ft/s is ${fmt(g.vPct,0)}% of limit — consider upsizing`});});
         const ck2Block=(P0,m5,regRef)=>{
@@ -158096,7 +158097,12 @@ window.calcWTS=function(){
         // V-101 out: the whole stream to the burner / flare line (header P_FLARE_HDR), a production line at P psig or (v3.4.2, the
         // page default; a page without the input too) the surge tank T-201 at its set point (0-30 psig, no Psep − 10 bound), walked
         // through seg 5 'multi' with the flare-line geometry like 'line' (ASSUMPTION); an unknown value → the burner line
-        const P0b=sepByDest==='line'?sepByP:sepByDest==='surge'?wtsClamp(PsurgeRaw,0,30):P_FLARE_HDR;
+        // v3.4.2 review: one builder per destination; 'surge' also carries the burner-line block as sepBy.alt (the rig-up is never
+        // read here: the painter and the engine take alt when no surge tank is in the rig-up, the destination demoted to the burner
+        // line; alt.ck2 is a skipped block, which keeps the default calc inside the timing gate). The 'surge' seg-5 run is labelled
+        // for the route it carries (Bypass→Surge Tank; id sep_flare kept)
+        const sbOf=(dest,noK2)=>{
+        const P0b=dest==='line'?sepByP:dest==='surge'?wtsClamp(PsurgeRaw,0,30):P_FLARE_HDR;
         const B=wtsWalk({P0:P0b,seg5:'multi',heater:true,ck2:null,qs:1}),cb=ck1Of(B.Pco,1);
         const dPb=Pci-B.Pco,dThb=B.Tho-B.Thi,Qdb=CpMix*Math.max(dThb,0)*3600,dutyB=htrEff>0?Qdb/htrEff/1e6:0;
         const nfB=Qg>0&&cb.regime==='No Flow',wb=[];
@@ -158106,17 +158112,20 @@ window.calcWTS=function(){
         // the highest pressure of the bypass path (the line pressure plus the whole line loss up to the choke)
         const pshhB=0.9*DESIGN_P_CK2;
         if(Qg>0&&!nfB&&B.Pho>=pshhB)wb.push({t:'error',msg:`PSHH-104 trips SDV-101 at ${fmt(pshhB,0)} psig (H-101 outlet ${fmt(B.Pho,0)} psig): this line pressure shuts the well in — lower the line pressure or go to the burner line`});
-        if(sepByDest==='line'&&!nfB&&B.Pco>DESIGN_P_CK2)wb.push({t:'warn',msg:`Bypass path ${fmt(B.Pco,0)} psig at the CK-101 outlet (production line ${fmt(P0b,0)} psig plus line loss ${fmt(B.Pco-P0b,1)} psi) above the 1,440 psig design pressure (blocked outlet not simulated)`});
-        if(Qg>0&&!nfB)vws(wb,[B.s3,B.s4,B.s5],[3,4,5]);
-        if(sepByDest==='surge')wb.push({t:'warn',msg:`Whole well stream into the surge tank at ${fmt(P0b,0)} psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in — for liquid-dominated flow-back`});
-        sepByBlk={v:1,dest:sepByDest,P0_psig:P0b,noFlow:nfB,
+        if(dest==='line'&&!nfB&&B.Pco>DESIGN_P_CK2)wb.push({t:'warn',msg:`Bypass path ${fmt(B.Pco,0)} psig at the CK-101 outlet (production line ${fmt(P0b,0)} psig plus line loss ${fmt(B.Pco-P0b,1)} psi) above the 1,440 psig design pressure (blocked outlet not simulated)`});
+        if(Qg>0&&!nfB)vws(wb,[B.s3,B.s4,B.s5],[3,4,5],dest==='surge'?SEG5S:null);
+        const s5o=segOut(5,B.s5);if(dest==='surge')s5o.label=SEG5S;
+        return {v:1,dest,P0_psig:P0b,noFlow:nfB,
             choke:{regime:cb.regime,flowLimited:cb.flowLimited,QmaxMMscfd:cb.Qcap/1000,QcritMMscfd:Q_crit_max/1000,Pin:Pci,Pout:B.Pco,
                    ratio:cb.ratio,rCrit,dP:dPb,dTjt:jtOf(dPb),wJT},
             nodes:{choke:{P:B.Pco,T:B.Tco},heater:{P:B.Pho,T:B.Tho},sep:{P:B.s4.Pout,T:B.s4.Tout}},
-            segs:[segOut(3,B.s3),segOut(4,B.s4),segOut(5,B.s5)],
+            segs:[segOut(3,B.s3),segOut(4,B.s4),s5o],
             heater:{dP:5,dutyMMBtuHr:dutyB,Tin:B.Thi,Tout:B.Tho},
             surgeP_psig:wtsClamp(PsurgeRaw,0,30),designP_psig:DESIGN_P_CK2,warnings:wb,
-            ck2:ck2Block(P0b,true,cb.regime)};
+            ck2:noK2?{v:1,bean:bean2,pos:ck2Pos,skipped:true,note:'no surge tank in the rig-up: the burner-line fallback is walked without the two-stage CK-102 walk (choose the burner line for it)'}:ck2Block(P0b,true,cb.regime)};
+        };
+        sepByBlk=sbOf(sepByDest);
+        if(sepByDest==='surge')sepByBlk.alt=sbOf('flare',true);
     }catch(e){ck2Blk=null;sepByBlk=null;console.warn('[WTS] flow blocks',e);}
     // ── v3.4.2 LP flare line / tank gas (flow.lp; display only, the base walk is read-only). GOR1 = separator gas over the oil;
     //    GOR2 = the Standing flash from the separator to the surge tank at the separator temperature (the engine's ΔRs of qFlashD:
@@ -158147,6 +158156,25 @@ window.calcWTS=function(){
             P_in:F.P_in,dP:F.dP,vel:F.vel,ve:F.ve,vPct:F.vPct,vSt:F.vSt,mach:F.mach,pah:F.pah,design:D,
             atWell:{q_mscfd:Wg.q_mscfd,P_in:Wg.P_in,vel_fts:Wg.vel,ve_fts:Wg.ve,vPct:Wg.vPct,vSt:Wg.vSt,mach:Wg.mach,pah:Wg.pah}};
     }catch(e){lpBlk=null;console.warn('[WTS] LP block',e);}
+    // v3.4.2 review: V-101 out to the surge tank — the gas the tank's back-pressure valve can pass wide open at PSHH (estimate of the
+    // engine's SEPBY_SURGE_CAP: PCV sized for twice the LP design rate at the set point, ISA-75.01 gas law at the PSHH set point
+    // SP + max(SP / 2, 15) against the LP design back pressure, capped at 0.4 × SP). Above it the steady verdict is ✗: PSHH shuts the
+    // well in (the expected result at normal gas rates). Names stay generic here (the painter names the receiving tank)
+    if(sepByBlk&&sepByBlk.dest==='surge'){
+        let cap=null;
+        try{
+            const PSC=14.696,SPs=wtsClamp(PsurgeRaw,0,30),TR=Tsi+459.67,fx=1.28/1.4*0.72;
+            const gq=(P1,P2)=>{if(!(P1>P2))return 0;let x=(P1-P2)/P1;if(x>fx)x=fx;return P1*(1-x/(3*fx))*Math.sqrt(x/(Math.max(SGg,0.05)*TR*Z(P1,TR)));};
+            const desM=lpBlk?lpBlk.design_mscfd:50,P2d=lpBlk&&lpBlk.design?lpBlk.design.P_in:0.45;
+            const P2=PSC+Math.min(P2d,0.4*SPs),P1u=Math.max(SPs+PSC,P2+5),P1c=SPs+Math.max(0.5*SPs,15)+PSC,g1=gq(P1u,P2);
+            cap=g1>0?2*desM*gq(P1c,P2)/g1/1000:null;
+        }catch(_){cap=null;}
+        const P0s=sepByBlk.P0_psig,over=cap!=null&&Qg>cap;
+        sepByBlk.gasCapEst_mmscfd=cap; sepByBlk.overCap=over;
+        sepByBlk.warnings.push({t:over?'error':'warn',k:'surge',
+            msg:over?`Whole well stream into the surge tank at ${fmt(P0s,0)} psig: ${fmt(Qg,2)} MMSCFD of gas against the capacity of the back-pressure valve, about ${fmt(cap,2)} MMSCFD at PSHH — PSHH shuts the well in (ESD); use the burner line, or this route only for liquid-dominated flow-back`
+                    :`Whole well stream into the surge tank at ${fmt(P0s,0)} psig: the back-pressure valve vents the gas (about ${cap!=null?fmt(cap,2):'—'} MMSCFD at PSHH, ${fmt(Qg,2)} MMSCFD now); above its capacity PSHH shuts the well in — for liquid-dominated flow-back`});
+    }
     // ── Build node array ──
     const nodes=[
         {nm:'Wellhead',P:Pwh,T:Twh,th:Thyd(Pwh+14.696)},
@@ -158306,7 +158334,11 @@ function wtsPaint(C,rig){
     const r=rig&&typeof rig==='object'?rig:{},fl=C.flow&&typeof C.flow==='object'?C.flow:null,uF=C.uF,UV=C.UV;
     const sepOut=r.separator===false,inRig=r.heaterChoke===true;
     const byp=inRig&&(r.heater===false||!!(fl&&fl.inputs&&fl.inputs.bypass)),act=inRig&&!byp;
-    const sb=sepOut&&fl&&fl.sepBy&&typeof fl.sepBy==='object'?fl.sepBy:null;
+    // v3.4.2 review: the receiving surge tank of dest 'surge' (T-201 in → T-201; T-201 out, T-202 in → T-202; neither → none, and the
+    // burner-line block sepBy.alt is shown with the engine's fallback note, as normRigup demotes the destination)
+    const recv=r.surge!==false?{t:'T-201',pcv:'PCV-201',pshh:'PSHH-201'}:r.surge2===true?{t:'T-202',pcv:'PCV-203',pshh:'PSHH-202'}:null;
+    const sb0=sepOut&&fl&&fl.sepBy&&typeof fl.sepBy==='object'?fl.sepBy:null;
+    const noTank=!!(sb0&&sb0.dest==='surge'&&!recv),sb=noTank?(sb0.alt&&typeof sb0.alt==='object'?sb0.alt:null):sb0;
     const kb0=act&&fl?(sepOut?(sb&&sb.ck2):fl.ck2):null,kb=kb0&&typeof kb0==='object'&&kb0.skipped===false?kb0:null;
     const rrow=(l,v)=>`<div class="rrow"><span class="rl">${l}</span><span class="rv">${v}</span></div>`;
     const nrow=(nm,P,T,th)=>{const hyd=T<th&&P>10,sc=hyd?'color:var(--blue);font-weight:700':'color:var(--green)';
@@ -158326,8 +158358,11 @@ function wtsPaint(C,rig){
         if(n.heater)rowAt(3,nrow('Heater (with CK-102)',n.heater.P,n.heater.T,thOf(n.heater.P)));}
     if(kb)put(C.iRowCk,nrow('Heater choke (CK-102)',kb.Pout,kb.Tout,kb.hyd.T));
     if(sb){const s5=sb.segs&&sb.segs[2];
-        const dTx=sb.dest==='line'?'production line':sb.dest==='surge'?'surge tank T-201':'burner line';
-        put(C.iRowEnd,nrow('→ '+dTx,sb.P0_psig,s5?s5.Tout:NaN,C.Thyd(sb.P0_psig+14.696)));
+        const dTx=sb.dest==='line'?'production line':sb.dest==='surge'?'surge tank '+recv.t:'burner line';
+        let dRow=nrow('→ '+dTx,sb.P0_psig,s5?s5.Tout:NaN,C.Thyd(sb.P0_psig+14.696));
+        // over the tank's gas capacity the destination row's verdict is the PSHH trip, not OK
+        if(sb.dest==='surge'&&sb.overCap===true)dRow=dRow.replace(/<td style="color:var\(--green\)">OK<\/td><\/tr>$/,'<td style="color:var(--red);font-weight:700">&#9888; '+recv.pshh+' TRIP (gas over '+recv.pcv+')</td></tr>');
+        put(C.iRowEnd,dRow);
         put(C.iChokeEnd,rrow('With V-101 out, to '+dTx,
             'downstream '+uF(sb.choke.Pout,'pressureG',0,'psig')+' &middot; '+sb.choke.regime+(sb.choke.flowLimited?' (flow-limited)':'')));}
     if(kb)put(C.iChokeEnd,rrow('Two-stage with CK-102','P between chokes '+uF(kb.Pin,'pressureG',0,'psig')+' &middot; CK-101 '+kb.ck1.regime));
@@ -158365,7 +158400,7 @@ function wtsPaint(C,rig){
         const stC=s=>s==='EXCEED'?'var(--red)':s==='WARNING'?'var(--yellow)':'var(--green)';
         const velTx=o=>`<span style="color:${stC(o.vSt)};font-weight:700">${uF(o.vel,'velocity',1,'ft/s')}</span> &middot; ${fmt(o.vPct,0)}% of ${uF(o.ve,'velocity',0,'ft/s')} &middot; Mach ${fmt(o.mach,3)} &middot; ${o.vSt}`;
         let b='<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line / tank gas (FT-201)</div>';
-        b+=rrow('Line',`${lp.nps}" SCH ${lp.sch} &middot; ${uF(lp.L,'length',0,'ft')} &middot; surge-tank PCV and PSV gas through FT-201 to the LP tip on FS-401`);
+        b+=rrow('Line',`${lp.nps}" SCH ${lp.sch} &middot; ${uF(lp.L,'length',0,'ft')} &middot; surge-tank PCV and PSV gas through FT-201 to ${r.flare===false?'the atmospheric vent (FS-401 out)':'the LP tip on FS-401'}`);
         if(sepOut)b+=rrow('GOR','V-101 out: no separator meter, GOR not measured');
         else{b+=rrow('GOR1 (separator)',uF(lp.gor1,'gor',0,'scf/STB'));b+=rrow('GOR2 (tank, PVT est.)',uF(lp.gor2,'gor',0,'scf/STB'));
             b+=rrow('Total GOR',uF(lp.gorTot,'gor',0,'scf/STB'));}
@@ -158373,8 +158408,9 @@ function wtsPaint(C,rig){
         b+=rrow('LP line inlet P (flash / design)',uF(lp.P_in,'pressureG',2,'psig')+' / '+uF(lp.design.P_in,'pressureG',2,'psig')+' &middot; alarm '+uF(lp.bpAlarm_psig,'pressureG',1,'psig'));
         b+=rrow('Velocity at the flash rate',velTx({vel:lp.vel,ve:lp.ve,vPct:lp.vPct,mach:lp.mach,vSt:lp.vSt}));
         b+=rrow('Velocity at the design rate',velTx(lp.design));
-        if(sepOut&&fl.sepBy&&fl.sepBy.dest==='surge'){const w=lp.atWell;
-            b+=rrow('Whole well gas to the tanks',uF(w.q_mscfd,'gasRateSmall',0,'Mscf/d')+' &middot; '+velTx({vel:w.vel_fts,ve:w.ve_fts,vPct:w.vPct,mach:w.mach,vSt:w.vSt}));}
+        if(sepOut&&fl.sepBy&&fl.sepBy.dest==='surge'){const w=lp.atWell,cp=fl.sepBy.gasCapEst_mmscfd;
+            b+=rrow('Whole well gas to the tanks',uF(w.q_mscfd,'gasRateSmall',0,'Mscf/d')+' &middot; '+velTx({vel:w.vel_fts,ve:w.ve_fts,vPct:w.vPct,mach:w.mach,vSt:w.vSt}));
+            if(cp!=null&&isFinite(cp))b+=rrow((recv?recv.pcv:'PCV')+' gas capacity at '+(recv?recv.pshh:'PSHH'),(fl.sepBy.overCap?'<span style="color:var(--red);font-weight:700">':'<span>')+'about '+uF(cp*1000,'gasRateSmall',0,'Mscf/d')+' &middot; well gas '+uF(w.q_mscfd,'gasRateSmall',0,'Mscf/d')+(fl.sepBy.overCap?' &mdash; over: the well is shut in':'')+'</span>');}
         b+=rrow('T-301 vent, not metered',uF(lp.residualT301_scfstb,'gor',0,'scf/STB')+' still in the oil at the surge tank pressure');
         h+=b+'</div>';
         if(lp.design.vSt!=='OK')lpW.push({t:lp.design.vSt==='EXCEED'?'error':'warn',m:`LP flare line: velocity ${fmt(lp.design.vel,0)} ft/s is ${fmt(lp.design.vPct,0)}% of limit at the design rate — consider a larger line`});
@@ -158387,7 +158423,10 @@ function wtsPaint(C,rig){
     // seg 3-5; CK-102 in line: seg 3-4), and with both, the sepBy ones of seg 3-4 (sepBy.ck2 has them)
     if(sb)ws=ws.filter(w=>!(w.seg>=2&&w.seg<=4));else if(kb)ws=ws.filter(w=>!(w.seg>=2&&w.seg<=3));
     const segW=/^(Choke→Heater|Heater→Sep): Velocity /;
-    [sb,kb].forEach(bk=>{if(bk&&Array.isArray(bk.warnings))bk.warnings.forEach(w=>{if(bk===sb&&kb&&segW.test(w.msg))return;ws.push({t:w.t,m:wtsEsc(w.msg)});});});
+    // the block's surge warning (k 'surge') is written with generic names: the receiving tank's own PCV / PSHH are put in here
+    const nmR=m=>recv?String(m).replace('into the surge tank','into the surge tank '+recv.t).replace(/the back-pressure valve/g,recv.pcv).replace(/PSHH (shuts|at)/g,recv.pshh+' $1'):m;
+    if(noTank)ws.push({t:'info',m:'No surge tank in the rig-up, so the whole stream goes to the burner / flare line.'});
+    [sb,kb].forEach(bk=>{if(bk&&Array.isArray(bk.warnings))bk.warnings.forEach(w=>{if(bk===sb&&kb&&segW.test(w.msg))return;ws.push({t:w.t,m:wtsEsc(w.k==='surge'?nmR(w.msg):w.msg)});});});
     lpW.forEach(w=>ws.push({t:w.t,m:wtsEsc(w.m)}));
     const wEl=$('wts_warn');
     if(wEl){
@@ -158402,6 +158441,10 @@ function wtsPaint(C,rig){
     if(pe&&typeof pe.closest==='function')pe.disabled=!line;
     tog('wts_sepByP',line,false);
     {const w=rowOf('wts_sepByP');if(w&&w.classList)w.classList.toggle('wts-dis',!line);}
+    // v3.4.2 review: with a rig-up handed over, the 'surge' option names the receiving tank, and is not offered (disabled; a stored
+    // choice is kept and runs on the burner line, as above) while no surge tank is in; no rig-up → the option as written
+    if(rig&&typeof rig==='object'){const d=$('wts_sepByDest'),o=d&&d.options?Array.prototype.find.call(d.options,x=>x&&x.value==='surge'):null;
+        if(o){o.textContent=recv?'Surge tank '+recv.t:'Surge tank (none in the rig-up: burner line)';o.disabled=!recv;}}
 }
 window.wtsRenderResults=function(flow,rig){
     if(rig&&typeof rig==='object'&&!Array.isArray(rig))wtsRig=Object.assign({},rig);
