@@ -23,6 +23,7 @@ const SE = require('../core/session');
 const R = require('../core/rate');
 const E = require('../core/envelope');
 const { code8, revertKey } = require('../core/keys');
+const I = require('../core/insight');
 
 const ADDR = 'user.address';     // one envelope field label for every address column (they move between columns in SQL)
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
@@ -183,6 +184,8 @@ async function codeVerify(ctx) {
   // 2. a sign-in (or sign-up) with an e-mail code
   const email = V.normEmail(b.email);
   if (!email) fail('invalid_or_expired');
+  // the optional profile (insight follow-up) is stored only when this request creates the account; checked before any try
+  const profile = b.profile !== undefined ? I.normProfile(b.profile) : null;
   const bidx = ctx.keys.emailBidx(email);
   const CONSENT = {};
   const res = await S.unitOf(ctx, null, async (unit) => {
@@ -224,6 +227,7 @@ async function codeVerify(ctx) {
     const device = await S.deviceFor(unit, ctx, userId, { label: b.deviceLabel, publicDevice: b.publicDevice });
     const sess = await SE.issue(unit, ctx, { userId, deviceId: device.id, publicDevice: b.publicDevice, method: 'code', stepup: true, signup: first });
     if (first) await unit.audit('signup', { deviceId: device.id, detail: { method: 'code' } });
+    if (first && profile && !I.isEmptyProfile(profile)) await I.storeProfile(unit, profile, 'signup', device.id);
     await unit.audit('signin', { deviceId: device.id, detail: { method: 'code', newDevice: device.isNew, via: acc && acc.role === 'recovery' ? 'recovery' : 'primary' } });
     if (device.isNew && !first) await unit.mail(a.primary, 'notice_new_device', mailParams(unit));
     return signInBody(a.u.row, a.primary, sess, device, first);

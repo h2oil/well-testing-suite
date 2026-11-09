@@ -82,7 +82,7 @@ module.exports = [
   {
     name: 'AC1 shared fixture: examples, envelopes, broken copies, strict requests, canonical vectors', wp: WP, opts: false,
     run(app, assert) {
-      assert.strictEqual(S.ENDPOINTS.length, 54);   // 50 + the four admin dashboard routes
+      assert.strictEqual(S.ENDPOINTS.length, 56);   // 50 + the four admin dashboard routes + profileUpdate, adminUser (insight)
       assert.deepStrictEqual(S.ENDPOINTS.map((e) => e.id).filter((id, i, a) => a.indexOf(id) !== i), [], 'endpoint ids are unique');
       for (const e of S.ENDPOINTS) {
         const ex = S.EXAMPLES[e.id];

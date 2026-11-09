@@ -152,7 +152,7 @@ build command needs no secret either way); tick **Contains secret values** for e
 | `WTS_ADMIN_EMAILS` | optional: the admin addresses (comma-separated); unset = the `WTS_INVITE_BOOTSTRAP` addresses — see "Admin dashboard" below |
 | `SYNC_MODE` | `on` |
 | `WTS_MIN_CLIENT` | `4.0` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (Privacy notice version 2 adds the country / city statistics) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (Privacy notice version 2 adds the country / city statistics, the optional profile and the project summaries) |
 | `WTS_DB_ROLE_MODE` | only if step L5 says so: `local` |
 
 Do **not** set: `WTS_PROXY_SIG`, `WTS_HOST_HEADER`, `WTS_CLIENT_IP_HEADER` (same-site mode fixes both), `WTS_DB_URL`,
@@ -239,7 +239,15 @@ sign-ups per day (90 days), the account list (newest first, search by part of an
 - **Audit:** every admin call writes a row on the admin's own security-log chain (actor `admin`, action `admin.summary`,
   `admin.users`, `admin.invite`); search text and invited addresses are never written. A signed-in non-admin's attempt writes
   `admin.denied`. Admin reads are limited to 600 per hour per admin, invites to 200 per day.
-- Routes: `GET /api/v1/admin/summary`, `GET /api/v1/admin/users?limit=&cursor=&q=`, `GET|POST /api/v1/admin/invites`
+- **Profile and project summaries** (migration `070-insight.sql`): an account may give an optional profile (name, company, job
+  title, country, phone) at sign-up or later (`PUT /api/v1/account/profile`), stored in `users.profile_enc`; each Save to cloud
+  may carry a short project summary (well names, client, operator, company, field, rig, country, job reference, modules,
+  project name), the latest one kept in `projects.summary_enc`. Both are sealed with the account's own data key and opened by
+  the admin routes only: the users list shows the profile and "work" (wells, clients, operators, fields, countries), the
+  user detail `GET /api/v1/admin/users/<id>` (audited `admin.user`) lists the live projects with their summaries, and the
+  summary adds the top companies, clients and fields. Privacy notice version 2 describes this; keep it in step.
+- Routes: `GET /api/v1/admin/summary`, `GET /api/v1/admin/users?limit=&cursor=&q=`, `GET /api/v1/admin/users/<id>`,
+  `GET|POST /api/v1/admin/invites`
   (`functions/admin.js`; contract in `core/contract.js`).
 
 ### Rollback

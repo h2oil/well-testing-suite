@@ -58,6 +58,27 @@ CREATE FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) RETURNS boolean
 
 ALTER FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) OWNER TO wts_definer;
 
+CREATE FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) RETURNS TABLE(user_id uuid, data_key_wrapped bytea, profile_enc bytea, summaries bytea[], last_project_at timestamp with time zone)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+BEGIN
+  PERFORM wts._admin_check(p_admins);
+  RETURN QUERY
+    SELECT u.id, u.data_key_wrapped, u.profile_enc,
+           coalesce((SELECT array_agg(x.summary_enc ORDER BY x.modified_at DESC)
+                       FROM (SELECT p.summary_enc, p.modified_at FROM wts.projects p
+                              WHERE p.user_id = u.id AND p.deleted_at IS NULL AND p.summary_enc IS NOT NULL
+                              ORDER BY p.modified_at DESC LIMIT 200) x), '{}'::bytea[]),
+           (SELECT max(p.modified_at) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL)
+      FROM wts.users u
+     WHERE p_ids IS NULL OR u.id = ANY (p_ids)
+     ORDER BY u.created_at DESC, u.id DESC
+     LIMIT 10000;
+END $$;
+
+ALTER FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) OWNER TO wts_definer;
+
 CREATE FUNCTION wts.admin_invite_add(p_admins bytea[], p_email_bidx bytea, p_note text) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
@@ -122,6 +143,38 @@ BEGIN
 END $$;
 
 ALTER FUNCTION wts.admin_summary(p_admins bytea[]) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) RETURNS TABLE(id uuid, email_enc bytea, data_key_wrapped bytea, signup_method text, status text, created_at timestamp with time zone, last_sign_in_at timestamp with time zone, signup_country text, last_country text, last_city text, projects bigint, used_bytes bigint, profile_enc bytea)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+BEGIN
+  PERFORM wts._admin_check(p_admins);
+  RETURN QUERY
+    SELECT u.id, u.email_enc, u.data_key_wrapped, u.signup_method, u.status, u.created_at, u.last_sign_in_at,
+           u.signup_country::text, u.last_country::text, u.last_city,
+           (SELECT count(*) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL), u.used_bytes, u.profile_enc
+      FROM wts.users u
+     WHERE u.id = p_id;
+END $$;
+
+ALTER FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) OWNER TO wts_definer;
+
+CREATE FUNCTION wts.admin_user_projects(p_admins bytea[], p_id uuid) RETURNS TABLE(id uuid, meta_enc bytea, summary_enc bytea, summary_at timestamp with time zone, modified_at timestamp with time zone, head_bytes bigint)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'wts', 'pg_temp'
+    AS $$
+BEGIN
+  PERFORM wts._admin_check(p_admins);
+  RETURN QUERY
+    SELECT p.id, p.meta_enc, p.summary_enc, p.summary_at, p.modified_at, p.head_bytes::bigint
+      FROM wts.projects p
+     WHERE p.user_id = p_id AND p.deleted_at IS NULL
+     ORDER BY p.modified_at DESC, p.id DESC
+     LIMIT 200;
+END $$;
+
+ALTER FUNCTION wts.admin_user_projects(p_admins bytea[], p_id uuid) OWNER TO wts_definer;
 
 CREATE FUNCTION wts.admin_users(p_admins bytea[], p_limit integer, p_before_at timestamp with time zone, p_before_id uuid) RETURNS TABLE(id uuid, email_enc bytea, data_key_wrapped bytea, signup_method text, status text, created_at timestamp with time zone, last_sign_in_at timestamp with time zone, signup_country text, last_country text, last_city text, projects bigint, used_bytes bigint)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -1201,7 +1254,10 @@ CREATE TABLE wts.projects (
     created_at timestamp with time zone NOT NULL,
     modified_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
-    is_conflict_of uuid
+    is_conflict_of uuid,
+    summary_enc bytea,
+    summary_at timestamp with time zone,
+    CONSTRAINT projects_summary_enc_check CHECK (((octet_length(summary_enc) >= 1) AND (octet_length(summary_enc) <= 32768)))
 );
 
 ALTER TABLE ONLY wts.projects FORCE ROW LEVEL SECURITY;
@@ -1324,8 +1380,10 @@ CREATE TABLE wts.users (
     signup_country character(2),
     last_country character(2),
     last_city text,
+    profile_enc bytea,
     CONSTRAINT users_last_city_check CHECK (((char_length(last_city) >= 1) AND (char_length(last_city) <= 80))),
     CONSTRAINT users_last_country_check CHECK ((last_country ~ '^[A-Z]{2}$'::text)),
+    CONSTRAINT users_profile_enc_check CHECK (((octet_length(profile_enc) >= 1) AND (octet_length(profile_enc) <= 4096))),
     CONSTRAINT users_signup_country_check CHECK ((signup_country ~ '^[A-Z]{2}$'::text)),
     CONSTRAINT users_signup_method_check CHECK ((signup_method = ANY (ARRAY['code'::text, 'google'::text, 'linkedin'::text]))),
     CONSTRAINT users_status_check CHECK ((status = ANY (ARRAY['active'::text, 'locked'::text, 'deleting'::text])))
@@ -1562,6 +1620,9 @@ GRANT ALL ON FUNCTION wts._window10() TO wts_definer;
 
 REVOKE ALL ON FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) FROM PUBLIC;
 
+REVOKE ALL ON FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) TO wts_api;
+
 REVOKE ALL ON FUNCTION wts.admin_invite_add(p_admins bytea[], p_email_bidx bytea, p_note text) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.admin_invite_add(p_admins bytea[], p_email_bidx bytea, p_note text) TO wts_api;
 
@@ -1570,6 +1631,12 @@ GRANT ALL ON FUNCTION wts.admin_invites(p_admins bytea[]) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.admin_summary(p_admins bytea[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.admin_summary(p_admins bytea[]) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) TO wts_api;
+
+REVOKE ALL ON FUNCTION wts.admin_user_projects(p_admins bytea[], p_id uuid) FROM PUBLIC;
+GRANT ALL ON FUNCTION wts.admin_user_projects(p_admins bytea[], p_id uuid) TO wts_api;
 
 REVOKE ALL ON FUNCTION wts.admin_users(p_admins bytea[], p_limit integer, p_before_at timestamp with time zone, p_before_id uuid) FROM PUBLIC;
 GRANT ALL ON FUNCTION wts.admin_users(p_admins bytea[], p_limit integer, p_before_at timestamp with time zone, p_before_id uuid) TO wts_api;
@@ -1879,6 +1946,8 @@ GRANT UPDATE(signup_country) ON TABLE wts.users TO wts_api;
 GRANT UPDATE(last_country) ON TABLE wts.users TO wts_api;
 
 GRANT UPDATE(last_city) ON TABLE wts.users TO wts_api;
+
+GRANT UPDATE(profile_enc) ON TABLE wts.users TO wts_api;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE wts.webauthn_challenges TO wts_definer;
 GRANT SELECT,DELETE ON TABLE wts.webauthn_challenges TO wts_jobs;

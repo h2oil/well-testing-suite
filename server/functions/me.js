@@ -8,6 +8,7 @@ const V = require('../core/validate');
 const S = require('../core/service');
 const SE = require('../core/session');
 const { _internal: A } = require('./auth');
+const I = require('../core/insight');
 
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
 
@@ -35,6 +36,8 @@ async function me(ctx) {
       projects, passkeys, identities, devices, minClient: ctx.config.minClient,
       // the admin dashboard (functions/admin.js): this account's primary address is in WTS_ADMIN_EMAILS
       admin: !!(ctx.config.adminEmails && ctx.config.adminEmails.has(a.primary)),
+      // the optional profile (insight follow-up): every field null when none was given
+      profile: I.openProfile(a.u, r.profile_enc) || I.emptyProfile(),
     };
   });
   return { status: 200, body };

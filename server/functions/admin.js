@@ -3,8 +3,14 @@
 // Admin, route #admin): who has signed up, from where (the country / city the hosting platform derives from the connection,
 // never the address), how active, how much is stored; the invite allow-list.
 //
-//   GET  /admin/summary   totals, byCountry, byMethod, signupsByDay (one aggregate statement, definer wts.admin_summary)
-//   GET  /admin/users     ?limit=50 (1–200) &cursor=<opaque> &q=<part of an address>; newest first, keyset on (created_at, id)
+//   GET  /admin/summary   totals, byCountry, byMethod, signupsByDay (one aggregate statement, definer wts.admin_summary);
+//                         byCompany (profiles), topClients / topFields (project summaries) — opened here with each account's
+//                         key ring (definer wts.admin_insight), top 20, counted case-insensitively
+//   GET  /admin/users     ?limit=50 (1–200) &cursor=<opaque> &q=<part of an address>; newest first, keyset on (created_at, id);
+//                         each row with the optional profile and "work" (what the account's live projects are about, from
+//                         their latest summaries: wells, clients, operators, fields, countries, lastProjectAt)
+//   GET  /admin/users/:id one account (the same row) and its live projects with their latest summaries (definers
+//                         wts.admin_user_get / admin_user_projects of 070-insight.sql); an unknown id → 404; audited admin.user
 //   POST /admin/invites   {email, note?} → 201 {ok:true}; adds the address's keyed index to the allow-list (idempotent)
 //   GET  /admin/invites   the allow-list: {addedAt, note} (the list holds keyed indexes only, so no address comes back)
 //
@@ -12,7 +18,7 @@
 // WTS_INVITE_BOOTSTRAP addresses). Everyone else — signed out, locked, deleting or simply not an admin — gets 404 not_found,
 // exactly like an unknown route. The database repeats the check (every admin definer refuses unless app.user_id is an active
 // account whose address index is in the list the handler passes). Every admin call is rate-limited per admin and writes an
-// audit row on the admin's chain (actor 'admin', action admin.summary / admin.users / admin.invite — add and list); a signed-in non-admin's
+// audit row on the admin's chain (actor 'admin', action admin.summary / admin.users / admin.user / admin.invite — add and list); a signed-in non-admin's
 // call writes 'admin.denied' (actor 'user'; the first 30 an hour, rate adminDeniedUserHour, still 404 after). Parameters and
 // bodies are checked only behind the gate, and core/app.js answers 404 for any refusal before the handler. The search text and invited addresses are never written to the audit.
 
@@ -22,10 +28,13 @@ const E = require('../core/envelope');
 const SE = require('../core/session');
 const R = require('../core/rate');
 const { _internal: A } = require('./auth');
+const I = require('../core/insight');
+const P = require('./projects')._internal;
 
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
 const arr = (sql, bufs) => sql.array(bufs, 17);     // bytea[]
 const CURSOR_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SCAN = 500;                                    // rows read per batch while a search filters on the opened addresses
 
 function adminBidxs(ctx) { return Array.from(ctx.config.adminEmails || []).map((e) => ctx.keys.emailBidx(e)); }
@@ -77,10 +86,47 @@ function openEmail(ctx, row) {
   }
 }
 
+// the profile and "work" of the given accounts (one statement, definer wts.admin_insight; ids null = every account) →
+// Map<id, {profile, summaries[], lastProjectAt}>; each account's key ring is opened once
+async function insightOf(ctx, unit, admins, ids) {
+  const rows = await unit.sql`select * from wts.admin_insight(${admins}, ${ids ? unit.sql.array(ids, 2950) : null}::uuid[])`;
+  const out = new Map();
+  for (const r of rows) {
+    const ring = I.ringOf(ctx.keys, r.data_key_wrapped);
+    if (!ring) ctx.log.warn('admin: a key ring could not be opened');
+    out.set(r.user_id, {
+      profile: I.profileWith(ring, r.profile_enc),
+      summaries: (r.summaries || []).map((b) => I.summaryWith(ring, b)).filter(Boolean),
+      lastProjectAt: iso(r.last_project_at),
+    });
+  }
+  return out;
+}
+function workOf(ins) {
+  const sm = (ins && ins.summaries) || [];
+  const flat = (k) => sm.map((x) => x[k]);
+  return {
+    wells: I.distinct([].concat(...sm.map((x) => x.wells)), 20),
+    clients: I.distinct(flat('client'), 20), operators: I.distinct(flat('operator'), 20),
+    fields: I.distinct(flat('field'), 20), countries: I.distinct(flat('country'), 20),
+    lastProjectAt: ins ? ins.lastProjectAt : null,
+  };
+}
+function userRow(r, email, ins) {
+  return {
+    id: r.id, email, method: r.signup_method, status: r.status, createdAt: iso(r.created_at), lastSignInAt: iso(r.last_sign_in_at),
+    signupCountry: r.signup_country || null, lastCountry: r.last_country || null, lastCity: r.last_city || null,
+    projects: Number(r.projects) || 0, usedBytes: Number(r.used_bytes) || 0,
+    profile: (ins && ins.profile) || null, work: workOf(ins),
+  };
+}
+
 async function adminSummary(ctx) {
   const body = await asAdmin(ctx, async (unit, s, admins) => {
     await R.enforce(unit.sql, 'adminReadUserHour', s.userId);
     const r = (await unit.sql`select wts.admin_summary(${admins}) as v`)[0].v;
+    const ins = Array.from((await insightOf(ctx, unit, admins, null)).values());
+    const sums = [].concat(...ins.map((x) => x.summaries));
     await unit.audit('admin.summary', { actor: 'admin', deviceId: s.deviceId, detail: { users: r.totals.users } });
     const n = (v) => Number(v) || 0;
     return {
@@ -90,6 +136,9 @@ async function adminSummary(ctx) {
       byCountry: r.byCountry.map((c) => ({ country: c.country || null, users: n(c.users), active30d: n(c.active30d) })),
       byMethod: r.byMethod.map((m) => ({ method: m.method, users: n(m.users) })),
       signupsByDay: r.signupsByDay.map((d) => ({ day: d.day, n: n(d.n) })),
+      byCompany: I.top(ins.map((x) => x.profile && x.profile.company), 20).map((t) => ({ company: t.value, users: t.n })),
+      topClients: I.top(sums.map((x) => x.client), 20).map((t) => ({ client: t.value, projects: t.n })),
+      topFields: I.top(sums.map((x) => x.field), 20).map((t) => ({ field: t.value, projects: t.n })),
     };
   });
   return { status: 200, body };
@@ -123,14 +172,31 @@ async function adminUsers(ctx) {
       before = { at: last.created_us, id: last.id };
     }
     await unit.audit('admin.users', { actor: 'admin', deviceId: s.deviceId, detail: { limit, n: out.length, search: !!q, page: cursor ? 'next' : 'first' } });
+    const ins = out.length ? await insightOf(ctx, unit, admins, out.map((x) => x.r.id)) : new Map();
     return {
-      users: out.map(({ r, email }) => ({
-        id: r.id, email, method: r.signup_method, status: r.status, createdAt: iso(r.created_at), lastSignInAt: iso(r.last_sign_in_at),
-        signupCountry: r.signup_country || null, lastCountry: r.last_country || null, lastCity: r.last_city || null,
-        projects: Number(r.projects) || 0, usedBytes: Number(r.used_bytes) || 0,
-      })),
+      users: out.map(({ r, email }) => userRow(r, email, ins.get(r.id))),
       next: more && out.length ? makeCursor(out[out.length - 1].r) : null,
     };
+  });
+  return { status: 200, body };
+}
+
+async function adminUser(ctx) {
+  const body = await asAdmin(ctx, async (unit, s, admins) => {
+    await R.enforce(unit.sql, 'adminReadUserHour', s.userId);
+    const id = String(ctx.params.id || '');
+    const r = UUID_RE.test(id) ? (await unit.sql`select * from wts.admin_user_get(${admins}, ${id}::uuid)`)[0] : null;
+    await unit.audit('admin.user', { actor: 'admin', deviceId: s.deviceId, target: r ? r.id : null, detail: { found: !!r } });
+    if (!r) return unit.failAfterCommit('not_found');
+    const ring = I.ringOf(ctx.keys, r.data_key_wrapped);
+    const ins = (await insightOf(ctx, unit, admins, [r.id])).get(r.id);
+    const projects = (await unit.sql`select * from wts.admin_user_projects(${admins}, ${r.id})`).map((p) => {
+      let name = '';
+      try { name = String(JSON.parse(I.openWith(ring, P.META, p.meta_enc) || '{}').name || ''); } catch (e) { name = ''; }
+      return { id: p.id, name, updatedAt: iso(p.modified_at), bytes: Number(p.head_bytes) || 0,
+        summary: I.summaryWith(ring, p.summary_enc), summaryAt: iso(p.summary_at) };
+    });
+    return { user: userRow(r, openEmail(ctx, r), ins), projects };
   });
   return { status: 200, body };
 }
@@ -159,4 +225,4 @@ async function adminInvites(ctx) {
   return { status: 200, body };
 }
 
-module.exports = { handlers: { adminSummary, adminUsers, adminInviteAdd, adminInvites }, _internal: { parseCursor, makeCursor, asAdmin } };
+module.exports = { handlers: { adminSummary, adminUsers, adminUser, adminInviteAdd, adminInvites }, _internal: { parseCursor, makeCursor, asAdmin, workOf } };

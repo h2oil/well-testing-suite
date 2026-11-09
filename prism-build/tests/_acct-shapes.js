@@ -106,6 +106,16 @@ const EXAMPLES = {
     signupsByDay: [{ day: '2026-11-08', n: 2 }, { day: '2026-11-09', n: 1 }] } } },
   adminUsers: { res: { 200: { users: [{ id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
     signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200 }], next: null } } },
+  // insight follow-up (server/core/insight.js): the optional profile and the admin user detail
+  profileUpdate: { req: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: 'Well test engineer', country: 'AE', phone: '+971 4 123 4567' },
+    res: { 200: { profile: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: 'Well test engineer', country: 'AE', phone: '+971 4 123 4567' } } } },
+  adminUser: { res: { 200: { user: { id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
+    signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200,
+    profile: { fullName: 'Ana Example', company: 'Operator Energy Ltd', jobTitle: null, country: 'AE', phone: null },
+    work: { wells: ['Example-1'], clients: ['Operator Energy Ltd'], operators: [], fields: ['North Field'], countries: [], lastProjectAt: T0 } },
+    projects: [{ id: P1, name: 'Example-1 DST', updatedAt: T0, bytes: 1200, summaryAt: T0,
+      summary: { name: 'Example-1 DST', client: 'Operator Energy Ltd', operator: null, company: null, field: 'North Field', rig: null, country: null, jobRef: null,
+        wells: ['Example-1'], modules: ['prism'] } }] } } },
   adminInviteAdd: { req: { email: 'name@company.example', note: 'Example-1 crew' }, res: { 201: { ok: true } } },
   adminInvites: { res: { 200: { invites: [{ addedAt: T0, note: 'Example-1 crew' }] } } },
 };
