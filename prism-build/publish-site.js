@@ -6,7 +6,8 @@
 // and, when they exist, the icons, the web manifest and the privacy / legal pages. Functions are never part of the static
 // output (the server lives in server/ as a separate functions-only site, server/site/). Nothing changes for the live site
 // until the owner points the static site's publish directory at the folder this script writes (server/RUNBOOK.md,
-// "Activation checklist"); until then the site keeps deploying exactly as v3.4.
+// "Activation checklist" step 0 — a PRECONDITION before server/ reaches master: a site that publishes the repository tree
+// would otherwise serve server/, docs/ and prism-build/ as static files); until then the site keeps deploying exactly as v3.4.
 //
 //   node prism-build/publish-site.js [--out <dir>] [--api] [--extra-connect "<host> …"] [--extra-img "<host> …"]
 //        writes the publish directory (default ./dist-site, git-ignored): the allowed files, a `_headers` file with the

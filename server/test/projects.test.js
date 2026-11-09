@@ -349,7 +349,11 @@ test.describe('projects, revisions, blobs, library (§3.3)', { skip }, () => {
     const p = part({ read: 'x'.repeat(2000) }); await upload(r, p);
     await T.db.sql`insert into wts.rate_counters (bucket, window_start, n) values (${'blobReadSessionHour:' + sid}, to_timestamp(floor(extract(epoch from now()) / 3600) * 3600), 100000000)`;
     assert.strictEqual((await r.call('GET', '/blobs/' + p.hash + '/0')).status, 429);
-    const old = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 2 }), []), { headers: { 'x-wts-app': '3.4' } });
-    assert.strictEqual(old.status, 426); assert.strictEqual(old.json.error, 'upgrade');
+    // no security minimum by default: any version passes; with WTS_MIN_CLIENT set, an older client gets 426
+    T.setEnv({ WTS_MIN_CLIENT: '3.5' });
+    try {
+      const old = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 2 }), []), { headers: { 'x-wts-app': '3.4' } });
+      assert.strictEqual(old.status, 426); assert.strictEqual(old.json.error, 'upgrade');
+    } finally { T.setEnv({ WTS_MIN_CLIENT: '' }); }
   });
 });

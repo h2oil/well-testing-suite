@@ -199,7 +199,12 @@ module.exports = [
       assert(/add Google under Account → Sign-in methods/.test(consent.textContent), 'the two-accounts warning');
       const btns = r.qa('#acct_oauth_body button').map((b) => b.textContent);
       assert.deepStrictEqual(btns, ['Create account', 'Cancel'], 'Cancel is the second button');
+      // review fix: the same explicit tick as the e-mail path, naming the versions; nothing is sent until it is ticked
+      assert(/version 1\) and have read the Privacy notice \(version 1\)/.test(r.q('#acct_oauth_body').textContent), 'the tick names the versions');
+      assert.strictEqual(r.q('#acct_oauth_title').textContent, 'Create your account', 'the heading names the step');
       click(r.q('#acct_oauth_create')); await settle();
+      assert(r.q('#acct_oauth_dlg') && /tick the box/.test(r.q('#acct_oauth_body').textContent), 'refused until ticked');
+      r.q('#acct_oauth_consent_ok').checked = true; click(r.q('#acct_oauth_create')); await settle();
       assert.strictEqual(r.q('#acct_oauth_dlg'), null, 'closed when done');
       const h = hint(r);
       assert.strictEqual(h.signedIn, true); assert.strictEqual(h.oauth, undefined); assert.strictEqual(h.initial, 'N');
@@ -239,7 +244,7 @@ module.exports = [
       t += 12 * MIN;
       typeIn(r.q('#acct_oauth_code'), fake.codeFor('li@company.example', 'code_oauth_verify')); click(r.q('#acct_oauth_verify')); await settle();
       assert(r.q('.acct-oauth-consent'), 'a code entered 12 minutes after the callback still finishes the step');
-      click(r.q('#acct_oauth_create')); await settle();
+      r.q('#acct_oauth_consent_ok').checked = true; click(r.q('#acct_oauth_create')); await settle();
       assert.strictEqual(hint(r).signedIn, true);
       // Google on a domain Google does not manage asks for a code
       const g = await roundTrip(page({ fake, now }), 'google', { key: 'g2', email: 'name@company.example' }, { fake, now });
@@ -375,7 +380,7 @@ module.exports = [
       assert.strictEqual(fake.sessionsOf('a.user@company.example').length, 1);
       const p = page({ fake, br });
       const r = await roundTrip(p, 'google', { key: 'B', email: 'b.user@' + CONSUMER }, { fake });
-      click(r.q('#acct_oauth_create')); await settle();
+      r.q('#acct_oauth_consent_ok').checked = true; click(r.q('#acct_oauth_create')); await settle();
       assert.strictEqual(fake.sessionsOf('a.user@company.example').length, 0, "A's session is revoked by B's finish");
       assert.strictEqual(r.A.state().user.emailMasked, 'b•••@' + CONSUMER);
       // the provider e-mail differs from the one at link time: Change / Keep, the account e-mail unchanged
@@ -450,7 +455,7 @@ module.exports = [
       calls.length = 0;
       p.A.finishProviderSignIn = (b) => { calls.push(b); return Promise.resolve(b.consent ? { next: 'oauth_state' } : { next: 'consent', newAccountEmailMasked: 'n•••@company.example', terms: '2026-11', privacy: '2026-10' }); };
       p.A.oauthUI.openFinish(); await settle();
-      click(p.q('#acct_oauth_create')); await settle();
+      p.q('#acct_oauth_consent_ok').checked = true; click(p.q('#acct_oauth_create')); await settle();
       assert.strictEqual(JSON.stringify(calls[1]), JSON.stringify({ consent: { terms: '2026-11', privacy: '2026-10' } }));
       // a finished link goes back to the page it started from
       p.store.wtsacct_hint = JSON.stringify({ oauth: { provider: 'linkedin', route: 'cheminj', at: Date.now(), purpose: 'link' } });

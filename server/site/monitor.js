@@ -54,6 +54,7 @@ function redactLine(text) {
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
     .replace(/\?[^\s]*/g, '?<query>')
     .replace(/\b[A-Za-z0-9+/_=-]{24,}\b/g, '<token>')
+    .replace(/\b\d{4}[ -]?\d{4}\b/g, '<code>')        // every e-mail code is 8 digits (mails show '1234 5678')
     .replace(/\b\d{6}\b/g, '<code>');
 }
 

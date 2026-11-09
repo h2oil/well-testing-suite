@@ -38,8 +38,25 @@
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function day(iso) { return iso ? esc(String(iso).slice(0, 10)) : '—'; }
   function when(iso) { if (!iso) return '—'; var s = String(iso); return esc(s.slice(0, 10) + ' ' + s.slice(11, 16)); }
-  function mb(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.round(n / 1000) + ' kB'; }
+  function mb(n) {
+    n = Number(n) || 0;
+    var t = n >= 1e6 ? String(Math.round(n / 1e5) / 10) + ' MB' : Math.round(n / 1000) + ' kB';
+    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
+    return dc ? t.replace('.', ',') : t;      // 250 MB, 1.5 MB (1,5 MB with the decimal-comma setting)
+  }
   function say(id, text, kind) { var e = $(id); if (e) { e.textContent = text || ''; e.setAttribute('data-kind', kind || ''); } }
+  // a new action clears the page's earlier status messages (review fix: an old error never lingers under a later action)
+  var MSG_IDS = ['acct_profile_msg', 'acct_projects_msg', 'acct_devices_msg', 'acct_data_msg'];
+  function clearMsgs() { MSG_IDS.forEach(function (id) { say(id, ''); }); }
+  // the profile forms: a bad address is caught before any request; the server's bad_request gets the same plain words
+  var BAD_ADDRESS = 'Enter a valid e-mail address.';
+  function addressOk(id) {
+    var el = $(id); var v = el ? String(el.value || '').trim() : '';
+    if (!v) return false;
+    if (el && typeof el.checkValidity === 'function' && !el.checkValidity()) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+  function profileErr(e) { return e && e.code === 'bad_request' ? BAD_ADDRESS : errText(e); }
   function errText(e) { var i = I(); return i ? i.cloudErrText(e) : String((e && e.code) || e); }
 
   var view = { trash: false, filter: '', projects: [], me: null, root: null };
@@ -49,6 +66,7 @@
     if (!body) return false;
     var a = A();
     var st = a ? a.state() : { status: 'signedOut' };
+    var ii = I(); if (ii && ii.ensureCss) ii.ensureCss();
     body.innerHTML = '<div id="acct_root">' + (st.status === 'signedIn' ? signedInHtml(st) : signedOutHtml(st)) + helpHtml() + '</div>';
     view.root = $('acct_root');
     wire(st);
@@ -92,17 +110,18 @@
       '<div class="acct-btns"><input type="text" id="acct_filter" placeholder="Filter by name, client or well" aria-label="Filter projects" data-acct-skip="1">' +
       '<button type="button" class="btn btn-secondary" id="acct_toggle_trash">' + (view.trash ? 'Show projects' : 'Show trash') + '</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_import">Import files…</button>' +
-      '<button type="button" class="btn btn-primary" id="acct_save_new">Save this device\'s project to the cloud</button></div>' +
+      // linked: Save to cloud (a new revision of the open project); unlinked: the first save creates a cloud project
+      '<button type="button" class="btn btn-primary" id="acct_save_new">' + (cloudLinked() ? 'Save to cloud' : 'Save this device\'s project to the cloud') + '</button></div>' +
       '<div id="acct_projects" aria-live="polite"><p>Loading…</p></div><div id="acct_projects_msg" role="status" aria-live="polite"></div></div>' +
 
       '<div class="card" id="acct_card_devices"><div class="card-title">Devices</div><div id="acct_devices">' + devicesHtml(me.devices || []) + '</div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_signout_all">Sign out everywhere…</button></div><div id="acct_devices_msg" role="status"></div></div>' +
 
       // WP-O mount point: the Sign-in methods card (e-mail, recovery, Google, LinkedIn, passkeys; link / unlink)
+      // (the provider block fills the mount with every row and the note; without it, the e-mail row below stands alone)
       '<div class="card" id="acct_methods_card" data-owner="WP-O"><div class="card-title">Sign-in methods</div>' +
-      '<div class="rrow"><span class="rl">E-mail code</span><span class="rv">always on — ' + esc(u.emailMasked) + '</span></div>' +
-      '<div id="acct_methods_mount"></div>' +
-      '<p class="acct-note">Your e-mail address always works as a way in, even if you lose your Google or LinkedIn account.</p></div>' +
+      '<div id="acct_methods_mount"><div class="rrow"><span class="rl">E-mail code</span><span class="rv">always on — ' + esc(u.emailMasked) + '</span></div>' +
+      '<p class="acct-note">Your e-mail address always works as a way in, even if you lose your Google or LinkedIn account.</p></div></div>' +
 
       '<div class="card" id="acct_card_local"><div class="card-title">On this device</div><div id="acct_local"><p>Loading…</p></div></div>' +
 
@@ -117,9 +136,10 @@
       '<p>Delete account: everything is hidden at once and deleted for good after 7 days. Signing in again during those days lets you cancel.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_delete">Delete account…</button></div><div id="acct_data_msg" role="status" aria-live="polite"></div></div>' +
 
-      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation and sends a security notice to your e-mail address.</p>' +
+      '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation; the list comes from an export of your account data, so your e-mail address also gets the "your data was exported" notice.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_show_activity">Show my activity</button></div><div id="acct_activity"></div></div>';
   }
+  function cloudLinked() { var c = C(); return !!(c && c.status && c.status().projectId); }
   function devicesHtml(list) {
     if (!list.length) return '<p>No devices.</p>';
     return '<table class="dtable" id="acct_devices_table"><thead><tr><th>Device</th><th>Last seen</th><th></th></tr></thead><tbody>' +
@@ -143,10 +163,10 @@
         var m = p.meta || {};
         var acts = view.trash
           ? '<button type="button" class="btn btn-secondary" data-act="restore" data-id="' + esc(p.id) + '">Restore</button> <button type="button" class="btn btn-secondary" data-act="purge" data-id="' + esc(p.id) + '">Delete for ever</button>'
-          : ['open:Open', 'rename:Rename', 'duplicate:Duplicate', 'history:History', 'download:Download', 'trash:Move to trash'].map(function (x) {
+          : (Number(p.headRev) ? ['open:Open', 'rename:Rename', 'duplicate:Duplicate', 'history:History', 'download:Download', 'trash:Move to trash'] : ['trash:Move to trash']).map(function (x) {
             var k = x.split(':'); return '<button type="button" class="btn btn-secondary" data-act="' + k[0] + '" data-id="' + esc(p.id) + '">' + k[1] + '</button>';
           }).join(' ');
-        return '<tr data-id="' + esc(p.id) + '"><td data-label="Name">' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + '</td>' +
+        return '<tr data-id="' + esc(p.id) + '"><td data-label="Name">' + esc(p.name) + (p.conflictOf ? ' <span title="conflict copy">&#9888; conflict copy</span>' : '') + (p.id === bound ? ' <b>(open here)</b>' : '') + (Number(p.headRev) ? '' : ' <span class="acct-incomplete">(incomplete upload — Save to cloud again to finish it)</span>') + '</td>' +
           '<td data-label="Client / well">' + esc([m.client, m.well].filter(Boolean).join(' / ')) + '</td><td data-label="Wells">' + esc(p.wells) + '</td><td data-label="Last saved">' + when(p.savedAt) + '</td><td data-label="Size">' + mb(p.bytes) + '</td><td>' + acts + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
@@ -162,7 +182,7 @@
   }
 
   // ── wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-  function on(id, fn) { var e = $(id); if (e) e.addEventListener('click', fn); }
+  function on(id, fn) { var e = $(id); if (e) e.addEventListener('click', function (ev) { clearMsgs(); return fn(ev); }); }
   function wire(st) {
     var a = A();
     if (st.status !== 'signedIn') {
@@ -176,10 +196,11 @@
     on('acct_change_email', function () {
       var v = String($('acct_new_email').value || '').trim();
       if (!v) { say('acct_profile_msg', 'Type the new address first.', 'err'); return; }
+      if (!addressOk('acct_new_email')) { say('acct_profile_msg', BAD_ADDRESS, 'err'); return; }
       a.changeEmail(v).then(function () {
         $('acct_email_code_row').hidden = false; $('acct_email_confirm_row').hidden = false;
         say('acct_profile_msg', 'If the address can be used, a code is on its way to it.', 'ok');
-      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', errText(e), 'err'); });
+      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', profileErr(e), 'err'); });
     });
     on('acct_confirm_email', function () {
       a.confirmEmail(String($('acct_email_code').value || '').replace(/\s/g, '')).then(function () { rerender(); }, function (e) { say('acct_profile_msg', e && e.code === 'invalid_or_expired' ? 'That code is wrong or has expired.' : errText(e), 'err'); });
@@ -187,10 +208,11 @@
     on('acct_set_recovery', function () {
       var v = String($('acct_recovery').value || '').trim();
       if (!v) { say('acct_profile_msg', 'Type the recovery address first.', 'err'); return; }
+      if (!addressOk('acct_recovery')) { say('acct_profile_msg', BAD_ADDRESS, 'err'); return; }
       a.setRecovery(v).then(function () {
         $('acct_recovery_code_row').hidden = false; $('acct_recovery_confirm_row').hidden = false;
         say('acct_profile_msg', 'If the address can be used, a code is on its way to it.', 'ok');
-      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', errText(e), 'err'); });
+      }, function (e) { if (e && e.code !== 'cancelled') say('acct_profile_msg', profileErr(e), 'err'); });
     });
     on('acct_confirm_recovery', function () {
       a.confirmRecovery(String($('acct_recovery_code').value || '').replace(/\s/g, '')).then(function () { rerender(); }, function (e) { say('acct_profile_msg', e && e.code === 'invalid_or_expired' ? 'That code is wrong or has expired.' : errText(e), 'err'); });
@@ -201,7 +223,7 @@
     if (filt) filt.addEventListener('input', function () { view.filter = String(filt.value || ''); drawProjects(); });
     on('acct_toggle_trash', function () { view.trash = !view.trash; $('acct_toggle_trash').textContent = view.trash ? 'Show projects' : 'Show trash'; loadProjects(); });
     on('acct_import', function () { C().pickAndImport().then(function () { loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
-    on('acct_save_new', function () { C().saveToCloud({ as: true }).then(function (r) { if (r && !r.cancelled) say('acct_projects_msg', 'Saved to the cloud.', 'ok'); loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
+    on('acct_save_new', function () { C().saveToCloud({ as: !C().status().projectId }).then(function (r) { if (r && !r.cancelled) say('acct_projects_msg', 'Saved to the cloud.', 'ok'); loadProjects(); }, function (e) { say('acct_projects_msg', errText(e), 'err'); }); });
     var pj = $('acct_projects');
     if (pj) pj.addEventListener('click', function (ev) {
       var t = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
@@ -234,7 +256,7 @@
   function signOutAll() {
     var i = I();
     return i.choose({ title: 'Sign out everywhere', text: 'Sign out of every browser and device that uses your account? This one is signed out too.',
-      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove passkeys and Google / LinkedIn links added in the last 14 days</label>',
+      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove ' + (i.recentMethodsText ? i.recentMethodsText() : 'Google / LinkedIn links') + ' added in the last 14 days</label>',
       buttons: [{ id: 'all', label: 'Sign out everywhere', primary: true }, { id: 'cancel', label: 'Cancel' }], keepOpen: true }).then(function (c) {
       var t = $('acct_recent_methods'); var recent = !!(t && t.checked);
       i.closeDialog(false);
@@ -399,6 +421,20 @@
       }, function (e) { if (!e || e.code !== 'cancelled') say('acct_data_msg', errText(e), 'err'); return null; });
     });
   }
+  // the audit action codes in plain words (§11.3)
+  var ACTIONS = { signup: 'Account created', signin: 'Signed in', stepup: 'Confirmed with a code', signout: 'Signed out', signout_all: 'Signed out everywhere',
+    email_change: 'E-mail address changed', email_revert: 'E-mail change undone', recovery_set: 'Recovery address set', recovery_remove: 'Recovery address removed',
+    identity_link: 'Sign-in method linked', identity_unlink: 'Sign-in method removed', export: 'Data exported', delete_request: 'Account deletion requested',
+    delete_cancel: 'Account deletion cancelled', device_revoke: 'Device signed out', device_rename: 'Device renamed', passkey_add: 'Passkey added',
+    passkey_remove: 'Passkey removed', project_purge: 'Project deleted for ever', commit_burst: 'Many cloud saves in a short time',
+    read_burst: 'Many cloud reads in a short time' };
+  var METHODS = { code: 'e-mail code', google: 'Google', linkedin: 'LinkedIn', passkey: 'passkey' };
+  function actionText(r) {
+    var a = String((r && r.action) || '');
+    var t = ACTIONS[a] || a.replace(/_/g, ' ');
+    var m = r && r.detail && r.detail.method;
+    return t + (m ? ' (' + (METHODS[m] || String(m)) + ')' : '');
+  }
   function showActivity() {
     var c = C();
     // the account JSON only — no project bodies are downloaded (§11.3: the user's own audit rows, 90 days)
@@ -407,7 +443,7 @@
       var rows = (res.account.audit || []).filter(function (r) { var t = Date.parse(r && r.at); return isFinite(t) && t >= since; });
       var el = $('acct_activity');
       if (el) el.innerHTML = rows.length ? '<table class="dtable" id="acct_activity_table"><thead><tr><th>When</th><th>What</th></tr></thead><tbody>' +
-        rows.map(function (r) { return '<tr><td data-label="When">' + when(r.at) + '</td><td data-label="What">' + esc(r.action) + (r.detail && r.detail.method ? ' (' + esc(r.detail.method) + ')' : '') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
+        rows.map(function (r) { return '<tr><td data-label="When">' + when(r.at) + '</td><td data-label="What">' + esc(actionText(r)) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p>No activity.</p>';
       return rows.length;
     }, function (e) { if (!e || e.code !== 'cancelled') say('acct_data_msg', errText(e), 'err'); return 0; });
   }

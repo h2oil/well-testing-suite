@@ -126,7 +126,9 @@ function createApp(o) {
       const cookies = H.parseCookies(H.header(req, 'cookie'));
       const afterTasks = [];
       const ctx = {
-        req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip, ipPrefix: ipPrefix(ip),
+        req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip,
+        // production without WTS_CLIENT_IP_HEADER: the socket address is the proxy's, so there is no client range (null)
+        ipPrefix: config.production && !config.ipHeader ? null : ipPrefix(ip),
         db: o.db || null, mail: o.mail || null, keys, objects: o.objects || null, jobs: o.jobs || null,
         after(task) { afterTasks.push(task); },
         // opts.maxAge (seconds) — required for the session cookie: seconds to abs_expires_at (contract COOKIES.session)

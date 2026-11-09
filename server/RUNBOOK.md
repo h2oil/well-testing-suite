@@ -83,6 +83,15 @@ and the secret scan refuse files that contain key material or name a secret vari
 
 Do these in order; each step is reversible until step 14. Plan §13.10 has the provider-console steps (WP0).
 
+0. **PRECONDITION — before `server/` reaches master** (integration review): if the static site publishes the repository
+   tree from master, merging the accounts branch would make `server/` (core, migrations, schema, this runbook, ops scripts),
+   `docs/` and `prism-build/` downloadable as static files. No secret is in them (secrets come only from the environment),
+   but plan §1 / §13.2 says `server/` is never published as static content. So **first** switch the static site's publish
+   directory to the output of `node prism-build/publish-site.js` (step 13 without `--api` until the API is live: the
+   allow-list and `_headers`), or add an equivalent host-side exclusion of `server/`, `docs/`, `tools/` and `prism-build/`,
+   deploy, and confirm `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404. Only then merge to master. Until it is
+   confirmed, the Dev → master auto-merge of CLAUDE.md must leave the accounts commits out (keep them on their branch).
+
 1. **Decide and sign up**: the hosting plan with functions and a scheduler (D17), the database in the UK (else EU), the blob
    store (EU), the e-mail service (sender `no-reply@h2oil.co.uk`, SPF / DKIM / DMARC on `h2oil.co.uk`), the uptime check.
 2. **Database**: create the production database. As the administrator run the migration job once (step 9) — it creates the
@@ -109,7 +118,9 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
 7. **Rewrite on the static site** (host settings of the existing static site, not this repository's root):
    `/api/v1/*` → `https://<functions-site-host>/api/v1/:splat`, status 200, proxied, adding the request header
    `X-WTS-Proxy-Sig: <WTS_PROXY_SIG current value>`; pass `Cookie`, `Origin`, `Content-Type` and the `X-WTS-*` headers through.
-   Set `WTS_HOST_HEADER` / `WTS_CLIENT_IP_HEADER` to the trusted forwarding headers the host adds. Check: the functions-site
+   Set `WTS_HOST_HEADER` / `WTS_CLIENT_IP_HEADER` to the trusted forwarding headers the host adds — **both are required in
+   production**: without `WTS_CLIENT_IP_HEADER` every user shares the proxy's address, so the config raises an alert and
+   provider sign-in is refused (no client range), and the per-range code limits cannot tell people apart. Check: the functions-site
    URL answered directly gives `404`; through the static site `GET /api/v1/health` gives `{"ok":true,"db":true,…}`. If the
    host's rewrite cannot add a header, use the fallback of plan §2 (one site, functions deployed from the same tags through a
    protected deploy branch) — ask for a plan update first.
@@ -127,7 +138,7 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
     host's log alerting on `alert:` lines and on the access-line rules of §5; `WTS_ALERT_WEBHOOK` / `WTS_ALERT_EMAIL`; a spend
     alert at 80 % of the plan.
 12. **First restore drill** (§9.3) before any real user signs in; note the result in PROJECT-NOTES.md.
-13. **Static site headers**: switch the static site's publish directory to the output of
+13. **Static site headers** (the publish directory itself was already switched in step 0): rebuild it with
     `node prism-build/publish-site.js --api` (the allow-list, `_headers` with HSTS, `Referrer-Policy`, `Permissions-Policy`,
     no-cache on the page and `sw.js`, and the CSP in **Report-Only** mode reporting to `/api/v1/csp-report`; collection hosts
     of the analytics tag via `--extra-connect` / `--extra-img` from the vendor notes). Confirm the published set with
@@ -141,8 +152,9 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
 
 ## 4. Releases and deploys
 
-- The static site auto-deploys from master as before. The client account code (66–68) ships with it, gated by the beta flag
-  and the server's switches.
+- The static site auto-deploys from master as before — **once step 0 of §3 is done** (the publish allow-list or a host-side
+  exclusion of `server/`, `docs/`, `tools/`, `prism-build/`); before that, do not merge the accounts commits to master. The
+  client account code (66–68) ships with it, gated by the beta flag and the server's switches.
 - The server deploys **only** from a `server-v*` tag on a master commit:
   1. Merge the reviewed server change to master (independent review, plan Q19).
   2. Sign the checklist in the release's PR or issue: tests green (incl. `rls.test.js`), independent review done, migration

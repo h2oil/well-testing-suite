@@ -79,5 +79,17 @@ function createKeys(config) {
 // new random identifiers
 function randomToken(bytes) { return crypto.randomBytes(bytes || 32).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 function code8() { return String(crypto.randomInt(0, 100000000)).padStart(8, '0'); }
+// the e-mail revert key (§4.3, review fix): 26 characters of A–Z and 2–7 = 130 bits, so no rate limit has to protect it
+// against guessing; stored only as the code HMAC like any code. Shown in the notice in groups of four.
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function revertKey() {
+  const b = crypto.randomBytes(17); let bits = 0; let v = 0; let out = '';
+  for (let i = 0; i < b.length && out.length < 26; i++) {
+    v = (v << 8) | b[i]; bits += 8;
+    while (bits >= 5 && out.length < 26) { out += B32[(v >>> (bits - 5)) & 31]; bits -= 5; }
+    v &= (1 << bits) - 1;
+  }
+  return out;
+}
 
-module.exports = { createKeys, randomToken, code8 };
+module.exports = { createKeys, randomToken, code8, revertKey };

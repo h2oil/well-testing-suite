@@ -22,6 +22,12 @@ function maskEmail(email) {
   return (at > 0 ? email[0] : '') + '•••' + email.slice(at);
 }
 function normCode(raw) { return typeof raw === 'string' ? raw.replace(/\s/g, '') : ''; }
+// the revert key: spaces and hyphens dropped, upper case; null unless exactly 26 characters of A–Z / 2–7
+function normRevertKey(raw) {
+  if (typeof raw !== 'string' || raw.length > 64) return null;
+  const k = raw.replace(/[\s-]/g, '').toUpperCase();
+  return /^[A-Z2-7]{26}$/.test(k) ? k : null;
+}
 const LABEL_RE = /^[A-Za-z0-9 _.()-]{0,40}$/;
 function isLabel(s) { return typeof s === 'string' && LABEL_RE.test(s); }
 // Validate a parsed body against a contract request shape; throws 400 bad_request naming the first failing field.
@@ -45,4 +51,4 @@ function ipPrefix(ip) {
   return null;
 }
 
-module.exports = { normEmail, domainOf, maskEmail, normCode, isLabel, requireShape, ipPrefix };
+module.exports = { normEmail, domainOf, maskEmail, normCode, normRevertKey, isLabel, requireShape, ipPrefix };

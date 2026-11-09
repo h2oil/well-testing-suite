@@ -15,7 +15,7 @@ const ua = S.uaFamily('SomeAgent/5.0 (DesktopOS 10.0) EvilBrowser/9 ' + EVIL);
 function paramsFor(name) {
   const p = {};
   for (const k of M.TEMPLATES[name].params) {
-    p[k] = { code: '12345678', revertCode: '87654321', browser: ua.browser, os: ua.os, at: AT, deleteAt: AT, provider: 'google',
+    p[k] = { code: '12345678', revertCode: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', browser: ua.browser, os: ua.os, at: AT, deleteAt: AT, provider: 'google',
       providerEmailMasked: 'p•••@company.example' }[k];
   }
   // a client string smuggled in as extra parameters must never be used
@@ -51,8 +51,11 @@ test.describe('mail bodies (§4.1, §4.3, §8.5)', () => {
   });
 
   test('revert notice: the code and the #account-revert link, 7 days (§4.3)', () => {
-    const r = M.render('notice_email_changed', { at: AT, revertCode: '87654321' });
-    assert.ok(r.text.includes('enter code 8765 4321 at welltest.h2oil.co.uk/#account-revert within 7 days'));
+    const r = M.render('notice_email_changed', { at: AT, revertCode: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' });
+    assert.ok(r.text.includes('open welltest.h2oil.co.uk/#account-revert=ABCDEFGHIJKLMNOPQRSTUVWXYZ within 7 days'), r.text);
+    assert.ok(r.text.includes('enter the revert key ABCD EFGH IJKL MNOP QRST UVWX YZ'), r.text);
+    // the revert key is not an 8-digit code (review fix): a guessable value is refused by the template
+    assert.throws(() => M.render('notice_email_changed', { at: AT, revertCode: '87654321' }), /revert key/);
   });
 
   test('deletion notice: date, how to cancel, where to remove app access at Google and LinkedIn (§8.5)', () => {

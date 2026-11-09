@@ -8,7 +8,10 @@
 //   • code/start ALWAYS answers 202 after a fixed floor (config.codeFloorMs); unknown, throttled, paused, locked and
 //     invite-refused addresses take the same path; the mail is queued and sent after the response (§3.3, T4).
 //   • A code is an HMAC over purpose ‖ address ‖ code (‖ user ‖ session for step-up, e-mail change, recovery add); two live
-//     per address and purpose; 5 tries each; 10 failures per address per 24 h pause its codes for 1 h (§8.3).
+//     per address, purpose and client range (sign-in); 5 tries each; sends limited per address AND range (5/h, 20/day) and
+//     10 failures per address and range per 24 h pause that pair for 1 h (§8.3, review fix: a stranger elsewhere can neither
+//     use up nor pause the owner's codes). Session-bound codes are limited per session. The e-mail revert proof is a
+//     130-bit key, not an 8-digit code.
 //   • code/verify for a new account without the current consent answers 409 consent_required and does NOT burn the code.
 //   • stepup_at is set by a code only (session.js); a sign-in revokes the session the request carried.
 
@@ -18,7 +21,7 @@ const S = require('../core/service');
 const SE = require('../core/session');
 const R = require('../core/rate');
 const E = require('../core/envelope');
-const { code8 } = require('../core/keys');
+const { code8, revertKey } = require('../core/keys');
 
 const ADDR = 'user.address';     // one envelope field label for every address column (they move between columns in SQL)
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
@@ -36,16 +39,35 @@ function signInBody(user, emailPlain, sess, device, first) {
 }
 function mailParams(unit) { return { browser: unit.ua.browser, os: unit.ua.os, at: S.whenText(Date.now()) }; }
 
-// the per-address send limits (§8.3): 5/h, 20/day, and the 1-hour pause after 10 failed codes
-async function mayStart(unit, bidx) {
-  const k = addrKey(bidx);
-  const h = await R.hit(unit.sql, 'codeStartAddrHour', k);
-  const d = await R.hit(unit.sql, 'codeStartAddrDay', k);
-  const p = await R.peek(unit.sql, 'codePauseHour', k);
-  return h.allowed && d.allowed && p.n === 0;
+// the send limits of a code to an address (§8.3, review fix). HARD per address AND client address range (5/h, 20/day, and the
+// 1-hour pause of that pair after 10 failed codes), so a stranger elsewhere can never use up or pause the owner's sends; per
+// address in all (50/day) only an alert. Shared with provider sign-in (functions/oauth.js): every unbound code mail obeys it.
+const rangeKey = (ctx, bidx) => addrKey(bidx) + ':' + (ctx.ipPrefix || '-');
+async function mayStart(unit, ctx, bidx) {
+  const k = rangeKey(ctx, bidx);
+  if ((await R.peek(unit.sql, 'codePauseHour', k)).n > 0) return false;
+  const h = await R.hit(unit.sql, 'codeStartAddrIpHour', k);
+  const d = await R.hit(unit.sql, 'codeStartAddrIpDay', k);
+  const all = await R.hit(unit.sql, 'codeStartAddrDay', addrKey(bidx));
+  if (all.over && all.n === all.limit + 1) ctx.log.warn('alert: one address above 50 code sends in 24 h (all client ranges together)');
+  return h.allowed && d.allowed;
 }
+// codes bound to a session (step-up, e-mail change, recovery add): counted per session, never in the address buckets, so a
+// stranger's sends to the address cannot block the signed-in owner's step-up
+async function mayStartSession(unit, s) {
+  return (await R.hit(unit.sql, 'codeStartSessionHour', Buffer.from(s.hash).toString('hex').slice(0, 32))).allowed;
+}
+// a verify from an address and range that reached 10 failed codes today is refused without checking (bounds guessing per
+// range; other ranges, and so the owner elsewhere, are not affected)
+async function verifyBlocked(unit, ctx, bidx) {
+  const k = rangeKey(ctx, bidx);
+  const f = await R.peek(unit.sql, 'codeVerifyFailDay', k);
+  return f.n >= f.limit;
+}
+// a wrong unbound code counts a try only on the codes sent to the caller's own range (migration 050, wts.ip_prefix)
+async function scopeChecks(unit, ctx) { await unit.sql`select set_config('wts.ip_prefix', ${ctx.ipPrefix || ''}, true)`; }
 async function issueCode(unit, ctx, o) {
-  const code = code8();
+  const code = o.purpose === 'email_revert' ? revertKey() : code8();
   // the revert code is checked before anyone is signed in (old address + code only), so its HMAC carries no binding; the
   // row still names its user
   const { kid, hmac } = ctx.keys.codeHmac(o.purpose, o.email, code, o.purpose === 'email_revert' ? null : o.bind);
@@ -54,12 +76,18 @@ async function issueCode(unit, ctx, o) {
   if (o.template) await unit.mail(o.email, o.template, Object.assign(mailParams(unit), { code }, o.params || {}));
   return code;
 }
-async function noteFailure(unit, ctx, bidx, email) {
-  const k = addrKey(bidx);
+// a failed code, counted only when a live code existed for the address (attempts_left -1 = none: nothing to guess, so junk
+// verifies cannot pause anyone). Per address and range: the 10th in 24 h pauses that pair's codes for 1 h; per address in
+// all only an alert.
+async function noteFailure(unit, ctx, bidx, email, attemptsLeft) {
+  if (attemptsLeft === -1) return null;
+  const k = rangeKey(ctx, bidx);
   const f = await R.hit(unit.sql, 'codeVerifyFailDay', k);
-  if (f.n === f.limit) {                                    // the 10th failure in 24 h: codes for the address pause for 1 h
+  const all = await R.hit(unit.sql, 'codeVerifyFailAddrDay', addrKey(bidx));
+  if (all.over && all.n === all.limit + 1) ctx.log.warn('alert: one address above 50 failed codes in 24 h (all client ranges together)');
+  if (f.n === f.limit) {                                    // the 10th failure in 24 h from one range: that pair pauses for 1 h
     await R.hit(unit.sql, 'codePauseHour', k);
-    ctx.log.warn('alert: an address reached 10 failed codes in 24 h — its codes are paused for 1 h');
+    ctx.log.warn('alert: an address reached 10 failed codes in 24 h from one client range — paused there for 1 h');
     // the notice goes only to an address that belongs to an account (never a mail to an address nobody registered)
     if (email && (await unit.sql`select 1 from wts.user_by_email(${bidx})`).length) await unit.mail(email, 'notice_codes_paused', { at: S.whenText(Date.now()) });
   }
@@ -95,7 +123,7 @@ async function startSignin(ctx, email) {
     if (ip && ip.over && ip.n === ip.limit + 1) ctx.log.warn('alert: code starts above the soft per-prefix limit');
     const site = await R.hit(unit.sql, 'codeStartSiteHour', 'all');
     if (site.over && site.n === site.limit + 1) ctx.log.warn('alert: site-wide code starts above 1,000/h — unknown addresses paused');
-    if (!(await mayStart(unit, bidx))) return;
+    if (!(await mayStart(unit, ctx, bidx))) return;
     const acc = (await unit.sql`select * from wts.user_by_email(${bidx})`)[0];
     if (acc) { if (acc.status === 'locked') return; }
     else {
@@ -110,7 +138,7 @@ async function startForSession(ctx, b, email) {
     const a = await addresses(unit);
     if (b.purpose === 'stepup') {
       const to = b.to === 'recovery' && a.recovery ? a.recovery : a.primary;
-      if (!(await mayStart(unit, ctx.keys.emailBidx(to)))) return;
+      if (!(await mayStartSession(unit, s))) return;
       await issueCode(unit, ctx, { purpose: 'stepup', email: to, bind: { user: s.userId, sid: s.hash }, template: 'code_stepup' });
       return;
     }
@@ -118,7 +146,7 @@ async function startForSession(ctx, b, email) {
     const col = b.purpose === 'email_change' ? a.u.row.email_pending_enc : a.u.row.recovery_pending_enc;
     const pending = col ? a.u.open(ADDR, col) : null;
     if (!pending || pending !== email) return;
-    if (!(await mayStart(unit, ctx.keys.emailBidx(pending)))) return;
+    if (!(await mayStartSession(unit, s))) return;
     await issueCode(unit, ctx, { purpose: b.purpose, email: pending, bind: { user: s.userId, sid: s.hash },
       template: b.purpose === 'email_change' ? 'code_email_change' : 'code_recovery_add' });
   });
@@ -139,7 +167,7 @@ async function codeVerify(ctx) {
       const r = (await unit.sql`select * from wts.code_check(${null}, 'stepup', ${arr(unit.sql, hm)}, ${s.userId}, ${s.hash}, ${null})`)[0];
       if (!r.ok) {
         if (b.email !== undefined) return null;               // not a step-up code: try it as a sign-in code below
-        await noteFailure(unit, ctx, ctx.keys.emailBidx(cands[0]), cands[0]);
+        // a step-up code is bound to this session (5 tries each, 5 sends per session per hour): never in the address buckets
         return unit.failAfterCommit('invalid_or_expired');
       }
       const n = await SE.rotate(unit, ctx, s, { stepup: true });
@@ -159,16 +187,18 @@ async function codeVerify(ctx) {
   const res = await S.unitOf(ctx, null, async (unit) => {
     const acc = (await unit.sql`select * from wts.user_by_email(${bidx})`)[0] || null;
     const hm = ctx.keys.codeCandidates('signin', email, code);
-    let outcome;
+    if (await verifyBlocked(unit, ctx, bidx)) return unit.failAfterCommit('invalid_or_expired');
+    await scopeChecks(unit, ctx);
+    let outcome; let left = 0;
     try {
       outcome = await unit.sql.savepoint(async (sp) => {
         const r = (await sp`select * from wts.code_check(${bidx}, 'signin', ${arr(sp, hm)}, ${null}, ${null}, ${null})`)[0];
-        if (!r.ok) return 'miss';
+        if (!r.ok) { left = r.attempts_left; return 'miss'; }
         if (!acc && !consentOk(ctx, b.consent)) throw CONSENT;   // roll the savepoint back: the code is not burnt
         return 'hit';
       });
     } catch (e) { if (e === CONSENT) outcome = 'consent'; else throw e; }
-    if (outcome === 'miss') { await noteFailure(unit, ctx, bidx, email); return unit.failAfterCommit('invalid_or_expired'); }
+    if (outcome === 'miss') { await noteFailure(unit, ctx, bidx, email, left); return unit.failAfterCommit('invalid_or_expired'); }
     if (outcome === 'consent') return unit.failAfterCommit('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
     let userId; let first = false;
     if (acc) {
@@ -266,16 +296,18 @@ async function emailRevert(ctx) {
       const ip = await R.hit(unit.sql, 'revertIpHour', ctx.ipPrefix);
       if (ip.over && ip.n === ip.limit + 1) ctx.log.warn('alert: revert tries above the soft per-prefix limit');
     }
-    // throttled: the code is not even checked (and never burnt), so a flood of junk tries cannot remove the owner's way back
+    // the proof is a 130-bit revert key (keys.revertKey), so a guess cannot succeed; wrong tries are throttled only per old
+    // address AND client range (5/h; the key is not even checked then, and never burnt). Per old address in all they only
+    // raise an alert: the person who changed the address cannot use up the owner's way back from other ranges (T18).
     const k = ak + ':' + (ctx.ipPrefix || '-');
     const f1 = await R.peek(unit.sql, 'revertFailAddrIpHour', k);
-    const f2 = await R.peek(unit.sql, 'revertFailAddrDay', ak);
-    if (f1.n >= f1.limit || f2.n >= f2.limit) return unit.failAfterCommit('rate', { retryAfter: Math.max(1, Number(f1.n >= f1.limit ? f1.retryAfter : f2.retryAfter) || 60) });
-    const hm = ctx.keys.codeCandidates('email_revert', old, V.normCode(ctx.body.code));
-    const r = (await unit.sql`select * from wts.email_revert(${bidx}, ${arr(unit.sql, hm)})`)[0];
+    if (f1.n >= f1.limit) return unit.failAfterCommit('rate', { retryAfter: Math.max(1, Number(f1.retryAfter) || 60) });
+    const key = V.normRevertKey(ctx.body.code);
+    const r = key ? (await unit.sql`select * from wts.email_revert(${bidx}, ${arr(unit.sql, ctx.keys.codeCandidates('email_revert', old, key))})`)[0] : null;
     if (!r) {
       await R.hit(unit.sql, 'revertFailAddrIpHour', k);
-      await R.hit(unit.sql, 'revertFailAddrDay', ak);
+      const f2 = await R.hit(unit.sql, 'revertFailAddrDay', ak);
+      if (f2.over && f2.n === f2.limit + 1) ctx.log.warn('alert: more than 100 wrong revert tries for one old address in 24 h');
       return unit.failAfterCommit('invalid_or_expired');
     }
     await unit.setUser(r.user_id);
@@ -386,5 +418,5 @@ module.exports = {
     passkeyRegisterVerify: notImplemented, passkeyRename: notImplemented, passkeyRemove: notImplemented,
     // methods / unlink live in functions/oauth.js (WP-O)
   },
-  _internal: { signInBody, addresses, issueCode, mailParams, ADDR },
+  _internal: { signInBody, addresses, issueCode, mailParams, mayStart, noteFailure, verifyBlocked, scopeChecks, ADDR },
 };

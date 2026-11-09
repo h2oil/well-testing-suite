@@ -262,11 +262,14 @@
     setStep('busy', { text: 'Signing in…' });
     return refresh().then(function () {
       if (current.status !== 'signedIn') { closeDialog(); return state(); }
+      // the reload below needs the page's pending autosave written first: write it BEFORE the hand-over, so the upload
+      // includes it and no rewrite after the binding marks a just-saved project dirty (review fix)
+      var reloads = G.__wtsGaLoaded === true;
+      if (reloads) { try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.flush) G.WTS_pageAutosave.flush(); } catch (e) { /* none */ } }
       var p = (S && typeof S.afterSignIn === 'function') ? S.afterSignIn(current.user, { firstSignIn: !!(body && body.firstSignIn), method: o.method || 'code' }) : Promise.resolve(null);
       return Promise.resolve(p).then(null, function () { return null; }).then(function () {
-        if (G.__wtsGaLoaded === true) {
+        if (reloads) {
           setStep('busy', { text: 'Finishing sign-in…' });
-          try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.flush) G.WTS_pageAutosave.flush(); } catch (e) { /* none */ }
           var rl = seams.reload || function () { try { L.reload(); } catch (e) { /* none */ } };
           rl();
           return state();
@@ -333,6 +336,8 @@
       '.acct-or.acct-or--none{display:none}',
       '.acct-msg{min-height:1.2em;margin-top:10px;font-size:13px}.acct-msg--err{color:#ff8a80}.acct-msg--ok{color:#8bd48b}',
       '.acct-note{font-size:12px;color:var(--text3,#aaa);margin-top:8px}',
+      // the host's .fg-item / .acct-btns display rules must not override the hidden attribute on account rows (review fix)
+      '#acct_root [hidden],.acct-dlg [hidden],.acct-ov[hidden]{display:none!important}',
       '.acct-faq{margin-top:12px;font-size:13px}.acct-faq ul{padding-left:18px;margin:6px 0}.acct-faq li{margin:4px 0}',
       '.acct-x{background:none;border:0;color:var(--text2,#ccc);font-size:20px;cursor:pointer;min-width:36px;min-height:36px}',
       '.acct-list{list-style:none;padding:0;margin:8px 0;max-height:46vh;overflow:auto}.acct-list li{padding:6px 0;border-bottom:1px solid var(--border,#333)}',
@@ -411,23 +416,25 @@
     if (name === 'busy') { b.innerHTML = '<p>' + esc(data.text || 'Working…') + '</p>'; return; }
     if (name === 'revert') return drawRevert(b, data);
   }
-  // #account-revert (the link in the "your e-mail address was changed" notice, §4.3): the old address and the 7-day revert code
-  function drawRevert(b) {
+  // #account-revert (the link in the "your e-mail address was changed" notice, §4.3): the old address and the 7-day revert key
+  // (26 letters and digits; the notice's link #account-revert=<key> fills it in)
+  function drawRevert(b, data) {
     setTitle('Undo an e-mail change');
     b.innerHTML = '<p>Your account\'s e-mail address was changed. If that was not you, enter your previous address and the code from the notice. ' +
       'This signs out every session and removes sign-in methods added since the change.</p>' +
       '<label for="acct_rev_email">Previous e-mail address</label><input type="email" id="acct_rev_email" maxlength="254" autocomplete="username">' +
-      '<label for="acct_rev_code">Code from the notice</label><input type="text" id="acct_rev_code" inputmode="numeric" maxlength="11" autocomplete="one-time-code">' +
+      '<label for="acct_rev_code">Revert key from the notice</label><input type="text" id="acct_rev_code" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_rev_go">Undo the change</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_rev_cancel">Cancel</button></div>';
     $('acct_rev_cancel').addEventListener('click', function () { closeDialog(true); });
     $('acct_rev_go').addEventListener('click', function () {
-      var em = String($('acct_rev_email').value || '').trim(); var code = String($('acct_rev_code').value || '').replace(/\s/g, '');
-      if (!EMAIL_RE.test(em) || !/^\d{8}$/.test(code)) { message('Enter the previous address and the 8-digit code.', 'err'); return; }
+      var em = String($('acct_rev_email').value || '').trim(); var code = String($('acct_rev_code').value || '').replace(/[\s-]/g, '').toUpperCase();
+      if (!EMAIL_RE.test(em) || !/^[A-Z2-7]{26}$/.test(code)) { message('Enter the previous address and the 26-character revert key from the notice.', 'err'); return; }
       revertEmail(em, code).then(function (r) {
         message('Done: your previous address is back and ' + r.sessions + ' session' + (r.sessions === 1 ? ' was' : 's were') + ' signed out.', 'ok');
       }, function (e) { message(errText(e), 'err'); });
     });
+    if (data && data.key) $('acct_rev_code').value = data.key;
     focusFirst('acct_rev_email');
   }
   function revertEmail(email, code) {
@@ -703,7 +710,15 @@
     }).then(null, function (e) { if (e && e.code === 'cancelled') return state(); throw e; });
   }
 
+  // changeEmail() with no address (the Sign-in methods card, the provider dialog): never a request with an empty address — the
+  // account page's "Change e-mail address" field gets the focus instead (sweep finding: it used to answer 400 silently)
+  function focusChangeEmail() {
+    var go = function () { var e = $('acct_new_email'); if (!e) return; try { if (e.scrollIntoView) e.scrollIntoView({ block: 'center' }); e.focus(); } catch (x) { /* focus */ } };
+    if (!$('acct_new_email') && G.WTS_accountPage && typeof G.WTS_accountPage.open === 'function') { try { G.WTS_accountPage.open(); } catch (x) { /* none */ } }
+    go();
+  }
   function changeEmail(newEmail) {
+    if (newEmail == null || String(newEmail).trim() === '') { focusChangeEmail(); return Promise.resolve(false); }
     return withStepUp(function () { return call('POST', '/auth/email/change', { newEmail: String(newEmail || '') }); }, 'Changing your e-mail address needs a fresh confirmation.')
       .then(function () { return true; });
   }
@@ -805,9 +820,14 @@
     });
     var f = $(items[0].id); try { if (f && f.focus) f.focus(); } catch (e) { /* none */ }
   }
+  // passkeys are named only when the account has any (Phase 1 has none: they answer 501)
+  function recentMethodsText() {
+    var me = current.me || {};
+    return (me.passkeys && me.passkeys.length ? 'passkeys and ' : '') + 'Google / LinkedIn links';
+  }
   function signOutEverywhereAsk() {
     return choose({ title: 'Sign out everywhere', text: 'Sign out of every browser and device that uses your account? This one is signed out too.',
-      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove passkeys and Google / LinkedIn links added in the last 14 days</label>',
+      html: '<label class="acct-tick"><input type="checkbox" id="acct_recent_methods"> Also remove ' + recentMethodsText() + ' added in the last 14 days</label>',
       buttons: [{ id: 'all', label: 'Sign out everywhere', primary: true }, { id: 'cancel', label: 'Cancel' }], keepOpen: true })
       .then(function (c) {
         var tick = $('acct_recent_methods'); var recent = !!(tick && tick.checked);
@@ -868,6 +888,8 @@
     if (e.code === 'offline_dirty') return 'You are offline: save this project to a file first, or wait for the connection.';
     if (e.code === 'signed_out') return 'Signed out — sign in to keep using the cloud. Nothing is lost on this device.';
     if (e.code === 'not_found' || e.code === 'gone') return 'That cloud project is no longer available.';
+    if (e.code === 'upgrade') return 'Reload to update the app. Your work is saved on this device.';
+    if (e.code === 'bad_request') return 'Please check what you entered and try again. Your work is saved on this device.';
     return 'Cloud action failed (' + String(e.code || 'error') + '). Your work is saved on this device.';
   }
   function openCloudMenu(ev) {
@@ -935,7 +957,7 @@
       btns = [['acct_bar_signin', 'Sign in', function () { openSignIn(); }]];
     } else if (current.status === 'unavailable' && current.reason === 'paused') {
       kind = 'paused'; text = 'Cloud sync paused — your work is saved on this device.';
-    } else if (current.status === 'unavailable' && current.reason === 'outage') {
+    } else if ((current.status === 'unavailable' || current.status === 'signedIn') && current.reason === 'outage') {
       kind = 'unavailable'; text = 'Cloud unavailable — your work is saved on this device.' + (st.lastSyncAt ? ' Last cloud save ' + hhmm(st.lastSyncAt) + '.' : '');
       btns = [['acct_bar_retry', 'Try again', function () { refresh(); }]];
     } else if (current.status === 'signedIn' && current.user && current.user.status === 'deleting') {
@@ -975,6 +997,12 @@
     renderChip();
     registerToolbar();
     var S = sync(); if (S && typeof S._mount === 'function') S._mount();
+    // the browser's own connection events (one-off listeners, no polling): back online → clear a network error and re-read
+    // /me once, so the chip and bar never stay at "Cloud unavailable"; offline → re-render (review fix)
+    if (typeof G.addEventListener === 'function') {
+      G.addEventListener('online', onOnline);
+      G.addEventListener('offline', function () { renderChip(); renderBar(); });
+    }
     if (h && h.signedIn) refresh().then(null, function () { /* outage handled */ });
     else current.status = 'signedOut';
     // a provider return with a fresh hint entry was finished at load by the provider block (WTS_account.oauthReturn, which
@@ -983,13 +1011,28 @@
       try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '')); } catch (e) { /* none */ }
     }
   }
-  function openRevert() { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert'); }
+  function onOnline() {
+    var S = sync(); if (S && typeof S._netBack === 'function') S._netBack();
+    var h = readHint();
+    if (current.status === 'signedIn' || current.status === 'unavailable' || (h && h.signedIn)) {
+      refresh().then(function () { renderChip(); renderBar(); }, function () { renderChip(); renderBar(); });
+    } else { renderChip(); renderBar(); }
+  }
+  function openRevert(key) { openDialog('revert', { title: 'Undo an e-mail change' }); setStep('revert', { key: key || '' }); }
+  // '#account-revert' or '#account-revert=<key>' (the notice's link) → {key} | null
+  function revertHash(h) {
+    var m = /^#account-revert(?:=([A-Za-z2-7]{26}))?$/.exec(String(h || ''));
+    return m ? { key: (m[1] || '').toUpperCase() } : null;
+  }
   function boot() {
     if (!HAS_DOC) return;
     // #account-revert (the notice's link): a user action, no request until submitted; during the Phase 1 beta only with the
     // beta flag, so the live site shows no account UI while no server is configured
-    if (String(L.hash || '') === '#account-revert' && betaEnabled()) {
-      var go = function () { ensureCss(); openRevert(); };
+    var rh = revertHash(L.hash);
+    if (rh && betaEnabled()) {
+      // the key leaves the address bar and the history entry at once (it stays only in the dialog's field)
+      if (rh.key) { try { if (G.history && G.history.replaceState) G.history.replaceState(null, '', String(L.pathname || '') + String(L.search || '') + '#account-revert'); } catch (e) { /* none */ } }
+      var go = function () { ensureCss(); openRevert(rh.key); };
       if (document.readyState === 'loading' && document.addEventListener) document.addEventListener('DOMContentLoaded', go, { once: true });
       else if (typeof G.setTimeout === 'function') G.setTimeout(go, 0);
     }
@@ -1012,7 +1055,7 @@
     // the provider block below (WP-O)
     // shared internals for 67 / 68 and WP-O (not a public contract)
     _i: { completeSignIn: completeSignIn, choose: choose, setStep: setStep, message: message, openDialog: openDialog, closeDialog: closeDialog,
-      readHint: readHint, writeHint: writeHint, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
+      readHint: readHint, writeHint: writeHint, recentMethodsText: recentMethodsText, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
       signedOutLocal: signedOutLocal, renderChip: renderChip, renderBar: renderBar, cloudAction: cloudAction, isOnline: isOnline, now: now,
       deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; } },
   };
@@ -1247,9 +1290,11 @@
       if (dlg && dlg.isConnected) return dlg;
       dlgOpener = d.activeElement && d.activeElement !== d.body ? d.activeElement : null;
       dlgEscape = true;
-      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
-        'aria-labelledby': 'acct_oauth_title', style: 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.45);display:block;overflow:auto;padding:16px' });
-      var box = el('div', { 'class': 'acct-oauth-box', style: 'max-width:420px;margin:8vh auto 0 auto;background:#ffffff;color:#1f1f1f;border-radius:8px;padding:20px 16px;box-sizing:border-box' });
+      // the same look as the sign-in dialog (#acct_dlg): its overlay and box classes and theme tokens (review fix)
+      try { ensureCss(); } catch (e) { /* none */ }
+      dlg = el('div', { id: 'acct_oauth_dlg', 'class': 'acct-ov acct-oauth-dlg rp-skip', 'data-rp-nosnap': '1', role: 'dialog', 'aria-modal': 'true',
+        'aria-labelledby': 'acct_oauth_title' });
+      var box = el('div', { 'class': 'acct-dlg acct-oauth-box' });
       box.appendChild(el('h2', { id: 'acct_oauth_title', text: 'Sign in', style: 'font-size:18px;margin:0 0 12px 0' }));
       box.appendChild(el('div', { id: 'acct_oauth_body' }));
       dlg.appendChild(box);
@@ -1264,6 +1309,9 @@
       try { if (o && o.isConnected !== false && typeof o.focus === 'function') o.focus(); } catch (e) { /* focus return */ }
     }
     function dbody() { var d = dialog(); return d ? d.querySelector('#acct_oauth_body') : null; }
+    // the heading names the step (never "Sign in" on the blocking public sign-out step)
+    function title(t) { var d = dialog(); var h = d && d.querySelector('#acct_oauth_title'); if (h) h.textContent = t; }
+    function para(cls, txt, extra) { return el('p', Object.assign({ 'class': cls, text: txt, style: 'margin:0 0 12px 0' }, extra || {})); }
     function btn(id, txt, primary, fn) {
       return el('button', { type: 'button', id: id, 'class': primary ? 'btn btn-primary' : 'btn btn-secondary', onclick: fn,
         style: 'min-height:44px;font-size:16px;margin:8px 8px 0 0', text: txt });
@@ -1317,15 +1365,19 @@
         return j;
       }
       if (j.next === 'email') {
-        var inp = el('input', { id: 'acct_oauth_email', type: 'email', inputmode: 'email', autocomplete: 'email', 'aria-label': 'E-mail address', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px' });
+        title('Confirm your e-mail address');
+        var inp = el('input', { id: 'acct_oauth_email', type: 'email', inputmode: 'email', autocomplete: 'email', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px' });
         inp.value = j.emailPrefill || '';
-        show([el('p', { 'class': 'acct-oauth-msg', text: (j.reason === 'missing' ? N + ' did not share an e-mail address. ' : '') + 'Confirm the e-mail address for this account — we will send a code to it.' }), inp,
+        show([para('acct-oauth-msg', (j.reason === 'missing' ? N + ' did not share an e-mail address. ' : '') + 'Confirm the e-mail address for this account — we will send a code to it.'),
+          el('label', { 'for': 'acct_oauth_email', text: 'E-mail address' }), inp,
           btn('acct_oauth_send', 'Send code', true, function () { drive(p, { email: String(inp.value || '').trim() }, oa); })]);
         return j;
       }
       if (j.next === 'code') {
-        var ci = el('input', { id: 'acct_oauth_code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '9', 'aria-label': 'Code', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px;letter-spacing:2px' });
-        show([el('p', { 'class': 'acct-oauth-msg', 'data-reason': j.reason || 'verify', 'data-masked': j.emailMasked || '', text: codeText(j.reason, j.emailMasked, p) }), ci,
+        title(j.reason === 'link_confirm' ? 'Confirm adding ' + N : j.reason === 'cancel_deletion' ? 'Cancel the account deletion' : 'Confirm your e-mail address');
+        var ci = el('input', { id: 'acct_oauth_code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '9', style: 'width:100%;box-sizing:border-box;font-size:16px;min-height:44px;letter-spacing:2px' });
+        show([para('acct-oauth-msg', codeText(j.reason, j.emailMasked, p), { 'data-reason': j.reason || 'verify', 'data-masked': j.emailMasked || '' }),
+          el('label', { 'for': 'acct_oauth_code', text: 'Code' }), ci,
           btn('acct_oauth_verify', 'Continue', true, function () {
             var reason = j.reason;
             drive(p, { code: String(ci.value || '').replace(/\s/g, '') }, oa).then(function (r) {
@@ -1341,9 +1393,17 @@
         // the versions come from the server; without them nothing is sent (never made-up versions)
         if (typeof j.terms !== 'string' || !j.terms || typeof j.privacy !== 'string' || !j.privacy) { showError(text('server', p)); return j; }
         var c = { terms: j.terms, privacy: j.privacy };
-        show([el('p', { 'class': 'acct-oauth-consent', text: 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.' }),
-          el('p', { style: 'font-size:13px', text: 'Creating an account means you accept the Terms of Use and the Privacy notice.' }),
-          btn('acct_oauth_create', 'Create account', true, function () { drive(p, { consent: c }, oa); }),
+        title('Create your account');
+        // the same explicit tick as the e-mail path, naming the versions (review fix): Create is refused until it is ticked
+        var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
+        var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
+        show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          cerr,
+          btn('acct_oauth_create', 'Create account', true, function () {
+            if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }
+            drive(p, { consent: c }, oa);
+          }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);
         return j;
       }
@@ -1351,6 +1411,7 @@
       return j;
     }
     function offerCancelDeletion() {
+      title('Cancel the account deletion');
       show([el('p', { 'class': 'acct-oauth-undelete-msg', text: 'This account is being deleted. You can cancel the deletion now.' }),
         btn('acct_oauth_undelete', 'Cancel deletion', true, function () {
           call('POST', '/account/delete/cancel', {}).then(function () { closeDialog(); }, function (e) { showError(text(e && e.code)); });
@@ -1372,6 +1433,7 @@
         if (!doc() || !doc().body) { resolve(false); return; }
         dialog();
         var N = NAME[p] || 'the provider';
+        title('Sign out of ' + N);
         show([el('p', { 'class': 'acct-oauth-signout', text: 'Now sign out of ' + N + ' in this browser: open ' + N + ', choose your account picture or name, then Sign out. This computer is shared, so the next person must not find you signed in there.' }),
           btn('acct_oauth_signedout', 'I have signed out', true, function () { closeDialog(); resolve(true); })]);
         dlgEscape = false;                                   // Escape does not close it; Tab still stays inside
@@ -1383,7 +1445,8 @@
     function renderMethods(host) {
       if (!host || !doc()) return Promise.resolve(null);
       host.textContent = '';
-      var card = el('div', { 'class': 'card acct-methods', id: 'acct_methods' }, [el('div', { 'class': 'card-title', text: 'Sign-in methods' })]);
+      // filled into the account page's own "Sign-in methods" card (68): no second card, title or note (review fix)
+      var card = el('div', { 'class': 'acct-methods', id: 'acct_methods' });
       host.appendChild(card);
       var list = el('div', { 'class': 'acct-methods-list' });
       card.appendChild(list);
@@ -1391,7 +1454,7 @@
       return Promise.all([api.methods(), api.providers().catch(function () { return { google: 'off', linkedin: 'off' }; })]).then(function (r) {
         var m = r[0] || {}; var st = r[1] || {};
         function row(title, detail, actions, p) {
-          var d = el('div', { 'class': 'acct-method-row', 'data-method': p || title, style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e0e0e0' });
+          var d = el('div', { 'class': 'acct-method-row', 'data-method': p || title, style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border,#3a3a3a)' });
           d.appendChild(el('div', { style: 'flex:1 1 220px' }, [el('div', { 'class': 'acct-method-title', text: title, style: 'font-weight:600' }), el('div', { 'class': 'acct-method-detail', text: detail, style: 'font-size:14px' })]));
           var a = el('div', { 'class': 'acct-method-actions', style: 'flex:1 1 200px' });
           (actions || []).forEach(function (x) { if (x) a.appendChild(x); });
@@ -1399,7 +1462,7 @@
           list.appendChild(d);
           return a;
         }
-        row('E-mail code', ((m.email && m.email.masked) || '') + ' — always on', [typeof api.changeEmail === 'function' ? btn('acct_m_email', 'Change e-mail', false, function () { api.changeEmail().catch(function () {}); }) : null], 'email');
+        row('E-mail code', ((m.email && m.email.masked) || '') + ' — always on', [typeof api.changeEmail === 'function' ? btn('acct_m_email', 'Change e-mail', false, function () { msg.textContent = 'Type the new address under "Change e-mail address" in Profile and security, then send the code.'; api.changeEmail().catch(function () {}); }) : null], 'email');
         row('Recovery address', m.recovery ? m.recovery.masked : 'Not set', [], 'recovery');
         PROVIDERS.forEach(function (p) {
           var i = (m.identities || []).filter(function (x) { return x.provider === p; })[0];

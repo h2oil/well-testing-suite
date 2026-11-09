@@ -371,7 +371,7 @@ module.exports = [
         assert(/n•••@company\.example/.test(t.acct().state().user.emailMasked));
         assert.strictEqual(t.fake.user('new@company.example').id, t.fake.user('new@company.example').id);
         const notice = t.fake.mail.sent.filter((m) => m.template === 'notice_email_changed' && m.to === E1).pop();
-        assert(notice && /^\d{8}$/.test(notice.params.revertCode), 'the old address got the revert code');
+        assert(notice && /^[A-Z2-7]{26}$/.test(notice.params.revertCode), 'the old address got the 130-bit revert key');
         t.a.flush(1000);
         const idId = addIdentity(t.fake, 'new@company.example', 'google');
         t.fake.state.sessions.forEach((s) => { if (s.userId === t.fake.user('new@company.example').id) s.identityId = idId; });
@@ -383,11 +383,12 @@ module.exports = [
           assert.strictEqual(t0.fake.requests.filter((r) => r.browser === t0.br.name).length, 0, 'and no request');
         } finally { t0.dispose(); }
         // the notice's link on another browser of a beta user
-        const t2 = T.device(ctx, t.fake, { hash: '#account-revert' });
+        const t2 = T.device(ctx, t.fake, { hash: '#account-revert=' + notice.params.revertCode.toLowerCase() });
         try {
           await t2.until(() => t2.el('acct_rev_email'), 'revert step opens from the link');
           assert.strictEqual(t2.fake.requests.filter((r) => r.browser === t2.br.name).length, 0, 'no request until submitted');
-          t2.a.input('acct_rev_email', E1); t2.a.input('acct_rev_code', notice.params.revertCode);
+          assert.strictEqual(t2.el('acct_rev_code').value, notice.params.revertCode, 'the link fills in the revert key');
+          t2.a.input('acct_rev_email', E1);
           t2.click('acct_rev_go');
           await t2.until(() => /previous address is back/.test(t2.text('acct_msg')), 'reverted');
           const u = t.fake.user(E1);

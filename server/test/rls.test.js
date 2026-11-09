@@ -48,7 +48,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
 
   test('migration recorded; every §3.4 table exists in schema wts', async () => {
     const m = await H.admin.sql`select name from public.wts_schema_migrations`;
-    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql', '040-oauth.sql']);
+    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql', '040-oauth.sql', '050-code-scope.sql']);
     const t = (await H.admin.sql`select tablename from pg_tables where schemaname = 'wts'`).map((r) => r.tablename).sort();
     assert.deepStrictEqual(t, USER_TABLES.concat(SYSTEM_TABLES).sort());
   });

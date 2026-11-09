@@ -139,6 +139,9 @@ function loadConfig(env) {
     mailCredential: env.WTS_MAIL_CREDENTIAL || '',
   };
   if (production && !secrets.proxySigs.length) alerts.push('WTS_PROXY_SIG missing on the production host — every request answers 404');
+  // behind the static site's rewrite the socket address is the proxy's: without the header every user would share one
+  // client-address bucket (provider sign-in is refused then, see functions/oauth.js noPrefix)
+  if (production && !ipHeader) alerts.push('WTS_CLIENT_IP_HEADER missing on the production host — provider sign-in is refused and per-range limits cannot work');
 
   const cfg = {
     env: wtsEnv, production, prodHost: PROD_HOST, prodOrigin: PROD_ORIGIN, devOrigin,
@@ -150,7 +153,8 @@ function loadConfig(env) {
     ipHeader, hostHeader,
     mailFrom: env.WTS_MAIL_FROM || 'no-reply@h2oil.co.uk',
     terms: String(env.WTS_TERMS_VERSION || '1'), privacy: String(env.WTS_PRIVACY_VERSION || '1'),
-    minClient: String(env.WTS_MIN_CLIENT || '3.5'), version: String(env.WTS_VERSION || 'wp0'),
+    // the security minimum of X-WTS-App (§3.2): unset = no gate; raised only for a security fix, never for a format change
+    minClient: String(env.WTS_MIN_CLIENT || ''), version: String(env.WTS_VERSION || 'wp0'),
     devPort: env.WTS_DEV_PORT ? Number(env.WTS_DEV_PORT) : 8787,
     // code/start answers no sooner than this (§3.3: padded to a fixed floor, so response time never tells an address apart)
     codeFloorMs: /^\d{1,5}$/.test(String(env.WTS_CODE_FLOOR_MS || '')) ? Number(env.WTS_CODE_FLOOR_MS) : (production ? 400 : 0),

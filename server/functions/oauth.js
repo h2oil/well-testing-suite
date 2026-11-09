@@ -52,24 +52,35 @@ function openJson(ctx, label, buf) { const b = open(ctx, label, buf); if (!b) re
 
 // e-mail codes bound to an attempt (and, for link_confirm, to the session's user — issued and checked inside that user's
 // transaction: code_issue / code_check require p_bound_user = app.user_id)
+// review fix: an oauth_verify code obeys the same send limits as an e-mail-code sign-in (auth.js mayStart: per address AND
+// client range, and the pause after 10 failed codes); when they refuse, nothing is sent and the reply stays the uniform next
+// 'code' step. o.send === false (sign-up closed to an address with no account) also sends nothing.
 async function issueCode(unit, ctx, o) {
+  const exp = new Date(Date.now() + 15 * MIN);
+  if (o.send === false) return { expiresAt: exp.getTime(), sent: false };
+  if (o.purpose === 'oauth_verify' && !(await AU.mayStart(unit, ctx, ctx.keys.emailBidx(o.email)))) return { expiresAt: exp.getTime(), sent: false };
   const code = code8();
   const bind = o.bind || {};
   const { kid, hmac } = ctx.keys.codeHmac(o.purpose, o.email, code, bind);
-  const exp = new Date(Date.now() + 15 * MIN);
   await unit.sql`select wts.code_issue(${ctx.keys.emailBidx(o.email)}, ${hmac}, ${kid}, ${o.purpose}, ${bind.user || null},
     ${bind.sid || null}, ${bind.attempt || null}, ${exp}, ${ctx.ipPrefix})`;
   await unit.mail(o.email, o.template, Object.assign({ code }, o.params || {}));
-  return { expiresAt: exp.getTime() };
+  return { expiresAt: exp.getTime(), sent: true };
 }
+// a wrong oauth_verify / link_confirm code counts towards the address-and-range pause like a wrong sign-in code (auth.js
+// noteFailure); a pair that reached 10 failures today is refused without checking
 async function checkCode(unit, ctx, o) {
   const code = V.normCode(o.code);
   if (!/^\d{8}$/.test(code)) return false;
+  const bidx = ctx.keys.emailBidx(o.email);
+  if (await AU.verifyBlocked(unit, ctx, bidx)) return false;
   const b = o.bind || {};
   const hm = ctx.keys.codeCandidates(o.purpose, o.email, code, b);
-  const r = (await unit.sql`select * from wts.code_check(${ctx.keys.emailBidx(o.email)}, ${o.purpose}, ${unit.sql.array(hm, 17)},
+  const r = (await unit.sql`select * from wts.code_check(${bidx}, ${o.purpose}, ${unit.sql.array(hm, 17)},
     ${b.user || null}, ${b.sid || null}, ${b.attempt || null})`)[0];
-  return !!(r && r.ok);
+  if (r && r.ok) return true;
+  await AU.noteFailure(unit, ctx, bidx, o.email, r ? r.attempts_left : -1);
+  return false;
 }
 async function userByEmail(unit, ctx, email) {
   const r = (await unit.sql`select * from wts.user_by_email(${ctx.keys.emailBidx(email)})`)[0];
@@ -380,7 +391,12 @@ function createOauthHandlers(deps) {
       const e = V.normEmail(b.email);
       if (!e) fail('bad_request', { field: 'email' });
       state.pending = { email: e, reason: 'verify' };
-      const c = await S.unitOf(ctx, null, (unit) => issueCode(unit, ctx, { email: e, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p } }));
+      const c = await S.unitOf(ctx, null, async (unit) => {
+        // review fix: with sign-up off (or invite-only and the address not listed) an address with no account gets nothing —
+        // the provider path is no way around the sign-up switch for sending mail; the reply stays the uniform next 'code'
+        const send = !!(await userByEmail(unit, ctx, e)) || !signupRefusal(ctx, await allowlistHas(unit, ctx, e));
+        return issueCode(unit, ctx, { email: e, purpose: 'oauth_verify', bind: { attempt: a.id }, template: 'code_oauth_verify', params: { provider: p }, send });
+      });
       return advance(ctx, st, a, oldHash, state, 'code', { emailMasked: V.maskEmail(e), reason: 'verify' }, c.expiresAt);   // uniform: always next code
     }
     if (b.code !== undefined) {

@@ -23,7 +23,7 @@
 //   'str' any string · 'nestr' non-empty string ≤ 4096 · 'int' integer · 'uint' integer ≥ 0 · 'num' finite number ·
 //   'bool' · 'iso' ISO-8601 timestamp string · 'uuid' · 'hex64' 64 lowercase hex (SHA-256) · 'b64' base64 text ·
 //   'email' a plausible address ≤ 254 · 'masked' a masked address (contains '•' and '@') · 'label' a device label
-//   (≤ 40 of letters, digits, space, -_.()) · 'code8' 8 digits (spaces allowed) · 'null' · 'any'
+//   (≤ 40 of letters, digits, space, -_.()) · 'code8' 8 digits (spaces allowed) · 'revertKey' 26 of A–Z / 2–7 (spaces, hyphens, any case) · 'null' · 'any'
 //   'a|b' alternatives; a quoted token 'x' is a literal string; true / false literal booleans; #N a literal number.
 //   Objects: plain {key: spec}; 'key?' optional. Arrays: [spec] or arr(spec, {min, max}). orNull(spec). oneOf(field, map).
 //   A function (v, path, ctx) is a custom rule. A string naming a shape ('@Name') refers to it.
@@ -97,6 +97,7 @@ const TYPES = {
   masked: (v) => typeof v === 'string' && v.indexOf('•') !== -1 && v.indexOf('@') > 0 && v.length <= 254,
   label: (v) => typeof v === 'string' && v.length <= 40 && /^[A-Za-z0-9 _.()-]*$/.test(v),
   code8: (v) => typeof v === 'string' && /^\d{8}$/.test(v.replace(/\s/g, '')),
+  revertKey: (v) => typeof v === 'string' && v.length <= 64 && /^[A-Z2-7]{26}$/.test(v.replace(/[\s-]/g, '').toUpperCase()),
   null: (v) => v === null,
   any: (v) => v !== undefined,
 };
@@ -224,7 +225,7 @@ S.CodeStartReq = all({ 'email?': 'email', purpose: "'signin'|'stepup'|'email_cha
 S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent' };
 S.EmailChangeReq = { newEmail: 'email' };
 S.EmailConfirmReq = { code: 'code8' };
-S.EmailRevertReq = { email: 'email', code: 'code8' };
+S.EmailRevertReq = { email: 'email', code: 'revertKey' };
 S.RecoverySetReq = all({ 'email?': 'email', 'code?': 'code8' }, rule((v) => ((v.email !== undefined) === (v.code !== undefined)) ? 'expected exactly one of email | code' : null));
 S.RecoveryRemoveReq = {};
 S.PasskeyOptionsReq = { purpose: "'signin'|'stepup'" };

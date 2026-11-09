@@ -53,6 +53,7 @@ module.exports = [
         assert(/Open "Example-1"/.test(b.dialogText()));
         await b.choose('open');
         await b.until(() => b.storage.getItem('wts_page_hydrate'), 'opened');
+        await b.until(() => b.sync().status().projectId, 'linked once the open has finished');
         assert.strictEqual(b.sync().status().projectId, proj(a.fake, E1)[0].id);
       } finally { a.dispose(); b.dispose(); }
     },

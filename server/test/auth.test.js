@@ -180,7 +180,7 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
     assert.strictEqual((await other.call('GET', '/me')).json.error, 'signed_out', 'every other session signed out');
     assert.strictEqual((await br.call('GET', '/me')).status, 200);
     const notice = T.lastMail(email, 'notice_email_changed');
-    assert.ok(notice && /^\d{8}$/.test(notice.params.revertCode), 'the old address gets the revert code');
+    assert.ok(notice && /^[A-Z2-7]{26}$/.test(notice.params.revertCode), 'the old address gets the 130-bit revert key');
     assert.ok(T.lastMail(neu, 'notice_email_added'));
     // the new address signs in; the old one is reserved for the revert window (nobody can register it)
     await T.signIn(T.browser(), neu);
@@ -194,8 +194,9 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
       values (gen_random_uuid(), ${id}, 'google', 'https://issuer.example', ${Buffer.alloc(32, 7)}, ${Buffer.from('s')}, true, now(), 'account_page')`;
     await T.db.sql`insert into wts.sessions (sid_hash, user_id, public_device, created_at, auth_at, last_seen_at, idle_expires_at, abs_expires_at, auth_method, identity_id)
       select ${Buffer.alloc(32, 9)}, ${id}, false, now(), now(), now(), now() + interval '1 day', now() + interval '2 days', 'google', i.id from wts.identities i where i.user_id = ${id}`;
-    const wrong = await T.browser().call('POST', '/auth/email/revert', { email, code: '11112222' });
+    const wrong = await T.browser().call('POST', '/auth/email/revert', { email, code: 'A'.repeat(26) });
     assert.strictEqual(wrong.json.error, 'invalid_or_expired');
+    assert.strictEqual((await T.browser().call('POST', '/auth/email/revert', { email, code: '11112222' })).status, 400, 'an 8-digit value is not a revert key');
     const rev = await T.browser().call('POST', '/auth/email/revert', { email, code: notice.params.revertCode });
     assert.strictEqual(rev.status, 200, JSON.stringify(rev.json));
     assert.ok(C.checkShape('RevokeRes', rev.json).ok);
@@ -255,14 +256,62 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
     await br.call('POST', '/auth/email/confirm', { code: T.codeFor(neu, 'code_email_change') });
     const code = T.lastMail(owner, 'notice_email_changed').params.revertCode;
     const attacker = T.browser({ ip: '198.51.100.7' });
-    for (let i = 0; i < 5; i++) assert.strictEqual((await attacker.call('POST', '/auth/email/revert', { email: owner, code: String(10000000 + i) })).json.error, 'invalid_or_expired');
+    const junk = (i) => ('JUNK' + 'A'.repeat(20) + 'B' + String.fromCharCode(65 + (i % 26))).slice(0, 26);
+    for (let i = 0; i < 5; i++) assert.strictEqual((await attacker.call('POST', '/auth/email/revert', { email: owner, code: junk(i) })).json.error, 'invalid_or_expired');
     const sixth = await attacker.call('POST', '/auth/email/revert', { email: owner, code });
     assert.strictEqual(sixth.status, 429, 'throttled: the code is not even checked'); assert.ok(sixth.json.retryAfter >= 1);
     const live = await T.db.sql`select count(*)::int as n from wts.email_codes where purpose = 'email_revert' and email_bidx = ${T.keys.emailBidx(owner)} and used_at is null and invalidated_at is null`;
     assert.strictEqual(live[0].n, 1, 'the revert code is still live');
-    const ok = await T.browser({ ip: '192.0.2.44' }).call('POST', '/auth/email/revert', { email: owner, code });
+    // review fix: 100+ junk tries from 21 ranges (5 each) never block the owner — the per-address count is an alert only
+    for (let r = 0; r < 20; r++) {
+      const b2 = T.browser({ ip: '198.18.' + r + '.9' });
+      for (let i = 0; i < 5; i++) await b2.call('POST', '/auth/email/revert', { email: owner, code: junk(i) });
+    }
+    const ok = await T.browser({ ip: '192.0.2.44' }).call('POST', '/auth/email/revert', { email: owner, code: code.toLowerCase().replace(/(.{4})/g, '$1-') });
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.json));
-    assert.ok(await T.userId(owner), 'the owner has the address back');
+    assert.ok(await T.userId(owner), 'the owner has the address back (key in any case, with hyphens)');
+  });
+
+  test('review fix: a stranger in another range cannot use up, cancel, burn or pause the owner\'s e-mail codes', async () => {
+    const owner = 'olga@company.example';
+    const home = T.browser({ ip: '192.0.2.10' });
+    await T.signIn(home, owner);
+    const stranger = T.browser({ ip: '198.51.100.20' });
+    for (let i = 0; i < 20; i++) await stranger.call('POST', '/auth/code/start', { email: owner, purpose: 'signin' });
+    const sentToStranger = T.mailsTo(owner).filter((m) => m.template === 'code_signin').length;
+    assert.ok(sentToStranger <= 6, 'the stranger\'s range got at most 5 sends (+1 sign-in): ' + sentToStranger);
+    // ten wrong verifies from the stranger's range
+    for (let i = 0; i < 12; i++) await stranger.call('POST', '/auth/code/verify', { email: owner, code: String(20000000 + i), publicDevice: false });
+    // the owner, from another range, still gets a sign-in code and it works
+    const n = T.mailsTo(owner).length;
+    const other = T.browser({ ip: '203.0.113.50' });
+    await other.call('POST', '/auth/code/start', { email: owner, purpose: 'signin' });
+    assert.strictEqual(T.mailsTo(owner).length, n + 1, 'the owner\'s sign-in code is sent');
+    const c = T.codeFor(owner, 'code_signin');
+    for (let i = 0; i < 4; i++) await stranger.call('POST', '/auth/code/start', { email: owner, purpose: 'signin' });
+    for (let i = 0; i < 6; i++) await stranger.call('POST', '/auth/code/verify', { email: owner, code: String(30000000 + i), publicDevice: false });
+    const r = await other.call('POST', '/auth/code/verify', { email: owner, code: c, publicDevice: false });
+    assert.strictEqual(r.status, 200, 'neither cancelled nor burnt by the stranger: ' + JSON.stringify(r.json));
+    // the signed-in owner's step-up is counted per session, not in the address buckets
+    await home.call('POST', '/auth/code/start', { purpose: 'stepup' });
+    const su = T.lastMail(owner, 'code_stepup');
+    assert.ok(su, 'step-up code sent despite the stranger');
+    assert.strictEqual((await home.call('POST', '/auth/code/verify', { code: su.params.code, publicDevice: false })).status, 200);
+    // the stranger's own range is paused after 10 failures: a verify there is refused even with a right code
+    const n2 = T.mailsTo(owner).length;
+    await stranger.call('POST', '/auth/code/start', { email: owner, purpose: 'signin' });
+    assert.strictEqual(T.mailsTo(owner).length, n2, 'the stranger\'s range is paused');
+  });
+
+  test('review fix: wrong codes with no live code never count towards the pause', async () => {
+    const owner = 'pia@company.example';
+    await T.signIn(T.browser(), owner);
+    const stranger = T.browser({ ip: '198.51.100.30' });
+    for (let i = 0; i < 15; i++) await stranger.call('POST', '/auth/code/verify', { email: owner, code: String(40000000 + i), publicDevice: false });
+    const n = T.mailsTo(owner).length;
+    await stranger.call('POST', '/auth/code/start', { email: owner, purpose: 'signin' });
+    assert.strictEqual(T.mailsTo(owner).length, n + 1, 'no pause: there was nothing to guess');
+    assert.ok(!T.mailsTo(owner).some((m) => m.template === 'notice_codes_paused'));
   });
 
   test('recovery address: code to it (step-up), one address one role, sign-in and step-up codes can go there, remove', async () => {
@@ -370,15 +419,22 @@ test.describe('auth (§3.3, §4)', { skip }, () => {
     const p = 'pause@company.example';
     await T.signIn(T.browser(), p);
     const b2 = T.browser();
-    for (let i = 0; i < 10; i++) await b2.call('POST', '/auth/code/verify', { email: p, code: '00000000', publicDevice: false });
+    // failures count only while a code is live for the address (review fix): one is sent, then guessed at
+    for (let r = 0; r < 2; r++) {
+      await b2.call('POST', '/auth/code/start', { email: p, purpose: 'signin' });
+      for (let i = 0; i < 5; i++) await b2.call('POST', '/auth/code/verify', { email: p, code: '00000000', publicDevice: false });
+    }
     const n = T.mailsTo(p).length;
     await b2.call('POST', '/auth/code/start', { email: p, purpose: 'signin' });
     assert.strictEqual(T.mailsTo(p).length, n, 'paused after 10 failures');
     assert.ok(T.logs.some((l) => /10 failed codes/.test(l)));
     assert.ok(T.lastMail(p, 'notice_codes_paused'), 'the account address is told');
     const nobody = 'nobody.paused@company.example';
-    for (let i = 0; i < 10; i++) await b2.call('POST', '/auth/code/verify', { email: nobody, code: '00000000', publicDevice: false });
-    assert.strictEqual(T.mailsTo(nobody).length, 0, 'no mail to an address without an account');
+    for (let r = 0; r < 2; r++) {
+      await b2.call('POST', '/auth/code/start', { email: nobody, purpose: 'signin' });
+      for (let i = 0; i < 5; i++) await b2.call('POST', '/auth/code/verify', { email: nobody, code: '00000000', publicDevice: false });
+    }
+    assert.ok(!T.mailsTo(nobody).some((m) => m.template === 'notice_codes_paused'), 'no pause notice to an address without an account');
   });
 
   test('enumeration: the reply of code start does not depend on the mailer (queued) and is padded to the floor', async () => {

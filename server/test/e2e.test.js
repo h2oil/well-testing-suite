@@ -89,10 +89,13 @@ function device(srv, o) {
 const sql = () => H.admin.sql;
 async function userRow(email, keys) { return (await sql()`select * from wts.users where email_bidx = ${keys.emailBidx(email)}`)[0] || null; }
 async function signedIn(t, what) { await t.until(() => t.acct().state().status === 'signedIn' && !t.el('acct_dlg_ov'), what || 'signed in', 15000); }
-async function wait(t, fn, what) {
-  try { return await t.until(fn, what, 15000); } catch (e) {
+async function wait(t, fn, what, o) {
+  o = o || {};
+  try { return await t.until(fn, what, o.max || 15000); } catch (e) {
     const b = (id) => { const el = t.a.el(id); return el ? String(el.textContent || '').slice(0, 300) : '-'; };
     e.message += ' [oauth dialog: ' + b('acct_oauth_body') + ' | dialog: ' + b('acct_dlg_body') + ' | hint: ' + t.storage.getItem('wtsacct_hint') + ']';
+    // a link whose promise rejected says why (the rejection used to be swallowed, so a failure looked like a timeout)
+    if (o.link) e.message += ' [linkProvider: ' + (o.link.state === 'rejected' ? 'rejected: ' + (o.link.error && (o.link.error.code || o.link.error.message)) : o.link.state) + ']';
     throw e;
   }
 }
@@ -101,7 +104,8 @@ async function wait(t, fn, what) {
 async function providerTrip(srv, t, provider, as, o) {
   o = o || {};
   const before = t.assigned.length;
-  if (o.link) t.acct().linkProvider(provider).catch(() => {});
+  const link = { state: 'pending', error: null };
+  if (o.link) t.acct().linkProvider(provider).then(() => { link.state = 'resolved'; }, (e) => { link.state = 'rejected'; link.error = e; });
   else {
     t.acct().openSignIn();
     await wait(t, () => t.a.find('#acct_provider_buttons .acct-prov-btn[data-provider="' + provider + '"]'), provider + ' button');
@@ -109,10 +113,12 @@ async function providerTrip(srv, t, provider, as, o) {
   }
   if (o.stepup) {
     // a provider session has no step-up: the code step-up of WP-C1 asks for a code sent to the account address
-    await wait(t, () => t.el('acct_code') && srv.codeFor(o.stepup, 'code_stepup'), 'the step-up code');
+    await wait(t, () => (t.el('acct_code') && srv.codeFor(o.stepup, 'code_stepup')) || link.state === 'rejected', 'the step-up code', { max: 30000, link: o.link ? link : null });
+    if (link.state === 'rejected') throw new Error('linkProvider rejected before the step-up code: ' + ((link.error && (link.error.code || link.error.message)) || 'unknown'));
     t.a.input('acct_code', srv.codeFor(o.stepup, 'code_stepup')); t.click('acct_verify');
   }
-  await wait(t, () => t.assigned.length > before, 'location.assign to ' + provider);
+  await wait(t, () => t.assigned.length > before || link.state === 'rejected', 'location.assign to ' + provider, { max: 30000, link: o.link ? link : null });
+  if (link.state === 'rejected') throw new Error('linkProvider rejected: ' + ((link.error && (link.error.code || link.error.message)) || 'unknown'));
   const back = await t.br.visit(t.assigned[t.assigned.length - 1], { as });
   assert.strictEqual(back.status, 303);
   assert.strictEqual(back.location, srv.config.appUrl + '#acct-oauth', 'the constant return address');
@@ -193,6 +199,7 @@ test.describe('Phase 1 end to end: page ↔ API ↔ database ↔ fake providers 
       t = await providerTrip(srv, t, 'google', { key: 'e2-g', email: gEmail });
       await wait(t, () => t.a.find('#acct_oauth_create'), 'the consent step');
       assert(/e•••@/.test(t.a.find('.acct-oauth-consent').textContent), 'the consent names the new address');
+      t.a.find('#acct_oauth_consent_ok').checked = true;
       t.click(t.a.find('#acct_oauth_create'));
       await signedIn(t, 'signed in with Google');
       assert.strictEqual(t.acct().state().authMethod, 'google');
@@ -255,6 +262,25 @@ test.describe('Phase 1 end to end: page ↔ API ↔ database ↔ fake providers 
       assert.strictEqual(t.storage.getItem('wtspref_shared_browser'), '1', 'the shared-browser flag is kept');
       assert.strictEqual(t.br.cookie('__Host-wts_sid'), null, 'the session cookie is cleared');
       assert.strictEqual((await sql()`select count(*)::int as n from wts.sessions where user_id = ${u.id}`)[0].n, 0, 'the session row is gone');
+    } finally { t.dispose(); }
+  });
+
+  test('E7 the built page without an appVer seam: X-WTS-App is the page\'s own version and a save works with the default server config', async () => {
+    const srv = realServer();
+    assert.strictEqual(srv.config.minClient, '', 'no security minimum by default (raised only for a security fix, §3.2)');
+    const email = 'e7.version@company.example';
+    const t = device(srv, { seed: true });
+    try {
+      t.acct().configure({ appVer: '' });                  // the page's own version (the label under the logo)
+      const label = /(\d+\.\d+(?:\.\d+)?)/.exec(t.text('appVersionLabel') || '');
+      assert(label, 'the version label');
+      assert.strictEqual(t.acct()._i.appVer(), label[1], 'appVer() follows the label');
+      await t.signIn(email, { handover: 'later' });
+      await signedIn(t);
+      const r = await t.sync().saveToCloud({});
+      assert.strictEqual(r.rev, 1, 'the save went through: ' + JSON.stringify(r));
+      const u = await userRow(email, srv.keys);
+      assert.strictEqual((await sql()`select count(*)::int as n from wts.projects where user_id = ${u.id} and head_rev = 1`)[0].n, 1);
     } finally { t.dispose(); }
   });
 

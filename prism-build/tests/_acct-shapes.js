@@ -47,7 +47,7 @@ const EXAMPLES = {
   codeVerify: { req: { email: 'name@company.example', code: '1234 5678', publicDevice: false, consent: { terms: '1', privacy: '1' } }, res: { 200: signIn } },
   emailChange: { req: { newEmail: 'new@company.example' }, res: { 202: { ok: true } } },
   emailConfirm: { req: { code: '12345678' }, res: { 200: { emailMasked: MASK } } },
-  emailRevert: { req: { email: 'name@company.example', code: '12345678' }, res: { 200: { ok: true, sessions: 2, passkeysRemoved: 0, identitiesRemoved: 1 } } },
+  emailRevert: { req: { email: 'name@company.example', code: 'ABCD EFGH IJKL MNOP QRST UVWX YZ' }, res: { 200: { ok: true, sessions: 2, passkeysRemoved: 0, identitiesRemoved: 1 } } },
   recoverySet: { req: { email: 'me@personal.example' }, res: { 202: { ok: true }, 200: { ok: true } } },
   recoveryRemove: { req: {}, res: { 200: { ok: true } } },
   passkeyOptions: { req: { purpose: 'signin' }, res: { 200: { publicKey: { challenge: 'AAAA', rpId: 'welltest.h2oil.co.uk', userVerification: 'required', allowCredentials: [] } } } },

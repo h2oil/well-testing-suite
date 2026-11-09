@@ -48,6 +48,7 @@ const rnd = (n) => crypto.randomBytes(n).toString('base64').replace(/=+$/, '').r
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const b64u = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 const code8 = () => String(crypto.randomInt(0, 1e8)).padStart(8, '0');
+const { revertKey } = require(path.join(SRV, 'core', 'keys'));
 
 function prodLocation(p) {
   const pathname = p || '/well-testing-app.html';
@@ -373,7 +374,7 @@ function createFakeServer(o) {
       const hit = takeCode((c) => c.purpose === 'email_change' && c.boundUser === u.id && c.boundSid === s.sid, V.normCode(ctx.body.code));
       if (!hit || findAccount(hit.email)) fail('invalid_or_expired');
       const old = u.email;
-      u.prev = { email: old, revertCode: code8(), until: now() + 7 * DAY };
+      u.prev = { email: old, revertCode: revertKey(), until: now() + 7 * DAY };
       u.email = hit.email; u.emailChangedAt = now(); u.pendingEmail = null;
       setEmailIndex(u);
       revokeWhere((x) => x.userId === u.id && x.sid !== s.sid);
@@ -382,7 +383,7 @@ function createFakeServer(o) {
       return { status: 200, body: { emailMasked: V.maskEmail(u.email) } };
     },
     emailRevert(ctx) {
-      const old = V.normEmail(ctx.body.email); const code = V.normCode(ctx.body.code);
+      const old = V.normEmail(ctx.body.email); const code = V.normRevertKey(ctx.body.code) || '-';
       const u = Array.from(S.users.values()).find((x) => x.prev && x.prev.email === old && x.prev.until > now() && H.safeEqual(x.prev.revertCode, code));
       if (!u || (findAccount(old) && findAccount(old).user !== u)) fail('invalid_or_expired');
       const since = u.emailChangedAt;

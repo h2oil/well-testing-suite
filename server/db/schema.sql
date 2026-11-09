@@ -151,7 +151,10 @@ CREATE FUNCTION wts.code_check(p_email_bidx bytea, p_purpose text, p_code_hmacs 
     SET search_path TO 'wts', 'pg_temp'
     AS $$
 #variable_conflict use_column
-DECLARE v_hit wts.email_codes%ROWTYPE; v_left int;
+DECLARE v_hit wts.email_codes%ROWTYPE; v_left int; v_any boolean;
+        v_prefix inet := NULLIF(current_setting('wts.ip_prefix', true), '')::inet;
+        v_scoped boolean := p_purpose = 'signin' AND p_bound_user IS NULL AND p_bound_attempt IS NULL
+                            AND NULLIF(current_setting('wts.ip_prefix', true), '') IS NOT NULL;
 BEGIN
   IF p_purpose IS NULL OR p_code_hmacs IS NULL OR (p_email_bidx IS NULL AND (p_bound_user IS NULL OR p_bound_sid IS NULL)) THEN
     RETURN QUERY SELECT false, NULL::uuid, 0; RETURN;
@@ -172,12 +175,19 @@ BEGIN
       AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt AND c.used_at IS NULL AND c.invalidated_at IS NULL;
     RETURN QUERY SELECT true, v_hit.id, 5 - v_hit.attempts; RETURN;
   END IF;
+  SELECT EXISTS (SELECT 1 FROM wts.email_codes c
+    WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
+      AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
+      AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt
+      AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()) INTO v_any;
+  IF NOT v_any THEN RETURN QUERY SELECT false, NULL::uuid, -1; RETURN; END IF;
   WITH u AS (
     UPDATE wts.email_codes c SET attempts = c.attempts + 1, invalidated_at = CASE WHEN c.attempts + 1 >= 5 THEN now() END
       WHERE (p_email_bidx IS NULL OR c.email_bidx = p_email_bidx) AND c.purpose = p_purpose
         AND c.bound_user IS NOT DISTINCT FROM p_bound_user AND c.bound_sid IS NOT DISTINCT FROM p_bound_sid
         AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt
         AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()
+        AND (NOT v_scoped OR c.ip_prefix IS NOT DISTINCT FROM v_prefix)
       RETURNING c.attempts)
   SELECT max(5 - u.attempts) INTO v_left FROM u;
   RETURN QUERY SELECT false, NULL::uuid, greatest(coalesce(v_left, 0), 0);
@@ -191,6 +201,7 @@ CREATE FUNCTION wts.code_issue(p_email_bidx bytea, p_code_hmac bytea, p_pepper_k
     AS $$
 DECLARE v_id uuid := gen_random_uuid();
         v_max timestamptz := now() + CASE WHEN p_purpose = 'email_revert' THEN interval '7 days' ELSE interval '15 minutes' END;
+        v_ranged boolean := p_purpose IN ('signin', 'oauth_verify');
 BEGIN
   IF p_email_bidx IS NULL OR p_code_hmac IS NULL OR p_purpose IS NULL THEN RAISE EXCEPTION 'code_issue: missing argument' USING ERRCODE = '22023'; END IF;
   IF p_purpose IN ('stepup', 'email_change', 'recovery_add') AND (p_bound_user IS NULL OR p_bound_sid IS NULL) THEN
@@ -203,7 +214,9 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('wts.code:' || encode(p_email_bidx, 'hex') || ':' || p_purpose, 0));
   UPDATE wts.email_codes SET invalidated_at = now() WHERE id IN (
     SELECT c.id FROM wts.email_codes c WHERE c.email_bidx = p_email_bidx AND c.purpose = p_purpose
-      AND c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()
+      AND CASE WHEN v_ranged THEN c.ip_prefix IS NOT DISTINCT FROM p_ip_prefix
+               ELSE c.bound_attempt IS NOT DISTINCT FROM p_bound_attempt END
+      AND c.used_at IS NULL AND c.invalidated_at IS NULL AND c.expires_at > now()
       ORDER BY c.expires_at DESC OFFSET 1);
   INSERT INTO wts.email_codes (id, email_bidx, code_hmac, pepper_kid, purpose, bound_user, bound_sid, bound_attempt, expires_at, ip_prefix)
     VALUES (v_id, p_email_bidx, p_code_hmac, p_pepper_kid, p_purpose, p_bound_user, p_bound_sid, p_bound_attempt,

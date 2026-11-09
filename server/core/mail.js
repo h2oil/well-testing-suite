@@ -51,6 +51,7 @@ const BROWSERS = new Set(['a web browser']);
 const OSES = new Set(['a computer', 'a phone or tablet']);
 const PROVIDERS = { google: 'Google', linkedin: 'LinkedIn' };
 const fmtCode = (c) => { const s = String(c == null ? '' : c); if (!/^\d{8}$/.test(s)) throw new Error('mail: code must be 8 digits'); return s.slice(0, 4) + ' ' + s.slice(4); };
+const fmtKey = (k) => { const s = String(k == null ? '' : k); if (!/^[A-Z2-7]{26}$/.test(s)) throw new Error('mail: revert key must be 26 of A-Z / 2-7'); return s; };
 const fmtWhen = (t) => { const s = String(t == null ? '' : t); return /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2} UTC)?$/.test(s) ? s : 'an unknown time'; };
 const fmtBrowser = (p) => (BROWSERS.has(p.browser) ? p.browser : 'a web browser');
 const fmtOs = (p) => (OSES.has(p.os) ? p.os : 'a device');
@@ -87,7 +88,8 @@ const BODIES = {
     'New sign-in on ' + fmtBrowser(p) + ' on ' + fmtOs(p) + ' at ' + fmtWhen(p.at) + '.', NOT_YOU]],
   notice_email_changed: (p) => ['The e-mail address of your Well Testing Suite account was changed', [
     'The e-mail address of your Well Testing Suite account was changed on ' + fmtWhen(p.at) + '.',
-    'If this was not you, enter code ' + fmtCode(p.revertCode) + ' at ' + SITE + '/#account-revert within 7 days. This restores this address, signs '
+    'If this was not you, open ' + SITE + '/#account-revert=' + fmtKey(p.revertCode) + ' within 7 days (or open ' + SITE + '/#account-revert '
+      + 'and enter the revert key ' + fmtKey(p.revertCode).replace(/(.{4})(?=.)/g, '$1 ') + '). This restores this address, signs '
       + 'out every session and removes every passkey, recovery address and Google or LinkedIn sign-in added since the change.']],
   notice_email_reverted: (p) => ['The e-mail address of your Well Testing Suite account was restored', [
     'The e-mail address of your Well Testing Suite account was restored to this address on ' + fmtWhen(p.at) + '. Every session was signed out, '

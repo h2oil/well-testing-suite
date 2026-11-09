@@ -39,7 +39,7 @@ const SITE_HEADERS = Object.freeze({
   'X-Frame-Options': 'DENY',
 });
 // sign-in routes closed on a preview without the flag (§13.1)
-const SIGNIN_IDS = new Set(['codeStart', 'codeVerify', 'passkeyOptions', 'passkeyVerify', 'oauthStart', 'oauthCallback', 'oauthFinish']);
+const SIGNIN_IDS = new Set(['codeStart', 'codeVerify', 'passkeyOptions', 'passkeyVerify', 'oauthStart', 'oauthCallback', 'oauthFinish', 'emailRevert']);
 
 function createHandler(o) {
   o = o || {};

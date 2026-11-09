@@ -262,12 +262,25 @@
     var st = status();
     try { if (HAS_DOC && typeof G.CustomEvent === 'function') document.dispatchEvent(new G.CustomEvent('wts:sync-status', { detail: st })); } catch (e) { /* none */ }
   }
+  // back online (66's 'online' listener): a network / outage error of the last action no longer stands
+  function netBack() { if (S.error && (S.error.code === 'network' || S.error.code === 'server')) { S.error = null; changed(); } }
   function setBusy(v, err) { S.busy = v; if (err !== undefined) S.error = err; changed(); }
+  // a change → dirty at once; then ONE snapshot compares with the last saved state, and a rewrite that changed nothing (the
+  // same value written again, e.g. an autosave flush) turns the binding clean again (review fix). changeGen guards a real
+  // edit that arrives while the check runs.
+  var changeGen = 0;
   function markDirty() {
     if (S.applying || S.snapshotting || !S.binding) return;
+    changeGen++;
     var u = signedInUser(); if (!u || S.binding.userId !== u.id) return;
     if (S.binding.dirty) return;
     S.binding.dirty = true; saveBinding(); changed();
+    if (!S.base || !S.base.vhash) return;
+    var gen = changeGen; var b = S.binding; var base = S.base.vhash;
+    snapshot({}).then(function (snap) {
+      if (gen !== changeGen || S.busy || S.binding !== b || !b.dirty || !S.base || S.base.vhash !== base || snap.vhash !== base) return;
+      b.dirty = false; saveBinding(); changed();
+    }, function () { /* stays dirty */ });
   }
   var EVENTS = ['wts:autosaved', 'wts:ls-write', 'wts:project-loaded', 'wts:project-new', 'wts:project-changed', 'prism:fit-updated',
     'prism:well-changed', 'prism:model-changed', 'wts:buildup-updated', 'wts:well-changed'];
@@ -277,8 +290,9 @@
     if (ev && ev.type === 'wts:project-loaded' && d && (d.source === 'cloud' || d.origin === 'cloud')) return;   // echo guard
     if (ev && ev.type === 'wts:ls-write' && d) {
       var key = String(d.key || '');
-      // account / device keys and the account library (synced on its own, not in the snapshot) never dirty the project
-      if (/^(wtsacct_|wtspref_)/.test(key) || LIBRARY_RE.test(key) || DEVICE_PREF_RE.test(key)) return;
+      // account / device keys, the account library (synced on its own, not in the snapshot) and derived keys (report
+      // snapshots, multi-well results: rebuilt on any click, outside vhash, §6.1 / §7) never dirty the project
+      if (/^(wtsacct_|wtspref_)/.test(key) || LIBRARY_RE.test(key) || DEVICE_PREF_RE.test(key) || DERIVED_KEYS[key]) return;
     }
     markDirty();
   }
@@ -690,11 +704,24 @@
           S.binding.dirty = false; saveBinding(); setBusy(false, null);
           return { rev: S.binding.baseRev, projectId: S.binding.projectId, unchanged: true };
         }
+        // a first save whose upload failed after the project was created left an empty project (no revision): the next
+        // first save reuses it instead of creating another (review fix; S.device.pendingCreate, cleared once bound)
+        var pend = !linked && S.device && S.device.pendingCreate && S.device.pendingCreate.userId === u.id ? S.device.pendingCreate : null;
         var create = linked ? Promise.resolve({ id: S.binding.projectId, rev: S.binding.baseRev })
-          : call('POST', '/projects', { name: name, meta: (function (m) { delete m.name; return m; })(metaOf(snap.payload, name)) }).then(function (r) { return { id: r.json.id, rev: r.json.headRev }; });
+          : pend ? (pend.name === name ? Promise.resolve() : call('POST', '/projects/' + encodeURIComponent(pend.id) + '/rename', { name: name }).then(function () { pend.name = name; }))
+            .then(function () { return { id: pend.id, rev: 0, pending: true }; })
+          : call('POST', '/projects', { name: name, meta: (function (m) { delete m.name; return m; })(metaOf(snap.payload, name)) }).then(function (r) {
+            if (!S.device) S.device = {};
+            S.device.pendingCreate = { userId: u.id, id: r.json.id, name: name };
+            return Promise.resolve(saveDevice()).then(function () { return { id: r.json.id, rev: r.json.headRev }; });
+          });
+        var clearPending = function (id) {
+          if (!S.device || !S.device.pendingCreate || S.device.pendingCreate.id !== id) return Promise.resolve();
+          delete S.device.pendingCreate; return Promise.resolve(saveDevice());
+        };
         return create.then(function (pr) {
           return pushSnap(pr.id, snap, pr.rev, reason, name).then(function (res) {
-            if (!res.stale) return bindTo(u, pr.id, name, res.rev, snap).then(function () { setBusy(false, null); libraryPush(); return { rev: res.rev, projectId: pr.id }; });
+            if (!res.stale) return clearPending(pr.id).then(function () { return bindTo(u, pr.id, name, res.rev, snap); }).then(function () { setBusy(false, null); libraryPush(); return { rev: res.rev, projectId: pr.id }; });
             setBusy(false, null);
             return staleChoice(u, pr.id, snap, res, name);
           });
@@ -703,6 +730,8 @@
         // §3.2: the linked project was trashed or purged on another device — unlink and offer a new cloud project
         var code = e && e.code;
         if ((code === 'not_found' || code === 'gone') && linkedFor(u) && !o.as) return goneChoice(u, e);
+        // the remembered empty project is gone (trashed or purged elsewhere): forget it, so the next save creates a new one
+        if ((code === 'not_found' || code === 'gone') && S.device && S.device.pendingCreate && !linkedFor(u)) { delete S.device.pendingCreate; saveDevice(); }
         return fail(e);
       });
     });
@@ -987,7 +1016,12 @@
     return { name: metaOf(snap.payload).name, client: (snap.meta && snap.meta.client) || '', wells: wells,
       wellNames: (snap.wells || []).map(function (w) { return w.name; }), pages: pages, prism: prism, buildup: buildup, bytes: bytes, large: large };
   }
-  function mb(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1000)) + ' kB'; }
+  function mb(n) {
+    n = Number(n) || 0;
+    var t = n >= 1e6 ? String(Math.round(n / 1e5) / 10) + ' MB' : Math.max(1, Math.round(n / 1000)) + ' kB';
+    var dc = false; try { dc = !!(G.WTS_a11y && G.WTS_a11y.decimalComma && G.WTS_a11y.decimalComma()); } catch (e) { /* none */ }
+    return dc ? t.replace('.', ',') : t;      // 250 MB, 1.5 MB (1,5 MB with the decimal-comma setting)
+  }
   function classify(user, migrated) {
     var d = S.device || {};
     if (!hasLocalWork()) return 'empty';
@@ -1247,8 +1281,7 @@
       return i.choose({ title: 'New project', text: 'Start a new cloud project, or a local-only one? The cloud project you are linked to is not changed.',
         buttons: [{ id: 'cloud', label: 'New cloud project', primary: true }, { id: 'local', label: 'Local only' }, { id: 'cancel', label: 'Cancel' }] }).then(function (c) {
         if (c !== 'cloud' && c !== 'local') return 'cancel';
-        afterAction('wts:project-new', function () { return unlink().then(function () { if (c === 'cloud') return saveToCloud({ as: true, name: 'New project' }); }); });
-        return 'proceed';
+        return { decision: 'proceed', after: followUp(function () { return unlink().then(function () { if (c === 'cloud') return saveToCloud({ as: true, name: 'New project' }); }); }) };
       });
     }
     if (action === 'open' || action === 'open-file') {
@@ -1264,27 +1297,24 @@
       });
       return pre.then(function (c) {
         if (c !== 'new' && c !== 'local' && c !== 'replace') return 'cancel';
-        afterAction('wts:project-loaded', function () {
+        return { decision: 'proceed', after: followUp(function (res) {
           if (c === 'local') return unlink();
           if (c === 'replace') { if (S.binding) { S.binding.dirty = true; } return saveToCloud({}); }
           var f = P() && P().currentFile && P().currentFile();
-          return unlink().then(function () { return saveToCloud({ as: true, name: f && f.name ? String(f.name).replace(/\.h2oilproj$/i, '') : undefined }); });
-        });
-        return 'proceed';
+          var name = (res && res.filename) || (f && f.name) || '';
+          return unlink().then(function () { return saveToCloud({ as: true, name: name ? String(name).replace(/\.h2oilproj$/i, '') : undefined }); });
+        }) };
       });
     }
     return 'proceed';
   }
   function lsSetPref(k, v) { try { G.localStorage.setItem(k, v); } catch (e) { /* blocked */ } }   /* ls-raw: wtspref_ device preference */
-  function afterAction(evt, fn) {
-    if (!HAS_DOC) return;
-    var h = function (ev) {
-      var d = ev && ev.detail;
-      if (d && (d.source === 'cloud' || d.source === 'well')) return;
-      document.removeEventListener(evt, h);
-      Promise.resolve().then(fn).then(null, function (e) { var i = I(); if (i) i.toast(i.cloudErrText(e), 'err'); });
+  // the follow-up of a guarded New / Open: 29 calls it with that action's own result, and only when it succeeded (a corrupt
+  // or empty file arms nothing that a later, unrelated open could fire)
+  function followUp(fn) {
+    return function (res) {
+      Promise.resolve(res).then(fn).then(null, function (e) { var i = I(); if (i) i.toast(i.cloudErrText(e), 'err'); });
     };
-    document.addEventListener(evt, h);
   }
   function mount() {
     init();
@@ -1341,7 +1371,7 @@
       discardStash: function (owner) { return kvGet('stash').then(function (st) { if (!st) return true; delete st[owner]; return kvPut('stash', st); }); },
     },
     _split: splitPayload, _hashSplit: hashSplit, _classify: classify, _store: { get: kvGet, put: kvPut, del: kvDel },
-    _attach: attach, _detach: detach, _mount: mount, _noteSignedOut: noteSignedOut, _setDevice: setDevice, _init: init,
+    _attach: attach, _detach: detach, _mount: mount, _netBack: netBack, _noteSignedOut: noteSignedOut, _setDevice: setDevice, _init: init,
     _hasLocalWork: hasLocalWork, _state: function () { return { binding: clone(S.binding), base: clone(S.base), device: clone(S.device), outbox: clone(S.outbox) }; },
   };
   G.WTS_cloudSync = api;

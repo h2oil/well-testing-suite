@@ -55,6 +55,9 @@ test('monitor: access lines carry nothing personal; redaction; summary; §13.6 r
   assert.strictEqual(M.ipPrefix('::ffff:198.51.100.9'), '198.51.100.0/24');
   const red = M.redactLine('send to someone@corp.example code 123456 token ' + 'A'.repeat(30) + ' /cb?code=xyz&state=abc');
   assert.ok(!/someone@|123456|AAAAAAAAAAAAAAAAAAAAAAAAAA|code=xyz|state=abc/.test(red), red);
+  // the codes are 8 digits, with or without the space the mails show
+  const red8 = M.redactLine('request threw: code 12345678 and 1234 5678 and 8765-4321');
+  assert.ok(!/12345678|1234 5678|8765-4321/.test(red8), red8);
   const lines = [];
   for (let i = 0; i < 97; i++) lines.push(M.accessLine({ route: 'me', status: 200, ms: 10 + i, ip: '1.2.3.4' }));
   lines.push(M.accessLine({ route: 'me', status: 500, ms: 3000, ip: '1.2.3.4' }), M.accessLine({ route: 'me', status: 502, ms: 2500, ip: '1.2.3.4' }), M.accessLine({ route: 'me', status: 503, ms: 2600, ip: '1.2.3.4' }), 'not json');
@@ -192,6 +195,9 @@ test('handler: web and event conventions, site headers, access log, isolation an
   assert.strictEqual(pv.state().isolation.signinAllowed, false);
   const cs = await pv.handle(webReq('POST', '/auth/code/start', { headers: { 'x-original-host': 'welltest.h2oil.co.uk', origin: PROD, 'x-wts-req': '1', 'content-type': 'application/json' }, body: '{"email":"a@b.example","purpose":"signin"}' }));
   assert.strictEqual(cs.status, 503);
+  // the e-mail revert also creates a session before anyone is signed in: closed on such a preview too
+  const rv = await pv.handle(webReq('POST', '/auth/email/revert', { headers: { 'x-original-host': 'welltest.h2oil.co.uk', origin: PROD, 'x-wts-req': '1', 'content-type': 'application/json' }, body: '{"email":"a@b.example","code":"AAAA"}' }));
+  assert.strictEqual(rv.status, 503, 'preview without the sign-in flag: revert paused');
   assert.strictEqual((await pv.handle(webReq('GET', '/health', { headers: { 'x-original-host': 'welltest.h2oil.co.uk' } }))).status, 200);
   // production without a proxy signature answers 404 to everything (the functions site is reachable only via the rewrite)
   const prod = createHandler({ env: { WTS_ENV: 'production' }, log: quiet() });

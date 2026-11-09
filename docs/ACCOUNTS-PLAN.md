@@ -1,6 +1,17 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Status: revision 4; Phase 1 build started; foundation landed (WP0 technical part); host and shared-file hooks landed (WP-H: H1–H18 incl. H4 applyChanges) — target v3.5 / v3.5.x / v3.6 (web only)**
+**Status: revision 4; Phase 1 integrated (ac/int: WP0 technical part, WP-H H1–H18, WP-S1, WP-O, WP-C1, WP-OPS, the end-to-end
+test) and its integration review fixed — target v3.5 / v3.5.x / v3.6 (web only)**
+*Integration (2026-11-09).* Deliberate deviations: gauges and build-up travel as **job-level** parts `well/job/<module>`
+(29-multiwell keeps those stores per job, not per well; well ids are `w\d+`, so they never collide with `job`); the
+e-mail-revert proof is a **130-bit revert key** (26 of A–Z / 2–7, link `#account-revert=<key>`), not an 8-digit code;
+e-mail-code send limits are hard **per address AND client range** (5/h, 20/day; per address only an alert), session-bound
+codes are limited per session, wrong codes count toward the 1-hour pause only while a code is live and only for that range
+(migration `050-code-scope.sql`), and provider address codes obey the same limits and the sign-up switch; `WTS_MIN_CLIENT` is
+unset by default (no 426 gate until a security fix needs one); the iOS section-11 CSS is a recorded exception (§9).
+Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — the consent tick names
+the versions but links to no text yet), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
+(security review, invite beta, CSP enforce, RELEASE_NOTES 3.5 entry).
 (2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
 `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
 `acct-contract.test.js` and the §9 iOS strip steps 0c / 0d in `sync-from-main.js`. Refinements to §3 / §3.4: a `wts_definer`
@@ -1328,7 +1339,10 @@ it from the fake server into a second app and asserts the same.
      `wts_account_host` in `user-guide.html`.
    - A static test asserts that those identifiers appear **only between ACCT markers** in the built HTML (the GA block's
      `wtsacct_hint` read is inside `GA:START/END`, also stripped), so neutral code (a11y rules, CSS, help text) cannot break the
-     iOS sync. Chip and bar CSS is injected by 66, not added to host CSS.
+     iOS sync. Chip and bar CSS is injected by 66, not added to host CSS. **Recorded exception (integration review):**
+     `ios-app/ios-additions/ios-styles.css` section 11 keeps neutral `html.ios-app .acct-*` safe-area rules for the account
+     overlays, bar, menus and toast. They never match in the app (the client is stripped and inert there); they exist because
+     CLAUDE.md asks every fixed overlay for its safe-area rule, and they name no account identifier (`acct-ios` IO8 / IO10).
 2. **Runtime guard** (§5.1): exact host over https, or DEV over http(s) on localhost only (never `capacitor:` or `file:`); no
    native bridge; not framed.
 3. **Server**: refuses every Origin other than `https://welltest.h2oil.co.uk`.

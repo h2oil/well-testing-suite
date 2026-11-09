@@ -13,12 +13,17 @@ const { ApiError } = require('./errors');
 const H = 3600; const D = 86400;
 const MB = 1000 * 1000;
 const LIMITS = {
-  codeStartAddrHour: { window: H, limit: 5 },
-  codeStartAddrDay: { window: D, limit: 20 },
+  // e-mail code sends (review fix): the HARD limits are per address AND client address range (`<addr>:<range>`), so a
+  // stranger elsewhere can never use up the owner's sends; per address in all only an alert (and the per-range limits)
+  codeStartAddrIpHour: { window: H, limit: 5 },
+  codeStartAddrIpDay: { window: D, limit: 20 },
+  codeStartAddrDay: { window: D, limit: 50, soft: true },           // alert only (all ranges together)
+  codeStartSessionHour: { window: H, limit: 5 },                    // step-up / e-mail change / recovery codes: per session
   codeStartIpHour: { window: H, limit: 300, soft: true },
   codeStartSiteHour: { window: H, limit: 1000, soft: true },        // above it: no sends to unknown addresses (breaker)
-  codeVerifyFailDay: { window: D, limit: 10, soft: true },          // reached → codes for the address paused 1 h
-  codePauseHour: { window: H, limit: 0, soft: true },               // n > 0 = paused
+  codeVerifyFailDay: { window: D, limit: 10, soft: true },          // per address and range; reached → that pair paused 1 h
+  codeVerifyFailAddrDay: { window: D, limit: 50, soft: true },      // per address in all: alert only
+  codePauseHour: { window: H, limit: 0, soft: true },               // per address and range; n > 0 = paused
   commitUserHour: { window: H, limit: 120 },
   commitUserDay: { window: D, limit: 600 },
   commitSessionHour: { window: H, limit: 60 },
@@ -38,11 +43,11 @@ const LIMITS = {
   cspIpHour: { window: H, limit: 120 },
   cspCountDay: { window: D, limit: 1e15, soft: true },              // aggregate counts per directive and blocked host
   mailEmailChangeHour: { window: H, limit: 5 },
-  // the pre-auth revert (§4.3): failures never burn the revert code; instead wrong tries are throttled per old address and
-  // IP prefix (5/h; an attacker elsewhere cannot block the owner), per old address in all (100/day, bounding a guess at
-  // ≈ 700 of 10^8 over the 7 days) and softly per IP prefix (alert only)
+  // the pre-auth revert (§4.3): the proof is a 130-bit revert key (not guessable), so wrong tries are only throttled per old
+  // address and IP prefix (5/h); per old address in all and per prefix they only raise an alert — the person who changed the
+  // address can never use up the owner's way back
   revertFailAddrIpHour: { window: H, limit: 5 },
-  revertFailAddrDay: { window: D, limit: 100 },
+  revertFailAddrDay: { window: D, limit: 100, soft: true },
   revertIpHour: { window: H, limit: 300, soft: true },
   oauthStartIpHour: { window: H, limit: 60, soft: true },           // provider starts per IP prefix (alert only, §8.3)
 };

@@ -29,6 +29,10 @@
 //        the account tables (stacked rows, data-label cells, full-width buttons)
 //   CL21 the account library pulled at an Open does not mark the project "Not saved to cloud"; the commit's appVer is the
 //        release-notes version
+//   CL22–CL27 integration review fixes: guard follow-ups tied to the action's own result; derived keys and same-value rewrites
+//        never dirty; the analytics reload after a first-sign-in upload leaves the chip synced; the 'online' event clears the
+//        outage (one /me); a failed first save reuses its empty project and head-less projects are labelled; the account page
+//        (one Sign-in methods card, [hidden] rule, plain profile errors, Save label, decimal comma, no export bar)
 'use strict';
 
 const zlib = require('zlib');
@@ -520,7 +524,8 @@ module.exports = [
         assert.strictEqual(t2.acct().state().status, 'signedOut', 'the revoked device is signed out');
         t.click('acct_show_activity');
         await t.until(() => t.el('acct_activity_table'), 'activity');
-        assert(/signup|signin/.test(t.text('acct_activity_table')));
+        assert(/Account created \(e-mail code\)|Signed in \(e-mail code\)/.test(t.text('acct_activity_table')), 'plain words: ' + t.text('acct_activity_table'));
+        assert(!/signup|signin \(code\)/.test(t.text('acct_activity_table')), 'no raw action codes');
         await t.sync()._store.put('stash', t.a.toWin({ 'some-user': { at: 1, payload: { format: 'h2oilproj', version: '1.0', modules: { storage: { keys: { wts_page_choke: JSON.stringify({ v: 1, t: 1, f: { bean: '44' } }) } } } } } }));
         t.w.WTS_accountPage.open();
         await t.until(() => t.el('acct_stash_restore_0'));
@@ -628,7 +633,7 @@ module.exports = [
         assert(/@media \(max-width:600px\)\{#acct_root table\.dtable/.test(css), 'stacked rows at phone width');
         assert(/#acct_root \.btn\{display:block;width:100%/.test(css), 'full-width buttons');
         assert(/td\[data-label\]:before\{content:attr\(data-label\)/.test(css));
-        assert(/security notice/.test(t.text('acct_card_activity')), 'the card says a notice is sent');
+        assert(/"your data was exported" notice/.test(t.text('acct_card_activity')), 'the card says which notice is sent');
         const before = t.fake.requests.length;
         t.click('acct_show_activity');
         await t.until(() => t.el('acct_activity_table') || t.el('acct_ch_cancel') || t.el('acct_code'), 'activity or step-up');
@@ -641,8 +646,8 @@ module.exports = [
         assert(reqs.some((r) => r.path.endsWith('/account/export')));
         assert(!reqs.some((r) => /\/blobs\/|\/head$|\/rev\//.test(r.path)), 'no project body fetched');
         const txt = t.text('acct_activity_table');
-        assert(/signup|signin/.test(txt));
-        assert(!/old_entry/.test(txt), 'rows older than 90 days are left out');
+        assert(/Account created|Signed in/.test(txt), txt);
+        assert(!/old.entry/.test(txt), 'rows older than 90 days are left out');
       } finally { t.dispose(); }
     },
   },
@@ -672,6 +677,194 @@ module.exports = [
         b.a.fire('document', 'wts:ls-write', { key: 'wts_unit_system' });
         assert.strictEqual(b.sync().status().state, 'idle', 'library / device keys do not dirty the project');
       } finally { a.dispose(); b.dispose(); }
+    },
+  },
+  // ── integration review fixes ──────────────────────────────────────────────────────────────────────────────────────
+  {
+    name: 'CL22 guard follow-up is tied to the action: a corrupt file arms nothing; the next local open creates no cloud project', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        if (!T.hostReady(t)) { T.skip('CL22', 'WP-H host hooks absent'); return; }
+        await t.sync().saveToCloud({});
+        const P = t.w.WTS_project;
+        const n0 = proj(t.fake).length;
+        // "Open as a new cloud project" on a file that turns out corrupt: the load answers {error}, no event
+        let r1 = null;
+        Promise.resolve(P.guarded('open-file', () => ({ error: 'not a project file' }))).then((x) => { r1 = x; });
+        await t.choose('new');
+        await t.until(() => r1, 'the corrupt open finished');
+        assert(r1.error, 'the load failed');
+        await t.settle();
+        assert.strictEqual(proj(t.fake).length, n0, 'nothing created for the corrupt file');
+        // a later, unrelated local-only open that does load: only its own follow-up runs (unlink), no cloud project
+        let r2 = null;
+        Promise.resolve(P.guarded('open-file', () => { t.a.fire('document', 'wts:project-loaded', { source: 'file' }); return { loaded: ['storage'] }; })).then((x) => { r2 = x; });
+        await t.choose('local');
+        await t.until(() => r2 && t.sync().status().projectId === null, 'local only: unlinked');
+        await t.settle();
+        assert.strictEqual(proj(t.fake).length, n0, 'the earlier choice never fires');
+        // the success path still works: "Open as a new cloud project" on a good file creates one
+        let r3 = null;
+        Promise.resolve(P.guarded('open-file', () => ({ loaded: ['storage'], filename: 'Rig-7.h2oilproj' }))).then((x) => { r3 = x; });
+        await t.choose('new');
+        await t.until(() => r3 && proj(t.fake).length === n0 + 1, 'a new cloud project for the good file');
+        await t.until(() => t.sync().status().projectId, 'linked to it');
+        assert(proj(t.fake).some((p) => p.name === 'Rig-7'), 'named after the file');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL23 derived keys and same-value rewrites never leave a linked project "Not saved to cloud"', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        await t.sync().saveToCloud({});
+        assert.strictEqual(t.sync().status().state, 'idle');
+        // the host rewrites the report snapshots after any click in #pgBody: a derived key (outside vhash)
+        t.storage.setItem('wts_report_snapshots', JSON.stringify({ choke: { at: 1 } }));
+        t.a.fire('document', 'wts:ls-write', { key: 'wts_report_snapshots' });
+        t.storage.setItem('wts_mw_results', '{}');
+        t.a.fire('document', 'wts:ls-write', { key: 'wts_mw_results' });
+        await t.settle();
+        assert.strictEqual(t.sync().status().state, 'idle', 'derived keys do not dirty the project');
+        // an autosave flush that writes the same value again: dirty at first, clean once the snapshot check ran
+        const v = t.storage.getItem('h2oil_client_info');
+        t.storage.setItem('h2oil_client_info', v);
+        t.a.fire('document', 'wts:ls-write', { key: 'h2oil_client_info' });
+        await t.until(() => t.sync().status().state === 'idle', 'clean again: nothing changed');
+        assert(!/Not saved to cloud/.test(t.text('acct_chip')), 'the chip says synced');
+        // a real edit still marks it changed
+        edit(t);
+        await t.until(() => t.sync().status().state === 'dirty', 'a real edit is dirty');
+        await t.settle();
+        assert.strictEqual(t.sync().status().state, 'dirty', 'and stays dirty');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL24 first sign-in upload with the analytics reload: the chip is synced after the reload', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = T.boot(ctx, { seed: true });
+      try {
+        t.w.__wtsGaLoaded = true;
+        let reloaded = 0;
+        t.acct().configure({ reload: () => { reloaded++; } });
+        await t.signIn(E1, { handover: 'upload' });
+        await t.until(() => reloaded === 1, 'the one reload after sign-in');
+        await t.until(() => proj(t.fake).length === 1, 'uploaded');
+        await t.settle();
+        assert.strictEqual(t.sync().status().state, 'idle', 'not "Not saved to cloud" before the reload');
+        const t2 = t.reload();
+        try {
+          await t2.until(() => t2.acct().state().status === 'signedIn' && t2.sync().status().projectId, 'signed in and linked after the reload');
+          await t2.settle();
+          assert.strictEqual(t2.sync().status().state, 'idle', 'synced after the reload');
+        } finally { t2.dispose(); }
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL25 back online: the chip leaves "Cloud unavailable" by itself (one /me, no polling); the bar shows during an outage', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        await t.sync().saveToCloud({});
+        edit(t);
+        t.fake.fault({ path: '*', mode: 'network', times: 50 });
+        await t.sync().saveToCloud({}).then(() => null, (e) => e);
+        await t.settle();
+        assert(/Cloud unavailable|Offline/.test(t.text('acct_chip')), 'outage shown: ' + t.text('acct_chip'));
+        assert(t.el('wts_sync_bar'), 'the bar shows while signed in during an outage');
+        t.fake.clearFaults();
+        const before = t.fake.requests.length;
+        t.a.fire('window', 'online', {});
+        await t.until(() => !/Cloud unavailable|Offline/.test(t.text('acct_chip')), 'the chip recovers');
+        const reqs = t.fake.requests.slice(before);
+        assert.strictEqual(reqs.filter((r) => r.path.endsWith('/me')).length, 1, 'one /me');
+        assert(/Not saved to cloud/.test(t.text('acct_chip')), 'the unsaved edit is shown: ' + t.text('acct_chip'));
+        assert.strictEqual(t.a.pendingTimers ? t.a.pendingTimers() : 0, 0, 'no timer left');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL26 a first save that fails after the project was created leaves no second empty project; "upgrade" has plain words', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        t.fake.fault({ path: /\/commit$/, mode: 'upgrade', times: 1 });
+        const e = await t.sync().saveToCloud({}).then(() => null, (x) => x);
+        assert(e && e.code === 'upgrade', 'the first commit failed: ' + (e && e.code));
+        assert.strictEqual(proj(t.fake).length, 1, 'one project row (no revision yet)');
+        assert(/Reload to update the app/.test(t.acct()._i.cloudErrText(e)), 'plain words, not "(upgrade)"');
+        const r = await t.sync().saveToCloud({});
+        assert.strictEqual(r.rev, 1);
+        assert.strictEqual(proj(t.fake).length, 1, 'the retry reused the empty project');
+        assert.strictEqual(t.sync().status().projectId, proj(t.fake)[0].id);
+        // a head-less project on the account page is labelled and offers only the trash
+        t.fake.fault({ path: /\/commit$/, mode: 'server', times: 1 });
+        await t.sync().saveToCloud({ as: true, name: 'Half' }).then(() => null, () => null);
+        t.w.WTS_accountPage.open();
+        await t.until(() => /incomplete upload/.test(t.text('acct_projects')), 'labelled');
+        const half = proj(t.fake).find((p) => p.name === 'Half');
+        const row = t.a.find('#acct_projects_table tr[data-id="' + half.id + '"]');
+        assert.deepStrictEqual(Array.from(row.querySelectorAll('button')).map((b) => b.getAttribute('data-act')), ['trash']);
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'CL27 account page: one Sign-in methods card, hidden code rows really hidden, plain errors, Save label, decimal comma, no export bar', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = await ready(ctx);
+      try {
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_root') && t.el('acct_card_profile'), 'the page');
+        await t.settle();
+        const titles = t.a.findAll('#acct_root .card-title').map((x) => x.textContent).filter((x) => x === 'Sign-in methods');
+        assert.strictEqual(titles.length, 1, 'exactly one Sign-in methods title');
+        assert.strictEqual(t.a.findAll('#acct_root .card .card').length, 0, 'no card inside a card');
+        assert(!/#e0e0e0/.test(t.el('acct_root').innerHTML), 'theme tokens, no light-theme border');
+        // the methods card's "Change e-mail" never sends an empty address (sweep finding: a silent 400); it points at the field
+        await t.until(() => t.el('acct_m_email'), 'the methods card rows');
+        const b0 = t.fake.requests.length;
+        t.click('acct_m_email'); await t.settle();
+        assert(!t.fake.requests.slice(b0).some((r) => /email\/change/.test(r.path)), 'no request with an empty address');
+        assert(/Change e-mail address/.test(t.text('acct_methods_card')), 'it says where to type the new address');
+        // the hidden code rows: the attribute is set AND a rule makes it win over the host .fg-item / .acct-btns display
+        ['acct_email_code_row', 'acct_email_confirm_row', 'acct_recovery_code_row', 'acct_recovery_confirm_row'].forEach((id) => assert(t.el(id).hidden, id));
+        assert(/#acct_root \[hidden\][^{]*\{display:none!important\}/.test(t.text('acct_css')), 'the [hidden] rule');
+        // an invalid recovery address: no request, the right words; the message clears on the next action
+        const before = t.fake.requests.length;
+        t.a.input('acct_recovery', 'not-an-email');
+        t.click('acct_set_recovery');
+        await t.settle();
+        assert.strictEqual(t.fake.requests.length, before, 'no request');
+        assert.strictEqual(t.text('acct_profile_msg'), 'Enter a valid e-mail address.');
+        t.click('acct_toggle_trash');
+        assert.strictEqual(t.text('acct_profile_msg'), '', 'cleared by the next action');
+        // unlinked → the first-save label; linked → Save to cloud (no extra copy)
+        assert(/Save this device's project to the cloud/.test(t.text('acct_save_new')));
+        await t.sync().saveToCloud({});
+        t.w.WTS_accountPage.open();
+        await t.until(() => t.el('acct_save_new') && /^Save to cloud$/.test(t.text('acct_save_new')), 'linked label');
+        const n = proj(t.fake).length;
+        edit(t);
+        t.click('acct_save_new');
+        await t.until(() => commits(t.fake).length === 2, 'saved as a new revision');
+        assert.strictEqual(proj(t.fake).length, n, 'no third copy');
+        // whole MB without a trailing .0; a fraction follows the decimal-comma setting
+        assert(/ of 250 MB \(/.test(t.text('acct_storage_used')), t.text('acct_storage_used'));
+        const u = t.fake.user(E1); u.quota = 1.5e6;
+        t.storage.setItem('wtspref_decimal_comma', '1');
+        await t.acct().refresh();
+        t.w.WTS_accountPage.open();
+        await t.until(() => / of 1,5 MB/.test(t.text('acct_storage_used')), 'decimal comma: ' + t.text('acct_storage_used'));
+        // Phase 1 has no passkeys: sign out everywhere names only the provider links
+        assert.strictEqual(t.acct()._i.recentMethodsText(), 'Google / LinkedIn links');
+        // the host's page-export bar is hidden on the account route
+        const eb = t.el('exportBtns');
+        if (eb && t.w.WTS_nav) { t.w.WTS_nav('account'); await t.settle(); assert.strictEqual(eb.style.display, 'none', 'no page export on the account page'); }
+      } finally { t.dispose(); }
     },
   },
 ];

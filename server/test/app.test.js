@@ -208,6 +208,21 @@ test('malformed percent escapes: 404 envelope with the common headers; the callb
   assert.strictEqual(weird.status, 404, 'no url / headers → 404, not a throw');
 });
 
+test('production without WTS_CLIENT_IP_HEADER: an alert, and no client address range (provider sign-in is refused on it)', async () => {
+  const bare = loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'x' });
+  assert.ok(bare.alerts.some((a) => /WTS_CLIENT_IP_HEADER missing/.test(a)), JSON.stringify(bare.alerts));
+  const withH = loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'x', WTS_CLIENT_IP_HEADER: 'x-client-ip' });
+  assert.deepStrictEqual(withH.alerts.filter((a) => /CLIENT_IP/.test(a)), []);
+  let seen = 'unset';
+  const echo = (config) => createApp({ config, handlers: Object.assign({}, fns.handlers, { health: (ctx) => { seen = ctx.ipPrefix; return { status: 200, body: { ok: true } }; } }) });
+  await echo(bare).handle(req('GET', '/health', { headers: { 'x-wts-proxy-sig': 'x' }, ip: '198.51.100.7' }));
+  assert.strictEqual(seen, null, 'the socket address (the proxy) is never a client range');
+  await echo(withH).handle(req('GET', '/health', { headers: { 'x-wts-proxy-sig': 'x', 'x-client-ip': '203.0.113.9' } }));
+  assert.strictEqual(seen, '203.0.113.0/24');
+  // the security minimum is unset by default: no 426 for any app version (raised only for a security fix, §3.2)
+  assert.strictEqual(loadConfig({ WTS_ENV: 'test' }).minClient, '');
+});
+
 test('proxy signature rotation: both comma-separated values are accepted, others refused', async () => {
   const config = loadConfig({ WTS_ENV: 'production', WTS_PROXY_SIG: 'sig-new, sig-old' });
   assert.deepStrictEqual(config.alerts.filter((a) => /PROXY/.test(a)), []);

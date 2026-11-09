@@ -361,6 +361,46 @@ test.describe('provider sign-in API (§4.10–4.14)', { skip }, () => {
     assert.strictEqual((await finish(bo, { code: '12345678' })).json.error, 'oauth_state', 'a code before the e-mail step');
   });
 
+  test('review fix: provider address codes obey the e-mail-code send limits, the pause, and the sign-up switch', async () => {
+    // sign-up off: an address with no account entered at the email step gets nothing (uniform next 'code')
+    const closed = makeEnv({ env: { ACCOUNTS_SIGNUP: 'off' } });
+    for (let i = 0; i < 3; i++) {
+      const b = browser(closed);
+      okFinish(await round(closed, b, 'linkedin', { key: 'off' + i, email: 'victim@company.example' }));
+      const c = okFinish(await finish(b, { email: 'victim@company.example' }));
+      assert.deepStrictEqual([c.next, c.reason], ['code', 'verify'], 'the reply stays uniform');
+    }
+    assert.strictEqual(closed.mail.sent.filter((m) => m.to === 'victim@company.example').length, 0, 'no mail while sign-up is off');
+    // open sign-up, 12 provider rounds from one range: at most 5 code mails, at most 2 live codes for the address
+    const E = makeEnv();
+    for (let i = 0; i < 12; i++) {
+      const b = browser(E);
+      okFinish(await round(E, b, 'linkedin', { key: 'm' + i, email: 'victim@company.example' }));
+      okFinish(await finish(b, { email: 'victim@company.example' }));
+    }
+    const sent = E.mail.sent.filter((m) => m.to === 'victim@company.example').length;
+    assert.ok(sent <= 5, '5 per hour per address and range: ' + sent);
+    const live = await H.admin.sql`select count(*)::int as n from wts.email_codes where email_bidx = ${E.keys.emailBidx('victim@company.example')}
+      and purpose = 'oauth_verify' and used_at is null and invalidated_at is null and expires_at > now()`;
+    assert.ok(live[0].n <= 2, 'at most two live codes per address and range across attempts: ' + live[0].n);
+    // another range is not affected by the first range's sends
+    const other = browser(E, '192.0.2.77');
+    okFinish(await round(E, other, 'linkedin', { key: 'o1', email: 'victim@company.example' }));
+    okFinish(await finish(other, { email: 'victim@company.example' }));
+    assert.strictEqual(E.mail.sent.filter((m) => m.to === 'victim@company.example').length, sent + 1, 'the other range still gets its code');
+    // wrong provider codes count towards the pause of the address and range
+    const g = browser(E, '203.0.113.200');
+    for (let r = 0; r < 2; r++) {
+      okFinish(await round(E, g, 'linkedin', { key: 'g' + r, email: 'guess@company.example' }));
+      okFinish(await finish(g, { email: 'guess@company.example' }));
+      for (let i = 0; i < 5; i++) await finish(g, { code: String(50000000 + i) });
+    }
+    const n = E.mail.sent.filter((m) => m.to === 'guess@company.example').length;
+    okFinish(await round(E, g, 'linkedin', { key: 'g9', email: 'guess@company.example' }));
+    okFinish(await finish(g, { email: 'guess@company.example' }));
+    assert.strictEqual(E.mail.sent.filter((m) => m.to === 'guess@company.example').length, n, 'paused after 10 failed provider codes');
+  });
+
   test('attempt lifetime: a code 12 minutes after the callback still finishes; 31 minutes after the start → oauth_state', async () => {
     const E = makeEnv();
     const br = browser(E);

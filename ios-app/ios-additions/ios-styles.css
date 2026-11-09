@@ -294,8 +294,8 @@
         /* 11. ACCOUNTS (web accounts, prism-build/66-68; docs/ACCOUNTS-PLAN.md §9, §11). The account client is stripped from
                the iOS bundle (ACCT markers) and its guard keeps it inert in the native shell, so these rules never match in
                the app; they exist so that every fixed overlay of the feature carries its safe-area padding should one ever
-               be shown edge to edge. Sign-in / choice dialog overlay (.acct-ov, block layout so the bottom padding scrolls),
-               the bottom status bar (.acct-sync-bar), the chip and cloud menus (fixed at phone width) and the toast. */
+               be shown edge to edge (the CLAUDE.md safe-area rule; a recorded exception, plan §9). The dialog overlay
+               (.acct-ov, block layout so the bottom padding scrolls), the bottom bar, the menus and the toast. */
         html.ios-app .acct-ov {
             display: block;
             padding: max(16px, calc(8px + env(safe-area-inset-top))) max(16px, calc(8px + env(safe-area-inset-right)))
