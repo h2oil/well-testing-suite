@@ -153,7 +153,9 @@ module.exports = [
       W.wtsRenderResults(rb.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
       const r0 = C.run(mix(BASE, {}));
-      assert.ok(r0.page.res === g.res && r0.page.warn === g.warn, 'neither active: the v3.3.1 page');
+      // v3.4.2 (2026-11-09): the kept rig-up has T-201 in, so the LP flare line box follows the v3.3.1 rows (only that)
+      const noLp = (h) => { const i = h.indexOf('<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line'); return i < 0 ? h : h.slice(0, i); };
+      assert.ok(noLp(r0.page.res) === g.res && r0.page.warn === g.warn, 'neither active: the v3.3.1 page (+ the LP box)');
     },
   },
   {

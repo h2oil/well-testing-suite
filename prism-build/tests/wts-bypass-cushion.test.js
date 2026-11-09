@@ -120,7 +120,9 @@ const HOST = [
       assert.ok(/Bypass path 1,44\d psig at the CK-101 outlet \(production line 1,440 psig plus line loss/.test(rl.page.warn) && /PSHH-104 trips SDV-101 at 1,296 psig/.test(rl.page.warn), 'rating and PSHH-104 warnings shown');
       W.wtsRenderResults(rl.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
-      assert.ok($('wts_res').innerHTML === g.res && $('wts_warn').innerHTML === g.warn, 'V-101 back in: the v3.3.1 page');
+      // v3.4.2 (2026-11-09): with T-201 in the LP flare line box follows the v3.3.1 rows (only that)
+      const noLp = (h) => { const i = h.indexOf('<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line'); return i < 0 ? h : h.slice(0, i); };
+      assert.ok(noLp($('wts_res').innerHTML) === g.res && $('wts_warn').innerHTML === g.warn, 'V-101 back in: the v3.3.1 page (+ the LP box)');
       // V-101 out and CK-102 in: the CK-102 rbox reads flow.sepBy.ck2
       W.wtsRenderResults(rl.flow, mix(X.RIG_DEFAULTS, { separator: false, heaterChoke: true }));
       const res2 = $('wts_res').innerHTML;

@@ -146,7 +146,8 @@ const HOST = [
       assert.deepStrictEqual(strip(stored.flow), strip(plain.flow), 'the stored rig-up does not move any field');
       assert.ok(stored.events.length === 1 && stored.events[0].type === 'wts:calc', 'one dispatch');
       assert.strictEqual(stored.page.res, plain.page.res, 'page unchanged');
-      assert.deepStrictEqual(Object.keys(plain.flow.sim).slice(5), X.SAMPLE_FLOW_SIM_KEYS, 'flow.sim: the 9 keys after the v3.3 five');
+      // v3.4.2 (2026-11-09): the three LP flare line inputs are appended after the v3.3.3 keys
+      assert.deepStrictEqual(Object.keys(plain.flow.sim).slice(5), X.SAMPLE_FLOW_SIM_KEYS.concat(['lpNps', 'lpSch', 'lpLen_ft']), 'flow.sim: the 9 keys after the v3.3 five, then the v3.4.2 LP inputs');
       assert.ok(plain.flow.sim.sepByDest === 'flare' && plain.flow.sim.sepByP_psig === 150 && !('bean2' in plain.flow.sim), 'flow.sim destination defaults; bean2 travels in flow.ck2');
       // input clamps (§4.1): the bean 4–128 (blank → 48), the position (anything else → inlet)
       [['', 48], ['2', 4], ['500', 128], ['56', 56], ['1e400', 48]].forEach(([v, w]) => assert.strictEqual(flowOf({ wts_bean2: v }).flow.ck2.bean, w, 'bean2 ' + v));
@@ -170,7 +171,9 @@ const HOST = [
       const reads0 = r.reads.length;
       // the default rig-up (CK-102 out, V-101 in): the v3.3.1 page
       W.wtsRenderResults(r.flow, J(X.RIG_DEFAULTS));
-      assert.ok($('wts_res').innerHTML === g.res && $('wts_warn').innerHTML === g.warn, 'default rig-up = v3.3.1 page');
+      // v3.4.2: a handed-over rig-up with T-201 in adds the LP flare line box at the end of #wts_res (only that)
+      const noLp = (h) => { const i = h.indexOf('<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line'); return i < 0 ? h : h.slice(0, i); };
+      assert.ok($('wts_res').innerHTML !== g.res && noLp($('wts_res').innerHTML) === g.res && $('wts_warn').innerHTML === g.warn, 'default rig-up = v3.3.1 page + the LP box');
       // CK-102 in line
       W.wtsRenderResults(r.flow, mix(X.RIG_DEFAULTS, { heaterChoke: true }));
       const res = $('wts_res').innerHTML, warn = $('wts_warn').innerHTML;

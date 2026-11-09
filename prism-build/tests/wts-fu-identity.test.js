@@ -129,7 +129,8 @@ module.exports = [
       assert.deepStrictEqual(G.sets.map((s) => s.name), GOLD.SETS.map((s) => s.name), '12 sets in tool order');
       assert.strictEqual(G.sets.length, 12);
       assert.deepStrictEqual(J(G.omit), X.BASE_FIELDS_OMIT, 'golden omit list = BASE_FIELDS_OMIT');
-      assert.deepStrictEqual(GOLD.BASE_FIELDS_OMIT, X.BASE_FIELDS_OMIT, 'tool omit list = BASE_FIELDS_OMIT');
+      // v3.4.2 (2026-11-09): the tool also omits the LP flare line block and its three flow.sim inputs (appended, C17)
+      assert.deepStrictEqual(GOLD.BASE_FIELDS_OMIT, X.BASE_FIELDS_OMIT.concat(['lp', 'sim.lpNps', 'sim.lpSch', 'sim.lpLen_ft']), 'tool omit list = BASE_FIELDS_OMIT + the v3.4.2 LP keys');
       // the golden numbers carry the Help page checks (FS-1 (a)–(e), FS-2) and the anchor base rows
       const by = {}; G.sets.forEach((s) => { by[s.name] = GOLD.decode(s.flow); });
       const near = (a, b, t) => Math.abs(a - b) <= t;
@@ -166,7 +167,9 @@ module.exports = [
       assert.ok(GOLD.compare(g, base).length === 0, 'defaults with new inputs and a stored rig-up');
       // the fixture's baseFields rule = the tool's (same omissions)
       const f = J(one.flow); f.ck2 = { v: 1 }; f.sepBy = { v: 1 }; f.sim.sepByDest = 'line'; f.sim.sepByP_psig = 3; f.ts = 1; f.seq = 9;
-      assert.deepStrictEqual(X.baseFields(f), J(GOLD.baseFields(f)), 'fixture baseFields = tool baseFields');
+      // v3.4.2: the fixture rule plus the LP keys (flow.lp, flow.sim.lpNps / lpSch / lpLen_ft) = the tool's
+      const xf = X.baseFields(f); delete xf.lp; ['lpNps', 'lpSch', 'lpLen_ft'].forEach((k) => { delete xf.sim[k]; });
+      assert.deepStrictEqual(xf, J(GOLD.baseFields(f)), 'fixture baseFields (+ v3.4.2 LP keys) = tool baseFields');
     },
   },
   {
