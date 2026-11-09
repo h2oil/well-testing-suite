@@ -358,7 +358,7 @@ const ENGINE = [
       assert.ok(X.near(anc('fUnload0'), d1.c0.fUnload) && X.near(anc('column0'), d1.c0.column_ft) && X.near(anc('WHPstart'), d1.c0.WHPtgt_psig) && X.near(anc('wJTc'), d1.c0.wJT),
         'start: ' + JSON.stringify([d1.c0.fUnload, d1.c0.column_ft, d1.c0.WHPtgt_psig, d1.c0.wJT]));
       assert.ok(Math.abs(d1.c0.WHPtgt_psig - ref.WHPtgt) / ref.WHPtgt < 0.005, 'start WHP = the closed form ' + ref.WHPtgt);
-      const ck = X.checkShape('cushion', J(d1.c0), { strict: true }); assert.ok(ck.ok, 'snap.cushion shape: ' + ck.errors.join('; '));
+      const ck = X.checkShape('cushion', J(d1.c0), { strict: true, engine: 'work' }); assert.ok(ck.ok, 'snap.cushion shape: ' + ck.errors.join('; '));
       d1.ev.forEach((p) => { const r = X.checkShape('cushionEvent', J(p), { strict: true }); assert.ok(r.ok, 'event shape: ' + r.errors.join('; ')); });
       assert.deepStrictEqual(d1.ev.map((p) => p.phase), ['unloading', 'breakthrough', 'tail', 'done'], 'phase sequence');
       assert.deepStrictEqual(d10.ev.map((p) => p.phase), ['unloading', 'breakthrough', 'tail', 'done'], 'phase sequence (dt 10)');

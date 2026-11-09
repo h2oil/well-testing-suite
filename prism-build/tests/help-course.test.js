@@ -116,9 +116,12 @@ const CHECKS = {
         { at: 2700, path: 'surge2.transfer.on', v: false }, { at: 2700, path: 'surge2.comps.1.inlet', v: false }, { at: 2950, path: 'surge2.comps.1.inlet', v: true }, { at: 2950, path: 'surge2.comps.0.inlet', v: false },
         { at: 2950, path: 'surge2.suction', v: 'A' }, { at: 2950, path: 'surge2.transfer.on', v: true }, { at: 3650, path: 'surge2.transfer.on', v: false }, { at: 3650, path: 'surge2.comps.0.frac', v: 0.25, tol: 0.08 }, { noAlarm: 'ESD_TRIPPED' }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 7000, dt: 5, actions: [{ t: 0, route: 'surge2' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
-      expect: [{ alarm: 'LAH_SURGE2_BOTH', from: 5200, to: 6000 }, { alarm: 'LSHH_SURGE2', from: 5600, to: 6400 }, { alarm: 'SURGE_BLOCKED', from: 5600, to: 6400 }, { alarm: 'ESD_TRIPPED', from: 5600, to: 6500 }, { gap: ['LSHH_SURGE2', 'ESD_TRIPPED'], max: 60 }] },
+      // (3.4.2 review: + XFER2_FAIL at the divert and the LSHH-102 ESD the observe text names)
+      expect: [{ alarm: 'XFER2_FAIL', from: 2700, to: 2950 }, { alarm: 'LAH_SURGE2_BOTH', from: 5200, to: 6000 }, { alarm: 'LSHH_SURGE2', from: 5600, to: 6400 }, { alarm: 'SURGE_BLOCKED', from: 5600, to: 6400 },
+        { alarm: 'LSHH_SEP', from: 5900, to: 6500 }, { alarm: 'ESD_TRIPPED', from: 5600, to: 6500 }, { gap: ['LSHH_SURGE2', 'ESD_TRIPPED'], max: 60 }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 14500, dt: 10, actions: [{ t: 0, route: 'both' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
-      expect: [{ alarm: 'LSHH_SURGE2', from: 12000, to: 14500 }, { noAlarm: 'ESD_TRIPPED' }] },
+      // (3.4.2 review: + the inlet closure on Both — LSHH-202 shuts the high side, the other is already shut after its divert)
+      expect: [{ alarm: 'LSHH_SURGE2', from: 12000, to: 14500 }, { noAlarm: 'ESD_TRIPPED' }, { at: 14500, path: 'surge2.comps.0.inlet', v: false }, { at: 14500, path: 'surge2.comps.1.inlet', v: false }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
       expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 850, to: 1100 }, { alarm: 'ESD_TRIPPED', from: 850, to: 1100 }, { at: 1200, path: 'surge2.comps.0.inlet', v: false }, { at: 1200, path: 'surge2.comps.1.inlet', v: false }] },
   ],

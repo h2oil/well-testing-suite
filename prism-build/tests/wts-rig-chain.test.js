@@ -233,4 +233,104 @@ module.exports = [
       assert.ok(s.rigup.surge && s.surge2.route !== 'none' && !s.esd.tripped, 'T-201 back: route ' + s.surge2.route);
     },
   },
+  {
+    name: 'WTSRC (l) 3.4.2 review: T-201 out, both T-202 inlets shut → SURGE_BLOCKED names XV-202A / XV-202B and T-202 (tag XV-202, eq surge2), never XV-301 / T-301; the LSHH-102 ESD follows',
+    wp: WP, opts: false, timeoutMs: 300000,
+    run(app, assert) {
+      const sim = mk({ rigup: { surge: false, surge2: true } });
+      run(sim, 300, 1);
+      sim.setValve('surge2', 0, false); sim.setValve('surge2', 1, false);
+      run(sim, 150, 1);
+      const s = st(sim), e = s.alarmLog.find((x) => x.id === 'SURGE_BLOCKED');
+      assert.ok(e, 'SURGE_BLOCKED raised');
+      assert.strictEqual(e.tag, 'XV-202', 'tag');
+      assert.strictEqual(e.msg, 'XV-202A / XV-202B closed — separator dumps blocked (no route to T-202)', e.msg);
+      assert.ok(!s.alarmLog.some((x) => /XV-301|T-301\)/.test(x.msg) && x.id === 'SURGE_BLOCKED'), 'no gauge-tank wording');
+      assert.ok(s.esd.tripped && s.esd.cause === 'LSHH_SEP', 'ESD by LSHH-102: ' + s.esd.cause);
+      const pub = J(sim.getState()).alarms.find((a) => a.id === 'SURGE_BLOCKED');
+      assert.ok(!pub || pub.eq === 'surge2', 'eq surge2');
+    },
+  },
+  {
+    name: 'WTSRC (m) 3.4.2 review: V-101 out to T-202 (T-201 out, or T-201 in with route T-202): SEPBY_SURGE_CAP, the rig note and segment 5 name T-202 / PCV-203 / PSHH-202 and the bypass run (no FI-Sep→Flare); route both names both',
+    wp: WP, opts: false, timeoutMs: 300000,
+    run(app, assert) {
+      // T-201 out: the rig note, the alarm (raised at once), the segment label + the velocity alarm tag
+      const a = mk({ sim: { sepByDest: 'surge' }, rigup: { separator: false, surge: false, surge2: true }, config: { noise: { on: false } } });
+      let s = st(a);
+      const note = s.rigup.notes.find((n) => /^V-101 bypassed/.test(n));
+      assert.ok(/surge tank T-202 \(gas through PCV-203 to the LP flare line/.test(note) && /PCV-203 can pass, PSHH-202 shuts the well in\.$/.test(note) && !/PCV-201|PSHH-201/.test(note), note);
+      assert.strictEqual(s.segs[4].label, 'V-101 bypass→T-202', 'segment 5 label');
+      a.advance(0.5); s = st(a);
+      const c = s.alarms.find((x) => x.id === 'SEPBY_SURGE_CAP');
+      assert.ok(c && c.tag === 'PCV-203' && /^Whole stream to T-202: .* gas against PCV-203 capacity .* at PSHH-202 — /.test(c.msg), c && c.msg);
+      run(a, 20, 0.5);
+      s = st(a);
+      assert.ok(!s.alarmLog.some((x) => /Sep→Flare/.test(x.tag + ' ' + x.msg)), 'no Sep→Flare alarm on the bypass route');
+      // the default 'surge' rig with a segment-5 limit below its velocity (the page's own flow): VEL_sep_flare names the bypass run
+      const fv = J(work().SAMPLE_FLOW); fv.segs[4].ve = 50; fv.sim.sepByDest = 'surge';
+      const v = work().create(fv, { seed: 3, rigup: { separator: false }, config: { noise: { on: false } } });
+      let zV = null;
+      run(v, 10, 0.5, (x) => { zV = x.alarms.find((y) => y.id === 'VEL_sep_flare') || zV; return !!zV; });
+      assert.ok(zV && zV.tag === 'FI-V-101 bypass→T-201' && /^V-101 bypass→T-201: velocity /.test(zV.msg), 'velocity alarm ' + JSON.stringify(zV));
+      // T-201 in, route T-202 (the review case): the text follows the receiving tank once T-201's inlets are shut
+      const b = mk({ inputs: { Qg: 0.5 }, sim: { sepByDest: 'surge' }, rigup: { separator: false, surge2: true }, config: { noise: { on: false } } });
+      assert.ok(b.setSurgeRoute('surge2').ok);
+      run(b, 20, 0.5); s = st(b);
+      assert.ok(!s.surge.comps[0].inlet && !s.surge.comps[1].inlet && s.sepBy.recv === 'T-202', 'T-202 receives');
+      const d = s.alarms.find((x) => x.id === 'SEPBY_SURGE_CAP');
+      assert.ok(d && d.tag === 'PCV-203' && /^Whole stream to T-202: 0\.50 MMSCFD gas against PCV-203 capacity .* at PSHH-202/.test(d.msg), d && d.msg);
+      assert.ok(Math.abs(s.sepBy.gasCap_mmscfd - parseFloat(/capacity ([0-9.]+)/.exec(d.msg)[1])) < 0.01, 'text capacity = gasCap ' + s.sepBy.gasCap_mmscfd);
+      assert.strictEqual(s.segs[4].label, 'V-101 bypass→T-202');
+      // route both: both tanks named
+      const c2 = mk({ inputs: { Qg: 0.5 }, sim: { sepByDest: 'surge' }, rigup: { separator: false, surge2: true }, config: { noise: { on: false } } });
+      assert.ok(c2.setSurgeRoute('both').ok);
+      run(c2, 20, 0.5); s = st(c2);
+      const e = s.alarms.find((x) => x.id === 'SEPBY_SURGE_CAP');
+      assert.ok(e && /^Whole stream to T-201 and T-202: .* PCV-201 and PCV-203 capacity .* at PSHH-201 and PSHH-202/.test(e.msg) && s.segs[4].label === 'V-101 bypass→T-201 / T-202', e && e.msg);
+      // V-101 in: segment 5 keeps its v1.7.0 label
+      assert.strictEqual(st(mk({})).segs[4].label, 'Sep→Flare');
+    },
+  },
+  {
+    name: 'WTSRC (n) 3.4.2 review: V-101 out to the surge tank at the default 10 MMscf/d — T-201 peaks ≈ 62–64 psig after the PSHH-201 ESD (≈ 125 % of its 50 psig MAWP): OVP_SURGE (> 110 %, marked > 121 %) and SEPBY_PSV_CAP (relief capacity < stream gas); T-202 alone peaks ≈ 54 psig (SEPBY_PSV_CAP, no OVP_SURGE2) and ≈ 67 psig at 20 MMscf/d (OVP_SURGE2); low gas: none',
+    wp: WP, opts: false, timeoutMs: 300000,
+    run(app, assert) {
+      const peak = (o, key) => {
+        const sim = mk(o); let pk = 0;
+        run(sim, 60, 0.5, (x) => { pk = Math.max(pk, x[key].P); });
+        return { pk, s: st(sim) };
+      };
+      const base = { sim: { sepByDest: 'surge' }, config: { noise: { on: false } } };
+      let r = peak(Object.assign({}, base, { rigup: { separator: false } }), 'surge');
+      assert.ok(r.pk > 60 && r.pk < 66 && r.s.surge.mawp === 50, 'T-201 peak ' + r.pk);
+      assert.ok(r.s.esd.tripped && r.s.esd.cause === 'PSHH_SURGE', 'PSHH-201 ESD');
+      let o = r.s.alarmLog.filter((x) => x.id === 'OVP_SURGE');
+      assert.ok(o.length >= 1 && o[0].tag === 'T-201' && /^T-201 over-pressure: .* above 110 % of its MAWP 50 psig/.test(o[0].msg), o[0] && o[0].msg);
+      assert.ok(o.some((x) => /\(above 121 %, the fire-case limit\)/.test(x.msg)), 'the 121 % mark: ' + o.map((x) => x.msg).join(' | '));
+      const last = o[o.length - 1].msg, shown = parseFloat(/over-pressure: ([0-9.]+)/.exec(last)[1]);
+      assert.ok(Math.abs(shown - r.pk) < 0.6, 'the text follows the peak: ' + shown + ' vs ' + r.pk);
+      assert.ok(!r.s.alarms.some((x) => x.id === 'OVP_SURGE'), 'cleared below 105 % of MAWP');
+      ['OVP_SURGE', 'SEPBY_PSV_CAP'].forEach((id) => {
+        const e = r.s.alarmLog.find((x) => x.id === id), F = CH.OVP_ALARMS[id] || CH.SEPBY_ALARMS[id];
+        assert.ok(e && e.tag === F.tag && e.sev === F.sev && CH.Q_SEPBY.indexOf('SEPBY_PSV_CAP') >= 0, id + ' = the fixture ' + JSON.stringify(e));
+      });
+      const pc = r.s.alarmLog.find((x) => x.id === 'SEPBY_PSV_CAP');
+      assert.ok(pc && pc.tag === 'PSV-201' && /^Whole stream to T-201: 10\.00 MMSCFD gas against a relief capacity of ([0-9.]+) MMSCFD \(PCV-201 \+ PSV-201 at 110 % of MAWP\)/.test(pc.msg), pc && pc.msg);
+      r = peak(Object.assign({}, base, { rigup: { separator: false, surge: false, surge2: true } }), 'surge2');
+      assert.ok(r.pk > 51 && r.pk < 55 && r.s.esd.cause === 'PSHH_SURGE2', 'T-202 peak ' + r.pk);
+      assert.ok(!r.s.alarmLog.some((x) => x.id === 'OVP_SURGE2' || x.id === 'OVP_SURGE'), 'within 110 %: no OVP');
+      assert.ok(r.s.alarmLog.some((x) => x.id === 'SEPBY_PSV_CAP' && x.tag === 'PSV-202' && /PCV-203 \+ PSV-202/.test(x.msg)), 'SEPBY_PSV_CAP on T-202');
+      r = peak(Object.assign({}, base, { inputs: { Qg: 20 }, rigup: { separator: false, surge: false, surge2: true } }), 'surge2');
+      o = r.s.alarmLog.filter((x) => x.id === 'OVP_SURGE2');
+      assert.ok(r.pk > 60 && o.length >= 1 && o[0].tag === 'T-202' && /^T-202 over-pressure: .*PSV-202 can relieve$/.test(o[0].msg), r.pk + ' ' + (o[0] && o[0].msg));
+      const lo = mk(CH.LOW_GAS);
+      run(lo, 600, 5);
+      const ls = st(lo);
+      assert.ok(!ls.alarmLog.some((x) => /^OVP_|SEPBY_PSV_CAP/.test(x.id)), 'low gas: none');
+      // the default rig (V-101 in): the alarm table has neither id until needed
+      const d = mk({}); run(d, 600, 10);
+      assert.ok(!st(d).alarmLog.some((x) => /^OVP_|SEPBY_PSV_CAP/.test(x.id)), 'default: none');
+    },
+  },
 ];

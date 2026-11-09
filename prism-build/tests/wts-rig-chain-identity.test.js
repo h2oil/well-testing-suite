@@ -3,7 +3,8 @@
 //       snapshot path that existed in v3.4.1: each core item out, V-101 out to 'flare' and 'line', T-202 / DS-101 / CK-102 cases;
 //   (2) the chain UNPINNED (pinOpts with lineup and routing false: compartments 1 + vent 'hp' + chain) === v3.4.1 wherever the chain
 //       changes nothing: default rig-up, H-101 out, V-101 out to 'flare' / 'line' (FS-401 in), T-201 + T-202 out, P-201 out, the
-//       optional items in. Its rig-up notes are left out of (2): the chain words the H-101 note as "H-101 out: … heater bypass …".
+//       optional items in. Only the H-101 note is left out of (2) (3.4.2 review: a precise filter, every other note is compared):
+//       the chain words it "H-101 out: … heater bypass …" where v3.4.1 wrote "H-101 bypassed: no heat input …".
 //   (3) legacyOpts (all four pins) === the frozen v3.3.1 engine for a few rig-ups (the wts-fu-identity suite covers the rest).
 'use strict';
 
@@ -25,7 +26,11 @@ function pair(Fz, pinFn, c, assert, skipNotes) {
     a.advance(10); b.advance(10);
     if (i % 60 === 0 || i === n) {
       const sa = J(a.getState()), sb = J(b.getState());
-      if (skipNotes) { sa.rigup.notes = []; sb.rigup.notes = []; }
+      if (skipNotes) {
+        const h = (x) => x.rigup.notes.filter((t) => H101_NOTE.test(t));
+        assert.ok(h(sa).length === h(sb).length, c.name + ': the H-101 note on both sides or neither');
+        sa.rigup.notes = sa.rigup.notes.filter((t) => !H101_NOTE.test(t)); sb.rigup.notes = sb.rigup.notes.filter((t) => !H101_NOTE.test(t));
+      }
       const d = X.identityDiff(sa, sb, 6);
       assert.ok(d.length === 0, c.name + ' t ' + i * 10 + ': ' + d.join(' | '));
     }
@@ -33,6 +38,8 @@ function pair(Fz, pinFn, c, assert, skipNotes) {
   const la = J(a.getState()).alarmLog.map((e) => e.msg).join('\n'), lb = J(b.getState()).alarmLog.map((e) => e.msg).join('\n');
   assert.strictEqual(lb, la, c.name + ': alarm log');
 }
+// the one rig-up note the chain words differently (v3.4.1 "H-101 bypassed: …", chain "H-101 out: … heater bypass …")
+const H101_NOTE = /^H-101 (out|bypassed)\b/;
 const CASES_V341 = [
   { name: 'default' }, { name: 'H-101 out', opts: { rigup: { heater: false } } }, { name: 'V-101 out (flare)', opts: { rigup: { separator: false } } },
   { name: 'V-101 out (line)', opts: { rigup: { separator: false } }, sim: { sepByDest: 'line', sepByP_psig: 150 } },
@@ -56,7 +63,7 @@ module.exports = [
     run(app, assert) { CASES_V341.forEach((c) => pair(v341(), v341Opts, c, assert, false)); },
   },
   {
-    name: 'WTSRCI (2) the chain unpinned (compartments 1 + vent hp + chain) === frozen v3.4.1 where the chain changes nothing (rig-up notes aside)',
+    name: 'WTSRCI (2) the chain unpinned (compartments 1 + vent hp + chain) === frozen v3.4.1 where the chain changes nothing (only the H-101 note aside)',
     wp: WP, opts: false, timeoutMs: 600000,
     run(app, assert) {
       const pin = (o) => pinOpts(o, { lineup: false, routing: false });

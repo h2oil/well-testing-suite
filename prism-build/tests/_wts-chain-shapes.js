@@ -2,7 +2,7 @@
 // its flow to the next item downstream"; rigup-next design, INTEGRATION C2, C3, C18, §2.1–2.4). Frozen at hand-off (E6): LIVE (38) and
 // VIEW3D (32) build their fake snapshots against it, not against a running engine. Not a test file.
 //   ROUTINGS, DESTS, ROUTES (one item out → {key: receiver}), ROUTE_KEYS, NOTES (exact texts of the chain rules)
-//   SEPBY_ALARMS, Q_SEPBY, SNAP_NEW (appended snapshot paths), NULLABLE_NEW
+//   SEPBY_ALARMS, Q_SEPBY, SNAP_NEW (appended snapshot paths), NULLABLE_NEW; OVP_ALARMS + SEPBY_PSV_CAP (3.4.2 review, appended)
 //   GAS_CAP (sepBy.gasCap_mmscfd on SAMPLE_FLOW, V-101 out to 'surge': LP line on / vent 'hp'; route 'both' ≈ 2×)
 //   LOW_GAS (the perf / test case of destination 'surge' that runs without a trip), BOOST_HEAD_PSI
 //   fakeRig(base, o) a copy of base with the rigup / sepBy / gauge.pump / surge(2).wellStream / cum / lines paths of the chain set;
@@ -44,8 +44,15 @@ var LOG = {
   rigTxtSurge: 'V-101 bypassed (well stream to the surge tank T-201)' };
 var SEPBY_ALARMS = {
   SEPBY_SURGE_CAP: { tag: 'PCV-201', sev: 'warn', eq: 'separator', note: 'V-101 out to the surge tank and the gas rate above what PCV-201 (+ PCV-203 on route both) passes at PSHH' },
-  SEPBY_VENT: { tag: 'FS-401', sev: 'warn', eq: 'flare', note: 'V-101 out to the surge tank with FS-401 out: cold vent' } };
-var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT'];
+  SEPBY_VENT: { tag: 'FS-401', sev: 'warn', eq: 'flare', note: 'V-101 out to the surge tank with FS-401 out: cold vent' },
+  // 3.4.2 review (appended; defined on first need, so an engine that never takes the whole stream to the tanks has no entry):
+  // the tag follows the receiving tank (PCV-203 / PSV-202 for T-202 alone)
+  SEPBY_PSV_CAP: { tag: 'PSV-201', sev: 'warn', eq: 'separator', note: 'V-101 out to the surge tank and the stream gas above PCV + PSV at 110 % of MAWP' } };
+var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT', 'SEPBY_PSV_CAP'];
+// 3.4.2 review: surge-tank over-pressure (> 110 % of MAWP; the text marks > 121 %), defined on first need; cleared below 105 %
+var OVP_ALARMS = {
+  OVP_SURGE: { tag: 'T-201', sev: 'alarm', eq: 'surge' },
+  OVP_SURGE2: { tag: 'T-202', sev: 'alarm', eq: 'surge2' } };
 var SNAP_NEW = ['rigup.routing', 'rigup.dest', 'rigup.routes', 'sepBy.recv', 'sepBy.gasCap_mmscfd', 'gauge.pump.suction', 'cushion.out.surge',
   'sand.cum.toSurge_lb', 'surge.wellStream', 'surge2.wellStream', 'cum.toSurge_gas_mscf', 'cum.toSurge_oil_stb', 'cum.toSurge_water_bbl', 'lines.sepby_surge'];
 var NULLABLE_NEW = ['sepBy.gasCap_mmscfd'];
@@ -90,5 +97,5 @@ function fakeRig(base, o) {
 
 module.exports = deepFreeze({
   ROUTINGS: ROUTINGS, DESTS: DESTS, ROUTE_KEYS: ROUTE_KEYS, ROUTES: ROUTES, ROUTES_DEFAULT_OPTIONAL: ROUTES_DEFAULT_OPTIONAL, NOTES: NOTES, LOG: LOG,
-  SEPBY_ALARMS: SEPBY_ALARMS, Q_SEPBY: Q_SEPBY, SNAP_NEW: SNAP_NEW, NULLABLE_NEW: NULLABLE_NEW, ENUMS: ENUMS, GAS_CAP: GAS_CAP, LOW_GAS: LOW_GAS,
+  SEPBY_ALARMS: SEPBY_ALARMS, Q_SEPBY: Q_SEPBY, OVP_ALARMS: OVP_ALARMS, SNAP_NEW: SNAP_NEW, NULLABLE_NEW: NULLABLE_NEW, ENUMS: ENUMS, GAS_CAP: GAS_CAP, LOW_GAS: LOW_GAS,
   BOOST_HEAD_PSI: BOOST_HEAD_PSI, fakeRig: fakeRig });

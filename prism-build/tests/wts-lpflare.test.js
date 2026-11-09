@@ -122,7 +122,7 @@ module.exports = [
       assert.ok(Math.abs(sumPu / n - 25) < 0.5, 'T-201 holds its SP: ' + (sumPu / n));
       assert.ok(s.cum.lpGas_mscf > 0 && s.cum.lpGas_mscf * 1e3 <= s.cum.flare_mmscf * 1e6, 'cum.lpGas within cum.flare');
       const I = sim._internal().lp;
-      assert.ok(Math.abs(I.Plp - (I.LP.P0 + I.LP.K * I.qLP * I.qLP)) < 2, 'P_in follows P0 + K q² (lag ± ' + (I.Plp - (I.LP.P0 + I.LP.K * I.qLP * I.qLP)) + ')');
+      assert.ok(Math.abs(I.Plp - I.target) < 2, 'P_in follows the LP line law (lag ± ' + (I.Plp - I.target) + ')');
       ['qgLP', 'gor1', 'gor2'].forEach((k) => { const hh = sim.getHistory(k); assert.ok(hh.y.length > 0 && hh.y.every(isFinite), 'history ' + k); });
     },
   },
@@ -188,6 +188,51 @@ module.exports = [
       const r = mk(); run(r, 1200, 10); r.reset('steady');
       const I = r._internal().lp;
       assert.ok(Math.abs(I.emaLp * 86.4 - LPX.SAMPLE.qFlashD_mscfd) < 0.01, 'reset: emaLp = the design flash');
+    },
+  },
+  {
+    name: 'WTSLP (6) 3.4.2 review: the LP back pressure is a compressible gas-line law — the design anchor holds (steady default ≈ unchanged), 1.2 MMscf/d gives a few psig (not tens), the open tip chokes near 4–5 MMscf/d; PSV-201 / PSV-202 rechecked against it; nps / sch overrides set the hydraulic ID',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const I = mk()._internal().lp, L = I.LP, at = I.at;
+      // design anchor: at qD the law gives the design back pressure P2d (+ one exit velocity head, < 0.01 psi)
+      assert.ok(Math.abs(at(L.qD, true) - L.P2d) < 0.01, 'anchor at qD: ' + at(L.qD, true) + ' vs ' + L.P2d);
+      // the steady default (the design flash ≈ qD / 3) within 0.01 psi of the v1.7.0 quadratic law
+      const q0 = LPX.SAMPLE.qFlashD_mscfd / 86.4;
+      assert.ok(Math.abs(at(q0, true) - (L.P0 + L.K * q0 * q0)) < 0.01 && Math.abs(st(mk()).lp.P_in_psig - LPX.EX_LP.P_in_psig) < 0.002, 'steady default unchanged: ' + at(q0, true));
+      // relief-rate anchors (3" SCH 40, 150 ft, SG 0.65): an isothermal hand estimate gives 3–5 psig at 1.16–1.2 MMscf/d
+      const p12 = at(1200 / 86.4, true);
+      assert.ok(p12 > 2 && p12 < 6, '1.2 MMscf/d → ' + p12 + ' psig (the incompressible P0 + K·q² gave ' + (L.P0 + L.K * Math.pow(1200 / 86.4, 2)) + ')');
+      // monotonic; compressible (the rise is slower than q²); at the critical-flow limit P_t = q / kCh (≈ 2.5 scf/s per psia for 3")
+      let last = L.P0;
+      [100, 500, 1000, 2000, 4000, 8000].forEach((m) => { const p = at(m / 86.4, true); assert.ok(p > last, 'monotonic at ' + m); last = p; });
+      assert.ok(at(2000 / 86.4, true) - L.P0 < 4 * (at(1000 / 86.4, true) - L.P0), 'slower than q²');
+      assert.ok(L.kCh > 2.2 && L.kCh < 2.8, 'tip critical-flow coefficient ' + L.kCh);
+      const qc = 4500 / 86.4;
+      assert.ok(at(qc, true) + 14.696 >= qc / L.kCh - 1e-9, 'never below the choked-tip pressure');
+      // PSV-201 / PSV-202 against the LP line: rated relief with the PCV wide open; the flow stays critical so each keeps ≥ 90 %
+      // of its rating at the built-up back pressure (bellows: built-up > 10 % of set, as the live run uses gq at the live P_in)
+      const c = I.psvCheck;
+      ['PSV-201', 'PSV-202'].forEach((k) => {
+        const v = c[k];
+        assert.ok(v && v.set_psig === 50 && v.Pb_psig > 0 && v.Pb_psig < v.set_psig && v.ok && v.psvAtPb_mscfd <= v.psv_mscfd + 1e-9, k + ' ' + JSON.stringify(v));
+        assert.strictEqual(v.bellows, v.Pb_psig > 0.1 * v.set_psig, k + ' bellows flag');
+      });
+      assert.ok(c['PSV-201'].Pb_psig < 30 && c['PSV-202'].Pb_psig < 15, 'built-up back pressures ' + c['PSV-201'].Pb_psig + ' / ' + c['PSV-202'].Pb_psig);
+      assert.strictEqual(mk({ config: { surge: { vent: { to: 'hp' } } } })._internal().lp.psvCheck, null, 'hp: no LP check');
+      // the default-mode dump-stuck relief: P_in stays a few psig below the tank, not ≈ the tank pressure
+      const d = mk({ seed: 3, config: { noise: { on: false } } });
+      d.advance(600); d.setFault('oilDumpStuckOpen', true);
+      let gap = Infinity, pk = 0;
+      run(d, 300, 1, (x) => { if (x.lp.q_mscfd > 500) gap = Math.min(gap, x.surge.P - x.lp.P_in_psig); pk = Math.max(pk, x.lp.P_in_psig); });
+      assert.ok(gap > 10 && pk < 30, 'relief: tank − P_in ≥ ' + gap + ' psi, peak P_in ' + pk);
+      // [5] cfg nps / sch alone: the hydraulic ID follows the table (an explicit ID_in still wins; flow.sim.lpSch alone is applied)
+      [[{ nps: 4 }, 4.026], [{ nps: 2 }, 2.067], [{ sch: 80 }, 2.900], [{ nps: 4, sch: 80 }, 3.826], [{ ID_in: 2.5 }, 2.5], [{ nps: 4, ID_in: 3.5 }, 3.5]].forEach(([v, id]) => {
+        const x = mk({ config: { surge: { vent: v } } }), s = st(x);
+        assert.ok(Math.abs(x._internal().lp.LP.ID - id) < 1e-12 && Math.abs(s.lp.ID_in - id) < 1e-12, JSON.stringify(v) + ' → ' + x._internal().lp.LP.ID);
+      });
+      assert.strictEqual(st(mk({ sim: { lpSch: 80 } })).lp.ID_in, 2.900, 'flow.sim.lpSch alone');
+      assert.ok(st(mk({ sim: { lpSch: 80 } })).lp.sch === 80, 'flow.sim.lpSch alone: sch');
     },
   },
 ];

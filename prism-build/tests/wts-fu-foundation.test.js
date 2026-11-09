@@ -65,7 +65,7 @@ module.exports = [
       // instance: getRigup 11 keys; entering / leaving texts; H-101 out takes CK-102 out (request kept)
       const sim = S.create(S.SAMPLE_FLOW, { seed: 2, config: NOISE_OFF });
       assert.strictEqual(JSON.stringify(sim.getRigup()), X.GETRIGUP_DEFAULT_JSON);
-      assert.ok(EQ.checkShape('rigup', J(sim.getState().rigup), { strict: true, rigKeys: X.RIG_KEYS }).ok, 'rigup shape');
+      assert.ok(EQ.checkShape('rigup', J(sim.getState().rigup), { strict: true, engine: 'work', rigKeys: X.RIG_KEYS }).ok, 'rigup shape');
       const msgs = []; sim.on('rigup', (p) => msgs.push(p.msg));
       assert.strictEqual(sim.setRigup({ heaterChoke: true }), true);
       assert.ok(msgs[0].indexOf('CK-102 ' + X.RIG_TXT_NEW.heaterChoke[2]) >= 0, msgs[0]);
@@ -110,7 +110,7 @@ module.exports = [
       assert.deepStrictEqual(Object.keys(st.nodes), X.NODE_IDS, 'node order');
       assert.strictEqual(st.segs.length, X.SEG_COUNT);
       [['nodes.heaterChoke', st.nodes.heaterChoke], ['sepBy', st.sepBy], ['cushion', st.cushion]].forEach(([n, v]) => {
-        const r = X.checkShape(n, v, { strict: true }); assert.ok(r.ok, n + ': ' + r.errors.join('; '));
+        const r = X.checkShape(n, v, { strict: true, engine: 'work' }); assert.ok(r.ok, n + ': ' + r.errors.join('; '));
       });
       const nk = st.nodes.heaterChoke;
       assert.ok(!nk.inRig && !nk.active && !nk.bypassed && nk.P === st.nodes.choke.P && nk.Pin === st.nodes.choke.P && nk.T === st.nodes.choke.T &&
