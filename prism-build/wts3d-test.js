@@ -347,10 +347,10 @@ const SECTION_B = (G /*, src */) => {
       const VP = I.VALVE_PROXIES || [];
       const ids = VP.map(v => v[0]).sort().join(',');
       // v1.2.0: + XV-202 (valve:surge2:0), XV-103 (dump:desander), HV-104 (bypass:desander); the six v3.3 targets are tappable with both items out
-      // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable)
-      if (ids !== 'bypass:desander,ckleg:adj,ckleg:fixed,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable); v1.5.0: two boxes per leg (one per side of its L)
+      if (ids !== 'bypass:desander,ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
       const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
-      if (def !== 'ckleg:adj,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
+      if (def !== 'ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
       // XV-201B (v1.4.0) sits on B's side nozzle (+X side, same height as XV-201A on A's −X nozzle)
       const vB = VP.filter(v => v[0] === 'valve:surge:1')[0], vA = VP.filter(v => v[0] === 'valve:surge:0')[0];
       if (!(vB[1][0] > 11.4 && vA[1][0] < 9.0 && vB[1][1] === vA[1][1])) return 'XV-201B not on the +X side nozzle';
@@ -407,7 +407,7 @@ const SECTION_B = (G /*, src */) => {
         ['separator', [5.6, 2.0, 0], [6.9, 1.8, 1.8]], ['surge', [10.2, 3.3, 4.0], [2.5, 4.9, 2.5]], ['pump', [20.35, 0.55, 5.95], [0.9, 1.1, 1.7]],
         ['gauge', [16.4, 1.55, 4.0], [5.0, 2.6, 2.6]], ['flare', [19.5, 3.9, -4.5], [0.8, 7.8, 0.8]], ['flare', [19.5, 0.2, -4.5], [1.6, 0.4, 1.6]]];
       // v1.4.0: the core tap targets = the six v3.3 valves + the two CK-101 legs (always in)
-      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1', 'ckleg:adj', 'ckleg:fixed'];
+      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1', 'ckleg:adj', 'ckleg:adj', 'ckleg:fixed', 'ckleg:fixed'];
       const VIEW_GROUPS_V33 = { wellhead: ['wellhead', 'esd', 'choke'], tanks: ['surge', 'pump', 'gauge'], process: ['separator', 'surge', 'gauge'], separator: ['heater', 'separator'] };
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
       // default overview camera at w × h → {pos, target, fov} for project()
@@ -478,9 +478,9 @@ const SECTION_B = (G /*, src */) => {
               const sdvOut = id === 'D0a' && !e && JSON.stringify(p) === JSON.stringify([-11.2, 1.2, 0]);      // SDV-101 outlet = the v3.3 E2 start
               if (!onRoute && !onTee && !onNoz && !sdvOut) bad.push(id + (e ? ' end' : ' start'));
             }); });
-          // both out: D0a + D0b + E2 (+ E2a, v1.4.0 manifold leg A) = the inlet line to the adjustable choke, LMa + LMb = the v3.3 LM polyline
+          // both out: D0a + D0b + E2 + E2a = the inlet line to the adjustable choke (v1.5.0 GA plan: 45° into the inlet tee), LMa + LMb = the v3.3 LM polyline
           const cat = ids => ids.map(route).reduce((a, r, i) => a.concat(i ? r.pts.slice(1) : r.pts), []);
-          if (JSON.stringify(cat(['D0a', 'D0b', 'E2', 'E2a'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.95, 1.2, 0], [-8.95, 1.2, 0.7], [-8.3, 1.2, 0.7], [-7.05, 1.2, 0.7]])) bad.push('E2 split');
+          if (JSON.stringify(cat(['D0a', 'D0b', 'E2', 'E2a'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.95, 1.2, 0], [-8.95, 1.2, 1.35], [-8.4, 1.2, 1.35], [-7.8, 1.2, 0.75], [-6.3, 1.2, 0.75]])) bad.push('E2 split');
           // v1.4.0 CK-101 legs: A = E2a → E3, B = E2b → E3f; both start at the inlet tee (E2 end), meet at the outlet tee (E3o start)
           const e2 = route('E2'), e3o = route('E3o'), J = x => JSON.stringify(x), first = id => route(id).pts[0], last = id => route(id).pts[route(id).pts.length - 1];
           if (!(J(first('E2a')) === J(last('E2')) && J(first('E2b')) === J(last('E2')) && J(last('E2a')) === J(first('E3')) && J(last('E2b')) === J(first('E3f')) &&
@@ -861,6 +861,126 @@ const SECTION_B = (G /*, src */) => {
             [/case 'heaterChoke':/, 'chip'], [/'bypassed with H-101'/, 'bypassed text'], [/HEATER CHOKE \(BETWEEN PASSES\)/, 'midcoil label (D10 fallback)']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
           if (/\b(let|const)\s/.test(src) || /=>/.test(src) || /\?\?|\?\./.test(src)) bad.push('ES5 style');
           return bad.length === 0 || bad.join(', ');
+        }],
+      ];
+    })(),
+    // ── v1.5.0 (3.4.2): CK-101 as the GA drawing plan (chokes in the corners, a gate per side, 45° unions) ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0], M = I.CK_M;
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const inBox = (p, b, e) => [0, 1, 2].every(i => Math.abs(p[i] - b[1][i]) <= b[2][i] / 2 + (e || 0));
+      const unit = (a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      // frozen v1.4.0 buildRoute (90° fillets only) — reference for the byte identity of every orthogonal route
+      const v3 = { sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], sc: (a, k) => [a[0] * k, a[1] * k, a[2] * k],
+        len: a => Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]), dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+        cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] };
+      v3.norm = a => { const l = v3.len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+      const anyPerp = d => { const up = Math.abs(d[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0]; return v3.norm(v3.sub(up, v3.sc(d, v3.dot(up, d)))); };
+      const rotAxis = (v, k, a) => { const c = Math.cos(a), s = Math.sin(a), kv = v3.cross(k, v), kd = v3.dot(k, v);
+        return [v[0] * c + kv[0] * s + k[0] * kd * (1 - c), v[1] * c + kv[1] * s + k[1] * kd * (1 - c), v[2] * c + kv[2] * s + k[2] * kd * (1 - c)]; };
+      const buildRouteV140 = (pts, rVis, opts) => {
+        const prims = [], n = pts.length; let len = 0;
+        if (n < 2) return { prims, length: 0, rVis };
+        const rbMax = (opts && opts.rb != null) ? opts.rb : 3 * rVis;
+        let cur = pts[0].slice(), nrm = null;
+        for (let k = 1; k < n; k++) {
+          const p = pts[k], dIn = v3.norm(v3.sub(p, pts[k - 1])), legIn = v3.len(v3.sub(p, pts[k - 1]));
+          let hasCorner = false, rb = 0, dOut = null;
+          if (k < n - 1) { dOut = v3.norm(v3.sub(pts[k + 1], p)); const legOut = v3.len(v3.sub(pts[k + 1], p));
+            if (Math.abs(v3.dot(dIn, dOut)) < 0.999 && legIn > 1e-6 && legOut > 1e-6) { hasCorner = true; rb = Math.min(rbMax, 0.45 * Math.min(legIn, legOut)); } }
+          const s = hasCorner ? v3.sub(p, v3.sc(dIn, rb)) : p.slice(), L = v3.len(v3.sub(s, cur));
+          if (!nrm) nrm = anyPerp(dIn);
+          if (L > 1e-6) { prims.push({ type: 'L', a: cur.slice(), b: s.slice(), len: L, dir: dIn, n0: nrm.slice(), s0: len }); len += L; }
+          if (hasCorner) { const c = v3.add(s, v3.sc(dOut, rb)), u = v3.norm(v3.sub(s, c)), axis = v3.norm(v3.cross(dIn, dOut)), al = rb * Math.PI / 2;
+            prims.push({ type: 'A', c, u, v: dIn, R: rb, ang: Math.PI / 2, len: al, n0: nrm.slice(), axis, dIn, dOut, s0: len });
+            len += al; nrm = rotAxis(nrm, axis, Math.PI / 2); cur = v3.add(p, v3.sc(dOut, rb)); } else cur = s;
+        }
+        return { prims, length: len, rVis };
+      };
+      const ckBoxes = id => I.VALVE_PROXIES.filter(v => v[0] === id);
+      return [
+        ['32 v1.5.0 (a): CK-101 GA plan — inlet tee front-left, outlet tee back-right, 45° unions on E2 / E3o, four straight legs, chokes in the other corners, a gate at each side midpoint', () => {
+          const bad = [], first = id => route(id).pts[0], last = id => route(id).pts[route(id).pts.length - 1];
+          if (!(M && M.xW < M.xE && M.zF > 0 && M.zB < 0)) return 'CK_M ' + J(M);
+          const e2 = route('E2').pts, e3o = route('E3o').pts, dg = M.dg;
+          const dl = unit(e2[e2.length - 2], e2[e2.length - 1]), ll = Math.hypot(...v3.sub(e2[e2.length - 1], e2[e2.length - 2]));
+          if (!(dl.every((v, i) => Math.abs(v - dg[i]) < 1e-9) && ll >= 0.8)) bad.push('E2 last run ' + J(dl) + ' ' + ll);
+          if (J(last('E2')) !== J([M.xW, M.y, M.zF])) bad.push('E2 end');
+          const d0 = unit(e3o[0], e3o[1]); if (!d0.every((v, i) => Math.abs(v - dg[i]) < 1e-9) || J(first('E3o')) !== J([M.xE, M.y, M.zB]) || J(last('E3o')) !== J([-4.3, 1.2, 0])) bad.push('E3o');
+          const runs = { E2a: [[1, 0, 0], 'z', M.zF], E3: [[0, 0, -1], 'x', M.xE], E2b: [[0, 0, -1], 'x', M.xW], E3f: [[1, 0, 0], 'z', M.zB] };
+          Object.keys(runs).forEach(id => { const r = route(id), [d, ax, v] = runs[id], u = unit(r.pts[0], r.pts[1]), k = ax === 'x' ? 0 : 2;
+            if (!(r.pts.length === 2 && u.every((q, i) => Math.abs(q - d[i]) < 1e-12) && r.pts.every(p => p[k] === v && p[1] === M.y))) bad.push('leg ' + id); });
+          if (J(last('E2a')) !== J([M.legs.adj.c[0], M.y, M.legs.adj.c[1]]) || J(last('E2b')) !== J([M.legs.fixed.c[0], M.y, M.legs.fixed.c[1]])) bad.push('choke corners');
+          if (J(I.CK_JOINTS) !== J([[M.xW, M.y, M.zF], [M.xE, M.y, M.zB], [M.xE, M.y, M.zF], [M.xW, M.y, M.zB]])) bad.push('CK_JOINTS');
+          // the adjustable choke is the front-right corner (owner decision 4), the positive one the back-left
+          if (!(M.legs.adj.c[0] === M.xE && M.legs.adj.c[1] === M.zF && M.legs.fixed.c[0] === M.xW && M.legs.fixed.c[1] === M.zB)) bad.push('leg corners');
+          const gates = [].concat(M.legs.adj.gates, M.legs.fixed.gates), mid = (a, b) => (a + b) / 2;
+          const want = [[mid(M.xW, M.xE), M.zF, 'x'], [M.xE, mid(M.zF, M.zB), 'z'], [M.xW, mid(M.zF, M.zB), 'z'], [mid(M.xW, M.xE), M.zB, 'x']];
+          if (J(gates) !== J(want)) bad.push('gates ' + J(gates));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (b): CK-101 pick boxes — two per leg, disjoint, each leg\'s gates and choke inside its own boxes only, tees outside; rays from the Wellhead & Choke and overview cameras pick the right leg and the tee picks the card', () => {
+          const bad = [], A = ckBoxes('ckleg:adj'), B = ckBoxes('ckleg:fixed'), all = A.concat(B);
+          if (A.length !== 2 || B.length !== 2) return 'box count ' + A.length + '/' + B.length;
+          const pt = (x, z) => [x, 1.2, z], gOf = L => L.gates.map(g => pt(g[0], g[1])).concat([pt(L.c[0], L.c[1])]);
+          gOf(M.legs.adj).forEach(p => { if (!A.some(b => inBox(p, b)) || B.some(b => inBox(p, b))) bad.push('adj part ' + J(p)); });
+          gOf(M.legs.fixed).forEach(p => { if (!B.some(b => inBox(p, b)) || A.some(b => inBox(p, b))) bad.push('fixed part ' + J(p)); });
+          [pt(M.xW, M.zF), pt(M.xE, M.zB)].forEach(p => { if (all.some(b => inBox(p, b))) bad.push('tee inside a leg box ' + J(p)); });
+          for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) if ([0, 1, 2].every(k => Math.abs(all[i][1][k] - all[j][1][k]) < (all[i][2][k] + all[j][2][k]) / 2)) bad.push('overlap ' + i + '/' + j);
+          const wv = I.viewFor('wellhead', {}, 1380, 700, INS), WH = I.VIEWS.wellhead, OV = I.VIEWS.overview;
+          const cams = { wellhead: camOf({ az: WH.az, el: WH.el, radius: wv.r, target: wv.tgt }), overview: camOf(I.fitView(I.fitPts({}), OV.az, OV.el, 36, 1380, 700, INS)) };
+          const P = I.rigProxies({}), V = I.rigValveProxies({});
+          Object.keys(cams).forEach(cn => { const cam = cams[cn];
+            [[[-7.05, 1.72, 0.75], 'ckleg:adj'], [[-6.3, 1.72, 0], 'ckleg:adj'], [[-6.3, 1.9, 0.75], 'ckleg:adj'],
+              [[-7.8, 1.72, 0], 'ckleg:fixed'], [[-7.05, 1.72, -0.75], 'ckleg:fixed'], [[-7.8, 1.6, -0.75], 'ckleg:fixed'],
+              [[M.xW, 1.2, M.zF], 'choke']].forEach(([p, want]) => { const got = I.pickRay(cam.pos, rayTo(cam, p), P, V); if (got !== want) bad.push(cn + ' ' + J(p) + ' → ' + got); }); });
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (c): buildRoute general fillets — every orthogonal route is byte-identical to v1.4.0; E2 / E3o (45° unions) are continuous, arcs end on dOut, lengths add up', () => {
+          const bad = [], nps = I.DEF_NPS;
+          I.ROUTES.forEach(r => { if (r.id === 'E2' || r.id === 'E3o') return; const rv = I.routeRVis(r, nps), o = r.rb != null ? { rb: r.rb } : null;
+            if (J(I.buildRoute(r.pts, rv, o)) !== J(buildRouteV140(r.pts, rv, o))) bad.push('identity ' + r.id); });
+          [I.PSV_ROUTE, I.LINE_SPOOL].concat(Object.keys(I.BYPASS_SPOOLS).map(k => I.BYPASS_SPOOLS[k])).forEach((pts, i) => { if (J(I.buildRoute(pts, 0.1)) !== J(buildRouteV140(pts, 0.1))) bad.push('identity spool ' + i); });
+          ['E2', 'E3o'].forEach(id => {
+            const r = route(id), rt = I.buildRoute(r.pts, I.routeRVis(r, nps), { rb: r.rb });
+            let prev = null, jump = 0, tdot = 1;
+            for (let s = 0; s <= rt.length; s += 0.01) { const q = I.routeSample(rt, s, { p: [0, 0, 0], t: [1, 0, 0] }), c = { p: q.p.slice(), t: q.t.slice() };
+              if (prev) { jump = Math.max(jump, Math.hypot(...v3.sub(c.p, prev.p))); tdot = Math.min(tdot, v3.dot(c.t, prev.t)); } prev = c; }
+            if (jump > 0.015 || tdot < 0.99) bad.push(id + ' continuity ' + jump.toFixed(4) + ' / ' + tdot.toFixed(4));
+            let sumLeg = 0, sumT = 0, sumArc = 0;
+            for (let k = 1; k < r.pts.length; k++) sumLeg += v3.len(v3.sub(r.pts[k], r.pts[k - 1]));
+            rt.prims.filter(p => p.type === 'A').forEach(a => {
+              const end = [0, 1, 2].map(j => -a.u[j] * Math.sin(a.ang) + a.v[j] * Math.cos(a.ang));
+              if (!end.every((v, j) => Math.abs(v - a.dOut[j]) < 1e-9)) bad.push(id + ' arc end tangent');
+              sumT += 2 * a.R * Math.tan(a.ang / 2); sumArc += a.R * a.ang;
+            });
+            if (Math.abs(rt.length - (sumLeg - sumT + sumArc)) > 1e-9) bad.push(id + ' length ' + rt.length + ' vs ' + (sumLeg - sumT + sumArc));
+            if (!rt.prims.some(p => p.type === 'A' && Math.abs(p.ang - Math.PI / 4) < 1e-9)) bad.push(id + ' no 45° arc');
+            const e = I.routeSample(rt, rt.length).p, w = r.pts[r.pts.length - 1]; if (Math.hypot(...v3.sub(e, w)) > 1e-9) bad.push(id + ' end point');
+          });
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 (d): CK-101 internal clearance — every manifold pipe keeps ≥ 0.05 m from the CK-101 tees / chokes it does not end in, E2 / E3o clear the skid; a planted probe on the E2 diagonal is found', () => {
+          const bad = [], ids = ['E2', 'E2a', 'E2b', 'E3', 'E3f', 'E3o'];
+          const boxes = I.PROPS.filter(p => /^CK-101|choke skid/.test(p[0])).map(p => ({ id: p[0], k: 'box', min: p[1], max: p[2] }));
+          if (boxes.length !== 5) return 'PROPS rows ' + boxes.map(b => b.id).join();
+          const inside = (p, b) => [0, 1, 2].every(i => p[i] >= b.min[i] - 0.01 && p[i] <= b.max[i] + 0.01);
+          const check = (bx) => { const out = [];
+            ids.forEach(id => { const r = route(id), rv = I.routeRVis(r, I.DEF_NPS), ends = [r.pts[0], r.pts[r.pts.length - 1]];
+              bx.forEach(b => { if (ends.some(p => inside(p, b))) return;
+                for (let i = 0; i < r.pts.length - 1; i++) { const g = I.primGap({ k: 'cap', a: r.pts[i], b: r.pts[i + 1], r: rv }, b); if (g < 0.05) { out.push(id + '~' + b.id + ' ' + g.toFixed(3)); break; } } }); });
+            return out; };
+          const c = check(boxes); if (c.length) bad.push(c.join(', '));
+          const probe = { id: 'probe', k: 'box', min: [-8.15, 1.15, 1.05], max: [-8.05, 1.25, 1.15] };
+          if (!check(boxes.concat([probe])).some(x => /probe/.test(x))) bad.push('probe on the E2 diagonal not found');
+          return bad.length === 0 || bad.join(' | ');
+        }],
+        ['32 v1.5.0 (e): clearance stays clean around the new CK-101 for DS-101 / CK-102 combinations', () => {
+          const bad = [];
+          [{ desander: true }, { heaterChoke: true }, { desander: true, heaterChoke: true }].forEach(rig => { const c = I.clearanceCheck(rig, 0.05); if (c.length) bad.push(J(rig) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          return bad.length === 0 || bad.join(' | ');
         }],
       ];
     })(),

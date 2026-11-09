@@ -129,12 +129,20 @@ var PROXIES = [
   ['heaterChoke',[-3.45,2.1,0.4],[0.5,0.9,0.5]]                 // x −3.7…−3.2: clear of the H-101 proxy (x −3.1…0.3)
 ];
 var MUSHROOM = { c:[-12.6,0.95,1.66], s:[0.14,0.14,0.12] };
-// CK-101 choke manifold (v1.4.0): a square loop on a skid — inlet hammer union + studded tee at the (xI, zA) corner, leg A
-// (adjustable) along zA and leg B (positive) along zB, each gate valve (xGu) → angle-body choke (xC) → gate valve (xGd); the legs
-// re-join at the studded tee in the opposite corner (xO, zB) with the outlet hammer union; blind studded tees in the other corners
-var CK_M = { xI:-8.3, xO:-5.8, zA:0.7, zB:-0.7, y:1.2, xC:-7.05, xGu:-7.75, xGd:-6.35, blk:0.42, xUi:-8.67, xUo:-5.44 };
-// points where a route ends inside a manifold block or choke body (no end flanges drawn there; the blocks carry their own)
-var CK_JOINTS = [[CK_M.xI, CK_M.y, CK_M.zA], [CK_M.xO, CK_M.y, CK_M.zB], [CK_M.xC, CK_M.y, CK_M.zA], [CK_M.xC, CK_M.y, CK_M.zB]];
+// CK-101 choke manifold (v1.5.0): plan of the 3-1/16" 10K two-choke manifold GA drawing, square loop on a skid (no mirror:
+// drawing left = −x, right = +x, top = −z (back), bottom = +z (front)). Inlet studded tee front-left (xW, zF) with the inlet
+// hammer union at 45° out to (−x, +z); outlet studded tee back-right (xE, zB) with the outlet union at 45° out to (+x, −z);
+// angle-body chokes in the two other corners — ADJUSTABLE front-right (drawing path 2: bottom gate → choke → right gate),
+// POSITIVE back-left (path 1: left gate → choke → top gate); one gate valve per side, at the side's midpoint
+var CK_M = { xW:-7.8, xE:-6.3, zF:0.75, zB:-0.75, xc:-7.05, y:1.2, blk:0.42, uOff:0.56,
+  dg:[Math.SQRT1_2, 0, -Math.SQRT1_2],                   // union axis = flow direction through both unions
+  legs:{
+    adj:  { c:[-6.3, 0.75],  dIn:[1, 0, 0],  dOut:[0, 0, -1], gates:[[-7.05, 0.75, 'x'], [-6.3, 0, 'z']] },   // path 2: bottom gate → choke → right gate
+    fixed:{ c:[-7.8, -0.75], dIn:[0, 0, -1], dOut:[1, 0, 0],  gates:[[-7.8, 0, 'z'], [-7.05, -0.75, 'x']] }   // path 1: left gate → choke → top gate
+  } };
+// points where a route ends inside a manifold block or choke body (no end flanges drawn there; the blocks carry their own):
+// inlet tee, outlet tee, adjustable choke, positive choke
+var CK_JOINTS = [[CK_M.xW, CK_M.y, CK_M.zF], [CK_M.xE, CK_M.y, CK_M.zB], [CK_M.xE, CK_M.y, CK_M.zF], [CK_M.xW, CK_M.y, CK_M.zB]];
 // Operable valves (tap/click toggles): T-201 inlets XV-201A/B, P-201 suctions A/B, T-301 inlets XV-301A/B;
 // optional items: T-202 inlet XV-202, DS-101 dump XV-103 ("Dump sand"), DS-101 bypass HV-104
 var VALVE_PROXIES = [
@@ -143,8 +151,12 @@ var VALVE_PROXIES = [
   ['valve:gauge:0',[15.3,3.2,3.6],[0.62,0.5,0.5]], ['valve:gauge:1',[17.7,3.2,3.6],[0.62,0.5,0.5]],
   ['valve:surge2:0',[9.6,3.05,2.0],[0.5,0.6,0.5]], ['dump:desander',[-10.2,0.62,-2.6],[0.45,0.6,0.45]],
   ['bypass:desander',[-10.0,1.4,0],[0.45,0.7,0.45]],
-  // v1.4.0: CK-101 manifold legs — each box spans the leg's gate → choke → gate run (tap = put that leg in service)
-  ['ckleg:adj',[CK_M.xC,1.42,CK_M.zA],[1.95,0.95,0.55]], ['ckleg:fixed',[CK_M.xC,1.42,CK_M.zB],[1.95,0.95,0.55]]
+  // v1.5.0: CK-101 manifold legs — two boxes per leg, one per side of its L (gate → corner choke → gate; tap = put that leg in
+  // service); the four boxes are pairwise disjoint and leave both studded tees to the 'choke' proxy. The positive leg's left-side
+  // box starts at y 1.1 (not 0.945): a tap on the inlet tee seen from the front-left cameras continues down behind the tee, and
+  // must not reach that box (it would put the positive leg in service instead of opening the card)
+  ['ckleg:adj',  [-6.75, 1.42, 0.75],  [1.5, 0.95, 0.56]],  ['ckleg:adj',  [-6.3, 1.42, 0.01],  [0.56, 0.95, 0.92]],
+  ['ckleg:fixed',[-7.8, 1.4975, -0.3], [0.56, 0.795, 1.5]], ['ckleg:fixed',[-7.06, 1.42, -0.75], [0.92, 0.95, 0.56]]
 ];
 var PAD_RECT = { x0:-20, x1:24, z0:-10, z1:8.5 };
 // T-201 B-inlet branch (v1.4.0): tee on LM at x 8.55 → behind the shell (z 3.5) → over the top head (y 5.95) → down on the +X
@@ -155,21 +167,21 @@ function proxyEq(id) { if (/^ckleg:/.test(id)) return 'choke'; var m = /^(?:valv
 
 // Framing boxes per equipment group (view presets only, never picking)
 var EQ_BOX = {
-  wellhead:[[-16.6,0,-1.6],[-13.4,2.6,1.9]], esd:[[-12.9,0,-0.6],[-11.0,3.4,1.8]], choke:[[-9.1,0,-1.2],[-5.3,2.0,1.2]],
+  wellhead:[[-16.6,0,-1.6],[-13.4,2.6,1.9]], esd:[[-12.9,0,-0.6],[-11.0,3.4,1.8]], choke:[[-9.15,0,-1.6],[-4.9,2.05,1.6]],
   heater:[[-3.3,0,-0.9],[1.0,5.4,1.6]], separator:[[2.1,0,-0.9],[9.1,3.1,1.2]], flare:[[18.6,0,-5.3],[20.4,7.8,-3.7]],
   surge:[[8.9,0,2.7],[11.5,6.2,5.3]], pump:[[19.8,0,5.0],[22.3,1.4,6.8]], gauge:[[13.8,0,1.9],[19.4,3.9,5.5]],
   desander:FIT_OPT.desander, surge2:FIT_OPT.surge2, heaterChoke:FIT_OPT.heaterChoke
 };
 var VIEWS = {
   overview:{ groups:null, az:-18, el:20, margin:1 },
-  wellhead:{ groups:['wellhead','esd','choke','desander'], az:-25, el:18, margin:1.25 },
+  wellhead:{ groups:['wellhead','esd','choke','desander'], az:-25, el:24, margin:1.15 },
   separator:{ groups:['heater','separator','heaterChoke'], az:-20, el:20, margin:1.20 },
   tanks:{ groups:['surge','pump','gauge','surge2'], az:-10, el:28, margin:1.20 },
   flare:{ groups:['flare'], az:-15, el:12, margin:1.30, flame:true },
   process:{ groups:['separator','surge','gauge','surge2'], az:-10, el:30, margin:1.15 }
 };
 var FOCUS = {
-  wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.2,1.3,0],6], heater:[[-1.4,1.7,0.3],8],
+  wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.05,1.35,0],5.0], heater:[[-1.4,1.7,0.3],8],
   separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
   flare:[[19.5,5,-4.5],18], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
 };
@@ -177,10 +189,10 @@ var FOCUS = {
 // so it is framed from +3° (between T-201 and T-301; wts3d framing check)
 var FOCUS_TH = { surge2:3 };
 // Equipment halos [x, z, radius] and blob shadows [x, z, sx, sz] (optional rows only while the item is in)
-var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.2, 0, 2.3], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
+var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.05, 0, 2.6], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
              flare:[19.5, -4.5, 1.4], surge:[10.2, 4.0, 1.8], pump:[20.4, 5.9, 1.1], gauge:[16.4, 4.0, 3.2],
              desander:[-10.2, -1.6, 0.9], surge2:[12.5, 2.3, 1.5], heaterChoke:[-3.45, 0.4, 0.6] };
-var BLOBS = [[-7.2, 0, 4.4, 3.0], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [10.2, 4.0, 3.2, 3.2], [20.3, 5.8, 1.2, 2.0], [16.4, 4.0, 5.8, 3.4],
+var BLOBS = [[-7.05, 0, 4.4, 3.2], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [10.2, 4.0, 3.2, 3.2], [20.3, 5.8, 1.2, 2.0], [16.4, 4.0, 5.8, 3.4],
              [19.5, -4.5, 2.2, 2.2], [-8, -6.5, 7.0, 3.4], [-11.6, 0, 1.4, 1.4], [-18.5, 5.0, 2.0, 2.8], [22.0, 3.0, 2.0, 2.8]];
 var BLOBS_OPT = { desander:[[-10.2, -1.6, 1.4, 1.4], [-10.2, -3.5, 1.6, 1.1]], surge2:[[12.5, 2.3, 2.6, 2.6]] };
 // Label obstacles (vessel cores the chips avoid): V-101, T-201, T-301 (+ T-202 while it is in)
@@ -231,12 +243,13 @@ function valveOf(id) {
 // (LMa + LMb = the v3.3 LM). Routes tagged rig:'desander' / rig:'surge2' are built only while that item is in (ROUTE_IDX stays).
 var ROUTES = [
   { id:'E1',  aSeg:0, seg:0, line:'wh_esd',       phase:'multi', pts:[[-14.2,1.2,0],[-12.0,1.2,0]] },
-  // v1.4.0 CK-101 manifold: E2 = inlet line to the inlet tee (union on its last run); E2a (appended) = leg A to the adjustable
-  // choke, E2b = leg B (down the inlet side) to the positive choke; E3 = leg A downstream (to the outlet tee), E3f (appended) = leg
-  // B downstream; E3o (appended) = outlet tee → heater tee. The corners inside the manifold blocks use a tight bend (rb)
-  { id:'E2',  aSeg:1, seg:1, line:'esd_choke',    phase:'multi', pts:[[-9.3,1.2,0],[-8.95,1.2,0],[-8.95,1.2,0.7],[-8.3,1.2,0.7]] },
-  { id:'E2b', aSeg:15, seg:1, line:'esd_choke',    phase:'multi', rb:0.05, pts:[[-8.3,1.2,0.7],[-8.3,1.2,-0.7],[-7.05,1.2,-0.7]] },
-  { id:'E3',  aSeg:16, seg:2, rSeg:1, line:'choke_heater', phase:'multi', rb:0.05, pts:[[-7.05,1.2,0.7],[-5.8,1.2,0.7],[-5.8,1.2,-0.7]] },
+  // v1.5.0 CK-101 manifold (GA drawing plan): E2 = inlet line to the inlet tee (front-left), arriving along the 45° union axis;
+  // the four legs are straight 2-point runs (each 90° turn is inside a choke body, a CK_JOINT): E2a (appended) = adjustable
+  // upstream (front side, + x), E2b = positive upstream (left side, − z), E3 = adjustable downstream (right side, − z, to the
+  // outlet tee), E3f (appended) = positive downstream (back side, + x); E3o (appended) = outlet tee (45° union) → heater tee
+  { id:'E2',  aSeg:1, seg:1, line:'esd_choke',    phase:'multi', rb:0.2, pts:[[-9.3,1.2,0],[-8.95,1.2,0],[-8.95,1.2,1.35],[-8.4,1.2,1.35],[-7.8,1.2,0.75]] },
+  { id:'E2b', aSeg:15, seg:1, line:'esd_choke',    phase:'multi', pts:[[-7.8,1.2,0.75],[-7.8,1.2,-0.75]] },
+  { id:'E3',  aSeg:16, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-6.3,1.2,0.75],[-6.3,1.2,-0.75]] },
   { id:'E3c', aSeg:2, seg:2, line:'choke_heater', phase:'multi', unless:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.15,1.9,0.4]] },
   { id:'E3b', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-4.3,1.2,0],[-4.3,1.2,1.5],[1.0,1.2,1.5],[1.0,1.2,0]] },
   { id:'E4a', aSeg:3, seg:3, line:'heater_sep',   phase:'multi', pts:[[0.35,1.9,-0.4],[1.0,1.9,-0.4],[1.0,1.2,-0.4],[1.0,1.2,0]] },
@@ -275,10 +288,10 @@ var ROUTES = [
   //    routes end on its faces (flanged), as the CK-101 legs end on the CK-101 body ──
   { id:'E3c1', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-4.3,1.2,0],[-3.9,1.2,0],[-3.9,1.9,0],[-3.9,1.9,0.4],[-3.65,1.9,0.4]] },
   { id:'E3c2', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rig:'heaterChoke', pts:[[-3.25,1.9,0.4],[-3.15,1.9,0.4]] },
-  // ── v1.4.0 (appended) — CK-101 manifold legs (see E2 / E2b / E3 above) ──
-  { id:'E2a', aSeg:14, seg:1, line:'esd_choke', phase:'multi', pts:[[-8.3,1.2,0.7],[-7.05,1.2,0.7]] },
-  { id:'E3f', aSeg:17, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.05,1.2,-0.7],[-5.8,1.2,-0.7]] },
-  { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', pts:[[-5.8,1.2,-0.7],[-5.0,1.2,-0.7],[-5.0,1.2,0],[-4.3,1.2,0]] }
+  // ── v1.4.0 (appended) — CK-101 manifold legs (see E2 / E2b / E3 above; v1.5.0 points) ──
+  { id:'E2a', aSeg:14, seg:1, line:'esd_choke', phase:'multi', pts:[[-7.8,1.2,0.75],[-6.3,1.2,0.75]] },
+  { id:'E3f', aSeg:17, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.8,1.2,-0.75],[-6.3,1.2,-0.75]] },
+  { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rb:0.2, pts:[[-6.3,1.2,-0.75],[-5.7,1.2,-1.35],[-5.15,1.2,-1.35],[-5.15,1.2,0],[-4.3,1.2,0]] }
 ];
 // CK-101 leg shader slots (v1.4.0): slot → { src segment, leg }. The in-service leg's slots copy their segment's colour, alert,
 // frost and chevron phase each frame; the standby leg's slots show the isolated look (slot 12), alert 0, frost 0, phase frozen
@@ -324,7 +337,7 @@ var RIG_GROUPS = ['heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'des
 
 // Segment chip anchors (pipe midpoints): 6 main + LW + LO
 var SEG_CHIPS = [
-  { key:'s0', seg:0, at:[-13.1,1.2,0] }, { key:'s1', seg:1, at:[-9.9,1.2,0], atDs:[-9.0,1.2,0] }, { key:'s2', seg:2, at:[-4.65,1.2,0] },
+  { key:'s0', seg:0, at:[-13.1,1.2,0] }, { key:'s1', seg:1, at:[-9.9,1.2,0], atDs:[-8.95,1.2,0.7] }, { key:'s2', seg:2, at:[-4.65,1.2,0] },
   { key:'s3', seg:3, at:[1.6,1.8,0] },  { key:'s4', seg:4, at:[14.5,3.6,0] }, { key:'s5', seg:5, at:[13.4,2.3,4.0] },
   { key:'lw', line:'sep_water', at:[6.3,0.55,1.3] }, { key:'lo', line:'sep_oil', at:[8.1,0.55,1.3] }
 ];
@@ -453,25 +466,30 @@ function buildRoute(pts, rVis, opts) {
   for (var k = 1; k < n; k++) {
     var p = pts[k], dIn = v3norm(v3sub(p, pts[k - 1]));
     var legIn = v3len(v3sub(p, pts[k - 1]));
-    var hasCorner = false, rb = 0, dOut = null;
+    var hasCorner = false, rb = 0, dOut = null, th = Math.PI / 2, tq = 0, nIn = null;
     if (k < n - 1) {
       dOut = v3norm(v3sub(pts[k + 1], p));
-      var legOut = v3len(v3sub(pts[k + 1], p));
-      if (Math.abs(v3dot(dIn, dOut)) < 0.999 && legIn > 1e-6 && legOut > 1e-6) {
-        hasCorner = true; rb = Math.min(rbMax, 0.45 * Math.min(legIn, legOut));
+      var legOut = v3len(v3sub(pts[k + 1], p)), cosT = v3dot(dIn, dOut);
+      if (Math.abs(cosT) < 0.999 && legIn > 1e-6 && legOut > 1e-6) {
+        hasCorner = true;
+        if (Math.abs(cosT) < 1e-12) { rb = Math.min(rbMax, 0.45 * Math.min(legIn, legOut)); tq = rb; nIn = dOut; }     // 90° (every orthogonal route, as v1.4.0)
+        else {                                                                              // v1.5.0: general-angle fillet (CK-101 45° unions)
+          th = Math.acos(clamp(cosT, -1, 1)); var tanH = Math.tan(th / 2);
+          rb = Math.min(rbMax, 0.45 * Math.min(legIn, legOut) / tanH); tq = rb * tanH; nIn = v3norm(v3sub(dOut, v3scale(dIn, cosT)));
+        }
       }
     }
-    var s = hasCorner ? v3sub(p, v3scale(dIn, rb)) : p.slice();
+    var s = hasCorner ? v3sub(p, v3scale(dIn, tq)) : p.slice();
     var L = v3len(v3sub(s, cur));
     if (!nrm) nrm = anyPerp(dIn);
     if (L > 1e-6) { prims.push({ type:'L', a:cur.slice(), b:s.slice(), len:L, dir:dIn, n0:nrm.slice(), s0:len }); len += L; }
     if (hasCorner) {
-      var c = v3add(s, v3scale(dOut, rb)), u = v3norm(v3sub(s, c)), axis = v3norm(v3cross(dIn, dOut));
-      var al = rb * Math.PI / 2;
-      prims.push({ type:'A', c:c, u:u, v:dIn, R:rb, ang:Math.PI / 2, len:al, n0:nrm.slice(), axis:axis, dIn:dIn, dOut:dOut, s0:len });
+      var c = v3add(s, v3scale(nIn, rb)), u = v3norm(v3sub(s, c)), axis = v3norm(v3cross(dIn, dOut));
+      var al = th === Math.PI / 2 ? rb * Math.PI / 2 : rb * th;
+      prims.push({ type:'A', c:c, u:u, v:dIn, R:rb, ang:th, len:al, n0:nrm.slice(), axis:axis, dIn:dIn, dOut:dOut, s0:len });
       len += al;
-      nrm = rotAxis(nrm, axis, Math.PI / 2);
-      cur = v3add(p, v3scale(dOut, rb));
+      nrm = rotAxis(nrm, axis, th);
+      cur = v3add(p, v3scale(dOut, tq));
     } else cur = s;
   }
   return { prims:prims, length:len, rVis:rVis };
@@ -1978,29 +1996,30 @@ function buildScene(F, renderer, tier, env, rig, dest) {
     S.dyn.esd = { rod:rod, beacon:beacon, beaconMat:beaconMat, glow:bglow, mush:mush };
   })();
 
-  // ═══ CK-101 choke manifold (−7.2,0,0) ══════════════════════════════════
-  // v1.4.0: the square manifold of a 3-1/16" 10K choke manifold general-assembly drawing, on a skid: inlet hammer union
-  // (wing-nut union) at the inlet studded tee (xI, zA); leg A (adjustable choke, front, zA) and leg B (positive choke, back, zB),
-  // each gate valve → angle-body choke → gate valve; the legs re-join at the outlet studded tee (xO, zB) with the outlet hammer
-  // union; blind studded tees in the two other corners. In-service leg: gate handwheels green with the rising stems up; standby
-  // leg: red handwheels, stems down, no flow (tracers follow the leg, see edgeState). Leg / beans from nodes.choke (leg, beanAdj).
+  // ═══ CK-101 choke manifold (−7.05,0,0) ═════════════════════════════════
+  // v1.5.0: the plan of a 3-1/16" 10K two-choke manifold GA drawing, on a skid, no mirror (drawing up = −z = back, down = +z =
+  // front; seen from the default camera at +z). Inlet studded tee front-left with the inlet hammer union at 45°; outlet studded
+  // tee back-right with the outlet hammer union at 45°; one gate valve at the midpoint of each side; angle-body chokes in the two
+  // other corners: ADJUSTABLE front-right (bottom gate → choke → right gate), POSITIVE back-left (left gate → choke → top gate).
+  // Bonnets and handwheels on top. In-service leg: gate handwheels green with the rising stems up; standby leg: red handwheels,
+  // stems down, no flow (tracers follow the leg, see edgeState). Leg / beans from nodes.choke (leg, beanAdj).
   (function () {
-    var Mx = CK_M, Y = Mx.y, rP = pipeRadius(4), B = Mx.blk, h = B / 2;
+    var Mx = CK_M, Y = Mx.y, rP = pipeRadius(4), B = Mx.blk, h = B / 2, dg = Mx.dg;
     // skid: chequer plate deck, perimeter frame, cross members, lifting eyes
-    var SX0 = -9.15, SX1 = -4.85, SZ = 1.1, sxc = (SX0 + SX1) / 2, sw = SX1 - SX0;
+    var SX0 = -8.6, SX1 = -5.5, SZ = 1.25, sxc = (SX0 + SX1) / 2, sw = SX1 - SX0;
     add('plate', F.boxAt(sw, 0.06, 2 * SZ, sxc, 0.17, 0));
     [-SZ + 0.06, SZ - 0.06].forEach(function (z) { add('steelDark', F.boxAt(sw, 0.16, 0.12, sxc, 0.07, z)); });
-    [SX0 + 0.06, SX1 - 0.06, Mx.xI, Mx.xC, Mx.xO].forEach(function (x) { add('steelDark', F.boxAt(0.12, 0.16, 2 * SZ - 0.24, x, 0.07, 0)); });
+    [SX0 + 0.06, SX1 - 0.06, Mx.xW, Mx.xc, Mx.xE].forEach(function (x) { add('steelDark', F.boxAt(0.12, 0.16, 2 * SZ - 0.24, x, 0.07, 0)); });
     [[SX0 + 0.2, SZ], [SX1 - 0.2, SZ], [SX0 + 0.2, -SZ], [SX1 - 0.2, -SZ]].forEach(function (q) {
       add('yellow', F.place(new THREE.TorusGeometry(0.07, 0.018, 6, 14), q[0], 0.28, q[1] + (q[1] > 0 ? 0.03 : -0.03), 0, 0, 0)); });
-    // pipe supports (pedestal + saddle) under the four corner blocks and the two chokes
-    [[Mx.xI, Mx.zA], [Mx.xO, Mx.zA], [Mx.xI, Mx.zB], [Mx.xO, Mx.zB], [Mx.xC, Mx.zA], [Mx.xC, Mx.zB]].forEach(function (q) {
+    // pipe supports (pedestal + saddle) under the four corners (two tees, two chokes)
+    [[Mx.xW, Mx.zF], [Mx.xE, Mx.zB], [Mx.xE, Mx.zF], [Mx.xW, Mx.zB]].forEach(function (q) {
       add('steelDark', F.boxAt(0.12, Y - h - 0.2, 0.12, q[0], 0.2 + (Y - h - 0.2) / 2, q[1])); add('steelDark', F.boxAt(0.3, 0.03, 0.3, q[0], 0.215, q[1]));
       add('steelDark', F.boxAt(0.3, 0.04, 0.26, q[0], Y - h - 0.02, q[1]));
     });
-    // studded connection on a block face: companion flange + 8 studs with nuts; a blind face gets a blind flange
-    function studFace(c, d, blind) {
-      var f0 = v3add(c, v3scale(d, h)), t = blind ? 0.05 : 0.035, rF = rP * (blind ? 1.7 : 1.6), n1 = anyPerp(d), n2 = v3cross(d, n1);
+    // studded connection: companion flange + 8 studs with nuts, its face at c + d·off; a blind face gets a blind flange
+    function studFaceAt(c, d, off, blind, rr) {
+      var rq = rr || rP, f0 = v3add(c, v3scale(d, off)), t = blind ? 0.05 : 0.035, rF = rq * (blind ? 1.7 : 1.6), n1 = anyPerp(d), n2 = v3cross(d, n1);
       add(blind ? 'steelDark' : 'steelSatin', F.cylAB(f0, v3add(f0, v3scale(d, t)), rF, 20));
       for (var k = 0; k < 8; k++) {
         var an = (k + 0.5) / 8 * Math.PI * 2, o = v3add(f0, v3add(v3scale(n1, Math.cos(an) * rF * 0.8), v3scale(n2, Math.sin(an) * rF * 0.8)));
@@ -2008,51 +2027,59 @@ function buildScene(F, renderer, tier, env, rig, dest) {
         add('bolt', F.cylAB(v3add(o, v3scale(d, t)), v3add(o, v3scale(d, t + 0.025)), 0.03, 6));
       }
     }
-    // studded tees: [x, z, connected faces, blind face]; the elbow corners carry a second blind port
-    var PX = [1, 0, 0], NX = [-1, 0, 0], PZ = [0, 0, 1], NZ = [0, 0, -1];
-    [[Mx.xI, Mx.zA, [NX, PX, NZ], [PZ]], [Mx.xO, Mx.zA, [NX, NZ], [PX, PZ]], [Mx.xI, Mx.zB, [PZ, PX], [NX, NZ]], [Mx.xO, Mx.zB, [NX, PZ, PX], [NZ]]].forEach(function (q) {
+    // studded tees: [x, z, studded faces (the two sides of the square), 45° port direction, port radius]
+    var PX = [1, 0, 0], NX = [-1, 0, 0], PZ = [0, 0, 1], NZ = [0, 0, -1], ndg = [-dg[0], 0, -dg[2]], rOut = pipeRadius(DEF_NPS[2]);
+    [[Mx.xW, Mx.zF, [PX, NZ], ndg, rP], [Mx.xE, Mx.zB, [NX, PZ], dg, rOut]].forEach(function (q) {
       var c = [q[0], Y, q[1]];
       add('steelSatin', F.boxAt(B, B, B, q[0], Y, q[1]));
       add('steelDark', F.boxAt(B * 0.5, 0.02, B * 0.5, q[0], Y + h + 0.01, q[1]));                     // forged-block top pad
-      q[2].forEach(function (d) { studFace(c, d, false); }); q[3].forEach(function (d) { studFace(c, d, true); });
+      q[2].forEach(function (d) { studFaceAt(c, d, h, false); });
+      add('steelSatin', F.cylAB(v3add(c, v3scale(q[3], 0.18)), v3add(c, v3scale(q[3], 0.33)), q[4] * 1.35, 20));     // 45° chamfer-port boss
+      studFaceAt(c, q[3], 0.33, false, q[4]);
     });
-    // hammer union (wing-nut union): male sub, wing nut with three lugs, female sub — along x at (x, Y, z)
-    function hammerUnion(x, z, rr) {
-      add('steelSatin', F.cylAB([x - 0.1, Y, z], [x - 0.03, Y, z], rr * 1.18, 18));
-      add('accent', F.cylAB([x - 0.04, Y, z], [x + 0.06, Y, z], rr * 1.5, 18));
-      add('accent', F.cylAB([x + 0.06, Y, z], [x + 0.08, Y, z], rr * 1.32, 18));
-      for (var k = 0; k < 3; k++) { var an = k / 3 * Math.PI * 2 + Math.PI / 2, rl = rr * 1.5 + 0.045;
-        add('accent', F.boxAt(0.075, 0.1, 0.05, x + 0.01, Y + Math.cos(an) * rl, z + Math.sin(an) * rl, -an, 0, 0)); }
-      add('steelSatin', F.cylAB([x + 0.08, Y, z], [x + 0.13, Y, z], rr * 1.22, 18));
+    // hammer union (wing-nut union) along d about o: male sub, wing nut with three radial lugs, female sub
+    function hammerUnionAB(o, d, rr) {
+      var at = function (k) { return v3add(o, v3scale(d, k)); }, n1 = [0, 1, 0], n2 = v3norm(v3cross(d, n1));
+      add('steelSatin', F.cylAB(at(-0.1), at(-0.03), rr * 1.18, 18));
+      add('accent', F.cylAB(at(-0.04), at(0.06), rr * 1.5, 18));
+      add('accent', F.cylAB(at(0.06), at(0.08), rr * 1.32, 18));
+      for (var k = 0; k < 3; k++) { var an = k / 3 * Math.PI * 2 + Math.PI / 2, e = v3add(v3scale(n1, Math.cos(an)), v3scale(n2, Math.sin(an)));
+        add('accent', F.cylAB(v3add(at(0.01), v3scale(e, rr * 1.5)), v3add(at(0.01), v3scale(e, rr * 1.5 + 0.09)), 0.03, 6)); }
+      add('steelSatin', F.cylAB(at(0.08), at(0.13), rr * 1.22, 18));
     }
-    hammerUnion(Mx.xUi, Mx.zA, rP); hammerUnion(Mx.xUo, Mx.zB, pipeRadius(DEF_NPS[2]));
-    // gate valves (leg A: green / leg B: red at the default; colours and stems follow the leg in service per frame)
+    hammerUnionAB([Mx.xW - dg[0] * Mx.uOff, Y, Mx.zF - dg[2] * Mx.uOff], dg, rP);
+    hammerUnionAB([Mx.xE + dg[0] * Mx.uOff, Y, Mx.zB + dg[2] * Mx.uOff], dg, rOut);
+    // gate valves, one per side (adjustable leg: green / positive leg: red at the default; colours and stems follow the leg in
+    // service per frame); A = the pipe axis through the valve, bonnet / handwheel vertical on top
     var mOpen = F.std(PALETTE.ok, 0.2, 0.45), mShut = F.std(PALETTE.alarm, 0.2, 0.45), wMat = [mOpen, mShut];
     var wg = F.mergeGeos([wheel(0.16, 0.018, 0, 0, 0, Math.PI / 2, 0)].concat(wheelSpokes(0.16, 0, 0, 0, true)));
     var stems = [[], []];
-    function gateLeg(x, z, li) {
-      add('steelSatin', F.boxAt(0.34, 0.4, 0.38, x, Y, z));
-      add('steelSatin', F.cylAB([x - 0.17, Y, z], [x - 0.2, Y, z], rP * 1.55, 20)); add('steelSatin', F.cylAB([x + 0.17, Y, z], [x + 0.2, Y, z], rP * 1.55, 20));
-      flange([x - 0.215, Y, z], [1, 0, 0], rP); flange([x + 0.215, Y, z], [1, 0, 0], rP);
+    function gate(x, z, ax, li) {
+      var A = ax === 'x' ? [1, 0, 0] : [0, 0, 1], c = [x, Y, z], at = function (k) { return v3add(c, v3scale(A, k)); };
+      add('steelSatin', ax === 'x' ? F.boxAt(0.34, 0.4, 0.38, x, Y, z) : F.boxAt(0.38, 0.4, 0.34, x, Y, z));
+      add('steelSatin', F.cylAB(at(-0.17), at(-0.2), rP * 1.55, 20)); add('steelSatin', F.cylAB(at(0.17), at(0.2), rP * 1.55, 20));
+      flange(at(-0.215), A, rP); flange(at(0.215), A, rP);
       add('steelSatin', F.cylAB([x, Y + 0.2, z], [x, Y + 0.24, z], 0.14, 16)); add('steelSatin', F.cylAB([x, Y + 0.24, z], [x, Y + 0.46, z], 0.085, 14));
       add('steelSatin', F.cylAB([x, Y + 0.46, z], [x, Y + 0.52, z], 0.03, 8));
       var wm = new THREE.Mesh(wg, wMat[li]); wm.position.set(x, Y + 0.52, z); scene.add(wm);
       var st = mkMesh(new THREE.CylinderGeometry(0.022, 0.022, 0.26, 8).translate(0, 0.13, 0), M.steelSatin); st.position.set(x, Y + 0.52, z);
       stems[li].push(st);
     }
-    gateLeg(Mx.xGu, Mx.zA, 0); gateLeg(Mx.xGd, Mx.zA, 0); gateLeg(Mx.xGu, Mx.zB, 1); gateLeg(Mx.xGd, Mx.zB, 1);
-    // angle-body chokes: body + outlet nose (frosts while its leg is in service and the outlet is in the hydrate region)
+    Mx.legs.adj.gates.forEach(function (g) { gate(g[0], g[1], g[2], 0); });
+    Mx.legs.fixed.gates.forEach(function (g) { gate(g[0], g[1], g[2], 1); });
+    // angle-body chokes in the corners: inlet port against the incoming side, outlet nose along the outgoing side (frosts while
+    // its leg is in service and the outlet is in the hydrate region); the flow turns 90° inside the body
     var fuA = { uFrost:{ value:0 } }, fuB = { uFrost:{ value:0 } }, mfA = frostMat(fuA), mfB = frostMat(fuB);
-    function chokeBody(z, mf) {
-      var x = Mx.xC;
-      mkMesh(F.mergeGeos([F.boxAt(0.44, 0.44, 0.44, x, Y, z), F.cylAB([x + 0.22, Y, z], [x + 0.34, Y, z], rP * 1.3, 18),
-        F.cylAB([x - 0.22, Y, z], [x - 0.25, Y, z], rP * 1.55, 20), F.cylAB([x + 0.34, Y, z], [x + 0.37, Y, z], rP * 1.55, 20)]), mf, true);
-      flange([x - 0.265, Y, z], [1, 0, 0], rP); flange([x + 0.385, Y, z], [1, 0, 0], rP);
-      add('steelSatin', F.cylAB([x, Y + 0.22, z], [x, Y + 0.27, z], 0.17, 20));                                      // bonnet flange
+    function chokeAngle(L, mf) {
+      var c = [L.c[0], Y, L.c[1]], pi = [-L.dIn[0], 0, -L.dIn[2]], po = L.dOut, at = function (d, k) { return v3add(c, v3scale(d, k)); };
+      mkMesh(F.mergeGeos([F.boxAt(0.44, 0.44, 0.44, c[0], Y, c[2]), F.cylAB(at(po, 0.22), at(po, 0.34), rP * 1.3, 18),
+        F.cylAB(at(pi, 0.22), at(pi, 0.25), rP * 1.55, 20), F.cylAB(at(po, 0.34), at(po, 0.37), rP * 1.55, 20)]), mf, true);
+      flange(at(pi, 0.265), pi, rP); flange(at(po, 0.385), po, rP);
+      add('steelSatin', F.cylAB([c[0], Y + 0.22, c[2]], [c[0], Y + 0.27, c[2]], 0.17, 20));                          // bonnet flange
     }
-    chokeBody(Mx.zA, mfA); chokeBody(Mx.zB, mfB);
-    // leg A — adjustable: bonnet, hex bonnet nut, position sleeve, rotating handwheel
-    var XA = Mx.xC, ZA = Mx.zA;
+    chokeAngle(Mx.legs.adj, mfA); chokeAngle(Mx.legs.fixed, mfB);
+    // adjustable choke (front-right): bonnet, hex bonnet nut, position sleeve, rotating handwheel
+    var XA = Mx.legs.adj.c[0], ZA = Mx.legs.adj.c[1];
     add('steelSatin', F.cylAB([XA, Y + 0.27, ZA], [XA, Y + 0.6, ZA], 0.1, 16));
     add('steelSatin', F.place(new THREE.CylinderGeometry(0.15, 0.15, 0.09, 6), XA, Y + 0.33, ZA));
     add('yellow', F.cylAB([XA, Y + 0.45, ZA], [XA, Y + 0.56, ZA], 0.104, 16));
@@ -2060,14 +2087,14 @@ function buildScene(F, renderer, tier, env, rig, dest) {
     var hw = new THREE.Group(); hw.position.set(XA, Y + 0.7, ZA);
     var hwg = F.mergeGeos([wheel(0.2, 0.02, 0, 0, 0, Math.PI / 2, 0)].concat(wheelSpokes(0.2, 0, 0, 0, true)));
     var hwm = new THREE.Mesh(hwg, M.accent); hw.add(hwm); scene.add(hw);
-    // leg B — positive: hex bean-retainer cap nut with hammer lugs (bean inside the body)
-    var ZB = Mx.zB;
-    add('steelSatin', F.place(new THREE.CylinderGeometry(0.16, 0.16, 0.14, 6), XA, Y + 0.34, ZB));
-    add('steelDark', F.cylAB([XA, Y + 0.41, ZB], [XA, Y + 0.46, ZB], 0.09, 14));
-    [0, Math.PI].forEach(function (an) { add('steelSatin', F.boxAt(0.12, 0.06, 0.05, XA + Math.cos(an) * 0.2, Y + 0.36, ZB + Math.sin(an) * 0.2, 0, an, 0)); });
+    // positive choke (back-left): hex bean-retainer cap nut with hammer lugs (bean inside the body)
+    var XB = Mx.legs.fixed.c[0], ZB = Mx.legs.fixed.c[1];
+    add('steelSatin', F.place(new THREE.CylinderGeometry(0.16, 0.16, 0.14, 6), XB, Y + 0.34, ZB));
+    add('steelDark', F.cylAB([XB, Y + 0.41, ZB], [XB, Y + 0.46, ZB], 0.09, 14));
+    [0, Math.PI].forEach(function (an) { add('steelSatin', F.boxAt(0.12, 0.06, 0.05, XB + Math.cos(an) * 0.2, Y + 0.36, ZB + Math.sin(an) * 0.2, 0, an, 0)); });
     // pressure gauges on the inlet / outlet tees
-    add('steelDark', F.cylAB([Mx.xI, Y + h + 0.02, Mx.zA], [Mx.xI, 1.72, Mx.zA], 0.02, 6)); add('steelDark', F.cylAB([Mx.xO, Y + h + 0.02, Mx.zB], [Mx.xO, 1.72, Mx.zB], 0.02, 6));
-    dial(Mx.xI, 1.82, Mx.zA + 0.05, 0, 'ckUp'); dial(Mx.xO, 1.82, Mx.zB + 0.05, 1, 'ckDn');
+    add('steelDark', F.cylAB([Mx.xW, Y + h + 0.02, Mx.zF], [Mx.xW, 1.72, Mx.zF], 0.02, 6)); add('steelDark', F.cylAB([Mx.xE, Y + h + 0.02, Mx.zB], [Mx.xE, 1.72, Mx.zB], 0.02, 6));
+    dial(Mx.xW, 1.82, Mx.zF + 0.05, 0, 'ckUp'); dial(Mx.xE, 1.82, Mx.zB + 0.05, 1, 'ckDn');
     S.dyn.choke = { wheel:hw, ang:0, wMat:wMat, stems:stems, fu:[fuA, fuB], open:C(PALETTE.ok), shut:C(PALETTE.alarm), lb:-1 };
   })();
 
@@ -2986,9 +3013,10 @@ var PROPS = [
   ['bund kerb W', [-17.48, 0, -2.38], [-17.32, 0.26, 3.38]], ['bund kerb E', [-4.48, 0, -2.38], [-4.32, 0.26, 3.38]],
   ['DAQ cabin', [-11.05, 0, -7.72], [-4.95, 2.8, -5.28]], ['DAQ cabin box', [-10.8, 1.8, -5.35], [-10.0, 2.4, -4.85]],
   ['T-301', [13.8, 0, 2.6], [19.0, 2.89, 5.4]], ['V-101', [2.05, 1.15, -0.9], [9.15, 2.9, 0.9]], ['H-101', [-3.6, 0, -0.9], [1.0, 2.5, 1.7]],
-  ['choke skid', [-9.15, 0, -1.1], [-4.85, 0.2, 1.1]], ['CK-101 inlet tee', [-8.6, 0.99, 0.49], [-8.0, 1.41, 0.91]],
-  ['CK-101 leg B tee', [-8.6, 0.99, -0.91], [-8.0, 1.41, -0.49]], ['CK-101 leg A tee', [-6.1, 0.99, 0.49], [-5.5, 1.41, 0.91]],
-  ['CK-101 outlet tee', [-6.1, 0.99, -0.91], [-5.5, 1.41, -0.49]], ['SDV-101', [-11.95, 0.94, -0.33], [-11.25, 3.12, 0.33]],
+  ['choke skid', [-8.6, 0, -1.25], [-5.5, 0.2, 1.25]],
+  ['CK-101 inlet tee', [-8.01, 0.99, 0.54], [-7.59, 1.41, 0.96]], ['CK-101 outlet tee', [-6.51, 0.99, -0.96], [-6.09, 1.41, -0.54]],
+  ['CK-101 choke ADJ', [-6.52, 0.98, 0.53], [-6.08, 1.92, 0.97]], ['CK-101 choke POS', [-8.06, 0.98, -0.97], [-7.54, 1.68, -0.53]],
+  ['SDV-101', [-11.95, 0.94, -0.33], [-11.25, 3.12, 0.33]],
   ['LCV-201', [12.2, 0.22, 3.77], [12.8, 1.03, 4.23]], ['PCV-201', [11.45, 5.95, 3.85], [11.75, 6.75, 4.15]],
   ['XV-201A', [8.69, 4.09, 3.89], [8.91, 4.31, 4.33]], ['XV-201B', [11.51, 4.09, 3.89], [11.73, 4.31, 4.33]],
   ['SV-201A', [10.0, 0.35, 3.89], [10.2, 0.55, 4.11]], ['SV-201B', [10.55, 0.62, 3.89], [10.75, 0.82, 4.11]],
@@ -3930,8 +3958,9 @@ function createHandle(THREE, container, opts) {
     var fz = S.frostU.uFrost.value;
     for (i = 0; i < tr.nF; i++) {
       var w = base + i, a2 = i * 2.39996;
-      pos[w * 3] = CK_M.xC + 0.25 + (i % 10) * 0.1 + Math.sin(a2) * 0.05; pos[w * 3 + 1] = 1.2 + Math.cos(a2) * 0.2;      // in-service leg, downstream of its choke
-      pos[w * 3 + 2] = (N.nodes.choke.leg === 'fixed' ? CK_M.zB : CK_M.zA) + Math.sin(a2 * 1.7) * 0.2;
+      var ckL = CK_M.legs[N.nodes.choke.leg === 'fixed' ? 'fixed' : 'adj'], ckAl = 0.25 + (i % 10) * 0.1 + Math.sin(a2) * 0.05, ckAc = Math.sin(a2 * 1.7) * 0.2;
+      pos[w * 3] = ckL.c[0] + ckL.dOut[0] * ckAl - ckL.dOut[2] * ckAc; pos[w * 3 + 1] = 1.2 + Math.cos(a2) * 0.2;      // in-service leg, downstream of its choke
+      pos[w * 3 + 2] = ckL.c[1] + ckL.dOut[2] * ckAl + ckL.dOut[0] * ckAc;
       col[w * 4] = 1.6; col[w * 4 + 1] = 1.8; col[w * 4 + 2] = 2.0; col[w * 4 + 3] = fz * (0.5 + 0.5 * Math.sin(tNow * 0.004 + i * 1.7)); sz[w] = 0.035;
     }
   }
@@ -4934,7 +4963,7 @@ function mount(container, opts) {
 // §G PUBLIC
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
-  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
+  PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, CK_M:CK_M, CK_JOINTS:CK_JOINTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
   TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,
