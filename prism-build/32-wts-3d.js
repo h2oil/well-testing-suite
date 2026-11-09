@@ -206,15 +206,21 @@ var VIEWS = {
 var FOCUS = {
   wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.05,1.35,0],5.0], heater:[[-1.4,1.7,0.3],8],
   separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
-  flare:[[19.5,5,-4.5],18], lp:[[15.5,3.0,-1.5],15], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
+  flare:[[19.5,5,-4.5],18], lp:[[15.5,4.2,-1.5],19], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
 };
 // fixed focus azimuth (deg) for items that another vessel hides from the usual -18° side: T-202 sits behind T-201 there,
 // so it is framed from +3° (between T-201 and T-301; wts3d framing check); the LP line (ground run behind T-301 from the front)
-// from 200°, behind the tanks with the stack to one side: crossover with FT-201, drop, ground run and riser in one view (3.4.2)
+// from 200°, behind the tanks with the stack to one side: crossover with FT-201, drop, ground run and riser in one view (3.4.2;
+// target y 4.2 / r 19 since the 3.4.2 round 2: the FT-201 tag plate and the LP tip clear a 98 px toolbar on a 1064×496 canvas)
 var FOCUS_TH = { surge2:3, lp:200 };
 // FOCUS radii are set for a landscape canvas (aspect ≥ 1.6); a narrower canvas (portrait phone, 3.4.2 review) backs the camera
 // off by 1.6 / aspect so the item keeps its width in frame (the 36° FOV is vertical) — a landscape canvas is unchanged
 var FOCUS_ASP = 1.6;
+// P-201 card rows: in booster mode (T-301 out, 3.4.2 rig-up chain) the pump boosts the T-201 transfer to export
+function pumpRows(ga) {
+  return ga && ga.pumpMode === 'booster' ? ['Service', 'T-201 → P-201 → export (booster)', 'Surge transfer', 'LCV-201 → P-201 booster']
+    : ['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)'];
+}
 function focusRadius(r, w, h) { var a = (w > 1 && h > 1) ? w / h : FOCUS_ASP; return a >= FOCUS_ASP ? r : r * FOCUS_ASP / Math.max(a, 0.4); }
 // Equipment halos [x, z, radius] and blob shadows [x, z, sx, sz] (optional rows only while the item is in)
 var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.05, 0, 2.6], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
@@ -3825,9 +3831,9 @@ function createHandle(THREE, container, opts) {
               'Time to HH', su.tFull_s >= 0 ? fmtNum(su.tFull_s / 60, 0) + ' min' : '—'].concat(n.rig.sepSurge ? ['Well stream', 'whole stream in (V-101 out)'] : [])); }
           break;
         case 'pump': {                                  // P-201: gauge tank → export / burner
-          var pst = ga.pumpMode === 'none' ? 'OUT' : ga.pumpFailed ? 'FAILED' : ga.pumpOn ? 'RUNNING' : 'STANDBY';
+          var pst = ga.pumpMode === 'none' ? 'OUT' : ga.pumpFailed ? 'FAILED' : ga.pumpOn ? 'RUNNING' : 'STANDBY'; if (ga.pumpMode === 'booster') pst = 'BOOSTER · ' + pst;
           slot(ch, null, null, null, ga.pump_q, 'liquidRate', 'L', '', pst, ga.pumpOn && !ga.pumpFailed ? 'g' : (ga.pumpFailed ? 'l' : 's'));
-          if (t2) rows(ch, ['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)']);
+          if (t2) rows(ch, pumpRows(ga));
           break; }
         case 'gauge':
           slot(ch, ga.tanks[0].Vo_bbl + ga.tanks[0].Vw_bbl, 'volume', 'L', ga.tanks[1].Vo_bbl + ga.tanks[1].Vw_bbl, 'volume', 'L', ' · ',
@@ -5220,7 +5226,7 @@ function mount(container, opts) {
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
   PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, CK_M:CK_M, CK_JOINTS:CK_JOINTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
-  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, focusRadius:focusRadius, FOCUS_ASP:FOCUS_ASP, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
+  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, focusRadius:focusRadius, FOCUS_ASP:FOCUS_ASP, pumpRows:pumpRows, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,
   flameLength:flameLength, phaseFractions:phaseFractions, niceRange:niceRange, pickTier:pickTier, lodForDistance:lodForDistance,
