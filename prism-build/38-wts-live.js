@@ -30,7 +30,8 @@ var G = (typeof window !== 'undefined') ? window : globalThis;
 // ═══════════════════════════════════════════════════════════════════
 // §A CONSTANTS
 // ═══════════════════════════════════════════════════════════════════
-var VERSION = '1.1.0';
+// 1.2.0 (release 3.4.2): T-202 twin compartments, LP flare line / FT-201 and the GOR split, rig-up chain texts
+var VERSION = '1.2.0';
 var PREFS_KEY = 'h2viz3d_prefs';
 var SPEEDS = [1, 10, 60, 600];
 var IMP = { pressureG: 'psig', pressureTank: 'psig', temperature: '°F', gasRate: 'MMSCFD', liquidRate: 'BPD',
@@ -159,7 +160,8 @@ var ALM_T = {
     PSHH_SURGE: ['surge tank', ' ≥ ', 'pressureG'], PSH_SURGE: ['surge tank pressure high', ' ≥ ', 'pressureG'],
     PSV_SURGE: ['lifting — surge tank', ' (set ', 'pressureG', ')'],
     // release 3.4.2: LP flare line (FT-201)
-    PAH_LP: ['LP flare line back pressure high', ' ≥ ', 'pressureG'], VEL_LP: ['LP flare line velocity', ' ≥ ', 'velocity']
+    // (VEL_LP carries the velocity as a percentage of the limit, as the engine raises it)
+    PAH_LP: ['LP flare line back pressure high', ' ≥ ', 'pressureG'], VEL_LP: ['LP flare line velocity', ' ≥ ', 'percent', ' of the limit']
 };
 
 // Inline 16 px icons (stroke 1.6, currentColor). No <title> children (they leak into textContent).

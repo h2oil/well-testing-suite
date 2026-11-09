@@ -57,7 +57,13 @@ const row = (card, l) => rows(card).find((d) => text(d.querySelector('.l')) === 
 const rowVal = (card, l) => { const r = row(card, l); return r ? text(r.querySelector('.v')) : null; };
 const rowSub = (card, l) => { const r = row(card, l), d = r && r.querySelector('.d'); return d ? text(d) : null; };
 const noErr = (app, assert) => assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().map((l) => l.text || l).join(' | '));
-function frameTexts(app, cv) { return app.canvasLog(cv).filter((e) => e.op === 'fillText').map((e) => String(e.args[0])); }
+// the texts of the last complete 2D frame (host clearRect(0, 0, …) … end of the overlay)
+function frameTexts(app, cv) {
+  const log = app.canvasLog(cv);
+  let i = log.length - 1;
+  while (i >= 0 && !(log[i].op === 'clearRect' && log[i].args[0] === 0 && log[i].args[1] === 0)) i--;
+  return log.slice(Math.max(0, i)).filter((e) => e.op === 'fillText').map((e) => String(e.args[0]));
+}
 
 module.exports = [
   {
@@ -78,7 +84,7 @@ module.exports = [
       const sm0 = J(L.summaryOf(app.toWin({ t: 0, cum: {}, rates: { gor_scf_stb: 5 }, gauge: {}, alarms: [] })));
       assert.deepStrictEqual([sm0.rates.gor1, sm0.rates.gor2, sm0.rates.gorTot, sm0.rates.lpGas_mscfd], [null, null, null, null], 'older engine: null keys');
       assert.deepStrictEqual(J(L.ALM_T.PAH_LP), ['LP flare line back pressure high', ' ≥ ', 'pressureG']);
-      assert.deepStrictEqual(J(L.ALM_T.VEL_LP), ['LP flare line velocity', ' ≥ ', 'velocity']);
+      assert.deepStrictEqual(J(L.ALM_T.VEL_LP), ['LP flare line velocity', ' ≥ ', 'percent', ' of the limit']);
       assert.ok(L.EQ_IDS.indexOf('lp') >= 0 && L.TAG.lp === 'FT-201' && L.NAME.lp === 'LP flare line');
       assert.strictEqual(L.fmtU ? 1 : 1, 1);
       const W = app.win.WTS_live;
@@ -89,8 +95,8 @@ module.exports = [
           assert.strictEqual(W.fmtU(10, 'gasRateSmall', 1), '283.2 m³/d');
           const t1 = L.alarmText(app.toWin({ id: 'PAH_LP', tag: 'FT-201', msg: 'FT-201 LP flare line back pressure high 6.0 psig ≥ 5.0 psig', value: 6, limit: 5 }));
           assert.ok(/^LP flare line back pressure high [\d.,]+ kPa.* ≥ [\d.,]+ kPa/.test(t1), 'PAH_LP metric: ' + t1);
-          const t2 = L.alarmText(app.toWin({ id: 'VEL_LP', tag: 'FT-201', msg: 'x', value: 300, limit: 350 }));
-          assert.ok(/^LP flare line velocity [\d.,]+ m\/s ≥ [\d.,]+ m\/s$/.test(t2), 'VEL_LP metric: ' + t2);
+          const t2 = L.alarmText(app.toWin({ id: 'VEL_LP', tag: 'FT-201', msg: 'x', value: 85, limit: 80 }));
+          assert.strictEqual(t2, 'LP flare line velocity 85 % ≥ 80 % of the limit', 'VEL_LP metric (percent of the limit)');
         } finally { app.win.WTS_units.setSystem('imperial'); }
       }
     }
