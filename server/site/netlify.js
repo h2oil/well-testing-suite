@@ -128,13 +128,14 @@ function defaultLog() {
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
 // ── /api/v1/* ───────────────────────────────────────────────────────────────────────────────────────────────────────
+let BUILD_ID = 'dev'; try { BUILD_ID = String(require('../build-info.json').commit || 'dev').slice(0, 12); } catch (e) { /* not a built bundle */ }
 function apiFunction(deps) {
   deps = deps || {};
   let h = null; let warned = false;
   return async function api(request, context) {
     const refusal = deployRefusal(deps.env || process.env, context);
     if (refusal) {
-      if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: isolation — api refused: ' + refusal); }
+      if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: isolation — api refused: ' + refusal + ' (build ' + BUILD_ID + ')'); }
       return json(404, { error: 'not_found' });
     }
     if (!h) {
@@ -144,7 +145,7 @@ function apiFunction(deps) {
         h = (deps.createHandler || require('./handler').createHandler)({ env, store, fetch: deps.fetch, log: deps.log, db: deps.db, mail: deps.mail });
       } catch (e) {
         // a configuration the server refuses (e.g. WTS_SITE_MODE=same with WTS_ENV=local) answers 404, never 500
-        if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: config — api refused: ' + (e && e.message)); }
+        if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: config — api refused: ' + (e && e.message) + ' (build ' + BUILD_ID + ')'); }
         return json(404, { error: 'not_found' });
       }
     }
