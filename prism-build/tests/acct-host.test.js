@@ -801,7 +801,8 @@ module.exports = [
     run(app, assert, ctx) {
       const html = fs.readFileSync(HTML, 'utf8');
       assert.ok(/<div class="page-actions"[^>]*>\s*<!-- ACCT:START --><div id="wts_account_host"><\/div><!-- ACCT:END -->/.test(html), 'H8 first child of .page-actions');
-      assert.ok(/Privacy — how your data is stored<\/a><!-- ACCT:START --><div id="sbAccountLine"><\/div><!-- ACCT:END -->/.test(html), 'H9 footer line + link text');
+      // 19d8287: the crawlable Privacy Policy / Terms of Service links sit between the link and the account line
+      assert.ok(/Privacy — how your data is stored<\/a>(?:<br><a href="https:\/\/welltest\.h2oil\.co\.uk\/privacy\.html"[^>]*>Privacy Policy<\/a> &#183; <a href="https:\/\/welltest\.h2oil\.co\.uk\/terms\.html"[^>]*>Terms of Service<\/a>)?<!-- ACCT:START --><div id="sbAccountLine"><\/div><!-- ACCT:END -->/.test(html), 'H9 footer line + link text');
       const stripped = html.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '').replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       for (const s of ['wts_account_host', 'sbAccountLine', 'Accounts and cloud projects', 'Sign in with LinkedIn', 'LinkedIn', 'unless you sign in to the cloud']) {
         assert.ok(html.indexOf(s) !== -1, 'present on the web: ' + s);

@@ -146,7 +146,8 @@ module.exports = [
     name: 'OP5 no root-level host configuration; server/ never reaches a published set', wp: WP, opts: false,
     run(app, assert) {
       const KNOWN = ['.git', '.gitattributes', '.github', '.gitignore', '.claude', 'CLAUDE.md', 'LICENSE', 'PRISM-PLAN.md', 'PROJECT-NOTES.md',
-        'README.md', 'docs', 'help', 'ios-app', 'prism-build', 'server', 'sw.js', 'tools', 'well-testing-app.html', 'wiki', 'dist-site', 'node_modules'];
+        'README.md', 'docs', 'help', 'ios-app', 'prism-build', 'server', 'sw.js', 'tools', 'well-testing-app.html', 'wiki', 'dist-site', 'node_modules',
+        'privacy.html', 'terms.html'];   // the static legal pages (19d8287; on the publish-site.js allow-list)
       fs.readdirSync(ROOT).forEach((n) => assert(KNOWN.includes(n), 'unexpected repository root entry (host configuration or functions folder?): ' + n));
       assert(!fs.existsSync(path.join(ROOT, 'functions')) && !fs.existsSync(path.join(ROOT, '_headers')) && !fs.existsSync(path.join(ROOT, '_redirects')), 'no root functions / headers / redirects');
       const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
