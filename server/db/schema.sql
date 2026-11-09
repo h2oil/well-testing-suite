@@ -58,7 +58,7 @@ CREATE FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) RETURNS boolean
 
 ALTER FUNCTION wts.address_in_use(p_bidx bytea, p_except uuid) OWNER TO wts_definer;
 
-CREATE FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) RETURNS TABLE(user_id uuid, data_key_wrapped bytea, profile_enc bytea, summaries bytea[], last_project_at timestamp with time zone)
+CREATE FUNCTION wts.admin_insight(p_admins bytea[], p_ids uuid[]) RETURNS TABLE(user_id uuid, data_key_wrapped bytea, profile_enc bytea, summaries bytea[], last_project_at timestamp with time zone, privacy_version text)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
     AS $$
@@ -70,7 +70,8 @@ BEGIN
                        FROM (SELECT p.summary_enc, p.modified_at FROM wts.projects p
                               WHERE p.user_id = u.id AND p.deleted_at IS NULL AND p.summary_enc IS NOT NULL
                               ORDER BY p.modified_at DESC LIMIT 200) x), '{}'::bytea[]),
-           (SELECT max(p.modified_at) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL)
+           (SELECT max(p.modified_at) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL),
+           u.privacy_version::text
       FROM wts.users u
      WHERE p_ids IS NULL OR u.id = ANY (p_ids)
      ORDER BY u.created_at DESC, u.id DESC
@@ -144,7 +145,7 @@ END $$;
 
 ALTER FUNCTION wts.admin_summary(p_admins bytea[]) OWNER TO wts_definer;
 
-CREATE FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) RETURNS TABLE(id uuid, email_enc bytea, data_key_wrapped bytea, signup_method text, status text, created_at timestamp with time zone, last_sign_in_at timestamp with time zone, signup_country text, last_country text, last_city text, projects bigint, used_bytes bigint, profile_enc bytea)
+CREATE FUNCTION wts.admin_user_get(p_admins bytea[], p_id uuid) RETURNS TABLE(id uuid, email_enc bytea, data_key_wrapped bytea, signup_method text, status text, created_at timestamp with time zone, last_sign_in_at timestamp with time zone, signup_country text, last_country text, last_city text, projects bigint, used_bytes bigint, profile_enc bytea, privacy_version text)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'wts', 'pg_temp'
     AS $$
@@ -153,7 +154,8 @@ BEGIN
   RETURN QUERY
     SELECT u.id, u.email_enc, u.data_key_wrapped, u.signup_method, u.status, u.created_at, u.last_sign_in_at,
            u.signup_country::text, u.last_country::text, u.last_city,
-           (SELECT count(*) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL), u.used_bytes, u.profile_enc
+           (SELECT count(*) FROM wts.projects p WHERE p.user_id = u.id AND p.deleted_at IS NULL), u.used_bytes, u.profile_enc,
+           u.privacy_version::text
       FROM wts.users u
      WHERE u.id = p_id;
 END $$;

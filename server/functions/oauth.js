@@ -234,6 +234,8 @@ function createOauthHandlers(deps) {
             await st.identities.ack(unit.sql, identityId, eb);
           }
         }
+        // an existing account that accepted the current versions at the consent step (review fix: asked like the e-mail code)
+        if (o.reconsent) await unit.sql`update wts.users set terms_version = ${ctx.config.terms}, privacy_version = ${ctx.config.privacy}, consented_at = now() where id = ${uid}`;
         if (o.create) await unit.audit('signup', { deviceId: dev.id, detail: { method: a.provider } });
         if (o.create && o.create.profile && !I.isEmptyProfile(o.create.profile)) await I.storeProfile(unit, o.create.profile, 'signup', dev.id);
         await unit.audit('signin', { deviceId: dev.id, detail: { method: a.provider, identity_id: identityId, newDevice: dev.isNew } });
@@ -251,6 +253,19 @@ function createOauthHandlers(deps) {
     try { await SE.revokePresented(ctx); } catch (e) { ctx.log.warn('oauth finish: revoke presented session failed'); }
     note(ctx, 'uid', res.user.id);
     return { status: 200, body: res };
+  }
+  // signs an EXISTING account in (rules 1, 4 and 5) — unless it accepted older Terms / Privacy versions than the current ones:
+  // then the consent step comes first (next 'consent' with existingAccount: true; the sign-in options wait in the sealed
+  // attempt state) and the versions are recorded in the sign-in transaction (review fix: §8.4 "asked again at the next
+  // sign-in", as the e-mail code path does)
+  async function signInExisting(ctx, st, a, oldHash, state, userId, o) {
+    const stale = await S.unitOf(ctx, userId, async (unit) => {
+      const r = (await unit.user()).row;
+      return r.terms_version !== ctx.config.terms || r.privacy_version !== ctx.config.privacy;
+    });
+    if (!stale) return signIn(ctx, st, a, state, userId, o);
+    state.pending = { reason: 'reconsent', userId, o: { identityId: o.identityId || null, link: o.link || null, stepup: !!o.stepup } };
+    return advance(ctx, st, a, oldHash, state, 'consent', { existingAccount: true, terms: ctx.config.terms, privacy: ctx.config.privacy });
   }
   // the status check of §4.12 on a found account: locked → 403; deleting → a code to the primary (cancel_deletion)
   async function statusGate(ctx, st, a, oldHash, state, userId, status) {
@@ -436,7 +451,7 @@ function createOauthHandlers(deps) {
         // rules 4 and 5: the code proved the address an account uses → link and sign in (stepup_at = now)
         if (acc.status === 'locked') await endFail(ctx, st, a, 'locked');
         if (acc.status === 'deleting') return statusGate(ctx, st, a, oldHash, state, acc.userId, 'deleting');
-        return signIn(ctx, st, a, state, acc.userId, { link: 'code_confirm', stepup: true });
+        return signInExisting(ctx, st, a, oldHash, state, acc.userId, { link: 'code_confirm', stepup: true });
       }
       const why = signupRefusal(ctx, await S.unitOf(ctx, null, (unit) => allowlistHas(unit, ctx, pend.email)));
       if (why) await endFail(ctx, st, a, why);
@@ -447,6 +462,13 @@ function createOauthHandlers(deps) {
     if (b.consent !== undefined) {
       if (state.step !== 'consent' || !state.pending) fail('oauth_state');
       if (b.consent.terms !== ctx.config.terms || b.consent.privacy !== ctx.config.privacy) fail('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+      if (state.pending.reason === 'reconsent') {
+        // an existing account accepting the current versions: signed in as it would have been; a profile is not taken here
+        const po = state.pending.o || {};
+        const ro = { stepup: !!po.stepup, reconsent: true };
+        if (po.link) ro.link = po.link; else ro.identityId = po.identityId;
+        return signIn(ctx, st, a, state, state.pending.userId, ro);
+      }
       // the optional profile (insight follow-up), stored with the new account in the same transaction
       const profile = b.profile !== undefined ? I.normProfile(b.profile) : null;
       const email = state.pending.email;
@@ -481,7 +503,7 @@ function createOauthHandlers(deps) {
     }
     if (known) {                                                         // rule 1
       const g = await statusGate(ctx, st, a, oldHash, state, known.userId, known.status); if (g) return g;
-      return signIn(ctx, st, a, state, known.userId, { identityId: known.identityId, stepup: false });
+      return signInExisting(ctx, st, a, oldHash, state, known.userId, { identityId: known.identityId, stepup: false });
     }
     const cfg = providerConfig(ctx, p);
     if (O.emailTrusted(cfg, out)) {

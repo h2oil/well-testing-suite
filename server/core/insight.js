@@ -144,6 +144,17 @@ function top(values, max) {
   return out.slice(0, max);
 }
 
+// consentCurrent(row, config) — the account accepted the current Privacy notice (users.privacy_version ≥ config.privacy; the
+// versions are numbers in text, anything else must match exactly). The profile and the project summaries are collected and
+// shown to the operator only under the notice that describes them (privacy version 2): an account that accepted an older
+// version stores neither until it accepts the current one at its next sign-in (review fix).
+function consentCurrent(row, config) {
+  if (!row || !config) return false;
+  const have = String(row.privacy_version == null ? '' : row.privacy_version); const want = String(config.privacy == null ? '' : config.privacy);
+  if (/^\d{1,6}$/.test(have) && /^\d{1,6}$/.test(want)) return Number(have) >= Number(want);
+  return have !== '' && have === want;
+}
+
 // store the account's profile in the unit's transaction (the unit's user, own row under RLS) and audit which fields are set —
 // never their values. via: 'signup' | 'account'
 async function storeProfile(unit, p, via, deviceId) {
@@ -155,5 +166,5 @@ async function storeProfile(unit, p, via, deviceId) {
 
 module.exports = {
   storeProfile, PROFILE_FIELD, SUMMARY_FIELD, normProfile, emptyProfile, isEmptyProfile, cleanProfile, sealProfile, openProfile,
-  normSummary, cleanSummary, sealSummary, openSummary, ringOf, openWith, profileWith, summaryWith, distinct, top,
+  consentCurrent, normSummary, cleanSummary, sealSummary, openSummary, ringOf, openWith, profileWith, summaryWith, distinct, top,
 };

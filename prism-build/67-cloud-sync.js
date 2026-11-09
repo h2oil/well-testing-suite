@@ -613,10 +613,25 @@
   // become spaces), trimmed and capped at 120 characters; empty fields are left out. Nothing else of the project is read.
   var SUM_MAX = 120;
   var MODULE_ALIAS = { prism_dataset: 'prism', pvt: 'prism', prism_gauges: 'prism', buildup_raw: 'buildup', buildup_analysis: 'buildup' };
+  // plain text exactly as the server checks it (core/contract.js textUpTo, core/insight.js normSummary): NFKC first, then the
+  // control characters the server refuses (C0, DEL, C1, U+2028 / U+2029) become spaces, then trimmed and capped — the length
+  // counted on the normalised text and cut on a code-point boundary (review fix: a C1 control or a value that NFKC expands
+  // made the server refuse the whole commit)
+  var SUM_CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  function nfkc(t) { try { return typeof t.normalize === 'function' ? t.normalize('NFKC') : t; } catch (e) { return t; } }
+  function capText(t, max) {
+    for (var guard = 0; guard < 8; guard++) {
+      t = nfkc(t).replace(SUM_CTRL, ' ').replace(/\s+/g, ' ').trim();
+      if (t.length <= max) return t;
+      t = t.slice(0, max);
+      if (/[\ud800-\udbff]$/.test(t)) t = t.slice(0, -1);       // never half a surrogate pair
+    }
+    return t.length <= max ? t : '';
+  }
   function sumText(v, max) {
     if (typeof v !== 'string' && typeof v !== 'number') return null;
-    var t = String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
-    return t ? t.slice(0, max || SUM_MAX).trim() : null;
+    var t = capText(String(v), max || SUM_MAX);
+    return t || null;
   }
   function objOf(raw) {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
@@ -754,6 +769,11 @@
           tries++;
           return call('POST', '/projects/' + projectId + '/commit', bodyC).then(function (r) { return clearOutbox().then(function () { return r.json; }); }, function (e) {
             if (e && e.code === 'missing_blobs' && tries < 2) return uploadList(snap, (e.body && e.body.missing) || []).then(commit);
+            // the summary is informational: a server that refuses it (an older or stricter rule) never blocks the save — the
+            // commit is sent once more without it (review fix)
+            if (e && e.code === 'bad_request' && bodyC.summary && /^summary(\.|\[|$)/.test(String((e.body && e.body.field) || ''))) {
+              delete bodyC.summary; return commit();
+            }
             if (e && e.code === 'stale') return clearOutbox().then(function () { return { stale: true, head: e.body && e.body.head, headRev: e.body && e.body.headRev }; });
             throw e;
           });

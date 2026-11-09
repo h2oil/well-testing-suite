@@ -234,8 +234,9 @@ async function codeVerify(ctx) {
     return signInBody(a.u.row, a.primary, sess, device, first);
   }).catch(async (e) => {
     if (e !== CONSENT) throw e;
-    // stale consent of an existing account: the whole transaction rolled back, so the code was not burnt
-    throw new ApiError('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+    // stale consent of an existing account: the whole transaction rolled back, so the code was not burnt; existing tells the
+    // page to ask for the updated versions (not a new-account step)
+    throw new ApiError('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy, existing: true });
   });
   await revokeOther(ctx);
   return { status: 200, body: res };

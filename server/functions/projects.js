@@ -198,8 +198,9 @@ async function projectCommit(ctx) {
     const p = await projectRow(unit, ctx.params.id, { lock: true });
     const headRev = Number(p.head_rev);
     if (b.baseRev !== headRev) fail('stale', { headRev, head: await headBody(unit, ctx, u, p) });
-    // the latest summary is kept per project (a commit without one keeps the stored one), also on a no-op commit
-    if (summary) await unit.sql`update wts.projects set summary_enc = ${I.sealSummary(u, summary)}, summary_at = now() where id = ${p.id} and user_id = ${unit.userId}`;
+    // the latest summary is kept per project (a commit without one keeps the stored one), also on a no-op commit; an account
+    // that has not accepted the current Privacy notice (which describes the summary) stores none — the commit itself goes on
+    if (summary && I.consentCurrent(u.row, ctx.config)) await unit.sql`update wts.projects set summary_enc = ${I.sealSummary(u, summary)}, summary_at = now() where id = ${p.id} and user_id = ${unit.userId}`;
     if (headRev && b.reason === 'auto' && hex(p.head_vhash) === b.core.vhash) {
       const h = (await unit.sql`select saved_at from wts.revisions where project_id = ${p.id} and rev = ${headRev}`)[0];
       return { rev: headRev, savedAt: iso(h && h.saved_at) };          // nothing changed in the normalised view: a no-op

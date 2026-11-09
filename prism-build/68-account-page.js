@@ -166,7 +166,13 @@
       return np;
     }, function (e) {
       if (btn) btn.disabled = false;
-      say('acct_myprofile_msg', e && e.code === 'bad_request' ? 'Please check the profile fields (name up to 80 characters, company up to 120, job title up to 80, phone up to 40).' : errText(e), 'err');
+      var m = e && e.code === 'bad_request'
+        ? ((i.isProfileErr && i.isProfileErr(e) && /phone/.test(String(e.body.field))) ? i.profileErrText(e)
+          : 'Please check the profile fields (name up to 80 characters, company up to 120, job title up to 80; phone: digits, spaces and + ( ) . / - only, with at least 3 digits).')
+        : e && e.code === 'consent_required'
+          ? 'The Privacy notice changed. Sign out and sign in again to accept the current version, then save your profile.'
+          : errText(e);
+      say('acct_myprofile_msg', m, 'err');
       return null;
     });
   }

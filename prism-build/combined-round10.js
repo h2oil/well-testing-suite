@@ -4321,6 +4321,7 @@ G.WTS_modbusBridgeSetup = {
     // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
     // revealed), so the text says what a new visitor can do
     if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts are by invitation during the beta: if you have no invitation yet, write to ' + SUPPORT + '.';
+    if (isProfileErr(e)) return profileErrText(e);
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
     return 'Something went wrong (' + esc(e.code) + '). Try again.';
@@ -4439,7 +4440,7 @@ G.WTS_modbusBridgeSetup = {
     if (dlg.onKey && HAS_DOC) document.removeEventListener('keydown', dlg.onKey);
     dlg.onKey = null;
     var wasOpen = dlg.open;
-    dlg.open = false; dlg.step = null; dlg.signup = false; dlg.profile = null;
+    dlg.open = false; dlg.step = null; dlg.signup = false; dlg.profile = null; dlg.existing = false;
     var ch = dlg.choice; dlg.choice = null;
     if (ch) ch(null);
     var r = dlg.resolve; dlg.resolve = null;
@@ -4586,21 +4587,39 @@ G.WTS_modbusBridgeSetup = {
     dlg.code = code;
     var req = { email: dlg.email, code: code, publicDevice: !!dlg.publicDevice, deviceLabel: deviceLabel() };
     if (consent) req.consent = consent;
-    if (consent && dlg.profile && !profileEmpty(dlg.profile)) req.profile = cleanProfile(dlg.profile);
+    if (consent && !dlg.existing && dlg.profile && !profileEmpty(dlg.profile)) req.profile = cleanProfile(dlg.profile);
     var btn = $('acct_verify') || $('acct_create'); if (btn) btn.disabled = true;
     return call('POST', '/auth/code/verify', req).then(function (r) {
       dlg.code = null;
       return completeSignIn(r.json, { method: 'code' }).then(function () { return true; });
     }, function (e) {
       if (btn) btn.disabled = false;
-      if (e && e.code === 'consent_required') { setStep('consent', { terms: e.body && e.body.terms, privacy: e.body && e.body.privacy, countryHint: e.body && e.body.countryHint }); return false; }
+      if (e && e.code === 'consent_required') { setStep('consent', { terms: e.body && e.body.terms, privacy: e.body && e.body.privacy, countryHint: e.body && e.body.countryHint, existing: !!(e.body && e.body.existing) }); return false; }
       message(errText(e), 'err');
       return false;
     });
   }
   function drawConsent(b, data) {
-    setTitle('Create your account');
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
+    dlg.existing = !!data.existing;
+    if (dlg.existing) {
+      // an existing account whose accepted versions are older (review fix): asked to accept the current ones, no new-account
+      // wording and no profile fields
+      setTitle('Updated Terms and Privacy notice');
+      b.innerHTML =
+        '<p id="acct_reconsent_note">The Terms of Use or the Privacy notice changed since you last accepted them. Please read the current versions to keep signing in to <b>' + esc(dlg.email) + '</b>.</p>' +
+        '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"><span>I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</span></label>' +
+        '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Accept and continue</button>' +
+        '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
+      $('acct_create').addEventListener('click', function () {
+        if (!$('acct_consent_ok').checked) { message('Please tick the box to accept the current Terms of Use and Privacy notice.', 'err'); return; }
+        dlg.profile = null;
+        verifyCode(dlg.consent);
+      });
+      $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
+      return;
+    }
+    setTitle('Create your account');
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
       '<fieldset class="acct-pf-set"><legend>About you <span class="acct-opt">(optional)</span></legend><p class="acct-note" id="acct_pf_note">' + esc(PROFILE_NOTE) + '</p>' +
@@ -4612,6 +4631,9 @@ G.WTS_modbusBridgeSetup = {
     $('acct_create').addEventListener('click', function () {
       if (!$('acct_consent_ok').checked) { message('Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.', 'err'); return; }
       dlg.profile = readProfile('acct_su');
+      // the optional profile is checked here, by the server's rules, so it can never block the account (review fix)
+      var pp = profileProblem(dlg.profile);
+      if (pp) { message(pp.text, 'err'); var pe = $('acct_su_pf_' + pp.field); try { if (pe && pe.focus) pe.focus(); } catch (e) { /* focus */ } return; }
       verifyCode(dlg.consent);
     });
     $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
@@ -4659,11 +4681,40 @@ G.WTS_modbusBridgeSetup = {
     PROFILE_FIELDS.forEach(function (f) {
       var v = p[f.k];
       if (f.k === 'country') { out.country = countryCode(v); return; }
-      v = v == null ? '' : String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, f.max).trim();
-      out[f.k] = v || null;
+      out[f.k] = profileText(v, f.max) || null;
     });
     return out;
   }
+  // the server's text rule (core/contract.js textUpTo): NFKC first, then the control characters it refuses (C0, DEL, C1,
+  // U+2028 / U+2029) become spaces, trimmed, the cap counted on the normalised text and cut on a code-point boundary (review fix)
+  var PF_CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  function profileText(v, max) {
+    var t = v == null ? '' : String(v);
+    for (var guard = 0; guard < 8; guard++) {
+      try { t = t.normalize('NFKC'); } catch (e) { /* no normalize */ }
+      t = t.replace(PF_CTRL, ' ').replace(/\s+/g, ' ').trim();
+      if (t.length <= max) return t;
+      t = t.slice(0, max);
+      if (/[\ud800-\udbff]$/.test(t)) t = t.slice(0, -1);
+    }
+    return t.length <= max ? t : '';
+  }
+  // profileProblem(p) → null, or {field, text} for the first field the server would refuse (today only the phone can be:
+  // digits, spaces and + ( ) . / -, at least 3 digits — core/contract.js phoneText)
+  var PHONE_RULE = 'Phone: use digits, spaces and + ( ) . / - only, with at least 3 digits (or leave it empty).';
+  function profileProblem(p) {
+    var c = cleanProfile(p);
+    if (!c) return null;
+    if (c.phone != null && (!/^[0-9+() .\/-]+$/.test(c.phone) || (c.phone.match(/[0-9]/g) || []).length < 3)) return { field: 'phone', text: PHONE_RULE };
+    return null;
+  }
+  // the message for a refused profile (a bad_request whose field is profile / profile.<key>)
+  function profileErrText(e) {
+    var f = String((e && e.body && e.body.field) || '');
+    if (/phone/.test(f)) return PHONE_RULE;
+    return 'Please check the optional profile fields (name up to 80 characters, company up to 120, job title up to 80; ' + PHONE_RULE.charAt(0).toLowerCase() + PHONE_RULE.slice(1, -1) + '), or leave them empty.';
+  }
+  function isProfileErr(e) { return !!(e && e.code === 'bad_request' && /^profile(\.|$)/.test(String((e.body && e.body.field) || ''))); }
   function profileEmpty(p) { var c = cleanProfile(p); return !c || PROFILE_FIELDS.every(function (f) { return c[f.k] == null; }); }
   // profileFormHtml(prefix, profile, {countryHint, compact}) — the five fields; ids <prefix>_pf_<key>; every value escaped
   function profileFormHtml(prefix, profile, o) {
@@ -4697,6 +4748,8 @@ G.WTS_modbusBridgeSetup = {
   function saveProfile(p) {
     var body = cleanProfile(p);
     if (!body) return Promise.reject(new AccountError('bad_request', 0, { error: 'bad_request', field: 'profile' }));
+    var pp = profileProblem(body);
+    if (pp) return Promise.reject(new AccountError('bad_request', 0, { error: 'bad_request', field: 'profile.' + pp.field }));
     return call('PUT', '/account/profile', body).then(function (r) {
       var np = cleanProfile(r.json && r.json.profile) || body;
       if (current.me) current.me.profile = np;
@@ -5346,7 +5399,8 @@ G.WTS_modbusBridgeSetup = {
       readHint: readHint, writeHint: writeHint, recentMethodsText: recentMethodsText, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
       signedOutLocal: signedOutLocal, renderChip: renderChip, renderBar: renderBar, cloudAction: cloudAction, isOnline: isOnline, now: now,
       deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; },
-      profileFormHtml: profileFormHtml, readProfile: readProfile, profileEmpty: profileEmpty, PROFILE_FIELDS: PROFILE_FIELDS, PROFILE_NOTE: PROFILE_NOTE },
+      profileFormHtml: profileFormHtml, readProfile: readProfile, profileEmpty: profileEmpty, PROFILE_FIELDS: PROFILE_FIELDS, PROFILE_NOTE: PROFILE_NOTE,
+      profileProblem: profileProblem, profileErrText: profileErrText, isProfileErr: isProfileErr },
   };
   G.WTS_account = api;
 
@@ -5631,7 +5685,7 @@ G.WTS_modbusBridgeSetup = {
           dbody().insertBefore(el('p', { 'class': 'acct-oauth-error', role: 'alert', text: text('invalid_or_expired', p) }), m);
           return { error: e.code };
         }
-        showError(text(e && e.code, p, e && e.body && e.body.reason));
+        showError(api._i.isProfileErr(e) ? api._i.profileErrText(e) : text(e && e.code, p, e && e.body && e.body.reason));
         return { error: e && e.code };
       });
     }
@@ -5682,6 +5736,25 @@ G.WTS_modbusBridgeSetup = {
         // the versions come from the server; without them nothing is sent (never made-up versions)
         if (typeof j.terms !== 'string' || !j.terms || typeof j.privacy !== 'string' || !j.privacy) { showError(text('server', p)); return j; }
         var c = { terms: j.terms, privacy: j.privacy };
+        if (j.existingAccount) {
+          // an existing account on older Terms / Privacy versions (review fix): accept the current ones to finish signing in
+          title('Updated Terms and Privacy notice');
+          var rtick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
+          var rerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
+          show([para('acct-oauth-reconsent', 'The Terms of Use or the Privacy notice changed since you last accepted them. Please read the current versions to keep signing in with ' + N + '.'),
+            el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [rtick, el('span', {}, [el('span', { text: ' I accept the ' }),
+              el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
+              el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
+              el('a', { href: 'privacy.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_privacy_link', text: 'Privacy notice' }),
+              el('span', { text: ' (version ' + j.privacy + ').' })])]),
+            rerr,
+            btn('acct_oauth_create', 'Accept and continue', true, function () {
+              if (!rtick.checked) { rerr.textContent = 'Please tick the box to accept the current Terms of Use and Privacy notice.'; return; }
+              drive(p, { consent: c }, oa);
+            }),
+            btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);
+          return j;
+        }
         title('Create your account');
         // the same explicit tick as the e-mail path, naming the versions (review fix): Create is refused until it is ticked
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
@@ -5701,6 +5774,9 @@ G.WTS_modbusBridgeSetup = {
           btn('acct_oauth_create', 'Create account', true, function () {
             if (!tick.checked) { cerr.textContent = 'Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.'; return; }
             var pf = api._i.readProfile('acct_oauth_su', pfs);
+            // the optional profile is checked by the server's rules first, so it can never block the account (review fix)
+            var pp = api._i.profileProblem(pf);
+            if (pp) { cerr.textContent = pp.text; return; }
             drive(p, pf && !api._i.profileEmpty(pf) ? { consent: c, profile: pf } : { consent: c }, oa);
           }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);
@@ -6431,10 +6507,25 @@ G.WTS_modbusBridgeSetup = {
   // become spaces), trimmed and capped at 120 characters; empty fields are left out. Nothing else of the project is read.
   var SUM_MAX = 120;
   var MODULE_ALIAS = { prism_dataset: 'prism', pvt: 'prism', prism_gauges: 'prism', buildup_raw: 'buildup', buildup_analysis: 'buildup' };
+  // plain text exactly as the server checks it (core/contract.js textUpTo, core/insight.js normSummary): NFKC first, then the
+  // control characters the server refuses (C0, DEL, C1, U+2028 / U+2029) become spaces, then trimmed and capped — the length
+  // counted on the normalised text and cut on a code-point boundary (review fix: a C1 control or a value that NFKC expands
+  // made the server refuse the whole commit)
+  var SUM_CTRL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  function nfkc(t) { try { return typeof t.normalize === 'function' ? t.normalize('NFKC') : t; } catch (e) { return t; } }
+  function capText(t, max) {
+    for (var guard = 0; guard < 8; guard++) {
+      t = nfkc(t).replace(SUM_CTRL, ' ').replace(/\s+/g, ' ').trim();
+      if (t.length <= max) return t;
+      t = t.slice(0, max);
+      if (/[\ud800-\udbff]$/.test(t)) t = t.slice(0, -1);       // never half a surrogate pair
+    }
+    return t.length <= max ? t : '';
+  }
   function sumText(v, max) {
     if (typeof v !== 'string' && typeof v !== 'number') return null;
-    var t = String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
-    return t ? t.slice(0, max || SUM_MAX).trim() : null;
+    var t = capText(String(v), max || SUM_MAX);
+    return t || null;
   }
   function objOf(raw) {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
@@ -6572,6 +6663,11 @@ G.WTS_modbusBridgeSetup = {
           tries++;
           return call('POST', '/projects/' + projectId + '/commit', bodyC).then(function (r) { return clearOutbox().then(function () { return r.json; }); }, function (e) {
             if (e && e.code === 'missing_blobs' && tries < 2) return uploadList(snap, (e.body && e.body.missing) || []).then(commit);
+            // the summary is informational: a server that refuses it (an older or stricter rule) never blocks the save — the
+            // commit is sent once more without it (review fix)
+            if (e && e.code === 'bad_request' && bodyC.summary && /^summary(\.|\[|$)/.test(String((e.body && e.body.field) || ''))) {
+              delete bodyC.summary; return commit();
+            }
             if (e && e.code === 'stale') return clearOutbox().then(function () { return { stale: true, head: e.body && e.body.head, headRev: e.body && e.body.headRev }; });
             throw e;
           });
@@ -7466,7 +7562,13 @@ G.WTS_modbusBridgeSetup = {
       return np;
     }, function (e) {
       if (btn) btn.disabled = false;
-      say('acct_myprofile_msg', e && e.code === 'bad_request' ? 'Please check the profile fields (name up to 80 characters, company up to 120, job title up to 80, phone up to 40).' : errText(e), 'err');
+      var m = e && e.code === 'bad_request'
+        ? ((i.isProfileErr && i.isProfileErr(e) && /phone/.test(String(e.body.field))) ? i.profileErrText(e)
+          : 'Please check the profile fields (name up to 80 characters, company up to 120, job title up to 80; phone: digits, spaces and + ( ) . / - only, with at least 3 digits).')
+        : e && e.code === 'consent_required'
+          ? 'The Privacy notice changed. Sign out and sign in again to accept the current version, then save your profile.'
+          : errText(e);
+      say('acct_myprofile_msg', m, 'err');
       return null;
     });
   }
@@ -8423,6 +8525,8 @@ G.WTS_modbusBridgeSetup = {
   var lastAdmin = null;
   function onState() {
     var now = isAdmin();
+    // signed out, or no longer an admin: the user detail panel (on document.body, outside the page) closes too (review fix)
+    if (!now && HAS_DOC && $('adm_detail_ov')) closeDetail();
     if (now === lastAdmin) return;
     lastAdmin = now;
     if (registered && onRoute()) render($('pgBody'));
@@ -8430,6 +8534,12 @@ G.WTS_modbusBridgeSetup = {
   (function boot() {
     var a = A();
     if (a && typeof a.on === 'function') a.on('state', onState);
+    // the detail panel belongs to the admin route: any navigation elsewhere (Back, a link, a shortcut) closes it (review fix;
+    // the host fires h2oil:pagechange from nav())
+    if (HAS_DOC && document.addEventListener) document.addEventListener('h2oil:pagechange', function (ev) {
+      var pg = ev && ev.detail ? ev.detail.page : null;
+      if (pg !== 'admin' && $('adm_detail_ov')) closeDetail();
+    });
     // a load with #admin opens the page (it shows "Not available" until /me says admin:true)
     if (String(L.hash || '') === '#admin' && a && a.betaEnabled && a.betaEnabled() && HAS_DOC) {
       var go = function () { if (register()) open(); };

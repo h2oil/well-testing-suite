@@ -48,7 +48,7 @@ const ERRORS = {
   signup_closed:      { status: 403, extra: [], text: 'New accounts are not open right now.' },
   not_found:          { status: 404, extra: [], text: 'Not found.' },
   stale:              { status: 409, extra: ['headRev?', 'head?', 'rev?', 'hash?'], text: 'The cloud copy changed.' },
-  consent_required:   { status: 409, extra: ['terms?', 'privacy?', 'countryHint?'], text: 'Accept the current Terms of Use and Privacy notice.' },
+  consent_required:   { status: 409, extra: ['terms?', 'privacy?', 'countryHint?', 'existing?'], text: 'Accept the current Terms of Use and Privacy notice.' },
   immutable:          { status: 409, extra: [], text: 'That part is already stored.' },
   identity_in_use:    { status: 409, extra: [], text: 'That sign-in is linked to another account.' },
   provider_linked:    { status: 409, extra: [], text: 'The account already has a sign-in of that provider.' },
@@ -270,7 +270,9 @@ S.FinishLinked = { next: "'done'", linked: '@IdentityMethod' };
 S.FinishEmail = { next: "'email'", reason: "'missing'|'unverified'|'unmanaged'", 'emailPrefill?': orNull('email') };
 S.FinishCode = { next: "'code'", emailMasked: 'masked', reason: "'verify'|'link_existing'|'link_confirm'|'cancel_deletion'" };
 // countryHint? (user insight): the country the platform detected for this connection, the sign-up profile's default
-S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr', 'countryHint?': orNull('str') };
+// existingAccount? (review fix): an existing account whose accepted Terms / Privacy versions are older than the current ones is
+// asked to accept them before it is signed in (no newAccountEmailMasked, no profile)
+S.FinishConsent = { next: "'consent'", 'newAccountEmailMasked?': 'masked', 'existingAccount?': 'bool', 'terms?': 'nestr', 'privacy?': 'nestr', 'countryHint?': orNull('str') };
 S.FinishRes = oneOf('next', {
   done: (v, p, ctx) => checkNamed(v && v.linked !== undefined ? 'FinishLinked' : 'FinishDone', v, p, ctx),
   email: '@FinishEmail', code: '@FinishCode', consent: '@FinishConsent',
@@ -292,6 +294,9 @@ S.Me = {
   'admin?': 'bool',
   // the optional profile (insight follow-up; always sent by the server, every field null when none was given)
   'profile?': '@Profile',
+  // countryHint? (review fix): the country of this connection as the platform detected it, else the last one recorded — the
+  // default of the profile's country on the Account page; null when unknown
+  'countryHint?': orNull('str'),
 };
 S.OutboxKeyRes = { k: 'b64' };
 S.OptsReq = { 'historian?': 'bool', 'liveCfg?': 'bool' };
@@ -469,7 +474,7 @@ ep('blobGet', 'GET', '/blobs/:hash/:n', { res: { 200: null }, errors: SIGNED.con
 ep('accountExport', 'POST', '/account/export', { auth: 'stepup', req: 'EmptyReq', res: { 200: 'ExportRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDelete', 'POST', '/account/delete', { auth: 'stepup', req: 'DeleteReq', res: { 200: 'DeleteRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDeleteCancel', 'POST', '/account/delete/cancel', { req: 'EmptyReq', res: { 200: 'Ok' }, errors: SIGNED });
-ep('profileUpdate', 'PUT', '/account/profile', { req: 'ProfileReq', res: { 200: 'ProfileRes' }, errors: SIGNED, notes: 'replaces the whole profile (a missing key = null); audited with the field names only' });
+ep('profileUpdate', 'PUT', '/account/profile', { req: 'ProfileReq', res: { 200: 'ProfileRes' }, errors: SIGNED.concat(['consent_required']), notes: 'replaces the whole profile (a missing key = null); audited with the field names only' });
 ep('health', 'GET', '/health', { auth: 'none', res: { 200: 'Health' }, errors: [] });
 ep('cspReport', 'POST', '/csp-report', { auth: 'report', body: 'csp', res: { 204: null }, errors: ['too_large', 'rate'] });
 ep('opsDaily', 'POST', '/ops/daily', { auth: 'hmac', req: 'EmptyReq', res: { 200: 'OpsDailyRes' }, errors: ['origin'] });

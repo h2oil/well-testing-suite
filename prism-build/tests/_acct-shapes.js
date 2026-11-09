@@ -130,6 +130,7 @@ const FINISH_EXAMPLES = [
   { next: 'email', reason: 'unmanaged', emailPrefill: 'name@company.example' },
   { next: 'code', emailMasked: MASK, reason: 'link_existing' },
   { next: 'consent', newAccountEmailMasked: 'x•••@personal.example' },
+  { next: 'consent', existingAccount: true, terms: '1', privacy: '2' },
 ];
 const ERROR_EXTRA = { bad_request: { field: 'email' }, oauth_failed: { reason: 'cancelled' }, stale: { headRev: 42, head },
   consent_required: { terms: '1', privacy: '1' }, too_large: { limit: 65536 }, quota: { limit: 250000000, used: 250000001 },

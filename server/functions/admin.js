@@ -29,7 +29,6 @@ const SE = require('../core/session');
 const R = require('../core/rate');
 const { _internal: A } = require('./auth');
 const I = require('../core/insight');
-const P = require('./projects')._internal;
 
 const iso = (d) => (d == null ? null : new Date(d).toISOString());
 const arr = (sql, bufs) => sql.array(bufs, 17);     // bytea[]
@@ -92,6 +91,9 @@ async function insightOf(ctx, unit, admins, ids) {
   const rows = await unit.sql`select * from wts.admin_insight(${admins}, ${ids ? unit.sql.array(ids, 2950) : null}::uuid[])`;
   const out = new Map();
   for (const r of rows) {
+    // the profile and the summaries are shown only for an account that accepted the Privacy notice describing them (review
+    // fix): anything stored before is not opened
+    if (!I.consentCurrent(r, ctx.config)) { out.set(r.user_id, { profile: null, summaries: [], lastProjectAt: iso(r.last_project_at) }); continue; }
     const ring = I.ringOf(ctx.keys, r.data_key_wrapped);
     if (!ring) ctx.log.warn('admin: a key ring could not be opened');
     out.set(r.user_id, {
@@ -188,13 +190,16 @@ async function adminUser(ctx) {
     const r = UUID_RE.test(id) ? (await unit.sql`select * from wts.admin_user_get(${admins}, ${id}::uuid)`)[0] : null;
     await unit.audit('admin.user', { actor: 'admin', deviceId: s.deviceId, target: r ? r.id : null, detail: { found: !!r } });
     if (!r) return unit.failAfterCommit('not_found');
-    const ring = I.ringOf(ctx.keys, r.data_key_wrapped);
+    // the projects' own names (meta_enc) are never opened here: the name shown is the one in the summary the page sent with a
+    // save (privacy notice v2, "Accounts"); a project without a summary — or of an account that has not accepted the current
+    // notice — shows only its size and update time (review fix)
+    const ok = I.consentCurrent(r, ctx.config);
+    const ring = ok ? I.ringOf(ctx.keys, r.data_key_wrapped) : null;
     const ins = (await insightOf(ctx, unit, admins, [r.id])).get(r.id);
     const projects = (await unit.sql`select * from wts.admin_user_projects(${admins}, ${r.id})`).map((p) => {
-      let name = '';
-      try { name = String(JSON.parse(I.openWith(ring, P.META, p.meta_enc) || '{}').name || ''); } catch (e) { name = ''; }
-      return { id: p.id, name, updatedAt: iso(p.modified_at), bytes: Number(p.head_bytes) || 0,
-        summary: I.summaryWith(ring, p.summary_enc), summaryAt: iso(p.summary_at) };
+      const summary = ok ? I.summaryWith(ring, p.summary_enc) : null;
+      return { id: p.id, name: (summary && summary.name) || '', updatedAt: iso(p.modified_at), bytes: Number(p.head_bytes) || 0,
+        summary, summaryAt: summary ? iso(p.summary_at) : null };
     });
     return { user: userRow(r, openEmail(ctx, r), ins), projects };
   });

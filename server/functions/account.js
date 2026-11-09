@@ -9,6 +9,7 @@
 //     released and every session revoked in the same transaction (definer deletion_request), the ledger row written; the daily
 //     job purges after the grace. A sign-in during the grace reaches only GET /me and cancel (everything else answers 410 gone).
 
+const { fail } = require('../core/errors');
 const S = require('../core/service');
 const SE = require('../core/session');
 const R = require('../core/rate');
@@ -67,6 +68,9 @@ async function profileUpdate(ctx) {
   const p = I.normProfile(ctx.body);
   const body = await SE.withSession(ctx, {}, async (unit, s) => {
     await R.enforce(unit.sql, 'profileUserHour', s.userId);
+    // the profile is collected only under the Privacy notice that describes it: an account on an older version is asked to
+    // accept the current one first (it does so at its next sign-in)
+    if (!I.consentCurrent((await unit.user()).row, ctx.config)) fail('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
     await I.storeProfile(unit, p, 'account', s.deviceId);
     return { profile: p };
   });

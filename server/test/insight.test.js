@@ -263,7 +263,10 @@ test.describe('profile, summaries and the admin insight (database)', { skip }, (
     const r = await admin.call('GET', '/admin/users/' + id);
     assert.strictEqual(r.status, 200, JSON.stringify(r.json)); shapeOk('AdminUserDetail', r.json);
     assert.strictEqual(r.json.user.email, 'ana@company.example'); assert.deepStrictEqual(r.json.user.profile, PROFILE);
-    assert.deepStrictEqual(r.json.projects.map((p) => p.name), ['Example-3 test', 'Example-1 DST'], 'newest first, the trashed copy left out');
+    // the name shown is the summary's (anaP2's summary has none): the project's own name (meta_enc) is never opened (review fix)
+    assert.deepStrictEqual(r.json.projects.map((p) => p.id), [anaP2, anaP1], 'newest first, the trashed copy left out');
+    assert.deepStrictEqual(r.json.projects.map((p) => p.name), ['', 'Example-1 DST']);
+    assert.ok(!JSON.stringify(r.json).includes('Example-3 test'), 'the project name outside a summary is not shown');
     const p1 = r.json.projects.find((p) => p.id === anaP1);
     assert.strictEqual(p1.summary.client, 'Operator Energy Ltd'); assert.strictEqual(p1.summary.jobRef, 'JOB-001'); assert.deepStrictEqual(p1.summary.modules, ['prism', 'wts']);
     assert.ok(p1.bytes > 0 && p1.updatedAt && p1.summaryAt);
@@ -312,6 +315,50 @@ test.describe('profile, summaries and the admin insight (database)', { skip }, (
     assert.strictEqual(seen[0].n, 1);
     const v = await auditVerify(T.db.sql);
     assert.deepStrictEqual(v.bad, []);
+  });
+
+  test('privacy notice gate (review fix): an account on an older version stores no summary or profile, the admin routes hide what it stored, the code sign-in asks it again; /me countryHint', async () => {
+    const cara = T.browser();
+    await signUp(cara, 'cara@company.example');
+    const id = (await rowOf('cara@company.example')).id;
+    // while current: a profile and a summary are stored
+    assert.strictEqual((await cara.call('PUT', '/account/profile', { fullName: 'Cara Example', company: 'Cara Co' })).status, 200);
+    const cp = (await cara.call('POST', '/projects', { name: 'Cara own name', meta: { client: '', well: '', field: '', operator: '' } })).json.id;
+    assert.strictEqual((await cara.call('POST', '/projects/' + cp + '/commit', commitBody(0, coreOf({ k: 1 }), { name: 'Cara own name', summary: { name: 'Cara-1 test', client: 'Kept Client', wells: ['Cara-1'] } }))).status, 200);
+    const before = (await T.db.sql`select summary_enc from wts.projects where id = ${cp}`)[0].summary_enc;
+    // the account is on an older notice (as every v1 account is when v2 goes live)
+    await T.db.sql`update wts.users set privacy_version = '0' where id = ${id}`;
+    const pr = await cara.call('PUT', '/account/profile', { fullName: 'New Name' });
+    assert.strictEqual(pr.status, 409); assert.strictEqual(pr.json.error, 'consent_required'); assert.ok(C.checkError('consent_required', pr.json).ok);
+    const c2 = await cara.call('POST', '/projects/' + cp + '/commit', commitBody(1, coreOf({ k: 2 }), { summary: { client: 'Secret Client', wells: ['Secret-1'] } }));
+    assert.strictEqual(c2.status, 200, 'the save itself goes on'); assert.strictEqual(c2.json.rev, 2);
+    assert.ok((await T.db.sql`select summary_enc from wts.projects where id = ${cp}`)[0].summary_enc.equals(before), 'the new summary was not stored');
+    const row = (await admin.call('GET', '/admin/users?limit=200')).json.users.find((u) => u.email === 'cara@company.example');
+    assert.strictEqual(row.profile, null); assert.deepStrictEqual(row.work.clients, []); assert.deepStrictEqual(row.work.wells, []);
+    const d = await admin.call('GET', '/admin/users/' + id);
+    assert.strictEqual(d.status, 200); shapeOk('AdminUserDetail', d.json);
+    assert.deepStrictEqual(d.json.projects.map((p) => [p.name, p.summary, p.summaryAt]), [['', null, null]]);
+    assert.ok(!/Cara|Kept Client|Secret/.test(JSON.stringify(d.json)), JSON.stringify(d.json));
+    const sm = (await admin.call('GET', '/admin/summary')).json;
+    assert.ok(!sm.topClients.some((x) => /kept client|secret client/i.test(x.client)) && !sm.byCompany.some((x) => /cara co/i.test(x.company)));
+    // /me: the country default of the profile card (the last recorded country when this connection has none)
+    await T.db.sql`update wts.users set last_country = 'OM' where id = ${id}`;
+    const me = await cara.call('GET', '/me');
+    shapeOk('Me', me.json); assert.strictEqual(me.json.countryHint, 'OM');
+    // the next e-mail-code sign-in asks for the current versions (existing: true), then records them
+    const br = T.browser();
+    assert.strictEqual((await br.call('POST', '/auth/code/start', { email: 'cara@company.example', purpose: 'signin' })).status, 202);
+    const code = T.codeFor('cara@company.example', 'code_signin');
+    const r1 = await br.call('POST', '/auth/code/verify', { email: 'cara@company.example', code, publicDevice: false });
+    assert.strictEqual(r1.status, 409); assert.strictEqual(r1.json.existing, true); assert.ok(C.checkError('consent_required', r1.json).ok);
+    const r2 = await br.call('POST', '/auth/code/verify', { email: 'cara@company.example', code, publicDevice: false, consent: { terms: T.config.terms, privacy: T.config.privacy } });
+    assert.strictEqual(r2.status, 200, JSON.stringify(r2.json));
+    assert.strictEqual((await T.db.sql`select privacy_version from wts.users where id = ${id}`)[0].privacy_version, T.config.privacy);
+    assert.strictEqual((await cara.call('PUT', '/account/profile', { fullName: 'New Name' })).status, 200, 'collected again once accepted');
+    assert.strictEqual(I.consentCurrent({ privacy_version: '3' }, { privacy: '2' }), true);
+    assert.strictEqual(I.consentCurrent({ privacy_version: '1' }, { privacy: '2' }), false);
+    assert.strictEqual(I.consentCurrent({ privacy_version: '2026-10' }, { privacy: '2026-11' }), false);
+    assert.strictEqual(I.consentCurrent(null, { privacy: '2' }), false);
   });
 });
 
@@ -367,5 +414,26 @@ test.describe('provider path: the profile at the consent step (database)', { ski
     assert.deepStrictEqual(me.json.profile, { fullName: 'Field Engineer', company: 'Service Co', jobTitle: null, country: 'NO', phone: null });
     const a = await DB.admin.sql`select detail from wts.audit where action = 'profile_update'`;
     assert.deepStrictEqual(a.map((x) => x.detail), [{ via: 'signup', fields: ['fullName', 'company', 'country'] }]);
+
+    // review fix: the same account on an older Privacy notice signs in with the provider again → the consent step comes first
+    // (existingAccount, no new-account address), and accepting it records the current versions in the sign-in
+    await DB.admin.sql`update wts.users set privacy_version = '0'`;
+    const s2 = await call('POST', '/auth/oauth/google/start', { purpose: 'signin', publicDevice: false });
+    const back2 = new URL(g.authorize(s2.json.url, { user: { key: 'fe-1', email } }));
+    const cb2 = await app.handle({ method: 'GET', url: back2.pathname + back2.search, headers: { host: 'welltest.h2oil.co.uk', cookie: ck(true) }, body: null, remoteAddress: '198.51.100.7' });
+    apply(cb2.cookies);
+    const r1 = await call('POST', '/auth/oauth/finish', {});
+    assert.strictEqual(r1.status, 200, JSON.stringify(r1.json));
+    assert.deepStrictEqual(r1.json, { next: 'consent', existingAccount: true, terms: '1', privacy: '1' });
+    assert.ok(C.checkShape('FinishRes', r1.json).ok, JSON.stringify(C.checkShape('FinishRes', r1.json).errors));
+    assert.strictEqual((await DB.admin.sql`select privacy_version from wts.users`)[0].privacy_version, '0', 'nothing recorded before the tick');
+    const old = await call('POST', '/auth/oauth/finish', { consent: { terms: '1', privacy: '0' } });
+    assert.strictEqual(old.status, 409); assert.strictEqual(old.json.error, 'consent_required');
+    const r2 = await call('POST', '/auth/oauth/finish', { consent: { terms: '1', privacy: '1' }, profile: { fullName: 'Not taken' } });
+    assert.strictEqual(r2.json.next, 'done', JSON.stringify(r2.json));
+    assert.strictEqual(r2.json.firstSignIn, false);
+    const row2 = (await DB.admin.sql`select count(*)::int as n, min(privacy_version) as v from wts.users`)[0];
+    assert.deepStrictEqual([row2.n, row2.v], [1, '1'], 'the same account, now on the current notice');
+    assert.strictEqual((await call('GET', '/me')).json.profile.fullName, 'Field Engineer', 'no profile taken at a re-consent');
   });
 });

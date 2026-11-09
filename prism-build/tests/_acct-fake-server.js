@@ -359,6 +359,12 @@ function createFakeServer(o) {
       if (!hit) fail('invalid_or_expired');
       let u = acc && acc.user; let first = false;
       if (u && u.status === 'locked') fail('locked');
+      // an existing account on older Terms / Privacy versions (test switch u.staleConsent, like the server's version check):
+      // 409 with existing: true and the code kept, until the current versions come with the request
+      if (u && u.staleConsent) {
+        if (!consentOk(b.consent)) { hit.used = false; fail('consent_required', { terms: config.terms, privacy: config.privacy, existing: true }); }
+        u.staleConsent = false;
+      }
       if (!u) {
         if (signupAllowed(email)) fail('invalid_or_expired');
         u = createUser(email, 'code'); first = true;
@@ -600,6 +606,7 @@ function createFakeServer(o) {
         devices: Array.from(S.devices.values()).filter((d) => d.userId === u.id && !d.revoked).map((d) => ({ id: d.id, label: d.label, lastSeen: d.lastSeen, current: d.id === s.deviceId })),
         minClient: config.minClient,
         profile: profileOf(null, u.profile),   // like the server: always an object, every field null when none was given
+        countryHint: u.countryHint || null,    // the profile's country default (server: the connection's, else the last recorded)
       } };
     },
     outboxKey(ctx) { const { u } = sessionOf(ctx); return { status: 200, body: { k: u.outboxKey } }; },
@@ -742,6 +749,7 @@ function createFakeServer(o) {
     },
     profileUpdate(ctx) {
       const { u } = sessionOf(ctx); notDeleting(u);
+      if (u.staleConsent) fail('consent_required', { terms: config.terms, privacy: config.privacy });
       u.profile = profileOf(ctx.body, u.profile);
       audit(u.id, 'profile', {});
       return { status: 200, body: { profile: Object.assign({}, u.profile) } };

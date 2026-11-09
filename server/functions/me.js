@@ -38,6 +38,8 @@ async function me(ctx) {
       admin: !!(ctx.config.adminEmails && ctx.config.adminEmails.has(a.primary)),
       // the optional profile (insight follow-up): every field null when none was given
       profile: I.openProfile(a.u, r.profile_enc) || I.emptyProfile(),
+      // the profile's country default on the Account page: this connection's platform-detected country, else the last recorded
+      countryHint: (ctx.geo && ctx.geo.country) || r.last_country || null,
     };
   });
   return { status: 200, body };

@@ -19,6 +19,15 @@
 //        opens the detail panel (GET /admin/users/:id) with profile, e-mail, locations, method, dates, storage and every
 //        project with its summary; Escape / × close it; every server string escaped (page, panel and CSV); CSV has the new
 //        columns with the formula guard; an older server without profile / work / tops still renders
+//   IN7  review fix: the summary text follows the server's rule (NFKC first, C1 controls removed, the cap counted after NFKC on
+//        a code-point boundary): every value passes SummaryReq and the server's normSummary; a commit whose summary the server
+//        refuses (bad_request, field summary…) is sent once more without it, so the save never fails on the summary
+//   IN8  review fix: the profile follows the server's rules: a phone with letters is stopped at Create with the allowed
+//        characters named (no request), C1 / NFKC text cleaned; the Account page says the phone rule and sends nothing; a
+//        profile refusal from the server gets profile words; /me countryHint preselects the Account page country
+//   IN9  review fix: an existing account on older Terms / Privacy versions (consent_required existing:true, provider
+//        existingAccount) gets an "Updated Terms and Privacy notice" step without the new-account wording or profile fields
+//   IN10 review fix: the admin user detail panel closes when the page leaves the admin route and when the account signs out
 'use strict';
 
 const T = require('./_acct-app');
@@ -393,6 +402,178 @@ module.exports = [
         assert(/No project summaries yet/.test(t.text('adm_top_clients')));
         assert(/sam@company\.example/.test(t.text('adm_users_table')) && /—/.test(t.text('adm_users_table')));
         assert(/,,,,,,,,,,,$/.test(t.w.WTS_accountAdmin._csv().split('\r\n')[1]), 'empty new columns');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'IN7 summary text by the server rule (C1, NFKC, code points); a refused summary never blocks the save (retry without it)', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const path = require('path');
+      const I = require(path.join(S.SERVER_DIR, 'core', 'insight'));
+      const t = boot(ctx, {});
+      try {
+        const nasty = { client: 'Op\u0085Co', operator: 'Operator\u0096Energy', field: 'K\u0085X', rig: 'Rig ½ ' + 'y'.repeat(118), company: 'ﷺ'.repeat(10),
+          country: '㎏'.repeat(60), ref: 'Well № 4 ' + 'x'.repeat(130), well: '㏏'.repeat(80) };
+        const pl = { meta: {}, modules: { storage: { keys: { h2oil_client_info: JSON.stringify(nasty) } },
+          wells: { v: 1, active: 'w1', wells: [{ id: 'w1', name: '㌀'.repeat(30) }, { id: 'w2', name: 'A' + '😀'.repeat(60), data: { keys: {} } }] } } };
+        const sum = T.J(t.sync().projectSummary(pl, 'Name ' + 'ﷺ'.repeat(20)));
+        const chk = S.checkShape('SummaryReq', sum);
+        assert(chk.ok, JSON.stringify(chk.errors));
+        assert.doesNotThrow(() => I.normSummary(sum), 'the server accepts it');
+        assert.strictEqual(sum.client, 'Op Co'); assert.strictEqual(sum.operator, 'Operator Energy'); assert.strictEqual(sum.field, 'K X');
+        Object.keys(sum).forEach((k) => { if (typeof sum[k] === 'string') assert(sum[k].length <= 120 && sum[k] === sum[k].normalize('NFKC'), k); });
+        sum.wells.forEach((w) => { assert(w.length <= 80, w.length); assert(!/[\ud800-\udbff]$/.test(w), 'no half surrogate'); });
+        // the commit path: a server that refuses the summary → the same commit once more without it; the save works
+        await t.signIn(E1);
+        await t.until(() => t.acct().state().status === 'signedIn' && !t.el('acct_dlg_ov'), 'signed in');
+        t.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Operator Energy Ltd', well: 'Example-1' }));
+        t.fake.fault({ path: /\/commit$/, method: 'POST', mode: 'bad_request', extra: { field: 'summary' } });
+        const r = await t.sync().saveToCloud({});
+        assert.strictEqual(r.rev, 1, JSON.stringify(r));
+        const cs = reqs(t, /\/commit$/, 'POST');
+        assert.strictEqual(cs.length, 2, 'one retry');
+        assert(cs[0].body.summary && !('summary' in cs[1].body), 'the retry has no summary');
+        assert.strictEqual(cs[0].body.pushId, cs[1].body.pushId, 'the same commit');
+        // another bad_request (not about the summary) is not retried
+        t.storage.setItem('wts_page_hydrate', JSON.stringify({ v: 1, t: 9, f: { hy_T: '41' } }));
+        t.a.fire('document', 'wts:autosaved', {});
+        t.fake.fault({ path: /\/commit$/, method: 'POST', mode: 'bad_request', extra: { field: 'core' } });
+        const n0 = reqs(t, /\/commit$/, 'POST').length;
+        await t.sync().saveToCloud({}).then(() => null, (e) => e);
+        assert.strictEqual(reqs(t, /\/commit$/, 'POST').length - n0, 1, 'no retry');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'IN8 profile by the server rules: phone checked at Create and on the Account page, C1 / NFKC cleaned, profile words, /me countryHint', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const t = boot(ctx, {});
+      try {
+        const i = t.acct()._i;
+        const c = T.J(t.acct().cleanProfile({ fullName: 'Ana\u0085Example', company: 'ﷺ'.repeat(10), jobTitle: 'Ⅳ lead', phone: '+44 20 7946 0000' }));
+        assert.strictEqual(c.fullName, 'Ana Example'); assert.strictEqual(c.jobTitle, 'IV lead');
+        assert(c.company.length <= 120 && S.checkShape('ProfileReq', c).ok, JSON.stringify(S.checkShape('ProfileReq', c).errors));
+        assert.strictEqual(i.profileProblem(c), null);
+        ['+44 20 7946 0000 ext 12', '+1 555 CALL', '12'].forEach((ph) => assert.strictEqual(i.profileProblem({ phone: ph }).field, 'phone', ph));
+        assert.strictEqual(i.profileProblem({ phone: '' }), null);
+        // sign-up: a bad phone is stopped at Create with the rule named; nothing is sent; cleared → the account is made
+        const r = await t.signIn('new.phone@company.example', { consent: false });
+        assert(r.consentShown);
+        t.a.input('acct_su_pf_phone', '+1 555 CALL');
+        t.a.check('acct_consent_ok', true);
+        const n0 = reqs(t, /\/auth\/code\/verify$/, 'POST').length;
+        t.click('acct_create');
+        await t.settle();
+        assert(/digits, spaces and \+ \( \) \. \/ -/.test(t.text('acct_msg')), t.text('acct_msg'));
+        assert.strictEqual(reqs(t, /\/auth\/code\/verify$/, 'POST').length, n0, 'no request');
+        assert.strictEqual(t.acct().state().status, 'signedOut');
+        t.a.input('acct_su_pf_phone', '');
+        t.click('acct_create');
+        await t.until(() => t.acct().state().status === 'signedIn', 'signed in');
+        // a profile refusal from the server (an older page's rule) gets profile words, not the address message
+        assert(/Phone: use digits/.test(i.profileErrText({ code: 'bad_request', body: { field: 'profile.phone' } })));
+        assert(i.isProfileErr({ code: 'bad_request', body: { field: 'profile' } }) && !i.isProfileErr({ code: 'bad_request', body: { field: 'email' } }));
+        // the Account page: /me countryHint preselects the country of an empty profile; a bad phone is stopped with the rule
+        await t.settle(20);
+        t.fake.user('new.phone@company.example').countryHint = 'OM';
+        await t.acct().refresh();
+        t.w.WTS_nav('account');
+        await t.until(() => t.el('acct_my_pf_country'), 'the card');
+        assert.strictEqual(t.el('acct_my_pf_country').value, 'OM', 'countryHint from /me');
+        t.a.input('acct_my_pf_phone', 'call me');
+        const p0 = reqs(t, /\/account\/profile$/, 'PUT').length;
+        t.click('acct_myprofile_save');
+        await t.until(() => /digits, spaces and \+ \( \) \. \/ -/.test(t.text('acct_myprofile_msg')), 'the phone rule');
+        assert.strictEqual(reqs(t, /\/account\/profile$/, 'PUT').length, p0, 'nothing sent');
+        // an account on an older Privacy notice: the save is refused with a plain explanation
+        t.fake.user('new.phone@company.example').staleConsent = true;
+        t.a.input('acct_my_pf_phone', '+968 0000 0000');
+        t.click('acct_myprofile_save');
+        await t.until(() => /Privacy notice changed/.test(t.text('acct_myprofile_msg')), 'consent words');
+      } finally { t.dispose(); }
+    },
+  },
+  {
+    name: 'IN9 an existing account on older Terms / Privacy versions: "Updated Terms and Privacy notice" step, no profile fields (code and provider)', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const fake = T.F.createFakeServer({});
+      const t0 = boot(ctx, { fake });
+      try {
+        await t0.signIn(E1);
+        await t0.until(() => t0.acct().state().status === 'signedIn' && !t0.el('acct_dlg_ov'), 'the account exists');
+      } finally { t0.dispose(); }
+      const t = boot(ctx, { fake });
+      try {
+        t.fake.user(E1).staleConsent = true;
+        const r = await t.signIn(E1, { consent: false });
+        assert(r.consentShown, 'the consent step');
+        const body = t.text('acct_dlg_body');
+        assert(/changed since you last accepted/.test(t.text('acct_reconsent_note')), body);
+        assert(!/creating a new account/.test(body) && !t.el('acct_su_pf'), 'no new-account wording or profile');
+        assert(/Updated Terms and Privacy notice/.test(t.dialogText()));
+        t.a.check('acct_consent_ok', true);
+        t.click('acct_create');
+        await t.until(() => t.acct().state().status === 'signedIn', 'signed in after accepting');
+        const v = reqs(t, /\/auth\/code\/verify$/, 'POST').pop();
+        assert(v.body.consent && !('profile' in v.body), JSON.stringify(v.body));
+        assert.strictEqual(t.fake.user(E1).staleConsent, false);
+      } finally { t.dispose(); }
+      const t2 = boot(ctx, {});
+      try {
+        const I = t2.acct();
+        const sent = [];
+        I.finishProviderSignIn = (b) => { sent.push(JSON.parse(JSON.stringify(b))); return Promise.resolve(b.consent ? { next: 'oauth_state' } : { next: 'consent', existingAccount: true, terms: '1', privacy: '2' }); };
+        assert(S.checkShape('FinishRes', { next: 'consent', existingAccount: true, terms: '1', privacy: '2' }).ok);
+        t2.storage.setItem('wtsacct_hint', JSON.stringify({ oauth: { provider: 'google', route: 'home', at: Date.now(), purpose: 'signin' } }));
+        I.oauthUI.openFinish();
+        await t2.until(() => t2.el('acct_oauth_consent_ok'), 'the consent step');
+        assert(/changed since you last accepted/.test(t2.text('acct_oauth_body')));
+        assert(!t2.el('acct_oauth_su_pf_fullName') && !/creating a new account/.test(t2.text('acct_oauth_body')));
+        t2.click('acct_oauth_create');
+        assert(/Please tick/.test(t2.text('acct_oauth_body')), 'the tick is needed');
+        t2.a.find('#acct_oauth_consent_ok').checked = true;
+        t2.click('acct_oauth_create');
+        await t2.settle();
+        assert.deepStrictEqual(sent[sent.length - 1], { consent: { terms: '1', privacy: '2' } });
+      } finally { t2.dispose(); }
+    },
+  },
+  {
+    name: 'IN10 the admin user detail panel closes on navigation away from the admin route and when the account signs out', wp: WP, opts: false,
+    async run(app, assert, ctx) {
+      const U1 = '00000000-0000-4000-8000-000000000001';
+      const user = { id: U1, email: 'sam@company.example', method: 'code', status: 'active', createdAt: '2026-11-01T08:00:00.000Z', lastSignInAt: null,
+        signupCountry: null, lastCountry: null, lastCity: null, projects: 0, usedBytes: 0, profile: { fullName: 'Sam', company: null, jobTitle: null, country: null, phone: null },
+        work: { wells: [], clients: [], operators: [], fields: [], countries: [], lastProjectAt: null } };
+      const SUM = { generatedAt: '2026-11-09T10:00:00.000Z', totals: { users: 1, active7d: 1, active30d: 1, projects: 0, storageBytes: 0, invitesPending: 0 },
+        byCountry: [], byMethod: [], signupsByDay: [], byCompany: [], topClients: [], topFields: [] };
+      const admin = { answer(p, q, method) {
+        if (p === '/api/v1/admin/summary') return json(200, SUM);
+        if (p === '/api/v1/admin/users') return json(200, { users: [user], next: null });
+        if (p === '/api/v1/admin/invites') return json(200, { invites: [] });
+        if (p === '/api/v1/admin/users/' + U1) return json(200, { user, projects: [] });
+        return null;
+      } };
+      const t = boot(ctx, { admin });
+      try {
+        await t.signIn(E1);
+        await t.until(() => t.acct().state().status === 'signedIn' && !t.el('acct_dlg_ov'), 'signed in');
+        const openIt = async () => {
+          t.w.WTS_nav('admin');
+          await t.until(() => t.a.find('#adm_users_table button.adm-open[data-id="' + U1 + '"]'), 'admin page');
+          t.click(t.a.find('#adm_users_table button.adm-open[data-id="' + U1 + '"]'));
+          await t.until(() => t.el('adm_d_noprojects'), 'the panel');
+          assert.strictEqual(t.text('adm_detail_t'), 'Sam');
+        };
+        await openIt();
+        t.w.WTS_nav('home');
+        assert(!t.el('adm_detail_ov'), 'closed on navigation');
+        await openIt();
+        t.fake.fault({ path: '/api/v1/me', mode: 'signed_out', times: 2 });
+        await t.acct().refresh().catch(() => null);
+        await t.settle(20);
+        await t.until(() => t.acct().state().status !== 'signedIn', 'signed out');
+        assert(!t.el('adm_detail_ov'), 'closed when signed out');
       } finally { t.dispose(); }
     },
   },

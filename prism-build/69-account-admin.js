@@ -581,6 +581,8 @@
   var lastAdmin = null;
   function onState() {
     var now = isAdmin();
+    // signed out, or no longer an admin: the user detail panel (on document.body, outside the page) closes too (review fix)
+    if (!now && HAS_DOC && $('adm_detail_ov')) closeDetail();
     if (now === lastAdmin) return;
     lastAdmin = now;
     if (registered && onRoute()) render($('pgBody'));
@@ -588,6 +590,12 @@
   (function boot() {
     var a = A();
     if (a && typeof a.on === 'function') a.on('state', onState);
+    // the detail panel belongs to the admin route: any navigation elsewhere (Back, a link, a shortcut) closes it (review fix;
+    // the host fires h2oil:pagechange from nav())
+    if (HAS_DOC && document.addEventListener) document.addEventListener('h2oil:pagechange', function (ev) {
+      var pg = ev && ev.detail ? ev.detail.page : null;
+      if (pg !== 'admin' && $('adm_detail_ov')) closeDetail();
+    });
     // a load with #admin opens the page (it shows "Not available" until /me says admin:true)
     if (String(L.hash || '') === '#admin' && a && a.betaEnabled && a.betaEnabled() && HAS_DOC) {
       var go = function () { if (register()) open(); };
