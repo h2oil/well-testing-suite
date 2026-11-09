@@ -173,10 +173,17 @@ function createFakeServer(o) {
     const u = { id: uuid(), email, recovery: null, status: 'active', created: iso(), signupMethod: method, terms: config.terms,
       privacy: config.privacy, consentedAt: consentAt || iso(), quota: o.quota || 250000000, used: 0, opts: { historian: false, liveCfg: false },
       lib: { rev: 0, hash: null, savedAt: null, body: null }, deleteAt: null, outboxKey: crypto.randomBytes(32).toString('base64'),
-      emailChangedAt: null, prev: null, pendingEmail: null, pendingRecovery: null, lastSignInAt: null };
+      emailChangedAt: null, prev: null, pendingEmail: null, pendingRecovery: null, lastSignInAt: null, profile: null };
     S.users.set(u.id, u); setEmailIndex(u);
     audit(u.id, 'signup', { method });
     return u;
+  }
+  // user insight: the optional profile (ProfileReq, already shape-checked) → the stored profile; empty strings → null
+  const PROFILE_KEYS = ['fullName', 'company', 'jobTitle', 'country', 'phone'];
+  function profileOf(p, prev) {
+    const out = {}; PROFILE_KEYS.forEach((k) => { out[k] = prev ? prev[k] : null; });
+    PROFILE_KEYS.forEach((k) => { if (p && p[k] !== undefined) { const v = p[k] == null ? '' : String(p[k]).trim(); out[k] = v ? v : null; } });
+    return out;
   }
   function consentOk(c) { return !!c && c.terms === config.terms && c.privacy === config.privacy; }
   function signupAllowed(email) {
@@ -355,6 +362,7 @@ function createFakeServer(o) {
       if (!u) {
         if (signupAllowed(email)) fail('invalid_or_expired');
         u = createUser(email, 'code'); first = true;
+        if (b.profile) u.profile = profileOf(b.profile);
       }
       const { d, isNew } = deviceFor(u, ctx, b.deviceLabel, b.publicDevice);
       const s = newSession(ctx, u, { publicDevice: b.publicDevice, deviceId: d.id, method: 'code', stepup: true });
@@ -532,6 +540,7 @@ function createFakeServer(o) {
         if (!consentOk(b.consent)) fail('consent_required', { terms: config.terms, privacy: config.privacy });
         if (findAccount(a.pending.email)) { endAttempt(ctx, a); fail('oauth_state'); }
         const u = createUser(a.pending.email, p);
+        if (b.profile) u.profile = profileOf(b.profile);
         return providerSignIn(ctx, a, u, linkIdentity(u, a, 'signup'), { stepup: !!a.pending.proved, first: true });
       }
       if (a.step) fail('oauth_state');
@@ -590,6 +599,7 @@ function createFakeServer(o) {
         passkeys: [], identities: identityList(u.id).map((i) => ({ id: i.id, provider: i.provider, linkedAt: i.linkedAt, lastUsedAt: i.lastUsedAt })),
         devices: Array.from(S.devices.values()).filter((d) => d.userId === u.id && !d.revoked).map((d) => ({ id: d.id, label: d.label, lastSeen: d.lastSeen, current: d.id === s.deviceId })),
         minClient: config.minClient,
+        profile: u.profile ? Object.assign({}, u.profile) : null,
       } };
     },
     outboxKey(ctx) { const { u } = sessionOf(ctx); return { status: 200, body: { k: u.outboxKey } }; },
@@ -656,6 +666,7 @@ function createFakeServer(o) {
       const r = { rev: headRev + 1, savedAt: iso(), device: s.deviceId || null, coreHash: b.core.hash, vhash: b.core.vhash, parts: b.parts.map((x) => ({ name: x.name, hash: x.hash, bytes: x.bytes })), bytes, reason: b.reason };
       if (b.core.inline !== undefined) r.coreInline = b.core.inline;
       p.revs.push(r); p.meta = { client: b.meta.client, well: b.meta.well, field: b.meta.field, operator: b.meta.operator }; p.name = b.meta.name || p.name; p.wells = b.wells.length;
+      if (b.summary) p.summary = JSON.parse(JSON.stringify(b.summary));   // user insight: the latest summary per project
       const res = { rev: r.rev, savedAt: r.savedAt }; S.receipts.set(rk, res);
       return { status: 200, body: res };
     },
@@ -728,6 +739,12 @@ function createFakeServer(o) {
       ctx.setCookie(C.COOKIES.session, null);
       send(u.email, 'notice_delete_requested', { deleteAt: iso(u.deleteAt) });
       return { status: 200, body: { ok: true, deleteAt: iso(u.deleteAt) } };
+    },
+    profileUpdate(ctx) {
+      const { u } = sessionOf(ctx); notDeleting(u);
+      u.profile = profileOf(ctx.body, u.profile);
+      audit(u.id, 'profile', {});
+      return { status: 200, body: { profile: Object.assign({}, u.profile) } };
     },
     accountDeleteCancel(ctx) {
       const { u } = sessionOf(ctx);

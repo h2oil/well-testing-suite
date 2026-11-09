@@ -288,7 +288,7 @@
 
   // ── dialog (§11.2) ─────────────────────────────────────────────────────────────────────────────────────────────────
   var dlg = { open: false, mode: null, step: null, email: '', publicDevice: false, consent: null, opener: null, resolve: null,
-    choice: null, onKey: null, signup: false };
+    choice: null, onKey: null, signup: false, profile: null };
   var hooks = { renderProviders: null, onPublicSignOut: null };
   var MSG = {
     network: 'Sign-in needs a connection. Your work keeps saving on this device.',
@@ -385,6 +385,14 @@
       '.acct-wc-opt p{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--text2,#ccc)}',
       '.acct-wc-opt .btn{width:100%;min-height:42px;font-size:15px}',
       '.acct-link{background:none;border:0;padding:0;color:var(--blue,#58a6ff);text-decoration:underline;cursor:pointer;font:inherit}',
+      // the optional profile (sign-up step, provider consent step, Account page): two columns, one at phone width
+      '.acct-pf-set{border:1px solid var(--border,#444);border-radius:8px;padding:6px 12px 12px;margin:12px 0}.acct-pf-set legend{font-size:13px;font-weight:600;padding:0 4px;color:var(--text,#eee)}',
+      '.acct-pf-set .acct-note{margin:2px 0 4px}',
+      '.acct-pf{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.acct-pf .acct-pf-fullName{grid-column:1 / -1}',
+      '.acct-pf label{display:block;margin:10px 0 4px;font-size:13px;color:var(--text2,#ccc)}.acct-opt{color:var(--text3,#999);font-weight:400;font-size:12px}',
+      '.acct-pf input,.acct-pf select{width:100%;box-sizing:border-box;font-size:16px;min-height:40px;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#555);background:var(--bg,#111);color:var(--text,#eee)}',
+      '#acct_root .acct-pf{max-width:640px}',
+      '@media (max-width:600px){.acct-pf{grid-template-columns:1fr}}',
     ].join('\n');
     (document.head || document.body).appendChild(st);
   }
@@ -417,7 +425,7 @@
     if (dlg.onKey && HAS_DOC) document.removeEventListener('keydown', dlg.onKey);
     dlg.onKey = null;
     var wasOpen = dlg.open;
-    dlg.open = false; dlg.step = null; dlg.signup = false;
+    dlg.open = false; dlg.step = null; dlg.signup = false; dlg.profile = null;
     var ch = dlg.choice; dlg.choice = null;
     if (ch) ch(null);
     var r = dlg.resolve; dlg.resolve = null;
@@ -564,13 +572,14 @@
     dlg.code = code;
     var req = { email: dlg.email, code: code, publicDevice: !!dlg.publicDevice, deviceLabel: deviceLabel() };
     if (consent) req.consent = consent;
+    if (consent && dlg.profile && !profileEmpty(dlg.profile)) req.profile = cleanProfile(dlg.profile);
     var btn = $('acct_verify') || $('acct_create'); if (btn) btn.disabled = true;
     return call('POST', '/auth/code/verify', req).then(function (r) {
       dlg.code = null;
       return completeSignIn(r.json, { method: 'code' }).then(function () { return true; });
     }, function (e) {
       if (btn) btn.disabled = false;
-      if (e && e.code === 'consent_required') { setStep('consent', { terms: e.body && e.body.terms, privacy: e.body && e.body.privacy }); return false; }
+      if (e && e.code === 'consent_required') { setStep('consent', { terms: e.body && e.body.terms, privacy: e.body && e.body.privacy, countryHint: e.body && e.body.countryHint }); return false; }
       message(errText(e), 'err');
       return false;
     });
@@ -580,16 +589,107 @@
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
+      '<fieldset class="acct-pf-set"><legend>About you <span class="acct-opt">(optional)</span></legend><p class="acct-note" id="acct_pf_note">' + esc(PROFILE_NOTE) + '</p>' +
+      profileFormHtml('acct_su', dlg.profile, { countryHint: data.countryHint }) + '</fieldset>' +
+      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"><span>I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</span></label>' +
       '<p class="acct-note">Your account and projects are stored encrypted in the United States (larger project files in the EU). You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
     $('acct_create').addEventListener('click', function () {
       if (!$('acct_consent_ok').checked) { message('Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.', 'err'); return; }
+      dlg.profile = readProfile('acct_su');
       verifyCode(dlg.consent);
     });
     $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
   }
+
+  // ── the optional profile (user insight; server: PUT /account/profile, GET /me profile, sign-up profile?) ──────────────
+  // Five self-declared fields, every one optional: full name, company (their employer), job title, country (ISO 3166-1
+  // alpha-2, from a list) and phone. Shown on the new-account step of both sign-in dialogs and on the Account page ("Your
+  // profile"). Strings are trimmed and capped; an empty field is null; nothing is sent when every field is empty. The fields
+  // live in the dialogs / the account route, outside #pgBody's autosave, so nothing typed is stored on the device.
+  var PROFILE_FIELDS = [
+    { k: 'fullName', label: 'Full name', max: 80, ac: 'name' },
+    { k: 'company', label: 'Company', max: 120, ac: 'organization' },
+    { k: 'jobTitle', label: 'Job title', max: 80, ac: 'organization-title' },
+    { k: 'country', label: 'Country', max: 2 },
+    { k: 'phone', label: 'Phone', max: 40, ac: 'tel' },
+  ];
+  // ISO 3166-1 alpha-2 (officially assigned codes)
+  var COUNTRY_CODES = ('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
+    'CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE ' +
+    'GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP ' +
+    'KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF ' +
+    'NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN ' +
+    'SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ' +
+    'ZM ZW').split(' ');
+  var regionNames = null;
+  try { if (G.Intl && typeof G.Intl.DisplayNames === 'function') regionNames = new G.Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) { regionNames = null; }
+  function countryCode(c) { c = String(c == null ? '' : c).trim().toUpperCase(); return /^[A-Z]{2}$/.test(c) ? c : null; }
+  function countryName(code) {
+    var c = countryCode(code); if (!c) return '';
+    var n = null; try { n = regionNames ? regionNames.of(c) : null; } catch (e) { n = null; }
+    return n && n !== c ? String(n) : c;
+  }
+  var countryList = null;
+  function countries() {
+    if (!countryList) countryList = COUNTRY_CODES.map(function (c) { return { code: c, name: countryName(c) }; })
+      .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+    return countryList;
+  }
+  // cleanProfile(p) → {fullName, company, jobTitle, country, phone} with every key present (null when empty), or null for a
+  // non-object. Control characters become spaces; text is trimmed and capped; a country that is not a two-letter code is null.
+  function cleanProfile(p) {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+    var out = {};
+    PROFILE_FIELDS.forEach(function (f) {
+      var v = p[f.k];
+      if (f.k === 'country') { out.country = countryCode(v); return; }
+      v = v == null ? '' : String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, f.max).trim();
+      out[f.k] = v || null;
+    });
+    return out;
+  }
+  function profileEmpty(p) { var c = cleanProfile(p); return !c || PROFILE_FIELDS.every(function (f) { return c[f.k] == null; }); }
+  // profileFormHtml(prefix, profile, {countryHint, compact}) — the five fields; ids <prefix>_pf_<key>; every value escaped
+  function profileFormHtml(prefix, profile, o) {
+    o = o || {};
+    var p = cleanProfile(profile) || {};
+    var sel = p.country || countryCode(o.countryHint) || '';
+    return '<div class="acct-pf" id="' + prefix + '_pf">' + PROFILE_FIELDS.map(function (f) {
+      var id = prefix + '_pf_' + f.k;
+      var lab = '<label for="' + id + '">' + esc(f.label) + ' <span class="acct-opt">(optional)</span></label>';
+      if (f.k === 'country') {
+        return '<div class="acct-pf-f acct-pf-country">' + lab + '<select id="' + id + '" autocomplete="country"><option value="">Choose…</option>' +
+          countries().map(function (c) { return '<option value="' + c.code + '"' + (c.code === sel ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('') +
+          '</select></div>';
+      }
+      return '<div class="acct-pf-f acct-pf-' + f.k + '">' + lab + '<input type="' + (f.k === 'phone' ? 'tel' : 'text') + '" id="' + id + '" maxlength="' + f.max + '"' +
+        (f.ac ? ' autocomplete="' + f.ac + '"' : '') + ' spellcheck="false" data-acct-skip="1" value="' + esc(p[f.k] || '') + '"></div>';
+    }).join('') + '</div>';
+  }
+  // readProfile(prefix, root?) → the cleaned profile of the fields on screen (root: a container to search in, for the
+  // provider dialog's nodes), or null when the fields are not there
+  function readProfile(prefix, root) {
+    var get = function (id) { try { return root && root.querySelector ? root.querySelector('#' + id) : $(id); } catch (e) { return null; } };
+    if (!get(prefix + '_pf_fullName')) return null;
+    var raw = {};
+    PROFILE_FIELDS.forEach(function (f) { var e = get(prefix + '_pf_' + f.k); raw[f.k] = e ? e.value : null; });
+    return cleanProfile(raw);
+  }
+  function profile() { return current.me && current.me.profile ? cleanProfile(current.me.profile) : null; }
+  // saveProfile(p) → Promise<profile>: PUT /account/profile; the answer replaces the profile of the state
+  function saveProfile(p) {
+    var body = cleanProfile(p);
+    if (!body) return Promise.reject(new AccountError('bad_request', 0, { error: 'bad_request', field: 'profile' }));
+    return call('PUT', '/account/profile', body).then(function (r) {
+      var np = cleanProfile(r.json && r.json.profile) || body;
+      if (current.me) current.me.profile = np;
+      fire('state', state());
+      return np;
+    }, handleError);
+  }
+  var PROFILE_NOTE = 'All optional. It helps us support you and understand who uses the app; you can change or clear it on the Account page at any time.';
 
   // openSignIn(opts) → Promise<state|null>: resolves with the state once signed in, null when the dialog is closed.
   function openSignIn(opts) {
@@ -1221,6 +1321,7 @@
     refresh: refresh, openSignIn: openSignIn, signOut: signOut, stepUp: stepUp, withStepUp: withStepUp,
     changeEmail: changeEmail, confirmEmail: confirmEmail, setRecovery: setRecovery, confirmRecovery: confirmRecovery, removeRecovery: removeRecovery,
     cancelDeletion: cancelDeletion, revertEmail: revertEmail, openRevert: openRevert, mount: mount, isAdmin: isAdmin,
+    profile: profile, saveProfile: saveProfile, cleanProfile: cleanProfile, countryName: countryName, countries: countries,
     welcome: { due: welcomeDue, maybe: maybeWelcome, open: openWelcome, close: closeWelcome, pref: welcomePref, EVERY: WELCOME_EVERY },
     addPasskey: notYet('addPasskey'), removePasskey: notYet('removePasskey'), renamePasskey: notYet('renamePasskey'),
     // signInWith, finishProviderSignIn, methods, linkProvider, unlinkMethod, providerSignOutNeeded, oauthReturn, oauthUI:
@@ -1229,7 +1330,8 @@
     _i: { completeSignIn: completeSignIn, choose: choose, setStep: setStep, message: message, openDialog: openDialog, closeDialog: closeDialog,
       readHint: readHint, writeHint: writeHint, recentMethodsText: recentMethodsText, handleError: handleError, errText: errText, cloudErrText: cloudErrText, esc: esc, toast: toast,
       signedOutLocal: signedOutLocal, renderChip: renderChip, renderBar: renderBar, cloudAction: cloudAction, isOnline: isOnline, now: now,
-      deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; } },
+      deviceLabel: deviceLabel, isOutage: isOutage, ensureCss: ensureCss, appVer: appVer, dialogOpen: function () { return dlg.open; },
+      profileFormHtml: profileFormHtml, readProfile: readProfile, profileEmpty: profileEmpty, PROFILE_FIELDS: PROFILE_FIELDS, PROFILE_NOTE: PROFILE_NOTE },
   };
   G.WTS_account = api;
 
@@ -1444,7 +1546,7 @@
     // the hand-over question.
     var dlg = null; var dlgOpener = null; var dlgEscape = true;
     function focusables() {
-      return dlg ? Array.prototype.filter.call(dlg.querySelectorAll('button, input'), function (n) { return !n.disabled; }) : [];
+      return dlg ? Array.prototype.filter.call(dlg.querySelectorAll('button, input, select'), function (n) { return !n.disabled; }) : [];
     }
     function dlgKey(ev) {
       if (!ev) return;
@@ -1569,7 +1671,12 @@
         // the same explicit tick as the e-mail path, naming the versions (review fix): Create is refused until it is ticked
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
         var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
+        // the optional profile (user insight): the shared markup (every value escaped), read back on Create
+        var pfs = el('fieldset', { 'class': 'acct-pf-set' });
+        pfs.innerHTML = '<legend>About you <span class="acct-opt">(optional)</span></legend><p class="acct-note">' + esc(api._i.PROFILE_NOTE) + '</p>' +
+          api._i.profileFormHtml('acct_oauth_su', null, { countryHint: j.countryHint });
         show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
+          pfs,
           el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', {}, [el('span', { text: ' I am 18 or over. I accept the ' }),
             el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
             el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
@@ -1578,7 +1685,8 @@
           cerr,
           btn('acct_oauth_create', 'Create account', true, function () {
             if (!tick.checked) { cerr.textContent = 'Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.'; return; }
-            drive(p, { consent: c }, oa);
+            var pf = api._i.readProfile('acct_oauth_su', pfs);
+            drive(p, pf && !api._i.profileEmpty(pf) ? { consent: c, profile: pf } : { consent: c }, oa);
           }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);
         return j;

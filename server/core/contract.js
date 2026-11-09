@@ -48,7 +48,7 @@ const ERRORS = {
   signup_closed:      { status: 403, extra: [], text: 'New accounts are not open right now.' },
   not_found:          { status: 404, extra: [], text: 'Not found.' },
   stale:              { status: 409, extra: ['headRev?', 'head?', 'rev?', 'hash?'], text: 'The cloud copy changed.' },
-  consent_required:   { status: 409, extra: ['terms?', 'privacy?'], text: 'Accept the current Terms of Use and Privacy notice.' },
+  consent_required:   { status: 409, extra: ['terms?', 'privacy?', 'countryHint?'], text: 'Accept the current Terms of Use and Privacy notice.' },
   immutable:          { status: 409, extra: [], text: 'That part is already stored.' },
   identity_in_use:    { status: 409, extra: [], text: 'That sign-in is linked to another account.' },
   provider_linked:    { status: 409, extra: [], text: 'The account already has a sign-in of that provider.' },
@@ -269,7 +269,8 @@ S.FinishDone = { next: "'done'", user: '@UserBrief', firstSignIn: 'bool', device
 S.FinishLinked = { next: "'done'", linked: '@IdentityMethod' };
 S.FinishEmail = { next: "'email'", reason: "'missing'|'unverified'|'unmanaged'", 'emailPrefill?': orNull('email') };
 S.FinishCode = { next: "'code'", emailMasked: 'masked', reason: "'verify'|'link_existing'|'link_confirm'|'cancel_deletion'" };
-S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr' };
+// countryHint? (user insight): the country the platform detected for this connection, the sign-up profile's default
+S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr', 'countryHint?': orNull('str') };
 S.FinishRes = oneOf('next', {
   done: (v, p, ctx) => checkNamed(v && v.linked !== undefined ? 'FinishLinked' : 'FinishDone', v, p, ctx),
   email: '@FinishEmail', code: '@FinishCode', consent: '@FinishConsent',

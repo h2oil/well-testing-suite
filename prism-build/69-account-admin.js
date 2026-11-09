@@ -7,7 +7,11 @@
 // a normal account, or the server answering 404 not_found — sees "Not available". It is opened from the account chip menu
 // ("Admin dashboard"), the account page, or a load with #admin.
 //
-// API (server/, shared contract): GET /admin/summary, GET /admin/users?limit&cursor&q, GET / POST /admin/invites. Every server
+// User insight (v4.0 follow-up): each user row also shows the optional self-declared profile (name, company, job title) and the
+// work context gathered from their cloud projects' summaries (wells, clients, fields); a row opens a detail panel (GET
+// /admin/users/:id: profile, e-mail, locations, sign-in method, dates, storage and every project with its summary); the
+// summary adds Top companies / clients / fields; the CSV carries every new column.
+// API (server/, shared contract): GET /admin/summary, GET /admin/users?limit&cursor&q, GET /admin/users/:id, GET / POST /admin/invites. Every server
 // string is escaped before it reaches innerHTML. Plain .card / .kpi / table.dtable / canvas-in-.chart-wrap markup; the route is
 // in the host skip tables (no autosave, no report snapshot, no recent tile, no page-export bar) and the root carries
 // data-acct-skip, so nothing typed here (search, invite address) is ever stored. No timers, polling or function wrapping.
@@ -100,12 +104,40 @@
       '#adm_root table.dtable thead{display:none}#adm_root table.dtable,#adm_root table.dtable tbody,#adm_root table.dtable tr,#adm_root table.dtable td{display:block;width:100%;box-sizing:border-box}',
       '#adm_root table.dtable tr{border-bottom:1px solid var(--border,#444);padding:6px 0}#adm_root table.dtable td{border:0;padding:2px 0}',
       '#adm_root table.dtable td[data-label]:before{content:attr(data-label) ": ";color:var(--text3,#999);font-size:11px}}',
+      // user insight: the richer users table, the top tables and the user detail panel
+      '#adm_root #adm_users_table td,#adm_detail_ov table.dtable td{vertical-align:top}',
+      '#adm_root .adm-strong,#adm_detail_ov .adm-strong{font-weight:600;color:var(--text,#eee)}',
+      '#adm_root .adm-lines{display:block;font-size:12px;color:var(--text3,#999);margin-top:2px}',
+      '#adm_root .adm-badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:8px;border:1px solid var(--border,#555);margin-left:6px;color:var(--text2,#bbb)}',
+      '#adm_root #adm_users_table tbody tr{cursor:pointer}#adm_root #adm_users_table tbody tr:hover{background:var(--bg2,#161b22)}',
+      '#adm_root .adm-open{white-space:nowrap}',
+      '#adm_root .adm-tops{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}#adm_root .adm-tops h4{margin:0 0 6px;font-size:13px;color:var(--text2,#bbb)}',
+      '#adm_root .adm-tops table.dtable{width:100%}',
+      '#adm_detail_ov.acct-ov{display:block}#adm_detail_ov .acct-dlg{max-width:1040px;margin:0 auto}',
+      '#adm_detail_ov .rv{font-family:inherit;font-weight:400;color:var(--text,#eee);font-size:13px}',
+      '#adm_root .adm-open{padding:4px 10px;font-size:12px;min-height:0}',
+      '#adm_root #adm_users_table td[data-label="Wells"],#adm_root #adm_users_table td[data-label="Country / city"]{min-width:104px}',
+      '#adm_root #adm_users_table td[data-label="Company / job title"]{min-width:120px}',
+      '#adm_detail_ov .adm-dgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:8px 0 14px}',
+      '#adm_detail_ov .adm-box{border:1px solid var(--border,#30363d);border-radius:8px;padding:10px 12px;background:var(--bg1,#0d1117)}',
+      '#adm_detail_ov .adm-box h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3,#999)}',
+      '#adm_detail_ov .rrow{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px;border-bottom:1px dashed var(--border,#30363d)}',
+      '#adm_detail_ov .rrow:last-child{border-bottom:0}#adm_detail_ov .rl{color:var(--text3,#999);flex:0 0 auto}#adm_detail_ov .rv{text-align:right;min-width:0;overflow-wrap:anywhere}',
+      '#adm_detail_ov .adm-scroll{overflow-x:auto}#adm_detail_ov table.dtable{width:100%;font-size:12px}',
+      '#adm_detail_ov .adm-sub{font-size:12px;color:var(--text3,#999)}#adm_detail_ov .adm-flag{font-size:15px;margin-right:5px}',
+      '#adm_detail_ov .adm-msg[data-kind=err]{color:#ff8a80}',
+      '@media (max-width:900px){#adm_root .adm-tops,#adm_detail_ov .adm-dgrid{grid-template-columns:1fr}}',
+      '@media (max-width:600px){#adm_detail_ov table.dtable thead{display:none}#adm_detail_ov table.dtable,#adm_detail_ov table.dtable tbody,#adm_detail_ov table.dtable tr,#adm_detail_ov table.dtable td{display:block;width:100%;box-sizing:border-box}',
+      '#adm_detail_ov table.dtable tr{border-bottom:1px solid var(--border,#444);padding:6px 0}#adm_detail_ov table.dtable td{border:0;padding:2px 0}',
+      '#adm_detail_ov table.dtable td[data-label]:before{content:attr(data-label) ": ";color:var(--text3,#999);font-size:11px}#adm_detail_ov table.dtable td.adm-empty{display:none}',
+      '#adm_root .adm-open{width:100%;min-height:40px;font-size:14px}}',
     ].join('\n');
     (document.head || document.body).appendChild(st);
   }
   function render(body) {
     if (!body) return false;
     ensureCss();
+    if ($('adm_detail_ov')) closeDetail();
     if (!isAdmin()) {
       body.innerHTML = '<div id="adm_root" data-acct-skip="1"><div class="card"><div class="card-title">Admin dashboard</div>' +
         '<p id="adm_na">Not available.</p></div></div>';
@@ -119,6 +151,11 @@
       '<div class="adm-kpis" id="adm_kpis"></div><div id="adm_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
       '<div class="card" id="adm_card_countries"><div class="card-title">Users by country</div><div id="adm_countries" class="adm-scroll"><p>Loading…</p></div>' +
       '<p class="adm-sub">Country of the last sign-in, else of the sign-up (from the hosting edge; no IP address is stored). Unknown = not sent or not valid.</p></div>' +
+      '<div class="card" id="adm_card_tops"><div class="card-title">Companies, clients and fields</div>' +
+      '<div class="adm-tops"><div><h4>Top companies</h4><div id="adm_top_companies"><p>Loading…</p></div></div>' +
+      '<div><h4>Top clients</h4><div id="adm_top_clients"><p>Loading…</p></div></div>' +
+      '<div><h4>Top fields</h4><div id="adm_top_fields"><p>Loading…</p></div></div></div>' +
+      '<p class="adm-sub">Companies from the optional profiles users gave; clients and fields from the summaries of their cloud projects (latest save of each project).</p></div>' +
       '<div class="card" id="adm_card_signups"><div class="card-title">Sign-ups per day (last 90 days)</div>' +
       '<div class="chart-wrap"><canvas id="adm_chart" width="900" height="220" role="img" aria-label="Sign-ups per day, last 90 days"></canvas></div>' +
       '<p class="adm-sub" id="adm_signups_total"></p><div id="adm_methods" class="adm-sub"></div></div>' +
@@ -126,6 +163,7 @@
       '<div class="adm-bar"><input type="search" id="adm_q" placeholder="Search by e-mail" aria-label="Search users by e-mail" maxlength="254" autocomplete="off" spellcheck="false">' +
       '<button type="button" class="btn btn-secondary" id="adm_search">Search</button>' +
       '<button type="button" class="btn btn-secondary" id="adm_csv">Export CSV</button></div>' +
+      '<p class="adm-sub">Click a user for the details: profile, e-mail, locations and every cloud project with its wells, client, operator and field.</p>' +
       '<div id="adm_users" class="adm-scroll"><p>Loading…</p></div>' +
       '<div class="adm-bar" style="margin-top:8px"><button type="button" class="btn btn-secondary" id="adm_more" hidden>Load more</button>' +
       '<span class="adm-sub" id="adm_users_count"></span></div><div id="adm_users_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
@@ -151,6 +189,13 @@
     on('adm_csv', 'click', function () { exportCsv(); });
     on('adm_inv_send', 'click', function () { invite(); });
     on('adm_inv_email', 'keydown', function (ev) { if (ev && ev.key === 'Enter') invite(); });
+    // a click anywhere on a user row (or Enter / Space on its Details button) opens the detail panel
+    on('adm_users', 'click', function (ev) {
+      var n = ev && ev.target;
+      while (n && n.id !== 'adm_users' && !(n.getAttribute && n.getAttribute('data-id'))) n = n.parentNode;
+      var id = n && n.getAttribute ? n.getAttribute('data-id') : null;
+      if (id) openDetail(id);
+    });
   }
   function search() { var q = $('adm_q'); view.q = q ? String(q.value || '').trim().slice(0, 254) : ''; return loadUsers(false); }
 
@@ -200,7 +245,18 @@
     var m = $('adm_methods');
     var ms = Array.isArray(s.byMethod) ? s.byMethod : [];
     if (m) m.textContent = ms.length ? 'Sign-in method: ' + ms.map(function (x) { return methodName(x && x.method) + ' ' + int(x && x.users); }).join(' · ') : '';
+    drawTop('adm_top_companies', s.byCompany, 'company', 'users', 'Company', 'Users', 'No profiles with a company yet.');
+    drawTop('adm_top_clients', s.topClients, 'client', 'projects', 'Client', 'Projects', 'No project summaries yet.');
+    drawTop('adm_top_fields', s.topFields, 'field', 'projects', 'Field', 'Projects', 'No project summaries yet.');
     drawChart();
+  }
+  // one "top" table (byCompany / topClients / topFields): name and count, at most 20 rows; every name escaped
+  function drawTop(id, rows, key, nkey, head, nhead, none) {
+    var el = $(id); if (!el) return;
+    rows = Array.isArray(rows) ? rows.filter(function (r) { return r && String(r[key] == null ? '' : r[key]).trim(); }).slice(0, 20) : [];
+    el.innerHTML = rows.length ? '<table class="dtable" id="' + id + '_table"><thead><tr><th>' + esc(head) + '</th><th>' + esc(nhead) + '</th></tr></thead><tbody>' +
+      rows.map(function (r) { return '<tr><td data-label="' + esc(head) + '">' + esc(r[key]) + '</td><td data-label="' + esc(nhead) + '">' + int(r[nkey]) + '</td></tr>'; }).join('') +
+      '</tbody></table>' : '<p class="adm-sub">' + esc(none) + '</p>';
   }
   // the last 90 days ending on the summary's day (UTC) → [{day, n}], every day present
   function days90() {
@@ -293,15 +349,36 @@
     return '<span class="adm-flag" aria-hidden="true">' + esc(flag(c)) + '</span>' + esc(countryName(c)) + (city ? ', ' + esc(city) : '') +
       (u.signupCountry && cc(u.signupCountry) && cc(u.signupCountry) !== cc(u.lastCountry) ? ' <span class="adm-sub">(signed up in ' + esc(cc(u.signupCountry)) + ')</span>' : '');
   }
+  // the optional profile and the work context of a row (older servers send neither: shown as —)
+  function prof(u) { var p = u && u.profile; return p && typeof p === 'object' ? p : {}; }
+  function work(u) { var w = u && u.work; return w && typeof w === 'object' ? w : {}; }
+  function strs(a) { return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string' && x.trim(); }) : []; }
+  // a short list: the first n names and "+k more"; every name escaped
+  function few(a, n) {
+    a = strs(a); if (!a.length) return '—';
+    return esc(a.slice(0, n).join(', ')) + (a.length > n ? ' <span class="adm-sub">+' + (a.length - n) + ' more</span>' : '');
+  }
+  function wellsCell(u) {
+    var a = strs(work(u).wells); if (!a.length) return '—';
+    return '<span class="adm-strong">' + int(a.length) + '</span> <span class="adm-sub">' + esc(a.slice(0, 3).join(', ')) + (a.length > 3 ? ', …' : '') + '</span>';
+  }
   function drawUsers() {
     var el = $('adm_users'); if (!el) return;
     var list = view.users;
-    el.innerHTML = list.length ? '<table class="dtable" id="adm_users_table"><thead><tr><th>E-mail</th><th>Method</th><th>Country / city</th><th>Joined</th><th>Last sign-in</th><th>Projects</th><th>Storage</th><th>Status</th></tr></thead><tbody>' +
+    el.innerHTML = list.length ? '<table class="dtable" id="adm_users_table"><thead><tr><th>Name / e-mail</th><th>Company / job title</th><th>Country / city</th><th>Wells</th><th>Client(s)</th><th>Field(s)</th>' +
+      '<th>Method</th><th>Joined / last sign-in</th><th>Projects</th><th></th></tr></thead><tbody>' +
       list.map(function (u) {
         u = u || {};
-        return '<tr data-id="' + esc(u.id) + '"><td data-label="E-mail">' + esc(u.email) + '</td><td data-label="Method">' + esc(methodName(u.method)) + '</td>' +
-          '<td data-label="Country / city">' + place(u) + '</td><td data-label="Joined" class="adm-nw">' + day(u.createdAt) + '</td><td data-label="Last sign-in" class="adm-nw">' + when(u.lastSignInAt) + '</td>' +
-          '<td data-label="Projects">' + int(u.projects) + '</td><td data-label="Storage">' + esc(bytes(u.usedBytes)) + '</td><td data-label="Status">' + esc(u.status || '') + '</td></tr>';
+        var p = prof(u);
+        var st = u.status && u.status !== 'active' ? '<span class="adm-badge">' + esc(u.status) + '</span>' : '';
+        return '<tr data-id="' + esc(u.id) + '"><td data-label="Name / e-mail">' + (p.fullName ? '<span class="adm-strong">' + esc(p.fullName) + '</span>' + st + '<span class="adm-lines">' + esc(u.email) + '</span>' : esc(u.email) + st) + '</td>' +
+          '<td data-label="Company / job title">' + (p.company ? esc(p.company) : '—') + (p.jobTitle ? '<span class="adm-lines">' + esc(p.jobTitle) + '</span>' : '') + '</td>' +
+          '<td data-label="Country / city">' + place(u) + '</td>' +
+          '<td data-label="Wells">' + wellsCell(u) + '</td><td data-label="Client(s)">' + few(work(u).clients, 2) + '</td><td data-label="Field(s)">' + few(work(u).fields, 2) + '</td>' +
+          '<td data-label="Method">' + esc(methodName(u.method)) + '</td>' +
+          '<td data-label="Joined / last sign-in" class="adm-nw">' + day(u.createdAt) + '<span class="adm-lines">' + when(u.lastSignInAt) + '</span></td>' +
+          '<td data-label="Projects" class="adm-nw">' + int(u.projects) + '<span class="adm-lines">' + esc(bytes(u.usedBytes)) + '</span></td>' +
+          '<td><button type="button" class="btn btn-secondary adm-open" data-id="' + esc(u.id) + '" aria-label="Details of ' + esc(u.email) + '">Details</button></td></tr>';
       }).join('') + '</tbody></table>' : '<p id="adm_users_empty">' + (view.q ? 'No user matches the search.' : 'No users yet.') + '</p>';
     var more = $('adm_more'); if (more) { more.hidden = !view.next; more.disabled = false; }
     say('adm_users_count', list.length ? list.length + ' user' + (list.length === 1 ? '' : 's') + ' shown' + (view.next ? ' (more available)' : '') : '');
@@ -313,10 +390,18 @@
     if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
+  // the columns: the account's own fields, then the optional profile, then the work context (lists joined with "; ")
+  var CSV_BASE = ['email', 'method', 'status', 'createdAt', 'lastSignInAt', 'signupCountry', 'lastCountry', 'lastCity', 'projects', 'usedBytes'];
+  var CSV_PROFILE = [['fullName', 'fullName'], ['company', 'company'], ['jobTitle', 'jobTitle'], ['profileCountry', 'country'], ['phone', 'phone']];
+  var CSV_WORK = [['wells', 'wells'], ['clients', 'clients'], ['operators', 'operators'], ['fields', 'fields'], ['workCountries', 'countries'], ['lastProjectAt', 'lastProjectAt']];
   function csv() {
-    var head = ['email', 'method', 'status', 'createdAt', 'lastSignInAt', 'signupCountry', 'lastCountry', 'lastCity', 'projects', 'usedBytes'];
+    var head = CSV_BASE.concat(CSV_PROFILE.map(function (c) { return c[0]; }), CSV_WORK.map(function (c) { return c[0]; }));
     return [head.join(',')].concat(view.users.map(function (u) {
-      return head.map(function (k) { return csvCell(u ? u[k] : ''); }).join(',');
+      u = u || {};
+      var p = prof(u), w = work(u);
+      return CSV_BASE.map(function (k) { return csvCell(u[k]); })
+        .concat(CSV_PROFILE.map(function (c) { return csvCell(p[c[1]]); }))
+        .concat(CSV_WORK.map(function (c) { var v = w[c[1]]; return csvCell(Array.isArray(v) ? strs(v).join('; ') : v); })).join(',');
     })).join('\r\n') + '\r\n';
   }
   function exportCsv() {
@@ -330,6 +415,108 @@
     }
     say('adm_users_msg', 'CSV of ' + view.users.length + ' user' + (view.users.length === 1 ? '' : 's') + ' downloaded.', 'ok');
     return text;
+  }
+
+  // ── user detail panel (GET /admin/users/:id) ────────────────────────────────────────────────────────────────────────
+  // A modal panel over the page (the sign-in dialog's overlay classes; outside #pgBody, so nothing in it is autosaved or put
+  // in a report): the profile, e-mail, sign-up / last location, sign-in method, dates, storage, the work context and every
+  // cloud project with its summary. Escape, the close button or a click on the backdrop closes it and focus returns to the row.
+  var detail = { id: null, data: null, seq: 0, opener: null, onKey: null };
+  function rrow(label, value, id) { return '<div class="rrow"' + (id ? ' id="' + id + '"' : '') + '><span class="rl">' + esc(label) + '</span><span class="rv">' + value + '</span></div>'; }
+  function txt(v) { return v == null || v === '' ? '—' : esc(v); }
+  function placeOf(c, city) {
+    c = cc(c); if (!c && !city) return '—';
+    return '<span class="adm-flag" aria-hidden="true">' + esc(flag(c)) + '</span>' + esc(countryName(c)) + (city ? ', ' + esc(city) : '');
+  }
+  function closeDetail() {
+    var ov = $('adm_detail_ov');
+    if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    if (detail.onKey && HAS_DOC && document.removeEventListener) document.removeEventListener('keydown', detail.onKey, true);
+    detail.onKey = null; detail.id = null; detail.data = null; detail.seq++;
+    var o = detail.opener; detail.opener = null;
+    try { if (o && o.focus) o.focus(); } catch (e) { /* gone */ }
+  }
+  function openDetail(id) {
+    var a = A(); if (!a || !HAS_DOC || !id) return Promise.resolve(null);
+    ensureCss();
+    var u = view.users.filter(function (x) { return x && x.id === id; })[0] || { id: id };
+    if (!$('adm_detail_ov')) {
+      detail.opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+      var ov = document.createElement('div');
+      ov.id = 'adm_detail_ov'; ov.className = 'acct-ov rp-skip'; ov.setAttribute('data-rp-nosnap', '1'); ov.setAttribute('data-acct-skip', '1');
+      ov.innerHTML = '<div class="acct-dlg" id="adm_detail" role="dialog" aria-modal="true" aria-labelledby="adm_detail_t">' +
+        '<h3><span id="adm_detail_t"></span><button type="button" class="acct-x" id="adm_detail_x" aria-label="Close">&#215;</button></h3>' +
+        '<div id="adm_detail_body"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener('click', function (ev) { if (ev && ev.target === ov) closeDetail(); });
+      $('adm_detail_x').addEventListener('click', function () { closeDetail(); });
+      detail.onKey = function (ev) {
+        if (!ev || !$('adm_detail_ov')) return;
+        if (ev.key === 'Escape') { if (ev.preventDefault) ev.preventDefault(); closeDetail(); return; }
+        if (ev.key !== 'Tab') return;
+        var box = $('adm_detail'); if (!box || !box.querySelectorAll) return;
+        var f = Array.prototype.filter.call(box.querySelectorAll('button, a[href]'), function (n) { return !n.disabled; });
+        if (!f.length) return;
+        var i = f.indexOf(document.activeElement);
+        var n = ev.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i === -1 || i === f.length - 1 ? 0 : i + 1);
+        if (ev.preventDefault) ev.preventDefault();
+        try { f[n].focus(); } catch (e) { /* focus */ }
+      };
+      if (document.addEventListener) document.addEventListener('keydown', detail.onKey, true);
+    }
+    detail.id = id; detail.data = null;
+    var seq = ++detail.seq;
+    drawDetail(u, null, 'Loading…');
+    try { $('adm_detail_x').focus(); } catch (e) { /* focus */ }
+    return a.call('GET', '/admin/users/' + encodeURIComponent(id)).then(function (r) {
+      if (seq !== detail.seq) return null;
+      var j = (r && r.json) || {};
+      detail.data = j;
+      drawDetail(j.user || u, Array.isArray(j.projects) ? j.projects : [], '');
+      return j;
+    }, function (e) {
+      if (seq !== detail.seq) return null;
+      if (e && e.code === 'not_found' && !view.users.some(function (x) { return x && x.id === id; })) { closeDetail(); failed(e); return null; }
+      drawDetail(u, null, e && e.code === 'not_found' ? 'This user was not found (deleted?).' : errText(e), true);
+      return null;
+    });
+  }
+  function drawDetail(u, projects, note, isErr) {
+    var b = $('adm_detail_body'); if (!b) return;
+    u = u || {};
+    var p = prof(u), w = work(u);
+    var t = $('adm_detail_t'); if (t) t.textContent = p.fullName || u.email || 'User';
+    var pc = cc(p.country);
+    b.innerHTML = '<div class="adm-dgrid">' +
+      '<div class="adm-box" id="adm_d_profile"><h4>Profile (self-declared, optional)</h4>' +
+        rrow('Name', txt(p.fullName)) + rrow('E-mail', esc(u.email || '—'), 'adm_d_email') + rrow('Company', txt(p.company)) + rrow('Job title', txt(p.jobTitle)) +
+        rrow('Country', pc ? placeOf(pc, '') : '—') + rrow('Phone', txt(p.phone)) + '</div>' +
+      '<div class="adm-box" id="adm_d_account"><h4>Account</h4>' +
+        rrow('Sign-in method', esc(methodName(u.method))) + rrow('Status', txt(u.status)) + rrow('Joined', when(u.createdAt)) + rrow('Last sign-in', when(u.lastSignInAt)) +
+        rrow('Signed up from', placeOf(u.signupCountry, '')) + rrow('Last seen from', placeOf(u.lastCountry, u.lastCity)) +
+        rrow('Cloud projects', int(u.projects)) + rrow('Storage', esc(bytes(u.usedBytes))) + '</div>' +
+      '<div class="adm-box" id="adm_d_work"><h4>Work (from project summaries)</h4>' +
+        rrow('Wells', few(w.wells, 6)) + rrow('Clients', few(w.clients, 4)) + rrow('Operators', few(w.operators, 4)) + rrow('Fields', few(w.fields, 4)) +
+        rrow('Countries', few(w.countries, 4)) + rrow('Last project save', when(w.lastProjectAt)) + '</div>' +
+      '</div>' +
+      '<h4 style="margin:6px 0">Cloud projects</h4>' +
+      (note ? '<p id="adm_detail_msg" class="adm-msg"' + (isErr ? ' data-kind="err" role="alert"' : ' role="status"') + '>' + esc(note) + '</p>' : '') +
+      (projects ? projectsTable(projects) : '');
+  }
+  function projectsTable(list) {
+    if (!list.length) return '<p class="adm-sub" id="adm_d_noprojects">No cloud projects.</p>';
+    var cols = [['Wells', function (s) { return few(s.wells, 4); }], ['Client', function (s) { return txt(s.client); }], ['Operator', function (s) { return txt(s.operator); }],
+      ['Company', function (s) { return txt(s.company); }], ['Field', function (s) { return txt(s.field); }], ['Rig', function (s) { return txt(s.rig); }],
+      ['Country', function (s) { return txt(s.country); }], ['Job ref.', function (s) { return txt(s.jobRef); }], ['Modules', function (s) { return few(s.modules, 6); }]];
+    return '<div class="adm-scroll"><table class="dtable" id="adm_d_projects"><thead><tr><th>Project</th>' + cols.map(function (c) { return '<th>' + esc(c[0]) + '</th>'; }).join('') +
+      '<th>Updated</th><th>Size</th></tr></thead><tbody>' +
+      list.map(function (x) {
+        x = x || {};
+        var s = x.summary && typeof x.summary === 'object' ? x.summary : {};
+        return '<tr data-project="' + esc(x.id) + '"><td data-label="Project"><span class="adm-strong">' + esc(x.name || s.name || '—') + '</span>' + (x.summary ? '' : ' <span class="adm-sub">(no summary yet)</span>') + '</td>' +
+          cols.map(function (c) { var v = c[1](s); return '<td data-label="' + esc(c[0]) + '"' + (v === '—' ? ' class="adm-empty"' : '') + '>' + v + '</td>'; }).join('') +
+          '<td data-label="Updated" class="adm-nw">' + when(x.updatedAt) + '</td><td data-label="Size" class="adm-nw">' + esc(bytes(x.bytes)) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
   }
 
   // ── invites ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -409,7 +596,8 @@
     }
   })();
   G.WTS_accountAdmin = { VERSION: VERSION, entry: entry, render: render, register: register, open: open, isAdmin: isAdmin,
-    _csv: csv, _countryName: countryName, _flag: flag, _days90: days90, _view: function () { return view; }, _load: load };
+    _csv: csv, _countryName: countryName, _flag: flag, _days90: days90, _view: function () { return view; }, _load: load,
+    openDetail: openDetail, closeDetail: closeDetail, _detail: function () { return { id: detail.id, data: detail.data }; } };
   register();
 })();
 // ── ACCT:END ──

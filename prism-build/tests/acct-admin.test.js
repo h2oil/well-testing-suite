@@ -371,7 +371,7 @@ module.exports = [
         assert(dl, 'CSV downloaded: ' + JSON.stringify(t2.a.downloads.map((d) => d.filename)));
         const csv = t2.w.WTS_accountAdmin._csv();
         assert.strictEqual(csv.split('\r\n').filter(Boolean).length, 4, 'header + 3 users');
-        assert(/^email,method,status,createdAt,lastSignInAt,signupCountry,lastCountry,lastCity,projects,usedBytes\r\n/.test(csv));
+        assert(/^email,method,status,createdAt,lastSignInAt,signupCountry,lastCountry,lastCity,projects,usedBytes,fullName,company,jobTitle,profileCountry,phone,wells,clients,operators,fields,workCountries,lastProjectAt\r\n/.test(csv), csv.split('\r\n')[0]);
         // search
         t2.a.input('adm_q', 'company'); t2.click('adm_search');
         await t2.until(() => /q=company/.test(t2.admin.log.filter((x) => x.path.endsWith('/users')).pop().url), 'search request');

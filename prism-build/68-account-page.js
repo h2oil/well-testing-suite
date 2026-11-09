@@ -46,7 +46,7 @@
   }
   function say(id, text, kind) { var e = $(id); if (e) { e.textContent = text || ''; e.setAttribute('data-kind', kind || ''); } }
   // a new action clears the page's earlier status messages (review fix: an old error never lingers under a later action)
-  var MSG_IDS = ['acct_profile_msg', 'acct_projects_msg', 'acct_devices_msg', 'acct_data_msg'];
+  var MSG_IDS = ['acct_profile_msg', 'acct_myprofile_msg', 'acct_projects_msg', 'acct_devices_msg', 'acct_data_msg'];
   function clearMsgs() { MSG_IDS.forEach(function (id) { say(id, ''); }); }
   // the profile forms: a bad address is caught before any request; the server's bad_request gets the same plain words
   var BAD_ADDRESS = 'Enter a valid e-mail address.';
@@ -106,6 +106,7 @@
       '<div class="fg-item" id="acct_recovery_code_row" hidden><label for="acct_recovery_code">Code from the recovery address</label><input type="text" id="acct_recovery_code" inputmode="numeric" maxlength="11" data-acct-skip="1"></div>' +
       '<div class="acct-btns" id="acct_recovery_confirm_row" hidden><button type="button" class="btn btn-primary" id="acct_confirm_recovery">Confirm the recovery address</button></div>' +
       '<div id="acct_profile_msg" role="status" aria-live="polite"></div></div>' +
+      myProfileHtml(me) +
 
       '<div class="card" id="acct_card_projects"><div class="card-title">Cloud projects</div>' +
       '<div class="acct-btns"><input type="text" id="acct_filter" placeholder="Filter by name, client or well" aria-label="Filter projects" data-acct-skip="1">' +
@@ -139,6 +140,35 @@
 
       '<div class="card" id="acct_card_activity"><div class="card-title">Activity</div><p>Your own sign-ins and security changes of the last 90 days (Export everything has 12 months). Showing them needs a fresh confirmation; the list comes from an export of your account data, so your e-mail address also gets the "your data was exported" notice.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_show_activity">Show my activity</button></div><div id="acct_activity"></div></div>';
+  }
+  // "Your profile" (user insight): the optional self-declared profile — name, company, job title, country, phone — saved with
+  // PUT /account/profile. The fields are those of the sign-up step (66: profileFormHtml / readProfile; values escaped there).
+  function myProfileHtml(me) {
+    var i = I(); if (!i || typeof i.profileFormHtml !== 'function') return '';
+    return '<div class="card" id="acct_card_myprofile"><div class="card-title">Your profile</div>' +
+      '<p class="acct-note" id="acct_myprofile_note">' + esc(i.PROFILE_NOTE) + ' H2Oil can see it with your e-mail address to support you; it is never sold or shared (see the Privacy notice).</p>' +
+      i.profileFormHtml('acct_my', me.profile || null, { countryHint: me.countryHint }) +
+      '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_myprofile_save">Save profile</button>' +
+      '<button type="button" class="btn btn-secondary" id="acct_myprofile_clear">Clear</button></div>' +
+      '<div id="acct_myprofile_msg" role="status" aria-live="polite"></div></div>';
+  }
+  function saveMyProfile(clear) {
+    var a = A(); var i = I();
+    if (!a || !i || typeof a.saveProfile !== 'function') return Promise.resolve(null);
+    var p = clear ? { fullName: null, company: null, jobTitle: null, country: null, phone: null } : i.readProfile('acct_my');
+    if (!p) return Promise.resolve(null);
+    var btn = $('acct_myprofile_save'); if (btn) btn.disabled = true;
+    say('acct_myprofile_msg', 'Saving…');
+    return a.saveProfile(p).then(function (np) {
+      if (btn) btn.disabled = false;
+      if (clear) (i.PROFILE_FIELDS || []).forEach(function (f) { var e = $('acct_my_pf_' + f.k); if (e) e.value = ''; });
+      say('acct_myprofile_msg', clear ? 'Profile cleared.' : 'Profile saved.', 'ok');
+      return np;
+    }, function (e) {
+      if (btn) btn.disabled = false;
+      say('acct_myprofile_msg', e && e.code === 'bad_request' ? 'Please check the profile fields (name up to 80 characters, company up to 120, job title up to 80, phone up to 40).' : errText(e), 'err');
+      return null;
+    });
   }
   function cloudLinked() { var c = C(); return !!(c && c.status && c.status().projectId); }
   function devicesHtml(list) {
@@ -194,6 +224,8 @@
       return;
     }
     var root = view.root;
+    on('acct_myprofile_save', function () { saveMyProfile(false); });
+    on('acct_myprofile_clear', function () { saveMyProfile(true); });
     on('acct_open_admin', function () { var P = G.WTS_accountAdmin; if (P && typeof P.open === 'function') P.open(); });
     on('acct_change_email', function () {
       var v = String($('acct_new_email').value || '').trim();
