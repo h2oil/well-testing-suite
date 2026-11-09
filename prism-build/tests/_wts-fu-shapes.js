@@ -314,11 +314,12 @@ var CUSHION_TUBING = [        // Scenarios form tubing select → capacity (bbl/
   { id: '4-1/2', label: '4-1/2″ 12.75 lb/ft (3.958″ ID)', cap: 0.01522 }];
 
 // ─── BASE_FIELDS (§9.2) ──────────────────────────────────────────────────────
-var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig'];
+// 'ck1' (CK-101 manifold block, added after v3.3.3) is omitted like ck2 / sepBy (= wts-calc-golden.js BASE_FIELDS_OMIT)
+var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig', 'ck1'];
 function baseFields(flow) {
   if (!flow || typeof flow !== 'object') return flow;
   var c = clone(flow);
-  delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy;
+  delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1;
   if (c.sim && typeof c.sim === 'object') { delete c.sim.sepByDest; delete c.sim.sepByP_psig; }
   return c;
 }

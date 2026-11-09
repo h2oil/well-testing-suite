@@ -10,6 +10,8 @@
 // Expected values: the fixture (plan constants), the segment losses the block publishes, plan texts.
 'use strict';
 
+const { legacyCfg } = require('./_wts-lineup-pin.js');
+
 const X = require('./_wts-fu-shapes');
 const GOLD = require('../wts-calc-golden.js');
 
@@ -245,7 +247,8 @@ const ENGINE = [
       assert.ok(st.lines.sep_flare.q > 0, 'seg 5 carries the stream to the line');
       balanced(assert, st, 'production line');
       // V-101 + FS-401 out (line only): the tanks' relief / vent gas goes to vent, never to the flare
-      const d = mk(S, sepByFlow(S, 'line', 300), { rigup: {} });
+      // v3.3.1 T-201 line-up pinned: the transfer is still running after 30 min (with the v1.6.0 default suction B sits at LSL)
+      const d = mk(S, sepByFlow(S, 'line', 300), { rigup: {}, config: legacyCfg() });
       run(d, 1800, 10);                                 // T-201 holds liquid that flashes
       d.setRigup({ separator: false, flare: false });
       st = d.getState();
