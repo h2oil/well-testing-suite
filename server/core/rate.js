@@ -50,6 +50,9 @@ const LIMITS = {
   revertFailAddrDay: { window: D, limit: 100, soft: true },
   revertIpHour: { window: H, limit: 300, soft: true },
   oauthStartIpHour: { window: H, limit: 60, soft: true },           // provider starts per IP prefix (alert only, §8.3)
+  // the admin routes (functions/admin.js): per admin account
+  adminReadUserHour: { window: H, limit: 600 },
+  adminInviteUserDay: { window: D, limit: 200 },
 };
 
 async function call(sql, name, key, amount) {

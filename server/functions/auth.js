@@ -222,7 +222,7 @@ async function codeVerify(ctx) {
     }
     if (!first && consentOk(ctx, b.consent)) await unit.sql`update wts.users set terms_version = ${ctx.config.terms}, privacy_version = ${ctx.config.privacy}, consented_at = now() where id = ${userId}`;
     const device = await S.deviceFor(unit, ctx, userId, { label: b.deviceLabel, publicDevice: b.publicDevice });
-    const sess = await SE.issue(unit, ctx, { userId, deviceId: device.id, publicDevice: b.publicDevice, method: 'code', stepup: true });
+    const sess = await SE.issue(unit, ctx, { userId, deviceId: device.id, publicDevice: b.publicDevice, method: 'code', stepup: true, signup: first });
     if (first) await unit.audit('signup', { deviceId: device.id, detail: { method: 'code' } });
     await unit.audit('signin', { deviceId: device.id, detail: { method: 'code', newDevice: device.isNew, via: acc && acc.role === 'recovery' ? 'recovery' : 'primary' } });
     if (device.isNew && !first) await unit.mail(a.primary, 'notice_new_device', mailParams(unit));

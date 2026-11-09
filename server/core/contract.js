@@ -271,6 +271,8 @@ S.Me = {
   identities: arr('@IdentityBrief', { max: 2 }),
   devices: [{ id: 'uuid', label: 'label', lastSeen: orNull('iso'), current: 'bool' }],
   minClient: 'str',
+  // the admin dashboard (v4.0 follow-up): true when the account may use the /admin routes (always sent by the server)
+  'admin?': 'bool',
 };
 S.OutboxKeyRes = { k: 'b64' };
 S.OptsReq = { 'historian?': 'bool', 'liveCfg?': 'bool' };
@@ -319,6 +321,26 @@ S.DeleteReq = { confirm: "'DELETE'", 'immediate?': 'bool' };
 S.DeleteRes = { ok: 'true', deleteAt: 'iso' };
 S.Health = { ok: 'bool', db: 'bool', ver: 'str' };
 S.OpsDailyRes = { ok: 'true', 'did?': 'any' };
+
+// admin dashboard (v4.0 follow-up; server/functions/admin.js): country = ISO 3166-1 alpha-2 from the hosting platform, or null
+const country = (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && /^[A-Z]{2}$/.test(v))) err(ctx, p, 'expected a country code or null, got ' + describe(v)); };
+const SIGNUP_METHODS = ['code', 'google', 'linkedin'];
+S.AdminSummary = {
+  generatedAt: 'iso',
+  totals: { users: 'uint', active7d: 'uint', active30d: 'uint', projects: 'uint', storageBytes: 'uint', invitesPending: 'uint' },
+  byCountry: arr({ country, users: 'uint', active30d: 'uint' }, { max: 300 }),
+  byMethod: arr({ method: enumOf(SIGNUP_METHODS), users: 'uint' }, { max: 3 }),
+  signupsByDay: arr({ day: (v, p, ctx) => { if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) err(ctx, p, 'expected YYYY-MM-DD, got ' + describe(v)); }, n: 'uint' }, { max: 90 }),
+};
+S.AdminUser = {
+  id: 'uuid', email: 'str', method: enumOf(SIGNUP_METHODS), status: "'active'|'locked'|'deleting'", createdAt: 'iso', lastSignInAt: orNull('iso'),
+  signupCountry: country, lastCountry: country,
+  lastCity: (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && v.length >= 1 && v.length <= 80)) err(ctx, p, 'expected a city of ≤ 80 characters or null, got ' + describe(v)); },
+  projects: 'uint', usedBytes: 'uint',
+};
+S.AdminUsers = { users: arr('@AdminUser', { max: 200 }), next: orNull('nestr') };
+S.AdminInviteReq = { email: 'email', 'note?': (v, p, ctx) => { if (typeof v !== 'string' || v.length > 200) err(ctx, p, 'expected a note of ≤ 200 characters, got ' + describe(v)); } };
+S.AdminInvites = { invites: arr({ addedAt: 'iso', note: orNull('str') }, { max: 1000 }) };
 
 // ── endpoints (§3.3; '/api/v1' omitted) ─────────────────────────────────────────────────────────────────────────
 const COMMON = ['bad_request', 'origin', 'rate', 'paused', 'upgrade'];
@@ -383,6 +405,12 @@ ep('accountDeleteCancel', 'POST', '/account/delete/cancel', { req: 'EmptyReq', r
 ep('health', 'GET', '/health', { auth: 'none', res: { 200: 'Health' }, errors: [] });
 ep('cspReport', 'POST', '/csp-report', { auth: 'report', body: 'csp', res: { 204: null }, errors: ['too_large', 'rate'] });
 ep('opsDaily', 'POST', '/ops/daily', { auth: 'hmac', req: 'EmptyReq', res: { 200: 'OpsDailyRes' }, errors: ['origin'] });
+// admin dashboard (v4.0 follow-up): an account in WTS_ADMIN_EMAILS only; everyone else (signed out included) → 404 not_found
+const ADMIN = COMMON.concat(['not_found']);
+ep('adminSummary', 'GET', '/admin/summary', { res: { 200: 'AdminSummary' }, errors: ADMIN, notes: 'admin only, else 404; audited' });
+ep('adminUsers', 'GET', '/admin/users', { res: { 200: 'AdminUsers' }, errors: ADMIN, notes: '?limit=50 (1–200) &cursor=<opaque> &q=<part of an address>; newest first; admin only, else 404' });
+ep('adminInviteAdd', 'POST', '/admin/invites', { req: 'AdminInviteReq', res: { 201: 'Ok' }, errors: ADMIN, notes: 'idempotent; admin only, else 404' });
+ep('adminInvites', 'GET', '/admin/invites', { res: { 200: 'AdminInvites' }, errors: ADMIN, notes: 'keyed indexes only: no address comes back; admin only, else 404' });
 
 const ENDPOINTS = E;
 const ROUTES = E.map((e) => {

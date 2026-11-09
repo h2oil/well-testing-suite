@@ -148,6 +148,7 @@ build command needs no secret either way); tick **Contains secret values** for e
 | `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` (the confirmed sender) |
 | `ACCOUNTS_SIGNUP` | `invite` |
 | `WTS_INVITE_BOOTSTRAP` | the owner's e-mail address (comma-separated for more than one) — see "The invite list" below |
+| `WTS_ADMIN_EMAILS` | optional: the admin addresses (comma-separated); unset = the `WTS_INVITE_BOOTSTRAP` addresses — see "Admin dashboard" below |
 | `SYNC_MODE` | `on` |
 | `WTS_MIN_CLIENT` | `4.0` |
 | `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `1` |
@@ -212,6 +213,26 @@ deploy) — variables reach the functions only on the next deploy. Removing an a
 account keeps working (lock it with `ops/security-reset.js` if needed). The database allow-list (`ops/allowlist-add.js`) needs
 the support credential and is not used on the live site for now. Before anyone outside H2Oil is invited, the processor
 contracts with the transfer safeguards must be in place (privacy notice sections 12 and 13 promise this).
+
+### Admin dashboard
+Where: sign in on the live site with an admin address, open the app's **Account** page → **Admin** (route `#admin`). It shows
+the totals (accounts, active in 7 / 30 days, projects, storage, pending invites), accounts by country, by sign-up method and
+sign-ups per day (90 days), the account list (newest first, search by part of an address) and the invite list, with an
+**Invite** form that adds an address to the database allow-list — so on the live site an invite no longer needs a redeploy
+(the bootstrap variable still works).
+- **Who is admin:** `WTS_ADMIN_EMAILS` (comma-separated addresses; not a secret, but personal data — site environment only,
+  never the repository). Unset = the `WTS_INVITE_BOOTSTRAP` addresses, so the owner is admin with no extra variable. A change
+  reaches the functions on the next deploy (step L4 "Redeploy"). Anyone else — signed out, not listed, locked — gets the same
+  404 as an unknown route; `GET /api/v1/me` carries `admin: true|false` for the page.
+- **Country and city** come from the hosting platform's geolocation request headers, read only in same-site mode and validated
+  (a two-letter country code, a short plain city name, otherwise unknown); the IP address is never stored for this. Sign-up
+  stores `signup_country`; every sign-in updates `last_country` / `last_city` (migration `060-admin.sql`). Accounts created
+  before that migration show an unknown sign-up country.
+- **Audit:** every admin call writes a row on the admin's own security-log chain (actor `admin`, action `admin.summary`,
+  `admin.users`, `admin.invite`); search text and invited addresses are never written. A signed-in non-admin's attempt writes
+  `admin.denied`. Admin reads are limited to 600 per hour per admin, invites to 200 per day.
+- Routes: `GET /api/v1/admin/summary`, `GET /api/v1/admin/users?limit=&cursor=&q=`, `GET|POST /api/v1/admin/invites`
+  (`functions/admin.js`; contract in `core/contract.js`).
 
 ### Rollback
 Publish the previous deploy (Deploys → the last static-only deploy → Publish deploy): the page is static again and the API

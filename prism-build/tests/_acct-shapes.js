@@ -98,6 +98,16 @@ const EXAMPLES = {
   health: { res: { 200: { ok: true, db: true, ver: '1.0.0' } } },
   cspReport: { res: { 204: null } },
   opsDaily: { req: {}, res: { 200: { ok: true } } },
+  // admin dashboard (v4.0 follow-up; server/functions/admin.js)
+  adminSummary: { res: { 200: { generatedAt: T0,
+    totals: { users: 3, active7d: 2, active30d: 3, projects: 4, storageBytes: 109443, invitesPending: 1 },
+    byCountry: [{ country: 'AE', users: 2, active30d: 2 }, { country: null, users: 1, active30d: 1 }],
+    byMethod: [{ method: 'code', users: 2 }, { method: 'google', users: 1 }],
+    signupsByDay: [{ day: '2026-11-08', n: 2 }, { day: '2026-11-09', n: 1 }] } } },
+  adminUsers: { res: { 200: { users: [{ id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
+    signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200 }], next: null } } },
+  adminInviteAdd: { req: { email: 'name@company.example', note: 'Example-1 crew' }, res: { 201: { ok: true } } },
+  adminInvites: { res: { 200: { invites: [{ addedAt: T0, note: 'Example-1 crew' }] } } },
 };
 const FINISH_EXAMPLES = [
   EXAMPLES.oauthFinish.res[200],

@@ -218,7 +218,7 @@ function createOauthHandlers(deps) {
         const acc = await account(unit);
         const lb = a.device_label_enc ? (open(ctx, 'oauth.label', a.device_label_enc) || '').toString() : '';
         const dev = await S.deviceFor(unit, ctx, uid, { label: V.isLabel(lb) ? lb : '', publicDevice: a.public_device });
-        const s = await SE.issue(unit, ctx, { userId: uid, deviceId: dev.id, publicDevice: a.public_device, method: a.provider, identityId, stepup: !!o.stepup });
+        const s = await SE.issue(unit, ctx, { userId: uid, deviceId: dev.id, publicDevice: a.public_device, method: a.provider, identityId, stepup: !!o.stepup, signup: !!o.create });
         await st.identities.touch(unit.sql, identityId);
         // U18: the provider e-mail differs from the one recorded at link time and from the last one acknowledged → say so
         // once (the index is stored as acknowledged when the note is shown)
