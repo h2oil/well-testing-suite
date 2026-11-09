@@ -12,7 +12,7 @@
 // heater temperature rise from the steady flow) or event order — never numbers taken from the code under test.
 'use strict';
 // the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
-// 3.4.2 review: this suite's subject is the v3.3 / v3.4.1 rig-up rules (T-201 out takes T-202 out, the dumps go to T-301, …), so the
+// 4.1 review: this suite's subject is the v3.3 / v3.4.1 rig-up rules (T-201 out takes T-202 out, the dumps go to T-301, …), so the
 // T-201 line-up and the v341 routing stay pinned; the T-202 compartments and the LP flare line run as shipped (the chain rules are
 // wts-rig-chain.test.js)
 const { pinOpts } = require('./_wts-lineup-pin.js');

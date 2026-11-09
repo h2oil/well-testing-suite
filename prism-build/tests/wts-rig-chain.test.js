@@ -1,4 +1,4 @@
-// Well Test Simulator — release 3.4.2 (WTS_sim code comments v1.7.0): the rig-up chain — an item taken out sends its flow to the next
+// Well Test Simulator — release 4.1 (WTS_sim code comments v1.7.0): the rig-up chain — an item taken out sends its flow to the next
 // item downstream (rigup-next design §B–D; INTEGRATION E4, C2, C3, C18). (a) the normRigup chain matrix, (b) 'v341' / no options =
 // the frozen v3.4.1 rules, (c)–(k) the engine: V-101 out to the surge tank (low gas, default gas → PSHH-201 ESD, route both, the
 // last-inlet refusal, FS-401 out → cold vent, cushion), T-301 out → the P-201 booster, FS-401 out with V-101 in, T-202 for T-201.
@@ -243,7 +243,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (l) 3.4.2 review: T-201 out, both T-202 inlets shut → SURGE_BLOCKED names XV-202A / XV-202B and T-202 (tag XV-202, eq surge2), never XV-301 / T-301; the LSHH-102 ESD follows',
+    name: 'WTSRC (l) 4.1 review: T-201 out, both T-202 inlets shut → SURGE_BLOCKED names XV-202A / XV-202B and T-202 (tag XV-202, eq surge2), never XV-301 / T-301; the LSHH-102 ESD follows',
     wp: WP, opts: false, timeoutMs: 300000,
     run(app, assert) {
       const sim = mk({ rigup: { surge: false, surge2: true } });
@@ -261,7 +261,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (m) 3.4.2 review: V-101 out to T-202 (T-201 out, or T-201 in with route T-202): SEPBY_SURGE_CAP, the rig note and segment 5 name T-202 / PCV-203 / PSHH-202 and the bypass run (no FI-Sep→Flare); route both names both',
+    name: 'WTSRC (m) 4.1 review: V-101 out to T-202 (T-201 out, or T-201 in with route T-202): SEPBY_SURGE_CAP, the rig note and segment 5 name T-202 / PCV-203 / PSHH-202 and the bypass run (no FI-Sep→Flare); route both names both',
     wp: WP, opts: false, timeoutMs: 300000,
     run(app, assert) {
       // T-201 out: the rig note, the alarm (raised at once), the segment label + the velocity alarm tag
@@ -302,7 +302,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (n) 3.4.2 review: V-101 out to the surge tank at the default 10 MMscf/d — T-201 peaks ≈ 62–64 psig after the PSHH-201 ESD (≈ 125 % of its 50 psig MAWP): OVP_SURGE (> 110 %, marked > 121 %) and SEPBY_PSV_CAP (relief capacity < stream gas); T-202 alone peaks ≈ 54 psig (SEPBY_PSV_CAP, no OVP_SURGE2) and ≈ 67 psig at 20 MMscf/d (OVP_SURGE2); low gas: none',
+    name: 'WTSRC (n) 4.1 review: V-101 out to the surge tank at the default 10 MMscf/d — T-201 peaks ≈ 62–64 psig after the PSHH-201 ESD (≈ 125 % of its 50 psig MAWP): OVP_SURGE (> 110 %, marked > 121 %) and SEPBY_PSV_CAP (relief capacity < stream gas); T-202 alone peaks ≈ 54 psig (SEPBY_PSV_CAP, no OVP_SURGE2) and ≈ 67 psig at 20 MMscf/d (OVP_SURGE2); low gas: none',
     wp: WP, opts: false, timeoutMs: 300000,
     run(app, assert) {
       const peak = (o, key) => {
@@ -343,7 +343,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (o) 3.4.2 round 2: the FS-401 out rig-up message follows the chain (V-101 in / out to the tanks / out to a line; v341 keeps "gas to export"); a standing segment-5 velocity alarm takes the new route tag after a mid-run rig change (both ways), the production-line run is named',
+    name: 'WTSRC (o) 4.1 round 2: the FS-401 out rig-up message follows the chain (V-101 in / out to the tanks / out to a line; v341 keeps "gas to export"); a standing segment-5 velocity alarm takes the new route tag after a mid-run rig change (both ways), the production-line run is named',
     wp: WP, opts: false, timeoutMs: 300000,
     run(app, assert) {
       const msgOf = (sim, patch) => { let m = null; const h = (e) => { m = e.msg; }; sim.on('rigup', h); sim.setRigup(patch); sim.off('rigup', h); return m; };
@@ -391,7 +391,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (p) 3.4.2 round 2 [22]: a flow.sepBy "surge" block with no surge tank in the rig-up — the engine walks its burner-line twin sepBy.alt (P0 5 psig, the alt choke outlet; alt.ck2 skipped → ck2Note), without alt the legacy law from 5 psig, never the 25 psig of the tank; with a tank in the block itself',
+    name: 'WTSRC (p) 4.1 round 2 [22]: a flow.sepBy "surge" block with no surge tank in the rig-up — the engine walks its burner-line twin sepBy.alt (P0 5 psig, the alt choke outlet; alt.ck2 skipped → ck2Note), without alt the legacy law from 5 psig, never the 25 psig of the tank; with a tank in the block itself',
     wp: WP, opts: false,
     run(app, assert) {
       const FU = require('./_wts-fu-shapes');
@@ -417,7 +417,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSRC (q) 3.4.2 round 2: each receiver\'s gas capacity in the snapshot (sepBy.gasCap1 / gasCap2_mmscfd, always numbers) — gasCap = the receiving sum (T-201, T-202, both), null with V-101 in',
+    name: 'WTSRC (q) 4.1 round 2: each receiver\'s gas capacity in the snapshot (sepBy.gasCap1 / gasCap2_mmscfd, always numbers) — gasCap = the receiving sum (T-201, T-202, both), null with V-101 in',
     wp: WP, opts: false, timeoutMs: 300000,
     run(app, assert) {
       const base = { inputs: { Qg: 0.05, Qo: 1000, Qw: 200 }, sim: { sepByDest: 'surge' }, config: { noise: { on: false } } };

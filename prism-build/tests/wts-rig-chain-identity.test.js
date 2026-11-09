@@ -1,9 +1,9 @@
-// Well Test Simulator — release 3.4.2 identity matrix of the rig-up chain (INTEGRATION C7; rigup-next "Identity contract" 3 and 4):
+// Well Test Simulator — release 4.1 identity matrix of the rig-up chain (INTEGRATION C7; rigup-next "Identity contract" 3 and 4):
 //   (1) cfg.rig.routing 'v341' (+ compartments 1, vent 'hp' = v341Opts) on the working engine === the frozen v3.4.1 engine on every
 //       snapshot path that existed in v3.4.1: each core item out, V-101 out to 'flare' and 'line', T-202 / DS-101 / CK-102 cases;
 //   (2) the chain UNPINNED (pinOpts with lineup and routing false: compartments 1 + vent 'hp' + chain) === v3.4.1 wherever the chain
 //       changes nothing: default rig-up, H-101 out, V-101 out to 'flare' / 'line' (FS-401 in), T-201 + T-202 out, P-201 out, the
-//       optional items in. Only the H-101 note is left out of (2) (3.4.2 review: a precise filter, every other note is compared):
+//       optional items in. Only the H-101 note is left out of (2) (4.1 review: a precise filter, every other note is compared):
 //       the chain words it "H-101 out: … heater bypass …" where v3.4.1 wrote "H-101 bypassed: no heat input …".
 //   (3) legacyOpts (all four pins) === the frozen v3.3.1 engine for a few rig-ups (the wts-fu-identity suite covers the rest).
 'use strict';

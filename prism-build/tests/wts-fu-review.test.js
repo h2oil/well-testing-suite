@@ -149,13 +149,13 @@ module.exports = [
       assert.ok(row(h, 'Heater (V-101 out)') && row(h, 'Separator (bypassed: line at V-101)'), 'Heater / Separator rows from flow.sepBy');
       // the base segment velocity warnings of seg 3-5 give way to the block's (no duplicates)
       const w = $('wts_warn').innerHTML;
-      // 3.4.2 review: the page default destination is the surge tank, whose seg-5 run is named for its route (Bypass→Surge Tank)
+      // 4.1 review: the page default destination is the surge tank, whose seg-5 run is named for its route (Bypass→Surge Tank)
       ['Heater→Sep', 'Bypass→Surge Tank'].forEach((nm) => assert.strictEqual(w.split(nm + ': Velocity').length - 1, 1, nm + ' velocity warning once: ' + w));
       assert.ok(w.indexOf('Sep→Flare: Velocity') < 0, 'no Sep→Flare warning on the surge route');
       W.wtsRenderResults(rb.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
       const r0 = C.run(mix(BASE, {}));
-      // v3.4.2 (2026-11-09): the kept rig-up has T-201 in, so the LP flare line box follows the v3.3.1 rows (only that)
+      // v4.1 (2026-11-09): the kept rig-up has T-201 in, so the LP flare line box follows the v3.3.1 rows (only that)
       const noLp = (h) => { const i = h.indexOf('<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line'); return i < 0 ? h : h.slice(0, i); };
       assert.ok(noLp(r0.page.res) === g.res && r0.page.warn === g.warn, 'neither active: the v3.3.1 page (+ the LP box)');
     },

@@ -801,8 +801,7 @@ module.exports = [
     run(app, assert, ctx) {
       const html = fs.readFileSync(HTML, 'utf8');
       assert.ok(/<div class="page-actions"[^>]*>\s*<!-- ACCT:START --><div id="wts_account_host"><\/div><!-- ACCT:END -->/.test(html), 'H8 first child of .page-actions');
-      // 19d8287: the crawlable Privacy Policy / Terms of Service links sit between the link and the account line
-      assert.ok(/Privacy — how your data is stored<\/a>(?:<br><a href="https:\/\/welltest\.h2oil\.co\.uk\/privacy\.html"[^>]*>Privacy Policy<\/a> &#183; <a href="https:\/\/welltest\.h2oil\.co\.uk\/terms\.html"[^>]*>Terms of Service<\/a>)?<!-- ACCT:START --><div id="sbAccountLine"><\/div><!-- ACCT:END -->/.test(html), 'H9 footer line + link text');
+      assert.ok(/Privacy — how your data is stored<\/a>(?:<br>|\s|&#183;|<a [^>]*>[^<]*<\/a>)*<!-- ACCT:START --><div id="sbAccountLine"><\/div><!-- ACCT:END --><\/div>/.test(html), 'H9 footer line + link text (the legal links may sit between)');
       const stripped = html.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '').replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       for (const s of ['wts_account_host', 'sbAccountLine', 'Accounts and cloud projects', 'Sign in with LinkedIn', 'LinkedIn', 'unless you sign in to the cloud']) {
         assert.ok(html.indexOf(s) !== -1, 'present on the web: ' + s);
@@ -814,7 +813,7 @@ module.exports = [
       assert.ok(t.indexOf('Your well data never leaves your device.') !== -1 && t.indexOf('no user accounts') !== -1);
       assert.ok(!app.el('privacy_accounts'), 'no account card');
       // H17: "This build" follows __wtsGaLoaded (gtag is defined even when the guard skipped the tag)
-      assert.ok(t.indexOf('anonymous usage analytics are active') !== -1, 'no hint → analytics active (v3.4 line)');
+      assert.ok(t.indexOf('usage analytics are active') !== -1, 'no hint → analytics active (v3.4 line)');
       app.win.__wtsGaLoaded = false;
       app.hook.nav('home'); app.hook.nav('privacy');
       const tg = app.el('pgBody').textContent;

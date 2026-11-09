@@ -29,7 +29,7 @@ function openWts(app) {
 }
 // Recording stub over the real engine. o: fakeFuSnapshot options ({ck2, bypassed, pos, sepOut, flareOut, dest, P, cushion});
 // startCushion returns o.start (default {ok:true, msg, warn:''}). Records the cushion API calls.
-// release 3.4.2: rigup.dest is the effective destination while V-101 is out (= sepBy.dest of the fake), and opts.routing pins the
+// release 4.1: rigup.dest is the effective destination while V-101 is out (= sepBy.dest of the fake), and opts.routing pins the
 // rig-up rules ('v341' = the v3.4.1 texts these v3.3.3 view tests describe; the chain texts are covered by wts-live-chain)
 function fuRigup(f, o) {
   if (f && f.rigup && f.sepBy && o && o.sepOut) f.rigup.dest = f.sepBy.dest;
@@ -525,7 +525,7 @@ const WP = 'WTSFUV';
 const J = (o) => JSON.parse(JSON.stringify(o));
 const REPO = path.resolve(__dirname, '..', '..');
 const V331 = '3611343';                      // v3.3.1 tree (plan Appendix A): host + Round 7 as shipped
-// Release 3.4.2 review: the live flame glyph clears only the host flame (y − 45 … − 19), no longer the bottom of the 'Flare' title
+// Release 4.1 review: the live flame glyph clears only the host flame (y − 45 … − 19), no longer the bottom of the 'Flare' title
 // (was y − 50 … − 19). That one documented command is mapped in the older reference frame; every other command must still match.
 function flare342(fr) {
   return fr.map((e) => (e.op === 'clearRect' && e.args[0] === 934 && e.args[1] === 80 && e.args[2] === 32 && e.args[3] === 31) ? Object.assign({}, e, { args: [934, 85, 32, 26] }) : e);
@@ -806,7 +806,7 @@ const D2 = [
       assert.ok(texts(fr).indexOf('GAS → EXPORT LINE') < 0 && !/VENT/.test(texts(fr).join('|')), 'FS-401 in: no export / vent label');
       stub.opts = { sepOut: true, dest: 'line', P: 0 }; redraw(app);
       assert.strictEqual(textAt(lastFrame(app, cv), lineLabel(0)).length, 1, 'line pressure 0 is shown as 0');
-      // 3.4.2 chain rules (the default): HP gas to the export line, LP / relief gas to vent, in one label
+      // 4.1 chain rules (the default): HP gas to the export line, LP / relief gas to vent, in one label
       stub.opts = { sepOut: true, dest: 'line', P: 300, flareOut: true }; redraw(app);
       t = texts(lastFrame(app, cv));
       assert.ok(t.indexOf('HP GAS → EXPORT LINE · LP / RELIEF → VENT') >= 0 && t.indexOf(lineLabel(300)) >= 0 && t.indexOf('TANK RELIEF → VENT') < 0, 'FS-401 out (chain): HP / LP label');

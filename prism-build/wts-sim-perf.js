@@ -23,9 +23,9 @@
 //   • ck2   — CK-102 in on a calcWTS flow that carries flow.ck2 (wts_bean2 48) ≤ 1.10 (SIM-FOLLOWUP §10)
 //   • cushion — Scenarios → Cushion unload with the defaults started at t = 0 ≤ 1.15
 //   • line  — V-101 out, destination production line 150 psig, against the default spread ≤ 1.05
-//   • surge — release 3.4.2: V-101 out, destination surge tank T-201, low gas (Qg 0.1 MMscf/d, 1,000 STB/d, 200 bbl/d — no ESD; an
+//   • surge — release 4.1: V-101 out, destination surge tank T-201, low gas (Qg 0.1 MMscf/d, 1,000 STB/d, 200 bbl/d — no ESD; an
 //             ESD'd sim is cheap and proves nothing) ≤ 1.10; skipped until WTS_sim.features.rigChain
-// Release 3.4.2: the working default includes the LP flare line (cfg.surge.vent 'lp') and the rig chain — the default gate covers
+// Release 4.1: the working default includes the LP flare line (cfg.surge.vent 'lp') and the rig chain — the default gate covers
 // their cost (the tool pins nothing on the working side; the frozen engine runs its own default)
 // A secondary case is skipped (with the reason) until the working engine has it (WTS_sim.features, startCushion, a flow.ck2
 // block from the host calcWTS); --case ck2|cushion|line|both|all (default all) limits which run.
@@ -114,7 +114,7 @@ function variantOf(S, v, ck2Flow) {
     return { flow: fl, opts: { rigup: { separator: false } } };
   }
   if (v === 'surge') {
-    if (!F.rigChain) return 'features.rigChain is false (release 3.4.2 rig chain)';
+    if (!F.rigChain) return 'features.rigChain is false (release 4.1 rig chain)';
     var fs2 = JSON.parse(JSON.stringify(S.SAMPLE_FLOW)); fs2.sim.sepByDest = 'surge';
     fs2.inputs.Qg = 0.1; fs2.inputs.Qo = 1000; fs2.inputs.Qw = 200; fs2.gasRate = 0.1;
     return { flow: fs2, opts: { rigup: { separator: false } } };

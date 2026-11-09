@@ -1,20 +1,20 @@
 // Well Test Simulator — identity pins of the working engine (test helper, not a test file).
-// Release 3.4.2 (code comments v1.7.0) has four orthogonal one-line defaults in 31-wts-sim.js. Each pin puts the old behaviour
+// Release 4.1 (code comments v1.7.0) has four orthogonal one-line defaults in 31-wts-sim.js. Each pin puts the old behaviour
 // back on the WORKING engine side only (the frozen engines tests/_wts-sim-v33.js / _v331.js / _v341.js ignore these cfg keys):
 //   lineup   cfg.surge.lineup = LEGACY_LINEUP        the v3.3.1 T-201 line-up (since v3.4.1 / v1.6.0 the default is XV-201A open,
 //                                                    XV-201B shut, LCV-201 suction from B, auto-divert on, steady start A 0.35 / B 0.60)
 //            engine line  var SURGE_LINEUP_DEF = deepFreeze({…});
-//   surge2   cfg.surge2.compartments = 1             the single-compartment T-202 of v3.3.1 / v3.4.1 (3.4.2 default: 2, A | B)
+//   surge2   cfg.surge2.compartments = 1             the single-compartment T-202 of v3.3.1 / v3.4.1 (4.1 default: 2, A | B)
 //            engine line  var SURGE2_COMP_DEF = 2;
-//   vent     cfg.surge.vent = {to:'hp'}              tank gas into the HP flare header (3.4.2 default: the LP flare line via FT-201)
+//   vent     cfg.surge.vent = {to:'hp'}              tank gas into the HP flare header (4.1 default: the LP flare line via FT-201)
 //            engine line  var SURGE_VENT_DEF = deepFreeze({…});
-//   routing  cfg.rig.routing = 'v341'                the v3.4.1 rig-up rules (3.4.2 default 'chain': next item downstream)
+//   routing  cfg.rig.routing = 'v341'                the v3.4.1 rig-up rules (4.1 default 'chain': next item downstream)
 //            engine line  var RIG_ROUTING_DEF = 'chain';
 // A cfg pin is set only when the key is absent (an explicit value in the test's own config wins). The pins never set
 // sep.bypass.dest (tests that use the production line keep it).
 //   legacyCfg / legacyOpts / legacyEngineOverrides()  all four pins → compare with the frozen v3.3 / v3.3.1 engines
 //   v341Cfg / v341Opts / v341EngineOverrides()        every pin but the line-up → compare with the frozen v3.4.1 engine
-//   lineupCfg / lineupOpts                            the T-201 line-up pin only (3.4.2 review): suites whose subject is the T-201
+//   lineupCfg / lineupOpts                            the T-201 line-up pin only (4.1 review): suites whose subject is the T-201
 //                                                    divert / rig-up behaviour on the v3.3.1 line-up and that compare with no
 //                                                    frozen engine — T-202, the LP line and the rig-up chain run as shipped
 //   pinCfg(cfg, which) / pinOpts(opts, which) / pinEngineOverrides(which)   which = {lineup, surge2, vent, routing} (missing = true)

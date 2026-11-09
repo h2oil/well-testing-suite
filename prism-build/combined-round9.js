@@ -6503,7 +6503,7 @@ function simSamples(t) {
     var add = function (tag, v, unit) { if (v !== null && v !== undefined && isFinite(+v)) out.push({ tag: tag, device: 'simulator', unit: unit, t: t, v: +v, q: 'good' }); };
     add('SIM.QG', R.gas_mmscfd, 'MMscf/d'); add('SIM.QO', R.oil_stbd, 'STB/d'); add('SIM.QW', R.water_bpd, 'bbl/d');
     add('SIM.GOR', R.gor, 'scf/STB'); add('SIM.BSW', R.bsw_pct, '%'); add('SIM.CUM_OIL', C.oil_stb, 'STB'); add('SIM.CUM_GAS', C.gas_mmscf, 'MMscf');
-    // v3.4.2: GOR1 (separator, FE-101) and GOR2 (tank, FT-201) beside the total SIM.GOR, and the tank gas on the LP flare line
+    // v4.1: GOR1 (separator, FE-101) and GOR2 (tank, FT-201) beside the total SIM.GOR, and the tank gas on the LP flare line
     // (blank while the simulator has none: V-101 out, below 0.1 STB/d oil, an older simulator)
     add('SIM.GOR1', R.gor1, 'scf/STB'); add('SIM.GOR2', R.gor2, 'scf/STB'); add('SIM.QG_LP', R.lpGas_mscfd, 'Mscf/d');
     return out;
@@ -7633,7 +7633,7 @@ var LIVE = 'Live values; read from the page for v3.3.2.';
 return { guides: {
 
 wellos: {
-route: 'wellos', reviewed: 'v3.4.2', reviewedSrc: '5dc3abe9', units: 'dual', notDocumented: [],
+route: 'wellos', reviewed: 'v4.1', reviewedSrc: '94a758ab', units: 'dual', notDocumented: [],
 keywords: ['SCADA', 'control room', 'live view', 'alarm', 'acknowledge', 'CSV log', 'quality', 'stale'],
 boldExempt: ['Use the Modbus simulator demo', 'Pause polling', 'Ack'],
 purpose: 'A live control-room view of the spread: tiles, process view, trends, alarms, a CSV log and a pressure trend for PRiSM.',
@@ -7762,7 +7762,7 @@ setup: [{ action: 'modbusSimDemo' }], callouts: [{ sel: '#mbc_res .rbox-title', 
 },
 
 historian: {
-route: 'historian', reviewed: 'v3.4.2', reviewedSrc: '67bdacdf', units: 'field',
+route: 'historian', reviewed: 'v4.1', reviewedSrc: '9c0985f8', units: 'field',
 notice: 'Values keep the unit they were recorded in; Metric mode does not convert them.',
 keywords: ['history', 'database', 'backup', 'restore', 'retention', 'rollup', 'xlsx'],
 notDocumented: nd('button, in the steps', 'demo_btn demohist_btn refresh_btn modbus_btn modbus_btn2 custom_apply live_btn reset_btn png_btn prev_btn next_btn copy_btn sort_btn export_btn import_btn ret_btn engine_btn persist_btn purge_btn clear_btn'),
@@ -7856,7 +7856,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 88ab68d7,ex1-view-p 780 1688 a5daa59e,ex10-t202-d 296 349 8e6572a1,ex11-ck102-d 296 349 04183165,ex11-ck2d-d 980 481 f85a4898,ex2-ck101-d 296 313 ecc60528,ex2-ck3d-d 980 481 da25ccba,ex4-alarms-d 476 258 2e861243,ex4-scen-d 531 423 6d462477,ex4-v101-d 296 307 284147cc,ex5-more-p 780 1688 f52d00b0,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 72179dff,ex5-viewmenu-d 213 253 1816fecb,ex6-events-d 476 294 8028137f,ex6-t301-d 296 349 d670c1bb,ex7-t201-d 296 349 37899a01,ex8-temp3d-d 980 481 b0b0ea5a,ex9-ds101-d 296 349 c0f844c7",
+    "course": "ex1-view-d 1280 800 7adb445c,ex1-view-p 780 1688 0f3caedd,ex10-t202-d 296 349 5b47eba5,ex11-ck102-d 296 349 3589fd27,ex11-ck2d-d 980 481 1db85eb6,ex2-ck101-d 296 313 bb3a7eb4,ex2-ck3d-d 980 481 4ce44ea2,ex4-alarms-d 476 258 1db3d749,ex4-scen-d 531 423 d5b23b09,ex4-v101-d 296 307 7c715086,ex5-more-p 780 1688 e5d8e03c,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 72179dff,ex5-viewmenu-d 213 253 f29ce39c,ex6-events-d 476 294 81843ac1,ex6-t301-d 296 349 96700d4a,ex7-t201-d 296 349 c0a0e376,ex8-temp3d-d 980 481 b0b0ea5a,ex9-ds101-d 296 349 cb35f801",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -7887,11 +7887,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
     "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
-    "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
+    "privacy": "view-d 1280 800 954ea29b,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 7bd585f4,view-p 780 1688 023089cc",
+    "releasenotes": "view-d 1280 800 d1ad944d,view-p 780 1688 8890f731",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -7906,13 +7906,13 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
-    "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 4eff3e06,view-p 780 1688 3276d78d",
+    "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 4eff3e06,view-p 780 1688 3276d78d",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
-    "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 2b20dcbf,view-p 780 1688 e25b67c8"
+    "wts": "card-d 296 349 259c15f2,card-p 752 858 e50f812d,rigup-d 982 525 5c45841c,tb-d 980 481 82b266c5,view-d 1280 800 fc8170bb,view-p 780 1688 29d75965"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 217;
-  M.bytes = 7976988;   // total size of the image files (the offline download label)
+  M.bytes = 7968246;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8295,18 +8295,18 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '1105b5be', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
 steps: [{ t: 'Select **Privacy** in **Overview**, or the privacy line under the sidebar.', shot: 'view' },
 { t: 'Read **Where your data is stored** ① and **Other network requests**.' },
-{ t: 'Save a project file to keep a copy of your work.' }],
-outputs: [{ label: 'This build', text: 'Says whether usage analytics are active. The web version counts anonymous usage (page views, time on a page and generic button events). No input values, names, files or results are sent. The iOS app sends none.' }],
+{ t: 'On the web, the Cookie settings link changes your analytics choice.' }],
+outputs: [{ label: 'This build', text: 'Says whether analytics are active. The web runs them only if you accept (a cookie identifier, page views, time on a page, button events); no inputs, names, files or results. The iOS app has none.' }],
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'a148cd51', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -9796,7 +9796,7 @@ shots: S('Analog Signal', ['#as_type', '#as_lo']) })
 // prism-build/48-calc-help-welltest.js — Help content: Well Test & Flowlines (docs/HELP-GUIDE-PLAN.md §4, WP-C3).
 // Data only (no WTS_calcRegistry page). The factory runs on the first Help open (WTS_help.load()); nothing runs at load.
 // Routes: wts (the simulator reference, in parts), bottomsup, casing, flowline, lineheat, pipesz.
-// The wts parts describe the simulator of release 3.4.2.
+// The wts parts describe the simulator of release 4.1.
 (function () {
 'use strict';
 var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -9807,7 +9807,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.4.2', reviewedSrc: '91a20ef7', units: 'dual',
+  route: 'wts', reviewed: 'v4.1', reviewedSrc: '86a32fa7', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line', 'FT-201', 'GOR2'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],

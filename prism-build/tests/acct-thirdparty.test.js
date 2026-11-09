@@ -6,8 +6,9 @@
 //        the one exception
 //   TP2  the spreadsheet loader (07, H16) in the app: a mismatching download is never run (no script element), a matching
 //        one runs from a blob: URL only; the pinned constants equal the published file (881,727 bytes)
-//   TP3  the analytics guard (H17, the head GA block run in a bare context): no hint → tag loaded; signed in or a provider
-//        sign-in under 10 minutes old → skipped; an older attempt or unreadable storage → loaded; __wtsGaLoaded says which.
+//   TP3  the analytics guard (H17 + the consent banner, the head GA block run in a bare context): no stored consent → never
+//        loaded; consent granted and no hint → tag loaded; signed in or a provider sign-in under 10 minutes old → skipped even
+//        with consent; an older attempt → loaded; unreadable storage → no consent → not loaded; __wtsGaLoaded says which.
 //        The iOS strip leaves exactly one "Google" (the pinned analytics sentence of the privacy text)
 'use strict';
 
@@ -173,7 +174,7 @@ module.exports = [
     },
   },
   {
-    name: 'TP3 H17 analytics guard: no hint → loaded; signed in / fresh provider return → skipped; stale or unreadable → loaded; one pinned "Google" on iOS', wp: WP, opts: false,
+    name: 'TP3 H17 analytics guard + consent: no consent → not loaded; consent + no hint → loaded; signed in / fresh provider return → skipped; one pinned "Google" on iOS', wp: WP, opts: false,
     run(app, assert) {
       const html = fs.readFileSync(HTML, 'utf8');
       const block = gaBlocks(html)[0];
@@ -183,13 +184,15 @@ module.exports = [
       const loader = scripts[1];
       assert.ok(!/<script[^>]*\bsrc=/.test(block), 'no static tag left');
       const now = Date.UTC(2026, 10, 8, 12, 0, 0);
+      const GRANTED = { choice: 'granted', v: 1, at: now - 864e5 };
       const runWith = (hint, opts) => {
+        const consent = (opts && 'consent' in opts) ? opts.consent : GRANTED;
         const appended = [];
         const sb = {
           Date: { now: () => now },
           JSON,
           document: { head: { appendChild: (s) => appended.push(s) }, documentElement: null, createElement: (t) => ({ tag: t }) },
-          localStorage: (opts && opts.throws) ? { getItem() { throw new Error('blocked'); } } : { getItem: (k) => (k === 'wtsacct_hint' && hint != null ? JSON.stringify(hint) : null) },
+          localStorage: (opts && opts.throws) ? { getItem() { throw new Error('blocked'); } } : { getItem: (k) => (k === 'wtsacct_hint' && hint != null ? JSON.stringify(hint) : k === 'wtspref_analytics_consent' && consent != null ? JSON.stringify(consent) : null) },
         };
         sb.window = sb;
         vm.createContext(sb);
@@ -208,7 +211,14 @@ module.exports = [
       r = runWith({ signedIn: false, oauth: { provider: 'google', route: 'home', at: now - 11 * 60000 }, v: 3 });
       assert.strictEqual(r.loaded, true, 'older attempt → loaded');
       r = runWith(null, { throws: true });
-      assert.strictEqual(r.loaded, true, 'storage blocked → loaded as before');
+      assert.strictEqual(r.loaded, false, 'storage blocked → no stored consent → not loaded');
+      assert.strictEqual(r.appended.length, 0);
+      r = runWith(null, { consent: null });
+      assert.strictEqual(r.loaded, false, 'no consent → not loaded'); assert.strictEqual(r.appended.length, 0);
+      r = runWith(null, { consent: { choice: 'denied', v: 1, at: now } });
+      assert.strictEqual(r.loaded, false, 'rejected → not loaded'); assert.strictEqual(r.appended.length, 0);
+      r = runWith({ signedIn: true, v: 3 }, { consent: GRANTED });
+      assert.strictEqual(r.loaded, false, 'signed in → skipped even with consent');
       // the iOS strip (GA, SW and ACCT steps of sync-from-main.js) leaves one "Google": the analytics sentence
       const ios = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '')
         .replace(/\/\/ ── SW:START[\s\S]*?\/\/ ── SW:END ──/g, '')
@@ -216,7 +226,7 @@ module.exports = [
         .replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       const g = ios.match(/[^'<>]{0,40}Google[^'<>]{0,60}/g) || [];
       assert.strictEqual(g.length, 1, 'one "Google" left: ' + JSON.stringify(g));
-      assert.ok(/The web version uses Google Analytics 4 to count anonymous usage/.test(g[0]), 'the analytics sentence: ' + g[0]);
+      assert.ok(/The web version uses Google Analytics 4 to count usage/.test(g[0]), 'the analytics sentence: ' + g[0]);
       assert.ok(ios.indexOf('LinkedIn') === -1, 'no "LinkedIn" on iOS');
     },
   },

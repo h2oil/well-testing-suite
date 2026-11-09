@@ -1,4 +1,4 @@
-// Well Test Simulator live HMI (38-wts-live.js) — release 3.4.2 review, round 2 (lane live). Covers the round-1 fixes that had
+// Well Test Simulator live HMI (38-wts-live.js) — release 4.1 review, round 2 (lane live). Covers the round-1 fixes that had
 // no test and the round-2 fixes:
 //   • pure: xferDest (booster), surgeDestTxt / inputsDiff receiver [23], capWhy [32], almShow relabel of the Sep→Flare run [34];
 //   • HUD: a cell is never narrower than its value (minmax(min-content, …) groups, label not widening a cell), the GOR split on a

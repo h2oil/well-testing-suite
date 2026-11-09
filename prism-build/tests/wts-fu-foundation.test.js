@@ -88,18 +88,18 @@ module.exports = [
       Object.keys(X.TAGS_NEW).forEach((k) => assert.strictEqual(S.TAGS[k], X.TAGS_NEW[k], 'TAGS.' + k));
       Object.keys(X.NAMES_NEW).forEach((k) => assert.strictEqual(S.NAMES[k], X.NAMES_NEW[k], 'NAMES.' + k));
       X.NULLABLE_NEW.forEach((p) => assert.ok(S.NULLABLE.indexOf(p) >= 0, 'NULLABLE ' + p));
-      // release 3.4.2 appends its keys after these (a prefix of EQ.HIST_KEYS_342, in that order)
+      // release 4.1 appends its keys after these (a prefix of EQ.HIST_KEYS_342, in that order)
       assert.deepStrictEqual(J(S.HIST_KEYS).slice(0, X.HIST_KEYS.length), X.HIST_KEYS, 'HIST_KEYS (+2)');
-      assert.deepStrictEqual(J(S.HIST_KEYS).slice(X.HIST_KEYS.length), require('./_wts-equip-shapes.js').HIST_KEYS_342.slice(0, S.HIST_KEYS.length - X.HIST_KEYS.length), 'HIST_KEYS: 3.4.2 keys appended');
+      assert.deepStrictEqual(J(S.HIST_KEYS).slice(X.HIST_KEYS.length), require('./_wts-equip-shapes.js').HIST_KEYS_342.slice(0, S.HIST_KEYS.length - X.HIST_KEYS.length), 'HIST_KEYS: 4.1 keys appended');
       assert.deepStrictEqual(J(S.NODE_IDS), X.NODE_IDS, 'NODE_IDS (heaterChoke = 10)');
       assert.deepStrictEqual(J(S.DEFAULTS.heaterChoke), X.DEFAULTS_NEW.heaterChoke);
       assert.deepStrictEqual(J(S.DEFAULTS.sep.bypass), X.DEFAULTS_NEW.sepBypass);
       assert.deepStrictEqual(J(S.DEFAULTS.cushion), X.DEFAULTS_NEW.cushion);
-      // release 3.4.2 appends its flags (tests/_wts-equip-shapes.js FEATURES_342), every one true
+      // release 4.1 appends its flags (tests/_wts-equip-shapes.js FEATURES_342), every one true
       const f342 = require('./_wts-equip-shapes.js').FEATURES_342, fz = J(S.features), f0 = {};
       Object.keys(X.FEATURES).forEach((k) => { f0[k] = fz[k]; });
       assert.deepStrictEqual(f0, X.FEATURES, 'features (D14)');
-      Object.keys(fz).filter((k) => !(k in X.FEATURES)).forEach((k) => assert.ok(f342.indexOf(k) >= 0 && fz[k] === true, 'features: 3.4.2 flag ' + k));
+      Object.keys(fz).filter((k) => !(k in X.FEATURES)).forEach((k) => assert.ok(f342.indexOf(k) >= 0 && fz[k] === true, 'features: 4.1 flag ' + k));
       X.API_STATIC_NEW.forEach((k) => assert.ok(k in S, 'WTS_sim.' + k));
       assert.deepStrictEqual(Object.keys(J(S.SAMPLE_FLOW.sim)).slice(5), X.SAMPLE_FLOW_SIM_KEYS, 'SAMPLE_FLOW.sim: the five, the seven, the two');
       assert.deepStrictEqual([S.SAMPLE_FLOW.sim.sepByDest, S.SAMPLE_FLOW.sim.sepByP_psig], [X.SAMPLE_FLOW_SIM_NEW.sepByDest, X.SAMPLE_FLOW_SIM_NEW.sepByP_psig]);
@@ -116,7 +116,7 @@ module.exports = [
       assert.ok(!nk.inRig && !nk.active && !nk.bypassed && nk.P === st.nodes.choke.P && nk.Pin === st.nodes.choke.P && nk.T === st.nodes.choke.T &&
         nk.dTjt === 0 && nk.regime === '' && nk.limiter === '' && nk.bean === 0 && nk.pos === 'inlet' && nk.designP_psig === X.DESIGN_P_CK2, 'static CK-102 node');
       assert.ok(st.inputs.bean2 === null && st.inputs.ck2Pos === null, 'no block → null inputs');
-      // 3.4.2 round 2: gasCap1 / gasCap2_mmscfd are each tank's PCV capacity (always a number, ≈ the fixture's 0.152)
+      // 4.1 round 2: gasCap1 / gasCap2_mmscfd are each tank's PCV capacity (always a number, ≈ the fixture's 0.152)
       const sbx = Object.assign({}, st.sepBy), sbe = X.EXAMPLES.sepBy;
       ['gasCap1_mmscfd', 'gasCap2_mmscfd'].forEach((k) => { assert.ok(Math.abs(sbx[k] / sbe[k] - 1) < 0.01, 'sepBy.' + k + ' ' + sbx[k]); sbx[k] = sbe[k]; });
       assert.deepStrictEqual(sbx, sbe, 'snap.sepBy default (burner line, V-101 in)');

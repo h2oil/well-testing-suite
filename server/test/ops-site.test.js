@@ -310,7 +310,10 @@ test('build: the bundle holds the functions only, its entry answers, nothing sta
   try {
     const r = B.build({ out });
     const names = fs.readdirSync(out).sort();
-    assert.deepStrictEqual(names, ['build-info.json', 'core', 'db', 'entry', 'functions', 'package-lock.json', 'package.json', 'site', 'static']);
+    assert.deepStrictEqual(names, ['build-info.json', 'core', 'db', 'entry', 'functions', 'netlify', 'netlify.toml', 'package-lock.json', 'package.json', 'public', 'site', 'static']);
+    // v4.0: the Netlify layout travels in the bundle (the release workflow deploys dist/ with the platform CLI)
+    assert.deepStrictEqual(fs.readdirSync(path.join(out, 'public')), ['robots.txt']);
+    assert.deepStrictEqual(require('../site/netlify-check').check(out), []);
     assert.deepStrictEqual(fs.readdirSync(path.join(out, 'static')), ['robots.txt']);
     // the single host function sits alone in its folder; the route-table modules in functions/ are not host functions
     assert.deepStrictEqual(fs.readdirSync(path.join(out, 'entry')), ['api.js']);

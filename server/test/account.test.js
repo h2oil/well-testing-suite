@@ -31,7 +31,7 @@ async function project(br, name, nParts) {
   const r = await br.call('POST', '/projects/' + pid + '/commit', { pushId: crypto.randomUUID(), baseRev: 0, reason: 'save',
     core: { hash: core.hash, vhash: core.hash, zsha: core.zsha, bytes: core.bytes, inline: core.z.toString('base64') },
     parts: parts.map((p, i) => ({ name: 'well/w' + i, hash: p.hash, bytes: p.bytes })),
-    meta: { name, client: 'Operator Energy Ltd', well: 'Example-1', field: '', operator: '' }, wells: parts.map((p, i) => ({ id: 'w' + i, name: 'W' + i })), fmt: 2, appVer: '3.5' });
+    meta: { name, client: 'Operator Energy Ltd', well: 'Example-1', field: '', operator: '' }, wells: parts.map((p, i) => ({ id: 'w' + i, name: 'W' + i })), fmt: 2, appVer: '4.0' });
   assert.strictEqual(r.status, 200, JSON.stringify(r.json));
   return { pid, parts, core };
 }

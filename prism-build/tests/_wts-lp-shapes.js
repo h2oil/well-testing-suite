@@ -1,4 +1,4 @@
-// Well Test Simulator — release 3.4.2 (WTS_sim code comments v1.7.0) contract fixture of the LP flare line of the surge-tank gas,
+// Well Test Simulator — release 4.1 (WTS_sim code comments v1.7.0) contract fixture of the LP flare line of the surge-tank gas,
 // FT-201 / FQI-201 and GOR1 / GOR2 (lpgas design; INTEGRATION §2.1, §2.4, C1, C3, C8, C9). Frozen at hand-off (E6): LIVE (38) and
 // VIEW3D (32) build their fake snapshots against it, not against a running engine. Not a test file.
 //   LP_KEYS            snap.lp keys in order (+ sources keys)        EX_LP / EX_LP_OFF   examples (default engine at t = 0 / 'hp')

@@ -20,7 +20,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const BUILD = path.resolve(__dirname, '..');
 const HTML = () => fs.readFileSync(path.join(ROOT, 'well-testing-app.html'), 'utf8');
 
-// The two GA:START blocks of the web <head>: [loader + privacy filter, event tracker].
+// The GA:START blocks of the web page: [loader + privacy filter + consent API, event tracker] in <head>, consent banner in <body> right before the main script.
 function gaBlocks(html) {
   const out = [];
   const re = /<!--\s*GA:START[\s\S]*?GA:END\s*-->/g;
@@ -38,7 +38,7 @@ function scriptsOf(block) {
 // Run the loader script (gtag + filter) in a bare sandbox → { gtag, dataLayer, policy, clean }.
 function loadFilter() {
   const loader = scriptsOf(gaBlocks(HTML())[0])[0];
-  const sb = { dataLayer: [] };
+  const sb = { dataLayer: [], __wtsGaLoaded: true };   // the tag accepted and loaded: events are queued only then (consent)
   sb.window = sb;
   vm.createContext(sb);
   vm.runInContext(loader, sb);
@@ -275,12 +275,12 @@ module.exports = [
     opts: false,
     run(app, assert) {
       const html = HTML();
-      assert.equal(gaBlocks(html).length, 2, 'two GA blocks in the web head');
+      assert.equal(gaBlocks(html).length, 3, 'two GA blocks in the web head + the consent banner block');
       // Same strip the sync script applies.
       const src = fs.readFileSync(path.join(ROOT, 'ios-app', 'scripts', 'sync-from-main.js'), 'utf8');
       assert.includes(src, "html.replace(/<!--\\s*GA:START[\\s\\S]*?GA:END\\s*-->/g");
       const ios = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->');
-      for (const s of ['googletagmanager', 'function gtag', 'window.h2oilTrack = track', 'G-6QKCBNWHYB\', {']) {
+      for (const s of ['googletagmanager', 'function gtag', 'window.h2oilTrack = track', 'G-6QKCBNWHYB\', {', 'wtsConsent', 'WTS_consent =', 'wtspref_analytics_consent']) {
         assert.ok(ios.indexOf(s) === -1, 'iOS bundle still has ' + s);
       }
     },
@@ -308,6 +308,15 @@ module.exports = [
       app.hook.nav('releasenotes');
       app.click('rnPrivacyLink');
       assert.equal(app.el('pgTitle').textContent, 'Privacy', 'release-notes link');
+      // Release Notes: Terms of Use next to Privacy (same-site page on the web, a new tab)
+      app.hook.nav('releasenotes');
+      const tl = app.el('rnTermsLink');
+      assert.ok(tl && tl.getAttribute('href') === 'terms.html' && tl.getAttribute('target') === '_blank' && tl.getAttribute('rel') === 'noopener', 'release-notes Terms link');
+      // the full notice and terms from the in-app page
+      app.hook.nav('privacy');
+      const fl = app.el('privacy_full_link'), tm = app.el('privacy_terms_link');
+      assert.ok(fl && fl.getAttribute('href') === 'privacy.html' && fl.getAttribute('rel') === 'noopener', 'full notice link');
+      assert.ok(tm && tm.getAttribute('href') === 'terms.html' && tm.getAttribute('target') === '_blank', 'terms link');
       // Not captured into the Quick Report / autosave.
       app.hook.nav('home');
       assert.equal(app.storage.getItem('wts_page_privacy'), null, 'no autosave record');

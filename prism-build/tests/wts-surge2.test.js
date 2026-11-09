@@ -19,7 +19,7 @@ function flow(o) {
   return f;
 }
 // the pins of mk(): every legacy pin (single-compartment T-202, HP vent, v341 rules, v3.3.1 T-201 line-up) — the identity frame of
-// this suite; the default-mode re-runs at the end (3.4.2 review) set PIN to none, so those tests run on the shipped engine
+// this suite; the default-mode re-runs at the end (4.1 review) set PIN to none, so those tests run on the shipped engine
 let PIN = legacyOpts;
 function mk(o) {
   o = o || {};
@@ -165,7 +165,7 @@ const T = [
       const sim = mk({ sim: { surge2Cap_bbl: 40 }, config: { noise: { on: false } } });
       sim.setSurgeRoute('surge2');
       let on = null, off = null, law = 0, cycles = 0, last = false;
-      // single T-202: the tank level, on at LSH 70 %; dual (shipped default, 3.4.2 review run): the suction compartment's level —
+      // single T-202: the tank level, on at LSH 70 %; dual (shipped default, 4.1 review run): the suction compartment's level —
       // LCV-202 opens on the compartment divert at 80 % (suction → the full side) and stops at LSL 25 % of that compartment
       const dual = st(sim).surge2.compartments === 2, onSp = dual ? 0.80 : 0.70;
       const lvl = (x) => dual ? x.surge2.comps[x.surge2.suction === 'B' ? 1 : 0].frac : x.surge2.frac;
@@ -555,7 +555,7 @@ const T = [
       a.setControls({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }, { initial: true });
       assert.strictEqual(JSON.stringify(a.getControls()), X.CONTROLS_DEFAULT_JSON, 'v3.3 prefs');
       const c = J(a.getControls()); c.surge2.inlet = true; c.surge2.strokeS = 4;
-      c.surge2.comp.inlet = [true, false];   // release 3.4.2: the appended command array, consistent with the derived inlet
+      c.surge2.comp.inlet = [true, false];   // release 4.1: the appended command array, consistent with the derived inlet
       const b = mk();
       b.setControls(c, { initial: true });
       let s = st(b);
@@ -649,7 +649,7 @@ const T = [
       });
       assert.ok(n > 300 && worst <= 0.05, 'Ph − min(P) worst ' + worst.toFixed(3) + ' psi over ' + n + ' samples');
       const s = st(sim);
-      // legacy frame: the share at the end; default line-up (3.4.2 review run): the instant can fall on a T-201 transfer dip, so the mean
+      // legacy frame: the share at the end; default line-up (4.1 review run): the instant can fall on a T-201 transfer dip, so the mean
       if (PIN === legacyOpts) assert.ok(s.surge2.share > 0.3 && s.surge2.share < 0.7, 'still shared: ' + s.surge2.share);
       assert.ok(sh / n > 0.3 && sh / n < 0.7, 'shared on average: ' + sh / n);
       balanced(assert, s, 1e-9, 'both');
@@ -657,7 +657,7 @@ const T = [
   },
 ];
 
-// 3.4.2 review: the behaviour of T-202 (PSV-202 sizing / relief, PCV-203 hold, LCV-202 law, split, gas accounting, balances) is not
+// 4.1 review: the behaviour of T-202 (PSV-202 sizing / relief, PCV-203 hold, LCV-202 law, split, gas accounting, balances) is not
 // a legacy subject, so these tests also run on the SHIPPED defaults — dual T-202 (A fills, B on LCV-202, auto-divert), the LP flare
 // line through FT-201 and the rig-up chain — with no pin at all. (The identity frame above keeps every pin.)
 const DEFAULT_RUNS = [/^WTSS2 pressure-driven split/, /^WTSS2 LCV-202: q = Cv/, /^WTSS2 oil \/ water \/ gas balances/, /^WTSS2 gas accounting/,

@@ -1,7 +1,7 @@
 // prism-build/48-calc-help-welltest.js — Help content: Well Test & Flowlines (docs/HELP-GUIDE-PLAN.md §4, WP-C3).
 // Data only (no WTS_calcRegistry page). The factory runs on the first Help open (WTS_help.load()); nothing runs at load.
 // Routes: wts (the simulator reference, in parts), bottomsup, casing, flowline, lineheat, pipesz.
-// The wts parts describe the simulator of release 3.4.2.
+// The wts parts describe the simulator of release 4.1.
 (function () {
 'use strict';
 var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -12,7 +12,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: 'v3.4.2', reviewedSrc: '91a20ef7', units: 'dual',
+  route: 'wts', reviewed: 'v4.1', reviewedSrc: '86a32fa7', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line', 'FT-201', 'GOR2'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],

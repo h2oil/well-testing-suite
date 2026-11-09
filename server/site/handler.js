@@ -3,7 +3,8 @@
 // Wraps the shared pipeline (core/app.js) for the host's function runtime in the two common calling conventions:
 //
 //   createHandler({env, store?, mail?, db?, fetch?, log?, now?}) → {
-//     handle(request: web Request) → Promise<web Response>          (fetch-style runtimes)
+//     handle(request: web Request, context?) → Promise<web Response>          (fetch-style runtimes; context.waitUntil, when the
+//        runtime has it, keeps the after-response work — the queued mail — alive after the response is sent)
 //     classic(event) → Promise<{statusCode, headers, multiValueHeaders, body, isBase64Encoded}>   (event-style runtimes)
 //     invoke(req: {method, url, headers, body, remoteAddress}) → Promise<pipeline response + site headers>
 //     state() → {ready, isolation, warnings, alerts}
@@ -55,8 +56,8 @@ function createHandler(o) {
 
   let db = o.db || null;
   function lazyDb() {
-    if (db || !config.secrets.dbUrl) return db;
-    db = require('../core/db').createDb(config.secrets.dbUrl, { max: 2 });
+    if (db || !config.secrets.dbUrl || config.dbRole === 'invalid') return db;
+    db = require('../core/db').createDb(config.secrets.dbUrl, { max: 2, idleTimeout: 10, role: config.dbRole || undefined });
     return db;
   }
   let objects = null;
@@ -69,8 +70,11 @@ function createHandler(o) {
     try { mail = A.httpMail({ url: env.WTS_MAIL_API_URL, credential: env.WTS_MAIL_CREDENTIAL, from: config.mailFrom, fetch: o.fetch }); } catch (e) { log.warn('config: mail transport — ' + e.message); }
   }
   let app = null;
+  // the runtime's waitUntil of the request in progress (function instances serve one request at a time)
+  let waitUntil = null;
+  const background = (p) => { if (typeof waitUntil === 'function') { try { waitUntil(p); } catch (e) { /* the promise still runs */ } } };
   function getApp() {
-    if (!app) app = createApp({ config, db: lazyDb(), mail, objects, now, log: { info: (m) => log.info(M.redactLine(m)), warn: (m) => log.warn(M.redactLine(m)) } });
+    if (!app) app = createApp({ config, db: lazyDb(), mail, objects, now, background, log: { info: (m) => log.info(M.redactLine(m)), warn: (m) => log.warn(M.redactLine(m)) } });
     return app;
   }
 
@@ -137,6 +141,7 @@ function createHandler(o) {
       if (buf.length > cap) tooLarge = true; else body = buf.length ? buf : null;
     }
     const ip = (context && (context.ip || (context.clientAddress))) || null;
+    waitUntil = context && typeof context.waitUntil === 'function' ? context.waitUntil.bind(context) : null;
     const res = await invoke({ method: request.method, url, headers, body, remoteAddress: ip, tooLarge });
     const out = new Headers();
     Object.keys(res.headers).forEach((k) => out.set(k, String(res.headers[k])));

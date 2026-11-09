@@ -1,4 +1,4 @@
-// Well Test Simulator live HMI (38-wts-live.js) — release 3.4.2, rig-up "next item downstream" chain (designs rigup-next.md §G,
+// Well Test Simulator live HMI (38-wts-live.js) — release 4.1, rig-up "next item downstream" chain (designs rigup-next.md §G,
 // INTEGRATION.md C2 / C3 / §2.7): an item taken out sends its flow to the next item in the rig-up.
 //   • pure: destTxt / bypSurge for the new V-101-out destination 'surge', ventOn under the chain rules, the three-valued
 //     destination text of inputsDiff, rigRoute (rigup.routes);
@@ -139,7 +139,7 @@ module.exports = [
         app.flush(600);
         let tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('BYPASSED → V-101') >= 0, 'heater: ' + tx.filter((x) => /BYPASS|RIG-UP/.test(x)).join('|'));
-        // review 3.4.2: two rows right of the dump pipe, inside the cleared P / T block (no stale separator values under it)
+        // review 4.1: two rows right of the dump pipe, inside the cleared P / T block (no stale separator values under it)
         assert.ok(tx.indexOf('BYPASSED → T-201') >= 0 && tx.indexOf('WHOLE STREAM · PSHH-104') >= 0, 'V-101 → T-201: ' + tx.filter((x) => /BYPASS|WHOLE/.test(x)).join('|'));
         const L0 = app.win.WTS_DIAG_LAYOUT, fr0 = lastOps(app, cv);
         assert.deepStrictEqual(textAt(fr0, 'BYPASSED → T-201'), [[L0.tx[4] + 7, L0.cy + 46]], 'row 1 position');
@@ -149,7 +149,7 @@ module.exports = [
         t.set({ rig: { surge: false, surge2: true }, routes: { surge: 'T-202' } }); app.flush(600);
         tx = frameTexts(app, cv);
         assert.ok(tx.indexOf('DUMPS → T-202') >= 0 && tx.indexOf('DUMPS → T-301 (no surge tank)') < 0, 'T-201 out: ' + tx.filter((x) => /DUMPS/.test(x)).join('|'));
-        // review 3.4.2: T-202 is drawn at its slot (the host draws the base row in this rig-up) with LCV-202 on the T-301 line
+        // review 4.1: T-202 is drawn at its slot (the host draws the base row in this rig-up) with LCV-202 on the T-301 line
         const L1 = app.win.WTS_DIAG_LAYOUT, fr1 = lastOps(app, cv);
         assert.ok(textAt(fr1, 'T-202').some((p) => p[0] === L1.t202.x && p[1] === L1.by + 38), 'T-202 drawn at its slot: ' + JSON.stringify(textAt(fr1, 'T-202')));
         assert.ok(textAt(fr1, 'T-202').some((p) => p[1] > L1.strip.y), 'T-202 strip bar shown while it stands in for T-201');

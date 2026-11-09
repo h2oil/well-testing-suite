@@ -1,235 +1,424 @@
-<!DOCTYPE html>
-<!-- Privacy notice for welltest.h2oil.co.uk. Draft prepared for review by a qualified lawyer; it is not legal advice.
-     Owner to confirm: legal name, trade licence, licensing authority, registered address, any UK/EU representative. Static page: no scripts, no external requests. -->
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Privacy Policy — H2Oil Well Testing Suite</title>
-<meta name="description" content="How the H2Oil Well Testing Suite (web app and iOS app) collects, uses, stores and protects personal data.">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Privacy notice for the H2Oil Well Testing Suite web app and iOS app: what data is processed, why, for how long, cookies and your rights.">
+<title>Privacy notice — H2Oil Well Testing Suite</title>
+<!--
+  Privacy notice version 1 (9 November 2026). Change together: this page, the server's WTS_PRIVACY_VERSION default ("1")
+  and the analytics consent version (WTS_consent.version in well-testing-app.html). Companion page: terms.html.
+-->
 <style>
-:root{--bg:#ffffff;--fg:#1d2330;--muted:#5a6475;--line:#d9dee7;--accent:#0b6bcb;--card:#f5f7fa}
-@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa6b6;--line:#2b3340;--accent:#58a6ff;--card:#161b22}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-header,main,footer{max-width:860px;margin:0 auto;padding:0 16px}
-header{padding-top:28px;border-bottom:1px solid var(--line);padding-bottom:16px}
-header a.brand{color:var(--fg);text-decoration:none;font-weight:700;letter-spacing:.5px}
-h1{font-size:1.9rem;margin:.4em 0 .2em}
-h2{font-size:1.3rem;margin:2em 0 .5em;padding-top:.4em;border-top:1px solid var(--line)}
-h3{font-size:1.05rem;margin:1.4em 0 .4em}
-p,li{color:var(--fg)}
-.meta{color:var(--muted);font-size:.92rem}
-a{color:var(--accent)}
-nav.toc{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 18px;margin:20px 0}
-nav.toc ol{margin:.3em 0;padding-left:1.3em}
-.box{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:14px 0}
-table{border-collapse:collapse;width:100%;margin:10px 0;font-size:.93rem;display:block;overflow-x:auto}
-th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
-th{background:var(--card)}
-code{font-size:.9em;background:var(--card);padding:1px 4px;border-radius:4px}
-footer{border-top:1px solid var(--line);margin-top:40px;padding:18px 16px 40px;color:var(--muted);font-size:.92rem}
+:root {
+  --bg0: #0a0e14; --bg1: #0d1117; --bg2: #161b22; --bg3: #1c2128;
+  --border: #30363d; --text: #e6edf3; --text2: #a3acb6; --text3: #8b949e;
+  --accent: #f0883e; --link: #58a6ff; --green: #3fb950; --warn: #d29922; --ph-bg: rgba(210,153,34,.20); --ph-fg: #f2cc60;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg0: #f6f8fa; --bg1: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2;
+    --border: #d0d7de; --text: #1f2328; --text2: #424a53; --text3: #57606a;
+    --accent: #bc4c00; --link: #0969da; --green: #1a7f37; --warn: #9a6700; --ph-bg: rgba(212,167,44,.25); --ph-fg: #7d4e00;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg1); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px; line-height: 1.6;
+}
+a { color: var(--link); }
+a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 8px; background: var(--bg2); padding: 6px 10px; z-index: 10; }
+.top { background: var(--bg0); border-bottom: 1px solid var(--border); }
+.top-in, main, footer { max-width: 860px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+.top-in { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-top: 12px; padding-bottom: 12px; }
+.brand { font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+.brand sub { font-size: 11px; }
+.brand span { color: var(--accent); }
+.top nav a { margin-left: 14px; font-size: 14px; }
+.top nav a:first-child { margin-left: 0; }
+main { padding-top: 24px; padding-bottom: 32px; }
+h1 { font-size: 28px; line-height: 1.25; margin: 0 0 6px; }
+h2 { font-size: 21px; line-height: 1.3; margin: 36px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+h3 { font-size: 17px; margin: 22px 0 6px; }
+p, ul, ol { margin: 0 0 12px; }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 4px; }
+.meta { color: var(--text3); font-size: 14px; margin-bottom: 16px; }
+.lead, .warn, .draft { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+.lead { border-left: 3px solid var(--green); }
+.warn, .draft { border-left: 3px solid var(--warn); }
+.draft { font-size: 14px; color: var(--text2); }
+.lead p:last-child, .lead ul:last-child, .warn p:last-child, .warn ul:last-child, .draft p:last-child { margin-bottom: 0; }
+.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px 4px; margin: 18px 0; }
+.toc h2 { border: 0; margin: 0 0 6px; padding: 0; font-size: 16px; }
+.toc ol { columns: 2; column-gap: 28px; font-size: 15px; }
+@media (max-width: 640px) { .toc ol { columns: 1; } h1 { font-size: 24px; } }
+.note { color: var(--text2); font-size: 15px; }
+.ph { background: var(--ph-bg); color: var(--ph-fg); border-radius: 3px; padding: 0 3px; font-weight: 600; }
+.tbl { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 0 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tbl table { min-width: 560px; }
+.tbl table.wide { min-width: 680px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 8px; border: 1px solid var(--border); overflow-wrap: normal; word-break: normal; hyphens: manual; }
+.tbl-hint { display: none; color: var(--text3); font-size: 13px; margin: -4px 0 6px; }
+@media (max-width: 700px) { .tbl-hint { display: block; } }
+th { background: var(--bg3); font-weight: 600; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--bg3); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
+footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom: 28px; color: var(--text3); font-size: 14px; }
+@media print { .top nav, .toc, .skip { display: none; } body { background: #fff; color: #000; } a { color: #000; } }
 </style>
 </head>
 <body>
-<header>
-  <a class="brand" href="https://welltest.h2oil.co.uk/">H2Oil · Well Testing Suite</a>
-  <h1>Privacy Policy</h1>
-  <p class="meta">Last updated: 9 November 2026 · Version 2026-11-09 · Applies to the web app at welltest.h2oil.co.uk and the iOS app “Well Testing Suite”.</p>
+<a class="skip" href="#main">Skip to the notice</a>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="well-testing-app.html">H<sub>2</sub>Oil <span>Well Testing Suite</span></a>
+    <nav aria-label="Legal pages">
+      <a href="well-testing-app.html">Open the app</a>
+      <a href="privacy.html" aria-current="page">Privacy</a>
+      <a href="terms.html">Terms of Use</a>
+    </nav>
+  </div>
 </header>
-<main>
-<div class="box"><strong>In short:</strong> the Well Testing Suite runs its calculations on your own device. Without an account, your inputs,
-well data and results stay in your browser or in the app on your device, and we never receive them. The web version uses Google Analytics
-to count anonymous usage. Accounts are optional and web only. If you create one, we store the projects you choose to save to the cloud,
-your e-mail address and the minimum needed to keep the account secure. We do not sell your data and we do not use your project data for
-advertising, analytics or AI training.</div>
 
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol>
-<li><a href="#who">Who we are</a></li>
-<li><a href="#summary">What data we process, why and on what basis</a></li>
-<li><a href="#device">Data that stays on your device</a></li>
-<li><a href="#analytics">Usage analytics (web version)</a></li>
-<li><a href="#accounts">Accounts and cloud projects (web version, optional)</a></li>
-<li><a href="#google-linkedin">Signing in with Google or LinkedIn</a></li>
-<li><a href="#emails">E-mails we send</a></li>
-<li><a href="#cookies">Cookies and similar technologies</a></li>
-<li><a href="#sharing">Who we share data with</a></li>
-<li><a href="#transfers">Where data is stored and international transfers</a></li>
-<li><a href="#retention">How long we keep data</a></li>
-<li><a href="#security">Security</a></li>
-<li><a href="#rights">Your rights</a></li>
-<li><a href="#business">Data you store about other people (business use)</a></li>
-<li><a href="#ios">iOS app</a></li>
-<li><a href="#children">Children</a></li>
-<li><a href="#changes">Changes to this policy</a></li>
-<li><a href="#contact">Contact and complaints</a></li>
-</ol></nav>
+<main id="main">
+<h1 id="top">Privacy notice</h1>
+<p class="meta">Last updated: 9 November 2026 · Privacy notice version 1</p>
+
+<div class="lead">
+  <p><strong>The short version.</strong></p>
+  <ul>
+    <li>All calculations run on your own device. Without an account, your inputs, results, client and well details and files stay on your device. We never receive them.</li>
+    <li>The web version can use Google Analytics to count how the app is used, but <strong>only if you accept analytics cookies</strong>. Nothing from Google Analytics is loaded until you do, and you can change your choice at any time. It never sends your input values, results, client or well names, or anything you type. The iOS app has no analytics.</li>
+    <li>Like every website, our hosting provider sees your IP address and browser details when you visit, to deliver and protect the site (section 6).</li>
+    <li>Web accounts are optional and are for the web version only. They are not open yet. When they launch, if you create one, we will store your e-mail address and the projects you choose to save to the cloud, encrypted, in the UK or the EU (section 13).</li>
+    <li>We do not sell your data, use it for advertising or use it to train AI models.</li>
+  </ul>
+</div>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#who">Who we are</a></li>
+    <li><a href="#scope">What this notice covers</a></li>
+    <li><a href="#laws">Laws that apply to you</a></li>
+    <li><a href="#device">Data that stays on your device</a></li>
+    <li><a href="#analytics">Analytics (web version only, with your consent)</a></li>
+    <li><a href="#network">Visiting the website and other network requests</a></li>
+    <li><a href="#accounts">Web accounts and cloud projects (optional, web version only)</a></li>
+    <li><a href="#signin">Signing in with Google or LinkedIn (optional, web version only)</a></li>
+    <li><a href="#ios">The iOS app</a></li>
+    <li><a href="#purposes">Purposes and legal bases</a></li>
+    <li><a href="#cookies">Cookies and similar technologies</a></li>
+    <li><a href="#sharing">Who receives data</a></li>
+    <li><a href="#transfers">International transfers</a></li>
+    <li><a href="#retention">How long we keep data</a></li>
+    <li><a href="#business">Data you store for an employer or client</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#rights">Your rights</a></li>
+    <li><a href="#complaints">Complaints</a></li>
+    <li><a href="#children">Children</a></li>
+    <li><a href="#decisions">Automated decisions</a></li>
+    <li><a href="#changes">Changes to this notice</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ol>
+</nav>
 
 <h2 id="who">1. Who we are</h2>
-<p>The Well Testing Suite is provided by <strong>H2Oil Engineering</strong> (“H2Oil”), a company registered in Dubai,
-United Arab Emirates (“H2Oil”, “we”, “us”). We are the controller of the personal data
-described in this policy, except where section 14 says we act for you.</p>
-<p>Contact for privacy questions and requests: <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>.</p>
-<p>We apply the data-protection law that governs us in the UAE, and, for users in the United Kingdom and the European Economic Area,
-the UK GDPR and the EU GDPR.</p>
+<p>The Well Testing Suite is made by H2Oil Engineering, a company licensed in Dubai, United Arab Emirates. In this notice, "H2Oil", "we", "us" and "our" mean that company.</p>
+<p>For the personal data described in this notice we are the <strong>controller</strong>: we decide why and how it is used. The exception is data you store for an employer or client, where we act for them (section 15).</p>
+<p>We have not appointed a Data Protection Officer. For anything about privacy, write to <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>.</p>
 
-<h2 id="summary">2. What data we process, why and on what basis</h2>
-<table>
-<tr><th>Purpose</th><th>Data</th><th>Legal basis</th></tr>
-<tr><td>Running the app on your device</td><td>Your inputs, results and files, kept on your device only</td><td>We do not receive this data</td></tr>
-<tr><td>Measuring how the web app is used, to improve it</td><td>Pages and modules viewed, buttons used, time on page, device and browser type, approximate location, an analytics identifier (see section 4)</td><td>Consent, where the law requires it; otherwise our legitimate interest in understanding and improving the service</td></tr>
-<tr><td>Providing an account and storing your cloud projects (optional, web)</td><td>E-mail address, optional recovery address, the projects you save, sign-in method, device and session records (see section 5)</td><td>Performance of our contract with you (the <a href="terms.html">Terms of Service</a>)</td></tr>
-<tr><td>Signing in with Google or LinkedIn (optional)</td><td>The identifier and e-mail address the provider sends (see section 6)</td><td>Performance of our contract with you</td></tr>
-<tr><td>Keeping accounts secure and preventing abuse</td><td>Security log, shortened IP address, browser family, rate-limit counters, security e-mails</td><td>Our legitimate interest in protecting you, other users and the service</td></tr>
-<tr><td>Answering your questions and requests</td><td>Your e-mail and what you tell us</td><td>Legitimate interest; legal obligation for data-protection requests</td></tr>
-<tr><td>Meeting legal obligations</td><td>Records we must keep or disclose by law</td><td>Legal obligation</td></tr>
-</table>
-<p>We do not make decisions about you based solely on automated processing that have legal or similarly significant effects. You do
-not have to give us any personal data to use the app without an account. An e-mail address is required only if you create an account.</p>
-
-<h2 id="device">3. Data that stays on your device</h2>
+<h2 id="scope">2. What this notice covers</h2>
 <ul>
-<li>Every calculator, PRiSM analysis, DFIT and build-up interpretation, simulation and report is computed in your browser or in the app. There is no server-side calculation.</li>
-<li>Your inputs, client and well details, loaded gauge data, results and preferences are kept in your browser's local storage and databases (in the iOS app, the app's own storage). We cannot see or recover them. Clearing the site's data in your browser, or deleting the app, removes them.</li>
-<li>Project files and PDF, PNG, CSV and spreadsheet exports are created only when you choose to save or share them, and go only where you put them.</li>
-<li>Live data (Modbus) connects only to devices you configure, through a bridge program you run on your own network (web) or directly from your device (iOS). Tag values and history stay in your browser's or app's local database.</li>
-<li>The web version keeps an offline copy of the app and its help pages in your browser (a service worker cache). It contains code and images only, not your data.</li>
-<li>Some optional features download public code libraries (the 3D engine, a database engine for the historian, a spreadsheet library) from a public content-delivery network the first time they are used. These requests contain no data from you beyond what any web request contains (such as your IP address).</li>
+  <li><strong>The web app</strong> (<a href="well-testing-app.html">the Well Testing Suite</a> at welltest.h2oil.co.uk), including its help pages.</li>
+  <li><strong>The iOS app</strong> "Well Testing Suite", which is free.</li>
+  <li><strong>Web accounts and cloud projects</strong>, an optional part of the web app. Accounts are not open yet. They will be introduced in stages, starting with a trial for invited users. Until accounts are offered to you, the account sections (7, 8 and the account rows of the tables) do not apply to you.</li>
+  <li><strong>The WTS Modbus Bridge</strong>, a small program you can install to connect the web app to equipment on your own network.</li>
+  <li>E-mails you send us.</li>
+</ul>
+<p>Without an account, you do not need to give us any personal data to use the Well Testing Suite. Our hosting provider still sees technical details of each visit to the website, such as your IP address (section 6).</p>
+
+<h2 id="laws">3. Laws that apply to you</h2>
+<p>People use the Well Testing Suite all over the world. We follow the data protection law that applies to us and, where their law reaches us, the law that protects you:</p>
+<ul>
+  <li><strong>UAE law (everyone).</strong> As a company licensed in Dubai, we are subject to the data-protection law of the United Arab Emirates that applies to us. It applies to our processing of everyone's personal data, wherever they live.</li>
+  <li><strong>UK and EU law (people in the UK or the EU).</strong> Because we offer the service to people in the UK and the EU, the UK GDPR, the UK Data Protection Act 2018 and the EU General Data Protection Regulation (GDPR) also apply to our processing of their personal data. So do the UK and EU rules on cookies and similar technologies.</li>
+  <li><strong>Other countries.</strong> If you live elsewhere, your local law may give you further rights. We will respect them. Contact us if you want to use them.</li>
+</ul>
+<p>This notice is written to meet all of these laws. Where they differ, section 10 shows the legal basis we rely on under each, and section 17 lists the rights you have under any of them.</p>
+
+<h2 id="device">4. Data that stays on your device</h2>
+<p>Every calculator, analysis, simulation and report is computed in your browser or in the app on your device. There is no calculation on our servers.</p>
+<p>What you enter is saved on your device so it is still there next time:</p>
+<ul>
+  <li>calculator inputs, analyses, loaded gauge data, wells and results;</li>
+  <li>the <strong>Client Info</strong> page, which can hold names and e-mail addresses of client contacts and of the engineer, a client logo and well details;</li>
+  <li>build-up surveillance results, including the names entered at sign-off;</li>
+  <li>live-data (Modbus) settings and the historian database of tag values and alarms (by default the historian keeps 30 days);</li>
+  <li>report snapshots, report templates and your preferences, such as units and layout.</li>
+</ul>
+<p>We cannot see, access or recover this data. It stays until you clear it, for example by clearing the browser's site data for welltest.h2oil.co.uk or by deleting the iOS app. Project files and PDF, PNG, CSV, Excel and database exports are made only when you ask, and go only where you save or share them.</p>
+<p>Because we do not receive this data, we are not its controller. If you enter other people's details, such as client contacts, you are responsible for doing so lawfully.</p>
+<p>If you use a <strong>shared or public computer</strong>, anyone using the same browser profile can see what is stored there. Clear the site data when you finish.</p>
+
+<h2 id="analytics">5. Analytics (web version only, with your consent)</h2>
+<p>The web version can use <strong>Google Analytics</strong>, a service provided by Google, to count how the app is used, so that we can see which features matter and improve them. We use it <strong>only if you accept</strong>.</p>
+<h3>Your choice</h3>
+<ul>
+  <li>When you first open the web app, a banner asks whether you accept analytics cookies. "Accept" and "Reject" are equally easy. Until you accept, the Google Analytics code is not loaded, no analytics cookie is set and nothing is sent. Nothing you did before accepting is sent afterwards: the app keeps no analytics events from before your choice.</li>
+  <li>We remember your choice on your device for 12 months, and ask again after that or when this notice changes.</li>
+  <li><strong>To change your choice</strong>, open <strong>Privacy</strong> (in the Overview group of the menu, or the "Privacy — how your data is stored" link at the bottom of the sidebar) and choose <strong>Cookie settings</strong>. If you withdraw consent, the app stops sending analytics straight away and deletes the analytics cookies it can reach. Clearing the site data for welltest.h2oil.co.uk also resets the choice.</li>
+  <li>Rejecting analytics does not affect any feature. Blocking it with a browser setting or content blocker has the same effect.</li>
+</ul>
+<h3>What is sent if you accept</h3>
+<ul>
+  <li>Events such as "page viewed", "time spent on a module", "calculate clicked", "exported as PDF", "PRiSM tab opened", scroll depth and clicks on links that leave the app.</li>
+  <li>Each event carries only page or route names, fixed button, tool or model names, the visible label of the menu item or link clicked, and a few counters (tab number, scroll percentage, seconds on a page). For an outgoing link, the address is sent without its query string or fragment.</li>
+  <li>A filter in the page removes everything else before an event is sent. <strong>Never sent:</strong> input values, results or other numbers from your data, client or well names, file contents, and any text you type, search for or copy.</li>
+  <li>The in-app page "GA4 Events Reference" lists every event.</li>
+</ul>
+<h3>What Google Analytics collects itself</h3>
+<p>Once loaded, the Google Analytics code also collects some data on its own: a random identifier stored in a cookie, the page address, the referring page, the browser and device type, screen size, language, and an approximate location (country or city) worked out from your IP address. Google states that Google Analytics does not log or store IP addresses. It also records some events of its own, such as the start of a visit, a first visit and how long the page is in use. These standard fields do not pass through our filter.</p>
+<p>Google Analytics keeps this data for up to 14 months. Google provides Google Analytics to us under its own terms for the service, and explains how it handles data from sites that use its services in its own privacy information.</p>
+<h3>When analytics are never used</h3>
+<ul>
+  <li>In the iOS app. The analytics code and the banner are removed when the app is built.</li>
+  <li>While you are signed in to a web account. The analytics code is not loaded on a signed-in page, and no account information is ever sent to Google Analytics.</li>
 </ul>
 
-<h2 id="analytics">4. Usage analytics (web version)</h2>
-<p>The web version uses <strong>Google Analytics 4</strong>, provided by Google, to count how the app is used. A filter in our page
-sends only page and module names, fixed button and model names and a few interface counters (tab number, scroll depth, seconds on a page).
-It never sends your inputs, client or well names, file contents, results or text you type or copy.</p>
-<p>As with any website using it, Google Analytics also receives technical data from your browser: your IP address (which Google uses to
-estimate a coarse location and says it does not store), device, browser, screen size, language, the referring page and an analytics
-identifier stored in a cookie (see section 8). Some events are generated automatically by Google's script and are not covered by our filter.</p>
+<h2 id="network">6. Visiting the website and other network requests</h2>
 <ul>
-<li>The analytics script is not loaded while you are signed in to an account.</li>
-<li>The iOS app contains no analytics code.</li>
-<li>You can block analytics with your browser's privacy settings or a content blocker; every feature keeps working.</li>
-<li>We are adding an in-app choice to accept or refuse analytics. When it is live, analytics will load only after you accept, and you will be able to change your choice at any time.</li>
+  <li><strong>Visiting the website.</strong> Whenever your browser loads the web app, its help pages or these pages, or talks to the account server, our hosting provider processes your full IP address, the address requested, the time and your browser details (user agent). It needs them to deliver the site and to keep it secure, for example to detect attacks. These standard request logs are kept by the hosting provider for the period its own log retention sets. This happens with or without an account. Only our account database shortens IP addresses (section 7); the hosting provider's logs do not.</li>
+  <li><strong>Security reports.</strong> Your browser may automatically send us a short report when the site's security policy blocks something on the page. We keep only counts by type of block and blocked host, and a rate-limit counter keyed by your shortened IP address, for up to 7 days. We never keep the page address, a sample of the content or your full IP address from these reports.</li>
+  <li><strong>Code libraries.</strong> Some features use open-source libraries: the 3D view, spreadsheet import and export, and the historian database. In the web version, your browser downloads these from public content-delivery networks. It may download them in the background when you first open the app, so the features also work offline, or when you first use a feature. These are plain file downloads that carry none of your data, but the network operator sees your IP address and browser type, as for any download. Each library is checked against a fixed fingerprint before it is used. The iOS app uses the copies built into the app.</li>
+  <li><strong>Offline copy.</strong> The web version keeps a copy of the app, its help pages and these libraries in your browser so it works offline. This copy contains code and pictures only.</li>
+  <li><strong>Live data (Modbus).</strong> Live data goes only to the equipment you configure. In the web version it passes through the WTS Modbus Bridge, which you run on your own computer or network. The bridge connects only to the devices the app asks for (by default any device on your network, or only the addresses you list) and to the app in your browser. It sends nothing to us or to anyone else. It keeps a small log file on your own computer (start-up settings and error messages; connection details only in verbose mode), which is never sent anywhere. In the iOS app the connection is direct on your local network, after iOS asks for Local Network permission. Writing to equipment is off by default.</li>
+  <li><strong>Links</strong> to installers or other pages are ordinary links that you choose to follow.</li>
 </ul>
 
-<h2 id="accounts">5. Accounts and cloud projects (web version, optional)</h2>
-<p>You can use the whole app without an account. If you create one (accounts are being introduced gradually, starting with invited users),
-we process the following:</p>
+<h2 id="accounts">7. Web accounts and cloud projects (optional, web version only)</h2>
+<p>You can use the whole Well Testing Suite without an account. An account lets you save projects to the cloud and open them on another computer. Accounts are free. Sign-in has no password: you sign in with a code we e-mail to you, or with Google or LinkedIn (section 8).</p>
+<h3>What we store if you create an account</h3>
 <ul>
-<li><strong>Your e-mail address</strong>, and a recovery address if you add one. We store them encrypted, with a keyed index so we can find your account, and decrypt them only to send you e-mail. You sign in with a one-time code sent to your e-mail, or with Google or LinkedIn. We never ask for or store a password.</li>
-<li><strong>The projects you save to the cloud</strong>: page inputs, PRiSM analyses, wells, build-up surveillance data, report snapshots and templates, client details you entered and your curve and preset library, plus their version history. Project contents and names are encrypted with a key unique to your account.</li>
-<li><strong>Account records</strong>: when the account was created and last used, your sign-in method, the version of these documents you accepted and when, storage used, and any deletion request.</li>
-<li><strong>Devices and sessions</strong>: a random device identifier, the device name you choose, a general browser family (for example “browser / mobile”, not your full browser details), when each session started and was last used, and a shortened IP address (the first three blocks of an IPv4 address, or the first 48 bits of an IPv6 address).</li>
-<li><strong>Security log</strong>: sign-ins, sign-outs, changes to your sign-in methods or e-mail address, exports and deletion requests, with time, device, shortened IP address and browser family. It never contains your project content or your e-mail address.</li>
-<li><strong>Short-lived security data</strong>: one-time codes (stored only as a keyed hash), sign-in attempts and rate-limit counters, deleted within a day to a week.</li>
+  <li><strong>Your e-mail address</strong>, and a recovery address if you add one. We store each address encrypted, together with a one-way keyed fingerprint so we can find your account. We decrypt an address only to send you e-mail.</li>
+  <li><strong>Account records:</strong> when the account was created and when you last signed in, how you signed up, which versions of the Terms of Use and this notice you accepted and when, your storage use, and a pending e-mail change. After a change, your previous address is kept, encrypted, so you can undo the change within 7 days. It is removed at the latest when you change your address again or delete your account.</li>
+  <li><strong>Sign-in sessions and devices:</strong> when each session started and was last used, a device identifier we issue, an optional device name (encrypted), the type of browser (desktop or mobile, not the full browser details) and a <strong>shortened IP address</strong>. For IPv4 we keep the first three parts (/24); for IPv6, the first 48 bits.</li>
+  <li><strong>Linked Google or LinkedIn sign-in</strong>, if you use one: see section 8.</li>
+  <li><strong>Your cloud projects</strong>, only the ones you choose to save. They can contain page inputs, analyses, wells, build-up surveillance data, report snapshots and templates, and the Client Info page (which may include client contacts' names and e-mail addresses and a logo). Project contents are compressed and encrypted with a key for your account (AES-256-GCM) before they are stored. Project names and details are encrypted too. We also keep a history of earlier saves (section 14).</li>
+  <li><strong>Your library</strong>: the curves, presets and column mappings you saved in PRiSM, kept once for your account (encrypted in the same way) and shared by your projects and devices.</li>
+  <li><strong>A security log</strong> of sign-ins, sign-in method changes, exports, deletions and similar events, with the device, the browser type and the shortened IP address. It never contains your project contents or your e-mail address.</li>
+  <li><strong>Short-lived records:</strong> sign-in codes (only as a keyed fingerprint, never the code itself), sign-in attempts with Google or LinkedIn, e-mails waiting to be sent, and counters that limit how often things can be tried.</li>
 </ul>
-<p>From your account page you can export everything we hold about you and your projects, change your e-mail address, and delete your account.
-A deletion can be cancelled for 7 days; after that we remove your data from our live systems, and it leaves our backups within 30 days.
-Data on your own devices stays until you clear it. We do not load analytics while you are signed in, and we never use your project data for
-analytics, advertising or AI training, or share or sell it.</p>
-
-<h2 id="google-linkedin">6. Signing in with Google or LinkedIn</h2>
-<p>These are optional alternatives to the e-mail code. When you choose one, your browser goes to Google or LinkedIn to sign in, and they send
-us information about you after you agree to share it:</p>
+<h3>If you start signing in but do not create an account</h3>
+<p>If you ask for a sign-in code, or start a Google or LinkedIn sign-in, but do not create an account, we keep your e-mail address (encrypted, only to send the code, plus a keyed fingerprint of it) and a shortened IP address for up to 24 hours, and the rate-limit counters (keyed fingerprints of the address and the shortened IP address) for 7 days. Then they are deleted.</p>
+<h3>What we do not do</h3>
 <ul>
-<li><strong>Google</strong> sends an identifier for your Google account, your e-mail address, whether Google has verified it and, for workplace accounts, the organisation's domain. We ask only for the “openid” and “email” permissions.</li>
-<li><strong>LinkedIn</strong> sends an identifier, your name, a link to your profile photo, your language setting, your e-mail address and whether it is verified. We keep only the identifier and the e-mail address; the rest is discarded straight away.</li>
+  <li>We do not look at your project contents. They are used only to store them and give them back to you. Support staff can view account records only through audited tools, and each lookup is written to your security log.</li>
+  <li>We never use project data for analytics, advertising or AI training, and we never share or sell it.</li>
+  <li>We send no marketing e-mail.</li>
 </ul>
-<p>We use this information only to create your account, sign you in and keep your account secure. We do not post anything, read your contacts,
-import your profile, or keep access to your Google or LinkedIn account: we store no access or refresh tokens. We do not share this information
-with anyone, use it for advertising, or use it to develop or train AI models. Our use and transfer of information received from Google APIs
-adheres to the Google API Services User Data Policy, including the Limited Use requirements.</p>
-<p>Google and LinkedIn learn that you signed in to the Well Testing Suite; they handle that under their own privacy policies. You can unlink
-Google or LinkedIn on your account page at any time (your e-mail code always still works). Deleting your account removes these links. To also
-remove the app from your Google or LinkedIn account, use your Google Account permissions page or LinkedIn's data-privacy settings.</p>
-
-<h2 id="emails">7. E-mails we send</h2>
-<p>If you have an account, we send only service and security e-mails: sign-in and confirmation codes, notices of a new device, changes to your
-e-mail address or sign-in methods, exports and deletion requests, and warnings before an inactive account is deleted. They are plain text and
-come from no-reply@h2oil.co.uk through an e-mail delivery service. We do not send marketing e-mail.</p>
-
-<h2 id="cookies">8. Cookies and similar technologies</h2>
-<table>
-<tr><th>Name</th><th>Set by</th><th>Purpose</th><th>Duration</th><th>Essential?</th></tr>
-<tr><td><code>_ga</code></td><td>Google Analytics (web)</td><td>Distinguishes browsers for usage statistics</td><td>Up to 2 years</td><td>No</td></tr>
-<tr><td><code>_ga_6QKCBNWHYB</code></td><td>Google Analytics (web)</td><td>Keeps the analytics session</td><td>Up to 2 years</td><td>No</td></tr>
-<tr><td><code>__Host-wts_sid</code></td><td>Us, only if you sign in</td><td>Keeps you signed in</td><td>Up to 180 days on a trusted device (ended after 35 days without use), up to 7 days on a shared computer (ended after 12 hours without use)</td><td>Yes</td></tr>
-<tr><td><code>__Host-wts_oa</code></td><td>Us, only during a Google or LinkedIn sign-in</td><td>Protects the sign-in round trip against tampering</td><td>10 to 30 minutes</td><td>Yes</td></tr>
-<tr><td>Local storage and browser databases</td><td>The app</td><td>Your inputs, results, projects and preferences on your device</td><td>Until you clear them</td><td>Yes, for the features you use</td></tr>
-<tr><td>Service worker cache</td><td>The app (web)</td><td>Lets the app and its help work offline</td><td>Until updated or cleared</td><td>Yes</td></tr>
-</table>
-<p>Essential items are needed for the features you ask for. You can delete cookies and site data in your browser settings at any time.</p>
-
-<h2 id="sharing">9. Who we share data with</h2>
-<p>We do not sell personal data. We share it only with service providers who process it for us under contract and our instructions:</p>
+<h3>E-mails we send</h3>
+<p>Account e-mails come from <strong>no-reply@h2oil.co.uk</strong>. They are sign-in codes and security notices, for example a sign-in on a new device, a changed e-mail address, a linked or unlinked sign-in method, an export, a deletion request, unusual activity, or a warning before an inactive account is deleted. They contain only fixed wording, times, a general device description and masked addresses. These e-mails are part of the account service, and you cannot turn them off while you have an account.</p>
+<h3>Export and deletion</h3>
 <ul>
-<li>our hosting provider (website, server functions, database and encrypted file storage);</li>
-<li>an e-mail delivery service (account e-mails only);</li>
-<li>Google, for Google Analytics on the web version;</li>
-<li>Google or LinkedIn, if you choose to sign in with them (as independent controllers for their own sign-in services).</li>
+  <li><strong>Export everything</strong> from the Account page at any time. You get a zip file with one project file per cloud project and an account file (profile, consents, devices, linked sign-in methods and your own security log). The export does not yet include your library. A copy of it stays in each browser where you use your account, and we will send you a copy on request.</li>
+  <li><strong>Delete your account</strong> from the Account page. We ask for a fresh e-mail code first. Your account and data are hidden at once, all sessions end and any Google or LinkedIn link is removed immediately. You can cancel within <strong>7 days</strong> by signing in with an e-mail code; Google or LinkedIn links do not come back, so link them again if you want them. When the 7 days end, or within a day if you choose "delete immediately", your data is removed from our live systems, and it disappears from backups within 30 days after that. If we ever restore a backup, deleted accounts are deleted again.</li>
+  <li>Deleting your account does not delete data stored on your own devices. The Account page offers to clear the current browser too.</li>
 </ul>
-<p>We may also disclose data where the law requires it, to protect the rights and safety of our users or the public, or as part of a sale or
-reorganisation of our business (the buyer would be bound by this policy).</p>
+<p>An e-mail address is needed to have an account, because it is how you sign in and how we tell you about security events. If you do not want to give one, you can use the app without an account.</p>
 
-<h2 id="transfers">10. Where data is stored and international transfers</h2>
-<p>Account data is stored with our hosting provider in the United Kingdom or the European Union, and encrypted project files in the European
-Union. We are based in the UAE, and our service providers or their support staff may access data from other countries. Where personal data of
-UK or EEA users is transferred to a country without an adequacy decision, we use approved safeguards such as the UK International Data Transfer
-Agreement or Addendum and the EU Standard Contractual Clauses. Google Analytics data is processed by Google, including in the United States,
-under Google's safeguards. Contact us for a copy of the safeguards that apply.</p>
+<h2 id="signin">8. Signing in with Google or LinkedIn (optional, web version only)</h2>
+<p>If you choose <strong>Sign in with Google</strong> or <strong>Sign in with LinkedIn</strong>, you are sent to that service to sign in, and it sends us some information about you. We use a standard sign-in protocol (OpenID Connect) with our own server. The page does not load any Google or LinkedIn script.</p>
+<div class="tbl"><table>
+  <thead><tr><th scope="col">Service</th><th scope="col">What it sends us</th><th scope="col">What we keep</th></tr></thead>
+  <tbody>
+    <tr><td>Google (we ask only for "openid" and "email")</td><td>An identifier for your Google account, your e-mail address, whether Google has verified it and, for a work account, the organisation's domain.</td><td>The identifier and the e-mail address at the time you linked it, both encrypted, plus whether the address was verified when you linked it, how it was linked, and when you linked and last used it.</td></tr>
+    <tr><td>LinkedIn (LinkedIn requires "openid", "profile" and "email")</td><td>An identifier, your name, a link to your profile photo, your language setting, your e-mail address and whether it is verified.</td><td>Only the identifier and the e-mail address at the time you linked it, both encrypted, plus whether the address was verified when you linked it, how it was linked, and when you linked and last used it. <strong>Your name, photo link and language setting are discarded immediately and never stored.</strong></td></tr>
+  </tbody>
+</table></div>
+<ul>
+  <li>We use this information <strong>only to sign you in</strong> and to protect your account, for example to tell you when a sign-in method is linked.</li>
+  <li>We do not store any access token. We cannot post for you, read your contacts or profile, or reach your Google or LinkedIn account later.</li>
+  <li>A Google or LinkedIn sign-in is never linked to an existing account just because the e-mail addresses match. Linking needs a code sent to that account's address.</li>
+  <li>Google or LinkedIn learns that you signed in to the Well Testing Suite. They handle that under their own privacy policies, as separate controllers.</li>
+  <li>You can unlink either one under Account → Sign-in methods. Deleting your account removes the links. To remove the Well Testing Suite from your Google or LinkedIn account as well, use that account's security or privacy settings.</li>
+  <li>Because we keep no access token, we are not told when you remove the Well Testing Suite in your Google or LinkedIn settings. If you do that, also unlink it under Account → Sign-in methods, or e-mail us, and we will delete the stored identifier and e-mail address within 7 days.</li>
+</ul>
+<p><strong>Google user data.</strong> The Well Testing Suite's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements. In particular, we use Google user data only to provide sign-in. We do not transfer it to others except as needed to run the service (our hosting provider), for security, or where the law requires. We do not use it for advertising. People do not read it, except with your agreement, for security, or where the law requires. We do not use it to train AI models.</p>
+<p><strong>LinkedIn member data.</strong> We keep it only while the link exists, store it so it can be deleted on its own, never use it for advertising, never sell or share it, and delete it when you unlink, when you ask us to, or when you request deletion of your account.</p>
 
-<h2 id="retention">11. How long we keep data</h2>
-<table>
-<tr><th>Data</th><th>Kept for</th></tr>
-<tr><td>Your account</td><td>While you use it. After 24 months without a sign-in we warn you twice by e-mail and then delete it.</td></tr>
-<tr><td>Cloud project versions</td><td>Named saves 30 days; automatic versions every 10 minutes for 24 hours, then one per day for 30 days; the current version until you delete it</td></tr>
-<tr><td>Projects in the trash</td><td>30 days</td></tr>
-<tr><td>Sessions</td><td>Until they expire (see section 8)</td></tr>
-<tr><td>One-time codes, sign-in attempts, sent e-mails</td><td>24 hours</td></tr>
-<tr><td>Rate-limit counters</td><td>7 days</td></tr>
-<tr><td>Security log</td><td>12 months (on account deletion it is no longer linked to you)</td></tr>
-<tr><td>Previous e-mail address after a change</td><td>7 days, so you can undo the change</td></tr>
-<tr><td>Deleted accounts</td><td>Removed from live systems after the 7-day cancellation period; from backups within 30 days. A record of the deletion (account identifier and dates, no e-mail) is kept for 12 months so that a restore from backup cannot bring the account back.</td></tr>
-<tr><td>Analytics</td><td>According to our Google Analytics retention setting (up to 14 months)</td></tr>
-</table>
+<h2 id="ios">9. The iOS app</h2>
+<ul>
+  <li>The iOS app has <strong>no analytics, no cookie banner, no accounts and no sign-in</strong>. It sends nothing to us. We collect no data from it.</li>
+  <li>Everything stays in the app's storage on your device until you delete the app or its data.</li>
+  <li>The only permission it may ask for is <strong>Local Network</strong>, used only to connect to Modbus equipment you configure.</li>
+  <li>The store you download the app from processes download data under its own terms and privacy policy. That processing is not done by us.</li>
+</ul>
 
-<h2 id="security">12. Security</h2>
-<p>We use encrypted connections (HTTPS), secure sign-in cookies that scripts cannot read, encryption of e-mail addresses and of project content
-and names with a key unique to each account, hashed one-time codes and session identifiers, database rules that stop one account from reading
-another's data, rate limits, a tamper-evident security log, and backups. No system is perfectly secure; if a breach affects your data we will
-tell you and the authorities where the law requires it.</p>
+<h2 id="purposes">10. Purposes and legal bases</h2>
+<p>Data protection law requires a legal basis for each use of personal data. Ours are:</p>
+<p class="tbl-hint">Scroll the table sideways to see every column.</p>
+<div class="tbl"><table>
+  <thead><tr><th scope="col">Purpose</th><th scope="col">Data</th><th scope="col">Basis under UK / EU GDPR</th><th scope="col">Basis under UAE law</th></tr></thead>
+  <tbody>
+    <tr><td>Delivering the website and keeping it secure</td><td>IP address, browser details and request logs at our hosting provider; security reports (section 6)</td><td>Legitimate interests: delivering and protecting the site (Art. 6(1)(f))</td><td>Necessary to provide the service you asked for and to keep it secure</td></tr>
+    <tr><td>Providing an account and cloud storage: sign-in, saving and opening projects, history, export, deletion, account e-mails</td><td>E-mail and recovery addresses, sign-in records, linked identities, projects</td><td>Contract: to provide the service you asked for under the <a href="terms.html">Terms of Use</a> (Art. 6(1)(b))</td><td>Necessary to perform our contract with you</td></tr>
+    <tr><td>Keeping accounts and the service secure: security log, new-device and unusual-activity notices, rate limits, preventing abuse and fraud</td><td>Shortened IP address, browser type, device identifier, security log, counters</td><td>Legitimate interests: protecting you, other users and the service (Art. 6(1)(f))</td><td>Necessary to perform our contract with you (a secure account) and to meet our legal obligations</td></tr>
+    <tr><td>Recording that you accepted the Terms of Use and this notice</td><td>Versions and time of acceptance</td><td>Legitimate interests: being able to show what was agreed; legal obligation where the law requires records</td><td>Necessary to perform our contract with you and to meet our legal obligations</td></tr>
+    <tr><td>Usage statistics to improve the web app (Google Analytics)</td><td>Analytics events and the data Google Analytics collects itself (section 5)</td><td><strong>Consent</strong>, given in the banner and withdrawable at any time (Art. 6(1)(a), and the cookie rules)</td><td><strong>Consent</strong></td></tr>
+    <tr><td>Remembering your analytics choice and your other settings on your device</td><td>The stored choice and preferences (section 11)</td><td>Your analytics choice: legal obligation to be able to show consent (Art. 6(1)(c) with Art. 7(1)). Other settings: legitimate interests. Storing them on your device is strictly necessary.</td><td>Necessary to provide the service you asked for</td></tr>
+    <tr><td>Answering your e-mails, support and data-protection requests</td><td>What you send us, your e-mail address</td><td>Legitimate interests: replying to you; legal obligation for data-protection requests</td><td>Your request (consent) and our legal obligations</td></tr>
+    <tr><td>Storing projects you keep for an employer or client</td><td>Project contents</td><td colspan="2">We act on that organisation's behalf (section 15); the organisation chooses its own legal basis</td></tr>
+    <tr><td>Legal claims, legal duties and requests from authorities</td><td>The data relevant to the matter</td><td>Legal obligation; legitimate interests in establishing, exercising or defending legal claims</td><td>Compliance with the law; establishing or defending legal claims</td></tr>
+  </tbody>
+</table></div>
+<p>Where we rely on legitimate interests, we have weighed them against your interests and rights. You have the right to object (section 17). Where we rely on consent, you can withdraw it at any time; this does not affect processing that took place before.</p>
 
-<h2 id="rights">13. Your rights</h2>
-<p>Depending on where you live, you may have the right to access your data, correct it, delete it, restrict or object to its use (including
-analytics and our legitimate interests), receive it in a portable format, and withdraw consent at any time. You can use your account page for
-export, correction of your e-mail address and deletion, or write to <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>. We will
-confirm your identity first (for example with a code sent to your e-mail address) and answer within one month (longer where the law allows).</p>
-<p>You can complain to a data-protection authority: in the UAE, the data-protection authority that supervises us; in the United Kingdom, the Information Commissioner's Office (ico.org.uk); in the EEA, your local supervisory
-authority. We would appreciate the chance to resolve your concern first.</p>
+<h2 id="cookies">11. Cookies and similar technologies</h2>
+<p>Cookies and browser storage (local storage, session storage, IndexedDB, the private file system and the offline cache) are used as follows. "Essential" means the item is strictly necessary for something you asked for, such as keeping your work, remembering your choice or signing in. Essential items do not need your consent. The analytics cookies are set only after you accept them.</p>
+<p class="tbl-hint">Scroll the table sideways to see every column.</p>
+<div class="tbl"><table class="wide">
+  <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Purpose</th><th scope="col">Duration</th><th scope="col">Essential?</th></tr></thead>
+  <tbody>
+    <tr><td><code>_ga</code></td><td>Cookie (first party, set by Google Analytics)</td><td>Distinguishes one browser from another for usage statistics (random identifier)</td><td>2 years, renewed on each visit; deleted by the app if you withdraw consent</td><td>No: analytics, <strong>only after you accept</strong>. Web only; never while signed in or in the iOS app.</td></tr>
+    <tr><td><code>_ga_6QKCBNWHYB</code></td><td>Cookie (first party, set by Google Analytics)</td><td>Keeps the state of the current visit for usage statistics</td><td>2 years, renewed on each visit; deleted by the app if you withdraw consent</td><td>No: analytics, as above</td></tr>
+    <tr><td><code>wtspref_analytics_consent</code></td><td>Local storage</td><td>Remembers whether you accepted or rejected analytics, the notice version and the date, so the banner is not shown again</td><td>12 months, then you are asked again (also when this notice changes)</td><td>Yes: records your choice. Never sent anywhere.</td></tr>
+    <tr><td><code>__Host-wts_sid</code></td><td>Cookie (secure, not readable by scripts)</td><td>Keeps you signed in to your web account (a random session identifier)</td><td>Until the session expires: at most 180 days on a trusted device or 7 days on a public computer. It ends sooner after 35 days unused (12 hours on a public computer) or when you sign out.</td><td>Yes (accounts only)</td></tr>
+    <tr><td><code>__Host-wts_oa</code></td><td>Cookie (secure, not readable by scripts)</td><td>Links the steps of a Google or LinkedIn sign-in</td><td>10 minutes, or up to 30 minutes if a code or confirmation step is needed</td><td>Yes (accounts only)</td></tr>
+    <tr><td><code>wts_page_*</code>, <code>wts_*</code>, <code>h2oil_client_info</code></td><td>Local storage</td><td>Saves your inputs, analyses, wells, client details, report snapshots and other work on this device</td><td>Until you clear them</td><td>Yes: keeps the work you entered</td></tr>
+    <tr><td><code>wtspref_*</code>, <code>wts_ui_*</code>, <code>wts_unit_system</code> and similar</td><td>Local storage</td><td>Remembers your preferences, such as units, layout and open menus</td><td>Until you clear them</td><td>Yes: preferences you choose. Never sent anywhere.</td></tr>
+    <tr><td><code>wtsacct_hint</code></td><td>Local storage</td><td>Records whether this browser is signed in (so the page can show it and skip analytics), the first letter of your address for the account button, whether you chose the public-computer option, when the session expires and when a Google or LinkedIn sign-in was started. Holds no e-mail address and no session key.</td><td>Until you sign out or the session ends</td><td>Yes (accounts only)</td></tr>
+    <tr><td><code>wts3d_*</code></td><td>Session storage</td><td>Remembers the 3D simulator view while the tab is open</td><td>Until the tab is closed</td><td>Yes: keeps your view</td></tr>
+    <tr><td><code>wts_prism</code>, <code>wts_buildup</code>, <code>wts-historian</code></td><td>IndexedDB and private file system</td><td>Stores loaded gauge data, build-up surveillance data and the live-data historian on this device</td><td>Until you clear them (historian default 30 days)</td><td>Yes: keeps the data you loaded</td></tr>
+    <tr><td><code>h2oil-wts3d</code></td><td>IndexedDB</td><td>A cached copy of the 3D library code (no personal data)</td><td>Until you clear it</td><td>Yes: makes the feature work</td></tr>
+    <tr><td><code>wts-sync</code></td><td>IndexedDB</td><td>Accounts only: which cloud project is open here, changes waiting to be saved and safety copies. On a public computer it is encrypted and wiped at sign-out.</td><td>Until you sign out on a public computer, or until you clear it</td><td>Yes (accounts only)</td></tr>
+    <tr><td><code>wts-shell-v1</code>, <code>wts-libs-v1</code>, <code>wts-help-v1</code></td><td>Offline cache (service worker)</td><td>An offline copy of the app, its libraries and help pages (code and pictures only)</td><td>Until replaced by a newer version or cleared</td><td>Yes: lets the app work offline</td></tr>
+  </tbody>
+</table></div>
+<h3>How to change your choice</h3>
+<ul>
+  <li>In the web app: open <strong>Privacy</strong> (in the Overview group of the menu, or the "Privacy — how your data is stored" link at the bottom of the sidebar) and choose <strong>Cookie settings</strong>, then Accept or Reject.</li>
+  <li>Or clear the site data for welltest.h2oil.co.uk in your browser. That deletes every item above, including the work stored on the device, so export anything you want to keep first. The banner then asks again.</li>
+  <li>You can also block cookies or analytics in your browser settings or with a content blocker.</li>
+</ul>
 
-<h2 id="business">14. Data you store about other people (business use)</h2>
-<p>If you store data about your employer, clients or other people in your cloud projects (for example client contact names), you decide why and
-how that data is used, and we process it only to provide the service to you. For such business data we act as your processor; a data processing
-agreement is available on request from <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>. Please do not store special categories of
-personal data (such as health data) in the app.</p>
+<h2 id="sharing">12. Who receives data</h2>
+<p>We do not sell personal data. We share it only with the following:</p>
+<ul>
+  <li><strong>Our hosting provider</strong>, which runs the website for us and keeps the request logs described in section 6. When accounts launch, it will also run the account server, the database and the file storage (section 13). It processes the request logs under its own data processing terms.</li>
+  <li><strong>An e-mail delivery service</strong>, which will deliver sign-in codes and security notices for us as our processor when accounts launch. It receives your e-mail address and the message.</li>
+  <li><strong>Google</strong>, which provides Google Analytics for the web version if you accept analytics (section 5), under its own terms for the service. For sign-in, Google and LinkedIn are separate controllers of their own services (section 8).</li>
+  <li><strong>Public content-delivery networks</strong>, which see your IP address and browser type when your browser downloads a code library (section 6).</li>
+  <li><strong>Professional advisers</strong> (such as lawyers and accountants), under a duty of confidentiality, where needed.</li>
+  <li><strong>Authorities</strong>, such as courts, regulators or the police, where the law requires it or to protect people from harm.</li>
+  <li><strong>A buyer or successor</strong> of our business, if one takes it over. This notice would continue to apply to your data.</li>
+</ul>
+<p>Before accounts launch, our contracts with the hosting and e-mail processors will require them to protect personal data to the standard of this notice and to use it only on our instructions.</p>
 
-<h2 id="ios">15. iOS app</h2>
-<p>The iOS app has no accounts, no sign-in and no analytics. Everything you enter stays on your device. If you open web links from the app, the
-web pages' own terms apply.</p>
+<h2 id="transfers">13. International transfers</h2>
+<ul>
+  <li><strong>Where we are.</strong> We are based in the United Arab Emirates. If you are in the UK or the EU and give us data directly (for example by creating an account), we receive it as a company outside the UK and the EU. Neither the UK nor the EU has found that the UAE protects personal data to the same standard, so we protect your data as this notice describes, under UK and EU law as well as UAE law.</li>
+  <li><strong>Where account data is stored.</strong> Accounts are not open yet. When they launch, account data will be stored in the UK or the EU. Our staff may access account data from the UAE to run the service.</li>
+  <li><strong>Safeguards.</strong> Our hosting provider processes the request logs under its own data processing terms. Before accounts launch, our contracts with the hosting and e-mail processors will include the safeguards the law requires for a controller outside the UK and the EU, such as the EU standard contractual clauses and the UK Addendum or the UK International Data Transfer Agreement.</li>
+  <li><strong>Transfers out of the UAE.</strong> Before accounts launch, our contracts with these processors will also include safeguards that protect the data to the standard required by the UAE law that applies to us.</li>
+  <li><strong>Analytics.</strong> If you accept analytics, Google may process Google Analytics data in the United States and other countries. Google states that it protects these transfers with safeguards such as the EU-US Data Privacy Framework, its UK extension, or standard contractual clauses.</li>
+  <li><strong>Sign-in.</strong> Google and LinkedIn handle their own transfers for sign-in under their own privacy policies.</li>
+</ul>
+<p>Once accounts launch, you can ask us for a copy of the safeguards we use (with commercial details removed).</p>
 
-<h2 id="children">16. Children</h2>
-<p>The Well Testing Suite is a professional engineering tool for adults. It is not directed at children, and accounts are for people aged 18 or
-over. If you believe a child has given us personal data, contact us and we will delete it.</p>
+<h2 id="retention">14. How long we keep data</h2>
+<div class="tbl"><table>
+  <thead><tr><th scope="col">Data</th><th scope="col">How long</th></tr></thead>
+  <tbody>
+    <tr><td>Data on your device (web or iOS)</td><td>Until you clear it. We have no access to it.</td></tr>
+    <tr><td>Hosting provider's request logs (every visit)</td><td>The period set by the hosting provider's own log retention</td></tr>
+    <tr><td>Security-report counts (shortened IP address only)</td><td>7 days</td></tr>
+    <tr><td>Your analytics choice</td><td>12 months on your device, then you are asked again</td></tr>
+    <tr><td>Your account</td><td>While you use it. If you do not sign in for <strong>24 months</strong>, we delete the account. We warn you by e-mail at 23 and 23.5 months, and the normal 7-day cancellation period applies.</td></tr>
+    <tr><td>Cloud projects</td><td>Until you delete them or your account</td></tr>
+    <tr><td>Earlier saves (project history)</td><td>Saves you name: 30 days. Automatic saves: every 10 minutes for 24 hours, then one a day for 30 days. A save that another of your devices is still working from is kept until that device moves on, and some recent saves are kept for up to 7 days to protect against conflicts. Removed saves are deleted from storage up to 7 days later.</td></tr>
+    <tr><td>Deleted projects (trash)</td><td>30 days, then removed</td></tr>
+    <tr><td>Linked Google or LinkedIn sign-in</td><td>While linked. Removed when you unlink it or request deletion of your account. When an e-mail change is undone, links added since the change are removed.</td></tr>
+    <tr><td>Sign-in sessions</td><td>Until they expire or you sign out (see the cookie table in section 11)</td></tr>
+    <tr><td>Sign-in codes, provider sign-in attempts, e-mails after sending (also when no account is created)</td><td>24 hours</td></tr>
+    <tr><td>Rate-limit counters</td><td>7 days</td></tr>
+    <tr><td>Previous e-mail address after a change</td><td>Usable for 7 days to undo the change; removed at the latest when you change the address again or delete your account</td></tr>
+    <tr><td>Security log</td><td>12 months. If you delete your account, your entries are kept for the rest of that period under a random identifier, not linked to you.</td></tr>
+    <tr><td>Record that an account was deleted (a random account number and dates; no e-mail address or content)</td><td>As long as we need it to stop a restored backup bringing the account back</td></tr>
+    <tr><td>Integrity checksums of the security log (one per account and day, keyed by the random account number)</td><td>Kept for audit, so that changes to the security log can be detected</td></tr>
+    <tr><td>Backups</td><td>Up to 30 days, after which deleted data no longer exists in them</td></tr>
+    <tr><td>Google Analytics data (only if you accepted)</td><td>Up to 14 months</td></tr>
+    <tr><td>E-mails you send us</td><td>As long as needed to answer your message, then up to 2 years, unless a legal matter requires longer</td></tr>
+  </tbody>
+</table></div>
 
-<h2 id="changes">17. Changes to this policy</h2>
-<p>We will post any change on this page with a new date and version. If a change is significant, we will tell account holders by e-mail or in the
-app and, where needed, ask for agreement again at the next sign-in.</p>
+<h2 id="business">15. Data you store for an employer or client</h2>
+<p>Engineers often save projects that contain information about their employer's or a client's wells, staff or contacts. If you save such projects to the cloud as part of your work for an organisation, that organisation decides why the data is processed and is its controller. We store it <strong>as its processor</strong>, only to keep it and return it to you, and we follow its instructions as far as the service allows.</p>
+<p>On request from <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>, we will agree a data processing agreement with that organisation, meeting Article 28 of the UK GDPR and the EU GDPR and the processor rules of UAE law, with the transfer clauses its location needs. If you use an account only for yourself, we are the controller of your projects as described in section 7.</p>
+<p>Please store only the personal data your work needs. Do not store special categories of personal data, such as health information, in projects.</p>
 
-<h2 id="contact">18. Contact and complaints</h2>
-<p>H2Oil Engineering, Dubai, United Arab Emirates · <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a></p>
-<p>See also our <a href="terms.html">Terms of Service</a>.</p>
+<h2 id="security">16. Security</h2>
+<ul>
+  <li>All connections use HTTPS.</li>
+  <li>Project contents and project details are encrypted at rest with a separate key for each account. E-mail addresses are stored encrypted, and lookups use one-way keyed fingerprints.</li>
+  <li>Sign-in codes and session identifiers are stored only as one-way fingerprints. Session cookies cannot be read by page scripts and are sent only to this site.</li>
+  <li>The database keeps each user's rows separate, IP addresses are shortened before they are stored in our database, and our own server logs never contain e-mail addresses, codes, cookies or project contents.</li>
+  <li>Sign-in attempts are rate-limited, and we tell you about new-device sign-ins and changes to your account.</li>
+  <li>If a breach is likely to put you at high risk, we will tell you without undue delay, and we will notify the regulators the law requires.</li>
+</ul>
+<p>No system is perfectly secure. Keep your mailbox secure, because it is how you sign in. On a shared computer, choose the public-computer option and sign out when you finish.</p>
+
+<h2 id="rights">17. Your rights</h2>
+<p>Depending on where you live, data protection law gives you the right to:</p>
+<ul>
+  <li>be <strong>informed</strong> about how we use your data (this notice);</li>
+  <li><strong>access</strong> your personal data and get a copy;</li>
+  <li>have inaccurate or incomplete data <strong>corrected</strong>;</li>
+  <li>have your data <strong>erased</strong>;</li>
+  <li><strong>restrict</strong> or stop how we use your data;</li>
+  <li><strong>data portability</strong>: receive the data you gave us in a machine-readable format (the account export does this for your projects and account information; we send your library on request) or have it sent to another provider;</li>
+  <li><strong>withdraw consent</strong> at any time, where we rely on consent, for example for analytics (section 5);</li>
+  <li>not be subject to decisions based solely on automated processing that significantly affect you, and to object to them (we make none; section 20).</li>
+</ul>
+<p><strong>Right to object.</strong> You can object at any time to our use of your data based on legitimate interests. We will stop unless we have compelling grounds or need the data for legal claims. We do not send direct marketing.</p>
+<p><strong>How to use your rights.</strong> Account holders can export, correct their e-mail address and delete everything directly on the Account page. Anyone can change the analytics choice under Privacy → Cookie settings. For anything else, e-mail <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>. To protect your account, we may confirm a request by sending a code to the account's e-mail address. We reply within one month. For complex requests, this can be extended by up to two more months, and we will tell you why. If we need more information to find your data, the time limit starts when we receive it. There is normally no charge.</p>
+<p>For data that stays only on your device, we hold nothing. You can view, change or delete it yourself in the app or in your browser.</p>
+
+<h2 id="complaints">18. Complaints</h2>
+<p>If you are unhappy with how we handle your data, please tell us first at <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>, with "Privacy complaint" in the subject line. We will acknowledge your complaint within 30 days, look into it without undue delay and tell you the outcome.</p>
+<p>You also have the right to complain to a data protection regulator at any time. You do not have to complain to us first.</p>
+<ul>
+  <li><strong>In the UAE:</strong> the UAE data-protection authority that supervises us.</li>
+  <li><strong>In the UK:</strong> the Information Commissioner's Office (ICO), the UK data protection regulator.</li>
+  <li><strong>In the EU:</strong> the data protection authority of the country where you live, work or think the problem happened.</li>
+  <li><strong>Elsewhere:</strong> the data protection authority of your country, if there is one.</li>
+</ul>
+
+<h2 id="children">19. Children</h2>
+<p>The Well Testing Suite is professional engineering software. It is not directed at children. Accounts are only for people aged 18 or over, and everyone creating one confirms this. We do not knowingly collect personal data from children. If you believe a child has created an account, contact us and we will delete it.</p>
+
+<h2 id="decisions">20. Automated decisions</h2>
+<p>We make no decisions about you based solely on automated processing that have legal or similarly significant effects, and we do not profile you. Automatic security limits, such as briefly pausing sign-in codes after many wrong attempts, protect accounts and can be lifted by waiting or by contacting us. The engineering calculations concern wells and equipment, not people.</p>
+
+<h2 id="changes">21. Changes to this notice</h2>
+<p>We will update this notice when the service or the law changes. The date and version number at the top show the current version. If a change is significant, we will tell account holders by e-mail or in the app before it takes effect. Where needed, the app will ask you to read the new version when you next sign in, and the analytics banner will ask for your choice again. Earlier versions are available on request.</p>
+
+<h2 id="contact">22. Contact</h2>
+<p>H2Oil Engineering<br>
+A company licensed in Dubai, United Arab Emirates<br>
+E-mail: <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a></p>
+<p class="note">See also the <a href="terms.html">Terms of Use</a>. The app's own Privacy page gives a short summary of the same information. This notice is written in English.</p>
 </main>
+
 <footer>
-  © 2026 H2Oil Engineering (H2Oil) · <a href="https://welltest.h2oil.co.uk/">Well Testing Suite</a> · <a href="privacy.html">Privacy Policy</a> · <a href="terms.html">Terms of Service</a>
+  <p>© H2Oil Engineering. Privacy notice version 1 · Last updated: 9 November 2026 · <a href="terms.html">Terms of Use</a> · <a href="well-testing-app.html">Back to the Well Testing Suite</a> · <a href="#top">Back to top</a></p>
 </footer>
 </body>
 </html>

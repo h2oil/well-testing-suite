@@ -30,7 +30,7 @@ if (!M || !M.VARS) return;
 var OWNER = 'wellos', UI_KEY = 'wts_wellos_ui';
 var WINDOWS = [[300, '5 min'], [1800, '30 min'], [7200, '2 h'], [43200, '12 h']];
 var PRESSURE_KEYS = ['bhp', 'whp', 'sep_p', 'choke_dn_p', 'surge_p', 'flare_p'];
-// v3.4.2: 'gor' is the separator GOR ('GOR (sep)'); the tank gas on the LP flare line (FT-201) and the total GOR are appended
+// v4.1: 'gor' is the separator GOR ('GOR (sep)'); the tank gas on the LP flare line (FT-201) and the total GOR are appended
 var KPI_KEYS = ['whp', 'bhp', 'sep_p', 'gas_rate', 'oil_rate', 'water_rate', 'gor', 'wcut', 'flare_rate', 'tank_gas', 'gor_total'];
 var ctl = null;
 
@@ -78,9 +78,9 @@ function disp(v, V) {
 var DERIVED = {
     gor: { key: 'gor', label: 'GOR (sep)', unit: 'scf/STB', cat: 'gor', dp: 0, deps: ['gas_rate', 'oil_rate'], calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && x.oil_rate > 0.5 ? x.gas_rate * 1e6 / x.oil_rate : null; } },
     wcut: { key: 'wcut', label: 'Water cut', unit: '%', deps: ['water_rate', 'oil_rate'], calc: function (x) { return isNum(x.water_rate) && isNum(x.oil_rate) && x.water_rate + x.oil_rate > 0 ? 100 * x.water_rate / (x.water_rate + x.oil_rate) : null; } },
-    // v3.4.2 (lpgas design §6): tank gas = the surge-tank gas on the LP flare line through FT-201, Mscf/d — form data: the simulator
+    // v4.1 (lpgas design §6): tank gas = the surge-tank gas on the LP flare line through FT-201, Mscf/d — form data: the simulator
     // page's steady LP block (WTS_state.flow.lp, Standing flash at the page rates); Modbus: a linked 'tank_gas' tag once the station
-    // has such an app variable — 3.4.2 review: WTS_modbus.VARS has none yet (a tag cannot keep the link), so in Modbus mode tank gas
+    // has such an app variable — 4.1 review: WTS_modbus.VARS has none yet (a tag cannot keep the link), so in Modbus mode tank gas
     // and the total GOR are 'form data only' (unmapped), not 'not linked'.
     // Total GOR = (gas × 10^6 + tank gas × 10^3) ÷ oil, its quality the worst of the three
     tank_gas: { key: 'tank_gas', label: 'Tank gas (FT-201)', unit: 'Mscf/d', cat: 'gasRateSmall', dp: 1, ext: tankGas },

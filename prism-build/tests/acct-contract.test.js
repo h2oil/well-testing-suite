@@ -166,7 +166,7 @@ module.exports = [
       const core = require('zlib').gzipSync('{"core":1}');
       const commit = (o) => post(br, '/projects/' + pc.id + '/commit', Object.assign({ pushId: crypto.randomUUID(), baseRev: 0, reason: 'save',
         core: { hash: sha('core-1'), vhash: sha('v-1'), zsha: sha(core), bytes: 10, inline: core.toString('base64') },
-        parts: [{ name: 'well/w1', hash: ph, bytes: part.length }], meta: Object.assign({ name: 'Example-1 DST' }, meta), wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '3.5' }, o));
+        parts: [{ name: 'well/w1', hash: ph, bytes: part.length }], meta: Object.assign({ name: 'Example-1 DST' }, meta), wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0' }, o));
       const miss = expect(assert, 'projectCommit', await commit({}), 422);
       assert.deepStrictEqual(miss.missing, [ph]);
       expect(assert, 'blobPut', await put(1, z2, 2, sha(whole)), 204);

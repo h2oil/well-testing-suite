@@ -545,12 +545,12 @@
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I accept the Terms of Use (version ' + esc(dlg.consent.terms) + ') and have read the Privacy notice (version ' + esc(dlg.consent.privacy) + ').</label>' +
+      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
       '<p class="acct-note">Your projects are stored encrypted in the UK / EU. You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
     $('acct_create').addEventListener('click', function () {
-      if (!$('acct_consent_ok').checked) { message('Please tick the box to accept the Terms of Use and the Privacy notice.', 'err'); return; }
+      if (!$('acct_consent_ok').checked) { message('Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.', 'err'); return; }
       verifyCode(dlg.consent);
     });
     $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
@@ -1398,10 +1398,14 @@
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
         var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
         show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
-          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', {}, [el('span', { text: ' I am 18 or over. I accept the ' }),
+            el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
+            el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
+            el('a', { href: 'privacy.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_privacy_link', text: 'Privacy notice' }),
+            el('span', { text: ' (version ' + j.privacy + ').' })])]),
           cerr,
           btn('acct_oauth_create', 'Create account', true, function () {
-            if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }
+            if (!tick.checked) { cerr.textContent = 'Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.'; return; }
             drive(p, { consent: c }, oa);
           }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);

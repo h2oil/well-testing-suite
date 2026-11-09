@@ -5,7 +5,10 @@ name: Server release (accounts API — server-v* tags only)
 # inert until the owner adds the secrets and variables below (server/RUNBOOK.md, "Activation checklist"):
 #   environment server-migrations (required reviewer = the owner): secret WTS_MIGRATE_DB_URL
 #   environment server-production (required reviewer = the owner): secret WTS_DEPLOY_TOKEN, variables WTS_DEPLOY_SITE,
-#     WTS_DEPLOY_COMMAND (the host CLI deploy invocation, run inside server/dist) and optionally WTS_HEALTH_URL
+#     WTS_DEPLOY_COMMAND (the host CLI deploy invocation, run inside <runner temp>/rel/server — the bundle placed in a
+#     repository layout, so a host whose site settings name the base directory `server` finds it — with the pinned CLI of
+#     server/ci/deploy-cli on PATH; the token reaches the CLI through its environment, never its command line) and
+#     optionally WTS_HEALTH_URL
 # Without them the verify job still runs (tests, secret scan, publish check, account-block digest, bundle) and the migrate /
 # deploy steps print a notice and skip — EXCEPT that deploy fails when it is configured, the migrate job was skipped and
 # server/db/migrations changed since the previous server tag (new code never goes live on an unmigrated schema). The secrets
@@ -117,7 +120,7 @@ jobs:
         run: |
           if [ -z "$WTS_MIGRATE_DB_URL" ]; then echo "::notice::migration credential not configured — skipped"; echo "result=skipped" >> "$GITHUB_OUTPUT"; exit 0; fi
           npm ci --ignore-scripts
-          node db/migrate.js
+          node db/migrate.js --platform
           echo "result=applied" >> "$GITHUB_OUTPUT"
 
   deploy:
@@ -125,14 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: server-production
     steps:
-      - name: Download the bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: server-dist
-          path: server/dist
-
-      - name: Deploy the functions-only site (manual approval)
-        working-directory: server/dist
+      - name: Deploy configuration and the migration gate
+        id: cfg
         env:
           WTS_DEPLOY_TOKEN: ${{ secrets.WTS_DEPLOY_TOKEN }}
           WTS_DEPLOY_SITE: ${{ vars.WTS_DEPLOY_SITE }}
@@ -140,11 +137,50 @@ jobs:
           MIGRATE_RESULT: ${{ needs.migrate.outputs.result }}
           MIGRATIONS_CHANGED: ${{ needs.verify.outputs.migrations_changed }}
         run: |
-          if [ -z "$WTS_DEPLOY_TOKEN" ] || [ -z "$WTS_DEPLOY_SITE" ] || [ -z "$WTS_DEPLOY_COMMAND" ]; then echo "::notice::deploy not configured — skipped"; exit 0; fi
+          if [ -z "$WTS_DEPLOY_TOKEN" ] || [ -z "$WTS_DEPLOY_SITE" ] || [ -z "$WTS_DEPLOY_COMMAND" ]; then echo "::notice::deploy not configured — skipped"; echo "configured=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           if [ "$MIGRATE_RESULT" != "applied" ] && [ "$MIGRATIONS_CHANGED" = "true" ]; then
             echo "::error::server/db/migrations changed since the previous server tag but the migrate job did not apply them — refusing to deploy"
             exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (the pinned deploy tools only)
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: server/ci/deploy-cli
+
+      - name: Setup Node (the deploy CLI needs Node 22)
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the deploy CLI (whole tree pinned by its lockfile, no install scripts)
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: server/ci/deploy-cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Download the bundle into a repository layout
+        if: steps.cfg.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: server-dist
+          path: ${{ runner.temp }}/rel/server
+
+      - name: Deploy the functions-only site (manual approval)
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: ${{ runner.temp }}/rel/server
+        env:
+          WTS_DEPLOY_TOKEN: ${{ secrets.WTS_DEPLOY_TOKEN }}
+          WTS_DEPLOY_SITE: ${{ vars.WTS_DEPLOY_SITE }}
+          WTS_DEPLOY_COMMAND: ${{ vars.WTS_DEPLOY_COMMAND }}
+        run: |
+          # <temp>/rel is the repository root as the host's CLI sees it (base directory `server`); the bundle is server/
+          git -C "$RUNNER_TEMP/rel" init -q
+          test -f package.json && test -d node_modules
           bash -c "$WTS_DEPLOY_COMMAND"
 
       - name: Health check after the deploy

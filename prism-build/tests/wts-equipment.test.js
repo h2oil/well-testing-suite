@@ -347,7 +347,7 @@ module.exports = [
       });
       assert.ok(msgs.some((m) => m.indexOf('DS-101 ' + X.RIG_TXT_NEW.desander[2]) >= 0), 'DS-101 entering text');
       assert.ok(msgs.some((m) => m.indexOf('T-202 ' + X.RIG_TXT_NEW.surge2[2]) >= 0), 'T-202 entering text');
-      // release 3.4.2 chain: T-202 stands in for T-201 (the dumps routed to it); 'v341' (pinned): T-201 out takes T-202 out (D11)
+      // release 4.1 chain: T-202 stands in for T-201 (the dumps routed to it); 'v341' (pinned): T-201 out takes T-202 out (D11)
       if (S.RIG_ROUTING_DEF === 'v341') assert.ok(msgs.some((m) => /T-202 out of the rig-up/.test(m) && /T-201 out of the rig-up/.test(m)), 'T-201 out takes T-202 out (D11): ' + msgs[msgs.length - 1]);
       else assert.ok(msgs.some((m) => /T-201 out of the rig-up/.test(m) && /Separator dumps routed to T-202 \(T-201 out of the rig-up\)/.test(m)), 'T-201 out: T-202 takes the dumps: ' + msgs[msgs.length - 1]);
       assert.strictEqual(sim.setRigup(app.toWin({ desander: null, surge2: null, heater: null, separator: null, gauge: null, pump: null, flare: null, surge: null })), true);
@@ -420,7 +420,7 @@ module.exports = [
       assert.deepStrictEqual(Object.keys(st.nodes), FU.NODE_IDS, 'node order (desander 8, surge2 9, heaterChoke 10)');
       assert.strictEqual(st.segs.length, X.SEG_COUNT);
       assert.deepStrictEqual(Object.keys(st.lines).slice(0, X.LINE_NAMES.length), X.LINE_NAMES, '20 line names');
-      assert.deepStrictEqual(Object.keys(st.lines).slice(X.LINE_NAMES.length), X.LINES_342.slice(0, Object.keys(st.lines).length - X.LINE_NAMES.length), 'release 3.4.2 lines appended');
+      assert.deepStrictEqual(Object.keys(st.lines).slice(X.LINE_NAMES.length), X.LINES_342.slice(0, Object.keys(st.lines).length - X.LINE_NAMES.length), 'release 4.1 lines appended');
       Object.keys(X.LINES_NEW).forEach((k) => {
         const r = X.checkShape('line', st.lines[k], { strict: true, engine: 'work' }); assert.ok(r.ok, 'line ' + k + ': ' + r.errors.join('; '));
         assert.strictEqual(st.lines[k].unit, X.LINES_NEW[k].unit, k + ' unit'); assert.strictEqual(st.lines[k].phase, X.LINES_NEW[k].phase, k + ' phase');
@@ -441,7 +441,7 @@ module.exports = [
       // controls (§6.9, exact JSON key order) and the API stubs of WP-E1 / WP-E2
       // v1.6.0: the T-201 default line-up changed (XV-201A open, XV-201B shut, suction B, auto-divert on); the rest is the v3.3.1 contract
       const CD = J(X.CONTROLS_DEFAULT); CD.surge.inlet = [true, false]; CD.surge.suction = 'B'; CD.surge.auto = true;
-      CD.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 3.4.2: the dual T-202 line-up (A fills, B on LCV-202, auto-divert on)
+      CD.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 4.1: the dual T-202 line-up (A fills, B on LCV-202, auto-divert on)
       assert.strictEqual(JSON.stringify(sim.getControls()), JSON.stringify(CD), 'getControls default');
       assert.ok(X.checkShape('controls', J(sim.getControls()), { strict: true }).ok);
       X.API_INSTANCE_NEW.forEach((k) => assert.strictEqual(typeof sim[k], 'function', 'api ' + k));
@@ -451,11 +451,11 @@ module.exports = [
       // v3.3 prefs (no surge2 / desander keys) keep the defaults; new keys are read and clamped
       const s2 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));
       s2.setControls(app.toWin({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }), app.toWin({ initial: true }));
-      const CD0 = J(X.CONTROLS_DEFAULT); CD0.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 3.4.2: unpinned engine = dual T-202
+      const CD0 = J(X.CONTROLS_DEFAULT); CD0.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 4.1: unpinned engine = dual T-202
       assert.strictEqual(JSON.stringify(s2.getControls()), JSON.stringify(CD0), 'v3.3 prefs');
       s2.setControls(app.toWin({ surge2: { inlet: true, auto: true, sp: 0.75, hyst: 9, strokeS: 99 }, desander: { bypass: true, auto: true, sp: 0.1 } }), app.toWin({ initial: true }));
       const c2 = J(s2.getControls());
-      // release 3.4.2: an old boolean inlet:true opens the T-202 fill line-up (XV-202A) and the comp block is appended
+      // release 4.1: an old boolean inlet:true opens the T-202 fill line-up (XV-202A) and the comp block is appended
       assert.deepStrictEqual(c2.surge2, { inlet: true, auto: true, sp: 0.75, hyst: 0.5, strokeS: 60,
         comp: Object.assign(J(X.CONTROLS_SURGE2_COMP_DUAL), { inlet: [true, false] }) }, 'surge2 controls read + clamped');
       assert.deepStrictEqual(c2.desander, { bypass: true, auto: true, sp: 0.5 }, 'desander controls read + clamped (sp 0.5–0.95)');
@@ -552,7 +552,7 @@ module.exports = [
       assert.strictEqual(I.INPUT_FOR.desander, 'wts_sandPptb'); assert.strictEqual(I.INPUT_FOR.surge2, 'wts_surge2Cap');
       ['mass', 'volumeSmall', 'erosionRate', 'erosionDay'].forEach((k) => assert.ok(typeof I.IMP[k] === 'string' && I.IMP[k], 'IMP.' + k));
       assert.ok(/^#|^rgb/.test(I.palCol('sand')), 'sand colour');
-      // release 3.4.2: T-202 has two compartments (XV-202A / XV-202B, LCV-202 suction); a one-compartment T-202 falls back to XV-202
+      // release 4.1: T-202 has two compartments (XV-202A / XV-202B, LCV-202 suction); a one-compartment T-202 falls back to XV-202
       assert.strictEqual(I.EQV.surge2.kind, 'comps'); assert.deepStrictEqual(J(I.EQV.surge2.valves), ['XV-202A', 'XV-202B']); assert.strictEqual(I.EQV.surge2.suction, true);
       assert.ok(I.EQV.surge.suction === true && I.EQV.gauge.kind === 'tanks' && I.EQV.desander.bypass === 'HV-104', 'EQV');
       assert.ok(I.rigIn({ rigup: { surge2: true } }, 'surge2') && !I.rigIn({ rigup: { surge2: 'true' } }, 'surge2') && !I.rigIn({}, 'desander'), 'rigIn');
@@ -582,7 +582,7 @@ module.exports = [
       assert.strictEqual(Object.keys(known8).length, 8, 'v3.3 view of a v3.3.1 object: 8 known keys, all in');
       // summaryOf: out = core items out only, extras = optional items in
       const sum = I.summaryOf(J(S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: { desander: true, gauge: false } })).getState()));
-      // release 3.4.2 chain: with T-301 out P-201 stays in as the booster of the T-201 transfer to export (pinned 'v341': both out)
+      // release 4.1 chain: with T-301 out P-201 stays in as the booster of the T-201 transfer to export (pinned 'v341': both out)
       assert.deepStrictEqual(J(sum.rigup.out), J(S.RIG_ROUTING_DEF) === 'v341' ? ['T-301', 'P-201'] : ['T-301'], 'summary out (core only)');
       assert.deepStrictEqual(J(sum.rigup.extras), ['desander'], 'summary extras');
       // test hooks: sim() / useSim(stub)
@@ -626,7 +626,7 @@ module.exports = [
       assert.strictEqual(JSON.parse(app.win.localStorage.getItem('wts_sim_rigup') || '{}').desander, true, 'saved');
       assert.ok(/Full rig-up · with DS-101/.test(cfgRow().textContent), cfgRow().textContent);
       assert.ok(card.querySelector('[data-rig-act="all"]').disabled, 'Full rig-up still disabled (core items all in)');
-      // T-201 out: under the 3.4.2 chain rules (default) T-202 may stand in for T-201 (RIGUP chainAlone), so its switch stays enabled
+      // T-201 out: under the 4.1 chain rules (default) T-202 may stand in for T-201 (RIGUP chainAlone), so its switch stays enabled
       // (the v3.4.1 'needs T-201' disable applies under the 'v341' routing only)
       app.click(sw('surge'));
       assert.ok(live.getState().rigup.routing === 'chain' && !sw('surge2').disabled && !/needs T-201/.test(sw('surge2').getAttribute('title') || ''), 'T-202 switch enabled while T-201 is out (chain)');

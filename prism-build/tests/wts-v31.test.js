@@ -12,7 +12,7 @@
 // the code under test.
 'use strict';
 // the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
-const { lineupOpts } = require('./_wts-lineup-pin.js');   // 3.4.2 review: the T-201 line-up pin only (T-202, LP line, chain as shipped)
+const { lineupOpts } = require('./_wts-lineup-pin.js');   // 4.1 review: the T-201 line-up pin only (T-202, LP line, chain as shipped)
 
 const WP = 'WTS31';
 const NOISE_OFF = { noise: { on: false } };

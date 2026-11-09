@@ -1,4 +1,4 @@
-// Release 3.4.2 host lane — the LP flare line / tank gas block of calcWTS (flow.lp, designs lpgas.md §6 and INTEGRATION.md §2.8).
+// Release 4.1 host lane — the LP flare line / tank gas block of calcWTS (flow.lp, designs lpgas.md §6 and INTEGRATION.md §2.8).
 //   flow.lp: GOR1 = separator gas over the oil, GOR2 = the Standing flash from the separator to the surge tank at the separator
 //   temperature (the engine's ΔRs of qFlashD, WTS_sim.pvt.rsEff), the T-301 residual, the FT-201 line hydraulics (design rate
 //   max(3 × flash, 50 Mscf/d), P_in = P0 + K·q²), the whole-well-gas case; the three LP inputs (clamps, flow.sim); the base
@@ -153,7 +153,7 @@ module.exports = [
     run(app, assert) {
       const f = flowOf({}).flow, sb = f.sepBy, fb = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;
       assert.ok(f.sim.sepByDest === 'surge' && sb.dest === 'surge' && sb.P0_psig === 25 && sb.P0_psig === sb.surgeP_psig, 'surge at 25 psig');
-      // 3.4.2 review: 'surge' adds alt (the burner-line block), gasCapEst_mmscfd, overCap and (round 2) gasQ_mmscfd to the shared shape
+      // 4.1 review: 'surge' adds alt (the burner-line block), gasCapEst_mmscfd, overCap and (round 2) gasQ_mmscfd to the shared shape
       const XK = ['alt', 'gasCapEst_mmscfd', 'overCap', 'gasQ_mmscfd'];
       const keys = (o) => JSON.stringify(Object.keys(o).filter((k) => XK.indexOf(k) < 0).concat(Object.keys(o.choke), Object.keys(o.nodes)));
       assert.strictEqual(keys(sb), keys(fb), 'same block shape as the burner line');
@@ -161,7 +161,7 @@ module.exports = [
       const sum = (b) => b.P0_psig + b.segs[0].dP + 5 + b.segs[1].dP + b.segs[2].dP;
       assert.ok(Math.abs(sb.choke.Pout - sum(sb)) < 0.5 && Math.abs(sb.segs[2].Pout - 25) < 0.2 && sb.segs[2].phase === 'multi', 'walk closes on 25 psig: ' + sb.choke.Pout);
       assert.ok(sb.choke.regime === 'Critical' && sb.choke.Pout > fb.choke.Pout, 'Critical, above the burner-line outlet');
-      // 3.4.2 review: at 10 MMSCFD the gas is far over the tank's back-pressure valve capacity → error, names generic (painter names them)
+      // 4.1 review: at 10 MMSCFD the gas is far over the tank's back-pressure valve capacity → error, names generic (painter names them)
       assert.ok(sb.overCap === true && sb.warnings.some((w) => w.t === 'error' && w.k === 'surge' && /^Whole well stream into the surge tank at 25 psig: 10\.00 MMSCFD of gas against the capacity of the back-pressure valve, about 0\.15 MMSCFD at PSHH — PSHH shuts the well in/.test(w.msg)), 'over-capacity error: ' + JSON.stringify(sb.warnings));
       const lo = flowOf({ wts_sepByDest: 'surge', wts_Qg: '0.1' }).flow.sepBy;
       assert.ok(lo.overCap === false && lo.warnings.some((w) => w.t === 'warn' && /^Whole well stream into the surge tank at 25 psig: the back-pressure valve vents the gas \(about 0\.1\d MMSCFD at PSHH, 0\.10 MMSCFD now\); above its capacity PSHH shuts the well in/.test(w.msg)), 'low gas: warn: ' + JSON.stringify(lo.warnings));
@@ -181,7 +181,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSLPH 3.4.2 review: the surge destination follows the rig-up on the page — no surge tank in → sepBy.alt (the burner line, 5 psig, the burner-line block but CK-102 skipped) with the engine fallback note; T-202 receiving → T-202 / PCV-203 / PSHH-202; FS-401 out → LP box to the vent; the host gas capacity matches the engine SEPBY_SURGE_CAP; seg 5 labelled Bypass→Surge Tank',
+    name: 'WTSLPH 4.1 review: the surge destination follows the rig-up on the page — no surge tank in → sepBy.alt (the burner line, 5 psig, the burner-line block but CK-102 skipped) with the engine fallback note; T-202 receiving → T-202 / PCV-203 / PSHH-202; FS-401 out → LP box to the vent; the host gas capacity matches the engine SEPBY_SURGE_CAP; seg 5 labelled Bypass→Surge Tank',
     wp: WP,
     opts: false,
     run(app, assert) {
@@ -289,7 +289,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSLPH 3.4.2 review round 2: T-201 + T-202 both receiving → twice the capacity (= the engine with route Both), names in both surge warnings, from rig.recv or the live simulator; the PSHH TRIP verdict is built with the row (kept with a hydrate risk); the no-tank note is neutral and names the CK-102 fallback; seg 5 of the line route is Bypass→Line',
+    name: 'WTSLPH 4.1 review round 2: T-201 + T-202 both receiving → twice the capacity (= the engine with route Both), names in both surge warnings, from rig.recv or the live simulator; the PSHH TRIP verdict is built with the row (kept with a hydrate risk); the no-tank note is neutral and names the CK-102 fallback; seg 5 of the line route is Bypass→Line',
     wp: WP,
     opts: false,
     run(app, assert) {

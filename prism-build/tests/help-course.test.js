@@ -104,7 +104,7 @@ const CHECKS = {
     { kind: 'sim', needs: 'surge2', unlessFeature: 'surge2Comps', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
       expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 900, to: 1150 }, { alarm: 'ESD_TRIPPED', from: 900, to: 1150 }, { at: 1200, path: 'surge2.inlet', v: false }] },
 
-    // release 3.4.2, two compartments (measured 2026-11-09 on the engine lane's 31 at E3: dual T-202 + LP line; re-checked on the
+    // release 4.1, two compartments (measured 2026-11-09 on the engine lane's 31 at E3: dual T-202 + LP line; re-checked on the
     // integrated engine — every window below holds unchanged): route T-202 opens XV-202A, then XV-201A closes; A at 80 % about 46 min after the route (2,841 s) →
     // auto-divert to B, suction A, LCV-202 empties A to 25 % (about 3,500 s); LCV-202 stuck on T-202 only: XFER2_FAIL 2,820 s, LAH-202
     // both high 5,605 s, LSHH-202 5,985 s, ESD 6,035 s; on Both: LSHH-202 12,520 s, no ESD; PCV-203 stuck at 120 s: PAH-202 406 s, PSHH-202 / ESD 946 s
@@ -116,16 +116,16 @@ const CHECKS = {
         { at: 2700, path: 'surge2.transfer.on', v: false }, { at: 2700, path: 'surge2.comps.1.inlet', v: false }, { at: 2950, path: 'surge2.comps.1.inlet', v: true }, { at: 2950, path: 'surge2.comps.0.inlet', v: false },
         { at: 2950, path: 'surge2.suction', v: 'A' }, { at: 2950, path: 'surge2.transfer.on', v: true }, { at: 3650, path: 'surge2.transfer.on', v: false }, { at: 3650, path: 'surge2.comps.0.frac', v: 0.25, tol: 0.08 }, { noAlarm: 'ESD_TRIPPED' }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 7000, dt: 5, actions: [{ t: 0, route: 'surge2' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
-      // (3.4.2 review: + XFER2_FAIL at the divert and the LSHH-102 ESD the observe text names)
+      // (4.1 review: + XFER2_FAIL at the divert and the LSHH-102 ESD the observe text names)
       expect: [{ alarm: 'XFER2_FAIL', from: 2700, to: 2950 }, { alarm: 'LAH_SURGE2_BOTH', from: 5200, to: 6000 }, { alarm: 'LSHH_SURGE2', from: 5600, to: 6400 }, { alarm: 'SURGE_BLOCKED', from: 5600, to: 6400 },
         { alarm: 'LSHH_SEP', from: 5900, to: 6500 }, { alarm: 'ESD_TRIPPED', from: 5600, to: 6500 }, { gap: ['LSHH_SURGE2', 'ESD_TRIPPED'], max: 60 }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 14500, dt: 10, actions: [{ t: 0, route: 'both' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
-      // (3.4.2 review: + the inlet closure on Both — LSHH-202 shuts the high side, the other is already shut after its divert)
+      // (4.1 review: + the inlet closure on Both — LSHH-202 shuts the high side, the other is already shut after its divert)
       expect: [{ alarm: 'LSHH_SURGE2', from: 12000, to: 14500 }, { noAlarm: 'ESD_TRIPPED' }, { at: 14500, path: 'surge2.comps.0.inlet', v: false }, { at: 14500, path: 'surge2.comps.1.inlet', v: false }] },
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
       expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 850, to: 1100 }, { alarm: 'ESD_TRIPPED', from: 850, to: 1100 }, { at: 1200, path: 'surge2.comps.0.inlet', v: false }, { at: 1200, path: 'surge2.comps.1.inlet', v: false }] },
   ],
-  // release 3.4.2 FS-5: V-101 out to the surge tank (page check on any engine; the sim checks need the rig chain). Measured 2026-11-09 on the
+  // release 4.1 FS-5: V-101 out to the surge tank (page check on any engine; the sim checks need the rig chain). Measured 2026-11-09 on the
   // integrated engine: a low-gas well (1 MMscf/d); PCV-201 takes ≈ 0.15 MMscf/d (SEPBY_SURGE_CAP); V-101 out before the cushion → PSHH-201
   // within seconds; cushion started, V-101 out 10 s later: ≈ 26 bbl in T-301 by breakthrough (2,468 s, 41 min), PAH-201 2,650 s, PSHH-201 /
   // ESD 2,715 s (≈ 4 min after breakthrough); V-101 back in at 35 min → no trip
@@ -243,8 +243,8 @@ function strings(v, p, cb) {
   if (Array.isArray(v)) { v.forEach((x, i) => strings(x, p + '[' + i + ']', cb)); return; }
   if (v && typeof v === 'object') Object.keys(v).forEach((k) => { if (k !== 'form' && k !== '_group') strings(v[k], p + '.' + k, cb); });
 }
-// release 3.4.2: feature / unlessFeature gate a check on WTS_sim.features (surge2Comps, lpFlare, rigChain), so the checks of the
-// 3.4.1 engine and of the 3.4.2 engine sit side by side while the lanes are apart
+// release 4.1: feature / unlessFeature gate a check on WTS_sim.features (surge2Comps, lpFlare, rigChain), so the checks of the
+// 3.4.1 engine and of the 4.1 engine sit side by side while the lanes are apart
 const hasItem = (V, c) => (!c.needs || V.optional.has(c.needs)) && (!c.feature || !!V.features[c.feature]) && (!c.unlessFeature || !V.features[c.unlessFeature]);
 const EQUIP = ['desander', 'surge2'];
 // The simcourse factory built against a stand-in engine that has DS-101 and T-202 (the sim-equip content), on any engine.
@@ -254,7 +254,7 @@ function equipContent(app) {
 }
 function content(app) { const C = app.win.WTS_help.load(); return { C, course: A(C.course).filter((x) => x._group === 'simcourse'), scenarios: A(C.scenarios).filter((x) => x._group === 'simcourse') }; }
 function openWts(app, set) {
-  if (!Object.prototype.hasOwnProperty.call(set || {}, 'wts_sepByDest')) set = Object.assign({ wts_sepByDest: 'flare' }, set || {});   // 3.4.2: page default 'surge'
+  if (!Object.prototype.hasOwnProperty.call(set || {}, 'wts_sepByDest')) set = Object.assign({ wts_sepByDest: 'flare' }, set || {});   // 4.1: page default 'surge'
   app.hook.nav('home');
   app.storage.removeItem('wts_page_wts'); app.storage.removeItem('wts_wts');
   app.hook.nav('wts');
@@ -363,14 +363,14 @@ function engineVocab(app) {
   const tags = new Set(Object.keys(S.TAGS).map((k) => S.TAGS[k]));
   (src.match(/\b[A-Z]{1,5}-\d{3}[A-Z]?\b/g) || []).forEach((t) => tags.add(t));
   const alarms = new Set();
-  // aDef('<ID>', …) and (3.4.2 engine, cached lookups) aDefC(<n>, '<ID>', …)
+  // aDef('<ID>', …) and (4.1 engine, cached lookups) aDefC(<n>, '<ID>', …)
   (src.match(/aDefC?\((?:\d+,\s*)?'([A-Z0-9_]+)/g) || []).forEach((m) => alarms.add(m.replace(/^aDefC?\((?:\d+,\s*)?'/, '')));
   if (/aDef\('HYD_' \+/.test(src)) ['wellhead', 'esd', 'choke', 'heater', 'separator'].forEach((n) => alarms.add('HYD_' + n));
   // Scenarios menu labels as 38 builds them (faultList): its own descriptive label for the ids it knows, else the engine label
   const local = new Map(), m = /var FAULTS = \[([\s\S]*?)\]\];/.exec(readSrc('38-wts-live.js'));
   ((m && m[1] + ']') || '').replace(/\['([A-Za-z0-9]+)', '([^']+)'\]/g, (x, id, l) => { local.set(id, l); return x; });
   const faults = new Map(A(S.FAULTS).map((f) => [local.get(f.id) || f.label, f.id]));
-  // release 3.4.2 names, accepted on an engine that predates them (the host lane's help text is written to the 3.4.2 contract)
+  // release 4.1 names, accepted on an engine that predates them (the host lane's help text is written to the 4.1 contract)
   const F = S.features || {};
   if (!F.surge2Comps) ['XV-202A', 'XV-202B', 'T-202A', 'T-202B'].forEach((t) => tags.add(t));
   if (!F.lpFlare) { tags.add('FT-201'); ['VEL_LP', 'PAH_LP', 'FT201_LOWCUT'].forEach((a) => alarms.add(a)); }
@@ -463,7 +463,7 @@ function shapeIssues(app, course, scenarios) {
     if (!tab) out.push(id + ': the which-pressure table is missing');
     else {
       const flat = A(tab.table.rows).map((r) => r.join(' | ')).join(' / ');
-      // 3.4.2 review: the Surge Tank Pressure row applies with V-101 in or out (to the tank); only its 10-below rule is V-101 in
+      // 4.1 review: the Surge Tank Pressure row applies with V-101 in or out (to the tank); only its 10-below rule is V-101 in
       ['Wellhead Pressure', 'Operating Pressure', 'Surge Tank Pressure', 'V-101 out', 'below Operating Pressure with V-101 in'].forEach((k) => { if (flat.indexOf(k) === -1) out.push(id + ': the table does not mention ' + k); });
     }
     if (x.feature !== 'bypassDest' || !A(x.afterSim).length) out.push(id + ': needs both variants (today, afterSim) with feature bypassDest');
@@ -505,7 +505,7 @@ module.exports = [
       // the sim-equip content, built against a stand-in engine, so its shape is checked on any engine
       const E = equipContent(app);
       assert.strictEqual(ids(E.course), EX8 + ',ex9,ex10', 'exercises 9 and 10 follow 8');
-      assert.strictEqual(ids(E.scenarios), 'FS-1,FS-2,FS-3,FS-4,FS-5', 'FS-3 between FS-2 and FS-4; FS-5 (3.4.2) last');
+      assert.strictEqual(ids(E.scenarios), 'FS-1,FS-2,FS-3,FS-4,FS-5', 'FS-3 between FS-2 and FS-4; FS-5 (4.1) last');
       fail(assert, shapeIssues(app, E.course, E.scenarios), 'sim-equip course and scenarios');
       // §6.4 shot recipes: valid for help-shots.js, each shown by a { shot } block, phone shots of the viewport and the More menu
       const HS = require(path.join(BUILD, 'help-shots.js'));

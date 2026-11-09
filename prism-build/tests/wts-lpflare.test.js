@@ -1,4 +1,4 @@
-// Well Test Simulator — release 3.4.2 (WTS_sim code comments v1.7.0): the LP flare line of the surge-tank gas, FT-201 / FQI-201
+// Well Test Simulator — release 4.1 (WTS_sim code comments v1.7.0): the LP flare line of the surge-tank gas, FT-201 / FQI-201
 // and GOR1 / GOR2 / total (lpgas design §1–3; INTEGRATION E3, C1, C3, C9). The engine runs in its own vm context
 // (tests/_wts-equip-shapes.js loadEngine); identity is against the frozen v3.3.1 (legacyOpts) and v3.4.1 (v341Opts) engines.
 'use strict';
@@ -191,7 +191,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSLP (6) 3.4.2 review: the LP back pressure is a compressible gas-line law — the design anchor holds (steady default ≈ unchanged), 1.2 MMscf/d gives a few psig (not tens), the open tip chokes near 4–5 MMscf/d; PSV-201 / PSV-202 rechecked against it; nps / sch overrides set the hydraulic ID',
+    name: 'WTSLP (6) 4.1 review: the LP back pressure is a compressible gas-line law — the design anchor holds (steady default ≈ unchanged), 1.2 MMscf/d gives a few psig (not tens), the open tip chokes near 4–5 MMscf/d; PSV-201 / PSV-202 rechecked against it; nps / sch overrides set the hydraulic ID',
     wp: WP, opts: false,
     run(app, assert) {
       const I = mk()._internal().lp, L = I.LP, at = I.at;

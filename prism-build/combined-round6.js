@@ -4170,7 +4170,7 @@
         rows += _row('Gas Rate',  _fmt(fp.gasRate, 2),  'MMscf/d');
         rows += _row('Oil Rate',  _fmtInt(fp.oilRate),  'STB/d');
         rows += _row('Water Rate', _fmtInt(fp.waterRate), 'bbl/d');
-        // v3.4.2: GOR1 (separator) / GOR2 (tank flash, Standing PVT estimate) / total from the steady flow.lp block, and the
+        // v4.1: GOR1 (separator) / GOR2 (tank flash, Standing PVT estimate) / total from the steady flow.lp block, and the
         // simulator's metered GOR1 / GOR2 (FE-101 / FT-201 over the oil meter) when the live view has published WTS_state.sim
         var lp = (fp.lp && typeof fp.lp === 'object') ? fp.lp : null;
         if (lp) {

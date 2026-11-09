@@ -21,17 +21,17 @@
 // T-201 line-up (SURGE_LINEUP_DEF): XV-201A open, XV-201B shut, LCV-201 suction from B, auto-divert on — A fills while B
 // transfers; steady start A 0.35 / B 0.60. cfg.surge.lineup = SURGE_LINEUP_V331 (both open, suction both, auto off, 0.55 / 0.55)
 // is the v3.3.1 engine exactly. nodes.choke.leg / beanAdj / beanFix = the CK-101 manifold legs from flow.ck1 (none → adj, bean, null).
-// v1.7.0 (release 3.4.2; WTS_sim.VERSION stays '1.5.0', features surge2Comps / lpFlare / rigChain): T-202 has two compartments A | B
+// v1.7.0 (release 4.1; WTS_sim.VERSION stays '1.5.0', features surge2Comps / lpFlare / rigChain): T-202 has two compartments A | B
 // like T-201 (XV-202A/B, LCV-202 suction A | B | both, compartment auto-divert; SURGE2_COMP_DEF 1 = the single tank); the surge-tank gas
 // goes to its own LP flare line through FT-201 (GOR1 separator, GOR2 tank, total; SURGE_VENT_DEF {to:'hp'} = the HP header); the
 // rig-up chain (RIG_ROUTING_DEF 'chain'): an item out sends its flow to the next item downstream (V-101 out → the surge tank as a
 // third destination, T-202 for T-201, P-201 booster with T-301 out, FS-401 out → export + vent; 'v341' = v3.4.1). Each default is
 // one line that tests/_wts-lineup-pin.js pins; with all four pinned the engine is v3.3.1 (and v3.4.1 with the line-up unpinned).
-// 3.4.2 review: the LP back pressure is a compressible gas-line law (lpTarget: line + meter on absolute squares, tip ΔP + exit head,
+// 4.1 review: the LP back pressure is a compressible gas-line law (lpTarget: line + meter on absolute squares, tip ΔP + exit head,
 // critical flow at the tip); OVP_SURGE / OVP_SURGE2 (> 110 % of MAWP) and SEPBY_PSV_CAP (whole stream above PCV + PSV at 110 % of
 // MAWP) annunciate the over-pressure of the whole-stream surge destination; SURGE_BLOCKED, SEPBY_SURGE_CAP, the V-101-out rig note
 // and segment 5 ('V-101 bypass→T-20x') name the receiving tank; an nps / sch override sets the LP line's hydraulic ID.
-// 3.4.2 round 2: the LP exit head is one ρv²/2gc (stray /144 removed: ≈ 5 psig at 1.2 MMscf/d, the tip chokes from ≈ 4.4); an explicit
+// 4.1 round 2: the LP exit head is one ρv²/2gc (stray /144 removed: ≈ 5 psig at 1.2 MMscf/d, the tip chokes from ≈ 4.4); an explicit
 // ID_in always wins; segment 5 to a production line is 'V-101 bypass→line' and a standing FI- alarm re-tags on a route change; the
 // FS-401 out message and routes follow the chain (routes.surge '' with V-101 to the burner / line); a 'surge' flow.sepBy block with no
 // tank in the rig-up gives way to sepBy.alt; snap.sepBy.gasCap1 / gasCap2_mmscfd = each tank's PCV capacity at PSHH.
@@ -138,7 +138,7 @@ var TAGS = deepFreeze({ wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', hea
   blanket2: 'PCV-204', psvSurge2: 'PSV-202', lgSurge2: 'LG-202', xfer2: 'LCV-202',
   // v1.5.0: CK-102 heater inlet choke (PAH-102 between the chokes), PSHH-104 on the V-101 bypass path, production-line tie-in
   heaterChoke: 'CK-102', pahCk2: 'PAH-102', pshhSepBy: 'PSHH-104', nrvLine: 'NRV-501', xvLine: 'XV-501',
-  // v1.7.0 (release 3.4.2): T-202 compartments A | B and their inlet valves
+  // v1.7.0 (release 4.1): T-202 compartments A | B and their inlet valves
   surge2A: 'T-202A', surge2B: 'T-202B', xvSurge2A: 'XV-202A', xvSurge2B: 'XV-202B',
   // v1.7.0: the LP flare line of the surge-tank gas and its meter FT-201 / FQI-201
   ft201: 'FT-201', lpLine: 'LP flare line' });
@@ -242,7 +242,7 @@ function normRigupV341(req, o) {
 // full = every core (non-optional) item in; extras = the optional items in, in RIG_KEYS order.
 // o (v1.5.0, optional): {sepByDest: 'flare' | 'line' | 'surge', P: production line psig, routing: 'chain' | 'v341'} = the V-101-out
 // destination (cfg.sep.bypass) and the rig-up rules (cfg.rig.routing). A call without o, or with routing other than 'chain', keeps the
-// v1.5.0 / v3.4.1 rules and notes exactly ('surge' is demoted to 'flare'). Release 3.4.2 'chain' (code comments v1.7.0): an item taken
+// v1.5.0 / v3.4.1 rules and notes exactly ('surge' is demoted to 'flare'). Release 4.1 'chain' (code comments v1.7.0): an item taken
 // out sends its flow to the next item downstream —
 //   H-101 → V-101 (heater bypass) · V-101 → T-201 (destination 'surge'; T-202 when T-201 is out; the burner / production line
 //   stay selectable; no pressurised tank in → 'flare') · T-201 → T-202 (when in) or T-301 · T-301 → P-201 as a booster to export
@@ -269,7 +269,7 @@ function normRigup(req, o) {
   if (!r.gauge && r.pump && !tankIn) { r.pump = false; notes.push('T-301 and the surge tanks out: P-201 has nothing to pump, so it is out of the line.'); }
   if (!r.heater) notes.push('H-101 out: the stream goes through the heater bypass straight to ' + (r.separator ? TAGS.separator : 'the V-101 bypass') + ' (no heat input, so downstream temperatures fall to the choke outlet temperature — watch the hydrate warnings).');
   if (!r.separator) {
-    // 3.4.2 review: the receiver's own back-pressure valve and PSHH (T-202 alone: PCV-203 / PSHH-202)
+    // 4.1 review: the receiver's own back-pressure valve and PSHH (T-202 alone: PCV-203 / PSHH-202)
     if (dest === 'surge') notes.push('V-101 bypassed: the whole well stream goes to the surge tank ' + recv + ' (gas through ' + (r.surge ? TAGS.bpv : TAGS.bpv2) + ' to the LP flare line, liquids on to ' +
       (r.gauge ? TAGS.gauge : 'the export / burner line') + '). There is no separation, so the separator meter rates, GOR and BS&W are not available; above the gas rate ' +
       (r.surge ? TAGS.bpv + ' can pass, PSHH-201' : TAGS.bpv2 + ' can pass, PSHH-202') + ' shuts the well in.');
@@ -341,7 +341,7 @@ var SUCTIONS = ['A', 'B', 'both'];
 // the v3.3.1 line-up is { inlet:[true,true], suction:'both', auto:false, initFrac:[0.55,0.55] } (SURGE_LINEUP_V331)
 var SURGE_LINEUP_DEF = deepFreeze({ inlet: [true, false], suction: 'B', auto: true, initFrac: [0.35, 0.60] });
 var SURGE_LINEUP_V331 = deepFreeze({ inlet: [true, true], suction: 'both', auto: false, initFrac: [0.55, 0.55] });
-// Release 3.4.2 (code comments v1.7.0) one-line defaults; tests/_wts-lineup-pin.js patches each line for the identity pins:
+// Release 4.1 (code comments v1.7.0) one-line defaults; tests/_wts-lineup-pin.js patches each line for the identity pins:
 // SURGE2_COMP_DEF = T-202 compartments (2 = A | B like T-201; 1 = the single-compartment T-202 of v1.4.0 – v1.6.0), read at create;
 // SURGE_VENT_DEF = the surge-tank gas line ('lp' = own LP flare line through FT-201; {to:'hp'} = into the HP flare header, legacy);
 // RIG_ROUTING_DEF = the rig-up rules ('chain' = an item out sends its flow to the next item downstream; 'v341' = v3.4.1 exactly)
@@ -451,11 +451,11 @@ var DEFAULTS = deepFreeze({ seed: 12345, speed: 10, speeds: [1, 10, 60, 600], hM
     tailFrac: 0.15, tailTau_s: 1800, breakTau_s: 600, Cd_liq: 0.85, burnerSG: 0.95, stallMargin_psi: 50,
     unstallHyst_psi: 25, htrRatedFactor: 1.25,
     lim: { V: [1, 500], SG: [0.80, 1.50], q: [100, 6000], cap: [0.003, 0.03], depth: [500, 25000] } },
-  // v1.7.0 (release 3.4.2): rig-up rules — 'chain' (RIG_ROUTING_DEF) = an item out sends its flow to the next item downstream; 'v341'
+  // v1.7.0 (release 4.1): rig-up rules — 'chain' (RIG_ROUTING_DEF) = an item out sends its flow to the next item downstream; 'v341'
   rig: { routing: RIG_ROUTING_DEF } });
 // v1.5.0 feature flags (D14): set by the same build and always equal (the Help content switches its texts on them)
 var FEATURES = deepFreeze({ heaterChoke: true, bypassDest: true, cushion: true,
-  surge2Comps: true, lpFlare: true, rigChain: true });   // release 3.4.2 (v1.7.0): T-202 compartments A | B; the LP flare line; the rig chain
+  surge2Comps: true, lpFlare: true, rigChain: true });   // release 4.1 (v1.7.0): T-202 compartments A | B; the LP flare line; the rig chain
 
 // ─── SAMPLE_FLOW (Appendix A: calcWTS defaults after H8; flow v1) ────────────
 var SAMPLE_FLOW = deepFreeze({v:1,seq:1,ts:0,wellheadPressure:3000,wellheadTemp:180,gasRate:10,oilRate:1000,waterRate:200,chokeBean:32,separatorPressure:150,
@@ -618,7 +618,7 @@ function flowDerived(fs) {
   // v1.7.0: LP flare line geometry from the host inputs (NPS 2 | 3 | 4, SCH 40 | 80, length ft); absent → cfg.surge.vent
   var vn = simNum(fs.lpNps), vs = simNum(fs.lpSch), vl = simNum(fs.lpLen_ft), vt = {};
   if (vn !== null && LP_ID[vn]) { vt.nps = vn; vt.ID_in = LP_ID[vn][vs === 80 ? 80 : 40]; vt.sch = vs === 80 ? 80 : 40; }
-  else if (vs === 80 || vs === 40) { vt.sch = vs; vt.ID_in = LP_ID[SURGE_VENT_DEF.nps][vs]; }   // 3.4.2 review: lpSch alone (NPS of the default)
+  else if (vs === 80 || vs === 40) { vt.sch = vs; vt.ID_in = LP_ID[SURGE_VENT_DEF.nps][vs]; }   // 4.1 review: lpSch alone (NPS of the default)
   if (vl !== null && vl > 0) vt.L_ft = clamp(vl, 10, 5000);
   if (vt.nps !== undefined || vt.sch !== undefined || vt.L_ft !== undefined) o.surge.vent = vt;
   return o;
@@ -649,7 +649,7 @@ function create(flowIn, opts) {
   var overrides = {};
   if (isPlainObj(opts.config)) mergeOverrides(overrides, deepClone(opts.config));
   var cfg = null;
-  // lpIdX (3.4.2 round 2): the LP line's explicit hydraulic ID — an ID_in of the user's overrides wins; overrides with nps / sch and no
+  // lpIdX (4.1 round 2): the LP line's explicit hydraulic ID — an ID_in of the user's overrides wins; overrides with nps / sch and no
   // ID_in → the table; else the host's flow.sim size (flowDerived sets ID_in with nps / sch); null → the table of the merged nps / sch.
   // The DEFAULTS' ID_in (3.068) never counts as explicit, so an explicit 3.068 is honoured whatever nps / sch are
   var lpIdX = null;
@@ -767,7 +767,7 @@ function create(flowIn, opts) {
     return r;
   }
   function BoR(Pa, TF) { var x = RsE(Pa, TF) * sqRatio + 1.25 * TF; return (0.9759 + 1.2e-4 * mpow(x > 0 ? x : 0, 1.2)) / bo060; }
-  // (3.4.2 review, performance only, bit-identical: the two temperature exponentials of Zf memoised per TR in a 4-entry ring,
+  // (4.1 review, performance only, bit-identical: the two temperature exponentials of Zf memoised per TR in a 4-entry ring,
   // cleared with the fluid epoch — the same exp of the same argument)
   var zT_T = [NaN, NaN, NaN, NaN], zT_a = [0, 0, 0, 0], zT_b = [0, 0, 0, 0], zT_i = 0, zT_e = -1;
   function Zf(Pa, TR) {
@@ -1721,7 +1721,7 @@ function create(flowIn, opts) {
   // v1.5.0 quiet lists (docs/SIM-FOLLOWUP-PLAN.md D12, §5.1; = tests/_wts-fu-shapes.js Q_CK2 / Q_SEPBY / Q_CUSH). Declared by WP-E0;
   // WP-E1 / WP-E2 raise these ids in their sections and add their MSG entries there
   var Q_CK2 = ['CHOKE2_LIMIT', 'CK1_SUBCRIT', 'PAH_CK2', 'HYD_heaterChoke'];
-  var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT', 'SEPBY_PSV_CAP'];   // v1.7.0: + the surge-tank destination warnings (3.4.2 review: + PSV case)
+  var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT', 'SEPBY_PSV_CAP'];   // v1.7.0: + the surge-tank destination warnings (4.1 review: + PSV case)
   var Q_CUSH = ['CUSH_LIMIT', 'CUSH_NOLIFT', 'CUSH_BURNER', 'CUSH_DUMP', 'HTR_FULL'];
   var Q_LP = ['VEL_LP', 'PAH_LP', 'FT201_LOWCUT'];   // v1.7.0 (= tests/_wts-lp-shapes.js Q_LP): quiet while the LP line is off
   // separator dumps blocked: both XV-201 shut (surge tank in line) or both XV-301 shut (V-101 → T-301 direct)
@@ -1729,7 +1729,7 @@ function create(flowIn, opts) {
     // v1.7.0: T-202 alone (T-201 out, chain) and the V-101-out stream to the surge tanks with every inlet shut block too
     var blk = (rSep || bypSurge) && ((rSurge || rSurge2) ? (!(rSurge && (uv[0] || uv[1])) && !(rSurge2 && s2Open())) : (rSep && rGauge && pumpBlocked));
     var A = (PA[0] || (PA[0] = aDef('SURGE_BLOCKED', 'XV-201', 'alarm', 'surge', 'b')));
-    // 3.4.2 review: tag / equipment of the receiving tank (T-201; T-202 alone with T-201 out; else the gauge tank)
+    // 4.1 review: tag / equipment of the receiving tank (T-201; T-202 alone with T-201 out; else the gauge tank)
     if (!A.active) { A.tag = A.pub.tag = rSurge ? 'XV-201' : rSurge2 ? TAGS.xvSurge2 : 'XV-301'; A.eq = A.pub.eq = rSurge ? 'surge' : rSurge2 ? 'surge2' : 'gauge'; }
     evalA(A, blk, !blk, null, null, MSG.SURGE_BLOCKED, true);
   }
@@ -1778,7 +1778,7 @@ function create(flowIn, opts) {
     evalA(A, rSurge && X.Pu >= X.pshU, !rSurge || X.Pu < X.pshU - dbPu, X.Pu, X.pshU, MSG.PSH_SURGE, true);
     A = (PA[14] || (PA[14] = aDef('PSV_SURGE', 'PSV-201', 'alarm', 'surge', 'b')));
     evalA(A, psvULift, !psvULift, X.Pu, X.mawpU, MSG.PSV_SURGE, false);
-    if (X.Pu > 1.10 * X.mawpU || AL.OVP_SURGE) ovpAlarm('OVP_SURGE', TAGS.surge, 'surge', X.Pu, X.mawpU, rSurge);   // 3.4.2 review: > 110 % of MAWP
+    if (X.Pu > 1.10 * X.mawpU || AL.OVP_SURGE) ovpAlarm('OVP_SURGE', TAGS.surge, 'surge', X.Pu, X.mawpU, rSurge);   // 4.1 review: > 110 % of MAWP
     if (rSurge) {
       A = (PA[15] || (PA[15] = aDef('LSHH_SURGE', 'LSHH-201', 'trip', 'surge', 'l')));
       evalA(A, fracHiU >= U.lshh, fracHiU < U.lshh - dbLu, fracHiU * 100, U.lshh * 100, MSG.LSHH_SURGE, false);
@@ -1820,7 +1820,7 @@ function create(flowIn, opts) {
     // v1.4.0 optional items: evaluated only while the item is in (sand alarms while sand is on); released on removal
     if (rDes || sandOn) desAlarms();
     if (rSurge2) surge2Alarms();
-    if (X2.Pu > 1.10 * X2.mawpU || AL.OVP_SURGE2) ovpAlarm('OVP_SURGE2', TAGS.surge2, 'surge2', X2.Pu, X2.mawpU, rSurge2);   // 3.4.2 review: T-202 > 110 % of MAWP
+    if (X2.Pu > 1.10 * X2.mawpU || AL.OVP_SURGE2) ovpAlarm('OVP_SURGE2', TAGS.surge2, 'surge2', X2.Pu, X2.mawpU, rSurge2);   // 4.1 review: T-202 > 110 % of MAWP
     // v1.5.0 (WP-E2): bypass-path protection while V-101 is out (§6.2, D16); cushion alarms while one flows (§6.3)
     if (!rSep) bypAlarms();
     if (cushOn) cushAlarms();
@@ -2470,7 +2470,7 @@ function create(flowIn, opts) {
   function setLine(L, q, design, vel, ID, act) {
     L.q = q; L.frac = design > 1e-9 ? q / design : 0; L.vel = vel; L.ID_in = ID; L.active = !!act && q > 1e-6;
   }
-  // 3.4.2 review: with V-101 out to the surge tank(s) segment 5 carries the whole stream to them, not to FS-401 (label + alarm tag)
+  // 4.1 review: with V-101 out to the surge tank(s) segment 5 carries the whole stream to them, not to FS-401 (label + alarm tag)
   // round 2: dest 'line' under the chain rules names the production line run (as 38's alias; 'v341' keeps the v3.3.1 'Sep→Flare')
   var SEG4_LINE = 'V-101 bypass→line';
   function seg4SurgeLabel() { var r = surgeRecv() || 1; return 'V-101 bypass→' + (r === 3 ? TAGS.surge + ' / ' + TAGS.surge2 : r === 2 ? TAGS.surge2 : TAGS.surge); }
@@ -3776,7 +3776,7 @@ function create(flowIn, opts) {
   // uo2 / uw2 = the whole-tank inventories (the sums of the compartments uo2k / uw2k in dual mode; single: uo2k[0] = uo2)
   var uo2 = 0, uw2 = 0, psvULift2 = false, xferOn2 = false, s2Both = false;
   var pend2 = { closeU: false, close2: false };   // close XV-201A/B at an XV-202's open limit | XV-202x at a T-201 inlet's open limit
-  // v1.7.0 (release 3.4.2, docs t202 design): XV-202A/B positions, compartment inventories and temperatures; the commands are
+  // v1.7.0 (release 4.1, docs t202 design): XV-202A/B positions, compartment inventories and temperatures; the commands are
   // ctl.surge2.comp.inlet (mutated in place only: TK2.cmd aliases it), the make-before-break holds hold.surge2[k]:
   //   intra — XV-202k commanded shut while the other XV-202 (commanded open) is still opening (compartment divert);
   //   cross — the last XV-202 commanded shut while a T-201 inlet (commanded open) is still opening (route change).
@@ -3941,7 +3941,7 @@ function create(flowIn, opts) {
       (S2N === 1 ? TAGS.surge2 : TAGS.surge2A + ' / ' + TAGS.surge2B);
   };
   MSG.SURGE_BLOCKED = function () {
-    if (!rSurge && rSurge2) return s2Valves() + ' closed — separator dumps blocked (no route to ' + TAGS.surge2 + ')';   // 3.4.2 review: T-202 alone
+    if (!rSurge && rSurge2) return s2Valves() + ' closed — separator dumps blocked (no route to ' + TAGS.surge2 + ')';   // 4.1 review: T-202 alone
     if (!rSurge) return TAGS.xvGaugeA + ' and ' + TAGS.xvGaugeB + ' closed — separator dumps blocked (no route to ' + TAGS.gauge + ')';
     return rSurge2 ? TAGS.xvSurgeA + ', ' + TAGS.xvSurgeB + ' and ' + s2Valves() + ' closed — separator dumps blocked (no route to ' + TAGS.surge + ' or ' + TAGS.surge2 + ')'
       : TAGS.xvSurgeA + ' and ' + TAGS.xvSurgeB + ' closed — separator dumps blocked (no route to ' + TAGS.surge + ')';
@@ -4810,10 +4810,10 @@ function create(flowIn, opts) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ─── LP flare line of the surge-tank gas + FT-201 + GOR1 / GOR2 (release 3.4.2, v1.7.0; lpgas design, INTEGRATION E3) ───
+  // ─── LP flare line of the surge-tank gas + FT-201 + GOR1 / GOR2 (release 4.1, v1.7.0; lpgas design, INTEGRATION E3) ───
   // PCV-201 / PCV-203 and PSV-201 / PSV-202 discharge into a separate LP line (3" SCH 40, 150 ft by default) to an LP tip on
   // FS-401, metered by FT-201 (insertion ultrasonic by default). Its back pressure P_in = lpTarget(q) follows the flow with a τ = 1 s
-  // exact-exponential lag (no algebraic loop). 3.4.2 review: lpTarget is a compressible (isothermal, ρ ∝ P) gas-line law on absolute
+  // exact-exponential lag (no algebraic loop). 4.1 review: lpTarget is a compressible (isothermal, ρ ∝ P) gas-line law on absolute
   // pressures, marched back from the tip:
   //   P_b   = P0 + tipDP · min(1, (q/qD)²)                          tip / seal ΔP, its design value from the design flow qD on (ASSUMPTION)
   //   P_t²  = P_b² + kEx · q²   (one exit velocity head)  or  P_t = q / kCh  (critical flow at the open tip), whichever is higher
@@ -4844,7 +4844,7 @@ function create(flowIn, opts) {
     var V = plain(cfg.surge.vent), M = plain(V.meter), was = lpOn;
     lpOn = V.to !== 'hp';
     LP.nps = LP_ID[num(V.nps, 3)] ? num(V.nps, 3) : 3; LP.sch = num(V.sch, 40) === 80 ? 80 : 40;
-    // 3.4.2 review (round 2): an explicit ID_in (lpIdX, see buildCfg) wins; otherwise the table ID of nps / sch (the DEFAULTS' 3.068
+    // 4.1 review (round 2): an explicit ID_in (lpIdX, see buildCfg) wins; otherwise the table ID of nps / sch (the DEFAULTS' 3.068
     // is the table value of the default 3" SCH 40, so the default run is unchanged)
     LP.ID = mmax(0.5, lpIdX !== null ? lpIdX : LP_ID[LP.nps][LP.sch]); LP.L = mmax(1, num(V.L_ft, 150));
     LP.P0 = mmax(0, num(V.P0_psig, 0.2)); LP.tip = mmax(0, num(V.tipDP_psi, 0.25));
@@ -4867,7 +4867,7 @@ function create(flowIn, opts) {
     var A = PI / 4 * Dft * Dft, Mw = 28.97 * LP.SG, kk = num(cfg.sep.pcv.k, 1.28);
     LP.P0a = Pa; LP.ReD = Re; LP.qF = LP.qD; LP.fr = 1;
     LP.kL = 2 * Pa * LP.dPd / (LP.qD * LP.qD); LP.kM = 2 * Pa * LP.mdP / (LP.qD * LP.qD);
-    LP.kEx = 2 * Mw * PSC * PSC * TRs * z / (1545.35 * TSC * TSC * A * A * 2 * 32.174);   // 3.4.2 round 2: 2·P·ρv²/(2·gc) in psia² (no /144: ρ carries the 144)
+    LP.kEx = 2 * Mw * PSC * PSC * TRs * z / (1545.35 * TSC * TSC * A * A * 2 * 32.174);   // 4.1 round 2: 2·P·ρv²/(2·gc) in psia² (no /144: ρ carries the 144)
     LP.kCh = A * 144 * msqrt(kk * 32.174 * Mw / (z * 1545.35 * TRs)) * mpow(2 / (kk + 1), (kk + 1) / (2 * (kk - 1))) / (PSC * 144 * Mw / (1545.35 * TSC));
     LP.cutV = M.lowCut_fts != null && isNum(+M.lowCut_fts) ? mmax(0, +M.lowCut_fts) : (mt.lowCut_fts != null ? mt.lowCut_fts : 0.25 * v);
     LP.qCut = LP.cutV * PI / 4 * Dft * Dft * (Pa / PSC) * (TSC / TRs) / z;   // the low-cut as a flow (scf/s) at P0 and the steady T
@@ -4894,7 +4894,7 @@ function create(flowIn, opts) {
     }
     return msqrt(Pt2 + (LP.kL * fr + LP.kM) * q2) - PSC;
   }
-  // 3.4.2 review: PSV-201 / PSV-202 against the LP line. Each tank's PSV at its rated relief (1.10 × MAWP, sized against the HP
+  // 4.1 review: PSV-201 / PSV-202 against the LP line. Each tank's PSV at its rated relief (1.10 × MAWP, sized against the HP
   // header back pressure cfg.sep.pcv.P2_psig) with its PCV wide open discharges into the line. At the defaults the 3" line builds
   // ≈ 24 psig at PSV-201's rated flow (≈ 47 % of set; PSV-202 ≈ 8.5 psig; round 2: exit head corrected): above the 10 % of a conventional valve, so the run treats
   // the PSVs as balanced-bellows valves — their flow is always gq(Cv, P_tank, P_in) at the live LP back pressure, and with the flow
@@ -4988,7 +4988,7 @@ function create(flowIn, opts) {
   }
   function lpInternal(o) {
     o.lp = { lpOn: lpOn, live: lpLive(), to: tankGasTo(), Plp: X.Plp, emaLp: X.emaLp, qLP: X.qLP, LP: deepClone(LP), cumLp: cum.lpGas, Cv_bpv: Cv_bpv,
-      target: lpTarget(X.qLP), at: lpTarget, psvCheck: lpPsvCheck() };   // 3.4.2 review: the law, and PSV-201 / PSV-202 against it
+      target: lpTarget(X.qLP), at: lpTarget, psvCheck: lpPsvCheck() };   // 4.1 review: the law, and PSV-201 / PSV-202 against it
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -5331,10 +5331,10 @@ function create(flowIn, opts) {
     // v1.7.0 chain: the whole stream to the surge tank(s) — the gas rate their back-pressure valves can pass at PSHH; FS-401 out → cold vent
     var cap = surgeGasCapNow(), over = bypSurge && qgE > cap, rv = surgeRecv();
     A = aDef('SEPBY_SURGE_CAP', TAGS.bpv, 'warn', 'separator', 'p');
-    if (!A.active) A.tag = A.pub.tag = rv === 2 ? TAGS.bpv2 : TAGS.bpv;   // 3.4.2 review: the receiving tank's PCV
+    if (!A.active) A.tag = A.pub.tag = rv === 2 ? TAGS.bpv2 : TAGS.bpv;   // 4.1 review: the receiving tank's PCV
     evalA(A, over, !over, qgE * 0.0864, cap * 0.0864, MSG.SEPBY_SURGE_CAP, false);
     recvRetext(A, rv, rv === 2 ? TAGS.bpv2 : TAGS.bpv, MSG.SEPBY_SURGE_CAP);
-    // 3.4.2 review: the relief case of the whole stream — PCV + PSV of the receiving tank(s) at 110 % of MAWP against the stream gas;
+    // 4.1 review: the relief case of the whole stream — PCV + PSV of the receiving tank(s) at 110 % of MAWP against the stream gas;
     // below it the tank over-pressures while SDV-101 closes (OVP_SURGE / OVP_SURGE2 show by how much). Static, like SEPBY_SURGE_CAP.
     // Defined on first need, so a run that never takes the whole stream to the tanks keeps the v1.7.0 alarm table
     var rc = surgeReliefCapNow(), short = bypSurge && qgE > rc;
@@ -5359,7 +5359,7 @@ function create(flowIn, opts) {
     if (!a && !b) { a = rSurge; b = !rSurge && rSurge2; }
     return (a ? 1 : 0) + (b ? 2 : 0);
   }
-  // 3.4.2 review: the relief capacity (scf/s) of each tank at 110 % of MAWP — PCV wide open + PSV rated — against the HP header
+  // 4.1 review: the relief capacity (scf/s) of each tank at 110 % of MAWP — PCV wide open + PSV rated — against the HP header
   // back pressure of the PSV sizing, or the LP line's own back pressure at that flow (one pass of lpTarget) while the LP line is on
   var relCap1 = 0, relCap2 = 0;
   function reliefDerive() {
@@ -5383,7 +5383,7 @@ function create(flowIn, opts) {
     return 'Whole stream to ' + recvTxt(r, TAGS.surge, TAGS.surge2) + ': ' + uq(v, 'gasRate', 2) + ' gas against a relief capacity of ' + uq(l, 'gasRate', 2) + ' (' +
       recvTxt(r, TAGS.bpv + ' + ' + TAGS.psvSurge, TAGS.bpv2 + ' + ' + TAGS.psvSurge2) + ' at 110 % of MAWP) — the PSV is not sized for this case; the tank over-pressures while SDV-101 closes';
   };
-  // 3.4.2 review: over-pressure of a surge tank — above 110 % of MAWP (the PSV accumulation of a non-fire case); the text marks
+  // 4.1 review: over-pressure of a surge tank — above 110 % of MAWP (the PSV accumulation of a non-fire case); the text marks
   // > 121 % (the fire-case limit) and the alarm value keeps the peak. Defined on first need (v1.7.0 alarm table otherwise)
   function ovpAlarm(id, tag, eq, P, mawp, on) {
     var hi = on && mawp > 0 && P > 1.10 * mawp, A = AL[id];
@@ -5403,7 +5403,7 @@ function create(flowIn, opts) {
   }
   MSG.OVP_SURGE = function (v, l) { return ovpTxt(TAGS.surge, TAGS.psvSurge, v, l); };
   MSG.OVP_SURGE2 = function (v, l) { return ovpTxt(TAGS.surge2, TAGS.psvSurge2, v, l); };
-  // 3.4.2 review: the words follow the receiving tank(s): T-201 / PCV-201 / PSHH-201, T-202 / PCV-203 / PSHH-202, or both
+  // 4.1 review: the words follow the receiving tank(s): T-201 / PCV-201 / PSHH-201, T-202 / PCV-203 / PSHH-202, or both
   function recvTxt(r, a, b) { return r === 3 ? a + ' and ' + b : r === 2 ? b : a; }
   MSG.SEPBY_SURGE_CAP = function (v, l) {
     var r = surgeRecv() || 1;
@@ -5831,7 +5831,7 @@ function schemaOK(st) {
   st.alarmLog.forEach(function (e) { if (['raise', 'clear', 'trip', 'reset', 'switch', 'batch', 'fault', 'event'].indexOf(e.type) < 0) bad.push('log type ' + e.type); });
   if (st.segs.length !== 6) bad.push('segs');
   var LN = ['wh_esd', 'esd_choke', 'choke_heater', 'heater_sep', 'sep_flare', 'sep_water', 'sep_oil', 'surge_gauge', 'surge_vent', 'blanket', 'gauge_drain', 'gauge_vent', 'psv_sep', 'psv_surge',
-    'sep_surge2', 'surge2_gauge', 'surge2_vent', 'blanket2', 'psv_surge2', 'ds_dump', 'lp_flare', 'sepby_surge'];   // 3.4.2: + lp_flare, sepby_surge
+    'sep_surge2', 'surge2_gauge', 'surge2_vent', 'blanket2', 'psv_surge2', 'ds_dump', 'lp_flare', 'sepby_surge'];   // 4.1: + lp_flare, sepby_surge
   if (Object.keys(st.lines).join() !== LN.join()) bad.push('line names ' + Object.keys(st.lines).length);
   if (Object.keys(st.nodes).join() !== 'wellhead,esd,choke,heater,separator,flare,surge,gauge,desander,surge2,heaterChoke') bad.push('node order');
   if (!st.desander || !st.sand || !st.surge2 || typeof st.health.massErr.sand !== 'number') bad.push('v1.4.0 blocks');
@@ -6184,7 +6184,7 @@ test('26 rig-up', function () {
     var sim = S.create(F0, { seed: 26, config: r.sand ? { noise: { on: false }, sand: { pptb: r.sand } } : cfg, rigup: r });
     run(sim, 3600, 20);
     var st = sim.getState(), m = st.health.massErr, key = JSON.stringify(r);
-    if (r.desander || r.surge2) assert(st.rigup.desander === !!r.desander && st.rigup.surge2 === !!r.surge2, key + ' optional items ' + st.rigup.sig);   // 3.4.2 chain: T-202 alone allowed
+    if (r.desander || r.surge2) assert(st.rigup.desander === !!r.desander && st.rigup.surge2 === !!r.surge2, key + ' optional items ' + st.rigup.sig);   // 4.1 chain: T-202 alone allowed
     assert(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9 && m.sand < 1e-9, key + ' mass ' + JSON.stringify(m));
     var bad = schemaOK(st); assert(bad.length === 0, key + ' schema ' + bad.join(';'));
     assert(!st.esd.tripped, key + ' trip ' + st.esd.cause);
@@ -6228,7 +6228,7 @@ test('28 optional rig-up items', function () {
   assert(st.rigup.desander && st.rigup.surge2 && st.rigup.sig === '11011111110' && st.rigup.extras.join() === 'desander,surge2' && st.desander.inRig && st.surge2.inRig, 'snapshot ' + st.rigup.sig);
   assert(ev.length === 1 && ev[0].extras.join() === 'desander,surge2' && /DS-101 in line upstream of the choke/.test(ev[0].msg) && /T-202 in the rig-up/.test(ev[0].msg), 'event ' + (ev[0] && ev[0].msg));
   assert(sim.setRigup({ desander: null }) === true && sim.getState().rigup.desander === false, 'null → the item default (out)');
-  // 3.4.2 chain: T-201 out leaves T-202 in (it takes the dumps); D11 (T-202 out with T-201) is the 'v341' rule
+  // 4.1 chain: T-201 out leaves T-202 in (it takes the dumps); D11 (T-202 out with T-201) is the 'v341' rule
   assert(sim.setRigup({ surge: false }) === true && sim.getState().rigup.surge2 === true && sim.getState().rigup.routes.surge === 'T-202', 'chain: T-202 stands in for T-201');
   var d11 = S.create(F0, { seed: 28, rigup: { surge2: true }, config: { rig: { routing: 'v341' } } });
   assert(d11.setRigup({ surge: false }) === true && d11.getState().rigup.surge2 === false && d11.getRigup().surge2 === true, 'D11: request kept, effective out');
@@ -6306,9 +6306,9 @@ test('30 v1.5.0 foundation', function () {
   assert(s4.setRigup({ heater: false }) === true && s4.getState().rigup.heaterChoke === false && s4.getRigup().heaterChoke === true, 'H-101 out takes CK-102 out');
 });
 
-// release 3.4.2 (v1.7.0): T-202 with two compartments A | B — exports, the route opens the fill line-up (XV-202A) only, the
+// release 4.1 (v1.7.0): T-202 with two compartments A | B — exports, the route opens the fill line-up (XV-202A) only, the
 // compartment auto-divert at 80 % moves the inlet to B and the LCV-202 suction to A; compartments 1 = the single tank
-test('T-202 dual compartments (3.4.2)', function () {
+test('T-202 dual compartments (4.1)', function () {
   assert(S.SURGE2_COMP_DEF === 2 && S.SURGE2_LINEUP.suction === 'B' && S.features.surge2Comps === true && S.TAGS.xvSurge2B === 'XV-202B', 'exports');
   var sim = S.create(S.SAMPLE_FLOW, { seed: 41, rigup: { surge2: true } }), st = sim.getState(), u = st.surge2, ev = [];
   assert(u.compartments === 2 && u.comps.length === 2 && !u.comps[0].inlet && !u.comps[1].inlet && u.fill[0] && !u.fill[1] && u.divert.on, 'standby');
@@ -6322,8 +6322,8 @@ test('T-202 dual compartments (3.4.2)', function () {
   assert(one.getState().surge2.compartments === 1 && one.getState().surge2.valveTag === 'XV-202' && one.setSuction('B', 'surge2') === false, 'single');
 });
 
-// release 3.4.2: the LP flare line (GOR1 + GOR2 = total, balances) and the rig chain (V-101 out to the surge tank, the booster)
-test('LP line and rig chain (3.4.2)', function () {
+// release 4.1: the LP flare line (GOR1 + GOR2 = total, balances) and the rig chain (V-101 out to the surge tank, the booster)
+test('LP line and rig chain (4.1)', function () {
   assert(S.features.lpFlare === true && S.features.rigChain === true && S.RIG_ROUTING_DEF === 'chain' && S.SURGE_VENT_DEF.to === 'lp' && S.LP_METERS.usm.lowCut_fts === 0.1, 'exports');
   var sim = S.create(F0, { seed: 51 });
   run(sim, 3600, 10);
@@ -6342,8 +6342,8 @@ test('LP line and rig chain (3.4.2)', function () {
   assert(!v.rig.pump && v.routing === 'v341', 'v341 rules');
 });
 
-// 3.4.2 review: the compressible LP law, the whole-stream relief / over-pressure annunciation, the T-202-alone wording
-test('LP law, over-pressure, T-202 wording (3.4.2 review)', function () {
+// 4.1 review: the compressible LP law, the whole-stream relief / over-pressure annunciation, the T-202-alone wording
+test('LP law, over-pressure, T-202 wording (4.1 review)', function () {
   var I = S.create(F0, { seed: 54 })._internal().lp, p12 = I.at(1200 / 86.4, true);
   assert(Math.abs(I.at(I.LP.qD, true) - I.LP.P2d) < 0.01 && p12 > 2 && p12 < 6 && I.psvCheck['PSV-201'].ok && I.psvCheck['PSV-202'].ok, 'LP law ' + p12);
   var f = JSON.parse(JSON.stringify(F0)); f.sim.sepByDest = 'surge';

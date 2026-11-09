@@ -1,8 +1,8 @@
-// Well Test Simulator — release 3.4.2 (WTS_sim code comments v1.7.0) contract fixture of the rig-up chain ("an item taken out sends
+// Well Test Simulator — release 4.1 (WTS_sim code comments v1.7.0) contract fixture of the rig-up chain ("an item taken out sends
 // its flow to the next item downstream"; rigup-next design, INTEGRATION C2, C3, C18, §2.1–2.4). Frozen at hand-off (E6): LIVE (38) and
 // VIEW3D (32) build their fake snapshots against it, not against a running engine. Not a test file.
 //   ROUTINGS, DESTS, ROUTES (one item out → {key: receiver}), ROUTE_KEYS, NOTES (exact texts of the chain rules)
-//   SEPBY_ALARMS, Q_SEPBY, SNAP_NEW (appended snapshot paths), NULLABLE_NEW; OVP_ALARMS + SEPBY_PSV_CAP (3.4.2 review, appended)
+//   SEPBY_ALARMS, Q_SEPBY, SNAP_NEW (appended snapshot paths), NULLABLE_NEW; OVP_ALARMS + SEPBY_PSV_CAP (4.1 review, appended)
 //   GAS_CAP (sepBy.gasCap_mmscfd on SAMPLE_FLOW, V-101 out to 'surge': LP line on / vent 'hp'; route 'both' ≈ 2×)
 //   LOW_GAS (the perf / test case of destination 'surge' that runs without a trip), BOOST_HEAD_PSI
 //   fakeRig(base, o) a copy of base with the rigup / sepBy / gauge.pump / surge(2).wellStream / cum / lines paths of the chain set;
@@ -50,11 +50,11 @@ var LOG = {
 var SEPBY_ALARMS = {
   SEPBY_SURGE_CAP: { tag: 'PCV-201', sev: 'warn', eq: 'separator', note: 'V-101 out to the surge tank and the gas rate above what PCV-201 (+ PCV-203 on route both) passes at PSHH' },
   SEPBY_VENT: { tag: 'FS-401', sev: 'warn', eq: 'flare', note: 'V-101 out to the surge tank with FS-401 out: cold vent' },
-  // 3.4.2 review (appended; defined on first need, so an engine that never takes the whole stream to the tanks has no entry):
+  // 4.1 review (appended; defined on first need, so an engine that never takes the whole stream to the tanks has no entry):
   // the tag follows the receiving tank (PCV-203 / PSV-202 for T-202 alone)
   SEPBY_PSV_CAP: { tag: 'PSV-201', sev: 'warn', eq: 'separator', note: 'V-101 out to the surge tank and the stream gas above PCV + PSV at 110 % of MAWP' } };
 var Q_SEPBY = ['PSHH_SEPBY', 'SEPBY_RATING', 'SEPBY_SURGE_CAP', 'SEPBY_VENT', 'SEPBY_PSV_CAP'];
-// 3.4.2 review: surge-tank over-pressure (> 110 % of MAWP; the text marks > 121 %), defined on first need; cleared below 105 %
+// 4.1 review: surge-tank over-pressure (> 110 % of MAWP; the text marks > 121 %), defined on first need; cleared below 105 %
 var OVP_ALARMS = {
   OVP_SURGE: { tag: 'T-201', sev: 'alarm', eq: 'surge' },
   OVP_SURGE2: { tag: 'T-202', sev: 'alarm', eq: 'surge2' } };

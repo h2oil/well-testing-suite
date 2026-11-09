@@ -20,7 +20,21 @@
 //   exportDatabase({conn, pgBin, objects, log, now}) → {entries, manifest}   (one snapshot for dump and manifest; objects null
 //        → manifest.objects = 'none', only when the caller passed --no-objects)
 //   writeExport({entries, keys, dir, now, retainDays}) → {file, pruned:[…]}
-//   restoreDrill({file|buf, keys, adminUrl, pgBin, allowRemote, env, log}) → report
+//   restoreDrill({file|buf, keys, adminUrl, pgBin, allowRemote, env, log}) → report   (both export formats)
+//
+// One-login hosting (v4.0, server/README.md "Hosting"): a function runtime has no dump tool and the functions site must not
+// hold a key that can READ an export (isolation.js keeps WTS_BACKUP_KEY off it). The weekly export there is therefore:
+//   exportCopy({db, objects, now, log}) → {entries, manifest}   one REPEATABLE READ, READ ONLY transaction as wts_backup
+//        (db = createDb(url, {role:'wts_backup', sessionRole:true})): every table of TABLES with COPY … TO STDOUT, the
+//        column list of each, the row counts, audit digest, migration list and user list of the SAME snapshot; manifest
+//        format 'copy' with the SHA-256 of every table file
+//   sealTo(payload, publicKey, meta) → Buffer   file format "WTSX2\n": an ephemeral X25519 key agreement with the owner's
+//        public key (WTS_BACKUP_PUBLIC_KEY "kid:<base64 SPKI>", not secret), HKDF-SHA-256, AES-256-GCM; only the private key
+//        (WTS_BACKUP_PRIVATE_KEY "kid:<base64 PKCS#8>", kept offline and on the drill machine) opens it
+//   parsePublicKey(raw) / parsePrivateKeys(raw) / generateBackupKeys(kid) → {publicKey, privateKey} (text forms)
+//   writeExportStore({entries, publicKey, objects, now, retainDays}) → {key, bytes, pruned}   export/wts-export-<stamp>.wtsx in
+//        the separate exports store (site/netlify-blobs.js 'wts-exports'), older than 28 days deleted
+//   open(buf, keys) opens both formats: keys may mix {kid, key} (WTSX1) and {kid, priv} (WTSX2)
 
 const fs = require('fs');
 const os = require('os');
@@ -65,10 +79,79 @@ function readHeader(buf) {
   return { header, headerBuf, rest: buf.subarray(nl + 1) };
 }
 function open(buf, keys) {
+  if (Buffer.isBuffer(buf) && buf.subarray(0, MAGIC2.length).equals(MAGIC2)) return openV2(buf, keys);
   const { header, headerBuf, rest } = readHeader(buf);
-  const k = keys.find((x) => x.kid === header.kid);
+  const k = keys.find((x) => x.kid === header.kid && x.key);
   if (!k) throw new Error('backup: no key with kid ' + header.kid);
   const d = crypto.createDecipheriv('aes-256-gcm', k.key, Buffer.from(header.iv, 'base64'));
+  d.setAAD(headerBuf);
+  d.setAuthTag(rest.subarray(rest.length - 16));
+  let plain;
+  try { plain = Buffer.concat([d.update(rest.subarray(0, rest.length - 16)), d.final()]); } catch (e) { throw new Error('backup: authentication failed (wrong key or a changed file)'); }
+  return zlib.gunzipSync(plain);
+}
+
+// ── WTSX2: sealed to the owner's public key (the functions site can write an export it cannot read) ─────────────────
+const MAGIC2 = Buffer.from('WTSX2\n');
+const V2_ALG = 'X25519-HKDF-SHA256-A256GCM';
+function kidItem(item, name) {
+  const m = /^(\d{1,6}):([A-Za-z0-9+/=_-]+)$/.exec(String(item).trim());
+  if (!m) throw new Error('backup: ' + name + ' entries must be "kid:<base64>"');
+  return { kid: Number(m[1]), der: Buffer.from(m[2].replace(/-/g, '+').replace(/_/g, '/'), 'base64') };
+}
+function parsePublicKey(raw) {
+  const first = String(raw || '').split(',').map((x) => x.trim()).filter(Boolean)[0];
+  if (!first) throw new Error('backup: WTS_BACKUP_PUBLIC_KEY is not set');
+  const { kid, der } = kidItem(first, 'WTS_BACKUP_PUBLIC_KEY');
+  let key;
+  try { key = crypto.createPublicKey({ key: der, format: 'der', type: 'spki' }); } catch (e) { throw new Error('backup: WTS_BACKUP_PUBLIC_KEY is not a public key'); }
+  if (key.asymmetricKeyType !== 'x25519') throw new Error('backup: WTS_BACKUP_PUBLIC_KEY must be an X25519 key');
+  return { kid, pub: key };
+}
+function parsePrivateKeys(raw) {
+  const out = String(raw || '').split(',').map((x) => x.trim()).filter(Boolean).map((item) => {
+    const { kid, der } = kidItem(item, 'WTS_BACKUP_PRIVATE_KEY');
+    let key;
+    try { key = crypto.createPrivateKey({ key: der, format: 'der', type: 'pkcs8' }); } catch (e) { throw new Error('backup: WTS_BACKUP_PRIVATE_KEY is not a private key'); }
+    if (key.asymmetricKeyType !== 'x25519') throw new Error('backup: WTS_BACKUP_PRIVATE_KEY must be an X25519 key');
+    return { kid, priv: key };
+  });
+  if (!out.length) throw new Error('backup: WTS_BACKUP_PRIVATE_KEY is not set');
+  return out;
+}
+function generateBackupKeys(kid) {
+  const k = crypto.generateKeyPairSync('x25519');
+  const id = Number(kid) || 1;
+  return {
+    publicKey: id + ':' + k.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    privateKey: id + ':' + k.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
+  };
+}
+function v2Key(shared, epk, kid) { return Buffer.from(crypto.hkdfSync('sha256', shared, epk, Buffer.from('wts-export v2 kid ' + kid), 32)); }
+function sealTo(payload, pk, meta) {
+  const eph = crypto.generateKeyPairSync('x25519');
+  const epk = eph.publicKey.export({ type: 'spki', format: 'der' });
+  const key = v2Key(crypto.diffieHellman({ privateKey: eph.privateKey, publicKey: pk.pub }), epk, pk.kid);
+  const iv = crypto.randomBytes(12);
+  const header = Buffer.from(JSON.stringify(Object.assign({ v: 2, alg: V2_ALG, kid: pk.kid, epk: epk.toString('base64'), iv: iv.toString('base64'), zip: 'gzip' }, meta || {})));
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  c.setAAD(header);
+  const body = Buffer.concat([c.update(zlib.gzipSync(payload)), c.final()]);
+  return Buffer.concat([MAGIC2, header, Buffer.from('\n'), body, c.getAuthTag()]);
+}
+function openV2(buf, keys) {
+  const nl = buf.indexOf(0x0a, MAGIC2.length);
+  if (nl === -1 || nl - MAGIC2.length > 4096) throw new Error('backup: bad header');
+  const headerBuf = buf.subarray(MAGIC2.length, nl);
+  const header = JSON.parse(headerBuf.toString('utf8'));
+  if (header.v !== 2 || header.alg !== V2_ALG) throw new Error('backup: unknown format');
+  const k = (keys || []).find((x) => x.kid === header.kid && x.priv);
+  if (!k) throw new Error('backup: no private key with kid ' + header.kid + ' (WTS_BACKUP_PRIVATE_KEY)');
+  const epkDer = Buffer.from(header.epk, 'base64');
+  const epk = crypto.createPublicKey({ key: epkDer, format: 'der', type: 'spki' });
+  const key = v2Key(crypto.diffieHellman({ privateKey: k.priv, publicKey: epk }), epkDer, header.kid);
+  const rest = buf.subarray(nl + 1);
+  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(header.iv, 'base64'));
   d.setAAD(headerBuf);
   d.setAuthTag(rest.subarray(rest.length - 16));
   let plain;
@@ -190,6 +273,112 @@ async function exportDatabase(o) {
 const FILE_RE = /^wts-export-(\d{8}T\d{6}Z)\.wtsx$/;
 function stamp(ms) { return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z'); }
 function parseStamp(s) { const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(s); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : NaN; }
+// ── the COPY export (function runtimes: no dump tool) ───────────────────────────────────────────────────────────────
+async function copyOut(tx, stmt) {
+  const stream = await tx.unsafe(stmt).readable();
+  const parts = [];
+  for await (const chunk of stream) parts.push(Buffer.from(chunk));
+  return Buffer.concat(parts);
+}
+async function exportCopy(o) {
+  const log = o.log || { log() {} };
+  const now = o.now || (() => Date.now());
+  const t0 = now();
+  if (!o.db || o.db.role !== 'wts_backup') throw new Error('backup: exportCopy needs a wts_backup connection');
+  await o.db.checkRole();
+  const files = {}; const columns = {}; let st; let userIds = [];
+  await o.db.sql.begin('isolation level repeatable read read only', async (tx) => {
+    for (const t of TABLES) {
+      columns[t] = (await tx`select a.attname as c from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'wts' and c.relname = ${t} and a.attnum > 0 and not a.attisdropped order by a.attnum`).map((r) => r.c);
+      if (!columns[t].length) throw new Error('backup: table wts.' + t + ' not found');
+      files[t] = await copyOut(tx, 'copy wts.' + t + ' to stdout');
+    }
+    st = await stats(tx);
+    userIds = (await tx.unsafe('select id::text as id from wts.users order by id')).map((r) => r.id);
+  });
+  const entries = TABLES.map((t) => ({ name: 'db/' + t + '.copy', data: files[t] }));
+  entries.push({ name: 'db/columns.json', data: Buffer.from(JSON.stringify(columns)) });
+  let blobKeys = [];
+  const objs = o.objects ? { ledger: 0, chain: 0 } : 'none';
+  if (o.objects) {
+    for (const p of ['ledger/', 'chain/']) {
+      for (const k of await o.objects.list(p)) { const b = await o.objects.get(k); if (b) { entries.push({ name: 'objects/' + k, data: b }); objs[p.slice(0, -1)]++; } }
+    }
+    for (const id of userIds) blobKeys = blobKeys.concat(await o.objects.list('u/' + id + '/'));
+  }
+  entries.push({ name: 'blob-manifest.json', data: Buffer.from(JSON.stringify({ keys: blobKeys })) });
+  const tables = {};
+  TABLES.forEach((t) => { tables[t] = { bytes: files[t].length, sha256: crypto.createHash('sha256').update(files[t]).digest('hex') }; });
+  const manifest = {
+    v: 2, format: 'copy', created: new Date(now()).toISOString(), tables,
+    counts: st.counts, auditDigest: st.audit, migrations: st.migrations, objects: objs, blobKeys: blobKeys.length, ms: now() - t0,
+  };
+  entries.unshift({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest)) });
+  log.log('[export] copy of ' + TABLES.length + ' tables, ' + (o.objects ? objs.ledger + ' ledger and ' + objs.chain + ' anchor objects' : 'no object store'));
+  return { entries, manifest };
+}
+const EXPORT_PREFIX = 'export/';
+async function writeExportStore(o) {
+  const now = o.now || (() => Date.now());
+  const retain = o.retainDays == null ? 28 : Number(o.retainDays);
+  if (!o.objects) throw new Error('backup: no export store');
+  if (!o.publicKey) throw new Error('backup: WTS_BACKUP_PUBLIC_KEY is not set');
+  const t = now();
+  const name = 'wts-export-' + stamp(t) + '.wtsx';
+  const sealed = sealTo(pack(o.entries), o.publicKey, { created: new Date(t).toISOString() });
+  await o.objects.put(EXPORT_PREFIX + name, sealed);
+  const pruned = [];
+  for (const k of await o.objects.list(EXPORT_PREFIX)) {
+    const m = FILE_RE.exec(k.slice(EXPORT_PREFIX.length));
+    if (m && t - parseStamp(m[1]) > retain * 86400000) { await o.objects.del(k); pruned.push(k.slice(EXPORT_PREFIX.length)); }
+  }
+  return { key: EXPORT_PREFIX + name, name, bytes: sealed.length, pruned };
+}
+async function newestExportInStore(objects) {
+  let best = null;
+  for (const k of await objects.list(EXPORT_PREFIX)) {
+    const m = FILE_RE.exec(k.slice(EXPORT_PREFIX.length));
+    if (m && (!best || m[1] > best.stamp)) best = { key: k, name: k.slice(EXPORT_PREFIX.length), stamp: m[1], at: parseStamp(m[1]) };
+  }
+  return best;
+}
+// a COPY export into the freshly created scratch database: the export's own migrations (names and digests), then the rows
+// with triggers and foreign-key checks off for the load (session_replication_role = replica, administrator only), then
+// every owned sequence moved past the restored ids
+async function restoreCopy(sconn, entries, manifest) {
+  const { createDb } = require('../core/db');
+  const { migrate } = require('../db/migrate');
+  const get = (n) => { const e = entries.find((x) => x.name === n); if (!e) throw new Error('backup: ' + n + ' missing'); return e.data; };
+  const cols = JSON.parse(get('db/columns.json').toString('utf8'));
+  Object.keys(manifest.tables).forEach((t) => {
+    if (crypto.createHash('sha256').update(get('db/' + t + '.copy')).digest('hex') !== manifest.tables[t].sha256) throw new Error('backup: ' + t + ' digest mismatch');
+  });
+  const db = createDb(sconn, { max: 1 });
+  try {
+    await migrate(db.sql, { names: manifest.migrations });
+    await db.sql.begin(async (tx) => {
+      await tx.unsafe('set local session_replication_role = replica');
+      for (const t of Object.keys(manifest.tables)) {
+        const have = (await tx`select a.attname as c from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = 'wts' and c.relname = ${t} and a.attnum > 0 and not a.attisdropped order by a.attnum`).map((r) => r.c);
+        if (JSON.stringify(have) !== JSON.stringify(cols[t])) throw new Error('backup: columns of ' + t + ' differ from the export');
+        const data = get('db/' + t + '.copy');
+        if (!data.length) continue;
+        const w = await tx.unsafe('copy wts.' + t + ' from stdin').writable();
+        await new Promise((resolve, reject) => { w.on('error', reject); w.on('finish', resolve); w.end(data); });
+      }
+      const seqs = await tx`select s.relname as seq, t.relname as tbl, a.attname as col from pg_class s
+        join pg_depend d on d.objid = s.oid and d.deptype in ('a', 'i') join pg_class t on t.oid = d.refobjid
+        join pg_attribute a on a.attrelid = t.oid and a.attnum = d.refobjsubid join pg_namespace n on n.oid = s.relnamespace
+        where s.relkind = 'S' and n.nspname = 'wts'`;
+      for (const q of seqs) {
+        await tx.unsafe('select setval(' + "'wts." + q.seq + "'" + ', greatest(coalesce((select max(' + q.col + ') from wts.' + q.tbl + '), 0), 1), (select count(*) > 0 from wts.' + q.tbl + '))');
+      }
+    });
+  } finally { await db.close(); }
+}
+
 function writeExport(o) {
   const now = o.now || (() => Date.now());
   const retain = o.retainDays == null ? 28 : Number(o.retainDays);
@@ -244,8 +433,9 @@ async function restoreDrill(o) {
   const entries = unpack(open(buf, o.keys));
   const get = (n) => { const e = entries.find((x) => x.name === n); if (!e) throw new Error('backup: ' + n + ' missing'); return e.data; };
   const manifest = JSON.parse(get('manifest.json').toString('utf8'));
-  const dump = get('db.dump');
-  if (crypto.createHash('sha256').update(dump).digest('hex') !== manifest.dumpSha256) throw new Error('backup: dump digest mismatch');
+  const isCopy = manifest.format === 'copy';
+  const dump = isCopy ? null : get('db.dump');
+  if (!isCopy && crypto.createHash('sha256').update(dump).digest('hex') !== manifest.dumpSha256) throw new Error('backup: dump digest mismatch');
   // isolation of the scratch target (§13.1)
   if (!o.adminUrl) throw new Error('drill: WTS_DRILL_ADMIN_URL is not set');
   const ca = connArgs(o.adminUrl);
@@ -262,13 +452,17 @@ async function restoreDrill(o) {
     await admin.sql.unsafe(rolesSql());
     await admin.sql.unsafe('CREATE DATABASE ' + scratch);
     created = true;
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-drill-'));
-    try {
-      const f = path.join(tmp, 'db.dump');
-      fs.writeFileSync(f, dump, { mode: 0o600 });
-      run(tool(o.pgBin, 'pg_restore'), ca.args.concat(['--no-password', '--exit-on-error', '-d', scratch, f]), { env: Object.assign({}, process.env, { PGPASSWORD: ca.password }) });
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
     const sconn = typeof o.adminUrl === 'string' ? (() => { const u = new URL(o.adminUrl); u.pathname = '/' + scratch; return u.toString(); })() : Object.assign({}, o.adminUrl, { database: scratch });
+    if (isCopy) await restoreCopy(sconn, entries, manifest);
+    else {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-drill-'));
+      try {
+        const f = path.join(tmp, 'db.dump');
+        fs.writeFileSync(f, dump, { mode: 0o600 });
+        run(tool(o.pgBin, 'pg_restore'), ca.args.concat(['--no-password', '--exit-on-error', '-d', scratch, f]), { env: Object.assign({}, process.env, { PGPASSWORD: ca.password }) });
+      } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    }
+    report.format = isCopy ? 'copy' : 'dump';
     const db = createDb(sconn, { max: 1 });
     try {
       const before = await stats(db.sql);
@@ -313,4 +507,5 @@ async function restoreDrill(o) {
   return report;
 }
 
-module.exports = { parseKeys, seal, open, readHeader, pack, unpack, exportDatabase, writeExport, newestExport, restoreDrill, archiveObjects, stats, rolesSql, TABLES, stamp, FILE_RE };
+module.exports = { parseKeys, seal, open, readHeader, pack, unpack, exportDatabase, writeExport, newestExport, restoreDrill, archiveObjects, stats, rolesSql, TABLES, stamp, FILE_RE,
+  parsePublicKey, parsePrivateKeys, generateBackupKeys, sealTo, exportCopy, writeExportStore, newestExportInStore, restoreCopy, EXPORT_PREFIX };

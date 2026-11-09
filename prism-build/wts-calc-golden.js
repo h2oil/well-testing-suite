@@ -78,7 +78,7 @@ var TIME_CK2_SEPBY = mix(BASE, { wts_bean2: '48', wts_ck2Pos: 'inlet', wts_sepBy
 // ck1 (CK-101 choke manifold: leg in service, adjustable / positive beans, effective bean) is a new block added after v3.3.3;
 // it is omitted like ck2 / sepBy so the strict no-extra-keys compare still guards every v3.3.1 field (no golden value changes;
 // with the adjustable leg in service flow.inputs.bean / flow.chokeBean are the v3.3.1 wts_bean, checked as before)
-// v3.4.2 (2026-11-09): lp (the LP flare line / tank gas block) and the three LP line inputs in flow.sim are new blocks, omitted the
+// v4.1 (2026-11-09): lp (the LP flare line / tank gas block) and the three LP line inputs in flow.sim are new blocks, omitted the
 // same way (the golden file is not edited; the LP box is painted only once a rig-up is handed over, so the page stays exact)
 var BASE_FIELDS_OMIT = ['ts', 'seq', 'ck2', 'sepBy', 'sim.sepByDest', 'sim.sepByP_psig', 'ck1', 'lp', 'sim.lpNps', 'sim.lpSch', 'sim.lpLen_ft'];
 

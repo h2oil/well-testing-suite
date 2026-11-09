@@ -182,7 +182,7 @@ const SECTION_A = (G, src) => {
       // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
       // v1.6.0 (WTS_sim): default T-201 line-up XV-201A open, XV-201B shut, LCV-201 suction B, auto-divert on
       if (c0 !== JSON.stringify({ surge: { inlet: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
-        // v1.7.0 (WTS_sim 1.5.0, 3.4.2): + surge2.comp (T-202 compartments; dual default = CONTROLS_SURGE2_COMP_DUAL: empty, both inlets shut)
+        // v1.7.0 (WTS_sim 1.5.0, 4.1): + surge2.comp (T-202 compartments; dual default = CONTROLS_SURGE2_COMP_DUAL: empty, both inlets shut)
         surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6, comp: { inlet: [false, false], fill: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1 } },
         desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== true) bad.push('snapshot');
@@ -844,7 +844,7 @@ const SECTION_B = (G /*, src */) => {
           if (!S || !F || typeof S.create !== 'function') return true;
           const s = S.create(F, { seed: 13 }); s.advance(60);
           const bad = [], nrm = () => I.normalize(s.getState(), I.makeNorm());
-          // 3.4.2 (C12): the LP flare line is on by default (lp.on with T-201 in) → the scene key ends in '|lp'
+          // 4.1 (C12): the LP flare line is on by default (lp.on with T-201 in) → the scene key ends in '|lp'
           if (nrm().rigKey !== '111111000|lp' || nrm().ck2.inRig) bad.push('default ' + nrm().rigKey);
           if (!s.setRigup({ heaterChoke: true })) return 'setRigup heaterChoke refused';
           s.advance(20); let n = nrm();
@@ -872,7 +872,7 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
-    // ── v1.5.0 (3.4.2): CK-101 as the GA drawing plan (chokes in the corners, a gate per side, 45° unions) ──
+    // ── v1.5.0 (4.1): CK-101 as the GA drawing plan (chokes in the corners, a gate per side, 45° unions) ──
     ...(() => {
       const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0], M = I.CK_M;
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
@@ -992,7 +992,7 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
-    // ── v1.5.0 (3.4.2): T-202 twin of T-201 (baffle, A | B caps, XV-202A / XV-202B, SV-202A / SV-202B on the LCV-202 suction) ──
+    // ── v1.5.0 (4.1): T-202 twin of T-201 (baffle, A | B caps, XV-202A / XV-202B, SV-202A / SV-202B on the LCV-202 suction) ──
     ...(() => {
       const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
@@ -1053,7 +1053,7 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
-    // ── v1.5.0 (3.4.2): LP flare line (VENTL → LP → FT-201 → LP riser / tip on FS-401; pseudo rig item lpLine from snapshot lp.on) ──
+    // ── v1.5.0 (4.1): LP flare line (VENTL → LP → FT-201 → LP riser / tip on FS-401; pseudo rig item lpLine from snapshot lp.on) ──
     ...(() => {
       const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
       const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
@@ -1101,7 +1101,7 @@ const SECTION_B = (G /*, src */) => {
           if (!hit.some(x => x.a === 'probe' || x.b === 'probe')) bad.push('probe not found');
           return bad.length === 0 || bad.join(', ');
         }],
-        ['32 3.4.2 round 2: focusRadius (landscape unchanged, portrait backs off by 1.6 / aspect, capped at 0.4, zero size = landscape); FOCUS.lp keeps FT-201, its tag plate, the LP tip and the riser foot inside the 98 / 76 px insets on 1064×496 … 1380×700 and 360×480, FT-201 picks \'lp\'', () => {
+        ['32 4.1 round 2: focusRadius (landscape unchanged, portrait backs off by 1.6 / aspect, capped at 0.4, zero size = landscape); FOCUS.lp keeps FT-201, its tag plate, the LP tip and the riser foot inside the 98 / 76 px insets on 1064×496 … 1380×700 and 360×480, FT-201 picks \'lp\'', () => {
           const bad = [], cl = (a, b) => Math.abs(a - b) < 1e-9;
           if (!(I.FOCUS_ASP === 1.6 && cl(I.focusRadius(5, 1380, 700), 5) && cl(I.focusRadius(5, 1600, 1000), 5) && cl(I.focusRadius(5, 360, 480), 5 * 1.6 / 0.75) &&
             cl(I.focusRadius(5, 0, 0), 5) && cl(I.focusRadius(5, 100, 1000), 20) && cl(I.focusRadius(5, 900, 640), 5 * 1.6 / (900 / 640)))) bad.push('focusRadius');
@@ -1113,7 +1113,7 @@ const SECTION_B = (G /*, src */) => {
             const g = I.pickRay(c.pos, rayTo(c, [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]]), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(w + 'x' + h + '/' + ph + ' pick ' + g); }));
           return bad.length === 0 || bad.join(', ');
         }],
-        ['32 3.4.2 round 2: P-201 card rows follow the pump mode (booster: T-201 → P-201 → export, no \'no pump\'); the chip state reads BOOSTER · …', () => {
+        ['32 4.1 round 2: P-201 card rows follow the pump mode (booster: T-201 → P-201 → export, no \'no pump\'); the chip state reads BOOSTER · …', () => {
           const b = I.pumpRows({ pumpMode: 'booster' }), p = I.pumpRows({ pumpMode: 'pump' }), bad = [];
           if (J(b) !== J(['Service', 'T-201 → P-201 → export (booster)', 'Surge transfer', 'LCV-201 → P-201 booster']) || /no pump|T-301/.test(b.join(' '))) bad.push('booster ' + J(b));
           if (J(p) !== J(['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)'])) bad.push('pump ' + J(p));
@@ -1126,7 +1126,7 @@ const SECTION_B = (G /*, src */) => {
           const bad = [], on = { lpLine: true }, cam = camOf({ az: 160, el: 55, target: [16.0, 0.5, 0.6], radius: 14 });
           const ft = [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]], got = I.pickRay(cam.pos, rayTo(cam, ft), I.rigProxies(on), I.rigValveProxies(on)), got2 = I.pickRay(cam.pos, rayTo(cam, [17.5, 0.35, 0.6]), I.rigProxies(on), I.rigValveProxies(on));
           if (got !== 'lp' || got2 !== 'lp') bad.push('pick ' + got + ' / ' + got2);
-          // 3.4.2 review: FT-201 sits on the high crossover, so the Tanks / Process presets (front) reach it with a tap too
+          // 4.1 review: FT-201 sits on the high crossover, so the Tanks / Process presets (front) reach it with a tap too
           ['tanks', 'process'].forEach(v => { const w = I.viewFor(v, on, 1380, 700, { top: 98, bottom: 76, left: 0, right: 0, card: null }), c = camOf({ az: w.th * 180 / Math.PI, el: 90 - w.ph * 180 / Math.PI, target: w.tgt, radius: w.r });
             const g = I.pickRay(c.pos, rayTo(c, ft), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(v + ' FT-201 pick ' + g); });
           if (I.rigProxies({}).some(p => p[0] === 'lp')) bad.push('lp proxy while off');
@@ -1147,7 +1147,7 @@ const SECTION_B = (G /*, src */) => {
         }],
       ];
     })(),
-    // ── v1.5.0 (3.4.2): rig chain — V-101 out to the surge tank (SURGE_SPOOL to a new LMa tee), chips from the chain ──
+    // ── v1.5.0 (4.1): rig chain — V-101 out to the surge tank (SURGE_SPOOL to a new LMa tee), chips from the chain ──
     ...(() => {
       const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
       const dSeg = (p, a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
@@ -1370,14 +1370,14 @@ const SECTION_C = (G, src) => {
         if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || o1.heaterChoke !== false || Object.keys(o1).length !== 11) bad.push('optional-only request stored ' + store.wts_sim_rigup);
         I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
         if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
-        // 3.4.2: T-202 has two compartments (XV-202A / XV-202B, suction) like T-201
+        // 4.1: T-202 has two compartments (XV-202A / XV-202B, suction) like T-201
         if (I.EQV.surge2.valves.join() !== 'XV-202A,XV-202B' || I.EQV.surge2.kind !== 'comps' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
         if (JSON.stringify(I.stepFor({})) !== JSON.stringify(I.STEP) || I.stepFor({ desander: true }).choke !== '④') bad.push('stepFor fallback');
         const st = simAt(600), st0 = st.getState();
         if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
         if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
         const s2 = simAt(60, (x) => x.setRigup({ gauge: false })).getState();
-        // 3.4.2 rig-up chain: T-301 out keeps P-201 in as a booster (T-201 → P-201 → export); the legacy 'v341' routing takes it out
+        // 4.1 rig-up chain: T-301 out keeps P-201 in as a booster (T-201 → P-201 → export); the legacy 'v341' routing takes it out
         if (!/^BOOSTER · (RUNNING|STANDBY)$/.test(I.pumpShort(s2)) || !I.rigOut(s2, 'gauge') || I.rigOut(s2, 'pump') || s2.gauge.pump.mode !== 'booster') bad.push('out texts ' + I.pumpShort(s2));
         const s3 = simAt(60, (x) => x.setRigup({ gauge: false }), { rig: { routing: 'v341' } }).getState();
         if (I.pumpShort(s3) !== 'OUT (no gauge tank)' || !I.rigOut(s3, 'gauge') || !I.rigOut(s3, 'pump')) bad.push('v341 out texts ' + I.pumpShort(s3));
@@ -1403,14 +1403,14 @@ const SECTION_C = (G, src) => {
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
       // (CK-101 manifold, after v3.3.3: the host flow.ck1 block {v, leg, beanAdj, beanFix, bean} is stripped the same way)
-      // (3.4.2: the host flow.lp block {v, gor1, gor2, gorTot, …} and flow.sim.lpNps / lpSch / lpLen_ft are host-only too, C17)
+      // (4.1: the host flow.lp block {v, gor1, gor2, gorTot, …} and flow.sim.lpNps / lpSch / lpLen_ft are host-only too, C17)
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; delete c.lp;
         if (c.sim) { delete c.sim.lpNps; delete c.sim.lpSch; delete c.sim.lpLen_ft; } return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
       // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);
       eqShape(strip(f), ref, 'flow', bad);
-      // 3.4.2 (DECISIONS 1): the PAGE default V-101-out destination is 'surge'; the engine SAMPLE_FLOW stays 'flare' (identity)
+      // 4.1 (DECISIONS 1): the PAGE default V-101-out destination is 'surge'; the engine SAMPLE_FLOW stays 'flare' (identity)
       if (!f.sim || f.sim.sepByDest !== 'surge' || S.SAMPLE_FLOW.sim.sepByDest !== 'flare' || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
       if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'surge') bad.push('flow.ck2 / flow.sepBy blocks');
       if (!f.lp || f.lp.v !== 1 || !(f.lp.gorTot > 0) || f.sim.lpNps !== 3 || f.sim.lpSch !== 40 || f.sim.lpLen_ft !== 150) bad.push('flow.lp ' + JSON.stringify(f.lp && [f.lp.v, f.lp.gorTot, f.sim.lpNps, f.sim.lpSch, f.sim.lpLen_ft]));

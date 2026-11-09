@@ -22,7 +22,7 @@ const iso = (d) => (d == null ? null : new Date(d).toISOString());
 const hex = (b) => (b == null ? null : Buffer.from(b).toString('hex'));
 
 // X-WTS-App below the security minimum → 426 (only ever raised for a security fix, never for a format change; §3.2)
-function verNum(v) { const m = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v || '')); return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)] : null; }
+function verNum(v) { const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v || '')); return m ? [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)] : null; }
 function clientGate(ctx) {
   const got = verNum(require('../core/http').header(ctx.req, 'x-wts-app')); const min = verNum(ctx.config.minClient);
   if (!got || !min) return;

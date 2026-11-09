@@ -1,0 +1,11 @@
+{
+  "name": "wts-server-deploy-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The hosting CLI used ONLY by the deploy job of the server release workflow, pinned with its whole dependency tree by package-lock.json (installed with npm ci --ignore-scripts). Never part of the functions bundle.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22.13.0" },
+  "dependencies": {
+    "netlify-cli": "27.16.2"
+  }
+}

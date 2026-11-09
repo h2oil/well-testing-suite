@@ -1,4 +1,4 @@
-// Well Test Simulator live HMI (38-wts-live.js) — release 3.4.2, T-202 with two compartments A | B like T-201
+// Well Test Simulator live HMI (38-wts-live.js) — release 4.1, T-202 with two compartments A | B like T-201
 // (designs t202.md §9, INTEGRATION.md §2.7 / C6):
 //   • pure: u2Dual / eqvOf (the single XV-202 fallback while the snapshot has no compartments 2), mergeKey (dotted prefs keys);
 //   • card (recording stub over a two-compartment T-202 snapshot): Line-up / T-202A / T-202B / Auto-divert rows, inlet A / B

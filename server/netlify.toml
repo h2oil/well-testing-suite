@@ -1,0 +1,31 @@
+# server/netlify.toml — the functions-only site of the web accounts API on Netlify (v4.0; server/README.md "Hosting",
+# server/RUNBOOK.md "Switch it on with Netlify"). This file sits in the site's BASE DIRECTORY, which is `server` (set once in
+# the site's build settings). It never holds a secret: every secret is an environment variable of the site (Netlify does not
+# pass variables set in this file to functions anyway). The repository root has no configuration for this site, and the
+# static site (welltest.h2oil.co.uk) is a different site.
+#
+# Deploy previews and branch deploys MUST stay OFF in the site settings (Branches and deploy contexts), and agent runs too: a
+# preview, branch deploy or agent run of a site with a database gets a copy of the production data, and every preview would run
+# with the production secrets. (At run time the functions also refuse anything but the published production deploy.) Releases go
+# out from server-v* tags through .github/workflows/server-release.yml (builds stopped in the UI), never from a push.
+
+[build]
+  # nothing to build: the publish directory holds only robots.txt ("Disallow: /"); the command checks the bundle rules
+  command = "node site/netlify-check.js"
+  publish = "public"
+
+[build.environment]
+  # the functions run on the build's Node version
+  NODE_VERSION = "22"
+  # do not install development tools during the build
+  NPM_FLAGS = "--omit=dev --ignore-scripts"
+
+[functions]
+  directory = "netlify/functions"
+  # trace the CommonJS modules the entries require (site/, core/, functions/) instead of re-bundling them
+  node_bundler = "nft"
+  included_files = ["core/**", "functions/**", "site/*.js", "package.json"]
+
+# The function region (London, lhr) is pinned in each function's own config (`region: 'lhr'` in netlify/functions/*.mjs; a
+# function-level region wins over the site setting) AND set as the site region in RUNBOOK §3N step 5, before the database
+# (step 6): the database is created next to the site's functions region and never moves.

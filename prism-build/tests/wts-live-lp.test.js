@@ -1,4 +1,4 @@
-// Well Test Simulator live HMI (38-wts-live.js) — release 3.4.2, LP flare line + GOR1 / GOR2 / Total GOR (designs lpgas.md §5,
+// Well Test Simulator live HMI (38-wts-live.js) — release 4.1, LP flare line + GOR1 / GOR2 / Total GOR (designs lpgas.md §5,
 // INTEGRATION.md §2.4 / §2.7 / C9): the surge tank gas (PCV-201 / PCV-203, PSV-201 / PSV-202) runs on its own LP flare line through
 // FT-201 to an LP tip on FS-401.
 //   • pure: gorOf (null while V-101 is out), gorLine, summaryOf rates appended, metric alarm templates PAH_LP / VEL_LP, the
@@ -79,7 +79,7 @@ module.exports = [
       assert.strictEqual(L.gorOf({ rates: { separated: false, gor1_scf_stb: 5 } }, 1), null);
       assert.strictEqual(L.lpOn(st), true); assert.strictEqual(L.lpOn({ lp: { on: false } }), false); assert.strictEqual(L.lpOn({}), false);
       assert.strictEqual(L.gorLine(st), 'GOR1 sep 900 · GOR2 tank 40 · total 940 scf/STB');
-      // review round 2 (3.4.2): the HUD sub-line is a line of its own under the rates group, labelled like the 2D strip line
+      // review round 2 (4.1): the HUD sub-line is a line of its own under the rates group, labelled like the 2D strip line
       assert.strictEqual(L.gorSub(st), 'GOR1 sep 900 · GOR2 tank 40');
       assert.strictEqual(L.gorSub(app.toWin({ rates: { gor1_scf_stb: 10132, gor2_scf_stb: 16, gorTot_scf_stb: 10148 } })), 'GOR1 sep 10,132 · GOR2 tank 16');
       assert.strictEqual(L.gorSub(app.toWin({ rates: { separated: false } })), 'GOR1 sep — · GOR2 tank —');

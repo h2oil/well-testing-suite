@@ -2752,7 +2752,7 @@ if (!M || !M.VARS) return;
 var OWNER = 'wellos', UI_KEY = 'wts_wellos_ui';
 var WINDOWS = [[300, '5 min'], [1800, '30 min'], [7200, '2 h'], [43200, '12 h']];
 var PRESSURE_KEYS = ['bhp', 'whp', 'sep_p', 'choke_dn_p', 'surge_p', 'flare_p'];
-// v3.4.2: 'gor' is the separator GOR ('GOR (sep)'); the tank gas on the LP flare line (FT-201) and the total GOR are appended
+// v4.1: 'gor' is the separator GOR ('GOR (sep)'); the tank gas on the LP flare line (FT-201) and the total GOR are appended
 var KPI_KEYS = ['whp', 'bhp', 'sep_p', 'gas_rate', 'oil_rate', 'water_rate', 'gor', 'wcut', 'flare_rate', 'tank_gas', 'gor_total'];
 var ctl = null;
 
@@ -2800,9 +2800,9 @@ function disp(v, V) {
 var DERIVED = {
     gor: { key: 'gor', label: 'GOR (sep)', unit: 'scf/STB', cat: 'gor', dp: 0, deps: ['gas_rate', 'oil_rate'], calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && x.oil_rate > 0.5 ? x.gas_rate * 1e6 / x.oil_rate : null; } },
     wcut: { key: 'wcut', label: 'Water cut', unit: '%', deps: ['water_rate', 'oil_rate'], calc: function (x) { return isNum(x.water_rate) && isNum(x.oil_rate) && x.water_rate + x.oil_rate > 0 ? 100 * x.water_rate / (x.water_rate + x.oil_rate) : null; } },
-    // v3.4.2 (lpgas design §6): tank gas = the surge-tank gas on the LP flare line through FT-201, Mscf/d — form data: the simulator
+    // v4.1 (lpgas design §6): tank gas = the surge-tank gas on the LP flare line through FT-201, Mscf/d — form data: the simulator
     // page's steady LP block (WTS_state.flow.lp, Standing flash at the page rates); Modbus: a linked 'tank_gas' tag once the station
-    // has such an app variable — 3.4.2 review: WTS_modbus.VARS has none yet (a tag cannot keep the link), so in Modbus mode tank gas
+    // has such an app variable — 4.1 review: WTS_modbus.VARS has none yet (a tag cannot keep the link), so in Modbus mode tank gas
     // and the total GOR are 'form data only' (unmapped), not 'not linked'.
     // Total GOR = (gas × 10^6 + tank gas × 10^3) ÷ oil, its quality the worst of the three
     tank_gas: { key: 'tank_gas', label: 'Tank gas (FT-201)', unit: 'Mscf/d', cat: 'gasRateSmall', dp: 1, ext: tankGas },
@@ -4581,12 +4581,12 @@ G.WTS_modbusBridgeSetup = {
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I accept the Terms of Use (version ' + esc(dlg.consent.terms) + ') and have read the Privacy notice (version ' + esc(dlg.consent.privacy) + ').</label>' +
+      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
       '<p class="acct-note">Your projects are stored encrypted in the UK / EU. You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
     $('acct_create').addEventListener('click', function () {
-      if (!$('acct_consent_ok').checked) { message('Please tick the box to accept the Terms of Use and the Privacy notice.', 'err'); return; }
+      if (!$('acct_consent_ok').checked) { message('Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.', 'err'); return; }
       verifyCode(dlg.consent);
     });
     $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
@@ -5434,10 +5434,14 @@ G.WTS_modbusBridgeSetup = {
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
         var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
         show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
-          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', {}, [el('span', { text: ' I am 18 or over. I accept the ' }),
+            el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
+            el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
+            el('a', { href: 'privacy.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_privacy_link', text: 'Privacy notice' }),
+            el('span', { text: ' (version ' + j.privacy + ').' })])]),
           cerr,
           btn('acct_oauth_create', 'Create account', true, function () {
-            if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }
+            if (!tick.checked) { cerr.textContent = 'Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.'; return; }
             drive(p, { consent: c }, oa);
           }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);

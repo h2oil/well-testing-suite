@@ -1,26 +1,123 @@
 {
-  "_comment": "The functions-only site of docs/ACCOUNTS-PLAN.md §2, §13.1, §13.8 (D19). Host-neutral description used by server/site/build.js and checked by the tests; the owner maps it to the host's own settings once (server/RUNBOOK.md, Activation checklist). It lives in server/ on purpose: the repository root carries no host configuration, so the static site keeps deploying exactly as v3.4.",
+  "_comment": "The functions-only site of docs/ACCOUNTS-PLAN.md §2, §13.1, §13.8 (D19). Host-neutral description used by server/site/build.js and checked by the tests; the owner maps it to the host's own settings once (server/RUNBOOK.md, Activation checklist). It lives in server/ on purpose: the repository root carries no host configuration, so the static site keeps deploying exactly as v3.4. v4.0: the site runs on Netlify — server/netlify.toml (base directory server), netlify/functions/*.mjs (site/netlify.js FUNCTIONS) and the 'netlify' block below; the generic entry/ stays for any other host.",
   "name": "wts-accounts-api",
-  "runtime": { "node": "22" },
+  "runtime": {
+    "node": "22"
+  },
   "static": null,
-  "build": { "command": "node site/build.js", "baseDir": "server", "output": "server/dist" },
+  "build": {
+    "command": "node site/build.js",
+    "baseDir": "server",
+    "output": "server/dist"
+  },
   "functions": [
-    { "name": "api", "entry": "dist/entry/api.js", "functionsDir": "dist/entry", "export": "default", "paths": ["/api/v1/*"], "region": "UK (else EU)", "maxBodyBytes": 4195328, "timeoutSeconds": 26 }
+    {
+      "name": "api",
+      "entry": "dist/entry/api.js",
+      "functionsDir": "dist/entry",
+      "export": "default",
+      "paths": [
+        "/api/v1/*"
+      ],
+      "region": "UK (else EU)",
+      "maxBodyBytes": 4195328,
+      "timeoutSeconds": 26
+    }
   ],
   "schedules": [
-    { "name": "ops-daily", "how": "POST /api/v1/ops/daily signed with WTS_OPS_HMAC (server/ops/call-daily.js) — or the host scheduler invoking the same", "cron": "17 3 * * *" },
-    { "name": "weekly-export", "how": "node server/ops/weekly-export.js (jobs host or the owner's machine; never from the static site)", "cron": "41 4 * * 0" },
-    { "name": "monitor-check", "how": "node server/ops/monitor-check.js (hourly)", "cron": "7 * * * *" }
+    {
+      "name": "ops-daily",
+      "how": "POST /api/v1/ops/daily signed with WTS_OPS_HMAC (server/ops/call-daily.js) — or the host scheduler invoking the same",
+      "cron": "17 3 * * *"
+    },
+    {
+      "name": "weekly-export",
+      "how": "node server/ops/weekly-export.js (jobs host or the owner's machine; never from the static site)",
+      "cron": "41 4 * * 0"
+    },
+    {
+      "name": "monitor-check",
+      "how": "node server/ops/monitor-check.js (hourly)",
+      "cron": "7 * * * *"
+    }
   ],
-  "deploy": { "from": "tags server-v*", "workflow": ".github/workflows/server-release.yml", "environments": ["server-migrations", "server-production"] },
+  "deploy": {
+    "from": "tags server-v*",
+    "workflow": ".github/workflows/server-release.yml",
+    "environments": [
+      "server-migrations",
+      "server-production"
+    ]
+  },
   "rewrite": {
-    "_comment": "Configured on the STATIC site by the owner (host settings or the generated publish directory), never in this repository's root.",
+    "_comment": "Configured on the MAIN site by the owner: a netlify.toml [[redirects]] rule from `node server/site/proxy-rule.js --snippet <functions-site>.netlify.app`, the signature filled in at build time from the main site's WTS_PROXY_SIG (never committed).",
     "from": "/api/v1/*",
     "to": "https://<functions-site-host>/api/v1/:splat",
     "status": 200,
     "proxy": true,
-    "addRequestHeaders": { "X-WTS-Proxy-Sig": "<the current value of WTS_PROXY_SIG — set in the host, never committed>" },
-    "preserve": ["Cookie", "Origin", "Content-Type", "X-WTS-Req", "X-WTS-App", "X-WTS-Device"],
-    "trustedHeaders": { "originalHost": "WTS_HOST_HEADER", "clientAddress": "WTS_CLIENT_IP_HEADER" }
+    "addRequestHeaders": {
+      "X-WTS-Proxy-Sig": "<WTS_PROXY_SIG — filled in by server/site/proxy-rule.js --apply at the main site build>",
+      "X-WTS-Host": "welltest.h2oil.co.uk"
+    },
+    "preserve": [
+      "Cookie",
+      "Origin",
+      "Content-Type",
+      "X-WTS-Req",
+      "X-WTS-App",
+      "X-WTS-Device"
+    ],
+    "trustedHeaders": {
+      "originalHost": "WTS_HOST_HEADER (default x-wts-host)",
+      "clientAddress": "WTS_CLIENT_IP_HEADER (default x-nf-client-connection-ip)"
+    }
+  },
+  "netlify": {
+    "baseDirectory": "server",
+    "config": "server/netlify.toml",
+    "publish": "public",
+    "functionsDir": "netlify/functions",
+    "bundler": "nft",
+    "functionsRegion": "lhr (London; pinned in every function's own config and set as the site setting before the database is created; credit-based Pro plan)",
+    "database": "Netlify Database (NETLIFY_DB_URL, one login; request transactions SET LOCAL ROLE wts_api, jobs wts_jobs, export wts_backup)",
+    "blobs": {
+      "stores": [
+        "wts-objects",
+        "wts-exports"
+      ],
+      "region": "eu-central-1",
+      "consistency": "strong"
+    },
+    "functions": [
+      {
+        "name": "api",
+        "path": "/api/v1/*"
+      },
+      {
+        "name": "ops-purge",
+        "schedule": "23 * * * *"
+      },
+      {
+        "name": "ops-daily",
+        "schedule": "17 3 * * *",
+        "starts": "ops-daily-background"
+      },
+      {
+        "name": "ops-daily-background",
+        "background": true
+      },
+      {
+        "name": "weekly-export",
+        "schedule": "41 4 * * 0",
+        "starts": "weekly-export-background"
+      },
+      {
+        "name": "weekly-export-background",
+        "background": true
+      }
+    ],
+    "deployPreviews": "off",
+    "branchDeploys": "none",
+    "builds": "stopped (releases from server-v* tags with the CLI: RUNBOOK)"
   }
 }

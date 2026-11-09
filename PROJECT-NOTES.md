@@ -5,10 +5,10 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
-## 2026-11-09 — v3.4.2 release: T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout
+## 2026-11-09 — v4.1 release (on top of v4.0): T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout
 
 **Integration (lead, after the four lanes merged)**
-- wts3d-test expectations moved to the 3.4.2 contract: default controls carry `surge2.comp` (dual, empty, both inlets shut); the 3D
+- wts3d-test expectations moved to the 4.1 contract: default controls carry `surge2.comp` (dual, empty, both inlets shut); the 3D
   scene key ends in '|lp' with the LP line on; 38 `EQV.surge2` = XV-202A / XV-202B; T-301 out keeps P-201 as a booster under the chain
   (38 pumpShort now reads "BOOSTER · RUNNING / STANDBY"; the 'v341' routing still reads "OUT (no gauge tank)"); the host flow.lp block
   and flow.sim.lp* are host-only like ck1 / ck2 / sepBy, page destination default 'surge'. 32 NULLABLE += rates.gor1 / gor2 /
@@ -24,7 +24,7 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 - Gates: smoke 344/344; accept --html --integration 1847/1847; wts-calc-golden --check --time ≈ 2.54 / 2.52; wts-sim-perf (2nd run;
   the 1st pooled 1.071 on a busy box) min 1.018 / pooled 1.035, both 1.550, ck2 1.015, cushion 1.089, line 0.963, surge 0.996.
 
-App and App Store version 3.4.2 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks). Built in four
+App and App Store version 4.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks). Built in four
 lanes against one contract (scratchpad designs INTEGRATION.md): ENGINE (31), VIEW3D (32), LIVE (38), HOST (calcWTS, 30, 47, 63,
 help, docs). `WTS_sim.VERSION` stays '1.5.0' (code comments v1.7.0) with `features.surge2Comps / lpFlare / rigChain`; 32 VERSION
 1.5.0; 38 VERSION 1.2.0.
@@ -56,6 +56,37 @@ help, docs). `WTS_sim.VERSION` stays '1.5.0' (code comments v1.7.0) with `featur
 FS-5 on the final engine (`WTS_HELP_SIMCHECKS` checks); regenerate the stale shots (wellos/view, scenarios/fs-1-rigup,
 scenarios/fs-1-cushion, course ex10-t202, ex5-trends, ex8-temp3d, the new course/ex2-ck3d) and help/user-guide.html; record the
 `wts-sim-perf.js` ratios here (default ≤ 1.05, both ≤ 1.6, surge ≤ 1.10).
+
+---
+
+## 2026-11-09 — v4.0 release: cloud accounts (beta, web only), on top of v3.4.2
+
+App and App Store version 4.0 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
+`#appVersionLabel` fallback). The product owner named the accounts release v4.0 (the plan's v3.5; Phase 2 / 3 are now v4.0.x /
+v4.1). Plan: docs/ACCOUNTS-PLAN.md revision 4 (status: built, release v4.0).
+
+**What shipped**
+- Cloud accounts, Phase 1 (web only, invite beta): sign in with an e-mail code, Google or LinkedIn; manual Save / Open from
+  cloud, project history and restore, account page (sign-in methods, devices, recovery address, e-mail change, security
+  notices, export, delete with a 7-day grace). Client files 66-68 are inert unless the beta flag and the exact host; the
+  sync strips every ACCT block from the iOS bundle.
+- Account API in `server/`: a separate functions-only site on our hosting platform (one-login database with separate roles by
+  `SET LOCAL ROLE`, blob store, scheduled jobs, sealed weekly export); owner set-up guide in server/RUNBOOK.md §3N (site) and
+  §3P (Google and LinkedIn consoles, redirect URIs, client ids and secrets). Server minimum client 4.0 by default there; the
+  version gate accepts the page's leading "v".
+- Release notes: the two account items are web only (between ACCT markers and `platform:'web'`, rendered as `li.rn-web`); the
+  iOS / App Store entry shows only the neutral items. help-shots.js leaves `li.rn-web` out of every screenshot (the shots are
+  copied to the iOS bundle); the Release Notes shots were re-taken.
+- Neutral items on both platforms: escaped stored text (storage-to-HTML sink audit); hash-checked spreadsheet import
+  library with a bundled iOS copy.
+- Tests: acct-host HO31 and acct-ops OP5 follow the footer links and root pages; account fixtures use appVer / minClient 4.0.
+- Merged onto v3.4.2 (dev 2c8bc1e: Privacy notice / Terms of Use, analytics consent banner, Terms notice, report disclaimers,
+  footer links): v3.4.2 keeps its own release-notes entry below v4.0, and the Privacy / Terms item was dropped from v4.0 (it
+  shipped in v3.4.2); the legal pages, footer, consent banner and LICENSE are v3.4.2's unchanged (the hosting platform is named
+  only inside server/). Generated files rebuilt (all rounds, Release Notes help shots, Round 9, user guide, iOS sync).
+
+**Notes** — Open owner items: the go-live probe (`migrate.js --platform`), the live proxy-signature and client-IP checks, the
+LinkedIn live tests before it is switched on in production, and the mail-service body format.
 
 ---
 

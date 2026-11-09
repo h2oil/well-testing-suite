@@ -1,4 +1,4 @@
-// Well Test Simulator — release 3.4.2 (WTS_sim code comments v1.7.0): T-202 with two compartments A | B like T-201 (t202 design,
+// Well Test Simulator — release 4.1 (WTS_sim code comments v1.7.0): T-202 with two compartments A | B like T-201 (t202 design,
 // INTEGRATION step E2). (a) The refactored T-201 compartment logic (the shared tk* kernel) is bit-identical to the frozen v3.4.1
 // engine on the v1.6.0 default line-up (T-202 out); (b) the single-compartment T-202 (cfg.surge2.compartments 1) is bit-identical
 // to v3.4.1; (c) the dual behaviour: standby start, the route opens the fill line-up, compartment auto-divert, LCV-202 suction,
@@ -347,7 +347,7 @@ module.exports = [
     },
   },
   {
-    name: 'WTSS2C (d) 3.4.2 review: checkShape requires the 3.4.2 keys of a working-engine snapshot (engine work; a partly missing set always fails) and excuses them only for an old object (all missing, or legacy)',
+    name: 'WTSS2C (d) 4.1 review: checkShape requires the 4.1 keys of a working-engine snapshot (engine work; a partly missing set always fails) and excuses them only for an old object (all missing, or legacy)',
     wp: WP, opts: false,
     run(app, assert) {
       const FU = require('./_wts-fu-shapes');
@@ -355,15 +355,15 @@ module.exports = [
       run(sim, 60, 10);
       const s = st(sim);
       assert.ok(X.checkShape('surge2', s.surge2, { strict: true, engine: 'work' }).ok && X.checkShape('rigup', s.rigup, { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok, 'complete snapshot');
-      // one key dropped (a regression of the 3.4.2 snapshot): fails with and without engine 'work'
+      // one key dropped (a regression of the 4.1 snapshot): fails with and without engine 'work'
       const one = J(s.surge2); delete one.comps;
       assert.ok(!X.checkShape('surge2', one, { strict: true, engine: 'work' }).ok && !X.checkShape('surge2', one, { strict: true }).ok && !X.checkShape('surge2', one).ok, 'surge2.comps missing');
       const r1 = J(s.rigup); delete r1.routes;
       assert.ok(!X.checkShape('rigup', r1, { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup.routes missing');
-      // every 3.4.2 key dropped (the review's reproduction): an old-looking object — fails for the working engine, passes as legacy
+      // every 4.1 key dropped (the review's reproduction): an old-looking object — fails for the working engine, passes as legacy
       const all = J(s.surge2);
       ['comps', 'compartments', 'suction', 'divert', 'fill', 'wellStream'].forEach((k) => delete all[k]); delete all.transfer.suction; delete all.transfer.T;
-      assert.ok(!X.checkShape('surge2', all, { strict: true, engine: 'work' }).ok, 'working engine: all 3.4.2 keys required');
+      assert.ok(!X.checkShape('surge2', all, { strict: true, engine: 'work' }).ok, 'working engine: all 4.1 keys required');
       assert.ok(X.checkShape('surge2', all, { strict: true, legacy: true }).ok && X.checkShape('surge2', all, { strict: true }).ok, 'an old object passes');
       const ra = J(s.rigup); delete ra.routing; delete ra.routes; delete ra.dest;
       assert.ok(!X.checkShape('rigup', ra, { strict: true, engine: 'work', rigKeys: FU.RIG_KEYS }).ok && X.checkShape('rigup', ra, { strict: true, legacy: true, rigKeys: FU.RIG_KEYS }).ok, 'rigup all three');
@@ -372,9 +372,9 @@ module.exports = [
       assert.ok(FU.checkShape('sepBy', s.sepBy, { strict: true, engine: 'work' }).ok && !FU.checkShape('sepBy', sb, { strict: true }).ok, 'sepBy.recv missing');
       delete sb.gasCap_mmscfd;
       assert.ok(!FU.checkShape('sepBy', sb, { strict: true }).ok, 'sepBy: round-2 gasCap1 / gasCap2 still there (partly missing)');
-      delete sb.gasCap1_mmscfd; delete sb.gasCap2_mmscfd;   // 3.4.2 round 2 keys
+      delete sb.gasCap1_mmscfd; delete sb.gasCap2_mmscfd;   // 4.1 round 2 keys
       assert.ok(!FU.checkShape('sepBy', sb, { strict: true, engine: 'work' }).ok && FU.checkShape('sepBy', sb, { strict: true }).ok && FU.checkShape('sepBy', sb, { legacy: true }).ok, 'sepBy old / working');
-      // a frozen v3.4.1 snapshot still passes (no 3.4.2 key at all)
+      // a frozen v3.4.1 snapshot still passes (no 4.1 key at all)
       const F = frozen(), fs = J(F.create(F.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } }).getState());
       assert.ok(X.checkShape('surge2', fs.surge2, { strict: true }).ok && X.checkShape('rigup', fs.rigup, { strict: true, rigKeys: FU.RIG_KEYS }).ok, 'v3.4.1 snapshot');
     },

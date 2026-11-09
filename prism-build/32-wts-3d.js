@@ -15,7 +15,7 @@
  *     (out by default and then absent; greyed "bypassed" per frame while the heater is bypassed), PAH-102 tag between the
  *     chokes; with V-101 out the bypass spool follows the destination (burner / flare line, or the production line through
  *     PSHH-104, NRV-501 and XV-501); the scene is rebuilt on rigSig + the destination (V-101 out only)
- *   · v1.5.0 (release 3.4.2): CK-101 as the plan of the two-choke manifold GA drawing (adjustable choke front-right, positive
+ *   · v1.5.0 (release 4.1): CK-101 as the plan of the two-choke manifold GA drawing (adjustable choke front-right, positive
  *     back-left, a gate valve per side, 45° hammer unions; general-angle route fillets, two pick boxes per leg); T-202 the twin
  *     of T-201 (baffle, A | B, XV-202A / XV-202B, SV-202A / SV-202B); the LP flare line (VENTL → LP → FT-201 → LP riser and
  *     tip on FS-401, from snapshot lp.on); the rig chain's V-101-out destination 'surge' (spool to the LMa tee) and chips; the
@@ -136,7 +136,7 @@ var PROXIES = [
   ['desander',[-10.2,1.55,-1.6],[0.9,3.1,0.9]], ['desander',[-10.2,0.45,-3.5],[1.2,0.9,0.7]],
   ['surge2',[12.5,3.2,2.3],[1.9,4.6,1.9]],                      // inscribed (x 11.55…13.45; T-201's proxy ends at x 11.45)
   ['heaterChoke',[-3.45,2.1,0.4],[0.5,0.9,0.5]],                // x −3.7…−3.2: clear of the H-101 proxy (x −3.1…0.3)
-  // v1.5.0: LP flare line (only while lp.on): FT-201 body and the ground run → card 'lp' (3.4.2 review: FT-201 on the high
+  // v1.5.0: LP flare line (only while lp.on): FT-201 body and the ground run → card 'lp' (4.1 review: FT-201 on the high
   // crossover, which the preset cameras see between T-201 and T-301, and the drop at x 13.0 — the ground run hides behind T-301)
   ['lp',[13.0,6.37,1.05],[0.5,0.9,0.5]], ['lp',[16.025,0.35,0.6],[6.05,0.36,0.36]], ['lp',[13.0,3.2,0.6],[0.36,5.4,0.36]]
 ];
@@ -210,13 +210,13 @@ var FOCUS = {
 };
 // fixed focus azimuth (deg) for items that another vessel hides from the usual -18° side: T-202 sits behind T-201 there,
 // so it is framed from +3° (between T-201 and T-301; wts3d framing check); the LP line (ground run behind T-301 from the front)
-// from 200°, behind the tanks with the stack to one side: crossover with FT-201, drop, ground run and riser in one view (3.4.2;
-// target y 4.2 / r 19 since the 3.4.2 round 2: the FT-201 tag plate and the LP tip clear a 98 px toolbar on a 1064×496 canvas)
+// from 200°, behind the tanks with the stack to one side: crossover with FT-201, drop, ground run and riser in one view (4.1;
+// target y 4.2 / r 19 since the 4.1 round 2: the FT-201 tag plate and the LP tip clear a 98 px toolbar on a 1064×496 canvas)
 var FOCUS_TH = { surge2:3, lp:200 };
-// FOCUS radii are set for a landscape canvas (aspect ≥ 1.6); a narrower canvas (portrait phone, 3.4.2 review) backs the camera
+// FOCUS radii are set for a landscape canvas (aspect ≥ 1.6); a narrower canvas (portrait phone, 4.1 review) backs the camera
 // off by 1.6 / aspect so the item keeps its width in frame (the 36° FOV is vertical) — a landscape canvas is unchanged
 var FOCUS_ASP = 1.6;
-// P-201 card rows: in booster mode (T-301 out, 3.4.2 rig-up chain) the pump boosts the T-201 transfer to export
+// P-201 card rows: in booster mode (T-301 out, 4.1 rig-up chain) the pump boosts the T-201 transfer to export
 function pumpRows(ga) {
   return ga && ga.pumpMode === 'booster' ? ['Service', 'T-201 → P-201 → export (booster)', 'Surge transfer', 'LCV-201 → P-201 booster']
     : ['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)'];
@@ -230,7 +230,7 @@ var BLOBS = [[-7.05, 0, 4.4, 3.2], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [1
              [19.5, -4.5, 2.2, 2.2], [-8, -6.5, 7.0, 3.4], [-11.6, 0, 1.4, 1.4], [-18.5, 5.0, 2.0, 2.8], [22.0, 3.0, 2.0, 2.8]];
 var BLOBS_OPT = { desander:[[-10.2, -1.6, 1.4, 1.4], [-10.2, -3.5, 1.6, 1.1]], surge2:[[12.5, 2.3, 2.6, 2.6]] };
 // Label obstacles (vessel cores the chips avoid): V-101, T-201, T-301 (+ T-202 while it is in; + FT-201 on the LP crossover while
-// the LP line is on, so the T-201 / V-101 chips do not sit on the meter in the Tanks / Process / Flare views — 3.4.2 review)
+// the LP line is on, so the T-201 / V-101 chips do not sit on the meter in the Tanks / Process / Flare views — 4.1 review)
 var OBST_BOXES = [{ box:V101_BOX }, { box:{ min:[9.0, 0.9, 2.8], max:[11.4, 5.7, 5.2] } }, { box:{ min:[13.9, 0.25, 2.7], max:[18.9, 2.85, 5.3] } },
                   { box:{ min:[11.5, 0.9, 1.3], max:[13.5, 5.5, 3.3] }, rig:'surge2' },
                   { box:{ min:[12.7, 5.85, 0.55], max:[13.3, 6.95, 1.55] }, rig:'lpLine' }];
@@ -330,7 +330,7 @@ var ROUTES = [
   { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rb:0.2, pts:[[-6.3,1.2,-0.75],[-5.7,1.2,-1.35],[-5.15,1.2,-1.35],[-5.15,1.2,0],[-4.3,1.2,0]] },
   // ── v1.5.0 (appended) — LP flare line (snapshot lp.on; pseudo rig item lpLine): VENTL = T-201 top → PCV-201 (the v3.3 VENT start;
   //    PSV-201 still tees in) to a flanged break at x 12.2; LP = that break → down at x 13.0 (z 0.6, clear of G1, the PSV header
-  //    and the T-202 B branch; FT-201 on the crossover at z 1.05 since the 3.4.2 review) → ground run at y 0.35 → along −z at x 19.05 to the LP riser foot (drain
+  //    and the T-202 B branch; FT-201 on the crossover at z 1.05 since the 4.1 review) → ground run at y 0.35 → along −z at x 19.05 to the LP riser foot (drain
   //    boot) at (19.05, 0.35, −3.5), clear of the flare base (z ≤ −3.7) and the knock-out drum; the riser and the LP tip are static
   //    meshes. VENT2 joins the LP z-run at (13.0, 6.1, 2.3); PSV2L (PSV-202 → LP) replaces PSV2 while the LP line is on ──
   { id:'VENTL', aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', rig:'lpLine', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[12.2,6.1,4.0]] },
@@ -364,7 +364,7 @@ var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9
   [8.1,2.3,4.0,3,'sepSurge']];                                          // (V-101 out to the surge tank: SURGE_SPOOL lands on LMa)
 // LP riser (static, rig lpLine) from the riser foot up beside the stack, a jog toward the HP tip at y 6.6, to the LP tip; the
 // LP tip / pilot sit at LP_TIP; FT-201 insertion meter on the high crossover (x 13.0, run along z between the PSV2L tee at z 1.6
-// and the drop at z 0.6: in view from the Tanks / Process / Flare presets, where the ground run sits behind T-301; 3.4.2 review)
+// and the drop at z 0.6: in view from the Tanks / Process / Flare presets, where the ground run sits behind T-301; 4.1 review)
 var LP_RISER = [[19.05,0.35,-3.5],[19.05,6.6,-3.5],[19.05,6.6,-4.05],[19.05,7.3,-4.05]], LP_TIP = [19.05,7.3,-4.05], FT201_AT = [13.0,6.1,1.05];
 function tagHolds(rig, t) { return t.charAt(0) === '!' ? !rigIn(rig, t.slice(1)) : rigIn(rig, t); }
 function teeBuilt(t, rig) { var g = t[4]; if (!g) return true; if (typeof g === 'string') return tagHolds(rig, g);
@@ -424,7 +424,7 @@ var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','surge
   'desander.dump.lastT','surge2.tFull_s','surge2.transfer.trip',
   'inputs.bean2','inputs.ck2Pos','cushion.tBreak',   // v1.5.0 (WTS_sim 1.5.0; SIM-FOLLOWUP §5.4, §6.3)
   'nodes.choke.beanFix',
-  'rates.gor1_scf_stb','rates.gor2_scf_stb','rates.gorTot_scf_stb','sepBy.gasCap_mmscfd'];   // 3.4.2 (WTS_sim 1.5.0 / v1.7.0: GOR1 / 2 / Total, surge cap)   // CK-101 positive leg bean (null without flow.ck1)
+  'rates.gor1_scf_stb','rates.gor2_scf_stb','rates.gorTot_scf_stb','sepBy.gasCap_mmscfd'];   // 4.1 (WTS_sim 1.5.0 / v1.7.0: GOR1 / 2 / Total, surge cap)   // CK-101 positive leg bean (null without flow.ck1)
 
 // ═════════════════════════════════════════════════════════════════════════
 // §B PURE HELPERS (Node-testable; exported as _internals)

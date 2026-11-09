@@ -38,7 +38,7 @@ function commitBody(baseRev, core, parts, o) {
   const b = { pushId: o.pushId || crypto.randomUUID(), baseRev, reason: o.reason || 'save',
     core: { hash: core.hash, vhash: o.vhash || core.hash, zsha: core.zsha, bytes: core.bytes },
     parts: parts.map((p, i) => ({ name: 'well/w' + (i + 1), hash: p.hash, bytes: p.bytes })),
-    meta: o.meta || META, wells: parts.map((p, i) => ({ id: 'w' + (i + 1), name: 'Example-' + (i + 1) })), fmt: 2, appVer: '3.5' };
+    meta: o.meta || META, wells: parts.map((p, i) => ({ id: 'w' + (i + 1), name: 'Example-' + (i + 1) })), fmt: 2, appVer: '4.0' };
   if (o.inline !== false) b.core.inline = core.z.toString('base64');
   return b;
 }
@@ -350,10 +350,13 @@ test.describe('projects, revisions, blobs, library (§3.3)', { skip }, () => {
     await T.db.sql`insert into wts.rate_counters (bucket, window_start, n) values (${'blobReadSessionHour:' + sid}, to_timestamp(floor(extract(epoch from now()) / 3600) * 3600), 100000000)`;
     assert.strictEqual((await r.call('GET', '/blobs/' + p.hash + '/0')).status, 429);
     // no security minimum by default: any version passes; with WTS_MIN_CLIENT set, an older client gets 426
-    T.setEnv({ WTS_MIN_CLIENT: '3.5' });
+    T.setEnv({ WTS_MIN_CLIENT: '4.0' });
     try {
       const old = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 2 }), []), { headers: { 'x-wts-app': '3.4' } });
       assert.strictEqual(old.status, 426); assert.strictEqual(old.json.error, 'upgrade');
+      // the page sends RELEASE_NOTES[0].ver as it stands ("v3.4"): the leading "v" must not switch the gate off
+      const oldV = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 3 }), []), { headers: { 'x-wts-app': 'v3.4' } });
+      assert.strictEqual(oldV.status, 426); assert.strictEqual(oldV.json.error, 'upgrade');
     } finally { T.setEnv({ WTS_MIN_CLIENT: '' }); }
   });
 });

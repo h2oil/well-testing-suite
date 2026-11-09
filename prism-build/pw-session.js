@@ -118,6 +118,17 @@ async function freshSession(browser, opts) {
   }, opts.phone ? { isMobile: true, hasTouch: true } : {}, opts.contextOptions || {}));
   const s = { ctx, page: null, errors: [], external: [], opts };
   await routeExternal(ctx, (u, a) => s.external.push({ url: u.replace(/\?.*$/, ''), action: a }));
+  // The web build's analytics consent banner (GA block in <body>) would cover the bottom of every shot: store a
+  // choice first ('denied' — analytics are stubbed anyway), unless the caller seeds wtspref_analytics_consent itself.
+  await ctx.addInitScript(() => {
+    try {
+      if (!localStorage.getItem('wtspref_analytics_consent')) {
+        localStorage.setItem('wtspref_analytics_consent', JSON.stringify({ choice: 'denied', v: 1, at: Date.now() }));
+      }
+      // the Terms of Use notice above the page header (web and iOS) would shift every shot: mark it seen
+      if (!localStorage.getItem('wtspref_terms_seen')) localStorage.setItem('wtspref_terms_seen', JSON.stringify({ v: 1, at: Date.now() }));
+    } catch (e) { /* storage unavailable */ }
+  });
   const seed = opts.seed || {};
   await ctx.addInitScript((kv) => {
     try {
