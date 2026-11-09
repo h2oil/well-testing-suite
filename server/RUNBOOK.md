@@ -19,7 +19,7 @@ the repository root carries no host configuration, so the static site's deploy i
 |---|---|
 | Request pipeline, contract, config | `core/app.js`, `core/contract.js`, `core/config.js` |
 | Functions-site adapter (the one function for `/api/v1/*`) | `site/handler.js`; bundle `node site/build.js` → `server/dist/` |
-| Live site, same-site mode (§3L) | `site/build-live.js` (the upload folder: static app + API; `--check`), `site/netlify-check.js --live` (its build command), `WTS_SITE_MODE=same` in `core/config.js` / `core/http.js`, `ops/remote-smoke.js` (`WTS_SMOKE_MODE=same`) |
+| Live site, same-site mode (§3L) | `site/build-live.js` (the upload folder: static app + API, functions pre-bundled with esbuild; `--check`), `site/netlify-check.js --live --prebundled` (its build command), `WTS_SITE_MODE=same` in `core/config.js` / `core/http.js`, `ops/remote-smoke.js` (`WTS_SMOKE_MODE=same`) |
 | Netlify site (v4.0) | `netlify.toml`, `netlify/functions/*.mjs`, `site/netlify.js` (functions, defaults, jobs, kick), `site/netlify-blobs.js`, `site/netlify-check.js` (build command), `site/proxy-rule.js` (main site rule), `ops/keygen.js` (secrets) |
 | Site description and the static site's rewrite | `site/site.json` |
 | Preview isolation | `site/isolation.js` |
@@ -107,7 +107,8 @@ functions-only site (§3N), on the **Free plan**. Consequences, all accepted by 
   rule and every other control are unchanged.
 - **One upload carries both.** The site is deployed by uploading a folder; `node server/site/build-live.js` assembles that
   folder: the static app (publish allow-list of `prism-build/publish-site.js`) under `public/`, the API functions, the platform
-  migrations and the pinned runtime dependencies. A deploy whose build or migration fails never replaces the live version.
+  migrations and the pinned runtime dependencies (bundled into each function file: an upload deploy installs no packages for
+  functions). A deploy whose build or migration fails never replaces the live version.
 - **Jobs in background functions.** The default bundle layout `live` has six functions: `api` (`/api/v1/*` only — static files
   win for every other path), `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sunday 04:41 UTC), the last two
   each starting a signed background function (`ops-daily-background`, `weekly-export-background`, 15 minutes each; they need
@@ -161,17 +162,24 @@ defaults `WTS_VERSION` (4.0.0). Check the site's **Build settings**: base direct
 EMPTY (the bundle's `netlify.toml` sets them); deploy previews and branch deploys cannot happen on an upload-only site, keep it so.
 
 ### Step L4 — Build the bundle and deploy
-From a checkout of the branch to release (repository root; Node 22.12 or newer; no `npm ci` needed for the build):
+From a checkout of the branch to release (repository root; Node 22.12 or newer; network access to the npm registry):
 ```
+cd server && npm ci && cd ..
 node server/site/build-live.js --out <folder outside the repository>
 node server/site/build-live.js --check --dir <that folder>
 ```
-(No `--inline-jobs`: the default layout with the background functions is the one to deploy.) The build prints `layout live`.
-The check lists every file and fails on anything outside the allow-list (`site/netlify-check.js checkLive`) or any
-secret-looking file. Upload the folder as a **production** deploy of the live site (the platform runs the build: it installs
-`package.json` / `package-lock.json`, runs `node site/netlify-check.js --live`, bundles the functions and, because
-`@netlify/database` is a dependency, provisions the database on the first such deploy and applies
-`netlify/database/migrations/` before publishing). Read the deploy log for `0000` … `0501` and the migration notes of §3T step
+(`npm ci` in server/ installs the pinned bundler, esbuild 0.24.2, a development dependency. No `--inline-jobs`: the default
+layout with the background functions is the one to deploy.) The build prints `layout live`. An upload deploy installs NO
+`node_modules` for the functions (and drops any uploaded with the folder; a plain `require('postgres')` then fails with "Cannot
+find module"), so the build **pre-bundles** them: it installs the bundle's exact runtime dependencies into a temporary folder
+(`npm ci --omit=dev --ignore-scripts` from the bundle's own `package.json` + lockfile), bundles each
+`netlify/functions/<name>.mjs` with its packages, removes the temporary folder and records the esbuild version and the SHA-256
+of every function file (and of the generated wrapper it was built from) in `build-info.json`. The folder never holds
+`node_modules`; the functions read no other file at run time. The check lists every file and fails on anything outside the
+allow-list (`site/netlify-check.js checkLive`), any secret-looking file or a function file that is not the recorded bundle.
+Upload the folder as a **production** deploy of the live site (the build command `node site/netlify-check.js --live
+--prebundled` repeats that check with no installed package; because `@netlify/database` is a dependency in `package.json`, the
+platform provisions the database on the first such deploy and applies `netlify/database/migrations/` before publishing). Read the deploy log for `0000` … `0501` and the migration notes of §3T step
 T5 (never edit or remove an applied file; never apply DDL through a direct connection; record the observed runner behaviour
 there). A failed build or migration leaves the previous version live. In the deploy summary the functions list must show six
 functions, two of them marked background.

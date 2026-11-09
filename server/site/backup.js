@@ -405,7 +405,7 @@ function newestExport(dir) {
 
 // the roles block of the first migration (cluster-wide roles; a scratch cluster needs them before the restore)
 function rolesSql() {
-  const t = fs.readFileSync(path.join(__dirname, '..', 'db', 'migrations', '001-schema.sql'), 'utf8');
+  const t = fs.readFileSync(require('../core/root').serverPath('db', 'migrations', '001-schema.sql'), 'utf8');
   const m = /DO \$roles\$[\s\S]*?\$roles\$;/.exec(t);
   if (!m) throw new Error('backup: roles block not found in 001-schema.sql');
   return m[0];
