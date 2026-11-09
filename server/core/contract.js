@@ -48,7 +48,7 @@ const ERRORS = {
   signup_closed:      { status: 403, extra: [], text: 'New accounts are not open right now.' },
   not_found:          { status: 404, extra: [], text: 'Not found.' },
   stale:              { status: 409, extra: ['headRev?', 'head?', 'rev?', 'hash?'], text: 'The cloud copy changed.' },
-  consent_required:   { status: 409, extra: ['terms?', 'privacy?'], text: 'Accept the current Terms of Use and Privacy notice.' },
+  consent_required:   { status: 409, extra: ['terms?', 'privacy?', 'countryHint?'], text: 'Accept the current Terms of Use and Privacy notice.' },
   immutable:          { status: 409, extra: [], text: 'That part is already stored.' },
   identity_in_use:    { status: 409, extra: [], text: 'That sign-in is linked to another account.' },
   provider_linked:    { status: 409, extra: [], text: 'The account already has a sign-in of that provider.' },
@@ -222,7 +222,8 @@ S.ErrorEnvelope = { error: 'nestr', message: 'str', 'retryAfter?': 'uint' };
 // for purpose 'stepup' (start) and for a step-up verify, which the server matches through the session (WP0 refinement of §3.3).
 S.CodeStartReq = all({ 'email?': 'email', purpose: "'signin'|'stepup'|'email_change'|'recovery_add'", 'to?': "'primary'|'recovery'" },
   rule((v) => (v.email === undefined && v.purpose !== 'stepup') ? 'email: missing (required unless purpose is stepup)' : null));
-S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent' };
+// profile? (user insight): the optional self-declared profile, sent with the consent of a new account only
+S.CodeVerifyReq = { 'email?': 'email', code: 'code8', 'deviceLabel?': 'label', publicDevice: 'bool', 'consent?': '@Consent', 'profile?': '@ProfileReq' };
 S.EmailChangeReq = { newEmail: 'email' };
 S.EmailConfirmReq = { code: 'code8' };
 S.EmailRevertReq = { email: 'email', code: 'revertKey' };
@@ -239,7 +240,8 @@ S.SignOutAllReq = { 'alsoRecentMethodsDays?': 'uint' };
 // sharedBrowser: the page's wtspref_shared_browser flag (T30) — with publicDevice it makes the attempt a fresh-login attempt
 // (§4.10 item 3); the plan names the flag but not the field (WP0 refinement).
 S.OAuthStartReq = { purpose: "'signin'|'link'", publicDevice: 'bool', 'sharedBrowser?': 'bool', 'deviceLabel?': 'label' };
-S.OAuthFinishReq = all({ 'email?': 'email', 'code?': 'code8', 'consent?': '@Consent' },
+S.OAuthFinishReq = all({ 'email?': 'email', 'code?': 'code8', 'consent?': '@Consent', 'profile?': '@ProfileReq' },
+  rule((v) => (v.profile !== undefined && v.consent === undefined) ? 'profile: only with consent' : null),
   rule((v) => (['email', 'code', 'consent'].filter((k) => v[k] !== undefined).length > 1) ? 'expected at most one of email | code | consent' : null));
 S.UnlinkReq = { id: 'uuid' };
 // auth responses
@@ -253,7 +255,8 @@ S.FinishDone = { next: "'done'", user: '@UserBrief', firstSignIn: 'bool', device
 S.FinishLinked = { next: "'done'", linked: '@IdentityMethod' };
 S.FinishEmail = { next: "'email'", reason: "'missing'|'unverified'|'unmanaged'", 'emailPrefill?': orNull('email') };
 S.FinishCode = { next: "'code'", emailMasked: 'masked', reason: "'verify'|'link_existing'|'link_confirm'|'cancel_deletion'" };
-S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr' };
+// countryHint? (user insight): the country the platform detected for this connection, the sign-up profile's default
+S.FinishConsent = { next: "'consent'", newAccountEmailMasked: 'masked', 'terms?': 'nestr', 'privacy?': 'nestr', 'countryHint?': orNull('str') };
 S.FinishRes = oneOf('next', {
   done: (v, p, ctx) => checkNamed(v && v.linked !== undefined ? 'FinishLinked' : 'FinishDone', v, p, ctx),
   email: '@FinishEmail', code: '@FinishCode', consent: '@FinishConsent',
@@ -273,6 +276,8 @@ S.Me = {
   minClient: 'str',
   // the admin dashboard (v4.0 follow-up): true when the account may use the /admin routes (always sent by the server)
   'admin?': 'bool',
+  // user insight: the account's own optional profile (null when none was given)
+  'profile?': orNull('@Profile'),
 };
 S.OutboxKeyRes = { k: 'b64' };
 S.OptsReq = { 'historian?': 'bool', 'liveCfg?': 'bool' };
@@ -300,6 +305,8 @@ S.CommitReq = {
   meta: { name: 'str', client: 'str', well: 'str', field: 'str', operator: 'str' },
   wells: arr({ id: 'nestr', name: 'str' }, { max: 200 }),
   fmt: 'uint', appVer: 'str',
+  // user insight: a small summary of the project (well names, client, …) the operator's admin page shows; latest kept
+  'summary?': '@ProjectSummary',
 };
 S.CommitRes = { rev: 'uint', savedAt: 'iso' };
 S.RenameReq = { name: 'nestr', 'meta?': '@ProjectMeta' };
@@ -331,16 +338,36 @@ S.AdminSummary = {
   byCountry: arr({ country, users: 'uint', active30d: 'uint' }, { max: 300 }),
   byMethod: arr({ method: enumOf(SIGNUP_METHODS), users: 'uint' }, { max: 3 }),
   signupsByDay: arr({ day: (v, p, ctx) => { if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) err(ctx, p, 'expected YYYY-MM-DD, got ' + describe(v)); }, n: 'uint' }, { max: 90 }),
+  // user insight: top 20 from the profiles / the project summaries
+  'byCompany?': arr({ company: 'str', users: 'uint' }, { max: 20 }),
+  'topClients?': arr({ client: 'str', projects: 'uint' }, { max: 20 }),
+  'topFields?': arr({ field: 'str', projects: 'uint' }, { max: 20 }),
 };
 S.AdminUser = {
   id: 'uuid', email: 'str', method: enumOf(SIGNUP_METHODS), status: "'active'|'locked'|'deleting'", createdAt: 'iso', lastSignInAt: orNull('iso'),
   signupCountry: country, lastCountry: country,
   lastCity: (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && v.length >= 1 && v.length <= 80)) err(ctx, p, 'expected a city of ≤ 80 characters or null, got ' + describe(v)); },
   projects: 'uint', usedBytes: 'uint',
+  // user insight: the decrypted profile, and the work context gathered from the user's project summaries
+  'profile?': orNull('@Profile'),
+  'work?': '@AdminWork',
 };
 S.AdminUsers = { users: arr('@AdminUser', { max: 200 }), next: orNull('nestr') };
 S.AdminInviteReq = { email: 'email', 'note?': (v, p, ctx) => { if (typeof v !== 'string' || v.length > 200) err(ctx, p, 'expected a note of ≤ 200 characters, got ' + describe(v)); } };
 S.AdminInvites = { invites: arr({ addedAt: 'iso', note: orNull('str') }, { max: 1000 }) };
+S.AdminWork = { wells: arr('str', { max: 20 }), clients: arr('str', { max: 20 }), operators: arr('str', { max: 20 }), fields: arr('str', { max: 20 }),
+  countries: arr('str', { max: 20 }), lastProjectAt: orNull('iso') };
+S.AdminUserDetail = { user: '@AdminUser', projects: arr({ id: 'uuid', name: 'str', updatedAt: orNull('iso'), bytes: 'uint', summary: orNull('@ProjectSummary') }, { max: 200 }) };
+
+// user insight (v4.0 follow-up): the optional profile (PUT /account/profile, GET /me, sign-up) and the project summary sent
+// with a commit. Strings are trimmed by the client; an empty string means null; unknown keys are refused (…Req is strict).
+const upTo = (max) => (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && v.length <= max)) err(ctx, p, 'expected a text of ≤ ' + max + ' characters or null, got ' + describe(v)); };
+const iso2 = (v, p, ctx) => { if (v !== null && !(typeof v === 'string' && /^[A-Z]{2}$/.test(v))) err(ctx, p, 'expected an ISO 3166-1 alpha-2 code or null, got ' + describe(v)); };
+S.ProfileReq = { 'fullName?': upTo(80), 'company?': upTo(120), 'jobTitle?': upTo(80), 'country?': iso2, 'phone?': upTo(40) };
+S.Profile = { fullName: upTo(80), company: upTo(120), jobTitle: upTo(80), country: iso2, phone: upTo(40) };
+S.ProfileRes = { profile: '@Profile' };
+S.ProjectSummary = { 'name?': upTo(120), 'wells?': arr(upTo(80), { max: 50 }), 'client?': upTo(120), 'operator?': upTo(120), 'company?': upTo(120),
+  'field?': upTo(120), 'rig?': upTo(120), 'country?': upTo(120), 'jobRef?': upTo(120), 'modules?': arr(upTo(40), { max: 40 }) };
 
 // ── endpoints (§3.3; '/api/v1' omitted) ─────────────────────────────────────────────────────────────────────────
 const COMMON = ['bad_request', 'origin', 'rate', 'paused', 'upgrade'];
@@ -402,6 +429,7 @@ ep('blobGet', 'GET', '/blobs/:hash/:n', { res: { 200: null }, errors: SIGNED.con
 ep('accountExport', 'POST', '/account/export', { auth: 'stepup', req: 'EmptyReq', res: { 200: 'ExportRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDelete', 'POST', '/account/delete', { auth: 'stepup', req: 'DeleteReq', res: { 200: 'DeleteRes' }, errors: SIGNED.concat(['reauth']) });
 ep('accountDeleteCancel', 'POST', '/account/delete/cancel', { req: 'EmptyReq', res: { 200: 'Ok' }, errors: SIGNED });
+ep('accountProfile', 'PUT', '/account/profile', { req: 'ProfileReq', res: { 200: 'ProfileRes' }, errors: SIGNED, notes: 'user insight: the optional profile; empty strings → null' });
 ep('health', 'GET', '/health', { auth: 'none', res: { 200: 'Health' }, errors: [] });
 ep('cspReport', 'POST', '/csp-report', { auth: 'report', body: 'csp', res: { 204: null }, errors: ['too_large', 'rate'] });
 ep('opsDaily', 'POST', '/ops/daily', { auth: 'hmac', req: 'EmptyReq', res: { 200: 'OpsDailyRes' }, errors: ['origin'] });
@@ -411,6 +439,7 @@ ep('adminSummary', 'GET', '/admin/summary', { res: { 200: 'AdminSummary' }, erro
 ep('adminUsers', 'GET', '/admin/users', { res: { 200: 'AdminUsers' }, errors: ADMIN, notes: '?limit=50 (1–200) &cursor=<opaque> &q=<part of an address>; newest first; admin only, else 404' });
 ep('adminInviteAdd', 'POST', '/admin/invites', { req: 'AdminInviteReq', res: { 201: 'Ok' }, errors: ADMIN, notes: 'idempotent; admin only, else 404' });
 ep('adminInvites', 'GET', '/admin/invites', { res: { 200: 'AdminInvites' }, errors: ADMIN, notes: 'keyed indexes only: no address comes back; admin only, else 404' });
+ep('adminUser', 'GET', '/admin/users/:id', { res: { 200: 'AdminUserDetail' }, errors: ADMIN, notes: 'user insight: one user and their projects with summaries; admin only, else 404; audited' });
 
 const ENDPOINTS = E;
 const ROUTES = E.map((e) => {

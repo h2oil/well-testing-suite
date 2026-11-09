@@ -34,12 +34,17 @@ const signIn = { user: userBrief, firstSignIn: false, device: { id: D1, label: '
 const methods = { email: { masked: MASK }, identities: [{ id: I1, provider: 'google', emailMasked: 'x•••@personal.example', linkedAt: T0, lastUsedAt: null }], passkeys: [] };
 const head = { rev: 41, savedAt: T0, device: D1, coreHash: H1, vhash: H2, parts: [{ name: 'well/w1', hash: H3, bytes: 61230 }], bytes: 109443 };
 const revItem = { rev: 41, savedAt: T0, device: D1, reason: 'save', bytes: 109443, coreHash: H1 };
+const PROFILE_REQ = { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: 'Well Test Engineer', country: 'AE', phone: '' };
+const PROFILE = { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: 'Well Test Engineer', country: 'AE', phone: null };
+const SUMMARY = { name: 'Example-1 DST', wells: ['Example-1', 'Example-2'], client: 'Operator Energy Ltd', operator: 'Operator Energy Ltd', company: 'Service Co Example',
+  field: 'Alpha Field', rig: 'Rig A', country: 'United Arab Emirates', jobRef: 'PO-2026-0042', modules: ['clientinfo', 'wts', 'prism'] };
+const WORK = { wells: ['Example-1', 'Example-2'], clients: ['Operator Energy Ltd'], operators: ['Operator Energy Ltd'], fields: ['Alpha Field'], countries: ['United Arab Emirates'], lastProjectAt: T0 };
 const commitReq = {
   pushId: '6f1c2a3b-0000-4000-8000-000000000001', baseRev: 41, reason: 'auto',
   core: { hash: H1, vhash: H2, zsha: H3, bytes: 48213, inline: 'H4sIAAAAAAAAA6uuBQBDv6ajAgAAAA==' },
   parts: [{ name: 'well/w1', hash: H3, bytes: 61230 }, { name: 'well/w1/prism_gauges', hash: H2, bytes: 9120344 }],
   meta: { name: 'Example-1 DST', client: 'Operator Energy Ltd', well: 'Example-1', field: '', operator: '' },
-  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0',
+  wells: [{ id: 'w1', name: 'Example-1' }], fmt: 2, appVer: '4.0', summary: SUMMARY,
 };
 
 const EXAMPLES = {
@@ -108,6 +113,11 @@ const EXAMPLES = {
     signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200 }], next: null } } },
   adminInviteAdd: { req: { email: 'name@company.example', note: 'Example-1 crew' }, res: { 201: { ok: true } } },
   adminInvites: { res: { 200: { invites: [{ addedAt: T0, note: 'Example-1 crew' }] } } },
+  // user insight (v4.0 follow-up): the optional profile and the project summary
+  accountProfile: { req: PROFILE_REQ, res: { 200: { profile: PROFILE } } },
+  adminUser: { res: { 200: { user: Object.assign({ id: U1, email: 'name@company.example', method: 'code', status: 'active', createdAt: T0, lastSignInAt: T0,
+    signupCountry: 'AE', lastCountry: 'AE', lastCity: 'Dubai', projects: 1, usedBytes: 1200 }, { profile: PROFILE, work: WORK }),
+    projects: [{ id: P1, name: 'Example-1 DST', updatedAt: T0, bytes: 109443, summary: SUMMARY }] } } },
 };
 const FINISH_EXAMPLES = [
   EXAMPLES.oauthFinish.res[200],

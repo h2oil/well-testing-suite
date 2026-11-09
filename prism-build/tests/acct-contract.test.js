@@ -82,7 +82,7 @@ module.exports = [
   {
     name: 'AC1 shared fixture: examples, envelopes, broken copies, strict requests, canonical vectors', wp: WP, opts: false,
     run(app, assert) {
-      assert.strictEqual(S.ENDPOINTS.length, 54);   // 50 + the four admin dashboard routes
+      assert.strictEqual(S.ENDPOINTS.length, 56);   // 50 + the four admin dashboard routes + PUT /account/profile + GET /admin/users/:id
       assert.deepStrictEqual(S.ENDPOINTS.map((e) => e.id).filter((id, i, a) => a.indexOf(id) !== i), [], 'endpoint ids are unique');
       for (const e of S.ENDPOINTS) {
         const ex = S.EXAMPLES[e.id];
@@ -215,6 +215,15 @@ module.exports = [
       expect(assert, 'recoverySet', await post(br, '/auth/recovery/set', { email: 'me@personal.example' }), 202);
       expect(assert, 'recoverySet', await post(br, '/auth/recovery/set', { code: fake.codeFor('me@personal.example', 'code_recovery_add') }), 200);
       assert(expect(assert, 'me', await get(br, '/me'), 200).user.recoveryMasked);
+      // the optional profile (user insight): PUT, empty strings → null, unknown keys refused, GET /me carries it
+      const putJ = (p, body) => br.fetch(B + p, { method: 'PUT', headers: { 'X-WTS-Req': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(async (r) => ({ status: r.status, json: await r.json() }));
+      const pr = expect(assert, 'accountProfile', await putJ('/account/profile', { fullName: ' Sam Example ', company: 'Operator Energy Ltd', phone: '', country: 'AE' }), 200);
+      assert.deepStrictEqual(pr.profile, { fullName: 'Sam Example', company: 'Operator Energy Ltd', jobTitle: null, country: 'AE', phone: null });
+      expect(assert, 'accountProfile', await putJ('/account/profile', { fullName: 'x', role: 'admin' }), 400, 'unknown keys are refused');
+      expect(assert, 'accountProfile', await putJ('/account/profile', { country: 'Dubai' }), 400, 'country is an ISO code');
+      expect(assert, 'accountProfile', await putJ('/account/profile', { fullName: 'x'.repeat(81) }), 400, 'name ≤ 80');
+      assert.strictEqual(expect(assert, 'me', await get(br, '/me'), 200).profile.company, 'Operator Energy Ltd');
       expect(assert, 'recoveryRemove', await post(br, '/auth/recovery/remove', {}), 200);
       // passkeys are Phase 3
       expect(assert, 'passkeyOptions', await post(br, '/auth/passkey/options', { purpose: 'signin' }), 501);
