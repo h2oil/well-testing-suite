@@ -154,14 +154,15 @@ function postmarkMail(o) {
 
 function mailFromEnv(env, o) {
   env = env || {}; o = o || {};
+  const cred = env.WTS_MAIL_CREDENTIAL || env.WTS_MAIL_KEY || '';   // WTS_MAIL_KEY = accepted alias
   const provider = String(env.WTS_MAIL_PROVIDER || '').trim().toLowerCase();
   if (provider === 'postmark') {
-    if (!env.WTS_MAIL_CREDENTIAL) return null;
-    return postmarkMail({ credential: env.WTS_MAIL_CREDENTIAL, from: o.from, fetch: o.fetch });
+    if (!cred) return null;
+    return postmarkMail({ credential: cred, from: o.from, fetch: o.fetch });
   }
   if (provider && provider !== 'json') throw new Error('mail: WTS_MAIL_PROVIDER must be postmark or json');
-  if (!env.WTS_MAIL_API_URL || !env.WTS_MAIL_CREDENTIAL) return null;
-  return httpMail({ url: env.WTS_MAIL_API_URL, credential: env.WTS_MAIL_CREDENTIAL, from: o.from, fetch: o.fetch });
+  if (!env.WTS_MAIL_API_URL || !cred) return null;
+  return httpMail({ url: env.WTS_MAIL_API_URL, credential: cred, from: o.from, fetch: o.fetch });
 }
 
 module.exports = { hostObjects, httpMail, postmarkMail, mailFromEnv, mailError, renderPlain, checkKey, checkPrefix, KEY_RE, MAIL_ERRORS, POSTMARK_URL };

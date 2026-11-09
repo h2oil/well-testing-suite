@@ -86,7 +86,7 @@ function checkIsolation(config, env) {
     if (mode === 'preview') {
       if (db && !/_preview$/.test(db)) problems.push('preview: the database name must end in "_preview"');
       signinAllowed = previewFlag;
-      if (env.WTS_MAIL_CREDENTIAL && !previewFlag) problems.push('preview: a mail credential without WTS_PREVIEW_SIGNIN=1');
+      if ((env.WTS_MAIL_CREDENTIAL || env.WTS_MAIL_KEY) && !previewFlag) problems.push('preview: a mail credential without WTS_PREVIEW_SIGNIN=1');
       if (!previewFlag) warnings.push('preview: sign-in disabled (WTS_PREVIEW_SIGNIN is not 1)');
     }
   }

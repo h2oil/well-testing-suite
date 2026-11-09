@@ -167,6 +167,7 @@ test.describe('mail transport: Postmark mode (WTS_MAIL_PROVIDER=postmark)', () =
     assert.strictEqual(A.mailFromEnv({ WTS_MAIL_API_URL: 'https://mail.example/send', WTS_MAIL_CREDENTIAL: 't' }).kind, 'http');
     assert.strictEqual(A.mailFromEnv({ WTS_MAIL_PROVIDER: 'json', WTS_MAIL_API_URL: 'https://mail.example/send', WTS_MAIL_CREDENTIAL: 't' }).kind, 'http');
     assert.strictEqual(A.mailFromEnv({ WTS_MAIL_CREDENTIAL: 't' }), null);
+    assert.strictEqual(A.mailFromEnv({ WTS_MAIL_PROVIDER: 'postmark', WTS_MAIL_KEY: 't' }).kind, 'postmark');   // alias
     assert.throws(() => A.mailFromEnv({ WTS_MAIL_PROVIDER: 'other', WTS_MAIL_CREDENTIAL: 't' }), /postmark or json/);
   });
 

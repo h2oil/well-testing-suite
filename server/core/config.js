@@ -55,7 +55,7 @@ const SWITCHES = {
 const SITE_MODES = ['same', 'separate'];
 const SECRET_ENV = [
   'WTS_DB_URL', 'WTS_JOBS_DB_URL', 'WTS_MASTER_KEYS', 'WTS_INDEX_PEPPER', 'WTS_CODE_PEPPERS', 'WTS_SESSION_PEPPER',
-  'WTS_PROXY_SIG', 'WTS_OPS_HMAC', 'WTS_MAIL_CREDENTIAL', 'OAUTH_GOOGLE_CLIENT_SECRET', 'OAUTH_LINKEDIN_CLIENT_SECRET',
+  'WTS_PROXY_SIG', 'WTS_OPS_HMAC', 'WTS_MAIL_CREDENTIAL', 'WTS_MAIL_KEY', 'OAUTH_GOOGLE_CLIENT_SECRET', 'OAUTH_LINKEDIN_CLIENT_SECRET',
 ];
 const CONFIG_ENV = [
   'WTS_ENV', 'WTS_OIDC_MODE', 'WTS_MASTER_KID', 'WTS_APP_PATH', 'WTS_DEV_ORIGIN', 'WTS_DEV_PORT', 'WTS_CLIENT_IP_HEADER',
@@ -197,7 +197,7 @@ function loadConfig(env) {
     // comma-separated: the current value first, the previous one still accepted during a rotation (§13.3)
     proxySigs: String(env.WTS_PROXY_SIG || '').split(',').map((v) => v.trim()).filter(Boolean),
     opsHmac: oneKey(env.WTS_OPS_HMAC, 'WTS_OPS_HMAC', warnings),
-    mailCredential: env.WTS_MAIL_CREDENTIAL || '',
+    mailCredential: env.WTS_MAIL_CREDENTIAL || env.WTS_MAIL_KEY || '',   // WTS_MAIL_KEY = accepted alias (owner set it under that name)
   };
   if (sameSite && secrets.proxySigs.length) warnings.push('WTS_PROXY_SIG: not used in same-site mode (there is no proxy) — ignored; remove it from the site');
   if (production && !sameSite && !secrets.proxySigs.length) alerts.push('WTS_PROXY_SIG missing on the production host — every request answers 404');
