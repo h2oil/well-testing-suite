@@ -7,7 +7,7 @@
 //        Info, unique, active first), client / operator / company / field / rig / country / job ref (active well first, other
 //        wells, then the meta), modules used; caps (50 wells, 80 / 120 characters, 40 modules), control characters, bad input
 //   IN2  Save to cloud of a seeded multi-well project: the commit carries the summary (the fake keeps the latest per project) and
-//        it passes the contract (ProjectSummary); a later save replaces it; a project without Client & Well Info still saves
+//        it passes the contract (SummaryReq); a later save replaces it; a project without Client & Well Info still saves
 //   IN3  sign-up (e-mail code): the new-account step shows the five optional fields (country list with names, nothing chosen),
 //        says they are optional; filled → codeVerify carries profile (trimmed, empty → null) and GET /me has it; left empty →
 //        no profile key at all; nothing typed is written to localStorage
@@ -104,7 +104,7 @@ module.exports = [
           country: 'Ghana, West Africa', jobRef: 'PO-2026-0042',
           modules: ['cheminj', 'choke', 'clientinfo', 'esdhi', 'hydrate', 'prism'],     // pages with data in any well; prism_gauges → prism
         }, JSON.stringify(sum));
-        assert(S.checkShape('ProjectSummary', sum).ok, JSON.stringify(S.checkShape('ProjectSummary', sum).errors));
+        assert(S.checkShape('SummaryReq', sum).ok, JSON.stringify(S.checkShape('SummaryReq', sum).errors));
         // a snapshot object is read through its payload; no name → the meta / well name
         assert.strictEqual(t.sync().projectSummary({ payload: multiWellPayload(), core: {} }).name, 'Alpha-2 ST1');
         // a single-well project without a well list: the Client & Well Info well, else the meta well
@@ -119,7 +119,7 @@ module.exports = [
         assert(s2.wells.every((w) => w.length <= 80), 'each ≤ 80');
         assert.strictEqual(s2.client.length, 120); assert(/^C lient Ltd x/.test(s2.client), s2.client.slice(0, 20));
         assert.strictEqual(s2.modules.length, 40, 'at most 40 modules');
-        assert(S.checkShape('ProjectSummary', s2).ok, JSON.stringify(S.checkShape('ProjectSummary', s2).errors));
+        assert(S.checkShape('SummaryReq', s2).ok, JSON.stringify(S.checkShape('SummaryReq', s2).errors));
         // bad input never throws
         assert.deepStrictEqual(T.J(t.sync().projectSummary(null)), {});
         assert.deepStrictEqual(T.J(t.sync().projectSummary({ modules: { storage: { keys: { h2oil_client_info: '{broken' } } } })), {});
@@ -311,10 +311,10 @@ module.exports = [
           work: { wells: [EVIL], clients: ['<script>x</script>'], operators: [], fields: [], countries: [], lastProjectAt: null } },
       ];
       const projects = [
-        { id: '11111111-2222-4333-8444-555555555555', name: 'Alpha DST', updatedAt: '2026-11-08T10:00:00.000Z', bytes: 109443,
+        { id: '11111111-2222-4333-8444-555555555555', name: 'Alpha DST', updatedAt: '2026-11-08T10:00:00.000Z', bytes: 109443, summaryAt: '2026-11-08T10:00:00.000Z',
           summary: { name: 'Alpha DST', wells: ['Alpha-1', 'Alpha-2'], client: 'Operator Energy Ltd', operator: 'Operator Energy Ltd', company: 'Service Co Example',
             field: 'Alpha Field', rig: 'Rig A', country: 'Oman', jobRef: 'PO-2026-0042', modules: ['prism', 'wts'] } },
-        { id: '11111111-2222-4333-8444-555555555556', name: 'Old project', updatedAt: null, bytes: 0, summary: null },
+        { id: '11111111-2222-4333-8444-555555555556', name: 'Old project', updatedAt: '2026-10-01T10:00:00.000Z', bytes: 0, summary: null, summaryAt: null },
       ];
       const SUM = { generatedAt: '2026-11-09T10:00:00.000Z', totals: { users: 2, active7d: 1, active30d: 2, projects: 3, storageBytes: 2400000, invitesPending: 0 },
         byCountry: [{ country: 'OM', users: 1, active30d: 1 }], byMethod: [{ method: 'code', users: 1 }], signupsByDay: [{ day: '2026-11-01', n: 1 }],

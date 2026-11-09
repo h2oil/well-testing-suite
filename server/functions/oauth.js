@@ -442,7 +442,7 @@ function createOauthHandlers(deps) {
       if (why) await endFail(ctx, st, a, why);
       if ((await providerState(ctx, p)) === 'signin') await endFail(ctx, st, a, 'provider_off', { provider: p });
       state.pending = { email: pend.email, reason: 'signup', proved: true };
-      return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(pend.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
+      return advance(ctx, st, a, oldHash, state, 'consent', Object.assign({ newAccountEmailMasked: V.maskEmail(pend.email), terms: ctx.config.terms, privacy: ctx.config.privacy }, countryHint(ctx)));
     }
     if (b.consent !== undefined) {
       if (state.step !== 'consent' || !state.pending) fail('oauth_state');
@@ -497,7 +497,7 @@ function createOauthHandlers(deps) {
       const why = signupRefusal(ctx, await S.unitOf(ctx, null, (unit) => allowlistHas(unit, ctx, out.email)));
       if (why) await endFail(ctx, st, a, why);
       state.pending = { email: out.email, reason: 'signup', proved: false };
-      return advance(ctx, st, a, oldHash, state, 'consent', { newAccountEmailMasked: V.maskEmail(out.email), terms: ctx.config.terms, privacy: ctx.config.privacy });
+      return advance(ctx, st, a, oldHash, state, 'consent', Object.assign({ newAccountEmailMasked: V.maskEmail(out.email), terms: ctx.config.terms, privacy: ctx.config.privacy }, countryHint(ctx)));
     }
     // rule 5: missing, unverified or unmanaged → ask for an address, then our code
     const reason = !out.email ? 'missing' : (!out.emailVerified ? 'unverified' : 'unmanaged');
@@ -546,4 +546,6 @@ function createOauthHandlers(deps) {
   return handlers;
 }
 
+// countryHint (user insight): the platform-detected country, the default of the optional sign-up profile (only when known)
+function countryHint(ctx) { return ctx.geo && ctx.geo.country ? { countryHint: ctx.geo.country } : {}; }
 module.exports = { handlers: createOauthHandlers({}), createOauthHandlers };

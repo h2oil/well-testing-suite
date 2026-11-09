@@ -677,7 +677,8 @@
     PROFILE_FIELDS.forEach(function (f) { var e = get(prefix + '_pf_' + f.k); raw[f.k] = e ? e.value : null; });
     return cleanProfile(raw);
   }
-  function profile() { return current.me && current.me.profile ? cleanProfile(current.me.profile) : null; }
+  // the server always sends the profile object (every field null when none was given): an all-empty profile reads as null
+  function profile() { var p = current.me && current.me.profile ? cleanProfile(current.me.profile) : null; return p && !profileEmpty(p) ? p : null; }
   // saveProfile(p) → Promise<profile>: PUT /account/profile; the answer replaces the profile of the state
   function saveProfile(p) {
     var body = cleanProfile(p);

@@ -599,7 +599,7 @@ function createFakeServer(o) {
         passkeys: [], identities: identityList(u.id).map((i) => ({ id: i.id, provider: i.provider, linkedAt: i.linkedAt, lastUsedAt: i.lastUsedAt })),
         devices: Array.from(S.devices.values()).filter((d) => d.userId === u.id && !d.revoked).map((d) => ({ id: d.id, label: d.label, lastSeen: d.lastSeen, current: d.id === s.deviceId })),
         minClient: config.minClient,
-        profile: u.profile ? Object.assign({}, u.profile) : null,
+        profile: profileOf(null, u.profile),   // like the server: always an object, every field null when none was given
       } };
     },
     outboxKey(ctx) { const { u } = sessionOf(ctx); return { status: 200, body: { k: u.outboxKey } }; },

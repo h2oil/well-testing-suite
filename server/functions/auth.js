@@ -203,7 +203,8 @@ async function codeVerify(ctx) {
       });
     } catch (e) { if (e === CONSENT) outcome = 'consent'; else throw e; }
     if (outcome === 'miss') { await noteFailure(unit, ctx, bidx, email, left); return unit.failAfterCommit('invalid_or_expired'); }
-    if (outcome === 'consent') return unit.failAfterCommit('consent_required', { terms: ctx.config.terms, privacy: ctx.config.privacy });
+    // countryHint (user insight): the platform-detected country, the default of the optional sign-up profile (only when known)
+    if (outcome === 'consent') return unit.failAfterCommit('consent_required', Object.assign({ terms: ctx.config.terms, privacy: ctx.config.privacy }, countryHint(ctx)));
     let userId; let first = false;
     if (acc) {
       if (acc.status === 'locked') return unit.failAfterCommit('locked');
@@ -415,6 +416,7 @@ async function signOutAll(ctx) {
 
 const notImplemented = () => fail('not_implemented');
 
+function countryHint(ctx) { return ctx.geo && ctx.geo.country ? { countryHint: ctx.geo.country } : {}; }
 module.exports = {
   handlers: {
     codeStart, codeVerify, emailChange, emailConfirm, emailRevert, recoverySet, recoveryRemove, signOut, signOutAll,
