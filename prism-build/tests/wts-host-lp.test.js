@@ -201,4 +201,37 @@ module.exports = [
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     },
   },
+  {
+    name: 'WTSLPH Quick Report GOR rows (flow.lp; simulator metered GOR1 / GOR2 when WTS_state.sim has them) and Mini WellOS form KPIs (GOR (sep), tank gas from flow.lp, total GOR with quality)',
+    wp: WP,
+    integration: true,
+    run(app, assert) {
+      const W = app.win;
+      app.click(app.find('.nav-btn[data-p="wts"]')); app.flush(500);
+      const lp = W.WTS_state.flow.lp;
+      let h = String(W.WTS_quickReport.preview({ modules: ['wts'] }));
+      const qrRow = (l) => { const m = h.match(new RegExp('<tr><th>' + l.replace(/[()]/g, '\\$&') + '</th><td>([^<]*)<')); return m ? m[1] : null; };
+      assert.ok(/^10,000/.test(qrRow('GOR1 (separator)')) && /^18/.test(qrRow('GOR2 (tank, PVT est.)')) && /^10,018/.test(qrRow('Total GOR')), 'Quick Report GOR rows: ' + [qrRow('GOR1 (separator)'), qrRow('GOR2 (tank, PVT est.)'), qrRow('Total GOR')]);
+      assert.ok(h.indexOf('Total GOR') > h.indexOf('Water Rate'), 'after Water Rate');
+      assert.strictEqual(qrRow('Simulator GOR1 / GOR2 (metered)'), null, 'no simulator row without WTS_state.sim rates');
+      const keepSim = W.WTS_state.sim;
+      W.WTS_state.sim = { running: true, rates: { gor: 10020, gor1: 10001, gor2: 19, gorTot: 10020 } };
+      h = String(W.WTS_quickReport.preview({ modules: ['wts'] }));
+      assert.ok(/^10,001 \/ 19/.test(qrRow('Simulator GOR1 / GOR2 (metered)') || ''), 'simulator metered row: ' + qrRow('Simulator GOR1 / GOR2 (metered)'));
+      W.WTS_state.sim = keepSim;
+      // Mini WellOS (form data)
+      const nb = app.find('.nav-btn[data-p="wellos"]');
+      assert.ok(nb && W.WTS_modbus && W.WTS_modbus.wellos, 'Mini WellOS present');
+      {
+        app.click(nb); app.flush(1500);
+        const C = W.WTS_modbus.wellos.controller(), cur = C.current();
+        assert.ok(cur.q.tank_gas === 'good' && Math.abs(cur.vals.tank_gas - lp.flash_mscfd) < 1e-9, 'tank gas from flow.lp: ' + cur.vals.tank_gas);
+        assert.ok(Math.abs(cur.vals.gor_total - (cur.vals.gas_rate * 1e6 + cur.vals.tank_gas * 1e3) / cur.vals.oil_rate) < 1e-6 && cur.q.gor_total === cur.q.gor, 'total GOR');
+        const kp = app.findAll('#wos_kpis .kpi').map((k) => String(k.querySelector('.kpi-l').textContent));
+        assert.deepStrictEqual(kp.slice(-2), ['Tank gas (FT-201)', 'Total GOR']);
+        assert.ok(kp.indexOf('GOR (sep)') >= 0, 'GOR relabelled');
+      }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
+    },
+  },
 ];

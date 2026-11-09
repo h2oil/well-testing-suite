@@ -779,7 +779,8 @@ module.exports = [
       await settle(app);
       const cb = app.find('#hist_root [data-h="logform"]');
       app.win.WTS_state = app.win.WTS_state || {};
-      app.win.WTS_state.sim = { running: true, rates: { gas_mmscfd: 9.5, oil_stbd: 1200, water_bpd: 40, gor: 7900, bsw_pct: 3.2 }, cum: { oil_stb: 12, gas_mmscf: 0.1 } };
+      // (v3.4.2: GOR1 / GOR2 / LP tank gas appended; SIM.GOR stays the total)
+      app.win.WTS_state.sim = { running: true, rates: { gas_mmscfd: 9.5, oil_stbd: 1200, water_bpd: 40, gor: 7900, bsw_pct: 3.2, gor1: 7880, gor2: 20, gorTot: 7900, lpGas_mscfd: 24 }, cum: { oil_stb: 12, gas_mmscf: 0.1 } };
       app.check(cb, true);
       app.fire('document', 'wts:calc', { inputs: { Pwh: 3000, Twh: 180, Qg: 10, Qo: 1000, Qw: 50, bean: 32, Psep: 150 }, choke: { Pin: 2990, Pout: 520 }, heater: { Tout: 150 } });
       app.flush(5000);                                    // one simulator sample
@@ -787,6 +788,8 @@ module.exports = [
       const q = await Hh.query({ tags: ['FORM.WHP', 'FORM.CHOKE_DP', 'FORM.QG', 'SIM.QG', 'SIM.BSW'] });
       assert.deepStrictEqual(plain(q.series.map((s) => s.v[s.v.length - 1])), [3000, 2470, 10, 9.5, 3.2]);
       assert.deepStrictEqual(plain(q.series.map((s) => s.unit)), ['psig', 'psi', 'MMscf/d', 'MMscf/d', '%']);
+      const q2 = await Hh.query({ tags: ['SIM.GOR', 'SIM.GOR1', 'SIM.GOR2', 'SIM.QG_LP'] });
+      assert.deepStrictEqual(plain(q2.series.map((s) => [s.tag, s.v[s.v.length - 1], s.unit])), [['SIM.GOR', 7900, 'scf/STB'], ['SIM.GOR1', 7880, 'scf/STB'], ['SIM.GOR2', 20, 'scf/STB'], ['SIM.QG_LP', 24, 'Mscf/d']], 'v3.4.2 GOR split tags (unique, total kept)');
       app.check(cb, false);
       await settle(app);
       assert.strictEqual(app.pendingTimers(), 0, 'form sampler stopped');
