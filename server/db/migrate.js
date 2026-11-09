@@ -31,8 +31,11 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { serverPath } = require('../core/root');
 
-const DIR = path.join(__dirname, 'migrations');
+// from the server root (core/root.js), never path.join(__dirname, 'migrations'): right in the repository and in a pre-bundled
+// live function alike
+const DIR = serverPath('db', 'migrations');
 
 function listMigrations(dir) {
   dir = dir || DIR;
@@ -150,7 +153,7 @@ if (require.main === module) {
     const a = await migrate(db.sql, { log: console });
     console.log('[migrate] ' + a.length + ' applied');
     if (platform) {
-      await db.sql.unsafe(fs.readFileSync(path.join(__dirname, '..', 'ops', 'sql', 'backup-role.sql'), 'utf8'));
+      await db.sql.unsafe(fs.readFileSync(serverPath('ops', 'sql', 'backup-role.sql'), 'utf8'));
       const g = await prepareLogin(db.sql, { backupRole: true });
       console.log('[migrate] export role ready' + (g.length ? ' (granted: ' + g.join(', ') + ')' : ''));
       const p = await probeRoleModes(url);

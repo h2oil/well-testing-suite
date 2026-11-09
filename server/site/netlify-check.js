@@ -16,7 +16,11 @@
 // [problems]. The bundle holds ONLY the files of LIVE (below); public/ holds exactly the files of public/publish-manifest.json
 // (prism-build/publish-site.js; every hash must match; index.html, well-testing-app.html and sw.js present) plus _headers and
 // the manifest; netlify/functions holds the functions of one live layout with their live config (site/netlify.js functionsFor /
-// functionSource: 'live' = six with the background functions, the default, or the opt-in 'live-inline' = four);
+// functionSource: 'live' = six with the background functions, the default, or the opt-in 'live-inline' = four), each
+// PRE-BUNDLED (an upload deploy installs no node_modules for functions): recorded in build-info.json `bundle` (esbuild
+// ESBUILD_VERSION, the file's SHA-256 and size, the SHA-256 of the generated wrapper it was built from), BUNDLE_BANNER first,
+// the literal config last, no top-level require / __filename / __dirname, no import but Node built-ins;
+// `--prebundled` (the generated build command) also fails when the check itself loaded a module from outside the bundle;
 // netlify/database/migrations holds the platform migrations; netlify.toml is exactly LIVE_TOML; no key file, PEM / JWK private
 // key or secret value anywhere (ci/secret-scan.js rules on every server text file). uploaded:true (build-live.js --check on the
 // lead's computer) also refuses node_modules/ and dot folders; on the platform (the build command) the installed
@@ -85,8 +89,9 @@ const LIVE_TOML = [
   '# it publishes (never edit or remove an applied file). A failed build or migration never replaces the live version.',
   '',
   '[build]',
-  '  # nothing to build: the command refuses a broken or incomplete bundle (site/netlify-check.js --live)',
-  '  command = "node site/netlify-check.js --live"',
+  '  # nothing to build: the functions are pre-bundled (site/build-live.js); the command refuses a broken, incomplete or',
+  '  # tampered bundle and needs no installed package (site/netlify-check.js --live --prebundled)',
+  '  command = "node site/netlify-check.js --live --prebundled"',
   '  publish = "public"',
   '',
   '[build.environment]',
@@ -94,13 +99,41 @@ const LIVE_TOML = [
   '  NPM_FLAGS = "--omit=dev --ignore-scripts"',
   '',
   '[functions]',
+  '  # each file is self-contained (its packages bundled in): an upload deploy installs no node_modules for functions,',
+  '  # and none is read from disk at run time (no included_files)',
   '  directory = "netlify/functions"',
   '  node_bundler = "nft"',
-  '  # loaded with a plain require() at run time, which the tracer can miss: ship them as they are',
-  '  external_node_modules = ["@netlify/blobs", "postgres", "@netlify/database"]',
-  '  included_files = ["core/**", "functions/**", "site/*.js", "db/migrate.js", "package.json"]',
   '',
 ].join('\n');
+// ── the pre-bundled functions (site/build-live.js bundles, checkLive verifies) ──────────────────────────────────────
+// The platform prepends its own `const require`, `__filename` and `__dirname` to an .mjs file, so a bundle must never declare
+// those names: the banner gives the bundle a require only when none exists, and __dirname / __filename are DEFINED as the
+// banner's names. __dirname is <bundle root>/site for every module of the bundle — core/root.js is how code finds the root.
+const ESBUILD_VERSION = '0.24.2';                       // = server/package.json devDependencies.esbuild (test/live-bundle.test.js)
+const BUNDLE_BANNER = "import { createRequire as __wtsCr } from 'module'; import { fileURLToPath as __wtsFu } from 'url'; "
+  + "import __wtsPath from 'path'; if (typeof globalThis.require === 'undefined') globalThis.require = __wtsCr(import.meta.url); "
+  + 'const __wtsFilename = __wtsFu(import.meta.url); '
+  + "const __wtsDirname = __wtsPath.join(__wtsPath.dirname(__wtsFilename), '..', '..', 'site');";
+const BUNDLE_DEFINE = Object.freeze({ __dirname: '__wtsDirname', __filename: '__wtsFilename' });
+const BUNDLE_OPTIONS = Object.freeze({ bundle: true, platform: 'node', target: 'node22', format: 'esm' });
+const PLATFORM_NAMES = ['require', '__filename', '__dirname'];
+const TOP_DECL = new RegExp('^(?:export\\s+)?(?:const|let|var|function\\*?|class)\\s+(' + PLATFORM_NAMES.join('|') + ')\\b', 'm');
+// the config line of a generated wrapper (the bundle carries it, literally, as its last line)
+function configLine(src) { const m = /^export const config = .*;$/m.exec(src); return m ? m[0] : null; }
+// the wrapper the bundler is given: the generated live source without its config line (the bundle appends that line itself)
+function bundleEntry(src) { const l = configLine(src); return l ? src.replace(l + '\n', '') : src; }
+// the static import specifiers of a module text that are not Node built-ins (a pre-bundled function has none)
+function externalImports(text) {
+  const builtin = new Set(require('module').builtinModules);
+  const out = [];
+  const re = /(?:^|[;\n])\s*(?:import|export)\s*(?:[^'";]*?\sfrom\s*)?['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const s = m[1];
+    if (!builtin.has(s.replace(/^node:/, '')) && !/^node:/.test(s)) out.push(s);
+  }
+  return out;
+}
 // the server files of the bundle (the runtime closure of the six functions + this check)
 const LIVE_SITE_FILES = ['adapters.js', 'backup.js', 'handler.js', 'isolation.js', 'monitor.js', 'netlify.js', 'netlify-blobs.js',
   'netlify-check.js', 'objects-loader.js', 'ops-env.js'];
@@ -172,12 +205,34 @@ function checkLive(root, o) {
   const LF = functionsFor(layout);
   const want = setOf(LF);
   if (JSON.stringify(fnFiles) !== JSON.stringify(want)) problems.push('netlify/functions must hold exactly ' + want.join(', ') + ' (layout ' + layout + ')');
+  // each function is pre-bundled (site/build-live.js): recorded in build-info.json (bundler, version, SHA-256 of the file and
+  // of the generated wrapper it was built from), the banner first, the literal config last, no platform name declared
+  let info = null;
+  try { info = JSON.parse(fs.readFileSync(path.join(root, 'build-info.json'), 'utf8')); } catch (e) { info = null; }
+  const B = info && info.bundle;
+  if (!B || B.bundler !== 'esbuild' || B.version !== ESBUILD_VERSION || !B.functions) problems.push('build-info.json: the functions are not recorded as pre-bundled with esbuild ' + ESBUILD_VERSION + ' (site/build-live.js)');
+  else if (B.layout !== layout) problems.push('build-info.json: bundle layout ' + B.layout + ' differs from the functions folder (' + layout + ')');
   Object.keys(LF).forEach((name) => {
-    const f = path.join(root, 'netlify', 'functions', LF[name].file);
+    const rel = 'netlify/functions/' + LF[name].file;
+    const f = path.join(root, rel);
     if (!fs.existsSync(f)) return;
-    const text = fs.readFileSync(f, 'utf8');
-    if (text !== functionSource(name, layout)) problems.push(name + ': differs from the generated live function');
-    let cfg = null; try { cfg = literalConfig(text); } catch (e) { cfg = null; }
+    const buf = fs.readFileSync(f);
+    const text = buf.toString('utf8');
+    const src = functionSource(name, layout);
+    const rec = B && B.functions && B.functions[name];
+    if (!rec) problems.push(name + ': not recorded in build-info.json bundle.functions');
+    else {
+      if (rec.file !== rel) problems.push(name + ': build-info.json records ' + rec.file);
+      if (rec.sha256 !== sha256(buf) || rec.bytes !== buf.length) problems.push(name + ': differs from the bundle recorded in build-info.json');
+      if (rec.wrapper !== sha256(Buffer.from(src, 'utf8'))) problems.push(name + ': built from a wrapper that differs from the generated live function');
+    }
+    if (!text.startsWith(BUNDLE_BANNER + '\n')) problems.push(name + ': does not start with the bundle banner (not pre-bundled by site/build-live.js)');
+    const decl = TOP_DECL.exec(text);
+    if (decl) problems.push(name + ': declares ' + decl[1] + ' at the top level (the platform declares it in every .mjs file)');
+    externalImports(text).forEach((s) => problems.push(name + ': imports ' + s + ', which is not in the bundle (only Node built-in modules may stay outside)'));
+    const last = text.trimEnd().split('\n').pop();
+    if (last !== configLine(src)) problems.push(name + ': the last line must be the literal config of the generated live function');
+    let cfg = null; try { cfg = literalConfig(last); } catch (e) { cfg = null; }
     if (JSON.stringify(cfg) !== JSON.stringify(LF[name].config)) problems.push(name + ': config differs from functionsFor(' + layout + ')');
   });
   if (!LF.api || LF.api.config.path !== '/api/v1/*') problems.push('api: the path must be /api/v1/*');
@@ -217,12 +272,21 @@ function checkLive(root, o) {
   return { problems, files: files.map((f) => f.rel), layout };
 }
 
-module.exports = { check, checkLive, literalConfig, LIVE_TOML, LIVE_SITE_FILES, LIVE_ROOT_FILES, liveAllowed };
+// the modules this process loaded from outside root or from any node_modules folder (--prebundled: the check itself must run
+// on a bundle with no installed package)
+function loadedOutside(root) {
+  const r = path.resolve(root) + path.sep;
+  return Object.keys(require.cache).filter((f) => !f.startsWith(r) || f.slice(r.length).split(path.sep).includes('node_modules'));
+}
+
+module.exports = { check, checkLive, literalConfig, loadedOutside, configLine, bundleEntry, LIVE_TOML, LIVE_SITE_FILES, LIVE_ROOT_FILES, liveAllowed,
+  ESBUILD_VERSION, BUNDLE_BANNER, BUNDLE_DEFINE, BUNDLE_OPTIONS, PLATFORM_NAMES };
 
 if (require.main === module && process.argv.includes('--live')) {
   const r = checkLive(SERVER);
+  if (process.argv.includes('--prebundled')) loadedOutside(SERVER).forEach((f) => r.problems.push('the check loaded a module outside the bundle: ' + path.relative(SERVER, f)));
   if (r.problems.length) { console.error('[netlify-check] live bundle refused:\n  ' + r.problems.join('\n  ')); process.exit(1); }
-  console.log('[netlify-check] ok — live bundle: ' + r.files.length + ' files, layout ' + r.layout + ' (same-site), publish folder = manifest, no key material, Node ' + process.versions.node);
+  console.log('[netlify-check] ok — live bundle: ' + r.files.length + ' files, layout ' + r.layout + ' (same-site), functions pre-bundled (esbuild ' + ESBUILD_VERSION + '), publish folder = manifest, no key material, Node ' + process.versions.node);
 } else if (require.main === module) {
   const p = check();
   if (p.length) { console.error('[netlify-check] refused:\n  ' + p.join('\n  ')); process.exit(1); }

@@ -67,7 +67,15 @@ Host header in every `WTS_ENV` (the platform address and previews answer 404; no
 client address only from `x-nf-client-connection-ip`; every other control is unchanged. Missing or unknown = `separate` (the
 signature is required), and the separate-site layout and tests stay as they were. `node site/build-live.js --out <dir>` builds
 the one upload folder (static allow-list under `public/`, `netlify.toml` = `site/netlify-check.js LIVE_TOML` whose build command
-`node site/netlify-check.js --live` refuses a broken bundle, the pinned runtime dependencies, the functions without a region pin
+`node site/netlify-check.js --live --prebundled` refuses a broken bundle and needs no installed package, the pinned runtime
+dependencies in `package.json` + lockfile (the database integration keys off `@netlify/database`; nothing is installed from
+them on an upload deploy), the functions **pre-bundled**: an upload deploy installs no `node_modules` for functions, so the build
+installs the runtime dependencies into a temporary folder (`npm ci --omit=dev --ignore-scripts`) and bundles each
+`netlify/functions/<name>.mjs` with esbuild (devDependency, exactly 0.24.2; ESM for Node 22; a banner that gives the bundle a
+`require` and defines `__dirname` = `<bundle>/site`, `__filename` without declaring either name, because the platform declares
+them in every .mjs file; `core/root.js` is how run-time file paths find the bundle root), records the version and each file's
+SHA-256 in `build-info.json` and never leaves `node_modules` in the folder (tests: `test/live-bundle.test.js` loads every function
+alone with the platform's header, health 200, a scheduled no-database run); the functions without a region pin
 — layout `live` by default: `api` on `/api/v1/*` only, three scheduled functions and the two background functions they start
 (offered on the Free plan; `--inline-jobs` = the fallback `live-inline`, jobs in place under a 25 s budget); same mode refuses
 any `WTS_ENV` but `production` / `staging` —

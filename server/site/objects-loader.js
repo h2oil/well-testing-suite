@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const A = require('./adapters');
 
-const SERVER = path.join(__dirname, '..');
+const SERVER = require('../core/root').SERVER_ROOT;
 const BINDING_RE = /^[A-Za-z0-9_][A-Za-z0-9_./-]{0,200}\.js$/;
 const DEFAULT_BINDING = 'site/objects-binding.js';
 

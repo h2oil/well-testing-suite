@@ -20,6 +20,8 @@ const { createHandler } = require('../site/handler');
 const { harness, available } = require('./_api');
 
 const b64 = () => crypto.randomBytes(32).toString('base64');
+const DEPS_CACHE = path.join(os.tmpdir(), 'wts-live-deps-cache');   // the bundle's npm install, once per lockfile (test/live-bundle.test.js)
+function esbuildOk() { try { return require(require.resolve('esbuild', { paths: [path.join(__dirname, '..')] })).version === NC.ESBUILD_VERSION; } catch (e) { return false; } }
 const PROD = 'welltest.h2oil.co.uk';
 const req = (headers, extra) => Object.assign({ method: 'GET', url: '/api/v1/health', headers, body: null, remoteAddress: '10.0.0.1' }, extra || {});
 function prodEnv(extra) {
@@ -245,14 +247,14 @@ test.describe('live bundle layout (site/netlify.js functionsFor, site/build-live
     assert.ok(I['ops-daily'].inline && !I['ops-daily'].kicks && I['weekly-export'].inline);
     assert.match(NF.functionSource('ops-daily', 'live-inline'), /nf\.scheduledFunction\('ops-daily', \{ inline: true \}\)/);
     for (const k of Object.keys(I)) assert.deepStrictEqual(NC.literalConfig(NF.functionSource(k, 'live-inline')), I[k].config, k);
-    assert.ok(/command = "node site\/netlify-check\.js --live"/.test(NC.LIVE_TOML) && /publish = "public"/.test(NC.LIVE_TOML) && /NODE_VERSION = "22"/.test(NC.LIVE_TOML));
+    assert.ok(/command = "node site\/netlify-check\.js --live --prebundled"/.test(NC.LIVE_TOML) && /publish = "public"/.test(NC.LIVE_TOML) && /NODE_VERSION = "22"/.test(NC.LIVE_TOML));
   });
-  test('build → check passes; a stray, secret or tampered file fails the check', { skip: !fs.existsSync(path.join(__dirname, '..', '..', 'prism-build', 'publish-site.js')) && 'no repository tree' }, async () => {
+  test('build → check passes; a stray, secret or tampered file fails the check', { skip: (!fs.existsSync(path.join(__dirname, '..', '..', 'prism-build', 'publish-site.js')) && 'no repository tree') || (!esbuildOk() && 'esbuild not installed (npm ci in server/)') }, async () => {
     const BL = require('../site/build-live');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-live-'));
     const out = path.join(dir, 'bundle');
     try {
-      const r = BL.build({ out, commit: 'test', inlineJobs: true });
+      const r = BL.build({ out, commit: 'test', inlineJobs: true, depsCache: DEPS_CACHE });
       assert.ok(r.files > 50);
       assert.strictEqual(r.info.layout, 'live-inline');
       assert.ok(!fs.existsSync(path.join(out, 'netlify', 'functions', 'ops-daily-background.mjs')));
@@ -293,7 +295,7 @@ test.describe('live bundle layout (site/netlify.js functionsFor, site/build-live
       fs.writeFileSync(api, NF.functionSource('api', 'live-inline'));
       fs.writeFileSync(path.join(out, 'netlify', 'functions', 'ops-daily-background.mjs'), NF.functionSource('ops-daily-background', 'live'));
       assert.ok(BL.checkDir(out).problems.some((p) => /must hold exactly .*layout live/.test(p)));
-      const six = BL.build({ out: path.join(dir, 'six'), commit: 'test' });
+      const six = BL.build({ out: path.join(dir, 'six'), commit: 'test', depsCache: DEPS_CACHE });
       assert.strictEqual(six.info.layout, 'live', 'the default layout has the background functions');
       assert.ok(fs.existsSync(path.join(dir, 'six', 'netlify', 'functions', 'ops-daily-background.mjs')) && fs.existsSync(path.join(dir, 'six', 'netlify', 'functions', 'weekly-export-background.mjs')));
       assert.deepStrictEqual(BL.checkDir(path.join(dir, 'six')).problems, []);
