@@ -29,7 +29,7 @@
 //   SHAPE_NAMES, checkShape(name, obj, {strict, rigKeys}) → {ok, errors:['<path>: <reason>', …]} (rigKeys: RIG_KEYS of the module under test)
 //   fakeEquipSnapshot(base, {desander, surge2, flushing, held, sand}) → a snapshot with every §6.4 path, for view builders
 //   identityDiff(v33, now) → ['<path>: a !== b', …] — exact (===) check of every v3.3 path (§7 sig rule for rigup.sig)
-//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'v331' (tests/_wts-sim-v331.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
+//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'v331' (tests/_wts-sim-v331.js), 'v341' (tests/_wts-sim-v341.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
 //            strips it) or a source string, each in its own vm context
 //
 // Conventions encoded here
@@ -551,19 +551,20 @@ function identityDiff(a, b, max) {
 }
 
 // ─── engines in their own vm contexts ────────────────────────────────────────
-// which: 'v33' (frozen v3.3 copy), 'v331' (frozen v3.3.1 copy, SIM-FOLLOWUP D13), 'work' (prism-build/31-wts-sim.js,
+// which: 'v33' (frozen v3.3 copy), 'v331' (frozen v3.3.1 copy, SIM-FOLLOWUP D13), 'v341' (frozen v3.4.1 copy, release 3.4.2), 'work' (prism-build/31-wts-sim.js,
 // self-test stripped as Round 7 strips it) or a source string.
 // Returns the context's WTS_sim (values live in that realm: compare numbers / strings, or JSON-copy objects).
 function loadEngine(which, ctxExtra) {
   var src;
   if (which === 'v33') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v33.js'), 'utf8');
   else if (which === 'v331') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v331.js'), 'utf8');
+  else if (which === 'v341') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v341.js'), 'utf8');   // release 3.4.2: frozen v3.4.1
   else if (which === 'work' || which === undefined) {
     src = require(path.join(BUILD_DIR, 'concat-round7.js')).stripSelfTest(
       fs.readFileSync(path.join(BUILD_DIR, '31-wts-sim.js'), 'utf8'), '31-wts-sim.js', { log: function () {}, warn: function () {} });
   } else src = String(which);
   var ctx = vm.createContext(Object.assign({ console: console }, ctxExtra || {}));
-  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : which === 'v331' ? '_wts-sim-v331.js' : '31-wts-sim.js' });
+  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : which === 'v331' ? '_wts-sim-v331.js' : which === 'v341' ? '_wts-sim-v341.js' : '31-wts-sim.js' });
   if (!ctx.WTS_sim) throw new Error('_wts-equip-shapes.loadEngine: WTS_sim not defined by ' + (typeof which === 'string' && which.length < 8 ? which : 'source'));
   return ctx.WTS_sim;
 }
