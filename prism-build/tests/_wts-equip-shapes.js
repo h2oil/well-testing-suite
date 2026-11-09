@@ -238,7 +238,8 @@ var ENUMS = {
   'surge2.transfer.dest': ['gauge', 'export'],
   'surge2.valveTag': ['XV-202', 'XV-202A/B'],                     // release 3.4.2: single | dual
   'surge2.suction': ['A', 'B', 'both'], 'surge2.transfer.suction': ['A', 'B', 'both'],
-  'rigup.extras[*]': RIG_OPTIONAL };
+  'rigup.extras[*]': RIG_OPTIONAL,
+  'rigup.routing': ['chain', 'v341'], 'rigup.dest': ['flare', 'line', 'surge'] };
 var API_STATIC_NEW = ['RIG_DEFAULTS', 'RIG_OPTIONAL', 'stepFor', 'sand'];
 var SAND_HELPERS = ['etot', 'cut', 'dp', 'erosionReducer', 'muDeadOil', 'muGas', 'c2', 'mixSound'];
 var API_INSTANCE_NEW = ['dumpDesander', 'setDesander', 'setSurgeRoute'];
@@ -339,7 +340,7 @@ var EX_SAND = {
   flowback: { on: false, W0_lbph: 200, tau_h: 6, t_h: 0, d50_um: 400, sigmaG: 1.5 },
   choke: { Up_fts: 888, C2: 0.110, erosion_mpy: 23.6, erosion_mild: 0.065, band: 'ok', warn_mild: 2.08, high_mild: 20.8, loss_mil: 0 },
   sep: { lb: 0, ft3: 0, frac: 0 },
-  cum: { in_lb: 0, capt_lb: 0, toChoke_lb: 0, toSep_lb: 0, toFlare_lb: 0, dumped_lb: 0 } };
+  cum: { in_lb: 0, capt_lb: 0, toChoke_lb: 0, toSep_lb: 0, toFlare_lb: 0, dumped_lb: 0, toSurge_lb: 0 } };   // 3.4.2: + toSurge_lb
 // T-202 in the rig-up, standby (XV-202 shut), empty, gas at T-201's set pressure (Psp null → follows T-201's 25 psig).
 var EX_SURGE2 = {
   tag: 'T-202', inRig: true, P: 25, SP: 25, SPeff: 25, T: 80, psh: 32, pshh: 40, mawp: 50, cap_bbl: 100, D: 6, H: 19.8575,
@@ -390,7 +391,10 @@ var EXAMPLES = {};
 
 var EX_LINE = { q: 0, unit: 'BPD', frac: 0, vel: 0, ID_in: 3.068, phase: 'liquid', active: false };
 var EX_RIGUP = { esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true,
-  desander: false, surge2: false, full: true, sig: SIG_DEFAULT_V331, notes: [], extras: [], refused: '', v: 1 };
+  desander: false, surge2: false, full: true, sig: SIG_DEFAULT_V331, notes: [], extras: [], refused: '', v: 1,
+  // release 3.4.2 (appended): the rig-up rules, the effective V-101-out destination, the receiver of each item that is out ('' = in)
+  routing: 'chain', dest: 'flare', routes: { esd: '', choke: '', heater: '', separator: '', surge: '', gauge: '', pump: '', flare: '', desander: 'CK-101',
+    surge2: 'T-201', heaterChoke: 'H-101' } };
 // rigup.refused (§3.3, added after WP-E0 review): '' or the note of the last refused setRigup while the same change would still
 // be refused (RIG_NOTES.surge2OnlyRouteRefused for T-202); 38 shows it and disables T-202's switch with that reason
 
@@ -413,6 +417,8 @@ var FIXED = {   // exact string values
   'surge2.tag': 'T-202', 'surge2.bpv.tag': 'PCV-203', 'surge2.blanket.tag': 'PCV-204',
   'surge2.psv.tag': 'PSV-202', 'surge2.transfer.tag': 'LCV-202', 'dumpEvent.type': 'dump' };
 
+var OPTIONAL_342 = ['rigup.routing', 'rigup.dest', 'rigup.routes', 'surge2.compartments', 'surge2.comps', 'surge2.suction', 'surge2.divert', 'surge2.fill',
+  'surge2.wellStream', 'surge2.transfer.suction', 'surge2.transfer.T', 'sand.cum.toSurge_lb'];
 function typeName(v) {
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'array';
@@ -470,6 +476,8 @@ function checkShape(name, obj, opts) {
     else rk.forEach(function (k, i) { if (typeof obj[k] === 'boolean' && (obj.sig.charAt(i) === '1') !== obj[k]) errs.push('rigup.sig: character ' + i + ' disagrees with ' + k); });
   }
   if (name === 'line' && obj && typeof obj.q === 'number' && obj.q < 0) errs.push('line.q: negative');
+  // release 3.4.2 appended keys may be missing in an older engine's snapshot (v3.3 / v3.3.1 / v3.4.1): only "missing" is excused
+  errs = errs.filter(function (e) { var m = /^(.*): missing$/.exec(e); return !(m && OPTIONAL_342.indexOf(m[1].replace(/\[\d+\]/g, '')) >= 0); });
   return { ok: errs.length === 0, errors: errs };
 }
 
@@ -502,6 +510,11 @@ function fakeEquipSnapshot(base, o) {
   if (!Array.isArray(ru.notes)) ru.notes = [];
   ru.refused = (uIn && o.refused === true) ? RIG_NOTES.surge2OnlyRouteRefused : (typeof ru.refused === 'string' && uIn ? ru.refused : '');
   if (typeof ru.v !== 'number') ru.v = 1;
+  // release 3.4.2 keys (a v3.3 / v3.4.1 base has none): rules, effective destination, receivers of the items that are out
+  if (typeof ru.routing !== 'string') ru.routing = 'chain';
+  if (typeof ru.dest !== 'string') ru.dest = 'flare';
+  if (!ru.routes || typeof ru.routes !== 'object') { ru.routes = clone(EX_RIGUP.routes); }
+  ru.routes.desander = dIn ? '' : 'CK-101'; ru.routes.surge2 = uIn ? '' : 'T-201';
   s.rigup = ru;
   // desander
   var d = dIn ? clone(EX_DESANDER) : clone(EX_DESANDER_OUT);

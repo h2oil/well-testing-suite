@@ -457,11 +457,12 @@ var EX_NODES_HC = { tag: 'CK-102', inRig: true, active: true, bypassed: false, P
 var EX_NODES_HC_OUT = { tag: 'CK-102', inRig: false, active: false, bypassed: false, P: 157.7, Pin: 157.7, T: 68.7, Tin: 68.7, th: 36.6, hyd: false,
   dTjt: 0, regime: '', bean: 0, pos: 'inlet', flowLimited: false, limiter: '', QmaxMMscfd: 0, designP_psig: 1440, note: '' };
 var EX_CUSHION = { on: true, phase: 'unloading', V_bbl: 50, SG: 1.03, q_set_bpd: 1500, q_bpd: 1500, qcap_bpd: 8433, WHPtgt_psig: 1702.6, column_ft: 4885.1,
-  Vleft_bbl: 50, recovered_bbl: 0, fUnload: 0.1825, wJT: 0.025, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0 } };
+  Vleft_bbl: 50, recovered_bbl: 0, fUnload: 0.1825, wJT: 0.025, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0, surge: 0 } };   // 3.4.2: + out.surge
 var EX_CUSHION_OFF = { on: false, phase: 'off', V_bbl: 0, SG: 0, q_set_bpd: 0, q_bpd: 0, qcap_bpd: 0, WHPtgt_psig: 0, column_ft: 0,
-  Vleft_bbl: 0, recovered_bbl: 0, fUnload: 0, wJT: 0, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0 } };
-var EX_SEPBY = { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '' };
-var EX_SEPBY_LINE = { dest: 'line', P_psig: 300, P0_psig: 300, active: true, vent: true, note: '' };
+  Vleft_bbl: 0, recovered_bbl: 0, fUnload: 0, wJT: 0, dutyCapped: false, tBreak: null, out: { flare: 0, line: 0, sep: 0, surge: 0 } };
+// release 3.4.2 (appended): recv ('' | 'T-201' | 'T-202' | 'both') and gasCap_mmscfd (null unless V-101 is out to 'surge')
+var EX_SEPBY = { dest: 'flare', P_psig: 150, P0_psig: 5, active: false, vent: false, note: '', recv: '', gasCap_mmscfd: null };
+var EX_SEPBY_LINE = { dest: 'line', P_psig: 300, P0_psig: 300, active: true, vent: true, note: '', recv: '', gasCap_mmscfd: null };
 var EXAMPLES = {};
 [['flowCk2', EX_FLOW_CK2], ['flowCk2Skipped', EX_FLOW_CK2_SKIPPED], ['flowSepBy', EX_FLOW_SEPBY], ['nodesHeaterChoke', EX_NODES_HC],
   ['nodesHeaterChokeOut', EX_NODES_HC_OUT], ['cushion', EX_CUSHION], ['cushionOff', EX_CUSHION_OFF], ['sepBy', EX_SEPBY], ['sepByLine', EX_SEPBY_LINE]].forEach(function (p) {
@@ -478,14 +479,14 @@ var ENUMS = {
   'flow.ck2.limiter': ['CK-101', 'CK-102', 'both'],
   'flow.ck2.ck1.regime': ['Critical', 'Subcritical', 'No Flow'],
   'flow.ck2.warnings[*].t': ['error', 'warn', 'info'],
-  'flow.sepBy.dest': ['flare', 'line'],
+  'flow.sepBy.dest': ['flare', 'line', 'surge'],   // 3.4.2: + 'surge'
   'flow.sepBy.choke.regime': ['Critical', 'Subcritical', 'No Flow'],
   'flow.sepBy.warnings[*].t': ['error', 'warn', 'info'],
   'nodes.heaterChoke.regime': ['', 'Critical', 'Subcritical', 'No Flow'],
   'nodes.heaterChoke.limiter': ['', 'CK-101', 'CK-102', 'both'],
   'nodes.heaterChoke.pos': ['inlet', 'midcoil'],
   'cushion.phase': CUSHION_PHASES,
-  'sepBy.dest': ['flare', 'line'] };
+  'sepBy.dest': ['flare', 'line', 'surge'] };   // 3.4.2: + 'surge' (the chain rules)
 var FIXED = { 'nodes.heaterChoke.tag': 'CK-102', 'flow.ck2.designP_psig': DESIGN_P_CK2, 'flow.sepBy.designP_psig': DESIGN_P_CK2, 'cushionEvent.type': 'cushion' };
 var SHAPES = {
   'flow.ck2': { tpl: EX_FLOW_CK2, root: 'flow.ck2' },

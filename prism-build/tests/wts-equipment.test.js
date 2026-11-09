@@ -347,7 +347,9 @@ module.exports = [
       });
       assert.ok(msgs.some((m) => m.indexOf('DS-101 ' + X.RIG_TXT_NEW.desander[2]) >= 0), 'DS-101 entering text');
       assert.ok(msgs.some((m) => m.indexOf('T-202 ' + X.RIG_TXT_NEW.surge2[2]) >= 0), 'T-202 entering text');
-      assert.ok(msgs.some((m) => /T-202 out of the rig-up/.test(m) && /T-201 out of the rig-up/.test(m)), 'T-201 out takes T-202 out (D11): ' + msgs[msgs.length - 1]);
+      // release 3.4.2 chain: T-202 stands in for T-201 (the dumps routed to it); 'v341' (pinned): T-201 out takes T-202 out (D11)
+      if (S.RIG_ROUTING_DEF === 'v341') assert.ok(msgs.some((m) => /T-202 out of the rig-up/.test(m) && /T-201 out of the rig-up/.test(m)), 'T-201 out takes T-202 out (D11): ' + msgs[msgs.length - 1]);
+      else assert.ok(msgs.some((m) => /T-201 out of the rig-up/.test(m) && /Separator dumps routed to T-202 \(T-201 out of the rig-up\)/.test(m)), 'T-201 out: T-202 takes the dumps: ' + msgs[msgs.length - 1]);
       assert.strictEqual(sim.setRigup(app.toWin({ desander: null, surge2: null, heater: null, separator: null, gauge: null, pump: null, flare: null, surge: null })), true);
       assert.strictEqual(JSON.stringify(sim.getRigup()), FU.GETRIGUP_DEFAULT_JSON, 'null → each item default');
       assert.ok(/DS-101 out of the rig-up \(well stream straight to the choke\)/.test(msgs[msgs.length - 1]) && /\(full rig-up\)$/.test(msgs[msgs.length - 1]), msgs[msgs.length - 1]);
@@ -579,7 +581,8 @@ module.exports = [
       assert.strictEqual(Object.keys(known8).length, 8, 'v3.3 view of a v3.3.1 object: 8 known keys, all in');
       // summaryOf: out = core items out only, extras = optional items in
       const sum = I.summaryOf(J(S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: { desander: true, gauge: false } })).getState()));
-      assert.deepStrictEqual(J(sum.rigup.out), ['T-301', 'P-201'], 'summary out (core only)');
+      // release 3.4.2 chain: with T-301 out P-201 stays in as the booster of the T-201 transfer to export (pinned 'v341': both out)
+      assert.deepStrictEqual(J(sum.rigup.out), J(S.RIG_ROUTING_DEF) === 'v341' ? ['T-301', 'P-201'] : ['T-301'], 'summary out (core only)');
       assert.deepStrictEqual(J(sum.rigup.extras), ['desander'], 'summary extras');
       // test hooks: sim() / useSim(stub)
       const keep = I.sim(), stub = { tag: 'stub' };
