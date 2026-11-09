@@ -226,7 +226,7 @@ module.exports = [
         .replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       const g = ios.match(/[^'<>]{0,40}Google[^'<>]{0,60}/g) || [];
       assert.strictEqual(g.length, 1, 'one "Google" left: ' + JSON.stringify(g));
-      assert.ok(/The web version uses Google Analytics 4 to count anonymous usage/.test(g[0]), 'the analytics sentence: ' + g[0]);
+      assert.ok(/The web version uses Google Analytics 4 to count usage/.test(g[0]), 'the analytics sentence: ' + g[0]);
       assert.ok(ios.indexOf('LinkedIn') === -1, 'no "LinkedIn" on iOS');
     },
   },

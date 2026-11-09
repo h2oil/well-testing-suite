@@ -38,7 +38,7 @@ function scriptsOf(block) {
 // Run the loader script (gtag + filter) in a bare sandbox → { gtag, dataLayer, policy, clean }.
 function loadFilter() {
   const loader = scriptsOf(gaBlocks(HTML())[0])[0];
-  const sb = { dataLayer: [] };
+  const sb = { dataLayer: [], __wtsGaLoaded: true };   // the tag accepted and loaded: events are queued only then (consent)
   sb.window = sb;
   vm.createContext(sb);
   vm.runInContext(loader, sb);

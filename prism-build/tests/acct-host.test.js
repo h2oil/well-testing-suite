@@ -813,7 +813,7 @@ module.exports = [
       assert.ok(t.indexOf('Your well data never leaves your device.') !== -1 && t.indexOf('no user accounts') !== -1);
       assert.ok(!app.el('privacy_accounts'), 'no account card');
       // H17: "This build" follows __wtsGaLoaded (gtag is defined even when the guard skipped the tag)
-      assert.ok(t.indexOf('anonymous usage analytics are active') !== -1, 'no hint → analytics active (v3.4 line)');
+      assert.ok(t.indexOf('usage analytics are active') !== -1, 'no hint → analytics active (v3.4 line)');
       app.win.__wtsGaLoaded = false;
       app.hook.nav('home'); app.hook.nav('privacy');
       const tg = app.el('pgBody').textContent;

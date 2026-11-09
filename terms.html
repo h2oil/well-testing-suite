@@ -12,7 +12,14 @@
   on 9 November 2026. The operator is a company licensed in Dubai, United Arab Emirates. Text in [SQUARE BRACKETS]
   (class "ph") is a placeholder or an owner decision to make before publication; see section 17 for the governing-law choice
   (recommended: DIFC law and the DIFC Courts by express opt-in, with consumers keeping their home-country protection;
-  alternative: UAE law and the Dubai Courts). LICENSE (repository) still names England and Wales and must be aligned.
+  alternative: UAE law and the Dubai Courts). LICENSE (repository) still names England and Wales and must be aligned with
+  the choice (section 10 says LICENSE governs the source code and these terms govern use of the service; the owner decision
+  box in section 17 stays until both are aligned).
+  Revised 9 November 2026 after three reviews. The iOS app keeps the store's standard licence agreement (no custom EULA is
+  submitted); section 2 says these terms add to it. If a custom EULA is ever submitted, add the store's minimum terms first.
+  Liability cap (section 12): the greater of USD 100 and the amounts paid in the previous 12 months; under onshore UAE law
+  (Civil Transactions Law Art. 383 / 390) the exclusions and the cap would not reach harmful-act (tort) claims, and a court can
+  adjust agreed damages — the lawyer should add that note if the onshore option is chosen.
   Terms of Use version 1 = the server's WTS_TERMS_VERSION default ("1"); change both together.
   Static page: no JavaScript, no external requests, no web fonts or remote images. Published at
   https://welltest.h2oil.co.uk/terms.html (prism-build/publish-site.js allow-list). Companion page: privacy.html.
@@ -70,7 +77,7 @@ li { margin-bottom: 4px; }
 .ph { background: var(--ph-bg); color: var(--ph-fg); border-radius: 3px; padding: 0 3px; font-weight: 600; }
 .tbl { width: 100%; overflow-x: auto; margin: 0 0 14px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { text-align: left; vertical-align: top; padding: 7px 8px; border: 1px solid var(--border); overflow-wrap: anywhere; }
+th, td { text-align: left; vertical-align: top; padding: 7px 8px; border: 1px solid var(--border); overflow-wrap: normal; }
 th { background: var(--bg3); font-weight: 600; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--bg3); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
 footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom: 28px; color: var(--text3); font-size: 14px; }
@@ -130,17 +137,17 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
 </nav>
 
 <h2 id="who">1. Who we are</h2>
-<p>The Well Testing Suite is provided by H2Oil, the trading name of <span class="ph">[COMPANY LEGAL NAME]</span>, a company licensed in Dubai, United Arab Emirates, by <span class="ph">[LICENSING AUTHORITY / FREE ZONE]</span> under trade licence number <span class="ph">[TRADE LICENCE NO.]</span>, with its registered address at <span class="ph">[REGISTERED ADDRESS, DUBAI, UAE]</span>. "H2Oil", "we", "us" and "our" mean that company. "You" means the person using the service.</p>
+<p>The Well Testing Suite is provided by <span class="ph">[COMPANY LEGAL NAME, EXACTLY AS ON THE TRADE LICENCE]</span><span class="ph">[, trading as H2Oil — KEEP ONLY IF "H2Oil" IS A REGISTERED TRADE NAME]</span>, a company licensed in Dubai, United Arab Emirates, by <span class="ph">[LICENSING AUTHORITY OR FREE ZONE]</span> under trade licence number <span class="ph">[TRADE LICENCE NO.]</span>, with its registered address at <span class="ph">[REGISTERED ADDRESS, DUBAI, UAE]</span>. "H2Oil", "we", "us" and "our" mean that company. "You" means the person using the service.</p>
 <p>You can contact us at <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>.</p>
 
 <h2 id="agreement">2. These terms</h2>
 <ul>
-  <li>These terms apply when you use the web app at https://welltest.h2oil.co.uk, the iOS app "Well Testing Suite", the WTS Modbus Bridge program, and optional web accounts and cloud projects (together, "the service").</li>
-  <li>By using the service you agree to these terms. When you create a web account, you accept them by ticking a box, and we record which version you accepted.</li>
+  <li>These terms apply when you use the web app at welltest.h2oil.co.uk, the iOS app "Well Testing Suite", the WTS Modbus Bridge program, and optional web accounts and cloud projects (together, "the service").</li>
+  <li>When you first open the web app or the iOS app, a notice tells you that by continuing you accept these terms and links to them; we remember on your device that you have seen it. By continuing to use the service you agree to these terms. When you create a web account, you accept them expressly by ticking a box, and we record which version you accepted. The terms are always linked at the bottom of the app's menu.</li>
   <li>Our <a href="privacy.html">Privacy notice</a> explains how we handle personal data, including cookies and analytics. It is not part of this contract, but please read it.</li>
   <li>If you use the service for your employer or another organisation, you confirm that you are allowed to do so. The organisation is then also bound by these terms for that use.</li>
-  <li>The iOS app is also subject to the terms of the store you downloaded it from. If those terms conflict with these about the app itself, the store's terms apply to the extent they must.</li>
-  <li>These terms are written in English. <span class="ph">[An Arabic version is available / will follow.]</span> If the versions differ, the English version applies, unless the law where you live requires otherwise.</li>
+  <li><strong>The iOS app.</strong> Your licence to use the iOS app is the store's standard licence agreement for apps, which you accepted when you downloaded it from the store. These terms add to that agreement: the sections on engineering results, live data, acceptable use, your content, our liability and the other sections apply to the iOS app too, as far as that agreement allows. If the two conflict about the app, the store's agreement applies.</li>
+  <li>These terms are written in English. <span class="ph">[KEEP ONE: An Arabic version is available. | An Arabic version will follow.]</span> If the versions differ, the English version applies, unless the law where you live requires otherwise.</li>
 </ul>
 
 <h2 id="service">3. The service</h2>
@@ -163,6 +170,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
     <li>Safety-critical decisions, such as setting relief, shutdown or alarm values, choosing equipment ratings, or deciding whether an operation may go ahead, must never rest on the service alone.</li>
     <li>The well-test simulator is a training and planning tool. It does not predict the behaviour of real equipment.</li>
     <li>Known limits of the methods are described in the app's help and reports. Some may not be.</li>
+    <li>PDF and PNG reports carry a short version of this notice. Keep it with the report when you share it.</li>
   </ul>
 </div>
 
@@ -203,7 +211,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li>Projects, inputs and files you create or upload remain <strong>yours</strong>. We claim no ownership of them.</li>
   <li>If you save projects to the cloud, you give us a limited, non-exclusive, royalty-free permission to store, copy, encrypt, back up, transmit and return them to you, <strong>only to provide the service</strong>. This permission ends when the content is deleted, subject to the backup period in the Privacy notice.</li>
   <li>We do not use your content for analytics, advertising or training AI models, and we do not share it except as the <a href="privacy.html#sharing">Privacy notice</a> describes.</li>
-  <li>You confirm that you have the right to store the content, including any client data and other people's personal data in it. If you store data for an employer or client, we act as their processor, and a data processing agreement is available on request.</li>
+  <li>You confirm that you have the right to store the content, including any client data and other people's personal data in it. If you store data for an employer or client, we act as their processor, and we will agree a data processing agreement with them on request.</li>
   <li>Keep your own copies of anything important, for example by exporting project files. Cloud storage is a convenience, not a guaranteed archive.</li>
 </ul>
 
@@ -215,6 +223,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li>You may not reverse engineer, decompile or disassemble the software, except where the law expressly allows it despite this restriction (for example, to achieve interoperability).</li>
   <li>Reports and exports you produce with the service are yours to use in your work.</li>
   <li>The service includes open-source components that remain under their own licences. Those licences apply to those components only.</li>
+  <li>The licence file published with the source code governs the source code itself. These terms govern your use of the service. <span class="ph">[ALIGN THE LICENCE FILE'S GOVERNING LAW AND COURTS WITH SECTION 17 BEFORE PUBLISHING]</span></li>
   <li>If you send us feedback or suggestions, we may use them without restriction or payment.</li>
   <li>"H2Oil" and the Well Testing Suite names and logos are ours. Do not use them in a way that suggests we endorse you.</li>
 </ul>
@@ -232,7 +241,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li>we are not liable for loss of profit, revenue, production or business, business interruption, loss of goodwill, wasted expenditure, or for any indirect or consequential loss;</li>
   <li>we are not liable for loss or corruption of data where a backup or export by you would have prevented it;</li>
   <li>we are not liable for decisions or actions taken on the basis of results that were not checked and approved as section 4 requires;</li>
-  <li>our total liability to you for all claims arising from the service in any 12-month period is limited to <span class="ph">[LIABILITY CAP, e.g. USD 100]</span>.</li>
+  <li>our total liability to you for all claims arising from the service in any 12-month period is limited to the greater of USD 100 and the total amount you paid us for the service in the 12 months before the claim arose.</li>
 </ul>
 <p>We set this limit because the service is free and you control how its results are checked and used. If you need different terms for your organisation, contact us.</p>
 <h3>If you are a consumer</h3>
@@ -254,7 +263,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
 <h3>You</h3>
 <ul>
   <li>You can stop using the service at any time. You can delete your account from the Account page. A deletion can be cancelled within 7 days, after which your cloud data is deleted as the <a href="privacy.html#retention">Privacy notice</a> describes.</li>
-  <li>Before you delete your account, you can <strong>export everything</strong> (one project file per cloud project, your library and your account information).</li>
+  <li>Before you delete your account, you can <strong>export everything</strong> from the Account page: one project file per cloud project and your account information. Your library is not in the export yet; a copy stays in each browser where you use your account, and we will send you a copy on request.</li>
 </ul>
 <h3>Us</h3>
 <ul>
@@ -277,13 +286,14 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li><strong>Transfer.</strong> We may transfer our rights and obligations under these terms to another organisation, for example if our business is sold. We will tell you, and your rights will not be reduced. You may not transfer your rights without our written agreement.</li>
   <li><strong>Separate terms.</strong> If a court decides that part of these terms is unlawful or unenforceable, the rest stays in force.</li>
   <li><strong>No waiver.</strong> If we do not enforce a right straight away, we can still enforce it later.</li>
-  <li><strong>Third parties.</strong> No one other than you and us has any right to enforce these terms.</li>
-  <li><strong>Whole agreement.</strong> For business users, these terms, together with any data processing agreement we sign with you, are the whole agreement about the service. You have not relied on anything else we said. This does not limit liability for fraud.</li>
+  <li><strong>Export control and sanctions.</strong> You must not use, export or re-export the service in breach of the export-control or sanctions laws that apply to you or to us, including the laws of the UAE, the UK, the EU and the United States. You confirm that you are not a person, and not in a country or territory, that those laws prohibit us from dealing with.</li>
+  <li><strong>Third parties.</strong> No one other than you and us has any right to enforce these terms, except that the operator of the store you downloaded the iOS app from may enforce them as far as they concern the app, where its licence agreement gives it that right.</li>
+  <li><strong>Whole agreement.</strong> For business users, these terms, together with any data processing agreement we sign with you and, for the iOS app, the store's licence agreement, are the whole agreement about the service. You have not relied on anything else we said. This does not limit liability for fraud.</li>
   <li><strong>Other agreements.</strong> If you have a separate written agreement with us, it takes priority where it conflicts with these terms.</li>
 </ul>
 
 <h2 id="law">17. Law and courts</h2>
-<p class="draft"><strong>Owner decision (delete this box before publication):</strong> the wording below follows the recommended option, the laws of the Dubai International Financial Centre and the DIFC Courts by express opt-in. The alternative is the laws of the Emirate of Dubai and the federal laws of the UAE, with the Dubai Courts (proceedings in Arabic). Either way, consumers keep the protection of their home country.</p>
+<p class="draft"><strong>Owner decision (delete this box before publication):</strong> the wording below follows the recommended option, the laws of the Dubai International Financial Centre and the DIFC Courts by express opt-in. The alternative is the laws of the Emirate of Dubai and the federal laws of the UAE, with the Dubai Courts (proceedings in Arabic). Either way, consumers keep the protection of their home country. Before publishing: (1) make the licence file published with the source code name the same law and courts (it names England and Wales today), or make it defer to these terms; (2) with the onshore alternative, the lawyer should add that the exclusions and cap in section 12 apply to contractual claims only (UAE Civil Transactions Law Art. 383 and 390); (3) the DIFC Courts opt-in must be specific, clear and in writing, so the in-app notice (section 2) and the account tick box should stay in place. Delete this box only when the licence file and these terms are aligned.</p>
 <ul>
   <li>These terms, and any dispute or claim arising out of or in connection with them or the service (including non-contractual disputes), are governed by the laws of the <span class="ph">[Dubai International Financial Centre (DIFC)]</span>.</li>
   <li>You and we agree that the <span class="ph">[Courts of the Dubai International Financial Centre (DIFC Courts)]</span> have exclusive jurisdiction to settle any such dispute. This is an express agreement in writing to submit to the DIFC Courts.</li>
@@ -292,9 +302,9 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
 </ul>
 
 <h2 id="contact">18. Contact and complaints</h2>
-<p>H2Oil, <span class="ph">[COMPANY LEGAL NAME]</span><br>
+<p><span class="ph">[COMPANY LEGAL NAME, EXACTLY AS ON THE TRADE LICENCE]</span><span class="ph">[, trading as H2Oil — KEEP ONLY IF REGISTERED]</span><br>
 <span class="ph">[REGISTERED ADDRESS, DUBAI, UAE]</span><br>
-Trade licence <span class="ph">[TRADE LICENCE NO.]</span>, <span class="ph">[LICENSING AUTHORITY / FREE ZONE]</span><br>
+Trade licence <span class="ph">[TRADE LICENCE NO.]</span>, <span class="ph">[LICENSING AUTHORITY OR FREE ZONE]</span><br>
 E-mail: <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a></p>
 <p>If you have a complaint, please e-mail us first, and we will try to resolve it quickly. For complaints about personal data, see the <a href="privacy.html#complaints">Privacy notice</a>.</p>
 <p class="note">See also the <a href="privacy.html">Privacy notice</a>.</p>

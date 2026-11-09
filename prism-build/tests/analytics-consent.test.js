@@ -11,6 +11,15 @@
 //        build with the API, and its legal links use the web URLs on iOS
 //   CB8  privacy.html / terms.html: static (no script, no external request), dated and versioned, link each other and the
 //        app, cookies table names the consent key, placeholders for the company facts; publish allow-list; not in www
+//   CB9  no analytics event is queued before Accept, and Accept drops any queued 'event' entry (keeps 'js' / 'config'),
+//        so nothing from before the choice is sent; events after Accept are queued
+//   CB10 Reject → Accept and Accept → Reject → Accept in one visit: the tag is on again (ga-disable false), appended once;
+//        Escape on a first visit stores no choice
+//   CB11 the in-app Privacy page follows a choice made in the banner (wts:consent-changed) and says "paused" while signed in
+//   CB12 static Privacy notice / Terms of Use links in the sidebar footer (outside GA / ACCT, so on the home page for brand
+//        verification); the Terms of Use notice shows until OK (wtspref_terms_seen, per terms version) and stays hidden
+//        after a reload; the iOS bundle points the static links at the web addresses; reports carry the disclaimer;
+//        the legal pages' tables scroll instead of breaking words
 'use strict';
 
 const fs = require('fs');
@@ -61,6 +70,11 @@ function makePage(store, opts) {
   vm.createContext(sb);
   const html = HTML();
   const blocks = gaBlocks(html);
+  if (opts.gtag) {                                               // head: the gtag wrapper + filter (needs a real Date once)
+    sb.Date = Date;
+    vm.runInContext(scriptsOf(blocks[0])[0], sb);
+    sb.Date = { now: () => now };
+  }
   vm.runInContext(scriptsOf(blocks[0])[1], sb);                  // head: consent API + loader
   // body end: the banner markup (ids) + its script
   const banner = blocks[2];
@@ -232,7 +246,7 @@ module.exports = [
         assert.includes(s, 'href="well-testing-app.html"');
         assert.includes(s, f === 'privacy.html' ? 'href="terms.html"' : 'href="privacy.html"');
         assert.includes(s, 'mailto:software@h2oil.co.uk');
-        for (const ph of ['[COMPANY LEGAL NAME]', '[TRADE LICENCE NO.]', '[LICENSING AUTHORITY / FREE ZONE]', '[REGISTERED ADDRESS, DUBAI, UAE]']) assert.includes(s, ph, f);
+        for (const ph of ['[COMPANY LEGAL NAME, EXACTLY AS ON THE TRADE LICENCE]', '[TRADE LICENCE NO.]', '[LICENSING AUTHORITY OR FREE ZONE]', '[REGISTERED ADDRESS, DUBAI, UAE]']) assert.includes(s, ph, f);
         assert.ok(/NOT LEGAL ADVICE/.test(s), f + ': draft-for-review comment');
         // every in-page anchor exists
         const ids = new Set(Array.from(s.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));
@@ -251,6 +265,131 @@ module.exports = [
       assert.ok(pub.ALLOW.optional.includes('privacy.html') && pub.ALLOW.optional.includes('terms.html'), 'publish allow-list');
       const sync = fs.readFileSync(path.join(ROOT, 'ios-app', 'scripts', 'sync-from-main.js'), 'utf8');
       assert.ok(sync.indexOf('privacy.html') === -1 && sync.indexOf('terms.html') === -1, 'sync-from-main does not copy them');
+    },
+  },
+  {
+    name: 'CB9 no event queued before Accept; Accept drops queued events (js / config kept); events after Accept are queued', wp: WP, opts: false,
+    run(app, assert) {
+      const evs = (dl) => Array.from(dl).filter((e) => e && e[0] === 'event');
+      const p = makePage(memStore(), { gtag: true });
+      assert.fn(p.sb.gtag, 'gtag wrapper loaded');
+      p.sb.gtag('event', 'page_view', { page_path: '/x' });
+      p.sb.gtag('event', 'module_view', { module_id: 'wts' });
+      assert.strictEqual(evs(p.sb.dataLayer).length, 0, 'nothing queued before consent');
+      assert.ok(Array.from(p.sb.dataLayer).some((e) => e[0] === 'js') && Array.from(p.sb.dataLayer).some((e) => e[0] === 'config'), 'js + config queued');
+      p.sb.dataLayer.push(['event', 'stray', {}]);            // pushed around the wrapper
+      p.acc.fire('click');
+      assert.strictEqual(p.appended.length, 1, 'tag loaded on Accept');
+      assert.strictEqual(evs(p.sb.dataLayer).length, 0, 'queued events dropped before the tag runs');
+      assert.ok(Array.from(p.sb.dataLayer).some((e) => e[0] === 'config'), 'config kept');
+      p.sb.gtag('event', 'calc_click', { calc_id: 'aga3' });
+      assert.strictEqual(evs(p.sb.dataLayer).length, 1, 'events after Accept are queued');
+      // rejected visitor: dataLayer does not grow
+      const r = makePage(memStore(), { gtag: true });
+      r.rej.fire('click');
+      const n = r.sb.dataLayer.length;
+      for (let i = 0; i < 20; i++) r.sb.gtag('event', 'nav_click', { nav_target: 'home' });
+      assert.strictEqual(r.sb.dataLayer.length, n, 'no growth after Reject');
+    },
+  },
+  {
+    name: 'CB10 Reject → Accept / Accept → Reject → Accept in one visit turn the tag back on; Escape on a first visit stores nothing', wp: WP, opts: false,
+    run(app, assert) {
+      const ID = 'ga-disable-G-6QKCBNWHYB';
+      let p = makePage(memStore());
+      p.rej.fire('click');
+      assert.strictEqual(p.sb[ID], true);
+      p.sb.WTS_consent.set('granted');
+      assert.strictEqual(p.sb[ID], false, 'Reject → Accept: enabled');
+      assert.strictEqual(p.appended.length, 1);
+      p = makePage(memStore());
+      p.acc.fire('click'); p.sb.WTS_consent.set('denied'); p.sb.WTS_consent.set('granted');
+      assert.strictEqual(p.sb[ID], false, 'Accept → Reject → Accept: enabled again without a reload');
+      assert.strictEqual(p.appended.length, 1, 'the tag is still appended once');
+      const st = memStore();
+      p = makePage(st);
+      assert.strictEqual(p.box.hidden, false);
+      p.box.fire('keydown', { key: 'Escape' });
+      assert.strictEqual(p.box.hidden, true, 'Escape hides the banner');
+      assert.ok(!(KEY in st.m), 'Escape stores no choice (asked again next time)');
+      assert.strictEqual(p.appended.length, 0);
+    },
+  },
+  {
+    name: 'CB11 in-app Privacy page follows a banner choice (wts:consent-changed) and says "paused" while signed in', wp: WP,
+    run(app, assert) {
+      let choice = null;
+      app.win.WTS_consent = { choice: () => choice, skipped: () => false, open() {} };
+      app.win.__wtsGaLoaded = false;
+      app.hook.nav('privacy');
+      assert.includes(app.el('pgBody').textContent, 'currently: not chosen');
+      choice = 'granted'; app.win.__wtsGaLoaded = true;
+      app.win.dispatchEvent(new app.win.CustomEvent('wts:consent-changed', { detail: { choice: 'granted' } }));
+      const t = app.el('pgBody').textContent;
+      assert.includes(t, 'currently: accepted');
+      assert.includes(t, 'usage analytics are active');
+      app.hook.nav('home');
+      choice = 'denied';
+      app.win.dispatchEvent(new app.win.CustomEvent('wts:consent-changed', { detail: { choice: 'denied' } }));
+      assert.ok(app.el('pgBody').textContent.indexOf('currently:') === -1, 'another page is not re-rendered');
+      // signed in (H17): the tag is skipped whatever the choice
+      choice = 'granted'; app.win.__wtsGaLoaded = false;
+      app.win.WTS_consent = { choice: () => choice, skipped: () => true, open() {} };
+      app.hook.nav('privacy');
+      assert.includes(app.el('pgBody').textContent, 'analytics are paused while you are signed in');
+      delete app.win.WTS_consent;
+      app.win.__wtsGaLoaded = undefined;
+    },
+  },
+  {
+    name: 'CB12 static legal links in the sidebar footer; Terms of Use notice until OK (per version, survives a reload); iOS links absolute; report disclaimer; tables scroll', wp: WP,
+    run(app, assert, ctx) {
+      const html = HTML();
+      const stripped = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '').replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
+      const foot = (stripped.match(/<div class="sidebar-footer">[\s\S]*?<\/div>/) || [''])[0];
+      assert.ok(/<a href="privacy\.html" id="sbPrivacyNotice"[^>]*>Privacy notice<\/a>/.test(foot), 'static Privacy notice link in the footer');
+      assert.ok(/<a href="terms\.html" id="sbTermsLink"[^>]*>Terms of Use<\/a>/.test(foot), 'static Terms of Use link in the footer');
+      // Terms of Use notice
+      const tn = app.el('wtsTermsNote');
+      assert.ok(tn, 'notice element');
+      assert.strictEqual(tn.hidden, false, 'shown on a first visit');
+      assert.ok(/href="terms\.html"/.test((html.match(/<div id="wtsTermsNote"[\s\S]*?<\/div>/) || [''])[0]), 'links the terms');
+      app.click('wtsTermsNoteOk');
+      assert.strictEqual(tn.hidden, true, 'OK hides it');
+      const seen = JSON.parse(app.storage.getItem('wtspref_terms_seen'));
+      assert.strictEqual(seen.v, 1, 'terms version stored on the device');
+      const r = app.reload();
+      try { assert.strictEqual(r.el('wtsTermsNote').hidden, true, 'stays hidden after a reload'); } finally { r.dispose(); }
+      const old = ctx.loadApp({});
+      try {
+        old.storage.setItem('wtspref_terms_seen', JSON.stringify({ v: 0, at: 1 }));
+        const o2 = old.reload();
+        try { assert.strictEqual(o2.el('wtsTermsNote').hidden, false, 'an older terms version → shown again'); } finally { o2.dispose(); }
+      } finally { old.dispose(); }
+      // iOS bundle: the static links point at the web addresses
+      const www = path.join(ROOT, 'ios-app', 'www', 'index.html');
+      if (fs.existsSync(www)) {
+        const w = fs.readFileSync(www, 'utf8');
+        assert.ok(!/href="(privacy|terms)\.html/.test(w), 'no relative legal link in www');
+        assert.includes(w, 'href="https://welltest.h2oil.co.uk/terms.html" id="wtsTermsNoteLink"');
+        assert.includes(w, 'href="https://welltest.h2oil.co.uk/privacy.html" id="sbPrivacyNotice"');
+      }
+      // reports: the engineering disclaimer (PDF body and PNG footer share the constant)
+      assert.ok(/const REPORT_DISCLAIMER = '[^']*competent person[^']*terms\.html'/.test(html), 'disclaimer names a competent person and the terms');
+      assert.ok(html.indexOf('<div class="rp-disc">${_rEsc(REPORT_DISCLAIMER)}</div>') !== -1, 'PDF / job report footer');
+      assert.ok(/wrap\(REPORT_DISCLAIMER, font\(10\), IW, 3\)/.test(html), 'PNG footer');
+      const rep = app.win.buildReportHTML('T', '<p>x</p>', 's');
+      assert.includes(rep, 'competent person');
+      // legal pages: tables scroll at phone width instead of breaking words
+      const p = fs.readFileSync(path.join(ROOT, 'privacy.html'), 'utf8');
+      assert.ok(/\.tbl table \{ min-width: 560px; \}/.test(p) && /<table class="wide">/.test(p), 'tables keep a minimum width inside the scroller');
+      assert.ok(!/th, td \{[^}]*overflow-wrap: anywhere/.test(p), 'cells do not break mid-word');
+      for (const f of ['privacy.html', 'terms.html']) {
+        const s = fs.readFileSync(path.join(ROOT, f), 'utf8');
+        const toc = {};
+        for (const m of s.matchAll(/<li><a href="#([a-z-]+)">([^<]+)<\/a><\/li>/g)) toc[m[1]] = m[2];
+        for (const m of s.matchAll(/<h2 id="([a-z-]+)">\d+\. ([^<]+)<\/h2>/g)) assert.equal(toc[m[1]], m[2], f + ': contents entry matches heading #' + m[1]);
+      }
     },
   },
 ];

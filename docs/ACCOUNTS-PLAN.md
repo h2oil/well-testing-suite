@@ -1330,7 +1330,15 @@ sign-in); a new Privacy notice version also bumps `VER` of the analytics consent
 `<body>` right before the main script, stripped from iOS; the skip link stays first in `<body>` and the main script must stay
 last before `</body>`, the iOS bridge anchor); the choice is the device preference `wtspref_analytics_consent` `{choice, v, at}` (never
 synced — 67 skips `wtspref_*`; never in project files — 29 `PREF_RE`), re-asked after 12 months or a new `v`; H17 still applies
-(no tag and no banner while signed in). Privacy → Cookie settings reopens the banner.
+(no tag and no banner while signed in). Privacy → Cookie settings reopens the banner. No analytics event is queued before Accept
+(the head gtag wrapper drops events while `__wtsGaLoaded` is not true, and Accept removes any queued event), so nothing from
+before the choice is sent. **Ship the banner and the two pages as their own web release now, not with v4.0** (review 2026-11-09:
+the tag loading for every visitor without consent breaks the ePrivacy rules for EU visitors; if that release cannot go out, remove
+the analytics tag from the live site until it can). **Terms of Use notice (web and iOS):** `#wtsTermsNote` above the page header,
+shown until OK per terms version (`wtspref_terms_seen` {v, at}, device preference; `TERMS_NOTE_V` = `WTS_TERMS_VERSION`); the
+sidebar footer has static Privacy notice / Terms of Use links (brand verification needs them on the home page; `sync-from-main.js`
+points every relative privacy / terms link at the web address in the iOS bundle); PDF / PNG / job reports carry
+`REPORT_DISCLAIMER` (aids to judgement, competent person, the terms address).
 
 ### 8.7 Storage-to-HTML sink audit (WP-H, M)
 Sync applies content on other devices with no Open by the user, so a value that reaches `innerHTML` / `insertAdjacentHTML`

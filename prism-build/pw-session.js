@@ -125,6 +125,8 @@ async function freshSession(browser, opts) {
       if (!localStorage.getItem('wtspref_analytics_consent')) {
         localStorage.setItem('wtspref_analytics_consent', JSON.stringify({ choice: 'denied', v: 1, at: Date.now() }));
       }
+      // the Terms of Use notice above the page header (web and iOS) would shift every shot: mark it seen
+      if (!localStorage.getItem('wtspref_terms_seen')) localStorage.setItem('wtspref_terms_seen', JSON.stringify({ v: 1, at: Date.now() }));
     } catch (e) { /* storage unavailable */ }
   });
   const seed = opts.seed || {};
