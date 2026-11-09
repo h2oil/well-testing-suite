@@ -22,7 +22,7 @@
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 18dd44ed,ex1-view-p 780 1688 0a83176e,ex10-t202-d 296 349 91bd369d,ex11-ck102-d 296 349 3d0c944f,ex11-ck2d-d 980 481 704aafa2,ex2-ck101-d 296 313 7140963a,ex2-ck3d-d 980 481 0915eeb8,ex4-alarms-d 476 258 87c95374,ex4-scen-d 531 423 fd678642,ex4-v101-d 296 307 75e55551,ex5-more-p 780 1688 6681af8c,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 53264665,ex5-viewmenu-d 213 253 d34613dc,ex6-events-d 476 294 574e6fc1,ex6-t301-d 296 349 b97dc494,ex7-t201-d 296 349 7f6ca3d1,ex8-temp3d-d 980 481 2cd3a878,ex9-ds101-d 296 349 aa03029c",
+    "course": "ex1-view-d 1280 800 88ab68d7,ex1-view-p 780 1688 a5daa59e,ex10-t202-d 296 349 8e6572a1,ex11-ck102-d 296 349 04183165,ex11-ck2d-d 980 481 f85a4898,ex2-ck101-d 296 313 ecc60528,ex2-ck3d-d 980 481 da25ccba,ex4-alarms-d 476 258 2e861243,ex4-scen-d 531 423 6d462477,ex4-v101-d 296 307 284147cc,ex5-more-p 780 1688 f52d00b0,ex5-reset-d 213 93 27ed6c31,ex5-trends-d 980 481 72179dff,ex5-viewmenu-d 213 253 1816fecb,ex6-events-d 476 294 8028137f,ex6-t301-d 296 349 d670c1bb,ex7-t201-d 296 349 37899a01,ex8-temp3d-d 980 481 b0b0ea5a,ex9-ds101-d 296 349 c0f844c7",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -59,7 +59,7 @@
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
     "releasenotes": "view-d 1280 800 7bd585f4,view-p 780 1688 023089cc",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
-    "scenarios": "fs-1-cushion-d 980 481 587757c9,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
+    "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
     "sephand": "res-d 491 217 e112f798,view-d 1280 800 e238ce1a,view-p 780 1688 5cc8127e",
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
@@ -72,13 +72,13 @@
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
-    "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 a2a86302,view-p 780 1688 d4c9432b",
+    "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 4eff3e06,view-p 780 1688 3276d78d",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
-    "wts": "card-d 296 349 c92f1bec,card-p 752 858 c677682d,rigup-d 982 525 c5f474e7,tb-d 980 481 e4cd0035,view-d 1280 800 b2ef26d6,view-p 780 1688 cca7e684"
+    "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 2b20dcbf,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 217;
-  M.bytes = 7974732;   // total size of the image files (the offline download label)
+  M.bytes = 7976988;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

@@ -2801,13 +2801,17 @@ var DERIVED = {
     gor: { key: 'gor', label: 'GOR (sep)', unit: 'scf/STB', cat: 'gor', dp: 0, deps: ['gas_rate', 'oil_rate'], calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && x.oil_rate > 0.5 ? x.gas_rate * 1e6 / x.oil_rate : null; } },
     wcut: { key: 'wcut', label: 'Water cut', unit: '%', deps: ['water_rate', 'oil_rate'], calc: function (x) { return isNum(x.water_rate) && isNum(x.oil_rate) && x.water_rate + x.oil_rate > 0 ? 100 * x.water_rate / (x.water_rate + x.oil_rate) : null; } },
     // v3.4.2 (lpgas design §6): tank gas = the surge-tank gas on the LP flare line through FT-201, Mscf/d — form data: the simulator
-    // page's steady LP block (WTS_state.flow.lp, Standing flash at the page rates); Modbus: a linked 'tank_gas' tag (else not linked).
+    // page's steady LP block (WTS_state.flow.lp, Standing flash at the page rates); Modbus: a linked 'tank_gas' tag once the station
+    // has such an app variable — 3.4.2 review: WTS_modbus.VARS has none yet (a tag cannot keep the link), so in Modbus mode tank gas
+    // and the total GOR are 'form data only' (unmapped), not 'not linked'.
     // Total GOR = (gas × 10^6 + tank gas × 10^3) ÷ oil, its quality the worst of the three
     tank_gas: { key: 'tank_gas', label: 'Tank gas (FT-201)', unit: 'Mscf/d', cat: 'gasRateSmall', dp: 1, ext: tankGas },
     gor_total: { key: 'gor_total', label: 'Total GOR', unit: 'scf/STB', cat: 'gor', dp: 0, deps: ['gas_rate', 'oil_rate', 'tank_gas'], calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && isNum(x.tank_gas) && x.oil_rate > 0.5 ? (x.gas_rate * 1e6 + x.tank_gas * 1e3) / x.oil_rate : null; } }
 };
 function tankGas(source, station) {
     if (source === 'modbus') {
+        var mv = G.WTS_modbus && G.WTS_modbus.VARS;
+        if (!Array.isArray(mv) || !mv.some(function (V) { return V && V.key === 'tank_gas'; })) return { v: null, q: 'unmapped', src: 'form data only (no Modbus app variable for FT-201 yet)' };
         var x = station && typeof station.getVar === 'function' ? station.getVar('tank_gas') : null;
         if (!x) return { v: null, q: 'unmapped', src: 'not linked' };
         var q = x.q === 'init' ? 'stale' : x.q;
@@ -2907,7 +2911,7 @@ function pageHtml(u) {
         '<div class="card" id="wos_hist"><div class="card-title">Historian</div><div id="wos_hist_body"></div></div>' +
         '</div></div>' +
         '<div class="card" style="margin-top:12px"><div class="card-title">Live variables</div><div id="wos_chips"></div></div>' +
-        '<div style="font-size:12px;color:var(--text2);margin-top:8px"><div><b>Notes</b> Form data runs the Well Test Simulator model from the simulator page inputs (or the sample well). Modbus data shows the tags linked on the Modbus page, converted to field units; quality: good = fresh, stale = no update for 3 poll intervals, bad = comms error / exception / unit mismatch, — = not linked. In Modbus mode the 3D and 2D views keep the last form snapshot for anything not linked. GOR (sep) = gas rate ÷ oil rate; tank gas = the surge-tank gas on the LP flare line (FT-201) from the simulator page (form data) or a linked tank_gas tag; total GOR = (gas + tank gas) ÷ oil rate; water cut = water ÷ (water + oil) rate, both from the rates shown. Representative equipment; not a safety system.</div></div>' +
+        '<div style="font-size:12px;color:var(--text2);margin-top:8px"><div><b>Notes</b> Form data runs the Well Test Simulator model from the simulator page inputs (or the sample well). Modbus data shows the tags linked on the Modbus page, converted to field units; quality: good = fresh, stale = no update for 3 poll intervals, bad = comms error / exception / unit mismatch, — = not linked. In Modbus mode the 3D and 2D views keep the last form snapshot for anything not linked. GOR (sep) = gas rate ÷ oil rate; tank gas = the surge-tank gas on the LP flare line (FT-201) from the simulator page (form data only: Modbus has no FT-201 app variable yet, so in Modbus mode tank gas and the total GOR stay blank); total GOR = (gas + tank gas) ÷ oil rate; water cut = water ÷ (water + oil) rate, both from the rates shown. Representative equipment; not a safety system.</div></div>' +
         '</div>';
 }
 
