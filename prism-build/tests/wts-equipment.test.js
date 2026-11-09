@@ -552,7 +552,8 @@ module.exports = [
       assert.strictEqual(I.INPUT_FOR.desander, 'wts_sandPptb'); assert.strictEqual(I.INPUT_FOR.surge2, 'wts_surge2Cap');
       ['mass', 'volumeSmall', 'erosionRate', 'erosionDay'].forEach((k) => assert.ok(typeof I.IMP[k] === 'string' && I.IMP[k], 'IMP.' + k));
       assert.ok(/^#|^rgb/.test(I.palCol('sand')), 'sand colour');
-      assert.strictEqual(I.EQV.surge2.kind, 'single'); assert.deepStrictEqual(J(I.EQV.surge2.valves), ['XV-202']);
+      // release 3.4.2: T-202 has two compartments (XV-202A / XV-202B, LCV-202 suction); a one-compartment T-202 falls back to XV-202
+      assert.strictEqual(I.EQV.surge2.kind, 'comps'); assert.deepStrictEqual(J(I.EQV.surge2.valves), ['XV-202A', 'XV-202B']); assert.strictEqual(I.EQV.surge2.suction, true);
       assert.ok(I.EQV.surge.suction === true && I.EQV.gauge.kind === 'tanks' && I.EQV.desander.bypass === 'HV-104', 'EQV');
       assert.ok(I.rigIn({ rigup: { surge2: true } }, 'surge2') && !I.rigIn({ rigup: { surge2: 'true' } }, 'surge2') && !I.rigIn({}, 'desander'), 'rigIn');
       X.STEP_COMBOS.forEach((c) => assert.deepStrictEqual(J(I.stepFor(app.toWin(c.rig))), c.step, '38 stepFor ' + c.name));
