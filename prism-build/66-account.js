@@ -43,7 +43,10 @@
 
   var VERSION = '1.0.0';
   var PROVIDERS = ['google', 'linkedin'];
-  var KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser' };
+  // welcome: the device preference of the signed-out welcome prompt, {choice: 'guest'|'signup'|'signin', at} — a wtspref_ key,
+  // so it is never synced and never in project files (29 PREF / 67 skip wtspref_*)
+  var KEYS = { hint: 'wtsacct_hint', beta: 'wtspref_cloud_beta', cloudOpen: 'wtspref_cloud_open', shared: 'wtspref_shared_browser',
+    welcome: 'wtspref_acct_welcome' };
   var SUPPORT = 'software@h2oil.co.uk';
   var HAS_DOC = typeof document !== 'undefined' && !!document && typeof document.createElement === 'function';
 
@@ -61,7 +64,10 @@
   // fetch, now, base, idb, crypto, gzip, gunzip, locks, minDelayMs: §5.2 test seams; appVer, deviceId: request headers;
   // reload / assign: page navigation (the analytics reload, WP-O's redirect); online: () → bool (navigator.onLine).
   var seams = { fetch: null, now: null, base: '/api/v1', idb: null, crypto: null, gzip: null, gunzip: null, locks: null, minDelayMs: 0,
-    appVer: '', deviceId: null, reload: null, assign: null, online: null, maxProjectBytes: 64 * 1000 * 1000 };
+    appVer: '', deviceId: null, reload: null, assign: null, online: null, maxProjectBytes: 64 * 1000 * 1000,
+    // welcome: false switches the signed-out welcome prompt off. The mount can run before a configure() call, so a page (the
+    // client tests' harness) can also switch it off before load with window.WTS_ACCOUNT_WELCOME = 0
+    welcome: G.WTS_ACCOUNT_WELCOME !== 0 };
   function configure(o) {
     o = o || {};
     Object.keys(o).forEach(function (k) { if (Object.prototype.hasOwnProperty.call(seams, k)) seams[k] = o[k]; });
@@ -184,7 +190,7 @@
   function setState(patch) {
     var before = current.status;
     Object.keys(patch).forEach(function (k) { current[k] = patch[k]; });
-    if (current.status === 'signedIn') attachSignedIn(); else detachSignedIn();
+    if (current.status === 'signedIn') { attachSignedIn(); closeWelcome(false); } else detachSignedIn();
     fire('state', state());
     if (before !== current.status || patch.reason !== undefined) emit('wts:account-changed', { status: current.status, reason: current.reason });
     renderChip(); renderBar();
@@ -282,7 +288,7 @@
 
   // ── dialog (§11.2) ─────────────────────────────────────────────────────────────────────────────────────────────────
   var dlg = { open: false, mode: null, step: null, email: '', publicDevice: false, consent: null, opener: null, resolve: null,
-    choice: null, onKey: null };
+    choice: null, onKey: null, signup: false };
   var hooks = { renderProviders: null, onPublicSignOut: null };
   var MSG = {
     network: 'Sign-in needs a connection. Your work keeps saving on this device.',
@@ -298,6 +304,9 @@
   function errText(e) {
     if (!e) return 'Something went wrong. Try again.';
     if (e.code === 'rate') return 'Too many attempts. Try again in ' + Math.max(1, Math.round(e.retryAfter || 30)) + ' s.';
+    // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
+    // revealed), so the text says what a new visitor can do
+    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts are by invitation during the beta: if you have no invitation yet, write to ' + SUPPORT + '.';
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
     return 'Something went wrong (' + esc(e.code) + '). Try again.';
@@ -357,6 +366,25 @@
       '.acct-btns .btn{flex:1 1 100%;min-height:44px;font-size:16px}.acct-menu button,.acct-cloud-menu button{min-height:44px;font-size:16px}',
       '.acct-menu,.acct-cloud-menu{position:fixed;left:16px;right:16px;top:auto;min-width:0}',
       '.acct-sync-bar{left:16px;right:16px;transform:none;max-width:none}}',
+      // the chip at the bottom-left: the last row of the sidebar footer, full width; the footer sticks to the sidebar's bottom
+      // edge so the chip stays on screen when the nav scrolls (also in the phone drawer)
+      '#sidebar .sidebar-footer{position:sticky;bottom:0;z-index:2;background:var(--bg0,#0d1117)}',
+      '#sbAccountLine{margin-top:8px}#sbAccountLine:empty{display:none}',
+      '.acct-host-sb,.acct-host-sb .acct-wrap{display:block;width:100%}',
+      '.acct-host-sb .acct-chip{display:flex;width:100%;box-sizing:border-box;border-radius:8px;min-height:36px;padding:6px 10px;font-size:13px;text-align:left;justify-content:flex-start}',
+      '.acct-host-sb .acct-chip .acct-txt{display:inline;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.acct-host-sb .acct-chip--out{border-color:var(--accent,#f0883e);color:var(--accent,#f0883e);font-weight:600}',
+      '.acct-host-sb .acct-chip--out:hover{background:rgba(240,136,62,.10)}',
+      '.acct-caret{font-size:10px;color:var(--text3,#999)}',
+      '.acct-menu.acct-menu--up{position:fixed;top:auto;right:auto;overflow-y:auto;box-sizing:border-box}',
+      '@media (max-width:768px){.acct-host-sb .acct-chip{min-height:44px;font-size:15px}}',
+      // the welcome prompt (signed-out first visit): two choices, sign up (primary) or continue as a guest
+      '.acct-welcome h3{font-size:20px}.acct-welcome .acct-wc-lead{margin:0 0 12px;color:var(--text2,#ccc);font-size:13px}',
+      '.acct-wc-opt{border:1px solid var(--border,#444);border-radius:8px;padding:12px 14px;margin:10px 0}',
+      '.acct-wc-opt--pri{border-color:var(--accent,#f0883e);background:rgba(240,136,62,.06)}',
+      '.acct-wc-opt p{margin:8px 0 0;font-size:13px;line-height:1.5;color:var(--text2,#ccc)}',
+      '.acct-wc-opt .btn{width:100%;min-height:42px;font-size:15px}',
+      '.acct-link{background:none;border:0;padding:0;color:var(--blue,#58a6ff);text-decoration:underline;cursor:pointer;font:inherit}',
     ].join('\n');
     (document.head || document.body).appendChild(st);
   }
@@ -389,7 +417,7 @@
     if (dlg.onKey && HAS_DOC) document.removeEventListener('keydown', dlg.onKey);
     dlg.onKey = null;
     var wasOpen = dlg.open;
-    dlg.open = false; dlg.step = null;
+    dlg.open = false; dlg.step = null; dlg.signup = false;
     var ch = dlg.choice; dlg.choice = null;
     if (ch) ch(null);
     var r = dlg.resolve; dlg.resolve = null;
@@ -444,13 +472,16 @@
     });
   }
   function drawEmail(b, data) {
-    setTitle('Sign in to Well Testing Suite');
+    setTitle(dlg.signup ? 'Create your free account' : 'Sign in to Well Testing Suite');
     b.innerHTML =
-      '<p>Use your e-mail address: we send you an 8-digit code. There is no password. Without signing in, your work stays on this device only.</p>' +
+      (dlg.signup
+        ? '<p>Enter your e-mail address: we send you an 8-digit code. There is no password. Your projects are then kept in your own secure cloud database, with full history, on any device.</p>' +
+          '<p class="acct-note" id="acct_signup_note">New accounts are by invitation during the beta. If your code is not accepted, write to ' + SUPPORT + ' for an invitation. Already have an account? The same steps sign you in.</p>'
+        : '<p>Use your e-mail address: we send you an 8-digit code. There is no password. Without signing in, your work stays on this device only.</p>') +
       (data.note ? '<p class="acct-note">' + esc(data.note) + '</p>' : '') +
       '<label for="acct_email">E-mail address</label>' +
       '<input type="email" id="acct_email" inputmode="email" autocomplete="username webauthn" maxlength="254" spellcheck="false" value="' + esc(dlg.email) + '">' +
-      '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_send">Send code</button></div>' +
+      '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_send">' + (dlg.signup ? 'Send my code' : 'Send code') + '</button></div>' +
       '<div class="acct-or acct-or--none" id="acct_or">or</div>' +
       '<div id="acct_provider_buttons" class="acct-providers" data-owner="WP-O"></div>' +
       '<label class="acct-tick"><input type="checkbox" id="acct_public"' + (dlg.publicDevice ? ' checked' : '') + '> This is a public or shared computer</label>' +
@@ -563,8 +594,10 @@
     if (current.status === 'signedIn' && !opts.force) return Promise.resolve(state());
     return new Promise(function (resolve) {
       if (dlg.resolve) { var old = dlg.resolve; dlg.resolve = null; old(null); }
+      closeWelcome(false);                 // never two modals: the sign-in dialog replaces the welcome prompt
       openDialog('signin');
       dlg.resolve = resolve;
+      dlg.signup = !!opts.signup;
       if (opts.email) dlg.email = String(opts.email);
       if (!isOnline()) { setStep('email'); message(MSG.network, 'err'); return; }
       setStep('email');
@@ -760,23 +793,32 @@
     }
   }
   function lastSyncTitle(st) { return 'Your work is saved on this device' + (st && st.lastSyncAt ? '. Last cloud save ' + hhmm(st.lastSyncAt) : ''); }
+  // The chip lives at the bottom-left of the screen: the host's #wts_account_host (H8) is moved into the sidebar footer's
+  // #sbAccountLine (H9) at the mount, full sidebar width (the footer is made sticky, so the chip stays on screen when the nav
+  // scrolls; at phone width it is the bottom row of the slide-out drawer). A host without #sbAccountLine keeps the chip in the
+  // header (.page-actions) as before.
   function ensureHost() {
     if (!HAS_DOC) return null;
     var host = $('wts_account_host');
-    if (host) return host;
-    var pa = document.querySelector ? document.querySelector('.page-actions') : null;
-    if (!pa) return null;
-    host = document.createElement('div'); host.id = 'wts_account_host'; host.setAttribute('data-acct-created', '1');
-    pa.insertBefore(host, pa.firstChild);
+    if (!host) {
+      var pa = document.querySelector ? document.querySelector('.page-actions') : null;
+      if (!pa) return null;
+      host = document.createElement('div'); host.id = 'wts_account_host'; host.setAttribute('data-acct-created', '1');
+      pa.insertBefore(host, pa.firstChild);
+    }
+    var line = $('sbAccountLine');
+    if (line && host.parentNode !== line) { line.appendChild(host); }
+    if (line && host.parentNode === line && host.className !== 'acct-host-sb') host.className = 'acct-host-sb';
     return host;
   }
+  function inSidebar() { var h = $('wts_account_host'); return !!(h && h.className === 'acct-host-sb'); }
   function renderChip() {
     if (!mounted || !HAS_DOC) return;
     var host = ensureHost(); if (!host) return;
     var closeMenu = $('acct_menu'); if (closeMenu && closeMenu.parentNode) closeMenu.parentNode.removeChild(closeMenu);
     if (current.status === 'signedOut' || current.status === 'signingIn') {
-      host.innerHTML = '<span class="acct-wrap"><button type="button" class="acct-chip" id="acct_chip" aria-label="Sign in" title="Sign in to save projects in the cloud">' +
-        '<span aria-hidden="true">&#9729;</span><span class="acct-txt">Sign in</span></button></span>';
+      host.innerHTML = '<span class="acct-wrap"><button type="button" class="acct-chip acct-chip--out" id="acct_chip" aria-label="Sign in" title="Sign in or create a free account to keep your projects in the cloud">' +
+        '<span aria-hidden="true">&#9729;</span><span class="acct-txt">Sign in / Sign up</span></button></span>';
       $('acct_chip').addEventListener('click', function () { openSignIn(); });
       return;
     }
@@ -785,7 +827,8 @@
     var initial = esc((current.user && current.user.emailMasked ? current.user.emailMasked[0] : h.initial || '?').toUpperCase());
     host.innerHTML = '<span class="acct-wrap"><button type="button" class="acct-chip" id="acct_chip" aria-haspopup="menu" aria-expanded="false" title="' + esc(info.title) + '">' +
       '<span class="acct-init" aria-hidden="true">' + initial + '</span><span class="acct-dot acct-dot--' + info.cls + '" aria-hidden="true"></span>' +
-      '<span class="acct-txt" id="acct_chip_txt" aria-live="polite">' + esc(info.text) + '</span></button></span>';
+      '<span class="acct-txt" id="acct_chip_txt" aria-live="polite">' + esc(info.text) + '</span>' +
+      (inSidebar() ? '<span class="acct-caret" aria-hidden="true">&#9652;</span>' : '') + '</button></span>';
     var chip = $('acct_chip');
     chip.setAttribute('aria-label', 'Account: ' + info.text);
     chip.addEventListener('click', toggleMenu);
@@ -800,6 +843,7 @@
       { id: 'acct_m_save', label: 'Save to cloud', run: function () { cloudAction('save'); }, when: current.status === 'signedIn' },
       { id: 'acct_m_open', label: 'Open from cloud…', run: function () { cloudAction('open'); }, when: current.status === 'signedIn' },
       { id: 'acct_m_page', label: 'Account & projects', run: openAccountPage, when: true },
+      { id: 'acct_m_admin', label: 'Admin dashboard', run: openAdminPage, when: isAdmin() },
       { id: 'acct_m_retry', label: 'Try again', run: function () { refresh(); }, when: current.status === 'unavailable' },
       { id: 'acct_m_signout', label: 'Sign out', run: function () { signOut(); }, when: true },
       { id: 'acct_m_everywhere', label: 'Sign out everywhere…', run: function () { signOutEverywhereAsk(); }, when: current.status === 'signedIn' },
@@ -810,15 +854,44 @@
       (S && S.status && S.status().name ? '<br>Project: ' + esc(S.status().name) : '') + '</div>' +
       items.map(function (it) { return '<button type="button" role="menuitem" id="' + it.id + '">' + esc(it.label) + '</button>'; }).join('');
     wrap.appendChild(m);
+    if (inSidebar()) placeMenuUp(m, $('acct_chip'));
     $('acct_chip').setAttribute('aria-expanded', 'true');
+    m.addEventListener('keydown', function (ev) {
+      if (ev && ev.key === 'Escape') { closeMenu(); var c = $('acct_chip'); try { if (c && c.focus) c.focus(); } catch (e) { /* none */ } }
+    });
     items.forEach(function (it) {
       $(it.id).addEventListener('click', function () {
-        var mm = $('acct_menu'); if (mm && mm.parentNode) mm.parentNode.removeChild(mm);
-        var c = $('acct_chip'); if (c) c.setAttribute('aria-expanded', 'false');
+        closeMenu();
         it.run();
       });
     });
     var f = $(items[0].id); try { if (f && f.focus) f.focus(); } catch (e) { /* none */ }
+  }
+  function closeMenu() {
+    var mm = $('acct_menu'); if (mm && mm.parentNode) mm.parentNode.removeChild(mm);
+    var c = $('acct_chip'); if (c) c.setAttribute('aria-expanded', 'false');
+  }
+  // The menu of the sidebar chip opens UPWARD from the bottom-left. It is position:fixed (the sidebar is a scroll container and
+  // would clip an absolute menu), left-aligned with the chip, at least 240 px wide but never wider than the window, and its
+  // height is capped by the room above the chip (it scrolls inside).
+  function placeMenuUp(m, chip) {
+    m.className = 'acct-menu acct-menu--up rp-skip';
+    var r = null;
+    try { r = chip && chip.getBoundingClientRect ? chip.getBoundingClientRect() : null; } catch (e) { r = null; }
+    var vw = Number(G.innerWidth) || 0, vh = Number(G.innerHeight) || 0;
+    if (!r || !vw || !vh || !(r.width > 0)) { m.style.bottom = '64px'; m.style.left = '16px'; return; }
+    var w = Math.min(Math.max(r.width, 240), vw - 16);
+    var left = Math.max(8, Math.min(r.left, vw - w - 8));
+    m.style.left = Math.round(left) + 'px';
+    m.style.width = Math.round(w) + 'px';
+    m.style.bottom = Math.round(Math.max(8, vh - r.top + 6)) + 'px';
+    m.style.maxHeight = Math.round(Math.max(120, r.top - 14)) + 'px';
+  }
+  function isAdmin() { return current.status === 'signedIn' && !!(current.me && current.me.admin === true); }
+  function openAdminPage() {
+    var P = G.WTS_accountAdmin;
+    if (P && typeof P.open === 'function') return P.open();
+    return null;
   }
   // passkeys are named only when the account has any (Phase 1 has none: they answer 501)
   function recentMethodsText() {
@@ -985,6 +1058,100 @@
     return call('POST', '/account/delete/cancel', {}).then(function () { return refresh(); }, handleError);
   }
 
+  // ── welcome prompt (signed-out visitors) ───────────────────────────────────────────────────────────────────────────
+  // A modal offer to create a free account or continue as a guest. Shown once per visit at most, only while accounts are
+  // mounted (eligible host + beta flag), signed out with no session hint, after the analytics consent banner and the Terms
+  // notice are dealt with (never stacked over them), never on the account / admin / privacy / help / release-notes routes, never
+  // over the sign-in dialog, and to a visitor who already chose at most once every 30 days. Esc / × = continue as guest.
+  var WELCOME_EVERY = 30 * 24 * 3600 * 1000;
+  var WELCOME_SKIP_ROUTES = { account: 1, admin: 1, privacy: 1, help: 1, releasenotes: 1, gaevents: 1 };
+  var welcome = { shown: false, onKey: null, opener: null, wired: false };
+  function welcomePref() {
+    try { var o = JSON.parse(lsGet(KEYS.welcome) || 'null'); return o && typeof o === 'object' && typeof o.at === 'number' ? o : null; } catch (e) { return null; }
+  }
+  function currentRoute() {
+    try { var P = G.WTS_pageAutosave; if (P && typeof P.page === 'function') return String(P.page() || ''); } catch (e) { /* host */ }
+    return '';
+  }
+  function visibleBlocker(id) { var e = $(id); return !!(e && !e.hidden); }
+  // welcomeDue() → null when the prompt may open now, else the reason it waits / is skipped
+  function welcomeDue() {
+    if (!mounted || !HAS_DOC) return 'unmounted';
+    if (seams.welcome === false) return 'off';
+    if (welcome.shown || $('acct_welcome_ov')) return 'shown';
+    var h = readHint();
+    if (current.status !== 'signedOut' || (h && h.signedIn)) return 'signed-in';
+    var p = welcomePref();
+    if (p && now() - p.at < WELCOME_EVERY) return 'answered';
+    if (dlg.open) return 'dialog';
+    if (/^#(acct-oauth|account-revert)/.test(String(L.hash || ''))) return 'hash';
+    if (WELCOME_SKIP_ROUTES[currentRoute()]) return 'route';
+    if (visibleBlocker('wtsConsent')) return 'consent';
+    if (visibleBlocker('wtsTermsNote')) return 'terms';
+    return null;
+  }
+  function maybeWelcome() { if (welcomeDue() === null) openWelcome(); return !!$('acct_welcome_ov'); }
+  // the follow-ups that re-check: the consent choice (or Esc on the banner), OK on the Terms notice, a page change (one-off
+  // listeners on the host's own elements and events; no timer)
+  function wireWelcome() {
+    if (welcome.wired || !HAS_DOC) return;
+    welcome.wired = true;
+    if (typeof G.addEventListener === 'function') G.addEventListener('wts:consent-changed', maybeWelcome);
+    var cb = $('wtsConsent'); if (cb) cb.addEventListener('keydown', function (ev) { if (ev && ev.key === 'Escape') maybeWelcome(); });
+    var ok = $('wtsTermsNoteOk'); if (ok) ok.addEventListener('click', maybeWelcome);
+    document.addEventListener('h2oil:pagechange', maybeWelcome);
+  }
+  function openWelcome() {
+    if (!HAS_DOC || !document.body || $('acct_welcome_ov')) return null;
+    ensureCss();
+    welcome.shown = true;
+    try { welcome.opener = document.activeElement; } catch (e) { welcome.opener = null; }
+    var ov = document.createElement('div');
+    ov.id = 'acct_welcome_ov'; ov.className = 'acct-ov acct-welcome-ov rp-skip'; ov.setAttribute('data-rp-nosnap', '1');
+    // iOS safe area: web only (stripped from the app bundle with this block); a scrolling block overlay like .acct-ov
+    ov.innerHTML = '<div class="acct-dlg acct-welcome" id="acct_welcome" role="dialog" aria-modal="true" aria-labelledby="acct_welcome_t" aria-describedby="acct_welcome_lead">' +
+      '<h3><span id="acct_welcome_t">Keep your work safe</span><button type="button" class="acct-x" id="acct_welcome_x" aria-label="Continue as guest">&#215;</button></h3>' +
+      '<p class="acct-wc-lead" id="acct_welcome_lead">Well Testing Suite now offers free accounts.</p>' +
+      '<div class="acct-wc-opt acct-wc-opt--pri"><button type="button" class="btn btn-primary" id="acct_welcome_signup">Create free account</button>' +
+      '<p>Sign up and all your projects are kept in your own secure cloud database — open them on any device, with full history, and never lose work if this browser is cleared.</p>' +
+      '<p>Already have an account? <button type="button" class="acct-link" id="acct_welcome_signin">Sign in</button></p></div>' +
+      '<div class="acct-wc-opt"><button type="button" class="btn btn-secondary" id="acct_welcome_guest">Continue as guest</button>' +
+      '<p>Your work is saved only in this browser on this device.</p></div></div>';
+    document.body.appendChild(ov);
+    function answer(choice) {
+      lsSet(KEYS.welcome, JSON.stringify({ choice: choice, at: now() }));
+      closeWelcome(choice === 'guest');
+      if (choice === 'signup') openSignIn({ signup: true });
+      else if (choice === 'signin') openSignIn();
+    }
+    $('acct_welcome_signup').addEventListener('click', function () { answer('signup'); });
+    $('acct_welcome_signin').addEventListener('click', function () { answer('signin'); });
+    $('acct_welcome_guest').addEventListener('click', function () { answer('guest'); });
+    $('acct_welcome_x').addEventListener('click', function () { answer('guest'); });
+    // modal: Esc = guest; Tab / Shift+Tab stay inside the dialog
+    welcome.onKey = function (ev) {
+      if (!ev || !$('acct_welcome_ov')) return;
+      if (ev.key === 'Escape') { if (ev.preventDefault) ev.preventDefault(); answer('guest'); return; }
+      if (ev.key !== 'Tab') return;
+      var f = ['acct_welcome_x', 'acct_welcome_signup', 'acct_welcome_signin', 'acct_welcome_guest'].map($).filter(Boolean);
+      if (!f.length) return;
+      var i = f.indexOf(document.activeElement);
+      var next = ev.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1);
+      if (ev.preventDefault) ev.preventDefault();
+      try { f[next].focus(); } catch (e) { /* none */ }
+    };
+    document.addEventListener('keydown', welcome.onKey, true);
+    focusFirst('acct_welcome_signup');
+    return ov;
+  }
+  function closeWelcome(returnFocus) {
+    var ov = $('acct_welcome_ov'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+    if (welcome.onKey && HAS_DOC) document.removeEventListener('keydown', welcome.onKey, true);
+    welcome.onKey = null;
+    if (returnFocus) { try { if (welcome.opener && welcome.opener.focus) welcome.opener.focus(); } catch (e) { /* gone */ } }
+    welcome.opener = null;
+  }
+
   // ── mount (§5.5) ───────────────────────────────────────────────────────────────────────────────────────────────────
   function mount() {
     if (mounted || !HAS_DOC) return;
@@ -1004,7 +1171,7 @@
       G.addEventListener('offline', function () { renderChip(); renderBar(); });
     }
     if (h && h.signedIn) refresh().then(null, function () { /* outage handled */ });
-    else current.status = 'signedOut';
+    else { current.status = 'signedOut'; wireWelcome(); maybeWelcome(); }
     // a provider return with a fresh hint entry was finished at load by the provider block (WTS_account.oauthReturn, which
     // strips the fragment); a #acct-oauth still here had no hint entry: it is ignored (no request) and removed
     if (String(L.hash || '') === '#acct-oauth') {
@@ -1049,7 +1216,8 @@
     configure: configure, seam: seam, state: state, call: call, providers: providers, on: on, off: off, betaEnabled: betaEnabled,
     refresh: refresh, openSignIn: openSignIn, signOut: signOut, stepUp: stepUp, withStepUp: withStepUp,
     changeEmail: changeEmail, confirmEmail: confirmEmail, setRecovery: setRecovery, confirmRecovery: confirmRecovery, removeRecovery: removeRecovery,
-    cancelDeletion: cancelDeletion, revertEmail: revertEmail, openRevert: openRevert, mount: mount,
+    cancelDeletion: cancelDeletion, revertEmail: revertEmail, openRevert: openRevert, mount: mount, isAdmin: isAdmin,
+    welcome: { due: welcomeDue, maybe: maybeWelcome, open: openWelcome, close: closeWelcome, pref: welcomePref, EVERY: WELCOME_EVERY },
     addPasskey: notYet('addPasskey'), removePasskey: notYet('removePasskey'), renamePasskey: notYet('renamePasskey'),
     // signInWith, finishProviderSignIn, methods, linkProvider, unlinkMethod, providerSignOutNeeded, oauthReturn, oauthUI:
     // the provider block below (WP-O)

@@ -32,7 +32,7 @@ const ALLOW_FILES = {
   '49-calc-dfit-cal.js': 'DFIT helper', '49-calc-dfit-info.js': 'DFIT helper',
   '49-calc-dfit-synth.js': 'DFIT helper', '49-calc-dfit-triage.js': 'DFIT helper',
   '66-account.js': 'account client: wtsacct_ / wtspref_ device keys only (never synced)',
-  '67-cloud-sync.js': 'account client', '68-account-page.js': 'account client',
+  '67-cloud-sync.js': 'account client', '68-account-page.js': 'account client', '69-account-admin.js': 'account client (no storage writes)',
 };
 // Marked raw lines per file (`ls-raw:` on the line). Fallbacks run only when the host's WTS_lsSet / WTS_lsRemove is absent.
 const MARKED = {
