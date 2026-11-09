@@ -417,7 +417,8 @@ module.exports = [
       ['desander', 'surge2'].forEach((n) => { const r = X.checkShape('nodes.' + n, st.nodes[n], { strict: true }); assert.ok(r.ok, 'nodes.' + n + ': ' + r.errors.join('; ')); });
       assert.deepStrictEqual(Object.keys(st.nodes), FU.NODE_IDS, 'node order (desander 8, surge2 9, heaterChoke 10)');
       assert.strictEqual(st.segs.length, X.SEG_COUNT);
-      assert.deepStrictEqual(Object.keys(st.lines), X.LINE_NAMES, '20 line names');
+      assert.deepStrictEqual(Object.keys(st.lines).slice(0, X.LINE_NAMES.length), X.LINE_NAMES, '20 line names');
+      assert.deepStrictEqual(Object.keys(st.lines).slice(X.LINE_NAMES.length), X.LINES_342.slice(0, Object.keys(st.lines).length - X.LINE_NAMES.length), 'release 3.4.2 lines appended');
       Object.keys(X.LINES_NEW).forEach((k) => {
         const r = X.checkShape('line', st.lines[k], { strict: true }); assert.ok(r.ok, 'line ' + k + ': ' + r.errors.join('; '));
         assert.strictEqual(st.lines[k].unit, X.LINES_NEW[k].unit, k + ' unit'); assert.strictEqual(st.lines[k].phase, X.LINES_NEW[k].phase, k + ' phase');

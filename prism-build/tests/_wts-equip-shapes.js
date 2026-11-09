@@ -181,6 +181,8 @@ var HIST_KEYS = HIST_KEYS_V33.concat(HIST_KEYS_NEW);
 var HIST_KEYS_342 = ['surge2FracA', 'surge2FracB', 'qgLP', 'gor1', 'gor2'];
 // release 3.4.2 feature flags appended to WTS_sim.features (each true once its part has landed): T-202 twin, LP line, rig chain
 var FEATURES_342 = ['surge2Comps', 'lpFlare', 'rigChain'];
+// release 3.4.2 snapshot lines appended after LINE_NAMES (in this order): the LP flare line, the V-101-out stream to the surge tank
+var LINES_342 = ['lp_flare', 'sepby_surge'];
 var NULLABLE_NEW = ['desander.dump.lastT', 'surge2.tFull_s', 'surge2.transfer.trip'];
 var NODE_IDS_V33 = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge'];
 var NODE_IDS = NODE_IDS_V33.concat(['desander', 'surge2']);   // positional readers: desander = 8, surge2 = 9
@@ -606,7 +608,7 @@ module.exports = deepFreeze({
   ACT_ALARMS: ACT_ALARMS, LOG_TYPES: LOG_TYPES, LOG_EVENT_IDS_NEW: LOG_EVENT_IDS_NEW,
   FAULT_IDS_V33: FAULT_IDS_V33, FAULTS_NEW: FAULTS_NEW, FAULT_IDS: FAULT_IDS,
   LINE_NAMES_V33: LINE_NAMES_V33, LINES_NEW: LINES_NEW, LINE_NAMES: LINE_NAMES, LINE_FIELDS: LINE_FIELDS,
-  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS, HIST_KEYS_342: HIST_KEYS_342, FEATURES_342: FEATURES_342,
+  HIST_KEYS_V33: HIST_KEYS_V33, HIST_KEYS_NEW: HIST_KEYS_NEW, HIST_KEYS: HIST_KEYS, HIST_KEYS_342: HIST_KEYS_342, FEATURES_342: FEATURES_342, LINES_342: LINES_342,
   NULLABLE_NEW: NULLABLE_NEW, NODE_IDS_V33: NODE_IDS_V33, NODE_IDS: NODE_IDS, SEG_COUNT: SEG_COUNT,
   DEFAULTS_NEW: DEFAULTS_NEW, FLOW_SIM: FLOW_SIM, SAMPLE_FLOW_SIM: SAMPLE_FLOW_SIM,
   DUMP_PHASES: DUMP_PHASES, DUMP_CMDS: DUMP_CMDS, SURGE_ROUTES: SURGE_ROUTES, SURGE2_ROUTE_VALUES: SURGE2_ROUTE_VALUES, ENUMS: ENUMS,
