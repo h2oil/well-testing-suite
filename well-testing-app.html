@@ -156941,7 +156941,7 @@ function wtsPaint(C,rig){
         const stC=s=>s==='EXCEED'?'var(--red)':s==='WARNING'?'var(--yellow)':'var(--green)';
         const velTx=o=>`<span style="color:${stC(o.vSt)};font-weight:700">${uF(o.vel,'velocity',1,'ft/s')}</span> &middot; ${fmt(o.vPct,0)}% of ${uF(o.ve,'velocity',0,'ft/s')} &middot; Mach ${fmt(o.mach,3)} &middot; ${o.vSt}`;
         let b='<div class="rbox" style="margin-top:10px"><div class="rbox-title">LP flare line / tank gas (FT-201)</div>';
-        b+=rrow('Line',`${lp.nps}" SCH ${lp.sch} &middot; ${uF(lp.L,'length',0,'ft')} &middot; T-201 / T-202 PCV and PSV gas through FT-201 to the LP tip on FS-401`);
+        b+=rrow('Line',`${lp.nps}" SCH ${lp.sch} &middot; ${uF(lp.L,'length',0,'ft')} &middot; surge-tank PCV and PSV gas through FT-201 to the LP tip on FS-401`);
         if(sepOut)b+=rrow('GOR','V-101 out: no separator meter, GOR not measured');
         else{b+=rrow('GOR1 (separator)',uF(lp.gor1,'gor',0,'scf/STB'));b+=rrow('GOR2 (tank, PVT est.)',uF(lp.gor2,'gor',0,'scf/STB'));
             b+=rrow('Total GOR',uF(lp.gorTot,'gor',0,'scf/STB'));}
