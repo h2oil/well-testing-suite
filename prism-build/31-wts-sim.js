@@ -242,6 +242,13 @@ var SUCTIONS = ['A', 'B', 'both'];
 // the v3.3.1 line-up is { inlet:[true,true], suction:'both', auto:false, initFrac:[0.55,0.55] } (SURGE_LINEUP_V331)
 var SURGE_LINEUP_DEF = deepFreeze({ inlet: [true, false], suction: 'B', auto: true, initFrac: [0.35, 0.60] });
 var SURGE_LINEUP_V331 = deepFreeze({ inlet: [true, true], suction: 'both', auto: false, initFrac: [0.55, 0.55] });
+// Release 3.4.2 (code comments v1.7.0) one-line defaults; tests/_wts-lineup-pin.js patches each line for the identity pins:
+// SURGE2_COMP_DEF = T-202 compartments (2 = A | B like T-201; 1 = the single-compartment T-202 of v1.4.0 – v1.6.0), read at create;
+// SURGE_VENT_DEF = the surge-tank gas line ('lp' = own LP flare line through FT-201; {to:'hp'} = into the HP flare header, legacy);
+// RIG_ROUTING_DEF = the rig-up rules ('chain' = an item out sends its flow to the next item downstream; 'v341' = v3.4.1 exactly)
+var SURGE2_COMP_DEF = 2;
+var SURGE_VENT_DEF = deepFreeze({ to: 'lp', nps: 3, ID_in: 3.068, L_ft: 150, P0_psig: 0.2, tipDP_psi: 0.25, designFactor: 3, minDesignMscfd: 50, tauP_s: 1, bpAlarm_psig: null, velWarnFrac: 0.8, SG: null, meter: { tag: 'FT-201', type: 'usm', lowCut_fts: null, tau_s: 600 } });
+var RIG_ROUTING_DEF = 'chain';
 function surgeLineup(c) {                    // resolved line-up (a fresh object) from cfg.surge.lineup and the defaults
   var L = isPlainObj(c) && isPlainObj(c.surge) && isPlainObj(c.surge.lineup) ? c.surge.lineup : {}, D = SURGE_LINEUP_DEF;
   var inl = Array.isArray(L.inlet) && L.inlet.length === 2 ? [!!L.inlet[0], !!L.inlet[1]] : [D.inlet[0], D.inlet[1]];
