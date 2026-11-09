@@ -93,6 +93,14 @@ function acctFail(msg) {
     if (google > 1) acctFail('"Google" appears ' + google + ' times (the baseline is the one analytics sentence)');
 }
 
+// ── 0e. The public Privacy notice and Terms of Use pages (at the site root) are not in the iOS bundle:
+// the static links that survive the strips (sidebar footer, Terms of Use notice) point at the web addresses instead.
+{
+    const legalBefore = (html.match(/href="(privacy|terms)\.html/g) || []).length;
+    html = html.replace(/href="(privacy|terms)\.html/g, 'href="https://welltest.h2oil.co.uk/$1.html');
+    if (legalBefore) console.log(`[sync] Pointed ${legalBefore} Privacy / Terms links at welltest.h2oil.co.uk`);
+}
+
 // (The in-app Release Notes are engineering-only and identical on web and
 // iOS, so no release-note filtering is needed here.)
 

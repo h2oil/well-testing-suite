@@ -46,6 +46,10 @@
       };
       function gtag(cmd, name, params){
         if (cmd === 'event') {
+          // Consent (privacy.html §5): no event is queued before the analytics tag is loaded (window.__wtsGaLoaded, set by
+          // the consent block below only after Accept), so nothing from before Accept is handed to the tag afterwards, and
+          // dataLayer does not grow for a visitor who rejects or is signed in.
+          if (window.__wtsGaLoaded !== true) return;
           if (!/^[a-z][a-z0-9_]{0,39}$/.test(String(name))) return;
           return __gtagRaw('event', name, window.h2oilGaClean(params));
         }
@@ -55,25 +59,80 @@
       gtag('config', 'G-6QKCBNWHYB', { send_page_view: false });
     </script>
     <script>
-      // The analytics tag itself (async). docs/ACCOUNTS-PLAN.md H17: it is NOT loaded while the web account hint says
-      // signed in, or within 10 minutes of starting a provider sign-in (the return from the provider). No hint (every
-      // visitor without an account) = loaded exactly as before. __wtsGaLoaded tells the account client whether it ran.
+      // The analytics tag itself (async), loaded ONLY with the visitor's consent (privacy.html §5 / §11). Nothing from
+      // the analytics provider is fetched and no analytics cookie is set until the visitor accepts in the consent banner
+      // (the consent banner block right before the main script). The choice is a device preference, wtspref_analytics_consent =
+      // {choice: 'granted'|'denied', v, at}: never synced (67 skips wtspref_*), never in project files (29 PREF_RE), and
+      // asked again after 12 months or when v (= the Privacy notice version, WTS_PRIVACY_VERSION) changes.
+      // docs/ACCOUNTS-PLAN.md H17 still applies on top: the tag is NOT loaded while the web account hint says signed in,
+      // or within 10 minutes of starting a provider sign-in (the return from the provider), whatever the choice.
+      // __wtsGaLoaded tells the account client whether the tag ran; window.WTS_consent is the choice API.
       (function () {
-        var skip = false;
-        try {
-          var h = JSON.parse(window.localStorage.getItem('wtsacct_hint') || 'null');
-          if (h && typeof h === 'object') {
-            var age = (h.oauth && typeof h.oauth.at === 'number') ? Date.now() - h.oauth.at : -1;
-            if (h.signedIn === true || (age >= 0 && age < 600000)) skip = true;
-          }
-        } catch (e) { /* storage blocked: no hint */ }
-        window.__wtsGaLoaded = false;
-        if (skip) return;
-        window.__wtsGaLoaded = true;
-        var s = document.createElement('script');
-        s.async = true;
-        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB';
-        (document.head || document.documentElement).appendChild(s);
+        var ID = 'G-6QKCBNWHYB', KEY = 'wtspref_analytics_consent', VER = 1, MAX_AGE = 365 * 864e5;
+        var W = window, mem = null;
+        function store() { try { return W.localStorage || null; } catch (e) { return null; } }
+        function skipped() {
+          try {
+            var h = JSON.parse(store().getItem('wtsacct_hint') || 'null');
+            if (h && typeof h === 'object') {
+              var age = (h.oauth && typeof h.oauth.at === 'number') ? Date.now() - h.oauth.at : -1;
+              if (h.signedIn === true || (age >= 0 && age < 600000)) return true;
+            }
+          } catch (e) { /* storage blocked: no hint */ }
+          return false;
+        }
+        function read() {
+          var c = null;
+          try { c = JSON.parse(store().getItem(KEY) || 'null'); } catch (e) { c = null; }
+          if (!c || typeof c !== 'object' || c.v !== VER || typeof c.at !== 'number' || !(Date.now() - c.at < MAX_AGE)) return mem;
+          return (c.choice === 'granted' || c.choice === 'denied') ? c.choice : mem;
+        }
+        function load() {
+          W['ga-disable-' + ID] = false;          // first: Accept after a Reject in the same visit turns the tag back on
+          if (W.__wtsGaLoaded === true) return;
+          // drop any 'event' entry queued before consent (keep 'js' / 'config'), so the tag sends nothing from before Accept
+          try {
+            var q = W.dataLayer;
+            if (q && typeof q.length === 'number') for (var i = q.length - 1; i >= 0; i--) { if (q[i] && q[i][0] === 'event') q.splice(i, 1); }
+          } catch (e) { /* not an array */ }
+          W.__wtsGaLoaded = true;
+          var s = document.createElement('script');
+          s.async = true;
+          s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB';
+          (document.head || document.documentElement).appendChild(s);
+        }
+        function clearCookies() {
+          try {
+            var names = String(document.cookie || '').split(';').map(function (c) { return c.split('=')[0].replace(/^\s+|\s+$/g, ''); })
+              .filter(function (n) { return /^_ga(_|$)/.test(n); });
+            var host = String(location.hostname || ''), parts = host.split('.'), doms = [''];
+            for (var i = 0; i < parts.length - 1; i++) doms.push('; domain=.' + parts.slice(i).join('.'));
+            names.forEach(function (n) {
+              doms.forEach(function (d) { document.cookie = n + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/' + d; });
+            });
+          } catch (e) { /* no cookie access */ }
+        }
+        var api = W.WTS_consent = {
+          key: KEY, version: VER,
+          choice: read,                 // 'granted' | 'denied' | null (not asked yet, expired or an older notice version)
+          skipped: skipped,             // H17: signed in (or returning from a provider) → no tag and no banner
+          set: function (choice) {
+            if (choice !== 'granted' && choice !== 'denied') return;
+            mem = choice;
+            try { store().setItem(KEY, JSON.stringify({ choice: choice, v: VER, at: Date.now() })); } catch (e) { /* this visit only */ }   // ls-raw: consent device pref, written in <head> before WTS_lsSet exists; never synced
+            if (choice === 'granted') { if (!skipped()) load(); }
+            else { W['ga-disable-' + ID] = true; clearCookies(); }
+            try { api.hide(); } catch (e) { /* banner not mounted */ }
+            try { W.dispatchEvent(new CustomEvent('wts:consent-changed', { detail: { choice: choice } })); } catch (e) { /* old browser */ }
+          },
+          open: function () { /* replaced by the banner block */ },
+          hide: function () { /* replaced by the banner block */ }
+        };
+        W.__wtsGaLoaded = false;
+        if (skipped()) return;
+        var c = read();
+        if (c === 'granted') load();
+        else if (c === 'denied') W['ga-disable-' + ID] = true;
       })();
     </script>
     <!-- GA:END -->
@@ -338,6 +397,15 @@
             font-size: 11px; color: var(--text3);
         }
         .sidebar-footer strong { color: var(--text2); font-weight: 600; display: block; margin-bottom: 2px; }
+        /* Terms of Use notice (terms.html §2): once per terms version on this device, web and iOS; inline, never blocks. */
+        .wts-terms-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 12px; padding: 8px 12px;
+            background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px;
+            font-size: 12px; line-height: 1.5; color: var(--text2); }
+        .wts-terms-note[hidden] { display: none; }
+        .wts-terms-note p { margin: 0; flex: 1 1 260px; }
+        .wts-terms-note a { color: var(--blue, #58a6ff); }
+        .wts-terms-note button { min-height: 30px; padding: 4px 14px; font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px;
+            border: 1px solid var(--border-light, var(--border)); background: var(--bg3); color: var(--text); }
         /* Hamburger (hidden on desktop) */
         .mob-header { display: none; }
         .sidebar-overlay { display: none; }
@@ -830,6 +898,7 @@
 
     <!-- Main -->
     <div class="main" role="main">
+        <div id="wtsTermsNote" class="wts-terms-note" role="region" aria-label="Terms of Use" hidden><p>By continuing to use the Well Testing Suite you accept the <a href="terms.html" id="wtsTermsNoteLink" target="_blank" rel="noopener">Terms of Use</a>. Results are aids to engineering judgement: check them, and have a competent person approve any operational decision.</p><button type="button" id="wtsTermsNoteOk">OK</button></div>
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div class="pg-head"><!--help-host-patch:H3--><div><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div><button type="button" id="pgHelpBtn" class="pg-help" aria-label="Help for this page" title="Help for this page (F1)" hidden>?</button></div>
           <div class="page-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
@@ -856,6 +925,58 @@
         <div class="page-body" id="pgBody"></div>
     </div>
 
+<!-- GA:START — analytics consent banner (web only; stripped from the iOS bundle by ios-app/scripts/sync-from-main.js;
+     placed right before the main script: the skip link stays first in <body>, and the main script still ends the body,
+     where sync-from-main.js injects the iOS bridge).
+     Shown while no valid choice is stored (window.WTS_consent, head GA block) and the visitor is not signed in (H17).
+     Accept and Reject are equal; no backdrop, the app stays usable; Privacy → Cookie settings reopens it. -->
+<style>
+    .wts-consent { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 9000; max-width: 640px; margin: 0 auto;
+        background: var(--bg2, #161b22); color: var(--text, #e6edf3); border: 1px solid var(--border-light, #3d444d);
+        border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.45); padding: 14px 16px; font-size: 13px; line-height: 1.55; }
+    .wts-consent[hidden] { display: none; }
+    .wts-consent h2 { font-size: 14px; margin: 0 0 4px; color: var(--text, #e6edf3); }
+    .wts-consent p { margin: 0; color: var(--text2, #8b949e); }
+    .wts-consent a { color: var(--blue, #58a6ff); }
+    .wts-consent-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .wts-consent-btns button { flex: 1 1 120px; min-height: 36px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer;
+        border-radius: 6px; border: 1px solid var(--border-light, #3d444d); background: var(--bg4, #21262d); color: var(--text, #e6edf3); }
+    .wts-consent-btns button:hover { background: var(--bg3, #1c2128); }
+    .wts-consent-btns button:focus-visible, .wts-consent a:focus-visible { outline: 2px solid var(--focus, #58a6ff); outline-offset: 2px; }
+    @media (max-width: 480px) { .wts-consent { left: 8px; right: 8px; bottom: 8px; padding: 12px; } }
+</style>
+<div id="wtsConsent" class="wts-consent" role="region" aria-labelledby="wtsConsentTitle" hidden>
+    <h2 id="wtsConsentTitle">Analytics cookies</h2>
+    <p id="wtsConsentText">May we use Google Analytics cookies to count how the app is used? They never carry your inputs, results, client or well names. Nothing is loaded unless you accept, and every feature works either way. You can change your choice at any time under Privacy &rarr; Cookie settings. <a href="privacy.html#cookies" target="_blank" rel="noopener">Privacy notice</a></p>
+    <div class="wts-consent-btns">
+        <button type="button" id="wtsConsentAccept">Accept</button>
+        <button type="button" id="wtsConsentReject">Reject</button>
+    </div>
+</div>
+<script>
+(function () {
+    var el = document.getElementById('wtsConsent'), api = window.WTS_consent;
+    if (!el || !api) return;
+    var back = null;
+    api.open = function () {
+        back = document.activeElement;
+        el.hidden = false;
+        try { document.getElementById('wtsConsentAccept').focus(); } catch (e) { /* not focusable */ }
+    };
+    api.hide = function () {
+        var had = el.contains(document.activeElement);
+        el.hidden = true;
+        if (had && back && back.focus && document.contains(back)) { try { back.focus(); } catch (e) { /* gone */ } }
+        back = null;
+    };
+    document.getElementById('wtsConsentAccept').addEventListener('click', function () { api.set('granted'); });
+    document.getElementById('wtsConsentReject').addEventListener('click', function () { api.set('denied'); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); api.hide(); } });
+    // first visit, expired or an older notice version → ask (not while signed in: the tag is never loaded then)
+    if (!api.choice() && !api.skipped()) el.hidden = false;
+})();
+</script>
+<!-- GA:END -->
 <script>
 /* ══════════════════════════════════════════════
    WELL TESTING SUITE — Pure Vanilla JS
@@ -1858,6 +1979,23 @@ let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => { if(b.dataset.p) nav(b.dataset.p); else if(b.dataset.hub) __hubOpen(b.dataset.hub); }));
 { const pl = $('sbPrivacyLink'); if(pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); }); }
+// Terms of Use notice (terms.html §2, web and iOS): shown until OK is pressed for the current terms version, then remembered as
+// the device preference wtspref_terms_seen = {v, at} (never synced: 67 skips wtspref_*; not a project key). Non-blocking.
+// WTS_TERMS_VERSION (server default "1") and terms.html "version 1" change together with TERMS_NOTE_V.
+const TERMS_NOTE_V = 1;
+{
+    const tn = $('wtsTermsNote');
+    let seen = null;
+    try { seen = JSON.parse(localStorage.getItem('wtspref_terms_seen') || 'null'); } catch(_) { seen = null; }
+    if(tn && !(seen && typeof seen === 'object' && seen.v === TERMS_NOTE_V)) {
+        tn.hidden = false;
+        const ok = $('wtsTermsNoteOk');
+        if(ok && typeof ok.addEventListener === 'function') ok.addEventListener('click', () => {
+            WTS_lsSet('wtspref_terms_seen', JSON.stringify({ v: TERMS_NOTE_V, at: Date.now() }));
+            tn.hidden = true;
+        });
+    }
+}
 { const rn = $('sbReleaseNotes'); if(rn && typeof rn.addEventListener === 'function') rn.addEventListener('click', ev => { ev.preventDefault(); nav('releasenotes'); }); }
 { const hb = $('sbHelp'); if(hb && typeof hb.addEventListener === 'function') hb.addEventListener('click', ev => { ev.preventDefault(); nav('help'); }); }   /* help-host-patch:H2 */
 // Hub tab strip: a tab opens that member's own route (←/→ via the a11y layer's tab handling).
@@ -2842,6 +2980,8 @@ function buildReportCoverHTML(title, subtitle) {
 }
 
 // Build the full standalone HTML document for a printable report
+// Engineering disclaimer on every PDF / PNG / job report (terms.html §4): it protects without depending on contract formation.
+const REPORT_DISCLAIMER = 'Results are engineering estimates based on the inputs and correlations shown, and aids to engineering judgement, not a substitute for it. Verify against applicable codes, standards and site procedures, and have a competent person approve them before operational use. Terms of Use: welltest.h2oil.co.uk/terms.html';
 function buildReportHTML(title, contentHTML, subtitle) {
     const ci = getClientInfo();
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_rEsc(title)}</title>
@@ -2918,7 +3058,7 @@ function buildReportHTML(title, contentHTML, subtitle) {
     ${contentHTML}
     <footer class="rp-foot"><span>${_rEsc(ci.company||'H2Oil Engineering')} · H2Oil Well Testing Suite</span>
       <span>Generated ${_rEsc(_reportDate())}${ci.engineer?' by '+_rEsc(ci.engineer):''}</span></footer>
-    <div class="rp-disc">Results are engineering estimates based on the inputs and correlations shown. Verify against applicable codes, standards and site procedures before operational use.</div>
+    <div class="rp-disc">${_rEsc(REPORT_DISCLAIMER)}</div>
     </body></html>`;
 }
 
@@ -3257,8 +3397,8 @@ window.exportPagePNG = async function() {
     text((ci.company || 'H2Oil Engineering') + ' · H2Oil Well Testing Suite', M, y, font(11), C.faint);
     text('Generated ' + model.date + (ci.engineer ? ' by ' + ci.engineer : ''), M + IW, y, font(11), C.faint, 'right');
     y += 18;
-    text(fit('Results are engineering estimates based on the inputs and correlations shown. Verify against applicable codes, standards and site procedures before operational use.', font(10), IW), M, y, font(10), '#8c959f');
-    y += 16 + M;
+    wrap(REPORT_DISCLAIMER, font(10), IW, 3).forEach(ln => { text(ln, M, y, font(10), '#8c959f'); y += 14; });
+    y += 2 + M;
 
     // Scale for sharpness but stay inside mobile canvas limits (~16.7 MP on iOS).
     const H = Math.ceil(y);
@@ -11545,7 +11685,7 @@ function renderReleaseNotes(body){
     body.innerHTML = '<style>' + RN_STYLE + '</style>' +
         '<div class="rn-wrap">' +
             '<div class="rn-top">' +
-                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a></div>' +
+                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a> · <a href="' + (window.isIOSApp ? 'https://welltest.h2oil.co.uk/' : '') + 'terms.html" target="_blank" rel="noopener" id="rnTermsLink" style="color:var(--text2)">Terms of Use</a></div>' +
                 '<div class="rn-filters" role="group" aria-label="Filter by category">' + filters + '</div>' +
             '</div>' +
             '<div class="rn-tl">' + releases + '</div>' +
@@ -11725,10 +11865,24 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17 / consent: the tag may be skipped while gtag is defined
+    // Consent banner (web only, GA blocks): the choice API exists only in the web build; the iOS build never has it.
+    const consent = (!ios && window.WTS_consent && typeof window.WTS_consent.choice === 'function') ? window.WTS_consent : null;
+    let choice = null;
+    try { choice = consent ? consent.choice() : null; } catch (e) { choice = null; }
+    let paused = false;
+    try { paused = !!(consent && consent.skipped()); } catch (e) { paused = false; }
     const build = ios ? 'iOS app — no analytics code is included in this build.'
-        : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
+        : (paused && !gaOn) ? 'Web version — analytics are paused while you are signed in, so nothing is sent.'
+        : gaOn ? 'Web version — usage analytics are active (a random identifier in a cookie, no account or input data; see below).'
+        : (consent && choice === 'denied') ? 'Web version — you turned analytics off, so analytics are not loaded and nothing is sent.'
+        : (consent && !choice) ? 'Web version — analytics are not loaded until you accept them, so nothing is sent.'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
+    // The full public Privacy notice and Terms of Use (privacy.html / terms.html at the site root). The iOS bundle does not
+    // carry them, so the app links to the web addresses.
+    const legalBase = ios ? 'https://welltest.h2oil.co.uk/' : '';
+    const legalLinks = 'The full <a href="' + legalBase + 'privacy.html" target="_blank" rel="noopener" id="privacy_full_link">Privacy notice</a> and the ' +
+        '<a href="' + legalBase + 'terms.html" target="_blank" rel="noopener" id="privacy_terms_link">Terms of Use</a> (open in a new tab) give the complete details: who we are, legal bases, cookies, retention, your rights and how to complain.';
     const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
         a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
     // H11 (docs/ACCOUNTS-PLAN.md §8.6): web / iOS branches. The web-only text (banner, account and sign-in cards) is inside
@@ -11744,11 +11898,11 @@ function renderPrivacy(body){
                 noAccounts: 'Accounts are optional (web version only): without one there is no sign-in and no H2Oil server receives your inputs, results or files.',
                 cards: '<div class="card" id="privacy_accounts"><div class="card-title">Accounts and cloud projects (web version, optional)</div>' +
                     '<p style="font-size:13px;color:var(--text2);line-height:1.65">You can use the Well Testing Suite without an account: everything then stays in this browser on this device, as before. ' +
-                    'If you create an account, the projects you save to the cloud — page inputs, PRiSM analyses, wells, build-up surveillance data, report snapshots and templates, your curve and preset library, and, only if you turn them on, historian backups and live-data connection settings — are stored in our cloud database in the UK / EU, encrypted at rest with a key for your account. ' +
-                    'We store your e-mail address (and a recovery address if you add one), the public keys of any passkeys you add (never a password), the identifier and the e-mail address that Google or LinkedIn gave when you linked it (if you use them), the devices you sign in on and a security log (shortened IP address, browser type) for 12 months, which we keep to protect your account. ' +
+                    'If you create an account, the projects you save to the cloud — page inputs, PRiSM analyses, wells, build-up surveillance data, report snapshots and templates — and your curve and preset library are stored in our cloud database in the UK / EU, encrypted at rest with a key for your account. ' +
+                    'We store your e-mail address (and a recovery address if you add one; there is never a password), the identifier and the e-mail address that Google or LinkedIn gave when you linked it (if you use them), the devices you sign in on and a security log (shortened IP address, browser type) for 12 months, which we keep to protect your account. ' +
                     'We do not load the analytics tag while you are signed in. We never use your project data for analytics, advertising or training, and we do not share it. ' +
                     'You can export everything or delete your account at any time from Account; a deletion can be cancelled for 7 days, then removes your data from our live systems, and from backups within 30 days after that. ' +
-                    'Data on your devices stays until you clear it. If you store data for your employer or a client, a data processing agreement is available. The iOS app has no accounts and keeps everything on your device. ' +
+                    'Data on your devices stays until you clear it. If you store data for your employer or a client, we will agree a data processing agreement with them on request. The iOS app has no accounts and keeps everything on your device. ' +
                     'Questions and data requests: software@h2oil.co.uk.</p></div>' +
                     '<div class="card" id="privacy_providers"><div class="card-title">Signing in with Google or LinkedIn (web version, optional)</div>' +
                     '<p style="font-size:13px;color:var(--text2);line-height:1.65">If you choose <em>Sign in with Google</em>, Google sends us an identifier for your Google account, your e-mail address and whether Google has verified it; we ask for nothing else. ' +
@@ -11774,18 +11928,20 @@ function renderPrivacy(body){
         'Project files (<code>.h2oilproj</code> / <code>.prism</code>), PDF, PNG and CSV exports are created only when you choose to save or share them, and go only where you put them.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Analytics (web version only)</div>' + li([
-        'The web version uses Google Analytics 4 to count anonymous usage: page / module views, time spent on a module, and generic events such as “calculate clicked”, “export as PDF” or “PRiSM tab opened”.',
+        'The web version uses Google Analytics 4 to count usage (a random identifier in a cookie; no account or input data): page / module views, time spent on a module, and generic events such as “calculate clicked”, “export as PDF” or “PRiSM tab opened”.',
         'Events carry only page / route names, fixed button or model names and a few UI counters (tab number, scroll depth, seconds on a page).',
         'An allow-list filter inside the tracker drops everything else before it is sent: no input values, no client or well names, no file contents, no results or other numbers from your data, and no search or copied text.',
         'Blocking analytics (for example with a content blocker) does not affect any feature.'
-      ]) + '</div>' +
+      ].concat(consent ? ['Analytics run only if you accept them in the cookie banner; until then nothing is loaded or sent. Your choice is kept on this device for 12 months. ' +
+        '<a href="#" id="privacy_cookie_settings">Cookie settings</a> — change your choice at any time (currently: ' +
+        (choice === 'granted' ? 'accepted' : choice === 'denied' ? 'rejected' : 'not chosen') + ').'] : [])) + '</div>' +
       '<div class="card"><div class="card-title">iOS app</div>' + li([
         'The analytics code is removed from the iOS bundle when it is built from the web version (<code>ios-app/scripts/sync-from-main.js</code> strips every <code>GA:START … GA:END</code> block), so the app sends no analytics at all.',
         'The 3D engine and the PDF libraries are bundled inside the app, so they work offline.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Other network requests</div>' + li([
-        'Some optional features download a public code library the first time they are used: the 3D engine for the Well Test Simulator and Mini WellOS, the historian database engine (SQLite) and the spreadsheet library for .xlsx import/export (web version).',
-        'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; the 3D engine is checked against a pinned SHA-384 hash before it is used.'
+        'Some optional features use a public code library: the 3D engine for the Well Test Simulator and Mini WellOS, the historian database engine (SQLite) and the spreadsheet library for .xlsx import/export. The web version downloads them in the background when you first open the app (so they also work offline), or when a feature first needs one.',
+        'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; every library is checked against its pinned SHA-384 hash before it is used.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Live data (Modbus) and the historian</div>' + li([
         'Modbus connects only to the devices you configure. On the web it goes through a bridge program you run yourself on your own network (bound to this computer by default); in the iOS app it connects directly on your local network, after iOS asks for Local Network permission.',
@@ -11795,12 +11951,22 @@ function renderPrivacy(body){
       '<div class="card"><div class="card-title">Open-source components</div>' + li([
         'three.js (MIT) — 3D views; jsPDF and html2canvas (MIT) — PDF / PNG export; SheetJS Community Edition (Apache-2.0) — Excel import/export.',
         'SQLite (public domain) with the official SQLite WebAssembly build (@sqlite.org/sqlite-wasm, Apache-2.0) and sql.js (MIT), both built with Emscripten (MIT) — historian database.',
-        'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them (the spreadsheet library excepted); the iOS app bundles them.'
+        'The web version loads the 3D, spreadsheet and historian libraries from a public content-delivery network and checks each against its pinned SHA-384 hash before running it; the iOS app uses the copies built into the app.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Contact</div>' +
-        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:6px">' + legalLinks + '</p></div>' +
     '</div>';
+    const cs = body.querySelector('#privacy_cookie_settings');
+    if (cs && consent) cs.addEventListener('click', ev => { ev.preventDefault(); try { consent.open(); } catch (e) { /* banner not mounted */ } });
 }
+// A choice made in the banner (also when opened from Cookie settings) re-renders an open Privacy page, so "This build" and
+// "currently: …" follow it. One module-level listener; the event exists only on the web (head GA block).
+try {
+    if (typeof window.addEventListener === 'function') window.addEventListener('wts:consent-changed', () => {
+        try { if (page === 'privacy') { const b = $('pgBody'); if (b) renderPrivacy(b); } } catch (e) { /* page not ready */ }
+    });
+} catch (e) { /* no window events */ }
 
 
 // ══════════════════════════════════════════════════════════════
@@ -116279,11 +116445,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
     "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
-    "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
+    "privacy": "view-d 1280 800 954ea29b,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 e53e176d,view-p 780 1688 9f485086",
+    "releasenotes": "view-d 1280 800 3914aecd,view-p 780 1688 ccf0f404",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 143a6d68,fs-1-rigup-d 982 525 1bfdebef,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -116304,7 +116470,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7984432;   // total size of the image files (the offline download label)
+  M.bytes = 7988068;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -116687,18 +116853,18 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '1105b5be', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
 steps: [{ t: 'Select **Privacy** in **Overview**, or the privacy line under the sidebar.', shot: 'view' },
 { t: 'Read **Where your data is stored** ① and **Other network requests**.' },
-{ t: 'Save a project file to keep a copy of your work.' }],
-outputs: [{ label: 'This build', text: 'Says whether usage analytics are active. The web version counts anonymous usage (page views, time on a page and generic button events). No input values, names, files or results are sent. The iOS app sends none.' }],
+{ t: 'On the web, the Cookie settings link changes your analytics choice.' }],
+outputs: [{ label: 'This build', text: 'Says whether analytics are active. The web runs them only if you accept (a cookie identifier, page views, time on a page, button events); no inputs, names, files or results. The iOS app has none.' }],
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'b8c6ebd2', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -153369,12 +153535,12 @@ G.WTS_modbusBridgeSetup = {
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I accept the Terms of Use (version ' + esc(dlg.consent.terms) + ') and have read the Privacy notice (version ' + esc(dlg.consent.privacy) + ').</label>' +
+      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I am 18 or over. I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
       '<p class="acct-note">Your projects are stored encrypted in the UK / EU. You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
     $('acct_create').addEventListener('click', function () {
-      if (!$('acct_consent_ok').checked) { message('Please tick the box to accept the Terms of Use and the Privacy notice.', 'err'); return; }
+      if (!$('acct_consent_ok').checked) { message('Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.', 'err'); return; }
       verifyCode(dlg.consent);
     });
     $('acct_consent_cancel').addEventListener('click', function () { closeDialog(true); });
@@ -154222,10 +154388,14 @@ G.WTS_modbusBridgeSetup = {
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
         var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
         show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
-          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', {}, [el('span', { text: ' I am 18 or over. I accept the ' }),
+            el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
+            el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
+            el('a', { href: 'privacy.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_privacy_link', text: 'Privacy notice' }),
+            el('span', { text: ' (version ' + j.privacy + ').' })])]),
           cerr,
           btn('acct_oauth_create', 'Create account', true, function () {
-            if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }
+            if (!tick.checked) { cerr.textContent = 'Please tick the box to confirm you are 18 or over and accept the Terms of Use and the Privacy notice.'; return; }
             drive(p, { consent: c }, oa);
           }),
           btn('acct_oauth_cancel', 'Cancel', false, function () { dropOauth(); closeDialog(); })]);

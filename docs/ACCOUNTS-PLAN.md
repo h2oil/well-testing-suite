@@ -9,8 +9,9 @@ e-mail-code send limits are hard **per address AND client range** (5/h, 20/day; 
 codes are limited per session, wrong codes count toward the 1-hour pause only while a code is live and only for that range
 (migration `050-code-scope.sql`), and provider address codes obey the same limits and the sign-up switch; `WTS_MIN_CLIENT` is
 unset by default (no 426 gate until a security fix needs one); the iOS section-11 CSS is a recorded exception (§9).
-Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — the consent tick names
-the versions but links to no text yet), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
+Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — draft `privacy.html` and
+`terms.html` at the site root since 2026-11-09, linked from both consent ticks and the in-app Privacy page; company placeholders
+and lawyer review still open), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
 (security review, invite beta, CSP enforce, RELEASE_NOTES 3.5 entry).
 (2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
 `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
@@ -1315,6 +1316,29 @@ Privacy page and contains neither "Sign in", "account" wording nor a provider na
 `user-guide.html` and copied to `www/help`). Any web-only sentence in the host "Where your data is" text (~l.104102) goes inside
 ACCT markers. Also `privacy-analytics.test.js:297` and the `sw.js` header comment. Terms of Use are a new owner document linked
 from the consent step.
+**Legal texts (2026-11-09, drafts for review by a qualified lawyer, not legal advice):** `privacy.html` (Privacy notice
+version 1) and `terms.html` (Terms of Use version 1) at the repository root, static (no script, no external request), published
+by the `publish-site.js` allow-list at `https://welltest.h2oil.co.uk/privacy.html` and `/terms.html` (the URLs for the Google
+consent screen, the LinkedIn app form and the iOS store listing). The operator is a company licensed in Dubai (UAE); its name,
+licence, licensing authority and address are placeholders. The consent ticks of 66 link both pages; the in-app Privacy page and
+the Release Notes meta line link them (the iOS app uses the absolute web URLs; `sync-from-main.js` does not copy them).
+**Versions:** the server's `WTS_TERMS_VERSION` and `WTS_PRIVACY_VERSION` stay at their default `1`, matching the pages. When a
+page's version changes, set the matching variable to the same value in the same release (users are then asked to accept again at
+sign-in); a new Privacy notice version also bumps `VER` of the analytics consent (`WTS_consent.version`, head GA block of
+`well-testing-app.html`), so the banner asks again.
+**Analytics consent (web only, 2026-11-09):** the analytics tag loads only after Accept in the consent banner (GA block at the
+`<body>` right before the main script, stripped from iOS; the skip link stays first in `<body>` and the main script must stay
+last before `</body>`, the iOS bridge anchor); the choice is the device preference `wtspref_analytics_consent` `{choice, v, at}` (never
+synced — 67 skips `wtspref_*`; never in project files — 29 `PREF_RE`), re-asked after 12 months or a new `v`; H17 still applies
+(no tag and no banner while signed in). Privacy → Cookie settings reopens the banner. No analytics event is queued before Accept
+(the head gtag wrapper drops events while `__wtsGaLoaded` is not true, and Accept removes any queued event), so nothing from
+before the choice is sent. **Ship the banner and the two pages as their own web release now, not with v4.0** (review 2026-11-09:
+the tag loading for every visitor without consent breaks the ePrivacy rules for EU visitors; if that release cannot go out, remove
+the analytics tag from the live site until it can). **Terms of Use notice (web and iOS):** `#wtsTermsNote` above the page header,
+shown until OK per terms version (`wtspref_terms_seen` {v, at}, device preference; `TERMS_NOTE_V` = `WTS_TERMS_VERSION`); the
+sidebar footer has static Privacy notice / Terms of Use links (brand verification needs them on the home page; `sync-from-main.js`
+points every relative privacy / terms link at the web address in the iOS bundle); PDF / PNG / job reports carry
+`REPORT_DISCLAIMER` (aids to judgement, competent person, the terms address).
 
 ### 8.7 Storage-to-HTML sink audit (WP-H, M)
 Sync applies content on other devices with no Open by the user, so a value that reaches `innerHTML` / `insertAdjacentHTML`
