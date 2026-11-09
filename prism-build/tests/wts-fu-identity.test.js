@@ -419,7 +419,9 @@ module.exports = [
         assert.strictEqual(D.sep.bypass.P_flare_psig, D.sep.pcv.P2_psig, 'burner / flare line inlet = the PCV outlet setting (identity, D3)');
         assert.strictEqual(D.sep.bypass.P_flare_psig, X.DEFAULTS_NEW.sepBypass.P_flare_psig);
         const f = J(B.features);
-        assert.deepStrictEqual(Object.keys(f).sort(), Object.keys(X.FEATURES).sort(), 'features keys');
+        // release 3.4.2 appends its own flags (tests/_wts-equip-shapes.js FEATURES_342) after the v1.5.0 ones
+        const f342 = require('./_wts-equip-shapes.js').FEATURES_342;
+        assert.deepStrictEqual(Object.keys(f).filter((k) => f342.indexOf(k) < 0).sort(), Object.keys(X.FEATURES).sort(), 'features keys');
         assert.ok(f.heaterChoke === f.bypassDest && f.bypassDest === f.cushion, 'features all equal (D14): ' + JSON.stringify(f));
         assert.ok(f.bypassDest === true, 'features set by this build');
       }

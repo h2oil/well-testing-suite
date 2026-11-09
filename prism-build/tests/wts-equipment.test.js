@@ -438,6 +438,7 @@ module.exports = [
       // controls (§6.9, exact JSON key order) and the API stubs of WP-E1 / WP-E2
       // v1.6.0: the T-201 default line-up changed (XV-201A open, XV-201B shut, suction B, auto-divert on); the rest is the v3.3.1 contract
       const CD = J(X.CONTROLS_DEFAULT); CD.surge.inlet = [true, false]; CD.surge.suction = 'B'; CD.surge.auto = true;
+      CD.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 3.4.2: the dual T-202 line-up (A fills, B on LCV-202, auto-divert on)
       assert.strictEqual(JSON.stringify(sim.getControls()), JSON.stringify(CD), 'getControls default');
       assert.ok(X.checkShape('controls', J(sim.getControls()), { strict: true }).ok);
       X.API_INSTANCE_NEW.forEach((k) => assert.strictEqual(typeof sim[k], 'function', 'api ' + k));
@@ -447,10 +448,13 @@ module.exports = [
       // v3.3 prefs (no surge2 / desander keys) keep the defaults; new keys are read and clamped
       const s2 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));
       s2.setControls(app.toWin({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }), app.toWin({ initial: true }));
-      assert.strictEqual(JSON.stringify(s2.getControls()), X.CONTROLS_DEFAULT_JSON, 'v3.3 prefs');
+      const CD0 = J(X.CONTROLS_DEFAULT); CD0.surge2.comp = J(X.CONTROLS_SURGE2_COMP_DUAL);   // release 3.4.2: unpinned engine = dual T-202
+      assert.strictEqual(JSON.stringify(s2.getControls()), JSON.stringify(CD0), 'v3.3 prefs');
       s2.setControls(app.toWin({ surge2: { inlet: true, auto: true, sp: 0.75, hyst: 9, strokeS: 99 }, desander: { bypass: true, auto: true, sp: 0.1 } }), app.toWin({ initial: true }));
       const c2 = J(s2.getControls());
-      assert.deepStrictEqual(c2.surge2, { inlet: true, auto: true, sp: 0.75, hyst: 0.5, strokeS: 60 }, 'surge2 controls read + clamped');
+      // release 3.4.2: an old boolean inlet:true opens the T-202 fill line-up (XV-202A) and the comp block is appended
+      assert.deepStrictEqual(c2.surge2, { inlet: true, auto: true, sp: 0.75, hyst: 0.5, strokeS: 60,
+        comp: Object.assign(J(X.CONTROLS_SURGE2_COMP_DUAL), { inlet: [true, false] }) }, 'surge2 controls read + clamped');
       assert.deepStrictEqual(c2.desander, { bypass: true, auto: true, sp: 0.5 }, 'desander controls read + clamped (sp 0.5–0.95)');
       // flow.sim values are clamped to the §6.3 ranges (1e400 = Infinity never gets through)
       const f = S.flowFromInputs(app.toWin({}), app.toWin({ sand_pptb: 1e400, sand_lbmmscf: -5, sand_d50_um: 5, desRating_psi: 7000, desAcc_gal: 1e9, sithp_psig: 50, surge2Cap_bbl: 1000 }));

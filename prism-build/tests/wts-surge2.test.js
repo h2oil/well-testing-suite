@@ -548,6 +548,7 @@ module.exports = [
       a.setControls({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }, { initial: true });
       assert.strictEqual(JSON.stringify(a.getControls()), X.CONTROLS_DEFAULT_JSON, 'v3.3 prefs');
       const c = J(a.getControls()); c.surge2.inlet = true; c.surge2.strokeS = 4;
+      c.surge2.comp.inlet = [true, false];   // release 3.4.2: the appended command array, consistent with the derived inlet
       const b = mk();
       b.setControls(c, { initial: true });
       let s = st(b);
