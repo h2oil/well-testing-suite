@@ -348,7 +348,8 @@ const SECTION_B = (G /*, src */) => {
       const ids = VP.map(v => v[0]).sort().join(',');
       // v1.2.0: + XV-202 (valve:surge2:0), XV-103 (dump:desander), HV-104 (bypass:desander); the six v3.3 targets are tappable with both items out
       // v1.4.0: + the CK-101 legs (ckleg:adj / ckleg:fixed, always tappable); v1.5.0: two boxes per leg (one per side of its L)
-      if (ids !== 'bypass:desander,ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      // v1.5.0 (T-202 twin): + XV-202B (valve:surge2:1), SV-202A / SV-202B (suction:surge2:0 / 1)
+      if (ids !== 'bypass:desander,ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,dump:desander,suction:surge2:0,suction:surge2:1,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge2:1,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
       const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
       if (def !== 'ckleg:adj,ckleg:adj,ckleg:fixed,ckleg:fixed,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
       // XV-201B (v1.4.0) sits on B's side nozzle (+X side, same height as XV-201A on A's −X nozzle)
@@ -981,6 +982,67 @@ const SECTION_B = (G /*, src */) => {
           const bad = [];
           [{ desander: true }, { heaterChoke: true }, { desander: true, heaterChoke: true }].forEach(rig => { const c = I.clearanceCheck(rig, 0.05); if (c.length) bad.push(J(rig) + ' ' + c.slice(0, 3).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
           return bad.length === 0 || bad.join(' | ');
+        }],
+      ];
+    })(),
+    // ── v1.5.0 (3.4.2): T-202 twin of T-201 (baffle, A | B caps, XV-202A / XV-202B, SV-202A / SV-202B on the LCV-202 suction) ──
+    ...(() => {
+      const J = x => JSON.stringify(x), route = id => I.ROUTES.filter(r => r.id === id)[0];
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const near = (p, q, e) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < (e || 0.02);
+      return [
+        ['32 v1.5.0 T-202 twin: normalize maps comps A | B (frac, fracW, inlet, suction, pos, moving, hold, fill), suction, divert; an older single-tank snapshot shows both halves at the tank level', () => {
+          const bad = [], fk = I.fakeSnapshot(9000, { surge2: true }), n = I.normalize(fk, I.makeNorm());
+          if (!(n.surge2.n === 2 && n.surge2.comps[0].frac === fk.surge2.comps[0].frac && n.surge2.comps[1].frac === fk.surge2.comps[1].frac && n.surge2.comps[0].inlet === true &&
+            n.surge2.comps[1].inlet === false && n.surge2.comps[1].suction === true && n.surge2.comps[0].suction === false && n.surge2.suction === 'B' && n.surge2.divertOn === true &&
+            n.surge2.comps[0].fill === fk.surge2.comps[0].fill_bpd)) bad.push('dual ' + J(n.surge2.comps));
+          const mean = (fk.surge2.comps[0].frac + fk.surge2.comps[1].frac) / 2; if (Math.abs(mean - fk.surge2.frac) > 1e-9) bad.push('fake halves do not average to the tank');
+          const old = JSON.parse(J(fk)); delete old.surge2.comps; delete old.surge2.compartments; delete old.surge2.suction; delete old.surge2.divert;
+          const no = I.normalize(old, I.makeNorm());
+          if (!(no.surge2.n === 1 && no.surge2.comps.every(c => c.frac === no.surge2.frac && c.inlet === no.surge2.inlet && c.pos === no.surge2.pos) && no.surge2.divertOn === false)) bad.push('old ' + J(no.surge2.comps));
+          const single = JSON.parse(J(fk)); single.surge2.compartments = 1; const ns = I.normalize(single, I.makeNorm());
+          if (!(ns.surge2.n === 1 && ns.surge2.comps[1].frac === ns.surge2.frac)) bad.push('legacy single mode');
+          if (I.normalize(fk, I.makeNorm()).rigSig !== '111111010') bad.push('rigSig ' + I.normalize(fk, I.makeNorm()).rigSig);
+          const out = I.normalize(I.fakeSnapshot(60), I.makeNorm()); if (out.surge2.comps.some(c => !isFinite(c.frac) || c.inlet)) bad.push('out');
+          if (S && S.features && S.features.surge2Comps && F) {             // the real engine (ENGINE lane): T-202 in → two compartments
+            const s = S.create(F, { seed: 3, rigup: { surge2: true } }); s.advance(60); const nr = I.normalize(s.getState(), I.makeNorm());
+            if (!(nr.surge2.n === 2 && nr.surge2.comps.length === 2)) bad.push('engine ' + nr.surge2.n);
+          }
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 T-202 twin: picks XV-202B → valve idx 1, SV-202A / SV-202B → suction idx 0 / 1; only while T-202 is in; the B branch and the suction header end on a tee / nozzle', () => {
+          const bad = [];
+          if (J(I.valveOf('valve:surge2:1')) !== J({ type: 'valve', eq: 'surge2', idx: 1 }) || J(I.valveOf('suction:surge2:0')) !== J({ type: 'suction', eq: 'surge2', idx: 0 }) ||
+            J(I.valveOf('suction:surge2:1')) !== J({ type: 'suction', eq: 'surge2', idx: 1 }) || I.proxyEq('suction:surge2:1') !== 'surge2') bad.push('payloads');
+          const ids = rig => I.rigValveProxies(rig).map(v => v[0]);
+          ['valve:surge2:0', 'valve:surge2:1', 'suction:surge2:0', 'suction:surge2:1'].forEach(id => { if (ids({}).indexOf(id) >= 0 || ids({ surge2: true }).indexOf(id) < 0) bad.push('rig filter ' + id); });
+          // static geometry ends: B branch from the LM2 tee to B's nozzle, the suction stubs from A's / B's bottom nozzle to the X0 tee
+          const tee = p => I.TEES.some(t => near(t, p) && t[4] === 'surge2'), noz = p => (I.NOZZLES.surge2 || []).some(q => near(q, p));
+          const ep = n => I.EXTRA_PIPES.filter(e => e[0] === n)[0];
+          const br = ep('T-202 B branch'), su = ep('T-202 suction'), sb = ep('T-202 suction B');
+          if (!br || !su || !sb || br[3] !== 'surge2' || su[3] !== 'surge2' || sb[3] !== 'surge2') return 'EXTRA_PIPES rows';
+          if (!tee(br[1][0]) || !noz(br[1][br[1].length - 1])) bad.push('B branch ends');
+          if (!noz(su[1][0]) || !noz(sb[1][0]) || !near(sb[1][sb[1].length - 1], su[1][su[1].length - 1])) bad.push('suction ends');
+          if (!tee(route('X0').pts[0]) || !(su[1][1][0] < route('X0').pts[0][0] && su[1][2][0] > route('X0').pts[0][0] && su[1][1][1] === route('X0').pts[0][1])) bad.push('X0 start on the header tee');
+          if (I.clearancePrims({}).some(p => /^T-202 /.test(p.route || '') || /^(XV|SV)-202/.test(p.id))) bad.push('present while out');
+          ['XV-202A', 'XV-202B', 'SV-202A', 'SV-202B'].forEach(id => { if (!I.clearancePrims({ surge2: true }).some(p => p.id === id && p.isNew)) bad.push('missing ' + id); });
+          // taps from the Tanks view and the overview reach the new valves (no other tap target in front of them)
+          const TV = I.VIEWS.tanks, tv = I.viewFor('tanks', { surge2: true }, 1380, 700, INS), OV = I.VIEWS.overview;
+          const cams = { tanks: camOf({ az: TV.az, el: TV.el, radius: tv.r, target: tv.tgt }), overview: camOf(I.fitView(I.fitPts({ surge2: true }), OV.az, OV.el, 36, 1380, 700, INS)) };
+          const P = I.rigProxies({ surge2: true }), V = I.rigValveProxies({ surge2: true });
+          Object.keys(cams).forEach(cn => [[[9.25, 3.22, 1.55], 'valve:surge2:1'], [[9.6, 3.22, 2.0], 'valve:surge2:0'], [[12.3, 0.62, 2.41], 'suction:surge2:0'], [[12.7, 0.62, 2.41], 'suction:surge2:1']]
+            .forEach(([p, want]) => { const got = I.pickRay(cams[cn].pos, rayTo(cams[cn], p), P, V); if (got !== want) bad.push(cn + ' ' + J(p) + ' → ' + got); }));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 v1.5.0 T-202 twin source: baffle + two half-disc caps (uSplitX 0), each half follows its compartment, LG-202 shows B; XV-202B / SV-202 lamps and handwheels; dual chip line-up', () => {
+          const src = stripComments(stripSelfTest(fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8')) || ''), bad = [];
+          [[/translate\(X - 0\.015, 0\.915, Z\)/, 'baffle'], [/v\.caps = capsU; v\.U\.uSplitX\.value = 0;/, 'two caps'], [/surgeCap\(v, 0, y2, t2A, t2AW\); surgeCap\(v, 1, y2B, t2B, t2BW\)/, 'per-compartment caps'],
+            [/yT2 = clamp\(0\.915 \+ y2B,/, 'LG-202 on B'], [/D2\.xvMB\.color/, 'XV-202B lamp'], [/D2\.sucM\[1\]\.color/, 'SV-202B lamp'], [/D2\.xwB\.rotation\.y/, 'XV-202B handwheel'],
+            [/tagPlate\('T-202A'/, 'T-202A plate'], [/tagPlate\('T-202B'/, 'T-202B plate'], [/'Line-up', 'A ▸ '/, 'chip line-up'], [/in2B = lm2 && two2/, 'B splash']].forEach(([re, n]) => { if (!re.test(src)) bad.push(n); });
+          if (/\b(let|const)\s/.test(src) || /=>/.test(src)) bad.push('ES5 style');
+          return bad.length === 0 || bad.join(', ');
         }],
       ];
     })(),
