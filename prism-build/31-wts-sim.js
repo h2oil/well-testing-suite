@@ -1522,13 +1522,8 @@ function create(flowIn, opts) {
   }
   // per-substep alarm lookups (performance only): processAlarms keeps its alarm objects in an array per alarm table AL (reset with
   // it), so the hot path indexes an array instead of a dictionary; aDef is still the one place that creates them
+  // (call sites read (PA[i] || (PA[i] = aDef('<ID>', …))) so the source keeps the aDef('<ID>' form the help tests scan for)
   var PA = [], PAal = null;
-  function aDefC(i, id, tag, sev, eq, kind, grace) {
-    if (PAal !== AL) { PAal = AL; PA.length = 0; }
-    var A = PA[i];
-    if (A === undefined) A = PA[i] = aDef(id, tag, sev, eq, kind, grace);
-    return A;
-  }
   function raise(A, value, limit, msg) {
     alarmsDirty = true;
     A.active = true; A.since = X.t; A.value = isNum(value) ? value : null; A.limit = isNum(limit) ? limit : null; A.msg = msg; A.offT = -1;
@@ -1695,76 +1690,77 @@ function create(flowIn, opts) {
   function surgeBlocked() {
     // v1.7.0: T-202 alone (T-201 out, chain) and the V-101-out stream to the surge tanks with every inlet shut block too
     var blk = (rSep || bypSurge) && ((rSurge || rSurge2) ? (!(rSurge && (uv[0] || uv[1])) && !(rSurge2 && s2Open())) : (rSep && rGauge && pumpBlocked));
-    var A = aDefC(0, 'SURGE_BLOCKED', 'XV-201', 'alarm', 'surge', 'b');
+    var A = (PA[0] || (PA[0] = aDef('SURGE_BLOCKED', 'XV-201', 'alarm', 'surge', 'b')));
     if (!A.active) { A.tag = A.pub.tag = rSurge ? 'XV-201' : 'XV-301'; A.eq = A.pub.eq = rSurge ? 'surge' : 'gauge'; }
     evalA(A, blk, !blk, null, null, MSG.SURGE_BLOCKED, true);
   }
   function processAlarms() {
+    if (PAal !== AL) { PAal = AL; PA = []; }        // the cached alarm objects belong to this alarm table
     var S = cfg.sep, dbP = cfg.alarm.pressDBfrac * mmax(X.SPe, 1), dbL = cfg.alarm.levelDB * D;
     var A;
     // pressure protection stays live on a blocked-in vessel; process alarms only while the vessel is in the rig-up
-    A = aDefC(1, 'PSHH_SEP', 'PSHH-101', 'trip', 'separator', 'p');
+    A = (PA[1] || (PA[1] = aDef('PSHH_SEP', 'PSHH-101', 'trip', 'separator', 'p')));
     evalA(A, X.Psep >= X.pshh, X.Psep < X.pshh - dbP, X.Psep, X.pshh, MSG.PSHH_SEP, false);
     if (rSep) {
-      A = aDefC(2, 'PSH_SEP', 'PAH-101', 'alarm', 'separator', 'p');
+      A = (PA[2] || (PA[2] = aDef('PSH_SEP', 'PAH-101', 'alarm', 'separator', 'p')));
       evalA(A, X.Psep >= X.psh, X.Psep < X.psh - dbP, X.Psep, X.psh, MSG.PSH_SEP, true);
-      A = aDefC(3, 'PSL_SEP', 'PAL-101', 'warn', 'separator', 'p', true);
+      A = (PA[3] || (PA[3] = aDef('PSL_SEP', 'PAL-101', 'warn', 'separator', 'p', true)));
       evalA(A, X.Psep <= X.psl && X.f > 0.5, X.Psep > X.psl + dbP || X.f <= 0.5, X.Psep, X.psl, MSG.PSL_SEP, true);
     }
-    A = aDefC(4, 'PSV_SEP', 'PSV-101', 'alarm', 'separator', 'b');
+    A = (PA[4] || (PA[4] = aDef('PSV_SEP', 'PSV-101', 'alarm', 'separator', 'b')));
     evalA(A, psvLift, !psvLift, X.Psep, X.mawpE, MSG.PSV_SEP, false);
     if (rSep) {
       var lshhO = S.oil.lshh * D, lahhT = S.lahhTotal * D;
-      A = aDefC(5, 'LSHH_SEP', 'LSHH-102', 'trip', 'separator', 'l');
+      A = (PA[5] || (PA[5] = aDef('LSHH_SEP', 'LSHH-102', 'trip', 'separator', 'l')));
       var useB = X.h2 / lshhO >= X.hL1 / lahhT;
       evalA(A, X.h2 >= lshhO || X.hL1 >= lahhT, X.h2 < lshhO - dbL && X.hL1 < lahhT - dbL,
         (useB ? X.h2 : X.hL1) / D * 100, (useB ? S.oil.lshh : S.lahhTotal) * 100, MSG.LSHH_SEP, false);
       var lshB = (S.oil.lsh + 0.03) * D;
-      A = aDefC(6, 'LSH_SEP', 'LAH-102', 'alarm', 'separator', 'l');
+      A = (PA[6] || (PA[6] = aDef('LSH_SEP', 'LAH-102', 'alarm', 'separator', 'l')));
       evalA(A, X.h2 >= lshB, X.h2 < lshB - dbL, X.h2 / D * 100, lshB / D * 100, MSG.LSH_SEP, true);
-      A = aDefC(7, 'LSLL_SEP', 'LALL-102', 'alarm', 'separator', 'l', true);
+      A = (PA[7] || (PA[7] = aDef('LSLL_SEP', 'LALL-102', 'alarm', 'separator', 'l', true)));
       evalA(A, X.h2 <= S.oil.lsll * D, X.h2 > S.oil.lsll * D + dbL, X.h2 / D * 100, S.oil.lsll * 100, MSG.LSLL_SEP, true);
       var blow = F.blowO + F.blowW;
-      A = aDefC(8, 'GAS_BLOWBY', 'LCV-102', 'alarm', 'separator', 'b');
+      A = (PA[8] || (PA[8] = aDef('GAS_BLOWBY', 'LCV-102', 'alarm', 'separator', 'b')));
       evalA(A, blow > 0, !(blow > 0), blow * 0.0864, null, MSG.GAS_BLOWBY, true);
-      A = aDefC(9, 'ISHH_SEP', 'LAHH-101', 'alarm', 'separator', 'l');
+      A = (PA[9] || (PA[9] = aDef('ISHH_SEP', 'LAHH-101', 'alarm', 'separator', 'l')));
       evalA(A, X.hW1 >= S.water.lshh * D, X.hW1 < S.water.lshh * D - dbL, X.hW1 / D * 100, S.water.lshh * 100, MSG.ISHH_SEP, true);
-      A = aDefC(10, 'CARRYOVER', 'V-101', 'warn', 'separator', 'b');
+      A = (PA[10] || (PA[10] = aDef('CARRYOVER', 'V-101', 'warn', 'separator', 'b')));
       evalA(A, F.phiC > 0, !(F.phiC > 0), X.hW1 / D * 100, hWeir / D * 100, MSG.CARRYOVER, true);
-      A = aDefC(11, 'OIL_IN_WATER', 'LCV-101', 'warn', 'separator', 'b', true);
+      A = (PA[11] || (PA[11] = aDef('OIL_IN_WATER', 'LCV-101', 'warn', 'separator', 'b', true)));
       evalA(A, F.wO > 0, !(F.wO > 0), F.wO * 86400, null, MSG.OIL_IN_WATER, true);
     } else quiet(Q_SEP);
     var U = cfg.surge, dbPu = cfg.alarm.pressDBfrac * mmax(X.SPeu, 1), dbLu = cfg.alarm.levelDB;
     var fUA = compVliq(0) / capK, fUB = compVliq(1) / capK, fracHiU = mmax(fUA, fUB), fracS = suctionV() / suctionCap();
     surgeHiK = fUB > fUA ? 1 : 0;
-    A = aDefC(12, 'PSHH_SURGE', 'PSHH-201', 'trip', 'surge', 'p');
+    A = (PA[12] || (PA[12] = aDef('PSHH_SURGE', 'PSHH-201', 'trip', 'surge', 'p')));
     evalA(A, X.Pu >= X.pshhU, X.Pu < X.pshhU - dbPu, X.Pu, X.pshhU, MSG.PSHH_SURGE, false);
-    A = aDefC(13, 'PSH_SURGE', 'PAH-201', 'alarm', 'surge', 'p');
+    A = (PA[13] || (PA[13] = aDef('PSH_SURGE', 'PAH-201', 'alarm', 'surge', 'p')));
     evalA(A, rSurge && X.Pu >= X.pshU, !rSurge || X.Pu < X.pshU - dbPu, X.Pu, X.pshU, MSG.PSH_SURGE, true);
-    A = aDefC(14, 'PSV_SURGE', 'PSV-201', 'alarm', 'surge', 'b');
+    A = (PA[14] || (PA[14] = aDef('PSV_SURGE', 'PSV-201', 'alarm', 'surge', 'b')));
     evalA(A, psvULift, !psvULift, X.Pu, X.mawpU, MSG.PSV_SURGE, false);
     if (rSurge) {
-      A = aDefC(15, 'LSHH_SURGE', 'LSHH-201', 'trip', 'surge', 'l');
+      A = (PA[15] || (PA[15] = aDef('LSHH_SURGE', 'LSHH-201', 'trip', 'surge', 'l')));
       evalA(A, fracHiU >= U.lshh, fracHiU < U.lshh - dbLu, fracHiU * 100, U.lshh * 100, MSG.LSHH_SURGE, false);
-      A = aDefC(16, 'LSLL_SURGE', 'LSLL-201', 'warn', 'surge', 'l', true);
+      A = (PA[16] || (PA[16] = aDef('LSLL_SURGE', 'LSLL-201', 'warn', 'surge', 'l', true)));
       evalA(A, fracS <= U.lsll, fracS > U.lsll + dbLu, fracS * 100, U.lsll * 100, MSG.LSLL_SURGE, true);
     }
     // LCV-201 low-low (gas blow-by) protection: latched trip set by the discrete logic (open transfer, suction at LSLL)
-    A = aDefC(17, 'PUMP_DRYRUN', TAGS.xfer, 'trip', 'surge', 'l'); A.act = 'pump';
+    A = (PA[17] || (PA[17] = aDef('PUMP_DRYRUN', TAGS.xfer, 'trip', 'surge', 'l'))); A.act = 'pump';
     if (ptrip.PUMP_DRYRUN && !A.active) raise(A, fracS * 100, U.lsll * 100, MSG.PUMP_DRYRUN(fracS * 100, U.lsll * 100));
     else if (A.active) A.value = fracS * 100;
     if (rSurge) {
       var runP = X.lastQp > 0, starved = runP && X.lastDraw < 0.98 * X.lastQp;
-      A = aDefC(18, 'PUMP_STARVED', TAGS.xfer, 'warn', 'surge', 'b');
+      A = (PA[18] || (PA[18] = aDef('PUMP_STARVED', TAGS.xfer, 'warn', 'surge', 'b')));
       evalA(A, starved, !starved, X.lastQp > 0 ? X.lastDraw / X.lastQp * 100 : 0, 98, MSG.PUMP_STARVED, true);
-      A = aDefC(19, 'XFER_FAIL', TAGS.xfer, 'alarm', 'surge', 'b');
+      A = (PA[19] || (PA[19] = aDef('XFER_FAIL', TAGS.xfer, 'alarm', 'surge', 'b')));
       evalA(A, faults.xferStuckClosed, !faults.xferStuckClosed, null, null, MSG.XFER_FAIL, false);
       // no pump: an open transfer valve passes nothing when the vessel pressure + head cannot lift the liquid
       var lowDP = F.xCmd > 0 && F.xdP < num(U.xferMinDP, 1);
-      A = aDefC(20, 'XFER_LOW_DP', TAGS.xfer, 'warn', 'surge', 'p');
+      A = (PA[20] || (PA[20] = aDef('XFER_LOW_DP', TAGS.xfer, 'warn', 'surge', 'p')));
       evalA(A, lowDP, !lowDP, F.xdP, num(U.xferMinDP, 1), MSG.XFER_LOW_DP, true);
       surgeBlocked();
-      A = aDefC(21, 'PUMP_BLOCKED', TAGS.xfer, 'alarm', 'surge', 'b');
+      A = (PA[21] || (PA[21] = aDef('PUMP_BLOCKED', TAGS.xfer, 'alarm', 'surge', 'b')));
       evalA(A, pumpBlocked, !pumpBlocked, null, null, MSG.PUMP_BLOCKED, true);
       var bU = tkBothHigh(TK1, uv, fUA, fUB, 0), bUc = !tkBothHigh(TK1, uv, fUA, fUB, dbLu);
       var msgU = MSG.LAH_SURGE_BOTH, vU = fracHiU, kU = 'both';
@@ -1774,7 +1770,7 @@ function create(flowIn, opts) {
         if (uKc >= 0) { vU = uKc ? fUB : fUA; msgU = uKc ? MSG.LAH_SURGE_B : MSG.LAH_SURGE_A; kU = uKc ? 'B' : 'A'; }
       }
       if (rSurge2 && ctl.surge2.auto && (S2N === 1 ? X2.VliqU / cap2 < ctl.surge2.sp - ctl.surge2.hyst : s2Any(s2Pick(true)))) { bU = false; bUc = true; }   // the auto route has room (WP-E2; v1.7.0 dual: a T-202 compartment has room)
-      A = aDefC(22, 'LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l');
+      A = (PA[22] || (PA[22] = aDef('LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l')));
       evalA(A, bU, bUc, vU * 100, ctl.surge.sp * 100, msgU, true);
       if (!A.active) A.lahKind = kU;                // raised with this meaning; while raised, a change of meaning (auto-divert
       else if (A.lahKind !== kU && !bUc) {          // toggled, other compartment) refreshes the text (never on the v3.3.1 paths)
@@ -1791,19 +1787,19 @@ function create(flowIn, opts) {
     if (!rGauge) {
       if (!boost) { quiet(Q_GAUGE); return; }
       quiet(Q_GAUGE_T301);                          // v1.7.0: T-301 out, P-201 boosting the tank transfer — its failure still alarms
-      A = aDefC(23, 'PUMP_FAIL', 'P-201', 'alarm', 'pump', 'b');
+      A = (PA[23] || (PA[23] = aDef('PUMP_FAIL', 'P-201', 'alarm', 'pump', 'b')));
       evalA(A, faults.surgePumpFail, !faults.surgePumpFail, null, null, MSG.PUMP_FAIL, false);
       return;
     }
-    A = aDefC(23, 'PUMP_FAIL', 'P-201', 'alarm', 'pump', 'b');
+    A = (PA[23] || (PA[23] = aDef('PUMP_FAIL', 'P-201', 'alarm', 'pump', 'b')));
     evalA(A, rPump && faults.surgePumpFail, !(rPump && faults.surgePumpFail), null, null, MSG.PUMP_FAIL, false);
     var Gc = cfg.gauge, fa = tankVliq(active) / capG, noStandby = tanks[1 - active].state !== 'ready';
     var fGA = tankVliq(0) / capG, fGB = tankVliq(1) / capG, fG = FG2; FG2[0] = fGA; FG2[1] = fGB;
-    A = aDefC(24, 'LAH_GT', 'LAH-301', 'alarm', 'gauge', 'l');
+    A = (PA[24] || (PA[24] = aDef('LAH_GT', 'LAH-301', 'alarm', 'gauge', 'l')));
     evalA(A, fa >= Gc.switchFrac && noStandby, fa < Gc.switchFrac - 0.02 || !noStandby, fa * 100, Gc.switchFrac * 100, MSG.LAH_GT, true);
     // LSHH-301: a compartment that is lined up (inlet commanded open or valve still passing) at high-high shuts
     // LCV-201 and closes that compartment's inlet; latched until the operator resets it below the reset point
-    A = aDefC(25, 'LSHH_GT', 'LSHH-301', 'trip', 'gauge', 'l'); A.act = 'pump';
+    A = (PA[25] || (PA[25] = aDef('LSHH_GT', 'LSHH-301', 'trip', 'gauge', 'l'))); A.act = 'pump';
     var hi0 = (gv[0] || gpos[0] > 0) && fGA >= Gc.lahh - 1e-9, hi1 = (gv[1] || gpos[1] > 0) && fGB >= Gc.lahh - 1e-9;
     if (!A.active) {
       if (hi0 || hi1) {
@@ -1820,7 +1816,7 @@ function create(flowIn, opts) {
       if (fG[gk] >= gC.sp && noRoom) { bG = true; gaugeLahK = gk; }
       if (fG[gk] >= gC.sp - 0.02 && noRoomC) bGc = false;
     }
-    A = aDefC(26, 'LAH_GT_BOTH', 'LAH-301', 'alarm', 'gauge', 'l');
+    A = (PA[26] || (PA[26] = aDef('LAH_GT_BOTH', 'LAH-301', 'alarm', 'gauge', 'l')));
     evalA(A, bG, bGc, fG[gaugeLahK] * 100, gC.sp * 100, MSG.LAH_GT_BOTH, true);
   }
   function autoTrip(A) {
