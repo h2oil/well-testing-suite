@@ -460,7 +460,8 @@ function shapeIssues(app, course, scenarios) {
     if (!tab) out.push(id + ': the which-pressure table is missing');
     else {
       const flat = A(tab.table.rows).map((r) => r.join(' | ')).join(' / ');
-      ['Wellhead Pressure', 'Operating Pressure', 'Surge Tank Pressure', 'V-101 out', 'V-101 in only'].forEach((k) => { if (flat.indexOf(k) === -1) out.push(id + ': the table does not mention ' + k); });
+      // 3.4.2 review: the Surge Tank Pressure row applies with V-101 in or out (to the tank); only its 10-below rule is V-101 in
+      ['Wellhead Pressure', 'Operating Pressure', 'Surge Tank Pressure', 'V-101 out', 'below Operating Pressure with V-101 in'].forEach((k) => { if (flat.indexOf(k) === -1) out.push(id + ': the table does not mention ' + k); });
     }
     if (x.feature !== 'bypassDest' || !A(x.afterSim).length) out.push(id + ': needs both variants (today, afterSim) with feature bypassDest');
   });

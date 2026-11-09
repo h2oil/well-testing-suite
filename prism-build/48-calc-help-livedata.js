@@ -35,7 +35,7 @@ I('Speed', '1×', 'Form data only.'),
 I('Trends', 0, 'Up to six variables; window 5 min, 30 min, 2 h or 12 h.'),
 I('Pressure gauge', 'Wellhead pressure (WHP)', 'The pressure sent to PRiSM.')],
 outputs: [
-I('Tiles', 0, 'Wellhead, bottom-hole gauge and separator pressure, the three rates, [[glossary#gor|GOR]] (sep), water cut, flare gas rate, tank gas (FT-201), total GOR.'),
+I('Tiles', 0, 'Wellhead, bottom-hole gauge and separator pressure, the three rates, [[glossary#gor|GOR]] (sep), water cut, flare gas rate; tank gas (FT-201), total GOR: form data only.'),
 I('Quality', 0, 'good = fresh; stale = no update for 3 poll intervals; bad = comms error, exception or unit mismatch; — = not linked.'),
 I('Alarms', 0, 'HI, HIHI, LO, LOLO from the tag limits, or simulator alarms; UNACKNOWLEDGED, acknowledged or normal.')],
 verdicts: [

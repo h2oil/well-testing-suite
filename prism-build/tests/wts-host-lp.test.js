@@ -153,12 +153,18 @@ module.exports = [
     run(app, assert) {
       const f = flowOf({}).flow, sb = f.sepBy, fb = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;
       assert.ok(f.sim.sepByDest === 'surge' && sb.dest === 'surge' && sb.P0_psig === 25 && sb.P0_psig === sb.surgeP_psig, 'surge at 25 psig');
-      const keys = (o) => JSON.stringify(Object.keys(o).concat(Object.keys(o.choke), Object.keys(o.nodes)));
+      // 3.4.2 review: 'surge' adds alt (the burner-line block), gasCapEst_mmscfd and overCap to the shared shape
+      const XK = ['alt', 'gasCapEst_mmscfd', 'overCap'];
+      const keys = (o) => JSON.stringify(Object.keys(o).filter((k) => XK.indexOf(k) < 0).concat(Object.keys(o.choke), Object.keys(o.nodes)));
       assert.strictEqual(keys(sb), keys(fb), 'same block shape as the burner line');
+      assert.ok(XK.every((k) => k in sb) && !XK.some((k) => k in fb), 'review keys only on surge');
       const sum = (b) => b.P0_psig + b.segs[0].dP + 5 + b.segs[1].dP + b.segs[2].dP;
       assert.ok(Math.abs(sb.choke.Pout - sum(sb)) < 0.5 && Math.abs(sb.segs[2].Pout - 25) < 0.2 && sb.segs[2].phase === 'multi', 'walk closes on 25 psig: ' + sb.choke.Pout);
       assert.ok(sb.choke.regime === 'Critical' && sb.choke.Pout > fb.choke.Pout, 'Critical, above the burner-line outlet');
-      assert.ok(sb.warnings.some((w) => w.t === 'warn' && /^Whole well stream into the surge tank at 25 psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in/.test(w.msg)), 'warning (warn: the info style is the hydrate snowflake)');
+      // 3.4.2 review: at 10 MMSCFD the gas is far over the tank's back-pressure valve capacity → error, names generic (painter names them)
+      assert.ok(sb.overCap === true && sb.warnings.some((w) => w.t === 'error' && w.k === 'surge' && /^Whole well stream into the surge tank at 25 psig: 10\.00 MMSCFD of gas against the capacity of the back-pressure valve, about 0\.15 MMSCFD at PSHH — PSHH shuts the well in/.test(w.msg)), 'over-capacity error: ' + JSON.stringify(sb.warnings));
+      const lo = flowOf({ wts_sepByDest: 'surge', wts_Qg: '0.1' }).flow.sepBy;
+      assert.ok(lo.overCap === false && lo.warnings.some((w) => w.t === 'warn' && /^Whole well stream into the surge tank at 25 psig: the back-pressure valve vents the gas \(about 0\.1\d MMSCFD at PSHH, 0\.10 MMSCFD now\); above its capacity PSHH shuts the well in/.test(w.msg)), 'low gas: warn: ' + JSON.stringify(lo.warnings));
       assert.ok(!fb.warnings.some((w) => /surge tank at/.test(w.msg)), 'no surge warning on the burner line');
       assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psurge: '40' }).flow.sepBy.P0_psig === 30 && flowOf({ wts_sepByDest: 'surge', wts_Psurge: '0' }).flow.sepBy.P0_psig === 0, 'set point 0-30');
       assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psep: '20', wts_Psurge: '25' }).flow.sepBy.P0_psig === 25, 'no Psep − 10 bound');
@@ -169,7 +175,45 @@ module.exports = [
       W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false }));
       const h = $('wts_res').innerHTML, w = $('wts_warn').innerHTML;
       assert.ok(h.indexOf('>→ surge tank T-201</td>') > 0 && /With V-101 out, to surge tank T-201<\/span><span class="rv">downstream [\d,]+ psig &middot; Critical/.test(h), 'surge rows');
-      assert.ok(/Whole well stream into the surge tank at 25 psig/.test(w), 'info warning painted');
+      assert.ok(/Whole well stream into the surge tank T-201 at 25 psig: 10\.00 MMSCFD of gas against the capacity of PCV-201, about 0\.15 MMSCFD at PSHH — PSHH-201 shuts the well in/.test(w), 'warning painted with the T-201 names');
+      assert.ok(/>→ surge tank T-201<\/td>(<td>[^<]*<\/td>){4}<td style="color:var\(--red\);font-weight:700">&#9888; PSHH-201 TRIP \(gas over PCV-201\)<\/td>/.test(h), 'destination row verdict: PSHH-201 TRIP');
+      assert.ok(/PCV-201 gas capacity at PSHH-201<\/span><span class="rv"><span style="color:var\(--red\);font-weight:700">about 152 Mscf\/d &middot; well gas 10,000 Mscf\/d &mdash; over: the well is shut in/.test(h), 'LP box capacity row');
+    },
+  },
+  {
+    name: 'WTSLPH 3.4.2 review: the surge destination follows the rig-up on the page — no surge tank in → sepBy.alt (the burner line, 5 psig, the burner-line block but CK-102 skipped) with the engine fallback note; T-202 receiving → T-202 / PCV-203 / PSHH-202; FS-401 out → LP box to the vent; the host gas capacity matches the engine SEPBY_SURGE_CAP; seg 5 labelled Bypass→Surge Tank',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const C = GOLD.makeCalc(GOLD.hostRegion()), W = C.sandbox.window, $ = C.sandbox.$;
+      const r = C.run(mix(BASE, { wts_sepByDest: 'surge' })), sb = r.flow.sepBy, fb = flowOf({ wts_sepByDest: 'flare' }).flow.sepBy;
+      // alt = the burner-line block of the same inputs (CK-102 skipped there: the default calc stays inside the timing gate)
+      const a = J(sb.alt), b = J(fb);
+      assert.ok(a.ck2 && a.ck2.skipped === true && /no surge tank in the rig-up/.test(a.ck2.note), 'alt.ck2 skipped: ' + JSON.stringify(a.ck2));
+      delete a.ck2; delete b.ck2;
+      assert.deepStrictEqual(a, b, 'alt = the burner-line block');
+      assert.ok(sb.segs[2].label === 'Bypass→Surge Tank' && sb.segs[2].id === 'sep_flare' && fb.segs[2].label === 'Sep→Flare' && a.segs[2].label === 'Sep→Flare', 'seg 5 label by route');
+      // no surge tank in the rig-up: burner-line rows, the fallback note, no surge warning, no LP box
+      W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false, surge: false }));
+      let h = $('wts_res').innerHTML, w = $('wts_warn').innerHTML;
+      assert.ok(h.indexOf('>→ burner line</td>') > 0 && h.indexOf('surge tank T-') < 0 && /With V-101 out, to burner line<\/span><span class="rv">downstream 35 psig/.test(h), 'burner-line rows: ' + (h.match(/With V-101 out[^&]*/) || [''])[0]);
+      assert.ok(/No surge tank in the rig-up, so the whole stream goes to the burner \/ flare line\./.test(w) && !/Whole well stream into the surge tank/.test(w) && h.indexOf(LP_TITLE) < 0, 'fallback note, no surge warning, no LP box');
+      // T-201 out, T-202 in: T-202 receives with its own valve and trip
+      W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false, surge: false, surge2: true }));
+      h = $('wts_res').innerHTML; w = $('wts_warn').innerHTML;
+      assert.ok(h.indexOf('>→ surge tank T-202</td>') > 0 && /With V-101 out, to surge tank T-202/.test(h) && /PSHH-202 TRIP \(gas over PCV-203\)/.test(h) && /PCV-203 gas capacity at PSHH-202/.test(h), 'T-202 rows');
+      assert.ok(/surge tank T-202 at 25 psig: .*capacity of PCV-203, .*PSHH-202 shuts the well in/.test(w) && !/PCV-201|PSHH-201|T-201/.test(w), 'T-202 warning');
+      // FS-401 out: the LP box sends the tank gas to the vent
+      W.wtsRenderResults(r.flow, mix(RIG_ALL_IN, { separator: false, flare: false }));
+      assert.ok(/through FT-201 to the atmospheric vent \(FS-401 out\)/.test($('wts_res').innerHTML), 'LP box: vent');
+      W.wtsRenderResults(r.flow, J(RIG_ALL_IN));
+      assert.ok(/through FT-201 to the LP tip on FS-401/.test($('wts_res').innerHTML), 'LP box: LP tip');
+      // the host estimate of the gas the receiving tank can take = the engine's SEPBY_SURGE_CAP capacity
+      const S = EQ.loadEngine('work');
+      [{}, { wts_Psurge: '10' }, { wts_Qo: '3000', wts_Psep: '400' }, { wts_Psurge: '30', wts_lpNps: '2' }].forEach((v) => {
+        const fl = J(flowOf(mix({ wts_sepByDest: 'surge' }, v)).flow), st = S.create(fl, { seed: 1, rigup: { separator: false } }).getState();
+        assert.ok(Math.abs(fl.sepBy.gasCapEst_mmscfd / st.sepBy.gasCap_mmscfd - 1) < 1e-6, 'gas cap ' + JSON.stringify(v) + ': ' + fl.sepBy.gasCapEst_mmscfd + ' vs ' + st.sepBy.gasCap_mmscfd);
+      });
     },
   },
   {

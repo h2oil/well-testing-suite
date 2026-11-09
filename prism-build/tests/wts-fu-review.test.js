@@ -149,7 +149,9 @@ module.exports = [
       assert.ok(row(h, 'Heater (V-101 out)') && row(h, 'Separator (bypassed: line at V-101)'), 'Heater / Separator rows from flow.sepBy');
       // the base segment velocity warnings of seg 3-5 give way to the block's (no duplicates)
       const w = $('wts_warn').innerHTML;
-      ['Heater→Sep', 'Sep→Flare'].forEach((nm) => assert.strictEqual(w.split(nm + ': Velocity').length - 1, 1, nm + ' velocity warning once: ' + w));
+      // 3.4.2 review: the page default destination is the surge tank, whose seg-5 run is named for its route (Bypass→Surge Tank)
+      ['Heater→Sep', 'Bypass→Surge Tank'].forEach((nm) => assert.strictEqual(w.split(nm + ': Velocity').length - 1, 1, nm + ' velocity warning once: ' + w));
+      assert.ok(w.indexOf('Sep→Flare: Velocity') < 0, 'no Sep→Flare warning on the surge route');
       W.wtsRenderResults(rb.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
       const r0 = C.run(mix(BASE, {}));

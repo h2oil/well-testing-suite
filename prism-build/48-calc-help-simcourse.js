@@ -52,10 +52,10 @@
             observe: ['WHP rises by itself as the column unloads; the choke outlet stays near {{5|pressureG}}.', 'CUSH_BURNER while cushion liquid goes to the burner.',
             'Breakthrough about 41 minutes after the start, then the tail; done after about 3.2 hours with {{50|volume}} recovered.', 'Variant: CUSH_DUMP, LAHH-101 and carry-over within 5 minutes. Variant 2: the water goes on to T-301; PSHH-201 after breakthrough.'],
             questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why does WHP rise while the cushion unloads?', 'Why warm the heater before breakthrough?', 'Why does V-101 flood in the variant?'],
-            answers: ['FWHP in **Wellhead Pressure**; line pressure in **Production line pressure** (V-101 out) or **Operating Pressure** (V-101 in).', 'The cushion column in the tubing gets shorter, so less of the shut-in pressure is lost to its head.',
+            answers: ['FWHP in **Wellhead Pressure**; line pressure in **Production line pressure** (V-101 out) or **Operating Pressure** (V-101 in).', 'The cushion column gets shorter, so its head takes less of the shut-in pressure.',
             'At breakthrough the gas flows again and cools across the choke: a cold heater gives hydrate alarms.', 'Its water dump passes about {{790|liquidRate}}, less than the {{1500|liquidRate}} unload rate.'],
             form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Variant: bean 12/64 and a low gas rate, and let the trainee find CUSH_LIMIT.',
-            good: 'Sets the destination first, warns the burner crew (CUSH_BURNER), warms the heater before breakthrough, goes through V-101 only on clean returns.',
+            good: 'Sets the destination first, warns the burner crew, warms the heater before breakthrough, goes through V-101 only on clean returns.',
             mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Unloading through V-101 faster than its water dump.', 'Sending an oil or diesel cushion to the burner without a plan.'],
             debrief: ['What is the real back pressure of your burner line?', 'What tells you the cushion is out?', 'When is it time to go through the separator?'] } },
         { id: 'ex4', title: 'Separator upset: dump valve failure', keywords: ['LCV-102', 'LSHH', 'dump valve', 'upset', 'trip'],
@@ -136,7 +136,7 @@
         ['Production or export line pressure (the header the well flows into)', 'V-101 in: **Operating Pressure** plus the line loss. V-101 out: **Production line pressure**, destination Production line', 'V-101 in or out', '[[fs#FS-2|FS-2]]'],
         ['Burner boom (cushion or clean-up straight to the burner)', 'Nothing to enter: destination **Burner / flare line** ({{5|pressureG}} header)', 'V-101 out', '[[fs#FS-1|FS-1]]'],
         ['Flow-back to the tanks', 'Destination **Surge tank T-201**, at Surge Tank Pressure', 'V-101 out', '[[fs#FS-5|FS-5]]'],
-        ['Surge tank back pressure', '**Surge Tank Pressure**, at most {{30|pressureG||imp}}; {{10|pressure||imp}} below Operating Pressure', 'V-101 in only', 'all']] } };
+        ['Surge tank back pressure', '**Surge Tank Pressure**, at most {{30|pressureG||imp}}; {{10|pressure||imp}} below Operating Pressure with V-101 in', 'any', 'all']] } };
     var CTRL = { table: { head: ['What Operating Pressure controls', 'V-101 in', 'V-101 out'], rows: [
         ['Live model: PCV-101 set point and separator pressure', 'yes', 'no (PCV-101 held shut)'],
         ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'live on the trapped vessel: lowering it trips PSHH-101'],
@@ -182,7 +182,7 @@
         intro: ['A low-gas clean-up can skip the separator: T-201 takes the whole stream, PCV-201 vents its gas to the LP flare line, LCV-201 sends the liquid on to T-301.'],
         today: [{ list: ['In **Dynamic Simulation** keep the V-101-out destination **Surge tank T-201**. Set **Gas Rate** to {{1|gasRate}}.',
             'Start **Cushion unload (clean-up)** from **Scenarios**, then at once switch V-101 (**Test separator**) out: the column holds the gas back (before the start PSHH-201 trips in seconds).',
-            'SEPBY_SURGE_CAP: PCV-201 takes about {{0.15|gasRate|2}} below PSHH-201. At **×60** about {{26|volume}} of water reaches T-301 by breakthrough.',
+            'SEPBY_SURGE_CAP: PCV-201 takes about {{0.15|gasRate|2}} below PSHH-201; the steady result warns: PSHH-201 TRIP. At **×60** about {{26|volume}} of water reaches T-301 by breakthrough.',
             'Breakthrough after about 41 minutes: the gas returns at the well rate, PAH-201, then PSHH-201 shuts the well in 4 minutes later, unless V-101 went back in first.'], ordered: true },
             { h: 'Limits' }, 'PCV-201 is not resized; no foam or slugs.'] });
     if (!EQ) return { guides: {}, course: course, scenarios: scenarios };
