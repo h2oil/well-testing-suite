@@ -251,7 +251,10 @@ module.exports = [
         assert.deepStrictEqual(vis.match(/class="(ph|draft)"|\[[^\]]*\]/g) || [], [], f + ': no placeholder in the visible text');
         assert.ok(!/Owner decision|representative:/i.test(vis), f + ': no owner box, no representative line');
         assert.includes(s, 'H2Oil Engineering, a company licensed in Dubai, United Arab Emirates', f);
-        assert.ok(/NOT LEGAL ADVICE/.test(s), f + ': draft-for-review comment');
+        // the public source comment is only the version line (open items live in docs/LEGAL-OWNER-NOTES.md, not published)
+        const cm = (s.match(/<!--([\s\S]*?)-->/) || [])[1] || '';
+        assert.ok(/version 1 \(9 November 2026\)/.test(cm) && /Change together/.test(cm), f + ': version comment');
+        assert.ok(!/DRAFT|LEGAL ADVICE|dev-87qwkg|LICENSE|DMCC|JAFZA|DSO|ADGM/.test(cm), f + ': no review notes in the public comment');
         // every in-page anchor exists
         const ids = new Set(Array.from(s.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));
         for (const m of s.matchAll(/href="#([^"]+)"/g)) assert.ok(ids.has(m[1]), f + ': anchor #' + m[1]);
@@ -259,6 +262,9 @@ module.exports = [
         assert.ok(/<h1\b/.test(s) && /<nav class="toc"/.test(s), f + ': heading + contents');
       }
       const p = pages['privacy.html'];
+      // nothing the owner has not done yet is stated as done (DPAs, breach plan); link labels are disclosed
+      assert.ok(!/We have a plan for handling security incidents|Our contracts with processors include|It acts as our processor/.test(p), 'no unconfirmed present-tense claims');
+      assert.ok(/Before accounts launch, our contracts with the hosting and e-mail processors will include/.test(p) && /visible label of the menu item or link clicked/.test(p), 'future-tense safeguards; link labels disclosed');
       for (const s of ['id="cookies"', '<code>_ga</code>', '<code>' + KEY + '</code>', '<code>__Host-wts_sid</code>', 'Limited Use requirements',
         'id="retention"', 'id="rights"', 'id="complaints"', 'Information Commission', 'Cookie settings', 'only if you accept',
         'the data-protection law of the United Arab Emirates that applies to us', 'the UAE data-protection authority that supervises us',
@@ -354,8 +360,8 @@ module.exports = [
       const html = HTML();
       const stripped = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '').replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       const foot = (stripped.match(/<div class="sidebar-footer">[\s\S]*?<\/div>/) || [''])[0];
-      assert.ok(/<a href="https:\/\/welltest\.h2oil\.co\.uk\/privacy\.html" id="sbPrivacyPolicy"[^>]*>Privacy Policy<\/a>/.test(foot), 'crawlable Privacy Policy link in the footer');
-      assert.ok(/<a href="https:\/\/welltest\.h2oil\.co\.uk\/terms\.html" id="sbTerms"[^>]*>Terms of Service<\/a>/.test(foot), 'crawlable Terms link in the footer');
+      assert.ok(/<a href="https:\/\/welltest\.h2oil\.co\.uk\/privacy\.html" id="sbPrivacyPolicy"[^>]*>Privacy notice<\/a>/.test(foot), 'crawlable Privacy notice link in the footer');
+      assert.ok(/<a href="https:\/\/welltest\.h2oil\.co\.uk\/terms\.html" id="sbTerms"[^>]*>Terms of Use<\/a>/.test(foot), 'crawlable Terms link in the footer');
       assert.strictEqual((foot.match(/privacy\.html/g) || []).length, 1, 'exactly one Privacy link in the footer');
       assert.strictEqual((foot.match(/terms\.html/g) || []).length, 1, 'exactly one Terms link in the footer');
       assert.ok(/id="sbPrivacyLink"[^>]*>Privacy — how your data is stored<\/a>/.test(foot), 'in-app Privacy page link kept');

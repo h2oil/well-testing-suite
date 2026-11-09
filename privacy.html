@@ -7,28 +7,8 @@
 <meta name="description" content="Privacy notice for the H2Oil Well Testing Suite web app and iOS app: what data is processed, why, for how long, cookies and your rights.">
 <title>Privacy notice — H2Oil Well Testing Suite</title>
 <!--
-  DRAFT FOR REVIEW BY A QUALIFIED LAWYER (UAE AND UK / EU DATA PROTECTION) — NOT LEGAL ADVICE.
-  Written from the product as built (branch dev-87qwkg; web accounts v3.5 Phase 1 built but dormant, shipping as v4.0;
-  analytics consent banner added with this page) on 9 November 2026.
-  Revised 9 November 2026 after three reviews (legal, product facts, page / consent behaviour).
-  The operator is H2Oil Engineering, a company licensed in Dubai, United Arab Emirates (the name the app footer and LICENSE
-  use). Publishable edition (9 November 2026): every placeholder of the review draft was replaced by wording that is true
-  without the missing fact. Still to be supplied or decided by the owner and the lawyer, then added here: the legal name
-  exactly as on the trade licence, the licence number, the licensing authority or free zone and the registered address
-  (section 1 and 22); which UAE regime applies (federal PDPL for mainland Dubai and free zones without their own law, e.g.
-  DMCC, JAFZA, DSO; the DIFC Data Protection Law No. 5 of 2020 for a DIFC licence; the ADGM Data Protection Regulations 2021
-  for an ADGM licence; DIFC / ADGM controllers must register with the Commissioner / Office of Data Protection) — then name
-  it in section 3, adapt the section 10 UAE column (DIFC / ADGM have legitimate interests), section 13 (transfers out of the
-  UAE) and section 18 (regulator); UK and EU representatives (UK / EU GDPR Art. 27; analytics already monitors UK / EU
-  visitors, so the "occasional" exemption is doubtful) — no representative is named until one is appointed; the hosting,
-  backup and e-mail regions and the hosting request-log retention (accounts are not live: the page says account data "will
-  be stored" in the UK or the EU); the Google Analytics settings (retention is stated as "up to 14 months" until a shorter
-  value is set; signals / data sharing are not claimed off) and acceptance of the Google Analytics data processing terms;
-  whether an Arabic version is needed; whether the UK ICO has become the Information Commission.
-  Privacy notice version 1 = the server's WTS_PRIVACY_VERSION default ("1") and the consent version of the analytics banner
-  (WTS_consent.version in well-testing-app.html). Change all three together.
-  Static page: no JavaScript, no external requests, no web fonts or remote images. Published at
-  https://welltest.h2oil.co.uk/privacy.html (prism-build/publish-site.js allow-list). Companion page: terms.html.
+  Privacy notice version 1 (9 November 2026). Change together: this page, the server's WTS_PRIVACY_VERSION default ("1")
+  and the analytics consent version (WTS_consent.version in well-testing-app.html). Companion page: terms.html.
 -->
 <style>
 :root {
@@ -200,7 +180,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
 <h3>What is sent if you accept</h3>
 <ul>
   <li>Events such as "page viewed", "time spent on a module", "calculate clicked", "exported as PDF", "PRiSM tab opened", scroll depth and clicks on links that leave the app.</li>
-  <li>Each event carries only page or route names, fixed button, tool or model names and a few counters (tab number, scroll percentage, seconds on a page). For an outgoing link, the address is sent without its query string or fragment.</li>
+  <li>Each event carries only page or route names, fixed button, tool or model names, the visible label of the menu item or link clicked, and a few counters (tab number, scroll percentage, seconds on a page). For an outgoing link, the address is sent without its query string or fragment.</li>
   <li>A filter in the page removes everything else before an event is sent. <strong>Never sent:</strong> input values, results or other numbers from your data, client or well names, file contents, and any text you type, search for or copy.</li>
   <li>The in-app page "GA4 Events Reference" lists every event.</li>
 </ul>
@@ -332,7 +312,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
 <h2 id="sharing">12. Who receives data</h2>
 <p>We do not sell personal data. We share it only with the following:</p>
 <ul>
-  <li><strong>Our hosting provider</strong>, which runs the website for us and keeps the request logs described in section 6. When accounts launch, it will also run the account server, the database and the file storage (section 13). It acts as our processor.</li>
+  <li><strong>Our hosting provider</strong>, which runs the website for us and keeps the request logs described in section 6. When accounts launch, it will also run the account server, the database and the file storage (section 13). It processes the request logs under its own data processing terms.</li>
   <li><strong>An e-mail delivery service</strong>, which will deliver sign-in codes and security notices for us as our processor when accounts launch. It receives your e-mail address and the message.</li>
   <li><strong>Google</strong>, which provides Google Analytics for the web version if you accept analytics (section 5), under its own terms for the service. For sign-in, Google and LinkedIn are separate controllers of their own services (section 8).</li>
   <li><strong>Public content-delivery networks</strong>, which see your IP address and browser type when your browser downloads a code library (section 6).</li>
@@ -340,18 +320,18 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li><strong>Authorities</strong>, such as courts, regulators or the police, where the law requires it or to protect people from harm.</li>
   <li><strong>A buyer or successor</strong> of our business, if one takes it over. This notice would continue to apply to your data.</li>
 </ul>
-<p>We require our processors to protect personal data to the standard of this notice and to use it only on our instructions.</p>
+<p>Before accounts launch, our contracts with the hosting and e-mail processors will require them to protect personal data to the standard of this notice and to use it only on our instructions.</p>
 
 <h2 id="transfers">13. International transfers</h2>
 <ul>
   <li><strong>Where we are.</strong> We are based in the United Arab Emirates. If you are in the UK or the EU and give us data directly (for example by creating an account), we receive it as a company outside the UK and the EU. Neither the UK nor the EU has found that the UAE protects personal data to the same standard, so we protect your data as this notice describes, under UK and EU law as well as UAE law.</li>
   <li><strong>Where account data is stored.</strong> Accounts are not open yet. When they launch, account data will be stored in the UK or the EU. Our staff may access account data from the UAE to run the service.</li>
-  <li><strong>Safeguards.</strong> Our contracts with processors include the safeguards the law requires for a controller outside the UK and the EU, such as the EU standard contractual clauses and the UK Addendum or the UK International Data Transfer Agreement.</li>
-  <li><strong>Transfers out of the UAE.</strong> Our contracts with these processors contain safeguards that protect the data to the standard required by the UAE law that applies to us.</li>
+  <li><strong>Safeguards.</strong> Our hosting provider processes the request logs under its own data processing terms. Before accounts launch, our contracts with the hosting and e-mail processors will include the safeguards the law requires for a controller outside the UK and the EU, such as the EU standard contractual clauses and the UK Addendum or the UK International Data Transfer Agreement.</li>
+  <li><strong>Transfers out of the UAE.</strong> Before accounts launch, our contracts with these processors will also include safeguards that protect the data to the standard required by the UAE law that applies to us.</li>
   <li><strong>Analytics.</strong> If you accept analytics, Google may process Google Analytics data in the United States and other countries. Google states that it protects these transfers with safeguards such as the EU-US Data Privacy Framework, its UK extension, or standard contractual clauses.</li>
   <li><strong>Sign-in.</strong> Google and LinkedIn handle their own transfers for sign-in under their own privacy policies.</li>
 </ul>
-<p>You can ask us for a copy of the safeguards we use (with commercial details removed).</p>
+<p>Once accounts launch, you can ask us for a copy of the safeguards we use (with commercial details removed).</p>
 
 <h2 id="retention">14. How long we keep data</h2>
 <div class="tbl"><table>
@@ -391,7 +371,7 @@ footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom:
   <li>Sign-in codes and session identifiers are stored only as one-way fingerprints. Session cookies cannot be read by page scripts and are sent only to this site.</li>
   <li>The database keeps each user's rows separate, IP addresses are shortened before they are stored in our database, and our own server logs never contain e-mail addresses, codes, cookies or project contents.</li>
   <li>Sign-in attempts are rate-limited, and we tell you about new-device sign-ins and changes to your account.</li>
-  <li>We have a plan for handling security incidents. If a breach is likely to put you at high risk, we will tell you without undue delay, and we will notify the regulators the law requires.</li>
+  <li>If a breach is likely to put you at high risk, we will tell you without undue delay, and we will notify the regulators the law requires.</li>
 </ul>
 <p>No system is perfectly secure. Keep your mailbox secure, because it is how you sign in. On a shared computer, choose the public-computer option and sign out when you finish.</p>
 
