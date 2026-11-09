@@ -408,7 +408,8 @@ var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','surge
   'rates.shrink_pct','alarms[*].value','alarms[*].limit','alarmLog[*].sev','gauge.batches[*].gor_scf_stb','gauge.batches[*].bsw_pct',
   'desander.dump.lastT','surge2.tFull_s','surge2.transfer.trip',
   'inputs.bean2','inputs.ck2Pos','cushion.tBreak',   // v1.5.0 (WTS_sim 1.5.0; SIM-FOLLOWUP §5.4, §6.3)
-  'nodes.choke.beanFix'];   // CK-101 positive leg bean (null without flow.ck1)
+  'nodes.choke.beanFix',
+  'rates.gor1_scf_stb','rates.gor2_scf_stb','rates.gorTot_scf_stb','sepBy.gasCap_mmscfd'];   // 3.4.2 (WTS_sim 1.5.0 / v1.7.0: GOR1 / 2 / Total, surge cap)   // CK-101 positive leg bean (null without flow.ck1)
 
 // ═════════════════════════════════════════════════════════════════════════
 // §B PURE HELPERS (Node-testable; exported as _internals)

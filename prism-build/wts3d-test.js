@@ -182,7 +182,9 @@ const SECTION_A = (G, src) => {
       // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
       // v1.6.0 (WTS_sim): default T-201 line-up XV-201A open, XV-201B shut, LCV-201 suction B, auto-divert on
       if (c0 !== JSON.stringify({ surge: { inlet: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
-        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
+        // v1.7.0 (WTS_sim 1.5.0, 3.4.2): + surge2.comp (T-202 compartments; dual default = CONTROLS_SURGE2_COMP_DUAL: empty, both inlets shut)
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6, comp: { inlet: [false, false], fill: [true, false], suction: 'B', auto: true, sp: 0.8, hyst: 0.1 } },
+        desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== true) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
@@ -842,7 +844,8 @@ const SECTION_B = (G /*, src */) => {
           if (!S || !F || typeof S.create !== 'function') return true;
           const s = S.create(F, { seed: 13 }); s.advance(60);
           const bad = [], nrm = () => I.normalize(s.getState(), I.makeNorm());
-          if (nrm().rigKey !== '111111000' || nrm().ck2.inRig) bad.push('default ' + nrm().rigKey);
+          // 3.4.2 (C12): the LP flare line is on by default (lp.on with T-201 in) → the scene key ends in '|lp'
+          if (nrm().rigKey !== '111111000|lp' || nrm().ck2.inRig) bad.push('default ' + nrm().rigKey);
           if (!s.setRigup({ heaterChoke: true })) return 'setRigup heaterChoke refused';
           s.advance(20); let n = nrm();
           if (!(n.rigSig === '111111001' && n.ck2.inRig && !n.ck2.bypassed && I.ck2Look(n) && I.ck2Look(n).grey === 0)) bad.push('in ' + n.rigSig + ' ' + J(n.ck2));
@@ -850,11 +853,11 @@ const SECTION_B = (G /*, src */) => {
           const st = s.getState(); st.inputs.bypass = true; const nb = I.normalize(st, I.makeNorm());
           if (!(nb.ck2.bypassed && I.ck2Look(nb).grey === 1 && nb.rigKey === n.rigKey)) bad.push('heater bypass');
           s.setRigup({ separator: false }); if (typeof s.setConfig === 'function') s.setConfig({ sep: { bypass: { dest: 'line', P_psig: 300 } } }); s.advance(20); n = nrm();
-          if (!(n.rigKey === '101111001|line' && n.sepBy.dest === 'line' && n.sepBy.P === 300)) bad.push('line ' + n.rigKey);
+          if (!(n.rigKey === '101111001|line|lp' && n.sepBy.dest === 'line' && n.sepBy.P === 300)) bad.push('line ' + n.rigKey);
           if (!(I.flareQ(n) === 0 && I.flameLength(I.flareQ(n)) === 0)) bad.push('line: flame on ' + I.flareQ(n));
           s.setRigup({ flare: false }); s.advance(10); n = nrm();
-          if (!(n.rigKey === '101110001|line' && n.sepBy.vent)) bad.push('FS-401 out ' + n.rigKey);
-          if (typeof s.setConfig === 'function') { s.setConfig({ sep: { bypass: { dest: 'flare' } } }); s.advance(10); n = nrm(); if (n.rigKey !== '101111001|flare') bad.push('back to flare ' + n.rigKey); }
+          if (!(n.rigKey === '101110001|line|lp' && n.sepBy.vent)) bad.push('FS-401 out ' + n.rigKey);
+          if (typeof s.setConfig === 'function') { s.setConfig({ sep: { bypass: { dest: 'flare' } } }); s.advance(10); n = nrm(); if (n.rigKey !== '101111001|flare|lp') bad.push('back to flare ' + n.rigKey); }
           return bad.length === 0 || bad.join(', ');
         }],
         ['32 v1.3.0 source: CK-102 built only while in (own materials, frost uniform, wheel), tracers E3 → E3c1 → E3c2 while in, the V-101 spool by destination with PSHH-104 / NRV-501 / XV-501 plates', () => {
@@ -1179,7 +1182,7 @@ const SECTION_B = (G /*, src */) => {
 const SECTION_C = (G, src) => {
   const L = G.WTS_live, S = G.WTS_sim, F = G.WTS_TEST_FIXTURE, I = L._internals || {};
   const code = stripComments(stripSelfTest(src) || '');
-  const simAt = (secs, mut) => { const s = S.create(F || S.SAMPLE_FLOW, { seed: 11 }); if (mut) mut(s); for (let i = 0; i < secs / 10; i++) s.advance(10); return s; };
+  const simAt = (secs, mut, config) => { const s = S.create(F || S.SAMPLE_FLOW, config ? { seed: 11, config } : { seed: 11 }); if (mut) mut(s); for (let i = 0; i < secs / 10; i++) s.advance(10); return s; };
   const HOST = path.join(ROOT, '..', 'well-testing-app.html');
   let patched = null;
   const patchedHtml = () => {                     // host HTML with wts-host-patch applied in memory (never written)
@@ -1344,13 +1347,17 @@ const SECTION_C = (G, src) => {
         if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || o1.heaterChoke !== false || Object.keys(o1).length !== 11) bad.push('optional-only request stored ' + store.wts_sim_rigup);
         I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
         if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
-        if (I.EQV.surge2.valves.join() !== 'XV-202' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
+        // 3.4.2: T-202 has two compartments (XV-202A / XV-202B, suction) like T-201
+        if (I.EQV.surge2.valves.join() !== 'XV-202A,XV-202B' || I.EQV.surge2.kind !== 'comps' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
         if (JSON.stringify(I.stepFor({})) !== JSON.stringify(I.STEP) || I.stepFor({ desander: true }).choke !== '④') bad.push('stepFor fallback');
         const st = simAt(600), st0 = st.getState();
         if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
         if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
         const s2 = simAt(60, (x) => x.setRigup({ gauge: false })).getState();
-        if (I.pumpShort(s2) !== 'OUT (no gauge tank)' || !I.rigOut(s2, 'gauge') || !I.rigOut(s2, 'pump')) bad.push('out texts');
+        // 3.4.2 rig-up chain: T-301 out keeps P-201 in as a booster (T-201 → P-201 → export); the legacy 'v341' routing takes it out
+        if (!/^BOOSTER · (RUNNING|STANDBY)$/.test(I.pumpShort(s2)) || !I.rigOut(s2, 'gauge') || I.rigOut(s2, 'pump') || s2.gauge.pump.mode !== 'booster') bad.push('out texts ' + I.pumpShort(s2));
+        const s3 = simAt(60, (x) => x.setRigup({ gauge: false }), { rig: { routing: 'v341' } }).getState();
+        if (I.pumpShort(s3) !== 'OUT (no gauge tank)' || !I.rigOut(s3, 'gauge') || !I.rigOut(s3, 'pump')) bad.push('v341 out texts ' + I.pumpShort(s3));
         return bad.length === 0 || bad.join('; ');
       } finally { G.localStorage = keep; }
     }],
@@ -1373,13 +1380,17 @@ const SECTION_C = (G, src) => {
       // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
       // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
       // (CK-101 manifold, after v3.3.3: the host flow.ck1 block {v, leg, beanAdj, beanFix, bean} is stripped the same way)
-      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; return c; };
+      // (3.4.2: the host flow.lp block {v, gor1, gor2, gorTot, …} and flow.sim.lpNps / lpSch / lpLen_ft are host-only too, C17)
+      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; delete c.ck1; delete c.lp;
+        if (c.sim) { delete c.sim.lpNps; delete c.sim.lpSch; delete c.sim.lpLen_ft; } return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation
       // inputs; v1.5.0: and the two destination keys (sepByDest, sepByP_psig), published by the host since WP-C
       const ref = strip(S.SAMPLE_FLOW);
       eqShape(strip(f), ref, 'flow', bad);
-      if (!f.sim || f.sim.sepByDest !== S.SAMPLE_FLOW.sim.sepByDest || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
-      if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'flare') bad.push('flow.ck2 / flow.sepBy blocks');
+      // 3.4.2 (DECISIONS 1): the PAGE default V-101-out destination is 'surge'; the engine SAMPLE_FLOW stays 'flare' (identity)
+      if (!f.sim || f.sim.sepByDest !== 'surge' || S.SAMPLE_FLOW.sim.sepByDest !== 'flare' || f.sim.sepByP_psig !== S.SAMPLE_FLOW.sim.sepByP_psig) bad.push('sim destination defaults');
+      if (!f.ck2 || !f.sepBy || f.ck2.skipped !== false || f.sepBy.dest !== 'surge') bad.push('flow.ck2 / flow.sepBy blocks');
+      if (!f.lp || f.lp.v !== 1 || !(f.lp.gorTot > 0) || f.sim.lpNps !== 3 || f.sim.lpSch !== 40 || f.sim.lpLen_ft !== 150) bad.push('flow.lp ' + JSON.stringify(f.lp && [f.lp.v, f.lp.gorTot, f.sim.lpNps, f.sim.lpSch, f.sim.lpLen_ft]));
       ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
         if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
       const near = (a, b, t) => Math.abs(a - b) <= t;

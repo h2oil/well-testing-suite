@@ -1128,6 +1128,7 @@ function pumpShort(st) {
     if (!p) return '—';
     if (p.mode === 'none') return 'OUT (no gauge tank)';
     if (p.mode === 'gravity') return 'NOT IN RIG-UP · gravity drain';
+    if (p.mode === 'booster') return 'BOOSTER · ' + (p.failed ? 'FAILED' : p.on ? 'RUNNING' : 'STANDBY');   // 3.4.2 chain: T-301 out
     return p.failed ? 'FAILED' : p.on ? 'RUNNING' : 'STANDBY';
 }
 // Scenarios list [[id, label]]: ids from WTS_sim.FAULTS when present (the local FAULTS is the fallback). Order: the v3.3 local

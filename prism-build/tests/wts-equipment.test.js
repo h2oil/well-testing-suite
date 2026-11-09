@@ -626,9 +626,10 @@ module.exports = [
       assert.strictEqual(JSON.parse(app.win.localStorage.getItem('wts_sim_rigup') || '{}').desander, true, 'saved');
       assert.ok(/Full rig-up · with DS-101/.test(cfgRow().textContent), cfgRow().textContent);
       assert.ok(card.querySelector('[data-rig-act="all"]').disabled, 'Full rig-up still disabled (core items all in)');
-      // T-201 out disables T-202's switch with the reason
+      // T-201 out: under the 3.4.2 chain rules (default) T-202 may stand in for T-201 (RIGUP chainAlone), so its switch stays enabled
+      // (the v3.4.1 'needs T-201' disable applies under the 'v341' routing only)
       app.click(sw('surge'));
-      assert.ok(sw('surge2').disabled && /needs T-201/.test(sw('surge2').getAttribute('title')), 'T-202 switch disabled while T-201 is out');
+      assert.ok(live.getState().rigup.routing === 'chain' && !sw('surge2').disabled && !/needs T-201/.test(sw('surge2').getAttribute('title') || ''), 'T-202 switch enabled while T-201 is out (chain)');
       // Full rig-up restores core items and leaves DS-101 in
       app.click(card.querySelector('[data-rig-act="all"]'));
       let st = live.getState();
