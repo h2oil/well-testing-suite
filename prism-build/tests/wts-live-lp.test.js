@@ -79,10 +79,10 @@ module.exports = [
       assert.strictEqual(L.gorOf({ rates: { separated: false, gor1_scf_stb: 5 } }, 1), null);
       assert.strictEqual(L.lpOn(st), true); assert.strictEqual(L.lpOn({ lp: { on: false } }), false); assert.strictEqual(L.lpOn({}), false);
       assert.strictEqual(L.gorLine(st), 'GOR1 sep 900 · GOR2 tank 40 · total 940 scf/STB');
-      // review 3.4.2: the HUD sub-line is labelled and five-digit values shrink to thousands so it fits the GOR cell
-      assert.strictEqual(L.gorSub(st), 'G1 900 · G2 40');
-      assert.strictEqual(L.gorSub(app.toWin({ rates: { gor1_scf_stb: 10132, gor2_scf_stb: 16, gorTot_scf_stb: 10148 } })), 'G1 10.1k · G2 16');
-      assert.strictEqual(L.gorSub(app.toWin({ rates: { separated: false } })), 'G1 — · G2 —');
+      // review round 2 (3.4.2): the HUD sub-line is a line of its own under the rates group, labelled like the 2D strip line
+      assert.strictEqual(L.gorSub(st), 'GOR1 sep 900 · GOR2 tank 40');
+      assert.strictEqual(L.gorSub(app.toWin({ rates: { gor1_scf_stb: 10132, gor2_scf_stb: 16, gorTot_scf_stb: 10148 } })), 'GOR1 sep 10,132 · GOR2 tank 16');
+      assert.strictEqual(L.gorSub(app.toWin({ rates: { separated: false } })), 'GOR1 sep — · GOR2 tank —');
       // LP meter texts: the FT-201 reading vs what flows now; metric low-cut with 2 decimals and the turndown range converted
       const ln = (o) => L.lpNowTxt(app.toWin({ lp: Object.assign({ on: true, q_mscfd: 42.5, belowCut: false }, o) }), true);
       assert.strictEqual(ln({}), '10-min average · now 42.5 MSCFD');
@@ -124,7 +124,7 @@ module.exports = [
         app.flush(600);
         const hud = app.el('wtsl_hud'), rR = hud.querySelector('[data-h="rR"]'), sub = hud.querySelector('[data-h="rRs"]');
         assert.strictEqual(text(rR), '9,542', 'HUD GOR = total');
-        assert.ok(sub && !sub.hidden && text(sub) === 'G1 9,500 · G2 42', 'sub-line: ' + text(sub));
+        assert.ok(sub && !sub.hidden && text(sub) === 'GOR1 sep 9,500 · GOR2 tank 42', 'sub-line: ' + text(sub));
         assert.ok(/GOR1 separator \(FE-101\) \+ GOR2 tank \(FT-201\)/.test(rR.closest('.wtsl-hi').getAttribute('title')), 'GOR tooltip');
         let card = openCard(app, 'separator');
         assert.strictEqual(rowVal(card, 'GOR1'), '9,500 scf/STB');
@@ -218,7 +218,7 @@ module.exports = [
       assert.strictEqual(rowVal(card, 'Service'), 'To the LP tip on FS-401');
       assert.ok(!/NaN|undefined|Infinity/.test(text(card)), 'no NaN in the lp card');
       const sub = app.el('wtsl_hud').querySelector('[data-h="rRs"]');
-      assert.ok(!sub.hidden && /^G1 [\d,.]+k? · G2 [\d,.]+k?$/.test(text(sub)), 'sub-line: ' + text(sub));
+      assert.ok(!sub.hidden && /^GOR1 sep [\d,.]+ · GOR2 tank [\d,.]+$/.test(text(sub)), 'sub-line: ' + text(sub));
       const sm = J(I(app).summaryOf(st));
       assert.ok(sm.rates.gor1 > 0 && sm.rates.gorTot >= sm.rates.gor1, 'summaryOf GOR split: ' + JSON.stringify(sm.rates));
       noErr(app, assert);
