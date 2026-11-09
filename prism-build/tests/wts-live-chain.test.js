@@ -85,7 +85,11 @@ module.exports = [
       assert.strictEqual(L.ventOn(W({ rigup: {} })), false);
       const f = (d) => ({ inputs: { bean: 32, Psep: 150, Qg: 10, Qo: 1000, Qw: 200 }, sim: { sepByDest: d } });
       const d1 = J(L.inputsDiff(W(f('flare')), W(f('surge'))));
-      assert.deepStrictEqual(d1, [['With V-101 out, well stream to the surge tank T-201', 'V-101']]);
+      assert.deepStrictEqual(d1, [['With V-101 out, well stream to the surge tank', 'V-101']], 'no rig-up given: generic');
+      // review round 2 ([23]): the receiver follows the requested rig-up
+      assert.deepStrictEqual(J(L.inputsDiff(W(f('flare')), W(f('surge')), W({ surge: true, surge2: true }))), [['With V-101 out, well stream to the surge tank T-201', 'V-101']]);
+      assert.deepStrictEqual(J(L.inputsDiff(W(f('flare')), W(f('surge')), W({ surge: false, surge2: true }))), [['With V-101 out, well stream to the surge tank T-202 (T-201 out)', 'V-101']]);
+      assert.deepStrictEqual(J(L.inputsDiff(W(f('flare')), W(f('surge')), W({ surge: false, surge2: false }))), [['With V-101 out, well stream to the surge tank (none in the rig-up: burner / flare line)', 'V-101']]);
       assert.deepStrictEqual(J(L.inputsDiff(W(f('surge')), W(f('line')))), [['With V-101 out, well stream to the production line', 'V-101']]);
       assert.deepStrictEqual(J(L.inputsDiff(W(f('surge')), W(f('flare')))), [['With V-101 out, well stream to the burner / flare line', 'V-101']]);
       assert.strictEqual(L.rigRoute(W({ rigup: { routes: { heater: 'V-101' } } }), 'heater'), 'V-101');
