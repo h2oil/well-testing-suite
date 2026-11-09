@@ -4,7 +4,7 @@
 // in a transaction that first sets app.user_id with set_config(…, true) — the transaction-local form, so a pooled
 // connection never carries a user id into the next transaction (rls.test.js checks it).
 //
-//   createDb(conn, {max, role?, sessionRole?}) → { sql, role, ping(), asUser(userId, fn), anon(fn), checkRole(), close() }
+//   createDb(conn, {max, role?, sessionRole?, roleMode?}) → { sql, role, ping(), asUser(userId, fn), anon(fn), checkRole(), close() }
 //     conn: a connection URL (WTS_DB_URL) or {host, port, user, password?, database}
 //   asUser(userId, fn(tx))  BEGIN; [SET LOCAL ROLE <role>;] set_config('app.user_id', userId, true); fn; COMMIT
 //   anon(fn(tx))            BEGIN; [SET LOCAL ROLE <role>;] fn; COMMIT — the pre-auth path, which may only call the definer functions
@@ -16,10 +16,16 @@
 //   • sessionRole:true also sends `role` as a connection start-up parameter, so EVERY statement of that pool runs as the
 //     role — for the scheduled jobs (core/jobs.js uses db.sql directly) and the operations scripts. A login that is not a
 //     member of the role cannot connect at all (fail closed).
+//   • roleMode:'local' (with sessionRole) is the fallback for a connection endpoint that refuses the start-up parameter (a
+//     transaction pooler; db/migrate.js --platform probes it and prints which mode works — RUNBOOK §3N step 7): no start-up
+//     role is sent; instead EVERY top-level statement and every sql.begin runs in its own transaction that first does
+//     SET LOCAL ROLE <role>, so each statement keeps its own commit exactly as before. Helpers (sql.array, sql(…)) pass
+//     through; a statement nested as a fragment inside another (sql`now()` inside a template) is not supported there.
 //   checkRole() → the current_user of a plain statement; throws unless it equals `role` (sessionRole pools only).
 // URLs: query parameters other than sslmode / sslrootcert are dropped (the driver would send them as start-up parameters,
 // e.g. channel_binding, which the server refuses); sslmode require / prefer / verify-ca to a non-loopback host is raised to
-// verify-full (certificate and host name checked).
+// verify-full (certificate and host name checked), and a non-loopback URL WITHOUT sslmode gets verify-full (the driver's own
+// default is no TLS at all).
 
 const ROLE_RE = /^wts_[a-z]{2,16}$/;
 const LOOPBACK = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/;
@@ -36,10 +42,32 @@ function cleanUrl(raw) {
   const keep = new URLSearchParams();
   const mode = u.searchParams.get('sslmode');
   const root = u.searchParams.get('sslrootcert');
-  if (mode) keep.set('sslmode', !LOOPBACK.test(u.hostname) && /^(require|prefer|verify-ca|allow)$/.test(mode) ? 'verify-full' : mode);
+  const remote = !LOOPBACK.test(u.hostname);
+  if (mode) keep.set('sslmode', remote && /^(require|prefer|verify-ca|allow)$/.test(mode) ? 'verify-full' : mode);
+  else if (remote) keep.set('sslmode', 'verify-full');      // no sslmode at all: the driver would connect without TLS
   if (root) keep.set('sslrootcert', root);
   u.search = keep.toString() ? '?' + keep.toString() : '';
   return u.toString();
+}
+
+// roleMode 'local': a stand-in for the driver's sql function whose statements each run in their own role transaction
+function localRoleSql(raw, enter) {
+  const isTemplate = (a) => Array.isArray(a) && Array.isArray(a.raw);
+  const inRole = (fn) => raw.begin(async (tx) => { await enter(tx); return fn(tx); });
+  const f = function (first, ...rest) {
+    if (isTemplate(first)) return inRole((tx) => tx(first, ...rest));
+    return raw(first, ...rest);                                   // helpers (identifiers, value lists) build fragments only
+  };
+  Object.keys(raw).forEach((k) => { f[k] = raw[k]; });
+  f.array = raw.array; f.json = raw.json;
+  f.unsafe = (text, args, opt) => inRole((tx) => tx.unsafe(text, args, opt));
+  f.begin = (a, b) => {
+    const fn = typeof a === 'function' ? a : b;
+    const wrapped = async (tx) => { await enter(tx); return fn(tx); };
+    return typeof a === 'function' ? raw.begin(wrapped) : raw.begin(a, wrapped);
+  };
+  f.end = (x) => raw.end(x);
+  return f;
 }
 
 function createDb(conn, o) {
@@ -47,15 +75,18 @@ function createDb(conn, o) {
   const role = o.role ? String(o.role) : '';
   if (role && !ROLE_RE.test(role)) throw new Error('db: role must be one of the wts_* roles');
   const driver = loadDriver();
+  if (o.roleMode != null && o.roleMode !== 'session' && o.roleMode !== 'local') throw new Error('db: roleMode must be session or local');
+  const localRole = !!(role && o.sessionRole && o.roleMode === 'local');
   const opts = { max: o.max || 4, idle_timeout: o.idleTimeout || 20, connect_timeout: o.connectTimeout || 10, onnotice: () => {}, prepare: false };
-  if (role && o.sessionRole) opts.connection = { role };
-  const sql = typeof conn === 'string' ? driver(cleanUrl(conn), opts) : driver(Object.assign({}, opts, {
+  if (role && o.sessionRole && !localRole) opts.connection = { role };
+  const raw = typeof conn === 'string' ? driver(cleanUrl(conn), opts) : driver(Object.assign({}, opts, {
     host: conn.host, port: conn.port, user: conn.user, password: conn.password, database: conn.database,
   }));
   // the role name is checked against ROLE_RE above, so it can be spliced into the statement
   const enter = role ? (tx) => tx.unsafe('set local role ' + role) : () => null;
+  const sql = localRole ? localRoleSql(raw, enter) : raw;
   return {
-    sql, role,
+    sql, role, roleMode: localRole ? 'local' : (role && o.sessionRole ? 'session' : null),
     async ping() { const r = await sql`select 1 as ok`; return !!(r[0] && r[0].ok === 1); },
     asUser(userId, fn) {
       if (!/^[0-9a-f-]{36}$/.test(String(userId || ''))) throw new Error('db.asUser: a user id is required');
@@ -67,7 +98,7 @@ function createDb(conn, o) {
       if (role && r !== role) throw new Error('db: statements run as ' + r + ', expected ' + role);
       return r;
     },
-    close() { return sql.end({ timeout: 5 }); },
+    close() { return raw.end({ timeout: 5 }); },
   };
 }
 

@@ -106,10 +106,12 @@ values**), a GitHub environment secret, or your password manager. Where a value 
 `https://h2oil-accounts-api.netlify.app`). If you pick another name, use it everywhere instead.
 
 ### Step 1 — Team plan and region
-1. Netlify → your team → **Team settings → Billing** → plan **Pro** → confirm. Pro is needed for the London function region
-   (UK data residency), per-scope environment variables and a second team owner. On Personal the functions and the database run
-   in the United States (Ohio); if you choose that, write the decision into PROJECT-NOTES.md and the privacy notice must name the
-   transfer.
+1. Netlify → your team → **Team settings → Billing**. The team must be on a **credit-based plan**: Netlify Database exists only
+   on credit-based plans, and a team on a legacy plan (legacy Starter, legacy Pro or similar) gets "database feature not
+   available for this account" at step 6. If Billing shows a legacy plan, switch the team's billing to credit-based first. Choose
+   the credit-based **Pro** plan: it gives the London function region (UK data residency), per-scope environment variables,
+   30-day database backups and a second team owner. On Personal the functions and the database run in the United States
+   (Ohio); if you choose that, write the decision into PROJECT-NOTES.md and the privacy notice must name the transfer.
 2. **Team settings → Members**: invite a second Owner (a lost owner login means nobody can rotate secrets or restore backups).
 3. Download the Data Processing Agreement from Netlify's Trust Center and keep it with the company records (UK GDPR processor
    contract); note the sub-processor list date.
@@ -134,13 +136,18 @@ without the master key no user data can ever be read again; without the backup p
 ### Step 4 — Create the functions site
 1. Netlify → **Add new project → Import an existing project → GitHub** → choose this repository.
 2. **Branch to deploy**: `master` (or `Dev` while the accounts work is not yet on master).
-3. **Base directory**: `server`. Leave **Build command** empty (server/netlify.toml sets `node site/netlify-check.js`).
-   **Publish directory**: `server/public`. **Functions directory**: `server/netlify/functions`.
+3. **Base directory**: `server`. Leave **Build command**, **Publish directory** and **Functions directory** all EMPTY:
+   server/netlify.toml sets them (`node site/netlify-check.js`, `public`, `netlify/functions`, relative to the base directory).
+   Typing them here can double the prefix (`server/server/…`).
 4. **Project name**: `h2oil-accounts-api` → **Deploy**. The first deploy is harmless: without its variables every API call
    answers 404 and the scheduled functions only log that nothing is configured.
 5. Immediately: **Project configuration → Build & deploy → Continuous deployment → Branches and deploy contexts → Configure**:
    **Branch deploys: Deploy only the production branch**; **Deploy Previews: Don't deploy pull requests** → **Save**. A preview of
-   a site with a database gets a copy of the production data and would run with the production secrets.
+   a site with a database gets a copy of the production data and would run with the production secrets. Also turn **agent
+   runs** off for this site (or limit them to team Owners) where the project or team settings offer it: every agent run gets its
+   own database branch seeded from production, i.e. a copy of all user data running with the site's secrets. (The functions
+   also refuse to run on anything but the published production deploy — `alert: isolation` — but a database branch is a data
+   copy even if nothing serves it.)
 6. Same page, **Build settings → Build status → Configure → Stopped builds** → Save. From now on the site is released only by
    the GitHub workflow from `server-v*` tags (step 12); a push to GitHub never changes it.
 7. Do **not** add a custom domain to this site. Its `.netlify.app` address is only ever called by the main site's proxy rule.
@@ -153,7 +160,8 @@ without the master key no user data can ever be read again; without the backup p
 1. On the functions site: **Data & Storage → Database → Create database**. If a region is offered, choose London (or the
    closest EU region offered); write the region into PROJECT-NOTES.md.
 2. Leave **sleep on inactivity** at the default (it wakes in well under a second).
-3. **Connect → Production connection string → Copy** (only an Owner sees it). Store it in the password manager as
+3. **Connect → Production connection string → Copy** (team Owners **and Developers** can see it — keep Developer seats on this
+   team to the minimum). Store it in the password manager as
    `WTS_MIGRATE_DB_URL`\*. It is the database's only login; the functions get it automatically as `NETLIFY_DB_URL` — never type it
    into the site's variables.
 4. Backups: **Data & Storage → Database → Backups** shows the daily backups (Pro: 30 days) and one per published deploy.
@@ -164,16 +172,23 @@ cd server
 WTS_MIGRATE_DB_URL='<the connection string>' node db/migrate.js --platform
 ```
 Expected, in this order: `login …: superuser false, createrole true, bypassrls true`, `roles ready (granted to the login: …)`,
-`applied 001-schema.sql` … `applied 050-code-scope.sql`, `4 applied`, `export role ready`. Running it again prints `0 applied`.
+`applied 001-schema.sql` … `applied 050-code-scope.sql`, `4 applied`, `export role ready`, then `start-up role ok`. Running it
+again prints `0 applied`. The last line probes how the scheduled jobs switch to their role:
+- `start-up role ok` — nothing to do.
+- `start-up role refused (…); transaction role ok — set WTS_DB_ROLE_MODE=local on the functions site` — the connection
+  endpoint refuses the start-up setting (a transaction pooler). Add the variable `WTS_DB_ROLE_MODE` = `local` in step 8; the jobs
+  and the export then switch role inside each transaction instead. Without it every scheduled job and the weekly export fail
+  (step 14) while the API works.
+- both refused — stop and pass the line to the developer.
 **If it stops with "cannot create roles" or "cannot create BYPASSRLS roles", stop here** and pass the message to the developer:
 the platform login lacks a right the plan's role design needs, and the fallback migration (server/README.md, Hosting
 deviation 1) has to be written first. Nothing was applied in that case.
 
 ### Step 8 — Environment variables of the functions site
 **Project configuration → Environment variables → Add a variable → Add a single variable.** For each row: the exact key, the
-value, **Scopes: Functions** only (Pro), **Deploy contexts: Production** only (or "Same value for all" with previews already
-off), and tick **Contains secret values** for every row marked \*. Changes take effect at the next deploy (step 12, or step 16
-"apply a change").
+value, **Scopes: Functions** only (Pro), **Deploy contexts: Production** only — never "Same value for all" (a branch or preview
+deploy would get the production secrets) — and tick **Contains secret values** for every row marked \*. Changes take effect at
+the next deploy (step 12, or step 16 "apply a change").
 
 | Key | Value |
 |---|---|
@@ -186,6 +201,11 @@ off), and tick **Contains secret values** for every row marked \*. Changes take 
 | `SYNC_MODE` | `on` |
 | `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | leave unset (= off) until §3P is done |
 | `OAUTH_GOOGLE_CLIENT_ID` · `OAUTH_GOOGLE_CLIENT_SECRET`\* · `OAUTH_LINKEDIN_CLIENT_ID` · `OAUTH_LINKEDIN_CLIENT_SECRET`\* | §3P |
+| `WTS_DB_ROLE_MODE` | only if step 7 said so: `local` |
+
+**Node version of the functions**: the release deploys without a platform build, so also open **Project configuration → Build &
+deploy → Dependency management → Node.js version** and choose **22.x** → Save (the functions then run on Node 22 whatever
+machine runs the deploy). If your layout shows no such setting, tell the developer before step 12.
 
 Do **not** set `WTS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_MIGRATE_DB_URL`, `WTS_SUPPORT_DB_URL`,
 `WTS_BACKUP_KEY` or `WTS_BACKUP_PRIVATE_KEY` here (the site refuses to start, or ignores them). Set automatically on Netlify and
@@ -211,25 +231,47 @@ only changed on purpose: `WTS_MIN_CLIENT` (default `4.0`), `WTS_VERSION` (defaul
 5. Check (after step 13): the code e-mail arrives, and its headers show `spf=pass`, `dkim=pass`, `dmarc=pass`.
 
 ### Step 10 — The main site: publish allow-list and the proxy rule
-This also completes §3 step 0 (the main site stops publishing the repository tree). Do it **before** the accounts work is
-merged to master.
-1. In a terminal in the repository folder: `node server/site/proxy-rule.js --snippet h2oil-accounts-api.netlify.app > netlify.toml`
-   and commit this one root file to master as a reviewed change. It sets the main site's build to
+This also completes §3 step 0 (the main site publishes only the allow-list). `server/`, `docs/` and `prism-build/` are already
+on master; today's main-site set-up already hides them — confirm `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404
+**before** and **after** this step.
+0. **Check how the main site deploys today** (change nothing yet): main site **h2oil → Project configuration → Build & deploy →
+   Continuous deployment**. Write into PROJECT-NOTES.md the linked repository, the **production branch**, the **Build command**
+   and the **Publish directory** shown there, so you can put them back. Go on only if the site is linked to THIS repository and
+   builds the branch `master`. If it is not linked to this repository (for example it is deployed by uploading files), or builds
+   another branch, **stop and ask the developer**: committing netlify.toml would then do nothing, or change the wrong branch.
+1. In a terminal in the repository folder: `node server/site/proxy-rule.js --snippet h2oil-accounts-api.netlify.app > netlify.toml`.
+   Commit this one root file on `Dev` and merge Dev → master like any other batch (CLAUDE.md branch model). It sets the main
+   site's build to
    `node prism-build/publish-site.js --api` with publish directory `dist-site`, and the rule
    `/api/v1/*` → `https://h2oil-accounts-api.netlify.app/api/v1/:splat` (status 200, forced) with the headers
    `X-WTS-Proxy-Sig` (a placeholder) and `X-WTS-Host: welltest.h2oil.co.uk`. The value is never in the file in the repository.
 2. Main site **h2oil → Project configuration → Environment variables**: add `WTS_PROXY_SIG`\* with the **same** value as on the
-   functions site, **Scopes: Builds**, tick **Contains secret values**. The main site's build fills it into its own copy of
+   functions site, **Scopes: Builds**, **Deploy contexts: Production** only (deploy previews and branch deploys of the main site
+   run pull-request code and must never get the signature; they then build with "unset" and their /api/v1 answers 404), tick
+   **Contains secret values**. The main site's build fills it into its own copy of
    `netlify.toml` (`server/site/proxy-rule.js --apply`); that file is not published, and `SECRETS_SCAN_OMIT_PATHS` keeps the
    platform's secret scan from failing the build on it.
 3. Main site **Build settings**: if the UI still shows an old publish directory or command, clear them (the file's values win).
-4. Deploy the main site (it deploys from master as usual). Checks:
-   - `https://welltest.h2oil.co.uk/` works as before; `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404.
+4. Deploy the main site (the merge to master starts it). Checks:
+   - `https://welltest.h2oil.co.uk/` and `https://welltest.h2oil.co.uk/index.html` open the app as before (the publish step
+     always writes index.html as a copy of the app page); `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404.
+     If the home page answers 404, roll back at once (step 16, "Rollback of the main site") and tell the developer.
    - The deploy log shows `[proxy-rule] proxy signature filled in`. If it shows "WTS_PROXY_SIG is not set", step 2 is missing:
      the site still deploys, the API answers 404 and accounts stay hidden.
-5. If Netlify ever ignores the filled-in header (check in step 12: `/api/v1/health` through the main site answers 404 while the
-   functions site is deployed), the documented alternative is a small edge function on the main site that adds the header from
-   its environment — ask the developer; do not put the value into the repository.
+   - **The deployed rule carries the header** (no server release needed): open the deploy → **Deploy summary** → the redirect
+     rules processed (or **Deploy log → processed redirects / headers**). The `/api/v1/*` rule must list a header
+     `X-WTS-Proxy-Sig` (the value is not shown) and `X-WTS-Host`. If the rule is listed without `X-WTS-Proxy-Sig`, the
+     platform did not re-read the filled-in file: use the fallback in 10.5 now.
+   - Later, once a deploy preview of the main site exists: its `/api/v1/health` answers 404 (no signature in previews).
+5. **Fallback (only if 10.4 shows the rule without its header)** — an edge function on the main site adds the headers at run
+   time; it is in the repository already (`server/site/edge/wts-api-proxy.js`):
+   1. `node server/site/proxy-rule.js --snippet h2oil-accounts-api.netlify.app --edge > netlify.toml`, commit on Dev, merge.
+   2. Main site variables: keep `WTS_PROXY_SIG`\* but change its **Scopes** to **Functions** (edge functions read it at run time;
+      Deploy contexts: Production only), and add `WTS_API_HOST` = `h2oil-accounts-api.netlify.app` (Scopes: Functions).
+   3. Functions site variables: add `WTS_CLIENT_IP_HEADER` = `x-wts-client-ip` (the edge function sends the visitor's address
+      there; set it ONLY with the fallback — with the proxy rule a visitor could send that header themselves), then apply the
+      change (step 16).
+   4. Redeploy the main site; the deploy summary lists the edge function `wts-api-proxy` on `/api/v1/*`. Do step 12 as written.
 
 ### Step 11 — GitHub release environments
 GitHub → repository **Settings → Environments**:
@@ -240,8 +282,13 @@ GitHub → repository **Settings → Environments**:
      token** (description "server releases", expiry 1 year; put a renewal date in the calendar — a password reset also cancels
      it);
    - variable `WTS_DEPLOY_SITE`: the functions site's **Project ID** (Project configuration → General → Project details);
-   - variable `WTS_DEPLOY_COMMAND`:
-     `npx --yes netlify-cli@27.16.2 deploy --prod --no-build --dir public --functions netlify/functions --site "$WTS_DEPLOY_SITE" --auth "$WTS_DEPLOY_TOKEN" --message "$GITHUB_REF_NAME"`
+   - variable `WTS_DEPLOY_COMMAND` (exactly; the token reaches the CLI through its environment, never its command line):
+     `NETLIFY_AUTH_TOKEN="$WTS_DEPLOY_TOKEN" NETLIFY_SITE_ID="$WTS_DEPLOY_SITE" netlify deploy --prod --no-build --dir public --functions netlify/functions --message "$GITHUB_REF_NAME"`
+   The workflow installs the CLI (netlify-cli 27.16.2, its whole dependency tree pinned by `server/ci/deploy-cli/package-lock.json`,
+   no install scripts) on Node 22, puts the bundle at `<runner temp>/rel/server` with `<runner temp>/rel` as the repository root
+   (so the site's base directory `server` exists there) and runs the command inside `rel/server`. Before the first tag, the
+   developer can check the layout once with the same command and `--prod` replaced by `--draft`: the log must name
+   `server/netlify.toml` and six functions.
    - variable `WTS_HEALTH_URL`: `https://welltest.h2oil.co.uk/api/v1/health`.
    These must be **environment** secrets and variables, never repository-level ones.
 
@@ -261,16 +308,21 @@ GitHub → repository **Settings → Environments**:
 5. **Check the client address** (unverified on the platform until now): call the health address once from your computer, then
    find its access line: `"ipp"` must be the start of **your** public address (your router's address, shown in its admin page).
    If every line shows the same platform address instead, tell the developer before step 15: provider sign-in refuses to run
-   without a real client address, and the per-address code limits would treat all users as one.
+   without a real client address, and the per-address code limits would treat all users as one. Then try a **forged** address:
+   ```
+   curl -H 'X-Nf-Client-Connection-Ip: 203.0.113.9' -H 'X-Forwarded-For: 203.0.113.9' https://welltest.h2oil.co.uk/api/v1/health
+   ```
+   Its access line must still show **your** prefix. If it shows `203.0.113`, **stop before step 15** and tell the developer:
+   anyone could then pick an address per request (rate limits stop working, other people's addresses could be locked out).
 
 ### Step 13 — The v4.0 page and the first sign-in
 1. The page must be the v4.0 release (the version under the logo reads **v4.0**): the server refuses project saves from older
    pages (`WTS_MIN_CLIENT` 4.0).
-2. Put yourself on the invite list (from your computer; the four key variables are the same values as on the site, the
-   connection string from step 6; the script runs as `wts_support`):
+2. Put yourself on the invite list (from your computer; the four key values are the same as on the site — `WTS_MASTER_KID` is
+   `1` as keygen printed — and the connection string is the one from step 6; the script runs as `wts_support`):
    ```
    cd server
-   WTS_SUPPORT_DB_URL='<connection string>' WTS_MASTER_KEYS='…' WTS_INDEX_PEPPER='…' WTS_CODE_PEPPERS='…' \
+   WTS_SUPPORT_DB_URL='<connection string>' WTS_MASTER_KEYS='…' WTS_MASTER_KID='1' WTS_INDEX_PEPPER='…' WTS_CODE_PEPPERS='…' \
      node ops/allowlist-add.js --actor support:owner --email name@company.example --note beta
    ```
    Output: `{"ok":true,…}` — no address is printed. Repeat for each beta tester.
@@ -284,12 +336,20 @@ GitHub → repository **Settings → Environments**:
 Functions site → **Logs → Functions**: `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sundays 04:41 UTC)
 show as scheduled. They run only on the published production deploy.
 1. `ops-daily` → **Run now** → its log shows `jobs: ops-daily started ops-daily-background`; the `ops-daily-background` log then
-   shows `jobs: ops-daily-background {"ok":true,…}` (and, until the first export, `alert: exportAge`).
+   shows `jobs: ops-daily-background {"ok":true,…}` (and, until the first export, `alert: exportAge`). A line
+   `alert: jobs — … platform retry ignored …` means the platform repeated a run that had failed (it retries background runs
+   after 1 and 2 minutes with the same signed call, which is never run twice): read the failure line just before it, fix it, and
+   start the job again with **Run now** on `ops-daily` (or `weekly-export`). `alert: jobs — … refused an unsigned or badly signed
+   call` is a call that did not come from the scheduled function — check that `WTS_OPS_HMAC` is set.
 2. `weekly-export` → **Run now** → `weekly-export-background` logs `{"ok":true,"name":"wts-export-….wtsx",…}`; **Blobs** lists
    the store `wts-exports`.
-3. The **first restore drill** (§9.3) before any real user signs in — with the developer, on a scratch database on a computer:
+3. The **first restore drill** (§9.3) before any real user signs in — with the developer, on a computer that has the
+   **PostgreSQL 16 tools** installed (set `WTS_PG_BIN` to their `bin` folder if they are not on PATH) and a **scratch database
+   server the developer sets up** for the drill:
    `WTS_BLOBS_SITE_ID=<Project ID> WTS_OBJECTS_CREDENTIAL='<a personal access token>' WTS_BACKUP_PRIVATE_KEY='…'
-   WTS_DRILL_ADMIN_URL='<scratch administrator>' node ops/restore-drill.js --from-store`. Record the report in PROJECT-NOTES.md.
+   WTS_DRILL_ADMIN_URL='<scratch administrator URL>' node ops/restore-drill.js --from-store`. `WTS_DRILL_ADMIN_URL` is the
+   administrator connection of that scratch server — **never** the production connection string. Record the report in
+   PROJECT-NOTES.md.
 4. Once a month: copy the newest export to offline storage —
    `WTS_BLOBS_SITE_ID=<Project ID> WTS_OBJECTS_CREDENTIAL='<personal access token>' node ops/export-fetch.js <folder>` (the file
    stays sealed; the private key is not needed to copy it). The quarterly drill can then use `node ops/restore-drill.js <file>`.
@@ -321,8 +381,26 @@ show as scheduled. They run only on the published production deploy.
   `wts_jobs`.
 - **Rotate a secret**: §10; after changing it on the site, apply the change (above). `WTS_PROXY_SIG`: set `new,old` on the
   functions site, apply, change the main site to `new`, redeploy it, then set `new` alone on the functions site.
-- **Never**: turn deploy previews or branch deploys on, start builds again, add `WTS_BACKUP_PRIVATE_KEY` to a site, or paste a
-  connection string into a variable of the functions site.
+- **Database branches**: keep them limited to production. Deploy previews, branch deploys and agent runs each get a database
+  branch seeded with a copy of production data — all three stay off on the functions site (step 4.5).
+- **Older deploys**: every earlier deploy keeps a permanent `<deploy id>--h2oil-accounts-api.netlify.app` address. The functions
+  refuse to run there (`alert: isolation — … not the published deploy`), so old code stays dark after a security release; a
+  rollback (above) publishes the old deploy and makes it run again on purpose.
+- **Never**: turn deploy previews, branch deploys or agent runs on, start builds again, add `WTS_BACKUP_PRIVATE_KEY` to a site,
+  or paste a connection string into a variable of the functions site (except a dedicated login, below).
+
+### Security notes for this platform (plan Appendix B.4)
+- **One login = administrator-equivalent on the site.** `NETLIFY_DB_URL`, which every function holds, is the same value as
+  `WTS_MIGRATE_DB_URL`: the database owner, with BYPASSRLS and the migration, support and export roles. The plan's credential
+  separation (D12 / §13.3) and the read-only property of the export role are **not enforced by credentials** here: code that
+  ran arbitrary SQL on the site could leave the request role (RESET ROLE), switch to any role or disable row-level security. The
+  barriers that remain: no SQL is ever built from input, every request transaction runs as `wts_api` under forced row-level
+  security, and the proxy signature keeps the site unreachable except through the main site. The site logs this residual on
+  every start as `config: one-login database: …` — expected, not an error.
+- **Go-live check (optional, record the outcome in plan B.4):** if the platform lets you override `NETLIFY_DB_URL` for the
+  functions, the developer can give `wts_api` and `wts_jobs` their own passwords (the login has CREATEROLE) and you set
+  `WTS_DB_URL`\* / `WTS_JOBS_DB_URL`\* (Scopes: Functions, Production) to those dedicated logins: the site then uses them
+  instead of `NETLIFY_DB_URL` and the `config: one-login database` line disappears. The export still needs the owner login.
 
 ## 3P. Google and LinkedIn console set-up (plan §13.10)
 
@@ -386,8 +464,9 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
    but plan §1 / §13.2 says `server/` is never published as static content. So **first** switch the static site's publish
    directory to the output of `node prism-build/publish-site.js` (step 13 without `--api` until the API is live: the
    allow-list and `_headers`), or add an equivalent host-side exclusion of `server/`, `docs/`, `tools/` and `prism-build/`,
-   deploy, and confirm `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404. Only then merge to master. Until it is
-   confirmed, the Dev → master auto-merge of CLAUDE.md must leave the accounts commits out (keep them on their branch).
+   deploy, and confirm `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404. (Status at v4.0: `server/` is already on
+   master and the live main site already answers 404 there; §3N step 10 replaces that set-up with the allow-list, and
+   publish-site.js always writes index.html as a copy of the app page so `/` keeps working.)
 
 1. **Decide and sign up**: the hosting plan with functions and a scheduler (D17), the database in the UK (else EU), the blob
    store (EU), the e-mail service (sender `no-reply@h2oil.co.uk`, SPF / DKIM / DMARC on `h2oil.co.uk`), the uptime check.

@@ -14,6 +14,10 @@
 //        nothing is applied), the wts_* roles are created and granted to the login (prepareLogin: a non-superuser cannot
 //        SET ROLE to a role it created without an explicit grant); afterwards the read-only export role
 //        (ops/sql/backup-role.sql) is applied and granted the same way. Output: one line per step, never a credential.
+//        Last, the role switch of the jobs (wts_jobs) is probed both ways (probeRoleModes): "start-up role ok" (the default
+//        works), or "start-up role refused … transaction role ok — set WTS_DB_ROLE_MODE=local on the functions site" (a
+//        connection endpoint that refuses start-up parameters; core/db.js roleMode 'local'), or both refused (stop).
+//   probeRoleModes(url, role?) → {session: true | 'message', local: true | 'message'}
 //   loginReport(sql) → {user, superuser, createrole, bypassrls, ok, problems:[text]}
 //   prepareLogin(sql, {backupRole}) → [granted roles]
 
@@ -98,7 +102,20 @@ async function prepareLogin(sql, o) {
   return granted;
 }
 
-module.exports = { migrate, listMigrations, loginReport, prepareLogin, RUN_ROLES, DIR };
+// the jobs' role switch: the start-up parameter (roleMode session) and the per-transaction fallback (roleMode local)
+async function probeRoleModes(url, role) {
+  const { createDb } = require('../core/db');
+  role = role || 'wts_jobs';
+  const out = {};
+  for (const mode of ['session', 'local']) {
+    const d = createDb(url, { role, sessionRole: true, roleMode: mode, max: 1, connectTimeout: 10 });
+    try { await d.checkRole(); out[mode] = true; } catch (e) { out[mode] = String((e && e.message) || e).replace(/postgres(ql)?:\/\/\S+/g, '<url>').slice(0, 200); }
+    try { await d.close(); } catch (e) { /* closed */ }
+  }
+  return out;
+}
+
+module.exports = { migrate, listMigrations, loginReport, prepareLogin, probeRoleModes, RUN_ROLES, DIR };
 
 if (require.main === module) {
   const url = process.env.WTS_MIGRATE_DB_URL;
@@ -119,6 +136,10 @@ if (require.main === module) {
       await db.sql.unsafe(fs.readFileSync(path.join(__dirname, '..', 'ops', 'sql', 'backup-role.sql'), 'utf8'));
       const g = await prepareLogin(db.sql, { backupRole: true });
       console.log('[migrate] export role ready' + (g.length ? ' (granted: ' + g.join(', ') + ')' : ''));
+      const p = await probeRoleModes(url);
+      if (p.session === true) console.log('[migrate] start-up role ok');
+      else if (p.local === true) console.log('[migrate] start-up role refused (' + p.session + '); transaction role ok — set WTS_DB_ROLE_MODE=local on the functions site');
+      else { console.error('[migrate] start-up role refused (' + p.session + ') and transaction role refused (' + p.local + ') — stop and tell the developer'); process.exitCode = 1; }
     }
     await db.close();
   })().catch((e) => { console.error('[migrate] ' + e.message); db.close().finally(() => process.exit(1)); });

@@ -11,7 +11,8 @@
 //   OP5  no root-level host configuration or functions folder: the repository root holds only the known entries, and
 //        neither the static allow-list nor ios-app/www can carry server/
 //   OP6  the server release workflow runs only on server-v* tags, is inert without the owner's secrets (every deploy /
-//        migration step checks its secret first and skips with a notice), and the iOS sync workflow does not watch server/
+//        migration step checks its secret first and skips with a notice, or runs only when the deploy job's configuration
+//        step said it is configured), and the iOS sync workflow does not watch server/
 'use strict';
 
 const fs = require('fs');
@@ -44,6 +45,10 @@ module.exports = [
         assert(r.ok, 'build ok');
         const man = JSON.parse(fs.readFileSync(path.join(out, 'publish-manifest.json'), 'utf8'));
         assert.strictEqual(man.files.length, set.length, 'manifest lists every file');
+        // the site root keeps serving the app after the switch to the publish directory (/ → index.html)
+        assert(rels.includes('index.html'), 'index.html is always in the published set');
+        const idxSrc = path.join(ROOT, fs.existsSync(path.join(ROOT, 'index.html')) ? 'index.html' : 'well-testing-app.html');
+        assert(fs.readFileSync(path.join(out, 'index.html')).equals(fs.readFileSync(idxSrc)), 'index.html = the app page (byte copy) when the tree has none');
         man.files.slice(0, 40).forEach((f) => assert.strictEqual(sha(fs.readFileSync(path.join(out, f.path))), f.sha256, 'hash of ' + f.path));
         const h = fs.readFileSync(path.join(out, '_headers'), 'utf8');
         ['X-Content-Type-Options: nosniff', 'Referrer-Policy: same-origin', 'Strict-Transport-Security: max-age=31536000',
@@ -166,10 +171,14 @@ module.exports = [
       assert(/tags:\s*\n\s*-\s*'server-v\*'/.test(on), 'triggers on server-v* tags');
       assert(!/branches|pull_request|schedule|workflow_dispatch|workflow_run|repository_dispatch/.test(on), 'no other trigger: ' + on);
       assert(/permissions:\s*\n\s*contents:\s*read/.test(wf), 'read-only token');
-      // every use of a deploy / migration secret sits in a step that checks it first
+      // every use of a deploy / migration secret sits in a step that checks it first, or that runs only when the job's
+      // configuration step (which checks it and skips with a notice) said it is configured
       const steps = wf.split(/\n\s*- name: /);
+      const cfgStep = steps.find((s) => /\n\s*id: cfg\n/.test(s));
+      assert(cfgStep && /not configured/.test(cfgStep) && /exit 0/.test(cfgStep) && /configured=false/.test(cfgStep), 'the deploy configuration step skips without its secret');
       steps.filter((s) => /secrets\.(WTS_DEPLOY_TOKEN|WTS_MIGRATE_DB_URL)/.test(s)).forEach((s) => {
-        assert(/not configured/.test(s) && /exit 0/.test(s), 'step skips without its secret: ' + s.split('\n')[0]);
+        const gated = /\n\s*if: steps\.cfg\.outputs\.configured == 'true'\n/.test(s);
+        assert((/not configured/.test(s) && /exit 0/.test(s)) || gated, 'step skips without its secret: ' + s.split('\n')[0]);
       });
       assert(/environment:\s*server-migrations/.test(wf) && /environment:\s*server-production/.test(wf), 'protected environments');
       // a skipped migration never lets new code go live when the migrations changed since the previous server tag

@@ -4,3 +4,5 @@
 import nf from '../../site/netlify.js';
 
 export default nf.backgroundFunction('weekly-export-background');
+
+export const config = { region: 'lhr' };

@@ -2139,8 +2139,18 @@ Details and the tests are in `server/README.md` ("Hosting"); the owner's steps i
 1. **D12, one login.** The platform's managed database hands out one login (the database owner), so `wts_api`, `wts_jobs` and
    `wts_support` cannot have their own credentials. The roles, grants, forced RLS and the `wts_definer` functions are unchanged;
    every request transaction starts with `SET LOCAL ROLE wts_api` (transaction-scoped, safe behind a pooler) and the jobs, the
-   weekly export and the support scripts connect with the start-up role `wts_jobs` / `wts_backup` / `wts_support`. Residual: a
-   stolen request credential is the owner credential (it could leave the role); SQL is never built from input. The migration
+   weekly export and the support scripts connect with the start-up role `wts_jobs` / `wts_backup` / `wts_support` (or, where the
+   endpoint refuses start-up settings, switch per transaction: `WTS_DB_ROLE_MODE=local`, probed by the migration runner).
+   **Residual, in full:** every function of the functions site holds the platform's login, which is the same value as the
+   migration credential — the database owner with BYPASSRLS, inheriting `wts_owner` and `wts_definer`. So the functions site now
+   holds the migration, support and export credential, and neither the D12 / §13.3 credential separation nor the export role's
+   read-only property is enforced by credentials on this platform: SQL running there could leave the request role, switch to any
+   wts_* role (the job and export connections can switch back to the login or to `wts_owner`) or disable row-level security.
+   The only barrier is that SQL is never built from input (tagged templates; role names checked). `site/isolation.js` logs this
+   as a standing `config: one-login database` warning in production instead of passing it silently. **Go-live check (open):** if
+   the platform lets the owner override the login variable for the functions, `wts_api` and `wts_jobs` get their own passwords
+   (the login has CREATEROLE) and dedicated request / job connection strings, which the site then prefers; outcome to be
+   recorded here. The migration
    runner (`db/migrate.js --platform`) grants the roles to the login and refuses to start unless it can create roles and
    BYPASSRLS roles; if the platform refuses BYPASSRLS, the fallback is permissive policies for `wts_definer` / `wts_jobs` in a new
    migration (written only if the go-live probe fails).
@@ -2151,13 +2161,20 @@ Details and the tests are in `server/README.md` ("Hosting"); the owner's steps i
    X25519 agreement to the owner's public key (only the offline private key opens it). It is kept in a separate store in the
    **same** EU region (the platform's blob store has one EU region), not "another region"; the owner copies one export a month
    offline and the platform's daily database backups add a second copy.
-4. **Regions.** Functions in London need the platform's paid team plan (else the United States); the blob store's nearest region
-   is Frankfurt, set on every call.
-5. **D19 previews.** A deploy preview of a site with a database gets a copy of the production data, so deploy previews and branch
-   deploys are off and automatic builds are stopped; releases come only from `server-v*` tags through the workflow's CLI deploy.
+4. **Regions.** Functions in London need the platform's credit-based paid team plan (its managed database exists only on
+   credit-based plans; else the United States); each function also pins London in its own configuration. The blob store's
+   nearest region is Frankfurt, set on every call.
+5. **D19 previews.** A deploy preview, a branch deploy or an agent run of a site with a database gets a database branch seeded
+   with the production data, so all three are off and automatic builds are stopped; releases come only from `server-v*` tags
+   through the workflow's CLI deploy (the CLI's whole tree pinned by a lockfile, the token passed through the environment). At run
+   time every function refuses to run unless it is the published production deploy, so older deploys' permanent addresses and
+   any preview stay dark.
 6. **§2 proxy signature.** The platform sets request headers on a proxy rule only in a configuration file that cannot read
    variables: the main site's build fills the signature into its (unpublished) copy of that file. The original host travels as
-   the fixed header `X-WTS-Host`, trusted only with a valid signature. Which client address reaches the functions site behind the
-   rewrite is checked live at go-live (RUNBOOK §3N step 12).
+   the fixed header `X-WTS-Host`, trusted only with a valid signature; the main site's signature variable is limited to the
+   production context, so its previews answer 404. The deployed rule is checked for the header before the first server release
+   (RUNBOOK §3N step 10.4); if it is missing, an edge-function fallback in the repository adds the headers at run time. Which
+   client address reaches the functions site behind the rewrite, and that a client-sent copy of the address header is not
+   trusted (the last value of a list is used), is checked live at go-live (RUNBOOK §3N step 12.5).
 7. **§3.2 client gate.** `WTS_MIN_CLIENT` defaults to 4.0 on the platform (the first release with accounts); the version parser now
    accepts the page's leading "v" (before, "v3.4" switched the gate off).

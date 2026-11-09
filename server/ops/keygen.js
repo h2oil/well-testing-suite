@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // server/ops/keygen.js — generates every secret value of the functions site in the exact form core/config.js reads
-// (server/RUNBOOK.md "Switch it on with Netlify", step 6). Run it on the owner's own computer; it prints NAME=value lines to
+// (server/RUNBOOK.md §3N "Switch it on with Netlify", step 3). Run it on the owner's own computer; it prints NAME=value lines to
 // the terminal only (nothing is written to disk, nothing is sent anywhere). Copy each value straight into the site's
 // environment variables (marked "Contains secret values") and into the password manager; close the terminal afterwards.
 //

@@ -78,7 +78,7 @@
     "publish": "public",
     "functionsDir": "netlify/functions",
     "bundler": "nft",
-    "functionsRegion": "lhr (London; a site setting, Pro plan — set before the database is created)",
+    "functionsRegion": "lhr (London; pinned in every function's own config and set as the site setting before the database is created; credit-based Pro plan)",
     "database": "Netlify Database (NETLIFY_DB_URL, one login; request transactions SET LOCAL ROLE wts_api, jobs wts_jobs, export wts_backup)",
     "blobs": {
       "stores": [

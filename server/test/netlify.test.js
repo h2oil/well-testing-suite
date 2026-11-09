@@ -34,6 +34,9 @@ function fakeBlobs() {
   return { getStore, stores, calls };
 }
 const memLog = () => { const lines = []; return { lines, info: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)) }; };
+// the platform's context of the published production deploy (the functions refuse anything else in production)
+const PROD = { deploy: { context: 'production', published: true, id: 'd1' } };
+const ctx = (extra) => Object.assign({}, PROD, extra);
 
 test('function files: exactly the six of FUNCTIONS, each importing site/netlify.js with the same literal config', async () => {
   const dir = path.join(SERVER, 'netlify', 'functions');
@@ -42,10 +45,11 @@ test('function files: exactly the six of FUNCTIONS, each importing site/netlify.
     const m = await import(path.join(dir, NF.FUNCTIONS[name].file));
     assert.strictEqual(typeof m.default, 'function', name + ' exports a handler');
     assert.deepStrictEqual(m.config === undefined ? null : m.config, NF.FUNCTIONS[name].config, name + ' config');
-    if (/-background$/.test(name)) assert.strictEqual(NF.FUNCTIONS[name].config, null);
+    if (/-background$/.test(name)) { assert.deepStrictEqual(NF.FUNCTIONS[name].config, { region: 'lhr' }); assert.strictEqual(NF.FUNCTIONS[name].background, true); }
+    assert.strictEqual(NF.FUNCTIONS[name].config.region, 'lhr', name + ' is pinned to London in its own config');
   }
   // the scheduled ones never serve a path; the API serves /api/v1/* only
-  assert.deepStrictEqual(NF.FUNCTIONS.api.config, { path: '/api/v1/*' });
+  assert.deepStrictEqual(NF.FUNCTIONS.api.config, { path: '/api/v1/*', region: 'lhr' });
   ['ops-purge', 'ops-daily', 'weekly-export'].forEach((n) => assert.ok(/^\S+ \S+ \S+ \S+ \S+$/.test(NF.FUNCTIONS[n].config.schedule) && !NF.FUNCTIONS[n].config.path));
   // site.json describes the same set
   const site = JSON.parse(fs.readFileSync(path.join(SERVER, 'site', 'site.json'), 'utf8'));
@@ -134,17 +138,67 @@ test('api function: one handler per instance; 404 without the proxy signature, h
   const F = fakeBlobs(); const log = memLog();
   const sig = crypto.randomBytes(32).toString('base64url');
   const api = NF.apiFunction({ env: { WTS_ENV: 'production', WTS_PROXY_SIG: sig }, getStore: F.getStore, log });
-  const direct = await api(new Request('https://wts-api.netlify.app/api/v1/health'), { ip: '203.0.113.9' });
+  const direct = await api(new Request('https://wts-api.netlify.app/api/v1/health'), ctx({ ip: '203.0.113.9' }));
   assert.strictEqual(direct.status, 404, 'a request sent straight to the functions site learns nothing');
-  const via = await api(new Request('https://wts-api.netlify.app/api/v1/health', { headers: { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': 'welltest.h2oil.co.uk', 'x-nf-client-connection-ip': '203.0.113.9' } }), { ip: '203.0.113.9' });
+  const via = await api(new Request('https://wts-api.netlify.app/api/v1/health', { headers: { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': 'welltest.h2oil.co.uk', 'x-nf-client-connection-ip': '203.0.113.9' } }), ctx({ ip: '203.0.113.9' }));
   assert.strictEqual(via.status, 200);
   const body = await via.json();
   assert.strictEqual(body.ok, true); assert.strictEqual(body.ver, '4.0.0'); assert.strictEqual(body.db, false);
   assert.strictEqual(via.headers.get('strict-transport-security'), 'max-age=31536000');
-  const other = await api(new Request('https://wts-api.netlify.app/api/v1/health', { headers: { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': 'elsewhere.example' } }), {});
+  const other = await api(new Request('https://wts-api.netlify.app/api/v1/health', { headers: { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': 'elsewhere.example' } }), ctx());
   assert.strictEqual(other.status, 404, 'the forwarded host must be the production host');
   assert.ok(log.lines.some((l) => /"t":"access"/.test(l)));
   assert.ok(!log.lines.some((l) => l.includes(sig)), 'the signature is never logged');
+});
+
+test('deploys: in production only the PUBLISHED PRODUCTION deploy runs — old deploys, previews, branch deploys refused', async () => {
+  const F = fakeBlobs(); const log = memLog();
+  const sig = crypto.randomBytes(32).toString('base64url');
+  const hdr = { 'X-WTS-Proxy-Sig': sig, 'X-WTS-Host': 'welltest.h2oil.co.uk', 'x-nf-client-connection-ip': '203.0.113.9' };
+  const req = () => new Request('https://wts-api.netlify.app/api/v1/health', { headers: hdr });
+  for (const env of [{ WTS_ENV: 'production', WTS_PROXY_SIG: sig }, { WTS_PROXY_SIG: sig }]) {       // unset WTS_ENV = production
+    const api = NF.apiFunction({ env, getStore: F.getStore, log });
+    assert.strictEqual((await api(req(), { deploy: { context: 'production', published: false } })).status, 404, 'an older deploy (permanent address)');
+    assert.strictEqual((await api(req(), { deploy: { context: 'deploy-preview', published: false } })).status, 404, 'a preview');
+    assert.strictEqual((await api(req(), { deploy: { context: 'branch-deploy' } })).status, 404, 'a branch deploy');
+    assert.strictEqual((await api(req(), {})).status, 404, 'no deploy information → refused (fail closed)');
+    assert.strictEqual((await api(req(), ctx())).status, 200, 'the published production deploy');
+  }
+  assert.ok(log.lines.some((l) => /^alert: isolation — api refused: not the published deploy/.test(l)));
+  assert.strictEqual(NF.deployRefusal({ WTS_ENV: 'test' }, {}), '', 'tests and previews of the code run without the platform context');
+  // scheduled and background functions skip with an alert line
+  const key = crypto.randomBytes(32).toString('base64');
+  let fetched = 0;
+  const s = NF.scheduledFunction('ops-daily', { env: { WTS_OPS_HMAC: key }, fetch: async () => { fetched++; return { status: 202 }; }, log });
+  assert.deepStrictEqual(await (await s(new Request('https://x.invalid/'), { deploy: { context: 'deploy-preview' }, site: { url: 'https://wts-api.netlify.app' } })).json(), { ok: false, skipped: 'deploy' });
+  assert.strictEqual(fetched, 0);
+  const bg = NF.backgroundFunction('weekly-export-background', { env: { WTS_OPS_HMAC: key }, nonces: H.memoryNonceStore(), log });
+  const k = NF.kickRequest('weekly-export-background', 'https://wts-api.netlify.app', key, Date.now());
+  assert.strictEqual((await bg(new Request(k.url, k.init), { deploy: { context: 'production', published: false } })).status, 404);
+  assert.ok(log.lines.some((l) => /^alert: isolation — weekly-export-background skipped: not the published deploy/.test(l)));
+});
+
+test('client address: the LAST value of a platform header list (the hop the edge appended), never a client-sent first value', () => {
+  const cfg = { ipHeader: 'x-nf-client-connection-ip' };
+  assert.strictEqual(H.clientIp({ headers: { 'x-nf-client-connection-ip': '198.51.100.7' } }, cfg), '198.51.100.7');
+  assert.strictEqual(H.clientIp({ headers: { 'x-nf-client-connection-ip': '203.0.113.9, 198.51.100.7' } }, cfg), '198.51.100.7', 'a forged first value is ignored');
+  assert.strictEqual(H.clientIp({ headers: { 'x-nf-client-connection-ip': '198.51.100.7, ' } }, cfg), '198.51.100.7');
+  assert.strictEqual(H.clientIp({ headers: {} }, cfg), null);
+  assert.strictEqual(H.clientIp({ headers: {}, remoteAddress: '127.0.0.1' }, {}), '127.0.0.1');
+});
+
+test('one-login database: production with NETLIFY_DB_URL as the request database carries a standing config warning', () => {
+  const { loadConfig } = require('../core/config');
+  const { checkIsolation, ONE_LOGIN_WARNING } = require('../site/isolation');
+  const K = require('../ops/keygen');
+  const e = { WTS_ENV: 'production', WTS_CLIENT_IP_HEADER: 'x-nf-client-connection-ip' };
+  K.generate().filter((r) => r.where !== 'NOT on any site').forEach((r) => { e[r.name] = r.value; });
+  const one = NF.platformEnv(Object.assign({ NETLIFY_DB_URL: 'postgresql://owner:pw@db.example.invalid/main' }, e));
+  const r = checkIsolation(loadConfig(one), one);
+  assert.ok(r.ok, 'a warning, not a refusal'); assert.deepStrictEqual(r.warnings, [ONE_LOGIN_WARNING]);
+  assert.match(ONE_LOGIN_WARNING, /administrator|owner/); assert.match(ONE_LOGIN_WARNING, /B\.4/);
+  const own = NF.platformEnv(Object.assign({ NETLIFY_DB_URL: 'postgresql://owner:pw@db.example.invalid/main', WTS_DB_URL: 'postgresql://wts_api_login:pw@db.example.invalid/main' }, e));
+  assert.deepStrictEqual(checkIsolation(loadConfig(own), own).warnings, [], 'a dedicated request login clears it');
 });
 
 test('kick: signed request accepted once by the background function; replay, wrong path, GET and plain http refused', async () => {
@@ -172,14 +226,14 @@ test('scheduled functions: ops-daily and weekly-export only start their backgrou
   const key = crypto.randomBytes(32).toString('base64');
   const seen = []; const log = memLog();
   const fetch = async (url, init) => { seen.push({ url, init }); return { status: 202, ok: true }; };
-  const r = await NF.scheduledFunction('weekly-export', { env: { WTS_OPS_HMAC: key }, fetch, log })(new Request('https://x.invalid/'), { site: { url: 'https://wts-api.netlify.app' } });
+  const r = await NF.scheduledFunction('weekly-export', { env: { WTS_OPS_HMAC: key }, fetch, log })(new Request('https://x.invalid/'), ctx({ site: { url: 'https://wts-api.netlify.app' } }));
   assert.deepStrictEqual(await r.json(), { ok: true, kicked: 'weekly-export-background', status: 202 });
   assert.strictEqual(seen[0].url, 'https://wts-api.netlify.app/.netlify/functions/weekly-export-background');
   assert.strictEqual(seen[0].init.method, 'POST'); assert.ok(seen[0].init.headers['X-WTS-Sig']);
-  const bad = await NF.scheduledFunction('ops-daily', { env: {}, fetch, log })(new Request('https://x.invalid/'), { site: { url: 'https://wts-api.netlify.app' } });
+  const bad = await NF.scheduledFunction('ops-daily', { env: {}, fetch, log })(new Request('https://x.invalid/'), ctx({ site: { url: 'https://wts-api.netlify.app' } }));
   assert.strictEqual(bad.status, 500);
   assert.ok(log.lines.some((l) => /^alert: jobs — ops-daily failed: WTS_OPS_HMAC/.test(l)));
-  const refused = await NF.scheduledFunction('ops-daily', { env: { WTS_OPS_HMAC: key }, fetch: async () => ({ status: 500, ok: false }), log })(new Request('https://x.invalid/'), { site: { url: 'https://wts-api.netlify.app' } });
+  const refused = await NF.scheduledFunction('ops-daily', { env: { WTS_OPS_HMAC: key }, fetch: async () => ({ status: 500, ok: false }), log })(new Request('https://x.invalid/'), ctx({ site: { url: 'https://wts-api.netlify.app' } }));
   assert.strictEqual((await refused.json()).ok, false);
   assert.ok(log.lines.some((l) => /could not start ops-daily-background \(500\)/.test(l)));
   assert.throws(() => NF.scheduledFunction('api'), /not a scheduled function/);
@@ -197,6 +251,13 @@ test('background functions: unsigned calls refused with an alert; a signed call 
   const r = await bg(new Request(k.url, k.init));
   assert.deepStrictEqual(await r.json(), { ok: false, skipped: 'no database' });
   assert.ok(log.lines.some((l) => /skipped \(no database\)/.test(l)));
+  // the platform retries a failed background run with the SAME request: never run twice, and the alert says it was a retry
+  const retry = await bg(new Request(k.url, k.init));
+  assert.strictEqual(retry.status, 409);
+  assert.ok(log.lines.some((l) => /^alert: jobs — ops-daily-background platform retry ignored .*Run now on ops-daily$/.test(l)));
+  assert.strictEqual(await NF.checkKick(new Request(k.url, k.init), 'ops-daily-background', { WTS_ENV: 'test', WTS_OPS_HMAC: key }, { nonces }), 'replay');
+  const forged = NF.kickRequest('ops-daily-background', 'https://wts-api.netlify.app', crypto.randomBytes(32).toString('base64'), Date.now());
+  assert.strictEqual(await NF.checkKick(new Request(forged.url, forged.init), 'ops-daily-background', { WTS_ENV: 'test', WTS_OPS_HMAC: key }, { nonces }), 'refused', 'a bad signature never reaches the nonce store');
 });
 
 test('proxy rule for the main site: placeholder only in the snippet, filled in from WTS_PROXY_SIG at build time', () => {
@@ -215,6 +276,50 @@ test('proxy rule for the main site: placeholder only in the snippet, filled in f
   assert.strictEqual(P.apply('nothing here', {}).state, 'no-placeholder');
   assert.throws(() => P.apply(s, { WTS_PROXY_SIG: 'short"injected' }), /32-128/);
   assert.throws(() => P.apply(s + P.PLACEHOLDER, { WTS_PROXY_SIG: sig }), /exactly once/);
+  // the edge-function fallback: no placeholder, no redirect, the edge function on /api/v1/*
+  const e = P.snippet('wts-accounts-api.netlify.app', { edge: true });
+  assert.match(e, /edge_functions = "server\/site\/edge"/); assert.match(e, /path = "\/api\/v1\/\*"/); assert.match(e, /function = "wts-api-proxy"/);
+  assert.ok(!e.includes(P.PLACEHOLDER) && !/\[\[redirects\]\]/.test(e)); assert.match(e, /publish = "dist-site"/);
+  assert.ok(fs.existsSync(path.join(SERVER, 'site', 'edge', 'wts-api-proxy.js')));
+});
+
+test('edge-function fallback: signature, host and client address added; client copies dropped; previews without a signature 404', async () => {
+  const text = fs.readFileSync(path.join(SERVER, 'site', 'edge', 'wts-api-proxy.js'), 'utf8');
+  const E = await import('data:text/javascript;base64,' + Buffer.from(text).toString('base64'));
+  const sig = crypto.randomBytes(32).toString('base64url');
+  const req = new Request('https://welltest.h2oil.co.uk/api/v1/auth/email/start?x=1', { method: 'POST', body: '{"a":1}',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://welltest.h2oil.co.uk', 'X-WTS-Proxy-Sig': 'forged', 'X-WTS-Client-Ip': '203.0.113.9', 'X-WTS-Host': 'evil.example' } });
+  const p = E.proxied(req, { sig: sig + ',old', host: 'wts-accounts-api.netlify.app', ip: '198.51.100.7' });
+  assert.strictEqual(p.url, 'https://wts-accounts-api.netlify.app/api/v1/auth/email/start?x=1');
+  assert.strictEqual(p.init.method, 'POST'); assert.strictEqual(p.init.redirect, 'manual');
+  assert.strictEqual(p.init.headers.get('x-wts-proxy-sig'), sig); assert.strictEqual(p.init.headers.get('x-wts-host'), 'welltest.h2oil.co.uk');
+  assert.strictEqual(p.init.headers.get('x-wts-client-ip'), '198.51.100.7'); assert.strictEqual(p.init.headers.get('origin'), 'https://welltest.h2oil.co.uk');
+  assert.strictEqual(p.init.headers.get('host'), null);
+  assert.strictEqual(E.proxied(req, { sig: '', host: 'wts-accounts-api.netlify.app' }), null, 'no signature (a preview) → 404');
+  assert.strictEqual(E.proxied(req, { sig, host: 'evil.example.com' }), null, 'only a functions-site address');
+  assert.strictEqual(E.proxied(new Request('https://welltest.h2oil.co.uk/other'), { sig, host: 'wts-accounts-api.netlify.app' }), null);
+  const res = await E.default(req, { ip: '198.51.100.7' });
+  assert.strictEqual(res.status, 404, 'without the platform environment the edge function answers 404');
+});
+
+test('release workflow deploy job: Node 22, pinned CLI tree from a lockfile, repository layout, token never on the command line', () => {
+  const wf = fs.readFileSync(path.join(SERVER, '..', '.github', 'workflows', 'server-release.yml'), 'utf8');
+  const deploy = wf.slice(wf.indexOf('\n  deploy:\n'));
+  assert.match(deploy, /uses: actions\/setup-node@v4\n\s+with:\n\s+node-version: '22'/);
+  assert.match(deploy, /working-directory: server\/ci\/deploy-cli\n\s+run: \|\n\s+npm ci --ignore-scripts/);
+  assert.match(deploy, /path: \$\{\{ runner\.temp \}\}\/rel\/server/);
+  assert.match(deploy, /working-directory: \$\{\{ runner\.temp \}\}\/rel\/server/);
+  assert.match(deploy, /git -C "\$RUNNER_TEMP\/rel" init -q/);
+  assert.ok(!/netlify/i.test(wf), 'the workflow (outside server/) names no hosting platform');
+  const pkg = JSON.parse(fs.readFileSync(path.join(SERVER, 'ci', 'deploy-cli', 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(SERVER, 'ci', 'deploy-cli', 'package-lock.json'), 'utf8'));
+  assert.strictEqual(pkg.dependencies['netlify-cli'], '27.16.2');
+  assert.strictEqual(lock.packages['node_modules/netlify-cli'].version, '27.16.2');
+  assert.ok(Object.keys(lock.packages).length > 100 && Object.values(lock.packages).every((x, i) => i === 0 || x.link || x.integrity), 'every package of the tree pinned by integrity');
+  const rb = fs.readFileSync(path.join(SERVER, 'RUNBOOK.md'), 'utf8');
+  const cmd = /`(NETLIFY_AUTH_TOKEN="\$WTS_DEPLOY_TOKEN"[^`]+)`/.exec(rb);
+  assert.ok(cmd, 'the RUNBOOK gives the deploy command'); assert.ok(!/--auth|npx/.test(cmd[1]), 'no --auth, no npx install');
+  assert.match(cmd[1], /netlify deploy --prod --no-build --dir public --functions netlify\/functions/);
 });
 
 test('keygen: every value loads in core/config.js; production ids pass isolation in production, preview ids only outside it', () => {
@@ -244,7 +349,9 @@ test('database URLs: only sslmode / sslrootcert reach the driver; TLS raised to 
   const D = require('../core/db');
   assert.strictEqual(D.cleanUrl('postgresql://u:p@ep-x.example.invalid/db?sslmode=require&channel_binding=require'), 'postgresql://u:p@ep-x.example.invalid/db?sslmode=verify-full');
   assert.strictEqual(D.cleanUrl('postgres://u@127.0.0.1:5432/db?sslmode=disable&role=wts_jobs'), 'postgres://u@127.0.0.1:5432/db?sslmode=disable');
-  assert.strictEqual(D.cleanUrl('postgres://u@db.example.invalid/db'), 'postgres://u@db.example.invalid/db');
+  assert.strictEqual(D.cleanUrl('postgres://u@db.example.invalid/db'), 'postgres://u@db.example.invalid/db?sslmode=verify-full', 'no sslmode off loopback → TLS with full verification');
+  assert.strictEqual(D.cleanUrl('postgres://u@db.example.invalid/db?application_name=x'), 'postgres://u@db.example.invalid/db?sslmode=verify-full');
+  assert.strictEqual(D.cleanUrl('postgres://u@localhost:5432/db'), 'postgres://u@localhost:5432/db', 'loopback without sslmode stays as given');
   assert.throws(() => D.cleanUrl('https://db.example.invalid/x'), /not a database URL/);
   assert.throws(() => D.createDb('postgres://u@127.0.0.1/db', { role: 'postgres' }), /wts_\* roles/);
   assert.throws(() => D.createDb('postgres://u@127.0.0.1/db', { role: 'wts_api; drop table x' }), /wts_\* roles/);

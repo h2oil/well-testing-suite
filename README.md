@@ -470,7 +470,7 @@ Manager, Xcode Cloud) are in [ios-app/README.md](ios-app/README.md).
 - All calculations run on your device. Without an account no H2Oil server receives inputs, results
   or files.
 - **Web version only, optional (invite beta since v4.0):** a cloud account — sign in with an e-mail
-  code, Google or LinkedIn — stores the projects you save to it in our UK / EU cloud database, with
+  code or a supported sign-in provider — stores the projects you save to it in our UK / EU cloud database, with
   history, export of everything and account deletion. The iOS app has no accounts. The full text is in
   the Privacy Policy (<https://welltest.h2oil.co.uk/privacy.html>) and the Terms of Service
   (<https://welltest.h2oil.co.uk/terms.html>).
@@ -592,7 +592,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
-| v4.0 | 2026-11-09 | Cloud accounts (beta, web only): sign in with an e-mail code, Google or LinkedIn; save and open projects in your account, history, export and delete; the account API runs as a separate functions-only site (`server/`). Public Privacy Policy and Terms of Service pages; escaped stored text; hash-checked spreadsheet import library. The iOS app is unchanged apart from the neutral items |
+| v4.0 | 2026-11-09 | Cloud accounts (beta, web only): sign in with an e-mail code or a supported sign-in provider; save and open projects in your account, history, export and delete; the account API runs as a separate functions-only site (`server/`). Public Privacy Policy and Terms of Service pages; escaped stored text; hash-checked spreadsheet import library. The iOS app is unchanged apart from the neutral items |
 | v3.4.1 | 2026-11-08 | Simulator choke manifold with an adjustable and a positive leg, independent T-201 compartment inlets, toolbar Rig-up menu; PRiSM fit status follows the adopted flag; help screenshots deployed with the web page |
 | v3.4 | 2026-11-07 | PRiSM DFIT mode: test triage and grade, ISIP and step tests, closure consensus (single value or range) with every method, after-closure p_i and k, leak-off model, designer, uncertainty, several tests per well, report and hand-offs; linear-time pressure derivative. Labels and the leak-off type are provisional (not yet calibrated) |
 | v3.3.2 | 2026-11-06 | Help & User Guide: a guide for every module with screenshots, search, a ? button on every page (F1), Getting started, "How do I…" tasks, a printable user guide and quick cards; Well Test Simulator training course (10 exercises, with trainer notes and worksheets) and field scenarios (unloading the cushion to the burner or a production line) |

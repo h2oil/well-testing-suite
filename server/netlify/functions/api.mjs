@@ -4,4 +4,4 @@ import nf from '../../site/netlify.js';
 
 export default nf.apiFunction();
 
-export const config = { path: '/api/v1/*' };
+export const config = { path: '/api/v1/*', region: 'lhr' };

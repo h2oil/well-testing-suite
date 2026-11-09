@@ -4,8 +4,9 @@
 # pass variables set in this file to functions anyway). The repository root has no configuration for this site, and the
 # static site (welltest.h2oil.co.uk) is a different site.
 #
-# Deploy previews and branch deploys MUST stay OFF in the site settings (Branches and deploy contexts): a preview of a site
-# with a database gets a copy of the production data, and every preview would run with the production secrets. Releases go
+# Deploy previews and branch deploys MUST stay OFF in the site settings (Branches and deploy contexts), and agent runs too: a
+# preview, branch deploy or agent run of a site with a database gets a copy of the production data, and every preview would run
+# with the production secrets. (At run time the functions also refuse anything but the published production deploy.) Releases go
 # out from server-v* tags through .github/workflows/server-release.yml (builds stopped in the UI), never from a push.
 
 [build]
@@ -25,5 +26,6 @@
   node_bundler = "nft"
   included_files = ["core/**", "functions/**", "site/*.js", "package.json"]
 
-# The function region (London, lhr) is a site setting, not a file setting: RUNBOOK step 4. It is set BEFORE the database is
-# created, because the database is created in the functions region and never moves.
+# The function region (London, lhr) is pinned in each function's own config (`region: 'lhr'` in netlify/functions/*.mjs; a
+# function-level region wins over the site setting) AND set as the site region in RUNBOOK §3N step 5, before the database
+# (step 6): the database is created next to the site's functions region and never moves.

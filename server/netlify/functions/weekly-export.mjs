@@ -3,4 +3,4 @@ import nf from '../../site/netlify.js';
 
 export default nf.scheduledFunction('weekly-export');
 
-export const config = { schedule: '41 4 * * 0' };
+export const config = { schedule: '41 4 * * 0', region: 'lhr' };

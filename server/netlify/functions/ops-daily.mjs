@@ -4,4 +4,4 @@ import nf from '../../site/netlify.js';
 
 export default nf.scheduledFunction('ops-daily');
 
-export const config = { schedule: '17 3 * * *' };
+export const config = { schedule: '17 3 * * *', region: 'lhr' };

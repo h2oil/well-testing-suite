@@ -66,6 +66,7 @@ test.describe('one-login hosting (Netlify Database pattern)', { skip }, () => {
     assert.match(r.stdout, /login wts_platform_login: superuser false, createrole true, bypassrls true/);
     assert.match(r.stdout, /applied 001-schema\.sql[\s\S]*applied 050-code-scope\.sql/);
     assert.match(r.stdout, /export role ready/);
+    assert.match(r.stdout, /start-up role ok/, 'the jobs\' role switch is probed (step 7)');
     assert.ok(!r.stdout.includes('postgresql://'), 'the connection string is never printed');
     const again = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'db', 'migrate.js'), '--platform'],
       { env: Object.assign({}, process.env, { WTS_MIGRATE_DB_URL: url }), encoding: 'utf8' });
@@ -110,6 +111,21 @@ test.describe('one-login hosting (Netlify Database pattern)', { skip }, () => {
       try { assert.strictEqual(await d.checkRole(), role); } finally { await d.close(); }
     }
     await H.admin.sql.unsafe('DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = \'wts_stranger\') THEN CREATE ROLE wts_stranger LOGIN; END IF; END $$');
+    // the fallback for an endpoint that refuses start-up parameters: SET LOCAL ROLE per statement / per transaction
+    const loc = createDb(url, { role: 'wts_jobs', sessionRole: true, roleMode: 'local', max: 1 });
+    try {
+      assert.strictEqual(loc.roleMode, 'local');
+      assert.strictEqual(await loc.checkRole(), 'wts_jobs');
+      assert.strictEqual((await loc.sql`select current_user as c, ${loc.sql.array([1, 2])}::int[] as a`)[0].c, 'wts_jobs');
+      assert.strictEqual((await loc.sql.unsafe('select current_user as c'))[0].c, 'wts_jobs');
+      const inTx = await loc.sql.begin('isolation level repeatable read read only', async (tx) => (await tx`select current_user as c`)[0].c);
+      assert.strictEqual(inTx, 'wts_jobs');
+      const r = await loc.sql`select count(*)::int as n from wts.mail_outbox`;
+      assert.ok(r[0].n >= 0);
+    } finally { await loc.close(); }
+    const P = await require('../db/migrate').probeRoleModes(url);
+    assert.deepStrictEqual(P, { session: true, local: true });
+    assert.throws(() => createDb(url, { role: 'wts_jobs', sessionRole: true, roleMode: 'pooled' }), /roleMode/);
     const s = createDb(Object.assign({}, conn, { user: 'wts_stranger' }), { role: 'wts_jobs', sessionRole: true, max: 1 });
     try { await assert.rejects(s.checkRole(), /permission denied to set role|role/); } finally { await s.close(); }
     const plain = createDb(conn, { max: 1 });
@@ -145,6 +161,8 @@ test.describe('one-login hosting (Netlify Database pattern)', { skip }, () => {
     assert.deepStrictEqual(Array.from(F.regions), ['eu-central-1/strong']);
     const exportsMap = F.stores.get('wts-exports');
     assert.deepStrictEqual(Array.from(exportsMap.keys()), ['export/' + e.name]);
+    const local = await NF.runJobs({ env: Object.assign({ WTS_DB_ROLE_MODE: 'local' }, env), getStore: F.getStore, log });
+    assert.strictEqual(local.ok, true); assert.ok(Object.values(local.did).every((x) => !x.error), 'the whole daily job runs in local role mode: ' + JSON.stringify(local.did));
     const again = await NF.runJobs({ env, getStore: F.getStore, log, only: ['quota'], checkExport: true });
     assert.ok(again.exportAgeDays < 1);
     const buf = Buffer.from(new Uint8Array(exportsMap.get('export/' + e.name)));

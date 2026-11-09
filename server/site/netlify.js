@@ -16,7 +16,13 @@
 // Defaults (platformEnv; every one can be overridden in the site's environment variables, except the database role):
 //   WTS_DB_URL       ← NETLIFY_DB_URL (the platform's ONE database login), and WTS_DB_ROLE = wts_api ALWAYS: every request
 //                      transaction switches to wts_api (core/db.js), so forced row-level security applies as for a wts_api
-//                      login. The jobs use wts_jobs, the export wts_backup, both as a connection start-up role.
+//                      login. The jobs use wts_jobs, the export wts_backup, both as a connection start-up role — or, with
+//                      WTS_DB_ROLE_MODE=local (when db/migrate.js --platform says so), as a SET LOCAL ROLE per transaction.
+//                      RESIDUAL (README "Hosting", plan B.4): that login is the database owner with BYPASSRLS, so the site
+//                      holds an administrator-equivalent credential; role switches are not a credential barrier. A
+//                      dedicated WTS_DB_URL / WTS_JOBS_DB_URL, when set, is used instead of NETLIFY_DB_URL.
+// Deploys: with WTS_ENV production (or unset) every function refuses to run unless it is the PUBLISHED PRODUCTION deploy
+// (context.deploy) — an older deploy's permanent address, a preview or a branch deploy answers 404 / skips with an alert.
 //   WTS_MIN_CLIENT   4.0 (the first release with accounts; X-WTS-App below it gets 426 upgrade on project writes)
 //   WTS_VERSION      the server package version (server/package.json, set by the release)
 //   WTS_HOST_HEADER  x-wts-host — sent by the main site's proxy rule (RUNBOOK); trusted only with a valid proxy signature
@@ -26,13 +32,17 @@
 const crypto = require('crypto');
 const PKG = require('../package.json');
 
+// region: every function is pinned to London in its own config (a function-level region wins over the site setting, so a
+// later change in the UI or a new site never moves them quietly); RUNBOOK §3N step 5 sets the site region too, before the
+// database is created next to it.
+const REGION = 'lhr';
 const FUNCTIONS = Object.freeze({
-  api: { file: 'api.mjs', config: { path: '/api/v1/*' } },
-  'ops-purge': { file: 'ops-purge.mjs', config: { schedule: '23 * * * *' } },
-  'ops-daily': { file: 'ops-daily.mjs', config: { schedule: '17 3 * * *' }, kicks: 'ops-daily-background' },
-  'ops-daily-background': { file: 'ops-daily-background.mjs', config: null },
-  'weekly-export': { file: 'weekly-export.mjs', config: { schedule: '41 4 * * 0' }, kicks: 'weekly-export-background' },
-  'weekly-export-background': { file: 'weekly-export-background.mjs', config: null },
+  api: { file: 'api.mjs', config: { path: '/api/v1/*', region: REGION } },
+  'ops-purge': { file: 'ops-purge.mjs', config: { schedule: '23 * * * *', region: REGION } },
+  'ops-daily': { file: 'ops-daily.mjs', config: { schedule: '17 3 * * *', region: REGION }, kicks: 'ops-daily-background' },
+  'ops-daily-background': { file: 'ops-daily-background.mjs', config: { region: REGION }, background: true },
+  'weekly-export': { file: 'weekly-export.mjs', config: { schedule: '41 4 * * 0', region: REGION }, kicks: 'weekly-export-background' },
+  'weekly-export-background': { file: 'weekly-export-background.mjs', config: { region: REGION }, background: true },
 });
 const PURGE_STEPS = ['purge', 'mail'];
 const EXPORT_MAX_AGE_DAYS = 8;
@@ -51,6 +61,17 @@ function platformEnv(env) {
   return out;
 }
 function dbUrl(env, specific) { return (specific && env[specific]) || env.NETLIFY_DB_URL || ''; }
+function roleMode(env) { return String(env.WTS_DB_ROLE_MODE || '').trim().toLowerCase() === 'local' ? 'local' : 'session'; }
+// production unless WTS_ENV names one of the other modes (core/config.js fails closed the same way)
+function productionMode(env) { return ['preview', 'local', 'test'].indexOf(String(env.WTS_ENV || '').trim().toLowerCase()) === -1; }
+// → '' when this deploy may run, else the reason (logged as an alert: isolation line)
+function deployRefusal(env, context) {
+  if (!productionMode(env)) return '';
+  const d = context && context.deploy;
+  if (!d || d.context !== 'production') return 'not a production deploy (' + ((d && d.context) || 'unknown') + ')';
+  if (d.published === false) return 'not the published deploy';
+  return '';
+}
 function defaultLog() {
   const M = require('./monitor');
   return { info: (m) => console.log(M.redactLine(m)), warn: (m) => console.warn(M.redactLine(m)) };
@@ -60,8 +81,13 @@ const json = (status, body) => new Response(JSON.stringify(body), { status, head
 // ── /api/v1/* ───────────────────────────────────────────────────────────────────────────────────────────────────────
 function apiFunction(deps) {
   deps = deps || {};
-  let h = null;
+  let h = null; let warned = false;
   return async function api(request, context) {
+    const refusal = deployRefusal(deps.env || process.env, context);
+    if (refusal) {
+      if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: isolation — api refused: ' + refusal); }
+      return json(404, { error: 'not_found' });
+    }
     if (!h) {
       const env = platformEnv(deps.env || process.env);
       const store = require('./netlify-blobs').createStore(env, { getStore: deps.getStore });
@@ -73,7 +99,7 @@ function apiFunction(deps) {
 
 // ── the signed kick of a background function ───────────────────────────────────────────────────────────────────────
 function kickPath(name) {
-  if (!FUNCTIONS[name] || !/-background$/.test(name)) throw new Error('netlify: unknown background function ' + name);
+  if (!FUNCTIONS[name] || !FUNCTIONS[name].background) throw new Error('netlify: unknown background function ' + name);
   return '/.netlify/functions/' + name;
 }
 function kickRequest(name, base, keyB64, nowMs) {
@@ -96,27 +122,32 @@ function lowerHeaders(h) {
   return out;
 }
 // → Promise<boolean>: the HMAC over method, path, timestamp and nonce (±5 min), the nonce once (wts.ops_nonce_claim)
-async function verifyKick(req, name, env, deps) {
+async function verifyKick(req, name, env, deps) { return (await checkKick(req, name, env, deps)) === 'ok'; }
+// → Promise<'ok' | 'replay' | 'refused'>: 'replay' = a valid signature whose nonce was already used — the platform retrying
+// a failed background run (it repeats the same request after 1 and 2 minutes), never run twice
+async function checkKick(req, name, env, deps) {
   deps = deps || {};
   const H = require('../core/http');
   const { loadJobsConfig } = require('../core/config');
   const p = kickPath(name);
   let path = '';
-  try { path = new URL(req.url).pathname; } catch (e) { return false; }
-  if (req.method !== 'POST' || path !== p) return false;
+  try { path = new URL(req.url).pathname; } catch (e) { return 'refused'; }
+  if (req.method !== 'POST' || path !== p) return 'refused';
   const cfg = loadJobsConfig(env);
-  if (!cfg.secrets.opsHmac) return false;
-  const nonces = deps.nonces || null;
-  let db = null;
+  if (!cfg.secrets.opsHmac) return 'refused';
+  let db = null; let replay = false;
   try {
-    let store = nonces;
+    let store = deps.nonces || null;
     if (!store) {
       const url = dbUrl(env, 'WTS_DB_URL');
-      if (!url) return false;
+      if (!url) return 'refused';
       db = (deps.createDb || require('../core/db').createDb)(url, { role: 'wts_api', max: 1 });
       store = H.dbNonceStore(db);
     }
-    return await H.verifyOps({ method: req.method, headers: lowerHeaders(req.headers) }, p, cfg, (deps.now || Date.now)(), store);
+    // verifyOps claims the nonce only after the signature and the time window passed
+    const watched = { async claim(n, t) { const ok = await store.claim(n, t); if (!ok) replay = true; return ok; } };
+    const ok = await H.verifyOps({ method: req.method, headers: lowerHeaders(req.headers) }, p, cfg, (deps.now || Date.now)(), watched);
+    return ok ? 'ok' : (replay ? 'replay' : 'refused');
   } finally { if (db) await db.close(); }
 }
 
@@ -127,6 +158,7 @@ function guard(env, log) {
   const config = loadJobsConfig(env);
   const iso = checkIsolation(config, env);
   iso.problems.forEach((p) => log.warn('alert: isolation — ' + p));
+  iso.warnings.forEach((w) => log.info('config: ' + w));
   return { config, ok: iso.ok };
 }
 function mailFor(env, config, deps) {
@@ -143,7 +175,7 @@ async function runJobs(o) {
   if (!url) return { ok: false, skipped: 'no database' };
   const { hostObjects } = require('./adapters');
   const blobs = require('./netlify-blobs');
-  const db = (o.createDb || require('../core/db').createDb)(url, { role: 'wts_jobs', sessionRole: true, max: 1 });
+  const db = (o.createDb || require('../core/db').createDb)(url, { role: 'wts_jobs', sessionRole: true, roleMode: roleMode(env), max: 1 });
   try {
     await db.checkRole();
     const keys = require('../core/keys').createKeys(config);
@@ -172,7 +204,7 @@ async function runExport(o) {
   if (!url) return { ok: false, skipped: 'no database' };
   const { hostObjects } = require('./adapters');
   const blobs = require('./netlify-blobs');
-  const db = (o.createDb || require('../core/db').createDb)(url, { role: 'wts_backup', sessionRole: true, max: 1 });
+  const db = (o.createDb || require('../core/db').createDb)(url, { role: 'wts_backup', sessionRole: true, roleMode: roleMode(env), max: 1 });
   try {
     const objects = hostObjects(blobs.createStore(env, { getStore: o.getStore }));
     const exportsStore = hostObjects(blobs.createStore(env, { name: blobs.STORES.exports, getStore: o.getStore }));
@@ -191,6 +223,8 @@ function scheduledFunction(name, deps) {
   return async function scheduled(request, context) {
     const env = deps.env || process.env;
     const log = deps.log || defaultLog();
+    const refusal = deployRefusal(env, context);
+    if (refusal) { log.warn('alert: isolation — ' + name + ' skipped: ' + refusal); return json(200, { ok: false, skipped: 'deploy' }); }
     try {
       if (name === 'ops-purge') {
         const r = await runJobs(Object.assign({}, deps, { env, log, only: PURGE_STEPS }));
@@ -212,12 +246,16 @@ function scheduledFunction(name, deps) {
 }
 function backgroundFunction(name, deps) {
   deps = deps || {};
-  if (!FUNCTIONS[name] || FUNCTIONS[name].config !== null) throw new Error('netlify: ' + name + ' is not a background function');
-  return async function background(request) {
+  if (!FUNCTIONS[name] || !FUNCTIONS[name].background) throw new Error('netlify: ' + name + ' is not a background function');
+  return async function background(request, context) {
     const env = platformEnv(deps.env || process.env);
     const log = deps.log || defaultLog();
     // the platform answers 202 to the caller at once; this return value is never seen by anyone
-    if (!(await verifyKick(request, name, env, deps))) { log.warn('alert: jobs — ' + name + ' refused an unsigned or replayed call'); return json(404, { ok: false }); }
+    const refusal = deployRefusal(env, context);
+    if (refusal) { log.warn('alert: isolation — ' + name + ' skipped: ' + refusal); return json(404, { ok: false }); }
+    const kick = await checkKick(request, name, env, deps);
+    if (kick === 'replay') { log.warn('alert: jobs — ' + name + ' platform retry ignored (this signed call already ran once); rerun it with Run now on ' + name.replace(/-background$/, '')); return json(409, { ok: false }); }
+    if (kick !== 'ok') { log.warn('alert: jobs — ' + name + ' refused an unsigned or badly signed call'); return json(404, { ok: false }); }
     try {
       const r = name === 'ops-daily-background'
         ? await runJobs(Object.assign({}, deps, { env, log, checkExport: true }))
@@ -232,4 +270,4 @@ function backgroundFunction(name, deps) {
   };
 }
 
-module.exports = { FUNCTIONS, DEFAULTS, PURGE_STEPS, platformEnv, apiFunction, scheduledFunction, backgroundFunction, kickRequest, kickPath, verifyKick, runJobs, runExport };
+module.exports = { FUNCTIONS, DEFAULTS, PURGE_STEPS, REGION, platformEnv, deployRefusal, apiFunction, scheduledFunction, backgroundFunction, kickRequest, kickPath, verifyKick, checkKick, runJobs, runExport };

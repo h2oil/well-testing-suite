@@ -4,4 +4,4 @@ import nf from '../../site/netlify.js';
 
 export default nf.scheduledFunction('ops-purge');
 
-export const config = { schedule: '23 * * * *' };
+export const config = { schedule: '23 * * * *', region: 'lhr' };

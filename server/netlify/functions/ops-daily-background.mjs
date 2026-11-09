@@ -4,3 +4,5 @@
 import nf from '../../site/netlify.js';
 
 export default nf.backgroundFunction('ops-daily-background');
+
+export const config = { region: 'lhr' };
