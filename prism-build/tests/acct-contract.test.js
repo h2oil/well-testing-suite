@@ -28,7 +28,7 @@ const F = require('./_acct-fake-server');
 
 const WP = 'AC0';
 const BUILD = path.join(__dirname, '..');
-const FILES = ['66-account.js', '67-cloud-sync.js', '68-account-page.js'];
+const FILES = ['66-account.js', '67-cloud-sync.js', '68-account-page.js', '69-account-admin.js'];
 const B = F.PROD + S.BASE;
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -409,14 +409,14 @@ module.exports = [
         const b = bare(o);
         assert.deepStrictEqual(Object.keys(b.win.WTS_account || {}), ['eligible'], what + ': only the ineligible stub');
         assert.strictEqual(b.win.WTS_account.eligible, false, what);
-        assert.strictEqual(b.win.WTS_cloudSync, undefined, what); assert.strictEqual(b.win.WTS_accountPage, undefined, what);
+        assert.strictEqual(b.win.WTS_cloudSync, undefined, what); assert.strictEqual(b.win.WTS_accountPage, undefined, what); assert.strictEqual(b.win.WTS_accountAdmin, undefined, what);
         assert.deepStrictEqual(b.counts, { fetch: 0, timers: 0, doc: 0 }, what + ': nothing at load');
       }
       for (const [what, o] of [['production https', { location: Object.assign({}, PROD_LOC, { search: '?cloud=1' }) }], ['DEV localhost', { dev: true }]]) {
         const b = bare(o);
         // the eligible files probe `typeof document` once each (undefined here, so no DOM can be touched); no request, no timer
         assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': no request or timer at load');
-        assert(b.counts.doc <= 4, what + ': only document probes at load');
+        assert(b.counts.doc <= 5, what + ': only document probes at load');
         const doc0 = b.counts.doc;
         for (const f of FILES) {
           const spec = S.CLIENT_NAMES[f]; const obj = b.win[spec.global];
@@ -437,6 +437,8 @@ module.exports = [
         for (const n of ['syncNow']) await assert.rejects(b.win.WTS_cloudSync[n](), (e) => e.code === 'not_implemented', 'WTS_cloudSync.' + n);
         assert.strictEqual(b.win.WTS_accountPage.register(), false, 'the account page is not registered before host H7');
         assert.strictEqual(b.win.WTS_accountPage.entry.navHidden, true);
+        assert.strictEqual(b.win.WTS_accountAdmin.register(), false, 'the admin page is not registered before host H7');
+        assert.strictEqual(b.win.WTS_accountAdmin.entry.navHidden, true);
         assert.deepStrictEqual([b.counts.fetch, b.counts.timers], [0, 0], what + ': stubs make no request');
         assert(b.counts.doc - doc0 <= 4, what + ': no DOM work without a document');
         if (what === 'production https') assert.strictEqual(b.store.wtspref_cloud_beta, '1', '?cloud=1 sets the beta flag');
@@ -454,13 +456,13 @@ module.exports = [
         assert(!/LinkedIn|Google/.test(src.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '')), f + ': provider brand names only inside the ACCT block');
         if (f === '67-cloud-sync.js') assert(!/LinkedIn|Google/.test(src), f + ': no provider brand names');
         assert(!/setInterval\s*\(/.test(src), f + ': no setInterval');
-        assert(((src.slice(0, st).match(/setTimeout\(/g) || []).length) <= (f === '66-account.js' ? 2 : 0), f + ': only the one-shot mount timers');
+        assert(((src.slice(0, st).match(/setTimeout\(/g) || []).length) <= (f === '66-account.js' ? 2 : f === '69-account-admin.js' ? 1 : 0), f + ': only the one-shot mount timers');
       }
       const R10 = require(path.join(BUILD, 'concat-round10.js'));
       const names = R10.listFiles();
-      assert.deepStrictEqual(names.slice(-3), FILES, 'Round 10 discovers 66–68 after 65');
+      assert.deepStrictEqual(names.slice(-FILES.length), FILES, 'Round 10 discovers 66–69 after 65');
       const out = R10.build({ log: { log() {}, warn() {} } });
-      assert.strictEqual((out.match(/\/\/ ── ACCT:START/g) || []).length, 3); assert.strictEqual((out.match(/\/\/ ── ACCT:END ──/g) || []).length, 3);
+      assert.strictEqual((out.match(/\/\/ ── ACCT:START/g) || []).length, FILES.length); assert.strictEqual((out.match(/\/\/ ── ACCT:END ──/g) || []).length, FILES.length);
       const stripped = out.replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '// (accounts and cloud sync: web only — stripped from the iOS bundle)');
       assert(!/WTS_account|WTS_cloudSync|\/api\/v1|wtsacct_/.test(stripped), 'the planned strip of §9 removes every account identifier');
       assert(!/SELF-TEST/.test(out.split('66-account')[1] || ''), 'self-tests stripped');

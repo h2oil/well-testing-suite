@@ -1148,7 +1148,7 @@ document.addEventListener('change', e => {
 // Unit-tagged inputs (22-units.js) are stored canonical (imperial), like the
 // legacy wts_<key> records. PRiSM routes keep their own persistence.
 const PAGE_LS_PREFIX = 'wts_page_';
-const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
+const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1, admin:1 };
 let __pageState = null;       // live record of the page currently rendered
 let __pageRestoring = false;  // true while render() re-applies saved values
 let __pageDirty = false;
@@ -1658,7 +1658,7 @@ function __calcHomeTiles(mods) {
 // never saved into project files). Event-driven only — no timers or polling.
 const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVO = 'wts_ui_nav_open', __UI_HUB = 'wts_ui_hub_last';
 const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
-const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1 };
+const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1, admin:1 };
 let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
 function __uiList(k) {
     try {
@@ -2099,7 +2099,7 @@ function render() {
     try { __restorePageState(); } catch(e) { __pageRestoring = false; console.warn('[autosave] restore failed', e); }
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
-    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help'||page==='account') ? 'none' : 'flex';   /* help-host-patch:H4 */ /* accounts: no page export on the account page (H10) */
+    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help'||page==='account'||page==='admin') ? 'none' : 'flex';   /* help-host-patch:H4 */ /* accounts: no page export on the account / admin pages (H10) */
     try { if(window.WTS_help && typeof window.WTS_help.syncHeader === 'function') window.WTS_help.syncHeader(page); } catch(e) {}   /* help-host-patch:H3 */
     // Notify analytics + any other listeners that the SPA has navigated.
     // Used by the GA4 tracker for virtual page_view + scroll-depth reset.
@@ -3382,7 +3382,7 @@ window.exportPagePNG = async function() {
 // model is cached (memory + localStorage 'wts_report_snapshots', so it also
 // travels in project files). The job report stitches every captured
 // calculator into one document with a summary table.
-const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
+const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1, admin:1 };
 const _reportSnaps = (function() {
     try { return JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}; } catch(e) { return {}; }
 })();
@@ -148869,6 +148869,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   • 66-account
 //   • 67-cloud-sync
 //   • 68-account-page
+//   • 69-account-admin
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -152887,6 +152888,14 @@ G.WTS_modbusBridgeSetup = {
 // (accounts and cloud sync: web only — stripped from the iOS bundle)
 
 // ─── END 68-account-page ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 69-account-admin ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// (accounts and cloud sync: web only — stripped from the iOS bundle)
+
+// ─── END 69-account-admin ─────────────────────────────────────────────
 
 
 // ── Round-10 (live data) injection END ──

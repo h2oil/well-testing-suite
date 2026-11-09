@@ -159,6 +159,7 @@ const CLIENT_NAMES = {
       'conflicts', 'resolve', 'diff', 'snapshot', 'migrateLocal', 'wipeDevice', 'historianBackup', 'historianRestore', 'exportAll', 'canonical', 'sha256Hex'],
     props: ['VERSION'] },
   '68-account-page.js': { global: 'WTS_accountPage', fns: ['render', 'register'], props: ['VERSION', 'entry'] },
+  '69-account-admin.js': { global: 'WTS_accountAdmin', fns: ['render', 'register', 'open'], props: ['VERSION', 'entry'] },
 };
 const CLIENT_STATES = ['signedOut', 'signingIn', 'signedIn', 'unavailable'];
 const SYNC_STATES = ['off', 'idle', 'dirty', 'syncing', 'offline', 'unavailable', 'conflict', 'quota', 'paused', 'readonly', 'signedOut'];

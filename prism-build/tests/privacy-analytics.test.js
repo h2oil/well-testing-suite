@@ -279,7 +279,10 @@ module.exports = [
       // Same strip the sync script applies.
       const src = fs.readFileSync(path.join(ROOT, 'ios-app', 'scripts', 'sync-from-main.js'), 'utf8');
       assert.includes(src, "html.replace(/<!--\\s*GA:START[\\s\\S]*?GA:END\\s*-->/g");
-      const ios = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->');
+      // (the sync also strips the web-only account blocks; the account client's welcome prompt names the banner id #wtsConsent
+      // to wait for it, inside its ACCT block)
+      const ios = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->')
+        .replace(/\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g, '').replace(/<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g, '');
       for (const s of ['googletagmanager', 'function gtag', 'window.h2oilTrack = track', 'G-6QKCBNWHYB\', {', 'wtsConsent', 'WTS_consent =', 'wtspref_analytics_consent']) {
         assert.ok(ios.indexOf(s) === -1, 'iOS bundle still has ' + s);
       }

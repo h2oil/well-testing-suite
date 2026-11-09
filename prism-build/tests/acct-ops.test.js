@@ -133,7 +133,7 @@ module.exports = [
       assert.strictEqual(A.digest('host();').sha384, null, 'no block → null');
       assert(A.digest(page + '\n// ── ACCT:START x\n').errors.length, 'unclosed JS block refused');
       assert(A.digest(page + '<!-- ACCT:START -->').errors.length, 'unclosed HTML block refused');
-      ['66-account.js', '67-cloud-sync.js', '68-account-page.js'].forEach((f) => {
+      ['66-account.js', '67-cloud-sync.js', '68-account-page.js', '69-account-admin.js'].forEach((f) => {
         const t = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
         const r = A.digest(t);
         assert.strictEqual(r.blocks, 1, f + ' has one block'); assert(/^sha384-[A-Za-z0-9+/]{64}$/.test(r.sha384), f);

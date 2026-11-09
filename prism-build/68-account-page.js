@@ -94,6 +94,7 @@
       '<div class="rrow"><span class="rl">This session</span><span class="rv">signed in with ' + esc(how) + ' on ' + when(s.authAt) + (s.publicDevice ? ' (public computer)' : '') + '</span></div>' +
       '<div class="rrow"><span class="rl">Account created</span><span class="rv">' + day(u.created) + '</span></div>' +
       '<div class="rrow"><span class="rl">Terms / Privacy versions</span><span class="rv">' + esc(u.terms) + ' / ' + esc(u.privacy) + '</span></div>' +
+      (A() && A().isAdmin && A().isAdmin() ? '<div class="acct-btns" id="acct_admin_row"><button type="button" class="btn btn-secondary" id="acct_open_admin">Admin dashboard</button> <span class="acct-note">sign-ups, countries and invitations (owner only)</span></div>' : '') +
       (u.status === 'deleting' ? '<div id="acct_p_deleting">&#9888; Your account is being deleted on ' + day(u.deleteAt) + '. <button type="button" class="btn btn-primary" id="acct_cancel_delete">Cancel deletion</button></div>' : '') +
       '<div class="fg-item"><label for="acct_new_email">Change e-mail address</label><input type="email" id="acct_new_email" maxlength="254" autocomplete="off" data-acct-skip="1"></div>' +
       '<div class="acct-btns"><button type="button" class="btn btn-secondary" id="acct_change_email">Send a code to the new address</button></div>' +
@@ -193,6 +194,7 @@
       return;
     }
     var root = view.root;
+    on('acct_open_admin', function () { var P = G.WTS_accountAdmin; if (P && typeof P.open === 'function') P.open(); });
     on('acct_change_email', function () {
       var v = String($('acct_new_email').value || '').trim();
       if (!v) { say('acct_profile_msg', 'Type the new address first.', 'err'); return; }

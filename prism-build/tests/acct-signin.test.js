@@ -66,7 +66,7 @@ module.exports = [
         assert(chip, 'chip mounted');
         assert.strictEqual(chip.getAttribute('aria-label'), 'Sign in');
         assert(/Sign in/.test(chip.textContent));
-        assert.strictEqual(t.el('wts_account_host').parentNode.className.indexOf('page-actions') !== -1, true, 'first in .page-actions');
+        assert.strictEqual(t.el('wts_account_host').parentNode.id, 'sbAccountLine', 'the chip host sits in the sidebar footer (bottom-left)');
         assert.strictEqual(t.fake.requests.length, 0, 'a signed-out visit makes no request');
         assert.strictEqual(t.a.pendingTimers(), 0, 'no timer left');
         assert.deepStrictEqual(t.a.errors.map((e) => e.message), []);
