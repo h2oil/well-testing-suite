@@ -5,7 +5,8 @@ owner's activation checklist, releases, monitoring, kill switches, incidents, th
 compromise, backups and restore, and support. Every script named here reads its credentials from the environment only and
 prints ids, counts and dates — never an e-mail address, a code, a key or a body.
 
-**State today:** the code is ready to deploy but nothing is deployed. While no server answers, the static site behaves
+**v4.0: the host is Netlify** — §3N is the owner's click-by-click guide, §3P the Google and LinkedIn consoles; the generic
+§3 stays for any other host. **State today:** the code is ready to deploy but nothing is deployed. While no server answers, the static site behaves
 exactly as v3.4: the page's cloud UI stays hidden unless `GET /api/v1/...` answers (and the `?cloud=1` beta flag is set
 during the beta), both provider sign-ins are off unless configured (`OAUTH_GOOGLE` / `OAUTH_LINKEDIN` default `off`), and
 the repository root carries no host configuration, so the static site's deploy is unchanged.
@@ -18,6 +19,7 @@ the repository root carries no host configuration, so the static site's deploy i
 |---|---|
 | Request pipeline, contract, config | `core/app.js`, `core/contract.js`, `core/config.js` |
 | Functions-site adapter (the one function for `/api/v1/*`) | `site/handler.js`; bundle `node site/build.js` → `server/dist/` |
+| Netlify site (v4.0) | `netlify.toml`, `netlify/functions/*.mjs`, `site/netlify.js` (functions, defaults, jobs, kick), `site/netlify-blobs.js`, `site/netlify-check.js` (build command), `site/proxy-rule.js` (main site rule), `ops/keygen.js` (secrets) |
 | Site description and the static site's rewrite | `site/site.json` |
 | Preview isolation | `site/isolation.js` |
 | Monitoring hooks and alert table | `site/monitor.js`, `ops/monitor-check.js` |
@@ -33,6 +35,11 @@ the repository root carries no host configuration, so the static site's deploy i
 ---
 
 ## 2. Environments and secrets
+
+**On Netlify (v4.0)** the functions site's variables are the table of §3N step 8; the database credential is the platform's
+`NETLIFY_DB_URL` (never typed in), and the jobs and the weekly export run inside the site as scheduled / background functions
+(no jobs host). The operations scripts on your computer take the production connection string in `WTS_SUPPORT_DB_URL` /
+`WTS_JOBS_DB_URL` and run as `wts_support` / `wts_jobs`. The rest of this section describes the generic layout.
 
 | Environment | Database | Secrets | Sign-in |
 |---|---|---|---|
@@ -79,7 +86,297 @@ and the secret scan refuse files that contain key material or name a secret vari
 
 ---
 
-## 3. Activation checklist (the owner)
+## 3N. Switch it on with Netlify (v4.0) — follow this, not §3
+
+This is the complete, ordered list for the owner. Each step says where to click, what to type and how to check it. Nothing
+here puts a secret into the repository: every secret goes into a Netlify environment variable (tick **Contains secret
+values**), a GitHub environment secret, or your password manager. Where a value is a secret it is marked \*.
+
+**What you need before you start**
+- The Netlify team that owns the main site (project **h2oil**, welltest.h2oil.co.uk), with your login as **Owner**.
+- Admin rights on the GitHub repository.
+- Someone who can add DNS records for `h2oil.co.uk`.
+- A Google account for the Google Cloud console and a LinkedIn login that is an administrator of the H2Oil company Page (§3P).
+- An account with an e-mail sending service (step 9).
+- On your own computer: Node.js 22 LTS (the installer from the Node.js website) and a copy of this repository (GitHub
+  Desktop is fine). Commands below are run in a terminal opened in the repository folder. On Windows PowerShell write
+  `$env:NAME='value'; node …` where this page writes `NAME='value' node …`.
+
+**Names used below**: the new site is called **h2oil-accounts-api** (its address is then
+`https://h2oil-accounts-api.netlify.app`). If you pick another name, use it everywhere instead.
+
+### Step 1 — Team plan and region
+1. Netlify → your team → **Team settings → Billing** → plan **Pro** → confirm. Pro is needed for the London function region
+   (UK data residency), per-scope environment variables and a second team owner. On Personal the functions and the database run
+   in the United States (Ohio); if you choose that, write the decision into PROJECT-NOTES.md and the privacy notice must name the
+   transfer.
+2. **Team settings → Members**: invite a second Owner (a lost owner login means nobody can rotate secrets or restore backups).
+3. Download the Data Processing Agreement from Netlify's Trust Center and keep it with the company records (UK GDPR processor
+   contract); note the sub-processor list date.
+
+### Step 2 — Start the long-lead items now (they run in parallel)
+- DNS access for `h2oil.co.uk` (Google domain proof, mail records).
+- The Google and LinkedIn console set-up (§3P) — Google's brand verification can take 1–3 weeks.
+- The e-mail service account (step 9).
+- The privacy notice and terms pages on welltest.h2oil.co.uk (both consoles ask for their addresses).
+
+### Step 3 — Generate the secrets on your computer
+```
+cd server
+npm ci
+node ops/keygen.js
+```
+It prints nine `NAME=value` lines. Put every one into your password manager under these exact names. Write
+`WTS_MASTER_KEYS` and `WTS_BACKUP_PRIVATE_KEY` also to the offline escrow (a printed copy in the safe, or an encrypted USB key):
+without the master key no user data can ever be read again; without the backup private key no weekly export can be opened.
+`WTS_BACKUP_PRIVATE_KEY` never goes into Netlify. Close the terminal when done.
+
+### Step 4 — Create the functions site
+1. Netlify → **Add new project → Import an existing project → GitHub** → choose this repository.
+2. **Branch to deploy**: `master` (or `Dev` while the accounts work is not yet on master).
+3. **Base directory**: `server`. Leave **Build command** empty (server/netlify.toml sets `node site/netlify-check.js`).
+   **Publish directory**: `server/public`. **Functions directory**: `server/netlify/functions`.
+4. **Project name**: `h2oil-accounts-api` → **Deploy**. The first deploy is harmless: without its variables every API call
+   answers 404 and the scheduled functions only log that nothing is configured.
+5. Immediately: **Project configuration → Build & deploy → Continuous deployment → Branches and deploy contexts → Configure**:
+   **Branch deploys: Deploy only the production branch**; **Deploy Previews: Don't deploy pull requests** → **Save**. A preview of
+   a site with a database gets a copy of the production data and would run with the production secrets.
+6. Same page, **Build settings → Build status → Configure → Stopped builds** → Save. From now on the site is released only by
+   the GitHub workflow from `server-v*` tags (step 12); a push to GitHub never changes it.
+7. Do **not** add a custom domain to this site. Its `.netlify.app` address is only ever called by the main site's proxy rule.
+
+### Step 5 — Function region London
+**Project configuration → Build & deploy → Functions → Region** (in some layouts **Cloud compute → Functions → Region**) →
+**EU (London) — lhr** → Save. Do this **before** step 6: the database is created in the functions region and never moves.
+
+### Step 6 — Create the database
+1. On the functions site: **Data & Storage → Database → Create database**. If a region is offered, choose London (or the
+   closest EU region offered); write the region into PROJECT-NOTES.md.
+2. Leave **sleep on inactivity** at the default (it wakes in well under a second).
+3. **Connect → Production connection string → Copy** (only an Owner sees it). Store it in the password manager as
+   `WTS_MIGRATE_DB_URL`\*. It is the database's only login; the functions get it automatically as `NETLIFY_DB_URL` — never type it
+   into the site's variables.
+4. Backups: **Data & Storage → Database → Backups** shows the daily backups (Pro: 30 days) and one per published deploy.
+
+### Step 7 — Probe and first migration (from your computer)
+```
+cd server
+WTS_MIGRATE_DB_URL='<the connection string>' node db/migrate.js --platform
+```
+Expected, in this order: `login …: superuser false, createrole true, bypassrls true`, `roles ready (granted to the login: …)`,
+`applied 001-schema.sql` … `applied 050-code-scope.sql`, `4 applied`, `export role ready`. Running it again prints `0 applied`.
+**If it stops with "cannot create roles" or "cannot create BYPASSRLS roles", stop here** and pass the message to the developer:
+the platform login lacks a right the plan's role design needs, and the fallback migration (server/README.md, Hosting
+deviation 1) has to be written first. Nothing was applied in that case.
+
+### Step 8 — Environment variables of the functions site
+**Project configuration → Environment variables → Add a variable → Add a single variable.** For each row: the exact key, the
+value, **Scopes: Functions** only (Pro), **Deploy contexts: Production** only (or "Same value for all" with previews already
+off), and tick **Contains secret values** for every row marked \*. Changes take effect at the next deploy (step 12, or step 16
+"apply a change").
+
+| Key | Value |
+|---|---|
+| `WTS_ENV` | `production` |
+| `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_PROXY_SIG`\* · `WTS_BACKUP_PUBLIC_KEY` | from step 3 (`WTS_BACKUP_PUBLIC_KEY` is not secret; `WTS_BACKUP_PRIVATE_KEY` is **never** set here — the site refuses to start with it) |
+| `WTS_MAIL_API_URL`\* · `WTS_MAIL_CREDENTIAL`\* | step 9 |
+| `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `1` (raise when the published texts change; users then re-consent) |
+| `ACCOUNTS_SIGNUP` | `invite` (beta: only allow-listed addresses can create an account) |
+| `SYNC_MODE` | `on` |
+| `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | leave unset (= off) until §3P is done |
+| `OAUTH_GOOGLE_CLIENT_ID` · `OAUTH_GOOGLE_CLIENT_SECRET`\* · `OAUTH_LINKEDIN_CLIENT_ID` · `OAUTH_LINKEDIN_CLIENT_SECRET`\* | §3P |
+
+Do **not** set `WTS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_MIGRATE_DB_URL`, `WTS_SUPPORT_DB_URL`,
+`WTS_BACKUP_KEY` or `WTS_BACKUP_PRIVATE_KEY` here (the site refuses to start, or ignores them). Set automatically on Netlify and
+only changed on purpose: `WTS_MIN_CLIENT` (default `4.0`), `WTS_VERSION` (default the server package version, 4.0.0),
+`WTS_HOST_HEADER` (default `x-wts-host`), `WTS_CLIENT_IP_HEADER` (default `x-nf-client-connection-ip`), `WTS_CODE_FLOOR_MS`
+(default 400).
+
+### Step 9 — E-mail service and DNS
+1. Choose an e-mail sending service with a UK/EU data option and an HTTPS API that accepts a POST with the header
+   `Authorization: Bearer <key>` and a JSON body `{"from","to","subject","text"}` (plain text only). If the chosen service needs
+   a different body, the developer changes `site/adapters.js httpMail` (one function) before go-live.
+2. In the service: add and verify the sending domain `h2oil.co.uk` (or a sub-domain such as `mail.h2oil.co.uk`); create an API
+   key limited to sending. `WTS_MAIL_API_URL`\* = the service's send endpoint (https); `WTS_MAIL_CREDENTIAL`\* = the key.
+3. DNS records on `h2oil.co.uk` (exact values come from the service's domain page):
+   - **SPF**: one TXT record on the sending domain, `v=spf1 include:<the service's SPF host> ~all` — merge it into the existing
+     SPF record if there is one (only one SPF record per name is allowed).
+   - **DKIM**: the CNAME or TXT records the service lists (usually `<selector>._domainkey…`).
+   - **Return-path / bounce domain**: the CNAME the service lists, if any.
+   - **DMARC**: TXT on `_dmarc.h2oil.co.uk`: start with `v=DMARC1; p=none; rua=mailto:<a monitored address>`; after two clean
+     weeks change `p=none` to `p=quarantine`.
+4. Wait until the service shows the domain as verified. In the service's console turn on complaint and bounce alerts to your
+   address.
+5. Check (after step 13): the code e-mail arrives, and its headers show `spf=pass`, `dkim=pass`, `dmarc=pass`.
+
+### Step 10 — The main site: publish allow-list and the proxy rule
+This also completes §3 step 0 (the main site stops publishing the repository tree). Do it **before** the accounts work is
+merged to master.
+1. In a terminal in the repository folder: `node server/site/proxy-rule.js --snippet h2oil-accounts-api.netlify.app > netlify.toml`
+   and commit this one root file to master as a reviewed change. It sets the main site's build to
+   `node prism-build/publish-site.js --api` with publish directory `dist-site`, and the rule
+   `/api/v1/*` → `https://h2oil-accounts-api.netlify.app/api/v1/:splat` (status 200, forced) with the headers
+   `X-WTS-Proxy-Sig` (a placeholder) and `X-WTS-Host: welltest.h2oil.co.uk`. The value is never in the file in the repository.
+2. Main site **h2oil → Project configuration → Environment variables**: add `WTS_PROXY_SIG`\* with the **same** value as on the
+   functions site, **Scopes: Builds**, tick **Contains secret values**. The main site's build fills it into its own copy of
+   `netlify.toml` (`server/site/proxy-rule.js --apply`); that file is not published, and `SECRETS_SCAN_OMIT_PATHS` keeps the
+   platform's secret scan from failing the build on it.
+3. Main site **Build settings**: if the UI still shows an old publish directory or command, clear them (the file's values win).
+4. Deploy the main site (it deploys from master as usual). Checks:
+   - `https://welltest.h2oil.co.uk/` works as before; `https://welltest.h2oil.co.uk/server/RUNBOOK.md` answers 404.
+   - The deploy log shows `[proxy-rule] proxy signature filled in`. If it shows "WTS_PROXY_SIG is not set", step 2 is missing:
+     the site still deploys, the API answers 404 and accounts stay hidden.
+5. If Netlify ever ignores the filled-in header (check in step 12: `/api/v1/health` through the main site answers 404 while the
+   functions site is deployed), the documented alternative is a small edge function on the main site that adds the header from
+   its environment — ask the developer; do not put the value into the repository.
+
+### Step 11 — GitHub release environments
+GitHub → repository **Settings → Environments**:
+1. **New environment** `server-migrations` → **Required reviewers**: you → Save → **Add environment secret**
+   `WTS_MIGRATE_DB_URL`\* = the connection string of step 6.
+2. **New environment** `server-production` → **Required reviewers**: you → Save →
+   - secret `WTS_DEPLOY_TOKEN`\*: Netlify → your avatar → **User settings → Applications → Personal access tokens → New access
+     token** (description "server releases", expiry 1 year; put a renewal date in the calendar — a password reset also cancels
+     it);
+   - variable `WTS_DEPLOY_SITE`: the functions site's **Project ID** (Project configuration → General → Project details);
+   - variable `WTS_DEPLOY_COMMAND`:
+     `npx --yes netlify-cli@27.16.2 deploy --prod --no-build --dir public --functions netlify/functions --site "$WTS_DEPLOY_SITE" --auth "$WTS_DEPLOY_TOKEN" --message "$GITHUB_REF_NAME"`
+   - variable `WTS_HEALTH_URL`: `https://welltest.h2oil.co.uk/api/v1/health`.
+   These must be **environment** secrets and variables, never repository-level ones.
+
+### Step 12 — First server release
+1. Make sure the accounts work and this runbook's version are on master (after step 10).
+2. GitHub → **Releases → Draft a new release → Choose a tag**: `server-v4.0.0` (new tag, target `master`) → **Publish release**
+   (or `git tag server-v4.0.0 <master commit> && git push origin server-v4.0.0`).
+3. GitHub → **Actions → Server release** → the run for the tag: `verify` runs the tests (about 5 minutes); then **Review
+   deployments → server-migrations → Approve** (prints `0 applied` after step 7); then approve **server-production** (the
+   deploy, then the health check).
+4. Checks:
+   - `https://welltest.h2oil.co.uk/api/v1/health` → `{"ok":true,"db":true,"ver":"4.0.0"}`.
+   - `https://h2oil-accounts-api.netlify.app/api/v1/health` (the functions site directly) → 404. If it answers 200, the
+     signature check is not active — stop and set `WTS_PROXY_SIG` / `WTS_ENV`.
+   - Functions site → **Logs → Functions → api**: one `{"t":"access",…}` line per request, no `alert:` lines. An
+     `alert: isolation` or `alert: config` line names the variable to fix.
+5. **Check the client address** (unverified on the platform until now): call the health address once from your computer, then
+   find its access line: `"ipp"` must be the start of **your** public address (your router's address, shown in its admin page).
+   If every line shows the same platform address instead, tell the developer before step 15: provider sign-in refuses to run
+   without a real client address, and the per-address code limits would treat all users as one.
+
+### Step 13 — The v4.0 page and the first sign-in
+1. The page must be the v4.0 release (the version under the logo reads **v4.0**): the server refuses project saves from older
+   pages (`WTS_MIN_CLIENT` 4.0).
+2. Put yourself on the invite list (from your computer; the four key variables are the same values as on the site, the
+   connection string from step 6; the script runs as `wts_support`):
+   ```
+   cd server
+   WTS_SUPPORT_DB_URL='<connection string>' WTS_MASTER_KEYS='…' WTS_INDEX_PEPPER='…' WTS_CODE_PEPPERS='…' \
+     node ops/allowlist-add.js --actor support:owner --email name@company.example --note beta
+   ```
+   Output: `{"ok":true,…}` — no address is printed. Repeat for each beta tester.
+3. Smoke test: open `https://welltest.h2oil.co.uk/?cloud=1` in a private window → the account chip → **Sign in** → your address
+   → the code e-mail arrives within a minute (check its SPF / DKIM / DMARC, step 9.5) → enter the code → accept the terms →
+   signed in. Then **Save to cloud** on a small project; open the page in another browser, sign in, **Open from cloud**: the
+   project opens with the same values. On the functions site **Data & Storage → Blobs** now lists the store `wts-objects`.
+4. Sign out; sign in again; on the account page check the devices list and the export.
+
+### Step 14 — Scheduled jobs
+Functions site → **Logs → Functions**: `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sundays 04:41 UTC)
+show as scheduled. They run only on the published production deploy.
+1. `ops-daily` → **Run now** → its log shows `jobs: ops-daily started ops-daily-background`; the `ops-daily-background` log then
+   shows `jobs: ops-daily-background {"ok":true,…}` (and, until the first export, `alert: exportAge`).
+2. `weekly-export` → **Run now** → `weekly-export-background` logs `{"ok":true,"name":"wts-export-….wtsx",…}`; **Blobs** lists
+   the store `wts-exports`.
+3. The **first restore drill** (§9.3) before any real user signs in — with the developer, on a scratch database on a computer:
+   `WTS_BLOBS_SITE_ID=<Project ID> WTS_OBJECTS_CREDENTIAL='<a personal access token>' WTS_BACKUP_PRIVATE_KEY='…'
+   WTS_DRILL_ADMIN_URL='<scratch administrator>' node ops/restore-drill.js --from-store`. Record the report in PROJECT-NOTES.md.
+4. Once a month: copy the newest export to offline storage —
+   `WTS_BLOBS_SITE_ID=<Project ID> WTS_OBJECTS_CREDENTIAL='<personal access token>' node ops/export-fetch.js <folder>` (the file
+   stays sealed; the private key is not needed to copy it). The quarterly drill can then use `node ops/restore-drill.js <file>`.
+
+### Step 15 — Switch the providers on (after §3P)
+- **Google**: set `OAUTH_GOOGLE_CLIENT_ID`, `OAUTH_GOOGLE_CLIENT_SECRET`\* and `OAUTH_GOOGLE=on` (new accounts, links and
+  sign-ins) — or `signin` (only identities already linked may sign in; no new account, no new link) — then apply the change
+  (step 16).
+- **LinkedIn**: set `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`\*, `OAUTH_LINKEDIN=on`. LinkedIn stays **off in
+  production** — whatever the switch says, with an `alert: config` line — until the live tests of plan §13.10 step 13 are
+  recorded in `server/core/oidc-providers.js` (the issuer value, PKCE, nonce and forced-login behaviour; `pending` emptied) and
+  released with a new server tag. The developer does that with you and one real LinkedIn account.
+- Check: the sign-in dialog shows the provider's button; sign in once with it; the account page lists the linked identity.
+- Never set `WTS_OIDC_MODE` on this site.
+
+### Step 16 — Everyday operations on Netlify
+- **Apply a changed variable**: variables are frozen into each deploy, and builds are stopped. GitHub → **Actions → Server
+  release** → the latest run → **Re-run all jobs** (approve the two environments again). The kill switches of §6 work the same
+  way (`ACCOUNTS_OFF=1`, `SYNC_MODE=readonly`, `ACCOUNTS_SIGNUP=off`, `OAUTH_<P>=off`).
+- **Rollback of the server code**: functions site → **Deploys** → the previous published deploy → **Publish deploy**
+  (instant; that deploy also brings back the variable values it was built with). Migrations are additive, so the older code
+  works on the newer schema. A rollback never restores the database.
+- **Rollback of the main site**: main site → **Deploys** → previous deploy → **Publish deploy**. Removing the proxy rule (a new
+  main-site deploy without the `[[redirects]]` block) takes accounts offline for everyone without touching any data.
+- **Restore the database**: Data & Storage → Database → Backups → choose a backup → Restore (Owner only; a fail-safe branch is
+  kept). Then, BEFORE re-opening the API (keep `ACCOUNTS_OFF=1` until then), run on your computer
+  `WTS_JOBS_DB_URL='<connection string>' WTS_BLOBS_SITE_ID=<Project ID> WTS_OBJECTS_CREDENTIAL='<personal access token>'
+  WTS_OBJECTS_BINDING=site/netlify-blobs.js node ops/ledger-replay.js` (§9) so deleted accounts stay deleted; it runs as
+  `wts_jobs`.
+- **Rotate a secret**: §10; after changing it on the site, apply the change (above). `WTS_PROXY_SIG`: set `new,old` on the
+  functions site, apply, change the main site to `new`, redeploy it, then set `new` alone on the functions site.
+- **Never**: turn deploy previews or branch deploys on, start builds again, add `WTS_BACKUP_PRIVATE_KEY` to a site, or paste a
+  connection string into a variable of the functions site.
+
+## 3P. Google and LinkedIn console set-up (plan §13.10)
+
+The exact callback addresses the server builds (`core/oidc.js redirectUri`: the production origin + `/api/v1/auth/oauth/` +
+provider + `/callback`) — type them exactly, https, no trailing slash, no wildcard:
+
+| Provider | Redirect URI | Variables |
+|---|---|---|
+| Google | `https://welltest.h2oil.co.uk/api/v1/auth/oauth/google/callback` | `OAUTH_GOOGLE_CLIENT_ID`, `OAUTH_GOOGLE_CLIENT_SECRET`\*, switch `OAUTH_GOOGLE` |
+| LinkedIn | `https://welltest.h2oil.co.uk/api/v1/auth/oauth/linkedin/callback` | `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`\*, switch `OAUTH_LINKEDIN` |
+
+Use an owner-controlled company login for both consoles and add a second administrator. Record the client ids (not the
+secrets) in §2 "Records".
+
+**Google** (Google Cloud console)
+1. **Domain proof**: in Google Search Console add the domain `h2oil.co.uk` and add the TXT record it shows to the DNS (step 2).
+2. Google Cloud console → project picker → **New project** → name `Well Testing Suite` → Create, and select it.
+3. Menu → **Google Auth Platform** (older layouts: **APIs & Services → OAuth consent screen**) → **Get started**: App name
+   **Well Testing Suite**; user support e-mail (a group or address the console owner controls, e.g. software@h2oil.co.uk);
+   Audience **External**; developer contact address → Create.
+4. **Branding**: application home page `https://welltest.h2oil.co.uk/`, privacy policy and terms of service addresses on
+   welltest.h2oil.co.uk, **Authorised domains**: `h2oil.co.uk`; logo (a logo requires brand verification).
+5. **Data access → Add or remove scopes**: `openid` and `.../auth/userinfo.email` only → Update → Save. (Non-sensitive: no
+   security assessment.)
+6. **Audience**: while testing, add the beta testers as **Test users** (at most 100; their grants expire after 7 days). When the
+   branding is ready, **Publish app** (In production) and submit brand verification if asked.
+7. **Clients → Create client** → Application type **Web application** → name `WTS production` → **Authorised JavaScript
+   origins**: none → **Authorised redirect URIs → Add URI**: `https://welltest.h2oil.co.uk/api/v1/auth/oauth/google/callback`
+   → **Create**. Copy the **Client ID** into `OAUTH_GOOGLE_CLIENT_ID` and the **Client secret** into
+   `OAUTH_GOOGLE_CLIENT_SECRET`\* straight away (the secret is shown in full only once).
+8. A second client `WTS development` with the developer's local page address + `/api/v1/auth/oauth/google/callback` (the
+   `WTS_DEV_ORIGIN` of `dev.js`, a `http://localhost:…` address) is only for local runs; its id and secret never go onto the
+   production site.
+9. Switch on: step 15.
+
+**LinkedIn** (LinkedIn Developer portal)
+1. The company Page for H2Oil must exist with you as a Page administrator.
+2. Developer portal → **My apps → Create app**: app name `Well Testing Suite`; **LinkedIn Page**: the H2Oil Page; **Privacy policy
+   URL**: the privacy page on welltest.h2oil.co.uk; **App logo**; accept the legal agreement → **Create app**.
+3. **Settings** tab → **Verify** → send the verification link to the Page administrator, who approves it.
+4. **Products** tab → **Sign In with LinkedIn using OpenID Connect** → **Request access** (self-serve). The **Auth** tab then lists
+   the scopes `openid`, `profile`, `email`.
+5. **Auth** tab → **OAuth 2.0 settings → Authorized redirect URLs for your app → Add redirect URL**:
+   `https://welltest.h2oil.co.uk/api/v1/auth/oauth/linkedin/callback` → Update. Copy **Client ID** into `OAUTH_LINKEDIN_CLIENT_ID`
+   and the **Primary Client Secret** into `OAUTH_LINKEDIN_CLIENT_SECRET`\*.
+6. **Never delete and re-create this app**: LinkedIn gives each app its own user ids, so a new app breaks every LinkedIn link
+   (`ops/retire-client.js` exists only for that emergency).
+7. The live tests with a real LinkedIn account (plan §13.10 step 13) and the pin update in `core/oidc-providers.js` come before
+   `OAUTH_LINKEDIN` can take effect in production (step 15).
+
+
+---
+
+## 3. Activation checklist (generic host — on Netlify follow §3N above; kept for any other host)
 
 Do these in order; each step is reversible until step 14. Plan §13.10 has the provider-console steps (WP0).
 

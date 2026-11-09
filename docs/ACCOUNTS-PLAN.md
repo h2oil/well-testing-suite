@@ -9,6 +9,9 @@ e-mail-code send limits are hard **per address AND client range** (5/h, 20/day; 
 codes are limited per session, wrong codes count toward the 1-hour pause only while a code is live and only for that range
 (migration `050-code-scope.sql`), and provider address codes obey the same limits and the sign-up switch; `WTS_MIN_CLIENT` is
 unset by default (no 426 gate until a security fix needs one); the iOS section-11 CSS is a recorded exception (§9).
+*Hosting (2026-11-09).* The owner named the Phase 1 release **v4.0** (was v3.5; Phase 2 / 3 follow as v4.0.x / v4.1) and chose
+our hosting platform for the functions-only site; `server/` now carries that platform's configuration, functions, database and
+blob bindings, and `server/RUNBOOK.md` §3N / §3P is the owner's click-by-click guide (deviations: Appendix B.4).
 Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — the consent tick names
 the versions but links to no text yet), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
 (security review, invite beta, CSP enforce, RELEASE_NOTES 3.5 entry).
@@ -2129,3 +2132,31 @@ from a reviewer's suggestion, or beyond it, and why:
 | calendar vs estimate; checklist order; verification on the critical path | §13.10 steps 0–8, §14, §15, Q24 |
 | D3 "saves a mail" for LinkedIn | D3, §11.2 friction table, Q27 |
 | minors: link step-up and link backdoor; session fixation; `oauth_verify` mail and recipient; one address per role; audit identity ids; production pins; provider error text; CLAUDE.md wording; `/me` auth method; U17 and retire-client; rule 4 recipient; `oidc_keys` access, `create_user`, CHECKs; consent mechanisms; release naming and columns; test counts; export and deletion tests in Phase 1; full provider e-mail in the export; development clients; step-up to the recovery address; support e-mail and DNS; LinkedIn form and Page; button wording; database name; `providerEmailDiffers` once | §4.12 rule 2, T2; §3.3 finish, §4.10 item 5; §4.12 rule 8 and rule 4; §4 item 4, §3.3; §4.12 rule 7, §13.6; §4.11, §13.8; §3.3 callback, §4.10 item 4; CLAUDE.md; §3.3 `/me`, §3.4; U17, §4.14; §4.12 rule 4; §3.4; §3.2, §3.3; §14, §3.4; §12.2–12.4; §12.2; §3.3 export; §4.10 item 6; §3.3 code start, §4 item 7, §13.7; §13.10 steps 0, 2, 3; §13.10 step 8; §11.2; conventions, Q1; §4.12 rule 1, §3.4 |
+
+### B.4 Hosting on the chosen platform (v4.0, 2026-11-09) — recorded deviations
+Details and the tests are in `server/README.md` ("Hosting"); the owner's steps in `server/RUNBOOK.md` §3N.
+1. **D12, one login.** The platform's managed database hands out one login (the database owner), so `wts_api`, `wts_jobs` and
+   `wts_support` cannot have their own credentials. The roles, grants, forced RLS and the `wts_definer` functions are unchanged;
+   every request transaction starts with `SET LOCAL ROLE wts_api` (transaction-scoped, safe behind a pooler) and the jobs, the
+   weekly export and the support scripts connect with the start-up role `wts_jobs` / `wts_backup` / `wts_support`. Residual: a
+   stolen request credential is the owner credential (it could leave the role); SQL is never built from input. The migration
+   runner (`db/migrate.js --platform`) grants the roles to the login and refuses to start unless it can create roles and
+   BYPASSRLS roles; if the platform refuses BYPASSRLS, the fallback is permissive policies for `wts_definer` / `wts_jobs` in a new
+   migration (written only if the go-live probe fails).
+2. **Unreleased migrations 001 / 002 / 040** lend `CREATE ON SCHEMA wts` to `wts_definer` around each ownership change (a
+   non-superuser may only give a function to a role that can create in its schema) and take it back; no effect for a superuser.
+3. **§13.5 weekly export.** A function has no dump tool and must not hold a key that can read an export: the export is a `COPY` of
+   every table in one REPEATABLE READ, READ ONLY transaction as `wts_backup`, with the same manifest, sealed with an ephemeral
+   X25519 agreement to the owner's public key (only the offline private key opens it). It is kept in a separate store in the
+   **same** EU region (the platform's blob store has one EU region), not "another region"; the owner copies one export a month
+   offline and the platform's daily database backups add a second copy.
+4. **Regions.** Functions in London need the platform's paid team plan (else the United States); the blob store's nearest region
+   is Frankfurt, set on every call.
+5. **D19 previews.** A deploy preview of a site with a database gets a copy of the production data, so deploy previews and branch
+   deploys are off and automatic builds are stopped; releases come only from `server-v*` tags through the workflow's CLI deploy.
+6. **§2 proxy signature.** The platform sets request headers on a proxy rule only in a configuration file that cannot read
+   variables: the main site's build fills the signature into its (unpublished) copy of that file. The original host travels as
+   the fixed header `X-WTS-Host`, trusted only with a valid signature. Which client address reaches the functions site behind the
+   rewrite is checked live at go-live (RUNBOOK §3N step 12).
+7. **§3.2 client gate.** `WTS_MIN_CLIENT` defaults to 4.0 on the platform (the first release with accounts); the version parser now
+   accepts the page's leading "v" (before, "v3.4" switched the gate off).

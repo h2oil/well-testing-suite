@@ -354,6 +354,9 @@ test.describe('projects, revisions, blobs, library (§3.3)', { skip }, () => {
     try {
       const old = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 2 }), []), { headers: { 'x-wts-app': '3.4' } });
       assert.strictEqual(old.status, 426); assert.strictEqual(old.json.error, 'upgrade');
+      // the page sends RELEASE_NOTES[0].ver as it stands ("v3.4"): the leading "v" must not switch the gate off
+      const oldV = await r.call('POST', '/projects/' + pid + '/commit', commitBody(0, part({ l: 3 }), []), { headers: { 'x-wts-app': 'v3.4' } });
+      assert.strictEqual(oldV.status, 426); assert.strictEqual(oldV.json.error, 'upgrade');
     } finally { T.setEnv({ WTS_MIN_CLIENT: '' }); }
   });
 });

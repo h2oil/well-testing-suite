@@ -10,6 +10,7 @@
 
 - **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~153k lines as of v3.4). Zero external runtime deps; pure `Math.*` for all engineering modules. Hosted at `https://welltest.h2oil.co.uk`; runs on `localhost:8080` via `npx http-server` for development. **Never mention another company's name, site or domain anywhere** (code, docs, tests, commits, placeholders/examples — use neutral examples such as 'Operator Energy Ltd', 'name@company.example') — the only web address for the app is welltest.h2oil.co.uk (user instruction).
   Exception (owner, 2026-11-08): the web accounts feature (docs/ACCOUNTS-PLAN.md, server/, files 66-68, their tests, UI, help, privacy text, e-mails and commits) may name exactly two identity providers, Google and LinkedIn, as sign-in methods; their endpoint addresses appear only in server/core/oidc-providers.js; console details stay out of the repo; no other company is named, and the names never ship in the iOS bundle.
+  Exception (owner, 2026-11-09): the accounts server's hosting platform, Netlify, may be named inside server/ only (code, package names, server/netlify.toml, server/README.md, server/RUNBOOK.md) — everywhere else (app, help, docs/, tests outside server/, release notes, commits) it is "our hosting platform".
 - **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; Capacitor 8 (SPM). The iOS app is free — no in-app purchases / subscription SDK.
 - **PRiSM module** is the flagship advanced Well Test Analysis tab, ~32k LOC of its own (pressure-transient + decline-curve workshop with 46 type-curve models, LM regression, auto-match, deconvolution, PVT, tide analysis, multi-dataset project files, etc.). Built across 21 numbered source files in `prism-build/` then concatenated and injected into `well-testing-app.html`.
 
@@ -290,7 +291,7 @@ via numbered "rounds":
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
    (344/344 must pass), `node prism-build/accept-test.js --html --integration` (1765/1765) and
    `node prism-build/wts3d-test.js` (132 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
-   after server/ or accounts (66-68) changes also `node server/test/run.js` (178 tests on a throwaway cluster);
+   after server/ or accounts (66-68) changes also `node server/test/run.js` (196 tests on a throwaway cluster);
    after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`; after host calcWTS changes
    `node prism-build/wts-calc-golden.js --check --time`.
 
@@ -656,7 +657,7 @@ Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            344/344 pass
 Acceptance tests:             1765/1765 pass (accept-test.js --html --integration; acct-* = v3.5 accounts client)
-Server tests:                 178/178 (node server/test/run.js; throwaway database cluster)
+Server tests:                 196/196 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 course exercises, 4 field scenarios,
                               216 screenshots (7.97 MB)
 3D simulator tests:           132 checks (wts3d-test.js; 130/132 on a Linux LF checkout — the two CRLF checks)

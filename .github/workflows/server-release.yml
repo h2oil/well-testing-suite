@@ -117,7 +117,7 @@ jobs:
         run: |
           if [ -z "$WTS_MIGRATE_DB_URL" ]; then echo "::notice::migration credential not configured — skipped"; echo "result=skipped" >> "$GITHUB_OUTPUT"; exit 0; fi
           npm ci --ignore-scripts
-          node db/migrate.js
+          node db/migrate.js --platform
           echo "result=applied" >> "$GITHUB_OUTPUT"
 
   deploy:

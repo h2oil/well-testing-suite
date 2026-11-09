@@ -317,6 +317,9 @@ CREATE FUNCTION wts.support_security_reset(p_actor text, p_user_id uuid, p_since
 
 RESET ROLE;
 
+-- a non-superuser migrator (one-login hosting, db/migrate.js --platform) may only hand a function to a role that can create in
+-- the schema: CREATE is lent to wts_definer for the ownership change and taken back at once (a superuser migrator: no change)
+GRANT CREATE ON SCHEMA wts TO wts_definer;
 -- definer functions run as wts_definer (BYPASSRLS), never as the table owner
 DO $own$
 DECLARE f record;
@@ -327,6 +330,7 @@ BEGIN
   END LOOP;
 END
 $own$;
+REVOKE CREATE ON SCHEMA wts FROM wts_definer;
 
 -- ── privileges ───────────────────────────────────────────────────────────────────────────────────────────────────
 REVOKE ALL ON ALL TABLES IN SCHEMA wts FROM PUBLIC;

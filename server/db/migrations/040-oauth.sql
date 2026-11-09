@@ -331,6 +331,9 @@ END $$;
 RESET search_path;
 
 -- owner and grants for the new functions (the replaced ones keep theirs)
+-- a non-superuser migrator (one-login hosting, db/migrate.js --platform) may only hand a function to a role that can create in
+-- the schema: CREATE is lent to wts_definer for the ownership change and taken back at once (a superuser migrator: no change)
+GRANT CREATE ON SCHEMA wts TO wts_definer;
 ALTER FUNCTION wts.oauth_attempt_drop(bytea) OWNER TO wts_definer;
 ALTER FUNCTION wts.oauth_attempt_close(uuid) OWNER TO wts_definer;
 ALTER FUNCTION wts.oauth_exchange_hit(inet) OWNER TO wts_definer;
@@ -342,6 +345,7 @@ ALTER FUNCTION wts.oauth_attempt_release(uuid) OWNER TO wts_definer;
 ALTER FUNCTION wts.oauth_finish_fail(inet) OWNER TO wts_definer;
 ALTER FUNCTION wts.oidc_fetch_claim(text) OWNER TO wts_definer;
 ALTER FUNCTION wts._window10() OWNER TO wts_owner;
+REVOKE CREATE ON SCHEMA wts FROM wts_definer;
 REVOKE EXECUTE ON FUNCTION wts.oauth_attempt_drop(bytea), wts.oauth_attempt_close(uuid), wts.oauth_exchange_hit(inet),
   wts.oauth_breaker_open(text), wts.oauth_breaker_note(text, boolean), wts.support_retire_identities(text, text), wts._window10(),
   wts.oauth_attempt_claim(uuid), wts.oauth_attempt_release(uuid), wts.oauth_finish_fail(inet), wts.oidc_fetch_claim(text) FROM PUBLIC;

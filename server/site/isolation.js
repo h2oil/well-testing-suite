@@ -30,6 +30,7 @@ const OFF_SITE_CREDENTIALS = [
   { name: 'WTS_SUPPORT_DB_URL', text: 'the support credential' },
   { name: 'WTS_BACKUP_DB_URL', text: 'the backup (export) database credential' },
   { name: 'WTS_BACKUP_KEY', text: 'the weekly export key' },
+  { name: 'WTS_BACKUP_PRIVATE_KEY', text: 'the private key that opens the weekly exports' },
   { name: 'WTS_EXPORT_CREDENTIAL', text: 'the export storage credential' },
 ];
 
