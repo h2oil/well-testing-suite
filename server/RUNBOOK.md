@@ -5,8 +5,8 @@ owner's activation checklist, releases, monitoring, kill switches, incidents, th
 compromise, backups and restore, and support. Every script named here reads its credentials from the environment only and
 prints ids, counts and dates — never an e-mail address, a code, a key or a body.
 
-**v4.0: the host is Netlify** — §3N is the owner's click-by-click guide, §3P the Google and LinkedIn consoles; the generic
-§3 stays for any other host. **State today:** the code is ready to deploy but nothing is deployed. While no server answers, the static site behaves
+**v4.0: the host is Netlify** — §3N is the owner's click-by-click guide, §3P the Google and LinkedIn consoles, §3T a disposable
+test backend (Free plan, Postmark); the generic §3 stays for any other host. **State today:** the code is ready to deploy but nothing is deployed. While no server answers, the static site behaves
 exactly as v3.4: the page's cloud UI stays hidden unless `GET /api/v1/...` answers (and the `?cloud=1` beta flag is set
 during the beta), both provider sign-ins are off unless configured (`OAUTH_GOOGLE` / `OAUTH_LINKEDIN` default `off`), and
 the repository root carries no host configuration, so the static site's deploy is unchanged.
@@ -167,6 +167,11 @@ without the master key no user data can ever be read again; without the backup p
 4. Backups: **Data & Storage → Database → Backups** shows the daily backups (Pro: 30 days) and one per published deploy.
 
 ### Step 7 — Probe and first migration (from your computer)
+> **Superseded on Netlify by platform migrations** (README "Platform migrations", §3T last note): the server now depends on
+> `@netlify/database`, so the production deploy provisions the database and applies `netlify/database/migrations/` itself.
+> Do not run the command below against a Netlify database (it refuses one the platform migrated); it stays for a host
+> without platform migrations. The capability check and the role-mode probe are then the deploy log and the smoke test's
+> row 6 (`node ops/remote-smoke.js`, §3T step T6).
 ```
 cd server
 WTS_MIGRATE_DB_URL='<the connection string>' node db/migrate.js --platform
@@ -401,6 +406,104 @@ show as scheduled. They run only on the published production deploy.
   functions, the developer can give `wts_api` and `wts_jobs` their own passwords (the login has CREATEROLE) and you set
   `WTS_DB_URL`\* / `WTS_JOBS_DB_URL`\* (Scopes: Functions, Production) to those dedicated logins: the site then uses them
   instead of `NETLIFY_DB_URL` and the `config: one-login database` line disappears. The export still needs the owner login.
+
+## 3T. Test backend (disposable, Netlify Free plan, Postmark)
+
+A throwaway copy of the functions site for trying the API end to end before the production set-up of §3N. **No real users,
+no real data**: it is deleted afterwards and production is built fresh on the Pro plan (§3N) with NEW secrets. Nothing of the
+test backend — secrets, database, Postmark token — is ever reused for production (the key ids make that checkable: the test
+keys carry kid 9001, which production refuses, and production's kid 1 is refused here).
+
+**How it differs from production**: `WTS_ENV=staging`. Every security rule of production applies unchanged (proxy signature,
+production host, production origin only, cookies, providers, code floor, the published-production-deploy rule); only the key
+ids differ and `ACCOUNTS_SIGNUP=open` lets any address create an account. On the Free plan the functions, the database and the
+blob store are not in London (the database and functions run in the platform's default US region; Blobs stay `eu-central-1`) —
+acceptable only because no personal data goes in. There is no main-site proxy rule for it: the page on welltest.h2oil.co.uk
+keeps talking to nothing, and the backend is exercised with `ops/remote-smoke.js` (and API calls that send the signature).
+
+**Names**: site **h2oil-accounts-test** (`https://h2oil-accounts-test.netlify.app`); branch: the accounts branch the developer
+names (today `ac/test`).
+
+### Step T1 — Secrets (your computer)
+```
+cd server && npm ci
+node ops/keygen.js --preview
+```
+Keep the printed values in the password manager under a separate "TEST backend" entry. `WTS_BACKUP_PRIVATE_KEY` is not set on
+the site (keep it with the test entry or discard it with the backend).
+
+### Step T2 — Postmark
+1. Create a Postmark account and a **Server** named "WTS test"; its **Default Transactional Stream** is `outbound` (the code
+   sends to that stream).
+2. **Sender Signatures**: add the From address (`no-reply@h2oil.co.uk`, or a test address you can receive at) and confirm it,
+   or verify the domain (DKIM + Return-Path records). Until Postmark approves the account, it only delivers to addresses on the
+   sender's own domain — test with an `@h2oil.co.uk` address.
+3. Server → **API Tokens** → copy the **Server API token** → `WTS_MAIL_CREDENTIAL`\* (never the Account token).
+
+### Step T3 — Create the site
+As §3N step 4 with these changes: project name `h2oil-accounts-test`; base directory `server`; build command, publish and
+functions directories EMPTY (netlify.toml sets them); branch = the test branch; **Branch deploys: production branch only;
+Deploy Previews: off**; agent runs off; no custom domain. Do not start a deploy before step T4 (if one starts, it is harmless:
+without variables every call answers 404).
+
+### Step T4 — Environment variables (before the first real deploy)
+Deploy context **Production** (on Free all scopes; tick **Contains secret values** for every \*):
+
+| Key | Value |
+|---|---|
+| `WTS_ENV` | `staging` |
+| `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` (`9001`) · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_PROXY_SIG`\* · `WTS_BACKUP_PUBLIC_KEY` | step T1 |
+| `WTS_MAIL_PROVIDER` | `postmark` |
+| `WTS_MAIL_CREDENTIAL`\* | the Postmark Server API token (step T2) |
+| `WTS_MAIL_FROM` | the confirmed sender (step T2), e.g. `no-reply@h2oil.co.uk` |
+| `ACCOUNTS_SIGNUP` | `open` |
+| `SYNC_MODE` | `on` |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | the values production will use (today `1` · `1`) |
+| `WTS_DB_ROLE_MODE` | only if step T6 says so: `local` |
+
+Do **not** set: `WTS_DB_URL`, `WTS_JOBS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_DEV_ORIGIN`,
+`WTS_MIGRATE_DB_URL`, `WTS_SUPPORT_DB_URL`, `WTS_BACKUP_PRIVATE_KEY`, `WTS_MAIL_API_URL`, any `OAUTH_*` (providers stay off on
+the test backend). Set by the platform or the site's defaults: `NETLIFY_DB_URL` (the database login), `WTS_HOST_HEADER`,
+`WTS_CLIENT_IP_HEADER`, `WTS_MIN_CLIENT`, `WTS_VERSION`.
+
+### Step T5 — Deploy (the database comes with it)
+A **production** deploy of the test branch (Deploys → Trigger deploy, or the developer's CLI deploy). Because `package.json`
+depends on `@netlify/database`, the platform provisions the database on this deploy and applies
+`netlify/database/migrations/` (server/README.md "Platform migrations"): `0000_platform_roles.sql`, `0010_schema.sql` … `0500_code_scope.sql`,
+`0501_platform_export_role.sql`. A failing migration blocks the publish — read the deploy log:
+- "cannot create BYPASSRLS roles" / "cannot create roles" / "PostgreSQL 16 or newer" → stop and pass the line to the developer
+  (README "Platform migrations", fallback). Nothing was applied.
+- Never "fix" the database by hand or with `db/migrate.js` (it refuses a platform-migrated database), never edit or delete a
+  file in `netlify/database/migrations/`: a correction is a new `db/migrations/NNN-*.sql` + `node db/platform-migrations.js --write`.
+- If the function region pin (`lhr`) is refused on the Free plan, stop and tell the developer.
+
+### Step T6 — Smoke test (from the developer's container or your computer)
+```
+cd server
+WTS_SMOKE_BASE='https://h2oil-accounts-test.netlify.app' WTS_PROXY_SIG='<value>' WTS_OPS_HMAC='<value>' node ops/remote-smoke.js
+WTS_SMOKE_BASE=… WTS_PROXY_SIG=… WTS_OPS_HMAC=… node ops/remote-smoke.js --mail-to you@h2oil.co.uk
+```
+(PowerShell: `$env:WTS_SMOKE_BASE='…'; …`; the values never go on the command line.) Expected: every row `PASS` — 1 health
+signed (`db true`, `ver 4.0.0`), 2 / 3 no or wrong signature → 404, 4 write without Origin → 403 origin, 5 self-test without
+the HMAC → 404, 6 self-test signed (isolation true, keys true, db true, request role `wts_api`, jobs role `session` or `local`,
+mail transport `postmark`), 7 (with `--mail-to`) test e-mail `sent` — and the "Well Testing Suite e-mail delivery test" mail
+arrives. Failures:
+- 1 fails with `db false` → the database was not provisioned or migrated: check the deploy log (T5).
+- 6 `isolation false (… problem(s): …)` → the listed variable is wrong (a production key id, an off-site credential …).
+- 6 `jobs role local` (row 6.1) → add `WTS_DB_ROLE_MODE` = `local` (T4) and redeploy; `refused` → tell the developer.
+- 7 `mail_sender` → the From address is not a confirmed sender signature; `mail_auth` → wrong token (use the Server token);
+  `mail_rejected` → the address is invalid / inactive, or the account is still pending and the address is off-domain.
+
+### Step T7 — Tear down
+Delete the site (its database and blob stores go with it), delete the Postmark server (or revoke its token), delete the "TEST
+backend" password-manager entry. Production is then set up from §3N with `node ops/keygen.js` (no `--preview`) and
+`WTS_ENV=production`.
+
+**Note for production (§3N):** with `@netlify/database` as a dependency the production deploy applies the migrations itself,
+so §3N step 7 (`migrate.js --platform` from your computer) and the release workflow's migrate job must NOT run against the
+Netlify database (`migrate.js` refuses a database the platform migrated; the opposite order — `migrate.js` first — makes the
+platform's `0010_schema.sql` fail and blocks the deploy). The workflow's migration gate has to be adapted before the first
+production tag (developer item).
 
 ## 3P. Google and LinkedIn console set-up (plan §13.10)
 

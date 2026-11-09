@@ -62,7 +62,8 @@ function platformEnv(env) {
 }
 function dbUrl(env, specific) { return (specific && env[specific]) || env.NETLIFY_DB_URL || ''; }
 function roleMode(env) { return String(env.WTS_DB_ROLE_MODE || '').trim().toLowerCase() === 'local' ? 'local' : 'session'; }
-// production unless WTS_ENV names one of the other modes (core/config.js fails closed the same way)
+// production unless WTS_ENV names one of the non-production modes (core/config.js fails closed the same way); staging (the
+// disposable test backend) is production here too: only its published production deploy runs
 function productionMode(env) { return ['preview', 'local', 'test'].indexOf(String(env.WTS_ENV || '').trim().toLowerCase()) === -1; }
 // → '' when this deploy may run, else the reason (logged as an alert: isolation line)
 function deployRefusal(env, context) {
@@ -162,8 +163,7 @@ function guard(env, log) {
   return { config, ok: iso.ok };
 }
 function mailFor(env, config, deps) {
-  if (!env.WTS_MAIL_API_URL || !env.WTS_MAIL_CREDENTIAL) return null;
-  return require('./adapters').httpMail({ url: env.WTS_MAIL_API_URL, credential: env.WTS_MAIL_CREDENTIAL, from: config.mailFrom, fetch: deps.fetch });
+  return require('./adapters').mailFromEnv(env, { from: config.mailFrom, fetch: deps.fetch });
 }
 async function runJobs(o) {
   o = o || {};

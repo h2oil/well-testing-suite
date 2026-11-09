@@ -8,3 +8,7 @@
 *.webp binary
 help/*.html text eol=lf
 ios-app/www/help/*.html text eol=lf
+
+# Accounts server migrations: their bytes are recorded (sha256) and an applied migration must never change, so they are LF
+# on every checkout, also the generated copies the hosting platform applies (server/db/platform-migrations.js --check).
+server/**/*.sql text eol=lf

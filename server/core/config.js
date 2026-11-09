@@ -9,8 +9,15 @@
 //   SECRET_ENV                    names of every secret variable (the publish check of §13.2 refuses a bundle that names them)
 //   CONFIG_ENV                    names of the non-secret variables
 //
-// WTS_ENV=production|preview|local|test — missing or unknown = production (fail closed). WTS_PROXY_SIG may list two values
-// (current,previous) during a rotation.
+// WTS_ENV=production|staging|preview|local|test — missing or unknown = production (fail closed). WTS_PROXY_SIG may list two
+// values (current,previous) during a rotation.
+// staging = a disposable TEST BACKEND deployed like production (server/RUNBOOK.md "Test backend"): `production` is TRUE there,
+// so every security rule of production applies unchanged (proxy signature, production host and origin only, cookies, no
+// development origin, no provider overrides, pins, the 400 ms code floor, the client-address header, ephemeral keys never
+// used). The differences are only what makes it a test site: `staging` true, site/isolation.js requires the test key ids
+// (≥ 9000 — which production refuses, so its keys can never be loaded by production nor production's by it) and skips the
+// production-only database-name check. ACCOUNTS_SIGNUP=open is the test site's setting, not a default. Nothing in staging
+// relaxes a rule: a value that is not exactly "staging" is production.
 // Kill switches (§13.6): ACCOUNTS_SIGNUP=open|invite|off · SYNC_MODE=on|readonly|off · ACCOUNTS_OFF=1 ·
 // OAUTH_GOOGLE=on|signin|off · OAUTH_LINKEDIN=on|signin|off (both off unless set AND the client id and secret are configured).
 
@@ -32,10 +39,10 @@ const SECRET_ENV = [
 ];
 const CONFIG_ENV = [
   'WTS_ENV', 'WTS_OIDC_MODE', 'WTS_MASTER_KID', 'WTS_APP_PATH', 'WTS_DEV_ORIGIN', 'WTS_DEV_PORT', 'WTS_CLIENT_IP_HEADER',
-  'WTS_HOST_HEADER', 'WTS_DB_ROLE', 'WTS_MAIL_FROM', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
+  'WTS_HOST_HEADER', 'WTS_DB_ROLE', 'WTS_MAIL_FROM', 'WTS_MAIL_PROVIDER', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
   'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_LINKEDIN_CLIENT_ID',
 ].concat(Object.keys(SWITCHES));
-const ENVS = ['production', 'preview', 'local', 'test'];
+const ENVS = ['production', 'staging', 'preview', 'local', 'test'];
 
 function pick(env, name, allowed, def, warn) {
   const raw = env[name];
@@ -75,7 +82,9 @@ function loadConfig(env) {
   let wtsEnv = String(env.WTS_ENV == null ? '' : env.WTS_ENV).trim().toLowerCase();
   if (!wtsEnv) { warnings.push('WTS_ENV: not set — treated as production'); wtsEnv = 'production'; }
   else if (ENVS.indexOf(wtsEnv) === -1) { warnings.push('WTS_ENV: unknown value — treated as production'); wtsEnv = 'production'; }
-  const production = wtsEnv === 'production';
+  // staging is production for every security rule (see the header); only `staging` and the isolation key rule tell them apart
+  const staging = wtsEnv === 'staging';
+  const production = wtsEnv === 'production' || staging;
 
   const signup = pick(env, 'ACCOUNTS_SIGNUP', SWITCHES.ACCOUNTS_SIGNUP, 'invite', warnings);
   const syncMode = pick(env, 'SYNC_MODE', SWITCHES.SYNC_MODE, 'on', warnings);
@@ -147,7 +156,7 @@ function loadConfig(env) {
   if (production && !ipHeader) alerts.push('WTS_CLIENT_IP_HEADER missing on the production host — provider sign-in is refused and per-range limits cannot work');
 
   const cfg = {
-    env: wtsEnv, production, prodHost: PROD_HOST, prodOrigin: PROD_ORIGIN, devOrigin,
+    env: wtsEnv, production, staging, prodHost: PROD_HOST, prodOrigin: PROD_ORIGIN, devOrigin,
     allowedOrigins: devOrigin ? [PROD_ORIGIN, devOrigin] : [PROD_ORIGIN],
     appUrl: appOrigin + appPath, appPath,
     signup, syncMode, accountsOff, oidcMode: production ? '' : oidcMode,

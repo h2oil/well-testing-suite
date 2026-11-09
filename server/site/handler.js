@@ -10,12 +10,20 @@
 //     state() → {ready, isolation, warnings, alerts}
 //   }
 //
+// POST /api/v1/ops/selftest (site level, server/ops/remote-smoke.js; body {mailTo?}): after the proxy signature, the host and
+// the ops HMAC (X-WTS-Ts, X-WTS-Nonce, X-WTS-Sig as for ops-daily; nonce once in 10 min through the database) it answers
+// {ok, checks:{isolation, problems, keys, objects, db, requestRole, jobsRole, mailTransport, mail}}: requestRole = the
+// current_user of a request transaction (wts_api), jobsRole = which role switch the jobs can use on this endpoint
+// (session | local | refused — db/migrate.js probeRoleModes), mail = 'sent' | 'not requested' | 'no transport' | 'refused
+// (isolation)' | the transport error kind. One test e-mail (core/mail.js notice_ops_test) per signed call; the address is
+// never logged or echoed. Every other failure answers 404.
+//
 // Per instance, once: the configuration from the environment ONLY (core/config.js; secrets never in the bundle), the
 // isolation check (site/isolation.js — on failure nothing but /health is served, every other route answers 503 paused,
 // and "alert:" lines are logged), the database (WTS_DB_URL, created lazily on the first request that needs it), the blob
 // store (the host store passed as `store`, else site/objects-loader.js: the binding module, else WTS_OBJECTS_DIR, else none
-// → data routes answer 503 paused), the mail transport (WTS_MAIL_API_URL + WTS_MAIL_CREDENTIAL, else none: mail waits in
-// the outbox).
+// → data routes answer 503 paused), the mail transport (site/adapters.js mailFromEnv: WTS_MAIL_PROVIDER, WTS_MAIL_API_URL,
+// WTS_MAIL_CREDENTIAL; else none: mail waits in the outbox).
 // Per request, in this order: the base path, then the proxy signature and the original host (else 404 — exactly as
 // core/app.js, so a request sent straight to the functions site learns nothing, plan §2), then the isolation gate (503
 // paused), the preview sign-in gate (503 paused) and the body cap measured BEFORE reading (Content-Length, 413), then the
@@ -39,6 +47,11 @@ const SITE_HEADERS = Object.freeze({
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'DENY',
 });
+// the operator's signed self-test (not a contract endpoint; server/ops/remote-smoke.js): behind the proxy signature and the
+// original host like every route, then the ops HMAC of core/http.js over method, path, timestamp and nonce (nonce once,
+// shared store), else 404 — a caller without the key learns nothing
+const SELFTEST_PATH = C.BASE + '/ops/selftest';
+const EMAIL_RE = /^[^\s@<>",;]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}$/;
 // sign-in routes closed on a preview without the flag (§13.1)
 const SIGNIN_IDS = new Set(['codeStart', 'codeVerify', 'passkeyOptions', 'passkeyVerify', 'oauthStart', 'oauthCallback', 'oauthFinish', 'emailRevert']);
 
@@ -66,8 +79,8 @@ function createHandler(o) {
     try { objects = loadObjects(env).objects; } catch (e) { log.warn('alert: objects — ' + M.redactLine(e && e.message)); }
   }
   let mail = o.mail || null;
-  if (!mail && env.WTS_MAIL_API_URL && env.WTS_MAIL_CREDENTIAL && iso.signinAllowed) {
-    try { mail = A.httpMail({ url: env.WTS_MAIL_API_URL, credential: env.WTS_MAIL_CREDENTIAL, from: config.mailFrom, fetch: o.fetch }); } catch (e) { log.warn('config: mail transport — ' + e.message); }
+  if (!mail && iso.signinAllowed) {
+    try { mail = A.mailFromEnv(env, { from: config.mailFrom, fetch: o.fetch }); } catch (e) { log.warn('config: mail transport — ' + e.message); }
   }
   let app = null;
   // the runtime's waitUntil of the request in progress (function instances serve one request at a time)
@@ -88,6 +101,45 @@ function createHandler(o) {
     return withSite({ status: status || e.status, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), cookies: [], body: JSON.stringify(e.body) });
   }
 
+  let keysReady = null;
+  async function selftest(req) {
+    const nonces = config.production ? (lazyDb() ? H.dbNonceStore(lazyDb()) : null) : (o.opsNonces || (lazyDb() ? H.dbNonceStore(lazyDb()) : H.memoryNonceStore()));
+    if (!(await H.verifyOps(req, SELFTEST_PATH, config, now(), nonces))) return plain(404, 'not_found');
+    let body = {};
+    try { body = req.body && req.body.length ? JSON.parse(req.body.toString('utf8')) : {}; } catch (e) { return plain(400, 'bad_request'); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return plain(400, 'bad_request');
+    const mailTo = body.mailTo == null ? null : String(body.mailTo);
+    if (mailTo !== null && (mailTo.length > 254 || !EMAIL_RE.test(mailTo))) return plain(400, 'bad_request');
+    const checks = { isolation: iso.ok, problems: iso.problems.slice(), keys: false, objects: !!objects, db: false,
+      requestRole: null, jobsRole: 'skipped', mailTransport: mail ? (mail.kind || 'custom') : null, mail: 'not requested' };
+    if (keysReady === null) { try { keysReady = !!require('../core/keys').createKeys(config).ready; } catch (e) { keysReady = false; } }
+    checks.keys = keysReady;
+    const d = lazyDb();
+    if (d) {
+      try { checks.db = (await d.ping()) === true; } catch (e) { checks.db = false; }
+      try { checks.requestRole = (await d.anon((tx) => tx`select current_user as u`))[0].u; } catch (e) { checks.requestRole = false; }
+    }
+    const jobsUrl = env.WTS_JOBS_DB_URL || env.NETLIFY_DB_URL || '';
+    if (jobsUrl && o.probeRoleModes !== false) {
+      try {
+        const p = await (o.probeRoleModes || require('../db/migrate').probeRoleModes)(jobsUrl, 'wts_jobs');
+        checks.jobsRole = p.session === true ? 'session' : (p.local === true ? 'local' : 'refused');
+      } catch (e) { checks.jobsRole = 'refused'; }
+    }
+    if (mailTo !== null) {
+      if (!iso.ok || !iso.signinAllowed) checks.mail = 'refused (isolation)';
+      else if (!mail) checks.mail = 'no transport';
+      else {
+        const at = new Date(now()).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+        try { await mail.send(require('../core/mail').compose({ to: mailTo, template: 'notice_ops_test', params: { at } })); checks.mail = 'sent'; }
+        catch (e) { checks.mail = (e && /^mail_[a-z]+$/.test(String(e.code))) ? e.code : 'mail_failed'; }
+      }
+    }
+    const ok = checks.isolation && checks.keys && checks.db && checks.requestRole === 'wts_api' && checks.jobsRole !== 'refused'
+      && (mailTo === null || checks.mail === 'sent');
+    return withSite({ status: 200, headers: Object.assign({}, H.COMMON_HEADERS, { 'Content-Type': 'application/json' }), cookies: [], body: JSON.stringify({ ok, checks }) });
+  }
+
   async function invoke(req) {
     const t0 = now();
     const rid = crypto.randomBytes(9).toString('base64url');
@@ -99,6 +151,7 @@ function createHandler(o) {
       if (m) route = m.endpoint.id;
       // plan §2: without the proxy signature and the production host nothing but 404 — before any other gate
       if (sub === null || !H.proxyOk(req, config) || !H.hostAllowed(req, config)) res = plain(404, 'not_found');
+      else if (full === SELFTEST_PATH) { route = 'opsSelftest'; res = req.method === 'POST' && !req.tooLarge ? await selftest(req) : plain(404, 'not_found'); }
       else if (!iso.ok && route !== 'health') res = plain(503, 'paused');
       else if (!iso.signinAllowed && SIGNIN_IDS.has(route)) res = plain(503, 'paused');
       else if (req.tooLarge) res = plain(413, 'too_large', { limit: H.bodyLimit(route) });
@@ -181,4 +234,4 @@ function createHandler(o) {
   };
 }
 
-module.exports = { createHandler, SITE_HEADERS, SIGNIN_IDS };
+module.exports = { createHandler, SITE_HEADERS, SIGNIN_IDS, SELFTEST_PATH };

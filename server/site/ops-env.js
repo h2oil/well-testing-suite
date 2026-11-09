@@ -32,6 +32,7 @@ const OPS_CONFIG_ENV = [
   'WTS_DEPLOY_SITE',         // release workflow: the functions site id (repository variable)
   'WTS_DEPLOY_COMMAND',      // release workflow: the host CLI deploy command (repository variable)
   'WTS_PREVIEW_SIGNIN',      // preview only: 1 allows sign-in on a preview deployment (synthetic database only)
+  'WTS_SMOKE_BASE',          // ops/remote-smoke.js: the deployed functions site's https address (not secret)
 ];
 
 module.exports = { OPS_SECRET_ENV, OPS_CONFIG_ENV };
