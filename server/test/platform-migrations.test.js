@@ -45,8 +45,16 @@ test.describe('platform migrations folder (no database)', () => {
       const a = f.text.indexOf('-- ── source body START ──\n') + '-- ── source body START ──\n'.length;
       const b = f.text.indexOf('\n-- ── source body END ──');
       assert.strictEqual(f.text.slice(a, b), m.text.endsWith('\n') ? m.text : m.text + '\n', f.name);
-      assert.match(f.text, /^(--[^\n]*\n)+BEGIN;\n/, 'opens its own transaction first');
-      assert.ok(f.text.endsWith('\nCOMMIT;\n'));
+      if (f.source <= '050-code-scope.sql') {
+        assert.match(f.text, /^(--[^\n]*\n)+BEGIN;\n/, 'an applied file keeps its own transaction');
+        assert.ok(f.text.endsWith('\nCOMMIT;\n'));
+      } else {
+        // later files run inside the platform runner's transaction: an own COMMIT ended it and failed the deploy
+        assert.ok(!/^\s*(BEGIN|COMMIT|ROLLBACK|END)\s*;/im.test(f.text.slice(0, a) + f.text.slice(b)), f.name + ': no transaction control in the wrapper');
+        assert.ok(!/^\s*(BEGIN|COMMIT|ROLLBACK)\s*;/im.test(m.text), f.name + ': no transaction control in the source body');
+        assert.match(f.text, /^(--[^\n]*\n)+SET search_path = wts, pg_temp;\n/, 'session search_path first');
+        assert.ok(f.text.includes('\nRESET search_path;\n'));
+      }
       assert.ok(f.text.includes("VALUES ('" + m.name + "', '" + m.sha + "')"), 'records the source name and digest');
     });
     const exp = PM.build().find((f) => f.name === '0501_platform_export_role.sql').text;
