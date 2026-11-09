@@ -158,7 +158,7 @@ module.exports = [
       const sum = (b) => b.P0_psig + b.segs[0].dP + 5 + b.segs[1].dP + b.segs[2].dP;
       assert.ok(Math.abs(sb.choke.Pout - sum(sb)) < 0.5 && Math.abs(sb.segs[2].Pout - 25) < 0.2 && sb.segs[2].phase === 'multi', 'walk closes on 25 psig: ' + sb.choke.Pout);
       assert.ok(sb.choke.regime === 'Critical' && sb.choke.Pout > fb.choke.Pout, 'Critical, above the burner-line outlet');
-      assert.ok(sb.warnings.some((w) => w.t === 'info' && /^Whole well stream into the surge tank at 25 psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in/.test(w.msg)), 'info warning');
+      assert.ok(sb.warnings.some((w) => w.t === 'warn' && /^Whole well stream into the surge tank at 25 psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in/.test(w.msg)), 'warning (warn: the info style is the hydrate snowflake)');
       assert.ok(!fb.warnings.some((w) => /surge tank at/.test(w.msg)), 'no surge warning on the burner line');
       assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psurge: '40' }).flow.sepBy.P0_psig === 30 && flowOf({ wts_sepByDest: 'surge', wts_Psurge: '0' }).flow.sepBy.P0_psig === 0, 'set point 0-30');
       assert.ok(flowOf({ wts_sepByDest: 'surge', wts_Psep: '20', wts_Psurge: '25' }).flow.sepBy.P0_psig === 25, 'no Psep − 10 bound');

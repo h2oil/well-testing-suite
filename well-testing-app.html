@@ -156675,7 +156675,7 @@ window.calcWTS=function(){
         if(Qg>0&&!nfB&&B.Pho>=pshhB)wb.push({t:'error',msg:`PSHH-104 trips SDV-101 at ${fmt(pshhB,0)} psig (H-101 outlet ${fmt(B.Pho,0)} psig): this line pressure shuts the well in — lower the line pressure or go to the burner line`});
         if(sepByDest==='line'&&!nfB&&B.Pco>DESIGN_P_CK2)wb.push({t:'warn',msg:`Bypass path ${fmt(B.Pco,0)} psig at the CK-101 outlet (production line ${fmt(P0b,0)} psig plus line loss ${fmt(B.Pco-P0b,1)} psi) above the 1,440 psig design pressure (blocked outlet not simulated)`});
         if(Qg>0&&!nfB)vws(wb,[B.s3,B.s4,B.s5],[3,4,5]);
-        if(sepByDest==='surge')wb.push({t:'info',msg:`Whole well stream into the surge tank at ${fmt(P0b,0)} psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in — for liquid-dominated flow-back`});
+        if(sepByDest==='surge')wb.push({t:'warn',msg:`Whole well stream into the surge tank at ${fmt(P0b,0)} psig: PCV-201 vents the gas; above its capacity PSHH-201 shuts the well in — for liquid-dominated flow-back`});
         sepByBlk={v:1,dest:sepByDest,P0_psig:P0b,noFlow:nfB,
             choke:{regime:cb.regime,flowLimited:cb.flowLimited,QmaxMMscfd:cb.Qcap/1000,QcritMMscfd:Q_crit_max/1000,Pin:Pci,Pout:B.Pco,
                    ratio:cb.ratio,rCrit,dP:dPb,dTjt:jtOf(dPb),wJT},
