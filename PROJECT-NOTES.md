@@ -5,6 +5,43 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-09 — v3.4.2 release: T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout
+
+App and App Store version 3.4.2 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks). Built in four
+lanes against one contract (scratchpad designs INTEGRATION.md): ENGINE (31), VIEW3D (32), LIVE (38), HOST (calcWTS, 30, 47, 63,
+help, docs). `WTS_sim.VERSION` stays '1.5.0' (code comments v1.7.0) with `features.surge2Comps / lpFlare / rigChain`; 32 VERSION
+1.5.0; 38 VERSION 1.2.0.
+
+**Host lane (calcWTS / page)**
+- `wts_sepByDest` options surge (selected) | flare | line; a page without the input → 'surge', an unknown value → 'flare'.
+  'surge': `flow.sepBy.P0_psig` = the surge set point 0–30 psig (no Psep − 10 bound), the seg-5 'multi' walk as 'line', a page
+  warning (warn style; the info style is the hydrate snowflake). One-time autosave migration flare → surge (`wts_wts` and
+  `wts_page_wts`), marker `wts_sepByDest_m1`; 'wts:project-loaded' / 'wts:project-new' / 'wts:project-changed' write the marker
+  first, so a project file keeps its value (the marker is a project key and is cleared with the other project keys on Open).
+- `flow.lp` (steady LP flare line / tank gas): GOR1 = Qg / Qo, GOR2 = Standing ΔRs separator → surge tank at the separator
+  temperature (equal to the engine's qFlashD / qoE, `WTS_sim.pvt.rsEff`, 1e-9), the T-301 residual, FT-201 line design as the
+  engine's `lpDerive` (rate max(3 × flash, 50 Mscf/d), P_in = P0 + K·q² capped at the tank pressure, velocity / API RP 14E limit /
+  Mach), `atWell` (whole well gas, for V-101 out to the tanks). Inputs `wts_lpNps` (2 | 3 | 4), `wts_lpSch` (40 | 80),
+  `wts_lpLen` (10–5,000 ft) → `flow.sim.lpNps / lpSch / lpLen_ft`.
+- The 'LP flare line / tank gas (FT-201)' rbox and its design-rate warnings are painted only with a handed-over rig-up with T-201
+  (or T-202) in; the rig-null page is the v3.3.1 page (golden unchanged). Tests that compared a handed-over default rig-up with the
+  golden strip the LP box (it is appended at the end of #wts_res).
+- `wts-calc-golden.js`: `BASE_FIELDS_OMIT` += lp, sim.lpNps, sim.lpSch, sim.lpLen_ft (baseFields now walks the list); NEW_INPUTS
+  carry the LP inputs and a 'surge' destination. `--check` green; `--time` ≈ 2.5 (≤ 4) / 2.5 (≤ 6).
+- Quick Report: GOR1 (separator), GOR2 (tank, PVT est.), Total GOR from flow.lp, and the simulator's metered GOR1 / GOR2.
+  Historian: SIM.GOR1, SIM.GOR2, SIM.QG_LP (SIM.GOR stays the total). Mini WellOS: 'GOR (sep)', tank gas (FT-201: flow.lp in
+  form data, a linked `tank_gas` tag in Modbus, else not linked) and total GOR, quality = the worst input.
+- Help: caps redistributed by 0.18 kB (sum 345 kB) and welltest / simcourse tightened by about 2.1 kB to fit the new text; the wts
+  guide is near its 14 kB serialised cap (14.0 kB). Exercise 10 numbers measured on the engine lane at E3 (dual T-202 + LP line);
+  FS-5 sim windows are the design's expectations. help-course checks carry `feature` / `unlessFeature` gates.
+
+**To do at integration (lead, H7 / H8)** — re-stamp the wts guide `reviewedSrc` (31 / 32 / 38 hashes); re-measure exercise 10 and
+FS-5 on the final engine (`WTS_HELP_SIMCHECKS` checks); regenerate the stale shots (wellos/view, scenarios/fs-1-rigup,
+scenarios/fs-1-cushion, course ex10-t202, ex5-trends, ex8-temp3d, the new course/ex2-ck3d) and help/user-guide.html; record the
+`wts-sim-perf.js` ratios here (default ≤ 1.05, both ≤ 1.6, surge ≤ 1.10).
+
+---
+
 ## 2026-11-08 — v3.4.1 release: simulator choke manifold legs, T-201 inlets, Rig-up menu
 
 App and App Store version 3.4.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
