@@ -11128,6 +11128,7 @@ const RELEASE_NOTES = [
         ['ux', '3D choke manifold', 'The 3D CK-101 follows a 3-1/16&quot; 10K two-choke manifold: four gate valves, studded tees, hammer-union inlet and outlet, on a skid.'],
         ['calc', 'Surge tank inlets', 'T-201 compartments A and B each have their own side inlet, one on each side of the baffle, and fill independently. By default A fills while LCV-201 transfers from B, and auto-divert swaps them at 80 %.'],
         ['ux', 'Rig-up menu', 'A Rig-up menu in the simulator toolbar switches the optional items in and out: the second surge tank T-202, the desander DS-101 and the heater inlet choke CK-102.'],
+        ['fix', 'PRiSM fit status', 'Model &amp; fit: a regression fit that the engine does not adopt (still moving or at a bound) is shown as not adopted, with its reason, and the parameters stay unchanged, even when its R² is above 0.9.'],
         ['fix', 'Help screenshots on the website', 'The help screenshots now load on the website: the help folder is deployed with the page. The App Store version is 3.4.1.'],
       ] },
     { ver:'v3.4', date:'2026-11-07', title:'DFIT analysis in PRiSM',
@@ -20928,6 +20929,11 @@ function _statusOf(fit, err) {
     var r2 = _num(fit && fit.r2);
     if (!fit) return { cls: 'prism-bad', text: 'No result.' };
     if (_isNum(r2) && r2 < 0.9) return { cls: 'prism-bad', text: 'Fit failed (R² ' + _fixed(r2, 4) + ') — parameters were not changed.' };
+    if (fit.adopted === false) {
+        var why = '';
+        (fit.warnings || []).forEach(function (m) { var mm = /Fit not adopted \((.*)\)/.exec(String(m)); if (mm) why = mm[1]; });
+        return { cls: 'prism-bad', text: 'Fit not adopted' + (why ? ' (' + why + ')' : '') + ' — R² ' + (_isNum(r2) ? _fixed(r2, 4) : '—') + '; parameters were not changed.' };
+    }
     if (fit.converged === true && _isNum(r2) && r2 >= 0.99) return { cls: 'prism-ok', text: 'Fit converged — R² ' + _fixed(r2, 5) };
     return { cls: 'prism-warn', text: 'Fit finished ' + (fit.converged ? '' : 'without converging ') + '(R² ' + (_isNum(r2) ? _fixed(r2, 4) : '—') + ') — treat as a starting point.' };
 }
@@ -21123,7 +21129,8 @@ function _runRegressionNow(extra) {
         if (!fit.modelKey) { fit.modelKey = st.model; fit.model = st.model; }
         if (!fit.kind) fit.kind = entry.kind === 'rate' ? 'rate' : 'pressure';
         if (!fit.source) fit.source = 'regression';
-        var good = fit.converged === true || (_isNum(fit.r2) && fit.r2 >= 0.9);
+        // runRegression decides adoption (R², bounds, settled); legacy engines fall back.
+        var good = typeof fit.adopted === 'boolean' ? fit.adopted : (fit.converged === true || (_isNum(fit.r2) && fit.r2 >= 0.9));
         if (!good) { st.params = snap.params; st.phys = snap.phys; st.tcMatch = snap.tcMatch; }
         if (legacy) {
             if (good) _setLastFit(fit);
@@ -116275,7 +116282,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 34353722,view-p 780 1688 9f485086",
+    "releasenotes": "view-d 1280 800 e53e176d,view-p 780 1688 9f485086",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 143a6d68,fs-1-rigup-d 982 525 1bfdebef,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -116296,7 +116303,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7984840;   // total size of the image files (the offline download label)
+  M.bytes = 7984432;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
