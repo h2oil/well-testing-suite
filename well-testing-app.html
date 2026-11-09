@@ -11122,6 +11122,15 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
+    { ver:'v3.4.2', date:'2026-11-09', title:'Simulator: T-202 compartments, LP flare line, rig-up flow path',
+      note:'The second surge tank works like T-201, the surge tank gas has its own metered LP flare line with a tank GOR, and taking an item out of the rig-up sends its flow to the next item downstream.',
+      items:[
+        ['new', 'T-202 compartments', 'T-202 has compartments A and B like T-201: inlets XV-202A and XV-202B, LCV-202 suction from A, B or both, and auto-divert at 80 %. It starts empty with both inlets shut and A lined up to fill; selecting T-202 or Both as the route opens its inlet.'],
+        ['new', 'LP flare line and GOR2', 'Surge tank gas (PCV-201, PCV-203 and the PSV-201 / PSV-202 relief) goes through the FT-201 meter to its own LP tip on the flare stack, apart from the separator gas. GOR1 (separator), GOR2 (tank) and the total GOR are shown in the HUD, the cards, the results, the Quick Report, the historian and Mini WellOS; the LP line size, schedule and length are page inputs.'],
+        ['calc', 'Rig-up flow path', 'An item taken out of the rig-up sends its flow to the next item downstream. With V-101 out the well stream can go to the surge tank T-201, now the default: PCV-201 takes the gas, so a normal gas rate shuts the well in on PSHH-201 (the page and the simulator warn). Pages saved with the burner line switch to the surge tank once; project files keep their setting.'],
+        ['ux', '3D choke manifold layout', 'The CK-101 manifold in 3D follows the drawing: the adjustable choke on the front and right of the square, the positive choke on the left and back.'],
+        ['new', 'Help', 'The simulator guide and course cover the new items: exercise 10 for the two T-202 compartments and field scenario FS-5, clean-up to the tanks. The App Store version is 3.4.2.'],
+      ] },
     { ver:'v3.4.1', date:'2026-11-08', title:'Simulator: choke manifold legs, surge tank inlets &amp; Rig-up menu',
       note:'The Well Test Simulator choke manifold now has an adjustable and a positive leg, the T-201 surge tank compartments fill independently from their own inlets, and the optional rig-up items are switched from a Rig-up menu in the toolbar.',
       items:[
