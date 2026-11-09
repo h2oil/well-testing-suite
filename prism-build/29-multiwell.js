@@ -104,10 +104,22 @@
     function _set(k, v) {
         if (typeof G.WTS_lsSet === 'function') return G.WTS_lsSet(k, v) !== false;
         var ls = _ls();
-        try { ls.setItem(k, v); return true; } catch (e) { return false; }
+        try { ls.setItem(k, v); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     // Plain write used mid-switch (no snapshot eviction into the half-swapped store).
-    function _rawSet(ls, k, v) { try { ls.setItem(k, v); return true; } catch (e) { return false; } }
+    // H2 (docs/ACCOUNTS-PLAN.md §5.4): WTS_lsSet(k, v, {raw:true}) is the plain write (throws like setItem, no eviction) that
+    // also fires the host's 'wts:ls-write'.
+    function _rawSet(ls, k, v) {
+        try {
+            if (typeof G.WTS_lsSet === 'function') G.WTS_lsSet(k, v, { raw: true });
+            else ls.setItem(k, v);   /* ls-raw: fallback */
+            return true;
+        } catch (e) { return false; }
+    }
+    function _del(ls, k) {
+        if (typeof G.WTS_lsRemove === 'function') return G.WTS_lsRemove(k) !== false;
+        try { ls.removeItem(k); return true; } catch (e) { return false; }   /* ls-raw: fallback */
+    }
     function _isWellKey(k) {
         var I = _I();
         if (!I) return false;
@@ -328,14 +340,18 @@
         if (ls && pvt && typeof pvt === 'object') {
             var copy = {};
             for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
-            try { ls.setItem('wts_prism_pvt', JSON.stringify(copy)); } catch (e) {}
+            try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy))); } catch (e) {}   /* ls-raw: fallback */
         }
     }
-    function _capture() {
+    function _capture(opts) {
         var I = _I(), ls = _ls();
-        I.flushAutosave();
+        var light = !!(opts && opts.light);
+        // light (captureWell): flush the page only when it has unsaved edits and leave the results cache alone, so two
+        // captures with no edit between them are equal apart from savedAt (docs/ACCOUNTS-PLAN.md H13, §6.1)
+        var PA = G.WTS_pageAutosave;
+        if (light && PA && typeof PA.flushIfDirty === 'function') { try { PA.flushIfDirty(); } catch (e) {} } else I.flushAutosave();
         _persistPrism();
-        _writeResultsCache();
+        if (!light) _writeResultsCache();
         var keys = {}, all = _keys(ls);
         for (var i = 0; i < all.length; i++) {
             if (!_isWellKey(all[i])) continue;
@@ -352,7 +368,7 @@
         return { v: 1, savedAt: _nowISO(), keys: keys, modules: mods };
     }
     function _clearActive(ls) {
-        _keys(ls).filter(_isWellKey).forEach(function (k) { try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).filter(_isWellKey).forEach(function (k) { _del(ls, k); });
     }
     // In-memory state back to "no well loaded" (keeps the unit system).
     function _resetMemory() {
@@ -401,6 +417,19 @@
         return cur;
     }
 
+    // captureWell(id) (H13) → the _capture() shape {v, savedAt, keys, modules} for any well: the active one from live
+    // storage and modules, a parked one from its blob (a copy); null for an unknown id. Writes nothing but the pending
+    // page edits and the PRiSM state the active capture always flushes.
+    function captureWell(id) {
+        if (!_I()) return null;
+        var reg = _readReg();
+        id = id == null ? reg.active : String(id);
+        if (id === reg.active || (!reg.wells.length && id === reg.active)) return _capture({ light: true });
+        if (!_find(reg, id)) return null;
+        var b = _blob(id);
+        return b ? JSON.parse(JSON.stringify(b)) : null;
+    }
+
     function list() {
         var reg = _readReg();
         return reg.wells.map(function (w) {
@@ -423,7 +452,7 @@
         var cur = _park(reg);
         if (!cur) return { ok: false, error: 'quota', message: _quotaMsg() };
         _cancelAutosave();
-        try { ls.removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(ls, BLOB_PREFIX + id);
         _clearActive(ls);
         _resetMemory();
         var failed = _writeKeys(ls, target.keys);
@@ -432,7 +461,7 @@
             _clearActive(ls);
             if (targetRaw != null) _rawSet(ls, BLOB_PREFIX + id, targetRaw);
             _writeKeys(ls, cur.keys);
-            try { ls.removeItem(BLOB_PREFIX + from); } catch (e) {}
+            _del(ls, BLOB_PREFIX + from);
             _resetMemory();
             _applyModules(cur.modules);
             _after('well-switch', from);
@@ -524,7 +553,7 @@
             if (!sw.ok) return sw;
             reg = _readReg();
         }
-        try { _ls().removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(_ls(), BLOB_PREFIX + id);
         reg.wells = reg.wells.filter(function (w) { return w.id !== id; });
         _writeReg(reg);
         _emit('wts:well-changed', { id: reg.active, list: list() });
@@ -533,16 +562,10 @@
     }
 
     // Keys holding one page's inputs: the universal autosave record plus the
-    // legacy per-calculator lists of that page.
-    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
-    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1 };
+    // legacy per-calculator lists of that page (one table, in 29-project-save.js).
+    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1, account: 1 };
     function _isPrismRoute(r) { return r === 'prism' || r === 'dca' || r === 'pta'; }
-    function _pageKeyMatch(route, k) {
-        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
-        var extra = LEGACY_PREFIX[route] || [];
-        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
-        return false;
-    }
+    function _pageKeyMatch(route, k) { var I = _I(); return !!(I && I.pageKeyMatch && I.pageKeyMatch(route, k)); }
     function copyPage(fromId, route) {
         if (!_I()) return { ok: false, error: 'unavailable' };
         var reg = _readReg(), ls = _ls();
@@ -581,7 +604,7 @@
     // ───────────────────────────────────────────────────────────────
     var _loadWarnings = [];
     function _removeWellsKeys(ls) {
-        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) _del(ls, k); });
     }
     function _registerModule() {
         if (!G.WTS_project || typeof G.WTS_project.registerModule !== 'function') return;
@@ -988,6 +1011,7 @@
     G.WTS_wells = {
         list: list, active: active, switchTo: switchTo, create: create, rename: rename, remove: remove,
         copyPage: copyPage, results: results, table: table, renderPage: renderPage, renderSwitcher: renderSwitcher,
+        captureWell: captureWell,
         loadWarnings: function () { return _loadWarnings.slice(); },
         _isWellKey: _isWellKey
     };

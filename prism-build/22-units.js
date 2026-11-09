@@ -1040,7 +1040,7 @@
     function _writePersisted(system) {
         try {
             if (typeof localStorage !== 'undefined' && localStorage.setItem) {
-                localStorage.setItem(STORAGE_KEY, system);
+                (typeof WTS_lsSet === 'function' ? WTS_lsSet(STORAGE_KEY, system, { raw: true }) : localStorage.setItem(STORAGE_KEY, system));   /* ls-raw: fallback */
             }
         } catch (e) {}
     }
@@ -1698,7 +1698,7 @@
                 data[ids[m]] = String(Number(c.toPrecision(12)));
                 changed = true;
             }
-            if (changed) { try { ls.setItem(keys[j], JSON.stringify(data)); } catch (e) {} }
+            if (changed) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(keys[j], JSON.stringify(data), { raw: true }) : ls.setItem(keys[j], JSON.stringify(data))); } catch (e) {} }   /* ls-raw: fallback */
         }
     }
 
@@ -1926,7 +1926,7 @@
     function _lsSet(k, v) {
         try {
             if (typeof localStorage === 'undefined') return;
-            if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+            if (v == null) (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(k) : localStorage.removeItem(k)); else (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : localStorage.setItem(k, v));   /* ls-raw: fallback */
         } catch (e) {}
     }
     function _baseKey() {
@@ -2092,6 +2092,14 @@
     if (_hasDoc && typeof document.addEventListener === 'function') {
         try {
             document.addEventListener('wts:project-loaded', function () {
+                var cur = _baseKey();
+                if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
+                _baseLast = cur;
+            });
+            // A key-level apply (WTS_project.applyChanges, docs/ACCOUNTS-PLAN.md H4) that changed the basis does the same.
+            document.addEventListener('wts:project-changed', function (e) {
+                var keys = (e && e.detail && Array.isArray(e.detail.keys)) ? e.detail.keys : [];
+                if (keys.indexOf(BASE_KEY) === -1) return;
                 var cur = _baseKey();
                 if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
                 _baseLast = cur;

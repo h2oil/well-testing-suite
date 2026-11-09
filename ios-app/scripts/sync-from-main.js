@@ -17,7 +17,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const MAIN_HTML = path.join(ROOT, 'well-testing-app.html');
+// WTS_SYNC_MAIN_HTML lets tests sync a scratch copy of the built page (e.g. with Round 10 rebuilt in memory).
+const MAIN_HTML = process.env.WTS_SYNC_MAIN_HTML ? path.resolve(process.env.WTS_SYNC_MAIN_HTML) : path.join(ROOT, 'well-testing-app.html');
 const IOS_ADDITIONS = path.join(__dirname, '..', 'ios-additions');
 // WTS_SYNC_OUT_DIR lets tests write the bundle to a scratch folder instead of ios-app/www.
 const WWW = process.env.WTS_SYNC_OUT_DIR ? path.resolve(process.env.WTS_SYNC_OUT_DIR) : path.join(__dirname, '..', 'www');
@@ -53,6 +54,43 @@ const swBefore = html.length;
 html = html.replace(/\/\/ ── SW:START[\s\S]*?\/\/ ── SW:END ──/g, '// (offline service worker: web only — stripped from the iOS bundle)');
 if (html.length !== swBefore) {
     console.log(`[sync] Stripped the web service-worker block (${swBefore - html.length} chars)`);
+}
+
+// ── 0c / 0d. Strip the web-only accounts and cloud-sync code (docs/ACCOUNTS-PLAN.md §9, layer 1). The account
+// client files (prism-build/66-68) and the host hooks sit between ACCT markers; the iOS app is free, local and has no
+// accounts. 0c = the JS form, 0d = the HTML form. The sync FAILS (no www/index.html is written) when the START / END
+// counts differ or when any account identifier survives the strip.
+const ACCT_JS_RE = /\/\/ ── ACCT:START[\s\S]*?\/\/ ── ACCT:END ──/g;
+const ACCT_HTML_RE = /<!--\s*ACCT:START[\s\S]*?ACCT:END\s*-->/g;
+let acctWrote = false;
+function acctFail(msg) {
+    if (acctWrote) { try { fs.rmSync(OUTPUT, { force: true }); } catch (e) { /* ignore */ } }
+    console.error('[sync] ERROR: ' + msg + ' — www/index.html NOT written (docs/ACCOUNTS-PLAN.md §9)');
+    process.exit(1);
+}
+{
+    const jsStarts = (html.match(/\/\/ ── ACCT:START/g) || []).length;
+    const jsEnds = (html.match(/\/\/ ── ACCT:END ──/g) || []).length;
+    const htStarts = (html.match(/<!--\s*ACCT:START/g) || []).length;
+    const htEnds = (html.match(/ACCT:END\s*-->/g) || []).length;
+    if (jsStarts !== jsEnds) acctFail('ACCT JS markers unbalanced (' + jsStarts + ' START, ' + jsEnds + ' END)');
+    if (htStarts !== htEnds) acctFail('ACCT HTML markers unbalanced (' + htStarts + ' START, ' + htEnds + ' END)');
+    const acctBefore = html.length;
+    html = html.replace(ACCT_JS_RE, '// (accounts and cloud sync: web only — stripped from the iOS bundle)');
+    html = html.replace(ACCT_HTML_RE, '<!-- account control: web only -->');
+    if (/ACCT:START|ACCT:END/.test(html)) acctFail('an ACCT marker survived the strip (nested or malformed block)');
+    if (html.length !== acctBefore) {
+        console.log(`[sync] Stripped the web-only accounts blocks (${jsStarts} JS, ${htStarts} HTML; ${acctBefore - html.length} chars)`);
+    }
+    const ACCT_IDS = ['WTS_account', 'WTS_cloudSync', '/api/v1', 'wts_account_host', 'wtsacct_', '/auth/oauth', 'wts_oa',
+        'Continue with Google', 'Sign in with Google', 'Sign in with LinkedIn', 'LinkedIn',
+        // WP-C1: the account page, dialog, status bar, device store and beta flag (docs/ACCOUNTS-PLAN.md §9, §11.4)
+        'WTS_accountPage', 'wts_sync_bar', 'acct_root', 'acct_dlg', 'wts-sync', 'wtspref_cloud'];
+    const left = ACCT_IDS.filter((t) => html.indexOf(t) !== -1);
+    if (left.length) acctFail('account identifiers remain outside ACCT markers: ' + left.join(', '));
+    // "Google" may appear once: the analytics sentence of the privacy text (baseline pinned; WP-H checks the sentence).
+    const google = (html.match(/Google/g) || []).length;
+    if (google > 1) acctFail('"Google" appears ' + google + ' times (the baseline is the one analytics sentence)');
 }
 
 // (The in-app Release Notes are engineering-only and identical on web and
@@ -94,6 +132,7 @@ html = html.replace(
 // ── 4. Ensure output dir exists ──
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
 fs.writeFileSync(OUTPUT, html, 'utf8');
+acctWrote = true;
 
 // ── 5. Copy Capacitor stub + bundled libs (offline PDF export) ──
 const capStub = `// Capacitor runtime bridge — replaced by Capacitor at build time.
@@ -108,6 +147,7 @@ fs.writeFileSync(path.join(WWW, 'capacitor.js'), capStub, 'utf8');
 //                          window.WTS3D_LOCAL_URL to it; 32-wts-3d.js still checks its SHA-384)
 //   sqlite3.mjs + sqlite3.wasm   — official SQLite WASM build (historian, 47-calc-historian.js)
 //   sql-wasm.js + sql-wasm.wasm  — sql.js (historian fallback engine; also reads .sqlite backups)
+//   xlsx.full.min.js     — SheetJS 0.18.5 for PRiSM .xlsx import (07 PRiSM_loadXLSX, SHA-384 checked)
 const LIBS_DIR = path.join(IOS_ADDITIONS, 'libs');
 const LIB_RE = /\.(js|mjs|wasm)$/;
 if (fs.existsSync(LIBS_DIR)) {
@@ -147,6 +187,19 @@ if (histPins) {
     if (ok && !bad) console.log('[sync] historian SQLite libraries: ' + ok + ' files match their pinned SHA-384 (offline SQLite ready)');
 }
 
+// ── 7b. SheetJS (PRiSM .xlsx import, 07-data-enhancements.js PRiSM_loadXLSX): the bundled xlsx.full.min.js must match
+// XLSX_SHA384, or the app falls back to the pinned remote copies (network + WebCrypto).
+const XLSX_LIB = path.join(WWW, 'xlsx.full.min.js');
+const xlsxPin = /XLSX_SHA384\s*=\s*'([A-Za-z0-9+/=]+)'/.exec(html);
+if (fs.existsSync(XLSX_LIB) && xlsxPin) {
+    const got = crypto.createHash('sha384').update(fs.readFileSync(XLSX_LIB)).digest('base64');
+    if (got === xlsxPin[1]) console.log('[sync] xlsx.full.min.js SHA-384 matches the pinned hash (offline .xlsx import ready)');
+    else console.warn('[sync] WARNING: www/xlsx.full.min.js SHA-384 ' + got + ' does not match the pinned ' + xlsxPin[1] +
+                      ' — the app will reject it. Re-bundle ios-additions/libs/xlsx.full.min.js.');
+} else if (!fs.existsSync(XLSX_LIB)) {
+    console.warn('[sync] WARNING: xlsx.full.min.js not bundled — .xlsx import in the app will need the network.');
+}
+
 // ── 8. Help centre files (docs/HELP-GUIDE-PLAN.md §3.2): served at capacitor://localhost/help/… so the guides'
 // screenshots and the printable user guide work offline in the app. www/help/ is rebuilt from scratch, and only
 // help/img/**/*.webp, help/img/manifest.json and help/user-guide.html are copied (nothing else under help/).
@@ -174,6 +227,17 @@ if (fs.existsSync(HELP_SRC)) {
     if (fs.existsSync(path.join(HELP_SRC, 'img', 'manifest.json'))) copy('img/manifest.json');
     if (fs.existsSync(path.join(HELP_SRC, 'user-guide.html'))) copy('user-guide.html');
     console.log(`[sync] Copied help/ → www/help/ (${copied.length} files)`);
+}
+
+// ── 9. www/help must carry no account material (docs/ACCOUNTS-PLAN.md §9, layer 1).
+if (fs.existsSync(HELP_OUT)) {
+    if (fs.existsSync(path.join(HELP_OUT, 'img', 'account'))) acctFail('www/help/img/account/ (an account shot folder) was copied');
+    const guide = path.join(HELP_OUT, 'user-guide.html');
+    if (fs.existsSync(guide)) {
+        const g = fs.readFileSync(guide, 'utf8');
+        const bad = ['Google', 'LinkedIn', 'Sign in', 'wts_account_host'].filter((t) => g.indexOf(t) !== -1);
+        if (bad.length) acctFail('www/help/user-guide.html contains account material: ' + bad.join(', '));
+    }
 }
 
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);

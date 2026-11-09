@@ -12,7 +12,7 @@ var LIVE = 'Live values; read from the page for v3.3.2.';
 return { guides: {
 
 wellos: {
-route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '9fe0919f', units: 'dual', notDocumented: [],
+route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '0b9912af', units: 'dual', notDocumented: [],
 keywords: ['SCADA', 'control room', 'live view', 'alarm', 'acknowledge', 'CSV log', 'quality', 'stale'],
 boldExempt: ['Use the Modbus simulator demo', 'Pause polling', 'Ack'],
 purpose: 'A live control-room view of the spread: tiles, process view, trends, alarms, a CSV log and a pressure trend for PRiSM.',
@@ -141,7 +141,7 @@ setup: [{ action: 'modbusSimDemo' }], callouts: [{ sel: '#mbc_res .rbox-title', 
 },
 
 historian: {
-route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '27ab1ca9', units: 'field',
+route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '161061ef', units: 'field',
 notice: 'Values keep the unit they were recorded in; Metric mode does not convert them.',
 keywords: ['history', 'database', 'backup', 'restore', 'retention', 'rollup', 'xlsx'],
 notDocumented: nd('button, in the steps', 'demo_btn demohist_btn refresh_btn modbus_btn modbus_btn2 custom_apply live_btn reset_btn png_btn prev_btn next_btn copy_btn sort_btn export_btn import_btn ret_btn engine_btn persist_btn purge_btn clear_btn'),

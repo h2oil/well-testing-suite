@@ -398,7 +398,7 @@ function getConfig() {
 // fires 'wts:modbus-config-changed'.
 function saveConfig(cfg, opts) {
     var n = normalizeConfig(cfg), s = ls(), txt = JSON.stringify(n.config);
-    try { if (s) s.setItem(STORE_KEY, txt); } catch (e) { return { ok: false, errors: ['Could not save: ' + (e && e.message)] }; }
+    try { if (s) (typeof WTS_lsSet === 'function' ? WTS_lsSet(STORE_KEY, txt, { raw: true }) : s.setItem(STORE_KEY, txt)); } catch (e) { return { ok: false, errors: ['Could not save: ' + (e && e.message)] }; }   /* ls-raw: fallback */
     _cache = { raw: txt, cfg: n.config };
     if (!(opts && opts.keepStation)) rebuildStation();
     fire('wts:modbus-config-changed', { config: clone(n.config) });

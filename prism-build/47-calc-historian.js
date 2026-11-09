@@ -102,7 +102,7 @@ function esc(s) {
 }
 function errMsg(e) { return String((e && e.message) || e || 'error'); }
 function lsGet(k) { try { return G.localStorage ? G.localStorage.getItem(k) : null; } catch (e) { return null; } }
-function lsSet(k, v) { try { if (G.localStorage) G.localStorage.setItem(k, v); } catch (e) { /* quota / private mode */ } }
+function lsSet(k, v) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : G.localStorage.setItem(k, v)); } catch (e) { /* quota / private mode */ } }   /* ls-raw: fallback */
 function lsJSON(k) { try { var s = lsGet(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }

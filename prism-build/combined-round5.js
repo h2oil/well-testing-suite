@@ -3972,7 +3972,7 @@
             var el = _$(ids[i]);
             if (el) vals[ids[i]] = el.value;
         }
-        try { localStorage.setItem(PL_LS_KEY, JSON.stringify(vals)); } catch (e) {}
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(PL_LS_KEY, JSON.stringify(vals), { raw: true }) : localStorage.setItem(PL_LS_KEY, JSON.stringify(vals))); } catch (e) {}   /* ls-raw: fallback */
         if (!G.WTS_state || typeof G.WTS_state !== 'object') G.WTS_state = {};
         G.WTS_state.pipelife = { values: vals };
     }

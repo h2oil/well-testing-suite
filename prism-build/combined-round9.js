@@ -4442,7 +4442,7 @@ function esc(s) {
 }
 function errMsg(e) { return String((e && e.message) || e || 'error'); }
 function lsGet(k) { try { return G.localStorage ? G.localStorage.getItem(k) : null; } catch (e) { return null; } }
-function lsSet(k, v) { try { if (G.localStorage) G.localStorage.setItem(k, v); } catch (e) { /* quota / private mode */ } }
+function lsSet(k, v) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : G.localStorage.setItem(k, v)); } catch (e) { /* quota / private mode */ } }   /* ls-raw: fallback */
 function lsJSON(k) { try { var s = lsGet(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
@@ -7494,7 +7494,7 @@ return o;
 function N(p, w) { return { pattern: p, why: w || 'label and default on the page' }; }
 return { guides: {
 
-flare: Q('flare', '33dcd62c', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
+flare: Q('flare', '9d010033', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
 notDocumented: [N('^fl_(t1|t2|he|hp|np|ns|mw|eff|nhv|F|V|tau|clbl|ambN)$|^fl_bg', 'tabs, drawing settings, or label and default on the page')],
 purpose: 'Flame length, radiation distances and noise around a flare or burner.',
 what: ['API 521 point-source method. Inputs are not converted: MMSCFD, BTU/SCF, m, m/s, Celsius.'],
@@ -7630,7 +7630,7 @@ var LIVE = 'Live values; read from the page for v3.3.2.';
 return { guides: {
 
 wellos: {
-route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '9fe0919f', units: 'dual', notDocumented: [],
+route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '0b9912af', units: 'dual', notDocumented: [],
 keywords: ['SCADA', 'control room', 'live view', 'alarm', 'acknowledge', 'CSV log', 'quality', 'stale'],
 boldExempt: ['Use the Modbus simulator demo', 'Pause polling', 'Ack'],
 purpose: 'A live control-room view of the spread: tiles, process view, trends, alarms, a CSV log and a pressure trend for PRiSM.',
@@ -7759,7 +7759,7 @@ setup: [{ action: 'modbusSimDemo' }], callouts: [{ sel: '#mbc_res .rbox-title', 
 },
 
 historian: {
-route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '27ab1ca9', units: 'field',
+route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '161061ef', units: 'field',
 notice: 'Values keep the unit they were recorded in; Metric mode does not convert them.',
 keywords: ['history', 'database', 'backup', 'restore', 'retention', 'rollup', 'xlsx'],
 notDocumented: nd('button, in the steps', 'demo_btn demohist_btn refresh_btn modbus_btn modbus_btn2 custom_apply live_btn reset_btn png_btn prev_btn next_btn copy_btn sort_btn export_btn import_btn ret_btn engine_btn persist_btn purge_btn clear_btn'),
@@ -8243,7 +8243,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: '438f32c4', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -8292,7 +8292,7 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '69e92717', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
@@ -8303,7 +8303,7 @@ outputs: [{ label: 'This build', text: 'Says whether usage analytics are active.
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'fecd72c4', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -8525,7 +8525,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: '808b6dd7', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -8759,7 +8759,7 @@ var gaslift = {
 };
 
 var buildup = {
-  route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
+  route: 'buildup', reviewed: V, reviewedSrc: '700970d3', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
   purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
   what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
@@ -8996,7 +8996,7 @@ refs: [{ std: 'API 520 Part I', note: 'critical gas flow' }],
 related: ['sep', 'tank', 'esdhi'],
 shots: [Sh('view', 'both', 'Liquid Line / RO inputs', '', ['#wts_ll_sep_p~1']), Sh('res', 'desktop', 'Results', RES, ['#wts_ll_results table~2'], T('#wts_ll_results table'))]
 }),
-pipelife: Gd('pipelife', '90d58266', 'wts_pl_', {
+pipelife: Gd('pipelife', 'cd99e45b', 'wts_pl_', {
 keywords: ['erosion', 'sand'],
 notDocumented: ['import~step 2', '^wts_pl_seg\\d_~segment table cells: the Pipe Segments row'],
 purpose: 'Sand-erosion rate and remaining service life of each pipe segment from the wellhead to the flare.',
@@ -20147,7 +20147,7 @@ pipesz: {
         if (typeof G.WTS_lsSet === 'function') { try { return G.WTS_lsSet(key, txt) !== false; } catch (e) { return false; } }
         var ls = _ls();
         if (!ls) return false;
-        try { ls.setItem(key, txt); return true; } catch (e) { return false; }
+        try { ls.setItem(key, txt); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
     // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)
@@ -20419,7 +20419,8 @@ pipesz: {
     var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
     function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
-        if (state === null) { _loaded[store] = []; _clear(store); return; }
+        // Returns a Promise for the IndexedDB writes (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3).
+        if (state === null) { _loaded[store] = []; return _clear(store); }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
         var ids = [], total = 0;
         Object.keys(state.wells).forEach(function (id) {
@@ -20435,7 +20436,9 @@ pipesz: {
             _mem[store][id] = v; ids.push(id);
         });
         _loaded[store] = ids;
-        ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var puts = ids.map(function (wid) { var v = _mem[store][wid]; return _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var P = _P();
+        return P ? P.all(puts) : undefined;
     }
     function _prune(store, keepIds) {
         Object.keys(_mem[store]).forEach(function (id) { if (keepIds.indexOf(id) === -1) delete _mem[store][id]; });
@@ -20466,15 +20469,19 @@ pipesz: {
         if (d.source === 'well') { _loaded.raw = null; _loaded.tests = null; return; }   // a well switch is not a project Open
         var keepRaw = _loaded.raw || [], keepTests = _loaded.tests || [];
         _loaded.raw = null; _loaded.tests = null;
-        _prune('raw', keepRaw);
-        _prune('tests', keepTests);
+        // H3: a module the load kept local (detail.keep) is not pruned; the prune Promises join detail.pending (`ready`).
+        var kept = Array.isArray(d.keep) ? d.keep : [];
+        var pend = [];
+        if (kept.indexOf('buildup_raw') === -1) pend.push(_prune('raw', keepRaw));
+        if (kept.indexOf('buildup_analysis') === -1) pend.push(_prune('tests', keepTests));
+        if (Array.isArray(d.pending)) pend.forEach(function (p) { if (p) d.pending.push(p); });
     }
     var _modsRegistered = false;
     function registerModules() {
         var P = G.WTS_project;
         if (_modsRegistered || !P || typeof P.registerModule !== 'function') return _modsRegistered;
-        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { _modWrite('raw', s); } });
-        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { _modWrite('tests', s); } });
+        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { return _modWrite('raw', s); } });
+        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { return _modWrite('tests', s); } });
         _modsRegistered = true;
         return true;
     }
@@ -37555,7 +37562,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   function pref(k, v) {
     try {
       if (v === undefined) return G.localStorage ? G.localStorage.getItem(k) : null;
-      if (G.localStorage) G.localStorage.setItem(k, v);
+      (G.WTS_lsSet || function(a,b) { G.localStorage.setItem(a, b); })(k, v, {raw:1}); //ls-raw: fallback
     } catch (e) { /* storage blocked */ }
     return null;
   }

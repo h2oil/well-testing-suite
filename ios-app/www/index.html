@@ -758,6 +758,32 @@
         html.ios-app .prism-dfit-panel input, html.ios-app .prism-dfit-panel select, html.ios-app .prism-dfit-step input,
         html.ios-app .prism-dfit-step select, html.ios-app #prism_dfit_override input, html.ios-app #prism_dfit_override textarea { font-size: 16px; }
         /* end of section 10 */
+        /* 11. ACCOUNTS (web accounts, prism-build/66-68; docs/ACCOUNTS-PLAN.md §9, §11). The account client is stripped from
+               the iOS bundle (ACCT markers) and its guard keeps it inert in the native shell, so these rules never match in
+               the app; they exist so that every fixed overlay of the feature carries its safe-area padding should one ever
+               be shown edge to edge (the CLAUDE.md safe-area rule; a recorded exception, plan §9). The dialog overlay
+               (.acct-ov, block layout so the bottom padding scrolls), the bottom bar, the menus and the toast. */
+        html.ios-app .acct-ov {
+            display: block;
+            padding: max(16px, calc(8px + env(safe-area-inset-top))) max(16px, calc(8px + env(safe-area-inset-right)))
+                     max(16px, calc(12px + env(safe-area-inset-bottom))) max(16px, calc(8px + env(safe-area-inset-left)));
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+        html.ios-app .acct-sync-bar {
+            bottom: max(16px, calc(8px + env(safe-area-inset-bottom)));
+            max-width: calc(100vw - max(16px, env(safe-area-inset-left)) - max(16px, env(safe-area-inset-right)));
+        }
+        html.ios-app .acct-menu, html.ios-app .acct-cloud-menu {
+            left: max(16px, calc(8px + env(safe-area-inset-left)));
+            right: max(16px, calc(8px + env(safe-area-inset-right)));
+        }
+        html.ios-app .acct-toast {
+            top: max(16px, calc(8px + env(safe-area-inset-top)));
+            right: max(16px, calc(8px + env(safe-area-inset-right)));
+        }
+        html.ios-app .acct-ov input, html.ios-app .acct-ov button { font-size: 16px; min-height: 44px; }
+        /* end of section 11 */
 
     </style>
 </head>
@@ -864,7 +890,7 @@
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
             <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
-        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk<br><a href="#" id="sbPrivacyLink" style="color:var(--text3)">Privacy — your data stays on this device</a></div>
+        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk<br><a href="#" id="sbPrivacyLink" style="color:var(--text3)">Privacy — how your data is stored</a><!-- account control: web only --></div>
     </div>
 
     <!-- Save flash -->
@@ -875,6 +901,7 @@
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div class="pg-head"><!--help-host-patch:H3--><div><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div><button type="button" id="pgHelpBtn" class="pg-help" aria-label="Help for this page" title="Help for this page (F1)" hidden>?</button></div>
           <div class="page-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
+            <!-- account control: web only -->
             <!-- Well switcher (multi-well projects). Wired by prism-build/29-multiwell.js. -->
             <div id="wts_well_host"></div>
             <!-- Project File toolbar (New / Open / Save). Wired by prism-build/29-project-save.js. -->
@@ -988,8 +1015,8 @@ function __evictOldestReportSnapshot(keepSnap) {
     const keys = Object.keys(snaps).filter(k => k !== keepSnap).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
     if(!keys.length) return false;
     delete snaps[keys[0]];
-    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); }
-    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); } catch(_) {} }
+    try { localStorage.setItem('wts_report_snapshots', JSON.stringify(snaps)); __lsNotify('wts_report_snapshots', false); }   /* ls-raw: H1 eviction inside __lsSet */
+    catch(e) { try { localStorage.removeItem('wts_report_snapshots'); __lsNotify('wts_report_snapshots', true); } catch(_) {} }   /* ls-raw: H1 eviction */
     return true;
 }
 let __lsFullWarned = false;
@@ -1008,9 +1035,25 @@ function __lsFullNotice(key, err) {
         setTimeout(() => t.remove(), 8000);
     } catch(_) {}
 }
+// H1 (docs/ACCOUNTS-PLAN.md §5.4): every successful write / remove through these helpers fires document 'wts:ls-write'
+// {key} ({key, removed:true} for a remove) — plain data; nothing listens in the local app.
+function __lsNotify(key, removed) {
+    try { document.dispatchEvent(new CustomEvent('wts:ls-write', { detail: removed ? { key: String(key), removed: true } : { key: String(key) } })); } catch(_) {}
+}
+// Plain write: throws like setItem (no eviction, no notice) and fires 'wts:ls-write' on success — for sites that were raw.
+function __lsSetRaw(key, value) {
+    localStorage.setItem(key, value);   /* ls-raw: H1 plain write */
+    __lsNotify(key, false);
+    return true;
+}
+function __lsRemove(key) {
+    try { localStorage.removeItem(key); } catch(e) { return false; }   /* ls-raw: H1 */
+    __lsNotify(key, true);
+    return true;
+}
 function __lsSet(key, value, keepSnap) {
     for(let i = 0; i < 200; i++) {
-        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); return true; }
+        try { localStorage.setItem(key, typeof value === 'function' ? value() : value); __lsNotify(key, false); return true; }   /* ls-raw: H1 */
         catch(e) {
             if(__isQuotaError(e) && __evictOldestReportSnapshot(keepSnap)) continue;
             __lsFullNotice(key, e);
@@ -1020,7 +1063,10 @@ function __lsSet(key, value, keepSnap) {
     return false;
 }
 // Shared with the injected modules (PRiSM, project files): WTS_lsSet(key, value) → boolean.
-window.WTS_lsSet = (key, value) => __lsSet(key, value);
+// WTS_lsSet(key, value, {raw:true}) is the plain write (throws like setItem; no eviction) — used where a raw setItem was.
+window.WTS_lsSet = (key, value, opts) => (opts && opts.raw) ? __lsSetRaw(key, value) : __lsSet(key, value);
+// WTS_lsRemove(key) → boolean (false only when the remove threw); fires 'wts:ls-write' {key, removed:true}.
+window.WTS_lsRemove = (key) => __lsRemove(key);
 // Track which calculator key the current page belongs to so the global
 // auto-save listener knows where to write changes.
 let __currentCalcKey = null;
@@ -1091,7 +1137,7 @@ document.addEventListener('change', e => {
 // Unit-tagged inputs (22-units.js) are stored canonical (imperial), like the
 // legacy wts_<key> records. PRiSM routes keep their own persistence.
 const PAGE_LS_PREFIX = 'wts_page_';
-const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1 };
+const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
 let __pageState = null;       // live record of the page currently rendered
 let __pageRestoring = false;  // true while render() re-applies saved values
 let __pageDirty = false;
@@ -1106,7 +1152,7 @@ function __isPersistableCtrl(el) {
     const t = __ctrlType(el);
     if(t==='file'||t==='button'||t==='submit'||t==='reset'||t==='hidden'||t==='image'||t==='password') return false;
     if(el.readOnly || el.disabled) return false;
-    if(typeof el.closest === 'function' && el.closest('[data-no-persist]')) return false;
+    if(typeof el.closest === 'function' && el.closest('[data-no-persist],[data-acct-skip]')) return false;
     return true;
 }
 function __unitsApi() {
@@ -1425,6 +1471,8 @@ function __restorePageState() {
 window.WTS_pageAutosave = {
     prefix: PAGE_LS_PREFIX,
     flush: () => __flushPageState(true),            // snapshot current page → localStorage now
+    // H15: write only when the page has unsaved control changes (no `t` rewrite otherwise) → true when it wrote
+    flushIfDirty: () => (__pageDirty ? __flushPageState(false) : false),
     cancel: () => {                                  // drop pending (debounced) writes
         clearTimeout(__pageSaveTimer); __pageSaveTimer = null; __pageDirty = false;
         clearTimeout(window.__h2oilSaveTimer);
@@ -1530,6 +1578,7 @@ function __mountCalcNav(builtins) {
             return;
         }
         if(e.hooks && typeof e.hooks === 'object' && !PAGE_HOOKS[key]) PAGE_HOOKS[key] = e.hooks;
+        if(e.navHidden === true) return;   // H7: a routed page with no sidebar button and no home tile (e.g. the web account page)
         if(sb.querySelector('.nav-btn[data-p="' + key + '"]')) return;
         const label = String(e.group || 'Calculators').trim();
         const findGrp = want => Array.from(sb.querySelectorAll('.nav-group')).find(g => {
@@ -1575,7 +1624,7 @@ function __renderRegistryCalc(p, body) {
 function __calcHomeTiles(mods) {
     const order = Array.from(document.querySelectorAll('.nav-btn[data-p]')).map(b => b.getAttribute('data-p'));
     __calcEntries().forEach(({ key, e }) => {
-        if(mods.some(m => m.id === key)) return;
+        if(e.navHidden === true || mods.some(m => m.id === key)) return;
         const g = __CALC_GROUP_TILE[String(e.group || '').trim().toLowerCase()] || [];
         const tile = {
             id: key, icon: __calcIcon(e.icon),
@@ -1598,7 +1647,7 @@ function __calcHomeTiles(mods) {
 // never saved into project files). Event-driven only — no timers or polling.
 const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVO = 'wts_ui_nav_open', __UI_HUB = 'wts_ui_hub_last';
 const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
-const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1 };
+const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1, account:1 };
 let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
 function __uiList(k) {
     try {
@@ -1606,7 +1655,7 @@ function __uiList(k) {
         return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.length > 0 && x.length <= 64) : [];
     } catch(e) { return []; }
 }
-function __uiSetList(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch(e) {} }
+function __uiSetList(k, a) { try { __lsSetRaw(k, JSON.stringify(a)); } catch(e) {} }
 function __uiTokens(q) { return String(q == null ? '' : q).toLowerCase().split(/\s+/).filter(Boolean); }
 function __uiMatch(tokens, hay) { hay = String(hay || '').toLowerCase(); return tokens.every(t => hay.indexOf(t) !== -1); }
 function __uiRecordRecent(p) {
@@ -1665,7 +1714,7 @@ function __hubRemember(h, p) {
     const o = __hubLast();
     if(o[h] === p) return;
     o[h] = p;
-    try { localStorage.setItem(__UI_HUB, JSON.stringify(o)); } catch(e) {}
+    try { __lsSetRaw(__UI_HUB, JSON.stringify(o)); } catch(e) {}
 }
 function __hubOpen(h) { const t = __hubTarget(h); if(t) nav(t); }
 function __sidebarFilter() {
@@ -1703,7 +1752,7 @@ let __navShownFor = null;      // page whose group was last revealed
 function __navOpenRead() {
     try { const v = localStorage.getItem(__UI_NAVO); return typeof v === 'string' && v.length <= 64 ? v : null; } catch(e) { return null; }
 }
-function __navOpenStore(k) { try { localStorage.setItem(__UI_NAVO, k); } catch(e) {} }
+function __navOpenStore(k) { try { __lsSetRaw(__UI_NAVO, k); } catch(e) {} }
 // Collapse every group but the open one. A remembered group that no longer exists (renamed,
 // or a plug-in group not mounted yet) falls back to the active page's group.
 function __sidebarApply() {
@@ -2022,7 +2071,7 @@ function render() {
     try { __restorePageState(); } catch(e) { __pageRestoring = false; console.warn('[autosave] restore failed', e); }
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
-    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help') ? 'none' : 'flex';   /* help-host-patch:H4 */
+    if(eb) eb.style.display = (page==='home'||page==='clientinfo'||page==='help'||page==='account') ? 'none' : 'flex';   /* help-host-patch:H4 */ /* accounts: no page export on the account page (H10) */
     try { if(window.WTS_help && typeof window.WTS_help.syncHeader === 'function') window.WTS_help.syncHeader(page); } catch(e) {}   /* help-host-patch:H3 */
     // Notify analytics + any other listeners that the SPA has navigated.
     // Used by the GA4 tracker for virtual page_view + scroll-depth reset.
@@ -2451,7 +2500,7 @@ window.clearClientLogo = function() {
 };
 
 window.clearClientInfo = function() {
-    localStorage.removeItem('h2oil_client_info');
+    __lsRemove('h2oil_client_info');
     nav('clientinfo');
 };
 
@@ -3303,7 +3352,7 @@ window.exportPagePNG = async function() {
 // model is cached (memory + localStorage 'wts_report_snapshots', so it also
 // travels in project files). The job report stitches every captured
 // calculator into one document with a summary table.
-const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1 };
+const _REPORT_SKIP = { home:1, help:1, /* help-host-patch:H5 */ clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1, wells:1, account:1 };
 const _reportSnaps = (function() {
     try { return JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}; } catch(e) { return {}; }
 })();
@@ -3323,6 +3372,14 @@ function _snapshotPage() {
 window.WTS_snapshotNow = function () { clearTimeout(_snapTimer); _snapshotPage(); };
 document.addEventListener('h2oil:pagechange', e => { _snapPage = e.detail && e.detail.page; clearTimeout(_snapTimer); });
 // Project File → New / Open replace localStorage; re-sync the in-memory cache.
+// A key-level apply (WTS_project.applyChanges → 'wts:project-changed') that rewrote the snapshot cache does the same.
+document.addEventListener('wts:project-changed', e => {
+    const keys = (e && e.detail && Array.isArray(e.detail.keys)) ? e.detail.keys : [];
+    if(keys.indexOf('wts_report_snapshots') === -1) return;
+    clearTimeout(_snapTimer);
+    Object.keys(_reportSnaps).forEach(k => delete _reportSnaps[k]);
+    try { Object.assign(_reportSnaps, JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}); } catch(_) {}
+});
 ['wts:project-new', 'wts:project-loaded'].forEach(t => document.addEventListener(t, () => {
     clearTimeout(_snapTimer);
     Object.keys(_reportSnaps).forEach(k => delete _reportSnaps[k]);
@@ -4436,112 +4493,128 @@ window.exportSession = async function() {
 window.importSession = function(inp) {
     const f = inp.files[0]; if(!f) return;
     const reader = new FileReader();
+    // H14 guard: WTS_project.guarded runs synchronously when no guard is registered (v3.4 behaviour); with a guard
+    // it returns a Promise and a 'cancel' answer leaves every key untouched.
+    const guarded = (run, then) => {
+        const g = window.WTS_project && window.WTS_project.guarded;
+        if(typeof g !== 'function') { then(run()); return; }
+        const r = g('open-file', run);
+        const fin = v => { if(v && v.cancelled) { inp.value = ''; return; } then(v); };
+        if(r && typeof r.then === 'function') r.then(fin, err => alert('Error reading session file: ' + ((err && err.message) || err)));
+        else fin(r);
+    };
     reader.onload = function(e) {
         try {
             const session = JSON.parse(e.target.result);
             // Project files (.h2oilproj from the top-right File toolbar) → project loader
             if(session && session.format === 'h2oilproj' && window.WTS_project) {
-                const res = window.WTS_project.loadFromObject(session) || {};
-                const st = $('ci_import_status');
-                if(st) {
-                    st.innerHTML = res.error
-                        ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
-                        : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
-                    setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
-                }
-                inp.value = '';
+                guarded(() => window.WTS_project.loadFromObject(session), r => {
+                    const res = r || {};
+                    const st = $('ci_import_status');
+                    if(st) {
+                        st.innerHTML = res.error
+                            ? '<span style="color:var(--red);font-weight:600">Project load failed: ' + String(res.error).replace(/[<>&]/g, '') + '</span>'
+                            : '<span style="color:var(--green);font-weight:600">&#10003; Project loaded — ' + (res.loaded || []).length + ' modules from ' + String(f.name).replace(/[<>&]/g, '') + '</span>';
+                        setTimeout(() => { if(st) st.innerHTML = ''; }, 4000);
+                    }
+                    inp.value = '';
+                });
                 return;
             }
             if(session._format !== 'H2Oil_WTS_Session_v1') {
                 alert('Invalid session file. Expected H2Oil Well Testing Suite export.');
                 return;
             }
-            try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
+            // H14: the import replaces the open work, so it asks the registered guard first (none → runs now, as before)
+            guarded(() => {
+                try { window.WTS_pageAutosave.cancel(); } catch(e) {}   // don't let a pending autosave overwrite the import
 
-            let count = 0;
-            // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
-            Object.keys(session).forEach(k => {
-                if(k.startsWith('wts_')) {
-                    if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
-                }
-            });
-
-            // Restore client info (preserve existing logo if any)
-            if(session['h2oil_client_info']) {
-                const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
-                const imported = session['h2oil_client_info'];
-                // Keep existing logo if import didn't have one
-                if(existing.clientLogo && !imported.clientLogo) {
-                    imported.clientLogo = existing.clientLogo;
-                }
-                delete imported._hasLogo;
-                if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
-            }
-
-            // Restore live page snapshots — bridge any wts_<key> gap so the
-            // first re-render of those pages picks up every typed value.
-            // We merge _live_<page> entries into the matching wts_<key> entry.
-            Object.keys(session).forEach(k => {
-                if(!k.startsWith('_live_')) return;
-                const live = session[k] || {};
-                // Find any existing wts_ key whose data overlaps these IDs and merge
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || !lk.startsWith('wts_')) continue;
-                    try {
-                        const data = JSON.parse(localStorage.getItem(lk)) || {};
-                        let merged = false;
-                        Object.keys(live).forEach(id => {
-                            if(id in data) { data[id] = live[id]; merged = true; }
-                        });
-                        if(merged) __lsSet(lk, JSON.stringify(data));
-                    } catch(e) {}
-                }
-            });
-
-            // Sessions exported before the universal autosave carry no wts_page_*
-            // records. Those records win on re-render, so drop the ids this file
-            // provides (legacy keys) and fold its _live_ snapshots in instead.
-            if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
-                const ids = {};
+                let count = 0;
+                // Restore all wts_ keys (non-JSON values, e.g. wts_unit_system, were exported as raw strings)
                 Object.keys(session).forEach(k => {
-                    if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    if(k.startsWith('wts_')) {
+                        if(__lsSet(k, typeof session[k] === 'string' ? session[k] : JSON.stringify(session[k]))) count++;
+                    }
                 });
-                for(let i = 0; i < localStorage.length; i++) {
-                    const lk = localStorage.key(i);
-                    if(!lk || lk.indexOf('wts_page_') !== 0) continue;
-                    try {
-                        const rec = JSON.parse(localStorage.getItem(lk));
-                        if(!rec || !rec.f) continue;
-                        let hit = false;
-                        Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
-                        if(hit) __lsSet(lk, JSON.stringify(rec));
-                    } catch(e) {}
+
+                // Restore client info (preserve existing logo if any)
+                if(session['h2oil_client_info']) {
+                    const existing = JSON.parse(localStorage.getItem('h2oil_client_info') || '{}');
+                    const imported = session['h2oil_client_info'];
+                    // Keep existing logo if import didn't have one
+                    if(existing.clientLogo && !imported.clientLogo) {
+                        imported.clientLogo = existing.clientLogo;
+                    }
+                    delete imported._hasLogo;
+                    if(__lsSet('h2oil_client_info', JSON.stringify(imported))) count++;
                 }
+
+                // Restore live page snapshots — bridge any wts_<key> gap so the
+                // first re-render of those pages picks up every typed value.
+                // We merge _live_<page> entries into the matching wts_<key> entry.
                 Object.keys(session).forEach(k => {
-                    if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
-                    if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
-                    const pk = 'wts_page_' + k.slice(6);
-                    let rec = null;
-                    try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
-                    if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
-                    rec.f = Object.assign(rec.f || {}, session[k]);
-                    rec.t = Date.now();
-                    __lsSet(pk, JSON.stringify(rec));
+                    if(!k.startsWith('_live_')) return;
+                    const live = session[k] || {};
+                    // Find any existing wts_ key whose data overlaps these IDs and merge
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || !lk.startsWith('wts_')) continue;
+                        try {
+                            const data = JSON.parse(localStorage.getItem(lk)) || {};
+                            let merged = false;
+                            Object.keys(live).forEach(id => {
+                                if(id in data) { data[id] = live[id]; merged = true; }
+                            });
+                            if(merged) __lsSet(lk, JSON.stringify(data));
+                        } catch(e) {}
+                    }
                 });
-            }
 
-            // Refresh the current page to show imported values
-            const status = $('ci_import_status');
-            if(status) {
-                status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
-                setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
-            }
+                // Sessions exported before the universal autosave carry no wts_page_*
+                // records. Those records win on re-render, so drop the ids this file
+                // provides (legacy keys) and fold its _live_ snapshots in instead.
+                if(!Object.keys(session).some(k => k.indexOf('wts_page_') === 0)) {
+                    const ids = {};
+                    Object.keys(session).forEach(k => {
+                        if(k.startsWith('wts_') && session[k] && typeof session[k] === 'object') Object.keys(session[k]).forEach(id => { ids[id] = 1; });
+                    });
+                    for(let i = 0; i < localStorage.length; i++) {
+                        const lk = localStorage.key(i);
+                        if(!lk || lk.indexOf('wts_page_') !== 0) continue;
+                        try {
+                            const rec = JSON.parse(localStorage.getItem(lk));
+                            if(!rec || !rec.f) continue;
+                            let hit = false;
+                            Object.keys(rec.f).forEach(id => { if(ids[id]) { delete rec.f[id]; hit = true; } });
+                            if(hit) __lsSet(lk, JSON.stringify(rec));
+                        } catch(e) {}
+                    }
+                    Object.keys(session).forEach(k => {
+                        if(!k.startsWith('_live_') || !session[k] || typeof session[k] !== 'object') return;
+                        if(!__pageAutosaveOn(k.slice(6)) || (PAGE_HOOKS[k.slice(6)] || {}).load) return;
+                        const pk = 'wts_page_' + k.slice(6);
+                        let rec = null;
+                        try { rec = JSON.parse(localStorage.getItem(pk) || 'null'); } catch(e) {}
+                        if(!rec || typeof rec !== 'object') rec = { v: 1, f: {} };
+                        rec.f = Object.assign(rec.f || {}, session[k]);
+                        rec.t = Date.now();
+                        __lsSet(pk, JSON.stringify(rec));
+                    });
+                }
 
-            // Re-render current page to pick up new values
-            render();
-            // If on client info, re-navigate to refresh fields
-            if(page === 'clientinfo') nav('clientinfo');
+                // Refresh the current page to show imported values
+                const status = $('ci_import_status');
+                if(status) {
+                    status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session restored — ' + count + ' modules loaded from ' + f.name + '</span>';
+                    setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
+                }
+
+                // Re-render current page to pick up new values
+                render();
+                // If on client info, re-navigate to refresh fields
+                if(page === 'clientinfo') nav('clientinfo');
+            return { done: true };
+            }, () => {});
 
         } catch(err) {
             alert('Error reading session file: ' + err.message);
@@ -7427,7 +7500,7 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
         const raw = localStorage.getItem('wts_flare');
         if (raw) {
             const o = JSON.parse(raw);
-            if (o && 'fl_V' in o) { delete o.fl_V; localStorage.setItem('wts_flare', JSON.stringify(o)); }
+            if (o && 'fl_V' in o) { delete o.fl_V; __lsSetRaw('wts_flare', JSON.stringify(o)); }
         }
     } catch(_) {}
 
@@ -11440,12 +11513,16 @@ function renderReleaseNotes(body){
     if (ttl) ttl.textContent = 'Release Notes';
     if (sub) sub.textContent = 'Engineering changes to the Well Testing Suite, newest first.';
     const cats = Object.keys(RN_CATS);
-    const used = cats.filter(c => RELEASE_NOTES.some(r => r.items.some(it => it[0] === c)));
+    // H12 (docs/ACCOUNTS-PLAN.md §5.4): an entry or an item marked {platform:'web'} (an item's 4th element) is hidden in the
+    // iOS app; web-only items also sit between ACCT markers so the iOS bundle never carries their text.
+    const rnShown = x => !(window.isIOSApp && x && ((Array.isArray(x) && x[3] && x[3].platform === 'web') || (!Array.isArray(x) && x.platform === 'web')));
+    const used = cats.filter(c => RELEASE_NOTES.some(r => rnShown(r) && r.items.some(it => it[0] === c && rnShown(it))));
     const latest = RELEASE_NOTES[0], first = RELEASE_NOTES[RELEASE_NOTES.length - 1];
     const chip = c => '<span class="rn-chip" style="color:' + RN_CATS[c].color + ';background:' + RN_CATS[c].bg + '">' + RN_CATS[c].label + '</span>';
     const releases = RELEASE_NOTES.map((r, i) => {
+        if (!rnShown(r)) return '';
         const groups = cats.map(c => {
-            const its = r.items.filter(it => it[0] === c);
+            const its = r.items.filter(it => it[0] === c && rnShown(it));
             if (!its.length) return '';
             return '<div class="rn-group" data-cat="' + c + '" style="--rn-c:' + RN_CATS[c].color + '">' + chip(c) +
                 '<ul class="rn-list">' + its.map(it => '<li><b>' + it[1] + '</b> — ' + it[2] + '</li>').join('') + '</ul></div>';
@@ -11646,19 +11723,25 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function';
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
     const build = ios ? 'iOS app — no analytics code is included in this build.'
         : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
     const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
         a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
+    // H11 (docs/ACCOUNTS-PLAN.md §8.6): web / iOS branches. The web-only text (banner, account and sign-in cards) is inside
+    // the ACCT markers below, so the iOS bundle carries only today's text. The account wording shows only while the web
+    // account client is eligible and switched on (the invite beta); otherwise the page is exactly the v3.4 page.
+    let acct = null;
+    // (accounts and cloud sync: web only — stripped from the iOS bundle)
     body.innerHTML = '<div id="privacy_root" style="max-width:860px">' +
       '<div class="info-bar" style="background:rgba(63,185,80,.06);border-color:rgba(63,185,80,.2);color:var(--green)">' +
-        '<strong>Your well data never leaves your device.</strong> This build: ' + build + '</div>' +
+        (acct ? acct.banner : '<strong>Your well data never leaves your device.</strong> This build: ' + build) + '</div>' +
       '<div class="card"><div class="card-title">Calculations run on your device</div>' + li([
         'Every calculator, PRiSM analysis, simulation and report is computed in your browser or in the app on your device. There is no server-side calculation.',
-        'There are no user accounts, no sign-in and no H2Oil server that receives your inputs, results or files.'
+        acct ? acct.noAccounts : 'There are no user accounts, no sign-in and no H2Oil server that receives your inputs, results or files.'
       ]) + '</div>' +
+      (acct ? acct.cards : '') +
       '<div class="card"><div class="card-title">Where your data is stored</div>' + li([
         'Inputs, client &amp; well details, loaded gauge data and results are kept in this browser’s local storage (in the iOS app: the app’s own local storage on the device).',
         'Clearing the browser’s site data (or deleting the app) removes them. We cannot see or recover them.',
@@ -13537,7 +13620,7 @@ function PRiSM_persistPaste(text) {
         if (raw) { try { o = JSON.parse(raw); } catch (e) { o = {}; } }
         if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
         o.prism_data_paste = String(text == null ? '' : text);
-        localStorage.setItem('wts_prism', JSON.stringify(o));
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(o), { raw: true }) : localStorage.setItem('wts_prism', JSON.stringify(o)));   /* ls-raw: fallback */
     } catch (e) { /* ignore quota / private mode */ }
 }
 
@@ -13654,7 +13737,7 @@ function PRiSM_seedDefaultSample(textareaId, opts) {
     try {
         const ta = (typeof document !== 'undefined') ? document.getElementById(textareaId || 'prism_data_paste') : null;
         if (opts.force) {
-            try { localStorage.removeItem('wts_prism_sample_suppress'); } catch (e) { /* ignore */ }
+            try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove('wts_prism_sample_suppress') : localStorage.removeItem('wts_prism_sample_suppress')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         } else {
             if (localStorage.getItem('wts_prism_sample_suppress')) return false;       // user cleared
             const cur = window.PRiSM_dataset;
@@ -13785,7 +13868,7 @@ function PRiSM_renderTabData(host) {
         $('prism_data_stats').innerHTML   = '<div style="color:var(--text3); font-size:12px;">No data parsed yet.</div>';
         $('prism_data_msg').textContent   = '';
         window.PRiSM_dataset = null;
-        try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_sample_suppress', '1', { raw: true }) : localStorage.setItem('wts_prism_sample_suppress', '1')); } catch (e) {}   /* ls-raw: fallback */
         saveInputs('prism', PERSIST_IDS);
         PRiSM_emit('prism:dataset-cleared', { source: 'clear' });
     };
@@ -13983,7 +14066,7 @@ function PRiSM_renderMultiRateRows() {
 }
 
 function PRiSM_persistMultiRate() {
-    try { localStorage.setItem('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || [])); }
+    try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || []), { raw: true }) : localStorage.setItem('wts_prism_mrate', JSON.stringify((window.PRiSM && window.PRiSM.multiRate) || []))); }   /* ls-raw: fallback */
     catch (e) { /* ignore quota errors */ }
 }
 
@@ -18158,10 +18241,10 @@ if (typeof renderPRiSM === "function" && !renderPRiSM.__h2oilMigrated) {
                         pta: pta ? JSON.parse(pta) : null,
                         migratedAt: new Date().toISOString()
                     };
-                    localStorage.setItem("wts_prism", JSON.stringify(existing));
+                    __lsSetRaw("wts_prism", JSON.stringify(existing));
                     console.log("[PRiSM] Migrated legacy DCA/PTA inputs into wts_prism._legacy");
                 }
-                localStorage.setItem("wts_prism_migrated", "1");
+                __lsSetRaw("wts_prism_migrated", "1");
             }
         } catch (e) { console.warn("[PRiSM] migration failed:", e); }
         return __origRenderPRiSM(body);
@@ -20488,7 +20571,7 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     _wireResetView('prism_params_reset_view', 'prism_params_canvas');
 }
 function _persistPresets() {
-    try { if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || [])); }
+    try { if (typeof localStorage !== 'undefined' && localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_presets', JSON.stringify(_st().presets || []), { raw: true }) : localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || []))); }   /* ls-raw: fallback */
     catch (e) { /* quota — ignore */ }
 }
 function _drawParamPreview(units) {
@@ -25412,35 +25495,94 @@ var REGISTRY_ADDITIONS = {
 
 
     // =======================================================================
-    // SECTION 2 — XLSX LOADER (lazy via CDN)
+    // SECTION 2 — XLSX LOADER (lazy via CDN, hash-pinned)
     // =======================================================================
-    // Loads SheetJS once on first XLSX upload; caches on window.XLSX. If the
-    // load fails (offline iOS), shows a friendly notice and asks for CSV.
+    // Loads SheetJS once on first XLSX upload; caches on window.XLSX. The file is fetched (CORS, no credentials), its
+    // SHA-384 checked against the pinned hash and only then run from a blob: URL — the pattern of the historian (47)
+    // and 3D (32) loaders (docs/ACCOUNTS-PLAN.md H16). Bytes that do not match are never run. Like the historian's
+    // libSources (47), a local copy comes first: in the iOS app the copy bundled in ios-app/ios-additions/libs
+    // (capacitor://localhost/xlsx.full.min.js, copied by sync-from-main.js), or window.WTS_XLSX_LIB_BASE + the file
+    // name for a self-hosted copy. The local copy is checked too when WebCrypto is there; without WebCrypto only the
+    // local copy is accepted (unverified, as the historian and 3D loaders do), never a remote one. If every source
+    // fails (no local copy, offline, a mismatch), the caller shows a friendly notice and asks for CSV.
     // =======================================================================
 
+    // xlsx@0.18.5 dist/xlsx.full.min.js — 881,727 bytes, identical on both pinned mirrors and in the published package
+    // (checked 2026-11-08); the same file is bundled for the iOS app.
+    var XLSX_FILE = 'xlsx.full.min.js';
+    var XLSX_URLS = ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+                     'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'];
+    var XLSX_SHA384 = 'vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw';
+    function _b64(ab) {
+        var b = new Uint8Array(ab), s = '', CH = 0x8000;
+        for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
+        return W.btoa(s);
+    }
+    function _isNativeShell() {
+        try {
+            if (W.location && W.location.protocol === 'capacitor:') return true;
+            var C = W.Capacitor;
+            return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+        } catch (e) { return false; }
+    }
+    function _absUrl(u) { try { return new W.URL(u, W.location && W.location.href).href; } catch (e) { return u; } }
+    // Sources in order: the local copy (native shell, or WTS_XLSX_LIB_BASE), then the pinned remote URLs.
+    function _xlsxSources() {
+        var src = [], base = W.WTS_XLSX_LIB_BASE != null ? String(W.WTS_XLSX_LIB_BASE) : (_isNativeShell() ? '' : null);
+        if (base !== null) src.push({ url: _absUrl(base + XLSX_FILE), local: true });
+        XLSX_URLS.forEach(function (u) { src.push({ url: u, local: false }); });
+        return src;
+    }
+    // → Promise<ArrayBuffer> of the first source whose bytes match the pinned SHA-384 (a local copy without WebCrypto:
+    // accepted unverified; a remote one without WebCrypto: skipped)
+    function _xlsxFetchVerified() {
+        var subtle = (W.crypto && W.crypto.subtle && typeof W.crypto.subtle.digest === 'function') ? W.crypto.subtle : null;
+        if (typeof W.fetch !== 'function') return Promise.reject(new Error('fetch is not available'));
+        var srcs = _xlsxSources(), tried = [], i = 0;
+        function next() {
+            if (i >= srcs.length) return Promise.reject(new Error('SheetJS could not be loaded — ' + tried.join('; ')));
+            var s = srcs[i++], url = s.url;
+            if (!s.local && !subtle) { tried.push(url + ' (skipped: no WebCrypto to check its SHA-384)'); return next(); }
+            var init = s.local ? { credentials: 'same-origin' } : { mode: 'cors', credentials: 'omit' };
+            return Promise.resolve(W.fetch(url, init))
+                .then(function (r) { if (!r || !r.ok) throw new Error('HTTP ' + (r ? r.status : '?')); return r.arrayBuffer(); })
+                .then(function (buf) {
+                    if (!subtle) return buf;   // local copy only (checked above)
+                    return subtle.digest('SHA-384', buf).then(function (d) {
+                        if (_b64(d) !== XLSX_SHA384) { tried.push(url + ' (SHA-384 mismatch — not used)'); return next(); }
+                        return buf;
+                    });
+                }, function (e) { tried.push(url + ' (' + ((e && e.message) || e) + ')'); return next(); });
+        }
+        return next();
+    }
     var _xlsxLoadPromise = null;
     function PRiSM_loadXLSX() {
         if (!_hasWin || !_hasDoc) return Promise.reject(new Error('No window'));
         if (window.XLSX) return Promise.resolve(window.XLSX);
         if (_xlsxLoadPromise) return _xlsxLoadPromise;
-        _xlsxLoadPromise = new Promise(function (resolve, reject) {
-            try {
+        _xlsxLoadPromise = _xlsxFetchVerified().then(function (buf) {
+            return new Promise(function (resolve, reject) {
+                if (!W.Blob || !W.URL || typeof W.URL.createObjectURL !== 'function') { reject(new Error('Blob URLs are not available')); return; }
+                var url = W.URL.createObjectURL(new W.Blob([buf], { type: 'text/javascript' }));
+                var done = function () { try { W.URL.revokeObjectURL(url); } catch (e) { /* ignore */ } };
                 var s = document.createElement('script');
-                s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+                s.src = url;   // blob: URL of the verified bytes (pinned loader)
                 s.async = true;
                 s.onload = function () {
+                    done();
                     if (window.XLSX) resolve(window.XLSX);
                     else reject(new Error('XLSX failed to register on window'));
                 };
-                s.onerror = function () { _xlsxLoadPromise = null; reject(new Error('Network blocked SheetJS')); };
+                s.onerror = function () { done(); reject(new Error('SheetJS could not run')); };
                 document.head.appendChild(s);
-            } catch (e) {
-                _xlsxLoadPromise = null;
-                reject(e);
-            }
+            });
         });
+        _xlsxLoadPromise.then(null, function () { _xlsxLoadPromise = null; });
         return _xlsxLoadPromise;
     }
+    PRiSM_loadXLSX.PINNED = { urls: XLSX_URLS.slice(), sha384: XLSX_SHA384, bytes: 881727, version: '0.18.5', file: XLSX_FILE };
+    PRiSM_loadXLSX.sources = function () { return _xlsxSources().map(function (x) { return { url: x.url, local: x.local }; }); };
 
     // Parse a workbook ArrayBuffer with SheetJS. Returns
     // { sheets: [{name, rows, headers, dateCols}], defaultIdx }.
@@ -25900,9 +26042,10 @@ var REGISTRY_ADDITIONS = {
         var ls = _ls();
         if (!ls || !st.hash) return;
         try {
-            ls.setItem('wts_prism_mapping_' + st.hash, JSON.stringify({
+            var mapTxt = JSON.stringify({
                 v: 2, mapping: st.mapping, units: st.units, ratePhase: st.ratePhase, cleanup: st.cleanup
-            }));
+            });
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mapping_' + st.hash, mapTxt, { raw: true }) : ls.setItem('wts_prism_mapping_' + st.hash, mapTxt));   /* ls-raw: fallback */
         } catch (e) { /* ignore */ }
     }
 
@@ -25911,7 +26054,7 @@ var REGISTRY_ADDITIONS = {
         var st = _getState();
         st.nameFor = { hash: _fnv(String(text || '')), name: name };
         var ls = _ls();
-        if (ls) { try { ls.setItem('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash })); } catch (e) { /* ignore */ } }
+        if (ls) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash }), { raw: true }) : ls.setItem('wts_prism_units', JSON.stringify({ v: 2, name: name, hash: st.nameFor.hash }))); } catch (e) { /* ignore */ } }   /* ls-raw: fallback */
     }
     function _nameForText(text) {
         var st = _getState();
@@ -25937,7 +26080,7 @@ var REGISTRY_ADDITIONS = {
             if (raw) { try { o = JSON.parse(raw); } catch (e) { o = {}; } }
             if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
             o.prism_data_paste = String(text == null ? '' : text);
-            ls.setItem('wts_prism', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(o), { raw: true }) : ls.setItem('wts_prism', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) { /* ignore */ }
     }
 
@@ -26236,7 +26379,7 @@ var REGISTRY_ADDITIONS = {
         if (typeof W.PRiSM_loadDemoData === 'function') {
             ds = W.PRiSM_loadDemoData();
         } else if (typeof W.PRiSM_DEFAULT_SAMPLE_CSV === 'string') {
-            try { var ls = _ls(); if (ls) ls.removeItem('wts_prism_sample_suppress'); } catch (e) { /* ignore */ }
+            try { var ls = _ls(); if (ls) (typeof WTS_lsRemove === 'function' ? WTS_lsRemove('wts_prism_sample_suppress') : ls.removeItem('wts_prism_sample_suppress')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
             var ta = _byId('prism_data_paste');
             if (ta) ta.value = W.PRiSM_DEFAULT_SAMPLE_CSV;
             _persistText(W.PRiSM_DEFAULT_SAMPLE_CSV);
@@ -26269,7 +26412,7 @@ var REGISTRY_ADDITIONS = {
         });
         W.PRiSM_dataset = null;
         _resetState();
-        try { var ls = _ls(); if (ls) ls.setItem('wts_prism_sample_suppress', '1'); } catch (e) { /* ignore */ }
+        try { var ls = _ls(); if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_sample_suppress', '1', { raw: true }) : ls.setItem('wts_prism_sample_suppress', '1')); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         if (ta) _save('prism', ['prism_data_paste']);
         else _persistText('');
         _renderRateOnlyBanner(null);
@@ -30195,7 +30338,7 @@ function _safeStorageGet(key) {
 function _safeStorageSet(key, val) {
     try {
         if (typeof localStorage === 'undefined') return false;
-        localStorage.setItem(key, val);
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, val, { raw: true }) : localStorage.setItem(key, val));   /* ls-raw: fallback */
         return true;
     } catch (e) { return false; }
 }
@@ -35230,12 +35373,12 @@ if (typeof G.PRiSM_setModel !== 'function') {
         // A window covering the whole record is no crop.
         if (cropState.i_start <= 0 && cropState.i_end >= n) { _clearPersistedCrop(); return; }
         try {
-            ls.setItem(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end }));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end }), { raw: true }) : ls.setItem(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end })));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
     function _clearPersistedCrop() {
         var ls = _ls();
-        if (ls) { try { ls.removeItem(CROP_KEY); } catch (e) { /* ignore */ } }
+        if (ls) { try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(CROP_KEY) : ls.removeItem(CROP_KEY)); } catch (e) { /* ignore */ } }   /* ls-raw: fallback */
     }
     function _readPersistedCrop() {
         var ls = _ls();
@@ -39449,7 +39592,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
                 if (k === '_computed') continue;
                 if (Object.prototype.hasOwnProperty.call(s, k)) clone[k] = s[k];
             }
-            ls.setItem(LS_KEY, JSON.stringify(clone));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_KEY, JSON.stringify(clone), { raw: true }) : ls.setItem(LS_KEY, JSON.stringify(clone)));   /* ls-raw: fallback */
         } catch (e) { /* quota / privacy mode */ }
     }
 
@@ -44717,8 +44860,8 @@ function _hasLS() {
     try {
         if (typeof localStorage === 'undefined' || localStorage === null) return false;
         var k = '__prism_ls_probe__';
-        localStorage.setItem(k, '1');
-        localStorage.removeItem(k);
+        localStorage.setItem(k, '1');   /* ls-raw: availability probe (not a wts_ key) */
+        localStorage.removeItem(k);   /* ls-raw: availability probe */
         return true;
     } catch (e) { return false; }
 }
@@ -44899,7 +45042,7 @@ function _lsIndex() {
     } catch (e) { return []; }
 }
 function _lsSetIndex(idx) {
-    try { localStorage.setItem(LS_INDEX_KEY, JSON.stringify(idx)); }
+    try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_INDEX_KEY, JSON.stringify(idx), { raw: true }) : localStorage.setItem(LS_INDEX_KEY, JSON.stringify(idx))); }   /* ls-raw: fallback */
     catch (e) { /* ignore */ }
 }
 
@@ -44950,7 +45093,8 @@ function _deserialiseRec(o) {
 
 function _lsPut(rec) {
     try {
-        localStorage.setItem(LS_PREFIX + rec.id, JSON.stringify(_serialiseRec(rec)));
+        var recTxt = JSON.stringify(_serialiseRec(rec));
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet(LS_PREFIX + rec.id, recTxt, { raw: true }) : localStorage.setItem(LS_PREFIX + rec.id, recTxt));   /* ls-raw: fallback */
         var idx = _lsIndex();
         var found = false;
         for (var i = 0; i < idx.length; i++) {
@@ -44976,7 +45120,7 @@ function _lsGet(id) {
 }
 function _lsDelete(id) {
     try {
-        localStorage.removeItem(LS_PREFIX + id);
+        (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(LS_PREFIX + id) : localStorage.removeItem(LS_PREFIX + id));   /* ls-raw: fallback */
         var idx = _lsIndex().filter(function (e) { return e.id !== id; });
         _lsSetIndex(idx);
         if (_memStore) _memStore.delete(id);
@@ -45025,7 +45169,7 @@ function _putMeta(meta) {
         return _idbPut({ id: META_KEY, kind: 'meta', createdAt: _now(), metadata: meta, data: null });
     }
     if (_backend === 'localStorage') {
-        try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* ignore */ }
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(META_KEY, JSON.stringify(meta), { raw: true }) : localStorage.setItem(META_KEY, JSON.stringify(meta))); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
         return _resolved();
     }
     if (!_memStore) _memStore = new Map();
@@ -46069,17 +46213,19 @@ function _registerProjectModule() {
             }
             return { activeAnalysisId: _activeAnalysisId, gaugeData: g.map(_recToFile), analysisData: a.map(_recToFile) };
         },
+        // write() returns its Promise (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3). A load that keeps
+        // this module local (opts.keep) never calls it, so the records on this device stay as they are.
         write: function (state) {
             if (!_Promise) return;
             if (state === null) {                                     // New
-                _ensureInit().then(function () { return _wipeAll(); }).then(function () {
+                return _ensureInit().then(function () { return _wipeAll(); }).then(function () {
                     _activeAnalysisId = null;
                     _refreshMounted();
                 }).catch(function () { /* ignore */ });
                 return;
             }
             if (!state || typeof state !== 'object' || state.truncated) return;
-            _restoreRecords(state).then(function () {
+            return _restoreRecords(state).then(function () {
                 _activeAnalysisId = state.activeAnalysisId || null;
                 _refreshMounted();
             }).catch(function () { /* ignore */ });
@@ -51446,7 +51592,7 @@ _registerPanel(6, {
     function _writePersisted(system) {
         try {
             if (typeof localStorage !== 'undefined' && localStorage.setItem) {
-                localStorage.setItem(STORAGE_KEY, system);
+                (typeof WTS_lsSet === 'function' ? WTS_lsSet(STORAGE_KEY, system, { raw: true }) : localStorage.setItem(STORAGE_KEY, system));   /* ls-raw: fallback */
             }
         } catch (e) {}
     }
@@ -52104,7 +52250,7 @@ _registerPanel(6, {
                 data[ids[m]] = String(Number(c.toPrecision(12)));
                 changed = true;
             }
-            if (changed) { try { ls.setItem(keys[j], JSON.stringify(data)); } catch (e) {} }
+            if (changed) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(keys[j], JSON.stringify(data), { raw: true }) : ls.setItem(keys[j], JSON.stringify(data))); } catch (e) {} }   /* ls-raw: fallback */
         }
     }
 
@@ -52332,7 +52478,7 @@ _registerPanel(6, {
     function _lsSet(k, v) {
         try {
             if (typeof localStorage === 'undefined') return;
-            if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+            if (v == null) (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(k) : localStorage.removeItem(k)); else (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : localStorage.setItem(k, v));   /* ls-raw: fallback */
         } catch (e) {}
     }
     function _baseKey() {
@@ -52498,6 +52644,14 @@ _registerPanel(6, {
     if (_hasDoc && typeof document.addEventListener === 'function') {
         try {
             document.addEventListener('wts:project-loaded', function () {
+                var cur = _baseKey();
+                if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
+                _baseLast = cur;
+            });
+            // A key-level apply (WTS_project.applyChanges, docs/ACCOUNTS-PLAN.md H4) that changed the basis does the same.
+            document.addEventListener('wts:project-changed', function (e) {
+                var keys = (e && e.detail && Array.isArray(e.detail.keys)) ? e.detail.keys : [];
+                if (keys.indexOf(BASE_KEY) === -1) return;
                 var cur = _baseKey();
                 if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
                 _baseLast = cur;
@@ -56593,7 +56747,7 @@ _registerPanel(6, {
             var el = _$(ids[i]);
             if (el) vals[ids[i]] = el.value;
         }
-        try { localStorage.setItem(PL_LS_KEY, JSON.stringify(vals)); } catch (e) {}
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(PL_LS_KEY, JSON.stringify(vals), { raw: true }) : localStorage.setItem(PL_LS_KEY, JSON.stringify(vals))); } catch (e) {}   /* ls-raw: fallback */
         if (!G.WTS_state || typeof G.WTS_state !== 'object') G.WTS_state = {};
         G.WTS_state.pipelife = { values: vals };
     }
@@ -58164,7 +58318,17 @@ _registerPanel(6, {
 //       open(fileInput?)        → showOpenFilePicker where available, else
 //                                 clicks the given <input type=file>
 //       load(file: File)        → Promise<{ loaded: [...], skipped: [...] }>
-//       loadFromObject(obj)     → synchronous; same shape as load result
+//       loadFromObject(obj, opts?) → synchronous; same shape as load result plus `ready`
+//                                 (a Promise for every module write, IndexedDB included).
+//                                 opts.source → the 'wts:project-loaded' detail; opts.keep:[module
+//                                 names] leaves those local modules untouched (docs/ACCOUNTS-PLAN.md H3)
+//       applyChanges(diff, {source}) → key-level apply without a project load (H4):
+//                                 fires 'wts:project-changed' {source, keys}, never 'wts:project-loaded'
+//       registerGuard(fn)       → New / Open / Open-from-file await fn({action}) → 'proceed'|'cancel'
+//                                 or {decision, after(result)} (after runs only when that action
+//                                 succeeded) before changing anything (H14); none registered = today's flow
+//       registerToolbarItems([{id, label, run, when?, title?}]) → extra File-toolbar buttons after
+//                                 Save As (H5); refreshToolbarItems() re-evaluates `when`
 //       new()                   → wipe project state (keeps preferences)
 //       currentFile()           → { name, hasHandle } | null
 //       info()                  → { modules: [...], modifiedAt, size }
@@ -58184,7 +58348,9 @@ _registerPanel(6, {
 //   'wts:autosaved' event            — drives the "● Autosaved hh:mm" status
 //
 // EVENTS (document)
-//   'wts:project-loaded' {loaded, skipped} — after Open replaced storage
+//   'wts:project-loaded' {loaded, skipped, source?, keep?, pending} — after Open replaced storage
+//                        (listeners may push a Promise into `pending`; loadFromObject's `ready` waits for it)
+//   'wts:project-changed' {source, keys} — after applyChanges wrote / removed keys
 //   'wts:project-new'    {cleared}         — after New cleared storage
 //   'wts:projectfile'    {name, hasHandle} — current file name changed
 //   Layers that cache localStorage in memory should re-read on these.
@@ -58279,7 +58445,8 @@ _registerPanel(6, {
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
     // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
+    // wts_acct_* / wts_sync_*: web account and cloud-sync device state (docs/ACCOUNTS-PLAN.md H6).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_|^wts_acct_|^wts_sync_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
@@ -58334,14 +58501,14 @@ _registerPanel(6, {
         for (var i = 0; i < keys.length; i++) {
             var k = keys[i];
             if (!_isProjectKey(k) || _isLibraryKey(k) || _isWellsKey(k)) continue;
-            try { ls.removeItem(k); removed.push(k); } catch (e) {}
+            try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(k) : ls.removeItem(k)); removed.push(k); } catch (e) {}   /* ls-raw: fallback */
         }
         var keep = {}, any = false;
         for (var j = 0; j < PREPARER_FIELDS.length; j++) {
             var f = PREPARER_FIELDS[j];
             if (ci[f]) { keep[f] = ci[f]; any = true; }
         }
-        if (any) { try { ls.setItem('h2oil_client_info', JSON.stringify(keep)); } catch (e) {} }
+        if (any) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('h2oil_client_info', JSON.stringify(keep), { raw: true }) : ls.setItem('h2oil_client_info', JSON.stringify(keep))); } catch (e) {} }   /* ls-raw: fallback */
         return removed;
     }
 
@@ -58653,7 +58820,7 @@ _registerPanel(6, {
             try {
                 var copy = {};
                 for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
-                ls.setItem('wts_prism_pvt', JSON.stringify(copy));
+                (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy)));   /* ls-raw: fallback */
             } catch (e) {}
         }
         _emitWin('prism:well-changed', { source: source });
@@ -58857,14 +59024,14 @@ _registerPanel(6, {
                 if (!ls) return;
                 if (state === null) { _clearProjectKeys(); return; }        // New
                 if (!state || typeof state !== 'object' || !state.keys ||
-                    typeof state.keys !== 'object') return;
+                    typeof state.keys !== 'object' || Array.isArray(state.keys)) return;   // shape check (§8.7)
                 _clearProjectKeys();
                 var keys = state.keys;
                 for (var k in keys) {
                     if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
                     if (!_isProjectKey(k) || _isWellsKey(k) || typeof keys[k] !== 'string') continue;
                     if (_isLibraryKey(k) && ls.getItem(k) != null) continue;  // keep local library
-                    try { ls.setItem(k, keys[k]); }
+                    try { ls.setItem(k, keys[k]); }   /* ls-raw: storage.write (load path; wts:project-loaded follows) */
                     catch (e) { _warn('[WTS_project] storage: could not write ' + k, e); }
                 }
             }
@@ -58916,9 +59083,13 @@ _registerPanel(6, {
         return payload;
     }
 
-    function _applyPayload(payload) {
+    function _isThenable(v) { return !!v && (typeof v === 'object' || typeof v === 'function') && typeof v.then === 'function'; }
+    function _applyPayload(payload, opts) {
         var loaded = [];
         var skipped = [];
+        var kept = [], waits = [];
+        var keep = (opts && Array.isArray(opts.keep)) ? opts.keep.map(String) : [];
+        var isKept = function (k) { return keep.indexOf(k) !== -1; };
         if (!payload || typeof payload !== 'object') {
             return { loaded: loaded, skipped: skipped, error: 'empty payload' };
         }
@@ -58930,10 +59101,10 @@ _registerPanel(6, {
         var mods = payload.modules || {};
         // A project with PRiSM state but no dataset must not inherit the
         // dataset that is open now (it is re-read from the restored inputs).
-        if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        if (_own(mods, 'prism') && mods.prism != null && !isKept('prism') && !_own(mods, 'prism_dataset') && !isKept('prism_dataset')) G.PRiSM_dataset = null;
         // A project saved before multi-well projects (or with a single well)
         // replaces the well list too: it opens as one well.
-        if (_own(mods, 'storage') && !_own(mods, 'wells') && MODULES.wells) {
+        if (_own(mods, 'storage') && mods.storage != null && !isKept('storage') && !_own(mods, 'wells') && !isKept('wells') && MODULES.wells) {
             try { MODULES.wells.write(null); } catch (e) { _warn('[WTS_project] wells reset failed', e); }
         }
         // Apply in registry order (inputs → dataset → analysis → storage), not
@@ -58943,15 +59114,22 @@ _registerPanel(6, {
         for (var i = 0; i < order.length; i++) {
             var key = order[i];
             if (!_own(mods, key)) continue;
+            if (isKept(key)) { kept.push(key); continue; }   // H3: the local module stays as it is
+            // null is New's "clear" value and never written to a file (read() null → omitted): a loaded null is refused,
+            // so a damaged or hostile file cannot wipe a module (docs/ACCOUNTS-PLAN.md §8.7 shape checks).
+            if (mods[key] == null) { skipped.push(key); continue; }
             try {
-                MODULES[key].write(mods[key]);
+                var w = MODULES[key].write(mods[key]);
+                if (_isThenable(w)) waits.push(w);
                 loaded.push(key);
             } catch (e) {
                 _warn('module write failed for ' + key, e);
                 skipped.push(key);
             }
         }
-        return { loaded: loaded, skipped: skipped, error: null };
+        var out = { loaded: loaded, skipped: skipped, error: null, _waits: waits };
+        if (keep.length) out.kept = kept;
+        return out;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -59161,7 +59339,8 @@ _registerPanel(6, {
             var h = handles && handles[0];
             if (!h) return { cancelled: true };
             return h.getFile().then(function (file) {
-                return load(file).then(function (r) {
+                return G.Promise.resolve(_guarded('open', function () { return _named(load(file), file.name); })).then(function (r) {
+                    if (r && r.cancelled) return r;
                     if (r && !r.error) _setCurrent(h, file.name);
                     if (r) r.filename = file.name;
                     return r;
@@ -59231,16 +59410,142 @@ _registerPanel(6, {
         } catch (e) {}
     }
 
-    function loadFromObject(obj) {
-        var res = _applyPayload(obj);
+    // loadFromObject(obj, opts?) — opts {source, keep:[module]} (H3). The result carries `ready`: a Promise that settles
+    // when every module write (the gauge and build-up IndexedDB writes) and every 'wts:project-loaded' listener's pending
+    // work (the build-up prune) has finished. Without opts the behaviour and the event detail are exactly as before
+    // (the detail gains only the `pending` list).
+    // keep rule: `keep` leaves a MODULE as it is, not the localStorage keys behind it. The storage module owns every
+    // wts_* project key, PRiSM's own included (wts_prism_state, wts_prism_pvt, wts_prism_*), so keeping prism, pvt or
+    // prism_dataset leaves PRiSM untouched only when 'storage' is kept too, and with it every PRiSM module (a loaded
+    // prism / pvt / prism_dataset / storage re-saves the PRiSM state through _prismSync):
+    // {keep:['prism','pvt','prism_dataset','storage']}. With storage loaded, storage.write replaces those keys from the
+    // file (acct-host HO34 codes against this rule).
+    function loadFromObject(obj, opts) {
+        opts = (opts && typeof opts === 'object') ? opts : {};
+        var res = _applyPayload(obj, opts);
+        var waits = (res && res._waits) || [];
+        if (res) delete res._waits;
         if (res && !res.error && res.loaded.length) {
             var touched = ['prism', 'prism_dataset', 'pvt', 'storage'].some(function (m) { return res.loaded.indexOf(m) !== -1; });
             if (touched) _prismSync('project-load');
-            _emit('wts:project-loaded', { loaded: res.loaded.slice(), skipped: res.skipped.slice() });
+            var detail = { loaded: res.loaded.slice(), skipped: res.skipped.slice() };
+            if (opts.source != null) detail.source = String(opts.source);
+            if (res.kept && res.kept.length) detail.keep = res.kept.slice();
+            if (Array.isArray(opts.keep) && opts.keep.length) detail.keep = opts.keep.map(String);
+            detail.pending = [];
+            _emit('wts:project-loaded', detail);
+            detail.pending.forEach(function (p) { if (_isThenable(p)) waits.push(p); });
             _rerender();
+        }
+        if (res && typeof G.Promise === 'function') {
+            var all = waits.map(function (p) { return G.Promise.resolve(p).then(null, function (e) { _warn('[WTS_project] module write failed', e); }); });
+            res.ready = G.Promise.all(all).then(function () { return true; });
         }
         return res;
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // applyChanges (H4) — write / remove project keys and selected modules without a project load: no key is cleared
+    // first, no 'wts:project-loaded' (whose listeners prune the build-up store and reset the simulator), the open page
+    // re-renders keeping its pending edits. Library keys and device preferences are refused.
+    //   diff = {set:{key:raw}, remove:[keys], modules:{prism?, prism_dataset?, pvt?}}  → {applied:[keys|modules], skipped}
+    // ───────────────────────────────────────────────────────────────
+    var APPLY_MODULES = { pvt: 1, prism_dataset: 1, prism: 1 };
+    // Keys holding one page's inputs: the universal autosave record plus the legacy per-calculator lists of that page
+    // (shared with 29-multiwell.js copyPage through _internals.pageKeyMatch).
+    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
+    function _pageKeyMatch(route, k) {
+        route = String(route || ''); k = String(k);
+        if (!route) return false;
+        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
+        var extra = _own(LEGACY_PREFIX, route) ? LEGACY_PREFIX[route] : [];
+        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
+        return false;
+    }
+    function _isPlainObj(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+    function applyChanges(diff, opts) {
+        opts = (opts && typeof opts === 'object') ? opts : {};
+        var applied = [], skipped = [], keys = [];
+        diff = (diff && typeof diff === 'object') ? diff : {};
+        var set = (diff.set && typeof diff.set === 'object') ? diff.set : {};
+        var rem = Array.isArray(diff.remove) ? diff.remove : [];
+        var mods = (diff.modules && typeof diff.modules === 'object') ? diff.modules : {};
+        var ok = function (k) { return typeof k === 'string' && _isProjectKey(k) && !_isLibraryKey(k) && !_isWellsKey(k); };
+        // The pending autosave of the open page is dropped only when one of that page's own keys changes (its
+        // wts_page_<route> record or one of its legacy per-calculator lists), so a debounced write cannot overwrite them.
+        var curPage = null;
+        try { curPage = (G.WTS_pageAutosave && typeof G.WTS_pageAutosave.page === 'function') ? G.WTS_pageAutosave.page() : null; } catch (e) { curPage = null; }
+        var touchesPage = !!curPage && Object.keys(set).concat(rem).some(function (k) { return ok(k) && _pageKeyMatch(curPage, k); });
+        if (touchesPage) { try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {} }
+        var ls = _ls();
+        Object.keys(set).forEach(function (k) {
+            if (!ok(k) || typeof set[k] !== 'string' || !ls) { skipped.push(k); return; }
+            var w = (typeof G.WTS_lsSet === 'function') ? G.WTS_lsSet(k, set[k]) !== false : (function () { try { ls.setItem(k, set[k]); return true; } catch (e) { return false; } })();   /* ls-raw: fallback */
+            if (w) { applied.push(k); keys.push(k); } else skipped.push(k);
+        });
+        rem.forEach(function (k) {
+            if (!ok(k) || !ls) { skipped.push(String(k)); return; }
+            if (typeof G.WTS_lsRemove === 'function') G.WTS_lsRemove(k); else { try { ls.removeItem(k); } catch (e) {} }   /* ls-raw: fallback */
+            applied.push(k); keys.push(k);
+        });
+        var prismTouched = false;
+        listModules().forEach(function (m) {
+            if (!_own(mods, m)) return;
+            if (!APPLY_MODULES[m]) { skipped.push(m); return; }
+            // As in _applyPayload: null is New's "clear" value and a module state is a plain object, so a damaged or
+            // hostile diff cannot wipe or corrupt a module (docs/ACCOUNTS-PLAN.md §8.7 shape checks).
+            if (!_isPlainObj(mods[m])) { skipped.push(m); return; }
+            try { MODULES[m].write(mods[m]); applied.push(m); prismTouched = true; }
+            catch (e) { _warn('[WTS_project] applyChanges: module write failed for ' + m, e); skipped.push(m); }
+        });
+        Object.keys(mods).forEach(function (m) { if (!MODULES[m] && skipped.indexOf(m) === -1) skipped.push(m); });
+        if (prismTouched || keys.some(function (k) { return /^wts_prism/.test(k); })) _prismSync(opts.source != null ? String(opts.source) : 'project-change');
+        if (applied.length) {
+            _emit('wts:project-changed', { source: opts.source != null ? String(opts.source) : null, keys: keys.slice(), modules: applied.filter(function (k) { return !!APPLY_MODULES[k]; }) });
+            try { if (typeof G.WTS_rerender === 'function') G.WTS_rerender({ discardPending: false }); } catch (e) { _warn('[WTS_project] re-render failed', e); }
+        }
+        return { applied: applied, skipped: skipped };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Guards (H14): New, Open and Open-from-file ask every registered guard first. A guard returns (a Promise of)
+    // 'proceed' or 'cancel' and may push or snapshot before answering. With no guard the action runs synchronously,
+    // exactly as before.
+    // ───────────────────────────────────────────────────────────────
+    var _guards = [];
+    function registerGuard(fn) {
+        if (typeof fn !== 'function') return function () {};
+        if (_guards.indexOf(fn) === -1) _guards.push(fn);
+        return function unregister() { _guards = _guards.filter(function (g) { return g !== fn; }); };
+    }
+    // _guarded(action, run) → run() directly when no guard; else a Promise of run()'s result or {cancelled:true, guard:true}.
+    // A guard may also answer {decision:'proceed'|'cancel', after(result)}: `after` runs once with the action's own result,
+    // and only when the action succeeded (not cancelled, no error, a load that loaded something) — never on a later,
+    // unrelated action (accounts review fix: no follow-up armed on a free-floating event).
+    function _succeeded(res) {
+        return !!res && !res.cancelled && !res.error && !(Array.isArray(res.loaded) && !res.loaded.length);
+    }
+    function _guarded(action, run) {
+        if (!_guards.length) return run();
+        var list = _guards.slice(), i = 0, afters = [];
+        function next() {
+            if (i >= list.length) return G.Promise.resolve(run()).then(function (res) {
+                if (_succeeded(res)) afters.forEach(function (fn) { try { fn(res); } catch (e) { _warn('[WTS_project] guard follow-up failed', e); } });
+                return res;
+            });
+            var g = list[i++], r;
+            try { r = g({ action: action }); } catch (e) { r = G.Promise.reject(e); }
+            return G.Promise.resolve(r).then(function (v) {
+                if (v === 'cancel' || (v && v.decision === 'cancel')) return { cancelled: true, guard: true };
+                if (v && typeof v.after === 'function') afters.push(v.after);
+                return next();
+            }, function (e) { _warn('[WTS_project] guard failed — ' + action + ' cancelled', e); return { cancelled: true, guard: true, error: (e && e.message) || String(e) }; });
+        }
+        return next();
+    }
+    function _hasGuards() { return _guards.length > 0; }
+    // the file name travels on the load result, so a guard's follow-up sees it
+    function _named(p, name) { return G.Promise.resolve(p).then(function (r) { if (r && typeof r === 'object' && !r.filename) r.filename = name; return r; }); }
 
     // ───────────────────────────────────────────────────────────────
     // New — clear every registered module's state + project keys in
@@ -59302,6 +59607,67 @@ _registerPanel(6, {
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // Extra toolbar items (H5): rendered after Save As in every mounted toolbar. Labels are text (escaped); `when()`
+    // false hides an item; refreshToolbarItems() re-evaluates. No items registered = the toolbar is exactly as before.
+    // ───────────────────────────────────────────────────────────────
+    var _toolbarItems = [], _toolbars = [];
+    var ITEM_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+    function registerToolbarItems(items) {
+        var n = 0;
+        (Array.isArray(items) ? items : [items]).forEach(function (it) {
+            if (!it || typeof it !== 'object' || !ITEM_ID_RE.test(String(it.id || '')) || typeof it.run !== 'function') return;
+            _toolbarItems = _toolbarItems.filter(function (x) { return x.id !== it.id; });
+            _toolbarItems.push({ id: String(it.id), label: String(it.label == null ? it.id : it.label), title: it.title == null ? '' : String(it.title),
+                                 run: it.run, when: typeof it.when === 'function' ? it.when : null });
+            n++;
+        });
+        refreshToolbarItems();
+        return n;
+    }
+    function unregisterToolbarItem(id) {
+        var before = _toolbarItems.length;
+        _toolbarItems = _toolbarItems.filter(function (x) { return x.id !== String(id); });
+        refreshToolbarItems();
+        return _toolbarItems.length !== before;
+    }
+    function refreshToolbarItems() {
+        _toolbars = _toolbars.filter(function (w) { return !!w && w.isConnected !== false; });
+        _toolbars.forEach(_renderToolbarItems);
+    }
+    function _renderToolbarItems(wrap) {
+        if (!wrap || !wrap.querySelector) return;
+        var box = wrap.querySelector('[data-role="items"]');
+        if (!_toolbarItems.length) { if (box && box.parentNode) box.parentNode.removeChild(box); return; }
+        if (!box) {
+            box = document.createElement('span');
+            box.setAttribute('data-role', 'items');
+            box.style.cssText = 'display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap';
+            var after = wrap.querySelector('[data-act="saveas"]');
+            if (after && after.parentNode === wrap) wrap.insertBefore(box, after.nextSibling); else wrap.appendChild(box);
+        }
+        var btnStyle =
+            'padding:4px 10px;background:var(--bg4,#21262d);border:1px solid var(--border,#30363d);' +
+            'border-radius:4px;color:var(--text,#e6edf3);font-size:12px;cursor:pointer;line-height:1.4;' +
+            'font-family:inherit';
+        box.innerHTML = '';
+        _toolbarItems.forEach(function (it) {
+            var show = true;
+            if (it.when) { try { show = it.when() !== false; } catch (e) { show = false; } }
+            if (!show) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('data-item', it.id);
+            b.style.cssText = btnStyle;
+            b.textContent = it.label;
+            if (it.title) b.title = it.title;
+            b.addEventListener('click', function (ev) {
+                try { it.run(ev, b); } catch (e) { _warn('[WTS_project] toolbar item ' + it.id + ' failed', e); }
+            });
+            box.appendChild(b);
+        });
+    }
+
     function renderProjectToolbar(container) {
         if (!_hasDoc || !container || !('innerHTML' in container)) return;
 
@@ -59342,6 +59708,8 @@ _registerPanel(6, {
             'style="display:none">';
 
         try { container.appendChild(wrap); } catch (e) { return; }
+        _toolbars.push(wrap);
+        _renderToolbarItems(wrap);
 
         var msgEl  = wrap.querySelector('[data-role="msg"]');
         var fileEl = wrap.querySelector('[data-role="file"]');
@@ -59402,8 +59770,10 @@ _registerPanel(6, {
                                'Save first if you want to keep the current project.');
             }
             if (!ok) return;
-            newProject();
-            _setStatus('New project started.', 'ok');
+            if (!_hasGuards()) { newProject(); _setStatus('New project started.', 'ok'); return; }
+            G.Promise.resolve(_guarded('new', function () { newProject(); return { done: true }; })).then(function (r) {
+                if (r && r.done) _setStatus('New project started.', 'ok');
+            });
         });
 
         if (btnOpen && picker) {
@@ -59420,7 +59790,8 @@ _registerPanel(6, {
                 var f = ev.target && ev.target.files && ev.target.files[0];
                 if (!f) return;
                 _setStatus('Opening ' + f.name + '…');
-                load(f).then(function (res) {
+                G.Promise.resolve(_guarded('open-file', function () { return _named(load(f), f.name); })).then(function (res) {
+                    if (res && res.cancelled) { _setStatus(''); picker.value = ''; return; }
                     if (res && res.error) {
                         _setStatus('Open failed: ' + res.error, 'err');
                     } else {
@@ -59461,6 +59832,13 @@ _registerPanel(6, {
         open:             open,
         load:             load,
         loadFromObject:   loadFromObject,
+        applyChanges:     applyChanges,
+        registerGuard:    registerGuard,
+        // guarded(action, run): run() now when no guard is registered, else a Promise of its result or {cancelled:true}
+        guarded:          _guarded,
+        registerToolbarItems: registerToolbarItems,
+        unregisterToolbarItem: unregisterToolbarItem,
+        refreshToolbarItems: refreshToolbarItems,
         'new':            newProject,   // reserved word — bracket-access from callers
         clearAll:         newProject,   // friendlier alias
         currentFile:      currentFile,
@@ -59476,7 +59854,8 @@ _registerPanel(6, {
             modules: function () { return MODULES; },
             applyPayload: _applyPayload,
             ls: _ls, lsKeys: _lsKeys,
-            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey,
+            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey, isPrefKey: _isPrefKey,
+            guarded: _guarded, pageKeyMatch: _pageKeyMatch,
             flushAutosave: _flushAutosave, prismSync: _prismSync, emit: _emit, rerender: _rerender,
             fileName: _fileName
         }
@@ -59616,10 +59995,22 @@ _registerPanel(6, {
     function _set(k, v) {
         if (typeof G.WTS_lsSet === 'function') return G.WTS_lsSet(k, v) !== false;
         var ls = _ls();
-        try { ls.setItem(k, v); return true; } catch (e) { return false; }
+        try { ls.setItem(k, v); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     // Plain write used mid-switch (no snapshot eviction into the half-swapped store).
-    function _rawSet(ls, k, v) { try { ls.setItem(k, v); return true; } catch (e) { return false; } }
+    // H2 (docs/ACCOUNTS-PLAN.md §5.4): WTS_lsSet(k, v, {raw:true}) is the plain write (throws like setItem, no eviction) that
+    // also fires the host's 'wts:ls-write'.
+    function _rawSet(ls, k, v) {
+        try {
+            if (typeof G.WTS_lsSet === 'function') G.WTS_lsSet(k, v, { raw: true });
+            else ls.setItem(k, v);   /* ls-raw: fallback */
+            return true;
+        } catch (e) { return false; }
+    }
+    function _del(ls, k) {
+        if (typeof G.WTS_lsRemove === 'function') return G.WTS_lsRemove(k) !== false;
+        try { ls.removeItem(k); return true; } catch (e) { return false; }   /* ls-raw: fallback */
+    }
     function _isWellKey(k) {
         var I = _I();
         if (!I) return false;
@@ -59840,14 +60231,18 @@ _registerPanel(6, {
         if (ls && pvt && typeof pvt === 'object') {
             var copy = {};
             for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
-            try { ls.setItem('wts_prism_pvt', JSON.stringify(copy)); } catch (e) {}
+            try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(copy), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(copy))); } catch (e) {}   /* ls-raw: fallback */
         }
     }
-    function _capture() {
+    function _capture(opts) {
         var I = _I(), ls = _ls();
-        I.flushAutosave();
+        var light = !!(opts && opts.light);
+        // light (captureWell): flush the page only when it has unsaved edits and leave the results cache alone, so two
+        // captures with no edit between them are equal apart from savedAt (docs/ACCOUNTS-PLAN.md H13, §6.1)
+        var PA = G.WTS_pageAutosave;
+        if (light && PA && typeof PA.flushIfDirty === 'function') { try { PA.flushIfDirty(); } catch (e) {} } else I.flushAutosave();
         _persistPrism();
-        _writeResultsCache();
+        if (!light) _writeResultsCache();
         var keys = {}, all = _keys(ls);
         for (var i = 0; i < all.length; i++) {
             if (!_isWellKey(all[i])) continue;
@@ -59864,7 +60259,7 @@ _registerPanel(6, {
         return { v: 1, savedAt: _nowISO(), keys: keys, modules: mods };
     }
     function _clearActive(ls) {
-        _keys(ls).filter(_isWellKey).forEach(function (k) { try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).filter(_isWellKey).forEach(function (k) { _del(ls, k); });
     }
     // In-memory state back to "no well loaded" (keeps the unit system).
     function _resetMemory() {
@@ -59913,6 +60308,19 @@ _registerPanel(6, {
         return cur;
     }
 
+    // captureWell(id) (H13) → the _capture() shape {v, savedAt, keys, modules} for any well: the active one from live
+    // storage and modules, a parked one from its blob (a copy); null for an unknown id. Writes nothing but the pending
+    // page edits and the PRiSM state the active capture always flushes.
+    function captureWell(id) {
+        if (!_I()) return null;
+        var reg = _readReg();
+        id = id == null ? reg.active : String(id);
+        if (id === reg.active || (!reg.wells.length && id === reg.active)) return _capture({ light: true });
+        if (!_find(reg, id)) return null;
+        var b = _blob(id);
+        return b ? JSON.parse(JSON.stringify(b)) : null;
+    }
+
     function list() {
         var reg = _readReg();
         return reg.wells.map(function (w) {
@@ -59935,7 +60343,7 @@ _registerPanel(6, {
         var cur = _park(reg);
         if (!cur) return { ok: false, error: 'quota', message: _quotaMsg() };
         _cancelAutosave();
-        try { ls.removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(ls, BLOB_PREFIX + id);
         _clearActive(ls);
         _resetMemory();
         var failed = _writeKeys(ls, target.keys);
@@ -59944,7 +60352,7 @@ _registerPanel(6, {
             _clearActive(ls);
             if (targetRaw != null) _rawSet(ls, BLOB_PREFIX + id, targetRaw);
             _writeKeys(ls, cur.keys);
-            try { ls.removeItem(BLOB_PREFIX + from); } catch (e) {}
+            _del(ls, BLOB_PREFIX + from);
             _resetMemory();
             _applyModules(cur.modules);
             _after('well-switch', from);
@@ -60036,7 +60444,7 @@ _registerPanel(6, {
             if (!sw.ok) return sw;
             reg = _readReg();
         }
-        try { _ls().removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _del(_ls(), BLOB_PREFIX + id);
         reg.wells = reg.wells.filter(function (w) { return w.id !== id; });
         _writeReg(reg);
         _emit('wts:well-changed', { id: reg.active, list: list() });
@@ -60045,16 +60453,10 @@ _registerPanel(6, {
     }
 
     // Keys holding one page's inputs: the universal autosave record plus the
-    // legacy per-calculator lists of that page.
-    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
-    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1 };
+    // legacy per-calculator lists of that page (one table, in 29-project-save.js).
+    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1, account: 1 };
     function _isPrismRoute(r) { return r === 'prism' || r === 'dca' || r === 'pta'; }
-    function _pageKeyMatch(route, k) {
-        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
-        var extra = LEGACY_PREFIX[route] || [];
-        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
-        return false;
-    }
+    function _pageKeyMatch(route, k) { var I = _I(); return !!(I && I.pageKeyMatch && I.pageKeyMatch(route, k)); }
     function copyPage(fromId, route) {
         if (!_I()) return { ok: false, error: 'unavailable' };
         var reg = _readReg(), ls = _ls();
@@ -60093,7 +60495,7 @@ _registerPanel(6, {
     // ───────────────────────────────────────────────────────────────
     var _loadWarnings = [];
     function _removeWellsKeys(ls) {
-        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) try { ls.removeItem(k); } catch (e) {} });
+        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) _del(ls, k); });
     }
     function _registerModule() {
         if (!G.WTS_project || typeof G.WTS_project.registerModule !== 'function') return;
@@ -60500,6 +60902,7 @@ _registerPanel(6, {
     G.WTS_wells = {
         list: list, active: active, switchTo: switchTo, create: create, rename: rename, remove: remove,
         copyPage: copyPage, results: results, table: table, renderPage: renderPage, renderSwitcher: renderSwitcher,
+        captureWell: captureWell,
         loadWarnings: function () { return _loadWarnings.slice(); },
         _isWellKey: _isWellKey
     };
@@ -61707,7 +62110,7 @@ _registerPanel(6, {
     function _prefGet() { try { return G.localStorage && G.localStorage.getItem(PREF_KEY) === '1'; } catch (e) { return false; } }
     function decimalComma(on) {
         if (on === undefined) return _prefGet();
-        try { if (on) G.localStorage.setItem(PREF_KEY, '1'); else G.localStorage.removeItem(PREF_KEY); } catch (e) { /* storage blocked */ }
+        try { if (on) (typeof WTS_lsSet === 'function' ? WTS_lsSet(PREF_KEY, '1', { raw: true }) : G.localStorage.setItem(PREF_KEY, '1')); else (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(PREF_KEY) : G.localStorage.removeItem(PREF_KEY)); } catch (e) { /* storage blocked */ }   /* ls-raw: fallback */
         _renderDecimalToggle();
         return !!on;
     }
@@ -77637,7 +78040,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
             var raw = ls.getItem('wts_prism'), box = raw ? JSON.parse(raw) : {};
             if (!box || typeof box !== 'object') box = {};
             box.prism_data_paste = o.pasteText;
-            ls.setItem('wts_prism', JSON.stringify(box));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism', JSON.stringify(box), { raw: true }) : ls.setItem('wts_prism', JSON.stringify(box)));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
     // 2. the multi-rate table (positive rates; C2 signs injection internally)
@@ -77645,7 +78048,7 @@ G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
         .map(function (r) { return { t: +r.t, q: Math.abs(+r.q) }; });
     if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
     G.PRiSM.multiRate = rows;
-    if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e2) { /* ignore */ } }
+    if (ls) { try { (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows))); } catch (e2) { /* ignore */ } }   /* ls-raw: fallback */
     // 3. C1 well inputs: a water injector's fall-off is fluid water / testType falloff
     var w = o.well || {};
     var inj = w.fluid === 'water_inj' || w.testType === 'falloff';
@@ -77722,7 +78125,7 @@ G.PRiSM_saveState = function PRiSM_saveState() {
     }
     var ls = _storage();
     if (ls) {
-        try { ls.setItem(STATE_KEY, JSON.stringify(snap)); } catch (e) { /* quota / private mode */ }
+        try { (typeof WTS_lsSet === 'function' ? WTS_lsSet(STATE_KEY, JSON.stringify(snap), { raw: true }) : ls.setItem(STATE_KEY, JSON.stringify(snap))); } catch (e) { /* quota / private mode */ }   /* ls-raw: fallback */
     }
     return snap;
 };
@@ -79611,7 +80014,7 @@ function _lsGet(key) {
     catch (e) { return null; }
 }
 function _lsSet(key, val) {
-    try { if (G.localStorage) G.localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* quota / privacy */ }
+    try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, JSON.stringify(val), { raw: true }) : G.localStorage.setItem(key, JSON.stringify(val))); } catch (e) { /* quota / privacy */ }   /* ls-raw: fallback */
 }
 function _models() { return G.PRiSM_MODELS || {}; }
 function _isRateModel(key) {
@@ -84098,7 +84501,7 @@ function _wireTab(host, m) {
     on('prism_report_goto_fit', function () { _goto(4, 6); });
     var notes = host.querySelector('#prism_report_notes');
     if (notes) notes.oninput = function () {
-        try { var ls = _ls(); if (ls) ls.setItem('wts_prism_report_notes', String(notes.value || '')); } catch (e) {}
+        try { var ls = _ls(); if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_report_notes', String(notes.value || ''), { raw: true }) : ls.setItem('wts_prism_report_notes', String(notes.value || ''))); } catch (e) {}   /* ls-raw: fallback */
     };
 }
 
@@ -84624,7 +85027,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (!s || !G.localStorage) return;
             var o = {};
             for (var k in s) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(s, k)) o[k] = s[k];
-            G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(o), { raw: true }) : G.localStorage.setItem('wts_prism_pvt', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) {}
     }
 
@@ -86810,7 +87213,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (isArr(o.multiRate)) {
                 if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
                 G.PRiSM.multiRate = clone(o.multiRate) || [];
-                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) {}
+                try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate), { raw: true }) : G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate))); } catch (e) {}   /* ls-raw: fallback */
                 try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) {}   // eslint-disable-line no-undef
             }
             if (o.well && typeof o.well === 'object') {
@@ -87538,7 +87941,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function persistMultiRate(rows) {
         try {
             var ls = G.localStorage || (typeof localStorage !== 'undefined' ? localStorage : null);
-            if (ls) ls.setItem('wts_prism_mrate', JSON.stringify(rows || []));
+            if (ls) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(rows || []), { raw: true }) : ls.setItem('wts_prism_mrate', JSON.stringify(rows || [])));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
 
@@ -88785,7 +89188,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (!s || !ls) return;
             var o = {};
             for (var k in s) if (k !== '_computed' && Object.prototype.hasOwnProperty.call(s, k)) o[k] = s[k];
-            ls.setItem('wts_prism_pvt', JSON.stringify(o));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_pvt', JSON.stringify(o), { raw: true }) : ls.setItem('wts_prism_pvt', JSON.stringify(o)));   /* ls-raw: fallback */
         } catch (e) { /* storage optional */ }
     }
     var _applying = false;
@@ -88807,7 +89210,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (isArr(o.multiRate)) {
                 if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
                 G.PRiSM.multiRate = clone(o.multiRate) || [];
-                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) { /* ignore */ }
+                try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate), { raw: true }) : G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate))); } catch (e) { /* ignore */ }   /* ls-raw: fallback */
                 try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) { /* host-scope helper (07) */ }   // eslint-disable-line no-undef
             }
             if (o.well && typeof o.well === 'object') {
@@ -94445,7 +94848,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var txt = JSON.stringify({ v: 1, completion: normComp(c) });
         try {
             if (typeof G.WTS_lsSet === 'function') { G.WTS_lsSet(LS_KEY, txt); return; }
-            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);
+            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);   /* ls-raw: fallback */
         } catch (e) { /* storage optional */ }
     }
     function completionFor(c, h) {
@@ -112402,7 +112805,7 @@ function esc(s) {
 }
 function errMsg(e) { return String((e && e.message) || e || 'error'); }
 function lsGet(k) { try { return G.localStorage ? G.localStorage.getItem(k) : null; } catch (e) { return null; } }
-function lsSet(k, v) { try { if (G.localStorage) G.localStorage.setItem(k, v); } catch (e) { /* quota / private mode */ } }
+function lsSet(k, v) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(k, v, { raw: true }) : G.localStorage.setItem(k, v)); } catch (e) { /* quota / private mode */ } }   /* ls-raw: fallback */
 function lsJSON(k) { try { var s = lsGet(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
@@ -115454,7 +115857,7 @@ return o;
 function N(p, w) { return { pattern: p, why: w || 'label and default on the page' }; }
 return { guides: {
 
-flare: Q('flare', '33dcd62c', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
+flare: Q('flare', '9d010033', 'radiation, exclusion zone, noise', 'API Standard 521', 'flareghg dispersion', {
 notDocumented: [N('^fl_(t1|t2|he|hp|np|ns|mw|eff|nhv|F|V|tau|clbl|ambN)$|^fl_bg', 'tabs, drawing settings, or label and default on the page')],
 purpose: 'Flame length, radiation distances and noise around a flare or burner.',
 what: ['API 521 point-source method. Inputs are not converted: MMSCFD, BTU/SCF, m, m/s, Celsius.'],
@@ -115590,7 +115993,7 @@ var LIVE = 'Live values; read from the page for v3.3.2.';
 return { guides: {
 
 wellos: {
-route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '9fe0919f', units: 'dual', notDocumented: [],
+route: 'wellos', reviewed: 'v3.3.2', reviewedSrc: '0b9912af', units: 'dual', notDocumented: [],
 keywords: ['SCADA', 'control room', 'live view', 'alarm', 'acknowledge', 'CSV log', 'quality', 'stale'],
 boldExempt: ['Use the Modbus simulator demo', 'Pause polling', 'Ack'],
 purpose: 'A live control-room view of the spread: tiles, process view, trends, alarms, a CSV log and a pressure trend for PRiSM.',
@@ -115719,7 +116122,7 @@ setup: [{ action: 'modbusSimDemo' }], callouts: [{ sel: '#mbc_res .rbox-title', 
 },
 
 historian: {
-route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '27ab1ca9', units: 'field',
+route: 'historian', reviewed: 'v3.3.2', reviewedSrc: '161061ef', units: 'field',
 notice: 'Values keep the unit they were recorded in; Metric mode does not convert them.',
 keywords: ['history', 'database', 'backup', 'restore', 'retention', 'rollup', 'xlsx'],
 notDocumented: nd('button, in the steps', 'demo_btn demohist_btn refresh_btn modbus_btn modbus_btn2 custom_apply live_btn reset_btn png_btn prev_btn next_btn copy_btn sort_btn export_btn import_btn ret_btn engine_btn persist_btn purge_btn clear_btn'),
@@ -116203,7 +116606,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'e0e2fa95', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: '438f32c4', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -116252,7 +116655,7 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '69e92717', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
@@ -116263,7 +116666,7 @@ outputs: [{ label: 'This build', text: 'Says whether usage analytics are active.
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'fecd72c4', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -116485,7 +116888,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4', reviewedSrc: 'aa965a51', units: 'field',
+  route: 'prism', reviewed: 'v3.4', reviewedSrc: '808b6dd7', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -116719,7 +117122,7 @@ var gaslift = {
 };
 
 var buildup = {
-  route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
+  route: 'buildup', reviewed: V, reviewedSrc: '700970d3', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
   purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
   what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
@@ -116956,7 +117359,7 @@ refs: [{ std: 'API 520 Part I', note: 'critical gas flow' }],
 related: ['sep', 'tank', 'esdhi'],
 shots: [Sh('view', 'both', 'Liquid Line / RO inputs', '', ['#wts_ll_sep_p~1']), Sh('res', 'desktop', 'Results', RES, ['#wts_ll_results table~2'], T('#wts_ll_results table'))]
 }),
-pipelife: Gd('pipelife', '90d58266', 'wts_pl_', {
+pipelife: Gd('pipelife', 'cd99e45b', 'wts_pl_', {
 keywords: ['erosion', 'sand'],
 notDocumented: ['import~step 2', '^wts_pl_seg\\d_~segment table cells: the Pipe Segments row'],
 purpose: 'Sand-erosion rate and remaining service life of each pipe segment from the wellhead to the flare.',
@@ -128107,7 +128510,7 @@ pipesz: {
         if (typeof G.WTS_lsSet === 'function') { try { return G.WTS_lsSet(key, txt) !== false; } catch (e) { return false; } }
         var ls = _ls();
         if (!ls) return false;
-        try { ls.setItem(key, txt); return true; } catch (e) { return false; }
+        try { ls.setItem(key, txt); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
     // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)
@@ -128379,7 +128782,8 @@ pipesz: {
     var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
     function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
-        if (state === null) { _loaded[store] = []; _clear(store); return; }
+        // Returns a Promise for the IndexedDB writes (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3).
+        if (state === null) { _loaded[store] = []; return _clear(store); }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
         var ids = [], total = 0;
         Object.keys(state.wells).forEach(function (id) {
@@ -128395,7 +128799,9 @@ pipesz: {
             _mem[store][id] = v; ids.push(id);
         });
         _loaded[store] = ids;
-        ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var puts = ids.map(function (wid) { var v = _mem[store][wid]; return _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var P = _P();
+        return P ? P.all(puts) : undefined;
     }
     function _prune(store, keepIds) {
         Object.keys(_mem[store]).forEach(function (id) { if (keepIds.indexOf(id) === -1) delete _mem[store][id]; });
@@ -128426,15 +128832,19 @@ pipesz: {
         if (d.source === 'well') { _loaded.raw = null; _loaded.tests = null; return; }   // a well switch is not a project Open
         var keepRaw = _loaded.raw || [], keepTests = _loaded.tests || [];
         _loaded.raw = null; _loaded.tests = null;
-        _prune('raw', keepRaw);
-        _prune('tests', keepTests);
+        // H3: a module the load kept local (detail.keep) is not pruned; the prune Promises join detail.pending (`ready`).
+        var kept = Array.isArray(d.keep) ? d.keep : [];
+        var pend = [];
+        if (kept.indexOf('buildup_raw') === -1) pend.push(_prune('raw', keepRaw));
+        if (kept.indexOf('buildup_analysis') === -1) pend.push(_prune('tests', keepTests));
+        if (Array.isArray(d.pending)) pend.forEach(function (p) { if (p) d.pending.push(p); });
     }
     var _modsRegistered = false;
     function registerModules() {
         var P = G.WTS_project;
         if (_modsRegistered || !P || typeof P.registerModule !== 'function') return _modsRegistered;
-        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { _modWrite('raw', s); } });
-        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { _modWrite('tests', s); } });
+        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { return _modWrite('raw', s); } });
+        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { return _modWrite('tests', s); } });
         _modsRegistered = true;
         return true;
     }
@@ -145515,7 +145925,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   function pref(k, v) {
     try {
       if (v === undefined) return G.localStorage ? G.localStorage.getItem(k) : null;
-      if (G.localStorage) G.localStorage.setItem(k, v);
+      (G.WTS_lsSet || function(a,b) { G.localStorage.setItem(a, b); })(k, v, {raw:1}); //ls-raw: fallback
     } catch (e) { /* storage blocked */ }
     return null;
   }
@@ -148378,6 +148788,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   • 63-wellos
 //   • 64-modbus-bridge-pack
 //   • 65-modbus-bridge-setup
+//   • 66-account
+//   • 67-cloud-sync
+//   • 68-account-page
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -149616,7 +150029,7 @@ function getConfig() {
 // fires 'wts:modbus-config-changed'.
 function saveConfig(cfg, opts) {
     var n = normalizeConfig(cfg), s = ls(), txt = JSON.stringify(n.config);
-    try { if (s) s.setItem(STORE_KEY, txt); } catch (e) { return { ok: false, errors: ['Could not save: ' + (e && e.message)] }; }
+    try { if (s) (typeof WTS_lsSet === 'function' ? WTS_lsSet(STORE_KEY, txt, { raw: true }) : s.setItem(STORE_KEY, txt)); } catch (e) { return { ok: false, errors: ['Could not save: ' + (e && e.message)] }; }   /* ls-raw: fallback */
     _cache = { raw: txt, cfg: n.config };
     if (!(opts && opts.keepStation)) rebuildStation();
     fire('wts:modbus-config-changed', { config: clone(n.config) });
@@ -151140,7 +151553,7 @@ function readUi() {
         } } catch (e) {}
     return u;
 }
-function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
+function writeUi(u) { try { if (G.localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet(UI_KEY, JSON.stringify(u), { raw: true }) : G.localStorage.setItem(UI_KEY, JSON.stringify(u))); } catch (e) {} }   /* ls-raw: fallback */
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
 // pump_running = LCV-201 transfer valve (legacy key); p201_running = the gauge tank pump P-201
@@ -152372,6 +152785,30 @@ G.WTS_modbusBridgeSetup = {
 })();
 
 // ─── END 65-modbus-bridge-setup ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 66-account ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// (accounts and cloud sync: web only — stripped from the iOS bundle)
+
+// ─── END 66-account ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 67-cloud-sync ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// (accounts and cloud sync: web only — stripped from the iOS bundle)
+
+// ─── END 67-cloud-sync ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 68-account-page ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// (accounts and cloud sync: web only — stripped from the iOS bundle)
+
+// ─── END 68-account-page ─────────────────────────────────────────────
 
 
 // ── Round-10 (live data) injection END ──
