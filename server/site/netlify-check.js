@@ -96,6 +96,8 @@ const LIVE_TOML = [
   '[functions]',
   '  directory = "netlify/functions"',
   '  node_bundler = "nft"',
+  '  # loaded with a plain require() at run time, which the tracer can miss: ship them as they are',
+  '  external_node_modules = ["@netlify/blobs", "postgres", "@netlify/database"]',
   '  included_files = ["core/**", "functions/**", "site/*.js", "db/migrate.js", "package.json"]',
   '',
 ].join('\n');
