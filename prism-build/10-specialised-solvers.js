@@ -347,7 +347,7 @@ function _safeStorageGet(key) {
 function _safeStorageSet(key, val) {
     try {
         if (typeof localStorage === 'undefined') return false;
-        localStorage.setItem(key, val);
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, val, { raw: true }) : localStorage.setItem(key, val));   /* ls-raw: fallback */
         return true;
     } catch (e) { return false; }
 }

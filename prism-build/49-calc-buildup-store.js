@@ -411,7 +411,7 @@
         if (typeof G.WTS_lsSet === 'function') { try { return G.WTS_lsSet(key, txt) !== false; } catch (e) { return false; } }
         var ls = _ls();
         if (!ls) return false;
-        try { ls.setItem(key, txt); return true; } catch (e) { return false; }
+        try { ls.setItem(key, txt); return true; } catch (e) { return false; }   /* ls-raw: fallback */
     }
     function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
     // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)
@@ -683,7 +683,8 @@
     var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
     function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
-        if (state === null) { _loaded[store] = []; _clear(store); return; }
+        // Returns a Promise for the IndexedDB writes (WTS_project.loadFromObject's `ready`, docs/ACCOUNTS-PLAN.md H3).
+        if (state === null) { _loaded[store] = []; return _clear(store); }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
         var ids = [], total = 0;
         Object.keys(state.wells).forEach(function (id) {
@@ -699,7 +700,9 @@
             _mem[store][id] = v; ids.push(id);
         });
         _loaded[store] = ids;
-        ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var puts = ids.map(function (wid) { var v = _mem[store][wid]; return _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
+        var P = _P();
+        return P ? P.all(puts) : undefined;
     }
     function _prune(store, keepIds) {
         Object.keys(_mem[store]).forEach(function (id) { if (keepIds.indexOf(id) === -1) delete _mem[store][id]; });
@@ -730,15 +733,19 @@
         if (d.source === 'well') { _loaded.raw = null; _loaded.tests = null; return; }   // a well switch is not a project Open
         var keepRaw = _loaded.raw || [], keepTests = _loaded.tests || [];
         _loaded.raw = null; _loaded.tests = null;
-        _prune('raw', keepRaw);
-        _prune('tests', keepTests);
+        // H3: a module the load kept local (detail.keep) is not pruned; the prune Promises join detail.pending (`ready`).
+        var kept = Array.isArray(d.keep) ? d.keep : [];
+        var pend = [];
+        if (kept.indexOf('buildup_raw') === -1) pend.push(_prune('raw', keepRaw));
+        if (kept.indexOf('buildup_analysis') === -1) pend.push(_prune('tests', keepTests));
+        if (Array.isArray(d.pending)) pend.forEach(function (p) { if (p) d.pending.push(p); });
     }
     var _modsRegistered = false;
     function registerModules() {
         var P = G.WTS_project;
         if (_modsRegistered || !P || typeof P.registerModule !== 'function') return _modsRegistered;
-        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { _modWrite('raw', s); } });
-        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { _modWrite('tests', s); } });
+        P.registerModule('buildup_raw', { read: function () { return _modRead('raw'); }, write: function (s) { return _modWrite('raw', s); } });
+        P.registerModule('buildup_analysis', { read: function () { return _modRead('tests'); }, write: function (s) { return _modWrite('tests', s); } });
         _modsRegistered = true;
         return true;
     }

@@ -2304,7 +2304,7 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     _wireResetView('prism_params_reset_view', 'prism_params_canvas');
 }
 function _persistPresets() {
-    try { if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || [])); }
+    try { if (typeof localStorage !== 'undefined' && localStorage) (typeof WTS_lsSet === 'function' ? WTS_lsSet('wts_prism_presets', JSON.stringify(_st().presets || []), { raw: true }) : localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || []))); }   /* ls-raw: fallback */
     catch (e) { /* quota — ignore */ }
 }
 function _drawParamPreview(units) {

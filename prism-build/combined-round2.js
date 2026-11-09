@@ -3201,7 +3201,7 @@ function _safeStorageGet(key) {
 function _safeStorageSet(key, val) {
     try {
         if (typeof localStorage === 'undefined') return false;
-        localStorage.setItem(key, val);
+        (typeof WTS_lsSet === 'function' ? WTS_lsSet(key, val, { raw: true }) : localStorage.setItem(key, val));   /* ls-raw: fallback */
         return true;
     } catch (e) { return false; }
 }
@@ -8236,12 +8236,12 @@ if (typeof G.PRiSM_setModel !== 'function') {
         // A window covering the whole record is no crop.
         if (cropState.i_start <= 0 && cropState.i_end >= n) { _clearPersistedCrop(); return; }
         try {
-            ls.setItem(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end }));
+            (typeof WTS_lsSet === 'function' ? WTS_lsSet(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end }), { raw: true }) : ls.setItem(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end })));   /* ls-raw: fallback */
         } catch (e) { /* quota / private mode */ }
     }
     function _clearPersistedCrop() {
         var ls = _ls();
-        if (ls) { try { ls.removeItem(CROP_KEY); } catch (e) { /* ignore */ } }
+        if (ls) { try { (typeof WTS_lsRemove === 'function' ? WTS_lsRemove(CROP_KEY) : ls.removeItem(CROP_KEY)); } catch (e) { /* ignore */ } }   /* ls-raw: fallback */
     }
     function _readPersistedCrop() {
         var ls = _ls();
