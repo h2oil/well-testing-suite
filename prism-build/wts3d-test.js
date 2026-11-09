@@ -1101,6 +1101,26 @@ const SECTION_B = (G /*, src */) => {
           if (!hit.some(x => x.a === 'probe' || x.b === 'probe')) bad.push('probe not found');
           return bad.length === 0 || bad.join(', ');
         }],
+        ['32 3.4.2 round 2: focusRadius (landscape unchanged, portrait backs off by 1.6 / aspect, capped at 0.4, zero size = landscape); FOCUS.lp keeps FT-201, its tag plate, the LP tip and the riser foot inside the 98 / 76 px insets on 1064×496 … 1380×700 and 360×480, FT-201 picks \'lp\'', () => {
+          const bad = [], cl = (a, b) => Math.abs(a - b) < 1e-9;
+          if (!(I.FOCUS_ASP === 1.6 && cl(I.focusRadius(5, 1380, 700), 5) && cl(I.focusRadius(5, 1600, 1000), 5) && cl(I.focusRadius(5, 360, 480), 5 * 1.6 / 0.75) &&
+            cl(I.focusRadius(5, 0, 0), 5) && cl(I.focusRadius(5, 100, 1000), 20) && cl(I.focusRadius(5, 900, 640), 5 * 1.6 / (900 / 640)))) bad.push('focusRadius');
+          const f = I.FOCUS.lp, on = { lpLine: true }, el = ph => 90 - ph * 180 / Math.PI;
+          const pts = { 'FT-201 plate': [I.FT201_AT[0], I.FT201_AT[1] + 0.8, I.FT201_AT[2]], 'FT-201': I.FT201_AT, 'LP tip': I.LP_TIP, 'riser foot': I.LP_RISER[0], 'ground run': [17.5, 0.35, 0.6] };
+          [[1064, 496], [1280, 640], [1380, 700], [360, 480]].forEach(([w, h]) => [0.95, 1.3].forEach(ph => {
+            const c = camOf({ az: I.FOCUS_TH.lp, el: el(ph), target: f[0], radius: I.focusRadius(f[1], w, h) });
+            Object.keys(pts).forEach(k => { const q = I.project(pts[k], c, w, h); if (q.behind || q.x < 0 || q.x > w || q.y < INS.top + 4 || q.y > h - INS.bottom) bad.push(w + 'x' + h + '/' + ph + ' ' + k + ' ' + Math.round(q.x) + ',' + Math.round(q.y)); });
+            const g = I.pickRay(c.pos, rayTo(c, [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]]), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(w + 'x' + h + '/' + ph + ' pick ' + g); }));
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32 3.4.2 round 2: P-201 card rows follow the pump mode (booster: T-201 → P-201 → export, no \'no pump\'); the chip state reads BOOSTER · …', () => {
+          const b = I.pumpRows({ pumpMode: 'booster' }), p = I.pumpRows({ pumpMode: 'pump' }), bad = [];
+          if (J(b) !== J(['Service', 'T-201 → P-201 → export (booster)', 'Surge transfer', 'LCV-201 → P-201 booster']) || /no pump|T-301/.test(b.join(' '))) bad.push('booster ' + J(b));
+          if (J(p) !== J(['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)'])) bad.push('pump ' + J(p));
+          const src = fs.readFileSync(path.join(ROOT, '32-wts-3d.js'), 'utf8');
+          if (!/if \(t2\) rows\(ch, pumpRows\(ga\)\);/.test(src) || !/if \(ga\.pumpMode === 'booster'\) pst = 'BOOSTER · ' \+ pst;/.test(src)) bad.push('card wiring');
+          return bad.length === 0 || bad.join(', ');
+        }],
         ['32 v1.5.0 LP: tap on FT-201 / the ground run → \'lp\' (only while on); slot 18 = LP; chain VENTL → LP; the LP tip flame follows qLP (none to the vent), the HP flame burns qHP', () => {
           // (from the front the ground run sits behind T-301 / T-201, which take the tap: look from behind, above the gas rack)
           const bad = [], on = { lpLine: true }, cam = camOf({ az: 160, el: 55, target: [16.0, 0.5, 0.6], radius: 14 });
