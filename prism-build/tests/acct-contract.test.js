@@ -82,7 +82,7 @@ module.exports = [
   {
     name: 'AC1 shared fixture: examples, envelopes, broken copies, strict requests, canonical vectors', wp: WP, opts: false,
     run(app, assert) {
-      assert.strictEqual(S.ENDPOINTS.length, 50);
+      assert.strictEqual(S.ENDPOINTS.length, 54);   // 50 + the four admin dashboard routes
       assert.deepStrictEqual(S.ENDPOINTS.map((e) => e.id).filter((id, i, a) => a.indexOf(id) !== i), [], 'endpoint ids are unique');
       for (const e of S.ENDPOINTS) {
         const ex = S.EXAMPLES[e.id];
@@ -262,7 +262,8 @@ module.exports = [
       assert.strictEqual(noHdr.headers.get('cache-control'), 'no-store');
       // every Phase 1 endpoint was exercised (callback / finish / start / unlink / devices are in AC3)
       const hit = new Set(fake.requests.map((q) => { const m = S.matchRoute(q.method, q.path.slice(S.BASE.length)); return m && m.endpoint.id; }));
-      const left = S.ENDPOINTS.filter((e) => e.phase === 1 && !hit.has(e.id) && ['oauthStart', 'oauthCallback', 'oauthFinish', 'unlink', 'emailRevert', 'cspReport', 'opsDaily'].indexOf(e.id) === -1).map((e) => e.id);
+      // (the admin routes are exercised against the real server: server/test/admin.test.js)
+      const left = S.ENDPOINTS.filter((e) => e.phase === 1 && !hit.has(e.id) && e.group !== 'admin' && ['oauthStart', 'oauthCallback', 'oauthFinish', 'unlink', 'emailRevert', 'cspReport', 'opsDaily'].indexOf(e.id) === -1).map((e) => e.id);
       assert.deepStrictEqual(left, [], 'Phase 1 endpoints not exercised');
       fake.mail.sent.forEach((m) => { assert(!/</.test(JSON.stringify(m.params)), 'plain-text mail params'); });
     },

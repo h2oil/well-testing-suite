@@ -5,7 +5,7 @@
 
 const { ENDPOINTS } = require('../core/contract');
 
-const FILES = ['auth', 'oauth', 'me', 'projects', 'blobs', 'library', 'account', 'health', 'csp-report', 'ops-daily'];
+const FILES = ['auth', 'oauth', 'me', 'projects', 'blobs', 'library', 'account', 'health', 'csp-report', 'ops-daily', 'admin'];
 const ids = new Set(ENDPOINTS.map((e) => e.id));
 const handlers = {};
 FILES.forEach((f) => {

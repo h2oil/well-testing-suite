@@ -33,6 +33,8 @@ async function me(ctx) {
       quota: { limit: Number(r.quota_bytes), used: Number(r.used_bytes) },
       opts: { historian: r.opt_historian, liveCfg: r.opt_livecfg },
       projects, passkeys, identities, devices, minClient: ctx.config.minClient,
+      // the admin dashboard (functions/admin.js): this account's primary address is in WTS_ADMIN_EMAILS
+      admin: !!(ctx.config.adminEmails && ctx.config.adminEmails.has(a.primary)),
     };
   });
   return { status: 200, body };

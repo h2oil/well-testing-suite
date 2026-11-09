@@ -127,6 +127,8 @@ function createApp(o) {
       const afterTasks = [];
       const ctx = {
         req, endpoint: ep, params: m.params, query, body, raw, cookies, config, now, log, ip,
+        // the platform's country / city of the connection (same-site mode only; validated; never the address) — core/http.js
+        geo: H.clientGeo(req, config),
         // production without WTS_CLIENT_IP_HEADER: the socket address is the proxy's, so there is no client range (null)
         ipPrefix: config.production && !config.ipHeader ? null : ipPrefix(ip),
         db: o.db || null, mail: o.mail || null, keys, objects: o.objects || null, jobs: o.jobs || null,

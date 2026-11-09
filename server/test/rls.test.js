@@ -27,6 +27,8 @@ const DEFINERS = {
   oauth_attempt_drop: 'wts_api', oauth_attempt_close: 'wts_api', oauth_exchange_hit: 'wts_api', oauth_breaker_open: 'wts_api',
   oauth_breaker_note: 'wts_api', support_retire_identities: 'wts_support',
   oauth_attempt_claim: 'wts_api', oauth_attempt_release: 'wts_api', oauth_finish_fail: 'wts_api', oidc_fetch_claim: 'wts_api',
+  // admin dashboard (060-admin.sql)
+  admin_summary: 'wts_api', admin_users: 'wts_api', admin_invite_add: 'wts_api', admin_invites: 'wts_api', _admin_check: null,
 };
 const ROLES = ['wts_api', 'wts_jobs', 'wts_support'];
 
@@ -48,7 +50,7 @@ test.describe('schema and RLS (§3.4)', { skip }, () => {
 
   test('migration recorded; every §3.4 table exists in schema wts', async () => {
     const m = await H.admin.sql`select name from public.wts_schema_migrations`;
-    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql', '040-oauth.sql', '050-code-scope.sql']);
+    assert.deepStrictEqual(m.map((r) => r.name), ['001-schema.sql', '002-core.sql', '040-oauth.sql', '050-code-scope.sql', '060-admin.sql']);
     const t = (await H.admin.sql`select tablename from pg_tables where schemaname = 'wts'`).map((r) => r.tablename).sort();
     assert.deepStrictEqual(t, USER_TABLES.concat(SYSTEM_TABLES).sort());
   });

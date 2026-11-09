@@ -35,6 +35,11 @@
 //   they were on the database allow-list (the owner's first sign-in without a direct database connection; RUNBOOK "Live site
 //   (same-site) setup"). Read at run time, normalised like every address; an invalid entry is ignored with a warning; not a
 //   secret, but personal data: set it in the site's environment only, never in the repository.
+// WTS_ADMIN_EMAILS=<address>[,<address> …] — the accounts that may use the admin routes (functions/admin.js; the app's Account
+//   page → Admin, route #admin). Unset = the WTS_INVITE_BOOTSTRAP addresses. Compared after normalisation (case-insensitive);
+//   an invalid entry is ignored with a warning. Not a secret; personal data like the bootstrap list (site environment only).
+// WTS_GEO_HEADERS=1 — TESTS ONLY (accepted only with WTS_ENV=test): read the platform's geolocation headers outside same-site
+//   mode. Same-site mode always reads them (the platform's edge sets them; core/http.js clientGeo validates every value).
 
 const providersPins = require('./oidc-providers');
 
@@ -60,7 +65,7 @@ const SECRET_ENV = [
 const CONFIG_ENV = [
   'WTS_ENV', 'WTS_OIDC_MODE', 'WTS_MASTER_KID', 'WTS_APP_PATH', 'WTS_DEV_ORIGIN', 'WTS_DEV_PORT', 'WTS_CLIENT_IP_HEADER',
   'WTS_HOST_HEADER', 'WTS_DB_ROLE', 'WTS_MAIL_FROM', 'WTS_MAIL_PROVIDER', 'WTS_CODE_FLOOR_MS', 'WTS_TERMS_VERSION', 'WTS_PRIVACY_VERSION', 'WTS_MIN_CLIENT', 'WTS_VERSION',
-  'WTS_SITE_MODE', 'WTS_INVITE_BOOTSTRAP', 'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_LINKEDIN_CLIENT_ID',
+  'WTS_SITE_MODE', 'WTS_INVITE_BOOTSTRAP', 'WTS_ADMIN_EMAILS', 'WTS_GEO_HEADERS', 'OAUTH_GOOGLE_CLIENT_ID', 'OAUTH_LINKEDIN_CLIENT_ID',
 ].concat(Object.keys(SWITCHES));
 const ENVS = ['production', 'staging', 'preview', 'local', 'test'];
 
@@ -130,6 +135,21 @@ function loadConfig(env) {
       if (e) inviteBootstrap.add(e); else warnings.push('WTS_INVITE_BOOTSTRAP: an entry is not an address — ignored');
     });
     if (inviteBootstrap.size && signup !== 'invite') warnings.push('WTS_INVITE_BOOTSTRAP: used only with ACCOUNTS_SIGNUP=invite');
+  }
+  // admin accounts: WTS_ADMIN_EMAILS, else the bootstrap addresses (a set of normalised addresses)
+  const adminEmails = new Set();
+  if (env.WTS_ADMIN_EMAILS !== undefined && String(env.WTS_ADMIN_EMAILS).trim() !== '') {
+    const { normEmail } = require('./validate');
+    String(env.WTS_ADMIN_EMAILS).split(/[\s,;]+/).filter(Boolean).forEach((raw) => {
+      const e = normEmail(raw);
+      if (e) adminEmails.add(e); else warnings.push('WTS_ADMIN_EMAILS: an entry is not an address — ignored');
+    });
+  } else inviteBootstrap.forEach((e) => adminEmails.add(e));
+  // the platform geolocation headers: same-site mode only (the platform's edge sets them), or the tests' explicit flag
+  let geoHeaders = sameSite;
+  if (env.WTS_GEO_HEADERS !== undefined && String(env.WTS_GEO_HEADERS).trim() !== '') {
+    if (wtsEnv === 'test' && truthy(env.WTS_GEO_HEADERS)) geoHeaders = true;
+    else if (!sameSite) warnings.push('WTS_GEO_HEADERS: accepted only with WTS_ENV=test — ignored');
   }
   const syncMode = pick(env, 'SYNC_MODE', SWITCHES.SYNC_MODE, 'on', warnings);
   // ACCOUNTS_OFF fails closed too: unset / '0' / 'false' / 'off' / 'no' = accounts on; '1' / 'true' / 'on' / 'yes' = off;
@@ -209,7 +229,7 @@ function loadConfig(env) {
     env: wtsEnv, production, staging, prodHost: PROD_HOST, prodOrigin: PROD_ORIGIN, devOrigin,
     allowedOrigins: devOrigin ? [PROD_ORIGIN, devOrigin] : [PROD_ORIGIN],
     appUrl: appOrigin + appPath, appPath,
-    siteMode, sameSite, inviteBootstrap,
+    siteMode, sameSite, inviteBootstrap, adminEmails, geoHeaders,
     signup, syncMode, accountsOff, oidcMode: production ? '' : oidcMode,
     providers: Object.freeze(providers),
     providerSwitches() { const o = {}; Object.keys(providers).forEach((p) => { o[p] = providers[p].effective; }); return o; },
@@ -228,6 +248,7 @@ function loadConfig(env) {
     const o = JSON.parse(JSON.stringify(cfg));
     o.providers = {}; Object.keys(providers).forEach((p) => { o.providers[p] = { switch: providers[p].switch, effective: providers[p].effective, clientId: providers[p].clientId ? '(set)' : '' }; });
     o.inviteBootstrap = inviteBootstrap.size;
+    o.adminEmails = adminEmails.size;
     o.secrets = {}; Object.keys(secrets).forEach((k) => { const v = secrets[k]; o.secrets[k] = (Array.isArray(v) ? v.length : v) ? '(set)' : ''; });
     return o;
   };
