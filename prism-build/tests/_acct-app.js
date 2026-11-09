@@ -37,7 +37,7 @@ function boot(ctx, o) {
   const w = a.win;
   if (w.WTS_account && w.WTS_account.configure) {
     w.WTS_account.configure({ idb: idb.indexedDB, gzip: (b) => zlib.gzipSync(Buffer.from(b.buffer, b.byteOffset, b.byteLength)),
-      gunzip: (b) => zlib.gunzipSync(Buffer.from(b.buffer, b.byteOffset, b.byteLength)), appVer: '3.5' });
+      gunzip: (b) => zlib.gunzipSync(Buffer.from(b.buffer, b.byteOffset, b.byteLength)), appVer: '4.0' });
   }
   a.flush(1);
   const t = {

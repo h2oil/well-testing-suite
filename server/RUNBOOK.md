@@ -628,7 +628,7 @@ Never delete and re-create the LinkedIn app (its subjects are per app — every 
   address gets the 7-day revert notice.
 - **"I can't sign in with Google / LinkedIn"**: use the e-mail code; a deleted provider account cannot sign in; link again
   after a code.
-- **"I have two accounts"** (no merge tool in v3.5): in the first account export everything, unlink its Google / LinkedIn
+- **"I have two accounts"** (no merge tool in v4.0): in the first account export everything, unlink its Google / LinkedIn
   identity, delete it; sign in to the second, *Import files to cloud…*, link the provider there. Revision history, the
   library document and devices do not travel.
 - Other macros: conflict copies, a public computer's locked outbox, storage full, deletion cancel (sign in with the e-mail

@@ -432,6 +432,8 @@ function serialise(app, el) {
     if (n.getAttribute('hidden') != null || (n.style && n.style.display === 'none')) return;
     // the web-only account hosts (docs/ACCOUNTS-PLAN.md H8 / H9, ACCT markers) are never part of a shot
     if (n.id === 'wts_account_host' || n.id === 'sbAccountLine') return;
+    // nor are the web-only release-notes items (li.rn-web, docs/ACCOUNTS-PLAN.md H12)
+    if (/(^|\s)rn-web(\s|$)/.test(String(n.className || ''))) return;
     const cls = String(n.className || '').split(/\s+/).filter(Boolean).sort().join('.');
     let line = depth + '<' + tag + (n.id ? '#' + n.id : '') + (cls ? '.' + cls : '');
     if (tag === 'input' || tag === 'select' || tag === 'textarea') line += ' =' + String(n.value == null ? '' : n.value);
@@ -711,7 +713,7 @@ async function decorate(s, shot) {
     const st = document.createElement('style'); st.id = '__hs_style';
     // the web-only account controls (docs/ACCOUNTS-PLAN.md §9) never appear in a shot: the shots are copied to the iOS bundle
     st.textContent = mk.join(',') + '{visibility:hidden!important}*{caret-color:transparent!important}' +
-      '#wts_account_host,#sbAccountLine,.acct-sync-bar,.acct-ov,.acct-toast{display:none!important}' +
+      '#wts_account_host,#sbAccountLine,.acct-sync-bar,.acct-ov,.acct-toast,li.rn-web{display:none!important}' +
       '.__hs_co{position:fixed;z-index:2147483647;width:22px;height:22px;box-sizing:border-box;border-radius:50%;background:#ffb300;color:#111;' +
       'border:2px solid #111;font:700 13px/18px sans-serif;text-align:center;pointer-events:none;box-shadow:0 0 0 2px #ffb300}';
     document.head.appendChild(st);

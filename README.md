@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://welltest.h2oil.co.uk>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v3.3 (2026-11-01)
+- **Current release:** v4.0 (2026-11-09)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -51,8 +51,9 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 - **Imperial ⇄ metric** on every page, and a standard-conditions selector for gas volumes.
 - **Reports:** PDF and PNG export of any page, a one-click Quick Report of the whole job (Daily and
   Final templates), CSV/JSON export, and `.h2oilproj` project files that hold several wells.
-- **Offline and private:** every calculation runs on your device. There is no server, no account and
-  no upload of well data.
+- **Offline and private:** every calculation runs on your device. Without signing in there is no
+  upload of well data; the optional cloud account (web version, invite beta since v4.0) stores only the
+  projects you choose to save to it.
 
 ---
 
@@ -466,8 +467,13 @@ Manager, Xcode Cloud) are in [ios-app/README.md](ios-app/README.md).
 
 ## Privacy
 
-- All calculations run on your device. There are no accounts and no H2Oil server that receives
-  inputs, results or files.
+- All calculations run on your device. Without an account no H2Oil server receives inputs, results
+  or files.
+- **Web version only, optional (invite beta since v4.0):** a cloud account — sign in with an e-mail
+  code, Google or LinkedIn — stores the projects you save to it in our UK / EU cloud database, with
+  history, export of everything and account deletion. The iOS app has no accounts. The full text is in
+  the Privacy Policy (<https://welltest.h2oil.co.uk/privacy.html>) and the Terms of Service
+  (<https://welltest.h2oil.co.uk/terms.html>).
 - Inputs and results are stored in the browser's local storage (or the iOS app's own storage);
   exports and project files are created only when you save them.
 - **Web version only:** anonymous Google Analytics 4 usage counts (page views, fixed button and
@@ -586,6 +592,8 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v4.0 | 2026-11-09 | Cloud accounts (beta, web only): sign in with an e-mail code, Google or LinkedIn; save and open projects in your account, history, export and delete; the account API runs as a separate functions-only site (`server/`). Public Privacy Policy and Terms of Service pages; escaped stored text; hash-checked spreadsheet import library. The iOS app is unchanged apart from the neutral items |
+| v3.4.1 | 2026-11-08 | Simulator choke manifold with an adjustable and a positive leg, independent T-201 compartment inlets, toolbar Rig-up menu; PRiSM fit status follows the adopted flag; help screenshots deployed with the web page |
 | v3.4 | 2026-11-07 | PRiSM DFIT mode: test triage and grade, ISIP and step tests, closure consensus (single value or range) with every method, after-closure p_i and k, leak-off model, designer, uncertainty, several tests per well, report and hand-offs; linear-time pressure derivative. Labels and the leak-off type are provisional (not yet calibrated) |
 | v3.3.2 | 2026-11-06 | Help & User Guide: a guide for every module with screenshots, search, a ? button on every page (F1), Getting started, "How do I…" tasks, a printable user guide and quick cards; Well Test Simulator training course (10 exercises, with trainer notes and worksheets) and field scenarios (unloading the cushion to the burner or a production line) |
 | v3.3 | 2026-11-01 | Build-up Surveillance (Production & Reservoir): shut-ins found in permanent-gauge data, each full build-up interpreted automatically, rates over the flowing hours, skin / k / p* / PI trends with delta and absolute alerts, onset and forecast, gas wells and injector fall-offs, rule-based review with an evidence check, audit trail and sign-off, Quick Report section; PRiSM Skin-check card with a calibrated confidence label and the closed-circle model (46 models) |

@@ -1,5 +1,5 @@
 'use strict';
-// server/core/contract.js — the FROZEN API contract of docs/ACCOUNTS-PLAN.md §3 (v3.5 Phase 1 + the Phase 3 passkey routes).
+// server/core/contract.js — the FROZEN API contract of docs/ACCOUNTS-PLAN.md §3 (v4.0 Phase 1 + the Phase 3 passkey routes).
 //
 // One machine-checkable description shared by the server (request validation, route table), the in-memory fake server
 // (prism-build/tests/_acct-fake-server.js) and the client tests (prism-build/tests/_acct-shapes.js re-exports this module

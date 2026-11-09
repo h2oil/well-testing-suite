@@ -5,6 +5,34 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-09 — v4.0 release: cloud accounts (beta, web only), Privacy Policy and Terms of Service
+
+App and App Store version 4.0 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static
+`#appVersionLabel` fallback). The product owner named the accounts release v4.0 (the plan's v3.5; Phase 2 / 3 are now v4.0.x /
+v4.1). Plan: docs/ACCOUNTS-PLAN.md revision 4 (status: built, release v4.0).
+
+**What shipped**
+- Cloud accounts, Phase 1 (web only, invite beta): sign in with an e-mail code, Google or LinkedIn; manual Save / Open from
+  cloud, project history and restore, account page (sign-in methods, devices, recovery address, e-mail change, security
+  notices, export, delete with a 7-day grace). Client files 66-68 are inert unless the beta flag and the exact host; the
+  sync strips every ACCT block from the iOS bundle.
+- Account API in `server/`: a separate functions-only site on our hosting platform (one-login database with separate roles by
+  `SET LOCAL ROLE`, blob store, scheduled jobs, sealed weekly export); owner set-up guide in server/RUNBOOK.md §3N (site) and
+  §3P (Google and LinkedIn consoles, redirect URIs, client ids and secrets). Server minimum client 4.0 by default there; the
+  version gate accepts the page's leading "v".
+- Release notes: the two account items are web only (between ACCT markers and `platform:'web'`, rendered as `li.rn-web`); the
+  iOS / App Store entry shows only the neutral items. help-shots.js leaves `li.rn-web` out of every screenshot (the shots are
+  copied to the iOS bundle); the Release Notes shots were re-taken.
+- Neutral items on both platforms: public Privacy Policy and Terms of Service pages (privacy.html, terms.html; drafts for legal
+  review) linked from the sidebar footer; escaped stored text (storage-to-HTML sink audit); hash-checked spreadsheet import
+  library with a bundled iOS copy.
+- Tests: acct-host HO31 and acct-ops OP5 follow the new footer links and root pages; account fixtures use appVer / minClient 4.0.
+
+**Notes** — Open owner items: the go-live probe (`migrate.js --platform`), the live proxy-signature and client-IP checks, the
+LinkedIn live tests before it is switched on in production, the mail-service body format, and the legal review of the two pages.
+
+---
+
 ## 2026-11-08 — v3.4.1 release: simulator choke manifold legs, T-201 inlets, Rig-up menu
 
 App and App Store version 3.4.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static

@@ -1,7 +1,8 @@
 # Accounts and cloud project sync (web version only) — implementation plan
 
-**Status: revision 4; Phase 1 integrated (ac/int: WP0 technical part, WP-H H1–H18, WP-S1, WP-O, WP-C1, WP-OPS, the end-to-end
-test) and its integration review fixed — target v3.5 / v3.5.x / v3.6 (web only)**
+**Status: revision 4; Phase 1 built and integrated (ac/int: WP0 technical part, WP-H H1–H18, WP-S1, WP-O, WP-C1, WP-OPS, the end-to-end
+test), its integration review fixed and the server prepared for our hosting platform — release v4.0 (2026-11-09; Phase 2 / 3
+follow as v4.0.x / v4.1; web only)**
 *Integration (2026-11-09).* Deliberate deviations: gauges and build-up travel as **job-level** parts `well/job/<module>`
 (29-multiwell keeps those stores per job, not per well; well ids are `w\d+`, so they never collide with `job`); the
 e-mail-revert proof is a **130-bit revert key** (26 of A–Z / 2–7, link `#account-revert=<key>`), not an 8-digit code;
@@ -14,7 +15,7 @@ our hosting platform for the functions-only site; `server/` now carries that pla
 blob bindings, and `server/RUNBOOK.md` §3N / §3P is the owner's click-by-click guide (deviations: Appendix B.4).
 Open: the owner items of WP0 / §13.10 (consoles, client ids and secrets, host plan, DNS, legal texts — the consent tick names
 the versions but links to no text yet), RUNBOOK §3 step 0 (publish allow-list before `server/` reaches master), WP-I1
-(security review, invite beta, CSP enforce, RELEASE_NOTES 3.5 entry).
+(security review, invite beta, CSP enforce, RELEASE_NOTES 4.0 entry (written: v4.0, 2026-11-09)).
 (2026-11-08; revision 2: 2026-11-07). Landed: the `server/` skeleton with the §3.4 schema and `server/core/contract.js`,
 `prism-build/tests/_acct-shapes.js`, `_acct-fake-server.js`, `server/test/fake-oidc.js`, inert skeletons 66–68,
 `acct-contract.test.js` and the §9 iOS strip steps 0c / 0d in `sync-from-main.js`. Refinements to §3 / §3.4: a `wts_definer`
@@ -61,7 +62,7 @@ scratch vendor notes, never in the repository. CLAUDE.md records the exception i
 
 | | |
 |---|---|
-| Releases | Three phases (§14). **v3.5** (Phase 1): sign-in (e-mail code, Google, LinkedIn; link and unlink), manual *Save to cloud* / *Open from cloud*, history, account page with export, delete, e-mail change and security notices — invite-only beta, then on for the web. **v3.5.x** (Phase 2): automatic sync and the key-level merge, after 4 weeks of Phase 1 telemetry. **v3.6** (Phase 3): passkeys, historian backup, live-data settings, field-level merge. Without signing in, the app behaves exactly as v3.4: nothing leaves the device |
+| Releases | Three phases (§14). **v4.0** (Phase 1): sign-in (e-mail code, Google, LinkedIn; link and unlink), manual *Save to cloud* / *Open from cloud*, history, account page with export, delete, e-mail change and security notices — invite-only beta, then on for the web. **v4.0.x** (Phase 2): automatic sync and the key-level merge, after 4 weeks of Phase 1 telemetry. **v4.1** (Phase 3): passkeys, historian backup, live-data settings, field-level merge. Without signing in, the app behaves exactly as v3.4: nothing leaves the device |
 | What | (1) **Passwordless sign-in, three ways into one account**: an 8-digit e-mail code (the root method: every account has a verified address; an optional second recovery address), **Sign in with Google** and **Sign in with LinkedIn** (OpenID Connect, full-page redirect, no stored provider token, never linked on an e-mail match alone), passkeys as the fast path in Phase 3. (2) **Server-side sessions** in an HttpOnly `__Host-` cookie, never visible to page script. (3) **Cloud projects**: the existing `.h2oilproj` payload, normalised per well, as the sync unit: a small *core document* plus content-addressed *parts*, committed with compare-and-swap on a revision number. (4) **Event-driven sync** (Phase 2): one coalescing debounced push, pulls on focus / online / visible and before the first edit; offline-first, no polling. (5) **Conflicts never lose work and never move it off the screen**: disjoint keys merge; an overlap keeps the local version on screen as a conflict copy. (6) **Account page**: projects, history, devices, security, export everything, delete account. (7) UK GDPR: export, deletion with a 7-day grace, retention, privacy-page text |
 | Where | Client: three new Round-10 files `prism-build/66-account.js`, `67-cloud-sync.js`, `68-account-page.js` (auto-discovered; 60–65 are taken, DFIT owns Round-8 56–59). Neutral host and shared-file edits H1–H18 (§5.4). Server: a new top-level `server/` folder (functions, shared core, ops scripts, migrations, tests) that is never published as static content and never copied into `ios-app/www`. Build: `ios-app/scripts/sync-from-main.js` (strip step, extended to `www/help/**`), a publish allow-list (§13.2). Tests in `prism-build/tests/` and `server/test/` |
 | Not touched | DFIT (`docs/DFIT-PLAN.md`, its branches, Round-8 files 56–59). The iOS native project. The simulator (31/32/38): its one direct write (`wts_sim_rigup`) is detected by the key-hash check instead of an edit (§5.4 H2). Calculation engines. `sw.js` code (only its header comment changes) |
@@ -378,7 +379,7 @@ Commit request:
              { "name": "well/w2",              "hash": "…", "bytes": 512004 } ],
   "meta":  { "name": "Example-1 DST", "client": "Operator Energy Ltd", "well": "Example-1", "field": "", "operator": "" },
   "wells": [ { "id": "w1", "name": "Example-1" }, { "id": "w2", "name": "Example-2" } ],
-  "fmt": 2, "appVer": "3.5"
+  "fmt": 2, "appVer": "4.0"
 }
 ```
 With `core.inline` the server checks `zsha` and stores the bytes as the core blob in the same transaction (one request for every
@@ -541,7 +542,7 @@ CREATE TABLE audit (id bigserial PRIMARY KEY, user_id uuid, actor text NOT NULL,
 - **Quota**: `used_bytes` = Σ compressed bytes of the user's blobs (deduplicated). Checked in the chunk PUT and in the commit.
 - **Provider columns in the first schema**: `sessions.auth_method` (default `'code'`), `sessions.stepup_at`,
   `sessions.identity_id`, `users.signup_method` (default `'code'`), `email_codes.bound_attempt` and `identities.email_ack_bidx`
-  are all in the first v3.5 schema, so a provider release after v3.5 needs no migration of existing rows (at most an
+  are all in the first v4.0 schema, so a provider release after v4.0 needs no migration of existing rows (at most an
   expand-only migration with these defaults).
 
 ### 3.5 Server jobs
@@ -1203,7 +1204,7 @@ why `start` is a fetch and not a form (§4.10). **This CSP limits
 only casual exfiltration**: `'unsafe-inline'` and `'unsafe-eval'` remain, analytics collection endpoints accept arbitrary
 parameters, and top-level navigation is not governed by CSP. Neither the privacy text nor the release notes may imply that
 script injection is contained. The planned fix is the **hardening track** — remove the six direct `eval` uses, `new Function`
-and the 103 inline handlers, then a nonce-based `script-src` with no analytics hosts in `connect-src` — targeted for **v3.6**
+and the 103 inline handlers, then a nonce-based `script-src` with no analytics hosts in `connect-src` — targeted for **v4.1**
 (Q23). Also `Referrer-Policy: same-origin`, `Permissions-Policy: publickey-credentials-get=(self),
 publickey-credentials-create=(self)`, `Cache-Control: no-cache` on the page and `sw.js`, and HSTS confirmed at
 `max-age=31536000` (with `includeSubDomains` once every `h2oil.co.uk` subdomain is HTTPS, checked in WP0).
@@ -1687,7 +1688,7 @@ offline by the owner. The functions site and the jobs credential are separate (D
 - **"I didn't get the code"** is expected to be the main ticket: macros for quarantine, allow-listing no-reply@h2oil.co.uk, the
   15-minute validity and the recovery address.
 - Other macros: "I can't sign in with Google / LinkedIn" (use the e-mail code; a deleted provider account; link again after
-  a code), "I have two accounts" (no merge tool in v3.5, Q31: in the first account export everything, **unlink its Google / LinkedIn
+  a code), "I have two accounts" (no merge tool in v4.0, Q31: in the first account export everything, **unlink its Google / LinkedIn
   identity**, then delete it — deletion also releases identities at the request, §8.5 — sign in to the second, import the
   projects with *Import files to cloud…* and link the provider there; revision history, the account library document and
   devices do not travel, and the user is told so), conflict copies, a public-computer locked outbox, storage full, deletion cancel, export of a large account, a DPA
@@ -1788,22 +1789,22 @@ verification, redirect URIs, development clients, live tests incl. the LinkedIn 
 | WP-HC | 1 | privacy page (with the provider card) and help-start texts, `privacy` hash, account help on providers, button assets checked against the providers' current rules, screenshots re-shot, GUI-sweep fake API | 4 |
 | WP-I1 | 1 | security review against the session / authentication / access-control chapters of a recognised application-security verification standard; abuse and load test; the provider round trip in the three main browser engines; invite beta (5–10 users, 2 weeks); CSP enforce; RELEASE_NOTES (`platform:'web'`); CLAUDE.md; full rebuild, smoke, acceptance, sync; merge; `server-v1` tag | 6 |
 | WP-C2 | 2 | automatic sync: triggers, coalescing, pull-before-edit gate, `applyChanges` path and `wts:project-changed`, `applyRemote`, `_applying` / `_snapshotting`, focus deferral, locks, outbox format, 401 / 426 rules, key-level merge (`merge.js` + concat step, ≈ 2 d), overlap conflict UX with *Show differences*, recent-project cache, library document sync; `acct-sync`, `acct-conflict` | 12 |
-| WP-I2 | 2 | after **4 weeks of Phase 1 telemetry**: beta of auto sync (2 weeks), review, release v3.5.x | 3 |
+| WP-I2 | 2 | after **4 weeks of Phase 1 telemetry**: beta of auto sync (2 weeks), review, release v4.0.x | 3 |
 | WP-C3 | 3 | passkeys (register, sign-in, conditional UI, UV step-up), historian backup / restore, live-config opt-in; `acct-account` | 8 |
 | WP-M (S) | 3 | field-level rules (§6.7), clash UI, `importWell`, PRiSM branch keep-both; `acct-merge` | 5 |
-| WP-I3 | 3 | review, CSP hardening track checkpoint (Q23), release v3.6 | 2 |
+| WP-I3 | 3 | review, CSP hardening track checkpoint (Q23), release v4.1 | 2 |
 
 | Phase | Release | Scope | Estimate (base → with 30 % contingency) |
 |---|---|---|---|
-| 1 | **v3.5** (invite beta, then on for the web) | sign-in (e-mail codes, recovery address, **Google, LinkedIn**; link / unlink), sessions, manual Save / Open from cloud, history and restore, import files, account page, export, delete with grace, e-mail change, security notices, migration and hand-over, public-computer wipe, ops (publish allow-list, separate server deploys, backups, ledger, runbook) | 65 → **≈ 85 person-days** (≈ 17 weeks for one full-time builder; revision 2 without providers: 49 → ≈ 64, ≈ 13 weeks), plus 6–10 calendar weeks of legal work and 1–3 weeks of Google verification in parallel |
-| 2 | **v3.5.x** | automatic sync, pull-before-edit, key-level merge, overlap conflicts kept on screen, offline outbox rules, recent-project cache | 15 → **≈ 20 person-days** (≈ 4 weeks), shipped no earlier than 4 weeks after v3.5 |
-| 3 | **v3.6** | passkeys, historian backup, live-data settings, field-level merge, CSP hardening checkpoint | 15 → **≈ 20 person-days** (≈ 4 weeks) |
+| 1 | **v4.0** (invite beta, then on for the web) | sign-in (e-mail codes, recovery address, **Google, LinkedIn**; link / unlink), sessions, manual Save / Open from cloud, history and restore, import files, account page, export, delete with grace, e-mail change, security notices, migration and hand-over, public-computer wipe, ops (publish allow-list, separate server deploys, backups, ledger, runbook) | 65 → **≈ 85 person-days** (≈ 17 weeks for one full-time builder; revision 2 without providers: 49 → ≈ 64, ≈ 13 weeks), plus 6–10 calendar weeks of legal work and 1–3 weeks of Google verification in parallel |
+| 2 | **v4.0.x** | automatic sync, pull-before-edit, key-level merge, overlap conflicts kept on screen, offline outbox rules, recent-project cache | 15 → **≈ 20 person-days** (≈ 4 weeks), shipped no earlier than 4 weeks after v4.0 |
+| 3 | **v4.1** | passkeys, historian backup, live-data settings, field-level merge, CSP hardening checkpoint | 15 → **≈ 20 person-days** (≈ 4 weeks) |
 | | | **Total** | 95 → **≈ 124 person-days** (≈ 117 without WP-M; the providers add 16 → ≈ 21 over revision 2's 79 → ≈ 103) |
 
-**If the providers move out of v3.5** (Q24 alternative): v3.5 keeps the revision-2 estimate and date (≈ week 15), and the
-providers follow in **a separate provider release before v3.5.x** (numbered when scheduled; WP-O plus a day each of WP0, WP-HC
+**If the providers move out of v4.0** (Q24 alternative): v4.0 keeps the revision-2 estimate and date (≈ week 15), and the
+providers follow in **a separate provider release before v4.0.x** (numbered when scheduled; WP-O plus a day each of WP0, WP-HC
 and WP-I1, 16 → ≈ 21 person-days, ≈ week 20). No data migration: every account already has the e-mail root method, and the
-provider columns and tables are in the first v3.5 schema with defaults (§3.4).
+provider columns and tables are in the first v4.0 schema with defaults (§3.4).
 
 **Calendar** — laid out on the **contingency days** (× 1.3), one full-time builder, **no two work packages at once**; weeks from
 the owner's go. Owner and legal work runs beside the build because it is not the builder's time.
@@ -1817,14 +1818,14 @@ the owner's go. Owner and legal work runs beside the build because it is not the
 | 11–13 | WP-C1 (≈ 11.5 d) | final privacy notice and Terms (by week 10) | yes |
 | 14–15 | WP-OPS, WP-HC (≈ 11.5 d) | | yes |
 | 16–17 | WP-I1: review, load test, provider round trip in three browser engines (≈ 5 d) | | yes |
-| 18–19 | WP-I1: invite beta (2 weeks, all three methods), fixes, **v3.5 ≈ week 19** | | yes |
+| 18–19 | WP-I1: invite beta (2 weeks, all three methods), fixes, **v4.0 ≈ week 19** | | yes |
 | 20–23 | WP-C2 (≈ 15.5 d) during the 4 weeks of Phase 1 telemetry | | |
-| 24–25 | auto-sync beta and WP-I2, **v3.5.x ≈ week 25** | | |
-| 26–29 | WP-C3, WP-M, WP-I3, **v3.6 ≈ week 29** | | |
+| 24–25 | auto-sync beta and WP-I2, **v4.0.x ≈ week 25** | | |
+| 26–29 | WP-C3, WP-M, WP-I3, **v4.1 ≈ week 29** | | |
 
-For comparison: revision 2 (e-mail code only) on the same basis gives **v3.5 ≈ week 15**; revision 3's table (base days, with
-overlaps) showed week 13–15. The providers therefore cost about **4 calendar weeks** before v3.5. With a second builder taking
-WP-O beside WP-S1, v3.5 would move back to about week 16.
+For comparison: revision 2 (e-mail code only) on the same basis gives **v4.0 ≈ week 15**; revision 3's table (base days, with
+overlaps) showed week 13–15. The providers therefore cost about **4 calendar weeks** before v4.0. With a second builder taking
+WP-O beside WP-S1, v4.0 would move back to about week 16.
 
 Each WP ends with the build incantation, smoke and acceptance green and the iOS strip test green.
 
@@ -1856,7 +1857,7 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | LinkedIn's e-mail claims unreliable; its issuer, nonce or PKCE behaviour differs from its documents | wrong links or failed sign-ins | its e-mail is never trusted (always our code); behaviour fixed by WP0 live tests in one config file; a test profile per provider |
 | LinkedIn app re-created | every LinkedIn link breaks (pairwise subjects) | never re-create (§13.10); re-link by one e-mail code (§4.14) |
 | Button branding refused, or the rules change | verification refused | official assets unmodified; checked in WP0 and WP-HC |
-| A second account by mistake (code with one address, a provider with another) | work split over two accounts | the provider sign-up consent step names the new address and points to *Sign-in methods*, with Cancel second (§11.2); the account page lists every method; support macro (export, unlink, delete — identities released at the deletion request — import, link); no merge tool in v3.5 (Q31) |
+| A second account by mistake (code with one address, a provider with another) | work split over two accounts | the provider sign-up consent step names the new address and points to *Sign-in methods*, with Cancel second (§11.2); the account page lists every method; support macro (export, unlink, delete — identities released at the deletion request — import, link); no merge tool in v4.0 (Q31) |
 | Provider sign-in leaves the user signed in to the provider on a shared PC | the next person can use their provider account (T30) | shared-browser flag and public tick force a fresh provider login (LinkedIn hidden unless a forced login exists); blocking provider sign-out step at public sign-out; residual recorded in T30 |
 | LinkedIn enforces neither PKCE nor nonce | a leaked LinkedIn code can be injected (T23) | WP0 wrong-verifier test; LinkedIn behind `OAUTH_LINKEDIN`; ship only on the owner's decision (Q32) |
 | Cookie SameSite behaviour differs in a browser | the callback or finish fails | the design never needs a Strict cookie on a cross-site request; three-engine round trip (WP-I1); the e-mail code still works |
@@ -1868,19 +1869,19 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | # | Question | Recommended default | Alternatives |
 |---|---|---|---|
 | Q1 | Backend option | **Own minimal API in serverless functions + managed SQL database + the host's blob store** (D2). Also confirm the naming convention: open standards (SQL, OpenID Connect, WebAuthn) are named, no vendor, host, service or product | a managed identity service of the host (no passkeys or codes, data region not stated); a hosted auth-plus-database service (large client SDK, free tier pauses when idle) |
-| Q2 | Sign-in methods | **E-mail code (root, on every account) + optional recovery address + Sign in with Google + Sign in with LinkedIn in v3.5; passkeys in v3.6**; no passwords (owner request of 2026-11-08) | e-mail code only (revision 2); passwords (more support, credential stuffing); more providers (each adds a console, a secret and a branding review) |
+| Q2 | Sign-in methods | **E-mail code (root, on every account) + optional recovery address + Sign in with Google + Sign in with LinkedIn in v4.0; passkeys in v4.1**; no passwords (owner request of 2026-11-08) | e-mail code only (revision 2); passwords (more support, credential stuffing); more providers (each adds a console, a secret and a branding review) |
 | Q3 | Sessions | **trusted 35 d idle / 180 d absolute; public 12 h / 7 d; "public computer" unticked by default** | 14 d / 90 d (signs out rig users after a hitch); public ticked by default |
 | Q4 | Encryption level | **server-side envelope encryption** now; optional end-to-end vault later (format ready) | end-to-end from day one (a lost key loses data for good; ~+25 days; no support recovery) |
 | Q5 | Free vs paid accounts | **free**, 250 MB quota, 64 MB per project, 100 MB historian backup | paid tiers (needs payments and terms; not planned) |
 | Q6 | Data region | functions UK, **database UK (else EU), bodies EU** | everything EU; UK-only when a UK object store is available |
 | Q7 | Retention | named saves 30 d; automatic revisions 10-minute points for 24 h + daily for 30 d; trash 30 d; audit 12 months; inactive accounts deleted after 24 months with two warnings; **deletion with a 7-day grace** | longer history (cost); 36-month inactivity; immediate deletion only |
-| Q8 | Live-data connection settings | **opt-in, off** (v3.6) | sync by default (exposes site network addresses) |
-| Q9 | Historian | **manual opt-in backup / restore** (v3.6) | automatic backup on Save to cloud (cost, bandwidth) |
+| Q8 | Live-data connection settings | **opt-in, off** (v4.1) | sync by default (exposes site network addresses) |
+| Q9 | Historian | **manual opt-in backup / restore** (v4.1) | automatic backup on Save to cloud (cost, bandwidth) |
 | Q10 | Account page placement | **header chip only (`navHidden`)** | Overview sidebar row 6 (web only) |
 | Q11 | Admin console | **none**; audited ops scripts | a minimal console (more attack surface) |
-| Q12 | Conflict policy | **key-level auto-merge (v3.5.x); an overlap keeps the local version on screen as a conflict copy**; field-level merge in v3.6 | conflict copy for every concurrent change (frequent, confusing); last writer wins (loses work) |
+| Q12 | Conflict policy | **key-level auto-merge (v4.0.x); an overlap keeps the local version on screen as a conflict copy**; field-level merge in v4.1 | conflict copy for every concurrent change (frequent, confusing); last writer wins (loses work) |
 | Q13 | Beta | **invite allow-list on the server (`ACCOUNTS_SIGNUP=invite`) + `?cloud=1` to show the chip, 2 weeks; auto sync after 4 weeks of telemetry** | open sign-up at release |
-| Q14 | Release numbers | **v3.5 / v3.5.x / v3.6 after DFIT v3.4**; agree with the DFIT lead | v3.4.x if DFIT slips |
+| Q14 | Release numbers | **v4.0 / v4.0.x / v4.1 after DFIT v3.4**; agree with the DFIT lead | v3.4.x if DFIT slips |
 | Q15 | Terms of Use | **new short Terms for the account service**, consent recorded per version | LICENSE §3 only (not enough) |
 | Q16 | Security notices | **every new device and every security change** (§4.9) | new devices only; weekly digest |
 | Q17 | Release-notes item on iOS | **hidden on iOS** (`platform:'web'`) | shown with "web version only" |
@@ -1889,15 +1890,15 @@ Each WP ends with the build incantation, smoke and acceptance green and the iOS 
 | Q20 | Account recovery policy | **recovery address + audited support recovery with the documented identity check (§13.7) and a 7-day revert notice** | no support recovery (a lost mailbox loses the account) |
 | Q21 | Business users' data | **offer a standard data processing agreement; H2Oil as processor for business data, controller for accounts** | controller only, no DPA (may block business use) |
 | Q22 | Waiting changes on a public computer at expiry | **wipe everything except the outbox encrypted with the server-held per-user key, kept 7 days** | wipe everything (loses a shift's unsynced work); keep local data until the next sign-in (exposes it) |
-| Q23 | CSP hardening track | **remove `eval` / `new Function` / inline handlers and move to a nonce-based `script-src` in v3.6** | leave the CSP as allow-list only (accepted residual risk) |
-| Q24 | Which methods ship when | **all three in v3.5 (≈ week 19)**, each provider behind its own switch read by the page (`GET /auth/providers`): Google in testing mode for the beta testers if its verification is late; a provider not ready at release ships dark and is switched on later without a client release | e-mail code in v3.5 (≈ week 15, the revision-2 date) and the providers in a separate provider release before v3.5.x (≈ 21 person-days later, ≈ week 20, §14); providers in v3.6 with passkeys |
-| Q25 | Passkeys | **still follow in v3.6** (fastest, phishing-resistant, no third party; the provider buttons do not replace them) | drop passkeys now that providers exist (less work, the strongest method lost); bring them into v3.5 (+8 days) |
+| Q23 | CSP hardening track | **remove `eval` / `new Function` / inline handlers and move to a nonce-based `script-src` in v4.1** | leave the CSP as allow-list only (accepted residual risk) |
+| Q24 | Which methods ship when | **all three in v4.0 (≈ week 19)**, each provider behind its own switch read by the page (`GET /auth/providers`): Google in testing mode for the beta testers if its verification is late; a provider not ready at release ships dark and is switched on later without a client release | e-mail code in v4.0 (≈ week 15, the revision-2 date) and the providers in a separate provider release before v4.0.x (≈ 21 person-days later, ≈ week 20, §14); providers in v4.1 with passkeys |
+| Q25 | Passkeys | **still follow in v4.1** (fastest, phishing-resistant, no third party; the provider buttons do not replace them) | drop passkeys now that providers exist (less work, the strongest method lost); bring them into v4.0 (+8 days) |
 | Q26 | Sign-up through a provider during the invite beta | **allowed under the same allow-list**: the account address (provider-managed and verified, or confirmed by our code) must be on it; otherwise `403 not_invited` with "Sign in with the address you were invited with, or use the e-mail code" | providers sign in only to existing accounts during the beta (`OAUTH_*=signin`); providers hidden during the beta |
 | Q27 | Trusting a provider's "e-mail verified" for a new account | **Google trusted only for addresses Google manages** (its consumer mail domain, or a hosted-domain claim matching the address's domain); every other Google address and **every LinkedIn address get our e-mail code** — so a first LinkedIn sign-in costs one code mail, once (§11.2 friction table) | our code for both always (one more step for every new Google user, one rule); trust Google for any domain (not recommended: a former employee's Google account on a reassigned work address); trust both (not recommended: LinkedIn's claim is optional and it does not verify identities) |
 | Q28 | Provider e-mail matches an existing account | **link only after an e-mail code to that account's address** (D24, §4.12 rule 4) | refuse and ask the user to link from the account page (safest, more friction); auto-link on a verified e-mail (not recommended: the classic takeover) |
-| Q29 | Step-up through the provider | **no**: step-up is `stepup_at`, set only by an e-mail code (to the primary or recovery address) or, from v3.6, a UV passkey; a provider only signs in, and its session starts with no step-up | a fresh Google re-authentication as step-up (a forced re-login and a second redirect in the middle of an action) |
+| Q29 | Step-up through the provider | **no**: step-up is `stepup_at`, set only by an e-mail code (to the primary or recovery address) or, from v4.1, a UV passkey; a provider only signs in, and its session starts with no step-up | a fresh Google re-authentication as step-up (a forced re-login and a second redirect in the middle of an action) |
 | Q30 | Provider profile data | **none kept**: Google asked only for `openid email`; LinkedIn's name and photo dropped | ask Google for `profile` and keep a display name for the chip (more personal data, little benefit) |
-| Q31 | Two accounts created by mistake | **no merge tool in v3.5**: prevention in the provider sign-up consent step plus the support macro (export, unlink, delete, import, link; history, library and devices do not travel) | a server-side merge tool (≈ +5 days; moves projects, history, library and identities; audited) |
+| Q31 | Two accounts created by mistake | **no merge tool in v4.0**: prevention in the provider sign-up consent step plus the support macro (export, unlink, delete, import, link; history, library and devices do not travel) | a server-side merge tool (≈ +5 days; moves projects, history, library and identities; audited) |
 | Q32 | LinkedIn if WP0 finds neither PKCE nor nonce enforced | **ship it behind `OAUTH_LINKEDIN` with the T23 residual recorded** (a code leaked before we redeem it could be injected), callback query logging off, and reassess at each review; decided by the owner after WP0 | keep LinkedIn dark until it enforces PKCE; drop LinkedIn |
 
 ---
@@ -2104,7 +2105,7 @@ from a reviewer's suggestion, or beyond it, and why:
    entries, so `RELEASE_NOTES[0].ver` — the version label and the app store stamp — stays the same on iOS.
 11. **"No Google in www"** (consistency blocker test): today's bundle already contains "Google" once (the analytics sentence of the
    web privacy branch), so the check pins that one occurrence as a baseline; "LinkedIn" must be absent everywhere.
-12. **Calendar** (major in two reviews): re-laid on the contingency days for one builder with no overlap (v3.5 ≈ week 19), with the
+12. **Calendar** (major in two reviews): re-laid on the contingency days for one builder with no overlap (v4.0 ≈ week 19), with the
    revision-2 date (≈ week 15) beside it and the second-builder option noted, rather than assuming a second builder.
 13. **Database name** (product minor): the prose uses "the SQL database"; open standards stay named; Q1 asks the owner to confirm.
 14. **Re-created LinkedIn app** (consistency minor): an ops script (`retire-client`) removes the orphaned rows before the new
