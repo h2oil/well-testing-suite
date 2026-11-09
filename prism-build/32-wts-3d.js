@@ -80,7 +80,11 @@ var ANCHORS = {
   desander:[-10.2,3.5,-1.6], surge2:[12.5,5.8,2.3], heaterChoke:[-3.45,2.8,0.4]
 };
 // in the effective rig-up? core items: unless strictly false; optional items: only when strictly true (D2)
-function rigIn(rig, id) { return OPT[id] ? !!(rig && rig[id] === true) : !(rig && rig[id] === false); }
+// v1.5.0: pseudo-items read from the normalised rig object (set from the snapshot, not rig-up switches; not in RIG_GROUPS / rigSig):
+// lpLine = the LP flare line is on (snapshot lp.on), sepSurge = V-101 out with the well stream to the surge tank (sepBy.dest
+// 'surge'); like the optional items they are in only when the rig object says so
+var PSEUDO = { lpLine:true, sepSurge:true };
+function rigIn(rig, id) { return OPT[id] || PSEUDO[id] ? !!(rig && rig[id] === true) : !(rig && rig[id] === false); }
 // does the item take part in picking / occlusion / framing / focus? Core items always (their v3.3 ghost stays pickable and
 // still hides labels); optional items only while they are in the rig-up (§8.0, D18)
 function optIn(rig, id) { return !OPT[id] || rigIn(rig, id); }
@@ -126,7 +130,9 @@ var PROXIES = [
   // optional items (appended; filtered out by rigProxies while the item is out of the rig-up)
   ['desander',[-10.2,1.55,-1.6],[0.9,3.1,0.9]], ['desander',[-10.2,0.45,-3.5],[1.2,0.9,0.7]],
   ['surge2',[12.5,3.2,2.3],[1.9,4.6,1.9]],                      // inscribed (x 11.55…13.45; T-201's proxy ends at x 11.45)
-  ['heaterChoke',[-3.45,2.1,0.4],[0.5,0.9,0.5]]                 // x −3.7…−3.2: clear of the H-101 proxy (x −3.1…0.3)
+  ['heaterChoke',[-3.45,2.1,0.4],[0.5,0.9,0.5]],                // x −3.7…−3.2: clear of the H-101 proxy (x −3.1…0.3)
+  // v1.5.0: LP flare line (only while lp.on): FT-201 body and the ground run → card 'lp'
+  ['lp',[15.0,0.62,0.6],[0.5,0.9,0.5]], ['lp',[16.025,0.35,0.6],[6.05,0.36,0.36]]
 ];
 var MUSHROOM = { c:[-12.6,0.95,1.66], s:[0.14,0.14,0.12] };
 // CK-101 choke manifold (v1.5.0): plan of the 3-1/16" 10K two-choke manifold GA drawing, square loop on a skid (no mirror:
@@ -210,7 +216,7 @@ var OBST_BOXES = [{ box:V101_BOX }, { box:{ min:[9.0, 0.9, 2.8], max:[11.4, 5.7,
                   { box:{ min:[11.5, 0.9, 1.3], max:[13.5, 5.5, 3.3] }, rig:'surge2' }];
 
 // ── tables filtered by the effective rig-up (§8.0, D18): a hidden item has no volume anywhere ──
-function rigProxies(rig) { return PROXIES.filter(function (p) { return optIn(rig, p[0]); }); }
+function rigProxies(rig) { return PROXIES.filter(function (p) { return p[0] === 'lp' ? rigIn(rig, 'lpLine') : optIn(rig, p[0]); }); }
 function rigValveProxies(rig) { return VALVE_PROXIES.filter(function (p) { return optIn(rig, proxyEq(p[0])); }); }
 function rigObst(rig) { return OBST_BOXES.filter(function (o) { return !o.rig || rigIn(rig, o.rig); }); }
 function rigEqIds(rig) { return EQ_IDS.filter(function (id) { return optIn(rig, id); }); }
@@ -269,7 +275,7 @@ var ROUTES = [
   { id:'LO',  aSeg:7, seg:-1, nps:3, line:'sep_oil',   phase:'oil',   pts:[[8.1,1.13,0],[8.1,0.55,0],[8.1,0.55,2.4]] },
   { id:'LMa', aSeg:8, seg:-1, nps:3, line:'LM',        phase:'liquid',pts:[[8.1,0.55,2.4],[8.1,0.55,4.0],[8.1,2.9,4.0]] },
   { id:'BLK', aSeg:9, seg:-1, nps:2, line:'blanket',   phase:'gas',   pts:[[4.1,2.87,0],[4.1,4.9,0],[4.1,4.9,4.0],[9.0,4.9,4.0]] },
-  { id:'VENT',aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[13.0,6.1,4.0],[13.0,6.1,0],[13.0,3.6,0]] },
+  { id:'VENT',aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', unless:'lpLine', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[13.0,6.1,4.0],[13.0,6.1,0],[13.0,3.6,0]] },
   // X1 → LCV-201 (control valve at x 12.5, no pump: the surge tank pressure drives the transfer) → X2
   { id:'X1',  aSeg:5, seg:5, line:'surge_gauge',  phase:'liquid', pts:[[10.65,0.95,4.0],[10.65,0.45,4.0],[12.2,0.45,4.0]] },
   { id:'X2',  aSeg:5, seg:5, line:'surge_gauge',  phase:'liquid', pts:[[12.8,0.45,4.0],[13.4,0.45,4.0],[13.4,3.4,4.0],[13.4,3.4,3.6],[15.2,3.4,3.6]] },
@@ -291,7 +297,7 @@ var ROUTES = [
   { id:'X0',  aSeg:5, seg:-1, nps:3, line:'surge2_gauge', phase:'liquid', rig:'surge2', pts:[[12.5,0.62,2.3],[12.5,0.45,2.3],[12.5,0.45,3.5],[13.4,0.45,3.5],[13.4,0.45,4.0]] },
   { id:'VENT2', aSeg:10, seg:-1, nps:2, line:'surge2_vent', phase:'gas', rig:'surge2', pts:[[12.5,5.5,2.3],[12.5,6.1,2.3],[13.0,6.1,2.3]] },
   { id:'BLK2', aSeg:9, seg:-1, nps:2, line:'blanket2', phase:'gas', rig:'surge2', pts:[[7.6,4.9,4.0],[7.6,4.9,2.0],[11.55,4.9,2.0]] },
-  { id:'PSV2', aSeg:10, seg:-1, nps:1, line:'psv_surge2', phase:'gas', rig:'surge2', pts:[[11.9,5.85,2.3],[11.35,5.85,2.3],[11.35,4.1,2.3],[11.35,4.1,0]] },
+  { id:'PSV2', aSeg:10, seg:-1, nps:1, line:'psv_surge2', phase:'gas', rig:'surge2', unless:'lpLine', pts:[[11.9,5.85,2.3],[11.35,5.85,2.3],[11.35,4.1,2.3],[11.35,4.1,0]] },
   // ── v1.3.0 (appended) — CK-102 on the H-101 inlet leg: E3c (built only while CK-102 is out, as in v3.3.1) splits into
   //    E3c1 (tee → riser → CK-102 inlet, the line between the chokes with PAH-102) and E3c2 (CK-102 outlet → coil inlet).
   //    E3c1 + CK-102 body + E3c2 = the E3c polyline; the body (centre CK2_AT) sits on its last horizontal stub and the two
@@ -301,28 +307,46 @@ var ROUTES = [
   // ── v1.4.0 (appended) — CK-101 manifold legs (see E2 / E2b / E3 above; v1.5.0 points) ──
   { id:'E2a', aSeg:14, seg:1, line:'esd_choke', phase:'multi', pts:[[-7.8,1.2,0.75],[-6.3,1.2,0.75]] },
   { id:'E3f', aSeg:17, seg:2, rSeg:1, line:'choke_heater', phase:'multi', pts:[[-7.8,1.2,-0.75],[-6.3,1.2,-0.75]] },
-  { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rb:0.2, pts:[[-6.3,1.2,-0.75],[-5.7,1.2,-1.35],[-5.15,1.2,-1.35],[-5.15,1.2,0],[-4.3,1.2,0]] }
+  { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rb:0.2, pts:[[-6.3,1.2,-0.75],[-5.7,1.2,-1.35],[-5.15,1.2,-1.35],[-5.15,1.2,0],[-4.3,1.2,0]] },
+  // ── v1.5.0 (appended) — LP flare line (snapshot lp.on; pseudo rig item lpLine): VENTL = T-201 top → PCV-201 (the v3.3 VENT start;
+  //    PSV-201 still tees in) to a flanged break at x 12.2; LP = that break → down at x 13.0 (z 0.6, clear of G1, the PSV header
+  //    and the T-202 B branch) → ground run at y 0.35 through FT-201 (x 15.0) → along −z at x 19.05 to the LP riser foot (drain
+  //    boot) at (19.05, 0.35, −3.5), clear of the flare base (z ≤ −3.7) and the knock-out drum; the riser and the LP tip are static
+  //    meshes. VENT2 joins the LP z-run at (13.0, 6.1, 2.3); PSV2L (PSV-202 → LP) replaces PSV2 while the LP line is on ──
+  { id:'VENTL', aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', rig:'lpLine', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[12.2,6.1,4.0]] },
+  { id:'LP', aSeg:18, seg:-1, nps:3, line:'lp_flare', phase:'gas', rig:'lpLine', pts:[[12.2,6.1,4.0],[13.0,6.1,4.0],[13.0,6.1,0.6],[13.0,0.35,0.6],[19.05,0.35,0.6],[19.05,0.35,-3.5]] },
+  { id:'PSV2L', aSeg:10, seg:-1, nps:1, line:'psv_surge2', phase:'gas', rig:['surge2', 'lpLine'], pts:[[11.9,5.85,2.3],[11.9,5.85,1.6],[13.0,5.85,1.6],[13.0,6.1,1.6]] }
 ];
 // CK-101 leg shader slots (v1.4.0): slot → { src segment, leg }. The in-service leg's slots copy their segment's colour, alert,
 // frost and chevron phase each frame; the standby leg's slots show the isolated look (slot 12), alert 0, frost 0, phase frozen
 var CK_LEG_SLOTS = { 14:{ src:1, leg:'adj' }, 15:{ src:1, leg:'fixed' }, 16:{ src:2, leg:'adj' }, 17:{ src:2, leg:'fixed' } };
-var SEG_SLOTS = 18;                                                     // shader uniform array length (aSeg 0–17)
+var SEG_SLOTS = 19;                                                     // shader uniform array length (aSeg 0–18; v1.5.0: 18 = LP flare line)
+var LP_SLOT = 18;                                                       // fed from the snapshot lp / lines.lp_flare, not from a segment
 // one slot's look this frame: its source segment while its leg is in service, else isolated (slot 12) (pure; Node-testable)
 function ckLegSlot(slot, leg) { var d = CK_LEG_SLOTS[slot]; if (!d) return null; var live = d.leg === (leg === 'fixed' ? 'fixed' : 'adj');
   return { src:d.src, live:live, look:live ? d.src : 12 }; }
-var NEW_ROUTES = ['D0a', 'D0b', 'D1', 'D2', 'DD', 'LM2', 'X0', 'VENT2', 'BLK2', 'PSV2', 'E3c1', 'E3c2'];
+var NEW_ROUTES = ['D0a', 'D0b', 'D1', 'D2', 'DD', 'LM2', 'X0', 'VENT2', 'BLK2', 'PSV2', 'E3c1', 'E3c2', 'VENTL', 'LP', 'PSV2L'];
 // CK-102 body: the CK-101 block (angle body, bonnet, handwheel) at 0.8 scale, except that the body is sized for the 6-inch
 // line (0.40 m along the flow × 0.46 m, wider than the pipe it sits on). It sits on the last horizontal stub of the inlet leg
 // (x −3.65…−3.25), clear of the riser (x −3.69) and of the shell end ring (x −3.13)
 var CK2_AT = [-3.45, 1.9, 0.4], CK2_BODY = [0.40, 0.46, 0.46];
 var PSV_ROUTE = [[5.2,2.87,0],[5.2,4.1,0],[12.4,4.1,0],[12.4,3.6,0]];
 // tees [x, y, z, size(NPS; 6 = main seg 2, 4 = main seg 1), rig?] — a rig-tagged tee is drawn only while its item is in,
-// but always suppresses the end flanges at its point (the v3.3 lines stay plain)
-var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9,0.45,6.3,3],[13.0,3.6,0,6],[12.4,3.6,0,6],
+// but always suppresses the end flanges at its point (the v3.3 lines stay plain). v1.5.0: the tag may be '!x' (built while x is
+// out) or an array of tags that must all hold (teeBuilt)
+var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9,0.45,6.3,3],[13.0,3.6,0,6,'!lpLine'],[12.4,3.6,0,6],
   [-10.75,1.2,0,4,'desander'],[-9.3,1.2,0,4,'desander'],
-  [8.1,2.9,4.0,3,'surge2'],[13.4,0.45,4.0,3,'surge2'],[13.0,6.1,2.3,2,'surge2'],[7.6,4.9,4.0,2,'surge2'],[11.35,4.1,0,3,'surge2'],
+  [8.1,2.9,4.0,3,'surge2'],[13.4,0.45,4.0,3,'surge2'],[13.0,6.1,2.3,2,'surge2'],[7.6,4.9,4.0,2,'surge2'],[11.35,4.1,0,3,['surge2','!lpLine']],
   // v1.5.0 (T-202 twin): the B-inlet branch tee on LM2 and the suction header tee into X0
-  [9.25,2.9,2.0,3,'surge2'],[12.5,0.62,2.3,3,'surge2']];
+  [9.25,2.9,2.0,3,'surge2'],[12.5,0.62,2.3,3,'surge2'],
+  // v1.5.0 (LP flare line): PSV2L on the LP z-run, the LP riser foot (drain boot below)
+  [13.0,6.1,1.6,2,['surge2','lpLine']],[19.05,0.35,-3.5,3,'lpLine']];
+// LP riser (static, rig lpLine) from the riser foot up beside the stack, a jog toward the HP tip at y 6.6, to the LP tip; the
+// LP tip / pilot sit at LP_TIP; FT-201 insertion meter on the ground run
+var LP_RISER = [[19.05,0.35,-3.5],[19.05,6.6,-3.5],[19.05,6.6,-4.05],[19.05,7.3,-4.05]], LP_TIP = [19.05,7.3,-4.05], FT201_AT = [15.0,0.35,0.6];
+function tagHolds(rig, t) { return t.charAt(0) === '!' ? !rigIn(rig, t.slice(1)) : rigIn(rig, t); }
+function teeBuilt(t, rig) { var g = t[4]; if (!g) return true; if (typeof g === 'string') return tagHolds(rig, g);
+  for (var i = 0; i < g.length; i++) if (!tagHolds(rig, g[i])) return false; return true; }
 // equipment connection points of the optional items (route ends that are not on a route or tee) — §9.2 endpoint check
 var NOZZLES = { desander:[[-10.45,2.5,-1.6],[-10.2,2.9,-1.6],[-10.2,0.5,-1.93],[-10.2,1.1,-3.5]],
                 surge2:[[11.55,2.9,2.0],[11.55,4.9,2.0],[12.5,5.5,2.3],[11.9,5.85,2.3],[12.9,2.9,1.3],[12.1,0.94,2.3],[12.9,0.94,2.3]],
@@ -343,7 +367,9 @@ var LINE_SPOOL = [[1.6,2.3,0],[1.6,2.3,-1.25],[1.6,3.6,-1.25],[17.0,3.6,-1.25],[
 var TAG_PTS = { pah102:[-3.9, 1.9, 0.2], pshh104:[3.2, 3.6, -1.25], nrv501:[20.3, 1.0, -6.6], xv501:[21.4, 1.0, -6.6] };
 // the scene key: rebuild on the rig-up signature, and with V-101 out also on the destination (the bypass spool changes);
 // with V-101 in the key is the v3.3.1 rigSig
-function rigKeyOf(rig, dest) { return rigSigOf(rig) + (rig && rig.separator === false ? '|' + (dest === 'line' ? 'line' : 'flare') : ''); }
+// v1.5.0: + '|surge' (V-101 out, whole stream to the surge tank) and '|lp' while the LP flare line is on (a v1.4.0 snapshot gives
+// the v1.4.0 key)
+function rigKeyOf(rig, dest, lp) { return rigSigOf(rig) + (rig && rig.separator === false ? '|' + (dest === 'line' ? 'line' : dest === 'surge' ? 'surge' : 'flare') : '') + (lp ? '|lp' : ''); }
 // rig-up groups the scene follows: the core groups are ghosted while out, the optional groups (appended) are not built while out
 var RIG_GROUPS = ['heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2', 'heaterChoke'];   // 9 (rigSig 9 characters)
 
@@ -793,7 +819,10 @@ function makeNorm() {
                               { frac:0, fracW:0, cap_bbl:100, state:'ready', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:false, pos:0, moving:false }],
             nb:0, lastOil:-1, lastRate:-1, lastBsw:-1, lastTag:'', autoOn:false, blocked:false,
             pumpOn:false, pumpFailed:false, pump_q:0, pump_design:1, pumpMode:'pump' },
-    rig:{ heater:true, separator:true, surge:true, gauge:true, pump:true, flare:true, desander:false, surge2:false, heaterChoke:false }, rigSig:'111111000',
+    rig:{ heater:true, separator:true, surge:true, gauge:true, pump:true, flare:true, desander:false, surge2:false, heaterChoke:false,
+          lpLine:false, sepSurge:false }, rigSig:'111111000',
+    // v1.5.0: LP flare line (snapshot lp, lines.lp_flare, nodes.flare.qLP_mmscfd / qHP_mmscfd); off = the v1.4.0 scene
+    lp:{ on:false, to:'hp', P_in:0, P0:0.2, vSt:'OK', vel:0, active:false, q:0, qLP:0, qHP:0 },
     rigKey:'111111000',
     // v1.3.0: CK-102 line-up (nodes.heaterChoke keeps the numbers), bypass destination (snapshot sepBy), cushion (snapshot cushion)
     ck2:{ inRig:false, active:false, bypassed:false, pos:'inlet', limiter:'', designP:1440, note:'' },
@@ -922,7 +951,14 @@ function normalize(state, out) {
   var SB = S.sepBy || {}, sb = N.sepBy;
   sb.dest = SB.dest === 'line' ? 'line' : 'flare'; sb.P = num(SB.P_psig, 150); sb.P0 = num(SB.P0_psig, sb.dest === 'line' ? sb.P : 5);
   sb.active = N.rig.separator === false; sb.vent = sb.active && sb.dest === 'line' && N.rig.flare === false;
-  N.rigKey = rigKeyOf(N.rig, sb.dest);
+  // v1.5.0 LP flare line (contract §2.4 lp; a missing lp = off, the v1.4.0 scene): pseudo rig item lpLine
+  var LPS = S.lp || {}, LPL = (S.lines && S.lines.lp_flare) || {}, FLN = ND.flare || {}, lp = N.lp;
+  lp.on = LPS.on === true; lp.to = LPS.to === 'lp' || LPS.to === 'vent' ? LPS.to : 'hp'; lp.P_in = Math.max(0, num(LPS.P_in_psig, 0)); lp.P0 = num(LPS.P0_psig, 0.2);
+  lp.vSt = nstr(LPS.vSt, 'OK'); lp.vel = Math.max(0, num(LPL.vel, num(LPS.vel_fts, 0))); lp.active = lp.on && (LPL.active === true || lp.vel > 0.01);
+  lp.q = Math.max(0, num(LPS.q_mscfd, 0)); lp.qLP = lp.on ? Math.max(0, num(FLN.qLP_mmscfd, lp.q / 1000)) : 0;
+  lp.qHP = Math.max(0, num(FLN.qHP_mmscfd, Math.max(0, num(FLN.qMMscfd, 0) - lp.qLP)));
+  N.rig.lpLine = lp.on;
+  N.rigKey = rigKeyOf(N.rig, sb.dest, lp.on);
   // CK-102: in the rig-up, in line (active), or greyed while bypassed with H-101 (heater bypass; with H-101 out the engine
   // takes CK-102 out of the rig-up, RIG_NOTES.heaterChokeNeedsHeater, so it is hidden — !N.rig.heater only guards odd snapshots)
   var HC = ND.heaterChoke || {}, c2 = N.ck2;
@@ -1016,9 +1052,12 @@ function streamRates(n, out) {
 }
 // flare gas the 3D shows (flame length, FS-401 chip): 0 while V-101 is out to the production line — the whole well stream goes
 // to the line and nothing reaches the flare (§8.1 'the flame stays off'), the engine's flare node otherwise
+// (v1.5.0: with the LP flare line on, the HP tip burns qHP; the LP tip has its own flame, lpFlareQ)
 function flareQ(n) {
-  return n.sepBy && n.sepBy.active && n.sepBy.dest === 'line' ? 0 : Math.max(0, num(n.nodes.flare.qMMscfd, 0));
+  if (n.sepBy && n.sepBy.active && n.sepBy.dest === 'line') return 0;
+  return n.lp && n.lp.on ? n.lp.qHP : Math.max(0, num(n.nodes.flare.qMMscfd, 0));
 }
+function lpFlareQ(n) { return n.lp && n.lp.on && n.lp.to === 'lp' ? n.lp.qLP : 0; }
 // snap.cushion for fakeSnapshot: off (all zeros, phase 'off'), or a phase with illustrative numbers (D7 defaults)
 var CUSH_PHASES = ['off', 'unloading', 'stalled', 'breakthrough', 'tail', 'done'];
 function fakeCushion(ph, to) {
@@ -1219,6 +1258,17 @@ function fakeSnapshot(t, o) {
   // v1.4.0: CK-101 legs only when asked (o.leg 'adj' | 'fixed'; o.beanFix): without them the snapshot is the v1.3.0 shape
   if (o.leg) { var ckF = o.leg === 'fixed', bF = num(o.beanFix, 24); st.nodes.choke.leg = ckF ? 'fixed' : 'adj'; st.nodes.choke.beanAdj = ckF ? 32 : bean;
     st.nodes.choke.beanFix = ckF ? bean : bF; }
+  // v1.5.0: the LP flare line only when asked (o.lp; o.lpTo 'lp' | 'hp' | 'vent'; o.qLP Mscf/d): without it the v1.4.0 shape
+  if (o.lp) {
+    var lpTo = o.lpTo === 'vent' || o.lpTo === 'hp' ? o.lpTo : 'lp', qL = o.qLP != null ? Math.max(0, num(o.qLP, 0)) : 18 * f, vL = qL > 0 ? 0.25 + qL * 0.08 : 0;
+    st.lp = { on:lpTo !== 'hp', to:lpTo, tag:'FT-201', lineTag:'LP flare line', nps:3, sch:'40', ID_in:3.068, L_ft:150, q_mscfd:qL, meter_mscfd:qL, meterType:'usm',
+      unc_txt:'±5 % of reading', turndown_txt:'2000:1', lowCut_fts:0.1, belowCut:qL <= 0, P_in_psig:0.2 + 0.25 + qL * 0.002, P0_psig:0.2, dP_psi:0.25 + qL * 0.002,
+      vel_fts:vL, ve_fts:60, vPct:vL / 60 * 100, mach:vL / 1100, vSt:'OK', sources:{ t201:qL * 0.8, t202:0, psv:0 }, psvIn:false,
+      note:lpTo === 'vent' ? 'LP gas to the atmospheric vent (FS-401 out)' : 'T-301 vent, not metered' };
+    st.lines.lp_flare = { q:qL / 1000, unit:'MMSCFD', f:f, vel:vL, ID:3.068, phase:'gas', active:qL > 0, vSt:'OK', ve:60, vPct:vL / 60 * 100 };
+    var fl0 = st.nodes.flare; fl0.qHP_mmscfd = fl0.qMMscfd; fl0.qLP_mmscfd = lpTo === 'lp' ? qL / 1000 : 0; fl0.Plp_psig = st.lp.P_in_psig;
+    fl0.qMMscfd = fl0.qHP_mmscfd + fl0.qLP_mmscfd;
+  }
   return st;
 }
 
@@ -1794,7 +1844,8 @@ var CHAIN_DEF = [
   { id:'X0', entry:'X0', phase:'liquid', edges:['X0'] },
   { id:'VENT2', entry:'VENT2', phase:'gas', edges:['VENT2'] },
   { id:'BLK2', entry:'BLK2', phase:'gas', edges:['BLK2'] },
-  { id:'PSV2', entry:'PSV2', phase:'gas', edges:['PSV2'] }
+  { id:'PSV2', entry:'PSV2', phase:'gas', edges:['PSV2'] },
+  { id:'LP', entry:'VENTL', phase:'gas', edges:['VENTL', 'LP'] }                    // v1.5.0 LP flare line (VENT2 / PSV2L continue onto LP)
 ];
 
 function buildScene(F, renderer, tier, env, rig, dest) {
@@ -1805,7 +1856,8 @@ function buildScene(F, renderer, tier, env, rig, dest) {
   // optional groups (DS-101, T-202) are simply not built while out (D18)
   var OFF = {}, IN = {}; RIG_GROUPS.forEach(function (g) { OFF[g] = !OPT[g] && !rigIn(rig, g); IN[g] = rigIn(rig, g); });
   S.off = OFF; S.rigIn = IN; S.rig = rig || {}; S.rigSig = rigSigOf(rig); S.grpObjs = {}; S.detached = [];
-  S.sepDest = dest === 'line' ? 'line' : 'flare'; S.rigKey = rigKeyOf(rig, S.sepDest);       // v1.3.0 scene key (§8.1)
+  IN.lpLine = rigIn(rig, 'lpLine'); IN.sepSurge = rigIn(rig, 'sepSurge');               // v1.5.0 pseudo-items (snapshot lp / sepBy)
+  S.sepDest = dest === 'line' ? 'line' : dest === 'surge' ? 'surge' : 'flare'; S.rigKey = rigKeyOf(rig, S.sepDest, IN.lpLine);   // scene key (§8.1, C12)
   // tables filtered by the rig-up (§8.0): picking, valve taps, occlusion, label obstacles
   S.proxies = rigProxies(rig); S.valveProxies = rigValveProxies(rig);
   S.obst = rigObst(rig).map(function (o) { return { box:o.box, x0:0, y0:0, x1:0, y1:0, on:false }; });
@@ -2716,8 +2768,30 @@ function buildScene(F, renderer, tier, env, rig, dest) {
       gp.push(X, 6.2, Z, ax, 0.05, az); add('concrete', F.boxAt(0.4, 0.2, 0.4, ax, 0.1, az)); });
     var gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3));
     scene.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color:C('#3a4452'), transparent:true, opacity:0.6 })));
+    // v1.5.0 LP flare line (only while lp.on): LP riser beside the stack (NPS 3, steel), a jog toward the HP tip at y 6.6, the LP
+    // tip with a wind shield ring and a pilot; drain boot with a drain valve under the riser foot
+    if (IN.lpLine) {
+      var rR = pipeRadius(3), rp = LP_RISER, tp = LP_TIP;
+      for (var ri = 0; ri < rp.length - 1; ri++) add('steelDark', F.cylAB(rp[ri], rp[ri + 1], rR, 14));
+      for (ri = 1; ri < rp.length - 1; ri++) add('steelDark', F.place(new THREE.SphereGeometry(rR * 1.04, 12, 8), rp[ri][0], rp[ri][1], rp[ri][2]));
+      [2.0, 4.5].forEach(function (y) { add('steelDark', F.cylAB([rp[0][0] + 0.05, y, rp[0][2] - 0.13], [X - 0.15, y, Z + 0.17], 0.025, 6)); });   // riser guides to the stack
+      add('steelDark', F.cylAB(tp, [tp[0], tp[1] + 0.32, tp[2]], 0.15, 16, true, 0.13)); add('steelSatin', F.place(new THREE.TorusGeometry(0.17, 0.02, 6, 20), tp[0], tp[1] + 0.3, tp[2], Math.PI / 2, 0, 0));
+      add('steelSatin', F.cylAB([tp[0] + 0.12, tp[1] - 0.6, tp[2]], [tp[0] + 0.12, tp[1] + 0.3, tp[2]], 0.02, 6));                        // pilot line
+      add('steelDark', F.cylAB([rp[0][0], rp[0][1], rp[0][2]], [rp[0][0], 0.04, rp[0][2]], 0.1, 12));                                     // drain boot
+      add('accent', F.boxAt(0.1, 0.1, 0.14, rp[0][0], 0.14, rp[0][2] + 0.16));
+      tagPlate('LP FLARE', tp[0], tp[1] - 0.35, tp[2] + 0.2);
+    }
   })();
   endGrp();
+  // v1.5.0: FT-201 insertion ultrasonic flare-gas meter on the LP ground run (spool, two transducer stalks, transmitter head)
+  if (IN.lpLine) (function () {
+    var f = FT201_AT, rR = pipeRadius(3);
+    add('steelSatin', F.cylAB([f[0] - 0.14, f[1], f[2]], [f[0] + 0.14, f[1], f[2]], rR * 1.12, 18));
+    flange([f[0] - 0.14, f[1], f[2]], [1, 0, 0], rR); flange([f[0] + 0.14, f[1], f[2]], [1, 0, 0], rR);
+    [-0.06, 0.06].forEach(function (dx) { add('steelSatin', F.cylAB([f[0] + dx, f[1] + rR, f[2] + dx], [f[0] + dx, f[1] + rR + 0.2, f[2] + dx], 0.03, 8)); });
+    add('paintBlue', F.boxAt(0.2, 0.18, 0.16, f[0], f[1] + rR + 0.3, f[2]));
+    tagPlate('FT-201', f[0], f[1] + rR + 0.52, f[2]);
+  })();
 
   // ═══ rig-up bypass spools (amber, static) for the items out of the spread ═══
   // v1.3.0: with V-101 out the separator spool follows the destination ('line': LINE_SPOOL to the export spool and the tie-in);
@@ -2865,7 +2939,11 @@ function buildScene(F, renderer, tier, env, rig, dest) {
         opacity:0.3, blending:THREE.AdditiveBlending, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2 }));
       streak.position.set(FLAME_BASE[0], 0.03, FLAME_BASE[2]); streak.frustumCulled = false; streak.renderOrder = 2; scene.add(streak);
     }
-    S.dyn.flame = { core:core, outer:outer, halo:halo, pilot:pilot, smoke:smoke, streak:streak, L:0, Lv:0, scroll:0, ph:0, fph:0 };
+    // v1.5.0: LP tip flame (own core mesh, smaller) and pilot while the LP flare line is in the scene
+    var lpCore = null, lpPilot = null;
+    if (IN.lpLine) { lpCore = new THREE.Mesh(core.geometry, F.makeFlameMat(T.fbm, 71.0, 0.9)); lpCore.frustumCulled = false; lpCore.renderOrder = 962; scene.add(lpCore);
+      lpPilot = sprite('#6fa8ff', 0.35, LP_TIP[0] + 0.12, LP_TIP[1] + 0.42, LP_TIP[2], 0.9); }
+    S.dyn.flame = { core:core, outer:outer, halo:halo, pilot:pilot, smoke:smoke, streak:streak, L:0, Lv:0, scroll:0, ph:0, fph:0, lpCore:lpCore, lpPilot:lpPilot, lpL:0 };
   })();
   endGrp();
 
@@ -3041,7 +3119,10 @@ function routeRVis(r, nps) {
 // is a route built for this rig-up? (routes tagged with an optional item exist only while it is in)
 // (r.unless: built only while that item is OUT — E3c, replaced by E3c1 + E3c2 while CK-102 is in)
 function routeGeom(r, rv) { return buildRoute(r.pts, rv, r.rb != null ? { rb:r.rb } : null); }
-function routeBuilt(r, rig) { return (!r.rig || rigIn(rig, r.rig)) && (!r.unless || !rigIn(rig, r.unless)); }
+// v1.5.0: r.rig / r.unless may each be a string or an array (rig = all in; unless = none in)
+function anyTag(rig, t, all) { if (typeof t === 'string') return rigIn(rig, t);
+  for (var i = 0; i < t.length; i++) { var x = rigIn(rig, t[i]); if (all ? !x : x) return !all; } return !!all; }
+function routeBuilt(r, rig) { return (!r.rig || anyTag(rig, r.rig, true)) && (!r.unless || !anyTag(rig, r.unless, false)); }
 // arc length on route `id` nearest to point p (tracers continue from a tee instead of jumping back), sampled at `step`
 function joinS(id, p, nps, step) {
   var r = ROUTES[ROUTE_IDX[id]], rt = routeGeom(r, routeRVis(r, nps || DEF_NPS)), st = step || 0.04, n = Math.max(2, Math.ceil(rt.length / st) + 1);
@@ -3084,7 +3165,7 @@ var PROPS = [
   ['CK-101 inlet tee', [-8.01, 0.99, 0.54], [-7.59, 1.41, 0.96]], ['CK-101 outlet tee', [-6.51, 0.99, -0.96], [-6.09, 1.41, -0.54]],
   ['CK-101 choke ADJ', [-6.52, 0.98, 0.53], [-6.08, 1.92, 0.97]], ['CK-101 choke POS', [-8.06, 0.98, -0.97], [-7.54, 1.68, -0.53]],
   ['SDV-101', [-11.95, 0.94, -0.33], [-11.25, 3.12, 0.33]],
-  ['LCV-201', [12.2, 0.22, 3.77], [12.8, 1.03, 4.23]], ['PCV-201', [11.45, 5.95, 3.85], [11.75, 6.75, 4.15]],
+  ['LCV-201', [12.2, 0.22, 3.77], [12.8, 1.03, 4.23]], ['PCV-201', [11.45, 5.95, 3.85], [11.75, 6.75, 4.15], ['VENT', 'VENTL']],
   ['XV-201A', [8.69, 4.09, 3.89], [8.91, 4.31, 4.33]], ['XV-201B', [11.51, 4.09, 3.89], [11.73, 4.31, 4.33]],
   ['SV-201A', [10.0, 0.35, 3.89], [10.2, 0.55, 4.11]], ['SV-201B', [10.55, 0.62, 3.89], [10.75, 0.82, 4.11]],
   ['PCV-101', [10.33, 3.33, -0.27], [10.87, 4.35, 0.27]], ['PCV-202', [3.85, 4.65, 1.75], [4.35, 5.55, 2.25]], ['FE-101', [9.24, 3.29, -0.31], [9.36, 4.25, 0.31]],
@@ -3124,7 +3205,8 @@ var OPT_PRIMS = {
     { id:'SV-202A', k:'box', min:[12.2, 0.52, 2.19], max:[12.4, 0.72, 2.41], on:['T-202 suction'] },
     { id:'SV-202B', k:'box', min:[12.6, 0.52, 2.19], max:[12.8, 0.72, 2.41], on:['T-202 suction'] },
     { id:'LCV-202', k:'box', min:[12.865, 0.265, 3.315], max:[13.235, 1.14, 3.685], on:['X0'] },
-    { id:'PCV-203', k:'box', min:[12.53, 5.98, 2.15], max:[12.83, 6.6, 2.45], on:['VENT2'] },
+    { id:'PCV-203', k:'box', min:[12.56, 5.98, 2.18], max:[12.8, 6.22, 2.42], on:['VENT2'], j:['PCV-203 actuator'] },               // globe body
+    { id:'PCV-203 actuator', k:'box', min:[12.53, 6.22, 2.15], max:[12.83, 6.6, 2.45], on:['VENT2'] },                                // stem + diaphragm
     { id:'PCV-204', k:'box', min:[9.45, 4.76, 1.85], max:[9.75, 5.39, 2.15], on:['BLK2'] }],
   // CK-102 (v1.3.0): body on E3c1 / E3c2, bonnet, handwheel, PAH-102 switch and plate on E3c1 ('H-101' = the coarse H-101 box
   // that contains the whole inlet stub; the end ring is checked instead)
@@ -3136,6 +3218,11 @@ var OPT_PRIMS = {
     { id:'PAH-102 plate', k:'box', min:[-4.12, 2.475, 0.19], max:[-3.68, 2.59, 0.21] }]
 };
 // V-101 out (v1.3.0): the bypass spool of the destination, PSHH-104 on it and, for 'line', NRV-501 / XV-501 at the tie-in
+// v1.5.0 LP flare line: FT-201 on the ground run, the drain boot under the riser foot, the LP tip (the riser is a capsule run)
+var LP_PRIMS = [
+  { id:'FT-201', k:'box', min:[14.86, 0.18, 0.44], max:[15.14, 0.98, 0.76], on:['LP'] },
+  { id:'LP drain boot', k:'cyl', c:[19.05, -3.5], r:0.1, y0:0.04, y1:0.3, on:['LP'], j:['LP riser'] },
+  { id:'LP tip', k:'cyl', c:[19.05, -4.05], r:0.15, y0:7.25, y1:7.7, j:['LP riser'] }];
 var SPOOL_PRIMS = {
   pshh104:{ id:'PSHH-104', k:'box', min:[2.98, 3.72, -1.31], max:[3.42, 4.2, -1.19], on:['V-101 bypass spool'] },
   line:[{ id:'NRV-501', k:'box', min:[20.08, 0.85, -6.75], max:[20.52, 1.54, -6.45], on:['V-101 bypass spool', 'export spool'] },     // (the line spool
@@ -3152,9 +3239,10 @@ function clearancePrims(rig, dest) {
   caps('PSV header', PSV_ROUTE, pipeRadius(3), false);
   EXTRA_PIPES.forEach(function (e) { if (e[3] && !rigIn(rig, e[3])) return; caps(e[0], e[1], pipeRadius(e[2]), !!e[3]); });
   VESSEL_CYLS.forEach(function (v) { out.push({ id:v[0], k:'cyl', c:v[1], r:v[2], y0:v[3], y1:v[4], isNew:false }); });
-  PROPS.forEach(function (p) { out.push({ id:p[0], k:'box', min:p[1], max:p[2], isNew:false }); });
+  PROPS.forEach(function (p) { var q = { id:p[0], k:'box', min:p[1], max:p[2], isNew:false }; if (p[3]) q.on = p[3]; out.push(q); });   // (4th: routes it sits on)
   function cp(p) { var q = {}; for (var k in p) q[k] = p[k]; q.isNew = true; out.push(q); }
   OPT_IDS.forEach(function (g) { if (!rigIn(rig, g)) return; OPT_PRIMS[g].forEach(cp); });
+  if (rigIn(rig, 'lpLine')) { caps('LP riser', LP_RISER, pipeRadius(3), true); LP_PRIMS.forEach(cp); }
   if (!rigIn(rig, 'separator')) {
     var line = dest === 'line';
     caps('V-101 bypass spool', line ? LINE_SPOOL : BYPASS_SPOOLS.separator, 0.12, true);
@@ -3233,6 +3321,7 @@ function buildPipes(F, S, nps) {
   base.G1 = so; base.LW = so; base.LO = so; base.BLK = so; base.LMa = so + Lh('LW'); base.LMb = base.LMa + Lh('LMa'); base.LM2 = base.LMb;
   var lmEnd = base.LMb + Lh('LMb');
   base.VENT = lmEnd + 5; base.VENT2 = base.VENT; base.BLK2 = base.BLK + 4; base.PSV2 = so;
+  base.VENTL = base.VENT; base.LP = base.VENTL + Lh('VENTL'); base.PSV2L = so;                        // v1.5.0 LP flare line
   base.X1 = lmEnd + 5; base.X2 = base.X1 + Lh('X1') + 0.5; base.X0 = base.X2 - 1; base.XA = base.XB = base.X2 + Lh('X2');
   base.DRA = base.DRB = base.XA + Lh('XB') + 3;
   var totalS = 0; for (var k in base) if (R[ROUTE_IDX[k]].built) totalS = Math.max(totalS, base[k] + Lh(k));
@@ -3294,7 +3383,7 @@ function buildPipes(F, S, nps) {
   var psv = buildRoute(PSV_ROUTE, pipeRadius(3));
   psv.prims.forEach(function (pr) { if (pr.type === 'L') steel.push(F.cylAB(pr.a, pr.b, pipeRadius(3), T.radP)); else steel.push(new THREE.TubeGeometry(new F.FilletArc(pr), 8, pipeRadius(3) * 1.07, T.radP, false)); });
   TEES.forEach(function (t) {
-    if (t[4] && !rigIn(rig, t[4])) return;                                              // optional item out: the line stays plain
+    if (!teeBuilt(t, rig)) return;                                                      // optional item out: the line stays plain
     var r = pipeRadius(t[3] === 6 ? nps[2] : t[3] === 4 ? nps[1] : t[3]) * 1.3; steel.push(F.boxAt(r * 2, r * 2, r * 2, t[0], t[1], t[2]));
   });
   var meshes = [];
@@ -3325,7 +3414,8 @@ function buildPipes(F, S, nps) {
   for (i = 0; i < dra.n; i++) { var dx = dra.P[i * 3] - 17.9, dz = dra.P[i * 3 + 2] - 6.3, dist = dx * dx + dz * dz; if (dist < best) { best = dist; sJ = i * dra.step; } }
   // X0 tees into the X2 riser at its elbow (13.4, 0.45, 4.0) and VENT2 into the VENT z-run (13.0, 6.1, 2.3): entry arc lengths
   S.pipes = { meshes:meshes, R:R, tables:tables, base:base, totalS:totalS, npsKey:nps.join(','), sDRBjoin:sJ,
-    sX0join:joinS('X2', [13.4, 0.45, 4.0], nps), sVENT2join:joinS('VENT', [13.0, 6.1, 2.3], nps) };
+    sX0join:joinS('X2', [13.4, 0.45, 4.0], nps), sVENT2join:joinS('VENT', [13.0, 6.1, 2.3], nps),
+    sVENT2joinLP:joinS('LP', [13.0, 6.1, 2.3], nps), sPSV2Ljoin:joinS('LP', [13.0, 6.1, 1.6], nps) };
   S.renderer && (S.renderer.shadowMap.needsUpdate = true);
   return S.pipes;
 }
@@ -3862,6 +3952,7 @@ function createHandle(THREE, container, opts) {
   // (after the CK-101 frost ramp). The standby leg keeps its last phase (no chevron motion) and shows the isolated colour
   function updateCkLegSlots(su, leg, what) {
     for (var sl = 14; sl < SEG_SLOTS; sl++) {
+      if (sl === LP_SLOT) continue;                                   // (v1.5.0: slot 18 = the LP flare line, fed from the snapshot lp)
       var c = ckLegSlot(sl, leg);
       if (what === 'frost') { su.frost.value[sl] = c.live ? su.frost.value[c.src] : 0; continue; }
       if (c.live) { su.col.value[sl].copy(su.col.value[c.src]); su.alert.value[sl] = su.alert.value[c.src]; su.ph.value[sl] = su.ph.value[c.src]; }
@@ -3902,7 +3993,9 @@ function createHandle(THREE, container, opts) {
         case 'X0': v = L.surge2_gauge.vel; act = L.surge2_gauge.active; break;
         case 'VENT2': v = L.surge2_vent.vel; act = L.surge2_vent.active; break;
         case 'BLK2': v = L.blanket2.vel; act = L.blanket2.active; break;
-        case 'PSV2': v = Math.max(L.psv_surge2.vel, L.psv_surge2.active ? 3 : 0); act = L.psv_surge2.active; break;
+        case 'PSV2': case 'PSV2L': v = Math.max(L.psv_surge2.vel, L.psv_surge2.active ? 3 : 0); act = L.psv_surge2.active; break;
+        case 'VENTL': v = L.surge_vent.vel; act = L.surge_vent.active; break;                                       // v1.5.0 LP flare line
+        case 'LP': v = Math.max(n.lp.vel, n.lp.active ? 0.5 : 0); act = n.lp.active; break;
         case 'E3': act = L.choke_heater.active && !ckB; break; case 'E3f': act = L.choke_heater.active && ckB; break;
         case 'E3o': act = L.choke_heater.active; break; case 'E3c': case 'E3c1': case 'E3c2': act = L.choke_heater.active && !byp; break;
         case 'E3b': act = L.choke_heater.active && byp; break;
@@ -3927,7 +4020,11 @@ function createHandle(THREE, container, opts) {
     if (u2In && L.sep_surge2.active) {                                                  // dump header split by the engine shares (route 'both')
       if (!tr.edgeAct[I.LMb]) tr.nextE[I.LMa] = I.LM2; else { tr.altE[I.LMa] = I.LM2; tr.altP[I.LMa] = n.surge2.share; }
     }
-    tr.nextE[I.X0] = S.rigIn.gauge ? I.X2 : -1; tr.nextS[I.X0] = S.pipes.sX0join;   // gauge out: X0 ends at the tee (export spool) tr.nextE[I.VENT2] = I.VENT; tr.nextS[I.VENT2] = S.pipes.sVENT2join;
+    tr.nextE[I.X0] = S.rigIn.gauge ? I.X2 : -1; tr.nextS[I.X0] = S.pipes.sX0join;   // gauge out: X0 ends at the tee (export spool)
+    // VENT2 continues on the T-201 vent (v1.5.0: on the LP flare line while it is on; PSV2L too); VENTL → LP
+    var lpB = !!S.rigIn.lpLine;
+    tr.nextE[I.VENT2] = lpB ? I.LP : I.VENT; tr.nextS[I.VENT2] = lpB ? S.pipes.sVENT2joinLP : S.pipes.sVENT2join;
+    tr.nextE[I.VENTL] = I.LP; tr.nextE[I.PSV2L] = I.LP; tr.nextS[I.PSV2L] = S.pipes.sPSV2Ljoin;
     tr.nextE[I.DRB] = I.DRA; tr.nextS[I.DRB] = S.pipes.sDRBjoin;
     for (i = 0; i < CHAIN_DEF.length; i++) tr.chainEntry[i] = I[CHAIN_DEF[i].entry];
     tr.chainEntry[7] = L.gauge_drain.tank === 1 ? I.DRB : I.DRA;
@@ -3950,7 +4047,9 @@ function createHandle(THREE, container, opts) {
       if (r2.id === 'DRA' || r2.id === 'DRB') { P0 = P1 = 0; T0 = T1 = n.surge.T; vp = L.gauge_drain.vel * 10; }
       if (r2.id === 'LM2') { P0 = n.sep.P; P1 = n.surge2.P; T0 = T1 = n.surge2.T; vp = L.sep_surge2.vel * 10; }
       if (r2.id === 'X0') { P0 = n.surge2.P; P1 = 0; T0 = T1 = n.surge2.T; vp = L.surge2_gauge.vel * 10; }
-      if (r2.id === 'VENT2' || r2.id === 'PSV2') { P0 = n.surge2.P; P1 = n.nodes.flare.P; T0 = T1 = n.surge2.T; }
+      if (r2.id === 'VENT2' || r2.id === 'PSV2') { P0 = n.surge2.P; P1 = n.lp.on ? n.lp.P_in : n.nodes.flare.P; T0 = T1 = n.surge2.T; }
+      if (r2.id === 'VENTL' || r2.id === 'PSV2L') { P0 = r2.id === 'VENTL' ? n.surge.P : n.surge2.P; P1 = n.lp.P_in; T0 = T1 = n.surge.T; }
+      if (r2.id === 'LP') { P0 = n.lp.P_in; P1 = n.lp.P0; T0 = T1 = n.surge.T; vp = n.lp.vel * 2; }
       if (r2.id === 'BLK2') { P0 = n.sep.P; P1 = n.surge2.P; }
       if (r2.id === 'DD') { P0 = n.ds.Pacc; P1 = 0; T0 = T1 = n.nodes.esd.T; vp = L.ds_dump.active ? 20 : 0; }
       for (var k = 0; k < 8; k++) {
@@ -4509,6 +4608,12 @@ function createHandle(THREE, container, opts) {
     fl.halo.position.set(FLAME_BASE[0] + WIND[0] * lean * L * 0.4, FLAME_BASE[1] + L * 0.45, FLAME_BASE[2] + WIND[2] * lean * L * 0.4);
     fl.halo.scale.set(2.2 * Math.max(L, 0.01), 2.2 * Math.max(L, 0.01), 1); fl.halo.material.opacity = 0.2 * flick * (L > 0.05 ? 1 : 0);
     fl.pilot.material.opacity = 0.7 + 0.2 * Math.sin(tNow * 0.02);
+    if (fl.lpCore) {                                    // LP tip flame from nodes.flare.qLP_mmscfd (none while the LP gas goes to the vent)
+      fl.lpL = ease('flameLP', flameLength(lpFlareQ(N)) * 0.8, dt, 1.2, snapNextLocal); var lu = fl.lpCore.material.uniforms;
+      lu.uBase.value.set(LP_TIP[0], LP_TIP[1] + 0.32, LP_TIP[2]); lu.uRight.value.copy(_right); lu.uWind.value.set(WIND[0], WIND[1], WIND[2]);
+      lu.uL.value = Math.max(fl.lpL, 0.001); lu.uW.value = 0.38 * fl.lpL; lu.uLean.value = 0.6; lu.uPh.value = fl.ph + 1.7; lu.uScroll.value = (fl.scroll * 1.3) % 256;
+      lu.uInt.value = flick; fl.lpCore.visible = fl.lpL > 0.05; fl.lpPilot.material.opacity = 0.6 + 0.2 * Math.sin(tNow * 0.023);
+    }
     S.lights.flare.intensity = 250 * Math.pow(L / 5, 2) * flick;
     S.lights.flare.position.set(FLAME_BASE[0], FLAME_BASE[1] + 0.4 * L, FLAME_BASE[2]);
     S.sky.material.uniforms.uFlareI.value = clamp(L / 5, 0, 1.6) * flick;
@@ -4900,6 +5005,9 @@ function createHandle(THREE, container, opts) {
       if (waveOld) { waveOld.t += dt; su.wave.value = reducedMotion ? 1e6 : S.pipes.totalS * clamp(waveOld.t / 1.2, 0, 1); if (waveOld.t > 1.3) { waveOld = null; su.wave.value = 1e6; } }
       for (si = 0; si < 14; si++) { var sv = si <= 5 ? si : -1, velS = sv >= 0 ? velToScene(N.segs[sv].vel) : 0.6; su.ph.value[si] = (su.ph.value[si] + velS * dt * flowGain) % 256; }
       updateCkLegSlots(su, N.nodes.choke.leg, 'look');
+      // LP flare line slot 18 (v1.5.0): the gas look of slot 10, its own velocity status and chevron phase
+      su.col.value[LP_SLOT].copy(su.col.value[10]); su.alert.value[LP_SLOT] = overlay !== 'temperature' && N.lp.on ? (N.lp.vSt === 'EXCEED' ? 2 : N.lp.vSt === 'WARNING' ? 1 : 0) : 0;
+      su.ph.value[LP_SLOT] = (su.ph.value[LP_SLOT] + (N.lp.active ? 0.6 : 0) * dt * flowGain) % 256;
       edgeState();
       updateVessels(dt, snap, anim);
       updateTracers(dt); updateJetEmbersFrost(dt, t0); updateVesselParticles(dt);
@@ -5075,6 +5183,9 @@ var _internals = {
   PROPS:PROPS, EXTRA_PIPES:EXTRA_PIPES, OPT_PRIMS:OPT_PRIMS, clearancePrims:clearancePrims, clearanceCheck:clearanceCheck, primGap:primGap,
   // v1.3.0 — CK-102 heater inlet choke, bypass destination, cushion (docs/SIM-FOLLOWUP-PLAN.md §8.1)
   OPT_IDS:OPT_IDS, CK2_AT:CK2_AT, CK2_BODY:CK2_BODY, LINE_SPOOL:LINE_SPOOL, TAG_PTS:TAG_PTS, SPOOL_PRIMS:SPOOL_PRIMS, rigKeyOf:rigKeyOf,
+  // v1.5.0 — CK-101 GA plan, T-202 twin, LP flare line
+  T2B_BRANCH:T2B_BRANCH, T2_SUCTION:T2_SUCTION, LP_RISER:LP_RISER, LP_TIP:LP_TIP, FT201_AT:FT201_AT, LP_PRIMS:LP_PRIMS, LP_SLOT:LP_SLOT, PSEUDO:PSEUDO,
+  teeBuilt:teeBuilt, lpFlareQ:lpFlareQ,
   fakeCushion:fakeCushion, CUSH_PHASES:CUSH_PHASES, ck2Look:ck2Look, streamRates:streamRates, flareQ:flareQ, flameLength:flameLength
 };
 WTS_3d.version = VERSION;
