@@ -151,7 +151,11 @@ function createHandler(o) {
       const m = sub !== null ? C.matchRoute(req.method, sub) : null;
       if (m) route = m.endpoint.id;
       // plan §2: without the proxy signature and the production host nothing but 404 — before any other gate
-      if (sub === null || !H.proxyOk(req, config) || !H.hostAllowed(req, config)) res = plain(404, 'not_found');
+      if (sub === null || !H.proxyOk(req, config) || !H.hostAllowed(req, config)) {
+        // which gate refused (no client data beyond the hostname the platform passed): diagnoses a mis-wired deploy
+        log.info('gate: ' + (sub === null ? 'path' : !H.proxyOk(req, config) ? 'proxy' : 'host') + ' mode=' + config.siteMode + ' host=' + String(H.originalHost(req, config)).replace(/[^a-z0-9.:-]/g, '').slice(0, 80));
+        res = plain(404, 'not_found');
+      }
       else if (full === SELFTEST_PATH) { route = 'opsSelftest'; res = req.method === 'POST' && !req.tooLarge ? await selftest(req) : plain(404, 'not_found'); }
       else if (!iso.ok && route !== 'health') res = plain(503, 'paused');
       else if (!iso.signinAllowed && SIGNIN_IDS.has(route)) res = plain(503, 'paused');
