@@ -149,7 +149,7 @@ module.exports = [
         await t.until(() => t.el('acct_ch_upload'), 'confirmation');
         assert(/Upload 'Operator Energy Ltd — Example-1' into c•••@company\.example's account\?/.test(t.dialogText()), t.dialogText());
         await t.choose('upload');
-        await t.until(() => proj(t.fake, E2).length === 1, 'uploaded into B');
+        await t.until(() => proj(t.fake, E2).length === 1 && proj(t.fake, E2)[0].revs.length > 0, 'uploaded into B');
         assert.strictEqual(proj(t.fake, E2)[0].revs[0].reason, 'migrate');
         assert.strictEqual(proj(t.fake, E1).length, 0);
       } finally { t.dispose(); }
