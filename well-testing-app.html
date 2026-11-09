@@ -55,25 +55,75 @@
       gtag('config', 'G-6QKCBNWHYB', { send_page_view: false });
     </script>
     <script>
-      // The analytics tag itself (async). docs/ACCOUNTS-PLAN.md H17: it is NOT loaded while the web account hint says
-      // signed in, or within 10 minutes of starting a provider sign-in (the return from the provider). No hint (every
-      // visitor without an account) = loaded exactly as before. __wtsGaLoaded tells the account client whether it ran.
+      // The analytics tag itself (async), loaded ONLY with the visitor's consent (privacy.html §5 / §11). Nothing from
+      // the analytics provider is fetched and no analytics cookie is set until the visitor accepts in the consent banner
+      // (the consent banner block right before the main script). The choice is a device preference, wtspref_analytics_consent =
+      // {choice: 'granted'|'denied', v, at}: never synced (67 skips wtspref_*), never in project files (29 PREF_RE), and
+      // asked again after 12 months or when v (= the Privacy notice version, WTS_PRIVACY_VERSION) changes.
+      // docs/ACCOUNTS-PLAN.md H17 still applies on top: the tag is NOT loaded while the web account hint says signed in,
+      // or within 10 minutes of starting a provider sign-in (the return from the provider), whatever the choice.
+      // __wtsGaLoaded tells the account client whether the tag ran; window.WTS_consent is the choice API.
       (function () {
-        var skip = false;
-        try {
-          var h = JSON.parse(window.localStorage.getItem('wtsacct_hint') || 'null');
-          if (h && typeof h === 'object') {
-            var age = (h.oauth && typeof h.oauth.at === 'number') ? Date.now() - h.oauth.at : -1;
-            if (h.signedIn === true || (age >= 0 && age < 600000)) skip = true;
-          }
-        } catch (e) { /* storage blocked: no hint */ }
-        window.__wtsGaLoaded = false;
-        if (skip) return;
-        window.__wtsGaLoaded = true;
-        var s = document.createElement('script');
-        s.async = true;
-        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB';
-        (document.head || document.documentElement).appendChild(s);
+        var ID = 'G-6QKCBNWHYB', KEY = 'wtspref_analytics_consent', VER = 1, MAX_AGE = 365 * 864e5;
+        var W = window, mem = null;
+        function store() { try { return W.localStorage || null; } catch (e) { return null; } }
+        function skipped() {
+          try {
+            var h = JSON.parse(store().getItem('wtsacct_hint') || 'null');
+            if (h && typeof h === 'object') {
+              var age = (h.oauth && typeof h.oauth.at === 'number') ? Date.now() - h.oauth.at : -1;
+              if (h.signedIn === true || (age >= 0 && age < 600000)) return true;
+            }
+          } catch (e) { /* storage blocked: no hint */ }
+          return false;
+        }
+        function read() {
+          var c = null;
+          try { c = JSON.parse(store().getItem(KEY) || 'null'); } catch (e) { c = null; }
+          if (!c || typeof c !== 'object' || c.v !== VER || typeof c.at !== 'number' || !(Date.now() - c.at < MAX_AGE)) return mem;
+          return (c.choice === 'granted' || c.choice === 'denied') ? c.choice : mem;
+        }
+        function load() {
+          if (W.__wtsGaLoaded === true) return;
+          W['ga-disable-' + ID] = false;
+          W.__wtsGaLoaded = true;
+          var s = document.createElement('script');
+          s.async = true;
+          s.src = 'https://www.googletagmanager.com/gtag/js?id=G-6QKCBNWHYB';
+          (document.head || document.documentElement).appendChild(s);
+        }
+        function clearCookies() {
+          try {
+            var names = String(document.cookie || '').split(';').map(function (c) { return c.split('=')[0].replace(/^\s+|\s+$/g, ''); })
+              .filter(function (n) { return /^_ga(_|$)/.test(n); });
+            var host = String(location.hostname || ''), parts = host.split('.'), doms = [''];
+            for (var i = 0; i < parts.length - 1; i++) doms.push('; domain=.' + parts.slice(i).join('.'));
+            names.forEach(function (n) {
+              doms.forEach(function (d) { document.cookie = n + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/' + d; });
+            });
+          } catch (e) { /* no cookie access */ }
+        }
+        var api = W.WTS_consent = {
+          key: KEY, version: VER,
+          choice: read,                 // 'granted' | 'denied' | null (not asked yet, expired or an older notice version)
+          skipped: skipped,             // H17: signed in (or returning from a provider) → no tag and no banner
+          set: function (choice) {
+            if (choice !== 'granted' && choice !== 'denied') return;
+            mem = choice;
+            try { store().setItem(KEY, JSON.stringify({ choice: choice, v: VER, at: Date.now() })); } catch (e) { /* this visit only */ }   // ls-raw: consent device pref, written in <head> before WTS_lsSet exists; never synced
+            if (choice === 'granted') { if (!skipped()) load(); }
+            else { W['ga-disable-' + ID] = true; clearCookies(); }
+            try { api.hide(); } catch (e) { /* banner not mounted */ }
+            try { W.dispatchEvent(new CustomEvent('wts:consent-changed', { detail: { choice: choice } })); } catch (e) { /* old browser */ }
+          },
+          open: function () { /* replaced by the banner block */ },
+          hide: function () { /* replaced by the banner block */ }
+        };
+        W.__wtsGaLoaded = false;
+        if (skipped()) return;
+        var c = read();
+        if (c === 'granted') load();
+        else if (c === 'denied') W['ga-disable-' + ID] = true;
       })();
     </script>
     <!-- GA:END -->
@@ -855,6 +905,58 @@
         <div class="page-body" id="pgBody"></div>
     </div>
 
+<!-- GA:START — analytics consent banner (web only; stripped from the iOS bundle by ios-app/scripts/sync-from-main.js;
+     placed right before the main script: the skip link stays first in <body>, and the main script still ends the body,
+     where sync-from-main.js injects the iOS bridge).
+     Shown while no valid choice is stored (window.WTS_consent, head GA block) and the visitor is not signed in (H17).
+     Accept and Reject are equal; no backdrop, the app stays usable; Privacy → Cookie settings reopens it. -->
+<style>
+    .wts-consent { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 9000; max-width: 640px; margin: 0 auto;
+        background: var(--bg2, #161b22); color: var(--text, #e6edf3); border: 1px solid var(--border-light, #3d444d);
+        border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.45); padding: 14px 16px; font-size: 13px; line-height: 1.55; }
+    .wts-consent[hidden] { display: none; }
+    .wts-consent h2 { font-size: 14px; margin: 0 0 4px; color: var(--text, #e6edf3); }
+    .wts-consent p { margin: 0; color: var(--text2, #8b949e); }
+    .wts-consent a { color: var(--blue, #58a6ff); }
+    .wts-consent-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .wts-consent-btns button { flex: 1 1 120px; min-height: 36px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer;
+        border-radius: 6px; border: 1px solid var(--border-light, #3d444d); background: var(--bg4, #21262d); color: var(--text, #e6edf3); }
+    .wts-consent-btns button:hover { background: var(--bg3, #1c2128); }
+    .wts-consent-btns button:focus-visible, .wts-consent a:focus-visible { outline: 2px solid var(--focus, #58a6ff); outline-offset: 2px; }
+    @media (max-width: 480px) { .wts-consent { left: 8px; right: 8px; bottom: 8px; padding: 12px; } }
+</style>
+<div id="wtsConsent" class="wts-consent" role="region" aria-labelledby="wtsConsentTitle" hidden>
+    <h2 id="wtsConsentTitle">Analytics cookies</h2>
+    <p id="wtsConsentText">May we use Google Analytics cookies to count how the app is used? They never carry your inputs, results, client or well names. Nothing is loaded unless you accept, and every feature works either way. You can change your choice at any time under Privacy &rarr; Cookie settings. <a href="privacy.html#cookies" target="_blank" rel="noopener">Privacy notice</a></p>
+    <div class="wts-consent-btns">
+        <button type="button" id="wtsConsentAccept">Accept</button>
+        <button type="button" id="wtsConsentReject">Reject</button>
+    </div>
+</div>
+<script>
+(function () {
+    var el = document.getElementById('wtsConsent'), api = window.WTS_consent;
+    if (!el || !api) return;
+    var back = null;
+    api.open = function () {
+        back = document.activeElement;
+        el.hidden = false;
+        try { document.getElementById('wtsConsentAccept').focus(); } catch (e) { /* not focusable */ }
+    };
+    api.hide = function () {
+        var had = el.contains(document.activeElement);
+        el.hidden = true;
+        if (had && back && back.focus && document.contains(back)) { try { back.focus(); } catch (e) { /* gone */ } }
+        back = null;
+    };
+    document.getElementById('wtsConsentAccept').addEventListener('click', function () { api.set('granted'); });
+    document.getElementById('wtsConsentReject').addEventListener('click', function () { api.set('denied'); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); api.hide(); } });
+    // first visit, expired or an older notice version → ask (not while signed in: the tag is never loaded then)
+    if (!api.choice() && !api.skipped()) el.hidden = false;
+})();
+</script>
+<!-- GA:END -->
 <script>
 /* ══════════════════════════════════════════════
    WELL TESTING SUITE — Pure Vanilla JS
@@ -11534,7 +11636,7 @@ function renderReleaseNotes(body){
     body.innerHTML = '<style>' + RN_STYLE + '</style>' +
         '<div class="rn-wrap">' +
             '<div class="rn-top">' +
-                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a></div>' +
+                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a> · <a href="' + (window.isIOSApp ? 'https://welltest.h2oil.co.uk/' : '') + 'terms.html" target="_blank" rel="noopener" id="rnTermsLink" style="color:var(--text2)">Terms of Use</a></div>' +
                 '<div class="rn-filters" role="group" aria-label="Filter by category">' + filters + '</div>' +
             '</div>' +
             '<div class="rn-tl">' + releases + '</div>' +
@@ -11714,10 +11816,21 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17 / consent: the tag may be skipped while gtag is defined
+    // Consent banner (web only, GA blocks): the choice API exists only in the web build; the iOS build never has it.
+    const consent = (!ios && window.WTS_consent && typeof window.WTS_consent.choice === 'function') ? window.WTS_consent : null;
+    let choice = null;
+    try { choice = consent ? consent.choice() : null; } catch (e) { choice = null; }
     const build = ios ? 'iOS app — no analytics code is included in this build.'
         : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
+        : (consent && choice === 'denied') ? 'Web version — you turned analytics off, so analytics are not loaded and nothing is sent.'
+        : (consent && !choice && !consent.skipped()) ? 'Web version — analytics are not loaded until you accept them, so nothing is sent.'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
+    // The full public Privacy notice and Terms of Use (privacy.html / terms.html at the site root). The iOS bundle does not
+    // carry them, so the app links to the web addresses.
+    const legalBase = ios ? 'https://welltest.h2oil.co.uk/' : '';
+    const legalLinks = 'The full <a href="' + legalBase + 'privacy.html" target="_blank" rel="noopener" id="privacy_full_link">Privacy notice</a> and the ' +
+        '<a href="' + legalBase + 'terms.html" target="_blank" rel="noopener" id="privacy_terms_link">Terms of Use</a> (open in a new tab) give the complete details: who we are, legal bases, cookies, retention, your rights and how to complain.';
     const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
         a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
     // H11 (docs/ACCOUNTS-PLAN.md §8.6): web / iOS branches. The web-only text (banner, account and sign-in cards) is inside
@@ -11767,7 +11880,9 @@ function renderPrivacy(body){
         'Events carry only page / route names, fixed button or model names and a few UI counters (tab number, scroll depth, seconds on a page).',
         'An allow-list filter inside the tracker drops everything else before it is sent: no input values, no client or well names, no file contents, no results or other numbers from your data, and no search or copied text.',
         'Blocking analytics (for example with a content blocker) does not affect any feature.'
-      ]) + '</div>' +
+      ].concat(consent ? ['Analytics run only if you accept them in the cookie banner; until then nothing is loaded or sent. Your choice is kept on this device for 12 months. ' +
+        '<a href="#" id="privacy_cookie_settings">Cookie settings</a> — change your choice at any time (currently: ' +
+        (choice === 'granted' ? 'accepted' : choice === 'denied' ? 'rejected' : 'not chosen') + ').'] : [])) + '</div>' +
       '<div class="card"><div class="card-title">iOS app</div>' + li([
         'The analytics code is removed from the iOS bundle when it is built from the web version (<code>ios-app/scripts/sync-from-main.js</code> strips every <code>GA:START … GA:END</code> block), so the app sends no analytics at all.',
         'The 3D engine and the PDF libraries are bundled inside the app, so they work offline.'
@@ -11787,8 +11902,11 @@ function renderPrivacy(body){
         'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them (the spreadsheet library excepted); the iOS app bundles them.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Contact</div>' +
-        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:6px">' + legalLinks + '</p></div>' +
     '</div>';
+    const cs = body.querySelector('#privacy_cookie_settings');
+    if (cs && consent) cs.addEventListener('click', ev => { ev.preventDefault(); try { consent.open(); } catch (e) { /* banner not mounted */ } });
 }
 
 
@@ -115768,11 +115886,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
     "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
-    "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
+    "privacy": "view-d 1280 800 87552ddb,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
+    "releasenotes": "view-d 1280 800 7dd15374,view-p 780 1688 caac63d3",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -115793,7 +115911,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7979112;   // total size of the image files (the offline download label)
+  M.bytes = 7981280;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -116176,7 +116294,7 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '8f8cd280', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
@@ -116187,7 +116305,7 @@ outputs: [{ label: 'This build', text: 'Says whether usage analytics are active.
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'b8c6ebd2', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],
@@ -152856,7 +152974,7 @@ G.WTS_modbusBridgeSetup = {
     dlg.consent = { terms: String(data.terms || ''), privacy: String(data.privacy || '') };
     b.innerHTML =
       '<p>You are creating a new account for <b>' + esc(dlg.email) + '</b>. Already have an account with another address? Cancel and sign in with it.</p>' +
-      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I accept the Terms of Use (version ' + esc(dlg.consent.terms) + ') and have read the Privacy notice (version ' + esc(dlg.consent.privacy) + ').</label>' +
+      '<label class="acct-tick"><input type="checkbox" id="acct_consent_ok"> I accept the <a href="terms.html" target="_blank" rel="noopener" id="acct_terms_link">Terms of Use</a> (version ' + esc(dlg.consent.terms) + ') and have read the <a href="privacy.html" target="_blank" rel="noopener" id="acct_privacy_link">Privacy notice</a> (version ' + esc(dlg.consent.privacy) + ').</label>' +
       '<p class="acct-note">Your projects are stored encrypted in the UK / EU. You can export everything or delete your account at any time.</p>' +
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_create">Create account</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_consent_cancel">Cancel</button></div>';
@@ -153709,7 +153827,11 @@ G.WTS_modbusBridgeSetup = {
         var tick = el('input', { type: 'checkbox', id: 'acct_oauth_consent_ok' });
         var cerr = el('p', { 'class': 'acct-oauth-error', role: 'alert', style: 'margin:8px 0 0 0' });
         show([para('acct-oauth-consent', 'You are creating a new account for ' + j.newAccountEmailMasked + '. Already have an account with another address? Sign in with it, then add ' + N + ' under Account → Sign-in methods.'),
-          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', { text: ' I accept the Terms of Use (version ' + j.terms + ') and have read the Privacy notice (version ' + j.privacy + ').' })]),
+          el('label', { 'class': 'acct-tick', 'for': 'acct_oauth_consent_ok' }, [tick, el('span', {}, [el('span', { text: ' I accept the ' }),
+            el('a', { href: 'terms.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_terms_link', text: 'Terms of Use' }),
+            el('span', { text: ' (version ' + j.terms + ') and have read the ' }),
+            el('a', { href: 'privacy.html', target: '_blank', rel: 'noopener', id: 'acct_oauth_privacy_link', text: 'Privacy notice' }),
+            el('span', { text: ' (version ' + j.privacy + ').' })])]),
           cerr,
           btn('acct_oauth_create', 'Create account', true, function () {
             if (!tick.checked) { cerr.textContent = 'Please tick the box to accept the Terms of Use and the Privacy notice.'; return; }

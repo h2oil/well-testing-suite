@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Terms of Use for the H2Oil Well Testing Suite web app, iOS app, WTS Modbus Bridge and optional web accounts.">
+<title>Terms of Use — H2Oil Well Testing Suite</title>
+<!--
+  DRAFT FOR REVIEW BY A QUALIFIED LAWYER (UAE, DIFC AND UK / EU CONSUMER LAW) — NOT LEGAL ADVICE.
+  Written from the product as built (branch dev-87qwkg; web accounts v3.5 Phase 1 built but dormant, shipping as v4.0)
+  on 9 November 2026. The operator is a company licensed in Dubai, United Arab Emirates. Text in [SQUARE BRACKETS]
+  (class "ph") is a placeholder or an owner decision to make before publication; see section 17 for the governing-law choice
+  (recommended: DIFC law and the DIFC Courts by express opt-in, with consumers keeping their home-country protection;
+  alternative: UAE law and the Dubai Courts). LICENSE (repository) still names England and Wales and must be aligned.
+  Terms of Use version 1 = the server's WTS_TERMS_VERSION default ("1"); change both together.
+  Static page: no JavaScript, no external requests, no web fonts or remote images. Published at
+  https://welltest.h2oil.co.uk/terms.html (prism-build/publish-site.js allow-list). Companion page: privacy.html.
+-->
+<style>
+:root {
+  --bg0: #0a0e14; --bg1: #0d1117; --bg2: #161b22; --bg3: #1c2128;
+  --border: #30363d; --text: #e6edf3; --text2: #a3acb6; --text3: #8b949e;
+  --accent: #f0883e; --link: #58a6ff; --green: #3fb950; --warn: #d29922; --ph-bg: rgba(210,153,34,.20); --ph-fg: #f2cc60;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg0: #f6f8fa; --bg1: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2;
+    --border: #d0d7de; --text: #1f2328; --text2: #424a53; --text3: #57606a;
+    --accent: #bc4c00; --link: #0969da; --green: #1a7f37; --warn: #9a6700; --ph-bg: rgba(212,167,44,.25); --ph-fg: #7d4e00;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg1); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px; line-height: 1.6;
+}
+a { color: var(--link); }
+a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 8px; background: var(--bg2); padding: 6px 10px; z-index: 10; }
+.top { background: var(--bg0); border-bottom: 1px solid var(--border); }
+.top-in, main, footer { max-width: 860px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+.top-in { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-top: 12px; padding-bottom: 12px; }
+.brand { font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+.brand sub { font-size: 11px; }
+.brand span { color: var(--accent); }
+.top nav a { margin-left: 14px; font-size: 14px; }
+.top nav a:first-child { margin-left: 0; }
+main { padding-top: 24px; padding-bottom: 32px; }
+h1 { font-size: 28px; line-height: 1.25; margin: 0 0 6px; }
+h2 { font-size: 21px; line-height: 1.3; margin: 36px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+h3 { font-size: 17px; margin: 22px 0 6px; }
+p, ul, ol { margin: 0 0 12px; }
+ul, ol { padding-left: 22px; }
+li { margin-bottom: 4px; }
+.meta { color: var(--text3); font-size: 14px; margin-bottom: 16px; }
+.lead, .warn, .draft { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+.lead { border-left: 3px solid var(--green); }
+.warn, .draft { border-left: 3px solid var(--warn); }
+.draft { font-size: 14px; color: var(--text2); }
+.lead p:last-child, .lead ul:last-child, .warn p:last-child, .warn ul:last-child, .draft p:last-child { margin-bottom: 0; }
+.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px 4px; margin: 18px 0; }
+.toc h2 { border: 0; margin: 0 0 6px; padding: 0; font-size: 16px; }
+.toc ol { columns: 2; column-gap: 28px; font-size: 15px; }
+@media (max-width: 640px) { .toc ol { columns: 1; } h1 { font-size: 24px; } }
+.note { color: var(--text2); font-size: 15px; }
+.ph { background: var(--ph-bg); color: var(--ph-fg); border-radius: 3px; padding: 0 3px; font-weight: 600; }
+.tbl { width: 100%; overflow-x: auto; margin: 0 0 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 8px; border: 1px solid var(--border); overflow-wrap: anywhere; }
+th { background: var(--bg3); font-weight: 600; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--bg3); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
+footer { border-top: 1px solid var(--border); padding-top: 14px; padding-bottom: 28px; color: var(--text3); font-size: 14px; }
+@media print { .top nav, .toc, .skip { display: none; } body { background: #fff; color: #000; } a { color: #000; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the terms</a>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="well-testing-app.html">H<sub>2</sub>Oil <span>Well Testing Suite</span></a>
+    <nav aria-label="Legal pages">
+      <a href="well-testing-app.html">Open the app</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html" aria-current="page">Terms of Use</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<h1 id="top">Terms of Use</h1>
+<p class="meta">Last updated: 9 November 2026 · Terms of Use version 1</p>
+
+<div class="lead">
+  <p><strong>The short version.</strong></p>
+  <ul>
+    <li>The Well Testing Suite is free engineering software. It runs on your device, on the web and as an iOS app.</li>
+    <li>Its results are aids to engineering judgement. You must check them, and a competent person must approve any operational, safety or design decision based on them.</li>
+    <li>A web account is optional. If you create one, keep your e-mail account secure and do not misuse the service.</li>
+    <li>The software belongs to H2Oil. You may use it for your own engineering work, but you may not copy or resell it.</li>
+    <li>Nothing in these terms takes away rights you have by law as a consumer.</li>
+  </ul>
+</div>
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#who">Who we are</a></li>
+    <li><a href="#agreement">These terms</a></li>
+    <li><a href="#service">The service</a></li>
+    <li><a href="#engineering">Engineering results: important</a></li>
+    <li><a href="#livedata">Live data and equipment</a></li>
+    <li><a href="#accounts">Web accounts</a></li>
+    <li><a href="#signin">Signing in with Google or LinkedIn</a></li>
+    <li><a href="#use">Acceptable use</a></li>
+    <li><a href="#content">Your content</a></li>
+    <li><a href="#ip">Our software and intellectual property</a></li>
+    <li><a href="#warranty">No warranty</a></li>
+    <li><a href="#liability">Our liability</a></li>
+    <li><a href="#changes-service">Availability and changes to the service</a></li>
+    <li><a href="#ending">Suspension, ending and your data</a></li>
+    <li><a href="#changes-terms">Changes to these terms</a></li>
+    <li><a href="#general">General</a></li>
+    <li><a href="#law">Law and courts</a></li>
+    <li><a href="#contact">Contact and complaints</a></li>
+  </ol>
+</nav>
+
+<h2 id="who">1. Who we are</h2>
+<p>The Well Testing Suite is provided by H2Oil, the trading name of <span class="ph">[COMPANY LEGAL NAME]</span>, a company licensed in Dubai, United Arab Emirates, by <span class="ph">[LICENSING AUTHORITY / FREE ZONE]</span> under trade licence number <span class="ph">[TRADE LICENCE NO.]</span>, with its registered address at <span class="ph">[REGISTERED ADDRESS, DUBAI, UAE]</span>. "H2Oil", "we", "us" and "our" mean that company. "You" means the person using the service.</p>
+<p>You can contact us at <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>.</p>
+
+<h2 id="agreement">2. These terms</h2>
+<ul>
+  <li>These terms apply when you use the web app at https://welltest.h2oil.co.uk, the iOS app "Well Testing Suite", the WTS Modbus Bridge program, and optional web accounts and cloud projects (together, "the service").</li>
+  <li>By using the service you agree to these terms. When you create a web account, you accept them by ticking a box, and we record which version you accepted.</li>
+  <li>Our <a href="privacy.html">Privacy notice</a> explains how we handle personal data, including cookies and analytics. It is not part of this contract, but please read it.</li>
+  <li>If you use the service for your employer or another organisation, you confirm that you are allowed to do so. The organisation is then also bound by these terms for that use.</li>
+  <li>The iOS app is also subject to the terms of the store you downloaded it from. If those terms conflict with these about the app itself, the store's terms apply to the extent they must.</li>
+  <li>These terms are written in English. <span class="ph">[An Arabic version is available / will follow.]</span> If the versions differ, the English version applies, unless the law where you live requires otherwise.</li>
+</ul>
+
+<h2 id="service">3. The service</h2>
+<ul>
+  <li>The Well Testing Suite is a set of engineering tools for well testing, metering, pressure-transient and decline analysis, fracture-injection (DFIT) analysis, test-system safety, process and flare calculations, a well-test simulator, and live data from field equipment.</li>
+  <li>The service is <strong>free</strong>. There are no purchases in the iOS app. If we ever introduce charges, we will tell you in advance, and you will not be charged unless you agree.</li>
+  <li>Calculations run on your device. Without an account, your work is stored only on your device (see the <a href="privacy.html">Privacy notice</a>).</li>
+  <li>Web accounts with cloud storage are optional and for the web version only. At first they are offered only to invited users. Each account has a storage allowance (currently 250 MB, with each project up to 64 MB compressed) and fair-use limits on how often projects can be saved, opened and exported.</li>
+  <li>The service is designed for professional use by engineers and technical staff in the oil and gas industry.</li>
+</ul>
+
+<h2 id="engineering">4. Engineering results: important</h2>
+<div class="warn">
+  <p><strong>Please read this section carefully.</strong> The service performs complex engineering calculations based on published methods, correlations and models, each with its own assumptions and limits.</p>
+  <ul>
+    <li>All results, interpretations, labels, grades, alarms and reports are <strong>aids to engineering judgement, not a substitute for it</strong>. Some outputs are marked as provisional or not yet calibrated; treat them accordingly.</li>
+    <li>You are responsible for your inputs and units, for choosing a suitable method, and for <strong>checking the results</strong> against the relevant standards and codes, your company's procedures, independent calculations where appropriate, and your own professional judgement.</li>
+    <li>The service is <strong>not a substitute for a competent engineer</strong>. Before any result is relied on for an operational, safety, environmental or design decision, it must be <strong>verified and approved by a competent, suitably qualified person</strong>.</li>
+    <li>The service is not a design authority, a certification or verification body, a safety system or a control system. It does not replace the review or approval your company, your client or a regulator requires.</li>
+    <li>Safety-critical decisions, such as setting relief, shutdown or alarm values, choosing equipment ratings, or deciding whether an operation may go ahead, must never rest on the service alone.</li>
+    <li>The well-test simulator is a training and planning tool. It does not predict the behaviour of real equipment.</li>
+    <li>Known limits of the methods are described in the app's help and reports. Some may not be.</li>
+  </ul>
+</div>
+
+<h2 id="livedata">5. Live data and equipment</h2>
+<ul>
+  <li>The live-data features can read from, and if you turn this on, write to, Modbus equipment that you configure. Writing is off by default and needs a confirmation for each write.</li>
+  <li>Connect only to equipment and networks you are authorised to use. You are responsible for the effect of any value you write and for following your site's control-of-work, permit and management-of-change procedures.</li>
+  <li>Live values, trends and alarms in the app are for information. Never use them as a safety function, a shutdown system or the only means of monitoring a process.</li>
+  <li>You install and run the WTS Modbus Bridge on your own computer, at your own choice, and you are responsible for its configuration.</li>
+</ul>
+
+<h2 id="accounts">6. Web accounts</h2>
+<ul>
+  <li>An account is optional. You must be at least <span class="ph">[18]</span> years old to create one.</li>
+  <li>An account is for <strong>one person</strong>. Do not share it. Use an e-mail address that you control and keep it up to date.</li>
+  <li>Sign-in uses codes sent to your e-mail address, or Google or LinkedIn. <strong>Anyone who can read your e-mail can sign in to your account</strong>, so keep your mailbox and any linked Google or LinkedIn account secure. On a shared computer, choose the public-computer option and sign out when you finish.</li>
+  <li>Tell us straight away at <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a> if you think someone else has used your account. You can also sign out everywhere from the Account page.</li>
+  <li>You can export your data or close your account at any time from the Account page (see section 14).</li>
+</ul>
+
+<h2 id="signin">7. Signing in with Google or LinkedIn</h2>
+<p>If you choose to sign in with Google or LinkedIn, that service's own terms and privacy policy also apply to your use of it. We are not responsible for those services or their availability. If one stops working, you can always sign in with an e-mail code. The <a href="privacy.html#signin">Privacy notice</a> explains what they send us and what we keep.</p>
+
+<h2 id="use">8. Acceptable use</h2>
+<p>You must not:</p>
+<ul>
+  <li>use the service unlawfully, or to store or send unlawful, harmful or infringing material;</li>
+  <li>upload malware, or try to gain unauthorised access to the service, other accounts or our systems;</li>
+  <li>probe, scan or test the security of the service without our written permission. If you find a security issue, please report it to <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a>;</li>
+  <li>overload the service, use automated tools to access it in bulk, or get around storage, rate or other limits;</li>
+  <li>create accounts automatically or in bulk, or use another person's account or e-mail address;</li>
+  <li>store personal data that you have no lawful basis to store, or special categories of personal data such as health information;</li>
+  <li>copy, modify, resell or redistribute the software, or reverse engineer it, except as section 10 allows.</li>
+</ul>
+
+<h2 id="content">9. Your content</h2>
+<ul>
+  <li>Projects, inputs and files you create or upload remain <strong>yours</strong>. We claim no ownership of them.</li>
+  <li>If you save projects to the cloud, you give us a limited, non-exclusive, royalty-free permission to store, copy, encrypt, back up, transmit and return them to you, <strong>only to provide the service</strong>. This permission ends when the content is deleted, subject to the backup period in the Privacy notice.</li>
+  <li>We do not use your content for analytics, advertising or training AI models, and we do not share it except as the <a href="privacy.html#sharing">Privacy notice</a> describes.</li>
+  <li>You confirm that you have the right to store the content, including any client data and other people's personal data in it. If you store data for an employer or client, we act as their processor, and a data processing agreement is available on request.</li>
+  <li>Keep your own copies of anything important, for example by exporting project files. Cloud storage is a convenience, not a guaranteed archive.</li>
+</ul>
+
+<h2 id="ip">10. Our software and intellectual property</h2>
+<ul>
+  <li>The Well Testing Suite, including its code, calculations, models, help, graphics and documentation, belongs to H2Oil and is protected by copyright and other intellectual property laws. It is proprietary software, not open source, even where parts of the source are publicly visible.</li>
+  <li>We give you a personal, non-exclusive, non-transferable, revocable permission to use the official web app, iOS app and WTS Modbus Bridge for <strong>your own internal engineering work</strong>, in line with these terms. This permission does not cover the source code.</li>
+  <li>You must not copy, mirror or host the software; modify it or create derivative works; sell, rent, sublicense or distribute it; build it into another product; use it to develop or train a competing product or model; or remove any copyright or proprietary notice.</li>
+  <li>You may not reverse engineer, decompile or disassemble the software, except where the law expressly allows it despite this restriction (for example, to achieve interoperability).</li>
+  <li>Reports and exports you produce with the service are yours to use in your work.</li>
+  <li>The service includes open-source components that remain under their own licences. Those licences apply to those components only.</li>
+  <li>If you send us feedback or suggestions, we may use them without restriction or payment.</li>
+  <li>"H2Oil" and the Well Testing Suite names and logos are ours. Do not use them in a way that suggests we endorse you.</li>
+</ul>
+
+<h2 id="warranty">11. No warranty</h2>
+<p>We work hard to make the service accurate and reliable. However, because it is provided free of charge and its results depend on your inputs and judgement, the service is provided <strong>"as is" and "as available"</strong>. To the extent the law allows, we give no promise that it will be error-free, uninterrupted or fit for a particular purpose, or that any result is correct.</p>
+<p>If you are a consumer, this does not affect any rights you have by law that cannot be excluded.</p>
+
+<h2 id="liability">12. Our liability</h2>
+<h3>What we never exclude</h3>
+<p>Nothing in these terms limits or excludes our liability for death or personal injury caused by our negligence, for fraud or fraudulent misrepresentation, for gross negligence or wilful misconduct, or for anything else that cannot be limited or excluded by the law that applies.</p>
+<h3>If you use the service for business</h3>
+<p>The service is designed for professional use, so most users use it in the course of their work. In that case, and subject to "What we never exclude":</p>
+<ul>
+  <li>we are not liable for loss of profit, revenue, production or business, business interruption, loss of goodwill, wasted expenditure, or for any indirect or consequential loss;</li>
+  <li>we are not liable for loss or corruption of data where a backup or export by you would have prevented it;</li>
+  <li>we are not liable for decisions or actions taken on the basis of results that were not checked and approved as section 4 requires;</li>
+  <li>our total liability to you for all claims arising from the service in any 12-month period is limited to <span class="ph">[LIABILITY CAP, e.g. USD 100]</span>.</li>
+</ul>
+<p>We set this limit because the service is free and you control how its results are checked and used. If you need different terms for your organisation, contact us.</p>
+<h3>If you are a consumer</h3>
+<ul>
+  <li>We are responsible for loss or damage you suffer that is a foreseeable result of our breaking these terms or failing to use reasonable care and skill. Loss is foreseeable if it was obvious it would happen, or if both of us knew it might happen when you started using the service.</li>
+  <li>We are not responsible for loss that was not foreseeable, or for business losses.</li>
+  <li>If digital content we supply damages a device or digital content belonging to you because we failed to use reasonable care and skill, we will either repair the damage or pay you compensation, where the law gives you that right.</li>
+  <li>Any term of these terms that the consumer protection law of your country does not allow does not apply to you.</li>
+</ul>
+
+<h2 id="changes-service">13. Availability and changes to the service</h2>
+<ul>
+  <li>We aim to keep the service available but do not guarantee it. We may need to suspend it for maintenance, security or reasons outside our control. The web app and iOS app keep working offline with the data on your device.</li>
+  <li>We may change, improve or remove features, for example to keep up with technical, security or legal requirements, or to improve the service. If a change significantly affects account holders, we will tell them in advance by e-mail or in the app, where reasonably possible.</li>
+  <li>We may limit or switch off accounts or cloud storage, for example to read-only. If we decide to <strong>end the cloud service</strong>, we will give account holders at least <span class="ph">[30]</span> days' notice by e-mail, so they can export their data, unless the law or a serious security risk requires faster action.</li>
+</ul>
+
+<h2 id="ending">14. Suspension, ending and your data</h2>
+<h3>You</h3>
+<ul>
+  <li>You can stop using the service at any time. You can delete your account from the Account page. A deletion can be cancelled within 7 days, after which your cloud data is deleted as the <a href="privacy.html#retention">Privacy notice</a> describes.</li>
+  <li>Before you delete your account, you can <strong>export everything</strong> (one project file per cloud project, your library and your account information).</li>
+</ul>
+<h3>Us</h3>
+<ul>
+  <li>We may suspend or close an account if we reasonably believe you have seriously or repeatedly broken these terms, if the account puts the service or other users at risk, or if the law requires it. Where it is reasonable and lawful, we will tell you why and give you a chance to respond and to export your data first.</li>
+  <li>If an account is not signed in to for <strong>24 months</strong>, we delete it. We send e-mail warnings at 23 and 23.5 months, and signing in keeps it.</li>
+  <li>We may withdraw your permission to use the software if you break section 10.</li>
+  <li>Sections 4, 9 (your confirmations), 10, 11, 12, 16 and 17 continue to apply after these terms end. Data on your own devices is not affected when an account ends.</li>
+</ul>
+
+<h2 id="changes-terms">15. Changes to these terms</h2>
+<ul>
+  <li>We may update these terms, for example when the service or the law changes. The date and version number at the top show the current version.</li>
+  <li>If we make a significant change, we will tell account holders before it takes effect, by e-mail or in the app, and ask you to accept the new version when you next sign in.</li>
+  <li>If you do not agree to the change, you may stop using the service and delete your account, after exporting your data. If you keep using the service without an account after a change, the new terms apply.</li>
+</ul>
+
+<h2 id="general">16. General</h2>
+<ul>
+  <li><strong>Events outside our control.</strong> We are not responsible for delays or failures caused by events beyond our reasonable control.</li>
+  <li><strong>Transfer.</strong> We may transfer our rights and obligations under these terms to another organisation, for example if our business is sold. We will tell you, and your rights will not be reduced. You may not transfer your rights without our written agreement.</li>
+  <li><strong>Separate terms.</strong> If a court decides that part of these terms is unlawful or unenforceable, the rest stays in force.</li>
+  <li><strong>No waiver.</strong> If we do not enforce a right straight away, we can still enforce it later.</li>
+  <li><strong>Third parties.</strong> No one other than you and us has any right to enforce these terms.</li>
+  <li><strong>Whole agreement.</strong> For business users, these terms, together with any data processing agreement we sign with you, are the whole agreement about the service. You have not relied on anything else we said. This does not limit liability for fraud.</li>
+  <li><strong>Other agreements.</strong> If you have a separate written agreement with us, it takes priority where it conflicts with these terms.</li>
+</ul>
+
+<h2 id="law">17. Law and courts</h2>
+<p class="draft"><strong>Owner decision (delete this box before publication):</strong> the wording below follows the recommended option, the laws of the Dubai International Financial Centre and the DIFC Courts by express opt-in. The alternative is the laws of the Emirate of Dubai and the federal laws of the UAE, with the Dubai Courts (proceedings in Arabic). Either way, consumers keep the protection of their home country.</p>
+<ul>
+  <li>These terms, and any dispute or claim arising out of or in connection with them or the service (including non-contractual disputes), are governed by the laws of the <span class="ph">[Dubai International Financial Centre (DIFC)]</span>.</li>
+  <li>You and we agree that the <span class="ph">[Courts of the Dubai International Financial Centre (DIFC Courts)]</span> have exclusive jurisdiction to settle any such dispute. This is an express agreement in writing to submit to the DIFC Courts.</li>
+  <li><strong>If you are a consumer</strong>, you keep the protection of the mandatory laws of the country where you live, and you may bring proceedings in the courts of that country. We may bring proceedings against you only in those courts.</li>
+  <li>Before going to court, please contact us so that we can try to resolve the matter (section 18). This does not stop you from going to court or to a regulator at any time.</li>
+</ul>
+
+<h2 id="contact">18. Contact and complaints</h2>
+<p>H2Oil, <span class="ph">[COMPANY LEGAL NAME]</span><br>
+<span class="ph">[REGISTERED ADDRESS, DUBAI, UAE]</span><br>
+Trade licence <span class="ph">[TRADE LICENCE NO.]</span>, <span class="ph">[LICENSING AUTHORITY / FREE ZONE]</span><br>
+E-mail: <a href="mailto:software@h2oil.co.uk">software@h2oil.co.uk</a></p>
+<p>If you have a complaint, please e-mail us first, and we will try to resolve it quickly. For complaints about personal data, see the <a href="privacy.html#complaints">Privacy notice</a>.</p>
+<p class="note">See also the <a href="privacy.html">Privacy notice</a>.</p>
+</main>
+
+<footer>
+  <p>© H2Oil. Terms of Use version 1 · Last updated: 9 November 2026 · <a href="privacy.html">Privacy notice</a> · <a href="well-testing-app.html">Back to the Well Testing Suite</a> · <a href="#top">Back to top</a></p>
+</footer>
+</body>
+</html>

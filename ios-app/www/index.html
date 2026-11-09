@@ -924,8 +924,8 @@
         <div class="page-body" id="pgBody"></div>
     </div>
 
+<!-- GA stripped from iOS bundle -->
 <script src="capacitor.js"></script>
-
 <script>
 /* ══════════════════════════════════════════════
    WELL TESTING SUITE — Pure Vanilla JS
@@ -11534,7 +11534,7 @@ function renderReleaseNotes(body){
     body.innerHTML = '<style>' + RN_STYLE + '</style>' +
         '<div class="rn-wrap">' +
             '<div class="rn-top">' +
-                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a></div>' +
+                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a> · <a href="' + (window.isIOSApp ? 'https://welltest.h2oil.co.uk/' : '') + 'terms.html" target="_blank" rel="noopener" id="rnTermsLink" style="color:var(--text2)">Terms of Use</a></div>' +
                 '<div class="rn-filters" role="group" aria-label="Filter by category">' + filters + '</div>' +
             '</div>' +
             '<div class="rn-tl">' + releases + '</div>' +
@@ -11714,10 +11714,21 @@ function renderPrivacy(body){
     $('pgTitle').textContent = 'Privacy';
     $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
     const ios = !!window.isIOSApp;
-    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17: the tag may be skipped while gtag is defined
+    const gaOn = typeof window.gtag === 'function' && window.__wtsGaLoaded !== false;   // H17 / consent: the tag may be skipped while gtag is defined
+    // Consent banner (web only, GA blocks): the choice API exists only in the web build; the iOS build never has it.
+    const consent = (!ios && window.WTS_consent && typeof window.WTS_consent.choice === 'function') ? window.WTS_consent : null;
+    let choice = null;
+    try { choice = consent ? consent.choice() : null; } catch (e) { choice = null; }
     const build = ios ? 'iOS app — no analytics code is included in this build.'
         : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
+        : (consent && choice === 'denied') ? 'Web version — you turned analytics off, so analytics are not loaded and nothing is sent.'
+        : (consent && !choice && !consent.skipped()) ? 'Web version — analytics are not loaded until you accept them, so nothing is sent.'
         : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
+    // The full public Privacy notice and Terms of Use (privacy.html / terms.html at the site root). The iOS bundle does not
+    // carry them, so the app links to the web addresses.
+    const legalBase = ios ? 'https://welltest.h2oil.co.uk/' : '';
+    const legalLinks = 'The full <a href="' + legalBase + 'privacy.html" target="_blank" rel="noopener" id="privacy_full_link">Privacy notice</a> and the ' +
+        '<a href="' + legalBase + 'terms.html" target="_blank" rel="noopener" id="privacy_terms_link">Terms of Use</a> (open in a new tab) give the complete details: who we are, legal bases, cookies, retention, your rights and how to complain.';
     const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
         a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
     // H11 (docs/ACCOUNTS-PLAN.md §8.6): web / iOS branches. The web-only text (banner, account and sign-in cards) is inside
@@ -11743,7 +11754,9 @@ function renderPrivacy(body){
         'Events carry only page / route names, fixed button or model names and a few UI counters (tab number, scroll depth, seconds on a page).',
         'An allow-list filter inside the tracker drops everything else before it is sent: no input values, no client or well names, no file contents, no results or other numbers from your data, and no search or copied text.',
         'Blocking analytics (for example with a content blocker) does not affect any feature.'
-      ]) + '</div>' +
+      ].concat(consent ? ['Analytics run only if you accept them in the cookie banner; until then nothing is loaded or sent. Your choice is kept on this device for 12 months. ' +
+        '<a href="#" id="privacy_cookie_settings">Cookie settings</a> — change your choice at any time (currently: ' +
+        (choice === 'granted' ? 'accepted' : choice === 'denied' ? 'rejected' : 'not chosen') + ').'] : [])) + '</div>' +
       '<div class="card"><div class="card-title">iOS app</div>' + li([
         'The analytics code is removed from the iOS bundle when it is built from the web version (<code>ios-app/scripts/sync-from-main.js</code> strips every <code>GA:START … GA:END</code> block), so the app sends no analytics at all.',
         'The 3D engine and the PDF libraries are bundled inside the app, so they work offline.'
@@ -11763,8 +11776,11 @@ function renderPrivacy(body){
         'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them (the spreadsheet library excepted); the iOS app bundles them.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Contact</div>' +
-        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:6px">' + legalLinks + '</p></div>' +
     '</div>';
+    const cs = body.querySelector('#privacy_cookie_settings');
+    if (cs && consent) cs.addEventListener('click', ev => { ev.preventDefault(); try { consent.open(); } catch (e) { /* banner not mounted */ } });
 }
 
 
@@ -115744,11 +115760,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
     "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
-    "privacy": "view-d 1280 800 acf0bd8f,view-p 780 1688 661be430",
+    "privacy": "view-d 1280 800 87552ddb,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 1e977bb3,view-p 780 1688 e516c6f6",
+    "releasenotes": "view-d 1280 800 7dd15374,view-p 780 1688 caac63d3",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -115769,7 +115785,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7979112;   // total size of the image files (the offline download label)
+  M.bytes = 7981280;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -116152,7 +116168,7 @@ tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
 shots: v('Well Comparison table with one well', 'Well Comparison', [{ sel: '#mw_table', n: 1 }]) },
-privacy: { route: 'privacy', reviewed: R, reviewedSrc: '467d9819', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
+privacy: { route: 'privacy', reviewed: R, reviewedSrc: '8f8cd280', units: N, keywords: ['privacy', 'data', 'offline', 'analytics', 'storage'],
 purpose: 'How the app handles your data: every calculation runs on your device.',
 what: ['There are no accounts and no server that receives your inputs. Data stays in this browser’s storage, or in the iOS app on the device.'],
 when: ['Before you enter client data.', 'When a client asks where the data goes.'],
@@ -116163,7 +116179,7 @@ outputs: [{ label: 'This build', text: 'Says whether usage analytics are active.
 pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
-releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: '504a62ba', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
+releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'b8c6ebd2', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
 purpose: 'The engineering changes in each version, newest first.',
 what: ['The version under the logo is the newest entry here.'],
 when: ['After an update.', 'To check when a calculation changed.'],

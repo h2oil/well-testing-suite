@@ -554,6 +554,9 @@ class Session {
     await this.ctx.addInitScript(pageHelper);
     // Software WebGL is slow: the simulator starts in 2D at low quality unless a view switches to 3D.
     await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('h2viz3d_prefs')) localStorage.setItem('h2viz3d_prefs', JSON.stringify({ mode: '2d', quality: 'low' })); } catch (e) { /* ignore */ } });
+    // A stored analytics choice keeps the consent banner (GA block) off the views; 'granted' keeps the analytics path
+    // (served by the stub below) exercised as before the banner. A sweep that clears storage sees the banner again.
+    await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('wtspref_analytics_consent')) localStorage.setItem('wtspref_analytics_consent', JSON.stringify({ choice: 'granted', v: 1, at: Date.now() })); } catch (e) { /* ignore */ } });
     await this.ctx.route(/^(https?|wss?):\/\/(?!127\.0\.0\.1[:/])/, (r) => {
       const u = r.request().url();
       if (/googletagmanager|google-analytics/.test(u)) { noteExternal(u, 'stubbed (empty analytics script)', this.route); return r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* sweep: analytics stub */' }); }

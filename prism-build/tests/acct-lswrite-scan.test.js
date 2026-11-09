@@ -43,7 +43,8 @@ const MARKED = {
   '49-calc-help.js': 1, '50-a11y.js': 1, '51-prism-workspace.js': 2, '54-prism-skin.js': 1, '61-modbus-station.js': 1,
   '63-wellos.js': 1,
 };
-const HOST_MARKED = 5;   // __lsSet, __lsSetRaw, __lsRemove and the two snapshot-eviction writes inside __lsSet
+const HOST_MARKED = 6;   // __lsSet, __lsSetRaw, __lsRemove, the two snapshot-eviction writes inside __lsSet, and the analytics
+                         // consent choice (wtspref_analytics_consent, head GA block: runs before WTS_lsSet exists; a device pref)
 
 function rawLines(src) {
   const out = [];
