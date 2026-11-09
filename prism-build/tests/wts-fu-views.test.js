@@ -525,6 +525,11 @@ const WP = 'WTSFUV';
 const J = (o) => JSON.parse(JSON.stringify(o));
 const REPO = path.resolve(__dirname, '..', '..');
 const V331 = '3611343';                      // v3.3.1 tree (plan Appendix A): host + Round 7 as shipped
+// Release 3.4.2 review: the live flame glyph clears only the host flame (y − 45 … − 19), no longer the bottom of the 'Flare' title
+// (was y − 50 … − 19). That one documented command is mapped in the older reference frame; every other command must still match.
+function flare342(fr) {
+  return fr.map((e) => (e.op === 'clearRect' && e.args[0] === 934 && e.args[1] === 80 && e.args[2] === 32 && e.args[3] === 31) ? Object.assign({}, e, { args: [934, 85, 32, 26] }) : e);
+}
 function v331Html() {
   for (const git of ['git', 'C:/Program Files/Git/cmd/git.exe', 'C:/Program Files/Git/bin/git.exe']) {
     try { return execFileSync(git, ['show', V331 + ':well-testing-app.html'], { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 }); }
@@ -717,7 +722,7 @@ const D2 = [
         openWts(old);
         const cv0 = old.el('wts_cv');
         old.flush(2000);
-        const ref = lastFrame(old, cv0);
+        const ref = flare342(lastFrame(old, cv0));
         const i = firstDiff(ref, now);
         assert.ok(JSON.stringify(ref) === JSON.stringify(now), 'first difference at op ' + i + ': v3.3.1 ' + JSON.stringify(ref[i]) + ' vs now ' + JSON.stringify(now[i]));
       } finally { if (old.dispose) old.dispose(); }

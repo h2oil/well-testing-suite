@@ -108,7 +108,7 @@ module.exports = [
         const card = openCard(app, 'surge2');
         assert.strictEqual(text(card.querySelector('.tt b')), 'T-202');
         const ls = rowLabels(card);
-        ['Level (A+B)', 'Line-up', 'T-202A', 'T-202B', 'Pressure', 'Liquid', 'Water cut', 'Route', 'Share of dumps', 'LCV-202', 'Time to HH', 'Flash gas', 'Auto-divert', 'Auto route']
+        ['Level (A+B)', 'Line-up', 'T-202A', 'T-202B', 'Pressure', 'Liquid', 'Water cut', 'Route', 'Share of dumps', 'LCV-202', 'Time to HH', 'Flash (calc, PVT)', 'Auto-divert', 'Auto route']
           .forEach((l) => assert.ok(ls.indexOf(l) >= 0, 'row ' + l + ' in ' + ls.join(',')));
         assert.ok(ls.indexOf('Inlet XV-202') < 0 && ls.indexOf('Level') < 0, 'single-compartment rows hidden: ' + ls.join(','));
         assert.ok(ls.indexOf('Auto-divert') < ls.indexOf('Auto route'), 'Auto-divert before Auto route');

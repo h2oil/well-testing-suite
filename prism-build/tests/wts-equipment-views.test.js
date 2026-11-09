@@ -199,7 +199,7 @@ const HMI = [
       try {
         const card = openCard(app, 'surge2');
         const ct = text(card);
-        ['Level', 'Pressure', 'Liquid', 'Water cut', 'Inlet XV-202', 'Route', 'Share of dumps', 'LCV-202', 'Time to HH', 'Flash gas', 'Auto route'].forEach((l) => assert.ok(ct.indexOf(l) >= 0, 'row ' + l));
+        ['Level', 'Pressure', 'Liquid', 'Water cut', 'Inlet XV-202', 'Route', 'Share of dumps', 'LCV-202', 'Time to HH', 'Flash (calc, PVT)', 'Auto route'].forEach((l) => assert.ok(ct.indexOf(l) >= 0, 'row ' + l));
         assert.ok(/of 100 bbl/.test(ct) && /fire case is not modelled/.test(ct), 'capacity and PSV-202 note');
         ['surge2', 'both', 'surge'].forEach((m) => { app.click(cardBtn(app, 's2route', m)); app.flush(20); });
         assert.deepStrictEqual(t.of('setSurgeRoute').map((c) => c[1]), ['surge2', 'both', 'surge'], 'routes');
@@ -563,6 +563,11 @@ function lastFrame(app, cv) {
   while (i >= 0 && !(log[i].op === 'clearRect' && FULL(log[i].args))) i--;
   return i < 0 ? [] : log.slice(Math.max(0, i - 1));
 }
+// Release 3.4.2 review: the live flame glyph clears only the host flame (y − 45 … − 19), no longer the bottom of the 'Flare' title
+// (was y − 50 … − 19). That one documented command is mapped in the older reference frame; every other command must still match.
+function flare342(fr) {
+  return fr.map((e) => (e.op === 'clearRect' && e.args[0] === 934 && e.args[1] === 80 && e.args[2] === 32 && e.args[3] === 31) ? Object.assign({}, e, { args: [934, 85, 32, 26] }) : e);
+}
 function frameTexts(fr) { return fr.filter((e) => e.op === 'fillText').map((e) => String(e.args[0])); }
 function redraw(app) { app.flush(250); }
 function canvasXY(app, cv, x, y) {
@@ -600,7 +605,7 @@ const D2 = [
         openWts(old);
         const cv0 = old.el('wts_cv');
         old.flush(2000);
-        const ref = lastFrame(old, cv0);
+        const ref = flare342(lastFrame(old, cv0));
         const a = JSON.stringify(ref), b = JSON.stringify(now);
         if (a !== b) {
           let k = 0; while (k < ref.length && JSON.stringify(ref[k]) === JSON.stringify(now[k])) k++;
