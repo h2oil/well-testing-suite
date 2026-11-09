@@ -596,7 +596,7 @@ const SECTION_B = (G /*, src */) => {
         }],
         ['32: label layout — default overview at 1380×700 with DS-101 and T-202 in hides no equipment chip', () => {
           const bad = [];
-          [{ desander: true, surge2: true }, {}].forEach(rig => {
+          [{ desander: true, surge2: true }, {}, { lpLine: true }, { desander: true, surge2: true, lpLine: true }].forEach(rig => {
             const cam = camOf(overview(rig, 1380, 700)), ids = I.rigEqIds(rig), rects = [], anchors = [];
             ids.forEach((id, i) => { const p = I.project(I.ANCHORS[id], cam, 1380, 700); rects.push({ w: 168, h: 44, prio: 3 + I.EQ_IDS.indexOf(id) * 0.01, pref: I.PREF_SIDE[id], seg: false }); anchors.push({ x: p.x, y: p.y, hide: false }); });
             const obs = I.rigObst(rig).map(o => { let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
@@ -604,7 +604,7 @@ const SECTION_B = (G /*, src */) => {
               const sx = (x1 - x0) * 0.12, sy = (y1 - y0) * 0.12; return { x0: x0 + sx, x1: x1 - sx, y0: y0 + sy, y1: y1 - sy, on: true }; });
             const out = I.layoutLabels(rects, anchors, { w: 1380, h: 700 }, { top: 98, bottom: 76, left: 0, right: 0, card: null, obs });
             ids.forEach((id, i) => { if (!out[i].vis) bad.push(JSON.stringify(rig) + ' ' + id + ' hidden'); });
-            if (rig.surge2 && I.rigObst(rig).length !== 4) bad.push('T-202 obstacle missing'); if (!rig.surge2 && I.rigObst(rig).length !== 3) bad.push('obstacles out');
+            if (I.rigObst(rig).length !== 3 + (rig.surge2 ? 1 : 0) + (rig.lpLine ? 1 : 0)) bad.push(JSON.stringify(rig) + ' obstacles ' + I.rigObst(rig).length);
           });
           return bad.length === 0 || bad.join(',');
         }],
@@ -1104,8 +1104,11 @@ const SECTION_B = (G /*, src */) => {
         ['32 v1.5.0 LP: tap on FT-201 / the ground run → \'lp\' (only while on); slot 18 = LP; chain VENTL → LP; the LP tip flame follows qLP (none to the vent), the HP flame burns qHP', () => {
           // (from the front the ground run sits behind T-301 / T-201, which take the tap: look from behind, above the gas rack)
           const bad = [], on = { lpLine: true }, cam = camOf({ az: 160, el: 55, target: [16.0, 0.5, 0.6], radius: 14 });
-          const got = I.pickRay(cam.pos, rayTo(cam, [15.0, 0.8, 0.6]), I.rigProxies(on), I.rigValveProxies(on)), got2 = I.pickRay(cam.pos, rayTo(cam, [17.5, 0.35, 0.6]), I.rigProxies(on), I.rigValveProxies(on));
+          const ft = [I.FT201_AT[0], I.FT201_AT[1] + 0.3, I.FT201_AT[2]], got = I.pickRay(cam.pos, rayTo(cam, ft), I.rigProxies(on), I.rigValveProxies(on)), got2 = I.pickRay(cam.pos, rayTo(cam, [17.5, 0.35, 0.6]), I.rigProxies(on), I.rigValveProxies(on));
           if (got !== 'lp' || got2 !== 'lp') bad.push('pick ' + got + ' / ' + got2);
+          // 3.4.2 review: FT-201 sits on the high crossover, so the Tanks / Process presets (front) reach it with a tap too
+          ['tanks', 'process'].forEach(v => { const w = I.viewFor(v, on, 1380, 700, { top: 98, bottom: 76, left: 0, right: 0, card: null }), c = camOf({ az: w.th * 180 / Math.PI, el: 90 - w.ph * 180 / Math.PI, target: w.tgt, radius: w.r });
+            const g = I.pickRay(c.pos, rayTo(c, ft), I.rigProxies(on), I.rigValveProxies(on)); if (g !== 'lp') bad.push(v + ' FT-201 pick ' + g); });
           if (I.rigProxies({}).some(p => p[0] === 'lp')) bad.push('lp proxy while off');
           if (route('LP').aSeg !== 18 || route('VENTL').aSeg !== 10 || route('PSV2L').aSeg !== 10 || J(I.CHAIN_DEF[I.CHAIN_DEF.length - 1]) !== J({ id: 'LP', entry: 'VENTL', phase: 'gas', edges: ['VENTL', 'LP'] })) bad.push('slots / chain');
           const q = x => { const n = I.normalize(I.fakeSnapshot(600, { lp: true, qLP: x }), I.makeNorm()); return [I.lpFlareQ(n), I.flareQ(n), n]; };

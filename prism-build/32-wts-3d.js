@@ -136,8 +136,9 @@ var PROXIES = [
   ['desander',[-10.2,1.55,-1.6],[0.9,3.1,0.9]], ['desander',[-10.2,0.45,-3.5],[1.2,0.9,0.7]],
   ['surge2',[12.5,3.2,2.3],[1.9,4.6,1.9]],                      // inscribed (x 11.55…13.45; T-201's proxy ends at x 11.45)
   ['heaterChoke',[-3.45,2.1,0.4],[0.5,0.9,0.5]],                // x −3.7…−3.2: clear of the H-101 proxy (x −3.1…0.3)
-  // v1.5.0: LP flare line (only while lp.on): FT-201 body and the ground run → card 'lp'
-  ['lp',[15.0,0.62,0.6],[0.5,0.9,0.5]], ['lp',[16.025,0.35,0.6],[6.05,0.36,0.36]]
+  // v1.5.0: LP flare line (only while lp.on): FT-201 body and the ground run → card 'lp' (3.4.2 review: FT-201 on the high
+  // crossover, which the preset cameras see between T-201 and T-301, and the drop at x 13.0 — the ground run hides behind T-301)
+  ['lp',[13.0,6.37,1.05],[0.5,0.9,0.5]], ['lp',[16.025,0.35,0.6],[6.05,0.36,0.36]], ['lp',[13.0,3.2,0.6],[0.36,5.4,0.36]]
 ];
 var MUSHROOM = { c:[-12.6,0.95,1.66], s:[0.14,0.14,0.12] };
 // CK-101 choke manifold (v1.5.0): plan of the 3-1/16" 10K two-choke manifold GA drawing, square loop on a skid (no mirror:
@@ -205,11 +206,16 @@ var VIEWS = {
 var FOCUS = {
   wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.05,1.35,0],5.0], heater:[[-1.4,1.7,0.3],8],
   separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
-  flare:[[19.5,5,-4.5],18], lp:[[16.0,1.2,-0.5],16], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
+  flare:[[19.5,5,-4.5],18], lp:[[15.5,3.0,-1.5],15], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10], heaterChoke:[[-3.6,2.05,0.35],5]
 };
 // fixed focus azimuth (deg) for items that another vessel hides from the usual -18° side: T-202 sits behind T-201 there,
-// so it is framed from +3° (between T-201 and T-301; wts3d framing check)
-var FOCUS_TH = { surge2:3 };
+// so it is framed from +3° (between T-201 and T-301; wts3d framing check); the LP line (ground run behind T-301 from the front)
+// from 200°, behind the tanks with the stack to one side: crossover with FT-201, drop, ground run and riser in one view (3.4.2)
+var FOCUS_TH = { surge2:3, lp:200 };
+// FOCUS radii are set for a landscape canvas (aspect ≥ 1.6); a narrower canvas (portrait phone, 3.4.2 review) backs the camera
+// off by 1.6 / aspect so the item keeps its width in frame (the 36° FOV is vertical) — a landscape canvas is unchanged
+var FOCUS_ASP = 1.6;
+function focusRadius(r, w, h) { var a = (w > 1 && h > 1) ? w / h : FOCUS_ASP; return a >= FOCUS_ASP ? r : r * FOCUS_ASP / Math.max(a, 0.4); }
 // Equipment halos [x, z, radius] and blob shadows [x, z, sx, sz] (optional rows only while the item is in)
 var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.05, 0, 2.6], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
              flare:[19.5, -4.5, 1.4], surge:[10.2, 4.0, 1.8], pump:[20.4, 5.9, 1.1], gauge:[16.4, 4.0, 3.2],
@@ -217,9 +223,11 @@ var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.05, 0, 2.6
 var BLOBS = [[-7.05, 0, 4.4, 3.2], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [10.2, 4.0, 3.2, 3.2], [20.3, 5.8, 1.2, 2.0], [16.4, 4.0, 5.8, 3.4],
              [19.5, -4.5, 2.2, 2.2], [-8, -6.5, 7.0, 3.4], [-11.6, 0, 1.4, 1.4], [-18.5, 5.0, 2.0, 2.8], [22.0, 3.0, 2.0, 2.8]];
 var BLOBS_OPT = { desander:[[-10.2, -1.6, 1.4, 1.4], [-10.2, -3.5, 1.6, 1.1]], surge2:[[12.5, 2.3, 2.6, 2.6]] };
-// Label obstacles (vessel cores the chips avoid): V-101, T-201, T-301 (+ T-202 while it is in)
+// Label obstacles (vessel cores the chips avoid): V-101, T-201, T-301 (+ T-202 while it is in; + FT-201 on the LP crossover while
+// the LP line is on, so the T-201 / V-101 chips do not sit on the meter in the Tanks / Process / Flare views — 3.4.2 review)
 var OBST_BOXES = [{ box:V101_BOX }, { box:{ min:[9.0, 0.9, 2.8], max:[11.4, 5.7, 5.2] } }, { box:{ min:[13.9, 0.25, 2.7], max:[18.9, 2.85, 5.3] } },
-                  { box:{ min:[11.5, 0.9, 1.3], max:[13.5, 5.5, 3.3] }, rig:'surge2' }];
+                  { box:{ min:[11.5, 0.9, 1.3], max:[13.5, 5.5, 3.3] }, rig:'surge2' },
+                  { box:{ min:[12.7, 5.85, 0.55], max:[13.3, 6.95, 1.55] }, rig:'lpLine' }];
 
 // ── tables filtered by the effective rig-up (§8.0, D18): a hidden item has no volume anywhere ──
 function rigProxies(rig) { return PROXIES.filter(function (p) { return p[0] === 'lp' ? rigIn(rig, 'lpLine') : optIn(rig, p[0]); }); }
@@ -316,7 +324,7 @@ var ROUTES = [
   { id:'E3o', aSeg:2, seg:2, line:'choke_heater', phase:'multi', rb:0.2, pts:[[-6.3,1.2,-0.75],[-5.7,1.2,-1.35],[-5.15,1.2,-1.35],[-5.15,1.2,0],[-4.3,1.2,0]] },
   // ── v1.5.0 (appended) — LP flare line (snapshot lp.on; pseudo rig item lpLine): VENTL = T-201 top → PCV-201 (the v3.3 VENT start;
   //    PSV-201 still tees in) to a flanged break at x 12.2; LP = that break → down at x 13.0 (z 0.6, clear of G1, the PSV header
-  //    and the T-202 B branch) → ground run at y 0.35 through FT-201 (x 15.0) → along −z at x 19.05 to the LP riser foot (drain
+  //    and the T-202 B branch; FT-201 on the crossover at z 1.05 since the 3.4.2 review) → ground run at y 0.35 → along −z at x 19.05 to the LP riser foot (drain
   //    boot) at (19.05, 0.35, −3.5), clear of the flare base (z ≤ −3.7) and the knock-out drum; the riser and the LP tip are static
   //    meshes. VENT2 joins the LP z-run at (13.0, 6.1, 2.3); PSV2L (PSV-202 → LP) replaces PSV2 while the LP line is on ──
   { id:'VENTL', aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', rig:'lpLine', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[12.2,6.1,4.0]] },
@@ -349,8 +357,9 @@ var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9
   [13.0,6.1,1.6,2,['surge2','lpLine']],[19.05,0.35,-3.5,3,'lpLine'],
   [8.1,2.3,4.0,3,'sepSurge']];                                          // (V-101 out to the surge tank: SURGE_SPOOL lands on LMa)
 // LP riser (static, rig lpLine) from the riser foot up beside the stack, a jog toward the HP tip at y 6.6, to the LP tip; the
-// LP tip / pilot sit at LP_TIP; FT-201 insertion meter on the ground run
-var LP_RISER = [[19.05,0.35,-3.5],[19.05,6.6,-3.5],[19.05,6.6,-4.05],[19.05,7.3,-4.05]], LP_TIP = [19.05,7.3,-4.05], FT201_AT = [15.0,0.35,0.6];
+// LP tip / pilot sit at LP_TIP; FT-201 insertion meter on the high crossover (x 13.0, run along z between the PSV2L tee at z 1.6
+// and the drop at z 0.6: in view from the Tanks / Process / Flare presets, where the ground run sits behind T-301; 3.4.2 review)
+var LP_RISER = [[19.05,0.35,-3.5],[19.05,6.6,-3.5],[19.05,6.6,-4.05],[19.05,7.3,-4.05]], LP_TIP = [19.05,7.3,-4.05], FT201_AT = [13.0,6.1,1.05];
 function tagHolds(rig, t) { return t.charAt(0) === '!' ? !rigIn(rig, t.slice(1)) : rigIn(rig, t); }
 function teeBuilt(t, rig) { var g = t[4]; if (!g) return true; if (typeof g === 'string') return tagHolds(rig, g);
   for (var i = 0; i < g.length; i++) if (!tagHolds(rig, g[i])) return false; return true; }
@@ -2828,13 +2837,13 @@ function buildScene(F, renderer, tier, env, rig, dest) {
     }
   })();
   endGrp();
-  // v1.5.0: FT-201 insertion ultrasonic flare-gas meter on the LP ground run (spool, two transducer stalks, transmitter head)
+  // v1.5.0: FT-201 insertion ultrasonic flare-gas meter on the LP crossover (spool along z, two transducer stalks, transmitter head)
   if (IN.lpLine) (function () {
     var f = FT201_AT, rR = pipeRadius(3);
-    add('steelSatin', F.cylAB([f[0] - 0.14, f[1], f[2]], [f[0] + 0.14, f[1], f[2]], rR * 1.12, 18));
-    flange([f[0] - 0.14, f[1], f[2]], [1, 0, 0], rR); flange([f[0] + 0.14, f[1], f[2]], [1, 0, 0], rR);
+    add('steelSatin', F.cylAB([f[0], f[1], f[2] - 0.14], [f[0], f[1], f[2] + 0.14], rR * 1.12, 18));
+    flange([f[0], f[1], f[2] - 0.14], [0, 0, 1], rR); flange([f[0], f[1], f[2] + 0.14], [0, 0, 1], rR);
     [-0.06, 0.06].forEach(function (dx) { add('steelSatin', F.cylAB([f[0] + dx, f[1] + rR, f[2] + dx], [f[0] + dx, f[1] + rR + 0.2, f[2] + dx], 0.03, 8)); });
-    add('paintBlue', F.boxAt(0.2, 0.18, 0.16, f[0], f[1] + rR + 0.3, f[2]));
+    add('paintBlue', F.boxAt(0.16, 0.18, 0.2, f[0], f[1] + rR + 0.3, f[2]));
     tagPlate('FT-201', f[0], f[1] + rR + 0.52, f[2]);
   })();
 
@@ -3263,9 +3272,9 @@ var OPT_PRIMS = {
     { id:'PAH-102 plate', k:'box', min:[-4.12, 2.475, 0.19], max:[-3.68, 2.59, 0.21] }]
 };
 // V-101 out (v1.3.0): the bypass spool of the destination, PSHH-104 on it and, for 'line', NRV-501 / XV-501 at the tie-in
-// v1.5.0 LP flare line: FT-201 on the ground run, the drain boot under the riser foot, the LP tip (the riser is a capsule run)
+// v1.5.0 LP flare line: FT-201 on the crossover, the drain boot under the riser foot, the LP tip (the riser is a capsule run)
 var LP_PRIMS = [
-  { id:'FT-201', k:'box', min:[14.86, 0.18, 0.44], max:[15.14, 0.98, 0.76], on:['LP'] },
+  { id:'FT-201', k:'box', min:[12.86, 5.93, 0.89], max:[13.14, 6.73, 1.21], on:['LP'] },
   { id:'LP drain boot', k:'cyl', c:[19.05, -3.5], r:0.1, y0:0.04, y1:0.3, on:['LP'], j:['LP riser'] },
   { id:'LP tip', k:'cyl', c:[19.05, -4.05], r:0.15, y0:7.25, y1:7.7, j:['LP riser'] }];
 var SPOOL_PRIMS = {
@@ -5108,7 +5117,7 @@ function createHandle(THREE, container, opts) {
     var th = cam.th, d = ((th + 18 * Math.PI / 180) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
     if (Math.abs(d) > Math.PI / 3) th = -18 * Math.PI / 180;
     if (FOCUS_TH[id] != null) th = FOCUS_TH[id] * Math.PI / 180;
-    startTween({ tgt:f[0], r:f[1], th:th, ph:clamp(cam.ph, 0.95, 1.3) }, 0.9);
+    startTween({ tgt:f[0], r:focusRadius(f[1], W, Hh), th:th, ph:clamp(cam.ph, 0.95, 1.3) }, 0.9);
   });
   H.select = guard(function (id) { selected = id && EQ_IDS.indexOf(id) >= 0 && optIn(N.rig, id) ? id : null; labelDirty = true; layoutDirty = true;
     for (var i = 0; i < chips.length; i++) chips[i].el.classList.toggle('sel', chips[i].id === selected); });
@@ -5211,7 +5220,7 @@ function mount(container, opts) {
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
   PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES, CK_LEG_SLOTS:CK_LEG_SLOTS, CK_M:CK_M, CK_JOINTS:CK_JOINTS, SEG_SLOTS:SEG_SLOTS, ckLegSlot:ckLegSlot,
-  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
+  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, focusRadius:focusRadius, FOCUS_ASP:FOCUS_ASP, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,
   flameLength:flameLength, phaseFractions:phaseFractions, niceRange:niceRange, pickTier:pickTier, lodForDistance:lodForDistance,
