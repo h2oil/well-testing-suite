@@ -28,8 +28,8 @@ release is cut on `rel/4.2` from e706c94. The owner named the release 4.2; there
   e-mail-code dialog and of the provider consent step, and as the "Your profile" card (Save / Clear) on the Account page
   (PUT /account/profile; the country defaults from /me `countryHint`). Text NFKC-normalised and capped; phone rule shared
   with the server.
-- Project summary with every Save to cloud (`WTS_cloudSync.projectSummary`): well names (≤ 50), client, operator, company,
-  field, rig, country, job reference (active well first) and the modules used (≤ 40); plain text ≤ 120 characters each; the
+- Project summary with every Save to cloud (`WTS_cloudSync.projectSummary`): well names (≤ 50, each ≤ 80 characters), client, operator, company,
+  field, rig, country, job reference (active well first) and the modules used (≤ 40); other fields plain text ≤ 120 characters; the
   default company is not reported; not part of the vhash; a refused summary is resent once without it, so it never blocks a save.
 - Updated Terms and Privacy step: an account on an older privacy version gets `consent_required {existing:true}` (code path)
   or the next consent `{existingAccount:true}` (provider path); the step shows no profile fields. Profiles and summaries are
@@ -72,7 +72,8 @@ page on both platforms; the in-app Help privacy guide says accounts are an optio
 the "Privacy notice version 2" item only.
 
 **Release mechanics** — Release Notes help shots re-taken (help-shots.js --route releasenotes --html; web-only items are left
-out of the shots), Round 9 rebuilt, user guide regenerated (Version 4.2 · 2026-11-09), iOS www synced. Gates: see the commit.
+out of the shots), Round 9 rebuilt, user guide regenerated (Version 4.2 · 2026-11-09), iOS www synced. Account code SHA-384 (9 blocks, `node prism-build/acct-hash.js --release`):
+sha384-ka+b7YAV1BU8hwJeZZT2MY1LkrVe1/cd3HUzhoq+ZMuwE0aRmJ9NqfMZJ+n1aScQ (recompute if the HTML changes before the merge). Gates: see the commit.
 
 **Notes** — Open owner items: reconcile the sign-up wording (dialog, Privacy notice, Terms, Help privacy guide, RUNBOOK §3L)
 with the live `ACCOUNTS_SIGNUP` setting; the 4.0 items still listed as open (go-live probe, LinkedIn live tests).

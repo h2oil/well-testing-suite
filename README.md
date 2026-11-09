@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://welltest.h2oil.co.uk>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v4.0 (2026-11-09)
+- **Current release:** v4.2 (2026-11-09)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -592,6 +592,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v4.2 | 2026-11-09 | Accounts follow-up (beta, web only): sign-in button at the bottom-left of the sidebar, welcome prompt (create a free account, sign in or continue as a guest), optional profile, a short project summary with each cloud save, an updated Terms / Privacy step for existing accounts, owner administrator dashboard; the account API now runs on the live site. Privacy notice version 2; the Help privacy guide and the Terms of Use mention the optional web accounts trial (both platforms). The iOS app has only the Privacy notice item |
 | v4.0 | 2026-11-09 | Cloud accounts (beta, web only): sign in with an e-mail code or a supported sign-in provider; save and open projects in your account, history, export and delete; the account API runs as a separate functions-only site (`server/`). Escaped stored text; hash-checked spreadsheet import library. The iOS app is unchanged apart from the neutral items |
 | v3.4.2 | 2026-11-09 | Public Privacy notice and Terms of Use (privacy.html, terms.html) linked from the sidebar footer; usage analytics on the web load only after Accept in a consent banner; a Terms notice; reports state that results are aids to engineering judgement |
 | v3.4.1 | 2026-11-08 | Simulator choke manifold with an adjustable and a positive leg, independent T-201 compartment inlets, toolbar Rig-up menu; PRiSM fit status follows the adopted flag; help screenshots deployed with the web page |
