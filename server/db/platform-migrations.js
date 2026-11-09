@@ -112,12 +112,13 @@ function rolesFile(src001) {
   ].join('\n');
 }
 
-// Files already applied on the live database (generated with their own BEGIN … COMMIT) keep that form byte for byte. Every
-// later file runs INSIDE the platform runner's transaction: the runner opens one transaction for all pending files and commits
-// it itself, so a file's own COMMIT ended it early and the deploy failed ("committing migrations: unexpected transaction status
+// Files already applied on the live database (generated with their own BEGIN … COMMIT, up to 0700 — 0600 / 0700 were applied by
+// a deploy whose platform commit then failed, so the platform holds their checksums) keep that form byte for byte. Every later
+// file runs INSIDE the platform runner's transaction: the runner opens one transaction for all pending files and commits it
+// itself, so a file's own COMMIT ended it early and the deploy failed ("committing migrations: unexpected transaction status
 // idle", v4.0 admin deploy). Those files set search_path at session level first, so the body's SET LOCAL lines are also
 // covered by a runner that does not open a transaction, and reset it at the end.
-const OWN_TXN_LAST = '050-code-scope.sql';
+const OWN_TXN_LAST = '070-insight.sql';
 function ownTransaction(name) { return name <= OWN_TXN_LAST; }
 function wrapSource(m) {
   if (!ownTransaction(m.name)) return wrapInRunner(m);

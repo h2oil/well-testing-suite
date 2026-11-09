@@ -45,7 +45,7 @@ test.describe('platform migrations folder (no database)', () => {
       const a = f.text.indexOf('-- ── source body START ──\n') + '-- ── source body START ──\n'.length;
       const b = f.text.indexOf('\n-- ── source body END ──');
       assert.strictEqual(f.text.slice(a, b), m.text.endsWith('\n') ? m.text : m.text + '\n', f.name);
-      if (f.source <= '050-code-scope.sql') {
+      if (f.source <= '070-insight.sql') {
         assert.match(f.text, /^(--[^\n]*\n)+BEGIN;\n/, 'an applied file keeps its own transaction');
         assert.ok(f.text.endsWith('\nCOMMIT;\n'));
       } else {
