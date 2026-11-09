@@ -4699,13 +4699,15 @@ function create(flowIn, opts) {
       u.bpv.u = 0; u.blanket.u = 0; u.blanket.held = false; u.psv.lifting = false;
       tr.on = false; tr.tripped = false; tr.failed = !!faults.xfer2StuckClosed; tr.blocked = false; tr.q_bpd = 0; tr.x = 0; tr.dP_psi = 0;
       tr.sg = SGo; tr.lowDP = false; tr.trip = null; tr.canReset = false; tr.resetBlock = ''; tr.T = Tamb;
-      for (k = 0; k < 2; k++) s2CompStatic(u.comps[k], k);
+      var sk = S2N + '|' + capK2 + '|' + cp.inlet[0] + cp.inlet[1] + cp.suction + u2k[0] + '|' + u2k[1] + '|' + Tamb;
+      if (sk !== s2StaticKey) { s2StaticKey = sk; for (k = 0; k < 2; k++) s2CompStatic(u.comps[k], k); }   // static rows: rewrite on a change only
       setLine(L.sep_surge2, 0, qDd2 * 86400, 0, 3.068, false); setLine(L.surge2_gauge, 0, pumpDesign2, 0, SS[5].ID, false);
       setLine(L.surge2_vent, 0, qFlashD2 * 0.0864, 0, 2.067, false); setLine(L.blanket2, 0, pumpDesign2 / 86400 * BBL * 0.0864, 0, 1.049, false);
       setLine(L.psv_surge2, 0, 0, 0, 1.049, false);
       s.nodes.surge2.P = u.P; s.nodes.surge2.T = u.T;
       return;
     }
+    s2StaticKey = '';
     u.inRig = true; u.P = X2.Pu; u.SP = Psp2; u.SPeff = X2.SPeu; u.T = X2.Tu; u.psh = X2.pshU; u.pshh = X2.pshhU; u.mawp = X2.mawpU;
     u.h = X2.hU; u.frac = X2.hU / H2; u.hW = uw2 * BBL / At2; u.fracW = u.hW / H2; u.Vo_bbl = uo2 * X2.Bu; u.Vo_stb = uo2; u.Vw_bbl = uw2;
     u.flash_mscfd = F2.flash * 86.4;
@@ -4735,6 +4737,7 @@ function create(flowIn, opts) {
     s.nodes.surge2.P = X2.Pu; s.nodes.surge2.T = X2.Tu;
   }
   // comps rows: single mode comps[0] = the whole tank (tag T-202 / XV-202), comps[1] a zero row; static rows while T-202 is out
+  var s2StaticKey = '';
   function s2CompStatic(cp, k) {
     cp.tag = S2N === 1 ? (k ? TAGS.surge2B : TAGS.surge2) : (k ? TAGS.surge2B : TAGS.surge2A);
     cp.valveTag = S2N === 1 ? (k ? TAGS.xvSurge2B : TAGS.xvSurge2) : (k ? TAGS.xvSurge2B : TAGS.xvSurge2A);
@@ -4853,11 +4856,11 @@ function create(flowIn, opts) {
   function lpVelAlarm() {
     var o = snap.lp, pct = o.mach >= 0.5 ? mmax(o.vPct, 100) : o.vPct, sev = pct >= 100 ? 'alarm' : 'warn';
     var A = aDef('VEL_LP', TAGS.ft201, sev, 'lp', 'd'), on = o.on && o.q_mscfd > 0 && pct >= LP.vw * 100;
+    if (!on && !A.active) return;                  // idle (the common case): nothing to raise, clear or retext
     if (on && A.active && A.sev !== sev) clearA(A);
     if (A.sev !== sev) { A.sev = sev; A.pub.sev = sev; alarmsDirty = true; }
-    var m = TAGS.lpLine + ' (' + TAGS.ft201 + '): velocity ' + uq(o.vel_fts, 'velocity') + ' is ' + rnd0(pct) + '% of limit ' + uq(o.ve_fts, 'velocity', 0) +
-      (o.mach >= 0.5 ? ' (Mach ' + o.mach.toFixed(2) + ' ≥ 0.5)' : '');
-    if (on && !A.active) raise(A, pct, sev === 'alarm' ? 100 : LP.vw * 100, m);
+    if (on && !A.active) raise(A, pct, sev === 'alarm' ? 100 : LP.vw * 100, TAGS.lpLine + ' (' + TAGS.ft201 + '): velocity ' + uq(o.vel_fts, 'velocity') + ' is ' +
+      rnd0(pct) + '% of limit ' + uq(o.ve_fts, 'velocity', 0) + (o.mach >= 0.5 ? ' (Mach ' + o.mach.toFixed(2) + ' ≥ 0.5)' : ''));
     else if (on) A.value = pct;
     else if (!on && A.active) clearA(A);
   }
