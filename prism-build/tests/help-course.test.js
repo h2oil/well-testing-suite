@@ -104,8 +104,8 @@ const CHECKS = {
     { kind: 'sim', needs: 'surge2', unlessFeature: 'surge2Comps', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
       expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 900, to: 1150 }, { alarm: 'ESD_TRIPPED', from: 900, to: 1150 }, { at: 1200, path: 'surge2.inlet', v: false }] },
 
-    // release 3.4.2, two compartments (measured 2026-11-09 on the engine lane's 31 at E3: dual T-202 + LP line; RE-MEASURE on the final
-    // engine after integration): route T-202 opens XV-202A, then XV-201A closes; A at 80 % about 46 min after the route (2,841 s) →
+    // release 3.4.2, two compartments (measured 2026-11-09 on the engine lane's 31 at E3: dual T-202 + LP line; re-checked on the
+    // integrated engine — every window below holds unchanged): route T-202 opens XV-202A, then XV-201A closes; A at 80 % about 46 min after the route (2,841 s) →
     // auto-divert to B, suction A, LCV-202 empties A to 25 % (about 3,500 s); LCV-202 stuck on T-202 only: XFER2_FAIL 2,820 s, LAH-202
     // both high 5,605 s, LSHH-202 5,985 s, ESD 6,035 s; on Both: LSHH-202 12,520 s, no ESD; PCV-203 stuck at 120 s: PAH-202 406 s, PSHH-202 / ESD 946 s
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 660, dt: 1, actions: [{ t: 60, route: 'both' }],
@@ -122,13 +122,21 @@ const CHECKS = {
     { kind: 'sim', needs: 'surge2', feature: 'surge2Comps', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
       expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 850, to: 1100 }, { alarm: 'ESD_TRIPPED', from: 850, to: 1100 }, { at: 1200, path: 'surge2.comps.0.inlet', v: false }, { at: 1200, path: 'surge2.comps.1.inlet', v: false }] },
   ],
-  // release 3.4.2 FS-5: V-101 out to the surge tank (page check on any engine; the sim checks need the rig chain — RE-MEASURE the windows on
-  // the final engine after integration: the design's expectations, cushion water to T-301 in batches, PSHH-201 at breakthrough ≈ 41 min)
+  // release 3.4.2 FS-5: V-101 out to the surge tank (page check on any engine; the sim checks need the rig chain). Measured 2026-11-09 on the
+  // integrated engine: a low-gas well (1 MMscf/d); PCV-201 takes ≈ 0.15 MMscf/d (SEPBY_SURGE_CAP); V-101 out before the cushion → PSHH-201
+  // within seconds; cushion started, V-101 out 10 s later: ≈ 26 bbl in T-301 by breakthrough (2,468 s, 41 min), PAH-201 2,650 s, PSHH-201 /
+  // ESD 2,715 s (≈ 4 min after breakthrough); V-101 back in at 35 min → no trip
   'FS-5': [
     { kind: 'page', set: { wts_sepByDest: 'surge' }, tol: 0.01, expectState: { 'flow.sim.sepByDest': 'surge', 'flow.sepBy.dest': 'surge', 'flow.sepBy.P0_psig': 25, 'flow.sepBy.choke.regime': 'Critical' } },
-    { kind: 'sim', feature: 'rigChain', set: { wts_sepByDest: 'surge' }, rig: { separator: false }, run: 30, dt: 1, expect: [{ alarm: 'SEPBY_SURGE_CAP', from: 0, to: 30 }, { at: 30, path: 'sepBy.dest', v: 'surge' }] },
-    { kind: 'sim', feature: 'rigChain', set: { wts_sepByDest: 'surge' }, run: 3600, dt: 5, rig: { separator: false }, actions: [{ t: 60, cushion: {}, ok: true }],
-      expect: [{ batch: 1, from: 60, to: 2400 }, { alarm: 'PSHH_SURGE', from: 2000, to: 3600 }, { alarm: 'ESD_TRIPPED', from: 2000, to: 3600 }, { gap: ['PSHH_SURGE', 'ESD_TRIPPED'], max: 10 }] },
+    { kind: 'sim', feature: 'rigChain', set: { wts_sepByDest: 'surge', wts_Qg: 1 }, rig: { separator: false }, run: 120, dt: 1,
+      expect: [{ alarm: 'SEPBY_SURGE_CAP', from: 0, to: 30 }, { at: 30, path: 'sepBy.dest', v: 'surge' }, { at: 30, path: 'sepBy.gasCap_mmscfd', v: 0.15, tol: 0.03 },
+        { alarm: 'PSHH_SURGE', from: 0, to: 60 }, { alarm: 'ESD_TRIPPED', from: 0, to: 60 }] },
+    { kind: 'sim', feature: 'rigChain', set: { wts_sepByDest: 'surge', wts_Qg: 1 }, run: 3600, dt: 5, actions: [{ t: 0, cushion: {}, ok: true }, { t: 10, rigup: { separator: false } }],
+      expect: [{ at: 2460, path: 'gauge.tanks.0.Vw_bbl', v: 26, tol: 0.05 }, { first: { path: 'cushion.phase', v: 'breakthrough' }, path: 'cushion.tBreak', v: 2468, tol: 0.005 },
+        { alarm: 'PSH_SURGE', from: 2400, to: 2700 }, { alarm: 'PSHH_SURGE', from: 2468 + 180, to: 2468 + 330 }, { alarm: 'ESD_TRIPPED', from: 2468 + 180, to: 2468 + 330 },
+        { gap: ['PSHH_SURGE', 'ESD_TRIPPED'], max: 10 }] },
+    { kind: 'sim', feature: 'rigChain', set: { wts_sepByDest: 'surge', wts_Qg: 1 }, run: 3600, dt: 5,
+      actions: [{ t: 0, cushion: {}, ok: true }, { t: 10, rigup: { separator: false } }, { t: 2100, rigup: { separator: true } }], expect: [{ noAlarm: 'PSHH_SURGE' }, { noAlarm: 'ESD_TRIPPED' }] },
   ],
   'FS-3': [
     { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 30, expect: [{ at: 30, path: 'desander.sithp_psi', v: 3600 }, { at: 30, path: 'desander.sithpEst', v: true }, { at: 30, path: 'desander.ratingOK', v: true }, { noAlarm: 'DES_RATING' }] },

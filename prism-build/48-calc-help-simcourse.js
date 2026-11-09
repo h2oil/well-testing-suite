@@ -50,7 +50,7 @@
             steps: ['Follow [[fs#FS-1|FS-1]]: V-101 out to the **Burner / flare line**, **Cushion unload (clean-up)** from **Scenarios**, **×60**.',
             'Variant: V-101 in, start the cushion again. Variant 2: **Surge tank T-201** ([[fs#FS-5|FS-5]]).'],
             observe: ['WHP rises by itself as the column unloads; the choke outlet stays near {{5|pressureG}}.', 'CUSH_BURNER while cushion liquid goes to the burner.',
-            'Breakthrough about 41 minutes after the start, then the tail; done after about 3.2 hours with {{50|volume}} recovered.', 'Variant: CUSH_DUMP, LAHH-101 and carry-over within 5 minutes. Variant 2: T-301 batches, PSHH-201 at breakthrough.'],
+            'Breakthrough about 41 minutes after the start, then the tail; done after about 3.2 hours with {{50|volume}} recovered.', 'Variant: CUSH_DUMP, LAHH-101 and carry-over within 5 minutes. Variant 2: the water goes on to T-301; PSHH-201 after breakthrough.'],
             questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why does WHP rise while the cushion unloads?', 'Why warm the heater before breakthrough?', 'Why does V-101 flood in the variant?'],
             answers: ['FWHP in **Wellhead Pressure**; line pressure in **Production line pressure** (V-101 out) or **Operating Pressure** (V-101 in).', 'The cushion column in the tubing gets shorter, so less of the shut-in pressure is lost to its head.',
             'At breakthrough the gas flows again and cools across the choke: a cold heater gives hydrate alarms.', 'Its water dump passes about {{790|liquidRate}}, less than the {{1500|liquidRate}} unload rate.'],
@@ -179,10 +179,11 @@
     ];
     var S = G.WTS_sim, O = (S && S.RIG_OPTIONAL) || [], EQ = O.indexOf('desander') >= 0 && O.indexOf('surge2') >= 0;
     scenarios.push({ id: 'FS-5', title: 'Clean-up to the tanks: V-101 out to the surge tank', keywords: ['clean-up', 'flow-back', 'surge tank', 'tanks', 'cushion', 'PSHH-201'],
-        intro: ['A liquid clean-up can skip the separator: T-201 takes the whole stream, PCV-201 vents its gas to the LP flare line, T-301 takes the liquid in batches.'],
-        today: [{ list: ['In **Dynamic Simulation** keep the V-101-out destination **Surge tank T-201**; switch V-101 (**Test separator**) out.', 'SEPBY_SURGE_CAP: the gas rate PCV-201 takes below PSHH-201.',
-            '**Cushion unload (clean-up)** from **Scenarios** with the [[fs#FS-1|FS-1]] values, **×60**: the water reaches T-301 in batches.',
-            'At breakthrough the gas returns at the well rate: PAH-201, then PSHH-201 shuts the well in, unless V-101 went back in first.'], ordered: true },
+        intro: ['A low-gas clean-up can skip the separator: T-201 takes the whole stream, PCV-201 vents its gas to the LP flare line, LCV-201 sends the liquid on to T-301.'],
+        today: [{ list: ['In **Dynamic Simulation** keep the V-101-out destination **Surge tank T-201**. Set **Gas Rate** to {{1|gasRate}}.',
+            'Start **Cushion unload (clean-up)** from **Scenarios**, then at once switch V-101 (**Test separator**) out: the column holds the gas back (before the start PSHH-201 trips in seconds).',
+            'SEPBY_SURGE_CAP: PCV-201 takes about {{0.15|gasRate|2}} below PSHH-201. At **×60** about {{26|volume}} of water reaches T-301 by breakthrough.',
+            'Breakthrough after about 41 minutes: the gas returns at the well rate, PAH-201, then PSHH-201 shuts the well in 4 minutes later, unless V-101 went back in first.'], ordered: true },
             { h: 'Limits' }, 'PCV-201 is not resized; no foam or slugs.'] });
     if (!EQ) return { guides: {}, course: course, scenarios: scenarios };
     var DS = '**Scenarios → Sand / proppant flow-back (clean-up)**', OUT = function (n) { return 'Finally switch **' + n + '** out in **Rig-up**: **Restore full rig-up** does not remove it.'; };
@@ -258,16 +259,16 @@
     add(C(5), 'reset', 'Reset menu open', 'The Reset menu', [A('simMenu', 'resetmenu')], MN);
     add(C(5), 'more', 'Phone toolbar with the More menu open', 'The More menu on a phone', [A('simMenu', 'more')], '', 'phone');
     add(C(5), 'viewmenu', '3D view with the View menu (camera views) open', 'The View menu (3D only)', [V3, A('simMenu', 'viewmenu')], MN);
-    add(C(5), 'trends', 'Trends of pressures and levels in the 3D view', 'Trends', [V3, RUN(60, 600), A('simMenu', 'trends')]);
+    add(C(5), 'trends', 'Trends of pressures and levels in the 3D view', 'Trends', [V3, RUN(60, 600), A('simMenu', 'trends')], '#wts_viz');
     add(C(6), 't301', 'T-301 card after the first batch', 'T-301 and its last batch', [RUN(600, 5400), A('simCard', 'gauge')], K);
     add(C(7), 't201', 'T-201 card: levels, pressure, LCV-201', 'The T-201 surge tank card', [RUN(10, 120), A('simCard', 'surge')], K);
-    add(C(8), 'temp3d', '3D view coloured by temperature', 'The 3D view with Colour → Temperature', [V3, A('simMenu', 'colour'), { click: MN + ' [data-v="temperature"]' }]);
+    add(C(8), 'temp3d', '3D view coloured by temperature', 'The 3D view with Colour → Temperature', [V3, A('simMenu', 'colour'), { click: MN + ' [data-v="temperature"]' }], '#wts_viz');
     add(C(6), 'events', 'Events tab with the first batch entry', 'The batch entry in Events', [RUN(600, 5400), A('simMenu', 'alarms'), { click: '.wtsl-dtabs [data-v="events"]' }], '.wtsl-drawer');
     add(C(9), 'ds101', 'DS-101 card during sand flow-back', 'DS-101: ΔP, capture, accumulator and Dump sand', [A('simRigup', { desander: 'on' }), A('simFault', 'sandFlowback'), RUN(600, 3600), A('simCard', 'desander')], K);
     add(C(10), 't202', 'T-202 card: level, pressure, inlet, route', 'T-202: route, XV-202 and LCV-202', [A('simRigup', { surge2: 'on' }), RUN(10, 60), A('simCard', 'surge2')], K);
     var FL = { set: { '#wts_sepByDest': 'flare' } };
     add(F('FS-1'), 'rigup', 'Rig-up card with V-101 out and its note', 'Rig-up: V-101 out for the burner', [FL, A('simRigup', { separator: 'off' })], '.wtsl-rig');
-    if (G.WTS_3d && +String(G.WTS_3d.version).split('.')[1] >= 5) add(C(2), 'ck3d', '3D Wellhead & Choke view: the CK-101 square manifold, adjustable leg in service', 'The CK-101 manifold in 3D', [V3, A('simMenu', 'viewmenu'), { click: MN + ' [data-act="view"][data-v="wellhead"]' }, RUN(1, 2)]);
+    if (G.WTS_3d && +String(G.WTS_3d.version).split('.')[1] >= 5) add(C(2), 'ck3d', '3D Wellhead & Choke view: the CK-101 square manifold, adjustable leg in service', 'The CK-101 manifold in 3D', [V3, A('simMenu', 'viewmenu'), { click: MN + ' [data-act="view"][data-v="wellhead"]' }, A('simMenu', 'labels'), { click: MN + ' [data-act="labelset"][data-v="off"]' }, RUN(1, 2)], '#wts_viz');
     if (HC) add(C(11), 'ck102', 'CK-102 card on 48/64: pressure between the chokes, pair capacity, limiter', 'The CK-102 heater inlet choke card', [A('simRigup', { heaterChoke: 'on' }), RUN(10, 60), A('simCard', 'heaterChoke')], K);
     if (HC) add(C(11), 'ck2d', '2D view with CK-101 and CK-102 in series, CK-102 on 32/64', 'Two chokes in series in the live 2D view', [A('simRigup', { heaterChoke: 'on' }), { set: { '#wts_bean2': '32' } }, RUN(10, 60)], '#wts_viz');
     add(F('FS-1'), 'cushion', 'Live view while the cushion unloads to the burner: WHP rising, CUSH_BURNER', 'Cushion unload to the burner line', [FL, A('simRigup', { separator: 'off' }), A('simMenu', 'scen'),
