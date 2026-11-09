@@ -21,6 +21,12 @@
 // T-201 line-up (SURGE_LINEUP_DEF): XV-201A open, XV-201B shut, LCV-201 suction from B, auto-divert on — A fills while B
 // transfers; steady start A 0.35 / B 0.60. cfg.surge.lineup = SURGE_LINEUP_V331 (both open, suction both, auto off, 0.55 / 0.55)
 // is the v3.3.1 engine exactly. nodes.choke.leg / beanAdj / beanFix = the CK-101 manifold legs from flow.ck1 (none → adj, bean, null).
+// v1.7.0 (release 3.4.2; WTS_sim.VERSION stays '1.5.0', features surge2Comps / lpFlare / rigChain): T-202 has two compartments A | B
+// like T-201 (XV-202A/B, LCV-202 suction A | B | both, compartment auto-divert; SURGE2_COMP_DEF 1 = the single tank); the surge-tank gas
+// goes to its own LP flare line through FT-201 (GOR1 separator, GOR2 tank, total; SURGE_VENT_DEF {to:'hp'} = the HP header); the
+// rig-up chain (RIG_ROUTING_DEF 'chain'): an item out sends its flow to the next item downstream (V-101 out → the surge tank as a
+// third destination, T-202 for T-201, P-201 booster with T-301 out, FS-401 out → export + vent; 'v341' = v3.4.1). Each default is
+// one line that tests/_wts-lineup-pin.js pins; with all four pinned the engine is v3.3.1 (and v3.4.1 with the line-up unpinned).
 //
 // Contents
 //   • geometry (horizontal 2:1-head vessel compartments, vertical tanks), LUTs
@@ -702,7 +708,18 @@ function create(flowIn, opts) {
   var geomKey = '';
 
   // PVT closures (use the derived fluid constants)
-  function Rs(Pa, TF) { return SGg > 0 ? SGg * mpow((Pa / 18.2 + 1.4) * mexp((k10 - 0.00091 * TF) * LN10), 1.2048) : 0; }
+  // (v1.7.0 performance only, bit-identical: the temperature factor 10^(0.0125·API − 0.00091·T) is memoised per T in a small ring,
+  // cleared with the fluid epoch like the other memos — the same exp of the same argument, so every Rs value is unchanged)
+  var rsF_T = [NaN, NaN, NaN, NaN], rsF_v = [0, 0, 0, 0], rsF_i = 0, rsF_e = -1;
+  function rsTF(TF) {
+    if (rsF_e !== boEpoch) { rsF_e = boEpoch; rsF_T[0] = rsF_T[1] = rsF_T[2] = rsF_T[3] = NaN; }
+    if (rsF_T[0] === TF) return rsF_v[0];
+    if (rsF_T[1] === TF) return rsF_v[1];
+    if (rsF_T[2] === TF) return rsF_v[2];
+    if (rsF_T[3] === TF) return rsF_v[3];
+    var v = mexp((k10 - 0.00091 * TF) * LN10); rsF_i = (rsF_i + 1) & 3; rsF_T[rsF_i] = TF; rsF_v[rsF_i] = v; return v;
+  }
+  function Rs(Pa, TF) { return SGg > 0 ? SGg * mpow((Pa / 18.2 + 1.4) * rsTF(TF), 1.2048) : 0; }
   // Hot-path memos (performance only — every value is bit-identical to the direct evaluation): the substep asks for
   // RsE / BoR at the same (P, T) several times (flash + vent at the surge tank, Bo of both vessels), and Rs at
   // atmospheric pressure per temperature. Small ring caches, cleared whenever the fluid changes (derive → boEpoch).
@@ -6125,6 +6142,26 @@ test('T-202 dual compartments (3.4.2)', function () {
   assert(Math.abs(st.health.massErr.oil) < 1e-9 && Math.abs(st.health.massErr.gas) < 1e-9, 'balances');
   var one = S.create(S.SAMPLE_FLOW, { seed: 41, rigup: { surge2: true }, config: { surge2: { compartments: 1 } } });
   assert(one.getState().surge2.compartments === 1 && one.getState().surge2.valveTag === 'XV-202' && one.setSuction('B', 'surge2') === false, 'single');
+});
+
+// release 3.4.2: the LP flare line (GOR1 + GOR2 = total, balances) and the rig chain (V-101 out to the surge tank, the booster)
+test('LP line and rig chain (3.4.2)', function () {
+  assert(S.features.lpFlare === true && S.features.rigChain === true && S.RIG_ROUTING_DEF === 'chain' && S.SURGE_VENT_DEF.to === 'lp' && S.LP_METERS.usm.lowCut_fts === 0.1, 'exports');
+  var sim = S.create(F0, { seed: 51 });
+  run(sim, 3600, 10);
+  var st = sim.getState(), r = st.rates;
+  assert(st.lp.on && st.lp.to === 'lp' && r.gor2_scf_stb > 0 && Math.abs(r.gorTot_scf_stb - (r.gor1_scf_stb + r.gor2_scf_stb)) < 1e-9 && r.gor_scf_stb === r.gorTot_scf_stb, 'GORs');
+  assert(st.lp.P_in_psig < 2 && Math.abs(st.nodes.flare.qMMscfd - st.nodes.flare.qHP_mmscfd - st.nodes.flare.qLP_mmscfd) < 1e-12 && Math.abs(st.health.massErr.gas) < 1e-9, 'LP line');
+  var hp = S.create(F0, { seed: 51, config: { surge: { vent: { to: 'hp' } } } }).getState();
+  assert(!hp.lp.on && hp.lp.to === 'hp' && hp.rates.gor2_scf_stb === null, 'vent hp');
+  var f = JSON.parse(JSON.stringify(F0)); f.sim.sepByDest = 'surge'; f.inputs.Qg = 0.05;
+  var b = S.create(f, { seed: 52, rigup: { separator: false } });
+  run(b, 1800, 10); st = b.getState();
+  assert(st.rigup.dest === 'surge' && st.sepBy.recv === 'T-201' && st.surge.wellStream && !st.esd.tripped && st.cum.toSurge_oil_stb > 0 && Math.abs(st.health.massErr.oil) < 1e-9, 'V-101 out → T-201');
+  var g = S.create(F0, { seed: 53, rigup: { gauge: false } }).getState();
+  assert(g.rigup.pump && g.gauge.pump.mode === 'booster' && g.rigup.routes.gauge === 'P-201 → export', 'booster');
+  var v = S.normRigup({ gauge: false }, { routing: 'v341' });
+  assert(!v.rig.pump && v.routing === 'v341', 'v341 rules');
 });
 
 var pass = results.filter(function (r) { return r.ok; }).length;
