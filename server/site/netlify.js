@@ -8,10 +8,12 @@
 //                                     pinned to London) or 'live' (same-site mode on the live site, server/site/build-live.js:
 //                                     the same six functions with NO region pin — on the live site's plan the functions run in
 //                                     the site's default functions region, next to its database; the api path is unchanged)
-//                                     or 'live-inline' (the live site WITHOUT background functions — the default of
-//                                     build-live.js, because the live site's plan may not offer them: four functions, api,
-//                                     ops-purge, ops-daily and weekly-export, the last two running their job inside the
-//                                     scheduled function itself — {inline:true}, the scheduled function's own time limit)
+//                                     — the DEFAULT of build-live.js (background functions are offered on every
+//                                     credit-based plan, the Free plan included) — or 'live-inline' (an opt-in fallback,
+//                                     build-live.js --inline-jobs: four functions, api, ops-purge, ops-daily and
+//                                     weekly-export, the last two running their job inside the scheduled function itself —
+//                                     {inline:true}, within the scheduled function's 30 s limit and a 25 s budget that
+//                                     stops cleanly with an alert, INLINE_BUDGET_MS)
 //   functionSource(name, layout)      the literal .mjs source build-live.js writes for a live layout
 //   platformEnv(env) → env            the request environment on the platform (see "Defaults")
 //   apiFunction(deps?) → (Request, context) → Response            /api/v1/* through site/handler.js (one handler per instance)
@@ -83,6 +85,10 @@ function literal(o) {
   return '{ ' + Object.keys(o).map((k) => k + ': ' + "'" + String(o[k]).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'").join(', ') + ' }';
 }
 const PURGE_STEPS = ['purge', 'mail'];
+// live-inline only: a scheduled function has a 30 s limit; the inline jobs stop by this budget and log an alert
+const INLINE_BUDGET_MS = 25000;
+const INLINE_MARGIN_MS = 5000;
+const OVER = Object.freeze({ over: true });
 const EXPORT_MAX_AGE_DAYS = 8;
 const DEFAULTS = Object.freeze({
   WTS_MIN_CLIENT: '4.0',
@@ -133,8 +139,14 @@ function apiFunction(deps) {
     }
     if (!h) {
       const env = platformEnv(deps.env || process.env);
-      const store = require('./netlify-blobs').createStore(env, { getStore: deps.getStore });
-      h = (deps.createHandler || require('./handler').createHandler)({ env, store, fetch: deps.fetch, log: deps.log, db: deps.db, mail: deps.mail });
+      try {
+        const store = require('./netlify-blobs').createStore(env, { getStore: deps.getStore });
+        h = (deps.createHandler || require('./handler').createHandler)({ env, store, fetch: deps.fetch, log: deps.log, db: deps.db, mail: deps.mail });
+      } catch (e) {
+        // a configuration the server refuses (e.g. WTS_SITE_MODE=same with WTS_ENV=local) answers 404, never 500
+        if (!warned) { warned = true; (deps.log || defaultLog()).warn('alert: config — api refused: ' + (e && e.message)); }
+        return json(404, { error: 'not_found' });
+      }
     }
     return h.handle(request, context);
   };
@@ -273,11 +285,26 @@ function scheduledFunction(name, deps) {
         log.info('jobs: ' + name + ' ' + JSON.stringify(r));
         return json(200, r);
       }
-      // live-inline layout (no background functions on the plan): the whole job inside this scheduled function
+      // live-inline layout (opt-in fallback, build-live.js --inline-jobs): the whole job inside this scheduled function, which
+      // the platform stops without a word after 30 s. A time budget (INLINE_BUDGET_MS, 25 s) makes the end visible: the daily
+      // job skips the steps it has not started by the budget minus a margin, and when the budget runs out first this function
+      // logs an alert and returns (an unfinished export writes nothing: the export file is written only at its end).
       if (deps.inline) {
-        const r = name === 'ops-daily'
-          ? await runJobs(Object.assign({}, deps, { env, log, checkExport: true }))
-          : await runExport(Object.assign({}, deps, { env, log }));
+        const budget = deps.budgetMs == null ? INLINE_BUDGET_MS : deps.budgetMs;
+        const start = (deps.now || Date.now)();
+        const J = deps.jobBodies || { runJobs, runExport };
+        const job = Promise.resolve(name === 'ops-daily'
+          ? J.runJobs(Object.assign({}, deps, { env, log, checkExport: true, deadline: start + Math.max(0, budget - INLINE_MARGIN_MS) }))
+          : J.runExport(Object.assign({}, deps, { env, log })));
+        job.catch(() => {});
+        let timer = null;
+        const over = new Promise((resolve) => { timer = setTimeout(() => resolve(OVER), budget); });
+        let r;
+        try { r = await Promise.race([job, over]); } finally { clearTimeout(timer); }
+        if (r === OVER) {
+          log.warn('alert: jobs — ' + name + ' (inline) did not finish within its ' + Math.round(budget / 1000) + ' s budget; the platform stops it at 30 s — use the background layout (build-live.js without --inline-jobs)');
+          return json(200, { ok: false, skipped: 'time' });
+        }
         log.info('jobs: ' + name + ' (inline) ' + JSON.stringify(r));
         if (!r.ok) log.warn('alert: jobs — ' + name + ' skipped (' + r.skipped + ')');
         return json(200, r);
@@ -321,4 +348,4 @@ function backgroundFunction(name, deps) {
   };
 }
 
-module.exports = { FUNCTIONS, LAYOUTS, functionsFor, functionSource, DEFAULTS, PURGE_STEPS, REGION, platformEnv, deployRefusal, apiFunction, scheduledFunction, backgroundFunction, kickRequest, kickPath, verifyKick, checkKick, runJobs, runExport };
+module.exports = { FUNCTIONS, LAYOUTS, functionsFor, functionSource, DEFAULTS, PURGE_STEPS, INLINE_BUDGET_MS, REGION, platformEnv, deployRefusal, apiFunction, scheduledFunction, backgroundFunction, kickRequest, kickPath, verifyKick, checkKick, runJobs, runExport };

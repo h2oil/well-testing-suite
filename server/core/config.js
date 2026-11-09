@@ -29,6 +29,8 @@
 //             loopback, no platform address, no forwarding header) — same mode cannot run without it; the client address
 //             comes ONLY from the platform's own header x-nf-client-connection-ip (any other WTS_CLIENT_IP_HEADER is ignored).
 //             Origin / X-WTS-Req / Content-Type, the cookies and every other rule are exactly those of separate mode.
+//             Same mode REFUSES (throws) unless WTS_ENV is production or staging: local / test / preview would turn on the
+//             development options with only the Host rule in front of them (the tests: allowSameSiteInTests(), WTS_ENV=test).
 // WTS_INVITE_BOOTSTRAP=<address>[,<address> …] — with ACCOUNTS_SIGNUP=invite these addresses may create an account as if
 //   they were on the database allow-list (the owner's first sign-in without a direct database connection; RUNBOOK "Live site
 //   (same-site) setup"). Read at run time, normalised like every address; an invalid entry is ignored with a warning; not a
@@ -91,6 +93,10 @@ function oneKey(raw, name, warn) {
 }
 function isLocalOrigin(o) { return /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/.test(o || ''); }
 
+// test-only escape hatch for same-site mode with WTS_ENV=test (server/test/*; nothing in the deployed code calls it)
+let sameSiteTestHatch = false;
+function allowSameSiteInTests(on) { sameSiteTestHatch = on !== false; }
+
 function loadConfig(env) {
   env = env || process.env;
   const warnings = [];
@@ -110,6 +116,12 @@ function loadConfig(env) {
   // same mode is never combined with a missing production host: the host check is the only thing standing in for the
   // proxy signature, so a missing or malformed production host stops the configuration outright
   if (sameSite && !HOSTNAME_RE.test(PROD_HOST)) throw new Error('config: WTS_SITE_MODE=same needs the production host');
+  // same mode runs only as production or staging: without the proxy signature, a wrong WTS_ENV (local / test / preview) on the
+  // live host would leave the Host rule as the only guard in front of the development options (WTS_OIDC_MODE, a development
+  // origin). The tests use WTS_ENV=test through allowSameSiteInTests() — a module flag, never an environment variable.
+  if (sameSite && !production && !(wtsEnv === 'test' && sameSiteTestHatch)) {
+    throw new Error('config: WTS_SITE_MODE=same runs only with WTS_ENV=production or staging (WTS_ENV=' + wtsEnv + ')');
+  }
   const inviteBootstrap = new Set();
   if (env.WTS_INVITE_BOOTSTRAP) {
     const { normEmail } = require('./validate');
@@ -236,4 +248,4 @@ async function inviteListed(cfg, email, bidxCheck) {
   return !!(await bidxCheck());
 }
 
-module.exports = { loadConfig, loadJobsConfig, inviteListed, SWITCHES, SITE_MODES, SAME_SITE_IP_HEADER, SECRET_ENV, CONFIG_ENV, PROD_HOST, PROD_ORIGIN, isLocalOrigin };
+module.exports = { loadConfig, loadJobsConfig, inviteListed, allowSameSiteInTests, SWITCHES, SITE_MODES, SAME_SITE_IP_HEADER, SECRET_ENV, CONFIG_ENV, PROD_HOST, PROD_ORIGIN, isLocalOrigin };

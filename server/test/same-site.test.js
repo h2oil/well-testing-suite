@@ -11,7 +11,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { loadConfig, inviteListed } = require('../core/config');
+const { loadConfig, inviteListed, allowSameSiteInTests } = require('../core/config');
+allowSameSiteInTests();   // the adapter tests below run same mode with WTS_ENV=test (the test-only escape hatch)
 const H = require('../core/http');
 const NF = require('../site/netlify');
 const NC = require('../site/netlify-check');
@@ -72,8 +73,26 @@ test.describe('same-site mode: configuration', () => {
 });
 
 test.describe('same-site mode: host, proxy and client-address rules (core/http.js)', () => {
-  test('no signature needed; the Host header must be EXACTLY the production host in every WTS_ENV', () => {
-    ['production', 'staging', 'test', 'local'].forEach((e) => {
+  test('same mode refuses WTS_ENV local / test / preview (test only through the test-only hatch)', () => {
+    const base = Object.assign(prodEnv(), { WTS_MASTER_KEYS: '', WTS_CODE_PEPPERS: '' });
+    ['local', 'preview'].forEach((e) => assert.throws(() => loadConfig(Object.assign({}, base, { WTS_ENV: e })), /runs only with WTS_ENV=production or staging/, e));
+    allowSameSiteInTests(false);
+    try {
+      assert.throws(() => loadConfig(Object.assign({}, base, { WTS_ENV: 'test' })), /production or staging/, 'test without the hatch');
+      assert.throws(() => loadConfig(Object.assign({}, base, { WTS_ENV: 'test', WTS_OIDC_MODE: 'dev', WTS_DEV_ORIGIN: 'http://localhost:8080' })), /production or staging/);
+      assert.strictEqual(loadConfig(Object.assign({}, base, { WTS_ENV: 'staging' })).sameSite, true);
+      assert.strictEqual(loadConfig(Object.assign({}, base, { WTS_ENV: 'local', WTS_SITE_MODE: 'separate' })).sameSite, false, 'separate mode is unchanged');
+    } finally { allowSameSiteInTests(); }
+  });
+  test('the api function answers 404 with an alert on a refused configuration (never 500)', async () => {
+    const lines = [];
+    const fn = NF.apiFunction({ env: Object.assign(prodEnv(), { WTS_ENV: 'local' }), log: { info() {}, warn: (m) => lines.push(m) } });
+    const r = await fn(new Request('https://' + PROD + '/api/v1/health', { headers: { host: PROD } }), { deploy: { context: 'production', published: true } });
+    assert.strictEqual(r.status, 404);
+    assert.ok(lines.some((l) => /^alert: config — api refused: config: WTS_SITE_MODE=same runs only/.test(l)), lines.join('\n'));
+  });
+  test('no signature needed; the Host header must be EXACTLY the production host in every allowed WTS_ENV', () => {
+    ['production', 'staging', 'test'].forEach((e) => {
       const c = loadConfig(Object.assign(prodEnv(), { WTS_ENV: e, WTS_MASTER_KEYS: '', WTS_CODE_PEPPERS: '' }));
       assert.strictEqual(H.proxyOk(req({ host: PROD }), c), true, e + ': no proxy');
       assert.strictEqual(H.hostAllowed(req({ host: PROD }), c), true, e);
@@ -147,6 +166,25 @@ test('live-inline scheduled functions run their job in place: no kick request, n
     assert.ok(body.ok === false && (body.skipped === 'no database' || res.status === 500), name + ' ran in place: ' + JSON.stringify(body));
   }
   assert.ok(lines.some((l) => /ops-daily \(inline\)/.test(l)), lines.join('\n'));
+  // the 25 s budget: a job that outlives it ends the function with an alert (the platform would stop it at 30 s silently)
+  assert.strictEqual(NF.INLINE_BUDGET_MS, 25000);
+  lines.length = 0;
+  const seen = [];
+  const never = () => new Promise(() => {});
+  for (const name of ['ops-daily', 'weekly-export']) {
+    const slow = NF.scheduledFunction(name, { inline: true, budgetMs: 30, env: { WTS_ENV: 'production', WTS_SITE_MODE: 'same' }, log,
+      jobBodies: { runJobs: (o) => { seen.push(o.deadline); return never(); }, runExport: never } });
+    const sb = await (await slow(new Request('https://' + PROD + '/.netlify/functions/' + name), ctx)).json();
+    assert.deepStrictEqual(sb, { ok: false, skipped: 'time' }, name);
+    assert.ok(lines.some((l) => new RegExp('^alert: jobs — ' + name + ' \\(inline\\) did not finish within').test(l)), lines.join('\n'));
+  }
+  assert.ok(seen.length === 1 && typeof seen[0] === 'number', 'the daily job gets a deadline');
+  // the daily job stops cleanly at its deadline: steps not started are skipped, one alert line
+  const dl = [];
+  const did = await require('../core/jobs').runDaily({ db: { sql: null }, deadline: Date.now() - 1, log: { info() {}, warn: (m) => dl.push(m) } });
+  assert.deepStrictEqual(did.purge, { skipped: 'time' });
+  assert.ok(Object.keys(did).every((k) => did[k].skipped === 'time'), JSON.stringify(did));
+  assert.strictEqual(dl.filter((l) => /^alert: jobs — daily job stopped at its time budget before step purge/.test(l)).length, 1, dl.join('\n'));
   // the separate layout still kicks its background function
   const kick = NF.scheduledFunction('ops-daily', { env: { WTS_ENV: 'production', WTS_OPS_HMAC: b64() }, log, fetch: async (u) => { calls.push(u); return { status: 202 }; } });
   await kick(new Request('https://x.example/'), ctx);
@@ -200,7 +238,7 @@ test.describe('live bundle layout (site/netlify.js functionsFor, site/build-live
     assert.throws(() => NF.functionsFor('other'));
     for (const k of Object.keys(L)) assert.deepStrictEqual(NC.literalConfig(NF.functionSource(k, 'live')), L[k].config, k);
     assert.ok(!/redirects|\/\*"?\s*=|force/.test(NC.LIVE_TOML.replace(/^#.*$/mg, '')), 'no redirect or catch-all rule: static files win for every other path');
-    // live-inline (the default bundle): no background functions; the daily job and the export run inside their schedule
+    // live-inline (opt-in, --inline-jobs): no background functions; the daily job and the export run inside their schedule
     const I = NF.functionsFor('live-inline');
     assert.deepStrictEqual(Object.keys(I), ['api', 'ops-purge', 'ops-daily', 'weekly-export']);
     assert.deepStrictEqual(I.api.config, { path: '/api/v1/*' });
@@ -214,7 +252,7 @@ test.describe('live bundle layout (site/netlify.js functionsFor, site/build-live
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-live-'));
     const out = path.join(dir, 'bundle');
     try {
-      const r = BL.build({ out, commit: 'test' });
+      const r = BL.build({ out, commit: 'test', inlineJobs: true });
       assert.ok(r.files > 50);
       assert.strictEqual(r.info.layout, 'live-inline');
       assert.ok(!fs.existsSync(path.join(out, 'netlify', 'functions', 'ops-daily-background.mjs')));
@@ -255,8 +293,9 @@ test.describe('live bundle layout (site/netlify.js functionsFor, site/build-live
       fs.writeFileSync(api, NF.functionSource('api', 'live-inline'));
       fs.writeFileSync(path.join(out, 'netlify', 'functions', 'ops-daily-background.mjs'), NF.functionSource('ops-daily-background', 'live'));
       assert.ok(BL.checkDir(out).problems.some((p) => /must hold exactly .*layout live/.test(p)));
-      const six = BL.build({ out: path.join(dir, 'six'), commit: 'test', backgroundJobs: true });
-      assert.strictEqual(six.info.layout, 'live');
+      const six = BL.build({ out: path.join(dir, 'six'), commit: 'test' });
+      assert.strictEqual(six.info.layout, 'live', 'the default layout has the background functions');
+      assert.ok(fs.existsSync(path.join(dir, 'six', 'netlify', 'functions', 'ops-daily-background.mjs')) && fs.existsSync(path.join(dir, 'six', 'netlify', 'functions', 'weekly-export-background.mjs')));
       assert.deepStrictEqual(BL.checkDir(path.join(dir, 'six')).problems, []);
       assert.throws(() => BL.build({ out: path.join(__dirname, '..', '..') }), /must not be the repository/);
       assert.throws(() => BL.build({ out: path.join(__dirname, '..', 'core', 'x') }), /server\/dist-live/);

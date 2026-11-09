@@ -3,7 +3,7 @@
 // server/site/build-live.js — assembles the ONE folder the lead uploads to the live site welltest.h2oil.co.uk: the static app
 // and the web accounts API in same-site mode (WTS_SITE_MODE=same; server/RUNBOOK.md "Live site (same-site) setup").
 //
-//   node server/site/build-live.js --out <dir> [--background-jobs] [--csp-report]
+//   node server/site/build-live.js --out <dir> [--inline-jobs] [--csp-report]
 //                                                     writes the bundle (the folder is replaced; it must not be inside the
 //                                                     repository tree, except server/dist-live/, which git ignores).
 //                                                     --csp-report adds the Report-Only CSP reporting to /api/v1/csp-report
@@ -11,11 +11,13 @@
 //                                                     a function call and a database write on the Free plan's quotas, and
 //                                                     the analytics tag (loaded after consent) would be reported on every
 //                                                     visit; the security headers are in _headers either way.
-//                                                     --background-jobs: the six-function layout 'live' (ops-daily and
-//                                                     weekly-export start background functions, 15 min each) — only on a
-//                                                     plan that offers background functions. Default 'live-inline': four
-//                                                     functions, the daily job and the weekly export run inside their
-//                                                     scheduled function (its own time limit; ample for the invite beta)
+//                                                     Default layout 'live': six functions — ops-daily and weekly-export
+//                                                     start background functions (15 min each; background functions are
+//                                                     offered on every credit-based plan, the Free plan included; they need
+//                                                     WTS_OPS_HMAC). --inline-jobs: the opt-in fallback 'live-inline', four
+//                                                     functions, the daily job and the weekly export inside their scheduled
+//                                                     function (30 s platform limit; a 25 s budget stops them with an alert).
+//                                                     --background-jobs is accepted and means the default.
 //   node server/site/build-live.js --check --dir <dir>  lists the bundle and fails (exit 1) on anything outside the allow-list
 //                                                     or any secret-looking file (site/netlify-check.js checkLive, uploaded)
 //   require('./build-live') → { build({out, root?}) → {out, files, info}, checkDir(dir) → {problems, files} }
@@ -29,9 +31,9 @@
 //                                 build command = the bundle check (no secret needed; a broken bundle fails the deploy)
 //   package.json + package-lock.json   the server's pinned runtime dependencies (@netlify/database → the platform provisions
 //                                 the database on the first production deploy and applies the migrations before publishing)
-//   netlify/functions/*.mjs       api on /api/v1/* only; ops-purge, ops-daily, weekly-export scheduled (and, with
-//                                 --background-jobs, the two background functions), generated from site/netlify.js
-//                                 functionsFor('live-inline' | 'live')
+//   netlify/functions/*.mjs       api on /api/v1/* only; ops-purge, ops-daily, weekly-export scheduled and the two
+//                                 background functions (not with --inline-jobs), generated from site/netlify.js
+//                                 functionsFor('live' | 'live-inline')
 //   netlify/database/migrations/  the platform migrations (copied byte for byte; never edited after a release)
 //   core/, functions/, db/migrate.js, site/<runtime files>, ci/secret-scan.js   the code the functions and the check load
 //   build-info.json               the commit and the SHA-256 of every file (not published: outside public/)
@@ -93,7 +95,7 @@ function build(o) {
     fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify(livePackage(), null, 2) + '\n'); list.push('package.json');
     copyFile(path.join(SERVER, 'package-lock.json'), path.join(out, 'package-lock.json'), list, 'package-lock.json');
     // 3. the functions (generated live sources) and the platform migrations
-    const layout = o.backgroundJobs ? 'live' : 'live-inline';
+    const layout = o.inlineJobs ? 'live-inline' : 'live';
     const LF = NF.functionsFor(layout);
     Object.keys(LF).forEach((name) => {
       const rel = 'netlify/functions/' + LF[name].file;
@@ -148,7 +150,8 @@ if (require.main === module) {
       if (r.problems.length) { console.error('[build-live] check FAILED (' + r.problems.length + '):\n  ' + r.problems.join('\n  ')); process.exit(1); }
       console.log('[build-live] check ok — ' + r.files.length + ' files, all in the live allow-list, no secret-looking file');
     } else {
-      const r = build({ out: val('--out'), cspReport: a.includes('--csp-report'), backgroundJobs: a.includes('--background-jobs') });
+      const r = build({ out: val('--out'), cspReport: a.includes('--csp-report'), inlineJobs: a.includes('--inline-jobs') });
+      if (a.includes('--inline-jobs') && a.includes('--background-jobs')) throw new Error('give --inline-jobs or --background-jobs, not both');
       console.log('[build-live] ' + r.files + ' files, layout ' + r.info.layout + ' → ' + r.out + ' (commit ' + (r.info.commit || 'unknown').slice(0, 12) + ')');
     }
   } catch (e) { console.error('[build-live] ' + e.message); process.exit(1); }

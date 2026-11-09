@@ -106,8 +106,15 @@ async function runDaily(o) {
   const db = o.db; const sql = db.sql; const log = o.log || { info() {}, warn() {} };
   const keys = o.keys; const objects = o.objects || null; const mail = o.mail || null;
   const did = {};
+  // o.deadline (ms since the epoch, optional): a step that has not started by then is skipped and the run stops cleanly with
+  // one alert line (the live-inline layout's scheduled function has a hard time limit; site/netlify.js INLINE_BUDGET_MS)
+  let stopped = false;
   const step = async (name, fn) => {
     if (o.only && o.only.indexOf(name) === -1) return;
+    if (o.deadline && (stopped || (o.now || Date.now)() >= o.deadline)) {
+      if (!stopped) log.warn('alert: jobs — daily job stopped at its time budget before step ' + name + '; the remaining steps run on the next run');
+      stopped = true; did[name] = { skipped: 'time' }; return;
+    }
     try { did[name] = await fn(); } catch (e) { did[name] = { error: true }; log.warn('jobs: ' + name + ' failed: ' + e.message); }
   };
   const n = async (q) => (await q).count;

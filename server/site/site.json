@@ -134,6 +134,7 @@
       "region": "eu-central-1",
       "consistency": "strong"
     },
+    "defaultLayout": "live",
     "layouts": {
       "live-inline": [
         "api",

@@ -68,7 +68,9 @@ client address only from `x-nf-client-connection-ip`; every other control is unc
 signature is required), and the separate-site layout and tests stay as they were. `node site/build-live.js --out <dir>` builds
 the one upload folder (static allow-list under `public/`, `netlify.toml` = `site/netlify-check.js LIVE_TOML` whose build command
 `node site/netlify-check.js --live` refuses a broken bundle, the pinned runtime dependencies, the functions without a region pin
-— layout `live-inline` by default: `api` on `/api/v1/*` only plus the three scheduled functions running their jobs in place —
+— layout `live` by default: `api` on `/api/v1/*` only, three scheduled functions and the two background functions they start
+(offered on the Free plan; `--inline-jobs` = the fallback `live-inline`, jobs in place under a 25 s budget); same mode refuses
+any `WTS_ENV` but `production` / `staging` —
 the platform migrations and the server code; nothing else); `--check --dir <dir>` lists it and fails on anything outside the
 allow-list or any secret-looking file. On the Free plan the database is in the platform's default region (United States, Ohio)
 for good; Blobs stay in `eu-central-1`. `WTS_INVITE_BOOTSTRAP` (addresses, run time) stands in for the database allow-list so

@@ -16,7 +16,7 @@
 // [problems]. The bundle holds ONLY the files of LIVE (below); public/ holds exactly the files of public/publish-manifest.json
 // (prism-build/publish-site.js; every hash must match; index.html, well-testing-app.html and sw.js present) plus _headers and
 // the manifest; netlify/functions holds the functions of one live layout with their live config (site/netlify.js functionsFor /
-// functionSource: 'live-inline' = four, or 'live' = six with the background functions);
+// functionSource: 'live' = six with the background functions, the default, or the opt-in 'live-inline' = four);
 // netlify/database/migrations holds the platform migrations; netlify.toml is exactly LIVE_TOML; no key file, PEM / JWK private
 // key or secret value anywhere (ci/secret-scan.js rules on every server text file). uploaded:true (build-live.js --check on the
 // lead's computer) also refuses node_modules/ and dot folders; on the platform (the build command) the installed
@@ -162,8 +162,8 @@ function checkLive(root, o) {
     ['@netlify/database', '@netlify/blobs', 'postgres'].forEach((d) => { if (!/^\d+\.\d+\.\d+$/.test(String(deps[d] || ''))) problems.push('package.json: ' + d + ' must be pinned to an exact version'); });
     if (pkg && (pkg.devDependencies || pkg.scripts)) problems.push('package.json: no scripts or development dependencies in the live bundle');
   }
-  // functions: exactly the set of one live layout ('live-inline': four, the jobs inside the scheduled functions; 'live': the
-  // six with the two background functions), each the generated live source
+  // functions: exactly the set of one live layout ('live', the default: the six with the two background functions;
+  // 'live-inline', opt-in: four, the jobs inside the scheduled functions), each the generated live source
   const fnFiles = files.filter((f) => /^netlify\/functions\//.test(f.rel)).map((f) => f.rel.slice('netlify/functions/'.length)).sort();
   const setOf = (L) => Object.keys(L).map((k) => L[k].file).sort();
   const layout = fnFiles.some((f) => /-background\.mjs$/.test(f)) ? 'live' : 'live-inline';

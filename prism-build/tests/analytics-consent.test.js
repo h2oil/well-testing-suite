@@ -272,6 +272,10 @@ module.exports = [
         'storing your account data in the United States is a transfer outside the UK and the EU', 'invitation-only trial']) assert.includes(p, s);
       // the account trial is running: no "when accounts launch" future tense left, and no UK / EU-only storage claim
       assert.ok(!/when (accounts|they) launch|accounts are not open yet|stored in the UK or the EU/i.test(p), 'storage and status match the live set-up');
+      assert.includes(p, 'the account server that handles your account requests (your e-mail address, sign-in codes and IP address) also runs in the United States');
+      // terms.html states the same status: the trial is running
+      assert.ok(!/not open yet|will be offered only to invited users/i.test(pages['terms.html']), 'terms.html: no "not open yet"');
+      assert.includes(pages['terms.html'], 'invitation-only trial');
       assert.ok(!/we have appointed|switched off Google signals|Arabic version/i.test(p.replace(/<!--[\s\S]*?-->/g, '')), 'no unconfirmed claim in the visible text');
       // cross-page anchors used by terms.html exist in privacy.html
       const pids = new Set(Array.from(p.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));

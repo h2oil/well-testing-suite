@@ -108,10 +108,14 @@ functions-only site (§3N), on the **Free plan**. Consequences, all accepted by 
 - **One upload carries both.** The site is deployed by uploading a folder; `node server/site/build-live.js` assembles that
   folder: the static app (publish allow-list of `prism-build/publish-site.js`) under `public/`, the API functions, the platform
   migrations and the pinned runtime dependencies. A deploy whose build or migration fails never replaces the live version.
-- **Jobs without background functions.** The default bundle layout `live-inline` has four functions: `api` (`/api/v1/*` only —
-  static files win for every other path), `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sunday 04:41 UTC);
-  the daily job and the weekly export run inside their scheduled function (its own time limit; ample for the invite beta). On a
-  plan with background functions, `--background-jobs` builds the six-function layout instead.
+- **Jobs in background functions.** The default bundle layout `live` has six functions: `api` (`/api/v1/*` only — static files
+  win for every other path), `ops-purge` (hourly), `ops-daily` (03:17 UTC) and `weekly-export` (Sunday 04:41 UTC), the last two
+  each starting a signed background function (`ops-daily-background`, `weekly-export-background`, 15 minutes each; they need
+  `WTS_OPS_HMAC`). Background functions are offered on every credit-based plan, the Free plan included; a scheduled function
+  has only 30 seconds, and the functions in the US read and write Blobs in Frankfurt on every object, so the daily job and the
+  export must not run inside it. Fallback only if the platform refuses the background functions: `--inline-jobs` builds the
+  four-function layout `live-inline` (the jobs inside their scheduled function, with a 25-second budget that stops the daily
+  job between steps and logs `alert: jobs — … did not finish within its 25 s budget` instead of being cut off silently).
 - **CSP reports off.** The bundle's `_headers` carries the security headers but no Report-Only CSP (each report would be a
   function call and a database write on the Free plan's quotas); `--csp-report` switches it on later.
 - **Accounts stay an invite beta:** `ACCOUNTS_SIGNUP=invite`; providers (Google, LinkedIn) off; the page shows the account UI only
@@ -136,7 +140,7 @@ build command needs no secret either way); tick **Contains secret values** for e
 
 | Key | Value |
 |---|---|
-| `WTS_ENV` | `production` |
+| `WTS_ENV` | `production` (same-site mode refuses any value but `production` or `staging`: the API answers 404 with an `alert: config` line) |
 | `WTS_SITE_MODE` | `same` |
 | `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` (`1`) · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_BACKUP_PUBLIC_KEY` | step L1 |
 | `WTS_MAIL_PROVIDER` | `postmark` |
@@ -161,13 +165,21 @@ From a checkout of the branch to release (repository root; Node 22.12 or newer; 
 node server/site/build-live.js --out <folder outside the repository>
 node server/site/build-live.js --check --dir <that folder>
 ```
+(No `--inline-jobs`: the default layout with the background functions is the one to deploy.) The build prints `layout live`.
 The check lists every file and fails on anything outside the allow-list (`site/netlify-check.js checkLive`) or any
 secret-looking file. Upload the folder as a **production** deploy of the live site (the platform runs the build: it installs
 `package.json` / `package-lock.json`, runs `node site/netlify-check.js --live`, bundles the functions and, because
 `@netlify/database` is a dependency, provisions the database on the first such deploy and applies
 `netlify/database/migrations/` before publishing). Read the deploy log for `0000` … `0501` and the migration notes of §3T step
 T5 (never edit or remove an applied file; never apply DDL through a direct connection; record the observed runner behaviour
-there). A failed build or migration leaves the previous version live.
+there). A failed build or migration leaves the previous version live. In the deploy summary the functions list must show six
+functions, two of them marked background.
+
+**Redeploy** (needed after every environment-variable change — variables reach the functions only through a new deploy, and an
+upload-only site has no Git trigger): either upload the same bundle folder again as a production deploy (keep the last one, or
+rebuild it from the same commit with the commands above), or use **Deploys → Trigger deploy → Deploy site** / **Retry deploy**
+on the latest production deploy if the platform offers it for the uploaded build — it re-runs the build on the files of that
+upload. Check afterwards that the new deploy is **Published** and that health still answers (step L5 row 1).
 
 ### Step L5 — Smoke test
 ```
@@ -181,11 +193,22 @@ true, db true, request role `wts_api`, jobs role `session` or `local`, mail tran
 as in §3T step T6; isolation problems name the variable to fix (a key id ≥ 9000, an off-site credential …). Then open
 `https://welltest.h2oil.co.uk/?cloud=1` and sign in with the owner's address (an e-mail code).
 
+**Check the client address** (the per-address limits depend on it; the smoke test cannot see the logs): call health once from
+your computer, then find its access line in the `api` function's log: `"ipp"` must be the start of **your** public address. Then
+try a **forged** address:
+```
+curl -H 'X-Nf-Client-Connection-Ip: 203.0.113.9' -H 'X-Forwarded-For: 203.0.113.9' https://welltest.h2oil.co.uk/api/v1/health
+```
+Its access line must still show **your** prefix (the edge overwrites the header; `clientIp` reads its last value). If it shows
+`203.0.113`, set `ACCOUNTS_OFF=1`, redeploy (step L4 "Redeploy") and tell the developer: anyone could pick an address per
+request, the rate limits would stop working and other people's addresses could be locked out.
+
 ### The invite list (no direct database connection)
 `ACCOUNTS_SIGNUP=invite` lets an address create an account only when it is on the invite list. `WTS_INVITE_BOOTSTRAP` is that
 list kept in the site's environment: read at run time (`core/config.js`), normalised like every address, checked before the
 database allow-list, never logged (the redacted config shows only the count). To invite someone: add the address (comma-separated)
-and redeploy (variables reach the functions on the next deploy). Removing an address later stops NEW sign-ups only; an existing
+to the variable, then redeploy as in step L4 "Redeploy" (upload the bundle again as a production deploy, or Trigger / Retry
+deploy) — variables reach the functions only on the next deploy. Removing an address later stops NEW sign-ups only; an existing
 account keeps working (lock it with `ops/security-reset.js` if needed). The database allow-list (`ops/allowlist-add.js`) needs
 the support credential and is not used on the live site for now. Before anyone outside H2Oil is invited, the processor
 contracts with the transfer safeguards must be in place (privacy notice sections 12 and 13 promise this).
@@ -193,7 +216,8 @@ contracts with the transfer safeguards must be in place (privacy notice sections
 ### Rollback
 Publish the previous deploy (Deploys → the last static-only deploy → Publish deploy): the page is static again and the API
 paths answer the static 404. The database and its applied migrations stay (they are never rolled back); the next deploy of a
-bundle picks them up. Kill switches (§6) work as environment variables: `ACCOUNTS_OFF=1` + a redeploy pauses every account route.
+bundle picks them up. Kill switches (§6) work as environment variables: `ACCOUNTS_OFF=1` + a redeploy (step L4 "Redeploy") pauses every account
+route.
 
 ---
 
