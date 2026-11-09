@@ -4369,7 +4369,9 @@ function create(flowIn, opts) {
     }
     A = s2A[8];
     evalA(A, all, allC, vAll * 100, sp2 * 100, MSG.LAH_SURGE_ALL, true);
-    if (S2N === 2) {                                  // v1.7.0: LAH-202 on T-202's own compartments (the T-201 LAH-201 rules)
+    // v1.7.0: LAH-202 on T-202's own compartments (the T-201 LAH-201 rules); idle and both compartments below SP − deadband: nothing
+    // can raise it (the tests below would be false), so they are skipped (performance only)
+    if (S2N === 2 && (s2A[9].active || s2A[9].onT >= 0 || fHi >= ctl.surge2.comp.sp - dbL)) {
       var cp = ctl.surge2.comp, c = cp.inlet, b2 = tkBothHigh(TK2, c, fA2, fB2, 0), b2c = !tkBothHigh(TK2, c, fA2, fB2, dbL);
       var msg2 = MSG.LAH_SURGE2_BOTH, v2 = fHi, k2 = 'both';
       if (!cp.auto) {
