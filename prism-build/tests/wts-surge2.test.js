@@ -5,6 +5,8 @@
 'use strict';
 
 const X = require('./_wts-equip-shapes');
+// written for the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off): pinned on every engine here
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSS2';
 const J = (o) => JSON.parse(JSON.stringify(o));
@@ -18,7 +20,7 @@ function flow(o) {
 }
 function mk(o) {
   o = o || {};
-  return eng().create(flow(o.sim), Object.assign({ seed: o.seed || 3, rigup: Object.assign({ surge2: true }, o.rigup || {}) }, o.config ? { config: o.config } : {}));
+  return eng().create(flow(o.sim), legacyOpts(Object.assign({ seed: o.seed || 3, rigup: Object.assign({ surge2: true }, o.rigup || {}) }, o.config ? { config: o.config } : {})));
 }
 const st = (sim) => J(sim.getState());
 // advance in steps of dt (s); cb(state) → true stops early (returns true)
@@ -63,7 +65,7 @@ module.exports = [
       assert.strictEqual(s.nodes.surge2.P, s.surge2.P); assert.strictEqual(s.nodes.surge2.T, s.surge2.T);
       ['sep_surge2', 'surge2_gauge', 'surge2_vent', 'blanket2', 'psv_surge2'].forEach((k) => assert.strictEqual(s.lines[k].active, false, k + ' idle'));
       // added later from the card: same (empty, shut); with T-201 out it is out too (D11)
-      const b = eng().create(eng().SAMPLE_FLOW, { seed: 3 });
+      const b = eng().create(eng().SAMPLE_FLOW, legacyOpts({ seed: 3 }));
       b.advance(600);
       assert.strictEqual(b.setRigup({ surge2: true }), true);
       const sb = st(b);
@@ -76,7 +78,7 @@ module.exports = [
     name: 'WTSS2 routes: make-before-break T-201 → T-202 → both → T-201 with no SURGE_BLOCKED during a switch; refused when out or at LSHH-202',
     wp: WP, opts: false,
     run(app, assert) {
-      const out = eng().create(eng().SAMPLE_FLOW, { seed: 3 });
+      const out = eng().create(eng().SAMPLE_FLOW, legacyOpts({ seed: 3 }));
       assert.strictEqual(out.setSurgeRoute('surge2').ok, false, 'T-202 out → refused');
       const sim = mk();
       run(sim, 300, 10);
@@ -551,7 +553,7 @@ module.exports = [
       let s = st(b);
       assert.ok(s.surge2.inlet && s.surge2.pos === 1 && s.surge2.route === 'both' && s.surge2.strokeS === 4, 'restored open ' + s.surge2.route);
       assert.deepStrictEqual(J(b.getControls()), c, 'round trip');
-      const d = S.create(S.SAMPLE_FLOW, { seed: 3 });
+      const d = S.create(S.SAMPLE_FLOW, legacyOpts({ seed: 3 }));
       d.setControls(c, { initial: true });
       d.advance(60);
       assert.strictEqual(d.setRigup({ surge2: true }), true);
@@ -603,7 +605,7 @@ module.exports = [
     wp: WP, opts: false,
     run(app, assert) {
       const S = eng();
-      const a = S.create(S.SAMPLE_FLOW, { seed: 5 }), b = mk({ seed: 5 });
+      const a = S.create(S.SAMPLE_FLOW, legacyOpts({ seed: 5 })), b = mk({ seed: 5 });
       for (let i = 0; i < 360; i++) { a.advance(10); b.advance(10); }
       const sa = st(a), sb = st(b);
       assert.near(sb.surge.P, sa.surge.P, 0.01, 'T-201 pressure');
@@ -617,7 +619,7 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const S = app.win.WTS_sim;
-      const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 2, rigup: { surge2: true } }));
+      const sim = S.create(S.SAMPLE_FLOW, app.toWin(legacyOpts({ seed: 2, rigup: { surge2: true } })));
       assert.ok(sim.setSurgeRoute('both').ok, 'route both');
       for (let i = 0; i < 180; i++) sim.advance(10);
       const s = J(sim.getState());

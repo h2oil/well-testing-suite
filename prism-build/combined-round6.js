@@ -4170,7 +4170,8 @@
         rows += _row('Gas Rate',  _fmt(fp.gasRate, 2),  'MMscf/d');
         rows += _row('Oil Rate',  _fmtInt(fp.oilRate),  'STB/d');
         rows += _row('Water Rate', _fmtInt(fp.waterRate), 'bbl/d');
-        rows += _row('Choke Bean', _fmt(fp.chokeBean, 0), '/64"');
+        // CK-101 manifold: the bean is the in-service leg's; the positive (fixed) choke leg is named (the adjustable leg reads as before)
+        rows += _row(fp.ck1 && fp.ck1.leg === 'fixed' ? 'Choke Bean (positive choke)' : 'Choke Bean', _fmt(fp.chokeBean, 0), '/64"');
         rows += _row('Separator Pressure', _fmt(fp.separatorPressure, 0), 'psig');
 
         var nodeRows = '';

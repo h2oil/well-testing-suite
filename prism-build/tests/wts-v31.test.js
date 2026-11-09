@@ -11,11 +11,13 @@
 // Expected values are configuration set points, event order and tag names from the P&ID — never numbers taken from
 // the code under test.
 'use strict';
+// the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTS31';
 const NOISE_OFF = { noise: { on: false } };
 
-function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(Object.assign({ seed: 7 }, o || {}))); }
+function sim(app, o, flow) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(flow || S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
 function runUntil(s, maxSec, dt, pred) { for (let i = 0; i < Math.ceil(maxSec / dt); i++) { s.advance(dt); if (pred(s.getState())) return true; } return false; }
 function balanced(assert, st, where) {
   const m = st.health.massErr;

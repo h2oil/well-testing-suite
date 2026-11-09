@@ -10,11 +10,13 @@
 // Most checks drive WTS_sim directly (deterministic seeds, noise off where exactness matters); the UI checks
 // open the Well Test Simulator page, which falls back to the live 2D schematic in the harness (no WebGL).
 'use strict';
+// the v3.3.1 T-201 line-up (both inlets open, suction both, auto-divert off) is pinned on these engines (_wts-lineup-pin.js)
+const { legacyOpts } = require('./_wts-lineup-pin.js');
 
 const WP = 'WTSDV';
 const NOISE_OFF = { noise: { on: false } };
 
-function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(Object.assign({ seed: 7 }, o || {}))); }
+function sim(app, o) { const S = app.win.WTS_sim; if (!S) throw new Error('WTS_sim missing (round 7 not built?)'); return S.create(S.SAMPLE_FLOW, app.toWin(legacyOpts(Object.assign({ seed: 7 }, o || {})))); }
 function run(s, secs, dt, cb) { const n = Math.round(secs / dt); for (let i = 0; i < n; i++) { s.advance(dt); if (cb && cb(s.getState(), i) === false) return; } }
 function balanced(assert, st, where) {
   const m = st.health.massErr;
@@ -284,6 +286,10 @@ module.exports = [
     integration: true,
     run(app, assert) {
       const live = openWts(app);
+      // v3.3.4: the live sim starts on the new default T-201 line-up (A fills, B transfers, auto-divert on); this test drives the
+      // schematic from the v3.3.1 line-up it was written for, so it sets that line-up first (both inlets, suction A + B, auto off)
+      live.setValve('surge', 0, true); live.setValve('surge', 1, true); live.setSuction('both'); live.setAutoDivert('surge', false);
+      assert.deepStrictEqual([live.getState().surge.suction, live.getState().surge.auto.on], ['both', false], 'v3.3.1 line-up set');
       const cv = app.el('wts_viz').querySelector('canvas');
       assert.ok(cv, 'schematic canvas');
       app.flush(1000);
