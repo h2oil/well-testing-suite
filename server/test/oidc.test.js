@@ -250,7 +250,20 @@ test('production pins: the pinned configuration passes; a localhost issuer or a 
   assert(PINS.checkPins(bad2).length > 0);
   const env = { WTS_ENV: 'production', WTS_PROXY_SIG: 'sig', OAUTH_GOOGLE: 'on', OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'secret' };
   assert.strictEqual(loadConfig(env).providerSwitches().google, 'on', 'pinned Google on the production host');
-  assert.strictEqual(loadConfig(env).providerSwitches().linkedin, 'off', 'LinkedIn off until WP0 records its pins');
+  assert.strictEqual(loadConfig(env).providerSwitches().linkedin, 'off', 'LinkedIn off while OAUTH_LINKEDIN is unset');
+  // LinkedIn pinned since release 4.2 (owner decision 2026-11-10): the discovery document's issuer, no pending item, and
+  // production + OAUTH_LINKEDIN=on with a client id and secret offers it
+  assert.strictEqual(PINS.pinned('linkedin'), true);
+  assert.deepStrictEqual(PINS.CONFIG.linkedin.pending, []);
+  assert.deepStrictEqual(PINS.CONFIG.linkedin.issuers, ['https://www.linkedin.com/oauth']);
+  assert.strictEqual(PINS.CONFIG.linkedin.freshLogin, null, 'no forced login relied on');
+  assert.strictEqual(PINS.CONFIG.linkedin.pkce, 'sent'); assert.strictEqual(PINS.CONFIG.linkedin.nonce, 'when-returned');
+  const envL = Object.assign({ OAUTH_LINKEDIN: 'on', OAUTH_LINKEDIN_CLIENT_ID: 'lid', OAUTH_LINKEDIN_CLIENT_SECRET: 'lsecret' }, env);
+  const cL = loadConfig(envL);
+  assert.deepStrictEqual(cL.providerSwitches(), { google: 'on', linkedin: 'on' }, 'production + OAUTH_LINKEDIN=on offers LinkedIn');
+  assert.ok(!cL.alerts.some((a) => /OAUTH_LINKEDIN/.test(a)), 'no LinkedIn alert');
+  assert.strictEqual(loadConfig(Object.assign({}, envL, { OAUTH_LINKEDIN_CLIENT_SECRET: '' })).providerSwitches().linkedin, 'off', 'a missing secret is off');
+  assert.strictEqual(loadConfig(Object.assign({}, envL, { OAUTH_LINKEDIN: 'signin' })).providerSwitches().linkedin, 'signin');
   const keep = PINS.CONFIG.google.jwks;
   try {
     PINS.CONFIG.google.jwks = 'http://localhost:9000/jwks';

@@ -5,9 +5,20 @@
 // WTS_OIDC_MODE is set there). Test and local runs pass their own endpoints through `resolve(p, {override})`, which is refused
 // on the production host.
 //
-// WP0 status (foundation): the Google values are the documented ones; the LinkedIn issuer and three behaviours are fixed only
-// after the owner's WP0 live tests (§13.10 item 13), so `pinned('linkedin')` is false and LinkedIn stays off in production
-// until they are recorded below (`pending` emptied).
+// Status: the Google values are the documented ones. LinkedIn is pinned since release 4.2 (owner decision 2026-11-10, "enable
+// linkedin login"), each WP0 item resolved conservatively instead of by the live tests of §13.10 item 13:
+//   • issuer — LinkedIn's OpenID discovery document (https://www.linkedin.com/oauth/.well-known/openid-configuration, fetched
+//     2026-11-10) states issuer "https://www.linkedin.com/oauth", jwks_uri https://www.linkedin.com/oauth/openid/jwks, RS256,
+//     response_types code, scopes openid profile email, subject_types pairwise, and the authorization / token endpoints below.
+//   • pkce 'sent' — PKCE (S256) is sent on every attempt but not relied on; the residual (a stolen code redeemed without the
+//     verifier) is accepted as T23 / Q32: the code is bound by the state cookie, the confidential client secret and the fixed
+//     redirect URI.
+//   • nonce 'when-returned' — verified (constant time) whenever LinkedIn returns it; the state cookie and the code exchange
+//     still bind the flow when it does not.
+//   • freshLogin null — no forced-login parameter is relied on: a fresh-login attempt (public-computer tick or a shared
+//     browser) is refused at start with reauth_stale and the client hides the LinkedIn button while the tick is set; a step-up
+//     never uses a provider sign-in (stepup_at is set only by an e-mail code, functions/oauth.js).
+// The owner's first live LinkedIn sign-in after the deploy is the check (RUNBOOK §3P item 7).
 
 const PROVIDERS = ['google', 'linkedin'];
 
@@ -33,18 +44,18 @@ const CONFIG = {
     authorization: 'https://www.linkedin.com/oauth/v2/authorization',
     token: 'https://www.linkedin.com/oauth/v2/accessToken',
     jwks: 'https://www.linkedin.com/oauth/openid/jwks',
-    issuers: [],                      // WP0: the accepted value is fixed after a test with a real token
+    issuers: ['https://www.linkedin.com/oauth'],   // the discovery document's issuer (fetched 2026-11-10)
     scopes: ['openid', 'profile', 'email'],
-    pkce: 'sent',                     // WP0 wrong-verifier test decides 'required' (else the T23 residual, Q32)
-    nonce: 'when-returned',           // WP0: 'required' if it always comes back
+    pkce: 'sent',                     // sent, not relied on: the T23 residual accepted (Q32)
+    nonce: 'when-returned',           // checked whenever it comes back
     callbackIss: false,
     prompt: null,
-    freshLogin: null,                 // WP0: a forced-login parameter + auth_time, else not offered on a fresh-login attempt
+    freshLogin: null,                 // not offered on a fresh-login attempt (reauth_stale); step-up uses the e-mail code
     trustEmailVerified: false,        // always our e-mail code (Q27)
     consumerDomains: [],
     pairwiseSubject: true,
     errorMap: { user_cancelled_login: 'cancelled', user_cancelled_authorize: 'cancelled' },
-    pending: ['issuer', 'pkce', 'nonce', 'freshLogin'],
+    pending: [],                      // resolved 2026-11-10 (see the header)
   },
 };
 const KNOWN_ERRORS = ['access_denied', 'user_cancelled_login', 'user_cancelled_authorize', 'invalid_request', 'unauthorized_client',

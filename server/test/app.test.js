@@ -44,7 +44,8 @@ test('config: switches fail closed, providers off unless configured, secrets nev
   const prodEnv = { WTS_ENV: 'production', WTS_PROXY_SIG: 'p', OAUTH_GOOGLE: 'on', OAUTH_GOOGLE_CLIENT_ID: 'i', OAUTH_GOOGLE_CLIENT_SECRET: 's',
     OAUTH_LINKEDIN: 'on', OAUTH_LINKEDIN_CLIENT_ID: 'i', OAUTH_LINKEDIN_CLIENT_SECRET: 's' };
   const p = loadConfig(prodEnv);
-  assert.deepStrictEqual(p.providerSwitches(), { google: 'on', linkedin: 'off' }, 'LinkedIn waits for its WP0 pins');
+  assert.deepStrictEqual(p.providerSwitches(), { google: 'on', linkedin: 'on' }, 'LinkedIn pinned since 4.2: on in production');
+  assert.ok(!p.alerts.some((a) => /not pinned/.test(a)), 'no pin alert for LinkedIn');
   assert.deepStrictEqual(loadConfig(Object.assign({ WTS_OIDC_MODE: 'dev' }, prodEnv)).providerSwitches(), { google: 'off', linkedin: 'off' });
   assert.ok(loadConfig(Object.assign({ WTS_OIDC_MODE: 'dev' }, prodEnv)).alerts.length > 0);
   assert.strictEqual(loadConfig({ WTS_ENV: 'production', WTS_DEV_ORIGIN: 'http://localhost:8080' }).devOrigin, null);
