@@ -283,6 +283,8 @@ docs/CHEMICAL-INJECTION-PLAN.md ← Chemical Injection module plan (v3.2a/3.2b; 
 docs/BUILDUP-SURVEILLANCE-PLAN.md ← Build-up Surveillance plan (v3.3; interfaces §3, algorithms §4, calibration §5, measured
                                   results §5.7, open items §12.1)
 docs/DFIT-PLAN.md               ← DFIT module plan (v3.4; PRiSM workspace mode 'dfit', Round-8 files 56–59)
+docs/WELL-PERFORMANCE-PLAN.md   ← Well performance / nodal analysis module plan (draft; route wellperf in hub `perf`, Round-9 files
+                                  49-calc-wp-*.js; increments A1 v4.3 / A2 v4.4 / B v4.5; owner questions §20)
 PROJECT-NOTES.md                ← Running changelog (newest on top)
 README.md                       ← Public-facing description
 ```
