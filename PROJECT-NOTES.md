@@ -9,7 +9,7 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 App and App Store version 4.2 (`RELEASE_NOTES[0]`, dated 2026-11-10, both `MARKETING_VERSION`, both `ci_post_clone.sh`
 fallbacks, the static `#appVersionLabel` fallback, help/user-guide.html stamp "Version 4.2 · 2026-11-10"). Cut on `rel/4.2`
-from master e706c94 (PR #27), with `ui/signin` (ec9d264) merged in. The owner named the release 4.2; there is no 4.1.
+from master e706c94 (PR #27), with `ui/signin` (ec9d264) merged in. The owner named the release 4.2. **4.2 includes v4.1**: the v4.1 simulator release (T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout; next section), merged into master by another session (c80ba0f) while 4.2 was being cut, was merged into `rel/4.2` (owner: "merge all branches with all changes to main and release 4.2"). Release notes keep both entries (4.2 on top, then 4.1 dated 2026-11-09); the App Store goes from 4.0 straight to 4.2 if 4.1 was never uploaded. Merge: Rounds 6, 7, 9 and 10 rebuilt, the release-notes help shots regenerated, every generated file regenerated, not hand-merged.
 
 **Owner decisions (2026-11-10)** — release 4.2 with all of it; LinkedIn sign-in ON (`OAUTH_LINKEDIN=on` set on the live site);
 sign-up OPEN TO EVERYONE (`ACCOUNTS_SIGNUP=open` set); "Open sign-up now": the Privacy notice, the Terms and the app wording
@@ -80,17 +80,74 @@ with LinkedIn after the deploy (RUNBOOK §3L "LinkedIn", §3P item 7); on a fail
 `WTS_TERMS_VERSION=1`, `WTS_ADMIN_EMAILS` optional (unset = the `WTS_INVITE_BOOTSTRAP` addresses).
 
 **Neutral (both platforms)** — the only non-account item is the Privacy notice v3 (sidebar footer and Privacy page links on
-both platforms) and the Terms wording; the App Store 4.2 entry shows the "Privacy notice version 3" item only. The release title
+both platforms) and the Terms wording; the App Store 4.2 entry shows the "Privacy notice version 3" item only (the 4.1 simulator entry follows it). The release title
 is "Privacy notice version 3" because the title is shown in the iOS app too (it has no accounts).
 
 **Release mechanics** — Rounds 9 and 10 rebuilt; Release Notes help shots re-taken (help-shots.js --route releasenotes --html;
 web-only items are left out of the shots); user guide regenerated; iOS www synced (no account identifier, "LinkedIn" or extra
-"Google"). Account code SHA-384 (9 blocks, `node prism-build/acct-hash.js --release`): sha384-C+qw0YhmTKy3TuOokVZb5WrhSDH7xTbOKbmC5Wpxb78QS4sAAamlVzIxtn5rc5gk
-(recompute if the HTML changes before the merge). Live bundle: `node server/site/build-live.js --out <dir>` + `--check --dir`.
-Gates: see the commit.
+"Google"). Account code SHA-384 (9 blocks, `node prism-build/acct-hash.js --release`): sha384-uq3gol+qwCacuRSr7Xr8DuXk5IZ6JOYtMuamYHeHrZDsS3FI8SeStizMfrQ4s9yl
+(recomputed after the v4.1 merge; the account blocks are unchanged by it). Live bundle: `node server/site/build-live.js --out <dir>` + `--check --dir`.
+Gates after the v4.1 merge: node --check ok; smoke 344/344; accept-test --html --integration 1900/1900 (run per file); wts3d-test
+147/149 (the two CRLF checks on an LF checkout); wts-sim-perf ok (1.022 / both 1.498 / ck2 1.010 / cushion 1.099 / line 0.978 /
+surge 1.004); wts-calc-golden --check --time ok (2.75 / 2.45); help-shots --check 217 files ok; build-user-guide --check ok;
+publish-site --check ok; server tests 278/278; platform-migrations --check ok (migrations folder unchanged since e706c94).
 
 **Notes** — Open owner items: the first live LinkedIn sign-in after the deploy (RUNBOOK §3P item 7); the 4.0 go-live probe
 items in RUNBOOK §3L.
+
+---
+
+## 2026-11-09 — v4.1 release (on top of v4.0): T-202 compartments, LP flare line + GOR2, rig-up flow path, CK-101 3D layout
+
+**Integration (lead, after the four lanes merged)**
+- wts3d-test expectations moved to the 4.1 contract: default controls carry `surge2.comp` (dual, empty, both inlets shut); the 3D
+  scene key ends in '|lp' with the LP line on; 38 `EQV.surge2` = XV-202A / XV-202B; T-301 out keeps P-201 as a booster under the chain
+  (38 pumpShort now reads "BOOSTER · RUNNING / STANDBY"; the 'v341' routing still reads "OUT (no gauge tank)"); the host flow.lp block
+  and flow.sim.lp* are host-only like ck1 / ck2 / sepBy, page destination default 'surge'. 32 NULLABLE += rates.gor1 / gor2 /
+  gorTot_scf_stb, sepBy.gasCap_mmscfd (= WTS_sim.NULLABLE). 147 checks, 145 on this LF checkout (the two CRLF checks).
+- Help FS-5 re-measured on the integrated engine: at the default 10 MMscf/d PCV-201 (≈ 0.15 MMscf/d) cannot take the gas, so the
+  scenario is a low-gas well (1 MMscf/d), the cushion is started first and V-101 goes out at once; ≈ 26 bbl of water in T-301 by
+  breakthrough (2,468 s), PAH-201 2,650 s, PSHH-201 / ESD 2,715 s; V-101 back in at 35 min → no trip. Exercise 10 windows hold as
+  measured by the engine lane. The 3D course shots ck3d / trends / temp3d are cropped to #wts_viz (image total 7.97 MB of 8 MB).
+- Host: the wts_sepByDest migration writes through `__lsSet` (acct LS2: no raw host writes). acct-ops OP5 / acct-host HO31 accept the
+  privacy.html / terms.html pages and footer links of 19d8287 (they were on the publish allow-list already).
+- wts-fu-views / wts-equipment app tests: the stubs set rigup.dest from the fake destination and may pin routing 'v341' for the
+  v3.3.3 texts; the chain label and the T-202-without-T-201 switch are asserted for the default routing.
+- Gates: smoke 344/344; accept --html --integration 1847/1847; wts-calc-golden --check --time ≈ 2.54 / 2.52; wts-sim-perf (2nd run;
+  the 1st pooled 1.071 on a busy box) min 1.018 / pooled 1.035, both 1.550, ck2 1.015, cushion 1.089, line 0.963, surge 0.996.
+
+App and App Store version 4.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks). Built in four
+lanes against one contract (scratchpad designs INTEGRATION.md): ENGINE (31), VIEW3D (32), LIVE (38), HOST (calcWTS, 30, 47, 63,
+help, docs). `WTS_sim.VERSION` stays '1.5.0' (code comments v1.7.0) with `features.surge2Comps / lpFlare / rigChain`; 32 VERSION
+1.5.0; 38 VERSION 1.2.0.
+
+**Host lane (calcWTS / page)**
+- `wts_sepByDest` options surge (selected) | flare | line; a page without the input → 'surge', an unknown value → 'flare'.
+  'surge': `flow.sepBy.P0_psig` = the surge set point 0–30 psig (no Psep − 10 bound), the seg-5 'multi' walk as 'line', a page
+  warning (warn style; the info style is the hydrate snowflake). One-time autosave migration flare → surge (`wts_wts` and
+  `wts_page_wts`), marker `wts_sepByDest_m1`; 'wts:project-loaded' / 'wts:project-new' / 'wts:project-changed' write the marker
+  first, so a project file keeps its value (the marker is a project key and is cleared with the other project keys on Open).
+- `flow.lp` (steady LP flare line / tank gas): GOR1 = Qg / Qo, GOR2 = Standing ΔRs separator → surge tank at the separator
+  temperature (equal to the engine's qFlashD / qoE, `WTS_sim.pvt.rsEff`, 1e-9), the T-301 residual, FT-201 line design as the
+  engine's `lpDerive` (rate max(3 × flash, 50 Mscf/d), P_in = P0 + K·q² capped at the tank pressure, velocity / API RP 14E limit /
+  Mach), `atWell` (whole well gas, for V-101 out to the tanks). Inputs `wts_lpNps` (2 | 3 | 4), `wts_lpSch` (40 | 80),
+  `wts_lpLen` (10–5,000 ft) → `flow.sim.lpNps / lpSch / lpLen_ft`.
+- The 'LP flare line / tank gas (FT-201)' rbox and its design-rate warnings are painted only with a handed-over rig-up with T-201
+  (or T-202) in; the rig-null page is the v3.3.1 page (golden unchanged). Tests that compared a handed-over default rig-up with the
+  golden strip the LP box (it is appended at the end of #wts_res).
+- `wts-calc-golden.js`: `BASE_FIELDS_OMIT` += lp, sim.lpNps, sim.lpSch, sim.lpLen_ft (baseFields now walks the list); NEW_INPUTS
+  carry the LP inputs and a 'surge' destination. `--check` green; `--time` ≈ 2.5 (≤ 4) / 2.5 (≤ 6).
+- Quick Report: GOR1 (separator), GOR2 (tank, PVT est.), Total GOR from flow.lp, and the simulator's metered GOR1 / GOR2.
+  Historian: SIM.GOR1, SIM.GOR2, SIM.QG_LP (SIM.GOR stays the total). Mini WellOS: 'GOR (sep)', tank gas (FT-201: flow.lp in
+  form data, a linked `tank_gas` tag in Modbus, else not linked) and total GOR, quality = the worst input.
+- Help: caps redistributed by 0.18 kB (sum 345 kB) and welltest / simcourse tightened by about 2.1 kB to fit the new text; the wts
+  guide is near its 14 kB serialised cap (14.0 kB). Exercise 10 numbers measured on the engine lane at E3 (dual T-202 + LP line);
+  FS-5 sim windows are the design's expectations. help-course checks carry `feature` / `unlessFeature` gates.
+
+**To do at integration (lead, H7 / H8)** — re-stamp the wts guide `reviewedSrc` (31 / 32 / 38 hashes); re-measure exercise 10 and
+FS-5 on the final engine (`WTS_HELP_SIMCHECKS` checks); regenerate the stale shots (wellos/view, scenarios/fs-1-rigup,
+scenarios/fs-1-cushion, course ex10-t202, ex5-trends, ex8-temp3d, the new course/ex2-ck3d) and help/user-guide.html; record the
+`wts-sim-perf.js` ratios here (default ≤ 1.05, both ≤ 1.6, surge ≤ 1.10).
 
 ---
 
