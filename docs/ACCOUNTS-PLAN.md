@@ -267,7 +267,7 @@ dependency. `server/` is never in the published static set (§13.2).
 | 400 | `invalid_or_expired` | wrong or expired code / passkey | generic message in the dialog; the session state is untouched |
 | 400 | `oauth_state` | `finish` without a valid attempt cookie, or with an attempt of another provider or purpose | dialog "Sign-in was interrupted — try again"; never retried automatically |
 | 400 | `oauth_failed` (`reason`: `cancelled` \| `expired` \| `provider` \| `token` \| `reauth_stale`) | the provider leg failed: cancelled at the provider, attempt expired, code exchange failed, id_token refused (also a public attempt without a fresh provider login, §4.11) | one plain message per reason; the e-mail field stays offered; a signed-in session (a failed link) stays signed in |
-| 403 | `not_invited` | invite beta: a provider sign-up whose address (provider-managed or proved by our code) is not on the allow-list | "The beta is invite-only. Sign in with the address you were invited with, or use the e-mail code." |
+| 403 | `not_invited` | invite beta: a provider sign-up whose address (provider-managed or proved by our code) is not on the allow-list | "New accounts are by invitation only right now. Sign in with the address you were invited with, or use the e-mail code." |
 | 403 | `signup_closed` | `ACCOUNTS_SIGNUP=off`: a provider sign-up for a new account | "New accounts are not open right now. Existing accounts can still sign in." |
 | 409 | `identity_in_use` | the provider identity is linked to another account | "This Google / LinkedIn account is linked to another Well Testing Suite account" (no address shown) |
 | 409 | `provider_linked` | the account already has an identity of that provider (one per provider; unlink first) | message on the account page |
@@ -1495,7 +1495,7 @@ the dialog close.
 
 Errors use the reasons in plain words: "Sign-in with LinkedIn was cancelled", "That took too long — try again", "Google
 sign-in is not available right now — use the e-mail code", "Please sign in to Google again on this shared computer"
-(`reauth_stale`), "The beta is invite-only. Sign in with the address you were invited with, or use the e-mail code."
+(`reauth_stale`), "New accounts are by invitation only right now. Sign in with the address you were invited with, or use the e-mail code."
 (`not_invited`), "New accounts are not open right now. Existing accounts can still sign in." (`signup_closed`), "This account is
 being deleted. Enter the code we sent to its address to cancel the deletion." (`cancel_deletion`). The buttons are hidden off the
 production host (previews) and absent on iOS.

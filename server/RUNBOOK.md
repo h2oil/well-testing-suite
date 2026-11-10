@@ -119,7 +119,8 @@ functions-only site (§3N), on the **Free plan**. Consequences, all accepted by 
   job between steps and logs `alert: jobs — … did not finish within its 25 s budget` instead of being cut off silently).
 - **CSP reports off.** The bundle's `_headers` carries the security headers but no Report-Only CSP (each report would be a
   function call and a database write on the Free plan's quotas); `--csp-report` switches it on later.
-- **Sign-up mode:** `ACCOUNTS_SIGNUP=invite` unless the owner opens it; providers (Google, LinkedIn) by their `OAUTH_*` switches.
+- **Sign-up mode:** `ACCOUNTS_SIGNUP=open` since release 4.2 (owner decision 2026-11-10: anyone may create an account;
+  `invite` = the invite list only, `off` = no new accounts); providers (Google, LinkedIn) by their `OAUTH_*` switches (both `on`).
   Since release 4.2 the page shows the account UI to every visitor on `https://welltest.h2oil.co.uk/` (no flag; a signed-out
   first visit opens the sign-in dialog). `?cloud=0` hides it on one device (`wtspref_cloud_off`); `?cloud=1` clears that.
 
@@ -148,12 +149,13 @@ build command needs no secret either way); tick **Contains secret values** for e
 | `WTS_MAIL_PROVIDER` | `postmark` |
 | `WTS_MAIL_CREDENTIAL`\* | the Postmark **Server** API token (step L2) |
 | `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` (the confirmed sender) |
-| `ACCOUNTS_SIGNUP` | `invite` |
-| `WTS_INVITE_BOOTSTRAP` | the owner's e-mail address (comma-separated for more than one) — see "The invite list" below |
+| `ACCOUNTS_SIGNUP` | `open` (since release 4.2; `invite` limits new accounts to the invite list) |
+| `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | `on` · `on` (LinkedIn stays off in production until its live tests and pins are recorded, §3P item 7) |
+| `WTS_INVITE_BOOTSTRAP` | optional with `open`: the owner's e-mail address (comma-separated for more than one) — see "The invite list" below |
 | `WTS_ADMIN_EMAILS` | optional: the admin addresses (comma-separated); unset = the `WTS_INVITE_BOOTSTRAP` addresses — see "Admin dashboard" below |
 | `SYNC_MODE` | `on` |
 | `WTS_MIN_CLIENT` | `4.0` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (Privacy notice version 2 adds the country / city statistics, the optional profile and the project summaries) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `3` (Privacy notice version 2 added the country / city statistics, the optional profile and the project summaries; version 3, release 4.2, says sign-up is open and that our processors' standard data processing terms apply) |
 | `WTS_DB_ROLE_MODE` | only if step L5 says so: `local` |
 
 Do **not** set: `WTS_PROXY_SIG`, `WTS_HOST_HEADER`, `WTS_CLIENT_IP_HEADER` (same-site mode fixes both), `WTS_DB_URL`,
@@ -220,8 +222,9 @@ database allow-list, never logged (the redacted config shows only the count). To
 to the variable, then redeploy as in step L4 "Redeploy" (upload the bundle again as a production deploy, or Trigger / Retry
 deploy) — variables reach the functions only on the next deploy. Removing an address later stops NEW sign-ups only; an existing
 account keeps working (lock it with `ops/security-reset.js` if needed). The database allow-list (`ops/allowlist-add.js`) needs
-the support credential and is not used on the live site for now. Before anyone outside H2Oil is invited, the processor
-contracts with the transfer safeguards must be in place (privacy notice sections 12 and 13 promise this).
+the support credential and is not used on the live site for now. With `ACCOUNTS_SIGNUP=open` (the live setting since release
+4.2) the list is not consulted. Privacy notice version 3 (sections 12 and 13) states that our hosting platform and our e-mail
+service process data under their standard data processing terms (owner confirmation 2026-11-10); keep it true if that changes.
 
 ### Admin dashboard
 Where: sign in on the live site with an admin address, open the app's **Account** page → **Admin** (route `#admin`). It shows
@@ -246,7 +249,7 @@ sign-ups per day (90 days), the account list (newest first, search by part of an
   project name), the latest one kept in `projects.summary_enc`. Both are sealed with the account's own data key and opened by
   the admin routes only: the users list shows the profile and "work" (wells, clients, operators, fields, countries), the
   user detail `GET /api/v1/admin/users/<id>` (audited `admin.user`) lists the live projects with their summaries, and the
-  summary adds the top companies, clients and fields. Privacy notice version 2 describes this; keep it in step.
+  summary adds the top companies, clients and fields. Privacy notice version 2 introduced this (version 3 keeps it); keep it in step.
 - Routes: `GET /api/v1/admin/summary`, `GET /api/v1/admin/users?limit=&cursor=&q=`, `GET /api/v1/admin/users/<id>`,
   `GET|POST /api/v1/admin/invites`
   (`functions/admin.js`; contract in `core/contract.js`).
@@ -374,8 +377,8 @@ the next deploy (step 12, or step 16 "apply a change").
 | `WTS_MASTER_KEYS`\* · `WTS_MASTER_KID` · `WTS_INDEX_PEPPER`\* · `WTS_CODE_PEPPERS`\* · `WTS_SESSION_PEPPER`\* · `WTS_OPS_HMAC`\* · `WTS_PROXY_SIG`\* · `WTS_BACKUP_PUBLIC_KEY` | from step 3 (`WTS_BACKUP_PUBLIC_KEY` is not secret; `WTS_BACKUP_PRIVATE_KEY` is **never** set here — the site refuses to start with it) |
 | `WTS_MAIL_API_URL`\* · `WTS_MAIL_CREDENTIAL`\* | step 9 |
 | `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `2` (raise when the published texts change; users then re-consent) |
-| `ACCOUNTS_SIGNUP` | `invite` (beta: only allow-listed addresses can create an account) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | `1` · `3` (raise when the published texts change; users then re-consent) |
+| `ACCOUNTS_SIGNUP` | `open` (the live setting since release 4.2) or `invite` (only allow-listed addresses can create an account) |
 | `SYNC_MODE` | `on` |
 | `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | leave unset (= off) until §3P is done |
 | `OAUTH_GOOGLE_CLIENT_ID` · `OAUTH_GOOGLE_CLIENT_SECRET`\* · `OAUTH_LINKEDIN_CLIENT_ID` · `OAUTH_LINKEDIN_CLIENT_SECRET`\* | §3P |
@@ -630,7 +633,7 @@ Deploy context **Production** (on Free all scopes; tick **Contains secret values
 | `WTS_MAIL_FROM` | the confirmed sender (step T2), e.g. `no-reply@h2oil.co.uk` |
 | `ACCOUNTS_SIGNUP` | `open` |
 | `SYNC_MODE` | `on` |
-| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | the values production will use (today `1` · `2`) |
+| `WTS_TERMS_VERSION` · `WTS_PRIVACY_VERSION` | the values production will use (today `1` · `3`) |
 | `WTS_DB_ROLE_MODE` | only if step T6 says so: `local` |
 
 Do **not** set: `WTS_DB_URL`, `WTS_JOBS_DB_URL`, `WTS_DB_ROLE`, `WTS_OIDC_MODE`, `WTS_PREVIEW_SIGNIN`, `WTS_DEV_ORIGIN`,
@@ -772,7 +775,7 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
    beyond `dist/static` (robots.txt only), UK region if offered. Disable deploy previews and branch deploys for this site (it
    deploys only from the release workflow).
 5. **Environment**: set the functions-site variables of §2. Leave `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` unset (= off) and
-   `ACCOUNTS_SIGNUP=invite` until the beta.
+   `ACCOUNTS_SIGNUP=invite` until the provider consoles are done; the live site runs `open` since release 4.2.
 6. **Blob store binding**: commit `server/site/objects-binding.js` through a reviewed server release, exporting
    `createStore(env)` that returns the host's blob store with `get / set / delete / list({prefix})` and reads its credential
    from the environment (`WTS_OBJECTS_CREDENTIAL`, never a literal — the secret scan and the bundle build refuse one). Every

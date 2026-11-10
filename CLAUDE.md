@@ -603,18 +603,20 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   = device opt-out; sign-in window on first open with Use as guest; sign-up open to everyone, server ACCOUNTS_SIGNUP=open); manual Save / Open from cloud only (automatic sync and the key-level merge are
   v4.0.x, passkeys / historian backup / live-data settings / field-level merge v4.1); no merge tool for two accounts; the server
   minimum client is 4.0 on our hosting platform (an older page gets 426 on project writes); LinkedIn stays switched off in
-  production until its live tests (plan §13.10 step 13) are recorded; the weekly export stays in the same EU region; the
+  production until its live tests (plan §13.10 step 13) are recorded in server/core/oidc-providers.js (`pending` emptied) — the
+  owner set OAUTH_LINKEDIN=on on 2026-11-10, the pin gate still keeps it off until then; the weekly export stays in the same EU region; the
   one-login database keeps separate roles by `SET LOCAL ROLE` (go-live probe `migrate.js --platform`, RUNBOOK step 7); proxy
   signature and client-IP header to be confirmed live (RUNBOOK steps 10 and 12); the CSP stays allow-list only until v4.1; the
   Privacy notice and Terms of Use (v3.4.2) still have owner facts pending (see their top comments). Live set-up (owner decision
   2026-11-09, server/RUNBOOK.md §3L): same-site mode on the live site on the Free plan — the account database is in the United
   States (Ohio) permanently and the functions are not pinned to London; Blobs (larger project files, weekly exports) stay in
-  eu-central-1; the privacy notice and the in-app cards say so (Privacy notice version 2 since v4.2: country / city, the optional
-  profile and project summaries; WTS_PRIVACY_VERSION=2 and the analytics consent VER 2 change together with it); the daily job and the export run in background functions (offered on the Free plan; a scheduled function has only 30 s —
+  eu-central-1; the privacy notice and the in-app cards say so (Privacy notice version 3 since v4.2, 2026-11-10: country / city, the
+  optional profile and project summaries (from v2), open sign-up and the processors' standard data processing terms (v3);
+  WTS_PRIVACY_VERSION=3 and the analytics consent VER 3 change together with it; Terms stay version 1, WTS_TERMS_VERSION=1); the daily job and the export run in background functions (offered on the Free plan; a scheduled function has only 30 s —
   the opt-in --inline-jobs fallback runs them in place under a 25 s budget that stops with an alert); same-site mode refuses
   any WTS_ENV but production / staging;
-  no Report-Only CSP on the live site (quota); the invite list is WTS_INVITE_BOOTSTRAP (env, redeploy to change; also the admins when WTS_ADMIN_EMAILS is unset); processor
-  contracts with transfer safeguards are promised before anyone outside H2Oil is invited; the e2e test E2 (link LinkedIn) is
+  no Report-Only CSP on the live site (quota); sign-up is open (ACCOUNTS_SIGNUP=open, owner 2026-11-10); the invite list WTS_INVITE_BOOTSTRAP (env) matters only with
+  ACCOUNTS_SIGNUP=invite (it also names the admins when WTS_ADMIN_EMAILS is unset); the e2e test E2 (link LinkedIn) is
   flaky on the base branch too ("linkProvider rejected before the step-up code: cancelled", about 1 run in 3).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
@@ -703,7 +705,7 @@ node prism-build/gui-sweep.js --mobile                       # click sweep at 39
 
 ---
 
-## Cumulative stats (as of 2026-11-09, v4.2)
+## Cumulative stats (as of 2026-11-10, v4.2)
 
 ```
 PRiSM source files:           01-21 + 33-37, 39, 51-59 (Round-8; 56-59 = DFIT) + tooling
@@ -724,13 +726,17 @@ Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.0
 Generated HTML:               ~157.3k lines (10.3 MB); www bundle ~10.0 MB (+ www/help 8.0 MB images and the guide)
 ```
 
-Latest release: v4.2 (accounts follow-up, web only: sign-in chip at the bottom-left of the sidebar (menu opens upward),
-welcome prompt (Create free account / Sign in / Continue as guest, a guest asked again after 30 days), optional profile at
-sign-up and on the Account page, a project summary with each Save to cloud, an updated Terms / Privacy step for existing accounts,
-the owner admin dashboard (file 69); server: same-site mode live, esbuild pre-bundled functions, country / city capture, admin
-API, profile / summary encrypted at rest, migrations 060 / 070, platform migrations from 080 without transaction control; neutral
-item on both platforms: Privacy notice version 2 (analytics consent asked again on the web); App Store 4.2 with only that item;
-PROJECT-NOTES.md has the live environment settings), dated 2026-11-09, on top of
+Latest release: v4.2 (accounts open to everyone, web only: accounts ON by default on the exact production host (no ?cloud=1;
+?cloud=0 = device opt-out), a first-open sign-in window merged with the welcome prompt ("Sign in to keep your work safe", Google /
+LinkedIn buttons when the server says on, e-mail code, Use as guest, Create a free account; guest asked again after 30 days),
+a redesigned centred modal card with a focus trap, open sign-up (ACCOUNTS_SIGNUP=open; invitation hints removed, not_invited kept
+as the invite-mode message), sign-in chip at the bottom-left of the sidebar (menu opens upward), optional profile, a project
+summary with each Save to cloud, an updated Terms / Privacy step for existing accounts, the owner admin dashboard (file 69);
+server: same-site mode live, esbuild pre-bundled functions, country / city capture, admin API, profile / summary encrypted at
+rest, migrations 060 / 070, platform migrations from 080 without transaction control, WTS_PRIVACY_VERSION default 3; neutral item
+on both platforms: Privacy notice version 3 (analytics consent asked again on the web; Terms stay version 1 with the open
+sign-up wording); release title "Privacy notice version 3" (titles show on iOS too); App Store 4.2 with only that item;
+PROJECT-NOTES.md has the owner decisions and the live environment settings), dated 2026-11-10, on top of
 v4.0 (cloud accounts, web only and an invite beta, Phase 1 of docs/ACCOUNTS-PLAN.md: sign in with an e-mail
 code, Google or LinkedIn, save / open projects in the account, history, export, delete, account page; files 66-68 inert unless the
 beta flag and the exact host; the account API in server/ as a separate functions-only site on our hosting platform, owner guide
