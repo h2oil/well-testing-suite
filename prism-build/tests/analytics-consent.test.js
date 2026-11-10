@@ -266,7 +266,7 @@ module.exports = [
       assert.ok(!/We have a plan for handling security incidents|Our contracts with processors include|It acts as our processor/.test(p), 'no unconfirmed present-tense claims');
       // version 3 (owner confirmation 2026-11-10): the processors' standard data processing terms apply, with the safeguards
       // they provide; no "before we invite anyone outside H2Oil" promise is left
-      assert.ok(/process personal data for us under their standard data processing terms/.test(p) && /include the safeguards for international transfers that they provide/.test(p) && /visible label of the menu item or link clicked/.test(p), 'standard data processing terms; link labels disclosed');
+      assert.ok(/process personal data for us under their standard data processing terms/.test(p) && /the transfer safeguards are the ones those terms provide: standard contractual clauses/.test(p) && !/they include the safeguards for international transfers that they provide/.test(p) && /visible label of the menu item or link clicked/.test(p), 'standard data processing terms; link labels disclosed');
       assert.ok(!/Before we invite anyone outside H2Oil|invitation-only trial|If you are invited/.test(p), 'privacy.html: open sign-up, no invitation-only trial');
       for (const s of ['id="cookies"', '<code>_ga</code>', '<code>' + KEY + '</code>', '<code>__Host-wts_sid</code>', 'Limited Use requirements',
         'id="retention"', 'id="rights"', 'id="complaints"', 'Information Commission', 'Cookie settings', 'only if you accept',

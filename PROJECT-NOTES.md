@@ -33,6 +33,15 @@ the Privacy notice becomes version 3 (every account is asked once to accept it).
 - Open sign-up in the app: the invitation hints on the sign-up path (code step note, extra text on a wrong code) are removed;
   `not_invited` (only with `ACCOUNTS_SIGNUP=invite`) reads "New accounts are by invitation only right now. …"; the admin
   dashboard's invite card says the list is used only while sign-up is invitation only.
+- Review fixes (2026-11-10): the sign-in / sign-up subtitles and the provider notes name only the providers whose buttons are
+  drawn (e-mail-only wording until GET /auth/providers answers and when none is on); a network error on GET /auth/providers now
+  means both providers off (the e-mail code only — a provider start would call the same unreachable API); the welcome line says
+  "with a history of earlier saves" (history is limited, Privacy §14); the in-app Privacy card mentions the optional profile, the
+  project summary and the operator's audited admin view; privacy.html §13 names the kind of transfer safeguard (standard
+  contractual clauses or an equivalent mechanism in the processors' standard terms); RUNBOOK beta / invite wording updated.
+  **Request note**: since 4.2 a signed-out first visitor sends one `GET /api/v1/auth/providers` when the first-open dialog opens
+  (after the consent banner and the Terms notice; none with `?cloud=0`). It carries no cookie and no personal data (the
+  server sees the IP address and browser type, as for any page request, Privacy §6); one function call per new visitor.
 - Kept from the first 4.2 cut: sign-in chip in the sidebar footer (`#sbAccountLine`, bottom-left, sticky; signed-in menu opens
   upward, Esc closes it, "Admin dashboard" item for admins); optional profile (name, company, job title, country, phone) on the
   new-account steps and the Account page; project summary with every Save to cloud (`WTS_cloudSync.projectSummary`, encrypted,
@@ -44,8 +53,9 @@ the Privacy notice becomes version 3 (every account is asked once to accept it).
 **Legal texts**
 - privacy.html → **version 3** (10 November 2026): accounts open to anyone who signs up on the website (the "invitation-only
   trial" wording and the "before we invite anyone outside H2Oil" promises in sections 12 and 13 removed); sections 12 / 13 say
-  our hosting provider and our e-mail delivery service process personal data under their standard data processing terms, which
-  include the transfer safeguards they provide (also for data leaving the UAE). Every other fact unchanged: US account database,
+  our hosting provider and our e-mail delivery service process personal data under their standard data processing terms, whose
+  transfer safeguards are standard contractual clauses (with the UK addendum or IDTA) or an equivalent recognised mechanism (also
+  for data leaving the UAE). Every other fact unchanged: US account database,
   EU file storage for larger projects and backups, the optional profile, project summaries, country / city, the operator's
   admin view, retention, rights.
 - terms.html stays **version 1** (editorial change, "Last updated: 10 November 2026"): "Anyone who is 18 or over can create one
@@ -56,10 +66,14 @@ the Privacy notice becomes version 3 (every account is asked once to accept it).
 
 **Server (server/; RUNBOOK §3L)** — no code change beyond the privacy default and comments; no new migration (the platform
 migrations folder still equals e706c94's eight files). E6 of server/test/e2e.test.js updated for default-on (chip mounts, no
-request; `?cloud=0` = the v3.4 page). LinkedIn: `OAUTH_LINKEDIN=on` is set, but `core/oidc-providers.js` still lists LinkedIn as
-`pending` (issuer, PKCE, nonce, forced login), so production keeps LinkedIn OFF (with an `alert: config` line) until the live
-tests of plan §13.10 step 13 are recorded there and released (RUNBOOK §3P item 7); the client shows the button only when the
-server says on.
+request; `?cloud=0` = the v3.4 page). **LinkedIn ON** (owner decision 2026-11-10, "enable linkedin login"):
+`core/oidc-providers.js` pins LinkedIn with `pending: []`, each WP0 item resolved conservatively instead of by the live tests —
+issuer `https://www.linkedin.com/oauth` from LinkedIn's OpenID discovery document (fetched 2026-11-10: jwks
+`/oauth/openid/jwks`, RS256, code flow, scopes openid profile email, pairwise subjects); PKCE `sent` (not relied on — the T23
+residual accepted, plan Q32); nonce `when-returned`; `freshLogin` null (a fresh-login attempt answers `reauth_stale` and the
+button is hidden while the public tick is set; step-up is set only by an e-mail code). With `OAUTH_LINKEDIN=on` and the client
+id / secret, production now offers LinkedIn (server tests in oidc.test.js / app.test.js). Live check: the owner signs in once
+with LinkedIn after the deploy (RUNBOOK §3L "LinkedIn", §3P item 7); on a failure `OAUTH_LINKEDIN=off`.
 
 **Live environment settings needed with this release** (redeploy after a change): `WTS_SITE_MODE=same`, `WTS_ENV=production`,
 `WTS_DB_ROLE_MODE=local`, `ACCOUNTS_SIGNUP=open`, `OAUTH_GOOGLE=on`, `OAUTH_LINKEDIN=on`, `WTS_PRIVACY_VERSION=3`,
@@ -71,12 +85,12 @@ is "Privacy notice version 3" because the title is shown in the iOS app too (it 
 
 **Release mechanics** — Rounds 9 and 10 rebuilt; Release Notes help shots re-taken (help-shots.js --route releasenotes --html;
 web-only items are left out of the shots); user guide regenerated; iOS www synced (no account identifier, "LinkedIn" or extra
-"Google"). Account code SHA-384 (9 blocks, `node prism-build/acct-hash.js --release`): sha384-Y7M/Vq1cB4322/gTdDnEynQ/RRjTT/15bVYlPUQGQ3bLSaAQFoi3PX6suIQZTKxW
+"Google"). Account code SHA-384 (9 blocks, `node prism-build/acct-hash.js --release`): sha384-C+qw0YhmTKy3TuOokVZb5WrhSDH7xTbOKbmC5Wpxb78QS4sAAamlVzIxtn5rc5gk
 (recompute if the HTML changes before the merge). Live bundle: `node server/site/build-live.js --out <dir>` + `--check --dir`.
 Gates: see the commit.
 
-**Notes** — Open owner items: LinkedIn live tests and pin update (until then LinkedIn stays off in production whatever the
-switch says); the 4.0 go-live probe items in RUNBOOK §3L.
+**Notes** — Open owner items: the first live LinkedIn sign-in after the deploy (RUNBOOK §3P item 7); the 4.0 go-live probe
+items in RUNBOOK §3L.
 
 ---
 

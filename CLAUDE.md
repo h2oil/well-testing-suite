@@ -602,9 +602,10 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   server is configured (on by default on the exact production host since release 4.2 — no ?cloud=1; `?cloud=0` / wtspref_cloud_off
   = device opt-out; sign-in window on first open with Use as guest; sign-up open to everyone, server ACCOUNTS_SIGNUP=open); manual Save / Open from cloud only (automatic sync and the key-level merge are
   v4.0.x, passkeys / historian backup / live-data settings / field-level merge v4.1); no merge tool for two accounts; the server
-  minimum client is 4.0 on our hosting platform (an older page gets 426 on project writes); LinkedIn stays switched off in
-  production until its live tests (plan §13.10 step 13) are recorded in server/core/oidc-providers.js (`pending` emptied) — the
-  owner set OAUTH_LINKEDIN=on on 2026-11-10, the pin gate still keeps it off until then; the weekly export stays in the same EU region; the
+  minimum client is 4.0 on our hosting platform (an older page gets 426 on project writes); LinkedIn is ON since release 4.2
+  (owner decision 2026-11-10; server/core/oidc-providers.js `pending: []`, issuer from LinkedIn's discovery document, PKCE sent
+  but not relied on — the T23 residual accepted, plan Q32 — nonce checked when returned, no forced login: the e-mail code covers
+  public computers and step-up; the owner's first live LinkedIn sign-in after the deploy is the check); the weekly export stays in the same EU region; the
   one-login database keeps separate roles by `SET LOCAL ROLE` (go-live probe `migrate.js --platform`, RUNBOOK step 7); proxy
   signature and client-IP header to be confirmed live (RUNBOOK steps 10 and 12); the CSP stays allow-list only until v4.1; the
   Privacy notice and Terms of Use (v3.4.2) still have owner facts pending (see their top comments). Live set-up (owner decision

@@ -123,6 +123,11 @@ functions-only site (§3N), on the **Free plan**. Consequences, all accepted by 
   `invite` = the invite list only, `off` = no new accounts); providers (Google, LinkedIn) by their `OAUTH_*` switches (both `on`).
   Since release 4.2 the page shows the account UI to every visitor on `https://welltest.h2oil.co.uk/` (no flag; a signed-out
   first visit opens the sign-in dialog). `?cloud=0` hides it on one device (`wtspref_cloud_off`); `?cloud=1` clears that.
+- **One request per new visitor.** Since release 4.2 each signed-out first visit makes one `GET /api/v1/auth/providers` call
+  (after the visitor deals with the cookie banner and the Terms notice, when the first-open sign-in dialog draws its provider
+  buttons; none with `?cloud=0` or while the banner shows). That is one `api` function call per new visitor, plus one database
+  read per provider switched on (the circuit-breaker check). The route has no rate limit of its own and is exempt from the
+  pause switch. Count it against the Free plan's function and database quotas (Usage page) when traffic grows.
 
 ### Step L1 — Secrets (the lead's computer; never in chat, a ticket or the repository)
 ```
@@ -150,7 +155,7 @@ build command needs no secret either way); tick **Contains secret values** for e
 | `WTS_MAIL_CREDENTIAL`\* | the Postmark **Server** API token (step L2) |
 | `WTS_MAIL_FROM` | `no-reply@h2oil.co.uk` (the confirmed sender) |
 | `ACCOUNTS_SIGNUP` | `open` (since release 4.2; `invite` limits new accounts to the invite list) |
-| `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | `on` · `on` (LinkedIn stays off in production until its live tests and pins are recorded, §3P item 7) |
+| `OAUTH_GOOGLE` · `OAUTH_LINKEDIN` | `on` · `on` (LinkedIn pinned since release 4.2; the owner signs in once with LinkedIn after the deploy, §3P item 7) |
 | `WTS_INVITE_BOOTSTRAP` | optional with `open`: the owner's e-mail address (comma-separated for more than one) — see "The invite list" below |
 | `WTS_ADMIN_EMAILS` | optional: the admin addresses (comma-separated); unset = the `WTS_INVITE_BOOTSTRAP` addresses — see "Admin dashboard" below |
 | `SYNC_MODE` | `on` |
@@ -498,14 +503,14 @@ deploy, so the connection string of step 6 never goes into GitHub):
 ### Step 13 — The v4.0 page and the first sign-in
 1. The page must be the v4.0 release (the version under the logo reads **v4.0**): the server refuses project saves from older
    pages (`WTS_MIN_CLIENT` 4.0).
-2. Put yourself on the invite list (from your computer; the four key values are the same as on the site — `WTS_MASTER_KID` is
+2. Only with `ACCOUNTS_SIGNUP=invite` (not needed with `open`, the live setting since release 4.2): put yourself on the invite list (from your computer; the four key values are the same as on the site — `WTS_MASTER_KID` is
    `1` as keygen printed — and the connection string is the one from step 6; the script runs as `wts_support`):
    ```
    cd server
    WTS_SUPPORT_DB_URL='<connection string>' WTS_MASTER_KEYS='…' WTS_MASTER_KID='1' WTS_INDEX_PEPPER='…' WTS_CODE_PEPPERS='…' \
-     node ops/allowlist-add.js --actor support:owner --email name@company.example --note beta
+     node ops/allowlist-add.js --actor support:owner --email name@company.example --note tester
    ```
-   Output: `{"ok":true,…}` — no address is printed. Repeat for each beta tester.
+   Output: `{"ok":true,…}` — no address is printed. Repeat for each tester.
 3. Smoke test: open `https://welltest.h2oil.co.uk/` in a private window → the account chip → **Sign in** → your address
    → the code e-mail arrives within a minute (check its SPF / DKIM / DMARC, step 9.5) → enter the code → accept the terms →
    signed in. Then **Save to cloud** on a small project; open the page in another browser, sign in, **Open from cloud**: the
@@ -538,10 +543,14 @@ show as scheduled. They run only on the published production deploy.
 - **Google**: set `OAUTH_GOOGLE_CLIENT_ID`, `OAUTH_GOOGLE_CLIENT_SECRET`\* and `OAUTH_GOOGLE=on` (new accounts, links and
   sign-ins) — or `signin` (only identities already linked may sign in; no new account, no new link) — then apply the change
   (step 16).
-- **LinkedIn**: set `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`\*, `OAUTH_LINKEDIN=on`. LinkedIn stays **off in
-  production** — whatever the switch says, with an `alert: config` line — until the live tests of plan §13.10 step 13 are
-  recorded in `server/core/oidc-providers.js` (the issuer value, PKCE, nonce and forced-login behaviour; `pending` emptied) and
-  released with a new server tag. The developer does that with you and one real LinkedIn account.
+- **LinkedIn**: set `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`\*, `OAUTH_LINKEDIN=on`. Since release 4.2 its
+  production values are pinned in `server/core/oidc-providers.js` (owner decision 2026-11-10: the issuer from LinkedIn's
+  discovery document; PKCE sent but not relied on — the T23 residual accepted, plan Q32; the nonce checked whenever it comes back;
+  no forced login, so the button is hidden on a public computer and a step-up always uses the e-mail code), so the switch takes
+  effect in production once the client id and secret are set. **Live test after the deploy**: sign in once with LinkedIn
+  yourself (a private window, the LinkedIn button, your own LinkedIn account) and confirm you land signed in and the account
+  page lists the LinkedIn identity; if it fails, set `OAUTH_LINKEDIN=off` (the e-mail code and Google keep working) and tell the
+  developer the reason shown.
 - Check: the sign-in dialog shows the provider's button; sign in once with it; the account page lists the linked identity.
 - Never set `WTS_OIDC_MODE` on this site.
 
@@ -717,7 +726,7 @@ secrets) in §2 "Records".
    welltest.h2oil.co.uk, **Authorised domains**: `h2oil.co.uk`; logo (a logo requires brand verification).
 5. **Data access → Add or remove scopes**: `openid` and `.../auth/userinfo.email` only → Update → Save. (Non-sensitive: no
    security assessment.)
-6. **Audience**: while testing, add the beta testers as **Test users** (at most 100; their grants expire after 7 days). When the
+6. **Audience**: while testing, add the testers as **Test users** (at most 100; their grants expire after 7 days). When the
    branding is ready, **Publish app** (In production) and submit brand verification if asked.
 7. **Clients → Create client** → Application type **Web application** → name `WTS production` → **Authorised JavaScript
    origins**: none → **Authorised redirect URIs → Add URI**: `https://welltest.h2oil.co.uk/api/v1/auth/oauth/google/callback`
@@ -740,8 +749,9 @@ secrets) in §2 "Records".
    and the **Primary Client Secret** into `OAUTH_LINKEDIN_CLIENT_SECRET`\*.
 6. **Never delete and re-create this app**: LinkedIn gives each app its own user ids, so a new app breaks every LinkedIn link
    (`ops/retire-client.js` exists only for that emergency).
-7. The live tests with a real LinkedIn account (plan §13.10 step 13) and the pin update in `core/oidc-providers.js` come before
-   `OAUTH_LINKEDIN` can take effect in production (step 15).
+7. The pins in `core/oidc-providers.js` are recorded since release 4.2 (owner decision 2026-11-10), so `OAUTH_LINKEDIN=on`
+   takes effect in production once the client id and secret are set. After that deploy the owner signs in once with LinkedIn
+   (the live test of plan §13.10 step 13); on a failure set `OAUTH_LINKEDIN=off` and tell the developer the reason shown.
 
 
 ---
@@ -814,9 +824,9 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
     of the analytics tag via `--extra-connect` / `--extra-img` from the vendor notes). Confirm the published set with
     `node prism-build/publish-site.js --check --dir <published folder>` and that `server/`, `docs/`, `tools/` and
     `prism-build/` URLs now answer 404. The CSP is enforced only at the end of Phase 1 (WP-I1), after the reports are clean.
-14. **Providers and beta**: complete plan §13.10 (consoles, verification, live tests), put the pinned values into
-    `core/oidc-providers.js` through a reviewed server release, then set `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` (`signin` or `on`)
-    and add the invited addresses (`ops/allowlist-add.js`). Since release 4.2 no URL flag is needed (`?cloud=0` hides the
+14. **Providers and sign-up**: complete plan §13.10 (consoles, verification; both providers are pinned in
+    `core/oidc-providers.js` since release 4.2), then set `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` (`signin` or `on`) and
+    `ACCOUNTS_SIGNUP=open` (with `invite`, add the invited addresses with `ops/allowlist-add.js`). Since release 4.2 no URL flag is needed (`?cloud=0` hides the
     account UI on one device).
 
 ---
@@ -953,7 +963,7 @@ incident note.
 5. Compare the audit chain heads with the newest `chain/<date>` anchor.
 6. `ACCOUNTS_OFF` unset; incident note (§7).
 
-### 9.3 Restore drill (first before the beta, then quarterly)
+### 9.3 Restore drill (first before opening accounts, then quarterly)
 On a machine with the engine's tools and a **scratch** cluster on loopback (never production):
 ```bash
 WTS_BACKUP_KEY=… WTS_DRILL_ADMIN_URL=<scratch administrator URL> WTS_PG_BIN=<tools folder> \

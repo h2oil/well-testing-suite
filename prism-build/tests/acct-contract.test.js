@@ -539,7 +539,7 @@ module.exports = [
       fake.fault({ path: '/me', mode: 'server' });
       await assert.rejects(A.call('GET', '/me'), (e) => e.code === 'server' && e.status === 500);
       fake.fault({ path: '/auth/providers', mode: 'network' });
-      assert.deepStrictEqual(clone(await A.providers()), { google: 'on', linkedin: 'on' }, 'network error: the buttons show, start decides');
+      assert.deepStrictEqual(clone(await A.providers()), { google: 'off', linkedin: 'off' }, 'network error: no provider button, the e-mail code only (review fix 4.2)');
       fake.fault({ path: '/me', mode: 'network' });
       await assert.rejects(A.call('GET', '/me'), (e) => e.code === 'network' && e.status === 0);
       const sent = fake.requests.filter((r) => r.path === '/api/v1/auth/code/start');

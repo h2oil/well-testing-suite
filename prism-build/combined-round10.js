@@ -4020,7 +4020,9 @@ G.WTS_modbusBridgeSetup = {
 // default (from release 4.2; v4.0 showed them only with the invite-beta flag ?cloud=1): the kill switch ?cloud=0 stores the device opt-out
 // wtspref_cloud_off = '1' (nothing is mounted, registered or requested, as before v4.0) and ?cloud=1 clears it again.
 // GET /me runs only when the device hint says a session exists. A signed-out first visit opens the sign-in dialog itself in
-// its welcome form (first-open, §11.2): that dialog asks GET /auth/providers for its Google / LinkedIn buttons; "Use as
+// its welcome form (first-open, §11.2): that dialog asks GET /auth/providers for its Google / LinkedIn buttons, so since
+// release 4.2 a signed-out first visitor sends that one request when the dialog opens (after the cookie banner and the Terms
+// notice; it carries no cookie and no personal data, and none is sent with ?cloud=0); "Use as
 // guest", Esc, × or a click on the backdrop store the guest choice (device pref, offered again after 30 days).
 //
 // WP-C1 (this file): the guard, configure() seams, the one API client call() (headers, error envelope → WTS_account.Error,
@@ -4032,7 +4034,7 @@ G.WTS_modbusBridgeSetup = {
 //
 // WP-O MOUNT POINTS (provider sign-in, the block near the end of this file): the e-mail step draws an empty
 // <div id="acct_provider_buttons" data-owner="WP-O"> and calls WTS_account.hooks.renderProviders(el, providers, ctx)
-// (GET /auth/providers runs only then); a public sign-out awaits hooks.onPublicSignOut({authMethod}) (the blocking provider
+// (GET /auth/providers runs only then — on a signed-out first visit that is when the first-open dialog opens); a public sign-out awaits hooks.onPublicSignOut({authMethod}) (the blocking provider
 // sign-out step); the provider finish completes a sign-in through completeSignIn, so the hand-over, consent and analytics
 // steps are shared. A load with #acct-oauth and a fresh hint.oauth entry opens the finish dialog (WTS_account.oauthReturn);
 // without the hint entry it is ignored. The account page's Sign-in methods card is mounted by 68 the same way
@@ -4143,17 +4145,17 @@ G.WTS_modbusBridgeSetup = {
   // the outage family: no answer from our API (network, a 5xx without an envelope, or a non-API reply)
   function isOutage(e) { return !!e && (e.code === 'network' || e.code === 'server'); }
 
-  // GET /auth/providers when the sign-in dialog or the Sign-in methods card opens (a user action). On a network error both
-  // buttons show and start decides (§3.3); a reply that is not the API's ('server': no envelope, not JSON) means no server
-  // answers, so both are off.
+  // GET /auth/providers when the sign-in dialog or the Sign-in methods card opens (since 4.2 also when the first-open dialog
+  // opens on a signed-out first visit). On a network error, or a reply that is not the API's ('server': no envelope, not
+  // JSON), no server answers, so both are off: the welcome form and the chip's sign-in form show the e-mail code only (a
+  // provider button could not start anyway — start is a call to the same API; review fix 4.2, it used to show both).
   function providers() {
     return call('GET', '/auth/providers').then(function (r) {
       var o = {};
       PROVIDERS.forEach(function (p) { var v = r.json && r.json[p]; o[p] = (v === 'on' || v === 'signin') ? v : 'off'; });
       return o;
     }, function (e) {
-      if (e && e.code === 'network') return { google: 'on', linkedin: 'on' };
-      if (e && e.code === 'server') return { google: 'off', linkedin: 'off' };
+      if (e && (e.code === 'network' || e.code === 'server')) return { google: 'off', linkedin: 'off' };
       throw e;
     });
   }
@@ -4597,14 +4599,24 @@ G.WTS_modbusBridgeSetup = {
   // The sign-in entry step — also the first-open (welcome) form. Top to bottom: Google / LinkedIn (only those the server's
   // GET /auth/providers says are on), "or", the e-mail field and Send code, "Use as guest", the create-account / sign-in
   // switch and the public-computer tick. The provider area keeps its height while the answer is pending (no layout shift).
+  // The sign-in / sign-up subtitles name only the providers whose buttons are drawn (GET /auth/providers): e-mail-only wording
+  // until the answer arrives and when no provider is on or the server cannot be reached (review fix 4.2).
   var SUB = {
-    welcome: 'Save your projects to your account in the cloud and open them on any device, with full history.',
-    signin: 'Use Google, LinkedIn or a one-time code sent to your e-mail — no password needed.',
-    signup: 'It is free. Use Google, LinkedIn or your e-mail address — no password needed.',
+    welcome: 'Save your projects to your account in the cloud and open them on any device, with a history of earlier saves.',
+    signin: function (names) {
+      return names && names.length ? 'Use ' + names.join(', ') + ' or a one-time code sent to your e-mail — no password needed.'
+        : 'Use a one-time code sent to your e-mail — no password needed.';
+    },
+    signup: function (names) {
+      return names && names.length ? 'It is free. Use ' + names.join(', ') + ' or your e-mail address — no password needed.'
+        : 'It is free. Use your e-mail address — no password needed.';
+    },
   };
+  var PROV_NAME = { google: 'Google', linkedin: 'LinkedIn' };
+  function subFor(names) { return dlg.signup ? SUB.signup(names) : dlg.welcome ? SUB.welcome : SUB.signin(names); }
   function drawEmail(b, data) {
     setTitle(dlg.signup ? 'Create your free account' : dlg.welcome ? 'Sign in to keep your work safe' : 'Sign in to Well Testing Suite');
-    setSub(dlg.signup ? SUB.signup : dlg.welcome ? SUB.welcome : SUB.signin);
+    setSub(subFor([]));
     b.innerHTML =
       '<div id="acct_provider_buttons" class="acct-providers" data-owner="WP-O"></div>' +
       '<div class="acct-or" id="acct_or">or</div>' +
@@ -4672,6 +4684,11 @@ G.WTS_modbusBridgeSetup = {
       return Promise.resolve(drawn).then(null, function () { return null; }).then(function () {
         var el3 = $('acct_provider_buttons'); if (!el3) return;
         var any = !!(el3.querySelector && el3.querySelector('.acct-prov-btn'));
+        var names = [];
+        if (any && el3.querySelectorAll) {
+          PROVIDERS.forEach(function (p) { if (el3.querySelector('.acct-prov-btn[data-provider="' + p + '"]')) names.push(PROV_NAME[p] || p); });
+        }
+        if (dlg.step === 'email') setSub(subFor(names));
         el3.style.minHeight = ''; el3.removeAttribute('aria-busy');
         el3.hidden = !any;
         var or2 = $('acct_or'); if (or2) or2.className = 'acct-or' + (any ? '' : ' acct-or--none');
@@ -5723,7 +5740,11 @@ G.WTS_modbusBridgeSetup = {
             text: 'You will also be signed in to Google / LinkedIn in this browser — sign out of it too when you finish.' }));
         }
         // o.compact (the sign-in dialog, whose e-mail field follows right below): no "use the e-mail code" line
-        if (any && !o.compact) wrap.appendChild(el('div', { 'class': 'acct-prov-note', style: 'font-size:13px', text: "Can't use Google or LinkedIn? Use the e-mail code." }));
+        if (any && !o.compact) {
+          var drawnNames = PROVIDERS.filter(function (p) { return !!wrap.querySelector('.acct-prov-btn[data-provider="' + p + '"]'); })
+            .map(function (p) { return NAME[p]; });
+          wrap.appendChild(el('div', { 'class': 'acct-prov-note', style: 'font-size:13px', text: "Can't use " + drawnNames.join(' or ') + '? Use the e-mail code.' }));
+        }
         if (offline()) Array.prototype.forEach.call(wrap.querySelectorAll('.acct-prov-btn'), function (b) { b.disabled = true; b.setAttribute('title', 'needs a connection'); });
         host.appendChild(wrap);
         return st;
@@ -5789,7 +5810,7 @@ G.WTS_modbusBridgeSetup = {
     }
     function showError(msg) {
       show([el('p', { 'class': 'acct-oauth-error', role: 'alert', text: msg }),
-        el('p', { style: 'font-size:13px', text: "Can't use Google or LinkedIn? Use the e-mail code." }),
+        el('p', { style: 'font-size:13px', text: 'Use the e-mail code instead: a one-time code sent to your e-mail address.' }),
         btn('acct_oauth_close', 'Close', true, function () { closeDialog(); })]);
     }
     function restoreRoute(oa) {

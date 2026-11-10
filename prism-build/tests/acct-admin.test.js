@@ -167,7 +167,7 @@ module.exports = [
         assert.strictEqual(d.getAttribute('role'), 'dialog'); assert.strictEqual(d.getAttribute('aria-modal'), 'true');
         assert(/acct-modal/.test(d.className) && /acct-ov--modal/.test(ov.className), 'the centred modal card');
         assert.strictEqual(t.text('acct_dlg_t'), 'Sign in to keep your work safe');
-        assert(/Save your projects to your account in the cloud and open them on any device, with full history\./.test(t.text('acct_dlg_sub')), 'the value line');
+        assert(/Save your projects to your account in the cloud and open them on any device, with a history of earlier saves\./.test(t.text('acct_dlg_sub')), 'the value line');
         const txt = d.textContent;
         assert(!/all your projects are kept|never lose work|own secure cloud database/.test(txt), 'no claim of automatic keeping or a database of one\'s own');
         assert.strictEqual(t.text('acct_guest'), 'Use as guest');
@@ -253,7 +253,52 @@ module.exports = [
         await t5.until(() => !t5.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered again');
         assert.strictEqual(t5.a.findAll('.acct-prov-btn').length, 0, 'none on: no button');
         assert(t5.el('acct_provider_buttons').hidden && /acct-or--none/.test(t5.el('acct_or').className), 'the area and the divider collapse');
+        assert.strictEqual(t5.text('acct_dlg_sub'), 'It is free. Use your e-mail address — no password needed.', 'no provider on: the e-mail-only sign-up line');
+        t5.click('acct_guest');
+        t5.acct().openSignIn();
+        await t5.until(() => t5.el('acct_provider_buttons') && !t5.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered (sign in)');
+        assert.strictEqual(t5.text('acct_dlg_sub'), 'Use a one-time code sent to your e-mail — no password needed.', 'no provider on: the e-mail-only sign-in line');
       } finally { t5.dispose(); }
+      // Google only (LinkedIn switched off): the subtitles never name LinkedIn
+      const s6 = settledStore();
+      const t6 = boot(ctx, { welcome: true, storage: s6, switches: { OAUTH_GOOGLE: 'on', OAUTH_LINKEDIN: 'off' } });
+      try {
+        t6.a.flush(10);
+        await t6.until(() => !t6.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered');
+        assert.deepStrictEqual(t6.a.findAll('.acct-prov-btn').map((b) => b.getAttribute('data-provider')), ['google']);
+        assert(!/LinkedIn/.test(t6.el('acct_dlg').textContent), 'the first-open form never names LinkedIn');
+        t6.click('acct_mode');
+        await t6.until(() => !t6.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered (sign up)');
+        assert.strictEqual(t6.text('acct_dlg_sub'), 'It is free. Use Google or your e-mail address — no password needed.');
+        assert(!/LinkedIn/.test(t6.el('acct_dlg').textContent), 'sign-up form: no LinkedIn');
+        t6.click('acct_guest');
+        t6.acct().openSignIn();
+        await t6.until(() => t6.el('acct_provider_buttons') && !t6.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered (sign in)');
+        assert.strictEqual(t6.text('acct_dlg_sub'), 'Use Google or a one-time code sent to your e-mail — no password needed.');
+        assert(!/LinkedIn/.test(t6.el('acct_dlg').textContent), 'chip sign-in form: no LinkedIn');
+      } finally { t6.dispose(); }
+      // both on: both named; the server cannot be reached (network error): no provider button, e-mail-only wording (review fix 4.2)
+      const s7 = settledStore();
+      const t7 = boot(ctx, { welcome: true, storage: s7, switches: { OAUTH_GOOGLE: 'on', OAUTH_LINKEDIN: 'on' } });
+      try {
+        t7.fake.fault({ path: '/auth/providers', mode: 'network' });
+        t7.a.flush(10);
+        await t7.until(() => !t7.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers failed (welcome)');
+        assert.strictEqual(t7.a.findAll('.acct-prov-btn').length, 0, 'network error: the welcome form shows the e-mail code only');
+        assert(t7.el('acct_provider_buttons').hidden && /acct-or--none/.test(t7.el('acct_or').className), 'the area and the divider collapse');
+        assert(!/LinkedIn|Google/.test(t7.el('acct_dlg').textContent), 'no provider named');
+        t7.click('acct_mode');
+        await t7.until(() => !t7.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered (sign up)');
+        assert.deepStrictEqual(t7.a.findAll('.acct-prov-btn').map((b) => b.getAttribute('data-provider')), ['google', 'linkedin']);
+        assert.strictEqual(t7.text('acct_dlg_sub'), 'It is free. Use Google, LinkedIn or your e-mail address — no password needed.');
+        t7.click('acct_guest');
+        t7.fake.fault({ path: '/auth/providers', mode: 'network' });
+        t7.acct().openSignIn();
+        await t7.until(() => t7.el('acct_provider_buttons') && !t7.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers failed (sign in)');
+        assert.strictEqual(t7.a.findAll('.acct-prov-btn').length, 0, 'network error: the chip sign-in form shows the e-mail code only');
+        assert.strictEqual(t7.text('acct_dlg_sub'), 'Use a one-time code sent to your e-mail — no password needed.');
+        assert(t7.el('acct_email'), 'the e-mail field is there');
+      } finally { t7.dispose(); }
     },
   },
   {
