@@ -291,6 +291,15 @@ module.exports = [
         await t7.until(() => !t7.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered (sign up)');
         assert.deepStrictEqual(t7.a.findAll('.acct-prov-btn').map((b) => b.getAttribute('data-provider')), ['google', 'linkedin']);
         assert.strictEqual(t7.text('acct_dlg_sub'), 'It is free. Use Google, LinkedIn or your e-mail address — no password needed.');
+        // the public-computer tick hides LinkedIn (no forced login): the "also signed in to" note names only Google
+        t7.a.check('acct_public', true);
+        await t7.until(() => !t7.el('acct_provider_buttons').getAttribute('aria-busy') && t7.a.findAll('.acct-prov-btn').length === 1, 'providers redrawn (tick)');
+        assert.deepStrictEqual(t7.a.findAll('.acct-prov-btn').map((b) => b.getAttribute('data-provider')), ['google'], 'tick: Google only');
+        const pubNote = t7.a.findAll('.acct-prov-public').map((n) => n.textContent).join(' ');
+        assert(/also be signed in to Google in this browser/.test(pubNote), 'tick note names Google: ' + pubNote);
+        assert(!/LinkedIn/.test(t7.el('acct_dlg').textContent), 'tick set, both providers on: the dialog never names LinkedIn');
+        t7.a.check('acct_public', false);
+        await t7.until(() => !t7.el('acct_provider_buttons').getAttribute('aria-busy') && t7.a.findAll('.acct-prov-btn').length === 2, 'providers redrawn (tick cleared)');
         t7.click('acct_guest');
         t7.fake.fault({ path: '/auth/providers', mode: 'network' });
         t7.acct().openSignIn();

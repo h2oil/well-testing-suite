@@ -5735,14 +5735,15 @@ G.WTS_modbusBridgeSetup = {
           if (st[p] === 'signin') wrap.appendChild(el('div', { 'class': 'acct-prov-note', text: 'existing accounts only', style: 'margin:-4px 0 8px 0;font-size:13px' }));
         });
         var any = !!wrap.querySelector('.acct-prov-btn');
+        // name only the providers actually drawn (finding 1: never a provider that is off or hidden by the tick)
+        var drawnNames = PROVIDERS.filter(function (p) { return !!wrap.querySelector('.acct-prov-btn[data-provider="' + p + '"]'); })
+          .map(function (p) { return NAME[p]; });
         if (fresh && any) {
           wrap.appendChild(el('div', { 'class': 'acct-prov-note acct-prov-public', style: 'font-size:13px;margin:0 0 8px 0',
-            text: 'You will also be signed in to Google / LinkedIn in this browser — sign out of it too when you finish.' }));
+            text: 'You will also be signed in to ' + drawnNames.join(' / ') + ' in this browser — sign out of it too when you finish.' }));
         }
         // o.compact (the sign-in dialog, whose e-mail field follows right below): no "use the e-mail code" line
         if (any && !o.compact) {
-          var drawnNames = PROVIDERS.filter(function (p) { return !!wrap.querySelector('.acct-prov-btn[data-provider="' + p + '"]'); })
-            .map(function (p) { return NAME[p]; });
           wrap.appendChild(el('div', { 'class': 'acct-prov-note', style: 'font-size:13px', text: "Can't use " + drawnNames.join(' or ') + '? Use the e-mail code.' }));
         }
         if (offline()) Array.prototype.forEach.call(wrap.querySelectorAll('.acct-prov-btn'), function (b) { b.disabled = true; b.setAttribute('title', 'needs a connection'); });
