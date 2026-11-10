@@ -82,7 +82,7 @@ function boot(ctx, o) {
 // a storage where the consent banner and the Terms notice are already dealt with
 function settledStore(extra) {
   return T.createStorage(Object.assign({ wtspref_cloud_beta: '1', wtspref_terms_seen: JSON.stringify({ v: 1, at: Date.now() }),
-    wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) }, extra || {}));
+    wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 3, at: Date.now() }) }, extra || {}));
 }
 async function signedIn(ctx, o) {
   const t = boot(ctx, o);
@@ -277,7 +277,7 @@ module.exports = [
         }
       } finally { t.dispose(); }
       // Terms notice open → waits; OK → shows
-      const s2 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
+      const s2 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 3, at: Date.now() }) });
       const t2 = boot(ctx, { welcome: true, storage: s2 });
       try {
         t2.a.flush(10);
@@ -290,7 +290,7 @@ module.exports = [
       } finally { t2.dispose(); }
       // excluded routes: the Terms notice holds the dialog, the visitor goes to Help and presses OK there → still waits (route);
       // Privacy and Account wait too; the next page change to another route shows it
-      const s3 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
+      const s3 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 3, at: Date.now() }) });
       const t3 = boot(ctx, { welcome: true, storage: s3 });
       try {
         t3.a.flush(10);
@@ -339,12 +339,12 @@ module.exports = [
         assert.strictEqual(t.text('acct_mode'), 'Sign in');
         assert(t.el('acct_provider_buttons'), 'Google / LinkedIn mount point is there too');
         assert(t.el('acct_guest'), 'the guest button stays');
-        // a wrong code on the sign-up path names the invitation route
+        // a wrong code on the sign-up path: the ordinary code message (sign-up is open; no invitation route)
         t.a.input('acct_email', 'new@company.example'); t.click('acct_send');
         await t.until(() => t.el('acct_code'), 'code step');
         assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup', 'Send stores the choice');
         assert(/new@company\.example/.test(t.text('acct_dlg_sub')), 'the code step names the address');
-        assert(/your address may not be invited yet: write to software@h2oil\.co\.uk/.test(t.text('acct_code_invite')), 'code step: invitation hint on the sign-up path');
+        assert(!t.el('acct_code_invite') && !/invit/i.test(t.text('acct_dlg_body') || ''), 'code step: no invitation hint (sign-up is open)');
         // Tab on the code step with the FAQ closed: the FAQ's summary is the last stop, then the close button (the
         // recovery button inside the closed <details> is not rendered, so it is never a stop)
         t.el('acct_faq').open = false;
@@ -357,7 +357,7 @@ module.exports = [
         assert.strictEqual(t.w.document.activeElement, summ, 'Shift+Tab from the close button goes back to the FAQ summary');
         t.a.input('acct_code', '00000000'); t.click('acct_verify');
         await t.until(() => /acct-msg--err/.test(t.el('acct_msg').className), 'error');
-        assert(/New accounts may need an invitation/.test(t.text('acct_msg')), t.text('acct_msg'));
+        assert(/That code is wrong or has expired/.test(t.text('acct_msg')) && !/invitation/.test(t.text('acct_msg')), t.text('acct_msg'));
         t.click('acct_dlg_x');
         assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup', 'closing after a started sign-in is not a guest choice');
         // the ordinary sign-in afterwards has the ordinary title and message

@@ -14,7 +14,8 @@
 //      delete again, the grace passes, the daily job purges it (ledger written, nothing left)
 //   E5 the local dev server (server/dev.js) over real HTTP on 127.0.0.1: a page origin on localhost signs up by code, reads
 //      /me and signs out; another origin is refused
-//   E6 with no server configured the page behaves as v3.4 (no chip, no request); the iOS bundle of this build carries none of it
+//   E6 with no server configured: on by default the chip mounts but no request is made; ?cloud=0 behaves as v3.4; the iOS bundle
+//      of this build carries none of it
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -389,8 +390,9 @@ test.describe('Phase 1 end to end: page ↔ API ↔ database ↔ fake providers 
     } finally { await srv.close(); }
   });
 
-  test('E6 no server configured: the page behaves as v3.4 (no chip, no request); the iOS bundle carries none of it', async () => {
-    // the live site today: production host, no beta flag, nothing answering /api/v1 (a static host's page fallback)
+  test('E6 no server configured: on by default the chip mounts but nothing is requested; ?cloud=0 behaves as v3.4; the iOS bundle carries none of it', async () => {
+    // a production host with nothing answering /api/v1 (a static host's page fallback). Since release 4.2 accounts are on by
+    // default there: the chip mounts, but a signed-out first visit makes no request while the Terms notice is up
     const calls = [];
     const fetch = (u) => { calls.push(String(u)); return Promise.resolve({ status: 200, ok: true, headers: { get: () => 'text/html' }, json: () => Promise.reject(new Error('html')), text: () => Promise.resolve('<html>') }); };
     const app = harness.loadApp({ fromSources: true, console: 'capture', timers: 'manual', globals: { fetch, location: F.prodLocation() } });
@@ -398,9 +400,19 @@ test.describe('Phase 1 end to end: page ↔ API ↔ database ↔ fake providers 
       app.flush(10000);
       assert.strictEqual(app.win.WTS_account.eligible, true, 'the guard admits the production host');
       assert.strictEqual(calls.filter((u) => u.includes('/api/v1')).length, 0, 'no request to the API');
-      for (const id of ['acct_chip', 'acct_dlg_ov', 'wts_sync_bar', 'acct_css']) assert.strictEqual(app.el(id), null, 'no ' + id);
-      assert(!app.win.WTS_calcRegistry || !app.win.WTS_calcRegistry.account, 'the account page is not registered');
+      assert(app.el('acct_chip'), 'on by default: the chip is mounted');
+      assert.strictEqual(app.el('wts_sync_bar'), null, 'no sync bar while signed out');
     } finally { app.dispose(); }
+    // the device opt-out (?cloud=0): exactly the v3.4 page
+    const calls0 = [];
+    const fetch0 = (u) => { calls0.push(String(u)); return fetch(u); };
+    const app0 = harness.loadApp({ fromSources: true, console: 'capture', timers: 'manual', globals: { fetch: fetch0, location: Object.assign(F.prodLocation(), { search: '?cloud=0' }) } });
+    try {
+      app0.flush(10000);
+      assert.strictEqual(calls0.filter((u) => u.includes('/api/v1')).length, 0, '?cloud=0: no request to the API');
+      for (const id of ['acct_chip', 'acct_dlg_ov', 'wts_sync_bar', 'acct_css']) assert.strictEqual(app0.el(id), null, '?cloud=0: no ' + id);
+      assert(!app0.win.WTS_calcRegistry || !app0.win.WTS_calcRegistry.account, '?cloud=0: the account page is not registered');
+    } finally { app0.dispose(); }
     // the iOS bundle of this build: the real sync script strips every account block
     const html = harness.buildFromSources({ silent: true }).html;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-ios-'));

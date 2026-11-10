@@ -168,7 +168,7 @@
       '<div class="adm-bar" style="margin-top:8px"><button type="button" class="btn btn-secondary" id="adm_more" hidden>Load more</button>' +
       '<span class="adm-sub" id="adm_users_count"></span></div><div id="adm_users_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
       '<div class="card" id="adm_card_invite"><div class="card-title">Invite someone</div>' +
-      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account (sign-ups are by invitation). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
+      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account while sign-up is set to invitation only (with open sign-up anyone can create an account and the list is not needed). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
       '<div class="fg-grid2"><div><label for="adm_inv_email">E-mail address</label><input type="email" id="adm_inv_email" maxlength="254" autocomplete="off" spellcheck="false"></div>' +
       '<div><label for="adm_inv_note">Note (optional)</label><input type="text" id="adm_inv_note" maxlength="200" autocomplete="off"></div></div>' +
       '<div class="adm-bar" style="margin-top:10px"><button type="button" class="btn btn-primary" id="adm_inv_send">Add invitation</button></div>' +

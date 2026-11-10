@@ -184,7 +184,7 @@ module.exports = [
       const loader = scripts[1];
       assert.ok(!/<script[^>]*\bsrc=/.test(block), 'no static tag left');
       const now = Date.UTC(2026, 10, 8, 12, 0, 0);
-      const GRANTED = { choice: 'granted', v: 2, at: now - 864e5 };
+      const GRANTED = { choice: 'granted', v: 3, at: now - 864e5 };
       const runWith = (hint, opts) => {
         const consent = (opts && 'consent' in opts) ? opts.consent : GRANTED;
         const appended = [];
@@ -215,7 +215,7 @@ module.exports = [
       assert.strictEqual(r.appended.length, 0);
       r = runWith(null, { consent: null });
       assert.strictEqual(r.loaded, false, 'no consent → not loaded'); assert.strictEqual(r.appended.length, 0);
-      r = runWith(null, { consent: { choice: 'denied', v: 2, at: now } });
+      r = runWith(null, { consent: { choice: 'denied', v: 3, at: now } });
       assert.strictEqual(r.loaded, false, 'rejected → not loaded'); assert.strictEqual(r.appended.length, 0);
       r = runWith({ signedIn: true, v: 3 }, { consent: GRANTED });
       assert.strictEqual(r.loaded, false, 'signed in → skipped even with consent');

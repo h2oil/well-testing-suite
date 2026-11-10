@@ -4324,9 +4324,6 @@ G.WTS_modbusBridgeSetup = {
   function errText(e) {
     if (!e) return 'Something went wrong. Try again.';
     if (e.code === 'rate') return 'Too many attempts. Try again in ' + Math.max(1, Math.round(e.retryAfter || 30)) + ' s.';
-    // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
-    // revealed), so the text says what a new visitor can do
-    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts may need an invitation: if you have none yet, write to ' + SUPPORT + '.';
     if (isProfileErr(e)) return profileErrText(e);
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
@@ -4721,9 +4718,6 @@ G.WTS_modbusBridgeSetup = {
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Sign in</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' +
-      // sign-up path in invite mode: an address that is not invited gets the same answer but no e-mail (server auth.js),
-      // so say where an invitation comes from before the visitor waits for a code that is never sent
-      (dlg.signup ? '<p class="acct-note acct-c" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
       codeFaq(false);
     $('acct_verify').addEventListener('click', function () { verifyCode(); });
     $('acct_code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') verifyCode(); });
@@ -5650,7 +5644,8 @@ G.WTS_modbusBridgeSetup = {
       var T = {
         oauth_state: 'Sign-in was interrupted — try again.',
         provider_off: N + ' sign-in is not available right now — use the e-mail code.',
-        not_invited: 'The beta is invite-only. Sign in with the address you were invited with, or use the e-mail code.',
+        // only with ACCOUNTS_SIGNUP=invite on the server (sign-up is open on the live site since release 4.2)
+        not_invited: 'New accounts are by invitation only right now. Sign in with the address you were invited with, or use the e-mail code.',
         signup_closed: 'New accounts are not open right now. Existing accounts can still sign in.',
         locked: 'This account is locked. Please contact software@h2oil.co.uk.',
         identity_in_use: 'This ' + N + ' account is linked to another Well Testing Suite account.',
@@ -8239,7 +8234,7 @@ G.WTS_modbusBridgeSetup = {
       '<div class="adm-bar" style="margin-top:8px"><button type="button" class="btn btn-secondary" id="adm_more" hidden>Load more</button>' +
       '<span class="adm-sub" id="adm_users_count"></span></div><div id="adm_users_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
       '<div class="card" id="adm_card_invite"><div class="card-title">Invite someone</div>' +
-      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account (sign-ups are by invitation). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
+      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account while sign-up is set to invitation only (with open sign-up anyone can create an account and the list is not needed). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
       '<div class="fg-grid2"><div><label for="adm_inv_email">E-mail address</label><input type="email" id="adm_inv_email" maxlength="254" autocomplete="off" spellcheck="false"></div>' +
       '<div><label for="adm_inv_note">Note (optional)</label><input type="text" id="adm_inv_note" maxlength="200" autocomplete="off"></div></div>' +
       '<div class="adm-bar" style="margin-top:10px"><button type="button" class="btn btn-primary" id="adm_inv_send">Add invitation</button></div>' +

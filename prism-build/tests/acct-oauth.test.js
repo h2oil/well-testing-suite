@@ -279,7 +279,7 @@ module.exports = [
       assert.strictEqual(stepups, 1, 'reauth → a code step-up'); assert.strictEqual(un.ok, true);
       // statuses, each in plain words
       const cases = [
-        ['not_invited', () => fake.setSwitch('ACCOUNTS_SIGNUP', 'invite'), 'invite-only'],
+        ['not_invited', () => fake.setSwitch('ACCOUNTS_SIGNUP', 'invite'), 'by invitation only'],
         ['signup_closed', () => fake.setSwitch('ACCOUNTS_SIGNUP', 'off'), 'New accounts are not open'],
       ];
       for (const [code, set, words] of cases) {

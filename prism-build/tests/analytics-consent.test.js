@@ -109,7 +109,7 @@ module.exports = [
       assert.strictEqual(p.appended.length, 1, 'tag appended once');
       assert.ok(/^https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-/.test(p.appended[0].src) && p.appended[0].async === true);
       assert.strictEqual(p.sb.__wtsGaLoaded, true);
-      assert.deepStrictEqual(JSON.parse(st.m[KEY]), { choice: 'granted', v: 2, at: p.now }, 'stored with the notice version');
+      assert.deepStrictEqual(JSON.parse(st.m[KEY]), { choice: 'granted', v: 3, at: p.now }, 'stored with the notice version');
       assert.strictEqual(p.box.hidden, true, 'banner hidden');
       p.sb.WTS_consent.set('granted');
       assert.strictEqual(p.appended.length, 1, 'never twice');
@@ -141,14 +141,14 @@ module.exports = [
     name: 'CB4-CB6 choice persists; re-asked after 12 months / new notice version; storage blocked; signed in → no banner, no tag; open / Escape', wp: WP, opts: false,
     run(app, assert) {
       const now = Date.UTC(2026, 10, 9, 12, 0, 0);
-      let p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 2, at: now - 30 * 864e5 }) }));
+      let p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 3, at: now - 30 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 1, 'granted earlier → tag at start'); assert.strictEqual(p.box.hidden, true, 'no banner');
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 2, at: now - 30 * 864e5 }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 3, at: now - 30 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 0, 'denied earlier → none'); assert.strictEqual(p.box.hidden, true, 'no banner');
       // CB5 expiry and version
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 2, at: now - 366 * 864e5 }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 3, at: now - 366 * 864e5 }) }));
       assert.strictEqual(p.appended.length, 0, 'expired → no tag'); assert.strictEqual(p.box.hidden, false, 'expired → asked again');
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 1, at: now }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'granted', v: 2, at: now }) }));
       assert.strictEqual(p.appended.length, 0, 'older notice version → no tag'); assert.strictEqual(p.box.hidden, false, 'asked again');
       p = makePage(memStore({ [KEY]: '{not json' }));
       assert.strictEqual(p.appended.length, 0); assert.strictEqual(p.box.hidden, false, 'unreadable → asked');
@@ -166,7 +166,7 @@ module.exports = [
       assert.strictEqual(p.appended.length, 0, 'signed in → no tag even after accepting');
       assert.strictEqual(JSON.parse(st.m[KEY]).choice, 'granted', 'the choice is still stored for later');
       // open / Escape / focus
-      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 2, at: now }) }));
+      p = makePage(memStore({ [KEY]: JSON.stringify({ choice: 'denied', v: 3, at: now }) }));
       assert.strictEqual(p.box.hidden, true);
       p.sb.WTS_consent.open();
       assert.strictEqual(p.box.hidden, false, 'open() shows it'); assert.ok(p.acc.focused >= 1, 'focus on Accept');
@@ -240,8 +240,8 @@ module.exports = [
         const body = s.replace(/<!--[\s\S]*?-->/g, '');
         const urls = (body.match(/https?:\/\/[^\s"'<),]+/g) || []);
         assert.deepStrictEqual(urls.filter((u) => !/^https:\/\/welltest\.h2oil\.co\.uk(\/|$)/.test(u)), [], f + ': only the app address');
-        assert.includes(s, 'Last updated: 9 November 2026');
-        assert.ok(f === 'privacy.html' ? /Privacy notice version 2/.test(s) : /Terms of Use version 1/.test(s), f + ' version string');
+        assert.includes(s, 'Last updated: 10 November 2026');
+        assert.ok(f === 'privacy.html' ? /Privacy notice version 3/.test(s) : /Terms of Use version 1/.test(s), f + ' version string');
         assert.includes(s, 'prefers-color-scheme: light');
         assert.includes(s, 'href="well-testing-app.html"');
         assert.includes(s, f === 'privacy.html' ? 'href="terms.html"' : 'href="privacy.html"');
@@ -253,7 +253,7 @@ module.exports = [
         assert.includes(s, 'H2Oil Engineering, a company licensed in Dubai, United Arab Emirates', f);
         // the public source comment is only the version line (open items live in docs/LEGAL-OWNER-NOTES.md, not published)
         const cm = (s.match(/<!--([\s\S]*?)-->/) || [])[1] || '';
-        assert.ok(new RegExp('version ' + (f === 'privacy.html' ? '2' : '1') + ' \\(9 November 2026\\)').test(cm) && /Change together/.test(cm), f + ': version comment');
+        assert.ok(new RegExp(f === 'privacy.html' ? 'version 3 \\(10 November 2026\\)' : 'version 1 \\(9 November 2026\\)').test(cm) && /Change together/.test(cm), f + ': version comment');
         assert.ok(!/DRAFT|LEGAL ADVICE|dev-87qwkg|LICENSE|DMCC|JAFZA|DSO|ADGM/.test(cm), f + ': no review notes in the public comment');
         // every in-page anchor exists
         const ids = new Set(Array.from(s.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));
@@ -264,18 +264,22 @@ module.exports = [
       const p = pages['privacy.html'];
       // nothing the owner has not done yet is stated as done (DPAs, breach plan); link labels are disclosed
       assert.ok(!/We have a plan for handling security incidents|Our contracts with processors include|It acts as our processor/.test(p), 'no unconfirmed present-tense claims');
-      assert.ok(/Before we invite anyone outside H2Oil to the account trial, our contracts with the hosting and e-mail processors will include/.test(p) && /visible label of the menu item or link clicked/.test(p), 'future-tense safeguards; link labels disclosed');
+      // version 3 (owner confirmation 2026-11-10): the processors' standard data processing terms apply, with the safeguards
+      // they provide; no "before we invite anyone outside H2Oil" promise is left
+      assert.ok(/process personal data for us under their standard data processing terms/.test(p) && /include the safeguards for international transfers that they provide/.test(p) && /visible label of the menu item or link clicked/.test(p), 'standard data processing terms; link labels disclosed');
+      assert.ok(!/Before we invite anyone outside H2Oil|invitation-only trial|If you are invited/.test(p), 'privacy.html: open sign-up, no invitation-only trial');
       for (const s of ['id="cookies"', '<code>_ga</code>', '<code>' + KEY + '</code>', '<code>__Host-wts_sid</code>', 'Limited Use requirements',
         'id="retention"', 'id="rights"', 'id="complaints"', 'Information Commission', 'Cookie settings', 'only if you accept',
         'the data-protection law of the United Arab Emirates that applies to us', 'the UAE data-protection authority that supervises us',
         'Up to 14 months', 'then up to 2 years', 'Our account database is in the United States', 'file storage in the European Union (Frankfurt, Germany)',
-        'storing your account data in the United States is a transfer outside the UK and the EU', 'invitation-only trial']) assert.includes(p, s);
-      // the account trial is running: no "when accounts launch" future tense left, and no UK / EU-only storage claim
+        'storing your account data in the United States is a transfer outside the UK and the EU', 'Anyone can create an account on the website']) assert.includes(p, s);
+      // accounts are open: no "when accounts launch" future tense left, and no UK / EU-only storage claim
       assert.ok(!/when (accounts|they) launch|accounts are not open yet|stored in the UK or the EU/i.test(p), 'storage and status match the live set-up');
       assert.includes(p, 'the account server that handles your account requests (your e-mail address, sign-in codes and IP address) also runs in the United States');
-      // terms.html states the same status: the trial is running
+      // terms.html states the same status: sign-up is open
       assert.ok(!/not open yet|will be offered only to invited users/i.test(pages['terms.html']), 'terms.html: no "not open yet"');
-      assert.includes(pages['terms.html'], 'invitation-only trial');
+      assert.includes(pages['terms.html'], 'Anyone who is 18 or over can create one on the website');
+      assert.ok(!/invitation-only trial/.test(pages['terms.html']), 'terms.html: open sign-up');
       assert.ok(!/we have appointed|switched off Google signals|Arabic version/i.test(p.replace(/<!--[\s\S]*?-->/g, '')), 'no unconfirmed claim in the visible text');
       // cross-page anchors used by terms.html exist in privacy.html
       const pids = new Set(Array.from(p.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1]));

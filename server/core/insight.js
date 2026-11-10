@@ -146,7 +146,7 @@ function top(values, max) {
 
 // consentCurrent(row, config) — the account accepted the current Privacy notice (users.privacy_version ≥ config.privacy; the
 // versions are numbers in text, anything else must match exactly). The profile and the project summaries are collected and
-// shown to the operator only under the notice that describes them (privacy version 2): an account that accepted an older
+// shown to the operator only under the notice that describes them (privacy version 2 and later): an account that accepted an older
 // version stores neither until it accepts the current one at its next sign-in (review fix).
 function consentCurrent(row, config) {
   if (!row || !config) return false;

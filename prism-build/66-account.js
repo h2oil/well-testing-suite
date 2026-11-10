@@ -310,9 +310,6 @@
   function errText(e) {
     if (!e) return 'Something went wrong. Try again.';
     if (e.code === 'rate') return 'Too many attempts. Try again in ' + Math.max(1, Math.round(e.retryAfter || 30)) + ' s.';
-    // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
-    // revealed), so the text says what a new visitor can do
-    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts may need an invitation: if you have none yet, write to ' + SUPPORT + '.';
     if (isProfileErr(e)) return profileErrText(e);
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
@@ -707,9 +704,6 @@
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Sign in</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' +
-      // sign-up path in invite mode: an address that is not invited gets the same answer but no e-mail (server auth.js),
-      // so say where an invitation comes from before the visitor waits for a code that is never sent
-      (dlg.signup ? '<p class="acct-note acct-c" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
       codeFaq(false);
     $('acct_verify').addEventListener('click', function () { verifyCode(); });
     $('acct_code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') verifyCode(); });
@@ -1636,7 +1630,8 @@
       var T = {
         oauth_state: 'Sign-in was interrupted — try again.',
         provider_off: N + ' sign-in is not available right now — use the e-mail code.',
-        not_invited: 'The beta is invite-only. Sign in with the address you were invited with, or use the e-mail code.',
+        // only with ACCOUNTS_SIGNUP=invite on the server (sign-up is open on the live site since release 4.2)
+        not_invited: 'New accounts are by invitation only right now. Sign in with the address you were invited with, or use the e-mail code.',
         signup_closed: 'New accounts are not open right now. Existing accounts can still sign in.',
         locked: 'This account is locked. Please contact software@h2oil.co.uk.',
         identity_in_use: 'This ' + N + ' account is linked to another Well Testing Suite account.',

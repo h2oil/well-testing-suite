@@ -68,7 +68,7 @@
       // or within 10 minutes of starting a provider sign-in (the return from the provider), whatever the choice.
       // __wtsGaLoaded tells the account client whether the tag ran; window.WTS_consent is the choice API.
       (function () {
-        var ID = 'G-6QKCBNWHYB', KEY = 'wtspref_analytics_consent', VER = 2, MAX_AGE = 365 * 864e5;
+        var ID = 'G-6QKCBNWHYB', KEY = 'wtspref_analytics_consent', VER = 3, MAX_AGE = 365 * 864e5;
         var W = window, mem = null;
         function store() { try { return W.localStorage || null; } catch (e) { return null; } }
         function skipped() {
@@ -11262,18 +11262,22 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
-    { ver:'v4.2', date:'2026-11-09', title:'Privacy notice version 2',
-      note:'The public Privacy notice is now version 2. Calculations still run on your device.',
+    { ver:'v4.2', date:'2026-11-10', title:'Privacy notice version 3',
+      note:'The public Privacy notice is now version 3. Calculations still run on your device.',
       items:[
         // ── ACCT:START — web only; sync-from-main.js strips this block ──
-        ['platform', 'Sign in at the bottom of the sidebar', 'For accounts beta testers (opened with the beta link, ?cloud=1): the Sign in / Sign up button now sits at the bottom-left of the sidebar and stays on screen, also in the phone menu; when you are signed in its menu opens upward.', { platform:'web' }],
-        ['platform', 'Welcome prompt', 'With the accounts beta link (?cloud=1), a signed-out visitor is offered Create free account, Sign in or Continue as guest. Your choice is remembered on this device: the prompt comes back only after 30 days if you are still signed out. The prompt waits for the cookie banner and the Terms notice and never opens over the account, help, privacy or release-notes pages. Accounts are still a beta on the web version.', { platform:'web' }],
+        ['platform', 'Accounts on the website for everyone', 'Sign-in and cloud projects are now part of the website for every visitor: no beta link is needed any more. To keep accounts switched off on one device, open the app once with ?cloud=0 (?cloud=1 switches them back on).', { platform:'web' }],
+        ['platform', 'Open sign-up', 'Anyone can create a free account on the website; an invitation is no longer needed.', { platform:'web' }],
+        ['platform', 'Sign-in window on first open', 'A signed-out visitor sees one sign-in window when the app opens: &ldquo;Sign in to keep your work safe&rdquo;, with the Google and LinkedIn buttons (each shown when our server offers it), an e-mail code, Create a free account and Use as guest. Use as guest (or closing the window) is remembered on this device, and the window comes back only after 30 days if you are still signed out. It waits for the cookie banner and the Terms notice and never opens over the account, help, privacy or release-notes pages.', { platform:'web' }],
+        ['platform', 'Redesigned sign-in window', 'The sign-in window is a centred, symmetrical card that also fits a phone screen; keyboard focus stays inside it while it is open (Tab wraps round, Esc closes it).', { platform:'web' }],
+        ['platform', 'LinkedIn button', 'The sign-in window has a LinkedIn button next to Google and the e-mail code; it shows whenever our server offers LinkedIn sign-in.', { platform:'web' }],
+        ['platform', 'Sign in at the bottom of the sidebar', 'The Sign in / Sign up button sits at the bottom-left of the sidebar and stays on screen, also in the phone menu; when you are signed in its menu opens upward.', { platform:'web' }],
         ['platform', 'Optional profile', 'Name, company, job title, country and phone, every field optional, when you create an account and later in Your profile on the Account page (Save or Clear). Stored encrypted.', { platform:'web' }],
         ['platform', 'Project summary in the cloud', 'Save to cloud also stores a short summary of the project: well names, client, operator, company, field, rig, country, job reference and the modules used. It is stored encrypted and never stops a save.', { platform:'web' }],
-        ['platform', 'Updated Terms and Privacy step', 'An existing account is asked once, at its next sign-in, to accept the updated Privacy notice (version 2); the profile and project summaries are kept only for accounts on the current version.', { platform:'web' }],
-        ['platform', 'Administrator dashboard', 'For the site owner only: users, sign-ups per day, users by country, the country and city of each user&rsquo;s last sign-in in the users table, top companies, clients and fields, a user detail panel, CSV export and invitations.', { platform:'web' }],
+        ['platform', 'Updated Terms and Privacy step', 'An existing account is asked once, at its next sign-in, to accept the updated Privacy notice (version 3); the profile and project summaries are kept only for accounts on the current version.', { platform:'web' }],
+        ['platform', 'Administrator dashboard', 'For the site owner only: users, sign-ups per day, users by country, the country and city of each user&rsquo;s last sign-in in the users table, top companies, clients and fields, a user detail panel and CSV export.', { platform:'web' }],
         // ── ACCT:END ──
-        ['ux', 'Privacy notice version 2', 'The Privacy notice linked from the sidebar footer and the Privacy page is now version 2: it describes in more detail the data kept for the optional web accounts. The Help privacy guide and the Terms of Use now mention the optional web accounts trial. On the website the analytics choice is asked once more because the notice changed. The App Store version is 4.2.'],
+        ['ux', 'Privacy notice version 3', 'The Privacy notice linked from the sidebar footer and the Privacy page is now version 3: it describes the data kept for the optional web accounts, which anyone can now create on the website, and says that the services that run them process data under their standard data processing terms. The Terms of Use (still version 1) now say the same about who can create an account. On the website the analytics choice is asked once more because the notice changed. The App Store version is 4.2.'],
       ] },
     { ver:'v4.0', date:'2026-11-09', title:'Safer stored data &amp; checked spreadsheet import',
       note:'Safer handling of saved text and a hash-checked spreadsheet import library. Everything still runs on your device.',
@@ -116481,7 +116485,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 15c29eed,view-p 780 1688 1874742a",
+    "releasenotes": "view-d 1280 800 c264348b,view-p 780 1688 b3ef96cd",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 143a6d68,fs-1-rigup-d 982 525 1bfdebef,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -116502,7 +116506,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 216;
-  M.bytes = 7972142;   // total size of the image files (the offline download label)
+  M.bytes = 7977522;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -153333,9 +153337,6 @@ G.WTS_modbusBridgeSetup = {
   function errText(e) {
     if (!e) return 'Something went wrong. Try again.';
     if (e.code === 'rate') return 'Too many attempts. Try again in ' + Math.max(1, Math.round(e.retryAfter || 30)) + ' s.';
-    // the sign-up path: an address that is not invited yet gets the same generic code error from the server (no account is
-    // revealed), so the text says what a new visitor can do
-    if (e.code === 'invalid_or_expired' && dlg.signup) return MSG.invalid_or_expired + ' New accounts may need an invitation: if you have none yet, write to ' + SUPPORT + '.';
     if (isProfileErr(e)) return profileErrText(e);
     if (MSG[e.code]) return MSG[e.code];
     if (e.status >= 500) return MSG.server;
@@ -153730,9 +153731,6 @@ G.WTS_modbusBridgeSetup = {
       '<div class="acct-btns"><button type="button" class="btn btn-primary" id="acct_verify">Sign in</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_resend">Send again</button>' +
       '<button type="button" class="btn btn-secondary" id="acct_back">Use another address</button></div>' +
-      // sign-up path in invite mode: an address that is not invited gets the same answer but no e-mail (server auth.js),
-      // so say where an invitation comes from before the visitor waits for a code that is never sent
-      (dlg.signup ? '<p class="acct-note acct-c" id="acct_code_invite">If no code arrives within a few minutes, your address may not be invited yet: write to ' + SUPPORT + ' for an invitation.</p>' : '') +
       codeFaq(false);
     $('acct_verify').addEventListener('click', function () { verifyCode(); });
     $('acct_code').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') verifyCode(); });
@@ -154659,7 +154657,8 @@ G.WTS_modbusBridgeSetup = {
       var T = {
         oauth_state: 'Sign-in was interrupted — try again.',
         provider_off: N + ' sign-in is not available right now — use the e-mail code.',
-        not_invited: 'The beta is invite-only. Sign in with the address you were invited with, or use the e-mail code.',
+        // only with ACCOUNTS_SIGNUP=invite on the server (sign-up is open on the live site since release 4.2)
+        not_invited: 'New accounts are by invitation only right now. Sign in with the address you were invited with, or use the e-mail code.',
         signup_closed: 'New accounts are not open right now. Existing accounts can still sign in.',
         locked: 'This account is locked. Please contact software@h2oil.co.uk.',
         identity_in_use: 'This ' + N + ' account is linked to another Well Testing Suite account.',
@@ -157248,7 +157247,7 @@ G.WTS_modbusBridgeSetup = {
       '<div class="adm-bar" style="margin-top:8px"><button type="button" class="btn btn-secondary" id="adm_more" hidden>Load more</button>' +
       '<span class="adm-sub" id="adm_users_count"></span></div><div id="adm_users_msg" class="adm-msg" role="status" aria-live="polite"></div></div>' +
       '<div class="card" id="adm_card_invite"><div class="card-title">Invite someone</div>' +
-      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account (sign-ups are by invitation). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
+      '<p class="adm-sub">Adds the address to the sign-up list, so that person can create an account while sign-up is set to invitation only (with open sign-up anyone can create an account and the list is not needed). No e-mail is sent: tell them to sign up at welltest.h2oil.co.uk with this address.</p>' +
       '<div class="fg-grid2"><div><label for="adm_inv_email">E-mail address</label><input type="email" id="adm_inv_email" maxlength="254" autocomplete="off" spellcheck="false"></div>' +
       '<div><label for="adm_inv_note">Note (optional)</label><input type="text" id="adm_inv_note" maxlength="200" autocomplete="off"></div></div>' +
       '<div class="adm-bar" style="margin-top:10px"><button type="button" class="btn btn-primary" id="adm_inv_send">Add invitation</button></div>' +

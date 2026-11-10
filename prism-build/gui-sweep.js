@@ -556,7 +556,7 @@ class Session {
     await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('h2viz3d_prefs')) localStorage.setItem('h2viz3d_prefs', JSON.stringify({ mode: '2d', quality: 'low' })); } catch (e) { /* ignore */ } });
     // A stored analytics choice keeps the consent banner (GA block) off the views; 'granted' keeps the analytics path
     // (served by the stub below) exercised as before the banner. A sweep that clears storage sees the banner again.
-    await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('wtspref_analytics_consent')) localStorage.setItem('wtspref_analytics_consent', JSON.stringify({ choice: 'granted', v: 2, at: Date.now() })); } catch (e) { /* ignore */ } });
+    await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('wtspref_analytics_consent')) localStorage.setItem('wtspref_analytics_consent', JSON.stringify({ choice: 'granted', v: 3, at: Date.now() })); } catch (e) { /* ignore */ } });
     // The Terms of Use notice (above the page header) is marked seen so it does not shift the views.
     await this.ctx.addInitScript(() => { try { if (!localStorage.getItem('wtspref_terms_seen')) localStorage.setItem('wtspref_terms_seen', JSON.stringify({ v: 1, at: Date.now() })); } catch (e) { /* ignore */ } });
     await this.ctx.route(/^(https?|wss?):\/\/(?!127\.0\.0\.1[:/])/, (r) => {
