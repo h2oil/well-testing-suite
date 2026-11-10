@@ -7,8 +7,8 @@ prints ids, counts and dates — never an e-mail address, a code, a key or a bod
 
 **v4.0: the host is Netlify** — §3N is the owner's click-by-click guide, §3P the Google and LinkedIn consoles, §3T a disposable
 test backend (Free plan, Postmark); the generic §3 stays for any other host. **State today:** the code is ready to deploy but nothing is deployed. While no server answers, the static site behaves
-exactly as v3.4: the page's cloud UI stays hidden unless `GET /api/v1/...` answers (and the `?cloud=1` beta flag is set
-during the beta), both provider sign-ins are off unless configured (`OAUTH_GOOGLE` / `OAUTH_LINKEDIN` default `off`), and
+exactly as v3.4: the page's cloud UI stays hidden unless `GET /api/v1/...` answers (since release 4.2 the account UI is on
+by default on the production host; `?cloud=0` is the device kill switch, `?cloud=1` clears it), both provider sign-ins are off unless configured (`OAUTH_GOOGLE` / `OAUTH_LINKEDIN` default `off`), and
 the repository root carries no host configuration, so the static site's deploy is unchanged.
 
 ---
@@ -119,8 +119,9 @@ functions-only site (§3N), on the **Free plan**. Consequences, all accepted by 
   job between steps and logs `alert: jobs — … did not finish within its 25 s budget` instead of being cut off silently).
 - **CSP reports off.** The bundle's `_headers` carries the security headers but no Report-Only CSP (each report would be a
   function call and a database write on the Free plan's quotas); `--csp-report` switches it on later.
-- **Accounts stay an invite beta:** `ACCOUNTS_SIGNUP=invite`; providers (Google, LinkedIn) off; the page shows the account UI only
-  with the beta flag (`https://welltest.h2oil.co.uk/?cloud=1`, stored as `wtspref_cloud_beta`).
+- **Sign-up mode:** `ACCOUNTS_SIGNUP=invite` unless the owner opens it; providers (Google, LinkedIn) by their `OAUTH_*` switches.
+  Since release 4.2 the page shows the account UI to every visitor on `https://welltest.h2oil.co.uk/` (no flag; a signed-out
+  first visit opens the sign-in dialog). `?cloud=0` hides it on one device (`wtspref_cloud_off`); `?cloud=1` clears that.
 
 ### Step L1 — Secrets (the lead's computer; never in chat, a ticket or the repository)
 ```
@@ -200,7 +201,7 @@ WTS_SMOKE_MODE=same WTS_SMOKE_BASE='https://welltest.h2oil.co.uk' WTS_SMOKE_ALT_
 (text/html); 4 write without Origin → 403 origin; 5 self-test without the HMAC → 404; 6 self-test signed (isolation true, keys
 true, db true, request role `wts_api`, jobs role `session` or `local`, mail transport `postmark`); 7 test e-mail `sent`. Failures
 as in §3T step T6; isolation problems name the variable to fix (a key id ≥ 9000, an off-site credential …). Then open
-`https://welltest.h2oil.co.uk/?cloud=1` and sign in with the owner's address (an e-mail code).
+`https://welltest.h2oil.co.uk/` and sign in with the owner's address (an e-mail code).
 
 **Check the client address** (the per-address limits depend on it; the smoke test cannot see the logs): call health once from
 your computer, then find its access line in the `api` function's log: `"ipp"` must be the start of **your** public address. Then
@@ -502,7 +503,7 @@ deploy, so the connection string of step 6 never goes into GitHub):
      node ops/allowlist-add.js --actor support:owner --email name@company.example --note beta
    ```
    Output: `{"ok":true,…}` — no address is printed. Repeat for each beta tester.
-3. Smoke test: open `https://welltest.h2oil.co.uk/?cloud=1` in a private window → the account chip → **Sign in** → your address
+3. Smoke test: open `https://welltest.h2oil.co.uk/` in a private window → the account chip → **Sign in** → your address
    → the code e-mail arrives within a minute (check its SPF / DKIM / DMARC, step 9.5) → enter the code → accept the terms →
    signed in. Then **Save to cloud** on a small project; open the page in another browser, sign in, **Open from cloud**: the
    project opens with the same values. On the functions site **Data & Storage → Blobs** now lists the store `wts-objects`.
@@ -812,7 +813,8 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
     `prism-build/` URLs now answer 404. The CSP is enforced only at the end of Phase 1 (WP-I1), after the reports are clean.
 14. **Providers and beta**: complete plan §13.10 (consoles, verification, live tests), put the pinned values into
     `core/oidc-providers.js` through a reviewed server release, then set `OAUTH_GOOGLE` / `OAUTH_LINKEDIN` (`signin` or `on`)
-    and add the invited addresses (`ops/allowlist-add.js`). Testers use `?cloud=1`.
+    and add the invited addresses (`ops/allowlist-add.js`). Since release 4.2 no URL flag is needed (`?cloud=0` hides the
+    account UI on one device).
 
 ---
 
@@ -820,7 +822,8 @@ Do these in order; each step is reversible until step 14. Plan §13.10 has the p
 
 - The static site auto-deploys from master as before — **once step 0 of §3 is done** (the publish allow-list or a host-side
   exclusion of `server/`, `docs/`, `tools/`, `prism-build/`); before that, do not merge the accounts commits to master. The
-  client account code (66–68) ships with it, gated by the beta flag and the server's switches.
+  client account code (66–69) ships with it, on by default on the production host since release 4.2 (`?cloud=0` = device kill
+  switch) and gated by the server's switches.
 - The server deploys **only** from a `server-v*` tag on a master commit:
   1. Merge the reviewed server change to master (independent review, plan Q19).
   2. Sign the checklist in the release's PR or issue: tests green (incl. `rls.test.js`), independent review done, migration

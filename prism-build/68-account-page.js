@@ -5,7 +5,7 @@
 // everything, delete account), activity and the account help (web only; kept here so it is stripped with the page). Round-10.
 //
 // Same guard as 66; outside it nothing is defined. The registry entry has navHidden:true (host H7: a route, no sidebar
-// button, no home tile). It is registered only with the invite-beta flag and only on a host that carries the account hooks
+// button, no home tile). It is registered only while accounts are on (66 enabled(): on by default, off after ?cloud=0) and only on a host that carries the account hooks
 // (the ACCT-marked #wts_account_host of H8 lands with H7), so on an older host the page can never appear as a sidebar row.
 // Every server string is put on the page escaped. Plain .card / .rbox / table.dtable markup, so reports work unchanged; the
 // route is in the host skip tables (H10). No timers, polling or function wrapping.
@@ -494,7 +494,7 @@
     navHidden: true, render: render,
   };
   var registered = false;
-  // register({force}) → true once the entry is in WTS_calcRegistry: only with the beta flag and a host that has the account
+  // register({force}) → true once the entry is in WTS_calcRegistry: only while accounts are on and on a host that has the account
   // hooks (H7 navHidden lands with H8's ACCT-marked #wts_account_host), unless forced (tests).
   function register(o) {
     o = o || {};

@@ -165,8 +165,10 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   #account-revert=<key>), 67-cloud-sync (WTS_cloudSync: snapshot / vhash, save / open / history,
                                   library, guard follow-ups via registerGuard {decision, after}), 68-account-page (route account,
                                   navHidden, H10 report skip, no page-export bar), 69-account-admin (route admin, navHidden, owner
-                                  dashboard over GET /api/v1/admin/*, shown only when GET /me says admin:true; admins = WTS_ADMIN_EMAILS). Inert unless the beta flag (?cloud=1 /
-                                  wtspref_cloud_beta) and the exact host (or WTS_ACCOUNT_DEV on localhost)
+                                  dashboard over GET /api/v1/admin/*, shown only when GET /me says admin:true; admins = WTS_ADMIN_EMAILS). Inert off the exact host (or WTS_ACCOUNT_DEV on
+                                  localhost); ON by default there since v4.2 (?cloud=0 → wtspref_cloud_off device kill switch, ?cloud=1
+                                  clears it); a signed-out first visit opens the sign-in dialog itself (welcome form, "Use as guest" →
+                                  wtspref_acct_welcome, 30 days), after the consent banner / Terms notice
                                   (use a free number; two files with the same number still load, ties by name)
   48-calc-help-*.js             ← Help content (Round-9 data modules, v3.3.2; docs/HELP-GUIDE-PLAN.md §4): start (Getting
                                   started, tasks, glossary, FAQ), overview, metering, welltest (wts reference parts), production
@@ -597,9 +599,8 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   default burner line at the full rate, with velocity alarms); SEPBY_RATING rounds a small line loss; after `done` the cushion tail
   runs on, so CUSH_BURNER stays until the formation blend ends.
 - **Accounts (v4.0 / v4.2, Phase 1)** (docs/ACCOUNTS-PLAN.md §14, Appendix B.4; server/README.md "Hosting"): web only and inert until the
-  server is configured and the beta flag is on (still true in v4.2: the welcome prompt and the chip mount only with ?cloud=1;
-  whether a new address may sign up is the server's ACCOUNTS_SIGNUP — the live setting is open, but the sign-up dialog, the
-  Privacy notice, the Terms and RUNBOOK §3L still describe an invitation-only trial: reconcile before announcing open sign-up); manual Save / Open from cloud only (automatic sync and the key-level merge are
+  server is configured (on by default on the exact production host since release 4.2 — no ?cloud=1; `?cloud=0` / wtspref_cloud_off
+  = device opt-out; sign-in window on first open with Use as guest; sign-up open to everyone, server ACCOUNTS_SIGNUP=open); manual Save / Open from cloud only (automatic sync and the key-level merge are
   v4.0.x, passkeys / historian backup / live-data settings / field-level merge v4.1); no merge tool for two accounts; the server
   minimum client is 4.0 on our hosting platform (an older page gets 426 on project writes); LinkedIn stays switched off in
   production until its live tests (plan §13.10 step 13) are recorded; the weekly export stays in the same EU region; the

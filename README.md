@@ -52,7 +52,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 - **Reports:** PDF and PNG export of any page, a one-click Quick Report of the whole job (Daily and
   Final templates), CSV/JSON export, and `.h2oilproj` project files that hold several wells.
 - **Offline and private:** every calculation runs on your device. Without signing in there is no
-  upload of well data; the optional cloud account (web version, invite beta since v4.0) stores only the
+  upload of well data; the optional cloud account (web version, since v4.0) stores only the
   projects you choose to save to it.
 
 ---
@@ -469,7 +469,7 @@ Manager, Xcode Cloud) are in [ios-app/README.md](ios-app/README.md).
 
 - All calculations run on your device. Without an account no H2Oil server receives inputs, results
   or files.
-- **Web version only, optional (invite beta since v4.0):** a cloud account — sign in with an e-mail
+- **Web version only, optional (since v4.0; offered when the app first opens, or use it as a guest):** a cloud account — sign in with an e-mail
   code or a supported sign-in provider — stores the projects you save to it in our UK / EU cloud database, with
   history, export of everything and account deletion. The iOS app has no accounts. The full text is in
   the Privacy notice (<https://welltest.h2oil.co.uk/privacy.html>) and the Terms of Use

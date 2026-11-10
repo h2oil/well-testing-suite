@@ -30,7 +30,7 @@
 //   --no-stub block the CDN libraries too (three.js, sql.js, SQLite WASM, html2canvas, jsPDF are served
 //             from ios-app/ios-additions/libs by default so 3D / historian / PDF paths are exercised)
 //   --accounts   the account UI (docs/ACCOUNTS-PLAN.md §12.5; on by default when --route names `account`): every page gets
-//             WTS_ACCOUNT_DEV = 1 and the beta flag, /api/v1/* is answered by the in-memory fake API
+//             WTS_ACCOUNT_DEV = 1 (accounts on by default), /api/v1/* is answered by the in-memory fake API
 //             (prism-build/tests/_acct-fake-server.js; /me is 401 until signed in), each account view signs in once with the fake
 //             mail code first, and the `account` route is swept. Sign out / delete account / revoke … count as destructive.
 //   --self-test  run the sweep's own parser checks (no browser) and exit 0 / 1
@@ -569,8 +569,8 @@ class Session {
       noteExternal(u, 'blocked', this.route); return r.abort('blockedbyclient');
     });
     if (ACCOUNTS && ACCT_FAKE) {
-      // accounts mode: the dev guard + beta flag (/api/v1/* is answered by serve() from the in-memory fake API)
-      await this.ctx.addInitScript(() => { window.WTS_ACCOUNT_DEV = 1; try { localStorage.setItem('wtspref_cloud_beta', '1'); } catch (e) { /* ignore */ } });
+      // accounts mode: the dev guard (accounts on by default; /api/v1/* is answered by serve() from the in-memory fake API)
+      await this.ctx.addInitScript(() => { window.WTS_ACCOUNT_DEV = 1; try { localStorage.removeItem('wtspref_cloud_off'); } catch (e) { /* ignore */ } });
     }
     this._main = true;
     this.ctx.on('page', (p) => { if (this._main) { this._main = false; return; } this._popup(p); });

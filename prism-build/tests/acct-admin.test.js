@@ -1,14 +1,15 @@
-// Accounts — the sidebar chip, the signed-out welcome prompt and the owner's admin page (66 / 68 / 69). The app runs on the
-// production https location against the in-memory fake API (tests/_acct-fake-server.js) with the invite-beta flag; the admin
+// Accounts — the sidebar chip, the first-open sign-in dialog and the owner's admin page (66 / 68 / 69). The app runs on the
+// production https location against the in-memory fake API (tests/_acct-fake-server.js), accounts on by default; the admin
 // routes and the admin flag of GET /me are added by a small fetch wrapper (the server side is tested in server/test).
 //
 //   AW1  the chip host sits in the sidebar footer (#sbAccountLine, bottom-left), full width, "Sign in / Sign up" while signed out
 //   AW2  signed in: the chip menu opens upward (fixed, bottom-anchored, no top), Escape closes it; "Admin dashboard" only for an admin
-//   AW3  welcome prompt: modal dialog once on a first signed-out visit; Esc = guest, stored as the wtspref_ device pref; not again
-//        on a reload; offered again after 30 days; Tab stays inside the dialog; the pref never travels in a project file
-//   AW4  welcome prompt waits for the consent banner and the Terms notice (never stacked), skips the help / account / privacy
-//        routes and shows on the next page change; never while signed in, never with the switch off or without the beta flag
-//   AW5  "Create free account" opens the sign-in dialog on its sign-up path (title, invitation note, the invite-mode code error)
+//   AW3  first open: the sign-in dialog itself in its welcome form (one modal card: title, value line, Google / LinkedIn, the
+//        e-mail code, Use as guest); Use as guest / Esc / backdrop store the wtspref_ guest pref; not again in the visit or within
+//        30 days, offered again after; Tab stays inside; the chip opens the same dialog; LinkedIn only when the server says on
+//   AW4  the first-open dialog waits for the consent banner and the Terms notice (never stacked), skips the help / account /
+//        privacy routes and shows on the next page change; never while signed in, with the switch off or after ?cloud=0
+//   AW5  "Create a free account" switches the dialog to its sign-up path (title, invitation hint, the invite-mode code error)
 //   AW6  admin page: a normal account (and a 404 from the server) sees "Not available"; an admin sees KPIs, countries with names
 //        and flags, the sign-up chart, the users table, Load more (cursor), search (q), CSV, invite POST and its list
 //   AW7  every server string is escaped: a malicious e-mail / note / city never becomes markup (page and CSV)
@@ -45,7 +46,7 @@ const PAGE2 = [U(3, 'c@company.example', { method: 'linkedin', signupCountry: nu
 function boot(ctx, o) {
   o = o || {};
   const F = T.F;
-  const fake = F.createFakeServer({});
+  const fake = F.createFakeServer({ switches: o.switches });
   const br = fake.browser('dev-admin');
   const admin = { on: !!o.admin, log: [], invites: [{ addedAt: '2026-11-08T12:00:00.000Z', note: '<script>x</script>' }] };
   const fetch = (u, i) => {
@@ -151,34 +152,48 @@ module.exports = [
     },
   },
   {
-    name: 'AW3 welcome prompt: once, modal, Esc = guest (wtspref_ pref), not on reload, again after 30 days, Tab trapped', wp: WP, opts: false,
+    name: 'AW3 first open: the sign-in dialog itself (welcome form), once, modal; Use as guest / Esc / backdrop = guest pref; again after 30 days; Tab trapped', wp: WP, opts: false,
     async run(app, assert, ctx) {
       let clock = Date.now();
       const storage = settledStore();
       const t = boot(ctx, { welcome: true, storage, now: () => clock });
       try {
         t.a.flush(10);
-        const ov = t.el('acct_welcome_ov');
-        assert(ov, 'prompt shown');
-        const d = t.el('acct_welcome');
+        const ov = t.el('acct_dlg_ov');
+        assert(ov, 'the sign-in dialog opens on the first signed-out visit');
+        assert(!t.el('acct_welcome_ov') && t.a.findAll('[role="dialog"]').length === 1, 'one dialog, never two stacked');
+        assert.strictEqual(t.acct().welcome.due(), 'shown');
+        const d = t.el('acct_dlg');
         assert.strictEqual(d.getAttribute('role'), 'dialog'); assert.strictEqual(d.getAttribute('aria-modal'), 'true');
-        assert.strictEqual(t.text('acct_welcome_t'), 'Keep your work safe');
+        assert(/acct-modal/.test(d.className) && /acct-ov--modal/.test(ov.className), 'the centred modal card');
+        assert.strictEqual(t.text('acct_dlg_t'), 'Sign in to keep your work safe');
+        assert(/Save your projects to your account in the cloud and open them on any device, with full history\./.test(t.text('acct_dlg_sub')), 'the value line');
         const txt = d.textContent;
-        assert(/Create free account/.test(txt) && /Continue as guest/.test(txt) && /Sign in/.test(txt));
-        assert(/save your projects to your account in the cloud with Save to cloud/.test(txt) && /Work you have not saved to the cloud stays only in this browser\./.test(txt), 'Phase 1 wording: manual save, no automatic-keep claim');
         assert(!/all your projects are kept|never lose work|own secure cloud database/.test(txt), 'no claim of automatic keeping or a database of one\'s own');
-        assert(/Your work is saved only in this browser on this device\./.test(txt));
+        assert.strictEqual(t.text('acct_guest'), 'Use as guest');
+        assert(/As a guest, your work stays in this browser only\./.test(t.text('acct_guest_note')));
+        assert.strictEqual(t.text('acct_send'), 'Send code');
+        assert(t.el('acct_email') && t.a.find('label[for="acct_email"]'), 'the e-mail code field');
+        assert.strictEqual(t.text('acct_mode'), 'Create a free account');
         assert(/rp-skip/.test(ov.className) && ov.getAttribute('data-rp-nosnap') === '1', 'never in a report');
-        assert.strictEqual(t.w.document.activeElement && t.w.document.activeElement.id, 'acct_welcome_signup', 'focus on the primary choice');
-        // Tab cycles inside: guest → (wrap) close button
-        t.el('acct_welcome_guest').focus();
-        t.a.key('acct_welcome_guest', 'Tab');
-        assert.strictEqual(t.w.document.activeElement.id, 'acct_welcome_x', 'Tab wraps to the first control');
-        t.a.key('acct_welcome_x', 'Escape');
-        assert(!t.el('acct_welcome_ov'), 'Esc closes');
+        // Google and LinkedIn (the fake server has both on): neutral buttons, identical size, the provider mark in its column
+        await t.until(() => t.a.findAll('#acct_provider_buttons .acct-prov-btn').length === 2, 'the provider buttons');
+        const pb = t.a.findAll('#acct_provider_buttons .acct-prov-btn');
+        assert.deepStrictEqual(pb.map((b) => b.getAttribute('data-provider')), ['google', 'linkedin']);
+        assert.deepStrictEqual(pb.map((b) => b.querySelector('.acct-prov-label').textContent), ['Sign in with Google', 'Sign in with LinkedIn']);
+        assert(!/Use the e-mail code/.test(t.text('acct_provider_buttons')), 'compact: the e-mail field follows right below');
+        assert(!/acct-or--none/.test(t.el('acct_or').className), 'the "or" divider');
+        assert.strictEqual(t.w.document.activeElement && t.w.document.activeElement.id, 'acct_dlg', 'focus on the card (no keyboard pops up)');
+        // Tab cycles inside: the last control → (wrap) the close button
+        t.el('acct_public').focus();
+        t.a.key('acct_public', 'Tab');
+        assert.strictEqual(t.w.document.activeElement.id, 'acct_dlg_x', 'Tab wraps to the first control');
+        t.a.key('acct_dlg_x', 'Tab', 'keydown');
+        assert(/acct-prov-btn/.test(t.w.document.activeElement.className), 'then the first provider button');
+        t.a.key('acct_dlg_x', 'Escape');
+        assert(!t.el('acct_dlg_ov'), 'Esc closes');
         const pref = JSON.parse(storage.getItem('wtspref_acct_welcome'));
         assert.strictEqual(pref.choice, 'guest'); assert.strictEqual(pref.at, clock);
-        assert(!t.el('acct_dlg_ov'), 'guest opens no sign-in dialog');
         // the pref is a device preference: not in a project file
         const P = t.w.WTS_project;
         if (P && typeof P.buildProject === 'function') {
@@ -186,130 +201,171 @@ module.exports = [
           assert(proj.indexOf('wtspref_acct_welcome') === -1, 'not in the project file');
         }
         t.a.fire('document', 'h2oil:pagechange', { page: 'home' });
-        assert(!t.el('acct_welcome_ov'), 'not again in the same visit');
+        assert(!t.el('acct_dlg_ov'), 'not again in the same visit');
+        // the chip still opens the same dialog any time (ordinary title, the same guest button)
+        t.click('acct_chip');
+        await t.until(() => t.el('acct_email'));
+        assert.strictEqual(t.text('acct_dlg_t'), 'Sign in to Well Testing Suite');
+        assert(t.el('acct_guest'));
+        clock += 1000;
+        t.click('acct_guest');
+        assert(!t.el('acct_dlg_ov'), 'Use as guest closes');
+        assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).at, clock, 'and stores the guest choice');
       } finally { t.dispose(); }
       // the visitor comes back 29 days later (the mount runs inside the page load, so the time is set in the stored pref)
       storage.setItem('wtspref_acct_welcome', JSON.stringify({ choice: 'guest', at: BASE - 29 * DAY }));
       const t2 = boot(ctx, { welcome: true, storage });
       try {
         t2.a.flush(10);
-        assert(!t2.el('acct_welcome_ov'), 'a guest is not asked again within 30 days');
+        assert(!t2.el('acct_dlg_ov'), 'a guest is not asked again within 30 days');
         assert.strictEqual(t2.acct().welcome.due(), 'answered');
       } finally { t2.dispose(); }
       storage.setItem('wtspref_acct_welcome', JSON.stringify({ choice: 'guest', at: BASE - 31 * DAY }));
       const t3 = boot(ctx, { welcome: true, storage });
       try {
         t3.a.flush(10);
-        assert(t3.el('acct_welcome_ov'), 'offered again after 30 days');
-        t3.click('acct_welcome_guest');
-        assert(!t3.el('acct_welcome_ov'));
-        assert(JSON.parse(storage.getItem('wtspref_acct_welcome')).at >= BASE, 'the new choice is dated now');
+        assert(t3.el('acct_dlg_ov'), 'offered again after 30 days');
+        t3.click('acct_guest');
+        assert(!t3.el('acct_dlg_ov'));
+        const p3 = JSON.parse(storage.getItem('wtspref_acct_welcome'));
+        assert(p3.at >= BASE && p3.choice === 'guest', 'the new choice is dated now');
       } finally { t3.dispose(); }
+      // a click on the backdrop = guest; a click inside the card does not close it
+      const s4 = settledStore();
+      const t4 = boot(ctx, { welcome: true, storage: s4 });
+      try {
+        t4.a.flush(10);
+        t4.click('acct_dlg_sub');
+        assert(t4.el('acct_dlg_ov'), 'a click inside the card keeps it open');
+        t4.click('acct_dlg_ov');
+        assert(!t4.el('acct_dlg_ov'), 'the backdrop closes it');
+        assert.strictEqual(JSON.parse(s4.getItem('wtspref_acct_welcome')).choice, 'guest');
+      } finally { t4.dispose(); }
+      // providers off on the server: no provider button and no "or"; LinkedIn alone when only it is on
+      const s5 = settledStore();
+      const t5 = boot(ctx, { welcome: true, storage: s5, switches: { OAUTH_GOOGLE: 'off', OAUTH_LINKEDIN: 'on' } });
+      try {
+        t5.a.flush(10);
+        await t5.until(() => !t5.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered');
+        assert.deepStrictEqual(t5.a.findAll('.acct-prov-btn').map((b) => b.getAttribute('data-provider')), ['linkedin'], 'LinkedIn only when the server says on');
+        t5.fake.setSwitch('OAUTH_LINKEDIN', 'off');
+        t5.click('acct_mode');
+        await t5.until(() => !t5.el('acct_provider_buttons').getAttribute('aria-busy'), 'providers answered again');
+        assert.strictEqual(t5.a.findAll('.acct-prov-btn').length, 0, 'none on: no button');
+        assert(t5.el('acct_provider_buttons').hidden && /acct-or--none/.test(t5.el('acct_or').className), 'the area and the divider collapse');
+      } finally { t5.dispose(); }
     },
   },
   {
-    name: 'AW4 welcome waits for the consent banner and the Terms notice, skips help / account / privacy, never signed in or switched off', wp: WP, opts: false,
+    name: 'AW4 first-open dialog waits for the consent banner and the Terms notice, skips help / account / privacy, never signed in, switched off or opted out', wp: WP, opts: false,
     async run(app, assert, ctx) {
       // consent banner open → waits; the choice → shows
-      const s1 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_terms_seen: JSON.stringify({ v: 1, at: Date.now() }) });
+      const s1 = T.createStorage({ wtspref_terms_seen: JSON.stringify({ v: 1, at: Date.now() }) });
       const t = boot(ctx, { welcome: true, storage: s1 });
       try {
         t.a.flush(10);
         const banner = t.el('wtsConsent');
         if (banner && !banner.hidden) {
-          assert(!t.el('acct_welcome_ov'), 'never stacked over the consent banner');
+          assert(!t.el('acct_dlg_ov'), 'never stacked over the consent banner');
           assert.strictEqual(t.acct().welcome.due(), 'consent');
+          assert.strictEqual(t.fake.requests.length, 0, 'no request while it waits');
           t.click('wtsConsentReject');
           assert(banner.hidden, 'banner closed');
-          assert(t.el('acct_welcome_ov'), 'shown once the banner is dealt with');
+          assert(t.el('acct_dlg_ov'), 'shown once the banner is dealt with');
         } else {
-          assert(t.el('acct_welcome_ov'), 'no banner in this harness: shown at once');
+          assert(t.el('acct_dlg_ov'), 'no banner in this harness: shown at once');
         }
       } finally { t.dispose(); }
       // Terms notice open → waits; OK → shows
-      const s2 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
+      const s2 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
       const t2 = boot(ctx, { welcome: true, storage: s2 });
       try {
         t2.a.flush(10);
         assert(!t2.el('wtsTermsNote').hidden, 'the Terms notice is up');
-        assert(!t2.el('acct_welcome_ov'), 'never stacked over the Terms notice');
+        assert(!t2.el('acct_dlg_ov'), 'never stacked over the Terms notice');
         assert.strictEqual(t2.acct().welcome.due(), 'terms');
         t2.click('wtsTermsNoteOk');
-        assert(t2.el('acct_welcome_ov'), 'shown after OK');
+        assert(t2.el('acct_dlg_ov'), 'shown after OK');
+        assert.strictEqual(t2.text('acct_dlg_t'), 'Sign in to keep your work safe');
       } finally { t2.dispose(); }
-      // excluded routes: the Terms notice holds the prompt, the visitor goes to Help and presses OK there → still waits (route);
+      // excluded routes: the Terms notice holds the dialog, the visitor goes to Help and presses OK there → still waits (route);
       // Privacy and Account wait too; the next page change to another route shows it
-      const s3 = T.createStorage({ wtspref_cloud_beta: '1', wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
+      const s3 = T.createStorage({ wtspref_analytics_consent: JSON.stringify({ choice: 'denied', v: 2, at: Date.now() }) });
       const t3 = boot(ctx, { welcome: true, storage: s3 });
       try {
         t3.a.flush(10);
         assert.strictEqual(t3.acct().welcome.due(), 'terms');
         t3.w.WTS_nav('help');
         t3.click('wtsTermsNoteOk');
-        assert(!t3.el('acct_welcome_ov'), 'not on the help route');
+        assert(!t3.el('acct_dlg_ov'), 'not on the help route');
         assert.strictEqual(t3.acct().welcome.due(), 'route');
         for (const r of ['privacy', 'account']) {
           t3.w.WTS_nav(r);
-          assert(!t3.el('acct_welcome_ov'), 'not on ' + r);
+          assert(!t3.el('acct_dlg_ov'), 'not on ' + r);
           assert.strictEqual(t3.acct().welcome.due(), 'route', r);
         }
         t3.w.WTS_nav('home');
-        assert(t3.el('acct_welcome_ov'), 'shown on the next ordinary page');
+        assert(t3.el('acct_dlg_ov'), 'shown on the next ordinary page');
         assert.strictEqual(t3.acct().welcome.due(), 'shown');
       } finally { t3.dispose(); }
-      // signed in (hint) → never; switch off (the tests' default) → never; no beta flag → nothing mounted
+      // signed in (hint) → never; switch off (the tests' default) → never; opted out (?cloud=0) → nothing mounted
       const t5 = await signedIn(ctx, { welcome: true, storage: settledStore() });
       try {
-        assert(!t5.el('acct_welcome_ov'), 'not while signing in / signed in');
+        assert(!t5.el('acct_dlg_ov'), 'not once signed in');
         const t6 = t5.reload({ welcome: true });
-        try { t6.a.flush(10); await t6.settle(); assert(!t6.el('acct_welcome_ov'), 'a signed-in reload shows no prompt'); assert.strictEqual(t6.acct().welcome.due(), 'signed-in'); }
+        try { t6.a.flush(10); await t6.settle(); assert(!t6.el('acct_dlg_ov'), 'a signed-in reload shows no dialog'); assert.strictEqual(t6.acct().welcome.due(), 'signed-in'); }
         finally { t6.dispose(); }
       } finally { t5.dispose(); }
       const t7 = boot(ctx, { storage: settledStore() });
-      try { t7.a.flush(10); assert(!t7.el('acct_welcome_ov'), 'switched off'); assert.strictEqual(t7.acct().welcome.due(), 'off'); } finally { t7.dispose(); }
+      try { t7.a.flush(10); assert(!t7.el('acct_dlg_ov'), 'switched off'); assert.strictEqual(t7.acct().welcome.due(), 'off'); } finally { t7.dispose(); }
       const t9 = boot(ctx, { welcome: true, beta: false });
-      try { t9.a.flush(5000); assert(!t9.el('acct_welcome_ov') && !t9.el('acct_chip'), 'no beta flag: nothing'); assert.strictEqual(t9.a.pendingTimers(), 0); } finally { t9.dispose(); }
+      try { t9.a.flush(5000); assert(!t9.el('acct_dlg_ov') && !t9.el('acct_chip'), 'opted out: nothing'); assert.strictEqual(t9.fake.requests.length, 0); assert.strictEqual(t9.a.pendingTimers(), 0); } finally { t9.dispose(); }
     },
   },
   {
-    name: 'AW5 Create free account opens the sign-up path of the sign-in dialog (title, invitation note, invite-mode code error)', wp: WP, opts: false,
+    name: 'AW5 Create a free account switches the dialog to its sign-up path (title, invitation hint, invite-mode code error); Send stores the choice', wp: WP, opts: false,
     async run(app, assert, ctx) {
       const storage = settledStore();
       const t = boot(ctx, { welcome: true, storage });
       try {
         t.a.flush(10);
-        t.click('acct_welcome_signup');
+        t.click('acct_mode');
         await t.until(() => t.el('acct_email'), 'e-mail step');
-        assert(!t.el('acct_welcome_ov'));
         assert.strictEqual(t.text('acct_dlg_t'), 'Create your free account');
-        assert(/by invitation during the beta/.test(t.text('acct_signup_note')));
-        assert(/If no code arrives within a few minutes, your address may not be invited yet/.test(t.text('acct_signup_note')));
-        assert(/save projects to your account with Save to cloud/.test(t.text('acct_dlg_body')) && /Work you have not saved to the cloud stays only in this browser/.test(t.text('acct_dlg_body')), 'sign-up text: Phase 1 manual save');
-        assert(!/own secure cloud database/.test(t.text('acct_dlg_body')));
+        assert(/no password needed/.test(t.text('acct_dlg_sub')));
+        await t.until(() => t.a.findAll('.acct-prov-btn').length === 2, 'provider buttons');
+        assert.deepStrictEqual(t.a.findAll('.acct-prov-label').map((x) => x.textContent), ['Sign up with Google', 'Sign up with LinkedIn'], 'the sign-up wording');
         assert.strictEqual(t.text('acct_send'), 'Send my code');
+        assert.strictEqual(t.text('acct_mode'), 'Sign in');
         assert(t.el('acct_provider_buttons'), 'Google / LinkedIn mount point is there too');
-        assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup');
+        assert(t.el('acct_guest'), 'the guest button stays');
         // a wrong code on the sign-up path names the invitation route
         t.a.input('acct_email', 'new@company.example'); t.click('acct_send');
         await t.until(() => t.el('acct_code'), 'code step');
+        assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup', 'Send stores the choice');
+        assert(/new@company\.example/.test(t.text('acct_dlg_sub')), 'the code step names the address');
         assert(/your address may not be invited yet: write to software@h2oil\.co\.uk/.test(t.text('acct_code_invite')), 'code step: invitation hint on the sign-up path');
+        // Tab on the code step with the FAQ closed: the FAQ's summary is the last stop, then the close button (the
+        // recovery button inside the closed <details> is not rendered, so it is never a stop)
+        t.el('acct_faq').open = false;
+        const summ = t.a.find('#acct_faq summary');
+        summ.focus();
+        t.a.key('acct_dlg_x', 'Tab');
+        assert.strictEqual(t.w.document.activeElement && t.w.document.activeElement.id, 'acct_dlg_x', 'Tab wraps from the FAQ summary to the close button');
+        t.el('acct_dlg_x').focus();
+        t.el('acct_dlg_x').dispatchEvent(new t.w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+        assert.strictEqual(t.w.document.activeElement, summ, 'Shift+Tab from the close button goes back to the FAQ summary');
         t.a.input('acct_code', '00000000'); t.click('acct_verify');
         await t.until(() => /acct-msg--err/.test(t.el('acct_msg').className), 'error');
-        assert(/New accounts are by invitation during the beta/.test(t.text('acct_msg')), t.text('acct_msg'));
+        assert(/New accounts may need an invitation/.test(t.text('acct_msg')), t.text('acct_msg'));
         t.click('acct_dlg_x');
+        assert.strictEqual(JSON.parse(storage.getItem('wtspref_acct_welcome')).choice, 'signup', 'closing after a started sign-in is not a guest choice');
         // the ordinary sign-in afterwards has the ordinary title and message
         t.acct().openSignIn();
         await t.until(() => t.el('acct_email'));
         assert.strictEqual(t.text('acct_dlg_t'), 'Sign in to Well Testing Suite');
-        assert(!t.el('acct_signup_note'));
+        assert.strictEqual(t.text('acct_mode'), 'Create a free account');
       } finally { t.dispose(); }
-      const t2 = boot(ctx, { welcome: true, storage: settledStore() });
-      try {
-        t2.a.flush(10);
-        t2.click('acct_welcome_signin');
-        await t2.until(() => t2.el('acct_email'));
-        assert.strictEqual(t2.text('acct_dlg_t'), 'Sign in to Well Testing Suite');
-      } finally { t2.dispose(); }
     },
   },
   {

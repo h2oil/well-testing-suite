@@ -609,7 +609,7 @@ async function accountChecks() {
   const counting = (o) => {
     const calls = [];
     const app = H.loadApp({ fromSources: false, timers: 'manual', console: 'capture',
-      storage: H.createStorage(Object.assign({ wtspref_cloud_beta: '1' }, o.store || {})),
+      storage: H.createStorage(Object.assign({}, o.store || {})),   // accounts on by default on the production host
       globals: { location: o.loc || F.prodLocation(), fetch: (u) => { calls.push(String(u)); return Promise.reject(new TypeError('Failed to fetch')); } } });
     return { app, calls };
   };
