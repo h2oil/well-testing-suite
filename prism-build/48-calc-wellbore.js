@@ -14,6 +14,8 @@
 //
 // 3.4a functions (shapes: prism-build/tests/_dfit-shapes.js StepDown, StepRate, Ramp, Hammer):
 //   column(spec)                         survey + strings → TVD/MD maps, capacity, segments, V_w
+//   surveyMC(rows)                       v4.3 (Well Performance WP4): minimum curvature [[md, inc, azi]] → stations (TVD, N, E,
+//                                        departure, dogleg, DLS) + at(md) on the arcs; column() takes such rows too (key mc)
 //   csys(column, fluid, T)               the one system compressibility c_fluid + ψ·D/(E_s·e), V_w·c_w, wave speed
 //   tempProfile(column, opts)            static geotherm or displaced (DFIT) column, relaxing with e^(−t/τ)
 //   hydrostatic(pK, tvdK, tvdT, col, T)  ρ(p,T) column, RK2 at 10 ft (or a constant gradient)
@@ -251,14 +253,113 @@
         var e = T.find(key);
         return (e && _fin(e.id) && _fin(e.od)) ? e : null;
     }
+    // ── minimum curvature (v4.3 WP4, docs/WELL-PERFORMANCE-PLAN.md §2.3) ──────
+    // rows [[md ft, inc °, azi °]] ascending MD (inc 0–180 from vertical, azi 0–360 from north) → stations with TVD, N, E,
+    // closure departure, along-hole horizontal length hd, dogleg ° and DLS °/100 ft; a tie-in [0, 0, azi] is prepended when the
+    // first row is below the surface (the hole is taken as vertical from the surface to it only if its inclination is 0).
+    // Between stations the hole is the circular arc of the method: ΔTVD = ΔMD/2·(cos I1 + cos I2)·RF, ΔN = ΔMD/2·(sin I1 cos A1 +
+    // sin I2 cos A2)·RF, ΔE likewise with sin A, RF = (2/β)·tan(β/2), β the dogleg; at(md) interpolates on that arc (the tangent is
+    // the slerp of the two station tangents), so TVD, N, E and the inclination are exact for a constant-curvature hole. Below the
+    // last station at(md) continues along its tangent; above the surface it is undefined (NaN).
+    function _mcTan(inc, azi) {
+        var i = inc * Math.PI / 180, a = azi * Math.PI / 180;
+        return [Math.sin(i) * Math.cos(a), Math.sin(i) * Math.sin(a), Math.cos(i)];
+    }
+    function _mcDogleg(i1, a1, i2, a2) {
+        var r = Math.PI / 180, s1 = Math.sin((i2 - i1) * r / 2), s2 = Math.sin((a2 - a1) * r / 2);
+        var x = s1 * s1 + Math.sin(i1 * r) * Math.sin(i2 * r) * s2 * s2;
+        return 2 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, x))));
+    }
+    // displacement and tangent at the fraction f of an interval of length L with end tangents t1, t2 and dogleg b (rad)
+    function _mcArc(t1, t2, b, L, f) {
+        var c1, c2, d1, d2;
+        if (b < 1e-7) { c1 = f - f * f / 2; c2 = f * f / 2; d1 = 1 - f; d2 = f; }
+        else {
+            var sb = Math.sin(b);
+            c1 = (Math.cos((1 - f) * b) - Math.cos(b)) / (b * sb); c2 = (1 - Math.cos(f * b)) / (b * sb);
+            d1 = Math.sin((1 - f) * b) / sb; d2 = Math.sin(f * b) / sb;
+        }
+        var d = [0, 0, 0], t = [0, 0, 0];
+        for (var k = 0; k < 3; k++) { d[k] = L * (c1 * t1[k] + c2 * t2[k]); t[k] = d1 * t1[k] + d2 * t2[k]; }
+        var n = Math.sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]) || 1;
+        return { d: d, t: [t[0] / n, t[1] / n, t[2] / n] };
+    }
+    function _mcAngles(t) {
+        var inc = Math.acos(Math.max(-1, Math.min(1, t[2]))) * 180 / Math.PI;
+        var azi = Math.atan2(t[1], t[0]) * 180 / Math.PI; if (azi < 0) azi += 360;
+        return { inc: inc, azi: inc < 1e-9 ? 0 : azi };
+    }
+    function surveyMC(rows) {
+        var warnings = [], st = [];
+        (Array.isArray(rows) ? rows : []).forEach(function (row) {
+            if (!row || !_fin(+row[0]) || !_fin(+row[1]) || !_fin(+row[2])) { warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'A survey row that is not three numbers (MD, inclination, azimuth) was dropped.')); return; }
+            var md = +row[0], inc = +row[1], azi = ((+row[2] % 360) + 360) % 360;
+            var last = st.length ? st[st.length - 1] : null;
+            if (md < 0 || inc < 0 || inc > 180 || (last && !(md > last.md))) {
+                warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'A survey row at ' + _f(md, 0) + ' ft MD was dropped (MD must rise, inclination 0–180°).'));
+                return;
+            }
+            st.push({ md: md, inc: inc, azi: azi });
+        });
+        if (!st.length) return _fail('NO_SURVEY', 'The survey needs at least one row of MD, inclination and azimuth.', ['survey']);
+        if (st[0].md > 0) {
+            if (st[0].inc > 0) warnings.push(_warn('SURVEY_TIE_IN', 'info', 'The survey starts at ' + _f(st[0].md, 0) + ' ft MD; it is tied in at the surface (0 ft, vertical).'));
+            st.unshift({ md: 0, inc: 0, azi: st[0].azi });
+        }
+        var out = [], maxInc = 0, maxDls = 0;
+        st.forEach(function (s, i) {
+            var o = { md: s.md, inc: s.inc, azi: s.azi, tvd: 0, n: 0, e: 0, dep: 0, hd: 0, dogleg: 0, dls: 0 };
+            if (i > 0) {
+                var p = out[i - 1], L = s.md - p.md, b = _mcDogleg(p.inc, p.azi, s.inc, s.azi);
+                var a = _mcArc(_mcTan(p.inc, p.azi), _mcTan(s.inc, s.azi), b, L, 1);
+                o.n = p.n + a.d[0]; o.e = p.e + a.d[1]; o.tvd = p.tvd + a.d[2];
+                o.dep = Math.sqrt(o.n * o.n + o.e * o.e); o.hd = p.hd + Math.sqrt(a.d[0] * a.d[0] + a.d[1] * a.d[1]);
+                o.dogleg = b * 180 / Math.PI; o.dls = L > 0 ? o.dogleg / L * 100 : 0;
+            }
+            if (o.inc > maxInc) maxInc = o.inc;
+            if (o.dls > maxDls) maxDls = o.dls;
+            out.push(o);
+        });
+        function at(md) {
+            if (!_fin(md) || md < 0) return { md: md, tvd: NaN, n: NaN, e: NaN, dep: NaN, hd: NaN, inc: NaN, azi: NaN };
+            var lo = 0, hi = out.length - 1;
+            if (md >= out[hi].md) {
+                var z = out[hi], t = _mcTan(z.inc, z.azi), dl = md - z.md, n = z.n + dl * t[0], e = z.e + dl * t[1];
+                return { md: md, tvd: z.tvd + dl * t[2], n: n, e: e, dep: Math.sqrt(n * n + e * e), hd: z.hd + dl * Math.sqrt(t[0] * t[0] + t[1] * t[1]), inc: z.inc, azi: z.azi };
+            }
+            while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (out[mid].md <= md) lo = mid; else hi = mid; }
+            var p = out[lo], q = out[hi], L = q.md - p.md, f = L > 0 ? (md - p.md) / L : 0;
+            var b = q.dogleg * Math.PI / 180, a = _mcArc(_mcTan(p.inc, p.azi), _mcTan(q.inc, q.azi), b, L, f), ang = _mcAngles(a.t);
+            var nn = p.n + a.d[0], ee = p.e + a.d[1];
+            // along-hole horizontal length: the horizontal arc length is not closed form; the fraction of the interval's hd is used
+            return { md: md, tvd: p.tvd + a.d[2], n: nn, e: ee, dep: Math.sqrt(nn * nn + ee * ee), hd: p.hd + f * (q.hd - p.hd), inc: ang.inc, azi: ang.azi };
+        }
+        return { ok: true, stations: out, at: at, tdMd: out[out.length - 1].md, maxInc: maxInc, maxDls: maxDls, warnings: warnings };
+    }
+    function _isMcRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return false;
+        for (var i = 0; i < rows.length; i++) if (!Array.isArray(rows[i]) || rows[i].length < 3 || !_fin(+rows[i][2])) return false;
+        return true;
+    }
+
     function column(spec) {
         spec = spec || {};
         var warnings = [];
         var datumTvd = _num(spec.datumTvd, null);
         if (!(_fin(datumTvd) && datumTvd > 0)) return _fail('NO_DATUM', 'The datum depth (mid-perforation TVD) is needed for the wellbore column.', ['datumTvd']);
-        // survey [[md, tvd]] ascending MD; [0, 0] prepended
-        var sv = [[0, 0]];
-        if (Array.isArray(spec.survey)) {
+        // survey [[md, tvd]] ascending MD; [0, 0] prepended. v4.3: [[md, inc, azi]] rows (every row three numbers) go through
+        // surveyMC; the column then interpolates TVD on the minimum-curvature arcs (key mc). Two-column input is unchanged.
+        var sv = [[0, 0]], mc = _isMcRows(spec.survey) ? surveyMC(spec.survey) : null;
+        if (mc && !mc.ok) mc = null;
+        if (mc) {
+            mc.warnings.forEach(function (w) { warnings.push(w); });
+            mc.stations.forEach(function (s) {
+                var last = sv[sv.length - 1];
+                if (s.md === 0) return;
+                if (s.tvd >= last[1] - 1e-9) sv.push([s.md, s.tvd]);
+                else warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'The station at ' + _f(s.md, 0) + ' ft MD rises (inclination above 90°); the column keeps TVD-monotone stations only.'));
+            });
+        } else if (Array.isArray(spec.survey)) {
             spec.survey.forEach(function (row) {
                 if (!row || !_fin(+row[0]) || !_fin(+row[1])) return;
                 var md = +row[0], tvd = +row[1], last = sv[sv.length - 1];
@@ -269,6 +370,7 @@
         }
         function tvdAt(md) {
             if (!_fin(md)) return NaN;
+            if (mc && md >= 0) return mc.at(md).tvd;
             if (sv.length === 1) return md;
             for (var i = 1; i < sv.length; i++) if (md <= sv[i][0]) {
                 var a = sv[i - 1], b = sv[i];
@@ -283,6 +385,11 @@
             for (var i = 1; i < sv.length; i++) if (tvd <= sv[i][1] && sv[i][1] > sv[i - 1][1]) {
                 var a = sv[i - 1], b = sv[i];
                 if (tvd < a[1]) continue;
+                if (mc) {          // bisection on the arc (TVD rises monotonically between TVD-monotone stations)
+                    var lo = a[0], hi = b[0];
+                    for (var it = 0; it < 60 && hi - lo > 1e-7; it++) { var m = 0.5 * (lo + hi); if (tvdAt(m) < tvd) lo = m; else hi = m; }
+                    return 0.5 * (lo + hi);
+                }
                 return a[0] + (b[0] - a[0]) * (tvd - a[1]) / (b[1] - a[1]);
             }
             var p = sv[sv.length - 2], q = sv[sv.length - 1];
@@ -345,13 +452,15 @@
         }
         var fl = _fluid(spec.fluid);
         var tp = spec.temp || {};
-        return {
+        var colOut = {
             ok: true, tvdAt: tvdAt, mdAt: mdAt, capacityAt: capacityAt, mdAtVolume: mdAtVolume, segAt: segAt,
             segments: segs, Vw: _nn(Vw), warnings: warnings,
             datumTvd: datumTvd, datumMd: datumMd, survey: sv, fluid: fl,
             temp: { model: tp.model === 'displaced' ? 'displaced' : 'static', surfF: _num(tp.surfF, 70), gradFper100: _num(tp.gradFper100, 1.5),
                     tauLoH: _num(tp.tauLoH, 0.5), tauHiH: _num(tp.tauHiH, 5) }
         };
+        if (mc) colOut.mc = { stations: mc.stations, at: mc.at, maxInc: mc.maxInc, maxDls: mc.maxDls };   // only with [md, inc, azi] rows
+        return colOut;
     }
     function _col(c) { if (c && typeof c.tvdAt === 'function') return c; if (c && typeof c === 'object') { var k = column(c); return k.ok ? k : null; } return null; }
 
@@ -1436,7 +1545,7 @@
     var API = { column: column, csys: csys, tempProfile: tempProfile, hydrostatic: hydrostatic, pipeFriction: pipeFriction, perfFriction: perfFriction,
                 nwbLoss: nwbLoss, bleedOff: bleedOff, convert: convert, vacuum: vacuum, stepDown: stepDown, stepDownDesignCheck: stepDownDesignCheck,
                 stepRate: stepRate, ramp: ramp, hammerQuick: hammerQuick, align: align,
-                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod };
+                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod, surveyMC: surveyMC };
     Object.keys(API).forEach(function (k) { W[k] = _safe(k, API[k]); });
     W.perfConstant = perfConstant;
     W.salinityFromPpg = salinityFromPpg;

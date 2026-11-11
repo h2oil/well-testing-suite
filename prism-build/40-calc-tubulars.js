@@ -38,6 +38,8 @@
 //   displacement(odIn, idIn)                bbl/ft open-end (steel) displacement
 //   closedEndDisplacement(odIn)             bbl/ft closed-end displacement
 //   bblFtToM3m(x)                           bbl/ft → m³/m (× 0.521612)
+//   roughness(key)                          v4.3: default roughness in (newSteel / well 0.0006, usedTubing / line 0.0018,
+//                                           plasticCoated / cra 0.0002); roughness.TABLE, roughness.LABELS
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -137,6 +139,15 @@
     }
     function closedEndDisplacement(odIn) { return capacity(odIn); }
 
+    // Default absolute roughness (in) by pipe condition — v4.3 Well Performance WP4, owner Q10: 0.0006 in for wells (new steel),
+    // 0.0018 in for lines (used pipe, the flowline page default). Only a default: a string's own rough (the column schema) wins,
+    // and the catalogue rows carry no rough. roughness(key) → in; unknown or empty key → the well default.
+    var ROUGH = { newSteel: 0.0006, usedTubing: 0.0018, plasticCoated: 0.0002, cra: 0.0002, well: 0.0006, line: 0.0018 };
+    function roughness(key) { return Object.prototype.hasOwnProperty.call(ROUGH, key) ? ROUGH[key] : ROUGH.well; }
+    roughness.TABLE = Object.freeze({ newSteel: ROUGH.newSteel, usedTubing: ROUGH.usedTubing, plasticCoated: ROUGH.plasticCoated, cra: ROUGH.cra,
+                                     well: ROUGH.well, line: ROUGH.line });
+    roughness.LABELS = Object.freeze({ newSteel: 'New steel', usedTubing: 'Used tubing', plasticCoated: 'Plastic-coated', cra: 'Corrosion-resistant alloy' });
+
     G.WTS_tubulars = {
         casing: casing, tubing: tubing, drillpipe: drillpipe, liners: liners,
         hostCasingKeys: HOST_CASING.map(function (r) { return 'casing-' + r[0] + '-' + r[1]; }),
@@ -152,7 +163,8 @@
         annularCapacity: annularCapacity,
         displacement: displacement,
         closedEndDisplacement: closedEndDisplacement,
-        bblFtToM3m: function (x) { return Number(x) * BBLFT_TO_M3M; }
+        bblFtToM3m: function (x) { return Number(x) * BBLFT_TO_M3M; },
+        roughness: roughness
     };
 })();
 

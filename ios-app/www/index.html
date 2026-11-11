@@ -111182,6 +111182,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   displacement(odIn, idIn)                bbl/ft open-end (steel) displacement
 //   closedEndDisplacement(odIn)             bbl/ft closed-end displacement
 //   bblFtToM3m(x)                           bbl/ft → m³/m (× 0.521612)
+//   roughness(key)                          v4.3: default roughness in (newSteel / well 0.0006, usedTubing / line 0.0018,
+//                                           plasticCoated / cra 0.0002); roughness.TABLE, roughness.LABELS
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -111281,6 +111283,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
     function closedEndDisplacement(odIn) { return capacity(odIn); }
 
+    // Default absolute roughness (in) by pipe condition — v4.3 Well Performance WP4, owner Q10: 0.0006 in for wells (new steel),
+    // 0.0018 in for lines (used pipe, the flowline page default). Only a default: a string's own rough (the column schema) wins,
+    // and the catalogue rows carry no rough. roughness(key) → in; unknown or empty key → the well default.
+    var ROUGH = { newSteel: 0.0006, usedTubing: 0.0018, plasticCoated: 0.0002, cra: 0.0002, well: 0.0006, line: 0.0018 };
+    function roughness(key) { return Object.prototype.hasOwnProperty.call(ROUGH, key) ? ROUGH[key] : ROUGH.well; }
+    roughness.TABLE = Object.freeze({ newSteel: ROUGH.newSteel, usedTubing: ROUGH.usedTubing, plasticCoated: ROUGH.plasticCoated, cra: ROUGH.cra,
+                                     well: ROUGH.well, line: ROUGH.line });
+    roughness.LABELS = Object.freeze({ newSteel: 'New steel', usedTubing: 'Used tubing', plasticCoated: 'Plastic-coated', cra: 'Corrosion-resistant alloy' });
+
     G.WTS_tubulars = {
         casing: casing, tubing: tubing, drillpipe: drillpipe, liners: liners,
         hostCasingKeys: HOST_CASING.map(function (r) { return 'casing-' + r[0] + '-' + r[1]; }),
@@ -111296,7 +111307,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         annularCapacity: annularCapacity,
         displacement: displacement,
         closedEndDisplacement: closedEndDisplacement,
-        bblFtToM3m: function (x) { return Number(x) * BBLFT_TO_M3M; }
+        bblFtToM3m: function (x) { return Number(x) * BBLFT_TO_M3M; },
+        roughness: roughness
     };
 })();
 
@@ -120677,6 +120689,8 @@ pipesz: {
 //
 // 3.4a functions (shapes: prism-build/tests/_dfit-shapes.js StepDown, StepRate, Ramp, Hammer):
 //   column(spec)                         survey + strings → TVD/MD maps, capacity, segments, V_w
+//   surveyMC(rows)                       v4.3 (Well Performance WP4): minimum curvature [[md, inc, azi]] → stations (TVD, N, E,
+//                                        departure, dogleg, DLS) + at(md) on the arcs; column() takes such rows too (key mc)
 //   csys(column, fluid, T)               the one system compressibility c_fluid + ψ·D/(E_s·e), V_w·c_w, wave speed
 //   tempProfile(column, opts)            static geotherm or displaced (DFIT) column, relaxing with e^(−t/τ)
 //   hydrostatic(pK, tvdK, tvdT, col, T)  ρ(p,T) column, RK2 at 10 ft (or a constant gradient)
@@ -120914,14 +120928,113 @@ pipesz: {
         var e = T.find(key);
         return (e && _fin(e.id) && _fin(e.od)) ? e : null;
     }
+    // ── minimum curvature (v4.3 WP4, docs/WELL-PERFORMANCE-PLAN.md §2.3) ──────
+    // rows [[md ft, inc °, azi °]] ascending MD (inc 0–180 from vertical, azi 0–360 from north) → stations with TVD, N, E,
+    // closure departure, along-hole horizontal length hd, dogleg ° and DLS °/100 ft; a tie-in [0, 0, azi] is prepended when the
+    // first row is below the surface (the hole is taken as vertical from the surface to it only if its inclination is 0).
+    // Between stations the hole is the circular arc of the method: ΔTVD = ΔMD/2·(cos I1 + cos I2)·RF, ΔN = ΔMD/2·(sin I1 cos A1 +
+    // sin I2 cos A2)·RF, ΔE likewise with sin A, RF = (2/β)·tan(β/2), β the dogleg; at(md) interpolates on that arc (the tangent is
+    // the slerp of the two station tangents), so TVD, N, E and the inclination are exact for a constant-curvature hole. Below the
+    // last station at(md) continues along its tangent; above the surface it is undefined (NaN).
+    function _mcTan(inc, azi) {
+        var i = inc * Math.PI / 180, a = azi * Math.PI / 180;
+        return [Math.sin(i) * Math.cos(a), Math.sin(i) * Math.sin(a), Math.cos(i)];
+    }
+    function _mcDogleg(i1, a1, i2, a2) {
+        var r = Math.PI / 180, s1 = Math.sin((i2 - i1) * r / 2), s2 = Math.sin((a2 - a1) * r / 2);
+        var x = s1 * s1 + Math.sin(i1 * r) * Math.sin(i2 * r) * s2 * s2;
+        return 2 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, x))));
+    }
+    // displacement and tangent at the fraction f of an interval of length L with end tangents t1, t2 and dogleg b (rad)
+    function _mcArc(t1, t2, b, L, f) {
+        var c1, c2, d1, d2;
+        if (b < 1e-7) { c1 = f - f * f / 2; c2 = f * f / 2; d1 = 1 - f; d2 = f; }
+        else {
+            var sb = Math.sin(b);
+            c1 = (Math.cos((1 - f) * b) - Math.cos(b)) / (b * sb); c2 = (1 - Math.cos(f * b)) / (b * sb);
+            d1 = Math.sin((1 - f) * b) / sb; d2 = Math.sin(f * b) / sb;
+        }
+        var d = [0, 0, 0], t = [0, 0, 0];
+        for (var k = 0; k < 3; k++) { d[k] = L * (c1 * t1[k] + c2 * t2[k]); t[k] = d1 * t1[k] + d2 * t2[k]; }
+        var n = Math.sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]) || 1;
+        return { d: d, t: [t[0] / n, t[1] / n, t[2] / n] };
+    }
+    function _mcAngles(t) {
+        var inc = Math.acos(Math.max(-1, Math.min(1, t[2]))) * 180 / Math.PI;
+        var azi = Math.atan2(t[1], t[0]) * 180 / Math.PI; if (azi < 0) azi += 360;
+        return { inc: inc, azi: inc < 1e-9 ? 0 : azi };
+    }
+    function surveyMC(rows) {
+        var warnings = [], st = [];
+        (Array.isArray(rows) ? rows : []).forEach(function (row) {
+            if (!row || !_fin(+row[0]) || !_fin(+row[1]) || !_fin(+row[2])) { warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'A survey row that is not three numbers (MD, inclination, azimuth) was dropped.')); return; }
+            var md = +row[0], inc = +row[1], azi = ((+row[2] % 360) + 360) % 360;
+            var last = st.length ? st[st.length - 1] : null;
+            if (md < 0 || inc < 0 || inc > 180 || (last && !(md > last.md))) {
+                warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'A survey row at ' + _f(md, 0) + ' ft MD was dropped (MD must rise, inclination 0–180°).'));
+                return;
+            }
+            st.push({ md: md, inc: inc, azi: azi });
+        });
+        if (!st.length) return _fail('NO_SURVEY', 'The survey needs at least one row of MD, inclination and azimuth.', ['survey']);
+        if (st[0].md > 0) {
+            if (st[0].inc > 0) warnings.push(_warn('SURVEY_TIE_IN', 'info', 'The survey starts at ' + _f(st[0].md, 0) + ' ft MD; it is tied in at the surface (0 ft, vertical).'));
+            st.unshift({ md: 0, inc: 0, azi: st[0].azi });
+        }
+        var out = [], maxInc = 0, maxDls = 0;
+        st.forEach(function (s, i) {
+            var o = { md: s.md, inc: s.inc, azi: s.azi, tvd: 0, n: 0, e: 0, dep: 0, hd: 0, dogleg: 0, dls: 0 };
+            if (i > 0) {
+                var p = out[i - 1], L = s.md - p.md, b = _mcDogleg(p.inc, p.azi, s.inc, s.azi);
+                var a = _mcArc(_mcTan(p.inc, p.azi), _mcTan(s.inc, s.azi), b, L, 1);
+                o.n = p.n + a.d[0]; o.e = p.e + a.d[1]; o.tvd = p.tvd + a.d[2];
+                o.dep = Math.sqrt(o.n * o.n + o.e * o.e); o.hd = p.hd + Math.sqrt(a.d[0] * a.d[0] + a.d[1] * a.d[1]);
+                o.dogleg = b * 180 / Math.PI; o.dls = L > 0 ? o.dogleg / L * 100 : 0;
+            }
+            if (o.inc > maxInc) maxInc = o.inc;
+            if (o.dls > maxDls) maxDls = o.dls;
+            out.push(o);
+        });
+        function at(md) {
+            if (!_fin(md) || md < 0) return { md: md, tvd: NaN, n: NaN, e: NaN, dep: NaN, hd: NaN, inc: NaN, azi: NaN };
+            var lo = 0, hi = out.length - 1;
+            if (md >= out[hi].md) {
+                var z = out[hi], t = _mcTan(z.inc, z.azi), dl = md - z.md, n = z.n + dl * t[0], e = z.e + dl * t[1];
+                return { md: md, tvd: z.tvd + dl * t[2], n: n, e: e, dep: Math.sqrt(n * n + e * e), hd: z.hd + dl * Math.sqrt(t[0] * t[0] + t[1] * t[1]), inc: z.inc, azi: z.azi };
+            }
+            while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (out[mid].md <= md) lo = mid; else hi = mid; }
+            var p = out[lo], q = out[hi], L = q.md - p.md, f = L > 0 ? (md - p.md) / L : 0;
+            var b = q.dogleg * Math.PI / 180, a = _mcArc(_mcTan(p.inc, p.azi), _mcTan(q.inc, q.azi), b, L, f), ang = _mcAngles(a.t);
+            var nn = p.n + a.d[0], ee = p.e + a.d[1];
+            // along-hole horizontal length: the horizontal arc length is not closed form; the fraction of the interval's hd is used
+            return { md: md, tvd: p.tvd + a.d[2], n: nn, e: ee, dep: Math.sqrt(nn * nn + ee * ee), hd: p.hd + f * (q.hd - p.hd), inc: ang.inc, azi: ang.azi };
+        }
+        return { ok: true, stations: out, at: at, tdMd: out[out.length - 1].md, maxInc: maxInc, maxDls: maxDls, warnings: warnings };
+    }
+    function _isMcRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return false;
+        for (var i = 0; i < rows.length; i++) if (!Array.isArray(rows[i]) || rows[i].length < 3 || !_fin(+rows[i][2])) return false;
+        return true;
+    }
+
     function column(spec) {
         spec = spec || {};
         var warnings = [];
         var datumTvd = _num(spec.datumTvd, null);
         if (!(_fin(datumTvd) && datumTvd > 0)) return _fail('NO_DATUM', 'The datum depth (mid-perforation TVD) is needed for the wellbore column.', ['datumTvd']);
-        // survey [[md, tvd]] ascending MD; [0, 0] prepended
-        var sv = [[0, 0]];
-        if (Array.isArray(spec.survey)) {
+        // survey [[md, tvd]] ascending MD; [0, 0] prepended. v4.3: [[md, inc, azi]] rows (every row three numbers) go through
+        // surveyMC; the column then interpolates TVD on the minimum-curvature arcs (key mc). Two-column input is unchanged.
+        var sv = [[0, 0]], mc = _isMcRows(spec.survey) ? surveyMC(spec.survey) : null;
+        if (mc && !mc.ok) mc = null;
+        if (mc) {
+            mc.warnings.forEach(function (w) { warnings.push(w); });
+            mc.stations.forEach(function (s) {
+                var last = sv[sv.length - 1];
+                if (s.md === 0) return;
+                if (s.tvd >= last[1] - 1e-9) sv.push([s.md, s.tvd]);
+                else warnings.push(_warn('SURVEY_ROW_DROPPED', 'warn', 'The station at ' + _f(s.md, 0) + ' ft MD rises (inclination above 90°); the column keeps TVD-monotone stations only.'));
+            });
+        } else if (Array.isArray(spec.survey)) {
             spec.survey.forEach(function (row) {
                 if (!row || !_fin(+row[0]) || !_fin(+row[1])) return;
                 var md = +row[0], tvd = +row[1], last = sv[sv.length - 1];
@@ -120932,6 +121045,7 @@ pipesz: {
         }
         function tvdAt(md) {
             if (!_fin(md)) return NaN;
+            if (mc && md >= 0) return mc.at(md).tvd;
             if (sv.length === 1) return md;
             for (var i = 1; i < sv.length; i++) if (md <= sv[i][0]) {
                 var a = sv[i - 1], b = sv[i];
@@ -120946,6 +121060,11 @@ pipesz: {
             for (var i = 1; i < sv.length; i++) if (tvd <= sv[i][1] && sv[i][1] > sv[i - 1][1]) {
                 var a = sv[i - 1], b = sv[i];
                 if (tvd < a[1]) continue;
+                if (mc) {          // bisection on the arc (TVD rises monotonically between TVD-monotone stations)
+                    var lo = a[0], hi = b[0];
+                    for (var it = 0; it < 60 && hi - lo > 1e-7; it++) { var m = 0.5 * (lo + hi); if (tvdAt(m) < tvd) lo = m; else hi = m; }
+                    return 0.5 * (lo + hi);
+                }
                 return a[0] + (b[0] - a[0]) * (tvd - a[1]) / (b[1] - a[1]);
             }
             var p = sv[sv.length - 2], q = sv[sv.length - 1];
@@ -121008,13 +121127,15 @@ pipesz: {
         }
         var fl = _fluid(spec.fluid);
         var tp = spec.temp || {};
-        return {
+        var colOut = {
             ok: true, tvdAt: tvdAt, mdAt: mdAt, capacityAt: capacityAt, mdAtVolume: mdAtVolume, segAt: segAt,
             segments: segs, Vw: _nn(Vw), warnings: warnings,
             datumTvd: datumTvd, datumMd: datumMd, survey: sv, fluid: fl,
             temp: { model: tp.model === 'displaced' ? 'displaced' : 'static', surfF: _num(tp.surfF, 70), gradFper100: _num(tp.gradFper100, 1.5),
                     tauLoH: _num(tp.tauLoH, 0.5), tauHiH: _num(tp.tauHiH, 5) }
         };
+        if (mc) colOut.mc = { stations: mc.stations, at: mc.at, maxInc: mc.maxInc, maxDls: mc.maxDls };   // only with [md, inc, azi] rows
+        return colOut;
     }
     function _col(c) { if (c && typeof c.tvdAt === 'function') return c; if (c && typeof c === 'object') { var k = column(c); return k.ok ? k : null; } return null; }
 
@@ -122099,7 +122220,7 @@ pipesz: {
     var API = { column: column, csys: csys, tempProfile: tempProfile, hydrostatic: hydrostatic, pipeFriction: pipeFriction, perfFriction: perfFriction,
                 nwbLoss: nwbLoss, bleedOff: bleedOff, convert: convert, vacuum: vacuum, stepDown: stepDown, stepDownDesignCheck: stepDownDesignCheck,
                 stepRate: stepRate, ramp: ramp, hammerQuick: hammerQuick, align: align,
-                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod };
+                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod, surveyMC: surveyMC };
     Object.keys(API).forEach(function (k) { W[k] = _safe(k, API[k]); });
     W.perfConstant = perfConstant;
     W.salinityFromPpg = salinityFromPpg;
@@ -152738,34 +152859,688 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 // =============================================================================
 // WTS — 49-calc-wp-well.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
 // -----------------------------------------------------------------------------
-// Well Performance well path: deviation (minimum curvature via WTS_wellbore.surveyMC), strings → segments, restrictions, temperature, schematic data — docs/WELL-PERFORMANCE-PLAN.md §2.10, §3.1, §4.5, §4.6.
-// WP0 STUB (contract only): every function below returns {ok:false, code:'STUB', name, wp, errors[]} until WP4 replaces it.
-// The work package that implements a function removes its name from window.__WP_STUBS (tests/wellperf-shapes.test.js lists them).
-// Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}], …}; nothing throws for user data):
+// Well Performance well path (WP4, docs/WELL-PERFORMANCE-PLAN.md §2.3, §2.5, §3.1, §4.5, §4.6, §15.1): deviation (minimum
+// curvature through WTS_wellbore.surveyMC), strings → flow segments on the true inclination, restrictions, the linear flowing
+// temperature with the Joule-Thomson hydrate THT, and the data of the interactive well schematic. Pure: no DOM, storage, timers or
+// events; nothing throws for user data. Field units: ft (MD / TVD), in (diameters, roughness), °F, psia.
+//
+// Interfaces (the WP0 contract; every result {ok, errors[], warnings[{code, msg, sev:'info'|'warn'}], …}):
 //   WTS_wp_well
-//     .build(well /*M.well*/, o)
-//         → W = {ok, segments:[{name, len, id, dz, area?, restr?, md0, md1, tvd0, tvd1, inc}], nodes:{wellheadMd, midPerfMd, midPerfTvd, gauges[]}, stations:[{md, tvd, inc, azi, n, e, dep}], tAt(md) °F, warnings, errors}
-//     .segmentsFor(W, o /*{from, toMd, path}*/)
-//         → [{name, len ft, id in, dz ft, area?, restr?}]  (flow order, bottom → top)
+//     .build(well /*M.well*/, o?)
+//         o: {res /*M.res: T_F = the flowing BHT at mid-perf*/, fluidType, tests /*M.tests: gauge MDs*/, gauges /*[md]*/,
+//             surface /*M.surface: the choke for the schematic*/, maxDoglegDeg /*segment dogleg limit, default 5°*/, fmt}
+//         → W = {ok, segments /*segmentsFor(W, {})*/, nodes:{wellheadMd, wellheadTvd, midPerfMd, midPerfTvd, perfTopMd, perfBotMd,
+//                perfTopTvd, perfBotTvd, tubingShoeMd, gauges:[{md, tvd, source}]}, stations:[{md, tvd, inc, azi, n, e, dep, hd, dls}],
+//                tAt(md) °F, tvdAt(md), mdAt(tvd), at(md) → {md, tvd, inc, azi, n, e, dep, hd}, xToMd(x, {fromTop?}),
+//                survey:{kind:'mc'|'tvd'|'vertical', tdMd, maxInc, maxDls, aziKnown, vsAzi}, strings[], restrictions[], path,
+//                rough /*length-weighted along the flow path — the marcher takes one roughness*/, deviated:[{md0, md1, incMax}],
+//                temp /*temperature(W)*/, heat, geo, bht, choke, column /*WTS_wellbore.column or null*/, warnings, errors}
+//     .segmentsFor(W, o /*{from, toMd, path, maxDoglegDeg}*/)
+//         → [{name, len ft, id in, dz ft (+ = the flow goes up), area? in², restr? {d, k}, md0, md1, tvd0, tvd1, inc, incMin, incMax,
+//             kind, rough}] in flow order; md0 / tvd0 = the segment's flow inlet, md1 / tvd1 = its outlet (production from the
+//             mid-perforations up: md0 > md1). Segments break at every bore change and restriction and wherever the hole turns by more
+//             than maxDoglegDeg; dz is the exact minimum-curvature ΔTVD, so the march takes the hydrostatic term on TVD and friction on
+//             MD, and each segment carries its own inclination for the correlations. A restriction at MD r is the restr of the segment
+//             whose flow inlet is r (the WP0b marcher applies it there).
 //     .restrictions(W)
-//         → [{kind, md, tvd, id, k, beta}]
-//     .temperature(W, o /*{mode, tht_F, thtMeasured, F, dpTubing}*/)
-//         → {ok, tAt(md), tht, bht, thtHyd, verdict, warnings}
-//     .schematic(W, R /*solution or null*/)
-//         → {trajectory:[{md, tvd, dep, n, e, inc, azi}], strings[], restrictions[], perfs:{topMd, botMd, midMd}, gauges[], choke, profile[] /*per-depth p, t, hl, vm, pattern from R*/}
+//         → [{kind, md, tvd, id, k, beta, bore, applied, label}]
+//     .temperature(W, o /*{mode, tht_F, thtMeasured, F, fluidType, dpTubing, pwf, thp, pMean /*psia*/, bht_F, sg}*/)
+//         → {ok, mode, tAt(md), geoAt(tvd), tht, bht, thtHyd, muJT, dpTubing, pMean, verdict:'measured'|'jt-corrected'|'upper-bound'|
+//            'geotherm', verdictText, warnings, errors}
+//         Linear (A1): T(MD) = THT + (BHT − THT)·MD / MD_midperf (§4.6); BHT = the reservoir temperature, else the geotherm at the
+//         mid-perforation TVD. Hydrate THT (gas / condensate, THT not measured): THT_hyd = THT − μ_JT·Δp_tubing, μ_JT (°F/psi) from
+//         WTS_gaspvt_isenthalpic at the mean tubing pressure and temperature; without Δp or μ_JT the verdict is "upper-bound THT, not
+//         conservative". No THT: the static geotherm, and the surface geotherm temperature for the hydrate check.
+//     .schematic(W, R /*a WTS_wp_system result or null*/, o?)
+//         → {ok, trajectory:[{md, tvd, dep, n, e, vs, inc, azi}], vsAzi, extents, strings[] (outermost first), restrictions[],
+//            perfs:{topMd, botMd, midMd, topTvd, botTvd, midTvd}, gauges[], choke, surface, profile:[{md, tvd, inc, vs, p, t, hl, vm,
+//            pattern, …}], ranges:{p, t, hl, vm, ero → [min, max] | null}, props[], at(md) (hover readout), norm(prop, v) → 0..1}
+//         Everything the page needs to draw the side view (vertical section), the plan view, the strings, restrictions, perforations,
+//         gauges and choke, the hover readout at any depth and the heat-map colouring along the well.
 // =============================================================================
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // WP4 replaces the WP0 stub file: its names leave window.__WP_STUBS (they are never added by this file)
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
-    function _mark(name) { if (STUBS.indexOf(name) === -1) STUBS.push(name); }
-    function _stub(name, wp) { return { ok: false, code: 'STUB', name: name, wp: wp, errors: [name + ' is not built yet (' + wp + ')'], warnings: [] }; }
-    var wp_well = G.WTS_wp_well = G.WTS_wp_well || {};
-    if (!wp_well.build) { wp_well.build = function () { return _stub('WTS_wp_well.build', 'WP4'); }; _mark('WTS_wp_well.build'); }
-    if (!wp_well.segmentsFor) { wp_well.segmentsFor = function () { return _stub('WTS_wp_well.segmentsFor', 'WP4'); }; _mark('WTS_wp_well.segmentsFor'); }
-    if (!wp_well.restrictions) { wp_well.restrictions = function () { return _stub('WTS_wp_well.restrictions', 'WP4'); }; _mark('WTS_wp_well.restrictions'); }
-    if (!wp_well.temperature) { wp_well.temperature = function () { return _stub('WTS_wp_well.temperature', 'WP4'); }; _mark('WTS_wp_well.temperature'); }
-    if (!wp_well.schematic) { wp_well.schematic = function () { return _stub('WTS_wp_well.schematic', 'WP4'); }; _mark('WTS_wp_well.schematic'); }
+    ['WTS_wp_well.build', 'WTS_wp_well.segmentsFor', 'WTS_wp_well.restrictions', 'WTS_wp_well.temperature', 'WTS_wp_well.schematic'].forEach(function (n) {
+        var i = STUBS.indexOf(n); if (i !== -1) STUBS.splice(i, 1);
+    });
+
+    var DEG = Math.PI / 180;
+    var DEF_DOGLEG = 5;                   // ° per flow segment (inclination resolution of the march)
+    var DEF_ROUGH = 0.0006;               // in, new steel (owner Q10, wells) when WTS_tubulars.roughness is absent
+    var HIGH_DLS = 10;                    // °/100 ft: warning
+    var DEVIATED_INC = 30;                // ° from vertical: sections listed for the vertical-only correlations (§4.4)
+    var STRING_KINDS = ['tubing', 'casing', 'liner'];
+    var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
+    var RESTR_LABEL = { sssv: 'SSSV', nipple: 'Nipple', sleeve: 'Sliding sleeve', xo: 'Crossover', downholeChoke: 'Downhole choke' };
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _num(v) {
+        if (typeof v === 'number') return isFinite(v) ? v : null;
+        if (typeof v === 'string' && v.trim() !== '' && /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(v.trim())) return +v.trim();
+        return null;
+    }
+    function _w(code, msg, sev) { return { code: code, msg: String(msg).slice(0, 299), sev: sev === 'info' ? 'info' : 'warn' }; }
+    function _f(x, dp) {
+        if (!_fin(x)) return '–';
+        var s = (+x.toFixed(dp || 0)).toFixed(dp || 0), neg = s.charAt(0) === '-';
+        if (neg) s = s.slice(1);
+        var parts = s.split('.'), ip = parts[0], out = '';
+        while (ip.length > 3) { out = ',' + ip.slice(-3) + out; ip = ip.slice(0, -3); }
+        return (neg ? '−' : '') + ip + out + (parts[1] ? '.' + parts[1] : '');
+    }
+    var FIELD_FMT = {
+        len: function (v) { return _f(v, 0) + ' ft'; },
+        t: function (v) { return _f(v, 1) + ' °F'; },
+        p: function (v) { return _f(v, 0) + ' psia'; },
+        d: function (v) { return _f(v, 3) + ' in'; }
+    };
+    function _fmt(o) {
+        var f = (o && o.fmt) || {}, r = {};
+        Object.keys(FIELD_FMT).forEach(function (k) { r[k] = typeof f[k] === 'function' ? f[k] : FIELD_FMT[k]; });
+        return r;
+    }
+    function _clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+    function _tan(inc, azi) { var i = inc * DEG, a = azi * DEG; return [Math.sin(i) * Math.cos(a), Math.sin(i) * Math.sin(a), Math.cos(i)]; }
+    function _angle(t1, t2) {
+        var d = t1[0] * t2[0] + t1[1] * t2[1] + t1[2] * t2[2];
+        var x = [t1[1] * t2[2] - t1[2] * t2[1], t1[2] * t2[0] - t1[0] * t2[2], t1[0] * t2[1] - t1[1] * t2[0]];
+        return Math.atan2(Math.sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]), d) / DEG;
+    }
+    function _missing(name) { return { ok: false, code: 'MISSING_ENGINE', name: name, errors: [name + ' is not loaded'], warnings: [] }; }
+
+    // ── trajectory: minimum curvature ([md, inc, azi]), TVD pairs ([md, tvd]) or vertical ──────────────────────────
+    function _isMc(rows) {
+        if (!Array.isArray(rows) || !rows.length) return false;
+        for (var i = 0; i < rows.length; i++) if (!Array.isArray(rows[i]) || rows[i].length < 3 || !_fin(_num(rows[i][2]))) return false;
+        return true;
+    }
+    function _trajVertical() {
+        var st = [{ md: 0, tvd: 0, inc: 0, azi: 0, n: 0, e: 0, dep: 0, hd: 0, dls: 0, dogleg: 0 }];
+        return { kind: 'vertical', stations: st, tdMd: 0, maxInc: 0, maxDls: 0, aziKnown: false, warnings: [],
+                 at: function (md) { return { md: md, tvd: _fin(md) ? md : NaN, inc: 0, azi: 0, n: 0, e: 0, dep: 0, hd: 0 }; } };
+    }
+    // [md, tvd] pairs: straight lines between stations (the convention of WTS_wellbore.column), inclination = acos(ΔTVD / ΔMD)
+    function _trajTvd(rows, warnings) {
+        var sv = [[0, 0]];
+        rows.forEach(function (r) {
+            var md = _num(r && r[0]), tvd = _num(r && r[1]), last = sv[sv.length - 1];
+            if (!_fin(md) || !_fin(tvd)) { warnings.push(_w('SURVEY_ROW_DROPPED', 'A survey row that is not two numbers (MD, TVD) was dropped.')); return; }
+            if (md === 0 && tvd === 0) return;
+            if (md > last[0] && tvd >= last[1] - 1e-9 && tvd - last[1] <= md - last[0] + 1e-6) sv.push([md, tvd]);
+            else warnings.push(_w('SURVEY_ROW_DROPPED', 'The survey row at ' + _f(md, 0) + ' ft MD was dropped (MD must rise and TVD may not rise faster than MD).'));
+        });
+        var st = [], maxInc = 0, maxDls = 0;
+        sv.forEach(function (p, i) {
+            var o = { md: p[0], tvd: p[1], inc: 0, azi: 0, n: 0, e: 0, dep: 0, hd: 0, dls: 0, dogleg: 0 };
+            if (i > 0) {
+                var q = st[i - 1], L = p[0] - q.md, dz = p[1] - q.tvd, h = Math.sqrt(Math.max(0, L * L - dz * dz));
+                o.inc = Math.acos(_clamp(dz / L, -1, 1)) / DEG; o.hd = q.hd + h; o.n = o.hd; o.dep = o.hd;
+                if (i > 1) { o.dogleg = Math.abs(o.inc - q.inc); o.dls = o.dogleg / L * 100; }
+            }
+            if (o.inc > maxInc) maxInc = o.inc;
+            if (o.dls > maxDls) maxDls = o.dls;
+            st.push(o);
+        });
+        if (st.length > 1) st[0].inc = st[1].inc;
+        function at(md) {
+            if (!_fin(md) || md < 0) return { md: md, tvd: NaN, inc: NaN, azi: 0, n: NaN, e: 0, dep: NaN, hd: NaN };
+            var k = 1;
+            while (k < st.length - 1 && md > st[k].md) k++;
+            if (st.length === 1) return { md: md, tvd: md, inc: 0, azi: 0, n: 0, e: 0, dep: 0, hd: 0 };
+            var a = st[k - 1], b = st[k], L = b.md - a.md, f = (md - a.md) / L;
+            var tvd = a.tvd + f * (b.tvd - a.tvd), hd = a.hd + f * (b.hd - a.hd);
+            return { md: md, tvd: tvd, inc: b.inc, azi: 0, n: hd, e: 0, dep: hd, hd: hd };
+        }
+        return { kind: 'tvd', stations: st, tdMd: st[st.length - 1].md, maxInc: maxInc, maxDls: maxDls, aziKnown: false, warnings: [], at: at };
+    }
+    function _trajectory(rows, warnings) {
+        rows = Array.isArray(rows) ? rows : [];
+        if (!rows.length) return _trajVertical();
+        if (_isMc(rows)) {
+            var WB = G.WTS_wellbore;
+            if (!WB || typeof WB.surveyMC !== 'function') return null;
+            var mc = WB.surveyMC(rows.map(function (r) { return [_num(r[0]), _num(r[1]), _num(r[2])]; }));
+            if (!mc || !mc.ok) {
+                warnings.push(_w('NO_SURVEY', 'The survey has no usable row; the well is treated as vertical.'));
+                return _trajVertical();
+            }
+            (mc.warnings || []).forEach(function (x) { warnings.push(_w(x.code, x.text || x.msg || '', x.level === 'info' ? 'info' : 'warn')); });
+            return { kind: 'mc', stations: mc.stations, tdMd: mc.tdMd, maxInc: mc.maxInc, maxDls: mc.maxDls, aziKnown: true, at: mc.at };
+        }
+        return _trajTvd(rows, warnings);
+    }
+
+    // ── strings ──────────────────────────────────────────────────────────────
+    function _roughDefault() {
+        var T = G.WTS_tubulars;
+        if (T && typeof T.roughness === 'function') { var r = T.roughness('well'); if (_fin(r) && r > 0) return r; }
+        return DEF_ROUGH;
+    }
+    function _strings(list, warnings) {
+        var T = G.WTS_tubulars, rd = _roughDefault(), out = [];
+        (Array.isArray(list) ? list : []).forEach(function (s, i) {
+            if (!s || typeof s !== 'object') return;
+            var e = (s.tubKey && T && typeof T.find === 'function') ? T.find(s.tubKey) : null;
+            var id = _num(s.id), od = _num(s.od), wall = _num(s.wall);
+            if (!_fin(id) && e) id = e.id;
+            if (!_fin(od) && e) od = e.od;
+            if (!_fin(wall)) wall = (e && _fin(e.wall)) ? e.wall : (_fin(id) && _fin(od) ? (od - id) / 2 : null);
+            var top = _num(s.topMd), bot = _num(s.botMd);
+            if (!(_fin(id) && id > 0 && _fin(od) && od > id && _fin(top) && _fin(bot) && bot > top && top >= 0)) {
+                warnings.push(_w('STRING_DROPPED', 'String row ' + (i + 1) + ' was dropped (it needs 0 < ID < OD and top MD < bottom MD).'));
+                return;
+            }
+            var rough = _num(s.rough), roughSrc = 'string';
+            if (!(_fin(rough) && rough >= 0)) { rough = rd; roughSrc = 'default'; }
+            var kind = STRING_KINDS.indexOf(s.kind) !== -1 ? s.kind : 'tubing';
+            out.push({ idx: i, kind: kind, tubKey: e ? s.tubKey : null, id: id, od: od, wall: wall, rough: rough, roughSrc: roughSrc, topMd: top, botMd: bot,
+                       label: (kind === 'tubing' ? 'Tubing' : kind === 'liner' ? 'Liner' : 'Casing') + ' ' + _f(od, 3) + ' in (ID ' + _f(id, 3) + ' in)' });
+        });
+        // overlapping tubing strings (a tapered string is end to end)
+        var tub = out.filter(function (s) { return s.kind === 'tubing'; }).sort(function (a, b) { return a.topMd - b.topMd; });
+        for (var k = 1; k < tub.length; k++) if (tub[k].topMd < tub[k - 1].botMd - 0.5)
+            warnings.push(_w('STRING_OVERLAP', 'Tubing rows overlap between ' + _f(tub[k].topMd, 0) + ' and ' + _f(Math.min(tub[k].botMd, tub[k - 1].botMd), 0) + ' ft MD; the smaller bore is used there.'));
+        // tubing that does not fit inside the casing around it
+        tub.forEach(function (t) {
+            out.forEach(function (c) {
+                if (c.kind === 'tubing' || c.botMd <= t.topMd || c.topMd >= t.botMd) return;
+                if (t.od >= c.id) warnings.push(_w('TUBING_NOT_INSIDE', 'The ' + _f(t.od, 3) + ' in tubing does not fit inside the ' + _f(c.id, 3) + ' in ID ' + c.kind + ' between ' + _f(Math.max(t.topMd, c.topMd), 0) + ' and ' + _f(Math.min(t.botMd, c.botMd), 0) + ' ft MD.'));
+            });
+        });
+        return out;
+    }
+    function _covering(strings, md, kinds) {
+        return strings.filter(function (s) { return md >= s.topMd - 1e-9 && md <= s.botMd + 1e-9 && (!kinds || kinds.indexOf(s.kind) !== -1); });
+    }
+    function _minBy(list, key) { var b = null; list.forEach(function (s) { if (!b || s[key] < b[key]) b = s; }); return b; }
+    // the flow bore at an MD: tubing path = the innermost string; annulus = casing / liner ID around the tubing OD (below the tubing:
+    // the casing bore). null when no string covers the depth.
+    function _boreAt(strings, md, path) {
+        var all = _covering(strings, md, null);
+        if (!all.length) return null;
+        if (path === 'annulus') {
+            var tub = _minBy(_covering(strings, md, ['tubing']), 'id');
+            if (tub) {
+                var cas = _minBy(all.filter(function (s) { return s.kind !== 'tubing' && s.id > tub.od; }), 'id');
+                if (!cas) return { annulusMissing: true };
+                var area = Math.PI / 4 * (cas.id * cas.id - tub.od * tub.od);
+                return { id: cas.id - tub.od, area: area, kind: 'annulus', rough: cas.rough, outer: cas, inner: tub,
+                         key: 'a|' + cas.id + '|' + tub.od + '|' + cas.rough, label: 'Annulus ' + _f(cas.id, 3) + ' × ' + _f(tub.od, 3) + ' in' };
+            }
+        }
+        var s = _minBy(all, 'id');
+        return { id: s.id, area: null, kind: s.kind, rough: s.rough, str: s, key: 'b|' + s.id + '|' + s.rough + '|' + s.kind,
+                 label: (s.kind === 'tubing' ? 'Tubing' : s.kind === 'liner' ? 'Liner' : 'Casing') + ' ' + _f(s.id, 3) + ' in' };
+    }
+
+    // ── geotherm and BHT ─────────────────────────────────────────────────────
+    function _geo(geo, bhtRes, midTvd) {
+        var pts = (geo && Array.isArray(geo.points) ? geo.points : []).map(function (p) { return [_num(p && p[0]), _num(p && p[1])]; })
+            .filter(function (p) { return _fin(p[0]) && _fin(p[1]) && p[0] >= 0; }).sort(function (a, b) { return a[0] - b[0]; });
+        var surf = geo ? _num(geo.surfT_F) : null;
+        if (_fin(surf) && !(pts.length && pts[0][0] === 0)) pts.unshift([0, surf]);
+        if (pts.length === 1 && _fin(bhtRes) && _fin(midTvd) && midTvd > 0) pts.push([midTvd, bhtRes]);
+        if (!pts.length) return null;
+        return function (tvd) {
+            if (!_fin(tvd)) return NaN;
+            if (pts.length === 1) return pts[0][1];
+            var k = 1;
+            while (k < pts.length - 1 && tvd > pts[k][0]) k++;
+            var a = pts[k - 1], b = pts[k];
+            return b[0] > a[0] ? a[1] + (b[1] - a[1]) * (tvd - a[0]) / (b[0] - a[0]) : a[1];
+        };
+    }
+
+    // ── build ────────────────────────────────────────────────────────────────
+    function build(well, o) {
+        o = o || {};
+        var fmt = _fmt(o), warnings = [], errors = [];
+        well = (well && typeof well === 'object') ? well : {};
+        var traj = _trajectory(well.survey, warnings);
+        if (!traj) return _missing('WTS_wellbore.surveyMC');
+        (traj.warnings || []).forEach(function (x) { warnings.push(x); });
+        var strings = _strings(well.strings, warnings);
+        // mid-perforations
+        var pTop = _num(well.perfTopMd), pBot = _num(well.perfBotMd);
+        if (_fin(pTop) && _fin(pBot) && pTop > pBot) { warnings.push(_w('PERF_ORDER', 'The perforation top is below the bottom; they are swapped.')); var sw = pTop; pTop = pBot; pBot = sw; }
+        var mid = _num(well.midPerfMd), midSrc = 'input';
+        if (!_fin(mid) && _fin(pTop) && _fin(pBot)) { mid = (pTop + pBot) / 2; midSrc = 'perfs'; }
+        if (!_fin(mid)) {
+            var deep = 0;
+            strings.forEach(function (s) { if (s.botMd > deep) deep = s.botMd; });
+            if (traj.tdMd > deep) deep = traj.tdMd;
+            if (deep > 0) { mid = deep; midSrc = 'default'; warnings.push(_w('MIDPERF_DEFAULT', 'No mid-perforation depth: ' + fmt.len(mid) + ' MD (the deepest survey station or string) is used.')); }
+        }
+        if (!(_fin(mid) && mid > 0)) errors.push('The mid-perforation depth (MD) is needed.');
+        if (!strings.length) errors.push('At least one string (tubing or casing) is needed for the flow path.');
+        var path = well.path === 'annulus' ? 'annulus' : 'tubing';
+        if (errors.length) return { ok: false, code: !strings.length ? 'NO_STRINGS' : 'NO_MIDPERF', errors: errors, warnings: warnings, segments: [], path: path };
+        if (_fin(pTop) && _fin(pBot) && (mid < pTop - 1e-6 || mid > pBot + 1e-6)) warnings.push(_w('MIDPERF_OUTSIDE', 'The mid-perforation depth ' + fmt.len(mid) + ' MD lies outside the perforated interval.'));
+        if (traj.kind !== 'vertical' && mid > traj.tdMd + 1) warnings.push(_w('SURVEY_EXTRAPOLATED', 'The survey ends at ' + fmt.len(traj.tdMd) + ' MD, above the mid-perforations; the hole is continued along the last station\'s direction.'));
+        if (traj.kind === 'vertical') warnings.push(_w('NO_SURVEY', 'No survey: the well is treated as vertical (TVD = MD).', 'info'));
+        if (traj.maxDls > HIGH_DLS) warnings.push(_w('HIGH_DLS', 'The survey has a dogleg severity of ' + _f(traj.maxDls, 1) + '°/100 ft (above ' + HIGH_DLS + '°/100 ft): check the survey.'));
+        if (traj.maxInc > 90 + 1e-9) warnings.push(_w('HOLE_RISES', 'The hole rises (inclination up to ' + _f(traj.maxInc, 1) + '°); TVD falls with MD there.', 'info'));
+
+        var at = function (md) { return traj.at(md); };
+        var tvdAt = function (md) { return traj.at(md).tvd; };
+        var W = {
+            ok: true, errors: [], warnings: warnings, path: path, strings: strings, stations: traj.stations,
+            survey: { kind: traj.kind, tdMd: traj.tdMd, maxInc: traj.maxInc, maxDls: traj.maxDls, aziKnown: traj.aziKnown, vsAzi: 0 },
+            at: at, tvdAt: tvdAt,
+            geo: well.geo || null, heat: well.heat || {}, fluidType: o.fluidType || null,
+            choke: (o.surface && o.surface.choke) ? { present: !!o.surface.choke.present, bean64: _num(o.surface.choke.bean64) } : null,
+            _restrIn: [], _maxDogleg: _fin(_num(o.maxDoglegDeg)) && o.maxDoglegDeg > 0 ? +o.maxDoglegDeg : DEF_DOGLEG, _fmt: fmt
+        };
+        W.mdAt = function (tvd) { return _mdAt(W, tvd); };
+        var midTvd = tvdAt(mid);
+        // vertical-section azimuth: the closure direction at the mid-perforations
+        var pm = at(mid);
+        if (traj.aziKnown && pm.dep > 1) { var az = Math.atan2(pm.e, pm.n) / DEG; W.survey.vsAzi = az < 0 ? az + 360 : az; }
+        var shoe = null;
+        strings.forEach(function (s) { if (s.kind === 'tubing' && (shoe === null || s.botMd > shoe)) shoe = s.botMd; });
+        // gauges
+        var gauges = [];
+        function addGauge(md, src) {
+            md = _num(md);
+            if (!_fin(md) || md < 0) return;
+            if (gauges.some(function (g) { return Math.abs(g.md - md) < 0.5; })) return;
+            gauges.push({ md: md, tvd: tvdAt(md), source: src });
+            if (md > mid + 1) warnings.push(_w('GAUGE_BELOW_MIDPERF', 'The gauge at ' + fmt.len(md) + ' MD is below the mid-perforations.'));
+        }
+        (Array.isArray(o.gauges) ? o.gauges : []).forEach(function (g) { addGauge(g && typeof g === 'object' ? g.md : g, 'input'); });
+        (Array.isArray(o.tests) ? o.tests : []).forEach(function (t) { if (t && t.use !== false) addGauge(t.gaugeMd, 'test ' + (t.id || '')); });
+        gauges.sort(function (a, b) { return a.md - b.md; });
+        W.nodes = { wellheadMd: 0, wellheadTvd: 0, midPerfMd: mid, midPerfTvd: midTvd, midPerfSource: midSrc,
+                    perfTopMd: _fin(pTop) ? pTop : null, perfBotMd: _fin(pBot) ? pBot : null,
+                    perfTopTvd: _fin(pTop) ? tvdAt(pTop) : null, perfBotTvd: _fin(pBot) ? tvdAt(pBot) : null,
+                    tubingShoeMd: shoe, tubingShoeTvd: shoe === null ? null : tvdAt(shoe), gauges: gauges };
+        if (path === 'tubing' && shoe !== null && shoe > mid + 1) warnings.push(_w('TUBING_BELOW_MIDPERF', 'The tubing reaches below the mid-perforations; the flow enters it at ' + fmt.len(mid) + ' MD.', 'info'));
+        // restrictions (normalised; applied by segmentsFor)
+        (Array.isArray(well.restrictions) ? well.restrictions : []).forEach(function (r, i) {
+            if (!r || typeof r !== 'object') return;
+            var md = _num(r.md), d = _num(r.id), k = _num(r.k);
+            if (!(_fin(md) && md >= 0 && _fin(d) && d > 0)) { warnings.push(_w('RESTR_DROPPED', 'Restriction row ' + (i + 1) + ' was dropped (it needs an MD and an ID).')); return; }
+            var kind = RESTR_KINDS.indexOf(r.kind) !== -1 ? r.kind : 'nipple';
+            W._restrIn.push({ idx: i, kind: kind, md: md, id: d, k: _fin(k) && k >= 0 ? k : null, label: RESTR_LABEL[kind] });
+        });
+        W._restrIn.sort(function (a, b) { return a.md - b.md; });
+        // the flow segments (mid-perforations → wellhead)
+        var segs = segmentsFor(W, {});
+        if (segs && segs.ok === false) return { ok: false, code: segs.code, errors: segs.errors, warnings: warnings, segments: [], path: path };
+        W.segments = segs;
+        var lsum = 0, rsum = 0, rset = {};
+        segs.forEach(function (s) { lsum += s.len; rsum += s.len * s.rough; rset[s.rough] = 1; });
+        W.rough = lsum > 0 ? rsum / lsum : _roughDefault();
+        if (Object.keys(rset).length > 1) warnings.push(_w('ROUGH_MIXED', 'The strings have different roughness; the march takes one value, the length-weighted ' + _f(W.rough, 5) + ' in.', 'info'));
+        // deviated sections (> 30° from vertical) for the vertical-only correlations
+        var dev = [];
+        segs.slice().sort(function (a, b) { return Math.min(a.md0, a.md1) - Math.min(b.md0, b.md1); }).forEach(function (s) {
+            if (s.incMax <= DEVIATED_INC) return;
+            var a = Math.min(s.md0, s.md1), b = Math.max(s.md0, s.md1), last = dev[dev.length - 1];
+            if (last && Math.abs(last.md1 - a) < 1e-6) { last.md1 = b; last.incMax = Math.max(last.incMax, s.incMax); }
+            else dev.push({ md0: a, md1: b, incMax: s.incMax });
+        });
+        W.deviated = dev;
+        W.restrictions = restrictions(W);
+        W.xToMd = function (x, oo) { return _xToMd(W.segments, x, oo); };
+        // flowing temperature (linear, A1)
+        var resT = o.res ? _num(o.res.T_F) : null, geoFn = _geo(W.geo, resT, midTvd);
+        W.bht = _fin(resT) ? resT : geoFn ? geoFn(midTvd) : null;
+        if (_fin(resT) && geoFn && W.geo && Array.isArray(W.geo.points) && W.geo.points.length) {
+            var gb = geoFn(midTvd);
+            if (_fin(gb) && Math.abs(gb - resT) > 5) warnings.push(_w('BHT_GEOTHERM', 'The reservoir temperature ' + fmt.t(resT) + ' differs from the geotherm at the mid-perforations (' + fmt.t(gb) + '); the reservoir temperature is used.', 'info'));
+        }
+        W.temp = temperature(W, {});
+        W.tAt = W.temp.tAt;
+        (W.temp.warnings || []).forEach(function (x) { warnings.push(x); });
+        // the WTS_wellbore column (hydrostatic / capacity helpers for the shut-in column)
+        W.column = null;
+        if (G.WTS_wellbore && typeof G.WTS_wellbore.column === 'function' && midTvd > 0) {
+            var col = G.WTS_wellbore.column({ datumTvd: midTvd, datumMd: mid, survey: Array.isArray(well.survey) ? well.survey : [],
+                strings: strings.map(function (s) { return { tubKey: s.tubKey, id: s.id, od: s.od, wall: s.wall, rough: s.rough, topMd: s.topMd, botMd: s.botMd }; }) });
+            if (col && col.ok) W.column = col;
+        }
+        return W;
+    }
+    function _mdAt(W, tvd) {
+        if (!_fin(tvd)) return NaN;
+        var st = W.stations;
+        if (W.survey.kind === 'vertical') return tvd;
+        for (var i = 1; i < st.length; i++) if (tvd <= st[i].tvd + 1e-9 && tvd >= st[i - 1].tvd - 1e-9 && st[i].tvd > st[i - 1].tvd) {
+            var lo = st[i - 1].md, hi = st[i].md;
+            for (var it = 0; it < 60 && hi - lo > 1e-7; it++) { var m = 0.5 * (lo + hi); if (W.tvdAt(m) < tvd) lo = m; else hi = m; }
+            return 0.5 * (lo + hi);
+        }
+        var z = st[st.length - 1], t = _tan(z.inc, z.azi);
+        return t[2] > 1e-9 ? z.md + (tvd - z.tvd) / t[2] : NaN;
+    }
+    // distance along the flow from the first segment's inlet (or, fromTop, from the last segment's outlet) → MD
+    function _xToMd(segs, x, o) {
+        if (!Array.isArray(segs) || !segs.length || !_fin(x)) return NaN;
+        var list = (o && o.fromTop) ? segs.slice().reverse() : segs, acc = 0;
+        for (var i = 0; i < list.length; i++) {
+            var s = list[i], a = (o && o.fromTop) ? s.md1 : s.md0, b = (o && o.fromTop) ? s.md0 : s.md1;
+            if (x <= acc + s.len + 1e-9 || i === list.length - 1) return a + (b - a) * _clamp((x - acc) / s.len, 0, 1);
+            acc += s.len;
+        }
+        return NaN;
+    }
+
+    // ── segmentsFor ──────────────────────────────────────────────────────────
+    function segmentsFor(W, o) {
+        o = o || {};
+        if (!W || !Array.isArray(W.strings) || !W.nodes || typeof W.at !== 'function') return { ok: false, code: 'NO_WELL', errors: ['segmentsFor needs a well from WTS_wp_well.build'], warnings: [] };
+        var from = _num(o.from), to = _num(o.toMd);
+        if (!_fin(from)) from = W.nodes.midPerfMd;
+        if (!_fin(to)) to = 0;
+        var path = o.path === 'annulus' || o.path === 'tubing' ? o.path : W.path;
+        var tol = _fin(_num(o.maxDoglegDeg)) && o.maxDoglegDeg > 0 ? +o.maxDoglegDeg : (W._maxDogleg || DEF_DOGLEG);
+        var lo = Math.min(from, to), hi = Math.max(from, to), up = from > to;
+        if (!(hi > lo)) return [];
+        var fmt = W._fmt || FIELD_FMT, warns = W.warnings || [];
+        function warnOnce(code, msg, sev) { if (!warns.some(function (x) { return x.code === code; })) warns.push(_w(code, msg, sev)); }
+        // forced breaks: the ends, every string end, every restriction inside the interval
+        var cuts = [lo, hi];
+        W.strings.forEach(function (s) { [s.topMd, s.botMd].forEach(function (m) { if (m > lo && m < hi) cuts.push(m); }); });
+        var restr = (W._restrIn || []).filter(function (r) { return r.md > lo + 1e-6 && r.md < hi - 1e-6 || (r.md === from && from !== 0); });
+        restr.forEach(function (r) { if (r.md > lo && r.md < hi) cuts.push(r.md); });
+        cuts.sort(function (a, b) { return a - b; });
+        var forced = [];
+        cuts.forEach(function (m) { if (!forced.length || m - forced[forced.length - 1] > 0.5) forced.push(m); else if (m === hi) forced[forced.length - 1] = hi; });
+        // the bore of each forced span; uncovered spans take the nearest string above (else below)
+        var spans = [];
+        for (var i = 1; i < forced.length; i++) {
+            var a = forced[i - 1], b = forced[i], bore = _boreAt(W.strings, 0.5 * (a + b), path);
+            if (bore && bore.annulusMissing) return { ok: false, code: 'ANNULUS_NO_CASING', errors: ['Annulus flow needs a casing or liner around the tubing at ' + fmt.len(0.5 * (a + b)) + ' MD.'], warnings: [] };
+            spans.push({ a: a, b: b, bore: bore });
+        }
+        spans.forEach(function (sp, k) {
+            if (sp.bore) return;
+            var j;
+            for (j = k - 1; j >= 0 && !spans[j].bore; j--) { /* search up */ }
+            var src = j >= 0 ? spans[j] : null;
+            if (!src) for (j = k + 1; j < spans.length && !spans[j].bore; j++) { /* search down */ }
+            if (!src && j < spans.length) src = spans[j];
+            sp.bore = src ? src.bore : null;
+            warnOnce('STRING_GAP', 'No string covers ' + fmt.len(sp.a) + ' to ' + fmt.len(sp.b) + ' MD; the nearest string\'s bore is used there.');
+        });
+        if (spans.some(function (sp) { return !sp.bore; })) return { ok: false, code: 'NO_STRINGS', errors: ['No string covers the flow path.'], warnings: [] };
+        // subdivide each span on the trajectory: a new segment wherever the hole has turned by more than tol
+        var st = W.stations || [], pieces = [];
+        spans.forEach(function (sp) {
+            var pts = [sp.a];
+            st.forEach(function (s) { if (s.md > sp.a + 0.5 && s.md < sp.b - 0.5) pts.push(s.md); });
+            pts.push(sp.b);
+            var start = sp.a, tStart = _tanAt(W, sp.a, +1), prev = sp.a;
+            for (var k = 1; k < pts.length; k++) {
+                var p = pts[k], tP = _tanAt(W, p, -1), ang = _angle(tStart, tP);
+                if (ang <= tol + 1e-9) { prev = p; continue; }
+                if (prev > start) {          // close the segment at the previous station and re-test this interval
+                    pieces.push({ a: start, b: prev, bore: sp.bore }); start = prev; tStart = _tanAt(W, prev, +1); k--; continue;
+                }
+                // one curved interval turns by more than tol: equal parts
+                var nP = Math.ceil(ang / tol), L = (p - start) / nP;
+                for (var q = 1; q < nP; q++) { pieces.push({ a: start, b: start + L, bore: sp.bore }); start += L; }
+                prev = p; tStart = _tanAt(W, start, +1);
+                pieces.push({ a: start, b: p, bore: sp.bore }); start = p; tStart = _tanAt(W, p, +1);
+            }
+            if (sp.b > start + 1e-9) pieces.push({ a: start, b: sp.b, bore: sp.bore });
+        });
+        // segments in flow order
+        if (up) pieces.reverse();
+        var restrBy = {};
+        restr.forEach(function (r) { restrBy[r.md] = r; });
+        return pieces.map(function (pc) {
+            var ta = W.tvdAt(pc.a), tb = W.tvdAt(pc.b), len = pc.b - pc.a;
+            var md0 = up ? pc.b : pc.a, md1 = up ? pc.a : pc.b, tvd0 = up ? tb : ta, tvd1 = up ? ta : tb;
+            var ia = W.at(pc.a).inc, ib = W.at(pc.b).inc, mid = W.at(0.5 * (pc.a + pc.b)).inc;
+            var incAvg = Math.acos(_clamp((tb - ta) / len, -1, 1)) / DEG;
+            var bore = pc.bore, seg = {
+                name: bore.label + ' ' + _f(Math.min(md0, md1), 0) + '–' + _f(Math.max(md0, md1), 0) + ' ft MD',
+                len: len, id: bore.id, dz: tvd0 - tvd1, md0: md0, md1: md1, tvd0: tvd0, tvd1: tvd1, inc: incAvg,
+                incMin: Math.min(ia, ib, mid), incMax: Math.max(ia, ib, mid), kind: bore.kind, rough: bore.rough
+            };
+            if (bore.area) seg.area = bore.area;
+            var r = restrBy[md0];
+            if (r) {
+                if (path === 'annulus' && bore.kind === 'annulus') warnOnce('RESTR_ANNULUS', 'Tubing restrictions are not in the annulus flow path; they are ignored.', 'info');
+                else if (r.id >= bore.id - 1e-9) warnOnce('RESTR_NOT_SMALLER', 'The ' + r.label + ' at ' + fmt.len(r.md) + ' MD (ID ' + fmt.d(r.id) + ') is not smaller than the bore (' + fmt.d(bore.id) + '); no loss is applied.');
+                else seg.restr = { d: r.id, k: r.k };
+            }
+            return seg;
+        });
+    }
+    // unit tangent at an MD (side −1: the direction arriving at md; +1: leaving it — equal on a minimum-curvature arc)
+    function _tanAt(W, md, side) {
+        var p = W.at(md);
+        if (W.survey && W.survey.kind === 'tvd') {
+            var q = W.at(md + (side > 0 ? 1e-6 : -1e-6));
+            return _tan(_fin(q.inc) ? q.inc : p.inc, 0);
+        }
+        return _tan(p.inc, p.azi);
+    }
+
+    // ── restrictions ─────────────────────────────────────────────────────────
+    function restrictions(W) {
+        if (!W || !Array.isArray(W._restrIn)) return [];
+        var applied = {};
+        (W.segments || []).forEach(function (s) { if (s.restr) applied[s.md0] = 1; });
+        return W._restrIn.map(function (r) {
+            var bore = _boreAt(W.strings, r.md + (W.nodes && W.nodes.midPerfMd > r.md ? -0.25 : 0.25), 'tubing');
+            var bid = bore && bore.id ? bore.id : null;
+            return { kind: r.kind, md: r.md, tvd: W.tvdAt(r.md), id: r.id, k: r.k, beta: bid ? Math.min(1, r.id / bid) : null, bore: bid,
+                     applied: !!applied[r.md], label: r.label };
+        });
+    }
+
+    // ── temperature (A1 linear + J-T hydrate THT, §4.6) ───────────────────────
+    function _muJT(sg, p, t, imp) {
+        var f = G.WTS_gaspvt_isenthalpic, x;
+        imp = imp || {};
+        if (typeof f === 'function') {
+            x = f({ sg: sg, p1: p, t1: t, p2: p, co2: imp.co2 || 0, h2s: imp.h2s || 0, n2: imp.n2 || 0 });
+            if (x && x.ok && _fin(x.muJT1_Fpsi)) return { mu: x.muJT1_Fpsi, src: 'WTS_gaspvt_isenthalpic' };
+        }
+        var e = G.WTS_gaspvt_enthalpy;
+        if (typeof e === 'function') {
+            x = e({ sg: sg, p: p, t: t, co2: imp.co2 || 0, h2s: imp.h2s || 0, n2: imp.n2 || 0 });
+            if (x && x.ok !== false && _fin(x.muJT_Fpsi)) return { mu: x.muJT_Fpsi, src: 'WTS_gaspvt_enthalpy' };
+        }
+        return null;
+    }
+    function temperature(W, o) {
+        o = o || {};
+        if (!W || !W.nodes || typeof W.tvdAt !== 'function') return { ok: false, code: 'NO_WELL', errors: ['temperature needs a well from WTS_wp_well.build'], warnings: [] };
+        var fmt = W._fmt || FIELD_FMT, warnings = [];
+        var heat = W.heat || {}, mid = W.nodes.midPerfMd, midTvd = W.nodes.midPerfTvd;
+        var mode = o.mode || heat.mode || 'linear';
+        if (mode === 'relax') { warnings.push(_w('TEMP_RELAX_A2', 'The flowing-temperature relaxation model arrives in a later release; the linear THT → BHT profile is used.', 'info')); }
+        var tht = _num(o.tht_F != null ? o.tht_F : heat.tht_F);
+        var measured = o.thtMeasured != null ? !!o.thtMeasured : !!heat.thtMeasured;
+        var bht = _num(o.bht_F); if (!_fin(bht)) bht = _num(W.bht);
+        var resT = _fin(bht) ? bht : null;
+        var geoFn = _geo(W.geo, resT, midTvd);
+        if (!_fin(bht) && geoFn) bht = geoFn(midTvd);
+        var res = { ok: true, mode: 'linear', geoAt: geoFn, tht: tht, bht: _fin(bht) ? bht : null, thtHyd: null, muJT: null, dpTubing: null, pMean: null,
+                    measured: measured, verdict: null, verdictText: '', warnings: warnings, errors: [] };
+        if (!_fin(tht)) {
+            if (geoFn) {
+                res.mode = 'static';
+                res.tAt = function (md) { return geoFn(W.tvdAt(_clamp(md, 0, Infinity))); };
+                res.tht = geoFn(0);
+                res.thtHyd = res.tht; res.verdict = 'geotherm';
+                res.verdictText = 'No THT entered: the static geotherm is used (low for the fluid properties); the hydrate check uses the surface geotherm temperature ' + fmt.t(res.tht) + ' (cold, conservative).';
+                warnings.push(_w('NO_THT', 'No wellhead temperature (THT): the static geotherm is used along the well, which under-estimates the flowing temperature.'));
+                if (!_fin(bht)) res.bht = geoFn(midTvd);
+                return res;
+            }
+            if (_fin(bht)) {
+                res.tht = bht; res.tAt = function () { return bht; }; res.thtHyd = bht; res.verdict = 'upper-bound';
+                res.verdictText = 'No THT and no geotherm: the bottom-hole temperature is used everywhere — an upper-bound THT, not conservative for the hydrate check.';
+                warnings.push(_w('NO_THT', 'No wellhead temperature (THT) and no geotherm: the bottom-hole temperature ' + fmt.t(bht) + ' is used along the well.'));
+                return res;
+            }
+            return { ok: false, code: 'NO_TEMPERATURE', errors: ['A wellhead temperature (THT), a reservoir temperature or a geotherm is needed.'], warnings: warnings };
+        }
+        if (!_fin(bht)) { bht = tht; res.bht = null; warnings.push(_w('NO_BHT', 'No reservoir temperature or geotherm: the THT ' + fmt.t(tht) + ' is used along the well.')); }
+        var b = bht;
+        res.tAt = function (md) { return (_fin(md) && mid > 0) ? tht + (b - tht) * _clamp(md / mid, 0, 1) : tht; };
+        if (_fin(bht) && tht > bht + 1e-9) warnings.push(_w('THT_ABOVE_BHT', 'The THT ' + fmt.t(tht) + ' is above the bottom-hole temperature ' + fmt.t(bht) + '.'));
+        // the THT of the hydrate check
+        var type = o.fluidType || (o.F && o.F.type) || W.fluidType || null;
+        var gasLike = type === 'gas' || type === 'condensate';
+        if (measured) {
+            res.thtHyd = tht; res.verdict = 'measured';
+            res.verdictText = 'Measured THT ' + fmt.t(tht) + ' used for the hydrate check.';
+            return res;
+        }
+        if (gasLike) {
+            var dp = _num(o.dpTubing), pwf = _num(o.pwf), thp = _num(o.thp), pm = _num(o.pMean);
+            if (!_fin(dp) && _fin(pwf) && _fin(thp)) dp = pwf - thp;
+            if (!_fin(pm)) pm = (_fin(pwf) && _fin(thp)) ? 0.5 * (pwf + thp) : (_fin(thp) && _fin(dp)) ? thp + dp / 2 : (_fin(pwf) && _fin(dp)) ? pwf - dp / 2 : null;
+            var sg = _num(o.sg), imp = (o.F && o.F.pvt && o.F.pvt.imp) || o.imp || null;
+            if (!_fin(sg) && o.F) {
+                if (typeof o.F.at === 'function' && _fin(pm)) { try { var pr = o.F.at(pm, 0.5 * (tht + b)); if (pr && _fin(pr.sgGas)) sg = pr.sgGas; } catch (e) { /* fluid fixture without at */ } }
+                if (!_fin(sg)) sg = _num(o.F.sgg);
+                if (!_fin(sg) && o.F.pvt) sg = _num(o.F.pvt.sgGas);
+            }
+            var mj = (_fin(dp) && dp >= 0 && _fin(pm) && pm > 0 && _fin(sg) && sg > 0) ? _muJT(sg, pm, 0.5 * (tht + b), imp) : null;
+            if (mj) {
+                var mu = mj.mu;
+                res.muJT = mu; res.dpTubing = dp; res.pMean = pm; res.muJTSource = mj.src;
+                if (mu < 0) {
+                    res.thtHyd = tht; res.verdict = 'jt-corrected';
+                    res.verdictText = 'Joule-Thomson coefficient below zero at ' + fmt.p(pm) + ' (inversion): no cooling credit, the THT ' + fmt.t(tht) + ' is used.';
+                    warnings.push(_w('JT_INVERSION', 'The gas is above its Joule-Thomson inversion at the mean tubing pressure; no J-T cooling is applied.', 'info'));
+                } else {
+                    res.thtHyd = tht - mu * dp; res.verdict = 'jt-corrected';
+                    res.verdictText = 'Estimated THT corrected for Joule-Thomson cooling: ' + fmt.t(tht) + ' − ' + _f(mu, 4) + ' °F/psi × ' + _f(dp, 0) + ' psi = ' + fmt.t(res.thtHyd) + ' for the hydrate check.';
+                }
+                return res;
+            }
+        }
+        res.thtHyd = tht; res.verdict = 'upper-bound';
+        res.verdictText = 'Estimated THT ' + fmt.t(tht) + ' without a Joule-Thomson correction: upper-bound THT, not conservative for the hydrate check.';
+        return res;
+    }
+
+    // ── schematic data (the interactive well view, owner GUI requirement 2026-11-11) ─────────────────────────
+    var PROFILE_KEYS = ['p', 't', 'hl', 'vm', 'vsl', 'vsg', 'rhoS', 'ero', 'gradEl', 'gradF', 'gradAcc'];
+    function schematic(W, R, o) {
+        o = o || {};
+        if (!W || !W.ok || !W.nodes) return { ok: false, code: 'NO_WELL', errors: ['schematic needs a well from WTS_wp_well.build'], warnings: [] };
+        var mid = W.nodes.midPerfMd, td = Math.max(mid, W.survey.tdMd || 0);
+        W.strings.forEach(function (s) { if (s.botMd > td) td = s.botMd; });
+        var vsAz = (W.survey.vsAzi || 0) * DEG, cv = Math.cos(vsAz), sv = Math.sin(vsAz);
+        function pt(md) {
+            var a = W.at(md);
+            return { md: md, tvd: a.tvd, dep: a.dep, n: a.n, e: a.e, vs: W.survey.aziKnown ? a.n * cv + a.e * sv : a.hd, inc: a.inc, azi: a.azi };
+        }
+        // trajectory: every station + a point at most every step ft (≤ ~400 points)
+        var step = Math.max(25, td / 300), mds = [0], seen = {};
+        for (var m = step; m < td; m += step) mds.push(m);
+        (W.stations || []).forEach(function (s) { if (s.md > 0 && s.md < td) mds.push(s.md); });
+        [mid, td].forEach(function (x) { mds.push(x); });
+        mds = mds.filter(function (x) { var k = x.toFixed(3); if (seen[k]) return false; seen[k] = 1; return _fin(x); }).sort(function (a, b) { return a - b; });
+        var traj = mds.map(pt), ext = { mdMax: td, tvdMax: 0, tvdMin: 0, depMax: 0, vsMin: 0, vsMax: 0, nMin: 0, nMax: 0, eMin: 0, eMax: 0 };
+        traj.forEach(function (p) {
+            ext.tvdMax = Math.max(ext.tvdMax, p.tvd); ext.tvdMin = Math.min(ext.tvdMin, p.tvd); ext.depMax = Math.max(ext.depMax, p.dep);
+            ext.vsMin = Math.min(ext.vsMin, p.vs); ext.vsMax = Math.max(ext.vsMax, p.vs);
+            ext.nMin = Math.min(ext.nMin, p.n); ext.nMax = Math.max(ext.nMax, p.n); ext.eMin = Math.min(ext.eMin, p.e); ext.eMax = Math.max(ext.eMax, p.e);
+        });
+        var strings = W.strings.map(function (s) {
+            return { idx: s.idx, kind: s.kind, label: s.label, id: s.id, od: s.od, rough: s.rough, topMd: s.topMd, botMd: s.botMd,
+                     topTvd: W.tvdAt(s.topMd), botTvd: W.tvdAt(s.botMd), inFlow: false };
+        }).sort(function (a, b) { return b.od - a.od || a.topMd - b.topMd; });
+        (W.segments || []).forEach(function (sg) {
+            var a = Math.min(sg.md0, sg.md1), b = Math.max(sg.md0, sg.md1);
+            strings.forEach(function (s) { if (s.topMd < b && s.botMd > a && (sg.kind === s.kind || sg.kind === 'annulus')) s.inFlow = true; });
+        });
+        var restr = (W.restrictions || restrictions(W)).map(function (r) { var p = pt(r.md); return Object.assign({}, r, { vs: p.vs, dep: p.dep, n: p.n, e: p.e }); });
+        var n = W.nodes, perfs = { topMd: n.perfTopMd, botMd: n.perfBotMd, midMd: n.midPerfMd, topTvd: n.perfTopTvd, botTvd: n.perfBotTvd, midTvd: n.midPerfTvd,
+            midVs: pt(n.midPerfMd).vs };
+        var gauges = (n.gauges || []).map(function (g) { var p = pt(g.md); return { md: g.md, tvd: g.tvd, vs: p.vs, source: g.source }; });
+        var surf = (R && R.surface) ? R.surface : null;
+        var choke = (surf && surf.choke) ? Object.assign({ present: true, bean64: W.choke ? W.choke.bean64 : null }, surf.choke) : (W.choke ? Object.assign({}, W.choke) : null);
+        // per-depth solution profile (md ascending); the temperature profile alone without a solution
+        var prof = [], tr = R && R.traverse && Array.isArray(R.traverse.profile) ? R.traverse.profile : null;
+        if (tr) {
+            tr.forEach(function (q) {
+                if (!q || q.restr) return;
+                var md = _fin(q.md) ? q.md : (_fin(q.x) ? W.xToMd(q.x, { fromTop: !!(R.traverse.fromTop) }) : NaN);
+                if (!_fin(md)) return;
+                var p = pt(md), e = { md: md, tvd: _fin(q.tvd) ? q.tvd : p.tvd, inc: _fin(q.inc) ? q.inc : p.inc, vs: p.vs, dep: p.dep, pattern: q.pattern || null };
+                PROFILE_KEYS.forEach(function (k) { e[k] = _fin(q[k]) ? q[k] : null; });
+                if (e.t === null && typeof W.tAt === 'function') e.t = W.tAt(md);
+                prof.push(e);
+            });
+            prof.sort(function (a, b) { return a.md - b.md; });
+        } else if (typeof W.tAt === 'function') {
+            traj.forEach(function (p) {
+                if (p.md > mid + 1e-9) return;
+                var e = { md: p.md, tvd: p.tvd, inc: p.inc, vs: p.vs, dep: p.dep, pattern: null };
+                PROFILE_KEYS.forEach(function (k) { e[k] = null; });
+                e.t = W.tAt(p.md);
+                prof.push(e);
+            });
+        }
+        var ranges = {}, props = [];
+        PROFILE_KEYS.forEach(function (k) {
+            var lo = Infinity, hi = -Infinity;
+            prof.forEach(function (e) { if (_fin(e[k])) { if (e[k] < lo) lo = e[k]; if (e[k] > hi) hi = e[k]; } });
+            ranges[k] = lo <= hi ? [lo, hi] : null;
+            if (ranges[k]) props.push(k);
+        });
+        if (prof.some(function (e) { return e.pattern; })) props.push('pattern');
+        function at(md) {
+            if (!_fin(md)) return null;
+            var p = pt(_clamp(md, 0, td)), r = { md: p.md, tvd: p.tvd, inc: p.inc, azi: p.azi, dep: p.dep, vs: p.vs, pattern: null };
+            PROFILE_KEYS.forEach(function (k) { r[k] = null; });
+            if (prof.length) {
+                var k = 0;
+                while (k < prof.length - 1 && prof[k + 1].md < md) k++;
+                var a = prof[k], b = prof[Math.min(k + 1, prof.length - 1)], f = (b.md > a.md) ? _clamp((md - a.md) / (b.md - a.md), 0, 1) : 0;
+                if (md <= prof[prof.length - 1].md + 1e-6 && md >= prof[0].md - 1e-6) {
+                    PROFILE_KEYS.forEach(function (key) { r[key] = (_fin(a[key]) && _fin(b[key])) ? a[key] + f * (b[key] - a[key]) : (_fin(a[key]) ? a[key] : null); });
+                    r.pattern = f < 0.5 ? a.pattern : b.pattern;
+                }
+            }
+            if (r.t === null && typeof W.tAt === 'function' && md <= mid + 1e-6) r.t = W.tAt(md);
+            r.string = null;
+            (W.segments || []).forEach(function (sg) { if (md >= Math.min(sg.md0, sg.md1) - 1e-9 && md <= Math.max(sg.md0, sg.md1) + 1e-9) r.string = sg.name; });
+            return r;
+        }
+        function norm(prop, v) {
+            var rg = ranges[prop];
+            if (!rg || !_fin(v)) return null;
+            return rg[1] > rg[0] ? _clamp((v - rg[0]) / (rg[1] - rg[0]), 0, 1) : 0.5;
+        }
+        return { ok: true, trajectory: traj, vsAzi: W.survey.vsAzi || 0, aziKnown: !!W.survey.aziKnown, surveyKind: W.survey.kind, extents: ext,
+                 strings: strings, restrictions: restr, perfs: perfs, gauges: gauges, choke: choke,
+                 surface: surf ? { thp: _num(surf.thp), tht: _num(surf.tht), thtHyd: _num(surf.thtHyd) } : null,
+                 deviated: (W.deviated || []).slice(), profile: prof, ranges: ranges, props: props, at: at, norm: norm, warnings: [], errors: [] };
+    }
+
+    // ── namespace (merge, never replace) ─────────────────────────────────────
+    function _safe(name, fn) {
+        return function () {
+            try { return fn.apply(null, arguments); }
+            catch (e) { return { ok: false, code: 'INTERNAL', errors: ['WTS_wp_well.' + name + ' failed: ' + (e && e.message ? e.message : 'error')], warnings: [] }; }
+        };
+    }
+    var NS = G.WTS_wp_well = G.WTS_wp_well || {};
+    NS.build = _safe('build', build);
+    NS.segmentsFor = _safe('segmentsFor', segmentsFor);
+    NS.restrictions = _safe('restrictions', restrictions);
+    NS.temperature = _safe('temperature', temperature);
+    NS.schematic = _safe('schematic', schematic);
+    NS.DEFAULTS = Object.freeze({ maxDoglegDeg: DEF_DOGLEG, highDls: HIGH_DLS, deviatedInc: DEVIATED_INC, rough: DEF_ROUGH });
+    NS.version = '4.3-wp4';
 })();
 
 // ─── END 49-calc-wp-well ─────────────────────────────────────────────
