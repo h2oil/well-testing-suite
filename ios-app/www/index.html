@@ -120278,7 +120278,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: '6ac62f1b', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: 'dfa99523', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -145375,7 +145375,27 @@ pipesz: {
 //   WTS_flowline_props(fluid, p, t)  in-situ fluid properties
 //   WTS_flowline_compute(input)   full routes → {ok, routes[], choke, pcv, psv, flareCheck, …} or {ok:false, errors, bad}
 //   WTS_flowline_march(segments, fluid, p0, t0, t1, opt)  pressure traverse (opt.reverse = against the flow,
-//                                 opt.refine = split steps with > 3 % pressure change)
+//                                 opt.refine = split steps with > 3 % pressure change; the Well Performance options
+//                                 corr / mult / tAt / pMax / stepFt / grid / eroC / detail and segment area / restr — below)
+//   WTS_flowline_corr             gradient-correlation registry {key: {key, label, kind, range, verified, grad(inp) → G}};
+//                                 this file registers 'bb' (Beggs & Brill); 49-calc-wp-vlp.js adds the well correlations
+//
+// WELL PERFORMANCE OPTIONS (v4.3 WP0b, docs/WELL-PERFORMANCE-PLAN.md §2.3, §4.5; every one is additive: absent, the march and
+// the page routes are exactly as before — wellperf-identity FI1–FI6)
+//   opt.corr      registry key string (D3): the step gradient is WTS_flowline_corr[key].grad(inp), inp = the object bb takes
+//                 + {props, mult}; an unknown key → {ok:false, code:'UNKNOWN_CORR'}; absent → bb as before
+//   opt.mult      {hl, f}: H_L' = clamp(m_h·H_L, λ_L, 1), then ρ_s, the gradients and the acceleration factor are rebuilt
+//                 (gradEl from ρ_s; gradF from the entry's friction(hl, inp, G) when it has one — bb recomputes its slip
+//                 factor S(y = λ_L / H_L'²) — else × 1; then × m_f; grad = (gradEl + gradF) / (1 − Ek), Ek with ρ_s)
+//   opt.stepFt    step length per segment (ft), clamped to 10–400 steps (default 50 ft as before)
+//   opt.grid      true → the march records its step / sub-step layout and returns it as .grid; a grid object from an
+//                 earlier march → that layout is used (no refine decisions: p(q) stays smooth within one solve, §4.5)
+//   opt.eroC      API RP 14E C for the erosional ratio (default 100)
+//   opt.detail    each profile entry also carries seg, vm, vsl, vsg, rhoS, gradEl, gradF, gradAcc, ero
+//   segment.area  flow area (in²) for the velocities when it differs from the circle of segment.id (annulus: id = the
+//                 hydraulic diameter); segment.restr {d in, k?}: a restriction at the segment's flow inlet,
+//                 Δp = K·ρ_n·v_m²/(2·g_c·144) at the bore velocity, K = 0.5(1 − β²) + (1 − β²)² (β = d / id) unless k is given
+//   fluid.pvt     property options for WTS_flowline_props (see props below); absent → Standing / Beggs-Robinson / DAK-Sutton
 //   WTS_flowline_isenthalp(sgg, p1 psia, t1 °F, p2 psia)  gas temperature after a throttling valve
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
@@ -145573,6 +145593,42 @@ pipesz: {
         return r;
     }
 
+    // ── Gradient-correlation registry (D3; merge, never replace) ──────
+    var CORR = G.WTS_flowline_corr = G.WTS_flowline_corr || {};
+    // bb's two-phase friction rebuilt at a scaled holdup (opt.mult): Darcy no-slip factor × e^S, S(y = λ_L / H_L²)
+    function _bbFriction(hl, inp, g) {
+        if (!(g.fn > 0) || g.pattern === 'gas' || g.pattern === 'liquid' || !(hl > 0)) return g.gradF;
+        var y = g.lambdaL / (hl * hl), S;
+        if (y > 1 && y < 1.2) S = Math.log(2.2 * y - 1.2);
+        else { var x = Math.log(y), den = -0.0523 + 3.182 * x - 0.8725 * x * x + 0.01853 * Math.pow(x, 4); S = den !== 0 ? x / den : 0; }
+        return g.fn * Math.exp(S) * g.rhoN * g.vm * g.vm / (2 * GC * (Number(inp.d) / 12)) / 144;
+    }
+    CORR.bb = {
+        key: 'bb', label: 'Beggs & Brill (1973), Payne corrections', kind: 'any', verified: true, vertical: false,
+        range: { incl: [-90, 90] },
+        grad: function (inp) { return bb(inp); },
+        friction: _bbFriction
+    };
+    function _corrOf(key) { var e = (key != null && Object.prototype.hasOwnProperty.call(CORR, key)) ? CORR[key] : null; return (e && typeof e.grad === 'function') ? e : null; }
+    // opt.mult: H_L' = clamp(m_h·H_L, λ_L, 1); ρ_s, gradEl, gradF, Ek and grad rebuilt (§3.4 / D10)
+    function _applyMult(g, inp, mult, E) {
+        var mh = _fin(+mult.hl) ? +mult.hl : 1, mf = _fin(+mult.f) ? +mult.f : 1;
+        if (mh === 1 && mf === 1) return g;
+        var lam = _fin(g.lambdaL) ? g.lambdaL : 0;
+        var hl = Math.min(1, Math.max(lam, mh * g.hl));
+        var rL = Number(inp.rhoL), rG = Number(inp.rhoG), th = (Number(inp.theta) || 0) * Math.PI / 180;
+        var rhoS = rL * hl + rG * (1 - hl);
+        var gEl = rhoS * Math.sin(th) / 144;
+        var gF = (E && typeof E.friction === 'function') ? E.friction(hl, inp, g) : g.gradF;
+        gF = (_fin(gF) ? gF : g.gradF) * mf;
+        var p = Number(inp.p), Ek = (inp.accel && p > 0) ? rhoS * g.vm * g.vsg / (GC * p * 144) : 0;
+        var tot = Ek < 1 ? (gEl + gF) / (1 - Ek) : Infinity;
+        var o = {}; for (var k in g) o[k] = g[k];
+        o.hl = hl; o.rhoS = rhoS; o.gradEl = gEl; o.gradF = gF; o.Ek = Ek; o.grad = tot; o.gradAcc = tot - gEl - gF;
+        o.mult = { hl: mh, f: mf, hlRaw: g.hl };
+        return o;
+    }
+
     // ── Fluid properties ────────────────────────────────────────────
     function _lib() { var L = G.PRiSM_pvt_correlations; return (L && L.Z_dranchukAbouKassem && L.Rs_standing) ? L : null; }
     function _pc(sg) {
@@ -145601,8 +145657,115 @@ pipesz: {
         var s = tF <= 74 ? s74 : tF >= 280 ? s280 : s74 + (tF - 74) * (s280 - s74) / 206;
         return Math.max(1, s);
     }
-    // fluid = {qo STB/d, qw BWPD, qg MMSCFD, api, sgg, sgw}; p psia; t °F
+    // fluid = {qo STB/d, qw BWPD, qg MMSCFD, api, sgg, sgw, pvt?}; p psia; t °F
+    // fluid.pvt (Well Performance, WP0b; absent → the path below, unchanged):
+    //   corr {rs, bo, muod, muo, z, mug}  correlation keys looked up in PRiSM_pvt_correlations as Rs_<k>, Bo_<k>, mu_oD_<k>,
+    //                                     mu_o_<k>, Z_<k>, mu_g_<k> (same signatures as the Standing / Beggs-Robinson / DAK /
+    //                                     Lee-Gonzalez-Eakin functions; an unknown key falls back to those)
+    //   pbFactor     one-point bubble-point shift: Rs is evaluated at p·pbFactor (pbFactor = Pb_corr / Pb_user at reservoir T)
+    //   undersat     true: above the bubble point (Rs(p) ≥ GOR) Bo = Bo_undersaturated and μo = mu_o_vasquezBeggs (16-pvt)
+    //   mult         {rs, bo, muo, mug, z} matched multipliers (B), default 1
+    //   imp          {n2, co2, h2s} mol %: Z from WTS_gaspvt_z (impurity-corrected) when it is loaded
+    //   liquidNoTransfer  wet gas (D14): the liquid "oil" is condensate with Rs = 0 and a constant volume factor bc (default 1),
+    //                     dead-oil viscosity; all the gas is free gas
+    //   injGas       {qg_MMscfd, sg} lift gas: added to the free gas only (no dissolution), gas properties at the mixed gravity
+    //   table        true | {dp psi, dT °F}: the (p, T)-dependent properties are binned (default 5 psi × 2 °F) and interpolated
+    //                bilinearly; the cache lives in a WeakMap keyed by the pvt object (never on it)
+    var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
+    function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
+    function _pvtCore(fluid, pv, p, t, sgMix) {
+        // (p, T)-only properties for this fluid's api / sgg / sgw (and the gas gravity in use)
+        var L = _lib(), c = pv.corr || {}, m = pv.mult || {};
+        var api = +fluid.api, sgg = +fluid.sgg;
+        var rsF = _pvtFn(L, 'Rs_', c.rs, L.Rs_standing), muodF = _pvtFn(L, 'mu_oD_', c.muod, L.mu_oD_beggsRobinson);
+        var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
+        var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
+        var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
+        var z = NaN, TR = t + RANK;
+        var imp = pv.imp;
+        if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
+            try { var zr = G.WTS_gaspvt_z({ sg: sgMix, p: p, t: t, n2: +imp.n2 || 0, co2: +imp.co2 || 0, h2s: +imp.h2s || 0 }); if (zr && zr.ok && _fin(zr.z)) z = zr.z; } catch (e) { z = NaN; }
+        }
+        if (!_fin(z)) { var pc = _pc(sgMix); z = zF(TR / pc.Tpc, p / pc.Ppc); }
+        z *= (_fin(+m.z) ? +m.z : 1);
+        return { rsRaw: rsRaw, z: z, mug: mugF(sgMix, t, z, p) * (_fin(+m.mug) ? +m.mug : 1), bw: L.Bw_meehan(p, t), muw: L.mu_w_meehan(t, 0),
+                 muod: muodF(api, t), sigO: sigmaOil(api, t, p), sigW: sigmaWater(t, p) };
+    }
+    function _pvtCoreTab(fluid, pv, p, t, sgMix) {
+        var o = pv.table === true ? {} : pv.table, dp = (+o.dp > 0) ? +o.dp : 5, dT = (+o.dT > 0) ? +o.dT : 2;
+        var tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, sgMix, dp, dT].join('|');
+        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var ip = Math.floor(p / dp), it = Math.floor(t / dT), fp = p / dp - ip, ft = t / dT - it;
+        function at(a, b) {
+            var k = a + ',' + b, v = tab.map[k];
+            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, sgMix);
+            return v;
+        }
+        var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), out = {};
+        for (var k in c00) out[k] = (c00[k] * (1 - fp) + c10[k] * fp) * (1 - ft) + (c01[k] * (1 - fp) + c11[k] * fp) * ft;
+        return out;
+    }
+    function _propsPvt(fluid, p, t) {
+        var L = _lib(), pv = fluid.pvt, c = pv.corr || {}, m = pv.mult || {};
+        var f = fluid, qo = Math.max(0, +f.qo || 0), qw = Math.max(0, +f.qw || 0), qg = Math.max(0, +f.qg || 0);
+        var api = +f.api, sgg = +f.sgg, sgw = +f.sgw;
+        var inj = pv.injGas && +pv.injGas.qg_MMscfd > 0 ? { q: +pv.injGas.qg_MMscfd * 1e6, sg: +pv.injGas.sg > 0 ? +pv.injGas.sg : sgg } : null;
+        var gor = qo > 0 ? qg * 1e6 / qo : 0;
+        var go = 141.5 / (131.5 + api);
+        var noTr = !!pv.liquidNoTransfer;
+        // the gas gravity of the free gas: formation free gas mixed with lift gas (mass weighted by standard volume)
+        var sgMix = sgg;
+        if (inj) {
+            var rs0 = noTr || !(qo > 0) ? 0 : Math.min(gor, Math.max(0, _pvtFn(L, 'Rs_', c.rs, L.Rs_standing)(api, sgg, p * ((+pv.pbFactor > 0) ? +pv.pbFactor : 1), t)));
+            var fr0 = Math.max(0, qg * 1e6 - qo * rs0);
+            sgMix = (fr0 + inj.q) > 0 ? (fr0 * sgg + inj.q * inj.sg) / (fr0 + inj.q) : sgg;
+        }
+        var C = (pv.table && _TABS) ? _pvtCoreTab(f, pv, p, t, sgMix) : _pvtCore(f, pv, p, t, sgMix);
+        var rs = (qo > 0 && !noTr) ? Math.min(gor, C.rsRaw) : 0;
+        var boF = _pvtFn(L, 'Bo_', c.bo, L.Bo_standing), muoF = _pvtFn(L, 'mu_o_', c.muo, L.mu_o_beggsRobinson);
+        var bo, muo, pb = null;
+        if (!(qo > 0)) { bo = 1; muo = 0; }
+        else if (noTr) { bo = (+pv.bc > 0 ? +pv.bc : 1); muo = C.muod; }
+        else {
+            bo = boF(api, sgg, rs, t); muo = muoF(C.muod, rs);
+            if (pv.undersat && C.rsRaw >= gor && gor > 0) {
+                pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor);
+                if (_fin(pb) && p > pb) { bo = L.Bo_undersaturated(bo, api, sgg, rs, p, t, pb); muo = L.mu_o_vasquezBeggs(muo, p, pb); }
+            }
+        }
+        bo *= (_fin(+m.bo) ? +m.bo : 1); muo *= (_fin(+m.muo) ? +m.muo : 1);
+        var z = C.z, TR = t + RANK, mug = C.mug, bw = C.bw, muw = C.muw;
+        var b = _basis();
+        var bg = b.Pb_psia * z * TR / ((b.Tb_F + RANK) * p);          // ft³/scf
+        var rhoG = p * MW_AIR * sgMix / (z * R_GAS * TR);
+        var rhoO = (62.37 * go + 0.01361 * rs * sgg) / bo;
+        var rhoW = RHO_W * sgw / bw;
+        var qoR = qo * bo * FT3_BBL / 86400, qwR = qw * bw * FT3_BBL / 86400;
+        var free = Math.max(0, qg * 1e6 - qo * rs) + (inj ? inj.q : 0);
+        var qgR = free * bg / 86400;
+        var qL = qoR + qwR, fo = qL > 0 ? qoR / qL : 0, fw = qL > 0 ? qwR / qL : 0;
+        var so = qo > 0 ? C.sigO : 0, sw = qw > 0 ? C.sigW : 0;
+        return {
+            p: p, t: t, gor: gor, rs: rs, bo: bo, bw: bw, z: z, bg: bg, muo: muo, muw: muw, mug: mug,
+            rhoO: rhoO, rhoW: rhoW, rhoG: rhoG, sigO: so, sigW: sw, freeGas: free,
+            qL: qL, qG: qgR, fo: fo, fw: fw,
+            rhoL: qL > 0 ? fo * rhoO + fw * rhoW : rhoO || rhoW,
+            muL: qL > 0 ? fo * muo + fw * muw : (muo || muw),
+            sigL: qL > 0 ? fo * so + fw * sw : (so || sw || 30),
+            pb: pb, sgGas: sgMix, pvt: true
+        };
+    }
+    // bubble point for the undersaturated branch: Pb_<rs key> when the library has it, else bisection on Rs(p) = GOR
+    function _pbFor(L, c, api, sgg, gor, t, pbFactor) {
+        var k = c.rs || 'standing', f = L['Pb_' + k], pf = (_fin(+pbFactor) && pbFactor > 0) ? +pbFactor : 1;
+        if (typeof f === 'function') { var v = f(api, sgg, gor, t); if (_fin(v) && v > 0) return v / pf; }
+        var rsF = _pvtFn(L, 'Rs_', k, L.Rs_standing), lo = 14.7, hi = 30000;
+        if (!(rsF(api, sgg, hi * pf, t) >= gor)) return NaN;
+        for (var i = 0; i < 80 && hi - lo > 1e-6 * hi; i++) { var mid = (lo + hi) / 2; if (rsF(api, sgg, mid * pf, t) >= gor) hi = mid; else lo = mid; }
+        return hi;
+    }
     function props(fluid, p, t) {
+        if (fluid && fluid.pvt && typeof fluid.pvt === 'object') return _propsPvt(fluid, p, t);
         var L = _lib();
         var f = fluid || {}, qo = Math.max(0, +f.qo || 0), qw = Math.max(0, +f.qw || 0), qg = Math.max(0, +f.qg || 0);
         var api = +f.api, sgg = +f.sgg, sgw = +f.sgw;
@@ -145636,7 +145799,7 @@ pipesz: {
     }
 
     // ── Route marching ───────────────────────────────────────────────
-    function _steps(len) { return Math.min(400, Math.max(10, Math.ceil(len / 50))); }
+    function _steps(len, stepFt) { return Math.min(400, Math.max(10, Math.ceil(len / (stepFt > 0 ? stepFt : 50)))); }
     // Coupled temperature step (opt.heat): the line-heat model of 49-calc-lineheat.js over dx at the
     // step's inlet temperature, T_out = Ta + (T_in − Ta)·exp(−UA'·dx/(ṁ·cp)), then Joule–Thomson
     // cooling μJT·Δp for the step's pressure drop (enthalpy balance of a throttled stream, as the
@@ -145653,11 +145816,15 @@ pipesz: {
     }
     // Beggs & Brill gradient with the fluid properties at (p psia, t °F) in segment s.
     function _gAt(fluid, pp, tt, s, opt) {
-        var pr = props(fluid, pp, tt), A = Math.PI * Math.pow(s.id / 12, 2) / 4;
-        var g = bb({
+        var pr = props(fluid, pp, tt), A = (s.area > 0) ? s.area / 144 : Math.PI * Math.pow(s.id / 12, 2) / 4;
+        var inp = {
             vsl: pr.qL / A, vsg: pr.qG / A, d: s.id, rhoL: pr.rhoL, rhoG: pr.rhoG, muL: pr.muL, muG: pr.mug,
             sigma: pr.sigL, theta: s.theta, rough: opt.rough, p: pp, payne: opt.payne, accel: opt.accel
-        });
+        };
+        var E = null, g;
+        if (opt.corr != null) { E = _corrOf(opt.corr); inp.props = pr; inp.mult = opt.mult || null; g = E.grad(inp); }
+        else g = bb(inp);
+        if (opt.mult) g = _applyMult(g, inp, opt.mult, E || CORR.bb);
         g.props = pr;
         return g;
     }
@@ -145680,7 +145847,11 @@ pipesz: {
     //       refine (split steps with > 3 % pressure change), chokeRaise (reverse only: choked-exit pressure),
     //       pMax (psia: the march stops, lost 'high', when the pressure would pass it)}
     function march(route, fluid, p0g, t0, t1, opt) {
+        if (opt.corr != null && !_corrOf(opt.corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(opt.corr), errors: ['unknown correlation key ' + String(opt.corr).slice(0, 40)] };
         var segs = route.segments, total = 0;
+        var gridIn = (opt.grid && typeof opt.grid === 'object' && Array.isArray(opt.grid.segs) && opt.grid.segs.length === segs.length) ? opt.grid : null;
+        var gridOut = opt.grid ? { v: 1, segs: [] } : null;
+        var eroC = (opt.eroC > 0) ? opt.eroC : 100;
         segs.forEach(function (s) { total += s.len; });
         var P = p0g + PATM, x = 0, out = [], profile = [], lost = null, chokes = [];
         var first = null, heat = opt.heat || null, Tc = t0, sgn = opt.reverse ? -1 : 1, tFn = opt.tAt || null;
@@ -145708,11 +145879,26 @@ pipesz: {
             if (r.patterns.indexOf(g.pattern) === -1) r.patterns.push(g.pattern);
             r.hlOut = g.hl; r.out = g;
             if (g.vm > r.vmMax) r.vmMax = g.vm;
-            var ve = g.rhoN > 0 ? 100 / Math.sqrt(g.rhoN) : Infinity;       // API RP 14E, C = 100
+            var ve = g.rhoN > 0 ? eroC / Math.sqrt(g.rhoN) : Infinity;      // API RP 14E, C = 100 unless opt.eroC
             if (g.vm / ve > r.eroMax) r.eroMax = g.vm / ve;
             P = P2; x += dx; Tc = tb;
-            profile.push({ x: x, p: P - PATM, t: tb, hl: g.hl, pattern: g.pattern });
+            if (opt.detail) profile.push({ x: x, p: P - PATM, t: tb, hl: g.hl, pattern: g.pattern, seg: k, vm: g.vm, vsl: g.vsl, vsg: g.vsg,
+                rhoS: g.rhoS, gradEl: g.gradEl, gradF: g.gradF, gradAcc: g.gradAcc, ero: g.vm / ve });
+            else profile.push({ x: x, p: P - PATM, t: tb, hl: g.hl, pattern: g.pattern });
             return true;
+        }
+        // restriction loss Δp = K·ρ_n·v²/(2·g_c·144) at the bore velocity (homogeneous, §4.5)
+        function _restr(s, r, k) {
+            var d = +s.restr.d, Tx = pt(x);
+            if (!(d > 0) || !(s.id > 0)) return;
+            var g = gAt(P, Tx, s), beta = Math.min(1, d / s.id), b2 = beta * beta;
+            var K = (s.restr.k != null && _fin(+s.restr.k)) ? +s.restr.k : 0.5 * (1 - b2) + (1 - b2) * (1 - b2);
+            var Ac = (s.area > 0) ? s.area : Math.PI * s.id * s.id / 4, v = g.vm * Ac / (Math.PI * d * d / 4);
+            var dp = K * g.rhoN * v * v / (2 * GC * 144);
+            var P2 = P - sgn * dp;
+            if (!_fin(P2) || P2 < PATM || (opt.pMax && P2 > opt.pMax)) { lost = { seg: k, x: x, reason: (opt.pMax && P2 > opt.pMax) ? 'high' : 'pressure' }; return; }
+            P = P2; r.dpRestr = (r.dpRestr || 0) + dp; r.restr = { d: d, beta: beta, K: K, v: v };
+            profile.push(opt.detail ? { x: x, p: P - PATM, t: Tx, seg: k, restr: true, dp: dp } : { x: x, p: P - PATM, t: Tx });
         }
         var tStart = pt(0);
         profile.push({ x: 0, p: P - PATM, t: tStart });
@@ -145742,25 +145928,35 @@ pipesz: {
                     else if (Pn > P) { dpNear = Pn - P; P = Pn; profile.push({ x: x, p: P - PATM, t: Tx }); }
                 }
             }
-            var n = _steps(s.len), dx = s.len / n;
+            var gs = gridIn ? gridIn.segs[k] : null;
+            var n = (gs && gs.n > 0) ? gs.n : _steps(s.len, opt.stepFt), dx = s.len / n;
+            var gso = gridOut ? { n: n, m: [] } : null;
+            if (gso) gridOut.segs.push(gso);
             var r = { name: s.name, len: s.len, id: s.id, dz: s.dz, theta: s.theta, pIn: pSegOut - PATM, tIn: pt(x),
                 dpEl: 0, dpF: 0, dpAcc: dpNear, patterns: [], hlIn: null, hlOut: null, vmMax: 0, eroMax: 0 };
+            // a restriction at the segment's flow inlet: before the segment when marching with the flow, after it against the flow
+            if (s.restr && !lost && sgn > 0) _restr(s, r, k);
             for (var j = 0; j < n && !lost; j++) {
                 var m = 1, gp = null;
-                if (opt.refine && !heat) {
+                if (gs && gs.m && gs.m[j] > 0) m = gs.m[j];
+                else if (opt.refine && !heat) {
                     gp = gAt(P, pt(x), s);
                     var dPp = Math.abs(gp.grad * dx);
                     if (_fin(dPp) && gp.Ek < EK_LOST) m = Math.min(MAX_SUB, Math.max(1, Math.ceil(dPp / (REFINE * P))));
                 }
+                if (gso) gso.m.push(m);
                 for (var q = 0; q < m; q++) if (!step(s, r, k, dx / m, q === 0 ? gp : null)) break;
             }
+            if (s.restr && !lost && sgn < 0) _restr(s, r, k);
             r.pOut = lost ? null : P - PATM;
             r.dp = lost ? null : r.pIn - r.pOut;
             r.tOut = pt(x);
             out.push(r);
         }
-        return { segments: out, profile: profile, pIn: p0g, pOut: lost ? null : P - PATM, dp: lost ? null : p0g - (P - PATM),
+        var res = { segments: out, profile: profile, pIn: p0g, pOut: lost ? null : P - PATM, dp: lost ? null : p0g - (P - PATM),
             length: total, lost: lost, inlet: first, tIn: tStart, tOut: lost ? null : pt(x), coupled: !!heat, chokes: chokes };
+        if (gridOut) res.grid = gridIn || gridOut;
+        return res;
     }
 
     function _segCopy(list) { return list.map(function (q) { return { name: q.name, len: q.len, id: q.id, dz: q.dz }; }); }
@@ -146084,12 +146280,27 @@ pipesz: {
     //   reverse: march against the flow direction (e.g. down a producing tubing from the wellhead),
     //   refine: split a step whose pressure change exceeds 3 % of the pressure (off by default)}.
     //   → {profile [{x, p psig, t, hl, pattern}], segments[], pOut, lost, …}, or null without the PVT library.
+    //   Well Performance options (v4.3 WP0b, passed through when present; see the header): corr, mult, tAt (x ft along the march →
+    //   °F, overrides t0 → t1), pMax (psia), stepFt, grid, eroC, detail; segments may carry area (in²) and restr {d, k?}.
     G.WTS_flowline_march = function (segments, fluid, p0, t0, t1, opt) {
         if (!_lib()) return null;
-        var segs = (segments || []).map(function (q) { return { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 }; });
+        var segs = (segments || []).map(function (q) {
+            var o2 = { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 };
+            if (+q.area > 0) o2.area = +q.area;
+            if (q.restr && +q.restr.d > 0) o2.restr = { d: +q.restr.d, k: q.restr.k == null ? null : +q.restr.k };
+            return o2;
+        });
         var o = opt || {};
-        return march({ segments: segs }, fluid, +p0, +t0, (t1 == null ? +t0 : +t1),
-            { rough: o.rough == null ? 0.0018 : +o.rough, payne: o.payne !== false, accel: !!o.accel, reverse: !!o.reverse, refine: !!o.refine });
+        var mo = { rough: o.rough == null ? 0.0018 : +o.rough, payne: o.payne !== false, accel: !!o.accel, reverse: !!o.reverse, refine: !!o.refine };
+        if (o.corr != null) mo.corr = String(o.corr);
+        if (o.mult && typeof o.mult === 'object') mo.mult = { hl: o.mult.hl == null ? 1 : +o.mult.hl, f: o.mult.f == null ? 1 : +o.mult.f };
+        if (typeof o.tAt === 'function') mo.tAt = o.tAt;
+        if (+o.pMax > 0) mo.pMax = +o.pMax;
+        if (+o.stepFt > 0) mo.stepFt = +o.stepFt;
+        if (o.grid) mo.grid = o.grid;
+        if (+o.eroC > 0) mo.eroC = +o.eroC;
+        if (o.detail) mo.detail = true;
+        return march({ segments: segs }, fluid, +p0, +t0, (t1 == null ? +t0 : +t1), mo);
     };
     G.WTS_flowline_friction = { smooth: fSmooth, colebrook: fColebrook };
     G.WTS_flowline_sigma = { oil: sigmaOil, water: sigmaWater };

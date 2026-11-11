@@ -594,7 +594,7 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['no pending timers 5 s after opening DFIT mode' + (detail && okT ? ' ' + detail : ''), okT]);
 })();
 
-// ── v4.3 Well Performance (docs/WELL-PERFORMANCE-PLAN.md §17.1: 2 checks of 3, WP0) ──
+// ── v4.3 Well Performance (docs/WELL-PERFORMANCE-PLAN.md §17.1: 3 checks, WP0 / WP0b) ──
 (function wellPerfChecks() {
   const reg = win.WTS_calcRegistry && win.WTS_calcRegistry.wellperf;
   checks.push(['WTS_calcRegistry.wellperf in "Production & Reservoir" (hooks.silent) + renderWellPerf / calcWellPerf',
@@ -605,6 +605,10 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   const miss = ns.filter((k) => !win[k] || typeof win[k] !== 'object').concat(fns.filter((k) => typeof win[k] !== 'function'));
   if (miss.length) console.error('[wellperf] missing namespaces: ' + miss.join(', '));
   checks.push(['WTS_wp_* namespaces present (model, fluid, ipr, vlp, well, system, sens, match; loading / check / qc)', miss.length === 0]);
+  const C = win.WTS_flowline_corr, bb = C && C.bb;
+  let okBb = false;
+  try { okBb = !!bb && bb.key === 'bb' && typeof bb.grad === 'function' && bb.grad({ vsl: 1, vsg: 1, d: 2.441, rhoL: 50, rhoG: 5, muL: 1, muG: 0.015, sigma: 20, theta: 90, rough: 0.0006, p: 1000 }).grad > 0; } catch (e) { okBb = false; }
+  checks.push(['WTS_flowline_corr.bb registered by 49-calc-flowline.js (key, grad)', okBb]);
 })();
 
 // ── v3.5 accounts (docs/ACCOUNTS-PLAN.md §12.3: 5 checks) ──
