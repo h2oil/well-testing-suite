@@ -32,7 +32,10 @@
     var G = (typeof window !== 'undefined') ? window : globalThis;
     var TITLE = 'Well Performance (Nodal Analysis)';
     var SUB = 'Inflow and outflow through the completion, tubing, choke and flowline to the separator: operating point, stability, choke sizing, shut-in and liquid loading';
-    var PATM = 14.696, BUDGET_MS = 300, LIVE_MS = 120;
+    // BUDGET_MS: §16 page recompute ≤ 300 ms on the container × the phone factor 3 ≈ 1 s on the device, else the Solve button.
+    // LIVE_MS: a drag re-solves on every move while the measured (or estimated) live solve stays below it — the live solve is the
+    // engine's warm tracking solve (≈ 5 evaluations instead of ≈ 20).
+    var PATM = 14.696, BUDGET_MS = 1000, LIVE_MS = 150;
     var STEPS = [
         { n: 1, sid: 'fluid', label: 'Fluid' }, { n: 2, sid: 'res', label: 'Reservoir' }, { n: 3, sid: 'well', label: 'Well' },
         { n: 4, sid: 'lift', label: 'Lift' }, { n: 5, sid: 'system', label: 'System' }, { n: 6, sid: 'match', label: 'Match' }, { n: 7, sid: 'report', label: 'Report' }
@@ -411,8 +414,11 @@
         out.F = _call('WTS_wp_fluid.build', M.fluid);
         out.I = _call('WTS_wp_ipr.curve', M.res, out.F && out.F.ok ? out.F : undefined);
         out.W = _call('WTS_wp_well.build', M.well, {});
-        var t0 = _now();
-        out.R = _call('WTS_wp_system.solve', M, { live: !!live });
+        var t0 = _now(), so = { live: !!live };
+        // live drag: continue the last full solve's stable root (tracking solve) and carry its curves / q_s until the release
+        var P = ST.R && ST.R.ok && ST.R.op && !ST.R.tracked ? ST.R : (ST.Rfull && ST.Rfull.ok ? ST.Rfull : null);
+        if (live && P && P.grid) so = { live: true, warm: P.grid, track: { q: P.op.q, slope: P.op.dDdq, curves: P.curves, qs: P.qs, vlpMin: P.vlpMin } };
+        out.R = _call('WTS_wp_system.solve', M, so);
         out.ms = _now() - t0;
         out.SC = _call('WTS_wp_well.schematic', out.W, out.R && out.R.ok ? out.R : null);
         if (out.R && out.R.ok) {
@@ -445,6 +451,8 @@
         if (!live) ST.shut = X.shut;
         ST.solveMs = X.ms || 0; ST.stale = false; ST.stubs = X.stubs;
         if (!live) ST.slow = ST.solveMs > budgetMs;
+        if (live) ST.liveMs = ST.solveMs;
+        else { ST.liveMs = null; if (X.R && X.R.ok && !X.R.tracked) ST.Rfull = X.R; }
         var R = (X.R && X.R.ok !== undefined) ? X.R : null, ok = !!(R && R.ok);
         S.wellperf = {
             v: 1, ok: ok, code: R && !ok ? (R.code || 'NO_SOLUTION') : null, op: ok ? R.op : null, roots: (R && R.roots) || [], qs: ok ? R.qs : null,
@@ -460,6 +468,12 @@
         var U = _U();
         return (U && typeof U.runCanonical === 'function') ? U.runCanonical(_calc) : _calc();
     };
+    // the expected live-solve time: measured during this drag, else the last full solve scaled by its evaluation count (≈ 5 E live)
+    function _liveMs() {
+        if (_fin(ST.liveMs)) return ST.liveMs;
+        var R = ST.R;
+        return (R && R.ok && _fin(R.evals) && R.evals > 5) ? ST.solveMs * 5 / R.evals : ST.solveMs;
+    }
     function _solveNow() { _force = true; try { G.calcWellPerf(); } finally { _force = false; } }
     function _solveLive() { _liveCall = true; try { G.calcWellPerf(); } finally { _liveCall = false; } }
 
@@ -467,6 +481,7 @@
     function _banner(kind, html) {
         var b = _byId('wp_banner'); if (!b) return;
         b.className = 'wp-banner rp-skip' + (kind ? ' ' + kind : '');
+        if (kind === 'fail' || kind === 'warn') b.setAttribute('style', 'color:var(--' + (kind === 'fail' ? 'red' : 'yellow') + ')'); else b.removeAttribute('style');
         b.innerHTML = html || '';
     }
     function _renderStale() {
@@ -509,7 +524,8 @@
         var rates = ok ? (R.rates || {}) : {}, op = ok ? R.op : null;
         var pwf = ok ? (_fin(R.pwf) ? R.pwf : (R.node === 'bottom' && op ? op.p : null)) : null;
         var thp = ok && R.surface ? (_fin(R.surface.thp_psig) ? R.surface.thp_psig : (_fin(R.surface.thp) ? R.surface.thp - PATM : null)) : null;
-        var tht = ok && R.surface ? R.surface.tht : null, thtHyd = ok && R.surface ? R.surface.thtHyd : null;
+        // hydrate: the THT of the check (J-T corrected for gas wells, WTS_wp_well.temperature) against the hydrate temperature at the THP
+        var tht = ok && R.surface ? R.surface.tht : null, thtChk = ok && R.surface ? (_fin(R.surface.thtHyd) ? R.surface.thtHyd : tht) : null, tHyd = ok && R.surface ? R.surface.tHyd : null;
         var pr = M ? M.res.pr : null;
         if (gas) out.push({ k: 'rate', l: 'Gas rate', v: _fin(rates.qg) ? _u(rates.qg / 1000, 'gasRate', 2, 'MMscf/d') : '—', s: _fin(rates.qo) ? 'Cond. ' + _u(rates.qo, 'liquidRate', 0, 'STB/d') : '', st: ok ? 'ok' : (R ? 'fail' : 'none') });
         else out.push({ k: 'rate', l: 'Liquid rate', v: _fin(rates.qL) ? _u(rates.qL, 'liquidRate', 0, 'STB/d') : '—', s: _fin(rates.qo) ? 'Oil ' + _u(rates.qo, 'liquidRate', 0, 'STB/d') : '', st: ok ? (op && op.stable === false ? 'fail' : 'ok') : (R && !_isStub(R) ? 'fail' : 'none') });
@@ -530,8 +546,8 @@
                    st: mg == null ? 'none' : (mg < 0 ? 'fail' : mg < 0.1 ? 'warn' : 'ok') });
         var ero = ok ? _eroMax(R) : null;
         out.push({ k: 'ero', l: 'Erosion ratio', v: _fin(ero) ? _fmt(ero, 2) : '—', s: M ? 'C = ' + _fmt(M.system.eroC, 0) : '', st: _fin(ero) ? (ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok') : 'none' });
-        var hm = (_fin(tht) && _fin(thtHyd)) ? tht - thtHyd : null;
-        out.push({ k: 'hyd', l: 'Hydrate margin', v: _fin(hm) ? _tempDiff(hm) : '—', s: _fin(thtHyd) ? 'hydrate ' + _u(thtHyd, 'temperature', 0, '°F') : '', st: _fin(hm) ? (hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok') : 'none' });
+        var hm = (_fin(thtChk) && _fin(tHyd)) ? thtChk - tHyd : null;
+        out.push({ k: 'hyd', l: 'Hydrate margin', v: _fin(hm) ? _tempDiff(hm) : '—', s: _fin(tHyd) ? 'hydrate ' + _u(tHyd, 'temperature', 0, '°F') : (M && M.fluid.type === 'water' ? 'no gas' : ''), st: _fin(hm) ? (hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok') : 'none' });
         return out;
     }
     function _eroMax(R) {
@@ -617,7 +633,7 @@
         else canon = Math.round(v);
         _setCtrl(id, canon, true);
         if (phase === 'end') { _commit(id); return; }
-        if (!ST.slow && ST.solveMs <= LIVE_MS) _solveLive();
+        if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
     }
 
     // Schematic
@@ -759,22 +775,27 @@
         if (R.vlpMin && _fin(R.vlpMin.q) && R.op.q < R.vlpMin.q && R.op.stable) add('info', 'ℹ The operating point lies left of the tubing-curve minimum (conventional, more conservative rule) while statically stable.');
         var sh = ST.shut;
         if (sh && sh.ok !== false && !_isStub(sh)) {
-            var si = _fin(sh.actualFluid) ? sh.actualFluid : sh.gasFilled;
-            if (sh.rating && _fin(sh.rating.margin)) add(sh.rating.margin >= 0 ? 'ok' : 'fail', (sh.rating.margin >= 0 ? '✓' : '✗') + ' Shut-in wellhead pressure ' + _u(si, 'pressureG', 0, 'psig') + (sh.rating.margin >= 0 ? ' is within' : ' exceeds') + ' the wellhead rating by ' + _u(Math.abs(sh.rating.margin), 'pressure', 0, 'psi') + '.');
-            else if (_fin(si)) add('info', 'ℹ Shut-in wellhead pressure ' + _u(si, 'pressureG', 0, 'psig') + (_fin(sh.gasFilled) ? ' (gas-filled ' + _u(sh.gasFilled, 'pressureG', 0, 'psig') + ')' : '') + '; enter the wellhead rating to check it.');
+            // the worst case of the gas-filled and actual-fluid columns is checked against the rating (§4.14)
+            var si = _fin(sh.sithp) ? sh.sithp : (_fin(sh.gasFilled) ? sh.gasFilled : sh.actualFluid);
+            var both = (_fin(sh.gasFilled) && _fin(sh.actualFluid) && Math.abs(sh.gasFilled - sh.actualFluid) > 0.5) ? ' (gas-filled ' + _u(sh.gasFilled, 'pressureG', 0, 'psig') + ', actual fluid ' + _u(sh.actualFluid, 'pressureG', 0, 'psig') + ')' : '';
+            if (sh.rating && _fin(sh.rating.margin)) add(sh.rating.margin < 0 ? 'fail' : (sh.rating.verdict === 'warn' ? 'warn' : 'ok'), (sh.rating.margin < 0 ? '✗' : sh.rating.verdict === 'warn' ? '⚠' : '✓') + ' Shut-in wellhead pressure ' + _u(si, 'pressureG', 0, 'psig') + both + (sh.rating.margin >= 0 ? ' is within' : ' exceeds') + ' the wellhead rating by ' + _u(Math.abs(sh.rating.margin), 'pressure', 0, 'psi') + '.');
+            else if (_fin(si)) add('info', 'ℹ Shut-in wellhead pressure up to ' + _u(si, 'pressureG', 0, 'psig') + both + '; enter the wellhead rating to check it.');
         }
         var tmax = M.surface.rating.tht_max_F, tht = R.surface && R.surface.tht;
         if (_fin(tmax) && _fin(tht)) add(tht <= tmax ? 'ok' : 'fail', (tht <= tmax ? '✓' : '✗') + ' Flowing wellhead temperature ' + _u(tht, 'temperature', 0, '°F') + (tht <= tmax ? ' is within' : ' exceeds') + ' the rating ' + _u(tmax, 'temperature', 0, '°F') + '.');
         var L = ST.loading;
         if (L && _fin(L.margin)) add(L.margin < 0 ? 'fail' : L.margin < 0.1 ? 'warn' : 'ok', (L.margin < 0 ? '✗ Liquid loading: the rate is ' + _fmt(-L.margin * 100, 0) + ' % below' : L.margin < 0.1 ? '⚠ Close to loading: only ' + _fmt(L.margin * 100, 0) + ' % above' : '✓ ' + _fmt(L.margin * 100, 0) + ' % above') +
-            ' the critical rate' + (_fin(L.qc_MMscfd) ? ' ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') + (L.method ? ' (' + L.method + ')' : '') + (_fin(L.limitingMd) ? ', limiting at ' + _u(L.limitingMd, 'length', 0, 'ft') + ' MD' : '') + '.');
+            ' the critical rate' + (_fin(L.qc_MMscfd) ? ' ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') + (L.method ? ' (' + L.method + (L.verified === false ? ', provisional' : '') + ')' : '') + (_fin(L.limitingMd) ? ', limiting at ' + _u(L.limitingMd, 'length', 0, 'ft') + ' MD' : '') + '.');
         var ero = _eroMax(R);
         if (_fin(ero)) add(ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok', (ero > 1 ? '✗' : ero > 0.8 ? '⚠' : '✓') + ' Maximum velocity is ' + _fmt(ero * 100, 0) + ' % of the erosional velocity (C = ' + _fmt(M.system.eroC, 0) + ').');
-        if (R.surface && _fin(R.surface.tht) && _fin(R.surface.thtHyd)) {
-            var hm = R.surface.tht - R.surface.thtHyd;
-            add(hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok', (hm < 0 ? '✗ Hydrate risk at the wellhead: THT is ' : hm < 10 ? '⚠ Hydrate margin only ' : '✓ Hydrate margin ') + _tempDiff(Math.abs(hm)) + (hm < 0 ? ' below the hydrate temperature.' : ' at the wellhead (hydrate ' + _u(R.surface.thtHyd, 'temperature', 0, '°F') + ').'));
+        var sfc = R.surface || {}, thc = _fin(sfc.thtHyd) ? sfc.thtHyd : sfc.tht;
+        if (_fin(thc) && _fin(sfc.tHyd)) {
+            var hm = thc - sfc.tHyd;
+            add(hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok', (hm < 0 ? '✗ Hydrate risk at the wellhead: THT is ' : hm < 10 ? '⚠ Hydrate margin only ' : '✓ Hydrate margin ') + _tempDiff(Math.abs(hm)) + (hm < 0 ? ' below the hydrate temperature' : ' at the wellhead') + ' (hydrate ' + _u(sfc.tHyd, 'temperature', 0, '°F') + (_fin(sfc.thtHyd) && _fin(sfc.tht) && Math.abs(sfc.thtHyd - sfc.tht) > 0.05 ? '; THT ' + _u(sfc.thtHyd, 'temperature', 0, '°F') + ' after J-T cooling' : '') + ').');
         }
-        (R.flags || []).slice(0, 6).forEach(function (f) { if (f && f.msg && f.code !== 'EROSION') add(f.sev === 'warn' ? 'warn' : 'info', (f.sev === 'warn' ? '⚠ ' : 'ℹ ') + f.msg); });
+        // flags the checks above already state are not repeated
+        var SKIP = { EROSION: 1, HEADING: 1, LEFT_OF_MIN: 1, LOADING: 1, HYDRATE_WH: 1, PROVISIONAL: 1 };
+        (R.flags || []).filter(function (f) { return f && f.msg && !SKIP[f.code]; }).slice(0, 6).forEach(function (f) { add(f.sev === 'warn' ? 'warn' : 'info', (f.sev === 'warn' ? '⚠ ' : 'ℹ ') + f.msg); });
         return out;
     }
     function _validity() {
@@ -788,7 +809,9 @@
         (c.warnings || []).slice(0, 4).forEach(function (w) { var m = w && (w.msg || w); if (m) out.push({ st: 'warn', t: ('⚠ ' + m).slice(0, 290) }); });
         return out;
     }
-    function _vHtml(v) { return '<div class="wp-v ' + v.st + '">' + _esc(v.t) + '</div>'; }
+    // ✓ / ⚠ / ✗ verdicts carry the app's verdict colour inline (the report / UX convention: color:var(--green|yellow|red))
+    var V_COL = { ok: 'green', warn: 'yellow', fail: 'red' };
+    function _vHtml(v) { return '<div class="wp-v ' + v.st + '"' + (V_COL[v.st] ? ' style="color:var(--' + V_COL[v.st] + ')"' : '') + '>' + _esc(v.t) + '</div>'; }
     function _renderVerdicts() {
         var h = _byId('wp_verd'); if (h) { var vs = _verdicts(); h.innerHTML = '<div class="rbox-title">Checks</div>' + (vs.length ? vs.map(_vHtml).join('') : '<div class="wp-v info">The checks appear after a solve.</div>'); }
         var hv = _byId('wp_valid'); if (hv) { var va = _validity(); hv.innerHTML = '<div class="rbox-title">Correlation validity</div>' + (va.length ? va.map(_vHtml).join('') : '<div class="wp-v info">The validity ranges of the correlations in use are checked after a solve.</div>'); }

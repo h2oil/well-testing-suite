@@ -187,14 +187,14 @@ function installWellPerfMock(G, opts) {
         var grav = profile.length ? (S.gas ? 0.75 : 0.88) * (pwf - (thp + PATM)) : 0;
         var breakdown = op ? [{ key: 'reservoir', dp: pr - pwf }, { key: 'gravity', dp: grav }, { key: 'friction', dp: (pwf - thp - PATM) - grav },
             { key: 'restrictions', dp: 0 }, { key: 'choke', dp: thp - (S.psep + S.flowDp(op.q)) }, { key: 'flowline', dp: S.flowDp(op.q) }] : [];
-        var thtHyd = S.gas ? 58 : 48, tht = num(M.well.heat.tht_F, 110);
+        var tHydWh = S.gas ? 58 : 48, tht = num(M.well.heat.tht_F, 110);
         var flags = [];
         var eroMax = profile.reduce(function (a, r) { return Math.max(a, r.ero); }, 0);
         if (eroMax > 0.8) flags.push(w('EROSION', 'Mixture velocity reaches ' + Math.round(eroMax * 100) + ' % of the erosional velocity.', eroMax > 1 ? 'warn' : 'info'));
         var loading = S.gas && op ? { ok: true, method: 'turner', suggested: 'turner', qc_MMscfd: 4.2, limitingMd: S.md, margin: op.q / 1000 / 4.2 - 1, perDepth: profile.filter(function (_, i) { return i % 6 === 0; }).map(function (r) { return { md: r.md, tvd: r.tvd, vg: r.vm, vc: 6 + 4 * r.tvd / S.tvd, qc: 2.4 + 0.7 * r.tvd / S.tvd }; }) } : null;
         return { ok: !!op, node: M.system.node || 'bottom', roots: roots, op: op, qs: qs, vlpMin: fin(vmin.q) ? vmin : null,
                  traverse: op ? { profile: profile } : null, breakdown: breakdown,
-                 surface: { thp: thp != null ? thp + PATM : null, thp_psig: thp, tht: tht, thtHyd: thtHyd, pChokeDn: op ? S.psep + S.flowDp(op.q) + PATM : null, choke: { regime: M.surface.choke.present ? 'critical' : 'none', ratio: 0.42 } },
+                 surface: { thp: thp != null ? thp + PATM : null, thp_psig: thp, tht: tht, thtHyd: tht, tHyd: tHydWh, pChokeDn: op ? S.psep + S.flowDp(op.q) + PATM : null, choke: { regime: M.surface.choke.present ? 'critical' : 'none', ratio: 0.42 } },
                  rates: { qo: qo, qw: qw, qg: qg, qL: qo + qw }, velocities: { eroMax: eroMax }, flags: flags, discontinuities: [], loading: loading,
                  curves: { ipr: curve.map(function (c) { return { q: c.q, p: c.ipr }; }), vlp: curve.map(function (c) { return { q: c.q, p: c.vlp }; }) },
                  pwf: pwf, warnings: op ? [] : [w('NO_OP', 'The tubing curve lies above the inflow curve: the well does not flow at these settings.')], errors: op ? [] : ['no operating point'], evals: n + 10 };

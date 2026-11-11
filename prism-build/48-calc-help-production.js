@@ -156,13 +156,14 @@ var solgor = {
 
 // WP0 route stub; WP10 writes the guide (plan §14)
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '586ccfc2', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '00c5aa1d', units: 'dual',
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through tubing, choke and flowline.',
   what: ['New in release 4.3.'],
   when: ['Before a test: the rate at a choke.', 'After a test: is the rate consistent?'],
   steps: ['Open the Well Performance hub.', 'Enter the fluid, reservoir and well.', 'Read the operating point.'],
   parts: [{ id: 'status', title: 'Status', what: ['In development.'] }],
   tips: ['Meanwhile use [[oilipr]], [[gasdeliv]] and [[gaslift]].'],
+  verdicts: [vd('✗', 'p̄r needed', 'Never defaulted.'), vd('✓', 'inside the published data range', 'No extrapolation.')],
   notDocumented: [{ pattern: '^(wp|wpv|wpt)_', why: 'WP10' }],
   noRefs: 'stub', related: ['oilipr', 'gasdeliv', 'gaslift']
 };
