@@ -1123,6 +1123,42 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   the neutral values, the unknown key, grid replay, detail, the restriction loss, the multipliers, wet gas, lift gas, the PVT table
   (< 0.05 % in BHP) and the undersaturated branch. The flowline guide's `reviewedSrc` was re-hashed (page unchanged).
 
+#### 18.1.2 WP5 / WP11 record (2026-11-11, branch wp/a1-wp5)
+
+- **`WTS_wp_system`** (49-calc-wp-system.js) as §4.7–§4.14: 12-point coarse scan on a frozen layout, monotone cubic between the
+  points, a Newton step on the coarse slope then Brent per sign change, central differences at ±1 % q, q_s by a secant step on fine
+  central differences, the tubing-curve minimum from a parabola, tangency = "marginal", discontinuity rule (a collapsed bracket whose
+  |Δ| stays above 0.1 psi at both ends and whose jump exceeds 10 × the expected slope × width: a discontinuity with q, jump and side,
+  never a root). Wellhead node (THP available vs required; within 1e-6 of the bottom node on the fixtures); the separator node is solved
+  at the wellhead node in A1 and says so. Choke: the max rule with y_c = 0.588 (multiphase), the gas nozzle inverted for p1 (critical:
+  fixed point on z; sub-critical: Illinois), the incompressible orifice below GLR 10 scf/STB. The solver builds the fluid with the
+  (p, T)-binned property table (WP0b FI9, < 0.05 % in BHP; ≈ 30 % faster). Extra result fields used by the page: `surface.thp_psig`,
+  `surface.tHyd` (hydrate temperature at the THP; `surface.thtHyd` is the THT of the hydrate check, §4.6), `tChokeDn` / `tHydDn`,
+  `curves {ipr, vlp}`, `velocities {vmMax, eroMax, qEro}`, `scan`, `atTarget` ('pressure' mode), `grid` (warm starts).
+- **Tracking solve** (`solve(M, {warm, track: {q, slope}})`, ≈ 5 E): the stable root continued from a neighbouring setting, no scan, no
+  q_s; used by the design Job, the bean schedule (6 beans ≈ 42 E against 50) and the page's live drag (the drag keeps the last full
+  solve's outflow curve and q_s until the release; `R.carried`). Design: one full solve at the current setting, a first guess from the
+  choke law (∝ S^1.89) or the root slope, then secant / Illinois on tracking solves (oil bean 4 solves, 32 E against 60).
+- **Loading** at every traverse node (Turner 1.912 / Coleman 1.593 / Li 0.7241); the liquid is water when the well makes water; FIX.gasWell
+  is limited in the 7 in casing below the tubing shoe (bottom controls, −53 %); the methods are provisional (Q9). **`WTS_wp_check`** as
+  §4.13 with codes and field ids. **`shutIn`**: gas-filled (well-stream gravity for a wet gas, Z iterated, WTS_gradient_compute), the
+  actual fluid (live liquid marched up from p̄r; the gas column for gas wells; the liquid level when p̄r cannot hold the column) and
+  partly liquid-filled columns; the worst case against the rating (⚠ within 10 %, none without a rating). Maximum THT = the entered THT
+  in A1 (linear model), checked against `rating.tht_max_F`.
+- **Findings for the lead.** (1) The frozen `FIX.fallingBranch` (J 0.3, p̄r 3,200 psia) does not flow with any A1 correlation; with
+  J = 1 and Hagedorn & Brown it is exactly the intended case (op 598 STB/d, q_s 277, tubing-curve minimum 875) — the tests use that
+  variant; the fixture's J should become 1. (2) Smoothness: the tubing outflow is smooth on the frozen grid for the gas well (Beggs &
+  Brill, Gray: second differences ≈ 1e-3 psi) and for no-slip oil (2e-3), but Beggs & Brill and Hagedorn & Brown in the oil wells and the
+  Beggs & Brill flowline step by 0.2–1 psi at pattern switches — the discontinuity rule reports the large ones; a continuous pattern
+  transition is an A2 item. (3) The plan's ≤ 250 ms per solve is not met on this container (oil 2 roots 22 E ≈ 400–470 ms, gas 15 E ≈
+  370–410 ms); the page budget is therefore the §16 device budget (1 s) and drags use the tracking solve. (4) A literal `key: '<route>'`
+  in a Round-9 file ties it to that route's help review hash (help-content `srcTexts`): the breakdown keys go through a constant map.
+- **WP11** `prism-build/wellperf-validate.js`: `--gate` (D17: BENCH table of §15.1 statuses — verified / pinned / pending; every pending
+  method verified:false, labelled in list / traverse / check validity / loading, never a default), `--check` (14 cross-checks of §15.2 /
+  §15.3: water column on the deviated path, dry-gas closed form, direction, node independence, smoothness, choke continuity, breakdown,
+  root tolerance, scan doubling, step convergence, warm = cold, shut-in gas / liquid columns, critical velocity), `--time` (evaluation
+  counts against §16 and ms against 2 × the E measured in the run). Tests: `wellperf-system` (21), `wellperf-loading` (6).
+
 ### 18.2 Increment A2 (v4.4)
 
 | WP | Content | Depends on | Lane |

@@ -30,7 +30,7 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
 const KB = 1000;
 const CAPS = {
   '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 18.85, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 37.21, '48-calc-help-livedata.js': 16.03,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 37.36, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
   '48-calc-help-simcourse.js': 41.72, '48-calc-help-manifest.js': 8.75,
 };
@@ -70,6 +70,8 @@ const CAPS = {
 // "go and continue all"): wellperf is a PART route and the allocation rises by 12 kB raw / 4 kB gzip to 357 kB / 124 kB. 0.8 kB goes
 // to production now (the wellperf route stub); the other 11.2 kB stay unallocated for WP10's guide and the A2 course (WP19), which
 // set the final per-file caps from the measured draft. wellperf is in MANUAL_OK only while the page is the WP0 stub (WP10 removes it).
+// Well Performance WP5 (2026-11-11): 0.15 kB of the unallocated pool to production — the wellperf stub's two verdicts (the page now
+// shows the real system solver's ✓ / ✗ checks at the defaults); 11.05 kB stay unallocated for WP10 / WP19.
 const SUM_CAP = 357 * KB, GZIP_CAP = 124 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
