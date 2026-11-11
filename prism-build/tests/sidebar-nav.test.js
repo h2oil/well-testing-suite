@@ -15,6 +15,7 @@ const HUBS = {
   esd: ['esdhi', 'esdlo'],
   separators: ['sep', 'seprate', 'sephand'],
   electrical: ['gensz', 'cablesz', 'vdrop', 'elec'],
+  perf: ['wellperf', 'oilipr', 'gasdeliv', 'gaslift'],   // Well Performance (docs/WELL-PERFORMANCE-PLAN.md §2.1, WP0)
 };
 const MAX_ROWS = 8;   // rows of the largest group: fits 1280×800 with every other group label shown
 
@@ -51,6 +52,11 @@ module.exports = [
       // plug-ins land in their place inside the group (host order), not at its end
       const mc = Array.from(grp(app, 'Metering & Chokes').querySelectorAll('.nav-btn')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
       assert.deepStrictEqual(mc, ['aga3', 'orifice', 'hub:chokes', 'choke', 'chokeflow', 'chokecnv', 'chokeperf', 'mcfshr', 'turbmeter', 'proving', 'sepqc']);
+      // Production & Reservoir: five rows (prism, oilgas, solgor, the Well Performance hub, buildup); the hub's members follow it
+      const pr = Array.from(grp(app, 'Production & Reservoir').querySelectorAll('.nav-btn')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
+      assert.deepStrictEqual(pr, ['prism', 'oilgas', 'solgor', 'hub:perf', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'buildup']);
+      assert.deepStrictEqual(rows(grp(app, 'Production & Reservoir')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub')), ['prism', 'oilgas', 'solgor', 'hub:perf', 'buildup'], '5 rows');
+      assert.strictEqual(text(hubBtn(app, 'perf').querySelector('span:last-child')), 'Well Performance');
     },
   },
   {
@@ -236,6 +242,37 @@ module.exports = [
       const now = app.findAll('#sidebar .nav-btn[tabindex="0"]');
       assert.strictEqual(now.length, 1);
       assert.strictEqual(now[0].getAttribute('data-p'), 'mcfshr', 'next shown button');
+    },
+  },
+  {
+    name: 'NAV Well Performance hub (v4.3 WP0): first click opens the nodal page; dashboard tiles of the members sit under Production & Reservoir in hub order, unchanged badges',
+    wp: WP,
+    run(app, assert) {
+      app.storage.removeItem('wts_ui_hub_last');
+      app.hook.nav('home');
+      app.click(hubBtn(app, 'perf'));
+      assert.strictEqual(app.hook.page(), 'wellperf', 'first member by default');
+      assert.deepStrictEqual(tabs(app), HUBS.perf, 'tab strip = the four members');
+      assert.ok(app.el('wp_root'), 'the page rendered');
+      app.click(app.find('#hubTabs [data-hub-go="gaslift"]'));
+      assert.strictEqual(app.hook.page(), 'gaslift');
+      app.hook.nav('home');
+      app.click(hubBtn(app, 'perf'));
+      assert.strictEqual(app.hook.page(), 'gaslift', 'then the member used last');
+      // dashboard: the existing hubs are the reference — members are tiles of their sidebar group, in sidebar order
+      app.hook.nav('home');
+      app.flush(50);
+      const secs = app.findAll('#pgBody .dash-sec');
+      const sec = secs.find((x) => /Production &(amp;)? Reservoir/.test(text(x.querySelector('.dash-group-h'))));
+      assert.ok(sec, 'Production & Reservoir section: ' + secs.map((x) => text(x.querySelector('.dash-group-h'))).join(' | '));
+      const ids = Array.from(sec.querySelectorAll('.dc-fav')).map((b) => b.getAttribute('data-fav'));
+      const want = ['prism', 'oilgas', 'solgor', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'buildup'];
+      assert.deepStrictEqual(ids.filter((k) => want.includes(k)), want, 'tiles in sidebar order: ' + ids.join(','));
+      const ch = secs.find((x) => /Metering/.test(text(x.querySelector('.dash-group-h'))));
+      const cids = Array.from(ch.querySelectorAll('.dc-fav')).map((b) => b.getAttribute('data-fav'));
+      assert.ok(HUBS.chokes.every((k) => cids.includes(k)), 'reference: the Chokes members are tiles of their group');
+      const badge = (k) => { const c = Array.from(sec.querySelectorAll('.dash-card')).find((x) => x.querySelector('[data-fav="' + k + '"]')); return text(c && c.querySelector('.dc-badge')); };
+      assert.deepStrictEqual(['oilipr', 'gasdeliv', 'gaslift'].map(badge), ['Production', 'Production', 'Artificial lift'], 'member tiles unchanged (owner Q19)');
     },
   },
 ];

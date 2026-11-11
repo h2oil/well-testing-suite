@@ -4,7 +4,7 @@
 var G = (typeof window !== 'undefined') ? window : globalThis;
 G.WTS_helpContent = G.WTS_helpContent || { guides: {}, factories: [] };
 G.WTS_helpContent.factories = G.WTS_helpContent.factories || [];
-G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
+G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'wellperf', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
 var V = 'v3.3.2', NC = 'the Calculate button';
 function sel(n, s) { return { sel: s, n: n }; }
 function inp(label, id, def, text) { var o = { label: label }; if (id) o.id = id; if (def) o.def = def; if (text) o.text = text; return o; }
@@ -152,6 +152,18 @@ var solgor = {
   related: ['oilgas', 'gaspvt', 'prism'],
   shots: [view('Solution GOR page', [sel(1, '#sg_p')]),
   crop('calc', '#pgBody .cols-2 > div > .card:first-child', 'Inputs and Calculate', 'Inputs', [sel(1, '#sg_p'), sel(2, '#pgBody .btn-primary')]), res('#sg_res .rbox', 'Solution GOR Results: Rs by both correlations', 'Default inputs', null, [{ click: '#pgBody .btn-primary' }, { waitFor: '#sg_res .rbox' }])]
+};
+
+// WP0 route stub; WP10 writes the guide (plan §14)
+var wellperf = {
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: 'c9cb530c', units: 'dual',
+  purpose: 'Nodal analysis: the rate where the inflow meets the lift through tubing, choke and flowline.',
+  what: ['The page is being built for release 4.3.'],
+  when: ['Before a test: the rate at a choke.', 'After a test: is the rate consistent?'],
+  steps: ['Open the Well Performance hub.', 'Enter the fluid, reservoir and well.', 'Read the operating point.'],
+  parts: [{ id: 'status', title: 'Status', what: ['In development.'] }],
+  tips: ['Meanwhile use [[oilipr]], [[gasdeliv]] and [[gaslift]].'],
+  noRefs: 'stub', related: ['oilipr', 'gasdeliv', 'gaslift']
 };
 
 var gasdeliv = {
@@ -310,7 +322,7 @@ var buildup = {
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
-return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
+return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, wellperf: wellperf, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
 } });
 })();
 

@@ -594,6 +594,19 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['no pending timers 5 s after opening DFIT mode' + (detail && okT ? ' ' + detail : ''), okT]);
 })();
 
+// ── v4.3 Well Performance (docs/WELL-PERFORMANCE-PLAN.md §17.1: 2 checks of 3, WP0) ──
+(function wellPerfChecks() {
+  const reg = win.WTS_calcRegistry && win.WTS_calcRegistry.wellperf;
+  checks.push(['WTS_calcRegistry.wellperf in "Production & Reservoir" (hooks.silent) + renderWellPerf / calcWellPerf',
+    !!reg && reg.key === 'wellperf' && reg.group === 'Production & Reservoir' && !!reg.hooks && reg.hooks.silent === true &&
+    typeof reg.render === 'function' && typeof win.renderWellPerf === 'function' && typeof win.calcWellPerf === 'function']);
+  const ns = ['WTS_wp_model', 'WTS_wp_fluid', 'WTS_wp_ipr', 'WTS_wp_vlp', 'WTS_wp_well', 'WTS_wp_system', 'WTS_wp_sens', 'WTS_wp_match'];
+  const fns = ['WTS_wp_loading', 'WTS_wp_check', 'WTS_wp_qc'];
+  const miss = ns.filter((k) => !win[k] || typeof win[k] !== 'object').concat(fns.filter((k) => typeof win[k] !== 'function'));
+  if (miss.length) console.error('[wellperf] missing namespaces: ' + miss.join(', '));
+  checks.push(['WTS_wp_* namespaces present (model, fluid, ipr, vlp, well, system, sens, match; loading / check / qc)', miss.length === 0]);
+})();
+
 // ── v3.5 accounts (docs/ACCOUNTS-PLAN.md §12.3: 5 checks) ──
 // 1 runs in this vm stub (an http location: the guard leaves the inert stub); 2–5 load the BUILT page in the test harness with
 // manual timers, a production https location, a counting fetch and the in-memory fake API.

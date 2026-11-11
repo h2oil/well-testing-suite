@@ -1186,6 +1186,9 @@ p_f = p_w − Δp_perf(q) − Δp_nwb(q)                  fracture entrance; aft
   T_inj, the displaced column is g_T·D cooler than the geotherm, relaxing with e^(−t/τ_T), τ_T a band 0.5–5 h or fitted from a
   BH temperature trace; (c) Ramey (3.4b, long injections): T = g_T·z + T_s − g_T·A + (T_inj − T_s + g_T·A)·e^(−z/A),
   A = w·c_p·f(t)/(2πk_e), f(t) = −ln(r_o/(2√(α_e t))) − 0.290.
+  Cross-reference (Well Performance, docs/WELL-PERFORMANCE-PLAN.md §4.6, D7, Q16): `WTS_wellbore._ramey` stays reserved for this
+  DFIT 3.4b model; the production flowing-temperature path is the separate public `WTS_wellbore.flowingTemp(column, opts)` (A2, WP14),
+  which offers `direction: 'inject'` for DFIT to call if it chooses.
 - **Pipe friction.** v = 17.157·q/d² (ft/s; q bbl/min, d in); Re = 928·ρ·v·d/μ; laminar f = 16/Re; turbulent Colebrook (Fanning)
   through `WTS_flowline_friction.colebrook` (it returns Darcy; ÷ 4); dp/dL = f·ρ·v²/(25.8·d). Friction-reduced water:
   Δp = (1 − FR)·Δp_water, FR capped by Virk's asymptote (85 % at Re 549,856). Power law: Re_MR = 89,100·ρ·v^(2−n)/K·(0.0416·d/(3 + 1/n))^n,

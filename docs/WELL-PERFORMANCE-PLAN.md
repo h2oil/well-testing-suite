@@ -338,8 +338,9 @@ in a hidden step is still drawn at a usable size. All plots expose their series 
 ### 2.9 Report and Quick Report
 
 The host has no per-calculator snapshot hook: the Quick Report snapshot is the whole `collectPageReport(#pgBody)` model, cached in
-`wts_report_snapshots` with eviction, and `collectPageReport` skips only `.rp-skip` (it does not skip hidden elements). The module
-therefore controls what is captured with markup:
+`wts_report_snapshots` with eviction, and `collectPageReport` skips `.rp-skip` **and every element that is not displayed** (`_isShown`:
+no client rects — a hidden step section, its cards and its canvases are left out; WP0 finding, `wellperf-shapes` WS4). The module
+therefore controls what is captured with markup, and anything that must reach a report lives in the always-visible `#wp_res`:
 
 - **Compact report block** `#wp_res`, always rendered whatever the active step: an inputs summary card, the operating-point card
   (q_o, q_w, q_g, pwf, THP, THT, stability, q_s, choke regime), the system plot, the Δp breakdown, the shut-in / maximum THT / rating
@@ -1091,6 +1092,36 @@ changes (5). **Total A2 ≈ 53.**
 
 Merge order: WP0 → WP0b → (WP1, WP2 in any order) → WP4 → WP3 → WP5 → WP11 → (WP6, WP7) → WP9 → WP10 → WPI. WP9 develops in
 parallel from WP0 against the stubs and rebases on each merge.
+
+#### 18.1.1 WP0 / WP0b record (lead, 2026-11-11, branch wp/a1)
+
+Owner decision: "go and continue all" — every open question takes its proposed default (§20); Q9: no textbooks, so the affected
+correlations ship provisional through the §15.1 gate. Built to the contracts below; lane WPs code against them.
+
+- **Files.** `49-calc-wp-model.js` (complete: `WTS_wp_model` `read` / `write` / `readRaw` / `migrate` / `validate` / `decimate` /
+  `dfitTests` / `fromDfit`, `SCALARS` (the page's `wp_*` control contract; `wp_ip_<name>` → `res.params.<name>`), `DEFAULTS`, `empty`);
+  stubs `49-calc-wp-fluid.js` (WP1), `-ipr` (WP2), `-vlp` (WP3), `-well` (WP4), `-system` (WP5), `-sens` (WP6), `-match` (WP7) — every
+  function returns `{ok:false, code:'STUB', name, wp}` and is listed in `window.__WP_STUBS` until its WP replaces the file; the page shell
+  `49-calc-wellperf.js` (registry entry, `renderWellPerf`, `calcWellPerf`, events, `WTS_wellperf_page.calcs()` test hook); fixtures
+  `tests/_wellperf-shapes.js` (hash-pinned); frozen v4.2 engine copies `tests/_wp-v42/` (flowline, chokeperf, wellbore, tubulars, oilipr,
+  gasdeliv, gaslift) for the identity tests; tests `wellperf-shapes` (4), `wellperf-names` (1), `wellperf-identity` (FI1–FI9 + FIT timing).
+- **Contract additions.** `M.system.thp_psig` (fixed THP when `surface.choke.present` is false) and the `system.mode` meanings
+  (`rate` | `pressure` | `max` | `design`, comment in 49-calc-wp-model.js); `M.fluid.bc`, `M.well.heat.thtMeasured`,
+  `M.system.stepFtLine`, `M.meta {status, readOnly, notes}`; a correlation entry may carry `friction(hl, inp, G)` (used by `opt.mult`) and
+  `vertical`; segment `area` (in²) and `restr {d, k?}` apply at the segment's **flow inlet**; the traverse profile and `SHAPE.R` carry `inc`;
+  `WTS_wp_well.build` / `schematic` (trajectory stations MD / TVD / N / E / departure / inclination) for the deviation-first schematic.
+- **Hub.** Static row `data-hub="perf"`, `__NAV_HUBS.perf`, `__NAV_ORDER`; Production & Reservoir 7 → 5 rows; `sidebar-nav` (HUBS, rows,
+  hub navigation and dashboard tiles — members are tiles of their group in sidebar order, badges unchanged), `buildup-page` row assertion;
+  `ux-layout-check` 1280×800 / 1440×900 fit ok; help screenshots home / help / start re-shot.
+- **Help (Q15 default).** `wellperf` route stub in 48-calc-help-production.js; `wellperf` a PART route; SUM_CAP 357 kB, GZIP_CAP 124 kB;
+  production cap +0.8 kB, 11.2 kB unallocated for WP10 / WP19; `wellperf` in MANUAL_OK while the page is the stub (WP10 removes it).
+- **Timing baseline (§16).** 8,000 ft vertical, 2.441 in, Beggs & Brill, 50 ft steps: 17.0 ms (160 steps, 0.106 ms / step); 10,000 ft:
+  22.3 ms; one fine evaluation E (10,000 ft at 100 ft steps): 10.1–12.0 ms (`BASELINE` in the fixtures; FIT reports it per run).
+- **WP0b (49-calc-flowline.js).** All §2.3 options (registry `WTS_flowline_corr` + `bb`, `corr` key, `mult`, `stepFt`, `grid`, `eroC`,
+  `detail`, `fluid.pvt` with `corr` / `pbFactor` / `undersat` / `mult` / `imp` / `liquidNoTransfer` / `bc` / `injGas` / `table`, segment
+  `area` / `restr`, wrapper pass-through); FI1–FI8 deep-compare the full outputs with the frozen v4.2 engines (bit for bit); FI9 checks
+  the neutral values, the unknown key, grid replay, detail, the restriction loss, the multipliers, wet gas, lift gas, the PVT table
+  (< 0.05 % in BHP) and the undersaturated branch. The flowline guide's `reviewedSrc` was re-hashed (page unchanged).
 
 ### 18.2 Increment A2 (v4.4)
 

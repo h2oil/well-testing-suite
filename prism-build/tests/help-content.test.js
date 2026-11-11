@@ -30,7 +30,7 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
 const KB = 1000;
 const CAPS = {
   '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 18.85, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 36.41, '48-calc-help-livedata.js': 16.03,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 37.21, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
   '48-calc-help-simcourse.js': 41.72, '48-calc-help-manifest.js': 8.75,
 };
@@ -66,12 +66,16 @@ const CAPS = {
 // Release 4.1 review round 2 (host lane, 2026-11-09): the round-1 wording trims are restored (welltest: the desander sand sources,
 // the 3D Colour overlay list; simcourse: CUSH_BURNER and the cushion column answer) and the LP inputs carry the page labels with unit
 // tokens; no file had 10 bytes of unused headroom to move, so short entries were joined onto one line (layout only); caps unchanged.
-const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
+// Well Performance WP0 (lead, 2026-11-11): owner question Q15 of docs/WELL-PERFORMANCE-PLAN.md taken at its proposed default (owner
+// "go and continue all"): wellperf is a PART route and the allocation rises by 12 kB raw / 4 kB gzip to 357 kB / 124 kB. 0.8 kB goes
+// to production now (the wellperf route stub); the other 11.2 kB stay unallocated for WP10's guide and the A2 course (WP19), which
+// set the final per-file caps from the measured draft. wellperf is in MANUAL_OK only while the page is the WP0 stub (WP10 removes it).
+const SUM_CAP = 357 * KB, GZIP_CAP = 124 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
-const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
-const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus'];
+const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian', 'wellperf'].concat(OVERVIEW);
+const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus', 'wellperf'];
 const SRC_OVERRIDE = { wts: ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'] };
 const SEC_KEYS = ['top', 'what', 'when', 'steps', 'inputs', 'results', 'example', 'tips', 'refs', 'related'];
 
@@ -668,7 +672,7 @@ const TESTS = [
     },
   },
   {
-    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 345 kB raw and ≤ 120 kB gzip',
+    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 357 kB raw and ≤ 124 kB gzip',
     wp: WP,
     opts: false,
     run(app, assert) {

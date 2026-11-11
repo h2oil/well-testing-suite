@@ -39,9 +39,9 @@
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 3d1726b2,view-p 780 1688 ced6e746",
+    "help": "view-d 1280 800 32f192a3,view-p 780 1688 ced6e746",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
-    "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
+    "home": "view-d 1280 800 a30bf3c6,view-p 780 1688 7648693c",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
     "lineheat": "res-d 987 416 7e6d3aaa,view-d 1280 800 afd8cd76,view-p 780 1688 2bd22587",
     "liquidline": "res-d 454 229 7f858d73,view-d 1280 800 883a1884,view-p 780 1688 f0f9f951",
@@ -65,7 +65,7 @@
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
     "seprate": "view-d 1280 800 eeea4137,view-p 780 1688 ac37ed8a",
     "solgor": "calc-d 491 551 eac40ac6,res-d 449 224 c8e07ca1,view-d 1280 800 94b6bdd0,view-p 780 1688 351b540a",
-    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 55bcce64",
+    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 1dbdb133",
     "tank": "view-d 1280 800 700a3803,view-p 780 1688 5f9d6598",
     "turbmeter": "res-d 449 298 169bbd66,view-d 1280 800 537337b8,view-p 780 1688 e5a2640d",
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
@@ -78,7 +78,7 @@
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 217;
-  M.bytes = 7975422;   // total size of the image files (the offline download label)
+  M.bytes = 7976450;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

@@ -380,8 +380,8 @@ module.exports = [
       assert.strictEqual(app.el('bu_dlg').hasAttribute('open'), false, 'dialog closed');
       assert.ok(app.el('pgTitle').textContent === 'Build-up Surveillance');
       const btn = app.find('#sidebar .nav-btn[data-p="buildup"]');
-      const grp = btn.closest('.nav-group'), rows = Array.from(grp.querySelectorAll('.nav-btn')).filter((b) => !b.classList.contains('nav-hub-member')).map((b) => b.getAttribute('data-p'));
-      assert.deepStrictEqual(rows.slice(-2), ['gaslift', 'buildup'], 'row 7 of Production & Reservoir, after Gas Lift: ' + rows.join(','));
+      const grp = btn.closest('.nav-group'), rows = Array.from(grp.querySelectorAll('.nav-btn')).filter((b) => !b.classList.contains('nav-hub-member')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
+      assert.deepStrictEqual(rows.slice(-2), ['hub:perf', 'buildup'], 'last row of Production & Reservoir, after the Well Performance hub (v4.3): ' + rows.join(','));
     },
   },
   {
