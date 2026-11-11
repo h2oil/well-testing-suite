@@ -167,7 +167,7 @@ var wellperf = {
 };
 
 var gasdeliv = {
-  route: 'gasdeliv', reviewed: V, reviewedSrc: 'c7c041f3', units: 'dual',
+  route: 'gasdeliv', reviewed: V, reviewedSrc: 'ad557373', units: 'dual',
   keywords: ['AOF', 'deliverability', 'back-pressure', 'isochronal'],
   purpose: 'AOF and deliverability of a gas well from test points, by C and n and by LIT.',
   what: ['Fits q = C (p̄r² − pwf²)ⁿ and p̄r² − pwf² = a·q + b·q² to the points, then tabulates both curves.'],
@@ -200,7 +200,7 @@ var gasdeliv = {
 };
 
 var oilipr = {
-  route: 'oilipr', reviewed: V, reviewedSrc: 'f7dc266c', units: 'dual',
+  route: 'oilipr', reviewed: V, reviewedSrc: '888c3ce4', units: 'dual',
   keywords: ['IPR', 'inflow performance', 'Vogel', 'productivity index'],
   purpose: 'Inflow performance of an oil well from test points: PI, Vogel or composite, or Fetkovich, with a future IPR.',
   what: ['Vogel / composite: Vogel when the bubble point is at or above p̄r, else a PI line above it and Vogel below.'],

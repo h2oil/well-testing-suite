@@ -40,6 +40,14 @@
 //               cn:{n, C, r2, aof, qAtPwf, pwfAtQ, qAboveAof},
 //               lit:{ok, a, b, aof, qAtPwf, pwfAtQ, qAboveAof, nonDarcyPct, reason},
 //               table:[{pwf, qCn, qLit}], ...}
+//   WTS_gasdeliv_model(spec)        parameter-driven evaluator on the same private functions compute() uses
+//       spec {cn:{C, n} | lit:{a, b}, pr, pAof (default 14.65 psia), delta?:{d(pwf) → Δ, inv(Δ) → pwf}}
+//       Δ defaults to p̄r² − pwf² (the page's form); a generic Δ (p̄r − pwf, m(p̄r) − m(pwf)) reuses the same root
+//       → {ok, kind:'cn'|'lit', pr, pAof, aof, qAt(pwf), pwfAt(q) → pwf | null, errors[]}
+//   WTS_gasdeliv_fitAB(points, deltaFn, opts?)  the LIT least-squares fitter on a generic drawdown Δ:
+//       Δ/q = a + b·q over points [{q, …}] (Δ = deltaFn(point)); opts.stab {q, …}: a from that stabilised point
+//       (isochronal tests, as compute()); opts.b fixes b (one point) → {ok, a, b, r2, n, rows:[{q, delta}], reason}
+//       (Well Performance, docs/WELL-PERFORMANCE-PLAN.md §2.3 / §3.3: Jones-Blount-Glaze and m(p) LIT reuse it)
 //   WTS_state.gasdeliv              last result (in memory only)
 //   WTS_calcRegistry.gasdeliv       Round-9 registration (host adds route,
 //                                   sidebar button and dashboard tile)
@@ -102,6 +110,19 @@
         return { slope: slope, intercept: my - slope * mx, r2: (syy > 0) ? (sxy * sxy) / (sxx * syy) : 1 };
     }
     function _log10(x) { return Math.log(x) / Math.LN10; }
+
+    // Shared by compute(), WTS_gasdeliv_model() and WTS_gasdeliv_fitAB().
+    // Back-pressure rate from a drawdown Δ; LIT rate from Δ (positive root of b·q² + a·q − Δ = 0).
+    function _cnQ(C, n) { return function (d) { return C * Math.pow(Math.max(0, d), n); }; }
+    function _litQ(a, b) { return function (d) { return (-a + Math.sqrt(a * a + 4 * b * d)) / (2 * b); }; }
+    // LIT least squares Δ/q = a + b·q over rows [{q, delta}]; with a stabilised row a = (Δs − b·qs²)/qs.
+    function _litFit(rows, stab) {
+        var lf = _fit(rows.map(function (u) { return u.q; }), rows.map(function (u) { return u.delta / u.q; }));
+        if (!lf) return null;
+        var b = lf.slope;
+        var a = stab ? (stab.delta - b * stab.q * stab.q) / stab.q : lf.intercept;
+        return { a: a, b: b, r2: lf.r2 };
+    }
 
     // ═════════════════════════════════════════════════════════════════
     // PURE COMPUTE — field units (psia, MSCFD)
@@ -195,7 +216,8 @@
             err('The fitted exponent n is not positive — the rates do not increase with drawdown; check the test points.', P + 'q1');
             return fail();
         }
-        var cnAt = function (pwf) { return C * Math.pow(Math.max(0, pr2 - pwf * pwf), n); };
+        var cnQ = _cnQ(C, n);
+        var cnAt = function (pwf) { return cnQ(pr2 - pwf * pwf); };
         var aofCn = C * Math.pow(dAOF, n);
         var cn = { n: n, C: C, r2: r2, aof: aofCn, qAtPwf: null, pwfAtQ: null, qAboveAof: false };
         if (hasPwfd) cn.qAtPwf = cnAt(pwfd);
@@ -209,18 +231,18 @@
         if (type === 'single') {
             lit.reason = 'LIT needs at least two points';
         } else {
-            var lf = _fit(slopeSet.map(function (u) { return u.q; }), slopeSet.map(function (u) { return u.delta / u.q; }));
+            var lf = _litFit(slopeSet, type === 'faf' ? null : stab);
             if (!lf) {
                 lit.reason = 'The slope points have equal rates — the LIT fit is singular.';
             } else {
-                var b = lf.slope;
-                var a = (type === 'faf') ? lf.intercept : (stab.delta - b * stab.q * stab.q) / stab.q;
+                var b = lf.b;
+                var a = lf.a;
                 lit.a = a; lit.b = b;
                 if (!(b > 0)) lit.reason = 'b ≤ 0';
                 else if (!(a > 0)) lit.reason = 'a ≤ 0';
                 else {
                     lit.ok = true;
-                    var litQ = function (d) { return (-a + Math.sqrt(a * a + 4 * b * d)) / (2 * b); };
+                    var litQ = _litQ(a, b);
                     lit.aof = litQ(dAOF);
                     if (hasPwfd) lit.qAtPwf = litQ(pr2 - pwfd * pwfd);
                     if (hasQt) {
@@ -265,6 +287,88 @@
         };
     }
     G.WTS_gasdeliv_compute = compute;
+
+    // Parameter-driven evaluator (plan §2.3). q(pwf) is 0 at pwf ≥ p̄r and the AOF at pwf ≤ pAof; pwf(q) is p̄r at q ≤ 0
+    // and null above the AOF.
+    function model(spec) {
+        spec = spec || {};
+        var pr = _nv(spec.pr), pAof = _given(spec.pAof) ? _nv(spec.pAof) : 14.65, errors = [];
+        var out = { ok: false, kind: null, pr: isFinite(pr) ? pr : null, pAof: pAof, aof: null, C: null, n: null, a: null, b: null,
+            qAt: null, pwfAt: null, errors: errors };
+        if (!(pr > 0)) errors.push('Average reservoir pressure must be above 0.');
+        if (!(pAof >= 0) || (pr > 0 && pAof >= pr)) errors.push('AOF back-pressure must be 0 or more and below the average reservoir pressure.');
+        var dl = spec.delta && typeof spec.delta.d === 'function' && typeof spec.delta.inv === 'function' ? spec.delta : null;
+        var pr2 = pr * pr;
+        var dOf = dl ? dl.d : function (pwf) { return pr2 - pwf * pwf; };
+        var pOfD = dl ? dl.inv : function (d) { return Math.sqrt(pr2 - d); };
+        var qOfD = null, dOfQ = null;
+        if (spec.cn) {
+            var C = _nv(spec.cn.C), n = _nv(spec.cn.n);
+            if (!(C > 0) || !(n > 0)) errors.push('Back-pressure C and n must be above 0.');
+            else { out.kind = 'cn'; out.C = C; out.n = n; qOfD = _cnQ(C, n); dOfQ = function (q) { return Math.pow(q / C, 1 / n); }; }
+        } else if (spec.lit) {
+            var a = _nv(spec.lit.a), b = _nv(spec.lit.b);
+            if (!(a > 0) || !(b >= 0)) errors.push('LIT a must be above 0 and b 0 or more.');
+            else {
+                out.kind = 'lit'; out.a = a; out.b = b;
+                qOfD = b > 0 ? _litQ(a, b) : function (d) { return d / a; };
+                dOfQ = function (q) { return a * q + b * q * q; };
+            }
+        } else errors.push('Give the back-pressure (cn) or LIT (lit) coefficients.');
+        if (errors.length) return out;
+        var dAof = dOf(pAof), aof = qOfD(dAof);
+        if (!(aof > 0) || !isFinite(aof)) { errors.push('The AOF is not positive with these coefficients.'); return out; }
+        out.ok = true; out.aof = aof;
+        out.qAt = function (pwf) {
+            pwf = +pwf;
+            if (!isFinite(pwf)) return NaN;
+            if (pwf >= pr) return 0;
+            if (pwf <= pAof) return aof;
+            return qOfD(dOf(pwf));
+        };
+        out.pwfAt = function (q) {
+            q = +q;
+            if (!isFinite(q)) return null;
+            if (q <= 0) return pr;
+            if (q > aof * (1 + 1e-12)) return null;
+            if (q >= aof) return pAof;
+            var p = pOfD(dOfQ(q));
+            return isFinite(p) ? Math.min(pr, Math.max(pAof, p)) : null;
+        };
+        return out;
+    }
+    G.WTS_gasdeliv_model = model;
+
+    // The LIT fitter on a generic drawdown (plan §2.3).
+    function fitAB(points, deltaFn, opts) {
+        opts = opts || {};
+        var rows = [], bad = 0;
+        (Array.isArray(points) ? points : []).forEach(function (pt) {
+            var q = _nv(pt && pt.q), d = (typeof deltaFn === 'function') ? _nv(deltaFn(pt)) : NaN;
+            if (q > 0 && d > 0) rows.push({ q: q, delta: d }); else bad++;
+        });
+        var out = { ok: false, a: null, b: null, r2: null, n: rows.length, rows: rows, skipped: bad, reason: '' };
+        var stab = null;
+        if (opts.stab) {
+            var qs = _nv(opts.stab.q), ds = _nv(deltaFn(opts.stab));
+            if (qs > 0 && ds > 0) stab = { q: qs, delta: ds }; else { out.reason = 'The stabilised point has no positive rate or drawdown.'; return out; }
+        }
+        if (_given(opts.b)) {
+            var bF = _nv(opts.b), ref = stab || rows[0];
+            if (!ref) { out.reason = 'No point with a positive rate and drawdown.'; return out; }
+            out.b = bF; out.a = (ref.delta - bF * ref.q * ref.q) / ref.q;
+        } else {
+            if (rows.length < 2) { out.reason = 'LIT needs at least two points'; return out; }
+            var lf = _litFit(rows, stab);
+            if (!lf) { out.reason = 'The slope points have equal rates — the LIT fit is singular.'; return out; }
+            out.a = lf.a; out.b = lf.b; if (rows.length >= 3) out.r2 = lf.r2;
+        }
+        if (!(out.b >= 0)) out.reason = 'b < 0';
+        else if (!(out.a > 0)) out.reason = 'a ≤ 0';
+        else out.ok = true;
+        return out;
+    }
+    G.WTS_gasdeliv_fitAB = fitAB;
 
     // ═════════════════════════════════════════════════════════════════
     // PAGE
@@ -602,6 +706,14 @@
     rel(g1.lit.pwfAtQ, 1371.7, 1e-3, 'G1 LIT pwf@5000');
     abs(g1.lit.nonDarcyPct, 28.5, 0.05, 'G1 non-Darcy %');
     ok(g1.verdicts[0].level === 'ok', 'G1 n verdict');
+    // G1b parameter-driven model and the generic LIT fitter reproduce compute() exactly (Well Performance, plan §2.3)
+    var mCn = G.WTS_gasdeliv_model({ cn: { C: g1.cn.C, n: g1.cn.n }, pr: 1952, pAof: 14.65 });
+    var mLit = G.WTS_gasdeliv_model({ lit: { a: g1.lit.a, b: g1.lit.b }, pr: 1952, pAof: 14.65 });
+    ok(mCn.ok && mCn.aof === g1.cn.aof && mLit.ok && mLit.aof === g1.lit.aof, 'G1b model AOF = compute');
+    ok(g1.table.every(function (r) { return mCn.qAt(r.pwf) === r.qCn && (r.pwf >= 1952 || mLit.qAt(r.pwf) === r.qLit); }), 'G1b model table = compute');
+    var fab = G.WTS_gasdeliv_fitAB(g1.points, function (u) { return 1952 * 1952 - u.pwf * u.pwf; });
+    ok(fab.ok && fab.a === g1.lit.a && fab.b === g1.lit.b, 'G1b fitAB = compute LIT');
+    abs(mLit.qAt(mLit.pwfAt(5000)), 5000, 1e-6, 'G1b LIT inverse');
 
     // G2 isochronal (synthetic, built with C = 0.07, n = 0.75)
     var g2 = f({ type: 'iso', pr: 3000, pb: 14.65, pwfDesign: 2000,

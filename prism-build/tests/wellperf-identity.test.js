@@ -10,6 +10,8 @@
 //   FI5 WTS_wellbore column / tempProfile static | displaced (and ramey → NOT_AVAILABLE kept: _ramey stays DFIT 3.4b's) / hydrostatic
 //   FI6 WTS_tubulars catalogue
 //   FI7 Oil Well IPR page / WTS_oilipr_compute; FI8 Gas Well Deliverability page / WTS_gasdeliv_compute
+//   FI7b / FI8b (WP2) WTS_oilipr_compute / WTS_gasdeliv_compute on every method, readout and error vector after the WP2 refactor onto
+//       the shared builders behind WTS_oilipr_model / WTS_gasdeliv_model / WTS_gasdeliv_fitAB (model = compute: wellperf-ipr IP1–IP3)
 //   FI9 the new marcher options at their neutral values reproduce the default output; unknown correlation key; grid replay;
 //       detail fields; restriction loss by hand; holdup / friction multipliers; fluid.pvt neutral and the (p, T) table
 //   FIT timing: one fine evaluation E (10,000 ft, 100 ft steps) measured and reported against BASELINE (no gate here; WP11 gates)
@@ -170,6 +172,42 @@ module.exports = [
       assert.ok(oa && oa.ok, 'oil IPR solved'); same(assert, oa, ob, 'oilipr page');
       const ga = pageState(A, 'gasdeliv', 'gasdeliv'), gb = pageState(B, 'gasdeliv', 'gasdeliv');
       assert.ok(ga && ga.ok, 'gas deliverability solved'); same(assert, ga, gb, 'gasdeliv page');
+    },
+  },
+  {
+    name: 'FI7b / FI8b inflow engines (WP2): WTS_oilipr_compute and WTS_gasdeliv_compute equal the frozen v4.2 engines on every method, readout and error vector after the shared-builder refactor',
+    wp: 'WP2',
+    opts: false,
+    timeoutMs: 120000,
+    run(_a, assert, ctx) {
+      const A = newApp(ctx).win, B = oldApp(ctx).win;
+      assert.ok(typeof A.WTS_oilipr_model === 'function' && typeof B.WTS_oilipr_model !== 'function', 'the frozen engines are in the second app');
+      const OIL = [
+        { method: 'pi', pr: 3000, pb: 2000, points: [{ q: 1000, pwf: 1500 }], pwfDesign: 1200, qTarget: 2000, prFuture: 2500 },
+        { method: 'vogel', pr: 2400, pb: 2400, fe: 1, points: [{ q: 100, pwf: 1800 }], pwfDesign: 900, qTarget: 180, prFuture: 2000 },
+        { method: 'vogel', pr: 2400, pb: 2600, fe: 0.7, points: [{ q: 100, pwf: 1800 }], pwfDesign: 0, qTarget: 120, prFuture: 1800 },
+        { method: 'vogel', pr: 2400, pb: 2400, fe: 1.3, points: [{ q: 100, pwf: 1800 }], pwfDesign: 300, qTarget: 300 },
+        { method: 'vogel', pr: 2400, pb: 2400, fe: 2.0, points: [{ q: 100, pwf: 500 }] },
+        { method: 'vogel', pr: 3000, pb: 2000, fe: 1.2, points: [{ q: 900, pwf: 2500 }], pwfDesign: 1000, qTarget: 3000, prFuture: 2000 },
+        { method: 'vogel', pr: 3000, pb: 2000, points: [{ q: 1500, pwf: 1500 }], pwfDesign: 600, qTarget: 2500 },
+        { method: 'fetk', pr: 2000, points: [{ q: 880, pwf: 1600 }, { q: 1320, pwf: 1200 }, { q: 1560, pwf: 800 }], pwfDesign: 1000, qTarget: 1000, prFuture: 1700 },
+        { method: 'fetk', pr: 2000, points: [{ q: 500, pwf: 1600 }] },
+        { method: 'fetk', pr: 2000, points: [{ q: 500, pwf: 1600 }, { q: 400, pwf: 1200 }] },
+        { method: 'vogel', pr: '', pb: 2400, points: [{ q: 100, pwf: 1800 }] },
+        { method: 'pi', pr: 2000, points: [{ q: 100, pwf: null }] },
+      ];
+      OIL.forEach((v, i) => same(assert, A.WTS_oilipr_compute(v), B.WTS_oilipr_compute(v), 'oilipr compute #' + i));
+      const pt = (kind, q, pwf, pws) => ({ kind, q, pwf, pws });
+      const GAS = [
+        { type: 'faf', pr: 1952, pb: 14.65, pwfDesign: 1000, qTarget: 5000, points: [pt('stab', 2624.6, 1700), pt('stab', 4154.7, 1500), pt('stab', 5425.1, 1300)] },
+        { type: 'iso', pr: 3000, pb: 14.65, pwfDesign: 2000, qTarget: 20000, points: [pt('trans', 3534.6, 2800), pt('trans', 5790.1, 2600), pt('trans', 7636.8, 2400), pt('stab', 4727.1, 2500)] },
+        { type: 'miso', pr: 3000, pb: 14.65, points: [pt('trans', 3000, 2800, 3000), pt('trans', 5000, 2550, 2980), pt('trans', 6500, 2300, 2960), pt('stab', 4200, 2450)] },
+        { type: 'single', pr: 2500, pb: 14.65, nAssumed: 0.8, pwfDesign: 1500, points: [pt('stab', 3000, 2000)] },
+        { type: 'faf', pr: 2000, pb: 14.65, points: [pt('stab', 1000, 1900), pt('stab', 1000, 1800)] },
+        { type: 'faf', pr: 2000, pb: 14.65, points: [pt('stab', 1000, 1900), pt('stab', 3000, 1850), pt('stab', 3100, 1300)] },
+        { type: 'faf', pr: 2000, pb: 150, points: [pt('stab', 1000, 1900)] },
+      ];
+      GAS.forEach((v, i) => same(assert, A.WTS_gasdeliv_compute(v), B.WTS_gasdeliv_compute(v), 'gasdeliv compute #' + i));
     },
   },
   {
