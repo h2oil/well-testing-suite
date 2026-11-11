@@ -156,7 +156,7 @@ var solgor = {
 
 // WP0 route stub; WP10 writes the guide (plan §14)
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '00c5aa1d', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '2af4b9e8', units: 'dual',
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through tubing, choke and flowline.',
   what: ['New in release 4.3.'],
   when: ['Before a test: the rate at a choke.', 'After a test: is the rate consistent?'],

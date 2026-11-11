@@ -1159,6 +1159,29 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   root tolerance, scan doubling, step convergence, warm = cold, shut-in gas / liquid columns, critical velocity), `--time` (evaluation
   counts against §16 and ms against 2 × the E measured in the run). Tests: `wellperf-system` (21), `wellperf-loading` (6).
 
+#### 18.1.3 WP6 record (2026-11-11, branch wp/a1-wp6)
+
+- **`WTS_wp_sens`** (49-calc-wp-sens.js) as §3.6 / §6: `VARS` (p̄r psia, WC %, GOR / GLR scf/STB, WGR / CGR STB/MMscf, THP psig with
+  the choke out of line, separator psig, tubing ID in or a `WTS_tubulars` key, skin and k·h for the Darcy models, bean /64 in, J for
+  pi / composite; each with a path in M, a validity range and the fluid types it applies to), `vars(M)` (applicability), `suggest(M,
+  key)`, `matrix` (full factorial, ≤ 10 values per variable, ≤ 4 variables, ≤ 1,000 cases), `job(M, vars)` (one variable in A1; two
+  → `A2_ONLY`), `table`, `csv` (field units; the family curves in long form).
+- **Numerics (§6.3).** Cases sorted by value; the START case is the model's own value when listed (else the nearest value): a plain
+  cold `solve(M)`, so the base case equals the single solve exactly (validate X15, WSE4). The other cases walk outwards, each a
+  tracking solve warm-started from the neighbour (linear extrapolation of the rate) on the start case's frozen layout; a failed
+  bracket falls back to the full solve inside `WTS_wp_system.solve`.
+- **Families (§6.2).** Inflow variables: one IPR per value from `WTS_wp_ipr.curve` (no march). Outflow variables: a 4-point coarse
+  scan (`coarseOnly`, ½ E each) plus the fine operating point as a knot. Budget: 10 WC cases on FIX.oilWell = 77 E against 80
+  (≈ 1.7 s on the container; the plan's 1.2 s is missed for the same reason as WP5 finding 3).
+- **Page.** Variable list from `WTS_wp_sens.VARS` with display units; values typed in display units (Metric converted to field units
+  per variable); suggestions on a variable change with the applicability note; full results table (rates, pwf, THP, THT, stable,
+  loading margin, choke regime or the reason a case does not flow; the model row in bold); rate-vs-parameter plot with hollow markers
+  for non-flowing / unstable cases; dashed families on the system plot; the CSV bundle carries the full table and the families.
+  Tests `wellperf-sens` (5). Help: the wellperf stub's `reviewedSrc` re-hashed (page text unchanged).
+- **Finding.** On FIX.gasWell with Beggs & Brill, the tubing outflow at a fixed gas rate falls from WGR 0 to 20 STB/MMscf and rises
+  again at 100 (a pattern switch, WP5 finding 2), so the WGR sensitivity shows the rate rising slightly with WGR; Gray and the
+  no-slip method are monotone.
+
 ### 18.2 Increment A2 (v4.4)
 
 | WP | Content | Depends on | Lane |
