@@ -31,6 +31,10 @@
 //   renderOilIPR(body)                paints the page into body
 //   calcOilIPR()                      read DOM → validate → compute → render
 //   WTS_oilipr_fetkCMetric(C, n)      Fetkovich C (BPD/psia²ⁿ) → m³/d/kPa²ⁿ (shown in Metric mode)
+//   WTS_oilipr_model(spec)            parameter-driven evaluator on the same private builders compute() uses
+//       spec {mode:'pi'|'vogel'|'composite'|'fetkovich', pr, pb, J, qmax (Vogel qmax at FE = 1), FE, C, n}
+//       → {ok, mode, pr, pb, J, qb, qmax, aof, qAt(pwf) → q, pwfAt(q) → pwf | null, errors[], warnings[]}
+//       (Well Performance, docs/WELL-PERFORMANCE-PLAN.md §2.3 / §3.3; FI7 + wellperf-ipr pin it to compute)
 //   WTS_state.oilipr                  last result {ok, mode, J, qb, qmax, C, CMetric, …}
 // ═══════════════════════════════════════════════════════════════════════
 (function () {
@@ -81,6 +85,42 @@
     function V(x) { return 1 - 0.2 * x - 0.8 * x * x; }
     // Inverse of V: V(x) = y → x = [−0.2 + √(0.04 + 3.2·(1 − y))]/1.6
     function Vinv(y) { return (-0.2 + Math.sqrt(0.04 + 3.2 * (1 - y))) / 1.6; }
+
+    // Inflow builders shared by compute() and WTS_oilipr_model(): q(pwf) → {q, held}, pwf(q) → psia.
+    // (1) straight-line PI
+    function _bPi(pr, J) {
+        return { qmax: J * pr,
+            qAt: function (pwf) { return { q: J * (pr - pwf), held: false }; },
+            pwfAt: function (q) { return pr - q / J; } };
+    }
+    // (2) saturated Vogel with Standing's FE; qm1 = qmax at FE = 1
+    function _mkVogelQ(p, qmax1, fe) {
+        return function (pwf) {
+            var pp = p - fe * (p - pwf);
+            if (pp < 0) return { q: qmax1, held: true };
+            return { q: qmax1 * V(pp / p), held: false };
+        };
+    }
+    function _mkVogelPwf(p, qmax1, fe) {
+        return function (q) { var x = Vinv(q / qmax1); return p - (p - x * p) / fe; };
+    }
+    function _bVogel(pr, qm1, fe) {
+        return { qmax: fe <= 1 ? qm1 * V(1 - fe) : qm1, pwfLimitFE: fe > 1 ? pr * (1 - 1 / fe) : null,
+            qAt: _mkVogelQ(pr, qm1, fe), pwfAt: _mkVogelPwf(pr, qm1, fe) };
+    }
+    // (3) composite: PI above pb, Vogel below pb
+    function _bComposite(pr, pb, Jc) {
+        var qbub = Jc * (pr - pb), qv = Jc * pb / 1.8;
+        return { qb: qbub, qv: qv, qmax: qbub + qv,
+            qAt: function (pwf) { return { q: pwf >= pb ? Jc * (pr - pwf) : qbub + qv * V(pwf / pb), held: false }; },
+            pwfAt: function (q) { return q <= qbub ? pr - q / Jc : pb * Vinv((q - qbub) / qv); } };
+    }
+    // (4) Fetkovich q = C·(p̄r² − pwf²)ⁿ
+    function _bFetk(pr, C, n) {
+        return { qmax: C * Math.pow(pr, 2 * n),
+            qAt: function (pwf) { return { q: C * Math.pow(pr * pr - pwf * pwf, n), held: false }; },
+            pwfAt: function (q) { return Math.sqrt(pr * pr - Math.pow(q / C, 1 / n)); } };
+    }
 
     function _validate(inp, fmt) {
         var errors = [], keys = [];
@@ -158,10 +198,10 @@
         if (method === 'pi') {
             // (1) Straight-line PI: J = q₁/(p̄r − pwf₁); q = J·(p̄r − pwf)
             var t = v.row1;
-            var J = t.q / (pr - t.pwf);
-            out.mode = 'pi'; out.J = J; out.qmax = J * pr;
-            qAt = function (pwf) { return { q: J * (pr - pwf), held: false }; };
-            pwfAt = function (q) { return pr - q / J; };
+            var J = t.q / (pr - t.pwf), bp = _bPi(pr, J);
+            out.mode = 'pi'; out.J = J; out.qmax = bp.qmax;
+            qAt = bp.qAt;
+            pwfAt = bp.pwfAt;
             if (isFinite(v.pb) && v.pb > t.pwf) warn('warn', '⚠ Test pwf is below the bubble point — a straight-line PI overstates the rate; use Vogel/composite.');
             if (hasPrf) warn('warn', '⚠ Future IPR is available for saturated Vogel and Fetkovich only.');
         } else if (method === 'vogel' && v.pb >= pr) {
@@ -171,28 +211,18 @@
             if (pwf1p < 0) {
                 return fail('pwf1', 'Test point 1 lies below the flow-efficiency validity limit (pwf = ' + fmt.p(pr * (1 - 1 / fe)) + '), so qmax cannot be backed out. Use a test point above this pressure or a lower FE.');
             }
-            var qm1 = t2.q / V(pwf1p / pr);
+            var qm1 = t2.q / V(pwf1p / pr), bv = _bVogel(pr, qm1, fe);
             out.mode = 'vogel-sat';
             out.qmaxFE1 = qm1;
-            out.qmax = fe <= 1 ? qm1 * V(1 - fe) : qm1;
-            if (fe > 1) out.pwfLimitFE = pr * (1 - 1 / fe);
-            var mkQ = function (p, qmax1) {
-                return function (pwf) {
-                    var pp = p - fe * (p - pwf);
-                    if (pp < 0) return { q: qmax1, held: true };
-                    return { q: qmax1 * V(pp / p), held: false };
-                };
-            };
-            var mkPwf = function (p, qmax1) {
-                return function (q) { var x = Vinv(q / qmax1); return p - (p - x * p) / fe; };
-            };
-            qAt = mkQ(pr, qm1);
-            pwfAt = mkPwf(pr, qm1);
+            out.qmax = bv.qmax;
+            if (fe > 1) out.pwfLimitFE = bv.pwfLimitFE;
+            qAt = bv.qAt;
+            pwfAt = bv.pwfAt;
             if (fe > 1) warn('warn', '⚠ Standing\'s FE > 1 curve is valid down to pwf = ' + fmt.p(out.pwfLimitFE) + '; below that the rate is held at qmax (FE = 1).');
             if (hasPrf) {
                 // Fetkovich/Eickmeier cube rule
                 var qmf1 = qm1 * Math.pow(prf / pr, 3);
-                qfAt = mkQ(prf, qmf1);
+                qfAt = _mkVogelQ(prf, qmf1, fe);
                 out.future = { pr: prf, qmaxFE1: qmf1, qmax: fe <= 1 ? qmf1 * V(1 - fe) : qmf1, qAtPwf: null };
             }
         } else if (method === 'vogel') {
@@ -200,10 +230,10 @@
             var pb = v.pb, t3 = v.row1, Jc;
             if (t3.pwf >= pb) Jc = t3.q / (pr - t3.pwf);
             else Jc = t3.q / ((pr - pb) + (pb / 1.8) * V(t3.pwf / pb));
-            var qbub = Jc * (pr - pb), qv = Jc * pb / 1.8;
-            out.mode = 'composite'; out.J = Jc; out.qb = qbub; out.qmax = qbub + qv;
-            qAt = function (pwf) { return { q: pwf >= pb ? Jc * (pr - pwf) : qbub + qv * V(pwf / pb), held: false }; };
-            pwfAt = function (q) { return q <= qbub ? pr - q / Jc : pb * Vinv((q - qbub) / qv); };
+            var bc = _bComposite(pr, pb, Jc);
+            out.mode = 'composite'; out.J = Jc; out.qb = bc.qb; out.qmax = bc.qmax;
+            qAt = bc.qAt;
+            pwfAt = bc.pwfAt;
             if (fe !== 1) warn('warn', '⚠ Flow efficiency applies to saturated (Vogel) wells only — FE ignored.');
             if (hasPrf) warn('warn', '⚠ Future IPR is available for saturated Vogel and Fetkovich only.');
         } else {
@@ -231,14 +261,15 @@
                     return fail('q1', 'The Fetkovich fit gives n ≤ 0 — rates must increase as the flowing pressure falls. Check the test points.');
                 }
             }
+            var bf = _bFetk(pr, C, n);
             out.mode = 'fetkovich'; out.n = n; out.C = C; out.r2 = r2;
-            out.qmax = C * Math.pow(pr, 2 * n);
-            qAt = function (pwf) { return { q: C * Math.pow(pr * pr - pwf * pwf, n), held: false }; };
-            pwfAt = function (q) { return Math.sqrt(pr * pr - Math.pow(q / C, 1 / n)); };
+            out.qmax = bf.qmax;
+            qAt = bf.qAt;
+            pwfAt = bf.pwfAt;
             if (m > 1 && (n < 0.5 || n > 1.0)) warn('warn', '⚠ Fetkovich exponent n = ' + _fix(n, 4) + ' is outside 0.5–1.0 — check the test points for unstabilised or non-Darcy data.');
             if (hasPrf) {
                 var Cf = C * (prf / pr);
-                qfAt = function (pwf) { return { q: Cf * Math.pow(prf * prf - pwf * pwf, n), held: false }; };
+                qfAt = _bFetk(prf, Cf, n).qAt;
                 out.future = { pr: prf, C: Cf, qmax: Cf * Math.pow(prf, 2 * n), qAtPwf: null };
             }
         }
@@ -267,6 +298,62 @@
         return out;
     }
     G.WTS_oilipr_compute = compute;
+
+    // Parameter-driven evaluator (Well Performance, plan §2.3): the same builders as compute(), from parameters instead of
+    // test points. q(pwf) is clipped to [0, aof] outside 0 ≤ pwf ≤ p̄r; pwf(q) is p̄r at q ≤ 0 and null above the AOF.
+    //   pi        {pr, J}               composite {pr, pb, J}   (pb ≥ p̄r → saturated: qb = 0, Vogel from p̄r)
+    //   vogel     {pr, qmax, FE}        qmax is the FE = 1 maximum rate (compute's qmaxFE1); FE default 1 (0.3–2.0)
+    //   fetkovich {pr, C, n}
+    function model(spec) {
+        spec = spec || {};
+        var mode = String(spec.mode || ''), pr = _n(spec.pr), errors = [], warnings = [];
+        var out = { ok: false, mode: mode, pr: isFinite(pr) ? pr : null, pb: null, J: null, qb: null, qmax: null, aof: null, FE: null, C: null, n: null,
+            qAt: null, pwfAt: null, errors: errors, warnings: warnings };
+        function pos(v) { return isFinite(v) && v > 0; }
+        if (!pos(pr)) errors.push('Average reservoir pressure must be above 0.');
+        var b = null;
+        if (mode === 'pi') {
+            var J = _n(spec.J);
+            if (!pos(J)) errors.push('Productivity index J must be above 0.');
+            if (!errors.length) { b = _bPi(pr, J); out.J = J; }
+        } else if (mode === 'vogel') {
+            var qm = _n(spec.qmax), fe = _blankV(spec.FE) ? 1 : _n(spec.FE);
+            if (!pos(qm)) errors.push('Vogel qmax must be above 0.');
+            if (!isFinite(fe) || fe < 0.3 || fe > 2.0) errors.push('Flow efficiency FE must be between 0.3 and 2.0.');
+            if (!errors.length) { b = _bVogel(pr, qm, fe); out.FE = fe; out.pb = pr; if (fe > 1) warnings.push('Standing FE > 1: rate held at qmax below pwf = ' + _fix(b.pwfLimitFE, 1) + ' psia.'); }
+        } else if (mode === 'composite') {
+            var Jc = _n(spec.J), pb = _n(spec.pb);
+            if (!pos(Jc)) errors.push('Productivity index J must be above 0.');
+            if (!isFinite(pb) || pb < 0) errors.push('Bubble-point pressure is required for the composite IPR.');
+            if (!errors.length) { if (pb > pr) pb = pr; b = _bComposite(pr, pb, Jc); out.J = Jc; out.pb = pb; out.qb = b.qb; }
+        } else if (mode === 'fetkovich') {
+            var C = _n(spec.C), n = _n(spec.n);
+            if (!pos(C)) errors.push('Fetkovich C must be above 0.');
+            if (!pos(n)) errors.push('Fetkovich n must be above 0.');
+            if (!errors.length) { b = _bFetk(pr, C, n); out.C = C; out.n = n; }
+        } else errors.push('Unknown IPR mode.');
+        if (errors.length) return out;
+        var aof = b.qmax;
+        out.ok = true; out.qmax = aof; out.aof = aof;
+        out.qAt = function (pwf) {
+            pwf = +pwf;
+            if (!isFinite(pwf)) return NaN;
+            if (pwf >= pr) return 0;
+            if (pwf <= 0) return aof;
+            return b.qAt(pwf).q;
+        };
+        out.pwfAt = function (q) {
+            q = +q;
+            if (!isFinite(q)) return null;
+            if (q <= 0) return pr;
+            if (q > aof * (1 + 1e-12)) return null;
+            if (q >= aof) return mode === 'vogel' && out.FE > 1 ? b.pwfLimitFE : 0;
+            var p = b.pwfAt(q);
+            return isFinite(p) ? Math.max(0, p) : null;
+        };
+        return out;
+    }
+    G.WTS_oilipr_model = model;
 
     // Fetkovich C in metric. q = C·(p̄r² − pwf²)ⁿ holds in any consistent units, so
     // with q_m = fq·q (m³/d per BPD) and p_m = fp·p (kPa per psi):
@@ -585,6 +672,15 @@
     r = f(base({ qTarget: 300 }));
     yes(r.ok && r.pwfAtQ == null && r.warnings.some(function (w) { return /^✗ Target rate exceeds/.test(w); }), 'qt ≥ qmax → ✗ verdict');
 
+    // Parameter-driven model = compute (Well Performance, plan §2.3)
+    r = f(base({}));
+    if (r.ok) {
+        var mm = G.WTS_oilipr_model(r.mode === 'composite' ? { mode: 'composite', pr: r.table[0].pwf, pb: base({}).pb, J: r.J }
+            : r.mode === 'pi' ? { mode: 'pi', pr: r.table[0].pwf, J: r.J } : { mode: 'vogel', pr: r.table[0].pwf, qmax: r.qmaxFE1, FE: base({}).fe });
+        yes(mm.ok && mm.aof === r.qmax && r.table.every(function (t) { return t.heldAtMax || mm.qAt(t.pwf) === t.q; }), 'model table = compute (' + r.mode + ')');
+    }
+    var mf = G.WTS_oilipr_model({ mode: 'fetkovich', pr: 2000, C: 2.9027e-3, n: 0.8 });
+    rel(mf.qAt(mf.pwfAt(300)), 300, 1e-9, 'Fetkovich model inverse'); yes(mf.pwfAt(1e6) === null, 'model pwfAt above AOF → null');
     if (fails.length) throw new Error('[42-calc-oilipr] self-test failed (' + fails.length + '/' + count + '):\n  ' + fails.join('\n  '));
     if (typeof window === 'undefined' && typeof console !== 'undefined') console.log('[42-calc-oilipr] self-test: ' + count + '/' + count + ' checks passed');
 })();
