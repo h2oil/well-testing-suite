@@ -60,6 +60,7 @@ const BENCH = [
   { kind: 'system', key: 'nodal', status: 'pending', source: 'Beggs, Production Optimization Using Nodal Analysis — operating point ±2 % q' },
   { kind: 'well', key: 'minCurvature', status: 'pinned', source: 'closed-form circular arc (FIX.devSurvey, wellperf-well) ±0.01 ft' },
   // A2
+  { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
   { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
 ];
 
@@ -144,7 +145,7 @@ function gate(G) {
     }
     rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
   }
-  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
+  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
 }
 
@@ -316,6 +317,15 @@ function checks(G) {
     const c = r2.ok && r2.cases.find((x) => x.values.wc === 30 && x.values.pr === 3000);
     add('X17', 'two-variable sensitivity: the start cell = the single solve (identical)', !!(c && c.R.q === R.op.q && c.R.pwf === R.pwf), c ? Math.abs(c.R.q - R.op.q) : 1, 0);
   }
+  // X18 (A2, WP18) gas lift at q_inj = 0 equals natural flow exactly (§15.2); the point of balance p_cas − ΔP_valve = p_tub
+  if (G.WTS_wp_gl && typeof G.WTS_wp_gl.glpc === 'function') {
+    const Mn = S.FIX.oilWell, Rn = solve(Mn), M0 = S.FIX.oilWell; M0.lift = { type: 'gaslift', gl: { qinj_Mscfd: 0, pinj_psig: 1200 } };
+    const R0 = solve(M0);
+    add('X18', 'gas lift at q_inj = 0 = natural flow (identical)', R0.op.q === Rn.op.q && R0.pwf === Rn.pwf, Math.abs(R0.op.q - Rn.op.q), 0);
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 500, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const Rl = solve(Ml), e = Rl.ok && Rl.lift ? Math.abs(Rl.lift.pCas - 100 - Rl.lift.pTub) : Infinity;
+    add('X19', 'gas lift: point of balance p_cas − ΔP_valve = p_tub at the injection depth (psi)', e < 1, e, 1);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -355,6 +365,11 @@ function timing(G) {
     rec('sensitivity, 10 cases', 'oilWell', ev == null ? 0 : ev, BUDGET.sens10, nowMs() - t0);
     const t1 = nowMs(); const r2 = run(G.WTS_wp_sens.job(M, [{ key: 'wc', values: vals }, { key: 'pr', values: [2600, 3000] }]));
     rec('sensitivity, 2 × 10 cases', 'oilWell', r2 && r2.ok ? r2.evals : 0, BUDGET.sens2x10, nowMs() - t1);
+    if (G.WTS_wp_gl && typeof G.WTS_wp_gl.glpc === 'function') {
+      const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 500, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+      const t2 = nowMs(); const g = run(G.WTS_wp_gl.glpc(Ml));
+      rec('gas-lift performance curve, 12 points', 'oilWell', g && g.ok ? g.evals : 0, BUDGET.glpc12, nowMs() - t2);
+    }
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }

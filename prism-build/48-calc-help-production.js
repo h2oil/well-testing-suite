@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: 'd6e9d86f', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '748e0632', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -170,7 +170,7 @@ var wellperf = {
   '① **Fluid**: type, gravity, [[glossary#gor|GOR]] and water cut (CGR and WGR for gas).',
   '② **Reservoir**: inflow model, p̄r (never defaulted) and its parameters, or **Import from PRiSM** (k, h, [[glossary#skin|skin]]).',
   '③ **Well**: survey (**MD · Inc · Azi** or **MD · TVD**), strings, restrictions, perforations, temperature. **Paste from a spreadsheet**, or the geometry of a [[glossary#dfit|DFIT]] test (**Import well geometry from a DFIT test**).',
-  '④ **Lift**: natural flow in this release.',
+  '④ **Lift**: natural flow, or gas lift: run the performance curve and drag its injection-rate line.',
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
   'Drag a handle (p̄r, THP, bean, WC) on the system plot: the well re-solves. A slow case shows **Solve now**.',
   'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.',
@@ -184,10 +184,10 @@ var wellperf = {
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|muod|muo|muou|z|mug)$', why: 'fluid and inflow details' },
-  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
-  o('Traverse', 'p and T against depth; Liquid loading, Sensitivity, Bean schedule.')],
+  o('Traverse', 'p and T against depth; Liquid loading, Choke, Sensitivity (one or two variables), Bean schedule.')],
   verdicts: [vd('✓', 'Stable operating point', 'It holds.'), vd('✗', 'Unstable operating point', 'It cannot hold.'), vd('✓', 'above the static stability limit', 'Clear of q_s.'),
   vd('⚠', 'within 10 % of the static', 'May head or load up.'), vd('✗', 'No operating point', 'Read the reason.'), vd('✗', 'p̄r needed', 'Enter it in ②.'),
   vd('✗', 'Liquid loading', 'Smaller string or lower THP.'), vd('⚠', 'Close to loading', 'Small margin.'), vd('✓', 'above the critical rate', 'Unloads.'),
