@@ -420,6 +420,16 @@
     //   corr.co      undersaturated oil compressibility key co_<k> (signature of co_vasquezBeggs): above the bubble point
     //                Bo = Bob·exp(−∫ co dp from pb to p) by 6-point Gauss-Legendre; absent or 'vasquezBeggs' → Bo_undersaturated
     //   corr.sigma   gas-oil surface tension key sigma_og_<k>(API, T_F, Rs) at the in-situ Rs; absent → Baker & Swerdloff
+    //   (B, WP23; each absent → the paths above, unchanged)
+    //   shift        {rs, bo, muo} the additive part of the lab match y = a·y_corr + b (a = mult, default 0): Rs = max(0, a·Rs + b),
+    //                Bo = a·Bo + b, μo = max(1e-4, a·μo + b); with a matched Rs (mult.rs or shift.rs) the bubble point of the
+    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a
+    //   rv           {rows: [[p psia, Rv STB/MMscf]] ascending, pd psia} modified black oil for a wet gas (liquidNoTransfer): the
+    //                vaporised condensate Rv(p) (≤ the stream CGR; = CGR at and above the dew point pd, linear to the last row
+    //                below it) travels in the gas — its standard volume and mass are added with the Standing well-stream
+    //                constants, so the gas gravity rises and the free liquid falls; mass is conserved exactly
+    //   emul         {model 'woelflin'|'brinkman'|'table', tight 'loose'|'medium'|'tight', inv 0..1, rows [[fw, ratio]]} the liquid
+    //                viscosity of an oil-water stream (WTS_flowline_emulsion); absent → the volume-weighted mixture
     var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
     function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
     function _pvtCore(fluid, pv, p, t, sgMix) {
@@ -430,6 +440,7 @@
         var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
         var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
         var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, pv.sep ? rsF(api, sgg, p * pbF, t, pv.sep) : rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
+        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs);
         var z = NaN, TR = t + RANK;
         var imp = pv.imp;
         if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
@@ -442,6 +453,7 @@
     }
     function _pvtCoreTab(fluid, pv, p, t, sgMix) {
         var o = pv.table === true ? {} : pv.table, dp = (+o.dp > 0) ? +o.dp : 5, dT = (+o.dT > 0) ? +o.dT : 2;
+        if (pv.rv) return _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT);
         var tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, sgMix, dp, dT].join('|');
         if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), fp = p / dp - ip, ft = t / dT - it;
@@ -453,6 +465,89 @@
         var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), out = {};
         for (var k in c00) out[k] = (c00[k] * (1 - fp) + c10[k] * fp) * (1 - ft) + (c01[k] * (1 - fp) + c11[k] * fp) * ft;
         return out;
+    }
+    // Rv (WP23): the free-gas gravity changes with p, so the table is also binned in the gravity (0.005) and interpolated trilinearly
+    function _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT) {
+        var dS = 0.005, tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, 'rv', dp, dT].join('|');
+        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var ip = Math.floor(p / dp), it = Math.floor(t / dT), is = Math.floor(sgMix / dS), fp = p / dp - ip, ft = t / dT - it, fs = sgMix / dS - is, out = {};
+        function at(a, b, c) {
+            var k = a + ',' + b + ',' + c, v = tab.map[k];
+            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS);
+            return v;
+        }
+        var c000 = at(ip, it, is), c100 = at(ip + 1, it, is), c010 = at(ip, it + 1, is), c110 = at(ip + 1, it + 1, is);
+        var c001 = at(ip, it, is + 1), c101 = at(ip + 1, it, is + 1), c011 = at(ip, it + 1, is + 1), c111 = at(ip + 1, it + 1, is + 1);
+        for (var k in c000) {
+            var lo = (c000[k] * (1 - fp) + c100[k] * fp) * (1 - ft) + (c010[k] * (1 - fp) + c110[k] * fp) * ft;
+            var hi = (c001[k] * (1 - fp) + c101[k] * fp) * (1 - ft) + (c011[k] * (1 - fp) + c111[k] * fp) * ft;
+            out[k] = lo * (1 - fs) + hi * fs;
+        }
+        return out;
+    }
+    // Rv(p) of a modified black oil (WP23), STB/MMscf, capped at the stream CGR: the CGR at and above the dew point; between the last row
+    // and the dew point linear to the CGR; inside the rows linear; below the first row its value
+    function _rvAt(rv, p, cgr) {
+        var rows = rv.rows || [], pd = +rv.pd, n = rows.length;
+        if (!(cgr > 0)) return 0;
+        if (_fin(pd) && p >= pd) return cgr;
+        if (!n) return 0;
+        var v;
+        if (p <= rows[0][0]) v = rows[0][1];
+        else if (p >= rows[n - 1][0]) {
+            var a = rows[n - 1];
+            v = (_fin(pd) && pd > a[0]) ? a[1] + (cgr - a[1]) * (p - a[0]) / (pd - a[0]) : a[1];
+        } else {
+            for (var i = 1; i < n; i++) if (p <= rows[i][0]) { var r0 = rows[i - 1], r1 = rows[i]; v = r0[1] + (r1[1] - r0[1]) * (p - r0[0]) / (r1[0] - r0[0]); break; }
+        }
+        return Math.max(0, Math.min(cgr, _fin(v) ? v : 0));
+    }
+    // the Standing well-stream constants at the base conditions: A = ρw·Vm / M_air (scf·lb/(bbl·lb)), B = ρw·Vm (scf per bbl of water-
+    // equivalent mass ÷ lb-mol) — the same as WTS_wp_fluid.recombine, so moles and mass of the vaporised condensate balance exactly
+    function _wsAB() { var b = _basis(), vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia, rb = 62.37 * FT3_BBL; return { A: rb * vm / MW_AIR, B: rb * vm }; }
+    // Emulsion viscosity (WP23; docs/WELL-PERFORMANCE-PLAN.md §1.4 B7): the liquid viscosity of an oil-water stream at the in-situ water
+    // fraction fw of the liquid. Oil-continuous below the inversion fraction inv (default 0.6), water-continuous above it.
+    //   brinkman  Brinkman (1952): μ = μ_c·(1 − φ)^−2.5, φ = the dispersed fraction (capped at 0.9)
+    //   woelflin  Woelflin (1942) loose / medium / tight emulsion curves (oil-continuous) as tabulated chart readings, log-linear between
+    //             them — readings to verify against the published figure (owner Q9); above the inversion the Brinkman water-continuous
+    //             branch
+    //   table     the user's μ_em / μo against fw (0..1), log-linear, constant beyond the ends; no inversion rule
+    // Returns {mu, ratio (μ / μo), cont 'oil'|'water'} or null for an unknown model.
+    var WOELFLIN = { fw: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        loose: [1, 1.25, 1.65, 2.3, 3.3, 4.9, 7.4], medium: [1, 1.45, 2.2, 3.5, 5.6, 9.0, 14.5], tight: [1, 1.75, 3.1, 5.6, 10.0, 18.0, 32.0] };
+    function _logInterp(xs, ys, x) {
+        var n = xs.length; if (!n) return 1;
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) {
+            if (n < 2 || !(ys[n - 1] > 0 && ys[n - 2] > 0) || xs[n - 1] === xs[n - 2]) return ys[n - 1];
+            return ys[n - 1] * Math.pow(ys[n - 1] / ys[n - 2], (x - xs[n - 1]) / (xs[n - 1] - xs[n - 2]));
+        }
+        for (var i = 1; i < n; i++) if (x <= xs[i]) {
+            var y0 = ys[i - 1], y1 = ys[i], f = (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+            return (y0 > 0 && y1 > 0) ? y0 * Math.pow(y1 / y0, f) : y0 + (y1 - y0) * f;
+        }
+        return ys[n - 1];
+    }
+    function emulsion(fw, muo, muw, e) {
+        e = e || {};
+        fw = Math.max(0, Math.min(1, +fw || 0)); muo = +muo; muw = +muw;
+        if (!(muo > 0) || !(muw > 0)) return null;
+        var inv = _fin(+e.inv) && +e.inv > 0.05 && +e.inv < 0.95 ? +e.inv : 0.6, m = e.model;
+        var brink = function (muc, phi) { return muc * Math.pow(1 - Math.min(0.9, Math.max(0, phi)), -2.5); };
+        if (m === 'table') {
+            var rows = (Array.isArray(e.rows) ? e.rows : []).filter(function (r) { return Array.isArray(r) && _fin(+r[0]) && _fin(+r[1]) && +r[1] > 0; })
+                .map(function (r) { return [+r[0], +r[1]]; }).sort(function (a, b) { return a[0] - b[0]; });
+            if (!rows.length) return null;
+            var rt = _logInterp(rows.map(function (r) { return r[0]; }), rows.map(function (r) { return r[1]; }), fw);
+            // constant beyond the last row (a user table is not extrapolated)
+            if (fw > rows[rows.length - 1][0]) rt = rows[rows.length - 1][1];
+            return { mu: muo * rt, ratio: rt, cont: 'table' };
+        }
+        if (m !== 'woelflin' && m !== 'brinkman') return null;
+        if (fw >= inv) { var mw = brink(muw, 1 - fw); return { mu: mw, ratio: mw / muo, cont: 'water' }; }
+        if (m === 'brinkman') { var mb = brink(muo, fw); return { mu: mb, ratio: mb / muo, cont: 'oil' }; }
+        var curve = WOELFLIN[e.tight === 'loose' || e.tight === 'tight' ? e.tight : 'medium'], r = _logInterp(WOELFLIN.fw, curve, fw);
+        return { mu: muo * r, ratio: r, cont: 'oil' };
     }
     function _propsPvt(fluid, p, t) {
         var L = _lib(), pv = fluid.pvt, c = pv.corr || {}, m = pv.mult || {};
@@ -469,6 +564,14 @@
             var fr0 = Math.max(0, qg * 1e6 - qo * rs0);
             sgMix = (fr0 + inj.q) > 0 ? (fr0 * sgg + inj.q * inj.sg) / (fr0 + inj.q) : sgg;
         }
+        // modified black oil (WP23): the vaporised condensate travels in the gas (standard volume B·γo/Mo per STB, mass A·γo per STB)
+        var vap = 0, vapScf = 0;
+        if (noTr && pv.rv && qo > 0 && qg > 0) {
+            var cgrT = qo / qg, rvp = _rvAt(pv.rv, p, cgrT), AB = _wsAB(), mo = 5954 / Math.max(1, api - 8.811);
+            vap = Math.min(qo, qg * rvp); vapScf = vap * AB.B * go / mo;
+            var gasScf = qg * 1e6;
+            sgMix = (gasScf * sgMix + vap * AB.A * go) / (gasScf + vapScf);
+        }
         var C = (pv.table && _TABS) ? _pvtCoreTab(f, pv, p, t, sgMix) : _pvtCore(f, pv, p, t, sgMix);
         var rs = (qo > 0 && !noTr) ? Math.min(gor, C.rsRaw) : 0;
         var boF = _pvtFn(L, 'Bo_', c.bo, L.Bo_standing), muoF = _pvtFn(L, 'mu_o_', c.muo, L.mu_o_beggsRobinson);
@@ -478,7 +581,7 @@
         else {
             bo = pv.sep ? boF(api, sgg, rs, t, pv.sep) : boF(api, sgg, rs, t); muo = muoF(C.muod, rs);
             if (pv.undersat && C.rsRaw >= gor && gor > 0) {
-                pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor, pv.sep);
+                pb = _pbFor(L, c, api, sgg, _gorCorr(pv, gor), t, pv.pbFactor, pv.sep);
                 if (_fin(pb) && p > pb) {
                     var coF = (c.co && c.co !== 'vasquezBeggs') ? L['co_' + c.co] : null;
                     // the Vasquez-Beggs co (Bo_undersaturated) is defined on the 100 psig separator gas gravity, like Rs / Bo / Pb
@@ -494,27 +597,42 @@
             }
         }
         bo *= (_fin(+m.bo) ? +m.bo : 1); muo *= (_fin(+m.muo) ? +m.muo : 1);
+        if (pv.shift && qo > 0 && !noTr) {
+            if (_fin(+pv.shift.bo)) bo = Math.max(0.5, bo + +pv.shift.bo);
+            if (_fin(+pv.shift.muo)) muo = Math.max(1e-4, muo + +pv.shift.muo);
+        }
         var z = C.z, TR = t + RANK, mug = C.mug, bw = C.bw, muw = C.muw;
         var b = _basis();
         var bg = b.Pb_psia * z * TR / ((b.Tb_F + RANK) * p);          // ft³/scf
         var rhoG = p * MW_AIR * sgMix / (z * R_GAS * TR);
         var rhoO = (62.37 * go + 0.01361 * rs * sgg) / bo;
         var rhoW = RHO_W * sgw / bw;
-        var qoR = qo * bo * FT3_BBL / 86400, qwR = qw * bw * FT3_BBL / 86400;
-        var free = Math.max(0, qg * 1e6 - qo * rs) + (inj ? inj.q : 0);
+        var qoR = (qo - vap) * bo * FT3_BBL / 86400, qwR = qw * bw * FT3_BBL / 86400;
+        var free = Math.max(0, qg * 1e6 - qo * rs) + vapScf + (inj ? inj.q : 0);
         var qgR = free * bg / 86400;
         var qL = qoR + qwR, fo = qL > 0 ? qoR / qL : 0, fw = qL > 0 ? qwR / qL : 0;
         var sgF = c.sigma ? L['sigma_og_' + c.sigma] : null;
         var so = qo > 0 ? (typeof sgF === 'function' ? Math.max(1, sgF(api, t, rs)) : C.sigO) : 0, sw = qw > 0 ? C.sigW : 0;
-        return {
+        var muL = qL > 0 ? fo * muo + fw * muw : (muo || muw), em = null;
+        if (pv.emul && qoR > 0 && qwR > 0) { em = emulsion(fw, muo, muw, pv.emul); if (em && _fin(em.mu)) muL = em.mu; else em = null; }
+        var out = {
             p: p, t: t, gor: gor, rs: rs, bo: bo, bw: bw, z: z, bg: bg, muo: muo, muw: muw, mug: mug,
             rhoO: rhoO, rhoW: rhoW, rhoG: rhoG, sigO: so, sigW: sw, freeGas: free,
             qL: qL, qG: qgR, fo: fo, fw: fw,
             rhoL: qL > 0 ? fo * rhoO + fw * rhoW : rhoO || rhoW,
-            muL: qL > 0 ? fo * muo + fw * muw : (muo || muw),
+            muL: muL,
             sigL: qL > 0 ? fo * so + fw * sw : (so || sw || 30),
             pb: pb, sgGas: sgMix, pvt: true
         };
+        if (pv.rv) { out.qoVap = vap; out.qoFree = Math.max(0, qo - vap); }
+        if (em) { out.emulRatio = em.ratio; out.emulCont = em.cont; }
+        return out;
+    }
+    // the GOR seen by the correlation when Rs is matched (WP23): Rs_m = a·Rs_c + b reaches the GOR where Rs_c = (GOR − b) / a
+    function _gorCorr(pv, gor) {
+        var m = pv.mult || {}, a = _fin(+m.rs) && +m.rs > 0 ? +m.rs : 1, b = pv.shift && _fin(+pv.shift.rs) ? +pv.shift.rs : 0;
+        if (a === 1 && b === 0) return gor;
+        return Math.max(1e-6, (gor - b) / a);
     }
     // bubble point for the undersaturated branch: Pb_<rs key> when the library has it, else bisection on Rs(p) = GOR
     function _pbFor(L, c, api, sgg, gor, t, pbFactor, sep) {
@@ -1073,6 +1191,9 @@
     };
     G.WTS_flowline_friction = { smooth: fSmooth, colebrook: fColebrook };
     G.WTS_flowline_sigma = { oil: sigmaOil, water: sigmaWater };
+    G.WTS_flowline_emulsion = emulsion;                       // WP23: the emulsion viscosity used by props (fluid.pvt.emul)
+    G.WTS_flowline_emulsion.WOELFLIN = JSON.parse(JSON.stringify(WOELFLIN));
+    G.WTS_flowline_rvAt = function (rv, p, cgr) { return _rvAt(rv || {}, +p, +cgr); };
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Multiphase Flowline Pressure Drop';

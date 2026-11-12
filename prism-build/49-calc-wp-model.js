@@ -74,7 +74,9 @@
                      sgw: 1.07, salinity_ppm: 0, yN2: 0, yCO2: 0, yH2S: 0, pbUser: null,
                      corr: { pb: 'standing', rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson', muou: 'vasquezBeggs',
                              co: 'vasquezBeggs', z: 'dranchukAbouKassem', mug: 'leeGonzalezEakin', sigma: 'bakerSwerdloff' },
-                     match: null, bc: 1.0 },
+                     match: null, bc: 1.0,
+                     // B (WP23): modified black oil (Rv) for a wet gas and the emulsion viscosity; 'none' = the A1 / A2 behaviour
+                     rv: { mode: 'none', pd: null, rows: [] }, emul: { model: 'none', tight: 'medium', inv: 0.6, rows: [] }, lab: null },
             res: { model: 'pi', pr: null, T_F: 200, pb: null, params: {}, points: [], layers: [], provenance: {} },
             well: { datum: 'RKB', datumOffset_ft: 0, survey: [], perfTopMd: null, perfBotMd: null, midPerfMd: null,
                     strings: [], path: 'tubing', restrictions: [],
@@ -107,6 +109,10 @@
         wp_sgw: { path: 'fluid.sgw', kind: 'num' }, wp_sal: { path: 'fluid.salinity_ppm', kind: 'num' },
         wp_n2: { path: 'fluid.yN2', kind: 'num' }, wp_co2: { path: 'fluid.yCO2', kind: 'num' }, wp_h2s: { path: 'fluid.yH2S', kind: 'num' },
         wp_pbUser: { path: 'fluid.pbUser', kind: 'num' }, wp_bc: { path: 'fluid.bc', kind: 'num' },
+        // B (WP23): Rv mode and dew point; emulsion model, tightness and inversion point (the control is in % water, the model 0..1)
+        wp_rvmode: { path: 'fluid.rv.mode', kind: 'str', enumv: ['none', 'table'] }, wp_pdew: { path: 'fluid.rv.pd', kind: 'num' },
+        wp_emul: { path: 'fluid.emul.model', kind: 'str', enumv: ['none', 'woelflin', 'brinkman', 'table'] },
+        wp_emulT: { path: 'fluid.emul.tight', kind: 'str', enumv: ['loose', 'medium', 'tight'] }, wp_emulInv: { path: 'fluid.emul.inv', kind: 'num', scale: 0.01 },
         wp_corr_pb: { path: 'fluid.corr.pb', kind: 'str' }, wp_corr_rs: { path: 'fluid.corr.rs', kind: 'str' },
         wp_corr_bo: { path: 'fluid.corr.bo', kind: 'str' }, wp_corr_muod: { path: 'fluid.corr.muod', kind: 'str' },
         wp_corr_muo: { path: 'fluid.corr.muo', kind: 'str' }, wp_corr_muou: { path: 'fluid.corr.muou', kind: 'str' },
@@ -254,13 +260,31 @@
             ['q_o', 'q_w', 'q_g', 'thp_psig', 'tht_F', 'bean64', 'gaugeMd', 'gauge_psia', 'chp_psig', 'qinj_Mscfd'].forEach(function (k) { o[k] = _num(t[k]); });
             return o;
         });
-        out.lab = _isObj(r.lab) ? _clone(r.lab) : null;
+        out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
         TABLE_KEYS.forEach(function (k) { if (Array.isArray(out[k]) && out[k].length > MAX_ROWS && k !== 'survey') out[k] = out[k].slice(0, MAX_ROWS); });
         return { rec: out, warnings: warnings };
     }
 
+    // the lab record (B, WP23): {v, T_F, basis, pb, rsbF, bobF, rows:[{p, rs, bo, muo}], rv:[[p, rv]], emul:[[fw, ratio]], example,
+    // adopt:{on, pbFactor, mult{rs, bo, muo}, shift{rs, bo, muo}, corr{rs, bo, muod, muo}, T_F, mare, ts, edited}} — numbers cleaned, ≤ 60 rows each
+    function _labClean(L) {
+        var o = { v: 1, T_F: _num(L.T_F), basis: L.basis === 'differential' ? 'differential' : 'flash', pb: _num(L.pb), rsbF: _num(L.rsbF), bobF: _num(L.bobF), example: L.example === true };
+        o.rows = (Array.isArray(L.rows) ? L.rows : []).filter(_isObj).slice(0, 60).map(function (x) { return { p: _num(x.p), rs: _num(x.rs), bo: _num(x.bo), muo: _num(x.muo) }; })
+            .filter(function (x) { return _fin(x.p) && x.p > 0 && (_fin(x.rs) || _fin(x.bo) || _fin(x.muo)); });
+        o.rv = _rowsNum(L.rv, 2).filter(function (x) { return x[0] > 0 && x[1] >= 0; }).slice(0, 60);
+        o.emul = _rowsNum(L.emul, 2).filter(function (x) { return x[0] >= 0 && x[0] <= 1 && x[1] > 0; }).slice(0, 60);
+        var a = _isObj(L.adopt) ? L.adopt : null;
+        if (a && a.on === true) {
+            var num3 = function (m, d) { var r = {}; ['rs', 'bo', 'muo'].forEach(function (k) { var v = _isObj(m) ? _num(m[k]) : null; r[k] = v == null ? d : v; }); return r; };
+            var c = _isObj(a.corr) ? a.corr : {}, cc = {};
+            ['rs', 'bo', 'muod', 'muo'].forEach(function (k) { if (typeof c[k] === 'string' && /^[A-Za-z0-9_]{1,32}$/.test(c[k])) cc[k] = c[k]; });
+            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
+                        mare: _isObj(a.mare) ? _clone(a.mare) : null, ts: _num(a.ts), labKey: typeof a.labKey === 'string' ? a.labKey.slice(0, 64) : null };
+        } else o.adopt = null;
+        return o;
+    }
     // dogleg at each interior station (rad): angle between the unit tangents of the two adjacent intervals
     function _tangents(rows) {
         var three = rows.length && rows[0].length >= 3, t = [];
@@ -317,7 +341,14 @@
             M.well.survey = rec.survey; M.well.strings = rec.strings; M.well.restrictions = rec.restrictions;
             M.well.geo.points = rec.geo.points; M.surface.flowline = rec.flowline;
             M.surface.rating = rec.rating; M.surface.beans = rec.beans.length ? rec.beans : M.surface.beans; M.tests = rec.tests;
-            M.cases = rec.cases; if (rec.lab) M.fluid.match = { lab: rec.lab }; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            M.cases = rec.cases; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            if (rec.lab) {
+                // B (WP23): the lab record; an adopted match goes to fluid.match (WTS_wp_fluid applies it while the correlations agree)
+                M.fluid.lab = rec.lab;
+                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift,
+                    corr: rec.lab.adopt.corr, T_F: rec.lab.adopt.T_F, edited: rec.lab.adopt.edited } : { lab: rec.lab };
+                M.fluid.rv.rows = rec.lab.rv; M.fluid.emul.rows = rec.lab.emul;
+            }
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);

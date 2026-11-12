@@ -51,6 +51,14 @@
 //     salinity takes the McCain standard density (γw = ρw,std / 62.368); validity verdicts for the Vasquez-Beggs, Glasø and
 //     Petrosky-Farshad families (Appendix A) and a "provisional" note on every unverified correlation in use (D17); F.provisional
 //     = labels of those; F.table rows gain rsw (McCain gas solubility in water, scf/STB) and co from the selected co key
+//     B additions (WP23; each absent → the A2 path bit for bit):
+//       spec.match {on, pbFactor, mult {rs, bo, muo}, shift {rs, bo, muo}, corr {rs, bo, muod, muo}, lab}  the adopted PVT lab match
+//                                       (WTS_wp_pvtmatch): y = a·y_corr + b through pvt.mult / pvt.shift and the bubble-point factor
+//                                       pvt.pbFactor (a user bubble point takes precedence); applied only while the fluid's correlation
+//                                       keys equal match.corr, else MATCH_STALE. F.match {applied, stale, pbFactor, mult, shift, reason}
+//       spec.rv {mode 'none'|'table', pd psia, rows [[p, Rv STB/MMscf]]}  modified black oil for a wet gas (pvt.rv; provisional, D17)
+//       spec.emul {model 'none'|'woelflin'|'brinkman'|'table', tight, inv 0..1, rows [[fw, ratio]]}  emulsion viscosity (pvt.emul)
+//       F.rv {pd, rows} | null, F.emul {model, tight, inv} | null; validity rows 'pvtmatch', 'rv', 'emulsion'; F.provisional gains them
 //     .flowlineFluid(F, q)              q = a number on F.rateBasis (oil: liquid STB/d split by WC; gas: separator gas Mscf/d
 //                                       with CGR / WGR; water: BWPD) or {qo, qw, qg_Mscfd}
 //         → {qo STB/d, qw BWPD, qg MMscf/d (the flowline key), qg_MMscfd, api, sgg, sgw, pvt}
@@ -160,8 +168,36 @@
             psep_psig: _num(spec.psep_psig), tsep_F: _num(spec.tsep_F), gor: _num(spec.gor), cgr: _num(spec.cgr), wgr: _num(spec.wgr),
             wc: _num(spec.wc), sgw: _num(spec.sgw), salinity_ppm: _num(spec.salinity_ppm),
             yN2: _num(spec.yN2), yCO2: _num(spec.yCO2), yH2S: _num(spec.yH2S), pbUser: _num(spec.pbUser), bc: _num(spec.bc), corr: c,
-            mult: (spec.match && spec.match.mult && typeof spec.match.mult === 'object') ? spec.match.mult : null
+            mult: (spec.match && spec.match.mult && typeof spec.match.mult === 'object') ? spec.match.mult : null,
+            match: _matchNorm(spec.match, c), rv: _rvNorm(spec.rv), emul: _emulNorm(spec.emul)
         };
+    }
+    // ── B (WP23): the adopted lab match, Rv and emulsion specifications ──
+    var MATCH_KEYS = ['rs', 'bo', 'muod', 'muo'];
+    function _matchNorm(m, c) {
+        if (!m || typeof m !== 'object' || m.on !== true) return null;
+        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null };
+        ['rs', 'bo', 'muo'].forEach(function (k) {
+            var a = m.mult && +m.mult[k], b = m.shift && +m.shift[k];
+            if (_fin(a) && a > 0 && a !== 1) out.mult[k] = a;
+            if (_fin(b) && b !== 0) out.shift[k] = b;
+        });
+        if (m.corr && typeof m.corr === 'object') MATCH_KEYS.forEach(function (k) { if (m.corr[k] && m.corr[k] !== c[k]) out.stale = true; });
+        return out;
+    }
+    function _rows2(rows, lo, hi) {
+        return (Array.isArray(rows) ? rows : []).map(function (r) { return Array.isArray(r) ? [Number(r[0]), Number(r[1])] : null; })
+            .filter(function (r) { return r && _fin(r[0]) && _fin(r[1]) && r[0] >= lo && r[0] <= hi && r[1] >= 0; }).sort(function (a, b) { return a[0] - b[0]; });
+    }
+    function _rvNorm(rv) {
+        if (!rv || typeof rv !== 'object' || rv.mode !== 'table') return null;
+        return { mode: 'table', pd: _num(rv.pd), rows: _rows2(rv.rows, 1e-6, 30000) };
+    }
+    var EMUL_MODELS = ['woelflin', 'brinkman', 'table'];
+    function _emulNorm(e) {
+        if (!e || typeof e !== 'object' || EMUL_MODELS.indexOf(e.model) === -1) return null;
+        return { model: e.model, tight: ['loose', 'medium', 'tight'].indexOf(e.tight) !== -1 ? e.tight : 'medium', inv: _num(e.inv),
+                 rows: _rows2(e.rows, 0, 1).filter(function (r) { return r[1] > 0; }) };
     }
 
     // Appendix A (recorded from the plan; values from the original papers, to verify — owner Q9) + the gas engine's ranges
@@ -220,6 +256,18 @@
             else if (!(_fin(s.pbUser) && s.pbUser > 14.7 && s.pbUser <= 15000)) err('pbUser', 'Bubble point must be above 14.7 and no more than 15,000 psia.');
             else if (!_fin(+opts.T_F)) warn('PB_SHIFT_NO_T', 'The bubble-point shift needs the reservoir temperature: the correlation bubble point is used.', 'warn', 'pbUser');
         }
+        if (s.rv) {
+            if (!(gasT && cgr > 0)) warn('RV_NOT_WET', 'The modified black oil (Rv) applies to a wet gas with a CGR: ignored for this fluid.', 'info', 'rvmode');
+            else if (!s.rv.rows.length) warn('RV_NO_TABLE', 'Modified black oil: enter the Rv table (pressure against vaporised condensate): the wet-gas model is used until then.', 'warn', 'rvmode');
+            if (s.rv.pd != null && !(_fin(s.rv.pd) && s.rv.pd > 14.7 && s.rv.pd <= 20000)) err('pdew', 'The dew point must be above 14.7 and no more than 20,000 psia.');
+        }
+        if (s.emul) {
+            if (!oil) warn('EMUL_NOT_OIL', 'An emulsion viscosity applies to an oil with water: ignored for this fluid.', 'info', 'emul');
+            else if (!(s.wc > 0)) warn('EMUL_NO_WATER', 'The emulsion viscosity needs a water cut: the oil viscosity is used.', 'info', 'emul');
+            if (s.emul.inv != null && !(_fin(s.emul.inv) && s.emul.inv >= 0.1 && s.emul.inv <= 0.9)) err('emulInv', 'The inversion point must be between 10 and 90 % water.');
+            if (s.emul.model === 'table' && !s.emul.rows.length) warn('EMUL_NO_TABLE', 'Emulsion table: enter μ_em / μo against the water fraction: the volume-weighted mixture is used until then.', 'warn', 'emul');
+        }
+        if (s.match && s.match.stale) warn('MATCH_STALE', 'The PVT lab match was fitted to other correlations (' + MATCH_KEYS.map(function (k) { return s.match.corr[k]; }).join(' / ') + '): it is not applied — run the match again.', 'warn', 'corr_rs');
         if (t === 'gasinj') warn('GASINJ_B', 'Gas injection wells are planned for a later release: the fluid is treated as gas only.', 'info', 'type');
         // unknown correlation keys fall back to the defaults inside the march — say so
         var L = _lib();
@@ -293,6 +341,18 @@
             }
             if (yco2 + yh2s > 0) rng('wichertAziz', [{ v: 'co2', name: 'CO2 (mol %)', lo: yco2 * 100 }, { v: 'h2s', name: 'H2S (mol %)', lo: yh2s * 100 }], true);
         }
+        // B (WP23): the lab match, the modified black oil and the emulsion viscosity in use
+        if (oil && s.match && !s.match.stale && (Object.keys(s.match.mult).length || Object.keys(s.match.shift).length || s.match.pbFactor)) {
+            var bandOk = ['rs', 'bo', 'muo'].every(function (k) { var a = s.match.mult[k]; return !(a < 0.8 || a > 1.25); });
+            validity.push({ corr: 'pvtmatch', label: 'PVT lab match', used: true, inRange: bandOk, provisional: false, out: [],
+                msg: (bandOk ? '✓' : '⚠') + ' PVT matched to the lab table (y = a·y_corr + b' + (s.pbUser != null ? '; the user bubble point replaces the matched one' : '') + ')' + (bandOk ? '.' : ': a multiplier is outside 0.8–1.25.') });
+        }
+        if (s.rv && gasT && cgr > 0 && s.rv.rows.length) validity.push({ corr: 'rv', label: 'Modified black oil (Rv)', used: true, inRange: true, provisional: true, out: [], msg: '✓ Modified black oil: condensate vaporised in the gas by the Rv table — ' + PROV_NOTE + '.' });
+        if (s.emul && oil && s.wc > 0 && (s.emul.model !== 'table' || s.emul.rows.length)) {
+            var EL = { woelflin: 'Woelflin (1942) ' + s.emul.tight + ' emulsion (chart readings)', brinkman: 'Brinkman (1952) emulsion', table: 'User emulsion table' }[s.emul.model];
+            validity.push({ corr: 'emulsion', label: EL, used: true, inRange: true, provisional: s.emul.model !== 'table', out: [],
+                msg: '✓ Liquid viscosity: ' + EL + (s.emul.model === 'table' ? ' (user data).' : ', inversion at ' + _fmtN(100 * (s.emul.inv != null ? s.emul.inv : 0.6), 0) + ' % water — ' + PROV_NOTE + '.') });
+        }
         if (yi > 0 && typeof G.WTS_gaspvt_z !== 'function') warn('IMP_NO_ENGINE', 'The gas PVT engine is not loaded: Z is not corrected for N2 / CO2 / H2S.', 'warn');
         if (yi > 0) warn('IMP_MUG', 'Gas viscosity along the well is Lee-Gonzalez-Eakin without the impurity correction (Z is corrected).', 'info');
         return { ok: true, errors: errors, bad: bad, warnings: warnings, validity: validity };
@@ -317,6 +377,15 @@
         return { qo: r.qo, qw: r.qw, qg: r.qg_Mscfd / 1000, qg_MMscfd: r.qg_Mscfd / 1000, api: F.api, sgg: F.sgg, sgw: F.sgw, pvt: F.pvt };
     }
 
+    // the dew point of the Rv table: the entered one, else the first table pressure where Rv reaches the CGR (linear), else the last row
+    function _rvPd(rv, cgr) {
+        if (_fin(rv.pd) && rv.pd > 14.7) return rv.pd;
+        var r = rv.rows;
+        for (var i = 0; i < r.length; i++) {
+            if (r[i][1] >= cgr) return i === 0 ? r[0][0] : r[i - 1][0] + (r[i][0] - r[i - 1][0]) * (cgr - r[i - 1][1]) / (r[i][1] - r[i - 1][1]);
+        }
+        return r.length ? r[r.length - 1][0] : null;
+    }
     function build(spec, opts) {
         opts = opts || {};
         var s = _norm(spec);
@@ -360,12 +429,21 @@
         if (gasT || water) { pvt.liquidNoTransfer = true; pvt.bc = _fin(s.bc) && s.bc > 0 ? s.bc : 1; }
         var yi = (+s.yN2 || 0) + (+s.yCO2 || 0) + (+s.yH2S || 0);
         if (yi > 0 && !water) pvt.imp = { n2: +s.yN2 || 0, co2: +s.yCO2 || 0, h2s: +s.yH2S || 0 };
-        if (s.mult) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
+        var matchApplied = !!(oil && s.match && !s.match.stale);
+        if (s.mult && !(s.match && s.match.stale)) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
+        if (matchApplied && Object.keys(s.match.shift).length) pvt.shift = Object.assign({}, s.match.shift);
+        var rvOn = !!(s.rv && gasT && cgr > 0 && s.rv.rows.length);
+        if (rvOn) pvt.rv = { rows: s.rv.rows, pd: _rvPd(s.rv, cgr) };
+        var emOn = !!(s.emul && oil && (s.emul.model !== 'table' || s.emul.rows.length));
+        if (emOn) pvt.emul = { model: s.emul.model, tight: s.emul.tight, inv: _fin(s.emul.inv) ? s.emul.inv : 0.6, rows: s.emul.rows };
         if (opts.table) pvt.table = opts.table === true ? true : { dp: +opts.table.dp > 0 ? +opts.table.dp : 5, dT: +opts.table.dT > 0 ? +opts.table.dT : 2 };
         // one-point bubble-point shift at the reservoir temperature
         var L = _lib(), T_F = _fin(+opts.T_F) ? +opts.T_F : null, pbShift = null;
+        if (matchApplied && !_fin(s.pbUser) && s.match.pbFactor && s.match.pbFactor !== 1) pvt.pbFactor = s.match.pbFactor;
         if (oil && _fin(s.pbUser) && T_F != null && s.gor > 0) {
-            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? (pvt.sep ? pbF(s.api, sgFree, s.gor, T_F, pvt.sep) : pbF(s.api, sgFree, s.gor, T_F)) : NaN;
+            var gorC = s.gor;
+            if (matchApplied && ((s.match.mult.rs && s.match.mult.rs !== 1) || s.match.shift.rs)) gorC = Math.max(1e-6, (s.gor - (s.match.shift.rs || 0)) / (s.match.mult.rs || 1));   // the matched Rs reaches the GOR here (WP23)
+            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? (pvt.sep ? pbF(s.api, sgFree, gorC, T_F, pvt.sep) : pbF(s.api, sgFree, gorC, T_F)) : NaN;
             if (_fin(pbCorr) && pbCorr > 14.7) { pvt.pbFactor = pbCorr / s.pbUser; pbShift = { pbCorr: pbCorr, pbUser: s.pbUser, factor: pvt.pbFactor, T_F: T_F }; }
             else warnings.push({ code: 'PB_SHIFT_FAILED', msg: 'The correlation bubble point could not be evaluated: no shift is applied.', sev: 'warn', field: 'pbUser' });
         }
@@ -378,6 +456,9 @@
             gor: oil ? s.gor : 0, cgr: cgr, wgr: wgr, wc: oil && _fin(s.wc) ? s.wc : 0, bc: pvt.bc || null,
             pbUser: oil ? s.pbUser : null, pbShift: pbShift, T_F: T_F, wet: gasT && cgr > 0, rsb: oil ? s.gor : 0,
             refQ: REF_Q[rb], imp: pvt.imp || null,
+            match: oil && s.match ? { applied: matchApplied, stale: !!s.match.stale, pbFactor: pvt.pbFactor || null, pbUserWins: !!(matchApplied && _fin(s.pbUser) && s.match.pbFactor),
+                mult: Object.assign({}, s.match.mult), shift: Object.assign({}, s.match.shift), corr: s.match.corr || null } : null,
+            rv: rvOn ? { pd: pvt.rv.pd, rows: s.rv.rows.slice() } : null, emul: emOn ? { model: s.emul.model, tight: s.emul.tight, inv: pvt.emul.inv } : null,
             validity: chk.validity, warnings: warnings, errors: [], bad: []
         };
         F.rates = function (q) { return _rates(F, q); };
@@ -399,6 +480,8 @@
         if (oil) { add('rs', s.corr.rs); add('bo', s.corr.bo); add('muod', s.corr.muod); add('muo', s.corr.muo); add('co', s.corr.co); add('sigma', s.corr.sigma); }
         else if (gasT && cgr > 0) { add('muod', s.corr.muod); add('sigma', s.corr.sigma); }
         if ((oil || gasT) && !(yi > 0)) add('z', s.corr.z);
+        if (s.rv && gasT && cgr > 0 && s.rv.rows.length) out.push('Modified black oil (Rv)');
+        if (s.emul && oil && (s.emul.model === 'woelflin' || s.emul.model === 'brinkman')) out.push(s.emul.model === 'woelflin' ? 'Woelflin emulsion (chart readings)' : 'Brinkman emulsion');
         return out;
     }
     function table(F, pList, T, q) {

@@ -65,6 +65,14 @@ const BENCH = [
   { kind: 'temp', key: 'relax', status: 'pending', source: 'Hasan & Kabir, Fluid Flow and Heat Transfer in Wellbores (Ramey / Hasan-Kabir relaxation), ±2 °F — A2 WP14; closed form + RK4 cross-check X16 only' },
   // A2
   { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
+  // B (WP23): PVT lab match (least squares — needs no published example), the differential → flash adjustment, the modified black oil
+  // and the emulsion viscosity (Q9: no books → provisional, never a default)
+  { kind: 'pvt', key: 'pvtmatch', status: 'pinned', source: 'least squares on the user\'s lab points; LM = closed-form weighted least squares (X22)' },
+  { kind: 'pvt', key: 'diffFlash', status: 'pending', source: 'McCain, The Properties of Petroleum Fluids (differential to flash adjustment) — algebra pinned (wellperf-pvtmatch PM1)' },
+  { kind: 'pvt', key: 'rv', status: 'pending', source: 'modified black oil with an Rv table (Whitson & Torp; Coats) — mass balance X23 only' },
+  { kind: 'pvt', key: 'woelflin', status: 'pending', source: 'Woelflin (1942) emulsion curves — chart readings to verify against the figure' },
+  { kind: 'pvt', key: 'brinkman', status: 'pending', source: 'Brinkman (1952) suspension viscosity — closed form only' },
+  { kind: 'pvt', key: 'table', status: 'pinned', source: 'user emulsion table (user data)' },
   { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
 ];
 
@@ -161,6 +169,28 @@ function gate(G) {
       if (!vv || vv.provisional !== true) bad('choke sachdeva', 'check validity does not mark it provisional');
     }
     rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
+  }
+  // 7. B (WP23): the PVT methods — registry flags agree with BENCH, provisional ones are labelled where they are used and never a default
+  const PM = G.WTS_wp_pvtmatch && G.WTS_wp_pvtmatch.METHODS;
+  if (PM) {
+    Object.keys(PM).forEach((k) => {
+      const e = PM[k], b = benchOf('pvt', k);
+      if (!b) { bad('pvt ' + k, 'no §15.1 entry in BENCH'); return; }
+      const okV = b.status === 'verified' || b.status === 'pinned';
+      if (!!e.verified !== okV) bad('pvt ' + k, 'registry verified=' + e.verified + ' but BENCH status ' + b.status);
+      if (!e.verified && e.provisional !== PROVISIONAL) bad('pvt ' + k, 'no provisional label');
+      rows.push({ kind: 'pvt', key: k, label: e.label, verified: !!e.verified, status: b.status, source: b.source });
+    });
+    if (D && D.fluid && D.fluid.rv && D.fluid.rv.mode !== 'none') bad('pvt rv', 'the modified black oil is the default');
+    if (D && D.fluid && D.fluid.emul && D.fluid.emul.model !== 'none') bad('pvt emulsion', 'an emulsion model is the default');
+    const Mg = S.FIX.gasWell; Mg.fluid.rv = { mode: 'table', pd: 4200, rows: G.WTS_wp_pvtmatch.exampleRv(20, 4200) };
+    const vr = (G.WTS_wp_check(Mg).validity || []).find((x) => x.corr === 'rv');
+    if (!vr || vr.msg.indexOf(PROVISIONAL) === -1) bad('pvt rv', 'the check validity does not carry the provisional label');
+    ['woelflin', 'brinkman'].forEach((m) => {
+      const Mo = S.FIX.oilWell; Mo.fluid.emul = { model: m, tight: 'medium', inv: 0.6 };
+      const ve = (G.WTS_wp_check(Mo).validity || []).find((x) => x.corr === 'emulsion');
+      if (!ve || ve.msg.indexOf(PROVISIONAL) === -1) bad('pvt ' + m, 'the check validity does not carry the provisional label');
+    });
   }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
@@ -365,6 +395,26 @@ function checks(G) {
     const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
     add('X21', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
   }
+  // X22 (B, WP23) the PVT lab match: PRiSM_lm = the closed-form relative weighted least squares on every property of the example lab
+  // table, and the matched pb equals the lab pb (Rs and the factor solved together)
+  if (G.WTS_wp_pvtmatch) {
+    const P = G.WTS_wp_pvtmatch, sp = { type: 'oil', api: 35, sgg: 0.75, gor: 600, psep_psig: 100, tsep_F: 80 }, lab = P.example(sp, 200), r = P.fit(sp, lab);
+    let worst = r.ok ? 0 : Infinity;
+    if (r.ok) Object.keys(r.props).forEach((k) => { const q = r.props[k], cf = P.wls(q.yc, q.y, q.fixedB); worst = Math.max(worst, Math.abs(q.a / cf.a - 1), Math.abs(q.b - cf.b) / Math.max(1, Math.abs(cf.b))); });
+    const ep = r.ok ? Math.abs(r.pb.after / lab.pb - 1) : Infinity;
+    add('X22', 'PVT lab match: LM = closed-form weighted least squares (a, b of Rs / Bo / μo); matched pb = lab pb (1e-4)', worst < 1e-6 && ep < 1e-4, worst, 1e-6);
+    // X23 modified black oil: total mass flow equal at the top and bottom of the deviated FIX.gasWell traverse (and at every station)
+    const Mg = S.FIX.gasWell; Mg.fluid.rv = { mode: 'table', pd: 4200, rows: P.exampleRv(20, 4200) };
+    const F = G.WTS_wp_fluid.build(Mg.fluid, { T_F: Mg.res.T_F }), W = G.WTS_wp_well.build(Mg.well, { res: Mg.res }), tr = V.traverse(F, W, 7000, { from: 'top', p0: 1500 });
+    let wm = tr.ok ? 0 : Infinity, m0 = null;
+    if (tr.ok) tr.profile.filter((x) => !x.restr).forEach((x) => { const a = F.at(x.p, x.t, 7000), m = a.qL * a.rhoL + a.qG * a.rhoG; if (m0 == null) m0 = m; wm = Math.max(wm, Math.abs(m / m0 - 1)); });
+    add('X23', 'modified black oil (Rv): mass flow constant along the deviated FIX.gasWell traverse', wm < 1e-9, wm, 1e-9);
+    // X24 identity: a match with a = 1, b = 0, f = 1 and the emulsion / Rv set to none solve exactly as the A2 model
+    const Mi = S.FIX.oilWell, R0 = SY.solve(Mi); Mi.fluid.match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: { rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson' } };
+    Mi.fluid.rv = { mode: 'none' }; Mi.fluid.emul = { model: 'none' };
+    const R1 = SY.solve(Mi);
+    add('X24', 'unit match (a = 1, b = 0, f = 1) and no Rv / emulsion = the A2 solve (identical)', R0.ok && R1.ok && R0.op.q === R1.op.q && R0.pwf === R1.pwf, R0.ok && R1.ok ? Math.abs(R0.op.q - R1.op.q) : 1, 0);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -437,6 +487,17 @@ function timing(G) {
     const ts = [mk('A', 350), mk('B', 700), mk('C', 1100)];
     t0 = nowMs(); const r3 = G.WTS_wp_match.tune(M, ts, 'bb', { free: ['hl', 'f'] });
     out.push({ op: 'VLP tuning, 3 tests (m_h, m_f)', fixture: 'oilWell', evals: r3 && r3.lm ? r3.lm.nEval : null, budget: null, ms: nowMs() - t0, okE: true, okMs: true, note: 'reported only' });
+  }
+  // B (WP23): the solves with the modified black oil (gas) and an emulsion (oil) keep the solve budget; the lab-match Job is property
+  // evaluations only (no march) — reported
+  if (G.WTS_wp_pvtmatch) {
+    const P = G.WTS_wp_pvtmatch, Mg = S.FIX.gasWell; Mg.fluid.rv = { mode: 'table', pd: 4200, rows: P.exampleRv(20, 4200) };
+    let t0 = nowMs(); const Rg = SY.solve(Mg); rec('system solve, modified black oil (Rv)', 'gasWell', Rg.evals, Rg.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
+    const Mo = S.FIX.oilWell; Mo.fluid.emul = { model: 'woelflin', tight: 'medium', inv: 0.6 };
+    t0 = nowMs(); const Ro = SY.solve(Mo); rec('system solve, emulsion viscosity', 'oilWell', Ro.evals, Ro.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
+    const sp = { type: 'oil', api: 35, sgg: 0.75, gor: 600, psep_psig: 100, tsep_F: 80 }, lab = P.example(sp, 200);
+    t0 = nowMs(); const j = run(P.job(sp, lab));
+    out.push({ op: 'PVT lab match Job (9 points, ranking)', fixture: 'oilWell', evals: null, budget: null, ms: nowMs() - t0, okE: true, okMs: true, note: 'reported only: ' + (j && j.evals) + ' property evaluations, no march' });
   }
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }

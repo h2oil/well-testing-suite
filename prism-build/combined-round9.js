@@ -58,6 +58,7 @@
 //   • 49-calc-wp-lift
 //   • 49-calc-wp-match
 //   • 49-calc-wp-model
+//   • 49-calc-wp-pvtmatch
 //   • 49-calc-wp-sens
 //   • 49-calc-wp-system
 //   • 49-calc-wp-view
@@ -8880,7 +8881,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '9218ad44', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '8e444837', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -8903,7 +8904,7 @@ var wellperf = {
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
-  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(?!well$|line$)[a-z]+$', why: 'fluid and inflow details' },
+  notDocumented: [{ pattern: '^wpl_|^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+|rvmode|pdew|emul\\w*)$|^wp_corr_(?!well$|line$)[a-z]+$', why: 'fluid and inflow details' },
   { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit|tcorr|tfree)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
@@ -8925,11 +8926,11 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
-  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing below the tubing shoe is shown as information. See the **Liquid loading** tab.'] },
+  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the shoe; the worst depth is shown. A wider casing below the shoe is information. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
-  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP at the operating rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
+  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP and rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
   { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** marches the temperature on the true inclination against the geotherm on TVD; the traverse also draws the earth temperature and the linear profile. **Fit U to the test THT** matches U to a measured THT.'] },
   { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest depth the casing pressure reaches, above the packer, and adds free gas only. **Run the gas-lift performance curve** gives rate against lift-gas rate with the optimum and the economic point; drag the injection-rate or packer handle; the schematic marks the point.'] },
@@ -10281,7 +10282,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: 'a6d169ef', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: '928fa277', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -36115,6 +36116,16 @@ pipesz: {
     //   corr.co      undersaturated oil compressibility key co_<k> (signature of co_vasquezBeggs): above the bubble point
     //                Bo = Bob·exp(−∫ co dp from pb to p) by 6-point Gauss-Legendre; absent or 'vasquezBeggs' → Bo_undersaturated
     //   corr.sigma   gas-oil surface tension key sigma_og_<k>(API, T_F, Rs) at the in-situ Rs; absent → Baker & Swerdloff
+    //   (B, WP23; each absent → the paths above, unchanged)
+    //   shift        {rs, bo, muo} the additive part of the lab match y = a·y_corr + b (a = mult, default 0): Rs = max(0, a·Rs + b),
+    //                Bo = a·Bo + b, μo = max(1e-4, a·μo + b); with a matched Rs (mult.rs or shift.rs) the bubble point of the
+    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a
+    //   rv           {rows: [[p psia, Rv STB/MMscf]] ascending, pd psia} modified black oil for a wet gas (liquidNoTransfer): the
+    //                vaporised condensate Rv(p) (≤ the stream CGR; = CGR at and above the dew point pd, linear to the last row
+    //                below it) travels in the gas — its standard volume and mass are added with the Standing well-stream
+    //                constants, so the gas gravity rises and the free liquid falls; mass is conserved exactly
+    //   emul         {model 'woelflin'|'brinkman'|'table', tight 'loose'|'medium'|'tight', inv 0..1, rows [[fw, ratio]]} the liquid
+    //                viscosity of an oil-water stream (WTS_flowline_emulsion); absent → the volume-weighted mixture
     var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
     function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
     function _pvtCore(fluid, pv, p, t, sgMix) {
@@ -36125,6 +36136,7 @@ pipesz: {
         var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
         var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
         var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, pv.sep ? rsF(api, sgg, p * pbF, t, pv.sep) : rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
+        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs);
         var z = NaN, TR = t + RANK;
         var imp = pv.imp;
         if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
@@ -36137,6 +36149,7 @@ pipesz: {
     }
     function _pvtCoreTab(fluid, pv, p, t, sgMix) {
         var o = pv.table === true ? {} : pv.table, dp = (+o.dp > 0) ? +o.dp : 5, dT = (+o.dT > 0) ? +o.dT : 2;
+        if (pv.rv) return _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT);
         var tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, sgMix, dp, dT].join('|');
         if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), fp = p / dp - ip, ft = t / dT - it;
@@ -36148,6 +36161,89 @@ pipesz: {
         var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), out = {};
         for (var k in c00) out[k] = (c00[k] * (1 - fp) + c10[k] * fp) * (1 - ft) + (c01[k] * (1 - fp) + c11[k] * fp) * ft;
         return out;
+    }
+    // Rv (WP23): the free-gas gravity changes with p, so the table is also binned in the gravity (0.005) and interpolated trilinearly
+    function _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT) {
+        var dS = 0.005, tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, 'rv', dp, dT].join('|');
+        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var ip = Math.floor(p / dp), it = Math.floor(t / dT), is = Math.floor(sgMix / dS), fp = p / dp - ip, ft = t / dT - it, fs = sgMix / dS - is, out = {};
+        function at(a, b, c) {
+            var k = a + ',' + b + ',' + c, v = tab.map[k];
+            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS);
+            return v;
+        }
+        var c000 = at(ip, it, is), c100 = at(ip + 1, it, is), c010 = at(ip, it + 1, is), c110 = at(ip + 1, it + 1, is);
+        var c001 = at(ip, it, is + 1), c101 = at(ip + 1, it, is + 1), c011 = at(ip, it + 1, is + 1), c111 = at(ip + 1, it + 1, is + 1);
+        for (var k in c000) {
+            var lo = (c000[k] * (1 - fp) + c100[k] * fp) * (1 - ft) + (c010[k] * (1 - fp) + c110[k] * fp) * ft;
+            var hi = (c001[k] * (1 - fp) + c101[k] * fp) * (1 - ft) + (c011[k] * (1 - fp) + c111[k] * fp) * ft;
+            out[k] = lo * (1 - fs) + hi * fs;
+        }
+        return out;
+    }
+    // Rv(p) of a modified black oil (WP23), STB/MMscf, capped at the stream CGR: the CGR at and above the dew point; between the last row
+    // and the dew point linear to the CGR; inside the rows linear; below the first row its value
+    function _rvAt(rv, p, cgr) {
+        var rows = rv.rows || [], pd = +rv.pd, n = rows.length;
+        if (!(cgr > 0)) return 0;
+        if (_fin(pd) && p >= pd) return cgr;
+        if (!n) return 0;
+        var v;
+        if (p <= rows[0][0]) v = rows[0][1];
+        else if (p >= rows[n - 1][0]) {
+            var a = rows[n - 1];
+            v = (_fin(pd) && pd > a[0]) ? a[1] + (cgr - a[1]) * (p - a[0]) / (pd - a[0]) : a[1];
+        } else {
+            for (var i = 1; i < n; i++) if (p <= rows[i][0]) { var r0 = rows[i - 1], r1 = rows[i]; v = r0[1] + (r1[1] - r0[1]) * (p - r0[0]) / (r1[0] - r0[0]); break; }
+        }
+        return Math.max(0, Math.min(cgr, _fin(v) ? v : 0));
+    }
+    // the Standing well-stream constants at the base conditions: A = ρw·Vm / M_air (scf·lb/(bbl·lb)), B = ρw·Vm (scf per bbl of water-
+    // equivalent mass ÷ lb-mol) — the same as WTS_wp_fluid.recombine, so moles and mass of the vaporised condensate balance exactly
+    function _wsAB() { var b = _basis(), vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia, rb = 62.37 * FT3_BBL; return { A: rb * vm / MW_AIR, B: rb * vm }; }
+    // Emulsion viscosity (WP23; docs/WELL-PERFORMANCE-PLAN.md §1.4 B7): the liquid viscosity of an oil-water stream at the in-situ water
+    // fraction fw of the liquid. Oil-continuous below the inversion fraction inv (default 0.6), water-continuous above it.
+    //   brinkman  Brinkman (1952): μ = μ_c·(1 − φ)^−2.5, φ = the dispersed fraction (capped at 0.9)
+    //   woelflin  Woelflin (1942) loose / medium / tight emulsion curves (oil-continuous) as tabulated chart readings, log-linear between
+    //             them — readings to verify against the published figure (owner Q9); above the inversion the Brinkman water-continuous
+    //             branch
+    //   table     the user's μ_em / μo against fw (0..1), log-linear, constant beyond the ends; no inversion rule
+    // Returns {mu, ratio (μ / μo), cont 'oil'|'water'} or null for an unknown model.
+    var WOELFLIN = { fw: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        loose: [1, 1.25, 1.65, 2.3, 3.3, 4.9, 7.4], medium: [1, 1.45, 2.2, 3.5, 5.6, 9.0, 14.5], tight: [1, 1.75, 3.1, 5.6, 10.0, 18.0, 32.0] };
+    function _logInterp(xs, ys, x) {
+        var n = xs.length; if (!n) return 1;
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) {
+            if (n < 2 || !(ys[n - 1] > 0 && ys[n - 2] > 0) || xs[n - 1] === xs[n - 2]) return ys[n - 1];
+            return ys[n - 1] * Math.pow(ys[n - 1] / ys[n - 2], (x - xs[n - 1]) / (xs[n - 1] - xs[n - 2]));
+        }
+        for (var i = 1; i < n; i++) if (x <= xs[i]) {
+            var y0 = ys[i - 1], y1 = ys[i], f = (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+            return (y0 > 0 && y1 > 0) ? y0 * Math.pow(y1 / y0, f) : y0 + (y1 - y0) * f;
+        }
+        return ys[n - 1];
+    }
+    function emulsion(fw, muo, muw, e) {
+        e = e || {};
+        fw = Math.max(0, Math.min(1, +fw || 0)); muo = +muo; muw = +muw;
+        if (!(muo > 0) || !(muw > 0)) return null;
+        var inv = _fin(+e.inv) && +e.inv > 0.05 && +e.inv < 0.95 ? +e.inv : 0.6, m = e.model;
+        var brink = function (muc, phi) { return muc * Math.pow(1 - Math.min(0.9, Math.max(0, phi)), -2.5); };
+        if (m === 'table') {
+            var rows = (Array.isArray(e.rows) ? e.rows : []).filter(function (r) { return Array.isArray(r) && _fin(+r[0]) && _fin(+r[1]) && +r[1] > 0; })
+                .map(function (r) { return [+r[0], +r[1]]; }).sort(function (a, b) { return a[0] - b[0]; });
+            if (!rows.length) return null;
+            var rt = _logInterp(rows.map(function (r) { return r[0]; }), rows.map(function (r) { return r[1]; }), fw);
+            // constant beyond the last row (a user table is not extrapolated)
+            if (fw > rows[rows.length - 1][0]) rt = rows[rows.length - 1][1];
+            return { mu: muo * rt, ratio: rt, cont: 'table' };
+        }
+        if (m !== 'woelflin' && m !== 'brinkman') return null;
+        if (fw >= inv) { var mw = brink(muw, 1 - fw); return { mu: mw, ratio: mw / muo, cont: 'water' }; }
+        if (m === 'brinkman') { var mb = brink(muo, fw); return { mu: mb, ratio: mb / muo, cont: 'oil' }; }
+        var curve = WOELFLIN[e.tight === 'loose' || e.tight === 'tight' ? e.tight : 'medium'], r = _logInterp(WOELFLIN.fw, curve, fw);
+        return { mu: muo * r, ratio: r, cont: 'oil' };
     }
     function _propsPvt(fluid, p, t) {
         var L = _lib(), pv = fluid.pvt, c = pv.corr || {}, m = pv.mult || {};
@@ -36164,6 +36260,14 @@ pipesz: {
             var fr0 = Math.max(0, qg * 1e6 - qo * rs0);
             sgMix = (fr0 + inj.q) > 0 ? (fr0 * sgg + inj.q * inj.sg) / (fr0 + inj.q) : sgg;
         }
+        // modified black oil (WP23): the vaporised condensate travels in the gas (standard volume B·γo/Mo per STB, mass A·γo per STB)
+        var vap = 0, vapScf = 0;
+        if (noTr && pv.rv && qo > 0 && qg > 0) {
+            var cgrT = qo / qg, rvp = _rvAt(pv.rv, p, cgrT), AB = _wsAB(), mo = 5954 / Math.max(1, api - 8.811);
+            vap = Math.min(qo, qg * rvp); vapScf = vap * AB.B * go / mo;
+            var gasScf = qg * 1e6;
+            sgMix = (gasScf * sgMix + vap * AB.A * go) / (gasScf + vapScf);
+        }
         var C = (pv.table && _TABS) ? _pvtCoreTab(f, pv, p, t, sgMix) : _pvtCore(f, pv, p, t, sgMix);
         var rs = (qo > 0 && !noTr) ? Math.min(gor, C.rsRaw) : 0;
         var boF = _pvtFn(L, 'Bo_', c.bo, L.Bo_standing), muoF = _pvtFn(L, 'mu_o_', c.muo, L.mu_o_beggsRobinson);
@@ -36173,7 +36277,7 @@ pipesz: {
         else {
             bo = pv.sep ? boF(api, sgg, rs, t, pv.sep) : boF(api, sgg, rs, t); muo = muoF(C.muod, rs);
             if (pv.undersat && C.rsRaw >= gor && gor > 0) {
-                pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor, pv.sep);
+                pb = _pbFor(L, c, api, sgg, _gorCorr(pv, gor), t, pv.pbFactor, pv.sep);
                 if (_fin(pb) && p > pb) {
                     var coF = (c.co && c.co !== 'vasquezBeggs') ? L['co_' + c.co] : null;
                     // the Vasquez-Beggs co (Bo_undersaturated) is defined on the 100 psig separator gas gravity, like Rs / Bo / Pb
@@ -36189,27 +36293,42 @@ pipesz: {
             }
         }
         bo *= (_fin(+m.bo) ? +m.bo : 1); muo *= (_fin(+m.muo) ? +m.muo : 1);
+        if (pv.shift && qo > 0 && !noTr) {
+            if (_fin(+pv.shift.bo)) bo = Math.max(0.5, bo + +pv.shift.bo);
+            if (_fin(+pv.shift.muo)) muo = Math.max(1e-4, muo + +pv.shift.muo);
+        }
         var z = C.z, TR = t + RANK, mug = C.mug, bw = C.bw, muw = C.muw;
         var b = _basis();
         var bg = b.Pb_psia * z * TR / ((b.Tb_F + RANK) * p);          // ft³/scf
         var rhoG = p * MW_AIR * sgMix / (z * R_GAS * TR);
         var rhoO = (62.37 * go + 0.01361 * rs * sgg) / bo;
         var rhoW = RHO_W * sgw / bw;
-        var qoR = qo * bo * FT3_BBL / 86400, qwR = qw * bw * FT3_BBL / 86400;
-        var free = Math.max(0, qg * 1e6 - qo * rs) + (inj ? inj.q : 0);
+        var qoR = (qo - vap) * bo * FT3_BBL / 86400, qwR = qw * bw * FT3_BBL / 86400;
+        var free = Math.max(0, qg * 1e6 - qo * rs) + vapScf + (inj ? inj.q : 0);
         var qgR = free * bg / 86400;
         var qL = qoR + qwR, fo = qL > 0 ? qoR / qL : 0, fw = qL > 0 ? qwR / qL : 0;
         var sgF = c.sigma ? L['sigma_og_' + c.sigma] : null;
         var so = qo > 0 ? (typeof sgF === 'function' ? Math.max(1, sgF(api, t, rs)) : C.sigO) : 0, sw = qw > 0 ? C.sigW : 0;
-        return {
+        var muL = qL > 0 ? fo * muo + fw * muw : (muo || muw), em = null;
+        if (pv.emul && qoR > 0 && qwR > 0) { em = emulsion(fw, muo, muw, pv.emul); if (em && _fin(em.mu)) muL = em.mu; else em = null; }
+        var out = {
             p: p, t: t, gor: gor, rs: rs, bo: bo, bw: bw, z: z, bg: bg, muo: muo, muw: muw, mug: mug,
             rhoO: rhoO, rhoW: rhoW, rhoG: rhoG, sigO: so, sigW: sw, freeGas: free,
             qL: qL, qG: qgR, fo: fo, fw: fw,
             rhoL: qL > 0 ? fo * rhoO + fw * rhoW : rhoO || rhoW,
-            muL: qL > 0 ? fo * muo + fw * muw : (muo || muw),
+            muL: muL,
             sigL: qL > 0 ? fo * so + fw * sw : (so || sw || 30),
             pb: pb, sgGas: sgMix, pvt: true
         };
+        if (pv.rv) { out.qoVap = vap; out.qoFree = Math.max(0, qo - vap); }
+        if (em) { out.emulRatio = em.ratio; out.emulCont = em.cont; }
+        return out;
+    }
+    // the GOR seen by the correlation when Rs is matched (WP23): Rs_m = a·Rs_c + b reaches the GOR where Rs_c = (GOR − b) / a
+    function _gorCorr(pv, gor) {
+        var m = pv.mult || {}, a = _fin(+m.rs) && +m.rs > 0 ? +m.rs : 1, b = pv.shift && _fin(+pv.shift.rs) ? +pv.shift.rs : 0;
+        if (a === 1 && b === 0) return gor;
+        return Math.max(1e-6, (gor - b) / a);
     }
     // bubble point for the undersaturated branch: Pb_<rs key> when the library has it, else bisection on Rs(p) = GOR
     function _pbFor(L, c, api, sgg, gor, t, pbFactor, sep) {
@@ -36768,6 +36887,9 @@ pipesz: {
     };
     G.WTS_flowline_friction = { smooth: fSmooth, colebrook: fColebrook };
     G.WTS_flowline_sigma = { oil: sigmaOil, water: sigmaWater };
+    G.WTS_flowline_emulsion = emulsion;                       // WP23: the emulsion viscosity used by props (fluid.pvt.emul)
+    G.WTS_flowline_emulsion.WOELFLIN = JSON.parse(JSON.stringify(WOELFLIN));
+    G.WTS_flowline_rvAt = function (rv, p, cgr) { return _rvAt(rv || {}, +p, +cgr); };
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Multiphase Flowline Pressure Drop';
@@ -41433,7 +41555,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var CIRC = ['', '①', '②', '③', '④', '⑤', '⑥', '⑦'];
     var calcs = 0, budgetMs = BUDGET_MS;
     var ST = { M: null, R: null, W: null, SC: null, I: null, F: null, chk: null, shut: null, loading: null, solveMs: 0, slow: false, stale: false,
-               live: false, job: null, sens: null, beans: null, design: null, match: null, qc: null, prov: {}, lastErr: null, tune: null, tuneTests: null, tunePrev: null, tuneKey: null, untuned: null };
+               live: false, job: null, sens: null, beans: null, design: null, match: null, qc: null, prov: {}, lastErr: null, tune: null, tuneTests: null, tunePrev: null, tuneKey: null, untuned: null,
+               pvtm: null, pvtmEdit: null, pvtmKey: null, pvtmCache: null };
 
     // ── small helpers ─────────────────────────────────────────────────────────
     function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
@@ -41496,7 +41619,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         wp_midPerf: 'length', wp_surfT: 'temperature', wp_tht: 'temperature', wp_Uto: 'heatTransferCoef', wp_ke: 'thermalConductivity',
         wp_psep: 'pressureG', wp_tamb: 'temperature', wp_thp: 'pressureG', wp_stepFt: 'length', wp_gl_packer: 'length', wp_gl_pinj: 'pressureG', wp_gl_qinj: 'gasRateSmall', wp_gl_incgor: 'gor',
         wp_gl_dpv: 'pressure', wp_ip_J: 'productivityIndex', wp_ip_qmax: 'liquidRate', wp_ip_k: 'permeability', wp_ip_h: 'length',
-        wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall'
+        wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall',
+        wp_pdew: 'pressure', wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor'
     };
 
     // ── model scalars (defaults from WTS_wp_model.DEFAULTS; Appendix B) ───────
@@ -41760,6 +41884,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wp_root .wp-pvtbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}' +
         '#wp_root .wp-2c{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}#wp_root .wp-2c>*{min-width:0}' +
         '#wp_root .rbox{margin-top:0}' +
+        '#wp_root .wp-pvtmg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start;padding-top:12px}#wp_root .wp-pvtmg>:first-child{grid-column:1/-1}#wp_root .wp-pvtmg .wp-cmpt td:first-child{min-width:150px}' +
+        '@media (max-width:900px){#wp_root .wp-pvtmg{grid-template-columns:minmax(0,1fr)}}' +
         '#wp_root .wp-stale #wp_bench,#wp_root .wp-stale .wp-kpis{opacity:.55;transition:opacity .2s}' +
         '@media (max-width:1180px){#wp_root .wp-row3{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-row3>:last-child{grid-column:1/-1}}' +
         '@media (max-width:1000px){#wp_root .wp-bench,#wp_root .wp-2c{grid-template-columns:minmax(0,1fr)}}' +
@@ -41804,6 +41930,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         restrictions: function () { return [{ k: 'kind', l: 'Kind', opts: [['sssv', 'SSSV'], ['nipple', 'Nipple'], ['sleeve', 'Sleeve'], ['xo', 'Cross-over'], ['downholeChoke', 'Downhole choke']] }, { k: 'md', l: 'MD', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'k', l: 'K (opt.)', u: '' }]; },
         geo: function () { return [{ k: 0, l: 'TVD', cat: 'length', u: 'ft' }, { k: 1, l: 'Temperature', cat: 'temperature', u: '°F' }]; },
         flowline: function () { return [{ k: 'name', l: 'Name', text: true }, { k: 'len', l: 'Length', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'dz', l: 'Rise', cat: 'length', u: 'ft' }]; },
+        // B (WP23): the lab table, the Rv table and the emulsion table (all inside the model key lab)
+        lab: function () { return [{ k: 'p', l: 'p', cat: 'pressure', u: 'psia' }, { k: 'rs', l: 'Rs', cat: 'gor', u: 'scf/STB' }, { k: 'bo', l: 'Bo', u: _fvfLab() }, { k: 'muo', l: 'Viscosity', u: 'cp' }]; },
+        rv: function () { return [{ k: 0, l: 'p', cat: 'pressure', u: 'psia' }, { k: 1, l: 'Rv', cat: 'cgr', u: 'STB/MMscf' }]; },
+        emul: function () { return [{ k: 0, l: 'Water', u: '%', pct: true }, { k: 1, l: 'Viscosity ratio', u: 'emulsion / oil' }]; },
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
                     { k: 'q_g', l: 'Gas', cat: 'gasRateSmall', u: 'Mscf/d' }, { k: 'thp_psig', l: 'THP', cat: 'pressureG', u: 'psig' }, { k: 'tht_F', l: 'THT', cat: 'temperature', u: '°F' },
@@ -41818,11 +41948,16 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (t === 'geo') return ((M.well.geo && M.well.geo.points) || []).map(function (r) { return r.slice(); });
         if (t === 'flowline') return (M.surface.flowline || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'tests') return (M.tests || []).map(function (r) { return Object.assign({}, r); });
+        var Lb = M.fluid && M.fluid.lab;
+        if (t === 'lab') return ((Lb && Lb.rows) || []).map(function (r) { return Object.assign({}, r); });
+        if (t === 'rv') return ((Lb && Lb.rv) || []).map(function (r) { return r.slice(); });
+        if (t === 'emul') return ((Lb && Lb.emul) || []).map(function (r) { return r.slice(); });
         return [];
     }
     function _cellVal(c, v) {
         if (c.opts || c.text) return v == null ? '' : String(v);
         if (!_fin(v)) return '';
+        if (c.pct) return String(Math.round(v * 1e6) / 1e4);
         var d = _dv(v, c.cat);
         return String(Math.round(d * 1e4) / 1e4);
     }
@@ -41830,7 +41965,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var host = _byId('wp_tbl_' + t); if (!host) return;
         var M = ST.M || _read(), cols = TABLES[t](M), rows = _tableRows(M, t), extra = _extraCols(t, M);
         var h = '<div class="wp-tw"><table class="dtable wp-ed" data-t="' + t + '"><thead><tr>' + cols.map(function (c) {
-            return '<th>' + _esc(c.l) + (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '') + '</th>';
+            return '<th' + (c.nocase ? ' style="text-transform:none"' : '') + '>' + _esc(c.l) + (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '') + '</th>';
         }).join('') + (extra ? extra.head.map(function (x) { return '<th>' + x + '</th>'; }).join('') : '') + '<th></th></tr></thead><tbody>';
         var rowHtml = function (r, i) {
             return '<tr data-r="' + i + '">' + cols.map(function (c) {
@@ -41890,7 +42025,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             cols.forEach(function (c) {
                 var e = tr.querySelector('[data-c="' + c.k + '"]'); if (!e) return;
                 var raw = String(e.value == null ? '' : e.value).trim(), v;
-                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = _fromDisp(v, c.cat); }
+                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = c.pct ? v / 100 : _fromDisp(v, c.cat); }
                 if (v !== null && v !== '' && !c.opts) any = true;
                 row[c.k] = v;
             });
@@ -41902,6 +42037,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _writeTable(t, rows) {
         var Mm = G.WTS_wp_model; if (!Mm || typeof Mm.write !== 'function') return null;
         var patch = {};
+        if (t === 'lab' || t === 'rv' || t === 'emul') { var lp = {}; lp[t === 'lab' ? 'rows' : t] = rows; if (t === 'lab') lp.example = false; return _labWrite(lp); }
         if (t === 'geo') patch.geo = { points: rows }; else patch[t] = rows;
         var r = Mm.write(patch);
         if (r && !r.ok) _banner('fail', 'The table was not saved: ' + ((r.errors || []).join(' ') || r.code));
@@ -42347,7 +42483,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var W = G.WTS_wp_fluid, T = M.res.T_F, pr = M.res.pr, kind = _pvtKind(M.fluid.type);
         var key; try { key = JSON.stringify([M.fluid, T, pr]); } catch (e) { key = String(Math.random()); }
         if (ST.pvtData && ST.pvtData.key === key) return ST.pvtData;
-        var base = Object.assign({}, M.fluid, { pbUser: null }), d = { key: key, kind: kind, fam: null, z: null, muod: null, grid: [] };
+        var base = Object.assign({}, M.fluid, { pbUser: null, match: null }), d = { key: key, kind: kind, fam: null, z: null, muod: null, grid: [] };   // the published families (the lab match is drawn from the selected fluid)
         var top = Math.max(_fin(pr) ? pr : 0, 1500) * 1.25;
         if (kind === 'oil' && typeof W.compare === 'function') {
             var f0 = W.compare(base, { T_F: T, pList: [top], pr: pr });
@@ -42380,7 +42516,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         var d = _pvtData(M), X = function (p) { return _dv(p, 'pressure'); }, cr = M.fluid.corr || {}, series = [], markers = [], vlines = [], handles = [];
         // the selected fluid (with the user's bubble point, or the dragged one) on the same grid
-        var Fs = F, pbUser = _fin(preview) ? preview : M.fluid.pbUser;
+        var Fs = F, pbUser = _fin(preview) ? preview : M.fluid.pbUser, matched = !!(F.match && F.match.applied);
         if (_fin(preview)) { var Fp = W.build(Object.assign({}, M.fluid, { pbUser: preview }), { T_F: T }); if (Fp && Fp.ok) Fs = Fp; }
         var sel = (W.table(Fs, d.grid, T) || {}).rows || [], pbSel = Fs.pb(T);
         var slot = (cur === 'rs' || cur === 'bo') ? 'fam' : cur === 'muo' ? 'muod' : cur === 'z' ? 'z' : null;
@@ -42389,12 +42525,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (cmp && cmp.rows) cmp.rows.forEach(function (r) {
             if (!r.ok || !r.table) return;
             var isSel = r.key === selKey;
-            if (isSel && !(slot === 'fam' && _fin(pbUser))) return;    // drawn below from the selected fluid
-            series.push({ key: 'c_' + r.key, label: r.label + (isSel ? ' (correlation pb)' : '') + (r.verified ? '' : ' (prov.)'), color: colOf(r.key), width: 1.5, dash: r.verified ? (isSel ? [2, 3] : null) : [6, 4],
+            if (isSel && !(slot === 'fam' && (_fin(pbUser) || matched)) && !(slot === 'muod' && matched)) return;    // drawn below from the selected fluid
+            series.push({ key: 'c_' + r.key, label: r.label + (isSel ? (matched ? ' (published)' : ' (correlation pb)') : '') + (r.verified ? '' : ' (prov.)'), color: colOf(r.key), width: 1.5, dash: r.verified ? (isSel ? [2, 3] : null) : [6, 4],
                 pts: r.table.map(function (t) { return [X(t.p), _pvtVal(cur, t)]; }).filter(function (p) { return _fin(p[1]); }) });
             if (slot === 'fam' && _fin(r.pb) && r.at && r.at.pb) markers.push({ x: X(r.pb), y: _pvtVal(cur, r.at.pb), kind: 'diamond', color: colOf(r.key), r: 4.5 });
         });
-        var selLabel = slot === 'fam' ? _famLabel('rs', cr.rs) : slot === 'muod' ? _famLabel('muod', cr.muod) + ' μod' : slot === 'z' ? _famLabel('z', cr.z) : 'Selected correlations';
+        var selLabel = (slot === 'fam' ? _famLabel('rs', cr.rs) : slot === 'muod' ? _famLabel('muod', cr.muod) + ' μod' : slot === 'z' ? _famLabel('z', cr.z) : 'Selected correlations') + (matched && (cur === 'rs' || cur === 'bo' || cur === 'muo') ? ' — lab-matched' : '');
+        // the lab points (B, WP23) when the lab temperature is within 5 °F of the reservoir temperature
+        var LB = M.fluid.lab;
+        if (kind === 'oil' && LB && Array.isArray(LB.rows) && LB.rows.length && _fin(LB.T_F) && Math.abs(LB.T_F - T) <= 5 && (cur === 'rs' || cur === 'bo' || cur === 'muo')) {
+            var lp = LB.rows.filter(function (r) { return _fin(r[cur]); }).map(function (r) { return [X(r.p), cur === 'rs' ? _dv(r.rs, 'gor') : r[cur]]; });
+            if (lp.length) series.push({ key: 'lab', label: 'lab' + (LB.example ? ' (example)' : '') + (LB.basis === 'differential' ? ' (differential)' : ''), color: Tm.green, kind: 'points', pts: lp });
+        }
         if (cur === 'rho') {
             var wantO = kind === 'oil' || F.cgr > 0, wantW = kind === 'water' || sel.some(function (r) { return _fin(r.rsw); }) || F.wc > 0 || F.wgr > 0;
             if (wantO) series.push({ key: 'rhoO', label: kind === 'oil' ? 'Oil (live)' : 'Condensate', color: Tm.green, width: 2.6, pts: sel.map(function (r) { return [X(r.p), _dv(r.rhoO, 'density')]; }) });
@@ -42467,6 +42609,295 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         _renderStudies();
     }
 
+    // ── ① PVT lab match, modified black oil (Rv) and emulsion (B, WP23) ───────────────────────────────────
+    // The lab record (conditions, table, Rv and emulsion tables, the adopted match) is the model key `lab` (WTS_wp_model); the fit is
+    // a Job (WTS_wp_pvtmatch.job via the existing driver) and Apply writes lab.adopt, so every solve uses the matched set (US14).
+    var PVTM_PROPS = [['rs', 'Rs'], ['bo', 'Bo'], ['muo', 'μo']];
+    var LAB_IN = { wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor' };
+    function _labRec(M) { var L = M && M.fluid && M.fluid.lab; return L && typeof L === 'object' ? JSON.parse(JSON.stringify(L)) : { v: 1, T_F: null, basis: 'flash', pb: null, rsbF: null, bobF: null, rows: [], rv: [], emul: [] }; }
+    function _labKey(L) { try { return String(JSON.stringify([L.T_F, L.basis, L.pb, L.rsbF, L.bobF, L.rows]).length) + ':' + JSON.stringify([L.T_F, L.basis, L.pb, L.rsbF, L.bobF, L.rows]).split('').reduce(function (h, c) { return (h * 31 + c.charCodeAt(0)) >>> 0; }, 7).toString(36); } catch (e) { return ''; } }
+    function _labWrite(patch, batch) {
+        var Mm = G.WTS_wp_model; if (!Mm || typeof Mm.write !== 'function') return null;
+        var L = Object.assign(_labRec(ST.M || _read()), patch || {});
+        if (batch) ST.batch = (ST.batch || 0) + 1;
+        var r; try { r = Mm.write({ lab: L }); } finally { if (batch) ST.batch--; }
+        if (r && !r.ok) _banner('fail', 'The lab data were not saved: ' + ((r.errors || []).join(' ') || r.code));
+        ST.M = _read() || ST.M;
+        return r;
+    }
+    function _labInputsFill() {
+        var L = _labRec(ST.M || _read());
+        var put = function (id, v) { var e = _byId(id); if (e) _canon(function () { e.value = _fin(v) ? String(+(+v).toPrecision(8)) : ''; }); };
+        put('wpl_T', L.T_F); put('wpl_pb', L.pb); put('wpl_rsbF', L.rsbF); put('wpl_bobF', L.bobF);
+        var b = _byId('wpl_basis'); if (b) b.value = L.basis === 'differential' ? 'differential' : 'flash';
+    }
+    function _labInputsWrite() {
+        var v = {}; _canon(function () { ['wpl_T', 'wpl_pb', 'wpl_rsbF', 'wpl_bobF'].forEach(function (id) { var e = _byId(id), x = e ? parseFloat(String(e.value).replace(',', '.')) : NaN; v[id] = _fin(x) ? x : null; }); });
+        _labWrite({ T_F: v.wpl_T, pb: v.wpl_pb, rsbF: v.wpl_rsbF, bobF: v.wpl_bobF, basis: (_byId('wpl_basis') || {}).value === 'differential' ? 'differential' : 'flash', example: false });
+        _renderPvtLab();
+    }
+    function _pvtmOn() { var M = ST.M; return !!(M && M.fluid.type === 'oil'); }
+    function _pvtmAdopted(M) { var L = M && M.fluid && M.fluid.lab; return L && L.adopt && L.adopt.on ? L.adopt : null; }
+    function _pvtmAct(act, btn) {
+        var M = ST.M || _read(), P = G.WTS_wp_pvtmatch, h = _byId('wp_pvtmjob');
+        if (!M || !P) { if (h) h.innerHTML = _vHtml({ st: 'warn', t: '⚠ The PVT match engine is not available.' }); return; }
+        if (act === 'pvtmatch') {
+            var L = _labRec(M), n = P.normLab(L);
+            if (!n.ok) { if (h) h.innerHTML = _vHtml({ st: 'warn', t: '⚠ ' + n.errors.join(' ') }); return; }
+            ST.pvtmEdit = null;
+            _drive(P.job(M.fluid, L), function (r) {
+                ST.pvtm = r && typeof r === 'object' ? r : null; ST.pvtmKey = _labKey(L) + '|' + JSON.stringify(M.fluid.corr || {}) + '|' + M.fluid.api + '|' + M.fluid.sgg;
+                if (G.WTS_state && G.WTS_state.wellperf) G.WTS_state.wellperf.pvtmatch = _pvtmSummary();
+                _renderPvtLab(); _renderStudies();
+            }, 'PVT lab match', 'wp_pvtmjob');
+            return;
+        }
+        if (act === 'pvtadopt') {
+            var f = ST.pvtm && ST.pvtm.fit; if (!f || !f.ok) return;
+            var m = ST.pvtmEdit ? ST.pvtmEdit.match : f.match, Lr = _labRec(M);
+            _labWrite({ adopt: { on: true, pbFactor: m.pbFactor, mult: m.mult, shift: m.shift, corr: m.corr, T_F: f.T_F, mare: ST.pvtmEdit ? null : m.mare, ts: Date.now(), edited: !!ST.pvtmEdit, labKey: _labKey(Lr) } });
+            if (h) h.innerHTML = _vHtml({ st: 'ok', t: '✓ The matched black-oil set is applied: every solve, table and plot on this page now uses it.' });
+            _renderPvtLab(); return;
+        }
+        if (act === 'pvtunadopt') { _labWrite({ adopt: null }); if (h) h.innerHTML = _vHtml({ st: 'info', t: 'ℹ The lab match is removed: the published correlations are used.' }); _renderPvtLab(); return; }
+        if (act === 'pvtmprop') { _plotsSet({ pvtmProp: btn.getAttribute('data-k') }); _drawPvtm(); return; }
+        if (act === 'pvtusefam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); if (h) h.innerHTML = _vHtml({ st: 'info', t: 'ℹ ' + _famLabel('rs', fk) + ' selected for Pb, Rs and Bo: run the match again for its multipliers.' }); _renderPvtLab(); return; }
+        if (act === 'pvtusevisc') { _setCtrl('wp_corr_muod', btn.getAttribute('data-d')); _setCtrl('wp_corr_muo', btn.getAttribute('data-l')); _commit('wp_corr_muo'); if (h) h.innerHTML = _vHtml({ st: 'info', t: 'ℹ Viscosity pair selected: run the match again.' }); _renderPvtLab(); return; }
+        if (act === 'labex') {
+            var ex = P.example(M.fluid, M.res.T_F); if (!ex) { if (h) h.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter the oil (API, gas gravity, GOR) and the reservoir temperature first.' }); return; }
+            var Lx = _labRec(M); Lx.T_F = ex.T_F; Lx.basis = 'flash'; Lx.pb = ex.pb; Lx.rsbF = ex.rsbF; Lx.bobF = null; Lx.rows = ex.rows; Lx.example = true; Lx.adopt = null;
+            _labWrite(Lx); _labInputsFill(); _renderTable('lab'); ST.pvtm = null; ST.pvtmEdit = null;
+            if (h) h.innerHTML = _vHtml({ st: 'info', t: 'ℹ Example lab data loaded (synthetic: the oil with a known distortion of the Standing family) — replace them with the lab report.' });
+            _renderPvtLab(); return;
+        }
+        if (act === 'rvex') {
+            var pd = _fin(M.fluid.rv && M.fluid.rv.pd) ? M.fluid.rv.pd : Math.round((_fin(M.res.pr) ? M.res.pr : 5000) * 0.84 / 50) * 50;
+            _labWrite({ rv: P.exampleRv(M.fluid.cgr, pd) }, true); _renderTable('rv');
+            if (!_fin(M.fluid.rv && M.fluid.rv.pd)) _setCtrl('wp_pdew', pd, true);
+            if ((M.fluid.rv || {}).mode !== 'table') _setCtrl('wp_rvmode', 'table');
+            _syncUi(); _commit('wp_pdew'); return;
+        }
+        if (act === 'emulex') { _labWrite({ emul: P.exampleEmul() }, true); _renderTable('emul'); if ((_byId('wp_emul') || {}).value !== 'table') _setCtrl('wp_emul', 'table'); _syncUi(); _commit('wp_emul'); return; }
+    }
+    function _pvtmSummary() {
+        var r = ST.pvtm, f = r && r.fit; if (!f || !f.ok) return r ? { ok: false, code: (f && f.code) || r.code || null } : null;
+        var a = _pvtmAdopted(ST.M), best = r.rank && r.rank.families && r.rank.families[0];
+        return { ok: true, corr: f.corr, pb: f.pb, props: Object.keys(f.props).reduce(function (o, k) { var p = f.props[k]; o[k] = { a: p.a, b: p.b, n: p.n, mareBefore: p.mareBefore, mareAfter: p.mareAfter }; return o; }, {}),
+                 best: best ? best.key : null, applied: !!a, flags: (f.flags || []).map(function (x) { return x.code; }) };
+    }
+    function _pvtmStale() { var M = ST.M, r = ST.pvtm; if (!M || !r) return false; return ST.pvtmKey !== (_labKey(_labRec(M)) + '|' + JSON.stringify(M.fluid.corr || {}) + '|' + M.fluid.api + '|' + M.fluid.sgg); }
+    function _mareTxt(v) { return _fin(v) ? (v < 0.1 ? _fmt(v, 3) : _fmt(v, v < 10 ? 2 : 1)) + ' %' : '—'; }
+    function _renderPvtLab() {
+        var h = _byId('wp_pvtmres'); if (!h) return;
+        var M = ST.M, r = ST.pvtm, f = r && r.fit, ad = _pvtmAdopted(M), F = ST.F, out = [];
+        var stF = F && F.match;
+        var ht0 = _byId('wp_pvtmtab'); if (ht0) ht0.innerHTML = '';
+        if (!M || M.fluid.type !== 'oil') { h.innerHTML = ''; return; }
+        // status line of the model's match
+        if (ad) {
+            var fresh = ad.labKey && ad.labKey === _labKey(_labRec(M));
+            out.push(_vHtml(stF && stF.stale ? { st: 'warn', t: '⚠ An adopted match is stored but not applied: it was fitted to ' + [ad.corr.rs, ad.corr.bo, ad.corr.muod, ad.corr.muo].filter(Boolean).map(function (k) { return _famLabel('rs', k).replace(/ \(provisional\)$/, ''); }).join(' / ') + ' — run the match again for the selected correlations.' }
+                : { st: fresh ? 'ok' : 'warn', t: (fresh ? '✓ Matched set applied' : '⚠ Matched set applied, but the lab data changed since — run the match again') + ' (Rs ' + _fx(ad.mult.rs, 3) + '·x' + (ad.shift.rs ? (ad.shift.rs > 0 ? ' + ' : ' − ') + _fmt(Math.abs(_dv(ad.shift.rs, 'gor')), 1) : '') + ', Bo ' + _fx(ad.mult.bo, 3) + '·x' + (ad.shift.bo ? (ad.shift.bo > 0 ? ' + ' : ' − ') + _fx(Math.abs(ad.shift.bo), 4) : '') + ', μo ' + _fx(ad.mult.muo, 3) + '·x' + (_fin(ad.pbFactor) && ad.pbFactor !== 1 ? ', pb factor ' + _fx(ad.pbFactor, 4) : '') + (ad.edited ? ', adjusted by hand' : '') + ').' }));
+        }
+        if (!r) { h.innerHTML = out.join('') + '<div class="wp-v info">Enter the lab table (or load the example) and press Match: every black-oil family is ranked against the lab points and the selected one is matched (a·y + b per property, Levenberg-Marquardt).</div>'; return; }
+        if (!f || !f.ok) { h.innerHTML = out.join('') + _vHtml({ st: (r.code === 'CANCELLED' ? 'info' : 'warn'), t: (r.code === 'CANCELLED' ? 'ℹ The match was cancelled.' : '⚠ ' + (((f && f.errors) || r.errors || [])[0] || 'The match could not be run.')) }); return; }
+        if (_pvtmStale()) out.push('<div class="wp-stalechip" role="status">The match is from the previous lab data or correlations — run it again</div>');
+        var best = r.rank && r.rank.families ? r.rank.families.filter(function (x) { return x.ok; })[0] : null, sel = f.corr.rs;
+        var k = [], pbE = f.pb.errPct;
+        k.push(_kpiHtml('Bubble point', _fin(f.pb.lab) ? _u(f.pb.lab, 'pressure', 0, 'psia') : '—', _fin(pbE) ? _famLabel('rs', sel).replace(/ \(provisional\)$/, '') + ' ' + (pbE >= 0 ? '+' : '') + _fmt(pbE, 1) + ' %' : 'no lab value', _fin(pbE) ? (Math.abs(pbE) <= 5 ? 'ok' : Math.abs(pbE) <= 15 ? 'warn' : 'fail') : 'none', 'Lab bubble point and the error of the selected correlation before the match (matched by the one-point factor).'));
+        var ed = ST.pvtmEdit;
+        PVTM_PROPS.forEach(function (p) {
+            var q = f.props[p[0]]; if (!q) return;
+            var after = ed && ed.mare && _fin(ed.mare[p[0]]) ? ed.mare[p[0]] : q.mareAfter;
+            k.push(_kpiHtml({ rs: 'Rs error', bo: 'Bo error', muo: 'Viscosity error' }[p[0]], _mareTxt(after), 'was ' + _mareTxt(q.mareBefore) + ' · a ' + _fx(ed && ed.match ? ed.match.mult[p[0]] : q.a, 3), (function () { var a = ed && ed.match ? ed.match.mult[p[0]] : q.a; return a < 0.8 || a > 1.25 ? 'fail' : a < 0.9 || a > 1.1 ? 'warn' : 'ok'; })(),
+                'Mean absolute relative error against the ' + q.n + ' lab point(s): after the match (was, unmatched). a = the multiplier; inside 0.9–1.1 the correlation is close, outside 0.8–1.25 it is stretched.'));
+        });
+        if (best) k.push(_kpiHtml('Best family', best.label, 'mean error ' + _mareTxt(best.score) + (best.key === sel ? ' · selected' : ''), best.key === sel ? 'ok' : 'info', 'Ranked by the mean absolute relative error of the unmatched Pb, Rs and Bo against the lab points.'));
+        out.push('<div class="wp-kpis wp-tkpis" aria-live="polite">' + k.join('') + '</div>');
+        (f.flags || []).forEach(function (x) { out.push(_vHtml({ st: x.sev === 'fail' ? 'fail' : x.sev === 'warn' ? 'warn' : 'info', t: (x.sev === 'fail' ? '✗ ' : x.sev === 'warn' ? '⚠ ' : 'ℹ ') + x.msg })); });
+        (f.warnings || []).filter(function (w) { return w.code === 'DIFF_FLASH' || w.code === 'DIFF_NO_SEP' || w.code === 'DIFF_NO_PB'; }).forEach(function (w) { out.push(_vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + w.msg })); });
+        var cur = ad && !(stF && stF.stale), same = cur && Math.abs(ad.mult.rs - f.match.mult.rs) < 1e-9 && Math.abs(ad.mult.bo - f.match.mult.bo) < 1e-9 && Math.abs(ad.mult.muo - f.match.mult.muo) < 1e-9 && !ad.edited && !ed;
+        out.push('<div class="wp-btns rp-skip" style="align-items:center">' + (same ? '<span class="wp-chip" style="margin:0;font-size:11.5px;padding:5px 11px;background:rgba(63,185,80,.15);color:var(--wp-ok)">✓ Applied to the model</span>' : '<button type="button" class="btn btn-primary" data-act="pvtadopt">' + (ed ? 'Apply the adjusted match' : 'Apply the match to the model') + '</button>') + (ad ? '<button type="button" class="btn btn-secondary" data-act="pvtunadopt">Remove the match</button>' : '') + '</div>');
+        // plot (property tabs, lab points, unmatched and matched curves, a / b rails)
+        var cp = _plots().pvtmProp; if (!f.props[cp]) cp = PVTM_PROPS.filter(function (p) { return f.props[p[0]]; }).map(function (p) { return p[0]; })[0] || 'rs';
+        out.push('<div class="wp-pvtbar rp-skip" style="margin-top:10px"><span class="wp-seg" role="group" aria-label="Property to plot">' + PVTM_PROPS.filter(function (p) { return f.props[p[0]]; }).map(function (p) { return '<button type="button" data-act="pvtmprop" data-k="' + p[0] + '" class="' + (p[0] === cp ? 'on' : '') + '" aria-pressed="' + (p[0] === cp) + '">' + p[1] + '</button>'; }).join('') + '</span></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_pvtm" tabindex="0" aria-label="Lab points against the correlation before and after the match; drag the a and b rails to adjust the match by hand"></canvas></div>' +
+            '<div class="wp-hint rp-skip">Drag <b>a</b> (multiplier) or <b>b</b> (shift) on the top rails: the curve and the error follow live; Apply keeps the adjusted values. Keyboard: [ and ] pick a rail, arrows move it, Enter commits.</div>');
+        h.innerHTML = out.join('');
+        _drawPvtm();
+        // parameters and rankings (full width, below the two cards)
+        out = [];
+        out.push('<div class="wp-pvtmg"><div><div class="rbox-title" style="margin:0 0 4px">Matched parameters (y = a·y_corr + b)</div><div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Property</th><th>Points</th><th>a</th><th>b</th><th>95 % of a</th><th>Error before</th><th>Error after</th></tr></thead><tbody>' +
+            PVTM_PROPS.filter(function (p) { return f.props[p[0]]; }).map(function (p) {
+                var q = f.props[p[0]], bU = p[0] === 'rs' ? ' ' + _lab('gor', 'scf/STB') : p[0] === 'muo' ? ' cp' : '';
+                return '<tr><td>' + p[1] + '</td><td class="num">' + q.n + '</td><td class="num">' + _fx(q.a, 4) + '</td><td class="num">' + (q.fixedB ? '0 (held)' : _fx(p[0] === 'rs' ? _dv(q.b, 'gor') : q.b, p[0] === 'bo' ? 4 : 2) + bU) + '</td><td class="num">' + (q.ci95 && q.ci95.a ? _fx(q.ci95.a[0], 3) + '–' + _fx(q.ci95.a[1], 3) : '—') + '</td><td class="num">' + _mareTxt(q.mareBefore) + '</td><td class="num">' + _mareTxt(q.mareAfter) + '</td></tr>';
+            }).join('') + (_fin(f.pb.lab) ? '<tr><td>pb</td><td class="num">1</td><td class="num" colspan="2">factor ' + _fx(f.pb.factor, 4) + '</td><td class="num">—</td><td class="num">' + (_fin(pbE) ? _fmt(Math.abs(pbE), 1) + ' %' : '—') + '</td><td class="num">' + (_fin(f.pb.after) ? _fmt(Math.abs(100 * (f.pb.after / f.pb.lab - 1)), 2) + ' %' : '—') + '</td></tr>' : '') + '</tbody></table></div></div>');
+        // ranking
+        var fam = (r.rank && r.rank.families || []).filter(function (x) { return x.ok; });
+        if (fam.length) out.push('<div><div class="rbox-title" style="margin:0 0 4px">Black-oil families against the lab table (unmatched)</div><div class="wp-tw"><table class="dtable wp-dense wp-cmpt"><thead><tr><th>Family</th><th>pb error</th><th>Rs error</th><th>Bo error</th><th>Mean</th><th></th></tr></thead><tbody>' +
+            fam.map(function (x, i) {
+                var isS = x.key === sel;
+                return '<tr' + (isS ? ' class="wp-sel"' : '') + '><td>' + (i === 0 ? '★ ' : '') + _esc(x.label) + (x.verified ? '' : ' <span class="wp-chip prov" style="margin-left:4px">provisional</span>') + '</td><td class="num">' + (_fin(x.pbErrPct) ? (x.pbErrPct >= 0 ? '+' : '') + _fmt(x.pbErrPct, 1) + ' %' : '—') + '</td><td class="num">' + _mareTxt(x.mare.rs) + '</td><td class="num">' + _mareTxt(x.mare.bo) + '</td><td class="num"><b>' + _mareTxt(x.score) + '</b></td><td>' +
+                    (isS ? '<span class="wp-hint" style="margin:0">selected</span>' : '<button type="button" class="btn btn-secondary wp-use rp-skip" data-act="pvtusefam" data-k="' + _esc(x.key) + '">Use</button>') + '</td></tr>';
+            }).join('') + '</tbody></table></div></div>');
+        var vis = (r.rank && r.rank.viscosity || []).filter(function (x) { return x.ok && _fin(x.mare); }).slice(0, 6), cr = M.fluid.corr || {};
+        if (vis.length) out.push('<div><div class="rbox-title" style="margin:0 0 4px">Viscosity pairs (dead + live oil) against the lab μo</div><div class="wp-tw"><table class="dtable wp-dense wp-cmpt"><thead><tr><th>Dead + live oil</th><th>Viscosity error</th><th></th></tr></thead><tbody>' +
+            vis.map(function (x, i) { var isS = x.muod === cr.muod && x.muo === cr.muo; return '<tr' + (isS ? ' class="wp-sel"' : '') + '><td>' + (i === 0 ? '★ ' : '') + _esc(x.label) + (x.verified ? '' : ' <span class="wp-chip prov" style="margin-left:4px">provisional</span>') + '</td><td class="num">' + _mareTxt(x.mare) + '</td><td>' + (isS ? '<span class="wp-hint" style="margin:0">selected</span>' : '<button type="button" class="btn btn-secondary wp-use rp-skip" data-act="pvtusevisc" data-d="' + _esc(x.muod) + '" data-l="' + _esc(x.muo) + '">Use</button>') + '</td></tr>'; }).join('') + '</tbody></table></div></div>');
+        var ht = _byId('wp_pvtmtab'); if (ht) ht.innerHTML = out.join('') + '</div>';
+    }
+    function _pvtmCurve(match) {
+        var r = ST.pvtm, f = r && r.fit, M = ST.M, P = G.WTS_wp_pvtmatch; if (!f || !f.ok || !P || !M) return [];
+        var L = _labRec(M), pMax = Math.max.apply(null, f.points.map(function (q) { return q.p; }).concat([f.pb.lab || 0])) * 1.08, grid = [];
+        for (var i = 0; i <= 40; i++) grid.push(PATM + (pMax - PATM) * i / 40);
+        var pr = P.predict(M.fluid, L, match || null, grid); return pr && pr.ok ? pr.rows : [];
+    }
+    function _drawPvtm() {
+        var cv = _byId('wp_cv_pvtm'), V = G.WTS_wp_view, r = ST.pvtm, f = r && r.fit; if (!cv || !V || !f || !f.ok) return;
+        var T = V.theme(), cp = _plots().pvtmProp; if (!f.props[cp]) cp = PVTM_PROPS.filter(function (p) { return f.props[p[0]]; }).map(function (p) { return p[0]; })[0] || 'rs';
+        var ed = ST.pvtmEdit, m = ed ? ed.match : f.match, X = function (p) { return _dv(p, 'pressure'); };
+        var Y = function (v) { return cp === 'rs' ? _dv(v, 'gor') : v; };
+        var key = 'unm|' + JSON.stringify(f.corr) + f.T_F;
+        if (!ST.pvtmCache || ST.pvtmCache.key !== key + JSON.stringify(f.match.mult) + JSON.stringify(f.match.shift)) ST.pvtmCache = { key: key + JSON.stringify(f.match.mult) + JSON.stringify(f.match.shift), unm: _pvtmCurve(null), mat: _pvtmCurve(f.match) };
+        var unm = ST.pvtmCache.unm, mat = ed ? (ed.curve || _pvtmCurve(m)) : ST.pvtmCache.mat;
+        var pts = f.points.filter(function (q) { return _fin(q.lab[cp]); });
+        var series = [
+            { key: 'unm', label: _famLabel('rs', f.corr.rs).replace(/ \(provisional\)$/, '') + ' (unmatched)', color: T.text2, width: 1.6, dash: [6, 4], pts: unm.map(function (q) { return [X(q.p), Y(q[cp])]; }).filter(function (p) { return _fin(p[1]); }) },
+            { key: 'mat', label: ed ? 'matched (adjusted by hand)' : 'matched a·y + b', color: ed ? T.yellow : T.accent, width: 2.8, pts: mat.map(function (q) { return [X(q.p), Y(q[cp])]; }).filter(function (p) { return _fin(p[1]); }) },
+            { key: 'lab', label: 'lab' + (f.example ? ' (example)' : '') + (f.flash && f.flash.applied ? ', flash-adjusted' : ''), color: T.green, kind: 'points', pts: pts.map(function (q) { return [X(q.p), Y(q.lab[cp])]; }) }
+        ];
+        var q = f.props[cp], aV = m.mult[cp], bV = m.shift[cp], B = (G.WTS_wp_pvtmatch && G.WTS_wp_pvtmatch.BOUNDS[cp]) || { a: [0.5, 2] };
+        var yLab = pts.map(function (z) { return z.lab[cp]; }), span = yLab.length ? Math.max.apply(null, yLab) : 1;
+        var bR = cp === 'bo' ? [-0.15, 0.15] : [-0.3 * span, 0.3 * span];
+        var handles = [{ key: 'a', kind: 'railX', value: aV, min: B.a[0], max: B.a[1], step: 0.002, label: 'a', railLabel: 'a', rail: [0, 0.5], color: T.accent, fmt: function (v) { return 'a ' + _fx(v, 3); } }];
+        if (q && !q.fixedB) handles.push({ key: 'b', kind: 'railX', value: Math.max(bR[0], Math.min(bR[1], bV)), min: bR[0], max: bR[1], step: cp === 'bo' ? 0.0005 : span / 500, label: 'b', railLabel: 'b', rail: [0.5, 1], color: T.purple, fmt: function (v) { return 'b ' + (cp === 'bo' ? _fx(v, 4) : _fmt(Y(v), 1)); } });
+        var vl = []; if (_fin(f.pb.lab)) vl.push({ x: X(f.pb.lab), color: T.green, label: 'pb lab', dash: [3, 3] });
+        if (_fin(f.pb.corr)) vl.push({ x: X(f.pb.corr), color: T.text2, label: 'pb corr.', dash: [2, 5] });
+        var yl = { rs: 'Rs (' + _lab('gor', 'scf/STB') + ')', bo: 'Bo (' + _fvfLab() + ')', muo: 'μo (cp)' }[cp];
+        V.chart(cv, { key: 'pvtm:' + cp + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 230, maxH: 380, w: 520, readout: 'x',
+            x: { label: 'Pressure (' + _lab('pressure', 'psia') + ') at ' + _u(f.T_F, 'temperature', 0, '°F') + ' (lab)', min: 0, short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+            y: { label: yl, min: cp === 'bo' ? undefined : 0, short: cp, fmtR: function (v) { return _fmt(v, cp === 'bo' ? 4 : cp === 'muo' ? 3 : 1); } },
+            series: series, vlines: vl, handles: handles, onHandle: _pvtmHandle, hidden: _plots().pvtmHidden || null, onLegend: function (hid) { _plotsSet({ pvtmHidden: hid }); },
+            empty: 'The lab points and the matched curve appear after a match.' });
+    }
+    function _pvtmHandle(key, v, phase) {
+        var r = ST.pvtm, f = r && r.fit, M = ST.M, P = G.WTS_wp_pvtmatch; if (!f || !f.ok || !P || !M) return;
+        var cp = _plots().pvtmProp; if (!f.props[cp]) cp = PVTM_PROPS.filter(function (p) { return f.props[p[0]]; }).map(function (p) { return p[0]; })[0];
+        var base = ST.pvtmEdit ? ST.pvtmEdit.match : f.match, e = { key: cp, a: base.mult[cp], b: base.shift[cp] };
+        e[key] = key === 'a' ? Math.round(v * 1000) / 1000 : v;
+        var pv = P.preview(M.fluid, _labRec(M), Object.assign({}, f, { match: base }), e);
+        if (!pv) return;
+        ST.pvtmEdit = { match: pv.match, mare: pv.mare, curve: phase === 'end' ? _pvtmCurve(pv.match) : null };
+        if (phase === 'end') { _renderPvtLab(); return; }
+        ST.pvtmEdit.curve = _pvtmCurve(pv.match);
+        var hk = document.querySelector && document.querySelector('#wp_pvtmres .wp-tkpis'); if (hk) { /* the chips follow on release */ }
+        _drawPvtm();
+    }
+
+    // condensate drop-out (modified black oil, Rv) — the Rv table against pressure and the free condensate along the operating traverse
+    function _rvInfo() {
+        var M = ST.M, F = ST.F, R = ST.R; if (!M || !F || !F.ok || !F.rv) return null;
+        var prof = R && R.ok && R.traverse && R.traverse.profile ? R.traverse.profile.filter(function (x) { return !x.restr; }) : [], cgr = F.cgr, pd = F.rv.pd;
+        var rows = prof.map(function (x) { var v = G.WTS_flowline_rvAt ? G.WTS_flowline_rvAt(F.rv, x.p, cgr) : null; return { md: x.md, tvd: x.tvd, p: x.p, rv: v, free: _fin(v) ? Math.max(0, cgr - v) : null }; });
+        var deep = null; rows.forEach(function (x) { if (_fin(pd) && x.p < pd && (deep == null || x.md > deep.md)) deep = x; });
+        return { rows: rows, pd: pd, cgr: cgr, deep: deep, prAbove: _fin(M.res.pr) && _fin(pd) ? M.res.pr > pd : null, wh: rows.length ? rows[0] : null };
+    }
+    function _renderRv() {
+        var hk = _byId('wp_rvk'), M = ST.M, F = ST.F; if (!hk) return;
+        var gas = M && _isGasType(M.fluid.type) && M.fluid.cgr > 0, on = !!(F && F.ok && F.rv);
+        if (!gas) { hk.innerHTML = ''; return; }
+        var I = _rvInfo(), k = [];
+        if (!on) {
+            hk.innerHTML = '<div class="wp-v info">' + ((M.fluid.rv || {}).mode === 'table' ? 'Enter the Rv table (or load the example) to use the modified black oil.' : 'Wet gas (default, D14): all the condensate is liquid along the well. Choose "Modified black oil" to carry part of it vaporised in the gas by an Rv table (lab constant-volume depletion).') + '</div>';
+        } else {
+            k.push(_kpiHtml('Dew point', _u(I.pd, 'pressure', 0, 'psia'), I.prAbove == null ? '' : I.prAbove ? 'below p̄r: single phase in the reservoir' : 'above p̄r: condensate in the reservoir', I.prAbove === false ? 'warn' : 'info'));
+            k.push(_kpiHtml('Drop-out starts', I.deep ? _u(I.deep.md, 'length', 0, 'ft') + ' MD' : (I.rows.length ? 'not in the well' : '—'), I.deep ? _u(I.deep.tvd, 'length', 0, 'ft') + ' TVD · ' + _u(I.deep.p, 'pressure', 0, 'psia') : (I.rows.length ? 'p above the dew point everywhere' : 'after a solve'), I.deep ? 'info' : 'ok'));
+            if (I.wh && _fin(I.wh.free)) k.push(_kpiHtml('Free condensate at the wellhead', _u(I.wh.free, 'cgr', 1, 'STB/MMscf'), 'of ' + _u(I.cgr, 'cgr', 1, 'STB/MMscf') + ' (' + _fmt(100 * I.wh.free / I.cgr, 0) + ' %)', 'info'));
+            hk.innerHTML = '<div class="wp-kpis wp-tkpis">' + k.join('') + '</div>' + _vHtml({ st: 'info', t: 'ℹ Modified black oil (Rv) — ' + PROVISIONAL_TXT + '. The wet-gas model (D14) stays the default.' });
+        }
+        _drawRv(I);
+    }
+    function _drawRv(I) {
+        var V = G.WTS_wp_view, M = ST.M, F = ST.F, T = V && V.theme(); if (!V || !M) return;
+        var cv = _byId('wp_cv_rv'), cv2 = _byId('wp_cv_rvd'), on = !!(F && F.ok && F.rv), cgr = M.fluid.cgr, X = function (p) { return _dv(p, 'pressure'); };
+        var rows = (M.fluid.rv && M.fluid.rv.rows) || [], pd = on ? F.rv.pd : (M.fluid.rv && M.fluid.rv.pd);
+        if (cv) {
+            var pMax = Math.max(_fin(M.res.pr) ? M.res.pr : 0, _fin(pd) ? pd * 1.2 : 0, rows.length ? rows[rows.length - 1][0] * 1.2 : 0, 1000);
+            var cur = on && G.WTS_wp_pvtmatch ? G.WTS_wp_pvtmatch.rvCurve(F.rv, cgr, { pMax: pMax, n: 80 }) : [];
+            var ser = [{ key: 'cgr', label: 'CGR (total)', color: T.text2, width: 1.4, dash: [4, 4], pts: [[0, _dv(cgr, 'cgr')], [X(pMax), _dv(cgr, 'cgr')]] }];
+            if (cur.length) ser.push({ key: 'rv', label: 'Rv vaporised', color: T.accent, width: 2.8, pts: cur.map(function (q) { return [X(q.p), _dv(q.rv, 'cgr')]; }) }, { key: 'free', label: 'free condensate', color: T.blue, width: 2, kind: 'area', pts: cur.map(function (q) { return [X(q.p), _dv(q.free, 'cgr')]; }) });
+            if (rows.length) ser.push({ key: 'tab', label: 'Rv table', color: T.green, kind: 'points', pts: rows.map(function (r) { return [X(r[0]), _dv(r[1], 'cgr')]; }) });
+            var vl = []; if (_fin(M.res.pr)) vl.push({ x: X(M.res.pr), color: T.text2, label: 'p̄r', dash: [2, 4] });
+            var hs = _fin(pd) ? [{ key: 'pd', kind: 'pointX', value: X(pd), min: X(200), max: X(pMax), step: 10, label: 'dew point', color: T.accent, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } }] : [];
+            V.chart(cv, { key: 'rv' + (_metric() ? 'm' : 'i'), aspect: 0.6, minH: 210, maxH: 340, w: 520, readout: 'x',
+                x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', min: 0, max: X(pMax), short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+                y: { label: 'Condensate (' + _lab('cgr', 'STB/MMscf') + ')', min: 0, short: 'Rv', fmtR: function (v) { return _fmt(v, 2); } },
+                series: ser, vlines: vl, handles: hs, onHandle: function (key, v, phase) {
+                    if (key !== 'pd') return;
+                    var pc = Math.round(_fromDisp(v, 'pressure'));
+                    _setCtrl('wp_pdew', pc, true);
+                    if (phase === 'end') { _commit('wp_pdew'); return; }
+                    var Fp = _call('WTS_wp_fluid.build', Object.assign({}, M.fluid, { rv: Object.assign({}, M.fluid.rv, { pd: pc }) }), { T_F: M.res.T_F });
+                    if (Fp && Fp.ok && Fp.rv) { ST.rvPrev = Fp; var keepF = ST.F; ST.F = Fp; try { _drawRv(_rvInfo()); } finally { ST.F = keepF; } }
+                }, empty: 'Enter the Rv table to plot the vaporised and free condensate.' });
+        }
+        if (cv2) {
+            var dax = _plots().depth === 'md' ? 'md' : 'tvd', rr = I && I.rows ? I.rows : [];
+            var dk = function (x) { return _dv(dax === 'md' ? x.md : x.tvd, 'length'); };
+            var s2 = rr.length ? [{ key: 'free', label: 'free condensate', color: T.blue, width: 2.6, pts: rr.filter(function (x) { return _fin(x.free); }).map(function (x) { return [_dv(x.free, 'cgr'), dk(x)]; }) },
+                { key: 'cgr', label: 'CGR', color: T.text2, width: 1.2, dash: [4, 4], pts: [[_dv(cgr, 'cgr'), dk(rr[0])], [_dv(cgr, 'cgr'), dk(rr[rr.length - 1])]] }] : [];
+            var mk = I && I.deep ? [{ x: _dv(I.deep.free, 'cgr'), y: dk(I.deep), kind: 'diamond', color: T.accent, r: 6, label: 'dew point' }] : [];
+            V.chart(cv2, { key: 'rvd:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 230, maxH: 380, w: 520, readout: 'y',
+                x: { label: 'Free condensate (' + _lab('cgr', 'STB/MMscf') + ')', min: 0, short: 'free', fmtR: function (v) { return _fmt(v, 2); } },
+                y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + _lab('length', 'ft') + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
+                series: s2, markers: mk, empty: on ? 'The free condensate along the well appears after a solve.' : 'With the modified black oil the free condensate along the well is drawn here.' });
+        }
+    }
+
+    // emulsion viscosity — μ_em / μo against the water cut, the inversion point handle and the stream's water cut
+    function _emulAt() {
+        var M = ST.M, F = ST.F, R = ST.R; if (!M || !F || !F.ok || M.fluid.type !== 'oil' || !(M.fluid.wc > 0)) return null;
+        var q = R && R.ok && R.op ? R.op.q : F.refQ, pts = [];
+        var prof = R && R.ok && R.traverse && R.traverse.profile ? R.traverse.profile.filter(function (x) { return !x.restr; }) : [];
+        if (prof.length) [prof[0], prof[prof.length - 1]].forEach(function (x, i) { var a = F.at(x.p, x.t, q); if (a) pts.push({ where: i ? 'bottom' : 'wellhead', md: x.md, tvd: x.tvd, p: x.p, t: x.t, muL: a.muL, mix: a.fo * a.muo + a.fw * a.muw, muo: a.muo, muw: a.muw, fw: a.fw, ratio: a.emulRatio, cont: a.emulCont }); });
+        return { q: q, pts: pts };
+    }
+    function _renderEmul(previewInv) {
+        var hk = _byId('wp_emulk'), M = ST.M, F = ST.F, V = G.WTS_wp_view, P = G.WTS_wp_pvtmatch; if (!hk || !M) return;
+        if (M.fluid.type !== 'oil') { hk.innerHTML = ''; return; }
+        var em = M.fluid.emul || {}, on = !!(F && F.ok && F.emul), A = _emulAt(), k = [];
+        if (!(M.fluid.wc > 0)) hk.innerHTML = '<div class="wp-v info">The emulsion viscosity needs a water cut (step ①).</div>';
+        else if (!on) hk.innerHTML = '<div class="wp-v info">Liquid viscosity: the volume-weighted oil + water mixture (default). Choose an emulsion model for a stable water-in-oil emulsion.</div>';
+        else {
+            (A ? A.pts : []).forEach(function (x) { k.push(_kpiHtml(x.where === 'bottom' ? 'Bottom-hole liquid' : 'Wellhead liquid', _fmt(x.muL, x.muL < 10 ? 2 : 1) + ' cp', '×' + _fmt(x.muL / x.mix, 2) + ' the mixture · ' + (x.cont === 'water' ? 'water-continuous' : x.cont === 'oil' ? 'oil-continuous' : 'table') + ' · ' + _u(x.md, 'length', 0, 'ft') + ' MD', x.muL / x.mix > 5 ? 'warn' : 'info')); });
+            hk.innerHTML = (k.length ? '<div class="wp-kpis wp-tkpis">' + k.join('') + '</div>' : '') + (em.model !== 'table' ? _vHtml({ st: 'info', t: 'ℹ ' + (em.model === 'woelflin' ? 'Woelflin emulsion curves (chart readings to verify)' : 'Brinkman emulsion') + ' — ' + PROVISIONAL_TXT + '. The volume-weighted mixture stays the default.' }) : '');
+        }
+        var cv = _byId('wp_cv_emul'); if (!cv || !V || !P) return;
+        var T = V.theme(), b = A && A.pts.length ? A.pts[A.pts.length - 1] : null, muo = b ? b.muo : 5, muw = b ? b.muw : 0.5, inv = _fin(previewInv) ? previewInv : (_fin(em.inv) ? em.inv : 0.6);
+        var curve = function (spec) { return P.emulCurve(spec, { muo: muo, muw: muw, n: 80 }).map(function (z) { return [100 * z.fw, z.ratio]; }); };
+        var ser = [{ key: 'mix', label: 'mixture (default)', color: T.text2, width: 1.4, dash: [4, 4], pts: curve(null) }];
+        [['woelflin', 'loose'], ['woelflin', 'medium'], ['woelflin', 'tight'], ['brinkman', null]].forEach(function (c) {
+            var sel = on && em.model === c[0] && (c[1] == null || em.tight === c[1]);
+            ser.push({ key: c[0] + (c[1] || ''), label: (c[0] === 'woelflin' ? 'Woelflin ' + c[1] : 'Brinkman') + ' (prov.)', color: sel ? T.accent : (c[0] === 'brinkman' ? T.purple : T.blue), width: sel ? 3 : 1.4, dash: sel ? null : [6, 4], pts: curve({ model: c[0], tight: c[1], inv: inv }) });
+        });
+        var rows = (em.rows || []);
+        if (rows.length) ser.push({ key: 'tab', label: 'user table', color: em.model === 'table' ? T.accent : T.green, width: em.model === 'table' ? 3 : 1.6, pts: curve({ model: 'table', rows: rows }) }, { key: 'tabp', label: '', legend: false, kind: 'points', color: T.green, pts: rows.map(function (r) { return [100 * r[0], r[1]]; }) });
+        var vl = [{ x: 100 * (M.fluid.wc || 0), color: T.green, label: 'WC', dash: [3, 3] }];
+        if (A && A.pts.length) vl.push({ x: 100 * A.pts[A.pts.length - 1].fw, color: T.text2, label: 'in situ', dash: [2, 5] });
+        var hs = (em.model === 'woelflin' || em.model === 'brinkman') ? [{ key: 'inv', kind: 'lineX', value: 100 * inv, min: 10, max: 90, step: 1, label: 'inversion', color: T.accent, fmt: function (v) { return _fmt(v, 0) + ' %'; } }] : [];
+        V.chart(cv, { key: 'emul' + (_metric() ? 'm' : 'i'), aspect: 0.6, minH: 210, maxH: 340, w: 520, readout: 'x',
+            x: { label: 'Water fraction of the liquid (%)', min: 0, max: 100, short: 'water', fmtR: function (v) { return _fmt(v, 1) + ' %'; } },
+            y: { label: 'Liquid viscosity / oil viscosity (–)', log: true, short: 'μ ratio', fmtR: function (v) { return '×' + _fmt(v, 2); } },
+            series: ser, vlines: vl, handles: hs, hidden: _plots().emulHidden || null, onLegend: function (hid) { _plotsSet({ emulHidden: hid }); },
+            onHandle: function (key, v, phase) {
+                if (key !== 'inv') return;
+                var pc = Math.round(v);
+                _setCtrl('wp_emulInv', pc);
+                if (phase === 'end') { _commit('wp_emulInv'); return; }
+                _renderEmul(pc / 100);
+            }, empty: 'No viscosity for these inputs.' });
+    }
+    function _renderPvtB() { _renderPvtLab(); _renderRv(); _renderEmul(null); }
+
     // Case summary: the inputs that produced the operating point, always rendered inside #wp_res so the page PDF and the Quick
     // Report carry them whichever step is open (the step input sections are hidden except the active one)
     var CORR_NAME = function (k) { var e = (G.WTS_flowline_corr || {})[k]; return e ? String(e.label || k).replace(/\s*\(.*$/, '') + (e.verified === true ? '' : ' (provisional)') : String(k || ''); };
@@ -42479,7 +42910,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             : ' · ' + _fmt(fl.api, 1) + ' °API · GOR ' + _u(fl.gor, 'gor', 0, 'scf/STB') + ' · WC ' + _fmt(100 * (fl.wc || 0), 1) + ' %'));
         var cr = fl.corr || {}, isOil = fl.type === 'oil', water = fl.type === 'water' || fl.type === 'waterinj';
         if (!water) row('PVT correlations', (isOil ? 'Pb / Rs ' + _famLabel('rs', cr.rs) + ' · Bo ' + _famLabel('bo', cr.bo) + ' · co ' + _famLabel('co', cr.co) + ' · μod ' + _famLabel('muod', cr.muod) + ' · μo ' + _famLabel('muo', cr.muo) + ' · σ ' + _famLabel('sigma', cr.sigma) + ' · '
-            : (fl.cgr > 0 ? 'condensate μod ' + _famLabel('muod', cr.muod) + ' · ' : '')) + 'Z ' + _famLabel('z', cr.z) + ' · μg ' + _famLabel('mug', cr.mug) + (isOil && _fin(fl.pbUser) ? ' · pb shifted to ' + _u(fl.pbUser, 'pressure', 0, 'psia') : ''));
+            : (fl.cgr > 0 ? 'condensate μod ' + _famLabel('muod', cr.muod) + ' · ' : '')) + 'Z ' + _famLabel('z', cr.z) + ' · μg ' + _famLabel('mug', cr.mug) + (isOil && _fin(fl.pbUser) ? ' · pb shifted to ' + _u(fl.pbUser, 'pressure', 0, 'psia') : '') +
+            (ST.F && ST.F.match && ST.F.match.applied ? ' · matched to the lab table' : '') + (ST.F && ST.F.rv ? ' · condensate by the Rv table (provisional)' : '') + (ST.F && ST.F.emul ? ' · emulsion viscosity ' + ST.F.emul.model + (ST.F.emul.model === 'table' ? '' : ' (provisional)') : ''));
         var I = ST.I, mods = _iprModels(), md = mods.filter(function (x) { return x.key === M.res.model; })[0];
         row('Reservoir', 'p̄r ' + _u(M.res.pr, 'pressure', 0, 'psia') + ' · T ' + _u(M.res.T_F, 'temperature', 0, '°F'));
         var par = Object.keys(M.res.params || {}).filter(function (k) { return IP[k] && _fin(+M.res.params[k]) && (!md || md.needs.indexOf(k) !== -1); }).map(function (k) { return k + ' ' + _fmt(+M.res.params[k], 4); }).join(', ');
@@ -42521,6 +42953,19 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var pd = ST.pvtData && ST.pvtData.fam && ST.pvtData.fam.rows ? ST.pvtData.fam : null, okF = pd ? pd.rows.filter(function (r) { return r.ok; }) : [];
             row('PVT family (Pb / Rs / Bo)', _famLabel('rs', cr.rs) + (okF.length > 1 && _fin(pd.spreadPb) ? ' · pb across ' + okF.length + ' families ' + okF.map(function (r) { return _fmt(_dv(r.pb, 'pressure'), 0); }).join(' / ') + ' ' + _lab('pressure', 'psia') + ' (spread ' + _fmt(100 * pd.spreadPb, 0) + ' %)' : ''));
         }
+        // B (WP23): the PVT lab match, the modified black oil and the emulsion viscosity
+        var ad = fl.lab && fl.lab.adopt && fl.lab.adopt.on ? fl.lab.adopt : null, fmt3 = ST.F && ST.F.ok ? ST.F : null, pmf = ST.pvtm && ST.pvtm.fit && ST.pvtm.fit.ok ? ST.pvtm.fit : null;
+        if (fl.type === 'oil' && (ad || pmf)) {
+            var mm = ad || pmf.match, ab = function (k, d) { var a = mm.mult[k], b = mm.shift[k]; return _fx(a, 3) + (b ? (b > 0 ? ' + ' : ' − ') + _fx(Math.abs(k === 'rs' ? _dv(b, 'gor') : b), d) : ''); };
+            row('PVT lab match' + (ad ? (fmt3 && fmt3.match && fmt3.match.stale ? ' (stored, not applied: other correlations)' : ' (applied)') : ' (not applied)'),
+                'Rs ' + ab('rs', 1) + ' · Bo ' + ab('bo', 4) + ' · μo ' + ab('muo', 3) + (_fin(mm.pbFactor) && mm.pbFactor !== 1 ? ' · pb factor ' + _fx(mm.pbFactor, 4) : '') +
+                (pmf ? ' · error ' + ['rs', 'bo', 'muo'].filter(function (k) { return pmf.props[k]; }).map(function (k) { return { rs: 'Rs', bo: 'Bo', muo: 'μo' }[k] + ' ' + _mareTxt(pmf.props[k].mareBefore) + ' → ' + _mareTxt(pmf.props[k].mareAfter); }).join(', ') : '') + (ad && ad.edited ? ' · adjusted by hand' : ''));
+            var bf = ST.pvtm && ST.pvtm.rank && ST.pvtm.rank.families ? ST.pvtm.rank.families.filter(function (x) { return x.ok; })[0] : null;
+            if (bf) row('Best black-oil family against the lab', bf.label + (bf.verified ? '' : ' (provisional)') + ' · mean error ' + _mareTxt(bf.score) + ' (selected ' + _famLabel('rs', cr.rs) + ')');
+        }
+        if (fmt3 && fmt3.rv) { var RI = _rvInfo(); row('Condensate: modified black oil (provisional)', 'dew point ' + _u(fmt3.rv.pd, 'pressure', 0, 'psia') + (RI && RI.deep ? ' · drop-out from ' + _u(RI.deep.md, 'length', 0, 'ft') + ' MD · ' + _u(RI.deep.tvd, 'length', 0, 'ft') + ' TVD' : (RI && RI.rows.length ? ' · no drop-out in the well' : '')) + (RI && RI.wh && _fin(RI.wh.free) ? ' · free at the wellhead ' + _u(RI.wh.free, 'cgr', 1, 'STB/MMscf') : '')); }
+        if (fmt3 && fmt3.emul) { var EA = _emulAt(), EN = { woelflin: 'Woelflin ' + fmt3.emul.tight + ' (chart readings, provisional)', brinkman: 'Brinkman (provisional)', table: 'user table' }[fmt3.emul.model];
+            row('Liquid viscosity: emulsion', EN + (fmt3.emul.model !== 'table' ? ', inversion ' + _fmt(100 * fmt3.emul.inv, 0) + ' % water' : '') + (EA && EA.pts.length ? ' · ' + EA.pts.map(function (x) { return x.where + ' ' + _fmt(x.muL, 2) + ' cp (×' + _fmt(x.muL / x.mix, 2) + ')'; }).join(', ') : '')); }
         // temperature model and the U fitted to the test THT
         var hx = R && R.ok && R.heat && R.heat.mode === 'relax' ? R.heat : null, uf = ST.ufit;
         row('Temperature model', hx ? 'relaxation, U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ', THT ' + _u(hx.tht, 'temperature', 0, '°F') + ' (provisional)' : (M.well.heat.mode === 'relax' ? 'relaxation asked, linear used' : 'linear'));
@@ -43158,6 +43603,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             } else hf.innerHTML = '<div class="wp-v info">' + (_isStub(F) ? 'The fluid engine shows the PVT table here once it is installed.' : 'Enter the fluid, the reservoir pressure and temperature to see the PVT table.') + '</div>';
         }
         _renderPvtCard(null);
+        _renderPvtB();
         // ② IPR plot
         var cv = _byId('wp_cv_ipr'), V = G.WTS_wp_view;
         if (cv && V) {
@@ -43328,9 +43774,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var choke = !!(_byId('wp_choke') || {}).checked, mode = (_byId('wp_mode') || {}).value || 'rate', ck = (_byId('wp_ckcorr') || {}).value || 'gilbert';
         var lift = (_byId('wp_lift') || {}).value || 'none', sv2 = (_byId('wpv_svar2') || {}).value || '';
         var heat = (_byId('wp_heat') || {}).value === 'relax' ? 'relax' : 'linear';
+        var rvm = (_byId('wp_rvmode') || {}).value || 'none', emm = (_byId('wp_emul') || {}).value || 'none';
         // one visibility rule per element: every condition it carries must hold (fluid type, IPR parameter, choke in line, solve mode,
         // choke model, lift type, a second sensitivity variable, temperature model)
-        Array.prototype.forEach.call(root.querySelectorAll('[data-for],[data-ip],[data-choke],[data-mode],[data-ck],[data-lift],[data-sv2],[data-heat]'), function (e) {
+        Array.prototype.forEach.call(root.querySelectorAll('[data-for],[data-ip],[data-choke],[data-mode],[data-ck],[data-lift],[data-sv2],[data-heat],[data-rv],[data-emul]'), function (e) {
             var on = true, a;
             if ((a = e.getAttribute('data-for')) != null) { var list = String(a).split(' '); on = on && (list.indexOf(gas ? 'gas' : 'oil') !== -1 || list.indexOf(type) !== -1); }
             if ((a = e.getAttribute('data-ip')) != null) on = on && need.indexOf(a) !== -1;
@@ -43340,6 +43787,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if ((a = e.getAttribute('data-lift')) != null) on = on && String(a).split(' ').indexOf(lift) !== -1;
             if ((a = e.getAttribute('data-sv2')) != null) on = on && ((a === 'on') === !!sv2);
             if ((a = e.getAttribute('data-heat')) != null) on = on && a === heat;
+            if ((a = e.getAttribute('data-rv')) != null) on = on && String(a).split(' ').indexOf(rvm) !== -1;
+            if ((a = e.getAttribute('data-emul')) != null) on = on && String(a).split(' ').indexOf(emm) !== -1;
             if (e.classList) e.classList.toggle('wp-off', !on);
         });
         // dry-gas-only lift methods are not applicable to oil and water wells (WTS_wp_check raises ✗ if one is still selected)
@@ -43424,6 +43873,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             return;
         }
         if (act === 'match') { _runMatch(); return; }
+        if (/^pvt(match|adopt|unadopt|mprop|usefam|usevisc)$/.test(act) || act === 'labex' || act === 'rvex' || act === 'emulex') { _pvtmAct(act, btn); return; }
         if (act === 'pvtprop') { _plotsSet({ pvtProp: btn.getAttribute('data-k') }); _renderPvtCard(null); return; }
         if (act === 'pvtfam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); return; }
         if (act === 'pbclear') { _setCtrl('wp_pbUser', ''); _commit('wp_pbUser'); return; }
@@ -43922,7 +44372,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (!cells.length || !cells.some(function (x) { return /^[-+]?\d/.test(x) || /^[-+]?[.,]\d/.test(x); })) return;      // header lines are skipped
             if (cells.length !== cols.length) odd++;
             var arr = cols.every(function (c) { return typeof c.k === 'number'; }), row = arr ? [] : {};
-            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, c.cat) : null; } });
+            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? (c.pct ? v / 100 : _fromDisp(v, c.cat)) : null; } });
             rows.push(row);
         });
         var r = _writeTable(t, rows), msg = _byId('wp_pastemsg_' + t);
@@ -43983,7 +44433,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (msg) msg.innerHTML = rowsOverride ? _vHtml({ st: 'info', t: 'ℹ The previous survey rows are back.' }) : (old.length ? _vHtml({ st: 'ok', t: '✓ ' + conv.length + ' station(s) converted to ' + (m === 'mdtvd' ? 'MD · TVD' : 'MD · Inc · Azi') + '.' }) + '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="svundo">Undo</button></div>' : '');
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
-    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
+    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests', 'lab', 'rv', 'emul'].forEach(_renderTable); _labInputsFill(); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
     function _renderRatings() {
         var M = _read(); if (!M) return;
         var a = _byId('wpt_rate_wh'), b = _byId('wpt_rate_tht'), c = _byId('wpt_beans');
@@ -44034,6 +44484,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             L.push(['q_inj (' + _lab('gasRateSmall', 'Mscf/d') + ')', 'q_L (' + _lab('liquidRate', 'STB/d') + ')', 'pwf (' + _lab('pressure', 'psia') + ')', 'THP (' + _lab('pressureG', 'psig') + ')', 'Injection MD (' + _lab('length', 'ft') + ')', 'Injection TVD (' + _lab('length', 'ft') + ')', 'Stable', 'Note'].map(q).join(','));
             ST.gl.points.forEach(function (p) { L.push([_dv(p.qinj, 'gasRateSmall'), p.ok ? _dv(p.qL, 'liquidRate') : '', p.ok ? _dv(p.pwf, 'pressure') : '', p.ok ? _dv(p.thp, 'pressureG') : '', _fin(p.injMd) ? _dv(p.injMd, 'length') : '', _fin(p.injTvd) ? _dv(p.injTvd, 'length') : '', p.ok ? p.stable : '', q(p.ok ? (p.atPacker ? 'packer' : '') : (p.error || p.code || ''))].join(',')); });
         }
+        var pmc = ST.pvtm && ST.pvtm.fit && ST.pvtm.fit.ok ? ST.pvtm.fit : null;
+        if (pmc) {
+            L.push(''); L.push(q('PVT lab match at ' + _u(pmc.T_F, 'temperature', 0, '°F') + ' (lab basis ' + pmc.basis + (pmc.flash.applied ? ', adjusted to flash' : '') + ')'));
+            L.push(['p (' + _lab('pressure', 'psia') + ')', 'Rs lab', 'Rs correlation', 'Rs matched', 'Bo lab', 'Bo correlation', 'Bo matched', 'muo lab (cp)', 'muo correlation', 'muo matched'].map(q).join(','));
+            var gv = function (o, k) { var v = o && o[k]; return _fin(v) ? (k === 'rs' ? _dv(v, 'gor') : v) : ''; };
+            pmc.points.forEach(function (x) { L.push([_dv(x.p, 'pressure'), gv(x.lab, 'rs'), gv(x.before, 'rs'), gv(x.after, 'rs'), gv(x.lab, 'bo'), gv(x.before, 'bo'), gv(x.after, 'bo'), gv(x.lab, 'muo'), gv(x.before, 'muo'), gv(x.after, 'muo')].join(',')); });
+            L.push(['property', 'a', 'b', 'points', 'error before (%)', 'error after (%)'].map(q).join(','));
+            Object.keys(pmc.props).forEach(function (k) { var x = pmc.props[k]; L.push([k, x.a, k === 'rs' ? _dv(x.b, 'gor') : x.b, x.n, x.mareBefore, x.mareAfter].join(',')); });
+        }
         if (ST.beans && ST.beans.rows) { L.push(''); L.push('Bean schedule'); ST.beans.rows.forEach(function (b) { L.push([b.bean, _dv(b.q, rc[0]), _dv(b.thp, 'pressureG'), _dv(b.tht, 'temperature'), b.stable].join(',')); }); }
         var csv = L.join('\n');
         ST.lastCsv = csv;
@@ -44059,6 +44518,34 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<button type="button" class="btn btn-secondary" data-act="paste" data-t="' + t + '">Paste from a spreadsheet</button>' + (o.btns || '') + '</div>' +
             '<div class="wp-paste" id="wp_paste_' + t + '"><textarea id="wp_pastet_' + t + '" aria-label="Paste rows" placeholder="Paste rows copied from a spreadsheet (columns in the order above, tab, comma or semicolon separated; header lines are skipped). The rows replace the table."></textarea>' +
             '<div class="wp-btns"><button type="button" class="btn btn-primary" data-act="pasteok" data-t="' + t + '">Replace the table with these rows</button></div></div><div id="wp_pastemsg_' + t + '"></div></div>';
+    }
+    // ① B (WP23): the PVT lab match (oil), the condensate drop-out (wet gas) and the emulsion viscosity (oil with water)
+    function _pvtBHtml() {
+        var lab = '<div class="fg">' + _fg('wpl_T', 'Lab temperature', { unit: '°F', ph: 'required' }) + _fg('wpl_basis', 'Lab basis', { options: [['flash', 'Flash (separator) values'], ['differential', 'Differential liberation']] }) +
+            _fg('wpl_pb', 'Lab bubble point', { unit: 'psia' }) + _fg('wpl_rsbF', 'Separator-test Rsb (flash)', { unit: 'scf/STB', hint: 'The lab oil\'s solution GOR; blank = the highest Rs of the table.' }) +
+            _fg('wpl_bobF', 'Separator-test Bob (flash)', { unit: 'rb/STB', hint: 'With differential data: adjusts the table to flash (provisional).' }) + '</div>';
+        return '<div class="wp-2c" data-for="oil">' +
+            _card('PVT lab data', lab + _tableBlock('lab', 'Lab table', 'Pressure with any of Rs, Bo and μo at the lab temperature; Rs above the bubble point is the Rsb. Pressures in absolute units.',
+                { btns: '<button type="button" class="btn btn-secondary" data-act="labex" title="Synthetic example data for trying the match">Example lab data</button>' }) +
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="pvtmatch">Match to the lab data</button></div><div id="wp_pvtmjob" class="rp-skip" role="status"></div>' +
+                '<div class="wp-hint">Pb by a one-point factor, then Rs (below pb), Bo and μo each as a·y + b on the model matched so far (Levenberg-Marquardt, relative errors); every black-oil family and viscosity pair is ranked against the lab points. Apply sends the matched set into every solve.</div>') +
+            _card('PVT lab match', '<div id="wp_pvtmres" aria-live="polite"></div>') + '</div>' +
+            '<div class="wp-studies" data-for="oil"><div id="wp_pvtmtab"></div></div>' +
+            '<div class="wp-2c" data-for="gas condensate">' +
+            _card('Condensate drop-out', '<div class="fg">' + _fg('wp_rvmode', 'Condensate model', { options: [['none', 'Wet gas — no mass transfer (default)'], ['table', 'Modified black oil — Rv table (provisional)']] }) +
+                _fg('wp_pdew', 'Dew point', { unit: 'psia', data: 'data-rv="table"', ph: 'from the table', hint: 'Blank = where the Rv table reaches the CGR. Drag it on the plot.' }) + '</div>' +
+                '<div data-rv="table">' + _tableBlock('rv', 'Vaporised condensate Rv', 'Lab constant-volume depletion: pressure and the condensate still in the gas (Rv ≤ CGR). Above the dew point all the condensate is vaporised.',
+                    { btns: '<button type="button" class="btn btn-secondary" data-act="rvex">Example Rv table</button>' }) + '</div>') +
+            _card('Condensate along the well', '<div id="wp_rvk" aria-live="polite"></div><div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rv" tabindex="0" aria-label="Vaporised and free condensate against pressure, with the dew point handle"></canvas></div>' +
+                '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rvd" tabindex="0" aria-label="Free condensate along the well at the operating point against depth"></canvas></div>' +
+                '<div class="wp-hint rp-skip">Drag the dew point on the left plot: the drop-out depth follows on release. The right plot reads MD and TVD along the deviated well (the TVD / MD switch of the traverse card).</div>') + '</div>' +
+            '<div class="wp-2c" data-for="oil">' +
+            _card('Emulsion', '<div class="fg">' + _fg('wp_emul', 'Liquid viscosity', { options: [['none', 'Oil + water mixture (default)'], ['woelflin', 'Woelflin emulsion curves (provisional)'], ['brinkman', 'Brinkman emulsion (provisional)'], ['table', 'Emulsion table (μ_em / μo)']] }) +
+                _fg('wp_emulT', 'Emulsion', { options: [['loose', 'Loose'], ['medium', 'Medium'], ['tight', 'Tight']], data: 'data-emul="woelflin"' }) +
+                _fg('wp_emulInv', 'Inversion point', { unit: '% water', data: 'data-emul="woelflin brinkman"', hint: 'Water-continuous above it (Brinkman in water). Drag it on the plot.' }) + '</div>' +
+                '<div data-emul="table">' + _tableBlock('emul', 'Emulsion viscosity ratio', 'Water fraction of the liquid (%) and μ_emulsion / μ_oil from a lab or field measurement; held constant beyond the last row.',
+                    { btns: '<button type="button" class="btn btn-secondary" data-act="emulex">Example table</button>' }) + '</div>') +
+            _card('Liquid viscosity', '<div id="wp_emulk" aria-live="polite"></div><div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_emul" tabindex="0" aria-label="Liquid viscosity over the oil viscosity against the water fraction for each emulsion model; drag the inversion point"></canvas></div>') + '</div>';
     }
     function _sectionsHtml() {
         var models = _iprModels(), wellCorr = _corrList('well'), lineCorr = _corrList('line');
@@ -44086,7 +44573,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<div class="wp-col">' + _card('Fluid properties', '<div class="wp-pvtbar rp-skip"><span class="wp-seg" id="wp_pvtseg" role="group" aria-label="Property to plot"></span><span id="wp_pvtclr"></span></div>' +
                 '<div class="chart-wrap"><canvas id="wp_cv_pvt" tabindex="0" aria-label="Fluid properties against pressure at the reservoir temperature, every correlation family overlaid; drag the pb handle to shift the bubble point"></canvas></div>' +
                 '<div class="wp-fchips rp-skip" id="wp_pvtchips" role="group" aria-label="Black-oil correlation families"></div><div id="wp_pvtverd"></div><div id="wp_pvtcmp" style="margin-top:8px"></div>') +
-            _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></div></section>';
+            _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></div>' + _pvtBHtml() + '</section>';
         var s2 = '<section id="wp_step_2" class="wp-sec" style="display:none"><div class="wp-sec-h">② Reservoir <span>inflow model, reservoir pressure and its parameters</span></div><div class="wp-2c">' +
             _card('Inflow', '<div class="fg">' +
                 _fg('wp_ipr', 'Inflow model', { options: models.map(function (m) { return [m.key, m.label + (m.kind === 'gas' ? ' (gas)' : '')]; }) }) +
@@ -44183,7 +44670,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 '<div class="wp-hint">Levenberg-Marquardt fits the holdup multiplier (H_L\' = clamp(m_h·H_L, λ_L, 1)) and, when the tests span at least 2:1 in rate, the friction multiplier to the gauge pressures of the used tests; density, friction and acceleration are rebuilt inside the march on the surveyed path. Apply sends the multipliers into every solve.</div>' +
                 '<div id="wp_tunebox" class="rp-skip"></div><div class="rbox wp-tune" id="wp_tuneres" style="margin-top:10px"></div>') + '</section>';
         var s7 = '<section id="wp_step_7" class="wp-sec" style="display:none"><div class="wp-sec-h">⑦ Report <span>what the page report and the Quick Report carry</span></div>' +
-            _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the traverse card, the correlation validity, the case summary, the studies and tuning summary (PVT family, temperature model and fitted U, gas-lift injection point, optimum, economic point and gain, VLP tuning m_h / m_f and RMS, the sensitivity grid) and the Notes. ' +
+            _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the traverse card, the correlation validity, the case summary, the studies and tuning summary (PVT family, the PVT lab match, the condensate and emulsion models, temperature model and fitted U, gas-lift injection point, optimum, economic point and gain, VLP tuning m_h / m_f and RMS, the sensitivity grid) and the Notes. ' +
                 'Full tables (traverse, curves, sensitivity, bean schedule) are in the CSV.</div>' +
                 '<div class="fg" style="margin-top:12px">' + _fg('wp_notes', 'Engineer notes (printed in the Notes)', { area: true, rows: 4, def: '', ph: 'Assumptions, data sources, decisions…' }) + '</div>' +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="csv">Export CSV bundle</button></div>') + '</section>';
@@ -44250,9 +44737,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (t.id === 'wpv_svar') { _sensSuggest(); return; }
             if (t.id === 'wpv_svar2') { _sensSuggest(2); _syncUi(); return; }
             if (t.getAttribute && t.getAttribute('data-corr')) return;
+            if (t.id && t.id.indexOf('wpl_') === 0) { _labInputsWrite(); return; }
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_corr_pb' || t.id === 'wp_corr_rs') _famSync(t.id);
-            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_heat' || t.id === 'wp_ckcorr' || t.id === 'wp_lift') _syncUi();
+            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_heat' || t.id === 'wp_ckcorr' || t.id === 'wp_lift' || t.id === 'wp_rvmode' || t.id === 'wp_emul') _syncUi();
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();
         });
@@ -44296,7 +44784,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         handle: function (key, v, phase) { _onHandle(key, v, phase || 'move'); },
         goStep: function (n) { _goStep(n, false); },
         examples: function () { return JSON.parse(JSON.stringify(EXAMPLES)); },
-        resetJobs: function () { ST.sens = null; ST.beans = null; ST.match = null; ST.design = null; ST.gl = null; ST.sensSel = null; ST.prov = {}; ST.slow = false; ST.tune = null; ST.tuneTests = null; ST.tunePrev = null; ST.untuned = null; },
+        resetJobs: function () { ST.sens = null; ST.beans = null; ST.match = null; ST.design = null; ST.gl = null; ST.sensSel = null; ST.prov = {}; ST.slow = false; ST.tune = null; ST.tuneTests = null; ST.tunePrev = null; ST.untuned = null; ST.pvtm = null; ST.pvtmEdit = null; ST.pvtmKey = null; ST.pvtmCache = null; },
+        pvtmHandle: function (key, v, phase) { _pvtmHandle(key, v, phase || 'move'); },
         tuneHandle: function (key, v, phase) { _tuneHandle(key, v, phase || 'move'); }
     };
     G.WTS_calcRegistry = G.WTS_calcRegistry || {};
@@ -44346,7 +44835,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     if (typeof G.addEventListener === 'function') {
         G.addEventListener('resize', function () {
             if (!_byId('wp_root') || !G.WTS_wp_view) return;
-            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr', 'wp_cv_match', 'wp_cv_glpc', 'wp_cv_gldepth', 'wp_cv_tub', 'wp_cv_tune', 'wp_cv_tobj'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
+            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr', 'wp_cv_match', 'wp_cv_glpc', 'wp_cv_gldepth', 'wp_cv_tub', 'wp_cv_tune', 'wp_cv_tobj', 'wp_cv_pvtm', 'wp_cv_rv', 'wp_cv_rvd', 'wp_cv_emul'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
             _renderBreakdown(); _renderSchematic();
         });
     }
@@ -44411,6 +44900,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //     salinity takes the McCain standard density (γw = ρw,std / 62.368); validity verdicts for the Vasquez-Beggs, Glasø and
 //     Petrosky-Farshad families (Appendix A) and a "provisional" note on every unverified correlation in use (D17); F.provisional
 //     = labels of those; F.table rows gain rsw (McCain gas solubility in water, scf/STB) and co from the selected co key
+//     B additions (WP23; each absent → the A2 path bit for bit):
+//       spec.match {on, pbFactor, mult {rs, bo, muo}, shift {rs, bo, muo}, corr {rs, bo, muod, muo}, lab}  the adopted PVT lab match
+//                                       (WTS_wp_pvtmatch): y = a·y_corr + b through pvt.mult / pvt.shift and the bubble-point factor
+//                                       pvt.pbFactor (a user bubble point takes precedence); applied only while the fluid's correlation
+//                                       keys equal match.corr, else MATCH_STALE. F.match {applied, stale, pbFactor, mult, shift, reason}
+//       spec.rv {mode 'none'|'table', pd psia, rows [[p, Rv STB/MMscf]]}  modified black oil for a wet gas (pvt.rv; provisional, D17)
+//       spec.emul {model 'none'|'woelflin'|'brinkman'|'table', tight, inv 0..1, rows [[fw, ratio]]}  emulsion viscosity (pvt.emul)
+//       F.rv {pd, rows} | null, F.emul {model, tight, inv} | null; validity rows 'pvtmatch', 'rv', 'emulsion'; F.provisional gains them
 //     .flowlineFluid(F, q)              q = a number on F.rateBasis (oil: liquid STB/d split by WC; gas: separator gas Mscf/d
 //                                       with CGR / WGR; water: BWPD) or {qo, qw, qg_Mscfd}
 //         → {qo STB/d, qw BWPD, qg MMscf/d (the flowline key), qg_MMscfd, api, sgg, sgw, pvt}
@@ -44520,8 +45017,36 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             psep_psig: _num(spec.psep_psig), tsep_F: _num(spec.tsep_F), gor: _num(spec.gor), cgr: _num(spec.cgr), wgr: _num(spec.wgr),
             wc: _num(spec.wc), sgw: _num(spec.sgw), salinity_ppm: _num(spec.salinity_ppm),
             yN2: _num(spec.yN2), yCO2: _num(spec.yCO2), yH2S: _num(spec.yH2S), pbUser: _num(spec.pbUser), bc: _num(spec.bc), corr: c,
-            mult: (spec.match && spec.match.mult && typeof spec.match.mult === 'object') ? spec.match.mult : null
+            mult: (spec.match && spec.match.mult && typeof spec.match.mult === 'object') ? spec.match.mult : null,
+            match: _matchNorm(spec.match, c), rv: _rvNorm(spec.rv), emul: _emulNorm(spec.emul)
         };
+    }
+    // ── B (WP23): the adopted lab match, Rv and emulsion specifications ──
+    var MATCH_KEYS = ['rs', 'bo', 'muod', 'muo'];
+    function _matchNorm(m, c) {
+        if (!m || typeof m !== 'object' || m.on !== true) return null;
+        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null };
+        ['rs', 'bo', 'muo'].forEach(function (k) {
+            var a = m.mult && +m.mult[k], b = m.shift && +m.shift[k];
+            if (_fin(a) && a > 0 && a !== 1) out.mult[k] = a;
+            if (_fin(b) && b !== 0) out.shift[k] = b;
+        });
+        if (m.corr && typeof m.corr === 'object') MATCH_KEYS.forEach(function (k) { if (m.corr[k] && m.corr[k] !== c[k]) out.stale = true; });
+        return out;
+    }
+    function _rows2(rows, lo, hi) {
+        return (Array.isArray(rows) ? rows : []).map(function (r) { return Array.isArray(r) ? [Number(r[0]), Number(r[1])] : null; })
+            .filter(function (r) { return r && _fin(r[0]) && _fin(r[1]) && r[0] >= lo && r[0] <= hi && r[1] >= 0; }).sort(function (a, b) { return a[0] - b[0]; });
+    }
+    function _rvNorm(rv) {
+        if (!rv || typeof rv !== 'object' || rv.mode !== 'table') return null;
+        return { mode: 'table', pd: _num(rv.pd), rows: _rows2(rv.rows, 1e-6, 30000) };
+    }
+    var EMUL_MODELS = ['woelflin', 'brinkman', 'table'];
+    function _emulNorm(e) {
+        if (!e || typeof e !== 'object' || EMUL_MODELS.indexOf(e.model) === -1) return null;
+        return { model: e.model, tight: ['loose', 'medium', 'tight'].indexOf(e.tight) !== -1 ? e.tight : 'medium', inv: _num(e.inv),
+                 rows: _rows2(e.rows, 0, 1).filter(function (r) { return r[1] > 0; }) };
     }
 
     // Appendix A (recorded from the plan; values from the original papers, to verify — owner Q9) + the gas engine's ranges
@@ -44580,6 +45105,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             else if (!(_fin(s.pbUser) && s.pbUser > 14.7 && s.pbUser <= 15000)) err('pbUser', 'Bubble point must be above 14.7 and no more than 15,000 psia.');
             else if (!_fin(+opts.T_F)) warn('PB_SHIFT_NO_T', 'The bubble-point shift needs the reservoir temperature: the correlation bubble point is used.', 'warn', 'pbUser');
         }
+        if (s.rv) {
+            if (!(gasT && cgr > 0)) warn('RV_NOT_WET', 'The modified black oil (Rv) applies to a wet gas with a CGR: ignored for this fluid.', 'info', 'rvmode');
+            else if (!s.rv.rows.length) warn('RV_NO_TABLE', 'Modified black oil: enter the Rv table (pressure against vaporised condensate): the wet-gas model is used until then.', 'warn', 'rvmode');
+            if (s.rv.pd != null && !(_fin(s.rv.pd) && s.rv.pd > 14.7 && s.rv.pd <= 20000)) err('pdew', 'The dew point must be above 14.7 and no more than 20,000 psia.');
+        }
+        if (s.emul) {
+            if (!oil) warn('EMUL_NOT_OIL', 'An emulsion viscosity applies to an oil with water: ignored for this fluid.', 'info', 'emul');
+            else if (!(s.wc > 0)) warn('EMUL_NO_WATER', 'The emulsion viscosity needs a water cut: the oil viscosity is used.', 'info', 'emul');
+            if (s.emul.inv != null && !(_fin(s.emul.inv) && s.emul.inv >= 0.1 && s.emul.inv <= 0.9)) err('emulInv', 'The inversion point must be between 10 and 90 % water.');
+            if (s.emul.model === 'table' && !s.emul.rows.length) warn('EMUL_NO_TABLE', 'Emulsion table: enter μ_em / μo against the water fraction: the volume-weighted mixture is used until then.', 'warn', 'emul');
+        }
+        if (s.match && s.match.stale) warn('MATCH_STALE', 'The PVT lab match was fitted to other correlations (' + MATCH_KEYS.map(function (k) { return s.match.corr[k]; }).join(' / ') + '): it is not applied — run the match again.', 'warn', 'corr_rs');
         if (t === 'gasinj') warn('GASINJ_B', 'Gas injection wells are planned for a later release: the fluid is treated as gas only.', 'info', 'type');
         // unknown correlation keys fall back to the defaults inside the march — say so
         var L = _lib();
@@ -44653,6 +45190,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
             if (yco2 + yh2s > 0) rng('wichertAziz', [{ v: 'co2', name: 'CO2 (mol %)', lo: yco2 * 100 }, { v: 'h2s', name: 'H2S (mol %)', lo: yh2s * 100 }], true);
         }
+        // B (WP23): the lab match, the modified black oil and the emulsion viscosity in use
+        if (oil && s.match && !s.match.stale && (Object.keys(s.match.mult).length || Object.keys(s.match.shift).length || s.match.pbFactor)) {
+            var bandOk = ['rs', 'bo', 'muo'].every(function (k) { var a = s.match.mult[k]; return !(a < 0.8 || a > 1.25); });
+            validity.push({ corr: 'pvtmatch', label: 'PVT lab match', used: true, inRange: bandOk, provisional: false, out: [],
+                msg: (bandOk ? '✓' : '⚠') + ' PVT matched to the lab table (y = a·y_corr + b' + (s.pbUser != null ? '; the user bubble point replaces the matched one' : '') + ')' + (bandOk ? '.' : ': a multiplier is outside 0.8–1.25.') });
+        }
+        if (s.rv && gasT && cgr > 0 && s.rv.rows.length) validity.push({ corr: 'rv', label: 'Modified black oil (Rv)', used: true, inRange: true, provisional: true, out: [], msg: '✓ Modified black oil: condensate vaporised in the gas by the Rv table — ' + PROV_NOTE + '.' });
+        if (s.emul && oil && s.wc > 0 && (s.emul.model !== 'table' || s.emul.rows.length)) {
+            var EL = { woelflin: 'Woelflin (1942) ' + s.emul.tight + ' emulsion (chart readings)', brinkman: 'Brinkman (1952) emulsion', table: 'User emulsion table' }[s.emul.model];
+            validity.push({ corr: 'emulsion', label: EL, used: true, inRange: true, provisional: s.emul.model !== 'table', out: [],
+                msg: '✓ Liquid viscosity: ' + EL + (s.emul.model === 'table' ? ' (user data).' : ', inversion at ' + _fmtN(100 * (s.emul.inv != null ? s.emul.inv : 0.6), 0) + ' % water — ' + PROV_NOTE + '.') });
+        }
         if (yi > 0 && typeof G.WTS_gaspvt_z !== 'function') warn('IMP_NO_ENGINE', 'The gas PVT engine is not loaded: Z is not corrected for N2 / CO2 / H2S.', 'warn');
         if (yi > 0) warn('IMP_MUG', 'Gas viscosity along the well is Lee-Gonzalez-Eakin without the impurity correction (Z is corrected).', 'info');
         return { ok: true, errors: errors, bad: bad, warnings: warnings, validity: validity };
@@ -44677,6 +45226,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return { qo: r.qo, qw: r.qw, qg: r.qg_Mscfd / 1000, qg_MMscfd: r.qg_Mscfd / 1000, api: F.api, sgg: F.sgg, sgw: F.sgw, pvt: F.pvt };
     }
 
+    // the dew point of the Rv table: the entered one, else the first table pressure where Rv reaches the CGR (linear), else the last row
+    function _rvPd(rv, cgr) {
+        if (_fin(rv.pd) && rv.pd > 14.7) return rv.pd;
+        var r = rv.rows;
+        for (var i = 0; i < r.length; i++) {
+            if (r[i][1] >= cgr) return i === 0 ? r[0][0] : r[i - 1][0] + (r[i][0] - r[i - 1][0]) * (cgr - r[i - 1][1]) / (r[i][1] - r[i - 1][1]);
+        }
+        return r.length ? r[r.length - 1][0] : null;
+    }
     function build(spec, opts) {
         opts = opts || {};
         var s = _norm(spec);
@@ -44720,12 +45278,21 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (gasT || water) { pvt.liquidNoTransfer = true; pvt.bc = _fin(s.bc) && s.bc > 0 ? s.bc : 1; }
         var yi = (+s.yN2 || 0) + (+s.yCO2 || 0) + (+s.yH2S || 0);
         if (yi > 0 && !water) pvt.imp = { n2: +s.yN2 || 0, co2: +s.yCO2 || 0, h2s: +s.yH2S || 0 };
-        if (s.mult) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
+        var matchApplied = !!(oil && s.match && !s.match.stale);
+        if (s.mult && !(s.match && s.match.stale)) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
+        if (matchApplied && Object.keys(s.match.shift).length) pvt.shift = Object.assign({}, s.match.shift);
+        var rvOn = !!(s.rv && gasT && cgr > 0 && s.rv.rows.length);
+        if (rvOn) pvt.rv = { rows: s.rv.rows, pd: _rvPd(s.rv, cgr) };
+        var emOn = !!(s.emul && oil && (s.emul.model !== 'table' || s.emul.rows.length));
+        if (emOn) pvt.emul = { model: s.emul.model, tight: s.emul.tight, inv: _fin(s.emul.inv) ? s.emul.inv : 0.6, rows: s.emul.rows };
         if (opts.table) pvt.table = opts.table === true ? true : { dp: +opts.table.dp > 0 ? +opts.table.dp : 5, dT: +opts.table.dT > 0 ? +opts.table.dT : 2 };
         // one-point bubble-point shift at the reservoir temperature
         var L = _lib(), T_F = _fin(+opts.T_F) ? +opts.T_F : null, pbShift = null;
+        if (matchApplied && !_fin(s.pbUser) && s.match.pbFactor && s.match.pbFactor !== 1) pvt.pbFactor = s.match.pbFactor;
         if (oil && _fin(s.pbUser) && T_F != null && s.gor > 0) {
-            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? (pvt.sep ? pbF(s.api, sgFree, s.gor, T_F, pvt.sep) : pbF(s.api, sgFree, s.gor, T_F)) : NaN;
+            var gorC = s.gor;
+            if (matchApplied && ((s.match.mult.rs && s.match.mult.rs !== 1) || s.match.shift.rs)) gorC = Math.max(1e-6, (s.gor - (s.match.shift.rs || 0)) / (s.match.mult.rs || 1));   // the matched Rs reaches the GOR here (WP23)
+            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? (pvt.sep ? pbF(s.api, sgFree, gorC, T_F, pvt.sep) : pbF(s.api, sgFree, gorC, T_F)) : NaN;
             if (_fin(pbCorr) && pbCorr > 14.7) { pvt.pbFactor = pbCorr / s.pbUser; pbShift = { pbCorr: pbCorr, pbUser: s.pbUser, factor: pvt.pbFactor, T_F: T_F }; }
             else warnings.push({ code: 'PB_SHIFT_FAILED', msg: 'The correlation bubble point could not be evaluated: no shift is applied.', sev: 'warn', field: 'pbUser' });
         }
@@ -44738,6 +45305,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             gor: oil ? s.gor : 0, cgr: cgr, wgr: wgr, wc: oil && _fin(s.wc) ? s.wc : 0, bc: pvt.bc || null,
             pbUser: oil ? s.pbUser : null, pbShift: pbShift, T_F: T_F, wet: gasT && cgr > 0, rsb: oil ? s.gor : 0,
             refQ: REF_Q[rb], imp: pvt.imp || null,
+            match: oil && s.match ? { applied: matchApplied, stale: !!s.match.stale, pbFactor: pvt.pbFactor || null, pbUserWins: !!(matchApplied && _fin(s.pbUser) && s.match.pbFactor),
+                mult: Object.assign({}, s.match.mult), shift: Object.assign({}, s.match.shift), corr: s.match.corr || null } : null,
+            rv: rvOn ? { pd: pvt.rv.pd, rows: s.rv.rows.slice() } : null, emul: emOn ? { model: s.emul.model, tight: s.emul.tight, inv: pvt.emul.inv } : null,
             validity: chk.validity, warnings: warnings, errors: [], bad: []
         };
         F.rates = function (q) { return _rates(F, q); };
@@ -44759,6 +45329,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (oil) { add('rs', s.corr.rs); add('bo', s.corr.bo); add('muod', s.corr.muod); add('muo', s.corr.muo); add('co', s.corr.co); add('sigma', s.corr.sigma); }
         else if (gasT && cgr > 0) { add('muod', s.corr.muod); add('sigma', s.corr.sigma); }
         if ((oil || gasT) && !(yi > 0)) add('z', s.corr.z);
+        if (s.rv && gasT && cgr > 0 && s.rv.rows.length) out.push('Modified black oil (Rv)');
+        if (s.emul && oil && (s.emul.model === 'woelflin' || s.emul.model === 'brinkman')) out.push(s.emul.model === 'woelflin' ? 'Woelflin emulsion (chart readings)' : 'Brinkman emulsion');
         return out;
     }
     function table(F, pList, T, q) {
@@ -46555,7 +47127,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                      sgw: 1.07, salinity_ppm: 0, yN2: 0, yCO2: 0, yH2S: 0, pbUser: null,
                      corr: { pb: 'standing', rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson', muou: 'vasquezBeggs',
                              co: 'vasquezBeggs', z: 'dranchukAbouKassem', mug: 'leeGonzalezEakin', sigma: 'bakerSwerdloff' },
-                     match: null, bc: 1.0 },
+                     match: null, bc: 1.0,
+                     // B (WP23): modified black oil (Rv) for a wet gas and the emulsion viscosity; 'none' = the A1 / A2 behaviour
+                     rv: { mode: 'none', pd: null, rows: [] }, emul: { model: 'none', tight: 'medium', inv: 0.6, rows: [] }, lab: null },
             res: { model: 'pi', pr: null, T_F: 200, pb: null, params: {}, points: [], layers: [], provenance: {} },
             well: { datum: 'RKB', datumOffset_ft: 0, survey: [], perfTopMd: null, perfBotMd: null, midPerfMd: null,
                     strings: [], path: 'tubing', restrictions: [],
@@ -46588,6 +47162,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         wp_sgw: { path: 'fluid.sgw', kind: 'num' }, wp_sal: { path: 'fluid.salinity_ppm', kind: 'num' },
         wp_n2: { path: 'fluid.yN2', kind: 'num' }, wp_co2: { path: 'fluid.yCO2', kind: 'num' }, wp_h2s: { path: 'fluid.yH2S', kind: 'num' },
         wp_pbUser: { path: 'fluid.pbUser', kind: 'num' }, wp_bc: { path: 'fluid.bc', kind: 'num' },
+        // B (WP23): Rv mode and dew point; emulsion model, tightness and inversion point (the control is in % water, the model 0..1)
+        wp_rvmode: { path: 'fluid.rv.mode', kind: 'str', enumv: ['none', 'table'] }, wp_pdew: { path: 'fluid.rv.pd', kind: 'num' },
+        wp_emul: { path: 'fluid.emul.model', kind: 'str', enumv: ['none', 'woelflin', 'brinkman', 'table'] },
+        wp_emulT: { path: 'fluid.emul.tight', kind: 'str', enumv: ['loose', 'medium', 'tight'] }, wp_emulInv: { path: 'fluid.emul.inv', kind: 'num', scale: 0.01 },
         wp_corr_pb: { path: 'fluid.corr.pb', kind: 'str' }, wp_corr_rs: { path: 'fluid.corr.rs', kind: 'str' },
         wp_corr_bo: { path: 'fluid.corr.bo', kind: 'str' }, wp_corr_muod: { path: 'fluid.corr.muod', kind: 'str' },
         wp_corr_muo: { path: 'fluid.corr.muo', kind: 'str' }, wp_corr_muou: { path: 'fluid.corr.muou', kind: 'str' },
@@ -46735,13 +47313,31 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             ['q_o', 'q_w', 'q_g', 'thp_psig', 'tht_F', 'bean64', 'gaugeMd', 'gauge_psia', 'chp_psig', 'qinj_Mscfd'].forEach(function (k) { o[k] = _num(t[k]); });
             return o;
         });
-        out.lab = _isObj(r.lab) ? _clone(r.lab) : null;
+        out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
         TABLE_KEYS.forEach(function (k) { if (Array.isArray(out[k]) && out[k].length > MAX_ROWS && k !== 'survey') out[k] = out[k].slice(0, MAX_ROWS); });
         return { rec: out, warnings: warnings };
     }
 
+    // the lab record (B, WP23): {v, T_F, basis, pb, rsbF, bobF, rows:[{p, rs, bo, muo}], rv:[[p, rv]], emul:[[fw, ratio]], example,
+    // adopt:{on, pbFactor, mult{rs, bo, muo}, shift{rs, bo, muo}, corr{rs, bo, muod, muo}, T_F, mare, ts, edited}} — numbers cleaned, ≤ 60 rows each
+    function _labClean(L) {
+        var o = { v: 1, T_F: _num(L.T_F), basis: L.basis === 'differential' ? 'differential' : 'flash', pb: _num(L.pb), rsbF: _num(L.rsbF), bobF: _num(L.bobF), example: L.example === true };
+        o.rows = (Array.isArray(L.rows) ? L.rows : []).filter(_isObj).slice(0, 60).map(function (x) { return { p: _num(x.p), rs: _num(x.rs), bo: _num(x.bo), muo: _num(x.muo) }; })
+            .filter(function (x) { return _fin(x.p) && x.p > 0 && (_fin(x.rs) || _fin(x.bo) || _fin(x.muo)); });
+        o.rv = _rowsNum(L.rv, 2).filter(function (x) { return x[0] > 0 && x[1] >= 0; }).slice(0, 60);
+        o.emul = _rowsNum(L.emul, 2).filter(function (x) { return x[0] >= 0 && x[0] <= 1 && x[1] > 0; }).slice(0, 60);
+        var a = _isObj(L.adopt) ? L.adopt : null;
+        if (a && a.on === true) {
+            var num3 = function (m, d) { var r = {}; ['rs', 'bo', 'muo'].forEach(function (k) { var v = _isObj(m) ? _num(m[k]) : null; r[k] = v == null ? d : v; }); return r; };
+            var c = _isObj(a.corr) ? a.corr : {}, cc = {};
+            ['rs', 'bo', 'muod', 'muo'].forEach(function (k) { if (typeof c[k] === 'string' && /^[A-Za-z0-9_]{1,32}$/.test(c[k])) cc[k] = c[k]; });
+            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
+                        mare: _isObj(a.mare) ? _clone(a.mare) : null, ts: _num(a.ts), labKey: typeof a.labKey === 'string' ? a.labKey.slice(0, 64) : null };
+        } else o.adopt = null;
+        return o;
+    }
     // dogleg at each interior station (rad): angle between the unit tangents of the two adjacent intervals
     function _tangents(rows) {
         var three = rows.length && rows[0].length >= 3, t = [];
@@ -46798,7 +47394,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             M.well.survey = rec.survey; M.well.strings = rec.strings; M.well.restrictions = rec.restrictions;
             M.well.geo.points = rec.geo.points; M.surface.flowline = rec.flowline;
             M.surface.rating = rec.rating; M.surface.beans = rec.beans.length ? rec.beans : M.surface.beans; M.tests = rec.tests;
-            M.cases = rec.cases; if (rec.lab) M.fluid.match = { lab: rec.lab }; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            M.cases = rec.cases; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            if (rec.lab) {
+                // B (WP23): the lab record; an adopted match goes to fluid.match (WTS_wp_fluid applies it while the correlations agree)
+                M.fluid.lab = rec.lab;
+                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift,
+                    corr: rec.lab.adopt.corr, T_F: rec.lab.adopt.T_F, edited: rec.lab.adopt.edited } : { lab: rec.lab };
+                M.fluid.rv.rows = rec.lab.rv; M.fluid.emul.rows = rec.lab.emul;
+            }
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);
@@ -46879,6 +47482,461 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 })();
 
 // ─── END 49-calc-wp-model ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-wp-pvtmatch ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-wp-pvtmatch.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
+// -----------------------------------------------------------------------------
+// Well Performance PVT lab match, modified black oil (Rv) and emulsion helpers — docs/WELL-PERFORMANCE-PLAN.md §5.1, §1.4 (B4, B5,
+// B7), §3.1 (fluid.match), §3.11 (wts_wellperf_model.lab), US14 (WP23, increment B).
+//
+// The module evaluates no fluid property itself: every value comes from WTS_wp_fluid.build → WTS_flowline_props (the one property
+// path of the march), so the matched set this module fits is exactly the set the rest of the module uses.
+//
+// PVT lab match (§5.1). Per property y ∈ {Rs, Bo, μo} two parameters, a multiplier a and a shift b: y_matched = a·y_corr + b, fitted
+// by PRiSM_lm (05-regression) on the relative residuals (weights 1 / y_lab²); the bubble point is one value, so it is the one-point
+// factor of A1 (Rs evaluated at p·f, f = Pb_corr(Rsb, T_lab) / Pb_lab). The fits run in order Pb → Rs → Bo → μo, each on the model
+// already matched by the previous ones (Bo below pb depends on the matched Rs, μo on the matched Rs). One lab point → a only (b held
+// at 0). The lab oil is the lab's own: its solution GOR Rsb (the flash Rsb when given, else the highest lab Rs) at the lab temperature;
+// the well then uses the same multipliers with its producing GOR at every temperature (an assumption, stated in the Notes).
+// Differential liberation → flash (the standard adjustment with the separator-test Bob and Rsb, labelled provisional — D17 / Q9):
+//   p ≤ pb: Bo_f = Bo_d·(Bob_f / Bob_d), Rs_f = Rsb_f − (Rsb_d − Rs_d)·(Bob_f / Bob_d);  p > pb: Bo_f = Bo_d·(Bob_f / Bob_d), Rs_f = Rsb_f.
+// Ranking: every black-oil family (Pb / Rs / Bo) by the mean absolute relative error (MARE, %) of its unmatched values against the
+// lab table, and every dead / live viscosity pair by its μo MARE on the matched Rs of the selected family.
+//
+// Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}], …}; nothing throws for user data):
+//   WTS_wp_pvtmatch
+//     .normLab(lab)              → {ok, lab:{T_F, basis, pb, rsbF, bobF, rows:[{p, rs, bo, muo}] ascending p, rv:[[p, rv]], emul:[[fw, r]]},
+//                                   errors, warnings}
+//     .diffToFlash(lab)          → {ok, applied, factor, rsbD, bobD, rows (flash basis), warnings}
+//     .labOil(spec, lab)         the fluid spec of the lab oil (gor = Rsb, no water, no user pb, no match)
+//     .predict(spec, lab, match?, pList?) → {ok, rows:[{p, rs, bo, muo}], pb, F}  (the matched set when match is given)
+//     .fit(spec, lab, o?)        → {ok, corr:{rs, bo, muod, muo}, rsb, T_F, basis, flash, pb:{lab, corr, after, factor, errPct},
+//                                   props:{rs|bo|muo: {n, a, b, ci95:{a, b}, mareBefore, mareAfter, converged, iterations, fixedB}},
+//                                   match:{on:true, pbFactor, mult:{rs, bo, muo}, shift:{rs, bo, muo}, corr, T_F, mare, ts},
+//                                   points:[{p, lab:{rs, bo, muo}, before:{…}, after:{…}}], flags[{code, sev, msg}], warnings, provisional}
+//                                o.props = subset of ['rs', 'bo', 'muo'] (default all with lab values)
+//     .rank(spec, lab, o?)       → {ok, families:[{key, label, verified, pbErrPct, mare:{rs, bo}, score, after:{rs, bo}}] sorted by score,
+//                                   viscosity:[{muod, muo, label, verified, mare}] sorted}
+//     .job(spec, lab, o?)        → Job for PRiSM_autoInterp.drive (step / done / progress / result / cancel); result() = {ok, fit, rank,
+//                                   evals (property evaluations)}
+//     .applyTo(spec, match)      spec with fluid.match = the adopted match (the page writes lab.adopt through WTS_wp_model)
+//     .preview(spec, lab, base, edit)  the fit's points re-evaluated with the multipliers of one property edited by hand (drag rails)
+//     .example(spec, T_F)        a synthetic lab table for the page example (a known distortion of the Standing family; flagged
+//                                example:true — never presented as measured data)
+//     .exampleRv(cgr, pd) / .exampleEmul()   example Rv and emulsion tables
+//     .emulsion(fw, muo, muw, e) = WTS_flowline_emulsion (the march's own function); .rvAt(rv, p, cgr) = WTS_flowline_rvAt
+//     .emulCurve(e, {muo, muw, n}) → [{fw, ratio, cont}] (0 … 1); .rvCurve(rv, cgr, {pMax, n}) → [{p, rv, free}]
+//     .METHODS   {pvtmatch, diffFlash, rv, woelflin, brinkman, table}: {label, verified, provisional, note}
+// =============================================================================
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var PROV = 'provisional — not verified against a published example';
+    var PROPS = ['rs', 'bo', 'muo'];
+    var MAX_ROWS = 60;
+    var BOUNDS = { rs: { a: [0.5, 2], b: null }, bo: { a: [0.8, 1.25], b: [-0.3, 0.3] }, muo: { a: [0.2, 5], b: null } };
+    var BAND = { ok: [0.9, 1.1], warn: [0.8, 1.25] };            // multiplier a: inside 0.9–1.1 fine; outside 0.8–1.25 the correlation is stretched
+    var METHODS = {
+        pvtmatch: { label: 'Lab match (multiplier and shift, Levenberg-Marquardt)', verified: true, note: 'least squares on the lab points (no published example needed)' },
+        diffFlash: { label: 'Differential liberation to flash adjustment (separator Bob / Rsb)', verified: false, provisional: PROV },
+        rv: { label: 'Modified black oil (vaporised oil-gas ratio Rv)', verified: false, provisional: PROV },
+        woelflin: { label: 'Woelflin (1942) emulsion curves — chart readings', verified: false, provisional: PROV, note: 'chart readings to verify against the published figure (owner Q9)' },
+        brinkman: { label: 'Brinkman (1952) emulsion viscosity', verified: false, provisional: PROV },
+        table: { label: 'User emulsion table (μ_em / μo against the water fraction)', verified: true, note: 'user data' }
+    };
+
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _num(v) { if (v === '' || v == null) return null; var n = Number(v); return _fin(n) ? n : null; }
+    function _isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+    function _clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    function _w(code, msg, sev) { return { code: code, msg: String(msg).slice(0, 299), sev: sev || 'warn' }; }
+    function _f(v, d) { return _fin(v) ? Number(v).toFixed(d == null ? 2 : d).replace(/\.?0+$/, function (m) { return m.indexOf('.') === 0 ? '' : m; }) : '—'; }
+    function _fail(code, msg, extra) { var o = { ok: false, code: code, errors: [msg], warnings: [] }; if (extra) Object.keys(extra).forEach(function (k) { o[k] = extra[k]; }); return o; }
+    function _interp(xs, ys, x) {
+        var n = xs.length; if (!n) return null;
+        if (n === 1 || x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) return ys[n - 1];
+        for (var i = 1; i < n; i++) if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+        return ys[n - 1];
+    }
+
+    // ── lab record ─────────────────────────────────────────────────────────────
+    function normLab(lab) {
+        var L = _isObj(lab) ? lab : {}, errors = [], warnings = [];
+        var T = _num(L.T_F), pb = _num(L.pb), rsbF = _num(L.rsbF), bobF = _num(L.bobF);
+        if (!(_fin(T) && T >= 40 && T <= 450)) errors.push('The lab temperature is needed (40–450 °F).');
+        if (pb != null && !(pb > 14.7 && pb <= 15000)) { warnings.push(_w('LAB_PB', 'The lab bubble point must be above 14.7 psia: ignored.')); pb = null; }
+        var rows = [], seen = {};
+        (Array.isArray(L.rows) ? L.rows : []).forEach(function (r) {
+            if (!_isObj(r) && !Array.isArray(r)) return;
+            var o = Array.isArray(r) ? { p: _num(r[0]), rs: _num(r[1]), bo: _num(r[2]), muo: _num(r[3]) } : { p: _num(r.p), rs: _num(r.rs), bo: _num(r.bo), muo: _num(r.muo) };
+            if (!(_fin(o.p) && o.p > 0 && o.p <= 20000)) return;
+            if (o.rs != null && !(o.rs >= 0 && o.rs <= 10000)) o.rs = null;
+            if (o.bo != null && !(o.bo >= 0.8 && o.bo <= 5)) o.bo = null;
+            if (o.muo != null && !(o.muo > 0 && o.muo <= 1e5)) o.muo = null;
+            if (o.rs == null && o.bo == null && o.muo == null) return;
+            var k = String(Math.round(o.p * 1000));
+            if (seen[k]) { warnings.push(_w('LAB_DUP', 'Two lab rows at ' + _f(o.p, 1) + ' psia: the first is kept.', 'info')); return; }
+            seen[k] = 1; rows.push(o);
+        });
+        rows.sort(function (a, b) { return a.p - b.p; });
+        if (rows.length > MAX_ROWS) { rows = rows.slice(0, MAX_ROWS); warnings.push(_w('LAB_ROWS', 'Only the first ' + MAX_ROWS + ' lab rows are used.', 'info')); }
+        if (!rows.length) errors.push('Enter at least one lab row (pressure with Rs, Bo or μo).');
+        var basis = L.basis === 'differential' ? 'differential' : 'flash';
+        var rv = (Array.isArray(L.rv) ? L.rv : []).map(function (r) { return Array.isArray(r) ? [_num(r[0]), _num(r[1])] : null; })
+            .filter(function (r) { return r && _fin(r[0]) && r[0] > 0 && _fin(r[1]) && r[1] >= 0; }).sort(function (a, b) { return a[0] - b[0]; }).slice(0, MAX_ROWS);
+        var emul = (Array.isArray(L.emul) ? L.emul : []).map(function (r) { return Array.isArray(r) ? [_num(r[0]), _num(r[1])] : null; })
+            .filter(function (r) { return r && _fin(r[0]) && r[0] >= 0 && r[0] <= 1 && _fin(r[1]) && r[1] > 0; }).sort(function (a, b) { return a[0] - b[0]; }).slice(0, MAX_ROWS);
+        return { ok: errors.length === 0, lab: { T_F: T, basis: basis, pb: pb, rsbF: rsbF, bobF: bobF, rows: rows, rv: rv, emul: emul, example: !!L.example },
+            errors: errors, warnings: warnings };
+    }
+    function _labAt(rows, key, p) {
+        var r = rows.filter(function (x) { return _fin(x[key]); });
+        return r.length ? _interp(r.map(function (x) { return x.p; }), r.map(function (x) { return x[key]; }), p) : null;
+    }
+    function diffToFlash(lab) {
+        var n = normLab(lab);
+        if (!n.ok) return { ok: false, errors: n.errors, warnings: n.warnings, rows: [] };
+        var L = n.lab, warnings = [];
+        if (L.basis !== 'differential') return { ok: true, applied: false, factor: 1, rows: _clone(L.rows), warnings: warnings };
+        var pb = L.pb;
+        if (!_fin(pb)) { warnings.push(_w('DIFF_NO_PB', 'Differential liberation data need the lab bubble point for the flash adjustment: the table is used as entered.')); return { ok: true, applied: false, factor: 1, rows: _clone(L.rows), warnings: warnings }; }
+        var bobD = _labAt(L.rows, 'bo', pb), rsbD = _labAt(L.rows, 'rs', pb);
+        if (!(_fin(L.bobF) && L.bobF > 0.8 && _fin(L.rsbF) && L.rsbF > 0 && _fin(bobD) && bobD > 0 && _fin(rsbD))) {
+            warnings.push(_w('DIFF_NO_SEP', 'Differential liberation data without the separator-test Bob and Rsb (or without Bo and Rs at the bubble point): the table is used as entered, not adjusted to flash.'));
+            return { ok: true, applied: false, factor: 1, rows: _clone(L.rows), warnings: warnings };
+        }
+        var k = L.bobF / bobD, neg = 0;
+        var rows = L.rows.map(function (r) {
+            var o = { p: r.p, rs: r.rs, bo: _fin(r.bo) ? r.bo * k : null, muo: r.muo };
+            if (_fin(r.rs)) {
+                o.rs = r.p <= pb ? L.rsbF - (rsbD - r.rs) * k : L.rsbF;
+                if (o.rs < 0) { neg++; o.rs = 0; }
+            }
+            return o;
+        });
+        if (neg) warnings.push(_w('DIFF_NEG_RS', neg + ' adjusted Rs value(s) fell below zero and were set to 0: check the separator Rsb.'));
+        warnings.push(_w('DIFF_FLASH', 'Differential liberation adjusted to flash with Bob_f / Bob_d = ' + _f(k, 4) + ' — ' + PROV + '.', 'info'));
+        return { ok: true, applied: true, factor: k, rsbD: rsbD, bobD: bobD, rows: rows, warnings: warnings };
+    }
+
+    // ── the lab oil and its predicted (optionally matched) properties ─────────
+    function _rsb(L, rows) {
+        if (_fin(L.rsbF) && L.rsbF > 0 && L.basis === 'flash') return L.rsbF;
+        if (L.basis === 'differential' && _fin(L.rsbF) && L.rsbF > 0) return L.rsbF;
+        var rs = rows.map(function (r) { return r.rs; }).filter(_fin);
+        return rs.length ? Math.max.apply(null, rs) : null;
+    }
+    function labOil(spec, lab, rsb) {
+        var s = _clone(spec || {}) || {};
+        s.type = 'oil'; s.wc = 0; s.pbUser = null; s.match = null; s.rv = null; s.emul = null;
+        if (_fin(rsb) && rsb > 0) s.gor = rsb;
+        return s;
+    }
+    function _build(spec, T, match) {
+        var W = G.WTS_wp_fluid; if (!W || typeof W.build !== 'function') return null;
+        var s = _clone(spec);
+        if (match) s.match = { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr || null };
+        return W.build(s, { T_F: T, table: false });
+    }
+    function _corrOf(spec) { var c = (spec && spec.corr) || {}; return { rs: c.rs || 'standing', bo: c.bo || 'standing', muod: c.muod || 'beggsRobinson', muo: c.muo || 'beggsRobinson' }; }
+    var _evals = 0;
+    function _props(F, ps, T, rsb) {
+        return ps.map(function (p) {
+            _evals++;
+            var r = F.at(p, T, { qo: 1000, qw: 0, qg_Mscfd: rsb });
+            return r ? { p: p, rs: r.rs, bo: r.bo, muo: r.muo } : { p: p, rs: null, bo: null, muo: null };
+        });
+    }
+    function predict(spec, lab, match, pList) {
+        var n = normLab(lab); if (!n.ok) return { ok: false, errors: n.errors, warnings: n.warnings, rows: [] };
+        var L = n.lab, fl = diffToFlash(L), rows = fl.rows, rsb = _rsb(L, rows), base = labOil(spec, L, rsb);
+        if (!_fin(base.gor)) return _fail('NO_RSB', 'The lab oil needs its solution GOR (flash Rsb or the lab Rs values).');
+        var F = _build(base, L.T_F, match || null);
+        if (!F || !F.ok) return _fail('NO_FLUID', ((F && F.errors) || ['the fluid engine is not available'])[0]);
+        var ps = Array.isArray(pList) ? pList.filter(function (p) { return _fin(p) && p > 0; }) : rows.map(function (r) { return r.p; });
+        return { ok: true, rows: _props(F, ps, L.T_F, base.gor), pb: F.pb(L.T_F), F: F, rsb: base.gor, errors: [], warnings: fl.warnings.slice() };
+    }
+
+    // ── fits ───────────────────────────────────────────────────────────────────
+    function _mare(pts, key, which) {
+        var s = 0, n = 0;
+        pts.forEach(function (q) { var y = q.lab[key], m = q[which] && q[which][key]; if (_fin(y) && y > 0 && _fin(m)) { s += Math.abs(m / y - 1); n++; } });
+        return n ? 100 * s / n : null;
+    }
+    // closed-form relative (1 / y²) weighted least squares of y ≈ a·yc + b (b = 0 when fixB) — the cross-check of the LM fit (X22)
+    function wls(yc, y, fixB) {
+        var n = y.length, Sw = 0, Sx = 0, Sy = 0, Sxx = 0, Sxy = 0;
+        for (var i = 0; i < n; i++) { var w = 1 / (y[i] * y[i]); Sw += w; Sx += w * yc[i]; Sy += w * y[i]; Sxx += w * yc[i] * yc[i]; Sxy += w * yc[i] * y[i]; }
+        if (!(Sxx > 0)) return null;
+        if (fixB || n < 2) return { a: Sxy / Sxx, b: 0 };
+        var det = Sw * Sxx - Sx * Sx; if (!(Math.abs(det) > 1e-300)) return { a: Sxy / Sxx, b: 0 };
+        return { a: (Sw * Sxy - Sx * Sy) / det, b: (Sxx * Sy - Sx * Sxy) / det };
+    }
+    function _lmFit(yc, y, bnd, fixB) {
+        // relative least squares of y ≈ a·yc + b with PRiSM_lm; one point → a only
+        var LM = G.PRiSM_lm;
+        if (typeof LM !== 'function') return { ok: false, code: 'MISSING_ENGINE', name: 'PRiSM_lm' };
+        var n = y.length, T = [], P = [], Wt = [];
+        for (var i = 0; i < n; i++) { T.push(i); P.push(y[i]); Wt.push(1 / Math.max(1e-12, y[i] * y[i])); }
+        if (n === 1) { T.push(0); P.push(y[0]); Wt.push(0); }
+        var yMax = Math.max.apply(null, y.map(Math.abs).concat([1e-9]));
+        var bB = bnd.b || [-0.5 * yMax, 0.5 * yMax];
+        var a0 = 1;
+        var model = function (tt, pr) { return tt.map(function (k) { return pr.a * yc[k] + pr.b; }); };
+        var lm;
+        try {
+            lm = LM(model, { t: T, p: P, weights: Wt }, { a: a0, b: 0 }, { a: bnd.a, b: bB }, fixB ? { b: true } : null,
+                { maxIter: 60, tolerance: 1e-12, gtol: 1e-14, derivStep: 1e-6 });
+        } catch (e) { return { ok: false, code: 'LM_FAILED', msg: String(e && e.message || e).slice(0, 200) }; }
+        var a = Math.min(bnd.a[1], Math.max(bnd.a[0], +lm.params.a)), b = fixB ? 0 : Math.min(bB[1], Math.max(bB[0], +lm.params.b));
+        // the problem is linear in (a, b): the closed-form weighted least squares is the optimality check of the LM answer (an LM stop on
+        // its damping limit at the noise floor of rounded lab values is still the optimum when the objectives agree)
+        var cf = wls(yc, y, fixB), ssr = function (aa, bb) { var t = 0; for (var j = 0; j < n; j++) { var e = (aa * yc[j] + bb - y[j]) / y[j]; t += e * e; } return t; };
+        var sL = ssr(a, b), sC = cf ? ssr(cf.a, cf.b) : null, inB = cf && cf.a >= bnd.a[0] && cf.a <= bnd.a[1] && (fixB || (cf.b >= bB[0] && cf.b <= bB[1]));
+        var conv = !!lm.converged || (inB && Math.abs(sL - sC) <= 1e-9 * sC + 1e-18);
+        return { ok: true, a: a, b: b, lm: lm, ci95: lm.ci95 || null, converged: conv, stopReason: lm.stopReason, iterations: lm.iterations, nEval: lm.nEval, bBounds: bB, cf: cf, ssr: sL };
+    }
+    function fit(spec, lab, o) {
+        o = o || {};
+        var n = normLab(lab); if (!n.ok) return { ok: false, code: 'BAD_LAB', errors: n.errors, warnings: n.warnings };
+        if (!G.WTS_wp_fluid || typeof G.WTS_wp_fluid.build !== 'function') return _fail('MISSING_ENGINE', 'WTS_wp_fluid is not loaded', { name: 'WTS_wp_fluid' });
+        if (typeof G.PRiSM_lm !== 'function') return _fail('MISSING_ENGINE', 'PRiSM_lm (Levenberg-Marquardt) is not available', { name: 'PRiSM_lm' });
+        if (spec && spec.type && spec.type !== 'oil') return _fail('NOT_OIL', 'The black-oil lab match applies to an oil.');
+        var L = n.lab, warnings = n.warnings.slice(), flags = [];
+        var fl = diffToFlash(L); warnings = warnings.concat(fl.warnings);
+        var rows = fl.rows, rsb = _rsb(L, rows), T = L.T_F, corr = _corrOf(spec);
+        if (!(_fin(rsb) && rsb > 0)) return _fail('NO_RSB', 'The lab oil needs its solution GOR: enter the flash Rsb or Rs values in the table.', { warnings: warnings });
+        var base = labOil(spec, L, rsb);
+        var F0 = _build(base, T, null);
+        if (!F0 || !F0.ok) return _fail('NO_FLUID', ((F0 && F0.errors) || ['the fluid could not be built'])[0], { warnings: warnings });
+        var want = Array.isArray(o.props) ? o.props.filter(function (k) { return PROPS.indexOf(k) !== -1; }) : PROPS.slice();
+        var ps = rows.map(function (r) { return r.p; });
+        var before = _props(F0, ps, T, rsb);
+        var pts = rows.map(function (r, i) { return { p: r.p, lab: { rs: r.rs, bo: r.bo, muo: r.muo }, before: before[i], after: null }; });
+        // 1. the bubble point (one value → the one-point factor of A1)
+        var pbCorr = F0.pb(T), pbOut = { lab: L.pb, corr: pbCorr, after: null, factor: 1, errPct: null };
+        var match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: corr, T_F: T };
+        if (_fin(L.pb) && _fin(pbCorr) && pbCorr > 14.7) { match.pbFactor = pbCorr / L.pb; pbOut.factor = match.pbFactor; pbOut.errPct = 100 * (pbCorr / L.pb - 1); }
+        else if (_fin(L.pb)) warnings.push(_w('PB_NOT_MATCHED', 'The correlation bubble point could not be evaluated: the lab bubble point is not matched.'));
+        else warnings.push(_w('PB_NO_LAB', 'No lab bubble point: the bubble point is not matched (Rs, Bo and μo are).', 'info'));
+        var props = {};
+        // 2–4. Rs (below pb only), Bo, μo — each on the model matched so far. Rs and the bubble-point factor are solved together as a
+        // fixed point: Rs_m(p) = a·Rs_c(p·f) + b, and f such that the matched Rs reaches Rsb at the lab pb (f = Pb_c((Rsb − b)/a) / Pb_lab)
+        var pbLab = _fin(L.pb) ? L.pb : null, rsIter = 0;
+        ['rs', 'bo', 'muo'].forEach(function (k) {
+            if (want.indexOf(k) === -1) return;
+            var F = _build(base, T, match), cur = _props(F, ps, T, rsb), idx = [];
+            if (k === 'rs') { var mr = _clone(match); mr.mult.rs = 1; mr.shift.rs = 0; F = _build(base, T, mr); cur = _props(F, ps, T, rsb); }
+            pts.forEach(function (q, i) {
+                var y = q.lab[k];
+                if (!_fin(y) || !(y > 0) || !_fin(cur[i][k])) return;
+                if (k === 'rs' && ((pbLab != null && q.p > pbLab * (1 + 1e-9)) || (pbLab == null && y >= rsb * 0.999))) return;   // Rs above pb is Rsb by definition
+                idx.push(i);
+            });
+            if (!idx.length) return;
+            var yc = idx.map(function (i) { return cur[i][k]; }), y = idx.map(function (i) { return pts[i].lab[k]; });
+            var fixB = idx.length < 2 || o.fixB === true;
+            var r = _lmFit(yc, y, BOUNDS[k], fixB);
+            if (k === 'rs' && r.ok && pbLab != null && match.pbFactor !== 1) {
+                // g(f) = f(a, b refitted at f) − f, solved by the secant method (Rs_c(p·f)·a is nearly a power law, so a plain fixed point
+                // creeps); the refit at the root is the answer
+                var gOf = function (fv) {
+                    var mr2 = _clone(match); mr2.pbFactor = fv; mr2.mult.rs = 1; mr2.shift.rs = 0;
+                    var cur2 = _props(_build(base, T, mr2), ps, T, rsb), yc2 = idx.map(function (i) { return cur2[i].rs; });
+                    if (!yc2.every(_fin)) return null;
+                    var r2 = _lmFit(yc2, y, BOUNDS.rs, fixB); if (!r2.ok) return null;
+                    var Fp = _build(base, T, { pbFactor: 1, mult: { rs: r2.a, bo: 1, muo: 1 }, shift: { rs: r2.b, bo: 0, muo: 0 }, corr: corr }), pbm = Fp && Fp.ok ? Fp.pb(T) : null;
+                    return _fin(pbm) ? { f: fv, g: pbm / pbLab - fv, r: r2, yc: yc2 } : null;
+                };
+                var e0 = gOf(match.pbFactor), e1 = e0 ? gOf(e0.f + e0.g) : null;
+                for (rsIter = 2; e0 && e1 && rsIter < 30; rsIter++) {
+                    if (Math.abs(e1.g) < 1e-12 * e1.f || e1.g === e0.g) break;
+                    var fn = e1.f - e1.g * (e1.f - e0.f) / (e1.g - e0.g);
+                    if (!(fn > 0.2 && fn < 5)) break;
+                    var en = gOf(fn); if (!en) break;
+                    e0 = e1; e1 = en;
+                }
+                var best = e1 || e0;
+                if (best) { match.pbFactor = best.f; r = best.r; yc = best.yc; }
+                pbOut.factor = match.pbFactor;
+            }
+            if (!r.ok) { warnings.push(_w('LM_' + k.toUpperCase(), (k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo') + ': the fit failed (' + (r.msg || r.code) + ').')); return; }
+            match.mult[k] = r.a; match.shift[k] = r.b;
+            props[k] = { n: idx.length, a: r.a, b: r.b, iter: k === 'rs' ? rsIter : undefined, ci95: r.ci95 ? { a: r.ci95.a || null, b: fixB ? null : (r.ci95.b || null) } : null, converged: r.converged,
+                iterations: r.iterations, nEval: r.nEval, stopReason: r.stopReason, cf: r.cf, yc: yc.slice(), y: y.slice(), fixedB: fixB, used: idx.map(function (i) { return pts[i].p; }) };
+            var lab = k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo';
+            if (r.a < BAND.warn[0] || r.a > BAND.warn[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.8–1.25: the correlation is stretched far — try the family ranked first.', 'fail'));
+            else if (r.a < BAND.ok[0] || r.a > BAND.ok[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.9–1.1.', 'warn'));
+            if (Math.abs(r.a - BOUNDS[k].a[0]) < 1e-9 || Math.abs(r.a - BOUNDS[k].a[1]) < 1e-9) flags.push(_w('BOUND_' + k.toUpperCase(), lab + ' multiplier at its bound ' + _f(r.a, 3) + ': the correlation cannot follow the lab data.', 'fail'));
+            if (!r.converged && idx.length > 1) flags.push(_w('NOCONV_' + k.toUpperCase(), lab + ': the fit did not converge.', 'warn'));
+        });
+        var Fm = _build(base, T, match), after = _props(Fm, ps, T, rsb);
+        pts.forEach(function (q, i) { q.after = after[i]; });
+        pbOut.after = Fm.pb(T);
+        var mare = {};
+        PROPS.forEach(function (k) {
+            var b0 = _mare(pts, k, 'before'), a0 = props[k] ? _mare(pts, k, 'after') : null;
+            if (props[k]) { props[k].mareBefore = b0; props[k].mareAfter = a0; }
+            mare[k] = { before: b0, after: props[k] ? a0 : b0 };
+        });
+        match.mare = mare; match.ts = Date.now();
+        if (pbLab != null && _fin(pbOut.after) && Math.abs(pbOut.after / pbLab - 1) > 0.02)
+            flags.push(_w('PB_AFTER', 'With the matched Rs the bubble point of the lab oil is ' + _f(pbOut.after, 0) + ' psia against the lab ' + _f(pbLab, 0) + ' psia: the Rs points near pb do not follow the lab pb.', 'warn'));
+        if (L.example) flags.push(_w('EXAMPLE', 'Example lab data (synthetic, for trying the page) — not a measured lab report.', 'info'));
+        if (!Object.keys(props).length && !(match.pbFactor !== 1)) return _fail('NOTHING', 'Nothing to match: the lab table has no usable Rs, Bo or μo values and no bubble point.', { warnings: warnings });
+        var provisional = fl.applied ? [METHODS.diffFlash.label] : [];
+        return { ok: true, corr: corr, rsb: rsb, T_F: T, basis: L.basis, flash: { applied: !!fl.applied, factor: fl.factor || 1, rsbD: fl.rsbD || null, bobD: fl.bobD || null },
+            pb: pbOut, props: props, match: match, points: pts, flags: flags, warnings: warnings, errors: [], provisional: provisional, example: !!L.example };
+    }
+
+    // ── a hand edit of one property's a / b (the page's drag rails): the points re-evaluated on the matched model ──
+    function preview(spec, lab, base, edit) {
+        if (!base || !base.ok || !base.match) return null;
+        var n = normLab(lab); if (!n.ok) return null;
+        var L = n.lab, fl = diffToFlash(L), rows = fl.rows, m = _clone(base.match);
+        if (edit && PROPS.indexOf(edit.key) !== -1) { if (_fin(edit.a)) m.mult[edit.key] = edit.a; if (_fin(edit.b)) m.shift[edit.key] = edit.b; }
+        var F = _build(labOil(spec, L, base.rsb), L.T_F, m); if (!F || !F.ok) return null;
+        var after = _props(F, rows.map(function (r) { return r.p; }), L.T_F, base.rsb);
+        var pts = base.points.map(function (q, i) { return { p: q.p, lab: q.lab, before: q.before, after: after[i] }; }), mare = {};
+        PROPS.forEach(function (k) { mare[k] = _mare(pts, k, 'after'); });
+        return { match: m, points: pts, mare: mare, pb: F.pb(L.T_F), F: F };
+    }
+
+    // ── ranking of the families and viscosity pairs ────────────────────────────
+    function _fams(slot) { var W = G.WTS_wp_fluid; try { return (W && typeof W.families === 'function') ? W.families(slot) : []; } catch (e) { return []; } }
+    function _famList() { var bo = _fams('bo'); return _fams('rs').filter(function (o) { return bo.some(function (b) { return b.key === o.key; }); }); }
+    function _rankFamily(spec, lab, key, label, verified) {
+        var c = Object.assign({}, (spec && spec.corr) || {}, { pb: key, rs: key, bo: key });
+        var s = Object.assign({}, spec, { corr: c });
+        var r = fit(s, lab, { props: ['rs', 'bo'] });
+        if (!r.ok) return { key: key, label: label, verified: verified, ok: false, errors: r.errors };
+        var mb = [r.props.rs ? r.props.rs.mareBefore : _mare(r.points, 'rs', 'before'), r.props.bo ? r.props.bo.mareBefore : _mare(r.points, 'bo', 'before')];
+        var parts = mb.filter(_fin).concat(_fin(r.pb.errPct) ? [Math.abs(r.pb.errPct)] : []);
+        return { key: key, label: label, verified: verified, ok: true, pbErrPct: r.pb.errPct, mare: { rs: mb[0], bo: mb[1] },
+            after: { rs: r.props.rs ? r.props.rs.mareAfter : null, bo: r.props.bo ? r.props.bo.mareAfter : null }, mult: { rs: r.match.mult.rs, bo: r.match.mult.bo },
+            score: parts.length ? parts.reduce(function (a, b) { return a + b; }, 0) / parts.length : null };
+    }
+    function _rankVisc(spec, lab, base, muod, muo, label, verified) {
+        var c = Object.assign({}, (spec && spec.corr) || {}, { muod: muod, muo: muo });
+        var s = Object.assign({}, spec, { corr: c });
+        var n = normLab(lab), L = n.lab, fl = diffToFlash(L), rows = fl.rows;
+        var m = base && base.ok ? { on: true, pbFactor: base.match.pbFactor, mult: { rs: base.match.mult.rs, bo: 1, muo: 1 }, shift: { rs: base.match.shift.rs, bo: 0, muo: 0 }, corr: _corrOf(s) } : null;
+        var F = _build(labOil(s, L, base ? base.rsb : _rsb(L, rows)), L.T_F, m);
+        if (!F || !F.ok) return { muod: muod, muo: muo, label: label, verified: verified, ok: false };
+        var pv = _props(F, rows.map(function (r) { return r.p; }), L.T_F, base ? base.rsb : _rsb(L, rows));
+        var pts = rows.map(function (r, i) { return { lab: { muo: r.muo }, before: pv[i] }; });
+        return { muod: muod, muo: muo, label: label, verified: verified, ok: true, mare: _mare(pts, 'muo', 'before') };
+    }
+    function _viscPairs() {
+        var out = [];
+        _fams('muod').forEach(function (d) { _fams('muo').forEach(function (l) { out.push({ muod: d.key, muo: l.key, label: d.label + ' + ' + l.label, verified: d.verified !== false && l.verified !== false }); }); });
+        return out;
+    }
+    function _sortRank(a, b) { var x = _fin(a.score) ? a.score : Infinity, y = _fin(b.score) ? b.score : Infinity; return x - y; }
+    function _sortVisc(a, b) { var x = _fin(a.mare) ? a.mare : Infinity, y = _fin(b.mare) ? b.mare : Infinity; return x - y; }
+    function rank(spec, lab, o) {
+        o = o || {};
+        var n = normLab(lab); if (!n.ok) return { ok: false, errors: n.errors, warnings: n.warnings, families: [], viscosity: [] };
+        var fams = _famList().map(function (f) { return _rankFamily(spec, lab, f.key, f.label, f.verified !== false); }).sort(_sortRank);
+        var base = o.base || fit(spec, lab, { props: ['rs'] });
+        var hasMu = n.lab.rows.some(function (r) { return _fin(r.muo); });
+        var visc = hasMu ? _viscPairs().map(function (v) { return _rankVisc(spec, lab, base, v.muod, v.muo, v.label, v.verified); }).sort(_sortVisc) : [];
+        return { ok: true, families: fams, viscosity: visc, errors: [], warnings: [] };
+    }
+
+    // ── the Job (PRiSM_autoInterp.drive) ───────────────────────────────────────
+    function job(spec, lab, o) {
+        o = o || {};
+        var st = { i: 0, done: false, cancelled: false, res: null, fit: null, fams: [], visc: [], base: null }, e0 = _evals;
+        var n = normLab(lab);
+        var famList = n.ok ? _famList() : [], visc = n.ok && n.lab.rows.some(function (r) { return _fin(r.muo); }) ? _viscPairs() : [];
+        var total = 1 + famList.length + (visc.length ? 1 + visc.length : 0);
+        function finish() {
+            if (st.res) return st.res;
+            if (st.cancelled) return (st.res = { ok: false, code: 'CANCELLED', cancelled: true, errors: ['cancelled'], warnings: [] });
+            st.res = { ok: !!(st.fit && st.fit.ok), fit: st.fit, rank: { ok: true, families: st.fams.slice().sort(_sortRank), viscosity: st.visc.slice().sort(_sortVisc) },
+                evals: _evals - e0, errors: st.fit && !st.fit.ok ? st.fit.errors : [], warnings: [] };
+            return st.res;
+        }
+        return {
+            step: function () {
+                if (st.done || st.cancelled) return { done: true, progress: 1, label: 'done' };
+                var i = st.i++, label;
+                if (!n.ok) { st.fit = { ok: false, code: 'BAD_LAB', errors: n.errors, warnings: n.warnings }; st.done = true; return { done: true, progress: 1, label: 'lab table' }; }
+                if (i === 0) { st.fit = fit(spec, lab, o); label = 'matching the selected correlations'; if (!st.fit.ok) { st.done = true; return { done: true, progress: 1, label: label }; } }
+                else if (i <= famList.length) { var f = famList[i - 1]; st.fams.push(_rankFamily(spec, lab, f.key, f.label, f.verified !== false)); label = 'ranking ' + f.label; }
+                else if (i === famList.length + 1) { st.base = fit(spec, lab, { props: ['rs'] }); label = 'viscosity base'; }
+                else { var v = visc[i - famList.length - 2]; if (v) st.visc.push(_rankVisc(spec, lab, st.base, v.muod, v.muo, v.label, v.verified)); label = 'ranking ' + (v ? v.label : 'viscosity'); }
+                if (st.i >= total) st.done = true;
+                return { done: st.done, progress: Math.min(1, st.i / total), label: label };
+            },
+            done: function () { return st.done; },
+            progress: function () { return Math.min(1, st.i / total); },
+            result: function () { return finish(); },
+            cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
+        };
+    }
+
+    function applyTo(spec, match) {
+        var s = _clone(spec || {}) || {};
+        s.match = match ? Object.assign({}, s.match || {}, { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr }) : null;
+        return s;
+    }
+
+    // ── examples (synthetic, flagged; the page labels them "example") ──────────
+    // A known distortion of the Standing family at the lab temperature: Pb 8 % above Standing, Rs = 0.93·Rs_c + 12, Bo = 1.012·Bo_c − 0.004,
+    // μo = 1.3·μo_c; the fit recovers it (wellperf-pvtmatch PM2)
+    var EX = { pbF: 1 / 1.08, rs: [0.93, 12], bo: [1.012, -0.004], muo: [1.3, 0] };
+    function example(spec, T_F) {
+        var s = spec || {}, T = _fin(+T_F) ? +T_F : 200, gor = _fin(+s.gor) && +s.gor > 0 ? +s.gor : 500;
+        var base = labOil({ type: 'oil', api: s.api, sgg: s.sgg, psep_psig: s.psep_psig, tsep_F: s.tsep_F, corr: { pb: 'standing', rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson' } }, null, gor);
+        var F0 = _build(base, T, null); if (!F0 || !F0.ok) return null;
+        var pbC = F0.pb(T); if (!_fin(pbC)) return null;
+        var m = { pbFactor: EX.pbF, mult: { rs: EX.rs[0], bo: EX.bo[0], muo: EX.muo[0] }, shift: { rs: EX.rs[1], bo: EX.bo[1], muo: EX.muo[1] }, corr: _corrOf(base) };
+        var F = _build(base, T, m); if (!F || !F.ok) return null;
+        var pb = F.pb(T); if (!_fin(pb)) return null;
+        var ps = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map(function (x) { return Math.round(pb * x / 5) * 5; }).concat([Math.round(pb * 1.15 / 5) * 5, Math.round(pb * 1.35 / 5) * 5]);
+        var rows = _props(F, ps, T, gor).map(function (r) { return { p: r.p, rs: Math.round(r.rs * 10) / 10, bo: Math.round(r.bo * 10000) / 10000, muo: Math.round(r.muo * 1000) / 1000 }; });
+        return { v: 1, example: true, T_F: T, basis: 'flash', pb: Math.round(pb), rsbF: gor, bobF: null, rows: rows };
+    }
+    function exampleRv(cgr, pd) {
+        var c = _fin(+cgr) && +cgr > 0 ? +cgr : 20, d = _fin(+pd) && +pd > 0 ? +pd : 4200, out = [];
+        [0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.92].forEach(function (x) { out.push([Math.round(d * x / 10) * 10, Math.round(c * (0.18 + 0.82 * Math.pow(x, 1.6)) * 100) / 100]); });
+        return out;
+    }
+    function exampleEmul() { return [[0, 1], [0.1, 1.4], [0.2, 2.1], [0.3, 3.2], [0.4, 5.0], [0.5, 7.8]]; }
+
+    function emulsion(fw, muo, muw, e) { return typeof G.WTS_flowline_emulsion === 'function' ? G.WTS_flowline_emulsion(fw, muo, muw, e) : null; }
+    function rvAt(rv, p, cgr) { return typeof G.WTS_flowline_rvAt === 'function' ? G.WTS_flowline_rvAt(rv, p, cgr) : null; }
+    function emulCurve(e, o) {
+        o = o || {}; var muo = _fin(+o.muo) && +o.muo > 0 ? +o.muo : 5, muw = _fin(+o.muw) && +o.muw > 0 ? +o.muw : 0.5, n = o.n > 4 ? Math.floor(o.n) : 60, out = [];
+        for (var i = 0; i <= n; i++) {
+            var fw = i / n, r = (e && e.model && e.model !== 'none') ? emulsion(fw, muo, muw, e) : null;
+            var mix = ((1 - fw) * muo + fw * muw) / muo;
+            out.push({ fw: fw, ratio: r ? r.ratio : mix, cont: r ? r.cont : 'mix', mix: mix });
+        }
+        return out;
+    }
+    function rvCurve(rv, cgr, o) {
+        o = o || {}; var pMax = _fin(+o.pMax) && +o.pMax > 0 ? +o.pMax : 6000, n = o.n > 4 ? Math.floor(o.n) : 60, out = [];
+        for (var i = 0; i <= n; i++) { var p = 14.7 + (pMax - 14.7) * i / n, v = rvAt(rv, p, cgr); out.push({ p: p, rv: v, free: _fin(v) ? Math.max(0, cgr - v) : null }); }
+        return out;
+    }
+
+    var NS = G.WTS_wp_pvtmatch = G.WTS_wp_pvtmatch || {};
+    NS.wls = wls; NS.normLab = normLab; NS.diffToFlash = diffToFlash; NS.labOil = labOil; NS.predict = predict; NS.fit = fit; NS.rank = rank; NS.job = job;
+    NS.applyTo = applyTo; NS.preview = preview; NS.example = example; NS.exampleRv = exampleRv; NS.exampleEmul = exampleEmul;
+    NS.emulsion = emulsion; NS.rvAt = rvAt; NS.emulCurve = emulCurve; NS.rvCurve = rvCurve;
+    NS.METHODS = METHODS; NS.PROV_NOTE = PROV; NS.BOUNDS = BOUNDS; NS.BAND = BAND; NS.PROPS = PROPS.slice(); NS._EX = EX;
+    NS.evals = function () { return _evals; };
+})();
+
+// ─── END 49-calc-wp-pvtmatch ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
