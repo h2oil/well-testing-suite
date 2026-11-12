@@ -135,7 +135,7 @@
         wp_thp: { path: 'system.thp_psig', kind: 'num' },
         wp_node: { path: 'system.node', kind: 'str', enumv: ['bottom', 'wellhead', 'separator'] },
         wp_mode: { path: 'system.mode', kind: 'str', enumv: ['rate', 'pressure', 'max', 'design'] },
-        wp_tkind: { path: 'system.target.kind', kind: 'str', enumv: ['bean', 'thp'] }, wp_tq: { path: 'system.target.q', kind: 'num' },
+        wp_tkind: { path: 'system.target.kind', kind: 'str', enumv: ['bean', 'thp', 'tubingId'] }, wp_tq: { path: 'system.target.q', kind: 'num' },
         wp_corr_well: { path: 'system.corr.well', kind: 'str' }, wp_corr_line: { path: 'system.corr.line', kind: 'str' },
         wp_mult_hl: { path: 'system.mult.hl', kind: 'num' }, wp_mult_f: { path: 'system.mult.f', kind: 'num' },
         wp_eroC: { path: 'system.eroC', kind: 'num' }, wp_stepFt: { path: 'system.stepFt', kind: 'num' },

@@ -65,7 +65,7 @@ const BENCH = [
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
 const BUDGET = {
-  traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80,
+  traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
 };
 
 function _load() {
@@ -311,6 +311,10 @@ function checks(G) {
       if (!b || b.R.q !== R.op.q || b.R.pwf !== R.pwf) { ok = false; worst = Math.max(worst, b ? Math.abs(b.R.q - R.op.q) : 1); }
     });
     add('X15', 'sensitivity at the base value = the single solve (identical)', ok, worst, 0);
+    // X17 (A2, WP16) two variables: the start cell (both model values) = the single solve exactly
+    const M = S.FIX.oilWell, R = solve(M), r2 = runJ(G.WTS_wp_sens.job(M, [{ key: 'wc', values: [20, 30, 40] }, { key: 'pr', values: [2800, 3000] }]));
+    const c = r2.ok && r2.cases.find((x) => x.values.wc === 30 && x.values.pr === 3000);
+    add('X17', 'two-variable sensitivity: the start cell = the single solve (identical)', !!(c && c.R.q === R.op.q && c.R.pwf === R.pwf), c ? Math.abs(c.R.q - R.op.q) : 1, 0);
   }
   return { ok: out.every((c) => c.ok), rows: out };
 }
@@ -349,6 +353,8 @@ function timing(G) {
     const t0 = nowMs(); const r = run(G.WTS_wp_sens.job(M, [{ key: 'wc', values: vals }]));
     const ev = r && r.cases ? r.cases.reduce((a, c) => a + ((c.R && c.R.evals) || 0), 0) : null;
     rec('sensitivity, 10 cases', 'oilWell', ev == null ? 0 : ev, BUDGET.sens10, nowMs() - t0);
+    const t1 = nowMs(); const r2 = run(G.WTS_wp_sens.job(M, [{ key: 'wc', values: vals }, { key: 'pr', values: [2600, 3000] }]));
+    rec('sensitivity, 2 × 10 cases', 'oilWell', r2 && r2.ok ? r2.evals : 0, BUDGET.sens2x10, nowMs() - t1);
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }

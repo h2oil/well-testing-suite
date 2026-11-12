@@ -72,7 +72,9 @@
 //                'sachdeva-scaled'|null, rateFactor, x1, ycIt, cv, subcritical 'sachdeva'|'bound', cd, fallback}},
 //                rates:{qo, qw, qg Mscf/d, qL}, velocities:{vmMax, eroMax, eroC, qEro}, curves:{ipr:[{q, p}], vlp:[{q, p}]},
 //                scan:[{q, pOut, pIn, lost}], flags[], discontinuities[], loading, atTarget?, warnings, errors, evals, counts, grid}
-//     .designFor(M, target /*{bean: q} | {thp: q}*/) → Job: result() → {ok, bean | thp (psig), q, R, solves}
+//     .designFor(M, target /*{bean: q} | {thp: q} | {tubingId: q} (A2)*/) → Job: result() → {ok, bean | thp (psig), q, R, solves};
+//                tubingId: {ok, tubingId in, tubKey, od, label, q, rows:[{key, label, id, od, ok, q, stable, loadingMargin, ero, thp, pwf,
+//                regime}], current, solves, evals} — the smallest catalogue size whose stable rate reaches the target
 //     .maxRate(M)   → {ok, q, thp_psig, tht, thtMax, rating:{verdict, margin}, R}
 //     .shutIn(M, o?) → {ok, gasFilled, actualFluid, partLiquid:[{liquidTopMd, liquidTopTvd, sithp}], liquidLevelMd, sgCol, zAvg,
 //                       sithp (worst), rating:{verdict:'ok'|'warn'|'fail'|'none', margin}, notes[]}   (pressures psig)
@@ -1123,8 +1125,60 @@
     // setting, a first guess from the choke law (critical rate ∝ S^1.89) or from the root slope (dq/dTHP ≈ −1/(dΔ/dq)), then secant /
     // Illinois steps; every later solve is a TRACKING solve warm-started from the nearest setting (≈ 5 E). Reverse communication: one
     // solve per Job step.
+    // Tubing-ID design (A2, WP16; §4.9): a discrete scan over the WTS_tubulars tubing catalogue (every tubing size whose OD fits
+    // inside the casing / liner around the tubing). One solve per size, smallest first, each a tracking solve warm-started from the
+    // previous size's root (a full solve when the bracket fails). The answer is the SMALLEST size whose stable rate reaches the target
+    // (tubing is sized for the rate it must carry, the smallest string keeps the highest velocity against loading); every size is
+    // listed with its rate, stability, loading margin (gas) and erosion ratio. Not reachable: the size with the highest rate, and why.
+    function _tubingCands(M) {
+        var T = G.WTS_tubulars; if (!T || typeof T.list !== 'function') return [];
+        var strs = (_get(M, ['well', 'strings'], []) || []), tub = strs.filter(function (x) { return x && (x.kind || 'tubing') === 'tubing'; });
+        var top = tub.length ? Math.min.apply(null, tub.map(function (x) { return +x.topMd || 0; })) : 0, bot = tub.length ? Math.max.apply(null, tub.map(function (x) { return +x.botMd || 0; })) : 0;
+        var dMin = Infinity; strs.forEach(function (c) { if (c && c.kind !== 'tubing' && +c.id > 0 && +c.topMd < bot && +c.botMd > top) dMin = Math.min(dMin, +c.id); });
+        var seen = {}, out = [];
+        T.list('tubing').slice().sort(function (a, b) { return a.id - b.id || a.od - b.od; }).forEach(function (e) {
+            if (!(e.id > 0) || e.od >= dMin - 0.25 || seen[e.id.toFixed(3)]) return;
+            seen[e.id.toFixed(3)] = 1; out.push({ key: e.key, id: e.id, od: e.od, wall: e.wall, label: e.label || e.key });
+        });
+        return out;
+    }
+    function _tubingDesign(M, qT) {
+        var base = M ? _clone(M) : null, cands = base ? _tubingCands(base) : [];
+        var tub = base ? (base.well.strings || []).filter(function (x) { return x && (x.kind || 'tubing') === 'tubing'; }) : [];
+        if (!base || !tub.length || !cands.length) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'NO_TUBING', errors: [!tub.length ? 'The well has no tubing string to size.' : 'No catalogue tubing fits inside the casing.'], warnings: [], rows: [] }; } });
+        if (base.system.mode === 'design' || base.system.mode === 'max') base.system.mode = 'rate';
+        var rows = [], prev = null, ev = 0;
+        return job({
+            label: function (i) { return 'tubing ' + (i < cands.length ? cands[i].label : '') + ' (' + Math.min(i + 1, cands.length) + ' of ' + cands.length + ')'; },
+            progress: function (i) { return i / cands.length; },
+            next: function (i) {
+                if (i >= cands.length) return true;
+                var c = cands[i], Mx = _clone(base);
+                Mx.well.strings.forEach(function (x) { if (x && (x.kind || 'tubing') === 'tubing') { x.tubKey = c.key; x.id = c.id; x.od = c.od; x.wall = c.wall; } });
+                var o = {};
+                if (prev && prev.R.ok) o = { track: { q: prev.R.op.q * Math.pow(c.id / prev.id, 1.5), slope: prev.R.op.dDdq } };   // a new path: no warm grid
+                var R = solve(Mx, o), ok = !!(R && R.ok && R.op);
+                ev += R ? (R.evals || 0) : 0;
+                if (ok) prev = { id: c.id, R: R };
+                rows.push({ key: c.key, label: c.label, id: c.id, od: c.od, ok: ok, q: ok ? R.op.q : null, stable: ok ? !!R.op.stable : false,
+                    loadingMargin: ok && R.loading ? R.loading.margin : null, ero: ok && R.velocities ? R.velocities.eroMax : null,
+                    thp: ok ? R.surface.thp_psig : null, pwf: ok ? R.pwf : null, regime: ok ? (R.surface.choke && R.surface.choke.regime) : ((R && R.code) || 'no flow'), R: R });
+                return i + 1 >= cands.length;
+            },
+            finish: function () {
+                var hit = rows.filter(function (r) { return r.ok && r.stable && r.q >= qT * (1 - 1e-3); }), best = hit[0] || null;
+                var top = rows.filter(function (r) { return r.ok; }).sort(function (a, b) { return b.q - a.q; })[0] || null;
+                var cur = _n(tub[0].id), plain = rows.map(function (r) { var o = {}; Object.keys(r).forEach(function (k) { if (k !== 'R') o[k] = r[k]; }); return o; });
+                if (best) return { ok: true, kind: 'tubingId', tubingId: best.id, tubKey: best.key, od: best.od, label: best.label, q: best.q, target: qT, R: best.R, rows: plain, current: cur, solves: rows.length, evals: ev, errors: [], warnings: [] };
+                var why = top ? 'The largest rate of the catalogue sizes is ' + _f(top.q, 0) + ' with ' + top.label + ': the inflow or the surface limits the rate, not the tubing.' : 'No catalogue size flows.';
+                return { ok: false, code: 'NOT_REACHABLE', kind: 'tubingId', target: qT, best: top ? { x: top.id, q: top.q, key: top.key } : null, rows: plain, current: cur, solves: rows.length, evals: ev,
+                    errors: ['No catalogue tubing reaches the target rate ' + _f(qT, 0) + '.', why], warnings: [] };
+            }
+        });
+    }
     function designFor(M, target) {
         target = target || {};
+        if (target.tubingId != null) return _tubingDesign(M, +target.tubingId);
         var kind = target.bean != null ? 'bean' : (target.thp != null ? 'thp' : null), qT = kind ? +target[kind] : NaN;
         var base = M ? _clone(M) : null;
         if (!kind || !(qT > 0) || !base || !base.surface || !base.system) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'BAD_TARGET', errors: ['a target rate {bean: q} or {thp: q} is needed'], warnings: [] }; } });

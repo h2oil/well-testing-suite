@@ -284,6 +284,9 @@
         '@media (max-width:1000px){#wp_root .wp-mres{grid-template-columns:1fr}}' +
         '#wp_root .wp-prog{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:8px}#wp_root .wp-prog i{display:block;height:100%;background:var(--accent);transition:width .2s}' +
         '#wp_root .wp-paste{display:none;margin-top:8px}#wp_root .wp-paste.on{display:block}#wp_root .wp-paste textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}' +
+        '#wp_root .wp-heat td.wp-hc{padding:0;transition:background .2s}#wp_root .wp-heat td.wp-hc button{display:block;width:100%;min-width:52px;padding:6px 8px;border:0;background:transparent;color:var(--text);font:inherit;font-variant-numeric:tabular-nums;text-align:right;cursor:pointer;border-radius:4px}' +
+        '#wp_root .wp-heat td.wp-hc button:hover{box-shadow:inset 0 0 0 1px var(--border-light)}#wp_root .wp-heat td.wp-hc.on button{box-shadow:inset 0 0 0 2px var(--accent);font-weight:700}' +
+        '#wp_root .wp-heat th{white-space:nowrap}#wp_root .wp-heatleg{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;flex-wrap:wrap}#wp_root .wp-heatleg i{display:inline-block;width:140px;height:8px;border-radius:4px}' +
         '#wp_root .wp-sec{animation:wpfade .18s ease-out}@keyframes wpfade{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}' +
         '#wp_root .wp-sec-h{display:flex;align-items:baseline;gap:10px;margin:4px 0 12px;font-size:15px;font-weight:700;color:var(--text)}#wp_root .wp-sec-h span{font-size:12px;font-weight:500;color:var(--text3)}' +
         '#wp_root .wp-2c{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}#wp_root .wp-2c>*{min-width:0}' +
@@ -934,6 +937,25 @@
         var hv = _byId('wp_valid'); if (hv) { var va = _validity(); hv.innerHTML = '<div class="rbox-title">Correlation validity</div>' + (va.length ? va.map(_vHtml).join('') : '<div class="wp-v info">The validity ranges of the correlations in use are checked after a solve.</div>'); }
     }
 
+    // Two-variable sensitivity (A2, WP16): the rate against the primary variable, one line per value of the second (a colour ramp),
+    // hollow markers where a case does not flow or is unstable, the selected heat-map cell as a ringed marker
+    function _sv(k, v, lab) { return lab ? String(lab) : _fmt(_sensDv(k, v), 3); }
+    function _sens2Spec(T) {
+        var s = ST.sens, V = G.WTS_wp_view, rc = _rateCat(), g = s.grid, ser = [], mk = [], ny = g.y.length;
+        g.y.forEach(function (y, j) {
+            var col = V.ramp(ny > 1 ? j / (ny - 1) : 0.5), pts = [];
+            g.x.forEach(function (x, i) { if (_fin(g.q[j][i])) pts.push([_sensDv(s.key, x), _dv(g.q[j][i], rc[0])]); });
+            ser.push({ key: 'r' + j, label: _sensVarLabel(s.key2).replace(/ \(.*\)$/, '') + ' ' + _sv(s.key2, y, g.labelsY[j]) + (s.unit2 && !g.labelsY[j] ? ' ' + _sensUnit(s.key2, s.unit2) : '') + (s.stale ? ' (previous inputs)' : ''), color: s.stale ? T.text2 : col, width: 2.2, dash: s.stale ? [2, 4] : null, pts: pts });
+            ser.push({ key: 'p' + j, label: '', legend: false, kind: 'points', color: s.stale ? T.text2 : col, r: 3.2, pts: pts });
+            g.x.forEach(function (x, i) { if (!_fin(g.q[j][i]) || g.stable[j][i] === false) mk.push({ x: _sensDv(s.key, x), y: _fin(g.q[j][i]) ? _dv(g.q[j][i], rc[0]) : 0, kind: 'hollow', color: T.red, r: 4.5 }); });
+        });
+        var sel = ST.sensSel;
+        if (sel && g.y[sel.j] != null && _fin(g.q[sel.j][sel.i])) mk.push({ x: _sensDv(s.key, g.x[sel.i]), y: _dv(g.q[sel.j][sel.i], rc[0]), kind: 'filled', color: T.accent, r: 7, halo: true, label: _fmt(_dv(g.q[sel.j][sel.i], rc[0]), 0) + ' ' + _lab(rc[0], rc[1]) });
+        return { key: 'sens2:' + s.key + ':' + s.key2, aspect: 0.55, minH: 230, maxH: 400, w: 640, readout: 'x',
+            x: { label: _sensVarLabel(s.key), short: 'x' }, y: { label: 'Rate (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab(rc[0], rc[1]); } },
+            series: ser, markers: mk, empty: 'No case of the two-variable sensitivity flows.' };
+    }
+
     // Choke tab (A2, WP15): the rate through the bean against the pressure ratio y = p2/p1 at the operating THP — the continuous
     // Sachdeva et al. (1986) curve, the critical correlation (valid left of its 0.588), the gas nozzle for gas wells; the critical ratios
     // as vertical lines, the operating point as the marker; the bean handle on the top rail re-solves the well like the system plot
@@ -984,6 +1006,8 @@
                      empty: (ST.M && !_isGasType(ST.M.fluid.type)) ? 'Liquid loading applies to gas and gas-condensate wells.' : 'The loading profile appears after a solve.' };
         } else if (tab === 'choke') {
             spec = _chokeSpec(T);
+        } else if (tab === 'sens' && ST.sens && ST.sens.two) {
+            spec = _sens2Spec(T);
         } else if (tab === 'sens') {
             var s = ST.sens, cs = (s && s.cases) || [], rc = _rateCat();
             spec = { key: 'sens:' + (s && s.key), aspect: 0.55, minH: 220, maxH: 380, w: 640, readout: 'x',
@@ -1047,11 +1071,12 @@
     function _sensDv(k, v) { return SENS_CAT[k] ? _dv(v, SENS_CAT[k]) : v; }
     function _sensLabel(s, c) { return c.label ? String(c.label) : _sensVarLabel(s.key).replace(/ \(.*\)$/, '') + ' ' + _fmt(_sensDv(s.key, +_sensVal(c)), 2); }
     // the values box: suggestions around the model value (WTS_wp_sens.suggest), shown in display units
-    function _sensSuggest() {
-        var SN = G.WTS_wp_sens, sel = _byId('wpv_svar'), box = _byId('wpv_svals'); if (!sel || !box || !SN || typeof SN.suggest !== 'function') return;
+    function _sensSuggest(which) {
+        var two = which === 2, SN = G.WTS_wp_sens, sel = _byId(two ? 'wpv_svar2' : 'wpv_svar'), box = _byId(two ? 'wpv_svals2' : 'wpv_svals'); if (!sel || !box || !SN || typeof SN.suggest !== 'function') return;
         var M = ST.M || _read(), k = sel.value, why = null;
+        if (two && !k) { box.value = ''; return; }
         try { var row = (SN.vars(M) || []).filter(function (x) { return x.key === k; })[0]; why = row && !row.applicable ? row.why : null; } catch (e) { why = null; }
-        var sg = SN.suggest(M, k, 5);
+        var sg = SN.suggest(M, k, two ? 3 : 5);
         if (sg && sg.ok) box.value = sg.values.map(function (v) { var d = _sensDv(k, v); return String(+(+d).toPrecision(4)); }).join(' ');
         var jb = _byId('wp_jobbox'); if (jb) jb.innerHTML = why ? _vHtml({ st: 'info', t: 'ℹ ' + _sensVarLabel(k).replace(/ \(.*\)$/, '') + ': ' + why + '.' }) : '';
     }
@@ -1065,11 +1090,14 @@
         return parts.filter(function (x) { return x !== ''; }).slice(0, 10).map(function (x) { var n = parseFloat(x.replace(/,/g, '.')); return _fin(n) ? _fromDisp(n, SENS_CAT[key]) : x; });
     }
     function _sensFit() {
-        var SN = G.WTS_wp_sens, sel = _byId('wpv_svar'), box = _byId('wpv_svals'); if (!sel || !box || !SN || !SN.VARS) return;
-        var V = SN.VARS[sel.value]; if (!V) return;
-        var vals = _sensParse(sel.value, box.value);
-        var bad = !vals.length || vals.some(function (v) { return typeof v === 'string' ? sel.value !== 'tubingId' : (!_fin(v) || (_fin(V.lo) && v < V.lo) || (_fin(V.hi) && v > V.hi)); });
-        if (bad) _sensSuggest();
+        var SN = G.WTS_wp_sens; if (!SN || !SN.VARS) return;
+        [1, 2].forEach(function (w) {
+            var sel = _byId(w === 2 ? 'wpv_svar2' : 'wpv_svar'), box = _byId(w === 2 ? 'wpv_svals2' : 'wpv_svals'); if (!sel || !box) return;
+            var V = SN.VARS[sel.value]; if (!V) return;
+            var vals = _sensParse(sel.value, box.value);
+            var bad = !vals.length || vals.some(function (v) { return typeof v === 'string' ? sel.value !== 'tubingId' : (!_fin(v) || (_fin(V.lo) && v < V.lo) || (_fin(V.hi) && v > V.hi)); });
+            if (bad) _sensSuggest(w);
+        });
     }
 
     // Results drawer (full tables, .rp-skip)
@@ -1237,10 +1265,11 @@
         if (act === 'example') { _loadExample(btn.getAttribute('data-ex')); return; }
         if (act === 'csv') { _csv(); return; }
         if (act === 'design') {
-            var tk = M.system.target.kind, q = M.system.target.q, tgt = {}; tgt[tk === 'thp' ? 'thp' : 'bean'] = q;
+            var tk = M.system.target.kind, q = M.system.target.q, tgt = {}; tgt[tk === 'thp' ? 'thp' : tk === 'tubingId' ? 'tubingId' : 'bean'] = q;
             if (!_fin(q)) { var b0 = _byId('wp_jobbox'); if (b0) b0.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter the target rate first.' }); return; }
             _drive(_jobOf(_call('WTS_wp_system.designFor', M, tgt)), function (r) {
                 ST.design = r;
+                if (tk === 'tubingId' || (r && r.kind === 'tubingId')) { _renderTubDesign(); return; }
                 var b = _byId('wp_design');
                 if (b) b.innerHTML = (r && r.ok) ? _vHtml({ st: 'ok', t: '✓ ' + (tk === 'thp' ? 'Wellhead pressure ' + _u(r.thp, 'pressureG', 0, 'psig') : 'Bean ' + _fmt(r.bean, 1) + '/64 in') + ' gives the target rate.' }) +
                     '<div class="wp-btns"><button type="button" class="btn btn-primary" data-act="adopt" data-id="' + (tk === 'thp' ? 'wp_thp' : 'wp_bean') + '" data-v="' + (tk === 'thp' ? Math.round(r.thp) : Math.round(r.bean)) + '">Use this ' + (tk === 'thp' ? 'THP' : 'bean') + '</button></div>'
@@ -1261,7 +1290,15 @@
         if (act === 'sens') {
             var key = (_byId('wpv_svar') || {}).value || 'wc', sraw = String((_byId('wpv_svals') || {}).value || '').trim(), vals = _sensParse(key, sraw).filter(function (x) { return _fin(x) || (key === 'tubingId' && typeof x === 'string'); });
             if (!vals.length) { var b1 = _byId('wp_jobbox'); if (b1) b1.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter up to 10 values for the sensitivity.' }); return; }
-            _drive(_jobOf(_call('WTS_wp_sens.job', M, [{ key: key, values: vals }])), function (r) {
+            var key2 = (_byId('wpv_svar2') || {}).value || '', vars = [{ key: key, values: vals }];
+            if (key2) {
+                if (key2 === key) { var b3 = _byId('wp_jobbox'); if (b3) b3.innerHTML = _vHtml({ st: 'warn', t: '⚠ Pick a second variable different from the first.' }); return; }
+                var vals2 = _sensParse(key2, String((_byId('wpv_svals2') || {}).value || '').trim()).filter(function (x) { return _fin(x) || (key2 === 'tubingId' && typeof x === 'string'); });
+                if (!vals2.length) { var b2 = _byId('wp_jobbox'); if (b2) b2.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter up to 10 values for the second variable.' }); return; }
+                vars.push({ key: key2, values: vals2 });
+            }
+            ST.sensSel = null;
+            _drive(_jobOf(_call('WTS_wp_sens.job', M, vars)), function (r) {
                 if (!r || r.ok === false) {          // e.g. BAD_VARS: the values do not fit the variable — say so, never stay silent
                     var eb = _byId('wp_jobbox'), em = ((r && r.errors) || []).slice(0, 3).join(' · ') || (r && r.code) || 'no result';
                     if (eb) eb.innerHTML = _vHtml({ st: 'fail', t: '✗ Sensitivity not run: ' + em });
@@ -1269,6 +1306,7 @@
                     return;
                 }
                 ST.sens = r && typeof r === 'object' ? Object.assign({ key: key }, r) : null;
+                if (ST.sens && ST.sens.two) _plotsSet({ trTab: 'sens' });
                 ST.sensKey = _mkey(M);
                 if (G.WTS_state && G.WTS_state.wellperf) G.WTS_state.wellperf.sens = ST.sens;
                 _plotsSet({ trTab: 'sens' }); _renderTraverseCard(); _renderSystemPlot(); _renderSensTable();
@@ -1276,6 +1314,23 @@
             return;
         }
         if (act === 'match') { _runMatch(); return; }
+        if (act === 'usetub') {
+            var tkey = btn.getAttribute('data-key'), e2 = G.WTS_tubulars && G.WTS_tubulars.find ? G.WTS_tubulars.find(tkey) : null, Mm = G.WTS_wp_model;
+            if (!e2 || !Mm) return;
+            var strs = JSON.parse(JSON.stringify(M.well.strings || []));
+            strs.forEach(function (x) { if (x && (x.kind || 'tubing') === 'tubing') { x.tubKey = tkey; x.id = e2.id; x.od = e2.od; x.wall = e2.wall; } });
+            Mm.write({ strings: strs });
+            _renderTable('strings');
+            var dm = _byId('wp_design'); if (dm) dm.insertAdjacentHTML('afterbegin', _vHtml({ st: 'ok', t: '✓ The tubing strings now use ' + (e2.label || tkey) + '.' }));
+            return;
+        }
+        if (act === 'sens2cell') {
+            var ci = +btn.getAttribute('data-i'), cj = +btn.getAttribute('data-j');
+            ST.sensSel = (ST.sensSel && ST.sensSel.i === ci && ST.sensSel.j === cj) ? null : { i: ci, j: cj };
+            _renderSensTable(); _plotsSet({ trTab: 'sens' }); _renderTraverseCard();
+            var nb2 = document.querySelector && document.querySelector('#wp_senstbl [data-act="sens2cell"][data-i="' + ci + '"][data-j="' + cj + '"]'); if (nb2 && nb2.focus) nb2.focus();
+            return;
+        }
         if (act === 'ckfit') {
             var ck = (_byId('wpv_ckfit') || {}).value || 'gilbert', fm = _byId('wp_ckfitmsg');
             var Mg = JSON.parse(JSON.stringify(M)); Mg.surface.choke.corr = ck; Mg.surface.choke.subcritical = 'sachdeva';
@@ -1286,7 +1341,8 @@
         }
         if (act === 'adopt') {
             var ids = String(btn.getAttribute('data-ids') || btn.getAttribute('data-id') || '').split(','), vs = String(btn.getAttribute('data-vs') || btn.getAttribute('data-v') || '').split(','), done = [];
-            ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = 'matched to test ' + ((ST.match && ST.match.test) || ''); done.push(id); } });
+            var pv = btn.getAttribute('data-prov');
+            ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = pv || ('matched to test ' + ((ST.match && ST.match.test) || '')); done.push(id); } });
             if (done.length) { _syncUi(); _commit(done[done.length - 1]); }
             return;
         }
@@ -1309,8 +1365,74 @@
         h.innerHTML = rows.length ? stale + bnote + '<div class="wp-tw"><table class="dtable"><thead><tr><th>Bean (/64)</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Choke Δp</th><th>Regime</th><th>Stable</th></tr></thead><tbody>' +
             rows.map(function (r) { return '<tr><td>' + _fmt(r.bean, 0) + '</td><td class="num">' + _fmt(_dv(r.q, rc[0]), 0) + '</td><td class="num">' + _fmt(_dv(r.thp, 'pressureG'), 0) + '</td><td class="num">' + _fmt(_dv(r.tht, 'temperature'), 0) + '</td><td class="num">' + _fmt(_dv(r.dpChoke, 'pressure'), 0) + '</td><td>' + _esc(r.regime || '') + '</td><td>' + (r.stable ? '✓' : '✗') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
     }
+    // Tubing-size design result (A2, WP16): every catalogue size with its rate, the target line and the chosen size; "Use this
+    // tubing" writes the size into the strings table (WTS_wp_model.write → one solve)
+    function _renderTubDesign() {
+        var b = _byId('wp_design'), r = ST.design, V = G.WTS_wp_view; if (!b || !r) return;
+        var rc = _rateCat(), gas = !!(ST.M && _isGasType(ST.M.fluid.type)), rows = r.rows || [];
+        var head = r.ok ? _vHtml({ st: 'ok', t: '✓ ' + r.label + ' is the smallest catalogue tubing that gives the target rate (' + _u(r.q, rc[0], 0, rc[1]) + ' against ' + _u(r.target, rc[0], 0, rc[1]) + ').' })
+            : (r.errors || []).slice(0, 2).map(function (e, i) { return _vHtml({ st: i ? 'info' : 'warn', t: (i ? 'ℹ ' : '⚠ ') + e }); }).join('');
+        var tb = rows.length ? '<div class="wp-tw" style="margin-top:8px"><table class="dtable"><thead><tr><th>Tubing</th><th>ID (' + _esc(_lab('lengthSmall', 'in')) + ')</th><th>Rate (' + _esc(_lab(rc[0], rc[1])) + ')</th><th>Stable</th>' + (gas ? '<th>Loading margin</th>' : '') + '<th>Erosion ratio</th><th></th></tr></thead><tbody>' +
+            rows.map(function (x) {
+                var pick = r.ok && x.key === r.tubKey, cur = _fin(r.current) && Math.abs(x.id - r.current) < 1e-3;
+                return '<tr' + (pick ? ' style="font-weight:700;color:var(--accent)"' : '') + '><td>' + _esc(x.label) + (cur ? ' (now)' : '') + '</td><td class="num">' + _fmt(_dv(x.id, 'lengthSmall'), 3) + '</td><td class="num">' + (x.ok ? _fmt(_dv(x.q, rc[0]), 0) : '—') + '</td><td>' + (x.ok ? (x.stable ? '✓' : '✗') : '—') + '</td>' +
+                    (gas ? '<td class="num">' + (_fin(x.loadingMargin) ? (x.loadingMargin >= 0 ? '+' : '') + _fmt(100 * x.loadingMargin, 0) + ' %' : '—') + '</td>' : '') + '<td class="num">' + (_fin(x.ero) ? _fmt(x.ero, 2) : '—') + '</td>' +
+                    '<td class="rp-skip">' + (x.ok ? '<button type="button" class="btn btn-secondary" data-act="usetub" data-key="' + _esc(x.key) + '" style="padding:3px 9px">Use</button>' : '') + '</td></tr>';
+            }).join('') + '</tbody></table></div>' : '';
+        b.innerHTML = head + '<div class="chart-wrap rp-skip" style="margin-top:8px"><canvas id="wp_cv_tub" aria-label="Rate against the tubing inside diameter"></canvas></div>' + tb;
+        var cv = _byId('wp_cv_tub'); if (!cv || !V) return;
+        var T = V.theme(), pts = rows.filter(function (x) { return x.ok; }).map(function (x) { return [_dv(x.id, 'lengthSmall'), _dv(x.q, rc[0])]; });
+        V.chart(cv, { key: 'tub:' + rc[0], aspect: 0.5, minH: 200, maxH: 320, w: 560, readout: 'x',
+            x: { label: 'Tubing ID (' + _lab('lengthSmall', 'in') + ')', short: 'ID', fmtR: function (v) { return _fmt(v, 3) + ' ' + _lab('lengthSmall', 'in'); } }, y: { label: 'Rate (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab(rc[0], rc[1]); } },
+            series: [{ key: 'q', label: 'Operating rate', color: T.blue, width: 2.4, pts: pts }, { key: 'qp', label: '', legend: false, kind: 'points', color: T.blue, pts: pts }],
+            hlines: _fin(r.target) ? [{ y: _dv(r.target, rc[0]), label: 'target', color: T.yellow, dash: [6, 4] }] : [],
+            markers: rows.filter(function (x) { return x.ok && (!x.stable || (r.ok && x.key === r.tubKey)); }).map(function (x) { var pk = r.ok && x.key === r.tubKey; return { x: _dv(x.id, 'lengthSmall'), y: _dv(x.q, rc[0]), kind: pk ? 'filled' : 'hollow', color: pk ? T.accent : T.red, r: pk ? 7 : 5, halo: pk, label: pk ? r.label : 'unstable' }; }),
+            empty: 'No catalogue size flows.' });
+    }
+
+    // the 2-D table of a two-variable sensitivity: rows = the second variable, columns = the primary one, each cell coloured by its
+    // rate (the heat map; grey = no operating point, ✗ = unstable). A cell is a button: it selects the case on the rate plot and
+    // shows its numbers with "Use these values" (the inputs change through the normal event path). The table is report-captured.
+    var SENS_ID = { pr: 'wp_pr', wc: 'wp_wc', gor: 'wp_gor', thp: 'wp_thp', psep: 'wp_psep', bean: 'wp_bean', J: 'wp_ip_J', skin: 'wp_ip_S', cgr: 'wp_cgr', wgr: 'wp_wgr' };
+    function _renderSens2Table() {
+        var h = _byId('wp_senstbl'); if (!h) return;
+        var s = ST.sens, g = s.grid, rc = _rateCat(), V = G.WTS_wp_view, all = [];
+        g.q.forEach(function (r) { r.forEach(function (q) { if (_fin(q)) all.push(q); }); });
+        var lo = all.length ? Math.min.apply(null, all) : 0, hi = all.length ? Math.max.apply(null, all) : 1, n = s.cases.filter(function (c) { return c.R && c.R.ok; }).length;
+        var l1 = _sensVarLabel(s.key), l2 = _sensVarLabel(s.key2), sel = ST.sensSel;
+        var head = '<div class="wp-sec-h" style="font-size:13px;margin-top:12px">Sensitivity — ' + _esc(l1) + ' × ' + _esc(l2) + ' <span>' + n + ' of ' + s.cases.length + ' cases flow; rate (' + _esc(_lab(rc[0], rc[1])) + ') in each cell</span></div>' +
+            (s.stale ? '<div class="wp-stalechip" role="status">Results are from the previous inputs — re-run the sensitivity</div>' : '') +
+            (s.warnings || []).filter(function (w) { return w && w.code !== 'CASE_NA'; }).map(function (w) { return _vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + w.msg }); }).join('');
+        var isB = function (k, v, b) { return b && _fin(b.value) && b.inList && Math.abs(v - b.value) <= 1e-9 * Math.max(1, Math.abs(b.value)); };
+        var tb = '<div class="wp-tw"><table class="dtable wp-heat" aria-label="Rate for each pair of values"><thead><tr><th>' + _esc(l2.replace(/ \(.*\)$/, '')) + ' ↓ / ' + _esc(l1.replace(/ \(.*\)$/, '')) + ' →</th>' +
+            g.x.map(function (x, i) { return '<th class="num"' + (isB(s.key, x, s.base) ? ' style="color:var(--accent)"' : '') + '>' + _esc(_sv(s.key, x, g.labelsX[i])) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+            g.y.map(function (y, j) {
+                return '<tr><th' + (isB(s.key2, y, s.base2) ? ' style="color:var(--accent)"' : '') + '>' + _esc(_sv(s.key2, y, g.labelsY[j])) + '</th>' + g.x.map(function (x, i) {
+                    var q = g.q[j][i], f = _fin(q) && hi > lo ? (q - lo) / (hi - lo) : 0.5, on = sel && sel.i === i && sel.j === j;
+                    var bg = _fin(q) ? V.ramp(0.08 + 0.84 * f).replace('rgb(', 'rgba(').replace(')', ',0.42)') : 'transparent';
+                    return '<td class="num wp-hc' + (on ? ' on' : '') + '" style="background:' + bg + '"><button type="button" data-act="sens2cell" data-i="' + i + '" data-j="' + j + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + _esc(l1 + ' ' + _sv(s.key, x, g.labelsX[i]) + ', ' + l2 + ' ' + _sv(s.key2, y, g.labelsY[j])) + '">' +
+                        (_fin(q) ? _fmt(_dv(q, rc[0]), 0) + (g.stable[j][i] === false ? ' ✗' : '') : '—') + '</button></td>';
+                }).join('') + '</tr>';
+            }).join('') + '</tbody></table></div>';
+        var leg = '<div class="wp-heatleg"><span>' + _esc(_fmt(_dv(lo, rc[0]), 0)) + '</span><i style="background:linear-gradient(90deg,' + [0.08, 0.3, 0.5, 0.7, 0.92].map(function (f) { return V.ramp(f); }).join(',') + ')"></i><span>' + _esc(_fmt(_dv(hi, rc[0]), 0) + ' ' + _lab(rc[0], rc[1])) + '</span><span class="wp-hint" style="margin:0 0 0 8px">— no flow · ✗ unstable · accent = the model value</span></div>';
+        var det = '';
+        if (sel) {
+            var c = s.cases.filter(function (x) { return x.i === sel.i && x.j === sel.j; })[0], R = c && c.R;
+            if (R) {
+                var v1 = g.x[sel.i], v2 = g.y[sel.j], ids = [], vs = [];
+                [[s.key, v1], [s.key2, v2]].forEach(function (kv) { var id = SENS_ID[kv[0]]; if (id && _byId(id)) { ids.push(id); vs.push(kv[0] === 'wc' ? kv[1] : kv[1]); } });
+                det = '<div class="rbox" style="margin-top:10px"><div class="rbox-title">Selected case</div>' +
+                    '<div class="rrow"><span class="rl">' + _esc(l1) + ' · ' + _esc(l2) + '</span><span class="rv">' + _esc(_sv(s.key, v1, g.labelsX[sel.i]) + ' · ' + _sv(s.key2, v2, g.labelsY[sel.j])) + '</span></div>' +
+                    (R.ok ? '<div class="rrow"><span class="rl">Rate</span><span class="rv">' + _esc(_u(R.q, rc[0], 0, rc[1])) + (R.stable ? '' : ' (unstable)') + '</span></div><div class="rrow"><span class="rl">pwf · THP</span><span class="rv">' + _esc(_u(R.pwf, 'pressure', 0, 'psia') + ' · ' + _u(R.thp, 'pressureG', 0, 'psig')) + '</span></div>'
+                        : _vHtml({ st: 'info', t: 'ℹ ' + (R.error || R.code || 'No operating point.') })) +
+                    (ids.length && R.ok ? '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="adopt" data-prov="from the sensitivity" data-ids="' + ids.join(',') + '" data-vs="' + vs.join(',') + '">Use these values</button></div>' : '') + '</div>';
+            }
+        }
+        h.innerHTML = head + tb + leg + det;
+    }
     function _renderSensTable() {
         var h = _byId('wp_senstbl'); if (!h) return;
+        if (ST.sens && ST.sens.two && ST.sens.grid) { _renderSens2Table(); return; }
         var s = ST.sens, rc = _rateCat();
         if (!(s && s.cases && s.cases.length)) { h.innerHTML = ''; return; }
         var gas = !!(ST.M && _isGasType(ST.M.fluid.type)), bv = s.base && _fin(s.base.value) ? s.base.value : null;
@@ -1565,7 +1687,12 @@
             var C = _curves(); L.push(''); L.push('System curves'); L.push(['Rate', 'IPR pwf', 'Outflow pwf'].map(q).join(','));
             C.ipr.forEach(function (p, i) { L.push([_dv(p[0], rc[0]), _dv(p[1], 'pressure'), C.vlp[i] && Math.abs(C.vlp[i][0] - p[0]) < 1e-9 ? _dv(C.vlp[i][1], 'pressure') : ''].join(',')); });
         }
-        if (ST.sens && ST.sens.cases) {
+        if (ST.sens && ST.sens.two && ST.sens.grid) {
+            var s2 = ST.sens, g2 = s2.grid;
+            L.push(''); L.push(q('Sensitivity: rate (' + _lab(rc[0], rc[1]) + '), rows ' + _sensVarLabel(s2.key2) + ', columns ' + _sensVarLabel(s2.key)));
+            L.push([''].concat(g2.x.map(function (x, i) { return g2.labelsX[i] || _sensDv(s2.key, x); })).map(q).join(','));
+            g2.y.forEach(function (y, j) { L.push([q(g2.labelsY[j] || _sensDv(s2.key2, y))].concat(g2.q[j].map(function (v) { return _fin(v) ? _dv(v, rc[0]) : ''; })).join(',')); });
+        } else if (ST.sens && ST.sens.cases) {
             var sk = ST.sens.key;
             L.push(''); L.push(q('Sensitivity: ' + _sensVarLabel(sk)));
             L.push([_sensVarLabel(sk), 'Rate (' + _lab(rc[0], rc[1]) + ')', 'q_o (' + _lab('liquidRate', 'STB/d') + ')', 'q_w (' + _lab('liquidRate', 'BWPD') + ')', 'q_g (' + _lab('gasRateSmall', 'Mscf/d') + ')',
@@ -1664,7 +1791,7 @@
                 '</select><button type="button" class="btn btn-secondary" data-act="ckfit" style="padding:6px 10px">Fit</button></div><div id="wp_ckfitmsg"></div></div>' +
                 _fg('wp_thp', 'Wellhead pressure (fixed)', { unit: 'psig', data: 'data-choke="off"' }) +
                 _fg('wp_psep', 'Separator pressure', { unit: 'psig' }) + _fg('wp_tamb', 'Ambient temperature', { unit: '°F' }) +
-                _fg('wp_tkind', 'Design variable', { options: [['bean', 'Bean'], ['thp', 'Wellhead pressure']], data: 'data-mode="design pressure"' }) + _fg('wp_tq', 'Target rate', { unit: 'STB/d or Mscf/d', data: 'data-mode="design pressure"' }) +
+                _fg('wp_tkind', 'Design variable', { options: [['bean', 'Bean'], ['thp', 'Wellhead pressure'], ['tubingId', 'Tubing size (catalogue scan)']], data: 'data-mode="design pressure"' }) + _fg('wp_tq', 'Target rate', { unit: 'STB/d or Mscf/d', data: 'data-mode="design pressure"' }) +
                 '</div>' + _tableBlock('flowline', 'Flowline to the separator', 'Marched with the flowline correlation below.') +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="design" data-mode="design pressure">Solve the design</button><button type="button" class="btn btn-secondary" data-act="solve">Solve now</button></div><div id="wp_design"></div>') +
             _card('Correlations and numerics', '<div class="fg">' +
@@ -1678,7 +1805,9 @@
                 '<div class="fg-item"><label for="wpt_beans">Bean list (/64 in)</label><input id="wpt_beans" data-rt="beans" type="text" placeholder="16 20 24 32 40 48"></div></div>' +
                 '<div class="wp-sec-h" style="font-size:13px;margin-top:14px">Studies</div><div class="fg rp-skip">' +
                 '<div class="fg-item"><label for="wpv_svar">Sensitivity variable</label><select id="wpv_svar">' + _sensDefs().map(function (v) { return '<option value="' + _esc(v[0]) + '">' + _esc(_sensVarLabel(v[0])) + '</option>'; }).join('') + '</select></div>' +
-                '<div class="fg-item"><label for="wpv_svals">Values (up to 10, in the variable\'s units)</label><input id="wpv_svals" type="text" value="0 20 40 60 80" spellcheck="false" autocomplete="off"></div></div>' +
+                '<div class="fg-item"><label for="wpv_svals">Values (up to 10, in the variable\'s units)</label><input id="wpv_svals" type="text" value="0 20 40 60 80" spellcheck="false" autocomplete="off"></div>' +
+                '<div class="fg-item"><label for="wpv_svar2">Second variable (optional)</label><select id="wpv_svar2"><option value="">— none: one variable —</option>' + _sensDefs().map(function (v) { return '<option value="' + _esc(v[0]) + '">' + _esc(_sensVarLabel(v[0])) + '</option>'; }).join('') + '</select></div>' +
+                '<div class="fg-item" data-sv2="on"><label for="wpv_svals2">Second values (a rate line each)</label><input id="wpv_svals2" type="text" value="" spellcheck="false" autocomplete="off"></div></div>' +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="sens">Run sensitivity</button><button type="button" class="btn btn-secondary" data-act="beans">Bean schedule</button><button type="button" class="btn btn-secondary" data-act="csv">Export CSV</button></div>' +
                 '<div id="wp_jobbox" class="rp-skip"></div><div id="wp_senstbl"></div><div id="wp_beans"></div>') + '</div></section>';
         var s6 = '<section id="wp_step_6" class="wp-sec" style="display:none"><div class="wp-sec-h">⑥ Match <span>production tests, correlation comparison, QC and IPR from a test</span></div>' +
@@ -1753,6 +1882,7 @@
             if (t.getAttribute && t.getAttribute('data-rt')) { _ratingWrite(); return; }
             if (t.id === 'wpv_prop') { _plotsSet({ prop: t.value }); _renderSchematic(); return; }
             if (t.id === 'wpv_svar') { _sensSuggest(); return; }
+            if (t.id === 'wpv_svar2') { _sensSuggest(2); _syncUi(); return; }
             if (t.getAttribute && t.getAttribute('data-corr')) return;
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_ckcorr' || t.id === 'wp_lift') _syncUi();
