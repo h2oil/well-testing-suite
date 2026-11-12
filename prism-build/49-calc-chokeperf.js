@@ -73,6 +73,10 @@
 //   WTS_chokeperf_multiphaseRate(corrKey, p1psig, s64, glr)                STB/d
 //   WTS_chokeperf_CORR             correlation constants {key: {name, a, b, c}}
 //   WTS_chokeperf_BEANS            standard bean sizes, 64ths
+//   WTS_chokeperf_sachdeva({s64, cd, p1a, p2a, x1, rhoL, rhoG1, k, sg, cL})   Sachdeva et al. (1986) continuous two-phase
+//                                  model → {ok, yc, y, critical, regime, G lbm/ft²s, w lbm/s, n, it, converged} (A2, provisional)
+//   WTS_chokeperf_liquidCv({cv | s64 + cd, sg, dp_psi | q_bpd})            liquid valve-coefficient law → {ok, cv, q_bpd, dp_psi}
+//   WTS_chokeperf_SACHDEVA         {cd 0.75, cL, maxIt 30, verified:false, label, range}
 //
 // STATE
 //   WTS_state.chokeperf = {ok, fluid, s64, sizeIn, q, qOil, rc, ratio, critical, k, z, f, beanUp[], ts}
@@ -154,6 +158,95 @@
         var c = CORR[key];
         if (!c || !(glr > 0)) return NaN;
         return p1 * Math.pow(s64, c.b) / (c.a * Math.pow(glr, c.c));
+    }
+
+    // ── Sachdeva et al. (1986) continuous two-phase choke model (Well Performance A2, WP15; docs/WELL-PERFORMANCE-PLAN.md §4.7) ──
+    // Sachdeva, R., Schmidt, Z., Brill, J.P., Blais, R.M. (1986) "Two-Phase Flow Through Chokes", SPE 15657; as presented in
+    // Brill & Mukherjee, Multiphase Flow in Wells (1999), choke chapter. One model on both sides of the critical ratio:
+    //   critical ratio y_c (implicit; fixed point, ≤ 30 iterations):
+    //     y = { k/(k−1) + (1−x1)·v_L·(1−y) / (x1·v_G1) } / { k/(k−1) + n/2 + n·(1−x1)·v_L / (x1·v_G2) + (n/2)·[(1−x1)·v_L / (x1·v_G2)]² }
+    //         raised to the power k/(k−1),   v_G2 = v_G1·y^(−1/k),
+    //     n = 1 + x1·(Cp − Cv) / (x1·Cv + (1−x1)·C_L)   (polytropic exponent of the mixture; Cp − Cv = R/M, Cv = (R/M)/(k−1))
+    //   mass flux at y = max(p2/p1, y_c):
+    //     G2 = Cd·√{ 2·g_c·144·p1·ρ_m2²·[ (1−x1)·(1−y)/ρ_L + x1·k/(k−1)·(v_G1 − y·v_G2) ] }   lbm/(ft²·s),
+    //     1/ρ_m2 = x1·v_G2 + (1−x1)/ρ_L
+    //   units: p1 psia (×144 → lbf/ft²), g_c 32.174 lbm·ft/(lbf·s²), ρ lbm/ft³, v ft³/lbm, C_L / Cp / Cv Btu/(lbm·°F); w = G2·A2 lbm/s,
+    //   A2 = π·d²/4 ft² (d = s64/64 in). Limits: x1 = 1 → the isentropic gas nozzle and y_c = (2/(k+1))^(k/(k−1)) exactly;
+    //   x1 = 0 → the incompressible orifice Cd·A·√(2·g_c·144·ρ_L·Δp) (no critical flow, y_c = 0).
+    //   Cd default 0.75 (to verify, plan Appendix B). Verified: false — no published example checked (owner Q9), so the model is
+    //   labelled provisional and is never a default (D17).
+    var SACH = { cd: 0.75, cL: 0.5, maxIt: 30, tol: 1e-10, R_BTU: 1.98588, verified: false,
+                 label: 'Sachdeva et al. (1986)', range: { beanMin: 8, beanMax: 40 } };
+    function _sachYc(x1, vL, vG1, k, n) {
+        if (!(x1 > 0)) return { yc: 0, it: 0, converged: true };
+        var kk = k / (k - 1), a = (1 - x1) * vL / x1, it = 0, conv = false;
+        var F = function (y) {
+            it++;
+            var vG2 = vG1 * Math.pow(y, -1 / k), b = a / vG2;
+            var num = kk + a * (1 - y) / vG1, den = kk + n / 2 + n * b + (n / 2) * b * b;
+            var yn = Math.pow(num / den, kk);
+            return (yn > 0 && yn < 1) ? yn : Math.min(Math.max(yn, 1e-6), 1 - 1e-9);
+        };
+        // the fixed point y = F(y) of the published equation, found as the root of g(y) = F(y) − y: g > 0 as y → 0 and g(1) = F(1) − 1 < 0,
+        // so it is bracketed on (0, 1); regula falsi (Illinois) on u = ln y converges in ≤ 30 evaluations over the whole input range (the
+        // plain iteration y ← F(y) creeps when the gas fraction is small). Every F evaluation counts as one iteration.
+        var ua = Math.log(1e-9), ub = Math.log(1 - 1e-12), ga = F(Math.exp(ua)) - Math.exp(ua), gb = F(Math.exp(ub)) - Math.exp(ub), side = 0, u = ub;
+        if (!(ga > 0)) return { yc: Math.exp(ua), it: it, converged: true };
+        if (!(gb < 0)) return { yc: Math.exp(ub), it: it, converged: true };
+        while (it < SACH.maxIt) {
+            u = (ua * gb - ub * ga) / (gb - ga);
+            var yy = Math.exp(u), gu = F(yy) - yy;
+            if (Math.abs(gu) < SACH.tol || Math.abs(ub - ua) < SACH.tol) { conv = true; break; }
+            if ((gu > 0) === (ga > 0)) { ua = u; ga = gu; if (side === 1) gb /= 2; side = 1; }
+            else { ub = u; gb = gu; if (side === -1) ga /= 2; side = -1; }
+        }
+        return { yc: Math.exp(u), it: it, converged: conv };
+    }
+    // o = {s64 | d_in, cd, p1a, p2a, x1 (free-gas mass fraction at the inlet), rhoL, rhoG1 (lbm/ft³ at p1), k, sg (gas), cL}
+    function sachdeva(o) {
+        o = o || {};
+        var errs = [];
+        var d = _fin(o.d_in) ? o.d_in : (_fin(o.s64) ? o.s64 / 64 : NaN), cd = _fin(o.cd) && o.cd > 0 ? o.cd : SACH.cd;
+        var p1 = o.p1a, p2 = o.p2a, x1 = o.x1, rL = o.rhoL, rG = o.rhoG1, k = _fin(o.k) ? o.k : 1.28, sg = _fin(o.sg) && o.sg > 0 ? o.sg : 0.65;
+        var cL = _fin(o.cL) && o.cL > 0 ? o.cL : SACH.cL;
+        if (!(d > 0)) errs.push('bean size needed');
+        if (!(p1 > 0) || !(p2 > 0)) errs.push('upstream and downstream pressures needed (psia)');
+        if (!(x1 >= 0 && x1 <= 1)) errs.push('gas mass fraction must be 0–1');
+        if (x1 < 1 && !(rL > 0)) errs.push('liquid density needed');
+        if (x1 > 0 && !(rG > 0)) errs.push('gas density needed');
+        if (!(k > 1 && k < 2)) errs.push('Cp/Cv must be between 1 and 2');
+        if (errs.length) return { ok: false, errors: errs, warnings: [] };
+        var vL = x1 < 1 ? 1 / rL : 0, vG1 = x1 > 0 ? 1 / rG : 0;
+        var Rm = SACH.R_BTU / (MW_AIR * sg), cv = Rm / (k - 1);
+        var n = x1 > 0 ? 1 + x1 * Rm / (x1 * cv + (1 - x1) * cL) : 1;
+        var Y = _sachYc(x1, vL, vG1, k, n);
+        var yAct = p2 / p1, crit = yAct <= Y.yc, y = Math.min(Math.max(yAct, Y.yc), 1);
+        var A = Math.PI / 4 * (d / 12) * (d / 12), G2 = 0;
+        if (y < 1) {
+            var vG2 = x1 > 0 ? vG1 * Math.pow(y, -1 / k) : 0;
+            var rhoM2 = 1 / (x1 * vG2 + (1 - x1) * vL);
+            var e = (1 - x1) * (1 - y) * vL + (x1 > 0 ? x1 * k / (k - 1) * (vG1 - y * vG2) : 0);
+            G2 = e > 0 ? cd * Math.sqrt(2 * GC * 144 * p1 * rhoM2 * rhoM2 * e) : 0;
+        }
+        return { ok: true, yc: Y.yc, y: y, ratio: yAct, critical: crit, regime: crit ? 'critical' : 'subcritical', G: G2, w: G2 * A, area_ft2: A, n: n,
+                 it: Y.it, converged: Y.converged, cd: cd, errors: [], warnings: Y.converged ? [] : ['the critical-ratio fixed point did not converge in ' + SACH.maxIt + ' iterations'] };
+    }
+    // Liquid through a bean: the valve-coefficient law q = 34.2857·Cv·√(Δp/SG) bbl/d (Cv in US gal/min at 1 psi, SG water = 1), with the
+    // bean's Cv = (1022.7/34.2857)·Cd·d² (d in): the incompressible orifice of 49-calc-wp-system.js (q = 1022.7·Cd·d²·√(Δp/SG) bbl/d).
+    // o = {cv | s64 | d_in (+ cd, default 0.85), sg, dp_psi | q_bpd} → {ok, cv, d_in, q_bpd, dp_psi}
+    var LIQ_BPD = 1022.7, GPM_BPD = 34.2857;
+    function liquidCv(o) {
+        o = o || {};
+        var sg = _fin(o.sg) && o.sg > 0 ? o.sg : NaN, cd = _fin(o.cd) && o.cd > 0 ? o.cd : 0.85;
+        var d = _fin(o.d_in) ? o.d_in : (_fin(o.s64) ? o.s64 / 64 : NaN);
+        var cv = _fin(o.cv) && o.cv > 0 ? o.cv : (d > 0 ? LIQ_BPD / GPM_BPD * cd * d * d : NaN);
+        if (!(cv > 0)) return { ok: false, errors: ['a valve coefficient Cv or a bean size is needed'], warnings: [] };
+        if (!(sg > 0)) return { ok: false, errors: ['the liquid specific gravity is needed'], warnings: [] };
+        var out = { ok: true, cv: cv, d_in: d > 0 ? d : null, sg: sg, errors: [], warnings: [] };
+        if (_fin(o.dp_psi)) { out.dp_psi = Math.max(0, o.dp_psi); out.q_bpd = GPM_BPD * cv * Math.sqrt(out.dp_psi / sg); }
+        else if (_fin(o.q_bpd)) { out.q_bpd = Math.max(0, o.q_bpd); out.dp_psi = sg * Math.pow(out.q_bpd / (GPM_BPD * cv), 2); }
+        else return { ok: false, errors: ['either the pressure drop or the rate is needed'], warnings: [] };
+        return out;
     }
 
     function _nextBeans(s64) {
@@ -304,6 +397,9 @@
     G.WTS_chokeperf_multiphaseRate = multiphaseRate;
     G.WTS_chokeperf_CORR = CORR;
     G.WTS_chokeperf_BEANS = BEANS.slice();
+    G.WTS_chokeperf_sachdeva = sachdeva;
+    G.WTS_chokeperf_liquidCv = liquidCv;
+    G.WTS_chokeperf_SACHDEVA = { cd: SACH.cd, cL: SACH.cL, maxIt: SACH.maxIt, verified: SACH.verified, label: SACH.label, range: { beanMin: SACH.range.beanMin, beanMax: SACH.range.beanMax } };
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Choke Performance & Critical Flow';
@@ -600,6 +696,10 @@
     near(G.WTS_chokeperf_criticalRatio(1.3), 0.5457, 1e-4, 'rc 1.3');
     // Gilbert (1954), 1500 psig, 32/64, R = 1 Mscf/bbl: 1500·32^1.89/(435·1^0.546) = 2411.77
     near(G.WTS_chokeperf_multiphaseRate('gilbert', 1500, 32, 1000), 1500 * Math.pow(32, 1.89) / 435, 1e-6, 'gilbert');
+    // Sachdeva, gas-only limit: y_c = the isentropic critical ratio
+    var sd = G.WTS_chokeperf_sachdeva({ s64: 32, p1a: 1000, p2a: 300, x1: 1, rhoG1: 3.5, k: 1.3, sg: 0.65 });
+    near(sd.yc, G.WTS_chokeperf_criticalRatio(1.3), 1e-8, 'sachdeva gas limit');
+    near(G.WTS_chokeperf_liquidCv({ s64: 64, cd: 1, sg: 1, dp_psi: 1 }).q_bpd, 1022.7, 1e-6, 'liquid Cv');
     if (fails.length) {
         if (typeof console !== 'undefined') console.error('[chokeperf self-test] ' + fails.length + '/' + n + ' FAILED:\n  ' + fails.join('\n  '));
         if (typeof window === 'undefined' && typeof process !== 'undefined') process.exitCode = 1;

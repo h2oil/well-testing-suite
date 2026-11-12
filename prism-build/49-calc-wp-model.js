@@ -80,7 +80,7 @@
                     strings: [], path: 'tubing', restrictions: [],
                     geo: { surfT_F: 60, points: [] },
                     heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04 } },
-            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75 }, flowline: [], psep_psig: 100, ambient_F: 60,
+            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'sachdeva', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
             lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100 }, esp: null },
             system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb' },
@@ -124,6 +124,9 @@
         wp_ke: { path: 'well.heat.ke', kind: 'num' }, wp_alpha: { path: 'well.heat.alpha', kind: 'num' },
         wp_choke: { path: 'surface.choke.present', kind: 'bool' }, wp_bean: { path: 'surface.choke.bean64', kind: 'num' },
         wp_ckcorr: { path: 'surface.choke.corr', kind: 'str' }, wp_ckcd: { path: 'surface.choke.cd', kind: 'num' },
+        // A2 (WP15): the sub-critical rule ('sachdeva' = the continuous Sachdeva et al. branch scaled to the critical correlation;
+        // 'bound' = the A1 conservative bound p1 ≥ p2 / 0.588) and the rate factor of the Sachdeva model (blank = 1)
+        wp_cksub: { path: 'surface.choke.subcritical', kind: 'str', enumv: ['sachdeva', 'bound'] }, wp_ckrf: { path: 'surface.choke.rateFactor', kind: 'num' },
         wp_psep: { path: 'surface.psep_psig', kind: 'num' }, wp_tamb: { path: 'surface.ambient_F', kind: 'num' },
         wp_lift: { path: 'lift.type', kind: 'str', enumv: ['none', 'gaslift', 'esp'] },
         wp_gl_packer: { path: 'lift.gl.packerMd', kind: 'num' }, wp_gl_sg: { path: 'lift.gl.sginj', kind: 'num' },

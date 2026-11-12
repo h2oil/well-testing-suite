@@ -803,8 +803,9 @@
         var qf = function (q) { return gas ? _u(q / 1000, 'gasRate', 3, 'MMscf/d') : _u(q, 'liquidRate', 0, 'STB/d'); };
         row('Static stability limit q_s', R.qs ? qf(R.qs.q) : 'none in range');
         if (R.vlpMin) row('Tubing-curve minimum', qf(R.vlpMin.q));
-        if (sf.choke && sf.choke.regime && sf.choke.regime !== 'none') row('Choke regime', sf.choke.regime);
-        if (sf.choke && _fin(sf.choke.ratio)) row('Choke pressure ratio p2/p1', _fmt(sf.choke.ratio, 2));
+        if (sf.choke && sf.choke.regime && sf.choke.regime !== 'none') row('Choke regime', sf.choke.regime + (sf.choke.model === 'sachdeva-scaled' && sf.choke.regime === 'subcritical' ? ' (Sachdeva branch, provisional)' : sf.choke.model === 'sachdeva' ? ' (Sachdeva, provisional)' : ''));
+        if (sf.choke && _fin(sf.choke.ratio)) row('Choke pressure ratio p2/p1', _fmt(sf.choke.ratio, 2) + (_fin(sf.choke.yc) ? ' (critical ratio ' + _fmt(sf.choke.yc, 3) + ')' : ''));
+        if (sf.choke && _fin(sf.choke.rateFactor) && sf.choke.model) row('Choke rate factor', _fmt(sf.choke.rateFactor, 3));
         h.innerHTML = '<div class="rbox-title">Operating point</div>' + rows.join('');
     }
 
@@ -830,7 +831,8 @@
         if (rs.length) row('Restrictions', rs.map(function (r) { return String(r.kind || '') + ' ' + _fmt(_dv(r.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ' at ' + _u(r.md, 'length', 0, 'ft') + ' MD'; }).join('; '));
         var nd = W && W.ok && W.nodes;
         row('Perforations', _u(M.well.perfTopMd, 'length', 0, 'ft') + ' – ' + _u(M.well.perfBotMd, 'length', 0, 'ft') + ' MD; mid ' + _u(nd ? nd.midPerfMd : M.well.midPerfMd, 'length', 0, 'ft') + ' MD' + (nd && _fin(nd.midPerfTvd) ? ' · ' + _u(nd.midPerfTvd, 'length', 0, 'ft') + ' TVD' : ''));
-        row('Wellhead', M.surface.choke.present !== false ? 'choke ' + _fmt(M.surface.choke.bean64, 0) + '/64 in (' + (gas ? 'gas nozzle' : String(M.surface.choke.corr || 'gilbert')) + ')' : (_fin(M.system.thp_psig) ? 'fixed THP ' + _u(M.system.thp_psig, 'pressureG', 0, 'psig') : 'lowest admissible THP'));
+        var ckc = M.surface.choke, ckN = { gilbert: 'Gilbert', ros: 'Ros', baxendell: 'Baxendell', achong: 'Achong', sachdeva: 'Sachdeva et al. (1986), provisional' }[ckc.corr] || String(ckc.corr || 'gilbert');
+        row('Wellhead', ckc.present !== false ? 'choke ' + _fmt(ckc.bean64, 0) + '/64 in (' + (gas && ckc.corr !== 'sachdeva' ? 'gas nozzle' : ckN + (ckc.corr !== 'sachdeva' && !gas ? (ckc.subcritical === 'bound' ? ', sub-critical: conservative bound' : ', sub-critical: Sachdeva branch') : '')) + ')' : (_fin(M.system.thp_psig) ? 'fixed THP ' + _u(M.system.thp_psig, 'pressureG', 0, 'psig') : 'lowest admissible THP'));
         var fls = M.surface.flowline || [];
         row('Surface', 'separator ' + _u(M.surface.psep_psig, 'pressureG', 0, 'psig') + (fls.length ? ' · flowline ' + fls.map(function (f) { return _u(f.len, 'length', 0, 'ft') + ' × ' + _fmt(_dv(f.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in'); }).join(' + ') : ' · no flowline'));
         var R = ST.R, cw = R && R.corr ? R.corr.well : (M.system.corr && M.system.corr.well), cl = R && R.corr ? R.corr.line : (M.system.corr && M.system.corr.line);
@@ -932,7 +934,39 @@
         var hv = _byId('wp_valid'); if (hv) { var va = _validity(); hv.innerHTML = '<div class="rbox-title">Correlation validity</div>' + (va.length ? va.map(_vHtml).join('') : '<div class="wp-v info">The validity ranges of the correlations in use are checked after a solve.</div>'); }
     }
 
-    // Traverse / loading / sensitivity / bean schedule card
+    // Choke tab (A2, WP15): the rate through the bean against the pressure ratio y = p2/p1 at the operating THP — the continuous
+    // Sachdeva et al. (1986) curve, the critical correlation (valid left of its 0.588), the gas nozzle for gas wells; the critical ratios
+    // as vertical lines, the operating point as the marker; the bean handle on the top rail re-solves the well like the system plot
+    function _chokeCurve() {
+        var R = ST.R, M = ST.M;
+        if (!(R && R.ok && !R.tracked && M && M.surface.choke.present !== false)) return ST.ckc && ST.ckc.R === R ? ST.ckc.c : null;
+        if (ST.ckc && ST.ckc.R === R) return ST.ckc.c;
+        var c = _call('WTS_wp_system.chokeCurve', M, { R: R });
+        ST.ckc = { R: R, c: c };
+        return c;
+    }
+    function _chokeSpec(T) {
+        var M = ST.M, c = _chokeCurve(), V = G.WTS_wp_view, gas = M && _isGasType(M.fluid.type), rc = gas ? ['gasRateSmall', 'Mscf/d'] : ['liquidRate', 'STB/d'];
+        var ok = !!(c && c.ok), ser = [], vl = [], mk = [], handles = [];
+        var Y = function (q) { return _dv(q, rc[0]); };
+        if (ok) {
+            if (c.series.sachdeva.length) ser.push({ key: 'sach', label: 'Sachdeva et al. (1986)' + (c.model === 'sachdeva-scaled' ? ', scaled' : '') + ' — provisional', color: T.accent, width: 2.6, pts: c.series.sachdeva.map(function (p) { return [p.y, Y(p.q)]; }) });
+            if (c.series.corr.length) ser.push({ key: 'corr', label: String(c.corr || '').replace(/^./, function (x) { return x.toUpperCase(); }) + ' (critical only)', color: T.blue, width: 2, dash: [6, 4], pts: c.series.corr.map(function (p) { return [p.y, Y(p.q)]; }) });
+            if (c.series.nozzle.length) ser.push({ key: 'noz', label: 'Isentropic gas nozzle', color: T.blue, width: 2, pts: c.series.nozzle.map(function (p) { return [p.y, Y(p.q)]; }) });
+            if (_fin(c.ycSachdeva)) vl.push({ x: c.ycSachdeva, color: T.accent, label: 'y_c ' + _fmt(c.ycSachdeva, 3), dash: [3, 3] });
+            if (_fin(c.ycCorr)) vl.push({ x: c.ycCorr, color: T.blue, label: (gas ? 'nozzle ' : '') + 'y_c ' + _fmt(c.ycCorr, 3), dash: [2, 5] });
+            if (c.op && _fin(c.op.y)) mk.push({ x: c.op.y, y: Y(c.op.q), kind: 'filled', color: T.green, r: 7, halo: true, label: _fmt(Y(c.op.q), 0) + ' ' + _lab(rc[0], rc[1]) + ' · p2/p1 ' + _fmt(c.op.y, 2) + ' · ' + c.regime });
+        }
+        if (M && M.surface.choke.present !== false) handles.push({ key: 'bean', kind: 'railX', value: _fin(M.surface.choke.bean64) ? M.surface.choke.bean64 : 32, min: 8, max: 128, step: 1, label: 'Bean', railLabel: 'BEAN', rail: [0, 1], color: T.accent, fmt: function (v) { return _fmt(v, 0) + '/64"'; } });
+        return { key: 'choke:' + rc[0] + (_metric() ? 'm' : 'i'), aspect: 0.58, minH: 240, maxH: 400, w: 640, readout: 'x',
+            x: { label: 'Pressure ratio p2/p1 (downstream / upstream, absolute)', min: 0, max: 1, short: 'y', fmtR: function (v) { return _fmt(v, 3); } },
+            y: { label: 'Rate through the bean at the operating THP (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab(rc[0], rc[1]); } },
+            series: ser, vlines: vl, markers: mk, handles: handles, onHandle: _onHandle,
+            bands: ok && _fin(c.ycSachdeva || c.ycCorr) ? [{ x0: 0, x1: _fin(c.ycSachdeva) ? c.ycSachdeva : c.ycCorr, color: 'rgba(88,166,255,0.06)', label: 'critical' }] : [],
+            empty: (M && M.surface.choke.present === false) ? 'No surface choke in line (step ⑤).' : (c && !c.ok && c.errors ? String(c.errors[0]) : 'The choke curve appears after a solve.') };
+    }
+
+    // Traverse / loading / choke / sensitivity / bean schedule card
     function _renderTraverseCard() {
         var cv = _byId('wp_cv_tr'), V = G.WTS_wp_view; if (!cv || !V) return;
         var tab = _plots().trTab || 'traverse', T = V.theme(), dax = _plots().depth === 'md' ? 'md' : 'tvd';
@@ -948,6 +982,8 @@
                      series: [{ key: 'vg', label: 'Gas velocity', color: T.blue, pts: pd.map(function (r) { return [_dv(r.vg, 'velocity'), _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length')]; }) },
                               { key: 'vc', label: 'Critical velocity', color: T.yellow, dash: [6, 4], pts: pd.map(function (r) { return [_dv(r.vc, 'velocity'), _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length')]; }) }],
                      empty: (ST.M && !_isGasType(ST.M.fluid.type)) ? 'Liquid loading applies to gas and gas-condensate wells.' : 'The loading profile appears after a solve.' };
+        } else if (tab === 'choke') {
+            spec = _chokeSpec(T);
         } else if (tab === 'sens') {
             var s = ST.sens, cs = (s && s.cases) || [], rc = _rateCat();
             spec = { key: 'sens:' + (s && s.key), aspect: 0.55, minH: 220, maxH: 380, w: 640, readout: 'x',
@@ -1138,6 +1174,7 @@
             box('Black-oil fluid model' + (gas ? '; the gas-condensate well is a wet gas with a constant condensate volume (no retrograde dropout)' : '') + '. ' +
                 'Correlations outside their data range are extrapolations; those without a verified published example are labelled provisional. Restrictions use a homogeneous loss coefficient.') +
             box('The stability verdict is a static criterion (q_s): it does not predict heading or slugging. The temperature is linear from the wellhead temperature entered; the J-T correction applies to the hydrate check only.') +
+            (M && M.surface.choke.present !== false && (M.surface.choke.corr === 'sachdeva' || (!gas && M.surface.choke.subcritical !== 'bound')) ? box('Choke: the Sachdeva et al. (1986) two-phase model' + (M.surface.choke.corr === 'sachdeva' ? ' (critical and sub-critical, with the rate factor)' : ' sets the critical ratio and carries the sub-critical branch, scaled to the critical correlation at its critical point') + '; provisional — not verified against a published example; its data range is bean 8–40/64 in.') : '') +
             (user ? '<div><b>Notes</b> ' + _esc(user) + '</div>' : '');
     }
 
@@ -1155,15 +1192,24 @@
     function _syncUi() {
         var root = _byId('wp_root'); if (!root) return;
         var type = (_byId('wp_ftype') || {}).value || 'oil', gas = _isGasType(type), model = (_byId('wp_ipr') || {}).value || 'pi';
-        Array.prototype.forEach.call(root.querySelectorAll('[data-for]'), function (e) { var list = String(e.getAttribute('data-for')).split(' '); if (e.classList) e.classList.toggle('wp-off', list.indexOf(gas ? 'gas' : 'oil') === -1 && list.indexOf(type) === -1); });
         var m = _iprModels().filter(function (x) { return x.key === model; })[0], need = m ? m.needs : [];
-        Array.prototype.forEach.call(root.querySelectorAll('[data-ip]'), function (e) { if (e.classList) e.classList.toggle('wp-off', need.indexOf(e.getAttribute('data-ip')) === -1); });
+        var choke = !!(_byId('wp_choke') || {}).checked, mode = (_byId('wp_mode') || {}).value || 'rate', ck = (_byId('wp_ckcorr') || {}).value || 'gilbert';
+        var lift = (_byId('wp_lift') || {}).value || 'none', sv2 = (_byId('wpv_svar2') || {}).value || '';
+        // one visibility rule per element: every condition it carries must hold (fluid type, IPR parameter, choke in line, solve mode,
+        // choke model, lift type, a second sensitivity variable)
+        Array.prototype.forEach.call(root.querySelectorAll('[data-for],[data-ip],[data-choke],[data-mode],[data-ck],[data-lift],[data-sv2]'), function (e) {
+            var on = true, a;
+            if ((a = e.getAttribute('data-for')) != null) { var list = String(a).split(' '); on = on && (list.indexOf(gas ? 'gas' : 'oil') !== -1 || list.indexOf(type) !== -1); }
+            if ((a = e.getAttribute('data-ip')) != null) on = on && need.indexOf(a) !== -1;
+            if ((a = e.getAttribute('data-choke')) != null) on = on && ((a === 'on') === choke);
+            if ((a = e.getAttribute('data-mode')) != null) on = on && String(a).split(' ').indexOf(mode) !== -1;
+            if ((a = e.getAttribute('data-ck')) != null) on = on && (a === 'sach' ? ck === 'sachdeva' : ck !== 'sachdeva');
+            if ((a = e.getAttribute('data-lift')) != null) on = on && String(a).split(' ').indexOf(lift) !== -1;
+            if ((a = e.getAttribute('data-sv2')) != null) on = on && ((a === 'on') === !!sv2);
+            if (e.classList) e.classList.toggle('wp-off', !on);
+        });
         // dry-gas-only lift methods are not applicable to oil and water wells (WTS_wp_check raises ✗ if one is still selected)
         ['wp_corr_well', 'wp_corr_line'].forEach(function (id) { var sel = _byId(id); if (!sel || !sel.options) return; Array.prototype.forEach.call(sel.options, function (o) { if (o.value === 'gasTZ') { o.disabled = !gas; o.title = gas ? '' : 'Not applicable: a dry-gas method for gas wells only'; } }); });
-        var choke = !!(_byId('wp_choke') || {}).checked;
-        Array.prototype.forEach.call(root.querySelectorAll('[data-choke]'), function (e) { var want = e.getAttribute('data-choke') === 'on'; if (e.classList) e.classList.toggle('wp-off', want !== choke); });
-        var mode = (_byId('wp_mode') || {}).value || 'rate';
-        Array.prototype.forEach.call(root.querySelectorAll('[data-mode]'), function (e) { if (e.classList) e.classList.toggle('wp-off', String(e.getAttribute('data-mode')).split(' ').indexOf(mode) === -1); });
         var ic = _byId('wp_iprchip'); if (ic) ic.innerHTML = m && m.verified === false ? '<span class="wp-chip prov">provisional</span>' : '';
         Object.keys(ST.prov).forEach(function (id) { var lab = root.querySelector('label[for="' + id + '"]'); if (lab && !lab.querySelector('.wp-chip')) lab.insertAdjacentHTML('beforeend', '<span class="wp-chip">' + _esc(ST.prov[id]) + '</span>'); });
         _goStep(_step(), false);
@@ -1230,6 +1276,14 @@
             return;
         }
         if (act === 'match') { _runMatch(); return; }
+        if (act === 'ckfit') {
+            var ck = (_byId('wpv_ckfit') || {}).value || 'gilbert', fm = _byId('wp_ckfitmsg');
+            var Mg = JSON.parse(JSON.stringify(M)); Mg.surface.choke.corr = ck; Mg.surface.choke.subcritical = 'sachdeva';
+            var cf = _call('WTS_wp_system.chokeFactor', Mg, ck);
+            if (cf && cf.ok) { _setCtrl('wp_ckrf', +cf.factor.toPrecision(4), true); ST.prov.wp_ckrf = 'fitted to ' + ck; _syncUi(); _commit('wp_ckrf'); if (fm) fm.innerHTML = _vHtml({ st: 'ok', t: '✓ Rate factor ' + _fmt(cf.factor, 3) + ': the Sachdeva rate equals ' + ck.replace(/^./, function (x) { return x.toUpperCase(); }) + ' at its critical point (' + _u(cf.p1_psig, 'pressureG', 0, 'psig') + ').' }); }
+            else if (fm) fm.innerHTML = _vHtml({ st: 'warn', t: '⚠ ' + (((cf && cf.errors) || [])[0] || 'The rate factor could not be fitted.') });
+            return;
+        }
         if (act === 'adopt') {
             var ids = String(btn.getAttribute('data-ids') || btn.getAttribute('data-id') || '').split(','), vs = String(btn.getAttribute('data-vs') || btn.getAttribute('data-v') || '').split(','), done = [];
             ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = 'matched to test ' + ((ST.match && ST.match.test) || ''); done.push(id); } });
@@ -1251,7 +1305,7 @@
         var rows = (ST.beans && ST.beans.rows) || [], rc = _rateCat();
         var stale = ST.beans && ST.beans.stale ? '<div class="wp-stalechip" role="status">Results are from the previous inputs — re-run the bean schedule</div>' : '';
         var bnd = rows.some(function (r) { return r.ok && r.regime === 'subcritical-bound'; });
-        var bnote = bnd ? _vHtml({ st: 'info', t: 'ℹ At the beans marked subcritical-bound the critical choke correlation caps the rate at its conservative sub-critical bound (p1 ≥ p2 / 0.588), so larger beans give the same rate' + (_fin(ST.maxQ) ? '; without a choke the well can deliver ' + (_isGasType(ST.M && ST.M.fluid.type) ? _u(ST.maxQ / 1000, 'gasRate', 2, 'MMscf/d') : _u(ST.maxQ, 'liquidRate', 0, 'STB/d')) : '') + '. A later release adds a continuous sub-critical model.' }) : '';
+        var bnote = bnd ? _vHtml({ st: 'info', t: 'ℹ At the beans marked subcritical-bound the critical choke correlation caps the rate at its conservative sub-critical bound (p1 ≥ p2 / 0.588), so larger beans give the same rate' + (_fin(ST.maxQ) ? '; without a choke the well can deliver ' + (_isGasType(ST.M && ST.M.fluid.type) ? _u(ST.maxQ / 1000, 'gasRate', 2, 'MMscf/d') : _u(ST.maxQ, 'liquidRate', 0, 'STB/d')) : '') + '. Choose the continuous sub-critical model in the choke settings to lift this cap.' }) : '';
         h.innerHTML = rows.length ? stale + bnote + '<div class="wp-tw"><table class="dtable"><thead><tr><th>Bean (/64)</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Choke Δp</th><th>Regime</th><th>Stable</th></tr></thead><tbody>' +
             rows.map(function (r) { return '<tr><td>' + _fmt(r.bean, 0) + '</td><td class="num">' + _fmt(_dv(r.q, rc[0]), 0) + '</td><td class="num">' + _fmt(_dv(r.thp, 'pressureG'), 0) + '</td><td class="num">' + _fmt(_dv(r.tht, 'temperature'), 0) + '</td><td class="num">' + _fmt(_dv(r.dpChoke, 'pressure'), 0) + '</td><td>' + _esc(r.regime || '') + '</td><td>' + (r.stable ? '✓' : '✗') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
     }
@@ -1598,7 +1652,16 @@
                 _fg('wp_mode', 'Solve for', { options: [['rate', 'Rate at these settings'], ['pressure', 'Pressures for a rate'], ['max', 'Maximum rate (no choke)'], ['design', 'Bean or THP for a target rate']] }) +
                 _fg('wp_node', 'Solution node', { options: [['bottom', 'Bottom hole (mid-perf)'], ['wellhead', 'Wellhead'], ['separator', 'Separator']] }) +
                 _fg('wp_choke', 'Surface choke in line', { check: true }) +
-                _fg('wp_bean', 'Choke bean', { unit: '/64 in', data: 'data-choke="on"' }) + _fg('wp_ckcorr', 'Choke correlation', { options: [['gilbert', 'Gilbert'], ['ros', 'Ros'], ['baxendell', 'Baxendell'], ['achong', 'Achong']], data: 'data-choke="on"' }) +
+                _fg('wp_bean', 'Choke bean', { unit: '/64 in', data: 'data-choke="on"' }) +
+                _fg('wp_ckcorr', 'Choke model', { options: [['gilbert', 'Gilbert (critical)'], ['ros', 'Ros (critical)'], ['baxendell', 'Baxendell (critical)'], ['achong', 'Achong (critical)'], ['sachdeva', 'Sachdeva et al. (1986) — provisional']], data: 'data-choke="on"',
+                    hint: '<span data-for="oil water">Critical correlations; below the critical ratio the rule underneath applies.</span><span data-for="gas condensate">Gas wells use the isentropic gas nozzle unless the two-phase Sachdeva model is chosen.</span>' }) +
+                _fg('wp_cksub', 'Sub-critical flow', { options: [['sachdeva', 'Continuous (Sachdeva et al., scaled) — provisional'], ['bound', 'Conservative bound p1 ≥ p2 / 0.588']], data: 'data-choke="on" data-for="oil water" data-ck="crit"',
+                    hint: 'The Sachdeva critical ratio sets the regime; sub-critical flow follows its branch scaled to the correlation at the critical point.' }) +
+                _fg('wp_ckcd', 'Discharge coefficient Cd', { data: 'data-choke="on"', hint: 'Sachdeva 0.75 (to verify); gas nozzle 0.85 when outside 0.5–1.2.' }) +
+                _fg('wp_ckrf', 'Rate factor', { data: 'data-choke="on" data-ck="sach"', ph: '1', hint: 'Multiplies the Sachdeva rate; Fit matches it to a critical correlation at the operating point.' }) +
+                '<div class="fg-item rp-skip" data-choke="on" data-ck="sach"><label for="wpv_ckfit">Fit the rate factor to</label><div style="display:flex;gap:6px"><select id="wpv_ckfit" aria-label="Critical correlation to match">' +
+                [['gilbert', 'Gilbert'], ['ros', 'Ros'], ['baxendell', 'Baxendell'], ['achong', 'Achong']].map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') +
+                '</select><button type="button" class="btn btn-secondary" data-act="ckfit" style="padding:6px 10px">Fit</button></div><div id="wp_ckfitmsg"></div></div>' +
                 _fg('wp_thp', 'Wellhead pressure (fixed)', { unit: 'psig', data: 'data-choke="off"' }) +
                 _fg('wp_psep', 'Separator pressure', { unit: 'psig' }) + _fg('wp_tamb', 'Ambient temperature', { unit: '°F' }) +
                 _fg('wp_tkind', 'Design variable', { options: [['bean', 'Bean'], ['thp', 'Wellhead pressure']], data: 'data-mode="design pressure"' }) + _fg('wp_tq', 'Target rate', { unit: 'STB/d or Mscf/d', data: 'data-mode="design pressure"' }) +
@@ -1651,7 +1714,7 @@
             '<div class="rbox" id="wp_verd"></div>' +
             '</div>' +
             _card('Traverse', '<div class="chart-wrap"><canvas id="wp_cv_tr" aria-label="Gradient traverse: pressure and temperature against depth"></canvas></div><div class="wp-legend-hint" id="wp_trleg"></div>',
-                { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['loading', 'Liquid loading'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
+                { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['loading', 'Liquid loading'], ['choke', 'Choke'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
                     '<span class="wp-seg" id="wp_depthseg"><button type="button" data-depth="tvd">TVD</button><button type="button" data-depth="md">MD</button></span>' }) +
             '<div class="rbox" id="wp_valid"></div>' +
             '<div class="rbox wp-case" id="wp_case"></div>' +
@@ -1692,7 +1755,7 @@
             if (t.id === 'wpv_svar') { _sensSuggest(); return; }
             if (t.getAttribute && t.getAttribute('data-corr')) return;
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
-            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode') _syncUi();
+            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_ckcorr' || t.id === 'wp_lift') _syncUi();
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();
         });

@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '2dee9885', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: 'b89f8dfd', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -184,7 +184,7 @@ var wellperf = {
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|muod|muo|muou|z|mug)$', why: 'fluid and inflow details' },
-  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest|ckfit)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Liquid loading, Sensitivity, Bean schedule.')],
@@ -198,12 +198,12 @@ var wellperf = {
   vd('✓', 'inside the published data range', 'No extrapolation.'), vd('⚠', 'outside the data range', 'Extrapolation.'), vd('✓', 'any inclination', 'Flowline.'), vd('✓', 'not used', 'Wet gas.'),
   vd('⚠', 'provisional', 'Not verified against a published example; never a default.'), vd('⚠', 'below the bubble point', 'Use Vogel or composite.'), vd('✓', 'gives the target rate', 'Adopt it.')],
   example: { title: 'The Oil example', setup: ['Vertical, mid-perf {{8000|length}}, tubing ID {{2.441|lengthSmall|3}}, WC 30 %, p̄r {{3000|pressure}}, J {{2|productivityIndex}}, bean 32, separator {{100|pressureG}}.'],
-  result: ['{{914|liquidRate}} at {{2543|pressure}}; THP {{320|pressureG}}; q_s {{319|liquidRate}}, tubing-curve minimum {{561|liquidRate}}.'],
+  result: ['{{914|liquidRate}} at {{2543|pressure}}; THP {{320|pressureG}}; q_s {{305|liquidRate}}, tubing-curve minimum {{431|liquidRate}}.'],
   check: { kind: 'compute', fn: 'WTS_wp_system.solve', input: { fluid: { type: 'oil', api: 35, sgg: 0.65, gor: 500, wc: 0.3, sgw: 1.07, psep_psig: 100, tsep_F: 80 },
     res: { model: 'pi', pr: 3000, T_F: 200, params: { J: 2 } }, well: { survey: [[0, 0], [8000, 8000]], midPerfMd: 8000, strings: [{ kind: 'tubing', id: 2.441, od: 2.875, topMd: 0, botMd: 8000 }],
     geo: { points: [[0, 60], [8000, 200]] }, heat: { tht_F: 120 } },
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
-    expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
+    expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 305.4, 'vlpMin.q': 430.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
   { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing or liner below the end of tubing is an information line. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },

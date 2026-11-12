@@ -59,6 +59,8 @@ const BENCH = [
   { kind: 'loading', key: 'li', status: 'pending', source: 'Li et al. (2001) flat-droplet critical rate' },
   { kind: 'system', key: 'nodal', status: 'pending', source: 'Beggs, Production Optimization Using Nodal Analysis — operating point ±2 % q' },
   { kind: 'well', key: 'minCurvature', status: 'pinned', source: 'closed-form circular arc (FIX.devSurvey, wellperf-well) ±0.01 ft' },
+  // A2
+  { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
@@ -127,6 +129,21 @@ function gate(G) {
   const loadPending = BENCH.filter((b) => b.kind === 'loading' && b.status === 'pending').length > 0;
   if (!R.ok || !R.loading) bad('loading', 'no loading result on FIX.gasWell');
   else if (loadPending && (R.loading.verified !== false || R.loading.provisional !== PROVISIONAL)) bad('loading', 'pending methods without the provisional label');
+  // 5. the choke model (A2, WP15): pending → verified:false, the provisional label on every flag / validity line, never the default
+  const SD = G.WTS_chokeperf_SACHDEVA, bS = benchOf('choke', 'sachdeva');
+  if (SD) {
+    const okS = bS && (bS.status === 'verified' || bS.status === 'pinned');
+    if (!!SD.verified !== !!okS) bad('choke sachdeva', 'registry verified=' + SD.verified + ' but BENCH status ' + (bS && bS.status));
+    if (!SD.verified) {
+      if (D && D.surface && D.surface.choke && D.surface.choke.corr === 'sachdeva') bad('choke sachdeva', 'is the default choke model');
+      const Mc = S.FIX.oilWell; Mc.surface.choke.bean64 = 64;
+      const Rc = G.WTS_wp_system.solve(Mc), f = (Rc.flags || []).find((x) => x.code === 'CHOKE_SUBCRITICAL');
+      if (!f || f.msg.indexOf(PROVISIONAL) === -1) bad('choke sachdeva', 'the sub-critical flag does not carry the provisional label');
+      const vv = (G.WTS_wp_check(Mc).validity || []).find((x) => x.corr === 'sachdeva');
+      if (!vv || vv.provisional !== true) bad('choke sachdeva', 'check validity does not mark it provisional');
+    }
+    rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
+  }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
 }
@@ -200,7 +217,24 @@ function checks(G) {
       const M = S.FIX[k], q = find(M, a, b), e = 1e-6 * q;
       worst = Math.max(worst, Math.abs(SY.boundary(M, q + e).thp - SY.boundary(M, q - e).thp));
     });
-    add('X6', 'choke continuity at the regime change (multiphase max rule, gas nozzle)', worst < 0.1, worst, 0.1);
+    add('X6', 'choke continuity at the regime change (multiphase Sachdeva-scaled default, gas nozzle)', worst < 0.1, worst, 0.1);
+    let wb = 0;
+    [['oilWell', 'bound', 100, 900], ['oilWell', 'sachdeva', 150, 3000]].forEach(([k, mode, a, b]) => {
+      const M = S.FIX[k]; if (mode === 'bound') M.surface.choke.subcritical = 'bound'; else M.surface.choke.corr = 'sachdeva';
+      const q = find(M, a, b), e = 1e-6 * q;
+      wb = Math.max(wb, Math.abs(SY.boundary(M, q + e).thp - SY.boundary(M, q - e).thp));
+    });
+    add('X6b', 'choke continuity: the A1 bound (subcritical \'bound\') and the Sachdeva model alone', wb < 0.1, wb, 0.1);
+  }
+  // X16 (§15.3, A2) the Sachdeva critical-ratio fixed point converges in ≤ 30 iterations over the input grid
+  if (typeof G.WTS_chokeperf_sachdeva === 'function') {
+    let worst = 0, ok = true;
+    [1e-4, 1e-3, 0.01, 0.05, 0.2, 0.5, 0.9, 0.999, 1].forEach((x1) => [1.1, 1.3, 1.6].forEach((k) => [[50, 0.5], [55, 5], [62, 25]].forEach(([rL, rG]) => {
+      const r = G.WTS_chokeperf_sachdeva({ s64: 32, p1a: 1500, p2a: 100, x1, rhoL: rL, rhoG1: rG, k, sg: 0.7 });
+      if (!r.ok || !r.converged || !(r.yc > 0 && r.yc < 1)) ok = false;
+      worst = Math.max(worst, r.it || 0);
+    })));
+    add('X16', 'Sachdeva critical ratio: fixed point ≤ 30 iterations over the input grid (81 cases)', ok && worst <= 30, worst, 30);
   }
   // X7 breakdown sums to p̄r − p_sep
   {

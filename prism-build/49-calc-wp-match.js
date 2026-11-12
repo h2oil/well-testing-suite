@@ -460,6 +460,7 @@
                 else checks.push(_chk('QC_GOR_LT_RSB', 'ok', 'Producing GOR ' + _f(r.gor, 0) + ' scf/STB against Rsb ' + _f(rsb, 0) + ' scf/STB' + (sat ? '' : ' (undersaturated at the well)') + '.'));
             }
             // QC_CHOKE
+            var C_GAS = { gas: 1, condensate: 1, gasinj: 1 };
             var ch = M.surface && M.surface.choke, bean = _n(t.bean64) || (ch && _n(ch.bean64)), thp = _n(t.thp_psig);
             if (!ch || ch.present === false) checks.push(_chk('QC_CHOKE', 'na', 'No surface choke in the model.'));
             else if (!_fin(thp) || !(bean > 0)) checks.push(_chk('QC_CHOKE', 'na', 'The test needs a THP and a bean.'));
@@ -471,6 +472,8 @@
                 else {
                     var reg0 = cr.b0.regime, dev = _fin(cr.q) ? cr.q / r.q - 1 : null, corrN = (ch.corr || 'gilbert');
                     if (reg0 === 'subcritical-bound') checks.push(_chk('QC_CHOKE', 'warn', 'The choke is sub-critical at the test (p2/p1 ' + _f(cr.b0.ratio, 2) + ' above ' + _f(cr.b0.yc, 3) + '): the critical correlation ' + corrN + ' does not apply to this test.'));
+                    // A2 (WP15): sub-critical on the continuous Sachdeva et al. (1986) branch — modelled, but provisional (D17), so it still warns
+                    else if (reg0 === 'subcritical' && !(C_GAS[M.fluid.type] && ch.corr !== 'sachdeva')) checks.push(_chk('QC_CHOKE', 'warn', 'The choke is sub-critical at the test (p2/p1 ' + _f(cr.b0.ratio, 2) + ' above ' + _f(cr.b0.yc, 3) + '): the rate rests on the Sachdeva et al. (1986) sub-critical branch, provisional — not verified against a published example' + (dev != null ? '; model rate ' + _f(cr.q, 0) + ' ' + r.rateUnit + ' (' + (dev > 0 ? '+' : '') + _f(100 * dev, 0) + ' %).' : '.')));
                     else if (dev == null) checks.push(_chk('QC_CHOKE', 'na', 'The choke rate at the measured THP could not be found.'));
                     else if (Math.abs(dev) > CHOKE_TOL) checks.push(_chk('QC_CHOKE', 'warn', 'Choke-model rate at THP ' + _f(thp, 0) + ' psig and bean ' + _f(bean, 0) + '/64 is ' + _f(cr.q, 0) + ' ' + r.rateUnit + ', ' + (dev > 0 ? '+' : '') + _f(100 * dev, 0) + ' % from the measured rate (' + reg0 + ').'));
                     else checks.push(_chk('QC_CHOKE', 'ok', 'Choke-model rate within ' + _f(Math.abs(100 * dev), 0) + ' % of the measured rate (' + reg0 + ').'));

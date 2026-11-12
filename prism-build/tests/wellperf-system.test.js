@@ -7,7 +7,7 @@
 // WSY4 q_s left of the tubing-curve minimum on every fixture that has both
 // WSY5 heading flag on q_s (within 10 % above), none on FIX.oilWell
 // WSY6 nodes agree: wellhead node vs bottom-hole node within 0.5 % in q
-// WSY7 choke continuity across the critical ratio: multiphase max-rule bound and the gas nozzle, |jump| < 0.1 psi
+// WSY7 choke continuity across the critical ratio: multiphase max-rule bound (the A1 rule, subcritical 'bound') and the gas nozzle, |jump| < 0.1 psi
 // WSY8 discontinuity detection: a synthetic jump correlation and the Hagedorn & Brown pattern step are reported, never roots
 // WSY9 p_out(q) smooth on the frozen grid: second differences < 0.01 psi
 // WSY10 warm start = cold start; a tracking solve finds the same root
@@ -47,7 +47,10 @@ module.exports = [
     run(_a, assert, ctx) {
       const G = app(ctx).win, SY = G.WTS_wp_system;
       S.STUBS.WP5.forEach((n) => assert.ok((G.__WP_STUBS || []).indexOf(n) === -1, n + ' left __WP_STUBS'));
-      const M = S.FIX.oilWell, R = sol(SY, M);
+      // the A1 conservative sub-critical bound (kept as surface.choke.subcritical 'bound'): its low-rate branch gives the second
+      // (unstable) crossing; the A2 default continuous Sachdeva branch has one crossing on this fixture (wellperf-choke2 WCK5)
+      const M = S.FIX.oilWell; M.surface.choke.subcritical = 'bound';
+      const R = sol(SY, M);
       const sh = S.checkShape('R', plain(R));
       assert.ok(sh.ok, sh.errors.join('; '));
       assert.ok(R.ok, JSON.stringify(R.errors));
@@ -176,7 +179,7 @@ module.exports = [
         for (let k = 0; k < 60; k++) { const m = 0.5 * (a + b), r = SY.boundary(M, m).regime; if (r === ra) a = m; else b = m; if (b - a < 1e-7 * b) break; }
         return 0.5 * (a + b);
       };
-      const M = S.FIX.oilWell;
+      const M = S.FIX.oilWell; M.surface.choke.subcritical = 'bound';     // the A1 rule (A2: wellperf-choke2 WCK3)
       assert.strictEqual(SY.boundary(M, 100).regime, 'subcritical-bound');
       assert.strictEqual(SY.boundary(M, 900).regime, 'critical');
       const qc = find(M, 100, 900), e = 1e-4 * qc;
@@ -186,7 +189,7 @@ module.exports = [
       assert.near(lo.thp / lo.p2, 1 / 0.588, 1e-3, 'the bound is p2 / y_c (y_c = 0.588)');
       // the operating-point traverse inherits it: Δ(q) through the switch is continuous
       // (on the smooth no-slip tubing correlation: Beggs & Brill pattern switches in an oil well step by up to ~1 psi, WSY9)
-      const Mn = S.FIX.oilWell; Mn.system.corr.well = 'nsl';
+      const Mn = S.FIX.oilWell; Mn.system.corr.well = 'nsl'; Mn.surface.choke.subcritical = 'bound';
       const g0 = SY.evalAt(Mn, qc).grid, e6 = 1e-6 * qc, d1 = SY.evalAt(Mn, qc - e6, { grid: g0 }).delta, d2 = SY.evalAt(Mn, qc + e6, { grid: g0 }).delta;
       assert.ok(Math.abs(d2 - d1) < 0.1, 'Δ continuous: ' + Math.abs(d2 - d1));
       const Gm = S.FIX.gasWell;

@@ -26,10 +26,14 @@
 //   polished by a secant step on fine central differences); only q < q_s is shaded. The tubing-curve minimum (dp_out/dq = 0) comes
 //   from a parabola through the three coarse points around the smallest p_out — the conventional, more conservative rule; it lies
 //   right of q_s. Heading flag: the operating point within 10 % above q_s. The static criterion does not predict heading dynamics.
-// CHOKE (§4.7, A1). Multiphase: critical correlations (Gilbert, Ros, Baxendell, Achong) through WTS_chokeperf_multiphaseRate,
-//   p1_crit(q) psig = q·a·GLR^c / S^b, and the continuous conservative bound p1(q) = max(p1_crit(q), p2 / y_c) (absolute pressures,
-//   y_c = 0.588 for the Gilbert family as in 49-calc-chokeperf.js): when the second term governs the regime is
-//   'subcritical-bound' ("the critical correlation does not apply; the rate shown is a conservative bound"). Gas and condensate:
+// CHOKE (§4.7; A2, WP15). Multiphase: critical correlations (Gilbert, Ros, Baxendell, Achong) through WTS_chokeperf_multiphaseRate,
+//   p1_crit(q) psig = q·a·GLR^c / S^b. The regime comes from the Sachdeva et al. (1986) critical ratio y_c (WTS_chokeperf_sachdeva,
+//   fixed point ≤ 30 iterations) at the correlation's p1: critical (p2/p1 ≤ y_c) → p1 = p1_crit exactly; sub-critical → the Sachdeva
+//   sub-critical mass rate scaled by the rate factor that makes it equal the correlation's rate at its critical point (continuous at
+//   y_c; regime 'subcritical', model 'sachdeva-scaled'). surface.choke.corr 'sachdeva' = the Sachdeva model alone on both sides (Cd,
+//   default 0.75, × surface.choke.rateFactor, default 1; model 'sachdeva'; it also carries the condensate and water of a gas well
+//   through the bean). surface.choke.subcritical 'bound' keeps the A1 rule: the continuous conservative bound p1(q) =
+//   max(p1_crit(q), p2 / y_c) with y_c = 0.588 (regime 'subcritical-bound'). Every Sachdeva use is provisional (D17). Gas and condensate:
 //   the isentropic nozzle WTS_chokeperf_gasRate (critical and sub-critical, continuous), inverted for p1 by bisection; the liquids
 //   of a wet gas are not in the nozzle (info). A liquid with no gas (GLR < 10 scf/STB): the incompressible orifice
 //   q(bbl/d) = 1022.7·Cd·d²·√(Δp/SG) (d in, Δp psi; = 29.84 gal/min × 34.2857 = 8074/√62.4: Torricelli's 19.636 gal/min is for
@@ -64,13 +68,18 @@
 //         → R = {ok, code?, node, mode, corr:{well, line}, roots:[{q, p, stable, dDdq}], op, qs, vlpMin, pwf, traverse,
 //                breakdown:[{key, dp}], surface:{thp psia, thp_psig, tht, thtHyd (THT of the hydrate check), tHyd (hydrate T at
 //                the THP), hydMargin, pChokeDn psia, pChokeDn_psig, tChokeDn, tHydDn, choke:{present, regime:'critical'|
-//                'subcritical-bound'|'subcritical'|'liquid'|'none', ratio, yc, bean, corr, p1crit_psig, dp}},
+//                'subcritical-bound'|'subcritical'|'liquid'|'none', ratio, yc, bean, corr, p1crit_psig, dp; A2: model 'sachdeva'|
+//                'sachdeva-scaled'|null, rateFactor, x1, ycIt, cv, subcritical 'sachdeva'|'bound', cd, fallback}},
 //                rates:{qo, qw, qg Mscf/d, qL}, velocities:{vmMax, eroMax, eroC, qEro}, curves:{ipr:[{q, p}], vlp:[{q, p}]},
 //                scan:[{q, pOut, pIn, lost}], flags[], discontinuities[], loading, atTarget?, warnings, errors, evals, counts, grid}
 //     .designFor(M, target /*{bean: q} | {thp: q}*/) → Job: result() → {ok, bean | thp (psig), q, R, solves}
 //     .maxRate(M)   → {ok, q, thp_psig, tht, thtMax, rating:{verdict, margin}, R}
 //     .shutIn(M, o?) → {ok, gasFilled, actualFluid, partLiquid:[{liquidTopMd, liquidTopTvd, sithp}], liquidLevelMd, sgCol, zAvg,
 //                       sithp (worst), rating:{verdict:'ok'|'warn'|'fail'|'none', margin}, notes[]}   (pressures psig)
+//     .chokeCurve(M, {R?}) → {ok, p1, p1_psig, tht, bean, corr, model, regime, yc, ycCorr, ycSachdeva, op:{y, q}, rateUnit,
+//                              series:{sachdeva:[{y, q}], corr:[{y, q}], nozzle:[{y, q}]}, rateFactor, x1}   (A2: the choke tab)
+//     .chokeFactor(M, corrKey, {R?}) → {ok, factor, corr, q, p1_psig, yc, cd}   the rate factor that scales the Sachdeva model to a
+//                              critical correlation at the operating point's critical rate (§4.7)
 //     .beanSchedule(M, beans) → Job: result() → [{bean, q, thp, tht, dpChoke, regime, stable, loadingMargin, ok}]
 //     .job(steps)   the small Job helper (step / done / result / cancel / progress) used by the three Jobs
 //   WTS_wp_loading(R, F, W) → {ok, applicable, method, suggested, qc_MMscfd, limitingMd, limitingTvd, margin, verdict,
@@ -103,6 +112,9 @@
     var BD = { reservoir: 'reservoir', completion: 'completion', gravity: 'gravity', friction: 'friction', acceleration: 'acceleration',
         restrictions: 'restrictions', choke: 'choke', wellhead: 'wellhead', flowline: 'flowline' };
     var PROVISIONAL = 'provisional — not verified against a published example';
+    var SACH_LABEL = 'Sachdeva et al. (1986)', SACH_RANGE = [8, 40];   // Appendix A: bean 8–40/64 in, the data range of the paper
+    var CK_NAMES = { gilbert: 'Gilbert', ros: 'Ros', baxendell: 'Baxendell', achong: 'Achong', sachdeva: 'Sachdeva et al.' };
+    function _corrName(k) { return CK_NAMES[k] || String(k || ''); }
     var DEF_LEVELS = [0.25, 0.5, 0.75];
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -238,7 +250,8 @@
             stepFt: +sys.stepFt > 0 ? +sys.stepFt : 100, stepFtLine: +sys.stepFtLine > 0 ? +sys.stepFtLine : 50,
             refine: sys.refine !== false, eroC: +sys.eroC > 0 ? +sys.eroC : 100, mult: mult,
             pr: +I.pr, aof: +I.aof, psep: _fin(_n(_get(M, ['surface', 'psep_psig']))) ? +M.surface.psep_psig : 100,
-            choke: { present: mode !== 'max' && !!choke.present && !o.noChoke, bean: _n(choke.bean64), corr: choke.corr || 'gilbert', cd: _n(choke.cd) },
+            choke: { present: mode !== 'max' && !!choke.present && !o.noChoke, bean: _n(choke.bean64), corr: choke.corr || 'gilbert', cd: _n(choke.cd),
+                sub: choke.subcritical === 'bound' ? 'bound' : 'sachdeva', rateFactor: _n(choke.rateFactor), cdS: (_n(choke.cd) >= 0.3 && _n(choke.cd) <= 1.2) ? _n(choke.cd) : 0.75 },
             thpFix: _n(sys.thp_psig), flowline: (M.surface && Array.isArray(M.surface.flowline) ? M.surface.flowline : []).filter(function (s) { return s && +s.len > 0 && +s.id > 0; }),
             tht: (W.temp && _fin(W.temp.tht)) ? W.temp.tht : (W.tAt ? W.tAt(0) : 100),
             grids: { coarse: null, fine: null, line: null }, cache: {}, counts: { fine: 0, coarse: 0, line: 0 }, warnings: [], lostSeen: {}, trWarn: null
@@ -303,12 +316,72 @@
         }
         return { p1: 0.5 * (a + b), regime: 'subcritical', yc: rc };
     }
+    // ── Sachdeva et al. (1986) choke node (A2, WP15; §4.7) ────────────────────
+    // The inlet mixture at (p psia, T °F) for the rate q: the free-gas mass fraction x1, the liquid and gas densities, the total mass
+    // rate (lbm/s; conserved along the stream: the oil density carries its dissolved gas) and the liquid heat capacity (oil 0.5,
+    // water 1.0 Btu/lbm·°F, mass weighted).
+    function _mixAt(C, q, p, T) {
+        var pr = C.F.at(Math.max(p, 15), T, q);
+        if (!pr) return null;
+        var wO = pr.qL * pr.fo * pr.rhoO, wW = pr.qL * pr.fw * pr.rhoW, wL = wO + wW, wG = pr.qG * pr.rhoG, w = wL + wG;
+        if (!(w > 0)) return null;
+        return { x1: wG / w, rhoL: pr.rhoL > 0 ? pr.rhoL : (pr.rhoO || pr.rhoW || 50), rhoG1: pr.rhoG, w: w, cL: wL > 0 ? (0.5 * wO + 1.0 * wW) / wL : 0.5, sg: pr.sgGas > 0 ? pr.sgGas : C.F.sgg };
+    }
+    function _sachAt(C, q, p1, p2, T) {
+        var m = _mixAt(C, q, p1, T), sd = G.WTS_chokeperf_sachdeva;
+        if (!m || typeof sd !== 'function') return null;
+        var cd = _fin(C.choke.cdS) ? C.choke.cdS : 0.75;
+        var r = sd({ s64: C.choke.bean, cd: cd, p1a: p1, p2a: p2, x1: m.x1, rhoL: m.rhoL, rhoG1: m.rhoG1, k: _kGas(C, T), sg: m.sg, cL: m.cL });
+        if (!r || !r.ok) return null;
+        r.mix = m;
+        return r;
+    }
+    // the upstream pressure p1 (psia) that passes q through the bean to p2 psia: fac·w_Sachdeva(p1, p2) = w(q), Illinois on [p2, hi]
+    // (w_Sachdeva rises with p1). empKey: a critical correlation the model is scaled to at its critical point (the rate factor of §4.7):
+    // in critical flow p1 is the correlation's p1 exactly, below the Sachdeva critical ratio the scaled sub-critical branch continues it.
+    function _sachTop(C, q, p2, T, empKey, glr, qL) {
+        var m0 = _mixAt(C, q, p2, T);
+        if (!m0) return null;
+        var W = m0.w, fac = _fin(C.choke.rateFactor) && C.choke.rateFactor > 0 ? C.choke.rateFactor : 1, p1e = null, sc = null;
+        if (empKey) {
+            var mp = G.WTS_chokeperf_multiphaseRate, per = typeof mp === 'function' && glr > 0 ? mp(empKey, 1, C.choke.bean, glr) : NaN;
+            if (!(per > 0)) return null;
+            p1e = qL / per + PATM;
+            sc = _sachAt(C, q, p1e, p1e * 1e-6, T);                         // the critical (choked) Sachdeva rate at the correlation's p1
+            if (!sc || !(sc.w > 0)) return null;
+            fac = W / sc.w;
+            if (p2 / p1e <= sc.yc) return { p1: p1e, regime: 'critical', yc: sc.yc, fac: fac, x1: sc.mix.x1, it: sc.it, p1crit: p1e - PATM, model: 'sachdeva-scaled' };
+        }
+        var f = function (p1) { var s = _sachAt(C, q, p1, p2, T); return s ? { v: fac * s.w - W, s: s } : null; };
+        var a = p2 * (1 + 1e-9), fa = -W, b = empKey ? p1e : Math.max(p2 * 1.25, p2 + 20), rb = f(b), side = 0, last = rb;
+        if (!rb) return null;
+        for (var dbl = 0; rb.v < 0 && dbl < 30; dbl++) { a = b; fa = rb.v; b *= 1.6; rb = f(b); if (!rb) return null; last = rb; }
+        if (rb.v < 0) return null;
+        var fb = rb.v;
+        for (var j = 0; j < 80; j++) {
+            var x = (a * fb - b * fa) / (fb - fa), fx = f(x);
+            if (!fx) return null;
+            last = fx;
+            if (Math.abs(fx.v) <= 1e-11 * W || Math.abs(b - a) <= 1e-11 * b) { a = b = x; break; }
+            if ((fx.v > 0) === (fb > 0)) { b = x; fb = fx.v; if (side === -1) fa /= 2; side = -1; }
+            else { a = x; fa = fx.v; if (side === 1) fb /= 2; side = 1; }
+        }
+        var p1 = 0.5 * (a + b), sl = last.s;
+        return { p1: p1, regime: sl.critical ? 'critical' : 'subcritical', yc: sl.yc, fac: fac, x1: sl.mix.x1, it: sl.it, p1crit: p1e != null ? p1e - PATM : null, model: empKey ? 'sachdeva-scaled' : 'sachdeva' };
+    }
     function _top(C, q) {
         var ln = _line(C, q);
         if (ln.lost) return { lost: true, reason: 'flowline ' + ln.reason };
         var out = { p2: ln.p2, lineDp: ln.dp, regime: 'none', ratio: null, yc: null, p1crit: null, lineEro: ln.eroMax, lineVm: ln.vmMax, tLine: ln.tLine != null ? ln.tLine : null };
         if (C.maxBC) { out.thp = ln.p2; return out; }
         if (!C.choke.present) { out.thp = C.thpFix + PATM; out.fixed = true; return out; }
+        if (C.gas && C.choke.corr === 'sachdeva') {
+            // the continuous two-phase model carries the condensate and water through the bean too (the gas nozzle does not)
+            var sg0 = _sachTop(C, q, ln.p2, C.tht, null);
+            if (!sg0) return { lost: true, reason: 'choke' };
+            out.thp = sg0.p1; out.regime = sg0.regime; out.yc = sg0.yc; out.ratio = ln.p2 / sg0.p1; out.model = sg0.model; out.rateFactor = sg0.fac; out.x1 = sg0.x1; out.ycIt = sg0.it;
+            return out;
+        }
         if (C.gas) {
             var g = _gasP1(C, q, ln.p2, C.tht);
             if (!g) return { lost: true, reason: 'choke' };
@@ -327,8 +400,16 @@
         var ff = G.WTS_wp_fluid.flowlineFluid(C.F, q), qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
         if (glr < 10) {
             var cd = (C.choke.cd >= 0.5 && C.choke.cd <= 1.2) ? C.choke.cd : 0.85, d = C.choke.bean / 64, sgL = ff.qw > 0 && ff.qo > 0 ? (ff.qw * C.F.sgw + ff.qo * 141.5 / (131.5 + C.F.api)) / qL : (ff.qw > 0 ? C.F.sgw : 141.5 / (131.5 + C.F.api));
-            var dp = sgL * Math.pow(qL / (LIQ_ORIFICE * cd * d * d), 2);
-            out.thp = ln.p2 + dp; out.regime = 'liquid'; out.ratio = ln.p2 / out.thp;
+            // the liquid valve-coefficient law of the choke file (A2, WTS_chokeperf_liquidCv: the same 1022.7 orifice constant)
+            var lc = typeof G.WTS_chokeperf_liquidCv === 'function' ? G.WTS_chokeperf_liquidCv({ s64: C.choke.bean, cd: cd, sg: sgL, q_bpd: qL }) : null;
+            var dp = (lc && lc.ok) ? lc.dp_psi : sgL * Math.pow(qL / (LIQ_ORIFICE * cd * d * d), 2);
+            out.thp = ln.p2 + dp; out.regime = 'liquid'; out.ratio = ln.p2 / out.thp; if (lc && lc.ok) out.cv = lc.cv;
+            return out;
+        }
+        if (C.choke.corr === 'sachdeva') {
+            var sp = _sachTop(C, q, ln.p2, C.tht, null);
+            if (!sp) return { lost: true, reason: 'choke' };
+            out.thp = sp.p1; out.regime = sp.regime; out.yc = sp.yc; out.ratio = ln.p2 / sp.p1; out.model = sp.model; out.rateFactor = sp.fac; out.x1 = sp.x1; out.ycIt = sp.it;
             return out;
         }
         var mp = G.WTS_chokeperf_multiphaseRate;
@@ -337,6 +418,14 @@
         if (!(per > 0)) return { lost: true, reason: 'choke' };
         var p1crit = qL / per, pBound = ln.p2 / GILBERT_YC - PATM;
         out.p1crit = p1crit; out.yc = GILBERT_YC;
+        if (C.choke.sub !== 'bound') {
+            // A2 (§4.7): one regime criterion, the Sachdeva et al. (1986) critical ratio y_c at the correlation's p1. Critical: the
+            // correlation's p1 exactly; sub-critical: the Sachdeva sub-critical branch scaled to the correlation at its critical point
+            // (rate factor) — continuous with it. The A1 conservative bound p1 ≥ p2 / 0.588 stays available as choke.subcritical 'bound'.
+            var hs = _sachTop(C, q, ln.p2, C.tht, C.choke.corr, glr, qL);
+            if (hs) { out.thp = hs.p1; out.regime = hs.regime; out.yc = hs.yc; out.model = hs.model; out.rateFactor = hs.fac; out.x1 = hs.x1; out.ycIt = hs.it; out.ratio = ln.p2 / out.thp; return out; }
+            out.fallback = true;                                         // the Sachdeva inlet state failed: the A1 bound, flagged
+        }
         if (p1crit >= pBound) { out.thp = p1crit + PATM; out.regime = 'critical'; }
         else { out.thp = pBound + PATM; out.regime = 'subcritical-bound'; }
         out.ratio = ln.p2 / out.thp;
@@ -586,8 +675,13 @@
             muJT: Wt && Wt.muJT, tHyd: tHyd, hydMargin: (_fin(thtHyd) && _fin(tHyd)) ? thtHyd - tHyd : null,
             pChokeDn: _fin(p2) ? p2 : null, pChokeDn_psig: _fin(p2) ? p2 - PATM : null, tChokeDn: tDn, tHydDn: tHydDn,
             hydMarginDn: (_fin(tDn) && _fin(tHydDn)) ? tDn - tHydDn : null,
-            choke: { present: C.choke.present, bean: C.choke.bean, corr: C.gas ? 'gasNozzle' : C.choke.corr, regime: e.top ? e.top.regime : 'none',
-                ratio: e.top ? e.top.ratio : null, yc: e.top ? e.top.yc : null, p1crit_psig: e.top ? e.top.p1crit : null, dp: (e.top && C.choke.present) ? e.top.thp - e.top.p2 : null },
+            choke: { present: C.choke.present, bean: C.choke.bean, corr: (C.gas && C.choke.corr !== 'sachdeva') ? 'gasNozzle' : C.choke.corr, regime: e.top ? e.top.regime : 'none',
+                ratio: e.top ? e.top.ratio : null, yc: e.top ? e.top.yc : null, p1crit_psig: e.top ? e.top.p1crit : null, dp: (e.top && C.choke.present) ? e.top.thp - e.top.p2 : null,
+                // A2 (WP15): the model behind the regime ('sachdeva' | 'sachdeva-scaled' | null), its rate factor, the inlet gas mass fraction,
+                // the fixed-point iterations of y_c, the liquid Cv, the sub-critical rule and whether the Sachdeva state failed (A1 bound used)
+                model: e.top && e.top.model ? e.top.model : null, rateFactor: e.top && _fin(e.top.rateFactor) ? e.top.rateFactor : null, x1: e.top && _fin(e.top.x1) ? e.top.x1 : null,
+                ycIt: e.top && _fin(e.top.ycIt) ? e.top.ycIt : null, cv: e.top && _fin(e.top.cv) ? e.top.cv : null, subcritical: C.choke.sub, cd: C.choke.corr === 'sachdeva' ? C.choke.cdS : C.choke.cd,
+                fallback: !!(e.top && e.top.fallback) },
             lineDp: e.top ? e.top.lineDp : null };
         if (Wt && Wt.warnings) Wt.warnings.forEach(function (w) { R.warnings.push(w); });
         // velocities and the erosional rate (interpolated on the scan)
@@ -606,8 +700,13 @@
     function _flags(C, R) {
         var F = [];
         var ch = R.surface && R.surface.choke;
-        if (ch && ch.regime === 'subcritical-bound') F.push(_w('SUBCRITICAL_BOUND', 'Sub-critical choke flow — the critical correlation does not apply; the rate shown is a conservative bound (a later release adds a continuous sub-critical model).'));
-        if (ch && ch.present && C.gas && C.F && (+C.F.cgr > 0 || +C.F.wgr > 0)) F.push(_w('NOZZLE_GAS_ONLY', 'The gas choke nozzle carries the gas only; the condensate and water through the choke are not included.', 'info'));
+        if (ch && ch.regime === 'subcritical-bound') F.push(_w('SUBCRITICAL_BOUND', ch.fallback ? 'Sub-critical choke flow and the continuous sub-critical model has no inlet state at this rate: the rate shown is the conservative bound p1 ≥ p2 / 0.588 of the critical correlation.'
+            : 'Sub-critical choke flow — the critical correlation does not apply; the rate shown is the conservative bound p1 ≥ p2 / 0.588 (the A1 rule chosen in the choke settings).'));
+        if (ch && ch.model === 'sachdeva-scaled' && ch.regime === 'subcritical') F.push(_w('CHOKE_SUBCRITICAL', 'Sub-critical choke flow (p2/p1 ' + _f(ch.ratio, 3) + ' above the critical ratio ' + _f(ch.yc, 3) + '): the rate follows the ' + SACH_LABEL +
+            ' sub-critical branch scaled to the ' + _corrName(ch.corr) + ' correlation at its critical point (rate factor ' + _f(ch.rateFactor, 3) + ') — ' + PROVISIONAL + '.', 'info'));
+        if (ch && ch.model === 'sachdeva') F.push(_w('CHOKE_PROVISIONAL', 'Choke: the ' + SACH_LABEL + ' continuous two-phase model (Cd ' + _f(ch.cd, 2) + ', rate factor ' + _f(ch.rateFactor, 3) + ', ' + ch.regime + ', y_c ' + _f(ch.yc, 3) + ') — ' + PROVISIONAL + '.', 'info'));
+        if (ch && ch.present && ch.model === 'sachdeva' && _fin(ch.bean) && (ch.bean < SACH_RANGE[0] || ch.bean > SACH_RANGE[1])) F.push(_w('CHOKE_RANGE', 'The bean ' + _f(ch.bean, 0) + '/64 in is outside the ' + SACH_LABEL + ' data range (' + SACH_RANGE[0] + '–' + SACH_RANGE[1] + '/64 in): extrapolation.', 'info'));
+        if (ch && ch.present && C.gas && ch.corr !== 'sachdeva' && C.F && (+C.F.cgr > 0 || +C.F.wgr > 0)) F.push(_w('NOZZLE_GAS_ONLY', 'The gas choke nozzle carries the gas only; the condensate and water through the choke are not included (the ' + SACH_LABEL + ' choke model in the choke settings carries them).', 'info'));
         if (ch && ch.regime === 'liquid') F.push(_w('CHOKE_LIQUID', 'Liquid with no free gas: the choke is an incompressible orifice.', 'info'));
         R.discontinuities.forEach(function (d) {
             F.push(_w('DISCONTINUITY', d.kind === 'lift-limit' ? 'The outflow curve ends at about ' + _f(d.q, 0) + ' (the march cannot carry a higher rate): no root there.'
@@ -910,6 +1009,17 @@
         var lk = (sys.corr && sys.corr.line) || 'bb', EL = REG[lk];
         if (EL && (sf.flowline || []).length) validity.push({ corr: lk, label: (EL.label || lk) + ' (flowline)', inRange: true, provisional: EL.verified !== true,
             msg: (EL.label || lk) + ' (flowline): any inclination; data from 1–1.5 in test pipe, commonly used beyond.' });
+        // the surface choke (A2, WP15): the Sachdeva et al. (1986) model — the whole choke ('sachdeva') or the sub-critical branch of a
+        // critical correlation (the default) — is provisional (D17) and its data range is bean 8–40/64 in (Appendix A)
+        var chk = sf.choke || {};
+        if (chk.present && !(sys.mode === 'max')) {
+            var bean = _n(chk.bean64), sachUsed = chk.corr === 'sachdeva' || (!gas && chk.subcritical !== 'bound');
+            if (sachUsed) {
+                var inR = !(_fin(bean) && (bean < SACH_RANGE[0] || bean > SACH_RANGE[1]));
+                validity.push({ corr: 'sachdeva', label: SACH_LABEL + ' choke', inRange: inR, provisional: true,
+                    msg: SACH_LABEL + (chk.corr === 'sachdeva' ? ' choke model' : ' sub-critical choke branch') + (inR ? ': inside the published data range (bean 8–40/64 in).' : ': outside the data range — bean ' + _f(bean, 0) + '/64 in, data 8–40/64 in (extrapolation).') });
+            }
+        }
         var errors = items.filter(function (x) { return x.sev === 'error'; }).map(function (x) { return x.msg; });
         // warnings = the ⚠ items the page lists; the information notes (e.g. "not applicable") stay in items / infos
         var warnings = items.filter(function (x) { return x.sev === 'warn'; }).map(function (x) { return _w(x.code, x.msg, 'warn', x.field); });
@@ -1112,14 +1222,14 @@
             },
             finish: function () {
                 var b = S.best;
-                // why a target is out of reach: the conservative sub-critical bound of the A1 critical choke correlation caps the bean
+                // why a target is out of reach: the conservative sub-critical bound (choke.subcritical 'bound') of the critical choke correlation caps the bean
                 // rate (the no-choke maximum is shown next to it), or the target lies in the rates the well cannot hold (stability cliff)
                 var why = function () {
                     var notes = [], bnd = pts.filter(function (p) { return p.R && p.R.ok && p.R.surface && p.R.surface.choke && p.R.surface.choke.regime === 'subcritical-bound'; });
                     if (kind === 'bean' && bnd.length) {
                         var qb = Math.max.apply(null, bnd.map(function (p) { return p.q; })), mr = maxRate(base);
                         notes.push('The critical choke correlation caps the rate at its conservative sub-critical bound (about ' + _f(qb, 0) + '): the bound p1 ≥ p2 / ' + GILBERT_YC + ' applies to every larger bean.' +
-                            (mr && mr.ok ? ' Without a choke the well can deliver ' + _f(mr.q, 0) + ' (maximum rate); a continuous sub-critical choke model comes in a later release.' : ''));
+                            (mr && mr.ok ? ' Without a choke the well can deliver ' + _f(mr.q, 0) + ' (maximum rate); the continuous sub-critical model (the choke settings) lifts this cap.' : ''));
                         S.maxQ = mr && mr.ok ? mr.q : null;
                     }
                     if (S.fail === 'NOT_REACHABLE_GAP') notes.push('The target lies in the rates the well cannot hold steadily: the rate drops to no flow across the stability limit between the closest settings.');
@@ -1167,6 +1277,61 @@
         return { ok: true, thp: t.thp, thp_psig: t.thp - PATM, p2: t.p2, p2_psig: t.p2 - PATM, regime: t.regime, ratio: t.ratio, yc: t.yc,
             p1crit_psig: t.p1crit, lineDp: t.lineDp, warnings: [], errors: [] };
     }
+    // ── the choke performance curve at the operating point (A2, WP15; the page's "Choke" tab) ──────────────────────────────
+    // At the operating THP p1 (psia) and THT: the rate through the bean against the pressure ratio y = p2/p1 — the Sachdeva et al.
+    // (1986) curve (scaled by the rate factor, or to the critical correlation at its critical point), the critical correlation's
+    // rate (flat, valid below its critical ratio 0.588) and, for gas wells, the isentropic nozzle; the operating point (y, q) on it.
+    // chokeCurve(M, {R}) → {ok, p1 psia, p1_psig, tht, bean, corr, model, regime, yc, ycCorr, op:{y, q}, rateUnit,
+    //                        series:{sachdeva:[{y, q}], corr:[{y, q}], nozzle:[{y, q}]}, rateFactor, x1}
+    function chokeCurve(M, o) {
+        o = o || {};
+        var R = o.R && o.R.ok ? o.R : solve(M);
+        if (!R || !R.ok || !R.op) return { ok: false, code: (R && R.code) || 'NO_SOLUTION', errors: (R && R.errors && R.errors.length) ? R.errors : ['no operating point'], warnings: [] };
+        var ch = R.surface && R.surface.choke;
+        if (!ch || !ch.present) return { ok: false, code: 'NO_CHOKE', errors: ['no surface choke in line'], warnings: [] };
+        var cx = _ctx(M, {}); if (cx.fail) return cx.fail;
+        var C = cx.C, q0 = R.op.q, p1 = R.surface.thp, T = R.surface.tht, ff = G.WTS_wp_fluid.flowlineFluid(C.F, q0);
+        var qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
+        var m = _mixAt(C, q0, p1, T); if (!m) return { ok: false, code: 'NO_STATE', errors: ['the choke inlet state could not be evaluated'], warnings: [] };
+        var perQ = m.w / q0, ys = [];
+        for (var i = 1; i <= 40; i++) ys.push(Math.min(0.999, 0.025 * i));
+        var out = { ok: true, p1: p1, p1_psig: p1 - PATM, tht: T, bean: C.choke.bean, corr: ch.corr, model: ch.model, regime: ch.regime, yc: ch.yc, ycCorr: null,
+            op: { y: ch.ratio, q: q0 }, rateUnit: C.gas ? 'Mscf/d' : 'STB/d liquid', series: { sachdeva: [], corr: [], nozzle: [] }, rateFactor: ch.rateFactor, x1: m.x1, warnings: [], errors: [] };
+        var fac = _fin(ch.rateFactor) ? ch.rateFactor : 1, ycS = null;
+        if (!C.gas && glr >= 10 && C.choke.corr !== 'sachdeva') {
+            var per = G.WTS_chokeperf_multiphaseRate(C.choke.corr, 1, C.choke.bean, glr), qc = per * (p1 - PATM);
+            out.ycCorr = GILBERT_YC;
+            ys.filter(function (y) { return y <= GILBERT_YC + 1e-12; }).concat([GILBERT_YC]).forEach(function (y) { out.series.corr.push({ y: y, q: qc }); });
+            var scC = _sachAt(C, qc, p1, p1 * 1e-6, T); if (scC && scC.w > 0) fac = (qc * perQ) / scC.w;   // scaled to the correlation's critical rate at p1
+        }
+        if (!C.gas && glr < 10) return Object.assign(out, { model: 'liquid' });
+        if (C.gas && C.choke.corr !== 'sachdeva') {
+            var gr = G.WTS_chokeperf_gasRate, k = _kGas(C, T), z = (C.F.at(p1, T, q0) || {}).z || 0.9, cd = (C.choke.cd >= 0.5 && C.choke.cd <= 1.2) ? C.choke.cd : 0.85;
+            if (typeof gr === 'function') ys.forEach(function (y) { out.series.nozzle.push({ y: y, q: gr({ s64: C.choke.bean, cd: cd, p1a: p1, p2a: y * p1, tR: T + RANK, sg: C.F.sgg, k: k, z: z }) }); });
+            out.ycCorr = Math.pow(2 / (k + 1), k / (k - 1));
+        }
+        if (C.choke.corr === 'sachdeva' || !C.gas) {
+            ys.forEach(function (y) { var s = _sachAt(C, q0, p1, y * p1, T); if (s) { if (ycS == null) ycS = s.yc; out.series.sachdeva.push({ y: y, q: fac * s.w / perQ }); } });
+            if (_fin(ycS)) out.ycSachdeva = ycS;
+        }
+        return out;
+    }
+    // the rate factor that makes the Sachdeva model equal a critical correlation at the operating point's critical rate (§4.7):
+    // factor = w(q_op) / w_Sachdeva,critical(p1_corr(q_op)) — the number the page writes into the rate factor control
+    function chokeFactor(M, corrKey, o) {
+        o = o || {};
+        var R = o.R && o.R.ok ? o.R : solve(M);
+        if (!R || !R.ok || !R.op) return { ok: false, code: 'NO_SOLUTION', errors: ['no operating point'], warnings: [] };
+        var cx = _ctx(M, {}); if (cx.fail) return cx.fail;
+        var C = cx.C, q = R.op.q, T = R.surface.tht, ff = G.WTS_wp_fluid.flowlineFluid(C.F, q), qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
+        if (C.gas || glr < 10) return { ok: false, code: 'NOT_APPLICABLE', errors: ['the critical multiphase correlations apply to oil wells with free gas (GLR ≥ 10 scf/STB)'], warnings: [] };
+        var per = typeof G.WTS_chokeperf_multiphaseRate === 'function' ? G.WTS_chokeperf_multiphaseRate(corrKey, 1, C.choke.bean, glr) : NaN;
+        if (!(per > 0)) return { ok: false, code: 'UNKNOWN_CORR', errors: ['unknown critical correlation ' + String(corrKey).slice(0, 30)], warnings: [] };
+        var p1e = qL / per + PATM, sc = _sachAt(C, q, p1e, p1e * 1e-6, T), m = _mixAt(C, q, p1e, T);
+        if (!sc || !m || !(sc.w > 0)) return { ok: false, code: 'NO_STATE', errors: ['the choke inlet state could not be evaluated'], warnings: [] };
+        var fac = m.w / sc.w;                       // relative to the Cd in the model (w_Sachdeva ∝ Cd)
+        return { ok: true, factor: fac, corr: corrKey, q: q, p1_psig: p1e - PATM, yc: sc.yc, cd: C.choke.cdS, warnings: [], errors: [] };
+    }
     function evalAt(M, q, o) {
         o = o || {};
         var cx = _ctx(M, o);
@@ -1180,7 +1345,7 @@
 
     var NS = G.WTS_wp_system = G.WTS_wp_system || {};
     NS.solve = solve; NS.designFor = designFor; NS.maxRate = maxRate; NS.shutIn = shutIn; NS.beanSchedule = beanSchedule; NS.job = job;
-    NS.boundary = boundary; NS.evalAt = evalAt;
+    NS.boundary = boundary; NS.evalAt = evalAt; NS.chokeCurve = chokeCurve; NS.chokeFactor = chokeFactor;
     NS._pchip = _pchip; NS._brent = _brent;
     NS.SCAN_FRACS = SCAN_FRACS.slice(); NS.TOL_P = TOL_P; NS.TOL_Q = TOL_Q; NS.GILBERT_YC = GILBERT_YC; NS.LOAD = LOAD; NS.HEADING_FRAC = HEADING_FRAC;
     G.WTS_wp_loading = loading;

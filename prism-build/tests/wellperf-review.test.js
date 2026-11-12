@@ -148,7 +148,7 @@ module.exports = [
     name: 'WRV8 bean design capped by the sub-critical bound: the message says the critical correlation caps the rate, and shows the no-choke maximum',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
-      const SY = app(ctx).win.WTS_wp_system, M = S.FIX.oilWell;
+      const SY = app(ctx).win.WTS_wp_system, M = S.FIX.oilWell; M.surface.choke.subcritical = 'bound';   // the A1 rule (A2 default: wellperf-choke2 WCK5)
       const r = run(SY.designFor(M, { bean: 1300 }));
       const mx = SY.maxRate(M);
       assert.ok(!r.ok, 'not reachable with a bean');
