@@ -1495,6 +1495,71 @@ the shared model, Thornhill-Craver, diagnostics, gradient survey import, Asheim 
 lift screening, operating envelope, tornado, 4-variable matrix · WP28 SVG well schematic, batch over wells (`WTS_wells` iteration as a
 Job, read-only per well). WP25 and WP26 after WP22 is preferred (temperature at the valve / pump).
 
+#### 18.3.1 WP23 record (2026-11-12, branch wp/b-wp23)
+
+Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so the differential → flash adjustment, the
+modified black oil (Rv) and the two emulsion models ship provisional through the D17 gate (`wellperf-validate.js` BENCH kind `pvt`); the
+lab match itself is least squares on the user's points (no published example needed, `pinned` to its closed-form check X22). Q21 open.
+
+- **Engine (new `49-calc-wp-pvtmatch.js`, `WTS_wp_pvtmatch`)** as §5.1: `normLab`, `diffToFlash` (Bo_f = Bo_d·Bob_f/Bob_d, Rs_f = Rsb_f −
+  (Rsb_d − Rs_d)·Bob_f/Bob_d below pb, Rsb_f above; without the separator Bob / Rsb the table is used as entered, warned), `labOil` (the lab
+  oil at its own Rsb and the lab temperature), `predict`, `fit` (Pb one-point factor f, then Rs below pb, Bo, μo each y = a·y_corr + b by
+  `PRiSM_lm` on relative residuals, each on the model matched so far; Rs and f solved together by a secant on f so the matched Rs reaches
+  Rsb at the lab pb — a·Rs_c(p·f) is nearly a power law, so a and f trade off and only their product is identified; one point → a only;
+  bounds a Rs 0.5–2, Bo 0.8–1.25, μo 0.2–5; flags outside 0.9–1.1 warn / 0.8–1.25 fail, at a bound, not converged; the LM answer is checked
+  against the closed-form weighted least squares `wls`), `rank` (every Pb / Rs / Bo family by the mean of |pb error|, Rs and Bo MARE before
+  the match; every dead × live viscosity pair by μo MARE on the matched Rs), `job` (a Job for `PRiSM_autoInterp.drive`: the fit, then one
+  step per family and per viscosity pair), `preview` (hand edits of a / b), `example` (synthetic lab table = a known distortion of the
+  Standing family, flagged `example:true`), `exampleRv`, `exampleEmul`, `emulCurve`, `rvCurve`, `METHODS`.
+- **Marcher (49-calc-flowline.js `props` with `fluid.pvt`, additive; absent → A2 bit for bit, PM5 / X24 / FI1–FI6):** `pvt.shift {rs, bo,
+  muo}` (the b of the match; a stays `pvt.mult`); with a matched Rs the undersaturated branch's pb is Pb_corr((GOR − b)/a)/f; `pvt.rv {rows,
+  pd}` modified black oil for a wet gas — Rv(p) ≤ CGR (CGR at and above pd, linear between the last row and pd, constant below the first
+  row) vaporised into the gas with the Standing well-stream constants (gas gravity and standard volume rise, free liquid falls; mass exact,
+  X23), and the (p, T) table is binned in the gas gravity too (trilinear) for it; `pvt.emul {model, tight, inv, rows}` liquid viscosity by
+  the new `WTS_flowline_emulsion(fw, μo, μw, e)` — Brinkman (1952) (1 − φ)^−2.5 with the dispersed fraction, Woelflin (1942) loose /
+  medium / tight as chart readings (log-linear; readings to verify against the figure), water-continuous Brinkman above the inversion
+  (default 60 %), or a user table (log-linear, constant beyond, no inversion rule). Exports `WTS_flowline_emulsion` (+ `.WOELFLIN`) and
+  `WTS_flowline_rvAt`. Props rows gain `qoVap`, `qoFree` (Rv) and `emulRatio`, `emulCont` (emulsion).
+- **Contract additions (additive).** M.fluid: `rv {mode 'none'|'table', pd, rows}`, `emul {model 'none'|'woelflin'|'brinkman'|'table',
+  tight, inv, rows}`, `lab` (the record), `match {lab, on, pbFactor, mult, shift, corr, T_F, edited}` when adopted (else `{lab}` as A1).
+  `wts_wellperf_model.lab` = `{v, T_F, basis, pb, rsbF, bobF, rows:[{p, rs, bo, muo}], rv:[[p, Rv]], emul:[[fw, ratio]], example, adopt:{on,
+  pbFactor, mult, shift, corr, T_F, mare, ts, edited, labKey}}` cleaned by `WTS_wp_model.validate`. Scalars `wp_rvmode`, `wp_pdew`,
+  `wp_emul`, `wp_emulT`, `wp_emulInv` (%, scale 0.01). `WTS_wp_fluid.build`: spec `match` (applied only while the fluid's rs / bo / muod /
+  muo keys equal `match.corr`, else `MATCH_STALE`; a user pb wins, evaluated at the matched GOR), `rv`, `emul`; F gains `match {applied,
+  stale, pbFactor, pbUserWins, mult, shift, corr}`, `rv {pd, rows}`, `emul {model, tight, inv}`; validity rows `pvtmatch`, `rv`, `emulsion`
+  (provisional ones carry the D17 note) reach `WTS_wp_check` and the page's Correlation validity; warnings `RV_NOT_WET`, `RV_NO_TABLE`,
+  `EMUL_NOT_OIL`, `EMUL_NO_WATER`, `EMUL_NO_TABLE`, `MATCH_STALE`. Defaults unchanged (rv none, emulsion none, no match).
+- **Page (step ①).** Oil: **PVT lab data** (lab temperature, basis, lab pb, separator Rsb / Bob, the lab table editor with paste and
+  **Example lab data**, **Match to the lab data** as a Job with progress / Cancel) beside **PVT lab match** (status of the adopted set, KPI
+  chips with ✓ / ! / ✕ — bubble point error, Rs / Bo / viscosity error after (before) with a, best family —, flags, **Apply the match to the
+  model** / **Remove the match**, a plot per property with the lab points, the unmatched and the matched curves, the lab and correlation pb
+  lines and **a** / **b** rails that re-evaluate live and keep an adjusted match on release), then full width the matched-parameter table and
+  the family and viscosity-pair rankings with **Use**. The Fluid properties plot overlays the lab points and draws the selected family
+  matched and published. Gas-condensate: **Condensate drop-out** (wet gas default or modified black oil, dew point, Rv table, example) and
+  **Condensate along the well** (dew point / drop-out start MD · TVD / free condensate at the wellhead chips; Rv and free condensate against
+  pressure with a draggable dew point; free condensate along the operating traverse on TVD or MD with an MD · TVD read-out). Oil with water:
+  **Emulsion** (mixture default, Woelflin, Brinkman, table; tightness, inversion) and **Liquid viscosity** (wellhead / bottom-hole liquid
+  viscosity chips, μ_em / μo against the water fraction for every model on a log axis, the WC and in-situ lines and a draggable inversion
+  point). Report: Studies rows "PVT lab match", "Best black-oil family against the lab", "Condensate: modified black oil", "Liquid
+  viscosity: emulsion"; case summary; CSV section (lab, correlation and matched values, parameters). Help: notDocumented pattern for the new
+  controls, wellperf / flowline reviewedSrc re-hashed, 36 bytes of loading / correlation wording trimmed to stay inside the 47.67 kB cap (no
+  new help text — the lab match, Rv and emulsion are not described in the guide: a gap until Q21); no screenshot changed (the `sys` shot is
+  step ⑤).
+- **Tests / gates.** `wellperf-pvtmatch` PM1–PM12 (12). `wellperf-validate`: BENCH kind `pvt` (pvtmatch / table pinned; diffFlash, rv,
+  woelflin, brinkman pending), gate 7 (registry vs BENCH, never a default, the label in the check validity), X22 (LM = closed form, matched
+  pb = lab pb), X23 (Rv mass along the deviated traverse), X24 (unit match + none = the A2 solve), `--time` rows: solve with Rv (gas 15 E),
+  with an emulsion (oil 22 E), the lab-match Job (≈ 80 ms, 900 property evaluations, no march). 25 / 25 cross-checks, gate PASS, E budgets ok.
+  Gates: Round 9 rebuilt, LF, synced, guide regenerated; node --check ok; smoke 347/347; accept-test --html --integration file by file
+  2134/2134 (183 files); wellperf-validate --html --gate --check --time PASS (25/25, every E budget ok); help-shots / build-user-guide /
+  publish-site --check ok; Chromium screenshots of the three cards at 1280 × 800 and 390 px.
+- **Known gaps.** No verifiable published example for any of the provisional methods (Q9); the Woelflin chart values are readings to verify;
+  the match multipliers are applied at every temperature (fitted at the lab temperature only), Pb and Rs are matched only through their
+  product (a and f trade off); no Z / Bg / μg lab match (gas lab data) and no separator-test optimisation; Rv needs a user (lab CVD) table
+  (no Rv correlation), the condensate liquid keeps the constant B_c, and the shut-in gas column and the loading check ignore Rv; the
+  emulsion applies to the tubing and flowline liquid viscosity only (not to the inflow) and drops at the inversion point (a step in the
+  gradient); the lab table editor stacks a card per row at phone width (the shared editor style); help text for the three features not added
+  (cap full, Q21).
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative

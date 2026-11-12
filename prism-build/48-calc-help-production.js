@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '9218ad44', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '8e444837', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -183,7 +183,7 @@ var wellperf = {
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
-  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(?!well$|line$)[a-z]+$', why: 'fluid and inflow details' },
+  notDocumented: [{ pattern: '^wpl_|^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+|rvmode|pdew|emul\\w*)$|^wp_corr_(?!well$|line$)[a-z]+$', why: 'fluid and inflow details' },
   { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit|tcorr|tfree)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
@@ -205,11 +205,11 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
-  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing below the tubing shoe is shown as information. See the **Liquid loading** tab.'] },
+  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the shoe; the worst depth is shown. A wider casing below the shoe is information. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
-  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP at the operating rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
+  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP and rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
   { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** marches the temperature on the true inclination against the geotherm on TVD; the traverse also draws the earth temperature and the linear profile. **Fit U to the test THT** matches U to a measured THT.'] },
   { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest depth the casing pressure reaches, above the packer, and adds free gas only. **Run the gas-lift performance curve** gives rate against lift-gas rate with the optimum and the economic point; drag the injection-rate or packer handle; the schematic marks the point.'] },
