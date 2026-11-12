@@ -1182,6 +1182,31 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   again at 100 (a pattern switch, WP5 finding 2), so the WGR sensitivity shows the rate rising slightly with WGR; Gray and the
   no-slip method are monotone.
 
+#### 18.1.4 WP7 record (2026-11-11, branch wp/a1-wp7)
+
+- **`WTS_wp_match.compare`** (49-calc-wp-match.js) as §5.2: each registered well correlation (oil: every `any` / `well` key; gas wells
+  also the `gas` keys) is marched top-down from the measured THP to the gauge MD on the deviated path
+  (`WTS_wp_well.segmentsFor(W, {from: gaugeMd, toMd: 0})`, hydrostatic on TVD, friction on MD), so p_calc is the march end exactly; err,
+  errPct, errPctDp (share of the measured tubing Δp), rank by |err|, several tests by the RMS over the tests with a gauge (`use: false`
+  left out), a lost march ranks last; every unverified row carries the D17 label; the decimated profile per correlation feeds the page
+  plot. The test is marched at its OWN measured rates and THT (missing water / gas filled from WC / GOR or CGR / WGR, listed in
+  `derived`); exact fluid properties (no binned table).
+- **`iprFromTest`** as §5.3: pwf at the mid-perforations marched down (or up) from the gauge, the gauge itself within 1 ft of the
+  mid-perforations, or marched down from the THP (an info note names the correlation and its label); 'pr' closed form for pi / jbgOil /
+  litP2, else an Illinois root on q(pwf; p̄r) with the resolved coefficients held; 'J' closed form for the coefficients q is linear in (J,
+  q_max, C, k), a factor root for A/B, a/b and darcyGas k, value = the PI equivalent; 'S' closed forms for darcyOil and darcyGas (D held),
+  NEEDS_DARCY otherwise. `adopt` = {control id: value}; the page writes them through the normal input path with the provenance "matched
+  to test <id>".
+- **`WTS_wp_qc`** as §5.4: every test (used or not) gets a check per code (ok / warn / fail / na) and flags; QC_GOR_LT_RSB is "not
+  applicable" without `pbUser` (Rsb = Standing Rs at pbUser, no one-point shift); QC_CHOKE inverts `WTS_wp_system.boundary` for the rate
+  at the measured THP / bean (secant on log q, ≤ 8 boundary calls) and warns beyond 20 % or when the choke is sub-critical at the test;
+  QC_WC orders the tests by date for the 20-point jump; QC_SEP reads `WTS_state.sepqc` (total GOR ± 15 %, or equal to its separator-basis
+  GOR). Score = 100 − 30 per fail − 10 per warn; ranked by score, ties in input order. `tune` stays the stub (A2, WP17).
+- **Page** (step ⑥): test picker (one test or all used tests = RMS), QC matrix with a chip per code (hover = the check), score and rank,
+  ranking table with provisional chips and error bars, the interactive comparison plot (a traverse per correlation, unverified dashed,
+  gauge / THP / pwf markers, TVD ↔ MD toggle, toggleable legend, crosshair / zoom / pan through `WTS_wp_view.chart`), one Adopt button
+  for every adopted coefficient. Tests: `wellperf-match` (6), `wellperf-qc` (8).
+
 ### 18.2 Increment A2 (v4.4)
 
 | WP | Content | Depends on | Lane |

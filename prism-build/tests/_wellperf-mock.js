@@ -237,7 +237,7 @@ function installWellPerfMock(G, opts) {
             compare: function (M, test, corrs) { return { ok: true, rows: (corrs || ['hb', 'gray', 'bb', 'nsl']).map(function (c, i) { var e = [12, -35, 58, -140][i % 4]; return { corr: c, pCalc: test.gauge_psia + e, err: e, errPct: 100 * e / test.gauge_psia, rank: 0, verified: c === 'bb' }; }).sort(function (a, b) { return Math.abs(a.err) - Math.abs(b.err); }).map(function (r, i) { r.rank = i + 1; return r; }) }; },
             iprFromTest: function (M, test, sf) { return { ok: true, value: sf === 'pr' ? 2985 : sf === 'J' ? 2.05 : 1.8, pwf: 2640, method: 'gauge' }; }
         },
-        qc: function (M, tests) { return { ok: true, rows: (tests || []).map(function (t) { return { id: t.id, score: 0.9, flags: [w('QC_GOR_LT_RSB', 'Not applicable: no bubble-point pressure entered.', 'info')] }; }) }; }
+        qc: function (M, tests) { return { ok: true, rows: (tests || []).map(function (t) { return { id: t.id, score: 90, rank: 1, use: t.use !== false, checks: [{ code: 'QC_GOR_LT_RSB', st: 'na', msg: 'Not applicable: no bubble-point pressure entered.' }], flags: [w('QC_GOR_LT_RSB', 'Not applicable: no bubble-point pressure entered.', 'info')] }; }) }; }
     };
 
     // install (replacing the WP0 stubs; the stub list keeps its names so WS3 still sees them as WP0 names)

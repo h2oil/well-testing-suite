@@ -41229,6 +41229,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wp_root .wp-check label{display:flex;align-items:center;gap:8px;text-transform:none;font-size:12.5px;color:var(--text);letter-spacing:0;margin-top:20px}' +
         '#wp_root .wp-chip{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;background:rgba(88,166,255,.14);color:var(--blue);margin-left:6px;text-transform:none;letter-spacing:0;vertical-align:middle}' +
         '#wp_root .wp-chip.prov{background:rgba(210,153,34,.15);color:var(--wp-warn)}' +
+        '#wp_root .wp-qc td.qc{text-align:center;padding:4px 6px}#wp_root .wp-qcb{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;border-radius:10px;font-size:11px;font-weight:800;background:var(--bg4);color:var(--text3);cursor:help}' +
+        '#wp_root .wp-qcb.ok{background:rgba(63,185,80,.15);color:var(--wp-ok)}#wp_root .wp-qcb.warn{background:rgba(210,153,34,.17);color:var(--wp-warn)}#wp_root .wp-qcb.fail{background:rgba(248,81,73,.17);color:var(--wp-fail)}' +
+        '#wp_root .wp-score{display:inline-block;min-width:34px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}' +
+        '#wp_root .wp-bar{position:relative;height:8px;border-radius:4px;background:var(--bg4);min-width:90px;overflow:hidden}#wp_root .wp-bar i{position:absolute;top:0;bottom:0;border-radius:4px;transition:width .2s,left .2s}' +
+        '#wp_root .wp-mres{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start;margin-top:12px}' +
+        '@media (max-width:1000px){#wp_root .wp-mres{grid-template-columns:1fr}}' +
         '#wp_root .wp-prog{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:8px}#wp_root .wp-prog i{display:block;height:100%;background:var(--accent);transition:width .2s}' +
         '#wp_root .wp-paste{display:none;margin-top:8px}#wp_root .wp-paste.on{display:block}#wp_root .wp-paste textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}' +
         '#wp_root .wp-sec{animation:wpfade .18s ease-out}@keyframes wpfade{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}' +
@@ -41355,6 +41361,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (t === 'geo') patch.geo = { points: rows }; else patch[t] = rows;
         var r = Mm.write(patch);
         if (r && !r.ok) _banner('fail', 'The table was not saved: ' + ((r.errors || []).join(' ') || r.code));
+        if (t === 'tests') { ST.M = _read() || ST.M; _syncMatchTests(); }
         return r;
     }
 
@@ -42028,7 +42035,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             return;
         }
         if (act === 'match') { _runMatch(); return; }
-        if (act === 'adopt') { var id = btn.getAttribute('data-id'), v = +btn.getAttribute('data-v'); if (_byId(id) && _fin(v)) { _setCtrl(id, v, true); _commit(id); } return; }
+        if (act === 'adopt') {
+            var ids = String(btn.getAttribute('data-ids') || btn.getAttribute('data-id') || '').split(','), vs = String(btn.getAttribute('data-vs') || btn.getAttribute('data-v') || '').split(','), done = [];
+            ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = 'matched to test ' + ((ST.match && ST.match.test) || ''); done.push(id); } });
+            if (done.length) { _syncUi(); _commit(done[done.length - 1]); }
+            return;
+        }
         if (act === 'prism') { _importPrism(); return; }
         if (act === 'dfit') { _importDfit(); return; }
         if (act === 'sqc') { var sq = G.WTS_state && G.WTS_state.sepqc; var g = sq && (sq.gor || (sq.result && sq.result.gor)); if (_fin(g)) { _setCtrl('wp_gor', g, true); _commit('wp_gor'); } else { var hb = _byId('wp_fluidmsg'); if (hb) hb.innerHTML = _vHtml({ st: 'info', t: 'ℹ No Separator QC result in this project yet.' }); } return; }
@@ -42067,27 +42079,89 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                     '<td>' + _esc(R.ok ? (R.regime ? 'choke ' + R.regime : '') : (R.error || R.code || 'no flow')) + '</td></tr>';
             }).join('') + '</tbody></table></div>';
     }
+    var QC_SYM = { ok: '✓', warn: '!', fail: '✕', na: '–' };
+    function _matchTests(M) { return (M.tests || []).filter(function (t) { return t && t.use !== false; }); }
+    function _syncMatchTests() {
+        var sel = _byId('wpv_mtest'), M = ST.M || _read(); if (!sel) return;
+        var cur = sel.value, ts = _matchTests(M), opts = ts.map(function (t, i) { var id = t.id != null && String(t.id) !== '' ? String(t.id) : 'test ' + (i + 1); return [String(i), id + (t.date ? ' (' + t.date + ')' : '')]; });
+        if (ts.length > 1) opts.push(['all', 'All used tests (RMS)']);
+        sel.innerHTML = opts.length ? opts.map(function (o) { return '<option value="' + _esc(o[0]) + '">' + _esc(o[1]) + '</option>'; }).join('') : '<option value="">no test</option>';
+        if (cur && opts.some(function (o) { return o[0] === cur; })) sel.value = cur;
+    }
     function _runMatch() {
         var M = ST.M || _read(), h = _byId('wp_matchres'); if (!h) return;
-        var tests = (M.tests || []).filter(function (t) { return t.use !== false; });
-        if (!tests.length) { h.innerHTML = _vHtml({ st: 'info', t: 'ℹ Add a production test with a gauge pressure first.' }); return; }
+        var tests = _matchTests(M);
+        if (!tests.length) { ST.match = null; h.innerHTML = _vHtml({ st: 'info', t: 'ℹ Add a production test (rates, THP, gauge MD and pressure) first.' }); _renderDots(); return; }
+        _syncMatchTests();
         var corrs = Array.prototype.filter.call(document.querySelectorAll('#wp_corrset input[data-corr]'), function (e) { return e.checked; }).map(function (e) { return e.getAttribute('data-corr'); });
-        var t = tests[0], cmp = _call('WTS_wp_match.compare', M, t, corrs), qc = _call('WTS_wp_qc', M, tests), sf = (_byId('wp_m_solve') || {}).value || 'pr', ip = _call('WTS_wp_match.iprFromTest', M, t, sf);
-        ST.match = { compare: cmp, qc: qc, ipr: ip, test: t.id };
+        var pick = (_byId('wpv_mtest') || {}).value || '0', all = pick === 'all', t = all ? tests[0] : (tests[+pick] || tests[0]);
+        var sf = (_byId('wp_m_solve') || {}).value || 'pr';
+        var cmp = _call('WTS_wp_match.compare', M, all ? tests : t, corrs), qc = _call('WTS_wp_qc', M, M.tests || [], { corrKeys: corrs.length ? corrs : undefined }), ip = _call('WTS_wp_match.iprFromTest', M, t, sf);
+        ST.match = { compare: cmp, qc: qc, ipr: ip, test: all ? 'all' : t.id, solveFor: sf, all: all };
         if (G.WTS_state && G.WTS_state.wellperf) G.WTS_state.wellperf.match = ST.match;
-        var reg = G.WTS_flowline_corr || {}, out = [];
-        if (cmp && cmp.ok !== false && Array.isArray(cmp.rows)) {
-            out.push('<div class="rbox-title">Correlation ranking — test ' + _esc(t.id) + '</div><div class="wp-tw"><table class="dtable"><thead><tr><th>#</th><th>Correlation</th><th>Calculated (' + _lab('pressure', 'psia') + ')</th><th>Error</th><th>Error %</th><th>Status</th></tr></thead><tbody>' +
-                cmp.rows.map(function (r) { return '<tr><td>' + r.rank + '</td><td>' + _esc((reg[r.corr] && reg[r.corr].label) || r.corr) + '</td><td class="num">' + _fmt(_dv(r.pCalc, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(r.err, 'pressure'), 0) + '</td><td class="num">' + _fmt(r.errPct, 1) + '</td><td>' + (r.verified ? 'verified' : 'provisional') + '</td></tr>'; }).join('') + '</tbody></table></div>');
-        } else out.push(_vHtml({ st: 'warn', t: '⚠ ' + (((cmp && cmp.errors) || [])[0] || 'The comparison engine is not available yet.') }));
-        if (qc && qc.ok !== false && Array.isArray(qc.rows)) qc.rows.forEach(function (r) { (r.flags || []).forEach(function (f) { out.push(_vHtml({ st: f.sev === 'warn' ? 'warn' : (f.sev === 'fail' ? 'fail' : 'info'), t: (f.sev === 'warn' ? '⚠ ' : f.sev === 'fail' ? '✗ ' : 'ℹ ') + r.id + ': ' + f.msg })); }); });
-        if (ip && ip.ok !== false && _fin(ip.value)) {
-            var map = { pr: ['wp_pr', 'Reservoir pressure', function (v) { return _u(v, 'pressure', 0, 'psia'); }], J: ['wp_ip_J', 'Productivity index', function (v) { return _u(v, 'productivityIndex', 3, 'STB/d/psi'); }], S: ['wp_ip_S', 'Skin', function (v) { return _fmt(v, 2); }] }[sf];
-            out.push(_vHtml({ st: 'ok', t: '✓ Back-calculated ' + map[1].toLowerCase() + ' from test ' + t.id + ': ' + map[2](ip.value) + ' (pwf ' + _u(ip.pwf, 'pressure', 0, 'psia') + ').' }) +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="adopt" data-id="' + map[0] + '" data-v="' + ip.value + '">Adopt ' + _esc(map[1].toLowerCase()) + '</button></div>');
-        }
-        h.innerHTML = out.join('');
+        _renderMatch();
         _renderDots();
+    }
+    function _renderMatch() {
+        var h = _byId('wp_matchres'), m = ST.match; if (!h || !m) return;
+        var cmp = m.compare, qc = m.qc, ip = m.ipr, reg = G.WTS_flowline_corr || {}, out = [], tid = m.all ? 'all used tests' : 'test ' + m.test;
+        // QC matrix: a chip per check, the score and the rank
+        if (qc && qc.ok !== false && Array.isArray(qc.rows) && qc.rows.length) {
+            var codes = (qc.codes || []).slice(), lab = qc.labels || {};
+            out.push('<div class="rbox-title">Production-test QC</div><div class="wp-tw"><table class="dtable wp-qc"><thead><tr><th>Test</th>' + codes.map(function (c) { return '<th title="' + _esc(c) + '">' + _esc(lab[c] || c) + '</th>'; }).join('') + '<th>Score</th><th>Rank</th></tr></thead><tbody>' +
+                qc.rows.map(function (r) {
+                    var byC = {}; (r.checks || []).forEach(function (c) { byC[c.code] = c; });
+                    return '<tr' + (r.use === false ? ' style="opacity:.6"' : '') + '><td>' + _esc(r.id) + (r.use === false ? ' <span class="wp-chip">not used</span>' : '') + '</td>' + codes.map(function (c) {
+                        var k = byC[c] || { st: 'na', msg: '' };
+                        return '<td class="qc"><span class="wp-qcb ' + _esc(k.st) + '" title="' + _esc(k.msg) + '" aria-label="' + _esc((lab[c] || c) + ': ' + k.st + '. ' + k.msg) + '">' + QC_SYM[k.st] + '</span></td>';
+                    }).join('') + '<td class="num"><span class="wp-score" style="color:var(--' + (r.score >= 90 ? 'green' : r.score >= 70 ? 'yellow' : 'red') + ')">' + _fmt(r.score, 0) + '</span></td><td class="num">' + _fmt(r.rank, 0) + '</td></tr>';
+                }).join('') + '</tbody></table></div><div class="wp-hint">Hover a chip for the check. ✓ passed · ! warning · ✕ failed · – not applicable. Score = 100 − 30 per failure − 10 per warning.</div>');
+            qc.rows.forEach(function (r) { (r.flags || []).forEach(function (f) { if (f.sev === 'warn' || f.sev === 'fail') out.push(_vHtml({ st: f.sev, t: (f.sev === 'fail' ? '✗ ' : '⚠ ') + r.id + ' · ' + (lab[f.code] || f.code) + ': ' + f.msg })); }); });
+        } else if (qc) out.push(_vHtml({ st: 'warn', t: '⚠ ' + (((qc && qc.errors) || [])[0] || 'The QC engine is not available yet.') }));
+        // correlation comparison: plot (left) and ranking (right)
+        var rk = '';
+        if (cmp && cmp.ok !== false && Array.isArray(cmp.rows)) {
+            var maxE = 0; cmp.rows.forEach(function (r) { if (_fin(r.errPct)) maxE = Math.max(maxE, Math.abs(r.errPct)); });
+            rk = '<div class="rbox-title">Correlation ranking — ' + _esc(tid) + (m.all ? ' (RMS)' : '') + '</div><div class="wp-tw"><table class="dtable"><thead><tr><th>#</th><th>Correlation</th>' + (m.all ? '' : '<th>Calculated (' + _lab('pressure', 'psia') + ')</th>') + '<th>' + (m.all ? 'RMS error' : 'Error') + ' (' + _lab('pressure', 'psi') + ')</th><th>Error %</th><th></th></tr></thead><tbody>' +
+                cmp.rows.map(function (r) {
+                    var e = _fin(r.errPct) ? r.errPct : null, w = e == null || !(maxE > 0) ? 0 : Math.min(100, 100 * Math.abs(e) / maxE), col = e == null ? 'text3' : Math.abs(e) <= 5 ? 'green' : Math.abs(e) <= 10 ? 'yellow' : 'red';
+                    return '<tr><td>' + r.rank + '</td><td>' + _esc((reg[r.corr] && reg[r.corr].label) || r.label || r.corr) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(r.provisional || '') + '">provisional</span>') + '</td>' +
+                        (m.all ? '' : '<td class="num">' + (r.pCalc == null ? 'lost' : _fmt(_dv(r.pCalc, 'pressure'), 0)) + '</td>') + '<td class="num">' + (r.err == null ? '—' : _fmt(_dv(r.err, 'pressure'), 0)) + '</td><td class="num">' + (e == null ? '—' : _fmt(e, 1)) + '</td>' +
+                        '<td><div class="wp-bar" aria-hidden="true"><i style="left:0;width:' + w.toFixed(1) + '%;background:var(--' + col + ')"></i></div></td></tr>';
+                }).join('') + '</tbody></table></div>' + (cmp.gauge ? '<div class="wp-hint">Gauge ' + _u(cmp.gauge.p, 'pressure', 0, 'psia') + ' at ' + _u(cmp.gauge.md, 'length', 0, 'ft') + ' MD / ' + _u(cmp.gauge.tvd, 'length', 0, 'ft') + ' TVD; each correlation is marched down from the THP along the surveyed path at the test rates.</div>' : '');
+        } else rk = _vHtml({ st: 'warn', t: '⚠ ' + (((cmp && cmp.errors) || [])[0] || 'The comparison engine is not available yet.') });
+        var dax = _plots().mdepth === 'md' ? 'md' : 'tvd';
+        out.push('<div class="wp-mres"><div class="wp-card" style="margin:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div class="rbox-title" style="margin:0">Traverses against the gauge</div><div class="wp-tabs rp-skip" id="wp_mdepth" style="margin-left:auto" role="group" aria-label="Depth axis"><button type="button" data-mdepth="tvd" class="' + (dax === 'tvd' ? 'on' : '') + '">TVD</button><button type="button" data-mdepth="md" class="' + (dax === 'md' ? 'on' : '') + '">MD</button></div></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_match" tabindex="0" aria-label="Correlation comparison: pressure against depth for each correlation, with the measured gauge and wellhead pressures"></canvas></div><div class="wp-hint">Click a legend entry to hide a correlation; wheel or pinch to zoom, drag to pan, double-click to reset.</div></div><div>' + rk + '</div></div>');
+        // back-calculated inflow value
+        var NAME = { pr: 'reservoir pressure p̄r', J: 'productivity (PI equivalent)', S: 'skin S' };
+        if (ip && ip.ok !== false && _fin(ip.value)) {
+            var vtxt = m.solveFor === 'pr' ? _u(ip.value, 'pressure', 0, 'psia') : m.solveFor === 'J' ? (_isGasType((ST.M || {}).fluid && ST.M.fluid.type) ? _fmt(ip.value, 3) + ' Mscf/d/psi' : _u(ip.value, 'productivityIndex', 3, 'STB/d/psi')) : _fmt(ip.value, 2);
+            var ids = Object.keys(ip.adopt || {}), vs = ids.map(function (k) { return ip.adopt[k]; });
+            out.push(_vHtml({ st: 'ok', t: '✓ Back-calculated ' + NAME[m.solveFor] + ' from test ' + (ST.match.all ? (ST.match.compare && ST.match.compare.tests ? ST.match.compare.tests[0] : '') : ST.match.test) + ': ' + vtxt + ' (pwf ' + _u(ip.pwf, 'pressure', 0, 'psia') + ' at the mid-perforations, ' + ip.method + (ip.param && ip.param !== 'pr' && ip.param !== m.solveFor ? '; model coefficient ' + ip.param : '') + ').' }) +
+                (ids.length ? '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="adopt" data-ids="' + _esc(ids.join(',')) + '" data-vs="' + _esc(vs.join(',')) + '">Adopt into step ②</button></div>' : ''));
+        } else if (ip) out.push(_vHtml({ st: 'warn', t: '⚠ Back-calculation: ' + (((ip && ip.errors) || [])[0] || 'not available.') }));
+        h.innerHTML = out.join('');
+        _drawMatchPlot();
+    }
+    function _drawMatchPlot() {
+        var cv = _byId('wp_cv_match'), V = G.WTS_wp_view, m = ST.match; if (!cv || !V || !m) return;
+        var T = V.theme(), dax = _plots().mdepth === 'md' ? 'md' : 'tvd', dl = _lab('length', 'ft'), cmp = m.compare;
+        var pal = [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, T.text2];
+        var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
+        var ser = [], markers = [], reg = G.WTS_flowline_corr || {};
+        if (cmp && cmp.ok !== false && !m.all) {
+            (cmp.rows || []).forEach(function (r, i) { if (r.profile && r.profile.length) ser.push({ key: r.corr, label: ((reg[r.corr] && reg[r.corr].label) || r.corr).replace(/\s*\(.*$/, '') + (r.verified ? '' : ' (prov.)'), color: pal[i % pal.length], width: i === 0 ? 2.6 : 1.8, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
+            if (cmp.gauge) markers.push({ x: _dv(cmp.gauge.p, 'pressure'), y: dk(cmp.gauge), kind: 'diamond', color: T.green, r: 7, label: 'Gauge' });
+            if (_fin(cmp.thp)) markers.push({ x: _dv(cmp.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, label: 'THP' });
+        }
+        var ip = m.ipr;
+        if (ip && ip.ok !== false && _fin(ip.pwf) && ST.SC && ST.SC.perfs && _fin(ST.SC.perfs.midMd)) markers.push({ x: _dv(ip.pwf, 'pressure'), y: _dv(dax === 'md' ? ST.SC.perfs.midMd : (_fin(ST.SC.perfs.midTvd) ? ST.SC.perfs.midTvd : ST.SC.perfs.midMd), 'length'), kind: 'hollow', color: T.accent, r: 6, label: 'pwf' });
+        V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
+            x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+            y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: dax.toUpperCase(), fmtR: function (v) { return _fmt(v, 0) + ' ' + dl; } },
+            series: ser, markers: markers, hidden: _plots().mHidden || null, onLegend: function (hid) { _plotsSet({ mHidden: hid }); },
+            empty: m.all ? 'Pick one test to see its traverses (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
     }
     function _importPrism() {
         var r = _call('WTS_wp_ipr.fromWell'), h = _byId('wp_prismmsg');
@@ -42159,7 +42233,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         _renderTable('survey'); _renderSvMode();
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
-    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); }
+    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
     function _renderRatings() {
         var M = _read(); if (!M) return;
         var a = _byId('wpt_rate_wh'), b = _byId('wpt_rate_tht'), c = _byId('wpt_beans');
@@ -42298,8 +42372,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             _card('Production tests', _tableBlock('tests', 'Tests', 'Gauge MD and gauge pressure let the comparison rank the correlations at the gauge.') +
                 '<div class="fg rp-skip" style="margin-top:12px"><div class="fg-item"><label>Correlations to compare</label><div id="wp_corrset" style="display:flex;flex-wrap:wrap;gap:10px;font-size:12.5px">' +
                 wellCorr.map(function (c) { return '<label style="display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;color:var(--text)"><input type="checkbox" data-corr="' + _esc(c.key) + '" checked> ' + _esc(c.label) + '</label>'; }).join('') + '</div></div>' +
-                _fg('wp_m_solve', 'Back-calculate from the test', { options: [['pr', 'Reservoir pressure p̄r'], ['J', 'Productivity index J'], ['S', 'Skin S']], def: 'pr' }) + '</div>' +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="match">Compare and QC</button></div><div id="wp_matchres" style="margin-top:10px"></div>') + '</section>';
+                '<div class="fg-item"><label for="wpv_mtest">Test to compare</label><select id="wpv_mtest"><option value="0">first used test</option></select></div>' +
+                _fg('wp_m_solve', 'Back-calculate from the test', { options: [['pr', 'Reservoir pressure p̄r (coefficients held)'], ['J', 'Productivity (p̄r held)'], ['S', 'Skin S (k·h held, Darcy)']], def: 'pr' }) + '</div>' +
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="match">Compare and QC</button></div><div class="wp-hint">Each correlation is marched from the measured THP down the surveyed path at the test\'s own rates and THT; the QC checks every test (used or not).</div><div id="wp_matchres" style="margin-top:10px"></div>') + '</section>';
         var s7 = '<section id="wp_step_7" class="wp-sec" style="display:none"><div class="wp-sec-h">⑦ Report <span>what the page report and the Quick Report carry</span></div>' +
             _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the correlation validity, the traverse card and the Notes. ' +
                 'Full tables (traverse, curves, sensitivity, bean schedule) are in the CSV.</div>' +
@@ -42380,6 +42455,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
             if (b.getAttribute('data-tab')) { _plotsSet({ trTab: b.getAttribute('data-tab') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-depth')) { _plotsSet({ depth: b.getAttribute('data-depth') }); _renderTraverseCard(); return; }
+            if (b.getAttribute('data-mdepth')) { _plotsSet({ mdepth: b.getAttribute('data-mdepth') }); Array.prototype.forEach.call(document.querySelectorAll('#wp_mdepth button'), function (x) { if (x.classList) x.classList.toggle('on', x === b); }); _drawMatchPlot(); return; }
             var act = b.getAttribute('data-act'); if (act) _act(act, b);
         });
         root.addEventListener('keydown', function (e) {
@@ -42426,20 +42502,21 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     };
 
     if (typeof document !== 'undefined' && document.addEventListener) {
-        var again = function () { if (_byId('wp_root')) { ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {}; _renderAllTables(); G.calcWellPerf(); } };
+        var again = function () { if (_byId('wp_root')) { ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {}; var mr = _byId('wp_matchres'); if (mr) mr.innerHTML = ''; _renderAllTables(); G.calcWellPerf(); } };
         document.addEventListener('wts:well-changed', again);
         document.addEventListener('wts:project-loaded', again);
-        document.addEventListener('wts:wellperf-model-changed', function () { if (_byId('wp_root')) G.calcWellPerf(); });
+        document.addEventListener('wts:wellperf-model-changed', function (e) { if (_byId('wp_root')) { G.calcWellPerf(); if (!e || !e.detail || !e.detail.keys || e.detail.keys.indexOf('tests') !== -1) _syncMatchTests(); } });
         document.addEventListener('wts:unit-system-changed', function () {
             if (!_byId('wp_root')) return;
             _renderAllTables();
             G.calcWellPerf();
+            _renderMatch();
         });
     }
     if (typeof G.addEventListener === 'function') {
         G.addEventListener('resize', function () {
             if (!_byId('wp_root') || !G.WTS_wp_view) return;
-            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
+            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr', 'wp_cv_match'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
             _renderBreakdown(); _renderSchematic();
         });
     }
@@ -43439,31 +43516,528 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 // =============================================================================
 // WTS — 49-calc-wp-match.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
 // -----------------------------------------------------------------------------
-// Well Performance correlation comparison, IPR from a test, production-test QC — docs/WELL-PERFORMANCE-PLAN.md §3.7, §5.
-// WP0 STUB (contract only): every function below returns {ok:false, code:'STUB', name, wp, errors[]} until WP7 replaces it.
-// The work package that implements a function removes its name from window.__WP_STUBS (tests/wellperf-shapes.test.js lists them).
-// Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}], …}; nothing throws for user data):
+// Well Performance correlation comparison, IPR from a test and production-test QC (WP7, increment A1) —
+// docs/WELL-PERFORMANCE-PLAN.md §3.7, §5.2–§5.4, §17.1, D17.
+//
+// Nothing here re-implements a correlation, a march, an inflow model or a choke law: the comparison and the back-calculation drive
+// the fluid (WTS_wp_fluid), the well path on the true inclination of every segment (WTS_wp_well: hydrostatic on TVD, friction on
+// MD), the vertical lift on the ONE marcher (WTS_wp_vlp.traverse → WTS_flowline_march), the inflow models (WTS_wp_ipr.curve) and
+// the surface boundary of the system solver (WTS_wp_system.boundary: flowline + choke). Pure: no DOM, storage, timers or events.
+//
+// TEST RATES. A test {q_o, q_w, q_g (Mscf/d), thp_psig, tht_F, bean64, gaugeMd, gauge_psia} is marched with its OWN measured rates
+// (the flowline fluid {qo, qw, qg_Mscfd}); a missing water or gas rate is filled from the model (WC, GOR; CGR / WGR for a gas well)
+// and listed in `derived`. The inflow rate basis is the module's: oil wells liquid STB/d (q_o + q_w), gas wells Mscf/d, water BWPD.
+// A measured THT replaces the model THT for the march (the linear THT → BHT profile of WTS_wp_well, "measured" for the hydrate check).
+//
+// COMPARE (§5.2). For each registered well correlation (the registry key strings of WTS_flowline_corr, D3): one march top-down
+//   from the measured THP to the gauge MD along the deviated path (WTS_wp_well.segmentsFor(W, {from: gaugeMd, toMd: 0})), so the
+//   calculated pressure is the march end exactly (no interpolation). err = p_calc − p_gauge (psi), errPct = 100·err / p_gauge,
+//   errPctDp = 100·err / (p_gauge − THP) (the share of the measured tubing Δp). Ranked by |err| (several tests: by the RMS over the
+//   tests with a gauge); a lost march ranks last. Unverified correlations keep their "provisional — not verified against a published
+//   example" label in every row (D17). No multipliers unless o.mult (tuning is A2, WP17).
+// IPR FROM A TEST (§5.3). pwf at the mid-perforations: marched DOWN from the gauge (segmentsFor between the gauge and the
+//   mid-perforations; a gauge below the mid-perforations is marched up), the gauge itself when it sits at the mid-perforations
+//   (±1 ft), or marched down from the THP when there is no gauge — with the chosen correlation (o.corr, else M.system.corr.well,
+//   else the verified default of WTS_wp_vlp.defaultCorr) and M.system.mult. Then, with the inflow model of step ② (WTS_wp_ipr.curve):
+//     'pr' (the model coefficients held): closed form for pi (p̄r = pwf + q/J), jbgOil (p̄r = pwf + A·q + B·q²) and litP2
+//          (p̄r² = pwf² + a·q + b·q²); a safeguarded 1-D root (Illinois) on q(pwf; p̄r) = q for the others.
+//     'J'  (p̄r held): the model's productivity coefficient — J (pi, composite), q_max (vogel), C (fetkovich, back-pressure), k
+//          (darcyOil): q is linear in it, so x = x₀·q / q₀ (closed form); A, B (jbgOil), a, b (litP2, litMp) divided by a factor,
+//          k (darcyGas): the factor by the 1-D root. value = the PI equivalent q / (p̄r − pwf); `adopt` holds the model coefficient(s).
+//     'S'  (k·h held, Darcy models only): darcyOil — q is linear in J and J ∝ 1/(X + S), so X + S = (X + S₀)·q₀ / q; darcyGas —
+//          Δ = a·q + b·q² with a ∝ (X + S) and b (D) held, so a = (a₀·q₀ + b·q₀² − b·q²) / q and X + S = (X + S₀)·a / a₀ (closed
+//          forms; X = the ln term of the chosen reference form). Other models → NEEDS_DARCY.
+//   adopt = {control id: value} for the page (through normal input events); the provenance is "matched to test <id>".
+// QC (§5.4). Every test (used or not) gets a check per code — st 'ok' | 'warn' | 'fail' | 'na' — and the non-ok ones as flags
+//   ({code, sev:'fail'|'warn'|'info', msg}; 'na' = info):
+//     QC_BHP_GT_PR  gauge or back-calculated pwf at or above p̄r (fail)
+//     QC_Q_GT_AOF   rate above the model AOF (fail)
+//     QC_GOR_LT_RSB producing GOR below Rsb for a saturated oil (warn) — only with a user bubble point (Rsb = Standing Rs at pbUser,
+//                   the correlation without the one-point shift); else "not applicable" (a correlation Pb from the producing GOR
+//                   gives Rsb = GOR by construction)
+//     QC_CHOKE      the choke-model rate at the measured THP / bean (the rate whose surface boundary needs the measured THP, a secant
+//                   on WTS_wp_system.boundary) differs from the measured rate by more than 20 %, or the choke is sub-critical at the
+//                   test and a critical correlation was used (warn)
+//     QC_THT        THT above the bottom-hole temperature (warn)
+//     QC_VLP        gauge error of the best correlation above 5 % (warn)
+//     QC_WC         water cut outside 0–1 / negative rates (fail), or a jump of more than 20 points from the previous test by date (warn)
+//     QC_SEP        producing GOR inconsistent with Separator QC (WTS_state.sepqc) — off by more than 15 % from its total GOR, or equal
+//                   to its separator-basis GOR (warn)
+//   score = 100 − 30 per fail − 10 per warn (≥ 0); tests ranked by score (ties in input order); the comparison and the inflow back-
+//   calculation of the page use only tests with use: true.
+//
+// Interfaces (field units, §3.0; psia inside, *_psig at surface inputs; every result {ok, errors[], warnings[{code, msg, sev}], …}):
 //   WTS_wp_match
-//     .compare(M, test, corrKeys)
-//         → {ok, rows:[{corr, pCalc, err, errPct, rank, verified}]}
-//     .iprFromTest(M, test, solveFor /*"pr"|"J"|"S"*/)
-//         → {ok, value, pwf, method}
-//     .tune(M, tests, corr, o)
-//         → A2 (WP17)
-//   WTS_wp_qc(M, tests)
-//         → {ok, rows:[{id, flags:[{code, sev, msg}], score}]}
+//     .compare(M, test | tests[], corrKeys?, o? /*{stepFt, mult, profiles:false}*/)
+//         → {ok, tests:[id], gauge:{md, tvd, p} (one test), thp, rows:[{corr, label, pCalc psia|null, err, errPct, errPctDp, rank,
+//            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct}], n}],
+//            best, warnings, errors}
+//     .iprFromTest(M, test, solveFor /*'pr'|'J'|'S'*/, o? /*{corr}*/)
+//         → {ok, solveFor, value, unit, pwf psia, method:'gauge'|'gauge at mid-perf'|'thp', corr, q, rateUnit, model, param, params
+//            (the changed coefficients), jEq, adopt:{controlId: value}, closedForm, provenance, warnings, errors}
+//     .pwfFromTest(M, test, o?) → {ok, pwf, method, corr, gauge, warnings}      (the pwf step alone)
+//     .rates(M, test) → {ok, qo, qw, qg_Mscfd, q, gor, wc, derived[]}
+//     .tune(M, tests, corr, o) → A2 (WP17): still the WP0 stub
+//   WTS_wp_qc(M, tests, o? /*{corrKeys, sepqc}*/)
+//         → {ok, rows:[{id, use, score, rank, q, pwf, gor, wc, checks:[{code, st, msg}], flags:[{code, sev, msg}], compare}], codes,
+//            warnings, errors}
 // =============================================================================
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // WP7 implements compare / iprFromTest / qc: their names leave window.__WP_STUBS; tune stays the WP0 stub (A2, WP17)
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
+    ['WTS_wp_match.compare', 'WTS_wp_match.iprFromTest', 'WTS_wp_qc'].forEach(function (n) { var i = STUBS.indexOf(n); if (i !== -1) STUBS.splice(i, 1); });
     function _mark(name) { if (STUBS.indexOf(name) === -1) STUBS.push(name); }
     function _stub(name, wp) { return { ok: false, code: 'STUB', name: name, wp: wp, errors: [name + ' is not built yet (' + wp + ')'], warnings: [] }; }
-    var wp_match = G.WTS_wp_match = G.WTS_wp_match || {};
-    if (!wp_match.compare) { wp_match.compare = function () { return _stub('WTS_wp_match.compare', 'WP7'); }; _mark('WTS_wp_match.compare'); }
-    if (!wp_match.iprFromTest) { wp_match.iprFromTest = function () { return _stub('WTS_wp_match.iprFromTest', 'WP7'); }; _mark('WTS_wp_match.iprFromTest'); }
-    if (!wp_match.tune) { wp_match.tune = function () { return _stub('WTS_wp_match.tune', 'WP7'); }; _mark('WTS_wp_match.tune'); }
-    if (typeof G.WTS_wp_qc !== 'function') { G.WTS_wp_qc = function () { return _stub('WTS_wp_qc', 'WP7'); }; _mark('WTS_wp_qc'); }
+
+    var PATM = 14.696;
+    var PROVISIONAL = 'provisional — not verified against a published example';
+    var QC_CODES = ['QC_BHP_GT_PR', 'QC_Q_GT_AOF', 'QC_GOR_LT_RSB', 'QC_CHOKE', 'QC_THT', 'QC_VLP', 'QC_WC', 'QC_SEP'];
+    var QC_LABEL = { QC_BHP_GT_PR: 'pwf vs p̄r', QC_Q_GT_AOF: 'Rate vs AOF', QC_GOR_LT_RSB: 'GOR vs Rsb', QC_CHOKE: 'Choke', QC_THT: 'THT',
+        QC_VLP: 'VLP at gauge', QC_WC: 'Water cut', QC_SEP: 'Separator QC' };
+    var PEN = { fail: 30, warn: 10 };
+    var CHOKE_TOL = 0.20, VLP_TOL = 5, WC_JUMP = 0.20, SEP_TOL = 0.15, SEP_SAME = 0.05;
+    var CTRL = { pr: 'wp_pr', S: 'wp_ip_S' };          // page control ids (the page maps wp_ip_<name> → res.params.<name>)
+    var IP_PREFIX = 'wp_ip_';
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _n(v) { if (typeof v === 'number') return isFinite(v) ? v : null; if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v; return null; }
+    function _w(code, msg, sev) { return { code: code, msg: String(msg).slice(0, 299), sev: sev === 'info' ? 'info' : 'warn' }; }
+    function _f(x, dp) {
+        if (!_fin(x)) return '–';
+        var s = (+x.toFixed(dp || 0)).toFixed(dp || 0), neg = s.charAt(0) === '-';
+        if (neg) s = s.slice(1);
+        var parts = s.split('.'), ip = parts[0], out = '';
+        while (ip.length > 3) { out = ',' + ip.slice(-3) + out; ip = ip.slice(0, -3); }
+        return (neg ? '−' : '') + ip + out + (parts[1] ? '.' + parts[1] : '');
+    }
+    function _clone(o) { return JSON.parse(JSON.stringify(o)); }
+    function _isGas(t) { return t === 'gas' || t === 'condensate' || t === 'gasinj'; }
+    function _fn(path) { var p = path.split('.'), f = p.length > 1 ? (G[p[0]] || {})[p[1]] : G[p[0]]; return typeof f === 'function' && (G.__WP_STUBS || []).indexOf(path) === -1 ? f : null; }
+    function _fail(code, msg, extra) { var o = { ok: false, code: code, errors: [].concat(msg), warnings: [] }; if (extra) for (var k in extra) o[k] = extra[k]; return o; }
+    function _reg() { return G.WTS_flowline_corr || {}; }
+    function _tid(t, i) { return (t && t.id != null && String(t.id) !== '') ? String(t.id).slice(0, 40) : 'test ' + (i + 1); }
+
+    // safeguarded 1-D root (Illinois regula falsi) on [a, b] with f(a)·f(b) ≤ 0; relative tolerance on x and on f / fScale
+    function _root(f, a, b, fa, fb, fScale, maxIt) {
+        if (fa === 0) return { x: a, fx: 0, it: 0 };
+        if (fb === 0) return { x: b, fx: 0, it: 0 };
+        var side = 0, x = a, fx = fa;
+        for (var it = 0; it < (maxIt || 80); it++) {
+            x = (a * fb - b * fa) / (fb - fa);
+            if (!(x > Math.min(a, b) && x < Math.max(a, b))) x = 0.5 * (a + b);
+            fx = f(x);
+            if (!_fin(fx)) return null;
+            if (Math.abs(fx) <= 1e-10 * fScale || Math.abs(b - a) <= 1e-12 * Math.max(1, Math.abs(x))) return { x: x, fx: fx, it: it + 1 };
+            if ((fx > 0) === (fb > 0)) { b = x; fb = fx; if (side === -1) fa /= 2; side = -1; }
+            else { a = x; fa = fx; if (side === 1) fb /= 2; side = 1; }
+        }
+        return { x: x, fx: fx, it: maxIt || 80 };
+    }
+
+    // ── the test model, rates and the well path ──────────────────────────────
+    function rates(M, t) {
+        if (!M || !M.fluid) return _fail('NO_MODEL', 'the model is incomplete');
+        if (!t || typeof t !== 'object') return _fail('NO_TEST', 'no test');
+        var type = M.fluid.type || 'oil', qo = _n(t.q_o), qw = _n(t.q_w), qg = _n(t.q_g), derived = [];
+        var wc = _fin(_n(M.fluid.wc)) ? _n(M.fluid.wc) : 0, gor = _fin(_n(M.fluid.gor)) ? _n(M.fluid.gor) : 0;
+        if (type === 'oil') {
+            if (!_fin(qo)) return _fail('NO_RATE', 'The test has no oil rate.');
+            if (!_fin(qw)) { qw = wc < 1 ? qo * wc / (1 - wc) : 0; derived.push('q_w from the model water cut'); }
+            if (!_fin(qg)) { qg = qo * gor / 1000; derived.push('q_g from the model GOR'); }
+        } else if (_isGas(type)) {
+            if (!_fin(qg)) return _fail('NO_RATE', 'The test has no gas rate.');
+            if (!_fin(qo)) { qo = (_n(M.fluid.cgr) || 0) * qg / 1000; derived.push('condensate from the model CGR'); }
+            if (!_fin(qw)) { qw = (_n(M.fluid.wgr) || 0) * qg / 1000; derived.push('water from the model WGR'); }
+        } else {
+            if (!_fin(qw)) return _fail('NO_RATE', 'The test has no water rate.');
+            qo = _fin(qo) ? qo : 0; qg = _fin(qg) ? qg : 0;
+        }
+        var q = type === 'oil' ? qo + qw : (_isGas(type) ? qg : qw);
+        return { ok: true, type: type, qo: qo, qw: qw, qg_Mscfd: qg, q: q, rateUnit: type === 'oil' ? 'STB/d' : (_isGas(type) ? 'Mscf/d' : 'BWPD'),
+            gor: qo > 0 ? qg * 1000 / qo : null, wc: (qo + qw) > 0 ? qw / (qo + qw) : null, derived: derived, errors: [], warnings: [] };
+    }
+    function _testModel(M, t) {
+        var M2 = _clone(M);
+        M2.well = M2.well || {}; M2.well.heat = M2.well.heat || {};
+        var tht = _n(t && t.tht_F);
+        if (_fin(tht)) { M2.well.heat.tht_F = tht; M2.well.heat.thtMeasured = true; }
+        var bean = _n(t && t.bean64);
+        if (_fin(bean) && bean > 0 && M2.surface && M2.surface.choke) M2.surface.choke.bean64 = bean;
+        return M2;
+    }
+    // fluid + well of one test (exact properties: no binned table — a comparison is about accuracy, not speed)
+    function _ctx(M, t) {
+        var need = ['WTS_wp_fluid.build', 'WTS_wp_well.build', 'WTS_wp_well.segmentsFor', 'WTS_wp_vlp.traverse'];
+        for (var i = 0; i < need.length; i++) if (!_fn(need[i])) return { fail: _fail('MISSING_ENGINE', need[i] + ' is not available', { name: need[i] }) };
+        if (!M || !M.fluid || !M.res || !M.well) return { fail: _fail('NO_MODEL', 'the model is incomplete') };
+        var r = rates(M, t);
+        if (!r.ok) return { fail: r };
+        var M2 = _testModel(M, t);
+        var F = G.WTS_wp_fluid.build(M2.fluid, { T_F: M2.res.T_F });
+        if (!F || !F.ok) return { fail: _fail('NEEDS_FLUID', (F && F.errors && F.errors.length) ? F.errors : ['the fluid is incomplete']) };
+        var W = G.WTS_wp_well.build(M2.well, { res: M2.res, fluidType: M2.fluid.type, tests: [t], surface: M2.surface });
+        if (!W || !W.ok || !W.segments || !W.segments.length) return { fail: _fail('NEEDS_WELL', (W && W.errors && W.errors.length) ? W.errors : ['the well has no flow path (survey and strings)']) };
+        return { M: M2, F: F, W: W, r: r, flow: { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd } };
+    }
+    // the part of the flow path between two MDs (flow order from `from` to `to`) as a path object for WTS_wp_vlp.traverse
+    function _sub(W, from, to) {
+        var segs = G.WTS_wp_well.segmentsFor(W, { from: from, toMd: to });
+        if (!Array.isArray(segs) || !segs.length) return null;
+        return { ok: true, segments: segs, tAt: W.tAt, nodes: W.nodes };
+    }
+    function _corrOf(M, F, o) {
+        if (o && o.corr) return String(o.corr);
+        if (M.system && M.system.corr && M.system.corr.well) return String(M.system.corr.well);
+        var V = G.WTS_wp_vlp;
+        return (V && typeof V.defaultCorr === 'function') ? V.defaultCorr(F).key : 'bb';
+    }
+    function _march(cx, path, from, p0, corr, o) {
+        var sys = cx.M.system || {};
+        var to = { from: from, p0: p0, corr: corr, stepFt: (o && +o.stepFt > 0) ? +o.stepFt : (+sys.stepFt > 0 ? +sys.stepFt : 100),
+            eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false, pMax: Math.max(p0 * 4, p0 + 10000) };
+        var mult = o && o.mult;
+        if (mult && (+mult.hl !== 1 || +mult.f !== 1)) to.mult = { hl: _fin(+mult.hl) ? +mult.hl : 1, f: _fin(+mult.f) ? +mult.f : 1 };
+        return G.WTS_wp_vlp.traverse(cx.F, path, cx.flow, to);
+    }
+    function _gaugeOf(t) {
+        var md = _n(t && t.gaugeMd), p = _n(t && t.gauge_psia);
+        return (_fin(md) && md > 0 && _fin(p) && p > 0) ? { md: md, p: p } : null;
+    }
+    function _decim(prof, n) {
+        if (!Array.isArray(prof) || !prof.length) return [];
+        var step = Math.max(1, Math.ceil(prof.length / (n || 80))), out = [];
+        for (var i = 0; i < prof.length; i += step) out.push({ md: prof[i].md, tvd: prof[i].tvd, p: prof[i].p });
+        var last = prof[prof.length - 1];
+        if (out[out.length - 1].md !== last.md) out.push({ md: last.md, tvd: last.tvd, p: last.p });
+        return out;
+    }
+    function _defaultKeys(type) {
+        var REG = _reg(), out = [];
+        var gas = _isGas(type);
+        Object.keys(REG).forEach(function (k) {
+            var e = REG[k];
+            if (!e || typeof e.grad !== 'function') return;
+            var kind = e.kind || 'any';
+            if (kind === 'any' || kind === 'well' || (gas && kind === 'gas')) out.push(e.key || k);
+        });
+        return out;
+    }
+
+    // ── compare (§5.2) ───────────────────────────────────────────────────────
+    function _compareOne(M, t, idx, keys, o) {
+        var cx = _ctx(M, t);
+        if (cx.fail) return { ok: false, id: _tid(t, idx), fail: cx.fail };
+        var g = _gaugeOf(t), thp = _n(t.thp_psig);
+        if (!g) return { ok: false, id: _tid(t, idx), fail: _fail('NO_GAUGE', 'Test ' + _tid(t, idx) + ' has no gauge depth and pressure: the correlations are ranked at the gauge.') };
+        if (!_fin(thp)) return { ok: false, id: _tid(t, idx), fail: _fail('NO_THP', 'Test ' + _tid(t, idx) + ' has no wellhead pressure.') };
+        var path = _sub(cx.W, g.md, 0);
+        if (!path) return { ok: false, id: _tid(t, idx), fail: _fail('NO_PATH', 'No flow path between the wellhead and the gauge.') };
+        var thpA = thp + PATM, REG = _reg(), res = {};
+        keys.forEach(function (k) {
+            var e = REG[k], tr = _march(cx, path, 'top', thpA, k, o), pC = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
+            res[k] = { pCalc: pC, err: pC == null ? null : pC - g.p, errPct: pC == null ? null : 100 * (pC - g.p) / g.p,
+                errPctDp: (pC == null || !(g.p - thpA > 1)) ? null : 100 * (pC - g.p) / (g.p - thpA), lost: !(tr && tr.ok),
+                lostAt: tr && tr.lost ? tr.lost : null, warnings: ((tr && tr.warnings) || []).map(function (w) { return w.code; }),
+                profile: (o && o.profiles === false) || !(tr && tr.profile) ? null : _decim(tr.profile, 80), verified: !!(e && e.verified === true) };
+        });
+        return { ok: true, id: _tid(t, idx), gauge: { md: g.md, tvd: typeof cx.W.tvdAt === 'function' ? cx.W.tvdAt(g.md) : null, p: g.p }, thp: thpA, res: res, rates: cx.r };
+    }
+    function compare(M, test, corrKeys, o) {
+        o = o || {};
+        var multi = Array.isArray(test), tests = multi ? test.filter(function (t) { return t && t.use !== false; }) : [test];
+        if (!tests.length || !tests[0]) return _fail('NO_TEST', 'No production test to compare (tests with use: true).', { rows: [] });
+        if (!M || !M.fluid) return _fail('NO_MODEL', 'the model is incomplete', { rows: [] });
+        var REG = _reg(), warnings = [], keys = [];
+        var asked = (Array.isArray(corrKeys) && corrKeys.length) ? corrKeys : _defaultKeys(M.fluid.type);
+        asked.forEach(function (k) {
+            k = String(k);
+            if (!Object.prototype.hasOwnProperty.call(REG, k) || typeof REG[k].grad !== 'function') { warnings.push(_w('UNKNOWN_CORR', 'Unknown correlation key ' + k.slice(0, 40) + ' (skipped).')); return; }
+            if (keys.indexOf(k) === -1) keys.push(k);
+        });
+        if (!keys.length) return _fail('NO_CORR', 'No known correlation to compare.', { rows: [], warnings: warnings });
+        var per = tests.map(function (t, i) { return _compareOne(M, t, i, keys, o); });
+        var good = per.filter(function (p) { return p.ok; });
+        if (!good.length) { var f = per[0].fail; return _fail(f.code, f.errors, { rows: [], warnings: warnings.concat(f.warnings || []) }); }
+        per.filter(function (p) { return !p.ok; }).forEach(function (p) { warnings.push(_w(p.fail.code, p.fail.errors[0] + ' (skipped)')); });
+        var rows = keys.map(function (k) {
+            var e = REG[k], row = { corr: k, label: e.label || k, verified: e.verified === true, provisional: e.verified === true ? null : PROVISIONAL };
+            if (!multi) {
+                var r = good[0].res[k];
+                row.pCalc = r.pCalc; row.err = r.err; row.errPct = r.errPct; row.errPctDp = r.errPctDp; row.lost = r.lost; row.lostAt = r.lostAt;
+                row.warnings = r.warnings; row.profile = r.profile; row.n = r.pCalc == null ? 0 : 1;
+            } else {
+                var e2 = 0, p2 = 0, n = 0;
+                row.perTest = good.map(function (p) { var r = p.res[k]; if (r.pCalc != null) { e2 += r.err * r.err; p2 += r.errPct * r.errPct; n++; } return { id: p.id, pCalc: r.pCalc, err: r.err, errPct: r.errPct }; });
+                row.n = n; row.pCalc = null; row.err = n ? Math.sqrt(e2 / n) : null; row.errPct = n ? Math.sqrt(p2 / n) : null; row.errPctDp = null;
+                row.lost = n < good.length; row.rms = true; row.warnings = [];
+            }
+            return row;
+        });
+        rows.sort(function (a, b) {
+            var ea = a.err == null ? Infinity : Math.abs(a.err), eb = b.err == null ? Infinity : Math.abs(b.err);
+            if (multi && a.n !== b.n) return b.n - a.n;
+            return ea - eb;
+        });
+        rows.forEach(function (r, i) { r.rank = i + 1; });
+        var best = rows[0] && rows[0].err != null ? rows[0].corr : null;
+        if (rows.some(function (r) { return !r.verified; })) warnings.push(_w('PROVISIONAL', 'Correlations marked provisional have no verified published example (' + PROVISIONAL + ').', 'info'));
+        var out = { ok: !!best, tests: good.map(function (p) { return p.id; }), rows: rows, best: best, warnings: warnings, errors: best ? [] : ['Every march was lost before the gauge.'] };
+        if (!multi) { out.gauge = good[0].gauge; out.thp = good[0].thp; out.thp_psig = good[0].thp - PATM; out.rates = good[0].rates; }
+        return out;
+    }
+
+    // ── pwf from a test (§5.3, first step) ───────────────────────────────────
+    function pwfFromTest(M, t, o) {
+        o = o || {};
+        var cx = _ctx(M, t);
+        if (cx.fail) return cx.fail;
+        return _pwf(cx, t, o);
+    }
+    function _pwf(cx, t, o) {
+        var W = cx.W, mid = W.nodes && W.nodes.midPerfMd, corr = _corrOf(cx.M, cx.F, o), g = _gaugeOf(t), warnings = [];
+        var mult = (o && o.mult) || (cx.M.system && cx.M.system.mult);
+        var mo = { mult: mult, stepFt: o && o.stepFt };
+        if (!_fin(mid)) return _fail('NO_MIDPERF', 'The mid-perforation depth is needed.');
+        if (!Object.prototype.hasOwnProperty.call(_reg(), corr)) return _fail('UNKNOWN_CORR', 'unknown correlation key ' + String(corr).slice(0, 40));
+        if (g) {
+            if (Math.abs(g.md - mid) <= 1) return { ok: true, pwf: g.p, method: 'gauge at mid-perf', corr: corr, gauge: g, warnings: warnings, errors: [] };
+            var down = g.md < mid, path = down ? _sub(W, mid, g.md) : _sub(W, g.md, mid);
+            if (!path) return _fail('NO_PATH', 'No flow path between the gauge and the mid-perforations.');
+            var tr = _march(cx, path, down ? 'top' : 'bottom', g.p, corr, mo);
+            if (!tr || !tr.ok) return _fail('LOST', 'The march from the gauge to the mid-perforations is lost (' + ((tr && tr.lost && tr.lost.reason) || (tr && tr.code) || 'failed') + ').');
+            if (!down) warnings.push(_w('GAUGE_BELOW_MIDPERF', 'The gauge is below the mid-perforations: the pressure is marched up to them.', 'info'));
+            return { ok: true, pwf: tr.pEnd, method: 'gauge', corr: corr, gauge: g, dpGauge: tr.pEnd - g.p, warnings: warnings, errors: [] };
+        }
+        var thp = _n(t.thp_psig);
+        if (!_fin(thp)) return _fail('NO_PRESSURE', 'The test needs a gauge pressure or a wellhead pressure.');
+        var pth = _sub(W, mid, 0);
+        if (!pth) return _fail('NO_PATH', 'No flow path between the wellhead and the mid-perforations.');
+        var tr2 = _march(cx, pth, 'top', thp + PATM, corr, mo);
+        if (!tr2 || !tr2.ok) return _fail('LOST', 'The march from the wellhead to the mid-perforations is lost (' + ((tr2 && tr2.lost && tr2.lost.reason) || (tr2 && tr2.code) || 'failed') + ').');
+        warnings.push(_w('PWF_FROM_THP', 'No gauge: pwf is marched down from the THP with ' + ((_reg()[corr] || {}).label || corr) + ((_reg()[corr] || {}).verified === true ? '' : ' (' + PROVISIONAL + ')') + '.', 'info'));
+        return { ok: true, pwf: tr2.pEnd, method: 'thp', corr: corr, gauge: null, warnings: warnings, errors: [] };
+    }
+
+    // ── IPR from a test (§5.3) ───────────────────────────────────────────────
+    var J_PARAM = { pi: ['J'], composite: ['J'], vogel: ['qmax'], fetkovich: ['C'], backPressure: ['C'], darcyOil: ['k'] };   // q ∝ x
+    var J_INV = { jbgOil: ['A', 'B'], litP2: ['a', 'b'], litMp: ['a', 'b'] };                                                  // Δ ∝ x
+    function _curve(res, F) { return G.WTS_wp_ipr.curve(res, F); }
+    function iprFromTest(M, t, solveFor, o) {
+        o = o || {};
+        var sf = solveFor === 'J' || solveFor === 'S' ? solveFor : (solveFor === 'pr' || solveFor == null ? 'pr' : null);
+        if (!sf) return _fail('BAD_SOLVE_FOR', 'solveFor must be pr, J or S.');
+        if (!_fn('WTS_wp_ipr.curve')) return _fail('MISSING_ENGINE', 'WTS_wp_ipr.curve is not available', { name: 'WTS_wp_ipr.curve' });
+        var cx = _ctx(M, t);
+        if (cx.fail) return cx.fail;
+        var pw = _pwf(cx, t, o);
+        if (!pw.ok) return pw;
+        var pwf = pw.pwf, q = cx.r.q, key = String(M.res.model || ''), def = (G.WTS_wp_ipr.models || {})[key];
+        var warnings = pw.warnings.slice(), res0 = _clone(M.res);
+        res0.params = res0.params || {};
+        if (!def) return _fail('UNKNOWN_MODEL', 'Unknown inflow model "' + key.slice(0, 40) + '".');
+        if (!(q > 0)) return _fail('NO_RATE', 'The test rate must be above zero.');
+        var out = { ok: true, solveFor: sf, pwf: pwf, method: pw.method, corr: pw.corr, q: q, rateUnit: cx.r.rateUnit, model: key, closedForm: false,
+            provenance: 'matched to test ' + _tid(t, 0), warnings: warnings, errors: [], params: {}, adopt: {} };
+        var jUnit = cx.r.rateUnit + '/psi';
+        if (sf === 'pr') {
+            var P = res0.params, pr = null;
+            if (key === 'pi' && _fin(_n(P.J)) && P.J > 0) { pr = pwf + q / P.J; out.closedForm = true; }
+            else if (key === 'jbgOil' && _fin(_n(P.A)) && _fin(_n(P.B))) { pr = pwf + P.A * q + P.B * q * q; out.closedForm = true; }
+            else if (key === 'litP2' && _fin(_n(P.a)) && _fin(_n(P.b))) { pr = Math.sqrt(pwf * pwf + P.a * q + P.b * q * q); out.closedForm = true; }
+            else {
+                // hold the resolved coefficients of the current model (a curve fitted to points keeps its fitted coefficients)
+                var I0 = res0.pr > 0 ? _curve(res0, cx.F) : null;
+                if (I0 && I0.ok && I0.params) Object.keys(I0.params).forEach(function (k) { if (['k', 'h', 'rw', 're', 'S', 'J', 'qmax', 'C', 'n', 'A', 'B', 'a', 'b', 'FE', 'D'].indexOf(k) !== -1 && !_fin(_n(P[k]))) P[k] = I0.params[k]; });
+                res0.points = [];
+                var fq = function (x) { var r = Object.assign({}, res0, { pr: x }), I = _curve(r, cx.F); return (I && I.ok) ? I.qAt(pwf) - q : NaN; };
+                var lo = pwf * (1 + 1e-6) + 1e-3, flo = fq(lo), hi = pwf + Math.max(50, pwf * 0.1), fhi = fq(hi), n = 0;
+                while (_fin(fhi) && fhi < 0 && n++ < 40) { lo = hi; flo = fhi; hi = pwf + (hi - pwf) * 2; fhi = fq(hi); }
+                if (!_fin(flo)) flo = -q;
+                if (!_fin(fhi) || fhi < 0) return _fail('NO_ROOT', 'No reservoir pressure reproduces the test rate with this inflow model.', { pwf: pwf, warnings: warnings });
+                var rr = _root(fq, lo, hi, flo, fhi, q, 100);
+                if (!rr) return _fail('NO_ROOT', 'The reservoir-pressure solve failed.', { pwf: pwf, warnings: warnings });
+                pr = rr.x;
+            }
+            out.value = pr; out.unit = 'psia'; out.param = 'pr'; out.params.pr = pr; out.adopt[CTRL.pr] = pr;
+            out.jEq = q / (pr - pwf);
+            return out;
+        }
+        // J and S need p̄r and a working current curve
+        var Ic = _curve(res0, cx.F);
+        if (!Ic || !Ic.ok) return _fail((Ic && Ic.code) || 'NEEDS_IPR', (Ic && Ic.errors && Ic.errors.length) ? Ic.errors : ['the inflow is incomplete'], { pwf: pwf, warnings: warnings });
+        if (!(pwf < Ic.pr)) return _fail('PWF_ABOVE_PR', 'The test pwf ' + _f(pwf, 0) + ' psia is at or above p̄r ' + _f(Ic.pr, 0) + ' psia: no inflow can match it.', { pwf: pwf, warnings: warnings });
+        var q0 = Ic.qAt(pwf), Pc = Ic.params || {};
+        if (!(q0 > 0)) return _fail('NO_ROOT', 'The inflow model gives no rate at the test pwf.', { pwf: pwf, warnings: warnings });
+        if (sf === 'J') {
+            if (J_PARAM[key]) {
+                var pk = J_PARAM[key][0], x0 = _n(Pc[pk]);
+                if (!_fin(x0)) return _fail('NEEDS_IPR', 'The inflow model has no ' + pk + ' to scale.');
+                var x1 = x0 * q / q0;
+                out.closedForm = true; out.param = pk; out.params[pk] = x1; out.adopt[IP_PREFIX + pk] = x1;
+            } else if (J_INV[key] || key === 'darcyGas') {
+                var ks = key === 'darcyGas' ? ['k'] : J_INV[key], P0 = {};
+                ks.forEach(function (k) { P0[k] = _n(Pc[k]); });
+                if (ks.some(function (k) { return !_fin(P0[k]); })) return _fail('NEEDS_IPR', 'The inflow model has no ' + ks.join(' / ') + ' to scale.');
+                var base = _clone(res0); base.points = [];
+                if (key === 'darcyGas') { base.params.D = Pc.D; base.params.S = Pc.S; }     // hold D and S while k changes
+                var scaled = function (fct) { var r = _clone(base); ks.forEach(function (k) { r.params[k] = key === 'darcyGas' ? P0[k] * fct : P0[k] / fct; }); return r; };
+                var fj = function (lf) { var I = _curve(scaled(Math.exp(lf)), cx.F); return (I && I.ok) ? I.qAt(pwf) - q : NaN; };
+                var a = Math.log(q / q0) - 1, b = Math.log(q / q0) + 1, fa = fj(a), fb = fj(b), it = 0;
+                while (_fin(fa) && fa > 0 && it++ < 30) { b = a; fb = fa; a -= 2; fa = fj(a); }
+                it = 0; while (_fin(fb) && fb < 0 && it++ < 30) { a = b; fa = fb; b += 2; fb = fj(b); }
+                if (!_fin(fa) || !_fin(fb) || fa > 0 || fb < 0) return _fail('NO_ROOT', 'No productivity reproduces the test rate with this inflow model.', { pwf: pwf, warnings: warnings });
+                var rj = _root(fj, a, b, fa, fb, q, 100);
+                if (!rj) return _fail('NO_ROOT', 'The productivity solve failed.', { pwf: pwf, warnings: warnings });
+                var fct = Math.exp(rj.x);
+                out.param = ks.join('/'); out.factor = fct;
+                ks.forEach(function (k) { var v = key === 'darcyGas' ? P0[k] * fct : P0[k] / fct; out.params[k] = v; out.adopt[IP_PREFIX + k] = v; });
+            } else return _fail('NO_J', 'The inflow model ' + key + ' has no productivity coefficient to solve for.');
+            out.value = q / (Ic.pr - pwf); out.jEq = out.value; out.unit = jUnit;
+            if (out.param !== 'J') warnings.push(_w('J_EQUIVALENT', 'The value is the PI equivalent q / (p̄r − pwf); the model coefficient ' + out.param + ' is adopted.', 'info'));
+            return out;
+        }
+        // S (k·h held): Darcy models only
+        if (key !== 'darcyOil' && key !== 'darcyGas') return _fail('NEEDS_DARCY', 'Skin is back-calculated with the Darcy inflow models (k·h held); choose Darcy oil or Darcy gas in step ②.', { pwf: pwf, warnings: warnings });
+        var X = Ic.form && _fin(Ic.form.X) ? Ic.form.X : null, S0 = _n(Pc.S);
+        if (!_fin(X) || !_fin(S0)) return _fail('NEEDS_IPR', 'The Darcy inflow has no ln term or skin to start from.');
+        var Snew;
+        if (key === 'darcyOil') Snew = (X + S0) * q0 / q - X;
+        else {
+            var a0 = _n(Pc.a), b0 = _n(Pc.b) || 0;
+            if (!(a0 > 0)) return _fail('NEEDS_IPR', 'The Darcy gas inflow has no Darcy coefficient.');
+            var aN = (a0 * q0 + b0 * q0 * q0 - b0 * q * q) / q;
+            if (!(aN > 0)) return _fail('NO_ROOT', 'The non-Darcy term alone exceeds the test drawdown: no skin reproduces the rate (check D).', { pwf: pwf, warnings: warnings });
+            Snew = (X + S0) * aN / a0 - X;
+        }
+        if (!(X + Snew > 0)) return _fail('NO_ROOT', 'The skin needed (' + _f(Snew, 2) + ') makes the ln term + S negative: the test rate is above what k·h allows.', { pwf: pwf, warnings: warnings });
+        out.closedForm = true; out.value = Snew; out.unit = ''; out.param = 'S'; out.params.S = Snew; out.adopt[CTRL.S] = Snew; out.jEq = q / (Ic.pr - pwf);
+        return out;
+    }
+
+    // ── production-test QC (§5.4) ────────────────────────────────────────────
+    function _chk(code, st, msg) { return { code: code, st: st, msg: String(msg).slice(0, 299), label: QC_LABEL[code] }; }
+    function _dateKey(t, i) { var d = t && t.date ? Date.parse(String(t.date)) : NaN; return _fin(d) ? d : 1e15 + i; }
+    // the rate whose surface boundary (choke + flowline + separator) needs the measured THP: a secant on log q (≤ 8 boundary calls)
+    function _chokeRate(M2, q, thpA) {
+        var B = G.WTS_wp_system.boundary, b0 = B(M2, q, {});
+        if (!b0 || !b0.ok) return { fail: b0 };
+        var f = function (lq) { var b = B(M2, Math.exp(lq), {}); return (b && b.ok) ? Math.log(b.thp / thpA) : NaN; };
+        var x0 = Math.log(q), f0 = Math.log(b0.thp / thpA), x1 = x0 - f0, f1 = f(x1), it = 0;
+        while (_fin(f1) && Math.abs(f1) > 1e-5 && it++ < 8 && f1 !== f0) {
+            var x2 = x1 - f1 * (x1 - x0) / (f1 - f0);
+            if (!_fin(x2)) break;
+            x0 = x1; f0 = f1; x1 = Math.max(x2, Math.log(q) - 6); f1 = f(x1);
+        }
+        return { b0: b0, q: _fin(f1) ? Math.exp(x1) : null, conv: _fin(f1) && Math.abs(f1) <= 1e-3 };
+    }
+    function qc(M, tests, o) {
+        o = o || {};
+        if (!M || !M.fluid || !M.res) return _fail('NO_MODEL', 'the model is incomplete', { rows: [] });
+        var list = Array.isArray(tests) ? tests.filter(function (t) { return t && typeof t === 'object'; }) : [];
+        if (!list.length) return _fail('NO_TEST', 'No production test to check.', { rows: [] });
+        var type = M.fluid.type || 'oil', gas = _isGas(type), oil = type === 'oil';
+        var sepqc = o.sepqc !== undefined ? o.sepqc : (G.WTS_state && G.WTS_state.sepqc) || null;
+        var Fm = _fn('WTS_wp_fluid.build') ? G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }) : null;
+        var I = (Fm && Fm.ok && _fn('WTS_wp_ipr.curve') && _n(M.res.pr) > 0) ? G.WTS_wp_ipr.curve(M.res, Fm) : null;
+        var pr = I && I.ok ? I.pr : _n(M.res.pr);
+        var order = list.map(function (t, i) { return { t: t, i: i, k: _dateKey(t, i) }; }).sort(function (a, b) { return a.k - b.k || a.i - b.i; });
+        var prevWc = {};
+        order.forEach(function (x, j) { if (j > 0) { var p = rates(M, order[j - 1].t); prevWc[x.i] = { wc: p.ok ? p.wc : null, id: _tid(order[j - 1].t, order[j - 1].i) }; } });
+        var rows = list.map(function (t, i) {
+            var id = _tid(t, i), checks = [], r = rates(M, t), cx = _ctx(M, t), pw = null, cmp = null;
+            if (!cx.fail) pw = _pwf(cx, t, { corr: o.corr });
+            var pwf = pw && pw.ok ? pw.pwf : null, g = _gaugeOf(t);
+            // QC_BHP_GT_PR
+            if (!_fin(pr) || !(pr > 0)) checks.push(_chk('QC_BHP_GT_PR', 'na', 'p̄r needed: the pwf check is not applicable.'));
+            else if (g && g.p >= pr) checks.push(_chk('QC_BHP_GT_PR', 'fail', 'Gauge pressure ' + _f(g.p, 0) + ' psia is at or above p̄r ' + _f(pr, 0) + ' psia: the well could not flow (check p̄r, the gauge or its depth).'));
+            else if (_fin(pwf) && pwf >= pr) checks.push(_chk('QC_BHP_GT_PR', 'fail', 'Back-calculated pwf ' + _f(pwf, 0) + ' psia (' + pw.method + ') is at or above p̄r ' + _f(pr, 0) + ' psia.'));
+            else if (_fin(pwf)) checks.push(_chk('QC_BHP_GT_PR', 'ok', 'pwf ' + _f(pwf, 0) + ' psia is below p̄r ' + _f(pr, 0) + ' psia (drawdown ' + _f(pr - pwf, 0) + ' psi).'));
+            else checks.push(_chk('QC_BHP_GT_PR', 'na', 'No pwf: ' + ((pw && pw.errors && pw.errors[0]) || (cx.fail && cx.fail.errors[0]) || 'the test needs a gauge or a THP')));
+            // QC_Q_GT_AOF
+            if (!r.ok) checks.push(_chk('QC_Q_GT_AOF', 'na', r.errors[0]));
+            else if (!(I && I.ok && I.aof > 0)) checks.push(_chk('QC_Q_GT_AOF', 'na', 'No inflow model (p̄r and the IPR parameters are needed).'));
+            else if (r.q > I.aof) checks.push(_chk('QC_Q_GT_AOF', 'fail', 'Test rate ' + _f(r.q, 0) + ' ' + r.rateUnit + ' is above the model AOF ' + _f(I.aof, 0) + ' ' + r.rateUnit + '.'));
+            else checks.push(_chk('QC_Q_GT_AOF', 'ok', 'Test rate is ' + _f(100 * r.q / I.aof, 0) + ' % of the model AOF.'));
+            // QC_GOR_LT_RSB
+            var pbU = _n(M.fluid.pbUser), L = G.PRiSM_pvt_correlations;
+            if (!oil) checks.push(_chk('QC_GOR_LT_RSB', 'na', 'Not applicable: gas well.'));
+            else if (!_fin(pbU) || !(pbU > 0)) checks.push(_chk('QC_GOR_LT_RSB', 'na', 'Not applicable: no bubble-point pressure entered (a correlation Pb from the producing GOR gives Rsb = GOR by construction).'));
+            else if (!r.ok || !_fin(r.gor)) checks.push(_chk('QC_GOR_LT_RSB', 'na', 'No producing GOR.'));
+            else if (!L || typeof L.Rs_standing !== 'function' || !_fin(_n(M.res.T_F))) checks.push(_chk('QC_GOR_LT_RSB', 'na', 'Rs correlation or reservoir temperature not available.'));
+            else {
+                var rsb = L.Rs_standing(+M.fluid.api, +M.fluid.sgg, pbU, +M.res.T_F), sat = (_fin(pr) && pr <= pbU) || (_fin(pwf) && pwf < pbU);
+                if (!_fin(rsb)) checks.push(_chk('QC_GOR_LT_RSB', 'na', 'Rsb could not be evaluated.'));
+                else if (sat && r.gor < 0.95 * rsb) checks.push(_chk('QC_GOR_LT_RSB', 'warn', 'Producing GOR ' + _f(r.gor, 0) + ' scf/STB is below Rsb ' + _f(rsb, 0) + ' scf/STB (Standing at the entered Pb ' + _f(pbU, 0) + ' psia) with free gas at the well: gas may be under-measured or the Pb is high.'));
+                else checks.push(_chk('QC_GOR_LT_RSB', 'ok', 'Producing GOR ' + _f(r.gor, 0) + ' scf/STB against Rsb ' + _f(rsb, 0) + ' scf/STB' + (sat ? '' : ' (undersaturated at the well)') + '.'));
+            }
+            // QC_CHOKE
+            var ch = M.surface && M.surface.choke, bean = _n(t.bean64) || (ch && _n(ch.bean64)), thp = _n(t.thp_psig);
+            if (!ch || ch.present === false) checks.push(_chk('QC_CHOKE', 'na', 'No surface choke in the model.'));
+            else if (!_fin(thp) || !(bean > 0)) checks.push(_chk('QC_CHOKE', 'na', 'The test needs a THP and a bean.'));
+            else if (!r.ok || !_fn('WTS_wp_system.boundary')) checks.push(_chk('QC_CHOKE', 'na', !r.ok ? r.errors[0] : 'The surface boundary engine is not available.'));
+            else {
+                var M2 = _testModel(M, t); M2.system = M2.system || {}; M2.system.mode = 'rate';
+                var cr = _chokeRate(M2, r.q, thp + PATM);
+                if (cr.fail) checks.push(_chk('QC_CHOKE', 'na', 'Choke model not available: ' + ((cr.fail && cr.fail.errors && cr.fail.errors[0]) || 'boundary failed')));
+                else {
+                    var reg0 = cr.b0.regime, dev = _fin(cr.q) ? cr.q / r.q - 1 : null, corrN = (ch.corr || 'gilbert');
+                    if (reg0 === 'subcritical-bound') checks.push(_chk('QC_CHOKE', 'warn', 'The choke is sub-critical at the test (p2/p1 ' + _f(cr.b0.ratio, 2) + ' above ' + _f(cr.b0.yc, 3) + '): the critical correlation ' + corrN + ' does not apply to this test.'));
+                    else if (dev == null) checks.push(_chk('QC_CHOKE', 'na', 'The choke rate at the measured THP could not be found.'));
+                    else if (Math.abs(dev) > CHOKE_TOL) checks.push(_chk('QC_CHOKE', 'warn', 'Choke-model rate at THP ' + _f(thp, 0) + ' psig and bean ' + _f(bean, 0) + '/64 is ' + _f(cr.q, 0) + ' ' + r.rateUnit + ', ' + (dev > 0 ? '+' : '') + _f(100 * dev, 0) + ' % from the measured rate (' + reg0 + ').'));
+                    else checks.push(_chk('QC_CHOKE', 'ok', 'Choke-model rate within ' + _f(Math.abs(100 * dev), 0) + ' % of the measured rate (' + reg0 + ').'));
+                }
+            }
+            // QC_THT
+            var tht = _n(t.tht_F), bht = cx.fail ? _n(M.res.T_F) : (_fin(cx.W.bht) ? cx.W.bht : (cx.W.temp && _fin(cx.W.temp.bht) ? cx.W.temp.bht : _n(M.res.T_F)));
+            if (!_fin(tht)) checks.push(_chk('QC_THT', 'na', 'No THT in the test.'));
+            else if (!_fin(bht)) checks.push(_chk('QC_THT', 'na', 'No bottom-hole temperature in the model.'));
+            else if (tht > bht + 0.5) checks.push(_chk('QC_THT', 'warn', 'THT ' + _f(tht, 0) + ' °F is above the bottom-hole temperature ' + _f(bht, 0) + ' °F.'));
+            else checks.push(_chk('QC_THT', 'ok', 'THT ' + _f(tht, 0) + ' °F is below the bottom-hole temperature ' + _f(bht, 0) + ' °F.'));
+            // QC_VLP
+            if (!g) checks.push(_chk('QC_VLP', 'na', 'No gauge pressure: the correlations cannot be checked.'));
+            else {
+                cmp = compare(M, t, o.corrKeys, { profiles: false });
+                var b = cmp.ok ? cmp.rows[0] : null;
+                if (!b) checks.push(_chk('QC_VLP', 'na', 'Comparison not available: ' + ((cmp.errors || [])[0] || '')));
+                else if (Math.abs(b.errPct) > VLP_TOL) checks.push(_chk('QC_VLP', 'warn', 'Best correlation ' + b.label + ' misses the gauge by ' + _f(b.err, 0) + ' psi (' + _f(b.errPct, 1) + ' %): rates, THP, gauge depth or the fluid may be inconsistent.'));
+                else checks.push(_chk('QC_VLP', 'ok', 'Best correlation ' + b.label + ' within ' + _f(Math.abs(b.errPct), 1) + ' % of the gauge' + (b.verified ? '' : ' (' + PROVISIONAL + ')') + '.'));
+            }
+            // QC_WC
+            var qo = _n(t.q_o), qw = _n(t.q_w);
+            if ((_fin(qo) && qo < 0) || (_fin(qw) && qw < 0) || (_fin(_n(t.q_g)) && _n(t.q_g) < 0)) checks.push(_chk('QC_WC', 'fail', 'A test rate is negative.'));
+            else if (!r.ok || r.wc == null) checks.push(_chk('QC_WC', 'na', 'No liquid rate.'));
+            else if (r.wc < 0 || r.wc > 1) checks.push(_chk('QC_WC', 'fail', 'Water cut ' + _f(100 * r.wc, 1) + ' % is outside 0–100 %.'));
+            else if (prevWc[i] && _fin(prevWc[i].wc) && Math.abs(r.wc - prevWc[i].wc) > WC_JUMP) checks.push(_chk('QC_WC', 'warn', 'Water cut ' + _f(100 * r.wc, 0) + ' % jumped ' + _f(100 * Math.abs(r.wc - prevWc[i].wc), 0) + ' points from test ' + prevWc[i].id + ' (' + _f(100 * prevWc[i].wc, 0) + ' %).'));
+            else checks.push(_chk('QC_WC', 'ok', (gas ? 'Water fraction of the liquids ' : 'Water cut ') + _f(100 * r.wc, 1) + ' %' + (r.derived.some(function (d) { return /^q_w/.test(d); }) ? ' (from the model)' : '') + '.'));
+            // QC_SEP
+            var sq = sepqc && sepqc.ok !== false ? sepqc : null, ref = sq ? (_n(sq.gorTotal) || _n(sq.gorSTCorr)) : null, gsep = sq ? _n(sq.gorSepCorr) : null;
+            if (!oil) checks.push(_chk('QC_SEP', 'na', 'Not applicable: gas well.'));
+            else if (!sq || !(ref > 0)) checks.push(_chk('QC_SEP', 'na', 'Not applicable: no Separator QC result in this project.'));
+            else if (!r.ok || !_fin(r.gor)) checks.push(_chk('QC_SEP', 'na', 'No producing GOR.'));
+            else if (gsep > 0 && Math.abs(r.gor / gsep - 1) <= SEP_SAME && Math.abs(gsep / ref - 1) > SEP_SAME) checks.push(_chk('QC_SEP', 'warn', 'Producing GOR ' + _f(r.gor, 0) + ' scf/STB equals the separator-basis GOR of Separator QC; the total (stock-tank) GOR is ' + _f(ref, 0) + ' scf/STB.'));
+            else if (Math.abs(r.gor / ref - 1) > SEP_TOL) checks.push(_chk('QC_SEP', 'warn', 'Producing GOR ' + _f(r.gor, 0) + ' scf/STB differs by ' + _f(100 * (r.gor / ref - 1), 0) + ' % from the Separator QC total GOR ' + _f(ref, 0) + ' scf/STB.'));
+            else checks.push(_chk('QC_SEP', 'ok', 'Producing GOR consistent with Separator QC (' + _f(ref, 0) + ' scf/STB).'));
+            var flags = checks.filter(function (c) { return c.st !== 'ok'; }).map(function (c) { return { code: c.code, sev: c.st === 'na' ? 'info' : c.st, msg: c.msg, na: c.st === 'na' }; });
+            var score = 100;
+            checks.forEach(function (c) { score -= PEN[c.st] || 0; });
+            return { id: id, use: t.use !== false, score: Math.max(0, score), q: r.ok ? r.q : null, rateUnit: r.ok ? r.rateUnit : null, pwf: pwf, pwfMethod: pw && pw.ok ? pw.method : null,
+                gor: r.ok ? r.gor : null, wc: r.ok ? r.wc : null, checks: checks, flags: flags, compare: cmp && cmp.ok ? { best: cmp.best, rows: cmp.rows.map(function (x) { return { corr: x.corr, err: x.err, errPct: x.errPct, rank: x.rank, verified: x.verified }; }) } : null };
+        });
+        var ranked = rows.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) { return b.r.score - a.r.score || a.i - b.i; });
+        ranked.forEach(function (x, k) { x.r.rank = k + 1; });
+        return { ok: true, rows: rows, codes: QC_CODES.slice(), labels: QC_LABEL, warnings: gas ? [_w('QC_GAS', 'Gas well: the GOR and Separator QC checks are not applicable.', 'info')] : [], errors: [] };
+    }
+
+    var NS = G.WTS_wp_match = G.WTS_wp_match || {};
+    NS.compare = compare; NS.iprFromTest = iprFromTest; NS.pwfFromTest = pwfFromTest; NS.rates = rates;
+    NS.QC_CODES = QC_CODES.slice(); NS.QC_LABEL = QC_LABEL; NS.PROVISIONAL = PROVISIONAL; NS._root = _root;
+    NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL };
+    if (!NS.tune) { NS.tune = function () { return _stub('WTS_wp_match.tune', 'WP7'); }; _mark('WTS_wp_match.tune'); }
+    G.WTS_wp_qc = qc;
 })();
 
 // ─── END 49-calc-wp-match ─────────────────────────────────────────────
