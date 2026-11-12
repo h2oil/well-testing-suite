@@ -297,6 +297,15 @@
         '#wp_root .wp-check label{display:flex;align-items:center;gap:8px;text-transform:none;font-size:12.5px;color:var(--text);letter-spacing:0;margin-top:20px}' +
         '#wp_root .wp-chip{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;background:rgba(88,166,255,.14);color:var(--blue);margin-left:6px;text-transform:none;letter-spacing:0;vertical-align:middle}' +
         '#wp_root .wp-chip.prov{background:rgba(210,153,34,.15);color:var(--wp-warn)}' +
+        '#wp_root .wp-cmpk{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0 8px}' +
+        '#wp_root .wp-cmpc{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:7px 10px;min-width:0;transition:border-color .2s}' +
+        '#wp_root .wp-cmpc .kpi-l{display:block;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wp_root .wp-cmpc .kpi-v{display:block;font-size:15px;font-weight:700;color:var(--text);margin-top:2px;font-variant-numeric:tabular-nums}#wp_root .wp-cmpc .kpi-s{display:block;font-style:normal;font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wp_root .wp-cmpc.st-ok{border-left-color:var(--wp-ok)}#wp_root .wp-cmpc.st-warn{border-left-color:var(--wp-warn)}' +
+        '#wp_root .wp-cdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:0}' +
+        '#wp_root .wp-cmpt tr.wp-sel td{background:rgba(240,136,62,.08)}#wp_root .wp-cmpt tr.wp-sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}#wp_root .wp-cmpt tr.wp-cf td{color:var(--text2)}' +
+        '#wp_root .wp-cmpt td:first-child{white-space:normal;min-width:190px}#wp_root .wp-cmpt td:nth-child(5){white-space:normal}' +
+        '#wp_root .wp-cmpt .wp-use{padding:3px 10px;font-size:11.5px}#wp_root .wp-cmpt tbody tr{transition:background .15s}#wp_root .wp-cmpt tbody tr:hover td{background:rgba(139,148,158,.08)}' +
         '#wp_root .wp-qc td.qc{text-align:center;padding:4px 6px}#wp_root .wp-qcb{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;border-radius:10px;font-size:11px;font-weight:800;background:var(--bg4);color:var(--text3);cursor:help}' +
         '#wp_root .wp-qcb.ok{background:rgba(63,185,80,.15);color:var(--wp-ok)}#wp_root .wp-qcb.warn{background:rgba(210,153,34,.17);color:var(--wp-warn)}#wp_root .wp-qcb.fail{background:rgba(248,81,73,.17);color:var(--wp-fail)}' +
         '#wp_root .wp-score{display:inline-block;min-width:34px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}' +
@@ -690,6 +699,7 @@
                                label: isOp ? _fmt(X(r.q), 0) + ' ' + _lab(rc[0], rc[1]) + ' · ' + _fmt(Y(r.p), 0) + ' ' + _lab('pressure', 'psia') : (r.stable ? '' : 'unstable') });
             });
         }
+        _corrOpMarkers(markers, X, Y, T);                      // WP12: the operating point of each correlation (after its Job)
         // drag handles
         var handles = [];
         if (M) {
@@ -1123,7 +1133,14 @@
         var tab = _plots().trTab || 'traverse', T = V.theme(), dax = _plots().depth === 'md' ? 'md' : 'tvd';
         Array.prototype.forEach.call(document.querySelectorAll('#wp_trtabs button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-tab') === tab); b.setAttribute('aria-pressed', b.getAttribute('data-tab') === tab ? 'true' : 'false'); });
         Array.prototype.forEach.call(document.querySelectorAll('#wp_depthseg button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-depth') === dax); });
-        var seg = _byId('wp_depthseg'); if (seg && seg.classList) seg.classList.toggle('wp-off', !(tab === 'traverse' || tab === 'loading'));
+        var seg = _byId('wp_depthseg'); if (seg && seg.classList) seg.classList.toggle('wp-off', !(tab === 'traverse' || tab === 'loading' || tab === 'corr'));
+        var ctb = _byId('wp_corrtbl'); if (ctb && tab !== 'corr' && tab !== 'map') ctb.innerHTML = '';
+        if (tab === 'corr' || tab === 'map') {                  // WP12 (A2): correlation comparison / Duns & Ros flow-regime map
+            if (tab === 'corr') _renderCorrTab(cv, V, T, dax); else _renderMapTab(cv, V, T);
+            var lg = _byId('wp_trleg');
+            if (lg) lg.innerHTML = tab === 'corr' ? 'Thick line = the correlation in use; dashed = provisional (no verified published example yet); dots = the Cullender-Smith closed form (gas wells). Hover for the pressure of every correlation at a depth.' : '';
+            return;
+        }
         var R = ST.R, ok = !!(R && R.ok), dl = _lab('length', 'ft');
         var spec;
         if (tab === 'loading') {
@@ -1181,6 +1198,189 @@
             } else leg.innerHTML = '';
         }
     }
+    // ── WP12 (A2): the correlations compared at the operating point, and the Duns & Ros flow-regime map (traverse-card tabs) ──
+    // "Correlations": every applicable well correlation marched down from the solved wellhead pressure at the operating rate with
+    // the system engine's own evaluation (WTS_wp_system.evalAt: same fluid table, same surveyed path, hydrostatic on TVD and friction
+    // on MD), the dry-gas closed forms (average T-Z and Cullender-Smith) as cross-check points for gas wells, a table with the BHP of
+    // each, its difference from the selected correlation and the gravity / friction split, a "Use" button per row, and on a button the
+    // operating point of each correlation (a Job of warm tracking solves) drawn as diamonds on the system plot. Computed when the tab
+    // is opened and cached per solve (≈ 1 evaluation per correlation).
+    // "Flow-regime map": the operating-point traverse of the selected correlation placed on the Ros map (N_Lv, N_gv; WTS_wp_vlp.drMap)
+    // with the region boundaries at the median N_d; hover a station for its MD / TVD, groups and region.
+    var CORR_SHORT = { bb: 'B&B', hb: 'H&B', gray: 'Gray', nsl: 'No-slip', dr: 'D&R', gasTZ: 'T-Z', gasCS: 'C-S', single: '1-phase' };
+    var REGION_TXT = { I: 'Region I — bubble / plug', II: 'Region II — slug', transition: 'Transition', III: 'Region III — mist', single: 'Single phase' };
+    var REGION_PAT = { I: 'bubble', II: 'slug', transition: 'transition', III: 'mist', single: 'single' };
+    function _corrShort(k) { return CORR_SHORT[k] || String(k).slice(0, 8); }
+    function _corrPal(T) { return [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, '#39c5cf', T.text2]; }
+    function _corrLabel(k) { var e = (G.WTS_flowline_corr || {})[k]; return (e && e.label) || k; }
+    function _gasOnlyCorr(e) { return !!(e && (e.key === 'gasTZ' || e.key === 'gasCS' || (e.range && e.range.note === 'gas only'))); }
+    function _cmpSet(M) {
+        var V = G.WTS_wp_vlp, gas = _isGasType(M.fluid.type), out = [];
+        ((V && typeof V.list === 'function') ? V.list() : []).forEach(function (e) { var k = e.kind || 'any'; if (k === 'any' || k === 'well' || (gas && k === 'gas')) out.push(e); });
+        return out;
+    }
+    function _selCorr() { var R = ST.R, M = ST.M; return (R && R.corr && R.corr.well) || (M && M.system.corr && M.system.corr.well) || 'bb'; }
+    function _cmpKey() { var R = ST.R; return (ST.lastKey || '') + '|' + (R && R.op ? R.op.q : ''); }
+    function _decim(prof, n) {
+        var a = (prof || []).filter(function (r) { return !r.restr && _fin(r.p); }), step = Math.max(1, Math.ceil(a.length / (n || 90))), out = [];
+        for (var i = 0; i < a.length; i += step) out.push({ md: a[i].md, tvd: a[i].tvd, p: a[i].p });
+        if (a.length && out[out.length - 1].md !== a[a.length - 1].md) out.push({ md: a[a.length - 1].md, tvd: a[a.length - 1].tvd, p: a[a.length - 1].p });
+        return out;
+    }
+    function _corrCmp() {
+        var R = ST.R, M = ST.M; if (!(R && R.ok && R.op && R.traverse && R.traverse.ok && M)) return null;
+        var key = _cmpKey();
+        if (ST.cmp && ST.cmp.key === key) return ST.cmp;
+        var sel = _selCorr(), q = R.op.q, thp = R.traverse.pTop, rows = [], t0 = _now();
+        _cmpSet(M).forEach(function (e) {
+            var tr = null, err = null;
+            if (e.key === sel) tr = R.traverse;
+            else {
+                var Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = e.key; Mc.system.node = 'bottom';
+                var r = _call('WTS_wp_system.evalAt', Mc, q);
+                if (r && r.tr && r.tr.ok) tr = r.tr; else err = (r && ((r.errors || [])[0] || (r.lost && 'the traverse is lost (' + r.lost.reason + ')'))) || 'no traverse';
+            }
+            var dEl = 0, dF = 0, dA = 0;
+            if (tr) (tr.segments || []).forEach(function (s) { dEl += +s.dpEl || 0; dF += +s.dpF || 0; dA += +s.dpAcc || 0; });
+            var pats = {}; if (tr) tr.profile.forEach(function (p) { if (p.pattern) pats[p.pattern] = (pats[p.pattern] || 0) + 1; });
+            rows.push({ key: e.key, label: e.label, verified: e.verified === true, vertical: !!e.vertical, gasOnly: _gasOnlyCorr(e), sel: e.key === sel,
+                pwf: tr ? tr.pEnd : null, dpEl: tr ? dEl : null, dpF: tr ? dF : null, dpAcc: tr ? dA : null, patterns: Object.keys(pats).sort(function (a, b) { return pats[b] - pats[a]; }).slice(0, 2),
+                profile: tr ? _decim(tr.profile, 90) : [], err: err });
+        });
+        var selRow = rows.filter(function (r) { return r.sel; })[0], pSel = selRow && _fin(selRow.pwf) ? selRow.pwf : null;
+        rows.forEach(function (r) { r.dp = (_fin(r.pwf) && _fin(pSel)) ? r.pwf - pSel : null; r.dpPct = (_fin(r.dp) && pSel > 0) ? 100 * r.dp / (pSel - thp) : null; });
+        var multi = rows.filter(function (r) { return !r.gasOnly && _fin(r.pwf); }).map(function (r) { return r.pwf; });
+        var cf = null;
+        if (_isGasType(M.fluid.type) && ST.F && ST.F.ok && ST.W && ST.W.ok) {
+            var tz = _call('WTS_wp_vlp.gasDry', ST.F, ST.W, q, { from: 'top', p0: thp }), cs = _call('WTS_wp_vlp.gasDry', ST.F, ST.W, q, { from: 'top', p0: thp, method: 'cs' });
+            cf = { tz: tz && tz.ok ? { pwf: tz.pwf, segs: tz.segments } : null, cs: cs && cs.ok ? { pwf: cs.pwf, stations: cs.stations } : null };
+        }
+        ST.cmp = { key: key, q: q, thp: thp, sel: sel, pSel: pSel, rows: rows, cf: cf, spread: multi.length > 1 ? Math.max.apply(null, multi) - Math.min.apply(null, multi) : null,
+            spreadPct: (multi.length > 1 && pSel > thp) ? 100 * (Math.max.apply(null, multi) - Math.min.apply(null, multi)) / (pSel - thp) : null, ms: _now() - t0 };
+        if (!(ST.cmpOp && ST.cmpOp.key === key)) ST.cmpOp = null;
+        return ST.cmp;
+    }
+    // the operating point of every correlation: a Job of warm tracking solves (≈ 5 evaluations each) from the current operating point
+    function _corrOpJob() {
+        var R = ST.R, M = ST.M, C = _corrCmp(); if (!C) return null;
+        var list = C.rows.filter(function (r) { return !r.sel; }).map(function (r) { return r.key; }), i = 0, out = {};
+        out[C.sel] = { ok: true, q: R.op.q, p: R.op.p, stable: R.op.stable !== false };
+        return {
+            step: function () {
+                if (i < list.length) {
+                    var k = list[i++], Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = k;
+                    var r = _call('WTS_wp_system.solve', Mc, { track: { q: R.op.q, slope: R.op.dDdq } });
+                    out[k] = (r && r.ok && r.op) ? { ok: true, q: r.op.q, p: r.op.p, stable: r.op.stable !== false } : { ok: false, msg: (r && ((r.errors || [])[0] || r.code)) || 'no operating point' };
+                }
+                return { done: i >= list.length, progress: list.length ? i / list.length : 1, label: i < list.length ? _corrShort(list[i]) + ' (' + (i + 1) + ' of ' + list.length + ')' : 'done' };
+            },
+            done: function () { return i >= list.length; }, progress: function () { return list.length ? i / list.length : 1; },
+            result: function () { return { key: C.key, ops: out }; }
+        };
+    }
+    function _corrOpMarkers(markers, X, Y, T) {
+        var C = ST.cmp, O = ST.cmpOp; if (!C || !O || O.key !== _cmpKey()) return;
+        var pal = _corrPal(T);
+        C.rows.forEach(function (r, i) { var o = O.ops[r.key]; if (!o || !o.ok || r.sel) return; markers.push({ x: X(o.q), y: Y(o.p), kind: 'diamond', color: pal[i % pal.length], r: 5 }); });
+    }
+    function _renderCorrTab(cv, V, T, dax) {
+        var C = _corrCmp(), R = ST.R, M = ST.M, dl = _lab('length', 'ft'), pal = _corrPal(T), ser = [], markers = [];
+        var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
+        if (C) {
+            C.rows.forEach(function (r, i) { if (r.profile.length) ser.push({ key: 'c_' + r.key, label: _corrShort(r.key) + (r.sel ? ' (selected)' : '') + (r.verified ? '' : ' · prov.'), color: pal[i % pal.length], width: r.sel ? 3 : 1.7, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
+            if (C.cf && C.cf.cs && C.cf.cs.stations) {
+                var st = C.cf.cs.stations, stp = Math.max(1, Math.ceil(st.length / 24)), pts = [];
+                for (var j = 0; j < st.length; j += stp) pts.push([_dv(st[j].p, 'pressure'), dk(st[j])]);
+                pts.push([_dv(st[st.length - 1].p, 'pressure'), dk(st[st.length - 1])]);
+                ser.push({ key: 'cf_cs', label: 'Cullender-Smith closed form', kind: 'points', color: T.text, r: 3, pts: pts });
+            }
+            markers.push({ x: _dv(C.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, halo: false });
+            var selR = C.rows.filter(function (r) { return r.sel; })[0];
+            if (selR && selR.profile.length) { var lp = selR.profile[selR.profile.length - 1]; markers.push({ x: _dv(lp.p, 'pressure'), y: dk(lp), kind: 'filled', color: T.accent, r: 6, label: 'pwf ' + _fmt(_dv(lp.p, 'pressure'), 0) }); }
+        }
+        V.chart(cv, { key: 'corr:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
+            x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+            y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
+            series: ser, markers: markers, hidden: _plots().cHidden || null, onLegend: function (hid) { _plotsSet({ cHidden: hid }); },
+            empty: (R && R.ok) ? 'No correlation traverse for these inputs.' : 'The correlations are compared at the operating point once the well solves.' });
+        var h = _byId('wp_corrtbl'); if (!h) return;
+        if (!C) { h.innerHTML = ''; return; }
+        var rc = _rateCat(), O = ST.cmpOp && ST.cmpOp.key === C.key ? ST.cmpOp : null, sp = C.spreadPct;
+        var chips = '<div class="wp-cmpk">' +
+            '<div class="kpi wp-cmpc st-' + (sp == null ? 'none' : sp > 15 ? 'warn' : 'ok') + '"><span class="kpi-l">BHP spread (multiphase)</span><b class="kpi-v">' + (_fin(C.spread) ? _u(C.spread, 'pressure', 0, 'psi') : '—') + '</b><i class="kpi-s">' + (_fin(sp) ? _fmt(sp, 1) + ' % of the tubing Δp' : '') + '</i></div>' +
+            '<div class="kpi wp-cmpc"><span class="kpi-l">Selected</span><b class="kpi-v">' + _esc(_corrShort(C.sel)) + '</b><i class="kpi-s">' + _esc(_corrLabel(C.sel).replace(/\s*\(.*$/, '')) + '</i></div>' +
+            '<div class="kpi wp-cmpc"><span class="kpi-l">At the operating rate</span><b class="kpi-v">' + _u(C.q, rc[0], 0, rc[1]) + '</b><i class="kpi-s">THP ' + _u(C.thp - PATM, 'pressureG', 0, 'psig') + '</i></div>' +
+            (C.cf && C.cf.tz && C.cf.cs ? '<div class="kpi wp-cmpc st-' + (Math.abs(C.cf.cs.pwf / C.cf.tz.pwf - 1) < 0.01 ? 'ok' : 'warn') + '"><span class="kpi-l">Dry-gas closed forms</span><b class="kpi-v">' + (100 * (C.cf.cs.pwf / C.cf.tz.pwf - 1)).toFixed(2).replace(/^-(0\.00)$/, '$1') + ' %</b><i class="kpi-s">Cullender-Smith vs average T-Z</i></div>' : '') + '</div>';
+        var rows = C.rows.map(function (r, i) {
+            var o = O && O.ops[r.key], dot = '<span class="wp-cdot" style="background:' + pal[i % pal.length] + '"></span>';
+            return '<tr' + (r.sel ? ' class="wp-sel"' : '') + '><td>' + dot + _esc(r.label.replace(/\s*\(.*$/, '')) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span>') + (r.gasOnly ? ' <span class="wp-chip" title="gas phase only: the liquids are ignored">gas only</span>' : '') + '</td>' +
+                '<td class="num">' + (_fin(r.pwf) ? _fmt(_dv(r.pwf, 'pressure'), 0) : '<span title="' + _esc(r.err || '') + '">lost</span>') + '</td>' +
+                '<td class="num">' + (r.sel ? '—' : (_fin(r.dp) ? (r.dp >= 0 ? '+' : '') + _fmt(_dv(r.dp, 'pressure'), 0) + (_fin(r.dpPct) ? ' (' + (r.dpPct >= 0 ? '+' : '') + _fmt(r.dpPct, 1) + ' %)' : '') : '—')) + '</td>' +
+                '<td class="num">' + (_fin(r.dpEl) ? _fmt(_dv(r.dpEl, 'pressure'), 0) + ' / ' + _fmt(_dv(r.dpF, 'pressure'), 0) : '—') + '</td>' +
+                '<td>' + _esc(r.patterns.join(', ')) + '</td>' +
+                '<td class="num">' + (o ? (o.ok ? _fmt(_dv(o.q, rc[0]), 0) + (o.stable ? '' : ' ⚠') : '<span title="' + _esc(o.msg || '') + '">no flow</span>') : '·') + '</td>' +
+                '<td class="rp-skip">' + (r.sel ? '<span class="wp-chip">in use</span>' : '<button type="button" class="btn btn-secondary wp-use" data-act="usecorr" data-v="' + _esc(r.key) + '" aria-label="Use ' + _esc(r.label) + '">Use</button>') + '</td></tr>';
+        }).join('');
+        if (C.cf) [['tz', 'Average T-Z (closed form)'], ['cs', 'Cullender-Smith (closed form)']].forEach(function (x) {
+            var c = C.cf[x[0]]; if (!c) return;
+            var d = _fin(C.pSel) ? c.pwf - C.pSel : null;
+            rows += '<tr class="wp-cf"><td><span class="wp-cdot" style="background:' + (x[0] === 'cs' ? 'var(--text)' : 'var(--text3)') + '"></span>' + x[1] + ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span></td><td class="num">' + _fmt(_dv(c.pwf, 'pressure'), 0) + '</td><td class="num">' + (_fin(d) ? (d >= 0 ? '+' : '') + _fmt(_dv(d, 'pressure'), 0) : '—') + '</td><td colspan="3" class="wp-hint" style="margin:0">gas phase only, cross-check</td><td class="rp-skip"></td></tr>';
+        });
+        h.innerHTML = chips + '<div class="wp-tw"><table class="dtable wp-cmpt"><thead><tr><th>Correlation</th><th>BHP (' + _lab('pressure', 'psia') + ')</th><th>Δ vs selected</th><th>Gravity / friction Δp</th><th>Main patterns</th><th>Own op. rate (' + _lab(rc[0], rc[1]) + ')</th><th class="rp-skip"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+            '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="corrop">' + (O ? 'Re-run' : 'Find') + ' the operating point of each correlation</button></div>' +
+            '<div class="wp-hint">Each correlation is marched down the surveyed path from the solved wellhead pressure at the operating rate (hydrostatic on TVD, friction on MD). Provisional correlations have no verified published example yet. The operating points appear on the system plot as diamonds in the colours of this table.</div>';
+    }
+    function _renderMapTab(cv, V, T) {
+        var R = ST.R, ok = !!(R && R.ok && R.traverse && R.traverse.ok), mp = null;
+        if (ok) {
+            var key = _cmpKey();
+            if (!(ST.drmap && ST.drmap.key === key)) { var m0 = _call('WTS_wp_vlp.drMap', ST.F, R.op.q, R.traverse); ST.drmap = { key: key, m: (m0 && m0.ok) ? m0 : null }; }
+            mp = ST.drmap.m;
+        }
+        var ser = [], markers = [], mn = { x: 0.1, y: 0.1 };
+        if (mp) {
+            mp.points.forEach(function (p) { if (p.NLv > 0) mn.x = Math.max(1e-3, Math.min(mn.x, p.NLv / 1.5)); if (p.Ngv > 0) mn.y = Math.max(1e-3, Math.min(mn.y, p.Ngv / 1.5)); });
+            var B = mp.boundaries, lim = function (pts) { return pts.filter(function (p) { return p[0] <= 100.01; }); };
+            if (B) {
+                ser.push({ key: 'b1', label: 'I / II', color: '#58a6ff', width: 1.4, dash: [5, 4], pts: lim(B.lines.bs) });
+                ser.push({ key: 'b2', label: 'II / transition', color: '#bc8cff', width: 1.4, dash: [5, 4], pts: lim(B.lines.st) });
+                ser.push({ key: 'b3', label: 'transition / III', color: '#f0883e', width: 1.4, dash: [5, 4], pts: lim(B.lines.tm) });
+                var x0 = 0.2, L1 = B.L1, L2 = B.L2;
+                markers.push({ x: x0, y: Math.max(0.12, (L1 + L2 * x0) / 4), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS.bubble, label: 'I bubble' });
+                markers.push({ x: x0, y: Math.sqrt((L1 + L2 * x0) * (50 + 36 * x0)), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS.slug, label: 'II slug' });
+                markers.push({ x: x0, y: Math.sqrt((50 + 36 * x0) * (75 + 84 * Math.pow(x0, 0.75))), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS.transition, label: 'transition' });
+                markers.push({ x: x0, y: 4 * (75 + 84 * Math.pow(x0, 0.75)), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS.mist, label: 'III mist' });
+            }
+            // the traverse path, one run per region (coloured as the flow-pattern strip), every station hoverable
+            var pts = mp.points.filter(function (p) { return p.NLv > 0 && p.Ngv > 0; }), runs = [], cur = null;
+            pts.forEach(function (p) { if (!cur || cur.reg !== p.region) { cur = { reg: p.region, pts: cur ? [cur.pts[cur.pts.length - 1]] : [], info: cur ? [cur.info[cur.info.length - 1]] : [] }; runs.push(cur); } cur.pts.push([p.NLv, p.Ngv]); cur.info.push(_mapInfo(p)); });
+            var seen = {};
+            runs.forEach(function (r, i) { var c = V.PATTERN_COLORS[REGION_PAT[r.reg]] || T.text2; ser.push({ key: 'run' + i, label: seen[r.reg] ? '' : REGION_TXT[r.reg], legend: !seen[r.reg], color: c, width: 3.2, pts: r.pts, info: r.info }); seen[r.reg] = 1; });
+            if (pts.length) {
+                var a = pts[0], z = pts[pts.length - 1];
+                markers.push({ x: a.NLv, y: a.Ngv, kind: 'filled', color: T.text, r: 5, halo: false, label: 'Wellhead' });
+                markers.push({ x: z.NLv, y: z.Ngv, kind: 'diamond', color: T.accent, r: 6, label: 'Bottom ' + _fmt(_dv(z.md, 'length'), 0) + ' MD' });
+            }
+        }
+        V.chart(cv, { key: 'drmap', aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'near',
+            x: { label: 'Liquid velocity number N_Lv', log: true, min: mn.x, short: 'N_Lv' }, y: { label: 'Gas velocity number N_gv', log: true, min: mn.y, short: 'N_gv' },
+            series: ser, markers: markers, hidden: _plots().mapHidden || null, onLegend: function (hid) { _plotsSet({ mapHidden: hid }); },
+            empty: ok ? 'No two-phase station on this traverse (single-phase flow throughout).' : 'The flow-regime map appears after a solve.' });
+        var h = _byId('wp_corrtbl'); if (!h) return;
+        if (!mp) { h.innerHTML = ''; return; }
+        var tot = mp.points.length || 1, cnt = mp.counts;
+        h.innerHTML = '<div class="wp-cmpk">' + ['I', 'II', 'transition', 'III', 'single'].filter(function (k) { return cnt[k] > 0; }).map(function (k) {
+            return '<div class="kpi wp-cmpc"><span class="kpi-l"><i class="wp-cdot" style="background:' + (V.PATTERN_COLORS[REGION_PAT[k]] || T.text2) + '"></i>' + _esc(REGION_TXT[k]) + '</span><b class="kpi-v">' + _fmt(100 * cnt[k] / tot, 0) + ' %</b><i class="kpi-s">' + cnt[k] + ' of ' + tot + ' stations</i></div>';
+        }).join('') + '</div>' +
+            '<div class="wp-hint">Duns &amp; Ros (Ros) flow-pattern map of the ' + _esc(_corrShort(mp.corr || _selCorr())) + ' traverse at the operating point. N_Lv = 1.938·v_sl·(ρ_L/σ)^¼, N_gv = 1.938·v_sg·(ρ_L/σ)^¼; the region I / II boundary is drawn for N_d = ' + _fmt(mp.NdRef, 1) +
+            (mp.NdMin && mp.NdMax && mp.NdMax - mp.NdMin > 1 ? ' (stations ' + _fmt(mp.NdMin, 1) + '–' + _fmt(mp.NdMax, 1) + ', each classified with its own N_d)' : '') + ' — L1 = ' + _fmt(mp.boundaries.L1, 2) + ', L2 = ' + _fmt(mp.boundaries.L2, 2) + ' (chart readings, provisional). Hover the path for each station.</div>';
+    }
+    function _mapInfo(p) {
+        return [_fmt(_dv(p.md, 'length'), 0) + ' ' + _lab('length', 'ft') + ' MD · ' + _fmt(_dv(p.tvd, 'length'), 0) + ' ' + _lab('length', 'ft') + ' TVD' + (_fin(p.inc) ? ' · ' + _fmt(p.inc, 1) + '°' : ''),
+                'N_Lv ' + _fmt(p.NLv, 3) + ' · N_gv ' + _fmt(p.Ngv, 2) + ' · N_d ' + _fmt(p.Nd, 1), REGION_TXT[p.region] + ' · p ' + _fmt(_dv(p.p, 'pressure'), 0) + ' ' + _lab('pressure', 'psia')];
+    }
+    var PROVISIONAL_TXT = 'provisional — not verified against a published example';
+
     // Sensitivity variables (WTS_wp_sens.VARS, WP6): [key, label, field unit]; the fallback list keeps the page usable without the engine.
     // Values are typed in display units (SENS_CAT converts Metric entries to the field units of the engine); WC is in %.
     var SENS_FALLBACK = [['wc', 'Water cut', '%'], ['pr', 'Reservoir pressure p̄r', 'psia'], ['bean', 'Choke bean', '/64 in'], ['thp', 'Wellhead pressure (fixed, choke out of line)', 'psig'], ['gor', 'Producing GOR', 'scf/STB'], ['psep', 'Separator pressure', 'psig'], ['J', 'Productivity index J', 'STB/d/psi']];
@@ -1348,7 +1548,7 @@
         var m = _iprModels().filter(function (x) { return x.key === model; })[0], need = m ? m.needs : [];
         Array.prototype.forEach.call(root.querySelectorAll('[data-ip]'), function (e) { if (e.classList) e.classList.toggle('wp-off', need.indexOf(e.getAttribute('data-ip')) === -1); });
         // dry-gas-only lift methods are not applicable to oil and water wells (WTS_wp_check raises ✗ if one is still selected)
-        ['wp_corr_well', 'wp_corr_line'].forEach(function (id) { var sel = _byId(id); if (!sel || !sel.options) return; Array.prototype.forEach.call(sel.options, function (o) { if (o.value === 'gasTZ') { o.disabled = !gas; o.title = gas ? '' : 'Not applicable: a dry-gas method for gas wells only'; } }); });
+        ['wp_corr_well', 'wp_corr_line'].forEach(function (id) { var sel = _byId(id); if (!sel || !sel.options) return; Array.prototype.forEach.call(sel.options, function (o) { if (o.value === 'gasTZ' || o.value === 'gasCS') { o.disabled = !gas; o.title = gas ? '' : 'Not applicable: a dry-gas method for gas wells only'; } }); });
         var choke = !!(_byId('wp_choke') || {}).checked;
         Array.prototype.forEach.call(root.querySelectorAll('[data-choke]'), function (e) { var want = e.getAttribute('data-choke') === 'on'; if (e.classList) e.classList.toggle('wp-off', want !== choke); });
         var mode = (_byId('wp_mode') || {}).value || 'rate';
@@ -1422,6 +1622,11 @@
         if (act === 'pvtprop') { _plotsSet({ pvtProp: btn.getAttribute('data-k') }); _renderPvtCard(null); return; }
         if (act === 'pvtfam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); return; }
         if (act === 'pbclear') { _setCtrl('wp_pbUser', ''); _commit('wp_pbUser'); return; }
+        if (act === 'usecorr') { var ck = btn.getAttribute('data-v'), sw = _byId('wp_corr_well'); if (ck && sw) { _setCtrl('wp_corr_well', ck, true); _commit('wp_corr_well'); } return; }
+        if (act === 'corrop') {
+            _drive(_corrOpJob(), function (r) { if (r && r.key === _cmpKey()) { ST.cmpOp = r; _renderTraverseCard(); _renderSystemPlot(); } }, 'Operating point per correlation');
+            return;
+        }
         if (act === 'adopt') {
             var ids = String(btn.getAttribute('data-ids') || btn.getAttribute('data-id') || '').split(','), vs = String(btn.getAttribute('data-vs') || btn.getAttribute('data-v') || '').split(','), done = [];
             ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = 'matched to test ' + ((ST.match && ST.match.test) || ''); done.push(id); } });
@@ -1802,7 +2007,7 @@
                 '</div>' + _tableBlock('flowline', 'Flowline to the separator', 'Marched with the flowline correlation below.') +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="design" data-mode="design pressure">Solve the design</button><button type="button" class="btn btn-secondary" data-act="solve">Solve now</button></div><div id="wp_design"></div>') +
             _card('Correlations and numerics', '<div class="fg">' +
-                _fg('wp_corr_well', 'Well (vertical lift)', { options: [['', 'Default for the fluid']].concat(wellCorr.map(function (c) { return [c.key, c.label + (c.verified ? '' : ' — provisional')]; })) }) +
+                _fg('wp_corr_well', 'Well (vertical lift)', { options: [['', 'Default for the fluid']].concat(wellCorr.map(function (c) { return [c.key, c.label + (c.verified ? '' : ' — provisional')]; })), hint: 'Compare every correlation at the operating point, and see the flow-regime map, on the Traverse card (Correlations · Flow-regime map).' }) +
                 _fg('wp_corr_line', 'Flowline', { options: lineCorr.map(function (c) { return [c.key, c.label + (c.verified ? '' : ' — provisional')]; }) }) +
                 _fg('wp_mult_hl', 'Holdup multiplier', { hint: '1 = as published (tuning in release 4.4).' }) + _fg('wp_mult_f', 'Friction multiplier') +
                 _fg('wp_eroC', 'Erosional C', { unit: 'API RP 14E' }) + _fg('wp_stepFt', 'Step length', { unit: 'ft' }) + _fg('wp_refine', 'Refine steps', { check: true }) + '</div>' +
@@ -1847,8 +2052,8 @@
             _card('Pressure-loss breakdown', '<div class="chart-wrap"><canvas id="wp_cv_bd" aria-label="Pressure-loss breakdown"></canvas></div>', { cls: 'wp-bdcard' }) +
             '<div class="rbox" id="wp_verd"></div>' +
             '</div>' +
-            _card('Traverse', '<div class="chart-wrap"><canvas id="wp_cv_tr" aria-label="Gradient traverse: pressure and temperature against depth"></canvas></div><div class="wp-legend-hint" id="wp_trleg"></div>',
-                { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['loading', 'Liquid loading'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
+            _card('Traverse', '<div class="chart-wrap"><canvas id="wp_cv_tr" aria-label="Gradient traverse: pressure and temperature against depth"></canvas></div><div class="wp-legend-hint" id="wp_trleg"></div><div id="wp_corrtbl" class="wp-corrtbl"></div>',
+                { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['corr', 'Correlations'], ['map', 'Flow-regime map'], ['loading', 'Liquid loading'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
                     '<span class="wp-seg" id="wp_depthseg"><button type="button" data-depth="tvd">TVD</button><button type="button" data-depth="md">MD</button></span>' }) +
             '<div class="rbox" id="wp_valid"></div>' +
             '<div class="rbox wp-case" id="wp_case"></div>' +
