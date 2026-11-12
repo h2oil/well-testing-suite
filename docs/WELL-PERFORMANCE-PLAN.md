@@ -1245,6 +1245,37 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
 | WP19 | training course (help page, print, validator, course tests — §14) | A1, Q15 | H |
 | WPI2 | integration (Rounds 3 and 9, sync, gates, release note) | all | lead |
 
+#### 18.2.x WP14 record (2026-11-12, branch wp/a2-wp14)
+
+- **`WTS_wellbore.flowingTemp(column, opts)`** (48-calc-wellbore.js, new, additive) as §4.6: Ramey / Hasan-Kabir steady relaxation,
+  `direction 'produce' | 'inject'`, z along the hole in the flow direction, geotherm on TVD (points or surface + gradient), applied
+  exactly piece by piece (pieces end at survey stations, geotherm points and every `stepFt`, default 50 ft), so a deviated hole marches
+  on its true inclination; U on the outside-radius basis (`U_ti` + `r_ti` converted); r_wb defaults to the largest string OD. Returns
+  `{A, fTD, tD, U_to, Ubasis, rwb, tAt(md), teAt(md), tOut, teOut, offsetOut (= g_G·A·sinθ of the last piece), profile, …}`. Also
+  `flowingTempFitU(column, opts, {T, md?, Umin, Umax})` (Brent on ln U, `OUT_OF_RANGE` with the reachable range) and `flowingTempF(tD)`.
+  `_ramey` is untouched (still NOT_AVAILABLE; Q16 default: DFIT 3.4b may call `flowingTemp` with `direction:'inject'`, pinned by TT6).
+- **`WTS_wp_well`**: `relax(W, F, q, {heat})` (mass rate and mixture c_p from `heatFlow`: oil Gambill, water 1.0, gas the real-gas c_p of
+  `WTS_gaspvt_state`; r_to the length-weighted conduit OD), `fitU(W, F, q, thtF)`, `heatFlow(F, q)`, `RELAX_DEFAULTS`;
+  `temperature(W, {mode:'relax', q, F})` returns the relaxation profile (THT an estimate; the J-T hydrate correction applies);
+  without a rate it is the linear profile with `TEMP_RELAX_NO_RATE` (was `TEMP_RELAX_A2`). Schematic profile rows add `te`, `dte`.
+- **`WTS_wp_system`**: with `M.well.heat.mode 'relax'` one profile per rate (cached by q) handed to the march as `tProfile` and used for
+  the THT at that rate (choke gas temperature, flowline); `R.heat` (mode, tht, A, f(t_D), t_D, U, U_to, Ubasis, r_to, rwb, k_e, α,
+  tProd_d, w, c_p, frac, teTop, offsetTop, verified:false, provisional); traverse rows carry `te`; flag `PROVISIONAL_TEMP`; a missing
+  geotherm falls back to linear with `RELAX_FALLBACK`. Evaluation counts unchanged (validate `--time`: oil 21 E, gas 15 E).
+- **`WTS_wp_match`**: `thtFit(M, tests)` (U per test, matched range, geometric mean); the compare / pwf march in the relaxation mode uses
+  the profile with U fitted to the test THT; QC_THT also warns beyond ±20 °F of the relaxation THT for the matched U range.
+- **Model** (additive): `well.heat.Ubasis` ('to' | 'ti'), `well.heat.dwb_in`; controls `wp_Ubasis`, `wp_dwb` (plus the existing
+  `wp_Uto`, `wp_tprod`, `wp_ke`, `wp_alpha`, now on the page). The linear mode stays the default (D17 gate: the Hasan & Kabir example is
+  not verifiable, Q9 → `temp relax` pending, provisional label in R.heat, the checks, the traverse legend and the Notes).
+- **Page**: the temperature model option is enabled; relaxation inputs; the "Relaxation at the operating point" box (THT, earth at
+  surface, A along MD, f(t_D), w, c_p, U_to, r_to · r_wb, mass-fraction bar, fluid-vs-earth mini profile on MD with TVD ticks); **Fit U to
+  the test THT** (step ③ and ⑥) with **Use U**; the traverse shows the relaxation curve, the earth geotherm, the linear profile and the
+  test THT, with **U** and **TIME** rails (log scales) that re-solve live (one rail at phone width); the schematic paints the formation
+  halo by the earth temperature and offers "Fluid − earth ΔT" colouring; KPI THT chip reads "relaxation · U"; case summary, checks and
+  Notes carry the model. Help: `wellperf` inputs + reviewedSrc.
+- **Validation**: BENCH row `temp relax` (pending), gate 5 (label, never default), X16 (march vs RK4 on the deviated FIX.gasWell path
+  < 0.02 °F, large-z limit), `--time` rows. Tests `wellperf-temp2` (9: TT1–TT9).
+
 ### 18.3 Increment B (v4.5)
 
 WP20 lift-table and PVT-table export · WP21 Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, per-section

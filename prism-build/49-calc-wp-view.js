@@ -24,7 +24,9 @@
 //   WTS_wp_view.schematic(S, o)          deviated-well schematic → {svg, pts:[{x, y, md, tvd, i}], width, height}
 //       S = WTS_wp_well.schematic(W, R) result: {trajectory:[{md, tvd, dep, n, e, inc, azi}], strings[], restrictions[],
 //            perfs:{topMd, botMd, midMd}, gauges[], choke, profile[{md, tvd, p, t, hl, vm, pattern}]};
-//       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'none', fmt:{p, t, md, vm}, labels, width, height}.
+//       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'heatloss' (A2: fluid − earth)|'none', fmt:{p, t, md, vm},
+//            labels, width, height}. Temperature colouring also paints the formation along the hole by the static earth temperature
+//            (profile te, A2) on the same scale, so the relaxation (heat lost to the earth) reads as the colour step.
 //       Side view (vertical section: TVD against horizontal departure, equal scale) with the strings drawn along the path, the
 //       flow path coloured by the chosen property (a heat map along the well), restrictions, perforations, mid-perf, gauges,
 //       wellhead and choke; plan view (north against east) and the colour bar on the right. Components carry data-comp
@@ -595,7 +597,8 @@
     function _poly(pts) { return pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(''); }
     var PROPS = {
         pressure: { key: 'p', label: 'Pressure' }, temperature: { key: 't', label: 'Temperature' }, holdup: { key: 'hl', label: 'Liquid holdup' },
-        velocity: { key: 'vm', label: 'Mixture velocity' }, pattern: { key: 'pattern', label: 'Flow pattern' }, none: { key: null, label: '' }
+        velocity: { key: 'vm', label: 'Mixture velocity' }, pattern: { key: 'pattern', label: 'Flow pattern' },
+        heatloss: { key: 'dte', label: 'Fluid − earth temperature' }, none: { key: null, label: '' }
     };
     function scale(prop, profile) {
         var P = PROPS[prop] || PROPS.none;
@@ -603,6 +606,8 @@
         var lo = Infinity, hi = -Infinity;
         (profile || []).forEach(function (r) { var v = r[P.key]; if (_fin(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } });
         if (prop === 'holdup') { lo = 0; hi = 1; }
+        // temperature: one scale for the fluid and the earth (the formation halo of the schematic uses the same colours)
+        if (prop === 'temperature') (profile || []).forEach(function (r) { if (_fin(r.te)) { if (r.te < lo) lo = r.te; if (r.te > hi) hi = r.te; } });
         if (!_fin(lo)) { lo = 0; hi = 1; }
         if (hi - lo < 1e-9) hi = lo + 1;
         return { prop: prop, label: P.label, lo: lo, hi: hi, key: P.key };
@@ -651,6 +656,19 @@
         g.push('<text x="' + (mL + aw / 2) + '" y="' + (H0 - pb - 8) + '" fill="' + T.text2 + '" font-size="10" font-weight="600" text-anchor="middle">' + _esc(o.labels && o.labels.vs || 'Vertical section (ft), equal scale') + '</text>');
         g.push('<line x1="' + mL + '" x2="' + (mL + aw) + '" y1="' + mT + '" y2="' + mT + '" stroke="#7d6a4f" stroke-width="2"/>');
 
+        // the formation along the hole coloured by the static earth temperature (temperature colouring, A2 WP14): a wide translucent
+        // halo behind the strings, on the same scale as the fluid, so the heat lost to the earth reads as the colour step between them
+        var prof0 = (S.profile || []).filter(function (r) { return _fin(r.md); }).sort(function (a, b) { return a.md - b.md; });
+        if (o.prop === 'temperature' && prof0.length > 1 && prof0.some(function (r) { return _fin(r.te); })) {
+            var scE = scale('temperature', prof0);
+            g.push('<g class="wp-earth" aria-hidden="true" opacity="0.34">');      // opaque strokes in a translucent group: no overlap banding
+            for (var ie = 1; ie < prof0.length; ie++) {
+                var ea = interp(path, prof0[ie - 1].md), eb = interp(path, prof0[ie].md), tev = prof0[ie].te;
+                if (!ea || !eb || !_fin(tev)) continue;
+                g.push('<line x1="' + ea.x.toFixed(1) + '" y1="' + ea.y.toFixed(1) + '" x2="' + eb.x.toFixed(1) + '" y2="' + eb.y.toFixed(1) + '" stroke="' + colorFor('temperature', tev, scE.lo, scE.hi) + '" stroke-width="40" stroke-linecap="round"/>');
+            }
+            g.push('</g>');
+        }
         // strings along the path: casing / liner (wide), tubing (narrow); stroke width scales with the OD
         var strs = (S.strings || []).filter(function (s) { return _fin(s.topMd) && _fin(s.botMd) && s.botMd > s.topMd; });
         var odMax = strs.reduce(function (a, s) { return Math.max(a, _fin(s.od) ? s.od : 0); }, 0) || 7;
@@ -775,6 +793,10 @@
                     g.push('<rect x="' + px0 + '" y="' + cbY + '" width="14" height="' + cbH + '" rx="3" fill="url(#wpcb)"/>');
                     var ff = (fm[P2.key] || function (v) { return _fmtTick(v); });
                     [0, 0.5, 1].forEach(function (f) { g.push('<text x="' + (px0 + 20) + '" y="' + (cbY + cbH * (1 - f) + 4).toFixed(1) + '" fill="' + T.text + '" font-size="10">' + _esc(ff(sc2.lo + f * (sc2.hi - sc2.lo))) + '</text>'); });
+                    if (o.prop === 'temperature' && prof0.some(function (r) { return _fin(r.te); })) {
+                        g.push('<rect x="' + px0 + '" y="' + (cbY + cbH + 12) + '" width="14" height="10" rx="2" fill="' + colorFor('temperature', (sc2.lo + sc2.hi) / 2, sc2.lo, sc2.hi) + '" fill-opacity="0.32"/>');
+                        g.push('<text x="' + (px0 + 20) + '" y="' + (cbY + cbH + 21) + '" fill="' + T.text2 + '" font-size="9">' + _esc((o.labels && o.labels.earth) || 'halo: earth (static)') + '</text>');
+                    }
                 }
             }
         }

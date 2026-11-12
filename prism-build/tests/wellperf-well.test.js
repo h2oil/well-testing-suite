@@ -291,7 +291,8 @@ module.exports = [
       assert.deepStrictEqual([sc0.perfs.topMd, sc0.perfs.midMd, sc0.perfs.botMd], [9900, 9950, 10000]);
       assert.ok(sc0.gauges.length === 1 && sc0.gauges[0].md === 9800);
       assert.deepStrictEqual(plain(sc0.choke), { present: true, bean64: 24 });
-      assert.deepStrictEqual(plain(sc0.props), ['t'], 'without a solution only the temperature colours the well');
+      // A2 (WP14): the earth temperature te and the fluid − earth difference dte join the temperature (additive keys)
+      assert.deepStrictEqual(plain(sc0.props), ['t', 'te', 'dte'], 'without a solution only the temperatures colour the well');
       // a solution traverse (the R.traverse.profile contract carries md / tvd / inc)
       const prof = [];
       for (let md = 0; md <= 9950; md += 50) prof.push({ md, tvd: W.tvdAt(md), inc: W.at(md).inc, p: 1500 + 0.15 * md, t: 140 + md * 0.009, hl: 0.05 + md * 1e-5, vm: 40 - md * 0.002, pattern: md > 5000 ? 'distributed' : 'intermittent' });

@@ -12,7 +12,8 @@
 // TEST RATES. A test {q_o, q_w, q_g (Mscf/d), thp_psig, tht_F, bean64, gaugeMd, gauge_psia} is marched with its OWN measured rates
 // (the flowline fluid {qo, qw, qg_Mscfd}); a missing water or gas rate is filled from the model (WC, GOR; CGR / WGR for a gas well)
 // and listed in `derived`. The inflow rate basis is the module's: oil wells liquid STB/d (q_o + q_w), gas wells Mscf/d, water BWPD.
-// A measured THT replaces the model THT for the march (the linear THT → BHT profile of WTS_wp_well, "measured" for the hydrate check).
+// A measured THT replaces the model THT for the march (the linear THT → BHT profile of WTS_wp_well, "measured" for the hydrate check);
+// in the relaxation mode (A2, WP14) the march takes the relaxation profile with U fitted to that THT (cx.heat).
 //
 // COMPARE (§5.2). For each registered well correlation (the registry key strings of WTS_flowline_corr, D3): one march top-down
 //   from the measured THP to the gauge MD along the deviated path (WTS_wp_well.segmentsFor(W, {from: gaugeMd, toMd: 0})), so the
@@ -43,7 +44,8 @@
 //     QC_CHOKE      the choke-model rate at the measured THP / bean (the rate whose surface boundary needs the measured THP, a secant
 //                   on WTS_wp_system.boundary) differs from the measured rate by more than 20 %, or the choke is sub-critical at the
 //                   test and a critical correlation was used (warn)
-//     QC_THT        THT above the bottom-hole temperature (warn)
+//     QC_THT        THT above the bottom-hole temperature (warn); A2 relaxation mode: also more than 20 °F outside the relaxation THT at
+//                   the test rates for the matched U range (the min–max of the U fitted to the used tests' THTs; the model U when none)
 //     QC_VLP        gauge error of the best correlation above 5 % (warn)
 //     QC_WC         water cut outside 0–1 / negative rates (fail), or a jump of more than 20 points from the previous test by date (warn)
 //     QC_SEP        producing GOR inconsistent with Separator QC (WTS_state.sepqc) — off by more than 15 % from its total GOR, or equal
@@ -57,6 +59,8 @@
 //         → {ok, tests:[id], gauge:{md, tvd, p} (one test), thp, rows:[{corr, label, pCalc psia|null, err, errPct, errPctDp, rank,
 //            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct}], n}],
 //            best, warnings, errors}
+//     .thtFit(M, tests) → {ok, rows:[{id, use, tht, q, ok, U, Ubasis, A, w, cp, range, msg}], uRange:[lo, hi] | null, U (geometric
+//            mean of the used fits), n, provisional}   (A2, WP14: U fitted to each test's measured THT, relaxation model)
 //     .iprFromTest(M, test, solveFor /*'pr'|'J'|'S'*/, o? /*{corr}*/)
 //         → {ok, solveFor, value, unit, pwf psia, method:'gauge'|'gauge at mid-perf'|'thp', corr, q, rateUnit, model, param, params
 //            (the changed coefficients), jEq, adopt:{controlId: value}, closedForm, provenance, warnings, errors}
@@ -166,7 +170,44 @@
         if (!F || !F.ok) return { fail: _fail('NEEDS_FLUID', (F && F.errors && F.errors.length) ? F.errors : ['the fluid is incomplete']) };
         var W = G.WTS_wp_well.build(M2.well, { res: M2.res, fluidType: M2.fluid.type, tests: [t], surface: M2.surface });
         if (!W || !W.ok || !W.segments || !W.segments.length) return { fail: _fail('NEEDS_WELL', (W && W.errors && W.errors.length) ? W.errors : ['the well has no flow path (survey and strings)']) };
-        return { M: M2, F: F, W: W, r: r, flow: { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd } };
+        var flow = { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd }, heat = null;
+        // relaxation mode (A2, WP14): the test is marched on the relaxation profile with U fitted to its measured THT, so the profile has
+        // the physical shape and passes through the measurement; a THT the model cannot reach keeps the linear profile (heat.ok false)
+        if (M2.well.heat && M2.well.heat.mode === 'relax' && _fin(_n(t && t.tht_F)) && _fn('WTS_wp_well.fitU') && _fn('WTS_wp_well.relax')) {
+            var fu = G.WTS_wp_well.fitU(W, F, flow, _n(t.tht_F));
+            if (fu && fu.ok) {
+                var hu = {}; hu.U_to = fu.U;
+                var rx = G.WTS_wp_well.relax(W, F, flow, { heat: hu });
+                if (rx && rx.ok) { W.tAt = rx.tAt; heat = { ok: true, U: fu.U, Ubasis: fu.Ubasis, A: rx.A, tht: rx.tht }; }
+            } else heat = { ok: false, code: fu && fu.code, msg: fu && fu.errors && fu.errors[0], range: fu && fu.range };
+        }
+        return { M: M2, F: F, W: W, r: r, flow: flow, heat: heat };
+    }
+    // U fitted to the measured THT of every test (relaxation mode, A2 WP14): rows per test, the matched U range [min, max] over the
+    // fitted tests with use !== false, and their geometric mean (the value the page offers to adopt)
+    function thtFit(M, tests, o) {
+        o = o || {};
+        if (!M || !M.fluid || !M.res || !M.well) return _fail('NO_MODEL', 'the model is incomplete', { rows: [] });
+        if (!_fn('WTS_wp_well.fitU')) return _fail('MISSING_ENGINE', 'WTS_wp_well.fitU is not available', { rows: [] });
+        var list = (Array.isArray(tests) ? tests : [tests]).filter(function (t) { return t && typeof t === 'object'; });
+        var rows = [], us = [];
+        list.forEach(function (t, i) {
+            var id = _tid(t, i), tht = _n(t.tht_F), row = { id: id, use: t.use !== false, tht: tht, ok: false, U: null, q: null };
+            if (!_fin(tht)) { row.msg = 'No THT in the test.'; rows.push(row); return; }
+            var r = rates(M, t);
+            if (!r.ok) { row.msg = r.errors[0]; rows.push(row); return; }
+            row.q = r.q;
+            var Fm = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F });
+            var Wm = Fm && Fm.ok ? G.WTS_wp_well.build(M.well, { res: M.res, fluidType: M.fluid.type, surface: M.surface }) : null;
+            if (!Wm || !Wm.ok) { row.msg = 'The fluid or the well is incomplete.'; rows.push(row); return; }
+            var fu = G.WTS_wp_well.fitU(Wm, Fm, { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd }, tht);
+            if (fu && fu.ok) { row.ok = true; row.U = fu.U; row.Ubasis = fu.Ubasis; row.A = fu.A; row.w = fu.w; row.cp = fu.cp; row.range = fu.range; if (row.use) us.push(fu.U); }
+            else { row.msg = (fu && fu.errors && fu.errors[0]) || 'U fit failed'; row.range = fu && fu.range; row.code = fu && fu.code; }
+            rows.push(row);
+        });
+        var lo = us.length ? Math.min.apply(null, us) : null, hi = us.length ? Math.max.apply(null, us) : null;
+        var gm = us.length ? Math.exp(us.reduce(function (a, u) { return a + Math.log(u); }, 0) / us.length) : null;
+        return { ok: us.length > 0, rows: rows, uRange: us.length ? [lo, hi] : null, U: gm, n: us.length, provisional: PROVISIONAL, errors: us.length ? [] : ['No test THT could be matched.'], warnings: [] };
     }
     // the part of the flow path between two MDs (flow order from `from` to `to`) as a path object for WTS_wp_vlp.traverse
     function _sub(W, from, to) {
@@ -419,6 +460,16 @@
         }
         return { b0: b0, q: _fin(f1) ? Math.exp(x1) : null, conv: _fin(f1) && Math.abs(f1) <= 1e-3 };
     }
+    var THT_TOL = 20;                     // °F, QC_THT against the relaxation estimate (A2)
+    // the relaxation THT at the test rates for the two ends of a U range (U low → hot, U high → cold)
+    function _thtBand(M, cx, ur) {
+        var Fm = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F });
+        var Wm = Fm && Fm.ok ? G.WTS_wp_well.build(M.well, { res: M.res, fluidType: M.fluid.type, surface: M.surface }) : null;
+        if (!Wm || !Wm.ok) return null;
+        var ts = ur.map(function (u) { var r = G.WTS_wp_well.relax(Wm, Fm, cx.flow, { heat: { U_to: u } }); return r && r.ok ? r.tht : NaN; });
+        if (!_fin(ts[0]) || !_fin(ts[1])) return null;
+        return { lo: Math.min(ts[0], ts[1]), hi: Math.max(ts[0], ts[1]), u: ur.slice() };
+    }
     function qc(M, tests, o) {
         o = o || {};
         if (!M || !M.fluid || !M.res) return _fail('NO_MODEL', 'the model is incomplete', { rows: [] });
@@ -432,6 +483,13 @@
         var order = list.map(function (t, i) { return { t: t, i: i, k: _dateKey(t, i) }; }).sort(function (a, b) { return a.k - b.k || a.i - b.i; });
         var prevWc = {};
         order.forEach(function (x, j) { if (j > 0) { var p = rates(M, order[j - 1].t); prevWc[x.i] = { wc: p.ok ? p.wc : null, id: _tid(order[j - 1].t, order[j - 1].i) }; } });
+        // relaxation mode: the matched U range over the used tests with a THT (or the model U when none can be matched)
+        var relaxQc = null;
+        if (M.well && M.well.heat && M.well.heat.mode === 'relax' && _fn('WTS_wp_well.relax')) {
+            var tf = o.uRange ? { ok: true, uRange: o.uRange } : thtFit(M, list.filter(function (t) { return t.use !== false; }));
+            var u0 = _n(M.well.heat.U_to) || 2;
+            relaxQc = tf.ok && tf.uRange ? { uRange: tf.uRange, src: tf.uRange[0] === tf.uRange[1] ? 'the U matched to the tests' : 'the U range matched to the tests' } : { uRange: [u0, u0], src: 'the model U' };
+        }
         var rows = list.map(function (t, i) {
             var id = _tid(t, i), checks = [], r = rates(M, t), cx = _ctx(M, t), pw = null, cmp = null;
             if (!cx.fail) pw = _pwf(cx, t, { corr: o.corr });
@@ -476,11 +534,14 @@
                     else checks.push(_chk('QC_CHOKE', 'ok', 'Choke-model rate within ' + _f(Math.abs(100 * dev), 0) + ' % of the measured rate (' + reg0 + ').'));
                 }
             }
-            // QC_THT
+            // QC_THT (A2: in the relaxation mode also more than 20 °F from the relaxation estimate with the matched U range)
             var tht = _n(t.tht_F), bht = cx.fail ? _n(M.res.T_F) : (_fin(cx.W.bht) ? cx.W.bht : (cx.W.temp && _fin(cx.W.temp.bht) ? cx.W.temp.bht : _n(M.res.T_F)));
+            var band = (relaxQc && !cx.fail && _fin(tht)) ? _thtBand(M, cx, relaxQc.uRange) : null;
             if (!_fin(tht)) checks.push(_chk('QC_THT', 'na', 'No THT in the test.'));
             else if (!_fin(bht)) checks.push(_chk('QC_THT', 'na', 'No bottom-hole temperature in the model.'));
             else if (tht > bht + 0.5) checks.push(_chk('QC_THT', 'warn', 'THT ' + _f(tht, 0) + ' °F is above the bottom-hole temperature ' + _f(bht, 0) + ' °F.'));
+            else if (band && (tht < band.lo - THT_TOL || tht > band.hi + THT_TOL)) checks.push(_chk('QC_THT', 'warn', 'THT ' + _f(tht, 0) + ' °F is more than ' + THT_TOL + ' °F from the relaxation estimate ' + _f(band.lo, 0) + (band.hi - band.lo >= 0.5 ? '–' + _f(band.hi, 0) : '') + ' °F (U ' + _f(band.u[0], 2) + (band.u[1] !== band.u[0] ? '–' + _f(band.u[1], 2) : '') + ', ' + relaxQc.src + ').'));
+            else if (band) checks.push(_chk('QC_THT', 'ok', 'THT ' + _f(tht, 0) + ' °F is within ' + THT_TOL + ' °F of the relaxation estimate ' + _f(band.lo, 0) + (band.hi - band.lo >= 0.5 ? '–' + _f(band.hi, 0) : '') + ' °F (' + relaxQc.src + ').'));
             else checks.push(_chk('QC_THT', 'ok', 'THT ' + _f(tht, 0) + ' °F is below the bottom-hole temperature ' + _f(bht, 0) + ' °F.'));
             // QC_VLP
             if (!g) checks.push(_chk('QC_VLP', 'na', 'No gauge pressure: the correlations cannot be checked.'));
@@ -518,9 +579,9 @@
     }
 
     var NS = G.WTS_wp_match = G.WTS_wp_match || {};
-    NS.compare = compare; NS.iprFromTest = iprFromTest; NS.pwfFromTest = pwfFromTest; NS.rates = rates;
+    NS.compare = compare; NS.iprFromTest = iprFromTest; NS.pwfFromTest = pwfFromTest; NS.rates = rates; NS.thtFit = thtFit;
     NS.QC_CODES = QC_CODES.slice(); NS.QC_LABEL = QC_LABEL; NS.PROVISIONAL = PROVISIONAL; NS._root = _root;
-    NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL };
+    NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL, tht: THT_TOL };
     if (!NS.tune) { NS.tune = function () { return _stub('WTS_wp_match.tune', 'WP7'); }; _mark('WTS_wp_match.tune'); }
     G.WTS_wp_qc = qc;
 })();

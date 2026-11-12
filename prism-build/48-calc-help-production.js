@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '2dee9885', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: 'd49205c9', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -179,12 +179,12 @@ var wellperf = {
   W('Water cut', 'wc', '0 %'), W('Inflow model', 'ipr', 'PI'), W('Average reservoir pressure p̄r', 'pr', null, 'Absolute; never defaulted.'),
   W('Productivity index J', 'ip_J', null, 'Each model shows its own parameters.'), inp('Survey stations', null, null, 'MD, inclination, azimuth (or MD, TVD); minimum curvature.'),
   inp('Tubing, casing and liners', null, null, 'OD, ID, top and bottom MD; tapered allowed.'), W('Mid-perforation (MD) — the bottom node', 'midPerf'),
-  W('Flowing wellhead temperature', 'tht', null, 'Estimated unless measured.'), W('Solve for', 'mode', 'Rate at these settings'), W('Solution node', 'node', 'Bottom hole (mid-perf)'),
+  W('Flowing wellhead temperature', 'tht', null, 'Estimated unless measured.'), W('Overall heat-transfer coefficient U', 'Uto', '2', 'Relaxation model: drag U on the traverse or Fit U to a test THT.'), W('Solve for', 'mode', 'Rate at these settings'), W('Solution node', 'node', 'Bottom hole (mid-perf)'),
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|muod|muo|muou|z|mug)$', why: 'fluid and inflow details' },
-  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Liquid loading, Sensitivity, Bean schedule.')],
