@@ -37,6 +37,13 @@
 //                                   table, evals, cancelled?, errors, warnings}; R-summary = {ok, code, error, q, qo, qw, qg, qL,
 //                                   pwf, thp, tht, stable, loadingMargin, regime, tracked, evals, op, qs, curve:[{q, p}], family}
 //                                   o.families false → no family curves (rates only)
+//                                 B (WP27): three or four variables → jobN (result.nd: keys[], labels[], units[], axes[{key, values, labels}],
+//                                   q[] / stable[] flat in row-major order of the axes (strides), cases[{values, R, idx[]}], start idx[],
+//                                   base[{value, inList}]); every cell a tracking solve warm-started from a solved neighbour (breadth-first
+//                                   from the start cell = the single solve when every model value is listed); ≤ 1,000 cases
+//     .tornado(M, o?)             → Job (B, WP27): result() → {ok, base:{q, …R-summary}, bars:[{key, label, unit, lo, hi, qLo, qHi, swing,
+//                                   okLo, okHi, noteLo, noteHi}] (largest swing first), rateUnit, evals}; o = {vars:[{key, lo?, hi?}], frac}
+//                                   (default: every applicable variable at its tornado range, TORNADO), the base = the single solve exactly
 //     .table(result)              → {head[], rows[][]}   (field units; numbers unformatted)
 //     .csv(result)                → string (the table, then the family curves in long form)
 // =============================================================================
@@ -235,7 +242,7 @@
         if (!M || !M.res || !M.fluid || !M.surface || !M.system) return _failJob('NO_MODEL', ['the model is incomplete'], []);
         var mx = matrix(list);
         if (!mx.ok) return _failJob('BAD_VARS', mx.errors, mx.warnings);
-        if (mx.axes.length > 2) return _failJob('B_ONLY', ['Up to two variables in this release (three and four come with the tornado in a later release).'], []);
+        if (mx.axes.length > 2) return jobN(M, mx, o);
         if (mx.axes.length === 2) return job2(M, mx, o);
         var key = mx.axes[0].key, d = VARS[key], why = _applicable(M, key);
         if (why) return _failJob('NOT_APPLICABLE', [d.label + ': ' + why], []);
@@ -414,10 +421,193 @@
         };
     }
 
+    // ── three or four variables (B, WP27; §6.2): the full factorial walked breadth-first from the start cell ──────────────
+    // The start cell (every model value when listed, else the nearest) is a cold solve — the plain single solve when every value
+    // is the model's own (§15.2). Every other cell is a tracking solve warm-started from the solved neighbour it was reached from
+    // (one index away in one variable) on the start cell's frozen layout; rates only.
+    function jobN(M, mx, o) {
+        var axes = mx.axes, D = axes.length, keys = axes.map(function (a) { return a.key; }), defs = keys.map(function (k) { return VARS[k]; });
+        for (var a = 0; a < D; a++) { var why = _applicable(M, keys[a]); if (why) return _failJob('NOT_APPLICABLE', [defs[a].label + ': ' + why], []); }
+        for (var i1 = 0; i1 < D; i1++) for (var i2 = i1 + 1; i2 < D; i2++) {
+            var k1 = keys[i1], k2 = keys[i2], cf = CONFLICT.filter(function (c) { return (c[0] === k1 && c[1] === k2) || (c[0] === k2 && c[1] === k1); })[0];
+            if (cf) return _failJob('BAD_PAIR', [defs[i1].label + ' and ' + defs[i2].label + ' cannot be varied together.'], []);
+        }
+        var SY = G.WTS_wp_system, base = _clone(M);
+        var vals = axes.map(function (ax) { return ax.values.slice().sort(function (x, y) { return x - y; }); });
+        var raw = keys.map(function () { return {}; });
+        mx.cases.forEach(function (c) { keys.forEach(function (k, d) { raw[d][c.values[k]] = c.raw[k]; }); });
+        var start = [], exact = [];
+        vals.forEach(function (vs, d) {
+            var b = defs[d].base(M), k = Math.floor((vs.length - 1) / 2), ex = false;
+            if (_fin(b)) { k = 0; vs.forEach(function (v, i) { if (Math.abs(v - b) < Math.abs(vs[k] - b)) k = i; }); ex = Math.abs(vs[k] - b) <= 1e-9 * Math.max(1, Math.abs(b)); }
+            start.push(k); exact.push(ex);
+        });
+        var strides = [], n = 1;
+        for (var d0 = D - 1; d0 >= 0; d0--) { strides[d0] = n; n *= vals[d0].length; }
+        var idxOf = function (ix) { var s = 0; for (var d = 0; d < D; d++) s += ix[d] * strides[d]; return s; };
+        var ixOf = function (f) { var ix = []; for (var d = 0; d < D; d++) { ix.push(Math.floor(f / strides[d]) % vals[d].length); } return ix; };
+        // breadth-first order from the start cell, each cell with the neighbour it was reached from
+        var s0 = idxOf(start), order = [s0], parent = {}, seen = {}; seen[s0] = 1; parent[s0] = -1;
+        for (var qh = 0; qh < order.length; qh++) {
+            var ix0 = ixOf(order[qh]);
+            for (var d1 = 0; d1 < D; d1++) [-1, 1].forEach(function (dd) {
+                var ix2 = ix0.slice(); ix2[d1] += dd;
+                if (ix2[d1] < 0 || ix2[d1] >= vals[d1].length) return;
+                var f2 = idxOf(ix2); if (seen[f2]) return;
+                seen[f2] = 1; parent[f2] = order[qh]; order.push(f2);
+            });
+        }
+        var cells = {}, st = { i: 0, done: false, cancelled: false, grid: null, res: null, warnings: mx.warnings.slice() };
+        vals.forEach(function (vs, d) { var b = defs[d].base(M); if (_fin(b) && !exact[d]) st.warnings.push(_w('NO_BASE_CASE', 'The model value ' + _f(b) + ' ' + defs[d].unit + ' of ' + defs[d].label + ' is not in the list.', 'info')); });
+        var exactAll = exact.every(Boolean);
+        function solveCell(f) {
+            var ix = ixOf(f), Mx = _clone(base), e = null;
+            if (!(f === s0 && exactAll)) for (var d = 0; d < D && !e; d++) e = defs[d].apply(Mx, vals[d][ix[d]], raw[d][vals[d][ix[d]]]);
+            if (e) { cells[f] = { R: null, res: { ok: false, code: 'NOT_APPLICABLE', error: e, evals: 0, curve: [], family: defs[0].family } }; return; }
+            var R, opt = {};
+            if (f === s0) R = SY.solve(Mx);
+            else {
+                if (st.grid) opt.warm = st.grid;
+                var p = parent[f], pc = cells[p];
+                if (pc && pc.R && pc.R.ok && pc.R.op) opt.track = { q: pc.R.op.q, slope: pc.R.op.dDdq };
+                else { var alt = null; for (var d2 = 0; d2 < D && !alt; d2++) [-1, 1].forEach(function (dd) { if (alt) return; var ix3 = ix.slice(); ix3[d2] += dd; if (ix3[d2] < 0 || ix3[d2] >= vals[d2].length) return; var c3 = cells[idxOf(ix3)]; if (c3 && c3.R && c3.R.ok && c3.R.op) alt = c3; }); if (alt) opt.track = { q: alt.R.op.q, slope: alt.R.op.dDdq }; }
+                R = SY.solve(Mx, opt);
+            }
+            if (!st.grid && R && R.grid && (R.grid.fine || R.grid.coarse)) st.grid = R.grid;
+            cells[f] = { R: R, res: _summary(R, defs[0].family) };
+        }
+        function finish() {
+            if (st.res) return st.res;
+            if (st.cancelled) { st.res = { ok: false, code: 'CANCELLED', keys: keys, nd: true, cases: [], table: { head: [], rows: [] }, evals: 0, cancelled: true, errors: ['cancelled'], warnings: [] }; return st.res; }
+            var q = [], stab = [], cases = [], nOk = 0;
+            for (var f = 0; f < n; f++) {
+                var c = cells[f], r = c ? c.res : { ok: false, code: 'NOT_RUN', error: 'not run', evals: 0, curve: [], family: defs[0].family }, ix = ixOf(f), v = {}, lab = null;
+                keys.forEach(function (k, d) { v[k] = vals[d][ix[d]]; var rw = raw[d][vals[d][ix[d]]]; if (typeof rw === 'string') lab = (lab ? lab + ' · ' : '') + rw; });
+                q[f] = r.ok ? r.q : null; stab[f] = r.ok ? !!r.stable : null; if (r.ok) nOk++;
+                var cs = { values: v, R: r, idx: ix }; if (lab) cs.label = lab;
+                cases.push(cs);
+            }
+            var tp = _type(M), res = { ok: nOk > 0, nd: true, key: keys[0], keys: keys, labels: defs.map(function (x) { return x.label; }), units: defs.map(function (x) { return x.unit; }),
+                axes: keys.map(function (k, d) { return { key: k, values: vals[d].slice(), labels: vals[d].map(function (x) { return typeof raw[d][x] === 'string' ? raw[d][x] : null; }) }; }),
+                strides: strides.slice(), q: q, stable: stab, cases: cases, start: start.slice(), base: defs.map(function (x, d) { var b = x.base(M); return { value: _fin(b) ? b : null, inList: exact[d] }; }),
+                family: defs[0].family, fluidType: tp, rateUnit: tp === 'oil' ? 'STB/d liquid' : tp === 'water' ? 'BWPD' : 'Mscf/d',
+                evals: cases.reduce(function (s2, c2) { return s2 + (c2.R.evals || 0); }, 0), errors: nOk ? [] : ['No case has an operating point.'], warnings: st.warnings };
+            cases.forEach(function (c2) { if (!c2.R.ok && c2.R.code === 'NOT_APPLICABLE' && !res.warnings.some(function (w) { return w.msg === String(c2.R.error).slice(0, 299); })) res.warnings.push(_w('CASE_NA', c2.R.error)); });
+            res.table = table(res);
+            st.res = res;
+            return res;
+        }
+        return {
+            key: keys[0], keys: keys, n: order.length,
+            step: function () {
+                if (!st.done && !st.cancelled) { solveCell(order[st.i]); st.i++; if (st.i >= order.length) st.done = true; } else st.done = true;
+                if (st.done) finish();
+                var nx = ixOf(order[Math.min(st.i, order.length - 1)]);
+                return { done: st.done, progress: st.done ? 1 : Math.min(0.99, st.i / order.length), label: st.done ? 'done' : ('case ' + (st.i + 1) + ' of ' + order.length + ': ' + keys.map(function (k, d) { return _f(vals[d][nx[d]]); }).join(' · ')) };
+            },
+            done: function () { return st.done; },
+            progress: function () { return st.done ? 1 : st.i / order.length; },
+            result: function () { return finish(); },
+            cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
+        };
+    }
+
+    // ── tornado (B, WP27; §6.2): the rate at the low and high value of every variable, one at a time around the model ─────
+    // The base = the single solve exactly; every low / high case is a tracking solve warm-started from the base root on its frozen
+    // layout (the solver falls back to a full solve when the bracket fails). Bars sorted by the swing |q_hi − q_lo| (a case that does
+    // not flow counts as rate 0 and is marked).
+    var TORNADO = {
+        pr: function (b, f) { return [b * (1 - f / 2), b * (1 + f / 2)]; },
+        wc: function (b) { return [Math.max(0, b - 10), Math.min(98, b + 10)]; },
+        gor: function (b, f) { return [b * (1 - f), b * (1 + f)]; }, glr: function (b, f) { return [b * (1 - f), b * (1 + f)]; },
+        wgr: function (b, f) { return b > 0 ? [b * (1 - 2 * f), b * (1 + 2 * f)] : [0, 20]; }, cgr: function (b, f) { return b > 0 ? [b * (1 - 2 * f), b * (1 + 2 * f)] : [0, 20]; },
+        thp: function (b, f) { return [Math.max(0, b * (1 - f)), b * (1 + f)]; }, psep: function (b, f) { return [Math.max(0, b * (1 - f)), b * (1 + f)]; },
+        bean: function (b) { return [Math.max(4, b - 8), Math.min(128, b + 8)]; },
+        J: function (b, f) { return [b * (1 - f), b * (1 + f)]; }, kh: function (b, f) { return [b * (1 - 2 * f), b * (1 + 2 * f)]; },
+        skin: function (b) { return [b - 2, b + 5]; },
+        tubingId: function (b) {
+            var T = G.WTS_tubulars, ids = (T && typeof T.list === 'function') ? T.list('tubing').map(function (e) { return e.id; }).filter(_fin).sort(function (x, y) { return x - y; }) : [];
+            ids = ids.filter(function (x, i, a) { return a.indexOf(x) === i; });
+            var lo = ids.filter(function (x) { return x < b - 0.05; }).pop(), hi = ids.filter(function (x) { return x > b + 0.05; })[0];
+            return [_fin(lo) ? lo : b * 0.8, _fin(hi) ? hi : b * 1.25];
+        }
+    };
+    var TORNADO_ORDER = ['pr', 'wc', 'gor', 'wgr', 'cgr', 'thp', 'bean', 'psep', 'tubingId', 'J', 'skin', 'kh'];
+    function tornado(M, o) {
+        o = o || {};
+        if (!_fn('WTS_wp_system.solve')) return _failJob('MISSING_ENGINE', ['WTS_wp_system.solve is not available'], []);
+        if (!M || !M.res || !M.fluid || !M.surface || !M.system) return _failJob('NO_MODEL', ['the model is incomplete'], []);
+        var frac = _fin(+o.frac) && +o.frac > 0 && +o.frac < 0.9 ? +o.frac : 0.2, list = [], warnings = [];
+        var asked = Array.isArray(o.vars) && o.vars.length ? o.vars : TORNADO_ORDER.map(function (k) { return { key: k }; });
+        asked.forEach(function (v) {
+            var k = v && v.key, d = VARS[k]; if (!d) { warnings.push(_w('UNKNOWN_VAR', 'unknown variable ' + String(k).slice(0, 30))); return; }
+            if (_applicable(M, k)) return;
+            var b = d.base(M); if (!_fin(b)) return;
+            var lh = (_fin(+v.lo) && _fin(+v.hi)) ? [+v.lo, +v.hi] : (TORNADO[k] ? TORNADO[k](b, frac) : [b * (1 - frac), b * (1 + frac)]);
+            var lo = Math.max(d.lo, Math.min(lh[0], lh[1])), hi = Math.min(d.hi, Math.max(lh[0], lh[1]));
+            if (k === 'skin' || k === 'wc' || k === 'bean') { lo = Math.round(lo * 10) / 10; hi = Math.round(hi * 10) / 10; } else { lo = +lo.toPrecision(4); hi = +hi.toPrecision(4); }
+            if (!(hi > lo)) return;
+            list.push({ key: k, label: d.label, unit: d.unit, base: b, lo: lo, hi: hi });
+        });
+        if (!list.length) return _failJob('NO_VARS', ['no applicable variable has a model value to vary'], warnings);
+        var SY = G.WTS_wp_system, base = _clone(M), st = { R0: null, grid: null, i: 0, done: false, cancelled: false, res: null }, todo = [];
+        list.forEach(function (v) { todo.push({ v: v, side: 'lo' }); todo.push({ v: v, side: 'hi' }); });
+        var n = 1 + todo.length, gas = ['gas', 'condensate'].indexOf(_type(M)) !== -1;
+        var qOf = function (s) { return s && s.ok ? (gas ? s.qg : s.q) : null; };
+        function finish() {
+            if (st.res) return st.res;
+            if (st.cancelled) { st.res = { ok: false, code: 'CANCELLED', cancelled: true, bars: [], evals: 0, errors: ['cancelled'], warnings: [] }; return st.res; }
+            var b0 = _summary(st.R0, 'vlp'), q0 = qOf(b0), ev = (st.R0 && st.R0.evals) || 0;
+            var bars = list.map(function (v) {
+                var L = v.resLo || { ok: false }, H = v.resHi || { ok: false }; ev += (L.evals || 0) + (H.evals || 0);
+                var qL = qOf(L), qH = qOf(H), aL = _fin(qL) ? qL : 0, aH = _fin(qH) ? qH : 0;
+                return { key: v.key, label: v.label, unit: v.unit, base: v.base, lo: v.lo, hi: v.hi, qLo: qL, qHi: qH, okLo: !!L.ok, okHi: !!H.ok, stableLo: !!L.stable, stableHi: !!H.stable,
+                    noteLo: L.ok ? (L.stable ? '' : 'unstable') : (L.error || L.code || 'no flow'), noteHi: H.ok ? (H.stable ? '' : 'unstable') : (H.error || H.code || 'no flow'),
+                    dLo: _fin(q0) ? aL - q0 : null, dHi: _fin(q0) ? aH - q0 : null, swing: Math.abs(aH - aL) };
+            }).sort(function (x, y) { return y.swing - x.swing; });
+            var tp = _type(M);
+            st.res = { ok: !!(b0.ok), base: b0, q0: q0, bars: bars, frac: frac, fluidType: tp, rateUnit: tp === 'oil' ? 'STB/d liquid' : tp === 'water' ? 'BWPD' : 'Mscf/d', evals: ev,
+                errors: b0.ok ? [] : ['the base case has no operating point'], warnings: warnings };
+            return st.res;
+        }
+        return {
+            n: n,
+            step: function () {
+                if (!st.done && !st.cancelled) {
+                    if (st.i === 0) { st.R0 = SY.solve(base); st.grid = st.R0 && st.R0.grid; }
+                    else {
+                        var t = todo[st.i - 1], Mx = _clone(base), e = VARS[t.v.key].apply(Mx, t.side === 'lo' ? t.v.lo : t.v.hi);
+                        var res;
+                        if (e) res = { ok: false, code: 'NOT_APPLICABLE', error: e, evals: 0 };
+                        else {
+                            var opt = {}; if (st.grid) opt.warm = st.grid;
+                            if (st.R0 && st.R0.ok && st.R0.op) opt.track = { q: st.R0.op.q, slope: st.R0.op.dDdq };
+                            res = _summary(SY.solve(Mx, opt), 'vlp');
+                        }
+                        if (t.side === 'lo') t.v.resLo = res; else t.v.resHi = res;
+                    }
+                    st.i++; if (st.i >= n) st.done = true;
+                } else st.done = true;
+                if (st.done) finish();
+                var t2 = todo[Math.min(st.i, n - 1) - 1];
+                return { done: st.done, progress: st.done ? 1 : Math.min(0.99, st.i / n), label: st.done ? 'done' : (st.i === 0 || !t2 ? 'base case' : t2.v.label + ' ' + (t2.side === 'lo' ? 'low' : 'high') + ' (' + (st.i + 1) + ' of ' + n + ')') };
+            },
+            done: function () { return st.done; },
+            progress: function () { return st.done ? 1 : st.i / n; },
+            result: function () { return finish(); },
+            cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
+        };
+    }
+
     // ── table / CSV ──────────────────────────────────────────────────────────
     var HEAD_TAIL = ['q_o (STB/d)', 'q_w (BWPD)', 'q_g (Mscf/d)', 'q_L (STB/d)', 'pwf (psia)', 'THP (psig)', 'THT (°F)', 'Stable', 'Loading margin (%)', 'Choke regime', 'Note'];
     function table(res) {
         if (!res || !Array.isArray(res.cases) || !res.key || !VARS[res.key]) return { head: [], rows: [] };
+        if (res.nd && Array.isArray(res.keys)) {
+            var hd = res.keys.map(function (k) { var dk = VARS[k]; return dk.label + (dk.unit ? ' (' + dk.unit + ')' : ''); }).concat(['Rate (' + (res.rateUnit || 'IPR basis') + ')']).concat(HEAD_TAIL);
+            return { head: hd, rows: res.cases.map(function (c) { var R = c.R || {}; return res.keys.map(function (k) { return c.values ? c.values[k] : null; }).concat([R.ok ? R.q : null, R.qo, R.qw, R.qg, R.qL, R.pwf, R.thp, R.tht, R.ok ? (R.stable ? 'yes' : 'no') : '',
+                _fin(R.loadingMargin) ? R.loadingMargin * 100 : null, R.regime || '', R.ok ? (R.tracked ? 'tracked' : '') : (R.error || R.code || '')]); }) };
+        }
         var d = VARS[res.key], d2 = res.key2 ? VARS[res.key2] : null;
         var head = [d.label + (d.unit ? ' (' + d.unit + ')' : '')].concat(d2 ? [d2.label + (d2.unit ? ' (' + d2.unit + ')' : '')] : []).concat(['Rate (' + (res.rateUnit || 'IPR basis') + ')']).concat(HEAD_TAIL);
         var rows = res.cases.map(function (c) {
@@ -436,6 +626,7 @@
         var t = table(res);
         if (!t.head.length) return '';
         var d = VARS[res.key], L = [];
+        if (res.nd) { L.push(_cell('Well Performance sensitivity matrix: ' + res.labels.join(' × ') + ' — field units')); L.push(t.head.map(_cell).join(',')); t.rows.forEach(function (r) { L.push(r.map(_cell).join(',')); }); return L.join('\n'); }
         L.push(_cell('Well Performance sensitivity: ' + d.label + (d.unit ? ' (' + d.unit + ')' : '') + ' — field units'));
         if (res.base && _fin(res.base.value)) L.push(_cell('Model value') + ',' + _cell(res.base.value) + (res.base.inList ? ',base case in the list' : ',not in the list'));
         L.push(t.head.map(_cell).join(','));
@@ -461,6 +652,14 @@
     var NS = G.WTS_wp_sens = G.WTS_wp_sens || {};
     NS.VARS = VARS; NS.ORDER = ORDER.slice(); NS.vars = vars; NS.suggest = suggest;
     NS.matrix = matrix; NS.job = job; NS.table = table; NS.csv = csv;
+    NS.tornado = tornado; NS.TORNADO_ORDER = TORNADO_ORDER.slice();
+    NS.tornadoCsv = function (res) {
+        if (!res || !Array.isArray(res.bars) || !res.bars.length) return '';
+        var L = [_cell('Well Performance tornado — rate (' + res.rateUnit + ') at the low and high value of each variable; base ' + _f(res.q0, 1))];
+        L.push(['Variable', 'Unit', 'Base', 'Low', 'High', 'Rate at low', 'Rate at high', 'Swing', 'Note low', 'Note high'].map(_cell).join(','));
+        res.bars.forEach(function (b) { L.push([b.label, b.unit, b.base, b.lo, b.hi, b.qLo, b.qHi, b.swing, b.noteLo, b.noteHi].map(_cell).join(',')); });
+        return L.join('\n');
+    };
     NS.MAX_VALUES = MAX_VALUES; NS.FAM_FRACS = FAM_FRACS.slice();
 })();
 

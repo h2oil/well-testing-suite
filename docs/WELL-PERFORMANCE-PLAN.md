@@ -1072,7 +1072,8 @@ changes (5). **Total A2 ≈ 53.**
 ### 17.3 Increment B
 
 `wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2` (WP24: 15), `wellperf-gl2`,
-`wellperf-esp`, `wellperf-cases`, `wellperf-mech`.
+`wellperf-esp`, `wellperf-cases`, `wellperf-mech`. WP27 shipped `wellperf-cases` (6), `wellperf-envelope` (5), `wellperf-tornado` (3) and
+`wellperf-studies` (5) — §18.3.6.
 
 ---
 
@@ -1747,6 +1748,72 @@ is a format, not a method, so it adds no D17 gate entry of its own; it carries t
 - **Known gaps.** The 3,200-point budget is met with little margin on a loaded container (≈ 51–56 s); lift-gas tables cost ≈ 4× per
   point; injector tables use the linear temperature profile (WP22 / WP24 should supply the injection temperature and injector VLP —
   then `_injPoint` should call that); ESP frequency axis waits for WP26; no datum mark on the well schematic.
+#### 18.3.6 WP27 record (2026-11-12, branch wp/b-wp27)
+
+Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so the forecast tank models and the lift
+screening ranges ship provisional through the D17 gate (`wellperf-validate.js` BENCH `forecast gasTank`, `forecast oilTank`,
+`screen lift` pending); none is a default (the forecast's default mode is the p̄r steps, which run the solver alone).
+
+- **Cases (US18, A3)** — new 49-calc-wp-cases.js `WTS_wp_cases`: `make` (name, kind base | matched | proposed | other, the page's scalar
+  contract `WTS_wp_model.SCALARS` + `wp_ip_*` only, the tables survey / strings / restrictions / geo / flowline / rating / beans / lab /
+  pump — never the tests), `add` (replace by name keeps the id; ≤ 20), `rename`, `remove`, `diff`, `model(c)` (the frozen M through
+  `WTS_wp_model.read` on an in-memory record, so a case solves exactly like the page — WCA2), `compare` (a Job: one cold solve per case,
+  the first is the reference, Δ %, the inputs that differ, IPR / outflow per case), `csv`, `summary(R)`. Stored in
+  `wts_wellperf_model.cases` (per well, project files; written only by the page through `WTS_wp_model.write`).
+- **Depletion forecast (§8)** — `WTS_wp_forecast` (same file): `job(M, spec)` — `steps` (default): future p̄r with optional WC / GOR per
+  step, the first step a cold solve (= the single solve when p̄r is the model's), the rest tracking solves; `tank`: explicit (forward
+  Euler) time steps on a gas p/Z tank (well-stream Z with impurities, wet-gas vapour equivalent from `WTS_wp_fluid.recombine`) or an oil
+  Havlena-Odeh tank (N, m, S_wi, c_w, c_f; PVT from the model's fluid; the producing GOR of each step from Corey curves on the
+  material-balance saturations once S_g > S_gc (n_o 3, n_g 2, S_gc 5 %; `gas:'retained'` = no free gas produced) fed into the outflow);
+  events: liquid-loading onset with the limiting MD · TVD, the step where lift is needed (no stable root), abandonment p̄r / rate; the
+  decline / EUR cross-check reads `PRiSM_declineResults()` when PRiSM has a decline fit. `tank(M, spec)` exposes the pure balance
+  (`pAt`, `pAtGp`, `step`, `at`, `gorAt`). Measured: 24 gas steps 114 E, first-order convergence (12 / 24 / 48 steps: ratio 0.51, 24
+  steps within 1.9 % of 48 — X51); a first finding during development: "produce the liberated gas at once" is not a valid closure below
+  p_b (the voidage needs free gas), hence the Corey GOR.
+- **Operating envelope** — new 49-calc-wp-envelope.js `WTS_wp_envelope.job(M, o)`: the wellhead deliverability THP_av(q) is the solver's
+  wellhead-node inflow (`WTS_wp_system.evalAt` on one frozen layout, ≈ 1 E per rate, 14 rates + the maximum-rate crossing + one exact
+  march at each limit), the flowline back pressure from `WTS_wp_system.boundary`; limits: static stability at a fixed THP (right of the
+  THP_av maximum), liquid loading (q = q_c of that traverse), the wellhead rating, the maximum rate, the tubing erosional ratio,
+  drawdown, a minimum pwf, p_b at the mid-perforations, a facility rate; the window, its binding limits and the operating point
+  checked; `at(res, q)` interpolates for the drag handle. Node independence X47 (0.11 %), maximum rate = `maxRate` X48 (0.32 %); at the
+  loading limit a fixed-THP solve has margin ≈ 7e-6 (WEN2).
+- **Lift screening (§7.4)** — `WTS_wp_screen` (same file): `matrix(M, {R, W})` (natural flow, continuous gas lift, ESP, rod pump, PCP,
+  jet pump, plunger; depth TVD / MD, liquid rate, maximum inclination and dogleg of the survey, BHT, API, GLR, H₂S / CO₂, lift gas; pump
+  setting windows on MD · TVD by dogleg / inclination limits) and `job(M, o)` (natural = the solve, gas lift = the quick-look optimum on
+  a short list with a stated screening casing pressure when step ④ has none, ESP only when the solver answers `R.lift.type 'esp'` —
+  WP26 — never the natural-flow number, and the pump potential = the IPR at a minimum pwf).
+- **Tornado and 3 / 4 variables (§6.2)** — 49-calc-wp-sens.js: `tornado(M, o)` (Job; base = the single solve, each low / high a tracking
+  solve from the base; default ranges `TORNADO`; `tornadoCsv`); `job` with three or four variables now runs `jobN` (breadth-first from the
+  start cell, each cell warm-started from the neighbour it was reached from; result `nd:true`, `keys`, `axes`, `strides`, flat `q` /
+  `stable`, `cases[{values, R, idx}]`); `table` / `csv` carry every variable.
+- **Contract changes (additive unless stated).** New namespaces `WTS_wp_cases`, `WTS_wp_forecast`, `WTS_wp_envelope`, `WTS_wp_screen`.
+  **Changed:** `WTS_wp_sens.job` with 3–4 variables returns the matrix instead of `{ok:false, code:'B_ONLY'}` (tests WSE / WSN2 updated);
+  new `WTS_wp_sens.tornado`, `tornadoCsv`, `TORNADO_ORDER`. `WTS_wp_view.chart` series kind `'poly'` (closed filled polygon, `alpha`);
+  `WTS_wp_view.schematic` marks kinds `'window'` {md, md2} (bracket beside the hole) and `'tick'`. Page (49-calc-wellperf.js): a generic
+  extension registry `window.WTS_wellperf_ext[name] = {resHtml, stepHtml(n), render(live), act, change, input, studies, marks, sysPlot,
+  csv, notes, reset, resize}` called at fixed points (name order, errors logged, never thrown), and `WTS_wellperf_page.ui()` (the page
+  helpers: display units, cards, `drive`, the input path); no change when no extension is registered. The WP27 page part is the
+  extension 49-calc-wp-studies.js (`WTS_wellperf_ext.studies`).
+- **Page.** #wp_res "Studies" card (tabs Operating envelope · Depletion forecast · Tornado · Matrix (3–4 variables) · Cases; one shared
+  canvas, so the active tab's plot, KPI chips and table reach the report and the Quick Report; controls `.rp-skip`): envelope with the
+  window band between the curves, constraint lines, the draggable point along the curve (live read-out THP / choke Δp / pwf / drawdown /
+  erosion / loading and ✓ / ✕ per limit; release → Bean for this rate (the design Job) → Use this bean); forecast with rate / p̄r /
+  cumulative / material-balance views, a time line and a slider that move the IPR and the operating point of that time on the system
+  plot, the loading-onset tick on the schematic; HTML tornado bars (select → Use low / high); the matrix heat map with column / row
+  selectors and sliders for the other variables, rate lines, Use these values; case cards (Compare / Load / Delete), overlay, Δ % and the
+  inputs that differ. Step ④ "Lift screening" card (the matrix follows every solve; the rate bars on a button; the ESP setting window
+  bracket on the schematic after a run). `#wp_studies` rows for every study; CSV sections; Notes for the provisional methods.
+- **Tests** (19): `wellperf-cases` (WCA1–2, WFC1–4), `wellperf-envelope` (WEN1–3, WSC1–2), `wellperf-tornado` (WTN1–3), `wellperf-studies`
+  (WST1–5, page incl. report capture and the 60 kB snapshot). Validate: gate rows above, X47–X52, `--time` rows envelope (oil 50.5 / gas
+  45 E of 60), forecast 24 steps (114 / 48 E of 160), tornado 7 variables (85 E of 136), matrix 3⁴ (432 E of 500), screening (100.5 E
+  of 120). Smoke: the namespace check lists the new namespaces (count 347 unchanged).
+- **Help.** The production help file was 1 byte under its 47.67 kB cap: the `wpv_*` controls are one notDocumented pattern (`^wpv_`)
+  and the guide's top-block line names the studies; no study part, no screenshot (help shot `sys` unchanged). Gap: the studies have no
+  guide text until the owner decides a cap (Q21 open).
+- **Known gaps.** Forward-Euler time steps (≈ 2 % on the cumulative at 24 steps; no predictor-corrector); the oil tank has no aquifer,
+  the Corey exponents and S_gc are defaults, the gas tank is volumetric; screening ranges are indicative and rod / PCP / jet / plunger
+  have no rate model (C); the ESP rate needs WP26; the envelope's erosion limit is the tubing only (the flowline is in the system
+  solve's erosion KPI); the operating-envelope point starts on the operating point (the marker and the handle overlap until dragged).
 
 ### 18.4 Increment C
 

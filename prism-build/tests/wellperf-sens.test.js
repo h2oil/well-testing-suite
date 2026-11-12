@@ -154,9 +154,9 @@ module.exports = [
       const jn = SN.job(M, [{ key: 'skin', values: [0, 5] }]);
       const rr = run(jn);
       assert.ok(!rr.ok && rr.code === 'NOT_APPLICABLE' && /Darcy/.test(rr.errors[0]), 'skin needs a Darcy model: ' + JSON.stringify(plain(rr.errors)));
-      // A2 (WP16): two variables run (wellperf-sens2); three wait for a later release
+      // A2 (WP16): two variables run (wellperf-sens2); B (WP27): three and four variables run (wellperf-tornado)
       const j3 = run(SN.job(M, [{ key: 'wc', values: [0, 50] }, { key: 'pr', values: [2800, 3000] }, { key: 'gor', values: [500] }]));
-      assert.ok(!j3.ok && j3.code === 'B_ONLY', 'three variables: a later release');
+      assert.ok(j3.ok && j3.nd && j3.cases.length === 4, 'three variables: the matrix (B)');
     },
   },
   {

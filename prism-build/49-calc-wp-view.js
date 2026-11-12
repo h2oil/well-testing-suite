@@ -9,7 +9,9 @@
 //   WTS_wp_view.chart(canvas, spec)      draw (and keep) a plot on a canvas; returns the canvas state
 //       spec = {key, aspect, minH, maxH, w (fallback width when the canvas is not laid out),
 //               x:{label, log, min, max, fmt}, y:{label, log, invert, min, max, fmt}, x2:{label, min, max, fmt} (top axis),
-//               series:[{key, label, color, pts:[[x, y]], width, dash, kind:'line'|'points'|'area', axis:'x2', legend:false, fill}],
+//               series:[{key, label, color, pts:[[x, y]], width, dash, kind:'line'|'points'|'area'|'poly', axis:'x2', legend:false, fill}],
+//               ('poly' (B, WP27): a closed polygon filled at s.alpha (default 0.16), outlined only when s.width > 0 — e.g. the operating
+//               window between the wellhead deliverability and the flowline back-pressure curves)
 //               bands:[{x0, x1, color, label}] (vertical shading), hbands:[{y0, y1, color, label}] (horizontal strips at the
 //               left edge, e.g. flow-pattern bands along depth), vlines:[{x, color, label, dash}], hlines:[{y, color, label, dash}],
 //               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}] (labels laid out without overlaps),
@@ -329,6 +331,13 @@
                 pts.forEach(function (p) { ctx.beginPath(); if (ctx.arc) ctx.arc(tx(p[0]), toY(p[1]), s.r || 3.5, 0, Math.PI * 2); ctx.fill(); });
                 return;
             }
+            if (s.kind === 'poly') {
+                if (pts.length < 3) return;
+                ctx.beginPath(); pts.forEach(function (p, i) { var x = tx(p[0]), y = toY(p[1]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); ctx.closePath();
+                ctx.globalAlpha = _fin(s.alpha) ? s.alpha : 0.16; ctx.fill(); ctx.globalAlpha = 1;
+                if (s.width > 0) { if (ctx.setLineDash) ctx.setLineDash(s.dash || []); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); }
+                return;
+            }
             if (ctx.setLineDash) ctx.setLineDash(s.dash || []);
             ctx.beginPath();
             pts.forEach(function (p, i) { var x = tx(p[0]), y = toY(p[1]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
@@ -387,6 +396,7 @@
                 ctx.globalAlpha = off ? 0.35 : 1;
                 ctx.strokeStyle = s.color || T.accent; ctx.fillStyle = s.color || T.accent; ctx.lineWidth = 3;
                 if (s.kind === 'points') { ctx.beginPath(); if (ctx.arc) ctx.arc(bx + 9, y, 4, 0, Math.PI * 2); ctx.fill(); }
+                else if (s.kind === 'poly') { ctx.globalAlpha = (off ? 0.35 : 1) * 0.45; if (ctx.fillRect) ctx.fillRect(bx, y - 5, 18, 10); ctx.globalAlpha = off ? 0.35 : 1; }
                 else { if (ctx.setLineDash) ctx.setLineDash(s.dash || []); ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx + 18, y); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); }
                 ctx.fillStyle = T.text; ctx.fillText(fit(s.label, wmax - 24), bx + 24, y);
                 ctx.globalAlpha = 1;
@@ -929,7 +939,9 @@
             labs.push({ side: 1, x: q.x + 22, y: q.y, t: 'gauge ' + (gg.name || gg.id || (i + 1)), c: T.green });
         });
         // extra marks (A2, WP18): o.marks = [{md, kind:'gl'|'packer', label, color, comp}] — the gas-lift injection point with the lift-gas
-        // path down the annulus (dashed, from the wellhead to the point) and the packer across the annulus
+        // path down the annulus (dashed, from the wellhead to the point) and the packer across the annulus; B (WP27): kind 'window'
+        // {md, md2} — a bracket beside the hole over an MD interval (e.g. a pump setting window), kind 'tick' — a short marker across the
+        // hole at an MD (e.g. the depth where liquid loading starts in a forecast)
         (o.marks || []).forEach(function (mk) {
             if (!mk || !_fin(mk.md)) return;
             var q = interp(path, Math.min(mk.md, mdMax)); if (!q) return;
@@ -947,6 +959,20 @@
                     '<circle cx="' + vx.toFixed(1) + '" cy="' + vy.toFixed(1) + '" r="6.5" fill="' + col + '" stroke="' + T.bg + '" stroke-width="2"/>' +
                     '<path d="M' + (vx - 3).toFixed(1) + ' ' + (vy - 2).toFixed(1) + 'h6l-3 4z" fill="' + T.bg + '"/></g>');
                 labs.push({ side: 1, x: vx + 10, y: vy, t: mk.label || 'GL injection', c: col });
+            } else if (mk.kind === 'window' && _fin(mk.md2)) {
+                var wc = mk.color || T.purple, mA = Math.min(mk.md, mk.md2), mB = Math.min(Math.max(mk.md, mk.md2), mdMax), wl = [], nW = 24;
+                for (var kw = 0; kw <= nW; kw++) { var qw = interp(path, mA + (mB - mA) * kw / nW); if (qw) wl.push((qw.x - Math.sin(qw.ang) * 24).toFixed(1) + ',' + (qw.y + Math.cos(qw.ang) * 24).toFixed(1)); }
+                var qa = interp(path, mA), qb = interp(path, mB);
+                if (wl.length > 1 && qa && qb) {
+                    g.push('<g aria-label="' + _esc(mk.label || 'window') + '"><polyline points="' + wl.join(' ') + '" fill="none" stroke="' + wc + '" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"/>' +
+                        [qa, qb].map(function (qq) { return '<line x1="' + (qq.x - Math.sin(qq.ang) * 18).toFixed(1) + '" y1="' + (qq.y + Math.cos(qq.ang) * 18).toFixed(1) + '" x2="' + (qq.x - Math.sin(qq.ang) * 30).toFixed(1) + '" y2="' + (qq.y + Math.cos(qq.ang) * 30).toFixed(1) + '" stroke="' + wc + '" stroke-width="2"/>'; }).join('') + '</g>');
+                    labs.push({ side: -1, x: qb.x - 34, y: qb.y, t: mk.label || 'window', c: wc });
+                }
+            } else if (mk.kind === 'tick') {
+                var tcol = mk.color || T.yellow;
+                g.push('<g aria-label="' + _esc(mk.label || 'marker') + '"><line x1="' + (q.x + nx * 16).toFixed(1) + '" y1="' + (q.y + ny * 16).toFixed(1) + '" x2="' + (q.x - nx * 16).toFixed(1) + '" y2="' + (q.y - ny * 16).toFixed(1) + '" stroke="' + tcol + '" stroke-width="3" stroke-linecap="round"/>' +
+                    '<circle cx="' + q.x.toFixed(1) + '" cy="' + q.y.toFixed(1) + '" r="4" fill="' + tcol + '" stroke="' + T.bg + '" stroke-width="1.5"/></g>');
+                labs.push({ side: 1, x: q.x + 20, y: q.y, t: mk.label || '', c: tcol });
             } else if (mk.kind === 'packer') {
                 [-1, 1].forEach(function (sd) { g.push('<rect x="' + (q.x + sd * nx * 13 - 4).toFixed(1) + '" y="' + (q.y + sd * ny * 13 - 4).toFixed(1) + '" width="8" height="8" fill="' + (mk.color || '#9ca3af') + '" stroke="' + T.bg + '"/>'); });
                 labs.push({ side: 1, x: q.x + 20, y: q.y, t: mk.label || 'packer', c: mk.color || '#9ca3af' });
