@@ -146,7 +146,13 @@ module.exports = [
       const n1 = G.WTS_wellperf_page.calcs();
       app.document.dispatchEvent(new G.CustomEvent('wts:well-changed', { detail: {} }));
       app.document.dispatchEvent(new G.CustomEvent('wts:project-loaded', { detail: {} }));
-      assert.strictEqual(G.WTS_wellperf_page.calcs() - n1, 2, 're-read on a well switch and a project open');
+      // the model is re-read on each event, and solved again only when it differs from the last solve (one solve per switch)
+      assert.strictEqual(G.WTS_wellperf_page.calcs() - n1, 0, 'same model after the events: redrawn, not re-solved');
+      app.storage.setItem('wts_wellperf_model', JSON.stringify({ v: 1, survey: [[0, 0], [5000, 5000]] }));
+      app.document.dispatchEvent(new G.CustomEvent('wts:well-changed', { detail: {} }));
+      app.document.dispatchEvent(new G.CustomEvent('wts:project-loaded', { detail: {} }));
+      assert.strictEqual(G.WTS_wellperf_page.calcs() - n1, 1, 're-read on a well switch: the new model solves once');
+      S.resetWellPerf(app);
       // report-capture rules (host collectPageReport): the markup the page is built on (§2.9)
       const root = app.el('wp_root');
       root.insertAdjacentHTML('beforeend',

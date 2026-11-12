@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '627050c6', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '2dee9885', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -205,7 +205,7 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
-  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node; the worst depth is shown, often a wide bore below the tubing. See the **Liquid loading** tab.'] },
+  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing or liner below the end of tubing is an information line. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] }],
   boldExempt: ['Use this bean'],

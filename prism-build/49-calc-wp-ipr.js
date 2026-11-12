@@ -332,18 +332,21 @@
             if (D < 0) return _fail('BAD_D', 'D must be 0 or more.');
             // m(p̄r) − m(pwf) = 1422·T·q/(k·h)·[X + S + D·q] → a = 1422·T·(X + S)/(k·h), b = 1422·T·D/(k·h)
             var a = C_DARCY_GAS * TR * (x.X + S) / (k * h), b = C_DARCY_GAS * TR * D / (k * h), m, form = 'm(p)';
+            var aMp = a, bMp = b, units = { a: 'psi²/cp per Mscf/d', b: 'psi²/cp per (Mscf/d)²' };
             if (+P.p2 === 1 || P.p2 === true) {
                 var pM = _pos(_n(P.pMean)) ? _n(P.pMean) : spec.pr, st = _gasState(c.sg, c.T, pM);
                 if (!st) return _fail('NEEDS', 'μg and Z are not available at the mean pressure.');
                 var mz = st.mu * st.z;
-                m = _gas({ lit: { a: a * mz, b: b * mz }, pr: spec.pr, pAof: P.pAof });
+                // the p² coefficients actually used (a·μ̄z̄, b·μ̄z̄) are the ones stored; the m(p) ones stay as aMp / bMp
+                a = aMp * mz; b = bMp * mz; units = { a: 'psi² per Mscf/d', b: 'psi² per (Mscf/d)²' };
+                m = _gas({ lit: { a: a, b: b }, pr: spec.pr, pAof: P.pAof });
                 form = 'p² with μ̄z̄ = ' + _fix(mz, 5) + ' cp at ' + _fix(pM, 0) + ' psia';
                 w.push(_w('P2_APPROX', 'p² form: μ̄z̄ evaluated at ' + _fix(pM, 0) + ' psia (an approximation; the m(p) form is exact).', 'info'));
             } else m = _gas({ lit: { a: a, b: b }, pr: spec.pr, pAof: P.pAof, delta: _mpDelta(c.tb, spec.pr) });
             if (!m.ok) return m;
-            P.S = S; P.D = D; P.sg = c.sg; P.a = a; P.b = b;
+            P.S = S; P.D = D; P.sg = c.sg; P.a = a; P.b = b; P.aMp = aMp; P.bMp = bMp;
             return { ev: m, pAof: m.pAof, D: D, Dsource: Dsrc, skin: sk.ok ? sk : null,
-                form: { ref: x.ref, label: x.label, X: x.X, Ssource: Ssrc, delta: form, a: a, b: b },
+                form: { ref: x.ref, label: x.label, X: x.X, Ssource: Ssrc, delta: form, a: a, b: b, aMp: aMp, bMp: bMp, units: units },
                 engine: 'WTS_gasdeliv_model (' + form + ')' };
         } });
 

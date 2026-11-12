@@ -723,6 +723,11 @@ catalogue as a discrete scan, lift gas). Maximum rate: THP at the lowest admissi
 - q_c (MMscf/d) = 3.067 p v_c A / ((T + 460) z) (p psia, v_c ft/s, A ft², T °F) at **every** traverse node; for a constant ID q_c varies
   as √p / (T z) and often rises with depth, so the bottom or the top of a larger liner can control. The reported limiting point is
   wherever the maximum of q_c falls; margin = q_op / q_c,max − 1.
+- **Decision (review 2026-11-12):** the verdict is the maximum over the nodes from the wellhead to the **tubing shoe** (a node takes the
+  conduit above it, so the shoe node carries the tubing ID). The casing / liner section between the tubing shoe and the mid-perforations
+  is reported apart as an information line ("liquid may accumulate below the end of tubing; q_c in the liner …", `loading.belowEot`):
+  conventional practice does not treat that short rathole as killing the well. The strict reading above (every node, the rathole
+  included) is the option `M.system.loadingRathole: true`.
 - Method suggestion (ranges to verify): Coleman for flowing wellhead pressure below about 500 psia (its data), Turner for higher
   wellhead pressures (its data mostly above about 1,000 psia); in between both are shown.
 - Shown on the system plot and as a ✓ / ⚠ / ✗ verdict with recommendations (smaller string ID that would unload — A2 `designFor`
@@ -1140,7 +1145,9 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   solve's outflow curve and q_s until the release; `R.carried`). Design: one full solve at the current setting, a first guess from the
   choke law (∝ S^1.89) or the root slope, then secant / Illinois on tracking solves (oil bean 4 solves, 32 E against 60).
 - **Loading** at every traverse node (Turner 1.912 / Coleman 1.593 / Li 0.7241); the liquid is water when the well makes water; FIX.gasWell
-  is limited in the 7 in casing below the tubing shoe (bottom controls, −53 %); the methods are provisional (Q9). **`WTS_wp_check`** as
+  is limited in the 7 in casing below the tubing shoe (bottom controls, −53 %) under the strict rule — after the review decision of
+  2026-11-12 (§4.11) the verdict is the tubing (+ ≈ 100 %, the 3-1/2 in upper string controls) and the liner below the shoe is an
+  information line; the methods are provisional (Q9). **`WTS_wp_check`** as
   §4.13 with codes and field ids. **`shutIn`**: gas-filled (well-stream gravity for a wet gas, Z iterated, WTS_gradient_compute), the
   actual fluid (live liquid marched up from p̄r; the gas column for gas wells; the liquid level when p̄r cannot hold the column) and
   partly liquid-filled columns; the worst case against the rating (⚠ within 10 %, none without a rating). Maximum THT = the entered THT
@@ -1346,3 +1353,28 @@ tolerance 0.1 psi; U_to 2 Btu/hr·ft²·°F; producing time 30 d; k_e 1.4 Btu/hr
 multiplier bounds 0.8–1.25, friction 0.7–1.5, flag outside 0.9–1.1; loading method suggested by WHP (Turner default); condensate
 B_c 1.0; choke Cd 0.75 (Sachdeva, A2), gas nozzle Cd as `WTS_chokeperf_gasRate`; separator 100 psig; heading flag 10 % above q_s;
 bean list 16, 20, 24, 32, 40, 48 /64; sensitivity ≤ 10 values per variable; Quick Report snapshot cap 60 kB.
+
+## Review fixes of increment A1 (2026-11-12)
+
+Verified findings of the A1 review and what changed (tests: `prism-build/tests/wellperf-review.test.js`, WRV1–WRV24):
+
+- Liquid-only choke (GLR < 10 scf/STB): q (bbl/d) = **1022.7**·Cd·d²·√(Δp/SG) (d in, Δp psi; = 29.84 gal/min × 34.29 = 8074/√62.4). The
+  A1 build used 673.2 (Torricelli's constant for head in feet), so the choke Δp was 2.31× too high.
+- Design (`designFor`): a no-flow trial past the stability cliff is a one-sided bound (bisection), never a secant value; a repeated
+  setting is not "converged" unless |q − target| ≤ tol; an unreachable target says why (stability gap, or the sub-critical bound of the
+  critical choke correlation with the no-choke maximum rate next to it). Up to 16 solves.
+- Erosion (§4.12) covers the flowline march as well as the tubing; `R.velocities` = the higher of the two with `where`.
+- Liquid loading: the decision recorded in §4.11 (tubing verdict, rathole apart, `loadingRathole` option).
+- Hydrate: ⚠ within 10 °F downstream of the choke as well as at the wellhead; the KPI shows the smaller margin and where; the hydrate
+  check and the choke isenthalp use the well-stream gravity for gas and condensate wells (`R.surface.sgHyd`).
+- The flowline of a choked gas well is marched at the choke-downstream (isenthalpic) temperature (`R.surface.tLine`).
+- `darcyGas` p² form stores the p² coefficients it uses (a·μ̄z̄, b·μ̄z̄; m(p) ones as `aMp` / `bMp`, units in `form.units`).
+- The dry-gas method `gasTZ` is refused for oil and water wells (solver `CORR_NOT_APPLICABLE`, ✗ in `WTS_wp_check`, disabled option).
+- Page: schematic hover marker passes clicks through; test gauges drawn on the schematic; MD and TVD on every depth readout (tables,
+  perforations, BHP KPI, component labels, depth-plot crosshairs); a case summary inside `#wp_res` (the report of any step carries the
+  inputs); sensitivity values fitted to the variable and engine refusals shown; touch-action none on the plot with handles; wheel zoom
+  only with Ctrl / Cmd or a focused plot; survey form switch converts the stations with Undo (no browser confirm); stale study results
+  marked; staggered vertical-line labels and an auto-placed legend; decimal-comma aware paste with a cell-count warning; one solve per
+  well switch / project open (the host re-render solves) and per example; layout at 1280 px; step status text for screen readers.
+- Not changed: the schematic is exported in the app's dark rendering (the app has no light theme and the host report bakes the on-screen
+  styles of every page's diagrams the same way); a light export needs a host report hook.

@@ -208,7 +208,9 @@
     }
     function _card(title, body, o) {
         o = o || {};
-        return '<div class="card wp-card' + (o.cls ? ' ' + o.cls : '') + '"' + (o.id ? ' id="' + o.id + '"' : '') + '><div class="card-title">' + _esc(title) + (o.tools ? '<span class="wp-tools rp-skip">' + o.tools + '</span>' : '') + '</div>' + body + '</div>';
+        // the tools sit beside the title, not inside .card-title: the report collector takes the whole title element's text
+        var head = o.tools ? '<div class="wp-card-h"><div class="card-title">' + _esc(title) + '</div><span class="wp-tools rp-skip">' + o.tools + '</span></div>' : '<div class="card-title">' + _esc(title) + '</div>';
+        return '<div class="card wp-card' + (o.cls ? ' ' + o.cls : '') + '"' + (o.id ? ' id="' + o.id + '"' : '') + '>' + head + body + '</div>';
     }
 
     var CSS = '<style>' +
@@ -239,6 +241,10 @@
         '#wp_root .wp-row3{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:var(--wp-gap);align-items:start}' +
         '#wp_root .wp-card{margin-bottom:var(--wp-gap);padding:16px}' +
         '#wp_root .wp-card .card-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}' +
+        '#wp_root .wp-card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}#wp_root .wp-card-h .card-title{margin-bottom:0}' +
+        '#wp_root .rrow{gap:12px}#wp_root .rrow .rl{min-width:0;flex:1 1 auto}#wp_root .rrow .rv{flex:0 0 auto;text-align:right}' +
+        '#wp_root .wp-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}' +
+        '#wp_root .wp-stalechip{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;background:rgba(210,153,34,.15);color:var(--wp-warn);margin:6px 0}' +
         '#wp_root .wp-tools{margin-left:auto;display:inline-flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font-weight:600}' +
         '#wp_root .wp-tools select,#wp_root .wp-seg button{font-size:11.5px;padding:4px 8px;border-radius:6px}' +
         '#wp_root .wp-seg{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}' +
@@ -261,7 +267,7 @@
         '#wp_root .wp-drawer-b{padding:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}' +
         '#wp_root .wp-tw{overflow-x:auto;max-width:100%}#wp_root .wp-tw .dtable td,#wp_root .wp-tw .dtable th{white-space:nowrap}' +
         '#wp_root .wp-tw .dtable td.num{text-align:right;font-variant-numeric:tabular-nums}' +
-        '#wp_root .wp-ed td{padding:3px 4px}#wp_root .wp-ed input,#wp_root .wp-ed select{width:100%;min-width:64px}' +
+        '#wp_root .wp-ed td{padding:3px 4px}#wp_root .wp-ed input,#wp_root .wp-ed select{width:100%;min-width:64px}#wp_root .wp-ed select{min-width:104px}' +
         '#wp_root .wp-ed td.ro{color:var(--text2);font-size:11.5px;text-align:right;font-variant-numeric:tabular-nums}' +
         '#wp_root .wp-ed tr.wp-flash td{animation:wpflash 1.4s ease-out}@keyframes wpflash{0%{background:rgba(240,136,62,.35)}100%{background:transparent}}' +
         '#wp_root .wp-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}#wp_root .wp-btns .btn{padding:7px 13px;font-size:12px}' +
@@ -280,7 +286,7 @@
         '#wp_root .wp-paste{display:none;margin-top:8px}#wp_root .wp-paste.on{display:block}#wp_root .wp-paste textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}' +
         '#wp_root .wp-sec{animation:wpfade .18s ease-out}@keyframes wpfade{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}' +
         '#wp_root .wp-sec-h{display:flex;align-items:baseline;gap:10px;margin:4px 0 12px;font-size:15px;font-weight:700;color:var(--text)}#wp_root .wp-sec-h span{font-size:12px;font-weight:500;color:var(--text3)}' +
-        '#wp_root .wp-2c{display:grid;grid-template-columns:1fr 1fr;gap:var(--wp-gap);align-items:start}' +
+        '#wp_root .wp-2c{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}#wp_root .wp-2c>*{min-width:0}' +
         '#wp_root .rbox{margin-top:0}' +
         '#wp_root .wp-stale #wp_bench,#wp_root .wp-stale .wp-kpis{opacity:.55;transition:opacity .2s}' +
         '@media (max-width:1180px){#wp_root .wp-row3{grid-template-columns:1fr 1fr}#wp_root .wp-row3>:last-child{grid-column:1/-1}}' +
@@ -350,7 +356,7 @@
     }
     function _renderTable(t) {
         var host = _byId('wp_tbl_' + t); if (!host) return;
-        var M = ST.M || _read(), cols = TABLES[t](M), rows = _tableRows(M, t), extra = (t === 'survey') ? _surveyExtra(M) : null;
+        var M = ST.M || _read(), cols = TABLES[t](M), rows = _tableRows(M, t), extra = _extraCols(t, M);
         var h = '<div class="wp-tw"><table class="dtable wp-ed" data-t="' + t + '"><thead><tr>' + cols.map(function (c) {
             return '<th>' + _esc(c.l) + (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '') + '</th>';
         }).join('') + (extra ? extra.head.map(function (x) { return '<th>' + x + '</th>'; }).join('') : '') + '<th></th></tr></thead><tbody>';
@@ -366,10 +372,21 @@
         h += '</tbody></table></div>';
         host.innerHTML = h;
     }
+    // computed read-only TVD columns of the strings and restrictions tables (every depth shows MD and TVD)
+    function _tvdAt(md) { var W = ST.W; if (!_fin(md) || !W || !W.ok || typeof W.tvdAt !== 'function') return null; try { var v = W.tvdAt(md); return _fin(v) ? v : null; } catch (e) { return null; } }
+    function _tvdCell(md) { var v = _tvdAt(md); return '<td class="ro">' + (_fin(v) ? _fmt(_dv(v, 'length'), 1) : '—') + '</td>'; }
+    function _extraCols(t, M) {
+        if (t === 'survey') return _surveyExtra(M);
+        if (t === 'strings') return { n: 2, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.topMd : null) + _tvdCell(r ? r.botMd : null); } };
+        if (t === 'restrictions') return { n: 1, head: ['TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.md : null); } };
+        if (t === 'tests') return { n: 1, head: ['Gauge TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.gaugeMd : null); } };
+        return null;
+    }
     function _surveyExtra(M) {
         var W = ST.W, stn = (W && W.ok && Array.isArray(W.stations)) ? W.stations : [];
         var three = _surveyMode(M) !== 'mdtvd';
         return {
+            n: three ? 3 : 2,
             head: three ? ['TVD (' + _lab('length', 'ft') + ')', 'Departure (' + _lab('length', 'ft') + ')', 'DLS (°/100 ft)'] : ['Inc (°)', 'Departure (' + _lab('length', 'ft') + ')'],
             cells: function (r) {
                 var md = r ? r[0] : null, s = _fin(md) ? stn.filter(function (x) { return Math.abs(x.md - md) < 0.01; })[0] : null;
@@ -378,6 +395,20 @@
                     : '<td class="ro">' + _fmt(s.inc, 1) + '</td><td class="ro">' + _fmt(_dv(s.dep, 'length'), 1) + '</td>';
             }
         };
+    }
+    function _refreshTvdCells() {
+        var keys = { strings: ['topMd', 'botMd'], restrictions: ['md'], tests: ['gaugeMd'] };
+        Object.keys(keys).forEach(function (t) {
+            var tbl = _byId('wp_tbl_' + t); if (!tbl || !tbl.querySelectorAll) return;
+            Array.prototype.forEach.call(tbl.querySelectorAll('tbody tr'), function (tr) {
+                var ro = tr.querySelectorAll('td.ro');
+                keys[t].forEach(function (k, i) {
+                    var e = tr.querySelector('[data-c="' + k + '"]'), raw = e ? String(e.value == null ? '' : e.value).trim() : '', v = raw === '' ? null : parseFloat(raw.replace(',', '.'));
+                    var tv = _fin(v) ? _tvdAt(_fromDisp(v, 'length')) : null;
+                    if (ro[i]) ro[i].textContent = _fin(tv) ? _fmt(_dv(tv, 'length'), 1) : '—';
+                });
+            });
+        });
     }
     function _collectTable(t) {
         var tbl = _byId('wp_tbl_' + t), M = ST.M || _read(), cols = TABLES[t](M), out = [];
@@ -402,7 +433,8 @@
         if (t === 'geo') patch.geo = { points: rows }; else patch[t] = rows;
         var r = Mm.write(patch);
         if (r && !r.ok) _banner('fail', 'The table was not saved: ' + ((r.errors || []).join(' ') || r.code));
-        if (t === 'tests') { ST.M = _read() || ST.M; _syncMatchTests(); }
+        ST.M = _read() || ST.M;                  // the tables render from ST.M: keep it current even when the write did not solve (batched)
+        if (t === 'tests') _syncMatchTests();
         return r;
     }
 
@@ -420,7 +452,7 @@
         out.chk = _call('WTS_wp_check', M);
         out.F = _call('WTS_wp_fluid.build', M.fluid);
         out.I = _call('WTS_wp_ipr.curve', M.res, out.F && out.F.ok ? out.F : undefined);
-        out.W = _call('WTS_wp_well.build', M.well, {});
+        out.W = _call('WTS_wp_well.build', M.well, { res: M.res, fluidType: M.fluid.type, tests: M.tests, surface: M.surface });   // test gauges reach the schematic
         var t0 = _now(), so = { live: !!live };
         // live drag: continue the last full solve's stable root (tracking solve) and carry its curves / q_s until the release
         var P = ST.R && ST.R.ok && ST.R.op && !ST.R.tracked ? ST.R : (ST.Rfull && ST.Rfull.ok ? ST.Rfull : null);
@@ -459,7 +491,11 @@
         ST.solveMs = X.ms || 0; ST.stale = false; ST.stubs = X.stubs;
         if (!live) ST.slow = ST.solveMs > budgetMs;
         if (live) ST.liveMs = ST.solveMs;
-        else { ST.liveMs = null; if (X.R && X.R.ok && !X.R.tracked) ST.Rfull = X.R; }
+        else { ST.liveMs = null; if (X.R && X.R.ok && !X.R.tracked) ST.Rfull = X.R; ST.lastKey = _mkey(M); }
+        // sensitivity / bean-schedule results made on other inputs are marked stale (dimmed, with a re-run chip)
+        var mk = _mkey(M);
+        if (ST.sens) ST.sens.stale = !!(ST.sensKey && ST.sensKey !== mk);
+        if (ST.beans) ST.beans.stale = !!(ST.beansKey && ST.beansKey !== mk);
         var R = (X.R && X.R.ok !== undefined) ? X.R : null, ok = !!(R && R.ok);
         S.wellperf = {
             v: 1, ok: ok, code: R && !ok ? (R.code || 'NO_SOLUTION') : null, op: ok ? R.op : null, roots: (R && R.roots) || [], qs: ok ? R.qs : null,
@@ -471,6 +507,8 @@
         _emit('wts:wellperf-solved', { ok: ok });
         return S.wellperf;
     }
+    // the model identity used to tell whether a solve is needed again and whether study results are stale
+    function _mkey(M) { if (!M) return ''; try { return JSON.stringify([M.fluid, M.res, M.well, M.surface, M.system, M.lift]); } catch (e) { return String(Math.random()); } }
     G.calcWellPerf = function () {
         var U = _U();
         return (U && typeof U.runCanonical === 'function') ? U.runCanonical(_calc) : _calc();
@@ -518,6 +556,9 @@
             _renderStepResults();
             _renderDots();
             _renderNotes();
+            _renderCase();
+            if (ST.sens) _renderSensTable();
+            if (ST.beans) _renderBeans();
         } else { _renderOp(); }
     }
 
@@ -536,7 +577,8 @@
         var pr = M ? M.res.pr : null;
         if (gas) out.push({ k: 'rate', l: 'Gas rate', v: _fin(rates.qg) ? _u(rates.qg / 1000, 'gasRate', 2, 'MMscf/d') : '—', s: _fin(rates.qo) ? 'Cond. ' + _u(rates.qo, 'liquidRate', 0, 'STB/d') : '', st: ok ? 'ok' : (R ? 'fail' : 'none') });
         else out.push({ k: 'rate', l: 'Liquid rate', v: _fin(rates.qL) ? _u(rates.qL, 'liquidRate', 0, 'STB/d') : '—', s: _fin(rates.qo) ? 'Oil ' + _u(rates.qo, 'liquidRate', 0, 'STB/d') : '', st: ok ? (op && op.stable === false ? 'fail' : 'ok') : (R && !_isStub(R) ? 'fail' : 'none') });
-        out.push({ k: 'bhp', l: 'Flowing BHP', v: _u(pwf, 'pressure', 0, 'psia'), s: (ST.W && ST.W.ok && ST.W.nodes && _fin(ST.W.nodes.midPerfTvd)) ? '@ ' + _u(ST.W.nodes.midPerfTvd, 'length', 0, 'ft') + ' TVD' : '' });
+        var nd = ST.W && ST.W.ok && ST.W.nodes;
+        out.push({ k: 'bhp', l: 'Flowing BHP', v: _u(pwf, 'pressure', 0, 'psia'), s: (nd && _fin(nd.midPerfTvd)) ? '@ ' + (_fin(nd.midPerfMd) ? _u(nd.midPerfMd, 'length', 0, 'ft') + ' MD · ' : '') + _u(nd.midPerfTvd, 'length', 0, 'ft') + ' TVD' : '' });
         out.push({ k: 'thp', l: 'THP', v: _u(thp, 'pressureG', 0, 'psig'), s: ok && R.surface && R.surface.choke && R.surface.choke.regime && R.surface.choke.regime !== 'none' ? 'choke ' + R.surface.choke.regime : (M && M.surface.choke.present === false ? 'fixed' : ''),
                    st: (ok && M && _fin(M.surface.rating.wellhead_psi) && _fin(thp)) ? (thp > M.surface.rating.wellhead_psi ? 'fail' : 'ok') : 'none' });
         out.push({ k: 'tht', l: 'THT', v: _u(tht, 'temperature', 0, '°F'), s: M && M.well.heat.thtMeasured ? 'measured' : (ok ? 'estimated' : ''),
@@ -551,11 +593,19 @@
         var L = ST.loading, mg = L && _fin(L.margin) ? L.margin : null;
         out.push({ k: 'load', l: 'Loading margin', v: mg == null ? (gas ? '—' : 'n/a') : (mg >= 0 ? '+' : '') + _fmt(mg * 100, 0) + ' %', s: L && L.method ? String(L.method).replace(/^./, function (c) { return c.toUpperCase(); }) + (_fin(L.qc_MMscfd) ? ' q_c ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') : (gas ? '' : 'oil well'),
                    st: mg == null ? 'none' : (mg < 0 ? 'fail' : mg < 0.1 ? 'warn' : 'ok') });
-        var ero = ok ? _eroMax(R) : null;
-        out.push({ k: 'ero', l: 'Erosion ratio', v: _fin(ero) ? _fmt(ero, 2) : '—', s: M ? 'C = ' + _fmt(M.system.eroC, 0) : '', st: _fin(ero) ? (ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok') : 'none' });
-        var hm = (_fin(thtChk) && _fin(tHyd)) ? thtChk - tHyd : null;
-        out.push({ k: 'hyd', l: 'Hydrate margin', v: _fin(hm) ? _tempDiff(hm) : '—', s: _fin(tHyd) ? 'hydrate ' + _u(tHyd, 'temperature', 0, '°F') : (M && M.fluid.type === 'water' ? 'no gas' : ''), st: _fin(hm) ? (hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok') : 'none' });
+        var ero = ok ? _eroMax(R) : null, eroWhere = ok && R.velocities && R.velocities.where === 'flowline' ? 'flowline' : 'tubing';
+        out.push({ k: 'ero', l: 'Erosion ratio', v: _fin(ero) ? _fmt(ero, 2) : '—', s: M ? 'C = ' + _fmt(M.system.eroC, 0) + (_fin(ero) ? ' · ' + eroWhere : '') : '', st: _fin(ero) ? (ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok') : 'none' });
+        // the smaller of the wellhead margin and the margin downstream of the choke, and where it is
+        var hz = _hydMin(R);
+        out.push({ k: 'hyd', l: 'Hydrate margin', v: hz ? _tempDiff(hz.m) : '—', s: hz ? (hz.where === 'dn' ? 'downstream of the choke' : 'at the wellhead') + ' · hydrate ' + _u(hz.tHyd, 'temperature', 0, '°F') : (M && M.fluid.type === 'water' ? 'no gas' : ''), st: hz ? (hz.m < 0 ? 'fail' : hz.m < 10 ? 'warn' : 'ok') : 'none' });
         return out;
+    }
+    function _hydMin(R) {
+        var sf = R && R.ok && R.surface; if (!sf) return null;
+        var thc = _fin(sf.thtHyd) ? sf.thtHyd : sf.tht, a = (_fin(thc) && _fin(sf.tHyd)) ? { m: thc - sf.tHyd, where: 'wh', tHyd: sf.tHyd, t: thc } : null;
+        var b = (_fin(sf.hydMarginDn) && _fin(sf.tHydDn)) ? { m: sf.hydMarginDn, where: 'dn', tHyd: sf.tHydDn, t: sf.tChokeDn } : null;
+        if (a && b) return b.m < a.m ? b : a;
+        return a || b;
     }
     function _eroMax(R) {
         if (R && R.velocities && _fin(R.velocities.eroMax)) return R.velocities.eroMax;
@@ -594,7 +644,8 @@
         var sens = ST.sens && ST.sens.ok !== false && Array.isArray(ST.sens.cases) ? ST.sens : null;
         if (sens) sens.cases.forEach(function (c, i) {
             var cur = c.R && (c.R.curve || c.R.vlp);
-            if (Array.isArray(cur) && cur.length) series.push({ key: 'sens' + i, label: _sensLabel(sens, c), color: V.ramp(sens.cases.length > 1 ? i / (sens.cases.length - 1) : 0.5), width: 1.4, dash: [6, 4],
+            // a family from other inputs is drawn faint (thin, dotted) and labelled as such until the sensitivity is re-run
+            if (Array.isArray(cur) && cur.length) series.push({ key: 'sens' + i, label: _sensLabel(sens, c) + (sens.stale ? ' (previous inputs)' : ''), color: sens.stale ? T.text2 : V.ramp(sens.cases.length > 1 ? i / (sens.cases.length - 1) : 0.5), width: sens.stale ? 1 : 1.4, dash: sens.stale ? [2, 4] : [6, 4],
                 pts: cur.map(function (p) { return [X(p.q), Y(_fin(p.p) ? p.p : p.pwf)]; }).filter(function (p) { return _fin(p[1]); }) });
         });
         if (ok) {
@@ -676,6 +727,18 @@
         for (var j = 1; j < pr.length; j++) if (md <= pr[j].md) { var c = pr[j - 1], d = pr[j], f = (md - c.md) / ((d.md - c.md) || 1); ['p', 't', 'hl', 'vm'].forEach(function (k) { if (_fin(c[k]) && _fin(d[k])) res[k] = c[k] + f * (d[k] - c[k]); }); res.pattern = f < 0.5 ? c.pattern : d.pattern; break; }
         return res;
     }
+    // a depth-axis readout (display units, MD or TVD) printed with the other depth too, from the trajectory
+    function _mdFromTvd(tvd) {
+        var tr = ST.SC && ST.SC.trajectory; if (!tr || tr.length < 2) return null;
+        for (var i = 1; i < tr.length; i++) { var a = tr[i - 1], b = tr[i]; if ((tvd - a.tvd) * (tvd - b.tvd) <= 0 && b.tvd !== a.tvd) return a.md + (tvd - a.tvd) / (b.tvd - a.tvd) * (b.md - a.md); }
+        return null;
+    }
+    function _depthPair(vDisp, dax) {
+        var v = _fromDisp(vDisp, 'length'), dl = _lab('length', 'ft');
+        var md = dax === 'md' ? v : _mdFromTvd(v), tvd = dax === 'md' ? _schAt(v).tvd : v;
+        var f = function (x) { return _fin(x) ? _fmt(_dv(x, 'length'), 0) + ' ' + dl : '—'; };
+        return dax === 'md' ? f(md) + ' MD · ' + f(tvd) + ' TVD' : f(tvd) + ' TVD · ' + f(md) + ' MD';
+    }
     function _schHover(e) {
         var host = _byId('wp_sch'), tip = _byId('wp_tip'); if (!host || !tip || !ST.schPts || !ST.schPts.length) return;
         var svg = host.querySelector('svg'); if (!svg || !svg.getBoundingClientRect) return;
@@ -701,7 +764,14 @@
     }
     function _editComp(comp) {
         var m = /^(string|restr|gauge):(\d+)$/.exec(comp || ''), step = 3, focusSel = null;
-        if (m) { var t = { string: 'strings', restr: 'restrictions', gauge: 'tests' }[m[1]]; step = m[1] === 'gauge' ? 6 : 3; focusSel = { t: t, r: +m[2] }; }
+        if (m) {
+            var t = { string: 'strings', restr: 'restrictions', gauge: 'tests' }[m[1]], r = +m[2];
+            if (m[1] === 'gauge') {      // the schematic lists the gauges by depth: find the test row that carries that gauge MD
+                var gg = ST.SC && ST.SC.gauges && ST.SC.gauges[r], ts = (ST.M && ST.M.tests) || [];
+                if (gg && _fin(gg.md)) for (var k = 0; k < ts.length; k++) if (_fin(+ts[k].gaugeMd) && Math.abs(+ts[k].gaugeMd - gg.md) < 0.5) { r = k; break; }
+            }
+            step = m[1] === 'gauge' ? 6 : 3; focusSel = { t: t, r: r };
+        }
         else if (comp === 'perf') { step = 3; focusSel = { id: 'wp_perfTop' }; }
         else if (comp === 'choke') { step = 5; focusSel = { id: 'wp_bean' }; }
         else if (comp === 'wellhead') { step = 5; focusSel = { id: 'wp_psep' }; }
@@ -722,18 +792,50 @@
         if (!ok) { h.innerHTML = '<div class="rbox-title">Operating point</div><div class="wp-v info">' + _esc(R && !_isStub(R) ? (((R.errors || [])[0]) || 'No operating point.') : 'Waiting for the system solver.') + '</div>'; return; }
         var rt = R.rates || {}, sf = R.surface || {}, gas = _isGasType(M.fluid.type);
         if (gas) row('Gas rate', _u(rt.qg / 1000, 'gasRate', 3, 'MMscf/d'));
-        row('Oil / condensate rate', _u(rt.qo, 'liquidRate', 0, 'STB/d'));
+        row(gas ? 'Condensate rate' : 'Oil rate', _u(rt.qo, 'liquidRate', 0, 'STB/d'));
         row('Water rate', _u(rt.qw, 'liquidRate', 0, 'BWPD'));
         if (!gas) row('Gas rate', _u(rt.qg, 'gasRateSmall', 0, 'Mscf/d'));
         row('Flowing bottom-hole pressure', _u(_fin(R.pwf) ? R.pwf : R.op.p, 'pressure', 0, 'psia'));
         row('Wellhead pressure (THP)', _u(_fin(sf.thp_psig) ? sf.thp_psig : (_fin(sf.thp) ? sf.thp - PATM : null), 'pressureG', 0, 'psig'));
         row('Wellhead temperature (THT)', _u(sf.tht, 'temperature', 0, '°F'));
         row('Stability', R.op.stable ? 'stable' : 'unstable');
-        row('Static stability limit q_s', R.qs ? _u(R.qs.q, _rateCat()[0], 0, _rateCat()[1]) : 'none in range');
-        if (R.vlpMin) row('Tubing-curve minimum', _u(R.vlpMin.q, _rateCat()[0], 0, _rateCat()[1]));
+        // q_s and the tubing-curve minimum in the same category and scale as the rate above (MMscf/d for gas wells)
+        var qf = function (q) { return gas ? _u(q / 1000, 'gasRate', 3, 'MMscf/d') : _u(q, 'liquidRate', 0, 'STB/d'); };
+        row('Static stability limit q_s', R.qs ? qf(R.qs.q) : 'none in range');
+        if (R.vlpMin) row('Tubing-curve minimum', qf(R.vlpMin.q));
         if (sf.choke && sf.choke.regime && sf.choke.regime !== 'none') row('Choke regime', sf.choke.regime);
         if (sf.choke && _fin(sf.choke.ratio)) row('Choke pressure ratio p2/p1', _fmt(sf.choke.ratio, 2));
         h.innerHTML = '<div class="rbox-title">Operating point</div>' + rows.join('');
+    }
+
+    // Case summary: the inputs that produced the operating point, always rendered inside #wp_res so the page PDF and the Quick
+    // Report carry them whichever step is open (the step input sections are hidden except the active one)
+    var CORR_NAME = function (k) { var e = (G.WTS_flowline_corr || {})[k]; return e ? String(e.label || k).replace(/\s*\(.*$/, '') + (e.verified === true ? '' : ' (provisional)') : String(k || ''); };
+    function _renderCase() {
+        var h = _byId('wp_case'); if (!h) return;
+        var M = ST.M; if (!M) { h.innerHTML = ''; return; }
+        var rows = [], row = function (l, v) { if (v != null && v !== '') rows.push('<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv">' + _esc(v) + '</span></div>'); };
+        var fl = M.fluid, gas = _isGasType(fl.type), TYPE = { oil: 'Oil', gas: 'Dry gas', condensate: 'Gas-condensate', water: 'Water' };
+        row('Fluid', (TYPE[fl.type] || fl.type) + (gas ? ' · SG ' + _fmt(fl.sgg, 3) + ' · CGR ' + _u(fl.cgr, 'cgr', 1, 'STB/MMscf') + ' · WGR ' + _u(fl.wgr, 'cgr', 1, 'STB/MMscf')
+            : ' · ' + _fmt(fl.api, 1) + ' °API · GOR ' + _u(fl.gor, 'gor', 0, 'scf/STB') + ' · WC ' + _fmt(100 * (fl.wc || 0), 1) + ' %'));
+        var I = ST.I, mods = _iprModels(), md = mods.filter(function (x) { return x.key === M.res.model; })[0];
+        row('Reservoir', 'p̄r ' + _u(M.res.pr, 'pressure', 0, 'psia') + ' · T ' + _u(M.res.T_F, 'temperature', 0, '°F'));
+        var par = Object.keys(M.res.params || {}).filter(function (k) { return IP[k] && _fin(+M.res.params[k]) && (!md || md.needs.indexOf(k) !== -1); }).map(function (k) { return k + ' ' + _fmt(+M.res.params[k], 4); }).join(', ');
+        row('Inflow model', (md ? md.label : M.res.model) + (par ? ' (' + par + ')' : '') + (I && I.ok && _fin(I.aof) ? ' · AOF ' + (gas ? _u(I.aof / 1000, 'gasRate', 2, 'MMscf/d') : _u(I.aof, 'liquidRate', 0, 'STB/d')) : ''));
+        var sv = M.well.survey || [], W = ST.W, stn = W && W.ok && Array.isArray(W.stations) ? W.stations : [], last = stn.length ? stn[stn.length - 1] : null;
+        var incMax = stn.reduce(function (a, x) { return _fin(x.inc) && x.inc > a ? x.inc : a; }, 0);
+        row('Survey', sv.length + ' stations' + (last ? ' · TD ' + _u(last.md, 'length', 0, 'ft') + ' MD · ' + _u(last.tvd, 'length', 0, 'ft') + ' TVD · departure ' + _u(last.dep || 0, 'length', 0, 'ft') + ' · max. inclination ' + _fmt(incMax, 1) + '°' : ''));
+        (M.well.strings || []).forEach(function (st0) { row(String(st0.kind || 'string').replace(/^./, function (c) { return c.toUpperCase(); }), _fmt(_dv(st0.od, 'lengthSmall'), 3) + ' × ' + _fmt(_dv(st0.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ', ' + _u(st0.topMd, 'length', 0, 'ft') + ' – ' + _u(st0.botMd, 'length', 0, 'ft') + ' MD'); });
+        var rs = M.well.restrictions || [];
+        if (rs.length) row('Restrictions', rs.map(function (r) { return String(r.kind || '') + ' ' + _fmt(_dv(r.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ' at ' + _u(r.md, 'length', 0, 'ft') + ' MD'; }).join('; '));
+        var nd = W && W.ok && W.nodes;
+        row('Perforations', _u(M.well.perfTopMd, 'length', 0, 'ft') + ' – ' + _u(M.well.perfBotMd, 'length', 0, 'ft') + ' MD; mid ' + _u(nd ? nd.midPerfMd : M.well.midPerfMd, 'length', 0, 'ft') + ' MD' + (nd && _fin(nd.midPerfTvd) ? ' · ' + _u(nd.midPerfTvd, 'length', 0, 'ft') + ' TVD' : ''));
+        row('Wellhead', M.surface.choke.present !== false ? 'choke ' + _fmt(M.surface.choke.bean64, 0) + '/64 in (' + (gas ? 'gas nozzle' : String(M.surface.choke.corr || 'gilbert')) + ')' : (_fin(M.system.thp_psig) ? 'fixed THP ' + _u(M.system.thp_psig, 'pressureG', 0, 'psig') : 'lowest admissible THP'));
+        var fls = M.surface.flowline || [];
+        row('Surface', 'separator ' + _u(M.surface.psep_psig, 'pressureG', 0, 'psig') + (fls.length ? ' · flowline ' + fls.map(function (f) { return _u(f.len, 'length', 0, 'ft') + ' × ' + _fmt(_dv(f.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in'); }).join(' + ') : ' · no flowline'));
+        var R = ST.R, cw = R && R.corr ? R.corr.well : (M.system.corr && M.system.corr.well), cl = R && R.corr ? R.corr.line : (M.system.corr && M.system.corr.line);
+        row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
+        h.innerHTML = '<div class="rbox-title">Case summary</div>' + rows.join('');
     }
 
     // Δp breakdown (canvas bars)
@@ -772,12 +874,12 @@
         var add = function (st, t) { out.push({ st: st, t: String(t).slice(0, 290) }); };
         if (!M) return out;
         if (!ok) { if (R && !_isStub(R)) add('fail', '✗ No operating point: ' + (((R.errors || [])[0]) || 'the outflow curve lies above the inflow curve.')); return out; }
-        var rc = _rateCat();
-        add(R.op.stable ? 'ok' : 'fail', (R.op.stable ? '✓ Stable operating point at ' : '✗ Unstable operating point at ') + _u(R.op.q, rc[0], 0, rc[1]) + ', ' + _u(R.op.p, 'pressure', 0, 'psia') + '.');
+        var gasW = _isGasType(M.fluid.type), qv = function (q) { return gasW ? _u(q / 1000, 'gasRate', 3, 'MMscf/d') : _u(q, 'liquidRate', 0, 'STB/d'); };
+        add(R.op.stable ? 'ok' : 'fail', (R.op.stable ? '✓ Stable operating point at ' : '✗ Unstable operating point at ') + qv(R.op.q) + ', ' + _u(R.op.p, 'pressure', 0, 'psia') + '.');
         if (R.qs && _fin(R.qs.q)) {
             var mgq = R.op.q / R.qs.q - 1;
-            if (mgq < 0.1) add('warn', '⚠ The operating point is within 10 % of the static stability limit q_s (' + _u(R.qs.q, rc[0], 0, rc[1]) + '): the well may head or load up.');
-            else add('ok', '✓ ' + _fmt(mgq * 100, 0) + ' % above the static stability limit q_s (' + _u(R.qs.q, rc[0], 0, rc[1]) + ').');
+            if (mgq < 0.1) add('warn', '⚠ The operating point is within 10 % of the static stability limit q_s (' + qv(R.qs.q) + '): the well may head or load up.');
+            else add('ok', '✓ ' + _fmt(mgq * 100, 0) + ' % above the static stability limit q_s (' + qv(R.qs.q) + ').');
         }
         if (R.vlpMin && _fin(R.vlpMin.q) && R.op.q < R.vlpMin.q && R.op.stable) add('info', 'ℹ The operating point lies left of the tubing-curve minimum (conventional, more conservative rule) while statically stable.');
         var sh = ST.shut;
@@ -792,16 +894,22 @@
         if (_fin(tmax) && _fin(tht)) add(tht <= tmax ? 'ok' : 'fail', (tht <= tmax ? '✓' : '✗') + ' Flowing wellhead temperature ' + _u(tht, 'temperature', 0, '°F') + (tht <= tmax ? ' is within' : ' exceeds') + ' the rating ' + _u(tmax, 'temperature', 0, '°F') + '.');
         var L = ST.loading;
         if (L && _fin(L.margin)) add(L.margin < 0 ? 'fail' : L.margin < 0.1 ? 'warn' : 'ok', (L.margin < 0 ? '✗ Liquid loading: the rate is ' + _fmt(-L.margin * 100, 0) + ' % below' : L.margin < 0.1 ? '⚠ Close to loading: only ' + _fmt(L.margin * 100, 0) + ' % above' : '✓ ' + _fmt(L.margin * 100, 0) + ' % above') +
-            ' the critical rate' + (_fin(L.qc_MMscfd) ? ' ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') + (L.method ? ' (' + L.method + (L.verified === false ? ', provisional' : '') + ')' : '') + (_fin(L.limitingMd) ? ', limiting at ' + _u(L.limitingMd, 'length', 0, 'ft') + ' MD' : '') + '.');
-        var ero = _eroMax(R);
-        if (_fin(ero)) add(ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok', (ero > 1 ? '✗' : ero > 0.8 ? '⚠' : '✓') + ' Maximum velocity is ' + _fmt(ero * 100, 0) + ' % of the erosional velocity (C = ' + _fmt(M.system.eroC, 0) + ').');
+            ' the critical rate' + (_fin(L.qc_MMscfd) ? ' ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') + (L.method ? ' (' + L.method + (L.verified === false ? ', provisional' : '') + ')' : '') + (_fin(L.limitingMd) ? ', limiting at ' + _u(L.limitingMd, 'length', 0, 'ft') + ' MD' + (_fin(L.limitingTvd) ? ' · ' + _u(L.limitingTvd, 'length', 0, 'ft') + ' TVD' : '') : '') + (L.basis === 'tubing' ? ', wellhead to the tubing shoe' : '') + '.');
+        if (L && L.belowEot && _fin(L.belowEot.margin) && L.belowEot.margin < 0 && !L.belowEot.inVerdict)
+            add('info', 'ℹ Liquid may accumulate below the end of tubing: q_c in the ' + _fmt(_dv(L.belowEot.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ' casing / liner below ' + _u(L.belowEot.fromMd, 'length', 0, 'ft') + ' MD is ' + _u(L.belowEot.qc_MMscfd, 'gasRate', 2, 'MMscf/d') + ' (information; the verdict above is the tubing critical rate).');
+        var ero = _eroMax(R), ew = R.velocities && R.velocities.where === 'flowline' ? 'flowline' : 'tubing';
+        if (_fin(ero)) add(ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok', (ero > 1 ? '✗' : ero > 0.8 ? '⚠' : '✓') + ' Maximum velocity is ' + _fmt(ero * 100, 0) + ' % of the erosional velocity (C = ' + _fmt(M.system.eroC, 0) + '), in the ' + ew + '.');
         var sfc = R.surface || {}, thc = _fin(sfc.thtHyd) ? sfc.thtHyd : sfc.tht;
         if (_fin(thc) && _fin(sfc.tHyd)) {
             var hm = thc - sfc.tHyd;
             add(hm < 0 ? 'fail' : hm < 10 ? 'warn' : 'ok', (hm < 0 ? '✗ Hydrate risk at the wellhead: THT is ' : hm < 10 ? '⚠ Hydrate margin only ' : '✓ Hydrate margin ') + _tempDiff(Math.abs(hm)) + (hm < 0 ? ' below the hydrate temperature' : ' at the wellhead') + ' (hydrate ' + _u(sfc.tHyd, 'temperature', 0, '°F') + (_fin(sfc.thtHyd) && _fin(sfc.tht) && Math.abs(sfc.thtHyd - sfc.tht) > 0.05 ? '; THT ' + _u(sfc.thtHyd, 'temperature', 0, '°F') + ' after J-T cooling' : '') + ').');
         }
+        if (_fin(sfc.hydMarginDn) && _fin(sfc.tHydDn)) {
+            var hd = sfc.hydMarginDn;
+            add(hd < 0 ? 'fail' : hd < 10 ? 'warn' : 'ok', (hd < 0 ? '✗ Hydrate risk downstream of the choke: ' : hd < 10 ? '⚠ Hydrate margin downstream of the choke only ' : '✓ Hydrate margin downstream of the choke ') + _tempDiff(Math.abs(hd)) + (hd < 0 ? ' below the hydrate temperature' : '') + ' (' + _u(sfc.tChokeDn, 'temperature', 0, '°F') + ' against ' + _u(sfc.tHydDn, 'temperature', 0, '°F') + ' at ' + _u(sfc.pChokeDn_psig, 'pressureG', 0, 'psig') + ').');
+        }
         // flags the checks above already state are not repeated
-        var SKIP = { EROSION: 1, HEADING: 1, LEFT_OF_MIN: 1, LOADING: 1, HYDRATE_WH: 1, PROVISIONAL: 1 };
+        var SKIP = { EROSION: 1, HEADING: 1, LEFT_OF_MIN: 1, LOADING: 1, HYDRATE_WH: 1, HYDRATE_DN: 1, HYDRATE_DN_NEAR: 1, PROVISIONAL: 1 };
         (R.flags || []).filter(function (f) { return f && f.msg && !SKIP[f.code]; }).slice(0, 6).forEach(function (f) { add(f.sev === 'warn' ? 'warn' : 'info', (f.sev === 'warn' ? '⚠ ' : 'ℹ ') + f.msg); });
         return out;
     }
@@ -836,7 +944,7 @@
         if (tab === 'loading') {
             var L = ST.loading, pd = (L && L.perDepth) || [];
             spec = { key: 'load:' + dax, aspect: 0.62, minH: 240, maxH: 420, w: 640, readout: 'y',
-                     x: { label: 'Gas velocity (' + _lab('velocity', 'ft/s') + ')', min: 0, short: 'v' }, y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: dax.toUpperCase(), fmtR: function (v) { return _fmt(v, 0) + ' ' + dl; } },
+                     x: { label: 'Gas velocity (' + _lab('velocity', 'ft/s') + ')', min: 0, short: 'v' }, y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
                      series: [{ key: 'vg', label: 'Gas velocity', color: T.blue, pts: pd.map(function (r) { return [_dv(r.vg, 'velocity'), _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length')]; }) },
                               { key: 'vc', label: 'Critical velocity', color: T.yellow, dash: [6, 4], pts: pd.map(function (r) { return [_dv(r.vc, 'velocity'), _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length')]; }) }],
                      empty: (ST.M && !_isGasType(ST.M.fluid.type)) ? 'Liquid loading applies to gas and gas-condensate wells.' : 'The loading profile appears after a solve.' };
@@ -873,7 +981,7 @@
             spec = { key: 'trav:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
                      x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
                      x2: { label: 'Temperature (' + _lab('temperature', '°F') + ')', fmtR: function (v) { return _fmt(v, 1) + ' ' + _lab('temperature', '°F'); } },
-                     y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: dax.toUpperCase(), fmtR: function (v) { return _fmt(v, 0) + ' ' + dl; } },
+                     y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
                      series: ser, hbands: hb.map(function (b) { return { y0: b.y0, y1: b.y1, color: b.color }; }),
                      hidden: _plots().trHidden || null, onLegend: function (hid) { _plotsSet({ trHidden: hid }); },
                      empty: 'The pressure and temperature traverse appears after a solve.' };
@@ -910,6 +1018,22 @@
         var sg = SN.suggest(M, k, 5);
         if (sg && sg.ok) box.value = sg.values.map(function (v) { var d = _sensDv(k, v); return String(+(+d).toPrecision(4)); }).join(' ');
         var jb = _byId('wp_jobbox'); if (jb) jb.innerHTML = why ? _vHtml({ st: 'info', t: 'ℹ ' + _sensVarLabel(k).replace(/ \(.*\)$/, '') + ': ' + why + '.' }) : '';
+    }
+
+    // the values box must fit the variable (range and fluid type): on render / restore the stored values are replaced by suggestions
+    // when one of them falls outside the variable's validity range (e.g. the water-cut placeholder with p̄r selected)
+    function _sensParse(key, sraw) {
+        sraw = String(sraw || '').trim();
+        var dc = !!(G.WTS_a11y && typeof G.WTS_a11y.decimalComma === 'function' && G.WTS_a11y.decimalComma());
+        var parts = (/[;\s]/.test(sraw) || dc) ? sraw.split(/[;\s]+/) : sraw.split(',');
+        return parts.filter(function (x) { return x !== ''; }).slice(0, 10).map(function (x) { var n = parseFloat(x.replace(/,/g, '.')); return _fin(n) ? _fromDisp(n, SENS_CAT[key]) : x; });
+    }
+    function _sensFit() {
+        var SN = G.WTS_wp_sens, sel = _byId('wpv_svar'), box = _byId('wpv_svals'); if (!sel || !box || !SN || !SN.VARS) return;
+        var V = SN.VARS[sel.value]; if (!V) return;
+        var vals = _sensParse(sel.value, box.value);
+        var bad = !vals.length || vals.some(function (v) { return typeof v === 'string' ? sel.value !== 'tubingId' : (!_fin(v) || (_fin(V.lo) && v < V.lo) || (_fin(V.hi) && v > V.hi)); });
+        if (bad) _sensSuggest();
     }
 
     // Results drawer (full tables, .rp-skip)
@@ -956,8 +1080,17 @@
             if (is) is.innerHTML = (I && I.ok) ? '<div class="rrow"><span class="rl">AOF</span><span class="rv">' + _u(I.aof, rc[0], 0, rc[1]) + '</span></div>' + (_fin(I.J) ? '<div class="rrow"><span class="rl">Productivity index</span><span class="rv">' + _u(I.J, 'productivityIndex', 3, 'STB/d/psi') + '</span></div>' : '') +
                 (I.verified === false ? _vHtml({ st: 'warn', t: '⚠ ' + (I.label || 'This inflow model') + ': provisional — not verified against a published example.' }) : '') : '';
         }
-        // ③ survey extras + segments
+        // ③ survey extras + segments; the TVD cells of the other tables are refreshed in place (no re-render: the focus stays)
         _renderTable('survey');
+        _refreshTvdCells();
+        var pt = _byId('wp_perftvd');
+        if (pt) {
+            var nd = ST.W && ST.W.ok && ST.W.nodes, f = function (md, tv) { return _fin(md) ? _u(md, 'length', 0, 'ft') + ' MD · ' + (_fin(tv) ? _u(tv, 'length', 0, 'ft') : '—') + ' TVD' : '—'; };
+            pt.innerHTML = nd ? '<div class="rrow"><span class="rl">Top perforation</span><span class="rv">' + _esc(f(nd.perfTopMd, nd.perfTopTvd)) + '</span></div>' +
+                '<div class="rrow"><span class="rl">Mid-perforation (bottom node)</span><span class="rv">' + _esc(f(nd.midPerfMd, nd.midPerfTvd)) + '</span></div>' +
+                '<div class="rrow"><span class="rl">Bottom perforation</span><span class="rv">' + _esc(f(nd.perfBotMd, nd.perfBotTvd)) + '</span></div>' +
+                (_fin(nd.tubingShoeMd) ? '<div class="rrow"><span class="rl">Tubing shoe</span><span class="rv">' + _esc(f(nd.tubingShoeMd, nd.tubingShoeTvd)) + '</span></div>' : '') : '';
+        }
         var hs = _byId('wp_segs');
         if (hs) {
             var W = ST.W;
@@ -983,9 +1116,17 @@
         st[7] = (R && R.ok) ? 'ok' : 'none';
         return st;
     }
+    var DOT_TXT = { ok: 'complete', warn: 'has warnings', fail: 'has a failed check', none: 'not started' };
     function _renderDots() {
-        var s = _stepStatus();
-        STEPS.forEach(function (x) { var d = _byId('wp_dot_' + x.n); if (d) d.className = 'wp-dot ' + (s[x.n] || 'none'); });
+        var s = _stepStatus(), vs = null;
+        STEPS.forEach(function (x) {
+            var d = _byId('wp_dot_' + x.n), st = s[x.n] || 'none'; if (d) d.className = 'wp-dot ' + st;
+            var t = DOT_TXT[st];
+            if (x.n === 5 && (st === 'fail' || st === 'warn')) { vs = vs || _verdicts(); var nf = vs.filter(function (v) { return v.st === st; }).length; t = nf + ' check' + (nf === 1 ? '' : 's') + (st === 'fail' ? ' failed' : ' with a warning'); }
+            var sr = _byId('wp_dotsr_' + x.n); if (sr) sr.textContent = ' — ' + t;
+            var b = document.querySelector ? document.querySelector('#wp_steps [data-step="' + x.n + '"]') : null;
+            if (b && b.setAttribute) b.setAttribute('title', CIRC[x.n] + ' ' + x.label + ' — ' + t);
+        });
     }
     function _renderNotes() {
         var h = _byId('wp_notesbox'); if (!h) return;
@@ -1017,6 +1158,8 @@
         Array.prototype.forEach.call(root.querySelectorAll('[data-for]'), function (e) { var list = String(e.getAttribute('data-for')).split(' '); if (e.classList) e.classList.toggle('wp-off', list.indexOf(gas ? 'gas' : 'oil') === -1 && list.indexOf(type) === -1); });
         var m = _iprModels().filter(function (x) { return x.key === model; })[0], need = m ? m.needs : [];
         Array.prototype.forEach.call(root.querySelectorAll('[data-ip]'), function (e) { if (e.classList) e.classList.toggle('wp-off', need.indexOf(e.getAttribute('data-ip')) === -1); });
+        // dry-gas-only lift methods are not applicable to oil and water wells (WTS_wp_check raises ✗ if one is still selected)
+        ['wp_corr_well', 'wp_corr_line'].forEach(function (id) { var sel = _byId(id); if (!sel || !sel.options) return; Array.prototype.forEach.call(sel.options, function (o) { if (o.value === 'gasTZ') { o.disabled = !gas; o.title = gas ? '' : 'Not applicable: a dry-gas method for gas wells only'; } }); });
         var choke = !!(_byId('wp_choke') || {}).checked;
         Array.prototype.forEach.call(root.querySelectorAll('[data-choke]'), function (e) { var want = e.getAttribute('data-choke') === 'on'; if (e.classList) e.classList.toggle('wp-off', want !== choke); });
         var mode = (_byId('wp_mode') || {}).value || 'rate';
@@ -1054,22 +1197,33 @@
                 ST.design = r;
                 var b = _byId('wp_design');
                 if (b) b.innerHTML = (r && r.ok) ? _vHtml({ st: 'ok', t: '✓ ' + (tk === 'thp' ? 'Wellhead pressure ' + _u(r.thp, 'pressureG', 0, 'psig') : 'Bean ' + _fmt(r.bean, 1) + '/64 in') + ' gives the target rate.' }) +
-                    '<div class="wp-btns"><button type="button" class="btn btn-primary" data-act="adopt" data-id="' + (tk === 'thp' ? 'wp_thp' : 'wp_bean') + '" data-v="' + (tk === 'thp' ? Math.round(r.thp) : Math.round(r.bean)) + '">Use this ' + (tk === 'thp' ? 'THP' : 'bean') + '</button></div>' : _vHtml({ st: 'warn', t: '⚠ No setting reaches the target rate.' });
+                    '<div class="wp-btns"><button type="button" class="btn btn-primary" data-act="adopt" data-id="' + (tk === 'thp' ? 'wp_thp' : 'wp_bean') + '" data-v="' + (tk === 'thp' ? Math.round(r.thp) : Math.round(r.bean)) + '">Use this ' + (tk === 'thp' ? 'THP' : 'bean') + '</button></div>'
+                    : ((r && r.errors && r.errors.length) ? r.errors.slice(0, 3).map(function (e, i) { return _vHtml({ st: i ? 'info' : 'warn', t: (i ? 'ℹ ' : '⚠ ') + e }); }).join('') : _vHtml({ st: 'warn', t: '⚠ No setting reaches the target rate.' }));
             }, 'Design');
             return;
         }
         if (act === 'beans') {
             _drive(_jobOf(_call('WTS_wp_system.beanSchedule', M, M.surface.beans)), function (rows) {
                 ST.beans = { rows: Array.isArray(rows) ? rows : (rows && rows.rows) || [] };
+                ST.beansKey = _mkey(M);
+                ST.maxQ = null;
+                if (ST.beans.rows.some(function (r) { return r.ok && r.regime === 'subcritical-bound'; })) { var mr = _call('WTS_wp_system.maxRate', M); ST.maxQ = mr && mr.ok ? mr.q : null; }
                 _plotsSet({ trTab: 'beans' }); _renderBeans(); _renderTraverseCard();
             }, 'Bean schedule');
             return;
         }
         if (act === 'sens') {
-            var key = (_byId('wpv_svar') || {}).value || 'wc', sraw = String((_byId('wpv_svals') || {}).value || '').trim(), vals = (/[;\s]/.test(sraw) ? sraw.split(/[;\s]+/) : sraw.split(',')).filter(function (x) { return x !== ''; }).slice(0, 10).map(function (x) { var n = parseFloat(x.replace(/,/g, '.')); return _fin(n) ? _fromDisp(n, SENS_CAT[key]) : x; }).filter(function (x) { return _fin(x) || (key === 'tubingId' && typeof x === 'string'); });
+            var key = (_byId('wpv_svar') || {}).value || 'wc', sraw = String((_byId('wpv_svals') || {}).value || '').trim(), vals = _sensParse(key, sraw).filter(function (x) { return _fin(x) || (key === 'tubingId' && typeof x === 'string'); });
             if (!vals.length) { var b1 = _byId('wp_jobbox'); if (b1) b1.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter up to 10 values for the sensitivity.' }); return; }
             _drive(_jobOf(_call('WTS_wp_sens.job', M, [{ key: key, values: vals }])), function (r) {
+                if (!r || r.ok === false) {          // e.g. BAD_VARS: the values do not fit the variable — say so, never stay silent
+                    var eb = _byId('wp_jobbox'), em = ((r && r.errors) || []).slice(0, 3).join(' · ') || (r && r.code) || 'no result';
+                    if (eb) eb.innerHTML = _vHtml({ st: 'fail', t: '✗ Sensitivity not run: ' + em });
+                    var stb = _byId('wp_senstbl'); if (stb) stb.innerHTML = '';
+                    return;
+                }
                 ST.sens = r && typeof r === 'object' ? Object.assign({ key: key }, r) : null;
+                ST.sensKey = _mkey(M);
                 if (G.WTS_state && G.WTS_state.wellperf) G.WTS_state.wellperf.sens = ST.sens;
                 _plotsSet({ trTab: 'sens' }); _renderTraverseCard(); _renderSystemPlot(); _renderSensTable();
             }, 'Sensitivity');
@@ -1089,12 +1243,16 @@
         if (act === 'paste') { var p = _byId('wp_paste_' + btn.getAttribute('data-t')); if (p && p.classList) p.classList.toggle('on'); return; }
         if (act === 'pasteok') { _pasteApply(btn.getAttribute('data-t')); return; }
         if (act === 'svmode') { _surveyModeSet(btn.getAttribute('data-m')); return; }
+        if (act === 'svundo') { var u = ST.svUndo; if (u) _surveyModeSet(u.mode, u.rows); return; }
     }
     function _jobOf(r) { return (r && typeof r.step === 'function') ? r : (r && r.job && typeof r.job.step === 'function' ? r.job : r); }
     function _renderBeans() {
         var h = _byId('wp_beans'); if (!h) return;
         var rows = (ST.beans && ST.beans.rows) || [], rc = _rateCat();
-        h.innerHTML = rows.length ? '<div class="wp-tw"><table class="dtable"><thead><tr><th>Bean (/64)</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Choke Δp</th><th>Regime</th><th>Stable</th></tr></thead><tbody>' +
+        var stale = ST.beans && ST.beans.stale ? '<div class="wp-stalechip" role="status">Results are from the previous inputs — re-run the bean schedule</div>' : '';
+        var bnd = rows.some(function (r) { return r.ok && r.regime === 'subcritical-bound'; });
+        var bnote = bnd ? _vHtml({ st: 'info', t: 'ℹ At the beans marked subcritical-bound the critical choke correlation caps the rate at its conservative sub-critical bound (p1 ≥ p2 / 0.588), so larger beans give the same rate' + (_fin(ST.maxQ) ? '; without a choke the well can deliver ' + (_isGasType(ST.M && ST.M.fluid.type) ? _u(ST.maxQ / 1000, 'gasRate', 2, 'MMscf/d') : _u(ST.maxQ, 'liquidRate', 0, 'STB/d')) : '') + '. A later release adds a continuous sub-critical model.' }) : '';
+        h.innerHTML = rows.length ? stale + bnote + '<div class="wp-tw"><table class="dtable"><thead><tr><th>Bean (/64)</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Choke Δp</th><th>Regime</th><th>Stable</th></tr></thead><tbody>' +
             rows.map(function (r) { return '<tr><td>' + _fmt(r.bean, 0) + '</td><td class="num">' + _fmt(_dv(r.q, rc[0]), 0) + '</td><td class="num">' + _fmt(_dv(r.thp, 'pressureG'), 0) + '</td><td class="num">' + _fmt(_dv(r.tht, 'temperature'), 0) + '</td><td class="num">' + _fmt(_dv(r.dpChoke, 'pressure'), 0) + '</td><td>' + _esc(r.regime || '') + '</td><td>' + (r.stable ? '✓' : '✗') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
     }
     function _renderSensTable() {
@@ -1108,6 +1266,7 @@
             var m = w.code === 'NO_BASE_CASE' && bv != null ? 'The model value ' + _fmt(_sensDv(s.key, bv), 3) + ' ' + _sensVarLabel(s.key).replace(/^.*\((.*)\)$/, '$1') + ' is not in the list: the sensitivity has no base case.' : w.msg;
             return _vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + m });
         }).join('');
+        if (s.stale) head += '<div class="wp-stalechip" role="status">Results are from the previous inputs — re-run the sensitivity</div>';
         h.innerHTML = head + warn + '<div class="wp-tw"><table class="dtable"><thead><tr><th>' + _esc(_sensVarLabel(s.key)) + '</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th>' +
             (gas ? '<th>Condensate (' + _lab('liquidRate', 'STB/d') + ')</th>' : '<th>Oil (' + _lab('liquidRate', 'STB/d') + ')</th><th>Gas (' + _lab('gasRateSmall', 'Mscf/d') + ')</th>') + '<th>Water (' + _lab('liquidRate', 'BWPD') + ')</th>' +
             '<th>pwf (' + _lab('pressure', 'psia') + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Stable</th>' + (gas ? '<th>Loading margin</th>' : '') + '<th>Note</th></tr></thead><tbody>' +
@@ -1200,7 +1359,7 @@
         if (ip && ip.ok !== false && _fin(ip.pwf) && ST.SC && ST.SC.perfs && _fin(ST.SC.perfs.midMd)) markers.push({ x: _dv(ip.pwf, 'pressure'), y: _dv(dax === 'md' ? ST.SC.perfs.midMd : (_fin(ST.SC.perfs.midTvd) ? ST.SC.perfs.midTvd : ST.SC.perfs.midMd), 'length'), kind: 'hollow', color: T.accent, r: 6, label: 'pwf' });
         V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
             x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
-            y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: dax.toUpperCase(), fmtR: function (v) { return _fmt(v, 0) + ' ' + dl; } },
+            y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
             series: ser, markers: markers, hidden: _plots().mHidden || null, onLegend: function (hid) { _plotsSet({ mHidden: hid }); },
             empty: m.all ? 'Pick one test to see its traverses (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
     }
@@ -1221,8 +1380,11 @@
         if (!Mm || !sel || !sel.value) { if (h) h.innerHTML = _vHtml({ st: 'info', t: 'ℹ No DFIT test with a well record in this project.' }); return; }
         var r = Mm.fromDfit(sel.value);
         if (!r || !r.ok) { if (h) h.innerHTML = _vHtml({ st: 'warn', t: '⚠ ' + ((r && (r.errors || [])[0]) || 'The DFIT test has no survey or strings.') }); return; }
-        var w = Mm.write(r.patch);
-        if (r.scalars && _fin(r.scalars.wp_midPerf)) _setCtrl('wp_midPerf', r.scalars.wp_midPerf, true);
+        var mid = r.scalars && _fin(r.scalars.wp_midPerf), w;
+        ST.batch = (ST.batch || 0) + (mid ? 1 : 0);          // with a mid-perforation to commit, that commit runs the one solve
+        try { w = Mm.write(r.patch); } finally { if (mid) ST.batch--; }
+        ST.M = _read() || ST.M;
+        if (mid) _setCtrl('wp_midPerf', r.scalars.wp_midPerf, true);
         ['survey', 'strings'].forEach(_renderTable);
         if (h) h.innerHTML = _vHtml({ st: w && w.ok ? 'ok' : 'warn', t: w && w.ok ? '✓ Well geometry imported from DFIT test ' + sel.value + ' (' + (r.patch.survey || []).length + ' survey stations, ' + (r.patch.strings || []).length + ' strings).' : '⚠ The import was not saved.' });
         if (r.scalars && _fin(r.scalars.wp_midPerf)) _commit('wp_midPerf');
@@ -1231,7 +1393,10 @@
         var ex = EXAMPLES[k], Mm = G.WTS_wp_model; if (!ex || !Mm) return;
         var conf = (typeof G.confirm === 'function') ? G.confirm('Load the example "' + ex.label + '"? It replaces this well\'s Well Performance inputs.') : true;
         if (!conf) return;
-        Mm.write(JSON.parse(JSON.stringify(ex.tables)));
+        // the table write is batched (its model-changed event does not solve): the one committed change below runs the one solve
+        ST.batch = (ST.batch || 0) + 1;
+        try { Mm.write(JSON.parse(JSON.stringify(ex.tables))); } finally { ST.batch--; }
+        ST.M = _read() || ST.M;
         Object.keys(ex.scalars).forEach(function (id) { _setCtrl(id, ex.scalars[id], typeof ex.scalars[id] === 'number'); });
         ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {};
         _renderAllTables();
@@ -1241,7 +1406,7 @@
     function _addRow(t) {
         var tbl = _byId('wp_tbl_' + t), tb = tbl && tbl.querySelector('tbody'); if (!tb) return;
         var n = tb.querySelectorAll('tr').length, M = ST.M || _read(), cols = TABLES[t](M);
-        var extra = t === 'survey' ? (_surveyMode(M) === 'mdtvd' ? 2 : 3) : 0;
+        var ex = _extraCols(t, M), extra = ex ? ex.n : 0;
         tb.insertAdjacentHTML('beforeend', '<tr data-r="' + n + '">' + cols.map(function (c) {
             if (c.opts) return '<td><select data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '">' + c.opts.map(function (o) { return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select></td>';
             return '<td><input data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '" ' + (c.text ? 'type="text"' : 'type="number" step="any" inputmode="decimal"') + ' value=""></td>';
@@ -1250,28 +1415,72 @@
     }
     function _pasteApply(t) {
         var ta = _byId('wp_pastet_' + t), M = ST.M || _read(), cols = TABLES[t](M); if (!ta) return;
-        var lines = String(ta.value || '').split(/\r?\n/), rows = [];
+        var lines = String(ta.value || '').split(/\r?\n/), rows = [], odd = 0;
+        var dc = !!(G.WTS_a11y && typeof G.WTS_a11y.decimalComma === 'function' && G.WTS_a11y.decimalComma());
         lines.forEach(function (ln) {
-            var cells = ln.trim().split(/\t|;|,(?=\s*[-\d.])|\s{2,}|\s(?=[-\d.])/).map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
-            if (!cells.length || !cells.some(function (x) { return /^[-+]?\d/.test(x); })) return;      // header lines are skipped
+            var cells = _pasteCells(ln, dc);
+            if (!cells.length || !cells.some(function (x) { return /^[-+]?\d/.test(x) || /^[-+]?[.,]\d/.test(x); })) return;      // header lines are skipped
+            if (cells.length !== cols.length) odd++;
             var arr = cols.every(function (c) { return typeof c.k === 'number'; }), row = arr ? [] : {};
-            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = parseFloat(String(raw == null ? '' : raw).replace(/,/g, '')); row[c.k] = _fin(v) ? _fromDisp(v, c.cat) : null; } });
+            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, c.cat) : null; } });
             rows.push(row);
         });
         var r = _writeTable(t, rows), msg = _byId('wp_pastemsg_' + t);
-        if (msg) msg.innerHTML = _vHtml({ st: r && r.ok ? 'ok' : 'warn', t: r && r.ok ? '✓ ' + rows.length + ' row(s) pasted' + ((r.warnings || []).length ? ' — ' + r.warnings.map(function (w) { return w.msg; }).join(' ') : '.') : '⚠ Nothing was pasted.' });
+        var oddTxt = odd ? ' ⚠ ' + odd + ' row(s) had ' + 'a different number of cells than the ' + cols.length + ' columns: check the columns.' : '';
+        if (msg) msg.innerHTML = _vHtml({ st: r && r.ok && !odd ? 'ok' : 'warn', t: r && r.ok ? (odd ? '⚠ ' : '✓ ') + rows.length + ' row(s) pasted' + ((r.warnings || []).length ? ' — ' + r.warnings.map(function (w) { return w.msg; }).join(' ') : '.') + oddTxt : '⚠ Nothing was pasted.' });
         ta.value = '';
         var p = _byId('wp_paste_' + t); if (p && p.classList) p.classList.remove('on');
         _renderTable(t);
     }
-    function _surveyModeSet(m) {
+    // switching the survey form converts the stations (no rows are lost): MD·Inc·Azi → MD·TVD from the minimum-curvature stations;
+    // MD·TVD → MD·Inc·Azi with the inclination of each straight segment and the last known azimuth. The previous rows stay one click
+    // away (Undo) in the message under the table — no browser confirm.
+    // one pasted line → cells. A row with tabs or semicolons is split on those only (so "30,5" stays one decimal-comma cell);
+    // otherwise commas between numbers split cells unless the app's decimal-comma setting is on, and runs of spaces split cells.
+    function _pasteCells(ln, dc) {
+        ln = String(ln || '').trim(); if (!ln) return [];
+        var parts;
+        if (/\t/.test(ln)) parts = ln.split('\t');
+        else if (/;/.test(ln)) parts = ln.split(';');
+        else if (!dc && /,/.test(ln)) parts = ln.split(/\s*,\s*/);
+        else parts = ln.split(/\s+/);
+        return parts.map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
+    }
+    function _pasteNum(raw, dc) {
+        var t = String(raw == null ? '' : raw).trim(); if (t === '') return NaN;
+        if (dc) return (G.WTS_a11y && typeof G.WTS_a11y.parseNumber === 'function') ? G.WTS_a11y.parseNumber(t.replace(/\.(?=\d{3}(\D|$))/g, '')) : parseFloat(t.replace(/\./g, '').replace(',', '.'));
+        if (/^[-+]?\d*,\d+$/.test(t) && !/^[-+]?\d{1,3}(,\d{3})+$/.test(t)) return parseFloat(t.replace(',', '.'));     // "30,5" in a tab / semicolon row
+        return parseFloat(t.replace(/,(?=\d{3}(\D|$))/g, ''));
+    }
+    function _surveyConvert(rows, to) {
+        if (!rows.length) return [];
+        if (to === 'mdtvd') {
+            var W = ST.W, stn = (W && W.ok && Array.isArray(W.stations)) ? W.stations : [];
+            var tvdOf = function (md) { var s0 = stn.filter(function (x) { return Math.abs(x.md - md) < 0.01; })[0]; return s0 ? s0.tvd : _tvdAt(md); };
+            var out = rows.map(function (r) { var tv = tvdOf(r[0]); return [r[0], _fin(tv) ? Math.round(tv * 100) / 100 : null]; });
+            return out.some(function (r) { return !_fin(r[1]); }) ? null : out;
+        }
+        var azi = _fin(_plots().surveyAzi) ? _plots().surveyAzi : 0, res = [[rows[0][0], 0, azi]];
+        for (var i = 1; i < rows.length; i++) {
+            var dmd = rows[i][0] - rows[i - 1][0], dtv = rows[i][1] - rows[i - 1][1];
+            var inc = dmd > 0 ? Math.acos(Math.max(-1, Math.min(1, dtv / dmd))) * 180 / Math.PI : 0;
+            res.push([rows[i][0], Math.round(inc * 100) / 100, azi]);
+        }
+        return res;
+    }
+    function _surveyModeSet(m, rowsOverride) {
         var M = ST.M || _read(), cur = _surveyMode(M);
-        if (m === cur) return;
-        if ((M.well.survey || []).length && typeof G.confirm === 'function' && !G.confirm('Switching the survey form clears the survey rows. Continue?')) return;
+        if (m === cur && !rowsOverride) return;
+        var old = (M.well.survey || []).map(function (r) { return r.slice(); }), msg = _byId('wp_svmsg');
+        var conv = rowsOverride || _surveyConvert(old, m);
+        if (old.length && !conv) { if (msg) msg.innerHTML = _vHtml({ st: 'warn', t: '⚠ The survey cannot be converted until the well solves (TVD of every station). Fix the survey first.' }); return; }
+        if (cur === 'mdinc' && old.length && old[old.length - 1].length >= 3 && _fin(old[old.length - 1][2])) _plotsSet({ surveyAzi: old[old.length - 1][2] });
         _plotsSet({ surveyMode: m });
-        if ((M.well.survey || []).length) _writeTable('survey', []);
+        ST.svUndo = rowsOverride ? null : { mode: cur, rows: old };
+        if (old.length || conv.length) _writeTable('survey', conv);
         ST.M = _read();
         _renderTable('survey'); _renderSvMode();
+        if (msg) msg.innerHTML = rowsOverride ? _vHtml({ st: 'info', t: 'ℹ The previous survey rows are back.' }) : (old.length ? _vHtml({ st: 'ok', t: '✓ ' + conv.length + ' station(s) converted to ' + (m === 'mdtvd' ? 'MD · TVD' : 'MD · Inc · Azi') + '.' }) + '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="svundo">Undo</button></div>' : '');
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
     function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
@@ -1329,7 +1538,7 @@
     // ── render ────────────────────────────────────────────────────────────────
     function _stepsHtml() {
         return '<nav class="wp-steps rp-skip" id="wp_steps" aria-label="Well performance steps">' + STEPS.map(function (s) {
-            return '<button type="button" data-step="' + s.n + '"><span class="wp-dot" id="wp_dot_' + s.n + '"></span>' + CIRC[s.n] + ' ' + s.label + '</button>';
+            return '<button type="button" data-step="' + s.n + '"><span class="wp-dot" id="wp_dot_' + s.n + '" aria-hidden="true"></span>' + CIRC[s.n] + ' ' + s.label + '<span class="wp-sr" id="wp_dotsr_' + s.n + '"></span></button>';
         }).join('') + '<span class="wp-sp"></span><span class="wp-ex">Examples: </span>' +
             '<button type="button" data-act="example" data-ex="oil" title="Load the example vertical oil well">Oil</button><button type="button" data-act="example" data-ex="gas" title="Load the example deviated gas-condensate well">Gas</button></nav>';
     }
@@ -1361,7 +1570,7 @@
                 _fg('wp_corr_muod', 'Dead-oil viscosity', { options: [['beggsRobinson', 'Beggs-Robinson']] }) + _fg('wp_corr_muo', 'Live-oil viscosity', { options: [['beggsRobinson', 'Beggs-Robinson']] }) +
                 _fg('wp_corr_muou', 'Undersaturated viscosity', { options: [['vasquezBeggs', 'Vasquez-Beggs']] }) + _fg('wp_corr_z', 'Gas Z factor', { options: [['dranchukAbouKassem', 'Dranchuk-Abou-Kassem']] }) +
                 _fg('wp_corr_mug', 'Gas viscosity', { options: [['leeGonzalezEakin', 'Lee-Gonzalez-Eakin']] }) + '</div></details>' +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="sqc">Use the Separator QC GOR</button></div><div id="wp_fluidmsg"></div>') +
+                '<div class="wp-btns rp-skip" data-for="oil"><button type="button" class="btn btn-secondary" data-act="sqc">Use the Separator QC GOR</button></div><div id="wp_fluidmsg"></div>') +
             _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></section>';
         var s2 = '<section id="wp_step_2" class="wp-sec" style="display:none"><div class="wp-sec-h">② Reservoir <span>inflow model, reservoir pressure and its parameters</span></div><div class="wp-2c">' +
             _card('Inflow', '<div class="fg">' +
@@ -1373,11 +1582,11 @@
         var s3 = '<section id="wp_step_3" class="wp-sec" style="display:none"><div class="wp-sec-h">③ Well <span>deviation survey, strings, restrictions, perforations and temperature</span></div>' +
             _card('Deviation survey', _tableBlock('survey', 'Survey stations', 'Minimum curvature gives TVD, departure and dog-leg severity for every station. Every depth on this page shows MD and TVD.',
                 { head: ' <span class="wp-seg" id="wp_svmode" style="margin-left:auto"><button type="button" data-act="svmode" data-m="mdinc">MD · Inc · Azi</button><button type="button" data-act="svmode" data-m="mdtvd">MD · TVD</button></span>',
-                  btns: '<select id="wpv_dfit" aria-label="DFIT test" style="max-width:260px"></select><button type="button" class="btn btn-secondary" data-act="dfit">Import well geometry from a DFIT test</button>' }) + '<div id="wp_dfitmsg"></div>') +
+                  btns: '<select id="wpv_dfit" aria-label="DFIT test" style="max-width:260px"></select><button type="button" class="btn btn-secondary" data-act="dfit">Import well geometry from a DFIT test</button>' }) + '<div id="wp_svmsg" class="rp-skip"></div><div id="wp_dfitmsg"></div>') +
             '<div class="wp-2c">' + _card('Strings and flow path', _tableBlock('strings', 'Tubing, casing and liners', 'OD / ID in inches; roughness defaults to new steel (0.0006 in).') +
                 '<div class="fg" style="margin-top:12px">' + _fg('wp_path', 'Flow path', { options: [['tubing', 'Tubing'], ['annulus', 'Annulus']] }) + _fg('wp_datum', 'Depth datum', { options: [['RKB', 'RKB'], ['GL', 'Ground level'], ['MSL', 'Mean sea level']] }) + _fg('wp_datumOff', 'Datum offset', { unit: 'ft' }) + '</div>') +
             _card('Restrictions and perforations', _tableBlock('restrictions', 'SSSV, nipples, sleeves, cross-overs, downhole chokes', 'Applied at the restriction depth with a homogeneous loss coefficient (K from β when blank).') +
-                '<div class="fg" style="margin-top:12px">' + _fg('wp_perfTop', 'Top perforation (MD)', { unit: 'ft' }) + _fg('wp_perfBot', 'Bottom perforation (MD)', { unit: 'ft' }) + _fg('wp_midPerf', 'Mid-perforation (MD) — the bottom node', { unit: 'ft' }) + '</div>') + '</div>' +
+                '<div class="fg" style="margin-top:12px">' + _fg('wp_perfTop', 'Top perforation (MD)', { unit: 'ft' }) + _fg('wp_perfBot', 'Bottom perforation (MD)', { unit: 'ft' }) + _fg('wp_midPerf', 'Mid-perforation (MD) — the bottom node', { unit: 'ft' }) + '</div><div id="wp_perftvd" class="wp-perftvd" aria-live="polite" style="margin-top:8px"></div>') + '</div>' +
             '<div class="wp-2c">' + _card('Temperature', '<div class="fg">' + _fg('wp_surfT', 'Surface temperature', { unit: '°F' }) + _fg('wp_tht', 'Flowing wellhead temperature', { unit: '°F' }) + _fg('wp_thtMeas', 'THT measured', { check: true }) +
                 _fg('wp_heat', 'Temperature model', { options: [['linear', 'Linear between THT and the reservoir'], ['relax', 'Heat-transfer relaxation (release 4.4)', true]] }) + '</div>' + _tableBlock('geo', 'Geothermal points', 'TVD and static temperature; at least the surface and the reservoir.')) +
             _card('Flow segments', '<div id="wp_segs"></div>') + '</div></section>';
@@ -1445,6 +1654,7 @@
                 { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['loading', 'Liquid loading'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
                     '<span class="wp-seg" id="wp_depthseg"><button type="button" data-depth="tvd">TVD</button><button type="button" data-depth="md">MD</button></span>' }) +
             '<div class="rbox" id="wp_valid"></div>' +
+            '<div class="rbox wp-case" id="wp_case"></div>' +
             '<div class="wp-notes" id="wp_notesbox" style="margin:var(--wp-gap) 0"></div>' +
             '</div>' +
             '<details class="wp-drawer rp-skip" id="wp_drawer"><summary>Full results <span class="wp-hint" id="wp_drawer_sum" style="margin:0 0 0 6px"></span></summary><div class="wp-drawer-b" id="wp_drawer_b"></div></details>';
@@ -1457,6 +1667,7 @@
         ST.M = _read();
         _renderAllTables();
         _syncUi();
+        _sensFit();
         _bindRoot();
         // With autosave on, the host restores the saved values silently right after this render and then calls hooks.after,
         // which runs the one calc (as 49-calc-cheminj.js); otherwise calc now.
@@ -1538,15 +1749,30 @@
         badge: 'Production',
         bc: 'dc-b-green',
         desc: 'Nodal analysis of a well: inflow, vertical lift with deviation, choke and flowline to the separator; operating point and stability, choke sizing, shut-in pressure and liquid loading.',
-        hooks: { silent: true, after: function () { _syncUi(); _renderAllTables(); G.calcWellPerf(); } },
+        hooks: { silent: true, after: function () { _syncUi(); _renderAllTables(); _sensFit(); G.calcWellPerf(); } },
         render: function (body) { return G.renderWellPerf(body); }
     };
 
     if (typeof document !== 'undefined' && document.addEventListener) {
-        var again = function () { if (_byId('wp_root')) { ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {}; var mr = _byId('wp_matchres'); if (mr) mr.innerHTML = ''; _renderAllTables(); G.calcWellPerf(); } };
+        // a well switch or a project open (one solve per switch, §2.6). 29-multiwell (_after) and 29-project-save (open) emit
+        // 'wts:project-loaded' {loaded, …} and 'wts:well-changed' {id, list} and then re-render the open page, whose silent restore
+        // (hooks.after) solves the new model with its restored controls. So a host event only clears the study results here: solving
+        // now would read the previous well's controls (a wrong, wasted solve). Any other dispatch re-reads the model and solves when it
+        // differs from the last solve.
+        var again = function (e) {
+            if (!_byId('wp_root')) return;
+            ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {}; var mr = _byId('wp_matchres'); if (mr) mr.innerHTML = '';
+            var b1 = _byId('wp_senstbl'); if (b1) b1.innerHTML = ''; var b2 = _byId('wp_beans'); if (b2) b2.innerHTML = '';
+            var d = e && e.detail, hostRerenders = !!(d && (Array.isArray(d.loaded) || Array.isArray(d.list)) && typeof G.WTS_rerender === 'function');
+            if (hostRerenders) return;
+            _renderAllTables();
+            var M = _read();
+            if (ST.R && !ST.stale && ST.lastKey && _mkey(M) === ST.lastKey) { ST.M = M; _renderAll(false); return; }
+            G.calcWellPerf();
+        };
         document.addEventListener('wts:well-changed', again);
         document.addEventListener('wts:project-loaded', again);
-        document.addEventListener('wts:wellperf-model-changed', function (e) { if (_byId('wp_root')) { G.calcWellPerf(); if (!e || !e.detail || !e.detail.keys || e.detail.keys.indexOf('tests') !== -1) _syncMatchTests(); } });
+        document.addEventListener('wts:wellperf-model-changed', function (e) { if (_byId('wp_root')) { if (!ST.batch) G.calcWellPerf(); if (!e || !e.detail || !e.detail.keys || e.detail.keys.indexOf('tests') !== -1) _syncMatchTests(); } });
         document.addEventListener('wts:unit-system-changed', function () {
             if (!_byId('wp_root')) return;
             _renderAllTables();

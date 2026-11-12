@@ -1,9 +1,10 @@
 // Well Performance liquid loading — docs/WELL-PERFORMANCE-PLAN.md §4.11, §15.1 (Turner / Coleman), §17.1 (WP5, 6 tests).
 //
 // WLD1 Turner / Coleman / Li critical velocity by hand at a node: v_c = C·σ^¼·(ρ_L − ρ_g)^¼/ρ_g^½, C = 1.912 / 1.593 / 0.7241
-// WLD2 q_c (MMscf/d) = 3.067·p·v_c·A/((T + 460)·z) at EVERY traverse node; the reported q_c is the maximum, the margin q_op/q_c − 1
-// WLD3 limiting depth with a tapered string: the casing below the tubing shoe (bottom) controls FIX.gasWell; with the path in the
-//      tubing only the larger upper string controls
+// WLD2 q_c (MMscf/d) = 3.067·p·v_c·A/((T + 460)·z) at EVERY traverse node; the reported q_c is the maximum over the tubing nodes
+//      (wellhead → tubing shoe, review 2026-11-12), the section below the end of tubing is reported apart; margin q_op/q_c − 1
+// WLD3 limiting depth with a tapered string: in the tubing the larger upper string controls FIX.gasWell; the 7 in liner below the
+//      tubing shoe is the belowEot information line, and controls the verdict only with M.system.loadingRathole
 // WLD4 method suggested by the flowing wellhead pressure: Coleman below 500 psia, Turner above 1,000 psia, both shown in between
 // WLD5 verdicts (✗ below, ⚠ within 10 %, ✓) and recommendations; an oil well is "not applicable"
 // WLD6 the solve carries the loading (same as WTS_wp_loading(R, F, W)), the LOADING flag and the per-depth profile with MD and TVD
@@ -60,8 +61,11 @@ module.exports = [
         n++;
       });
       assert.ok(n > 40, 'q_c along the whole well: ' + n + ' nodes');
-      const mx = Math.max.apply(null, L.perDepth.map((r) => r.qc));
-      assert.ok(L.methods.turner.qc_MMscfd >= mx - 1e-12, 'reported q_c is the maximum over the nodes');
+      const mx = Math.max.apply(null, L.perDepth.filter((r) => !r.belowEot).map((r) => r.qc));
+      assert.ok(L.methods.turner.qc_MMscfd >= mx - 1e-12, 'reported q_c is the maximum over the tubing nodes');
+      const mb = Math.max.apply(null, L.perDepth.filter((r) => r.belowEot).map((r) => r.qc));
+      assert.ok(L.belowEot && Math.abs(L.belowEot.qc_MMscfd - mb) < 1e-9 * mb, 'below the end of tubing: reported apart');
+      assert.strictEqual(L.basis, 'tubing');
       assert.rel(L.methods.turner.margin, R.rates.qg / 1000 / L.methods.turner.qc_MMscfd - 1, 1e-12, 'margin');
     },
   },
@@ -70,12 +74,19 @@ module.exports = [
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const { R } = env(ctx), L = R.loading;
-      assert.within(L.limitingMd, 9850 - 1e-6, 9950 + 1e-6, 'bottom (casing 9,850–9,950 ft MD) controls');
+      assert.ok(L.limitingMd <= 5000 + 1e-6, 'the 3-1/2 in upper string controls the tubing verdict: ' + L.limitingMd);
       assert.ok(L.limitingTvd < L.limitingMd, 'TVD of the limiting point on the deviated well');
+      assert.ok(L.belowEot && L.belowEot.fromMd === 9850 && L.belowEot.toMd > 9850 && L.belowEot.toMd <= 9950 + 1e-6 && Math.abs(L.belowEot.id - 6.276) < 1e-9, 'liner below the shoe reported apart: ' + JSON.stringify(plain(L.belowEot)));
+      assert.ok(L.belowEot.qc_MMscfd > L.qc_MMscfd && L.belowEot.margin < 0 && /end of tubing/.test(L.belowEot.note), 'liquid may accumulate below the end of tubing (information)');
+      // the strict reading (every node, the rathole included) as an explicit option
+      const Mr = S.FIX.gasWell; Mr.system.loadingRathole = true;
+      const Lr = sol(app(ctx).win.WTS_wp_system, Mr).loading;
+      assert.within(Lr.limitingMd, 9850 - 1e-6, 9950 + 1e-6, 'with loadingRathole the casing 9,850–9,950 ft MD controls');
+      assert.ok(Lr.margin < 0 && Lr.basis === 'all', 'rathole verdict');
       const M = S.FIX.gasWell; M.well.midPerfMd = 9840; M.well.perfTopMd = 9830; M.well.perfBotMd = 9845;
       const L2 = sol(app(ctx).win.WTS_wp_system, M).loading;
       assert.ok(L2 && L2.limitingMd <= 5000 + 1e-6, 'the 3-1/2 in upper string controls in the tubing alone: ' + (L2 && L2.limitingMd));
-      assert.ok(L2.methods.turner.qc_MMscfd < L.methods.turner.qc_MMscfd, 'a smaller controlling bore → a smaller critical rate');
+      assert.ok(L2.methods.turner.qc_MMscfd < Lr.methods.turner.qc_MMscfd, 'a smaller controlling bore → a smaller critical rate');
     },
   },
   {
@@ -99,10 +110,11 @@ module.exports = [
     run(_a, assert, ctx) {
       const { G, R, F, W } = env(ctx);
       const L = R.loading;
-      assert.ok(L.margin < 0 && L.verdict === 'fail' && L.recommendations.length === 3, 'below: ' + L.margin);
       // the same well at a scaled rate: rebuild the verdict through the engine (the margin is linear in q_op)
       const at = (q) => { const R2 = Object.assign({}, R, { rates: Object.assign({}, R.rates, { qg: q }) }); return G.WTS_wp_loading(R2, F, W); };
       const qc = L.qc_MMscfd * 1000;
+      const Lb = at(qc * 0.8);
+      assert.ok(Lb.margin < 0 && Lb.verdict === 'fail' && Lb.recommendations.length === 3, 'below: ' + Lb.margin);
       assert.strictEqual(at(qc * 1.05).verdict, 'warn');
       assert.strictEqual(at(qc * 1.5).verdict, 'ok');
       assert.ok(!at(qc * 1.5).recommendations, 'no recommendation when unloading');
@@ -120,7 +132,9 @@ module.exports = [
     run(_a, assert, ctx) {
       const { G, R, F, W } = env(ctx);
       assert.deepStrictEqual(plain(R.loading), plain(G.WTS_wp_loading(R, F, W)), 'same result');
-      assert.ok(R.flags.some((f) => f.code === 'LOADING' && f.sev === 'warn'), 'LOADING flag');
+      assert.ok(R.loading.margin > 0 && !R.flags.some((f) => f.code === 'LOADING'), 'the tubing unloads at the operating rate: no LOADING flag');
+      const Mr = S.FIX.gasWell; Mr.system.loadingRathole = true;
+      assert.ok(sol(G.WTS_wp_system, Mr).flags.some((f) => f.code === 'LOADING' && f.sev === 'warn'), 'LOADING flag (rathole rule)');
       const pd = R.loading.perDepth;
       assert.near(pd[0].md, 0, 1e-6); assert.near(pd[pd.length - 1].md, W.nodes.midPerfMd, 1e-6, 'to the mid-perforations');
       assert.ok(pd.every((r) => r.tvd <= r.md + 1e-6 && isFinite(r.vg) && isFinite(r.vc) && isFinite(r.qc)), 'MD / TVD / velocities');

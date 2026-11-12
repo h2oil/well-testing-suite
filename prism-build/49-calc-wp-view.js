@@ -145,9 +145,13 @@
         if (!st) { st = cv._wp = { view: null, hidden: {}, key: null, hover: null, drag: null, focusHandle: -1, ptrs: {} }; _bind(cv); }
         if (st.key !== spec.key) { st.view = null; st.key = spec.key; st.hidden = {}; if (spec.hidden) Object.keys(spec.hidden).forEach(function (k) { st.hidden[k] = !!spec.hidden[k]; }); }
         st.spec = spec;
+        // touch-action must be set before the gesture starts: none while the plot has drag handles (the drag and the pinch are
+        // handled here), pan-y otherwise so the page scrolls over a plot without handles
+        if (cv.style) cv.style.touchAction = (spec.handles && spec.handles.length) ? 'none' : 'pan-y';
         _draw(cv);
         return st;
     }
+    var WHEEL_HINT = 'Ctrl + wheel to zoom (or click the plot first)';
     function redraw(cv) { if (cv && cv._wp && cv._wp.spec) _draw(cv); }
 
     function _draw(cv) {
@@ -204,7 +208,8 @@
             var x0 = toX(_clamp(b.x0, xr[0], xr[1])), x1 = toX(_clamp(b.x1, xr[0], xr[1]));
             if (!(x1 > x0)) return;
             ctx.fillStyle = b.color || 'rgba(248,81,73,0.10)'; ctx.fillRect(x0, P.y, x1 - x0, P.h);
-            if (b.label && x1 - x0 > 50) { ctx.fillStyle = T.text2; ctx.font = font(10); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(b.label, x0 + 5, P.y + 5); }
+            // the band label sits at the bottom of the band, clear of the vertical-line labels that run down from the top
+            if (b.label && x1 - x0 > 50) { ctx.fillStyle = T.text2; ctx.font = font(10); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(b.label, x0 + 5, P.y + P.h - (st.view ? 16 : 5)); }
         });
         // horizontal strips at the left edge (flow-pattern bands along depth)
         (sp.hbands || []).forEach(function (b) {
@@ -212,12 +217,32 @@
             if (!(hh > 0)) return;
             ctx.fillStyle = b.color; ctx.globalAlpha = 0.85; ctx.fillRect(P.x, top, 10, hh); ctx.globalAlpha = 0.07; ctx.fillRect(P.x + 10, top, P.w - 10, hh); ctx.globalAlpha = 1;
         });
-        (sp.vlines || []).forEach(function (l) {
-            if (!_fin(l.x) || l.x < xr[0] || l.x > xr[1]) return;
-            var x = toX(l.x);
+        // legend box placed first (auto: the plot corner with the fewest curve points, markers and handles under it), so the
+        // vertical-line labels can keep clear of it
+        var legBox = _legendPlace(ctx, sp, hidden, P, toX, toY, font);
+        st.legBox = legBox;
+        // vertical lines; their rotated labels run down from the top and are staggered (never within 14 px of each other in x while
+        // overlapping in y), kept off the legend box and the point-handle labels
+        var vl = (sp.vlines || []).filter(function (l) { return _fin(l.x) && l.x >= xr[0] && l.x <= xr[1]; }).map(function (l) { return { l: l, x: toX(l.x) }; }).sort(function (a, b) { return a.x - b.x; });
+        var obst = [];
+        if (legBox) obst.push(legBox);
+        (sp.handles || []).forEach(function (h) { if (h.kind === 'point' && _fin(h.x) && _fin(h.value)) { var hx0 = toX(h.x), hy0 = toY(h.value); obst.push({ x0: hx0, x1: hx0 + 150, y0: hy0 - 24, y1: hy0 + 2 }); } });
+        var placed = st.vlabels = [];
+        ctx.font = font(10, '600');
+        vl.forEach(function (it) {
+            var l = it.l, x = it.x;
             ctx.strokeStyle = l.color || T.text2; ctx.lineWidth = 1.2; if (ctx.setLineDash) ctx.setLineDash(l.dash || [5, 4]);
             ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]);
-            if (l.label) { ctx.save(); ctx.translate(x - 4, P.y + 8); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore(); }
+            if (!l.label) return;
+            var tw = (ctx.measureText ? ctx.measureText(l.label).width : l.label.length * 6) + 4, ys = P.y + 8, guard = 0, moved = true;
+            var hit = function (r) { return x - 14 < r.x1 && x - 1 > r.x0 && ys < r.y1 && ys + tw > r.y0; };
+            while (moved && guard++ < 20) {
+                moved = false;
+                placed.concat(obst).forEach(function (r) { if (hit(r)) { ys = r.y1 + 6; moved = true; } });
+            }
+            if (ys + tw > P.y + P.h - 4) ys = Math.max(P.y + 4, P.y + P.h - 4 - tw);
+            placed.push({ x0: x - 14, x1: x - 1, y0: ys, y1: ys + tw, label: l.label });
+            ctx.save(); ctx.translate(x - 4, ys); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore();
         });
         (sp.hlines || []).forEach(function (l) {
             if (!_fin(l.y)) return;
@@ -276,12 +301,9 @@
         // legend (toggles)
         st.legendHits = [];
         var leg = (sp.series || []).filter(function (s) { return s.legend !== false && s.label; });
-        if (leg.length) {
+        if (leg.length && legBox) {
             ctx.font = font(11, '600'); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-            var lx = P.x + P.w - 8, ly = P.y + 10, rowH = 18, wmax = 0;
-            leg.forEach(function (s) { var w = (ctx.measureText ? ctx.measureText(s.label).width : s.label.length * 6) + 30; if (w > wmax) wmax = w; });
-            wmax = Math.min(wmax, P.w * 0.6);
-            var bx = lx - wmax, bh = leg.length * rowH + 6;
+            var rowH = 18, wmax = legBox.w, bx = legBox.x0 + 4, ly = legBox.y0 + 6, bh = leg.length * rowH + 6;
             ctx.fillStyle = T.bg; ctx.globalAlpha = 0.78; ctx.fillRect(bx - 4, ly - 6, wmax + 8, bh); ctx.globalAlpha = 1;
             leg.forEach(function (s, i) {
                 var y = ly + i * rowH + 4, off = !!hidden[s.key];
@@ -359,6 +381,34 @@
             _wrap(ctx, sp.empty, P.w - 40).forEach(function (ln, i, a) { ctx.fillText(ln, P.x + P.w / 2, P.y + P.h / 2 + (i - (a.length - 1) / 2) * 18); });
         }
         if (st.view) { ctx.fillStyle = T.text2; ctx.font = font(10); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText('zoomed — double-click to reset', P.x + 4, P.y + P.h - 3); }
+        if (st.wheelHint) { ctx.font = font(11, '600'); var hw = (ctx.measureText ? ctx.measureText(WHEEL_HINT).width : 150) + 14; ctx.fillStyle = T.bg; ctx.globalAlpha = 0.85; ctx.fillRect(P.x + P.w / 2 - hw / 2, P.y + P.h - 26, hw, 20); ctx.globalAlpha = 1; ctx.fillStyle = T.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(WHEEL_HINT, P.x + P.w / 2, P.y + P.h - 16); }
+    }
+    // the legend box: candidates are the four plot corners; the score counts the visible curve points, markers (with their labels)
+    // and point handles under the box; ties keep the order top-right, bottom-right, top-left, bottom-left
+    function _legendPlace(ctx, sp, hidden, P, toX, toY, font) {
+        var leg = (sp.series || []).filter(function (s) { return s.legend !== false && s.label; });
+        if (!leg.length) return null;
+        ctx.font = font(11, '600');
+        var wmax = 0;
+        leg.forEach(function (s) { var w = (ctx.measureText ? ctx.measureText(s.label).width : s.label.length * 6) + 30; if (w > wmax) wmax = w; });
+        wmax = Math.min(wmax, P.w * 0.6);
+        var bw = wmax + 8, bh = leg.length * 18 + 6, pad = 4;
+        var cand = [[P.x + P.w - pad - bw, P.y + pad], [P.x + P.w - pad - bw, P.y + P.h - pad - bh - 14], [P.x + pad + 2, P.y + pad], [P.x + pad + 2, P.y + P.h - pad - bh - 14]];
+        var pts = [];
+        (sp.series || []).forEach(function (s) {
+            if (hidden[s.key] || s.axis === 'x2') return;
+            var a = s.pts || [], step = Math.max(1, Math.floor(a.length / 80));
+            for (var i = 0; i < a.length; i += step) if (_fin(a[i][0]) && _fin(a[i][1])) pts.push({ x: toX(a[i][0]), y: toY(a[i][1]), w: 1 });
+        });
+        (sp.markers || []).forEach(function (m) { if (_fin(m.x) && _fin(m.y)) { var mx = toX(m.x), my = toY(m.y); pts.push({ x: mx, y: my, w: 60 }); if (m.label) for (var k = 1; k <= 6; k++) pts.push({ x: mx + (mx > P.x + P.w * 0.7 ? -k * 20 : k * 20), y: my - 12, w: 30 }); } });
+        (sp.handles || []).forEach(function (h) { if (h.kind === 'point' && _fin(h.x) && _fin(h.value)) { var hx = toX(h.x), hy = toY(h.value); for (var k = 0; k <= 6; k++) pts.push({ x: hx + k * 20, y: hy - 12, w: 40 }); } });
+        var best = null;
+        cand.forEach(function (c, ci) {
+            var sc = 0;
+            pts.forEach(function (p) { if (p.x >= c[0] && p.x <= c[0] + bw && p.y >= c[1] && p.y <= c[1] + bh) sc += p.w; });
+            if (!best || sc < best.sc) best = { sc: sc, ci: ci, x0: c[0], y0: c[1] };
+        });
+        return { x0: best.x0, y0: best.y0, x1: best.x0 + bw, y1: best.y0 + bh, w: wmax, corner: best.ci };
     }
     function _wrap(ctx, s, w) {
         var words = String(s).split(' '), out = [], cur = '';
@@ -456,6 +506,7 @@
                 var A = cv._wpAxes; if (!A) return;
                 if (p.x >= A.plot.x && p.x <= A.plot.x + A.plot.w && p.y >= A.plot.y && p.y <= A.plot.y + A.plot.h) st.drag = { pan: true, x: p.x, y: p.y };
             }
+            if (cv.focus && typeof document !== 'undefined' && document.activeElement !== cv) { try { cv.focus({ preventScroll: true }); } catch (e4) { /* ignore */ } }
             if (st.drag && cv.setPointerCapture) { try { cv.setPointerCapture(e.pointerId); } catch (e3) { /* ignore */ } }
             if (cv.classList) cv.classList.add('wp-cv-live');
             _draw(cv);
@@ -489,9 +540,13 @@
         };
         cv.addEventListener('pointerup', end);
         cv.addEventListener('pointercancel', end);
-        cv.addEventListener('pointerleave', function () { var st = cv._wp; if (st && !st.drag) { st.hover = null; _draw(cv); } });
+        cv.addEventListener('pointerleave', function () { var st = cv._wp; if (st && !st.drag) { st.hover = null; st.wheelHint = false; _draw(cv); } });
+        // the wheel zooms only with Ctrl / Cmd held or once the plot has the focus (clicked or tabbed to); otherwise the page scrolls
+        // and the plot shows a "Ctrl + wheel to zoom" hint
         cv.addEventListener('wheel', function (e) {
             var st = cv._wp; if (!st || !st.spec) return;
+            var focused = typeof document !== 'undefined' && document.activeElement === cv;
+            if (!(e.ctrlKey || e.metaKey || focused)) { if (!st.wheelHint) { st.wheelHint = true; _draw(cv); } return; }
             if (e.preventDefault) e.preventDefault();
             var p = _pos(cv, e); _zoom(cv, p.x, p.y, (e.deltaY || 0) > 0 ? 1.15 : 1 / 1.15);
         }, { passive: false });
@@ -557,6 +612,13 @@
         o = o || {};
         var W0 = o.width || 420, H0 = o.height || 560, T = _theme(), fm = o.fmt || {};
         var fmtMd = fm.md || function (v) { return Math.round(v).toLocaleString() + ' ft'; };
+        // every component label carries MD and TVD (TVD by linear interpolation on the trajectory)
+        var tvdOf = function (md) {
+            var tj = (S && S.trajectory) || [];
+            for (var q = 1; q < tj.length; q++) if (md <= tj[q].md) { var a0 = tj[q - 1], b0 = tj[q], f0 = (md - a0.md) / ((b0.md - a0.md) || 1); return a0.tvd + f0 * (b0.tvd - a0.tvd); }
+            return tj.length ? tj[tj.length - 1].tvd : null;
+        };
+        var D = function (md) { var tv = tvdOf(md); return fmtMd(md) + ' MD' + (_fin(tv) ? ' · ' + fmtMd(tv) + ' TVD' : ''); };
         var traj = (S && Array.isArray(S.trajectory)) ? S.trajectory.filter(function (r) { return _fin(r.md) && _fin(r.tvd); }) : [];
         if (traj.length < 2) return { svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W0 + ' 120" width="100%" role="img" aria-label="Well schematic"><text x="' + (W0 / 2) + '" y="64" fill="' + T.text2 + '" font-size="13" text-anchor="middle">' + _esc(o.empty || 'Enter a survey and the strings (step ③) to draw the well.') + '</text></svg>', pts: [], width: W0, height: 120 };
         var narrow = W0 < 520, pb = narrow ? Math.round(Math.min(W0 * 0.5, 230)) : 0;   // narrow: plan view below the section
@@ -597,7 +659,7 @@
         order.forEach(function (it) {
             var s = it.s, pl = _poly(_sub(path, s.topMd, Math.min(s.botMd, mdMax))), w = wOf(s), tub = s.kind === 'tubing';
             if (!pl) return;
-            g.push('<g class="wp-comp" data-comp="string:' + it.i + '" tabindex="0" role="button" aria-label="' + _esc((s.kind || 'string') + ' ' + (s.od || '') + ' in OD, ' + fmtMd(s.topMd) + ' to ' + fmtMd(s.botMd) + ' MD — edit') + '">');
+            g.push('<g class="wp-comp" data-comp="string:' + (_fin(s.idx) ? s.idx : it.i) + '" tabindex="0" role="button" aria-label="' + _esc((s.kind || 'string') + ' ' + (s.od || '') + ' in OD, ' + D(s.topMd) + ' to ' + D(s.botMd) + ' — edit') + '">');
             g.push('<path d="' + pl + '" fill="none" stroke="' + (tub ? '#4b5563' : '#6b7280') + '" stroke-width="' + (w + 3).toFixed(1) + '" stroke-linecap="butt" stroke-linejoin="round"/>');
             g.push('<path d="' + pl + '" fill="none" stroke="' + (tub ? '#1f2937' : '#111827') + '" stroke-width="' + (w - 1).toFixed(1) + '" stroke-linecap="butt" stroke-linejoin="round"/>');
             g.push('<path d="' + pl + '" fill="none" stroke="transparent" stroke-width="' + (w + 8) + '" class="wp-hit"/>');
@@ -624,7 +686,7 @@
         // perforations + mid-perf
         var pf = S.perfs || {};
         if (_fin(pf.topMd) && _fin(pf.botMd) && pf.botMd > pf.topMd) {
-            g.push('<g class="wp-comp" data-comp="perf" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + fmtMd(pf.topMd) + ' to ' + fmtMd(pf.botMd) + ' MD — edit') + '">');
+            g.push('<g class="wp-comp" data-comp="perf" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + D(pf.topMd) + ' to ' + D(pf.botMd) + (_fin(pf.midMd) ? ', mid-perforation ' + D(pf.midMd) : '') + ' — edit') + '">');
             var n = Math.max(3, Math.min(14, Math.round((pf.botMd - pf.topMd) / Math.max(1, mdMax) * 400)));
             for (var k = 0; k <= n; k++) {
                 var q = interp(path, pf.topMd + (pf.botMd - pf.topMd) * k / n), nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
@@ -643,7 +705,7 @@
             var q = interp(path, Math.min(r.md, mdMax)); if (!q) return;
             var kind = String(r.kind || 'nipple'), col = kind === 'sssv' ? T.yellow : (kind === 'downholeChoke' ? T.accent : T.purple);
             var lab = { sssv: 'SSSV', nipple: 'Nipple', sleeve: 'Sleeve', xo: 'X-over', downholeChoke: 'DH choke' }[kind] || kind;
-            g.push('<g class="wp-comp" data-comp="restr:' + i + '" tabindex="0" role="button" aria-label="' + _esc(lab + ' at ' + fmtMd(r.md) + ' MD, ID ' + (r.id || '') + ' in — edit') + '">' +
+            g.push('<g class="wp-comp" data-comp="restr:' + i + '" tabindex="0" role="button" aria-label="' + _esc(lab + ' at ' + D(r.md) + ', ID ' + (r.id || '') + ' in — edit') + '">' +
                 '<rect x="' + (q.x - 7).toFixed(1) + '" y="' + (q.y - 7).toFixed(1) + '" width="14" height="14" transform="rotate(45 ' + q.x.toFixed(1) + ' ' + q.y.toFixed(1) + ')" fill="' + col + '" stroke="' + T.bg + '" stroke-width="1.5"/></g>');
             labs.push({ side: -1, x: q.x - 10, y: q.y, t: lab, c: col });
         });
@@ -651,7 +713,7 @@
         (S.gauges || []).forEach(function (gg, i) {
             var md = _fin(gg.md) ? gg.md : gg.gaugeMd; if (!_fin(md)) return;
             var q = interp(path, Math.min(md, mdMax)); if (!q) return;
-            g.push('<g class="wp-comp" data-comp="gauge:' + i + '" tabindex="0" role="button" aria-label="' + _esc('Gauge ' + (gg.name || gg.id || (i + 1)) + ' at ' + fmtMd(md) + ' MD — edit') + '">' +
+            g.push('<g class="wp-comp" data-comp="gauge:' + i + '" tabindex="0" role="button" aria-label="' + _esc('Gauge ' + (gg.name || gg.id || (i + 1)) + ' at ' + D(md) + ' — edit') + '">' +
                 '<path d="M' + (q.x + 12).toFixed(1) + ' ' + q.y.toFixed(1) + 'l10 -6v12z" fill="' + T.green + '" stroke="' + T.bg + '"/></g>');
             labs.push({ side: 1, x: q.x + 22, y: q.y, t: 'gauge ' + (gg.name || gg.id || (i + 1)), c: T.green });
         });
@@ -679,7 +741,7 @@
                 '<text x="' + (cxp + 34).toFixed(1) + '" y="' + (cyp + 4) + '" fill="' + T.accent + '" font-size="10" font-weight="700">' + _esc(_fin(ck.bean64) ? ck.bean64 + '/64' : 'choke') + '</text></g>');
         }
         // hover marker (moved by the page)
-        g.push('<g class="wp-hover" style="display:none"><circle r="7" fill="none" stroke="' + T.text + '" stroke-width="2"/><circle r="2.5" fill="' + T.text + '"/></g>');
+        g.push('<g class="wp-hover" pointer-events="none" style="display:none;pointer-events:none"><circle r="7" fill="none" stroke="' + T.text + '" stroke-width="2"/><circle r="2.5" fill="' + T.text + '"/></g>');
 
         // plan view + colour bar
         if (planW > 0 || pb > 0) {

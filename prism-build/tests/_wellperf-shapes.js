@@ -254,7 +254,9 @@ function files() {
   fs.readdirSync(BUILD).forEach((f) => {
     if (/^4\d-calc-(wp-.*|wellperf|help-wellperf)\.js$/.test(f) || f === 'wellperf-validate.js') out.push(path.join('prism-build', f));
   });
-  fs.readdirSync(__dirname).forEach((f) => { if (/^(wellperf-.*\.test\.js|_wellperf-shapes\.js)$/.test(f)) out.push(path.join('prism-build', 'tests', f)); });
+  fs.readdirSync(__dirname).forEach((f) => { if (/^(wellperf-.*\.test\.js|_wellperf-(shapes|mock)\.js)$/.test(f)) out.push(path.join('prism-build', 'tests', f)); });
+  // the help text of the module (plan §2.11) and the shared engines it edits
+  ['48-calc-help-production.js', '48-calc-help-start.js', '49-calc-flowline.js', '48-calc-wellbore.js', '40-calc-tubulars.js'].forEach((f) => { if (fs.existsSync(path.join(BUILD, f))) out.push(path.join('prism-build', f)); });
   ['docs/WELL-PERFORMANCE-PLAN.md'].forEach((f) => { if (fs.existsSync(path.join(REPO, f))) out.push(f); });
   return out.sort();
 }
