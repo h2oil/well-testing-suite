@@ -267,6 +267,17 @@ function checks(G) {
     const e = Math.max(Math.abs(L.vc / vc(1.912) - 1), Math.abs(L.vcColeman / vc(1.593) - 1), Math.abs(L.vcLi / vc(0.7241) - 1));
     add('X14', 'critical velocity by hand: Turner 1.912, Coleman 1.593, Li 0.7241', e < 1e-12, e, 1e-12);
   }
+  // X15 sensitivity at the base value equals the single solve exactly (§15.2, WP6)
+  if (G.WTS_wp_sens && typeof G.WTS_wp_sens.job === 'function' && (G.__WP_STUBS || []).indexOf('WTS_wp_sens.job') === -1) {
+    let ok = true, worst = 0;
+    const runJ = (job) => { let s, n = 0; do { s = job.step(); n++; } while (!s.done && n < 500); return job.result(); };
+    [['oilWell', 'wc', [20, 30, 40]], ['gasWell', 'bean', [16, 24, 32]]].forEach(([k, key, vals]) => {
+      const M = S.FIX[k], R = solve(M), r = runJ(G.WTS_wp_sens.job(M, [{ key, values: vals }]));
+      const b = r.cases.find((c) => c.R && !c.R.tracked && c.R.ok && r.base.inList && c.values[key] === r.base.value);
+      if (!b || b.R.q !== R.op.q || b.R.pwf !== R.pwf) { ok = false; worst = Math.max(worst, b ? Math.abs(b.R.q - R.op.q) : 1); }
+    });
+    add('X15', 'sensitivity at the base value = the single solve (identical)', ok, worst, 0);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 

@@ -837,8 +837,9 @@
             var s = ST.sens, cs = (s && s.cases) || [], rc = _rateCat();
             spec = { key: 'sens:' + (s && s.key), aspect: 0.55, minH: 220, maxH: 380, w: 640, readout: 'x',
                      x: { label: _sensVarLabel(s && s.key), short: 'x' }, y: { label: 'Rate (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q' },
-                     series: [{ key: 'q', label: 'Operating rate', color: T.accent, pts: cs.map(function (c) { return [+_sensVal(c), _dv(c.R && c.R.q, rc[0])]; }).filter(function (p) { return _fin(p[0]) && _fin(p[1]); }) },
-                              { key: 'qp', label: '', legend: false, kind: 'points', color: T.accent, pts: cs.map(function (c) { return [+_sensVal(c), _dv(c.R && c.R.q, rc[0])]; }).filter(function (p) { return _fin(p[0]) && _fin(p[1]); }) }],
+                     series: [{ key: 'q', label: 'Operating rate', color: T.accent, pts: cs.map(function (c) { return [_sensDv(s.key, +_sensVal(c)), _dv(c.R && c.R.q, rc[0])]; }).filter(function (p) { return _fin(p[0]) && _fin(p[1]); }) },
+                              { key: 'qp', label: '', legend: false, kind: 'points', color: T.accent, pts: cs.map(function (c) { return [_sensDv(s.key, +_sensVal(c)), _dv(c.R && c.R.q, rc[0])]; }).filter(function (p) { return _fin(p[0]) && _fin(p[1]); }) }],
+                     markers: cs.filter(function (c) { return !(c.R && c.R.ok) || (c.R && c.R.stable === false); }).map(function (c) { return { x: _sensDv(s.key, +_sensVal(c)), y: c.R && c.R.ok ? _dv(c.R.q, rc[0]) : 0, kind: 'hollow', color: T.red, label: c.R && c.R.ok ? 'unstable' : 'no flow' }; }).filter(function (m) { return _fin(m.x); }),
                      empty: 'Run a sensitivity (step ⑤) to see the rate against the parameter.' };
         } else if (tab === 'beans') {
             var bs = (ST.beans && Array.isArray(ST.beans.rows)) ? ST.beans.rows : [], rc2 = _rateCat();
@@ -880,10 +881,29 @@
             } else leg.innerHTML = '';
         }
     }
-    var SENS_VARS = [['wc', 'Water cut (%)'], ['pr', 'Reservoir pressure (psia)'], ['bean', 'Choke bean (/64 in)'], ['thp', 'Wellhead pressure (psig)'], ['gor', 'GOR (scf/STB)'], ['psep', 'Separator pressure (psig)'], ['J', 'Productivity index (STB/d/psi)']];
-    function _sensVarLabel(k) { var r = SENS_VARS.filter(function (x) { return x[0] === k; })[0]; return r ? r[1] : (k || 'Parameter'); }
+    // Sensitivity variables (WTS_wp_sens.VARS, WP6): [key, label, field unit]; the fallback list keeps the page usable without the engine.
+    // Values are typed in display units (SENS_CAT converts Metric entries to the field units of the engine); WC is in %.
+    var SENS_FALLBACK = [['wc', 'Water cut', '%'], ['pr', 'Reservoir pressure p̄r', 'psia'], ['bean', 'Choke bean', '/64 in'], ['thp', 'Wellhead pressure (fixed, choke out of line)', 'psig'], ['gor', 'Producing GOR', 'scf/STB'], ['psep', 'Separator pressure', 'psig'], ['J', 'Productivity index J', 'STB/d/psi']];
+    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor' };
+    function _sensDefs() {
+        var SN = G.WTS_wp_sens;
+        if (SN && SN.VARS && Array.isArray(SN.ORDER) && (G.__WP_STUBS || []).indexOf('WTS_wp_sens.job') === -1) return SN.ORDER.map(function (k) { return [k, SN.VARS[k].label, SN.VARS[k].unit]; });
+        return SENS_FALLBACK;
+    }
+    function _sensUnit(k, imp) { return SENS_CAT[k] ? _lab(SENS_CAT[k], imp) : imp; }
+    function _sensVarLabel(k) { var r = _sensDefs().filter(function (x) { return x[0] === k; })[0]; return r ? r[1] + (r[2] ? ' (' + _sensUnit(k, r[2]) + ')' : '') : (k || 'Parameter'); }
     function _sensVal(c) { var v = c && c.values; if (!v) return null; if (_fin(v.value)) return v.value; var ks = Object.keys(v); return ks.length ? v[ks[0]] : null; }
-    function _sensLabel(s, c) { return _sensVarLabel(s.key).replace(/ \(.*\)$/, '') + ' ' + _fmt(+_sensVal(c), 2); }
+    function _sensDv(k, v) { return SENS_CAT[k] ? _dv(v, SENS_CAT[k]) : v; }
+    function _sensLabel(s, c) { return c.label ? String(c.label) : _sensVarLabel(s.key).replace(/ \(.*\)$/, '') + ' ' + _fmt(_sensDv(s.key, +_sensVal(c)), 2); }
+    // the values box: suggestions around the model value (WTS_wp_sens.suggest), shown in display units
+    function _sensSuggest() {
+        var SN = G.WTS_wp_sens, sel = _byId('wpv_svar'), box = _byId('wpv_svals'); if (!sel || !box || !SN || typeof SN.suggest !== 'function') return;
+        var M = ST.M || _read(), k = sel.value, why = null;
+        try { var row = (SN.vars(M) || []).filter(function (x) { return x.key === k; })[0]; why = row && !row.applicable ? row.why : null; } catch (e) { why = null; }
+        var sg = SN.suggest(M, k, 5);
+        if (sg && sg.ok) box.value = sg.values.map(function (v) { var d = _sensDv(k, v); return String(+(+d).toPrecision(4)); }).join(' ');
+        var jb = _byId('wp_jobbox'); if (jb) jb.innerHTML = why ? _vHtml({ st: 'info', t: 'ℹ ' + _sensVarLabel(k).replace(/ \(.*\)$/, '') + ': ' + why + '.' }) : '';
+    }
 
     // Results drawer (full tables, .rp-skip)
     function _renderDrawer() {
@@ -1039,7 +1059,7 @@
             return;
         }
         if (act === 'sens') {
-            var key = (_byId('wpv_svar') || {}).value || 'wc', vals = String((_byId('wpv_svals') || {}).value || '').split(/[;\s,]+/).map(parseFloat).filter(_fin).slice(0, 10);
+            var key = (_byId('wpv_svar') || {}).value || 'wc', sraw = String((_byId('wpv_svals') || {}).value || '').trim(), vals = (/[;\s]/.test(sraw) ? sraw.split(/[;\s]+/) : sraw.split(',')).filter(function (x) { return x !== ''; }).slice(0, 10).map(function (x) { var n = parseFloat(x.replace(/,/g, '.')); return _fin(n) ? _fromDisp(n, SENS_CAT[key]) : x; }).filter(function (x) { return _fin(x) || (key === 'tubingId' && typeof x === 'string'); });
             if (!vals.length) { var b1 = _byId('wp_jobbox'); if (b1) b1.innerHTML = _vHtml({ st: 'warn', t: '⚠ Enter up to 10 values for the sensitivity.' }); return; }
             _drive(_jobOf(_call('WTS_wp_sens.job', M, [{ key: key, values: vals }])), function (r) {
                 ST.sens = r && typeof r === 'object' ? Object.assign({ key: key }, r) : null;
@@ -1068,8 +1088,25 @@
     function _renderSensTable() {
         var h = _byId('wp_senstbl'); if (!h) return;
         var s = ST.sens, rc = _rateCat();
-        h.innerHTML = (s && s.cases && s.cases.length) ? '<div class="wp-tw"><table class="dtable"><thead><tr><th>' + _esc(_sensVarLabel(s.key)) + '</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th><th>pwf (' + _lab('pressure', 'psia') + ')</th></tr></thead><tbody>' +
-            s.cases.map(function (c) { return '<tr><td>' + _fmt(+_sensVal(c), 2) + '</td><td class="num">' + _fmt(_dv(c.R && c.R.q, rc[0]), 0) + '</td><td class="num">' + _fmt(_dv(c.R && c.R.pwf, 'pressure'), 0) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
+        if (!(s && s.cases && s.cases.length)) { h.innerHTML = ''; return; }
+        var gas = !!(ST.M && _isGasType(ST.M.fluid.type)), bv = s.base && _fin(s.base.value) ? s.base.value : null;
+        var nOk = s.cases.filter(function (c) { return c.R && c.R.ok; }).length;
+        var head = '<div class="wp-sec-h" style="font-size:13px;margin-top:12px">Sensitivity — ' + _esc(_sensVarLabel(s.key)) + ' <span>' + nOk + ' of ' + s.cases.length + ' cases flow' + (s.family === 'ipr' ? '; one inflow curve per value' : '; one outflow curve per value') + ' on the system plot</span></div>';
+        var warn = (s.warnings || []).filter(function (w) { return w && w.code !== 'CASE_NA'; }).map(function (w) {
+            var m = w.code === 'NO_BASE_CASE' && bv != null ? 'The model value ' + _fmt(_sensDv(s.key, bv), 3) + ' ' + _sensVarLabel(s.key).replace(/^.*\((.*)\)$/, '$1') + ' is not in the list: the sensitivity has no base case.' : w.msg;
+            return _vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + m });
+        }).join('');
+        h.innerHTML = head + warn + '<div class="wp-tw"><table class="dtable"><thead><tr><th>' + _esc(_sensVarLabel(s.key)) + '</th><th>Rate (' + _lab(rc[0], rc[1]) + ')</th>' +
+            (gas ? '<th>Condensate (' + _lab('liquidRate', 'STB/d') + ')</th>' : '<th>Oil (' + _lab('liquidRate', 'STB/d') + ')</th><th>Gas (' + _lab('gasRateSmall', 'Mscf/d') + ')</th>') + '<th>Water (' + _lab('liquidRate', 'BWPD') + ')</th>' +
+            '<th>pwf (' + _lab('pressure', 'psia') + ')</th><th>THP (' + _lab('pressureG', 'psig') + ')</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>Stable</th>' + (gas ? '<th>Loading margin</th>' : '') + '<th>Note</th></tr></thead><tbody>' +
+            s.cases.map(function (c) {
+                var R = c.R || {}, v = +_sensVal(c), isBase = bv != null && Math.abs(v - bv) <= 1e-9 * Math.max(1, Math.abs(bv));
+                return '<tr' + (isBase ? ' style="font-weight:600"' : '') + '><td>' + _esc(c.label || _fmt(_sensDv(s.key, v), 3)) + (isBase ? ' (model)' : '') + '</td><td class="num">' + _fmt(_dv(R.q, rc[0]), 0) + '</td>' +
+                    (gas ? '<td class="num">' + _fmt(_dv(R.qo, 'liquidRate'), 1) + '</td>' : '<td class="num">' + _fmt(_dv(R.qo, 'liquidRate'), 0) + '</td><td class="num">' + _fmt(_dv(R.qg, 'gasRateSmall'), 0) + '</td>') + '<td class="num">' + _fmt(_dv(R.qw, 'liquidRate'), 0) + '</td>' +
+                    '<td class="num">' + _fmt(_dv(R.pwf, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(R.thp, 'pressureG'), 0) + '</td><td class="num">' + _fmt(_dv(R.tht, 'temperature'), 0) + '</td>' +
+                    '<td>' + (R.ok ? (R.stable ? '✓' : '✗') : '—') + '</td>' + (gas ? '<td class="num">' + (_fin(R.loadingMargin) ? _fmt(100 * R.loadingMargin, 0) + ' %' : '—') + '</td>' : '') +
+                    '<td>' + _esc(R.ok ? (R.regime ? 'choke ' + R.regime : '') : (R.error || R.code || 'no flow')) + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
     }
     function _runMatch() {
         var M = ST.M || _read(), h = _byId('wp_matchres'); if (!h) return;
@@ -1191,7 +1228,19 @@
             var C = _curves(); L.push(''); L.push('System curves'); L.push(['Rate', 'IPR pwf', 'Outflow pwf'].map(q).join(','));
             C.ipr.forEach(function (p, i) { L.push([_dv(p[0], rc[0]), _dv(p[1], 'pressure'), C.vlp[i] && Math.abs(C.vlp[i][0] - p[0]) < 1e-9 ? _dv(C.vlp[i][1], 'pressure') : ''].join(',')); });
         }
-        if (ST.sens && ST.sens.cases) { L.push(''); L.push('Sensitivity: ' + _sensVarLabel(ST.sens.key)); ST.sens.cases.forEach(function (c) { L.push([_sensVal(c), _dv(c.R && c.R.q, rc[0]), _dv(c.R && c.R.pwf, 'pressure')].join(',')); }); }
+        if (ST.sens && ST.sens.cases) {
+            var sk = ST.sens.key;
+            L.push(''); L.push(q('Sensitivity: ' + _sensVarLabel(sk)));
+            L.push([_sensVarLabel(sk), 'Rate (' + _lab(rc[0], rc[1]) + ')', 'q_o (' + _lab('liquidRate', 'STB/d') + ')', 'q_w (' + _lab('liquidRate', 'BWPD') + ')', 'q_g (' + _lab('gasRateSmall', 'Mscf/d') + ')',
+                'pwf (' + _lab('pressure', 'psia') + ')', 'THP (' + _lab('pressureG', 'psig') + ')', 'THT (' + _lab('temperature', '°F') + ')', 'Stable', 'Loading margin (%)', 'Note'].map(q).join(','));
+            ST.sens.cases.forEach(function (c) { var R = c.R || {}; L.push([q(c.label || _sensDv(sk, _sensVal(c))), _dv(R.q, rc[0]), _dv(R.qo, 'liquidRate'), _dv(R.qw, 'liquidRate'), _dv(R.qg, 'gasRateSmall'), _dv(R.pwf, 'pressure'), _dv(R.thp, 'pressureG'), _dv(R.tht, 'temperature'),
+                R.ok ? R.stable : '', _fin(R.loadingMargin) ? 100 * R.loadingMargin : '', q(R.ok ? (R.regime || '') : (R.error || R.code || ''))].map(function (x) { return x == null ? '' : x; }).join(',')); });
+            var fam = ST.sens.cases.filter(function (c) { return c.R && Array.isArray(c.R.curve) && c.R.curve.length; });
+            if (fam.length) {
+                L.push(''); L.push(q('Sensitivity family curves (' + (ST.sens.family === 'ipr' ? 'inflow' : 'outflow') + ')')); L.push([_sensVarLabel(sk), 'Rate (' + _lab(rc[0], rc[1]) + ')', 'pwf (' + _lab('pressure', 'psia') + ')'].map(q).join(','));
+                fam.forEach(function (c) { var lab = q(c.label || _sensDv(sk, _sensVal(c))); c.R.curve.forEach(function (p) { L.push([lab, _dv(p.q, rc[0]), _dv(p.p, 'pressure')].join(',')); }); });
+            }
+        }
         if (ST.beans && ST.beans.rows) { L.push(''); L.push('Bean schedule'); ST.beans.rows.forEach(function (b) { L.push([b.bean, _dv(b.q, rc[0]), _dv(b.thp, 'pressureG'), _dv(b.tht, 'temperature'), b.stable].join(',')); }); }
         var csv = L.join('\n');
         ST.lastCsv = csv;
@@ -1282,8 +1331,8 @@
                 '<div class="fg-item"><label for="wpt_rate_tht">Maximum THT (' + _esc(_lab('temperature', '°F')) + ')</label><input id="wpt_rate_tht" data-rt="tht_max_F" type="number" step="any" inputmode="decimal" placeholder="no default"></div>' +
                 '<div class="fg-item"><label for="wpt_beans">Bean list (/64 in)</label><input id="wpt_beans" data-rt="beans" type="text" placeholder="16 20 24 32 40 48"></div></div>' +
                 '<div class="wp-sec-h" style="font-size:13px;margin-top:14px">Studies</div><div class="fg rp-skip">' +
-                '<div class="fg-item"><label for="wpv_svar">Sensitivity variable</label><select id="wpv_svar">' + SENS_VARS.map(function (v) { return '<option value="' + v[0] + '">' + _esc(v[1]) + '</option>'; }).join('') + '</select></div>' +
-                '<div class="fg-item"><label for="wpv_svals">Values (up to 10)</label><input id="wpv_svals" type="text" value="0 20 40 60 80"></div></div>' +
+                '<div class="fg-item"><label for="wpv_svar">Sensitivity variable</label><select id="wpv_svar">' + _sensDefs().map(function (v) { return '<option value="' + _esc(v[0]) + '">' + _esc(_sensVarLabel(v[0])) + '</option>'; }).join('') + '</select></div>' +
+                '<div class="fg-item"><label for="wpv_svals">Values (up to 10, in the variable\'s units)</label><input id="wpv_svals" type="text" value="0 20 40 60 80" spellcheck="false" autocomplete="off"></div></div>' +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="sens">Run sensitivity</button><button type="button" class="btn btn-secondary" data-act="beans">Bean schedule</button><button type="button" class="btn btn-secondary" data-act="csv">Export CSV</button></div>' +
                 '<div id="wp_jobbox" class="rp-skip"></div><div id="wp_senstbl"></div><div id="wp_beans"></div>') + '</div></section>';
         var s6 = '<section id="wp_step_6" class="wp-sec" style="display:none"><div class="wp-sec-h">⑥ Match <span>production tests, correlation comparison, QC and IPR from a test</span></div>' +
@@ -1354,6 +1403,7 @@
             }
             if (t.getAttribute && t.getAttribute('data-rt')) { _ratingWrite(); return; }
             if (t.id === 'wpv_prop') { _plotsSet({ prop: t.value }); _renderSchematic(); return; }
+            if (t.id === 'wpv_svar') { _sensSuggest(); return; }
             if (t.getAttribute && t.getAttribute('data-corr')) return;
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode') _syncUi();
