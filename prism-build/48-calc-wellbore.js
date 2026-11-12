@@ -25,6 +25,10 @@
 //                                        flowingTempFitU(column, opts, {T, md?}) fits U_to (Brent on ln U); flowingTempF(tD) = f(t_D).
 //                                        `_ramey` is NOT defined here: it stays reserved for DFIT 3.4b (which may call flowingTemp with
 //                                        direction 'inject', owner Q16)
+//                                        v4.5 (WP22, additive): opts.layers [{topMd, botMd, U_to, ke?}] (U by depth, outside-radius
+//                                        basis; outside every layer the scalar U), opts.src(mdA, mdB) → ψ °F/ft along the flow (the
+//                                        enthalpy-balance source: J-T, gravity, kinetic) with opts.srcCuts (MDs where ψ changes);
+//                                        both absent → the v4.4 result exactly
 //   hydrostatic(pK, tvdK, tvdT, col, T)  ρ(p,T) column, RK2 at 10 ft (or a constant gradient)
 //   pipeFriction(q, seg, fluid, T)       Newtonian / friction-reduced (Virk cap) / power law
 //   perfFriction, nwbLoss, bleedOff      perforation, near-wellbore and the friction bleed-off after shut-in
@@ -619,18 +623,39 @@
         (c.survey || []).forEach(function (s) { if (s[0] > lo && s[0] < hi) cuts.push(s[0]); });
         if (c.mc) c.mc.stations.forEach(function (s) { if (s.md > lo && s.md < hi) cuts.push(s.md); });
         if (o.geo && Array.isArray(o.geo.points)) o.geo.points.forEach(function (p) { var t = _num(p && p[0], NaN); if (t > 0) { var mdp = c.mdAt(t); if (mdp > lo && mdp < hi) cuts.push(mdp); } });
+        // v4.5 (WP22): layered U (piece cuts at the layer ends) and the enthalpy source ψ (cuts where it changes)
+        var layers = [], srcFn = typeof o.src === 'function' ? o.src : null;
+        if (Array.isArray(o.layers)) o.layers.forEach(function (l) {
+            var a = _num(l && l.topMd, NaN), b = _num(l && l.botMd, NaN), u = _num(l && l.U_to, NaN), k = _num(l && l.ke, NaN);
+            if (!(_fin(a) && _fin(b) && b > a && u > 0)) return;
+            layers.push({ topMd: a, botMd: b, U_to: u, ke: k > 0 ? k : ke });
+            [a, b].forEach(function (m) { if (m > lo && m < hi) cuts.push(m); });
+        });
+        if (srcFn && Array.isArray(o.srcCuts)) o.srcCuts.forEach(function (m) { m = _num(m, NaN); if (m > lo && m < hi) cuts.push(m); });
+        function Aof(md) {
+            for (var li = layers.length - 1; li >= 0; li--) {
+                var ly = layers[li];
+                if (md >= ly.topMd && md <= ly.botMd) return { A: (w * cp / (2 * Math.PI)) * (ly.ke + rto * ly.U_to * fT) / (rto * ly.U_to * ly.ke), layer: li };
+            }
+            return null;
+        }
         cuts.sort(function (a, b) { return a - b; });
         var mds = [];
         cuts.forEach(function (x) { if (!mds.length || x - mds[mds.length - 1] > 1e-6) mds.push(x); });
         if (up) mds.reverse();
         // the exact march, piece by piece in the flow direction
         var pieces = [], T = Tin, z = 0, prof = [{ md: mds[0], tvd: tvdOf(mds[0]), z: 0, te: teAt(mds[0]), t: T }];
+        var aMin = A, aMax = A;
         for (var i = 1; i < mds.length; i++) {
-            var a = mds[i - 1], b = mds[i], L = Math.abs(b - a), tea = teAt(a), teb = teAt(b), s = (teb - tea) / L, e = Math.exp(-L / A);
-            pieces.push({ md0: a, md1: b, z0: z, L: L, T0: T, te0: tea, s: s });
-            T = teb + (T - tea) * e - s * A * (1 - e);
+            var a = mds[i - 1], b = mds[i], L = Math.abs(b - a), tea = teAt(a), teb = teAt(b), s = (teb - tea) / L;
+            var Ak = A, psi = 0, lyr = null;
+            if (layers.length) { var al = Aof(0.5 * (a + b)); if (al) { Ak = al.A; lyr = al.layer; if (Ak < aMin) aMin = Ak; if (Ak > aMax) aMax = Ak; } }
+            if (srcFn) { psi = _num(srcFn(a, b), 0); if (!_fin(psi)) psi = 0; }
+            var e = Math.exp(-L / Ak);
+            pieces.push({ md0: a, md1: b, z0: z, L: L, T0: T, te0: tea, s: s, A: Ak, psi: psi, layer: lyr });
+            T = teb + (T - tea) * e - (s - psi) * Ak * (1 - e);
             z += L;
-            prof.push({ md: b, tvd: tvdOf(b), z: z, te: teb, t: T });
+            prof.push(srcFn || layers.length ? { md: b, tvd: tvdOf(b), z: z, te: teb, t: T, psi: psi, A: Ak } : { md: b, tvd: tvdOf(b), z: z, te: teb, t: T });
         }
         var p0 = pieces[0], pN = pieces[pieces.length - 1];
         function tAt(md) {
@@ -639,12 +664,15 @@
             if (up ? md <= pN.md1 : md >= pN.md1) return T;                      // beyond the outlet: the outlet temperature
             var k0 = 0, k1 = pieces.length - 1;
             while (k1 > k0) { var km = (k0 + k1) >> 1; var pk = pieces[km]; if (up ? md >= pk.md1 : md <= pk.md1) k1 = km; else k0 = km + 1; }
-            var p = pieces[k0], l = Math.abs(md - p.md0), ee = Math.exp(-l / A), tem = p.te0 + p.s * l;
-            return tem + (p.T0 - p.te0) * ee - p.s * A * (1 - ee);
+            var p = pieces[k0], l = Math.abs(md - p.md0), ee = Math.exp(-l / p.A), tem = p.te0 + p.s * l;
+            return tem + (p.T0 - p.te0) * ee - (p.s - p.psi) * p.A * (1 - ee);
         }
-        return { ok: true, direction: dir, A: A, fTD: fT, tD: tD, U_to: U, Ubasis: basis, r_to: rto, rwb: rwb, rwbSource: rwbSrc, ke: ke, alpha: alpha,
+        var extra = {};
+        if (layers.length) { extra.layers = layers; extra.Amin = aMin; extra.Amax = aMax; }
+        if (srcFn) extra.src = true;
+        return Object.assign({ ok: true, direction: dir, A: A, fTD: fT, tD: tD, U_to: U, Ubasis: basis, r_to: rto, rwb: rwb, rwbSource: rwbSrc, ke: ke, alpha: alpha,
                  t_hr: tHr, w: w, cp: cp, fromMd: inMd, toMd: outMd, Tin: Tin, tOut: T, teOut: teAt(outMd), teIn: te0,
-                 offsetOut: -pN.s * A, tAt: tAt, teAt: teAt, profile: prof, pieces: pieces.length, warnings: warnings };
+                 offsetOut: (pN.psi - pN.s) * pN.A, tAt: tAt, teAt: teAt, profile: prof, pieces: pieces.length, warnings: warnings }, extra);
     }
     // U_to that makes the flowing temperature at target.md equal target.T (°F): Brent on ln U in [Umin, Umax] (default 0.01–1000).
     // The temperature at the outlet falls monotonically with U for production (more heat lost), rises for injection; a target

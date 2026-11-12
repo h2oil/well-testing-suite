@@ -213,7 +213,15 @@
             var Fm = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F });
             var Wm = Fm && Fm.ok ? G.WTS_wp_well.build(M.well, { res: M.res, fluidType: M.fluid.type, surface: M.surface }) : null;
             if (!Wm || !Wm.ok) { row.msg = 'The fluid or the well is incomplete.'; rows.push(row); return; }
-            var fu = G.WTS_wp_well.fitU(Wm, Fm, { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd }, tht);
+            var fo = null;
+            // B (WP22): in the enthalpy mode the fit holds the J-T / gravity / kinetic source of a coarse traverse at the test rates,
+            // marched down from the test THP on the well's own profile (no THP: the relaxation fit, row.model 'relax')
+            if (M.well.heat && M.well.heat.mode === 'enthalpy' && _fin(_n(t.thp_psig)) && _fn('WTS_wp_vlp.traverse')) {
+                var trq = G.WTS_wp_vlp.traverse(Fm, Wm, { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd }, { from: 'top', p0: _n(t.thp_psig) + PATM, corr: _corrOf(M, Fm, o), stepFt: 400, refine: false });
+                if (trq && trq.ok) fo = { rows: trq.profile };
+            }
+            var fu = G.WTS_wp_well.fitU(Wm, Fm, { qo: r.qo, qw: r.qw, qg_Mscfd: r.qg_Mscfd }, tht, fo || undefined);
+            row.model = fu && fu.model ? fu.model : 'relax';
             if (fu && fu.ok) { row.ok = true; row.U = fu.U; row.Ubasis = fu.Ubasis; row.A = fu.A; row.w = fu.w; row.cp = fu.cp; row.range = fu.range; if (row.use) us.push(fu.U); }
             else { row.msg = (fu && fu.errors && fu.errors[0]) || 'U fit failed'; row.range = fu && fu.range; row.code = fu && fu.code; }
             rows.push(row);
