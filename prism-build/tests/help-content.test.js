@@ -29,8 +29,8 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 18.85, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 37.36, '48-calc-help-livedata.js': 16.03,
+  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 19.74, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 45.41, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
   '48-calc-help-simcourse.js': 41.72, '48-calc-help-manifest.js': 8.75,
 };
@@ -72,11 +72,15 @@ const CAPS = {
 // set the final per-file caps from the measured draft. wellperf is in MANUAL_OK only while the page is the WP0 stub (WP10 removes it).
 // Well Performance WP5 (2026-11-11): 0.15 kB of the unallocated pool to production — the wellperf stub's two verdicts (the page now
 // shows the real system solver's ✓ / ✗ checks at the defaults); 11.05 kB stay unallocated for WP10 / WP19.
+// Well Performance WP10 (2026-11-11): the wellperf guide measured as drafted (9.2 kB serialised; Q15 default, final numbers from the
+// draft): 8.05 kB of the pool to production (the guide, its two shots, the hub note on the oilipr / gasdeliv / gaslift guides, Q19)
+// and 0.89 kB to start (the two "How do I…" tasks, 12 → 14); 2.11 kB raw stay unallocated for WP19. wellperf leaves MANUAL_OK (its
+// example is a compute check of WTS_wp_system.solve; a dotted fn is called on its namespace). Gzip after WP10: about 122.9 of 124 kB.
 const SUM_CAP = 357 * KB, GZIP_CAP = 124 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
-const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian', 'wellperf'].concat(OVERVIEW);
+const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
 const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus', 'wellperf'];
 const SRC_OVERRIDE = { wts: ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'] };
 const SEC_KEYS = ['top', 'what', 'when', 'steps', 'inputs', 'results', 'example', 'tips', 'refs', 'related'];
@@ -374,9 +378,11 @@ function checkExample(app, r, g, route0) {
   if (!ck || ck.kind === 'manual') return out;
   const tol = ck.tol == null ? 0.005 : ck.tol, W = app.win;
   if (ck.kind === 'compute') {
-    if (typeof W[ck.fn] !== 'function') return [r + ': example.check fn ' + ck.fn + ' is not a function'];
+    // fn may be a dotted path to a namespace method ('WTS_wp_system.solve'): called with its namespace as `this`
+    const fp = String(ck.fn).split('.'), name = fp.pop(), owner = fp.reduce((a, k) => (a == null ? a : a[k]), W);
+    if (!owner || typeof owner[name] !== 'function') return [r + ': example.check fn ' + ck.fn + ' is not a function'];
     let res;
-    try { res = W[ck.fn](app.toWin(ck.input || {})); } catch (e) { return [r + ': example.check ' + ck.fn + ' threw ' + e.message]; }
+    try { res = owner[name](app.toWin(ck.input || {})); } catch (e) { return [r + ': example.check ' + ck.fn + ' threw ' + e.message]; }
     Object.keys(ck.expect || {}).forEach((k) => { const v = getPath(res, k); if (!near(v, ck.expect[k], tol)) out.push(r + ': example ' + k + ' = ' + v + ', guide says ' + ck.expect[k]); });
     return out;
   }

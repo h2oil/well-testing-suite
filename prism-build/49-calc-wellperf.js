@@ -913,7 +913,7 @@
                 var tb = _call('WTS_wp_fluid.table', F, pl, T), rows = (tb && tb.rows) || [];
                 hf.innerHTML = '<div class="wp-tw"><table class="dtable"><thead><tr><th>p (' + _lab('pressure', 'psia') + ')</th><th>Rs (' + _lab('gor', 'scf/STB') + ')</th><th>Bo (rb/STB)</th><th>μo (cp)</th><th>Z</th><th>μg (cp)</th></tr></thead><tbody>' +
                     rows.map(function (r) { return '<tr><td>' + _fmt(_dv(r.p, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(r.rs, 'gor'), 0) + '</td><td class="num">' + _fmt(r.bo, 3) + '</td><td class="num">' + _fmt(r.muo, 3) + '</td><td class="num">' + _fmt(r.z, 3) + '</td><td class="num">' + _fmt(r.mug, 4) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
-                    ((F.validity || []).map(function (v) { return _vHtml({ st: v.inRange === false ? 'warn' : 'ok', t: (v.inRange === false ? '⚠ ' : '✓ ') + (v.msg || v.corr) }); }).join(''));
+                    ((F.validity || []).map(function (v) { return _vHtml({ st: v.inRange === false ? 'warn' : 'ok', t: (v.inRange === false ? '⚠ ' : '✓ ') + String(v.msg || v.corr).replace(/^[✓⚠✗]\s*/, '') }); }).join(''));
             } else hf.innerHTML = '<div class="wp-v info">' + (_isStub(F) ? 'The fluid engine shows the PVT table here once it is installed.' : 'Enter the fluid, the reservoir pressure and temperature to see the PVT table.') + '</div>';
         }
         // ② IPR plot

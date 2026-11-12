@@ -135,7 +135,14 @@ S('historian', 'Keep the history and export it.', 'exported series'),
 S('prism', 'Load the series and interpret it.')] },
 { id: 'gasprops', title: 'Gas properties for a calculation', purpose: 'Z and related properties at line conditions.', steps: [
 S('gaspvt', 'Z, k, viscosity and J-T coefficient at the line pressure and temperature.', 'Z, k, J-T coefficient'),
-S('', 'Enter them on the page that needs them.')] }];
+S('', 'Enter them on the page that needs them.')] },
+{ id: 'beansize', title: 'Size a bean for a target rate', purpose: 'The choke that gives the rate you want.', steps: [
+S('wellperf', 'Steps ① to ③: fluid, reservoir, well; check the rate at the present bean.', 'operating point'),
+S('wellperf', 'Step ⑤: Solve for → Bean or THP for a target rate, Target rate, Solve the design ([[wellperf#design|Design]]).', 'bean, THP'),
+S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstream of the choke.')] },
+{ id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
+S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
+S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
