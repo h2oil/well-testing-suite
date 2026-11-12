@@ -17,7 +17,7 @@
 // (review fix: the grid alone left the optimum as coarse as the list; GL_OPT_AT_START says when the grid optimum was the first
 // non-zero rate); economic = the point where the incremental OIL slope dq_o/dq_inj falls to 1000 / incGor (STB/d per Mscf/d;
 // incGor = M.lift.gl.incGor scf/STB, the user's incremental gas-oil ratio limit; 0 or blank = the optimum; q_L when a point has no
-// q_o). A point whose root is statically unstable is flagged (the Asheim heading check is B). The quick look adds the rate gain over
+// q_o). A point whose root is statically unstable is flagged (the Asheim numbers are in 49-calc-wp-gldesign.js, B). The quick look adds the rate gain over
 // natural flow and the lift gas for 90 % of the maximum gain (interpolated from (0, 0) when the well does not flow naturally).
 //
 // Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}]}; nothing throws for user data):
@@ -162,7 +162,7 @@
                 gain: sm.gain, gas90: sm.gas90, stable: sm.stable, incGor: _fin(incGor) ? incGor : 0, evals: pts.reduce(function (a, p) { return a + (p.evals || 0); }, 0), warnings: warnings.slice(), errors: [] };
             if (!res.ok) { res.code = 'NO_FLOW'; res.errors.push('No injection rate gives an operating point: check the injection pressure, the packer depth and the surface boundary.'); }
             if (nat && !nat.ok) res.warnings.push(_w('GL_DEAD_WELL', 'The well does not flow naturally at these settings: every rate on the curve is lifted.', 'info'));
-            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; the Asheim check comes in a later release).'));
+            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; see the Asheim stability numbers of the gas-lift design card).'));
             var noInj = pts.filter(function (p) { return !p.ok && /injection/i.test(String(p.error || '') + String(p.code || '')); });
             if (noInj.length) res.warnings.push(_w('GL_NO_INJECTION', 'At some rates the casing pressure cannot open a point above the packer: raise the injection pressure or lower the valve ΔP.'));
             if (sm.optimum && sm.optimum.qinj === list[list.length - 1] && list.length > 2) res.warnings.push(_w('GL_OPT_AT_END', 'The maximum rate is at the largest injection rate of the list: extend the list to find the optimum.', 'info'));

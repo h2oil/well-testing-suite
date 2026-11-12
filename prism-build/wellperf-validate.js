@@ -101,6 +101,11 @@ const BENCH = [
   { kind: 'forecast', key: 'gasTank', status: 'pending', source: 'volumetric gas p/Z material balance (e.g. Craft & Hawkins) — closed form X49 only' },
   { kind: 'forecast', key: 'oilTank', status: 'pending', source: 'Havlena & Odeh (1963) straight line with Corey gas flow above S_gc — identity X50 only' },
   { kind: 'screen', key: 'lift', status: 'pending', source: 'Brown (1982); Clegg, Bucaram & Hein (1993) — indicative screening ranges' },
+  // B (WP25): the gas-lift design is the existing API RP 11V6 engine (49-calc-gaslift.js, pinned by calc-gaslift against an independent
+  // RK4 gas column) on the shared model (identity X55); the valve throughput and the stability numbers have no checked example (Q9)
+  { kind: 'lift', key: 'glDesign', status: 'pinned', source: 'API RP 11V6 spacing — calc-gaslift tests (independent RK4 gas column); vertical-path identity X55' },
+  { kind: 'lift', key: 'thornhillCraver', status: 'pending', source: 'Thornhill & Craver; API RP 11V2, Brown vol. 2a — no worked example checked (Q9); isentropic-nozzle cross-check X54 only' },
+  { kind: 'lift', key: 'asheim', status: 'pending', source: 'Asheim (1988) gas-lift stability criteria — written from the lumped model, coefficients not checked (Q9); identities X57 only' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
@@ -110,6 +115,9 @@ const BUDGET = {
   // B (WP27): the envelope (one solve + ≈ 22 marches with the flowline), a 24-step forecast, the tornado (one solve + ≤ 8 E per case),
   // the 3 × 3 × 3 × 3 matrix, the lift screening (one solve + the short performance curve), two cases compared (a cold solve each)
   envelope: 60, forecast24: 160, tornadoPerCase: 8, matrix81: 500, screening: 120, cases2: 48,
+  // B (WP25): the gas-lift valve design (marches of the RP 11V6 engine on the model path, each ≤ 1 E: the traverses below and above the
+  // point of injection, the GLR bisection and the spacing) and the diagnosis of a test (two marches)
+  glDesign: 120, glDiag: 3,
 };
 const LIFT3200_MS = 60000;               // §16: the 3,200-point lift table within 60 s in the container
 
@@ -278,6 +286,18 @@ function gate(G) {
   if (SCR && typeof SCR.matrix === 'function') {
     const b = benchOf('screen', 'lift'), m = SCR.matrix(S.FIX.oilWell, {});
     if ((!b || b.status === 'pending') && (!m.ok || m.verified !== false || m.provisional !== PROVISIONAL)) bad('screen lift', 'pending without the provisional label');
+  }
+  // 11. the gas-lift throughput and stability numbers (B, WP25): pending → verified:false and the provisional label where they are shown
+  const GLB = G.WTS_wp_gl;
+  if (GLB && typeof GLB.tc === 'function') {
+    const pend = (k) => { const b = benchOf('lift', k); return !b || b.status === 'pending'; };
+    if (pend('thornhillCraver') && GLB.TC.verified !== false) bad('lift thornhillCraver', 'pending but the registry says verified');
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 800, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const Rl = G.WTS_wp_system.solve(Ml), a = GLB.asheim(Ml, Rl, { port64: 16 });
+    if (pend('asheim') && (!a.ok || a.verified !== false || a.provisional !== PROVISIONAL)) bad('lift asheim', 'pending without the provisional label');
+    let s0, j = GLB.design(Ml, Rl), n0 = 0; do { s0 = j.step(); n0++; } while (!s0.done && n0 < 20);
+    const Dl = j.result();
+    if (pend('thornhillCraver') && (!Dl.ok || !Dl.warnings.some((w) => w.code === 'TC_PROVISIONAL' && w.msg.indexOf(PROVISIONAL) !== -1))) bad('lift thornhillCraver', 'the design does not carry the provisional note');
   }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift' || b.kind === 'forecast' || b.kind === 'screen').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
@@ -737,6 +757,43 @@ function checks(G) {
       add('X53b', 'schematic deviation marks: KOP at 3° and the horizontal hold on FIX.devSurvey (ft)', eK < 0.01 && eH < 0.01, Math.max(eK, eH), 0.01);
     }
   }
+  // X54–X58 (B, WP25): gas-lift design on the shared model, Thornhill-Craver, diagnosis, Asheim and the gradient survey
+  const GL = G.WTS_wp_gl;
+  if (GL && typeof GL.tc === 'function' && typeof G.WTS_gaslift_compute === 'function') {
+    // X54 Thornhill-Craver = the isentropic gas nozzle of 49-calc-chokeperf.js at z = 1 and the same Cd (the 155.5·√(2g) constant against
+    // the nozzle's K_G at 60 °F / 14.696 psia), over a grid of ports, ratios (critical and sub-critical), temperatures and gravities
+    let wTC = 0;
+    [8, 16, 24, 32].forEach((p64) => [0.3, 0.55, 0.8, 0.95].forEach((r) => [100, 200].forEach((T) => [0.6, 0.8].forEach((sg) => {
+      const t = GL.tc({ port64: p64, p1: 1200, p2: 1200 * r, T: T, sg: sg, cd: 0.85 });
+      const nz = G.WTS_chokeperf_gasRate({ s64: p64, cd: 0.85, p1a: 1200, p2a: 1200 * r, tR: T + 459.67, sg: sg, k: 1.27, z: 1 });
+      wTC = Math.max(wTC, Math.abs(t.q / nz - 1));
+    }))));
+    add('X54', 'Thornhill-Craver = the isentropic nozzle at z = 1 (critical and sub-critical; relative)', wTC < 0.005, wTC, 0.005);
+    // X55 the additive inputs of WTS_gaslift_compute: a one-segment vertical path + a straight-line inflow object = the vertical design
+    const B0 = { qo: 800, qw: 400, gor: 300, api: 35, sgg: 0.7, sgw: 1.07, sginj: 0.65, pr: 3000, pi: 2, dperf: 8000, dmax: 7700, tub: 'tubing-2.875-6.5', rough: 0.0018,
+      pwh: 120, twh: 110, bht: 190, pko: 1100, pso: 1000, glr: 800, dpv: 100, dpdrop: 25, gs: 0.465, ftub: 20, minsp: 250, R: 0.067 };
+    const a0 = G.WTS_gaslift_compute(B0), a1 = G.WTS_gaslift_compute(Object.assign({}, B0, { segments: [{ len: 8000, id: 2.441, dz: 8000 }], ipr: { pr: 3014.696, pwfAt: (q) => 3014.696 - q / 2 } }));
+    let w55 = a0.ok && a1.ok && a0.valves.length === a1.valves.length ? 0 : Infinity;
+    if (w55 === 0) a0.valves.forEach((v, i) => { w55 = Math.max(w55, Math.abs(v.d - a1.valves[i].d), Math.abs(v.ptro - a1.valves[i].ptro)); });
+    add('X55', 'gas-lift design: vertical path + straight-line ipr = the vertical design (valve depth ft, p_tro psi)', w55 < 1e-6, w55, 1e-6);
+    // X56 the design and the diagnosis agree: at the design's operating surface pressure (+5 psi) and the operating rates the valve that
+    // passes the gas is the design's operating valve, alone
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 800, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const Rl = solve(Ml), runJ = (job) => { let st, n = 0; do { st = job.step(); n++; } while (!st.done && n < 20); return job.result(); }, Dl = runJ(GL.design(Ml, Rl));
+    if (Dl.ok) {
+      const opv = Dl.valves[Dl.valves.length - 1], dg = GL.diagnose(Ml, Rl, GL.valvesFromDesign(Dl), { chp_psig: opv.pso + 5, thp_psig: Rl.surface.thp_psig, qinj_Mscfd: 800, q_o: Rl.rates.qo, q_w: Rl.rates.qw, q_g: Rl.rates.qg + 800 });
+      const ok56 = dg.ok && dg.operating && dg.operating.n === Dl.valves.length && !dg.multi;
+      add('X56', 'diagnosis at the design operating surface pressure = the design operating valve, alone', ok56, ok56 ? 0 : 1, 0);
+    } else add('X56', 'diagnosis at the design operating surface pressure = the design operating valve, alone', false, 1, 0);
+    // X57 Asheim: F1 > 1 exactly when the solver's static criterion dΔ/dq > 0; a critical port gives F2 = 0
+    const a = GL.asheim(Ml, Rl, { port64: 16 }), Mc = S.FIX.oilWell; Mc.fluid.wc = 0.6; Mc.res.pr = 2600; Mc.lift = { type: 'gaslift', gl: { qinj_Mscfd: 800, pinj_psig: 1200, sginj: 0.65, dpValve: 700, packerMd: 7800 } };
+    const ac = GL.asheim(Mc, solve(Mc), { port64: 16 }), ok57 = a.ok && a.stable1 === (Rl.op.dDdq > 0) && ac.ok && ac.parts.critical && ac.F2 === 0;
+    add('X57', 'Asheim F1 > 1 ⇔ dΔ/dq > 0; a critical port gives F2 = 0', ok57, ok57 ? 0 : 1, 0);
+    // X58 the solve's own traverse read as a survey matches it exactly, and its gradient break lies at the injection point
+    const rows = Rl.traverse.profile.filter((r, i) => !r.restr && i % 4 === 0).map((r) => ({ md: r.md, p: r.p }));
+    const ms = GL.matchSurvey(Ml, Rl, rows), dB = ms.ok && ms.brk ? Math.abs(ms.brk.md - Rl.lift.injMd) : Infinity;
+    add('X58', 'gradient survey = the solved traverse: RMS 0 psi, break at the injection point (ft MD)', ms.ok && ms.rms < 1e-6 && dB < 400, dB, 400);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -808,6 +865,21 @@ function timing(G) {
       rec('gas-lift performance curve, 12 points', 'oilWell', g && g.ok ? g.evals : 0, BUDGET.glpc12, nowMs() - t2);
     }
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
+  // B (WP25): the gas-lift valve design on the shared model and a test diagnosis — every WTS_flowline_march call counted as 1 E (the
+  // marches of the design run over the hole or part of it; the tool counts them, the app never wraps the function)
+  if (G.WTS_wp_gl && typeof G.WTS_wp_gl.design === 'function') {
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 800, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const Rl = SY.solve(Ml), orig = G.WTS_flowline_march; let nM = 0;
+    G.WTS_flowline_march = function () { nM++; return orig.apply(this, arguments); };
+    try {
+      let t0 = nowMs(); const Dl = run(G.WTS_wp_gl.design(Ml, Rl)); rec('gas-lift valve design (' + (Dl.ok ? Dl.valves.length : 0) + ' valves, model path)', 'oilWell', nM, BUDGET.glDesign, nowMs() - t0);
+      if (Dl.ok) {
+        nM = 0; const opv = Dl.valves[Dl.valves.length - 1];
+        t0 = nowMs(); G.WTS_wp_gl.diagnose(Ml, Rl, G.WTS_wp_gl.valvesFromDesign(Dl), { chp_psig: opv.pso + 5, thp_psig: Rl.surface.thp_psig, qinj_Mscfd: 800, q_o: Rl.rates.qo, q_w: Rl.rates.qw, q_g: Rl.rates.qg + 800 });
+        rec('gas-lift diagnosis of a test', 'oilWell', nM, BUDGET.glDiag, nowMs() - t0);
+      }
+    } finally { G.WTS_flowline_march = orig; }
+  }
   // B (WP24): the injector solve (flow down the path; one root, no q_s) and a two-layer solve
   if (G.WTS_wp_inj) {
     const Mi = S.FIX.gasWell; Mi.fluid = Object.assign(Mi.fluid, { type: 'waterinj', cgr: 0, wgr: 0, sgw: 1.05 }); Mi.res = { model: 'injector', pr: 3200, T_F: 230, params: { II: 4, pfrac: 5200 }, points: [], layers: [] };

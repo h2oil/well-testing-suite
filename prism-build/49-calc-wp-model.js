@@ -10,7 +10,9 @@
 //                       corrSections (v4.5 WP21: per-section correlations → M.system.corr.sections)
 //                       (B, WP22: geo.layers [[topMd, botMd, U, ke|null]] — heat-transfer layers by depth → M.well.heat.layers [{topMd,
 //                       botMd, U, ke}], present only when the record has layers)
-//                       layers (B, WP24: multilayer rows → M.res.layers)}; read() also copies the perforations to M.res.perf
+//                       layers (B, WP24: multilayer rows → M.res.layers),
+//                       glValves (B, WP25: installed gas-lift valves [{md ft, port /64 in, ptro psig, R, kind 'ipo'|'orifice'|'dummy'}], ≤ 20,
+//                       sorted by MD → M.lift.gl.valves)}; read() also copies the perforations to M.res.perf
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -35,7 +37,7 @@
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers'];   // corrSections: v4.5 WP21; layers: B (WP24)
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25)
     var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
@@ -89,7 +91,9 @@
                     heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04, Ubasis: 'to', dwb_in: null } },
             surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'bound', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
-            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
+            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0,
+                    // B (WP25): the unloading design settings (blank = the engine defaults) and the installed valves (table glValves)
+                    design: { pko_psig: null, gs: null, ftub: null, minsp: null, dpdrop: null, port64: null, R: null, qL: null, dmaxMd: null }, valves: [] }, esp: null },
             system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb', sections: [] },
                       mult: { hl: 1, f: 1 }, eroC: 100, stepFt: 100, stepFtLine: 50, refine: true },
             tests: [],
@@ -147,6 +151,12 @@
         // A2 (WP18): the operating lift-gas rate (Mscf/d; blank or 0 = natural flow) and the incremental gas-oil ratio limit of the
         // economic point (scf/STB; 0 = the optimum)
         wp_gl_qinj: { path: 'lift.gl.qinj_Mscfd', kind: 'num' }, wp_gl_incgor: { path: 'lift.gl.incGor', kind: 'num' },
+        // B (WP25): gas-lift unloading design (kickoff psig, kill-fluid gradient psi/ft, design tubing effect %, minimum spacing ft MD, surface
+        // pressure drop per valve psi, port /64 in, R, design liquid rate STB/d, deepest mandrel ft MD)
+        wp_gld_pko: { path: 'lift.gl.design.pko_psig', kind: 'num' }, wp_gld_gs: { path: 'lift.gl.design.gs', kind: 'num' },
+        wp_gld_ftub: { path: 'lift.gl.design.ftub', kind: 'num' }, wp_gld_minsp: { path: 'lift.gl.design.minsp', kind: 'num' },
+        wp_gld_dpdrop: { path: 'lift.gl.design.dpdrop', kind: 'num' }, wp_gld_port: { path: 'lift.gl.design.port64', kind: 'num' },
+        wp_gld_R: { path: 'lift.gl.design.R', kind: 'num' }, wp_gld_qL: { path: 'lift.gl.design.qL', kind: 'num' }, wp_gld_dmax: { path: 'lift.gl.design.dmaxMd', kind: 'num' },
         wp_thp: { path: 'system.thp_psig', kind: 'num' },
         wp_node: { path: 'system.node', kind: 'str', enumv: ['bottom', 'wellhead', 'separator'] },
         wp_mode: { path: 'system.mode', kind: 'str', enumv: ['rate', 'pressure', 'max', 'design'] },
@@ -200,7 +210,7 @@
     // ── table record: empty / migrate / validate / decimate ───────────────────
     function empty() {
         return { v: VERSION, survey: [], strings: [], restrictions: [], geo: { points: [] }, flowline: [],
-                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [], layers: [] };
+                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [], layers: [], glValves: [] };
     }
     function migrate(rec) {
         if (!_isObj(rec)) return { ok: false, code: 'BAD_RECORD', notes: ['the stored model is not an object'] };
@@ -282,6 +292,12 @@
             ['topMd', 'botMd', 'tvdTop', 'tvdBot', 'pr', 'J', 'pb', 'k', 'h', 'S', 'a', 'b'].forEach(function (k) { o[k] = _num(x[k]); });
             return o;
         }).filter(function (x) { return _fin(x.topMd) && _fin(x.botMd) && x.botMd > x.topMd; });
+        // B (WP25): installed gas-lift valves {md ft, port /64 in, ptro psig (test-rack opening), R (port / bellows), kind}
+        out.glValves = (Array.isArray(r.glValves) ? r.glValves : []).filter(_isObj).map(function (x) {
+            var o = { md: _num(x.md), port: _num(x.port), ptro: _num(x.ptro), R: _num(x.R), kind: ['ipo', 'orifice', 'dummy'].indexOf(x.kind) !== -1 ? x.kind : 'ipo' };
+            if (!(o.port > 0 && o.port <= 64)) o.port = null; if (!(o.R > 0 && o.R < 0.5)) o.R = null; if (!(o.ptro > 0)) o.ptro = null;
+            return o;
+        }).filter(function (x) { return _fin(x.md) && x.md > 0; }).sort(function (a, b) { return a.md - b.md; }).slice(0, 20);
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
@@ -380,6 +396,7 @@
             }
             M.system.corr.sections = rec.corrSections || [];
             M.res.layers = rec.layers || [];
+            M.lift.gl.valves = rec.glValves || [];   // B (WP25)
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);

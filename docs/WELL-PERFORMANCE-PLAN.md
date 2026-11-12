@@ -1073,7 +1073,7 @@ changes (5). **Total A2 ≈ 53.**
 
 `wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2` (WP24: 15), `wellperf-gl2`,
 `wellperf-esp`, `wellperf-cases`, `wellperf-mech`. WP27 shipped `wellperf-cases` (6), `wellperf-envelope` (5), `wellperf-tornado` (3) and
-`wellperf-studies` (5) — §18.3.6.
+`wellperf-studies` (5) — §18.3.6; WP25 shipped `wellperf-gl2` (8) — §18.3.9.
 
 ---
 
@@ -1884,6 +1884,76 @@ after every merge; the wellperf and flowline guides re-hashed (reviewed v4.5). R
   (2122 + 86 new); wellperf-validate --html --gate --check --time: gate PASS, 51/51 cross-checks, every E budget ok (one wall-clock row,
   the gas enthalpy solve, ran over its ms cap on the loaded container: 1.46 s against 1.36 s); help-shots / build-user-guide /
   publish-site --check ok; help production file under its cap (no screenshot added).
+
+#### 18.3.9 WP25 record (2026-11-12, branch wp/b-wp25)
+
+Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so Thornhill-Craver and the Asheim numbers ship
+provisional through the D17 gate (`wellperf-validate.js` BENCH `lift thornhillCraver`, `lift asheim` pending; `lift glDesign` pinned — the
+existing API RP 11V6 engine, calc-gaslift against an independent RK4 gas column). Q11 (valve library) stays at its default: no library.
+
+- **`WTS_gaslift_compute` additive inputs (§2.3)** — absent → today bit for bit (calc-gaslift 4, wellperf-identity FI3 unchanged):
+  `ipr` (a `WTS_wp_ipr` curve: `pr` psia, `pwfAt(q)` psia) replaces the straight-line PI; `segments` (the flow path from the mid-perforations
+  up, `WTS_wp_well.segmentsFor` shape) replaces `[{len: L, dz: L}]` — every depth is then an MD, the injection-gas column, the kill-fluid
+  gradient and the design tubing line work on the TVD of that MD, spacing (minsp) is along the hole, dperf = the path MD (≤ 40,000 ft);
+  `tAt(md)` replaces the linear THT → BHT profile (marches, gas column, valve temperatures); `corr` (a `WTS_flowline_corr` key) and `pvt`
+  (fluid.pvt without `table` / `injGas`) reach the marches. With them the result adds `valves[].md / tvd`, `curves[*][].tvd`, `deviated`,
+  `poiTvd`, `poiValveTvd`, `dperfTvd`, `pr`, `ipr {key, label, pr_psia}`. X55: a one-segment vertical path + a straight-line ipr = the
+  vertical design (6e-8).
+- **`WTS_wp_gl` (new file `49-calc-wp-gldesign.js`, same namespace as 49-calc-wp-lift.js)**: `TC` {cd 0.865, k 1.27, A_bellows 0.77 in²,
+  ports 8–32/64, verified:false}; `tc({port64 | d_in, cd, p1, p2 psia, T °F, sg, k})` Thornhill-Craver with the critical-ratio cap
+  (q, qCrit, r, rc, critical, dqdp2); `portR`; `context(M)` (fluid, inflow, path as the solver builds them); `inputFor(M, R)` (the design
+  input on the shared model: rate and THP of the operating solve, injection pressure and rate of step ④, kickoff = injection + 100 psi,
+  deepest mandrel = packer − 30 ft, the model's inflow, path, correlation and the flowing temperature of the operating solve at every valve
+  — linear, relaxation or enthalpy profile); `design(M, R)` → a Job (2 steps; result `{ok, gl, valves:[{n, md, tvd, role, port, R, t, pso,
+  pvo, pt, pd, pd60, ptro, pvcs, spacing, tc, need, ok}], operating, qinj, qL, port, portRec, capOk, inputs, warnings}` — portRec = the
+  smallest port passing 110 % of the injection rate at the operating valve); `setValve(D, i, md)` (a dragged design valve re-set on the same
+  casing and design-tubing lines); `valvesFromDesign`; `diagnose(M, R, valves, test)` (casing at each valve from the test CHP, tubing from
+  the THP marched down with the metered lift gas to the operating valve and with the formation gas below it; IPO open at p_vo, held open
+  down to p_vc = p_d; status, operating valve, multi-pointing, lifting above the bottom valve, throughput against the metered gas, supply-
+  limited, sub-critical, under / over injection (80 % / 120 %) against the performance-curve economic point or optimum, else the design
+  rate; orifice and dummy kinds); `parseSurvey(text, {axis, unit})` (header units m / bar / kPa / °C converted; psig / psia; MD or TVD);
+  `matchSurvey(M, R, rows, {valves})` (residuals against the solved traverse, RMS / bias / worst, temperature RMS, the gradient break by
+  two least-squares lines in p vs TVD → injection MD · TVD, nearest valve); `asheim(M, R, {port64})` → `{F1, F2, stable1, stable2,
+  verdict, parts, verified:false, provisional}`: F1 = (dp_in/dq)/(dp_out/dq) at the operating point (∞ on a rising tubing curve; > 1 ⇔
+  the solver's dΔ/dq > 0, X57), F2 = |∂p_ti/∂q_gi|·|∂q_v/∂p_ti| (no-slip column above the point × the Thornhill-Craver slope; 0 with a
+  critical port; < 1 stable) — written for this module from Asheim's lumped description; the paper's own coefficients were not checked.
+- **Model (`WTS_wp_model`, additive)**: table key `glValves` [{md, port /64, ptro psig, R, kind 'ipo'|'orifice'|'dummy'}] ≤ 20, sorted →
+  `M.lift.gl.valves`; `M.lift.gl.design {pko_psig, gs, ftub, minsp, dpdrop, port64, R, qL, dmaxMd}` (null = engine default); scalars
+  `wp_gld_pko / gs / ftub / dpdrop / minsp / port / R / qL / dmax`. The test rows already carried `chp_psig` and `qinj_Mscfd`; the page's
+  test table now shows them (CHP, Lift gas).
+- **Page** (extension `window.WTS_wellperf_ext.gldesign`, new file `49-calc-wp-glui.js`; page edits: the `handle` / `trPlot` / `comp`
+  extension hooks, the wp_gld_* unit tags, the two test columns, three text lines): `#wp_res` card "Gas-lift valves — design, throughput
+  and diagnosis" (with gas lift): KPI chips (valves, operating valve MD · TVD, port throughput vs need, Asheim F1 / F2, diagnosis, survey
+  RMS), the valve chart `#wp_cv_glv` (pressure vs TVD or MD; Design view: kickoff / injection casing lines, design tubing line, unloading
+  kill-fluid legs, tubing with and without lift gas, point of injection; Diagnosis view: casing from the CHP, tubing from the THP, p_vo per
+  valve; survey stops and break; packer) with a drag knob per valve (live re-set of a design valve, or a moved installed valve written on
+  release; keyboard [ ] arrows Enter), the valve table (MD, TVD, T, port, p_tro, p_vo / p_c, p_t, capacity / gas, role / status) and the
+  ✓ / ⚠ / ✗ verdicts. Step ④: "Gas-lift design — unloading valves" (settings, Design the valves (a Job), Use this design → glValves, Use the
+  recommended port, the installed-valve editor with TVD) and "Gas-lift diagnosis and gradient survey" (test select — device pref
+  `wtspref_wp_plots.glTest`, survey text `wpv_gls_text`, Match the survey). Schematic: a mandrel per valve coloured by state (operating /
+  open / closed / orifice / dummy) — click opens its editor row, drag along the hole moves it (live), arrow keys on a focused mandrel move it
+  50 ft (Shift 10 ft). Traverse: a line per valve (the operating one labelled) and the survey stops. CSV blocks (valves, diagnosis, survey),
+  a Notes line. Device prefs `glvView`, `glvDepth`, `glvHidden`. Shots at 1280 × 800 and 390 px (scratchpad `shots-b-WP25`), no
+  horizontal overflow, no console errors.
+- **Tests / gates**: `wellperf-gl2` (8: WG21–WG28); `wellperf-validate`: gate section 11 (Thornhill-Craver and Asheim carry the provisional
+  label; the design carries TC_PROVISIONAL), X54 (Thornhill-Craver = the isentropic nozzle at z = 1, 0.32 % worst), X55, X56 (diagnosis at the
+  design operating surface pressure = the design operating valve, alone), X57, X58 (the solve's own traverse as a survey: RMS 0, break
+  71 ft from the injection point); `--time` rows "gas-lift valve design" (26 marches against 120 E) and "gas-lift diagnosis" (1 against 3).
+  Full suite: 193 files, 2,216 / 2,216; smoke 347; wellperf-validate --html: gate PASS, 56 / 56, every E budget ok.
+- **Help**: no new text or screenshot (the production help file is at its cap, Q21) — `^wp_gld_` added to the wellperf notDocumented
+  pattern; the wellperf and gaslift guides re-hashed (reviewedSrc). The guide does not describe the design card, the diagnosis or the
+  survey (gap).
+- **Known gaps**: Thornhill-Craver (Cd 0.865) and the Asheim numbers are provisional (Q9) — the F1 / F2 forms are this module's reading of
+  the lumped model and need the owner's check against the paper; the design marches are the RP 11V6 engine's (the model's correlation and
+  PVT pass through, the lift gas is mixed into the gravity and the total GLR, not the solver's free-gas-only option), so the design tubing
+  curve and the solve's traverse differ slightly; with gas lift the solver uses the relaxation profile (WP22 ENTH_FALLBACK), so the valve
+  temperatures are relaxation / linear on a lifted well; the system solve still injects at its single point of balance with the step ④
+  casing pressure — it does not yet inject at the installed valves (the design's operating valve sits at the operating surface pressure
+  p_so − (n − 1)·Δp_drop); the RP 11V6 engine's operating-pressure iteration can stop on an alternate valve count (psoOp of the last pass),
+  so the page reports the operating valve's own surface pressure; the diagnosis is steady state (IPO valves only, held open above their
+  closing pressure, formation gas = metered gas − lift gas, no hole-in-tubing model); the survey is in field units unless its header says
+  otherwise and is not used for tuning (step ⑥ tunes on gauges); no valve / mandrel library (Q11); valve labels can overlap on the chart
+  when two valves are close; GLPC points carry no Asheim numbers.
 
 ### 18.4 Increment C
 
