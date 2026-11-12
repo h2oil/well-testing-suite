@@ -5,12 +5,12 @@
 'use strict';
 var G=(typeof window!=='undefined')?window:globalThis,H=G.WTS_help=G.WTS_help||{};
 var SITE='welltest.h2oil.co.uk',BOOK='Well Testing Suite — User Guide',CH='Chapter ',IMG='help/img/',AP='Appendix ',UG='help/user-guide.html',SC=/^(card|worksheet):(.+)$/;
-var LT={start:'Getting started',tasks:'How do I…',course:'Well Test Simulator course',scenarios:'Field scenarios'};
-var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course:'course',glossary:'glossary',faq:'faq'};
+var LT={start:'Getting started',tasks:'How do I…',course:'Well Test Simulator course',wpcourse:'Well performance course',scenarios:'Field scenarios'};
+var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course:'course',wpcourse:'wpcourse',glossary:'glossary',faq:'faq'};
 var KEYS=[['F1','Help for this page'],['/','Help: search box'],['↑ ↓ Enter Esc','Help search results'],['?','Simulator: keyboard shortcuts']];
 var arr=v=>Array.isArray(v)?v:v==null||v===''?[]:[v],C=()=>H.load(),esc=s=>H.esc(s),md=(s,o)=>H.md(s,o);
 var byId=id=>typeof document!=='undefined'?document.getElementById(id):null;
-var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
+var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true}),EX=k=>H.exercises?H.exercises(k):C().course,EK=id=>H.exerciseKind?H.exerciseKind(id):'course';
 var go=(r,l)=>'<button type="button" class="help-a" data-help-go="'+r+'">'+l+'</button>';
 var note=t=>'<p class="help-note">'+t+' not in this build yet.</p>';
 var lines=n=>new Array(n+1).join('<div class="bk-line"></div>');
@@ -40,6 +40,7 @@ function plan(){
   var m=ch('course','Well Test Simulator');
   if(c.guides.wts)num(m,'wts',m.n+'.1');
   ch('fs',LT.scenarios);
+  if(EX('wpcourse').length)ch('wpcourse',LT.wpcourse);
   P.app=[['A','Standards index'],['B','Glossary'],['C','Keyboard shortcuts'],['D','Troubleshooting and FAQ']];
   P.x.glossary=[AP+'B','bk-app-b'];P.x.faq=[AP+'D','bk-app-d'];
   return P;
@@ -47,7 +48,7 @@ function plan(){
 // [[links]] → "label (see Chapter N.M)"; route#sec → its anchor if in the book
 var BTN=/<button type="button" class="help-a" data-help-go="([^"]*)"(?: data-help-sec="([^"]*)")?(?: aria-current="true")?>([\s\S]*?)<\/button>/g;
 var links=(h,P,bk)=>h.replace(BTN,(m,r,s,l)=>{
-  var t=P.x[KIND[r]||nr(r)];
+  var t=P.x[r==='course'&&s?EK(s):KIND[r]||nr(r)];
   if(!t)return l;
   var id=s&&KIND[r]?'help-'+({tasks:'task',scenarios:'fs'}[r]||r)+'-'+s:t[1],y=s&&'help-'+nr(r)+'-'+s;
   if(y&&!KIND[r]&&h.indexOf('id="'+y+'"')>-1)id=y;
@@ -58,15 +59,16 @@ function chapter(o,x){
   var c=C(),k=o.kind,w=H.titleOf('wts'),b;
   if(k==='start')b=(c.start.length?list('start',x):note('Getting started is'))+(c.tasks.length?'<h3>'+LT.tasks+'</h3>'+list('tasks',x).replace(/<(\/?)h3>/g,'<$1h4>'):'');
   else if(k==='group')b=o.routes.map(r=>H.renderGuide(r,x)).join('\n')+(o.wts?'<p>'+go('wts',esc(w))+'</p>':o.routes.length?'':note('Guides are'));
-  else if(k==='course')b=(c.guides.wts?H.renderGuide('wts',x):note('The reference is'))+course(x);
+  else if(k==='course')b=(c.guides.wts?H.renderGuide('wts',x):note('The reference is'))+course(x,k);
+  else if(k==='wpcourse')b=(c.guides.wellperf?'<p>'+go('wellperf',esc(H.titleOf('wellperf')))+'</p>':'')+course(x,k);
   else b=c.scenarios.length?list('scenarios',x):note('Field scenarios are');
   return chap(o.id,o.n+' '+o.t,b);
 }
 // exercises (worksheets), then all answers, then all trainer notes (§5.2)
 var TN=[['Duration','duration'],['Fault to inject','fault'],['A good response','good'],['Common mistakes','mistakes',1],['Debrief questions','debrief',1]];
-function course(o){
-  var x=C().course,ul=l=>'<ul><li>'+l.map(s=>md(s,o)).join('</li><li>')+'</li></ul>',z=(t,f)=>'<h3>'+t+'</h3>'+x.map((e,i)=>'<h4>'+(i+1)+' '+md(e.title,o)+'</h4>'+f(e,e.trainer||{})).join('\n');
-  return!x.length?'':'<section class="help-sec" id="bk-course"><h3>'+LT.course+'</h3>'+list('course',ws(o))+z('Answers',e=>arr(e.answers).length?ul(arr(e.answers)):'')+
+function course(o,k){
+  var x=EX(k),ul=l=>'<ul><li>'+l.map(s=>md(s,o)).join('</li><li>')+'</li></ul>',z=(t,f)=>'<h3>'+t+'</h3>'+x.map((e,i)=>'<h4>'+(i+1)+' '+md(e.title,o)+'</h4>'+f(e,e.trainer||{})).join('\n');
+  return!x.length?'':'<section class="help-sec" id="bk-'+k+'"><h3>'+LT[k]+'</h3>'+list(k,ws(o))+z('Answers',e=>arr(e.answers).length?ul(arr(e.answers)):'')+
     z('Trainer notes',(e,t)=>TN.map(q=>{var v=arr(t[q[1]]);return!v.length?'':'<p><b>'+q[0]+':</b>'+(q[2]?'</p>'+ul(v):' '+md(v[0],o)+'</p>');}).join(''))+'</section>';
 }
 function appx(P,o,only){
@@ -96,7 +98,7 @@ function card(r,o){
   try{return '<section class="bk-card"><p class="bk-k">Quick card</p>'+H.renderGuide(r,o)+'</section>';}finally{c.guides[r]=g;}
 }
 function worksheet(id,o){
-  var c=C(),i=c.course.map(x=>x.id).indexOf(id),x=c.course[i],q=arr(x&&x.questions);
+  var l=EX(EK(id)),i=l.map(x=>x.id).indexOf(id),x=l[i],q=arr(x&&x.questions);
   return!x?'':'<section class="bk-ws"><p class="bk-k">Trainee worksheet</p>'+H.renderExercise(x,i,ws(o))+
     '<p>Name: ____________________ Date: __________</p><h4>Readings</h4>'+lines(6)+'<h4>Answers</h4>'+(q.length?q.map((y,k)=>'<p><b>Q'+(k+1)+'</b> '+md(y,o)+'</p>'+lines(3)).join(''):lines(6))+'</section>';
 }
@@ -170,7 +172,7 @@ function items(v){
   var c=C(),out=[],r=v.kind==='guide'&&c.guides[v.route]&&v.route,g=r&&H.sidebarGroups().filter(x=>x.routes.indexOf(r)>-1)[0];
   if(r)out.push(['Quick card','card:'+v.route],['This guide',v.route]);
   if(g&&g.label!=='Other')out.push(['This group: '+g.label,g.label]);
-  if(v.kind==='course')c.course.forEach((x,i)=>out.push(['Worksheet: '+(i+1)+' '+pt(x.title),'worksheet:'+x.id]));
+  if(v.kind==='course'||v.kind==='wpcourse')EX(v.kind).forEach((x,i)=>out.push(['Worksheet: '+(i+1)+' '+pt(x.title),'worksheet:'+x.id]));
   return out.concat([['Whole user guide','all']]);
 }
 function fill(v){var l=byId('help_pm');if(l)l.innerHTML='<option value="">Print ▾</option>'+items(v).map(x=>'<option value="'+esc(x[1])+'">'+esc(x[0])+'</option>').join('');}

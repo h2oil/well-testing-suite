@@ -110677,6 +110677,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   • 48-calc-help-start
 //   • 48-calc-help-utilities
 //   • 48-calc-help-welltest
+//   • 48-calc-help-wpcourse
 //   • 48-calc-wellbore
 //   • 48-calc-wellkill
 //   • 49-calc-buildup-data
@@ -118740,7 +118741,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 eab29e2b,view-p 780 1688 ced6e746",
+    "help": "view-d 1280 800 7847caa4,view-p 780 1688 9545f48d",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 a30bf3c6,view-p 780 1688 7648693c",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -118780,7 +118781,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 218;
-  M.bytes = 7994340;   // total size of the image files (the offline download label)
+  M.bytes = 7994360;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -119114,10 +119115,10 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: '438f32c4', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: '7962c13f', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
-purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
+purpose: 'A guide for every module, with search, "How do I…" tasks, two training courses and field scenarios.',
 what: ['Every guide has the same sections: what it does, when to use it, steps, inputs, results and verdicts, an example, tips and standards.', 'Help is never put in reports, autosave or project files.'],
 when: ['You are new to a page, or a verdict is not clear.', 'A job needs several modules in order.'],
 steps: [{ t: 'Select **Help & Guide** in **Overview**. On other pages, the ? next to the page title opens that page’s guide.', shot: 'view' },
@@ -119579,7 +119580,14 @@ var wellperf = {
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
   { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing below the tubing shoe is shown as information. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
-  { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] }],
+  { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
+  { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
+  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP at the operating rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
+  { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** marches the temperature on the true inclination against the geotherm on TVD; the traverse also draws the earth temperature and the linear profile. **Fit U to the test THT** matches U to a measured THT.'] },
+  { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: continuous (Sachdeva, provisional) or the conservative bound. The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
+  { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest depth the casing pressure reaches, above the packer, and adds free gas only. **Run the gas-lift performance curve** gives rate against lift-gas rate with the optimum and the economic point; drag the injection-rate or packer handle; the schematic marks the point.'] },
+  { id: 'study', title: 'Two variables and tubing size', what: ['A **Second variable** gives a rate line per value and a heat-map table: select a cell, then **Use these values**. **Tubing size (catalogue scan)** lists each size with rate, stability, loading margin and erosion ([[course#wp2|course exercise 2]]).'] },
+  { id: 'tune', title: 'VLP tuning', what: ['**Tune to the tests** fits the holdup multiplier m_h (0.8–1.25) to the gauges, and the friction multiplier m_f (0.7–1.5) only when the test rates span 2:1. Tuned and untuned traverses are drawn against the gauges; **Apply to the model** sends them into every solve. Practise it in the [[wpcourse|Well performance course]].'] }],
   boldExempt: ['Use this bean'],
   tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT bounds the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
   refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading')],
@@ -120507,7 +120515,7 @@ var faq = [
 'Cushion or clean-up straight to the burner: V-101 out to the **Burner / flare line**, then the cushion scenario ([[fs#FS-1|FS-1]]).']),
 'The steps are in FS-1, FS-2 and the [[wts]] guide.'] },
 { id: 'training', q: 'Is there training for the simulator?', a: [
-'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew.',
+'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew. Nodal analysis has the [[wpcourse|Well performance course]].',
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },
@@ -121113,6 +121121,77 @@ pipesz: {
 })();
 
 // ─── END 48-calc-help-welltest ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 48-calc-help-wpcourse ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// Help: Well performance course (WELL-PERFORMANCE-PLAN §14, WP19); numbers checked by tests/wellperf-course.test.js on the page examples.
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    G.WTS_helpContent = G.WTS_helpContent || { guides: {}, factories: [] };
+    G.WTS_helpContent.factories = G.WTS_helpContent.factories || [];
+    G.WTS_helpContent.factories.push({ group: 'wpcourse', routes: [], build: function () {
+    var OIL = 'Open [[wellperf]] and select **Oil** (vertical oil well, bean 32, test T1).', GAS = 'Open [[wellperf]] and select **Gas** (deviated gas-condensate well, tapered string).';
+    var course = [
+        { id: 'wp1', course: 'wellperf', title: 'Predict the rate at three beans and compare with a test', keywords: ['bean', 'bean schedule', 'operating point', 'test', 'nodal'],
+            goal: 'Predict rate and wellhead pressure at three beans, then check the model against a production test.', setup: [OIL],
+            steps: ['⑤ **System**: read the operating point in the KPI strip and on the system plot.', 'Enter **Bean list** 24 32 40 and select **Bean schedule**; open the **Bean schedule** tab.',
+            'Drag the bean handle on the system plot to 40 and back to 32: the well re-solves as you drag.', '⑥ **Match**: T1 is {{700|liquidRate}} oil, {{300|liquidRate}} water, THP {{250|pressureG}} on 32/64, gauge {{2500|pressure}} at {{7900|length}} MD. Select **Compare and QC**.',
+            'Set **Back-calculate from the test** to **Productivity (p̄r held)** and select **Compare and QC** again.'],
+            observe: ['Beans 24, 32, 40: about {{645|liquidRate}}, {{914|liquidRate}} and {{1139|liquidRate}} at THP {{389|pressureG}}, {{320|pressureG}} and {{262|pressureG}}; every bean is critical.',
+            'The rate rises 1.77 times from 24 to 40 while the bean area rises 2.78 times.', 'Bean 32 gives {{914|liquidRate}} and THP {{320|pressureG}} against {{1000|liquidRate}} and {{250|pressureG}} measured.',
+            'At the gauge Beggs & Brill is {{147|pressure}} low (5.9 %); Duns & Ros ranks first at {{78|pressure}} low but is provisional.', 'T1 implies J {{2.15|productivityIndex}} against {{2|productivityIndex}} entered.'],
+            questions: ['Why does the rate not follow the bean area?', 'Is the model optimistic or pessimistic at bean 32, and in which part?', 'Would you switch to the correlation that ranks first?', 'What does the back-calculated J tell you?'],
+            answers: ['The inflow and the tubing take more of p̄r as the rate rises: pwf falls from {{2678|pressure}} to {{2430|pressure}}, so the choke sees less pressure.',
+            'Pessimistic: the computed gauge pressure is too low and the rate too low. Both the lift and the inflow need a look, one test at a time.',
+            'Not on one test: Duns & Ros is provisional (no verified published example) and one gauge cannot rank correlations reliably. Tune instead ([[course#wp3|exercise 3]]).',
+            'With the gauge pwf, T1 needs 7 % more productivity than entered; adopt it only if the test was stable.'],
+            trainer: { duration: '25–30 minutes.', fault: 'Variant: water cut 50 % before step 2; the trainee explains the lower rates.',
+            good: 'Reads rate, THP and regime per bean; compares at the gauge, not only at the wellhead; adopts nothing from one test without a reason.',
+            mistakes: ['Expecting the rate to scale with the bean area.', 'Comparing liquid rates with oil rates.', 'Adopting the first-ranked provisional correlation.'],
+            debrief: ['Which reading of a test do you trust most, and why?', 'What would a second test at another bean add?', 'When would the choke go sub-critical?'] } },
+        { id: 'wp2', course: 'wellperf', title: 'The gas well that loads up: find the string that unloads it', keywords: ['liquid loading', 'Turner', 'tubing size', 'critical rate', 'late life'],
+            goal: 'Find where a depleted gas well loads up and pick the tubing that keeps it unloading.', setup: [GAS],
+            steps: ['Open the **Liquid loading** tab: the margin at p̄r {{5000|pressure}}.', '② **Reservoir**: set **Average reservoir pressure p̄r** to {{2500|pressure}} (or drag the p̄r handle): late life.',
+            'Read the KPI strip and the **Liquid loading** tab: critical rate against depth, worst depth in MD and TVD.', '⑤ **Solve for** **Bean or THP for a target rate**, **Design variable** **Tubing size (catalogue scan)**, **Target rate** 2500; select **Solve the design**.',
+            'In the table read the loading margin of each size; select **Use** on the 2-7/8" 6.50 lb/ft row and read the tab again.'],
+            observe: ['At {{5000|pressure}} the margin is about +100 %. At {{2500|pressure}}: {{2542|gasRateSmall}} at THP {{1081|pressureG}}; ✗ liquid loading, Turner critical rate {{2.66|gasRate}}, margin −5 %.',
+            'The worst depth is {{5000|length}} MD ({{4731|length}} TVD): the bottom of the 3-1/2" top section, not the 2-7/8" below it.',
+            'The design names the 1.900" (ID {{1.61|lengthSmall|3}}) as the smallest size that reaches the target; margins run from +215 % (1.900") to −13 % (ID {{2.992|lengthSmall|3}}).',
+            'One 2-7/8" string (ID {{2.441|lengthSmall|3}}): {{2598|gasRateSmall}}, margin +38 %, critical rate {{1.88|gasRate}}, worst at the tubing shoe.'],
+            questions: ['Why does the wider top section load first?', 'Why does the rate hardly change from one size to the next?', 'Why not take the smallest size the design names?', 'What else would you check before running the new string?'],
+            answers: ['The gas velocity is lowest in the widest bore: the critical rate scales with the flow area.',
+            'Friction is only about {{31|pressure}} of the drop; gravity ({{1031|pressure}}), the inflow and the choke take the rest, and the bore hardly changes them.',
+            'It reaches the target but its erosion ratio (0.58) and friction rise first as the rate climbs; 2-7/8" unloads with margin and loses nothing now.',
+            'Erosion at the start-up rate, the margin at a lower p̄r and higher water-gas ratio (a second variable), and whether the shoe stays above the perforations.'],
+            trainer: { duration: '25–35 minutes.', fault: 'Variant: at p̄r {{3000|pressure}} raise **Water-gas ratio** from 2 to 20: the margin falls from +21 % to +13 %.',
+            good: 'Reads the worst depth in MD and TVD, chooses by loading margin and erosion rather than the first size listed, and states the p̄r at which to re-check.',
+            mistakes: ['Checking loading only at the wellhead.', 'Choosing the smallest size without looking at erosion.', 'Forgetting that a tapered string loads in its widest section.'],
+            debrief: ['At what p̄r does the 2-7/8" string start to load?', 'What do velocity strings, plunger lift and foam change in this picture?', 'Which test data would confirm loading in the field?'] } },
+        { id: 'wp3', course: 'wellperf', title: 'Tune the VLP to a gauge and back-calculate skin', keywords: ['VLP tuning', 'holdup multiplier', 'skin', 'gauge', 'Darcy'],
+            goal: 'Make the lift reproduce a gauge, then back-calculate skin with and without the gauge.', setup: [OIL],
+            steps: ['⑥ **Match**: select **Compare and QC** and read the Beggs & Brill error at the gauge.', 'In **VLP tuning** leave **Multipliers to fit** on Automatic and select **Tune to the tests**; read m_h and the tuned and untuned traverses against the gauge, then **Apply to the model**.',
+            '② **Inflow model** **Darcy radial oil (k·h, skin)**: k {{80|permeability}}, h {{30|length}}, rw {{0.354|length}}, re {{1490|length}}, S 0.',
+            '⑥ **Back-calculate from the test** **Skin S (k·h held, Darcy)**, then **Compare and QC**.', 'Clear **Gauge p** of T1 (THP only). Back-calculate skin tuned, then after **Reset to 1 (untuned)**.'],
+            observe: ['Untuned: {{147|pressure}} low at the gauge (5.9 %).', 'One test: only m_h is fitted, 1.064 (inside 0.8–1.25); the gauge error goes to zero.',
+            'With the gauge: pwf {{2535|pressure}} at the mid-perforations, S +2.8, tuned or not.', 'THP only: tuned S +2.8 again; untuned pwf {{2388|pressure}} and S +6.0.'],
+            questions: ['Why does tuning not change the skin when the gauge is used?', 'Why is m_f not fitted?', 'What does an untuned VLP do to skin from THP alone?', 'When would you refuse the tuned multiplier?'],
+            answers: ['The pwf comes from the gauge, {{100|length}} above the mid-perforations; the VLP only carries it down that last step.',
+            'One test cannot separate holdup from friction (correlation 1.0); m_f needs tests spanning 2:1 in rate (rule D10).',
+            'It puts pwf {{147|pressure}} too low, so the inflow looks worse: S +6.0 instead of +2.8, a stimulation candidate that is not.',
+            'At a bound (TUNE_AT_BOUND), on an unstable test, or when the tuned correlation is provisional and untested elsewhere.'],
+            trainer: { duration: '30–40 minutes.', fault: 'Variant: gauge {{2800|pressure}} in T1; m_h stops at its 1.25 bound (TUNE_AT_BOUND) and the trainee must not apply it.',
+            good: 'Tunes before inverting the inflow, applies the multiplier knowingly and explains why the gauge-based skin does not move.',
+            mistakes: ['Back-calculating skin from THP with an untuned VLP.', 'Fitting m_f to one test.', 'Treating Darcy skin from a provisional model as final.'],
+            debrief: ['What does a second test at another rate add?', 'How would you confirm skin independently (build-up)?', 'Which number goes into the report Notes?'] } }
+    ];
+    return { guides: {}, course: course };
+    } });
+})();
+
+// ─── END 48-calc-help-wpcourse ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -148857,12 +148936,12 @@ pipesz: {
 'use strict';
 var G=(typeof window!=='undefined')?window:globalThis,H=G.WTS_help=G.WTS_help||{};
 var SITE='welltest.h2oil.co.uk',BOOK='Well Testing Suite — User Guide',CH='Chapter ',IMG='help/img/',AP='Appendix ',UG='help/user-guide.html',SC=/^(card|worksheet):(.+)$/;
-var LT={start:'Getting started',tasks:'How do I…',course:'Well Test Simulator course',scenarios:'Field scenarios'};
-var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course:'course',glossary:'glossary',faq:'faq'};
+var LT={start:'Getting started',tasks:'How do I…',course:'Well Test Simulator course',wpcourse:'Well performance course',scenarios:'Field scenarios'};
+var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course:'course',wpcourse:'wpcourse',glossary:'glossary',faq:'faq'};
 var KEYS=[['F1','Help for this page'],['/','Help: search box'],['↑ ↓ Enter Esc','Help search results'],['?','Simulator: keyboard shortcuts']];
 var arr=v=>Array.isArray(v)?v:v==null||v===''?[]:[v],C=()=>H.load(),esc=s=>H.esc(s),md=(s,o)=>H.md(s,o);
 var byId=id=>typeof document!=='undefined'?document.getElementById(id):null;
-var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
+var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true}),EX=k=>H.exercises?H.exercises(k):C().course,EK=id=>H.exerciseKind?H.exerciseKind(id):'course';
 var go=(r,l)=>'<button type="button" class="help-a" data-help-go="'+r+'">'+l+'</button>';
 var note=t=>'<p class="help-note">'+t+' not in this build yet.</p>';
 var lines=n=>new Array(n+1).join('<div class="bk-line"></div>');
@@ -148892,6 +148971,7 @@ function plan(){
   var m=ch('course','Well Test Simulator');
   if(c.guides.wts)num(m,'wts',m.n+'.1');
   ch('fs',LT.scenarios);
+  if(EX('wpcourse').length)ch('wpcourse',LT.wpcourse);
   P.app=[['A','Standards index'],['B','Glossary'],['C','Keyboard shortcuts'],['D','Troubleshooting and FAQ']];
   P.x.glossary=[AP+'B','bk-app-b'];P.x.faq=[AP+'D','bk-app-d'];
   return P;
@@ -148899,7 +148979,7 @@ function plan(){
 // [[links]] → "label (see Chapter N.M)"; route#sec → its anchor if in the book
 var BTN=/<button type="button" class="help-a" data-help-go="([^"]*)"(?: data-help-sec="([^"]*)")?(?: aria-current="true")?>([\s\S]*?)<\/button>/g;
 var links=(h,P,bk)=>h.replace(BTN,(m,r,s,l)=>{
-  var t=P.x[KIND[r]||nr(r)];
+  var t=P.x[r==='course'&&s?EK(s):KIND[r]||nr(r)];
   if(!t)return l;
   var id=s&&KIND[r]?'help-'+({tasks:'task',scenarios:'fs'}[r]||r)+'-'+s:t[1],y=s&&'help-'+nr(r)+'-'+s;
   if(y&&!KIND[r]&&h.indexOf('id="'+y+'"')>-1)id=y;
@@ -148910,15 +148990,16 @@ function chapter(o,x){
   var c=C(),k=o.kind,w=H.titleOf('wts'),b;
   if(k==='start')b=(c.start.length?list('start',x):note('Getting started is'))+(c.tasks.length?'<h3>'+LT.tasks+'</h3>'+list('tasks',x).replace(/<(\/?)h3>/g,'<$1h4>'):'');
   else if(k==='group')b=o.routes.map(r=>H.renderGuide(r,x)).join('\n')+(o.wts?'<p>'+go('wts',esc(w))+'</p>':o.routes.length?'':note('Guides are'));
-  else if(k==='course')b=(c.guides.wts?H.renderGuide('wts',x):note('The reference is'))+course(x);
+  else if(k==='course')b=(c.guides.wts?H.renderGuide('wts',x):note('The reference is'))+course(x,k);
+  else if(k==='wpcourse')b=(c.guides.wellperf?'<p>'+go('wellperf',esc(H.titleOf('wellperf')))+'</p>':'')+course(x,k);
   else b=c.scenarios.length?list('scenarios',x):note('Field scenarios are');
   return chap(o.id,o.n+' '+o.t,b);
 }
 // exercises (worksheets), then all answers, then all trainer notes (§5.2)
 var TN=[['Duration','duration'],['Fault to inject','fault'],['A good response','good'],['Common mistakes','mistakes',1],['Debrief questions','debrief',1]];
-function course(o){
-  var x=C().course,ul=l=>'<ul><li>'+l.map(s=>md(s,o)).join('</li><li>')+'</li></ul>',z=(t,f)=>'<h3>'+t+'</h3>'+x.map((e,i)=>'<h4>'+(i+1)+' '+md(e.title,o)+'</h4>'+f(e,e.trainer||{})).join('\n');
-  return!x.length?'':'<section class="help-sec" id="bk-course"><h3>'+LT.course+'</h3>'+list('course',ws(o))+z('Answers',e=>arr(e.answers).length?ul(arr(e.answers)):'')+
+function course(o,k){
+  var x=EX(k),ul=l=>'<ul><li>'+l.map(s=>md(s,o)).join('</li><li>')+'</li></ul>',z=(t,f)=>'<h3>'+t+'</h3>'+x.map((e,i)=>'<h4>'+(i+1)+' '+md(e.title,o)+'</h4>'+f(e,e.trainer||{})).join('\n');
+  return!x.length?'':'<section class="help-sec" id="bk-'+k+'"><h3>'+LT[k]+'</h3>'+list(k,ws(o))+z('Answers',e=>arr(e.answers).length?ul(arr(e.answers)):'')+
     z('Trainer notes',(e,t)=>TN.map(q=>{var v=arr(t[q[1]]);return!v.length?'':'<p><b>'+q[0]+':</b>'+(q[2]?'</p>'+ul(v):' '+md(v[0],o)+'</p>');}).join(''))+'</section>';
 }
 function appx(P,o,only){
@@ -148948,7 +149029,7 @@ function card(r,o){
   try{return '<section class="bk-card"><p class="bk-k">Quick card</p>'+H.renderGuide(r,o)+'</section>';}finally{c.guides[r]=g;}
 }
 function worksheet(id,o){
-  var c=C(),i=c.course.map(x=>x.id).indexOf(id),x=c.course[i],q=arr(x&&x.questions);
+  var l=EX(EK(id)),i=l.map(x=>x.id).indexOf(id),x=l[i],q=arr(x&&x.questions);
   return!x?'':'<section class="bk-ws"><p class="bk-k">Trainee worksheet</p>'+H.renderExercise(x,i,ws(o))+
     '<p>Name: ____________________ Date: __________</p><h4>Readings</h4>'+lines(6)+'<h4>Answers</h4>'+(q.length?q.map((y,k)=>'<p><b>Q'+(k+1)+'</b> '+md(y,o)+'</p>'+lines(3)).join(''):lines(6))+'</section>';
 }
@@ -149022,7 +149103,7 @@ function items(v){
   var c=C(),out=[],r=v.kind==='guide'&&c.guides[v.route]&&v.route,g=r&&H.sidebarGroups().filter(x=>x.routes.indexOf(r)>-1)[0];
   if(r)out.push(['Quick card','card:'+v.route],['This guide',v.route]);
   if(g&&g.label!=='Other')out.push(['This group: '+g.label,g.label]);
-  if(v.kind==='course')c.course.forEach((x,i)=>out.push(['Worksheet: '+(i+1)+' '+pt(x.title),'worksheet:'+x.id]));
+  if(v.kind==='course'||v.kind==='wpcourse')EX(v.kind).forEach((x,i)=>out.push(['Worksheet: '+(i+1)+' '+pt(x.title),'worksheet:'+x.id]));
   return out.concat([['Whole user guide','all']]);
 }
 function fill(v){var l=byId('help_pm');if(l)l.innerHTML='<option value="">Print ▾</option>'+items(v).map(x=>'<option value="'+esc(x[1])+'">'+esc(x[0])+'</option>').join('');}
@@ -149074,6 +149155,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     'The Metric setting does not convert PRiSM inputs or results — enter and read values in these units.';
   var METRIC_LINE = 'In Metric mode the page shows the same values converted; the calculation is the same.';
   var VCLS = { '✓': 'ok', '⚠': 'warn', '✗': 'bad' };
+  // Courses: [course key, view kind, title, short label]; an exercise names its course (none = the simulator course).
+  var COURSES = [['sim', 'course', 'Well Test Simulator course', 'Simulator course'], ['wellperf', 'wpcourse', 'Well performance course', 'Well performance course']];
+  function cDef(k) { return COURSES.filter(c => c[0] === k || c[1] === k)[0] || COURSES[0]; }
+  function exList(k) { var c = cDef(k)[0]; return arr(C.course).filter(x => (x.course || 'sim') === c); }
+  function exKind(id) { var x = arr(C.course).filter(e => e.id === id)[0]; return cDef(x && x.course || 'sim')[1]; }
+  H.COURSES = COURSES; H.exercises = exList; H.exerciseKind = exKind;
   H.SECTIONS = SECTIONS;
   H.loadErrors = H.loadErrors || [];
 
@@ -149385,7 +149472,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     arr(C.start).forEach(s => { add('start', s.id, s.title, 'Getting started', [['title', s.title], ['body', blocksText(s.body)]]); });
     var SF = (G.WTS_sim && G.WTS_sim.features) || {};   // the variant shown (afterSim once the feature is in) is the one indexed
     arr(C.scenarios).forEach(s => { add('scenario', s.id, s.id + ' ' + s.title, 'Field scenarios', [['title', s.title], ['kw', J(s.keywords)], ['body', blocksText([].concat(arr(s.intro), arr(s.blocks), arr(s.feature && SF[s.feature] && s.afterSim ? s.afterSim : s.today)))]]); });
-    arr(C.course).forEach(x => { add('course', x.id, x.title, 'Simulator course', [['title', x.title], ['kw', J(x.keywords)], ['body', [x.goal].concat(arr(x.setup), arr(x.steps), arr(x.observe), arr(x.questions)).join(' ')]]); });
+    arr(C.course).forEach(x => { add('course', x.id, x.title, cDef(x.course || 'sim')[3], [['title', x.title], ['kw', J(x.keywords)], ['body', [x.goal].concat(arr(x.setup), arr(x.steps), arr(x.observe), arr(x.questions)).join(' ')]]); });
     arr(C.faq).forEach(x => { add('faq', x.id, x.q, 'FAQ', [['title', x.q], ['body', blocksText(x.a)]]); });
     Object.keys(C.glossary || {}).forEach(k => { var e = C.glossary[k] || {}; add('glossary', k, e.term || k, 'Glossary', [['title', e.term || k], ['kw', J(e.variants)], ['body', e.def]]); });
     return out;
@@ -149482,7 +149569,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     load();
     var links = [lk('landing', 'Help home')];
     if (hasStart()) links.push(lk('start', 'Getting started'));
-    if (C.course.length) links.push(lk('course', 'Simulator course'));
+    COURSES.forEach(c => { if (exList(c[1]).length) links.push(lk(c[1], c[3])); });
     if (C.scenarios.length) links.push(lk('scenarios', 'Field scenarios'));
     return '<div id="help_root" class="help rp-skip" data-rp-nosnap data-no-persist>' + CSS +
       '<div class="help-bar" role="search"><input type="search" role="combobox" id="help_q" placeholder="Search help (/)" aria-label="Search help" autocomplete="off" spellcheck="false"' +
@@ -149495,8 +149582,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       '<dialog id="help_lb" class="help-lb" aria-label="Screenshot"><button type="button" id="help_lb_x" aria-label="Close">✕</button>' +
       '<img id="help_lb_img" alt=""><p id="help_lb_cap"></p></dialog></div>';
   }
-  var TR = [['course', 'Well Test Simulator course'], ['scenarios', 'Field scenarios'], ['glossary', 'Glossary'], ['faq', 'Troubleshooting and FAQ']];
-  function trAvail(k) { return k === 'glossary' ? Object.keys(C.glossary).length : C[k].length; }
+  var TR = COURSES.map(c => [c[1], c[2]]).concat([['scenarios', 'Field scenarios']]).concat([ ['glossary', 'Glossary'], ['faq', 'Troubleshooting and FAQ']]);
+  function trAvail(k) { return k === 'glossary' ? Object.keys(C.glossary).length : C[k] ? C[k].length : exList(k).length; }
   function guideGroups() { return sidebarGroups().map(g => { return { label: g.label, routes: g.routes.filter(r => !!C.guides[r]) }; }).filter(g => g.routes.length); }
   function li(x) { return '<li>' + x + '</li>'; }
   function tocHTML(active) {
@@ -149516,7 +149603,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       return '<div class="help-tile"><b>' + esc(g.label) + '</b><br>' + g.routes.map(r => lk(r, esc(titleOf(r)))).join('<br>') + '</div>';
     }).join('') + '</div>';
     if (!Object.keys(C.guides).length) h += '<p class="help-note">No guides are installed in this build yet.</p>';
-    var tr = TR.slice(0, 2).filter(t => trAvail(t[0])).map(t => lk(t[0], t[1]));
+    var tr = TR.slice(0, COURSES.length + 1).filter(t => trAvail(t[0])).map(t => lk(t[0], t[1]));
     if (tr.length) h += '<h3>Training</h3><p>' + tr.join(' · ') + '</p>';
     var M = manifest(), keys = Object.keys(M);
     if (keys.length) {
@@ -149539,7 +149626,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       (o.worksheet ? '' : det('Answers', ul(x.answers, o)) + det('For the trainer', x.trainer ? pb('Duration', tn.duration, o) + pb('Fault to inject', tn.fault, o) +
         pb('A good response', tn.good, o) + sub('Common mistakes', tn.mistakes, o) + sub('Debrief questions', tn.debrief, o) : '')));
   }
-  var LT = { start: 'Getting started', tasks: 'How do I…', course: 'Well Test Simulator course', scenarios: 'Field scenarios', glossary: 'Glossary', faq: 'Troubleshooting and FAQ' };
+  var LT = { start: 'Getting started', tasks: 'How do I…', course: COURSES[0][2], wpcourse: COURSES[1][2], scenarios: 'Field scenarios', glossary: 'Glossary', faq: 'Troubleshooting and FAQ' };
   function listView(kind, o) {
     o = o || {};
     var h = '<h2 class="help-h" id="help-' + kind + '" tabindex="-1">' + esc(LT[kind]) + '</h2>', F = (G.WTS_sim && G.WTS_sim.features) || {};
@@ -149553,7 +149640,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       var after = s.feature && F[s.feature] && s.afterSim;
       h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios', s.id)).join(''));
     });
-    if (kind === 'course') C.course.forEach((x, i) => { h += exerciseHTML(x, i, o); });
+    if (kind === 'course' || kind === 'wpcourse') exList(kind).forEach((x, i) => { h += exerciseHTML(x, i, o); });
     if (kind === 'glossary') h += '<dl>' + Object.keys(C.glossary).sort().map(k => {
       var e = C.glossary[k] || {};
       return '<dt id="help-glossary-' + esc(k) + '"><b>' + esc(e.term || k) + '</b></dt><dd>' + md(e.def || '', o) + '</dd>';
@@ -149562,8 +149649,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     return h;
   }
   H.renderList = listView; H.renderExercise = exerciseHTML;
-  var KINDS = { start: 'start', tasks: 'tasks', task: 'tasks', course: 'course', scenarios: 'scenarios', fs: 'scenarios', glossary: 'glossary', faq: 'faq' };
-  var SECP = { tasks: 'task', scenarios: 'fs' };
+  var KINDS = { start: 'start', tasks: 'tasks', task: 'tasks', course: 'course', wpcourse: 'wpcourse', scenarios: 'scenarios', fs: 'scenarios', glossary: 'glossary', faq: 'faq' };
+  var SECP = { tasks: 'task', scenarios: 'fs', wpcourse: 'course' };
   function show(v, noFocus) {
     var main = byId('help_main');
     if (!main) return;
@@ -149588,6 +149675,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   }
   function goTo(r, sec) {
     if (r === 'landing') return show({ kind: 'landing' });
+    if (r === 'course' && sec) r = exKind(sec);   // an exercise opens in its own course
     if (KINDS[r]) return show({ kind: r, sec: sec || '' });
     return show({ kind: 'guide', route: norm(r), sec: sec || '' });
   }
@@ -149790,7 +149878,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   G.WTS_calcRegistry = G.WTS_calcRegistry || {};
   G.WTS_calcRegistry.help = {
     key: 'help', title: 'Help & User Guide', navTitle: 'Help & Guide',
-    sub: 'How to use each module, the simulator course and field scenarios',
+    sub: 'How to use each module, the training courses and field scenarios',
     group: 'Overview', icon: '?', desc: 'Guides, screenshots, training course and printable user guide',
     badge: 'Help', bc: 'dc-b-green',
     hooks: { store: () => true },   // no wts_page_help

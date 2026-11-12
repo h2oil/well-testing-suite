@@ -39,7 +39,7 @@
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 eab29e2b,view-p 780 1688 ced6e746",
+    "help": "view-d 1280 800 7847caa4,view-p 780 1688 9545f48d",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 a30bf3c6,view-p 780 1688 7648693c",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -79,7 +79,7 @@
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 218;
-  M.bytes = 7994340;   // total size of the image files (the offline download label)
+  M.bytes = 7994360;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

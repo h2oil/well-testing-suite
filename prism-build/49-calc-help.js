@@ -19,6 +19,12 @@
     'The Metric setting does not convert PRiSM inputs or results — enter and read values in these units.';
   var METRIC_LINE = 'In Metric mode the page shows the same values converted; the calculation is the same.';
   var VCLS = { '✓': 'ok', '⚠': 'warn', '✗': 'bad' };
+  // Courses: [course key, view kind, title, short label]; an exercise names its course (none = the simulator course).
+  var COURSES = [['sim', 'course', 'Well Test Simulator course', 'Simulator course'], ['wellperf', 'wpcourse', 'Well performance course', 'Well performance course']];
+  function cDef(k) { return COURSES.filter(c => c[0] === k || c[1] === k)[0] || COURSES[0]; }
+  function exList(k) { var c = cDef(k)[0]; return arr(C.course).filter(x => (x.course || 'sim') === c); }
+  function exKind(id) { var x = arr(C.course).filter(e => e.id === id)[0]; return cDef(x && x.course || 'sim')[1]; }
+  H.COURSES = COURSES; H.exercises = exList; H.exerciseKind = exKind;
   H.SECTIONS = SECTIONS;
   H.loadErrors = H.loadErrors || [];
 
@@ -330,7 +336,7 @@
     arr(C.start).forEach(s => { add('start', s.id, s.title, 'Getting started', [['title', s.title], ['body', blocksText(s.body)]]); });
     var SF = (G.WTS_sim && G.WTS_sim.features) || {};   // the variant shown (afterSim once the feature is in) is the one indexed
     arr(C.scenarios).forEach(s => { add('scenario', s.id, s.id + ' ' + s.title, 'Field scenarios', [['title', s.title], ['kw', J(s.keywords)], ['body', blocksText([].concat(arr(s.intro), arr(s.blocks), arr(s.feature && SF[s.feature] && s.afterSim ? s.afterSim : s.today)))]]); });
-    arr(C.course).forEach(x => { add('course', x.id, x.title, 'Simulator course', [['title', x.title], ['kw', J(x.keywords)], ['body', [x.goal].concat(arr(x.setup), arr(x.steps), arr(x.observe), arr(x.questions)).join(' ')]]); });
+    arr(C.course).forEach(x => { add('course', x.id, x.title, cDef(x.course || 'sim')[3], [['title', x.title], ['kw', J(x.keywords)], ['body', [x.goal].concat(arr(x.setup), arr(x.steps), arr(x.observe), arr(x.questions)).join(' ')]]); });
     arr(C.faq).forEach(x => { add('faq', x.id, x.q, 'FAQ', [['title', x.q], ['body', blocksText(x.a)]]); });
     Object.keys(C.glossary || {}).forEach(k => { var e = C.glossary[k] || {}; add('glossary', k, e.term || k, 'Glossary', [['title', e.term || k], ['kw', J(e.variants)], ['body', e.def]]); });
     return out;
@@ -427,7 +433,7 @@
     load();
     var links = [lk('landing', 'Help home')];
     if (hasStart()) links.push(lk('start', 'Getting started'));
-    if (C.course.length) links.push(lk('course', 'Simulator course'));
+    COURSES.forEach(c => { if (exList(c[1]).length) links.push(lk(c[1], c[3])); });
     if (C.scenarios.length) links.push(lk('scenarios', 'Field scenarios'));
     return '<div id="help_root" class="help rp-skip" data-rp-nosnap data-no-persist>' + CSS +
       '<div class="help-bar" role="search"><input type="search" role="combobox" id="help_q" placeholder="Search help (/)" aria-label="Search help" autocomplete="off" spellcheck="false"' +
@@ -440,8 +446,8 @@
       '<dialog id="help_lb" class="help-lb" aria-label="Screenshot"><button type="button" id="help_lb_x" aria-label="Close">✕</button>' +
       '<img id="help_lb_img" alt=""><p id="help_lb_cap"></p></dialog></div>';
   }
-  var TR = [['course', 'Well Test Simulator course'], ['scenarios', 'Field scenarios'], ['glossary', 'Glossary'], ['faq', 'Troubleshooting and FAQ']];
-  function trAvail(k) { return k === 'glossary' ? Object.keys(C.glossary).length : C[k].length; }
+  var TR = COURSES.map(c => [c[1], c[2]]).concat([['scenarios', 'Field scenarios']]).concat([ ['glossary', 'Glossary'], ['faq', 'Troubleshooting and FAQ']]);
+  function trAvail(k) { return k === 'glossary' ? Object.keys(C.glossary).length : C[k] ? C[k].length : exList(k).length; }
   function guideGroups() { return sidebarGroups().map(g => { return { label: g.label, routes: g.routes.filter(r => !!C.guides[r]) }; }).filter(g => g.routes.length); }
   function li(x) { return '<li>' + x + '</li>'; }
   function tocHTML(active) {
@@ -461,7 +467,7 @@
       return '<div class="help-tile"><b>' + esc(g.label) + '</b><br>' + g.routes.map(r => lk(r, esc(titleOf(r)))).join('<br>') + '</div>';
     }).join('') + '</div>';
     if (!Object.keys(C.guides).length) h += '<p class="help-note">No guides are installed in this build yet.</p>';
-    var tr = TR.slice(0, 2).filter(t => trAvail(t[0])).map(t => lk(t[0], t[1]));
+    var tr = TR.slice(0, COURSES.length + 1).filter(t => trAvail(t[0])).map(t => lk(t[0], t[1]));
     if (tr.length) h += '<h3>Training</h3><p>' + tr.join(' · ') + '</p>';
     var M = manifest(), keys = Object.keys(M);
     if (keys.length) {
@@ -484,7 +490,7 @@
       (o.worksheet ? '' : det('Answers', ul(x.answers, o)) + det('For the trainer', x.trainer ? pb('Duration', tn.duration, o) + pb('Fault to inject', tn.fault, o) +
         pb('A good response', tn.good, o) + sub('Common mistakes', tn.mistakes, o) + sub('Debrief questions', tn.debrief, o) : '')));
   }
-  var LT = { start: 'Getting started', tasks: 'How do I…', course: 'Well Test Simulator course', scenarios: 'Field scenarios', glossary: 'Glossary', faq: 'Troubleshooting and FAQ' };
+  var LT = { start: 'Getting started', tasks: 'How do I…', course: COURSES[0][2], wpcourse: COURSES[1][2], scenarios: 'Field scenarios', glossary: 'Glossary', faq: 'Troubleshooting and FAQ' };
   function listView(kind, o) {
     o = o || {};
     var h = '<h2 class="help-h" id="help-' + kind + '" tabindex="-1">' + esc(LT[kind]) + '</h2>', F = (G.WTS_sim && G.WTS_sim.features) || {};
@@ -498,7 +504,7 @@
       var after = s.feature && F[s.feature] && s.afterSim;
       h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios', s.id)).join(''));
     });
-    if (kind === 'course') C.course.forEach((x, i) => { h += exerciseHTML(x, i, o); });
+    if (kind === 'course' || kind === 'wpcourse') exList(kind).forEach((x, i) => { h += exerciseHTML(x, i, o); });
     if (kind === 'glossary') h += '<dl>' + Object.keys(C.glossary).sort().map(k => {
       var e = C.glossary[k] || {};
       return '<dt id="help-glossary-' + esc(k) + '"><b>' + esc(e.term || k) + '</b></dt><dd>' + md(e.def || '', o) + '</dd>';
@@ -507,8 +513,8 @@
     return h;
   }
   H.renderList = listView; H.renderExercise = exerciseHTML;
-  var KINDS = { start: 'start', tasks: 'tasks', task: 'tasks', course: 'course', scenarios: 'scenarios', fs: 'scenarios', glossary: 'glossary', faq: 'faq' };
-  var SECP = { tasks: 'task', scenarios: 'fs' };
+  var KINDS = { start: 'start', tasks: 'tasks', task: 'tasks', course: 'course', wpcourse: 'wpcourse', scenarios: 'scenarios', fs: 'scenarios', glossary: 'glossary', faq: 'faq' };
+  var SECP = { tasks: 'task', scenarios: 'fs', wpcourse: 'course' };
   function show(v, noFocus) {
     var main = byId('help_main');
     if (!main) return;
@@ -533,6 +539,7 @@
   }
   function goTo(r, sec) {
     if (r === 'landing') return show({ kind: 'landing' });
+    if (r === 'course' && sec) r = exKind(sec);   // an exercise opens in its own course
     if (KINDS[r]) return show({ kind: r, sec: sec || '' });
     return show({ kind: 'guide', route: norm(r), sec: sec || '' });
   }
@@ -735,7 +742,7 @@
   G.WTS_calcRegistry = G.WTS_calcRegistry || {};
   G.WTS_calcRegistry.help = {
     key: 'help', title: 'Help & User Guide', navTitle: 'Help & Guide',
-    sub: 'How to use each module, the simulator course and field scenarios',
+    sub: 'How to use each module, the training courses and field scenarios',
     group: 'Overview', icon: '?', desc: 'Guides, screenshots, training course and printable user guide',
     badge: 'Help', bc: 'dc-b-green',
     hooks: { store: () => true },   // no wts_page_help

@@ -1405,6 +1405,33 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
 - **Gates**: node --check ok; smoke 347/347; accept-test --html --integration file by file, 181 files, 2226/2226; wellperf-validate
   --html --gate --check --time: gate PASS, 22/22 cross-checks, every E budget ok; help-shots --check, build-user-guide --check ok.
 
+#### 18.2.7 WP19 record (2026-11-12, branch wp/a2-wp19)
+
+- **Course** (new `48-calc-help-wpcourse.js`, factory group `wpcourse`, no guides): three exercises with `course: 'wellperf'`, each with
+  goal, set-up, steps, what to observe, questions and answers, trainer notes (duration, variant, a good response, mistakes, debrief) and a
+  worksheet. E1 `wp1` beans 24 / 32 / 40 on the Oil example (645 / 914 / 1139 STB/d, all critical) against test T1 (Compare and QC: Beggs &
+  Brill 147 psi low at the gauge, Duns & Ros first but provisional; J from T1 2.15). E2 `wp2` the Gas example at p̄r 2,500 psia loads
+  (Turner 2.66 MMscf/d, −5 %) at 5,000 ft MD / 4,731 ft TVD, the bottom of the 3-1/2" top section; the tubing-size design lists margins
+  from +215 % (1.900") to −13 % (current 3-1/2"), one 2-7/8" string unloads with +38 % at 2,598 Mscf/d. E3 `wp3` VLP tuning to T1 (m_h
+  1.064 only, ρ = 1), Darcy k·h 80 × 30: skin +2.8 from the gauge tuned or not, from THP alone +6.0 untuned and +2.8 tuned; variant gauge
+  2,800 psia → m_h at its bound. Every number is the engine's on the page examples (`wellperf-course` WC2–WC4). Text only, no images.
+- **Help page / print** (`49-calc-help.js`, `49-calc-help-print.js`): `H.COURSES` [key, view kind, title, short label] — `sim` →
+  `course` 'Well Test Simulator course', `wellperf` → `wpcourse` 'Well performance course'; `H.exercises(kind)`, `H.exerciseKind(id)`;
+  a link and a contents entry per course, search module label per course, numbering per course, `[[course#wp2]]` opens the well
+  performance course, `[[wpcourse|…]]` links the list. Print: the course chapter (13) after the field scenarios (earlier chapter numbers
+  unchanged), worksheets per course in Print ▾, links to its exercises print "(see Chapter 13)". The help page subtitle says "the training
+  courses".
+- **Guide** (wellperf, A2 features, prose parts): PVT correlations, Correlations and flow regimes, Flowing temperature, Choke, Gas lift
+  (quick look), Two variables and tubing size, VLP tuning (9.3 → 11.5 kB serialised of the 14 kB PART cap). Overview `help` purpose
+  "two training courses" (reviewedSrc re-hashed); start FAQ "training" links the course.
+- **Validator** (`help-content.test.js`): course ids per course (an exercise names a known course; the simulator file holds only
+  simulator exercises), `wpcourse` group and link kind, the new file in CONTENT_FILES (also help-page, help-guide-sync, smoke lists).
+  help-course.test.js unchanged (it filters the simulator group); help-guide-sync expects chapter 13.
+- **Caps (Q15 default, measured from the draft)**: SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB (measured 367,974 raw, 127,744 gzip);
+  per file: wpcourse 9.83 kB (new), production 45.41 → 47.67, 49-calc-help 47.6 → 48.52, print 15.33 → 15.68, start 19.74 → 19.8.
+  Images: help/view re-taken (the course link in the bar), 218 files, 7,994,360 of 8,000,000 bytes; no wellperf shot was stale, none added.
+- **Tests**: `wellperf-course` WC1–WC5 (shape and page text, E1 / E2 / E3 numbers, page / search / print per course).
+
 ### 18.3 Increment B (v4.5)
 
 WP20 lift-table and PVT-table export · WP21 Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, per-section
