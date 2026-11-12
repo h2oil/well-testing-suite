@@ -110,7 +110,7 @@
         wp_midPerf: 'length', wp_surfT: 'temperature', wp_tht: 'temperature', wp_Uto: 'heatTransferCoef', wp_ke: 'thermalConductivity',
         wp_psep: 'pressureG', wp_tamb: 'temperature', wp_thp: 'pressureG', wp_stepFt: 'length', wp_gl_packer: 'length', wp_gl_pinj: 'pressureG',
         wp_gl_dpv: 'pressure', wp_ip_J: 'productivityIndex', wp_ip_qmax: 'liquidRate', wp_ip_k: 'permeability', wp_ip_h: 'length',
-        wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD'
+        wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall'
     };
 
     // ── model scalars (defaults from WTS_wp_model.DEFAULTS; Appendix B) ───────
@@ -306,6 +306,11 @@
         '#wp_root .wp-cmpt tr.wp-sel td{background:rgba(240,136,62,.08)}#wp_root .wp-cmpt tr.wp-sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}#wp_root .wp-cmpt tr.wp-cf td{color:var(--text2)}' +
         '#wp_root .wp-cmpt td:first-child{white-space:normal;min-width:190px}#wp_root .wp-cmpt td:nth-child(5){white-space:normal}' +
         '#wp_root .wp-cmpt .wp-use{padding:3px 10px;font-size:11.5px}#wp_root .wp-cmpt tbody tr{transition:background .15s}#wp_root .wp-cmpt tbody tr:hover td{background:rgba(139,148,158,.08)}' +
+        '#wp_root .wp-heat{margin:12px 0 4px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--red,#f85149);border-radius:8px;background:var(--bg3);transition:border-color .2s,opacity .2s}' +
+        '#wp_root .wp-heat .wp-heat-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:6px 14px;margin:6px 0 8px}' +
+        '#wp_root .wp-heat .wp-hk{font-size:10.5px;color:var(--text2);text-transform:uppercase;letter-spacing:.04em}#wp_root .wp-heat .wp-hv{font-size:14px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}' +
+        '#wp_root .wp-heat .wp-hbar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:2px 0 6px;background:var(--bg2)}#wp_root .wp-heat .wp-hbar i{display:block;height:100%;transition:width .25s}' +
+        '#wp_root .wp-relaxleg{margin-top:4px;color:var(--text2)}' +
         '#wp_root .wp-qc td.qc{text-align:center;padding:4px 6px}#wp_root .wp-qcb{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;border-radius:10px;font-size:11px;font-weight:800;background:var(--bg4);color:var(--text3);cursor:help}' +
         '#wp_root .wp-qcb.ok{background:rgba(63,185,80,.15);color:var(--wp-ok)}#wp_root .wp-qcb.warn{background:rgba(210,153,34,.17);color:var(--wp-warn)}#wp_root .wp-qcb.fail{background:rgba(248,81,73,.17);color:var(--wp-fail)}' +
         '#wp_root .wp-score{display:inline-block;min-width:34px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}' +
@@ -594,12 +599,13 @@
             _renderTraverseCard();
             _renderDrawer();
             _renderStepResults();
+            _renderHeat();
             _renderDots();
             _renderNotes();
             _renderCase();
             if (ST.sens) _renderSensTable();
             if (ST.beans) _renderBeans();
-        } else { _renderOp(); }
+        } else { _renderOp(); if (ST.heatDrag) _renderTraverseCard(); }
     }
 
     // KPI strip
@@ -621,7 +627,8 @@
         out.push({ k: 'bhp', l: 'Flowing BHP', v: _u(pwf, 'pressure', 0, 'psia'), s: (nd && _fin(nd.midPerfTvd)) ? '@ ' + (_fin(nd.midPerfMd) ? _u(nd.midPerfMd, 'length', 0, 'ft') + ' MD · ' : '') + _u(nd.midPerfTvd, 'length', 0, 'ft') + ' TVD' : '' });
         out.push({ k: 'thp', l: 'THP', v: _u(thp, 'pressureG', 0, 'psig'), s: ok && R.surface && R.surface.choke && R.surface.choke.regime && R.surface.choke.regime !== 'none' ? 'choke ' + R.surface.choke.regime : (M && M.surface.choke.present === false ? 'fixed' : ''),
                    st: (ok && M && _fin(M.surface.rating.wellhead_psi) && _fin(thp)) ? (thp > M.surface.rating.wellhead_psi ? 'fail' : 'ok') : 'none' });
-        out.push({ k: 'tht', l: 'THT', v: _u(tht, 'temperature', 0, '°F'), s: M && M.well.heat.thtMeasured ? 'measured' : (ok ? 'estimated' : ''),
+        var hx = ok && R.heat && R.heat.mode === 'relax' ? R.heat : null;
+        out.push({ k: 'tht', l: 'THT', v: _u(tht, 'temperature', 0, '°F'), s: hx ? 'relaxation · U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') : (M && M.well.heat.thtMeasured ? 'measured' : (ok ? 'estimated' : '')),
                    st: (ok && M && _fin(M.surface.rating.tht_max_F) && _fin(tht)) ? (tht > M.surface.rating.tht_max_F ? 'fail' : 'ok') : 'none' });
         out.push({ k: 'dd', l: 'Drawdown', v: (_fin(pr) && _fin(pwf)) ? _u(pr - pwf, 'pressure', 0, 'psi') : '—', s: _fin(pr) ? 'p̄r ' + _u(pr, 'pressure', 0, 'psia') : 'p̄r needed', st: _fin(pr) ? 'none' : 'warn' });
         if (gas) {
@@ -725,12 +732,14 @@
         });
     }
     function _onHandle(key, v, phase) {
-        var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc' }[key]; if (!id) return;
+        var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod' }[key]; if (!id) return;
         var canon;
-        if (key === 'pr') canon = Math.round(_fromDisp(v, 'pressure'));
+        if (key === 'hU' || key === 'hT') canon = +Math.pow(10, v).toPrecision(3);   // the heat rails are on log10 scales
+        else if (key === 'pr') canon = Math.round(_fromDisp(v, 'pressure'));
         else if (key === 'thp') canon = Math.round(_fromDisp(v, 'pressure') - PATM);
         else canon = Math.round(v);
         _setCtrl(id, canon, true);
+        ST.heatDrag = (key === 'hU' || key === 'hT') && phase !== 'end';
         if (phase === 'end') { _commit(id); return; }
         if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
     }
@@ -749,8 +758,8 @@
         }
         var o = {
             prop: prop, width: w, height: narrow ? Math.round(w * 1.2) + Math.round(Math.min(w * 0.5, 230)) : Math.round(Math.max(470, w * 1.18)),
-            fmt: { depthTick: _depthFmt, md: function (v) { return _u(v, 'length', 0, 'ft'); }, p: function (v) { return _fmt(_dv(v, 'pressure'), 0); }, t: function (v) { return _fmt(_dv(v, 'temperature'), 0); }, hl: function (v) { return _fmt(v, 2); }, vm: function (v) { return _fmt(_dv(v, 'velocity'), 1); } },
-            labels: { tvd: 'TVD (' + _lab('length', 'ft') + ')', vs: 'Vertical section (' + _lab('length', 'ft') + '), equal scale', closure: '', prop: { pressure: 'Pressure (' + _lab('pressure', 'psia') + ')', temperature: 'Temperature (' + _lab('temperature', '°F') + ')', holdup: 'Liquid holdup (–)', velocity: 'Mixture velocity (' + _lab('velocity', 'ft/s') + ')', pattern: 'Flow pattern', none: '' }[prop] },
+            fmt: { depthTick: _depthFmt, md: function (v) { return _u(v, 'length', 0, 'ft'); }, p: function (v) { return _fmt(_dv(v, 'pressure'), 0); }, t: function (v) { return _fmt(_dv(v, 'temperature'), 0); }, dte: function (v) { return _tempDiff(v); }, hl: function (v) { return _fmt(v, 2); }, vm: function (v) { return _fmt(_dv(v, 'velocity'), 1); } },
+            labels: { tvd: 'TVD (' + _lab('length', 'ft') + ')', vs: 'Vertical section (' + _lab('length', 'ft') + '), equal scale', closure: '', earth: 'halo: earth (geotherm)', prop: { pressure: 'Pressure (' + _lab('pressure', 'psia') + ')', temperature: 'Temperature (' + _lab('temperature', '°F') + ')', heatloss: 'Fluid − earth (' + _lab('tempDiff', '°F') + ')', holdup: 'Liquid holdup (–)', velocity: 'Mixture velocity (' + _lab('velocity', 'ft/s') + ')', pattern: 'Flow pattern', none: '' }[prop] },
             empty: (ST.stubs && ST.stubs.indexOf('WTS_wp_well.build') !== -1) || _isStub(ST.SC) ? 'The well path engine draws the deviated well here once it is installed.' : 'Enter a survey and the strings (step ③) to draw the well.',
             aria: 'Well schematic: vertical section and plan view, coloured by ' + prop
         };
@@ -765,7 +774,7 @@
         var tr = S.trajectory;
         for (var i = 1; i < tr.length; i++) if (md <= tr[i].md) { var a = tr[i - 1], b = tr[i], t = (md - a.md) / ((b.md - a.md) || 1); res.tvd = a.tvd + t * (b.tvd - a.tvd); res.inc = _fin(b.inc) ? (_fin(a.inc) ? a.inc + t * (b.inc - a.inc) : b.inc) : null; break; }
         var pr = (S.profile || []).slice().sort(function (x, y) { return x.md - y.md; });
-        for (var j = 1; j < pr.length; j++) if (md <= pr[j].md) { var c = pr[j - 1], d = pr[j], f = (md - c.md) / ((d.md - c.md) || 1); ['p', 't', 'hl', 'vm'].forEach(function (k) { if (_fin(c[k]) && _fin(d[k])) res[k] = c[k] + f * (d[k] - c[k]); }); res.pattern = f < 0.5 ? c.pattern : d.pattern; break; }
+        for (var j = 1; j < pr.length; j++) if (md <= pr[j].md) { var c = pr[j - 1], d = pr[j], f = (md - c.md) / ((d.md - c.md) || 1); ['p', 't', 'te', 'hl', 'vm'].forEach(function (k) { if (_fin(c[k]) && _fin(d[k])) res[k] = c[k] + f * (d[k] - c[k]); }); res.pattern = f < 0.5 ? c.pattern : d.pattern; break; }
         return res;
     }
     // a depth-axis readout (display units, MD or TVD) printed with the other depth too, from the trajectory
@@ -794,6 +803,7 @@
         if (_fin(a.inc)) rows.push('<span class="k">Inclination</span> ' + _fmt(a.inc, 1) + '°');
         if (_fin(a.p)) rows.push('<span class="k">Pressure</span> ' + _u(a.p, 'pressure', 0, 'psia'));
         if (_fin(a.t)) rows.push('<span class="k">Temperature</span> ' + _u(a.t, 'temperature', 1, '°F'));
+        if (_fin(a.te)) rows.push('<span class="k">Earth</span> ' + _u(a.te, 'temperature', 1, '°F') + (_fin(a.t) ? ' (fluid ' + (a.t >= a.te ? '+' : '−') + _tempDiff(Math.abs(a.t - a.te)) + ')' : ''));
         if (_fin(a.hl)) rows.push('<span class="k">Holdup</span> ' + _fmt(a.hl, 3));
         if (_fin(a.vm)) rows.push('<span class="k">Velocity</span> ' + _u(a.vm, 'velocity', 1, 'ft/s'));
         if (a.pattern) rows.push('<span class="k">Pattern</span> ' + _esc(a.pattern));
@@ -823,6 +833,7 @@
             if (tr) { if (tr.classList) { tr.classList.remove('wp-flash'); tr.classList.add('wp-flash'); } var inp = tr.querySelector('input,select'); if (inp && inp.focus) inp.focus(); if (tr.scrollIntoView) { try { tr.scrollIntoView({ block: 'center', behavior: _reduced() ? 'auto' : 'smooth' }); } catch (x) { /* ignore */ } } }
         }
     }
+    function _phone() { try { return !!(G.matchMedia && G.matchMedia('(max-width: 600px)').matches); } catch (e) { return false; } }
     function _reduced() { try { return !!(G.matchMedia && G.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; } }
 
     // Operating point card
@@ -1029,6 +1040,9 @@
         var fls = M.surface.flowline || [];
         row('Surface', 'separator ' + _u(M.surface.psep_psig, 'pressureG', 0, 'psig') + (fls.length ? ' · flowline ' + fls.map(function (f) { return _u(f.len, 'length', 0, 'ft') + ' × ' + _fmt(_dv(f.id, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in'); }).join(' + ') : ' · no flowline'));
         var R = ST.R, cw = R && R.corr ? R.corr.well : (M.system.corr && M.system.corr.well), cl = R && R.corr ? R.corr.line : (M.system.corr && M.system.corr.line);
+        var hx = R && R.ok && R.heat && R.heat.mode === 'relax' ? R.heat : null;
+        row('Temperature', hx ? 'relaxation (Ramey / Hasan-Kabir), U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' (' + (hx.Ubasis === 'ti' ? 'inside' : 'outside') + ' radius), ' + _fmt(hx.tProd_d, 0) + ' d, k_e ' + _u(hx.ke, 'thermalConductivity', 2, 'Btu/hr·ft·°F') + ', α ' + _fmt(hx.alpha, 3) + ' ft²/hr, A ' + _u(hx.A, 'length', 0, 'ft') + ' · geotherm ' + _u(M.well.geo.surfT_F, 'temperature', 0, '°F') + ' at surface'
+            : (M.well.heat.mode === 'relax' ? 'relaxation asked, linear used (no geotherm)' : 'linear, THT ' + (_fin(M.well.heat.tht_F) ? _u(M.well.heat.tht_F, 'temperature', 0, '°F') + (M.well.heat.thtMeasured ? ' measured' : ' estimated') : 'not entered (static geotherm)') + ' → BHT'));
         row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
         h.innerHTML = '<div class="rbox-title">Case summary</div>' + rows.join('');
     }
@@ -1104,7 +1118,13 @@
             add(hd < 0 ? 'fail' : hd < 10 ? 'warn' : 'ok', (hd < 0 ? '✗ Hydrate risk downstream of the choke: ' : hd < 10 ? '⚠ Hydrate margin downstream of the choke only ' : '✓ Hydrate margin downstream of the choke ') + _tempDiff(Math.abs(hd)) + (hd < 0 ? ' below the hydrate temperature' : '') + ' (' + _u(sfc.tChokeDn, 'temperature', 0, '°F') + ' against ' + _u(sfc.tHydDn, 'temperature', 0, '°F') + ' at ' + _u(sfc.pChokeDn_psig, 'pressureG', 0, 'psig') + ').');
         }
         // flags the checks above already state are not repeated
-        var SKIP = { EROSION: 1, HEADING: 1, LEFT_OF_MIN: 1, LOADING: 1, HYDRATE_WH: 1, HYDRATE_DN: 1, HYDRATE_DN_NEAR: 1, PROVISIONAL: 1 };
+        var hx = R.heat && R.heat.mode === 'relax' ? R.heat : null;
+        if (hx) {
+            add('info', 'ℹ Flowing temperature from the heat-transfer relaxation (Ramey / Hasan-Kabir): THT ' + _u(hx.tht, 'temperature', 0, '°F') + ' at this rate with U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' and ' + _fmt(hx.tProd_d, 0) + ' d producing — provisional, not verified against a published example.');
+            var tm = (M.tests || []).filter(function (t) { return t.use !== false && _fin(+t.tht_F); })[0];
+            if (tm && ST.ufit && ST.ufit.ok && _fin(ST.ufit.U) && Math.abs(ST.ufit.U / hx.U - 1) > 0.25) add('warn', '⚠ U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' differs from the U matched to the test THT (' + _u(ST.ufit.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + '): adopt it in step ③.');
+        } else if (R.heat && R.heat.fallback) add('warn', '⚠ The relaxation model could not run (it needs a geotherm): the linear THT → BHT profile is used.');
+        var SKIP = { EROSION: 1, HEADING: 1, LEFT_OF_MIN: 1, LOADING: 1, HYDRATE_WH: 1, HYDRATE_DN: 1, HYDRATE_DN_NEAR: 1, PROVISIONAL: 1, PROVISIONAL_TEMP: 1, RELAX_FALLBACK: 1 };
         (R.flags || []).filter(function (f) { return f && f.msg && !SKIP[f.code]; }).slice(0, 6).forEach(function (f) { add(f.sev === 'warn' ? 'warn' : 'info', (f.sev === 'warn' ? '⚠ ' : 'ℹ ') + f.msg); });
         return out;
     }
@@ -1175,8 +1195,16 @@
                 else last.y1 = dk(r);
                 if (i === prof.length - 1) last.y1 = dk(r);
             });
+            var hx = ok && R.heat && R.heat.mode === 'relax' ? R.heat : null;
             var ser = [{ key: 'p', label: 'Pressure', color: T.accent, width: 2.6, pts: prof.map(function (r) { return [_dv(r.p, 'pressure'), dk(r)]; }) },
-                       { key: 't', label: 'Temperature', color: T.red, axis: 'x2', width: 2, pts: prof.map(function (r) { return [_dv(r.t, 'temperature'), dk(r)]; }) }];
+                       { key: 't', label: hx ? 'Temperature (relaxation)' : 'Temperature', color: T.red, axis: 'x2', width: 2.2, pts: prof.map(function (r) { return [_dv(r.t, 'temperature'), dk(r)]; }) }];
+            // the static earth temperature (geotherm on TVD) and, in the relaxation mode, the linear A1 profile for comparison and the
+            // measured test THTs at the wellhead (A2, WP14)
+            if (prof.some(function (r) { return _fin(r.te); })) ser.push({ key: 'te', label: 'Earth (geotherm)', color: T.yellow, axis: 'x2', dash: [2, 4], width: 1.6, pts: prof.filter(function (r) { return _fin(r.te); }).map(function (r) { return [_dv(r.te, 'temperature'), dk(r)]; }) });
+            var thtIn = ST.M && ST.M.well.heat.tht_F, bhtIn = ST.W && ST.W.ok ? ST.W.bht : null, midIn = ST.W && ST.W.ok && ST.W.nodes ? ST.W.nodes.midPerfMd : null;
+            if (hx && _fin(thtIn) && _fin(bhtIn) && _fin(midIn) && prof.length) ser.push({ key: 'tl', label: 'Linear THT → BHT', color: T.text2, axis: 'x2', dash: [6, 5], width: 1.2, pts: prof.map(function (r) { return [_dv(thtIn + (bhtIn - thtIn) * Math.min(1, Math.max(0, r.md / midIn)), 'temperature'), dk(r)]; }) });
+            var tt = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(+t.tht_F); });
+            if (hx && tt.length) ser.push({ key: 'tt', label: 'Test THT', kind: 'points', color: T.purple, axis: 'x2', r: 5, pts: tt.map(function (t) { return [_dv(+t.tht_F, 'temperature'), 0]; }) });
             if (prof.some(function (r) { return _fin(r.tHyd); })) ser.push({ key: 'thyd', label: 'Hydrate temperature', color: T.blue, axis: 'x2', dash: [5, 4], width: 1.6, pts: prof.filter(function (r) { return _fin(r.tHyd); }).map(function (r) { return [_dv(r.tHyd, 'temperature'), dk(r)]; }) });
             var gp = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(t.gaugeMd) && _fin(t.gauge_psia); });
             if (gp.length && ST.SC && ST.SC.trajectory) ser.push({ key: 'g', label: 'Gauge (tests)', kind: 'points', color: T.green, r: 5, pts: gp.map(function (t) { return [_dv(t.gauge_psia, 'pressure'), _dv(dax === 'md' ? t.gaugeMd : (_fin(_schAt(t.gaugeMd).tvd) ? _schAt(t.gaugeMd).tvd : t.gaugeMd), 'length')]; }) });
@@ -1187,6 +1215,18 @@
                      series: ser, hbands: hb.map(function (b) { return { y0: b.y0, y1: b.y1, color: b.color }; }),
                      hidden: _plots().trHidden || null, onLegend: function (hid) { _plotsSet({ trHidden: hid }); },
                      empty: 'The pressure and temperature traverse appears after a solve.' };
+            if (hx) {
+                // drag U and the producing time on the top rails: the relaxation profile, the THT and the operating point re-solve live
+                spec.key += ':relax';
+                spec.handles = [
+                    { key: 'hU', kind: 'railX', value: Math.log(Math.max(0.05, Math.min(200, hx.U))) / Math.LN10, min: Math.log(0.1) / Math.LN10, max: Math.log(100) / Math.LN10, step: 0.02, label: 'U', railLabel: 'U', rail: [0, 0.5], color: T.red,
+                      fmt: function (v) { return _u(Math.pow(10, v), 'heatTransferCoef', Math.pow(10, v) < 10 ? 2 : 1, 'Btu/hr·ft²·°F'); } },
+                    { key: 'hT', kind: 'railX', value: Math.log(Math.max(0.1, Math.min(3650, hx.tProd_d))) / Math.LN10, min: Math.log(0.1) / Math.LN10, max: Math.log(3650) / Math.LN10, step: 0.02, label: 'Time', railLabel: 'TIME', rail: [0.5, 1], color: T.yellow,
+                      fmt: function (v) { var d = Math.pow(10, v); return d < 1 ? _fmt(d * 24, 0) + ' h' : _fmt(d, d < 10 ? 1 : 0) + ' d'; } }];
+                // a phone-width chart has room for one rail: U across the full width (the producing time stays a step ③ input)
+                if (_phone()) { spec.handles = spec.handles.slice(0, 1); spec.handles[0].rail = [0, 1]; }
+                spec.onHandle = _onHandle;
+            }
         }
         V.chart(cv, spec);
         var leg = _byId('wp_trleg');
@@ -1194,7 +1234,9 @@
             if (tab === 'traverse') {
                 var seen = {}, items = [];
                 ((ok && R.traverse && R.traverse.profile) || []).forEach(function (r) { var k = V.patternKey(r.pattern); if (!seen[k]) { seen[k] = 1; items.push(k); } });
-                leg.innerHTML = items.length ? 'Flow pattern (left strip): ' + items.map(function (k) { return '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + V.PATTERN_COLORS[k] + ';margin:0 4px 0 8px;vertical-align:-1px"></span>' + _esc(k); }).join('') : '';
+                leg.innerHTML = (items.length ? 'Flow pattern (left strip): ' + items.map(function (k) { return '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + V.PATTERN_COLORS[k] + ';margin:0 4px 0 8px;vertical-align:-1px"></span>' + _esc(k); }).join('') : '') +
+                    (ok && R.heat && R.heat.mode === 'relax' ? '<div class="wp-relaxleg">Relaxation: A ' + _esc(_u(R.heat.A, 'length', 0, 'ft')) + ' along the hole · f(t_D) ' + _esc(_fmt(R.heat.fTD, 2)) + ' · w ' + _esc(_fmt(R.heat.w, 0)) + ' lbm/hr · c_p ' + _esc(_u(R.heat.cp, 'specificHeat', 3, 'Btu/lb·°F')) +
+                        ' · at the wellhead the fluid is ' + _esc(_tempDiff(R.heat.tht - R.heat.teTop)) + ' above the earth (limit far from the inlet g_G·A·sinθ ' + _esc(_tempDiff(R.heat.offsetTop)) + ') <span class="wp-chip prov">provisional</span><span class="rp-skip"> — drag <b>U</b> and <b>TIME</b> on the top rails.</span></div>' : '');
             } else leg.innerHTML = '';
         }
     }
@@ -1491,6 +1533,78 @@
         }
     }
 
+    // ③ temperature: the relaxation summary at the operating point and the U fit (A2, WP14)
+    function _renderHeat() {
+        var R = ST.R, M = ST.M, hx = R && R.ok && R.heat && R.heat.mode === 'relax' ? R.heat : null, html = '';
+        var cell = function (k, v, t) { return '<div' + (t ? ' title="' + _esc(t) + '"' : '') + '><div class="wp-hk">' + _esc(k) + '</div><div class="wp-hv">' + _esc(v) + '</div></div>'; };
+        if (hx) {
+            var fr = hx.frac || {}, pc = function (x) { return _fmt(100 * (x || 0), 0) + ' %'; };
+            html += '<div class="rbox-title" style="margin:0">Relaxation at the operating point <span class="wp-chip prov">provisional</span></div><div class="wp-heat-g">' +
+                cell('THT at this rate', _u(hx.tht, 'temperature', 1, '°F'), 'The wellhead end of the relaxation profile') +
+                cell('Earth at surface', _u(hx.teTop, 'temperature', 1, '°F')) +
+                cell('Relaxation distance A', _u(hx.A, 'length', 0, 'ft') + ' MD', 'A = (w c_p / 2π)·(k_e + r_to U_to f(t_D)) / (r_to U_to k_e), measured along the hole') +
+                cell('f(t_D)', _fmt(hx.fTD, 3) + ' (t_D ' + _fmt(hx.tD, 0) + ')', 'Hasan-Kabir dimensionless time function, t_D = α t / r_wb²') +
+                cell('Mass rate w', _fmt(hx.w, 0) + ' lbm/hr') +
+                cell('Heat capacity c_p', _u(hx.cp, 'specificHeat', 3, 'Btu/lb·°F'), 'Mass-weighted: oil (Gambill), water 1.0, gas (real-gas)') +
+                cell('U_to (outside radius)', _u(hx.U_to, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + (hx.Ubasis === 'ti' ? ' (from U_ti ' + _fmt(hx.U, 2) + ')' : '')) +
+                cell('r_to · r_wb', _fmt(_dv(hx.r_to * 12, 'lengthSmall'), 3) + ' · ' + _fmt(_dv(hx.rwb * 12, 'lengthSmall'), 2) + ' ' + _lab('lengthSmall', 'in'), 'Hole radius: ' + (hx.rwbSource || '')) +
+                '</div><div class="wp-hk">Mass fractions — oil ' + pc(fr.oil) + ' · water ' + pc(fr.water) + ' · gas ' + pc(fr.gas) + '</div>' +
+                '<div class="wp-hbar" role="img" aria-label="Mass fractions: oil ' + pc(fr.oil) + ', water ' + pc(fr.water) + ', gas ' + pc(fr.gas) + '"><i style="width:' + (100 * (fr.oil || 0)).toFixed(1) + '%;background:var(--accent)"></i><i style="width:' + (100 * (fr.water || 0)).toFixed(1) + '%;background:var(--blue)"></i><i style="width:' + (100 * (fr.gas || 0)).toFixed(1) + '%;background:var(--green)"></i></div>' +
+                _heatSvg(R);
+        } else if (M && M.well.heat.mode === 'relax') html += '<div class="wp-v info">' + (R && R.ok && R.heat && R.heat.fallback ? '⚠ The relaxation model needs a geotherm (the surface temperature and the reservoir temperature, or geothermal points): the linear profile is used.' : 'ℹ The relaxation profile appears after a solve (it depends on the rate).') + '</div>';
+        var tests = ((M && M.tests) || []).filter(function (t) { return t.use !== false && _fin(+t.tht_F); });
+        html += '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="fitU"' + (tests.length ? '' : ' disabled title="Add a production test with a wellhead temperature (step ⑥)"') + '>Fit U to the test THT' + (tests.length > 1 ? 's' : '') + '</button></div>';
+        var uf = _ufitHtml();
+        var hb = _byId('wp_heatbox'); if (hb) hb.innerHTML = html + uf;
+        var h6 = _byId('wp_ufit6'); if (h6) h6.innerHTML = uf;
+    }
+    // compact profile of the fluid (relaxation) against the earth along MD, the heat lost shaded between them; depth ticks MD with TVD
+    function _heatSvg(R) {
+        var prof = ((R.traverse && R.traverse.profile) || []).filter(function (r) { return _fin(r.md) && _fin(r.t) && _fin(r.te); }).slice().sort(function (a, b) { return a.md - b.md; });
+        if (prof.length < 3) return '';
+        var V = G.WTS_wp_view, T = V && V.theme ? V.theme() : { red: '#f85149', yellow: '#d29922', text2: '#8b949e', border: '#30363d' };
+        var W0 = 420, H0 = 150, mL = 44, mR = 10, mT = 16, mB = 24, aw = W0 - mL - mR, ah = H0 - mT - mB;
+        var lo = Infinity, hi = -Infinity, mdMax = prof[prof.length - 1].md;
+        prof.forEach(function (r) { lo = Math.min(lo, r.t, r.te); hi = Math.max(hi, r.t, r.te); });
+        if (!(hi - lo > 1e-6) || !(mdMax > 0)) return '';
+        var X = function (t) { return (mL + aw * (t - lo) / (hi - lo)).toFixed(1); }, Y = function (md) { return (mT + ah * md / mdMax).toFixed(1); };
+        var fl = prof.map(function (r, i) { return (i ? 'L' : 'M') + X(r.t) + ' ' + Y(r.md); }).join('');
+        var el = prof.map(function (r, i) { return (i ? 'L' : 'M') + X(r.te) + ' ' + Y(r.md); }).join('');
+        var area = fl + prof.slice().reverse().map(function (r) { return 'L' + X(r.te) + ' ' + Y(r.md); }).join('') + 'Z';
+        var ticks = [0, 0.5, 1].map(function (f) {
+            var md = f * mdMax, r = prof.reduce(function (a, b) { return Math.abs(b.md - md) < Math.abs(a.md - md) ? b : a; });
+            return '<text x="' + (mL - 4) + '" y="' + (+Y(md) + 3) + '" text-anchor="end" font-size="9" fill="' + T.text2 + '">' + _esc(_fmt(_dv(md, 'length'), 0)) + '</text>' +
+                (f > 0 && _fin(r.tvd) ? '<text x="' + (mL - 4) + '" y="' + (+Y(md) + 12) + '" text-anchor="end" font-size="8" fill="' + T.text2 + '" opacity=".75">' + _esc(_fmt(_dv(r.tvd, 'length'), 0)) + ' TVD</text>' : '');
+        }).join('');
+        var top = prof[0];
+        return '<svg class="wp-heatsvg" viewBox="0 0 ' + W0 + ' ' + H0 + '" width="100%" height="' + H0 + '" role="img" aria-label="Flowing temperature against the earth temperature along MD; the shaded band is the heat the fluid carries above the earth">' +
+            '<rect x="' + mL + '" y="' + mT + '" width="' + aw + '" height="' + ah + '" fill="none" stroke="' + (T.border || '#30363d') + '"/>' +
+            '<path d="' + area + '" fill="' + T.red + '" fill-opacity=".13"/>' +
+            '<path d="' + el + '" fill="none" stroke="' + T.yellow + '" stroke-width="1.6" stroke-dasharray="2 3"/>' +
+            '<path d="' + fl + '" fill="none" stroke="' + T.red + '" stroke-width="2.2"/>' +
+            '<circle cx="' + X(top.t) + '" cy="' + Y(0) + '" r="3.5" fill="' + T.red + '"/>' +
+            ticks +
+            '<text x="' + mL + '" y="' + (mT - 5) + '" font-size="9" fill="' + T.text2 + '">' + _esc(_fmt(_dv(lo, 'temperature'), 0)) + '</text>' +
+            '<text x="' + (mL + aw) + '" y="' + (mT - 5) + '" font-size="9" text-anchor="end" fill="' + T.text2 + '">' + _esc(_fmt(_dv(hi, 'temperature'), 0) + ' ' + _lab('temperature', '°F')) + '</text>' +
+            '<text x="' + (mL + aw / 2) + '" y="' + (H0 - 6) + '" font-size="9" text-anchor="middle" fill="' + T.text2 + '">' + _esc('— fluid (relaxation)   ··· earth (geotherm on TVD)   MD (' + _lab('length', 'ft') + ')') + '</text>' +
+            '</svg>';
+    }
+    function _ufitHtml() {
+        var f = ST.ufit; if (!f) return '';
+        if (f.ok === false && !(f.rows && f.rows.length)) return _vHtml({ st: 'warn', t: '⚠ ' + ((f.errors || [])[0] || 'U fit not available.') });
+        var rows = (f.rows || []).map(function (r) {
+            return '<tr><td>' + _esc(r.id) + '</td><td class="num">' + (_fin(r.q) ? _fmt(r.q, 0) : '—') + '</td><td class="num">' + _fmt(_dv(r.tht, 'temperature'), 1) + '</td><td class="num">' + (r.ok ? _fmt(_dv(r.U, 'heatTransferCoef'), 2) : '—') + '</td><td>' + (r.ok ? '✓' : '⚠ ' + _esc(String(r.msg || '').slice(0, 120))) + '</td></tr>';
+        }).join('');
+        var out = '<div class="wp-tw" style="margin-top:8px"><table class="dtable"><thead><tr><th>Test</th><th>Rate</th><th>THT (' + _lab('temperature', '°F') + ')</th><th>U (' + _lab('heatTransferCoef', 'Btu/hr·ft²·°F') + ')</th><th>Fit</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+        if ((f.rows || []).some(function (r) { return r.code === 'OUT_OF_RANGE'; })) out += _vHtml({ st: 'info', t: 'ℹ A THT outside the reachable range cannot be matched by U alone: below it the earth itself limits the cooling (a shorter producing time or a higher k_e cools more); above it even an insulated tubing (U → 0) would not reach it — check the THT, the rates and the reservoir temperature.' });
+        if (f.ok && _fin(f.U)) {
+            var ur = f.uRange || [f.U, f.U];
+            out += _vHtml({ st: 'ok', t: '✓ U ' + _u(f.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + (f.n > 1 ? ' (geometric mean of ' + f.n + ' tests, range ' + _fmt(_dv(ur[0], 'heatTransferCoef'), 2) + '–' + _fmt(_dv(ur[1], 'heatTransferCoef'), 2) + ')' : '') + ' reproduces the measured THT (1-D Brent on ln U) — provisional.' }) +
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="adoptU" data-v="' + (+f.U.toPrecision(4)) + '">Use U = ' + _esc(_fmt(_dv(f.U, 'heatTransferCoef'), 2)) + '</button></div>';
+        }
+        return out;
+    }
+
     // step status dots
     function _stepStatus() {
         var M = ST.M, R = ST.R, st = {};
@@ -1526,7 +1640,9 @@
                 'The vertical lift marches on the true inclination of every segment (hydrostatic on TVD, friction on MD); one correlation for the whole well.') +
             box('Black-oil fluid model' + (gas ? '; the gas-condensate well is a wet gas with a constant condensate volume (no retrograde dropout)' : '') + '. ' +
                 'Correlations outside their data range are extrapolations; those without a verified published example are labelled provisional. Restrictions use a homogeneous loss coefficient.') +
-            box('The stability verdict is a static criterion (q_s): it does not predict heading or slugging. The temperature is linear from the wellhead temperature entered; the J-T correction applies to the hydrate check only.') +
+            box('The stability verdict is a static criterion (q_s): it does not predict heading or slugging. ' + (M && M.well.heat.mode === 'relax'
+                ? 'The flowing temperature is the steady heat-transfer relaxation (Ramey / Hasan-Kabir) per rate: geotherm on TVD, relaxation along MD, decoupled from pressure, with a constant producing time and a single U; no Joule-Thomson or kinetic term in the profile (the J-T correction applies to the hydrate check); provisional — not verified against a published example.'
+                : 'The temperature is linear from the wellhead temperature entered; the J-T correction applies to the hydrate check only.')) +
             (user ? '<div><b>Notes</b> ' + _esc(user) + '</div>' : '');
     }
 
@@ -1551,6 +1667,8 @@
         ['wp_corr_well', 'wp_corr_line'].forEach(function (id) { var sel = _byId(id); if (!sel || !sel.options) return; Array.prototype.forEach.call(sel.options, function (o) { if (o.value === 'gasTZ' || o.value === 'gasCS') { o.disabled = !gas; o.title = gas ? '' : 'Not applicable: a dry-gas method for gas wells only'; } }); });
         var choke = !!(_byId('wp_choke') || {}).checked;
         Array.prototype.forEach.call(root.querySelectorAll('[data-choke]'), function (e) { var want = e.getAttribute('data-choke') === 'on'; if (e.classList) e.classList.toggle('wp-off', want !== choke); });
+        var heat = (_byId('wp_heat') || {}).value === 'relax' ? 'relax' : 'linear';
+        Array.prototype.forEach.call(root.querySelectorAll('[data-heat]'), function (e) { if (e.classList) e.classList.toggle('wp-off', e.getAttribute('data-heat') !== heat); });
         var mode = (_byId('wp_mode') || {}).value || 'rate';
         Array.prototype.forEach.call(root.querySelectorAll('[data-mode]'), function (e) { if (e.classList) e.classList.toggle('wp-off', String(e.getAttribute('data-mode')).split(' ').indexOf(mode) === -1); });
         var ic = _byId('wp_iprchip'); if (ic) ic.innerHTML = m && m.verified === false ? '<span class="wp-chip prov">provisional</span>' : '';
@@ -1625,6 +1743,18 @@
         if (act === 'usecorr') { var ck = btn.getAttribute('data-v'), sw = _byId('wp_corr_well'); if (ck && sw) { _setCtrl('wp_corr_well', ck, true); _commit('wp_corr_well'); } return; }
         if (act === 'corrop') {
             _drive(_corrOpJob(), function (r) { if (r && r.key === _cmpKey()) { ST.cmpOp = r; _renderTraverseCard(); _renderSystemPlot(); } }, 'Operating point per correlation');
+            return;
+        }
+        if (act === 'fitU') {
+            var tl = (M.tests || []).filter(function (t) { return t.use !== false; });
+            var Mf = JSON.parse(JSON.stringify(M)); Mf.well.heat.mode = 'relax';
+            ST.ufit = _call('WTS_wp_match.thtFit', Mf, tl);
+            _renderHeat(); _renderVerdicts();
+            return;
+        }
+        if (act === 'adoptU') {
+            var uv = +btn.getAttribute('data-v');
+            if (_fin(uv) && uv > 0 && _byId('wp_Uto')) { _setCtrl('wp_Uto', uv, true); ST.prov.wp_Uto = 'matched to the test THT'; _syncUi(); _commit('wp_Uto'); }
             return;
         }
         if (act === 'adopt') {
@@ -1989,8 +2119,18 @@
                 '<div class="fg" style="margin-top:12px">' + _fg('wp_path', 'Flow path', { options: [['tubing', 'Tubing'], ['annulus', 'Annulus']] }) + _fg('wp_datum', 'Depth datum', { options: [['RKB', 'RKB'], ['GL', 'Ground level'], ['MSL', 'Mean sea level']] }) + _fg('wp_datumOff', 'Datum offset', { unit: 'ft' }) + '</div>') +
             _card('Restrictions and perforations', _tableBlock('restrictions', 'SSSV, nipples, sleeves, cross-overs, downhole chokes', 'Applied at the restriction depth with a homogeneous loss coefficient (K from β when blank).') +
                 '<div class="fg" style="margin-top:12px">' + _fg('wp_perfTop', 'Top perforation (MD)', { unit: 'ft' }) + _fg('wp_perfBot', 'Bottom perforation (MD)', { unit: 'ft' }) + _fg('wp_midPerf', 'Mid-perforation (MD) — the bottom node', { unit: 'ft' }) + '</div><div id="wp_perftvd" class="wp-perftvd" aria-live="polite" style="margin-top:8px"></div>') + '</div>' +
-            '<div class="wp-2c">' + _card('Temperature', '<div class="fg">' + _fg('wp_surfT', 'Surface temperature', { unit: '°F' }) + _fg('wp_tht', 'Flowing wellhead temperature', { unit: '°F' }) + _fg('wp_thtMeas', 'THT measured', { check: true }) +
-                _fg('wp_heat', 'Temperature model', { options: [['linear', 'Linear between THT and the reservoir'], ['relax', 'Heat-transfer relaxation (release 4.4)', true]] }) + '</div>' + _tableBlock('geo', 'Geothermal points', 'TVD and static temperature; at least the surface and the reservoir.')) +
+            '<div class="wp-2c">' + _card('Temperature', '<div class="fg">' +
+                _fg('wp_heat', 'Temperature model', { options: [['linear', 'Linear between THT and the reservoir'], ['relax', 'Heat-transfer relaxation (Ramey / Hasan-Kabir)']] }) +
+                _fg('wp_surfT', 'Surface temperature', { unit: '°F' }) +
+                _fg('wp_tht', 'Flowing wellhead temperature', { unit: '°F', data: 'data-heat="linear"' }) + _fg('wp_thtMeas', 'THT measured', { check: true, data: 'data-heat="linear"' }) +
+                _fg('wp_Uto', 'Overall heat-transfer coefficient U', { unit: 'Btu/hr·ft²·°F', data: 'data-heat="relax"', hint: 'Drag U on the traverse, or fit it to a test THT.' }) +
+                _fg('wp_Ubasis', 'U basis', { options: [['to', 'Outside tubing radius (r_to·U_to)'], ['ti', 'Inside tubing radius (converted)']], data: 'data-heat="relax"' }) +
+                _fg('wp_tprod', 'Producing time', { unit: 'd', data: 'data-heat="relax"' }) +
+                _fg('wp_ke', 'Earth conductivity k_e', { unit: 'Btu/hr·ft·°F', data: 'data-heat="relax"' }) +
+                _fg('wp_alpha', 'Earth diffusivity α', { unit: 'ft²/hr', data: 'data-heat="relax"' }) +
+                _fg('wp_dwb', 'Hole diameter (optional)', { unit: 'in', data: 'data-heat="relax"', ph: 'largest string OD' }) + '</div>' +
+                '<div id="wp_heatbox" class="wp-heat" data-heat="relax" aria-live="polite"></div>' +
+                _tableBlock('geo', 'Geothermal points', 'TVD and static temperature; at least the surface and the reservoir. The relaxation model reads the geotherm on TVD and relaxes along MD.')) +
             _card('Flow segments', '<div id="wp_segs"></div>') + '</div></section>';
         var s4 = '<section id="wp_step_4" class="wp-sec" style="display:none"><div class="wp-sec-h">④ Lift <span>natural flow in this release</span></div>' +
             _card('Artificial lift', '<div class="fg">' + _fg('wp_lift', 'Lift type', { options: [['none', 'Natural flow'], ['gaslift', 'Gas lift (release 4.4)', true], ['esp', 'ESP (release 4.5)', true]] }) + '</div>' +
@@ -2026,7 +2166,7 @@
                 wellCorr.map(function (c) { return '<label style="display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;color:var(--text)"><input type="checkbox" data-corr="' + _esc(c.key) + '" checked> ' + _esc(c.label) + '</label>'; }).join('') + '</div></div>' +
                 '<div class="fg-item"><label for="wpv_mtest">Test to compare</label><select id="wpv_mtest"><option value="0">first used test</option></select></div>' +
                 _fg('wp_m_solve', 'Back-calculate from the test', { options: [['pr', 'Reservoir pressure p̄r (coefficients held)'], ['J', 'Productivity (p̄r held)'], ['S', 'Skin S (k·h held, Darcy)']], def: 'pr' }) + '</div>' +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="match">Compare and QC</button></div><div class="wp-hint">Each correlation is marched from the measured THP down the surveyed path at the test\'s own rates and THT; the QC checks every test (used or not).</div><div id="wp_matchres" style="margin-top:10px"></div>') + '</section>';
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-primary" data-act="match">Compare and QC</button><button type="button" class="btn btn-secondary" data-act="fitU" data-heat="relax">Fit U to the test THTs</button></div><div id="wp_ufit6" class="rp-skip" data-heat="relax"></div><div class="wp-hint">Each correlation is marched from the measured THP down the surveyed path at the test\'s own rates and THT; the QC checks every test (used or not).</div><div id="wp_matchres" style="margin-top:10px"></div>') + '</section>';
         var s7 = '<section id="wp_step_7" class="wp-sec" style="display:none"><div class="wp-sec-h">⑦ Report <span>what the page report and the Quick Report carry</span></div>' +
             _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the correlation validity, the traverse card and the Notes. ' +
                 'Full tables (traverse, curves, sensitivity, bean schedule) are in the CSV.</div>' +
@@ -2043,7 +2183,7 @@
             _card('Well', '<div class="wp-schw" id="wp_schw"><div id="wp_sch"></div><div class="wp-tip" id="wp_tip" role="status"></div></div><div class="wp-legend-hint" id="wp_sch_cap"></div>' +
                 '<div class="wp-legend-hint rp-skip">Hover the well for MD, TVD, inclination, pressure, temperature and holdup; click a string, restriction, the perforations, a gauge or the choke to edit it.</div>',
                 { tools: '<label for="wpv_prop" style="font-size:11px;color:var(--text2)">Colour by</label><select id="wpv_prop" aria-label="Colour the well by">' +
-                    [['pressure', 'Pressure'], ['temperature', 'Temperature'], ['holdup', 'Holdup'], ['velocity', 'Velocity'], ['pattern', 'Flow pattern'], ['none', 'None']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === prop ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' }) +
+                    [['pressure', 'Pressure'], ['temperature', 'Temperature'], ['heatloss', 'Fluid − earth ΔT'], ['holdup', 'Holdup'], ['velocity', 'Velocity'], ['pattern', 'Flow pattern'], ['none', 'None']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === prop ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' }) +
             _card('System — inflow and outflow', '<div class="chart-wrap"><canvas id="wp_cv_sys" aria-label="System plot: inflow and outflow curves, operating point; drag the handles to change the reservoir pressure, the wellhead pressure, the bean or the water cut"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag a handle — <b>p̄r</b> on the inflow curve, <b>THP</b> on the right rail, <b>bean</b> and <b>WC</b> on the top rails — and the well re-solves. Wheel or pinch to zoom, drag to pan, double-click to reset; click the legend to hide a curve. Keyboard: [ and ] pick a handle, arrows move it, Enter commits.</div>') +
             '</div>' +
@@ -2095,7 +2235,7 @@
             if (t.getAttribute && t.getAttribute('data-corr')) return;
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_corr_pb' || t.id === 'wp_corr_rs') _famSync(t.id);
-            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode') _syncUi();
+            if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_heat') _syncUi();
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();
         });

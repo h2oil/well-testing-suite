@@ -18,6 +18,13 @@
 //                                        departure, dogleg, DLS) + at(md) on the arcs; column() takes such rows too (key mc)
 //   csys(column, fluid, T)               the one system compressibility c_fluid + ψ·D/(E_s·e), V_w·c_w, wave speed
 //   tempProfile(column, opts)            static geotherm or displaced (DFIT) column, relaxing with e^(−t/τ)
+//   flowingTemp(column, opts)            v4.4 (Well Performance WP14): steady flowing temperature, Ramey / Hasan-Kabir relaxation,
+//                                        direction 'produce' | 'inject'; geotherm on TVD, relaxation along MD (true inclination);
+//                                        opts {w lbm/hr, cp, U_to | U_ti + r_ti, r_to ft, ke, alpha, rwb ft, t_hr, direction, Tin,
+//                                        geo, fromMd, toMd, stepFt} → {A, fTD, tD, tAt(md), teAt(md), tOut, profile, …}.
+//                                        flowingTempFitU(column, opts, {T, md?}) fits U_to (Brent on ln U); flowingTempF(tD) = f(t_D).
+//                                        `_ramey` is NOT defined here: it stays reserved for DFIT 3.4b (which may call flowingTemp with
+//                                        direction 'inject', owner Q16)
 //   hydrostatic(pK, tvdK, tvdT, col, T)  ρ(p,T) column, RK2 at 10 ft (or a constant gradient)
 //   pipeFriction(q, seg, fluid, T)       Newtonian / friction-reduced (Virk cap) / power law
 //   perfFriction, nwbLoss, bleedOff      perforation, near-wellbore and the friction bleed-off after shut-in
@@ -530,6 +537,156 @@
         if (T && typeof T.T === 'function') return T.T;
         if (c) return tempProfile(c, { model: 'static' }).T;
         return function () { return 60; };
+    }
+
+    // ── flowing temperature: steady relaxation (v4.4, Well Performance WP14; docs/WELL-PERFORMANCE-PLAN.md §4.6, D7, Q16) ──────
+    // Ramey (1962) / Hasan & Kabir (1994) steady relaxation, decoupled from pressure. z = length ALONG THE HOLE in the flow
+    // direction (production: upward from the inlet, normally the mid-perforations; injection: downward from the wellhead). The
+    // earth temperature T_ei comes from the geotherm on TVD (piecewise linear points or a gradient), so along the hole its slope is
+    // s = dT_ei/dz = ±g_G·sinθ (θ from horizontal: the true inclination of the survey). The energy balance w·c_p·dT_f/dz =
+    // −(2π r_to U_to k_e / (k_e + r_to U_to f(t_D)))·(T_f − T_ei) = −w·c_p (T_f − T_ei) / A gives on every piece where s is constant
+    //   T_f(z) = T_ei(z) + (T_f0 − T_ei0)·e^(−z/A) − s·A·(1 − e^(−z/A))
+    // i.e. the plan's T_f = T_ei + (T_bh − T_ebh) e^(−z/A) + g_G A sinθ (1 − e^(−z/A)) for production (s = −g_G sinθ); applied piece by
+    // piece (pieces end at survey stations, geotherm points and at most every stepFt ft), so the march is exact for a piecewise-linear
+    // T_ei(z). A = (w c_p / 2π)·(k_e + r_to U_to f(t_D)) / (r_to U_to k_e) [ft]: w lbm/hr, c_p Btu/lbm·°F, k_e Btu/hr·ft·°F, r_to ft,
+    // U_to Btu/hr·ft²·°F on the OUTSIDE-tubing-radius basis (a U on the inside radius is converted, U_to = U_ti·r_ti / r_to).
+    // f(t_D) = 1.1281 √t_D (1 − 0.3 √t_D) for t_D ≤ 1.5, (0.4063 + 0.5 ln t_D)(1 + 0.6 / t_D) otherwise (Hasan & Kabir), t_D = α t / r_wb².
+    // As U → ∞, A → w c_p f(t_D) / (2π k_e) (the earth resistance alone: the plain Ramey line source).
+    function flowingTempF(tD) {
+        if (!(_fin(tD) && tD > 0)) return NaN;
+        if (tD <= 1.5) { var s = Math.sqrt(tD); return 1.1281 * s * (1 - 0.3 * s); }
+        return (0.4063 + 0.5 * Math.log(tD)) * (1 + 0.6 / tD);
+    }
+    function _geoFn(o, c) {
+        var g = o.geo;
+        if (typeof g === 'function') return g;
+        if (g && Array.isArray(g.points)) {
+            var pts = g.points.map(function (p) { return [_num(p && p[0], NaN), _num(p && p[1], NaN)]; }).filter(function (p) { return _fin(p[0]) && _fin(p[1]); })
+                .sort(function (a, b) { return a[0] - b[0]; });
+            var sf = _num(g.surfT_F, _num(g.surfF, null));
+            if (_fin(sf) && !(pts.length && pts[0][0] === 0)) pts.unshift([0, sf]);
+            if (pts.length >= 2) return function (tvd) {
+                var k = 1; while (k < pts.length - 1 && tvd > pts[k][0]) k++;
+                var a = pts[k - 1], b = pts[k]; return b[0] > a[0] ? a[1] + (b[1] - a[1]) * (tvd - a[0]) / (b[0] - a[0]) : a[1];
+            };
+            if (pts.length === 1 && _fin(_num(g.gradFper100, null))) { var p0 = pts[0], gg = g.gradFper100 / 100; return function (tvd) { return p0[1] + gg * (tvd - p0[0]); }; }
+            return null;
+        }
+        var base = (c && c.temp) || { surfF: 70, gradFper100: 1.5 };
+        var surf = _num(g && g.surfF, _num(o.surfF, base.surfF)), grad = _num(g && g.gradFper100, _num(o.gradFper100, base.gradFper100)) / 100;
+        return function (tvd) { return surf + grad * tvd; };
+    }
+    function flowingTemp(col, opts) {
+        var c = _col(col);
+        if (!c) return _fail('NO_COLUMN', 'A wellbore column (survey and datum) is needed for the flowing temperature.', ['column']);
+        var o = opts || {}, warnings = [];
+        var dir = o.direction === 'inject' ? 'inject' : 'produce';
+        var w = _num(o.w, NaN), cp = _num(o.cp, NaN);
+        if (!(w > 0)) return _fail('NO_RATE', 'The mass rate w (lbm/hr) must be above zero.', ['w']);
+        if (!(cp > 0)) return _fail('NO_CP', 'The heat capacity c_p (Btu/lbm·°F) must be above zero.', ['cp']);
+        var rto = _num(o.r_to, NaN);
+        if (!(rto > 0)) return _fail('NO_RADIUS', 'The outside tubing radius r_to (ft) is needed.', ['r_to']);
+        var U = _num(o.U_to, NaN), basis = 'to';
+        if (!_fin(U) && _fin(_num(o.U_ti, NaN))) {
+            var rti = _num(o.r_ti, NaN);
+            if (!(rti > 0 && rti <= rto)) return _fail('NO_RADIUS', 'A U on the inside-radius basis needs the inside tubing radius r_ti (ft, at most r_to).', ['r_ti']);
+            U = o.U_ti * rti / rto; basis = 'ti';
+        }
+        if (!(U > 0)) return _fail('NO_U', 'The overall heat-transfer coefficient U (Btu/hr·ft²·°F) must be above zero.', ['U_to']);
+        var ke = _num(o.ke, 1.4), alpha = _num(o.alpha, 0.04), tHr = _num(o.t_hr, 720);
+        var rwb = _num(o.rwb, NaN), rwbSrc = 'input';
+        if (!(rwb > 0)) {
+            var odMax = 0; (c.segments || []).forEach(function (s) { if (s.od > odMax) odMax = s.od; });
+            rwb = odMax > 0 ? Math.max(odMax / 24, rto) : 0.354; rwbSrc = odMax > 0 ? 'largest string OD' : 'default 8.5 in hole';
+        }
+        if (!(ke > 0 && alpha > 0 && tHr > 0)) return _fail('BAD_INPUT', 'k_e, α and the producing time must be above zero.', ['ke', 'alpha', 't_hr']);
+        if (rwb < rto) { warnings.push(_warn('RWB_SMALL', 'warn', 'The wellbore radius is below the tubing radius; r_wb = r_to is used.')); rwb = rto; }
+        var tD = alpha * tHr / (rwb * rwb), fT = flowingTempF(tD);
+        var A = (w * cp / (2 * Math.PI)) * (ke + rto * U * fT) / (rto * U * ke);
+        var geo = _geoFn(o, c);
+        if (!geo) return _fail('NO_GEOTHERM', 'A geotherm (surface temperature and gradient, or TVD-temperature points) is needed.', ['geo']);
+        var tvdOf = function (md) { return md <= 0 ? 0 : c.tvdAt(md); };
+        var teAt = function (md) { return geo(tvdOf(md)); };
+        var inMd = _num(o.fromMd, dir === 'produce' ? c.datumMd : 0), outMd = _num(o.toMd, dir === 'produce' ? 0 : c.datumMd);
+        if (!(_fin(inMd) && _fin(outMd)) || inMd === outMd) return _fail('BAD_INPUT', 'fromMd and toMd must be two different depths.', ['fromMd', 'toMd']);
+        var up = outMd < inMd;
+        if ((dir === 'produce') !== up) warnings.push(_warn('DIRECTION', 'info', dir === 'produce' ? 'Production normally flows up the hole (fromMd below toMd).' : 'Injection normally flows down the hole (fromMd above toMd).'));
+        var Tin = _num(o.Tin, NaN), te0 = teAt(inMd);
+        if (!_fin(Tin)) Tin = dir === 'produce' ? te0 : teAt(0);
+        // piece ends: survey stations, geotherm breakpoints (as MD) and at most stepFt along the hole
+        var lo = Math.min(inMd, outMd), hi = Math.max(inMd, outMd), step = Math.max(5, _num(o.stepFt, 50)), cuts = [lo, hi];
+        for (var m = Math.ceil(lo / step) * step; m < hi; m += step) cuts.push(m);
+        (c.survey || []).forEach(function (s) { if (s[0] > lo && s[0] < hi) cuts.push(s[0]); });
+        if (c.mc) c.mc.stations.forEach(function (s) { if (s.md > lo && s.md < hi) cuts.push(s.md); });
+        if (o.geo && Array.isArray(o.geo.points)) o.geo.points.forEach(function (p) { var t = _num(p && p[0], NaN); if (t > 0) { var mdp = c.mdAt(t); if (mdp > lo && mdp < hi) cuts.push(mdp); } });
+        cuts.sort(function (a, b) { return a - b; });
+        var mds = [];
+        cuts.forEach(function (x) { if (!mds.length || x - mds[mds.length - 1] > 1e-6) mds.push(x); });
+        if (up) mds.reverse();
+        // the exact march, piece by piece in the flow direction
+        var pieces = [], T = Tin, z = 0, prof = [{ md: mds[0], tvd: tvdOf(mds[0]), z: 0, te: teAt(mds[0]), t: T }];
+        for (var i = 1; i < mds.length; i++) {
+            var a = mds[i - 1], b = mds[i], L = Math.abs(b - a), tea = teAt(a), teb = teAt(b), s = (teb - tea) / L, e = Math.exp(-L / A);
+            pieces.push({ md0: a, md1: b, z0: z, L: L, T0: T, te0: tea, s: s });
+            T = teb + (T - tea) * e - s * A * (1 - e);
+            z += L;
+            prof.push({ md: b, tvd: tvdOf(b), z: z, te: teb, t: T });
+        }
+        var p0 = pieces[0], pN = pieces[pieces.length - 1];
+        function tAt(md) {
+            if (!_fin(md)) return NaN;
+            if (up ? md >= p0.md0 : md <= p0.md0) return Tin;                    // upstream of the inlet: the inlet temperature
+            if (up ? md <= pN.md1 : md >= pN.md1) return T;                      // beyond the outlet: the outlet temperature
+            var k0 = 0, k1 = pieces.length - 1;
+            while (k1 > k0) { var km = (k0 + k1) >> 1; var pk = pieces[km]; if (up ? md >= pk.md1 : md <= pk.md1) k1 = km; else k0 = km + 1; }
+            var p = pieces[k0], l = Math.abs(md - p.md0), ee = Math.exp(-l / A), tem = p.te0 + p.s * l;
+            return tem + (p.T0 - p.te0) * ee - p.s * A * (1 - ee);
+        }
+        return { ok: true, direction: dir, A: A, fTD: fT, tD: tD, U_to: U, Ubasis: basis, r_to: rto, rwb: rwb, rwbSource: rwbSrc, ke: ke, alpha: alpha,
+                 t_hr: tHr, w: w, cp: cp, fromMd: inMd, toMd: outMd, Tin: Tin, tOut: T, teOut: teAt(outMd), teIn: te0,
+                 offsetOut: -pN.s * A, tAt: tAt, teAt: teAt, profile: prof, pieces: pieces.length, warnings: warnings };
+    }
+    // U_to that makes the flowing temperature at target.md equal target.T (°F): Brent on ln U in [Umin, Umax] (default 0.01–1000).
+    // The temperature at the outlet falls monotonically with U for production (more heat lost), rises for injection; a target
+    // outside the reachable range returns OUT_OF_RANGE with that range (U → 0: the inlet temperature carried up adiabatically;
+    // U → ∞: the earth-resistance limit).
+    function flowingTempFitU(col, opts, target) {
+        var o = opts || {}, tg = target || {};
+        var T = _num(tg.T, NaN);
+        if (!_fin(T)) return _fail('NO_TARGET', 'A measured temperature (target.T, °F) is needed for the U fit.', ['T']);
+        var Umin = _num(tg.Umin, 0.01), Umax = _num(tg.Umax, 1000);
+        var base = flowingTemp(col, Object.assign({}, o, { U_to: 1, U_ti: undefined }));
+        if (!base.ok) return base;
+        var md = _num(tg.md, base.toMd), n = 0;
+        function at(lnU) { n++; var r = flowingTemp(col, Object.assign({}, o, { U_to: Math.exp(lnU), U_ti: undefined })); return r.ok ? r.tAt(md) : NaN; }
+        var a = Math.log(Umin), b = Math.log(Umax), fa = at(a) - T, fb = at(b) - T;
+        var range = { Umin: Umin, Umax: Umax, tAtUmin: fa + T, tAtUmax: fb + T };
+        if (!(_fin(fa) && _fin(fb))) return _fail('FIT_FAILED', 'The flowing temperature could not be evaluated for the U fit.');
+        if (fa * fb > 0) {
+            var near = Math.abs(fa) < Math.abs(fb) ? Umin : Umax;
+            var r0 = _fail('OUT_OF_RANGE', 'The measured ' + _f(T, 1) + ' °F is outside the reachable range ' + _f(Math.min(range.tAtUmin, range.tAtUmax), 1) + '–' + _f(Math.max(range.tAtUmin, range.tAtUmax), 1) + ' °F for U ' + Umin + '–' + Umax + ' Btu/hr·ft²·°F.');
+            r0.range = range; r0.nearest = near; return r0;
+        }
+        // Brent (zeroin) on ln U
+        var c2 = a, fc = fa, d = b - a, e = d;
+        for (var it = 0; it < 100; it++) {
+            if ((fb > 0) === (fc > 0)) { c2 = a; fc = fa; d = b - a; e = d; }
+            if (Math.abs(fc) < Math.abs(fb)) { a = b; b = c2; c2 = a; fa = fb; fb = fc; fc = fa; }
+            var tol = 1e-10 * Math.max(1, Math.abs(b)), mm = 0.5 * (c2 - b);
+            if (Math.abs(fb) < 1e-9 || Math.abs(mm) <= tol) break;
+            if (Math.abs(e) >= tol && Math.abs(fa) > Math.abs(fb)) {
+                var sx = fb / fa, p, q, r;
+                if (a === c2) { p = 2 * mm * sx; q = 1 - sx; }
+                else { q = fa / fc; r = fb / fc; p = sx * (2 * mm * q * (q - r) - (b - a) * (r - 1)); q = (q - 1) * (r - 1) * (sx - 1); }
+                if (p > 0) q = -q; else p = -p;
+                if (2 * p < Math.min(3 * mm * q - Math.abs(tol * q), Math.abs(e * q))) { e = d; d = p / q; } else { d = mm; e = mm; }
+            } else { d = mm; e = mm; }
+            a = b; fa = fb;
+            b += Math.abs(d) > tol ? d : (mm > 0 ? tol : -tol);
+            fb = at(b) - T;
+        }
+        var U = Math.exp(b), fin = flowingTemp(col, Object.assign({}, o, { U_to: U, U_ti: undefined }));
+        return { ok: true, U_to: U, T: fin.ok ? fin.tAt(md) : NaN, md: md, resid: fb, evals: n, range: range, A: fin.A, result: fin, warnings: fin.warnings || [] };
     }
 
     // ── hydrostatics (§4.2) ──────────────────────────────────────────────────
@@ -1545,8 +1702,9 @@
     var API = { column: column, csys: csys, tempProfile: tempProfile, hydrostatic: hydrostatic, pipeFriction: pipeFriction, perfFriction: perfFriction,
                 nwbLoss: nwbLoss, bleedOff: bleedOff, convert: convert, vacuum: vacuum, stepDown: stepDown, stepDownDesignCheck: stepDownDesignCheck,
                 stepRate: stepRate, ramp: ramp, hammerQuick: hammerQuick, align: align,
-                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod, surveyMC: surveyMC };
+                pipeDp: pipeDp, vwcwFromPeriod: vwcwFromPeriod, surveyMC: surveyMC, flowingTemp: flowingTemp, flowingTempFitU: flowingTempFitU };
     Object.keys(API).forEach(function (k) { W[k] = _safe(k, API[k]); });
+    W.flowingTempF = flowingTempF;
     W.perfConstant = perfConstant;
     W.salinityFromPpg = salinityFromPpg;
     W.rhoScPpg = rhoScPpg;

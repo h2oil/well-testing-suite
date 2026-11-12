@@ -1,6 +1,6 @@
 // Well Performance WP4 — flowing temperature, A1 (docs/WELL-PERFORMANCE-PLAN.md §4.6, §17.1: wellperf-temp).
 //
-// WT1 linear mode: THT → BHT along MD, BHT from the reservoir temperature or the geotherm, no THT → static geotherm, relax → A2 note
+// WT1 linear mode: THT → BHT along MD, BHT from the reservoir temperature or the geotherm, no THT → static geotherm, relax without a rate → linear with a note (A2: wellperf-temp2)
 // WT2 Joule-Thomson hydrate THT for gas / condensate wells: THT_hyd = THT − μ_JT·Δp_tubing, μ_JT from WTS_gaspvt_isenthalpic at the
 //     mean tubing conditions (the fluid's gas gravity and impurities)
 // WT3 verdicts: measured THT, "upper-bound THT, not conservative" without the correction, oil wells
@@ -18,7 +18,7 @@ const FLUID = (type, sg, imp) => ({ ok: true, type, pvt: { imp: imp || {} }, at:
 
 module.exports = [
   {
-    name: 'WT1 linear temperature: THT → BHT along MD (BHT = reservoir T, else the geotherm at the mid-perf TVD); no THT → the static geotherm; relax → linear with an A2 note',
+    name: 'WT1 linear temperature: THT → BHT along MD (BHT = reservoir T, else the geotherm at the mid-perf TVD); no THT → the static geotherm; relax without a rate → linear with a note',
     wp: WP,
     opts: false,
     run(_a, assert, ctx) {
@@ -43,9 +43,9 @@ module.exports = [
       assert.strictEqual(W2.temp.verdict, 'geotherm');
       near(assert, W2.temp.thtHyd, 60, 1e-12, 'surface geotherm for the hydrate check');
       assert.ok(plain(W2.warnings).some((w) => w.code === 'NO_THT'));
-      // relax (A2): linear with an info note
+      // relax without a rate (A2, WP14: the profile depends on the rate — wellperf-temp2): linear with an info note
       const r = N.temperature(W, { mode: 'relax' });
-      assert.ok(r.ok && r.mode === 'linear' && plain(r.warnings).some((w) => w.code === 'TEMP_RELAX_A2' && w.sev === 'info'));
+      assert.ok(r.ok && r.mode === 'linear' && r.relaxAsked === true && plain(r.warnings).some((w) => w.code === 'TEMP_RELAX_NO_RATE' && w.sev === 'info'));
       near(assert, r.tAt(4000), 160, 1e-12, 'same profile');
       // overrides through o: THT / BHT
       const o = N.temperature(W, { tht_F: 100, bht_F: 220 });

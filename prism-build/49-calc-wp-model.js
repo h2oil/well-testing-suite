@@ -79,7 +79,7 @@
             well: { datum: 'RKB', datumOffset_ft: 0, survey: [], perfTopMd: null, perfBotMd: null, midPerfMd: null,
                     strings: [], path: 'tubing', restrictions: [],
                     geo: { surfT_F: 60, points: [] },
-                    heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04 } },
+                    heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04, Ubasis: 'to', dwb_in: null } },
             surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75 }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
             lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100 }, esp: null },
@@ -122,6 +122,7 @@
         wp_thtMeas: { path: 'well.heat.thtMeasured', kind: 'bool' },
         wp_Uto: { path: 'well.heat.U_to', kind: 'num' }, wp_tprod: { path: 'well.heat.tProd_d', kind: 'num' },
         wp_ke: { path: 'well.heat.ke', kind: 'num' }, wp_alpha: { path: 'well.heat.alpha', kind: 'num' },
+        wp_Ubasis: { path: 'well.heat.Ubasis', kind: 'str', enumv: ['to', 'ti'] }, wp_dwb: { path: 'well.heat.dwb_in', kind: 'num' },   // A2 (WP14)
         wp_choke: { path: 'surface.choke.present', kind: 'bool' }, wp_bean: { path: 'surface.choke.bean64', kind: 'num' },
         wp_ckcorr: { path: 'surface.choke.corr', kind: 'str' }, wp_ckcd: { path: 'surface.choke.cd', kind: 'num' },
         wp_psep: { path: 'surface.psep_psig', kind: 'num' }, wp_tamb: { path: 'surface.ambient_F', kind: 'num' },

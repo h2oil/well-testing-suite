@@ -62,6 +62,7 @@ const BENCH = [
   { kind: 'loading', key: 'li', status: 'pending', source: 'Li et al. (2001) flat-droplet critical rate' },
   { kind: 'system', key: 'nodal', status: 'pending', source: 'Beggs, Production Optimization Using Nodal Analysis — operating point ±2 % q' },
   { kind: 'well', key: 'minCurvature', status: 'pinned', source: 'closed-form circular arc (FIX.devSurvey, wellperf-well) ±0.01 ft' },
+  { kind: 'temp', key: 'relax', status: 'pending', source: 'Hasan & Kabir, Fluid Flow and Heat Transfer in Wellbores (Ramey / Hasan-Kabir relaxation), ±2 °F — A2 WP14; closed form + RK4 cross-check X16 only' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
@@ -130,7 +131,16 @@ function gate(G) {
   const loadPending = BENCH.filter((b) => b.kind === 'loading' && b.status === 'pending').length > 0;
   if (!R.ok || !R.loading) bad('loading', 'no loading result on FIX.gasWell');
   else if (loadPending && (R.loading.verified !== false || R.loading.provisional !== PROVISIONAL)) bad('loading', 'pending methods without the provisional label');
-  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
+  // 5. the relaxation temperature model (A2, WP14): pending → R.heat carries the label and verified:false, and it is never the default
+  const tb = benchOf('temp', 'relax');
+  if (tb && G.WTS_wp_well && typeof G.WTS_wp_well.relax === 'function') {
+    const Mr = S.FIX.oilWell; Mr.well.heat.mode = 'relax';
+    const Rr = G.WTS_wp_system.solve(Mr), pend = tb.status === 'pending';
+    if (!Rr.ok || !Rr.heat || Rr.heat.mode !== 'relax') bad('temp relax', 'no relaxation result on FIX.oilWell');
+    else if (pend && (Rr.heat.verified !== false || Rr.heat.provisional !== PROVISIONAL)) bad('temp relax', 'pending without the provisional label');
+    if (pend && D && D.well && D.well.heat && D.well.heat.mode === 'relax') bad('temp relax', 'a pending method is the default temperature model');
+  }
+  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
 }
 
@@ -287,6 +297,21 @@ function checks(G) {
     });
     add('X15', 'sensitivity at the base value = the single solve (identical)', ok, worst, 0);
   }
+  // X16 flowing temperature (A2, WP14): the piecewise-exact relaxation march vs an RK4 integration of the steady energy balance on the
+  // deviated FIX.gasWell path (geotherm on TVD, relaxation along MD), and the large-z limit g_G·A·sinθ on a vertical hole
+  if (G.WTS_wellbore && typeof G.WTS_wellbore.flowingTemp === 'function') {
+    const WB = G.WTS_wellbore, M = S.FIX.gasWell, W = G.WTS_wp_well.build(M.well, { res: M.res }), mid = W.nodes.midPerfMd;
+    const o = { w: 12000, cp: 0.55, U_to: 2, r_to: 2.875 / 24, rwb: 8.5 / 24, t_hr: 720, geo: { points: [[0, 70], [4000, 120], [9300, 230]] }, Tin: 240 };
+    const col = { tvdAt: W.tvdAt, mdAt: W.mdAt, datumMd: mid, survey: W.stations.map((x) => [x.md, x.tvd]), segments: [] };
+    const r = WB.flowingTemp(col, o), geoF = (tvd) => (tvd <= 4000 ? 70 + 50 * tvd / 4000 : 120 + 110 * (tvd - 4000) / 5300);
+    const f = (md, T) => (geoF(W.tvdAt(md)) - T) / r.A;
+    let T = 240, md = mid; while (md > 1e-9) { const h = Math.min(2, md), k1 = f(md, T), k2 = f(md - h / 2, T + h * k1 / 2), k3 = f(md - h / 2, T + h * k2 / 2), k4 = f(md - h, T + h * k3); T += h * (k1 + 2 * k2 + 2 * k3 + k4) / 6; md -= h; }
+    const e1 = Math.abs(r.tOut - T);
+    const cv = WB.column({ datumTvd: 20000, survey: [[0, 0], [20000, 20000]], strings: [{ id: 2.441, od: 2.875, topMd: 0, botMd: 20000 }] });
+    const rv = WB.flowingTemp(cv, { w: 1500, cp: 0.55, U_to: 20, r_to: 2.875 / 24, rwb: 8.5 / 24, t_hr: 720, geo: { surfF: 60, gradFper100: 1.6 } });
+    const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
+    add('X16', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -320,6 +345,12 @@ function timing(G) {
     t0 = nowMs(); const d = run(SY.designFor(M, { bean: R.op.q * 1.2 })); rec('design bean (' + d.solves + ' solves)', k, d.evals || 0, BUDGET.design, nowMs() - t0);
     t0 = nowMs(); const rows = run(SY.beanSchedule(M, M.surface.beans)); rec('bean schedule, 6 beans', k, rows.reduce((a, r) => a + (r.evals || 0), 0), BUDGET.beans6, nowMs() - t0);
     t0 = nowMs(); const mx = SY.maxRate(M); rec('maximum rate', k, mx.R.evals, BUDGET.maxRate, nowMs() - t0);
+  });
+  // the relaxation mode (A2, WP14): one profile per rate before the march — the evaluation budget is unchanged
+  ['oilWell', 'gasWell'].forEach((k) => {
+    const M = S.FIX[k]; M.well.heat.mode = 'relax';
+    const t0 = nowMs(); const R = SY.solve(M);
+    rec('system solve, relaxation temperature', k, R.evals, R.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
   });
   {
     const M = S.FIX.oilWell; M.surface.choke.present = false; M.system.thp_psig = 300;
