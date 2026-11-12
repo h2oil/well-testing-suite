@@ -1814,6 +1814,53 @@ screening ranges ship provisional through the D17 gate (`wellperf-validate.js` B
   the Corey exponents and S_gc are defaults, the gas tank is volumetric; screening ranges are indicative and rod / PCP / jet / plunger
   have no rate model (C); the ESP rate needs WP26; the envelope's erosion limit is the tubing only (the flowline is in the system
   solve's erosion KPI); the operating-envelope point starts on the operating point (the marker and the handle overlap until dragged).
+#### 18.3.7 WP28 record (2026-11-12, branch wp/b-wp28)
+
+- **`WTS_wp_batch`** (new, `49-calc-wp-batch.js`, engine, no page): `sources(o?)` (the `WTS_wells` list; the open well reads the live
+  storage, a parked well its blob through `WTS_wells.captureWell` — a copy, nothing written; a project without `wts_wells` is one well;
+  `o.wells` injects wells for tests), `readWell(src, {scalars})` (`WTS_wp_model.read` with a getter-only storage whose setItem throws;
+  `NO_INPUTS` when neither `wts_page_wellperf` nor `wts_wellperf_model` exists), `summarise(M, R, W, L?)` (one row: rates, p_wf, THP, THT,
+  bean, stability, q / q_s, loading margin (WTS_wp_loading when the solve has none), correlation + provisional, warning flags, verdict
+  ok / warn / fail / none, decimated IPR / outflow curves, and the deviation of the well: mid-perf MD · TVD, TD, max inclination,
+  departure, horizontal length at ≥ 80°, a ≤ 60-point trajectory), `job(o?)` (one well per step for `PRiSM_autoInterp.drive`; progress,
+  label "name (i of n)", cancel within one well keeps the finished rows, `ids` subset, `liveScalars` for the open well) → `{ok, v, rows,
+  totals (stable wells only), counts, evals, ms, cancelled?, errors, warnings, ts}`, `table` (20 columns, field units), `csv`, `key(M)`
+  (8-hex model hash) and `storedFrom(M)` (a model as a well stores it — the inverse of `read`, exact on FIX.oilWell / gasWell). Read only:
+  no storage write, no event, no switch, no page calc (WW2).
+- **Page** (additive; the UI in `49-calc-wp-wells.js`, `WTS_wp_wellsUi`, so the page file only gets hooks): `#wp_wells` inside `#wp_res`
+  (empty until a run; with several wells and no run an `.rp-skip` call to action "Run all wells"), step ⑦ card "All wells in the project"
+  (`data-act="wellsrun"`). After a run the card carries KPI chips (wells solved n / n with inputs, oil, water, gas of the stable wells,
+  unstable, loading risk), an interactive map `#wp_cv_wells` (WTS_wp_view.chart: crosshair 'near' read-out, zoom / pan, legend) with three
+  views — **Normalised** (q / AOF against p_wf / p̄r, every well's inflow and outflow, oil and gas together), **Rate – BHP** (liquid or gas
+  wells, a switch when both), **Well paths** (vertical section against TVD, each well's mid-perforation, MD · TVD on hover) — click a point
+  or a table row (Enter / arrows on the rows) to pick a well, **Open this well** (`WTS_wells.switchTo`, the only write, a user action), a
+  stale chip when the open well's inputs or the well list change, **Run again** / **Export CSV**; the page CSV bundle appends the table.
+  Views are the device pref `wtspref_wp_plots.wellsView` / `wellsKind`. The result lives in memory (survives a well switch, not a reload).
+- **Contract changes (additive)**: `WTS_state.wellperf.wells` = `{ts, counts, totals, cancelled, rows:[{id, name, status, verdict, gas,
+  q, qo, qw, qg, pwf, thp, tht, stable, midMd, midTvd, incMax}]}` or null; `WTS_wellperf_page.ui` (page helpers: u, dv, lab, fmt, esc,
+  vHtml, drive, liveScalars, reduced, phone) and `.publishWells()`; `resetJobs()` also clears the wells result; data-act `wells*`.
+  `WTS_wp_view` 1.1.0: `schematic(S, o)` takes `o.layers [{topMd, botMd, label, color}]`, `o.sections [{fromMd, toMd, key, label, color,
+  provisional}]` (rail beside the flow path + legend; `o.prop 'correlation'` paints the path by section, provisional dashed), marks kinds
+  `'esp' {md, label}` (pump / seal / motor along the hole) and `'mandrel' {md, state 'operating'|'open'|'closed'|'orifice'|'dummy', label}`,
+  `o.deviation` (default on when the maximum inclination ≥ 5°: KOP at 3°, each stretch ≥ 80° and ≥ 2 % of MD bracketed with its length);
+  returns `dev {kopMd, kopTvd, incMax, incMaxMd, hz[]}` and `sections`; `devInfo(traj, o?)` exported. A vertical well draws as before.
+  The page feeds the schematic from what the B engines supply — **for WP21 / WP24 / WP25 / WP26**: `R.lift.marks` (any mark kind) or else
+  `R.lift.valves [{md, state | operating, label}]` (mandrels) and `R.lift.pumpMd` / `M.lift.esp.pumpMd` (ESP); `M.res.layers [{topMd,
+  botMd | topTvd, botTvd, label | name}]`; `R.corr.sections` / `M.system.corr.sections [{fromMd, toMd, key}]` (without them the
+  "Correlation" colouring shows the well correlation from the wellhead to the mid-perforation). Colour by gains "Correlation"; the hover
+  read-out adds the section correlation and the layer; the caption adds the maximum inclination (MD · TVD), the KOP and the horizontal
+  length; ESP / mandrel marks open step ④.
+- **Tests / gates**: `wellperf-wells` (10: WW1–WW10 — sources, read only, row = single solve for the open and a parked well, no-input /
+  no-solution rows and totals, Job progress / cancel / subset, deviation per well incl. a horizontal well, table / CSV, page card with
+  report capture, views, selection, Open this well and the stale chip, schematic view additions, page schematic caption / colouring /
+  lift-marks contract). `wellperf-validate`: X53a (each stored well = its single solve, identical), X53b (KOP 1,100 ft MD and the 500 ft
+  hold on FIX.devSurvey), `--time` row "all wells, 2 wells" (37 E against 2 × 24). No gate row: the batch adds no method (D17 unchanged).
+- **Help**: the `wellperf` guide re-hashed (reviewedSrc), text unchanged — the production help file is at its byte cap (47.67 kB), so
+  "Run all wells" and the schematic marks are not described (gap, Q21). No new screenshot. Browser shots at 1280 × 800 and 390 px in the
+  session scratchpad (`shots-b-WP28`), no horizontal overflow.
+- **Known gaps**: the batch result is not persisted (a reload clears it); parked wells are solved from their saved inputs only (no PRiSM
+  or DFIT import at run time); the well-path map is not equal-scale; the horizontal length counts trajectory points at ≥ 80° (within one
+  point spacing); layers / sections / ESP / mandrels appear only once WP24 / WP21 / WP26 / WP25 supply the fields above.
 
 ### 18.4 Increment C
 

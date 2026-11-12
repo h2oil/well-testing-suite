@@ -719,6 +719,24 @@ function checks(G) {
     const okx = t.ok && t.q0 === R.op.q && c0 && c0.R.q === R.op.q;
     add('X52', 'tornado base and the matrix start cell = the single solve (identical)', okx, okx ? 0 : 1, 0);
   }
+  // X53a / X53b (B, WP28): the batch over wells — each well stored as a project keeps it (WTS_wp_batch.storedFrom, read back through
+  // WTS_wp_model.read) gives exactly the single solve; the deviation marks of the schematic on FIX.devSurvey (closed form: KOP at 3° =
+  // 1,000 ft + 3 / (3°/100 ft) = 1,100 ft MD on the linear build; the 90° hold = 500 ft)
+  if (G.WTS_wp_batch && typeof G.WTS_wp_batch.job === 'function') {
+    const BT = G.WTS_wp_batch, fx = ['oilWell', 'gasWell'];
+    const wells = fx.map((k, i) => ({ id: 'w' + (i + 1), name: k, active: i === 0, keys: BT.storedFrom(S.FIX[k]) }));
+    const runJ = (job) => { let st, n = 0; do { st = job.step(); n++; } while (!st.done && n < 50); return job.result(); };
+    const r = runJ(BT.job({ wells }));
+    let ok = r.rows.length === 2, worst = 0;
+    fx.forEach((k, i) => { const R = solve(S.FIX[k]), row = r.rows[i]; const d = row && R.ok ? Math.abs(row.q - R.op.q) : Infinity; worst = Math.max(worst, d); if (!(row && row.status === 'ok' && row.q === R.op.q && row.pwf === (Number.isFinite(R.pwf) ? R.pwf : R.op.p))) ok = false; });
+    add('X53a', 'batch over wells: each stored well = its single solve (identical q and p_wf, oil + wet gas)', ok, worst, 0);
+    const dv = S.FIX.devSurvey, V2 = G.WTS_wp_view;
+    if (V2 && typeof V2.devInfo === 'function') {
+      const d = V2.devInfo(dv.expect.map((e, i) => ({ md: e.md, tvd: e.tvd, inc: dv.rows[i][1] })));
+      const eK = Math.abs(d.kopMd - 1100), eH = d.hz.length === 1 ? Math.abs((d.hz[0].md1 - d.hz[0].md0) - 500) : Infinity;
+      add('X53b', 'schematic deviation marks: KOP at 3° and the horizontal hold on FIX.devSurvey (ft)', eK < 0.01 && eH < 0.01, Math.max(eK, eH), 0.01);
+    }
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -812,6 +830,13 @@ function timing(G) {
     const Ms = S.FIX.oilWell; Ms.fluid.wc = 0.6; Ms.res.pr = 2600;
     t0 = nowMs(); const sc = run3(G.WTS_wp_screen.job(Ms)); rec('lift screening (solve + short performance curve)', 'oilWell', sc.evals || 0, BUDGET.screening, nowMs() - t0);
   }
+  // B (WP28): the batch over wells = one full solve per well (no shut-in, no page extras): budget 2 × the two-root solve for 2 wells
+  if (G.WTS_wp_batch && typeof G.WTS_wp_batch.job === 'function') {
+    const BT = G.WTS_wp_batch, wells = ['oilWell', 'gasWell'].map((k, i) => ({ id: 'w' + (i + 1), name: k, active: i === 0, keys: BT.storedFrom(S.FIX[k]) }));
+    const t0 = nowMs(); const r = run(BT.job({ wells }));
+    out.push({ op: 'all wells, 2 wells (oil + wet gas)', fixture: 'oilWell', evals: r.evals, budget: 2 * BUDGET.solve2, ms: nowMs() - t0, eMs: E.oilWell,
+      cap: 2 * Math.max(E.oilWell, E.gasWell) * Math.max(r.evals, 1), okE: r.evals <= 2 * BUDGET.solve2 + 1e-9, okMs: nowMs() - t0 <= 2 * Math.max(E.oilWell, E.gasWell) * Math.max(r.evals, 1) });
+  }
   // VLP tuning (A2, WP17; §5.2): PRiSM_lm on the gauge residuals — each residual is one wellhead → gauge march (counted as 1 E;
   // no flowline). Reported only: §16 has no tuning budget.
   const tuneStub = (G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') !== -1;
@@ -874,7 +899,7 @@ async function main() {
   if (doCheck) {
     const c = checks(G); summary.checks = c;
     console.log('\nCross-checks (§15.2, §15.3):');
-    c.rows.forEach((r) => console.log('  ' + (r.ok ? 'PASS' : 'FAIL') + '  ' + r.id.padEnd(4) + r.name + '  [' + _fmt(r.value, 4) + ' / tol ' + _fmt(r.tol, 4) + ']'));
+    c.rows.forEach((r) => console.log('  ' + (r.ok ? 'PASS' : 'FAIL') + '  ' + r.id.padEnd(5) + r.name + '  [' + _fmt(r.value, 4) + ' / tol ' + _fmt(r.tol, 4) + ']'));
     console.log('  ' + c.rows.filter((r) => r.ok).length + ' / ' + c.rows.length + ' checks pass');
     if (!c.ok) fail = true;
   }
