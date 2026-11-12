@@ -167,6 +167,16 @@
     // input = {qo, qw STB/d, gor scf/STB, api, sgg, sgw, sginj, pr psig, pi STB/d/psi, dperf ft, dmax ft,
     //          tub (WTS_tubulars key) | tubId in, rough in, pwh psig, twh °F, bht °F,
     //          pko, pso psig, glr scf/STB (target total), dpv psi, dpdrop psi, gs psi/ft, ftub %, minsp ft, R}
+    // Well Performance B (WP25, docs/WELL-PERFORMANCE-PLAN.md §2.3, §7.2) — additive inputs; absent → today's output bit for bit:
+    //   ipr       a WTS_wp_ipr curve object {pr psia, pwfAt(q) psia}: replaces the straight-line PI (pr / pi not needed)
+    //   segments  the deviated flow path from the mid-perforations to the wellhead in flow order (WTS_wp_well.segmentsFor shape:
+    //             [{len ft MD, id in, dz ft (TVD rise), area?, restr?}]): replaces [{len: L, dz: L}]. Every depth D of the design is
+    //             then an MD; the injection-gas column, the kill-fluid gradient and the design tubing line work on the TVD of D
+    //             (minimum-curvature dz of the segments); valve spacing (minsp) is along the hole. dperf = the path MD.
+    //   tAt(md)   °F along the hole (e.g. the flowing profile of the Well Performance solve — linear, relaxation or enthalpy);
+    //             replaces the linear twh → bht profile in the marches, the casing gas column and the valve temperatures
+    //   corr      a WTS_flowline_corr key for the tubing marches (default Beggs & Brill)   pvt  fluid.pvt options for the marches
+    // With segments the result adds tvd to every valve, curve point and the point of injection (poiTvd) and deviated: true.
     function compute(input) {
         var i = input || {}, errors = [], bad = [];
         function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
@@ -177,6 +187,26 @@
         var dpv = n('dpv'), dpdrop = n('dpdrop'), gs = n('gs'), ftub = n('ftub'), minsp = n('minsp'), R = n('R');
         var T = G.WTS_tubulars, tub = (i.tub && T && T.find) ? T.find(String(i.tub)) : null;
         var tid = tub ? tub.id : n('tubId');
+        // WP25 additive inputs (see above)
+        var iprIn = (i.ipr && typeof i.ipr.pwfAt === 'function') ? i.ipr : null, segIn = null, tvdOf = null;
+        if (Array.isArray(i.segments) && i.segments.length) {
+            segIn = i.segments.map(function (q) { var o = { name: q.name || 'Tubing', len: +q.len, id: +q.id, dz: +q.dz || 0 }; if (+q.area > 0) o.area = +q.area; if (q.restr && +q.restr.d > 0) o.restr = { d: +q.restr.d, k: q.restr.k == null ? null : +q.restr.k }; return o; })
+                .filter(function (q) { return q.len > 0 && q.id > 0; });
+            if (!segIn.length) segIn = null;
+        }
+        if (iprIn) { pr = _fin(+iprIn.pr) ? +iprIn.pr - PATM : NaN; pi = 1; }
+        if (segIn) {
+            // MD / TVD stations from the wellhead down (the segments come in flow order: mid-perforations first)
+            var mdS = [0], tvS = [0];
+            for (var sk = segIn.length - 1; sk >= 0; sk--) { mdS.push(mdS[mdS.length - 1] + segIn[sk].len); tvS.push(tvS[tvS.length - 1] + segIn[sk].dz); }
+            dperf = mdS[mdS.length - 1];
+            if (!_fin(tid)) tid = segIn[segIn.length - 1].id;
+            tvdOf = function (D) {
+                if (!(D > 0)) return 0;
+                for (var k = 1; k < mdS.length; k++) if (D <= mdS[k]) return tvS[k - 1] + (tvS[k] - tvS[k - 1]) * (D - mdS[k - 1]) / ((mdS[k] - mdS[k - 1]) || 1);
+                return tvS[tvS.length - 1] + (D - mdS[mdS.length - 1]);
+            };
+        }
         need(_fin(qo) && qo >= 0 && qo <= 50000, 'qo', 'Oil rate must be between 0 and 50,000 STB/d.');
         need(_fin(qw) && qw >= 0 && qw <= 50000, 'qw', 'Water rate must be between 0 and 50,000 BWPD.');
         if (_fin(qo) && _fin(qw)) need(qo + qw >= 10, 'qo', 'Liquid rate (oil + water) must be at least 10 STB/d.');
@@ -187,7 +217,7 @@
         need(_fin(sginj) && sginj >= 0.55 && sginj <= 1.0, 'sginj', 'Injection gas gravity must be between 0.55 and 1.0.');
         need(_fin(pr) && pr > 0 && pr <= 15000, 'pr', 'Reservoir pressure must be above 0 and no more than 15,000 psig.');
         need(_fin(pi) && pi > 0 && pi <= 1000, 'pi', 'Productivity index must be above 0 and no more than 1,000 STB/d/psi.');
-        var dOk = need(_fin(dperf) && dperf >= 500 && dperf <= 20000, 'dperf', 'Mid-perforation depth must be between 500 and 20,000 ft.');
+        var dOk = need(_fin(dperf) && dperf >= 500 && dperf <= (segIn ? 40000 : 20000), 'dperf', 'Mid-perforation depth must be between 500 and ' + (segIn ? '40,000 ft MD.' : '20,000 ft.'));
         need(_fin(dmax) && dmax >= 200 && (!dOk || dmax < dperf), 'dmax', 'Deepest mandrel depth must be at least 200 ft and above the perforations.');
         need(_fin(tid) && tid >= 1 && tid <= 7, 'tub', 'Select a tubing size.');
         need(_fin(rough) && rough >= 0 && rough <= 0.01, 'rough', 'Pipe roughness must be between 0 and 0.01 in.');
@@ -209,15 +239,33 @@
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         var qL = qo + qw, glrF = qo * gor / qL, qgF = qo * gor / 1e6;
-        var pwf = pr - qL / pi;
+        var pwf = iprIn ? +iprIn.pwfAt(qL) - PATM : pr - qL / pi;
         if (!(pwf > 0)) return { ok: false, errors: ['The target liquid rate needs a flowing bottomhole pressure below zero (p_r − q_L/J): lower the rate or check the PI.'], bad: ['pi'] };
-        var tAt = function (D) { return twh + (bht - twh) * D / dperf; };
+        var tAt = typeof i.tAt === 'function' ? function (D) { var t = +i.tAt(D); return _fin(t) ? t : twh + (bht - twh) * D / dperf; } : function (D) { return twh + (bht - twh) * D / dperf; };
         var seg = function (L) { return [{ name: 'Tubing', len: L, id: tid, dz: L }]; };
         var opt = { rough: rough, payne: true, accel: false };
         var fluidF = { qo: qo, qw: qw, qg: qgF, api: api, sgg: sgg, sgw: sgw };
+        // WP25: the deviated path cut at MD L (flow order, mid-perforations first), its top-down order for the reverse marches, the
+        // temperature along each march and the model's correlation / PVT options; vertical depth of an MD (identity without segments)
+        var Dv = tvdOf || function (D) { return D; };
+        var pvtIn = (i.pvt && typeof i.pvt === 'object') ? (function () { var o = {}; Object.keys(i.pvt).forEach(function (k) { if (k !== 'table' && k !== 'injGas') o[k] = i.pvt[k]; }); return o; })() : null;
+        if (pvtIn) fluidF.pvt = pvtIn;
+        if (i.corr != null && i.corr !== '') opt.corr = String(i.corr);
+        if (segIn) seg = function (L) {
+            var out = [], top = 0;
+            for (var k = segIn.length - 1; k >= 0 && top < L - 1e-9; k--) {
+                var s0 = segIn[k], take = Math.min(s0.len, L - top), f = take / s0.len, c = Object.assign({}, s0, { len: take, dz: s0.dz * f });
+                if (f < 1) delete c.restr;              // a restriction sits at the segment inlet (its deepest end)
+                out.unshift(c); top += take;
+            }
+            return out;
+        };
+        var segDown = function (L) { return segIn ? seg(L).reverse() : seg(L); };
+        var optUp = function () { return typeof i.tAt === 'function' ? Object.assign({}, opt, { tAt: function (x) { return tAt(Math.max(0, dperf - x)); } }) : opt; };
+        var optDown = function () { return typeof i.tAt === 'function' ? Object.assign({ reverse: true }, opt, { tAt: function (x) { return tAt(x); } }) : Object.assign({ reverse: true }, opt); };
 
         // 3. Traverse below the POI: from the perforations upward, formation GLR.
-        var below = G.WTS_flowline_march(seg(dperf), fluidF, pwf, bht, twh, opt);
+        var below = G.WTS_flowline_march(seg(dperf), fluidF, pwf, bht, twh, optUp());
         var bp = below.profile.map(function (q) { return { d: dperf - q.x, p: q.p }; }).reverse();   // shallow → deep
         function pBelow(D) {
             if (D >= bp[bp.length - 1].d) return bp[bp.length - 1].p;
@@ -228,7 +276,7 @@
             return bp[bp.length - 1].p;
         }
         var naturalWh = below.lost ? null : below.pOut;
-        var pc = function (ps, D) { return casingP(ps, D, sginj, twh, tAt(D)).p; };
+        var pc = function (ps, D) { return casingP(ps, Dv(D), sginj, twh, tAt(D)).p; };
 
         function findPoi(psoOp) {
             var f = function (D) { return pc(psoOp, D) - dpv - pBelow(D); };
@@ -252,7 +300,8 @@
         };
         function above(glrT, D) {
             var fl = { qo: qo, qw: qw, qg: Math.max(glrT, glrF) * qL / 1e6, api: api, sgg: sgMix(glrT), sgw: sgw };
-            return G.WTS_flowline_march(seg(D), fl, pwh, twh, tAt(D), Object.assign({ reverse: true }, opt));
+            if (pvtIn) fl.pvt = pvtIn;
+            return G.WTS_flowline_march(segDown(D), fl, pwh, twh, tAt(D), optDown());
         }
 
         // Iterate POI ↔ valve count (the operating valve opens at p_so − (n−1)·Δp_drop).
@@ -265,15 +314,15 @@
             var ab = above(glr, poiV);
             var pAbove = ab.pOut, pBel = pBelow(poiV);
             var pts = pwh + ftub / 100 * (pso - pwh), ptPoi = pAbove;
-            var ptd = function (D) { return pts + (ptPoi - pts) * D / poiV; };
+            var ptd = function (D) { return pts + (ptPoi - pts) * Dv(D) / Dv(poiV); };
             // 6. Spacing
             valves = []; spacingFail = null;
-            var fTop = function (D) { return pc(pko, D) - (pwh + gs * D); };
+            var fTop = function (D) { return pc(pko, D) - (pwh + gs * Dv(D)); };
             var D1 = fTop(poiV) > 0 ? poiV : _bisect(fTop, 0, poiV, 80);
             valves.push({ n: 1, d: D1, pso: pso, kick: true });
             while (valves[valves.length - 1].d < poiV - 1e-6 && valves.length < MAXV) {
                 var k = valves.length, Dk = valves[k - 1].d, psoK = pso - k * dpdrop, ptk = ptd(Dk);
-                var h = function (D) { return pc(psoK, D) - (ptk + gs * (D - Dk)); };
+                var h = function (D) { return pc(psoK, D) - (ptk + gs * (Dv(D) - Dv(Dk))); };
                 if (!(h(Dk) > 0)) { spacingFail = { after: k, d: Dk }; break; }
                 var Dn = h(poiV) > 0 ? poiV : _bisect(h, Dk, poiV, 80);
                 if (Dn - Dk < minsp) Dn = Math.min(poiV, Dk + minsp);
@@ -336,9 +385,13 @@
         curves.ptd = [{ d: 0, p: P.pts }, { d: P.poiV, p: P.ptPoi }];
         curves.above = P.ab.profile.map(function (x) { return { d: x.x, p: x.p }; });
         curves.below = bp.slice();
-        curves.load.push({ d: 0, p: pwh }, { d: valves[0].d, p: pwh + gs * valves[0].d });
+        curves.load.push({ d: 0, p: pwh }, { d: valves[0].d, p: pwh + gs * Dv(valves[0].d) });
         for (var v2 = 1; v2 < valves.length; v2++) {
-            curves.load.push(null, { d: valves[v2 - 1].d, p: P.ptd(valves[v2 - 1].d) }, { d: valves[v2].d, p: P.ptd(valves[v2 - 1].d) + gs * (valves[v2].d - valves[v2 - 1].d) });
+            curves.load.push(null, { d: valves[v2 - 1].d, p: P.ptd(valves[v2 - 1].d) }, { d: valves[v2].d, p: P.ptd(valves[v2 - 1].d) + gs * (Dv(valves[v2].d) - Dv(valves[v2 - 1].d)) });
+        }
+        if (segIn) {
+            Object.keys(curves).forEach(function (k) { curves[k].forEach(function (c) { if (c) c.tvd = Dv(c.d); }); });
+            valves.forEach(function (v) { v.md = v.d; v.tvd = Dv(v.d); });
         }
 
         var warnings = [];
@@ -346,7 +399,7 @@
         if (P.poi > dmax + 1e-6) warnings.push('The point of balance (' + _fmt(P.poi, 0) + ' ft) is below the deepest mandrel: the operating valve is at the deepest mandrel, ' + _fmt(dmax, 0) + ' ft.');
         if (glr <= glrF) warnings.push('Target total GLR is not above the formation GLR (' + _fmt(glrF, 0) + ' scf/STB): no injection gas is needed for it.');
         if (P.ab.lost) warnings.push('The traverse above the point of injection fails (pressure or critical flow): check the rate and tubing size.');
-        return {
+        var out = {
             ok: true, pwh: pwh, pko: pko, pso: pso, qL: qL, glrF: glrF, qgF: qgF, pwf: pwf, glr: glr, qinj: qinj, injGlr: Math.max(0, glr - glrF),
             glrMin: glrMin, glrMinNote: glrMinNote, qinjMin: qinjMin, lifts: lifts,
             poi: P.poi, poiValve: P.poiV, poiAtPerfs: P.atPerfs, psoOp: P.psoOp,
@@ -356,6 +409,11 @@
             gasGrad: gGrad, sgMix: sgMix(glr), naturalWh: naturalWh, curves: curves, dperf: dperf, dmax: dmax,
             tubing: tub ? tub.label : null, tid: tid, warnings: warnings, iterations: it + 1
         };
+        if (segIn || iprIn || typeof i.tAt === 'function') {
+            out.deviated = !!segIn; out.poiTvd = Dv(P.poi); out.poiValveTvd = Dv(P.poiV); out.dperfTvd = Dv(dperf); out.pr = pr;
+            if (iprIn) out.ipr = { key: iprIn.key || null, label: iprIn.label || null, pr_psia: +iprIn.pr };
+        }
+        return out;
     }
 
     G.WTS_gaslift_compute = compute;

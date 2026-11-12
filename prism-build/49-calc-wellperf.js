@@ -120,7 +120,9 @@
         wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall',
         wp_pdew: 'pressure', wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor',
         wp_ip_L: 'length', wp_ip_boxA: 'length', wp_ip_boxB: 'length', wp_ip_xPos: 'length', wp_ip_zPos: 'length', wp_ip_yMid: 'length', wp_ip_yb: 'length',
-        wp_ip_xf: 'length', wp_ip_ct: 'compressibility', wp_ip_II: 'productivityIndex', wp_ip_pfrac: 'pressure'
+        wp_ip_xf: 'length', wp_ip_ct: 'compressibility', wp_ip_II: 'productivityIndex', wp_ip_pfrac: 'pressure',
+        // B (WP25): the gas-lift unloading design (49-calc-wp-glui.js draws the controls; tagged here so the host restore converts them)
+        wp_gld_pko: 'pressureG', wp_gld_gs: 'pressureGradient', wp_gld_minsp: 'length', wp_gld_dpdrop: 'pressure', wp_gld_qL: 'liquidRate', wp_gld_dmax: 'length'
     };
 
     // ── model scalars (defaults from WTS_wp_model.DEFAULTS; Appendix B) ───────
@@ -515,7 +517,9 @@
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
                     { k: 'q_g', l: 'Gas', cat: 'gasRateSmall', u: 'Mscf/d' }, { k: 'thp_psig', l: 'THP', cat: 'pressureG', u: 'psig' }, { k: 'tht_F', l: 'THT', cat: 'temperature', u: '°F' },
-                    { k: 'bean64', l: 'Bean', u: '/64' }, { k: 'gaugeMd', l: 'Gauge MD', cat: 'length', u: 'ft' }, { k: 'gauge_psia', l: 'Gauge p', cat: 'pressure', u: 'psia' }];
+                    { k: 'bean64', l: 'Bean', u: '/64' }, { k: 'gaugeMd', l: 'Gauge MD', cat: 'length', u: 'ft' }, { k: 'gauge_psia', l: 'Gauge p', cat: 'pressure', u: 'psia' },
+                    // B (WP25): the casing pressure and the metered lift gas of a gas-lifted test (the gas-lift diagnosis reads them)
+                    { k: 'chp_psig', l: 'CHP', cat: 'pressureG', u: 'psig' }, { k: 'qinj_Mscfd', l: 'Lift gas', cat: 'gasRateSmall', u: 'Mscf/d' }];
         }
     };
     function _tableRows(M, t) {
@@ -972,6 +976,7 @@
         if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
     }
     function _onHandle(key, v, phase) {
+        if (_ext('handle', key, v, phase).some(Boolean)) return;          // B (WP25): handles of an extension's plots (gas-lift valves)
         if (/^sec\d+[ft]$/.test(key)) { _secHandle(key, v, phase); return; }
         var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer', tFlow: 'wp_ip_tFlow', L: 'wp_ip_L', xf: 'wp_ip_xf', thpI: 'wp_thp' }[key]; if (!id) return;
         var canon;
@@ -1128,7 +1133,7 @@
         else if (comp === 'choke') { step = 5; focusSel = { id: 'wp_bean' }; }
         else if (comp === 'wellhead') { step = 5; focusSel = { id: 'wp_psep' }; }
         else if (comp === 'gl') { step = 4; focusSel = { id: 'wp_gl_qinj' }; }
-        else if (comp === 'esp' || comp === 'mandrel') { step = 4; }
+        else if (/^(esp|mandrel)(:\d+)?$/.test(comp || '')) { step = 4; _goStep(step, true); _ext('comp', comp); return; }   // B (WP25): the extension focuses the valve row
         _goStep(step, true);
         if (focusSel && focusSel.id) { var e = _byId(focusSel.id); if (e && e.focus) e.focus(); }
         else if (focusSel) {
@@ -2068,6 +2073,7 @@
                     });
                 });
             }
+            _ext('trPlot', { series: ser, hlines: trHl, dax: dax, T: T });     // B (WP25): gas-lift valves and a flowing gradient survey on the traverse
             var gp = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(t.gaugeMd) && _fin(t.gauge_psia); });
             if (gp.length && ST.SC && ST.SC.trajectory) ser.push({ key: 'g', label: 'Gauge (tests)', kind: 'points', color: T.green, r: 5, pts: gp.map(function (t) { return [_dv(t.gauge_psia, 'pressure'), _dv(dax === 'md' ? t.gaugeMd : (_fin(_schAt(t.gaugeMd).tvd) ? _schAt(t.gaugeMd).tvd : t.gaugeMd), 'length')]; }) });
             spec = { key: 'trav:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
@@ -2669,7 +2675,7 @@
                 ? 'The flowing temperature is the steady heat-transfer relaxation (Ramey / Hasan-Kabir) per rate: geotherm on TVD, relaxation along MD, decoupled from pressure, with a constant producing time and a single U; no Joule-Thomson or kinetic term in the profile (the J-T correction applies to the hydrate check); provisional — not verified against a published example.'
                 : 'The temperature is linear from the wellhead temperature entered; the J-T correction applies to the hydrate check only.')) +
             (M && M.surface.choke.present !== false && (M.surface.choke.corr === 'sachdeva' || (!gas && M.surface.choke.subcritical === 'sachdeva')) ? box('Choke: the Sachdeva et al. (1986) two-phase model' + (M.surface.choke.corr === 'sachdeva' ? ' (critical and sub-critical, with the rate factor)' : ' sets the critical ratio and carries the sub-critical branch, scaled to the critical correlation at its critical point') + '; provisional — not verified against a published example; its data range is bean 8–40/64 in.') : '') +
-            (M && M.lift && M.lift.type === 'gaslift' ? box('Gas lift (quick look): one injection point — the shallower of the packer and the point of balance of the static casing gas column (less the valve ΔP) with the tubing; the lift gas is free gas only above it; no valve mechanics or unloading; the stability check is static (no heading dynamics).') : '') +
+            (M && M.lift && M.lift.type === 'gaslift' ? box('Gas lift (quick look): one injection point — the shallower of the packer and the point of balance of the static casing gas column (less the valve ΔP) with the tubing; the lift gas is free gas only above it; valve mechanics, unloading and diagnosis are in the gas-lift design card; the stability check is static (no heading dynamics).') : '') +
             _ext('notes').map(function (a) { return (Array.isArray(a) ? a : [a]).map(function (t) { return t ? box(t) : ''; }).join(''); }).join('') +
             (user ? '<div><b>Notes</b> ' + _esc(user) + '</div>' : '');
     }
@@ -3810,7 +3816,7 @@
                 _fg('wp_gl_incgor', 'Incremental GOR limit (economic point)', { unit: 'scf/STB', data: 'data-lift="gaslift"', hint: '0 = the maximum rate.' }) + '</div>' +
                 '<div class="wp-btns rp-skip" data-lift="gaslift"><button type="button" class="btn btn-primary" data-act="glpc">Run the gas-lift performance curve</button></div><div id="wp_glmsg" class="rp-skip"></div>' +
                 '<div id="wp_glres" data-lift="gaslift" style="margin-top:12px"></div>' +
-                '<div class="wp-hint" data-lift="none" style="margin-top:10px">Choose gas lift for the quick look: the injection depth solved at every rate on the deviated path, the lift-gas performance curve with the optimum and economic points and the rate gain over natural flow. Unloading valves: the Gas Lift Design page of this hub.</div>') +
+                '<div class="wp-hint" data-lift="none" style="margin-top:10px">Choose gas lift for the quick look: the injection depth solved at every rate on the deviated path, the lift-gas performance curve with the optimum and economic points and the rate gain over natural flow. Unloading valves, valve throughput, diagnosis from a test and a gradient survey: the gas-lift design card of this step.</div>') +
             _card('Gas-lift performance', '<div data-lift="gaslift"><div class="chart-wrap"><canvas id="wp_cv_glpc" aria-label="Gas-lift performance curve: liquid rate against the lift-gas rate; drag the line to change the injection rate"></canvas></div>' +
                 '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_gldepth" aria-label="Injection depth against the lift-gas rate"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag the dashed <b>q_inj</b> line (or focus the plot, [ / ] then the arrows) and the well re-solves with that much lift gas.</div></div>' +

@@ -58,6 +58,8 @@
 //   • 49-calc-wp-envelope
 //   • 49-calc-wp-export
 //   • 49-calc-wp-fluid
+//   • 49-calc-wp-gldesign
+//   • 49-calc-wp-glui
 //   • 49-calc-wp-inj
 //   • 49-calc-wp-ipr
 //   • 49-calc-wp-lift
@@ -8889,7 +8891,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '93132802', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '878b028f', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -8912,7 +8914,7 @@ var wellperf = {
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
-  notDocumented: [{ pattern: '^wpl_|^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+|rvmode|pdew|emul\\w*)$|^wp_corr_(?!well$|line$)[a-z]+$|^wplt', why: 'details, export' },
+  notDocumented: [{ pattern: '^wpl_|^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+|rvmode|pdew|emul\\w*)$|^wp_corr_(?!well$|line$)[a-z]+$|^wplt|^wp_gld_', why: 'details, export' },
   { pattern: '^wp_pastet_|^wpv_|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
@@ -9015,7 +9017,7 @@ var oilipr = {
 };
 
 var gaslift = {
-  route: 'gaslift', reviewed: V, reviewedSrc: '8c8fef79', units: 'dual',
+  route: 'gaslift', reviewed: V, reviewedSrc: 'cbcbf995', units: 'dual',
   keywords: ['gas lift', 'artificial lift', 'unloading', 'valve spacing'],
   purpose: 'Screening design of continuous gas lift: point of injection, gas needed, valve spacing and schedule.',
   what: ['Balances the gas column against the flowing traverse ([[flowline]] engine), then spaces and sets the valves.'],
@@ -37957,6 +37959,16 @@ pipesz: {
     // input = {qo, qw STB/d, gor scf/STB, api, sgg, sgw, sginj, pr psig, pi STB/d/psi, dperf ft, dmax ft,
     //          tub (WTS_tubulars key) | tubId in, rough in, pwh psig, twh °F, bht °F,
     //          pko, pso psig, glr scf/STB (target total), dpv psi, dpdrop psi, gs psi/ft, ftub %, minsp ft, R}
+    // Well Performance B (WP25, docs/WELL-PERFORMANCE-PLAN.md §2.3, §7.2) — additive inputs; absent → today's output bit for bit:
+    //   ipr       a WTS_wp_ipr curve object {pr psia, pwfAt(q) psia}: replaces the straight-line PI (pr / pi not needed)
+    //   segments  the deviated flow path from the mid-perforations to the wellhead in flow order (WTS_wp_well.segmentsFor shape:
+    //             [{len ft MD, id in, dz ft (TVD rise), area?, restr?}]): replaces [{len: L, dz: L}]. Every depth D of the design is
+    //             then an MD; the injection-gas column, the kill-fluid gradient and the design tubing line work on the TVD of D
+    //             (minimum-curvature dz of the segments); valve spacing (minsp) is along the hole. dperf = the path MD.
+    //   tAt(md)   °F along the hole (e.g. the flowing profile of the Well Performance solve — linear, relaxation or enthalpy);
+    //             replaces the linear twh → bht profile in the marches, the casing gas column and the valve temperatures
+    //   corr      a WTS_flowline_corr key for the tubing marches (default Beggs & Brill)   pvt  fluid.pvt options for the marches
+    // With segments the result adds tvd to every valve, curve point and the point of injection (poiTvd) and deviated: true.
     function compute(input) {
         var i = input || {}, errors = [], bad = [];
         function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
@@ -37967,6 +37979,26 @@ pipesz: {
         var dpv = n('dpv'), dpdrop = n('dpdrop'), gs = n('gs'), ftub = n('ftub'), minsp = n('minsp'), R = n('R');
         var T = G.WTS_tubulars, tub = (i.tub && T && T.find) ? T.find(String(i.tub)) : null;
         var tid = tub ? tub.id : n('tubId');
+        // WP25 additive inputs (see above)
+        var iprIn = (i.ipr && typeof i.ipr.pwfAt === 'function') ? i.ipr : null, segIn = null, tvdOf = null;
+        if (Array.isArray(i.segments) && i.segments.length) {
+            segIn = i.segments.map(function (q) { var o = { name: q.name || 'Tubing', len: +q.len, id: +q.id, dz: +q.dz || 0 }; if (+q.area > 0) o.area = +q.area; if (q.restr && +q.restr.d > 0) o.restr = { d: +q.restr.d, k: q.restr.k == null ? null : +q.restr.k }; return o; })
+                .filter(function (q) { return q.len > 0 && q.id > 0; });
+            if (!segIn.length) segIn = null;
+        }
+        if (iprIn) { pr = _fin(+iprIn.pr) ? +iprIn.pr - PATM : NaN; pi = 1; }
+        if (segIn) {
+            // MD / TVD stations from the wellhead down (the segments come in flow order: mid-perforations first)
+            var mdS = [0], tvS = [0];
+            for (var sk = segIn.length - 1; sk >= 0; sk--) { mdS.push(mdS[mdS.length - 1] + segIn[sk].len); tvS.push(tvS[tvS.length - 1] + segIn[sk].dz); }
+            dperf = mdS[mdS.length - 1];
+            if (!_fin(tid)) tid = segIn[segIn.length - 1].id;
+            tvdOf = function (D) {
+                if (!(D > 0)) return 0;
+                for (var k = 1; k < mdS.length; k++) if (D <= mdS[k]) return tvS[k - 1] + (tvS[k] - tvS[k - 1]) * (D - mdS[k - 1]) / ((mdS[k] - mdS[k - 1]) || 1);
+                return tvS[tvS.length - 1] + (D - mdS[mdS.length - 1]);
+            };
+        }
         need(_fin(qo) && qo >= 0 && qo <= 50000, 'qo', 'Oil rate must be between 0 and 50,000 STB/d.');
         need(_fin(qw) && qw >= 0 && qw <= 50000, 'qw', 'Water rate must be between 0 and 50,000 BWPD.');
         if (_fin(qo) && _fin(qw)) need(qo + qw >= 10, 'qo', 'Liquid rate (oil + water) must be at least 10 STB/d.');
@@ -37977,7 +38009,7 @@ pipesz: {
         need(_fin(sginj) && sginj >= 0.55 && sginj <= 1.0, 'sginj', 'Injection gas gravity must be between 0.55 and 1.0.');
         need(_fin(pr) && pr > 0 && pr <= 15000, 'pr', 'Reservoir pressure must be above 0 and no more than 15,000 psig.');
         need(_fin(pi) && pi > 0 && pi <= 1000, 'pi', 'Productivity index must be above 0 and no more than 1,000 STB/d/psi.');
-        var dOk = need(_fin(dperf) && dperf >= 500 && dperf <= 20000, 'dperf', 'Mid-perforation depth must be between 500 and 20,000 ft.');
+        var dOk = need(_fin(dperf) && dperf >= 500 && dperf <= (segIn ? 40000 : 20000), 'dperf', 'Mid-perforation depth must be between 500 and ' + (segIn ? '40,000 ft MD.' : '20,000 ft.'));
         need(_fin(dmax) && dmax >= 200 && (!dOk || dmax < dperf), 'dmax', 'Deepest mandrel depth must be at least 200 ft and above the perforations.');
         need(_fin(tid) && tid >= 1 && tid <= 7, 'tub', 'Select a tubing size.');
         need(_fin(rough) && rough >= 0 && rough <= 0.01, 'rough', 'Pipe roughness must be between 0 and 0.01 in.');
@@ -37999,15 +38031,33 @@ pipesz: {
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         var qL = qo + qw, glrF = qo * gor / qL, qgF = qo * gor / 1e6;
-        var pwf = pr - qL / pi;
+        var pwf = iprIn ? +iprIn.pwfAt(qL) - PATM : pr - qL / pi;
         if (!(pwf > 0)) return { ok: false, errors: ['The target liquid rate needs a flowing bottomhole pressure below zero (p_r − q_L/J): lower the rate or check the PI.'], bad: ['pi'] };
-        var tAt = function (D) { return twh + (bht - twh) * D / dperf; };
+        var tAt = typeof i.tAt === 'function' ? function (D) { var t = +i.tAt(D); return _fin(t) ? t : twh + (bht - twh) * D / dperf; } : function (D) { return twh + (bht - twh) * D / dperf; };
         var seg = function (L) { return [{ name: 'Tubing', len: L, id: tid, dz: L }]; };
         var opt = { rough: rough, payne: true, accel: false };
         var fluidF = { qo: qo, qw: qw, qg: qgF, api: api, sgg: sgg, sgw: sgw };
+        // WP25: the deviated path cut at MD L (flow order, mid-perforations first), its top-down order for the reverse marches, the
+        // temperature along each march and the model's correlation / PVT options; vertical depth of an MD (identity without segments)
+        var Dv = tvdOf || function (D) { return D; };
+        var pvtIn = (i.pvt && typeof i.pvt === 'object') ? (function () { var o = {}; Object.keys(i.pvt).forEach(function (k) { if (k !== 'table' && k !== 'injGas') o[k] = i.pvt[k]; }); return o; })() : null;
+        if (pvtIn) fluidF.pvt = pvtIn;
+        if (i.corr != null && i.corr !== '') opt.corr = String(i.corr);
+        if (segIn) seg = function (L) {
+            var out = [], top = 0;
+            for (var k = segIn.length - 1; k >= 0 && top < L - 1e-9; k--) {
+                var s0 = segIn[k], take = Math.min(s0.len, L - top), f = take / s0.len, c = Object.assign({}, s0, { len: take, dz: s0.dz * f });
+                if (f < 1) delete c.restr;              // a restriction sits at the segment inlet (its deepest end)
+                out.unshift(c); top += take;
+            }
+            return out;
+        };
+        var segDown = function (L) { return segIn ? seg(L).reverse() : seg(L); };
+        var optUp = function () { return typeof i.tAt === 'function' ? Object.assign({}, opt, { tAt: function (x) { return tAt(Math.max(0, dperf - x)); } }) : opt; };
+        var optDown = function () { return typeof i.tAt === 'function' ? Object.assign({ reverse: true }, opt, { tAt: function (x) { return tAt(x); } }) : Object.assign({ reverse: true }, opt); };
 
         // 3. Traverse below the POI: from the perforations upward, formation GLR.
-        var below = G.WTS_flowline_march(seg(dperf), fluidF, pwf, bht, twh, opt);
+        var below = G.WTS_flowline_march(seg(dperf), fluidF, pwf, bht, twh, optUp());
         var bp = below.profile.map(function (q) { return { d: dperf - q.x, p: q.p }; }).reverse();   // shallow → deep
         function pBelow(D) {
             if (D >= bp[bp.length - 1].d) return bp[bp.length - 1].p;
@@ -38018,7 +38068,7 @@ pipesz: {
             return bp[bp.length - 1].p;
         }
         var naturalWh = below.lost ? null : below.pOut;
-        var pc = function (ps, D) { return casingP(ps, D, sginj, twh, tAt(D)).p; };
+        var pc = function (ps, D) { return casingP(ps, Dv(D), sginj, twh, tAt(D)).p; };
 
         function findPoi(psoOp) {
             var f = function (D) { return pc(psoOp, D) - dpv - pBelow(D); };
@@ -38042,7 +38092,8 @@ pipesz: {
         };
         function above(glrT, D) {
             var fl = { qo: qo, qw: qw, qg: Math.max(glrT, glrF) * qL / 1e6, api: api, sgg: sgMix(glrT), sgw: sgw };
-            return G.WTS_flowline_march(seg(D), fl, pwh, twh, tAt(D), Object.assign({ reverse: true }, opt));
+            if (pvtIn) fl.pvt = pvtIn;
+            return G.WTS_flowline_march(segDown(D), fl, pwh, twh, tAt(D), optDown());
         }
 
         // Iterate POI ↔ valve count (the operating valve opens at p_so − (n−1)·Δp_drop).
@@ -38055,15 +38106,15 @@ pipesz: {
             var ab = above(glr, poiV);
             var pAbove = ab.pOut, pBel = pBelow(poiV);
             var pts = pwh + ftub / 100 * (pso - pwh), ptPoi = pAbove;
-            var ptd = function (D) { return pts + (ptPoi - pts) * D / poiV; };
+            var ptd = function (D) { return pts + (ptPoi - pts) * Dv(D) / Dv(poiV); };
             // 6. Spacing
             valves = []; spacingFail = null;
-            var fTop = function (D) { return pc(pko, D) - (pwh + gs * D); };
+            var fTop = function (D) { return pc(pko, D) - (pwh + gs * Dv(D)); };
             var D1 = fTop(poiV) > 0 ? poiV : _bisect(fTop, 0, poiV, 80);
             valves.push({ n: 1, d: D1, pso: pso, kick: true });
             while (valves[valves.length - 1].d < poiV - 1e-6 && valves.length < MAXV) {
                 var k = valves.length, Dk = valves[k - 1].d, psoK = pso - k * dpdrop, ptk = ptd(Dk);
-                var h = function (D) { return pc(psoK, D) - (ptk + gs * (D - Dk)); };
+                var h = function (D) { return pc(psoK, D) - (ptk + gs * (Dv(D) - Dv(Dk))); };
                 if (!(h(Dk) > 0)) { spacingFail = { after: k, d: Dk }; break; }
                 var Dn = h(poiV) > 0 ? poiV : _bisect(h, Dk, poiV, 80);
                 if (Dn - Dk < minsp) Dn = Math.min(poiV, Dk + minsp);
@@ -38126,9 +38177,13 @@ pipesz: {
         curves.ptd = [{ d: 0, p: P.pts }, { d: P.poiV, p: P.ptPoi }];
         curves.above = P.ab.profile.map(function (x) { return { d: x.x, p: x.p }; });
         curves.below = bp.slice();
-        curves.load.push({ d: 0, p: pwh }, { d: valves[0].d, p: pwh + gs * valves[0].d });
+        curves.load.push({ d: 0, p: pwh }, { d: valves[0].d, p: pwh + gs * Dv(valves[0].d) });
         for (var v2 = 1; v2 < valves.length; v2++) {
-            curves.load.push(null, { d: valves[v2 - 1].d, p: P.ptd(valves[v2 - 1].d) }, { d: valves[v2].d, p: P.ptd(valves[v2 - 1].d) + gs * (valves[v2].d - valves[v2 - 1].d) });
+            curves.load.push(null, { d: valves[v2 - 1].d, p: P.ptd(valves[v2 - 1].d) }, { d: valves[v2].d, p: P.ptd(valves[v2 - 1].d) + gs * (Dv(valves[v2].d) - Dv(valves[v2 - 1].d)) });
+        }
+        if (segIn) {
+            Object.keys(curves).forEach(function (k) { curves[k].forEach(function (c) { if (c) c.tvd = Dv(c.d); }); });
+            valves.forEach(function (v) { v.md = v.d; v.tvd = Dv(v.d); });
         }
 
         var warnings = [];
@@ -38136,7 +38191,7 @@ pipesz: {
         if (P.poi > dmax + 1e-6) warnings.push('The point of balance (' + _fmt(P.poi, 0) + ' ft) is below the deepest mandrel: the operating valve is at the deepest mandrel, ' + _fmt(dmax, 0) + ' ft.');
         if (glr <= glrF) warnings.push('Target total GLR is not above the formation GLR (' + _fmt(glrF, 0) + ' scf/STB): no injection gas is needed for it.');
         if (P.ab.lost) warnings.push('The traverse above the point of injection fails (pressure or critical flow): check the rate and tubing size.');
-        return {
+        var out = {
             ok: true, pwh: pwh, pko: pko, pso: pso, qL: qL, glrF: glrF, qgF: qgF, pwf: pwf, glr: glr, qinj: qinj, injGlr: Math.max(0, glr - glrF),
             glrMin: glrMin, glrMinNote: glrMinNote, qinjMin: qinjMin, lifts: lifts,
             poi: P.poi, poiValve: P.poiV, poiAtPerfs: P.atPerfs, psoOp: P.psoOp,
@@ -38146,6 +38201,11 @@ pipesz: {
             gasGrad: gGrad, sgMix: sgMix(glr), naturalWh: naturalWh, curves: curves, dperf: dperf, dmax: dmax,
             tubing: tub ? tub.label : null, tid: tid, warnings: warnings, iterations: it + 1
         };
+        if (segIn || iprIn || typeof i.tAt === 'function') {
+            out.deviated = !!segIn; out.poiTvd = Dv(P.poi); out.poiValveTvd = Dv(P.poiV); out.dperfTvd = Dv(dperf); out.pr = pr;
+            if (iprIn) out.ipr = { key: iprIn.key || null, label: iprIn.label || null, pr_psia: +iprIn.pr };
+        }
+        return out;
     }
 
     G.WTS_gaslift_compute = compute;
@@ -41666,7 +41726,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall',
         wp_pdew: 'pressure', wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor',
         wp_ip_L: 'length', wp_ip_boxA: 'length', wp_ip_boxB: 'length', wp_ip_xPos: 'length', wp_ip_zPos: 'length', wp_ip_yMid: 'length', wp_ip_yb: 'length',
-        wp_ip_xf: 'length', wp_ip_ct: 'compressibility', wp_ip_II: 'productivityIndex', wp_ip_pfrac: 'pressure'
+        wp_ip_xf: 'length', wp_ip_ct: 'compressibility', wp_ip_II: 'productivityIndex', wp_ip_pfrac: 'pressure',
+        // B (WP25): the gas-lift unloading design (49-calc-wp-glui.js draws the controls; tagged here so the host restore converts them)
+        wp_gld_pko: 'pressureG', wp_gld_gs: 'pressureGradient', wp_gld_minsp: 'length', wp_gld_dpdrop: 'pressure', wp_gld_qL: 'liquidRate', wp_gld_dmax: 'length'
     };
 
     // ── model scalars (defaults from WTS_wp_model.DEFAULTS; Appendix B) ───────
@@ -42061,7 +42123,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
                     { k: 'q_g', l: 'Gas', cat: 'gasRateSmall', u: 'Mscf/d' }, { k: 'thp_psig', l: 'THP', cat: 'pressureG', u: 'psig' }, { k: 'tht_F', l: 'THT', cat: 'temperature', u: '°F' },
-                    { k: 'bean64', l: 'Bean', u: '/64' }, { k: 'gaugeMd', l: 'Gauge MD', cat: 'length', u: 'ft' }, { k: 'gauge_psia', l: 'Gauge p', cat: 'pressure', u: 'psia' }];
+                    { k: 'bean64', l: 'Bean', u: '/64' }, { k: 'gaugeMd', l: 'Gauge MD', cat: 'length', u: 'ft' }, { k: 'gauge_psia', l: 'Gauge p', cat: 'pressure', u: 'psia' },
+                    // B (WP25): the casing pressure and the metered lift gas of a gas-lifted test (the gas-lift diagnosis reads them)
+                    { k: 'chp_psig', l: 'CHP', cat: 'pressureG', u: 'psig' }, { k: 'qinj_Mscfd', l: 'Lift gas', cat: 'gasRateSmall', u: 'Mscf/d' }];
         }
     };
     function _tableRows(M, t) {
@@ -42518,6 +42582,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
     }
     function _onHandle(key, v, phase) {
+        if (_ext('handle', key, v, phase).some(Boolean)) return;          // B (WP25): handles of an extension's plots (gas-lift valves)
         if (/^sec\d+[ft]$/.test(key)) { _secHandle(key, v, phase); return; }
         var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer', tFlow: 'wp_ip_tFlow', L: 'wp_ip_L', xf: 'wp_ip_xf', thpI: 'wp_thp' }[key]; if (!id) return;
         var canon;
@@ -42674,7 +42739,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         else if (comp === 'choke') { step = 5; focusSel = { id: 'wp_bean' }; }
         else if (comp === 'wellhead') { step = 5; focusSel = { id: 'wp_psep' }; }
         else if (comp === 'gl') { step = 4; focusSel = { id: 'wp_gl_qinj' }; }
-        else if (comp === 'esp' || comp === 'mandrel') { step = 4; }
+        else if (/^(esp|mandrel)(:\d+)?$/.test(comp || '')) { step = 4; _goStep(step, true); _ext('comp', comp); return; }   // B (WP25): the extension focuses the valve row
         _goStep(step, true);
         if (focusSel && focusSel.id) { var e = _byId(focusSel.id); if (e && e.focus) e.focus(); }
         else if (focusSel) {
@@ -43614,6 +43679,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                     });
                 });
             }
+            _ext('trPlot', { series: ser, hlines: trHl, dax: dax, T: T });     // B (WP25): gas-lift valves and a flowing gradient survey on the traverse
             var gp = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(t.gaugeMd) && _fin(t.gauge_psia); });
             if (gp.length && ST.SC && ST.SC.trajectory) ser.push({ key: 'g', label: 'Gauge (tests)', kind: 'points', color: T.green, r: 5, pts: gp.map(function (t) { return [_dv(t.gauge_psia, 'pressure'), _dv(dax === 'md' ? t.gaugeMd : (_fin(_schAt(t.gaugeMd).tvd) ? _schAt(t.gaugeMd).tvd : t.gaugeMd), 'length')]; }) });
             spec = { key: 'trav:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
@@ -44215,7 +44281,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 ? 'The flowing temperature is the steady heat-transfer relaxation (Ramey / Hasan-Kabir) per rate: geotherm on TVD, relaxation along MD, decoupled from pressure, with a constant producing time and a single U; no Joule-Thomson or kinetic term in the profile (the J-T correction applies to the hydrate check); provisional — not verified against a published example.'
                 : 'The temperature is linear from the wellhead temperature entered; the J-T correction applies to the hydrate check only.')) +
             (M && M.surface.choke.present !== false && (M.surface.choke.corr === 'sachdeva' || (!gas && M.surface.choke.subcritical === 'sachdeva')) ? box('Choke: the Sachdeva et al. (1986) two-phase model' + (M.surface.choke.corr === 'sachdeva' ? ' (critical and sub-critical, with the rate factor)' : ' sets the critical ratio and carries the sub-critical branch, scaled to the critical correlation at its critical point') + '; provisional — not verified against a published example; its data range is bean 8–40/64 in.') : '') +
-            (M && M.lift && M.lift.type === 'gaslift' ? box('Gas lift (quick look): one injection point — the shallower of the packer and the point of balance of the static casing gas column (less the valve ΔP) with the tubing; the lift gas is free gas only above it; no valve mechanics or unloading; the stability check is static (no heading dynamics).') : '') +
+            (M && M.lift && M.lift.type === 'gaslift' ? box('Gas lift (quick look): one injection point — the shallower of the packer and the point of balance of the static casing gas column (less the valve ΔP) with the tubing; the lift gas is free gas only above it; valve mechanics, unloading and diagnosis are in the gas-lift design card; the stability check is static (no heading dynamics).') : '') +
             _ext('notes').map(function (a) { return (Array.isArray(a) ? a : [a]).map(function (t) { return t ? box(t) : ''; }).join(''); }).join('') +
             (user ? '<div><b>Notes</b> ' + _esc(user) + '</div>' : '');
     }
@@ -45356,7 +45422,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 _fg('wp_gl_incgor', 'Incremental GOR limit (economic point)', { unit: 'scf/STB', data: 'data-lift="gaslift"', hint: '0 = the maximum rate.' }) + '</div>' +
                 '<div class="wp-btns rp-skip" data-lift="gaslift"><button type="button" class="btn btn-primary" data-act="glpc">Run the gas-lift performance curve</button></div><div id="wp_glmsg" class="rp-skip"></div>' +
                 '<div id="wp_glres" data-lift="gaslift" style="margin-top:12px"></div>' +
-                '<div class="wp-hint" data-lift="none" style="margin-top:10px">Choose gas lift for the quick look: the injection depth solved at every rate on the deviated path, the lift-gas performance curve with the optimum and economic points and the rate gain over natural flow. Unloading valves: the Gas Lift Design page of this hub.</div>') +
+                '<div class="wp-hint" data-lift="none" style="margin-top:10px">Choose gas lift for the quick look: the injection depth solved at every rate on the deviated path, the lift-gas performance curve with the optimum and economic points and the rate gain over natural flow. Unloading valves, valve throughput, diagnosis from a test and a gradient survey: the gas-lift design card of this step.</div>') +
             _card('Gas-lift performance', '<div data-lift="gaslift"><div class="chart-wrap"><canvas id="wp_cv_glpc" aria-label="Gas-lift performance curve: liquid rate against the lift-gas rate; drag the line to change the injection rate"></canvas></div>' +
                 '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_gldepth" aria-label="Injection depth against the lift-gas rate"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag the dashed <b>q_inj</b> line (or focus the plot, [ / ] then the arrows) and the well re-solves with that much lift gas.</div></div>' +
@@ -48122,6 +48188,1047 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-wp-gldesign ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-wp-gldesign.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
+// -----------------------------------------------------------------------------
+// Well Performance gas-lift design and diagnostics (B, WP25) — docs/WELL-PERFORMANCE-PLAN.md §1.3 US16, §2.3, §3.8, §4.10, §7.2, D17.
+//
+// Nothing here re-implements a march, a correlation, the casing gas column or the nitrogen dome: the design is WTS_gaslift_compute
+// (49-calc-gaslift.js, API RP 11V6 spacing) driven with the SHARED model through its additive inputs (WP25: ipr, segments, tAt, corr,
+// pvt) — the model's inflow (WTS_wp_ipr), the deviated flow path (WTS_wp_well.segmentsFor: hydrostatic on TVD, friction on MD), the
+// flowing temperature of the operating solve at every valve (linear, relaxation or enthalpy — WP14 / WP22) and the well correlation;
+// the diagnostic traverses are WTS_flowline_march on the same path; the gas column is WTS_gaslift_casingP and the dome correction
+// WTS_gaslift_ct.
+//
+// METHODS (field units: psia inside, psig at surface inputs named *_psig, ft MD / TVD, °F, Mscf/d, STB/d)
+//   Thornhill-Craver valve throughput (Thornhill & Craver; as written in API RP 11V2 and Brown 1980 vol. 2a), ideal gas:
+//     q (Mscf/d) = 155.5·Cd·A·p1·√{ 2g·k/(k−1)·(r^(2/k) − r^((k+1)/k)) } / √(γg·T1)
+//     A port area in², p1 upstream (casing) psia, T1 °R, g = 32.16 ft/s², r = max(p2/p1, r_c) — the critical ratio cap
+//     r_c = (2/(k+1))^(k/(k−1)); Cd default 0.865; k default 1.27. Provisional (D17): no worked example verified (Q9); cross-check
+//     X: at the same Cd it equals the isentropic gas nozzle of 49-calc-chokeperf.js with z = 1 within 0.5 %.
+//   Valve mechanics (IPO, nitrogen-charged bellows, force balance; 49-calc-gaslift.js): dome at 60 °F from the test-rack opening
+//     pressure p_d60 = p_tro·(1 − R); at the valve temperature p_d from the real-gas dome (WTS_gaslift_ct inverted); opening casing
+//     pressure at depth p_vo = (p_d − R·p_t)/(1 − R); closing p_vc = p_d. A valve is open when p_c ≥ p_vo (orifice: always), and
+//     passes gas when also p_c > p_t.
+//   Diagnosis from a test (CHP, THP, lift gas, liquid and gas rates; M.tests rows carry chp_psig / qinj_Mscfd): casing pressure at
+//     every valve from the CHP (static gas column over TVD at the flowing temperature), tubing pressure from the THP marched down the
+//     path with the lift gas to the operating valve and with the formation gas below it (two marches); status per valve, operating
+//     valve = the deepest valve that passes gas, multi-pointing (> 1), throughput (Thornhill-Craver at p_c, p_t) against the measured
+//     lift gas, under- / over-injection against the reference rate (the performance-curve optimum or economic point, else the design
+//     rate): under below 80 %, over above 120 %; lifting from a valve above the deepest (bottom) valve.
+//   Flowing gradient survey (J3): import of (MD or TVD, p, T) rows (psig or psia; m, bar, kPa headers converted), residuals against
+//     the solved traverse (RMS, bias, worst), and the gradient break of the survey — two straight lines in p against TVD fitted by least
+//     squares over every split; the intersection is the injection depth read from the survey, compared with the valves.
+//   Stability after Asheim (1988), written for this module from the lumped annulus–tubing description (provisional, D17; the paper's
+//     coefficients could not be checked, Q9):
+//     F1 = (dp_in/dq) / (dp_out/dq) at the operating point (inflow slope over the tubing-curve slope at a fixed lift-gas rate, the
+//          solver's static criterion; ∞ on a rising tubing curve) — stable when F1 > 1;
+//     F2 = |∂p_ti/∂q_gi| · |∂q_v/∂p_ti| — the loop gain of the injection: a higher tubing pressure at the valve passes less gas
+//          (Thornhill-Craver slope; 0 when the port flow is critical) and less gas makes the column heavier (no-slip column above the
+//          point, ∂p/∂v_G = −(H/144)·q_L·(ρ_L − ρ_G)/(q_L + v_G)², v_G = q_g·B_g) — stable when F2 < 1.
+//     The static criterion does not predict heading dynamics (§21); both numbers are screening values.
+//
+// Interfaces (every result {ok, errors[], warnings[{code, msg, sev}]}; nothing throws for user data):
+//   WTS_wp_gl (namespace shared with 49-calc-wp-lift.js)
+//     .TC              {cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32] (/64 in), verified: false, label}
+//     .tc({port64 | d_in, cd?, p1, p2 (psia), T (°F), sg, k?}) → {ok, q, qCrit, r, rc, critical, area_in2, dqdp2 (Mscf/d per psi)}
+//     .portR(port64, abellows?) → R = A_port / A_bellows
+//     .context(M)      → {ok, F, I, W} the model's fluid, inflow and path (built like the system solver) | failure
+//     .inputFor(M, R, o?) → {ok, input (the WTS_gaslift_compute input on the shared model), notes[]} | failure
+//     .design(M, R, o?) → Job (step / done / progress / result / cancel); result() → {ok, gl (the WTS_gaslift_compute result),
+//          valves:[{n, md, tvd, role, port, R, t, pso, pvo, pt, pd, pd60, ptro, pvcs, spacing, tc:{q, critical, r}, need, ok}],
+//          operating:{n, md, tvd}, qinj, qL, port, portRec, capOk, inputs, warnings, errors, ms}
+//     .valvesFromDesign(D) → rows for the model table glValves [{md, port, ptro, R, kind:'ipo'}]
+//     .setValve(D, i, md) → design valve i re-set at MD md on the same surface opening pressure and design tubing line (casing p_vo at
+//          its TVD and flowing temperature, dome / p_tro, Thornhill-Craver) — the page's drag of a valve; null when out of range
+//     .pdAt(ptro, R, T) → the dome pressure (psig) at T from the test-rack opening pressure
+//     .diagnose(M, R, valves, test, o?) → {ok, valves:[{n, md, tvd, t, port, R, kind, pc, pt, pd, pvo, pvc, open, passing, status,
+//          q, critical}], operating:{n, md, tvd} | null, multi, qCap, qinj, ref, flags[{code, sev, msg}], tubing:[{md, tvd, p}],
+//          casing:[{md, tvd, p}], verdict:'ok'|'warn'|'fail'}
+//     .parseSurvey(text, o? {axis:'md'|'tvd', unit:'psig'|'psia'}) → {ok, rows:[{md?, tvd?, p psia, t?}], axis, unit, skipped, warnings}
+//     .matchSurvey(M, R, rows, o? {W, valves}) → {ok, rows:[{md, tvd, p, pModel, dp, t?, tModel?, dt?}], n, rms, bias, maxAbs, rmsT,
+//          brk:{md, tvd, p, gUp, gDown, sse} | null, nearValve:{n, md, tvd, dMd} | null, verdict}
+//     .asheim(M, R, o? {port64, cd, W}) → {ok, F1, F2, stable1, stable2, verdict, parts{…}, label, verified:false, provisional}
+// =============================================================================
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    var PATM = 14.696, RANK = 459.67, GFT = 32.16;
+    var TC = { cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32], verified: false, label: 'Thornhill-Craver' };
+    var PROVISIONAL = 'provisional — not verified against a published example';
+    var UNDER = 0.8, OVER = 1.2;
+
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _n(v) { if (typeof v === 'number') return isFinite(v) ? v : null; if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v; return null; }
+    function _w(code, msg, sev) { return { code: code, msg: String(msg).slice(0, 299), sev: sev === 'info' ? 'info' : (sev === 'fail' ? 'fail' : 'warn') }; }
+    function _fail(code, errors, extra) { var r = { ok: false, code: code, errors: errors || [], warnings: [] }; if (extra) Object.keys(extra).forEach(function (k) { r[k] = extra[k]; }); return r; }
+    function _f(x, dp) { if (!_fin(x)) return '–'; var s = (+x.toFixed(dp || 0)).toFixed(dp || 0), p = s.split('.'), ip = p[0], neg = ip.charAt(0) === '-', out = ''; if (neg) ip = ip.slice(1); while (ip.length > 3) { out = ',' + ip.slice(-3) + out; ip = ip.slice(0, -3); } return (neg ? '−' : '') + ip + out + (p[1] ? '.' + p[1] : ''); }
+    function _fn(path) { var o = G, ks = path.split('.'); for (var i = 0; i < ks.length; i++) { if (!o) return null; o = o[ks[i]]; } return typeof o === 'function' ? o : null; }
+    function _interp(rows, x, kx, ky) {
+        if (!rows || !rows.length) return null;
+        if (x <= rows[0][kx]) return rows[0][ky];
+        for (var i = 1; i < rows.length; i++) if (x <= rows[i][kx]) { var a = rows[i - 1], b = rows[i], d = b[kx] - a[kx]; return d > 0 ? a[ky] + (b[ky] - a[ky]) * (x - a[kx]) / d : b[ky]; }
+        return rows[rows.length - 1][ky];
+    }
+
+    // ── Thornhill-Craver ─────────────────────────────────────────────────────
+    function portR(port64, ab) { var d = (+port64) / 64, A = Math.PI * d * d / 4; return A / ((+ab > 0) ? +ab : TC.abellows_in2); }
+    function _tcRaw(A, cd, p1, p2, TR, sg, k) {
+        var rc = Math.pow(2 / (k + 1), k / (k - 1)), r = Math.max(p2 / p1, rc);
+        if (!(r < 1)) return { q: 0, r: p2 / p1, rc: rc, critical: false };
+        var br = 2 * GFT * k / (k - 1) * (Math.pow(r, 2 / k) - Math.pow(r, (k + 1) / k));
+        return { q: br > 0 ? 155.5 * cd * A * p1 * Math.sqrt(br) / Math.sqrt(sg * TR) : 0, r: p2 / p1, rc: rc, critical: p2 / p1 <= rc };
+    }
+    function tc(o) {
+        o = o || {};
+        var d = _fin(+o.d_in) && +o.d_in > 0 ? +o.d_in : (+o.port64 > 0 ? +o.port64 / 64 : NaN), cd = _fin(+o.cd) && +o.cd > 0 ? +o.cd : TC.cd, k = _fin(+o.k) && +o.k > 1 ? +o.k : TC.k;
+        var p1 = +o.p1, p2 = +o.p2, T = +o.T, sg = +o.sg, errs = [];
+        if (!(d > 0 && d < 2)) errs.push('port size');
+        if (!(p1 > 0)) errs.push('upstream pressure');
+        if (!(p2 > 0)) errs.push('downstream pressure');
+        if (!_fin(T)) errs.push('temperature');
+        if (!(sg > 0.4 && sg < 2)) errs.push('gas gravity');
+        if (errs.length) return _fail('BAD_INPUT', ['Thornhill-Craver needs ' + errs.join(', ')]);
+        var A = Math.PI * d * d / 4, TR = T + RANK, a = _tcRaw(A, cd, p1, p2, TR, sg, k), c = _tcRaw(A, cd, p1, p1 * a.rc * 0.999999, TR, sg, k);
+        var h = Math.max(0.5, 1e-3 * p1), lo = _tcRaw(A, cd, p1, Math.max(1, p2 - h), TR, sg, k), hi = _tcRaw(A, cd, p1, Math.min(p1, p2 + h), TR, sg, k);
+        var dq = (Math.min(p1, p2 + h) - Math.max(1, p2 - h)) > 0 ? (hi.q - lo.q) / (Math.min(p1, p2 + h) - Math.max(1, p2 - h)) : 0;
+        if (a.critical) dq = 0;
+        return { ok: true, q: p2 >= p1 ? 0 : a.q, qCrit: c.q, r: p2 / p1, rc: a.rc, critical: a.critical, area_in2: A, cd: cd, k: k, dqdp2: dq, errors: [], warnings: [] };
+    }
+
+    // ── the shared model: fluid, inflow and path (as the system solver builds them) ───────────────────────────
+    function context(M) {
+        var need = ['WTS_wp_fluid.build', 'WTS_wp_ipr.curve', 'WTS_wp_well.build', 'WTS_wp_well.segmentsFor'];
+        for (var i = 0; i < need.length; i++) if (!_fn(need[i])) return _fail('MISSING_ENGINE', [need[i] + ' is not available']);
+        if (!M || !M.fluid || !M.res || !M.well) return _fail('NO_MODEL', ['the model is incomplete']);
+        var type = M.fluid.type || 'oil';
+        if (type !== 'oil' && type !== 'water') return _fail('GL_NOT_APPLICABLE', ['Gas-lift design is for oil (and water) producers; this is a ' + type + ' well.']);
+        var F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F, table: false });
+        if (!F || !F.ok) return _fail('NEEDS_FLUID', (F && F.errors && F.errors.length) ? F.errors : ['the fluid is incomplete']);
+        var W = G.WTS_wp_well.build(M.well, { res: M.res, fluidType: type, tests: M.tests, surface: M.surface });
+        if (!W || !W.ok) return _fail('NEEDS_WELL', (W && W.errors && W.errors.length) ? W.errors : ['the well has no flow path']);
+        var I = G.WTS_wp_ipr.curve(M.res, F, { tvdAt: W.tvdAt, refMd: W.nodes ? W.nodes.midPerfMd : null });
+        if (!I || !I.ok || I.inj) return _fail('NEEDS_IPR', (I && I.errors && I.errors.length) ? I.errors : ['the inflow is incomplete']);
+        return { ok: true, F: F, I: I, W: W, errors: [], warnings: [] };
+    }
+    // the flowing temperature along the hole: the operating solve's traverse (linear, relaxation or enthalpy profile), else W.tAt
+    function _tAtFrom(R, W) {
+        var rows = R && R.ok && R.traverse && Array.isArray(R.traverse.profile) ? R.traverse.profile.filter(function (r) { return r && _fin(r.md) && _fin(r.t); }).slice().sort(function (a, b) { return a.md - b.md; }) : [];
+        if (rows.length >= 2) return { src: (R.heat && R.heat.mode) || 'linear', fn: function (md) { return _interp(rows, md, 'md', 't'); } };
+        return { src: 'linear', fn: function (md) { return W.tAt ? W.tAt(md) : NaN; } };
+    }
+    function _gld(M) { var g = (M.lift && M.lift.gl) || {}; return g.design || {}; }
+    function _corrOf(M, R) { var c = (R && R.corr && R.corr.well) || (M.system && M.system.corr && M.system.corr.well) || null; var REG = G.WTS_flowline_corr || {}; return c && REG[c] && !REG[c].gasOnly ? String(c) : null; }
+
+    function inputFor(M, R, o) {
+        o = o || {};
+        var X = o.ctx || context(M); if (!X.ok) return X;
+        var F = X.F, I = X.I, W = X.W, gl = (M.lift && M.lift.gl) || {}, d = _gld(M), notes = [];
+        var pso = _n(gl.pinj_psig); if (!(pso > 0)) return _fail('NEEDS_PINJ', ['Enter the surface injection (casing) pressure (step ④).']);
+        var qinj = _fin(_n(o.qinj)) ? _n(o.qinj) : _n(gl.qinj_Mscfd);
+        if (!(qinj > 0)) return _fail('NEEDS_QINJ', ['Set the lift-gas injection rate (step ④) or run the performance curve and use the optimum: the design injects that rate.']);
+        var rt = R && R.ok && R.rates ? R.rates : null;
+        var qL = _fin(_n(o.qL)) ? _n(o.qL) : (_n(d.qL) > 0 ? _n(d.qL) : (rt && _fin(rt.qL) ? rt.qL : null));
+        if (!(qL > 0)) return _fail('NEEDS_RATE', ['No design liquid rate: solve the well with gas lift, or enter the design rate.']);
+        var wc = rt && rt.qL > 0 && _fin(rt.qw) ? rt.qw / rt.qL : (_fin(+F.wc) ? +F.wc : 0);
+        var qo = qL * (1 - wc), qw = qL * wc;
+        var pwh = _fin(_n(o.pwh)) ? _n(o.pwh) : (R && R.ok && R.surface && _fin(R.surface.thp_psig) ? R.surface.thp_psig : _n(M.system && M.system.thp_psig));
+        if (!(pwh >= 0)) return _fail('NEEDS_THP', ['No flowing wellhead pressure: solve the well first.']);
+        var mid = W.nodes.midPerfMd, shoe = _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd : mid;
+        var pk = _n(gl.packerMd); if (!(pk > 0) || pk > Math.min(shoe, mid)) pk = Math.min(shoe, mid);
+        var dmax = _n(d.dmaxMd) > 0 ? Math.min(_n(d.dmaxMd), pk) : Math.max(200, pk - 30);
+        var segs = G.WTS_wp_well.segmentsFor(W, { from: mid, toMd: 0 });
+        if (!Array.isArray(segs) || !segs.length) return _fail('NEEDS_WELL', ['the well has no flow path from the mid-perforations']);
+        var tA = _tAtFrom(R, W), port = _n(d.port64) > 0 ? _n(d.port64) : 16, Rv = _n(d.R) > 0 && _n(d.R) < 0.5 ? _n(d.R) : portR(port);
+        var gor = _fin(+F.gor) ? +F.gor : (_fin(+M.fluid.gor) ? +M.fluid.gor : 0), glrF = qL > 0 ? qo * gor / qL : 0;
+        var input = {
+            qo: qo, qw: qw, gor: gor, api: +F.api || +M.fluid.api, sgg: +F.sgg || +M.fluid.sgg, sgw: Math.min(1.3, Math.max(0.95, +F.sgw || +M.fluid.sgw || 1.07)),
+            sginj: _n(gl.sginj) > 0 ? _n(gl.sginj) : 0.65, pr: I.pr - PATM, pi: 1, dmax: dmax, rough: _fin(+W.rough) && +W.rough >= 0 ? +W.rough : 0.0018,
+            pwh: pwh, twh: tA.fn(0), bht: Math.max(tA.fn(0), tA.fn(mid)), pko: _n(d.pko_psig) > 0 ? _n(d.pko_psig) : pso + 100, pso: pso,
+            glr: glrF + qinj * 1000 / qL, dpv: _fin(_n(gl.dpValve)) && _n(gl.dpValve) >= 0 ? _n(gl.dpValve) : 100, dpdrop: _fin(_n(d.dpdrop)) && _n(d.dpdrop) >= 0 ? _n(d.dpdrop) : 25,
+            gs: _n(d.gs) > 0 ? _n(d.gs) : 0.465, ftub: _fin(_n(d.ftub)) && _n(d.ftub) >= 0 ? _n(d.ftub) : 20, minsp: _fin(_n(d.minsp)) && _n(d.minsp) >= 0 ? _n(d.minsp) : 250, R: Rv,
+            ipr: I, segments: segs, tAt: tA.fn, corr: _corrOf(M, R), pvt: F.pvt
+        };
+        if (!_n(d.pko_psig)) notes.push('kickoff pressure = injection pressure + 100 psi (default)');
+        notes.push('valve temperatures from the ' + tA.src + ' flowing profile of the operating solve');
+        return { ok: true, input: input, qinj: qinj, qL: qL, port: port, R: Rv, packerMd: pk, tSrc: tA.src, notes: notes, ctx: X, errors: [], warnings: [] };
+    }
+
+    // throughput of every designed valve at its opening conditions; the operating valve against the design injection rate
+    function _throughput(D, In, port) {
+        var sg = In.input.sginj, need = In.qinj, rows = [];
+        D.valves.forEach(function (v) {
+            var t = tc({ port64: port, p1: v.pvo + PATM, p2: v.pt + PATM, T: v.t, sg: sg });
+            rows.push({ n: v.n, md: _fin(v.md) ? v.md : v.d, tvd: _fin(v.tvd) ? v.tvd : v.d, role: v.role, port: port, R: In.R, t: v.t, pso: v.pso, pvo: v.pvo, pt: v.pt,
+                pd: v.pd, pd60: v.pd60, ptro: v.ptro, pvcs: v.pvcs, spacing: v.spacing, ct: v.ct,
+                tc: t.ok ? { q: t.q, critical: t.critical, r: t.r, rc: t.rc } : null, need: v.role === 'Operating' ? need : null,
+                ok: v.role !== 'Operating' || !(t.ok) || t.q >= need });
+        });
+        var op = rows.filter(function (r) { return r.role === 'Operating'; })[0] || null;
+        // the smallest port that passes 110 % of the design rate at the operating valve
+        var rec = null;
+        if (op) TC.ports.some(function (p64) { var t = tc({ port64: p64, p1: op.pvo + PATM, p2: op.pt + PATM, T: op.t, sg: sg }); if (t.ok && t.q >= 1.1 * need) { rec = p64; return true; } return false; });
+        return { rows: rows, op: op, rec: rec };
+    }
+
+    function design(M, R, o) {
+        o = o || {};
+        var st = { i: 0, done: false, res: null, cancelled: false, In: null, D: null, t0: Date.now() };
+        function finish() {
+            if (st.res) return st.res;
+            if (st.cancelled) { st.res = _fail('CANCELLED', ['cancelled']); st.res.cancelled = true; return st.res; }
+            if (st.In && !st.In.ok) { st.res = st.In; return st.res; }
+            var D = st.D;
+            if (!D || !D.ok) { st.res = _fail(D && D.bad ? 'BAD_INPUT' : 'DESIGN_FAILED', (D && D.errors) || ['the design failed'], { inputs: st.In ? st.In.input : null }); return st.res; }
+            var T = _throughput(D, st.In, st.In.port), warnings = [];
+            (D.warnings || []).forEach(function (t) { warnings.push(_w('GL_DESIGN', t, 'info')); });
+            if (D.spacingFail) warnings.push(_w('GL_SPACING', 'The unloading valves cannot reach the point of injection: the spacing stops after valve ' + D.spacingFail.after + ' (' + _f(D.spacingFail.d, 0) + ' ft MD). Raise the kickoff pressure or lower the kill-fluid gradient.'));
+            if (T.op && T.op.tc && T.op.tc.q < st.In.qinj) warnings.push(_w('GL_PORT_SMALL', 'The ' + T.op.port + '/64 in port of the operating valve passes ' + _f(T.op.tc.q, 0) + ' Mscf/d at its opening conditions, less than the design ' + _f(st.In.qinj, 0) + ' Mscf/d' + (T.rec ? ': use ' + T.rec + '/64 in.' : '.')));
+            if (T.op && T.op.tc && !T.op.tc.critical) warnings.push(_w('GL_SUBCRITICAL', 'Port flow at the operating valve is sub-critical (p_t/p_c ' + _f(T.op.tc.r, 2) + ' > ' + _f(T.op.tc.rc, 2) + '): the injection follows the tubing pressure (heading risk; see the stability numbers).', 'info'));
+            warnings.push(_w('TC_PROVISIONAL', 'Thornhill-Craver valve throughput is ' + PROVISIONAL + '.', 'info'));
+            st.res = { ok: true, gl: D, valves: T.rows, operating: T.op ? { n: T.op.n, md: T.op.md, tvd: T.op.tvd } : null, qinj: st.In.qinj, qL: st.In.qL, port: st.In.port, R: st.In.R,
+                portRec: T.rec, capOk: !!(T.op && T.op.ok), packerMd: st.In.packerMd, tSrc: st.In.tSrc, inputs: (function () { var c = {}; Object.keys(st.In.input).forEach(function (k) { if (k !== 'ipr' && k !== 'segments' && k !== 'tAt' && k !== 'pvt') c[k] = st.In.input[k]; }); return c; })(),
+                notes: st.In.notes, warnings: warnings, errors: [], ms: Date.now() - st.t0, provisional: [TC.label] };
+            // kept for setValve (a valve dragged to another depth is re-set on the same design lines); functions, not serialised
+            Object.defineProperty(st.res, '_tAt', { value: st.In.input.tAt, enumerable: false });
+            Object.defineProperty(st.res, '_tvdAt', { value: st.In.ctx.W.tvdAt, enumerable: false });
+            return st.res;
+        }
+        var steps = [
+            function () { st.In = inputFor(M, R, o); return !st.In.ok; },
+            function () { if (typeof G.WTS_gaslift_compute !== 'function') { st.In = _fail('MISSING_ENGINE', ['WTS_gaslift_compute is not available']); return true; } st.D = G.WTS_gaslift_compute(st.In.input); return true; }
+        ];
+        var J = {
+            n: steps.length,
+            step: function () {
+                if (!st.done && !st.cancelled) { var stop = steps[st.i++](); if (stop || st.i >= steps.length) st.done = true; } else st.done = true;
+                if (st.done) finish();
+                return { done: st.done, progress: st.done ? 1 : st.i / steps.length, label: st.done ? 'done' : 'spacing the unloading valves on the deviated path' };
+            },
+            done: function () { return st.done; },
+            progress: function () { return st.done ? 1 : st.i / steps.length; },
+            result: function () { while (!st.done) J.step(); return finish(); },
+            cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
+        };
+        return J;
+    }
+    // a designed valve moved to MD md (the page's drag): its casing opening pressure on the same surface opening pressure, the design
+    // tubing line at its TVD, the dome and test-rack settings at its temperature and its Thornhill-Craver throughput → a new valve row
+    function setValve(Dr, i, md) {
+        if (!Dr || !Dr.ok || !Dr.valves || !Dr.valves[i] || !(md > 0)) return null;
+        var v = Dr.valves[i], g = Dr.gl, In = Dr.inputs, tvdAt = Dr._tvdAt || function (x) { return x; }, tAt = Dr._tAt || function () { return v.t; };
+        var tvd = tvdAt(md), T = tAt(md), Rv = v.R, cp = G.WTS_gaslift_casingP(v.pso, Math.max(0, tvd), In.sginj, In.twh, T);
+        if (!cp || !_fin(cp.p)) return null;
+        var poiT = _fin(g.poiValveTvd) ? g.poiValveTvd : g.poiValve, pt = g.pts + (g.ptPoi - g.pts) * tvd / (poiT || 1), pd = cp.p * (1 - Rv) + pt * Rv;
+        var c = G.WTS_gaslift_ct(pd + PATM, T), pd60 = c.ct * (pd + PATM) - PATM, t = tc({ port64: v.port, p1: cp.p + PATM, p2: pt + PATM, T: T, sg: In.sginj });
+        var out = {}; Object.keys(v).forEach(function (k) { out[k] = v[k]; });
+        out.md = md; out.tvd = tvd; out.t = T; out.pvo = cp.p; out.pt = pt; out.pd = pd; out.ct = c.ct; out.pd60 = pd60; out.ptro = pd60 / (1 - Rv); out.moved = true;
+        out.tc = t.ok ? { q: t.q, critical: t.critical, r: t.r, rc: t.rc } : null; out.ok = v.role !== 'Operating' || !t.ok || t.q >= (v.need || 0);
+        return out;
+    }
+    function valvesFromDesign(Dr) {
+        if (!Dr || !Dr.ok) return [];
+        return Dr.valves.map(function (v) { return { md: Math.round(v.md), port: v.port, ptro: Math.round(v.ptro), R: +(+v.R).toFixed(4), kind: 'ipo' }; });
+    }
+
+    // dome pressure at the valve temperature from the test-rack opening pressure (inverse of WTS_gaslift_ct: p_d60 = C_t·p_d)
+    function _pdAt(ptro, Rv, tF) {
+        var p60 = ptro * (1 - Rv) + PATM, pT = p60;
+        if (typeof G.WTS_gaslift_ct !== 'function') return p60 - PATM;
+        for (var k = 0; k < 12; k++) { var c = G.WTS_gaslift_ct(pT, tF); if (!c || !_fin(c.ct) || !(c.ct > 0)) break; var pn = p60 / c.ct; if (Math.abs(pn - pT) < 1e-6) { pT = pn; break; } pT = pn; }
+        return pT - PATM;
+    }
+    function _cleanValves(valves, W) {
+        return (Array.isArray(valves) ? valves : []).map(function (v, i) {
+            var md = _n(v && v.md); if (!(md > 0)) return null;
+            var kind = v.kind === 'orifice' || v.kind === 'dummy' ? v.kind : 'ipo', port = _n(v.port) > 0 ? _n(v.port) : 16;
+            return { md: md, tvd: W && W.tvdAt ? W.tvdAt(md) : md, port: port, ptro: _n(v.ptro), R: _n(v.R) > 0 && _n(v.R) < 0.5 ? _n(v.R) : portR(port), kind: kind, i: i };
+        }).filter(Boolean).sort(function (a, b) { return a.md - b.md; });
+    }
+    // a top-down march of the shared path from the THP to MD toMd (lift gas included or not); → rows [{md, p psia}]
+    function _down(X, M, R, toMd, fl, thp, tFn) {
+        var segs = G.WTS_wp_well.segmentsFor(X.W, { from: toMd, toMd: 0 });
+        if (!Array.isArray(segs) || !segs.length || typeof G.WTS_flowline_march !== 'function') return null;
+        var o = { reverse: true, rough: _fin(+X.W.rough) ? +X.W.rough : 0.0018, payne: true, accel: false, tAt: function (x) { return tFn(x); } }, c = _corrOf(M, R);
+        if (c) o.corr = c;
+        var m = G.WTS_flowline_march(segs.slice().reverse(), fl, thp, tFn(0), tFn(toMd), o);
+        if (!m || m.ok === false) return null;
+        return { rows: (m.profile || []).filter(function (r) { return _fin(r.x) && _fin(r.p); }).map(function (r) { return { md: r.x, p: r.p + PATM }; }), lost: m.lost || null };
+    }
+    function diagnose(M, R, valves, test, o) {
+        o = o || {};
+        var X = o.ctx || context(M); if (!X.ok) return X;
+        var W = X.W, F = X.F, gl = (M.lift && M.lift.gl) || {}, sg = _n(gl.sginj) > 0 ? _n(gl.sginj) : 0.65, t = test || {};
+        var V = _cleanValves(valves, W);
+        if (!V.length) return _fail('NO_VALVES', ['No gas-lift valves: run the design and use it, or enter the mandrel depths.']);
+        var chp = _n(t.chp_psig), thp = _n(t.thp_psig), qinj = _n(t.qinj_Mscfd), qo = _n(t.q_o), qw = _n(t.q_w), qgm = _n(t.q_g);
+        var miss = [];
+        if (!(chp > 0)) miss.push('casing pressure (CHP)'); if (!(thp >= 0)) miss.push('THP'); if (!(qinj >= 0)) miss.push('lift-gas rate');
+        if (!((qo || 0) + (qw || 0) > 0)) miss.push('liquid rate');
+        if (miss.length) return _fail('NEEDS_TEST', ['The diagnosis needs the ' + miss.join(', ') + ' of a test (step ⑥, test table).']);
+        qo = qo || 0; qw = qw || 0;
+        var gor = _fin(+F.gor) ? +F.gor : 0, qgF = (qgm > qinj) ? (qgm - qinj) : qo * gor / 1000;   // Mscf/d of formation gas
+        if (!(qgm > qinj) && qgm != null) qgF = qo * gor / 1000;
+        var tA = _tAtFrom(R, W).fn, deep = V[V.length - 1].md;
+        var base = function (qgMs, sgm) { var f = G.WTS_wp_fluid.flowlineFluid(F, { qo: qo, qw: qw, qg_Mscfd: qgMs }); var c = {}; Object.keys(f).forEach(function (k) { c[k] = f[k]; }); c.sgg = sgm; if (c.pvt) { var p = {}; Object.keys(c.pvt).forEach(function (k) { if (k !== 'table' && k !== 'injGas') p[k] = c.pvt[k]; }); c.pvt = p; } return c; };
+        var sgMix = (qgF + qinj) > 0 ? (qgF * (+F.sgg || 0.65) + qinj * sg) / (qgF + qinj) : (+F.sgg || 0.65);
+        var up = _down(X, M, R, deep, base(qgF + qinj, sgMix), thp, tA);
+        if (!up || !up.rows.length) return _fail('TRAVERSE_FAILED', ['The tubing traverse from the test THP failed.']);
+        var pcAt = function (md) { var tvd = W.tvdAt ? W.tvdAt(md) : md, r = G.WTS_gaslift_casingP(chp, Math.max(0, tvd), sg, tA(0), tA(md)); return r && _fin(r.p) ? r.p + PATM : NaN; };
+        function evalAt(ptOf) {
+            return V.map(function (v, k) {
+                var T = tA(v.md), pc = pcAt(v.md), pt = ptOf(v.md), out = { n: k + 1, md: v.md, tvd: v.tvd, t: T, port: v.port, R: v.R, kind: v.kind, ptro: v.ptro, pc: pc, pt: pt };
+                if (v.kind === 'dummy') { out.open = false; out.passing = false; out.status = 'dummy'; return out; }
+                if (v.kind === 'orifice' || !_fin(v.ptro)) { out.open = true; out.status = v.kind === 'orifice' ? 'orifice' : 'no setting'; }
+                else {
+                    out.pd = _pdAt(v.ptro, v.R, T) + PATM;
+                    out.pvo = (out.pd - v.R * pt) / (1 - v.R); out.pvc = out.pd;
+                    // an IPO valve opens at p_vo and, once open (unloading opened it), closes only below p_vc = p_d
+                    out.open = pc >= out.pvc;
+                    out.held = out.open && pc < out.pvo;
+                }
+                out.passing = !!out.open && pc > pt;
+                if (out.passing) { var q = tc({ port64: v.port, p1: pc, p2: pt, T: T, sg: sg }); out.q = q.ok ? q.q : null; out.critical = q.ok ? q.critical : null; out.r = q.ok ? q.r : null; }
+                out.status = out.status && out.status !== 'no setting' ? out.status : (out.passing ? (out.held ? 'open (held above closing) — injecting' : 'open — injecting') : (out.open ? 'open — no flow (p_c ≤ p_t)' : 'closed'));
+                if (!_fin(v.ptro) && v.kind !== 'orifice') out.status = out.passing ? 'injecting (no setting)' : 'no flow (no setting)';
+                return out;
+            });
+        }
+        var ptUp = function (md) { return _interp(up.rows, md, 'md', 'p'); };
+        var rows = evalAt(ptUp), opI = -1;
+        rows.forEach(function (r, k) { if (r.passing) opI = k; });
+        var tub = up.rows.slice(), lowRows = null;
+        // below the operating valve the tubing carries the formation gas only: march on from the valve with the formation fluid
+        if (opI >= 0 && opI < rows.length - 1) {
+            var mdOp = rows[opI].md, pOp = ptUp(mdOp), segs = G.WTS_wp_well.segmentsFor(W, { from: deep, toMd: mdOp });
+            if (Array.isArray(segs) && segs.length) {
+                var oo = { reverse: true, rough: _fin(+W.rough) ? +W.rough : 0.0018, payne: true, accel: false, tAt: function (x) { return tA(mdOp + x); } }, c2 = _corrOf(M, R);
+                if (c2) oo.corr = c2;
+                var m2 = G.WTS_flowline_march(segs.slice().reverse(), base(qgF, +F.sgg || 0.65), pOp - PATM, tA(mdOp), tA(deep), oo);
+                if (m2 && m2.ok !== false && m2.profile) {
+                    lowRows = m2.profile.filter(function (r) { return _fin(r.x) && _fin(r.p); }).map(function (r) { return { md: mdOp + r.x, p: r.p + PATM }; });
+                    var ptOf2 = function (md) { return md <= mdOp ? ptUp(md) : _interp(lowRows, md, 'md', 'p'); };
+                    rows = evalAt(ptOf2); opI = -1; rows.forEach(function (r, k) { if (r.passing) opI = k; });
+                    tub = up.rows.filter(function (r) { return r.md <= mdOp; }).concat(lowRows.filter(function (r) { return r.md > mdOp; }));
+                }
+            }
+        }
+        var passing = rows.filter(function (r) { return r.passing; }), qCap = passing.reduce(function (a, r) { return a + (_fin(r.q) ? r.q : 0); }, 0);
+        var flags = [], op = opI >= 0 ? rows[opI] : null;
+        var ref = _fin(_n(o.ref)) && _n(o.ref) > 0 ? _n(o.ref) : (_n(gl.qinj_Mscfd) > 0 ? _n(gl.qinj_Mscfd) : null), refSrc = o.refSrc || 'the design injection rate';
+        if (!op) flags.push(_w('GL_NO_VALVE', 'No valve passes gas at this CHP and THP: the casing pressure is below every opening pressure or below the tubing pressure (check the CHP, the valve settings or a plugged valve).', 'fail'));
+        else {
+            if (passing.length > 1) flags.push(_w('GL_MULTIPOINT', 'Multi-pointing: ' + passing.length + ' valves pass gas (' + passing.map(function (r) { return 'valve ' + r.n + ' ' + _f(r.md, 0) + ' ft MD'; }).join(', ') + ').'));
+            if (opI < rows.length - 1 && rows.slice(opI + 1).some(function (r) { return r.kind !== 'dummy'; })) flags.push(_w('GL_SHALLOW', 'Lifting from valve ' + op.n + ' (' + _f(op.md, 0) + ' ft MD · ' + _f(op.tvd, 0) + ' ft TVD), above the deepest valve: the well is not unloaded to the bottom valve.'));
+            if (qinj > 0 && qCap > 0 && qinj > 1.15 * qCap) flags.push(_w('GL_THROUGHPUT', 'The measured lift gas (' + _f(qinj, 0) + ' Mscf/d) is more than the open valves pass (' + _f(qCap, 0) + ' Mscf/d, Thornhill-Craver): a leak, a hole in the tubing or a wrong gas meter.'));
+            if (qinj > 0 && qCap > 0 && qinj < 0.5 * qCap && op.critical === false) flags.push(_w('GL_THROTTLED', 'The open valves could pass ' + _f(qCap, 0) + ' Mscf/d but ' + _f(qinj, 0) + ' Mscf/d is metered: the surface gas supply limits the injection.', 'info'));
+            if (op.critical === false) flags.push(_w('GL_SUBCRITICAL', 'Port flow at the operating valve is sub-critical (p_t/p_c ' + _f(op.r, 2) + '): the injection follows the tubing pressure (heading risk).', 'info'));
+        }
+        if (ref && qinj >= 0) {
+            if (qinj < UNDER * ref) flags.push(_w('GL_UNDER', 'Under-injection: ' + _f(qinj, 0) + ' Mscf/d against ' + _f(ref, 0) + ' Mscf/d (' + refSrc + ').'));
+            else if (qinj > OVER * ref) flags.push(_w('GL_OVER', 'Over-injection: ' + _f(qinj, 0) + ' Mscf/d against ' + _f(ref, 0) + ' Mscf/d (' + refSrc + '): the extra gas adds little rate.'));
+        }
+        var verdict = flags.some(function (f) { return f.sev === 'fail'; }) ? 'fail' : (flags.some(function (f) { return f.sev === 'warn'; }) ? 'warn' : 'ok');
+        var cas = []; for (var k = 0; k <= 20; k++) { var md = deep * k / 20; cas.push({ md: md, tvd: W.tvdAt ? W.tvdAt(md) : md, p: pcAt(md) }); }
+        return { ok: true, valves: rows, operating: op ? { n: op.n, md: op.md, tvd: op.tvd } : null, multi: passing.length > 1, qCap: qCap, qinj: qinj, ref: ref, refSrc: refSrc,
+            flags: flags, verdict: verdict, tubing: tub.map(function (r) { return { md: r.md, tvd: W.tvdAt ? W.tvdAt(r.md) : r.md, p: r.p }; }), casing: cas,
+            test: { chp_psig: chp, thp_psig: thp, qinj_Mscfd: qinj, q_o: qo, q_w: qw, qgF_Mscfd: qgF, id: t.id || null }, errors: [], warnings: [] };
+    }
+
+    // ── flowing gradient survey (J3) ─────────────────────────────────────────
+    function parseSurvey(text, o) {
+        o = o || {};
+        var lines = String(text == null ? '' : text).split(/\r?\n/).map(function (l) { return l.trim(); }).filter(function (l) { return l && !/^#/.test(l); });
+        var axis = o.axis === 'tvd' ? 'tvd' : 'md', unit = o.unit === 'psia' ? 'psia' : 'psig', fL = 1, fP = 1, cols = { d: 0, p: 1, t: 2 }, rows = [], skipped = 0, warnings = [], tC = false;
+        if (lines.length && /[a-z]/i.test(lines[0]) && !/^[-+\d.]/.test(lines[0])) {
+            var h0 = lines.shift().toLowerCase(), h = h0.split(/[,;\t]+|\s{2,}/).map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
+            if (h.length < 2) h = h0.split(/\s+/).filter(function (x) { return x !== ''; });
+            h.forEach(function (x, i) {
+                if (/tvd/.test(x)) { cols.d = i; axis = 'tvd'; } else if (/md|depth/.test(x)) { cols.d = i; if (!/tvd/.test(x)) axis = o.axis === 'tvd' ? 'tvd' : 'md'; }
+                if (/^p|press/.test(x)) { cols.p = i; if (/psia/.test(x)) unit = 'psia'; else if (/psig/.test(x)) unit = 'psig'; else if (/kpa/.test(x)) { fP = 0.1450377; unit = /a\)?$|kpaa/.test(x) ? 'psia' : 'psig'; } else if (/bar/.test(x)) { fP = 14.50377; unit = /bara/.test(x) ? 'psia' : 'psig'; } }
+                if (/^t|temp/.test(x) && !/tvd/.test(x)) { cols.t = i; if (/°?c\)?$|degc|\(c\)/.test(x)) tC = true; }
+                if ((/md|tvd|depth/.test(x)) && /\(m\)|\bm\b|metre|meter/.test(x)) fL = 1 / 0.3048;
+            });
+        }
+        lines.forEach(function (l) {
+            var a = l.split(/[,;\t ]+/).map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; }).map(Number);
+            var d = a[cols.d], p = a[cols.p], t = a.length > cols.t ? a[cols.t] : NaN;
+            if (!_fin(d) || !_fin(p) || d < 0 || p <= 0) { skipped++; return; }
+            var r = {}; r[axis] = d * fL; r.p = p * fP + (unit === 'psig' ? PATM : 0); if (_fin(t)) r.t = tC ? t * 9 / 5 + 32 : t;
+            rows.push(r);
+        });
+        rows.sort(function (x, y) { return x[axis] - y[axis]; });
+        if (rows.length > 400) { warnings.push(_w('SURVEY_LONG', 'Only the first 400 survey points are used.', 'info')); rows = rows.slice(0, 400); }
+        if (skipped) warnings.push(_w('SURVEY_SKIPPED', skipped + ' line(s) were not read (depth and pressure needed).', 'info'));
+        return { ok: rows.length >= 2, rows: rows, axis: axis, unit: unit, skipped: skipped, warnings: warnings, errors: rows.length >= 2 ? [] : ['At least two survey points (depth, pressure) are needed.'] };
+    }
+    function _line(pts) {          // least squares p = a + b·tvd
+        var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+        pts.forEach(function (q) { sx += q.x; sy += q.y; sxx += q.x * q.x; sxy += q.x * q.y; });
+        var den = n * sxx - sx * sx; if (!(Math.abs(den) > 1e-12)) return null;
+        var b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n, sse = 0;
+        pts.forEach(function (q) { var e = q.y - a - b * q.x; sse += e * e; });
+        return { a: a, b: b, sse: sse };
+    }
+    function matchSurvey(M, R, rows, o) {
+        o = o || {};
+        if (!R || !R.ok || !R.traverse || !Array.isArray(R.traverse.profile)) return _fail('NO_SOLVE', ['Solve the well first: the survey is compared with the solved traverse.']);
+        var W = o.W || (context(M).W);
+        if (!W) return _fail('NEEDS_WELL', ['the well has no path']);
+        var prof = R.traverse.profile.filter(function (r) { return r && _fin(r.md) && _fin(r.p) && !r.restr; }).slice().sort(function (a, b) { return a.md - b.md; });
+        var mdOf = function (r) { return _fin(r.md) ? r.md : (W.mdAt ? W.mdAt(r.tvd) : r.tvd); }, tvdOf = function (r, md) { return _fin(r.tvd) ? r.tvd : (W.tvdAt ? W.tvdAt(md) : md); };
+        var out = [], s2 = 0, sb = 0, mx = 0, st2 = 0, nt = 0, mdEnd = prof.length ? prof[prof.length - 1].md : 0;
+        (rows || []).forEach(function (r) {
+            var md = mdOf(r); if (!_fin(md) || md > mdEnd + 1) return;
+            var tvd = tvdOf(r, md), pm = _interp(prof, md, 'md', 'p'), x = { md: md, tvd: tvd, p: r.p, pModel: pm, dp: r.p - pm };
+            if (_fin(r.t)) { x.t = r.t; x.tModel = _interp(prof, md, 'md', 't'); x.dt = _fin(x.tModel) ? r.t - x.tModel : null; if (_fin(x.dt)) { st2 += x.dt * x.dt; nt++; } }
+            s2 += x.dp * x.dp; sb += x.dp; mx = Math.max(mx, Math.abs(x.dp)); out.push(x);
+        });
+        if (!out.length) return _fail('NO_POINTS', ['No survey point lies on the solved path.']);
+        var n = out.length, res = { ok: true, rows: out, n: n, rms: Math.sqrt(s2 / n), bias: sb / n, maxAbs: mx, rmsT: nt ? Math.sqrt(st2 / nt) : null, brk: null, nearValve: null, errors: [], warnings: [] };
+        // gradient break: two lines in p against TVD, every split with ≥ 2 points each side
+        if (n >= 4) {
+            var pts = out.map(function (x) { return { x: x.tvd, y: x.p }; }), best = null;
+            for (var k = 2; k <= n - 2; k++) {
+                var a = _line(pts.slice(0, k)), b = _line(pts.slice(k));
+                if (!a || !b) continue;
+                if (!best || a.sse + b.sse < best.sse) best = { k: k, a: a, b: b, sse: a.sse + b.sse };
+            }
+            if (best && best.b.b > best.a.b * 1.15) {
+                var xi = Math.abs(best.a.b - best.b.b) > 1e-9 ? (best.b.a - best.a.a) / (best.a.b - best.b.b) : (pts[best.k - 1].x + pts[best.k].x) / 2;
+                xi = Math.max(pts[best.k - 1].x, Math.min(pts[best.k].x, xi));
+                var mdI = W.mdAt ? W.mdAt(xi) : xi;
+                res.brk = { tvd: xi, md: _fin(mdI) ? mdI : xi, p: best.a.a + best.a.b * xi, gUp: best.a.b, gDown: best.b.b, sse: best.sse };
+                var V = _cleanValves(o.valves, W);
+                if (V.length && _fin(res.brk.md)) {
+                    var nv = null; V.forEach(function (v, i) { var dd = Math.abs(v.md - res.brk.md); if (!nv || dd < nv.dMd) nv = { n: i + 1, md: v.md, tvd: v.tvd, dMd: dd }; });
+                    res.nearValve = nv;
+                }
+            }
+        }
+        res.verdict = res.rms <= 25 ? 'ok' : (res.rms <= 75 ? 'warn' : 'fail');
+        return res;
+    }
+
+    // ── stability after Asheim (1988), provisional ───────────────────────────
+    function asheim(M, R, o) {
+        o = o || {};
+        if (!R || !R.ok || !R.op || !R.lift || R.lift.type !== 'gaslift') return _fail('NOT_LIFTED', ['The stability numbers need a gas-lifted operating point.']);
+        var X = o.ctx || context(M); if (!X.ok) return X;
+        var I = X.I, F = X.F, q = R.op.q, h = Math.max(1, 0.01 * q);
+        var p1 = I.pwfAt(Math.max(0, q - h)), p2 = I.pwfAt(q + h), dIn = (_fin(p1) && _fin(p2)) ? (p2 - p1) / (2 * h) : null;   // psi per (STB/d), < 0
+        var dD = R.op.dDdq, dOut = _fin(dD) && _fin(dIn) ? dD + dIn : null;
+        var F1 = (_fin(dOut) && dOut < 0 && _fin(dIn)) ? dIn / dOut : Infinity;
+        // the lifted column above the injection point (no-slip, average conditions)
+        var L = R.lift, H = _fin(L.injTvd) ? L.injTvd : null, pti = L.pTub, pca = L.pCas, thp = R.surface && _fin(R.surface.thp) ? R.surface.thp : (R.surface && _fin(R.surface.thp_psig) ? R.surface.thp_psig + PATM : null);
+        var tA = _tAtFrom(R, X.W).fn, pAvg = _fin(thp) && _fin(pti) ? (thp + pti) / 2 : pti, tAvg = (tA(0) + tA(L.injMd)) / 2;
+        var sg = _n(L.sginj) > 0 ? _n(L.sginj) : 0.65, port = _n(o.port64) > 0 ? _n(o.port64) : 16, gl = M.lift.gl || {};
+        var fl = G.WTS_wp_fluid.flowlineFluid(F, { qo: R.rates.qo, qw: R.rates.qw, qg_Mscfd: R.rates.qo * (+F.gor || 0) / 1000 });
+        var pv = {}; if (fl.pvt) Object.keys(fl.pvt).forEach(function (k) { if (k !== 'table') pv[k] = fl.pvt[k]; });
+        pv.injGas = { qg_MMscfd: L.qinj / 1000, sg: sg };
+        var flI = {}; Object.keys(fl).forEach(function (k) { flI[k] = fl[k]; }); flI.pvt = pv;
+        var pr = (typeof G.WTS_flowline_props === 'function' && _fin(pAvg)) ? G.WTS_flowline_props(flI, Math.max(pAvg, 15), tAvg) : null;
+        if (!pr || !_fin(H) || !_fin(pti) || !_fin(pca)) return _fail('NO_PROPS', ['The column properties at the injection point are not available.']);
+        var qLr = pr.qL, vG = pr.qG, rhoL = pr.rhoL, rhoG = pr.rhoG, Bg = pr.bg;
+        var dpdv = -(H / 144) * qLr * (rhoL - rhoG) / Math.pow(qLr + vG, 2);                 // psi per (ft³/s of gas in situ)
+        var dvdq = Bg * 1000 / 86400;                                                          // ft³/s per Mscf/d of lift gas
+        var dpdq = dpdv * dvdq;                                                                // psi per Mscf/d (< 0)
+        var t = tc({ port64: port, p1: pca, p2: pti, T: tA(L.injMd), sg: sg, cd: o.cd });
+        var F2 = t.ok ? Math.abs(dpdq) * Math.abs(t.dqdp2) : null;
+        var s1 = F1 > 1, s2 = _fin(F2) ? F2 < 1 : null;
+        var verdict = !s1 ? 'fail' : (s2 === false ? 'warn' : 'ok');
+        return { ok: true, F1: F1, F2: F2, stable1: s1, stable2: s2, verdict: verdict, label: 'Asheim (1988) criteria', verified: false, provisional: PROVISIONAL,
+            parts: { q: q, dpInDq: dIn, dpOutDq: dOut, dDdq: dD, H: H, pti: pti, pca: pca, qLres_ft3s: qLr, vG_ft3s: vG, rhoL: rhoL, rhoG: rhoG, Bg: Bg, dpdqg: dpdq,
+                port64: port, critical: t.ok ? t.critical : null, r: t.ok ? t.r : null, rc: t.ok ? t.rc : null, dqvdpt: t.ok ? t.dqdp2 : null, qValve: t.ok ? t.q : null, qinj: L.qinj, dpValve: _n(gl.dpValve) },
+            errors: [], warnings: [] };
+    }
+
+    var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
+    NS.TC = TC; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
+    NS.diagnose = diagnose; NS.parseSurvey = parseSurvey; NS.matchSurvey = matchSurvey; NS.asheim = asheim; NS.pdAt = _pdAt;
+})();
+
+// ─── END 49-calc-wp-gldesign ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-wp-glui ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-wp-glui.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
+// -----------------------------------------------------------------------------
+// Well Performance page part for the gas-lift design and diagnostics (B, WP25) — docs/WELL-PERFORMANCE-PLAN.md §1.3 US16, §7.2, §2.9 and
+// the owner GUI requirement (interactive, deviation first: every depth MD · TVD; KPI chips; every result captured by the reports).
+//
+// Registered as window.WTS_wellperf_ext.gldesign (the page's extension hooks, 49-calc-wellperf.js). It draws with the page helpers
+// (WTS_wellperf_page.ui()) and the engines of 49-calc-wp-gldesign.js (WTS_wp_gl.design / setValve / diagnose / parseSurvey /
+// matchSurvey / asheim / tc) — no numerics of its own.
+//
+//   #wp_res card "Gas-lift valves" (with gas lift selected): KPI chips (valves, operating valve MD · TVD, port throughput against the
+//     injection rate, Asheim F1 / F2, diagnosis, survey RMS), the valve chart (pressure against MD or TVD: kickoff and operating casing
+//     lines, design tubing line, unloading gradients, the tubing with and without lift gas; in the Diagnosis view the casing from the
+//     test CHP, the tubing from the test THP and each valve's opening pressure; the survey points and their gradient break) with a
+//     drag knob per valve (vertical drag moves the valve: a design valve is re-set on the same design lines, an installed valve keeps
+//     its setting and is written on release; keyboard [ ] then arrows), the valve table and the verdicts.
+//   Step ④ card "Gas-lift design — unloading valves": the design settings (kickoff pressure, kill-fluid gradient, tubing effect,
+//     spacing, pressure drop per valve, port, R, design rate, deepest mandrel), Design (a Job), Use this design (writes the model table
+//     glValves), Use the recommended port, the installed-valve editor (MD with TVD, port, test-rack pressure, kind).
+//   Step ④ card "Diagnosis and gradient survey": the test (M.tests rows with CHP and lift gas), the survey text (MD or TVD, p, T) and
+//     Match the survey.
+//   Schematic: a side-pocket mandrel per valve (state from the diagnosis or the design), click → its editor row, drag along the hole →
+//     a new depth (live), arrow keys on a focused mandrel move it by 50 ft (Shift 10 ft). Traverse: valve lines and the survey points.
+// =============================================================================
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    function P() { var pg = G.WTS_wellperf_page; return pg && typeof pg.ui === 'function' ? pg.ui() : null; }
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _L() { return G.WTS_wp_gl && typeof G.WTS_wp_gl.design === 'function' ? G.WTS_wp_gl : null; }
+    function _on(M) { return !!(M && M.lift && M.lift.type === 'gaslift' && M.fluid && (M.fluid.type === 'oil' || M.fluid.type === 'water' || !M.fluid.type)); }
+    var PATM = 14.696;
+    var STATE_COL = { operating: 'accent', open: 'green', closed: 'text2', orifice: 'blue', dummy: 'text2' };
+    var PORTS = [8, 12, 16, 20, 24, 28, 32];
+    var PORT_TXT = { 8: '1/8', 12: '3/16', 16: '1/4', 20: '5/16', 24: '3/8', 28: '7/16', 32: '1/2' };
+
+    // results kept per page instance (cleared on a well switch / project open; never stored except through the model table glValves)
+    var S = { des: null, desKey: null, desRows: null, desEdited: false, diag: null, diagKey: null, ash: null, ashR: null, sur: null, surR: null, surRows: null, surKey: null,
+        drag: null, sdrag: null, noClick: false, msg: null };
+
+    var CSS = '<style>' +
+        '#wp_root .wpg-ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 12px;align-items:end}' +
+        '#wp_root .wpg-ctl .fg-item{margin:0;min-width:0}#wp_root .wpg-ctl input,#wp_root .wpg-ctl select{width:100%;min-width:0}' +
+        '#wp_root .wpg-go{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0 4px}#wp_root .wpg-go .btn{padding:7px 13px;font-size:12px}' +
+        '#wp_root .wpg-seg{display:inline-flex;border:1px solid var(--border);border-radius:14px;overflow:hidden}#wp_root .wpg-seg button{font-size:11px;padding:4px 10px;border:0;background:transparent;color:var(--text2);cursor:pointer;transition:background .15s,color .15s}' +
+        '#wp_root .wpg-seg button.on{background:var(--accent);color:var(--on-accent,#fff)}#wp_root .wpg-seg button:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:-2px}' +
+        '#wp_root .wpg-read{min-height:18px;font-size:12px;color:var(--text2);margin:4px 2px;font-variant-numeric:tabular-nums}' +
+        '#wp_root .wpg-ed td input,#wp_root .wpg-ed td select{width:100%;min-width:62px}#wp_root .wpg-ed td.ro{color:var(--text2);white-space:nowrap}' +
+        '#wp_root .wpg-ed tr.wp-flash td{animation:wpgFlash 1.2s ease-out}@keyframes wpgFlash{from{background:rgba(240,136,62,.28)}to{background:transparent}}' +
+        '#wp_root .wpg-tbl td.st{white-space:nowrap}#wp_root .wpg-tbl td.op{color:var(--accent);font-weight:700}#wp_root .wpg-tbl tr.drag td{background:rgba(88,166,255,.12)}' +
+        '#wp_root .wpg-sv textarea{width:100%;min-height:92px;font-family:var(--mono,monospace);font-size:12px;resize:vertical}' +
+        '#wp_root .wpg-badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.3px;padding:1px 7px;border-radius:9px;border:1px solid var(--border);color:var(--text2);margin-left:6px;vertical-align:1px}' +
+        '#wp_root #wp_sch [data-comp^="mandrel:"]{cursor:ns-resize}#wp_root #wp_sch [data-comp^="mandrel:"]:focus-visible{outline:2px solid var(--focus,#58a6ff)}' +
+        '@media (prefers-reduced-motion: reduce){#wp_root .wpg-ed tr.wp-flash td{animation:none}#wp_root .wpg-seg button{transition:none}}' +
+        '@media (max-width:600px){#wp_root .wpg-ctl{grid-template-columns:1fr 1fr}#wp_root .wpg-tbl{font-size:11.5px}}' +
+        '</style>';
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function _num(v) { if (typeof v === 'number') return isFinite(v) ? v : null; var s = String(v == null ? '' : v).trim(); if (!s) return null; var x = parseFloat(s.replace(',', '.')); return isFinite(x) ? x : null; }
+    function _mkey(M) { try { var l = JSON.parse(JSON.stringify(M.lift || {})); if (l.gl) { delete l.gl.valves; } return JSON.stringify([M.fluid, M.res, M.well, M.surface && M.surface.choke, M.system, l]); } catch (e) { return ''; } }
+    function _depthAx(p) { var d = (p.plots().glvDepth || p.plots().depth); return d === 'md' ? 'md' : 'tvd'; }
+    function _view(p) { var v = p.plots().glvView; return v === 'diag' || v === 'design' ? v : (S.diag && S.diag.ok ? 'diag' : 'design'); }
+    function _tests(M) { return ((M && M.tests) || []).map(function (t, i) { return { t: t, i: i }; }).filter(function (x) { return x.t && x.t.use !== false && _num(x.t.chp_psig) > 0; }); }
+    function _testSel(p, M) {
+        var ts = _tests(M), pi = p.plots().glTest, hit = ts.filter(function (x) { return x.i === pi; })[0];
+        return hit || ts[ts.length - 1] || null;
+    }
+    function _ref(p) {
+        var g = p.ST.gl;
+        if (g && g.ok && !g.stale) {
+            if (g.economic && g.economic.rule === 'slope') return { q: g.economic.qinj, src: 'the economic point of the performance curve' };
+            if (g.optimum) return { q: g.optimum.qinj, src: 'the optimum of the performance curve' };
+        }
+        return null;
+    }
+    // the valve set shown: the installed valves of the model (table glValves), else the last design (possibly moved by a drag)
+    function _vset(p) {
+        var M = p.ST.M, inst = (M && M.lift && M.lift.gl && Array.isArray(M.lift.gl.valves)) ? M.lift.gl.valves : [];
+        var W = p.ST.W, tvdAt = function (md) { return p.tvdAt(md); }, rows;
+        if (inst.length) {
+            rows = inst.map(function (v, i) { return { i: i, md: +v.md, tvd: tvdAt(+v.md), port: v.port || 16, ptro: v.ptro, R: v.R, kind: v.kind || 'ipo', src: 'installed' }; });
+            if (S.drag && S.drag.src === 'installed' && rows[S.drag.i]) { rows[S.drag.i].md = S.drag.md; rows[S.drag.i].tvd = tvdAt(S.drag.md); rows[S.drag.i].dragging = true; }
+            return { src: 'installed', rows: rows };
+        }
+        if (S.desRows && S.desRows.length) {
+            rows = S.desRows.map(function (v, i) { var r = {}; Object.keys(v).forEach(function (k) { r[k] = v[k]; }); r.i = i; r.src = 'design'; r.kind = 'ipo'; return r; });
+            if (S.drag && S.drag.src === 'design' && rows[S.drag.i] && S.drag.row) { var d0 = S.drag.row; Object.keys(d0).forEach(function (k) { rows[S.drag.i][k] = d0[k]; }); rows[S.drag.i].i = S.drag.i; rows[S.drag.i].dragging = true; }
+            return { src: 'design', rows: rows };
+        }
+        void W;
+        return { src: 'none', rows: [] };
+    }
+    function _state(row) {
+        var dg = S.diag && S.diag.ok ? S.diag.valves.filter(function (x) { return Math.abs(x.md - row.md) < 0.5; })[0] : null;
+        if (row.kind === 'dummy') return 'dummy';
+        if (dg) { if (S.diag.operating && S.diag.operating.n === dg.n) return 'operating'; if (dg.passing || dg.open) return dg.kind === 'orifice' ? 'orifice' : 'open'; return 'closed'; }
+        if (row.kind === 'orifice') return 'orifice';
+        if (row.role === 'Operating') return 'operating';
+        return 'closed';
+    }
+    function _commitValves(rows) {
+        var Mm = G.WTS_wp_model; if (!Mm || typeof Mm.write !== 'function') return null;
+        return Mm.write({ glValves: rows.map(function (r) { return { md: Math.round(r.md), port: r.port, ptro: _fin(r.ptro) ? Math.round(r.ptro) : null, R: _fin(r.R) ? +(+r.R).toFixed(4) : null, kind: r.kind || 'ipo' }; }) });
+    }
+
+    // ── markup ───────────────────────────────────────────────────────────────
+    function resHtml() {
+        var p = P(); if (!p) return '';
+        var tools = '<span class="wpg-seg" role="group" aria-label="Valve chart view"><button type="button" data-act="wpg_view" data-v="design">Design</button><button type="button" data-act="wpg_view" data-v="diag">Diagnosis</button></span> ' +
+            '<span class="wpg-seg" role="group" aria-label="Depth axis"><button type="button" data-act="wpg_depth" data-v="tvd">TVD</button><button type="button" data-act="wpg_depth" data-v="md">MD</button></span>';
+        return CSS + '<div data-lift="gaslift">' + p.card('Gas-lift valves — design, throughput and diagnosis',
+            '<div class="wp-kpis" id="wpg_kpi" aria-live="polite"></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_glv" tabindex="0" aria-label="Gas-lift valve chart: pressure against depth with the casing and tubing lines and a knob per valve; drag a knob up or down to move the valve"></canvas></div>' +
+            '<div class="wpg-read rp-skip" id="wpg_read" aria-live="polite"></div>' +
+            '<div id="wpg_tbl"></div><div id="wpg_verd"></div>' +
+            '<div class="wp-legend-hint rp-skip">Drag a valve knob (or a mandrel on the well schematic) up or down and it moves along the hole — MD and TVD shown; a design valve is re-set on the same design lines, an installed valve keeps its setting. Keyboard: [ and ] pick a valve, arrows move it, Enter commits.</div>',
+            { tools: tools, id: 'wpg_card' }) + '</div>';
+    }
+    function _fgx(p, id, label, o) { return p.fg(id, label, o || {}); }
+    function stepHtml(n) {
+        var p = P(); if (!p || n !== 4) return null;
+        var portOpts = [['', 'from the design (1/4 in)']].concat(PORTS.map(function (x) { return [String(x), PORT_TXT[x] + ' in (' + x + '/64)']; }));
+        var des = p.card('Gas-lift design — unloading valves',
+            '<div class="wpg-ctl">' +
+            _fgx(p, 'wp_gld_pko', 'Kickoff pressure (surface)', { unit: 'psig', ph: 'injection + 100' }) +
+            _fgx(p, 'wp_gld_gs', 'Kill-fluid gradient', { unit: 'psi/ft', ph: '0.465' }) +
+            _fgx(p, 'wp_gld_ftub', 'Design tubing effect', { unit: '%', ph: '20' }) +
+            _fgx(p, 'wp_gld_dpdrop', 'Pressure drop per valve', { unit: 'psi', ph: '25' }) +
+            _fgx(p, 'wp_gld_minsp', 'Minimum spacing (MD)', { unit: 'ft', ph: '250' }) +
+            _fgx(p, 'wp_gld_port', 'Port size', { options: portOpts }) +
+            _fgx(p, 'wp_gld_R', 'Port / bellows R', { ph: 'from the port' }) +
+            _fgx(p, 'wp_gld_qL', 'Design liquid rate', { unit: 'STB/d', ph: 'operating point' }) +
+            _fgx(p, 'wp_gld_dmax', 'Deepest mandrel MD', { unit: 'ft', ph: 'packer − 30 ft' }) + '</div>' +
+            '<div class="wpg-go rp-skip"><button type="button" class="btn btn-primary" data-act="wpg_design">Design the valves</button>' +
+            '<button type="button" class="btn btn-secondary" data-act="wpg_use">Use this design</button>' +
+            '<button type="button" class="btn btn-secondary" data-act="wpg_port" style="display:none">Use the recommended port</button></div>' +
+            '<div id="wpg_msg" class="rp-skip" role="status"></div>' +
+            '<div class="wp-hint" style="margin:6px 0 4px">Spacing on the deviated path with the model\'s inflow, correlation and flowing temperatures (the injection pressure and rate above). Installed valves (written to the well):</div>' +
+            '<div id="wpg_edit" class="rp-skip"></div>' +
+            '<div class="wpg-go rp-skip"><button type="button" class="btn btn-secondary" data-act="wpg_add">Add a valve</button><button type="button" class="btn btn-secondary" data-act="wpg_clear">Remove all valves</button></div>',
+            { id: 'wpg_dcard' });
+        var dx = p.card('Gas-lift diagnosis and gradient survey',
+            '<div class="wpg-ctl">' + '<div class="fg-item"><label for="wpv_gld_test">Test (CHP, THP, lift gas, rates)</label><select id="wpv_gld_test" aria-label="Test for the diagnosis"></select></div></div>' +
+            '<div class="wp-hint" id="wpg_testhint" style="margin:4px 0 10px"></div>' +
+            '<div class="wpg-sv rp-skip"><div class="wpg-ctl" style="grid-template-columns:1fr 1fr">' +
+            '<div class="fg-item"><label for="wpv_gls_axis">Survey depth</label><select id="wpv_gls_axis"><option value="md">MD</option><option value="tvd">TVD</option></select></div>' +
+            '<div class="fg-item"><label for="wpv_gls_unit">Survey pressure</label><select id="wpv_gls_unit"><option value="psig">psig</option><option value="psia">psia</option></select></div></div>' +
+            '<div class="fg-item" style="margin-top:8px"><label for="wpv_gls_text">Flowing gradient survey (depth, pressure, temperature — one stop per line; a header with m, bar or kPa is converted)</label>' +
+            '<textarea id="wpv_gls_text" rows="5" placeholder="MD (ft), P (psig), T (°F)&#10;0, 160, 118&#10;2000, 520, 132&#10;…" spellcheck="false"></textarea></div>' +
+            '<div class="wpg-go"><button type="button" class="btn btn-primary" data-act="wpg_survey">Match the survey</button><button type="button" class="btn btn-secondary" data-act="wpg_svclear">Clear</button></div></div>' +
+            '<div id="wpg_svres"></div>',
+            { id: 'wpg_xcard' });
+        return '<div data-lift="gaslift" class="wp-2c">' + des + dx + '</div>';
+    }
+
+    // ── computations on a solve (cheap; the design itself is a Job on the button) ─────────────────────────
+    function _update(p, live) {
+        var M = p.ST.M, R = p.ST.R, L = _L(); if (!L || !M) return;
+        if (S.des && S.desKey !== _mkey(M)) S.des.stale = true;
+        if (live) return;
+        // Asheim numbers at the operating point (the port of the valve nearest the injection point)
+        if (R && R.ok && R.lift && R.lift.type === 'gaslift') {
+            if (S.ashR !== R) {
+                var vs = _vset(p).rows, port = null, best = Infinity;
+                vs.forEach(function (v) { var d = Math.abs(v.md - R.lift.injMd); if (d < best) { best = d; port = v.port; } });
+                var d0 = (M.lift.gl.design || {}).port64;
+                S.ash = L.asheim(M, R, { port64: port || d0 || 16 }); S.ashR = R;
+            }
+        } else { S.ash = null; S.ashR = R; }
+        // diagnosis of the chosen test against the valves shown
+        var vset = _vset(p), t = _testSel(p, M), key = JSON.stringify([vset.rows.map(function (v) { return [v.md, v.port, v.ptro, v.R, v.kind]; }), t && t.t, _mkey(M), R && R.ok ? R.op.q : null]);
+        if (!t || !vset.rows.length) { S.diag = null; S.diagKey = null; }
+        else if (key !== S.diagKey) {
+            var ref = _ref(p), rows = vset.src === 'design' ? vset.rows.map(function (v) { return { md: v.md, port: v.port, ptro: v.ptro, R: v.R, kind: 'ipo' }; }) : vset.rows;
+            S.diag = L.diagnose(M, R, rows, t.t, ref ? { ref: ref.q, refSrc: ref.src } : {}); S.diagKey = key;
+        }
+        // the survey against the solved traverse
+        if (S.surRows && S.surR !== R) { S.sur = L.matchSurvey(M, R, S.surRows, { W: p.ST.W, valves: vset.rows }); S.surR = R; }
+    }
+
+    // ── render ───────────────────────────────────────────────────────────────
+    function render(live) {
+        var p = P(); if (!p || !_byId('wpg_card')) return;
+        var M = p.ST.M;
+        if (!_on(M)) { ['wpg_kpi', 'wpg_tbl', 'wpg_verd', 'wpg_svres'].forEach(function (id) { var e = _byId(id); if (e) e.innerHTML = ''; }); return; }
+        _update(p, live);
+        _drawChart(p);
+        _renderKpi(p); _renderTable(p);
+        if (!live) { _renderVerd(p); _renderEditor(p); _renderTests(p); _renderSurvey(p); _syncButtons(p); }
+    }
+    function _syncButtons(p) {
+        var u = document.querySelector('#wpg_dcard [data-act="wpg_use"]'); if (u) u.disabled = !(S.desRows && S.desRows.length);
+        var pb = document.querySelector('#wpg_dcard [data-act="wpg_port"]'); if (pb) pb.style.display = (S.des && S.des.ok && S.des.portRec && S.des.portRec !== S.des.port) ? '' : 'none';
+        var view = _view(p), dax = _depthAx(p);
+        Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_view"]'), function (b) { var on = b.getAttribute('data-v') === view; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+        Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_depth"]'), function (b) { var on = b.getAttribute('data-v') === dax; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    }
+    function _kfmt(p, md, tvd) { return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(_fin(tvd) ? tvd : p.tvdAt(md), 'length'), 0) + ' TVD ' + p.lab('length', 'ft'); }
+    function _renderKpi(p) {
+        var h = _byId('wpg_kpi'); if (!h) return;
+        var vs = _vset(p), R = p.ST.R, out = [], k = function (l, v, s, st, t) { out.push(p.kpiHtml(l, v, s, st, t)); };
+        k('Valves', vs.rows.length ? String(vs.rows.length) : '—', vs.src === 'installed' ? 'installed' : (vs.src === 'design' ? 'design' + (S.desEdited ? ' (moved)' : '') + ' — not installed' : 'design the valves'), vs.rows.length ? (vs.src === 'installed' ? 'ok' : 'info') : 'none');
+        var op = S.diag && S.diag.ok && S.diag.operating ? S.diag.operating : (S.des && S.des.ok && S.des.operating && vs.src === 'design' ? S.des.operating : null);
+        var deepest = vs.rows.length ? vs.rows[vs.rows.length - 1] : null;
+        if (op) k('Operating valve', 'V' + op.n, _kfmt(p, op.md, op.tvd), deepest && Math.abs(deepest.md - op.md) > 1 && S.diag && S.diag.ok ? 'warn' : 'ok', 'The valve that passes the lift gas');
+        else if (R && R.ok && R.lift) k('Injection point', _kfmt(p, R.lift.injMd, R.lift.injTvd).replace(/ ft$|\s\S+$/, ''), 'point of balance (no valves)', 'info');
+        if (S.des && S.des.ok && S.des.valves) {
+            var ov = S.des.valves.filter(function (v) { return v.role === 'Operating'; })[0];
+            if (ov && ov.tc) k('Port throughput', p.u(ov.tc.q, 'gasRateSmall', 0, 'Mscf/d'), 'need ' + p.u(S.des.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' · ' + (PORT_TXT[ov.port] || ov.port + '/64') + ' in' + (ov.tc.critical ? ' · critical' : ''), ov.tc.q >= S.des.qinj ? 'ok' : 'fail', 'Thornhill-Craver (provisional) at the operating valve');
+        }
+        var a = S.ash;
+        if (a && a.ok) {
+            k('Asheim F1', _fin(a.F1) ? p.fmt(a.F1, 2) : '∞', 'inflow · stable > 1', a.stable1 ? 'ok' : 'fail', 'Static inflow criterion at the operating point — provisional');
+            if (_fin(a.F2)) k('Asheim F2', p.fmt(a.F2, 2), 'injection' + (a.parts.critical ? ' · critical port' : '') + ' · stable < 1', a.stable2 ? 'ok' : 'warn', 'Valve–tubing loop gain — provisional');
+        }
+        if (S.diag) k('Diagnosis', S.diag.ok ? ({ ok: 'normal', warn: 'check', fail: 'problem' }[S.diag.verdict]) : 'not run', S.diag.ok ? (S.diag.test.id ? 'test ' + S.diag.test.id : 'selected test') : ((S.diag.errors || [])[0] || ''), S.diag.ok ? S.diag.verdict : 'info');
+        if (S.sur && S.sur.ok) k('Survey match', 'RMS ' + p.fmt(p.dv(S.sur.rms, 'pressure'), 0) + ' ' + p.lab('pressure', 'psi'), S.sur.n + ' stops · bias ' + p.fmt(p.dv(S.sur.bias, 'pressure'), 0), S.sur.verdict);
+        h.innerHTML = out.join('');
+    }
+    function _renderTable(p) {
+        var h = _byId('wpg_tbl'); if (!h) return;
+        var vs = _vset(p); if (!vs.rows.length) { h.innerHTML = '<div class="wp-v info">No valves yet: set the injection pressure and rate above, then <b>Design the valves</b> in step ④ (or enter the installed mandrels).</div>'; return; }
+        var dl = p.lab('length', 'ft'), pl = p.lab('pressureG', 'psig'), tl = p.lab('temperature', '°F'), ql = p.lab('gasRateSmall', 'Mscf/d');
+        var diag = S.diag && S.diag.ok ? S.diag : null;
+        var head = ['#', 'MD (' + dl + ')', 'TVD (' + dl + ')', 'T (' + tl + ')', 'Port', 'p<sub>tro</sub> (' + pl + ')'].concat(diag ? ['p<sub>c</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'p<sub>vo</sub> (' + pl + ')', 'Gas (' + ql + ')', 'Status'] : ['p<sub>vo</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'Capacity (' + ql + ')', 'Role']);
+        var rows = vs.rows.map(function (v, i) {
+            var st = _state(v), cls = (st === 'operating' ? ' class="op"' : '');
+            var c = [String(i + 1), p.fmt(p.dv(v.md, 'length'), 0), p.fmt(p.dv(_fin(v.tvd) ? v.tvd : p.tvdAt(v.md), 'length'), 0)];
+            if (diag) {
+                var d = diag.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] || {};
+                c.push(_fin(d.t) ? p.fmt(p.dv(d.t, 'temperature'), 0) : '—', (PORT_TXT[v.port] || v.port + '/64'), _fin(v.ptro) ? p.fmt(p.dv(v.ptro, 'pressureG'), 0) : '—',
+                    _fin(d.pc) ? p.fmt(p.dv(d.pc - PATM, 'pressureG'), 0) : '—', _fin(d.pt) ? p.fmt(p.dv(d.pt - PATM, 'pressureG'), 0) : '—', _fin(d.pvo) ? p.fmt(p.dv(d.pvo - PATM, 'pressureG'), 0) : '—',
+                    _fin(d.q) ? p.fmt(p.dv(d.q, 'gasRateSmall'), 0) + (d.critical ? ' ●' : '') : '—', d.status || '—');
+            } else {
+                c.push(_fin(v.t) ? p.fmt(p.dv(v.t, 'temperature'), 0) : '—', (PORT_TXT[v.port] || v.port + '/64'), _fin(v.ptro) ? p.fmt(p.dv(v.ptro, 'pressureG'), 0) : '—',
+                    _fin(v.pvo) ? p.fmt(p.dv(v.pvo, 'pressureG'), 0) : '—', _fin(v.pt) ? p.fmt(p.dv(v.pt, 'pressureG'), 0) : '—', v.tc ? p.fmt(p.dv(v.tc.q, 'gasRateSmall'), 0) + (v.tc.critical ? ' ●' : '') : '—', v.role ? v.role.toLowerCase() + (v.moved ? ' · moved' : '') : (vs.src === 'installed' ? 'installed' : '—'));
+            }
+            return '<tr' + (v.dragging ? ' class="drag"' : '') + '>' + c.map(function (x, j) { return '<td' + (j === c.length - 1 ? ' class="st"' : (j === 0 ? cls : '')) + (j > 0 && j < c.length - 1 ? ' style="text-align:right"' : '') + '>' + (j === c.length - 1 || j === 4 ? _esc(x) : x) + '</td>'; }).join('') + '</tr>';
+        });
+        h.innerHTML = '<div class="wp-tw"><table class="dtable wpg-tbl"><thead><tr>' + head.map(function (x) { return '<th>' + x + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
+            '<div class="wp-hint" style="margin:4px 0 0">● critical port flow (Thornhill-Craver, provisional). ' + (vs.src === 'design' ? 'Design valves — not installed until you use the design.' : 'Installed valves of this well.') + '</div>';
+    }
+    function _renderVerd(p) {
+        var h = _byId('wpg_verd'); if (!h) return;
+        var out = [], add = function (st, t) { out.push(p.vHtml({ st: st, t: (st === 'ok' ? '✓ ' : st === 'fail' ? '✗ ' : st === 'info' ? 'ℹ ' : '⚠ ') + t })); };
+        if (S.msg) add(S.msg.st, S.msg.t);
+        var D = S.des;
+        if (D && D.ok) {
+            if (D.stale) add('info', 'The design is from the previous inputs — design again.');
+            var g = D.gl;
+            add(g.reachesPoi ? 'ok' : 'warn', D.valves.length + ' valves; operating valve at ' + _kfmt(p, D.operating ? D.operating.md : g.poiValve, D.operating ? D.operating.tvd : g.poiValveTvd) + ', operating surface injection ' + p.u(D.valves[D.valves.length - 1].pso, 'pressureG', 0, 'psig') + ' (' + p.u(D.inputs.dpdrop, 'pressure', 0, 'psi') + ' per valve).');
+            // the design's own sub-critical note is left out when a diagnosis of a test says the same about the installed valve
+            (D.warnings || []).forEach(function (w) { if (w.code !== 'TC_PROVISIONAL' && !(w.code === 'GL_SUBCRITICAL' && S.diag && S.diag.ok)) add(w.sev === 'info' ? 'info' : 'warn', w.msg); });
+        } else if (D && !D.ok) add('warn', 'Design: ' + ((D.errors || [])[0] || 'failed'));
+        if (S.diag && S.diag.ok) {
+            if (!S.diag.flags.length) add('ok', 'Diagnosis: valve ' + S.diag.operating.n + ' operates alone at ' + _kfmt(p, S.diag.operating.md, S.diag.operating.tvd) + '; ' + p.u(S.diag.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' within the valve throughput.');
+            S.diag.flags.forEach(function (f) { add(f.sev === 'fail' ? 'fail' : (f.sev === 'info' ? 'info' : 'warn'), f.msg); });
+        } else if (S.diag && !S.diag.ok) add('info', (S.diag.errors || [])[0] || 'Diagnosis not available.');
+        var a = S.ash;
+        if (a && a.ok) add(a.verdict === 'ok' ? 'ok' : a.verdict === 'fail' ? 'fail' : 'warn', 'Stability after Asheim (1988): F1 ' + (_fin(a.F1) ? p.fmt(a.F1, 2) : '∞') + (a.stable1 ? ' > 1' : ' ≤ 1') + (_fin(a.F2) ? ', F2 ' + p.fmt(a.F2, 2) + (a.stable2 ? ' < 1' : ' ≥ 1 (heading risk: a larger valve ΔP or a smaller port makes the port flow critical)') : '') + ' — provisional.');
+        if (S.sur && S.sur.ok && S.sur.brk) add('info', 'Survey gradient break at ' + _kfmt(p, S.sur.brk.md, S.sur.brk.tvd) + (S.sur.nearValve ? ' — valve ' + S.sur.nearValve.n + ' (' + p.u(S.sur.nearValve.dMd, 'length', 0, 'ft') + ' away)' : '') + '.');
+        if ((D && D.ok) || (a && a.ok)) add('info', 'Thornhill-Craver throughput and the Asheim numbers are provisional — not verified against a published example.');
+        h.innerHTML = out.join('');
+    }
+    function _renderEditor(p) {
+        var h = _byId('wpg_edit'); if (!h) return;
+        var ae = document.activeElement; if (ae && h.contains && h.contains(ae)) return;            // keep the cell being edited
+        var M = p.ST.M, inst = (M && M.lift && M.lift.gl && M.lift.gl.valves) || [], dl = p.lab('length', 'ft'), pl = p.lab('pressureG', 'psig');
+        if (!inst.length) { h.innerHTML = '<div class="wp-v info">No installed valves. <b>Use this design</b> after a design, or <b>Add a valve</b>.</div>'; return; }
+        h.innerHTML = '<div class="wp-tw"><table class="dtable wpg-ed"><thead><tr><th>#</th><th>MD (' + _esc(dl) + ')</th><th>TVD</th><th>Port</th><th>p<sub>tro</sub> (' + _esc(pl) + ')</th><th>Kind</th><th></th></tr></thead><tbody>' +
+            inst.map(function (v, i) {
+                return '<tr data-i="' + i + '"><td>' + (i + 1) + '</td><td><input type="number" step="any" inputmode="decimal" data-glv="md" data-i="' + i + '" aria-label="Valve ' + (i + 1) + ' MD" value="' + _esc(_fin(+v.md) ? Math.round(p.dv(+v.md, 'length')) : '') + '"></td>' +
+                    '<td class="ro">' + p.fmt(p.dv(p.tvdAt(+v.md), 'length'), 0) + '</td>' +
+                    '<td><select data-glv="port" data-i="' + i + '" aria-label="Valve ' + (i + 1) + ' port">' + PORTS.map(function (x) { return '<option value="' + x + '"' + (+v.port === x ? ' selected' : '') + '>' + PORT_TXT[x] + '</option>'; }).join('') + '</select></td>' +
+                    '<td><input type="number" step="any" inputmode="decimal" data-glv="ptro" data-i="' + i + '" aria-label="Valve ' + (i + 1) + ' test-rack opening pressure" value="' + _esc(_fin(+v.ptro) ? Math.round(p.dv(+v.ptro, 'pressureG')) : '') + '"></td>' +
+                    '<td><select data-glv="kind" data-i="' + i + '" aria-label="Valve ' + (i + 1) + ' kind">' + [['ipo', 'IPO valve'], ['orifice', 'Orifice'], ['dummy', 'Dummy']].map(function (o) { return '<option value="' + o[0] + '"' + ((v.kind || 'ipo') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></td>' +
+                    '<td><button type="button" class="btn btn-secondary wp-del" data-act="wpg_del" data-i="' + i + '" aria-label="Remove valve ' + (i + 1) + '" title="Remove valve">&#10005;</button></td></tr>';
+            }).join('') + '</tbody></table></div>';
+        if (!h._wpg) {
+            h._wpg = true;
+            h.addEventListener('change', function (e) {
+                var t = e.target; if (!t || !t.getAttribute || !t.getAttribute('data-glv')) return;
+                var p2 = P(); if (!p2) return;
+                var M2 = p2.ST.M, rows = ((M2 && M2.lift.gl.valves) || []).map(function (v) { return { md: v.md, port: v.port || 16, ptro: v.ptro, R: v.R, kind: v.kind || 'ipo' }; });
+                var i = +t.getAttribute('data-i'), k = t.getAttribute('data-glv'); if (!rows[i]) return;
+                var x = t.value;
+                if (k === 'md') { var d = _num(x); if (_fin(d) && d > 0) rows[i].md = p2.fromDisp(d, 'length'); }
+                else if (k === 'ptro') { var q = _num(x); rows[i].ptro = _fin(q) ? p2.fromDisp(q, 'pressureG') : null; }
+                else if (k === 'port') { rows[i].port = +x; rows[i].R = G.WTS_wp_gl.portR(+x); }
+                else if (k === 'kind') rows[i].kind = x;
+                _commitValves(rows);
+            });
+        }
+    }
+    function _renderTests(p) {
+        var sel = _byId('wpv_gld_test'), hint = _byId('wpg_testhint'); if (!sel) return;
+        var M = p.ST.M, ts = _tests(M), cur = _testSel(p, M);
+        sel.innerHTML = ts.length ? ts.map(function (x) { return '<option value="' + x.i + '"' + (cur && cur.i === x.i ? ' selected' : '') + '>' + _esc((x.t.id || ('T' + (x.i + 1))) + (x.t.date ? ' · ' + x.t.date : '') + ' — CHP ' + p.u(+x.t.chp_psig, 'pressureG', 0, 'psig')) + '</option>'; }).join('') : '<option value="">— no test with a CHP —</option>';
+        sel.disabled = !ts.length;
+        if (hint) hint.innerHTML = ts.length ? 'The casing pressure at every valve comes from the CHP (gas column over TVD), the tubing pressure from the THP marched down the hole with the metered lift gas.' :
+            'Add a test with its <b>CHP</b> and <b>lift gas</b> in step ⑥ (test table) to diagnose the operating valve.';
+    }
+    function _renderSurvey(p) {
+        var h = _byId('wpg_svres'); if (!h) return;
+        var s = S.sur, out = '';
+        if (S.surParse && S.surParse.warnings) S.surParse.warnings.forEach(function (w) { out += p.vHtml({ st: 'info', t: 'ℹ ' + w.msg }); });
+        if (s && !s.ok) out += p.vHtml({ st: 'warn', t: '⚠ ' + ((s.errors || [])[0] || 'The survey could not be matched.') });
+        else if (s && s.ok) {
+            var dl = p.lab('length', 'ft'), pl = p.lab('pressure', 'psia');
+            out += '<div class="rbox"><div class="rbox-title">Flowing gradient survey against the model</div>' +
+                '<div class="rrow"><span class="rl">Stops on the path</span><span class="rv">' + s.n + '</span></div>' +
+                '<div class="rrow"><span class="rl">RMS / bias / worst</span><span class="rv">' + _esc(p.fmt(p.dv(s.rms, 'pressure'), 1) + ' / ' + p.fmt(p.dv(s.bias, 'pressure'), 1) + ' / ' + p.fmt(p.dv(s.maxAbs, 'pressure'), 1) + ' ' + p.lab('pressure', 'psi')) + '</span></div>' +
+                (_fin(s.rmsT) ? '<div class="rrow"><span class="rl">Temperature RMS</span><span class="rv">' + _esc(p.tempDiff(s.rmsT)) + '</span></div>' : '') +
+                (s.brk ? '<div class="rrow"><span class="rl">Gradient break (injection)</span><span class="rv">' + _esc(_kfmt(p, s.brk.md, s.brk.tvd)) + '</span></div>' +
+                    '<div class="rrow"><span class="rl">Gradient above / below</span><span class="rv">' + _esc(p.fmt(p.dv(s.brk.gUp, 'pressureGradient'), 3) + ' / ' + p.fmt(p.dv(s.brk.gDown, 'pressureGradient'), 3) + ' ' + p.lab('pressureGradient', 'psi/ft')) + '</span></div>' : '') +
+                (s.nearValve ? '<div class="rrow"><span class="rl">Nearest valve</span><span class="rv">' + _esc('V' + s.nearValve.n + ' at ' + _kfmt(p, s.nearValve.md, s.nearValve.tvd)) + '</span></div>' : '') +
+                (p.ST.R && p.ST.R.lift && _fin(p.ST.R.lift.injMd) ? '<div class="rrow"><span class="rl">Model injection point</span><span class="rv">' + _esc(_kfmt(p, p.ST.R.lift.injMd, p.ST.R.lift.injTvd)) + '</span></div>' : '') +
+                p.vHtml({ st: s.verdict, t: (s.verdict === 'ok' ? '✓ The model follows the survey (RMS ≤ 25 psi).' : s.verdict === 'warn' ? '⚠ The model is off the survey by ' + p.fmt(s.rms, 0) + ' psi RMS: check the rates, the lift gas or tune the correlation (step ⑥).' : '✗ The model is far from the survey: check the depth axis, the pressure basis and the test.') }) + '</div>';
+            void dl; void pl;
+        }
+        h.innerHTML = out;
+    }
+
+    // ── the valve chart ──────────────────────────────────────────────────────
+    function _drawChart(p) {
+        var cv = _byId('wp_cv_glv'), V = G.WTS_wp_view; if (!cv || !V) return;
+        var T = V.theme(), dax = _depthAx(p), view = _view(p), vs = _vset(p), ser = [], mk = [], hl = [], handles = [];
+        var D = S.des && S.des.ok ? S.des : null, dg = S.diag && S.diag.ok ? S.diag : null, R = p.ST.R;
+        var Y = function (md, tvd) { return p.dv(dax === 'md' ? md : (_fin(tvd) ? tvd : p.tvdAt(md)), 'length'); };
+        var Xg = function (psig) { return p.dv(psig, 'pressureG'); }, Xa = function (psia) { return p.dv(psia - PATM, 'pressureG'); };
+        var line = function (key, label, arr, col, w, dash, toX) { var pts = (arr || []).filter(function (c) { return c && _fin(c.p) && _fin(c.d); }).map(function (c) { return [toX(c.p), Y(c.d, c.tvd)]; }); if (pts.length > 1) ser.push({ key: key, label: label, color: col, width: w, dash: dash, pts: pts }); };
+        if (view === 'design' && D) {
+            var c = D.gl.curves;
+            line('pko', 'Casing at kickoff', c.pko, T.purple, 1.6, [6, 4], Xg);
+            line('pso', 'Casing at injection', c.pso, T.purple, 2.2, null, Xg);
+            line('ptd', 'Design tubing line', c.ptd, T.yellow, 1.8, [4, 4], Xg);
+            // the unloading kill-fluid lines (null-separated legs)
+            var legs = [], cur = [];
+            (c.load || []).forEach(function (q) { if (!q) { if (cur.length) legs.push(cur); cur = []; } else cur.push(q); }); if (cur.length) legs.push(cur);
+            legs.forEach(function (lg, i) { var pts = lg.map(function (q) { return [Xg(q.p), Y(q.d, q.tvd)]; }); ser.push({ key: 'ld' + i, label: i ? '' : 'Unloading (kill fluid)', legend: i === 0, color: T.blue, width: 1.3, pts: pts }); });
+            line('ab', 'Tubing, with lift gas', c.above, T.accent, 2.4, null, Xg);
+            line('bl', 'Tubing, formation gas', c.below, T.red, 1.8, [3, 3], Xg);
+            if (_fin(D.gl.poiValve)) hl.push({ y: Y(D.gl.poiValve, D.gl.poiValveTvd), label: 'point of injection', color: T.accent, dash: [2, 3] });
+        } else if (view === 'diag' && dg) {
+            ser.push({ key: 'cas', label: 'Casing from the CHP', color: T.purple, width: 2.2, pts: dg.casing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
+            ser.push({ key: 'tub', label: 'Tubing from the THP', color: T.accent, width: 2.4, pts: dg.tubing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
+            dg.valves.forEach(function (v) { if (_fin(v.pvo)) mk.push({ x: Xa(v.pvo), y: Y(v.md, v.tvd), kind: 'hollow', color: v.passing ? T.green : T.text2, r: 4.5 }); });
+        } else if (R && R.ok && R.lift) {
+            // no design and no diagnosis yet: the operating traverse and the casing column of the solve
+            var prof = (R.traverse && R.traverse.profile) || [];
+            ser.push({ key: 'tr', label: 'Tubing (operating point)', color: T.accent, width: 2.2, pts: prof.filter(function (r) { return _fin(r.p) && !r.restr; }).map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
+            ser.push({ key: 'cs', label: 'Casing (lift gas)', color: T.purple, width: 2, dash: [8, 4], pts: (R.lift.casing || []).map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
+        }
+        // the survey stops and their break
+        if (S.sur && S.sur.ok) {
+            ser.push({ key: 'sv', label: 'Gradient survey', kind: 'points', color: T.green, r: 4.5, pts: S.sur.rows.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
+            if (S.sur.brk) hl.push({ y: Y(S.sur.brk.md, S.sur.brk.tvd), label: 'survey break', color: T.green, dash: [5, 3] });
+        }
+        var pk = R && R.ok && R.lift && _fin(R.lift.packerMd) ? R.lift.packerMd : null;
+        if (_fin(pk)) hl.push({ y: Y(pk), label: 'packer', color: T.text2, dash: [4, 4] });
+        // a knob per valve at its opening (or tubing) pressure: vertical drag = a new depth
+        var xs = []; ser.forEach(function (s) { (s.pts || []).forEach(function (q) { if (_fin(q[0])) xs.push(q[0]); }); });
+        var xMax = xs.length ? Math.max.apply(null, xs) : 1500, yMaxMd = (p.ST.W && p.ST.W.nodes && _fin(p.ST.W.nodes.midPerfMd)) ? p.ST.W.nodes.midPerfMd : 10000;
+        vs.rows.forEach(function (v, i) {
+            var st = _state(v), col = T[STATE_COL[st]] || T.blue, dgv = dg ? dg.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] : null;
+            var xv = dgv && _fin(dgv.pc) ? Xa(dgv.pc) : (_fin(v.pvo) ? Xg(v.pvo) : (_fin(v.ptro) ? Xg(v.ptro) : xMax * 0.9));
+            handles.push({ key: 'glv' + i, kind: 'point', x: xv, value: Y(v.md, v.tvd), min: 0, max: Y(Math.max(0, (pk || yMaxMd) - 10)), step: p.metric() ? 3 : 10, label: 'V' + (i + 1), color: col,
+                fmt: function (vv) { var md = _mdOf(p, vv, dax); return p.phone() ? p.fmt(p.dv(md, 'length'), 0) : p.fmt(p.dv(md, 'length'), 0) + ' MD'; } });
+        });
+        var empty = !_on(p.ST.M) ? 'Choose gas lift to design the valves.' : (view === 'diag' ? 'Choose a test with a CHP (step ⑥) and valves to see the diagnosis.' : 'Design the valves in step ④ to see the design chart.');
+        V.chart(cv, { key: 'glv:' + view + ':' + dax + (p.metric() ? 'm' : 'i'), aspect: p.phone() ? 1.3 : 0.7, minH: 300, maxH: 560, w: 640, readout: 'y',
+            x: { label: 'Pressure (' + p.lab('pressureG', 'psig') + ')', min: 0, short: 'p', fmtR: function (v) { return p.fmt(v, 0) + ' ' + p.lab('pressureG', 'psig'); } },
+            y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + p.lab('length', 'ft') + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { var md = _mdOf(p, v, dax), tvd = dax === 'md' ? p.tvdAt(md) : p.fromDisp(v, 'length'); return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(tvd, 'length'), 0) + ' TVD'; } },
+            series: ser, markers: mk, hlines: hl, handles: handles, onHandle: _onHandle, empty: (ser.length || handles.length) ? null : empty,
+            hidden: p.plots().glvHidden || null, onLegend: function (hid) { p.plotsSet({ glvHidden: hid }); } });
+    }
+    function _mdOf(p, vDisp, dax) {
+        var v = p.fromDisp(vDisp, 'length');
+        if (dax === 'md') return v;
+        var W = p.ST.W, md = W && W.ok && typeof W.mdAt === 'function' ? W.mdAt(v) : null;
+        return _fin(md) ? md : v;
+    }
+    // a valve moved to MD md (chart knob, schematic drag, arrow keys): live preview; phase 'end' commits
+    function _move(i, md, phase) {
+        var p = P(), L = _L(); if (!p || !L) return;
+        var vs = _vset(p); if (!vs.rows[i]) return;
+        var W = p.ST.W, lim = W && W.nodes ? Math.min(_fin(p.ST.R && p.ST.R.lift && p.ST.R.lift.packerMd) ? p.ST.R.lift.packerMd : Infinity, _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd : Infinity, W.nodes.midPerfMd || Infinity) : Infinity;
+        md = Math.max(50, Math.min(_fin(lim) ? lim - 10 : md, Math.round(md / 5) * 5));
+        if (vs.src === 'design') {
+            var base = S.desRows[i], row = L.setValve({ ok: true, valves: S.desRows, gl: S.des.gl, inputs: S.des.inputs, _tAt: S.des._tAt, _tvdAt: S.des._tvdAt }, i, md);
+            if (!row) return;
+            if (phase === 'end') { S.desRows[i] = row; S.desRows.sort(function (a, b) { return a.md - b.md; }); S.desRows.forEach(function (r, k) { r.n = k + 1; }); S.desEdited = true; S.drag = null; S.diagKey = null; S.ashR = null; S.surR = null; void base; _rerender(p); return; }
+            S.drag = { src: 'design', i: i, md: md, row: row };
+        } else {
+            if (phase === 'end') {
+                var M = p.ST.M, rows = M.lift.gl.valves.map(function (v) { return { md: v.md, port: v.port || 16, ptro: v.ptro, R: v.R, kind: v.kind || 'ipo' }; });
+                rows[i].md = md; S.drag = null; _commitValves(rows); return;           // the model write re-solves and re-renders
+            }
+            S.drag = { src: 'installed', i: i, md: md };
+        }
+        var rd = _byId('wpg_read'); if (rd) rd.textContent = 'Valve ' + (i + 1) + ' → ' + _kfmt(p, md) + (S.drag && S.drag.row && S.drag.row.tc ? ' · p_vo ' + p.u(S.drag.row.pvo, 'pressureG', 0, 'psig') + ' · capacity ' + p.u(S.drag.row.tc.q, 'gasRateSmall', 0, 'Mscf/d') : '');
+        _drawChart(p); _renderTable(p);
+        if (typeof p.renderSchematic === 'function') p.renderSchematic();
+    }
+    function _rerender(p) { render(false); if (typeof p.renderSchematic === 'function') p.renderSchematic(); _trRefresh(p); }
+    function _onHandle(key, v, phase) {
+        var m = /^glv(\d+)$/.exec(key || ''); if (!m) return false;
+        var p = P(); if (!p) return true;
+        _move(+m[1], _mdOf(p, v, _depthAx(p)), phase);
+        return true;
+    }
+
+    // ── the schematic: mandrels, drag along the hole, arrow keys ────────────────────────────
+    function marks() {
+        var p = P(); if (!p || !_on(p.ST.M)) return null;
+        var vs = _vset(p);
+        return vs.rows.map(function (v, i) {
+            var st = _state(v);
+            return { md: v.md, kind: 'mandrel', state: st, comp: 'mandrel:' + i, label: 'V' + (i + 1) + (st === 'operating' ? ' operating' : '') + (p.phone() ? '' : ' · ' + p.fmt(p.dv(v.md, 'length'), 0) + ' ' + p.lab('length', 'ft')) };
+        });
+    }
+    function _bindSchematic() {
+        var sw = _byId('wp_schw'); if (!sw || sw._wpg25 || !sw.addEventListener) return;
+        sw._wpg25 = true;
+        var mdAtPtr = function (e) {
+            var p = P(), host = _byId('wp_sch'), svg = host && host.querySelector('svg'); if (!p || !svg || !svg.getBoundingClientRect || !p.ST.schPts) return null;
+            var r = svg.getBoundingClientRect(); if (!(r.width > 0)) return null;
+            var vx = (e.clientX - r.left) * p.ST.schW / r.width, vy = (e.clientY - r.top) * p.ST.schH / r.height, best = null, bd = 1e9;
+            p.ST.schPts.forEach(function (q) { var d = Math.hypot(q.x - vx, q.y - vy); if (d < bd) { bd = d; best = q; } });
+            return best ? best.md : null;
+        };
+        sw.addEventListener('pointerdown', function (e) {
+            var t = e.target, g = t && t.closest ? t.closest('[data-comp^="mandrel:"]') : null; if (!g) return;
+            S.sdrag = { i: +g.getAttribute('data-comp').split(':')[1], moved: false, id: e.pointerId };
+            if (sw.setPointerCapture) { try { sw.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ } }
+            if (e.preventDefault) e.preventDefault();
+        });
+        sw.addEventListener('pointermove', function (e) {
+            if (!S.sdrag) return;
+            var md = mdAtPtr(e); if (!_fin(md)) return;
+            S.sdrag.moved = true; S.sdrag.md = md; _move(S.sdrag.i, md, 'move');
+        });
+        var end = function () { if (!S.sdrag) return; var d = S.sdrag; S.sdrag = null; if (d.moved && _fin(d.md)) { S.noClick = true; _move(d.i, d.md, 'end'); } };
+        sw.addEventListener('pointerup', end); sw.addEventListener('pointercancel', end);
+        sw.addEventListener('click', function (e) { if (S.noClick) { S.noClick = false; if (e.stopPropagation) e.stopPropagation(); if (e.preventDefault) e.preventDefault(); } }, true);
+        sw.addEventListener('keydown', function (e) {
+            var t = e.target, c = t && t.getAttribute ? t.getAttribute('data-comp') : null, m = /^mandrel:(\d+)$/.exec(c || '');
+            if (!m || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+            var p = P(); if (!p) return;
+            var v = _vset(p).rows[+m[1]]; if (!v) return;
+            if (e.preventDefault) e.preventDefault(); if (e.stopPropagation) e.stopPropagation();
+            _move(+m[1], v.md + (e.key === 'ArrowDown' ? 1 : -1) * (e.shiftKey ? 10 : 50), 'end');
+            var host = _byId('wp_sch'), el = host && host.querySelector('[data-comp="mandrel:' + m[1] + '"]'); if (el && el.focus) el.focus();
+        }, true);
+    }
+
+    // ── the traverse plot: valve lines and the survey ──────────────────────────────────────
+    function trPlot(o) {
+        var p = P(); if (!p || !o || !_on(p.ST.M)) return null;
+        var T = o.T, dax = o.dax, Y = function (md, tvd) { return p.dv(dax === 'md' ? md : (_fin(tvd) ? tvd : p.tvdAt(md)), 'length'); };
+        _vset(p).rows.forEach(function (v, i) {
+            var st = _state(v);
+            o.hlines.push({ _wpg: true, y: Y(v.md, v.tvd), label: st === 'operating' ? 'V' + (i + 1) + ' operating' : '', color: T[STATE_COL[st]] || T.blue, dash: st === 'operating' ? [6, 3] : [2, 5] });
+        });
+        if (S.surRows && S.surR !== p.ST.R) { var L = _L(); if (L) { S.sur = L.matchSurvey(p.ST.M, p.ST.R, S.surRows, { W: p.ST.W, valves: _vset(p).rows }); S.surR = p.ST.R; } }
+        if (S.sur && S.sur.ok) o.series.push({ key: 'gls', label: 'Gradient survey', kind: 'points', color: T.green, r: 4.5, pts: S.sur.rows.map(function (r) { return [p.dv(r.p, 'pressure'), Y(r.md, r.tvd)]; }) });
+        return true;
+    }
+
+    // the traverse card keeps its spec: after a design, a drag or a survey the valve lines and survey points are put in again and redrawn
+    function _trRefresh(p) {
+        var cv = _byId('wp_cv_tr'), V = G.WTS_wp_view, sp = cv && cv._wp && cv._wp.spec; if (!sp || !V || !/^trav:/.test(sp.key || '')) return;
+        sp.series = (sp.series || []).filter(function (s) { return s.key !== 'gls'; }); sp.hlines = (sp.hlines || []).filter(function (h) { return !h._wpg; });
+        trPlot({ series: sp.series, hlines: sp.hlines, dax: /^trav:md/.test(sp.key) ? 'md' : 'tvd', T: V.theme() });
+        V.redraw(cv);
+    }
+
+    // ── actions ──────────────────────────────────────────────────────────────
+    function act(a, btn) {
+        if (!/^wpg_/.test(a || '')) return false;
+        var p = P(), L = _L(); if (!p) return true;
+        var M = p.ST.M, R = p.ST.R;
+        if (a === 'wpg_view') { p.plotsSet({ glvView: btn.getAttribute('data-v') }); _drawChart(p); _syncButtons(p); return true; }
+        if (a === 'wpg_depth') { p.plotsSet({ glvDepth: btn.getAttribute('data-v') }); _drawChart(p); _syncButtons(p); return true; }
+        if (!L) { var m0 = _byId('wpg_msg'); if (m0) m0.innerHTML = p.vHtml({ st: 'warn', t: '⚠ The gas-lift design engine is not available.' }); return true; }
+        if (a === 'wpg_design') {
+            S.msg = null;
+            p.drive(L.design(M, R), function (r) {
+                S.des = r; S.desKey = _mkey(M); S.desEdited = false; S.desRows = r && r.ok ? r.valves.map(function (v) { var c = {}; Object.keys(v).forEach(function (k) { c[k] = v[k]; }); return c; }) : null;
+                if (r && !r.ok) S.msg = { st: 'warn', t: (r.errors || [])[0] || 'The design failed.' };
+                S.diagKey = null; S.ashR = null; S.surR = null;
+                if (r && r.ok) p.plotsSet({ glvView: 'design' });
+                _rerender(p);
+            }, 'Gas-lift design', 'wpg_msg');
+            return true;
+        }
+        if (a === 'wpg_use') {
+            if (!(S.desRows && S.desRows.length)) return true;
+            S.msg = { st: 'ok', t: S.desRows.length + ' valves written to this well (installed).' };
+            _commitValves(S.desRows.map(function (v) { return { md: v.md, port: v.port, ptro: v.ptro, R: v.R, kind: 'ipo' }; }));
+            return true;
+        }
+        if (a === 'wpg_port') {
+            if (S.des && S.des.portRec) { p.setCtrl('wp_gld_port', String(S.des.portRec)); p.commit('wp_gld_port'); S.msg = { st: 'info', t: 'Port ' + PORT_TXT[S.des.portRec] + ' in set — design again.' }; }
+            return true;
+        }
+        var inst = (M && M.lift.gl.valves) ? M.lift.gl.valves.map(function (v) { return { md: v.md, port: v.port || 16, ptro: v.ptro, R: v.R, kind: v.kind || 'ipo' }; }) : [];
+        if (a === 'wpg_add') {
+            var last = inst.length ? inst[inst.length - 1].md : 1500, W = p.ST.W, lim = W && W.nodes && _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd - 30 : last + 1000;
+            inst.push({ md: Math.min(lim, last + (inst.length ? 600 : 0)), port: 16, ptro: null, R: L.portR(16), kind: 'ipo' });
+            _commitValves(inst); return true;
+        }
+        if (a === 'wpg_del') { var i = +btn.getAttribute('data-i'); inst.splice(i, 1); _commitValves(inst); return true; }
+        if (a === 'wpg_clear') { _commitValves([]); S.msg = { st: 'info', t: 'The installed valves were removed (the design stays on the page).' }; return true; }
+        if (a === 'wpg_survey') { _survey(p); return true; }
+        if (a === 'wpg_svclear') { var ta = _byId('wpv_gls_text'); if (ta) ta.value = ''; S.surRows = null; S.sur = null; S.surParse = null; S.surR = null; _rerender(p); return true; }
+        return true;
+    }
+    function _survey(p) {
+        var L = _L(), ta = _byId('wpv_gls_text'); if (!L || !ta) return;
+        var pr = L.parseSurvey(ta.value, { axis: (_byId('wpv_gls_axis') || {}).value, unit: (_byId('wpv_gls_unit') || {}).value });
+        S.surParse = pr;
+        if (!pr.ok) { S.surRows = null; S.sur = { ok: false, errors: pr.errors }; _renderSurvey(p); return; }
+        // the survey is entered in field units unless its header says m / bar / kPa; Metric display: the page converts
+        S.surRows = pr.rows; S.surR = null; S.sur = null;
+        _update(p, false); _rerender(p);
+    }
+    function change(el) {
+        if (!el || !/^wpv_gl[ds]_/.test(el.id || '')) return false;
+        var p = P(); if (!p) return true;
+        if (el.id === 'wpv_gld_test') { p.plotsSet({ glTest: el.value === '' ? null : +el.value }); S.diagKey = null; _rerender(p); return true; }
+        if ((el.id === 'wpv_gls_axis' || el.id === 'wpv_gls_unit') && S.surRows) { _survey(p); return true; }
+        return true;
+    }
+    function comp(c) {
+        var m = /^mandrel:(\d+)$/.exec(c || ''); if (!m) return null;
+        var tr = document.querySelector('#wpg_edit tr[data-i="' + m[1] + '"]'), card = _byId('wpg_dcard');
+        if (tr) { if (tr.classList) { tr.classList.remove('wp-flash'); tr.classList.add('wp-flash'); } var inp = tr.querySelector('input'); if (inp && inp.focus) inp.focus(); }
+        else if (card && card.scrollIntoView) { try { card.scrollIntoView({ block: 'start' }); } catch (e) { /* ignore */ } }
+        return true;
+    }
+
+    // ── report / CSV / notes ─────────────────────────────────────────────────
+    function csv() {
+        var p = P(); if (!p || !_on(p.ST.M)) return null;
+        var vs = _vset(p); if (!vs.rows.length && !S.sur) return null;
+        var L = ['Gas-lift valves (' + vs.src + '),MD ft,TVD ft,port /64 in,ptro psig,state'];
+        vs.rows.forEach(function (v, i) { L.push('V' + (i + 1) + ',' + Math.round(v.md) + ',' + Math.round(_fin(v.tvd) ? v.tvd : p.tvdAt(v.md)) + ',' + v.port + ',' + (_fin(v.ptro) ? Math.round(v.ptro) : '') + ',' + _state(v)); });
+        if (S.diag && S.diag.ok) { L.push(''); L.push('Diagnosis,MD ft,pc psia,pt psia,pvo psia,gas Mscf/d,status'); S.diag.valves.forEach(function (v) { L.push('V' + v.n + ',' + Math.round(v.md) + ',' + (_fin(v.pc) ? v.pc.toFixed(1) : '') + ',' + (_fin(v.pt) ? v.pt.toFixed(1) : '') + ',' + (_fin(v.pvo) ? v.pvo.toFixed(1) : '') + ',' + (_fin(v.q) ? v.q.toFixed(0) : '') + ',"' + v.status + '"'); }); }
+        if (S.sur && S.sur.ok) { L.push(''); L.push('Gradient survey,MD ft,TVD ft,p psia,model psia,difference psi'); S.sur.rows.forEach(function (r) { L.push(',' + Math.round(r.md) + ',' + Math.round(r.tvd) + ',' + r.p.toFixed(1) + ',' + r.pModel.toFixed(1) + ',' + r.dp.toFixed(1)); }); }
+        return L;
+    }
+    function notes() {
+        var p = P(); if (!p || !_on(p.ST.M)) return null;
+        return ['Gas-lift design: unloading valves spaced with API RP 11V6 on the deviated path (gas column and kill-fluid gradient on TVD, spacing on MD) with the model\'s inflow, well correlation and flowing temperatures; Thornhill-Craver valve throughput with the critical-ratio cap and the Asheim (1988) stability numbers are provisional — not verified against a published example.'];
+    }
+    function reset() { S.des = null; S.desKey = null; S.desRows = null; S.desEdited = false; S.diag = null; S.diagKey = null; S.ash = null; S.ashR = null; S.sur = null; S.surR = null; S.surRows = null; S.surParse = null; S.drag = null; S.sdrag = null; S.msg = null; }
+    function resize() { var cv = _byId('wp_cv_glv'); if (cv && G.WTS_wp_view) G.WTS_wp_view.redraw(cv); }
+    function renderHook(live) { _bindSchematic(); render(live); }
+
+    G.WTS_wellperf_ext = G.WTS_wellperf_ext || {};
+    G.WTS_wellperf_ext.gldesign = { resHtml: resHtml, stepHtml: stepHtml, render: renderHook, act: act, change: change, marks: marks, trPlot: trPlot, handle: function (k, v, ph) { return _onHandle(k, v, ph) === true; },
+        comp: comp, csv: csv, notes: notes, reset: reset, resize: resize, state: function () { return S; }, move: function (i, md, phase) { _move(i, md, phase || 'end'); } };
+})();
+
+// ─── END 49-calc-wp-glui ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 49-calc-wp-inj ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
@@ -49465,7 +50572,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 // (review fix: the grid alone left the optimum as coarse as the list; GL_OPT_AT_START says when the grid optimum was the first
 // non-zero rate); economic = the point where the incremental OIL slope dq_o/dq_inj falls to 1000 / incGor (STB/d per Mscf/d;
 // incGor = M.lift.gl.incGor scf/STB, the user's incremental gas-oil ratio limit; 0 or blank = the optimum; q_L when a point has no
-// q_o). A point whose root is statically unstable is flagged (the Asheim heading check is B). The quick look adds the rate gain over
+// q_o). A point whose root is statically unstable is flagged (the Asheim numbers are in 49-calc-wp-gldesign.js, B). The quick look adds the rate gain over
 // natural flow and the lift gas for 90 % of the maximum gain (interpolated from (0, 0) when the well does not flow naturally).
 //
 // Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}]}; nothing throws for user data):
@@ -49610,7 +50717,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 gain: sm.gain, gas90: sm.gas90, stable: sm.stable, incGor: _fin(incGor) ? incGor : 0, evals: pts.reduce(function (a, p) { return a + (p.evals || 0); }, 0), warnings: warnings.slice(), errors: [] };
             if (!res.ok) { res.code = 'NO_FLOW'; res.errors.push('No injection rate gives an operating point: check the injection pressure, the packer depth and the surface boundary.'); }
             if (nat && !nat.ok) res.warnings.push(_w('GL_DEAD_WELL', 'The well does not flow naturally at these settings: every rate on the curve is lifted.', 'info'));
-            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; the Asheim check comes in a later release).'));
+            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; see the Asheim stability numbers of the gas-lift design card).'));
             var noInj = pts.filter(function (p) { return !p.ok && /injection/i.test(String(p.error || '') + String(p.code || '')); });
             if (noInj.length) res.warnings.push(_w('GL_NO_INJECTION', 'At some rates the casing pressure cannot open a point above the packer: raise the injection pressure or lower the valve ΔP.'));
             if (sm.optimum && sm.optimum.qinj === list[list.length - 1] && list.length > 2) res.warnings.push(_w('GL_OPT_AT_END', 'The maximum rate is at the largest injection rate of the list: extend the list to find the optimum.', 'info'));
@@ -50496,7 +51603,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //                       corrSections (v4.5 WP21: per-section correlations → M.system.corr.sections)
 //                       (B, WP22: geo.layers [[topMd, botMd, U, ke|null]] — heat-transfer layers by depth → M.well.heat.layers [{topMd,
 //                       botMd, U, ke}], present only when the record has layers)
-//                       layers (B, WP24: multilayer rows → M.res.layers)}; read() also copies the perforations to M.res.perf
+//                       layers (B, WP24: multilayer rows → M.res.layers),
+//                       glValves (B, WP25: installed gas-lift valves [{md ft, port /64 in, ptro psig, R, kind 'ipo'|'orifice'|'dummy'}], ≤ 20,
+//                       sorted by MD → M.lift.gl.valves)}; read() also copies the perforations to M.res.perf
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -50521,7 +51630,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers'];   // corrSections: v4.5 WP21; layers: B (WP24)
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25)
     var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
@@ -50575,7 +51684,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                     heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04, Ubasis: 'to', dwb_in: null } },
             surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'bound', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
-            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
+            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0,
+                    // B (WP25): the unloading design settings (blank = the engine defaults) and the installed valves (table glValves)
+                    design: { pko_psig: null, gs: null, ftub: null, minsp: null, dpdrop: null, port64: null, R: null, qL: null, dmaxMd: null }, valves: [] }, esp: null },
             system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb', sections: [] },
                       mult: { hl: 1, f: 1 }, eroC: 100, stepFt: 100, stepFtLine: 50, refine: true },
             tests: [],
@@ -50633,6 +51744,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // A2 (WP18): the operating lift-gas rate (Mscf/d; blank or 0 = natural flow) and the incremental gas-oil ratio limit of the
         // economic point (scf/STB; 0 = the optimum)
         wp_gl_qinj: { path: 'lift.gl.qinj_Mscfd', kind: 'num' }, wp_gl_incgor: { path: 'lift.gl.incGor', kind: 'num' },
+        // B (WP25): gas-lift unloading design (kickoff psig, kill-fluid gradient psi/ft, design tubing effect %, minimum spacing ft MD, surface
+        // pressure drop per valve psi, port /64 in, R, design liquid rate STB/d, deepest mandrel ft MD)
+        wp_gld_pko: { path: 'lift.gl.design.pko_psig', kind: 'num' }, wp_gld_gs: { path: 'lift.gl.design.gs', kind: 'num' },
+        wp_gld_ftub: { path: 'lift.gl.design.ftub', kind: 'num' }, wp_gld_minsp: { path: 'lift.gl.design.minsp', kind: 'num' },
+        wp_gld_dpdrop: { path: 'lift.gl.design.dpdrop', kind: 'num' }, wp_gld_port: { path: 'lift.gl.design.port64', kind: 'num' },
+        wp_gld_R: { path: 'lift.gl.design.R', kind: 'num' }, wp_gld_qL: { path: 'lift.gl.design.qL', kind: 'num' }, wp_gld_dmax: { path: 'lift.gl.design.dmaxMd', kind: 'num' },
         wp_thp: { path: 'system.thp_psig', kind: 'num' },
         wp_node: { path: 'system.node', kind: 'str', enumv: ['bottom', 'wellhead', 'separator'] },
         wp_mode: { path: 'system.mode', kind: 'str', enumv: ['rate', 'pressure', 'max', 'design'] },
@@ -50686,7 +51803,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // ── table record: empty / migrate / validate / decimate ───────────────────
     function empty() {
         return { v: VERSION, survey: [], strings: [], restrictions: [], geo: { points: [] }, flowline: [],
-                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [], layers: [] };
+                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [], layers: [], glValves: [] };
     }
     function migrate(rec) {
         if (!_isObj(rec)) return { ok: false, code: 'BAD_RECORD', notes: ['the stored model is not an object'] };
@@ -50768,6 +51885,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             ['topMd', 'botMd', 'tvdTop', 'tvdBot', 'pr', 'J', 'pb', 'k', 'h', 'S', 'a', 'b'].forEach(function (k) { o[k] = _num(x[k]); });
             return o;
         }).filter(function (x) { return _fin(x.topMd) && _fin(x.botMd) && x.botMd > x.topMd; });
+        // B (WP25): installed gas-lift valves {md ft, port /64 in, ptro psig (test-rack opening), R (port / bellows), kind}
+        out.glValves = (Array.isArray(r.glValves) ? r.glValves : []).filter(_isObj).map(function (x) {
+            var o = { md: _num(x.md), port: _num(x.port), ptro: _num(x.ptro), R: _num(x.R), kind: ['ipo', 'orifice', 'dummy'].indexOf(x.kind) !== -1 ? x.kind : 'ipo' };
+            if (!(o.port > 0 && o.port <= 64)) o.port = null; if (!(o.R > 0 && o.R < 0.5)) o.R = null; if (!(o.ptro > 0)) o.ptro = null;
+            return o;
+        }).filter(function (x) { return _fin(x.md) && x.md > 0; }).sort(function (a, b) { return a.md - b.md; }).slice(0, 20);
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
@@ -50866,6 +51989,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
             M.system.corr.sections = rec.corrSections || [];
             M.res.layers = rec.layers || [];
+            M.lift.gl.valves = rec.glValves || [];   // B (WP25)
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);
