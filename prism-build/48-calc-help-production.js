@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: 'fe50c090', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '627050c6', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -173,7 +173,7 @@ var wellperf = {
   '④ **Lift**: natural flow in this release.',
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
   'Drag a handle (p̄r, THP, bean, WC) on the system plot: the well re-solves. A slow case shows **Solve now**.',
-  { t: 'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.', shot: 'load' },
+  'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.',
   '⑥ **Match**: tests, then **Compare and QC**. ⑦ **Report**: notes, **Export CSV bundle**.'],
   inputs: [W('Fluid type', 'ftype', 'Oil'), W('Oil / condensate gravity', 'api', '35'), W('Gas specific gravity', 'sgg', '0.65'), W('Producing GOR', 'gor', '{{500|gor}}'),
   W('Water cut', 'wc', '0 %'), W('Inflow model', 'ipr', 'PI'), W('Average reservoir pressure p̄r', 'pr', null, 'Absolute; never defaulted.'),
@@ -184,7 +184,7 @@ var wellperf = {
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|muod|muo|muou|z|mug)$', why: 'fluid and inflow details' },
-  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Liquid loading, Sensitivity, Bean schedule.')],
@@ -212,9 +212,8 @@ var wellperf = {
   tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT is an upper bound for the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
   refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading')],
   related: ['oilipr', 'gasdeliv', 'gaslift', 'prism', 'flowline'],
-  // two shots: the 8 MB image cap (help plan D15) leaves no room for the schematic and KPI strip shots (10.2 kB and 11.9 kB measured)
-  shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil'),
-  ws('load', '#wp_cv_tr', 'Gas example: gas and critical velocity against MD; the wide bore below the tubing loads', 'gas', [{ click: '#wp_trtabs [data-tab=loading]' }, { click: '#wp_depthseg [data-depth=md]' }])]
+  // one shot: the 8 MB image cap (help plan D15); not shot: loading traverse ws('load', '#wp_cv_tr', …, 'gas'), schematic, KPI strip
+  shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil')]
 };
 
 var gasdeliv = {

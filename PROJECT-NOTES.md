@@ -5,6 +5,47 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-11 — v4.3 release: Well Performance (nodal analysis), increment A1 of docs/WELL-PERFORMANCE-PLAN.md
+
+App and App Store version 4.3 (`RELEASE_NOTES[0]`, dated 2026-11-11, both platforms (Q18), title "Well Performance: nodal
+analysis"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`; help/user-guide.html stamp from
+RELEASE_NOTES[0].date). Owner decision "go and continue all": every open question Q1–Q20 takes the plan's recommended default;
+Q9 (textbooks) not provided, so every correlation without a verified published example ships `verified:false` with the label
+"provisional — not verified against a published example" (D17 gate, `wellperf-validate.js --gate`) and is never a default.
+Owner GUI requirement (2026-11-11): deviation first-class, interactive SVG well schematic coloured by a property, interactive
+canvas plots with drag handles, KPI strip, polished responsive look.
+
+- **Built on `wp/a1`** from master a3e87c3 (v4.2): WP0 / WP0b (contracts, `WTS_wp_model`, stubs, the Well Performance hub `perf`
+  with members wellperf / oilipr / gasdeliv / gaslift — Production & Reservoir 7 → 5 rows; flowline marcher options
+  `WTS_flowline_corr` registry, `corr` key, `mult`, `stepFt`, `grid`, `eroC`, `detail`, `fluid.pvt`, segment `area` / `restr`, all
+  bit-for-bit identical to v4.2 by default — wellperf-identity FI1–FI9), WP1 fluid (`WTS_wp_fluid`), WP2 inflow (`WTS_wp_ipr`), WP3
+  lift (`WTS_wp_vlp`), WP4 well / deviation / temperature (`WTS_wp_well`), WP5 system solver + loading + checks + shut-in + design
+  Jobs (`WTS_wp_system`, `WTS_wp_check`), WP11 `prism-build/wellperf-validate.js`, WP9 page (route `wellperf`, `WTS_wp_view`), WP6
+  sensitivity (`WTS_wp_sens`), WP7 comparison / IPR from a test / QC (`WTS_wp_match`, `WTS_wp_qc`), WP10 help (guide `wellperf`, tasks
+  `beansize` and `loading`, hub notes in the oilipr / gasdeliv / gaslift guides). WPI merged WP6, WP7, WP10 (--no-ff); generated files
+  (combined-round9.js, the HTML, www) regenerated, never hand-merged; plan records §18.1.3 WP6, §18.1.4 WP7, §18.1.5 WP10.
+- **Verified / provisional.** Verified: Beggs & Brill (Brill & Mukherjee Ex. 4.7; the default lift correlation for every fluid in
+  A1), PI, Vogel, composite, Fetkovich, back-pressure C and n, LIT in p² (pinned through the existing calculators), minimum curvature.
+  Provisional: Hagedorn & Brown, Gray, no-slip, single-phase, average T-Z gas (lift); Jones-Blount-Glaze, Darcy oil, Darcy gas with D,
+  LIT in m(p) (inflow); Turner, Coleman, Li (critical rate); the nodal operating-point benchmark. The preferred defaults of D5
+  (Hagedorn & Brown for oil, Gray for gas) take over only when a WP flips their flag with a verified example.
+- **WPI lead items.** Help: `wpv_mtest` added to the guide's notDocumented pattern, `reviewedSrc` re-hashed to 627050c6. The 8 MB help
+  image cap (help plan D15) was 2.8 kB short once the v4.3 release-notes shot grew, so the `wellperf/load` screenshot (8.3 kB, liquid
+  loading traverse) was removed (its recipe is kept in a comment); images 7,994,546 bytes, 218 files. Raising the image cap and the
+  help text pool (≈ 2 kB raw left) is an owner decision before WP19 (A2) and before the next release-notes re-shot.
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2031/2031 (173 files, run per
+  file); wts3d-test 147/149 (the two CRLF checks, LF checkout); wellperf-validate --html --check --time: gate PASS, 15/15
+  cross-checks, every E budget ok (sensitivity 10 cases 77 E / 80); help-shots --check and build-user-guide --check ok; publish-site
+  --check ok; server unchanged. GUI sweep `--route wellperf,oilipr,gasdeliv,gaslift` (quick, full and --mobile on wellperf): 0
+  findings.
+- **Open items (A1).** Solves are slower than the plan's 250 ms target on the container (oil ≈ 450 ms, gas ≈ 400 ms; the page uses
+  the 1 s device budget and tracking solves for drags; sensitivity of 10 cases ≈ 1.7–1.9 s against 1.2 s planned); Beggs & Brill and
+  Hagedorn & Brown step by 0.2–1 psi at flow-pattern switches (a continuous transition is A2), which makes the Beggs & Brill WGR
+  sensitivity of FIX.gasWell non-monotone; `FIX.fallingBranch` (J 0.3) does not flow with any A1 correlation (tests use J = 1); the
+  sensitivity result is not marked stale on input changes; all-tests (RMS) comparison shows no traverse plot; QC_THT checks only
+  against the bottom-hole temperature and QC_VLP runs before tuning (A2); engine warnings are in field units; `tune` stub still
+  reports `wp:'WP7'` (frozen WP0 test). Not yet checked in a real browser or the WebKit tool beyond the GUI sweep.
+
 ## 2026-11-10 — v4.2 release: accounts open to everyone (on by default on the website, first-open sign-in window, open sign-up), Privacy notice v3
 
 App and App Store version 4.2 (`RELEASE_NOTES[0]`, dated 2026-11-10, both `MARKETING_VERSION`, both `ci_post_clone.sh`
