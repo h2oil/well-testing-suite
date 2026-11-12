@@ -1207,6 +1207,23 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   gauge / THP / pwf markers, TVD ↔ MD toggle, toggleable legend, crosshair / zoom / pan through `WTS_wp_view.chart`), one Adopt button
   for every adopted coefficient. Tests: `wellperf-match` (6), `wellperf-qc` (8).
 
+#### 18.1.5 WP10 record (2026-11-12, branch wp/a1-wp10)
+
+- **Guide** `wellperf` in 48-calc-help-production.js (PART route, 9.2 kB serialised of 14 kB): purpose, what, when, nine steps over the
+  seven steps (examples Oil / Gas, survey modes, paste, DFIT import, drag handles, Solve now, Checks / Traverse, Match, Report), 21
+  inputs + two notDocumented patterns, five outputs, 27 verdicts, parts `stability`, `loading`, `match`, `design`; the example is a
+  compute check of `WTS_wp_system.solve` on a compact Oil-example model (914 STB/d at 2,543 psia, THP 320 psig, q_s 319, tubing-curve
+  minimum 561). help-content's compute check now accepts a dotted `fn` (called on its namespace); `wellperf` left MANUAL_OK.
+- **Tasks** (start, 12 → 14): `beansize` (size a bean for a target rate) and `loading` (check a gas well for liquid loading).
+- **Hub note (Q19 default)**: the oilipr / gasdeliv / gaslift guides open through the Well Performance hub (`hub()` step); tiles unchanged.
+- **Caps (Q15 default, from the draft)**: production 37.36 → 45.41 kB, start 18.85 → 19.74 kB; 2.11 kB raw of the 357 kB stay unallocated
+  (WP19); gzip ≈ 122.9 of 124 kB. help-shots `moduleBytes` 8.75 → 8.8 kB (two manifest rows).
+- **Screenshots**: two desktop crops, `sys` (Oil system plot, 14.6 kB) and `load` (Gas liquid-loading tab on MD, 8.3 kB); `help/view-d`
+  re-shot (task count). Images total 7,997,236 of 8,000,000 bytes: the schematic (10.2 kB) and KPI-strip (11.9 kB) shots were measured
+  but do not fit the help plan's 8 MB image cap (D15) — an owner decision.
+- **Page fix**: the ① PVT card printed the fluid validity lines with a doubled mark ("✓ ✓ …"); the leading mark of the engine message is
+  now stripped (reviewedSrc fe50c090).
+
 ### 18.2 Increment A2 (v4.4)
 
 | WP | Content | Depends on | Lane |
