@@ -6,7 +6,8 @@
 //
 // Storage (both keys start with "wts_", so 29-multiwell makes them per well and project files carry them; no project module):
 //   wts_page_wellperf   host autosave of the page's id'd scalar controls ({f: {id: value}}; unit-tagged inputs canonical imperial)
-//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases}
+//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases,
+//                       layers (B, WP24: multilayer rows → M.res.layers)}; read() also copies the perforations to M.res.perf
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -31,7 +32,7 @@
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases'];
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'layers'];   // layers: B (WP24)
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
 
@@ -189,7 +190,7 @@
     // ── table record: empty / migrate / validate / decimate ───────────────────
     function empty() {
         return { v: VERSION, survey: [], strings: [], restrictions: [], geo: { points: [] }, flowline: [],
-                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [] };
+                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], layers: [] };
     }
     function migrate(rec) {
         if (!_isObj(rec)) return { ok: false, code: 'BAD_RECORD', notes: ['the stored model is not an object'] };
@@ -254,6 +255,12 @@
             ['q_o', 'q_w', 'q_g', 'thp_psig', 'tht_F', 'bean64', 'gaugeMd', 'gauge_psia', 'chp_psig', 'qinj_Mscfd'].forEach(function (k) { o[k] = _num(t[k]); });
             return o;
         });
+        // B (WP24): multilayer rows {name, topMd, botMd, tvdTop?, tvdBot? (stored by the page from the well path), pr, J, pb, k, h, S, a, b, use}
+        out.layers = (Array.isArray(r.layers) ? r.layers : []).filter(_isObj).slice(0, 10).map(function (x, i) {
+            var o = { name: String(x.name == null ? '' : x.name).slice(0, 24), use: x.use !== false };
+            ['topMd', 'botMd', 'tvdTop', 'tvdBot', 'pr', 'J', 'pb', 'k', 'h', 'S', 'a', 'b'].forEach(function (k) { o[k] = _num(x[k]); });
+            return o;
+        }).filter(function (x) { return _fin(x.topMd) && _fin(x.botMd) && x.botMd > x.topMd; });
         out.lab = _isObj(r.lab) ? _clone(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
@@ -318,9 +325,12 @@
             M.well.geo.points = rec.geo.points; M.surface.flowline = rec.flowline;
             M.surface.rating = rec.rating; M.surface.beans = rec.beans.length ? rec.beans : M.surface.beans; M.tests = rec.tests;
             M.cases = rec.cases; if (rec.lab) M.fluid.match = { lab: rec.lab }; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            M.res.layers = rec.layers || [];
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);
+        // B (WP24): the perforation interval travels with the inflow spec (horizontal lateral length, multilayer reference depth)
+        M.res.perf = { topMd: M.well.perfTopMd, botMd: M.well.perfBotMd, midMd: M.well.midPerfMd };
         M.meta = { status: raw.status, readOnly: readOnly, notes: notes, bytes: raw.bytes };
         return _freeze(M);
     }

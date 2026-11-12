@@ -1070,7 +1070,7 @@ changes (5). **Total A2 ≈ 53.**
 
 ### 17.3 Increment B
 
-`wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2`, `wellperf-gl2`,
+`wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2` (WP24: 15), `wellperf-gl2`,
 `wellperf-esp`, `wellperf-cases`, `wellperf-mech`.
 
 ---
@@ -1494,6 +1494,57 @@ composite, horizontal, fractured, multilayer, transient, injector IPR and VLP; B
 the shared model, Thornhill-Craver, diagnostics, gradient survey import, Asheim · WP26 ESP · WP27 cases, compare, depletion forecast,
 lift screening, operating envelope, tornado, 4-variable matrix · WP28 SVG well schematic, batch over wells (`WTS_wells` iteration as a
 Job, read-only per well). WP25 and WP26 after WP22 is preferred (temperature at the valve / pump).
+
+#### 18.3.x WP24 record (2026-11-12, branch wp/b-wp24)
+
+Owner default: every open question at its proposed default; Q9 (no textbooks) → every model below ships `verified:false` with the D17
+label, is never a default, and has a `pending` BENCH row in `wellperf-validate.js`.
+
+- **Inflow models (49-calc-wp-ipr.js, additive; `WTS_wp_ipr.B_KEYS`)**: `wcComposite` (water-cut-weighted composite after Brown 1984: PI
+  above pb, f_w·water PI + f_o·oil Vogel below — the oil branch is `WTS_oilipr_model` composite — and past q_o,max the straight line with
+  the exact limit slope −(f_w + 9 f_o)/J; f_w = `params.fw` or the fluid WC); `joshi` (Joshi 1988, anisotropy term in the form of
+  Economides et al., r_eh = `re`); `babuOdeh` (Babu & Odeh 1989 box, ln C_H, partial-penetration s_R cases 1 / 2 with F(x) on both
+  branches; outside both cases → case 1 with a warning); `furui` (Furui, Zhu & Hill 2003); `frac` / `fracGas` (Prats r_w′ = x_f/2 and the
+  closed-form fit of the Cinco-Ley & Samaniego F_cD curve, 0.1–1,000; s_f joins S in darcyOil / darcyGas exactly); `transient` (line-source
+  log approximation at a flowing time; t_D < 100 and past-t_pss warnings; J(t) exposed); `multilayer` (commingled layers from
+  `res.layers`, each at its own TVD from the well path, wellbore gradient from the fluid; crossflow on the layer PI / reversed LIT; p_ws by
+  bisection; layer rates and the shut-in crossflow); `injector` (water II·(pwf − p̄r) or Darcy II with Bw / μw; gas reversed m(p) LIT;
+  `pfrac`). The horizontal lateral L defaults to the perforated MD interval (deviation first class). `fromBuildup(state, {midPerfTvd})` —
+  the Build-up Surveillance hand-off: the latest interpreted test → k, h (or kh/k), S, rw / re, p̄r = p_ext moved from the Build-up datum by
+  its static gradient (p* flagged); `fracSkin`, `babuOdehX`, `transientJ` exported.
+- **Injection wells (new 49-calc-wp-inj.js, `WTS_wp_inj.solve`)**: `WTS_wp_system.solve` delegates waterinj / gasinj to it. VLP = the ONE
+  marcher with the flow down the deviated path (`WTS_wp_vlp.traverse` option `inject`: segment rise −dz, forward from the THP / reverse
+  from the bottom); one stable root by scan + Brent; fracture limit p_frac (input, else the DFIT closure gradient × mid-perf TVD, provisional);
+  q_frac, the highest THP without fracturing, the THP to start injecting, verdicts ok / warn (5 %) / fail; breakdown sums to THP − p̄r.
+- **Contract changes (all additive; absent → A2 bit for bit)**: `WTS_wp_ipr.curve(spec, F, o)` reads `spec.layers`, `spec.perf` and
+  `o.tvdAt` / `o.refMd`; I gains `kind` 'inj' | 'any'-resolved, `horizontal`, `frac`, `transient`, `layers`, `layerRates(pwf)`, `crossflow`,
+  `prInput`, `inj`, `pFrac`, `qLimit`, `II`, `injector`; registry entries gain `horizontal`. `WTS_wp_model`: table key `layers` (≤ 10 rows,
+  `{name, topMd, botMd, tvdTop, tvdBot, pr, J, pb, k, h, S, a, b, use}`) → `M.res.layers`; `M.res.perf {topMd, botMd, midMd}`. The solver
+  builds W before I and passes the well path to the inflow; R gains `layers {rates, crossflow, pws, grad, thief}` (producers) and, for
+  injectors, `injector: true`, `inj {…}`, `rates.injection`; flags `CROSSFLOW`, `INJ_FRAC`, `INJ_FRAC_NEAR`, `INJ_FRAC_DFIT`, `INJ_NO_FRAC`,
+  `PROVISIONAL_INJ`; check items `INJ_MODEL`, `INJ_THP`, `INJ_CHOKE`, `INJ_MODEL_PROD`, a validity line for a B model in use.
+  `WTS_wp_vlp.traverse` option `inject`. `WTS_wp_view.schematic` options `layers`, `inject`, `frac`, `lateral`. Fluid types gasinj /
+  waterinj enabled on the page (the gas-injector "later release" note removed).
+- **Page**: new IP fields (L, kv/kh, box a / b, x0 (`xPos`), z0 (`zPos`), y_mid, y_b, x_f, F_cD, φ, ct, t, II, p_frac), a Layers table card
+  (MD, TVD from the survey, live rate at the operating point, red on crossflow), the **Inflow study** plot with a live drag handle per model
+  (J vs flowing time, J vs lateral length with the vertical-well line, J vs x_f with infinite conductivity, the WC rail on the composite
+  split, layer rates on TVD with the shut-in crossflow, injection rate vs THP with the fracture limit), the IPR plot with per-layer curves /
+  p_ws / p_frac / q_frac, injector KPI strip (rate, BHP, THP, fracture margin, max rate, injectivity, temperature, erosion), one extra KPI for
+  the producer B models (Crossflow / Lateral / Fracture / Flowing time), injector operating-point card, verdicts, system plot (fracture
+  line, THP handle), schematic beds with inflow / crossflow arrows, injection arrows, fracture wings, lateral label; **Import from Build-up
+  Surveillance** (async through `WTS_buildup.store`, provenance chips); report capture through `#wp_studies` "Inflow: …" rows; examples
+  **Horizontal**, **Layers**, **Injector**. Help: the wellperf guide step text (examples, B models, Build-up import) within the existing cap
+  (production 47,653 of 47,670 bytes), reviewedSrc d3fa5380; no screenshot added or re-taken.
+- **Tests / gates**: `wellperf-ipr2` IP2-1 … IP2-15 (14 unit + 1 integration); wellperf-ipr IP9 limited to the A1 keys. wellperf-validate:
+  9 BENCH rows (pending), gate 7 (each B model provisional in the check validity; the injector flag), X22–X29 (30 / 30 pass), `--time` rows
+  injector solve 15 E of 20 and two-layer solve 23 E of 24. Accept-test `--html --integration` 2137 / 2137 (183 files, file by file);
+  smoke 347 / 347; help-shots / build-user-guide / publish-site `--check` ok.
+- **Known gaps**: no verified published example for any B model (Q9); horizontal and transient models are oil only (gas horizontal via
+  fracGas / darcyGas only); Babu-Odeh kx = ky; the injector temperature is the linear profile (no inject-direction relaxation), no injector
+  design / sensitivity / match (`_ctx` refuses them), the injection-rate-vs-THP study shifts the outflow by ΔTHP (exact for water, approximate
+  for gas); the transient model is not wired to PRiSM C3 directly (Import from PRiSM fills k, h, φ, ct, rw, S); multilayer layers use one
+  wellbore gradient (static, at the mean layer pressure) and no per-layer PVT; Build-up import reads the localStorage summary (the per-test
+  arrays of an overflowed state are not needed); help text for the B models is one line (the cap is full; no new screenshots).
 
 ### 18.4 Increment C
 

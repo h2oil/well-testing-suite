@@ -34,6 +34,21 @@
 //   estimateD(o)              Geertsma β (1/ft) and D (d/Mscf) → {ok, beta, D, label} — an estimate, provisional
 //   darcyX(params)            the ln term of the Darcy forms → {ok, X, ref, label}
 //   PROVISIONAL               the label of a method with no verified published example (D17)
+// Increment B (WP24; every model verified:false, provisional, never a default — Q9):
+//   B keys (B_KEYS)           wcComposite {J, fw? (default F.wc)} · joshi {k, h, L, kvkh, rw, re = r_eh, S} · babuOdeh {k, h, L, kvkh, rw,
+//                             boxA, boxB, xPos? (x0), zPos? (z0), yMid?, S} · furui {k, h, L, kvkh, rw, yb, S} (L blank = the perforated MD interval of
+//                             spec.perf) · frac {k, h, rw, re, xf, FcD | kfw, S} · fracGas (+ D, sg) · transient {k, h, phi, ct, rw, tFlow h,
+//                             S, re?} · multilayer (spec.layers rows {name, topMd, botMd, tvdTop?, tvdBot?, pr, J | a, b | k, h, S, pb?}, rw, re)
+//                             · injector {II | k, h, rw, re, S (water); a, b | k, h, S, D (gas, m(p)); pfrac}
+//   curve(spec, F, o)         o.tvdAt(md) / o.refMd: the well path for the multilayer layer depths (the solver and the page pass it)
+//   I extras                  horizontal {L, Iani} · frac {xf, FcD, sf} · transient {t, tPss, kh, jOfT(t)} · layers [..], layerRates(pwf)
+//                             → [{name, md, tvd, pr, pLayer, q (< 0 crossflow), crossflow}], crossflow {pws, rate, thief[], layers}, prInput
+//                             (I.pr = the commingled static pressure p_ws) · inj true, pFrac, qLimit (= aof, the rate at the pressure
+//                             limit), II, injector {fluid, II, pfrac, pLim, qLim, limitIsFrac}; I.kind 'oil' | 'gas' | 'inj'; I.future null
+//                             for multilayer and injector
+//   fromBuildup(state?, o?)   Build-up Surveillance hand-off (§2.10) → {ok, spec:{model, pr, params:{k, h, S, rw?, re?}, provenance}, test,
+//                             warnings}; state defaults to WTS_buildup.store.loadState(); o.midPerfTvd moves p_ext from the datum
+//   fracSkin(o), babuOdehX(o), transientJ(o)   the closed forms (exported for the tests and wellperf-validate)
 // =============================================================================
 (function () {
     'use strict';
@@ -155,7 +170,7 @@
             future: null
         };
         if (!def.verified) I.warnings.push(_w('PROVISIONAL', def.label + ': ' + PROVISIONAL + '.', 'info'));
-        var pmin = _fin(extra.pAof) ? extra.pAof : 0;
+        var pmin = _fin(extra.curveTo) ? extra.curveTo : (_fin(extra.pAof) ? extra.pAof : 0);   // an injector's curve runs up to its pressure limit
         for (var i = 0; i < NCURVE; i++) {
             var pw = base.pr - (base.pr - pmin) * i / (NCURVE - 1);
             I.curve.push({ q: ev.qAt(pw), pwf: pw });
@@ -350,6 +365,452 @@
                 engine: 'WTS_gasdeliv_model (' + form + ')' };
         } });
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // Increment B (WP24, docs/WELL-PERFORMANCE-PLAN.md §4.2 "Increment B", §3.3): water-cut composite, horizontal (Joshi, Babu-Odeh,
+    // Furui), fractured (Prats / Cinco-Ley-Samaniego F_cD), transient (line source), multilayer with crossflow, injector. Q9: no
+    // textbooks — every B model ships verified:false with the provisional label (D17) and none is a default. Oil below pb: the
+    // delegated composite (WTS_oilipr_model) with the model's J, as darcyOil. Field units: k md, h / L / rw / re / xf ft, μ cp,
+    // B rb/STB, ct 1/psi, t h, q STB/d (oil, water) or Mscf/d (gas), p psia.
+    // ═════════════════════════════════════════════════════════════════════════
+    function _bmu(P, F, spec, w, water) {          // Bo / μo (or Bw / μw) from the inputs, else the fluid at p̄r
+        var B = _n(water ? P.Bw : P.Bo), mu = _n(water ? P.muw : P.muo), src = 'input';
+        if ((!_pos(B) || !_pos(mu)) && F && F.ok && typeof F.at === 'function') {
+            var pp = null;
+            try { pp = F.at(spec.pr, _n(spec.T_F)); } catch (e) { pp = null; }
+            if (pp) {
+                if (!_pos(B)) B = _n(water ? pp.bw : pp.bo);
+                if (!_pos(mu)) mu = _n(water ? pp.muw : pp.muo);
+                src = 'fluid at p̄r';
+            }
+        }
+        if (water) { if (!_pos(B)) B = 1.0; if (!_pos(mu)) { mu = 0.5; w.push(_w('MUW_DEFAULT', 'Water viscosity not available: 0.5 cp used.', 'info')); } }
+        return (_pos(B) && _pos(mu)) ? { B: B, mu: mu, src: src } : null;
+    }
+    // J → the delegated oil curve (composite below pb when the bubble point is known; straight line otherwise)
+    function _oilFromJ(spec, F, w, J, form, extra) {
+        var pb = _pbOf(spec, F, w), m;
+        if (_fin(pb) && pb > 0) m = _oil({ mode: 'composite', pr: spec.pr, pb: pb, J: J });
+        else { m = _oil({ mode: 'pi', pr: spec.pr, J: J }); w.push(_w('NO_PB', 'No bubble point: straight-line PI from J.', 'info')); }
+        if (!m.ok) return m;
+        var o = { ev: m, J: J, pb: m.pb, form: form, engine: 'WTS_oilipr_model (' + (m.mode === 'composite' ? 'composite' : 'PI') + ')' };
+        if (extra) for (var k in extra) o[k] = extra[k];
+        return o;
+    }
+    function _perfLen(spec) { var pf = spec.perf || {}; var a = _n(pf.topMd), b = _n(pf.botMd); return (_fin(a) && _fin(b) && b > a) ? b - a : NaN; }
+    function _kv(P) { var r = _first(P.kvkh, 0.1); return (r > 0 && r <= 10) ? r : NaN; }
+    // monotone inverse q(pwf) of a decreasing pwf(q) on [0, qMax] (bisection to 1e-14·qMax, then the exact inverse holds to 1e-9)
+    function _invQ(pwfOf, qMax, pwf) {
+        var lo = 0, hi = qMax;
+        for (var i = 0; i < 200 && hi - lo > 1e-14 * qMax; i++) { var mid = 0.5 * (lo + hi); if (pwfOf(mid) > pwf) lo = mid; else hi = mid; }
+        return 0.5 * (lo + hi);
+    }
+
+    // ── water-cut composite three-phase IPR (the water-cut-weighted composite as given by Brown 1984): oil composite (PI above pb, Vogel below)
+    // and water PI weighted by the fractional flow f_w = WC; beyond the oil Vogel maximum q_o,max a straight line with the
+    // slope of the weighted curve at q_o,max (exact limit: dpwf/dq = −(f_w + 9·f_o)/J) to pwf = 0 at q_t,max.
+    reg({ key: 'wcComposite', label: 'Water-cut composite (oil Vogel + water PI)', kind: 'oil', needs: ['J', 'pb'], verified: false,
+        build: function (spec, P, w, F) {
+            var J = _n(P.J);
+            if (!_pos(J)) return _fail('NEEDS', 'The water-cut composite IPR needs the liquid productivity index J (above the bubble point).');
+            var pb = _pbOf(spec, F, w);
+            if (!_fin(pb)) return _fail('PB_NEEDED', 'Bubble-point pressure is needed for the water-cut composite IPR.');
+            var pr = spec.pr; if (pb > pr) pb = pr;
+            var fw = _n(P.fw);
+            if (!_fin(fw)) fw = (F && F.ok && _fin(F.wc)) ? F.wc : 0;
+            if (!(fw >= 0 && fw <= 1)) return _fail('BAD_WC', 'The water cut must be 0–100 %.');
+            var fo = 1 - fw, oil = _oil({ mode: 'composite', pr: pr, pb: pb, J: J });
+            if (!oil.ok) return oil;
+            var qb = J * (pr - pb), qom = qb + J * pb / 1.8, slope = -(fw + 9 * fo) / J;
+            var pAtQom = fw * (pr - qom / J);                      // the oil branch is at pwf = 0 there
+            var qtm = qom + pAtQom / -slope;
+            var pwfOf = function (q) {
+                if (q <= qb) return pr - q / J;
+                if (q <= qom) return fw * (pr - q / J) + fo * oil.pwfAt(q);
+                return Math.max(0, pAtQom + slope * (q - qom));
+            };
+            var ev = {
+                aof: qtm,
+                pwfAt: function (q) { q = +q; if (!_fin(q)) return null; if (q <= 0) return pr; if (q > qtm * (1 + 1e-12)) return null; return pwfOf(Math.min(q, qtm)); },
+                qAt: function (pwf) { pwf = +pwf; if (!_fin(pwf)) return NaN; if (pwf >= pr) return 0; if (pwf <= 0) return qtm;
+                    if (pwf >= pb) return J * (pr - pwf); return _invQ(pwfOf, qtm, pwf); }
+            };
+            P.fw = fw;
+            return { ev: ev, J: J, pb: pb, form: { fw: fw, qb: qb, qoMax: qom, qtMax: qtm, slope: slope, label: 'water-cut-weighted composite (Brown 1984)' },
+                engine: 'WTS_oilipr_model (composite oil) + water PI' };
+        } });
+
+    // ── horizontal wells. L = the lateral (default: the perforated MD length, so the deviated survey sets it) ───────────
+    function _hzCommon(spec, P, w, F) {
+        var k = _n(P.k), h = _n(P.h), rw = _n(P.rw), L = _n(P.L), kv = _kv(P);
+        if (!_pos(L)) { L = _perfLen(spec); if (_pos(L)) w.push(_w('L_FROM_PERFS', 'Lateral length L = the perforated MD interval (' + _fix(L, 0) + ' ft).', 'info')); }
+        if (!_pos(k) || !_pos(h)) return _fail('NEEDS', 'Horizontal inflow needs the horizontal permeability k and the thickness h.');
+        if (!_pos(rw)) return _fail('NEEDS_RW', 'Wellbore radius rw is needed.');
+        if (!_pos(L)) return _fail('NEEDS_L', 'The lateral length L is needed (or the perforation interval in step ③).');
+        if (!_fin(kv)) return _fail('BAD_KVKH', 'kv/kh must be above 0 (at most 10).');
+        var bm = _bmu(P, F, spec, w);
+        if (!bm) return _fail('NEEDS', 'Horizontal oil inflow needs Bo and μo (enter them or build the fluid).');
+        var S = _n(P.S); if (!_fin(S)) S = 0;
+        return { ok: true, k: k, h: h, rw: rw, L: L, kv: kv, Iani: Math.sqrt(1 / kv), B: bm.B, mu: bm.mu, BmuSource: bm.src, S: S };
+    }
+    // Joshi (1988), steady state with p_e at r_eh; anisotropy term in the form of Economides et al. (I_ani = √(kh/kv)):
+    // J = k·h / (141.2·Bo·μo·{ln[(a + √(a² − (L/2)²)) / (L/2)] + (I_ani·h/L)·ln[I_ani·h / (rw·(I_ani + 1))] + S}),
+    // a = (L/2)·[0.5 + √(0.25 + (2·r_eh/L)⁴)]^0.5
+    reg({ key: 'joshi', label: 'Horizontal well — Joshi (1988)', kind: 'oil', needs: ['k', 'h', 'L', 'kvkh', 'rw', 're', 'S'], verified: false, horizontal: true,
+        build: function (spec, P, w, F) {
+            var c = _hzCommon(spec, P, w, F); if (!c.ok) return c;
+            var reh = _n(P.re);
+            if (!_pos(reh)) return _fail('NEEDS_RE', 'Drainage radius r_eh is needed for the Joshi IPR.');
+            if (!(c.L / 2 < 0.9 * reh)) return _fail('L_TOO_LONG', 'Joshi needs L/2 < 0.9·r_eh (the lateral is too long for this drainage radius).');
+            var a = (c.L / 2) * Math.sqrt(0.5 + Math.sqrt(0.25 + Math.pow(2 * reh / c.L, 4)));
+            var t1 = Math.log((a + Math.sqrt(a * a - c.L * c.L / 4)) / (c.L / 2)), t2 = (c.Iani * c.h / c.L) * Math.log(c.Iani * c.h / (c.rw * (c.Iani + 1)));
+            var X = t1 + t2;
+            if (!(X + c.S > 0)) return _fail('BAD_SKIN', 'The skin is too negative for this geometry (denominator ≤ 0).');
+            var J = c.k * c.h / (C_DARCY_OIL * c.B * c.mu * (X + c.S));
+            var Jv = (_pos(c.rw) && reh > c.rw) ? c.k * c.h / (C_DARCY_OIL * c.B * c.mu * Math.log(reh / c.rw)) : null;
+            if (c.L > 0.8 * 2 * reh) w.push(_w('HZ_LONG', 'The lateral is close to the drainage diameter: the Joshi ellipse is stretched.', 'info'));
+            P.L = c.L; P.S = c.S;
+            return _oilFromJ(spec, F, w, J, { a: a, t1: t1, t2: t2, X: X, L: c.L, Iani: c.Iani, reh: reh, BmuSource: c.BmuSource, Jvertical: Jv, ratio: Jv ? J / Jv : null,
+                label: 'Joshi (1988), steady state, p_e at r_eh' }, { horizontal: { L: c.L, Iani: c.Iani } });
+        } });
+    // Babu & Odeh (1989), pseudo-steady state in a box a (x, across the well) × b (y, along the well) × h, well at (x0, z0), centre y_mid:
+    // J = 0.00708·b·√(kx·kz) / (Bo·μo·[ln(√A/rw) + ln C_H − 0.75 + s_R + S]), A = a·h (0.00708 = 1/141.2)
+    // ln C_H = 6.28·(a/h)·√(kz/kx)·[1/3 − x0/a + (x0/a)²] − ln(sin(π·z0/h)) − 0.5·ln[(a/h)·√(kz/kx)] − 1.088
+    // s_R (partial penetration, L < b): case 1 (a/√kx ≥ 0.75·b/√ky ≥ 0.75·h/√kz) s_R = P_xyz + P'_xy; case 2 (b/√ky ≥ 1.33·a/√kx ≥ h/√kz)
+    // s_R = P_xyz + P_y + P_xy, with the published P terms and F(x) (code below). kx = ky = k, kz = (kv/kh)·k.
+    function _boF(x) {
+        if (!(x > 0)) return 0;
+        if (x <= 1) return -x * (0.145 + Math.log(x) - 0.137 * x * x);
+        var y = 2 - x; if (!(y > 0)) return 0;
+        return y * (0.145 + Math.log(y) - 0.137 * y * y);
+    }
+    function babuOdehX(o) {
+        var a = o.a, b = o.b, h = o.h, L = o.L, rw = o.rw, kx = o.kx, ky = o.ky, kz = o.kz;
+        var x0 = _fin(o.x0) ? o.x0 : a / 2, z0 = _fin(o.z0) ? o.z0 : h / 2, ym = _fin(o.ymid) ? o.ymid : b / 2;
+        var r = Math.sqrt(kz / kx), A = a * h, s = Math.sin(Math.PI * z0 / h);
+        var lnCH = 6.28 * (a / h) * r * (1 / 3 - x0 / a + (x0 / a) * (x0 / a)) - Math.log(s) - 0.5 * Math.log((a / h) * r) - 1.088;
+        var sR = 0, kase = 'full';
+        if (L < b * (1 - 1e-9)) {
+            var Pxyz = (b / L - 1) * (Math.log(h / rw) + 0.25 * Math.log(kx / kz) - Math.log(s) - 1.84);
+            var A1 = a / Math.sqrt(kx), B1 = b / Math.sqrt(ky), H1 = h / Math.sqrt(kz);
+            if (B1 >= 1.33 * A1 && A1 >= H1) {
+                var Py = (6.28 * b * b / (a * h)) * (Math.sqrt(kx * kz) / ky) * ((1 / 3 - ym / b + ym * ym / (b * b)) + (L / (24 * b)) * (L / b - 3));
+                var Pxy = (b / L - 1) * (6.28 * a / h) * r * (1 / 3 - x0 / a + (x0 / a) * (x0 / a));
+                sR = Pxyz + Py + Pxy; kase = 'case 2';
+            } else {
+                var Pxy1 = (2 * b * b / (L * h)) * Math.sqrt(kz / ky) * (_boF(L / (2 * b)) + 0.5 * (_boF((4 * ym + L) / (2 * b)) - _boF((4 * ym - L) / (2 * b))));
+                sR = Pxyz + Pxy1; kase = (A1 >= 0.75 * B1 && 0.75 * B1 >= 0.75 * H1) ? 'case 1' : 'case 1 (outside both published cases)';
+            }
+        }
+        var X = Math.log(Math.sqrt(A) / rw) + lnCH - 0.75 + sR;
+        return { X: X, lnCH: lnCH, sR: sR, kase: kase, A: A, x0: x0, z0: z0, ymid: ym };
+    }
+    reg({ key: 'babuOdeh', label: 'Horizontal well — Babu-Odeh (1989), box', kind: 'oil', needs: ['k', 'h', 'L', 'kvkh', 'rw', 'boxA', 'boxB', 'xPos', 'zPos', 'yMid', 'S'], verified: false, horizontal: true,
+        build: function (spec, P, w, F) {
+            var c = _hzCommon(spec, P, w, F); if (!c.ok) return c;
+            var a = _n(P.boxA), b = _n(P.boxB);
+            if (!_pos(a) || !_pos(b)) return _fail('NEEDS_BOX', 'Babu-Odeh needs the drainage box: a (across the well) and b (along the well).');
+            if (c.L > b * (1 + 1e-9)) return _fail('L_GT_B', 'The lateral L must not exceed the box length b.');
+            var x0 = _n(P.xPos), z0 = _n(P.zPos), ym = _n(P.yMid);
+            if (_fin(x0) && !(x0 > 0 && x0 < a)) return _fail('BAD_X0', 'x0 must lie inside the box (0 < x0 < a).');
+            if (_fin(z0) && !(z0 > 0 && z0 < c.h)) return _fail('BAD_Z0', 'z0 must lie inside the layer (0 < z0 < h).');
+            if (_fin(ym) && !(ym - c.L / 2 >= -1e-9 && ym + c.L / 2 <= b + 1e-9)) return _fail('BAD_YMID', 'The lateral must lie inside the box along y (L/2 ≤ y_mid ≤ b − L/2).');
+            var kx = c.k, kz = c.k * c.kv, bo = babuOdehX({ a: a, b: b, h: c.h, L: c.L, rw: c.rw, kx: kx, ky: kx, kz: kz, x0: x0, z0: z0, ymid: ym });
+            if (/outside/.test(bo.kase)) w.push(_w('BO_CASE', 'Babu-Odeh: the box is outside both published partial-penetration cases; case 1 is used.'));
+            if (!(bo.X + c.S > 0)) return _fail('BAD_SKIN', 'The skin is too negative for this geometry (denominator ≤ 0).');
+            var J = b * Math.sqrt(kx * kz) / (C_DARCY_OIL * c.B * c.mu * (bo.X + c.S));
+            P.L = c.L; P.S = c.S;
+            return _oilFromJ(spec, F, w, J, { X: bo.X, lnCH: bo.lnCH, sR: bo.sR, kase: bo.kase, A: bo.A, a: a, b: b, L: c.L, Iani: c.Iani, x0: bo.x0, z0: bo.z0, yMid: bo.ymid,
+                BmuSource: c.BmuSource, label: 'Babu & Odeh (1989), pseudo-steady state, p̄r' }, { horizontal: { L: c.L, Iani: c.Iani } });
+        } });
+    // Furui, Zhu & Hill (2003), a lateral between constant-pressure boundaries y_b from the well:
+    // J = k·L / (141.2·Bo·μo·[ln(h·I_ani / (rw·(I_ani + 1))) + π·y_b / (h·I_ani) − 1.224 + S])
+    reg({ key: 'furui', label: 'Horizontal well — Furui et al. (2003)', kind: 'oil', needs: ['k', 'h', 'L', 'kvkh', 'rw', 'yb', 'S'], verified: false, horizontal: true,
+        build: function (spec, P, w, F) {
+            var c = _hzCommon(spec, P, w, F); if (!c.ok) return c;
+            var yb = _n(P.yb);
+            if (!_pos(yb)) return _fail('NEEDS_YB', 'Furui needs y_b, the distance from the lateral to the constant-pressure boundary.');
+            var X = Math.log(c.h * c.Iani / (c.rw * (c.Iani + 1))) + Math.PI * yb / (c.h * c.Iani) - 1.224;
+            if (!(X + c.S > 0)) return _fail('BAD_SKIN', 'The skin is too negative for this geometry (denominator ≤ 0).');
+            var J = c.k * c.L / (C_DARCY_OIL * c.B * c.mu * (X + c.S));
+            P.L = c.L; P.S = c.S;
+            return _oilFromJ(spec, F, w, J, { X: X, yb: yb, L: c.L, Iani: c.Iani, BmuSource: c.BmuSource, label: 'Furui, Zhu & Hill (2003), steady state, p_e at y_b' },
+                { horizontal: { L: c.L, Iani: c.Iani } });
+        } });
+
+    // ── fractured wells: Prats r_w' = x_f/2 (infinite conductivity) and the Cinco-Ley & Samaniego (1981) F_cD curve as the closed-form
+    // fit f(F_cD) = s_f + ln(x_f/rw) = (1.65 − 0.328u + 0.116u²) / (1 + 0.180u + 0.064u² + 0.005u³), u = ln F_cD, 0.1 ≤ F_cD ≤ 1,000
+    // (F_cD = k_f·w / (k·x_f)). The fracture skin s_f joins the other skin S in the Darcy form.
+    function fracSkin(o) {
+        o = o || {};
+        var xf = _n(o.xf), rw = _n(o.rw), k = _n(o.k), fcd = _n(o.FcD), kfw = _n(o.kfw), warnings = [];
+        if (!_pos(xf) || !_pos(rw)) return _fail('NEEDS', 'The fracture skin needs x_f and rw.');
+        if (!_pos(fcd) && _pos(kfw) && _pos(k)) fcd = kfw / (k * xf);
+        var f, basis;
+        if (!_pos(fcd)) { f = Math.log(2); basis = 'infinite conductivity (Prats r_w′ = x_f/2)'; }
+        else {
+            var fc = fcd;
+            if (fc < 0.1) { fc = 0.1; warnings.push(_w('FCD_LOW', 'F_cD below 0.1: the fit is held at 0.1 (outside its range).')); }
+            if (fc > 1000) { fc = 1000; warnings.push(_w('FCD_HIGH', 'F_cD above 1,000: the fit is held at 1,000 (≈ infinite conductivity).', 'info')); }
+            var u = Math.log(fc);
+            f = (1.65 - 0.328 * u + 0.116 * u * u) / (1 + 0.180 * u + 0.064 * u * u + 0.005 * u * u * u);
+            basis = 'Cinco-Ley & Samaniego F_cD curve (closed-form fit), F_cD = ' + _fix(fcd, 2);
+        }
+        var sf = f - Math.log(xf / rw);
+        return { ok: true, sf: sf, f: f, FcD: _pos(fcd) ? fcd : null, rwEff: rw * Math.exp(-sf), basis: basis, warnings: warnings, errors: [] };
+    }
+    function _fracBuild(gasKind) {
+        return function (spec, P, w, F) {
+            var fs = fracSkin({ xf: P.xf, rw: P.rw, k: P.k, FcD: P.FcD, kfw: P.kfw });
+            if (!fs.ok) return fs;
+            fs.warnings.forEach(function (x) { w.push(x); });
+            var re = _n(P.re), xf = _n(P.xf);
+            if (_pos(re) && xf > 0.5 * re) w.push(_w('XF_LONG', 'x_f is more than half the drainage radius: the radial Darcy form with an effective radius is only approximate.'));
+            var S0 = _n(P.S); if (!_fin(S0)) S0 = 0;
+            var P2 = _plainParams(P); delete P2.xf; P2.S = S0 + fs.sf;
+            var b = MODELS[gasKind ? 'darcyGas' : 'darcyOil'].build(spec, P2, w, F);
+            if (!b || b.ok === false) return b;
+            ['a', 'b', 'aMp', 'bMp', 'D', 'sg', 'Bo', 'muo'].forEach(function (k) { if (P2[k] != null) P[k] = P2[k]; });
+            P.S = S0;
+            b.form = Object.assign({}, b.form || {}, { sf: fs.sf, f: fs.f, FcD: fs.FcD, rwEff: fs.rwEff, fracBasis: fs.basis, Sother: S0, Stotal: S0 + fs.sf });
+            b.frac = { xf: xf, FcD: fs.FcD, sf: fs.sf };
+            return b;
+        };
+    }
+    reg({ key: 'frac', label: 'Fractured well — Prats / Cinco-Ley F_cD (oil)', kind: 'oil', needs: ['k', 'h', 'rw', 're', 'xf', 'FcD', 'S'], verified: false, build: _fracBuild(false) });
+    reg({ key: 'fracGas', label: 'Fractured well — Prats / Cinco-Ley F_cD (gas)', kind: 'gas', needs: ['k', 'h', 'rw', 're', 'xf', 'FcD', 'S', 'D'], verified: false, build: _fracBuild(true) });
+
+    // ── transient IPR (line-source log approximation, infinite acting, at a flowing time t):
+    // pwf = p_i − 162.6·q·B·μ/(k·h)·[log10(k·t/(φ·μ·ct·rw²)) − 3.23 + 0.87·S]  →  J(t) = k·h / (162.6·B·μ·[…]); p̄r field = p_i
+    function transientJ(o) {
+        var k = _n(o.k), h = _n(o.h), phi = _n(o.phi), ct = _n(o.ct), rw = _n(o.rw), t = _n(o.t), B = _n(o.B), mu = _n(o.mu), S = _fin(_n(o.S)) ? _n(o.S) : 0;
+        if (!_pos(k) || !_pos(h) || !(phi > 0 && phi < 1) || !_pos(ct) || !_pos(rw) || !_pos(t) || !_pos(B) || !_pos(mu)) return null;
+        var X = Math.log(k * t / (phi * mu * ct * rw * rw)) / Math.LN10 - 3.23 + 0.87 * S;
+        return X > 0 ? { J: k * h / (162.6 * B * mu * X), X: X } : null;
+    }
+    reg({ key: 'transient', label: 'Transient (line source at a flowing time)', kind: 'oil', needs: ['k', 'h', 'phi', 'ct', 'rw', 'tFlow', 'S', 're'], verified: false,
+        build: function (spec, P, w, F) {
+            var bm = _bmu(P, F, spec, w);
+            if (!bm) return _fail('NEEDS', 'The transient IPR needs Bo and μo (enter them or build the fluid).');
+            var t = _n(P.tFlow);
+            if (!_pos(t)) return _fail('NEEDS_T', 'The flowing time t (hours) is needed for the transient IPR.');
+            var o = { k: P.k, h: P.h, phi: P.phi, ct: P.ct, rw: P.rw, t: t, B: bm.B, mu: bm.mu, S: P.S };
+            var r = transientJ(o);
+            if (!r) return _fail('NEEDS', 'The transient IPR needs k, h, φ (0–1), ct and rw, with a log term above 0 (a longer time or a smaller skin).');
+            var tD = 0.0002637 * _n(P.k) * t / (_n(P.phi) * bm.mu * _n(P.ct) * _n(P.rw) * _n(P.rw));
+            if (tD < 100) w.push(_w('TD_SMALL', 'Dimensionless time t_D ' + _fix(tD, 0) + ' < 100: the log approximation of the line source is inaccurate this early.', 'info'));
+            var re = _n(P.re), tPss = null;
+            if (_pos(re)) {
+                tPss = 0.1 * _n(P.phi) * bm.mu * _n(P.ct) * Math.PI * re * re / (0.0002637 * _n(P.k));   // t_DA = 0.1 (circle)
+                if (t > tPss) w.push(_w('T_GT_PSS', 'The flowing time is beyond the end of infinite-acting flow (≈ ' + _fix(tPss, 0) + ' h for r_e): use the pseudo-steady Darcy model.'));
+            }
+            var kh = _n(P.k) * _n(P.h);
+            var jOfT = function (tt) { var x = transientJ(Object.assign({}, o, { t: tt })); return x ? x.J : null; };
+            return _oilFromJ(spec, F, w, r.J, { X: r.X, t: t, tD: tD, tPss: tPss, BmuSource: bm.src, label: 'line-source log approximation, p_i = p̄r field' },
+                { transient: { t: t, tPss: tPss, kh: kh, jOfT: jOfT } });
+        } });
+
+    // ── multilayer commingled IPR with crossflow (res.layers; §4.2 B): every layer at its own mid TVD; the wellbore pressure at a
+    // layer = pwf at the reference depth + the static gradient of the wellbore fluid × (TVD_layer − TVD_ref). A layer whose
+    // wellbore pressure exceeds its p̄r takes fluid (crossflow, a negative rate on its injectivity = its PI). Layer models: oil —
+    // J (composite below the layer pb) or Darcy k·h·S; gas — LIT in p² a, b or Darcy k·h·S (p² form, μ̄z̄ at the layer p̄r).
+    function _layerRows(spec) { return (Array.isArray(spec.layers) ? spec.layers : []).filter(function (r) { return r && r.use !== false && _pos(_n(r.pr)); }).slice(0, 10); }
+    reg({ key: 'multilayer', label: 'Multilayer commingled (crossflow reported)', kind: 'any', needs: ['layers', 'rw', 're'], verified: false,
+        build: function (spec, P, w, F, o) {
+            o = o || {};
+            var rows = _layerRows(spec);
+            if (!rows.length) return _fail('NEEDS_LAYERS', 'Enter at least one layer with its reservoir pressure (layers table, step ②).');
+            var gas = !!(F && F.ok && (F.type === 'gas' || F.type === 'condensate' || F.type === 'gasinj'));
+            var T = _n(spec.T_F), tvdAt = typeof o.tvdAt === 'function' ? o.tvdAt : null, pf = spec.perf || {};
+            var refMd = _first(o.refMd, pf.midMd, NaN), noTvd = false;
+            var tvdOf = function (md, stored) {
+                if (tvdAt && _fin(md)) { var v = tvdAt(md); if (_fin(v)) return v; }
+                if (_fin(stored)) return stored;
+                noTvd = true; return md;
+            };
+            var layers = [], pmean = 0;
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i], top = _n(r.topMd), bot = _n(r.botMd);
+                if (!_fin(top) || !_fin(bot) || !(bot > top)) return _fail('BAD_LAYER', 'Layer ' + (i + 1) + ': top MD and bottom MD (bottom below top) are needed.');
+                var mid = 0.5 * (top + bot), tv = tvdOf(mid, _fin(_n(r.tvdTop)) && _fin(_n(r.tvdBot)) ? 0.5 * (_n(r.tvdTop) + _n(r.tvdBot)) : null);
+                layers.push({ i: i, name: String(r.name == null || r.name === '' ? 'L' + (i + 1) : r.name).slice(0, 24), topMd: top, botMd: bot, midMd: mid, tvd: tv, pr: _n(r.pr), raw: r });
+                pmean += _n(r.pr) / rows.length;
+            }
+            if (!_fin(refMd)) refMd = layers.reduce(function (a, l) { return a + l.midMd; }, 0) / layers.length;
+            var refTvd = tvdOf(refMd, null);
+            if (noTvd) w.push(_w('LAYER_TVD', 'No well path for the layer depths: TVD = MD is assumed (vertical well).', 'info'));
+            // static gradient of the wellbore fluid (psi/ft) at the mean layer pressure and the reservoir temperature
+            var grad = gas ? 0.05 : 0.35, gsrc = 'assumed';
+            if (F && F.ok && typeof F.at === 'function' && _fin(T)) {
+                var pp = null; try { pp = F.at(pmean, T); } catch (e) { pp = null; }
+                if (pp) {
+                    var rho = gas ? _n(pp.rhoG) : (1 - (_fin(F.wc) ? F.wc : 0)) * _n(pp.rhoO) + (_fin(F.wc) ? F.wc : 0) * _n(pp.rhoW);
+                    if (F.type === 'water' || F.type === 'waterinj') rho = _n(pp.rhoW);
+                    if (_pos(rho)) { grad = rho / 144; gsrc = 'fluid at ' + _fix(pmean, 0) + ' psia'; }
+                }
+            }
+            var bm = gas ? null : _bmu(P, F, spec, w);
+            var Xd = darcyX(P);
+            // each layer's q(p_layer) (positive = production) and its injectivity for crossflow
+            for (var j = 0; j < layers.length; j++) {
+                var L = layers[j], R0 = L.raw, J = _n(R0.J), a = _n(R0.a), b = _n(R0.b), k = _n(R0.k), h = _n(R0.h), S = _fin(_n(R0.S)) ? _n(R0.S) : 0;
+                L.dz = L.tvd - refTvd;
+                if (!gas) {
+                    var src = 'J';
+                    if (!_pos(J) && _pos(k) && _pos(h)) {
+                        if (!Xd.ok) return _fail('NEEDS_RE', 'Layer ' + L.name + ': the Darcy layer needs rw and re (inflow card).');
+                        if (!bm) return _fail('NEEDS', 'Darcy layers need Bo and μo (build the fluid).');
+                        if (!(Xd.X + S > 0)) return _fail('BAD_SKIN', 'Layer ' + L.name + ': the skin is too negative.');
+                        J = k * h / (C_DARCY_OIL * bm.B * bm.mu * (Xd.X + S)); src = 'Darcy k·h';
+                    }
+                    if (!_pos(J)) return _fail('NEEDS', 'Layer ' + L.name + ': enter J, or k and h.');
+                    var pbl = _n(R0.pb), m = (_fin(pbl) && pbl > 0) ? _oil({ mode: 'composite', pr: L.pr, pb: Math.min(pbl, L.pr), J: J }) : _oil({ mode: 'pi', pr: L.pr, J: J });
+                    if (!m.ok) return m;
+                    L.J = J; L.src = src; L.model = m.mode; L.ev = m;
+                    L.q = (function (L0) { return function (pl) { return pl >= L0.pr ? -L0.J * (pl - L0.pr) : L0.ev.qAt(Math.max(0, pl)); }; })(L);
+                } else {
+                    var src2 = 'LIT p²';
+                    if (!(_pos(a) && b >= 0) && _pos(k) && _pos(h)) {
+                        if (!Xd.ok) return _fail('NEEDS_RE', 'Layer ' + L.name + ': the Darcy layer needs rw and re (inflow card).');
+                        var sgx = _sgOf(P, F), st = sgx ? _gasState(sgx.sg, T, L.pr) : null;
+                        if (!st) return _fail('NEEDS', 'Darcy gas layers need the gas gravity and the reservoir temperature.');
+                        if (!(Xd.X + S > 0)) return _fail('BAD_SKIN', 'Layer ' + L.name + ': the skin is too negative.');
+                        a = C_DARCY_GAS * (T + RANK) * st.mu * st.z * (Xd.X + S) / (k * h); b = 0; src2 = 'Darcy k·h (p², μ̄z̄ at the layer p̄r)';
+                    }
+                    if (!(_pos(a) && (b >= 0 || !_fin(b)))) return _fail('NEEDS', 'Layer ' + L.name + ': enter LIT a and b (p²), or k and h.');
+                    if (!_fin(b)) b = 0;
+                    L.a = a; L.b = b; L.src = src2; L.model = 'litP2';
+                    L.q = (function (L0) {
+                        var root = function (d) { return L0.b > 0 ? (-L0.a + Math.sqrt(L0.a * L0.a + 4 * L0.b * d)) / (2 * L0.b) : d / L0.a; };
+                        return function (pl) { var d = L0.pr * L0.pr - pl * pl; return d >= 0 ? root(d) : -root(-d); };
+                    })(L);
+                }
+            }
+            var pAof = gas ? (_fin(_n(P.pAof)) ? _n(P.pAof) : P_AOF) : 0;
+            var Qof = function (pwf) { var s = 0; for (var k2 = 0; k2 < layers.length; k2++) s += layers[k2].q(Math.max(0, pwf + grad * layers[k2].dz)); return s; };
+            // the commingled static pressure p_ws (total rate 0) by bisection between the extreme layer pressures referred to the datum
+            var lo = Infinity, hi = -Infinity;
+            layers.forEach(function (L) { var pr0 = L.pr - grad * L.dz; if (pr0 < lo) lo = pr0; if (pr0 > hi) hi = pr0; });
+            lo = Math.max(pAof, lo - 1); hi = hi + 1;
+            for (var it = 0; it < 200 && hi - lo > 1e-10 * hi; it++) { var mm = 0.5 * (lo + hi); if (Qof(mm) > 0) lo = mm; else hi = mm; }
+            var pws = 0.5 * (lo + hi), aof = Qof(pAof);
+            if (!(aof > 0) || !(pws > pAof)) return _fail('NO_FLOW', 'The layers give no positive commingled rate.');
+            var ev = {
+                aof: aof,
+                qAt: function (pwf) { pwf = +pwf; if (!_fin(pwf)) return NaN; if (pwf >= pws) return 0; if (pwf <= pAof) return aof; return Qof(pwf); },
+                pwfAt: function (q) {
+                    q = +q; if (!_fin(q)) return null; if (q <= 0) return pws; if (q > aof * (1 + 1e-12)) return null; if (q >= aof) return pAof;
+                    var a2 = pAof, b2 = pws;
+                    for (var n = 0; n < 200 && b2 - a2 > 1e-12 * pws; n++) { var c2 = 0.5 * (a2 + b2); if (Qof(c2) > q) a2 = c2; else b2 = c2; }
+                    return 0.5 * (a2 + b2);
+                }
+            };
+            var rates = function (pwf) {
+                return layers.map(function (L) {
+                    var pl = Math.max(0, pwf + grad * L.dz), q = L.q(pl);
+                    return { name: L.name, topMd: L.topMd, botMd: L.botMd, midMd: L.midMd, tvd: L.tvd, pr: L.pr, pLayer: pl, q: q, crossflow: q < 0 };
+                });
+            };
+            var shut = rates(pws), xIn = 0;
+            shut.forEach(function (r) { if (r.q > 0) xIn += r.q; });
+            var thief = shut.filter(function (r) { return r.q < -1e-9; }).map(function (r) { return r.name; });
+            if (thief.length) w.push(_w('CROSSFLOW_SHUTIN', 'Shut in, ' + _fix(xIn, gas ? 0 : 1) + (gas ? ' Mscf/d' : ' STB/d') + ' flow from the higher-pressure layers into ' + thief.join(', ') + ' (crossflow in the wellbore).'));
+            var summary = layers.map(function (L) { return { name: L.name, topMd: L.topMd, botMd: L.botMd, midMd: L.midMd, tvd: L.tvd, dz: L.dz, pr: L.pr, J: L.J || null, a: L.a || null, b: _fin(L.b) ? L.b : null, model: L.model, src: L.src }; });
+            return { ev: ev, pAof: pAof, J: gas ? null : layers.reduce(function (s, L) { return s + (L.J || 0); }, 0), pb: null, prOverride: pws, kindOverride: gas ? 'gas' : 'oil',
+                form: { pws: pws, grad: grad, gradSource: gsrc, refMd: refMd, refTvd: refTvd, n: layers.length, label: 'commingled layers with crossflow' },
+                multilayer: { layers: summary, rates: rates, crossflow: { pws: pws, rate: xIn, thief: thief, layers: shut } }, engine: gas ? 'WTS_gasdeliv-form LIT per layer' : 'WTS_oilipr_model per layer' };
+        } });
+
+    // ── injector (water or gas injection well; fluid type waterinj / gasinj, or water): the injectivity index above p̄r with a
+    // fracture-pressure limit. Water: q = II·(pwf − p̄r), II input or Darcy k·h / (141.2·Bw·μw·(X + S)). Gas: LIT in m(p) reversed,
+    // m(pwf) − m(p̄r) = a·q + b·q², a / b input or Darcy (a = 1422·T·(X + S)/(k·h), b = 1422·T·D/(k·h)). pfrac (psia at the mid-
+    // perforations) caps the plot and the maximum rate; without it the solver may take the DFIT closure (WTS_wp_inj).
+    reg({ key: 'injector', label: 'Injector — injectivity index with a fracture-pressure limit', kind: 'inj', needs: ['II', 'k', 'h', 'rw', 're', 'S', 'pfrac', 'a', 'b', 'D'], verified: false,
+        build: function (spec, P, w, F) {
+            var pr = spec.pr, gas = !!(F && F.ok && (F.type === 'gasinj' || F.type === 'gas'));
+            var pfrac = _n(P.pfrac);
+            if (_fin(pfrac) && !(pfrac > pr)) return _fail('BAD_PFRAC', 'The fracture pressure must be above p̄r.');
+            var pLim = _fin(pfrac) ? pfrac : pr + Math.max(2000, 0.5 * pr), qAt, pwfAt, II = null, form = {};
+            if (!gas) {
+                II = _n(P.II); var src = 'input';
+                if (!_pos(II)) {
+                    var k = _n(P.k), h = _n(P.h), x = darcyX(P), bm = _bmu(P, F, spec, w, true), S = _fin(_n(P.S)) ? _n(P.S) : 0;
+                    if (!_pos(k) || !_pos(h)) return _fail('NEEDS', 'Enter the injectivity index II, or k and h.');
+                    if (!x.ok) return x;
+                    if (!(x.X + S > 0)) return _fail('BAD_SKIN', 'ln-term + S must be above 0.');
+                    II = k * h / (C_DARCY_OIL * bm.B * bm.mu * (x.X + S)); src = 'Darcy k·h (Bw ' + _fix(bm.B, 3) + ', μw ' + _fix(bm.mu, 3) + ' cp, ' + bm.src + ')';
+                    form = { X: x.X, ref: x.ref, S: S };
+                }
+                qAt = function (pwf) { pwf = +pwf; if (!_fin(pwf)) return NaN; return pwf <= pr ? 0 : II * (pwf - pr); };
+                pwfAt = function (q) { q = +q; if (!_fin(q)) return null; return q <= 0 ? pr : pr + q / II; };
+                form.IIsource = src;
+            } else {
+                var c = _gasCtx(Object.assign({}, spec, { pr: pLim }), P, F);
+                if (!c.ok) return c;
+                var a = _n(P.a), b = _n(P.b), src3 = 'LIT m(p) input';
+                if (!_pos(a)) {
+                    var k3 = _n(P.k), h3 = _n(P.h), x3 = darcyX(P), S3 = _fin(_n(P.S)) ? _n(P.S) : 0, D3 = _fin(_n(P.D)) ? _n(P.D) : 0;
+                    if (!_pos(k3) || !_pos(h3)) return _fail('NEEDS', 'Enter LIT a and b in m(p), or k and h.');
+                    if (!x3.ok) return x3;
+                    a = C_DARCY_GAS * (c.T + RANK) * (x3.X + S3) / (k3 * h3); b = C_DARCY_GAS * (c.T + RANK) * D3 / (k3 * h3); src3 = 'Darcy k·h (m(p))';
+                    form = { X: x3.X, ref: x3.ref, S: S3, D: D3 };
+                }
+                if (!_fin(b) || b < 0) b = 0;
+                var tb = c.tb, mpr = tb.mOf(pr);
+                qAt = function (pwf) { pwf = +pwf; if (!_fin(pwf)) return NaN; if (pwf <= pr) return 0; var d = tb.mOf(pwf) - mpr; return b > 0 ? (-a + Math.sqrt(a * a + 4 * b * d)) / (2 * b) : d / a; };
+                pwfAt = function (q) { q = +q; if (!_fin(q)) return null; if (q <= 0) return pr; return tb.pOf(mpr + a * q + b * q * q); };
+                P.a = a; P.b = b; P.sg = c.sg;
+                form.IIsource = src3; form.a = a; form.b = b;
+                II = qAt(pr + 100) / 100;                      // the secant injectivity over the first 100 psi, Mscf/d per psi
+            }
+            var qLim = qAt(pLim);
+            if (!(qLim > 0)) return _fail('NO_INJ', 'The injectivity gives no rate below the pressure limit.');
+            return { ev: { aof: qLim, qAt: qAt, pwfAt: pwfAt }, J: II, pb: null, pAof: null, kindOverride: 'inj', form: form,
+                injector: { fluid: gas ? 'gas' : 'water', II: II, pfrac: _fin(pfrac) ? pfrac : null, pLim: pLim, qLim: qLim, limitIsFrac: _fin(pfrac) },
+                engine: gas ? 'm(p) LIT reversed (PRiSM_mpTable)' : 'injectivity index' };
+        } });
+
+    // ── Build-up Surveillance hand-off (§2.10): the latest interpreted build-up of this well → k, h, S and p̄r ────────────────
+    // state = WTS_buildup.store.loadState() (localStorage, well-scoped; the per-test summaries keep result.final even after an
+    // overflow). The extrapolated pressure is at the Build-up datum TVD: o.midPerfTvd moves it to the mid-perforations with the
+    // Build-up static gradient (depth.grad, psi/ft). p̄r = pExt when it is the average pressure; a p* is passed with a caution.
+    function fromBuildup(state, o) {
+        o = o || {};
+        var warnings = [];
+        if (state === undefined) {
+            var BS = G.WTS_buildup && G.WTS_buildup.store;
+            state = (BS && typeof BS.loadState === 'function') ? BS.loadState() : null;
+        }
+        var A = state && state.analysis;
+        if (!A || !Array.isArray(A.tests)) return _fail('NO_BUILDUP', 'No build-up result for this well (run Build-up Surveillance first).');
+        var cand = A.tests.filter(function (t) { return t && t.status === 'interpreted' && t.result && t.result.final && _pos(_n(t.result.final.k)); });
+        if (!cand.length) return _fail('NO_BUILDUP', 'No interpreted build-up with a permeability for this well.');
+        cand.sort(function (x, y) { return (_n(x.tc_ms) || 0) - (_n(y.tc_ms) || 0) || String(x.date || '').localeCompare(String(y.date || '')); });
+        var t = cand[cand.length - 1], f = t.result.final, wl = A.well || {}, dep = A.depth || {}, P = {}, prov = {};
+        var src = 'Build-up ' + t.id + (t.date ? ' (' + t.date + ')' : '');
+        var k = _n(f.k), kh = _n(f.kh), h = _n(wl.h);
+        if (!_pos(h) && _pos(kh)) h = kh / k;
+        P.k = k; prov.k = src;
+        if (_pos(h)) { P.h = h; prov.h = src + (_pos(_n(wl.h)) ? ' well input' : ' kh/k'); }
+        if (_fin(_n(f.S))) { P.S = _n(f.S); prov.S = src; }
+        if (_pos(_n(wl.rw))) { P.rw = _n(wl.rw); prov.rw = src + ' well input'; }
+        if (_pos(_n(wl.re_ft))) { P.re = _n(wl.re_ft); prov.re = src + ' well input'; }
+        var gas = wl.fluid === 'gas';
+        if (gas && f.gas && _fin(_n(f.gas.Sprime))) warnings.push(_w('BU_SPRIME', 'Gas well: the build-up skin is the apparent skin S′ = S + D·q at the test rate.', 'info'));
+        var pExt = _first(t.pExtDatum, f.pExt), kind = f.pExtKind || (_fin(_n(t.pStarDatum)) ? 'pStar' : null), pr = null;
+        if (!_fin(pExt) && _fin(_n(t.pStarDatum))) { pExt = _n(t.pStarDatum); kind = 'pStar'; }
+        if (_fin(pExt)) {
+            pr = pExt;
+            var dTvd = _n(dep.datumTVD), g = _n(dep.grad), mt = _n(o.midPerfTvd);
+            if (_fin(dTvd) && _fin(g) && _fin(mt) && Math.abs(mt - dTvd) > 0.5) { pr = pExt + g * (mt - dTvd); warnings.push(_w('BU_DATUM', 'Pressure moved from the Build-up datum ' + _fix(dTvd, 0) + ' ft TVD to the mid-perforations ' + _fix(mt, 0) + ' ft TVD (' + _fix(g, 3) + ' psi/ft).', 'info')); }
+            prov.pr = src + (kind === 'pbar' ? ' p̄r' : ' p*');
+            if (kind !== 'pbar') warnings.push(_w('BU_PSTAR', 'The build-up gives p* (the extrapolated pressure), not p̄r: in a bounded or depleting reservoir p̄r is lower — check it.'));
+        } else warnings.push(_w('PR_NEEDED', 'The build-up has no extrapolated pressure: p̄r is not imported (never defaulted).'));
+        if (t.result.confidence && t.result.confidence.headline === 'low') warnings.push(_w('BU_LOW', 'The build-up interpretation has a low confidence label.'));
+        return { ok: true, spec: { model: gas ? 'darcyGas' : 'darcyOil', pr: pr, params: P, provenance: prov }, provenance: prov,
+            test: { id: t.id, date: t.date || null, k: k, kh: kh, S: _n(f.S), pExt: pExt, pExtKind: kind, conf: t.result.confidence ? t.result.confidence.headline : null, source: f.source || null },
+            warnings: warnings, errors: [] };
+    }
+
     function curve(spec, F, o) {
         spec = spec || {};
         o = o || {};
@@ -359,7 +820,7 @@
         var pr = _n(spec.pr);
         if (!_pos(pr)) return _fail('PR_NEEDED', 'p̄r needed: enter the average reservoir pressure (it is never defaulted).', { key: key, kind: def.kind });
         var warnings = [], P = _plainParams(spec.params);
-        var s = { model: key, pr: pr, T_F: spec.T_F, pb: spec.pb, params: P, points: spec.points };
+        var s = { model: key, pr: pr, T_F: spec.T_F, pb: spec.pb, params: P, points: spec.points, layers: spec.layers, perf: spec.perf };
         var hasCoef = def.needs.filter(function (n) { return n !== 'pb' && n !== 'sg'; }).every(function (n) { return _fin(_n(P[n])); });
         if (!hasCoef && def.fit) {
             var f = _autoFit(key, s, warnings);
@@ -369,13 +830,20 @@
         }
         var b = def.build(s, P, warnings, F || null, o);
         if (!b || b.ok === false) { b = b || _fail('BAD_PARAMS', 'Inflow could not be built.'); b.key = key; b.kind = def.kind; b.warnings = (b.warnings || []).concat(warnings); return b; }
-        var I = _mkI(key, { pr: pr, warnings: warnings }, b.ev, {
-            pb: b.pb, J: b.J, pAof: def.kind === 'gas' ? b.pAof : 0, skin: b.skin, params: P, D: b.D, Dsource: b.Dsource, form: b.form, engine: b.engine });
-        if (!I.skin && def.kind) {
-            var sk = skin(Object.assign({}, P, { pbar: pr, kind: def.kind, T_F: spec.T_F }));
+        var kind = b.kindOverride || def.kind, prI = _fin(b.prOverride) ? b.prOverride : pr;
+        var I = _mkI(key, { pr: prI, warnings: warnings }, b.ev, {
+            pb: b.pb, J: b.J, pAof: kind === 'gas' ? b.pAof : 0, skin: b.skin, params: P, D: b.D, Dsource: b.Dsource, form: b.form, engine: b.engine,
+            curveTo: b.injector ? b.injector.pLim : null });
+        I.kind = kind;
+        // increment B (WP24) extras: horizontal geometry, fracture, transient time, layers with crossflow, injector limits
+        ['horizontal', 'frac', 'transient', 'multilayer', 'injector'].forEach(function (k) { if (b[k]) I[k] = b[k]; });
+        if (b.multilayer) { I.layers = b.multilayer.layers; I.layerRates = b.multilayer.rates; I.crossflow = b.multilayer.crossflow; I.prInput = pr; }
+        if (b.injector) { I.inj = true; I.pFrac = b.injector.pfrac; I.qLimit = b.injector.qLim; I.II = b.injector.II; }
+        if (!I.skin && def.kind && !b.injector && !b.multilayer) {
+            var sk = skin(Object.assign({}, P, { pbar: pr, kind: kind, T_F: spec.T_F }));
             if (sk.ok && sk.parts.length) I.skin = sk;
         }
-        I.future = _future(spec, F, o, I);
+        I.future = (b.injector || b.multilayer) ? null : _future(spec, F, o, I);
         return I;
     }
 
@@ -612,7 +1080,7 @@
     Object.keys(MODELS).forEach(function (k) {
         var d = MODELS[k];
         api.models[k] = { key: d.key, label: d.label, kind: d.kind, needs: d.needs.slice(), verified: !!d.verified,
-            provisional: d.verified ? null : PROVISIONAL, fittable: !!d.fit,
+            provisional: d.verified ? null : PROVISIONAL, fittable: !!d.fit, horizontal: !!d.horizontal,
             curve: (function (key) { return function (spec, F, o) { return curve(Object.assign({}, spec || {}, { model: key }), F, o); }; })(k) };
     });
     api.curve = curve;
@@ -620,6 +1088,11 @@
     api.fromWell = fromWell;
     api.skin = skin;
     api.estimateD = estimateD;
+    api.fromBuildup = fromBuildup;
+    api.fracSkin = fracSkin;
+    api.babuOdehX = babuOdehX;
+    api.transientJ = transientJ;
+    api.B_KEYS = ['wcComposite', 'joshi', 'babuOdeh', 'furui', 'frac', 'fracGas', 'transient', 'multilayer', 'injector'];
     api.darcyX = darcyX;
     api.PROVISIONAL = PROVISIONAL;
     api.CONST = { P_AOF: P_AOF, C_DARCY_OIL: C_DARCY_OIL, C_DARCY_GAS: C_DARCY_GAS, C_FORCH: C_FORCH, C_D: C_D, C_BETA: C_BETA };

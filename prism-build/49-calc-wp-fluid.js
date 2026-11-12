@@ -16,7 +16,7 @@
 //               viscosity at its API; water from the WGR. The recombined well-stream gravity (recombine) is returned as
 //               F.sgWell for the reservoir m(p) table and the shut-in gas column only — never used in the march
 //   water       Meehan Bw / μw (water producer and water injector)
-//   gas injector  (B in the plan) built as a gas-only fluid with an info note
+//   gas injector  (B, WP24) built as a gas-only fluid with an info note; solved by WTS_wp_inj
 //
 // Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}], …}; nothing throws for user data):
 //   WTS_wp_fluid
@@ -220,7 +220,7 @@
             else if (!(_fin(s.pbUser) && s.pbUser > 14.7 && s.pbUser <= 15000)) err('pbUser', 'Bubble point must be above 14.7 and no more than 15,000 psia.');
             else if (!_fin(+opts.T_F)) warn('PB_SHIFT_NO_T', 'The bubble-point shift needs the reservoir temperature: the correlation bubble point is used.', 'warn', 'pbUser');
         }
-        if (t === 'gasinj') warn('GASINJ_B', 'Gas injection wells are planned for a later release: the fluid is treated as gas only.', 'info', 'type');
+        if (t === 'gasinj') warn('GASINJ_B', 'Gas injection well: the fluid is treated as dry gas (no liquids).', 'info', 'type');
         // unknown correlation keys fall back to the defaults inside the march — say so
         var L = _lib();
         if (L) Object.keys(CORR_PREFIX).forEach(function (k) {

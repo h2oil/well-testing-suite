@@ -235,14 +235,16 @@
         if (typeof G.WTS_flowline_march !== 'function') return { fail: _fail('MISSING_ENGINE', ['WTS_flowline_march is not available'], { name: 'WTS_flowline_march' }) };
         if (!M || !M.fluid || !M.res || !M.well) return { fail: _fail('NO_MODEL', ['the model is incomplete']) };
         var type = M.fluid.type || 'oil';
-        if (type === 'waterinj' || type === 'gasinj') return { fail: _fail('INJECTOR', ['Injection wells are solved in a later release (this release solves producers).']) };
+        if (type === 'waterinj' || type === 'gasinj') return { fail: _fail('INJECTOR', ['Injection wells: the operating point and the fracture limit are solved (WTS_wp_inj); design, bean schedule and the choke studies are for producers.']) };
         // the (p, T)-binned property table of the marcher (§4.5, WP0b FI9: < 0.05 % in BHP) — built once per solve; o.table false = exact props
         var F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F, table: o.table !== false });
         if (!F || !F.ok) return { fail: _fail('NEEDS_FLUID', (F && F.errors && F.errors.length) ? F.errors : ['the fluid is incomplete'], { F: F }) };
-        var I = G.WTS_wp_ipr.curve(M.res, F);
+        var W = G.WTS_wp_well.build(M.well, { res: M.res, fluidType: type, tests: M.tests, surface: M.surface });
+        // B (WP24): the inflow gets the well path (multilayer: every layer at its own TVD, referred to the mid-perforations)
+        var I = G.WTS_wp_ipr.curve(M.res, F, (W && W.ok) ? { tvdAt: W.tvdAt, refMd: W.nodes ? W.nodes.midPerfMd : null } : undefined);
         if (!I || !I.ok) return { fail: _fail('NEEDS_IPR', (I && I.errors && I.errors.length) ? I.errors : ['the inflow is incomplete (p̄r and the model parameters)'], { F: F, I: I }) };
         if (!(I.aof > 0)) return { fail: _fail('NEEDS_IPR', ['the inflow has no open-flow rate'], { F: F, I: I }) };
-        var W = G.WTS_wp_well.build(M.well, { res: M.res, fluidType: type, tests: M.tests, surface: M.surface });
+        if (I.inj) return { fail: _fail('INJ_MODEL', ['The injector inflow model is for injection wells (fluid type water or gas injector).'], { F: F, I: I }) };
         if (!W || !W.ok || !W.segments || !W.segments.length) return { fail: _fail('NEEDS_WELL', (W && W.errors && W.errors.length) ? W.errors : ['the well has no flow path (survey and strings)'], { F: F, I: I, W: W }) };
         var sys = M.system || {}, V = G.WTS_wp_vlp;
         var corrWell = (sys.corr && sys.corr.well) ? String(sys.corr.well) : (V.defaultCorr ? V.defaultCorr(F).key : 'bb');
@@ -773,6 +775,12 @@
         var ff = G.WTS_wp_fluid.flowlineFluid(C.F, opQ);
         R.rates = { q: opQ, qo: ff.qo, qw: ff.qw, qg: ff.qg_MMscfd * 1000, qL: ff.qo + ff.qw, basis: C.F.rateBasis };
         R.pwf = pwf;
+        // B (WP24): multilayer — every layer's rate at the operating pwf (negative = crossflow into that layer) and the shut-in crossflow
+        if (typeof C.I.layerRates === 'function') {
+            var lr = C.I.layerRates(pwf), tot = 0; lr.forEach(function (x) { tot += x.q; });
+            lr.forEach(function (x) { x.share = tot > 0 ? x.q / tot : null; });
+            R.layers = { rates: lr, crossflow: C.I.crossflow, pws: C.I.pr, grad: C.I.form ? C.I.form.grad : null, thief: lr.filter(function (x) { return x.crossflow; }).map(function (x) { return x.name; }) };
+        }
         if (C.gl) {
             R.rates.qinj = C.gl.qinj; R.rates.qgTotal = R.rates.qg + C.gl.qinj;
             var lt = tr && tr.ok && tr.lift ? tr.lift : null, casProf = [];
@@ -859,6 +867,7 @@
             F.push(_w('GL_POINT', 'Gas lift: ' + _f(lf.qinj, 0) + ' Mscf/d injected at ' + _f(lf.injMd, 0) + ' ft MD (' + _f(lf.injTvd, 0) + ' ft TVD), ' + (lf.atPacker ? 'at the packer' : 'the point of balance above the packer') +
                 '; casing ' + _f(lf.pCas - PATM, 0) + ' psig against tubing ' + _f(lf.pTub - PATM, 0) + ' psig. Quick look: one injection point, no valve mechanics.', 'info'));
         }
+        if (R.layers && R.layers.thief && R.layers.thief.length) F.push(_w('CROSSFLOW', 'Crossflow while flowing: ' + R.layers.thief.join(', ') + ' take' + (R.layers.thief.length === 1 ? 's' : '') + ' fluid at the operating point (wellbore pressure above the layer pressure).'));
         if (ch && ch.regime === 'liquid') F.push(_w('CHOKE_LIQUID', 'Liquid with no free gas: the choke is an incompressible orifice.', 'info'));
         R.discontinuities.forEach(function (d) {
             F.push(_w('DISCONTINUITY', d.kind === 'lift-limit' ? 'The outflow curve ends at about ' + _f(d.q, 0) + ' (the march cannot carry a higher rate): no root there.'
@@ -917,6 +926,8 @@
     // ── solve ─────────────────────────────────────────────────────────────────
     function solve(M, o) {
         o = o || {};
+        // B (WP24): an injection well is solved by WTS_wp_inj (the flow down the path, the injectivity and the fracture limit)
+        if (M && M.fluid && (M.fluid.type === 'waterinj' || M.fluid.type === 'gasinj') && typeof (G.WTS_wp_inj || {}).solve === 'function') return G.WTS_wp_inj.solve(M, o);
         var cx = _ctx(M, o);
         if (cx.fail) return cx.fail;
         var C = cx.C;
@@ -1126,12 +1137,23 @@
         }
         if (F && !F.ok) (F.errors || []).forEach(function (e) { add('FLUID', 'error', 'wp_ftype', e); });
         // pressures
-        var thp = _n(sys.thp_psig);
-        if (_fin(pr) && _fin(thp) && !(sf.choke && sf.choke.present) && thp + PATM >= pr) add('THP_GE_PR', 'error', 'wp_thp', 'The wellhead pressure must be below p̄r.');
-        if (_fin(pr) && _fin(_n(sf.psep_psig)) && +sf.psep_psig + PATM >= pr) add('PSEP_GE_PR', 'error', 'wp_psep', 'The separator pressure must be below p̄r.');
-        (Array.isArray(M.tests) ? M.tests : []).forEach(function (t) {
-            if (_fin(pr) && _fin(+t.gauge_psia) && +t.gauge_psia >= pr) add('TEST_PWF_GE_PR', 'warn', 'wp_tests', 'Test ' + (t.id || '') + ': the gauge pressure is not below p̄r.');
-        });
+        var thp = _n(sys.thp_psig), injW = fl.type === 'waterinj' || fl.type === 'gasinj';
+        if (injW) {
+            // B (WP24): injection wells — the injector inflow model and the surface injection pressure
+            if (res.model !== 'injector') add('INJ_MODEL', 'error', 'wp_ipr', 'An injection well needs the injector inflow model (injectivity index with a fracture-pressure limit).');
+            if (!_fin(thp)) add('INJ_THP', 'error', 'wp_thp', 'Enter the surface injection pressure (wellhead pressure).');
+            if (sf.choke && sf.choke.present) add('INJ_CHOKE', 'info', 'wp_choke', 'Injection well: the surface choke is not used.');
+        } else {
+            if (res.model === 'injector') add('INJ_MODEL_PROD', 'error', 'wp_ipr', 'The injector inflow model is for injection wells: choose the water or gas injector fluid type, or a producer inflow model.');
+            if (_fin(pr) && _fin(thp) && !(sf.choke && sf.choke.present) && thp + PATM >= pr) add('THP_GE_PR', 'error', 'wp_thp', 'The wellhead pressure must be below p̄r.');
+            if (_fin(pr) && _fin(_n(sf.psep_psig)) && +sf.psep_psig + PATM >= pr) add('PSEP_GE_PR', 'error', 'wp_psep', 'The separator pressure must be below p̄r.');
+            (Array.isArray(M.tests) ? M.tests : []).forEach(function (t) {
+                if (_fin(pr) && _fin(+t.gauge_psia) && +t.gauge_psia >= pr) add('TEST_PWF_GE_PR', 'warn', 'wp_tests', 'Test ' + (t.id || '') + ': the gauge pressure is not below p̄r.');
+            });
+        }
+        // B (WP24): every increment-B inflow model is provisional (D17) — a validity line names it
+        var IPm = (G.WTS_wp_ipr && G.WTS_wp_ipr.models) || {}, ipd = IPm[res.model];
+        if (ipd && ipd.verified === false && (G.WTS_wp_ipr.B_KEYS || []).indexOf(res.model) !== -1) validity.push({ corr: res.model, label: ipd.label, inRange: true, provisional: true, msg: ipd.label + ': inflow model in use.' });
         var I = null;
         if (F && F.ok && _fin(pr) && _fn('WTS_wp_ipr.curve')) { I = G.WTS_wp_ipr.curve(res, F); if (I && !I.ok) (I.errors || []).forEach(function (e) { add('IPR', 'error', 'wp_ipr', e); }); }
         if (I && I.ok && _fin(I.aof)) (M.tests || []).forEach(function (t) {
