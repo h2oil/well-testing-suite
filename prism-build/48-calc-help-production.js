@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: 'ebe5c7d8', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '8f5234fd', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -174,7 +174,7 @@ var wellperf = {
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
   'Drag a handle (p̄r, THP, bean, WC) on the system plot: the well re-solves. A slow case shows **Solve now**.',
   'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.',
-  '⑥ **Match**: tests, then **Compare and QC**. ⑦ **Report**: notes, **Export CSV bundle**.'],
+  '⑥ **Match**: tests, then **Compare and QC**. **Tune to the tests** fits the holdup multiplier (friction too when the rates span 2:1), then apply it to the model. ⑦ **Report**: notes, **Export CSV bundle**.'],
   inputs: [W('Fluid type', 'ftype', 'Oil'), W('Oil / condensate gravity', 'api', '35'), W('Gas specific gravity', 'sgg', '0.65'), W('Producing GOR', 'gor', '{{500|gor}}'),
   W('Water cut', 'wc', '0 %'), W('Inflow model', 'ipr', 'PI'), W('Average reservoir pressure p̄r', 'pr', null, 'Absolute; never defaulted.'),
   W('Productivity index J', 'ip_J', null, 'Each model shows its own parameters.'), inp('Survey stations', null, null, 'MD, inclination, azimuth (or MD, TVD); minimum curvature.'),
@@ -184,7 +184,7 @@ var wellperf = {
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|co|muod|muo|muou|z|mug|sigma)$', why: 'fluid and inflow details' },
-  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit|tcorr|tfree)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Liquid loading, Choke, Sensitivity (one or two variables), Bean schedule.')],

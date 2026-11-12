@@ -1,7 +1,7 @@
 // =============================================================================
 // WTS — 49-calc-wp-match.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
 // -----------------------------------------------------------------------------
-// Well Performance correlation comparison, IPR from a test and production-test QC (WP7, increment A1) —
+// Well Performance correlation comparison, IPR from a test, production-test QC (WP7, increment A1) and VLP tuning (WP17, A2) —
 // docs/WELL-PERFORMANCE-PLAN.md §3.7, §5.2–§5.4, §17.1, D17.
 //
 // Nothing here re-implements a correlation, a march, an inflow model or a choke law: the comparison and the back-calculation drive
@@ -20,7 +20,7 @@
 //   calculated pressure is the march end exactly (no interpolation). err = p_calc − p_gauge (psi), errPct = 100·err / p_gauge,
 //   errPctDp = 100·err / (p_gauge − THP) (the share of the measured tubing Δp). Ranked by |err| (several tests: by the RMS over the
 //   tests with a gauge); a lost march ranks last. Unverified correlations keep their "provisional — not verified against a published
-//   example" label in every row (D17). No multipliers unless o.mult (tuning is A2, WP17).
+//   example" label in every row (D17). No multipliers unless o.mult (tune() fits them, A2 WP17).
 // IPR FROM A TEST (§5.3). pwf at the mid-perforations: marched DOWN from the gauge (segmentsFor between the gauge and the
 //   mid-perforations; a gauge below the mid-perforations is marched up), the gauge itself when it sits at the mid-perforations
 //   (±1 ft), or marched down from the THP when there is no gauge — with the chosen correlation (o.corr, else M.system.corr.well,
@@ -66,7 +66,20 @@
 //            (the changed coefficients), jEq, adopt:{controlId: value}, closedForm, provenance, warnings, errors}
 //     .pwfFromTest(M, test, o?) → {ok, pwf, method, corr, gauge, warnings}      (the pwf step alone)
 //     .rates(M, test) → {ok, qo, qw, qg_Mscfd, q, gor, wc, derived[]}
-//     .tune(M, tests, corr, o) → A2 (WP17): still the WP0 stub
+//     .tune(M, tests | test, corr?, o? /*{free:['hl'] | ['hl','f'] (default: the D10 rule), bounds:{hl:[lo,hi], f:[lo,hi]}, start:{hl, f},
+//            stepFt, maxIter, scan:false, profiles:false}*/)                                                       (A2, WP17; §5.2, D10)
+//         → {ok, corr, label, verified, provisional, free, freeAsked, bounds, start, mult:{hl, f}, adopt:{wp_mult_hl, wp_mult_f},
+//            residuals:[{id, q, rateUnit, gauge:{md, tvd, p}, thp, pUntuned, pTuned, errUntuned, errTuned, errPctUntuned, errPctTuned}],
+//            rms:{untuned, tuned, untunedPct, tunedPct}, rateSpan, nTests, tests, corrMatrix:[[1, ρ], [ρ, 1]] | null, corrBasis:'lm' |
+//            'jacobian', rho, separable, flags:[{code, sev, msg}], scan:[{hl, rms}], profiles:[{id, gauge, thp, untuned:[{md, tvd, p}],
+//            tuned:[…]}], lm:{iterations, converged, stopReason, ssr, nEval, ci95:{hl, f}, stderr:{hl, f}}, warnings, errors}
+//         flags: TUNE_MH_ONLY (info; rate span < 2:1 or one test), TUNE_INSEPARABLE (|ρ| > 0.9), TUNE_HL_RANGE / TUNE_F_RANGE
+//         (outside 0.9–1.1), TUNE_AT_BOUND, TUNE_NOT_CONVERGED, TUNE_RESIDUAL (a test still > 5 % off), PROVISIONAL (D17).
+//         Refusals: NO_TEST, NO_GAUGE…, LOST, UNKNOWN_CORR, INSENSITIVE (the gradient has no holdup to scale), MISSING_ENGINE (PRiSM_lm).
+//     .tuneJob(M, tests, corr?, o?) → Job (PRiSM_autoInterp.drive protocol, one stage per step); result() = tune()'s result
+//     .TUNE = {bounds, flag:[0.9, 1.1], rho: 0.9, span: 2, scan, inseparable}
+//   (A2) pwfFromTest / iprFromTest report the multipliers they used (mult: {hl, f} | null; M.system.mult = the tuned VLP, §5.3);
+//   QC_VLP is checked after tuning when M.system.mult ≠ 1 (§5.4).
 //   WTS_wp_qc(M, tests, o? /*{corrKeys, sepqc}*/)
 //         → {ok, rows:[{id, use, score, rank, q, pwf, gor, wc, checks:[{code, st, msg}], flags:[{code, sev, msg}], compare}], codes,
 //            warnings, errors}
@@ -75,9 +88,9 @@
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
 
-    // WP7 implements compare / iprFromTest / qc: their names leave window.__WP_STUBS; tune stays the WP0 stub (A2, WP17)
+    // WP7 implements compare / iprFromTest / qc and WP17 (A2) tune: their names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
-    ['WTS_wp_match.compare', 'WTS_wp_match.iprFromTest', 'WTS_wp_qc'].forEach(function (n) { var i = STUBS.indexOf(n); if (i !== -1) STUBS.splice(i, 1); });
+    ['WTS_wp_match.compare', 'WTS_wp_match.iprFromTest', 'WTS_wp_match.tune', 'WTS_wp_qc'].forEach(function (n) { var i = STUBS.indexOf(n); if (i !== -1) STUBS.splice(i, 1); });
     function _mark(name) { if (STUBS.indexOf(name) === -1) STUBS.push(name); }
     function _stub(name, wp) { return { ok: false, code: 'STUB', name: name, wp: wp, errors: [name + ' is not built yet (' + wp + ')'], warnings: [] }; }
 
@@ -336,7 +349,7 @@
             var tr = _march(cx, path, down ? 'top' : 'bottom', g.p, corr, mo);
             if (!tr || !tr.ok) return _fail('LOST', 'The march from the gauge to the mid-perforations is lost (' + ((tr && tr.lost && tr.lost.reason) || (tr && tr.code) || 'failed') + ').');
             if (!down) warnings.push(_w('GAUGE_BELOW_MIDPERF', 'The gauge is below the mid-perforations: the pressure is marched up to them.', 'info'));
-            return { ok: true, pwf: tr.pEnd, method: 'gauge', corr: corr, gauge: g, dpGauge: tr.pEnd - g.p, warnings: warnings, errors: [] };
+            return { ok: true, pwf: tr.pEnd, method: 'gauge', corr: corr, mult: mo.mult && (+mo.mult.hl !== 1 || +mo.mult.f !== 1) ? { hl: +mo.mult.hl, f: +mo.mult.f } : null, gauge: g, dpGauge: tr.pEnd - g.p, warnings: warnings, errors: [] };
         }
         var thp = _n(t.thp_psig);
         if (!_fin(thp)) return _fail('NO_PRESSURE', 'The test needs a gauge pressure or a wellhead pressure.');
@@ -345,7 +358,7 @@
         var tr2 = _march(cx, pth, 'top', thp + PATM, corr, mo);
         if (!tr2 || !tr2.ok) return _fail('LOST', 'The march from the wellhead to the mid-perforations is lost (' + ((tr2 && tr2.lost && tr2.lost.reason) || (tr2 && tr2.code) || 'failed') + ').');
         warnings.push(_w('PWF_FROM_THP', 'No gauge: pwf is marched down from the THP with ' + ((_reg()[corr] || {}).label || corr) + ((_reg()[corr] || {}).verified === true ? '' : ' (' + PROVISIONAL + ')') + '.', 'info'));
-        return { ok: true, pwf: tr2.pEnd, method: 'thp', corr: corr, gauge: null, warnings: warnings, errors: [] };
+        return { ok: true, pwf: tr2.pEnd, method: 'thp', corr: corr, mult: mo.mult && (+mo.mult.hl !== 1 || +mo.mult.f !== 1) ? { hl: +mo.mult.hl, f: +mo.mult.f } : null, gauge: null, warnings: warnings, errors: [] };
     }
 
     // ── IPR from a test (§5.3) ───────────────────────────────────────────────
@@ -366,7 +379,7 @@
         res0.params = res0.params || {};
         if (!def) return _fail('UNKNOWN_MODEL', 'Unknown inflow model "' + key.slice(0, 40) + '".');
         if (!(q > 0)) return _fail('NO_RATE', 'The test rate must be above zero.');
-        var out = { ok: true, solveFor: sf, pwf: pwf, method: pw.method, corr: pw.corr, q: q, rateUnit: cx.r.rateUnit, model: key, closedForm: false,
+        var out = { ok: true, solveFor: sf, pwf: pwf, method: pw.method, corr: pw.corr, mult: pw.mult || null, q: q, rateUnit: cx.r.rateUnit, model: key, closedForm: false,
             provenance: 'matched to test ' + _tid(t, 0), warnings: warnings, errors: [], params: {}, adopt: {} };
         var jUnit = cx.r.rateUnit + '/psi';
         if (sf === 'pr') {
@@ -551,7 +564,15 @@
             else {
                 cmp = compare(M, t, o.corrKeys, { profiles: false });
                 var b = cmp.ok ? cmp.rows[0] : null;
+                // A2 (§5.4): with tuned multipliers (M.system.mult ≠ 1) the check is made after tuning, on the model's well correlation
+                var tm = M.system && M.system.mult, tuned = tm && ((_fin(+tm.hl) && +tm.hl !== 1) || (_fin(+tm.f) && +tm.f !== 1)) ? { hl: _fin(+tm.hl) ? +tm.hl : 1, f: _fin(+tm.f) ? +tm.f : 1 } : null;
+                var tcmp = tuned && !cx.fail ? compare(M, t, [_corrOf(cx.M, cx.F, { corr: o.corr })], { profiles: false, mult: tuned }) : null;
                 if (!b) checks.push(_chk('QC_VLP', 'na', 'Comparison not available: ' + ((cmp.errors || [])[0] || '')));
+                else if (tuned && tcmp && tcmp.ok && tcmp.rows[0] && _fin(tcmp.rows[0].errPct) && Math.abs(tcmp.rows[0].errPct) <= Math.abs(b.errPct)) {
+                    var tb = tcmp.rows[0], tl = ' after tuning (' + tb.label + ', m_h ' + _f(tuned.hl, 3) + ', m_f ' + _f(tuned.f, 3) + ')';
+                    if (Math.abs(tb.errPct) > VLP_TOL) checks.push(_chk('QC_VLP', 'warn', 'The tuned correlation still misses the gauge by ' + _f(tb.err, 0) + ' psi (' + _f(tb.errPct, 1) + ' %)' + tl + ': rates, THP, gauge depth or the fluid may be inconsistent.'));
+                    else checks.push(_chk('QC_VLP', 'ok', 'Within ' + _f(Math.abs(tb.errPct), 1) + ' % of the gauge' + tl + (tb.verified ? '' : ' (' + PROVISIONAL + ')') + '.'));
+                }
                 else if (Math.abs(b.errPct) > VLP_TOL) checks.push(_chk('QC_VLP', 'warn', 'Best correlation ' + b.label + ' misses the gauge by ' + _f(b.err, 0) + ' psi (' + _f(b.errPct, 1) + ' %): rates, THP, gauge depth or the fluid may be inconsistent.'));
                 else checks.push(_chk('QC_VLP', 'ok', 'Best correlation ' + b.label + ' within ' + _f(Math.abs(b.errPct), 1) + ' % of the gauge' + (b.verified ? '' : ' (' + PROVISIONAL + ')') + '.'));
             }
@@ -581,11 +602,208 @@
         return { ok: true, rows: rows, codes: QC_CODES.slice(), labels: QC_LABEL, warnings: gas ? [_w('QC_GAS', 'Gas well: the GOR and Separator QC checks are not applicable.', 'info')] : [], errors: [] };
     }
 
+    // ── VLP tuning (§5.2 A2, D10; WP17) ──────────────────────────────────────
+    // The multipliers act INSIDE the one marcher (WTS_flowline_march opt.mult, WP0b): H_L' = clamp(m_h·H_L, λ_L, 1), then ρ_s, the
+    // slip viscosity / friction of the correlation (its .friction hook), gradEl, gradF = m_f·gradF' and grad = (gradEl + gradF)/(1 − Ek)
+    // are rebuilt. The residual of a test is p_calc(m) − p_gauge with p_calc the march from the measured THP down the surveyed path to
+    // the gauge MD at the test's own rates and THT (the compare march); the sub-step layout is frozen at the start (§4.5) so p(m) is
+    // smooth for the forward-difference Jacobian. PRiSM_lm (05-regression) fits m_h, or m_h and m_f when the used tests span at least
+    // 2:1 in rate (with gauges at one depth the two are nearly collinear otherwise). The 2 × 2 parameter correlation is reported
+    // either from the LM covariance (both fitted) or from the Jacobian of both multipliers at the answer (m_h only): |ρ| > 0.9 →
+    // "the two multipliers cannot be separated with these tests".
+    var TUNE_BOUNDS = { hl: [0.8, 1.25], f: [0.7, 1.5] }, TUNE_FLAG = [0.9, 1.1], TUNE_RHO = 0.9, TUNE_SPAN = 2, TUNE_SCAN = 9;
+    var INSEP_MSG = 'the two multipliers cannot be separated with these tests';
+    function _bnd(o, k) {
+        var b = o && o.bounds && Array.isArray(o.bounds[k]) ? o.bounds[k] : null, d = TUNE_BOUNDS[k];
+        var lo = b && _fin(+b[0]) ? +b[0] : d[0], hi = b && _fin(+b[1]) ? +b[1] : d[1];
+        lo = Math.max(0.05, lo); hi = Math.min(20, hi);
+        return hi > lo ? [lo, hi] : d.slice();
+    }
+    function _cl(v, b) { return Math.min(b[1], Math.max(b[0], v)); }
+    // the fit in stages (the Job runs one stage per step; tune() runs them all): contexts + untuned marches · free set + sensitivity ·
+    // LM · correlation + flags · objective scan + profiles
+    function _tuneStages(M, tests, corr, o) {
+        o = o || {};
+        var S = { out: null };
+        var stages = [function () { S.out = _tuneA(M, tests, corr, o, S); }, function () { S.out = _tuneB(o, S); }, function () { S.out = _tuneC(o, S); },
+            function () { S.out = _tuneD(o, S); }, function () { S.out = _tuneE(o, S); }];
+        return { S: S, stages: stages, labels: ['untuned marches', 'free multipliers', 'Levenberg-Marquardt fit', 'parameter correlation', 'objective and traverses'] };
+    }
+    function tune(M, tests, corr, o) {
+        var R = _tuneStages(M, tests, corr, o);
+        for (var i = 0; i < R.stages.length; i++) { R.stages[i](); if (R.S.out) return R.S.out; }
+        return R.S.out || _fail('TUNE_FAILED', 'the fit did not finish');
+    }
+    function tuneJob(M, tests, corr, o) {
+        var R = _tuneStages(M, tests, corr, o), J = G.WTS_wp_system && G.WTS_wp_system.job;
+        var spec = { next: function (i) { if (i < R.stages.length && !R.S.out) R.stages[i](); return !!R.S.out || i + 1 >= R.stages.length; },
+            finish: function () { return R.S.out || _fail('CANCELLED', 'The tuning was cancelled.'); },
+            progress: function (i) { return i / R.stages.length; }, label: function (i) { return R.labels[Math.min(i, R.labels.length - 1)]; } };
+        if (typeof J === 'function') return J(spec);
+        var done = false, res = null, i0 = 0;
+        return { step: function () { if (!done) { done = spec.next(i0++); if (done) res = spec.finish(); } return { done: done, progress: done ? 1 : spec.progress(i0), label: spec.label(i0) }; },
+            done: function () { return done; }, progress: function () { return done ? 1 : spec.progress(i0); }, result: function () { return res || spec.finish(); }, cancel: function () { done = true; } };
+    }
+    function _tuneA(M, tests, corr, o, S) {
+        if (!M || !M.fluid) return _fail('NO_MODEL', 'the model is incomplete');
+        var LM = G.PRiSM_lm;
+        if (typeof LM !== 'function') return _fail('MISSING_ENGINE', 'PRiSM_lm (Levenberg-Marquardt) is not available', { name: 'PRiSM_lm' });
+        var list = (Array.isArray(tests) ? tests : [tests]).filter(function (t) { return t && typeof t === 'object' && t.use !== false; });
+        if (!list.length) return _fail('NO_TEST', 'No production test to tune to (tests with use: true).');
+        var REG = _reg(), warnings = [], flags = [], cases = [];
+        var flag = function (code, sev, msg) { flags.push({ code: code, sev: sev, msg: String(msg).slice(0, 299) }); };
+        // one context per test: fluid, deviated well path wellhead → gauge, frozen sub-step grid
+        var key = null;
+        list.forEach(function (t, i) {
+            var id = _tid(t, i), g = _gaugeOf(t), thp = _n(t.thp_psig);
+            if (!g) { warnings.push(_w('NO_GAUGE', 'Test ' + id + ' has no gauge depth and pressure (skipped).')); return; }
+            if (!_fin(thp)) { warnings.push(_w('NO_THP', 'Test ' + id + ' has no wellhead pressure (skipped).')); return; }
+            var cx = _ctx(M, t);
+            if (cx.fail) { warnings.push(_w(cx.fail.code, 'Test ' + id + ': ' + (cx.fail.errors[0] || 'not usable') + ' (skipped).')); return; }
+            if (key == null) key = _corrOf(cx.M, cx.F, { corr: corr });
+            var path = _sub(cx.W, g.md, 0);
+            if (!path) { warnings.push(_w('NO_PATH', 'Test ' + id + ': no flow path between the wellhead and the gauge (skipped).')); return; }
+            cases.push({ id: id, t: t, cx: cx, path: path, g: g, thpA: thp + PATM, q: cx.r.q, rateUnit: cx.r.rateUnit, grid: true, memo: {},
+                gaugeTvd: typeof cx.W.tvdAt === 'function' ? cx.W.tvdAt(g.md) : null });
+        });
+        if (!cases.length) { var w0 = warnings[0]; return _fail(w0 ? w0.code : 'NO_TEST', w0 ? w0.msg : 'No usable test (gauge depth and pressure, THP, rates).', { warnings: warnings }); }
+        key = String(key);
+        if (!Object.prototype.hasOwnProperty.call(REG, key) || typeof REG[key].grad !== 'function') return _fail('UNKNOWN_CORR', 'unknown correlation key ' + key.slice(0, 40), { warnings: warnings });
+        var E = REG[key], sys = M.system || {}, stepFt = +o.stepFt > 0 ? +o.stepFt : (+sys.stepFt > 0 ? +sys.stepFt : 100);
+        var bH = _bnd(o, 'hl'), bF = _bnd(o, 'f'), nEval = 0;
+        // p_calc at the gauge for multipliers m (a lost march returns null)
+        function pAt(c, hl, f, keepProfile) {
+            var mk = hl.toPrecision(14) + '|' + f.toPrecision(14);
+            if (!keepProfile && c.memo[mk] !== undefined) return c.memo[mk];
+            var so = { from: 'top', p0: c.thpA, corr: key, stepFt: stepFt, eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false,
+                pMax: Math.max(c.thpA * 4, c.thpA + 10000), grid: c.grid };
+            if (hl !== 1 || f !== 1) so.mult = { hl: hl, f: f };
+            var tr = G.WTS_wp_vlp.traverse(c.cx.F, c.path, c.cx.flow, so);
+            nEval++;
+            if (c.grid === true && tr && tr.grid) c.grid = tr.grid;          // the layout of the first march is kept (§4.5 frozen grid)
+            var p = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
+            c.memo[mk] = p;
+            return keepProfile ? { p: p, profile: tr && tr.profile ? _decim(tr.profile, 80) : null } : p;
+        }
+        var h0 = _fin(+(o.start && o.start.hl)) ? _cl(+o.start.hl, bH) : 1, f0 = _fin(+(o.start && o.start.f)) ? _cl(+o.start.f, bF) : 1;
+        // untuned residuals (m = 1) — the march at the published correlation fixes each test's grid
+        cases.forEach(function (c) { c.pU = pAt(c, 1, 1); });
+        var live = cases.filter(function (c) { return c.pU != null; });
+        cases.filter(function (c) { return c.pU == null; }).forEach(function (c) { warnings.push(_w('LOST', 'Test ' + c.id + ': the untuned march is lost before the gauge (skipped).')); });
+        if (!live.length) return _fail('LOST', 'Every march was lost before the gauge.', { warnings: warnings });
+        S.c = { key: key, E: E, bH: bH, bF: bF, h0: h0, f0: f0, live: live, warnings: warnings, flags: flags, flag: flag, pAt: pAt, LM: LM, nEval: function () { return nEval; } };
+        return null;
+    }
+    function _tuneB(o, S) {
+        var c0 = S.c, live = c0.live, flag = c0.flag, pAt = c0.pAt, f0 = c0.f0, E = c0.E, key = c0.key, warnings = c0.warnings;
+        // which multipliers are free (D10): m_h always; m_f only when the tests span ≥ 2:1 in rate
+        var qs = live.map(function (c) { return c.q; }).filter(function (q) { return q > 0; });
+        var span = qs.length ? Math.max.apply(null, qs) / Math.min.apply(null, qs) : 1;
+        var asked = Array.isArray(o.free) ? o.free.filter(function (k) { return k === 'hl' || k === 'f'; }) : null;
+        var wantF = asked ? asked.indexOf('f') !== -1 : (span >= TUNE_SPAN && live.length >= 2);
+        var free = ['hl'];
+        if (wantF && span >= TUNE_SPAN && live.length >= 2) free.push('f');
+        else if (wantF || (asked == null && live.length >= 2)) flag('TUNE_MH_ONLY', 'info', 'The tests span ' + _f(span, 2) + ':1 in rate (below ' + TUNE_SPAN + ':1): with gauge pressures at one depth the holdup and friction multipliers are nearly collinear, so only the holdup multiplier m_h is fitted (m_f held at ' + _f(f0, 3) + ').');
+        else if (live.length === 1) flag('TUNE_MH_ONLY', 'info', 'One test: only the holdup multiplier m_h is fitted (m_f held at ' + _f(f0, 3) + ').');
+        // sensitivity: a method whose gradient does not depend on the holdup (single-phase gas) cannot be tuned this way
+        var dH = 0;
+        live.forEach(function (c) { var a = pAt(c, _cl(1.02, [0.01, 99]), 1), b = pAt(c, _cl(0.98, [0.01, 99]), 1); if (a != null && b != null) dH = Math.max(dH, Math.abs(a - b) / 0.04); });
+        if (!(dH > 0.5)) return _fail('INSENSITIVE', (E.label || key) + ': the pressure at the gauge does not respond to the holdup multiplier (' + _f(dH, 2) + ' psi per unit) — no liquid holdup to scale; nothing to tune.', { corr: key, warnings: warnings });
+        c0.free = free; c0.span = span; c0.asked = asked;
+        return null;
+    }
+    function _tuneC(o, S) {
+        var c0 = S.c, live = c0.live, pAt = c0.pAt, bH = c0.bH, bF = c0.bF, free = c0.free, warnings = c0.warnings, LM = c0.LM, h0 = c0.h0, f0 = c0.f0;
+        // PRiSM_lm on the gauge residuals (one row per test; a single test gets a zero-weight copy: PRiSM_lm needs two rows)
+        var n = live.length, T = [], P = [], Wt = [];
+        live.forEach(function (c, i) { T.push(i); P.push(c.g.p); Wt.push(1); });
+        if (n === 1) { T.push(0); P.push(live[0].g.p); Wt.push(0); }
+        var model = function (tt, pr) {
+            var hl = _cl(+pr.hl, bH), f = _cl(+pr.f, bF);
+            return tt.map(function (i) { var c = live[i], p = pAt(c, hl, f); return p == null ? c.g.p + 1e4 : p; });
+        };
+        var lm;
+        try {
+            lm = LM(model, { t: T, p: P, weights: Wt }, { hl: h0, f: f0 }, { hl: bH, f: bF }, free.indexOf('f') === -1 ? { f: true } : null,
+                { maxIter: +o.maxIter > 0 ? +o.maxIter : 30, tolerance: 1e-9, gtol: 1e-10, derivStep: 1e-3 });
+        } catch (e) { return _fail('LM_FAILED', 'The fit failed: ' + String(e && e.message || e).slice(0, 200), { warnings: warnings }); }
+        var mh = _cl(+lm.params.hl, bH), mf = free.indexOf('f') !== -1 ? _cl(+lm.params.f, bF) : f0;
+        c0.lm = lm; c0.mh = mh; c0.mf = mf; c0.n = n;
+        return null;
+    }
+    function _tuneD(o, S) {
+        var c0 = S.c, live = c0.live, pAt = c0.pAt, bH = c0.bH, bF = c0.bF, free = c0.free, lm = c0.lm, mh = c0.mh, mf = c0.mf, flag = c0.flag, E = c0.E, key = c0.key;
+        // residuals before / after, RMS
+        var res = live.map(function (c) {
+            var pT = pAt(c, mh, mf);
+            return { id: c.id, q: c.q, rateUnit: c.rateUnit, gauge: { md: c.g.md, tvd: c.gaugeTvd, p: c.g.p }, thp: c.thpA, pUntuned: c.pU, pTuned: pT,
+                errUntuned: c.pU - c.g.p, errTuned: pT == null ? null : pT - c.g.p, errPctUntuned: 100 * (c.pU - c.g.p) / c.g.p,
+                errPctTuned: pT == null ? null : 100 * (pT - c.g.p) / c.g.p };
+        });
+        var rms = function (k) { var s = 0, m = 0; res.forEach(function (r) { if (_fin(r[k])) { s += r[k] * r[k]; m++; } }); return m ? Math.sqrt(s / m) : null; };
+        // the 2 × 2 parameter correlation: LM covariance (both free) or the Jacobian of both multipliers at the answer
+        var rho = null, basis = null;
+        if (free.length === 2 && lm.corr && lm.corr[0] && _fin(lm.corr[0][1])) { rho = lm.corr[0][1]; basis = 'lm'; }
+        else {
+            var hh = 0.01, sHH = 0, sFF = 0, sHF = 0;
+            live.forEach(function (c) {
+                var a = pAt(c, mh + hh, mf), b = pAt(c, mh - hh, mf), cc = pAt(c, mh, mf + hh), d = pAt(c, mh, mf - hh);
+                if ([a, b, cc, d].some(function (v) { return v == null; })) return;
+                var jh = (a - b) / (2 * hh), jf = (cc - d) / (2 * hh);
+                sHH += jh * jh; sFF += jf * jf; sHF += jh * jf;
+            });
+            if (sHH > 0 && sFF > 0) {
+                var det = sHH * sFF - sHF * sHF;
+                rho = det > 1e-9 * sHH * sFF ? -sHF / Math.sqrt(sHH * sFF) : (sHF >= 0 ? -1 : 1);
+                basis = 'jacobian';
+            }
+        }
+        var separable = rho == null ? null : Math.abs(rho) <= TUNE_RHO;
+        if (separable === false) flag('TUNE_INSEPARABLE', free.length === 2 ? 'warn' : 'info', 'Parameter correlation |ρ| = ' + _f(Math.abs(rho), 3) + ' above ' + TUNE_RHO + ': ' + INSEP_MSG + (free.length === 2 ? '; consider fitting m_h only.' : ' (m_h alone is fitted).'));
+        // flags (D10): a multiplier outside 0.9–1.1 stretches the correlation; at a bound; not converged; still off the gauge
+        var near = function (v, b) { return Math.abs(v - b) <= 1e-3 * (bH[1] - bH[0]); };
+        if (mh < TUNE_FLAG[0] || mh > TUNE_FLAG[1]) flag('TUNE_HL_RANGE', 'warn', 'Holdup multiplier m_h = ' + _f(mh, 3) + ' is outside ' + TUNE_FLAG[0] + '–' + TUNE_FLAG[1] + ': the correlation is being stretched — check the test rates, the gauge depth and the fluid before adopting it.');
+        if (free.indexOf('f') !== -1 && (mf < TUNE_FLAG[0] || mf > TUNE_FLAG[1])) flag('TUNE_F_RANGE', 'warn', 'Friction multiplier m_f = ' + _f(mf, 3) + ' is outside ' + TUNE_FLAG[0] + '–' + TUNE_FLAG[1] + ': check the roughness, the tubing ID and the rates before adopting it.');
+        if (near(mh, bH[0]) || near(mh, bH[1]) || (free.indexOf('f') !== -1 && (Math.abs(mf - bF[0]) <= 1e-3 * (bF[1] - bF[0]) || Math.abs(mf - bF[1]) <= 1e-3 * (bF[1] - bF[0]))))
+            flag('TUNE_AT_BOUND', 'warn', 'A multiplier stopped at its bound (m_h ' + bH[0] + '–' + bH[1] + (free.indexOf('f') !== -1 ? ', m_f ' + bF[0] + '–' + bF[1] : '') + '): the correlation cannot reach the gauge within the allowed range — the test or the model is inconsistent, or another correlation fits better.');
+        if (!lm.converged) flag('TUNE_NOT_CONVERGED', 'warn', 'The fit stopped before convergence (' + (lm.stopReason || 'iterations') + ').');
+        var worst = 0; res.forEach(function (r) { if (_fin(r.errPctTuned)) worst = Math.max(worst, Math.abs(r.errPctTuned)); });
+        if (worst > VLP_TOL) flag('TUNE_RESIDUAL', 'warn', 'After tuning a test still misses the gauge by ' + _f(worst, 1) + ' % (above ' + VLP_TOL + ' %): the tests are not consistent with one pair of multipliers.');
+        if (E.verified !== true) flag('PROVISIONAL', 'info', (E.label || key) + ': ' + PROVISIONAL + '.');
+        c0.res = res; c0.rms = rms; c0.rho = rho; c0.basis = basis; c0.separable = separable;
+        return null;
+    }
+    function _tuneE(o, S) {
+        var c0 = S.c, live = c0.live, pAt = c0.pAt, bH = c0.bH, bF = c0.bF, free = c0.free, lm = c0.lm, mh = c0.mh, mf = c0.mf, E = c0.E, key = c0.key;
+        var res = c0.res, rms = c0.rms, rho = c0.rho, basis = c0.basis, separable = c0.separable, flags = c0.flags, warnings = c0.warnings;
+        var span = c0.span, asked = c0.asked, h0 = c0.h0, f0 = c0.f0, n = c0.n;
+        // the objective along m_h (m_f at its answer) for the page's residual plot
+        var scan = [];
+        if (o.scan !== false) for (var k = 0; k < TUNE_SCAN; k++) {
+            var hk = bH[0] + (bH[1] - bH[0]) * k / (TUNE_SCAN - 1), s2 = 0, m2 = 0;
+            live.forEach(function (c) { var p = pAt(c, hk, mf); if (p != null) { s2 += (p - c.g.p) * (p - c.g.p); m2++; } });
+            scan.push({ hl: hk, rms: m2 ? Math.sqrt(s2 / m2) : null });
+        }
+        var profiles = null;
+        if (o.profiles !== false) profiles = live.slice(0, 6).map(function (c) { return { id: c.id, gauge: { md: c.g.md, tvd: c.gaugeTvd, p: c.g.p }, thp: c.thpA, untuned: pAt(c, 1, 1, true).profile, tuned: pAt(c, mh, mf, true).profile }; });
+        var ci = lm.ci95 || {}, se = lm.stderr || {};
+        return { ok: true, corr: key, label: E.label || key, verified: E.verified === true, provisional: E.verified === true ? null : PROVISIONAL,
+            free: free, freeAsked: asked, bounds: { hl: bH, f: bF }, start: { hl: h0, f: f0 }, mult: { hl: mh, f: mf },
+            adopt: { wp_mult_hl: +mh.toPrecision(6), wp_mult_f: +mf.toPrecision(6) },
+            residuals: res, rms: { untuned: rms('errUntuned'), tuned: rms('errTuned'), untunedPct: rms('errPctUntuned'), tunedPct: rms('errPctTuned') },
+            rateSpan: span, nTests: n, tests: live.map(function (c) { return c.id; }), corrMatrix: rho == null ? null : [[1, rho], [rho, 1]], corrBasis: basis, rho: rho,
+            separable: separable, flags: flags, scan: scan, profiles: profiles,
+            lm: { iterations: lm.iterations, converged: !!lm.converged, stopReason: lm.stopReason || null, ssr: lm.ssr, nEval: c0.nEval(),
+                ci95: { hl: ci.hl && _fin(ci.hl[0]) ? ci.hl : null, f: free.indexOf('f') !== -1 && ci.f && _fin(ci.f[0]) ? ci.f : null },
+                stderr: { hl: _fin(se.hl) ? se.hl : null, f: free.indexOf('f') !== -1 && _fin(se.f) ? se.f : null } },
+            warnings: warnings, errors: [] };
+    }
+
     var NS = G.WTS_wp_match = G.WTS_wp_match || {};
     NS.compare = compare; NS.iprFromTest = iprFromTest; NS.pwfFromTest = pwfFromTest; NS.rates = rates; NS.thtFit = thtFit;
     NS.QC_CODES = QC_CODES.slice(); NS.QC_LABEL = QC_LABEL; NS.PROVISIONAL = PROVISIONAL; NS._root = _root;
     NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL, tht: THT_TOL };
-    if (!NS.tune) { NS.tune = function () { return _stub('WTS_wp_match.tune', 'WP7'); }; _mark('WTS_wp_match.tune'); }
+    NS.tune = tune; NS.tuneJob = tuneJob; NS.TUNE = { bounds: { hl: TUNE_BOUNDS.hl.slice(), f: TUNE_BOUNDS.f.slice() }, flag: TUNE_FLAG.slice(), rho: TUNE_RHO, span: TUNE_SPAN, scan: TUNE_SCAN, inseparable: INSEP_MSG };
     G.WTS_wp_qc = qc;
 })();
 

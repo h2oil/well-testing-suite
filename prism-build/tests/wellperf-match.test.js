@@ -2,7 +2,7 @@
 //
 // WM1 compare ranking: every well correlation marched top-down from the measured THP to the gauge MD on the deviated path, the
 //     calculated pressure equals an independent full-well traverse at the gauge, err / errPct / rank, a test built from one
-//     correlation ranks it first with zero error, several tests rank by RMS; the WP7 names left __WP_STUBS (tune stays A2)
+//     correlation ranks it first with zero error, several tests rank by RMS; the WP7 names left __WP_STUBS (tune too since A2 WP17)
 // WM2 provisional label (D17): unverified correlations carry the label in every row, Beggs & Brill is verified; gas-well set (Gray,
 //     dry gas) with MD > TVD at the gauge; unknown keys are skipped with a warning; NO_GAUGE / NO_TEST
 // WM3 IPR from a test, p̄r (coefficients held): pwf marched down from the gauge, the gauge itself at the mid-perforations, from the
@@ -31,7 +31,7 @@ module.exports = [
     run(_a, assert, ctx) {
       const G = app(ctx).win, Mt = G.WTS_wp_match;
       ['WTS_wp_match.compare', 'WTS_wp_match.iprFromTest', 'WTS_wp_qc'].forEach((n) => assert.ok((G.__WP_STUBS || []).indexOf(n) === -1, n + ' left __WP_STUBS'));
-      assert.ok((G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') !== -1, 'tune stays the WP0 stub (A2, WP17)');
+      assert.ok((G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') === -1 && typeof G.WTS_wp_match.tune === 'function', 'tune is built (A2, WP17; wellperf-tune)');
       const M = S.FIX.oilWell, t = S.FIX.test1;
       const c = Mt.compare(M, t, ['bb', 'hb', 'nsl']);
       assert.ok(c.ok, JSON.stringify(plain(c.errors)));
