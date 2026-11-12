@@ -4,7 +4,7 @@
 // WSN1 two variables: full factorial, the 2-D grid (rows = the second variable), the start cell = the single solve exactly, every
 //      other cell a tracking solve from a solved neighbour; 2 × 10 within the §16 budget (≤ 160 E)
 // WSN2 each row equals the one-variable sensitivity at that value of the second variable (same rates within the root tolerance);
-//      pairs that set the same input are refused, three variables wait for a later release, applicability is checked
+//      pairs that set the same input are refused (also among three variables, B: WP27), applicability is checked
 // WSN3 table and CSV: both variable columns, the 2-D rate block; cancel discards the result
 // WSN4 tubing-size design: the smallest catalogue size whose stable rate reaches the target, every size listed (rate, stability,
 //      loading margin, erosion), sizes that do not fit the casing left out, an unreachable target says why
@@ -46,7 +46,7 @@ module.exports = [
     },
   },
   {
-    name: 'WSN2 each row = the one-variable sensitivity at that second value; refused pairs, three variables, applicability',
+    name: 'WSN2 each row = the one-variable sensitivity at that second value; refused pairs (also with three variables), applicability',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const G = app(ctx).win, SN = G.WTS_wp_sens;
@@ -61,7 +61,7 @@ module.exports = [
       const bad = (vars, code) => { const j = SN.job(S.FIX.oilWell, vars); const x = run(j); assert.ok(!x.ok && x.code === code, code + ': ' + JSON.stringify(plain(x.errors))); };
       bad([{ key: 'thp', values: [200, 300] }, { key: 'bean', values: [24, 32] }], 'BAD_PAIR');
       bad([{ key: 'gor', values: [400, 600] }, { key: 'glr', values: [300, 500] }], 'BAD_PAIR');
-      bad([{ key: 'wc', values: [10] }, { key: 'pr', values: [3000] }, { key: 'gor', values: [500] }], 'B_ONLY');
+      bad([{ key: 'wc', values: [10] }, { key: 'pr', values: [3000] }, { key: 'gor', values: [500] }, { key: 'glr', values: [400] }], 'BAD_PAIR');   // B (WP27): three and four variables run (wellperf-tornado)
       bad([{ key: 'wc', values: [10, 20] }, { key: 'cgr', values: [10, 20] }], 'NOT_APPLICABLE');
       // a gas well: bean × WGR
       const g = job(SN, S.FIX.gasWell, [{ key: 'bean', values: [20, 24, 28] }, { key: 'wgr', values: [2, 20] }]);

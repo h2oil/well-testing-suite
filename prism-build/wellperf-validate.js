@@ -66,11 +66,19 @@ const BENCH = [
   // A2
   { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
   { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
+  // B (WP27): the depletion-forecast tank models and the lift-screening ranges — no published example checked (Q9); closed-form and
+  // material-balance identities only (X24 / X25), so they ship provisional and the tank is never the default forecast mode
+  { kind: 'forecast', key: 'gasTank', status: 'pending', source: 'volumetric gas p/Z material balance (e.g. Craft & Hawkins) — closed form X24 only' },
+  { kind: 'forecast', key: 'oilTank', status: 'pending', source: 'Havlena & Odeh (1963) straight line with Corey gas flow above S_gc — identity X25 only' },
+  { kind: 'screen', key: 'lift', status: 'pending', source: 'Brown (1982); Clegg, Bucaram & Hein (1993) — indicative screening ranges' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
 const BUDGET = {
   traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
+  // B (WP27): the envelope (one solve + ≈ 22 marches with the flowline), a 24-step forecast, the tornado (one solve + ≤ 8 E per case),
+  // the 3 × 3 × 3 × 3 matrix, the lift screening (one solve + the short performance curve), two cases compared (a cold solve each)
+  envelope: 60, forecast24: 160, tornadoPerCase: 8, matrix81: 500, screening: 120, cases2: 48,
 };
 
 function _load() {
@@ -162,7 +170,20 @@ function gate(G) {
     }
     rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
   }
-  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
+  // 7. the forecast tank models and the lift screening (B, WP27): pending → verified:false, the provisional label, never the default
+  const FC = G.WTS_wp_forecast, SCR = G.WTS_wp_screen;
+  if (FC && typeof FC.tank === 'function') {
+    const pend = (k) => { const b = benchOf('forecast', k); return !b || b.status === 'pending'; };
+    const tg = FC.tank(S.FIX.gasWell, { G_Bscf: 20 }), to = FC.tank(S.FIX.oilWell, { N_MMstb: 20 });
+    if (pend('gasTank') && (!tg.ok || tg.verified !== false || tg.provisional !== PROVISIONAL)) bad('forecast gasTank', 'pending without the provisional label');
+    if (pend('oilTank') && (!to.ok || to.verified !== false || to.provisional !== PROVISIONAL)) bad('forecast oilTank', 'pending without the provisional label');
+    if ((pend('gasTank') || pend('oilTank')) && FC.DEFAULT_MODE !== 'steps') bad('forecast', 'a pending tank model is the default forecast mode');
+  }
+  if (SCR && typeof SCR.matrix === 'function') {
+    const b = benchOf('screen', 'lift'), m = SCR.matrix(S.FIX.oilWell, {});
+    if ((!b || b.status === 'pending') && (!m.ok || m.verified !== false || m.provisional !== PROVISIONAL)) bad('screen lift', 'pending without the provisional label');
+  }
+  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift' || b.kind === 'forecast' || b.kind === 'screen').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
 }
 
@@ -365,6 +386,42 @@ function checks(G) {
     const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
     add('X21', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
   }
+  // B (WP27): the envelope, the forecast tanks, the tornado and the matrix
+  const runJ2 = (job) => { let s, n = 0; do { s = job.step(); n++; } while (!s.done && n < 3000); return job.result(); };
+  if (G.WTS_wp_envelope && typeof G.WTS_wp_envelope.job === 'function') {
+    // X22 node independence of the envelope: at the operating rate the wellhead deliverability = the THP of the choke solve, the
+    // flowline back pressure = the choke-downstream pressure; X23 its maximum rate = WTS_wp_system.maxRate
+    let w1 = 0, w2 = 0;
+    ['oilWell', 'gasWell'].forEach((k) => {
+      const M = S.FIX[k], R = solve(M), e = runJ2(G.WTS_wp_envelope.job(M, { R })), a = G.WTS_wp_envelope.at(e, R.op.q);
+      w1 = Math.max(w1, a ? Math.abs(a.thp / R.surface.thp_psig - 1) : Infinity);
+      w2 = Math.max(w2, e.max ? Math.abs(e.max.q / SY.maxRate(M).q - 1) : Infinity);
+    });
+    add('X22', 'operating envelope: wellhead deliverability at the operating rate = the THP of the choke solve (node independence)', w1 < 0.005, w1, 0.005);
+    add('X23', 'operating envelope: maximum rate = WTS_wp_system.maxRate', w2 < 0.005, w2, 0.005);
+  }
+  if (G.WTS_wp_forecast && typeof G.WTS_wp_forecast.tank === 'function') {
+    // X24 gas tank on its p/Z line; X25 oil tank on the Havlena-Odeh line (N·E_t = F) at every step of a 24-step forecast
+    const FC = G.WTS_wp_forecast, T = FC.tank(S.FIX.gasWell, { G_Bscf: 20 });
+    const rg = runJ2(FC.job(S.FIX.gasWell, { mode: 'tank', tank: { G_Bscf: 20 }, horizon_d: 3650, n: 24 }));
+    let e1 = 0; rg.rows.forEach((x) => { e1 = Math.max(e1, Math.abs(x.mb.poz / (T.piz * (1 - x.Gp / T.G)) - 1)); });
+    add('X24', 'forecast, gas tank: every step on the p/Z line (relative)', e1 < 1e-6, e1, 1e-6);
+    const ro = runJ2(FC.job(S.FIX.oilWell, { mode: 'tank', tank: { N_MMstb: 20 }, horizon_d: 3650, n: 24 }));
+    let e2 = 0; ro.rows.forEach((x) => { if (x.mb) e2 = Math.max(e2, Math.abs(20e6 * x.mb.Et - x.mb.F) / Math.max(1, x.mb.F)); });
+    add('X25', 'forecast, oil tank: N·E_t = F at every step (relative)', e2 < 1e-5, e2, 1e-5);
+    // X26 explicit stepping converges at first order: |C24 − C48| < 0.6·|C12 − C24|, and within 2.5 % of C48
+    const c = [12, 24, 48].map((n) => runJ2(FC.job(S.FIX.gasWell, { mode: 'tank', tank: { G_Bscf: 20 }, horizon_d: 1825, n })).totals.produced);
+    const ratio = Math.abs(c[1] - c[2]) / Math.abs(c[0] - c[1]), rel = Math.abs(c[1] - c[2]) / c[2];
+    add('X26', 'forecast, explicit time steps: first-order convergence 12 / 24 / 48 steps (ratio; 24 steps within 2.5 %)', ratio < 0.6 && rel < 0.025, ratio, 0.6);
+  }
+  if (G.WTS_wp_sens && typeof G.WTS_wp_sens.tornado === 'function') {
+    // X27 the tornado base and the start cell of a three-variable matrix = the single solve exactly (§15.2)
+    const M = S.FIX.oilWell, R = solve(M), t = runJ2(G.WTS_wp_sens.tornado(M, { vars: [{ key: 'wc' }] }));
+    const m = runJ2(G.WTS_wp_sens.job(M, [{ key: 'wc', values: [20, 30] }, { key: 'pr', values: [3000] }, { key: 'bean', values: [32, 40] }]));
+    const c0 = m.ok && m.cases.find((x) => x.values.wc === 30 && x.values.pr === 3000 && x.values.bean === 32);
+    const okx = t.ok && t.q0 === R.op.q && c0 && c0.R.q === R.op.q;
+    add('X27', 'tornado base and the matrix start cell = the single solve (identical)', okx, okx ? 0 : 1, 0);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -424,6 +481,20 @@ function timing(G) {
       rec('gas-lift performance curve, 12 points', 'oilWell', g && g.ok ? g.evals : 0, BUDGET.glpc12, nowMs() - t2);
     }
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
+  // B (WP27): envelope, forecast, tornado, matrix, screening, cases
+  if (G.WTS_wp_envelope && typeof G.WTS_wp_envelope.job === 'function') {
+    ['oilWell', 'gasWell'].forEach((k) => {
+      let t0 = nowMs(); const e = run(G.WTS_wp_envelope.job(S.FIX[k])); rec('operating envelope (solve + marches)', k, e.evals || 0, BUDGET.envelope, nowMs() - t0);
+    });
+    const run3 = (job) => { let s, n = 0; do { s = job.step(); n++; } while (!s.done && n < 3000); return job.result(); };
+    let t0 = nowMs(); const fg = run3(G.WTS_wp_forecast.job(S.FIX.gasWell, { mode: 'tank', tank: { G_Bscf: 20 }, horizon_d: 3650, n: 24 })); rec('depletion forecast, gas tank, 24 steps', 'gasWell', fg.evals || 0, BUDGET.forecast24, nowMs() - t0);
+    t0 = nowMs(); const fo = run3(G.WTS_wp_forecast.job(S.FIX.oilWell, { mode: 'tank', tank: { N_MMstb: 20 }, horizon_d: 3650, n: 24 })); rec('depletion forecast, oil tank (to lift needed)', 'oilWell', fo.evals || 0, BUDGET.forecast24, nowMs() - t0);
+    t0 = nowMs(); const tn = run3(G.WTS_wp_sens.tornado(S.FIX.oilWell)); rec('tornado (' + tn.bars.length + ' variables)', 'oilWell', tn.evals || 0, BUDGET.solve2 + 2 * tn.bars.length * BUDGET.tornadoPerCase, nowMs() - t0);
+    t0 = nowMs(); const m4 = run3(G.WTS_wp_sens.job(S.FIX.oilWell, [{ key: 'wc', values: [20, 30, 40] }, { key: 'pr', values: [2800, 3000, 3200] }, { key: 'bean', values: [24, 32, 40] }, { key: 'gor', values: [400, 500, 600] }]));
+    rec('sensitivity matrix 3 × 3 × 3 × 3', 'oilWell', m4.evals || 0, BUDGET.matrix81, nowMs() - t0);
+    const Ms = S.FIX.oilWell; Ms.fluid.wc = 0.6; Ms.res.pr = 2600;
+    t0 = nowMs(); const sc = run3(G.WTS_wp_screen.job(Ms)); rec('lift screening (solve + short performance curve)', 'oilWell', sc.evals || 0, BUDGET.screening, nowMs() - t0);
+  }
   // VLP tuning (A2, WP17; §5.2): PRiSM_lm on the gauge residuals — each residual is one wellhead → gauge march (counted as 1 E;
   // no flowline). Reported only: §16 has no tuning budget.
   const tuneStub = (G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') !== -1;
