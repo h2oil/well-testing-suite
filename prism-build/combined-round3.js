@@ -583,7 +583,7 @@
     //   Glasø (1980)             log pb = 1.7669 + 1.7447·log pb* − 0.30218·(log pb*)², pb* = (Rs/γg)^0.816·T^0.172/API^0.989;
     //                            Rs its exact inverse; Bo = 1 + 10^A, A = −6.58511 + 2.91329·log B* − 0.27683·(log B*)²,
     //                            B* = Rs·(γg/γo)^0.526 + 0.968·T
-    //   Petrosky & Farshad (1993) pb = 112.727·[Rs^0.5774/(γg^0.8439·10^X) − 12.340], X = 7.916e−4·API^1.5410 − 4.561e−5·T^1.3911;
+    //   Petrosky & Farshad (1993) pb = 112.727·[Rs^0.577421/(γg^0.8439·10^X) − 12.340], X = 7.916e−4·API^1.5410 − 4.561e−5·T^1.3911;
     //                            Rs its inverse (exponent 1.73184); Bo = 1.0113 + 7.2046e−5·[Rs^0.3738·γg^0.2914/γo^0.6265
     //                            + 0.24626·T^0.5371]^3.0936; co = 1.705e−7·Rsb^0.69357·γg^0.1885·API^0.3272·T^0.6729·p^−0.5906
     //   Egbogah (1983)           log log(μod + 1) = 1.8653 − 0.025086·API − 0.5644·log T
@@ -660,7 +660,7 @@
     function Pb_petrosky(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
         if (Rs <= 0 || SG_g <= 0) return 14.7;
-        return 112.727 * (Math.pow(Rs, 0.5774) / (Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F))) - 12.340);
+        return 112.727 * (Math.pow(Rs, 0.577421) / (Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F))) - 12.340);
     }
     function Rs_petrosky(API, SG_g, P, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
@@ -714,12 +714,7 @@
         var gas = (_isFiniteNum(Rsw) && Rsw > 0 && _isFiniteNum(SG_g) && SG_g > 0) ? 0.01361 * Rsw * SG_g : 0;
         return (rs + gas) / Bw;
     }
-    function Bw_mcCain(P, T_F) {
-        if (!_isFiniteNum(P) || !_isFiniteNum(T_F)) return NaN;
-        var dVwT = -1.0001e-2 + 1.33391e-4 * T_F + 5.50654e-7 * T_F * T_F;
-        var dVwP = -1.95301e-9 * P * T_F - 1.72834e-13 * P * P * T_F - 3.58922e-7 * P - 2.25341e-10 * P * P;
-        return (1 + dVwT) * (1 + dVwP);
-    }
+    // McCain water FVF = the same relation as the A1 Bw_meehan (same coefficients): registered as an alias, not a second body
     function Rsw_mcCain(P, T_F, salinity_ppm) {
         if (!_isFiniteNum(P) || !_isFiniteNum(T_F) || T_F <= 0) return NaN;
         if (P <= 0) return 0;
@@ -770,7 +765,7 @@
             Pb_petrosky: Pb_petrosky, Rs_petrosky: Rs_petrosky, Bo_petrosky: Bo_petrosky,
             mu_oD_egbogah: mu_oD_egbogah, mu_oD_bergmanSutton: mu_oD_bergmanSutton, mu_o_chewConnally: mu_o_chewConnally,
             co_petrosky: co_petrosky, sg_gas100_vasquezBeggs: sg_gas100_vasquezBeggs,
-            rho_w_mcCain: rho_w_mcCain, Bw_mcCain: Bw_mcCain, sigma_og_abdulMajeed: sigma_og_abdulMajeed, Rsw_mcCain: Rsw_mcCain
+            rho_w_mcCain: rho_w_mcCain, Bw_mcCain: Bw_meehan, sigma_og_abdulMajeed: sigma_og_abdulMajeed, Rsw_mcCain: Rsw_mcCain
         };
         Object.keys(add).forEach(function (k) { if (typeof L[k] !== 'function') L[k] = add[k]; });
     })();
@@ -803,7 +798,7 @@
             sigma_og_abdulMajeed: e('Abdul-Majeed gas-oil surface tension', 'sigma', 'abdulMajeed', 'Abdul-Majeed'),
             sg_gas100_vasquezBeggs: e('Vasquez-Beggs 100 psig gas gravity', 'sep', 'vasquezBeggs', 'Vasquez & Beggs (1980)'),
             rho_w_mcCain: e('McCain water density', 'water', 'mcCain', 'McCain (1990)'),
-            Bw_mcCain: e('McCain water FVF', 'water', 'mcCain', 'McCain (1990)'),
+            Bw_mcCain: e('McCain water FVF (the same relation as Bw_meehan)', 'water', 'mcCain', 'McCain (1990)'),
             Rsw_mcCain: e('McCain gas solubility in water', 'water', 'mcCain', 'McCain (1990)'),
             Z_hallYarborough: e('Hall-Yarborough Z factor', 'z', 'hallYarborough', 'Hall & Yarborough (1973)')
         };

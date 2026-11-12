@@ -12,7 +12,8 @@
 //               series:[{key, label, color, pts:[[x, y]], width, dash, kind:'line'|'points'|'area', axis:'x2', legend:false, fill}],
 //               bands:[{x0, x1, color, label}] (vertical shading), hbands:[{y0, y1, color, label}] (horizontal strips at the
 //               left edge, e.g. flow-pattern bands along depth), vlines:[{x, color, label, dash}], hlines:[{y, color, label, dash}],
-//               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}],
+//               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}] (labels laid out without overlaps),
+//               legendNote (one muted line under the legend, e.g. that faint curves come from the previous inputs),
 //               handles:[{key, kind:'point'|'railY'|'railX'|'pointX'|'lineX', x, y, value, min, max, step, label, color, fmt(v),
 //                         rail:[f0, f1]}],
 //               ('pointX' (A2, WP13): a handle at x = value on the plot (y = h.y, else the bottom of the plot) dragged along x, with a
@@ -233,6 +234,51 @@
         var vl = (sp.vlines || []).filter(function (l) { return _fin(l.x) && l.x >= xr[0] && l.x <= xr[1]; }).map(function (l) { return { l: l, x: toX(l.x) }; }).sort(function (a, b) { return a.x - b.x; });
         var obst = [];
         if (legBox) obst.push(legBox);
+        // label layout (review fix: the labels near a plot corner overlapped): the lineX handle labels first (top of the plot), then
+        // every marker label tries the preferred side above the marker, the other side, below, then stacked further up; the vertical
+        // line labels below keep clear of all of them
+        var rHit = function (a, b) { return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0; };
+        var hLabs = [];
+        ctx.font = font(10, '700');
+        (sp.handles || []).forEach(function (h) {
+            if (h.kind !== 'lineX' || !_fin(h.value)) return;
+            var t = h.label + ' ' + (h.fmt ? h.fmt(h.value) : _fmtTick(h.value)), tw0 = (ctx.measureText ? ctx.measureText(t).width : t.length * 6) + 10;
+            var hx0 = _clamp(toX(h.value), P.x, P.x + P.w), tx0 = (hx0 + 13.5 + tw0 > P.x + P.w) ? hx0 - 13.5 - tw0 : hx0 + 13.5;
+            hLabs.push({ x0: tx0, x1: tx0 + tw0, y0: P.y + 4, y1: P.y + 20 });
+        });
+        // the marker symbols themselves (with their halo) and the lineX knobs are obstacles for every label too
+        var mSyms = [];
+        (sp.markers || []).forEach(function (mk, i) { if (_fin(mk.x) && _fin(mk.y) && (mk.r || 6) >= 2) { var mx = toX(mk.x), my = toY(mk.y), rr = (mk.r || 6) + (mk.kind === 'filled' && mk.halo !== false ? 6 : 2); mSyms.push({ x0: mx - rr, x1: mx + rr, y0: my - rr, y1: my + rr, i: i }); } });
+        (sp.handles || []).forEach(function (h) { if (h.kind === 'lineX' && _fin(h.value)) { var kx = _clamp(toX(h.value), P.x, P.x + P.w); mSyms.push({ x0: kx - 11, x1: kx + 11, y0: P.y + 1, y1: P.y + 23, i: -1 }); } });
+        var mLabs = st.mlabels = [], occ = obst.concat(hLabs, mSyms);
+        ctx.font = font(11, '700');
+        (sp.markers || []).forEach(function (mk, i) {
+            if (!mk.label || !_fin(mk.x) || !_fin(mk.y)) return;
+            var x = toX(mk.x), y = toY(mk.y), r = mk.r || 6, tw0 = (ctx.measureText ? ctx.measureText(mk.label).width : 60) + 8;
+            var right = x > P.x + P.w * 0.7, R0 = { x0: x + r + 2, x1: x + r + 2 + tw0 }, L0 = { x0: x - r - tw0 - 2, x1: x - r - 2 };
+            var sides = right ? [L0, R0] : [R0, L0], cand = [];
+            sides.forEach(function (sd) { cand.push({ x0: sd.x0, x1: sd.x1, y0: y - r - 18, y1: y - r - 2 }); });
+            sides.forEach(function (sd) { cand.push({ x0: sd.x0, x1: sd.x1, y0: y + r + 2, y1: y + r + 18 }); });
+            for (var k = 1; k <= 6; k++) {
+                sides.forEach(function (sd) { cand.push({ x0: sd.x0, x1: sd.x1, y0: y - r - 18 - 18 * k, y1: y - r - 2 - 18 * k }); });
+                sides.forEach(function (sd) { cand.push({ x0: sd.x0, x1: sd.x1, y0: y + r + 2 + 18 * k, y1: y + r + 18 + 18 * k }); });
+            }
+            // inside the plot (a candidate past an edge is shifted in), then the first without an overlap, else the least overlap
+            var area = function (q) { return occ.reduce(function (t, o) { return t + (o.i !== i && rHit(q, o) ? (Math.min(q.x1, o.x1) - Math.max(q.x0, o.x0)) * (Math.min(q.y1, o.y1) - Math.max(q.y0, o.y0)) : 0); }, 0); };
+            var pick = null, best = null;
+            for (var c = 0; c < cand.length && !pick; c++) {
+                var q0 = cand[c], dx = Math.max(0, P.x + 1 - q0.x0) - Math.max(0, q0.x1 - (P.x + P.w - 1));
+                if (q0.y0 < P.y + 1 || q0.y1 > P.y + P.h - 1) continue;
+                var q = { x0: q0.x0 + dx, x1: q0.x1 + dx, y0: q0.y0, y1: q0.y1 }, a0 = area(q);
+                if (a0 === 0) pick = q; else if (!best || a0 < best.a) best = { q: q, a: a0 };
+            }
+            if (!pick) pick = best ? best.q : { x0: _clamp(cand[0].x0, P.x + 1, P.x + P.w - tw0 - 1), x1: 0, y0: _clamp(cand[0].y0, P.y + 1, P.y + P.h - 17), y1: 0 };
+            if (!pick.x1) { pick.x1 = pick.x0 + tw0; pick.y1 = pick.y0 + 16; }
+            pick.i = i; pick.label = mk.label;
+            mLabs.push(pick); occ.push(pick);
+        });
+        var obstBase = obst.slice();
+        obst = obst.concat(hLabs, mLabs, mSyms);
         (sp.handles || []).forEach(function (h) { if (h.kind === 'point' && _fin(h.x) && _fin(h.value)) { var hx0 = toX(h.x), hy0 = toY(h.value); obst.push({ x0: hx0, x1: hx0 + 150, y0: hy0 - 24, y1: hy0 + 2 }); } });
         var placed = st.vlabels = [];
         ctx.font = font(10, '600');
@@ -242,14 +288,26 @@
             ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]);
             if (!l.label) return;
             var tw = (ctx.measureText ? ctx.measureText(l.label).width : l.label.length * 6) + 4, ys = P.y + 8, guard = 0, moved = true;
-            var hit = function (r) { return x - 14 < r.x1 && x - 1 > r.x0 && ys < r.y1 && ys + tw > r.y0; };
-            while (moved && guard++ < 20) {
-                moved = false;
-                placed.concat(obst).forEach(function (r) { if (hit(r)) { ys = r.y1 + 6; moved = true; } });
+            // the label runs on the left of its line, or on the right when the line is too close to the left edge (it would be clipped)
+            var lx0 = x - 14 >= P.x + 1 ? x - 14 : x + 1, lx1 = lx0 + 13;
+            var hit = function (r) { return lx0 < r.x1 && lx1 > r.x0 && ys < r.y1 && ys + tw > r.y0; };
+            var settle = function (os) {
+                ys = P.y + 8; guard = 0; moved = true;
+                while (moved && guard++ < 20) {
+                    moved = false;
+                    placed.concat(os).forEach(function (r) { if (hit(r)) { ys = r.y1 + 6; moved = true; } });
+                }
+                return ys + tw <= P.y + P.h - 4;
+            };
+            // the marker / handle labels are avoided when there is room (from the top, else at the bottom of the plot); otherwise only
+            // the legend and the other line labels
+            if (!settle(obst)) {
+                ys = P.y + P.h - 4 - tw;
+                if (ys < P.y + 4 || placed.concat(obst).some(hit)) settle(obstBase);
             }
             if (ys + tw > P.y + P.h - 4) ys = Math.max(P.y + 4, P.y + P.h - 4 - tw);
-            placed.push({ x0: x - 14, x1: x - 1, y0: ys, y1: ys + tw, label: l.label });
-            ctx.save(); ctx.translate(x - 4, ys); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore();
+            placed.push({ x0: lx0, x1: lx1, y0: ys, y1: ys + tw, label: l.label });
+            ctx.save(); ctx.translate(lx0 + 10, ys); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore();
         });
         (sp.hlines || []).forEach(function (l) {
             if (!_fin(l.y)) return;
@@ -278,7 +336,7 @@
             } else { ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); }
         });
         // markers
-        (sp.markers || []).forEach(function (mk) {
+        (sp.markers || []).forEach(function (mk, mi) {
             if (!_fin(mk.x) || !_fin(mk.y)) return;
             var x = toX(mk.x), y = toY(mk.y), r = mk.r || 6;
             ctx.lineWidth = 2.2; ctx.strokeStyle = mk.color || T.accent; ctx.fillStyle = mk.color || T.accent;
@@ -288,12 +346,14 @@
             if (mk.kind === 'hollow') { ctx.fillStyle = T.panel; ctx.fill(); ctx.stroke(); }
             else { ctx.fill(); ctx.strokeStyle = T.bg; ctx.lineWidth = 1.5; ctx.stroke(); }
             if (mk.kind === 'filled' && mk.halo !== false) { ctx.globalAlpha = 0.25; ctx.beginPath(); if (ctx.arc) ctx.arc(x, y, r + 5, 0, Math.PI * 2); ctx.strokeStyle = mk.color || T.accent; ctx.lineWidth = 3; ctx.stroke(); ctx.globalAlpha = 1; }
-            if (mk.label) {
-                ctx.font = font(11, '700'); ctx.textBaseline = 'bottom';
-                var right = x > P.x + P.w * 0.7; ctx.textAlign = right ? 'right' : 'left';
-                ctx.fillStyle = T.bg; var tw = (ctx.measureText ? ctx.measureText(mk.label).width : 60) + 8;
-                ctx.globalAlpha = 0.75; ctx.fillRect(right ? x - r - tw - 2 : x + r + 2, y - r - 18, tw, 16); ctx.globalAlpha = 1;
-                ctx.fillStyle = mk.color || T.accent; ctx.fillText(mk.label, right ? x - r - 6 : x + r + 6, y - r - 4);
+            var lb = mk.label ? mLabs.filter(function (q) { return q.i === mi; })[0] : null;
+            if (lb) {
+                ctx.font = font(11, '700'); ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+                ctx.fillStyle = T.bg; ctx.globalAlpha = 0.75; ctx.fillRect(lb.x0, lb.y0, lb.x1 - lb.x0, 16); ctx.globalAlpha = 1;
+                // a leader from the marker when the label moved away from its corner
+                var cy = (lb.y0 + lb.y1) / 2, cx = lb.x1 < x ? lb.x1 : lb.x0;
+                if (Math.abs(cy - y) > r + 14) { ctx.strokeStyle = mk.color || T.accent; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx, cy); ctx.stroke(); ctx.globalAlpha = 1; }
+                ctx.fillStyle = mk.color || T.accent; ctx.fillText(mk.label, lb.x0 + 4, lb.y0 + 14);
             }
         });
         ctx.restore();
@@ -310,18 +370,26 @@
         var leg = (sp.series || []).filter(function (s) { return s.legend !== false && s.label; });
         if (leg.length && legBox) {
             ctx.font = font(11, '600'); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-            var rowH = 18, wmax = legBox.w, bx = legBox.x0 + 4, ly = legBox.y0 + 6, bh = leg.length * rowH + 6;
+            var rowH = 18, wmax = legBox.w, bx = legBox.x0 + 4, ly = legBox.y0 + 6, bh = leg.length * rowH + 6 + (sp.legendNote ? rowH : 0);
             ctx.fillStyle = T.bg; ctx.globalAlpha = 0.78; ctx.fillRect(bx - 4, ly - 6, wmax + 8, bh); ctx.globalAlpha = 1;
+            // an entry longer than the box is shortened with an ellipsis (the full text stays in the hover readout and the legend hit)
+            var fit = function (t, w) {
+                var mw = function (u) { return ctx.measureText ? ctx.measureText(u).width : u.length * 6; };
+                t = String(t); if (mw(t) <= w) return t;
+                while (t.length > 2 && mw(t + '…') > w) t = t.slice(0, -1);
+                return t + '…';
+            };
             leg.forEach(function (s, i) {
                 var y = ly + i * rowH + 4, off = !!hidden[s.key];
                 ctx.globalAlpha = off ? 0.35 : 1;
                 ctx.strokeStyle = s.color || T.accent; ctx.fillStyle = s.color || T.accent; ctx.lineWidth = 3;
                 if (s.kind === 'points') { ctx.beginPath(); if (ctx.arc) ctx.arc(bx + 9, y, 4, 0, Math.PI * 2); ctx.fill(); }
                 else { if (ctx.setLineDash) ctx.setLineDash(s.dash || []); ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx + 18, y); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); }
-                ctx.fillStyle = T.text; ctx.fillText(s.label, bx + 24, y);
+                ctx.fillStyle = T.text; ctx.fillText(fit(s.label, wmax - 24), bx + 24, y);
                 ctx.globalAlpha = 1;
                 st.legendHits.push({ key: s.key, x0: bx - 4, x1: bx + wmax + 4, y0: y - rowH / 2, y1: y + rowH / 2 });
             });
+            if (sp.legendNote) { ctx.fillStyle = T.text2; ctx.font = font(10, 'italic 600'); ctx.fillText(fit(sp.legendNote, wmax), bx, ly + leg.length * rowH + 4); }
         }
 
         // handles
@@ -345,10 +413,20 @@
                 ctx.strokeStyle = T.axis; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(hx, P.y + 4); ctx.lineTo(hx, P.y + P.h - 4); ctx.stroke(); ctx.lineCap = 'butt';
                 ctx.fillStyle = T.text2; ctx.font = font(9, '700'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(h.railLabel || h.label, hx, P.y - 2);
             } else {
-                var f0 = (h.rail && h.rail[0]) || 0, f1 = (h.rail && h.rail[1]) || 1, gap = f1 < 1 ? 14 : 0, rx0 = P.x + P.w * f0 + (f0 > 0 ? 14 : 0) + 40, rx1 = P.x + P.w * f1 - gap - 58, ry = m.t - (sp.x2 ? 26 : 0) - 16;
-                h._vx = P.x + P.w * f1 - gap;
+                // the track runs between the rail label and the value text, both measured (review fix: on a narrow chart the label
+                // ran into the knob and the value); when the segment is too short the rail label is dropped and the value text
+                // carries the name instead
+                var f0 = (h.rail && h.rail[0]) || 0, f1 = (h.rail && h.rail[1]) || 1, gap = f1 < 1 ? 14 : 0, sx0 = P.x + P.w * f0 + (f0 > 0 ? 14 : 0), sx1 = P.x + P.w * f1 - gap, ry = m.t - (sp.x2 ? 26 : 0) - 16;
+                var rl = String(h.railLabel || h.label || ''), vt = h.fmt ? h.fmt(h.value) : _fmtTick(h.value);
+                ctx.font = font(10, '700');
+                var mw = function (t) { return ctx.measureText ? ctx.measureText(t).width : String(t).length * 6; };
+                var lw = rl ? mw(rl) + 8 : 0, narrowRail = (sx1 - sx0) - lw - (mw(vt) + 10) < 60;
+                if (narrowRail) { if (rl && String(vt).toLowerCase().indexOf(rl.toLowerCase()) !== 0) vt = rl + ' ' + vt; lw = 0; }
+                var rx0 = sx0 + lw + 8, rx1 = sx1 - mw(vt) - 12;
+                if (rx1 < rx0 + 20) rx1 = rx0 + 20;
+                h._vx = sx1; h._vtxt = vt; h._narrow = narrowRail;
                 h._rx0 = rx0; h._rx1 = rx1;
-                ctx.fillStyle = T.text2; ctx.font = font(10, '700'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(h.railLabel || h.label, P.x + P.w * f0 + (f0 > 0 ? 14 : 0), ry);
+                ctx.fillStyle = T.text2; ctx.font = font(10, '700'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; if (!narrowRail && rl) ctx.fillText(rl, sx0, ry);
                 ctx.strokeStyle = T.axis; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(rx0, ry); ctx.lineTo(rx1, ry); ctx.stroke();
                 var fv = (h.max > h.min) ? _clamp((h.value - h.min) / (h.max - h.min), 0, 1) : 0;
                 ctx.strokeStyle = col; ctx.globalAlpha = 0.55; ctx.beginPath(); ctx.moveTo(rx0, ry); ctx.lineTo(rx0 + fv * (rx1 - rx0), ry); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineCap = 'butt';
@@ -372,7 +450,7 @@
                 ctx.fillStyle = T.bg; ctx.globalAlpha = 0.85; ctx.fillRect(tx, ty - 8, tw, 16); ctx.globalAlpha = 1;
                 ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.fillText(txt, tx + 5, ty);
             } else {
-                ctx.fillStyle = T.text; ctx.textAlign = 'right'; ctx.fillText(h.fmt ? h.fmt(h.value) : _fmtTick(h.value), h._vx, ry);
+                ctx.fillStyle = T.text; ctx.textAlign = 'right'; ctx.fillText(h._vtxt != null ? h._vtxt : (h.fmt ? h.fmt(h.value) : _fmtTick(h.value)), h._vx, ry);
             }
             st.handleHits.push({ i: i, x: hx, y: hy, r: r + 7 });
         });
@@ -414,7 +492,9 @@
         var wmax = 0;
         leg.forEach(function (s) { var w = (ctx.measureText ? ctx.measureText(s.label).width : s.label.length * 6) + 30; if (w > wmax) wmax = w; });
         wmax = Math.min(wmax, P.w * 0.6);
-        var bw = wmax + 8, bh = leg.length * 18 + 6, pad = 4;
+        if (sp.legendNote) { var nw = (ctx.measureText ? ctx.measureText(sp.legendNote).width : sp.legendNote.length * 6) + 8; if (nw > wmax) wmax = nw; }
+        wmax = Math.min(wmax, P.w * 0.6);
+        var bw = wmax + 8, bh = leg.length * 18 + 6 + (sp.legendNote ? 18 : 0), pad = 4;
         var cand = [[P.x + P.w - pad - bw, P.y + pad], [P.x + P.w - pad - bw, P.y + P.h - pad - bh - 14], [P.x + pad + 2, P.y + pad], [P.x + pad + 2, P.y + P.h - pad - bh - 14]];
         var pts = [];
         (sp.series || []).forEach(function (s) {

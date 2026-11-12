@@ -12,17 +12,20 @@
 //
 // GLPC (§7.1): q_L against q_inj on a 12-point grid 0–5 MMscf/d (M.lift.gl.qinjList_Mscfd when the user gave one), run as a Job
 // on a button press (PRiSM_autoInterp.drive), ascending, each point a tracking solve warm-started from the previous root (a full
-// solve when the bracket fails or the previous point does not flow). optimum = the maximum q_L; economic = the point where the
-// incremental slope dq_L/dq_inj falls to 1000 / incGor (STB/d per Mscf/d; incGor = M.lift.gl.incGor scf/STB, the user's
-// incremental gas-oil ratio limit; 0 or blank = the optimum). A point whose root is statically unstable is flagged (the Asheim
-// heading check is B). The quick look adds the rate gain over natural flow and the lift gas for 90 % of the maximum gain.
+// solve when the bracket fails or the previous point does not flow). optimum = the maximum q_L, refined after the grid by a
+// golden-section search (REFINE extra solves, rounded to 1 Mscf/d) in the bracket of the grid points either side of the best one
+// (review fix: the grid alone left the optimum as coarse as the list; GL_OPT_AT_START says when the grid optimum was the first
+// non-zero rate); economic = the point where the incremental OIL slope dq_o/dq_inj falls to 1000 / incGor (STB/d per Mscf/d;
+// incGor = M.lift.gl.incGor scf/STB, the user's incremental gas-oil ratio limit; 0 or blank = the optimum; q_L when a point has no
+// q_o). A point whose root is statically unstable is flagged (the Asheim heading check is B). The quick look adds the rate gain over
+// natural flow and the lift gas for 90 % of the maximum gain (interpolated from (0, 0) when the well does not flow naturally).
 //
 // Interfaces (field units, §3.0; every result {ok, errors[], warnings[{code, msg, sev}]}; nothing throws for user data):
 //   WTS_wp_gl
 //     .glpc(M, {qinjList?, incGor?}) → Job (step / done / progress / result / cancel); result() →
 //         {ok, points:[{qinj Mscf/d, ok, qL, qo, qw, qg, pwf psia, thp psig, injMd, injTvd, pCas, pTub psia, atPacker, stable, tracked,
 //          evals, code?, error?}], natural:{qL, ok}, optimum:{qinj, qL}, economic:{qinj, qL, slope}, stable:[qinj of unstable points],
-//          gain, gas90:{qinj, qL}, incGor, evals, warnings, errors}
+//          gain, gas90:{qinj, qL}, incGor, evals, warnings, errors}; refined points carry refined: true
 //     .quickLook(M, o?)  → the same Job with the list from M.lift.gl.qinjList_Mscfd (or the default grid) — the page's button
 //     .DEFAULT_LIST      the default 12-point grid (Mscf/d)
 //     .summary(points, incGor) → {optimum, economic, gain, gas90, stable}   (pure; exported for tests)
@@ -32,7 +35,8 @@
     var G = (typeof window !== 'undefined') ? window : globalThis;
 
     var DEFAULT_LIST = [0, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000];
-    var MAX_POINTS = 24;
+    var MAX_POINTS = 24, REFINE = 7;                                              // golden-section solves after the grid
+    var GR = (Math.sqrt(5) - 1) / 2;
 
     function _fin(v) { return typeof v === 'number' && isFinite(v); }
     function _n(v) { if (typeof v === 'number') return isFinite(v) ? v : null; if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v; return null; }
@@ -55,12 +59,13 @@
         out.optimum = { qinj: best.qinj, qL: best.qL };
         var nat = (points || []).filter(function (p) { return p && p.qinj === 0; })[0], qNat = nat && nat.ok ? nat.qL : 0;
         out.gain = best.qL - qNat;
-        var lim = _fin(+incGor) && +incGor > 0 ? 1000 / +incGor : null;           // STB/d per Mscf/d
+        var lim = _fin(+incGor) && +incGor > 0 ? 1000 / +incGor : null;           // STB/d of OIL per Mscf/d (an incremental gas-oil ratio)
+        var oilOf = function (p) { return _fin(p.qo) ? p.qo : p.qL; };
         if (lim == null) out.economic = { qinj: best.qinj, qL: best.qL, slope: null, rule: 'optimum' };
         else {
             var e = { qinj: ok[0].qinj, qL: ok[0].qL, slope: null, rule: 'slope' };
             for (var i = 1; i < ok.length && ok[i].qinj <= best.qinj; i++) {
-                var sl = (ok[i].qL - ok[i - 1].qL) / (ok[i].qinj - ok[i - 1].qinj);
+                var sl = (oilOf(ok[i]) - oilOf(ok[i - 1])) / (ok[i].qinj - ok[i - 1].qinj);
                 if (sl >= lim) e = { qinj: ok[i].qinj, qL: ok[i].qL, slope: sl, rule: 'slope' };
                 else {
                     // inside this interval the incremental slope falls below the limit: the last point that still pays
@@ -69,7 +74,8 @@
             }
             out.economic = e;
         }
-        var want = qNat + 0.9 * (best.qL - qNat), prev = null;
+        // a well that does not flow naturally: the curve starts at (0, 0), so the 90 % rate is interpolated from there
+        var want = qNat + 0.9 * (best.qL - qNat), prev = (nat && !nat.ok && ok[0].qinj > 0) ? { qinj: 0, qL: 0 } : null;
         for (var j = 0; j < ok.length; j++) {
             var p = ok[j];
             if (p.qL >= want - 1e-9) {
@@ -99,23 +105,58 @@
         var incGor = _fin(_n(o.incGor)) ? _n(o.incGor) : _n(gl.incGor);
         var base = _clone(M);
         if (base.system.mode === 'design' || base.system.mode === 'max') base.system.mode = 'rate';
-        var pts = [], prev = null, st = { i: 0, done: false, cancelled: false, res: null }, warnings = [];
-        function solvePoint(qinj) {
+        var pts = [], prev = null, st = { i: 0, done: false, cancelled: false, res: null, ref: null, k: 0 }, warnings = [], Rs = [];
+        // the solved neighbour nearest in q_inj (the warm start of a refinement solve)
+        function nearR(qinj) {
+            var b = null, d = Infinity;
+            Rs.forEach(function (x) { if (x.R && x.R.ok && Math.abs(x.q - qinj) < d) { d = Math.abs(x.q - qinj); b = x.R; } });
+            return b;
+        }
+        function solvePoint(qinj, refined) {
             var Mx = _clone(base);
             Mx.lift = Mx.lift || {}; Mx.lift.type = qinj > 0 ? 'gaslift' : 'none'; Mx.lift.gl = Mx.lift.gl || {}; Mx.lift.gl.qinj_Mscfd = qinj;
             var opt = {};
+            if (refined) { var nr = nearR(qinj); prev = nr ? { R: nr } : null; }
             if (prev && prev.R && prev.R.ok && qinj > 0) opt.track = { q: prev.R.op.q, slope: prev.R.op.dDdq };
             var R = SY.solve(Mx, opt), ok = !!(R && R.ok && R.op), rt = ok ? (R.rates || {}) : {}, lf = ok ? R.lift : null;
             var p = { qinj: qinj, ok: ok, qL: ok ? rt.qL : null, qo: ok ? rt.qo : null, qw: ok ? rt.qw : null, qg: ok ? rt.qg : null, pwf: ok ? R.pwf : null,
                 thp: ok && R.surface ? R.surface.thp_psig : null, injMd: lf ? lf.injMd : null, injTvd: lf ? lf.injTvd : null, pCas: lf ? lf.pCas : null, pTub: lf ? lf.pTub : null,
                 atPacker: lf ? lf.atPacker : null, stable: ok ? !!R.op.stable : false, tracked: !!(R && R.tracked), evals: R ? (R.evals || 0) : 0 };
             if (!ok) { p.code = (R && R.code) || 'NO_FLOW'; p.error = (R && R.errors && R.errors[0]) || 'no operating point'; }
+            if (refined) p.refined = true;
             if (ok) prev = { R: R };
+            Rs.push({ q: qinj, R: ok ? R : null });
             pts.push(p);
+            return p;
+        }
+        function sortPts() { pts.sort(function (a, b) { return a.qinj - b.qinj; }); }
+        function valAt(q) {
+            var hit = pts.filter(function (p) { return p.qinj === q; })[0] || solvePoint(q, true);
+            return hit.ok && _fin(hit.qL) ? hit.qL : -Infinity;
+        }
+        // golden-section bracket around the best grid point: [the grid point before it (or 0), the one after it]
+        function refineSetup() {
+            sortPts();
+            var okp = pts.filter(function (p) { return p.ok && _fin(p.qL); });
+            if (!okp.length) return null;
+            var best = okp.reduce(function (a, b) { return b.qL > a.qL ? b : a; }), i = pts.indexOf(best);
+            if (i >= pts.length - 1) return null;                                     // at the end of the list: GL_OPT_AT_END
+            var a = i > 0 ? pts[i - 1].qinj : best.qinj, b = pts[i + 1].qinj;
+            if (!(b - a > 2)) return null;
+            st.atStart = i > 0 && pts[i - 1].qinj === 0 && best.qinj > 0;
+            return { a: a, b: b, c: null, d: null, fc: null, fd: null };
+        }
+        function refineStep() {
+            var r = st.ref, rd = function (x) { return Math.round(x); };
+            if (r.c == null) { r.c = rd(r.b - GR * (r.b - r.a)); r.fc = valAt(r.c); return; }
+            if (r.d == null) { r.d = rd(r.a + GR * (r.b - r.a)); r.fd = valAt(r.d); return; }
+            if (r.fc >= r.fd) { r.b = r.d; r.d = r.c; r.fd = r.fc; r.c = rd(r.b - GR * (r.b - r.a)); if (r.c >= r.d) r.c = r.d - 1; r.fc = valAt(r.c); }
+            else { r.a = r.c; r.c = r.d; r.fc = r.fd; r.d = rd(r.a + GR * (r.b - r.a)); if (r.d <= r.c) r.d = r.c + 1; r.fd = valAt(r.d); }
         }
         function finish() {
             if (st.res) return st.res;
             if (st.cancelled) { st.res = { ok: false, code: 'CANCELLED', points: [], cancelled: true, errors: ['cancelled'], warnings: [] }; return st.res; }
+            sortPts();
             var sm = summary(pts, incGor), nat = pts.filter(function (p) { return p.qinj === 0; })[0];
             var res = { ok: pts.some(function (p) { return p.ok; }), points: pts, natural: { ok: !!(nat && nat.ok), qL: nat && nat.ok ? nat.qL : 0 }, optimum: sm.optimum, economic: sm.economic,
                 gain: sm.gain, gas90: sm.gas90, stable: sm.stable, incGor: _fin(incGor) ? incGor : 0, evals: pts.reduce(function (a, p) { return a + (p.evals || 0); }, 0), warnings: warnings.slice(), errors: [] };
@@ -125,18 +166,26 @@
             var noInj = pts.filter(function (p) { return !p.ok && /injection/i.test(String(p.error || '') + String(p.code || '')); });
             if (noInj.length) res.warnings.push(_w('GL_NO_INJECTION', 'At some rates the casing pressure cannot open a point above the packer: raise the injection pressure or lower the valve ΔP.'));
             if (sm.optimum && sm.optimum.qinj === list[list.length - 1] && list.length > 2) res.warnings.push(_w('GL_OPT_AT_END', 'The maximum rate is at the largest injection rate of the list: extend the list to find the optimum.', 'info'));
+            if (st.atStart) res.warnings.push(_w('GL_OPT_AT_START', 'On the list the maximum rate was at the first non-zero injection rate (' + _f(list[1], 0) + ' Mscf/d): it was refined between 0 and the next rate; add rates near zero for a finer curve.', 'info'));
+            res.refined = pts.filter(function (p) { return p.refined; }).length;
             st.res = res;
             return res;
         }
+        var nTot = list.length + REFINE;
         return {
-            n: list.length,
+            n: nTot,
             step: function () {
-                if (!st.done && !st.cancelled) { solvePoint(list[st.i]); st.i++; if (st.i >= list.length) st.done = true; } else st.done = true;
+                if (!st.done && !st.cancelled) {
+                    if (st.i < list.length) { solvePoint(list[st.i]); st.i++; if (st.i >= list.length) { st.ref = refineSetup(); if (!st.ref) st.done = true; } }
+                    else if (st.ref && st.k < REFINE) { refineStep(); st.k++; if (st.k >= REFINE) st.done = true; }
+                    else st.done = true;
+                } else st.done = true;
                 if (st.done) finish();
-                return { done: st.done, progress: st.done ? 1 : Math.min(0.99, st.i / list.length), label: st.done ? 'done' : ('lift gas ' + _f(list[Math.min(st.i, list.length - 1)], 0) + ' Mscf/d (' + (st.i + 1) + ' of ' + list.length + ')') };
+                var nDone = st.i + st.k;
+                return { done: st.done, progress: st.done ? 1 : Math.min(0.99, nDone / nTot), label: st.done ? 'done' : (st.i < list.length ? ('lift gas ' + _f(list[Math.min(st.i, list.length - 1)], 0) + ' Mscf/d (' + (st.i + 1) + ' of ' + list.length + ')') : 'refining the optimum (' + (st.k + 1) + ' of ' + REFINE + ')') };
             },
             done: function () { return st.done; },
-            progress: function () { return st.done ? 1 : st.i / list.length; },
+            progress: function () { return st.done ? 1 : (st.i + st.k) / nTot; },
             result: function () { return finish(); },
             cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
         };

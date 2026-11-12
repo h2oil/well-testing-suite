@@ -26,7 +26,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '6ac4d0d5', units: 'field',
+  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '39cfa292', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '3604f58b', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '9218ad44', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -198,12 +198,12 @@ var wellperf = {
   vd('✓', 'inside the published data range', 'No extrapolation.'), vd('⚠', 'outside the data range', 'Extrapolation.'), vd('✓', 'any inclination', 'Flowline.'), vd('✓', 'not used', 'Wet gas.'),
   vd('⚠', 'provisional', 'Not verified against a published example; never a default.'), vd('⚠', 'below the bubble point', 'Use Vogel or composite.'), vd('✓', 'gives the target rate', 'Adopt it.')],
   example: { title: 'The Oil example', setup: ['Vertical, mid-perf {{8000|length}}, tubing ID {{2.441|lengthSmall|3}}, WC 30 %, p̄r {{3000|pressure}}, J {{2|productivityIndex}}, bean 32, separator {{100|pressureG}}.'],
-  result: ['{{914|liquidRate}} at {{2543|pressure}}; THP {{320|pressureG}}; q_s {{305|liquidRate}}, tubing-curve minimum {{431|liquidRate}}.'],
+  result: ['{{914|liquidRate}} at {{2543|pressure}}; THP {{320|pressureG}}; q_s {{319|liquidRate}}, tubing-curve minimum {{561|liquidRate}}.'],
   check: { kind: 'compute', fn: 'WTS_wp_system.solve', input: { fluid: { type: 'oil', api: 35, sgg: 0.65, gor: 500, wc: 0.3, sgw: 1.07, psep_psig: 100, tsep_F: 80 },
     res: { model: 'pi', pr: 3000, T_F: 200, params: { J: 2 } }, well: { survey: [[0, 0], [8000, 8000]], midPerfMd: 8000, strings: [{ kind: 'tubing', id: 2.441, od: 2.875, topMd: 0, botMd: 8000 }],
     geo: { points: [[0, 60], [8000, 200]] }, heat: { tht_F: 120 } },
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
-    expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 305.4, 'vlpMin.q': 430.9, 'surface.thp_psig': 320.4 } } },
+    expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
   { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing below the tubing shoe is shown as information. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
@@ -211,7 +211,7 @@ var wellperf = {
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
   { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP at the operating rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
   { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** marches the temperature on the true inclination against the geotherm on TVD; the traverse also draws the earth temperature and the linear profile. **Fit U to the test THT** matches U to a measured THT.'] },
-  { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: continuous (Sachdeva, provisional) or the conservative bound. The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
+  { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest depth the casing pressure reaches, above the packer, and adds free gas only. **Run the gas-lift performance curve** gives rate against lift-gas rate with the optimum and the economic point; drag the injection-rate or packer handle; the schematic marks the point.'] },
   { id: 'study', title: 'Two variables and tubing size', what: ['A **Second variable** gives a rate line per value and a heat-map table: select a cell, then **Use these values**. **Tubing size (catalogue scan)** lists each size with rate, stability, loading margin and erosion ([[course#wp2|course exercise 2]]).'] },
   { id: 'tune', title: 'VLP tuning', what: ['**Tune to the tests** fits the holdup multiplier m_h (0.8–1.25) to the gauges, and the friction multiplier m_f (0.7–1.5) only when the test rates span 2:1. Tuned and untuned traverses are drawn against the gauges; **Apply to the model** sends them into every solve. Practise it in the [[wpcourse|Well performance course]].'] }],

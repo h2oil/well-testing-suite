@@ -80,7 +80,7 @@
                     strings: [], path: 'tubing', restrictions: [],
                     geo: { surfT_F: 60, points: [] },
                     heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04, Ubasis: 'to', dwb_in: null } },
-            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'sachdeva', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
+            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'bound', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
             lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
             system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb' },
@@ -127,7 +127,7 @@
         wp_ckcorr: { path: 'surface.choke.corr', kind: 'str' }, wp_ckcd: { path: 'surface.choke.cd', kind: 'num' },
         // A2 (WP15): the sub-critical rule ('sachdeva' = the continuous Sachdeva et al. branch scaled to the critical correlation;
         // 'bound' = the A1 conservative bound p1 ≥ p2 / 0.588) and the rate factor of the Sachdeva model (blank = 1)
-        wp_cksub: { path: 'surface.choke.subcritical', kind: 'str', enumv: ['sachdeva', 'bound'] }, wp_ckrf: { path: 'surface.choke.rateFactor', kind: 'num' },
+        wp_cksub: { path: 'surface.choke.subcritical', kind: 'str', enumv: ['bound', 'sachdeva'] }, wp_ckrf: { path: 'surface.choke.rateFactor', kind: 'num' },
         wp_psep: { path: 'surface.psep_psig', kind: 'num' }, wp_tamb: { path: 'surface.ambient_F', kind: 'num' },
         wp_lift: { path: 'lift.type', kind: 'str', enumv: ['none', 'gaslift', 'esp'] },
         wp_gl_packer: { path: 'lift.gl.packerMd', kind: 'num' }, wp_gl_sg: { path: 'lift.gl.sginj', kind: 'num' },
@@ -161,7 +161,10 @@
             return t;
         }
         if (spec.kind === 'list') {
-            var a = Array.isArray(raw) ? raw : String(raw == null ? '' : raw).split(/[;\s,]+/);
+            // the page hands an already-parsed array (display units and decimal comma resolved there); a string from storage or a
+            // script: whitespace / ';' separate, ',' only without whitespace, 'd,ddd' is a thousands group (review fix)
+            var str = String(raw == null ? '' : raw).trim();
+            var a = Array.isArray(raw) ? raw : (/[;\s]/.test(str) ? str.split(/[;\s]+/) : str.split(',')).map(function (t) { return /^[-+]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t) ? t.replace(/,/g, '') : t; });
             return a.map(_num).filter(_fin);
         }
         var x = _num(raw);

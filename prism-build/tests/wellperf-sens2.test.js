@@ -154,19 +154,61 @@ module.exports = [
       assert.ok(!BAD.test(txt(A.el('wp_step_5'))), 'step 5 clean');
       // tubing-size design
       A.select('wp_mode', 'design'); A.flush(30);
-      A.select('wp_tkind', 'tubingId'); A.change('wp_tq', '800'); A.flush(30);
+      A.select('wp_tkind', 'tubingId'); A.change('wp_tq', ''); A.flush(30);
+      // review fix: the missing-target message sits next to the design button, not in the Studies box
+      A.click(A.find('[data-act="design"]')); A.flush(5);
+      assert.match(txt(A.el('wp_designmsg')), /Enter the target rate first/);
+      assert.ok(!/Enter the target rate first/.test(txt(A.el('wp_jobbox'))), 'not in the Studies box');
+      A.change('wp_tq', '800'); A.flush(30);
       st.design = null;
       A.click(A.find('[data-act="design"]'));
       for (let i = 0; i < 80 && !st.design; i++) await A.flushAsync(1);
       const dz = A.el('wp_design');
       assert.match(txt(dz), /smallest catalogue tubing that gives the target rate/);
       assert.ok(A.findAll('#wp_design table tbody tr').length >= 8 && A.el('wp_cv_tub')._wp, 'table and chart');
+      assert.strictEqual(txt(A.el('wp_designmsg')), '', 'message cleared');
+      // review fix: no Use button on the current size; erosion ratio with two decimals on every row
+      A.findAll('#wp_design table tbody tr').forEach((tr) => {
+        const cells = tr.querySelectorAll('td'), now = /\(now\)/.test(txt(cells[0]));
+        if (now) assert.ok(!tr.querySelector('[data-act="usetub"]'), 'no Use on the current size');
+        const er = txt(cells[cells.length - 2]);
+        assert.ok(er === '—' || /^\d+\.\d{2}$/.test(er), 'erosion ratio 2 dp: ' + er);
+      });
       const ub = A.findAll('#wp_design [data-act="usetub"]')[0];
       A.click(ub); A.flush(30);
       const rec = JSON.parse(A.storage.getItem('wts_wellperf_model'));
       assert.ok(rec.strings.filter((x) => x.kind === 'tubing').every((x) => x.tubKey === ub.getAttribute('data-key')), 'strings written');
       assert.strictEqual(A.consoleErrors().length, 0, 'no console errors');
       A.select('wp_mode', 'rate'); A.select('wpv_svar2', ''); A.flush(30);
+    },
+  },
+  {
+    name: 'WSN6 review fix: loading an example suggests the sensitivity values again (p̄r values from the empty model are replaced) so Run sensitivity flows; a restore with stale p̄r values (< 0.3 × the model p̄r) is refreshed',
+    wp: WP, opts: false,
+    async run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win;
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs();
+      A.hook.nav('wellperf'); A.flush(30);
+      G.WTS_wellperf_page.goStep(5); A.flush(5);
+      A.select('wpv_svar', 'pr'); A.flush(5);
+      A.el('wpv_svals').value = '15 50 86 120 160';
+      A.click(A.find('[data-act="example"][data-ex="oil"]')); A.flush(30);
+      const vals = A.el('wpv_svals').value.split(' ').map(Number);
+      assert.ok(vals.length >= 3 && vals.every((v) => v > 900), 'suggested for p̄r 3,000: ' + A.el('wpv_svals').value);
+      const st = G.WTS_wellperf_page.state();
+      A.click(A.find('[data-act="sens"]'));
+      for (let i = 0; i < 80 && !st.sens; i++) await A.flushAsync(1);
+      assert.ok(st.sens && st.sens.cases.some((c) => c.R && c.R.ok), 'cases flow');
+      // the silent restore (project open / well switch) refreshes stale values
+      A.el('wpv_svals').value = '15 50 86';
+      G.WTS_calcRegistry.wellperf.hooks.after(); A.flush(30);
+      assert.ok(A.el('wpv_svals').value.split(' ').map(Number).every((v) => v > 900), 'refreshed on restore: ' + A.el('wpv_svals').value);
+      A.el('wpv_svals').value = '2000 2500 3000';
+      G.WTS_calcRegistry.wellperf.hooks.after(); A.flush(30);
+      assert.strictEqual(A.el('wpv_svals').value, '2000 2500 3000', 'values that fit are kept');
+      A.select('wpv_svar', 'wc'); A.flush(5);
+      G.WTS_wellperf_page.resetJobs();
     },
   },
 ];

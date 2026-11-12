@@ -106,9 +106,13 @@ module.exports = [
       const G = app(ctx).win, GL = G.WTS_wp_gl;
       assert.strictEqual(GL.DEFAULT_LIST.length, 12); assert.strictEqual(GL.DEFAULT_LIST[GL.DEFAULT_LIST.length - 1], 5000);
       const r = run(GL.glpc(liftM(500, { incGor: 3000 })));
-      assert.ok(r.ok && r.points.length === 12, JSON.stringify(plain(r.errors)));
+      const grid = r.points.filter((p) => !p.refined), refd = r.points.filter((p) => p.refined);
+      assert.ok(r.ok && grid.length === 12 && refd.length >= 1 && refd.length <= 7 && r.refined === refd.length, JSON.stringify(plain(r.errors)) + ' grid ' + grid.length + ' refined ' + refd.length);
+      assert.ok(r.points.every((p, i) => i === 0 || p.qinj > r.points[i - 1].qinj), 'sorted, no duplicates');
       assert.ok(!r.natural.ok && r.warnings.some((w) => w.code === 'GL_DEAD_WELL'), 'dead in natural flow');
-      assert.ok(r.evals <= 200, 'GLPC within the §16 budget: ' + r.evals + ' E');
+      const eGrid = grid.reduce((t, p) => t + (p.evals || 0), 0);
+      assert.ok(eGrid <= 200, 'GLPC grid within the §16 budget: ' + eGrid + ' E (with the refinement ' + r.evals + ')');
+      console.log('WGL4 evals grid ' + eGrid + ' total ' + r.evals + ' optimum ' + r.optimum.qinj);
       assert.ok(r.points.filter((p) => p.qinj > 0 && p.ok).filter((p) => p.tracked).length >= 8, 'tracking solves');
       const ok = r.points.filter((p) => p.ok), mx = ok.reduce((a, b) => (b.qL > a.qL ? b : a));
       assert.deepStrictEqual(plain(r.optimum), { qinj: mx.qinj, qL: mx.qL }, 'optimum = the maximum');
@@ -198,6 +202,162 @@ module.exports = [
       assert.ok(!BAD.test(txt(A.el('wp_res'))) && !BAD.test(txt(A.el('wp_step_4'))), 'clean');
       assert.strictEqual(A.consoleErrors().length, 0, 'no console errors');
       A.select('wp_lift', 'none'); A.flush(30);
+    },
+  },
+  {
+    name: 'WGL7 review fixes: the economic point uses the incremental OIL slope (water cut); gas for 90 % interpolates from (0, 0) on a dead well; the optimum is refined between grid points with GL_OPT_AT_START',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const G = app(ctx).win, GL = G.WTS_wp_gl;
+      // 60 % water: the liquid slope 0.4 STB/d per Mscf/d would pass a 3000 scf/STB limit (0.333) but the oil slope 0.16 does not
+      const wet = [{ qinj: 0, ok: true, qL: 100, qo: 40 }, { qinj: 500, ok: true, qL: 300, qo: 120 }, { qinj: 1000, ok: true, qL: 350, qo: 140 }];
+      const e = GL.summary(wet, 3000).economic;
+      assert.ok(e.rule === 'slope' && e.qinj === 0 && Math.abs(e.slope - 0.16) < 1e-12, 'oil slope: ' + JSON.stringify(e));
+      assert.strictEqual(GL.summary(wet, 10000).economic.qinj, 500, '10000 scf/STB = 0.1 STB/d per Mscf/d: the oil slope 0.16 pays to 500, 0.04 does not');
+      // dead natural point: the 90 % gain rate is interpolated from (0, 0)
+      const dead = [{ qinj: 0, ok: false, qL: null }, { qinj: 250, ok: true, qL: 580 }, { qinj: 500, ok: true, qL: 600 }];
+      const g = GL.summary(dead, 0).gas90;
+      assert.near(g.qinj, 250 * 540 / 580, 1e-9, 'interpolated from (0, 0): ' + JSON.stringify(g));
+      assert.near(g.qL, 540, 1e-9);
+      // a flowing well: unchanged (the first point reaching the target is the grid point when the natural point is above it)
+      const live = [{ qinj: 0, ok: true, qL: 590 }, { qinj: 250, ok: true, qL: 600 }];
+      assert.near(GL.summary(live, 0).gas90.qinj, 250 * (599 - 590) / 10, 1e-9);
+      // refinement: the optimum at the first non-zero grid rate is refined between 0 and the next rate, with the info warning
+      const M = S.FIX.oilWell; M.fluid.wc = 0.3; M.lift = { type: 'gaslift', gl: { pinj_psig: 1200, packerMd: 7800 } };
+      const r = run(GL.glpc(M, { qinjList: [0, 250, 1000, 2000] }));
+      const grid = r.points.filter((p) => !p.refined);
+      const gbest = grid.filter((p) => p.ok).reduce((a, b) => (b.qL > a.qL ? b : a));
+      assert.ok(r.ok && r.refined > 0, 'refined points: ' + r.refined);
+      assert.ok(r.optimum.qL >= gbest.qL, 'the refined optimum is at least the grid optimum');
+      assert.ok(r.points.filter((p) => p.ok).every((p) => p.qL <= r.optimum.qL), 'optimum = the best point');
+      if (gbest.qinj === 250) {
+        assert.ok(r.warnings.some((w) => w.code === 'GL_OPT_AT_START'), 'GL_OPT_AT_START');
+        assert.ok(r.optimum.qinj > 0 && r.optimum.qinj < 1000, 'refined inside (0, 1000): ' + r.optimum.qinj);
+      }
+      assert.ok(r.points.every((p, i) => i === 0 || p.qinj > r.points[i - 1].qinj), 'sorted, unique');
+    },
+  },
+  {
+    name: 'WGL8 review fix: with step ⑦ open the page report (collectPageReport) and the Quick Report snapshot carry the studies summary — gas-lift injection point / optimum / economic point / gain, VLP tuning m_h / m_f / RMS, the two-variable sensitivity grid, the temperature model',
+    wp: WP, opts: false,
+    async run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win, txt = (e) => String(e && e.textContent || '').replace(/\s+/g, ' ').trim(), BAD = /NaN|undefined|Infinity|\[object Object\]/;
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs(); G.WTS_wellperf_page.budget(5000);
+      A.hook.nav('wellperf'); A.flush(30);
+      A.click(A.find('[data-act="example"][data-ex="oil"]')); A.flush(30);
+      const P = G.WTS_wellperf_page, st = P.state();
+      // gas lift + the performance curve (step ④)
+      P.goStep(4); A.flush(5);
+      A.select('wp_lift', 'gaslift'); A.flush(30);
+      A.change('wp_gl_pinj', '1500'); A.change('wp_gl_packer', '7800'); A.change('wp_gl_qinj', '500'); A.change('wp_gl_incgor', '2000'); A.flush(30);
+      A.click(A.find('[data-act="glpc"]'));
+      for (let i = 0; i < 160 && !st.gl; i++) await A.flushAsync(1);
+      assert.ok(st.gl && st.gl.ok, 'GLPC');
+      // MD and TVD on the new depth readouts (review fix): the schematic gas-lift mark and the flow-regime map end label
+      assert.match(A.el('wp_sch').innerHTML, /gas lift [\d,]+ ft MD · [\d,]+ ft TVD/);
+      A.click(A.find('#wp_trtabs [data-tab="map"]')); A.flush(5);
+      const mm = A.el('wp_cv_tr')._wp.spec.markers.find((m) => /^Bottom/.test(m.label || ''));
+      assert.ok(mm && /^Bottom [\d,]+ ft MD · [\d,]+ ft TVD$/.test(mm.label), 'map end label: ' + (mm && mm.label));
+      A.click(A.find('#wp_trtabs [data-tab="traverse"]')); A.flush(5);
+      // VLP tuning (step ⑥)
+      P.goStep(6); A.flush(5);
+      A.click(A.find('[data-act="tune"]'));
+      for (let i = 0; i < 80 && !st.tune; i++) await A.flushAsync(1);
+      assert.ok(st.tune && st.tune.ok, 'tuned');
+      // two-variable sensitivity (step ⑤)
+      P.goStep(5); A.flush(5);
+      A.select('wpv_svar', 'wc'); A.flush(5); A.change('wpv_svals', '0 30 60'); A.flush(5);
+      A.select('wpv_svar2', 'pr'); A.flush(5); A.change('wpv_svals2', '2600 3000'); A.flush(5);
+      A.click(A.find('[data-act="sens"]'));
+      for (let i = 0; i < 80 && !(st.sens && st.sens.two); i++) await A.flushAsync(1);
+      assert.ok(st.sens && st.sens.two, 'two-variable sensitivity');
+      // step ⑦: the report
+      P.goStep(7); A.flush(5);
+      const box = A.el('wp_studies');
+      assert.ok(box && box.closest('#wp_res') && !box.closest('.rp-skip'), 'studies block inside #wp_res, not rp-skip');
+      const t = txt(box);
+      ['Studies and tuning', 'Gas-lift injection point', 'Gas-lift optimum', 'Gas-lift economic point', 'Gas-lift gain', 'VLP tuning', 'm_h', 'RMS', 'Sensitivity', 'Temperature model', 'PVT family'].forEach((k) => assert.includes(t, k));
+      assert.match(t, /Gas-lift injection point\s*[\d,]+ ft MD · [\d,]+ ft TVD/);
+      assert.ok(A.findAll('#wp_studies table.dtable tbody tr').length === 2 && A.findAll('#wp_studies table.dtable tbody td').length === 6, 'the 2 × 3 grid');
+      assert.ok(/●/.test(txt(A.find('#wp_studies table.dtable'))), 'the model cell marked');
+      assert.ok(!BAD.test(t), 'clean: ' + (t.match(BAD) || [''])[0]);
+      const flat = JSON.stringify(G.collectPageReport(A.el('pgBody'), { charts: false }));
+      ['Studies and tuning', 'Gas-lift optimum', 'VLP tuning', 'Gas-lift injection point', 'Sensitivity'].forEach((k) => assert.includes(flat, k));
+      assert.includes(txt(A.el('wp_step_7')), 'studies and tuning summary');
+      A.select('wp_lift', 'none'); A.change('wp_gl_incgor', '0'); A.flush(30);
+      G.WTS_wellperf_page.resetJobs();
+    },
+  },
+  {
+    name: 'WGL9 review fix: the performance-curve rate list honours thousands groups and the decimal comma; in Metric mode it is typed and labelled in the display gas-rate unit and converted on a unit change; the tuning table rate is in the display unit',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win, txt = (e) => String(e && e.textContent || '').replace(/\s+/g, ' ').trim();
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs();
+      A.hook.nav('wellperf'); A.flush(30);
+      A.click(A.find('[data-act="example"][data-ex="oil"]')); A.flush(30);
+      G.WTS_wellperf_page.goStep(4); A.flush(5);
+      A.select('wp_lift', 'gaslift'); A.flush(30);
+      const list = () => Array.from(G.WTS_wellperf_page.state().M.lift.gl.qinjList_Mscfd);
+      A.change('wp_gl_qlist', '0 1,000 2,000'); A.flush(30);
+      assert.deepStrictEqual(list(), [0, 1000, 2000], 'thousands groups');
+      A.change('wp_gl_qlist', '0,250,500'); A.flush(30);
+      assert.deepStrictEqual(list(), [0, 250, 500], 'commas without whitespace separate');
+      // the model contract on its own (a string from storage)
+      assert.deepStrictEqual(Array.from(G.WTS_wp_model.read({ scalars: { wp_gl_qlist: '0 1,500 3,000' } }).lift.gl.qinjList_Mscfd), [0, 1500, 3000]);
+      G.WTS_a11y.decimalComma(true);
+      try {
+        A.change('wp_gl_qlist', '0 100,5 250 500'); A.flush(30);
+        assert.deepStrictEqual(list(), [0, 100.5, 250, 500], 'decimal comma');
+        A.change('wp_gl_qlist', '0;1.000,5;2.000'); A.flush(30);
+        assert.deepStrictEqual(list(), [0, 1000.5, 2000], 'decimal comma with a thousands point');
+      } finally { G.WTS_a11y.decimalComma(false); }
+      A.change('wp_gl_qlist', '0 1000 2000'); A.flush(30);
+      const U = G.WTS_units, lab = () => txt(A.find('label[for="wp_gl_qlist"]'));
+      assert.match(lab(), /\(Mscf\/d\)/);
+      U.setSystem('metric'); A.flush(30);
+      try {
+        assert.ok(!/Mscf\/d/.test(lab()), 'relabelled: ' + lab());
+        const shown = A.el('wp_gl_qlist').value.split(' ').map(Number);
+        assert.ok(shown.length === 3 && shown[0] === 0 && Math.abs(shown[1] - U.convertCategory(1000, 'gasRateSmall', 'imperial', 'metric')) < 1e-3 * shown[1], 'box converted: ' + A.el('wp_gl_qlist').value);
+        A.change('wp_gl_qlist', A.el('wp_gl_qlist').value); A.flush(30);
+        const l = list();
+        assert.ok(Math.abs(l[1] - 1000) < 0.01 && Math.abs(l[2] - 2000) < 0.02, 'read back in field units: ' + l);
+      } finally { U.setSystem('imperial'); A.flush(30); }
+      assert.deepStrictEqual(A.el('wp_gl_qlist').value.split(' ').map((x) => Math.round(+x)), [0, 1000, 2000], 'converted back');
+      A.change('wp_gl_qlist', ''); A.select('wp_lift', 'none'); A.flush(30);
+    },
+  },
+  {
+    name: 'WGL10 review fix: on the performance plot the marker labels, the q_inj handle label and the 90 % line label do not overlap (Oil example, casing 1,200 psig, the default list), also in Metric mode',
+    wp: WP, opts: false,
+    async run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win;
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs(); G.WTS_wellperf_page.budget(5000);
+      A.hook.nav('wellperf'); A.flush(30);
+      A.click(A.find('[data-act="example"][data-ex="oil"]')); A.flush(30);
+      const P = G.WTS_wellperf_page, st = P.state();
+      P.goStep(4); A.flush(5);
+      A.select('wp_lift', 'gaslift'); A.flush(30);
+      A.change('wp_gl_pinj', '1200'); A.change('wp_gl_qinj', '250'); A.change('wp_gl_incgor', '1500'); A.flush(30);
+      A.click(A.find('[data-act="glpc"]'));
+      for (let i = 0; i < 160 && !st.gl; i++) await A.flushAsync(1);
+      assert.ok(st.gl && st.gl.ok, 'GLPC');
+      const hit = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+      const check = (tag) => {
+        const w = A.el('wp_cv_glpc')._wp, ml = w.mlabels || [], vl = w.vlabels || [];
+        assert.ok(ml.length >= 2, tag + ': marker labels laid out: ' + ml.length);
+        ml.forEach((a, i) => ml.forEach((b, j) => { if (i < j) assert.ok(!hit(a, b), tag + ': "' + a.label + '" vs "' + b.label + '"'); }));
+        ml.forEach((a) => vl.forEach((b) => assert.ok(!hit(a, b), tag + ': marker "' + a.label + '" vs line "' + b.label + '"')));
+      };
+      check('imperial');
+      G.WTS_units.setSystem('metric'); A.flush(30);
+      try { check('metric'); } finally { G.WTS_units.setSystem('imperial'); A.flush(30); }
+      A.change('wp_gl_incgor', '0'); A.select('wp_lift', 'none'); A.flush(30);
+      G.WTS_wellperf_page.resetJobs();
     },
   },
 ];

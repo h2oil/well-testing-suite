@@ -150,7 +150,11 @@ function gate(G) {
     if (!!SD.verified !== !!okS) bad('choke sachdeva', 'registry verified=' + SD.verified + ' but BENCH status ' + (bS && bS.status));
     if (!SD.verified) {
       if (D && D.surface && D.surface.choke && D.surface.choke.corr === 'sachdeva') bad('choke sachdeva', 'is the default choke model');
-      const Mc = S.FIX.oilWell; Mc.surface.choke.bean64 = 64;
+      if (D && D.surface && D.surface.choke && D.surface.choke.subcritical !== 'bound') bad('choke sachdeva', 'the sub-critical default is not the A1 bound (subcritical ' + JSON.stringify(D.surface.choke.subcritical) + ')');
+      const M0 = S.FIX.oilWell; M0.surface.choke.bean64 = 64; delete M0.surface.choke.subcritical;
+      const R0 = G.WTS_wp_system.solve(M0);
+      if (!R0.ok || !R0.surface || !R0.surface.choke || R0.surface.choke.model) bad('choke sachdeva', 'a model without surface.choke.subcritical runs on the Sachdeva branch (model ' + (R0.surface && R0.surface.choke && R0.surface.choke.model) + ')');
+      const Mc = S.FIX.oilWell; Mc.surface.choke.bean64 = 64; Mc.surface.choke.subcritical = 'sachdeva';
       const Rc = G.WTS_wp_system.solve(Mc), f = (Rc.flags || []).find((x) => x.code === 'CHOKE_SUBCRITICAL');
       if (!f || f.msg.indexOf(PROVISIONAL) === -1) bad('choke sachdeva', 'the sub-critical flag does not carry the provisional label');
       const vv = (G.WTS_wp_check(Mc).validity || []).find((x) => x.corr === 'sachdeva');
@@ -234,10 +238,11 @@ function checks(G) {
     const find = (M, a, b) => { const ra = SY.boundary(M, a).regime; for (let k = 0; k < 60; k++) { const m = 0.5 * (a + b); if (SY.boundary(M, m).regime === ra) a = m; else b = m; } return 0.5 * (a + b); };
     let worst = 0;
     [['oilWell', 100, 900], ['gasWell', 200, 7000]].forEach(([k, a, b]) => {
-      const M = S.FIX[k], q = find(M, a, b), e = 1e-6 * q;
+      const M = S.FIX[k]; if (k === 'oilWell') M.surface.choke.subcritical = 'sachdeva';   // the provisional option (the default is the bound, X6b)
+      const q = find(M, a, b), e = 1e-6 * q;
       worst = Math.max(worst, Math.abs(SY.boundary(M, q + e).thp - SY.boundary(M, q - e).thp));
     });
-    add('X6', 'choke continuity at the regime change (multiphase Sachdeva-scaled default, gas nozzle)', worst < 0.1, worst, 0.1);
+    add('X6', 'choke continuity at the regime change (multiphase Sachdeva-scaled option, gas nozzle)', worst < 0.1, worst, 0.1);
     let wb = 0;
     [['oilWell', 'bound', 100, 900], ['oilWell', 'sachdeva', 150, 3000]].forEach(([k, mode, a, b]) => {
       const M = S.FIX[k]; if (mode === 'bound') M.surface.choke.subcritical = 'bound'; else M.surface.choke.corr = 'sachdeva';

@@ -284,4 +284,56 @@ module.exports = [
       assert.deepStrictEqual(A.consoleErrors ? A.consoleErrors().filter((e) => !/self-test|WARN/.test(e)) : [], [], 'no console errors');
     },
   },
+  {
+    name: 'WT7 review fix: Metric mode — the tuning residual table gives the test rate in the display gas-rate unit (gas example)',
+    wp: WP, opts: false,
+    async run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win, txt = (e) => String(e && e.textContent || '').replace(/\s+/g, ' ').trim();
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A);
+      A.hook.nav('wellperf'); A.flush(30);
+      G.WTS_wellperf_page.resetJobs(); G.WTS_wellperf_page.budget(5000);
+      A.click(A.find('[data-act="example"][data-ex="gas"]')); A.flush(30);
+      A.click(A.find('#wp_steps [data-step="6"]')); A.flush(5);
+      A.click(A.find('[data-act="tune"]'));
+      for (let i = 0; i < 80 && !(G.WTS_wellperf_page.state().tune); i++) await A.flushAsync(1);
+      const r = G.WTS_wellperf_page.state().tune;
+      assert.ok(r && r.ok, 'gas tune: ' + JSON.stringify(plain(r && r.errors)));
+      const cell = () => txt(A.find('#wp_tuneres table.dtable tbody tr td:nth-child(2)'));
+      assert.match(cell(), /Mscf\/d/);
+      G.WTS_units.setSystem('metric'); A.flush(30);
+      try {
+        assert.ok(!/Mscf\/d/.test(cell()) && /m/.test(cell()), 'metric rate: ' + cell());
+      } finally { G.WTS_units.setSystem('imperial'); A.flush(30); }
+      G.WTS_wellperf_page.resetJobs();
+    },
+  },
+  {
+    name: 'WT8 review fix: two top rails on a phone-width chart — the rail track starts after its label and ends before its value text; when the half is too short the label is dropped and the value carries the name; the legend is shortened to fit',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win, V = G.WTS_wp_view;
+      const mk = (w) => {
+        const cv = G.document.createElement('canvas');
+        const spec = { key: 'wt8:' + w, aspect: 0.72, minH: 260, maxH: 440, w, x: { label: 'p' }, y: { label: 'd', invert: true },
+          series: [{ key: 'a', label: 'Water cut 0 % with a long legend entry that cannot fit', color: '#f00', pts: [[0, 0], [1, 1]] }], legendNote: 'Faint curves: previous inputs — re-run',
+          handles: [{ key: 'hl', kind: 'railX', value: 1.064, min: 0.5, max: 1.5, step: 0.005, label: 'm_h', railLabel: 'm_h', rail: [0, 0.5], fmt: (v) => 'm_h ' + v.toFixed(3) },
+                    { key: 'f', kind: 'railX', value: 1, min: 0.5, max: 1.5, step: 0.005, label: 'm_f', railLabel: 'm_f', rail: [0.5, 1], fmt: (v) => 'm_f ' + v.toFixed(3) }] };
+        V.chart(cv, spec);
+        return cv;
+      };
+      [340, 900].forEach((w) => {
+        const cv = mk(w), hs = cv._wp.spec.handles;
+        hs.forEach((h) => {
+          assert.ok(h._rx1 > h._rx0 + 19, w + ': ' + h.key + ' track ' + h._rx0 + '–' + h._rx1);
+          assert.ok(h._rx1 < h._vx - 10, w + ': ' + h.key + ' track ends before its value text');
+          if (h._narrow) assert.ok(/^m_[hf] /.test(h._vtxt), 'narrow: the value text carries the name');
+        });
+        assert.ok(hs[0]._vx <= hs[1]._rx0, w + ': the first rail ends before the second begins');
+      });
+      const texts = A.canvasTexts(mk(340));
+      assert.ok(texts.some((t) => /^Water cut 0 %.*…$/.test(t)) && !texts.some((t) => /cannot fit$/.test(t)), 'legend entry shortened: ' + texts.filter((t) => /Water/.test(t)));
+      assert.ok(texts.some((t) => /^Faint curves/.test(t)), 'legend note drawn');
+    },
+  },
 ];

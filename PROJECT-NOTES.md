@@ -12,12 +12,15 @@ gas lift and tuning"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallback
 fallback; help/user-guide.html stamp from RELEASE_NOTES[0].date). Increment A2 of docs/WELL-PERFORMANCE-PLAN.md (§18.2, records
 §18.2.1–§18.2.8). Owner decision "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so
 every new method without a verified published example ships `verified:false` with the provisional label (D17 gate) and is never a
-default; Q15 → help text caps +12 kB raw / +4 kB gzip; Q16 → `WTS_wellbore.flowingTemp` with `direction:'inject'` available to DFIT 3.4b.
+default; Q15 → help text caps +12 kB raw / +4 kB gzip (used by A1); the A2 course needed a second raise (SUM_CAP 357 → 369 kB, GZIP_CAP
+124 → 128 kB, per-file production / 49-calc-help / print / start) — that is owner question Q21 (plan §20), open before release, not the
+Q15 default; Q16 → `WTS_wellbore.flowingTemp` with `direction:'inject'` available to DFIT 3.4b.
 
 - **Built on `wp/a2`** from master 9775e07 (v4.3): WP13 PVT correlation families (16-pvt, Round 3; 38 keys, `PRiSM_pvt_corrInfo`,
   Fluid properties card), WP12 Duns & Ros + Cullender-Smith (correlation comparison tab, Ros flow-regime map), WP14 relaxation flowing
   temperature (`WTS_wellbore.flowingTemp`, U fit, U / TIME rails), WP15 Sachdeva choke (sub-critical branch scaled to the critical
-  correlation is the new default; 'bound' keeps the A1 rule), WP16 two-variable sensitivity + tubing-size design, WP18 gas-lift quick look
+  correlation as the provisional option `subcritical:'sachdeva'`; the A1 conservative bound stays the default — the A2 review restored it,
+  plan §18.2.9), WP16 two-variable sensitivity + tubing-size design, WP18 gas-lift quick look
   (`WTS_wp_gl`, 49-calc-wp-lift.js), WP17 VLP tuning (`WTS_wp_match.tune` with `PRiSM_lm`), WP19 Well performance course (new
   48-calc-help-wpcourse.js, a course list per course, print chapter 13) and the A2 guide parts. All merged `--no-ff`; generated files
   regenerated, never hand-merged.
@@ -25,6 +28,10 @@ default; Q15 → help text caps +12 kB raw / +4 kB gzip; Q16 → `WTS_wellbore.f
   sachdeva (sub-critical branch only), lift glpc; still provisional from A1: Hagedorn & Brown, Gray, no-slip, single-phase, average T-Z,
   Jones-Blount-Glaze, Darcy oil / gas, LIT m(p), Turner / Coleman / Li, the nodal benchmark. Beggs & Brill stays the default lift
   correlation, linear stays the default temperature model.
+- **A2 review fixes** (plan §18.2.9): the conservative bound is the sub-critical choke default again (D17; the Sachdeva branch is an
+  option, validate gate 6 checks it), Sachdeva inlet at the stream THT in relaxation mode, Vasquez-Beggs co on γgs, Petrosky Pb 0.577421,
+  Bw_mcCain an alias, GLPC oil slope / dead-well 90 % / refined optimum, a "Studies and tuning" block in the report, one list parser (thousands,
+  decimal comma, Metric), plot label layout / legend note / measured rails, sensitivity values re-suggested, MD · TVD readouts, polish.
 - **WPI2 lead items.** Release notes v4.4 (the release-notes help shots re-taken: the first draft of the entry made the desktop shot
   88 kB and the image total 5.6 kB over the 8 MB cap, so the entry was written shorter — shots 76 kB / 61 kB, total 7,986,940 bytes);
   Round 3 and Round 9 rebuilt, LF, synced, user guide regenerated. GUI sweep fixes in 49-calc-wellperf.js: the case summary values now

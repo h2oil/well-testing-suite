@@ -481,7 +481,14 @@
                 pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor, pv.sep);
                 if (_fin(pb) && p > pb) {
                     var coF = (c.co && c.co !== 'vasquezBeggs') ? L['co_' + c.co] : null;
-                    bo = typeof coF === 'function' ? _boCoInt(coF, bo, api, sgg, rs, p, t, pb) : L.Bo_undersaturated(bo, api, sgg, rs, p, t, pb);
+                    // the Vasquez-Beggs co (Bo_undersaturated) is defined on the 100 psig separator gas gravity, like Rs / Bo / Pb
+                    // of the family: with pv.sep the gravity is normalised the same way (review fix; no pv.sep → unchanged)
+                    var sgCo = sgg;
+                    if (typeof coF !== 'function' && pv.sep && typeof L.sg_gas100_vasquezBeggs === 'function') {
+                        var g100 = L.sg_gas100_vasquezBeggs(sgg, api, +pv.sep.tsep_F, +pv.sep.psep_psig);
+                        if (_fin(g100) && g100 > 0) sgCo = g100;
+                    }
+                    bo = typeof coF === 'function' ? _boCoInt(coF, bo, api, sgg, rs, p, t, pb) : L.Bo_undersaturated(bo, api, sgCo, rs, p, t, pb);
                     muo = L.mu_o_vasquezBeggs(muo, p, pb);
                 }
             }

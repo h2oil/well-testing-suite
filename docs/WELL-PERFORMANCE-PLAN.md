@@ -52,8 +52,8 @@ Partial adoption, with the reason:
 - **Choke continuity in A1.** The review proposed one continuous critical / sub-critical model (Sachdeva) or a max-of-two-curves rule.
   Sachdeva moves to A2 with the scope split, so A1 uses the max rule with the existing critical correlations:
   p1(q) = max(p1_crit(q), p2 / y_c). This is continuous, and it is a conservative bound (it over-states the p1 needed in sub-critical
-  flow, so it under-states the rate). It is flagged "sub-critical — conservative bound". A2 replaces it with the continuous Sachdeva
-  model (§4.7).
+  flow, so it under-states the rate). It is flagged "sub-critical — conservative bound". A2 adds the continuous Sachdeva model (§4.7) as
+  an option; while it is provisional (D17) the bound stays the default (A2 review, §18.2.9).
 - **Sensitivity and GLPC as Jobs.** The review proposed Jobs from about 10 cases. The plan goes further: they always run as Jobs, on a
   button press. This gives one code path, and progress is shown even for small runs.
 
@@ -1337,13 +1337,15 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
   the bean's Cv from the solver's 1022.7 orifice). `WTS_chokeperf_SACHDEVA` {cd 0.75, verified:false, range bean 8–40/64}. In the solver
   the regime of a critical correlation now comes from the Sachdeva y_c at the correlation's p1: critical → the correlation's p1 exactly;
   sub-critical → the Sachdeva branch scaled (rate factor) to the correlation at its critical point (regime `subcritical`, model
-  `sachdeva-scaled`; continuous, X6 / WCK3). This is the new default and replaces the A1 bound (D17 note: the critical rates still come
+  `sachdeva-scaled`; continuous, X6 / WCK3). *Superseded by the A2 review (§18.2.9): this branch was the default here, which broke D17;
+  the default is again the A1 bound and the branch is the option `surface.choke.subcritical: 'sachdeva'`* (the critical rates still come
   from the verified correlations; only the sub-critical continuation is the provisional branch, labelled in the flag, the validity
-  verdict and the Notes). The A1 rule stays as `surface.choke.subcritical: 'bound'`. `surface.choke.corr: 'sachdeva'` = the model alone
+  verdict and the Notes). `surface.choke.corr: 'sachdeva'` = the model alone
   (Cd `surface.choke.cd`, × `surface.choke.rateFactor`); for gas wells it carries the condensate and water through the bean (the nozzle
   does not). `chokeCurve(M, {R})` and `chokeFactor(M, corrKey, {R})`. Effect on FIX.oilWell: the same operating point (critical there),
   the A1 bound's unstable low root disappears (WSY1 / WSY7 / WRV8 now pin `'bound'`), the bean design is no longer capped. QC_CHOKE still
-  warns on a sub-critical test (provisional branch). The help example's q_s / tubing-curve minimum moved (319 → 305, 561 → 431 STB/d).
+  warns on a sub-critical test (provisional branch). With the option the help example's q_s / tubing-curve minimum move (319 → 305,
+  561 → 431 STB/d); the help shows the default (319 / 561, as A1).
 - **WP16 sensitivity (§6).** `WTS_wp_sens.job(M, vars)` takes two variables: the 2-D grid walked from the start cell (= the single solve
   when both model values are listed, X17), each cell a tracking solve from a solved neighbour; pairs that set the same input are refused
   (`BAD_PAIR`), three variables `B_ONLY` (was `A2_ONLY` for two). 2 × 10 = 117 E of 160. `designFor(M, {tubingId: q})`: the smallest
@@ -1402,7 +1404,8 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
 - **Integration fix**: `_glTraverse` (gas lift) now passes the relaxation profile to both marches, like the natural-flow path.
 - **Help cap**: the merged production help file was 292 bytes over its 45.41 kB cap (each lane fitted alone); trimmed (comments, step ④ /
   ⑥ wording, the U hint, one notDocumented pattern) to fit without a cap change; the Traverse output now names Correlations and Flow-regime map.
-- **Gates**: node --check ok; smoke 347/347; accept-test --html --integration file by file, 181 files, 2226/2226; wellperf-validate
+- **Gates**: node --check ok; smoke 347/347; accept-test --html --integration file by file, 181 files (the "2226/2226" first written
+  here was a miscount — `accept-test.js --list --integration` gave 2112 at §18.2.8); wellperf-validate
   --html --gate --check --time: gate PASS, 22/22 cross-checks, every E budget ok; help-shots --check, build-user-guide --check ok.
 
 #### 18.2.7 WP19 record (2026-11-12, branch wp/a2-wp19)
@@ -1427,7 +1430,7 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
 - **Validator** (`help-content.test.js`): course ids per course (an exercise names a known course; the simulator file holds only
   simulator exercises), `wpcourse` group and link kind, the new file in CONTENT_FILES (also help-page, help-guide-sync, smoke lists).
   help-course.test.js unchanged (it filters the simulator group); help-guide-sync expects chapter 13.
-- **Caps (Q15 default, measured from the draft)**: SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB (measured 367,974 raw, 127,744 gzip);
+- **Caps (a second raise — owner question Q21, not the Q15 default, which A1 used; see §18.2.9)**: SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB (measured 367,974 raw, 127,744 gzip);
   per file: wpcourse 9.83 kB (new), production 45.41 → 47.67, 49-calc-help 47.6 → 48.52, print 15.33 → 15.68, start 19.74 → 19.8.
   Images: help/view re-taken (the course link in the bar), 218 files, 7,994,360 of 8,000,000 bytes; no wellperf shot was stale, none added.
 - **Tests**: `wellperf-course` WC1–WC5 (shape and page text, E1 / E2 / E3 numbers, page / search / print per course).
@@ -1443,6 +1446,45 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
 - **Gates**: smoke 347/347; accept-test --html --integration 2112/2112 (182 files); wellperf-validate --html --gate --check --time PASS
   (22/22, every E budget ok); wts3d 147/149 (CRLF checks); help-shots / build-user-guide / publish-site --check ok; GUI sweep (4 routes,
   full and --mobile) 0 findings.
+
+#### 18.2.9 A2 review fixes (2026-11-12, branch wp/a2)
+
+- **D17 choke default.** `surface.choke.subcritical` defaults to `'bound'` again (model DEFAULTS and the solver when the key is missing,
+  so A1-saved models keep the A1 answers); the Sachdeva sub-critical branch is the option `'sachdeva'` (select order bound, Sachdeva
+  provisional; case summary "sub-critical: conservative bound" / "Sachdeva branch (provisional)"; the Choke tab draws the bound's 0.588 and
+  the Sachdeva curve "comparison only"). wellperf-validate gate 6 also fails when the sub-critical default is not the bound or a model
+  without the key runs the branch. Help example back to q_s 319, tubing-curve minimum 561 STB/d; release note "Optional continuous
+  sub-critical flow … (provisional; the conservative bound stays the default)". Tests WCK3–WCK6 opt in with `subcritical:'sachdeva'`.
+- **Choke inlet temperature** in relaxation mode: the Sachdeva calls take the stream THT `_thtQ(C, q)` like the nozzle and the flowline
+  (WCK7).
+- **Vasquez-Beggs co on γgs**: with `pv.sep` the undersaturated Bo (Bo_undersaturated) and the F.table co use the 100 psig gas gravity
+  (PV2-11); no `pv.sep` → unchanged. (μo above pb has no gravity term — that part of the review is not a defect.)
+- **Petrosky-Farshad** Pb exponent 0.577421 (self-test 10 and PV2-4 at 1e-5). **Bw_mcCain** is an alias of Bw_meehan (one body).
+- **GLPC**: the economic point on the incremental OIL slope dq_o/dq_inj (q_L when a point has no q_o); gas for 90 % interpolated from
+  (0, 0) on a dead well; the optimum refined by 7 golden-section solves in the bracket around the best grid point (refined points flagged,
+  rounded to 1 Mscf/d; GL_OPT_AT_START info when the grid optimum was the first non-zero rate) (WGL4, WGL7).
+- **Report capture**: `#wp_studies` "Studies and tuning" inside `#wp_res` (PVT family and pb spread, temperature model and fitted U,
+  gas-lift injection point MD · TVD / optimum / economic point / gain and gas for 90 %, VLP tuning m_h / m_f / RMS tuned vs untuned and
+  applied, the sensitivity list or the 2-D grid with the model cell ●); step ⑦ text lists it (WGL8).
+- **Rate list**: one parser for the gas-lift list and the sensitivity values (whitespace / ';'; ',' only without whitespace and without
+  decimal comma; 'd,ddd' thousands, decimal-comma 'd.ddd,d' / 'd,d'); the page hands the model an array in field units (gasRateSmall);
+  the label follows the unit system and the box is converted on a unit change; the model's string path reads thousands groups (WGL9).
+  Tuning table rate through `_u` (WT7).
+- **Plots**: `WTS_wp_view` lays marker labels out without overlaps (candidate positions, leader when moved), the lineX handle label and
+  the vertical-line labels avoid them (falling back to the legend-only rule when there is no room); `legendNote` (one line) replaces the
+  "(previous inputs)" suffix on every entry; legend entries are shortened with an ellipsis; top rails measure their label and value and
+  drop the label on a short segment (WGL10, WT8, WRV19).
+- **Page**: sensitivity values suggested again after an example and refreshed on restore when every p̄r value is below 0.3 × the model
+  p̄r (WSN6); MD · TVD with the unit on the schematic gas-lift mark and the flow-regime map end label; the design message next to the
+  design button (`#wp_designmsg`); no Use on the current tubing size; erosion ratio with 2 decimals; heat-map row headers sized to content;
+  family chips separate name, pb and range (WSN5, PV2-12).
+- **Not changed**: the second zeroin in `flowingTempFitU` (48-calc-wellbore loads before wp-system; the solver's tolerances are its own) —
+  noted in the code. Q21 (second help-cap raise) recorded as an open owner question.
+- **Gates**: node --check ok; smoke 347/347; accept-test --html --integration file by file 2122/2122 (182 files; +10 regression tests);
+  wellperf-validate --html --gate --check --time: gate PASS (gate 6 checks the sub-critical default), 22/22 cross-checks, every E budget
+  ok (GLPC with the refinement 144 E of 200); wts3d 147/149 (the two CRLF checks on an LF checkout); help-shots --check (release-notes
+  and wellperf/sys desktop shots re-taken, 7,989,310 bytes), build-user-guide --check, publish-site --check ok; GUI sweep wellperf
+  (desktop and --mobile) 0 findings; Chromium screenshots of the performance curve, the tuning rails and the studies block at 1280 / 390 px.
 
 ### 18.3 Increment B (v4.5)
 
@@ -1507,6 +1549,7 @@ multilateral branches; annulus + tubing simultaneous flow; multi-well gas-lift a
 | Q18 | Release notes: the well performance items on both platforms (web and iOS)? | yes, both |
 | Q19 | Do the oilipr / gasdeliv / gaslift guides and dashboard tiles change wording once they are hub members? | one hub note per guide, tiles unchanged |
 | Q20 | Default equipment ratings for the shut-in / THT verdicts (wellhead pressure class, maximum THT)? | no default — the user enters the rating; verdict hidden until entered |
+| Q21 | Second help-cap raise for A2 (the course and the A2 guide parts): SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB, per-file caps production 45.41 → 47.67, 49-calc-help 47.6 → 48.52, print 15.33 → 15.68, start 19.74 → 19.8 kB, wpcourse 9.83 kB (new)? Q15's default was one raise (+12 / +4 kB), used by A1; raising a cap is an owner decision (§14) | **open — to the owner before release 4.4** (the caps in help-content.test.js already carry the raise; recorded here as its own decision, not as the Q15 default) |
 
 ---
 

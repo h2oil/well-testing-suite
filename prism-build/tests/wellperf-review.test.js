@@ -338,7 +338,8 @@ module.exports = [
       assert.ok(st.sens && st.sens.cases && !st.sens.stale, 'sensitivity ran');
       A.change('wp_pr', '3200'); A.flush(10);
       assert.ok(st.sens.stale, 'stale after an input change');
-      assert.ok(A.el('wp_cv_sys')._wp.spec.series.filter((s) => /^sens/.test(s.key)).every((s) => /previous inputs/.test(s.label)), 'family labelled');
+      assert.ok(A.el('wp_cv_sys')._wp.spec.series.filter((s) => /^sens/.test(s.key)).every((s) => s.stale === true && !/previous inputs/.test(s.label)), 'family marked stale (no suffix per entry)');
+      assert.match(String(A.el('wp_cv_sys')._wp.spec.legendNote), /previous inputs/, 'one legend note instead (review fix: long entries were cut at 390 px)');
       assert.match(txt(A.el('wp_senstbl')), /Results are from the previous inputs/);
     },
   },

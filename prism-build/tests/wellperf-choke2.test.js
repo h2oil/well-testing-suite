@@ -6,11 +6,13 @@
 //      satisfied (y = F(y)) and the fixed point converges in ≤ 30 iterations over the whole input grid
 // WCK2 sub-critical mass flux: the liquid limit is the incompressible orifice, the gas limit the isentropic nozzle; choked (flat)
 //      below y_c, falling to 0 at y = 1; WTS_chokeperf_liquidCv = 34.2857·Cv·√(Δp/SG) = the solver's 1022.7 orifice
-// WCK3 continuity in the solver: p1(q) has no jump at the regime change (|jump| < 0.1 psi) for the scaled default and for the
+// D17 (review fix): the provisional Sachdeva sub-critical branch is an option (surface.choke.subcritical 'sachdeva'), never the
+//      default — the default (and a model without the key) is the A1 conservative bound; sach() below opts in explicitly.
+// WCK3 continuity in the solver: p1(q) has no jump at the regime change (|jump| < 0.1 psi) for the scaled option and for the
 //      Sachdeva model alone; p1 rises with q
 // WCK4 rate factor: in critical flow the scaled default gives the correlation's p1 exactly; chokeFactor() makes the Sachdeva model
 //      equal Gilbert at the operating point; the factor scales the mass rate linearly
-// WCK5 the A2 default replaces the A1 conservative bound: FIX.oilWell keeps its operating point (critical there), loses the
+// WCK5 the scaled Sachdeva option against the A1 conservative bound (the default): FIX.oilWell keeps its operating point, loses the
 //      bound's unstable low root, flags and validity carry the provisional label, the bean design is no longer capped; the A1 rule
 //      stays as surface.choke.subcritical 'bound'; a gas well with the Sachdeva model carries its liquids through the bean
 // WCK6 the page: the choke model / sub-critical / Cd / rate factor controls, the Fit button, the Choke tab (curve, critical
@@ -24,6 +26,7 @@ const plain = (x) => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const app = (ctx) => S.sharedApp(ctx);
 const run = (job) => { let s, n = 0; do { s = job.step(); n++; } while (!s.done && n < 200); return job.result(); };
 const GC = 32.174;
+const sach = () => { const M = S.FIX.oilWell; M.surface.choke.subcritical = 'sachdeva'; return M; };   // the provisional option
 
 module.exports = [
   {
@@ -94,7 +97,7 @@ module.exports = [
     run(_a, assert, ctx) {
       const SY = app(ctx).win.WTS_wp_system;
       const find = (M, a, b) => { const ra = SY.boundary(M, a).regime; for (let k = 0; k < 60; k++) { const m = 0.5 * (a + b); if (SY.boundary(M, m).regime === ra) a = m; else b = m; if (b - a < 1e-7 * b) break; } return 0.5 * (a + b); };
-      const Md = S.FIX.oilWell;                                   // A2 default: Gilbert + the scaled Sachdeva sub-critical branch
+      const Md = sach();                                          // option: Gilbert + the scaled Sachdeva sub-critical branch
       const b1 = SY.boundary(Md, 100), b2 = SY.boundary(Md, 900);
       assert.ok(b1.regime === 'subcritical' && b2.regime === 'critical', b1.regime + ' / ' + b2.regime);
       assert.ok(b1.yc > 0.5 && b1.yc < 0.7, 'Sachdeva y_c ' + b1.yc);
@@ -115,7 +118,7 @@ module.exports = [
     run(_a, assert, ctx) {
       const G = app(ctx).win, SY = G.WTS_wp_system;
       const Mb = S.FIX.oilWell; Mb.surface.choke.subcritical = 'bound';
-      const Md = S.FIX.oilWell;
+      const Md = sach();
       [700, 900, 1100].forEach((q) => { const a = SY.boundary(Md, q), b = SY.boundary(Mb, q); assert.ok(a.regime === 'critical' && b.regime === 'critical'); assert.near(a.thp, b.thp, 1e-9 * b.thp, 'critical: the correlation p1 at q ' + q); });
       const R = SY.solve(Md);
       assert.ok(R.ok && R.surface.choke.regime === 'critical' && R.surface.choke.model === 'sachdeva-scaled' && R.surface.choke.rateFactor > 0, JSON.stringify(plain(R.surface.choke)));
@@ -138,33 +141,42 @@ module.exports = [
     },
   },
   {
-    name: 'WCK5 the A2 default replaces the A1 bound: same operating point, no bound root, provisional flags / validity, design no longer capped; the bound stays selectable; Sachdeva carries the liquids of a gas well',
+    name: 'WCK5 D17: the A1 bound is the default (model and missing key); the Sachdeva option: same operating point, no bound root, provisional flags / validity, design no longer capped; Sachdeva carries the liquids of a gas well',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const G = app(ctx).win, SY = G.WTS_wp_system;
       const Mb = S.FIX.oilWell; Mb.surface.choke.subcritical = 'bound';
-      const Rb = SY.solve(Mb), Rd = SY.solve(S.FIX.oilWell);
-      assert.ok(Rb.ok && Rd.ok);
+      const Rb = SY.solve(Mb), Rd = SY.solve(sach()), R0 = SY.solve(S.FIX.oilWell);
+      assert.ok(Rb.ok && Rd.ok && R0.ok);
+      assert.strictEqual(G.WTS_wp_model.DEFAULTS ? G.WTS_wp_model.DEFAULTS.surface.choke.subcritical : G.WTS_wp_model.defaults().surface.choke.subcritical, 'bound', 'D17: the default sub-critical rule is the A1 bound');
+      assert.ok(R0.surface.choke.model == null && R0.op.q === Rb.op.q && R0.roots.length === Rb.roots.length, 'a model without the key = the A1 bound, never the provisional branch');
+      const M64 = S.FIX.oilWell; M64.surface.choke.bean64 = 64;
+      const R64 = SY.solve(M64);
+      assert.ok(R64.ok && R64.surface.choke.regime === 'subcritical-bound' && !R64.flags.some((f) => f.code === 'CHOKE_SUBCRITICAL'), 'default at bean 64: the bound, no provisional flag');
+      assert.ok(!G.WTS_wp_check(M64).validity.some((x) => x.corr === 'sachdeva'), 'default: no Sachdeva validity line');
       assert.near(Rd.op.q, Rb.op.q, 2e-4 * Rb.op.q, 'critical at the operating point: same rate (within the root tolerance 1e-4·q)');
       assert.strictEqual(Rb.roots.length, 2, 'A1 bound: the unstable low root');
       assert.strictEqual(Rd.roots.length, 1, 'A2: the bound\'s low root is gone (the continuous branch is lower)');
-      assert.ok(SY.boundary(S.FIX.oilWell, 200).thp < SY.boundary(Mb, 200).thp - 30, 'the bound over-states p1 in sub-critical flow');
-      const Mlo = S.FIX.oilWell; Mlo.surface.choke.bean64 = 64;
+      assert.ok(SY.boundary(sach(), 200).thp < SY.boundary(Mb, 200).thp - 30, 'the bound over-states p1 in sub-critical flow');
+      const Mlo = sach(); Mlo.surface.choke.bean64 = 64;
       const Rlo = SY.solve(Mlo);
       assert.ok(Rlo.ok && Rlo.surface.choke.regime === 'subcritical', 'large bean: ' + Rlo.surface.choke.regime);
       assert.ok(Rlo.flags.some((f) => f.code === 'CHOKE_SUBCRITICAL' && /provisional/.test(f.msg)) && !Rlo.flags.some((f) => f.code === 'SUBCRITICAL_BOUND'), 'flag');
       const v = (G.WTS_wp_check(Mlo).validity || []).find((x) => x.corr === 'sachdeva');
       assert.ok(v && v.provisional === true && v.inRange === false, 'validity: provisional, bean 64 outside 8–40');
-      assert.ok(G.WTS_wp_check(S.FIX.oilWell).validity.find((x) => x.corr === 'sachdeva').inRange, 'bean 32 in range');
+      assert.ok(G.WTS_wp_check(sach()).validity.find((x) => x.corr === 'sachdeva').inRange, 'bean 32 in range');
       assert.ok(!G.WTS_wp_check(Mb).validity.some((x) => x.corr === 'sachdeva'), 'not listed with the A1 bound');
       // the bean design that the A1 bound capped (WRV8) reaches higher rates now
-      const d = run(SY.designFor(S.FIX.oilWell, { bean: 1250 }));
+      const d = run(SY.designFor(sach(), { bean: 1250 }));
       assert.ok(!(d.errors || []).some((t) => /sub-critical bound/.test(t)), 'no bound cap: ' + (d.errors || []).join(' '));
       assert.ok(d.ok || d.best.q > 1150, 'design above the bound cap: ' + JSON.stringify(plain(d.best || d.q)));
       // QC: a sub-critical test still warns (provisional branch)
-      const Mh = S.FIX.oilWell; Mh.surface.psep_psig = 600;
+      const Mh = sach(); Mh.surface.psep_psig = 600;
       const c = G.WTS_wp_qc(Mh, [S.FIX.test1]).rows[0].checks.find((x) => x.code === 'QC_CHOKE');
       assert.ok(c.st === 'warn' && /Sachdeva/.test(c.msg) && /sub-critical/.test(c.msg), c.msg);
+      const Mh0 = S.FIX.oilWell; Mh0.surface.psep_psig = 600;
+      const c0 = G.WTS_wp_qc(Mh0, [S.FIX.test1]).rows[0].checks.find((x) => x.code === 'QC_CHOKE');
+      assert.ok(c0 && c0.st === 'warn' && !/Sachdeva/.test(c0.msg), 'default: the bound message ' + (c0 && c0.msg));
       // gas well: the Sachdeva model carries the condensate and water through the bean (the nozzle carries the gas only)
       const Mg = S.FIX.gasWell; Mg.surface.choke.corr = 'sachdeva';
       const Rg = SY.solve(Mg), Rn = SY.solve(S.FIX.gasWell);
@@ -186,11 +198,20 @@ module.exports = [
       const opts = Array.from(A.el('wp_ckcorr').options).map((o) => o.value);
       assert.deepStrictEqual(opts, ['gilbert', 'ros', 'baxendell', 'achong', 'sachdeva']);
       assert.match(A.el('wp_ckcorr').options[4].textContent, /provisional/);
-      assert.strictEqual(A.el('wp_cksub').value, 'sachdeva', 'A2 default: the continuous sub-critical branch');
+      assert.strictEqual(A.el('wp_cksub').value, 'bound', 'D17 default: the A1 conservative bound');
+      assert.strictEqual(A.el('wp_cksub').options[0].value, 'bound');
+      assert.match(A.el('wp_cksub').options[1].textContent, /provisional/);
       const off = (id) => /wp-off/.test(A.el(id).closest('.fg-item').className);
       assert.ok(off('wp_ckrf') && !off('wp_cksub'), 'critical correlation: rate factor hidden, sub-critical rule shown');
+      assert.match(txt(A.el('wp_case')), /sub-critical: conservative bound/);
+      assert.ok(!/Sachdeva et al\. \(1986\)/.test(txt(A.el('wp_notesbox'))), 'default: no Sachdeva note');
+      A.click(A.find('#wp_trtabs [data-tab="choke"]')); A.flush(5);
+      const sp0 = A.el('wp_cv_tr')._wp.spec;
+      assert.ok(sp0.vlines.some((v) => /bound y_c 0\.588/.test(v.label)) && sp0.series.some((s) => s.key === 'sach' && /comparison only/.test(s.label)), 'bound: y_c 0.588, Sachdeva curve for comparison');
+      A.click(A.find('#wp_trtabs [data-tab="traverse"]')); A.flush(5);
+      A.select('wp_cksub', 'sachdeva'); A.flush(30);
       assert.match(txt(A.el('wp_op')), /critical ratio 0\.\d{3}/);
-      assert.match(txt(A.el('wp_case')), /sub-critical: Sachdeva branch/);
+      assert.match(txt(A.el('wp_case')), /sub-critical: Sachdeva branch \(provisional\)/);
       assert.match(txt(A.el('wp_notesbox')), /Sachdeva et al\. \(1986\)/);
       assert.match(txt(A.el('wp_valid')), /Sachdeva et al\. \(1986\) sub-critical choke branch: inside the published data range/);
       // the Choke tab: curve, critical ratios, operating point, the bean handle
@@ -212,7 +233,24 @@ module.exports = [
       assert.strictEqual(G.WTS_state.wellperf.surface.choke.model, 'sachdeva');
       assert.ok(!BAD.test(txt(A.el('wp_res'))) && !BAD.test(txt(A.el('wp_step_5'))), 'clean');
       assert.strictEqual(A.consoleErrors().length, 0, 'no console errors');
-      A.select('wp_ckcorr', 'gilbert'); A.change('wp_bean', '32'); A.flush(30);
+      A.select('wp_ckcorr', 'gilbert'); A.select('wp_cksub', 'bound'); A.change('wp_bean', '32'); A.flush(30);
+    },
+  },
+  {
+    name: 'WCK7 review fix: in relaxation mode the Sachdeva choke takes its inlet state at the relaxation THT of the rate (as the nozzle and the flowline), not the build-time THT',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const SY = app(ctx).win.WTS_wp_system;
+      ['sachdeva', 'gilbert'].forEach((corr) => {
+        const M = sach(); M.surface.choke.bean64 = 48; M.surface.choke.corr = corr; M.well.heat.mode = 'relax';
+        const R = SY.solve(M);
+        assert.ok(R.ok && R.heat && R.heat.mode === 'relax', corr + ': relaxation solve');
+        // the same rate with the linear model and the entered THT = the relaxation THT at that rate: identical surface boundary
+        const M2 = sach(); M2.surface.choke.bean64 = 48; M2.surface.choke.corr = corr; M2.well.heat.mode = 'linear'; M2.well.heat.tht_F = R.surface.tht;
+        assert.ok(Math.abs(R.surface.tht - (M.well.heat.tht_F == null ? 0 : M.well.heat.tht_F)) > 5, 'the relaxation THT differs from the build-time THT');
+        const b = SY.boundary(M, R.op.q), b2 = SY.boundary(M2, R.op.q);
+        assert.near(b.thp, b2.thp, 1e-6 * b2.thp, corr + ': the choke uses the stream THT (' + b.thp + ' vs ' + b2.thp + ')');
+      });
     },
   },
 ];

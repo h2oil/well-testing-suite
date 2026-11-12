@@ -414,7 +414,9 @@
             var co = null;
             if (F.type === 'oil' && pb != null && p > pb) {
                 var coF = (F.corr && F.corr.co && typeof L['co_' + F.corr.co] === 'function') ? L['co_' + F.corr.co] : L.co_vasquezBeggs;
-                var c = coF(F.api, F.sgg, F.rsb, p, Tn); co = _fin(c) ? c : null;
+                // Vasquez-Beggs co is defined on the 100 psig separator gravity (as the flowline path when pv.sep is set)
+                var sgCo = (coF === L.co_vasquezBeggs && F.pvt && F.pvt.sep && _fin(F.sg100) && F.sg100 > 0) ? F.sg100 : F.sgg;
+                var c = coF(F.api, sgCo, F.rsb, p, Tn); co = _fin(c) ? c : null;
             }
             var rsw = (r.qL > 0 && r.fw > 0 && typeof L.Rsw_mcCain === 'function') ? L.Rsw_mcCain(p, Tn, F.salinity_ppm || 0) : null;
             rows.push({ p: p, rs: r.rs, bo: r.bo, muo: r.muo, co: co, z: r.z, bg: r.bg, bgRB: r.bg * 1000 / 5.614583, mug: r.mug,

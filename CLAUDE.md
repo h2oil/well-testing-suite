@@ -157,8 +157,8 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   registers hb / gray / nsl / single / gasTZ and, A2, dr (Duns & Ros) / gasCS (Cullender-Smith) in
                                   WTS_flowline_corr; gasCS, drMap / drRegion), wp-well (WTS_wp_well: survey, minimum
                                   curvature, strings, segmentsFor — gravity on TVD, friction on MD — schematic, temperature), wp-system
-                                  (WTS_wp_system: roots, q_s, choke (A2: Sachdeva sub-critical branch scaled to the critical correlation,
-                                  'bound' = the A1 rule), loading, shutIn, design / bean-schedule Jobs, gas lift inside solve; WTS_wp_check;
+                                  (WTS_wp_system: roots, q_s, choke (default 'bound' = the A1 rule, also for a missing key; A2 option
+                                  'sachdeva' = the provisional branch scaled to the critical correlation), loading, shutIn, design / bean-schedule Jobs, gas lift inside solve; WTS_wp_check;
                                   A2 relax / fitU / heatFlow in wp-well), wp-sens (WTS_wp_sens; 2 variables + designFor tubingId in A2),
                                   wp-lift (A2: WTS_wp_gl glpc / quickLook / summary), wp-match (WTS_wp_match compare / iprFromTest / thtFit /
                                   A2 tune + tuneJob with PRiSM_lm, WTS_wp_qc), wp-view
@@ -247,7 +247,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2112 tests; wellperf-* = v4.3 / v4.4 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2122 tests; wellperf-* = v4.3 / v4.4 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -315,8 +315,8 @@ docs/BUILDUP-SURVEILLANCE-PLAN.md ← Build-up Surveillance plan (v3.3; interfac
                                   results §5.7, open items §12.1)
 docs/DFIT-PLAN.md               ← DFIT module plan (v3.4; PRiSM workspace mode 'dfit', Round-8 files 56–59)
 docs/WELL-PERFORMANCE-PLAN.md   ← Well performance / nodal analysis module plan (route wellperf in hub `perf`, Round-9 files
-                                  49-calc-wp-*.js; A1 = v4.3 shipped, records §18.1.x; A2 = v4.4 shipped, records §18.2.x; B v4.5 to do; owner questions §20 all at
-                                  their defaults, Q9 textbooks not provided)
+                                  49-calc-wp-*.js; A1 = v4.3 shipped, records §18.1.x; A2 = v4.4 shipped, records §18.2.x; B v4.5 to do; owner questions §20 at
+                                  their defaults, Q9 textbooks not provided, Q21 second help-cap raise open)
 PROJECT-NOTES.md                ← Running changelog (newest on top)
 README.md                       ← Public-facing description
 ```
@@ -380,7 +380,7 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2112/2112) and
+   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2122/2122) and
    `node prism-build/wts3d-test.js` (149 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
    after server/ or accounts (66-69) changes also `node server/test/run.js` (278 tests on a throwaway cluster);
@@ -690,12 +690,12 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   choke, 2-variable sensitivity, VLP tuning, gas-lift quick look, course (A2) and everything of B.
 - **Well Performance A2 (v4.4)** (docs/WELL-PERFORMANCE-PLAN.md §18.2.x; PROJECT-NOTES 4.4): Q9 still not provided, so the 18 new PVT
   correlations (16-pvt, PRiSM_pvt_corrInfo verified:false), Duns & Ros, Cullender-Smith, the relaxation temperature (linear stays the
-  default), the Sachdeva sub-critical branch (now the default sub-critical rule; critical rates still from the verified correlations; Cd
-  0.75 and the liquid heat capacities unverified) and the gas-lift quick look ship provisional; the Duns & Ros chart functions are
+  default), the Sachdeva sub-critical branch (an option, `surface.choke.subcritical:'sachdeva'`; the A1
+  conservative bound stays the default per D17 — review fix §18.2.9; Cd 0.75 and the liquid heat capacities unverified) and the gas-lift quick look ship provisional; the Duns & Ros chart functions are
   tabulated readings pinned to their own values; Glasø / Petrosky-Farshad Rs invert Pb only to their printed constants; GLPC stability is
   the static check only (Asheim in B) and the depth plot of a dead well starts at the first lifted point; VLP tuning fits m_h only unless
   the tests span ≥ 2:1 in rate, and has no time budget in §16 (3 tests with both multipliers ≈ 2.5 s); the help text pool is full again
-  (≈ 1 kB raw / 0.26 kB gzip left; caps 369 / 128 kB per Q15) and the image cap has ≈ 13 kB left (no shots of the A2 cards were added).
+  (≈ 1 kB raw / 0.26 kB gzip left; caps 369 / 128 kB — a second raise after Q15's, owner question Q21, open) and the image cap has ≈ 13 kB left (no shots of the A2 cards were added).
   Still open from A1: sensitivity not marked stale on input changes, all-tests RMS comparison without a traverse plot, solves slower than
   the plan's 250 ms. Not in A2: ESP, rod pump, Asheim stability, multi-layer, the D5 preferred defaults (B).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
@@ -724,7 +724,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 347 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 2112 acceptance tests passed" (run per file with --file on a small heap; help-* need 6144 MB)
+# Expect: "[ok] all 2122 acceptance tests passed" (run per file with --file on a small heap; help-* need 6144 MB)
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -796,7 +796,7 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2112/2112 pass, 182 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4)
+Acceptance tests:             2122/2122 pass, 182 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
                               Well performance course of 3 exercises (4.4), 218 screenshots (7,986,940 of the 8 MB cap — a new shot
@@ -810,7 +810,7 @@ Generated HTML:               ~172.0k lines (11.6 MB, LF); www bundle ~11.3 MB (
 
 Latest release: v4.4 (Well Performance A2, docs/WELL-PERFORMANCE-PLAN.md §18.2, both platforms: PVT correlation families with a
 Fluid properties card, Duns & Ros and Cullender-Smith, correlation comparison and Ros flow-regime map tabs, relaxation flowing temperature
-with U fit, Sachdeva sub-critical choke branch + liquid Cv + rate factor, two-variable sensitivity with heat map, tubing-size design,
+with U fit, optional Sachdeva sub-critical choke branch (the conservative bound stays the default) + liquid Cv + rate factor, two-variable sensitivity with heat map, tubing-size design,
 gas-lift quick look, VLP tuning to tests with PRiSM_lm, Well performance course (help, print chapter 13); new methods provisional per D17;
 App Store 4.4), dated 2026-11-12, on top of
 v4.3 (Well Performance, increment A1 of docs/WELL-PERFORMANCE-PLAN.md, both platforms: the `wellperf` page in a new

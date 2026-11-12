@@ -173,10 +173,10 @@ module.exports = [
       const app = app0(ctx), L = app.win.PRiSM_pvt_correlations;
       const api = 32, gg = 0.8, T = 210, rs = 700, go = 141.5 / (131.5 + api);
       const X = 7.916e-4 * Math.pow(api, 1.5410) - 4.561e-5 * Math.pow(T, 1.3911);
-      const pb = 112.727 * (Math.pow(rs, 0.5774) / (Math.pow(gg, 0.8439) * Math.pow(10, X)) - 12.340);
+      const pb = 112.727 * (Math.pow(rs, 0.577421) / (Math.pow(gg, 0.8439) * Math.pow(10, X)) - 12.340);
       assert.rel(L.Pb_petrosky(api, gg, rs, T), pb, 1e-13);
       assert.rel(L.Rs_petrosky(api, gg, pb, T), Math.pow((pb / 112.727 + 12.340) * Math.pow(gg, 0.8439) * Math.pow(10, X), 1.73184), 1e-13);
-      assert.rel(L.Rs_petrosky(api, gg, pb, T), rs, 5e-4, 'inverse to the printed constants');
+      assert.rel(L.Rs_petrosky(api, gg, pb, T), rs, 1e-5, 'inverse to the printed constants (0.577421 × 1.73184 = 1 + 8e-7)');
       const Fb = Math.pow(rs, 0.3738) * Math.pow(gg, 0.2914) / Math.pow(go, 0.6265) + 0.24626 * Math.pow(T, 0.5371);
       assert.rel(L.Bo_petrosky(api, gg, rs, T), 1.0113 + 7.2046e-5 * Math.pow(Fb, 3.0936), 1e-13);
       const A = 1.705e-7 * Math.pow(rs, 0.69357) * Math.pow(gg, 0.1885) * Math.pow(api, 0.3272) * Math.pow(T, 0.6729);
@@ -239,6 +239,8 @@ module.exports = [
       assert.rel(L.rho_w_mcCain(100000, 1.03, 15, 0.7), (L.rho_w_mcCain(100000) + 0.01361 * 15 * 0.7) / 1.03, 1e-14, 'in situ with dissolved gas');
       assert.rel(L.rho_w_mcCain(100000, 1.03), L.rho_w_mcCain(100000) / 1.03, 1e-14);
       [[14.7, 60], [3000, 200], [8000, 280]].forEach(([p, t]) => assert.ok(Math.abs(L.Bw_mcCain(p, t) - L.Bw_meehan(p, t)) <= 1e-15, 'same McCain coefficients at ' + p + ' / ' + t));
+      assert.strictEqual(L.Bw_mcCain, L.Bw_meehan, 'review fix: Bw_mcCain is an alias of the A1 Bw_meehan (reuse, never duplicate)');
+      assert.match(String((app.win.PRiSM_pvt_corrInfo.Bw_mcCain || {}).label), /same relation as Bw_meehan/);
       // Rsw (pure water) by hand at 3,000 psia / 200 °F, then the salinity factor
       const T = 200, P = 3000;
       const A = 8.15839 - 6.12265e-2 * T + 1.91663e-4 * T * T - 2.1654e-7 * T * T * T;
@@ -452,6 +454,41 @@ module.exports = [
       } finally { U.setSystem('imperial'); app.flush(30); }
       assert.strictEqual(app.consoleErrors().length, 0);
       S.resetWellPerf(app);
+    },
+  },
+  {
+    name: 'PV2-11 review fix: with the Vasquez-Beggs family and a separator the undersaturated co / Bo (march and F.table) use the 100 psig gas gravity; without the family the raw gravity (unchanged)',
+    wp: WP,
+    run(_a, assert, ctx) {
+      const app = app0(ctx), L = app.win.PRiSM_pvt_correlations, W = app.win.WTS_wp_fluid, T = 190;
+      const Fv = W.build(OIL({ pb: 'vasquezBeggs', rs: 'vasquezBeggs', bo: 'vasquezBeggs' }, { psep_psig: 300, tsep_F: 90 }), { T_F: T });
+      const g100 = L.sg_gas100_vasquezBeggs(0.75, 35, 90, 300), pb = Fv.pb(T), p = pb * 1.4;
+      assert.ok(Math.abs(g100 - 0.75) > 0.005, 'the separator correction is not trivial: ' + g100);
+      // Bo above pb: Bob·(p/pb)^(−A/1e5) with A on the 100 psig gravity
+      const bob = Fv.at(pb, T).bo, bo = Fv.at(p, T).bo;
+      assert.rel(bo, L.Bo_undersaturated(bob, 35, g100, 600, p, T, pb), 1e-9, 'march Bo on the 100 psig gravity');
+      assert.ok(Math.abs(bo - L.Bo_undersaturated(bob, 35, 0.75, 600, p, T, pb)) > 1e-7, 'differs from the raw gravity');
+      const row = Fv.table([p], T).rows[0];
+      assert.rel(row.co, L.co_vasquezBeggs(35, g100, 600, p, T), 1e-12, 'F.table co on the 100 psig gravity');
+      // Standing family: no sep → the raw gravity, as in A1
+      const Fs = W.build(OIL(null, { psep_psig: 300, tsep_F: 90 }), { T_F: T }), pbs = Fs.pb(T);
+      assert.rel(Fs.table([pbs * 1.4], T).rows[0].co, L.co_vasquezBeggs(35, 0.75, 600, pbs * 1.4, T), 1e-14, 'Standing: raw gravity');
+      assert.rel(Fs.at(pbs * 1.4, T).bo, L.Bo_undersaturated(Fs.at(pbs, T).bo, 35, 0.75, 600, pbs * 1.4, T, pbs), 1e-9, 'Standing: raw gravity Bo');
+    },
+  },
+  {
+    name: 'PV2-12 review fix: the family chips separate the name, pb and the range in their text; the heat-map / summary grid row headers size to their content',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const app = app0(ctx);
+      if (app.win.__WP_MOCK) return assert.ok(true, 'mock installed');
+      S.resetWellPerf(app); app.win.WTS_wellperf_page.resetJobs();
+      open(app); example(app, 'oil'); step(app, 1);
+      const chips = app.findAll('#wp_pvtchips button');
+      assert.ok(chips.length >= 2, 'chips');
+      chips.forEach((c) => assert.ok(/[^\s] pb [\d,]+/.test(String(c.textContent)) && / (inside|outside) its data range/.test(String(c.textContent)), 'separated: ' + c.textContent));
+      const css = app.el('wp_root').parentNode.innerHTML;
+      assert.ok(/table\.wp-heat thead th:first-child[^{]*\{width:1%;white-space:nowrap\}/.test(css), 'row-header column sized to content');
     },
   },
 ];

@@ -667,7 +667,8 @@
             var r0 = _fail('OUT_OF_RANGE', 'The measured ' + _f(T, 1) + ' °F is outside the reachable range ' + _f(Math.min(range.tAtUmin, range.tAtUmax), 1) + '–' + _f(Math.max(range.tAtUmin, range.tAtUmax), 1) + ' °F for U ' + Umin + '–' + Umax + ' Btu/hr·ft²·°F.');
             r0.range = range; r0.nearest = near; return r0;
         }
-        // Brent (zeroin) on ln U
+        // Brent (zeroin) on ln U. A second small zeroin besides the private _brent of 49-calc-wp-system.js (review note, kept on
+        // purpose): this file loads first, and that solver's tolerances (TOL_Q / TOL_P on rate and pressure) and result shape are its own.
         var c2 = a, fc = fa, d = b - a, e = d;
         for (var it = 0; it < 100; it++) {
             if ((fb > 0) === (fc > 0)) { c2 = a; fc = fa; d = b - a; e = d; }
