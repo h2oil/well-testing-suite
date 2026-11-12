@@ -1267,7 +1267,7 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
 - **Tests**: `wellperf-pvt2` PV2-1…PV2-10 (frozen A1 copy `tests/_pvt16-v43.js`); downstream suites (dfit-*, wp15-gas, buildup-engine-*,
   calc-review-pvt-wellkill, calc-g2, flowline / flare / gas lift) unchanged. Help: wellperf / prism / flowline reviewedSrc refreshed; the
   production help file is at 45,400 of 45,410 bytes (WP19 needs the Q15 cap).
-#### 18.2.1 WP12 record (2026-11-12, branch wp/a2-wp12)
+#### 18.2.2 WP12 record (2026-11-12, branch wp/a2-wp12)
 
 - **Registry (49-calc-wp-vlp.js, additive).** `WTS_flowline_corr.dr` (Duns & Ros, kind `well`, vertical) and `.gasCS` (Cullender-Smith,
   kind `gas`, range note `gas only` — refused for oil / water wells by the existing solver and check rule); both `verified:false` with
@@ -1296,7 +1296,7 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   X16 (Cullender-Smith vs average T-Z + inverse), `--time` rows "one traverse (Duns & Ros)" and "correlation comparison" (1 E per
   correlation). Measured on the fixtures: Duns & Ros BHP vs Beggs & Brill +4.9 % of the tubing Δp (oil), Cullender-Smith vs average T-Z
   closed forms 0.003 % (dry gas, deviated).
-#### 18.2.x WP14 record (2026-11-12, branch wp/a2-wp14)
+#### 18.2.3 WP14 record (2026-11-12, branch wp/a2-wp14)
 
 - **`WTS_wellbore.flowingTemp(column, opts)`** (48-calc-wellbore.js, new, additive) as §4.6: Ramey / Hasan-Kabir steady relaxation,
   `direction 'produce' | 'inject'`, z along the hole in the flow direction, geotherm on TVD (points or surface + gradient), applied
@@ -1324,15 +1324,15 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   test THT, with **U** and **TIME** rails (log scales) that re-solve live (one rail at phone width); the schematic paints the formation
   halo by the earth temperature and offers "Fluid − earth ΔT" colouring; KPI THT chip reads "relaxation · U"; case summary, checks and
   Notes carry the model. Help: `wellperf` inputs + reviewedSrc.
-- **Validation**: BENCH row `temp relax` (pending), gate 5 (label, never default), X16 (march vs RK4 on the deviated FIX.gasWell path
+- **Validation**: BENCH row `temp relax` (pending), gate 5 (label, never default), X21 (X16 on its branch; march vs RK4 on the deviated FIX.gasWell path
   < 0.02 °F, large-z limit), `--time` rows. Tests `wellperf-temp2` (9: TT1–TT9).
-#### 18.2.1 WP15 / WP16 / WP18 record (lane S, 2026-11-12, branch wp/a2-sys)
+#### 18.2.4 WP15 / WP16 / WP18 record (lane S, 2026-11-12, branch wp/a2-sys)
 
 Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so the Sachdeva choke and the gas-lift quick
 look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke sachdeva`, `lift glpc` pending).
 
 - **WP15 choke (§4.7).** `WTS_chokeperf_sachdeva(o)` (49-calc-chokeperf.js): critical ratio from the published implicit equation as a
-  bracketed fixed point (regula falsi on ln y, ≤ 30 evaluations over the whole input grid, X16 / WCK1), mass flux on both sides; limits
+  bracketed fixed point (regula falsi on ln y, ≤ 30 evaluations over the whole input grid, X20 (X16 on its branch) / WCK1), mass flux on both sides; limits
   exact (gas only → isentropic ratio and nozzle; liquid only → incompressible orifice). `WTS_chokeperf_liquidCv(o)` (q = 34.2857·Cv·√(Δp/SG),
   the bean's Cv from the solver's 1022.7 orifice). `WTS_chokeperf_SACHDEVA` {cd 0.75, verified:false, range bean 8–40/64}. In the solver
   the regime of a critical correlation now comes from the Sachdeva y_c at the correlation's p1: critical → the correlation's p1 exactly;
@@ -1367,10 +1367,43 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
   and chart with Use; step ④ gas lift: the performance curve with the draggable q_inj line, the injection depth (MD / TVD) per rate, the
   quick-look summary, Use the optimum / economic point; Lift gas KPI (replaces the n/a loading KPI of a lifted oil well); schematic
   injection point with the annulus gas path and the packer; traverse casing curve, injection line and a packer drag handle.
-- **Tests.** wellperf-choke2 (6), wellperf-sens2 (5), wellperf-gaslift (6); validate X6b, X16–X19, the 2 × 10 and GLPC timing rows.
+- **Tests.** wellperf-choke2 (6), wellperf-sens2 (5), wellperf-gaslift (6); validate X6b, X17–X20 (X20 = X16 on its branch), the 2 × 10 and GLPC timing rows.
 - **Known gaps.** Sachdeva Cd 0.75 and the liquid heat capacities (oil 0.5, water 1.0 Btu/lbm·°F) are unverified (the help screenshot
   `sys` was re-shot: 14.4 kB, the image total 7,994,340 bytes); GLPC stability is the static check only (Asheim in B); the depth plot of a
   dead well starts at the first lifted point.
+
+#### 18.2.5 WP17 record (2026-11-12, branch wp/a2-wp17)
+
+- **Engine (49-calc-wp-match.js)**: `WTS_wp_match.tune(M, tests|test, corr?, o?)` fits m_h (0.8–1.25) with `PRiSM_lm`, and m_f
+  (0.7–1.5) only when the used tests span ≥ 2:1 in rate (else m_h only + TUNE_MH_ONLY) — D10. Residual = the march from the measured THP
+  down the surveyed path to the gauge at the test's own rates and THT (frozen step layout); multipliers through the marcher's `opt.mult`
+  (H_L' = clamp(m_h·H_L, λ_L, 1), density / friction / acceleration rebuilt; the flowline is never tuned). 2×2 correlation from the LM
+  covariance (both free) or the Jacobian (m_h only); |ρ| > 0.9 → "cannot be separated". Flags: outside 0.9–1.1, at a bound, not converged,
+  a test still > 5 % off, provisional correlation. `tuneJob()` (5 stages, progress / Cancel via `PRiSM_autoInterp.drive`), `TUNE` constants;
+  `pwfFromTest` / `iprFromTest` gain `mult`; QC_VLP is judged after tuning when the model carries multipliers (§5.4).
+- **Page**: step ⑥ **VLP tuning** card (`wpv_tcorr`, `wpv_tfree`; Tune / Apply to the model / Reset to 1), KPI chips, flags, per-test
+  residual table (gauge MD and TVD, before / after), coloured ρ cells; tuned vs untuned traverse with gauge diamonds and draggable m_h / m_f
+  rails (live re-march, release commits); RMS along m_h with the LM optimum and the 0.9–1.1 band. With multipliers in the model: the KPI
+  chip, the untuned outflow and operating point dashed on the system plot, the untuned pressure on the traverse, a check line, case summary
+  and schematic caption.
+- **Tests**: `wellperf-tune` WT1–WT6; wellperf-match WM1 now expects `tune` built (the frozen STUBS fixture unchanged). `--time` reports
+  tuning as "reported only" (§16 has no tuning budget): 1 test 25 E ≈ 0.35 s, 3 tests with both multipliers 159 E ≈ 2.3 s.
+
+#### 18.2.6 A2 integration record (2026-11-12, branch wp/a2)
+
+- **Merge order** wp/a2-wp13 → wp/a2-wp12 → wp/a2-wp14 → wp/a2-sys → wp/a2-wp17 (all `--no-ff`). Generated files (combined-round3 / 9,
+  the HTML, ios-app/www, help/user-guide.html and its www copy) were never merged by hand: Rounds 3 and 9 were rebuilt, LF, synced and
+  the guide regenerated after every merge; the wellperf `reviewedSrc` re-hashed after each.
+- **Reconciled**: one visibility rule in `_syncUi` (WP15–18's `data-ck` / `data-lift` / `data-sv2` rule plus WP14's `data-heat`; the
+  separate WP14 loops re-enabled elements hidden by the combined rule); traverse tabs traverse / corr / map / loading / choke / sens / beans;
+  `_onHandle` keys hU / hT (heat rails) + qinj / packer (gas lift); view handle kinds `pointX` (WP13) and `lineX` (WP18); model defaults
+  heat {Ubasis, dwb_in} + choke {subcritical:'sachdeva', rateFactor}; validate gate 5 = temp relax, gate 6 = choke sachdeva; the three X16
+  checks renumbered (Cullender-Smith X16, Sachdeva critical ratio X20, relaxation vs RK4 X21).
+- **Integration fix**: `_glTraverse` (gas lift) now passes the relaxation profile to both marches, like the natural-flow path.
+- **Help cap**: the merged production help file was 292 bytes over its 45.41 kB cap (each lane fitted alone); trimmed (comments, step ④ /
+  ⑥ wording, the U hint, one notDocumented pattern) to fit without a cap change; the Traverse output now names Correlations and Flow-regime map.
+- **Gates**: node --check ok; smoke 347/347; accept-test --html --integration file by file, 181 files, 2226/2226; wellperf-validate
+  --html --gate --check --time: gate PASS, 22/22 cross-checks, every E budget ok; help-shots --check, build-user-guide --check ok.
 
 ### 18.3 Increment B (v4.5)
 

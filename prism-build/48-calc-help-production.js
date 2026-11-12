@@ -1,4 +1,4 @@
-// Help content: Production & Reservoir (docs/HELP-GUIDE-PLAN.md §4, WP-C4). Data only; the factory runs on the first Help open.
+// Help content: Production & Reservoir (HELP-GUIDE-PLAN §4). Data only; built on the first Help open.
 (function () {
 'use strict';
 var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -17,7 +17,7 @@ function view(alt, co) { return { id: 'view', view: 'both', alt: alt, caption: '
 function res(target, alt, caption, co, setup) { var o = { id: 'res', view: 'desktop', target: target, alt: alt, caption: caption }; if (co) o.callouts = co; if (setup) o.setup = setup; return o; }
 function crop(id, target, alt, caption, co) { return { id: id, view: 'desktop', target: target, alt: alt, caption: caption, callouts: co }; }
 function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir**.', shot: 'view' }; }
-// hub members (plan §2.1, Q19): one hub note per guide
+// hub members (plan §2.1): one note per guide
 function hub(t) { return { t: 'Open the **Well Performance** hub in **Production & Reservoir**, then the **' + t + '** tab.', shot: 'view' }; }
 
 // DFIT shot recipes
@@ -156,7 +156,7 @@ var solgor = {
   crop('calc', '#pgBody .cols-2 > div > .card:first-child', 'Inputs and Calculate', 'Inputs', [sel(1, '#sg_p'), sel(2, '#pgBody .btn-primary')]), res('#sg_res .rbox', 'Solution GOR Results: Rs by both correlations', 'Default inputs', null, [{ click: '#pgBody .btn-primary' }, { waitFor: '#sg_res .rbox' }])]
 };
 
-// Well Performance (WP10, plan §14): compact A1 guide; correlation ranges and limits are in the page's validity verdicts and Notes
+// Well Performance (plan §14); ranges and limits: the page's verdicts and Notes
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
@@ -164,30 +164,30 @@ var wellperf = {
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
-  'The block on top (KPI strip, well, system plot, checks, traverse) updates on every solve; the report carries it.'],
-  when: ['Before a test: the rate and wellhead pressure at a choke.', 'After a test: do the rate, THP and gauge agree?', 'Gas wells: does the well load up, and where?'],
+  'The top block (KPIs, well, system plot, checks, traverse) updates on every solve and goes into the report.'],
+  when: ['Before a test: the rate and wellhead pressure at a choke.', 'After a test: do the rate, THP and gauge agree?', 'Gas wells: does it load up, and where?'],
   steps: ['Open the **Well Performance** hub in **Production & Reservoir**. **Oil** or **Gas** loads an example.',
   '① **Fluid**: type, gravity, [[glossary#gor|GOR]] and water cut (CGR and WGR for gas).',
   '② **Reservoir**: inflow model, p̄r (never defaulted) and its parameters, or **Import from PRiSM** (k, h, [[glossary#skin|skin]]).',
   '③ **Well**: survey (**MD · Inc · Azi** or **MD · TVD**), strings, restrictions, perforations, temperature. **Paste from a spreadsheet**, or the geometry of a [[glossary#dfit|DFIT]] test (**Import well geometry from a DFIT test**).',
-  '④ **Lift**: natural flow, or gas lift: run the performance curve and drag its injection-rate line.',
+  '④ **Lift**: natural flow or gas lift (performance curve, draggable injection rate).',
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
   'Drag a handle (p̄r, THP, bean, WC) on the system plot: the well re-solves. A slow case shows **Solve now**.',
   'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.',
-  '⑥ **Match**: tests, then **Compare and QC**. **Tune to the tests** fits the holdup multiplier (friction too when the rates span 2:1), then apply it to the model. ⑦ **Report**: notes, **Export CSV bundle**.'],
+  '⑥ **Match**: tests, then **Compare and QC**. **Tune to the tests** fits lift multipliers to the gauges. ⑦ **Report**: notes, **Export CSV bundle**.'],
   inputs: [W('Fluid type', 'ftype', 'Oil'), W('Oil / condensate gravity', 'api', '35'), W('Gas specific gravity', 'sgg', '0.65'), W('Producing GOR', 'gor', '{{500|gor}}'),
   W('Water cut', 'wc', '0 %'), W('Inflow model', 'ipr', 'PI'), W('Average reservoir pressure p̄r', 'pr', null, 'Absolute; never defaulted.'),
   W('Productivity index J', 'ip_J', null, 'Each model shows its own parameters.'), inp('Survey stations', null, null, 'MD, inclination, azimuth (or MD, TVD); minimum curvature.'),
   inp('Tubing, casing and liners', null, null, 'OD, ID, top and bottom MD; tapered allowed.'), W('Mid-perforation (MD) — the bottom node', 'midPerf'),
-  W('Flowing wellhead temperature', 'tht', null, 'Estimated unless measured.'), W('Overall heat-transfer coefficient U', 'Uto', '2', 'Relaxation model: drag U on the traverse or Fit U to a test THT.'), W('Solve for', 'mode', 'Rate at these settings'), W('Solution node', 'node', 'Bottom hole (mid-perf)'),
+  W('Flowing wellhead temperature', 'tht', null, 'Estimated unless measured.'), W('Overall heat-transfer coefficient U', 'Uto', '2', 'Relaxation model; Fit U to a test THT.'), W('Solve for', 'mode', 'Rate at these settings'), W('Solution node', 'node', 'Bottom hole (mid-perf)'),
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
-  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|co|muod|muo|muou|z|mug|sigma)$', why: 'fluid and inflow details' },
+  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(?!well$|line$)[a-z]+$', why: 'fluid and inflow details' },
   { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar2?|svals2?|mtest|ckfit|tcorr|tfree)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|gl_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
-  o('Traverse', 'p and T against depth; Liquid loading, Choke, Sensitivity (one or two variables), Bean schedule.')],
+  o('Traverse', 'p and T against depth; Correlations, Flow-regime map, Liquid loading, Choke, Sensitivity (1 or 2 variables), Bean schedule.')],
   verdicts: [vd('⚠', 'correlations differ', 'Enter pb.'), vd('✓', 'Stable operating point', 'It holds.'), vd('✗', 'Unstable operating point', 'It cannot hold.'), vd('✓', 'above the static stability limit', 'Clear of q_s.'),
   vd('⚠', 'within 10 % of the static', 'May head or load up.'), vd('✗', 'No operating point', 'Read the reason.'), vd('✗', 'p̄r needed', 'Enter it in ②.'),
   vd('✗', 'Liquid loading', 'Smaller string or lower THP.'), vd('⚠', 'Close to loading', 'Small margin.'), vd('✓', 'above the critical rate', 'Unloads.'),
@@ -205,14 +205,14 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 305.4, 'vlpMin.q': 430.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
-  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing or liner below the end of tubing is an information line. See the **Liquid loading** tab.'] },
+  { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the tubing shoe; the worst depth is shown. A wider casing below the tubing shoe is shown as information. See the **Liquid loading** tab.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] }],
   boldExempt: ['Use this bean'],
-  tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT is an upper bound for the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
+  tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT bounds the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
   refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading')],
   related: ['oilipr', 'gasdeliv', 'gaslift', 'prism', 'flowline'],
-  // one shot: the 8 MB image cap (help plan D15); not shot: loading traverse ws('load', '#wp_cv_tr', …, 'gas'), schematic, KPI strip
+  // one shot (8 MB image cap, help plan D15)
   shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil')]
 };
 
