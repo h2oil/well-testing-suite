@@ -26,6 +26,11 @@
 // the system plot (p̄r, wellhead pressure, choke bean, water cut) re-solve on every pointer move while the measured solve time is
 // below LIVE_MS, else on release; when a solve takes longer than BUDGET_MS the page switches to a Solve button (§2.6).
 // Design, bean schedule, sensitivity and comparison run on their buttons as Jobs (PRiSM_autoInterp.drive when present).
+// A2 (WP13): step ① offers the correlation families of 16-pvt (Vasquez-Beggs, Glasø, Petrosky-Farshad Pb / Rs / Bo; Egbogah,
+// Bergman-Sutton μod; Chew-Connally μo; Petrosky-Farshad co; Hall-Yarborough Z; Abdul-Majeed σ), each unverified one labelled
+// provisional (D17); the "Fluid properties" card plots Rs / Bo / μo / Z / μg / Bg / Bw / density against pressure at the reservoir
+// temperature with every family overlaid (WTS_wp_fluid.compare), family chips (bubble point, data-range state, click to select),
+// a drag handle on the bubble point (the one-point shift wp_pbUser: previewed live, committed on release) and a comparison table.
 // =============================================================================
 (function () {
     'use strict';
@@ -187,6 +192,22 @@
         return out;
     }
 
+    // correlation options of a fluid slot (WTS_wp_fluid.families; 'family' = the families that cover both Rs and Bo)
+    var FAM_FALLBACK = { family: ['standing', 'Standing'], rs: ['standing', 'Standing'], bo: ['standing', 'Standing'], co: ['vasquezBeggs', 'Vasquez-Beggs'], muod: ['beggsRobinson', 'Beggs-Robinson'],
+        muo: ['beggsRobinson', 'Beggs-Robinson'], z: ['dranchukAbouKassem', 'Dranchuk-Abou-Kassem'], mug: ['leeGonzalezEakin', 'Lee-Gonzalez-Eakin'], sigma: ['bakerSwerdloff', 'Baker-Swerdloff'] };
+    function _famList(slot) {
+        var W = G.WTS_wp_fluid, list = null;
+        try {
+            if (W && typeof W.families === 'function') {
+                if (slot === 'family') { var bo = W.families('bo'); list = W.families('rs').filter(function (o) { return bo.some(function (b) { return b.key === o.key; }); }); }
+                else list = W.families(slot);
+            }
+        } catch (e) { list = null; }
+        return (list && list.length) ? list : [{ key: FAM_FALLBACK[slot][0], label: FAM_FALLBACK[slot][1], verified: true }];
+    }
+    function _famOpts(slot) { return _famList(slot).map(function (o) { return [o.key, o.label + (o.verified ? '' : ' — provisional')]; }); }
+    function _famLabel(slot, key) { var o = _famList(slot).filter(function (x) { return x.key === key; })[0]; return o ? o.label + (o.verified ? '' : ' (provisional)') : String(key || ''); }
+
     // ── markup builders ───────────────────────────────────────────────────────
     function _fg(id, label, o) {
         o = o || {};
@@ -286,6 +307,16 @@
         '#wp_root .wp-paste{display:none;margin-top:8px}#wp_root .wp-paste.on{display:block}#wp_root .wp-paste textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}' +
         '#wp_root .wp-sec{animation:wpfade .18s ease-out}@keyframes wpfade{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}' +
         '#wp_root .wp-sec-h{display:flex;align-items:baseline;gap:10px;margin:4px 0 12px;font-size:15px;font-weight:700;color:var(--text)}#wp_root .wp-sec-h span{font-size:12px;font-weight:500;color:var(--text3)}' +
+        '#wp_root .wp-col{display:flex;flex-direction:column;min-width:0}' +
+        '#wp_root .wp-fchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px}' +
+        '#wp_root .wp-fchip{flex:1 1 190px;max-width:280px;display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:118px;padding:6px 10px 6px 9px;border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--text3);background:var(--bg3);color:var(--text);font-size:11.5px;cursor:pointer;text-align:left;transition:border-color .15s,background .15s,box-shadow .15s}' +
+        '#wp_root .wp-fchip:hover{border-color:var(--border-light)}' +
+        '#wp_root .wp-fchip .n{font-weight:700;display:flex;align-items:center;gap:6px}#wp_root .wp-fchip .n i{width:9px;height:9px;border-radius:50%;display:inline-block}' +
+        '#wp_root .wp-fchip .v{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}#wp_root .wp-fchip .s{font-size:10.5px;color:var(--text2)}' +
+        '#wp_root .wp-fchip.st-ok{border-left-color:var(--wp-ok)}#wp_root .wp-fchip.st-warn{border-left-color:var(--wp-warn)}' +
+        '#wp_root .wp-fchip.sel{background:rgba(240,136,62,.10);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}' +
+        '#wp_root .wp-dense th,#wp_root .wp-dense td{padding:6px 7px;font-size:12px}#wp_root .wp-dense th{font-size:10px;text-transform:none;letter-spacing:.2px}' +
+        '#wp_root .wp-pvtbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}' +
         '#wp_root .wp-2c{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}#wp_root .wp-2c>*{min-width:0}' +
         '#wp_root .rbox{margin-top:0}' +
         '#wp_root .wp-stale #wp_bench,#wp_root .wp-stale .wp-kpis{opacity:.55;transition:opacity .2s}' +
@@ -450,7 +481,7 @@
         var out = { M: M, chk: null, F: null, I: null, W: null, R: null, SC: null, shut: null, loading: null, stubs: [] };
         if (!M) return out;
         out.chk = _call('WTS_wp_check', M);
-        out.F = _call('WTS_wp_fluid.build', M.fluid);
+        out.F = _call('WTS_wp_fluid.build', M.fluid, { T_F: M.res.T_F });   // T_F: the one-point bubble-point shift (as the solver's fluid)
         out.I = _call('WTS_wp_ipr.curve', M.res, out.F && out.F.ok ? out.F : undefined);
         out.W = _call('WTS_wp_well.build', M.well, { res: M.res, fluidType: M.fluid.type, tests: M.tests, surface: M.surface });   // test gauges reach the schematic
         var t0 = _now(), so = { live: !!live };
@@ -808,6 +839,157 @@
         h.innerHTML = '<div class="rbox-title">Operating point</div>' + rows.join('');
     }
 
+    // ── ① Fluid properties card (A2, WP13) ─────────────────────────────────────
+    // the family selector sets Pb, Rs and Bo together; Rs alone moves the family selector (the bubble point follows Rs)
+    function _hasOpt(id, v) { var e = _byId(id); return !!(e && e.options && Array.prototype.some.call(e.options, function (o) { return o.value === v; })); }
+    function _famSync(id) {
+        var v = (_byId(id) || {}).value; if (!v) return;
+        if (id === 'wp_corr_pb') { ['wp_corr_rs', 'wp_corr_bo'].forEach(function (k) { if (_hasOpt(k, v)) _setCtrl(k, v); }); }
+        else if (id === 'wp_corr_rs' && _hasOpt('wp_corr_pb', v)) _setCtrl('wp_corr_pb', v);
+    }
+    var PVT_PROPS = {
+        oil: [['rs', 'Rs'], ['bo', 'Bo'], ['muo', 'μo'], ['z', 'Z'], ['mug', 'μg'], ['rho', 'Density']],
+        gas: [['z', 'Z'], ['mug', 'μg'], ['bg', 'Bg'], ['rho', 'Density']],
+        water: [['bw', 'Bw'], ['muw', 'μw'], ['rho', 'Density']]
+    };
+    var FAM_COL = { standing: 'blue', vasquezBeggs: 'green', glaso: 'purple', petrosky: 'yellow', beggsRobinson: 'blue', egbogah: 'green', bergmanSutton: 'purple',
+        dranchukAbouKassem: 'blue', hallYarborough: 'purple' };
+    function _pvtKind(t) { return t === 'oil' ? 'oil' : (t === 'water' || t === 'waterinj') ? 'water' : 'gas'; }
+    function _pvtVal(prop, r) {
+        if (!r) return null;
+        switch (prop) {
+            case 'rs': return _dv(r.rs, 'gor'); case 'bo': return r.bo; case 'muo': return r.muo; case 'z': return r.z; case 'mug': return r.mug;
+            case 'bg': return r.bgRB; case 'bw': return r.bw; case 'muw': return r.muw; default: return null;
+        }
+    }
+    function _pvtYLabel(prop) {
+        return { rs: 'Rs (' + _lab('gor', 'scf/STB') + ')', bo: 'Bo (rb/STB)', muo: 'μo (cp)', z: 'Z factor (–)', mug: 'μg (cp)', bg: 'Bg (rb/Mscf)', bw: 'Bw (rb/STB)', muw: 'μw (cp)',
+            rho: 'Density (' + _lab('density', 'lbm/ft³') + ')' }[prop] || '';
+    }
+    // the comparison tables are recomputed only when the fluid, the reservoir pressure or temperature change
+    function _pvtData(M) {
+        var W = G.WTS_wp_fluid, T = M.res.T_F, pr = M.res.pr, kind = _pvtKind(M.fluid.type);
+        var key; try { key = JSON.stringify([M.fluid, T, pr]); } catch (e) { key = String(Math.random()); }
+        if (ST.pvtData && ST.pvtData.key === key) return ST.pvtData;
+        var base = Object.assign({}, M.fluid, { pbUser: null }), d = { key: key, kind: kind, fam: null, z: null, muod: null, grid: [] };
+        var top = Math.max(_fin(pr) ? pr : 0, 1500) * 1.25;
+        if (kind === 'oil' && typeof W.compare === 'function') {
+            var f0 = W.compare(base, { T_F: T, pList: [top], pr: pr });
+            var pbs = ((f0 && f0.rows) || []).map(function (r) { return r.pb; }).filter(_fin);
+            if (pbs.length) top = Math.max(top, Math.max.apply(null, pbs) * 1.2);
+        }
+        top = Math.ceil(top / 100) * 100;
+        for (var i = 0; i <= 44; i++) d.grid.push(PATM + (top - PATM) * i / 44);
+        d.top = top;
+        if (typeof W.compare === 'function') {
+            if (kind === 'oil') { d.fam = W.compare(base, { T_F: T, pList: d.grid, pr: pr }); d.muod = W.compare(base, { T_F: T, pList: d.grid, pr: pr, slot: 'muod' }); }
+            if (kind !== 'water') d.z = W.compare(base, { T_F: T, pList: d.grid, pr: pr, slot: 'z' });
+        }
+        ST.pvtData = d;
+        return d;
+    }
+    function _renderPvtCard(preview) {
+        var cv = _byId('wp_cv_pvt'), V = G.WTS_wp_view, W = G.WTS_wp_fluid; if (!cv || !V) return;
+        var M = ST.M, F = ST.F, Tm = V.theme(), kind = _pvtKind(M && M.fluid.type), props = PVT_PROPS[kind], cur = _plots().pvtProp;
+        if (!props.some(function (p) { return p[0] === cur; })) cur = props[0][0];
+        var seg = _byId('wp_pvtseg');
+        if (seg) seg.innerHTML = props.map(function (p) { return '<button type="button" data-act="pvtprop" data-k="' + p[0] + '" class="' + (p[0] === cur ? 'on' : '') + '" aria-pressed="' + (p[0] === cur) + '">' + _esc(p[1]) + '</button>'; }).join('');
+        var hc = _byId('wp_pvtchips'), hv = _byId('wp_pvtverd'), ht = _byId('wp_pvtcmp'), hclr = _byId('wp_pvtclr');
+        var T = M && M.res.T_F, ok = !!(F && F.ok && W && _fin(T));
+        if (!ok) {
+            V.chart(cv, { key: 'pvt', aspect: 0.62, minH: 220, maxH: 340, w: 520, x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')' }, y: { label: _pvtYLabel(cur) }, series: [],
+                empty: _isStub(F) ? 'The fluid engine draws the properties here once it is installed.' : 'Enter the fluid and the reservoir temperature (step ②) to plot the properties.' });
+            [hc, hv, ht, hclr].forEach(function (h) { if (h) h.innerHTML = ''; });
+            return;
+        }
+        var d = _pvtData(M), X = function (p) { return _dv(p, 'pressure'); }, cr = M.fluid.corr || {}, series = [], markers = [], vlines = [], handles = [];
+        // the selected fluid (with the user's bubble point, or the dragged one) on the same grid
+        var Fs = F, pbUser = _fin(preview) ? preview : M.fluid.pbUser;
+        if (_fin(preview)) { var Fp = W.build(Object.assign({}, M.fluid, { pbUser: preview }), { T_F: T }); if (Fp && Fp.ok) Fs = Fp; }
+        var sel = (W.table(Fs, d.grid, T) || {}).rows || [], pbSel = Fs.pb(T);
+        var slot = (cur === 'rs' || cur === 'bo') ? 'fam' : cur === 'muo' ? 'muod' : cur === 'z' ? 'z' : null;
+        var cmp = slot ? d[slot] : null, selKey = slot === 'fam' ? cr.rs : slot === 'muod' ? cr.muod : slot === 'z' ? cr.z : null;
+        var colOf = function (k) { return Tm[FAM_COL[k] || 'text2'] || Tm.text2; };
+        if (cmp && cmp.rows) cmp.rows.forEach(function (r) {
+            if (!r.ok || !r.table) return;
+            var isSel = r.key === selKey;
+            if (isSel && !(slot === 'fam' && _fin(pbUser))) return;    // drawn below from the selected fluid
+            series.push({ key: 'c_' + r.key, label: r.label + (isSel ? ' (correlation pb)' : '') + (r.verified ? '' : ' (prov.)'), color: colOf(r.key), width: 1.5, dash: r.verified ? (isSel ? [2, 3] : null) : [6, 4],
+                pts: r.table.map(function (t) { return [X(t.p), _pvtVal(cur, t)]; }).filter(function (p) { return _fin(p[1]); }) });
+            if (slot === 'fam' && _fin(r.pb) && r.at && r.at.pb) markers.push({ x: X(r.pb), y: _pvtVal(cur, r.at.pb), kind: 'diamond', color: colOf(r.key), r: 4.5 });
+        });
+        var selLabel = slot === 'fam' ? _famLabel('rs', cr.rs) : slot === 'muod' ? _famLabel('muod', cr.muod) + ' μod' : slot === 'z' ? _famLabel('z', cr.z) : 'Selected correlations';
+        if (cur === 'rho') {
+            var wantO = kind === 'oil' || F.cgr > 0, wantW = kind === 'water' || sel.some(function (r) { return _fin(r.rsw); }) || F.wc > 0 || F.wgr > 0;
+            if (wantO) series.push({ key: 'rhoO', label: kind === 'oil' ? 'Oil (live)' : 'Condensate', color: Tm.green, width: 2.6, pts: sel.map(function (r) { return [X(r.p), _dv(r.rhoO, 'density')]; }) });
+            if (kind !== 'water') series.push({ key: 'rhoG', label: 'Gas', color: Tm.red, width: 2.6, pts: sel.map(function (r) { return [X(r.p), _dv(r.rhoG, 'density')]; }) });
+            if (wantW) series.push({ key: 'rhoW', label: 'Water', color: Tm.blue, width: 2.6, pts: sel.map(function (r) { return [X(r.p), _dv(r.rhoW, 'density')]; }) });
+        } else {
+            series.push({ key: 'sel', label: selLabel + (slot === 'fam' && _fin(pbUser) ? ' (pb shifted)' : ''), color: Tm.accent, width: 3, pts: sel.map(function (r) { return [X(r.p), _pvtVal(cur, r)]; }).filter(function (p) { return _fin(p[1]); }) });
+        }
+        var pr = M.res.pr;
+        if (_fin(pr)) vlines.push({ x: X(pr), color: Tm.text2, label: 'p̄r', dash: [2, 4] });
+        // bubble-point handle (oil): drag to shift the selected correlation (one point), previewed live, committed on release
+        if (kind === 'oil' && _fin(pbSel) && (cur === 'rs' || cur === 'bo' || cur === 'muo')) {
+            var selAtPb = (W.table(Fs, [pbSel], T).rows || [])[0];
+            if (cur !== 'rho' && selAtPb && _fin(_pvtVal(cur, selAtPb))) markers.push({ x: X(pbSel), y: _pvtVal(cur, selAtPb), kind: 'filled', color: Tm.accent, r: 5.5, halo: true });
+            handles.push({ key: 'pb', kind: 'pointX', value: X(pbSel), min: X(100), max: X(d.top), step: _metric() ? 10 : 5, label: 'pb', color: Tm.accent,
+                fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia') + (_fin(pbUser) ? ' (shifted)' : ''); } });
+        }
+        V.chart(cv, {
+            key: 'pvt:' + cur + ':' + kind + ':' + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 230, maxH: 360, w: 520,
+            x: { label: 'Pressure (' + _lab('pressure', 'psia') + ') at ' + _u(T, 'temperature', 0, '°F'), min: 0, max: X(d.top), short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+            y: { label: _pvtYLabel(cur), min: (cur === 'z' || cur === 'bo' || cur === 'bw') ? undefined : 0, short: cur, fmtR: function (v) { return _fmt(v, cur === 'mug' ? 4 : cur === 'rs' || cur === 'rho' ? 1 : 3); } },
+            series: series, markers: markers, vlines: vlines, handles: handles, readout: 'x',
+            hidden: _plots().pvtHidden || null, onLegend: function (hid) { _plotsSet({ pvtHidden: hid }); },
+            onHandle: function (key, v, phase) {
+                if (key !== 'pb') return;
+                var pbC = Math.round(_fromDisp(v, 'pressure'));
+                _setCtrl('wp_pbUser', pbC, true);
+                if (phase === 'end') { _commit('wp_pbUser'); return; }
+                _renderPvtCard(pbC);
+            },
+            empty: 'No property for these inputs.'
+        });
+        if (hclr) hclr.innerHTML = (kind === 'oil' && _fin(M.fluid.pbUser)) ? '<button type="button" class="btn btn-secondary" data-act="pbclear" style="font-size:11.5px;padding:4px 10px" title="Remove the bubble-point shift">Clear pb shift (' + _esc(_u(M.fluid.pbUser, 'pressure', 0, 'psia')) + ')</button>' : '<span class="wp-hint" style="margin:0">Drag the pb handle, or use [ ] and the arrow keys on the plot, to shift the bubble point.</span>';
+        if (kind !== 'oil') { if (hclr) hclr.innerHTML = ''; }
+        // family chips, spread verdict and the comparison table
+        var fam = d.fam && d.fam.rows ? d.fam.rows.filter(function (r) { return r.ok; }) : [];
+        if (hc) hc.innerHTML = fam.map(function (r) {
+            var isSel = r.key === cr.rs;
+            return '<button type="button" class="wp-fchip ' + (r.inRange ? 'st-ok' : 'st-warn') + (isSel ? ' sel' : '') + '" data-act="pvtfam" data-k="' + _esc(r.key) + '" aria-pressed="' + isSel + '" title="Use the ' + _esc(r.label) + ' family for Pb, Rs and Bo">' +
+                '<span class="n"><i style="background:' + (isSel ? Tm.accent : colOf(r.key)) + '"></i>' + _esc(r.label) + (r.verified ? '' : ' <span class="wp-chip prov" style="margin-left:0">provisional</span>') + '</span>' +
+                '<span class="v">pb ' + _esc(_u(r.pb, 'pressure', 0, 'psia')) + '</span><span class="s">' + (r.inRange ? 'inside its data range' : 'outside its data range') + '</span></button>';
+        }).join('');
+        if (hv) {
+            var vs = [];
+            if (fam.length > 1 && _fin(d.fam.spreadPb)) {
+                var sp = d.fam.spreadPb * 100;
+                vs.push(sp > 15 ? { st: 'warn', t: '⚠ The bubble-point correlations differ by ' + _fmt(sp, 0) + ' % for this oil: enter a measured bubble point (or drag pb) to shift the selected one.' }
+                    : { st: 'info', t: 'ℹ The bubble-point correlations agree within ' + _fmt(sp, 0) + ' % for this oil.' });
+            }
+            if ((F.provisional || []).length) vs.push({ st: 'info', t: ('ℹ Provisional (not verified against a published example): ' + F.provisional.join(', ') + '.').slice(0, 290) });
+            hv.innerHTML = vs.map(_vHtml).join('');
+        }
+        if (ht) {
+            if (fam.length) {
+                ht.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Black-oil family</th><th>pb<br>' + _lab('pressure', 'psia') + '</th><th>Rs at p̄r<br>' + _lab('gor', 'scf/STB') + '</th><th>Bo at pb<br>rb/STB</th><th>μo at pb<br>cp</th><th>Data range</th></tr></thead><tbody>' +
+                    fam.map(function (r) {
+                        var a = r.at || {}, isSel = r.key === cr.rs;
+                        return '<tr' + (isSel ? ' style="font-weight:700"' : '') + '><td>' + (isSel ? '● ' : '') + _esc(r.label) + (r.verified ? '' : '<div style="font-size:10.5px;font-weight:600;color:var(--wp-warn)"> (provisional)</div>') + '</td><td class="num">' + _fmt(_dv(r.pb, 'pressure'), 0) + '</td><td class="num">' + (a.pr ? _fmt(_dv(a.pr.rs, 'gor'), 0) : '—') +
+                            '</td><td class="num">' + (a.pb ? _fmt(a.pb.bo, 4) : '—') + '</td><td class="num">' + (a.pb ? _fmt(a.pb.muo, 3) : '—') + '</td><td>' + (r.inRange ? 'inside' : 'outside') + '</td></tr>';
+                    }).join('') + '</tbody></table></div>';
+            } else if (kind === 'gas' && d.z && d.z.rows && _fin(pr)) {
+                ht.innerHTML = '<div class="wp-tw"><table class="dtable"><thead><tr><th>Z correlation at p̄r</th><th>Z</th><th>μg (cp)</th><th>Bg (rb/Mscf)</th><th>ρg (' + _lab('density', 'lbm/ft³') + ')</th></tr></thead><tbody>' +
+                    d.z.rows.filter(function (r) { return r.ok && r.at && r.at.pr; }).map(function (r) { var a = r.at.pr; return '<tr><td>' + (r.key === cr.z ? '● ' : '') + _esc(r.label) + (r.verified ? '' : ' (provisional)') + '</td><td class="num">' + _fmt(a.z, 4) + '</td><td class="num">' + _fmt(a.mug, 4) + '</td><td class="num">' + _fmt(a.bgRB, 4) + '</td><td class="num">' + _fmt(_dv(a.rhoG, 'density'), 2) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            } else if (kind === 'water' && _fin(pr)) {
+                var wr = (W.table(F, [pr], T).rows || [])[0];
+                ht.innerHTML = wr ? '<div class="rbox-title">Water at p̄r (McCain)</div><div class="rrow"><span class="rl">Bw</span><span class="rv">' + _fmt(wr.bw, 4) + ' rb/STB</span></div><div class="rrow"><span class="rl">μw</span><span class="rv">' + _fmt(wr.muw, 3) + ' cp</span></div>' +
+                    '<div class="rrow"><span class="rl">ρw in situ</span><span class="rv">' + _u(wr.rhoW, 'density', 2, 'lbm/ft³') + '</span></div><div class="rrow"><span class="rl">γw (standard)</span><span class="rv">' + _fmt(F.sgw, 4) + '</span></div>' : '';
+            } else ht.innerHTML = '';
+        }
+    }
+
     // Case summary: the inputs that produced the operating point, always rendered inside #wp_res so the page PDF and the Quick
     // Report carry them whichever step is open (the step input sections are hidden except the active one)
     var CORR_NAME = function (k) { var e = (G.WTS_flowline_corr || {})[k]; return e ? String(e.label || k).replace(/\s*\(.*$/, '') + (e.verified === true ? '' : ' (provisional)') : String(k || ''); };
@@ -818,6 +1000,9 @@
         var fl = M.fluid, gas = _isGasType(fl.type), TYPE = { oil: 'Oil', gas: 'Dry gas', condensate: 'Gas-condensate', water: 'Water' };
         row('Fluid', (TYPE[fl.type] || fl.type) + (gas ? ' · SG ' + _fmt(fl.sgg, 3) + ' · CGR ' + _u(fl.cgr, 'cgr', 1, 'STB/MMscf') + ' · WGR ' + _u(fl.wgr, 'cgr', 1, 'STB/MMscf')
             : ' · ' + _fmt(fl.api, 1) + ' °API · GOR ' + _u(fl.gor, 'gor', 0, 'scf/STB') + ' · WC ' + _fmt(100 * (fl.wc || 0), 1) + ' %'));
+        var cr = fl.corr || {}, isOil = fl.type === 'oil', water = fl.type === 'water' || fl.type === 'waterinj';
+        if (!water) row('PVT correlations', (isOil ? 'Pb / Rs ' + _famLabel('rs', cr.rs) + ' · Bo ' + _famLabel('bo', cr.bo) + ' · co ' + _famLabel('co', cr.co) + ' · μod ' + _famLabel('muod', cr.muod) + ' · μo ' + _famLabel('muo', cr.muo) + ' · σ ' + _famLabel('sigma', cr.sigma) + ' · '
+            : (fl.cgr > 0 ? 'condensate μod ' + _famLabel('muod', cr.muod) + ' · ' : '')) + 'Z ' + _famLabel('z', cr.z) + ' · μg ' + _famLabel('mug', cr.mug) + (isOil && _fin(fl.pbUser) ? ' · pb shifted to ' + _u(fl.pbUser, 'pressure', 0, 'psia') : ''));
         var I = ST.I, mods = _iprModels(), md = mods.filter(function (x) { return x.key === M.res.model; })[0];
         row('Reservoir', 'p̄r ' + _u(M.res.pr, 'pressure', 0, 'psia') + ' · T ' + _u(M.res.T_F, 'temperature', 0, '°F'));
         var par = Object.keys(M.res.params || {}).filter(function (k) { return IP[k] && _fin(+M.res.params[k]) && (!md || md.needs.indexOf(k) !== -1); }).map(function (k) { return k + ' ' + _fmt(+M.res.params[k], 4); }).join(', ');
@@ -1062,11 +1247,15 @@
             if (F && F.ok && _fin(T) && _fin(M.res.pr)) {
                 var pl = []; for (var i = 0; i < 6; i++) pl.push(Math.round(PATM + (M.res.pr - PATM) * i / 5));
                 var tb = _call('WTS_wp_fluid.table', F, pl, T), rows = (tb && tb.rows) || [];
-                hf.innerHTML = '<div class="wp-tw"><table class="dtable"><thead><tr><th>p (' + _lab('pressure', 'psia') + ')</th><th>Rs (' + _lab('gor', 'scf/STB') + ')</th><th>Bo (rb/STB)</th><th>μo (cp)</th><th>Z</th><th>μg (cp)</th></tr></thead><tbody>' +
-                    rows.map(function (r) { return '<tr><td>' + _fmt(_dv(r.p, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(r.rs, 'gor'), 0) + '</td><td class="num">' + _fmt(r.bo, 3) + '</td><td class="num">' + _fmt(r.muo, 3) + '</td><td class="num">' + _fmt(r.z, 3) + '</td><td class="num">' + _fmt(r.mug, 4) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+                var hasCo = rows.some(function (r) { return _fin(r.co); }), hasW = rows.some(function (r) { return _fin(r.rsw); });
+                hf.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>p (' + _lab('pressure', 'psia') + ')</th><th>Rs (' + _lab('gor', 'scf/STB') + ')</th><th>Bo (rb/STB)</th><th>μo (cp)</th><th>Z</th><th>μg (cp)</th>' +
+                    (hasCo ? '<th>co (1e-6/psi)</th>' : '') + (hasW ? '<th>ρw (' + _lab('density', 'lbm/ft³') + ')</th><th>Rsw (' + _lab('gor', 'scf/STB') + ')</th>' : '') + '</tr></thead><tbody>' +
+                    rows.map(function (r) { return '<tr><td>' + _fmt(_dv(r.p, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(r.rs, 'gor'), 0) + '</td><td class="num">' + _fmt(r.bo, 3) + '</td><td class="num">' + _fmt(r.muo, 3) + '</td><td class="num">' + _fmt(r.z, 3) + '</td><td class="num">' + _fmt(r.mug, 4) + '</td>' +
+                        (hasCo ? '<td class="num">' + (_fin(r.co) ? _fmt(r.co * 1e6, 2) : '—') + '</td>' : '') + (hasW ? '<td class="num">' + _fmt(_dv(r.rhoW, 'density'), 2) + '</td><td class="num">' + (_fin(r.rsw) ? _fmt(_dv(r.rsw, 'gor'), 1) : '—') + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div>' +
                     ((F.validity || []).map(function (v) { return _vHtml({ st: v.inRange === false ? 'warn' : 'ok', t: (v.inRange === false ? '⚠ ' : '✓ ') + String(v.msg || v.corr).replace(/^[✓⚠✗]\s*/, '') }); }).join(''));
             } else hf.innerHTML = '<div class="wp-v info">' + (_isStub(F) ? 'The fluid engine shows the PVT table here once it is installed.' : 'Enter the fluid, the reservoir pressure and temperature to see the PVT table.') + '</div>';
         }
+        _renderPvtCard(null);
         // ② IPR plot
         var cv = _byId('wp_cv_ipr'), V = G.WTS_wp_view;
         if (cv && V) {
@@ -1230,6 +1419,9 @@
             return;
         }
         if (act === 'match') { _runMatch(); return; }
+        if (act === 'pvtprop') { _plotsSet({ pvtProp: btn.getAttribute('data-k') }); _renderPvtCard(null); return; }
+        if (act === 'pvtfam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); return; }
+        if (act === 'pbclear') { _setCtrl('wp_pbUser', ''); _commit('wp_pbUser'); return; }
         if (act === 'adopt') {
             var ids = String(btn.getAttribute('data-ids') || btn.getAttribute('data-id') || '').split(','), vs = String(btn.getAttribute('data-vs') || btn.getAttribute('data-v') || '').split(','), done = [];
             ids.forEach(function (id, i) { var v = +vs[i]; if (id && _byId(id) && _fin(v)) { _setCtrl(id, +v.toPrecision(6), true); ST.prov[id] = 'matched to test ' + ((ST.match && ST.match.test) || ''); done.push(id); } });
@@ -1566,12 +1758,17 @@
                 _fg('wp_pbUser', 'Bubble point (optional)', { unit: 'psia', data: 'data-for="oil"', hint: 'Shifts the correlation to this pb (one point).' }) +
                 _fg('wp_bc', 'Condensate FVF B_c', { unit: 'rb/STB', data: 'data-for="condensate"' }) +
                 '</div><details class="rp-skip" style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--text2)">PVT correlations</summary><div class="fg" style="margin-top:10px">' +
-                _fg('wp_corr_pb', 'Bubble point / Rs', { options: [['standing', 'Standing']] }) + _fg('wp_corr_rs', 'Solution GOR', { options: [['standing', 'Standing']] }) + _fg('wp_corr_bo', 'Oil FVF', { options: [['standing', 'Standing']] }) +
-                _fg('wp_corr_muod', 'Dead-oil viscosity', { options: [['beggsRobinson', 'Beggs-Robinson']] }) + _fg('wp_corr_muo', 'Live-oil viscosity', { options: [['beggsRobinson', 'Beggs-Robinson']] }) +
-                _fg('wp_corr_muou', 'Undersaturated viscosity', { options: [['vasquezBeggs', 'Vasquez-Beggs']] }) + _fg('wp_corr_z', 'Gas Z factor', { options: [['dranchukAbouKassem', 'Dranchuk-Abou-Kassem']] }) +
-                _fg('wp_corr_mug', 'Gas viscosity', { options: [['leeGonzalezEakin', 'Lee-Gonzalez-Eakin']] }) + '</div></details>' +
+                _fg('wp_corr_pb', 'Black-oil family (Pb, Rs, Bo)', { options: _famOpts('family'), data: 'data-for="oil"' }) + _fg('wp_corr_rs', 'Solution GOR and bubble point', { options: _famOpts('rs'), data: 'data-for="oil"' }) +
+                _fg('wp_corr_bo', 'Oil FVF', { options: _famOpts('bo'), data: 'data-for="oil"' }) + _fg('wp_corr_co', 'Undersaturated compressibility (Bo above pb)', { options: _famOpts('co'), data: 'data-for="oil"' }) +
+                _fg('wp_corr_muod', 'Dead-oil viscosity', { options: _famOpts('muod'), data: 'data-for="oil condensate"' }) + _fg('wp_corr_muo', 'Live-oil viscosity', { options: _famOpts('muo'), data: 'data-for="oil"' }) +
+                _fg('wp_corr_muou', 'Undersaturated viscosity', { options: [['vasquezBeggs', 'Vasquez-Beggs']], data: 'data-for="oil"' }) + _fg('wp_corr_sigma', 'Gas-oil surface tension', { options: _famOpts('sigma'), data: 'data-for="oil condensate"' }) +
+                _fg('wp_corr_z', 'Gas Z factor', { options: _famOpts('z') }) + _fg('wp_corr_mug', 'Gas viscosity', { options: _famOpts('mug') }) +
+                '</div><div class="wp-hint" style="margin-top:4px">Options marked provisional have not been checked against a published worked example; the defaults are not provisional. The family selector sets Pb, Rs and Bo together.</div></details>' +
                 '<div class="wp-btns rp-skip" data-for="oil"><button type="button" class="btn btn-secondary" data-act="sqc">Use the Separator QC GOR</button></div><div id="wp_fluidmsg"></div>') +
-            _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></section>';
+            '<div class="wp-col">' + _card('Fluid properties', '<div class="wp-pvtbar rp-skip"><span class="wp-seg" id="wp_pvtseg" role="group" aria-label="Property to plot"></span><span id="wp_pvtclr"></span></div>' +
+                '<div class="chart-wrap"><canvas id="wp_cv_pvt" tabindex="0" aria-label="Fluid properties against pressure at the reservoir temperature, every correlation family overlaid; drag the pb handle to shift the bubble point"></canvas></div>' +
+                '<div class="wp-fchips rp-skip" id="wp_pvtchips" role="group" aria-label="Black-oil correlation families"></div><div id="wp_pvtverd"></div><div id="wp_pvtcmp" style="margin-top:8px"></div>') +
+            _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></div></section>';
         var s2 = '<section id="wp_step_2" class="wp-sec" style="display:none"><div class="wp-sec-h">② Reservoir <span>inflow model, reservoir pressure and its parameters</span></div><div class="wp-2c">' +
             _card('Inflow', '<div class="fg">' +
                 _fg('wp_ipr', 'Inflow model', { options: models.map(function (m) { return [m.key, m.label + (m.kind === 'gas' ? ' (gas)' : '')]; }) }) +
@@ -1692,6 +1889,7 @@
             if (t.id === 'wpv_svar') { _sensSuggest(); return; }
             if (t.getAttribute && t.getAttribute('data-corr')) return;
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
+            if (t.id === 'wp_corr_pb' || t.id === 'wp_corr_rs') _famSync(t.id);
             if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode') _syncUi();
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();

@@ -1245,6 +1245,29 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
 | WP19 | training course (help page, print, validator, course tests — §14) | A1, Q15 | H |
 | WPI2 | integration (Rounds 3 and 9, sync, gates, release note) | all | lead |
 
+#### 18.2.1 WP13 record (2026-11-12, branch wp/a2-wp13)
+
+- **16-pvt (Round 3)**: the 18 keys merged into `PRiSM_pvt_correlations` (38 keys; the 20 A1 functions are the same objects).
+  Signatures follow the marcher slots (`Pb_/Rs_/Bo_<k>(API, SG_g, Rs|P, T_F[, sep])`, `mu_oD_<k>(API, T_F)`, `mu_o_<k>(mu_oD, Rs)`,
+  `co_<k>(API, SG_g, Rsb, P, T_F)`, `sigma_og_abdulMajeed(API, T_F, Rs)`, `rho_w_mcCain(salinity_ppm, Bw?, Rsw?, SG_g?)`,
+  `Bw_mcCain(P, T_F)`, `Rsw_mcCain(P, T_F, salinity_ppm)`, `sg_gas100_vasquezBeggs(SG_g, API, Tsep_F, Psep_psig)` = the host
+  `_vbGasGravity100`). New `window.PRiSM_pvt_corrInfo` {label, slot, family, ref, verified:false, note, range} for the 18 keys and
+  Hall-Yarborough Z. Q9 (no textbooks): every new correlation is provisional (D17) and none is a default. Finding: the A1
+  `Bw_meehan` already uses McCain's (1990) ΔV coefficients, so `Bw_mcCain` gives the same values (P-ID forbids renaming).
+  Glasø and Petrosky-Farshad Rs invert Pb only to their printed constants (≤ 5e-4).
+- **Contract additions (additive; absent → A1 bit for bit)**: `WTS_flowline_props` `fluid.pvt.sep {psep_psig, tsep_F}` (5th argument of
+  Rs / Bo / Pb), `pvt.corr.co` (undersaturated Bo = Bob·exp(−∫co dp), 6-point Gauss-Legendre), `pvt.corr.sigma`; `WTS_wp_fluid.families(slot?)`,
+  `.compare(spec, {T_F, pList, pr, slot})`, `.PROV_NOTE`; F gains `corr, provisional[], sg100, salinity_ppm`; table rows gain `rsw` and co
+  from the selected key; a blank γw with a salinity takes the McCain density; validity entries carry `provisional` and the D17 note in
+  `msg`; `WTS_wp_view` handle kind `pointX`. The page now builds its fluid with `{T_F}` (A1 built it without, so the PVT table ignored
+  the one-point pb shift).
+- **Page**: step ① family selectors (provisional labelled), co and σ selectors; the Fluid properties card (Rs / Bo / μo / Z / μg / Bg /
+  Bw / density against pressure at T_res, every family overlaid, provisional dashed, pb drag handle previewed live and committed on
+  release, family chips that select, spread verdict, comparison table in the report); case-summary row "PVT correlations".
+- **Tests**: `wellperf-pvt2` PV2-1…PV2-10 (frozen A1 copy `tests/_pvt16-v43.js`); downstream suites (dfit-*, wp15-gas, buildup-engine-*,
+  calc-review-pvt-wellkill, calc-g2, flowline / flare / gas lift) unchanged. Help: wellperf / prism / flowline reviewedSrc refreshed; the
+  production help file is at 45,400 of 45,410 bytes (WP19 needs the Q15 cap).
+
 ### 18.3 Increment B (v4.5)
 
 WP20 lift-table and PVT-table export · WP21 Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, per-section

@@ -32,12 +32,16 @@
 //     Dodson-Standing (1944)        — cw (water compressibility)
 //     Al-Hussainy, Ramey (1966)     — real-gas pseudo-pressure m(p)
 //     Earlougher (1977, SPE Mono 5) — dimensional conversions
+//     WP13 (Well Performance A2, provisional — PRiSM_pvt_corrInfo): Vasquez & Beggs (1980) Pb / Rs / Bo,
+//       Glasø (1980), Petrosky & Farshad (1993) Pb / Rs / Bo / co, Egbogah (1983) and Bergman-Sutton μ_oD,
+//       Chew & Connally (1959) μ_o, Abdul-Majeed σ_og, McCain (1990) water ρ / Bw / Rsw
 //     Bourdet (2002)                — kh from the derivative stabilisation
 // ════════════════════════════════════════════════════════════════════
 //
 // PUBLIC API
 //   window.PRiSM_pvt                       — input + computed state (C1 store)
-//   window.PRiSM_pvt_correlations          — pure correlation funcs
+//   window.PRiSM_pvt_correlations          — pure correlation funcs (20 A1 keys + 18 WP13 keys, merged)
+//   window.PRiSM_pvt_corrInfo              — WP13 metadata {label, slot, family, ref, verified:false, note, range}
 //   window.PRiSM_pvt_compute()             — fill in null values
 //   window.PRiSM_pvt_effective()           — B, μ, ct actually used (override → correlation)
 //   window.PRiSM_setWell(patch, {source})  — C1 writer (provenance, persist, 'prism:well-changed')
@@ -559,6 +563,176 @@
     }
 
 
+
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 6b — MORE CORRELATION FAMILIES (Well Performance A2, WP13)
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // docs/WELL-PERFORMANCE-PLAN.md §2.3 (16-pvt row), §4.1, Appendix A. Eighteen keys MERGED into
+    // PRiSM_pvt_correlations below; the 20 keys above are untouched (P-ID, tests/wellperf-pvt2.test.js).
+    // Signatures follow the slot conventions the flowline marcher looks up (49-calc-flowline.js fluid.pvt):
+    //   Pb_<k>(API, SG_g, Rs, T_F[, sep])   Rs_<k>(API, SG_g, P, T_F[, sep])   Bo_<k>(API, SG_g, Rs, T_F[, sep])
+    //   mu_oD_<k>(API, T_F)                 mu_o_<k>(mu_oD, Rs)                co_<k>(API, SG_g, Rsb, P, T_F)
+    // Units: P psia, T °F, Rs scf/STB, μ cp, co 1/psi, σ dyn/cm, ρ lbm/ft³, salinity ppm (wt % inside).
+    // sep = {psep_psig, tsep_F}: Vasquez-Beggs normalises the separator gas gravity to a 100 psig separator
+    // (γgs = γg·[1 + 5.912e−5·API·Ts·log10((Ps + 14.7)/114.7)], the host Bubble Point / Solution GOR relation);
+    // without sep the gravity is used as the 100 psig gravity. The other families ignore the extra argument.
+    //
+    //   Vasquez & Beggs (1980)   Rs = C1·γgs·p^C2·exp[C3·API/(T + 460)]; Pb its inverse at Rs;
+    //                            Bo = 1 + C1'·Rs + (T − 60)·(API/γgs)·(C2' + C3'·Rs)   (API ≤ 30 | > 30 sets)
+    //   Glasø (1980)             log pb = 1.7669 + 1.7447·log pb* − 0.30218·(log pb*)², pb* = (Rs/γg)^0.816·T^0.172/API^0.989;
+    //                            Rs its exact inverse; Bo = 1 + 10^A, A = −6.58511 + 2.91329·log B* − 0.27683·(log B*)²,
+    //                            B* = Rs·(γg/γo)^0.526 + 0.968·T
+    //   Petrosky & Farshad (1993) pb = 112.727·[Rs^0.5774/(γg^0.8439·10^X) − 12.340], X = 7.916e−4·API^1.5410 − 4.561e−5·T^1.3911;
+    //                            Rs its inverse (exponent 1.73184); Bo = 1.0113 + 7.2046e−5·[Rs^0.3738·γg^0.2914/γo^0.6265
+    //                            + 0.24626·T^0.5371]^3.0936; co = 1.705e−7·Rsb^0.69357·γg^0.1885·API^0.3272·T^0.6729·p^−0.5906
+    //   Egbogah (1983)           log log(μod + 1) = 1.8653 − 0.025086·API − 0.5644·log T
+    //   Bergman-Sutton           ln ln(μod + 1) = A0 + A1·ln(T + 310), A0 = 22.33 − 0.194·API + 0.00033·API², A1 = −3.20 + 0.0185·API
+    //   Chew & Connally (1959)   μo = 10^a·μod^b, a = Rs·(2.2e−7·Rs − 7.4e−4),
+    //                            b = 0.68/10^(8.62e−5·Rs) + 0.25/10^(1.1e−3·Rs) + 0.062/10^(3.74e−3·Rs)
+    //   Abdul-Majeed             σod = (1.17013 − 1.694e−3·T)·(38.085 − 0.259·API); σo = σod·(0.056379 + 0.94362·exp(−3.8491e−3·Rs))
+    //   McCain (1990)            ρw,std = 62.368 + 0.438603·S + 1.60074e−3·S² (S wt %), in situ (ρw,std + 0.01361·Rsw·γg)/Bw;
+    //                            Bw = (1 + ΔVwT)(1 + ΔVwp) — the coefficients Bw_meehan above already uses (identical values);
+    //                            Rsw(pure) = A + B·p + C·p² (cubic / quartic in T), log10(Rsw/Rsw,pure) = −0.0840655·S·T^−0.285854
+    //
+    // None of these has been checked against a published worked example here (owner Q9: no textbooks): every one ships
+    // verified:false (D17, "provisional — not verified against a published example") and none is a default. The metadata
+    // (label, slot, family, validity range of Appendix A where the plan records one) is window.PRiSM_pvt_corrInfo.
+
+    function _sepGravity(SG_g, API, sep) {
+        if (sep && _isFiniteNum(+sep.psep_psig) && _isFiniteNum(+sep.tsep_F)) return sg_gas100_vasquezBeggs(SG_g, API, +sep.tsep_F, +sep.psep_psig);
+        return SG_g;
+    }
+    // Vasquez-Beggs separator-gas-gravity normalisation to 100 psig (argument order of the host _vbGasGravity100).
+    function sg_gas100_vasquezBeggs(SG_g, API, Tsep_F, Psep_psig) {
+        if (!_isFiniteNum(SG_g) || !_isFiniteNum(API) || !_isFiniteNum(Tsep_F) || !_isFiniteNum(Psep_psig) || Psep_psig + 14.7 <= 0) return NaN;
+        return SG_g * (1 + 5.912e-5 * API * Tsep_F * Math.log10((Psep_psig + 14.7) / 114.7));
+    }
+    function _vbC(API) { return API <= 30 ? { c1: 0.0362, c2: 1.0937, c3: 25.7240, b1: 4.677e-4, b2: 1.751e-5, b3: -1.811e-8 }
+                                         : { c1: 0.0178, c2: 1.1870, c3: 23.9310, b1: 4.670e-4, b2: 1.100e-5, b3: 1.337e-9 }; }
+    function Rs_vasquezBeggs(API, SG_g, P, T_F, sep) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F)) return NaN;
+        if (P <= 0) return 0;
+        var g = _sepGravity(SG_g, API, sep), c = _vbC(API);
+        if (!(g > 0)) return NaN;
+        return c.c1 * g * Math.pow(P, c.c2) * Math.exp(c.c3 * API / (T_F + 460));
+    }
+    function Pb_vasquezBeggs(API, SG_g, Rs, T_F, sep) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
+        if (Rs <= 0 || SG_g <= 0) return 14.7;
+        var g = _sepGravity(SG_g, API, sep), c = _vbC(API);
+        if (!(g > 0)) return NaN;
+        return Math.pow(Rs / (c.c1 * g * Math.exp(c.c3 * API / (T_F + 460))), 1 / c.c2);
+    }
+    function Bo_vasquezBeggs(API, SG_g, Rs, T_F, sep) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
+        var g = _sepGravity(SG_g, API, sep), c = _vbC(API);
+        if (!(g > 0)) return NaN;
+        var f = (T_F - 60) * (API / g);
+        return 1 + c.b1 * Rs + c.b2 * f + c.b3 * Rs * f;
+    }
+
+    // Glasø (1980), North Sea oils (no API / paraffinicity correction).
+    var GLASO_PMAX = Math.pow(10, 14.1811 / 3.3093);   // the vertex of the quadratic: Rs is flat above it (≈ 19,280 psia)
+    function Pb_glaso(API, SG_g, Rs, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
+        if (Rs <= 0 || SG_g <= 0) return 14.7;
+        var x = Math.log10(Math.pow(Rs / SG_g, 0.816) * Math.pow(T_F, 0.172) / Math.pow(API, 0.989));
+        return Math.pow(10, 1.7669 + 1.7447 * x - 0.30218 * x * x);
+    }
+    function Rs_glaso(API, SG_g, P, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
+        if (P <= 0) return 0;
+        var X = 2.8869 - Math.sqrt(Math.max(0, 14.1811 - 3.3093 * Math.log10(Math.min(P, GLASO_PMAX))));
+        return SG_g * Math.pow(Math.pow(API, 0.989) / Math.pow(T_F, 0.172) * Math.pow(10, X), 1 / 0.816);
+    }
+    function Bo_glaso(API, SG_g, Rs, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
+        var SG_o = 141.5 / (API + 131.5);
+        var bs = Math.max(0, Rs) * Math.pow(SG_g / SG_o, 0.526) + 0.968 * T_F;
+        if (!(bs > 0)) return NaN;
+        var y = Math.log10(bs);
+        return 1 + Math.pow(10, -6.58511 + 2.91329 * y - 0.27683 * y * y);
+    }
+
+    // Petrosky & Farshad (1993), Gulf of Mexico oils.
+    function _pfX(API, T_F) { return 7.916e-4 * Math.pow(API, 1.5410) - 4.561e-5 * Math.pow(T_F, 1.3911); }
+    function Pb_petrosky(API, SG_g, Rs, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
+        if (Rs <= 0 || SG_g <= 0) return 14.7;
+        return 112.727 * (Math.pow(Rs, 0.5774) / (Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F))) - 12.340);
+    }
+    function Rs_petrosky(API, SG_g, P, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
+        if (P <= 0) return 0;
+        return Math.pow((P / 112.727 + 12.340) * Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F)), 1.73184);
+    }
+    function Bo_petrosky(API, SG_g, Rs, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || T_F < 0) return NaN;
+        var SG_o = 141.5 / (API + 131.5);
+        var F = Math.pow(Math.max(0, Rs), 0.3738) * Math.pow(SG_g, 0.2914) / Math.pow(SG_o, 0.6265) + 0.24626 * Math.pow(T_F, 0.5371);
+        return 1.0113 + 7.2046e-5 * Math.pow(F, 3.0936);
+    }
+    // Petrosky-Farshad undersaturated oil compressibility (P ≥ Pb), Rsb = the solution GOR at the bubble point.
+    function co_petrosky(API, SG_g, Rsb, P, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rsb) || !_isFiniteNum(P) || !_isFiniteNum(T_F) ||
+            P <= 0 || Rsb < 0 || SG_g <= 0 || API <= 0 || T_F <= 0) return NaN;
+        return 1.705e-7 * Math.pow(Rsb, 0.69357) * Math.pow(SG_g, 0.1885) * Math.pow(API, 0.3272) * Math.pow(T_F, 0.6729) * Math.pow(P, -0.5906);
+    }
+
+    // Dead-oil viscosity (cp).
+    function mu_oD_egbogah(API, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(T_F) || T_F <= 0) return NaN;
+        return Math.pow(10, Math.pow(10, 1.8653 - 0.025086 * API - 0.5644 * Math.log10(T_F))) - 1;
+    }
+    function mu_oD_bergmanSutton(API, T_F) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(T_F) || T_F + 310 <= 1) return NaN;
+        var A0 = 22.33 - 0.194 * API + 0.00033 * API * API, A1 = -3.20 + 0.0185 * API;
+        return Math.exp(Math.exp(A0 + A1 * Math.log(T_F + 310))) - 1;
+    }
+    // Chew-Connally live-oil (saturated) viscosity from the dead-oil viscosity.
+    function mu_o_chewConnally(mu_oD, Rs) {
+        if (!_isFiniteNum(mu_oD) || !_isFiniteNum(Rs) || mu_oD <= 0) return NaN;
+        if (Rs < 0) Rs = 0;
+        var a = Rs * (2.2e-7 * Rs - 7.4e-4);
+        var b = 0.68 / Math.pow(10, 8.62e-5 * Rs) + 0.25 / Math.pow(10, 1.1e-3 * Rs) + 0.062 / Math.pow(10, 3.74e-3 * Rs);
+        return Math.pow(10, a) * Math.pow(mu_oD, b);
+    }
+    // Abdul-Majeed gas-oil surface tension (dyn/cm); Rs = the solution GOR at the pressure (0 = dead oil).
+    function sigma_og_abdulMajeed(API, T_F, Rs) {
+        if (!_isFiniteNum(API) || !_isFiniteNum(T_F)) return NaN;
+        var sod = (1.17013 - 1.694e-3 * T_F) * (38.085 - 0.259 * API);
+        var r = _isFiniteNum(Rs) && Rs > 0 ? Rs : 0;
+        return Math.max(0, sod) * (0.056379 + 0.94362 * Math.exp(-3.8491e-3 * r));
+    }
+
+    // Water (McCain 1990).
+    function rho_w_mcCain(salinity_ppm, Bw, Rsw, SG_g) {
+        var S = (_isFiniteNum(salinity_ppm) ? Math.max(0, salinity_ppm) : 0) / 1e4;   // wt %
+        var rs = 62.368 + 0.438603 * S + 1.60074e-3 * S * S;
+        if (!_isFiniteNum(Bw) || !(Bw > 0)) return rs;
+        var gas = (_isFiniteNum(Rsw) && Rsw > 0 && _isFiniteNum(SG_g) && SG_g > 0) ? 0.01361 * Rsw * SG_g : 0;
+        return (rs + gas) / Bw;
+    }
+    function Bw_mcCain(P, T_F) {
+        if (!_isFiniteNum(P) || !_isFiniteNum(T_F)) return NaN;
+        var dVwT = -1.0001e-2 + 1.33391e-4 * T_F + 5.50654e-7 * T_F * T_F;
+        var dVwP = -1.95301e-9 * P * T_F - 1.72834e-13 * P * P * T_F - 3.58922e-7 * P - 2.25341e-10 * P * P;
+        return (1 + dVwT) * (1 + dVwP);
+    }
+    function Rsw_mcCain(P, T_F, salinity_ppm) {
+        if (!_isFiniteNum(P) || !_isFiniteNum(T_F) || T_F <= 0) return NaN;
+        if (P <= 0) return 0;
+        var T = T_F, T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+        var A = 8.15839 - 6.12265e-2 * T + 1.91663e-4 * T2 - 2.1654e-7 * T3;
+        var B = 1.01021e-2 - 7.44241e-5 * T + 3.05553e-7 * T2 - 2.94883e-10 * T3;
+        var C = -1e-7 * (9.02505 - 0.130237 * T + 8.53425e-4 * T2 - 2.34122e-6 * T3 + 2.37049e-9 * T4);
+        var rp = Math.max(0, A + B * P + C * P * P);
+        var S = (_isFiniteNum(salinity_ppm) ? Math.max(0, salinity_ppm) : 0) / 1e4;
+        return rp * Math.pow(10, -0.0840655 * S * Math.pow(T, -0.285854));
+    }
+
+
     // Expose the correlation library.
     G.PRiSM_pvt_correlations = {
         // Oil
@@ -587,6 +761,54 @@
         // Total compressibility
         ct:                   ct
     };
+
+    // Merge the WP13 families (never replace the object: the 20 keys above stay the same functions).
+    (function () {
+        var L = G.PRiSM_pvt_correlations, add = {
+            Pb_vasquezBeggs: Pb_vasquezBeggs, Rs_vasquezBeggs: Rs_vasquezBeggs, Bo_vasquezBeggs: Bo_vasquezBeggs,
+            Pb_glaso: Pb_glaso, Rs_glaso: Rs_glaso, Bo_glaso: Bo_glaso,
+            Pb_petrosky: Pb_petrosky, Rs_petrosky: Rs_petrosky, Bo_petrosky: Bo_petrosky,
+            mu_oD_egbogah: mu_oD_egbogah, mu_oD_bergmanSutton: mu_oD_bergmanSutton, mu_o_chewConnally: mu_o_chewConnally,
+            co_petrosky: co_petrosky, sg_gas100_vasquezBeggs: sg_gas100_vasquezBeggs,
+            rho_w_mcCain: rho_w_mcCain, Bw_mcCain: Bw_mcCain, sigma_og_abdulMajeed: sigma_og_abdulMajeed, Rsw_mcCain: Rsw_mcCain
+        };
+        Object.keys(add).forEach(function (k) { if (typeof L[k] !== 'function') L[k] = add[k]; });
+    })();
+
+    // Correlation metadata (WP13): label, slot (the Well Performance correlation slot it fills), family, D17 status and the
+    // Appendix A data range where the plan records one ({api, t °F, rs scf/STB, p psia, sgg}). Read by 49-calc-wp-fluid.js and
+    // the page. The A1 defaults (Standing, Beggs-Robinson, Vasquez-Beggs undersaturated co / μo, DAK, Lee-Gonzalez-Eakin,
+    // Baker-Swerdloff in the marcher) are not listed: they are outside the D17 gate (A1).
+    (function () {
+        var PROV = 'provisional — not verified against a published example';
+        var R_VB = { api: [15.3, 59.5], t: [75, 294], rs: [0, 2199], p: [15, 6055] };
+        var R_GL = { api: [22.3, 48.1], t: [80, 280], rs: [90, 2637] };
+        var R_PF = { api: [16.3, 45], t: [114, 288], rs: [217, 1406] };
+        function e(label, slot, family, ref, range) { return { label: label, slot: slot, family: family, ref: ref, verified: false, note: PROV, range: range || null }; }
+        var I = G.PRiSM_pvt_corrInfo = G.PRiSM_pvt_corrInfo || {};
+        var add = {
+            Pb_vasquezBeggs: e('Vasquez-Beggs bubble point', 'pb', 'vasquezBeggs', 'Vasquez & Beggs (1980)', R_VB),
+            Rs_vasquezBeggs: e('Vasquez-Beggs solution GOR', 'rs', 'vasquezBeggs', 'Vasquez & Beggs (1980)', R_VB),
+            Bo_vasquezBeggs: e('Vasquez-Beggs oil FVF', 'bo', 'vasquezBeggs', 'Vasquez & Beggs (1980)', R_VB),
+            Pb_glaso: e('Glasø bubble point', 'pb', 'glaso', 'Glasø (1980)', R_GL),
+            Rs_glaso: e('Glasø solution GOR', 'rs', 'glaso', 'Glasø (1980)', R_GL),
+            Bo_glaso: e('Glasø oil FVF', 'bo', 'glaso', 'Glasø (1980)', R_GL),
+            Pb_petrosky: e('Petrosky-Farshad bubble point', 'pb', 'petrosky', 'Petrosky & Farshad (1993)', R_PF),
+            Rs_petrosky: e('Petrosky-Farshad solution GOR', 'rs', 'petrosky', 'Petrosky & Farshad (1993)', R_PF),
+            Bo_petrosky: e('Petrosky-Farshad oil FVF', 'bo', 'petrosky', 'Petrosky & Farshad (1993)', R_PF),
+            co_petrosky: e('Petrosky-Farshad undersaturated co', 'co', 'petrosky', 'Petrosky & Farshad (1993)', R_PF),
+            mu_oD_egbogah: e('Egbogah dead-oil viscosity', 'muod', 'egbogah', 'Egbogah (1983)'),
+            mu_oD_bergmanSutton: e('Bergman-Sutton dead-oil viscosity', 'muod', 'bergmanSutton', 'Bergman; Sutton'),
+            mu_o_chewConnally: e('Chew-Connally live-oil viscosity', 'muo', 'chewConnally', 'Chew & Connally (1959)'),
+            sigma_og_abdulMajeed: e('Abdul-Majeed gas-oil surface tension', 'sigma', 'abdulMajeed', 'Abdul-Majeed'),
+            sg_gas100_vasquezBeggs: e('Vasquez-Beggs 100 psig gas gravity', 'sep', 'vasquezBeggs', 'Vasquez & Beggs (1980)'),
+            rho_w_mcCain: e('McCain water density', 'water', 'mcCain', 'McCain (1990)'),
+            Bw_mcCain: e('McCain water FVF', 'water', 'mcCain', 'McCain (1990)'),
+            Rsw_mcCain: e('McCain gas solubility in water', 'water', 'mcCain', 'McCain (1990)'),
+            Z_hallYarborough: e('Hall-Yarborough Z factor', 'z', 'hallYarborough', 'Hall & Yarborough (1973)')
+        };
+        Object.keys(add).forEach(function (k) { if (!I[k]) I[k] = add[k]; });
+    })();
 
 
     // ═══════════════════════════════════════════════════════════════

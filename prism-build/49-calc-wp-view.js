@@ -13,7 +13,9 @@
 //               bands:[{x0, x1, color, label}] (vertical shading), hbands:[{y0, y1, color, label}] (horizontal strips at the
 //               left edge, e.g. flow-pattern bands along depth), vlines:[{x, color, label, dash}], hlines:[{y, color, label, dash}],
 //               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}],
-//               handles:[{key, kind:'point'|'railY'|'railX', x, y, value, min, max, step, label, color, fmt(v), rail:[f0, f1]}],
+//               handles:[{key, kind:'point'|'railY'|'railX'|'pointX', x, y, value, min, max, step, label, color, fmt(v), rail:[f0, f1]}],
+//               ('pointX' (A2, WP13): a handle at x = value on the plot (y = h.y, else the bottom of the plot) dragged along x, with a
+//               dashed guide line across the plot — e.g. the bubble point on the fluid-property plot)
 //               readout:'x'|'y' (crosshair interpolation along x or along y), empty:'message when there is nothing to draw',
 //               onHandle(key, value, phase 'move'|'end'), onLegend(hiddenMap), hidden:{seriesKey:true} (initial)}
 //       Interaction (installed once per canvas): crosshair readout; wheel and pinch zoom at the pointer; drag to pan; double
@@ -322,6 +324,11 @@
         (sp.handles || []).forEach(function (h, i) {
             var hx, hy, focus = st.focusHandle === i, active = st.drag && st.drag.handle === i, col = h.color || T.accent;
             if (h.kind === 'point') { hx = toX(h.x); hy = toY(h.value); }
+            else if (h.kind === 'pointX') {
+                hx = _clamp(toX(h.value), P.x, P.x + P.w); hy = _fin(h.y) ? _clamp(toY(h.y), P.y, P.y + P.h) : P.y + P.h;
+                ctx.strokeStyle = col; ctx.globalAlpha = active || focus ? 0.8 : 0.45; ctx.lineWidth = 1.2; if (ctx.setLineDash) ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(hx, P.y); ctx.lineTo(hx, P.y + P.h); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); ctx.globalAlpha = 1;
+            }
             else if (h.kind === 'railY') {
                 hx = P.x + P.w + (m.r / 2); hy = _clamp(toY(h.value), P.y, P.y + P.h);
                 ctx.strokeStyle = T.axis; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(hx, P.y + 4); ctx.lineTo(hx, P.y + P.h - 4); ctx.stroke(); ctx.lineCap = 'butt';
@@ -347,6 +354,7 @@
             var tw = (ctx.measureText ? ctx.measureText(txt).width : txt.length * 6) + 10, tx, ty;
             if (h.kind === 'railY') { tx = hx - r - 4 - tw; ty = hy; }
             else if (h.kind === 'railX') { tx = _clamp(hx - tw / 2, 2, cw - tw - 2); ty = hy + 15; }
+            else if (h.kind === 'pointX') { tx = _clamp(hx - tw / 2, P.x + 2, P.x + P.w - tw - 2); ty = hy - r - 12; }
             else { tx = hx + r + 6; ty = hy - 14; }
             if (h.kind !== 'railX' || active || focus) {
                 ctx.fillStyle = T.bg; ctx.globalAlpha = 0.85; ctx.fillRect(tx, ty - 8, tw, 16); ctx.globalAlpha = 1;
@@ -401,7 +409,9 @@
             for (var i = 0; i < a.length; i += step) if (_fin(a[i][0]) && _fin(a[i][1])) pts.push({ x: toX(a[i][0]), y: toY(a[i][1]), w: 1 });
         });
         (sp.markers || []).forEach(function (m) { if (_fin(m.x) && _fin(m.y)) { var mx = toX(m.x), my = toY(m.y); pts.push({ x: mx, y: my, w: 60 }); if (m.label) for (var k = 1; k <= 6; k++) pts.push({ x: mx + (mx > P.x + P.w * 0.7 ? -k * 20 : k * 20), y: my - 12, w: 30 }); } });
-        (sp.handles || []).forEach(function (h) { if (h.kind === 'point' && _fin(h.x) && _fin(h.value)) { var hx = toX(h.x), hy = toY(h.value); for (var k = 0; k <= 6; k++) pts.push({ x: hx + k * 20, y: hy - 12, w: 40 }); } });
+        (sp.handles || []).forEach(function (h) { if (h.kind === 'point' && _fin(h.x) && _fin(h.value)) { var hx = toX(h.x), hy = toY(h.value); for (var k = 0; k <= 6; k++) pts.push({ x: hx + k * 20, y: hy - 12, w: 40 }); }
+            if (h.kind === 'pointX' && _fin(h.value)) { var px = _clamp(toX(h.value), P.x, P.x + P.w), py = _fin(h.y) ? toY(h.y) : P.y + P.h; for (var j = -4; j <= 4; j++) pts.push({ x: px + j * 18, y: py - 20, w: 40 }); }
+        });
         var best = null;
         cand.forEach(function (c, ci) {
             var sc = 0;
@@ -453,6 +463,7 @@
     function _handleValue(cv, h, p) {
         var A = cv._wpAxes, v;
         if (h.kind === 'railX') { var f = _clamp((p.x - h._rx0) / Math.max(1, h._rx1 - h._rx0), 0, 1); v = h.min + f * (h.max - h.min); }
+        else if (h.kind === 'pointX') v = A.fromX(_clamp(p.x, A.plot.x, A.plot.x + A.plot.w));
         else v = A.fromY(_clamp(p.y, A.plot.y, A.plot.y + A.plot.h));
         if (_fin(h.step) && h.step > 0) v = Math.round(v / h.step) * h.step;
         if (_fin(h.min)) v = Math.max(h.min, v);

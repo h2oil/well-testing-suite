@@ -26,7 +26,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '6b4639d3', units: 'field',
+  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '6ac4d0d5', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -160,7 +160,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.3', reviewedSrc: '2dee9885', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '52a6c5dc', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -183,12 +183,12 @@ var wellperf = {
   W('Surface choke in line', 'choke', 'On'), W('Choke bean', 'bean', '32'), W('Wellhead pressure (fixed)', 'thp', null, 'No choke in line.'),
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
-  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|muod|muo|muou|z|mug)$', why: 'fluid and inflow details' },
+  notDocumented: [{ pattern: '^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+)$|^wp_corr_(pb|rs|bo|co|muod|muo|muou|z|mug|sigma)$', why: 'fluid and inflow details' },
   { pattern: '^wp_pastet_|^wpv_(dfit|prop|svar|svals|mtest)$|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Liquid loading, Sensitivity, Bean schedule.')],
-  verdicts: [vd('✓', 'Stable operating point', 'It holds.'), vd('✗', 'Unstable operating point', 'It cannot hold.'), vd('✓', 'above the static stability limit', 'Clear of q_s.'),
+  verdicts: [vd('⚠', 'correlations differ', 'Enter pb.'), vd('✓', 'Stable operating point', 'It holds.'), vd('✗', 'Unstable operating point', 'It cannot hold.'), vd('✓', 'above the static stability limit', 'Clear of q_s.'),
   vd('⚠', 'within 10 % of the static', 'May head or load up.'), vd('✗', 'No operating point', 'Read the reason.'), vd('✗', 'p̄r needed', 'Enter it in ②.'),
   vd('✗', 'Liquid loading', 'Smaller string or lower THP.'), vd('⚠', 'Close to loading', 'Small margin.'), vd('✓', 'above the critical rate', 'Unloads.'),
   vd('✓', 'erosional velocity', 'Below 80 %.'), vd('⚠', 'erosional velocity', '80–100 %.'), vd('✗', 'erosional velocity', 'Too fast.'),

@@ -40,6 +40,17 @@
 //            gorTotal = separator + stock-tank gas per STB (A1: no stock-tank gas input, = R); geq = B·γo / Mo (the
 //            condensate's gas equivalent, scf/STB); wellGasFactor = (R + geq) / R (well-stream gas per separator scf)
 //     .separatorGravity({sgWell, gorSep, apiST, cgr}) → {ok, sgSep}   the inverse (a 'total' basis entered for a wet gas)
+//     .families(slot?)                  (A2, WP13) the correlation options of each fluid slot {pb, rs, bo, muod, muo, co, z, mug, sigma}
+//                                       → [{key, label, verified, note}] (the A1 default first, then PRiSM_pvt_corrInfo entries)
+//     .compare(fluidSpec, {T_F, pList, pr?, slot:'family'|'muod'|'muo'|'co'|'z'|'sigma', keys?})  (A2, WP13) the same fluid built once per option of
+//                                       the slot ('family' = Pb / Rs / Bo together) and tabulated through F.table: → {ok, slot, T,
+//                                       pList, rows:[{key, label, verified, ok, pb, table:[…F.table rows], at:{pb: row, pr: row}, validity, inRange}], spreadPb}
+//     A2 additions to build / check (WP13): corr.co ('vasquezBeggs' | 'petrosky') and corr.sigma ('bakerSwerdloff' | 'abdulMajeed')
+//     reach the marcher (pvt.corr.co / .sigma only when not the default); a Vasquez-Beggs Pb / Rs / Bo with the separator pressure
+//     and temperature sets pvt.sep {psep_psig, tsep_F} (the 100 psig gas-gravity normalisation); a blank water gravity with a
+//     salinity takes the McCain standard density (γw = ρw,std / 62.368); validity verdicts for the Vasquez-Beggs, Glasø and
+//     Petrosky-Farshad families (Appendix A) and a "provisional" note on every unverified correlation in use (D17); F.provisional
+//     = labels of those; F.table rows gain rsw (McCain gas solubility in water, scf/STB) and co from the selected co key
 //     .flowlineFluid(F, q)              q = a number on F.rateBasis (oil: liquid STB/d split by WC; gas: separator gas Mscf/d
 //                                       with CGR / WGR; water: BWPD) or {qo, qw, qg_Mscfd}
 //         → {qo STB/d, qw BWPD, qg MMscf/d (the flowline key), qg_MMscfd, api, sgg, sgw, pvt}
@@ -54,7 +65,34 @@
     var CORR_DEFAULT = { pb: 'standing', rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson', muou: 'vasquezBeggs',
         co: 'vasquezBeggs', z: 'dranchukAbouKassem', mug: 'leeGonzalezEakin', sigma: 'bakerSwerdloff' };
     // library prefix of each correlation slot (16-pvt PRiSM_pvt_correlations); the march looks the keys up the same way
-    var CORR_PREFIX = { rs: 'Rs_', bo: 'Bo_', muod: 'mu_oD_', muo: 'mu_o_', z: 'Z_', mug: 'mu_g_', pb: 'Pb_' };
+    var CORR_PREFIX = { rs: 'Rs_', bo: 'Bo_', muod: 'mu_oD_', muo: 'mu_o_', z: 'Z_', mug: 'mu_g_', pb: 'Pb_', co: 'co_', sigma: 'sigma_og_' };
+    // the A1 default of each slot (outside the D17 gate) and its label; more options come from PRiSM_pvt_corrInfo (WP13)
+    var SLOT_DEF = { pb: ['standing', 'Standing'], rs: ['standing', 'Standing'], bo: ['standing', 'Standing'], muod: ['beggsRobinson', 'Beggs-Robinson'],
+        muo: ['beggsRobinson', 'Beggs-Robinson'], co: ['vasquezBeggs', 'Vasquez-Beggs'], z: ['dranchukAbouKassem', 'Dranchuk-Abou-Kassem'],
+        mug: ['leeGonzalezEakin', 'Lee-Gonzalez-Eakin'], sigma: ['bakerSwerdloff', 'Baker-Swerdloff'] };
+    var FAMILY_LABEL = { standing: 'Standing', vasquezBeggs: 'Vasquez-Beggs', glaso: 'Glasø', petrosky: 'Petrosky-Farshad', egbogah: 'Egbogah',
+        bergmanSutton: 'Bergman-Sutton', chewConnally: 'Chew-Connally', abdulMajeed: 'Abdul-Majeed', hallYarborough: 'Hall-Yarborough',
+        beggsRobinson: 'Beggs-Robinson', dranchukAbouKassem: 'Dranchuk-Abou-Kassem', leeGonzalezEakin: 'Lee-Gonzalez-Eakin', bakerSwerdloff: 'Baker-Swerdloff' };
+    var PROV_NOTE = 'provisional — not verified against a published example';
+    function _info(slot, key) {
+        var I = G.PRiSM_pvt_corrInfo || {}, p = CORR_PREFIX[slot];
+        return (p && I[p + key]) || null;
+    }
+    function _isProv(slot, key) { var e = _info(slot, key); return !!(e && e.verified === false); }
+    function families(slot) {
+        var L = _lib(), I = G.PRiSM_pvt_corrInfo || {}, out = {};
+        Object.keys(SLOT_DEF).forEach(function (sl) {
+            var list = [{ key: SLOT_DEF[sl][0], label: SLOT_DEF[sl][1], verified: true, note: '' }], pre = CORR_PREFIX[sl];
+            Object.keys(I).forEach(function (k) {
+                var e = I[k]; if (!e || e.slot !== sl || k.indexOf(pre) !== 0) return;
+                var key = k.slice(pre.length);
+                if (key === SLOT_DEF[sl][0] || (L && typeof L[k] !== 'function')) return;
+                list.push({ key: key, label: FAMILY_LABEL[key] || e.label || key, verified: e.verified !== false, note: e.verified === false ? (e.note || PROV_NOTE) : '' });
+            });
+            out[sl] = list;
+        });
+        return slot ? (out[slot] || []) : out;
+    }
     var REF_Q = { liquid: 1000, gas: 1000, water: 1000 };
 
     function _fin(v) { return typeof v === 'number' && isFinite(v); }
@@ -131,6 +169,9 @@
         standing: { label: 'Standing Pb / Rs / Bo', api: [16.5, 63.8], t: [100, 258], rs: [20, 1425], sgg: [0.59, 0.95] },
         beggsRobinson: { label: 'Beggs-Robinson μo', api: [16, 58], t: [70, 295], rs: [20, 2070] },
         vasquezBeggs: { label: 'Vasquez-Beggs (undersaturated co, μo)', api: [15.3, 59.5], t: [75, 294], rs: [0, 2199], p: [15, 6055] },
+        vasquezBeggsBo: { label: 'Vasquez-Beggs Pb / Rs / Bo', api: [15.3, 59.5], t: [75, 294], rs: [0, 2199], p: [15, 6055] },
+        glaso: { label: 'Glasø Pb / Rs / Bo', api: [22.3, 48.1], t: [80, 280], rs: [90, 2637] },
+        petrosky: { label: 'Petrosky-Farshad Pb / Rs / Bo / co', api: [16.3, 45], t: [114, 288], rs: [217, 1406] },
         dak: { label: 'Dranchuk & Abou-Kassem Z (Sutton pseudo-criticals)', tpr: [1.05, 3.0], ppr: [0, 15], sgHc: [0.57, 1.68] },
         wichertAziz: { label: 'Wichert-Aziz sour-gas correction', co2: [0, 54.4], h2s: [0, 73.8] }
     };
@@ -145,7 +186,7 @@
         var t = s.type;
         if (!t) { err('type', 'Fluid type must be one of oil, gas, condensate, water, gasinj, waterinj.'); return { ok: false, errors: errors, bad: bad, warnings: warnings, validity: validity }; }
         var gasT = _isGasType(t), oil = t === 'oil', water = t === 'water' || t === 'waterinj';
-        var cgr = _fin(s.cgr) ? s.cgr : 0, wgr = _fin(s.wgr) ? s.wgr : 0;
+        var cgr = _fin(s.cgr) ? s.cgr : 0, wgr = _fin(s.wgr) ? s.wgr : 0, L0 = _lib();
         // required inputs
         if (oil || gasT) { if (!(_fin(s.sgg) && s.sgg >= 0.55 && s.sgg <= 3)) err('sgg', 'Gas gravity must be between 0.55 and 3.0 (air = 1).'); }
         if (oil) {
@@ -164,7 +205,10 @@
             else if (!(_fin(s.wc) && s.wc >= 0 && s.wc <= 1)) err('wc', 'Water cut must be between 0 and 100 %.');
         }
         var needW = water || (oil && s.wc > 0) || (gasT && wgr > 0);
-        if (needW && !(_fin(s.sgw) && s.sgw >= 0.95 && s.sgw <= 1.4)) err('sgw', 'Water specific gravity must be between 0.95 and 1.40.');
+        var sgwSal = (s.sgw == null && _fin(s.salinity_ppm) && s.salinity_ppm >= 0 && L0 && typeof L0.rho_w_mcCain === 'function') ? L0.rho_w_mcCain(s.salinity_ppm) / 62.368 : null;
+        if (s.salinity_ppm != null && !(_fin(s.salinity_ppm) && s.salinity_ppm >= 0 && s.salinity_ppm <= 350000)) err('salinity_ppm', 'Salinity must be between 0 and 350,000 ppm.');
+        else if (needW && sgwSal != null && s.salinity_ppm > 0) warn('SGW_MCCAIN', 'Water specific gravity ' + _fmtN(sgwSal, 4) + ' from the salinity (McCain standard density, provisional).', 'info', 'sgw');
+        if (needW && !(_fin(s.sgw) && s.sgw >= 0.95 && s.sgw <= 1.4) && !(sgwSal != null && s.salinity_ppm > 0 && sgwSal <= 1.4)) err('sgw', 'Water specific gravity must be between 0.95 and 1.40 (or give the salinity).');
         ['yN2', 'yCO2', 'yH2S'].forEach(function (k) {
             if (s[k] != null && !(_fin(s[k]) && s[k] >= 0 && s[k] < 100)) err(k, k.slice(1) + ' must be between 0 and 100 mol %.');
         });
@@ -183,6 +227,7 @@
             var key = s.corr[k];
             if (key !== CORR_DEFAULT[k] && typeof L[CORR_PREFIX[k] + key] !== 'function') warn('CORR_UNKNOWN', 'Correlation "' + String(key).slice(0, 30) + '" (' + k + ') is not available here; ' + CORR_DEFAULT[k] + ' is used.', 'warn', 'corr_' + k);
         });
+        if (oil && s.corr.pb !== s.corr.rs && L && typeof L['Rs_' + s.corr.rs] === 'function') warn('PB_FOLLOWS_RS', 'The bubble point follows the solution-GOR correlation (' + (FAMILY_LABEL[s.corr.rs] || s.corr.rs) + '), so that Rs reaches the GOR at the bubble point.', 'info', 'corr_pb');
         if (errors.length) return { ok: false, errors: errors, bad: bad, warnings: warnings, validity: validity };
 
         // validity ranges of the correlations actually used
@@ -205,7 +250,9 @@
                 var val = o.lo === o.hi ? show(o.lo) : show(o.lo) + '–' + show(o.hi);
                 return o.name + ' ' + val + ' is outside ' + show(o.range[0]) + '–' + show(o.range[1]);
             }).join('; ') + ' (extrapolated).';
-            var e = { corr: key, label: R.label, used: !!used, inRange: !out.length, msg: msg, out: out };
+            var prov = !!(used && note === 'prov');
+            if (prov) msg = msg.replace(/\.$/, '') + ' — ' + PROV_NOTE + '.';
+            var e = { corr: key, label: R.label, used: !!used, inRange: !out.length, msg: msg, out: out, provisional: prov };
             validity.push(e);
             if (used && out.length) warn('RANGE_' + key.toUpperCase(), msg.replace(/^⚠ /, ''), 'warn');
             return e;
@@ -213,11 +260,23 @@
         var rsb = oil ? s.gor : 0;
         if (oil) {
             rng('standing', [{ v: 'api', name: 'API', lo: s.api }, { v: 't', name: 'temperature', lo: tLo, hi: tHi }, { v: 'rs', name: 'GOR', lo: rsb },
-                { v: 'sgg', name: 'gas gravity', lo: s.sgg }], s.corr.rs === 'standing');
+                { v: 'sgg', name: 'gas gravity', lo: s.sgg }], s.corr.rs === 'standing' || s.corr.bo === 'standing');
             rng('beggsRobinson', [{ v: 'api', name: 'API', lo: s.api }, { v: 't', name: 'temperature', lo: tLo, hi: tHi }, { v: 'rs', name: 'GOR', lo: rsb }],
                 s.corr.muo === 'beggsRobinson');
             rng('vasquezBeggs', [{ v: 'api', name: 'API', lo: s.api }, { v: 't', name: 'temperature', lo: tLo, hi: tHi }, { v: 'rs', name: 'GOR', lo: rsb },
                 { v: 'p', name: 'pressure', lo: pLo, hi: pHi }], true);
+            // WP13 families (each provisional, D17): Pb / Rs / Bo (and co for Petrosky-Farshad) when any of their slots is in use
+            var famUsed = function (k) { return s.corr.rs === k || s.corr.bo === k || (k === 'petrosky' && s.corr.co === k); };
+            if (famUsed('vasquezBeggs')) rng('vasquezBeggsBo', [{ v: 'api', name: 'API', lo: s.api }, { v: 't', name: 'temperature', lo: tLo, hi: tHi }, { v: 'rs', name: 'GOR', lo: rsb },
+                { v: 'p', name: 'pressure', lo: pLo, hi: pHi }], true, 'prov');
+            ['glaso', 'petrosky'].forEach(function (k) {
+                if (famUsed(k)) rng(k, [{ v: 'api', name: 'API', lo: s.api }, { v: 't', name: 'temperature', lo: tLo, hi: tHi }, { v: 'rs', name: 'GOR', lo: rsb }], true, 'prov');
+            });
+            // the other WP13 options carry no recorded range: a provisional note only
+            [['muod', s.corr.muod], ['muo', s.corr.muo], ['sigma', s.corr.sigma]].forEach(function (p) {
+                var e = _isProv(p[0], p[1]) ? _info(p[0], p[1]) : null;
+                if (e) validity.push({ corr: p[1], label: e.label, used: true, inRange: true, provisional: true, out: [], msg: '✓ ' + e.label + ': no data range recorded — ' + PROV_NOTE + '.' });
+            });
         } else if (gasT && cgr > 0) {
             rng('standing', [], false, 'the condensate is a wet-gas liquid with Rs = 0, D14');
         }
@@ -230,6 +289,7 @@
                 rng('dak', [{ v: 'sgHc', name: 'hydrocarbon gas gravity', lo: pc.sgHc },
                     { v: 'tpr', name: 'Tpr', lo: tLo == null ? null : (tLo + RANK) / pc.Tpc, hi: tHi == null ? null : (tHi + RANK) / pc.Tpc },
                     { v: 'ppr', name: 'Ppr', lo: pLo == null ? null : pLo / pc.Ppc, hi: pHi == null ? null : pHi / pc.Ppc }], s.corr.z === 'dranchukAbouKassem' || yi > 0);
+                if (s.corr.z !== 'dranchukAbouKassem' && _isProv('z', s.corr.z)) { var ez = _info('z', s.corr.z); validity.push({ corr: s.corr.z, label: ez.label, used: !(yi > 0), inRange: true, provisional: !(yi > 0), out: [], msg: yi > 0 ? ez.label + ': not used (N2 / CO2 / H2S: the corrected DAK Z of the gas PVT engine).' : '✓ ' + ez.label + ': ' + PROV_NOTE + '.' }); }
             }
             if (yco2 + yh2s > 0) rng('wichertAziz', [{ v: 'co2', name: 'CO2 (mol %)', lo: yco2 * 100 }, { v: 'h2s', name: 'H2S (mol %)', lo: yh2s * 100 }], true);
         }
@@ -267,7 +327,7 @@
         if (!_lib() || typeof G.WTS_flowline_props !== 'function') return Object.assign(base, { code: 'MISSING_ENGINE', name: !_lib() ? 'PRiSM_pvt_correlations' : 'WTS_flowline_props', errors: ['the fluid-property engines are not loaded'] });
         var t = s.type, gasT = _isGasType(t), oil = t === 'oil', water = t === 'water' || t === 'waterinj';
         var cgr = (gasT && t !== 'gasinj' && _fin(s.cgr)) ? s.cgr : 0, wgr = (gasT && t !== 'gasinj' && _fin(s.wgr)) ? s.wgr : 0;
-        var warnings = chk.warnings.slice();
+        var warnings = chk.warnings.slice(), L0 = _lib();
         var sgFree = (oil || gasT) ? s.sgg : 0.65, sgWell = null;
         var apiUse = _fin(s.api) ? s.api : (gasT ? 55 : 35);   // a liquid-free gas or water: API only feeds unused oil terms
         if (gasT) {
@@ -280,10 +340,22 @@
                 var rc = recombine({ sgSep: s.sgg, apiST: s.api, cgr: cgr });
                 sgWell = rc.ok ? rc.sgWell : s.sgg;
             }
-        } else if (oil && s.sggBasis === 'separator' && _fin(s.psep_psig) && Math.abs(s.psep_psig - 100) > 1) {
-            warnings.push({ code: 'SGG_BASIS_A1', msg: 'Gas gravity is used as entered (the separator-pressure normalisation of the gravity comes with the Vasquez-Beggs family).', sev: 'info', field: 'sgg' });
+        }
+        var vbUsed = oil && (s.corr.rs === 'vasquezBeggs' || s.corr.bo === 'vasquezBeggs');
+        var sepOk = _fin(s.psep_psig) && _fin(s.tsep_F) && s.psep_psig + 14.7 > 0;
+        if (oil && !vbUsed && s.sggBasis === 'separator' && _fin(s.psep_psig) && Math.abs(s.psep_psig - 100) > 1) {
+            warnings.push({ code: 'SGG_BASIS_A1', msg: 'Gas gravity is used as entered (the separator-pressure normalisation of the gravity applies to the Vasquez-Beggs family only).', sev: 'info', field: 'sgg' });
         }
         var pvt = { corr: { rs: s.corr.rs, bo: s.corr.bo, muod: s.corr.muod, muo: s.corr.muo, z: s.corr.z, mug: s.corr.mug } };
+        if (oil && s.corr.co !== CORR_DEFAULT.co && typeof L0['co_' + s.corr.co] === 'function') pvt.corr.co = s.corr.co;
+        if ((oil || s.cgr > 0) && s.corr.sigma !== CORR_DEFAULT.sigma && typeof L0['sigma_og_' + s.corr.sigma] === 'function') pvt.corr.sigma = s.corr.sigma;
+        var sg100 = null;
+        if (vbUsed && sepOk) {
+            pvt.sep = { psep_psig: s.psep_psig, tsep_F: s.tsep_F };
+            sg100 = L0.sg_gas100_vasquezBeggs(sgFree, apiUse, s.tsep_F, s.psep_psig);
+            warnings.push({ code: 'VB_SG100', msg: 'Vasquez-Beggs uses the gas gravity corrected to a 100 psig separator: ' + _fmtN(sgFree, 4) + ' → ' + _fmtN(sg100, 4) + '.', sev: 'info', field: 'sgg' });
+        } else if (vbUsed) warnings.push({ code: 'VB_SEP_BLANK', msg: 'Separator pressure or temperature is blank: Vasquez-Beggs takes the gas gravity as a 100 psig separator gravity.', sev: 'info', field: 'psep_psig' });
+        var sgwUse = _fin(s.sgw) && s.sgw > 0 ? s.sgw : (_fin(s.salinity_ppm) && s.salinity_ppm > 0 && typeof L0.rho_w_mcCain === 'function' ? L0.rho_w_mcCain(s.salinity_ppm) / 62.368 : 1.07);
         if (oil) pvt.undersat = true;
         if (gasT || water) { pvt.liquidNoTransfer = true; pvt.bc = _fin(s.bc) && s.bc > 0 ? s.bc : 1; }
         var yi = (+s.yN2 || 0) + (+s.yCO2 || 0) + (+s.yH2S || 0);
@@ -293,7 +365,7 @@
         // one-point bubble-point shift at the reservoir temperature
         var L = _lib(), T_F = _fin(+opts.T_F) ? +opts.T_F : null, pbShift = null;
         if (oil && _fin(s.pbUser) && T_F != null && s.gor > 0) {
-            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? pbF(s.api, sgFree, s.gor, T_F) : NaN;
+            var pbF = L['Pb_' + s.corr.rs], pbCorr = typeof pbF === 'function' ? (pvt.sep ? pbF(s.api, sgFree, s.gor, T_F, pvt.sep) : pbF(s.api, sgFree, s.gor, T_F)) : NaN;
             if (_fin(pbCorr) && pbCorr > 14.7) { pvt.pbFactor = pbCorr / s.pbUser; pbShift = { pbCorr: pbCorr, pbUser: s.pbUser, factor: pvt.pbFactor, T_F: T_F }; }
             else warnings.push({ code: 'PB_SHIFT_FAILED', msg: 'The correlation bubble point could not be evaluated: no shift is applied.', sev: 'warn', field: 'pbUser' });
         }
@@ -301,7 +373,8 @@
         var rb = _rateBasis(t);
         var F = {
             ok: true, type: t, rateBasis: rb, rateUnit: rb === 'liquid' ? 'STB/d' : rb === 'water' ? 'BWPD' : 'Mscf/d',
-            pvt: pvt, api: apiUse, sgg: sgFree, sgWell: sgWell, sgw: _fin(s.sgw) && s.sgw > 0 ? s.sgw : 1.07,
+            pvt: pvt, api: apiUse, sgg: sgFree, sgWell: sgWell, sgw: sgwUse, sg100: sg100, salinity_ppm: _fin(s.salinity_ppm) ? s.salinity_ppm : null,
+            corr: _deepFreeze(Object.assign({}, s.corr)), provisional: _provList(s, oil, gasT, cgr, yi),
             gor: oil ? s.gor : 0, cgr: cgr, wgr: wgr, wc: oil && _fin(s.wc) ? s.wc : 0, bc: pvt.bc || null,
             pbUser: oil ? s.pbUser : null, pbShift: pbShift, T_F: T_F, wet: gasT && cgr > 0, rsb: oil ? s.gor : 0,
             refQ: REF_Q[rb], imp: pvt.imp || null,
@@ -319,6 +392,15 @@
         return Object.freeze(F);
     }
 
+    // labels of the unverified (D17) correlations this fluid uses
+    function _provList(s, oil, gasT, cgr, yi) {
+        var out = [], seen = {};
+        function add(slot, key) { var e = _isProv(slot, key) ? _info(slot, key) : null; if (e && !seen[e.label]) { seen[e.label] = 1; out.push(e.label); } }
+        if (oil) { add('rs', s.corr.rs); add('bo', s.corr.bo); add('muod', s.corr.muod); add('muo', s.corr.muo); add('co', s.corr.co); add('sigma', s.corr.sigma); }
+        else if (gasT && cgr > 0) { add('muod', s.corr.muod); add('sigma', s.corr.sigma); }
+        if ((oil || gasT) && !(yi > 0)) add('z', s.corr.z);
+        return out;
+    }
     function table(F, pList, T, q) {
         if (!F || !F.ok) return { ok: false, code: 'NO_FLUID', rows: [], errors: ['the fluid is not built'], warnings: [] };
         var Tn = +T;
@@ -330,16 +412,46 @@
             var r = F.at(p, Tn, q);
             if (!r) return;
             var co = null;
-            if (F.type === 'oil' && pb != null && p > pb) { var c = L.co_vasquezBeggs(F.api, F.sgg, F.rsb, p, Tn); co = _fin(c) ? c : null; }
+            if (F.type === 'oil' && pb != null && p > pb) {
+                var coF = (F.corr && F.corr.co && typeof L['co_' + F.corr.co] === 'function') ? L['co_' + F.corr.co] : L.co_vasquezBeggs;
+                var c = coF(F.api, F.sgg, F.rsb, p, Tn); co = _fin(c) ? c : null;
+            }
+            var rsw = (r.qL > 0 && r.fw > 0 && typeof L.Rsw_mcCain === 'function') ? L.Rsw_mcCain(p, Tn, F.salinity_ppm || 0) : null;
             rows.push({ p: p, rs: r.rs, bo: r.bo, muo: r.muo, co: co, z: r.z, bg: r.bg, bgRB: r.bg * 1000 / 5.614583, mug: r.mug,
-                rhoO: r.rhoO, rhoG: r.rhoG, rhoW: r.rhoW, bw: r.bw, muw: r.muw, sigO: r.sigO, sigW: r.sigW,
+                rhoO: r.rhoO, rhoG: r.rhoG, rhoW: r.rhoW, bw: r.bw, muw: r.muw, sigO: r.sigO, sigW: r.sigW, rsw: _fin(rsw) ? rsw : null,
                 saturated: F.type === 'oil' ? !(pb != null && p > pb) : null });
         });
         if (!rows.length) warnings.push({ code: 'NO_ROWS', msg: 'No valid pressures were given.', sev: 'warn' });
         return { ok: rows.length > 0, T: Tn, pb: pb, rows: rows, warnings: warnings, errors: [] };
     }
 
+    // the same fluid once per option of a slot, tabulated through F.table (no numerics of its own)
+    function compare(spec, opts) {
+        opts = opts || {};
+        var slot = ['muod', 'muo', 'co', 'z', 'sigma'].indexOf(opts.slot) >= 0 ? opts.slot : 'family';
+        var T = +opts.T_F, pList = Array.isArray(opts.pList) ? opts.pList.map(Number).filter(function (p) { return _fin(p) && p > 0; }) : [];
+        if (!_fin(T)) return { ok: false, code: 'BAD_T', errors: ['temperature is needed'], warnings: [], rows: [] };
+        var fam = slot === 'family' ? families('rs').filter(function (o) { return families('bo').some(function (b) { return b.key === o.key; }); }) : families(slot);
+        if (Array.isArray(opts.keys)) fam = fam.filter(function (o) { return opts.keys.indexOf(o.key) >= 0; });
+        var base = spec || {}, rows = [];
+        fam.forEach(function (o) {
+            var c = Object.assign({}, base.corr || {});
+            if (slot === 'family') { c.pb = o.key; c.rs = o.key; c.bo = o.key; } else c[slot] = o.key;
+            var F = build(Object.assign({}, base, { corr: c }), { T_F: T, tMin: opts.tMin, tMax: opts.tMax, pMin: opts.pMin, pMax: opts.pMax });
+            if (!F.ok) { rows.push({ key: o.key, label: o.label, verified: o.verified, ok: false, errors: F.errors }); return; }
+            var tb = table(F, pList, T, opts.q), pb = F.pb(T), at = {};
+            if (_fin(pb)) at.pb = (table(F, [pb], T, opts.q).rows || [])[0] || null;
+            if (_fin(+opts.pr) && +opts.pr > 0) at.pr = (table(F, [+opts.pr], T, opts.q).rows || [])[0] || null;
+            rows.push({ key: o.key, label: o.label, verified: o.verified, ok: tb.ok, pb: pb, table: tb.rows, at: at, validity: F.validity,
+                inRange: (F.validity || []).every(function (v) { return v.used === false || v.inRange !== false; }) });
+        });
+        var pbs = rows.map(function (r) { return r.pb; }).filter(_fin);
+        var spread = pbs.length > 1 ? (Math.max.apply(null, pbs) - Math.min.apply(null, pbs)) / Math.min.apply(null, pbs) : null;
+        return { ok: rows.some(function (r) { return r.ok; }), slot: slot, T: T, pList: pList, rows: rows, spreadPb: spread, errors: [], warnings: [] };
+    }
+
     var NS = G.WTS_wp_fluid = G.WTS_wp_fluid || {};
+    NS.families = families; NS.compare = compare; NS.PROV_NOTE = PROV_NOTE;
     NS.build = build; NS.table = table; NS.check = check; NS.recombine = recombine; NS.separatorGravity = separatorGravity;
     NS.flowlineFluid = flowlineFluid; NS.RANGES = RANGES; NS.CORR_DEFAULT = CORR_DEFAULT; NS.TYPES = TYPES.slice();
     // this file is the implementation: drop the WP0 stub names

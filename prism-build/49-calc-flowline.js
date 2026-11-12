@@ -414,6 +414,12 @@
     //   injGas       {qg_MMscfd, sg} lift gas: added to the free gas only (no dissolution), gas properties at the mixed gravity
     //   table        true | {dp psi, dT °F}: the (p, T)-dependent properties are binned (default 5 psi × 2 °F) and interpolated
     //                bilinearly; the cache lives in a WeakMap keyed by the pvt object (never on it)
+    //   (A2, WP13; each absent → the path above, unchanged)
+    //   sep          {psep_psig, tsep_F} passed as the 5th argument of Rs_<k> / Bo_<k> / Pb_<k> (the Vasquez-Beggs family normalises
+    //                the gas gravity to a 100 psig separator with it; the other families ignore it)
+    //   corr.co      undersaturated oil compressibility key co_<k> (signature of co_vasquezBeggs): above the bubble point
+    //                Bo = Bob·exp(−∫ co dp from pb to p) by 6-point Gauss-Legendre; absent or 'vasquezBeggs' → Bo_undersaturated
+    //   corr.sigma   gas-oil surface tension key sigma_og_<k>(API, T_F, Rs) at the in-situ Rs; absent → Baker & Swerdloff
     var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
     function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
     function _pvtCore(fluid, pv, p, t, sgMix) {
@@ -423,7 +429,7 @@
         var rsF = _pvtFn(L, 'Rs_', c.rs, L.Rs_standing), muodF = _pvtFn(L, 'mu_oD_', c.muod, L.mu_oD_beggsRobinson);
         var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
         var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
-        var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
+        var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, pv.sep ? rsF(api, sgg, p * pbF, t, pv.sep) : rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
         var z = NaN, TR = t + RANK;
         var imp = pv.imp;
         if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
@@ -459,7 +465,7 @@
         // the gas gravity of the free gas: formation free gas mixed with lift gas (mass weighted by standard volume)
         var sgMix = sgg;
         if (inj) {
-            var rs0 = noTr || !(qo > 0) ? 0 : Math.min(gor, Math.max(0, _pvtFn(L, 'Rs_', c.rs, L.Rs_standing)(api, sgg, p * ((+pv.pbFactor > 0) ? +pv.pbFactor : 1), t)));
+            var rs0 = noTr || !(qo > 0) ? 0 : Math.min(gor, Math.max(0, _pvtFn(L, 'Rs_', c.rs, L.Rs_standing)(api, sgg, p * ((+pv.pbFactor > 0) ? +pv.pbFactor : 1), t, pv.sep)));
             var fr0 = Math.max(0, qg * 1e6 - qo * rs0);
             sgMix = (fr0 + inj.q) > 0 ? (fr0 * sgg + inj.q * inj.sg) / (fr0 + inj.q) : sgg;
         }
@@ -470,10 +476,14 @@
         if (!(qo > 0)) { bo = 1; muo = 0; }
         else if (noTr) { bo = (+pv.bc > 0 ? +pv.bc : 1); muo = C.muod; }
         else {
-            bo = boF(api, sgg, rs, t); muo = muoF(C.muod, rs);
+            bo = pv.sep ? boF(api, sgg, rs, t, pv.sep) : boF(api, sgg, rs, t); muo = muoF(C.muod, rs);
             if (pv.undersat && C.rsRaw >= gor && gor > 0) {
-                pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor);
-                if (_fin(pb) && p > pb) { bo = L.Bo_undersaturated(bo, api, sgg, rs, p, t, pb); muo = L.mu_o_vasquezBeggs(muo, p, pb); }
+                pb = _pbFor(L, c, api, sgg, gor, t, pv.pbFactor, pv.sep);
+                if (_fin(pb) && p > pb) {
+                    var coF = (c.co && c.co !== 'vasquezBeggs') ? L['co_' + c.co] : null;
+                    bo = typeof coF === 'function' ? _boCoInt(coF, bo, api, sgg, rs, p, t, pb) : L.Bo_undersaturated(bo, api, sgg, rs, p, t, pb);
+                    muo = L.mu_o_vasquezBeggs(muo, p, pb);
+                }
             }
         }
         bo *= (_fin(+m.bo) ? +m.bo : 1); muo *= (_fin(+m.muo) ? +m.muo : 1);
@@ -487,7 +497,8 @@
         var free = Math.max(0, qg * 1e6 - qo * rs) + (inj ? inj.q : 0);
         var qgR = free * bg / 86400;
         var qL = qoR + qwR, fo = qL > 0 ? qoR / qL : 0, fw = qL > 0 ? qwR / qL : 0;
-        var so = qo > 0 ? C.sigO : 0, sw = qw > 0 ? C.sigW : 0;
+        var sgF = c.sigma ? L['sigma_og_' + c.sigma] : null;
+        var so = qo > 0 ? (typeof sgF === 'function' ? Math.max(1, sgF(api, t, rs)) : C.sigO) : 0, sw = qw > 0 ? C.sigW : 0;
         return {
             p: p, t: t, gor: gor, rs: rs, bo: bo, bw: bw, z: z, bg: bg, muo: muo, muw: muw, mug: mug,
             rhoO: rhoO, rhoW: rhoW, rhoG: rhoG, sigO: so, sigW: sw, freeGas: free,
@@ -499,13 +510,21 @@
         };
     }
     // bubble point for the undersaturated branch: Pb_<rs key> when the library has it, else bisection on Rs(p) = GOR
-    function _pbFor(L, c, api, sgg, gor, t, pbFactor) {
+    function _pbFor(L, c, api, sgg, gor, t, pbFactor, sep) {
         var k = c.rs || 'standing', f = L['Pb_' + k], pf = (_fin(+pbFactor) && pbFactor > 0) ? +pbFactor : 1;
-        if (typeof f === 'function') { var v = f(api, sgg, gor, t); if (_fin(v) && v > 0) return v / pf; }
+        if (typeof f === 'function') { var v = sep ? f(api, sgg, gor, t, sep) : f(api, sgg, gor, t); if (_fin(v) && v > 0) return v / pf; }
         var rsF = _pvtFn(L, 'Rs_', k, L.Rs_standing), lo = 14.7, hi = 30000;
-        if (!(rsF(api, sgg, hi * pf, t) >= gor)) return NaN;
-        for (var i = 0; i < 80 && hi - lo > 1e-6 * hi; i++) { var mid = (lo + hi) / 2; if (rsF(api, sgg, mid * pf, t) >= gor) hi = mid; else lo = mid; }
+        if (!(rsF(api, sgg, hi * pf, t, sep) >= gor)) return NaN;
+        for (var i = 0; i < 80 && hi - lo > 1e-6 * hi; i++) { var mid = (lo + hi) / 2; if (rsF(api, sgg, mid * pf, t, sep) >= gor) hi = mid; else lo = mid; }
         return hi;
+    }
+    // undersaturated Bo from a compressibility correlation (WP13 corr.co): Bo = Bob·exp(−∫ co dp, pb → p), 6-point Gauss-Legendre
+    var GL6 = [[-0.9324695142031521, 0.1713244923791704], [-0.6612093864662645, 0.3607615730481386], [-0.2386191860831909, 0.4679139345726910],
+               [0.2386191860831909, 0.4679139345726910], [0.6612093864662645, 0.3607615730481386], [0.9324695142031521, 0.1713244923791704]];
+    function _boCoInt(coF, bob, api, sgg, rsb, p, t, pb) {
+        var h = (p - pb) / 2, m = (p + pb) / 2, s = 0;
+        for (var i = 0; i < 6; i++) { var c = coF(api, sgg, rsb, m + h * GL6[i][0], t); if (!_fin(c)) return bob; s += GL6[i][1] * c; }
+        return bob * Math.exp(-s * h);
     }
     function props(fluid, p, t) {
         if (fluid && fluid.pvt && typeof fluid.pvt === 'object') return _propsPvt(fluid, p, t);
