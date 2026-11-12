@@ -47,6 +47,12 @@ const BENCH = [
   // WP12 (A2): Q9 — no books, so both ship provisional; the chart readings of Duns & Ros are pinned to their own values (wellperf-vlp2)
   { kind: 'corr', key: 'dr', status: 'pending', source: 'Brill & Mukherjee (Duns & Ros traverse), ±3 % on Δp' },
   { kind: 'corr', key: 'gasCS', status: 'pending', source: 'Economides et al.; Brill & Mukherjee (Cullender-Smith), ±1 %' },
+  // WP21 (B): Q9 — no books, so all five ship provisional; their explicit equations are pinned by hand calculations (wellperf-vlp3)
+  { kind: 'corr', key: 'ork', status: 'pending', source: 'Brill & Mukherjee §4.2.3; Brown vol. 1 (Orkiszewski traverse), ±3 % on Δp' },
+  { kind: 'corr', key: 'agf', status: 'pending', source: 'Brill & Mukherjee §4.2.5 (Aziz, Govier & Fogarasi traverse), ±3 % on Δp' },
+  { kind: 'corr', key: 'mb', status: 'pending', source: 'Brill & Mukherjee §4.3.3; Mukherjee & Brill (1985) example, ±3 % on Δp' },
+  { kind: 'corr', key: 'ansari', status: 'pending', source: 'Brill & Mukherjee §4.4 (Ansari et al. 1994 example), ±3 % on Δp' },
+  { kind: 'corr', key: 'hk', status: 'pending', source: 'Hasan & Kabir, Fluid Flow and Heat Transfer in Wellbores ch. 4 (drift-flux example), ±3 % on Δp' },
   { kind: 'ipr', key: 'pi', status: 'pinned', source: 'calc-new oilipr tests (WTS_oilipr_compute)' },
   { kind: 'ipr', key: 'vogel', status: 'pinned', source: 'Ahmed; Brown vol. 1 — calc-new oilipr tests' },
   { kind: 'ipr', key: 'composite', status: 'pinned', source: 'Ahmed — calc-new oilipr tests' },
@@ -118,6 +124,8 @@ function gate(G) {
   if (D) {
     const line = (D.system && D.system.corr && D.system.corr.line) || 'bb';
     if (!REG[line] || REG[line].verified !== true) bad('default line', line + ' is not verified');
+    const secs = D.system && D.system.corr && D.system.corr.sections;
+    if (secs && secs.length) bad('default sections', 'the default model carries per-section correlations (none is the default, D17)');
     const im = D.res && D.res.model;
     if (im && IP[im] && !IP[im].verified) bad('default inflow', im + ' is not verified');
   }
@@ -176,7 +184,7 @@ function checks(G) {
     const M = S.FIX.gasWell; M.fluid.type = 'water'; M.fluid.sgw = 1.07; M.fluid.cgr = 0; M.fluid.wgr = 0;
     const F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res });
     let worst = 0;
-    ['bb', 'hb', 'gray', 'nsl', 'single', 'dr'].forEach((k) => {
+    ['bb', 'hb', 'gray', 'nsl', 'single', 'dr', 'ork', 'agf', 'mb', 'ansari', 'hk'].forEach((k) => {
       const tr = V.traverse(F, W, 1e-6, { from: 'top', p0: 100, corr: k });
       if (!tr.ok) { worst = Infinity; return; }
       // independent: RK2 on the traverse's own MD / TVD stations with the fluid engine's water density
@@ -188,7 +196,7 @@ function checks(G) {
       }
       worst = Math.max(worst, Math.abs(tr.pEnd - p) / (p - 100));
     });
-    add('X1', 'water column, no flow, every correlation, deviated FIX.gasWell path (hydrostatic on TVD)', worst < 1e-4, worst, 1e-4);
+    add('X1', 'water column, no flow, every correlation (incl. the five B correlations), deviated FIX.gasWell path (hydrostatic on TVD)', worst < 1e-4, worst, 1e-4);
   }
   // X2 dry gas: the marcher (gas only) vs the closed-form average T and Z, within 1 %
   {
@@ -196,8 +204,8 @@ function checks(G) {
     const F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res });
     const cf = V.gasDry(F, W, 8000, { from: 'top', p0: 1500 });
     let worst = 0;
-    ['gasTZ', 'gray', 'bb', 'nsl', 'dr', 'gasCS'].forEach((k) => { const tr = V.traverse(F, W, 8000, { from: 'top', p0: 1500, corr: k }); worst = Math.max(worst, tr.ok ? Math.abs(tr.pEnd - cf.pwf) / cf.pwf : Infinity); });
-    add('X2', 'dry gas: marcher (average T-Z and Cullender-Smith entries, Gray, Beggs & Brill, no-slip, Duns & Ros) vs the closed form', worst < 0.01, worst, 0.01);
+    ['gasTZ', 'gray', 'bb', 'nsl', 'dr', 'gasCS', 'ork', 'agf', 'mb', 'ansari', 'hk'].forEach((k) => { const tr = V.traverse(F, W, 8000, { from: 'top', p0: 1500, corr: k }); worst = Math.max(worst, tr.ok ? Math.abs(tr.pEnd - cf.pwf) / cf.pwf : Infinity); });
+    add('X2', 'dry gas: marcher (average T-Z and Cullender-Smith entries, Gray, Beggs & Brill, no-slip, Duns & Ros; B: Orkiszewski, AGF, Mukherjee-Brill, Ansari, Hasan-Kabir) vs the closed form', worst < 0.01, worst, 0.01);
     // X16 (A2, WP12): the Cullender-Smith closed form vs the average T-Z closed form (1 %) and its bottom-up inverse (0.05 psi)
     if (typeof V.gasCS === 'function') {
       const cs = V.gasCS(F, W, 8000, { from: 'top', p0: 1500 }), up = cs.ok ? V.gasCS(F, W, 8000, { from: 'bottom', p0: cs.pwf }) : null;
@@ -365,6 +373,43 @@ function checks(G) {
     const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
     add('X21', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
   }
+  // X22 (B, WP21) per-section correlations: one section over the whole path with key k = the whole-well traverse with k (bit-identical);
+  // sections naming only the base key = no sections; an MD section split with the same key moves the step layout only (< 0.5 psi)
+  {
+    const M = S.FIX.gasWell, F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res });
+    let worst = 0, okId = true;
+    ['mb', 'hk', 'bb'].forEach((k) => {
+      const a = V.traverse(F, W, 7000, { from: 'top', p0: 500, corr: k });
+      const b = V.traverse(F, W, 7000, { from: 'top', p0: 500, corr: 'hb', sections: [{ by: 'inc', from: 0, to: 180, corr: k }] });
+      if (!(a.ok && b.ok) || a.pEnd !== b.pEnd) okId = false;
+      const c = V.traverse(F, W, 7000, { from: 'top', p0: 500, corr: k, sections: [{ by: 'md', from: 3333, to: 6666, corr: k }] });
+      worst = Math.max(worst, c.ok ? Math.abs(c.pEnd - a.pEnd) : Infinity);
+    });
+    const n0 = V.traverse(F, W, 7000, { from: 'top', p0: 500, corr: 'gray' }), n1 = V.traverse(F, W, 7000, { from: 'top', p0: 500, corr: 'gray', sections: [{ by: 'md', from: 0, to: 4000, corr: 'gray' }, { by: 'inc', from: 0, to: 180, corr: 'gray' }] });
+    if (!(n0.ok && n1.ok) || Math.abs(n0.pEnd - n1.pEnd) > 0.5) okId = false;
+    add('X22', 'per-section correlations: one section over the path = that correlation (identical); an MD split with the same key < 0.5 psi', okId && worst < 0.5, worst, 0.5);
+  }
+  // X23 (B, WP21) single-phase liquid at rate: each new correlation = Darcy-Weisbach with Colebrook (0.1 %), vertical water well
+  {
+    const M = S.FIX.gasWell; M.fluid.type = 'water'; M.fluid.sgw = 1.07; M.fluid.cgr = 0; M.fluid.wgr = 0;
+    const F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res });
+    const ref = V.traverse(F, W, 3000, { from: 'top', p0: 200, corr: 'single' });
+    let worst = 0;
+    ['ork', 'agf', 'mb', 'ansari', 'hk'].forEach((k) => { const tr = V.traverse(F, W, 3000, { from: 'top', p0: 200, corr: k }); worst = Math.max(worst, tr.ok && ref.ok ? Math.abs(tr.pEnd - ref.pEnd) / (ref.pEnd - 200) : Infinity); });
+    add('X23', 'single-phase water at 3,000 BWPD: the five B correlations vs Darcy-Weisbach / Colebrook (deviated path)', worst < 0.001, worst, 0.001);
+  }
+  // X24 (B, WP21) direction agreement for each new correlation (oil and wet gas): top-down then bottom-up within 0.5 psi
+  {
+    let worst = 0;
+    ['oilWell', 'gasWell'].forEach((fx) => {
+      const M = S.FIX[fx], F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res }), q = fx === 'oilWell' ? 900 : 7000;
+      ['ork', 'agf', 'mb', 'ansari', 'hk'].forEach((k) => {
+        const d = V.traverse(F, W, q, { from: 'top', p0: 500, corr: k }), u = d.ok ? V.traverse(F, W, q, { from: 'bottom', p0: d.pEnd, corr: k }) : null;
+        worst = Math.max(worst, u && u.ok ? Math.abs(u.pEnd - 500) : Infinity);
+      });
+    });
+    add('X24', 'direction agreement, the five B correlations (oil and wet gas): top-down then bottom-up returns the wellhead pressure', worst < 0.5, worst, 0.5);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -385,6 +430,12 @@ function timing(G) {
     let t0 = nowMs(); V.traverse(F, W, k === 'oilWell' ? 900 : 7000, { from: 'top', p0: 400 }); rec('one traverse', k, 1, BUDGET.traverse, nowMs() - t0);
     // WP12 (A2): one Duns & Ros traverse, and the page's correlation comparison at the operating point (one evaluation per correlation)
     t0 = nowMs(); V.traverse(F, W, k === 'oilWell' ? 900 : 7000, { from: 'top', p0: 400, corr: 'dr' }); rec('one traverse (Duns & Ros)', k, 1, BUDGET.traverse, nowMs() - t0);
+    // WP21 (B): one traverse per new correlation, and a per-section traverse (three correlations along one path: still one march)
+    [['ork', 'Orkiszewski'], ['agf', 'Aziz-Govier-Fogarasi'], ['mb', 'Mukherjee-Brill'], ['ansari', 'Ansari'], ['hk', 'Hasan-Kabir']].forEach(([c, n]) => {
+      t0 = nowMs(); V.traverse(F, W, k === 'oilWell' ? 900 : 7000, { from: 'top', p0: 400, corr: c }); rec('one traverse (' + n + ')', k, 1, BUDGET.traverse, nowMs() - t0);
+    });
+    t0 = nowMs(); V.traverse(F, W, k === 'oilWell' ? 900 : 7000, { from: 'top', p0: 400, corr: 'hb', sections: [{ by: 'md', from: 0, to: 2000, corr: 'ansari' }, { by: 'inc', from: 30, to: 180, corr: 'mb' }] });
+    rec('one traverse, per-section correlations', k, 1, BUDGET.traverse, nowMs() - t0);
     {
       const R0 = SY.solve(M), keys = (V.list() || []).filter((e) => e.kind === 'any' || e.kind === 'well' || (M.fluid.type !== 'oil' && e.kind === 'gas')).map((e) => e.key);
       const t1 = nowMs();

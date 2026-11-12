@@ -234,10 +234,20 @@
         var V = G.WTS_wp_vlp;
         return (V && typeof V.defaultCorr === 'function') ? V.defaultCorr(F).key : 'bb';
     }
+    // per-section correlations (v4.5 WP21): o.sections when given (false / [] = none); else the model's sections when the march uses the
+    // model's own well correlation (pwf / IPR from a test, tuning of the model); the comparison rows are pure (one correlation each)
+    function _secFor(M, F, corr, o) {
+        if (o && o.sections !== undefined) return Array.isArray(o.sections) && o.sections.length ? o.sections : null;
+        var sc = M && M.system && M.system.corr;
+        if (!sc || !Array.isArray(sc.sections) || !sc.sections.length) return null;
+        return String(corr) === _corrOf(M, F, null) ? sc.sections : null;
+    }
     function _march(cx, path, from, p0, corr, o) {
         var sys = cx.M.system || {};
         var to = { from: from, p0: p0, corr: corr, stepFt: (o && +o.stepFt > 0) ? +o.stepFt : (+sys.stepFt > 0 ? +sys.stepFt : 100),
             eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false, pMax: Math.max(p0 * 4, p0 + 10000) };
+        var sec = (o && o._pure) ? null : _secFor(cx.M, cx.F, corr, o);
+        if (sec) to.sections = sec;
         var mult = o && o.mult;
         if (mult && (+mult.hl !== 1 || +mult.f !== 1)) to.mult = { hl: _fin(+mult.hl) ? +mult.hl : 1, f: _fin(+mult.f) ? +mult.f : 1 };
         return G.WTS_wp_vlp.traverse(cx.F, path, cx.flow, to);
@@ -277,7 +287,7 @@
         if (!path) return { ok: false, id: _tid(t, idx), fail: _fail('NO_PATH', 'No flow path between the wellhead and the gauge.') };
         var thpA = thp + PATM, REG = _reg(), res = {};
         keys.forEach(function (k) {
-            var e = REG[k], tr = _march(cx, path, 'top', thpA, k, o), pC = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
+            var e = REG[k], tr = _march(cx, path, 'top', thpA, k, Object.assign({}, o, { _pure: o.sections === undefined })), pC = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
             res[k] = { pCalc: pC, err: pC == null ? null : pC - g.p, errPct: pC == null ? null : 100 * (pC - g.p) / g.p,
                 errPctDp: (pC == null || !(g.p - thpA > 1)) ? null : 100 * (pC - g.p) / (g.p - thpA), lost: !(tr && tr.ok),
                 lostAt: tr && tr.lost ? tr.lost : null, warnings: ((tr && tr.warnings) || []).map(function (w) { return w.code; }),
@@ -677,6 +687,7 @@
             if (!keepProfile && c.memo[mk] !== undefined) return c.memo[mk];
             var so = { from: 'top', p0: c.thpA, corr: key, stepFt: stepFt, eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false,
                 pMax: Math.max(c.thpA * 4, c.thpA + 10000), grid: c.grid };
+            var secT = _secFor(M, c.cx.F, key, o); if (secT) so.sections = secT;
             if (hl !== 1 || f !== 1) so.mult = { hl: hl, f: f };
             var tr = G.WTS_wp_vlp.traverse(c.cx.F, c.path, c.cx.flow, so);
             nEval++;

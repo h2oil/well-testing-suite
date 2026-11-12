@@ -340,6 +340,14 @@
         '#wp_root .wp-cdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:0}' +
         '#wp_root .wp-cmpt tr.wp-sel td{background:rgba(240,136,62,.08)}#wp_root .wp-cmpt tr.wp-sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}#wp_root .wp-cmpt tr.wp-cf td{color:var(--text2)}' +
         '#wp_root .wp-cmpt td:first-child{white-space:normal;min-width:190px}#wp_root .wp-cmpt td:nth-child(5){white-space:normal}' +
+        // v4.5 WP21: pattern strips along the well (comparison rows), the map-kind switch, the per-section editor and its chips
+        '#wp_root .wp-pstrip{display:block;width:100%;min-width:96px;height:16px;border-radius:4px;overflow:hidden;background:var(--bg3)}#wp_root .wp-pstrip rect{transition:opacity .15s}#wp_root .wp-pstrip:hover rect{opacity:.85}' +
+        '#wp_root .wp-mapk{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}#wp_root .wp-mapk button{font-size:11.5px;padding:4px 10px}' +
+        '#wp_root .wp-secbar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:6px 0 4px;border:1px solid var(--border);background:var(--bg3)}#wp_root .wp-secbar i{display:block;height:100%;min-width:2px;transition:flex-grow .25s ease}' +
+        '#wp_root .wp-seclg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;color:var(--text2);margin-bottom:6px}#wp_root .wp-seclg b{color:var(--text);font-weight:600}' +
+        '#wp_root td.wp-seccov{white-space:normal;min-width:150px;font-size:11.5px;line-height:1.35}' +
+        '#wp_root #wp_tbl_corrSections select[data-c="by"]{width:74px}#wp_root #wp_tbl_corrSections input{width:76px}#wp_root #wp_tbl_corrSections select[data-c="corr"]{min-width:128px}' +
+        '@media (prefers-reduced-motion: reduce){#wp_root .wp-secbar i,#wp_root .wp-pstrip rect{transition:none}}' +
         '#wp_root .wp-cmpt .wp-use{padding:3px 10px;font-size:11.5px}#wp_root .wp-cmpt tbody tr{transition:background .15s}#wp_root .wp-cmpt tbody tr:hover td{background:rgba(139,148,158,.08)}' +
         '#wp_root .wp-heat{margin:12px 0 4px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--red,#f85149);border-radius:8px;background:var(--bg3);transition:border-color .2s,opacity .2s}' +
         '#wp_root .wp-heat .wp-heat-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:6px 14px;margin:6px 0 8px}' +
@@ -419,6 +427,13 @@
         restrictions: function () { return [{ k: 'kind', l: 'Kind', opts: [['sssv', 'SSSV'], ['nipple', 'Nipple'], ['sleeve', 'Sleeve'], ['xo', 'Cross-over'], ['downholeChoke', 'Downhole choke']] }, { k: 'md', l: 'MD', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'k', l: 'K (opt.)', u: '' }]; },
         geo: function () { return [{ k: 0, l: 'TVD', cat: 'length', u: 'ft' }, { k: 1, l: 'Temperature', cat: 'temperature', u: '°F' }]; },
         flowline: function () { return [{ k: 'name', l: 'Name', text: true }, { k: 'len', l: 'Length', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'dz', l: 'Rise', cat: 'length', u: 'ft' }]; },
+        // v4.5 WP21: per-section correlations — 'From' / 'To' are MD (length) on an MD-interval row and degrees from vertical on an
+        // inclination-band row (catOf: the unit follows the row's By cell)
+        corrSections: function (M) {
+            var gas = M && _isGasType(M.fluid.type);
+            return [{ k: 'by', l: 'By', opts: [['md', 'MD'], ['inc', 'Incl.']] }, { k: 'from', l: 'From', catOf: _secCat, uh: _secU }, { k: 'to', l: 'To', catOf: _secCat, uh: _secU },
+                    { k: 'corr', l: 'Correlation', opts: _corrList('well').filter(function (c) { return gas || (c.key !== 'gasTZ' && c.key !== 'gasCS'); }).map(function (c) { return [c.key, _corrShortL(c.key).replace(/\s*\(.*$/, '') + (c.verified ? '' : ' (prov.)')]; }) }];
+        },
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
                     { k: 'q_g', l: 'Gas', cat: 'gasRateSmall', u: 'Mscf/d' }, { k: 'thp_psig', l: 'THP', cat: 'pressureG', u: 'psig' }, { k: 'tht_F', l: 'THT', cat: 'temperature', u: '°F' },
@@ -433,25 +448,29 @@
         if (t === 'geo') return ((M.well.geo && M.well.geo.points) || []).map(function (r) { return r.slice(); });
         if (t === 'flowline') return (M.surface.flowline || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'tests') return (M.tests || []).map(function (r) { return Object.assign({}, r); });
+        if (t === 'corrSections') return ((M.system.corr && M.system.corr.sections) || []).map(function (r) { return Object.assign({}, r); });
         return [];
     }
-    function _cellVal(c, v) {
+    function _secCat(r) { return r && r.by === 'inc' ? null : 'length'; }
+    function _secU() { return _lab('length', 'ft') + ' or °'; }
+    function _cCat(c, r) { return c.catOf ? c.catOf(r) : c.cat; }
+    function _cellVal(c, v, r) {
         if (c.opts || c.text) return v == null ? '' : String(v);
         if (!_fin(v)) return '';
-        var d = _dv(v, c.cat);
+        var d = _dv(v, _cCat(c, r));
         return String(Math.round(d * 1e4) / 1e4);
     }
     function _renderTable(t) {
         var host = _byId('wp_tbl_' + t); if (!host) return;
         var M = ST.M || _read(), cols = TABLES[t](M), rows = _tableRows(M, t), extra = _extraCols(t, M);
         var h = '<div class="wp-tw"><table class="dtable wp-ed" data-t="' + t + '"><thead><tr>' + cols.map(function (c) {
-            return '<th>' + _esc(c.l) + (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '') + '</th>';
+            return '<th>' + _esc(c.l) + (c.uh ? ' <span class="wp-u">(' + _esc(c.uh()) + ')</span>' : (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '')) + '</th>';
         }).join('') + (extra ? extra.head.map(function (x) { return '<th>' + x + '</th>'; }).join('') : '') + '<th></th></tr></thead><tbody>';
         var rowHtml = function (r, i) {
             return '<tr data-r="' + i + '">' + cols.map(function (c) {
                 var v = r ? (Array.isArray(r) ? r[c.k] : r[c.k]) : null;
                 if (c.opts) return '<td><select data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '">' + c.opts.map(function (o) { return '<option value="' + o[0] + '"' + (String(v) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></td>';
-                return '<td><input data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '" ' + (c.text ? 'type="text"' : 'type="number" step="any" inputmode="decimal"') + ' value="' + _esc(_cellVal(c, v)) + '"></td>';
+                return '<td><input data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '" ' + (c.text ? 'type="text"' : 'type="number" step="any" inputmode="decimal"') + ' value="' + _esc(_cellVal(c, v, r)) + '"></td>';
             }).join('') + (extra ? extra.cells(r, i) : '') + '<td><button type="button" class="btn btn-secondary wp-del" data-del="' + t + '" data-r="' + i + '" aria-label="Delete row" title="Delete row">&#10005;</button></td></tr>';
         };
         rows.forEach(function (r, i) { h += rowHtml(r, i); });
@@ -467,6 +486,7 @@
         if (t === 'strings') return { n: 2, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.topMd : null) + _tvdCell(r ? r.botMd : null); } };
         if (t === 'restrictions') return { n: 1, head: ['TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.md : null); } };
         if (t === 'tests') return { n: 1, head: ['Gauge TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.gaugeMd : null); } };
+        if (t === 'corrSections') return { n: 1, head: ['Covers (MD · TVD, inclination)'], cells: function (r, i) { return '<td class="ro wp-seccov">' + _secCover(i) + '</td>'; } };
         return null;
     }
     function _surveyExtra(M) {
@@ -505,7 +525,7 @@
             cols.forEach(function (c) {
                 var e = tr.querySelector('[data-c="' + c.k + '"]'); if (!e) return;
                 var raw = String(e.value == null ? '' : e.value).trim(), v;
-                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = _fromDisp(v, c.cat); }
+                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = _fromDisp(v, _cCat(c, row)); }
                 if (v !== null && v !== '' && !c.opts) any = true;
                 row[c.k] = v;
             });
@@ -529,7 +549,11 @@
     function _read() {
         var Mm = G.WTS_wp_model;
         if (!Mm || typeof Mm.read !== 'function') return null;
-        try { return Mm.read({ scalars: _byId('wp_root') ? _liveScalars() : undefined }); } catch (e) { return null; }
+        var M0; try { M0 = Mm.read({ scalars: _byId('wp_root') ? _liveScalars() : undefined }); } catch (e) { return null; }
+        // v4.5 WP21: while a section boundary is dragged on the traverse plot, the dragged rows stand in for the stored ones (the
+        // release writes them through WTS_wp_model.write)
+        if (M0 && ST.secLive) { M0 = JSON.parse(JSON.stringify(M0)); M0.system.corr.sections = ST.secLive; }
+        return M0;
     }
     function _isGasType(t) { return t === 'gas' || t === 'condensate' || t === 'gasinj'; }
 
@@ -728,7 +752,7 @@
         if (!out.ipr.length && I && I.ok && Array.isArray(I.curve)) out.ipr = I.curve.map(function (c) { return [c.q, c.pwf]; }).sort(function (a, b) { return a[0] - b[0]; });
         if (!out.vlp.length && R && R.ok && ST.M && ST.M.surface.choke.present === false && ST.F && ST.W && ST.W.ok && _fn('WTS_wp_vlp.curve') && I && I.ok && _fin(I.aof)) {
             var qList = []; for (var i = 1; i <= 16; i++) qList.push(I.aof * i / 17);
-            var thp = ST.M.system.thp_psig, c = _call('WTS_wp_vlp.curve', ST.F, ST.W, { qList: qList, p0: _fin(thp) ? thp + PATM : null, corr: ST.M.system.corr.well, coarse: true });
+            var thp = ST.M.system.thp_psig, c = _call('WTS_wp_vlp.curve', ST.F, ST.W, { qList: qList, p0: _fin(thp) ? thp + PATM : null, corr: ST.M.system.corr.well, sections: ST.M.system.corr.sections, coarse: true });
             if (Array.isArray(c)) out.vlp = c.filter(function (x) { return _fin(x.pwf); }).map(function (x) { return [x.q, x.pwf]; });
         }
         return out;
@@ -788,7 +812,50 @@
             onHandle: _onHandle
         });
     }
+    // ── v4.5 WP21: per-section correlations on the page ──
+    function _secRows(M) { return ((M && M.system.corr && M.system.corr.sections) || []).map(function (r) { return Object.assign({}, r); }); }
+    function _secRuns() { var R = ST.R; return (R && R.ok && R.traverse && R.traverse.sections) || null; }
+    function _secSummary(runs) {
+        if (!runs || !runs.length) return '';
+        return runs.map(function (x) { return _corrShort(x.corr) + ' ' + _fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0); }).join(' · ') + ' ' + _lab('length', 'ft') + ' MD';
+    }
+    // the "Covers" cell of section row i: the MD · TVD intervals and inclinations its correlation got on the solved path
+    function _secCover(i) {
+        var runs = _secRuns(); if (!runs) return '—';
+        var mine = runs.filter(function (x) { return x.row === i; });
+        if (!mine.length) return ST.R && ST.R.ok ? '<span title="this row covers no part of the flow path, or an earlier row covers it">none</span>' : '—';
+        return mine.map(function (x) { return _esc(_fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0) + ' MD · ' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD ' + _lab('length', 'ft') + ', ' + _fmt(x.incMin, 0) + (Math.abs(x.incMax - x.incMin) >= 0.5 ? '–' + _fmt(x.incMax, 0) : '') + '°'); }).join('<br>');
+    }
+    function _refreshSecCover() {
+        var tbl = _byId('wp_tbl_corrSections'); if (tbl && tbl.querySelectorAll) Array.prototype.forEach.call(tbl.querySelectorAll('tbody tr'), function (tr, i) { var c = tr.querySelector('td.wp-seccov'); if (c) c.innerHTML = _secCover(i); });
+        var bar = _byId('wp_secbar'); if (!bar) return;
+        var runs = _secRuns(), R = ST.R;
+        var all = runs || (R && R.ok && R.traverse && R.traverse.profile.length ? [{ corr: _selCorr(), mdTop: R.traverse.profile[0].md, mdBot: R.traverse.profile[R.traverse.profile.length - 1].md, verified: true }] : []);
+        var span = all.length ? (all[all.length - 1].mdBot - all[0].mdTop) || 1 : 1, seen = {};
+        bar.innerHTML = all.length ? '<div class="wp-secbar" role="img" aria-label="' + _esc('Correlations along the flow path: ' + (runs ? _secSummary(runs) : _corrShortL(all[0].corr) + ' throughout')) + '">' +
+            all.map(function (x) { return '<i style="flex-grow:' + Math.max(0.001, (x.mdBot - x.mdTop) / span).toFixed(4) + ';background:' + _corrCol(x.corr) + '" title="' + _esc(_corrShortL(x.corr) + ': ' + _fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0) + ' ' + _lab('length', 'ft') + ' MD' + (_fin(x.tvdTop) ? ' · ' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD' : '')) + '"></i>'; }).join('') + '</div>' +
+            '<div class="wp-seclg">' + all.filter(function (x) { if (seen[x.corr]) return false; seen[x.corr] = 1; return true; }).map(function (x) { var e = (G.WTS_flowline_corr || {})[x.corr]; return '<span><i class="wp-cdot" style="background:' + _corrCol(x.corr) + '"></i><b>' + _esc(_corrShortL(x.corr)) + '</b>' + (e && e.verified !== true ? ' <span class="wp-chip prov">prov.</span>' : '') + '</span>'; }).join('') +
+            '<span>wellhead → bottom along MD' + (runs ? '' : ' (one correlation)') + '</span></div>' : '';
+    }
+    function _secPreset(v) {
+        var rows = v === 'dev' ? [{ by: 'inc', from: 30, to: 180, corr: 'mb' }] : v === 'mech' ? [{ by: 'inc', from: 0, to: 30, corr: 'ansari' }, { by: 'inc', from: 30, to: 180, corr: 'hk' }] : [];
+        _writeTable('corrSections', rows); _renderTable('corrSections');
+    }
+    // dragging a section boundary (MD interval rows) on the traverse plot: live tracking solves, the release writes the table
+    function _secHandle(key, v, phase) {
+        var m = /^sec(\d+)([ft])$/.exec(key); if (!m) return;
+        var i = +m[1], fld = m[2] === 'f' ? 'from' : 'to', rows = ST.secLive ? ST.secLive.map(function (r) { return Object.assign({}, r); }) : _secRows(ST.M);
+        if (!rows[i]) return;
+        var dft = _fromDisp(v, 'length'), mdv = _plots().depth === 'md' ? dft : _mdFromTvd(dft), md = Math.max(0, Math.round((_fin(mdv) ? mdv : dft) / 10) * 10);
+        if (fld === 'from' && _fin(rows[i].to)) md = Math.min(md, rows[i].to - 10);
+        if (fld === 'to' && _fin(rows[i].from)) md = Math.max(md, rows[i].from + 10);
+        rows[i][fld] = md;
+        if (phase === 'end') { ST.secLive = null; _writeTable('corrSections', rows); _renderTable('corrSections'); return; }
+        ST.secLive = rows;
+        if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
+    }
     function _onHandle(key, v, phase) {
+        if (/^sec\d+[ft]$/.test(key)) { _secHandle(key, v, phase); return; }
         var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer' }[key]; if (!id) return;
         var canon;
         if (key === 'hU' || key === 'hT') canon = +Math.pow(10, v).toPrecision(3);   // the heat rails are on log10 scales
@@ -822,6 +889,7 @@
             fmt: { depthTick: _depthFmt, md: function (v) { return _u(v, 'length', 0, 'ft'); }, p: function (v) { return _fmt(_dv(v, 'pressure'), 0); }, t: function (v) { return _fmt(_dv(v, 'temperature'), 0); }, dte: function (v) { return _tempDiff(v); }, hl: function (v) { return _fmt(v, 2); }, vm: function (v) { return _fmt(_dv(v, 'velocity'), 1); } },
             labels: { tvd: 'TVD (' + _lab('length', 'ft') + ')', vs: 'Vertical section (' + _lab('length', 'ft') + '), equal scale', closure: '', earth: 'halo: earth (geotherm)', prop: { pressure: 'Pressure (' + _lab('pressure', 'psia') + ')', temperature: 'Temperature (' + _lab('temperature', '°F') + ')', heatloss: 'Fluid − earth (' + _lab('tempDiff', '°F') + ')', holdup: 'Liquid holdup (–)', velocity: 'Mixture velocity (' + _lab('velocity', 'ft/s') + ')', pattern: 'Flow pattern', none: '' }[prop] },
             empty: (ST.stubs && ST.stubs.indexOf('WTS_wp_well.build') !== -1) || _isStub(ST.SC) ? 'The well path engine draws the deviated well here once it is installed.' : 'Enter a survey and the strings (step ③) to draw the well.',
+            bands: (_secRuns() || []).map(function (x) { return { mdTop: x.mdTop, mdBot: x.mdBot, color: _corrCol(x.corr), label: _corrShort(x.corr), title: _corrShortL(x.corr) + ' ' + _mdTvdTxt(x.mdTop, x.tvdTop) + ' to ' + _mdTvdTxt(x.mdBot, x.tvdBot) }; }),
             marks: (ST.R && ST.R.ok && ST.R.lift && _fin(ST.R.lift.injMd)) ? [{ md: ST.R.lift.injMd, kind: 'gl', comp: 'gl', label: 'gas lift ' + _mdTvdTxt(ST.R.lift.injMd, ST.R.lift.injTvd), color: '#58a6ff' }].concat(_fin(ST.R.lift.packerMd) ? [{ md: ST.R.lift.packerMd, kind: 'packer', label: 'packer' }] : []) : [],
             aria: 'Well schematic: vertical section and plan view, coloured by ' + prop
         };
@@ -830,6 +898,7 @@
         host.innerHTML = out.svg;
         var mt = _multOf(ST.M), tr0 = ST.tune && ST.tune.ok ? ST.tune : null;
         if (mt.tuned) closure += (closure ? ' · ' : '') + 'VLP tuned: m_h ' + _fx(mt.hl, 3) + ', m_f ' + _fx(mt.f, 3) + (tr0 && Math.abs(tr0.mult.hl - mt.hl) < 1e-5 && Math.abs(tr0.mult.f - mt.f) < 1e-5 ? ' (RMS ' + _fx(_dv(tr0.rms.tuned, 'pressure'), 1) + ' ' + _lab('pressure', 'psi') + ' at the gauge' + (tr0.residuals.length === 1 && _fin(tr0.residuals[0].gauge.tvd) ? ', ' + _u(tr0.residuals[0].gauge.md, 'length', 0, 'ft') + ' MD · ' + _u(tr0.residuals[0].gauge.tvd, 'length', 0, 'ft') + ' TVD' : '') + ')' : '');
+        var sr0 = _secRuns(); if (sr0) closure += (closure ? ' · ' : '') + 'correlations by section: ' + _secSummary(sr0);
         var cap = _byId('wp_sch_cap'); if (cap) cap.textContent = closure;
     }
     function _schAt(md) {
@@ -1117,6 +1186,7 @@
         row('Temperature', hx ? 'relaxation (Ramey / Hasan-Kabir), U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' (' + (hx.Ubasis === 'ti' ? 'inside' : 'outside') + ' radius), ' + _fmt(hx.tProd_d, 0) + ' d, k_e ' + _u(hx.ke, 'thermalConductivity', 2, 'Btu/hr·ft·°F') + ', α ' + _fmt(hx.alpha, 3) + ' ft²/hr, A ' + _u(hx.A, 'length', 0, 'ft') + ' · geotherm ' + _u(M.well.geo.surfT_F, 'temperature', 0, '°F') + ' at surface'
             : (M.well.heat.mode === 'relax' ? 'relaxation asked, linear used (no geotherm)' : 'linear, THT ' + (_fin(M.well.heat.tht_F) ? _u(M.well.heat.tht_F, 'temperature', 0, '°F') + (M.well.heat.thtMeasured ? ' measured' : ' estimated') : 'not entered (static geotherm)') + ' → BHT'));
         row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
+        var srn = _secRuns(); if (srn) row('Per-section correlations', srn.map(function (x) { return CORR_NAME(x.corr) + ' ' + _u(x.mdTop, 'length', 0, 'ft') + '–' + _u(x.mdBot, 'length', 0, 'ft') + ' MD (' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD, ' + _fmt(x.incMin, 0) + '–' + _fmt(x.incMax, 0) + '°)'; }).join('; '));
         var mc = _multOf(M); if (mc.tuned) row('VLP multipliers', 'holdup m_h ' + _fx(mc.hl, 3) + ' · friction m_f ' + _fx(mc.f, 3) + (ST.tune && ST.tune.ok && Math.abs(ST.tune.mult.hl - mc.hl) < 1e-5 && Math.abs(ST.tune.mult.f - mc.f) < 1e-5 ? ' (tuned to ' + (ST.tune.tests || []).join(', ') + ')' : ''));
         h.innerHTML = '<div class="rbox-title">Case summary</div>' + rows.join('');
         _renderStudies();
@@ -1475,6 +1545,26 @@
                 }
                 if (_fin(gl.packerMd)) trH.push({ key: 'packer', kind: 'railY', value: _dv(dax === 'md' ? gl.packerMd : (_fin(gl.packerTvd) ? gl.packerTvd : gl.packerMd), 'length'), min: 0, max: _dv(dax === 'md' ? gl.packerMd * 1.5 + 1000 : (gl.packerTvd || gl.packerMd) * 1.5 + 1000, 'length'), step: _metric() ? 5 : 10, label: 'Packer', railLabel: 'PKR', color: T.text2, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('length', 'ft') + ' ' + (dax === 'md' ? 'MD' : 'TVD'); } });
             }
+            // v4.5 WP21: per-section correlations — a line at each change of correlation (MD · TVD, the correlation below) and a knob on
+            // the right rail for each MD-interval end inside the path (drag: the boundary moves and the well re-solves live)
+            var sruns = ok ? _secRuns() : null;
+            if (sruns) {
+                var mdEnd = prof.length ? prof[prof.length - 1].md : 0, knobAt = {};
+                _secRows(ST.M).forEach(function (r) { if (r.by === 'md') [r.from, r.to].forEach(function (v) { if (_fin(v) && v > 0 && v < mdEnd) knobAt[Math.round(v)] = 1; }); });
+                // a boundary with a knob is named by the knob (no second label on the line)
+                sruns.forEach(function (x, j) { if (j === 0) return; trHl.push({ y: _dv(dax === 'md' ? x.mdTop : x.tvdTop, 'length'), label: (knobAt[Math.round(x.mdTop)] || _phone()) ? '' : '↓ ' + _corrShort(x.corr) + ' from ' + _u(x.mdTop, 'length', 0, 'ft') + ' MD · ' + _u(x.tvdTop, 'length', 0, 'ft') + ' TVD', color: _corrCol(x.corr), dash: [6, 3] }); });
+                _secRows(ST.M).forEach(function (r, i) {
+                    if (r.by !== 'md' || trH.length >= 4) return;
+                    [['f', r.from], ['t', r.to]].forEach(function (e2) {
+                        if (!_fin(e2[1]) || e2[1] <= 0 || e2[1] >= mdEnd || trH.length >= 4) return;
+                        var yv = dax === 'md' ? e2[1] : _tvdAt(e2[1]);
+                        if (!_fin(yv)) return;
+                        trH.push({ key: 'sec' + i + e2[0], kind: 'railY', value: _dv(yv, 'length'), min: 0, max: _dv(dax === 'md' ? mdEnd : (_tvdAt(mdEnd) || mdEnd), 'length'), step: _metric() ? 3 : 10,
+                            label: _corrShort(r.corr) + (e2[0] === 'f' ? ' top' : ' bottom'), railLabel: 'SEC', color: _corrCol(r.corr),
+                            fmt: function (v2) { var d2 = _fromDisp(v2, 'length'), mdv = dax === 'md' ? d2 : _mdFromTvd(d2), tv = _tvdAt(_fin(mdv) ? mdv : d2); return _fmt(_dv(_fin(mdv) ? mdv : d2, 'length'), 0) + ' MD' + (_phone() ? '' : ' · ' + (_fin(tv) ? _fmt(_dv(tv, 'length'), 0) : '—') + ' TVD') + ' ' + _lab('length', 'ft'); } });
+                    });
+                });
+            }
             var gp = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(t.gaugeMd) && _fin(t.gauge_psia); });
             if (gp.length && ST.SC && ST.SC.trajectory) ser.push({ key: 'g', label: 'Gauge (tests)', kind: 'points', color: T.green, r: 5, pts: gp.map(function (t) { return [_dv(t.gauge_psia, 'pressure'), _dv(dax === 'md' ? t.gaugeMd : (_fin(_schAt(t.gaugeMd).tvd) ? _schAt(t.gaugeMd).tvd : t.gaugeMd), 'length')]; }) });
             spec = { key: 'trav:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
@@ -1494,6 +1584,7 @@
                       fmt: function (v) { var d = Math.pow(10, v); return d < 1 ? _fmt(d * 24, 0) + ' h' : _fmt(d, d < 10 ? 1 : 0) + ' d'; } }];
                 // a phone-width chart has room for one rail: U across the full width (the producing time stays a step ③ input)
                 if (_phone()) { spec.handles = spec.handles.slice(0, 1); spec.handles[0].rail = [0, 1]; }
+                spec.handles = spec.handles.concat(trH.filter(function (h) { return /^sec/.test(h.key); }));      // the section knobs stay (WP21)
                 spec.onHandle = _onHandle;
             }
         }
@@ -1518,11 +1609,17 @@
     // is opened and cached per solve (≈ 1 evaluation per correlation).
     // "Flow-regime map": the operating-point traverse of the selected correlation placed on the Ros map (N_Lv, N_gv; WTS_wp_vlp.drMap)
     // with the region boundaries at the median N_d; hover a station for its MD / TVD, groups and region.
-    var CORR_SHORT = { bb: 'B&B', hb: 'H&B', gray: 'Gray', nsl: 'No-slip', dr: 'D&R', gasTZ: 'T-Z', gasCS: 'C-S', single: '1-phase' };
+    var CORR_SHORT = { bb: 'B&B', hb: 'H&B', gray: 'Gray', nsl: 'No-slip', dr: 'D&R', gasTZ: 'T-Z', gasCS: 'C-S', single: '1-phase', ork: 'Ork', agf: 'AGF', mb: 'M&B', ansari: 'Ansari', hk: 'H&K', __sec: 'Per-section' };
+    var CORR_SHORT_L = { bb: 'Beggs & Brill', hb: 'Hagedorn & Brown', gray: 'Gray', nsl: 'No-slip', dr: 'Duns & Ros', gasTZ: 'Average T-Z (gas)', gasCS: 'Cullender-Smith (gas)', single: 'Single phase',
+        ork: 'Orkiszewski', agf: 'Aziz-Govier-Fogarasi', mb: 'Mukherjee-Brill', ansari: 'Ansari (mechanistic)', hk: 'Hasan-Kabir (drift flux)' };
+    function _corrShortL(k) { return CORR_SHORT_L[k] || String(_corrLabel(k) || k || '').replace(/\s*\(.*$/, ''); }
+    // one stable colour per correlation key (the schematic section band, the section bar and the boundary labels)
+    var CORR_COL = { bb: '#f0883e', hb: '#58a6ff', gray: '#bc8cff', nsl: '#8b949e', single: '#8b949e', dr: '#3fb950', gasTZ: '#d29922', gasCS: '#e6edf3', ork: '#39c5cf', agf: '#ff7b72', mb: '#d2a8ff', ansari: '#7ee787', hk: '#ffa657' };
+    function _corrCol(k) { return CORR_COL[k] || '#6e7681'; }
     var REGION_TXT = { I: 'Region I — bubble / plug', II: 'Region II — slug', transition: 'Transition', III: 'Region III — mist', single: 'Single phase' };
     var REGION_PAT = { I: 'bubble', II: 'slug', transition: 'transition', III: 'mist', single: 'single' };
     function _corrShort(k) { return CORR_SHORT[k] || String(k).slice(0, 8); }
-    function _corrPal(T) { return [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, '#39c5cf', T.text2]; }
+    function _corrPal(T) { return [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, '#39c5cf', T.text2, '#ff7b72', '#d2a8ff', '#7ee787', '#ffa657', '#79c0ff', '#f778ba']; }
     function _corrLabel(k) { var e = (G.WTS_flowline_corr || {})[k]; return (e && e.label) || k; }
     function _gasOnlyCorr(e) { return !!(e && (e.key === 'gasTZ' || e.key === 'gasCS' || (e.range && e.range.note === 'gas only'))); }
     function _cmpSet(M) {
@@ -1538,16 +1635,48 @@
         if (a.length && out[out.length - 1].md !== a[a.length - 1].md) out.push({ md: a[a.length - 1].md, tvd: a[a.length - 1].tvd, p: a[a.length - 1].p });
         return out;
     }
+    // the flow-pattern runs of a traverse along MD (top → bottom) and their strip (an inline SVG: MD left → right; the per-section row
+    // carries the correlation runs as a thin bar above its patterns)
+    function _patRuns(prof) {
+        var V = G.WTS_wp_view, out = [];
+        (prof || []).forEach(function (r) {
+            if (r.restr || !_fin(r.md)) return;
+            var k = V ? V.patternKey(r.pattern) : String(r.pattern || ''), l = out[out.length - 1];
+            if (l && l.k === k) l.b = r.md; else out.push({ a: l ? l.b : r.md, b: r.md, k: k });
+        });
+        return out.filter(function (x) { return x.b > x.a; });
+    }
+    function _patStrip(r) {
+        var V = G.WTS_wp_view, pr = r.pruns || [];
+        if (!V || !pr.length) return '';
+        var a0 = pr[0].a, z = pr[pr.length - 1].b, span = (z - a0) || 1, top = r.cruns && r.cruns.length ? 5 : 0, g = '', tip = [];
+        (r.cruns || []).forEach(function (c) { g += '<rect x="' + (100 * (c.a - a0) / span).toFixed(2) + '" y="0" width="' + Math.max(0.4, 100 * (c.b - c.a) / span).toFixed(2) + '" height="4" fill="' + _corrCol(c.k) + '"/>'; });
+        pr.forEach(function (x) {
+            g += '<rect x="' + (100 * (x.a - a0) / span).toFixed(2) + '" y="' + top + '" width="' + Math.max(0.4, 100 * (x.b - x.a) / span).toFixed(2) + '" height="' + (16 - top) + '" fill="' + (V.PATTERN_COLORS[x.k] || '#6e7681') + '"/>';
+            tip.push(x.k + ' ' + _fmt(_dv(x.a, 'length'), 0) + '–' + _fmt(_dv(x.b, 'length'), 0) + ' ' + _lab('length', 'ft') + ' MD');
+        });
+        return '<svg class="wp-pstrip" viewBox="0 0 100 16" preserveAspectRatio="none" role="img" aria-label="' + _esc('Flow pattern along the well: ' + tip.join('; ')) + '"><title>' + _esc(tip.join('\n')) + '</title>' + g + '</svg>';
+    }
     function _corrCmp() {
         var R = ST.R, M = ST.M; if (!(R && R.ok && R.op && R.traverse && R.traverse.ok && M)) return null;
         var key = _cmpKey();
         if (ST.cmp && ST.cmp.key === key) return ST.cmp;
-        var sel = _selCorr(), q = R.op.q, thp = R.traverse.pTop, rows = [], t0 = _now();
+        var sel0 = _selCorr(), q = R.op.q, thp = R.traverse.pTop, rows = [], t0 = _now();
+        // v4.5 WP21: with per-section correlations in use the solve's own traverse is the "Per-section" row and every correlation row is
+        // marched pure (one correlation over the whole path)
+        var secRuns = (R.traverse.sections && R.traverse.sections.length) ? R.traverse.sections : null, sel = secRuns ? '__sec' : sel0;
+        if (secRuns) {
+            var dE = 0, dFs = 0, dAs = 0, pz = {}; (R.traverse.segments || []).forEach(function (s0) { dE += +s0.dpEl || 0; dFs += +s0.dpF || 0; dAs += +s0.dpAcc || 0; });
+            R.traverse.profile.forEach(function (p0) { if (p0.pattern) pz[p0.pattern] = (pz[p0.pattern] || 0) + 1; });
+            rows.push({ key: '__sec', label: 'Per-section correlations (in use)', verified: secRuns.every(function (x) { return x.verified; }), vertical: false, gasOnly: false, sel: true,
+                pwf: R.traverse.pEnd, dpEl: dE, dpF: dFs, dpAcc: dAs, patterns: Object.keys(pz).sort(function (a, b) { return pz[b] - pz[a]; }).slice(0, 2),
+                profile: _decim(R.traverse.profile, 90), pruns: _patRuns(R.traverse.profile), cruns: secRuns.map(function (x) { return { a: x.mdTop, b: x.mdBot, k: x.corr }; }), err: null });
+        }
         _cmpSet(M).forEach(function (e) {
             var tr = null, err = null;
             if (e.key === sel) tr = R.traverse;
             else {
-                var Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = e.key; Mc.system.node = 'bottom';
+                var Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = e.key; Mc.system.node = 'bottom'; Mc.system.corr.sections = [];
                 var r = _call('WTS_wp_system.evalAt', Mc, q);
                 if (r && r.tr && r.tr.ok) tr = r.tr; else err = (r && ((r.errors || [])[0] || (r.lost && 'the traverse is lost (' + r.lost.reason + ')'))) || 'no traverse';
             }
@@ -1556,7 +1685,7 @@
             var pats = {}; if (tr) tr.profile.forEach(function (p) { if (p.pattern) pats[p.pattern] = (pats[p.pattern] || 0) + 1; });
             rows.push({ key: e.key, label: e.label, verified: e.verified === true, vertical: !!e.vertical, gasOnly: _gasOnlyCorr(e), sel: e.key === sel,
                 pwf: tr ? tr.pEnd : null, dpEl: tr ? dEl : null, dpF: tr ? dF : null, dpAcc: tr ? dA : null, patterns: Object.keys(pats).sort(function (a, b) { return pats[b] - pats[a]; }).slice(0, 2),
-                profile: tr ? _decim(tr.profile, 90) : [], err: err });
+                profile: tr ? _decim(tr.profile, 90) : [], pruns: tr ? _patRuns(tr.profile) : [], err: err });
         });
         var selRow = rows.filter(function (r) { return r.sel; })[0], pSel = selRow && _fin(selRow.pwf) ? selRow.pwf : null;
         rows.forEach(function (r) { r.dp = (_fin(r.pwf) && _fin(pSel)) ? r.pwf - pSel : null; r.dpPct = (_fin(r.dp) && pSel > 0) ? 100 * r.dp / (pSel - thp) : null; });
@@ -1574,12 +1703,12 @@
     // the operating point of every correlation: a Job of warm tracking solves (≈ 5 evaluations each) from the current operating point
     function _corrOpJob() {
         var R = ST.R, M = ST.M, C = _corrCmp(); if (!C) return null;
-        var list = C.rows.filter(function (r) { return !r.sel; }).map(function (r) { return r.key; }), i = 0, out = {};
+        var list = C.rows.filter(function (r) { return !r.sel && r.key !== '__sec'; }).map(function (r) { return r.key; }), i = 0, out = {};
         out[C.sel] = { ok: true, q: R.op.q, p: R.op.p, stable: R.op.stable !== false };
         return {
             step: function () {
                 if (i < list.length) {
-                    var k = list[i++], Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = k;
+                    var k = list[i++], Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = k; Mc.system.corr.sections = [];
                     var r = _call('WTS_wp_system.solve', Mc, { track: { q: R.op.q, slope: R.op.dDdq } });
                     out[k] = (r && r.ok && r.op) ? { ok: true, q: r.op.q, p: r.op.p, stable: r.op.stable !== false } : { ok: false, msg: (r && ((r.errors || [])[0] || r.code)) || 'no operating point' };
                 }
@@ -1598,12 +1727,14 @@
         var C = _corrCmp(), R = ST.R, M = ST.M, dl = _lab('length', 'ft'), pal = _corrPal(T), ser = [], markers = [];
         var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
         if (C) {
-            C.rows.forEach(function (r, i) { if (r.profile.length) ser.push({ key: 'c_' + r.key, label: _corrShort(r.key) + (r.sel ? ' (selected)' : '') + (r.verified ? '' : ' · prov.'), color: pal[i % pal.length], width: r.sel ? 3 : 1.7, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
+            // a phone-width chart keeps the legend to the selected row (the table below carries every colour)
+            var ph = _phone();
+            C.rows.forEach(function (r, i) { if (r.profile.length) ser.push({ key: 'c_' + r.key, label: _corrShort(r.key) + (r.sel ? ' (selected)' : '') + (r.verified ? '' : ' · prov.'), legend: !ph || r.sel, color: pal[i % pal.length], width: r.sel ? 3 : 1.7, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
             if (C.cf && C.cf.cs && C.cf.cs.stations) {
                 var st = C.cf.cs.stations, stp = Math.max(1, Math.ceil(st.length / 24)), pts = [];
                 for (var j = 0; j < st.length; j += stp) pts.push([_dv(st[j].p, 'pressure'), dk(st[j])]);
                 pts.push([_dv(st[st.length - 1].p, 'pressure'), dk(st[st.length - 1])]);
-                ser.push({ key: 'cf_cs', label: 'Cullender-Smith closed form', kind: 'points', color: T.text, r: 3, pts: pts });
+                ser.push({ key: 'cf_cs', label: 'Cullender-Smith closed form', legend: !_phone(), kind: 'points', color: T.text, r: 3, pts: pts });
             }
             markers.push({ x: _dv(C.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, halo: false });
             var selR = C.rows.filter(function (r) { return r.sel; })[0];
@@ -1619,16 +1750,17 @@
         var rc = _rateCat(), O = ST.cmpOp && ST.cmpOp.key === C.key ? ST.cmpOp : null, sp = C.spreadPct;
         var chips = '<div class="wp-cmpk">' +
             '<div class="kpi wp-cmpc st-' + (sp == null ? 'none' : sp > 15 ? 'warn' : 'ok') + '"><span class="kpi-l">BHP spread (multiphase)</span><b class="kpi-v">' + (_fin(C.spread) ? _u(C.spread, 'pressure', 0, 'psi') : '—') + '</b><i class="kpi-s">' + (_fin(sp) ? _fmt(sp, 1) + ' % of the tubing Δp' : '') + '</i></div>' +
-            '<div class="kpi wp-cmpc"><span class="kpi-l">Selected</span><b class="kpi-v">' + _esc(_corrShort(C.sel)) + '</b><i class="kpi-s">' + _esc(_corrLabel(C.sel).replace(/\s*\(.*$/, '')) + '</i></div>' +
+            '<div class="kpi wp-cmpc' + (C.sel === '__sec' ? ' st-ok' : '') + '"><span class="kpi-l">Selected</span><b class="kpi-v">' + _esc(_corrShort(C.sel)) + '</b><i class="kpi-s">' + _esc(C.sel === '__sec' ? _secSummary(R.traverse.sections) : _corrLabel(C.sel).replace(/\s*\(.*$/, '')) + '</i></div>' +
             '<div class="kpi wp-cmpc"><span class="kpi-l">At the operating rate</span><b class="kpi-v">' + _u(C.q, rc[0], 0, rc[1]) + '</b><i class="kpi-s">THP ' + _u(C.thp - PATM, 'pressureG', 0, 'psig') + '</i></div>' +
             (C.cf && C.cf.tz && C.cf.cs ? '<div class="kpi wp-cmpc st-' + (Math.abs(C.cf.cs.pwf / C.cf.tz.pwf - 1) < 0.01 ? 'ok' : 'warn') + '"><span class="kpi-l">Dry-gas closed forms</span><b class="kpi-v">' + (100 * (C.cf.cs.pwf / C.cf.tz.pwf - 1)).toFixed(2).replace(/^-(0\.00)$/, '$1') + ' %</b><i class="kpi-s">Cullender-Smith vs average T-Z</i></div>' : '') + '</div>';
         var rows = C.rows.map(function (r, i) {
             var o = O && O.ops[r.key], dot = '<span class="wp-cdot" style="background:' + pal[i % pal.length] + '"></span>';
-            return '<tr' + (r.sel ? ' class="wp-sel"' : '') + '><td>' + dot + _esc(r.label.replace(/\s*\(.*$/, '')) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span>') + (r.gasOnly ? ' <span class="wp-chip" title="gas phase only: the liquids are ignored">gas only</span>' : '') + '</td>' +
+            if (r.key === '__sec') dot = '<span class="wp-cdot" style="background:conic-gradient(' + (r.cruns || []).map(function (c, j, a) { return _corrCol(c.k) + ' ' + (100 * j / a.length).toFixed(0) + '% ' + (100 * (j + 1) / a.length).toFixed(0) + '%'; }).join(',') + ')"></span>';
+            return '<tr' + (r.sel ? ' class="wp-sel"' : '') + '><td>' + dot + _esc(r.key === '__sec' ? r.label : r.label.replace(/\s*\(.*$/, '')) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span>') + (r.gasOnly ? ' <span class="wp-chip" title="gas phase only: the liquids are ignored">gas only</span>' : '') + '</td>' +
                 '<td class="num">' + (_fin(r.pwf) ? _fmt(_dv(r.pwf, 'pressure'), 0) : '<span title="' + _esc(r.err || '') + '">lost</span>') + '</td>' +
                 '<td class="num">' + (r.sel ? '—' : (_fin(r.dp) ? (r.dp >= 0 ? '+' : '') + _fmt(_dv(r.dp, 'pressure'), 0) + (_fin(r.dpPct) ? ' (' + (r.dpPct >= 0 ? '+' : '') + _fmt(r.dpPct, 1) + ' %)' : '') : '—')) + '</td>' +
                 '<td class="num">' + (_fin(r.dpEl) ? _fmt(_dv(r.dpEl, 'pressure'), 0) + ' / ' + _fmt(_dv(r.dpF, 'pressure'), 0) : '—') + '</td>' +
-                '<td>' + _esc(r.patterns.join(', ')) + '</td>' +
+                '<td>' + _patStrip(r) + '<span class="wp-u">' + _esc(r.patterns.join(', ')) + '</span></td>' +
                 '<td class="num">' + (o ? (o.ok ? _fmt(_dv(o.q, rc[0]), 0) + (o.stable ? '' : ' ⚠') : '<span title="' + _esc(o.msg || '') + '">no flow</span>') : '·') + '</td>' +
                 '<td class="rp-skip">' + (r.sel ? '<span class="wp-chip">in use</span>' : '<button type="button" class="btn btn-secondary wp-use" data-act="usecorr" data-v="' + _esc(r.key) + '" aria-label="Use ' + _esc(r.label) + '">Use</button>') + '</td></tr>';
         }).join('');
@@ -1637,11 +1769,78 @@
             var d = _fin(C.pSel) ? c.pwf - C.pSel : null;
             rows += '<tr class="wp-cf"><td><span class="wp-cdot" style="background:' + (x[0] === 'cs' ? 'var(--text)' : 'var(--text3)') + '"></span>' + x[1] + ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span></td><td class="num">' + _fmt(_dv(c.pwf, 'pressure'), 0) + '</td><td class="num">' + (_fin(d) ? (d >= 0 ? '+' : '') + _fmt(_dv(d, 'pressure'), 0) : '—') + '</td><td colspan="3" class="wp-hint" style="margin:0">gas phase only, cross-check</td><td class="rp-skip"></td></tr>';
         });
-        h.innerHTML = chips + '<div class="wp-tw"><table class="dtable wp-cmpt"><thead><tr><th>Correlation</th><th>BHP (' + _lab('pressure', 'psia') + ')</th><th>Δ vs selected</th><th>Gravity / friction Δp</th><th>Main patterns</th><th>Own op. rate (' + _lab(rc[0], rc[1]) + ')</th><th class="rp-skip"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        h.innerHTML = chips + '<div class="wp-tw"><table class="dtable wp-cmpt"><thead><tr><th>Correlation</th><th>BHP (' + _lab('pressure', 'psia') + ')</th><th>Δ vs selected</th><th>Gravity / friction Δp</th><th>Flow pattern along the well (top → bottom)</th><th>Own op. rate (' + _lab(rc[0], rc[1]) + ')</th><th class="rp-skip"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
             '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="corrop">' + (O ? 'Re-run' : 'Find') + ' the operating point of each correlation</button></div>' +
             '<div class="wp-hint">Each correlation is marched down the surveyed path from the solved wellhead pressure at the operating rate (hydrostatic on TVD, friction on MD). Provisional correlations have no verified published example yet. The operating points appear on the system plot as diamonds in the colours of this table.</div>';
     }
+    // v4.5 WP21: the map switch — the Ros map (Duns & Ros regions, A2) or the map of Aziz-Govier-Fogarasi, Mukherjee-Brill or the
+    // mechanistic superficial-velocity map (Ansari, or Hasan-Kabir when that is the correlation in use); the default follows the
+    // correlation in use (its registry entry's map)
+    var MAP_KINDS = [['ros', 'Duns & Ros (Ros map)'], ['agf', 'Aziz-Govier-Fogarasi'], ['mb', 'Mukherjee-Brill'], ['mech', 'Mechanistic (v_sg · v_sl)']];
+    function _mapKind() {
+        var k = _plots().mapKind; if (k && MAP_KINDS.some(function (x) { return x[0] === k; })) return k;
+        var sc = ST.R && ST.R.traverse && ST.R.traverse.sections, ck = sc && sc.length ? sc[sc.length - 1].corr : _selCorr(), e = (G.WTS_flowline_corr || {})[ck];
+        return (e && e.map) || 'ros';
+    }
+    function _mapSwitch(kind) {
+        return '<div class="wp-tabs wp-mapk rp-skip" role="tablist" aria-label="Flow-pattern map">' + MAP_KINDS.map(function (x) { return '<button type="button" data-mapk="' + x[0] + '" role="tab" aria-selected="' + (x[0] === kind) + '" class="' + (x[0] === kind ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>';
+    }
+    var PM_TXT = {
+        agf: 'Aziz, Govier &amp; Fogarasi map: N_x = v_sg·(ρ_g/0.0764)^⅓·[(ρ_L/62.4)(72/σ)]^¼, N_y = v_sl·[(ρ_L/62.4)(72/σ)]^¼; boundaries N1, N2, N3 and N_x = 26.5.',
+        mb: 'Mukherjee &amp; Brill map: N_Lv, N_gv as Duns &amp; Ros; the boundaries move with the inclination — drawn at the median station.',
+        mech: 'Mechanistic map in superficial velocities: bubble / slug, dispersed bubble and annular boundaries at the median station.'
+    };
+    function _renderPatternMap(cv, V, T, kind) {
+        var R = ST.R, ok = !!(R && R.ok && R.traverse && R.traverse.ok), mp = null, sel = _selCorr();
+        if (ok) {
+            var key = _cmpKey() + '|' + kind + '|' + sel;
+            if (!(ST.pmap && ST.pmap.key === key)) { var m0 = _call('WTS_wp_vlp.patternMap', ST.F, R.op.q, R.traverse, { kind: kind, corr: sel }); ST.pmap = { key: key, m: (m0 && m0.ok) ? m0 : null }; }
+            mp = ST.pmap.m;
+        }
+        var vel = kind === 'mech', cx = function (v) { return vel ? _dv(v, 'velocity') : v; };
+        var ser = [], markers = [], mn = { x: 1e9, y: 1e9 }, mxv = { x: 0, y: 0 };
+        var BCOL = ['#58a6ff', '#bc8cff', '#f0883e', '#3fb950', '#d29922'];
+        if (mp) {
+            mp.points.forEach(function (p) { mn.x = Math.min(mn.x, p.x); mn.y = Math.min(mn.y, p.y); mxv.x = Math.max(mxv.x, p.x); mxv.y = Math.max(mxv.y, p.y); });
+            var x0 = Math.max(1e-3, Math.min(mn.x / 3, kind === 'mb' ? 1e-2 : 0.05)), y0 = Math.max(1e-3, Math.min(mn.y / 3, kind === 'mb' ? 0.1 : 0.05));
+            var x1 = Math.max(mxv.x * 3, kind === 'agf' ? 600 : (kind === 'mb' ? 30 : 200)), y1 = Math.max(mxv.y * 3, kind === 'mb' ? 2000 : 30);
+            var inb = function (q) { return q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1 && _fin(q[0]) && _fin(q[1]); };
+            mp.lines.forEach(function (l, i) { var pts = l.pts.filter(inb).map(function (q) { return [cx(q[0]), cx(q[1])]; }); if (pts.length > 1) ser.push({ key: 'b' + l.key, label: l.label, color: BCOL[i % BCOL.length], width: 1.4, dash: [5, 4], pts: pts }); });
+            mp.labels.forEach(function (lb) { if (inb([lb.x, lb.y])) markers.push({ x: cx(lb.x), y: cx(lb.y), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS[V.patternKey(lb.pattern)] || T.text2, label: lb.text }); });
+            var runs = [], cur = null;
+            mp.points.forEach(function (p) {
+                var k = V.patternKey(p.pattern);
+                if (!cur || cur.k !== k) { cur = { k: k, pat: p.pattern, pts: cur ? [cur.pts[cur.pts.length - 1]] : [], info: cur ? [cur.info[cur.info.length - 1]] : [] }; runs.push(cur); }
+                cur.pts.push([cx(p.x), cx(p.y)]);
+                cur.info.push([_mdTvdTxt(p.md, p.tvd) + (_fin(p.inc) ? ' · ' + _fmt(p.inc, 1) + '°' : ''), mp.axes.x.label + ' ' + _fmt(cx(p.x), 3) + ' · ' + mp.axes.y.label + ' ' + _fmt(cx(p.y), 3), String(p.pattern) + ' · p ' + _fmt(_dv(p.p, 'pressure'), 0) + ' ' + _lab('pressure', 'psia')]);
+            });
+            var seen = {};
+            runs.forEach(function (r, i) { ser.push({ key: 'run' + i, label: seen[r.k] ? '' : r.pat, legend: !seen[r.k], color: V.PATTERN_COLORS[r.k] || T.text2, width: 3.2, pts: r.pts, info: r.info }); seen[r.k] = 1; });
+            if (mp.points.length) {
+                var a = mp.points[0], z = mp.points[mp.points.length - 1];
+                markers.push({ x: cx(a.x), y: cx(a.y), kind: 'filled', color: T.text, r: 5, halo: false, label: 'Wellhead' });
+                markers.push({ x: cx(z.x), y: cx(z.y), kind: 'diamond', color: T.accent, r: 6, label: 'Bottom ' + _mdTvdTxt(z.md, z.tvd) });
+            }
+            mn.x = x0; mn.y = y0;
+        }
+        var ax = function (a) { return vel ? (a.label === 'v_sg' ? 'Superficial gas velocity v_sg' : 'Superficial liquid velocity v_sl') + ' (' + _lab('velocity', 'ft/s') + ')' : (a.label === 'N_x' ? 'Gas number N_x' : a.label === 'N_y' ? 'Liquid number N_y' : a.label === 'N_Lv' ? 'Liquid velocity number N_Lv' : 'Gas velocity number N_gv'); };
+        V.chart(cv, { key: 'pmap:' + kind + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'near',
+            x: { label: mp ? ax(mp.axes.x) : '', log: true, min: mp ? cx(mn.x) : 0.01, short: mp ? mp.axes.x.label : 'x' }, y: { label: mp ? ax(mp.axes.y) : '', log: true, min: mp ? cx(mn.y) : 0.01, short: mp ? mp.axes.y.label : 'y' },
+            series: ser, markers: markers, hidden: _plots().pmapHidden || null, onLegend: function (hid) { _plotsSet({ pmapHidden: hid }); },
+            empty: ok ? 'No two-phase station on this traverse (single-phase flow throughout).' : 'The flow-pattern map appears after a solve.' });
+        var h = _byId('wp_corrtbl'); if (!h) return;
+        var cnt = mp ? mp.counts : {}, tot = 0; Object.keys(cnt).forEach(function (k) { tot += cnt[k]; });
+        var mc = kind === 'mech' ? (mp && mp.corr === 'hk' ? 'hk' : 'ansari') : kind, E = (G.WTS_flowline_corr || {})[mc];
+        h.innerHTML = _mapSwitch(kind) + (mp ? '<div class="wp-cmpk">' + Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; }).map(function (k) {
+            var pk = V.patternKey(k);
+            return '<div class="kpi wp-cmpc"><span class="kpi-l"><i class="wp-cdot" style="background:' + (V.PATTERN_COLORS[pk] || T.text2) + '"></i>' + _esc(k) + '</span><b class="kpi-v">' + _fmt(100 * cnt[k] / (tot || 1), 0) + ' %</b><i class="kpi-s">' + cnt[k] + ' of ' + tot + ' stations</i></div>';
+        }).join('') + '</div>' +
+            '<div class="wp-hint">' + PM_TXT[kind] + ' The ' + _esc(R.traverse.sections && R.traverse.sections.length ? 'per-section' : _corrShort(sel)) + ' traverse at the operating point, each station classified by ' + _esc(E ? E.label.replace(/\s*\(.*$/, '') : mc) +
+            ' with its own properties' + (mp.ref ? ' (boundaries at ' + _fmt(mp.ref.inc, 0) + '° from vertical, ID ' + _fmt(_dv(mp.ref.d, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ')' : '') + (E && E.verified !== true ? ' — <span class="wp-chip prov">provisional</span>' : '') + '. Hover the path for each station (MD · TVD).</div>' : '');
+    }
     function _renderMapTab(cv, V, T) {
+        var kind = _mapKind();
+        if (kind !== 'ros') { _renderPatternMap(cv, V, T, kind); return; }
         var R = ST.R, ok = !!(R && R.ok && R.traverse && R.traverse.ok), mp = null;
         if (ok) {
             var key = _cmpKey();
@@ -1678,9 +1877,9 @@
             series: ser, markers: markers, hidden: _plots().mapHidden || null, onLegend: function (hid) { _plotsSet({ mapHidden: hid }); },
             empty: ok ? 'No two-phase station on this traverse (single-phase flow throughout).' : 'The flow-regime map appears after a solve.' });
         var h = _byId('wp_corrtbl'); if (!h) return;
-        if (!mp) { h.innerHTML = ''; return; }
+        if (!mp) { h.innerHTML = _mapSwitch('ros'); return; }
         var tot = mp.points.length || 1, cnt = mp.counts;
-        h.innerHTML = '<div class="wp-cmpk">' + ['I', 'II', 'transition', 'III', 'single'].filter(function (k) { return cnt[k] > 0; }).map(function (k) {
+        h.innerHTML = _mapSwitch('ros') + '<div class="wp-cmpk">' + ['I', 'II', 'transition', 'III', 'single'].filter(function (k) { return cnt[k] > 0; }).map(function (k) {
             return '<div class="kpi wp-cmpc"><span class="kpi-l"><i class="wp-cdot" style="background:' + (V.PATTERN_COLORS[REGION_PAT[k]] || T.text2) + '"></i>' + _esc(REGION_TXT[k]) + '</span><b class="kpi-v">' + _fmt(100 * cnt[k] / tot, 0) + ' %</b><i class="kpi-s">' + cnt[k] + ' of ' + tot + ' stations</i></div>';
         }).join('') + '</div>' +
             '<div class="wp-hint">Duns &amp; Ros (Ros) flow-pattern map of the ' + _esc(_corrShort(mp.corr || _selCorr())) + ' traverse at the operating point. N_Lv = 1.938·v_sl·(ρ_L/σ)^¼, N_gv = 1.938·v_sg·(ρ_L/σ)^¼; the region I / II boundary is drawn for N_d = ' + _fmt(mp.NdRef, 1) +
@@ -1789,6 +1988,7 @@
         // ③ survey extras + segments; the TVD cells of the other tables are refreshed in place (no re-render: the focus stays)
         _renderTable('survey');
         _refreshTvdCells();
+        _refreshSecCover();
         var pt = _byId('wp_perftvd');
         if (pt) {
             var nd = ST.W && ST.W.ok && ST.W.nodes, f = function (md, tv) { return _fin(md) ? _u(md, 'length', 0, 'ft') + ' MD · ' + (_fin(tv) ? _u(tv, 'length', 0, 'ft') : '—') + ' TVD' : '—'; };
@@ -2042,6 +2242,7 @@
         if (act === 'pvtprop') { _plotsSet({ pvtProp: btn.getAttribute('data-k') }); _renderPvtCard(null); return; }
         if (act === 'pvtfam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); return; }
         if (act === 'pbclear') { _setCtrl('wp_pbUser', ''); _commit('wp_pbUser'); return; }
+        if (act === 'secpreset') { _secPreset(btn.getAttribute('data-v')); return; }
         if (act === 'usecorr') { var ck = btn.getAttribute('data-v'), sw = _byId('wp_corr_well'); if (ck && sw) { _setCtrl('wp_corr_well', ck, true); _commit('wp_corr_well'); } return; }
         if (act === 'corrop') {
             _drive(_corrOpJob(), function (r) { if (r && r.key === _cmpKey()) { ST.cmpOp = r; _renderTraverseCard(); _renderSystemPlot(); } }, 'Operating point per correlation');
@@ -2537,7 +2738,7 @@
             if (!cells.length || !cells.some(function (x) { return /^[-+]?\d/.test(x) || /^[-+]?[.,]\d/.test(x); })) return;      // header lines are skipped
             if (cells.length !== cols.length) odd++;
             var arr = cols.every(function (c) { return typeof c.k === 'number'; }), row = arr ? [] : {};
-            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, c.cat) : null; } });
+            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, _cCat(c, row)) : null; } });
             rows.push(row);
         });
         var r = _writeTable(t, rows), msg = _byId('wp_pastemsg_' + t);
@@ -2598,7 +2799,7 @@
         if (msg) msg.innerHTML = rowsOverride ? _vHtml({ st: 'info', t: 'ℹ The previous survey rows are back.' }) : (old.length ? _vHtml({ st: 'ok', t: '✓ ' + conv.length + ' station(s) converted to ' + (m === 'mdtvd' ? 'MD · TVD' : 'MD · Inc · Azi') + '.' }) + '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="svundo">Undo</button></div>' : '');
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
-    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
+    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests', 'corrSections'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
     function _renderRatings() {
         var M = _read(); if (!M) return;
         var a = _byId('wpt_rate_wh'), b = _byId('wpt_rate_tht'), c = _byId('wpt_beans');
@@ -2771,6 +2972,11 @@
                 _fg('wp_corr_line', 'Flowline', { options: lineCorr.map(function (c) { return [c.key, c.label + (c.verified ? '' : ' — provisional')]; }) }) +
                 _fg('wp_mult_hl', 'Holdup multiplier m_h', { hint: '1 = as published; fitted to the tests in ⑥ Match (VLP tuning, 0.8–1.25).' }) + _fg('wp_mult_f', 'Friction multiplier m_f', { hint: 'Fitted only when the tests span at least 2:1 in rate (0.7–1.5).' }) +
                 _fg('wp_eroC', 'Erosional C', { unit: 'API RP 14E' }) + _fg('wp_stepFt', 'Step length', { unit: 'ft' }) + _fg('wp_refine', 'Refine steps', { check: true }) + '</div>' +
+                '<div id="wp_secbar" class="wp-secwrap"></div>' +
+                _tableBlock('corrSections', 'Per-section correlations', 'Rows in order: the first row that covers a part of the path sets its correlation (an MD interval, or an inclination band in degrees from vertical); the well correlation above applies elsewhere. Drag a boundary on the Traverse plot.',
+                    { btns: '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="dev" title="Mukherjee-Brill where the hole is 30° or more from vertical">Deviated → Mukherjee-Brill</button>' +
+                        '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="mech" title="Ansari below 30°, Hasan-Kabir above">Mechanistic by inclination</button>' +
+                        '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="clear">Clear</button>' }) +
                 '<div class="wp-sec-h" style="font-size:13px;margin-top:14px">Equipment ratings</div><div class="fg rp-skip">' +
                 '<div class="fg-item"><label for="wpt_rate_wh">Wellhead rating (' + _esc(_lab('pressure', 'psi')) + ')</label><input id="wpt_rate_wh" data-rt="wellhead_psi" type="number" step="any" inputmode="decimal" placeholder="no default"></div>' +
                 '<div class="fg-item"><label for="wpt_rate_tht">Maximum THT (' + _esc(_lab('temperature', '°F')) + ')</label><input id="wpt_rate_tht" data-rt="tht_max_F" type="number" step="any" inputmode="decimal" placeholder="no default"></div>' +
@@ -2868,6 +3074,7 @@
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_corr_pb' || t.id === 'wp_corr_rs') _famSync(t.id);
             if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_heat' || t.id === 'wp_ckcorr' || t.id === 'wp_lift') _syncUi();
+            if (t.id === 'wp_ftype') _renderTable('corrSections');        // the dry-gas keys are offered for gas wells only (WP21)
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();
         });
@@ -2881,6 +3088,7 @@
                 _writeTable(tn, _collectTable(tn)); _renderTable(tn); return;
             }
             if (b.getAttribute('data-tab')) { _plotsSet({ trTab: b.getAttribute('data-tab') }); _renderTraverseCard(); return; }
+            if (b.getAttribute('data-mapk')) { _plotsSet({ mapKind: b.getAttribute('data-mapk') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-depth')) { _plotsSet({ depth: b.getAttribute('data-depth') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-mdepth')) { _plotsSet({ mdepth: b.getAttribute('data-mdepth') }); Array.prototype.forEach.call(document.querySelectorAll('#wp_mdepth button'), function (x) { if (x.classList) x.classList.toggle('on', x === b); }); _drawMatchPlot(); _drawTunePlot(); return; }
             var act = b.getAttribute('data-act'); if (act) _act(act, b);

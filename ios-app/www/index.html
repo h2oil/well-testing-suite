@@ -119391,7 +119391,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.4', reviewedSrc: '9218ad44', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'c1289099', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -119440,7 +119440,7 @@ var wellperf = {
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
-  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** marches every correlation that applies from the solved THP at the operating rate (TVD or MD), with the BHP spread and **Use**; gas wells add the average T-Z and Cullender-Smith closed forms. **Flow-regime map** puts each traverse station on the Duns & Ros map.'] },
+  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations**: each one marched from the solved THP (BHP spread, **Use**). **Flow-regime map**: four maps. **Per-section correlations** (⑤) by MD or inclination.'] },
   { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** marches the temperature on the true inclination against the geotherm on TVD; the traverse also draws the earth temperature and the linear profile. **Fit U to the test THT** matches U to a measured THT.'] },
   { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab draws rate against downstream pressure; **Fit** sets the rate factor so Sachdeva equals a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest depth the casing pressure reaches, above the packer, and adds free gas only. **Run the gas-lift performance curve** gives rate against lift-gas rate with the optimum and the economic point; drag the injection-rate or packer handle; the schematic marks the point.'] },
@@ -120792,7 +120792,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: 'a6d169ef', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: '420cd799', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -146339,6 +146339,7 @@ pipesz: {
 //   opt.stepFt    step length per segment (ft), clamped to 10–400 steps (default 50 ft as before)
 //   opt.grid      true → the march records its step / sub-step layout and returns it as .grid; a grid object from an
 //                 earlier march → that layout is used (no refine decisions: p(q) stays smooth within one solve, §4.5)
+//   segment.corr  (v4.5 WP21) a registry key for this segment only (per-section correlation); absent → opt.corr (or bb) as before
 //   opt.eroC      API RP 14E C for the erosional ratio (default 100)
 //   opt.detail    each profile entry also carries seg, vm, vsl, vsg, rhoS, gradEl, gradF, gradAcc, ero
 //   segment.area  flow area (in²) for the velocities when it differs from the circle of segment.id (annulus: id = the
@@ -146796,8 +146797,8 @@ pipesz: {
             vsl: pr.qL / A, vsg: pr.qG / A, d: s.id, rhoL: pr.rhoL, rhoG: pr.rhoG, muL: pr.muL, muG: pr.mug,
             sigma: pr.sigL, theta: s.theta, rough: opt.rough, p: pp, payne: opt.payne, accel: opt.accel
         };
-        var E = null, g;
-        if (opt.corr != null) { E = _corrOf(opt.corr); inp.props = pr; inp.mult = opt.mult || null; g = E.grad(inp); }
+        var E = null, g, ck = (s.corr != null) ? s.corr : opt.corr;          // segment.corr (v4.5 WP21): a per-segment registry key
+        if (ck != null) { E = _corrOf(ck); inp.props = pr; inp.mult = opt.mult || null; g = E.grad(inp); }
         else g = bb(inp);
         if (opt.mult) g = _applyMult(g, inp, opt.mult, E || CORR.bb);
         g.props = pr;
@@ -146824,6 +146825,7 @@ pipesz: {
     function march(route, fluid, p0g, t0, t1, opt) {
         if (opt.corr != null && !_corrOf(opt.corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(opt.corr), errors: ['unknown correlation key ' + String(opt.corr).slice(0, 40)] };
         var segs = route.segments, total = 0;
+        for (var ks = 0; ks < segs.length; ks++) if (segs[ks].corr != null && !_corrOf(segs[ks].corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(segs[ks].corr), errors: ['unknown correlation key ' + String(segs[ks].corr).slice(0, 40)] };
         var gridIn = (opt.grid && typeof opt.grid === 'object' && Array.isArray(opt.grid.segs) && opt.grid.segs.length === segs.length) ? opt.grid : null;
         var gridOut = opt.grid ? { v: 1, segs: [] } : null;
         var eroC = (opt.eroC > 0) ? opt.eroC : 100;
@@ -147256,13 +147258,14 @@ pipesz: {
     //   refine: split a step whose pressure change exceeds 3 % of the pressure (off by default)}.
     //   → {profile [{x, p psig, t, hl, pattern}], segments[], pOut, lost, …}, or null without the PVT library.
     //   Well Performance options (v4.3 WP0b, passed through when present; see the header): corr, mult, tAt (x ft along the march →
-    //   °F, overrides t0 → t1), pMax (psia), stepFt, grid, eroC, detail; segments may carry area (in²) and restr {d, k?}.
+    //   °F, overrides t0 → t1), pMax (psia), stepFt, grid, eroC, detail; segments may carry area (in²), restr {d, k?} and (v4.5) corr.
     G.WTS_flowline_march = function (segments, fluid, p0, t0, t1, opt) {
         if (!_lib()) return null;
         var segs = (segments || []).map(function (q) {
             var o2 = { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 };
             if (+q.area > 0) o2.area = +q.area;
             if (q.restr && +q.restr.d > 0) o2.restr = { d: +q.restr.d, k: q.restr.k == null ? null : +q.restr.k };
+            if (q.corr != null && q.corr !== '') o2.corr = String(q.corr);
             return o2;
         });
         var o = opt || {};
@@ -152236,6 +152239,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wp_root .wp-cdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:0}' +
         '#wp_root .wp-cmpt tr.wp-sel td{background:rgba(240,136,62,.08)}#wp_root .wp-cmpt tr.wp-sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}#wp_root .wp-cmpt tr.wp-cf td{color:var(--text2)}' +
         '#wp_root .wp-cmpt td:first-child{white-space:normal;min-width:190px}#wp_root .wp-cmpt td:nth-child(5){white-space:normal}' +
+        // v4.5 WP21: pattern strips along the well (comparison rows), the map-kind switch, the per-section editor and its chips
+        '#wp_root .wp-pstrip{display:block;width:100%;min-width:96px;height:16px;border-radius:4px;overflow:hidden;background:var(--bg3)}#wp_root .wp-pstrip rect{transition:opacity .15s}#wp_root .wp-pstrip:hover rect{opacity:.85}' +
+        '#wp_root .wp-mapk{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}#wp_root .wp-mapk button{font-size:11.5px;padding:4px 10px}' +
+        '#wp_root .wp-secbar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:6px 0 4px;border:1px solid var(--border);background:var(--bg3)}#wp_root .wp-secbar i{display:block;height:100%;min-width:2px;transition:flex-grow .25s ease}' +
+        '#wp_root .wp-seclg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;color:var(--text2);margin-bottom:6px}#wp_root .wp-seclg b{color:var(--text);font-weight:600}' +
+        '#wp_root td.wp-seccov{white-space:normal;min-width:150px;font-size:11.5px;line-height:1.35}' +
+        '#wp_root #wp_tbl_corrSections select[data-c="by"]{width:74px}#wp_root #wp_tbl_corrSections input{width:76px}#wp_root #wp_tbl_corrSections select[data-c="corr"]{min-width:128px}' +
+        '@media (prefers-reduced-motion: reduce){#wp_root .wp-secbar i,#wp_root .wp-pstrip rect{transition:none}}' +
         '#wp_root .wp-cmpt .wp-use{padding:3px 10px;font-size:11.5px}#wp_root .wp-cmpt tbody tr{transition:background .15s}#wp_root .wp-cmpt tbody tr:hover td{background:rgba(139,148,158,.08)}' +
         '#wp_root .wp-heat{margin:12px 0 4px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--red,#f85149);border-radius:8px;background:var(--bg3);transition:border-color .2s,opacity .2s}' +
         '#wp_root .wp-heat .wp-heat-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:6px 14px;margin:6px 0 8px}' +
@@ -152315,6 +152326,13 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         restrictions: function () { return [{ k: 'kind', l: 'Kind', opts: [['sssv', 'SSSV'], ['nipple', 'Nipple'], ['sleeve', 'Sleeve'], ['xo', 'Cross-over'], ['downholeChoke', 'Downhole choke']] }, { k: 'md', l: 'MD', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'k', l: 'K (opt.)', u: '' }]; },
         geo: function () { return [{ k: 0, l: 'TVD', cat: 'length', u: 'ft' }, { k: 1, l: 'Temperature', cat: 'temperature', u: '°F' }]; },
         flowline: function () { return [{ k: 'name', l: 'Name', text: true }, { k: 'len', l: 'Length', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'dz', l: 'Rise', cat: 'length', u: 'ft' }]; },
+        // v4.5 WP21: per-section correlations — 'From' / 'To' are MD (length) on an MD-interval row and degrees from vertical on an
+        // inclination-band row (catOf: the unit follows the row's By cell)
+        corrSections: function (M) {
+            var gas = M && _isGasType(M.fluid.type);
+            return [{ k: 'by', l: 'By', opts: [['md', 'MD'], ['inc', 'Incl.']] }, { k: 'from', l: 'From', catOf: _secCat, uh: _secU }, { k: 'to', l: 'To', catOf: _secCat, uh: _secU },
+                    { k: 'corr', l: 'Correlation', opts: _corrList('well').filter(function (c) { return gas || (c.key !== 'gasTZ' && c.key !== 'gasCS'); }).map(function (c) { return [c.key, _corrShortL(c.key).replace(/\s*\(.*$/, '') + (c.verified ? '' : ' (prov.)')]; }) }];
+        },
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
                     { k: 'q_g', l: 'Gas', cat: 'gasRateSmall', u: 'Mscf/d' }, { k: 'thp_psig', l: 'THP', cat: 'pressureG', u: 'psig' }, { k: 'tht_F', l: 'THT', cat: 'temperature', u: '°F' },
@@ -152329,25 +152347,29 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (t === 'geo') return ((M.well.geo && M.well.geo.points) || []).map(function (r) { return r.slice(); });
         if (t === 'flowline') return (M.surface.flowline || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'tests') return (M.tests || []).map(function (r) { return Object.assign({}, r); });
+        if (t === 'corrSections') return ((M.system.corr && M.system.corr.sections) || []).map(function (r) { return Object.assign({}, r); });
         return [];
     }
-    function _cellVal(c, v) {
+    function _secCat(r) { return r && r.by === 'inc' ? null : 'length'; }
+    function _secU() { return _lab('length', 'ft') + ' or °'; }
+    function _cCat(c, r) { return c.catOf ? c.catOf(r) : c.cat; }
+    function _cellVal(c, v, r) {
         if (c.opts || c.text) return v == null ? '' : String(v);
         if (!_fin(v)) return '';
-        var d = _dv(v, c.cat);
+        var d = _dv(v, _cCat(c, r));
         return String(Math.round(d * 1e4) / 1e4);
     }
     function _renderTable(t) {
         var host = _byId('wp_tbl_' + t); if (!host) return;
         var M = ST.M || _read(), cols = TABLES[t](M), rows = _tableRows(M, t), extra = _extraCols(t, M);
         var h = '<div class="wp-tw"><table class="dtable wp-ed" data-t="' + t + '"><thead><tr>' + cols.map(function (c) {
-            return '<th>' + _esc(c.l) + (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '') + '</th>';
+            return '<th>' + _esc(c.l) + (c.uh ? ' <span class="wp-u">(' + _esc(c.uh()) + ')</span>' : (c.u ? ' <span class="wp-u">(' + _esc(c.cat ? _lab(c.cat, c.u) : c.u) + ')</span>' : '')) + '</th>';
         }).join('') + (extra ? extra.head.map(function (x) { return '<th>' + x + '</th>'; }).join('') : '') + '<th></th></tr></thead><tbody>';
         var rowHtml = function (r, i) {
             return '<tr data-r="' + i + '">' + cols.map(function (c) {
                 var v = r ? (Array.isArray(r) ? r[c.k] : r[c.k]) : null;
                 if (c.opts) return '<td><select data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '">' + c.opts.map(function (o) { return '<option value="' + o[0] + '"' + (String(v) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></td>';
-                return '<td><input data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '" ' + (c.text ? 'type="text"' : 'type="number" step="any" inputmode="decimal"') + ' value="' + _esc(_cellVal(c, v)) + '"></td>';
+                return '<td><input data-t="' + t + '" data-c="' + c.k + '" aria-label="' + _esc(c.l) + '" ' + (c.text ? 'type="text"' : 'type="number" step="any" inputmode="decimal"') + ' value="' + _esc(_cellVal(c, v, r)) + '"></td>';
             }).join('') + (extra ? extra.cells(r, i) : '') + '<td><button type="button" class="btn btn-secondary wp-del" data-del="' + t + '" data-r="' + i + '" aria-label="Delete row" title="Delete row">&#10005;</button></td></tr>';
         };
         rows.forEach(function (r, i) { h += rowHtml(r, i); });
@@ -152363,6 +152385,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (t === 'strings') return { n: 2, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.topMd : null) + _tvdCell(r ? r.botMd : null); } };
         if (t === 'restrictions') return { n: 1, head: ['TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.md : null); } };
         if (t === 'tests') return { n: 1, head: ['Gauge TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.gaugeMd : null); } };
+        if (t === 'corrSections') return { n: 1, head: ['Covers (MD · TVD, inclination)'], cells: function (r, i) { return '<td class="ro wp-seccov">' + _secCover(i) + '</td>'; } };
         return null;
     }
     function _surveyExtra(M) {
@@ -152401,7 +152424,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             cols.forEach(function (c) {
                 var e = tr.querySelector('[data-c="' + c.k + '"]'); if (!e) return;
                 var raw = String(e.value == null ? '' : e.value).trim(), v;
-                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = _fromDisp(v, c.cat); }
+                if (c.opts || c.text) v = raw; else { v = raw === '' ? null : parseFloat(raw.replace(',', '.')); if (!_fin(v)) v = null; else v = _fromDisp(v, _cCat(c, row)); }
                 if (v !== null && v !== '' && !c.opts) any = true;
                 row[c.k] = v;
             });
@@ -152425,7 +152448,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _read() {
         var Mm = G.WTS_wp_model;
         if (!Mm || typeof Mm.read !== 'function') return null;
-        try { return Mm.read({ scalars: _byId('wp_root') ? _liveScalars() : undefined }); } catch (e) { return null; }
+        var M0; try { M0 = Mm.read({ scalars: _byId('wp_root') ? _liveScalars() : undefined }); } catch (e) { return null; }
+        // v4.5 WP21: while a section boundary is dragged on the traverse plot, the dragged rows stand in for the stored ones (the
+        // release writes them through WTS_wp_model.write)
+        if (M0 && ST.secLive) { M0 = JSON.parse(JSON.stringify(M0)); M0.system.corr.sections = ST.secLive; }
+        return M0;
     }
     function _isGasType(t) { return t === 'gas' || t === 'condensate' || t === 'gasinj'; }
 
@@ -152624,7 +152651,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (!out.ipr.length && I && I.ok && Array.isArray(I.curve)) out.ipr = I.curve.map(function (c) { return [c.q, c.pwf]; }).sort(function (a, b) { return a[0] - b[0]; });
         if (!out.vlp.length && R && R.ok && ST.M && ST.M.surface.choke.present === false && ST.F && ST.W && ST.W.ok && _fn('WTS_wp_vlp.curve') && I && I.ok && _fin(I.aof)) {
             var qList = []; for (var i = 1; i <= 16; i++) qList.push(I.aof * i / 17);
-            var thp = ST.M.system.thp_psig, c = _call('WTS_wp_vlp.curve', ST.F, ST.W, { qList: qList, p0: _fin(thp) ? thp + PATM : null, corr: ST.M.system.corr.well, coarse: true });
+            var thp = ST.M.system.thp_psig, c = _call('WTS_wp_vlp.curve', ST.F, ST.W, { qList: qList, p0: _fin(thp) ? thp + PATM : null, corr: ST.M.system.corr.well, sections: ST.M.system.corr.sections, coarse: true });
             if (Array.isArray(c)) out.vlp = c.filter(function (x) { return _fin(x.pwf); }).map(function (x) { return [x.q, x.pwf]; });
         }
         return out;
@@ -152684,7 +152711,50 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             onHandle: _onHandle
         });
     }
+    // ── v4.5 WP21: per-section correlations on the page ──
+    function _secRows(M) { return ((M && M.system.corr && M.system.corr.sections) || []).map(function (r) { return Object.assign({}, r); }); }
+    function _secRuns() { var R = ST.R; return (R && R.ok && R.traverse && R.traverse.sections) || null; }
+    function _secSummary(runs) {
+        if (!runs || !runs.length) return '';
+        return runs.map(function (x) { return _corrShort(x.corr) + ' ' + _fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0); }).join(' · ') + ' ' + _lab('length', 'ft') + ' MD';
+    }
+    // the "Covers" cell of section row i: the MD · TVD intervals and inclinations its correlation got on the solved path
+    function _secCover(i) {
+        var runs = _secRuns(); if (!runs) return '—';
+        var mine = runs.filter(function (x) { return x.row === i; });
+        if (!mine.length) return ST.R && ST.R.ok ? '<span title="this row covers no part of the flow path, or an earlier row covers it">none</span>' : '—';
+        return mine.map(function (x) { return _esc(_fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0) + ' MD · ' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD ' + _lab('length', 'ft') + ', ' + _fmt(x.incMin, 0) + (Math.abs(x.incMax - x.incMin) >= 0.5 ? '–' + _fmt(x.incMax, 0) : '') + '°'); }).join('<br>');
+    }
+    function _refreshSecCover() {
+        var tbl = _byId('wp_tbl_corrSections'); if (tbl && tbl.querySelectorAll) Array.prototype.forEach.call(tbl.querySelectorAll('tbody tr'), function (tr, i) { var c = tr.querySelector('td.wp-seccov'); if (c) c.innerHTML = _secCover(i); });
+        var bar = _byId('wp_secbar'); if (!bar) return;
+        var runs = _secRuns(), R = ST.R;
+        var all = runs || (R && R.ok && R.traverse && R.traverse.profile.length ? [{ corr: _selCorr(), mdTop: R.traverse.profile[0].md, mdBot: R.traverse.profile[R.traverse.profile.length - 1].md, verified: true }] : []);
+        var span = all.length ? (all[all.length - 1].mdBot - all[0].mdTop) || 1 : 1, seen = {};
+        bar.innerHTML = all.length ? '<div class="wp-secbar" role="img" aria-label="' + _esc('Correlations along the flow path: ' + (runs ? _secSummary(runs) : _corrShortL(all[0].corr) + ' throughout')) + '">' +
+            all.map(function (x) { return '<i style="flex-grow:' + Math.max(0.001, (x.mdBot - x.mdTop) / span).toFixed(4) + ';background:' + _corrCol(x.corr) + '" title="' + _esc(_corrShortL(x.corr) + ': ' + _fmt(_dv(x.mdTop, 'length'), 0) + '–' + _fmt(_dv(x.mdBot, 'length'), 0) + ' ' + _lab('length', 'ft') + ' MD' + (_fin(x.tvdTop) ? ' · ' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD' : '')) + '"></i>'; }).join('') + '</div>' +
+            '<div class="wp-seclg">' + all.filter(function (x) { if (seen[x.corr]) return false; seen[x.corr] = 1; return true; }).map(function (x) { var e = (G.WTS_flowline_corr || {})[x.corr]; return '<span><i class="wp-cdot" style="background:' + _corrCol(x.corr) + '"></i><b>' + _esc(_corrShortL(x.corr)) + '</b>' + (e && e.verified !== true ? ' <span class="wp-chip prov">prov.</span>' : '') + '</span>'; }).join('') +
+            '<span>wellhead → bottom along MD' + (runs ? '' : ' (one correlation)') + '</span></div>' : '';
+    }
+    function _secPreset(v) {
+        var rows = v === 'dev' ? [{ by: 'inc', from: 30, to: 180, corr: 'mb' }] : v === 'mech' ? [{ by: 'inc', from: 0, to: 30, corr: 'ansari' }, { by: 'inc', from: 30, to: 180, corr: 'hk' }] : [];
+        _writeTable('corrSections', rows); _renderTable('corrSections');
+    }
+    // dragging a section boundary (MD interval rows) on the traverse plot: live tracking solves, the release writes the table
+    function _secHandle(key, v, phase) {
+        var m = /^sec(\d+)([ft])$/.exec(key); if (!m) return;
+        var i = +m[1], fld = m[2] === 'f' ? 'from' : 'to', rows = ST.secLive ? ST.secLive.map(function (r) { return Object.assign({}, r); }) : _secRows(ST.M);
+        if (!rows[i]) return;
+        var dft = _fromDisp(v, 'length'), mdv = _plots().depth === 'md' ? dft : _mdFromTvd(dft), md = Math.max(0, Math.round((_fin(mdv) ? mdv : dft) / 10) * 10);
+        if (fld === 'from' && _fin(rows[i].to)) md = Math.min(md, rows[i].to - 10);
+        if (fld === 'to' && _fin(rows[i].from)) md = Math.max(md, rows[i].from + 10);
+        rows[i][fld] = md;
+        if (phase === 'end') { ST.secLive = null; _writeTable('corrSections', rows); _renderTable('corrSections'); return; }
+        ST.secLive = rows;
+        if (!ST.slow && _liveMs() <= LIVE_MS) _solveLive();
+    }
     function _onHandle(key, v, phase) {
+        if (/^sec\d+[ft]$/.test(key)) { _secHandle(key, v, phase); return; }
         var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer' }[key]; if (!id) return;
         var canon;
         if (key === 'hU' || key === 'hT') canon = +Math.pow(10, v).toPrecision(3);   // the heat rails are on log10 scales
@@ -152718,6 +152788,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             fmt: { depthTick: _depthFmt, md: function (v) { return _u(v, 'length', 0, 'ft'); }, p: function (v) { return _fmt(_dv(v, 'pressure'), 0); }, t: function (v) { return _fmt(_dv(v, 'temperature'), 0); }, dte: function (v) { return _tempDiff(v); }, hl: function (v) { return _fmt(v, 2); }, vm: function (v) { return _fmt(_dv(v, 'velocity'), 1); } },
             labels: { tvd: 'TVD (' + _lab('length', 'ft') + ')', vs: 'Vertical section (' + _lab('length', 'ft') + '), equal scale', closure: '', earth: 'halo: earth (geotherm)', prop: { pressure: 'Pressure (' + _lab('pressure', 'psia') + ')', temperature: 'Temperature (' + _lab('temperature', '°F') + ')', heatloss: 'Fluid − earth (' + _lab('tempDiff', '°F') + ')', holdup: 'Liquid holdup (–)', velocity: 'Mixture velocity (' + _lab('velocity', 'ft/s') + ')', pattern: 'Flow pattern', none: '' }[prop] },
             empty: (ST.stubs && ST.stubs.indexOf('WTS_wp_well.build') !== -1) || _isStub(ST.SC) ? 'The well path engine draws the deviated well here once it is installed.' : 'Enter a survey and the strings (step ③) to draw the well.',
+            bands: (_secRuns() || []).map(function (x) { return { mdTop: x.mdTop, mdBot: x.mdBot, color: _corrCol(x.corr), label: _corrShort(x.corr), title: _corrShortL(x.corr) + ' ' + _mdTvdTxt(x.mdTop, x.tvdTop) + ' to ' + _mdTvdTxt(x.mdBot, x.tvdBot) }; }),
             marks: (ST.R && ST.R.ok && ST.R.lift && _fin(ST.R.lift.injMd)) ? [{ md: ST.R.lift.injMd, kind: 'gl', comp: 'gl', label: 'gas lift ' + _mdTvdTxt(ST.R.lift.injMd, ST.R.lift.injTvd), color: '#58a6ff' }].concat(_fin(ST.R.lift.packerMd) ? [{ md: ST.R.lift.packerMd, kind: 'packer', label: 'packer' }] : []) : [],
             aria: 'Well schematic: vertical section and plan view, coloured by ' + prop
         };
@@ -152726,6 +152797,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         host.innerHTML = out.svg;
         var mt = _multOf(ST.M), tr0 = ST.tune && ST.tune.ok ? ST.tune : null;
         if (mt.tuned) closure += (closure ? ' · ' : '') + 'VLP tuned: m_h ' + _fx(mt.hl, 3) + ', m_f ' + _fx(mt.f, 3) + (tr0 && Math.abs(tr0.mult.hl - mt.hl) < 1e-5 && Math.abs(tr0.mult.f - mt.f) < 1e-5 ? ' (RMS ' + _fx(_dv(tr0.rms.tuned, 'pressure'), 1) + ' ' + _lab('pressure', 'psi') + ' at the gauge' + (tr0.residuals.length === 1 && _fin(tr0.residuals[0].gauge.tvd) ? ', ' + _u(tr0.residuals[0].gauge.md, 'length', 0, 'ft') + ' MD · ' + _u(tr0.residuals[0].gauge.tvd, 'length', 0, 'ft') + ' TVD' : '') + ')' : '');
+        var sr0 = _secRuns(); if (sr0) closure += (closure ? ' · ' : '') + 'correlations by section: ' + _secSummary(sr0);
         var cap = _byId('wp_sch_cap'); if (cap) cap.textContent = closure;
     }
     function _schAt(md) {
@@ -153013,6 +153085,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         row('Temperature', hx ? 'relaxation (Ramey / Hasan-Kabir), U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' (' + (hx.Ubasis === 'ti' ? 'inside' : 'outside') + ' radius), ' + _fmt(hx.tProd_d, 0) + ' d, k_e ' + _u(hx.ke, 'thermalConductivity', 2, 'Btu/hr·ft·°F') + ', α ' + _fmt(hx.alpha, 3) + ' ft²/hr, A ' + _u(hx.A, 'length', 0, 'ft') + ' · geotherm ' + _u(M.well.geo.surfT_F, 'temperature', 0, '°F') + ' at surface'
             : (M.well.heat.mode === 'relax' ? 'relaxation asked, linear used (no geotherm)' : 'linear, THT ' + (_fin(M.well.heat.tht_F) ? _u(M.well.heat.tht_F, 'temperature', 0, '°F') + (M.well.heat.thtMeasured ? ' measured' : ' estimated') : 'not entered (static geotherm)') + ' → BHT'));
         row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
+        var srn = _secRuns(); if (srn) row('Per-section correlations', srn.map(function (x) { return CORR_NAME(x.corr) + ' ' + _u(x.mdTop, 'length', 0, 'ft') + '–' + _u(x.mdBot, 'length', 0, 'ft') + ' MD (' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD, ' + _fmt(x.incMin, 0) + '–' + _fmt(x.incMax, 0) + '°)'; }).join('; '));
         var mc = _multOf(M); if (mc.tuned) row('VLP multipliers', 'holdup m_h ' + _fx(mc.hl, 3) + ' · friction m_f ' + _fx(mc.f, 3) + (ST.tune && ST.tune.ok && Math.abs(ST.tune.mult.hl - mc.hl) < 1e-5 && Math.abs(ST.tune.mult.f - mc.f) < 1e-5 ? ' (tuned to ' + (ST.tune.tests || []).join(', ') + ')' : ''));
         h.innerHTML = '<div class="rbox-title">Case summary</div>' + rows.join('');
         _renderStudies();
@@ -153371,6 +153444,26 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 }
                 if (_fin(gl.packerMd)) trH.push({ key: 'packer', kind: 'railY', value: _dv(dax === 'md' ? gl.packerMd : (_fin(gl.packerTvd) ? gl.packerTvd : gl.packerMd), 'length'), min: 0, max: _dv(dax === 'md' ? gl.packerMd * 1.5 + 1000 : (gl.packerTvd || gl.packerMd) * 1.5 + 1000, 'length'), step: _metric() ? 5 : 10, label: 'Packer', railLabel: 'PKR', color: T.text2, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('length', 'ft') + ' ' + (dax === 'md' ? 'MD' : 'TVD'); } });
             }
+            // v4.5 WP21: per-section correlations — a line at each change of correlation (MD · TVD, the correlation below) and a knob on
+            // the right rail for each MD-interval end inside the path (drag: the boundary moves and the well re-solves live)
+            var sruns = ok ? _secRuns() : null;
+            if (sruns) {
+                var mdEnd = prof.length ? prof[prof.length - 1].md : 0, knobAt = {};
+                _secRows(ST.M).forEach(function (r) { if (r.by === 'md') [r.from, r.to].forEach(function (v) { if (_fin(v) && v > 0 && v < mdEnd) knobAt[Math.round(v)] = 1; }); });
+                // a boundary with a knob is named by the knob (no second label on the line)
+                sruns.forEach(function (x, j) { if (j === 0) return; trHl.push({ y: _dv(dax === 'md' ? x.mdTop : x.tvdTop, 'length'), label: (knobAt[Math.round(x.mdTop)] || _phone()) ? '' : '↓ ' + _corrShort(x.corr) + ' from ' + _u(x.mdTop, 'length', 0, 'ft') + ' MD · ' + _u(x.tvdTop, 'length', 0, 'ft') + ' TVD', color: _corrCol(x.corr), dash: [6, 3] }); });
+                _secRows(ST.M).forEach(function (r, i) {
+                    if (r.by !== 'md' || trH.length >= 4) return;
+                    [['f', r.from], ['t', r.to]].forEach(function (e2) {
+                        if (!_fin(e2[1]) || e2[1] <= 0 || e2[1] >= mdEnd || trH.length >= 4) return;
+                        var yv = dax === 'md' ? e2[1] : _tvdAt(e2[1]);
+                        if (!_fin(yv)) return;
+                        trH.push({ key: 'sec' + i + e2[0], kind: 'railY', value: _dv(yv, 'length'), min: 0, max: _dv(dax === 'md' ? mdEnd : (_tvdAt(mdEnd) || mdEnd), 'length'), step: _metric() ? 3 : 10,
+                            label: _corrShort(r.corr) + (e2[0] === 'f' ? ' top' : ' bottom'), railLabel: 'SEC', color: _corrCol(r.corr),
+                            fmt: function (v2) { var d2 = _fromDisp(v2, 'length'), mdv = dax === 'md' ? d2 : _mdFromTvd(d2), tv = _tvdAt(_fin(mdv) ? mdv : d2); return _fmt(_dv(_fin(mdv) ? mdv : d2, 'length'), 0) + ' MD' + (_phone() ? '' : ' · ' + (_fin(tv) ? _fmt(_dv(tv, 'length'), 0) : '—') + ' TVD') + ' ' + _lab('length', 'ft'); } });
+                    });
+                });
+            }
             var gp = (ST.M && ST.M.tests || []).filter(function (t) { return t.use !== false && _fin(t.gaugeMd) && _fin(t.gauge_psia); });
             if (gp.length && ST.SC && ST.SC.trajectory) ser.push({ key: 'g', label: 'Gauge (tests)', kind: 'points', color: T.green, r: 5, pts: gp.map(function (t) { return [_dv(t.gauge_psia, 'pressure'), _dv(dax === 'md' ? t.gaugeMd : (_fin(_schAt(t.gaugeMd).tvd) ? _schAt(t.gaugeMd).tvd : t.gaugeMd), 'length')]; }) });
             spec = { key: 'trav:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'y',
@@ -153390,6 +153483,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                       fmt: function (v) { var d = Math.pow(10, v); return d < 1 ? _fmt(d * 24, 0) + ' h' : _fmt(d, d < 10 ? 1 : 0) + ' d'; } }];
                 // a phone-width chart has room for one rail: U across the full width (the producing time stays a step ③ input)
                 if (_phone()) { spec.handles = spec.handles.slice(0, 1); spec.handles[0].rail = [0, 1]; }
+                spec.handles = spec.handles.concat(trH.filter(function (h) { return /^sec/.test(h.key); }));      // the section knobs stay (WP21)
                 spec.onHandle = _onHandle;
             }
         }
@@ -153414,11 +153508,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // is opened and cached per solve (≈ 1 evaluation per correlation).
     // "Flow-regime map": the operating-point traverse of the selected correlation placed on the Ros map (N_Lv, N_gv; WTS_wp_vlp.drMap)
     // with the region boundaries at the median N_d; hover a station for its MD / TVD, groups and region.
-    var CORR_SHORT = { bb: 'B&B', hb: 'H&B', gray: 'Gray', nsl: 'No-slip', dr: 'D&R', gasTZ: 'T-Z', gasCS: 'C-S', single: '1-phase' };
+    var CORR_SHORT = { bb: 'B&B', hb: 'H&B', gray: 'Gray', nsl: 'No-slip', dr: 'D&R', gasTZ: 'T-Z', gasCS: 'C-S', single: '1-phase', ork: 'Ork', agf: 'AGF', mb: 'M&B', ansari: 'Ansari', hk: 'H&K', __sec: 'Per-section' };
+    var CORR_SHORT_L = { bb: 'Beggs & Brill', hb: 'Hagedorn & Brown', gray: 'Gray', nsl: 'No-slip', dr: 'Duns & Ros', gasTZ: 'Average T-Z (gas)', gasCS: 'Cullender-Smith (gas)', single: 'Single phase',
+        ork: 'Orkiszewski', agf: 'Aziz-Govier-Fogarasi', mb: 'Mukherjee-Brill', ansari: 'Ansari (mechanistic)', hk: 'Hasan-Kabir (drift flux)' };
+    function _corrShortL(k) { return CORR_SHORT_L[k] || String(_corrLabel(k) || k || '').replace(/\s*\(.*$/, ''); }
+    // one stable colour per correlation key (the schematic section band, the section bar and the boundary labels)
+    var CORR_COL = { bb: '#f0883e', hb: '#58a6ff', gray: '#bc8cff', nsl: '#8b949e', single: '#8b949e', dr: '#3fb950', gasTZ: '#d29922', gasCS: '#e6edf3', ork: '#39c5cf', agf: '#ff7b72', mb: '#d2a8ff', ansari: '#7ee787', hk: '#ffa657' };
+    function _corrCol(k) { return CORR_COL[k] || '#6e7681'; }
     var REGION_TXT = { I: 'Region I — bubble / plug', II: 'Region II — slug', transition: 'Transition', III: 'Region III — mist', single: 'Single phase' };
     var REGION_PAT = { I: 'bubble', II: 'slug', transition: 'transition', III: 'mist', single: 'single' };
     function _corrShort(k) { return CORR_SHORT[k] || String(k).slice(0, 8); }
-    function _corrPal(T) { return [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, '#39c5cf', T.text2]; }
+    function _corrPal(T) { return [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, '#39c5cf', T.text2, '#ff7b72', '#d2a8ff', '#7ee787', '#ffa657', '#79c0ff', '#f778ba']; }
     function _corrLabel(k) { var e = (G.WTS_flowline_corr || {})[k]; return (e && e.label) || k; }
     function _gasOnlyCorr(e) { return !!(e && (e.key === 'gasTZ' || e.key === 'gasCS' || (e.range && e.range.note === 'gas only'))); }
     function _cmpSet(M) {
@@ -153434,16 +153534,48 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (a.length && out[out.length - 1].md !== a[a.length - 1].md) out.push({ md: a[a.length - 1].md, tvd: a[a.length - 1].tvd, p: a[a.length - 1].p });
         return out;
     }
+    // the flow-pattern runs of a traverse along MD (top → bottom) and their strip (an inline SVG: MD left → right; the per-section row
+    // carries the correlation runs as a thin bar above its patterns)
+    function _patRuns(prof) {
+        var V = G.WTS_wp_view, out = [];
+        (prof || []).forEach(function (r) {
+            if (r.restr || !_fin(r.md)) return;
+            var k = V ? V.patternKey(r.pattern) : String(r.pattern || ''), l = out[out.length - 1];
+            if (l && l.k === k) l.b = r.md; else out.push({ a: l ? l.b : r.md, b: r.md, k: k });
+        });
+        return out.filter(function (x) { return x.b > x.a; });
+    }
+    function _patStrip(r) {
+        var V = G.WTS_wp_view, pr = r.pruns || [];
+        if (!V || !pr.length) return '';
+        var a0 = pr[0].a, z = pr[pr.length - 1].b, span = (z - a0) || 1, top = r.cruns && r.cruns.length ? 5 : 0, g = '', tip = [];
+        (r.cruns || []).forEach(function (c) { g += '<rect x="' + (100 * (c.a - a0) / span).toFixed(2) + '" y="0" width="' + Math.max(0.4, 100 * (c.b - c.a) / span).toFixed(2) + '" height="4" fill="' + _corrCol(c.k) + '"/>'; });
+        pr.forEach(function (x) {
+            g += '<rect x="' + (100 * (x.a - a0) / span).toFixed(2) + '" y="' + top + '" width="' + Math.max(0.4, 100 * (x.b - x.a) / span).toFixed(2) + '" height="' + (16 - top) + '" fill="' + (V.PATTERN_COLORS[x.k] || '#6e7681') + '"/>';
+            tip.push(x.k + ' ' + _fmt(_dv(x.a, 'length'), 0) + '–' + _fmt(_dv(x.b, 'length'), 0) + ' ' + _lab('length', 'ft') + ' MD');
+        });
+        return '<svg class="wp-pstrip" viewBox="0 0 100 16" preserveAspectRatio="none" role="img" aria-label="' + _esc('Flow pattern along the well: ' + tip.join('; ')) + '"><title>' + _esc(tip.join('\n')) + '</title>' + g + '</svg>';
+    }
     function _corrCmp() {
         var R = ST.R, M = ST.M; if (!(R && R.ok && R.op && R.traverse && R.traverse.ok && M)) return null;
         var key = _cmpKey();
         if (ST.cmp && ST.cmp.key === key) return ST.cmp;
-        var sel = _selCorr(), q = R.op.q, thp = R.traverse.pTop, rows = [], t0 = _now();
+        var sel0 = _selCorr(), q = R.op.q, thp = R.traverse.pTop, rows = [], t0 = _now();
+        // v4.5 WP21: with per-section correlations in use the solve's own traverse is the "Per-section" row and every correlation row is
+        // marched pure (one correlation over the whole path)
+        var secRuns = (R.traverse.sections && R.traverse.sections.length) ? R.traverse.sections : null, sel = secRuns ? '__sec' : sel0;
+        if (secRuns) {
+            var dE = 0, dFs = 0, dAs = 0, pz = {}; (R.traverse.segments || []).forEach(function (s0) { dE += +s0.dpEl || 0; dFs += +s0.dpF || 0; dAs += +s0.dpAcc || 0; });
+            R.traverse.profile.forEach(function (p0) { if (p0.pattern) pz[p0.pattern] = (pz[p0.pattern] || 0) + 1; });
+            rows.push({ key: '__sec', label: 'Per-section correlations (in use)', verified: secRuns.every(function (x) { return x.verified; }), vertical: false, gasOnly: false, sel: true,
+                pwf: R.traverse.pEnd, dpEl: dE, dpF: dFs, dpAcc: dAs, patterns: Object.keys(pz).sort(function (a, b) { return pz[b] - pz[a]; }).slice(0, 2),
+                profile: _decim(R.traverse.profile, 90), pruns: _patRuns(R.traverse.profile), cruns: secRuns.map(function (x) { return { a: x.mdTop, b: x.mdBot, k: x.corr }; }), err: null });
+        }
         _cmpSet(M).forEach(function (e) {
             var tr = null, err = null;
             if (e.key === sel) tr = R.traverse;
             else {
-                var Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = e.key; Mc.system.node = 'bottom';
+                var Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = e.key; Mc.system.node = 'bottom'; Mc.system.corr.sections = [];
                 var r = _call('WTS_wp_system.evalAt', Mc, q);
                 if (r && r.tr && r.tr.ok) tr = r.tr; else err = (r && ((r.errors || [])[0] || (r.lost && 'the traverse is lost (' + r.lost.reason + ')'))) || 'no traverse';
             }
@@ -153452,7 +153584,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var pats = {}; if (tr) tr.profile.forEach(function (p) { if (p.pattern) pats[p.pattern] = (pats[p.pattern] || 0) + 1; });
             rows.push({ key: e.key, label: e.label, verified: e.verified === true, vertical: !!e.vertical, gasOnly: _gasOnlyCorr(e), sel: e.key === sel,
                 pwf: tr ? tr.pEnd : null, dpEl: tr ? dEl : null, dpF: tr ? dF : null, dpAcc: tr ? dA : null, patterns: Object.keys(pats).sort(function (a, b) { return pats[b] - pats[a]; }).slice(0, 2),
-                profile: tr ? _decim(tr.profile, 90) : [], err: err });
+                profile: tr ? _decim(tr.profile, 90) : [], pruns: tr ? _patRuns(tr.profile) : [], err: err });
         });
         var selRow = rows.filter(function (r) { return r.sel; })[0], pSel = selRow && _fin(selRow.pwf) ? selRow.pwf : null;
         rows.forEach(function (r) { r.dp = (_fin(r.pwf) && _fin(pSel)) ? r.pwf - pSel : null; r.dpPct = (_fin(r.dp) && pSel > 0) ? 100 * r.dp / (pSel - thp) : null; });
@@ -153470,12 +153602,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // the operating point of every correlation: a Job of warm tracking solves (≈ 5 evaluations each) from the current operating point
     function _corrOpJob() {
         var R = ST.R, M = ST.M, C = _corrCmp(); if (!C) return null;
-        var list = C.rows.filter(function (r) { return !r.sel; }).map(function (r) { return r.key; }), i = 0, out = {};
+        var list = C.rows.filter(function (r) { return !r.sel && r.key !== '__sec'; }).map(function (r) { return r.key; }), i = 0, out = {};
         out[C.sel] = { ok: true, q: R.op.q, p: R.op.p, stable: R.op.stable !== false };
         return {
             step: function () {
                 if (i < list.length) {
-                    var k = list[i++], Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = k;
+                    var k = list[i++], Mc = JSON.parse(JSON.stringify(M)); Mc.system.corr.well = k; Mc.system.corr.sections = [];
                     var r = _call('WTS_wp_system.solve', Mc, { track: { q: R.op.q, slope: R.op.dDdq } });
                     out[k] = (r && r.ok && r.op) ? { ok: true, q: r.op.q, p: r.op.p, stable: r.op.stable !== false } : { ok: false, msg: (r && ((r.errors || [])[0] || r.code)) || 'no operating point' };
                 }
@@ -153494,12 +153626,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var C = _corrCmp(), R = ST.R, M = ST.M, dl = _lab('length', 'ft'), pal = _corrPal(T), ser = [], markers = [];
         var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
         if (C) {
-            C.rows.forEach(function (r, i) { if (r.profile.length) ser.push({ key: 'c_' + r.key, label: _corrShort(r.key) + (r.sel ? ' (selected)' : '') + (r.verified ? '' : ' · prov.'), color: pal[i % pal.length], width: r.sel ? 3 : 1.7, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
+            // a phone-width chart keeps the legend to the selected row (the table below carries every colour)
+            var ph = _phone();
+            C.rows.forEach(function (r, i) { if (r.profile.length) ser.push({ key: 'c_' + r.key, label: _corrShort(r.key) + (r.sel ? ' (selected)' : '') + (r.verified ? '' : ' · prov.'), legend: !ph || r.sel, color: pal[i % pal.length], width: r.sel ? 3 : 1.7, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
             if (C.cf && C.cf.cs && C.cf.cs.stations) {
                 var st = C.cf.cs.stations, stp = Math.max(1, Math.ceil(st.length / 24)), pts = [];
                 for (var j = 0; j < st.length; j += stp) pts.push([_dv(st[j].p, 'pressure'), dk(st[j])]);
                 pts.push([_dv(st[st.length - 1].p, 'pressure'), dk(st[st.length - 1])]);
-                ser.push({ key: 'cf_cs', label: 'Cullender-Smith closed form', kind: 'points', color: T.text, r: 3, pts: pts });
+                ser.push({ key: 'cf_cs', label: 'Cullender-Smith closed form', legend: !_phone(), kind: 'points', color: T.text, r: 3, pts: pts });
             }
             markers.push({ x: _dv(C.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, halo: false });
             var selR = C.rows.filter(function (r) { return r.sel; })[0];
@@ -153515,16 +153649,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var rc = _rateCat(), O = ST.cmpOp && ST.cmpOp.key === C.key ? ST.cmpOp : null, sp = C.spreadPct;
         var chips = '<div class="wp-cmpk">' +
             '<div class="kpi wp-cmpc st-' + (sp == null ? 'none' : sp > 15 ? 'warn' : 'ok') + '"><span class="kpi-l">BHP spread (multiphase)</span><b class="kpi-v">' + (_fin(C.spread) ? _u(C.spread, 'pressure', 0, 'psi') : '—') + '</b><i class="kpi-s">' + (_fin(sp) ? _fmt(sp, 1) + ' % of the tubing Δp' : '') + '</i></div>' +
-            '<div class="kpi wp-cmpc"><span class="kpi-l">Selected</span><b class="kpi-v">' + _esc(_corrShort(C.sel)) + '</b><i class="kpi-s">' + _esc(_corrLabel(C.sel).replace(/\s*\(.*$/, '')) + '</i></div>' +
+            '<div class="kpi wp-cmpc' + (C.sel === '__sec' ? ' st-ok' : '') + '"><span class="kpi-l">Selected</span><b class="kpi-v">' + _esc(_corrShort(C.sel)) + '</b><i class="kpi-s">' + _esc(C.sel === '__sec' ? _secSummary(R.traverse.sections) : _corrLabel(C.sel).replace(/\s*\(.*$/, '')) + '</i></div>' +
             '<div class="kpi wp-cmpc"><span class="kpi-l">At the operating rate</span><b class="kpi-v">' + _u(C.q, rc[0], 0, rc[1]) + '</b><i class="kpi-s">THP ' + _u(C.thp - PATM, 'pressureG', 0, 'psig') + '</i></div>' +
             (C.cf && C.cf.tz && C.cf.cs ? '<div class="kpi wp-cmpc st-' + (Math.abs(C.cf.cs.pwf / C.cf.tz.pwf - 1) < 0.01 ? 'ok' : 'warn') + '"><span class="kpi-l">Dry-gas closed forms</span><b class="kpi-v">' + (100 * (C.cf.cs.pwf / C.cf.tz.pwf - 1)).toFixed(2).replace(/^-(0\.00)$/, '$1') + ' %</b><i class="kpi-s">Cullender-Smith vs average T-Z</i></div>' : '') + '</div>';
         var rows = C.rows.map(function (r, i) {
             var o = O && O.ops[r.key], dot = '<span class="wp-cdot" style="background:' + pal[i % pal.length] + '"></span>';
-            return '<tr' + (r.sel ? ' class="wp-sel"' : '') + '><td>' + dot + _esc(r.label.replace(/\s*\(.*$/, '')) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span>') + (r.gasOnly ? ' <span class="wp-chip" title="gas phase only: the liquids are ignored">gas only</span>' : '') + '</td>' +
+            if (r.key === '__sec') dot = '<span class="wp-cdot" style="background:conic-gradient(' + (r.cruns || []).map(function (c, j, a) { return _corrCol(c.k) + ' ' + (100 * j / a.length).toFixed(0) + '% ' + (100 * (j + 1) / a.length).toFixed(0) + '%'; }).join(',') + ')"></span>';
+            return '<tr' + (r.sel ? ' class="wp-sel"' : '') + '><td>' + dot + _esc(r.key === '__sec' ? r.label : r.label.replace(/\s*\(.*$/, '')) + (r.verified ? '' : ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span>') + (r.gasOnly ? ' <span class="wp-chip" title="gas phase only: the liquids are ignored">gas only</span>' : '') + '</td>' +
                 '<td class="num">' + (_fin(r.pwf) ? _fmt(_dv(r.pwf, 'pressure'), 0) : '<span title="' + _esc(r.err || '') + '">lost</span>') + '</td>' +
                 '<td class="num">' + (r.sel ? '—' : (_fin(r.dp) ? (r.dp >= 0 ? '+' : '') + _fmt(_dv(r.dp, 'pressure'), 0) + (_fin(r.dpPct) ? ' (' + (r.dpPct >= 0 ? '+' : '') + _fmt(r.dpPct, 1) + ' %)' : '') : '—')) + '</td>' +
                 '<td class="num">' + (_fin(r.dpEl) ? _fmt(_dv(r.dpEl, 'pressure'), 0) + ' / ' + _fmt(_dv(r.dpF, 'pressure'), 0) : '—') + '</td>' +
-                '<td>' + _esc(r.patterns.join(', ')) + '</td>' +
+                '<td>' + _patStrip(r) + '<span class="wp-u">' + _esc(r.patterns.join(', ')) + '</span></td>' +
                 '<td class="num">' + (o ? (o.ok ? _fmt(_dv(o.q, rc[0]), 0) + (o.stable ? '' : ' ⚠') : '<span title="' + _esc(o.msg || '') + '">no flow</span>') : '·') + '</td>' +
                 '<td class="rp-skip">' + (r.sel ? '<span class="wp-chip">in use</span>' : '<button type="button" class="btn btn-secondary wp-use" data-act="usecorr" data-v="' + _esc(r.key) + '" aria-label="Use ' + _esc(r.label) + '">Use</button>') + '</td></tr>';
         }).join('');
@@ -153533,11 +153668,78 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var d = _fin(C.pSel) ? c.pwf - C.pSel : null;
             rows += '<tr class="wp-cf"><td><span class="wp-cdot" style="background:' + (x[0] === 'cs' ? 'var(--text)' : 'var(--text3)') + '"></span>' + x[1] + ' <span class="wp-chip prov" title="' + _esc(PROVISIONAL_TXT) + '">provisional</span></td><td class="num">' + _fmt(_dv(c.pwf, 'pressure'), 0) + '</td><td class="num">' + (_fin(d) ? (d >= 0 ? '+' : '') + _fmt(_dv(d, 'pressure'), 0) : '—') + '</td><td colspan="3" class="wp-hint" style="margin:0">gas phase only, cross-check</td><td class="rp-skip"></td></tr>';
         });
-        h.innerHTML = chips + '<div class="wp-tw"><table class="dtable wp-cmpt"><thead><tr><th>Correlation</th><th>BHP (' + _lab('pressure', 'psia') + ')</th><th>Δ vs selected</th><th>Gravity / friction Δp</th><th>Main patterns</th><th>Own op. rate (' + _lab(rc[0], rc[1]) + ')</th><th class="rp-skip"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        h.innerHTML = chips + '<div class="wp-tw"><table class="dtable wp-cmpt"><thead><tr><th>Correlation</th><th>BHP (' + _lab('pressure', 'psia') + ')</th><th>Δ vs selected</th><th>Gravity / friction Δp</th><th>Flow pattern along the well (top → bottom)</th><th>Own op. rate (' + _lab(rc[0], rc[1]) + ')</th><th class="rp-skip"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
             '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="corrop">' + (O ? 'Re-run' : 'Find') + ' the operating point of each correlation</button></div>' +
             '<div class="wp-hint">Each correlation is marched down the surveyed path from the solved wellhead pressure at the operating rate (hydrostatic on TVD, friction on MD). Provisional correlations have no verified published example yet. The operating points appear on the system plot as diamonds in the colours of this table.</div>';
     }
+    // v4.5 WP21: the map switch — the Ros map (Duns & Ros regions, A2) or the map of Aziz-Govier-Fogarasi, Mukherjee-Brill or the
+    // mechanistic superficial-velocity map (Ansari, or Hasan-Kabir when that is the correlation in use); the default follows the
+    // correlation in use (its registry entry's map)
+    var MAP_KINDS = [['ros', 'Duns & Ros (Ros map)'], ['agf', 'Aziz-Govier-Fogarasi'], ['mb', 'Mukherjee-Brill'], ['mech', 'Mechanistic (v_sg · v_sl)']];
+    function _mapKind() {
+        var k = _plots().mapKind; if (k && MAP_KINDS.some(function (x) { return x[0] === k; })) return k;
+        var sc = ST.R && ST.R.traverse && ST.R.traverse.sections, ck = sc && sc.length ? sc[sc.length - 1].corr : _selCorr(), e = (G.WTS_flowline_corr || {})[ck];
+        return (e && e.map) || 'ros';
+    }
+    function _mapSwitch(kind) {
+        return '<div class="wp-tabs wp-mapk rp-skip" role="tablist" aria-label="Flow-pattern map">' + MAP_KINDS.map(function (x) { return '<button type="button" data-mapk="' + x[0] + '" role="tab" aria-selected="' + (x[0] === kind) + '" class="' + (x[0] === kind ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>';
+    }
+    var PM_TXT = {
+        agf: 'Aziz, Govier &amp; Fogarasi map: N_x = v_sg·(ρ_g/0.0764)^⅓·[(ρ_L/62.4)(72/σ)]^¼, N_y = v_sl·[(ρ_L/62.4)(72/σ)]^¼; boundaries N1, N2, N3 and N_x = 26.5.',
+        mb: 'Mukherjee &amp; Brill map: N_Lv, N_gv as Duns &amp; Ros; the boundaries move with the inclination — drawn at the median station.',
+        mech: 'Mechanistic map in superficial velocities: bubble / slug, dispersed bubble and annular boundaries at the median station.'
+    };
+    function _renderPatternMap(cv, V, T, kind) {
+        var R = ST.R, ok = !!(R && R.ok && R.traverse && R.traverse.ok), mp = null, sel = _selCorr();
+        if (ok) {
+            var key = _cmpKey() + '|' + kind + '|' + sel;
+            if (!(ST.pmap && ST.pmap.key === key)) { var m0 = _call('WTS_wp_vlp.patternMap', ST.F, R.op.q, R.traverse, { kind: kind, corr: sel }); ST.pmap = { key: key, m: (m0 && m0.ok) ? m0 : null }; }
+            mp = ST.pmap.m;
+        }
+        var vel = kind === 'mech', cx = function (v) { return vel ? _dv(v, 'velocity') : v; };
+        var ser = [], markers = [], mn = { x: 1e9, y: 1e9 }, mxv = { x: 0, y: 0 };
+        var BCOL = ['#58a6ff', '#bc8cff', '#f0883e', '#3fb950', '#d29922'];
+        if (mp) {
+            mp.points.forEach(function (p) { mn.x = Math.min(mn.x, p.x); mn.y = Math.min(mn.y, p.y); mxv.x = Math.max(mxv.x, p.x); mxv.y = Math.max(mxv.y, p.y); });
+            var x0 = Math.max(1e-3, Math.min(mn.x / 3, kind === 'mb' ? 1e-2 : 0.05)), y0 = Math.max(1e-3, Math.min(mn.y / 3, kind === 'mb' ? 0.1 : 0.05));
+            var x1 = Math.max(mxv.x * 3, kind === 'agf' ? 600 : (kind === 'mb' ? 30 : 200)), y1 = Math.max(mxv.y * 3, kind === 'mb' ? 2000 : 30);
+            var inb = function (q) { return q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1 && _fin(q[0]) && _fin(q[1]); };
+            mp.lines.forEach(function (l, i) { var pts = l.pts.filter(inb).map(function (q) { return [cx(q[0]), cx(q[1])]; }); if (pts.length > 1) ser.push({ key: 'b' + l.key, label: l.label, color: BCOL[i % BCOL.length], width: 1.4, dash: [5, 4], pts: pts }); });
+            mp.labels.forEach(function (lb) { if (inb([lb.x, lb.y])) markers.push({ x: cx(lb.x), y: cx(lb.y), kind: 'hollow', r: 0.1, color: V.PATTERN_COLORS[V.patternKey(lb.pattern)] || T.text2, label: lb.text }); });
+            var runs = [], cur = null;
+            mp.points.forEach(function (p) {
+                var k = V.patternKey(p.pattern);
+                if (!cur || cur.k !== k) { cur = { k: k, pat: p.pattern, pts: cur ? [cur.pts[cur.pts.length - 1]] : [], info: cur ? [cur.info[cur.info.length - 1]] : [] }; runs.push(cur); }
+                cur.pts.push([cx(p.x), cx(p.y)]);
+                cur.info.push([_mdTvdTxt(p.md, p.tvd) + (_fin(p.inc) ? ' · ' + _fmt(p.inc, 1) + '°' : ''), mp.axes.x.label + ' ' + _fmt(cx(p.x), 3) + ' · ' + mp.axes.y.label + ' ' + _fmt(cx(p.y), 3), String(p.pattern) + ' · p ' + _fmt(_dv(p.p, 'pressure'), 0) + ' ' + _lab('pressure', 'psia')]);
+            });
+            var seen = {};
+            runs.forEach(function (r, i) { ser.push({ key: 'run' + i, label: seen[r.k] ? '' : r.pat, legend: !seen[r.k], color: V.PATTERN_COLORS[r.k] || T.text2, width: 3.2, pts: r.pts, info: r.info }); seen[r.k] = 1; });
+            if (mp.points.length) {
+                var a = mp.points[0], z = mp.points[mp.points.length - 1];
+                markers.push({ x: cx(a.x), y: cx(a.y), kind: 'filled', color: T.text, r: 5, halo: false, label: 'Wellhead' });
+                markers.push({ x: cx(z.x), y: cx(z.y), kind: 'diamond', color: T.accent, r: 6, label: 'Bottom ' + _mdTvdTxt(z.md, z.tvd) });
+            }
+            mn.x = x0; mn.y = y0;
+        }
+        var ax = function (a) { return vel ? (a.label === 'v_sg' ? 'Superficial gas velocity v_sg' : 'Superficial liquid velocity v_sl') + ' (' + _lab('velocity', 'ft/s') + ')' : (a.label === 'N_x' ? 'Gas number N_x' : a.label === 'N_y' ? 'Liquid number N_y' : a.label === 'N_Lv' ? 'Liquid velocity number N_Lv' : 'Gas velocity number N_gv'); };
+        V.chart(cv, { key: 'pmap:' + kind + (_metric() ? 'm' : 'i'), aspect: 0.62, minH: 260, maxH: 440, w: 640, readout: 'near',
+            x: { label: mp ? ax(mp.axes.x) : '', log: true, min: mp ? cx(mn.x) : 0.01, short: mp ? mp.axes.x.label : 'x' }, y: { label: mp ? ax(mp.axes.y) : '', log: true, min: mp ? cx(mn.y) : 0.01, short: mp ? mp.axes.y.label : 'y' },
+            series: ser, markers: markers, hidden: _plots().pmapHidden || null, onLegend: function (hid) { _plotsSet({ pmapHidden: hid }); },
+            empty: ok ? 'No two-phase station on this traverse (single-phase flow throughout).' : 'The flow-pattern map appears after a solve.' });
+        var h = _byId('wp_corrtbl'); if (!h) return;
+        var cnt = mp ? mp.counts : {}, tot = 0; Object.keys(cnt).forEach(function (k) { tot += cnt[k]; });
+        var mc = kind === 'mech' ? (mp && mp.corr === 'hk' ? 'hk' : 'ansari') : kind, E = (G.WTS_flowline_corr || {})[mc];
+        h.innerHTML = _mapSwitch(kind) + (mp ? '<div class="wp-cmpk">' + Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; }).map(function (k) {
+            var pk = V.patternKey(k);
+            return '<div class="kpi wp-cmpc"><span class="kpi-l"><i class="wp-cdot" style="background:' + (V.PATTERN_COLORS[pk] || T.text2) + '"></i>' + _esc(k) + '</span><b class="kpi-v">' + _fmt(100 * cnt[k] / (tot || 1), 0) + ' %</b><i class="kpi-s">' + cnt[k] + ' of ' + tot + ' stations</i></div>';
+        }).join('') + '</div>' +
+            '<div class="wp-hint">' + PM_TXT[kind] + ' The ' + _esc(R.traverse.sections && R.traverse.sections.length ? 'per-section' : _corrShort(sel)) + ' traverse at the operating point, each station classified by ' + _esc(E ? E.label.replace(/\s*\(.*$/, '') : mc) +
+            ' with its own properties' + (mp.ref ? ' (boundaries at ' + _fmt(mp.ref.inc, 0) + '° from vertical, ID ' + _fmt(_dv(mp.ref.d, 'lengthSmall'), 3) + ' ' + _lab('lengthSmall', 'in') + ')' : '') + (E && E.verified !== true ? ' — <span class="wp-chip prov">provisional</span>' : '') + '. Hover the path for each station (MD · TVD).</div>' : '');
+    }
     function _renderMapTab(cv, V, T) {
+        var kind = _mapKind();
+        if (kind !== 'ros') { _renderPatternMap(cv, V, T, kind); return; }
         var R = ST.R, ok = !!(R && R.ok && R.traverse && R.traverse.ok), mp = null;
         if (ok) {
             var key = _cmpKey();
@@ -153574,9 +153776,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             series: ser, markers: markers, hidden: _plots().mapHidden || null, onLegend: function (hid) { _plotsSet({ mapHidden: hid }); },
             empty: ok ? 'No two-phase station on this traverse (single-phase flow throughout).' : 'The flow-regime map appears after a solve.' });
         var h = _byId('wp_corrtbl'); if (!h) return;
-        if (!mp) { h.innerHTML = ''; return; }
+        if (!mp) { h.innerHTML = _mapSwitch('ros'); return; }
         var tot = mp.points.length || 1, cnt = mp.counts;
-        h.innerHTML = '<div class="wp-cmpk">' + ['I', 'II', 'transition', 'III', 'single'].filter(function (k) { return cnt[k] > 0; }).map(function (k) {
+        h.innerHTML = _mapSwitch('ros') + '<div class="wp-cmpk">' + ['I', 'II', 'transition', 'III', 'single'].filter(function (k) { return cnt[k] > 0; }).map(function (k) {
             return '<div class="kpi wp-cmpc"><span class="kpi-l"><i class="wp-cdot" style="background:' + (V.PATTERN_COLORS[REGION_PAT[k]] || T.text2) + '"></i>' + _esc(REGION_TXT[k]) + '</span><b class="kpi-v">' + _fmt(100 * cnt[k] / tot, 0) + ' %</b><i class="kpi-s">' + cnt[k] + ' of ' + tot + ' stations</i></div>';
         }).join('') + '</div>' +
             '<div class="wp-hint">Duns &amp; Ros (Ros) flow-pattern map of the ' + _esc(_corrShort(mp.corr || _selCorr())) + ' traverse at the operating point. N_Lv = 1.938·v_sl·(ρ_L/σ)^¼, N_gv = 1.938·v_sg·(ρ_L/σ)^¼; the region I / II boundary is drawn for N_d = ' + _fmt(mp.NdRef, 1) +
@@ -153685,6 +153887,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // ③ survey extras + segments; the TVD cells of the other tables are refreshed in place (no re-render: the focus stays)
         _renderTable('survey');
         _refreshTvdCells();
+        _refreshSecCover();
         var pt = _byId('wp_perftvd');
         if (pt) {
             var nd = ST.W && ST.W.ok && ST.W.nodes, f = function (md, tv) { return _fin(md) ? _u(md, 'length', 0, 'ft') + ' MD · ' + (_fin(tv) ? _u(tv, 'length', 0, 'ft') : '—') + ' TVD' : '—'; };
@@ -153938,6 +154141,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (act === 'pvtprop') { _plotsSet({ pvtProp: btn.getAttribute('data-k') }); _renderPvtCard(null); return; }
         if (act === 'pvtfam') { var fk = btn.getAttribute('data-k'); _setCtrl('wp_corr_pb', fk); _famSync('wp_corr_pb'); _commit('wp_corr_pb'); return; }
         if (act === 'pbclear') { _setCtrl('wp_pbUser', ''); _commit('wp_pbUser'); return; }
+        if (act === 'secpreset') { _secPreset(btn.getAttribute('data-v')); return; }
         if (act === 'usecorr') { var ck = btn.getAttribute('data-v'), sw = _byId('wp_corr_well'); if (ck && sw) { _setCtrl('wp_corr_well', ck, true); _commit('wp_corr_well'); } return; }
         if (act === 'corrop') {
             _drive(_corrOpJob(), function (r) { if (r && r.key === _cmpKey()) { ST.cmpOp = r; _renderTraverseCard(); _renderSystemPlot(); } }, 'Operating point per correlation');
@@ -154433,7 +154637,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (!cells.length || !cells.some(function (x) { return /^[-+]?\d/.test(x) || /^[-+]?[.,]\d/.test(x); })) return;      // header lines are skipped
             if (cells.length !== cols.length) odd++;
             var arr = cols.every(function (c) { return typeof c.k === 'number'; }), row = arr ? [] : {};
-            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, c.cat) : null; } });
+            cols.forEach(function (c, i) { var raw = cells[i]; if (c.opts || c.text) row[c.k] = raw == null ? (c.opts ? c.opts[0][0] : '') : raw; else { var v = _pasteNum(raw, dc); row[c.k] = _fin(v) ? _fromDisp(v, _cCat(c, row)) : null; } });
             rows.push(row);
         });
         var r = _writeTable(t, rows), msg = _byId('wp_pastemsg_' + t);
@@ -154494,7 +154698,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (msg) msg.innerHTML = rowsOverride ? _vHtml({ st: 'info', t: 'ℹ The previous survey rows are back.' }) : (old.length ? _vHtml({ st: 'ok', t: '✓ ' + conv.length + ' station(s) converted to ' + (m === 'mdtvd' ? 'MD · TVD' : 'MD · Inc · Azi') + '.' }) + '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="svundo">Undo</button></div>' : '');
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
-    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
+    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'tests', 'corrSections'].forEach(_renderTable); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
     function _renderRatings() {
         var M = _read(); if (!M) return;
         var a = _byId('wpt_rate_wh'), b = _byId('wpt_rate_tht'), c = _byId('wpt_beans');
@@ -154667,6 +154871,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 _fg('wp_corr_line', 'Flowline', { options: lineCorr.map(function (c) { return [c.key, c.label + (c.verified ? '' : ' — provisional')]; }) }) +
                 _fg('wp_mult_hl', 'Holdup multiplier m_h', { hint: '1 = as published; fitted to the tests in ⑥ Match (VLP tuning, 0.8–1.25).' }) + _fg('wp_mult_f', 'Friction multiplier m_f', { hint: 'Fitted only when the tests span at least 2:1 in rate (0.7–1.5).' }) +
                 _fg('wp_eroC', 'Erosional C', { unit: 'API RP 14E' }) + _fg('wp_stepFt', 'Step length', { unit: 'ft' }) + _fg('wp_refine', 'Refine steps', { check: true }) + '</div>' +
+                '<div id="wp_secbar" class="wp-secwrap"></div>' +
+                _tableBlock('corrSections', 'Per-section correlations', 'Rows in order: the first row that covers a part of the path sets its correlation (an MD interval, or an inclination band in degrees from vertical); the well correlation above applies elsewhere. Drag a boundary on the Traverse plot.',
+                    { btns: '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="dev" title="Mukherjee-Brill where the hole is 30° or more from vertical">Deviated → Mukherjee-Brill</button>' +
+                        '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="mech" title="Ansari below 30°, Hasan-Kabir above">Mechanistic by inclination</button>' +
+                        '<button type="button" class="btn btn-secondary" data-act="secpreset" data-v="clear">Clear</button>' }) +
                 '<div class="wp-sec-h" style="font-size:13px;margin-top:14px">Equipment ratings</div><div class="fg rp-skip">' +
                 '<div class="fg-item"><label for="wpt_rate_wh">Wellhead rating (' + _esc(_lab('pressure', 'psi')) + ')</label><input id="wpt_rate_wh" data-rt="wellhead_psi" type="number" step="any" inputmode="decimal" placeholder="no default"></div>' +
                 '<div class="fg-item"><label for="wpt_rate_tht">Maximum THT (' + _esc(_lab('temperature', '°F')) + ')</label><input id="wpt_rate_tht" data-rt="tht_max_F" type="number" step="any" inputmode="decimal" placeholder="no default"></div>' +
@@ -154764,6 +154973,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (!t.id || t.id.indexOf('wp_') !== 0) return;
             if (t.id === 'wp_corr_pb' || t.id === 'wp_corr_rs') _famSync(t.id);
             if (t.id === 'wp_ipr' || t.id === 'wp_ftype' || t.id === 'wp_choke' || t.id === 'wp_mode' || t.id === 'wp_heat' || t.id === 'wp_ckcorr' || t.id === 'wp_lift') _syncUi();
+            if (t.id === 'wp_ftype') _renderTable('corrSections');        // the dry-gas keys are offered for gas wells only (WP21)
             if (e.isTrusted && ST.prov[t.id]) { delete ST.prov[t.id]; var lab = root.querySelector('label[for="' + t.id + '"] .wp-chip'); if (lab && lab.parentNode) lab.parentNode.removeChild(lab); }
             G.calcWellPerf();
         });
@@ -154777,6 +154987,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 _writeTable(tn, _collectTable(tn)); _renderTable(tn); return;
             }
             if (b.getAttribute('data-tab')) { _plotsSet({ trTab: b.getAttribute('data-tab') }); _renderTraverseCard(); return; }
+            if (b.getAttribute('data-mapk')) { _plotsSet({ mapKind: b.getAttribute('data-mapk') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-depth')) { _plotsSet({ depth: b.getAttribute('data-depth') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-mdepth')) { _plotsSet({ mdepth: b.getAttribute('data-mdepth') }); Array.prototype.forEach.call(document.querySelectorAll('#wp_mdepth button'), function (x) { if (x.classList) x.classList.toggle('on', x === b); }); _drawMatchPlot(); _drawTunePlot(); return; }
             var act = b.getAttribute('data-act'); if (act) _act(act, b);
@@ -156411,10 +156622,20 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var V = G.WTS_wp_vlp;
         return (V && typeof V.defaultCorr === 'function') ? V.defaultCorr(F).key : 'bb';
     }
+    // per-section correlations (v4.5 WP21): o.sections when given (false / [] = none); else the model's sections when the march uses the
+    // model's own well correlation (pwf / IPR from a test, tuning of the model); the comparison rows are pure (one correlation each)
+    function _secFor(M, F, corr, o) {
+        if (o && o.sections !== undefined) return Array.isArray(o.sections) && o.sections.length ? o.sections : null;
+        var sc = M && M.system && M.system.corr;
+        if (!sc || !Array.isArray(sc.sections) || !sc.sections.length) return null;
+        return String(corr) === _corrOf(M, F, null) ? sc.sections : null;
+    }
     function _march(cx, path, from, p0, corr, o) {
         var sys = cx.M.system || {};
         var to = { from: from, p0: p0, corr: corr, stepFt: (o && +o.stepFt > 0) ? +o.stepFt : (+sys.stepFt > 0 ? +sys.stepFt : 100),
             eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false, pMax: Math.max(p0 * 4, p0 + 10000) };
+        var sec = (o && o._pure) ? null : _secFor(cx.M, cx.F, corr, o);
+        if (sec) to.sections = sec;
         var mult = o && o.mult;
         if (mult && (+mult.hl !== 1 || +mult.f !== 1)) to.mult = { hl: _fin(+mult.hl) ? +mult.hl : 1, f: _fin(+mult.f) ? +mult.f : 1 };
         return G.WTS_wp_vlp.traverse(cx.F, path, cx.flow, to);
@@ -156454,7 +156675,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (!path) return { ok: false, id: _tid(t, idx), fail: _fail('NO_PATH', 'No flow path between the wellhead and the gauge.') };
         var thpA = thp + PATM, REG = _reg(), res = {};
         keys.forEach(function (k) {
-            var e = REG[k], tr = _march(cx, path, 'top', thpA, k, o), pC = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
+            var e = REG[k], tr = _march(cx, path, 'top', thpA, k, Object.assign({}, o, { _pure: o.sections === undefined })), pC = (tr && tr.ok && _fin(tr.pEnd)) ? tr.pEnd : null;
             res[k] = { pCalc: pC, err: pC == null ? null : pC - g.p, errPct: pC == null ? null : 100 * (pC - g.p) / g.p,
                 errPctDp: (pC == null || !(g.p - thpA > 1)) ? null : 100 * (pC - g.p) / (g.p - thpA), lost: !(tr && tr.ok),
                 lostAt: tr && tr.lost ? tr.lost : null, warnings: ((tr && tr.warnings) || []).map(function (w) { return w.code; }),
@@ -156854,6 +157075,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (!keepProfile && c.memo[mk] !== undefined) return c.memo[mk];
             var so = { from: 'top', p0: c.thpA, corr: key, stepFt: stepFt, eroC: +sys.eroC > 0 ? +sys.eroC : 100, refine: sys.refine !== false,
                 pMax: Math.max(c.thpA * 4, c.thpA + 10000), grid: c.grid };
+            var secT = _secFor(M, c.cx.F, key, o); if (secT) so.sections = secT;
             if (hl !== 1 || f !== 1) so.mult = { hl: hl, f: f };
             var tr = G.WTS_wp_vlp.traverse(c.cx.F, c.path, c.cx.flow, so);
             nEval++;
@@ -156998,7 +157220,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //
 // Storage (both keys start with "wts_", so 29-multiwell makes them per well and project files carry them; no project module):
 //   wts_page_wellperf   host autosave of the page's id'd scalar controls ({f: {id: value}}; unit-tagged inputs canonical imperial)
-//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases}
+//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases,
+//                       corrSections (v4.5 WP21: per-section correlations → M.system.corr.sections)}
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -157023,7 +157246,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases'];
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections'];   // corrSections: v4.5 WP21
+    var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
 
@@ -157075,7 +157299,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'bound', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
             lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
-            system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb' },
+            system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb', sections: [] },
                       mult: { hl: 1, f: 1 }, eroC: 100, stepFt: 100, stepFtLine: 50, refine: true },
             tests: [],
             cases: []
@@ -157181,7 +157405,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // ── table record: empty / migrate / validate / decimate ───────────────────
     function empty() {
         return { v: VERSION, survey: [], strings: [], restrictions: [], geo: { points: [] }, flowline: [],
-                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [] };
+                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [] };
     }
     function migrate(rec) {
         if (!_isObj(rec)) return { ok: false, code: 'BAD_RECORD', notes: ['the stored model is not an object'] };
@@ -157249,6 +157473,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         out.lab = _isObj(r.lab) ? _clone(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
+        // per-section correlations (v4.5 WP21): [{by:'md'|'inc', from, to, corr}] — MD in ft, inclination in degrees from vertical; a key
+        // string of WTS_flowline_corr (checked by the engines: an unknown key is skipped there, with a warning)
+        out.corrSections = (Array.isArray(r.corrSections) ? r.corrSections : []).filter(_isObj).map(function (x) {
+            var by = SEC_BY.indexOf(x.by) !== -1 ? x.by : 'md', k = typeof x.corr === 'string' ? x.corr.trim() : '';
+            return { by: by, from: _num(x.from), to: _num(x.to), corr: /^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(k) ? k : '' };
+        }).filter(function (x) { return x.corr && (x.from === null || x.from >= 0) && (x.to === null || x.from === null || x.to > x.from); }).slice(0, SEC_MAX);
         TABLE_KEYS.forEach(function (k) { if (Array.isArray(out[k]) && out[k].length > MAX_ROWS && k !== 'survey') out[k] = out[k].slice(0, MAX_ROWS); });
         return { rec: out, warnings: warnings };
     }
@@ -157310,6 +157540,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             M.well.geo.points = rec.geo.points; M.surface.flowline = rec.flowline;
             M.surface.rating = rec.rating; M.surface.beans = rec.beans.length ? rec.beans : M.surface.beans; M.tests = rec.tests;
             M.cases = rec.cases; if (rec.lab) M.fluid.match = { lab: rec.lab }; if (rec.pump) M.lift.esp = { pump: rec.pump };
+            M.system.corr.sections = rec.corrSections || [];
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);
@@ -158122,12 +158353,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // a dry-gas-only method (the liquids are ignored) is not applicable to an oil or water well: refused, never a silent answer
         if (!_isGas(type) && (_gasOnly(REG[corrWell]) || _gasOnly(REG[corrLine])))
             return { fail: _fail('CORR_NOT_APPLICABLE', ['The dry-gas method (' + (_gasOnly(REG[corrWell]) ? REG[corrWell].label || corrWell : REG[corrLine].label || corrLine) + ') ignores the oil and water columns: it is not applicable to a ' + type + ' well. Choose another correlation.'], { F: F, I: I, W: W }) };
+        // per-section correlations (v4.5 WP21; WTS_wp_vlp.traverse o.sections): rows with a known key; a dry-gas-only key in a section of an
+        // oil or water well is refused like the whole-well choice
+        var secs = (sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections.filter(function (r) { return r && r.corr && REG[r.corr]; }) : [];
+        for (var si = 0; si < secs.length; si++) if (!_isGas(type) && _gasOnly(REG[secs[si].corr]))
+            return { fail: _fail('CORR_NOT_APPLICABLE', ['Section ' + (si + 1) + ': the dry-gas method (' + (REG[secs[si].corr].label || secs[si].corr) + ') ignores the oil and water columns: it is not applicable to a ' + type + ' well.'], { F: F, I: I, W: W }) };
         var mode = o.mode || sys.mode || 'rate';
         var choke = M.surface && M.surface.choke ? M.surface.choke : { present: false };
         var mult = sys.mult && (+sys.mult.hl !== 1 || +sys.mult.f !== 1) ? { hl: _fin(+sys.mult.hl) ? +sys.mult.hl : 1, f: _fin(+sys.mult.f) ? +sys.mult.f : 1 } : null;
         var node = o.node || sys.node || 'bottom';
         var C = {
-            M: M, F: F, I: I, W: W, type: type, gas: _isGas(type), corrWell: corrWell, corrLine: corrLine, mode: mode,
+            M: M, F: F, I: I, W: W, type: type, gas: _isGas(type), corrWell: corrWell, corrLine: corrLine, mode: mode, sections: secs.length ? secs : null,
             node: node === 'separator' ? 'wellhead' : (node === 'wellhead' ? 'wellhead' : 'bottom'), nodeAsked: node,
             stepFt: +sys.stepFt > 0 ? +sys.stepFt : 100, stepFtLine: +sys.stepFtLine > 0 ? +sys.stepFtLine : 50,
             refine: sys.refine !== false, eroC: +sys.eroC > 0 ? +sys.eroC : 100, mult: mult,
@@ -158249,7 +158485,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // one gas-lifted well evaluation at q: the tubing in two marches (lift gas above the injection point, formation fluid below);
     // the frozen step layout is not used (the injection depth moves with q). → a traverse-like object (profile, segments, pEnd, …)
     function _glTraverse(C, q, p0, dir, keep) {
-        var V = G.WTS_wp_vlp, o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, pMax: C.pMax };
+        var V = G.WTS_wp_vlp, o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, pMax: C.pMax, sections: C.sections };
         if (C.mult) o.mult = C.mult;
         var tpg = _tProf(C, q); if (tpg) o.tProfile = tpg.tAt;     // relaxation mode (WP14): the formation-fluid profile at q
         var mid = C.W.nodes.midPerfMd, inj, up, lo;
@@ -158435,7 +158671,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         r.top = top;
         var pwfI = C.I.pwfAt(q);
         var gkey = fine ? 'fine' : 'coarse';
-        var o = { corr: C.corrWell, stepFt: C.stepFt, coarse: !fine, eroC: C.eroC, refine: C.refine, pMax: C.pMax };
+        var o = { corr: C.corrWell, stepFt: C.stepFt, coarse: !fine, eroC: C.eroC, refine: C.refine, pMax: C.pMax, sections: C.sections };
         if (C.mult) o.mult = C.mult;
         var tpr = _tProf(C, q); if (tpr) o.tProfile = tpr.tAt;
         o.grid = C.grids[gkey] || true;
@@ -158628,7 +158864,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var tr = e.tr;
         // the reported traverse is always the wellhead → bottom march at the operating point (bottom node: e.tr already)
         if (C.node !== 'bottom' && e.top && !e.top.lost) {
-            var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax };
+            var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax, sections: C.sections };
             if (C.mult) o.mult = C.mult;
             var tpo = _tProf(C, opQ); if (tpo) o.tProfile = tpo.tAt;
             tr = C.gl ? _glTraverse(C, opQ, e.top.thp, 'down', true) : V.traverse(C.F, C.W, opQ, o); C.counts.fine++;
@@ -158746,6 +158982,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         (C.trWarn || []).forEach(function (w) { if (w && w.code !== 'LOST' && w.code !== 'PROVISIONAL') F.push(_w(w.code, w.msg, w.sev)); });
         var E = (G.WTS_flowline_corr || {})[C.corrWell];
         if (E && E.verified !== true) F.push(_w('PROVISIONAL', (E.label || C.corrWell) + ': provisional — not verified against a published example.', 'info'));
+        // per-section correlations (v4.5 WP21): each provisional section correlation actually on the path, once
+        var trS = R.traverse && R.traverse.sections, seenS = {};
+        seenS[C.corrWell] = 1;
+        if (trS) trS.forEach(function (sr) { var Es = (G.WTS_flowline_corr || {})[sr.corr]; if (seenS[sr.corr] || !Es) return; seenS[sr.corr] = 1;
+            if (Es.verified !== true) F.push(_w('PROVISIONAL', (Es.label || sr.corr) + ' (section ' + _f(sr.mdTop, 0) + '–' + _f(sr.mdBot, 0) + ' ft MD): provisional — not verified against a published example.', 'info')); });
         if (R.heat && R.heat.mode === 'relax') F.push(_w('PROVISIONAL_TEMP', 'Flowing temperature (heat-transfer relaxation, Ramey / Hasan-Kabir): ' + PROVISIONAL + '.', 'info'));
         if (C.nodeAsked === 'separator') F.push(_w('NODE_SEPARATOR', 'The separator node is solved at the wellhead node in this release (same operating point).', 'info'));
         R.flags = F;
@@ -158768,6 +159009,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             roots: [{ q: r.q, p: C.node === 'bottom' ? C.I.pwfAt(r.q) : _eval(C, r.q, true).pOut, dDdq: d, stable: true, conv: r.conv, evals: r.evals }],
             op: null, qs: null, vlpMin: null, pwf: null, traverse: null, breakdown: [], surface: {}, rates: {}, velocities: {}, flags: [], discontinuities: [], marginal: [],
             loading: null, warnings: C.warnings.slice(), errors: [], aof: C.aof, pr: C.pr, choke: { present: C.choke.present }, scan: [], curves: { ipr: [], vlp: [] } };
+        if (C.sections) R.corr.sections = JSON.parse(JSON.stringify(C.sections));
         R.op = { q: r.q, p: R.roots[0].p, stable: true, dDdq: d };
         // a live drag carries the curves, q_s and the tubing-curve minimum of the last full solve until the release (R.carried)
         if (o.track.curves) { R.curves = { ipr: C.node === 'bottom' ? [] : (o.track.curves.ipr || []), vlp: o.track.curves.vlp || [] }; R.qs = o.track.qs || null; R.vlpMin = o.track.vlpMin || null; R.carried = true; }
@@ -158798,6 +159040,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var R = { ok: false, node: C.node, nodeAsked: C.nodeAsked, mode: C.mode, corr: { well: C.corrWell, line: C.corrLine }, roots: [], op: null, qs: null,
             vlpMin: null, pwf: null, traverse: null, breakdown: [], surface: {}, rates: {}, velocities: {}, flags: [], discontinuities: [], marginal: [],
             loading: null, warnings: C.warnings.slice(), errors: [], aof: C.aof, pr: C.pr, choke: { present: C.choke.present } };
+        if (C.sections) R.corr.sections = JSON.parse(JSON.stringify(C.sections));
         var pts = _scan(C, o.scanFracs);
         R.scan = pts.map(function (p) { return { q: p.q, pOut: p.pOut, pIn: p.pIn, lost: p.lost ? p.lost.reason : null, eroMax: p.eroMax }; });
         var runs = _runs(C, pts);
@@ -159028,6 +159271,21 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             validity.push({ corr: ck, label: E.label || ck, inRange: !outs.length, provisional: E.verified !== true,
                 msg: (E.label || ck) + (outs.length ? ': outside the data range — ' + outs.join('; ') + ' (extrapolation).' : ': inside the published data range.') });
         }
+        // per-section correlations (v4.5 WP21): a validity row per section (provisional label, vertical-only rule on the section's
+        // inclination — the inclination band itself, or the survey's maximum inside the MD interval), dry-gas keys refused for oil / water
+        ((sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections : []).forEach(function (sr, i) {
+            if (!sr || !sr.corr) return;
+            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : '180') + '° from vertical'
+                : 'MD ' + _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : 'TD') + ' ft';
+            if (!Es) { add('SECTION_CORR', 'warn', 'wp_sections', 'Section ' + (i + 1) + ': unknown correlation ' + String(sr.corr).slice(0, 24) + ' (skipped).'); return; }
+            if (!gas && _gasOnly(Es)) { add('CORR_NOT_APPLICABLE', 'error', 'wp_sections', 'Section ' + (i + 1) + ': ' + (Es.label || sr.corr) + ' ignores the oil and water columns: not applicable to a ' + (fl.type || 'oil') + ' well.'); return; }
+            var incS = 0;
+            if (sr.by === 'inc') incS = _fin(+sr.to) ? Math.min(+sr.to, 180) : 180;
+            else if (three) sv.forEach(function (r2) { var md = +r2[0]; if (md >= (+sr.from || 0) && (!_fin(+sr.to) || md <= +sr.to) && +r2[1] > incS && +r2[1] <= 180) incS = +r2[1]; });
+            var outsS = (Es.vertical && incS > 30) ? ['a vertical-well correlation on a section reaching ' + _f(Math.min(incS, 90), 0) + '°'] : [];
+            validity.push({ corr: sr.corr, label: (Es.label || sr.corr) + ' (section ' + where + ')', inRange: !outsS.length, provisional: Es.verified !== true, section: i + 1,
+                msg: (Es.label || sr.corr) + ' (section ' + where + ')' + (outsS.length ? ': outside the data range — ' + outsS.join('; ') + ' (extrapolation).' : ': per-section correlation.') });
+        });
         var lk = (sys.corr && sys.corr.line) || 'bb', EL = REG[lk];
         if (EL && (sf.flowline || []).length) validity.push({ corr: lk, label: (EL.label || lk) + ' (flowline)', inRange: true, provisional: EL.verified !== true,
             msg: (EL.label || lk) + ' (flowline): any inclination; data from 1–1.5 in test pipe, commonly used beyond.' });
@@ -159474,6 +159732,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //       canvas._wpAxes = {toX, toY, fromX, fromY, plot} like PRiSM's _prismAxes (C6).
 //   WTS_wp_view.redraw(canvas)           redraw with the kept spec (resize, theme)
 //   WTS_wp_view.schematic(S, o)          deviated-well schematic → {svg, pts:[{x, y, md, tvd, i}], width, height}
+//                                        (v4.5 WP21: o.bands = [{mdTop, mdBot, color, label, title}] — correlation-by-section band beside the path)
 //       S = WTS_wp_well.schematic(W, R) result: {trajectory:[{md, tvd, dep, n, e, inc, azi}], strings[], restrictions[],
 //            perfs:{topMd, botMd, midMd}, gauges[], choke, profile[{md, tvd, p, t, hl, vm, pattern}]};
 //       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'heatloss' (A2: fluid − earth)|'none', fmt:{p, t, md, vm},
@@ -160265,6 +160524,21 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (fp) g.push('<path d="' + fp + '" fill="none" stroke="' + T.blue + '" stroke-opacity="0.55" stroke-width="3" stroke-dasharray="6 5"/>');
         }
         var labs = [];      // side labels, placed after the markers without overlaps
+        // per-section correlation bands (v4.5 WP21): o.bands = [{mdTop, mdBot, color, label, title}] — a coloured band beside the flow path
+        // (the side away from the gas-lift annulus path), one per run of a correlation, labelled at its middle
+        var bands = (o.bands || []).filter(function (bd) { return bd && _fin(bd.mdTop) && _fin(bd.mdBot) && bd.mdBot > bd.mdTop; });
+        if (bands.length > 1 || (bands.length === 1 && o.bandsAlways)) {
+            g.push('<g class="wp-secband" aria-label="Correlation by section">');
+            bands.forEach(function (bd) {
+                var pl = [], nS = Math.max(4, Math.min(40, Math.round((bd.mdBot - bd.mdTop) / Math.max(1, mdMax) * 60)));
+                for (var kb = 0; kb <= nS; kb++) { var qb = interp(path, Math.min(mdMax, bd.mdTop + (bd.mdBot - bd.mdTop) * kb / nS)); if (qb) pl.push((qb.x - Math.sin(qb.ang) * 17).toFixed(1) + ',' + (qb.y + Math.cos(qb.ang) * 17).toFixed(1)); }
+                if (pl.length < 2) return;
+                g.push('<polyline points="' + pl.join(' ') + '" fill="none" stroke="' + (bd.color || T.accent) + '" stroke-width="5" stroke-linecap="round" stroke-opacity="0.9"><title>' + _esc(bd.title || bd.label || '') + '</title></polyline>');
+                var qm = interp(path, Math.min(mdMax, 0.5 * (bd.mdTop + bd.mdBot)));
+                if (qm && bd.label) labs.push({ side: -1, x: qm.x - Math.sin(qm.ang) * 17 - 6, y: qm.y + Math.cos(qm.ang) * 17, t: bd.label, c: bd.color || T.accent });
+            });
+            g.push('</g>');
+        }
         // perforations + mid-perf
         var pf = S.perfs || {};
         if (_fin(pf.topMd) && _fin(pf.botMd) && pf.botMd > pf.topMd) {
@@ -160463,9 +160737,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   gasCS   Cullender & Smith (1956), WP12 (A2): ∫ (p/TZ)/[F² + (p/TZ)²(TVD/MD)/1000] dp = 18.75·γ·MD, F² = 0.667·f·q²/d⁵ (q MMscf/d,
 //           d in, T °R, f Moody); the registry entry is the differentiated integrand (gas phase only), the closed form (two half-
 //           lengths, then Simpson, per segment) is gasCS() / gasDry(…, {method:'cs'}) — the cross-check of gasTZ and of the marcher.
+//   ork, agf, mb, ansari, hk  (WP21, increment B): Orkiszewski (1967), Aziz-Govier-Fogarasi (1972), Mukherjee-Brill (1985, inclined;
+//           kind 'any', also a flowline choice), Ansari et al. (1994, mechanistic) and Hasan-Kabir (1988, drift flux, inclined) —
+//           equations and units at the code (section "Increment B"); explicit equations, no chart readings.
+//   PER-SECTION CORRELATIONS (WP21): traverse o.sections = [{by:'md'|'inc', from, to, corr}] — the segments are split at MD ends and
+//           each segment takes the first matching row's key (segment.corr of the marcher); result .sections (runs) and .corrs; warnings
+//           per correlation in use. patternMap() places a traverse on the AGF / Mukherjee-Brill / mechanistic map.
 //
 // VERIFICATION GATE (D17, §15.1). Q9 — the owner's textbooks were not provided — so no correlation of this file has a verified
-// published traverse: hb, gray, nsl, single, gasTZ (A1) and dr, gasCS (A2) ship with verified:false and the label
+// published traverse: hb, gray, nsl, single, gasTZ (A1), dr, gasCS (A2) and ork, agf, mb, ansari, hk (B) ship with verified:false and the label
 // "provisional — not verified against a published example". A provisional correlation cannot be a default, so defaultCorr()
 // returns the verified Beggs & Brill ('bb', Brill & Mukherjee Ex. 4.7 in calc-flowline) for every fluid until a WP flips the flag
 // with a verified example; the preferred defaults (D5: hb for oil, gray for gas / condensate) are named in its result.
@@ -160488,6 +160768,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //         III, single}, NdRef, NdMin, NdMax, boundaries} — any correlation's traverse placed on the Ros map
 //     .drRegion(NLv, Ngv, Nd) → {region:'I'|'II'|'transition'|'III', LB, LS, LM, L1, L2}; .drBoundaries(Nd, n?) → {Nd, L1, L2,
 //         lines:{bs, st, tm}: [[NLv, Ngv]]}; ._drCharts {F(name, NL), L(Nd), f2(x), table} (the Duns & Ros chart readings)
+//     .traverse o.sections (B, WP21) → also {sections:[{corr, label, verified, vertical, row, mdTop, mdBot, tvdTop, tvdBot, incMin, incMax}],
+//         corrs[]}, profile rows and segments carry corr; absent / [] → the A2 result exactly
+//     .normSections(list) → {rows, warnings}; .sectionsFor(W, list, base) → {ok, active, runs, warnings, rows}
+//     .patternMap(F, q, traverse, {kind:'agf'|'mb'|'mech', corr}) → {ok, kind, corr, axes, points:[{md, tvd, inc, p, x, y, pattern}],
+//         counts, lines:[{key, label, pts}], labels, ref}; .agfMap, .mbPattern, .mbHoldup, .mbFr, .orkGamma, .ansariPattern(inp),
+//         .hkPattern(inp), .MB_C (the closed-form pieces, pinned by wellperf-mech)
 //     .singlePhase(F, W, q, o) → {ok, pEnd, profile, warnings}  (traverse with corr 'single')
 //     .defaultCorr(typeOrF) → {key, preferred, provisional, reason}; .list(kind?) → registry entries (well / gas / single / any)
 //     .hbBubbleLimit(vm ft/s, dFt) → L_B; ._charts {cnl, hlPsi, psi} (the HB curve fits); .PROVISIONAL; .KEYS
@@ -160503,7 +160789,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var HB_VS = 0.8;                           // ft/s, Griffith bubble-rise slip velocity
     var VERT_WARN_DEG = 30;                    // vertical-only correlations: warn above this inclination (§4.4)
     var PROVISIONAL = 'provisional — not verified against a published example';
-    var KEYS = ['hb', 'gray', 'nsl', 'single', 'gasTZ', 'dr', 'gasCS'];        // dr, gasCS: WP12 (A2)
+    var KEYS = ['hb', 'gray', 'nsl', 'single', 'gasTZ', 'dr', 'gasCS', 'ork', 'agf', 'mb', 'ansari', 'hk'];   // dr, gasCS: WP12 (A2); ork … hk: WP21 (B)
 
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _log10(x) { return Math.log(x) / Math.LN10; }
@@ -160884,6 +161170,403 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return r;
     }
 
+    // ══ Increment B (v4.5, WP21): Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari et al., Hasan-Kabir ══════════════════
+    // Equations as given in Brill & Mukherjee, "Multiphase Flow in Wells" (1999) ch. 4, and Hasan & Kabir, "Fluid Flow and Heat Transfer
+    // in Wellbores" (2002) ch. 4 — Q9: the books were not available to this work package, so every method below ships verified:false
+    // with the D17 label; the explicit equations are pinned by hand calculations in wellperf-vlp3 (no chart readings are used).
+    // Units: v ft/s, ρ lbm/ft³, μ cp (× 6.7197e-4 → lbm/(ft·s) where a consistent group needs it), σ dyn/cm (× 0.00220462 → lbm/s²),
+    // d ft, g = 32.174 ft/s², gradients psi/ft (lbf/ft² per ft ÷ 144); θ = inclination from HORIZONTAL (+ = flow up), as the marcher passes.
+    // Every function returns the bb result shape (hl, lambdaL, pattern, rhoS, rhoN, grad, gradEl, gradF, gradAcc, Ek, vm, vsl, vsg, fn)
+    // plus its own diagnostic numbers.
+
+    // single phase (or no surface tension): Darcy-Weisbach on the no-slip mixture (as hb / dr)
+    function _onePhase(b, r) {
+        var lam = r.lambdaL, rhoN = r.rhoN, muN = r.muN;
+        r.pattern = lam < 1e-7 ? 'gas' : 'liquid'; r.hl = lam < 1e-7 ? 0 : (lam > 1 - 1e-9 ? 1 : lam);
+        var nre0 = 1488 * rhoN * b.vm * b.dFt / Math.max(muN, 1e-9), f0 = _fMoody(nre0, b.rough / 12 / b.dFt);
+        r.fn = f0; r.NRe = nre0;
+        return _finish(b, r, rhoN, f0 * rhoN * b.vm * b.vm / (2 * GC * b.dFt) / 144);
+    }
+    function _head(b, key) {
+        var lam = b.vsl / b.vm, lamG = 1 - lam;
+        var r = { lambdaL: lam, rhoN: b.rL * lam + b.rG * lamG, muN: b.muL * lam + b.muG * lamG, corr: key };
+        r.single = lam < 1e-7 || lam > 1 - 1e-9 || !(b.sig > 0) || !(b.rL > b.rG);
+        return r;
+    }
+    // assemble with the region's own elevation density, friction and acceleration factor
+    function _assemble(b, r, rhoS, gF, Ek) {
+        var gEl = rhoS * Math.sin(b.th) / 144, tot = Ek < 1 ? (gEl + gF) / (1 - Ek) : Infinity;
+        r.vsl = b.vsl; r.vsg = b.vsg; r.vm = b.vm; r.theta = b.theta; r.rhoS = rhoS;
+        r.gradEl = gEl; r.gradF = gF; r.Ek = Ek; r.grad = tot; r.gradAcc = tot - gEl - gF;
+        return r;
+    }
+    function _ekOf(b, rho) { return (b.accel && b.p > 0) ? rho * b.vm * b.vsg / (GC * b.p * 144) : 0; }
+    function _clampHl(hl, lam, up) { if (!(hl === hl)) hl = lam; if (up && hl < lam) hl = lam; if (hl < 0) hl = 0; if (hl > 1) hl = 1; return hl; }
+
+    // ── Orkiszewski (1967) ─────────────────────────────────────────────────────────────────────────────────────────────
+    // Patterns: Griffith bubble flow when λ_g < L_B (the Hagedorn & Brown limit above, v_s = 0.8 ft/s); slug while N_gv < L_S = 50 + 36·N_Lv
+    // (the Duns & Ros groups); the Duns & Ros transition (L_S ≤ N_gv < L_M) and mist (N_gv ≥ L_M) above it — Orkiszewski's own choice.
+    // Slug (Griffith & Wallis bubble rise with Orkiszewski's liquid distribution coefficient Γ):
+    //   N_ReL = 1488·ρ_L·v_m·d/μ_L, N_Reb = 1488·ρ_L·v_b·d/μ_L (d ft, μ cp), iterated on v_b:
+    //     N_Reb ≤ 3000: v_b = (0.546 + 8.74e-6·N_ReL)·√(g·d);  N_Reb ≥ 8000: v_b = (0.35 + 8.74e-6·N_ReL)·√(g·d);
+    //     between: v_b = ½[v_bs + √(v_bs² + 13.59·μ_L/(ρ_L·√d))], v_bs = (0.251 + 8.74e-6·N_ReL)·√(g·d)        (v ft/s, d ft)
+    //   Γ, water-continuous liquid (water fraction of the liquid > 0.75) / oil-continuous, log = log10, v_m ft/s, d ft, μ_L cp:
+    //     water, v_m < 10: Γ = 0.013·log μ_L / d^1.38 − 0.681 + 0.232·log v_m − 0.428·log d
+    //     water, v_m ≥ 10: Γ = 0.045·log μ_L / d^0.799 − 0.709 − 0.162·log v_m − 0.888·log d
+    //     oil,   v_m < 10: Γ = 0.0127·log(μ_L + 1) / d^1.415 − 0.284 + 0.167·log v_m + 0.113·log d
+    //     oil,   v_m ≥ 10: Γ = 0.0274·log(μ_L + 1) / d^1.371 + 0.161 + 0.569·log d + X,
+    //                      X = −log v_m·[0.01·log(μ_L + 1) / d^1.571 + 0.397 + 0.63·log d]
+    //     lower limits: v_m < 10: Γ ≥ −0.065·v_m;  v_m ≥ 10: Γ ≥ −v_b/(v_m + v_b)·(1 − ρ_s0/ρ_L)
+    //   ρ_s = [ρ_L·(v_sl + v_b) + ρ_g·v_sg]/(v_m + v_b) + Γ·ρ_L  (= ρ_s0 + Γ·ρ_L), held within [ρ_n, ρ_L] (holdup ≥ no-slip)
+    //   dp/dL_f = f·ρ_L·v_m²/(2·g_c·d)·[(v_sl + v_b)/(v_m + v_b) + Γ] / 144, f Moody at N_ReL; no acceleration term in slug flow.
+    function _orkVb(b, nreL) {
+        var sq = Math.sqrt(GRAV * b.dFt), vb = 0.5 * sq, it = 0;
+        for (; it < 40; it++) {
+            var nreb = 1488 * b.rL * vb * b.dFt / Math.max(b.muL, 1e-9), v2;
+            if (nreb <= 3000) v2 = (0.546 + 8.74e-6 * nreL) * sq;
+            else if (nreb >= 8000) v2 = (0.35 + 8.74e-6 * nreL) * sq;
+            else { var vbs = (0.251 + 8.74e-6 * nreL) * sq; v2 = 0.5 * (vbs + Math.sqrt(vbs * vbs + 13.59 * b.muL / (b.rL * Math.sqrt(b.dFt)))); }
+            if (Math.abs(v2 - vb) < 1e-9 * Math.max(1, vb)) { vb = v2; break; }
+            vb = 0.5 * (vb + v2);
+        }
+        return { vb: vb, iters: it + 1, nreb: 1488 * b.rL * vb * b.dFt / Math.max(b.muL, 1e-9) };
+    }
+    function orkGamma(vm, dFt, muL, water) {
+        var lv = _log10(Math.max(vm, 1e-9)), ld = _log10(dFt);
+        if (water) return vm < 10 ? 0.013 * _log10(Math.max(muL, 1e-9)) / Math.pow(dFt, 1.38) - 0.681 + 0.232 * lv - 0.428 * ld
+            : 0.045 * _log10(Math.max(muL, 1e-9)) / Math.pow(dFt, 0.799) - 0.709 - 0.162 * lv - 0.888 * ld;
+        var lm = _log10(muL + 1);
+        if (vm < 10) return 0.0127 * lm / Math.pow(dFt, 1.415) - 0.284 + 0.167 * lv + 0.113 * ld;
+        return 0.0274 * lm / Math.pow(dFt, 1.371) + 0.161 + 0.569 * ld - lv * (0.01 * lm / Math.pow(dFt, 1.571) + 0.397 + 0.63 * ld);
+    }
+    function ork(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var r = _head(b, 'ork');
+        if (r.single) return _onePhase(b, r);
+        var lam = r.lambdaL, LB = hbBubbleLimit(b.vm, b.dFt);
+        r.LB = LB;
+        if (1 - lam < LB) {                                  // Griffith bubble flow (as Hagedorn & Brown)
+            var a = 1 + b.vm / HB_VS, hl = 1 - 0.5 * (a - Math.sqrt(Math.max(0, a * a - 4 * b.vsg / HB_VS)));
+            hl = _clampHl(hl, lam, true);
+            var fr = _hbFrictionBubble(hl, b);
+            r.pattern = 'bubble'; r.hl = hl; r.fn = fr.f; r.NRe = fr.nre;
+            return _finish(b, r, b.rL * hl + b.rG * (1 - hl), fr.gF);
+        }
+        var gp = _drGroups(b), LS = 50 + 36 * gp.NLv;
+        r.NLv = gp.NLv; r.Ngv = gp.Ngv; r.Nd = gp.Nd; r.LS = LS;
+        if (gp.Ngv >= LS) {                                  // the Duns & Ros transition and mist regions
+            var d = dr(inp);
+            d.corr = 'ork'; d.LB = LB; d.drRegion = d.region;
+            return d;
+        }
+        var nreL = 1488 * b.rL * b.vm * b.dFt / Math.max(b.muL, 1e-9), v = _orkVb(b, nreL), vb = v.vb;
+        var fw = (inp && inp.props && _fin(+inp.props.fw)) ? +inp.props.fw : 0, water = fw > 0.75;
+        var G0 = orkGamma(b.vm, b.dFt, b.muL, water);
+        var rs0 = (b.rL * (b.vsl + vb) + b.rG * b.vsg) / (b.vm + vb);
+        var gMin = b.vm < 10 ? -0.065 * b.vm : -vb / (b.vm + vb) * (1 - rs0 / b.rL);
+        var Gm = G0 < gMin ? gMin : G0;
+        var rhoS = rs0 + Gm * b.rL, rhoN = r.rhoN;
+        if (rhoS < rhoN) rhoS = rhoN;
+        if (rhoS > b.rL) rhoS = b.rL;
+        var f = _fMoody(nreL, b.rough / 12 / b.dFt);
+        var gF = f * b.rL * b.vm * b.vm / (2 * GC * b.dFt) * ((b.vsl + vb) / (b.vm + vb) + Gm) / 144;
+        if (gF < 0) gF = 0;
+        r.pattern = 'slug'; r.vb = vb; r.NReb = v.nreb; r.NReL = nreL; r.Gamma = Gm; r.Gamma0 = G0; r.GammaMin = gMin; r.water = water;
+        r.rhoS0 = rs0; r.fn = f; r.NRe = nreL;
+        r.hl = _clampHl((rhoS - b.rG) / (b.rL - b.rG), lam, true);
+        return _assemble(b, r, rhoS, gF, 0);
+    }
+
+    // ── Aziz, Govier & Fogarasi (1972) ──────────────────────────────────────────────────────────────────────────────────
+    // Map coordinates (v ft/s, ρ lbm/ft³, σ dyn/cm): N_x = v_sg·(ρ_g/0.0764)^⅓·[(ρ_L/62.4)·(72/σ)]^¼, N_y = v_sl·[(ρ_L/62.4)·(72/σ)]^¼
+    // Boundaries: N1 = 0.51·(100·N_y)^0.172, N2 = 8.6 + 3.8·N_y, N3 = 70·(100·N_y)^−0.152.
+    //   bubble N_x < N1; N_y < 4: slug N1 ≤ N_x < N2, transition N2 ≤ N_x < N3, mist N_x ≥ N3; N_y ≥ 4: slug N_x < 26.5, mist above.
+    // Bubble: v_bs = 1.41·[g·σ·(ρ_L − ρ_g)/ρ_L²]^¼ (σ lbm/s²), v_bf = 1.2·v_m + v_bs, H_L = 1 − v_sg/v_bf;
+    //   dp/dL_f = f·ρ_s·v_m²/(2·g_c·d)/144, f Moody at N_Re = 1488·ρ_L·v_m·d/μ_L.
+    // Slug: N_E = g·d²·(ρ_L − ρ_g)/σ (σ lbm/s²), N_v = √(g·d³·ρ_L·(ρ_L − ρ_g))/μ_L (μ_L lbm/(ft·s)); m = 25 (N_v ≤ 18),
+    //   69·N_v^−0.35 (18 < N_v < 250), 10 (N_v ≥ 250); C = 0.345·[1 − e^(−0.029·N_v)]·[1 − e^((3.37 − N_E)/m)];
+    //   v_bs = C·√(g·d·(ρ_L − ρ_g)/ρ_L), v_bf = 1.2·v_m + v_bs, H_L = 1 − v_sg/v_bf; dp/dL_f = f·ρ_L·H_L·v_m²/(2·g_c·d)/144.
+    // Mist: the Duns & Ros mist region (no slip, film roughness). Transition: A = (N3 − N_x)/(N3 − N2), slug × A + mist × (1 − A).
+    function agfMap(b) {
+        var cL = Math.pow((b.rL / 62.4) * (72 / b.sig), 0.25);
+        var Nx = b.vsg * Math.pow(Math.max(b.rG, 0) / 0.0764, 1 / 3) * cL, Ny = b.vsl * cL;
+        var y100 = Math.max(100 * Ny, 1e-12), N1 = 0.51 * Math.pow(y100, 0.172), N2 = 8.6 + 3.8 * Ny, N3 = 70 * Math.pow(y100, -0.152);
+        var pat;
+        if (Nx < N1) pat = 'bubble';
+        else if (Ny < 4) pat = Nx < N2 ? 'slug' : (Nx < N3 ? 'transition' : 'mist');
+        else pat = Nx < 26.5 ? 'slug' : 'mist';
+        return { Nx: Nx, Ny: Ny, N1: N1, N2: N2, N3: N3, pattern: pat };
+    }
+    function _agfSlug(b) {
+        var sigM = b.sig * SIG_LBM, dr0 = b.rL - b.rG, muLb = Math.max(b.muL, 1e-9) * MU_LBM;
+        var NE = GRAV * b.dFt * b.dFt * dr0 / sigM, Nv = Math.sqrt(GRAV * Math.pow(b.dFt, 3) * b.rL * dr0) / muLb;
+        var m = Nv <= 18 ? 25 : (Nv >= 250 ? 10 : 69 * Math.pow(Nv, -0.35));
+        var C = 0.345 * (1 - Math.exp(-0.029 * Nv)) * (1 - Math.exp((3.37 - NE) / m));
+        var vbs = C * Math.sqrt(GRAV * b.dFt * dr0 / b.rL), vbf = 1.2 * b.vm + vbs;
+        var lam = b.vsl / b.vm, hl = _clampHl(1 - b.vsg / vbf, lam, true);
+        var nre = 1488 * b.rL * b.vm * b.dFt / Math.max(b.muL, 1e-9), f = _fMoody(nre, b.rough / 12 / b.dFt);
+        return { hl: hl, rhoS: b.rL * hl + b.rG * (1 - hl), gF: f * b.rL * hl * b.vm * b.vm / (2 * GC * b.dFt) / 144, f: f, NRe: nre, C: C, NE: NE, Nv: Nv, m: m, vbs: vbs, vbf: vbf };
+    }
+    function agf(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var r = _head(b, 'agf');
+        if (r.single) return _onePhase(b, r);
+        var mp = agfMap(b), lam = r.lambdaL;
+        r.Nx = mp.Nx; r.Ny = mp.Ny; r.N1 = mp.N1; r.N2 = mp.N2; r.N3 = mp.N3; r.pattern = mp.pattern;
+        if (mp.pattern === 'bubble') {
+            var vbs = 1.41 * Math.pow(GRAV * b.sig * SIG_LBM * (b.rL - b.rG) / (b.rL * b.rL), 0.25), vbf = 1.2 * b.vm + vbs;
+            var hl = _clampHl(1 - b.vsg / vbf, lam, true), rhoS = b.rL * hl + b.rG * (1 - hl);
+            var nre = 1488 * b.rL * b.vm * b.dFt / Math.max(b.muL, 1e-9), f = _fMoody(nre, b.rough / 12 / b.dFt);
+            r.hl = hl; r.vbs = vbs; r.vbf = vbf; r.fn = f; r.NRe = nre;
+            return _assemble(b, r, rhoS, f * rhoS * b.vm * b.vm / (2 * GC * b.dFt) / 144, 0);
+        }
+        if (mp.pattern === 'slug') {
+            var s = _agfSlug(b);
+            r.hl = s.hl; r.C = s.C; r.NE = s.NE; r.Nv = s.Nv; r.vbs = s.vbs; r.vbf = s.vbf; r.fn = s.f; r.NRe = s.NRe;
+            return _assemble(b, r, s.rhoS, s.gF, 0);
+        }
+        var mi = _drMist(b, b.rG);
+        if (mp.pattern === 'mist') { r.hl = mi.hl; r.fn = mi.f; r.eps = mi.eps; return _assemble(b, r, mi.rhoS, mi.gF, mi.Ek); }
+        var A = (mp.N3 - mp.Nx) / (mp.N3 - mp.N2), s2 = _agfSlug(b);
+        var rhoT = A * s2.rhoS + (1 - A) * mi.rhoS;
+        r.A = A; r.fn = A * s2.f + (1 - A) * mi.f;
+        r.hl = _clampHl((rhoT - b.rG) / (b.rL - b.rG), lam, true);
+        return _assemble(b, r, rhoT, A * s2.gF + (1 - A) * mi.gF, (1 - A) * mi.Ek);
+    }
+
+    // ── Mukherjee & Brill (1985) ────────────────────────────────────────────────────────────────────────────────────────
+    // Groups N_Lv, N_gv, N_L as Hagedorn & Brown; θ from horizontal (+ up), s = sin θ, log = log10.
+    //   slug / annular:   N_gvSM = 10^(1.401 − 2.694·N_L + 0.521·N_Lv^0.329)            annular when N_gv > N_gvSM
+    //   uphill (θ > 0):   N_gvBS = 10^(log N_Lv + 0.940 + 0.074·s − 0.855·s² + 3.695·N_L)   bubble when N_gv < N_gvBS, else slug
+    //   level / downhill: N_LvBS = 10^(0.431 − 3.003·N_L − 1.138·log N_gv·s − 0.429·(log N_gv)²·s + 1.132·s)
+    //                     N_LvST = 10^(0.321 − 0.017·N_gv − 4.267·s − 2.972·N_L − 0.033·(log N_gv)² − 3.925·s²)
+    //                     bubble when N_Lv > N_LvBS; slug when N_LvST < N_Lv ≤ N_LvBS; stratified otherwise
+    //   holdup H_L = exp[(C1 + C2·s + C3·s² + C4·N_L²)·N_gv^C5 / N_Lv^C6] with the three published coefficient sets (MB_C below: uphill
+    //   for θ ≥ 0, downhill stratified, downhill other); in upward flow H_L ≥ λ_L (as the other correlations of this page).
+    //   bubble / slug: dp/dL_f = f·ρ_s·v_m²/(2·g_c·d)/144, f Moody at the no-slip N_Re = 1488·ρ_n·v_m·d/μ_n;
+    //   annular: f = f_R·f_n with f_R from H_R = λ_L/H_L (MB_FR table, linear in log10 H_R), dp/dL_f = f·ρ_n·v_m²/(2·g_c·d)/144;
+    //   stratified: the separated-flow geometry from H_L = (δ − sin δ)/(2π) (δ the liquid-wetted angle), A_L = H_L·A, P_L = δ·d/2,
+    //   P_g = (2π − δ)·d/2, S_i = d·sin(δ/2), d_hL = 4·A_L/P_L, d_hg = 4·A_g/(P_g + S_i); τ_wk = f_k·ρ_k·v_k²/(2·g_c) with f_k Moody at
+    //   1488·ρ_k·v_k·d_hk/μ_k, v_L = v_sl/H_L, v_g = v_sg/(1 − H_L); dp/dL_f = (τ_wL·P_L + τ_wg·P_g)/A/144 (the interfacial shear cancels in
+    //   the combined momentum balance). Acceleration factor Ek = ρ_s·v_m·v_sg/(g_c·p·144) in every pattern.
+    var MB_C = {
+        up: [-0.380113, 0.129875, -0.119788, 2.343227, 0.475686, 0.288657],
+        downStrat: [-1.330282, 4.808139, 4.171584, 56.262268, 0.079951, 0.504887],
+        downOther: [-0.516644, 0.789805, 0.551627, 15.519214, 0.371771, 0.393952]
+    };
+    var MB_FR = [[0.01, 1.00], [0.2, 0.98], [0.3, 1.20], [0.4, 1.25], [0.5, 1.30], [0.7, 1.25], [1.0, 1.00], [10, 1.00]];
+    function mbFr(HR) {
+        if (!(HR > 0)) return 1;
+        if (HR <= MB_FR[0][0]) return MB_FR[0][1];
+        for (var i = 1; i < MB_FR.length; i++) if (HR <= MB_FR[i][0]) {
+            var a = _log10(MB_FR[i - 1][0]), c = _log10(MB_FR[i][0]);
+            return MB_FR[i - 1][1] + (MB_FR[i][1] - MB_FR[i - 1][1]) * (_log10(HR) - a) / (c - a);
+        }
+        return 1;
+    }
+    function mbPattern(NLv, Ngv, NL, th) {
+        var s = Math.sin(th), lg = _log10(Math.max(Ngv, 1e-12));
+        var SM = Math.pow(10, 1.401 - 2.694 * NL + 0.521 * Math.pow(Math.max(NLv, 0), 0.329));
+        var out = { NgvSM: SM, NgvBS: null, NLvBS: null, NLvST: null, up: th > 0 };
+        if (th > 0) out.NgvBS = Math.pow(10, _log10(Math.max(NLv, 1e-12)) + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL);
+        else {
+            out.NLvBS = Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lg * s - 0.429 * lg * lg * s + 1.132 * s);
+            out.NLvST = Math.pow(10, 0.321 - 0.017 * Ngv - 4.267 * s - 2.972 * NL - 0.033 * lg * lg - 3.925 * s * s);
+        }
+        if (Ngv > SM) out.pattern = 'annular';
+        else if (th > 0) out.pattern = Ngv < out.NgvBS ? 'bubble' : 'slug';
+        else out.pattern = NLv > out.NLvBS ? 'bubble' : (NLv > out.NLvST ? 'slug' : 'stratified');
+        return out;
+    }
+    function mbHoldup(NLv, Ngv, NL, th, set) {
+        var C = MB_C[set], s = Math.sin(th);
+        return Math.exp((C[0] + C[1] * s + C[2] * s * s + C[3] * NL * NL) * Math.pow(Ngv, C[4]) / Math.pow(NLv, C[5]));
+    }
+    // the liquid-wetted angle δ of a stratified layer: H_L = (δ − sin δ)/(2π), bisection on [0, 2π]
+    function _mbDelta(hl) {
+        var lo = 0, hi = 2 * Math.PI;
+        for (var k = 0; k < 80; k++) { var m = 0.5 * (lo + hi); if ((m - Math.sin(m)) / (2 * Math.PI) < hl) lo = m; else hi = m; }
+        return 0.5 * (lo + hi);
+    }
+    function mb(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var r = _head(b, 'mb');
+        if (r.single) return _onePhase(b, r);
+        var gp = _drGroups(b), lam = r.lambdaL, up = b.th > 0;
+        var pt = mbPattern(gp.NLv, gp.Ngv, gp.NL, b.th);
+        r.NLv = gp.NLv; r.Ngv = gp.Ngv; r.NL = gp.NL; r.pattern = pt.pattern; r.NgvSM = pt.NgvSM; r.NgvBS = pt.NgvBS; r.NLvBS = pt.NLvBS; r.NLvST = pt.NLvST;
+        var set = b.th >= 0 ? 'up' : (pt.pattern === 'stratified' ? 'downStrat' : 'downOther');
+        var hl = _clampHl(mbHoldup(gp.NLv, gp.Ngv, gp.NL, b.th, set), lam, up);
+        if (hl < 1e-6) hl = 1e-6;
+        r.hl = hl; r.set = set; r.hlRaw = mbHoldup(gp.NLv, gp.Ngv, gp.NL, b.th, set);
+        var rhoS = b.rL * hl + b.rG * (1 - hl), nreN = 1488 * r.rhoN * b.vm * b.dFt / Math.max(r.muN, 1e-9), fn = _fMoody(nreN, b.rough / 12 / b.dFt), gF;
+        r.NRe = nreN;
+        if (pt.pattern === 'annular') {
+            var HR = lam / hl, fR = mbFr(HR);
+            r.HR = HR; r.fR = fR; r.fn = fR * fn;
+            gF = fR * fn * r.rhoN * b.vm * b.vm / (2 * GC * b.dFt) / 144;
+        } else if (pt.pattern === 'stratified') {
+            var dl = _mbDelta(hl), d = b.dFt, A = Math.PI * d * d / 4, AL = hl * A, Ag = A - AL;
+            var PL = dl * d / 2, Pg = (2 * Math.PI - dl) * d / 2, Si = d * Math.sin(dl / 2);
+            var dhL = 4 * AL / Math.max(PL, 1e-12), dhg = 4 * Ag / Math.max(Pg + Si, 1e-12);
+            var vL = b.vsl / hl, vG = b.vsg / Math.max(1 - hl, 1e-9);
+            var fL = _fMoody(1488 * b.rL * vL * dhL / Math.max(b.muL, 1e-9), b.rough / 12 / Math.max(dhL, 1e-9));
+            var fG = _fMoody(1488 * b.rG * vG * dhg / Math.max(b.muG, 1e-9), b.rough / 12 / Math.max(dhg, 1e-9));
+            var tL = fL * b.rL * vL * vL / (2 * GC), tG = fG * b.rG * vG * vG / (2 * GC);
+            r.delta = dl; r.dhL = dhL; r.dhg = dhg; r.fL = fL; r.fG = fG; r.tauL = tL; r.tauG = tG; r.fn = fn;
+            gF = (tL * PL + tG * Pg) / A / 144;
+        } else { r.fn = fn; gF = fn * rhoS * b.vm * b.vm / (2 * GC * b.dFt) / 144; }
+        return _assemble(b, r, rhoS, gF, _ekOf(b, rhoS));
+    }
+
+    // ── Ansari, Sylvester, Sarica, Shoham & Brill (1994), mechanistic, upward flow ──────────────────────────────────────
+    // Consistent units (v ft/s, ρ lbm/ft³, σ lbm/s², μ lbm/(ft·s), d ft, g ft/s²; dp/dL lbf/ft² per ft ÷ 144 → psi/ft):
+    //   bubble rise v_s = 1.53·[g·σ·(ρ_L − ρ_g)/ρ_L²]^¼; bubble / slug: v_sg = 0.25·v_s + 0.333·v_sl, bubble flow only when
+    //   d > d_min = 19.01·[(ρ_L − ρ_g)·σ/(ρ_L²·g)]^½; annular: v_sg > 3.1·[g·σ·(ρ_L − ρ_g)/ρ_g²]^¼;
+    //   dispersed bubble (Barnea): 2·[0.4·σ/((ρ_L − ρ_g)·g)]^½·(ρ_L/σ)^0.6·[f_n/(2·d)]^0.4·v_m^1.2 > 0.725 + 4.15·(v_sg/v_m)^½ while
+    //   λ_g ≤ 0.52.
+    //   bubble: v_sg/(1 − H_L) = 1.2·v_m + v_s·H_L^½ (solved for H_L); dispersed bubble: no slip; friction f·ρ_s·v_m²/(2·g_c·d) at
+    //     N_Re = 1488·ρ_L·v_m·d/μ_L (dispersed: ρ_n, μ_n);
+    //   slug (fully developed): v_TB = 1.2·v_m + 0.35·√(g·d·(ρ_L − ρ_g)/ρ_L); H_LLS = 1/[1 + (v_m/28.4)^1.39] (Gregory et al.; v_m ft/s);
+    //     v_gLS = 1.2·v_m + v_s·H_LLS^½, v_LLS = (v_m − v_gLS·(1 − H_LLS))/H_LLS; film H_LTB from (v_TB − v_LLS)·H_LLS =
+    //     (v_TB + v_LTB)·H_LTB, v_LTB = 9.916·√(g·d·(1 − √(1 − H_LTB))); β = L_TB/L_SU = [v_sg − v_gLS·(1 − H_LLS)] /
+    //     [v_TB·(1 − H_LTB) − v_gLS·(1 − H_LLS)]; ρ_s = (1 − β)·ρ_LS + β·ρ_g (the film's weight neglected, as published);
+    //     dp/dL_f = f·ρ_LS·v_m²/(2·g_c·d)·(1 − β), f Moody at N_Re = 1488·ρ_LS·v_m·d/μ_LS;
+    //   annular (Alves et al. film model): entrainment F_E = 1 − exp[−0.125·(v_crit − 1.5)], v_crit = 1e4·v_sg·μ_g/σ·(ρ_g/ρ_L)^½ in SI
+    //     (v m/s, μ Pa·s, σ N/m: = 3048·v_sg(ft/s)·μ_g(cp)/σ(dyn/cm)·(ρ_g/ρ_L)^½); core λ_LC = F_E·v_sl/(v_sg + F_E·v_sl),
+    //     ρ_c, μ_c by λ_LC, v_sc = v_sg + F_E·v_sl; (dp/dL)_SC = f_SC·ρ_c·v_sc²/(2·g_c·d), (dp/dL)_SL = f_SL·ρ_L·v_sl²/(2·g_c·d);
+    //     X_M² = (1 − F_E)²·(dp/dL)_SL/(dp/dL)_SC (film friction factor taken equal to f_SL), Y_M = sin θ·(ρ_L − ρ_c)/(dp/dL)_SC;
+    //     Z = 1 + 300·δ (F_E > 0.9) else 1 + 24·(ρ_L/ρ_g)^⅓·δ; δ (film thickness / d) from
+    //       Y_M − Z/[4δ(1 − δ)·(1 − 4δ(1 − δ))^2.5] + X_M²/[4δ(1 − δ)]³ = 0      (bisection on 0 < δ < ½)
+    //     dp/dL = Z/(1 − 2δ)⁵·(dp/dL)_SC + ρ_c·sin θ (core), H_L = 4δ(1 − δ) + λ_LC·(1 − 2δ)².
+    function _ansariProps(b) {
+        var sigM = b.sig * SIG_LBM, drho = b.rL - b.rG;
+        return { sigM: sigM, drho: drho, vs: 1.53 * Math.pow(GRAV * sigM * drho / (b.rL * b.rL), 0.25),
+            vsgA: b.rG > 0 ? 3.1 * Math.pow(GRAV * sigM * drho / (b.rG * b.rG), 0.25) : Infinity,
+            dMin: 19.01 * Math.sqrt(drho * sigM / (b.rL * b.rL * GRAV)) };
+    }
+    // dispersed-bubble criterion (Barnea) — > 0 when dispersed
+    function _barnea(b, sigM, drho, fn) {
+        var lhs = 2 * Math.sqrt(0.4 * sigM / (drho * GRAV)) * Math.pow(b.rL / sigM, 0.6) * Math.pow(fn / (2 * b.dFt), 0.4) * Math.pow(b.vm, 1.2);
+        return lhs - (0.725 + 4.15 * Math.sqrt(b.vsg / b.vm));
+    }
+    function ansariPattern(b) {
+        var a = _ansariProps(b), lam = b.vsl / b.vm;
+        var rhoN = b.rL * lam + b.rG * (1 - lam), muN = b.muL * lam + b.muG * (1 - lam);
+        var fn = _fMoody(1488 * rhoN * b.vm * b.dFt / Math.max(muN, 1e-9), b.rough / 12 / b.dFt);
+        var vsgBS = 0.25 * a.vs + 0.333 * b.vsl, bar = _barnea(b, a.sigM, a.drho, fn);
+        var pat = b.vsg > a.vsgA ? 'annular' : ((bar > 0 && 1 - lam <= 0.52) ? 'dispersed bubble' : ((b.vsg < vsgBS && b.dFt > a.dMin) ? 'bubble' : 'slug'));
+        return { pattern: pat, vs: a.vs, vsgBS: vsgBS, vsgA: a.vsgA, dMin: a.dMin, barnea: bar, fn: fn, sigM: a.sigM, drho: a.drho };
+    }
+    function ansari(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var r = _head(b, 'ansari');
+        if (r.single) return _onePhase(b, r);
+        var lam = r.lambdaL, P = ansariPattern(b), up = b.th > 0;
+        r.pattern = P.pattern; r.vs = P.vs; r.vsgBS = P.vsgBS; r.vsgA = P.vsgA;
+        var nreL = 1488 * b.rL * b.vm * b.dFt / Math.max(b.muL, 1e-9), rel = b.rough / 12 / b.dFt;
+        if (P.pattern === 'dispersed bubble') {
+            r.hl = lam; r.fn = P.fn; r.NRe = 1488 * r.rhoN * b.vm * b.dFt / Math.max(r.muN, 1e-9);
+            return _assemble(b, r, r.rhoN, P.fn * r.rhoN * b.vm * b.vm / (2 * GC * b.dFt) / 144, _ekOf(b, r.rhoN));
+        }
+        if (P.pattern === 'bubble') {
+            var lo = 1e-9, hi = 1 - 1e-9;
+            for (var k = 0; k < 56; k++) { var m = 0.5 * (lo + hi); if (b.vsg / (1 - m) - 1.2 * b.vm - P.vs * Math.sqrt(m) < 0) lo = m; else hi = m; }
+            var hl = _clampHl(0.5 * (lo + hi), lam, up), rhoS = b.rL * hl + b.rG * (1 - hl), f = _fMoody(nreL, rel);
+            r.hl = hl; r.fn = f; r.NRe = nreL;
+            return _assemble(b, r, rhoS, f * rhoS * b.vm * b.vm / (2 * GC * b.dFt) / 144, _ekOf(b, rhoS));
+        }
+        if (P.pattern === 'slug') {
+            var vTB = 1.2 * b.vm + 0.35 * Math.sqrt(GRAV * b.dFt * P.drho / b.rL);
+            var HLLS = 1 / (1 + Math.pow(b.vm / 28.4, 1.39)), aLS = 1 - HLLS;
+            var vgLS = 1.2 * b.vm + P.vs * Math.sqrt(HLLS), vLLS = (b.vm - vgLS * aLS) / HLLS;
+            var rhsF = (vTB - vLLS) * HLLS, l2 = 1e-9, h2 = HLLS;
+            var hf = function (h) { return (vTB + 9.916 * Math.sqrt(GRAV * b.dFt * (1 - Math.sqrt(Math.max(0, 1 - h))))) * h - rhsF; };
+            if (rhsF <= 0) h2 = l2;
+            else for (var k2 = 0; k2 < 56; k2++) { var m2 = 0.5 * (l2 + h2); if (hf(m2) < 0) l2 = m2; else h2 = m2; }
+            var HLTB = 0.5 * (l2 + h2);
+            var den = vTB * (1 - HLTB) - vgLS * aLS, beta = den > 1e-12 ? (b.vsg - vgLS * aLS) / den : 0;
+            if (!(beta >= 0)) beta = 0; if (beta > 1) beta = 1;
+            var rhoLS = b.rL * HLLS + b.rG * aLS, muLS = b.muL * HLLS + b.muG * aLS;
+            var rhoS2 = (1 - beta) * rhoLS + beta * b.rG;
+            var nreLS = 1488 * rhoLS * b.vm * b.dFt / Math.max(muLS, 1e-9), f2 = _fMoody(nreLS, rel);
+            r.vTB = vTB; r.HLLS = HLLS; r.HLTB = HLTB; r.beta = beta; r.vgLS = vgLS; r.vLLS = vLLS; r.rhoLS = rhoLS; r.fn = f2; r.NRe = nreLS;
+            r.hl = _clampHl((rhoS2 - b.rG) / (b.rL - b.rG), lam, up);
+            return _assemble(b, r, rhoS2, f2 * rhoLS * b.vm * b.vm / (2 * GC * b.dFt) * (1 - beta) / 144, 0);
+        }
+        // annular
+        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL);
+        var FE = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (FE < 0) FE = 0; if (FE > 0.9999) FE = 0.9999;
+        var vsc = b.vsg + FE * b.vsl, lLC = FE * b.vsl / vsc, rhoC = b.rL * lLC + b.rG * (1 - lLC), muC = b.muL * lLC + b.muG * (1 - lLC);
+        var fSC = _fMoody(1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), rel), dpSC = fSC * rhoC * vsc * vsc / (2 * GC * b.dFt);
+        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, dpSL = fSL * b.rL * b.vsl * b.vsl / (2 * GC * b.dFt);
+        var XM2 = dpSC > 0 ? (1 - FE) * (1 - FE) * dpSL / dpSC : 0, YM = dpSC > 0 ? Math.sin(b.th) * (b.rL - rhoC) / dpSC : 0;
+        var hiZ = FE > 0.9, zc = 24 * Math.pow(b.rL / Math.max(b.rG, 1e-9), 1 / 3);
+        var Zf = function (dd) { return hiZ ? 1 + 300 * dd : 1 + zc * dd; };
+        var fd = function (dd) { var w = 4 * dd * (1 - dd); return YM - Zf(dd) / (w * Math.pow(1 - w, 2.5)) + XM2 / (w * w * w); };
+        var dlo = 1e-7, dhi = 0.5 - 1e-7;
+        if (fd(dlo) <= 0) dhi = dlo;
+        else for (var k3 = 0; k3 < 48; k3++) { var dm = Math.sqrt(dlo * dhi); if (fd(dm) > 0) dlo = dm; else dhi = dm; }
+        var dl = Math.sqrt(dlo * dhi), Z = Zf(dl), coreF = Z / Math.pow(1 - 2 * dl, 5) * dpSC / 144;
+        r.FE = FE; r.vcrit = vcrit; r.delta = dl; r.Z = Z; r.XM2 = XM2; r.YM = YM; r.lambdaLC = lLC; r.rhoC = rhoC; r.fn = fSC;
+        r.hl = _clampHl(4 * dl * (1 - dl) + lLC * Math.pow(1 - 2 * dl, 2), 0, false);
+        return _assemble(b, r, rhoC, coreF, _ekOf(b, rhoC));
+    }
+
+    // ── Hasan & Kabir (1988; 2002 text), drift flux, inclined wells ─────────────────────────────────────────────────────
+    // θ from horizontal; consistent units as Ansari above (σ lbm/s²). Drift velocities:
+    //   bubbles v_∞ = 1.53·[g·σ·(ρ_L − ρ_g)/ρ_L²]^¼; Taylor bubbles v_∞T = 0.35·√(g·d·(ρ_L − ρ_g)/ρ_L)·√(sin θ)·(1 + cos θ)^1.2
+    // Patterns: annular v_sg > 3.1·[g·σ·(ρ_L − ρ_g)/ρ_g²]^¼; dispersed bubble v_m > 4·[d^0.429·(σ/ρ_L)^0.089/ν_L^0.072·(g·(ρ_L − ρ_g)/ρ_L)^0.446]
+    //   (SI inside: d m, σ N/m, ρ kg/m³, ν_L m²/s, g m/s² → m/s); bubble v_sg < 0.429·v_sl + 0.357·v_∞·sin θ; churn
+    //   v_sg > 1.083·v_sl + 0.52·v_∞T; slug otherwise.
+    // Void fraction α = v_sg/(C0·v_m + v_d): bubble and dispersed bubble C0 = 1.2, v_d = v_∞·sin θ; slug C0 = 1.2, v_d = v_∞T; churn
+    //   C0 = 1.15, v_d = v_∞T; H_L = 1 − α (≥ λ_L in upward flow). Friction f·ρ_s·v_m²/(2·g_c·d)/144 at N_Re = 1488·ρ_L·v_m·d/μ_L.
+    // Annular: α = (1 + X^0.8)^−0.378 with the Lockhart-Martinelli X = √[(dp/dL)_SL/(dp/dL)_SG] (superficial-phase Moody friction);
+    //   core entrainment E as Ansari (Wallis v_crit), core density ρ_c = (ρ_g·v_sg + ρ_L·E·v_sl)/v_sc, v_sc = v_sg + E·v_sl;
+    //   dp/dL_f = f_c·ρ_c·v_sc²/(2·g_c·d)/144 with the interfacial factor f_c = 4 × 0.079·(1 + 75·H_L)/N_Re,c^0.25 (Darcy form of the
+    //   Fanning Blasius factor with the Wallis film term; N_Re,c = 1488·ρ_c·v_sc·d/μ_c); elevation on ρ_s = ρ_L·H_L + ρ_g·α.
+    //   Acceleration factor Ek = ρ_s·v_m·v_sg/(g_c·p·144) except slug / churn.
+    function hkPattern(b) {
+        var sigM = b.sig * SIG_LBM, drho = b.rL - b.rG, s = Math.sin(b.th), c = Math.cos(b.th);
+        var vinf = 1.53 * Math.pow(GRAV * sigM * drho / (b.rL * b.rL), 0.25);
+        var vinfT = 0.35 * Math.sqrt(GRAV * b.dFt * drho / b.rL) * Math.sqrt(Math.max(0, s)) * Math.pow(1 + c, 1.2);
+        var vsgA = b.rG > 0 ? 3.1 * Math.pow(GRAV * sigM * drho / (b.rG * b.rG), 0.25) : Infinity;
+        var dM = b.dFt * 0.3048, sigSI = b.sig * 1e-3, rLSI = b.rL * 16.0185, nuL = b.muL * 1e-3 / rLSI;
+        var vDB = 4 * Math.pow(dM, 0.429) * Math.pow(sigSI / rLSI, 0.089) / Math.pow(nuL, 0.072) * Math.pow(9.80665 * drho / b.rL, 0.446) / 0.3048;   // ft/s
+        var vsgB = 0.429 * b.vsl + 0.357 * vinf * Math.max(0, s), vsgC = 1.083 * b.vsl + 0.52 * vinfT;
+        var pat = b.vsg > vsgA ? 'annular' : (b.vm > vDB ? 'dispersed bubble' : (b.vsg < vsgB ? 'bubble' : (b.vsg > vsgC ? 'churn' : 'slug')));
+        return { pattern: pat, vinf: vinf, vinfT: vinfT, vsgA: vsgA, vDB: vDB, vsgB: vsgB, vsgC: vsgC, sigM: sigM, drho: drho };
+    }
+    function hk(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var r = _head(b, 'hk');
+        if (r.single) return _onePhase(b, r);
+        var lam = r.lambdaL, P = hkPattern(b), up = b.th > 0, s = Math.max(0, Math.sin(b.th)), rel = b.rough / 12 / b.dFt;
+        r.pattern = P.pattern; r.vinf = P.vinf; r.vinfT = P.vinfT; r.vsgA = P.vsgA; r.vDB = P.vDB; r.vsgB = P.vsgB; r.vsgC = P.vsgC;
+        var nreL = 1488 * b.rL * b.vm * b.dFt / Math.max(b.muL, 1e-9);
+        if (P.pattern !== 'annular') {
+            var C0 = P.pattern === 'churn' ? 1.15 : 1.2, vd = (P.pattern === 'slug' || P.pattern === 'churn') ? P.vinfT : P.vinf * s;
+            var alpha = b.vsg / (C0 * b.vm + vd), hl = _clampHl(1 - alpha, lam, up), rhoS = b.rL * hl + b.rG * (1 - hl), f = _fMoody(nreL, rel);
+            r.C0 = C0; r.vd = vd; r.alpha = 1 - hl; r.hl = hl; r.fn = f; r.NRe = nreL;
+            var ek = (P.pattern === 'slug' || P.pattern === 'churn') ? 0 : _ekOf(b, rhoS);
+            return _assemble(b, r, rhoS, f * rhoS * b.vm * b.vm / (2 * GC * b.dFt) / 144, ek);
+        }
+        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, fSG = _fMoody(1488 * b.rG * b.vsg * b.dFt / Math.max(b.muG, 1e-9), rel);
+        var dpSL = fSL * b.rL * b.vsl * b.vsl, dpSG = fSG * b.rG * b.vsg * b.vsg, X = dpSG > 0 ? Math.sqrt(dpSL / dpSG) : 0;
+        var al = Math.pow(1 + Math.pow(X, 0.8), -0.378), hl2 = _clampHl(1 - al, lam, up); al = 1 - hl2;
+        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL), E = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (E < 0) E = 0; if (E > 0.9999) E = 0.9999;
+        var vsc = b.vsg + E * b.vsl, rhoC = (b.rG * b.vsg + b.rL * E * b.vsl) / vsc, lC = E * b.vsl / vsc, muC = b.muL * lC + b.muG * (1 - lC);
+        var nreC = 1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), fi = 4 * 0.079 * (1 + 75 * hl2) / Math.pow(Math.max(nreC, 1), 0.25), vc = vsc;
+        var rhoS3 = b.rL * hl2 + b.rG * al;
+        r.X = X; r.alpha = al; r.hl = hl2; r.E = E; r.rhoC = rhoC; r.vc = vc; r.fi = fi; r.fn = fi; r.NRe = nreC;
+        return _assemble(b, r, rhoS3, fi * rhoC * vc * vc / (2 * GC * b.dFt) / 144, _ekOf(b, rhoS3));
+    }
+
     // ── registry (merge, never replace; D3) ──────────────────────────────────────────────────────────────────────────
     // 49-calc-flowline.js owns WTS_flowline_corr (it loads first in Round 9); the entries are added to it when it exists — at load
     // and again at call time (_reg) — and the registry is never created here, so an older marcher without it stays untouched.
@@ -160904,7 +161587,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             range: { incl: [0, VERT_WARN_DEG], note: 'vertical wells; wide gas-liquid ratio range; mist region extrapolated for high liquid rates' },
             grad: dr },
         gasCS: { key: 'gasCS', label: 'Cullender-Smith (1956), dry gas', kind: 'gas', vertical: false, range: { incl: [-90, 90], note: 'gas only' },
-            grad: csPoint }
+            grad: csPoint },
+        // WP21 (B): two more empirical vertical-well methods, one inclined-pipe method and two mechanistic models
+        ork: { key: 'ork', label: 'Orkiszewski (1967), Griffith bubble, Griffith-Wallis slug, Duns & Ros mist', kind: 'well', vertical: true,
+            range: { incl: [0, VERT_WARN_DEG], note: 'vertical oil wells; slug flow with the liquid distribution coefficient' }, map: 'ros', grad: ork },
+        agf: { key: 'agf', label: 'Aziz, Govier & Fogarasi (1972), flow-pattern map N_x / N_y', kind: 'well', vertical: true,
+            range: { incl: [0, VERT_WARN_DEG], note: 'vertical oil wells; bubble and slug from bubble-rise physics' }, map: 'agf', grad: agf },
+        mb: { key: 'mb', label: 'Mukherjee & Brill (1985), inclined pipe (holdup and pattern by inclination)', kind: 'any', vertical: false,
+            range: { incl: [-90, 90], note: 'any inclination, uphill and downhill; stratified flow in level and downhill pipe' }, map: 'mb', grad: mb },
+        ansari: { key: 'ansari', label: 'Ansari et al. (1994), mechanistic (bubble, dispersed bubble, slug, annular)', kind: 'well', vertical: true,
+            range: { incl: [0, VERT_WARN_DEG], note: 'vertical upward flow' }, map: 'mech', grad: ansari },
+        hk: { key: 'hk', label: 'Hasan & Kabir (1988), drift flux for inclined wells', kind: 'well', vertical: false,
+            range: { incl: [0, 90], note: 'upward flow, vertical to near-horizontal (the Taylor-bubble drift falls to zero at horizontal)' }, map: 'mech', grad: hk }
     };
     KEYS.forEach(function (k) {
         var e = ENTRIES[k];
@@ -160915,7 +161609,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             k === 'gasTZ' ? 'average temperature and Z method (Katz et al.; Economides et al.)' :
             k === 'single' ? 'Darcy-Weisbach with the Colebrook (1939) friction factor' :
             k === 'dr' ? 'Duns & Ros (1963); chart readings as reproduced by Brill & Mukherjee (1999) §4.2.2 — not checked against the figures (Q9)' :
-            k === 'gasCS' ? 'Cullender & Smith (1956), as given by Economides et al. and Brill & Mukherjee (1999)' : 'homogeneous mixture';
+            k === 'gasCS' ? 'Cullender & Smith (1956), as given by Economides et al. and Brill & Mukherjee (1999)' :
+            k === 'ork' ? 'Orkiszewski (1967); Griffith (1961); Griffith & Wallis (1961); Duns & Ros (1963) — as given by Brill & Mukherjee (1999) §4.2.3' :
+            k === 'agf' ? 'Aziz, Govier & Fogarasi (1972) — as given by Brill & Mukherjee (1999) §4.2.5' :
+            k === 'mb' ? 'Mukherjee & Brill (1985) — as given by Brill & Mukherjee (1999) §4.3.3' :
+            k === 'ansari' ? 'Ansari, Sylvester, Sarica, Shoham & Brill (1994); Barnea (1987); Gregory et al. (1978); Alves et al. (1991)' :
+            k === 'hk' ? 'Hasan & Kabir (1988), Fluid Flow and Heat Transfer in Wellbores (2002) ch. 4; Wallis (1969)' : 'homogeneous mixture';
     });
     function _reg() {
         var R = G.WTS_flowline_corr;
@@ -161025,6 +161724,85 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return defaultCorr(F && F.type).key;
     }
 
+    // ── per-section correlations (WP21, increment B) ───────────────────────────────────────────────────────────────────
+    // o.sections = [{by:'md'|'inc', from, to, corr}] — 'md': the MD interval [from, to) ft (segments are split at its ends); 'inc': every
+    // segment whose average inclination FROM VERTICAL is in [from, to) degrees (from ≤ inc < to; to ≥ 90 includes horizontal). Rows apply
+    // in the listed order: the first row that covers a segment sets its correlation; elsewhere the base correlation (o.corr / the model's)
+    // applies. A row with an unknown key, no range or an empty range is skipped with a SECTION_SKIPPED warning. The marcher takes the key
+    // per segment (segment.corr, 49-calc-flowline.js v4.5), so one march, one frozen step layout and one profile carry every section.
+    var SEC_MAX = 12;
+    function normSections(list) {
+        var rows = [], warnings = [], REG = _reg();
+        (Array.isArray(list) ? list : []).slice(0, SEC_MAX).forEach(function (r, i) {
+            if (!r || typeof r !== 'object') return;
+            var by = r.by === 'inc' ? 'inc' : 'md', a = +r.from, z = +r.to, k = r.corr == null ? '' : String(r.corr);
+            if (by === 'md' && !_fin(a)) a = 0;
+            if (by === 'inc' && !_fin(a)) a = 0;
+            if (!_fin(z)) z = by === 'inc' ? 180 : Infinity;
+            var ok = k && Object.prototype.hasOwnProperty.call(REG, k) && REG[k] && typeof REG[k].grad === 'function';
+            if (!ok) { warnings.push(_w('SECTION_SKIPPED', 'Section ' + (i + 1) + ': unknown correlation ' + (k ? k.slice(0, 24) : '(none)') + ' — skipped.', 'info')); return; }
+            if (!(z > a)) { warnings.push(_w('SECTION_SKIPPED', 'Section ' + (i + 1) + ': the range is empty (from ≥ to) — skipped.', 'info')); return; }
+            rows.push({ by: by, from: a, to: z, corr: k, row: i });
+        });
+        return { rows: rows, warnings: warnings };
+    }
+    // split the flow-order segment list (deepest first) at the given MDs (straight segments: length, Δz and TVD in proportion; a
+    // restriction stays with the piece that holds the segment's flow inlet, the deeper end)
+    function _splitAt(segs, mds) {
+        var out = [];
+        segs.forEach(function (s) {
+            var cuts = mds.filter(function (m) { return m > s.mdTop + 0.01 && m < s.mdBot - 0.01; }).sort(function (a, b) { return b - a; });
+            if (!cuts.length) { out.push(s); return; }
+            var hiMd = s.mdBot;
+            cuts.concat([s.mdTop]).forEach(function (m, j) {
+                var len = hiMd - m, fr = len / s.len, c = {};
+                Object.keys(s).forEach(function (k) { c[k] = s[k]; });
+                c.mdTop = m; c.mdBot = hiMd; c.len = len; c.dz = s.dz * fr;
+                c.tvdTop = s.tvdTop + (s.tvdBot - s.tvdTop) * (m - s.mdTop) / s.len; c.tvdBot = s.tvdTop + (s.tvdBot - s.tvdTop) * (hiMd - s.mdTop) / s.len;
+                if (j > 0) delete c.restr;
+                out.push(c); hiMd = m;
+            });
+        });
+        return out;
+    }
+    function _applySections(segs, list, base) {
+        var n = normSections(list), rows = n.rows;
+        if (!rows.length) return { segs: segs, active: false, warnings: n.warnings, rows: rows };
+        var mds = [];
+        rows.forEach(function (r) { if (r.by === 'md') { if (_fin(r.from)) mds.push(r.from); if (_fin(r.to)) mds.push(r.to); } });
+        var sp = mds.length ? _splitAt(segs, mds) : segs.slice();
+        var hit = rows.map(function () { return 0; });
+        sp.forEach(function (s) {
+            var mid = 0.5 * (s.mdTop + s.mdBot), key = base, rule = -1;
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i], inside = r.by === 'md' ? (mid >= r.from && mid < r.to) : (s.inc >= r.from - 1e-9 && s.inc < r.to - 1e-9 || (r.to >= 90 && s.inc >= r.from && s.inc <= 180));
+                if (inside) { key = r.corr; rule = i; hit[i]++; break; }
+            }
+            s.corr = key; s.secRow = rule >= 0 ? rows[rule].row : -1;
+        });
+        rows.forEach(function (r, i) { if (!hit[i]) n.warnings.push(_w('SECTION_EMPTY', 'Section ' + (r.row + 1) + ' (' + (r.by === 'md' ? 'MD ' + _fmt(r.from, 0) + '–' + (_fin(r.to) ? _fmt(r.to, 0) : 'TD') + ' ft' : _fmt(r.from, 0) + '–' + _fmt(r.to, 0) + '° from vertical') + ') covers no part of this flow path.', 'info')); });
+        return { segs: sp, active: true, warnings: n.warnings, rows: rows };
+    }
+    // the contiguous runs of one correlation along a segment list, top → bottom
+    function _runs(segs, REG) {
+        var a = segs.slice().sort(function (x, y) { return x.mdTop - y.mdTop; }), out = [];
+        a.forEach(function (s) {
+            var l = out[out.length - 1], k = s.corr;
+            if (l && l.corr === k && Math.abs(l.mdBot - s.mdTop) < 0.5) { l.mdBot = s.mdBot; l.tvdBot = s.tvdBot; l.incMin = Math.min(l.incMin, s.inc); l.incMax = Math.max(l.incMax, s.inc); return; }
+            var e = REG[k] || {};
+            out.push({ corr: k, label: e.label || k, verified: e.verified === true, vertical: !!e.vertical, row: s.secRow, mdTop: s.mdTop, mdBot: s.mdBot, tvdTop: s.tvdTop, tvdBot: s.tvdBot, incMin: s.inc, incMax: s.inc });
+        });
+        return out;
+    }
+    // the sections resolved on a well path (for the page, the schematic and the report): runs top → bottom
+    function sectionsFor(W, list, base) {
+        var segs = _path(W);
+        if (!segs.length) return { ok: false, code: 'NO_PATH', runs: [], warnings: [] };
+        var b = base || 'bb', ap = _applySections(segs, list, b);
+        if (!ap.active) ap.segs.forEach(function (s) { s.corr = b; s.secRow = -1; });
+        return { ok: true, active: ap.active, runs: _runs(ap.segs, _reg()), warnings: ap.warnings, rows: ap.rows };
+    }
+
     // ── traverse ─────────────────────────────────────────────────────────────────────────────────────────────────────
     function traverse(F, W, q, o) {
         o = o || {};
@@ -161036,6 +161814,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (!segs.length) return fail('NO_PATH', 'the well has no flow path (segments)');
         var key = _corrKey(F, o), REG = _reg(), E = (REG === G.WTS_flowline_corr && Object.prototype.hasOwnProperty.call(REG, key)) ? REG[key] : null;
         if (!E || typeof E.grad !== 'function') return { ok: false, code: 'UNKNOWN_CORR', corr: key, errors: ['unknown correlation key ' + String(key).slice(0, 40)], warnings: warnings, profile: [], pEnd: null, lost: null };
+        // per-section correlations (WP21): o.sections absent, false, null or [] → one correlation for the whole path (as before)
+        var SEC = (Array.isArray(o.sections) && o.sections.length) ? _applySections(segs, o.sections, key) : null;
+        if (SEC) { SEC.warnings.forEach(function (w) { warnings.push(w); }); if (SEC.active) segs = SEC.segs; else SEC = null; }
         var from = o.from === 'bottom' ? 'bottom' : 'top';
         var p0 = _fin(+o.p0) ? +o.p0 : (_fin(+o.p0_psig) ? +o.p0_psig + PATM : NaN);
         if (!(p0 > 0)) return fail('NO_P0', 'the start pressure p0 (psia) is missing');
@@ -161061,7 +161842,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (+o.pMax > 0) mo.pMax = +o.pMax;
         if (o.grid) mo.grid = o.grid;
         if (+o.eroC > 0) mo.eroC = +o.eroC;
-        var m = G.WTS_flowline_march(mseg.map(function (s) { var c = { name: s.name, len: s.len, id: s.id, dz: s.dz }; if (s.area) c.area = s.area; if (s.restr) c.restr = s.restr; return c; }),
+        var m = G.WTS_flowline_march(mseg.map(function (s) { var c = { name: s.name, len: s.len, id: s.id, dz: s.dz }; if (s.area) c.area = s.area; if (s.restr) c.restr = s.restr; if (SEC) c.corr = s.corr; return c; }),
             ff, p0 - PATM, NaN, NaN, mo);
         if (!m) return fail('MISSING_ENGINE', 'the fluid-property library is not loaded');
         if (m.ok === false) return { ok: false, code: m.code || 'MARCH_FAILED', corr: key, errors: m.errors || ['march failed'], warnings: warnings, profile: [], pEnd: null, lost: null };
@@ -161074,6 +161855,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var row = { md: w.md, tvd: tvdTop + (tvdBot - tvdTop) * Math.min(1, Math.max(0, frTop)), inc: s.inc, p: e.p + PATM, t: e.t,
                 hl: e.hl != null ? e.hl : null, pattern: e.pattern || null, vm: e.vm, vsl: e.vsl, vsg: e.vsg, rhoS: e.rhoS,
                 gradEl: e.gradEl, gradF: e.gradF, gradAcc: e.gradAcc, ero: e.ero };
+            if (SEC) row.corr = s.corr;
             if (e.restr) { row.restr = true; row.dpRestr = e.dp; }
             prof.push(row);
         });
@@ -161095,31 +161877,41 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (r.dpRestr > 0) { dpR += r.dpRestr; restr.push({ md: s.mdBot /* the segment's flow inlet */, dp: r.dpRestr, d: r.restr.d, beta: r.restr.beta, K: r.restr.K, v: r.restr.v, kind: s.restr && s.restr.kind }); }
             if (r.vmMax > vmMax) vmMax = r.vmMax;
             if (r.eroMax > eroMax) eroMax = r.eroMax;
-            return { name: s.name, mdTop: s.mdTop, mdBot: s.mdBot, tvdTop: s.tvdTop, tvdBot: s.tvdBot, inc: s.inc, len: s.len, id: s.id,
+            var so = { name: s.name, mdTop: s.mdTop, mdBot: s.mdBot, tvdTop: s.tvdTop, tvdBot: s.tvdBot, inc: s.inc, len: s.len, id: s.id,
                 pIn: r.pIn == null ? null : r.pIn + PATM, pOut: r.pOut == null ? null : r.pOut + PATM, dpEl: r.dpEl, dpF: r.dpF, dpAcc: r.dpAcc,
                 dpRestr: r.dpRestr || 0, patterns: r.patterns, vmMax: r.vmMax, eroMax: r.eroMax };
+            if (SEC) so.corr = s.corr;
+            return so;
         });
-        // warnings: vertical-only correlations on deviated sections, ranges, provisional label
-        if (E.vertical) {
-            var incMax = 0, mdAt = null;
-            segs.forEach(function (s) { if (s.inc > incMax) { incMax = s.inc; mdAt = s.mdTop; } });
-            if (incMax > VERT_WARN_DEG) warnings.push(_w('VERTICAL_ONLY', E.label + ' is a vertical-well correlation; the path reaches ' + _fmt(incMax, 0) +
-                '° from vertical (MD ' + _fmt(mdAt, 0) + ' ft). The elevation term uses the true inclination; Beggs & Brill is suggested for this well.'));
-        }
-        var R = E.range || {};
-        var dMax = 0; segs.forEach(function (s) { if (s.id > dMax) dMax = s.id; });
-        if (R.dMaxIn && dMax > R.dMaxIn) warnings.push(_w('RANGE_D', E.label + ': flow diameter ' + _fmt(dMax, 3) + ' in is above the data range (≤ ' + R.dMaxIn + ' in).'));
-        if (R.vmMax && vmMax > R.vmMax) warnings.push(_w('RANGE_VM', E.label + ': mixture velocity ' + _fmt(vmMax, 1) + ' ft/s is above the data range (< ' + R.vmMax + ' ft/s).'));
-        if (R.cgrMax != null && _num(F.cgr) > R.cgrMax) warnings.push(_w('RANGE_CGR', E.label + ': condensate ratio ' + _fmt(F.cgr, 1) + ' bbl/MMscf is above the data range (≤ ' + R.cgrMax + ').'));
-        if (R.wgrMax != null && _num(F.wgr) > R.wgrMax) warnings.push(_w('RANGE_WGR', E.label + ': water ratio ' + _fmt(F.wgr, 1) + ' bbl/MMscf is above the data range (≤ ' + R.wgrMax + ').'));
-        if (key === 'single' && prof.some(function (r) { return r.pattern === 'homogeneous'; })) warnings.push(_w('SINGLE_TWO_PHASE', 'Single-phase method with free gas present: a homogeneous mixture is used; choose a multiphase correlation.'));
-        if ((key === 'gasTZ' || key === 'gasCS' || (R.note === 'gas only')) && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
-        if (E.verified !== true) warnings.push(_w('PROVISIONAL', E.label + ': ' + PROVISIONAL + '.', 'info'));
+        // warnings: vertical-only correlations on deviated sections, ranges, provisional label — for every correlation in use (one
+        // without sections; each section's own with them, judged on the segments it covers)
+        var used = [];
+        if (SEC) segs.forEach(function (s) { if (used.indexOf(s.corr) === -1) used.push(s.corr); }); else used.push(key);
+        used.forEach(function (uk) {
+            var Eu = REG[uk], Ru = (Eu && Eu.range) || {}, mine = SEC ? segs.filter(function (s) { return s.corr === uk; }) : segs;
+            if (!Eu) return;
+            if (Eu.vertical) {
+                var incMax = 0, mdAt = null;
+                mine.forEach(function (s) { if (s.inc > incMax) { incMax = s.inc; mdAt = s.mdTop; } });
+                if (incMax > VERT_WARN_DEG) warnings.push(_w('VERTICAL_ONLY', Eu.label + ' is a vertical-well correlation; ' + (SEC ? 'its section' : 'the path') + ' reaches ' + _fmt(incMax, 0) +
+                    '° from vertical (MD ' + _fmt(mdAt, 0) + ' ft). The elevation term uses the true inclination; Beggs & Brill is suggested for ' + (SEC ? 'that section.' : 'this well.')));
+            }
+            var dMax = 0; mine.forEach(function (s) { if (s.id > dMax) dMax = s.id; });
+            var vmU = 0; if (SEC) segOut.forEach(function (so) { if (so.corr === uk && so.vmMax > vmU) vmU = so.vmMax; }); else vmU = vmMax;
+            if (Ru.dMaxIn && dMax > Ru.dMaxIn) warnings.push(_w('RANGE_D', Eu.label + ': flow diameter ' + _fmt(dMax, 3) + ' in is above the data range (≤ ' + Ru.dMaxIn + ' in).'));
+            if (Ru.vmMax && vmU > Ru.vmMax) warnings.push(_w('RANGE_VM', Eu.label + ': mixture velocity ' + _fmt(vmU, 1) + ' ft/s is above the data range (< ' + Ru.vmMax + ' ft/s).'));
+            if (Ru.cgrMax != null && _num(F.cgr) > Ru.cgrMax) warnings.push(_w('RANGE_CGR', Eu.label + ': condensate ratio ' + _fmt(F.cgr, 1) + ' bbl/MMscf is above the data range (≤ ' + Ru.cgrMax + ').'));
+            if (Ru.wgrMax != null && _num(F.wgr) > Ru.wgrMax) warnings.push(_w('RANGE_WGR', Eu.label + ': water ratio ' + _fmt(F.wgr, 1) + ' bbl/MMscf is above the data range (≤ ' + Ru.wgrMax + ').'));
+            if (uk === 'single' && prof.some(function (r) { return r.pattern === 'homogeneous' && (!SEC || r.corr === 'single'); })) warnings.push(_w('SINGLE_TWO_PHASE', 'Single-phase method with free gas present: a homogeneous mixture is used; choose a multiphase correlation.'));
+            if ((uk === 'gasTZ' || uk === 'gasCS' || (Ru.note === 'gas only')) && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
+            if (Eu.verified !== true) warnings.push(_w('PROVISIONAL', Eu.label + ': ' + PROVISIONAL + '.', 'info'));
+        });
         if (lost) warnings.push(_w('LOST', 'The traverse stops at MD ' + _fmt(lost.md, 0) + ' ft (' + lost.reason + ').'));
         var res = { ok: !lost, corr: key, from: from, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
             pTop: prof.length ? prof[0].p : null, pBottom: prof.length ? prof[prof.length - 1].p : null, lost: lost,
             grid: m.grid || null, segments: segOut, restrictionsDp: dpR, restrictions: restr, vmMax: vmMax, eroMax: eroMax,
             rough: rough.v, stepFt: stepFt, warnings: warnings, errors: errors };
+        if (SEC) { res.sections = _runs(segs, REG); res.corrs = used; }
         if (lost) { res.code = 'LOST'; res.errors = ['traverse lost (' + lost.reason + ')']; res.pTop = from === 'top' ? p0 : null; res.pBottom = from === 'bottom' ? p0 : null; }
         return res;
     }
@@ -161355,6 +162147,95 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             boundaries: NdRef ? drBoundaries(NdRef) : null };
     }
 
+    // ── WP21 (B): a traverse on the flow-pattern map of another correlation ──────────────────────────────────────────────
+    // patternMap(F, q, traverse, {kind:'agf'|'mb'|'mech', corr?}) — each station of any traverse placed on the map of Aziz-Govier-Fogarasi
+    // (N_x, N_y), Mukherjee-Brill (N_Lv, N_gv; boundaries at the stations' median inclination) or the mechanistic superficial-velocity
+    // map (v_sg, v_sl ft/s; corr 'hk' → the Hasan-Kabir boundaries, else Ansari), classified by that correlation's own pattern rules with
+    // the in-situ properties at the station (WTS_flowline_props) — so the colours are the map correlation's patterns, not the traverse's.
+    // The boundary lines are drawn at the median station's properties (diameter, densities, σ, N_L, inclination).
+    // → {ok, kind, corr, axes:{x, y}, points:[{md, tvd, inc, p, x, y, pattern}], counts{pattern: n}, lines:[{key, label, pts:[[x, y]]}],
+    //    labels:[{x, y, text, pattern}], ref:{inc, theta, d, NL, rhoL, rhoG, sigma}}
+    var MAP_KINDS = { agf: 'agf', mb: 'mb', mech: 'ansari' };
+    function _logspace(a, b, n) { var out = [], la = _log10(a), lb = _log10(b); for (var i = 0; i < n; i++) out.push(Math.pow(10, la + (lb - la) * i / (n - 1))); return out; }
+    function patternMap(F, q, tr, o) {
+        o = o || {};
+        var kind = MAP_KINDS[o.kind] ? o.kind : 'agf', corr = kind === 'mech' ? (o.corr === 'hk' ? 'hk' : 'ansari') : MAP_KINDS[kind];
+        if (!tr || !Array.isArray(tr.profile) || !tr.profile.length) return { ok: false, code: 'NO_TRAVERSE', errors: ['no traverse'], points: [], kind: kind, corr: corr };
+        if (typeof G.WTS_flowline_props !== 'function') return { ok: false, code: 'MISSING_ENGINE', errors: ['WTS_flowline_props is not loaded'], points: [], kind: kind, corr: corr };
+        var ff = _ff(F, q), segs = Array.isArray(tr.segments) ? tr.segments : [], rough = _fin(+tr.rough) ? +tr.rough : 0.0006;
+        var idAt = function (md) { for (var i = 0; i < segs.length; i++) { var s = segs[i]; if (md >= s.mdTop - 1e-6 && md <= s.mdBot + 1e-6) return s.id; } return segs.length ? segs[segs.length - 1].id : null; };
+        var pts = [], counts = {}, refs = [];
+        tr.profile.forEach(function (r) {
+            if (r.restr || !_fin(r.p) || !_fin(r.t)) return;
+            var d = idAt(r.md); if (!(d > 0)) return;
+            var pr = G.WTS_flowline_props(ff, r.p, r.t); if (!pr) return;
+            var vsl = _num(r.vsl), vsg = _num(r.vsg);
+            if (!(vsl > 0) || !(vsg > 0) || !(pr.sigL > 0) || !(pr.rhoL > pr.rhoG)) { counts.single = (counts.single || 0) + 1; return; }
+            var inc = _fin(r.inc) ? r.inc : 0;
+            var b = _base({ vsl: vsl, vsg: vsg, d: d, rhoL: pr.rhoL, rhoG: pr.rhoG, muL: pr.muL, muG: pr.mug, sigma: pr.sigL, theta: 90 - inc, rough: rough, p: r.p });
+            var x, y, pat;
+            if (kind === 'agf') { var am = agfMap(b); x = am.Nx; y = am.Ny; pat = am.pattern; }
+            else if (kind === 'mb') { var gp = _drGroups(b); x = gp.NLv; y = gp.Ngv; pat = mbPattern(gp.NLv, gp.Ngv, gp.NL, b.th).pattern; b.NL = gp.NL; }
+            else { x = vsg; y = vsl; pat = corr === 'hk' ? hkPattern(b).pattern : ansariPattern(b).pattern; }
+            counts[pat] = (counts[pat] || 0) + 1;
+            pts.push({ md: r.md, tvd: r.tvd, inc: inc, p: r.p, x: x, y: y, pattern: pat });
+            refs.push(b);
+        });
+        var out = { ok: pts.length > 0, kind: kind, corr: corr, points: pts, counts: counts, lines: [], labels: [], ref: null,
+            axes: kind === 'agf' ? { x: { label: 'N_x', log: true }, y: { label: 'N_y', log: true } } : kind === 'mb' ? { x: { label: 'N_Lv', log: true }, y: { label: 'N_gv', log: true } }
+                : { x: { label: 'v_sg', unit: 'ft/s', log: true }, y: { label: 'v_sl', unit: 'ft/s', log: true } } };
+        if (!refs.length) return out;
+        var B = refs[Math.floor(refs.length / 2)];
+        out.ref = { inc: 90 - B.theta, theta: B.theta, d: B.dIn, rhoL: B.rL, rhoG: B.rG, sigma: B.sig, muL: B.muL, NL: kind === 'mb' ? _drGroups(B).NL : null };
+        var L = out.lines, LB = out.labels;
+        if (kind === 'agf') {
+            var ys = _logspace(1e-3, 100, 60), ysLo = ys.filter(function (v) { return v < 4; }).concat([4]);
+            L.push({ key: 'n1', label: 'N1 (bubble / slug)', pts: ys.map(function (v) { return [0.51 * Math.pow(100 * v, 0.172), v]; }) });
+            L.push({ key: 'n2', label: 'N2 (slug / transition)', pts: ysLo.map(function (v) { return [8.6 + 3.8 * v, v]; }) });
+            L.push({ key: 'n3', label: 'N3 (transition / mist)', pts: ysLo.map(function (v) { return [70 * Math.pow(100 * v, -0.152), v]; }) });
+            L.push({ key: 'n4', label: 'N_x = 26.5 (N_y ≥ 4)', pts: _logspace(4, 100, 12).map(function (v) { return [26.5, v]; }) });
+            LB.push({ x: 0.05, y: 2, text: 'bubble', pattern: 'bubble' }, { x: 3, y: 0.3, text: 'slug', pattern: 'slug' }, { x: 30, y: 0.02, text: 'transition', pattern: 'transition' }, { x: 300, y: 0.3, text: 'mist', pattern: 'mist' });
+        } else if (kind === 'mb') {
+            var NL = out.ref.NL, th = B.th, xs = _logspace(1e-3, 100, 60), ys2 = _logspace(1e-2, 1000, 60);
+            L.push({ key: 'sm', label: 'slug / annular boundary', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvSM]; }) });
+            if (th > 0) L.push({ key: 'bs', label: 'bubble / slug', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvBS]; }) });
+            else {
+                L.push({ key: 'bs', label: 'bubble / slug', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvBS, v]; }) });
+                L.push({ key: 'st', label: 'slug / stratified', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvST, v]; }) });
+            }
+            LB.push({ x: 10, y: 0.05, text: 'bubble', pattern: 'bubble' }, { x: 0.05, y: 3, text: 'slug', pattern: 'slug' }, { x: 0.05, y: 300, text: 'annular', pattern: 'annular' });
+            if (!(th > 0)) LB.push({ x: 0.002, y: 0.05, text: 'stratified', pattern: 'stratified' });
+        } else {
+            var vl = _logspace(0.01, 50, 50);
+            if (corr === 'hk') {
+                var P = hkPattern(B);
+                L.push({ key: 'bs', label: 'bubble / slug', pts: vl.map(function (v) { return [0.429 * v + 0.357 * P.vinf * Math.max(0, Math.sin(B.th)), v]; }) });
+                L.push({ key: 'sc', label: 'slug / churn', pts: vl.map(function (v) { return [1.083 * v + 0.52 * P.vinfT, v]; }) });
+                L.push({ key: 'db', label: 'dispersed-bubble boundary', pts: vl.filter(function (v) { return P.vDB - v > 1e-3; }).map(function (v) { return [P.vDB - v, v]; }) });
+                L.push({ key: 'an', label: 'annular boundary', pts: vl.map(function (v) { return [P.vsgA, v]; }) });
+            } else {
+                var A0 = _ansariProps(B);
+                L.push({ key: 'bs', label: 'bubble / slug', pts: vl.map(function (v) { return [0.25 * A0.vs + 0.333 * v, v]; }) });
+                var db = [];
+                vl.forEach(function (v) {
+                    var gfun = function (vg) { var bb2 = _base({ vsl: v, vsg: vg, d: B.dIn, rhoL: B.rL, rhoG: B.rG, muL: B.muL, muG: B.muG, sigma: B.sig, theta: B.theta, rough: B.rough, p: B.p });
+                        var lam = v / (v + vg), rn = B.rL * lam + B.rG * (1 - lam), mn = B.muL * lam + B.muG * (1 - lam);
+                        return _barnea(bb2, A0.sigM, A0.drho, _fMoody(1488 * rn * bb2.vm * bb2.dFt / Math.max(mn, 1e-9), B.rough / 12 / bb2.dFt)); };
+                    var hiV = v * 0.52 / 0.48, loV = 1e-4;
+                    if (!(gfun(loV) > 0)) return;
+                    if (gfun(hiV) > 0) { db.push([hiV, v]); return; }
+                    for (var k = 0; k < 50; k++) { var mid = Math.sqrt(loV * hiV); if (gfun(mid) > 0) loV = mid; else hiV = mid; }
+                    db.push([Math.sqrt(loV * hiV), v]);
+                });
+                L.push({ key: 'db', label: 'dispersed-bubble boundary', pts: db });
+                L.push({ key: 'an', label: 'annular boundary', pts: vl.map(function (v) { return [A0.vsgA, v]; }) });
+            }
+            LB.push({ x: 0.05, y: 8, text: 'bubble', pattern: 'bubble' }, { x: 3, y: 0.05, text: 'slug', pattern: 'slug' }, { x: 300, y: 0.1, text: 'annular', pattern: 'annular' }, { x: 0.3, y: 30, text: 'dispersed', pattern: 'bubble' });
+            if (corr === 'hk') LB.push({ x: 25, y: 0.03, text: 'churn', pattern: 'churn' });
+        }
+        return out;
+    }
+
     function singlePhase(F, W, q, o) {
         var r = traverse(F, W, q, Object.assign({}, o || {}, { corr: 'single' }));
         return { ok: r.ok, code: r.code, pEnd: r.pEnd, profile: r.profile, warnings: r.warnings || [], errors: r.errors || [], lost: r.lost || null };
@@ -161365,6 +162246,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.defaultCorr = defaultCorr; NS.list = list; NS.hbBubbleLimit = hbBubbleLimit;
     // WP12 (A2): Cullender-Smith closed form, the Ros flow-pattern map and the Duns & Ros chart readings
     NS.gasCS = gasCS; NS.drMap = drMap; NS.drRegion = drRegion; NS.drBoundaries = drBoundaries;
+    // WP21 (B): per-section correlations, the pattern maps of the new correlations and their closed-form pieces (tests)
+    NS.normSections = normSections; NS.sectionsFor = sectionsFor; NS.patternMap = patternMap;
+    NS.agfMap = agfMap; NS.mbPattern = mbPattern; NS.mbHoldup = mbHoldup; NS.mbFr = mbFr; NS.orkGamma = orkGamma;
+    NS.ansariPattern = function (inp) { return ansariPattern(_base(inp)); }; NS.hkPattern = function (inp) { return hkPattern(_base(inp)); };
+    NS.MB_C = JSON.parse(JSON.stringify(MB_C)); NS.SEC_MAX = SEC_MAX;
     NS._drCharts = { F: _drF, L: _drL, f2: _drF2, table: { NL: DR_NLX.slice(), F: JSON.parse(JSON.stringify(DR_CH)), Nd: DR_NDX.slice(), L1: DR_L1.slice(), L2: DR_L2.slice(), f2x: DR_F2X.slice(), f2y: DR_F2Y.slice() } };
     NS._charts = { cnl: _cnl, hlPsi: _hlPsi, psi: _psi };
     NS.PROVISIONAL = PROVISIONAL; NS.KEYS = KEYS.slice(); NS.PREFERRED = PREFERRED;

@@ -1495,6 +1495,51 @@ the shared model, Thornhill-Craver, diagnostics, gradient survey import, Asheim 
 lift screening, operating envelope, tornado, 4-variable matrix · WP28 SVG well schematic, batch over wells (`WTS_wells` iteration as a
 Job, read-only per well). WP25 and WP26 after WP22 is preferred (temperature at the valve / pump).
 
+#### 18.3.1 WP21 record (2026-11-12, branch wp/b-wp21)
+
+- **Correlations (49-calc-wp-vlp.js, registry merge).** `ork` Orkiszewski (Griffith bubble = the H&B bubble branch; Griffith-Wallis slug
+  with the v_b iteration and the liquid distribution coefficient Γ, four formulas, water-continuous above 75 % water, lower limits;
+  the Duns & Ros transition / mist above L_S), `agf` Aziz-Govier-Fogarasi (N_x / N_y map, N1–N3 and N_x = 26.5; bubble / slug bubble-rise
+  holdups; Duns & Ros mist; linear transition, continuous at N2 and N3), `mb` Mukherjee-Brill (uphill / downhill boundaries, the three
+  holdup coefficient sets, annular f_R table, stratified separated-flow geometry; kind `any` so it is also a flowline choice), `ansari`
+  Ansari et al. (bubble / dispersed bubble (Barnea) / slug unit with the film balance and β / annular film model of Alves et al. with
+  the film friction factor taken equal to f_SL), `hk` Hasan-Kabir (drift flux with the inclined Taylor-bubble rise, bubble / dispersed /
+  slug / churn, annular with the Lockhart-Martinelli void fraction and a Wallis-type interfacial factor on the Blasius base). Explicit
+  equations only (no chart readings), units at the code. All five `verified:false` with the D17 label and §15.1 BENCH rows `pending`
+  (Q9: no books); `defaultCorr` unchanged (Beggs & Brill). Vertical flags: ork, agf, ansari vertical-only (warn above 30°); mb, hk not.
+- **Per-section correlation (contract additions, all additive).** `WTS_flowline_march` segment `corr` (a per-segment registry key;
+  unknown → `UNKNOWN_CORR`; absent → as before, FI identities unchanged). `WTS_wp_vlp.traverse` `o.sections = [{by:'md'|'inc', from,
+  to, corr}]` (MD ends split the segments; inclination band in degrees from vertical on each segment's average inclination; first
+  matching row wins; elsewhere the base correlation) → result `.sections` (runs: corr, label, verified, vertical, row, MD / TVD / incl.
+  range) and `.corrs`, `corr` on profile rows and segments, warnings per correlation in use (VERTICAL_ONLY per section, ranges,
+  PROVISIONAL), SECTION_SKIPPED / SECTION_EMPTY; absent or `[]` → the A2 result exactly. New `normSections`, `sectionsFor`,
+  `patternMap(F, q, traverse, {kind:'agf'|'mb'|'mech', corr})`, `agfMap`, `mbPattern`, `mbHoldup`, `mbFr`, `orkGamma`,
+  `ansariPattern`, `hkPattern`, `MB_C`, `SEC_MAX` (12). Model: table key `corrSections` (validated rows) → `M.system.corr.sections`
+  (DEFAULTS `[]`). System: `C.sections` passed to every well traverse (solve, tracking, gas lift parts, evalAt); `R.corr.sections` only
+  when sections exist; PROVISIONAL flag per section correlation; a dry-gas key in a section of an oil / water well → CORR_NOT_APPLICABLE.
+  `WTS_wp_check`: a validity row per section (`section: n`, vertical-only rule on the band / the survey inside the MD interval).
+  Match: `compare` rows are pure (one correlation each); `pwfFromTest` / `iprFromTest` / `tune` march the model's sections when the
+  correlation is the model's own (`o.sections` overrides). `WTS_wp_view.schematic` `o.bands` (correlation-by-section band).
+- **Page.** Step ⑤ Correlations card: section bar (colour per correlation along MD) and a **Per-section correlations** table editor
+  (By MD / Incl., From / To in the row's unit, correlation; read-only Covers column on MD · TVD and inclination, refreshed in place),
+  presets "Deviated → Mukherjee-Brill", "Mechanistic by inclination", Clear. Traverse tab: a dashed line at each change of correlation
+  with MD · TVD and the knob per MD-interval end on the right rail (drag → live tracking solves through a model override, release writes
+  the table). Correlations tab: a **Per-section (in use)** row (= the solve) with every correlation row marched pure, a pattern strip per
+  row (patterns along MD; the per-section row adds the correlation runs above), the five new rows; phone legend only for the selection.
+  Flow-regime map tab: map switch Duns & Ros (A2) / Aziz-Govier-Fogarasi / Mukherjee-Brill / mechanistic (v_sg · v_sl; Ansari or
+  Hasan-Kabir boundaries), default from the correlation in use, stations coloured by the map correlation's own patterns with MD · TVD
+  read-outs and pattern counts. Schematic band and caption; case summary row (inside #wp_res). Help: one sentence (production file at its
+  cap), wellperf and flowline guides re-hashed.
+- **Tests / gates.** `wellperf-mech` VM1–VM10 (hand calculations of every explicit equation, the section contract, patternMap, the
+  page). wellperf-validate: five BENCH rows, gate check that no default model carries sections, X1 / X2 extended to the five, X22
+  (one section over the path = that correlation, identical; an MD split with the same key < 0.5 psi), X23 (single-phase water = Darcy-
+  Weisbach), X24 (direction agreement of the five, oil and wet gas); `--time` rows per new correlation and a per-section traverse (1 E).
+- **Known gaps.** No verified published example (Q9) — all five provisional. Ansari annular: film friction factor = f_SL; Hasan-Kabir
+  annular friction is a Wallis-type factor on the Blasius base (the 2002 text form not checked); Mukherjee-Brill stratified ignores the
+  interfacial shear in the combined balance; Orkiszewski and AGF transition / mist reuse the Duns & Ros chart readings (provisional).
+  Sections apply to the producing well only (flowline keeps one correlation). The help screenshots of step ⑤ were not re-taken (image cap
+  full); the guide carries one sentence (text cap).
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative

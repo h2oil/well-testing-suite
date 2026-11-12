@@ -133,6 +133,7 @@
 //   opt.stepFt    step length per segment (ft), clamped to 10–400 steps (default 50 ft as before)
 //   opt.grid      true → the march records its step / sub-step layout and returns it as .grid; a grid object from an
 //                 earlier march → that layout is used (no refine decisions: p(q) stays smooth within one solve, §4.5)
+//   segment.corr  (v4.5 WP21) a registry key for this segment only (per-section correlation); absent → opt.corr (or bb) as before
 //   opt.eroC      API RP 14E C for the erosional ratio (default 100)
 //   opt.detail    each profile entry also carries seg, vm, vsl, vsg, rhoS, gradEl, gradF, gradAcc, ero
 //   segment.area  flow area (in²) for the velocities when it differs from the circle of segment.id (annulus: id = the
@@ -590,8 +591,8 @@
             vsl: pr.qL / A, vsg: pr.qG / A, d: s.id, rhoL: pr.rhoL, rhoG: pr.rhoG, muL: pr.muL, muG: pr.mug,
             sigma: pr.sigL, theta: s.theta, rough: opt.rough, p: pp, payne: opt.payne, accel: opt.accel
         };
-        var E = null, g;
-        if (opt.corr != null) { E = _corrOf(opt.corr); inp.props = pr; inp.mult = opt.mult || null; g = E.grad(inp); }
+        var E = null, g, ck = (s.corr != null) ? s.corr : opt.corr;          // segment.corr (v4.5 WP21): a per-segment registry key
+        if (ck != null) { E = _corrOf(ck); inp.props = pr; inp.mult = opt.mult || null; g = E.grad(inp); }
         else g = bb(inp);
         if (opt.mult) g = _applyMult(g, inp, opt.mult, E || CORR.bb);
         g.props = pr;
@@ -618,6 +619,7 @@
     function march(route, fluid, p0g, t0, t1, opt) {
         if (opt.corr != null && !_corrOf(opt.corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(opt.corr), errors: ['unknown correlation key ' + String(opt.corr).slice(0, 40)] };
         var segs = route.segments, total = 0;
+        for (var ks = 0; ks < segs.length; ks++) if (segs[ks].corr != null && !_corrOf(segs[ks].corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(segs[ks].corr), errors: ['unknown correlation key ' + String(segs[ks].corr).slice(0, 40)] };
         var gridIn = (opt.grid && typeof opt.grid === 'object' && Array.isArray(opt.grid.segs) && opt.grid.segs.length === segs.length) ? opt.grid : null;
         var gridOut = opt.grid ? { v: 1, segs: [] } : null;
         var eroC = (opt.eroC > 0) ? opt.eroC : 100;
@@ -1050,13 +1052,14 @@
     //   refine: split a step whose pressure change exceeds 3 % of the pressure (off by default)}.
     //   → {profile [{x, p psig, t, hl, pattern}], segments[], pOut, lost, …}, or null without the PVT library.
     //   Well Performance options (v4.3 WP0b, passed through when present; see the header): corr, mult, tAt (x ft along the march →
-    //   °F, overrides t0 → t1), pMax (psia), stepFt, grid, eroC, detail; segments may carry area (in²) and restr {d, k?}.
+    //   °F, overrides t0 → t1), pMax (psia), stepFt, grid, eroC, detail; segments may carry area (in²), restr {d, k?} and (v4.5) corr.
     G.WTS_flowline_march = function (segments, fluid, p0, t0, t1, opt) {
         if (!_lib()) return null;
         var segs = (segments || []).map(function (q) {
             var o2 = { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 };
             if (+q.area > 0) o2.area = +q.area;
             if (q.restr && +q.restr.d > 0) o2.restr = { d: +q.restr.d, k: q.restr.k == null ? null : +q.restr.k };
+            if (q.corr != null && q.corr !== '') o2.corr = String(q.corr);
             return o2;
         });
         var o = opt || {};

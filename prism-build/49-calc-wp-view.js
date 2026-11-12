@@ -28,6 +28,7 @@
 //       canvas._wpAxes = {toX, toY, fromX, fromY, plot} like PRiSM's _prismAxes (C6).
 //   WTS_wp_view.redraw(canvas)           redraw with the kept spec (resize, theme)
 //   WTS_wp_view.schematic(S, o)          deviated-well schematic → {svg, pts:[{x, y, md, tvd, i}], width, height}
+//                                        (v4.5 WP21: o.bands = [{mdTop, mdBot, color, label, title}] — correlation-by-section band beside the path)
 //       S = WTS_wp_well.schematic(W, R) result: {trajectory:[{md, tvd, dep, n, e, inc, azi}], strings[], restrictions[],
 //            perfs:{topMd, botMd, midMd}, gauges[], choke, profile[{md, tvd, p, t, hl, vm, pattern}]};
 //       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'heatloss' (A2: fluid − earth)|'none', fmt:{p, t, md, vm},
@@ -819,6 +820,21 @@
             if (fp) g.push('<path d="' + fp + '" fill="none" stroke="' + T.blue + '" stroke-opacity="0.55" stroke-width="3" stroke-dasharray="6 5"/>');
         }
         var labs = [];      // side labels, placed after the markers without overlaps
+        // per-section correlation bands (v4.5 WP21): o.bands = [{mdTop, mdBot, color, label, title}] — a coloured band beside the flow path
+        // (the side away from the gas-lift annulus path), one per run of a correlation, labelled at its middle
+        var bands = (o.bands || []).filter(function (bd) { return bd && _fin(bd.mdTop) && _fin(bd.mdBot) && bd.mdBot > bd.mdTop; });
+        if (bands.length > 1 || (bands.length === 1 && o.bandsAlways)) {
+            g.push('<g class="wp-secband" aria-label="Correlation by section">');
+            bands.forEach(function (bd) {
+                var pl = [], nS = Math.max(4, Math.min(40, Math.round((bd.mdBot - bd.mdTop) / Math.max(1, mdMax) * 60)));
+                for (var kb = 0; kb <= nS; kb++) { var qb = interp(path, Math.min(mdMax, bd.mdTop + (bd.mdBot - bd.mdTop) * kb / nS)); if (qb) pl.push((qb.x - Math.sin(qb.ang) * 17).toFixed(1) + ',' + (qb.y + Math.cos(qb.ang) * 17).toFixed(1)); }
+                if (pl.length < 2) return;
+                g.push('<polyline points="' + pl.join(' ') + '" fill="none" stroke="' + (bd.color || T.accent) + '" stroke-width="5" stroke-linecap="round" stroke-opacity="0.9"><title>' + _esc(bd.title || bd.label || '') + '</title></polyline>');
+                var qm = interp(path, Math.min(mdMax, 0.5 * (bd.mdTop + bd.mdBot)));
+                if (qm && bd.label) labs.push({ side: -1, x: qm.x - Math.sin(qm.ang) * 17 - 6, y: qm.y + Math.cos(qm.ang) * 17, t: bd.label, c: bd.color || T.accent });
+            });
+            g.push('</g>');
+        }
         // perforations + mid-perf
         var pf = S.perfs || {};
         if (_fin(pf.topMd) && _fin(pf.botMd) && pf.botMd > pf.topMd) {
