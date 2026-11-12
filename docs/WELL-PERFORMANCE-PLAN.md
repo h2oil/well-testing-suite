@@ -1862,6 +1862,29 @@ screening ranges ship provisional through the D17 gate (`wellperf-validate.js` B
   or DFIT import at run time); the well-path map is not equal-scale; the horizontal length counts trajectory points at ≥ 80° (within one
   point spacing); layers / sections / ESP / mandrels appear only once WP24 / WP21 / WP26 / WP25 supply the fields above.
 
+#### 18.3.8 B integration record (2026-11-12, branch wp/b)
+
+Merged with --no-ff in the order WP23, WP21, WP22, WP24, WP20, WP27, WP28 onto master 8ce1989. Generated files (combined-round9.js,
+well-testing-app.html, ios-app/www, help/user-guide.html) were never merged by hand: Round 9 rebuilt, LF, synced and the guide regenerated
+after every merge; the wellperf and flowline guides re-hashed (reviewed v4.5). Resolutions that change a WP record:
+
+- **Cross-check ids** (each WP numbered from X22): WP23 X22–X24, WP21 X25–X27, WP24 X28–X35, WP22 X40–X42, WP20 X43–X46, WP27 X47–X52,
+  WP28 X53a / X53b; gate sections 7 (PVT, WP23), 8 (B inflow, WP24), 9 (exports, WP20), 10 (forecast / screening, WP27). The records
+  above carry the new ids.
+- **Page table names**: WP22's heat-transfer layer table is `hlayers` (`#wp_tbl_hlayers`, still stored in `geo.layers`); `layers` is WP24's
+  reservoir layer table (model key `layers`). The WP22 sleeve CSS is scoped to `.wp-comp.wp-layer`.
+- **Schematic layers**: one drawing — the WP24 beds at TVD with inflow / crossflow arrows (labelled by their arrows); the WP28 band
+  drawing along MD is dropped (WP28's `_schLayers` still feeds `o.layers` when the model is not multilayer; the multilayer inflow overrides it).
+- **Correlation sections on the schematic**: the WP21 band beside the path by default; with Colour by → Correlation the WP28 rail is
+  drawn from the WP21 traverse runs (`mdTop`, `mdBot`, `corr`) and the band is left out.
+- **`WTS_wellperf_page.ui`**: a function returning the WP27 helper set, with the WP28 subset attached as properties (`ui.u`, `ui.drive`, …).
+- **`WTS_wp_system` _ctx**: the well path is built before the inflow (WP24) and `o.outflowOnly` skips the inflow (WP20); evalAt with a
+  reused context also resets the predictor count (WP22).
+- **Gates at the integration HEAD**: node --check ok; smoke 347/347; accept-test --html --integration file by file 192 files, 2208/2208
+  (2122 + 86 new); wellperf-validate --html --gate --check --time: gate PASS, 51/51 cross-checks, every E budget ok (one wall-clock row,
+  the gas enthalpy solve, ran over its ms cap on the loaded container: 1.46 s against 1.36 s); help-shots / build-user-guide /
+  publish-site --check ok; help production file under its cap (no screenshot added).
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative
