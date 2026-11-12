@@ -1,7 +1,8 @@
 // =============================================================================
 // WTS — 49-calc-wp-vlp.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
 // -----------------------------------------------------------------------------
-// Well Performance vertical lift (WP3, increment A1) — docs/WELL-PERFORMANCE-PLAN.md §3.4, §4.4, §4.5, §15.1, §15.2, D3, D5, D17.
+// Well Performance vertical lift (WP3, increment A1; WP12, increment A2) — docs/WELL-PERFORMANCE-PLAN.md §3.4, §4.4, §4.5, §15.1,
+// §15.2, D3, D5, D17.
 //
 // ONE MARCHER (D3). This file adds no pressure march of its own: it registers point-gradient correlations into the registry of
 // 49-calc-flowline.js (window.WTS_flowline_corr, merge, never replace) and drives WTS_flowline_march with the registry KEY STRING
@@ -47,9 +48,15 @@
 //           f (Colebrook) at N_Re = 20.09·γ·q_Mscfd / (d_in·μ_g). Applied segment by segment (tapered strings, deviation).
 //           Its registry entry is the differential form of the same model (gas phase only, no slip, Darcy friction): the
 //           marcher with corr 'gasTZ' is the cross-check of the closed form (§15.2, within 1 %).
+//   dr      Duns & Ros (1963), WP12 (A2): Ros flow-pattern regions I (bubble / plug), II (slug), transition, III (mist) by N_gv against
+//           N_Lv with the N_d-dependent L1 / L2; slip velocity per region (F1–F7 chart readings); mist friction on the liquid-film
+//           roughness (Weber rule); the transition interpolated. Equations and units at the code (section "Duns & Ros"). Vertical-only.
+//   gasCS   Cullender & Smith (1956), WP12 (A2): ∫ (p/TZ)/[F² + (p/TZ)²(TVD/MD)/1000] dp = 18.75·γ·MD, F² = 0.667·f·q²/d⁵ (q MMscf/d,
+//           d in, T °R, f Moody); the registry entry is the differentiated integrand (gas phase only), the closed form (two half-
+//           lengths, then Simpson, per segment) is gasCS() / gasDry(…, {method:'cs'}) — the cross-check of gasTZ and of the marcher.
 //
 // VERIFICATION GATE (D17, §15.1). Q9 — the owner's textbooks were not provided — so no correlation of this file has a verified
-// published traverse: hb, gray, nsl, single and gasTZ ship with verified:false and the label
+// published traverse: hb, gray, nsl, single, gasTZ (A1) and dr, gasCS (A2) ship with verified:false and the label
 // "provisional — not verified against a published example". A provisional correlation cannot be a default, so defaultCorr()
 // returns the verified Beggs & Brill ('bb', Brill & Mukherjee Ex. 4.7 in calc-flowline) for every fluid until a WP flips the flag
 // with a verified example; the preferred defaults (D5: hb for oil, gray for gas / condensate) are named in its result.
@@ -63,7 +70,15 @@
 //            restrictions[], vmMax, eroMax, warnings, errors}
 //     .curve(F, W, o /*{qList, p0, corr, mult, coarse, grid, from}*/) → [{q, pwf psia | null, lost}] (+ .grid, .warnings, .corr)
 //     .family(F, W, o, vary /*{key, values[], apply?(value, {F, W, o}) → {F, W, o}}*/) → [{value, curve}]
-//     .gasDry(F, W, q /*Mscf/d*/, o /*{from, p0 psia, tProfile}*/) → {ok, pwf, pEnd, pTop, zAvg, tAvg, segments[], warnings}
+//     .gasDry(F, W, q /*Mscf/d*/, o /*{from, p0 psia, tProfile, method:'tz' (default) | 'cs' (A2)}*/) → {ok, pwf, pEnd, pTop, zAvg, tAvg,
+//         segments[], warnings}; method 'cs' returns gasCS()
+//     .gasCS(F, W, q, o /*{from, p0 psia, tProfile}*/) (A2) → {ok, corr:'gasCS', method, pwf, pEnd, pTop, pBottom, q_MMscfd, sg,
+//         segments:[{name, mdTop, mdBot, tvdTop, tvdBot, inc, len, id, pTop, pMid, pBot, tTop, tMid, tBot, iTop, iMid, iBot, f, F2}],
+//         stations:[{md, tvd, p}] (top, middle and bottom of each segment), iters, warnings} | {ok:false, code: LOST | PVT | NO_* …}
+//     .drMap(F, q, traverse) (A2) → {ok, corr, points:[{md, tvd, inc, p, NLv, Ngv, Nd, region, pattern}], counts{I, II, transition,
+//         III, single}, NdRef, NdMin, NdMax, boundaries} — any correlation's traverse placed on the Ros map
+//     .drRegion(NLv, Ngv, Nd) → {region:'I'|'II'|'transition'|'III', LB, LS, LM, L1, L2}; .drBoundaries(Nd, n?) → {Nd, L1, L2,
+//         lines:{bs, st, tm}: [[NLv, Ngv]]}; ._drCharts {F(name, NL), L(Nd), f2(x), table} (the Duns & Ros chart readings)
 //     .singlePhase(F, W, q, o) → {ok, pEnd, profile, warnings}  (traverse with corr 'single')
 //     .defaultCorr(typeOrF) → {key, preferred, provisional, reason}; .list(kind?) → registry entries (well / gas / single / any)
 //     .hbBubbleLimit(vm ft/s, dFt) → L_B; ._charts {cnl, hlPsi, psi} (the HB curve fits); .PROVISIONAL; .KEYS
@@ -79,7 +94,7 @@
     var HB_VS = 0.8;                           // ft/s, Griffith bubble-rise slip velocity
     var VERT_WARN_DEG = 30;                    // vertical-only correlations: warn above this inclination (§4.4)
     var PROVISIONAL = 'provisional — not verified against a published example';
-    var KEYS = ['hb', 'gray', 'nsl', 'single', 'gasTZ'];
+    var KEYS = ['hb', 'gray', 'nsl', 'single', 'gasTZ', 'dr', 'gasCS'];        // dr, gasCS: WP12 (A2)
 
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _log10(x) { return Math.log(x) / Math.LN10; }
@@ -271,6 +286,195 @@
         return _finish(b, r, b.rG, f * b.rG * b.vm * b.vm / (2 * GC * b.dFt) / 144);
     }
 
+    // ── Duns & Ros (1963) — WP12, increment A2 ───────────────────────────────────────────────────────────────────────────
+    // Ros flow-pattern map in the dimensionless velocities (N_Lv, N_gv) with the pipe-diameter number N_d; slip velocity per region;
+    // the mist region with the liquid-film roughness rule. Units next to each equation; the group definitions are the ones of the
+    // Hagedorn & Brown block above (ρ lbm/ft³, σ dyn/cm, μ cp, v ft/s, d ft):
+    //   N_Lv = 1.938·v_sl·(ρ_L/σ)^¼, N_gv = 1.938·v_sg·(ρ_L/σ)^¼, N_d = 120.872·d_ft·(ρ_L/σ)^½, N_L = 0.15726·μ_L·(1/(ρ_L·σ³))^¼
+    // Region boundaries (Ros map):  I / II   N_gv = L1 + L2·N_Lv          (L1, L2 = chart functions of N_d)
+    //                               II / tr  N_gv = L_S = 50 + 36·N_Lv
+    //                               tr / III N_gv = L_M = 75 + 84·N_Lv^0.75
+    // Region I  (bubble, plug, part of froth)  S = F1 + F2·N_Lv + F3'·(N_gv/(1 + N_Lv))²,     F3' = F3 − F4/N_d
+    // Region II (slug, rest of froth)          S = (1 + F5)·(N_gv^0.982 + F6')/(1 + F7·N_Lv)², F6' = 0.029·N_d + F6
+    //   v_s = S/(1.938·(ρ_L/σ)^¼) (ft/s); holdup from v_s = v_sg/(1 − H_L) − v_sl/H_L:
+    //   H_L = [v_s − v_m + √((v_m − v_s)² + 4·v_s·v_sl)]/(2·v_s), clamped to [λ_L, 1]
+    //   friction (I, II): dp/dL_f = f_m·ρ_L·v_sl·v_m/(2·g_c·d_ft)/144 (psi/ft), f_m = f1·f2/f3, f1 = Moody(N_Re = 1488·ρ_L·v_sl·d_ft/μ_L),
+    //   f2 = chart of f1·R·N_d^(2/3) with R = v_sg/v_sl, f3 = 1 + f1·√(R/50); no acceleration term in regions I and II.
+    // Region III (mist)  no slip (H_L = λ_L, ρ_s = ρ_n); friction on the gas: dp/dL_f = f·ρ_g·v_sg²/(2·g_c·d_ft)/144 with the film
+    //   roughness ε (ft) from the Weber rule: X = N_We·N_μ = ρ_g·v_sg²·μ_L²/(ρ_L·σ²) (consistent units: μ_L lbm/(ft·s) = cp × 6.7197e-4,
+    //   σ lbm/s² = dyn/cm × 0.00220462; ε cancels), ε = 0.0749·σ/(ρ_g·v_sg²) when X ≤ 0.005 else ε = 0.3713·σ·X^0.302/(ρ_g·v_sg²)
+    //   (σ dyn/cm, ρ lbm/ft³, v ft/s → ε ft); ε/d between the wall roughness and 0.5; f = Moody below ε/d = 0.05, else
+    //   f = 4·[1/(4·log10(0.27·ε/d))² + 0.067·(ε/d)^1.73]; d → d − ε and v_sg → v_sg·d²/(d − ε)² (two passes); the acceleration factor
+    //   Ek = ρ_n·v_m·v_sg/(g_c·p·144) when acceleration is on.
+    // Transition: A = (L_M − N_gv)/(L_M − L_S); gradients = A·(region II) + (1 − A)·(region III with ρ_g' = ρ_g·N_gv/L_M).
+    // CHART FITS. The ten chart functions (F1–F7 against N_L; L1, L2 against N_d; f2 against f1·R·N_d^(2/3)) are tabulated readings of
+    // the published Duns & Ros figures (as reproduced by Brill & Mukherjee, "Multiphase Flow in Wells", §4.2.2), interpolated linearly
+    // in log10 of the abscissa and held constant beyond the ends. Q9: the owner's books were not available to this work package, so the
+    // readings could not be checked against the printed figures — the table is pinned to its own values by tests (three readings per
+    // curve) and the correlation ships provisional (D17). Replacing a reading after verification is a table edit plus its pin.
+    var DR_NLX = [0.001, 0.01, 0.1, 0.2, 0.5, 1, 10];
+    var DR_CH = {
+        F1: [1.00, 1.35, 1.95, 2.00, 1.60, 1.25, 0.90],
+        F2: [0.24, 0.50, 1.00, 1.05, 0.80, 0.60, 0.30],
+        F3: [0.80, 1.40, 2.40, 2.80, 3.20, 3.40, 3.80],
+        F4: [25, 32, 45, 52, 55, 56, 58],
+        F5: [0.22, 0.14, 0.08, 0.075, 0.085, 0.10, 0.12],
+        F6: [0.80, 1.30, 2.10, 2.15, 1.60, 0.90, -0.60],
+        F7: [0.14, 0.10, 0.06, 0.05, 0.04, 0.035, 0.025]
+    };
+    var DR_NDX = [10, 20, 30, 40, 50, 70, 100, 300];
+    var DR_L1 = [2.00, 2.00, 1.65, 1.35, 1.20, 1.00, 1.00, 1.00];
+    var DR_L2 = [0.50, 0.50, 0.70, 0.88, 1.00, 1.10, 1.10, 1.10];
+    var DR_F2X = [0.001, 0.01, 0.05, 0.1, 0.5, 1, 10, 100];
+    var DR_F2Y = [1.00, 0.94, 0.75, 0.60, 0.32, 0.22, 0.08, 0.05];
+    var MU_LBM = 6.7197e-4;                    // cp → lbm/(ft·s)
+    // linear in log10(x), constant beyond the table ends
+    function _tab(xs, ys, x) {
+        if (!(x > 0)) return ys[0];
+        if (x <= xs[0]) return ys[0];
+        var n = xs.length;
+        if (x >= xs[n - 1]) return ys[n - 1];
+        var lx = _log10(x);
+        for (var i = 1; i < n; i++) if (x <= xs[i]) {
+            var a = _log10(xs[i - 1]), bb = _log10(xs[i]);
+            return ys[i - 1] + (ys[i] - ys[i - 1]) * (lx - a) / (bb - a);
+        }
+        return ys[n - 1];
+    }
+    function _drF(name, NL) { return _tab(DR_NLX, DR_CH[name], NL); }
+    function _drL(Nd) { return { L1: _tab(DR_NDX, DR_L1, Nd), L2: _tab(DR_NDX, DR_L2, Nd) }; }
+    function _drF2(x) { return _tab(DR_F2X, DR_F2Y, x); }
+    // the region of a point of the Ros map: 'I' | 'II' | 'transition' | 'III', with the boundary values at that N_Lv
+    function drRegion(NLv, Ngv, Nd) {
+        var L = _drL(Nd), LB = L.L1 + L.L2 * NLv, LS = 50 + 36 * NLv, LM = 75 + 84 * Math.pow(Math.max(0, NLv), 0.75);
+        var reg = Ngv <= LB ? 'I' : (Ngv <= LS ? 'II' : (Ngv < LM ? 'transition' : 'III'));
+        return { region: reg, LB: LB, LS: LS, LM: LM, L1: L.L1, L2: L.L2 };
+    }
+    var DR_PATTERN = { I: 'bubble', II: 'slug', transition: 'transition', III: 'mist' };
+    // dimensionless groups of a point
+    function _drGroups(b) {
+        var q4 = Math.pow(b.rL / b.sig, 0.25);
+        return { NLv: 1.938 * b.vsl * q4, Ngv: 1.938 * b.vsg * q4, Nd: 120.872 * b.dFt * Math.sqrt(b.rL / b.sig),
+            NL: 0.15726 * b.muL * Math.pow(1 / (b.rL * b.sig * b.sig * b.sig), 0.25), q4: q4 };
+    }
+    // slip holdup of regions I / II
+    function _drHoldup(S, q4, b, lam) {
+        var vs = S / (1.938 * q4);
+        if (!(vs > 1e-12)) return { hl: lam, vs: vs };
+        var hl = (vs - b.vm + Math.sqrt(Math.pow(b.vm - vs, 2) + 4 * vs * b.vsl)) / (2 * vs);
+        if (!(hl >= lam)) hl = lam;
+        if (hl > 1) hl = 1;
+        return { hl: hl, vs: vs };
+    }
+    // regions I / II: elevation on the slip holdup, friction f_m on the liquid
+    function _drBubbleSlug(b, gp, reg) {
+        var lam = b.vsl / b.vm, S, F1, F2, F3, F4, F5, F6, F7;
+        if (reg === 'I') {
+            F1 = _drF('F1', gp.NL); F2 = _drF('F2', gp.NL); F3 = _drF('F3', gp.NL); F4 = _drF('F4', gp.NL);
+            var F3p = F3 - F4 / gp.Nd;
+            S = F1 + F2 * gp.NLv + F3p * Math.pow(gp.Ngv / (1 + gp.NLv), 2);
+        } else {
+            F5 = _drF('F5', gp.NL); F6 = _drF('F6', gp.NL); F7 = _drF('F7', gp.NL);
+            var F6p = 0.029 * gp.Nd + F6;
+            S = (1 + F5) * (Math.pow(gp.Ngv, 0.982) + F6p) / Math.pow(1 + F7 * gp.NLv, 2);
+        }
+        var h = _drHoldup(S, gp.q4, b, lam);
+        var nreL = 1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), f1 = _fMoody(nreL, b.rough / 12 / b.dFt);
+        var R = b.vsl > 0 ? b.vsg / b.vsl : 0, f2 = _drF2(f1 * R * Math.pow(gp.Nd, 2 / 3)), f3 = 1 + f1 * Math.sqrt(R / 50);
+        var fm = f1 * f2 / f3;
+        return { S: S, vs: h.vs, hl: h.hl, rhoS: b.rL * h.hl + b.rG * (1 - h.hl), f1: f1, f2: f2, f3: f3, fm: fm, NReL: nreL,
+            gF: fm * b.rL * b.vsl * b.vm / (2 * GC * b.dFt) / 144 };
+    }
+    // region III (mist): no slip, gas friction on the film roughness
+    function _drMist(b, rhoG) {
+        var lam = b.vsl / b.vm, rhoN = b.rL * lam + rhoG * (1 - lam);
+        var sigLbm = b.sig * SIG_LBM, muLbm = b.muL * MU_LBM, v = b.vsg, d = b.dFt, eps = 0, rel = 0, f = 0;
+        for (var pass = 0; pass < 3; pass++) {
+            var rv2 = rhoG * v * v;
+            if (!(rv2 > 0)) break;
+            var X = rv2 * muLbm * muLbm / (b.rL * sigLbm * sigLbm);
+            eps = X <= 0.005 ? 0.0749 * b.sig / rv2 : 0.3713 * b.sig * Math.pow(X, 0.302) / rv2;           // ft
+            rel = eps / b.dFt;
+            var relWall = b.rough / 12 / b.dFt;
+            if (rel < relWall) rel = relWall;
+            if (rel > 0.5) rel = 0.5;
+            eps = rel * b.dFt;
+            if (pass === 2) break;
+            d = b.dFt - eps; if (!(d > 0.1 * b.dFt)) d = 0.1 * b.dFt;
+            v = b.vsg * b.dFt * b.dFt / (d * d);
+        }
+        var relD = eps / d;
+        if (relD < 0.05) { var nreG = 1488 * rhoG * v * d / Math.max(b.muG, 1e-9); f = _fMoody(nreG, relD); }
+        else { var lg = _log10(0.27 * relD); f = 4 * (1 / (16 * lg * lg) + 0.067 * Math.pow(relD, 1.73)); }
+        var gF = f * rhoG * v * v / (2 * GC * d) / 144;
+        var Ek = (b.accel && b.p > 0) ? rhoN * b.vm * b.vsg / (GC * b.p * 144) : 0;
+        return { hl: lam, rhoS: rhoN, rhoN: rhoN, gF: gF, f: f, eps: eps, relRough: relD, Ek: Ek };
+    }
+    function dr(inp) {
+        var b = _base(inp);
+        if (!(b.vm > 0) || !(b.dFt > 0)) return _static(b);
+        var lam = b.vsl / b.vm, lamG = 1 - lam;
+        var rhoN = b.rL * lam + b.rG * lamG, muN = b.muL * lam + b.muG * lamG;
+        var r = { lambdaL: lam, rhoN: rhoN, muN: muN, corr: 'dr' };
+        if (lam < 1e-7 || lam > 1 - 1e-9 || !(b.sig > 0) || !(b.rL > 0)) {        // single phase: Darcy-Weisbach on the no-slip mixture
+            r.pattern = lam < 1e-7 ? 'gas' : 'liquid'; r.hl = lam < 1e-7 ? 0 : (lam > 1 - 1e-9 ? 1 : lam);
+            var nre0 = 1488 * rhoN * b.vm * b.dFt / Math.max(muN, 1e-9), f0 = _fMoody(nre0, b.rough / 12 / b.dFt);
+            r.fn = f0; r.NRe = nre0;
+            return _finish(b, r, rhoN, f0 * rhoN * b.vm * b.vm / (2 * GC * b.dFt) / 144);
+        }
+        var gp = _drGroups(b), rg = drRegion(gp.NLv, gp.Ngv, gp.Nd);
+        r.NLv = gp.NLv; r.Ngv = gp.Ngv; r.Nd = gp.Nd; r.NL = gp.NL; r.region = rg.region; r.LB = rg.LB; r.LS = rg.LS; r.LM = rg.LM;
+        r.pattern = DR_PATTERN[rg.region];
+        var hl, rhoS, gF, Ek = 0;
+        if (rg.region === 'I' || rg.region === 'II') {
+            var bs = _drBubbleSlug(b, gp, rg.region);
+            hl = bs.hl; rhoS = bs.rhoS; gF = bs.gF; r.S = bs.S; r.vs = bs.vs; r.fn = bs.fm; r.f1 = bs.f1; r.f2 = bs.f2; r.f3 = bs.f3; r.NRe = bs.NReL;
+        } else if (rg.region === 'III') {
+            var m = _drMist(b, b.rG);
+            hl = m.hl; rhoS = m.rhoS; gF = m.gF; Ek = m.Ek; r.fn = m.f; r.eps = m.eps; r.relRough = m.relRough;
+        } else {
+            var A = (rg.LM - gp.Ngv) / (rg.LM - rg.LS);
+            var b2 = _drBubbleSlug(b, gp, 'II'), m2 = _drMist(b, b.rG * gp.Ngv / rg.LM);
+            rhoS = A * b2.rhoS + (1 - A) * m2.rhoS; gF = A * b2.gF + (1 - A) * m2.gF; Ek = (1 - A) * m2.Ek;
+            hl = (b.rL > b.rG) ? (rhoS - b.rG) / (b.rL - b.rG) : lam;
+            if (!(hl >= lam)) hl = lam;
+            if (hl > 1) hl = 1;
+            r.A = A; r.S = b2.S; r.fn = A * b2.fm + (1 - A) * m2.f; r.eps = m2.eps;
+        }
+        r.hl = hl;
+        // assemble (elevation on ρ_s and the true inclination, the region's own acceleration factor)
+        var gEl = rhoS * Math.sin(b.th) / 144, tot = Ek < 1 ? (gEl + gF) / (1 - Ek) : Infinity;
+        r.vsl = b.vsl; r.vsg = b.vsg; r.vm = b.vm; r.theta = b.theta; r.rhoS = rhoS;
+        r.gradEl = gEl; r.gradF = gF; r.Ek = Ek; r.grad = tot; r.gradAcc = tot - gEl - gF;
+        return r;
+    }
+
+    // ── Cullender & Smith (1956) — WP12, increment A2: point form ─────────────────────────────────────────────────────────
+    // The integrand of the Cullender-Smith method,  ∫ (p/TZ) / [F² + (p/TZ)²·(TVD/MD)/1000] dp = 18.75·γ·MD,  F² = 0.667·f·q²/d⁵
+    // (p psia, T °R, q MMscf/d, d in, f Moody, MD / TVD ft), differentiated along the path:
+    //   dp/dL = 18.75·γ·[F² + 0.001·(p/TZ)²·sin θ] / (p/TZ) = 0.01875·γ·(p/TZ)·sin θ + 18.75·γ·F²·(TZ/p)      (psi/ft)
+    // with T and Z from the fluid-property path of the marcher (inp.props: z, t), γ from the gas density (ρ_g = 2.7·γ·p/(Z·T) form:
+    // γ = ρ_g·10.7316·T·Z/(28.9647·p)), and q the gas rate at standard conditions that gives the in-situ velocity v_sg in a circle of
+    // diameter d (q_MMscfd = v_sg·(π·d_ft²/4)·(p/(Z·T))·(519.67/14.696)·86400/1e6 — on the hydraulic diameter for an annulus);
+    // f = Moody at N_Re = 20.09·γ·q_Mscfd/(d·μ_g). Gas phase only (the liquids are ignored and the traverse says so); no kinetic-energy
+    // term (the method has none). The closed form (two half-lengths, then Simpson) is WTS_wp_vlp.gasCS / gasDry(…, {method:'cs'}).
+    function csPoint(inp) {
+        var b = _base(inp), pr = (inp && inp.props) || null;
+        var r = { corr: 'gasCS', lambdaL: 0, hl: 0, rhoN: b.rG, muN: b.muG, pattern: 'gas', liquidIgnored: b.vsl > 0 };
+        b.vsl = 0; b.vm = b.vsg;
+        if (!pr || !_fin(+pr.z) || !_fin(+pr.t) || !(b.p > 0)) { r.noProps = true; return gasPoint(inp); }
+        var TR = +pr.t + RANK, Z = +pr.z, pz = b.p / (TR * Z);
+        var gam = b.rG > 0 ? b.rG * 10.7316 / (28.9647 * pz) : 0.65;
+        var dIn = b.dIn, qMM = b.vsg * Math.PI * b.dFt * b.dFt / 4 * pz * (519.67 / 14.696) * 86400 / 1e6;
+        var nre = qMM > 0 ? 20.09 * gam * qMM * 1000 / (dIn * Math.max(b.muG, 1e-9)) : 0, f = qMM > 0 ? _fMoody(nre, b.rough / dIn) : 0;
+        var F2 = 0.667 * f * qMM * qMM / Math.pow(dIn, 5);
+        var gEl = 0.01875 * gam * pz * Math.sin(b.th), gF = 18.75 * gam * F2 / pz;
+        r.fn = f; r.NRe = nre; r.F2 = F2; r.gamma = gam; r.q_MMscfd = qMM; r.pTZ = pz;
+        r.vsl = b.vsl; r.vsg = b.vsg; r.vm = b.vm; r.theta = b.theta; r.rhoS = 0.01875 * gam * pz * 144;
+        r.gradEl = gEl; r.gradF = gF; r.Ek = 0; r.grad = gEl + gF; r.gradAcc = 0;
+        return r;
+    }
+
     // ── registry (merge, never replace; D3) ──────────────────────────────────────────────────────────────────────────
     // 49-calc-flowline.js owns WTS_flowline_corr (it loads first in Round 9); the entries are added to it when it exists — at load
     // and again at call time (_reg) — and the registry is never created here, so an older marcher without it stays untouched.
@@ -285,7 +489,13 @@
         single: { key: 'single', label: 'Single phase, Darcy-Weisbach with Colebrook', kind: 'single', vertical: false, range: { incl: [-90, 90] },
             grad: single },
         gasTZ: { key: 'gasTZ', label: 'Dry gas, average temperature and Z', kind: 'gas', vertical: false, range: { incl: [-90, 90], note: 'gas only' },
-            grad: gasPoint }
+            grad: gasPoint },
+        // WP12 (A2): Duns & Ros for oil and gas wells (vertical); Cullender-Smith for dry / wet gas (gas phase only, any inclination)
+        dr: { key: 'dr', label: 'Duns & Ros (1963), flow-pattern regions I–III', kind: 'well', vertical: true,
+            range: { incl: [0, VERT_WARN_DEG], note: 'vertical wells; wide gas-liquid ratio range; mist region extrapolated for high liquid rates' },
+            grad: dr },
+        gasCS: { key: 'gasCS', label: 'Cullender-Smith (1956), dry gas', kind: 'gas', vertical: false, range: { incl: [-90, 90], note: 'gas only' },
+            grad: csPoint }
     };
     KEYS.forEach(function (k) {
         var e = ENTRIES[k];
@@ -294,7 +504,9 @@
         e.source = k === 'hb' ? 'Hagedorn & Brown (1965); Griffith (1961); chart fits as printed by Economides et al. and Guo et al.' :
             k === 'gray' ? 'Gray (1974), as given in API RP 14B and Brill & Mukherjee (1999)' :
             k === 'gasTZ' ? 'average temperature and Z method (Katz et al.; Economides et al.)' :
-            k === 'single' ? 'Darcy-Weisbach with the Colebrook (1939) friction factor' : 'homogeneous mixture';
+            k === 'single' ? 'Darcy-Weisbach with the Colebrook (1939) friction factor' :
+            k === 'dr' ? 'Duns & Ros (1963); chart readings as reproduced by Brill & Mukherjee (1999) §4.2.2 — not checked against the figures (Q9)' :
+            k === 'gasCS' ? 'Cullender & Smith (1956), as given by Economides et al. and Brill & Mukherjee (1999)' : 'homogeneous mixture';
     });
     function _reg() {
         var R = G.WTS_flowline_corr;
@@ -492,7 +704,7 @@
         if (R.cgrMax != null && _num(F.cgr) > R.cgrMax) warnings.push(_w('RANGE_CGR', E.label + ': condensate ratio ' + _fmt(F.cgr, 1) + ' bbl/MMscf is above the data range (≤ ' + R.cgrMax + ').'));
         if (R.wgrMax != null && _num(F.wgr) > R.wgrMax) warnings.push(_w('RANGE_WGR', E.label + ': water ratio ' + _fmt(F.wgr, 1) + ' bbl/MMscf is above the data range (≤ ' + R.wgrMax + ').'));
         if (key === 'single' && prof.some(function (r) { return r.pattern === 'homogeneous'; })) warnings.push(_w('SINGLE_TWO_PHASE', 'Single-phase method with free gas present: a homogeneous mixture is used; choose a multiphase correlation.'));
-        if (key === 'gasTZ' && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
+        if ((key === 'gasTZ' || key === 'gasCS' || (R.note === 'gas only')) && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
         if (E.verified !== true) warnings.push(_w('PROVISIONAL', E.label + ': ' + PROVISIONAL + '.', 'info'));
         if (lost) warnings.push(_w('LOST', 'The traverse stops at MD ' + _fmt(lost.md, 0) + ' ft (' + lost.reason + ').'));
         var res = { ok: !lost, corr: key, from: from, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
@@ -542,6 +754,7 @@
     // ── gasDry: average T and Z, segment by segment ───────────────────────────────────────────────────────────────────
     function gasDry(F, W, q, o) {
         o = o || {};
+        if (o.method === 'cs') return gasCS(F, W, q, o);           // WP12 (A2): Cullender-Smith; default (absent / 'tz') = the A1 method
         var warnings = [];
         var fail = function (code, msg) { return { ok: false, code: code, errors: [msg], warnings: warnings, pwf: null, pEnd: null }; };
         if (typeof G.WTS_flowline_props !== 'function') return fail('MISSING_ENGINE', 'WTS_flowline_props is not loaded');
@@ -589,6 +802,150 @@
         return res;
     }
 
+    // ── gasCS: Cullender-Smith closed form, segment by segment (WP12, A2) ────────────────────────────────────────────────
+    // Per segment (MD length L, TVD rise Δz, sin θ = Δz/L; temperatures at its top, middle and bottom from the profile):
+    //   I(p, T) = (p/TZ) / [F² + 0.001·(p/TZ)²·sin θ],   F² = 0.667·f·q²/d⁵   (p psia, T °R, q MMscf/d, d in, f Moody)
+    //   upper half:  p_mf − p_tf = 18.75·γ·L / (I_tf + I_mf)       lower half:  p_wf − p_mf = 18.75·γ·L / (I_mf + I_wf)
+    //   Simpson:     p_wf − p_tf = 112.5·γ·L / (I_tf + 4·I_mf + I_wf)        (each solved by fixed-point iteration on Z)
+    // (18.75·γ·L/2 per half-length with the trapezoid's ½ cancelling; 6 × 18.75 = 112.5.) f is the Moody factor at
+    // N_Re = 20.09·γ·q_Mscfd/(d·μ_g) with μ_g at the segment's mean pressure and temperature (one f per segment, as the method
+    // takes F constant). Z (and μ_g) through WTS_flowline_props on the gas phase — the same Z path as the marcher, impurities
+    // included. Bottom-up (from 'bottom') solves the same three equations for the upper pressures. A tapered or deviated well
+    // is the sum of its segments (the method's TVD/MD per segment).
+    function gasCS(F, W, q, o) {
+        o = o || {};
+        var warnings = [];
+        var fail = function (code, msg) { return { ok: false, code: code, corr: 'gasCS', errors: [msg], warnings: warnings, pwf: null, pEnd: null }; };
+        if (typeof G.WTS_flowline_props !== 'function') return fail('MISSING_ENGINE', 'WTS_flowline_props is not loaded');
+        if (!F || F.ok === false) return fail('NO_FLUID', 'the fluid is not built');
+        var segs = _path(W);
+        if (!segs.length) return fail('NO_PATH', 'the well has no flow path (segments)');
+        var tF = _tFn(W, o);
+        if (!tF) return fail('NO_TEMP', 'no temperature profile (W.tAt or o.tProfile)');
+        var from = o.from === 'bottom' ? 'bottom' : 'top';
+        var p0 = _fin(+o.p0) ? +o.p0 : (_fin(+o.p0_psig) ? +o.p0_psig + PATM : NaN);
+        if (!(p0 > 0)) return fail('NO_P0', 'the start pressure p0 (psia) is missing');
+        var ffq = _ff(F, q);
+        var qMM = _num(ffq.qg), qM = qMM * 1000, sg = _fin(+ffq.sgg) ? +ffq.sgg : 0.65;
+        if (ffq.qo > 0 || ffq.qw > 0) warnings.push(_w('GAS_ONLY', 'Cullender-Smith: the liquids are not included.'));
+        if (segs.some(function (s) { return s.restr; })) warnings.push(_w('RESTR_IGNORED', 'Cullender-Smith: restriction losses are not included.', 'info'));
+        var gasOnly = { qo: 0, qw: 0, qg: Math.max(qMM, 1e-9), api: ffq.api, sgg: sg, sgw: ffq.sgw, pvt: ffq.pvt };
+        var rough = _roughOf(o, segs).v;
+        var zmu = function (p, T) { var pr = G.WTS_flowline_props(gasOnly, Math.max(p, 1), T); return pr && _fin(pr.z) ? pr : null; };
+        var order = from === 'top' ? segs.slice().reverse() : segs.slice();
+        var p = p0, out = [], iters = 0;
+        for (var i = 0; i < order.length; i++) {
+            var s = order[i], L = s.len, d = s.id, sn = Math.max(-1, Math.min(1, s.dz / L));
+            var mdMid = (s.mdTop + s.mdBot) / 2, Tt = tF(s.mdTop), Tm = tF(mdMid), Tb = tF(s.mdBot);
+            var K = 18.75 * sg * L;
+            // f from μ_g at the segment's mean conditions (iterated once on the solved pressures)
+            var f = 0, F2 = 0, pOther = p;
+            var Ifn = function (pp, T) {
+                var pr = zmu(pp, T); if (!pr) return NaN;
+                var pz = pp / ((T + RANK) * pr.z), den = F2 + 0.001 * pz * pz * sn;
+                return den > 1e-30 ? pz / den : Infinity;
+            };
+            var halfStep = function (pa, Ia, T, sgn) {     // pb with (pb − pa)·sgn·(Ia + I(pb)) = K
+                var pb = pa;
+                for (var k = 0; k < 60; k++) {
+                    var Ib = Ifn(pb, T); iters++;
+                    if (!_fin(Ib) && Ib !== Infinity) return NaN;
+                    var dp = (Ia === Infinity || Ib === Infinity) ? 0 : K / (Ia + Ib), pn = pa + sgn * dp;
+                    if (!(pn > 0)) return NaN;
+                    var done = Math.abs(pn - pb) < 1e-9 * pn; pb = pn;
+                    if (done) break;
+                }
+                return pb;
+            };
+            var pt, pm, pb2, It, Im, Ib2;
+            for (var outer = 0; outer < 2; outer++) {
+                var pMean = outer === 0 ? p : 0.5 * (p + pOther), tMean = Tm;
+                var pr0 = zmu(pMean, tMean);
+                if (!pr0) return fail('PVT', 'Z could not be evaluated');
+                var nre = qM > 0 ? 20.09 * sg * qM / (d * pr0.mug) : 0;
+                f = qM > 0 ? _fMoody(nre, rough / d) : 0;
+                F2 = 0.667 * f * qMM * qMM / Math.pow(d, 5);
+                if (from === 'top') {
+                    pt = p; It = Ifn(pt, Tt);
+                    pm = halfStep(pt, It, Tm, 1); if (!_fin(pm)) return fail('PVT', 'Cullender-Smith did not converge');
+                    Im = Ifn(pm, Tm);
+                    pb2 = halfStep(pm, Im, Tb, 1); if (!_fin(pb2)) return fail('PVT', 'Cullender-Smith did not converge');
+                    // Simpson over the whole segment
+                    for (var k2 = 0; k2 < 60; k2++) {
+                        Ib2 = Ifn(pb2, Tb); iters++;
+                        var sum = (It === Infinity || Im === Infinity || Ib2 === Infinity) ? Infinity : It + 4 * Im + Ib2;
+                        var pn2 = pt + (sum === Infinity ? 0 : 6 * K / sum);
+                        var dn2 = Math.abs(pn2 - pb2) < 1e-9 * pn2; pb2 = pn2;
+                        if (dn2) break;
+                    }
+                    pOther = pb2;
+                } else {
+                    pb2 = p; Ib2 = Ifn(pb2, Tb);
+                    pm = halfStep(pb2, Ib2, Tm, -1);
+                    if (!_fin(pm) || pm < PATM) return Object.assign(fail('LOST', 'the gas cannot reach the wellhead at this rate'), { lost: { md: s.mdBot, reason: 'pressure' } });
+                    Im = Ifn(pm, Tm);
+                    pt = halfStep(pm, Im, Tt, -1);
+                    if (!_fin(pt) || pt < PATM) return Object.assign(fail('LOST', 'the gas cannot reach the wellhead at this rate'), { lost: { md: mdMid, reason: 'pressure' } });
+                    for (var k3 = 0; k3 < 60; k3++) {
+                        It = Ifn(pt, Tt); iters++;
+                        var sum3 = (It === Infinity || Im === Infinity || Ib2 === Infinity) ? Infinity : It + 4 * Im + Ib2;
+                        var pn3 = pb2 - (sum3 === Infinity ? 0 : 6 * K / sum3);
+                        if (!(pn3 > PATM)) return Object.assign(fail('LOST', 'the gas cannot reach the wellhead at this rate'), { lost: { md: s.mdTop, reason: 'pressure' } });
+                        var dn3 = Math.abs(pn3 - pt) < 1e-9 * pn3; pt = pn3;
+                        if (dn3) break;
+                    }
+                    pOther = pt;
+                }
+            }
+            out.push({ name: s.name, mdTop: s.mdTop, mdBot: s.mdBot, tvdTop: s.tvdTop, tvdBot: s.tvdBot, inc: s.inc, len: L, id: d,
+                pTop: pt, pMid: pm, pBot: pb2, tTop: Tt, tMid: Tm, tBot: Tb, iTop: It, iMid: Im, iBot: Ib2, f: f, F2: F2 });
+            p = pOther;
+        }
+        var segsOut = from === 'top' ? out : out.slice().reverse();          // top → bottom
+        var res = { ok: true, corr: 'gasCS', method: 'Cullender-Smith (two half-lengths, then Simpson)', from: from, pEnd: p,
+            pwf: from === 'top' ? p : p0, pwh: from === 'top' ? p0 : p, pTop: from === 'top' ? p0 : p, pBottom: from === 'top' ? p : p0,
+            q_MMscfd: qMM, sg: sg, segments: segsOut, iters: iters, warnings: warnings, errors: [],
+            stations: segsOut.reduce(function (a, sg2, j) { if (!j) a.push({ md: sg2.mdTop, tvd: sg2.tvdTop, p: sg2.pTop }); a.push({ md: (sg2.mdTop + sg2.mdBot) / 2, tvd: (sg2.tvdTop + sg2.tvdBot) / 2, p: sg2.pMid }); a.push({ md: sg2.mdBot, tvd: sg2.tvdBot, p: sg2.pBot }); return a; }, []) };
+        warnings.push(_w('PROVISIONAL', ENTRIES.gasCS.label + ': ' + PROVISIONAL + '.', 'info'));
+        return res;
+    }
+
+    // ── drMap: the Ros flow-pattern map of a traverse (WP12; the page's flow-regime map) ───────────────────────────────────
+    // Every traverse station (any correlation) placed on the Duns & Ros map: N_Lv, N_gv and N_d from the station's superficial
+    // velocities, the local flow diameter and the liquid density / surface tension of the fluid-property path at (p, T); the region
+    // by drRegion. boundaries(Nd) gives the three boundary lines for drawing (N_Lv from 0.1 to 1,000 on a log grid).
+    function drBoundaries(Nd, n) {
+        var L = _drL(Nd), pts = { bs: [], st: [], tm: [] }, k = n || 41;
+        for (var i = 0; i < k; i++) {
+            var x = Math.pow(10, -1 + 4 * i / (k - 1));
+            pts.bs.push([x, L.L1 + L.L2 * x]); pts.st.push([x, 50 + 36 * x]); pts.tm.push([x, 75 + 84 * Math.pow(x, 0.75)]);
+        }
+        return { Nd: Nd, L1: L.L1, L2: L.L2, lines: pts };
+    }
+    function drMap(F, q, tr) {
+        if (!tr || !Array.isArray(tr.profile) || !tr.profile.length) return { ok: false, code: 'NO_TRAVERSE', errors: ['no traverse'], points: [] };
+        if (typeof G.WTS_flowline_props !== 'function') return { ok: false, code: 'MISSING_ENGINE', errors: ['WTS_flowline_props is not loaded'], points: [] };
+        var ff = _ff(F, q), segs = Array.isArray(tr.segments) ? tr.segments : [];
+        var idAt = function (md) { for (var i = 0; i < segs.length; i++) { var s = segs[i]; if (md >= s.mdTop - 1e-6 && md <= s.mdBot + 1e-6) return s.id; } return segs.length ? segs[segs.length - 1].id : null; };
+        var pts = [], counts = { I: 0, II: 0, transition: 0, III: 0, single: 0 }, nds = [];
+        tr.profile.forEach(function (r) {
+            if (r.restr || !_fin(r.p) || !_fin(r.t)) return;
+            var d = idAt(r.md); if (!(d > 0)) return;
+            var pr = G.WTS_flowline_props(ff, r.p, r.t); if (!pr) return;
+            var rL = pr.rhoL, sig = pr.sigL, vsl = _num(r.vsl), vsg = _num(r.vsg);
+            if (!(rL > 0) || !(sig > 0)) return;
+            var q4 = Math.pow(rL / sig, 0.25), NLv = 1.938 * vsl * q4, Ngv = 1.938 * vsg * q4, Nd = 120.872 * (d / 12) * Math.sqrt(rL / sig);
+            var single = !(vsl > 0) || !(vsg > 0), rg = single ? null : drRegion(NLv, Ngv, Nd);
+            var reg = single ? 'single' : rg.region;
+            counts[reg]++; nds.push(Nd);
+            pts.push({ md: r.md, tvd: r.tvd, inc: r.inc, p: r.p, NLv: NLv, Ngv: Ngv, Nd: Nd, region: reg, pattern: r.pattern || null });
+        });
+        nds.sort(function (a, b) { return a - b; });
+        var NdRef = nds.length ? nds[Math.floor(nds.length / 2)] : null;
+        return { ok: pts.length > 0, corr: tr.corr || null, points: pts, counts: counts, NdRef: NdRef, NdMin: nds.length ? nds[0] : null, NdMax: nds.length ? nds[nds.length - 1] : null,
+            boundaries: NdRef ? drBoundaries(NdRef) : null };
+    }
+
     function singlePhase(F, W, q, o) {
         var r = traverse(F, W, q, Object.assign({}, o || {}, { corr: 'single' }));
         return { ok: r.ok, code: r.code, pEnd: r.pEnd, profile: r.profile, warnings: r.warnings || [], errors: r.errors || [], lost: r.lost || null };
@@ -597,6 +954,9 @@
     var NS = G.WTS_wp_vlp = G.WTS_wp_vlp || {};
     NS.traverse = traverse; NS.curve = curve; NS.family = family; NS.gasDry = gasDry; NS.singlePhase = singlePhase;
     NS.defaultCorr = defaultCorr; NS.list = list; NS.hbBubbleLimit = hbBubbleLimit;
+    // WP12 (A2): Cullender-Smith closed form, the Ros flow-pattern map and the Duns & Ros chart readings
+    NS.gasCS = gasCS; NS.drMap = drMap; NS.drRegion = drRegion; NS.drBoundaries = drBoundaries;
+    NS._drCharts = { F: _drF, L: _drL, f2: _drF2, table: { NL: DR_NLX.slice(), F: JSON.parse(JSON.stringify(DR_CH)), Nd: DR_NDX.slice(), L1: DR_L1.slice(), L2: DR_L2.slice(), f2x: DR_F2X.slice(), f2y: DR_F2Y.slice() } };
     NS._charts = { cnl: _cnl, hlPsi: _hlPsi, psi: _psi };
     NS.PROVISIONAL = PROVISIONAL; NS.KEYS = KEYS.slice(); NS.PREFERRED = PREFERRED;
     // WP3 implements every WTS_wp_vlp function: drop them from the WP0 stub list
@@ -613,7 +973,9 @@
     var G = (typeof window !== 'undefined') ? window : globalThis;
     var V = G.WTS_wp_vlp, C = G.WTS_flowline_corr, bad = [];
     if (!V || typeof V.traverse !== 'function') bad.push('WTS_wp_vlp.traverse missing');
-    ['hb', 'gray', 'nsl', 'single', 'gasTZ'].forEach(function (k) { if (!C || !C[k] || typeof C[k].grad !== 'function') bad.push(k + ' not registered'); });
+    ['hb', 'gray', 'nsl', 'single', 'gasTZ', 'dr', 'gasCS'].forEach(function (k) { if (!C || !C[k] || typeof C[k].grad !== 'function') bad.push(k + ' not registered'); });
+    if (V && V.drRegion) { var rg = V.drRegion(1, 100, 30); if (rg.region !== 'transition' || Math.abs(rg.LS - 86) > 1e-9) bad.push('Duns & Ros regions'); }
+    if (C && C.dr) { var gd = C.dr.grad({ vsl: 1e-6, vsg: 0, d: 2.441, rhoL: 62.4, rhoG: 0.1, muL: 1, muG: 0.01, sigma: 70, theta: 90, rough: 0.0006, p: 1000 }); if (Math.abs(gd.gradEl - 62.4 / 144) > 1e-12) bad.push('DR hydrostatic'); }
     if (V && V.hbBubbleLimit && Math.abs(V.hbBubbleLimit(1, 0.5) - (1.071 - 0.2218 / 0.5)) > 1e-12) bad.push('HB bubble limit');
     // water column at a creeping rate: gradEl = ρ_L/144, no friction to speak of
     if (C && C.hb) {

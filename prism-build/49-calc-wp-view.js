@@ -14,7 +14,8 @@
 //               left edge, e.g. flow-pattern bands along depth), vlines:[{x, color, label, dash}], hlines:[{y, color, label, dash}],
 //               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}],
 //               handles:[{key, kind:'point'|'railY'|'railX', x, y, value, min, max, step, label, color, fmt(v), rail:[f0, f1]}],
-//               readout:'x'|'y' (crosshair interpolation along x or along y), empty:'message when there is nothing to draw',
+//               readout:'x'|'y'|'near' (crosshair interpolation along x or along y; 'near' = the nearest point of a series with
+//               info:[string | [strings]] per point, WP12), empty:'message when there is nothing to draw',
 //               onHandle(key, value, phase 'move'|'end'), onLegend(hiddenMap), hidden:{seriesKey:true} (initial)}
 //       Interaction (installed once per canvas): crosshair readout; wheel and pinch zoom at the pointer; drag to pan; double
 //       click (or the 0 key) resets; legend items toggle their series; handles drag (pointer) or step with the keyboard
@@ -363,7 +364,9 @@
             ctx.strokeStyle = T.text2; ctx.globalAlpha = 0.6; ctx.lineWidth = 1; if (ctx.setLineDash) ctx.setLineDash([3, 3]);
             ctx.beginPath(); ctx.moveTo(hv.x, P.y); ctx.lineTo(hv.x, P.y + P.h); ctx.moveTo(P.x, hv.y); ctx.lineTo(P.x + P.w, hv.y); ctx.stroke();
             if (ctx.setLineDash) ctx.setLineDash([]); ctx.globalAlpha = 1;
-            var lines = _readout(sp, hidden, fromX(hv.x), fromY(hv.y), fromX2 ? fromX2(hv.x) : null);
+            var near = sp.readout === 'near' ? _near(sp, hidden, hv, toX, toY) : null;
+            if (near) { ctx.strokeStyle = near.c || T.accent; ctx.lineWidth = 2; ctx.beginPath(); if (ctx.arc) ctx.arc(near.x, near.y, 7, 0, Math.PI * 2); ctx.stroke(); }
+            var lines = sp.readout === 'near' ? (near ? near.lines : [{ t: (xa.short || 'x') + ' ' + _fmtTick(fromX(hv.x)) + ' · ' + (ya.short || 'y') + ' ' + _fmtTick(fromY(hv.y)) }]) : _readout(sp, hidden, fromX(hv.x), fromY(hv.y), fromX2 ? fromX2(hv.x) : null);
             if (lines.length) {
                 ctx.font = font(11, '600'); var wmx = 0;
                 lines.forEach(function (l) { var w = ctx.measureText ? ctx.measureText(l.t).width : l.t.length * 6.5; if (w > wmx) wmx = w; });
@@ -423,6 +426,20 @@
             if (!_fin(p0[a]) || !_fin(p1[a])) continue;
             if ((v - p0[a]) * (v - p1[a]) <= 0 && p1[a] !== p0[a]) { var t = (v - p0[a]) / (p1[a] - p0[a]); best = p0[b] + t * (p1[b] - p0[b]); break; }
         }
+        return best;
+    }
+    // readout 'near' (WP12): the nearest point (within 28 px) of a series that carries info[] (one string or a list of strings per
+    // point) — e.g. a traverse station on the flow-regime map with its MD / TVD and groups
+    function _near(sp, hidden, hv, toX, toY) {
+        var best = null, bd = 28 * 28;
+        (sp.series || []).forEach(function (s) {
+            if (hidden[s.key] || !Array.isArray(s.info) || !(s.pts || []).length) return;
+            s.pts.forEach(function (p, i) {
+                if (!_fin(p[0]) || !_fin(p[1]) || s.info[i] == null) return;
+                var x = toX(p[0]), y = toY(p[1]), d = (x - hv.x) * (x - hv.x) + (y - hv.y) * (y - hv.y);
+                if (d < bd) { bd = d; best = { x: x, y: y, c: s.color, lines: [].concat(s.info[i]).slice(0, 6).map(function (t, k) { return { t: String(t), c: k ? null : s.color }; }) }; }
+            });
+        });
         return best;
     }
     function _readout(sp, hidden, x, y, x2) {

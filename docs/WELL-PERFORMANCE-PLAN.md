@@ -1245,6 +1245,36 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
 | WP19 | training course (help page, print, validator, course tests — §14) | A1, Q15 | H |
 | WPI2 | integration (Rounds 3 and 9, sync, gates, release note) | all | lead |
 
+#### 18.2.1 WP12 record (2026-11-12, branch wp/a2-wp12)
+
+- **Registry (49-calc-wp-vlp.js, additive).** `WTS_flowline_corr.dr` (Duns & Ros, kind `well`, vertical) and `.gasCS` (Cullender-Smith,
+  kind `gas`, range note `gas only` — refused for oil / water wells by the existing solver and check rule); both `verified:false` with
+  the D17 label (Q9: no books) and their §15.1 BENCH rows (`pending`); `defaultCorr` unchanged (Beggs & Brill). Duns & Ros: Ros map
+  regions I / II / transition / III (boundaries L1 + L2·N_Lv, 50 + 36·N_Lv, 75 + 84·N_Lv^0.75), slip number per region, f_m = f1·f2/f3 on
+  the liquid in I / II (no acceleration term), mist friction on the Weber film roughness with the large-roughness law and Ek, transition
+  interpolated (continuous at L_S and L_M; the I / II boundary is the method's own jump). The ten chart functions (F1–F7, L1, L2, f2) are
+  tabulated readings pinned to their own values (three per curve) until checked against the figures. Cullender-Smith point form = the
+  differentiated integrand (γ, T, Z from the marcher's props; no kinetic term).
+- **Contract additions (all additive).** `WTS_wp_vlp.gasDry(F, W, q, o)` takes `o.method: 'tz'` (default, unchanged) | `'cs'`;
+  new `WTS_wp_vlp.gasCS(F, W, q, o)` (closed form per segment: two half-lengths then Simpson; result with `segments[]` incl. pMid / I values
+  and `stations[]`), `drMap(F, q, traverse)` (any traverse on the Ros map), `drRegion(NLv, Ngv, Nd)`, `drBoundaries(Nd, n)`, `_drCharts`;
+  `KEYS` gains `dr`, `gasCS`. The traverse's `GAS_ONLY` warning covers every gas-only entry. `WTS_wp_view.chart` gains `readout: 'near'`
+  (the nearest point of a series with `info[]`). No change to 49-calc-flowline.js, 49-calc-wp-system.js or 49-calc-wp-match.js (the new
+  keys reach the solver, `compare` and the page selectors through the registry).
+- **Page.** Traverse card tabs **Correlations** (every applicable correlation marched down from the solved THP at the operating rate with
+  `WTS_wp_system.evalAt` — the selected row is the solve's own traverse; depth plot on TVD / MD with crosshair read-out of every
+  correlation, provisional dashed; KPI chips BHP spread / selected / operating rate / closed-form agreement; table with BHP, Δ vs selected,
+  gravity / friction, main patterns, the operating point of each correlation (button → Job of warm tracking solves → diamonds on the system
+  plot) and a **Use** button through the normal input path; for gas wells the average T-Z and Cullender-Smith closed forms as rows and
+  points) and **Flow-regime map** (log-log Ros map with the boundaries at the median N_d, the operating traverse coloured by region with a
+  per-station read-out of MD / TVD / inclination / groups / region, wellhead and bottom markers, station counts per region). gasCS disabled
+  for oil wells like gasTZ; a hint under the correlation selector. Help: the `wellperf` guide re-hashed (text unchanged; the two tabs are
+  not described yet — WP19 / the integrator, within the cap).
+- **Tests / gates.** `wellperf-vlp2` (10: VD1–VD8 engine as §17.2, VD9–VD10 page); `wellperf-validate` X1 / X2 extended to dr / gasCS,
+  X16 (Cullender-Smith vs average T-Z + inverse), `--time` rows "one traverse (Duns & Ros)" and "correlation comparison" (1 E per
+  correlation). Measured on the fixtures: Duns & Ros BHP vs Beggs & Brill +4.9 % of the tubing Δp (oil), Cullender-Smith vs average T-Z
+  closed forms 0.003 % (dry gas, deviated).
+
 ### 18.3 Increment B (v4.5)
 
 WP20 lift-table and PVT-table export · WP21 Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, per-section
