@@ -5,6 +5,44 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-12 — v4.4 release: Well Performance A2 (correlations, flowing temperature, choke, two-variable sensitivity, gas lift, VLP tuning, course)
+
+App and App Store version 4.4 (`RELEASE_NOTES[0]`, dated 2026-11-12, both platforms, title "Well Performance: correlations, temperature,
+gas lift and tuning"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`, the static `#appVersionLabel`
+fallback; help/user-guide.html stamp from RELEASE_NOTES[0].date). Increment A2 of docs/WELL-PERFORMANCE-PLAN.md (§18.2, records
+§18.2.1–§18.2.8). Owner decision "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so
+every new method without a verified published example ships `verified:false` with the provisional label (D17 gate) and is never a
+default; Q15 → help text caps +12 kB raw / +4 kB gzip; Q16 → `WTS_wellbore.flowingTemp` with `direction:'inject'` available to DFIT 3.4b.
+
+- **Built on `wp/a2`** from master 9775e07 (v4.3): WP13 PVT correlation families (16-pvt, Round 3; 38 keys, `PRiSM_pvt_corrInfo`,
+  Fluid properties card), WP12 Duns & Ros + Cullender-Smith (correlation comparison tab, Ros flow-regime map), WP14 relaxation flowing
+  temperature (`WTS_wellbore.flowingTemp`, U fit, U / TIME rails), WP15 Sachdeva choke (sub-critical branch scaled to the critical
+  correlation is the new default; 'bound' keeps the A1 rule), WP16 two-variable sensitivity + tubing-size design, WP18 gas-lift quick look
+  (`WTS_wp_gl`, 49-calc-wp-lift.js), WP17 VLP tuning (`WTS_wp_match.tune` with `PRiSM_lm`), WP19 Well performance course (new
+  48-calc-help-wpcourse.js, a course list per course, print chapter 13) and the A2 guide parts. All merged `--no-ff`; generated files
+  regenerated, never hand-merged.
+- **Verified / provisional.** Provisional (pending BENCH rows): every new PVT correlation, Duns & Ros, Cullender-Smith, temp relax, choke
+  sachdeva (sub-critical branch only), lift glpc; still provisional from A1: Hagedorn & Brown, Gray, no-slip, single-phase, average T-Z,
+  Jones-Blount-Glaze, Darcy oil / gas, LIT m(p), Turner / Coleman / Li, the nodal benchmark. Beggs & Brill stays the default lift
+  correlation, linear stays the default temperature model.
+- **WPI2 lead items.** Release notes v4.4 (the release-notes help shots re-taken: the first draft of the entry made the desktop shot
+  88 kB and the image total 5.6 kB over the 8 MB cap, so the entry was written shorter — shots 76 kB / 61 kB, total 7,986,940 bytes);
+  Round 3 and Round 9 rebuilt, LF, synced, user guide regenerated. GUI sweep fixes in 49-calc-wellperf.js: the case summary values now
+  wrap (the long "PVT correlations" row made #pgBody 1,383 px wide at 390 px and overflowed at 1440 px); the drawer, match-result and
+  three-column grids use `minmax(0, …)` tracks so wide tables scroll inside their card (the step ⑥ "Traverses against the gauge" card
+  pushed the page to 968 px at 390 px after a comparison); FVF units read rm³/sm³ in Metric mode (the same number). wellperf
+  `reviewedSrc` re-hashed (3604f58b).
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2112/2112 (182 files, run per
+  file; the WP19 hand-over figure 2231 was a miscount — `--list` gives 2112); wts3d-test 147/149 (the two CRLF checks); wellperf-validate
+  --html --gate --check --time: gate PASS, 22/22 cross-checks, every E budget ok; wellperf-identity FI (flowline / chokeperf / wellbore /
+  tubulars identity vs v4.2) pass; help-shots --check, build-user-guide --check, publish-site --check ok; server unchanged. GUI sweep
+  `--route wellperf,oilipr,gasdeliv,gaslift` full and --mobile: 0 findings after the fixes (3 before: the two overflows and the metric
+  label); an extra Playwright pass over every step and traverse tab (Oil and Gas examples, gas lift + relaxation + tuning) at 390 and
+  1280 px: no overflow, no page error.
+- **Open items (A2).** Help text pool nearly full (≈ 1 kB raw, 0.26 kB gzip left) and ≈ 13 kB of image cap left: no screenshots of the A2
+  cards; GLPC stability static only; VLP tuning not budgeted in §16; A1 open items (sensitivity staleness, RMS comparison traverse,
+  solve time) remain. B (v4.5): ESP, rod pump, Asheim, D5 defaults once verified examples exist.
+
 ## 2026-11-11 — v4.3 release: Well Performance (nodal analysis), increment A1 of docs/WELL-PERFORMANCE-PLAN.md
 
 App and App Store version 4.3 (`RELEASE_NOTES[0]`, dated 2026-11-11, both platforms (Q18), title "Well Performance: nodal

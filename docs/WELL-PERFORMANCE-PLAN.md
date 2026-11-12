@@ -1432,6 +1432,18 @@ look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke 
   Images: help/view re-taken (the course link in the bar), 218 files, 7,994,360 of 8,000,000 bytes; no wellperf shot was stale, none added.
 - **Tests**: `wellperf-course` WC1–WC5 (shape and page text, E1 / E2 / E3 numbers, page / search / print per course).
 
+#### 18.2.8 WPI2 record (2026-11-12, branch wp/a2, release 4.4)
+
+- **Release**: RELEASE_NOTES v4.4 dated 2026-11-12 on top of v4.3 (both platforms; provisional methods marked), MARKETING_VERSION and both
+  ci_post_clone.sh VERSION_BASE 4.4, static #appVersionLabel fallback v4.4; release-notes help shots re-taken (entry shortened so the
+  image total stays under the 8 MB cap: 7,986,940 bytes); Rounds 3 and 9 rebuilt, LF, synced, guide regenerated.
+- **GUI fixes** (49-calc-wellperf.js, from the sweep and a per-step / per-tab overflow pass at 390 and 1280 px): case-summary values wrap
+  (`.rrow .rv` flexible, label ≤ 45 %); `.wp-drawer-b` items `min-width:0`; `.wp-mres`, `.wp-tplots`, `.wp-bench`, `.wp-2c`,
+  `.wp-row3` and the phone drawer use `minmax(0, …)` tracks; `_fvfLab()` gives rm³/sm³ for Bo / Bw in Metric mode. reviewedSrc 3604f58b.
+- **Gates**: smoke 347/347; accept-test --html --integration 2112/2112 (182 files); wellperf-validate --html --gate --check --time PASS
+  (22/22, every E budget ok); wts3d 147/149 (CRLF checks); help-shots / build-user-guide / publish-site --check ok; GUI sweep (4 routes,
+  full and --mobile) 0 findings.
+
 ### 18.3 Increment B (v4.5)
 
 WP20 lift-table and PVT-table export · WP21 Orkiszewski, Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, per-section

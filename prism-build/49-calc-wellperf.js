@@ -94,6 +94,7 @@
     function _dv(v, cat) { var U = _U(); return (_fin(v) && _metric() && _hasCat(cat) && U.convertCategory) ? U.convertCategory(v, cat, 'imperial', 'metric') : v; }
     function _fromDisp(v, cat) { var U = _U(); return (_fin(v) && _metric() && _hasCat(cat) && U.convertCategory) ? U.convertCategory(v, cat, 'metric', 'imperial') : v; }
     function _lab(cat, imp) { var U = _U(); return (_metric() && _hasCat(cat)) ? U.CATEGORIES[cat].metric.label : imp; }
+    function _fvfLab() { return _metric() ? 'rm³/sm³' : 'rb/STB'; }   // a volume ratio: the same number in both systems
     function _fmt(v, d) {
         if (v == null || !_fin(v)) return '—';
         var s = Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
@@ -259,11 +260,11 @@
         '#wp_root .wp-banner.warn{border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.08)}#wp_root .wp-banner.fail{border-color:rgba(248,81,73,.45);background:rgba(248,81,73,.07)}' +
         '#wp_root .wp-banner:empty{display:none}' +
         '#wp_root .wp-bench{display:grid;grid-template-columns:minmax(300px,0.85fr) minmax(360px,1.25fr);gap:var(--wp-gap);align-items:start}' +
-        '#wp_root .wp-row3{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:var(--wp-gap);align-items:start}' +
+        '#wp_root .wp-row3{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}' +
         '#wp_root .wp-card{margin-bottom:var(--wp-gap);padding:16px}' +
         '#wp_root .wp-card .card-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}' +
         '#wp_root .wp-card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}#wp_root .wp-card-h .card-title{margin-bottom:0}' +
-        '#wp_root .rrow{gap:12px}#wp_root .rrow .rl{min-width:0;flex:1 1 auto}#wp_root .rrow .rv{flex:0 0 auto;text-align:right}' +
+        '#wp_root .rrow{gap:12px}#wp_root .rrow .rl{min-width:0;flex:0 1 auto;max-width:45%}#wp_root .rrow .rv{flex:1 1 0;min-width:0;text-align:right;overflow-wrap:anywhere}' +
         '#wp_root .wp-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}' +
         '#wp_root .wp-stalechip{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;background:rgba(210,153,34,.15);color:var(--wp-warn);margin:6px 0}' +
         '#wp_root .wp-tools{margin-left:auto;display:inline-flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0;font-weight:600}' +
@@ -285,7 +286,7 @@
         '#wp_root details.wp-drawer{background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:var(--wp-gap)}' +
         '#wp_root details.wp-drawer>summary{cursor:pointer;padding:12px 16px;font-size:13px;font-weight:700;color:var(--text);list-style:none;display:flex;align-items:center;gap:8px}' +
         '#wp_root details.wp-drawer>summary::before{content:"\\25B8";color:var(--accent);transition:transform .15s}#wp_root details.wp-drawer[open]>summary::before{transform:rotate(90deg)}' +
-        '#wp_root .wp-drawer-b{padding:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}' +
+        '#wp_root .wp-drawer-b{padding:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}#wp_root .wp-drawer-b>*{min-width:0}' +
         '#wp_root .wp-tw{overflow-x:auto;max-width:100%}#wp_root .wp-tw .dtable td,#wp_root .wp-tw .dtable th{white-space:nowrap}' +
         '#wp_root .wp-tw .dtable td.num{text-align:right;font-variant-numeric:tabular-nums}' +
         '#wp_root .wp-ed td{padding:3px 4px}#wp_root .wp-ed input,#wp_root .wp-ed select{width:100%;min-width:64px}#wp_root .wp-ed select{min-width:104px}' +
@@ -316,10 +317,10 @@
         '#wp_root .wp-score{display:inline-block;min-width:34px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}' +
         '#wp_root .wp-bar{position:relative;height:8px;border-radius:4px;background:var(--bg4);min-width:90px;overflow:hidden}#wp_root .wp-bar i{position:absolute;top:0;bottom:0;border-radius:4px;transition:width .2s,left .2s}' +
         '#wp_root .wp-mres{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start;margin-top:12px}' +
-        '@media (max-width:1000px){#wp_root .wp-mres{grid-template-columns:1fr}}' +
+        '@media (max-width:1000px){#wp_root .wp-mres{grid-template-columns:minmax(0,1fr)}}' +
         '#wp_root .wp-kpis.wp-k11{grid-template-columns:repeat(auto-fit,minmax(138px,1fr))}#wp_root .wp-tune:empty{display:none}#wp_root .wp-tkpis{margin:8px 0 10px;grid-template-columns:repeat(auto-fit,minmax(138px,1fr))}#wp_root .wp-tplots{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start;margin-top:12px}' +
         '#wp_root .wp-tcorr{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:10px}#wp_root .wp-tcorr .wp-hint{flex:1 1 260px;margin:0}' +
-        '@media (max-width:1000px){#wp_root .wp-tplots{grid-template-columns:1fr}}' +
+        '@media (max-width:1000px){#wp_root .wp-tplots{grid-template-columns:minmax(0,1fr)}}' +
         '#wp_root .wp-prog{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:8px}#wp_root .wp-prog i{display:block;height:100%;background:var(--accent);transition:width .2s}' +
         '#wp_root .wp-paste{display:none;margin-top:8px}#wp_root .wp-paste.on{display:block}#wp_root .wp-paste textarea{width:100%;min-height:90px;font-family:monospace;font-size:12px}' +
         '#wp_root .wp-studies>div:empty{display:none}#wp_root .wp-studies:not(:has(>div:not(:empty))){display:none}#wp_root .wp-studies{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:4px 16px 14px;margin-bottom:var(--wp-gap)}' +
@@ -341,10 +342,10 @@
         '#wp_root .wp-2c{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wp-gap);align-items:start}#wp_root .wp-2c>*{min-width:0}' +
         '#wp_root .rbox{margin-top:0}' +
         '#wp_root .wp-stale #wp_bench,#wp_root .wp-stale .wp-kpis{opacity:.55;transition:opacity .2s}' +
-        '@media (max-width:1180px){#wp_root .wp-row3{grid-template-columns:1fr 1fr}#wp_root .wp-row3>:last-child{grid-column:1/-1}}' +
-        '@media (max-width:1000px){#wp_root .wp-bench,#wp_root .wp-2c{grid-template-columns:1fr}}' +
-        '@media (max-width:640px){#wp_root .wp-row3{grid-template-columns:1fr}#wp_root .wp-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-kpi .kpi-v{font-size:15px}' +
-        '#wp_root .wp-card{padding:12px}#wp_root .wp-steps{top:-14px}#wp_root .wp-tools{margin-left:0;width:100%}#wp_root .wp-drawer-b{grid-template-columns:1fr}}' +
+        '@media (max-width:1180px){#wp_root .wp-row3{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-row3>:last-child{grid-column:1/-1}}' +
+        '@media (max-width:1000px){#wp_root .wp-bench,#wp_root .wp-2c{grid-template-columns:minmax(0,1fr)}}' +
+        '@media (max-width:640px){#wp_root .wp-row3{grid-template-columns:minmax(0,1fr)}#wp_root .wp-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-kpi .kpi-v{font-size:15px}' +
+        '#wp_root .wp-card{padding:12px}#wp_root .wp-steps{top:-14px}#wp_root .wp-tools{margin-left:0;width:100%}#wp_root .wp-drawer-b{grid-template-columns:minmax(0,1fr)}}' +
         '@media (prefers-reduced-motion:reduce){#wp_root *,#wp_root *::before,#wp_root *::after{animation:none!important;transition:none!important}}' +
         '</style>';
 
@@ -916,7 +917,7 @@
         }
     }
     function _pvtYLabel(prop) {
-        return { rs: 'Rs (' + _lab('gor', 'scf/STB') + ')', bo: 'Bo (rb/STB)', muo: 'μo (cp)', z: 'Z factor (–)', mug: 'μg (cp)', bg: 'Bg (rb/Mscf)', bw: 'Bw (rb/STB)', muw: 'μw (cp)',
+        return { rs: 'Rs (' + _lab('gor', 'scf/STB') + ')', bo: 'Bo (' + _fvfLab() + ')', muo: 'μo (cp)', z: 'Z factor (–)', mug: 'μg (cp)', bg: 'Bg (rb/Mscf)', bw: 'Bw (' + _fvfLab() + ')', muw: 'μw (cp)',
             rho: 'Density (' + _lab('density', 'lbm/ft³') + ')' }[prop] || '';
     }
     // the comparison tables are recomputed only when the fluid, the reservoir pressure or temperature change
@@ -1026,7 +1027,7 @@
         }
         if (ht) {
             if (fam.length) {
-                ht.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Black-oil family</th><th>pb<br>' + _lab('pressure', 'psia') + '</th><th>Rs at p̄r<br>' + _lab('gor', 'scf/STB') + '</th><th>Bo at pb<br>rb/STB</th><th>μo at pb<br>cp</th><th>Data range</th></tr></thead><tbody>' +
+                ht.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Black-oil family</th><th>pb<br>' + _lab('pressure', 'psia') + '</th><th>Rs at p̄r<br>' + _lab('gor', 'scf/STB') + '</th><th>Bo at pb<br>' + _fvfLab() + '</th><th>μo at pb<br>cp</th><th>Data range</th></tr></thead><tbody>' +
                     fam.map(function (r) {
                         var a = r.at || {}, isSel = r.key === cr.rs;
                         return '<tr' + (isSel ? ' style="font-weight:700"' : '') + '><td>' + (isSel ? '● ' : '') + _esc(r.label) + (r.verified ? '' : '<div style="font-size:10.5px;font-weight:600;color:var(--wp-warn)"> (provisional)</div>') + '</td><td class="num">' + _fmt(_dv(r.pb, 'pressure'), 0) + '</td><td class="num">' + (a.pr ? _fmt(_dv(a.pr.rs, 'gor'), 0) : '—') +
@@ -1037,7 +1038,7 @@
                     d.z.rows.filter(function (r) { return r.ok && r.at && r.at.pr; }).map(function (r) { var a = r.at.pr; return '<tr><td>' + (r.key === cr.z ? '● ' : '') + _esc(r.label) + (r.verified ? '' : ' (provisional)') + '</td><td class="num">' + _fmt(a.z, 4) + '</td><td class="num">' + _fmt(a.mug, 4) + '</td><td class="num">' + _fmt(a.bgRB, 4) + '</td><td class="num">' + _fmt(_dv(a.rhoG, 'density'), 2) + '</td></tr>'; }).join('') + '</tbody></table></div>';
             } else if (kind === 'water' && _fin(pr)) {
                 var wr = (W.table(F, [pr], T).rows || [])[0];
-                ht.innerHTML = wr ? '<div class="rbox-title">Water at p̄r (McCain)</div><div class="rrow"><span class="rl">Bw</span><span class="rv">' + _fmt(wr.bw, 4) + ' rb/STB</span></div><div class="rrow"><span class="rl">μw</span><span class="rv">' + _fmt(wr.muw, 3) + ' cp</span></div>' +
+                ht.innerHTML = wr ? '<div class="rbox-title">Water at p̄r (McCain)</div><div class="rrow"><span class="rl">Bw</span><span class="rv">' + _fmt(wr.bw, 4) + ' ' + _fvfLab() + '</span></div><div class="rrow"><span class="rl">μw</span><span class="rv">' + _fmt(wr.muw, 3) + ' cp</span></div>' +
                     '<div class="rrow"><span class="rl">ρw in situ</span><span class="rv">' + _u(wr.rhoW, 'density', 2, 'lbm/ft³') + '</span></div><div class="rrow"><span class="rl">γw (standard)</span><span class="rv">' + _fmt(F.sgw, 4) + '</span></div>' : '';
             } else ht.innerHTML = '';
         }
@@ -1663,7 +1664,7 @@
                 var pl = []; for (var i = 0; i < 6; i++) pl.push(Math.round(PATM + (M.res.pr - PATM) * i / 5));
                 var tb = _call('WTS_wp_fluid.table', F, pl, T), rows = (tb && tb.rows) || [];
                 var hasCo = rows.some(function (r) { return _fin(r.co); }), hasW = rows.some(function (r) { return _fin(r.rsw); });
-                hf.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>p (' + _lab('pressure', 'psia') + ')</th><th>Rs (' + _lab('gor', 'scf/STB') + ')</th><th>Bo (rb/STB)</th><th>μo (cp)</th><th>Z</th><th>μg (cp)</th>' +
+                hf.innerHTML = '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>p (' + _lab('pressure', 'psia') + ')</th><th>Rs (' + _lab('gor', 'scf/STB') + ')</th><th>Bo (' + _fvfLab() + ')</th><th>μo (cp)</th><th>Z</th><th>μg (cp)</th>' +
                     (hasCo ? '<th>co (1e-6/psi)</th>' : '') + (hasW ? '<th>ρw (' + _lab('density', 'lbm/ft³') + ')</th><th>Rsw (' + _lab('gor', 'scf/STB') + ')</th>' : '') + '</tr></thead><tbody>' +
                     rows.map(function (r) { return '<tr><td>' + _fmt(_dv(r.p, 'pressure'), 0) + '</td><td class="num">' + _fmt(_dv(r.rs, 'gor'), 0) + '</td><td class="num">' + _fmt(r.bo, 3) + '</td><td class="num">' + _fmt(r.muo, 3) + '</td><td class="num">' + _fmt(r.z, 3) + '</td><td class="num">' + _fmt(r.mug, 4) + '</td>' +
                         (hasCo ? '<td class="num">' + (_fin(r.co) ? _fmt(r.co * 1e6, 2) : '—') + '</td>' : '') + (hasW ? '<td class="num">' + _fmt(_dv(r.rhoW, 'density'), 2) + '</td><td class="num">' + (_fin(r.rsw) ? _fmt(_dv(r.rsw, 'gor'), 1) : '—') + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div>' +
