@@ -316,6 +316,20 @@ function timing(G) {
     const ev = r && r.cases ? r.cases.reduce((a, c) => a + ((c.R && c.R.evals) || 0), 0) : null;
     rec('sensitivity, 10 cases', 'oilWell', ev == null ? 0 : ev, BUDGET.sens10, nowMs() - t0);
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
+  // VLP tuning (A2, WP17; §5.2): PRiSM_lm on the gauge residuals — each residual is one wellhead → gauge march (counted as 1 E;
+  // no flowline). Reported only: §16 has no tuning budget.
+  const tuneStub = (G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') !== -1;
+  if (!tuneStub && G.WTS_wp_match && typeof G.WTS_wp_match.tune === 'function') {
+    const M = S.FIX.oilWell, t = S.FIX.test1;
+    let t0 = nowMs(); const r1 = G.WTS_wp_match.tune(M, [t], 'bb');
+    out.push({ op: 'VLP tuning, 1 test (m_h)', fixture: 'oilWell', evals: r1 && r1.lm ? r1.lm.nEval : null, budget: null, ms: nowMs() - t0, okE: true, okMs: true, note: 'reported only' });
+    // three self-consistent tests over 3:1 in rate whose gauges are the Beggs & Brill answer at m_h 1.08, m_f 1.15
+    const mk = (id, qo) => { const t2 = Object.assign(S.FIX.test1, { id, q_o: qo, q_w: qo * 3 / 7, q_g: qo * 0.5 });
+      t2.gauge_psia = G.WTS_wp_match.compare(M, t2, ['bb'], { mult: { hl: 1.08, f: 1.15 }, profiles: false }).rows[0].pCalc; return t2; };
+    const ts = [mk('A', 350), mk('B', 700), mk('C', 1100)];
+    t0 = nowMs(); const r3 = G.WTS_wp_match.tune(M, ts, 'bb', { free: ['hl', 'f'] });
+    out.push({ op: 'VLP tuning, 3 tests (m_h, m_f)', fixture: 'oilWell', evals: r3 && r3.lm ? r3.lm.nEval : null, budget: null, ms: nowMs() - t0, okE: true, okMs: true, note: 'reported only' });
+  }
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }
 
