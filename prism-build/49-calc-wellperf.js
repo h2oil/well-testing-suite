@@ -118,7 +118,9 @@
         wp_psep: 'pressureG', wp_tamb: 'temperature', wp_thp: 'pressureG', wp_stepFt: 'length', wp_gl_packer: 'length', wp_gl_pinj: 'pressureG', wp_gl_qinj: 'gasRateSmall', wp_gl_incgor: 'gor',
         wp_gl_dpv: 'pressure', wp_ip_J: 'productivityIndex', wp_ip_qmax: 'liquidRate', wp_ip_k: 'permeability', wp_ip_h: 'length',
         wp_ip_rw: 'length', wp_ip_re: 'length', wp_ip_D: 'nonDarcyD', wp_dwb: 'lengthSmall',
-        wp_pdew: 'pressure', wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor'
+        wp_pdew: 'pressure', wpl_T: 'temperature', wpl_pb: 'pressure', wpl_rsbF: 'gor',
+        wp_ip_L: 'length', wp_ip_boxA: 'length', wp_ip_boxB: 'length', wp_ip_xPos: 'length', wp_ip_zPos: 'length', wp_ip_yMid: 'length', wp_ip_yb: 'length',
+        wp_ip_xf: 'length', wp_ip_ct: 'compressibility', wp_ip_II: 'productivityIndex', wp_ip_pfrac: 'pressure'
     };
 
     // ── model scalars (defaults from WTS_wp_model.DEFAULTS; Appendix B) ───────
@@ -206,20 +208,37 @@
         A: { l: 'Laminar term A', u: 'psi/(STB/d)' }, B: { l: 'Turbulent term B', u: 'psi/(STB/d)²' },
         a: { l: 'LIT a', u: 'field units' }, b: { l: 'LIT b', u: 'field units' }, k: { l: 'Permeability k', cat: 'permeability', u: 'md' },
         h: { l: 'Net thickness h', cat: 'length', u: 'ft' }, rw: { l: 'Wellbore radius rw', cat: 'length', u: 'ft' },
-        re: { l: 'Drainage radius re', cat: 'length', u: 'ft' }, S: { l: 'Skin S', u: '' }, D: { l: 'Non-Darcy D', cat: 'nonDarcyD', u: 'd/Mscf' }
+        re: { l: 'Drainage radius re', cat: 'length', u: 'ft' }, S: { l: 'Skin S', u: '' }, D: { l: 'Non-Darcy D', cat: 'nonDarcyD', u: 'd/Mscf' },
+        // B (WP24): horizontal, fractured, transient, injector parameters (wp_ip_<name> → res.params.<name>); 'layers' is a table
+        L: { l: 'Lateral length L', cat: 'length', u: 'ft', ph: 'perforated MD' }, kvkh: { l: 'kv/kh', u: '', ph: '0.1' },
+        boxA: { l: 'Box width a (across the well)', cat: 'length', u: 'ft' }, boxB: { l: 'Box length b (along the well)', cat: 'length', u: 'ft' },
+        xPos: { l: 'Well position x0 in the box', cat: 'length', u: 'ft', ph: 'a/2' }, zPos: { l: 'Well height z0 above the base', cat: 'length', u: 'ft', ph: 'h/2' },
+        yMid: { l: 'Lateral centre y_mid', cat: 'length', u: 'ft', ph: 'b/2' }, yb: { l: 'Distance to the constant-pressure boundary y_b', cat: 'length', u: 'ft' },
+        xf: { l: 'Fracture half-length x_f', cat: 'length', u: 'ft' }, FcD: { l: 'Fracture conductivity F_cD', u: '', ph: 'blank = infinite' },
+        phi: { l: 'Porosity φ', u: 'fraction' }, ct: { l: 'Total compressibility ct', cat: 'compressibility', u: '1/psi' }, tFlow: { l: 'Flowing time t', u: 'h' },
+        II: { l: 'Injectivity index II', cat: 'productivityIndex', u: 'BWPD/psi' }, pfrac: { l: 'Fracture pressure at the mid-perforations', cat: 'pressure', u: 'psia', ph: 'DFIT closure' },
+        layers: { l: 'Layers', table: true }
     };
     var IPR_FALLBACK = [
         ['pi', 'Straight-line PI', 'oil', ['J']], ['vogel', 'Vogel with flow efficiency', 'oil', ['qmax', 'FE']], ['composite', 'Composite (PI above pb, Vogel below)', 'oil', ['J']],
         ['fetkovich', 'Fetkovich C and n', 'oil', ['C', 'n']], ['jbgOil', 'Jones-Blount-Glaze two-term oil', 'oil', ['A', 'B']], ['darcyOil', 'Darcy radial oil (k·h, skin)', 'oil', ['k', 'h', 'rw', 're', 'S']],
         ['backPressure', 'Back-pressure C and n', 'gas', ['C', 'n']], ['litP2', 'LIT in p²', 'gas', ['a', 'b']], ['litMp', 'LIT in m(p)', 'gas', ['a', 'b']],
-        ['darcyGas', 'Darcy radial gas with non-Darcy D', 'gas', ['k', 'h', 'rw', 're', 'S', 'D']]
+        ['darcyGas', 'Darcy radial gas with non-Darcy D', 'gas', ['k', 'h', 'rw', 're', 'S', 'D']],
+        // B (WP24), all provisional (D17)
+        ['wcComposite', 'Water-cut composite (oil Vogel + water PI)', 'oil', ['J']], ['joshi', 'Horizontal well — Joshi (1988)', 'oil', ['k', 'h', 'L', 'kvkh', 'rw', 're', 'S']],
+        ['babuOdeh', 'Horizontal well — Babu-Odeh (1989), box', 'oil', ['k', 'h', 'L', 'kvkh', 'rw', 'boxA', 'boxB', 'xPos', 'zPos', 'yMid', 'S']],
+        ['furui', 'Horizontal well — Furui et al. (2003)', 'oil', ['k', 'h', 'L', 'kvkh', 'rw', 'yb', 'S']],
+        ['frac', 'Fractured well — Prats / Cinco-Ley F_cD (oil)', 'oil', ['k', 'h', 'rw', 're', 'xf', 'FcD', 'S']], ['fracGas', 'Fractured well — Prats / Cinco-Ley F_cD (gas)', 'gas', ['k', 'h', 'rw', 're', 'xf', 'FcD', 'S', 'D']],
+        ['transient', 'Transient (line source at a flowing time)', 'oil', ['k', 'h', 'phi', 'ct', 'rw', 'tFlow', 'S', 're']],
+        ['multilayer', 'Multilayer commingled (crossflow reported)', 'any', ['layers', 'rw', 're']],
+        ['injector', 'Injector — injectivity index with a fracture-pressure limit', 'inj', ['II', 'k', 'h', 'rw', 're', 'S', 'pfrac', 'a', 'b', 'D']]
     ];
     function _iprModels() {
         var reg = G.WTS_wp_ipr && G.WTS_wp_ipr.models, out = [];
         IPR_FALLBACK.forEach(function (r) {
             var m = reg && reg[r[0]];
             out.push({ key: r[0], label: (m && m.label) || r[1], kind: (m && m.kind) || r[2], needs: (m && Array.isArray(m.needs)) ? m.needs.filter(function (k) { return IP[k]; }) : r[3],
-                       verified: m ? m.verified !== false : true });
+                       verified: m ? m.verified !== false : IPR_FALLBACK.indexOf(r) < 10 });
         });
         return out;
     }
@@ -364,7 +383,7 @@
         '#wp_root .wp-bud{display:flex;flex-direction:column;gap:5px;margin:6px 0 4px}#wp_root .wp-bud-r{display:grid;grid-template-columns:118px 1fr 76px;gap:8px;align-items:center;font-size:11.5px;color:var(--text2)}' +
         '#wp_root .wp-bud-k{text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#wp_root .wp-bud-v{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}' +
         '#wp_root .wp-bud-t{position:relative;height:13px;border-radius:4px;background:var(--bg2)}#wp_root .wp-bud-t i{position:absolute;top:0;bottom:0;border-radius:4px;transition:left .25s,width .25s}' +
-        '@media (max-width:600px){#wp_root .wp-bud-r{grid-template-columns:96px 1fr 66px;font-size:11px}}#wp_root .wp-layer{cursor:pointer}#wp_root .wp-layer:focus{outline:none}#wp_root .wp-layer:focus path,#wp_root .wp-layer:hover path{stroke-opacity:.9}' +
+        '@media (max-width:600px){#wp_root .wp-bud-r{grid-template-columns:96px 1fr 66px;font-size:11px}}#wp_root .wp-comp.wp-layer{cursor:pointer}#wp_root .wp-comp.wp-layer:focus{outline:none}#wp_root .wp-comp.wp-layer:focus path,#wp_root .wp-comp.wp-layer:hover path{stroke-opacity:.9}' +
         '@media (prefers-reduced-motion: reduce){#wp_root .wp-bud-t i{transition:none}}' +
         '#wp_root .wp-qc td.qc{text-align:center;padding:4px 6px}#wp_root .wp-qcb{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;border-radius:10px;font-size:11px;font-weight:800;background:var(--bg4);color:var(--text3);cursor:help}' +
         '#wp_root .wp-qcb.ok{background:rgba(63,185,80,.15);color:var(--wp-ok)}#wp_root .wp-qcb.warn{background:rgba(210,153,34,.17);color:var(--wp-warn)}#wp_root .wp-qcb.fail{background:rgba(248,81,73,.17);color:var(--wp-fail)}' +
@@ -427,6 +446,32 @@
                       restrictions: [{ kind: 'sssv', md: 1500, id: 2.75 }, { kind: 'xo', md: 5000, id: 2.441 }],
                       geo: { points: [[0, 70], [9300, 230]] }, flowline: [{ name: 'Flowline', len: 1500, id: 3, dz: 0 }],
                       tests: [{ id: 'G1', date: '2026-10-20', q_o: 120, q_w: 12, q_g: 6000, thp_psig: 2300, tht_F: 140, bean64: 24, gaugeMd: 9800, gauge_psia: 3900, use: true }] }
+        },
+        // B (WP24): a horizontal oil well (the lateral from the survey and the perforations), a two-layer well, a deviated water injector
+        hz: {
+            label: 'Horizontal oil well',
+            scalars: { wp_ftype: 'oil', wp_api: 35, wp_sgg: 0.65, wp_gor: 500, wp_wc: 20, wp_ipr: 'joshi', wp_pr: 3000, wp_tres: 200, wp_respb: 1800, wp_ip_k: 20, wp_ip_h: 60, wp_ip_kvkh: 0.1,
+                       wp_ip_rw: 0.354, wp_ip_re: 2000, wp_ip_S: 0, wp_ip_L: '', wp_perfTop: 9400, wp_perfBot: 11400, wp_midPerf: 10400, wp_tht: 125, wp_surfT: 60, wp_choke: true, wp_bean: 40, wp_psep: 100 },
+            tables: { survey: [[0, 0, 0], [6000, 0, 45], [6500, 15, 45], [7000, 30, 45], [7500, 45, 45], [8000, 60, 45], [8500, 75, 45], [9000, 88, 45], [9400, 90, 45], [11500, 90, 45]],
+                      strings: [{ kind: 'tubing', od: 3.5, id: 2.992, rough: 0.0006, topMd: 0, botMd: 8800 }, { kind: 'casing', od: 9.625, id: 8.681, rough: 0.0006, topMd: 0, botMd: 9000 }, { kind: 'liner', od: 5.5, id: 4.892, rough: 0.0006, topMd: 8700, botMd: 11500 }],
+                      restrictions: [{ kind: 'sssv', md: 1000, id: 2.813 }], geo: { points: [[0, 60], [8000, 200]] }, flowline: [{ name: 'Flowline', len: 2000, id: 4, dz: 0 }], tests: [], layers: [] }
+        },
+        ml: {
+            label: 'Two-layer oil well',
+            scalars: { wp_ftype: 'oil', wp_api: 35, wp_sgg: 0.65, wp_gor: 500, wp_wc: 30, wp_ipr: 'multilayer', wp_pr: 3000, wp_tres: 200, wp_ip_rw: 0.354, wp_ip_re: 1490,
+                       wp_perfTop: 7800, wp_perfBot: 8250, wp_midPerf: 8000, wp_tht: 120, wp_surfT: 60, wp_choke: true, wp_bean: 32, wp_psep: 100 },
+            tables: { survey: [[0, 0, 0], [3000, 0, 90], [4000, 20, 90], [8400, 20, 90]],
+                      strings: [{ kind: 'tubing', od: 2.875, id: 2.441, rough: 0.0006, topMd: 0, botMd: 7700 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 8400 }],
+                      restrictions: [{ kind: 'sssv', md: 1000, id: 2.313 }], geo: { points: [[0, 60], [8000, 200]] }, flowline: [{ name: 'Flowline', len: 2000, id: 3, dz: 0 }], tests: [],
+                      layers: [{ name: 'Upper', topMd: 7800, botMd: 7860, pr: 3100, J: 1.2, use: true }, { name: 'Lower (depleted)', topMd: 8190, botMd: 8250, pr: 2450, J: 0.9, use: true }] }
+        },
+        inj: {
+            label: 'Deviated water injector',
+            scalars: { wp_ftype: 'waterinj', wp_sgw: 1.05, wp_wc: 0, wp_ipr: 'injector', wp_pr: 3200, wp_tres: 200, wp_ip_II: 4, wp_ip_pfrac: 5200, wp_thp: 1200,
+                       wp_perfTop: 8900, wp_perfBot: 9050, wp_midPerf: 8975, wp_tht: 80, wp_surfT: 60, wp_choke: false, wp_psep: 100 },
+            tables: { survey: [[0, 0, 0], [1500, 0, 200], [2500, 20, 200], [3500, 35, 200], [7000, 35, 200], [9200, 35, 200]],
+                      strings: [{ kind: 'tubing', od: 3.5, id: 2.992, rough: 0.0006, topMd: 0, botMd: 8850 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 9200 }],
+                      restrictions: [], geo: { points: [[0, 60], [7700, 200]] }, flowline: [], tests: [], layers: [] }
         }
     };
 
@@ -440,7 +485,7 @@
         strings: function () { return [{ k: 'kind', l: 'Kind', opts: [['tubing', 'Tubing'], ['casing', 'Casing'], ['liner', 'Liner']] }, { k: 'od', l: 'OD', cat: 'lengthSmall', u: 'in' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'rough', l: 'Rough.', cat: 'lengthSmall', u: 'in' }, { k: 'topMd', l: 'Top MD', cat: 'length', u: 'ft' }, { k: 'botMd', l: 'Bottom MD', cat: 'length', u: 'ft' }]; },
         restrictions: function () { return [{ k: 'kind', l: 'Kind', opts: [['sssv', 'SSSV'], ['nipple', 'Nipple'], ['sleeve', 'Sleeve'], ['xo', 'Cross-over'], ['downholeChoke', 'Downhole choke']] }, { k: 'md', l: 'MD', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'k', l: 'K (opt.)', u: '' }]; },
         geo: function () { return [{ k: 0, l: 'TVD', cat: 'length', u: 'ft' }, { k: 1, l: 'Temperature', cat: 'temperature', u: '°F' }]; },
-        layers: function () { return [{ k: 0, l: 'Top MD', cat: 'length', u: 'ft' }, { k: 1, l: 'Bottom MD', cat: 'length', u: 'ft' }, { k: 2, l: 'U', cat: 'heatTransferCoef', u: 'Btu/hr·ft²·°F' }, { k: 3, l: 'k_e (opt.)', cat: 'thermalConductivity', u: 'Btu/hr·ft·°F' }]; },
+        hlayers: function () { return [{ k: 0, l: 'Top MD', cat: 'length', u: 'ft' }, { k: 1, l: 'Bottom MD', cat: 'length', u: 'ft' }, { k: 2, l: 'U', cat: 'heatTransferCoef', u: 'Btu/hr·ft²·°F' }, { k: 3, l: 'k_e (opt.)', cat: 'thermalConductivity', u: 'Btu/hr·ft·°F' }]; },
         flowline: function () { return [{ k: 'name', l: 'Name', text: true }, { k: 'len', l: 'Length', cat: 'length', u: 'ft' }, { k: 'id', l: 'ID', cat: 'lengthSmall', u: 'in' }, { k: 'dz', l: 'Rise', cat: 'length', u: 'ft' }]; },
         // B (WP23): the lab table, the Rv table and the emulsion table (all inside the model key lab)
         lab: function () { return [{ k: 'p', l: 'p', cat: 'pressure', u: 'psia' }, { k: 'rs', l: 'Rs', cat: 'gor', u: 'scf/STB' }, { k: 'bo', l: 'Bo', u: _fvfLab() }, { k: 'muo', l: 'Viscosity', u: 'cp' }]; },
@@ -452,6 +497,12 @@
             var gas = M && _isGasType(M.fluid.type);
             return [{ k: 'by', l: 'By', opts: [['md', 'MD'], ['inc', 'Incl.']] }, { k: 'from', l: 'From', catOf: _secCat, uh: _secU }, { k: 'to', l: 'To', catOf: _secCat, uh: _secU },
                     { k: 'corr', l: 'Correlation', opts: _corrList('well').filter(function (c) { return gas || (c.key !== 'gasTZ' && c.key !== 'gasCS'); }).map(function (c) { return [c.key, _corrShortL(c.key).replace(/\s*\(.*$/, '') + (c.verified ? '' : ' (prov.)')]; }) }];
+        },
+        layers: function (M) {
+            var gas = M && _isGasType(M.fluid.type);
+            return [{ k: 'name', l: 'Layer', text: true }, { k: 'topMd', l: 'Top MD', cat: 'length', u: 'ft' }, { k: 'botMd', l: 'Bottom MD', cat: 'length', u: 'ft' }, { k: 'pr', l: 'p̄r', cat: 'pressure', u: 'psia' }]
+                .concat(gas ? [{ k: 'a', l: 'LIT a (p²)', u: '' }, { k: 'b', l: 'LIT b (p²)', u: '' }] : [{ k: 'J', l: 'J', cat: 'productivityIndex', u: 'STB/d/psi' }, { k: 'pb', l: 'pb', cat: 'pressure', u: 'psia' }])
+                .concat([{ k: 'k', l: 'k', cat: 'permeability', u: 'md' }, { k: 'h', l: 'h', cat: 'length', u: 'ft' }, { k: 'S', l: 'S', u: '' }]);
         },
         tests: function () {
             return [{ k: 'id', l: 'Test', text: true }, { k: 'date', l: 'Date', text: true }, { k: 'q_o', l: 'Oil', cat: 'liquidRate', u: 'STB/d' }, { k: 'q_w', l: 'Water', cat: 'liquidRate', u: 'BWPD' },
@@ -465,7 +516,7 @@
         if (t === 'strings') return (M.well.strings || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'restrictions') return (M.well.restrictions || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'geo') return ((M.well.geo && M.well.geo.points) || []).map(function (r) { return r.slice(); });
-        if (t === 'layers') return ((M.well.heat && M.well.heat.layers) || []).map(function (l) { return [l.topMd, l.botMd, l.U, l.ke]; });
+        if (t === 'hlayers') return ((M.well.heat && M.well.heat.layers) || []).map(function (l) { return [l.topMd, l.botMd, l.U, l.ke]; });
         if (t === 'flowline') return (M.surface.flowline || []).map(function (r) { return Object.assign({}, r); });
         if (t === 'tests') return (M.tests || []).map(function (r) { return Object.assign({}, r); });
         var Lb = M.fluid && M.fluid.lab;
@@ -473,6 +524,7 @@
         if (t === 'rv') return ((Lb && Lb.rv) || []).map(function (r) { return r.slice(); });
         if (t === 'emul') return ((Lb && Lb.emul) || []).map(function (r) { return r.slice(); });
         if (t === 'corrSections') return ((M.system.corr && M.system.corr.sections) || []).map(function (r) { return Object.assign({}, r); });
+        if (t === 'layers') return ((M.res && M.res.layers) || []).map(function (r) { return Object.assign({}, r); });
         return [];
     }
     function _secCat(r) { return r && r.by === 'inc' ? null : 'length'; }
@@ -512,7 +564,11 @@
         if (t === 'restrictions') return { n: 1, head: ['TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.md : null); } };
         if (t === 'tests') return { n: 1, head: ['Gauge TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r.gaugeMd : null); } };
         if (t === 'corrSections') return { n: 1, head: ['Covers (MD · TVD, inclination)'], cells: function (r, i) { return '<td class="ro wp-seccov">' + _secCover(i) + '</td>'; } };
-        if (t === 'layers') return { n: 2, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r[0] : null) + _tvdCell(r ? r[1] : null); } };
+        if (t === 'hlayers') return { n: 2, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')'], cells: function (r) { return _tvdCell(r ? r[0] : null) + _tvdCell(r ? r[1] : null); } };
+        if (t === 'layers') return { n: 3, head: ['Top TVD (' + _lab('length', 'ft') + ')', 'Bottom TVD (' + _lab('length', 'ft') + ')', 'Rate at the operating point'], cells: function (r, i) {
+            var lr = ST.R && ST.R.ok && ST.R.layers ? ST.R.layers.rates[i] : null, rc = _rateCat();
+            return _tvdCell(r ? r.topMd : null) + _tvdCell(r ? r.botMd : null) + '<td class="ro"' + (lr && lr.crossflow ? ' style="color:var(--red)"' : '') + '>' + (lr ? _fmt(_dv(lr.q, rc[0]), 0) + ' ' + _lab(rc[0], rc[1]) : '—') + '</td>';
+        } };
         return null;
     }
     function _surveyExtra(M) {
@@ -530,7 +586,7 @@
         };
     }
     function _refreshTvdCells() {
-        var keys = { strings: ['topMd', 'botMd'], restrictions: ['md'], tests: ['gaugeMd'], layers: ['0', '1'] };
+        var keys = { strings: ['topMd', 'botMd'], restrictions: ['md'], tests: ['gaugeMd'], hlayers: ['0', '1'], layers: ['topMd', 'botMd'] };
         Object.keys(keys).forEach(function (t) {
             var tbl = _byId('wp_tbl_' + t); if (!tbl || !tbl.querySelectorAll) return;
             Array.prototype.forEach.call(tbl.querySelectorAll('tbody tr'), function (tr) {
@@ -541,6 +597,13 @@
                     if (ro[i]) ro[i].textContent = _fin(tv) ? _fmt(_dv(tv, 'length'), 1) : '—';
                 });
             });
+        });
+        // B (WP24): the layer rates at the operating point (read-only column; negative = crossflow, red)
+        var lt = _byId('wp_tbl_layers'), lr = ST.R && ST.R.ok && ST.R.layers ? ST.R.layers.rates : null, rcx = _rateCat();
+        if (lt && lt.querySelectorAll) Array.prototype.forEach.call(lt.querySelectorAll('tbody tr'), function (tr, i) {
+            var ro = tr.querySelectorAll('td.ro'), r = lr ? lr[i] : null; if (!ro[2]) return;
+            ro[2].textContent = r ? _fmt(_dv(r.q, rcx[0]), 0) + ' ' + _lab(rcx[0], rcx[1]) : '—';
+            if (ro[2].style) ro[2].style.color = r && r.crossflow ? 'var(--red)' : '';
         });
     }
     function _collectTable(t) {
@@ -567,7 +630,8 @@
         // geo carries the heat layers too (B, WP22): writing one keeps the other
         var cur = ST.M || _read(), curGeo = (cur && cur.well && cur.well.geo && cur.well.geo.points) || [], curLy = ((cur && cur.well && cur.well.heat && cur.well.heat.layers) || []).map(function (l) { return [l.topMd, l.botMd, l.U, l.ke]; });
         if (t === 'geo') patch.geo = { points: rows, layers: curLy };
-        else if (t === 'layers') patch.geo = { points: curGeo.map(function (r) { return r.slice(); }), layers: rows.map(function (r) { return [r[0], r[1], r[2], r[3] == null ? null : r[3]]; }) };
+        else if (t === 'hlayers') patch.geo = { points: curGeo.map(function (r) { return r.slice(); }), layers: rows.map(function (r) { return [r[0], r[1], r[2], r[3] == null ? null : r[3]]; }) };
+        else if (t === 'layers') patch.layers = _layerTvds(rows);
         else patch[t] = rows;
         var r = Mm.write(patch);
         if (r && !r.ok) _banner('fail', 'The table was not saved: ' + ((r.errors || []).join(' ') || r.code));
@@ -593,8 +657,9 @@
         if (!M) return out;
         out.chk = _call('WTS_wp_check', M);
         out.F = _call('WTS_wp_fluid.build', M.fluid, { T_F: M.res.T_F });   // T_F: the one-point bubble-point shift (as the solver's fluid)
-        out.I = _call('WTS_wp_ipr.curve', M.res, out.F && out.F.ok ? out.F : undefined);
         out.W = _call('WTS_wp_well.build', M.well, { res: M.res, fluidType: M.fluid.type, tests: M.tests, surface: M.surface });   // test gauges reach the schematic
+        // B (WP24): the inflow gets the well path (multilayer: each layer at its TVD, referred to the mid-perforations)
+        out.I = _call('WTS_wp_ipr.curve', M.res, out.F && out.F.ok ? out.F : undefined, out.W && out.W.ok ? { tvdAt: out.W.tvdAt, refMd: out.W.nodes ? out.W.nodes.midPerfMd : null } : undefined);
         var t0 = _now(), so = { live: !!live };
         // live drag: continue the last full solve's stable root (tracking solve) and carry its curves / q_s until the release
         var P = ST.R && ST.R.ok && ST.R.op && !ST.R.tracked ? ST.R : (ST.Rfull && ST.Rfull.ok ? ST.Rfull : null);
@@ -716,6 +781,7 @@
             '<div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' + (sub ? '<div class="kpi-s">' + _esc(sub) + '</div>' : '') + '</div>';
     }
     function _kpis() {
+        if (_isInj(ST.M)) return _kpisInj();
         var R = ST.R, M = ST.M, ok = !!(R && R.ok), gas = M && _isGasType(M.fluid.type), out = [];
         var rates = ok ? (R.rates || {}) : {}, op = ok ? R.op : null;
         var pwf = ok ? (_fin(R.pwf) ? R.pwf : (R.node === 'bottom' && op ? op.p : null)) : null;
@@ -750,6 +816,7 @@
         var mu = _multOf(M);
         if (mu.tuned) out.push({ k: 'tune', l: 'VLP m_h / m_f', v: _fx(mu.hl, 3) + ' / ' + _fx(mu.f, 3), s: CORR_NAME((R && R.corr && R.corr.well) || (M.system.corr && M.system.corr.well) || 'bb'), st: (_tuneBand(mu.hl) === 'warn' || _tuneBand(mu.f) === 'warn') ? 'warn' : 'ok' });
         var hz = _hydMin(R);
+        var kb = _kpiB(); if (kb) out.push(kb);
         out.push({ k: 'hyd', l: 'Hydrate margin', v: hz ? _tempDiff(hz.m) : '—', s: hz ? (hz.where === 'dn' ? 'downstream of the choke' : 'at the wellhead') + ' · hydrate ' + _u(hz.tHyd, 'temperature', 0, '°F') : (M && M.fluid.type === 'water' ? 'no gas' : ''), st: hz ? (hz.m < 0 ? 'fail' : hz.m < 10 ? 'warn' : 'ok') : 'none' });
         return out;
     }
@@ -788,14 +855,15 @@
         }
         return out;
     }
-    function _rateCat() { return (ST.M && _isGasType(ST.M.fluid.type)) ? ['gasRateSmall', 'Mscf/d'] : ['liquidRate', 'STB/d']; }
+    function _rateCat() { return (ST.M && ST.M.fluid.type === 'waterinj') ? ['liquidRate', 'BWPD'] : (ST.M && _isGasType(ST.M.fluid.type)) ? ['gasRateSmall', 'Mscf/d'] : ['liquidRate', 'STB/d']; }
     function _renderSystemPlot() {
         var cv = _byId('wp_cv_sys'), V = G.WTS_wp_view; if (!cv || !V) return;
         var R = ST.R, M = ST.M, ok = !!(R && R.ok), rc = _rateCat(), T = V.theme();
         var X = function (q) { return _dv(q, rc[0]); }, Y = function (p) { return _dv(p, 'pressure'); };
         var C = _curves(), series = [], markers = [], bands = [], vlines = [];
-        series.push({ key: 'ipr', label: 'Inflow (IPR)', color: T.green, width: 2.6, pts: C.ipr.map(function (p) { return [X(p[0]), Y(p[1])]; }) });
-        series.push({ key: 'vlp', label: (M && M.system.node === 'wellhead') ? 'Outflow' : 'Outflow (tubing + surface)', color: T.blue, width: 2.6, pts: C.vlp.map(function (p) { return [X(p[0]), Y(p[1])]; }) });
+        var injW = _isInj(M);
+        series.push({ key: 'ipr', label: injW ? 'Injectivity (reservoir)' : 'Inflow (IPR)', color: T.green, width: 2.6, pts: C.ipr.map(function (p) { return [X(p[0]), Y(p[1])]; }) });
+        series.push({ key: 'vlp', label: injW ? 'Injection outflow' : (M && M.system.node === 'wellhead') ? 'Outflow' : 'Outflow (tubing + surface)', color: T.blue, width: 2.6, pts: C.vlp.map(function (p) { return [X(p[0]), Y(p[1])]; }) });
         var UR = ok && _multOf(M).tuned ? ST.untuned : null;
         if (UR && UR.curve.length > 1) series.push({ key: UR.node === 'bottom' ? 'vlpU' : 'iprU', label: (UR.node === 'bottom' ? 'Outflow' : 'Inflow at the wellhead') + ' — untuned (m = 1)', color: T.text2, width: 1.6, dash: [7, 4], pts: UR.curve.map(function (c) { return [X(c.q), Y(UR.node === 'bottom' ? c.pOut : c.pIn)]; }).filter(function (p) { return _fin(p[1]); }) });
         var sens = ST.sens && ST.sens.ok !== false && Array.isArray(ST.sens.cases) ? ST.sens : null;
@@ -818,25 +886,31 @@
             });
         }
         _corrOpMarkers(markers, X, Y, T);                      // WP12: the operating point of each correlation (after its Job)
+        // B (WP24): an injector shows the fracture pressure, the rate there and the limit band above it
+        var hlinesB = [];
+        if (injW && ok && R.inj) {
+            if (_fin(R.inj.pFrac)) hlinesB.push({ y: Y(R.inj.pFrac), color: T.red, label: 'fracture pressure' + (R.inj.pFracProvisional ? ' (DFIT, provisional)' : ''), dash: [6, 4] });
+            if (_fin(R.inj.qFrac)) vlines.push({ x: X(R.inj.qFrac), color: T.red, label: 'q at p_frac', dash: [2, 4] });
+        }
         // drag handles
         var handles = [];
         if (M) {
             var gas = _isGasType(M.fluid.type), pr = M.res.pr;
             if (_fin(pr)) handles.push({ key: 'pr', kind: 'point', x: 0, value: Y(pr), min: Y(200), max: Y(20000), step: _metric() ? 10 : 5, label: 'p̄r', color: T.green, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } });
-            if (M.surface.choke.present === false) {
+            if (M.surface.choke.present === false || injW) {
                 var thp = _fin(M.system.thp_psig) ? M.system.thp_psig : 100;
                 handles.push({ key: 'thp', kind: 'railY', value: Y(thp + PATM), min: Y(PATM), max: Y(15000), step: _metric() ? 10 : 5, label: 'THP', railLabel: 'THP', color: T.blue, fmt: function (v) { return _fmt(_dv(_fromDisp(v, 'pressure') - PATM, 'pressureG'), 0) + ' ' + _lab('pressureG', 'psig'); } });
             } else {
                 handles.push({ key: 'bean', kind: 'railX', value: _fin(M.surface.choke.bean64) ? M.surface.choke.bean64 : 32, min: 8, max: 128, step: 1, label: 'Bean', railLabel: 'BEAN', rail: [0, 0.5], color: T.accent, fmt: function (v) { return _fmt(v, 0) + '/64"'; } });
             }
-            if (!gas) handles.push({ key: 'wc', kind: 'railX', value: _fin(M.fluid.wc) ? M.fluid.wc * 100 : 0, min: 0, max: 98, step: 1, label: 'WC', railLabel: 'WC', rail: [0.5, 1], color: T.purple, fmt: function (v) { return _fmt(v, 0) + ' %'; } });
+            if (!gas && !injW) handles.push({ key: 'wc', kind: 'railX', value: _fin(M.fluid.wc) ? M.fluid.wc * 100 : 0, min: 0, max: 98, step: 1, label: 'WC', railLabel: 'WC', rail: [0.5, 1], color: T.purple, fmt: function (v) { return _fmt(v, 0) + ' %'; } });
         }
         var emptyMsg = (!M) ? 'The model module is not available.' : (ST.stubs && ST.stubs.length && !ok) ? 'The inflow / outflow curves appear here once the engines are installed.' : (!_fin(M.res.pr) ? 'Enter the reservoir pressure (step ②) to draw the inflow curve.' : 'No curve for these inputs.');
         V.chart(cv, {
             key: 'sys:' + rc[0] + ':' + (_metric() ? 'm' : 'i'), aspect: 0.8, minH: 280, maxH: 560, w: 640,
-            x: { label: (_isGasType(M && M.fluid.type) ? 'Gas rate' : 'Liquid rate') + ' (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab(rc[0], rc[1]); } },
-            y: { label: (M && M.system.node === 'wellhead' ? 'Pressure at the node' : 'Bottom-hole pressure') + ' (' + _lab('pressure', 'psia') + ')', min: 0, max: (M && _fin(M.res.pr)) ? Y(Math.max(M.res.pr, ok ? R.op.p : 0) * 1.3) : undefined, short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
-            series: series, markers: markers, bands: bands, vlines: vlines, handles: handles, readout: 'x', empty: emptyMsg,
+            x: { label: (injW ? 'Injection rate' : _isGasType(M && M.fluid.type) ? 'Gas rate' : 'Liquid rate') + ' (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab(rc[0], rc[1]); } },
+            y: { label: (M && M.system.node === 'wellhead' ? 'Pressure at the node' : 'Bottom-hole pressure') + ' (' + _lab('pressure', 'psia') + ')', min: 0, max: (M && _fin(M.res.pr)) ? Y(Math.max(M.res.pr, ok ? R.op.p : 0, injW && ok && R.inj && _fin(R.inj.pFrac) ? R.inj.pFrac : 0) * (injW ? 1.15 : 1.3)) : undefined, short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
+            series: series, markers: markers, bands: bands, vlines: vlines, hlines: hlinesB, handles: handles, readout: 'x', empty: emptyMsg,
             legendNote: sens && sens.stale ? STALE_NOTE : null,
             hidden: _plots().sysHidden || null,
             onLegend: function (hid) { _plotsSet({ sysHidden: hid }); },
@@ -887,13 +961,16 @@
     }
     function _onHandle(key, v, phase) {
         if (/^sec\d+[ft]$/.test(key)) { _secHandle(key, v, phase); return; }
-        var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer' }[key]; if (!id) return;
+        var id = { pr: 'wp_pr', thp: 'wp_thp', bean: 'wp_bean', wc: 'wp_wc', hU: 'wp_Uto', hT: 'wp_tprod', qinj: 'wp_gl_qinj', packer: 'wp_gl_packer', tFlow: 'wp_ip_tFlow', L: 'wp_ip_L', xf: 'wp_ip_xf', thpI: 'wp_thp' }[key]; if (!id) return;
         var canon;
         if (key === 'hU' || key === 'hT') canon = +Math.pow(10, v).toPrecision(3);   // the heat rails are on log10 scales
         else if (key === 'pr') canon = Math.round(_fromDisp(v, 'pressure'));
         else if (key === 'qinj') canon = Math.max(0, Math.round(_fromDisp(v, 'gasRateSmall') / 5) * 5);
         else if (key === 'packer') { var dft = _fromDisp(v, 'length'), mdv = _plots().depth === 'md' ? dft : _mdFromTvd(dft); canon = Math.round(_fin(mdv) ? mdv : dft); }
         else if (key === 'thp') canon = Math.round(_fromDisp(v, 'pressure') - PATM);
+        else if (key === 'thpI') canon = Math.max(0, Math.round(_fromDisp(v, 'pressureG')));
+        else if (key === 'tFlow') canon = +v.toPrecision(3);
+        else if (key === 'L' || key === 'xf') canon = Math.max(1, Math.round(_fromDisp(v, 'length')));
         else canon = Math.round(v);
         _setCtrl(id, canon, true);
         ST.heatDrag = (key === 'hU' || key === 'hT') && phase !== 'end';
@@ -924,6 +1001,7 @@
             marks: (ST.R && ST.R.ok && ST.R.lift && _fin(ST.R.lift.injMd)) ? [{ md: ST.R.lift.injMd, kind: 'gl', comp: 'gl', label: 'gas lift ' + _mdTvdTxt(ST.R.lift.injMd, ST.R.lift.injTvd), color: '#58a6ff' }].concat(_fin(ST.R.lift.packerMd) ? [{ md: ST.R.lift.packerMd, kind: 'packer', label: 'packer' }] : []) : [],
             aria: 'Well schematic: vertical section and plan view, coloured by ' + prop
         };
+        var ob = _schB(); Object.keys(ob).forEach(function (k) { o[k] = ob[k]; });
         var out = V.schematic(S || {}, o);
         ST.schPts = out.pts; ST.schW = out.width; ST.schH = out.height;
         host.innerHTML = out.svg;
@@ -987,7 +1065,7 @@
             }
             step = m[1] === 'gauge' ? 6 : 3; focusSel = { t: t, r: r };
         }
-        else if (/^layer:\d+$/.test(comp || '')) { step = 3; focusSel = { t: 'layers', r: +comp.split(':')[1] }; }
+        else if (/^layer:\d+$/.test(comp || '')) { step = 3; focusSel = { t: 'hlayers', r: +comp.split(':')[1] }; }
         else if (comp === 'perf') { step = 3; focusSel = { id: 'wp_perfTop' }; }
         else if (comp === 'choke') { step = 5; focusSel = { id: 'wp_bean' }; }
         else if (comp === 'wellhead') { step = 5; focusSel = { id: 'wp_psep' }; }
@@ -1009,6 +1087,7 @@
         var row = function (l, v) { rows.push('<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv">' + _esc(v) + '</span></div>'); };
         if (!ok) { h.innerHTML = '<div class="rbox-title">Operating point</div><div class="wp-v info">' + _esc(R && !_isStub(R) ? (((R.errors || [])[0]) || 'No operating point.') : 'Waiting for the system solver.') + '</div>'; return; }
         var rt = R.rates || {}, sf = R.surface || {}, gas = _isGasType(M.fluid.type);
+        if (R.injector) { _opInj(row); h.innerHTML = '<div class="rbox-title">Operating point (injection)</div>' + rows.join(''); return; }
         if (gas) row('Gas rate', _u(rt.qg / 1000, 'gasRate', 3, 'MMscf/d'));
         row(gas ? 'Condensate rate' : 'Oil rate', _u(rt.qo, 'liquidRate', 0, 'STB/d'));
         row('Water rate', _u(rt.qw, 'liquidRate', 0, 'BWPD'));
@@ -1028,6 +1107,7 @@
             row('Lift gas', _u(R.lift.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' at ' + _u(R.lift.pinj_psig, 'pressureG', 0, 'psig'));
             row('Injection point', _u(R.lift.injMd, 'length', 0, 'ft') + ' MD · ' + _u(R.lift.injTvd, 'length', 0, 'ft') + ' TVD' + (R.lift.atPacker ? ' (packer)' : ''));
         }
+        _opRowsB(row);
         h.innerHTML = '<div class="rbox-title">Operating point</div>' + rows.join('');
     }
 
@@ -1583,6 +1663,8 @@
         } else if (s && s.cases && s.cases.length) {
             row('Sensitivity' + (s.stale ? ' (previous inputs)' : ''), _sensVarLabel(s.key) + ': ' + s.cases.map(function (c) { var v = +_sensVal(c), Rc = c.R || {}; return (c.label || _fmt(_sensDv(s.key, v), 3)) + ' → ' + (Rc.ok ? _fmt(_dv(Rc.q, rc[0]), 0) : '—'); }).join(' · ') + ' ' + _lab(rc[0], rc[1]));
         }
+        var bRows = (ST.I && ST.I.ok && _bKey(ST.I.key)) ? _iprBRows(ST.I) : [];
+        bRows.forEach(function (r) { row('Inflow: ' + r[0], r[1]); });
         h.innerHTML = (rows.length > 1 || extra || (g && g.ok) || (tn && tn.ok) || uf) ? '<div class="rbox-title">Studies and tuning</div>' + rows.join('') + extra : '';
     }
 
@@ -1612,7 +1694,8 @@
             c.fillStyle = cols[i % cols.length]; c.fillRect(lw, y + 15, w, 8);
         });
         c.fillStyle = T.text2 || '#8b949e'; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
-        c.fillText('Total p̄r − p_sep: ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14);
+        if (R && R.injector) { var gain = items.filter(function (b) { return b.dp < 0; }).reduce(function (a, b) { return a - b.dp; }, 0); c.fillText('Injection: THP − p̄r ' + _fmt(_dv(R.surface.thp - R.pr, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '; the column adds ' + _fmt(_dv(gain, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14); }
+        else c.fillText('Total p̄r − p_sep: ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14);
         cv.__h2oilSnapshot = null;
     }
 
@@ -1623,6 +1706,14 @@
         if (!M) return out;
         if (!ok) { if (R && !_isStub(R)) add('fail', '✗ No operating point: ' + (((R.errors || [])[0]) || 'the outflow curve lies above the inflow curve.')); return out; }
         var gasW = _isGasType(M.fluid.type), qv = function (q) { return gasW ? _u(q / 1000, 'gasRate', 3, 'MMscf/d') : _u(q, 'liquidRate', 0, 'STB/d'); };
+        if (R.injector) {
+            var ri = _injRateCat();
+            add('ok', '✓ Injecting ' + _u(R.op.q, ri[0], 0, ri[1]) + ' at ' + _u(R.surface.thp_psig, 'pressureG', 0, 'psig') + ' wellhead pressure (bottom hole ' + _u(R.pwf, 'pressure', 0, 'psia') + ').');
+            _verdictsB(add);
+            var eroI = _eroMax(R); if (_fin(eroI)) add(eroI > 1 ? 'fail' : eroI > 0.8 ? 'warn' : 'ok', (eroI > 1 ? '✗' : eroI > 0.8 ? '⚠' : '✓') + ' Maximum velocity is ' + _fmt(eroI * 100, 0) + ' % of the erosional velocity (C = ' + _fmt(M.system.eroC, 0) + ').');
+            return out;
+        }
+        _verdictsB(add);
         add(R.op.stable ? 'ok' : 'fail', (R.op.stable ? '✓ Stable operating point at ' : '✗ Unstable operating point at ') + qv(R.op.q) + ', ' + _u(R.op.p, 'pressure', 0, 'psia') + '.');
         if (R.qs && _fin(R.qs.q)) {
             var mgq = R.op.q / R.qs.q - 1;
@@ -2333,13 +2424,17 @@
         if (cv && V) {
             var I = ST.I, Tm = V.theme(), rc = _rateCat(), pts = (I && I.ok && I.curve) ? I.curve.map(function (c) { return [_dv(c.q, rc[0]), _dv(c.pwf, 'pressure')]; }).sort(function (a, b) { return a[0] - b[0]; }) : [];
             var tp = ((M && M.res.points) || []).map(function (p) { return [_dv(p.q, rc[0]), _dv(p.pwf, 'pressure')]; });
-            V.chart(cv, { key: 'ipr:' + rc[0], aspect: 0.6, minH: 220, maxH: 360, w: 520, readout: 'x', x: { label: 'Rate (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q' }, y: { label: 'pwf (' + _lab('pressure', 'psia') + ')', min: 0, short: 'pwf' },
-                series: [{ key: 'ipr', label: 'IPR', color: Tm.green, width: 2.4, pts: pts }, { key: 'pts', label: 'Test points', kind: 'points', color: Tm.accent, pts: tp }],
-                hlines: (I && I.ok && _fin(I.pb)) ? [{ y: _dv(I.pb, 'pressure'), label: 'pb', color: Tm.yellow }] : [],
+            if (_isInj(M)) rc = _injRateCat();
+            var bx = _iprBExtras(I, function (q) { return _dv(q, rc[0]); }, function (p) { return _dv(p, 'pressure'); }, Tm);
+            V.chart(cv, { key: 'ipr:' + rc[0], aspect: 0.6, minH: 220, maxH: 360, w: 520, readout: 'x', x: { label: (_isInj(M) ? 'Injection rate' : 'Rate') + ' (' + _lab(rc[0], rc[1]) + ')', min: (I && I.layers) ? undefined : 0, short: 'q' }, y: { label: 'pwf (' + _lab('pressure', 'psia') + ')', min: 0, short: 'pwf' },
+                series: [{ key: 'ipr', label: (I && I.inj) ? 'Injectivity' : (I && I.layers) ? 'Total (commingled)' : 'IPR', color: Tm.green, width: 2.4, pts: pts }, { key: 'pts', label: 'Test points', kind: 'points', color: Tm.accent, pts: tp }].concat(bx.series),
+                hlines: ((I && I.ok && _fin(I.pb)) ? [{ y: _dv(I.pb, 'pressure'), label: 'pb', color: Tm.yellow }] : []).concat(bx.hlines), vlines: bx.vlines, markers: bx.markers,
                 empty: _isStub(I) ? 'The inflow engine draws the IPR here once it is installed.' : 'Enter p̄r and the model parameters to draw the IPR.' });
             var is = _byId('wp_iprsum');
-            if (is) is.innerHTML = (I && I.ok) ? '<div class="rrow"><span class="rl">AOF</span><span class="rv">' + _u(I.aof, rc[0], 0, rc[1]) + '</span></div>' + (_fin(I.J) ? '<div class="rrow"><span class="rl">Productivity index</span><span class="rv">' + _u(I.J, 'productivityIndex', 3, 'STB/d/psi') + '</span></div>' : '') +
+            if (is) is.innerHTML = (I && I.ok) ? '<div class="rrow"><span class="rl">' + (I.inj ? 'Rate at the pressure limit' : 'AOF') + '</span><span class="rv">' + _u(I.aof, rc[0], 0, rc[1]) + '</span></div>' + (_fin(I.J) && !I.inj ? '<div class="rrow"><span class="rl">Productivity index</span><span class="rv">' + _u(I.J, 'productivityIndex', 3, 'STB/d/psi') + '</span></div>' : '') +
+                _iprBRows(I).map(function (r) { return '<div class="rrow"><span class="rl">' + _esc(r[0]) + '</span><span class="rv">' + _esc(r[1]) + '</span></div>'; }).join('') +
                 (I.verified === false ? _vHtml({ st: 'warn', t: '⚠ ' + (I.label || 'This inflow model') + ': provisional — not verified against a published example.' }) : '') : '';
+            _renderIprStudy();
         }
         // ③ survey extras + segments; the TVD cells of the other tables are refreshed in place (no re-render: the focus stays)
         _renderTable('survey');
@@ -2581,6 +2676,7 @@
         if (act === 'cancel') { if (ST.job) ST.job.cancel(); return; }
         if (act === 'example') { _loadExample(btn.getAttribute('data-ex')); return; }
         if (act === 'csv') { _csv(); return; }
+        if (act === 'bu') { _importBuildup(); return; }
         if (act === 'design') {
             var tk = M.system.target.kind, q = M.system.target.q, tgt = {}; tgt[tk === 'thp' ? 'thp' : tk === 'tubingId' ? 'tubingId' : tk === 'qinj' ? 'qinj' : 'bean'] = q;
             // the message sits next to the design button (review fix: it appeared in the Studies box of the other card)
@@ -3196,7 +3292,7 @@
         if (msg) msg.innerHTML = rowsOverride ? _vHtml({ st: 'info', t: 'ℹ The previous survey rows are back.' }) : (old.length ? _vHtml({ st: 'ok', t: '✓ ' + conv.length + ' station(s) converted to ' + (m === 'mdtvd' ? 'MD · TVD' : 'MD · Inc · Azi') + '.' }) + '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="svundo">Undo</button></div>' : '');
     }
     function _renderSvMode() { var m = _surveyMode(ST.M || _read()); Array.prototype.forEach.call(document.querySelectorAll('#wp_svmode button'), function (b) { if (b.classList) b.classList.toggle('on', b.getAttribute('data-m') === m); }); }
-    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'layers', 'flowline', 'tests', 'lab', 'rv', 'emul', 'corrSections'].forEach(_renderTable); _labInputsFill(); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
+    function _renderAllTables() { ['survey', 'strings', 'restrictions', 'geo', 'hlayers', 'flowline', 'tests', 'layers', 'lab', 'rv', 'emul', 'corrSections'].forEach(_renderTable); _labInputsFill(); _renderRatings(); _renderSvMode(); _renderDfitList(); _syncMatchTests(); }
     function _renderRatings() {
         var M = _read(); if (!M) return;
         var a = _byId('wpt_rate_wh'), b = _byId('wpt_rate_tht'), c = _byId('wpt_beans');
@@ -3267,12 +3363,270 @@
         return csv;
     }
 
+    // ── increment B inflow (WP24): water-cut composite, horizontal, fractured, transient, multilayer with crossflow, injector ──
+    // Every model is drawn from the engine's I object (WTS_wp_ipr.curve) and the solver's R (WTS_wp_system.solve → WTS_wp_inj for
+    // injectors); the page adds no numerics of its own beyond re-evaluating the inflow (no march) for the study curves. The step ②
+    // "Inflow study" plot carries a drag handle on the natural variable of the model (flowing time, lateral length, half-length,
+    // water cut, injection pressure) that re-solves the well live, like the system plot.
+    function _isInj(M) { var t = M && M.fluid && M.fluid.type; return t === 'waterinj' || t === 'gasinj'; }
+    function _injR() { var R = ST.R; return !!(R && R.injector); }
+    function _injRateCat() { return (ST.M && ST.M.fluid.type === 'gasinj') ? ['gasRateSmall', 'Mscf/d'] : ['liquidRate', 'BWPD']; }
+    // the IPR of one parameter value (no march; the model's other inputs held)
+    function _iprWith(patch) {
+        var M = ST.M; if (!M || !_fn('WTS_wp_ipr.curve')) return null;
+        var spec = JSON.parse(JSON.stringify(M.res)); spec.params = Object.assign({}, spec.params || {}, patch);
+        var W = ST.W, o = W && W.ok ? { tvdAt: W.tvdAt, refMd: W.nodes ? W.nodes.midPerfMd : null } : undefined;
+        var I = _call('WTS_wp_ipr.curve', spec, ST.F && ST.F.ok ? ST.F : undefined, o);
+        return I && I.ok ? I : null;
+    }
+    // extra series and lines of the step ② IPR plot for the B models
+    function _iprBExtras(I, X, Y, Tm) {
+        var out = { series: [], hlines: [], vlines: [], markers: [] };
+        if (!I || !I.ok) return out;
+        var R = ST.R, op = R && R.ok ? R.op : null;
+        if (I.layerRates && I.layers) {
+            var pal = [Tm.blue, Tm.purple, Tm.yellow, '#39c5cf', Tm.accent, Tm.red, Tm.text2], pws = I.pr, pTop = Math.max.apply(null, I.layers.map(function (l) { return l.pr; })) + 200;
+            var grid = []; for (var g = 0; g <= 40; g++) grid.push(Math.max(0, pTop - (pTop) * g / 40));
+            I.layers.forEach(function (L, li) {
+                var pts = grid.map(function (p) { var r = I.layerRates(p)[li]; return [X(r.q), Y(p)]; });
+                out.series.push({ key: 'lay' + li, label: L.name + ' (p̄r ' + _fmt(_dv(L.pr, 'pressure'), 0) + ')', color: pal[li % pal.length], width: 1.6, dash: [5, 4], pts: pts });
+            });
+            out.hlines.push({ y: Y(pws), label: 'p_ws (commingled)', color: Tm.text2, dash: [2, 4] });
+            if (I.crossflow && I.crossflow.rate > 0) out.vlines.push({ x: X(0), label: '', color: Tm.text2 });
+        }
+        if (I.inj) {
+            if (_fin(I.pFrac)) out.hlines.push({ y: Y(I.pFrac), label: 'fracture pressure', color: Tm.red, dash: [6, 4] });
+            else if (R && R.inj && _fin(R.inj.pFrac)) out.hlines.push({ y: Y(R.inj.pFrac), label: 'fracture (DFIT, provisional)', color: Tm.red, dash: [6, 4] });
+            var qf = R && R.inj ? R.inj.qFrac : null;
+            if (_fin(qf)) out.vlines.push({ x: X(qf), label: 'q at p_frac', color: Tm.red, dash: [2, 4] });
+        }
+        if (op && R.ok) out.markers.push({ x: X(op.q), y: Y(op.p), kind: 'filled', color: Tm.accent, r: 6, label: 'operating point' });
+        return out;
+    }
+    // the inflow-study plot: one variable per model, with a live drag handle
+    function _iprStudy() {
+        var M = ST.M, I = ST.I, V = G.WTS_wp_view; if (!M || !I || !I.ok || !V) return null;
+        var Tm = V.theme(), P = M.res.params || {}, key = M.res.model, pi = _lab('productivityIndex', 'STB/d/psi');
+        var Jd = function (j) { return _dv(j, 'productivityIndex'); };
+        if (I.transient && typeof I.transient.jOfT === 'function') {
+            var t0 = I.transient.t, tp = I.transient.tPss, tmax = Math.max(1e3, (tp || 0) * 3, t0 * 10), pts = [];
+            for (var e = -1; e <= Math.log(tmax) / Math.LN10 + 1e-9; e += 0.1) { var tt = Math.pow(10, e), j = I.transient.jOfT(tt); if (_fin(j)) pts.push([tt, Jd(j)]); }
+            return { title: 'Productivity index against flowing time', x: { label: 'Flowing time (h)', log: true, min: 0.1, max: tmax, short: 't' }, y: { label: 'J (' + pi + ')', min: 0, short: 'J' },
+                series: [{ key: 'jt', label: 'J(t), line source', color: Tm.green, width: 2.4, pts: pts }],
+                vlines: _fin(tp) ? [{ x: tp, label: 'end of infinite-acting flow', color: Tm.yellow, dash: [6, 4] }] : [],
+                handle: { key: 'tFlow', label: 't', value: t0, min: 0.1, max: tmax, color: Tm.accent, fmt: function (v) { return _fmt(v, v < 10 ? 1 : 0) + ' h'; } },
+                note: 'Drag t: the IPR and the operating point follow the flowing time (infinite acting until the boundary is felt).' };
+        }
+        if (I.horizontal) {
+            var L0 = I.horizontal.L, Lmax = key === 'babuOdeh' ? +P.boxB : (key === 'joshi' && _fin(+P.re) ? 1.75 * +P.re : 3 * L0), ser = [];
+            if (!(Lmax > L0)) Lmax = L0 * 1.5;
+            for (var i = 1; i <= 24; i++) { var Li = Lmax * i / 24, Ii = _iprWith({ L: Li }); if (Ii && _fin(Ii.J)) ser.push([_dv(Li, 'length'), Jd(Ii.J)]); }
+            var jv = I.form && _fin(I.form.Jvertical) ? I.form.Jvertical : null;
+            return { title: 'Productivity index against lateral length', x: { label: 'Lateral length L (' + _lab('length', 'ft') + ')', min: 0, short: 'L' }, y: { label: 'J (' + pi + ')', min: 0, short: 'J' },
+                series: [{ key: 'jl', label: (I.label || key).replace(/^Horizontal well — /, ''), color: Tm.green, width: 2.4, pts: ser }],
+                hlines: jv ? [{ y: Jd(jv), label: 'vertical well, same r_e', color: Tm.text2, dash: [3, 4] }] : [],
+                handle: { key: 'L', label: 'L', value: _dv(L0, 'length'), min: _dv(50, 'length'), max: _dv(Lmax, 'length'), color: Tm.accent, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('length', 'ft'); } },
+                note: 'Drag L along the lateral: the perforated MD interval sets it when L is blank (deviation survey, step ③).' };
+        }
+        if (I.frac) {
+            var xf0 = I.frac.xf, xmax = Math.max(xf0 * 2.5, 100), s1 = [], s2 = [];
+            for (var k = 1; k <= 24; k++) {
+                var xk = xmax * k / 24, a = _iprWith({ xf: xk }), b = _iprWith({ xf: xk, FcD: null, kfw: null });
+                if (a && _fin(a.J)) s1.push([_dv(xk, 'length'), Jd(a.J)]);
+                if (b && _fin(b.J)) s2.push([_dv(xk, 'length'), Jd(b.J)]);
+            }
+            var ser2 = [{ key: 'jx', label: 'F_cD ' + (_fin(I.frac.FcD) ? _fmt(I.frac.FcD, 1) : '∞'), color: Tm.green, width: 2.4, pts: s1 }];
+            if (_fin(I.frac.FcD)) ser2.push({ key: 'jinf', label: 'infinite conductivity', color: Tm.blue, width: 1.6, dash: [6, 4], pts: s2 });
+            return { title: 'Productivity index against fracture half-length', x: { label: 'x_f (' + _lab('length', 'ft') + ')', min: 0, short: 'x_f' }, y: { label: 'J (' + pi + ')', min: 0, short: 'J' },
+                series: ser2, handle: { key: 'xf', label: 'x_f', value: _dv(xf0, 'length'), min: _dv(10, 'length'), max: _dv(xmax, 'length'), color: Tm.accent, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('length', 'ft'); } },
+                note: 'Drag x_f: s_f from the F_cD curve (Cinco-Ley & Samaniego, closed-form fit) moves the IPR.' };
+        }
+        if (key === 'wcComposite' && I.form) {
+            var rc = _rateCat(), oilI = _iprWith({ fw: 0 }), watI = _iprWith({ fw: 1 }), cur = function (J0) { return J0 ? J0.curve.map(function (c) { return [_dv(c.q, rc[0]), _dv(c.pwf, 'pressure')]; }).sort(function (x, y) { return x[0] - y[0]; }) : []; };
+            return { title: 'Water-cut composite: oil, water and the weighted curve', x: { label: 'Liquid rate (' + _lab(rc[0], rc[1]) + ')', min: 0, short: 'q' }, y: { label: 'pwf (' + _lab('pressure', 'psia') + ')', min: 0, short: 'pwf' },
+                series: [{ key: 'oil', label: 'oil (WC 0 %)', color: Tm.green, width: 1.6, dash: [6, 4], pts: cur(oilI) }, { key: 'wat', label: 'water (WC 100 %)', color: Tm.blue, width: 1.6, dash: [6, 4], pts: cur(watI) },
+                    { key: 'mix', label: 'WC ' + _fmt(100 * I.form.fw, 0) + ' %', color: Tm.accent, width: 2.6, pts: cur(I) }],
+                handle: { key: 'wc', kind: 'railX', label: 'WC', value: 100 * I.form.fw, min: 0, max: 98, step: 1, color: Tm.purple, fmt: function (v) { return _fmt(v, 0) + ' %'; } },
+                note: 'Drag WC: the weighted curve moves between the oil Vogel curve and the water PI line.' };
+        }
+        if (I.layers && ST.R && ST.R.ok && ST.R.layers) {
+            var lr = ST.R.layers.rates, rcm = _rateCat(), serL = [], mk = [];
+            lr.forEach(function (r) {
+                var y = _dv(r.tvd, 'length'), c = r.q < 0 ? Tm.red : Tm.green;
+                serL.push({ key: 'b' + r.name, label: r.name, legend: false, color: c, width: 12, pts: [[0, y], [_dv(r.q, rcm[0]), y]] });
+                mk.push({ x: _dv(r.q, rcm[0]), y: y, kind: 'filled', color: c, r: 4, label: r.name + ' ' + _fmt(_dv(r.q, rcm[0]), 0) + (r.q < 0 ? ' (crossflow)' : '') });
+            });
+            var cf = ST.R.layers.crossflow; if (cf && cf.layers) cf.layers.forEach(function (r) { mk.push({ x: _dv(r.q, rcm[0]), y: _dv(r.tvd, 'length'), kind: 'hollow', color: Tm.text2, r: 4, label: '' }); });
+            return { title: 'Layer rates at the operating point (shut-in crossflow hollow)', x: { label: 'Layer rate (' + _lab(rcm[0], rcm[1]) + '; < 0 = crossflow into the layer)', short: 'q' },
+                y: (function () { var tv = lr.map(function (r) { return _dv(r.tvd, 'length'); }), lo = Math.min.apply(null, tv), hi = Math.max.apply(null, tv), pad = Math.max(60, 0.35 * (hi - lo)); return { label: 'TVD (' + _lab('length', 'ft') + ')', invert: true, short: 'TVD', min: lo - pad, max: hi + pad }; })(), series: serL, markers: mk, vlines: [{ x: 0, color: Tm.text2, label: '' }],
+                note: 'Each bar is a layer at its true vertical depth; red = the layer takes fluid. Hollow markers: the rates with the well shut in.' };
+        }
+        if (_injR() && ST.R.ok && ST.R.curves && ST.R.curves.vlp && ST.R.curves.vlp.length > 2) {
+            var Rr = ST.R, vl = Rr.curves.vlp.slice().sort(function (x, y) { return x.q - y.q; }), thp0 = Rr.surface.thp_psig, rcI = _injRateCat(), Ip = I;
+            var pv = function (q) { for (var a = 1; a < vl.length; a++) if (q <= vl[a].q) { var f = (q - vl[a - 1].q) / ((vl[a].q - vl[a - 1].q) || 1); return vl[a - 1].p + f * (vl[a].p - vl[a - 1].p); } return vl[vl.length - 1].p + (q - vl[vl.length - 1].q) * (vl[vl.length - 1].p - vl[vl.length - 2].p) / ((vl[vl.length - 1].q - vl[vl.length - 2].q) || 1); };
+            var qOf = function (thp) { var d = thp - thp0, lo = 0, hi = vl[vl.length - 1].q * 4; if (pv(0) + d - Ip.pwfAt(0) <= 0) return 0; for (var n = 0; n < 60; n++) { var m = 0.5 * (lo + hi); if (pv(m) + d - Ip.pwfAt(m) > 0) lo = m; else hi = m; } return 0.5 * (lo + hi); };
+            var tmx = Math.max(_fin(Rr.inj.thpFrac_psig) ? Rr.inj.thpFrac_psig * 1.3 : 0, thp0 * 2, 500), sI = [];
+            for (var s = 0; s <= 30; s++) { var th = tmx * s / 30; sI.push([_dv(th, 'pressureG'), _dv(qOf(th), rcI[0])]); }
+            return { title: 'Injection rate against wellhead pressure', x: { label: 'Wellhead injection pressure (' + _lab('pressureG', 'psig') + ')', min: 0, short: 'THP' }, y: { label: 'Injection rate (' + _lab(rcI[0], rcI[1]) + ')', min: 0, short: 'q' },
+                series: [{ key: 'qthp', label: 'rate', color: Tm.blue, width: 2.4, pts: sI }],
+                vlines: _fin(Rr.inj.thpFrac_psig) ? [{ x: _dv(Rr.inj.thpFrac_psig, 'pressureG'), label: 'fracture limit', color: Tm.red, dash: [6, 4] }] : [],
+                handle: { key: 'thpI', label: 'THP', value: _dv(thp0, 'pressureG'), min: 0, max: _dv(tmx, 'pressureG'), color: Tm.accent, fmt: function (v) { return _fmt(v, 0) + ' ' + _lab('pressureG', 'psig'); } },
+                note: 'Drag the THP: the well re-solves. The curve shifts the outflow by the pressure change (' + (ST.M.fluid.type === 'gasinj' ? 'approximate for gas' : 'exact for an incompressible water column') + ').' };
+        }
+        return null;
+    }
+    function _renderIprStudy() {
+        var box = _byId('wp_iprsbox'), cv = _byId('wp_cv_iprs'), V = G.WTS_wp_view; if (!box || !cv || !V) return;
+        var sp = _iprStudy();
+        if (box.classList) box.classList.toggle('wp-off', !sp);
+        if (!sp) return;
+        var tt = _byId('wp_iprs_t'); if (tt) tt.textContent = sp.title;
+        var nt = _byId('wp_iprs_n'); if (nt) nt.textContent = sp.note || '';
+        var h = sp.handle ? [Object.assign({ kind: 'lineX', rail: [0, 1] }, sp.handle)] : [];
+        V.chart(cv, { key: 'iprs:' + (ST.M ? ST.M.res.model : '') + ':' + (_metric() ? 'm' : 'i'), aspect: 0.58, minH: 210, maxH: 340, w: 520, readout: 'x', x: sp.x, y: sp.y,
+            series: sp.series, hlines: sp.hlines || [], vlines: sp.vlines || [], markers: sp.markers || [], handles: h, onHandle: _onHandle, empty: 'No study for this inflow model.' });
+    }
+    // step ② summary rows of the B models (and the report rows of #wp_studies)
+    function _iprBRows(I) {
+        var out = [], row = function (l, v) { if (v != null && v !== '') out.push([l, v]); };
+        if (!I || !I.ok) return out;
+        var f = I.form || {}, rc = _rateCat();
+        if (I.horizontal) {
+            row('Lateral length', _u(I.horizontal.L, 'length', 0, 'ft') + ' (anisotropy I_ani ' + _fmt(I.horizontal.Iani, 2) + ')');
+            if (_fin(f.ratio)) row('J horizontal / J vertical', _fmt(f.ratio, 2) + ' × (same drainage radius)');
+            if (f.kase) row('Partial penetration', f.kase + (_fin(f.sR) ? ', s_R ' + _fmt(f.sR, 2) : '') + (_fin(f.lnCH) ? ', ln C_H ' + _fmt(f.lnCH, 2) : ''));
+        }
+        if (I.frac) row('Fracture', 'x_f ' + _u(I.frac.xf, 'length', 0, 'ft') + ', F_cD ' + (_fin(I.frac.FcD) ? _fmt(I.frac.FcD, 1) : '∞') + ', s_f ' + _fmt(I.frac.sf, 2) + (_fin(f.rwEff) ? ', r_w′ ' + _u(f.rwEff, 'length', 1, 'ft') : ''));
+        if (I.transient) row('Transient', 'J at ' + _fmt(I.transient.t, 1) + ' h = ' + _u(I.J, 'productivityIndex', 3, 'STB/d/psi') + (_fin(I.transient.tPss) ? '; infinite acting until ≈ ' + _fmt(I.transient.tPss, 0) + ' h' : ''));
+        if (M_key(I) === 'wcComposite') row('Composite', 'WC ' + _fmt(100 * f.fw, 0) + ' % · q_o,max ' + _u(f.qoMax, rc[0], 0, rc[1]) + ' · q_t,max ' + _u(f.qtMax, rc[0], 0, rc[1]));
+        if (I.layers) {
+            row('Layers', I.layers.length + ' · commingled p_ws ' + _u(I.pr, 'pressure', 0, 'psia') + ' at ' + _u(f.refMd, 'length', 0, 'ft') + ' MD · ' + _u(f.refTvd, 'length', 0, 'ft') + ' TVD · gradient ' + _fmt(_dv(f.grad, 'pressureGradient'), 3) + ' ' + _lab('pressureGradient', 'psi/ft'));
+            var cf = I.crossflow; if (cf) row('Shut-in crossflow', cf.thief && cf.thief.length ? _u(cf.rate, rc[0], 0, rc[1]) + ' into ' + cf.thief.join(', ') : 'none');
+        }
+        if (I.inj) {
+            var ru = _injRateCat();
+            row('Injectivity', (ST.M && ST.M.fluid.type === 'gasinj' ? _fmt(I.II, 2) + ' Mscf/d/psi (secant, first 100 psi)' : _u(I.II, 'productivityIndex', 3, 'BWPD/psi')) + (f.IIsource ? ' · ' + f.IIsource : ''));
+            row('Pressure limit', _fin(I.pFrac) ? 'fracture ' + _u(I.pFrac, 'pressure', 0, 'psia') + ' (input) · rate there ' + _u(I.qLimit, ru[0], 0, ru[1]) : 'no fracture pressure entered');
+        }
+        return out;
+    }
+    function M_key(I) { return I && I.key; }
+    function _bKey(k) { return (G.WTS_wp_ipr && (G.WTS_wp_ipr.B_KEYS || []).indexOf(k) !== -1); }
+    // KPIs of an injection well (replaces the producer strip)
+    function _kpisInj() {
+        var R = ST.R, M = ST.M, ok = !!(R && R.ok), out = [], rc = _injRateCat(), inj = R && R.inj ? R.inj : {};
+        var nd = ST.W && ST.W.ok && ST.W.nodes;
+        out.push({ k: 'rate', l: 'Injection rate', v: ok ? _u(R.op.q, rc[0], 0, rc[1]) : '—', s: M ? (M.fluid.type === 'gasinj' ? 'gas injector' : 'water injector') : '', st: ok ? 'ok' : (R ? 'fail' : 'none') });
+        out.push({ k: 'bhp', l: 'Injection BHP', v: ok ? _u(R.pwf, 'pressure', 0, 'psia') : '—', s: nd && _fin(nd.midPerfTvd) ? '@ ' + _u(nd.midPerfMd, 'length', 0, 'ft') + ' MD · ' + _u(nd.midPerfTvd, 'length', 0, 'ft') + ' TVD' : '' });
+        out.push({ k: 'thp', l: 'Injection THP', v: _u(M ? M.system.thp_psig : null, 'pressureG', 0, 'psig'), s: _fin(inj.thpStart_psig) ? 'starts at ' + _u(inj.thpStart_psig, 'pressureG', 0, 'psig') : 'wellhead (boundary)',
+            st: (ok && M && _fin(M.surface.rating.wellhead_psi)) ? (M.system.thp_psig > M.surface.rating.wellhead_psi ? 'fail' : 'ok') : 'none' });
+        out.push({ k: 'frac', l: 'Fracture margin', v: _fin(inj.margin) ? _u(inj.margin, 'pressure', 0, 'psi') : '—', s: _fin(inj.pFrac) ? 'p_frac ' + _u(inj.pFrac, 'pressure', 0, 'psia') + (inj.pFracProvisional ? ' (DFIT)' : '') : 'enter p_frac',
+            st: inj.verdict === 'fail' ? 'fail' : inj.verdict === 'warn' ? 'warn' : inj.verdict === 'ok' ? 'ok' : 'none' });
+        out.push({ k: 'qfrac', l: 'Max rate (no frac)', v: _fin(inj.qFrac) ? _u(inj.qFrac, rc[0], 0, rc[1]) : '—', s: _fin(inj.thpFrac_psig) ? 'THP ≤ ' + _u(inj.thpFrac_psig, 'pressureG', 0, 'psig') : '' });
+        out.push({ k: 'ii', l: 'Injectivity', v: _fin(inj.II) ? (M && M.fluid.type === 'gasinj' ? _fmt(inj.II, 1) + ' Mscf/d/psi' : _u(inj.II, 'productivityIndex', 2, 'BWPD/psi')) : '—', s: 'p̄r ' + _u(M ? M.res.pr : null, 'pressure', 0, 'psia') });
+        out.push({ k: 'tht', l: 'Injection temperature', v: _u(ok && R.surface ? R.surface.tht : null, 'temperature', 0, '°F'), s: 'at the wellhead' });
+        var ero = ok ? _eroMax(R) : null;
+        out.push({ k: 'ero', l: 'Erosion ratio', v: _fin(ero) ? _fmt(ero, 2) : '—', s: M ? 'C = ' + _fmt(M.system.eroC, 0) + ' · tubing' : '', st: _fin(ero) ? (ero > 1 ? 'fail' : ero > 0.8 ? 'warn' : 'ok') : 'none' });
+        return out;
+    }
+    // one extra KPI for the B producer models (the A1 / A2 strip is unchanged for the other models)
+    function _kpiB() {
+        var I = ST.I, R = ST.R; if (!I || !I.ok) return null;
+        if (I.layers) {
+            var th = R && R.ok && R.layers ? R.layers.thief : [], cf = I.crossflow, rc = _rateCat();
+            return { k: 'xflow', l: 'Crossflow', v: th && th.length ? th.join(', ') : (cf && cf.thief && cf.thief.length ? 'shut-in only' : 'none'), s: cf && cf.rate > 0 ? 'shut in ' + _u(cf.rate, rc[0], 0, rc[1]) : I.layers.length + ' layers',
+                st: th && th.length ? 'fail' : (cf && cf.thief && cf.thief.length ? 'warn' : 'ok') };
+        }
+        if (I.horizontal) return { k: 'hz', l: 'Lateral', v: _u(I.horizontal.L, 'length', 0, 'ft'), s: I.form && _fin(I.form.ratio) ? 'J ' + _fmt(I.form.ratio, 1) + '× vertical' : (I.label || '').replace(/^Horizontal well — /, ''), st: 'info' };
+        if (I.frac) return { k: 'frac', l: 'Fracture', v: 'x_f ' + _u(I.frac.xf, 'length', 0, 'ft'), s: 's_f ' + _fmt(I.frac.sf, 2) + ' · F_cD ' + (_fin(I.frac.FcD) ? _fmt(I.frac.FcD, 1) : '∞'), st: 'info' };
+        if (I.transient) return { k: 'tr', l: 'Flowing time', v: _fmt(I.transient.t, 1) + ' h', s: 'J ' + _u(I.J, 'productivityIndex', 2, 'STB/d/psi'), st: _fin(I.transient.tPss) && I.transient.t > I.transient.tPss ? 'warn' : 'info' };
+        return null;
+    }
+    // operating-point rows and verdicts of the B models
+    function _opRowsB(row) {
+        var R = ST.R, rc = _rateCat();
+        if (R && R.ok && R.layers) R.layers.rates.forEach(function (r) {
+            row('Layer ' + r.name + ' (' + _u(r.midMd, 'length', 0, 'ft') + ' MD · ' + _u(r.tvd, 'length', 0, 'ft') + ' TVD)', _u(r.q, rc[0], 0, rc[1]) + (r.crossflow ? ' — crossflow into the layer' : (_fin(r.share) ? ' (' + _fmt(100 * r.share, 0) + ' %)' : '')));
+        });
+    }
+    function _opInj(row) {
+        var R = ST.R, inj = R.inj || {}, rc = _injRateCat();
+        row('Injection rate', _u(R.op.q, rc[0], 0, rc[1]));
+        row('Bottom-hole injection pressure', _u(R.pwf, 'pressure', 0, 'psia'));
+        row('Wellhead injection pressure', _u(R.surface.thp_psig, 'pressureG', 0, 'psig'));
+        row('Injection drive pwf − p̄r', _u(R.pwf - R.pr, 'pressure', 0, 'psi'));
+        if (_fin(inj.pFrac)) row('Fracture pressure', _u(inj.pFrac, 'pressure', 0, 'psia') + (inj.pFracSource && inj.pFracSource !== 'input' ? ' (' + inj.pFracSource + ', provisional)' : ''));
+        if (_fin(inj.qFrac)) row('Rate at the fracture pressure', _u(inj.qFrac, rc[0], 0, rc[1]));
+        if (_fin(inj.thpFrac_psig)) row('Highest THP without fracturing', _u(inj.thpFrac_psig, 'pressureG', 0, 'psig'));
+        if (_fin(inj.thpStart_psig)) row('THP to start injecting', _u(inj.thpStart_psig, 'pressureG', 0, 'psig'));
+    }
+    function _verdictsB(add) {
+        var R = ST.R, I = ST.I, rc = _rateCat();
+        if (R && R.injector && R.ok) {
+            var inj = R.inj || {};
+            if (inj.verdict === 'fail') add('fail', '✗ Injection BHP ' + _u(R.pwf, 'pressure', 0, 'psia') + ' is above the fracture pressure ' + _u(inj.pFrac, 'pressure', 0, 'psia') + ': keep the THP below ' + _u(inj.thpFrac_psig, 'pressureG', 0, 'psig') + '.');
+            else if (inj.verdict === 'warn') add('warn', '⚠ Injection BHP within 5 % of the fracture pressure ' + _u(inj.pFrac, 'pressure', 0, 'psia') + ' (margin ' + _u(inj.margin, 'pressure', 0, 'psi') + ').');
+            else if (inj.verdict === 'ok') add('ok', '✓ Injection BHP ' + _u(inj.margin, 'pressure', 0, 'psi') + ' below the fracture pressure; up to ' + _u(inj.thpFrac_psig, 'pressureG', 0, 'psig') + ' THP without fracturing.');
+            else add('info', 'ℹ No fracture pressure: enter it in step ② or run a DFIT on this well.');
+            return;
+        }
+        if (R && R.ok && R.layers) {
+            if (R.layers.thief && R.layers.thief.length) add('warn', '⚠ Crossflow while flowing: ' + R.layers.thief.join(', ') + (R.layers.thief.length === 1 ? ' takes' : ' take') + ' fluid at the operating point.');
+            else add('ok', '✓ Every layer produces at the operating point (no crossflow while flowing).');
+            var cf = R.layers.crossflow; if (cf && cf.thief && cf.thief.length) add('info', 'ℹ Shut in, ' + _u(cf.rate, rc[0], 0, rc[1]) + ' cross-flows into ' + cf.thief.join(', ') + ' (commingled p_ws ' + _u(cf.pws, 'pressure', 0, 'psia') + ').');
+        }
+        if (I && I.ok && I.transient && _fin(I.transient.tPss) && I.transient.t > I.transient.tPss) add('warn', '⚠ The flowing time is past the end of infinite-acting flow: the transient IPR over-states the productivity.');
+    }
+    // Build-up Surveillance hand-off (§2.10): the latest interpreted build-up of this well → k, h, S, p̄r with provenance chips
+    function _importBuildup() {
+        var h = _byId('wp_bumsg'), BS = G.WTS_buildup && G.WTS_buildup.store;
+        var show = function (st, t) { if (h) h.innerHTML = _vHtml({ st: st, t: t }); };
+        if (!BS || typeof BS.loadState !== 'function' || !_fn('WTS_wp_ipr.fromBuildup')) { show('warn', '⚠ Build-up Surveillance is not available.'); return; }
+        var go = function () {
+            var nd = ST.W && ST.W.ok && ST.W.nodes, r = _call('WTS_wp_ipr.fromBuildup', BS.loadState(), { midPerfTvd: nd ? nd.midPerfTvd : null });
+            if (!r || !r.ok) { show('warn', '⚠ ' + (((r && r.errors) || [])[0] || 'No build-up result.')); return; }
+            var sp = r.spec, prov = r.provenance || {}, cur = (_byId('wp_ipr') || {}).value, usesK = /^(darcyOil|darcyGas|joshi|babuOdeh|furui|frac|fracGas|transient)$/.test(cur || '');
+            var put = function (id, v, src) { if (v == null || !_fin(+v)) return; _setCtrl(id, v, true); ST.prov[id] = 'Build-up'; };
+            if (!usesK) _setCtrl('wp_ipr', sp.model, false);
+            Object.keys(sp.params || {}).forEach(function (k) { if (IP[k]) put('wp_ip_' + k, sp.params[k], prov[k]); });
+            if (_fin(sp.pr)) put('wp_pr', Math.round(sp.pr), prov.pr);
+            _syncUi(); _commit('wp_ipr');
+            var t = r.test || {};
+            show(r.warnings.some(function (w) { return w.sev === 'warn'; }) ? 'warn' : 'ok', (r.warnings.some(function (w) { return w.sev === 'warn'; }) ? '⚠ ' : '✓ ') + 'Imported build-up ' + t.id + (t.date ? ' (' + t.date + ')' : '') + ': k ' + _u(t.k, 'permeability', 2, 'md') + ', S ' + _fmt(t.S, 2) +
+                (_fin(sp.pr) ? ', p̄r ' + _u(sp.pr, 'pressure', 0, 'psia') : '') + (t.conf ? ' · confidence ' + t.conf : '') + (r.warnings.length ? ' — ' + r.warnings.map(function (w) { return w.msg; }).join(' ') : ''));
+        };
+        show('info', 'ℹ Reading the build-up results…');
+        var P0 = typeof BS.init === 'function' ? BS.init() : null;
+        if (P0 && typeof P0.then === 'function') P0.then(go, go); else go();
+    }
+    // the layers table writes the TVD of every layer from the current well path (the engines prefer the live path when they have it)
+    function _layerTvds(rows) {
+        return rows.map(function (r) { var o = Object.assign({}, r); o.tvdTop = _tvdAt(r.topMd); o.tvdBot = _tvdAt(r.botMd); o.use = true; return o; });
+    }
+    // schematic options of the B models: the layers as beds across the section (rate and crossflow), the flow direction of an
+    // injector, the fracture wings at the mid-perforations
+    function _schB() {
+        var o = {}, I = ST.I, R = ST.R, rc = _rateCat();
+        if (I && I.ok && I.layers) {
+            var rates = R && R.ok && R.layers ? R.layers.rates : null;
+            o.layers = I.layers.map(function (L, i) {
+                var r = rates ? rates[i] : null;
+                return { topMd: L.topMd, botMd: L.botMd, name: L.name, q: r ? r.q : null, crossflow: !!(r && r.crossflow), label: String(L.name).replace(/\s*\(.*\)$/, '').slice(0, 12) + (r ? ' ' + _fmt(_dv(r.q, rc[0]), 0) + ' ' + _lab(rc[0], rc[1]) : '') };
+            });
+        }
+        if (_isInj(ST.M)) o.inject = true;
+        if (I && I.ok && I.frac && ST.W && ST.W.ok && ST.W.nodes) o.frac = { md: ST.W.nodes.midPerfMd, label: 'x_f ' + _u(I.frac.xf, 'length', 0, 'ft') };
+        if (I && I.ok && I.horizontal) o.lateral = { label: 'lateral ' + _u(I.horizontal.L, 'length', 0, 'ft') };
+        return o;
+    }
+
     // ── render ────────────────────────────────────────────────────────────────
     function _stepsHtml() {
         return '<nav class="wp-steps rp-skip" id="wp_steps" aria-label="Well performance steps">' + STEPS.map(function (s) {
             return '<button type="button" data-step="' + s.n + '"><span class="wp-dot" id="wp_dot_' + s.n + '" aria-hidden="true"></span>' + CIRC[s.n] + ' ' + s.label + '<span class="wp-sr" id="wp_dotsr_' + s.n + '"></span></button>';
         }).join('') + '<span class="wp-sp"></span><span class="wp-ex">Examples: </span>' +
-            '<button type="button" data-act="example" data-ex="oil" title="Load the example vertical oil well">Oil</button><button type="button" data-act="example" data-ex="gas" title="Load the example deviated gas-condensate well">Gas</button></nav>';
+            '<button type="button" data-act="example" data-ex="oil" title="Load the example vertical oil well">Oil</button><button type="button" data-act="example" data-ex="gas" title="Load the example deviated gas-condensate well">Gas</button>' +
+            '<button type="button" data-act="example" data-ex="hz" title="Load the example horizontal oil well (Joshi inflow on the surveyed lateral)">Horizontal</button><button type="button" data-act="example" data-ex="ml" title="Load the example two-layer oil well with crossflow">Layers</button><button type="button" data-act="example" data-ex="inj" title="Load the example deviated water injector with a fracture-pressure limit">Injector</button></nav>';
     }
     function _tableBlock(t, title, hint, o) {
         o = o || {};
@@ -3312,10 +3666,10 @@
     }
     function _sectionsHtml() {
         var models = _iprModels(), wellCorr = _corrList('well'), lineCorr = _corrList('line');
-        var ipFields = Object.keys(IP).map(function (k) { var d = IP[k]; return _fg('wp_ip_' + k, d.l, { unit: d.u || '', data: 'data-ip="' + k + '"' }); }).join('');
+        var ipFields = Object.keys(IP).filter(function (k) { return !IP[k].table; }).map(function (k) { var d = IP[k]; return _fg('wp_ip_' + k, d.l, { unit: d.u || '', data: 'data-ip="' + k + '"', ph: d.ph }); }).join('');
         var s1 = '<section id="wp_step_1" class="wp-sec"><div class="wp-sec-h">① Fluid <span>black-oil properties, gas gravity, water and impurities</span></div><div class="wp-2c">' +
             _card('Fluid', '<div class="fg">' +
-                _fg('wp_ftype', 'Fluid type', { options: [['oil', 'Oil'], ['gas', 'Dry gas'], ['condensate', 'Gas-condensate (wet gas)'], ['water', 'Water'], ['gasinj', 'Gas injector', true], ['waterinj', 'Water injector', true]] }) +
+                _fg('wp_ftype', 'Fluid type', { options: [['oil', 'Oil'], ['gas', 'Dry gas'], ['condensate', 'Gas-condensate (wet gas)'], ['water', 'Water'], ['gasinj', 'Gas injector'], ['waterinj', 'Water injector']] }) +
                 _fg('wp_api', 'Oil / condensate gravity', { unit: '°API', data: 'data-for="oil condensate"' }) + _fg('wp_sgg', 'Gas specific gravity', { unit: 'air = 1' }) +
                 _fg('wp_sggBasis', 'Gas gravity basis', { options: [['separator', 'Separator gas'], ['total', 'Total (well stream)']] }) +
                 _fg('wp_gor', 'Producing GOR', { unit: 'scf/STB', data: 'data-for="oil"' }) + _fg('wp_wc', 'Water cut', { unit: '%', data: 'data-for="oil water"' }) +
@@ -3339,11 +3693,14 @@
             _card('PVT at six pressures', '<div id="wp_pvt"></div>') + '</div></div>' + _pvtBHtml() + '</section>';
         var s2 = '<section id="wp_step_2" class="wp-sec" style="display:none"><div class="wp-sec-h">② Reservoir <span>inflow model, reservoir pressure and its parameters</span></div><div class="wp-2c">' +
             _card('Inflow', '<div class="fg">' +
-                _fg('wp_ipr', 'Inflow model', { options: models.map(function (m) { return [m.key, m.label + (m.kind === 'gas' ? ' (gas)' : '')]; }) }) +
+                _fg('wp_ipr', 'Inflow model', { options: models.map(function (m) { return [m.key, m.label + (m.kind === 'gas' ? ' (gas)' : '') + (m.verified ? '' : ' — provisional')]; }) }) +
                 _fg('wp_pr', 'Average reservoir pressure p̄r', { unit: 'psia', ph: 'required' }) + _fg('wp_tres', 'Reservoir temperature', { unit: '°F' }) +
                 _fg('wp_respb', 'Bubble point (composite)', { unit: 'psia' }) + ipFields + '</div><div id="wp_iprchip" class="rp-skip" style="margin-top:6px"></div>' +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="prism">Import from PRiSM</button></div><div id="wp_prismmsg"></div>') +
-            _card('Inflow performance', '<div class="chart-wrap"><canvas id="wp_cv_ipr" aria-label="Inflow performance relationship plot"></canvas></div><div id="wp_iprsum" style="margin-top:8px"></div>') + '</div></section>';
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="prism">Import from PRiSM</button><button type="button" class="btn btn-secondary" data-act="bu" title="k, h, skin and p̄r from the latest interpreted build-up of this well">Import from Build-up Surveillance</button></div><div id="wp_prismmsg"></div><div id="wp_bumsg"></div>') +
+            '<div class="wp-col">' + _card('Inflow performance', '<div class="chart-wrap"><canvas id="wp_cv_ipr" aria-label="Inflow performance relationship plot"></canvas></div><div id="wp_iprsum" style="margin-top:8px"></div>') +
+            '<div id="wp_iprsbox" class="wp-off">' + _card('Inflow study', '<div class="wp-hint" id="wp_iprs_t" style="margin:0 0 6px;font-weight:700;color:var(--text2)"></div><div class="chart-wrap"><canvas id="wp_cv_iprs" tabindex="0" aria-label="Inflow study plot with a drag handle on the model variable"></canvas></div><div class="wp-legend-hint rp-skip" id="wp_iprs_n"></div>', { cls: 'rp-skip' }) + '</div>' +
+            '<div data-ip="layers">' + _card('Layers', _tableBlock('layers', 'Layers (commingled)', 'Top / bottom MD and p̄r per layer; J (oil) or LIT a, b (gas, p²), or k, h and S with rw and re from the inflow card. TVD comes from the deviation survey; the rate column is the operating point (negative = crossflow into the layer).')) + '</div>' +
+            '</div></div></section>';
         var s3 = '<section id="wp_step_3" class="wp-sec" style="display:none"><div class="wp-sec-h">③ Well <span>deviation survey, strings, restrictions, perforations and temperature</span></div>' +
             _card('Deviation survey', _tableBlock('survey', 'Survey stations', 'Minimum curvature gives TVD, departure and dog-leg severity for every station. Every depth on this page shows MD and TVD.',
                 { head: ' <span class="wp-seg" id="wp_svmode" style="margin-left:auto"><button type="button" data-act="svmode" data-m="mdinc">MD · Inc · Azi</button><button type="button" data-act="svmode" data-m="mdtvd">MD · TVD</button></span>',
@@ -3364,7 +3721,7 @@
                 _fg('wp_dwb', 'Hole diameter (optional)', { unit: 'in', data: 'data-heat="relax"', ph: 'largest string OD' }) + '</div>' +
                 '<div id="wp_heatbox" class="wp-heat" data-heat="relax" aria-live="polite"></div>' +
                 _tableBlock('geo', 'Geothermal points', 'TVD and static temperature; at least the surface and the reservoir. The relaxation model reads the geotherm on TVD and relaxes along MD.') +
-                '<div data-heat="relax">' + _tableBlock('layers', 'Heat-transfer layers (U by depth)', 'Optional MD ranges with their own U (same basis as U above) and k_e — for example an insulated or a riser section. Outside the layers the U above applies. TVD shown.') + '</div>') +
+                '<div data-heat="relax">' + _tableBlock('hlayers', 'Heat-transfer layers (U by depth)', 'Optional MD ranges with their own U (same basis as U above) and k_e — for example an insulated or a riser section. Outside the layers the U above applies. TVD shown.') + '</div>') +
             _card('Flow segments', '<div id="wp_segs"></div>') + '</div></section>';
         var s4 = '<section id="wp_step_4" class="wp-sec" style="display:none"><div class="wp-sec-h">④ Lift <span>natural flow or the gas-lift quick look</span></div><div class="wp-2c">' +
             _card('Artificial lift', '<div class="fg">' + _fg('wp_lift', 'Lift type', { options: [['none', 'Natural flow'], ['gaslift', 'Gas lift (quick look)'], ['esp', 'ESP (release 4.5)', true]] }) +
@@ -3595,7 +3952,7 @@
         document.addEventListener('wts:project-loaded', again);
         document.addEventListener('wts:wellperf-model-changed', function (e) { if (_byId('wp_root')) { if (!ST.batch) G.calcWellPerf(); if (!e || !e.detail || !e.detail.keys || e.detail.keys.indexOf('tests') !== -1) _syncMatchTests();
             // B (WP22): a geo write from elsewhere (an import, a script) shows in the geotherm and heat-layer tables unless one is being edited
-            var ae = document.activeElement; if (e && e.detail && e.detail.keys && e.detail.keys.indexOf('geo') !== -1 && !(ae && ae.closest && ae.closest('#wp_tbl_geo,#wp_tbl_layers'))) ['geo', 'layers'].forEach(_renderTable); } });
+            var ae = document.activeElement; if (e && e.detail && e.detail.keys && e.detail.keys.indexOf('geo') !== -1 && !(ae && ae.closest && ae.closest('#wp_tbl_geo,#wp_tbl_hlayers'))) ['geo', 'hlayers'].forEach(_renderTable); } });
         document.addEventListener('wts:unit-system-changed', function () {
             if (!_byId('wp_root')) return;
             _qlistUnits(); _relabelUntagged();
@@ -3608,7 +3965,7 @@
     if (typeof G.addEventListener === 'function') {
         G.addEventListener('resize', function () {
             if (!_byId('wp_root') || !G.WTS_wp_view) return;
-            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr', 'wp_cv_match', 'wp_cv_glpc', 'wp_cv_gldepth', 'wp_cv_tub', 'wp_cv_tune', 'wp_cv_tobj', 'wp_cv_pvtm', 'wp_cv_rv', 'wp_cv_rvd', 'wp_cv_emul'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
+            ['wp_cv_sys', 'wp_cv_tr', 'wp_cv_ipr', 'wp_cv_iprs', 'wp_cv_match', 'wp_cv_glpc', 'wp_cv_gldepth', 'wp_cv_tub', 'wp_cv_tune', 'wp_cv_tobj', 'wp_cv_pvtm', 'wp_cv_rv', 'wp_cv_rvd', 'wp_cv_emul'].forEach(function (id) { var c = _byId(id); if (c) G.WTS_wp_view.redraw(c); });
             _renderBreakdown(); _renderSchematic();
         });
     }

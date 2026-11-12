@@ -81,6 +81,16 @@ const BENCH = [
   { kind: 'pvt', key: 'woelflin', status: 'pending', source: 'Woelflin (1942) emulsion curves — chart readings to verify against the figure' },
   { kind: 'pvt', key: 'brinkman', status: 'pending', source: 'Brinkman (1952) suspension viscosity — closed form only' },
   { kind: 'pvt', key: 'table', status: 'pinned', source: 'user emulsion table (user data)' },
+  // B (WP24): the increment-B inflow models — Q9, no books, all pending (provisional, never a default)
+  { kind: 'ipr', key: 'wcComposite', status: 'pending', source: 'Brown, The Technology of Artificial Lift Methods vol. 4 / Ahmed (water-cut-weighted composite), ±1 %' },
+  { kind: 'ipr', key: 'joshi', status: 'pending', source: 'Joshi (1988); Economides et al. (horizontal well, anisotropy form), ±1 %' },
+  { kind: 'ipr', key: 'babuOdeh', status: 'pending', source: 'Babu & Odeh (1989) worked example; Economides et al., ±1 %' },
+  { kind: 'ipr', key: 'furui', status: 'pending', source: 'Furui, Zhu & Hill (2003); Economides et al., ±1 %' },
+  { kind: 'ipr', key: 'frac', status: 'pending', source: 'Cinco-Ley & Samaniego (1981) F_cD curve; Economides et al. (closed-form fit), ±2 %' },
+  { kind: 'ipr', key: 'fracGas', status: 'pending', source: 'as frac, gas form (Darcy gas with s_f)' },
+  { kind: 'ipr', key: 'transient', status: 'pending', source: 'Lee / Earlougher line-source log approximation — cross-checked against the exponential-integral solution (X30) only' },
+  { kind: 'ipr', key: 'multilayer', status: 'pending', source: 'commingled layers with crossflow (Economides et al.) — mass balance and single-layer identities (X31) only' },
+  { kind: 'ipr', key: 'injector', status: 'pending', source: 'injectivity index with a fracture limit (Economides et al.) — closure and march identities (X32, X33) only' },
   { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
 ];
 
@@ -210,6 +220,19 @@ function gate(G) {
       const ve = (G.WTS_wp_check(Mo).validity || []).find((x) => x.corr === 'emulsion');
       if (!ve || ve.msg.indexOf(PROVISIONAL) === -1) bad('pvt ' + m, 'the check validity does not carry the provisional label');
     });
+  }
+  // 8. the increment-B inflow models (WP24): each one in use is named provisional in the check validity (page + report), and the
+  // injector is solved through WTS_wp_inj with its provisional flag
+  (G.WTS_wp_ipr && G.WTS_wp_ipr.B_KEYS || []).forEach((k) => {
+    const e = IP[k]; if (!e) { bad('ipr ' + k, 'increment-B model missing from the registry'); return; }
+    const Mb = S.FIX.oilWell; Mb.res.model = k;
+    const v = (G.WTS_wp_check(Mb).validity || []).find((x) => x.corr === k);
+    if (!e.verified && (!v || v.provisional !== true)) bad('ipr ' + k, 'check validity does not mark it provisional');
+  });
+  if (G.WTS_wp_inj) {
+    const Mi = S.FIX.oilWell; Mi.fluid.type = 'waterinj'; Mi.res = { model: 'injector', pr: 3000, T_F: 200, params: { II: 5, pfrac: 4500 }, points: [], layers: [] }; Mi.system.thp_psig = 1000; Mi.surface.choke.present = false;
+    const Ri = G.WTS_wp_system.solve(Mi);
+    if (!Ri.ok || !Ri.injector || !(Ri.flags || []).some((f) => f.code === 'PROVISIONAL_INJ' && f.msg.indexOf(PROVISIONAL) !== -1)) bad('ipr injector', 'the injector solve does not carry the provisional flag');
   }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
@@ -506,6 +529,81 @@ function checks(G) {
     ['oilWell', 'gasWell'].forEach((k) => { const M = S.FIX[k]; M.well.heat.mode = 'enthalpy'; const R = G.WTS_wp_system.solve(M); w = Math.max(w, R.ok && R.heat && Number.isFinite(R.heat.passCheck) ? R.heat.passCheck : 99); });
     add('X42', 'enthalpy balance: predictor pass check, THT on the solution pressures vs the predictor (°F)', w < 0.5, w, 0.5);
   }
+  // ── increment B inflow (WP24) ──
+  const IPR = G.WTS_wp_ipr;
+  if (IPR && IPR.models && IPR.models.wcComposite) {
+    // X28 water-cut composite limits: WC 0 = the composite oil IPR, WC 1 = the straight-line PI, and the weighted curve between
+    {
+      const c0 = IPR.curve({ model: 'wcComposite', pr: 3000, pb: 2000, params: { J: 2, fw: 0 } }), oil = IPR.curve({ model: 'composite', pr: 3000, pb: 2000, params: { J: 2 } });
+      const c1 = IPR.curve({ model: 'wcComposite', pr: 3000, pb: 2000, params: { J: 2, fw: 1 } }), cm = IPR.curve({ model: 'wcComposite', pr: 3000, pb: 2000, params: { J: 2, fw: 0.4 } });
+      let w = 0;
+      [0.1, 0.4, 0.7, 0.95].forEach((f) => {
+        const q = f * oil.aof; w = Math.max(w, Math.abs(c0.pwfAt(q) - oil.pwfAt(q)), Math.abs(c1.pwfAt(q) - Math.max(0, 3000 - q / 2)), Math.abs(cm.pwfAt(q) - (0.4 * Math.max(0, 3000 - q / 2) + 0.6 * oil.pwfAt(q))));
+      });
+      add('X28', 'water-cut composite: WC 0 = composite oil, WC 1 = PI line, weighted in between (psi)', w < 1e-9, w, 1e-9);
+    }
+    // X29 fracture: s_f of an infinite-conductivity fracture = ln(2·rw/x_f) (Prats); the F_cD fit tends to it (F_cD 1,000 within 3 %);
+    // the frac model = Darcy oil with S = s_f exactly
+    {
+      const a = IPR.fracSkin({ xf: 300, rw: 0.354 }), b = IPR.fracSkin({ xf: 300, rw: 0.354, FcD: 1000 });
+      const e1 = Math.abs(a.sf - Math.log(2 * 0.354 / 300)), e2 = Math.abs(b.f / Math.log(2) - 1);
+      const P = { k: 2, h: 40, rw: 0.354, re: 1490, Bo: 1.2, muo: 1.1 }, fr = IPR.curve({ model: 'frac', pr: 3000, params: Object.assign({ xf: 300, FcD: 5 }, P) });
+      const sf = IPR.fracSkin({ xf: 300, rw: 0.354, FcD: 5 }).sf, da = IPR.curve({ model: 'darcyOil', pr: 3000, params: Object.assign({ S: sf }, P) });
+      const e3 = Math.abs(fr.J / da.J - 1);
+      add('X29', 'fracture: Prats limit ln(2rw/x_f), F_cD fit → ln 2 (3 %), frac = Darcy with S = s_f', e1 < 1e-12 && e2 < 0.03 && e3 < 1e-12, Math.max(e1, e3), 1e-12);
+    }
+    // X30 transient: the log approximation vs the exponential-integral line source at t_D > 100 (0.2 %)
+    {
+      const E1 = (x) => { let s = -0.5772156649 - Math.log(x), t = 1; for (let n = 1; n < 60; n++) { t *= -x / n; s -= t / n; } return s; };
+      const k = 20, h = 40, phi = 0.15, ct = 1.5e-5, rw = 0.354, B = 1.2, mu = 0.8, q = 500;
+      let w = 0;
+      [5, 24, 200].forEach((t) => {
+        const r = IPR.transientJ({ k, h, phi, ct, rw, t, B, mu, S: 0 }), dpLog = q / r.J;
+        const dpEi = 70.6 * q * B * mu / (k * h) * E1(948 * phi * mu * ct * rw * rw / (k * t));
+        w = Math.max(w, Math.abs(dpLog / dpEi - 1));
+      });
+      add('X30', 'transient IPR: log approximation vs the exponential-integral line source (t_D > 100)', w < 0.002, w, 0.002);
+    }
+    // X31 multilayer: one layer = the PI exactly; at the commingled static pressure the layer rates sum to 0 (crossflow balance)
+    {
+      const one = IPR.curve({ model: 'multilayer', pr: 3000, layers: [{ name: 'A', topMd: 7990, botMd: 8010, pr: 3000, J: 2 }], perf: { midMd: 8000 }, params: {} });
+      const pi = IPR.curve({ model: 'pi', pr: 3000, params: { J: 2 } });
+      let w = 0; [0.1, 0.5, 0.9].forEach((f) => { const q = f * pi.aof; w = Math.max(w, Math.abs(one.pwfAt(q) - pi.pwfAt(q))); });
+      const two = IPR.curve({ model: 'multilayer', pr: 3000, layers: [{ name: 'A', topMd: 7800, botMd: 7850, pr: 3100, J: 1.2 }, { name: 'B', topMd: 8150, botMd: 8200, pr: 2400, J: 0.9 }], perf: { midMd: 8000 }, params: {} });
+      const bal = two.crossflow.layers.reduce((s, r) => s + r.q, 0);
+      add('X31', 'multilayer: one layer = the PI (psi); layer rates at p_ws sum to 0 (crossflow balance)', w < 1e-6 && Math.abs(bal) < 1e-6 && two.crossflow.thief.length === 1, Math.max(w, Math.abs(bal)), 1e-6);
+    }
+    // X32 injector: the operating point closes (|pwf_VLP − pwf_IPR| < 0.1 psi) and the fracture-limit THP marched back down gives
+    // p_frac at q_frac (injection direction agreement, 0.5 psi)
+    {
+      const Mi = S.FIX.gasWell; Mi.fluid = Object.assign(Mi.fluid, { type: 'waterinj', cgr: 0, wgr: 0, sgw: 1.05 }); Mi.res = { model: 'injector', pr: 3200, T_F: 230, params: { II: 4, pfrac: 5200 }, points: [], layers: [] };
+      Mi.system.thp_psig = 1200; Mi.surface.choke.present = false; Mi.surface.flowline = []; Mi.well.heat.tht_F = 80;
+      const R = solve(Mi), F = G.WTS_wp_fluid.build(Mi.fluid, { T_F: 230 }), W = G.WTS_wp_well.build(Mi.well, { res: Mi.res });
+      const tr = V.traverse(F, W, R.op.q, { from: 'top', p0: 1200 + PATM, inject: true, corr: R.corr.well });
+      const e1 = Math.abs(tr.pEnd - (3200 + R.op.q / 4));
+      const tf = V.traverse(F, W, R.inj.qFrac, { from: 'top', p0: R.inj.thpFrac_psig + PATM, inject: true, corr: R.corr.well }), e2 = Math.abs(tf.pEnd - 5200);
+      add('X32', 'injector: operating point closes (psi) and the fracture-limit THP gives p_frac at q_frac (psi), deviated path', e1 < 0.15 && e2 < 0.5, Math.max(e1, e2), 0.5);
+      // X33 injection column, no flow: the marcher down the deviated path vs RK2 on ρ_w(p, T)
+      const t0 = V.traverse(F, W, 1e-6, { from: 'top', p0: 1200 + PATM, inject: true, corr: 'bb' }), pr = t0.profile.filter((r) => !r.restr);
+      let p = 1200 + PATM;
+      for (let i = 1; i < pr.length; i++) { const dz = pr[i].tvd - pr[i - 1].tvd, tm = 0.5 * (pr[i].t + pr[i - 1].t), r1 = F.at(p, tm).rhoW, r2 = F.at(p + r1 * dz / 144, tm).rhoW; p += 0.5 * (r1 + r2) * dz / 144; }
+      const e3 = Math.abs(t0.pEnd - p) / (p - 1200 - PATM);
+      add('X33', 'injection column at no flow: march down the deviated path vs RK2 (hydrostatic on TVD)', e3 < 1e-4, e3, 1e-4);
+    }
+    // X34 Babu-Odeh: s_R = 0 at full penetration and falls as the lateral fills the box
+    {
+      const g = { a: 2000, b: 4000, h: 50, rw: 0.354, kx: 50, ky: 50, kz: 5 }, s = [2000, 3000, 4000].map((L) => IPR.babuOdehX(Object.assign({ L }, g)).sR);
+      add('X34', 'Babu-Odeh partial penetration: s_R(L = b) = 0, decreasing with L', s[2] === 0 && s[0] > s[1] && s[1] > 0, s[2], 0);
+    }
+    // X35 Build-up hand-off: the latest interpreted test → k, h, S; p̄r moved from the datum by the static gradient
+    {
+      const st = { v: 1, analysis: { well: { fluid: 'oil', h: 40, rw: 0.354 }, depth: { datumTVD: 7900, grad: 0.35 }, tests: [
+        { id: 'B1', status: 'interpreted', tc_ms: 1, date: '2026-01-01', pExtDatum: 3100, result: { final: { k: 10, kh: 400, S: 3, pExtKind: 'pbar' } } },
+        { id: 'B2', status: 'interpreted', tc_ms: 2, date: '2026-03-01', pExtDatum: 3000, result: { final: { k: 12, kh: 480, S: 4, pExtKind: 'pbar' } } }] } };
+      const r = IPR.fromBuildup(st, { midPerfTvd: 8000 });
+      add('X35', 'Build-up hand-off: latest test k / h / S, p̄r at the mid-perforations (datum + 0.35 psi/ft × 100 ft)', r.ok && r.spec.params.k === 12 && r.spec.params.h === 40 && r.spec.params.S === 4 && Math.abs(r.spec.pr - 3035) < 1e-9, r.ok ? Math.abs(r.spec.pr - 3035) : 1, 1e-9);
+    }
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -577,6 +675,14 @@ function timing(G) {
       rec('gas-lift performance curve, 12 points', 'oilWell', g && g.ok ? g.evals : 0, BUDGET.glpc12, nowMs() - t2);
     }
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
+  // B (WP24): the injector solve (flow down the path; one root, no q_s) and a two-layer solve
+  if (G.WTS_wp_inj) {
+    const Mi = S.FIX.gasWell; Mi.fluid = Object.assign(Mi.fluid, { type: 'waterinj', cgr: 0, wgr: 0, sgw: 1.05 }); Mi.res = { model: 'injector', pr: 3200, T_F: 230, params: { II: 4, pfrac: 5200 }, points: [], layers: [] };
+    Mi.system.thp_psig = 1200; Mi.surface.choke.present = false; Mi.surface.flowline = [];
+    let t0 = nowMs(); const Ri = SY.solve(Mi); rec('injector solve (water, deviated, fracture limit)', 'gasWell', Ri.evals, BUDGET.solve1, nowMs() - t0);
+    const Mm = S.FIX.oilWell; Mm.res = { model: 'multilayer', pr: 3000, T_F: 200, params: {}, points: [], layers: [{ name: 'A', topMd: 7800, botMd: 7850, pr: 3100, J: 1.2 }, { name: 'B', topMd: 8150, botMd: 8200, pr: 2400, J: 0.9 }], perf: { midMd: 8000 } };
+    t0 = nowMs(); const Rm = SY.solve(Mm); rec('system solve, two layers with crossflow', 'oilWell', Rm.evals, Rm.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
+  }
   // VLP tuning (A2, WP17; §5.2): PRiSM_lm on the gauge residuals — each residual is one wellhead → gauge march (counted as 1 E;
   // no flowline). Reported only: §16 has no tuning budget.
   const tuneStub = (G.__WP_STUBS || []).indexOf('WTS_wp_match.tune') !== -1;

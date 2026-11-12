@@ -32,7 +32,9 @@
 //       S = WTS_wp_well.schematic(W, R) result: {trajectory:[{md, tvd, dep, n, e, inc, azi}], strings[], restrictions[],
 //            perfs:{topMd, botMd, midMd}, gauges[], choke, profile[{md, tvd, p, t, hl, vm, pattern}]};
 //       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'heatloss' (A2: fluid − earth)|'none', fmt:{p, t, md, vm},
-//            labels, width, height}. Temperature colouring also paints the formation along the hole by the static earth temperature
+//            labels, width, height; B (WP24): layers [{topMd, botMd, name, q, crossflow, label}] drawn as beds at their TVD with
+//            inflow / crossflow arrows, inject (flow arrows down, no choke), frac {md, label} (wings at the mid-perforations),
+//            lateral {label}}. Temperature colouring also paints the formation along the hole by the static earth temperature
 //            (profile te, A2) on the same scale, so the relaxation (heat lost to the earth) reads as the colour step.
 //       Side view (vertical section: TVD against horizontal departure, equal scale) with the strings drawn along the path, the
 //       flow path coloured by the chosen property (a heat map along the well), restrictions, perforations, mid-perf, gauges,
@@ -801,6 +803,19 @@
             g.push('<text x="' + (mp.x + 22).toFixed(1) + '" y="' + (mp.y + 3).toFixed(1) + '" fill="' + T.purple + '" font-size="10" font-weight="700">' + _esc(lab) + '</text>');
             g.push('<title>' + _esc('Layer ' + (li + 1) + ': ' + lab + (ly.ke ? ', k_e ' + ly.ke : '') + ' — ' + D(ly.topMd) + ' to ' + D(ly.botMd)) + '</title></g>');
         });
+        // B (WP24): o.layers = [{topMd, botMd, name, q, crossflow, label}] — reservoir layers drawn as beds across the section at their
+        // TVD (from the trajectory), with an arrow at the well: into the well when the layer produces, out (red) when it takes crossflow
+        var layArrows = [];
+        (o.layers || []).forEach(function (L, li) {
+            if (!L || !_fin(L.topMd) || !_fin(L.botMd)) return;
+            var t0 = tvdOf(L.topMd), t1 = tvdOf(L.botMd); if (!_fin(t0) || !_fin(t1)) return;
+            var y0 = Y(Math.min(t0, t1)), y1 = Y(Math.max(t0, t1)), hh = Math.max(9, y1 - y0), col = L.crossflow ? T.red : T.yellow;
+            g.push('<g class="wp-layer" aria-label="' + _esc('Layer ' + (L.name || li + 1) + ', ' + D(L.topMd) + ' to ' + D(L.botMd) + (L.crossflow ? ', crossflow into the layer' : '')) + '">' +
+                '<rect x="' + mL + '" y="' + (y0 - (hh - (y1 - y0)) / 2).toFixed(1) + '" width="' + aw + '" height="' + hh.toFixed(1) + '" fill="' + col + '" fill-opacity="' + (L.crossflow ? 0.2 : 0.14) + '"/>' +
+                '<line x1="' + mL + '" x2="' + (mL + aw) + '" y1="' + y0.toFixed(1) + '" y2="' + y0.toFixed(1) + '" stroke="' + col + '" stroke-opacity="0.5" stroke-dasharray="4 3"/>' +
+                '<line x1="' + mL + '" x2="' + (mL + aw) + '" y1="' + y1.toFixed(1) + '" y2="' + y1.toFixed(1) + '" stroke="' + col + '" stroke-opacity="0.5" stroke-dasharray="4 3"/></g>');
+            layArrows.push({ md: 0.5 * (L.topMd + L.botMd), col: col, out: !!L.crossflow, label: L.label || L.name });
+        });
         // strings along the path: casing / liner (wide), tubing (narrow); stroke width scales with the OD
         var strs = (S.strings || []).filter(function (s) { return _fin(s.topMd) && _fin(s.botMd) && s.botMd > s.topMd; });
         var odMax = strs.reduce(function (a, s) { return Math.max(a, _fin(s.od) ? s.od : 0); }, 0) || 7;
@@ -864,6 +879,37 @@
             if (mp) { g.push('<line x1="' + (mp.x - 26).toFixed(1) + '" x2="' + (mp.x + 26).toFixed(1) + '" y1="' + mp.y.toFixed(1) + '" y2="' + mp.y.toFixed(1) + '" stroke="' + T.red + '" stroke-dasharray="3 3"/>');
                 labs.push({ side: 1, x: mp.x + 26, y: mp.y, t: 'mid-perf', c: T.red }); }
         }
+        // B (WP24): the layer arrows (into the well = production, out of the well = crossflow), the fracture wings at the mid-perforations,
+        // the lateral label and an injector's flow arrows down the tubing
+        layArrows.forEach(function (la) {
+            var q = interp(path, Math.min(la.md, mdMax)); if (!q) return;
+            var nx = -Math.sin(q.ang), ny = Math.cos(q.ang), x1 = q.x + nx * 34, y1 = q.y + ny * 34, x2 = q.x + nx * 14, y2 = q.y + ny * 14;
+            var ax = la.out ? x1 : x2, ay = la.out ? y1 : y2, bx = la.out ? x2 : x1, by = la.out ? y2 : y1, ux = (ax - bx) / 20, uy = (ay - by) / 20;
+            g.push('<g aria-hidden="true"><line x1="' + bx.toFixed(1) + '" y1="' + by.toFixed(1) + '" x2="' + ax.toFixed(1) + '" y2="' + ay.toFixed(1) + '" stroke="' + la.col + '" stroke-width="2.4"/>' +
+                '<path d="M' + ax.toFixed(1) + ' ' + ay.toFixed(1) + 'l' + (-ux * 6 + uy * 4).toFixed(1) + ' ' + (-uy * 6 - ux * 4).toFixed(1) + 'l' + (-uy * 8).toFixed(1) + ' ' + (ux * 8).toFixed(1) + 'z" fill="' + la.col + '"/></g>');
+            labs.push({ side: -1, x: Math.min(q.x, x1, x2) - 8, y: q.y, t: la.label, c: la.col });
+        });
+        if (o.frac && _fin(o.frac.md)) {
+            var fq = interp(path, Math.min(o.frac.md, mdMax));
+            if (fq) {
+                var fnx = -Math.sin(fq.ang), fny = Math.cos(fq.ang);
+                g.push('<g aria-label="' + _esc('Hydraulic fracture, ' + (o.frac.label || '')) + '"><path d="M' + (fq.x - fnx * 46).toFixed(1) + ' ' + (fq.y - fny * 46).toFixed(1) + 'L' + (fq.x + Math.cos(fq.ang) * 3).toFixed(1) + ' ' + (fq.y + Math.sin(fq.ang) * 3).toFixed(1) +
+                    'L' + (fq.x + fnx * 46).toFixed(1) + ' ' + (fq.y + fny * 46).toFixed(1) + 'L' + (fq.x - Math.cos(fq.ang) * 3).toFixed(1) + ' ' + (fq.y - Math.sin(fq.ang) * 3).toFixed(1) + 'Z" fill="' + T.accent + '" fill-opacity="0.55" stroke="' + T.accent + '"/></g>');
+                labs.push({ side: -1, x: fq.x - fnx * 46 - 4, y: fq.y - fny * 46, t: o.frac.label || 'fracture', c: T.accent });
+            }
+        }
+        if (o.lateral && _fin(pf.topMd) && _fin(pf.botMd)) {
+            var lq = interp(path, Math.min(0.5 * (pf.topMd + pf.botMd), mdMax));
+            if (lq) labs.push({ side: -1, x: lq.x - 10, y: lq.y - 18, t: o.lateral.label || 'lateral', c: T.red });
+        }
+        if (o.inject) {
+            [0.12, 0.3, 0.5, 0.7].forEach(function (f) {
+                var ia = interp(path, mdMax * f), ib = interp(path, mdMax * f + mdMax * 0.04); if (!ia || !ib) return;
+                var dx = ib.x - ia.x, dy = ib.y - ia.y, dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+                g.push('<path aria-hidden="true" d="M' + (ib.x + dx * 6).toFixed(1) + ' ' + (ib.y + dy * 6).toFixed(1) + 'l' + (-dx * 9 + dy * 5).toFixed(1) + ' ' + (-dy * 9 - dx * 5).toFixed(1) + 'l' + (-dy * 10).toFixed(1) + ' ' + (dx * 10).toFixed(1) + 'z" fill="' + T.blue + '"/>');
+            });
+            labs.push({ side: 1, x: path[0].x + 16, y: mT + 16, t: 'injection ↓', c: T.blue });
+        }
         // restrictions
         (S.restrictions || []).forEach(function (r, i) {
             if (!_fin(r.md)) return;
@@ -922,7 +968,7 @@
         var wh = path[0], ck = S.choke || {};
         g.push('<g class="wp-comp" data-comp="wellhead" tabindex="0" role="button" aria-label="Wellhead — surface settings"><rect x="' + (wh.x - 9).toFixed(1) + '" y="' + (mT - 30) + '" width="18" height="28" rx="2" fill="#374151" stroke="#9ca3af"/>' +
             '<rect x="' + (wh.x - 14).toFixed(1) + '" y="' + (mT - 20) + '" width="28" height="6" fill="#9ca3af"/></g>');
-        if (ck.present !== false) {
+        if (ck.present !== false && !o.inject) {
             var cxp = wh.x + 22, cyp = mT - 17;
             g.push('<g class="wp-comp" data-comp="choke" tabindex="0" role="button" aria-label="' + _esc('Surface choke' + (_fin(ck.bean64) ? ' ' + ck.bean64 + '/64 in' : '') + ' — edit') + '">' +
                 '<line x1="' + (wh.x + 14).toFixed(1) + '" x2="' + (cxp + 30).toFixed(1) + '" y1="' + cyp + '" y2="' + cyp + '" stroke="#9ca3af" stroke-width="3"/>' +

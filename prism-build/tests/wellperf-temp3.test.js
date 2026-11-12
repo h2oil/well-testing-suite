@@ -297,12 +297,12 @@ module.exports = [
       P(A).handle('hU', Math.log10(8), 'end'); A.flush(1200);
       assert.ok(A.win.WTS_state.wellperf.surface.tht < tht0 - 1, 'U rail re-solves the enthalpy profile');
       // layers table (TVD columns) → schematic sleeve; click it → step ③ row
-      assert.ok(A.el('wp_tbl_layers'), 'layers table');
+      assert.ok(A.el('wp_tbl_hlayers'), 'layers table');
       A.win.WTS_wp_model.write({ geo: { points: plain(A.win.WTS_wp_model.read().well.geo.points), layers: [[500, 3500, 0.3, null]] } }); A.flush(1200);
       P(A).recalc && P(A).recalc(); A.flush(1200);
-      const lt = txt(A.el('wp_tbl_layers'));
+      const lt = txt(A.el('wp_tbl_hlayers'));
       assert.ok(/Top TVD/.test(lt), 'TVD columns in the layers table');
-      const li = A.el('wp_tbl_layers').querySelectorAll('input');
+      const li = A.el('wp_tbl_hlayers').querySelectorAll('input');
       assert.ok(li.length >= 4 && li[0].value === '500' && li[1].value === '3500' && li[2].value === '0.3', 'the written layer shows in the table');
       assert.ok(A.win.WTS_state.wellperf.ok, 'solved with a layer');
       const sch = A.el('wp_sch').innerHTML;

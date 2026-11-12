@@ -70,7 +70,7 @@
 // Interfaces (field units, §3.0; psia inside the engine; every result {ok, errors[], warnings[{code, msg, sev}], …}):
 //   WTS_wp_vlp
 //     .traverse(F, W, q, o /*{from:'top'|'bottom', p0 psia (or p0_psig), corr, mult, tProfile(md) °F, grid, stepFt, pMax psia,
-//                             rough in, accel, refine, eroC, coarse}*/)
+//                             rough in, accel, refine, eroC, coarse, inject (B, WP24: flow down the path, an injection well)}*/)
 //         → {ok, corr, from, profile:[{md, tvd, inc, p psia, t, hl, pattern, vm, vsl, vsg, rhoS, gradEl, gradF, gradAcc, ero, restr?}]
 //            (ordered by MD, top → bottom), pEnd psia | null, pTop, pBottom, lost {md, reason} | null, grid, segments, restrictionsDp,
 //            restrictions[], vmMax, eroMax, warnings, errors}
@@ -1153,13 +1153,16 @@
         if (rough.mixed) warnings.push(_w('ROUGH_MIXED', 'The strings have different roughness: one length-weighted value ' + _fmt(rough.v, 5) + ' in is used for the whole path.', 'info'));
         var stepFt = +o.stepFt > 0 ? +o.stepFt : 100;
         if (o.coarse) stepFt *= 2;
-        var mo = { corr: key, reverse: from === 'top', tAt: tAt, stepFt: stepFt, detail: true, rough: rough.v,
+        // B (WP24): o.inject — an injection well, the flow runs DOWN the path (wellhead → perforations): from 'top' the march goes with
+        // the flow (forward), from 'bottom' against it; every segment's rise in the flow direction is −dz (hydrostatic gain going down)
+        var inj = !!o.inject;
+        var mo = { corr: key, reverse: inj ? from === 'bottom' : from === 'top', tAt: tAt, stepFt: stepFt, detail: true, rough: rough.v,
             accel: o.accel !== false, payne: o.payne !== false, refine: o.refine !== false };
         if (o.mult && typeof o.mult === 'object' && (+o.mult.hl !== 1 || +o.mult.f !== 1)) mo.mult = o.mult;
         if (+o.pMax > 0) mo.pMax = +o.pMax;
         if (o.grid) mo.grid = o.grid;
         if (+o.eroC > 0) mo.eroC = +o.eroC;
-        var m = G.WTS_flowline_march(mseg.map(function (s) { var c = { name: s.name, len: s.len, id: s.id, dz: s.dz }; if (s.area) c.area = s.area; if (s.restr) c.restr = s.restr; if (SEC) c.corr = s.corr; return c; }),
+        var m = G.WTS_flowline_march(mseg.map(function (s) { var c = { name: s.name, len: s.len, id: s.id, dz: inj ? -s.dz : s.dz }; if (s.area) c.area = s.area; if (s.restr) c.restr = s.restr; if (SEC) c.corr = s.corr; return c; }),
             ff, p0 - PATM, NaN, NaN, mo);
         if (!m) return fail('MISSING_ENGINE', 'the fluid-property library is not loaded');
         if (m.ok === false) return { ok: false, code: m.code || 'MARCH_FAILED', corr: key, errors: m.errors || ['march failed'], warnings: warnings, profile: [], pEnd: null, lost: null };
@@ -1224,7 +1227,7 @@
             if (Eu.verified !== true) warnings.push(_w('PROVISIONAL', Eu.label + ': ' + PROVISIONAL + '.', 'info'));
         });
         if (lost) warnings.push(_w('LOST', 'The traverse stops at MD ' + _fmt(lost.md, 0) + ' ft (' + lost.reason + ').'));
-        var res = { ok: !lost, corr: key, from: from, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
+        var res = { ok: !lost, corr: key, from: from, inject: inj, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
             pTop: prof.length ? prof[0].p : null, pBottom: prof.length ? prof[prof.length - 1].p : null, lost: lost,
             grid: m.grid || null, segments: segOut, restrictionsDp: dpR, restrictions: restr, vmMax: vmMax, eroMax: eroMax,
             rough: rough.v, stepFt: stepFt, warnings: warnings, errors: errors };

@@ -297,8 +297,8 @@ module.exports = [
         assert.strictEqual(I.curve.length, 41); assert.strictEqual(I.curve[0].q, 0); assert.rel(I.curve[40].q, I.aof, 1e-12);
         for (let i = 1; i < 41; i++) assert.ok(I.curve[i].q >= I.curve[i - 1].q, s.model + ' monotone');
       });
-      assert.deepStrictEqual([...keys].sort(), Object.keys(W.models).sort(), 'every A1 model covered');
-      Object.keys(W.models).forEach((k) => { const m = W.models[k]; assert.ok(m.key === k && (m.kind === 'oil' || m.kind === 'gas') && Array.isArray(m.needs) && typeof m.curve === 'function'); });
+      assert.deepStrictEqual([...keys].sort(), Object.keys(W.models).filter((k) => (W.B_KEYS || []).indexOf(k) === -1).sort(), 'every A1 model covered (the increment-B models: wellperf-ipr2)');
+      Object.keys(W.models).filter((k) => (W.B_KEYS || []).indexOf(k) === -1).forEach((k) => { const m = W.models[k]; assert.ok(m.key === k && (m.kind === 'oil' || m.kind === 'gas') && Array.isArray(m.needs) && typeof m.curve === 'function'); });
       ['jbgOil', 'darcyOil', 'litMp', 'darcyGas'].forEach((k) => assert.ok(W.models[k].verified === false && /provisional/.test(W.models[k].provisional), k + ' provisional (D17)'));
       ['pi', 'vogel', 'composite', 'fetkovich', 'backPressure', 'litP2'].forEach((k) => assert.ok(W.models[k].verified === true, k + ' delegated, pinned'));
       assert.strictEqual(W.curve({ model: 'nope', pr: 1 }).code, 'UNKNOWN_MODEL');

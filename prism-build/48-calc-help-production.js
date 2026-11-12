@@ -160,15 +160,15 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '0021b024', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '68bc83be', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
-  'The top block (KPIs, well, system plot, checks, traverse) updates on every solve and goes into the report.'],
+  'The top block updates on every solve and goes into the report.'],
   when: ['Before a test: the rate and wellhead pressure at a choke.', 'After a test: do the rate, THP and gauge agree?', 'Gas wells: does it load up, and where?'],
-  steps: ['Open the **Well Performance** hub in **Production & Reservoir**. **Oil** or **Gas** loads an example.',
+  steps: ['**Oil**, **Gas**, **Horizontal**, **Layers** or **Injector** loads an example.',
   '① **Fluid**: type, gravity, [[glossary#gor|GOR]] and water cut (CGR and WGR for gas).',
-  '② **Reservoir**: inflow model, p̄r (never defaulted) and its parameters, or **Import from PRiSM** (k, h, [[glossary#skin|skin]]).',
+  '② **Reservoir**: inflow model (horizontal, fractured, layers, injector: provisional), p̄r (never defaulted), or **Import from PRiSM** / **Build-up Surveillance**.',
   '③ **Well**: survey (**MD · Inc · Azi** or **MD · TVD**), strings, restrictions, perforations, temperature. **Paste from a spreadsheet**, or the geometry of a [[glossary#dfit|DFIT]] test (**Import well geometry from a DFIT test**).',
   '④ **Lift**: natural flow or gas lift (performance curve, draggable injection rate).',
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
@@ -206,7 +206,7 @@ var wellperf = {
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] },
   { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node from the wellhead to the shoe; the worst depth is shown. A wider casing below the shoe is information. See the **Liquid loading** tab.'] },
-  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or skin.'] },
+  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] },
   { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation (Rs, Bo, μo, Z, μg, density); drag the pb handle. Provisional ones are dashed and never the default.'] },
   { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations**: each one marched from the solved THP (BHP spread, **Use**). **Flow-regime map**: four maps. **Per-section correlations** (⑤) by MD or inclination.'] },
