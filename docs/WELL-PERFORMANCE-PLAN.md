@@ -233,6 +233,7 @@ resolved at call time, never at load, so the order does not matter.
 | `48-calc-help-wellperf.js` (or a section in 48-calc-help-production.js) | help data | guide factory (§14, owner Q15) | WP10 | A1 |
 | `49-calc-wp-lift.js` | engine | `WTS_wp_gl` (glpc, quickLook; B: design wrapper, throughput, diagnose) | WP18 | A2 |
 | `49-calc-wp-export.js` | engine | `WTS_wp_export` (lift tables, PVT tables) | WP20 | B |
+| `49-calc-wp-tables.js` | page panel | `WTS_wp_tables` (step ⑦ lift / PVT table cards, `#wp_ltsum`) | WP20 | B |
 | `49-calc-wp-esp.js` | engine | `WTS_wp_esp` | WP26 | B |
 | `49-calc-wp-cases.js` | engine | `WTS_wp_cases`, `WTS_wp_forecast` | WP27 | B |
 | `prism-build/wellperf-validate.js` | tool | benchmark + timing gate (`--check`, `--time` reports evaluations and ms) | WP11 | A1 |
@@ -1494,6 +1495,54 @@ composite, horizontal, fractured, multilayer, transient, injector IPR and VLP; B
 the shared model, Thornhill-Craver, diagnostics, gradient survey import, Asheim · WP26 ESP · WP27 cases, compare, depletion forecast,
 lift screening, operating envelope, tornado, 4-variable matrix · WP28 SVG well schematic, batch over wells (`WTS_wells` iteration as a
 Job, read-only per well). WP25 and WP26 after WP22 is preferred (temperature at the valve / pump).
+
+#### 18.3.1 WP20 record (2026-11-12, branch wp/b-wp20)
+
+Owner default: Q4 at its proposed default (the lift-curve table text format, producer / injector, + CSV); Q9 not provided — a table export
+is a format, not a method, so it adds no D17 gate entry of its own; it carries the provisional label of every unverified method it uses.
+
+- **Engine (new `49-calc-wp-export.js`, `WTS_wp_export`).** Axes: rate `OIL` | `LIQ` | `GAS` | `WAT`, THP (psia), water fraction `WCT` |
+  `WOR` | `WGR`, gas fraction `GOR` | `GLR` | `OGR`, lift quantity none | `GRAT` (the `ALQ` registry is open: WP26 adds the pump frequency
+  with an `apply()`); value = BHP at the datum. Each point is the solver's own top-down evaluation at that THP (`WTS_wp_system.evalAt`,
+  outflow only): the model's correlation, multipliers, temperature model, restrictions, deviated path and, on a lift-gas axis, the A2
+  injection point solved inside the point; choke / flowline / separator are not in a table. One solver context per (WFR, GFR, ALQ)
+  combination, one frozen step layout per THP row recorded at its middle rate (BHP smooth along each row; X22 ≤ 0.1 psi against a
+  fresh evaluation, the middle rate exact). Datum = an MD (default the mid-perforations; deeper is clamped), read on the traverse; the
+  record carries its TVD. Injector tables (`waterinj` / `gasinj`): the one marcher `WTS_flowline_march` down the reversed path with the
+  rise negated (hydrostatic gained, friction lost), the well's linear temperature (INJ_TEMP note). Lost points (a march over pMax, a
+  lift point whose gas cannot enter) are filled along the rate axis (interpolated; above the last valid rate a straight line never
+  falling — never rising for an injector, ≥ 1 atm; below the first valid rate held; a whole lost row from the next THP row + ΔTHP), listed in
+  the notes, the text header and the CSV flags. **Monotonicity (deviation from §9 as written):** BHP rising with THP is checked on every
+  column; along the rate axis a row is checked for a SINGLE MINIMUM (falling branch, then rising) — BHP is not monotone in rate left of
+  the tubing-curve minimum, which is physical; a second minimum (a correlation's flow-pattern switch, e.g. Beggs & Brill on the wet-gas
+  fixture at 1,400 psia) is flagged, never smoothed. `liftJob` (PRiSM_autoInterp.drive; a step evaluates points for up to 20 ms, at
+  least one — `sliceMs: 0` = one point per step), `liftTable`, `fill`, `monotone`, `text` / `parseText` (round trip), `csv`, `slice`,
+  `interp`, `suggest` (10 × 5 × 4 × 4 × 1–4 around the operating point), `normalize` (≤ 12,000 points). PVT (B9): `pvtTable` (the rows
+  of `WTS_wp_fluid.table` at the reservoir T, the bubble point always a row), `pvtCsv` (field, or metric through WTS_units), `pvtText` /
+  `parsePvtText` (black-oil PVT table text format: live oil with the undersaturated branch under the bubble-point Rs, dry gas, water with
+  cw and viscosibility by central differences; a wet gas exports the gas table only, D14).
+- **Contract changes (additive).** `WTS_wp_system.evalAt(M, q, o)`: `o.outflowOnly` (no inflow built or needed, pIn NaN, pMax default
+  30,000 psia), `o.pMax`, `o.ctx` (from the new `WTS_wp_system.context(M, o)` → `{ok, C}`; one fluid build / property table reused) and
+  `o.thp_psig` (with ctx: the fixed THP of this evaluation). Defaults unchanged (`solve` identical). Page: `#wp_ltsum` inside `#wp_res`;
+  step ⑦ mounts `WTS_wp_tables.html()` and calls `bind()` after `_bindRoot()`.
+- **Page (new `49-calc-wp-tables.js`, `WTS_wp_tables`).** Step ⑦ "Lift-curve tables" card: axis types (only the applicable ones
+  enabled) and values in the table's field units, table number, datum MD with its TVD on the surveyed path, Fill from the model (axes
+  follow the model until edited), point count and time estimate, Run (Job with progress and Cancel), downloads (text, CSV). Results: KPI
+  chips (points, filled, BHP vs THP, single-minimum rows, datum MD · TVD, run time), sliders for the WFR / GFR / ALQ slice, an
+  interactive chart (BHP vs rate, a curve per THP, filled points hollow, the model's inflow with the operating point at each THP when the
+  slice is the model's fluid, a draggable rate line reading every THP's BHP; no legend box on phones — the readout row carries the
+  colours), the slice table with each row's minimum. "PVT table export" card with preview pills and two downloads. Controls `wplt_*`
+  autosave but never solve. The summary `#wp_ltsum` (table, axes, datum MD · TVD, ranges, correlation, ✓ / ⚠ verdicts, provisional
+  labels; "(previous inputs)" after a model change) is in the page report and the Quick Report.
+- **Tests.** `wellperf-export` WX1–WX10 (axes, solver identity, Job / cancel, text round trip and record layout, fill and monotonicity,
+  CSV, lift-gas axis identity, PVT tables, injector hydrostatic, page). Validate: gate 7 (export labels, defaults), X22–X25, timing rows
+  (800 points 800 E ≈ 12.7 s; 3,200 projected ≈ 51 s of 60 s; lift-gas table reported only, ≈ 1.7 E per lifted point).
+- **Help.** Text only, within the caps: the wellperf guide's notDocumented pattern takes `^wplt` (the production file is 47,666 of 47,670
+  bytes); reviewedSrc re-hashed. No screenshot. **Gap:** the guide does not describe the lift-curve / PVT table export (no room under
+  the cap).
+- **Known gaps.** The 3,200-point budget is met with little margin on a loaded container (≈ 51–56 s); lift-gas tables cost ≈ 4× per
+  point; injector tables use the linear temperature profile (WP22 / WP24 should supply the injection temperature and injector VLP —
+  then `_injPoint` should call that); ESP frequency axis waits for WP26; no datum mark on the well schematic.
 
 ### 18.4 Increment C
 

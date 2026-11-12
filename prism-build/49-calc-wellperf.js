@@ -2798,10 +2798,12 @@
                 '<div class="wp-hint">Levenberg-Marquardt fits the holdup multiplier (H_L\' = clamp(m_h·H_L, λ_L, 1)) and, when the tests span at least 2:1 in rate, the friction multiplier to the gauge pressures of the used tests; density, friction and acceleration are rebuilt inside the march on the surveyed path. Apply sends the multipliers into every solve.</div>' +
                 '<div id="wp_tunebox" class="rp-skip"></div><div class="rbox wp-tune" id="wp_tuneres" style="margin-top:10px"></div>') + '</section>';
         var s7 = '<section id="wp_step_7" class="wp-sec" style="display:none"><div class="wp-sec-h">⑦ Report <span>what the page report and the Quick Report carry</span></div>' +
-            _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the traverse card, the correlation validity, the case summary, the studies and tuning summary (PVT family, temperature model and fitted U, gas-lift injection point, optimum, economic point and gain, VLP tuning m_h / m_f and RMS, the sensitivity grid) and the Notes. ' +
+            _card('Report', '<div class="wp-notes">The page report (PDF / PNG from the page export bar) and the Quick Report carry the block at the top of this page: the KPI strip, the well schematic, the system plot, the operating point, the pressure-loss breakdown, the checks, the traverse card, the correlation validity, the case summary, the studies and tuning summary (PVT family, temperature model and fitted U, gas-lift injection point, optimum, economic point and gain, VLP tuning m_h / m_f and RMS, the sensitivity grid), the last lift-curve table and the Notes. ' +
                 'Full tables (traverse, curves, sensitivity, bean schedule) are in the CSV.</div>' +
                 '<div class="fg" style="margin-top:12px">' + _fg('wp_notes', 'Engineer notes (printed in the Notes)', { area: true, rows: 4, def: '', ph: 'Assumptions, data sources, decisions…' }) + '</div>' +
-                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="csv">Export CSV bundle</button></div>') + '</section>';
+                '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="csv">Export CSV bundle</button></div>') +
+            // B (WP20): lift-curve tables and PVT tables (49-calc-wp-tables.js; its summary #wp_ltsum sits in #wp_res)
+            (G.WTS_wp_tables && typeof G.WTS_wp_tables.html === 'function' ? G.WTS_wp_tables.html() : '') + '</section>';
         return s1 + s2 + s3 + s4 + s5 + s6 + s7;
     }
     function _resHtml() {
@@ -2828,6 +2830,7 @@
             '<div class="rbox" id="wp_valid"></div>' +
             '<div class="rbox wp-case" id="wp_case"></div>' +
             '<div class="rbox wp-case" id="wp_studies"></div>' +
+            '<div class="rbox wp-case" id="wp_ltsum"></div>' +
             '<div class="wp-notes" id="wp_notesbox" style="margin:var(--wp-gap) 0"></div>' +
             '</div>' +
             '<details class="wp-drawer rp-skip" id="wp_drawer"><summary>Full results <span class="wp-hint" id="wp_drawer_sum" style="margin:0 0 0 6px"></span></summary><div class="wp-drawer-b" id="wp_drawer_b"></div></details>';
@@ -2842,6 +2845,7 @@
         _syncUi();
         _sensFit();
         _bindRoot();
+        if (G.WTS_wp_tables && typeof G.WTS_wp_tables.bind === 'function') G.WTS_wp_tables.bind();
         // With autosave on, the host restores the saved values silently right after this render and then calls hooks.after,
         // which runs the one calc (as 49-calc-cheminj.js); otherwise calc now.
         var AS = G.WTS_pageAutosave;

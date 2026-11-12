@@ -70,6 +70,11 @@
 //
 // Interfaces (field units, §3.0; psia inside, psig at surface inputs/outputs named *_psig; every result {ok, errors[], warnings[]}):
 //   WTS_wp_system
+//     .evalAt(M, q, o /*{grid, coarse, node, noChoke; B (WP20): outflowOnly — no inflow needed (pIn NaN), pMax psia (default 30000
+//                        with outflowOnly), ctx (a context(M, o) reused: one fluid build and property table, the step layout frozen at
+//                        its first evaluation), thp_psig (with ctx: the fixed THP of this evaluation)}*/) → {ok, q, pOut, pIn, delta, thp,
+//                        regime, lost, tr (the traverse, kept), grid, counts}
+//     .context(M, o)   (B, WP20) → {ok, C} (opaque; for evalAt o.ctx) | the solver's failure object
 //     .solve(M, ctx /*{warm: R.grid | {grid}, coarseOnly, live, node}*/)
 //         → R = {ok, code?, node, mode, corr:{well, line}, roots:[{q, p, stable, dDdq}], op, qs, vlpMin, pwf, traverse,
 //                breakdown:[{key, dp}], surface:{thp psia, thp_psig, tht, thtHyd (THT of the hydrate check), tHyd (hydrate T at
@@ -239,9 +244,10 @@
         // the (p, T)-binned property table of the marcher (§4.5, WP0b FI9: < 0.05 % in BHP) — built once per solve; o.table false = exact props
         var F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F, table: o.table !== false });
         if (!F || !F.ok) return { fail: _fail('NEEDS_FLUID', (F && F.errors && F.errors.length) ? F.errors : ['the fluid is incomplete'], { F: F }) };
-        var I = G.WTS_wp_ipr.curve(M.res, F);
+        // B (WP20, lift tables): o.outflowOnly — the outflow alone (fixed THP, bottom node): no inflow is built or needed (pIn = NaN)
+        var I = o.outflowOnly ? { ok: true, outflowOnly: true, pr: NaN, aof: NaN, pwfAt: function () { return NaN; } } : G.WTS_wp_ipr.curve(M.res, F);
         if (!I || !I.ok) return { fail: _fail('NEEDS_IPR', (I && I.errors && I.errors.length) ? I.errors : ['the inflow is incomplete (p̄r and the model parameters)'], { F: F, I: I }) };
-        if (!(I.aof > 0)) return { fail: _fail('NEEDS_IPR', ['the inflow has no open-flow rate'], { F: F, I: I }) };
+        if (!o.outflowOnly && !(I.aof > 0)) return { fail: _fail('NEEDS_IPR', ['the inflow has no open-flow rate'], { F: F, I: I }) };
         var W = G.WTS_wp_well.build(M.well, { res: M.res, fluidType: type, tests: M.tests, surface: M.surface });
         if (!W || !W.ok || !W.segments || !W.segments.length) return { fail: _fail('NEEDS_WELL', (W && W.errors && W.errors.length) ? W.errors : ['the well has no flow path (survey and strings)'], { F: F, I: I, W: W }) };
         var sys = M.system || {}, V = G.WTS_wp_vlp;
@@ -271,7 +277,7 @@
             // A2 (WP14, §4.6): the relaxation model — one flowing-temperature profile per rate, before the march (tProfile)
             relax: !!(M.well.heat && M.well.heat.mode === 'relax') && _fn('WTS_wp_well.relax') !== null, tCache: {}
         };
-        C.pMax = Math.max(2 * C.pr, C.pr + 3000);
+        C.pMax = +o.pMax > 0 ? +o.pMax : (o.outflowOnly ? 30000 : Math.max(2 * C.pr, C.pr + 3000));   // o.pMax psia (B, WP20)
         // gas lift (A2, WP18; §7.1): M.lift.type 'gaslift' with an injection rate lift.gl.qinj_Mscfd > 0 (0 or blank = natural flow, the
         // exact natural-flow path). Single injection point: the shallower of the packer depth and the depth where the casing gas column
         // (WTS_gaslift_casingP from the surface injection pressure) less the valve ΔP equals the tubing pressure; above it the lift gas
@@ -1551,9 +1557,12 @@
     }
     function evalAt(M, q, o) {
         o = o || {};
-        var cx = _ctx(M, o);
+        // B (WP20): o.ctx = a context from context(M, o) reused across evaluations of the same model (one fluid build, one property
+        // table, the step layout frozen at its first evaluation); o.thp_psig then sets the fixed THP of this evaluation
+        var cx = (o.ctx && o.ctx.C) ? o.ctx : _ctx(M, o);
         if (cx.fail) return cx.fail;
         var C = cx.C;
+        if (o.ctx && o.ctx.C) { C.cache = {}; C.counts = { fine: 0, coarse: 0, line: 0 }; if (_fin(_n(o.thp_psig))) C.thpFix = _n(o.thp_psig); }
         if (o.grid) { C.grids.fine = o.grid.fine || null; C.grids.coarse = o.grid.coarse || null; C.grids.line = o.grid.line || null; }
         var e = _eval(C, q, o.coarse ? false : true, true);
         return { ok: !e.lost, q: q, pOut: e.pOut, pIn: e.pIn, delta: e.delta, thp: e.top && !e.top.lost ? e.top.thp : null, regime: e.top && e.top.regime,
@@ -1562,7 +1571,7 @@
 
     var NS = G.WTS_wp_system = G.WTS_wp_system || {};
     NS.solve = solve; NS.designFor = designFor; NS.maxRate = maxRate; NS.shutIn = shutIn; NS.beanSchedule = beanSchedule; NS.job = job;
-    NS.boundary = boundary; NS.evalAt = evalAt; NS.chokeCurve = chokeCurve; NS.chokeFactor = chokeFactor;
+    NS.boundary = boundary; NS.evalAt = evalAt; NS.context = function (M, o) { var cx = _ctx(M, o || {}); return cx.fail ? cx.fail : { ok: true, C: cx.C }; }; NS.chokeCurve = chokeCurve; NS.chokeFactor = chokeFactor;
     NS._pchip = _pchip; NS._brent = _brent;
     NS.SCAN_FRACS = SCAN_FRACS.slice(); NS.TOL_P = TOL_P; NS.TOL_Q = TOL_Q; NS.GILBERT_YC = GILBERT_YC; NS.LOAD = LOAD; NS.HEADING_FRAC = HEADING_FRAC;
     G.WTS_wp_loading = loading;

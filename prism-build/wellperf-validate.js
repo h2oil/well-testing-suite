@@ -66,12 +66,18 @@ const BENCH = [
   // A2
   { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
   { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
+  // B (WP20): a table export is a format, not a method — no published example applies; the gate checks that the table carries the
+  // provisional label of every unverified method it used and changes no default (the round trip and the solver identity are X22–X25)
+  { kind: 'export', key: 'liftTable', status: 'format', source: 'lift-curve table text format (producer / injector) + CSV — round-trip parser, solver identity (X22–X24)' },
+  { kind: 'export', key: 'pvtTable', status: 'format', source: 'PVT table CSV + black-oil PVT table text format — the fluid engine\'s rows, round trip (X25)' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
 const BUDGET = {
   traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
+  lift800: 800, lift3200: 3200,          // B (WP20): one traverse per lift-table point (§9: 3,200 points ≤ 60 s)
 };
+const LIFT3200_MS = 60000;               // §16: the 3,200-point lift table within 60 s in the container
 
 function _load() {
   const harness = require('./tests/_harness');
@@ -161,6 +167,24 @@ function gate(G) {
       if (!vv || vv.provisional !== true) bad('choke sachdeva', 'check validity does not mark it provisional');
     }
     rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
+  }
+  // 7. the exports (B, WP20): a lift table built with a provisional correlation (and a PVT table with a provisional family) carries the
+  // label in its notes and in the text header; the export changes no default; on the default model the table carries none
+  const XP = G.WTS_wp_export;
+  if (XP && typeof XP.liftTable === 'function') {
+    const sp = { flo: { type: 'OIL', values: [300, 900] }, thp: [300], wfr: { type: 'WCT', values: [0.3] }, gfr: { type: 'GOR', values: [0.5] }, alq: { type: '', values: [0] } };
+    const T0 = XP.liftTable(S.FIX.oilWell, sp);
+    if (!T0.ok) bad('export liftTable', 'the default oil table failed: ' + (T0.errors || []).join('; '));
+    else if (T0.provisional.length || XP.text(T0).indexOf(PROVISIONAL) !== -1) bad('export liftTable', 'the default model (verified Beggs & Brill) carries a provisional label');
+    const Mh = S.FIX.oilWell; Mh.system.corr.well = 'hb';
+    const T1 = XP.liftTable(Mh, sp);
+    if (!T1.ok || !T1.provisional.some((p) => p.indexOf(PROVISIONAL) !== -1) || XP.text(T1).indexOf(PROVISIONAL) === -1) bad('export liftTable', 'a provisional correlation is not labelled in the table');
+    if (D && D.system && D.system.corr && D.system.corr.well && REG[D.system.corr.well] && REG[D.system.corr.well].verified !== true) bad('export liftTable', 'the model default well correlation is provisional');
+    const Mv = S.FIX.oilWell; Mv.fluid.corr.pb = 'vasquezBeggs'; Mv.fluid.corr.rs = 'vasquezBeggs'; Mv.fluid.corr.bo = 'vasquezBeggs';
+    const Pv = XP.pvtTable(Mv), P0 = XP.pvtTable(S.FIX.oilWell);
+    if (!Pv.ok || XP.pvtText(Pv).indexOf(PROVISIONAL) === -1) bad('export pvtTable', 'a provisional PVT family is not labelled in the PVT text table');
+    if (!P0.ok || XP.pvtText(P0).indexOf(PROVISIONAL) !== -1) bad('export pvtTable', 'the default (Standing) PVT table carries a provisional label');
+    ['liftTable', 'pvtTable'].forEach((k) => { const b = benchOf('export', k); rows.push({ kind: 'export', key: k, label: k, verified: true, status: b ? b.status : 'missing', source: b ? b.source : '' }); });
   }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
@@ -365,6 +389,40 @@ function checks(G) {
     const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
     add('X21', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
   }
+  // B (WP20) lift-curve and PVT tables
+  const XP = G.WTS_wp_export;
+  if (XP && typeof XP.liftTable === 'function') {
+    // X22 every lift-table point = the solver's own top-down evaluation at that THP (evalAt, outflowOnly), oil and the deviated wet gas
+    let w22 = 0, ok22 = true;
+    const evalP = (M, thpA, q, mut) => { const Mx = JSON.parse(JSON.stringify(M)); Mx.surface.choke.present = false; Mx.system.thp_psig = thpA - PATM; Mx.system.node = 'bottom'; Mx.system.mode = 'rate'; if (mut) mut(Mx); return SY.evalAt(Mx, q, { outflowOnly: true }); };
+    const spO = { flo: { type: 'OIL', values: [150, 500, 1000] }, thp: [200, 500], wfr: { type: 'WCT', values: [0.3, 0.7] }, gfr: { type: 'GOR', values: [0.5] }, alq: { type: '', values: [0] } };
+    const spG = { flo: { type: 'GAS', values: [2000, 6000, 12000] }, thp: [800, 1600], wfr: { type: 'WGR', values: [0.002] }, gfr: { type: 'OGR', values: [0.02, 0.05] }, alq: { type: '', values: [0] } };
+    const TO = XP.liftTable(S.FIX.oilWell, spO), TG = XP.liftTable(S.FIX.gasWell, spG);
+    if (!TO.ok || !TG.ok) ok22 = false;
+    else {
+      TO.points.forEach((p) => { const e = evalP(S.FIX.oilWell, p.thp, p.flo / (1 - p.wfr), (Mx) => { Mx.fluid.wc = p.wfr; Mx.fluid.gor = p.gfr * 1000; }); if (!e.ok) ok22 = false; else w22 = Math.max(w22, Math.abs(e.pOut - p.bhp)); });
+      TG.points.forEach((p) => { const e = evalP(S.FIX.gasWell, p.thp, p.flo, (Mx) => { Mx.fluid.wgr = p.wfr * 1000; Mx.fluid.cgr = p.gfr * 1000; }); if (!e.ok) ok22 = false; else w22 = Math.max(w22, Math.abs(e.pOut - p.bhp)); });
+    }
+    add('X22', 'lift table: every point = the solver\'s top-down evaluation at its THP (oil, deviated wet gas; psi)', ok22 && w22 < 0.1, w22, 0.1);
+    // X23 the text format and the CSV read back: axes exactly, BHP within the printed 0.005 psi; one CSV row per point
+    let w23 = 0, ok23 = true;
+    [TO, TG].forEach((T) => {
+      if (!T.ok) { ok23 = false; return; }
+      const P = XP.parseText(XP.text(T)); if (!P.ok || JSON.stringify(P.axes) !== JSON.stringify(T.axes)) { ok23 = false; return; }
+      T.points.forEach((p) => { w23 = Math.max(w23, Math.abs(P.bhp[p.t][p.w][p.g][p.a][p.f] - p.bhp)); });
+      if (XP.csv(T).trim().split('\n').length - 2 !== T.n) ok23 = false;
+    });
+    add('X23', 'lift-curve table text format and CSV round trip (axes exact, BHP within 0.005 psi)', ok23 && w23 <= 0.005 + 1e-9, w23, 0.005);
+    // X24 monotonicity: BHP rises with THP on every column; every oil rate row has a single minimum (falling branch, then rising)
+    const ok24 = TO.ok && TG.ok && TO.monotone.thp.ok && TG.monotone.thp.ok && TO.monotone.rate.ok;
+    add('X24', 'lift table: BHP rises with THP on every column (oil, gas); oil rate rows single-minimum', ok24, ok24 ? 0 : 1, 0);
+    // X25 the PVT table rows are the fluid engine's (identical) and the black-oil text table reads back (Bo within the printed 5e-6)
+    const M = S.FIX.oilWell, P = XP.pvtTable(M), F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F });
+    const tb = G.WTS_wp_fluid.table(F, P.rows.map((r) => r.p), M.res.T_F), Q = XP.parsePvtText(XP.pvtText(P));
+    let w25 = JSON.stringify(P.rows) === JSON.stringify(tb.rows) ? 0 : 1;
+    if (Q.ok) Q.oil.forEach((rc) => rc.rows.forEach((r) => { const row = P.rows.find((x) => Math.abs(x.p - r.p) < 1e-3); w25 = Math.max(w25, row ? Math.abs(row.bo - r.bo) : 1); }));
+    add('X25', 'PVT table: the fluid engine\'s rows (identical); black-oil text table round trip (Bo)', P.ok && Q.ok && w25 <= 5e-6 + 1e-12, w25, 5e-6);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -437,6 +495,21 @@ function timing(G) {
     const ts = [mk('A', 350), mk('B', 700), mk('C', 1100)];
     t0 = nowMs(); const r3 = G.WTS_wp_match.tune(M, ts, 'bb', { free: ['hl', 'f'] });
     out.push({ op: 'VLP tuning, 3 tests (m_h, m_f)', fixture: 'oilWell', evals: r3 && r3.lm ? r3.lm.nEval : null, budget: null, ms: nowMs() - t0, okE: true, okMs: true, note: 'reported only' });
+  }
+  // B (WP20) lift-curve tables: one traverse per point (the evaluation count is the stable gate). Measured on 800 points (10 rates × 5 THP ×
+  // 4 WC × 4 GOR, FIX.oilWell); the §9 3,200-point table is that per-point time × 3,200 against its own 60 s cap (§16).
+  const XP = G.WTS_wp_export;
+  if (XP && typeof XP.liftTable === 'function') {
+    const M = S.FIX.oilWell, sp = XP.suggest(M, SY.solve(M));
+    const t0 = nowMs(); const T = XP.liftTable(M, sp); const ms = nowMs() - t0;
+    rec('lift table, 800 points (10 × 5 × 4 × 4)', 'oilWell', T.ok ? T.evals : 0, BUDGET.lift800, ms);
+    const per = ms / Math.max(1, T.n);
+    out.push({ op: 'lift table, 3,200 points (projected)', fixture: 'oilWell', evals: T.ok ? T.evals / T.n * 3200 : null, budget: BUDGET.lift3200, ms: per * 3200, eMs: E.oilWell, cap: LIFT3200_MS,
+      okE: !!T.ok && T.evals / T.n * 3200 <= BUDGET.lift3200 + 1e-9, okMs: per * 3200 <= LIFT3200_MS });
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 500, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const sl = { flo: { type: 'OIL', values: [100, 300, 500, 700, 900] }, thp: [150, 300, 450], wfr: { type: 'WCT', values: [0.6] }, gfr: { type: 'GOR', values: [0.5] }, alq: { type: 'GRAT', values: [0, 250, 500, 1000] } };
+    const t1 = nowMs(); const TL = XP.liftTable(Ml, sl);
+    out.push({ op: 'lift table with lift gas, 60 points (3 of 4 lifted)', fixture: 'oilWell', evals: TL.ok ? TL.evals : null, budget: null, ms: nowMs() - t1, eMs: E.oilWell, cap: 2 * E.oilWell * Math.max(TL.evals || 1, 1), okE: true, okMs: true, note: 'reported only' });
   }
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }
