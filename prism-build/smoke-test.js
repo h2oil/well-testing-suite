@@ -512,7 +512,7 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   let okLoad = false, detail = '';
   try {
     const C = H.load();
-    const files = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities']
+    const files = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'wpcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities']
       .map((g) => '48-calc-help-' + g + '.js');
     const all = files.every((f) => fs.existsSync(path.join(__dirname, f)));
     const n = Object.keys(C.guides || {}).length, t = (C.tasks || []).length;

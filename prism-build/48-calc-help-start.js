@@ -177,7 +177,7 @@ var faq = [
 'Cushion or clean-up straight to the burner: V-101 out to the **Burner / flare line**, then the cushion scenario ([[fs#FS-1|FS-1]]).']),
 'The steps are in FS-1, FS-2 and the [[wts]] guide.'] },
 { id: 'training', q: 'Is there training for the simulator?', a: [
-'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew.',
+'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew. Nodal analysis has the [[wpcourse|Well performance course]].',
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },

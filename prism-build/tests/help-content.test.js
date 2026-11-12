@@ -25,14 +25,14 @@ const GROUP_LABEL = {
   overview: 'Overview', metering: 'Metering & Chokes', welltest: 'Well Test & Flowlines', production: 'Production & Reservoir',
   livedata: 'Live Data', safety: 'Test System Safety', process: 'Separation & Process', flare: 'Flare & Relief', utilities: 'Fluids & Utilities',
 };
-const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities']
+const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'wpcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities']
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 47.6, '49-calc-help-print.js': 15.33, '48-calc-help-start.js': 19.74, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 45.41, '48-calc-help-livedata.js': 16.03,
+  '49-calc-help.js': 48.52, '49-calc-help-print.js': 15.68, '48-calc-help-start.js': 19.8, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 47.67, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
-  '48-calc-help-simcourse.js': 41.72, '48-calc-help-manifest.js': 8.75,
+  '48-calc-help-simcourse.js': 41.72, '48-calc-help-wpcourse.js': 9.83, '48-calc-help-manifest.js': 8.75,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
 // per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
@@ -76,7 +76,12 @@ const CAPS = {
 // draft): 8.05 kB of the pool to production (the guide, its two shots, the hub note on the oilipr / gasdeliv / gaslift guides, Q19)
 // and 0.89 kB to start (the two "How do I…" tasks, 12 → 14); 2.11 kB raw stay unallocated for WP19. wellperf leaves MANUAL_OK (its
 // example is a compute check of WTS_wp_system.solve; a dotted fn is called on its namespace). Gzip after WP10: about 122.9 of 124 kB.
-const SUM_CAP = 357 * KB, GZIP_CAP = 124 * KB;
+// Well Performance WP19 (A2, 2026-11-12): the Well performance course and the A2 guide parts measured as drafted (Q15 default, final
+// numbers from the draft): the allocation rises by 12 kB raw / 4 kB gzip to 369 kB / 128 kB. New file wpcourse 9.83 kB (three
+// exercises); production +2.26 (seven guide parts: PVT families, correlations and flow regimes, flowing temperature, choke, gas lift,
+// two variables and tubing size, VLP tuning), 49-calc-help +0.92 (a course list per course), print +0.35 (a course chapter and
+// worksheets per course), start +0.06 (the training FAQ); the 2.11 kB WP10 left unallocated are used. Measured: 367,974 raw, 127,744 gzip.
+const SUM_CAP = 369 * KB, GZIP_CAP = 128 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
@@ -152,7 +157,7 @@ function textIssues(s, where, ctx) {
     if (r === 'fs') { if (!ctx.fs.has(sec)) e('link to unknown field scenario ' + t); return; }
     if (r === 'course') { if (sec && !ctx.course.has(sec)) e('link to unknown exercise ' + t); return; }
     if (r === 'start') { if (sec && !ctx.start.has(sec)) e('link to unknown Getting started chapter ' + t); return; }
-    if (['tasks', 'scenarios', 'faq', 'landing'].indexOf(r) !== -1) return;
+    if (['tasks', 'scenarios', 'faq', 'landing', 'wpcourse'].indexOf(r) !== -1) return;
     const rr = r === 'dca' || r === 'pta' ? 'prism' : r;
     if (!ctx.routes.has(rr)) { e('link to unknown route ' + t); return; }
     const g = ctx.guides[rr];
@@ -534,7 +539,12 @@ function otherIssues(C, ctx) {
     (t.steps || []).forEach((s, j) => { if (s.route && !ctx.routes.has(s.route)) out.push(w + '.steps[' + j + ']: route ' + s.route + ' is not live'); });
   });
   if ((C.factories || []).some((f) => f && f.group === 'start') && ((C.tasks || []).length < 10 || C.tasks.length > 15)) out.push('tasks: 10–15 "How do I…" tasks expected');
-  (C.course || []).forEach((x, i) => { if (size(x) > 4096) out.push('course[' + i + ']: over 4 kB'); });
+  const CK = new Set((C.COURSES || [['sim'], ['wellperf']]).map((c) => c[0]));
+  (C.course || []).forEach((x, i) => {
+    if (size(x) > 4096) out.push('course[' + i + ']: over 4 kB');
+    if (x.course != null && !CK.has(x.course)) out.push('course[' + i + ']: unknown course ' + x.course);   // course ids per course (WP19)
+    if (x.course && x.course !== 'sim' && x._group === 'simcourse') out.push('course[' + i + ']: the simulator file holds only simulator exercises');
+  });
   (C.scenarios || []).forEach((x, i) => { if (size(x) > 5120) out.push('scenarios[' + i + ']: over 5 kB'); if (!/^FS-\d+$/.test(String(x.id))) out.push('scenarios[' + i + ']: id FS-n'); });
   ['start', 'tasks', 'course', 'scenarios', 'faq'].forEach((k) => (C[k] || []).forEach((x, i) => {
     const seen = (C[k] || []).filter((y) => y.id === x.id).length;
@@ -653,7 +663,7 @@ const TESTS = [
       C.factories.forEach((f, i) => {
         if (!f || !f.group) { issues.push('factory ' + i + ': group missing'); return; }
         present.add(f.group);
-        if (!GROUP_LABEL[f.group] && f.group !== 'start' && f.group !== 'simcourse') issues.push('factory ' + i + ': unknown group ' + f.group);
+        if (!GROUP_LABEL[f.group] && ['start', 'simcourse', 'wpcourse'].indexOf(f.group) === -1) issues.push('factory ' + i + ': unknown group ' + f.group);
         const built = Object.keys(C.guides).filter((r) => C.guides[r]._group === f.group).sort();
         if (JSON.stringify((f.routes || []).slice().sort()) !== JSON.stringify(built)) issues.push('factory ' + f.group + ': routes [' + (f.routes || []) + '] differ from the guides it builds [' + built + ']');
       });
@@ -674,13 +684,13 @@ const TESTS = [
         const g = Object.assign({}, C.guides[r]);
         guideIssues(app, r, g, ctx, (w) => warns.push(w)).forEach((x) => issues.push(x));
       });
-      otherIssues(C, ctx).forEach((x) => issues.push(x));
+      otherIssues(Object.assign({ COURSES: H.COURSES }, C), ctx).forEach((x) => issues.push(x));
       if (warns.length) console.log('[help-content] ' + warns.length + ' readability warning(s):\n  ' + warns.slice(0, 20).join('\n  '));
       fail(assert, issues, 'content');
     },
   },
   {
-    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 357 kB raw and ≤ 124 kB gzip',
+    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 369 kB raw and ≤ 128 kB gzip',
     wp: WP,
     opts: false,
     run(app, assert) {

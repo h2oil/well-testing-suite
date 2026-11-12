@@ -14,7 +14,7 @@ const { patch } = require('../help-host-patch');
 const MODEL = require('./_help-model');
 
 const WP = 'HELP';
-const CONTENT = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities', 'manifest']
+const CONTENT = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'wpcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities', 'manifest']
   .map((g) => '48-calc-help-' + g + '.js');
 const FIX = {
   guides: {
