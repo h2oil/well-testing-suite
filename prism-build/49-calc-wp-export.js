@@ -134,6 +134,15 @@
                 if (!(+Mx.lift.gl.pinj_psig > 0)) return 'a lift-gas axis needs the gas-lift injection pressure (step ④)';
                 Mx.lift.type = 'gaslift'; Mx.lift.gl.qinj_Mscfd = v;
                 return null;
+            } },
+        // B (WP26): the ESP frequency (Hz) of the model's pump (M.lift.type 'esp' with a pump curve and stages)
+        FREQ: { label: 'ESP frequency', unit: 'Hz', types: ['oil', 'water'],
+            apply: function (Mx, v) {
+                if (!(v >= 30 && v <= 90)) return 'the ESP frequency must be 30–90 Hz';
+                Mx.lift = Mx.lift || {};
+                if (Mx.lift.type !== 'esp' || !Mx.lift.esp || !Mx.lift.esp.pump) return 'an ESP frequency axis needs the ESP with a pump curve (step ④)';
+                Mx.lift.esp = Object.assign({}, Mx.lift.esp, { freq: v });
+                return null;
             } }
     };
     [FLO, WFR, GFR, ALQ].forEach(function (r) { Object.keys(r).forEach(function (k) { r[k].key = k; }); });
@@ -195,6 +204,7 @@
         }
         var lift = _get(M, ['lift', 'type'], 'none'), qi = _n(_get(M, ['lift', 'gl', 'qinj_Mscfd']));
         if (!gas && lift === 'gaslift' && +_get(M, ['lift', 'gl', 'pinj_psig'], 0) > 0) spec.alq = { type: 'GRAT', values: _uniq([0, (qi > 0 ? qi : 500) * 0.5, qi > 0 ? qi : 500, (qi > 0 ? qi : 500) * 2].map(_nice)) };
+        else if (!gas && lift === 'esp' && _get(M, ['lift', 'esp', 'pump'])) { var fz = _n(_get(M, ['lift', 'esp', 'freq'])) || 60; spec.alq = { type: 'FREQ', values: _uniq([fz - 10, fz, fz + 5].filter(function (v) { return v >= 30 && v <= 90; })) }; }
         else spec.alq = { type: '', values: [0] };
         return spec;
     }
@@ -235,6 +245,8 @@
             s.alq = { type: at, values: at === '' ? [0] : _vals(spec.alq && spec.alq.values, 'lift quantity', errors, MAX_VALUES.alq, 0) };
             if (wt === 'WCT' && s.wfr.values.some(function (v) { return v >= 1; })) errors.push('water cut values must be below 1 (a fraction)');
             if (at === 'GRAT' && !(+_get(M, ['lift', 'gl', 'pinj_psig'], 0) > 0)) errors.push('a lift-gas axis needs gas lift with an injection pressure (step ④)');
+            if (at === 'FREQ' && !(_get(M, ['lift', 'type']) === 'esp' && _get(M, ['lift', 'esp', 'pump']))) errors.push('an ESP frequency axis needs the ESP with a pump curve (step ④)');
+            if (at === '' && _get(M, ['lift', 'type']) === 'esp') warnings.push(_w('ALQ_MODEL_ESP', 'No lift axis: every point carries the model\'s ESP at ' + _f(+_get(M, ['lift', 'esp', 'freq'], 60) || 60, 1) + ' Hz.', 'info'));
             if (at === '' && _get(M, ['lift', 'type']) === 'gaslift' && +_get(M, ['lift', 'gl', 'qinj_Mscfd'], 0) > 0) warnings.push(_w('ALQ_MODEL_LIFT', 'No lift axis: every point carries the model\'s lift-gas rate (' + _f(+M.lift.gl.qinj_Mscfd, 0) + ' Mscf/d).', 'info'));
         } else { s.wfr = { type: null, values: [0] }; s.gfr = { type: null, values: [0] }; s.alq = { type: null, values: [0] }; }
         var n = s.flo.values.length * s.thp.length * s.wfr.values.length * s.gfr.values.length * s.alq.values.length;
@@ -253,7 +265,7 @@
         Mx.surface = Mx.surface || {}; Mx.surface.choke = Object.assign({}, Mx.surface.choke || {}, { present: false });
         Mx.system = Mx.system || {}; Mx.system.mode = 'rate'; Mx.system.node = 'bottom';
         if (s.kind === 'prod') {
-            if (s.alq.type === 'GRAT' || (s.alq.type === '' && _get(Mx, ['lift', 'type']) !== 'gaslift')) { Mx.lift = Mx.lift || {}; if (s.alq.type === '') Mx.lift.type = 'none'; }
+            if (s.alq.type === 'GRAT' || (s.alq.type === '' && _get(Mx, ['lift', 'type']) !== 'gaslift' && _get(Mx, ['lift', 'type']) !== 'esp')) { Mx.lift = Mx.lift || {}; if (s.alq.type === '') Mx.lift.type = 'none'; }
             // the water fraction first (GLR and the oil / gas rate bases read the water cut)
             var e = WFR[s.wfr.type].apply(Mx, s.wfr.values[w]) || GFR[s.gfr.type].apply(Mx, s.gfr.values[g]) || ALQ[s.alq.type].apply(Mx, s.alq.values[a]);
             if (e) return { error: e };

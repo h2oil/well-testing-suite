@@ -101,6 +101,13 @@ const BENCH = [
   { kind: 'forecast', key: 'gasTank', status: 'pending', source: 'volumetric gas p/Z material balance (e.g. Craft & Hawkins) — closed form X49 only' },
   { kind: 'forecast', key: 'oilTank', status: 'pending', source: 'Havlena & Odeh (1963) straight line with Corey gas flow above S_gc — identity X50 only' },
   { kind: 'screen', key: 'lift', status: 'pending', source: 'Brown (1982); Clegg, Bucaram & Hein (1993) — indicative screening ranges' },
+  // B (WP26): the ESP — the affinity laws are exact similarity relations (pinned: X60); the viscosity correction, the natural separation,
+  // the gas criterion and the motor / cable basics have no checked published example (Q9: Takacs, Electrical Submersible Pumps Manual)
+  { kind: 'esp', key: 'affinity', status: 'pinned', source: 'affinity laws q ∝ f, H ∝ f², P ∝ f³ — exact (X60, wellperf-esp ES2)' },
+  { kind: 'esp', key: 'turzo', status: 'pending', source: 'Turzo, Takacs & Zsuga (2000); Takacs, Electrical Submersible Pumps Manual — coefficients to verify (Q9); water identity only' },
+  { kind: 'esp', key: 'alhanati', status: 'pending', source: 'Alhanati (1993) natural separation (simplified v∞ / (v∞ + v_SL)); Takacs ESP manual, ±3 % — hand check only' },
+  { kind: 'esp', key: 'turpin', status: 'pending', source: 'Turpin, Lea & Bearden (1986) gas-handling criterion — closed form only' },
+  { kind: 'esp', key: 'motor', status: 'pending', source: 'motor load and copper cable voltage drop (basics) — hand check only' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
@@ -110,6 +117,8 @@ const BUDGET = {
   // B (WP27): the envelope (one solve + ≈ 22 marches with the flowline), a 24-step forecast, the tornado (one solve + ≤ 8 E per case),
   // the 3 × 3 × 3 × 3 matrix, the lift screening (one solve + the short performance curve), two cases compared (a cold solve each)
   envelope: 60, forecast24: 160, tornadoPerCase: 8, matrix81: 500, screening: 120, cases2: 48,
+  // B (WP26): ESP stage sizing (≤ 3 evaluations at the target rate) and the rate-against-frequency Job (7 tracking solves ≈ like the bean schedule)
+  espSize: 3, espSweep7: 70,
 };
 const LIFT3200_MS = 60000;               // §16: the 3,200-point lift table within 60 s in the container
 
@@ -278,6 +287,23 @@ function gate(G) {
   if (SCR && typeof SCR.matrix === 'function') {
     const b = benchOf('screen', 'lift'), m = SCR.matrix(S.FIX.oilWell, {});
     if ((!b || b.status === 'pending') && (!m.ok || m.verified !== false || m.provisional !== PROVISIONAL)) bad('screen lift', 'pending without the provisional label');
+  }
+  // 11. the ESP (B, WP26): the method flags agree with BENCH, a pending method is labelled provisional where it is used (the solve's flags
+  // and the check validity), and the default lift type stays natural flow
+  const EP = G.WTS_wp_esp;
+  if (EP && EP.METHODS) {
+    Object.keys(EP.METHODS).forEach((k) => {
+      const e = EP.METHODS[k], b = benchOf('esp', k);
+      if (!b) { bad('esp ' + k, 'no §15.1 entry in BENCH'); return; }
+      const okV = b.status === 'verified' || b.status === 'pinned';
+      if (!!e.verified !== okV) bad('esp ' + k, 'registry verified=' + e.verified + ' but BENCH status ' + b.status);
+      rows.push({ kind: 'esp', key: k, label: e.label, verified: !!e.verified, status: b.status, source: b.source });
+    });
+    if (D && D.lift && D.lift.type !== 'none') bad('esp', 'the default lift type is not natural flow');
+    const Me = S.FIX.oilWell; Me.res.pr = 2200; Me.fluid.wc = 0.6; Me.lift = { type: 'esp', gl: {}, esp: { pump: EP.example(), pumpMd: 7900, stages: 120 } };
+    const Re = G.WTS_wp_system.solve(Me), ck = G.WTS_wp_check(Me);
+    if (!Re.ok || !(Re.flags || []).some((x) => x.code === 'PROVISIONAL_ESP' && x.msg.indexOf(PROVISIONAL) !== -1)) bad('esp', 'a provisional ESP method in use is not labelled in the solve');
+    if (!(ck.validity || []).some((v) => /^esp_/.test(v.corr) && v.provisional && v.msg.indexOf(PROVISIONAL) !== -1)) bad('esp', 'the check validity does not label the provisional ESP methods');
   }
   BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift' || b.kind === 'forecast' || b.kind === 'screen').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
@@ -737,6 +763,33 @@ function checks(G) {
       add('X53b', 'schematic deviation marks: KOP at 3° and the horizontal hold on FIX.devSurvey (ft)', eK < 0.01 && eH < 0.01, Math.max(eK, eH), 0.01);
     }
   }
+  // X60–X63 (B, WP26; numbered from X60 to stay clear of a parallel package): the ESP
+  const EP = G.WTS_wp_esp;
+  if (EP && typeof EP.pump === 'function') {
+    const espM = (o) => { const M = S.FIX.oilWell; M.res.pr = 2200; M.fluid.wc = 0.6; M.well.strings.push({ kind: 'casing', tubKey: null, rough: 0.0006, topMd: 0, botMd: 7950, id: 6.276, od: 7, wall: 0.362 });
+      M.lift = { type: 'esp', gl: {}, esp: Object.assign({ pump: EP.example(), pumpMd: 7900, freq: 60, stages: 120 }, o || {}) }; return M; };
+    // X60 affinity laws on the curve: H(q·r; f) = r²·H(q; 60), P ∝ r³ (relative)
+    const P0 = EP.normPump(EP.example()).pump, c60 = EP.curve(P0, 60); let wA = 0;
+    [40, 50, 70].forEach((f) => { const r = f / 60, c = EP.curve(P0, f); [300, 1200, 2100].forEach((q) => { wA = Math.max(wA, Math.abs(c.head(q * r) / (r * r * c60.head(q)) - 1), Math.abs(c.bhp(q * r, 1) / (r * r * r * c60.bhp(q, 1)) - 1)); }); });
+    add('X60', 'ESP affinity laws on the pump curve: H ∝ f², P ∝ f³ at q ∝ f (relative)', wA < 1e-12, wA, 1e-12);
+    // X61 at the operating point the pump's discharge pressure = the pressure the tubing needs (psi), and the breakdown closes on p̄r − p_sep
+    const M = espM(), R = solve(M), dD = R.ok ? Math.abs(R.lift.pDisReq - R.lift.pDis) : Infinity;
+    const cl = R.ok ? Math.abs(R.breakdown.reduce((a, b) => a + b.dp, 0) - (R.pr - (M.surface.psep_psig + 14.696))) : Infinity;
+    add('X61', 'ESP node: discharge pressure made = needed at the root; breakdown closure with the pump gain (psi)', dD < 0.5 && cl < 0.5, Math.max(dD, cl), 0.5);
+    // X62 node independence (bottom vs wellhead, relative q) and the top-down evaluation without inflow = the bottom-node pwf (relative)
+    const Mh = espM(); Mh.system.node = 'wellhead'; const Rh = solve(Mh), SY2 = G.WTS_wp_system;
+    const e = SY2.evalAt(M, R.op.q, { outflowOnly: true, thp_psig: R.surface.thp_psig, ctx: SY2.context(M, { outflowOnly: true }) });
+    const n1 = Rh.ok ? Math.abs(Rh.op.q / R.op.q - 1) : Infinity, n2 = e.ok ? Math.abs(e.pOut / R.pwf - 1) : Infinity;
+    add('X62', 'ESP: node independence (q) and the top-down pumped march = the bottom-node pwf (relative)', n1 < 0.005 && n2 < 0.0015, Math.max(n1, n2), 0.005);
+    // X63 a water pump: Δp stage by stage = ρ̄·N·H(Q)/144 (relative), the frequency sweep row at 60 Hz = the single solve
+    const W = G.WTS_wp_well.build(M.well, { res: M.res }), Mw = JSON.parse(JSON.stringify(M)); Mw.fluid.type = 'water'; Mw.fluid.sgw = 1.0;
+    const Fw = G.WTS_wp_fluid.build(Mw.fluid, { T_F: 150, table: false }), Pw = EP.prepare(Mw, W), st = EP.pump(Pw, Fw, 1500, 1500, 150);
+    const a = Fw.at(1500, 150, 1500), b2 = Fw.at(st.pDis, 150, 1500), cw = EP.curve(Pw.pump, 60, Math.max(0.5, a.muL / (a.rhoL / 62.428)));
+    const hand = (a.rhoL + b2.rhoL) / 2 * 120 * cw.head(a.qL * 86400 / 5.614583) / 144, w1 = Math.abs(st.dp / hand - 1);
+    const runS = (job) => { let x, n = 0; do { x = job.step(); n++; } while (!x.done && n < 50); return job.result(); };
+    const sw = runS(EP.sweep(M, { freqs: [55, 60] })), r60 = sw.rows.find((x) => x.f === 60), w2 = r60 && r60.ok ? Math.abs(r60.q / R.op.q - 1) : Infinity;
+    add('X63', 'ESP: water pump Δp = ρ·N·H/144 stage by stage; the sweep row at 60 Hz = the single solve (relative)', w1 < 1e-3 && w2 < 0.005, Math.max(w1, w2), 0.005);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -836,6 +889,19 @@ function timing(G) {
     const t0 = nowMs(); const r = run(BT.job({ wells }));
     out.push({ op: 'all wells, 2 wells (oil + wet gas)', fixture: 'oilWell', evals: r.evals, budget: 2 * BUDGET.solve2, ms: nowMs() - t0, eMs: E.oilWell,
       cap: 2 * Math.max(E.oilWell, E.gasWell) * Math.max(r.evals, 1), okE: r.evals <= 2 * BUDGET.solve2 + 1e-9, okMs: nowMs() - t0 <= 2 * Math.max(E.oilWell, E.gasWell) * Math.max(r.evals, 1) });
+  }
+  // B (WP26): the ESP solve (one traverse per evaluation: the intake and discharge segments), stage sizing (≤ 3 evaluations), the
+  // rate-against-frequency Job (7 warm solves) and a lift table on the frequency axis (one top-down pumped march per point, reported)
+  if (G.WTS_wp_esp && typeof G.WTS_wp_esp.sweep === 'function') {
+    const EP = G.WTS_wp_esp, Me = S.FIX.oilWell; Me.res.pr = 2200; Me.fluid.wc = 0.6; Me.lift = { type: 'esp', gl: {}, esp: { pump: EP.example(), pumpMd: 7900, freq: 60, stages: 120 } };
+    let t0 = nowMs(); const Re = SY.solve(Me); rec('system solve with an ESP', 'oilWell', Re.evals, Re.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
+    t0 = nowMs(); const z = EP.sizeStages(Me, 1100); rec('ESP stages for a rate', 'oilWell', z.evals || 0, BUDGET.espSize, nowMs() - t0);
+    t0 = nowMs(); const sw = run(EP.sweep(Me, { freqs: [40, 45, 50, 55, 60, 65, 70] })); rec('ESP rate against frequency, 7 frequencies', 'oilWell', sw.evals || 0, BUDGET.espSweep7, nowMs() - t0);
+    t0 = nowMs(); const dz = run(SY.designFor(Me, { freq: 750 })); rec('ESP frequency for a rate (' + (dz.solves || 0) + ' solves)', 'oilWell', dz.evals || 0, BUDGET.design, nowMs() - t0);
+    if (G.WTS_wp_export) {
+      t0 = nowMs(); const T = G.WTS_wp_export.liftTable(Me, { flo: { type: 'LIQ', values: [400, 800, 1200] }, thp: [150, 300], wfr: { type: 'WCT', values: [0.6] }, gfr: { type: 'GOR', values: [0.5] }, alq: { type: 'FREQ', values: [50, 60] } });
+      out.push({ op: 'lift table on the ESP frequency axis, 12 points', fixture: 'oilWell', evals: T.ok ? T.evals : null, budget: null, ms: nowMs() - t0, eMs: E.oilWell, cap: 2 * E.oilWell * Math.max(T.evals || 1, 1), okE: true, okMs: true, note: 'reported only' });
+    }
   }
   // VLP tuning (A2, WP17; §5.2): PRiSM_lm on the gauge residuals — each residual is one wellhead → gauge march (counted as 1 E;
   // no flowline). Reported only: §16 has no tuning budget.

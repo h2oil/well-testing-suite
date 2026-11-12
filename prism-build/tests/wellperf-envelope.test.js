@@ -113,7 +113,7 @@ module.exports = [
     },
   },
   {
-    name: 'WSC2 screening Job: natural = the solve, gas lift = the quick-look optimum, ESP not available (never natural flow), pump potential = IPR',
+    name: 'WSC2 screening Job: natural = the solve, gas lift = the quick-look optimum, ESP = the pumped solve or not available (never natural flow), pump potential = IPR',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const G = app(ctx).win, SC = G.WTS_wp_screen, SY = G.WTS_wp_system;
@@ -125,7 +125,13 @@ module.exports = [
       const g = run(G.WTS_wp_gl.glpc(Mg, { qinjList: [0, 500, 1000, 2000, 3500] }));
       assert.ok(r.gaslift.ok && r.gaslift.assumedPinj && r.gaslift.pinj_psig === 1000 && Math.abs(r.gaslift.qL - g.optimum.qL) < 1e-9 && r.gaslift.qinj === g.optimum.qinj, 'gas lift = the quick-look optimum: ' + r.gaslift.qL + ' at ' + r.gaslift.qinj);
       assert.ok(r.warnings.some((w) => w.code === 'PINJ_ASSUMED'), 'screening pressure stated');
-      assert.ok(!r.esp.ok && r.esp.code === 'ESP_NOT_AVAILABLE' && r.esp.q == null, 'ESP not available, no natural-flow number');
+      // B (WP26): with the ESP engine and no pump in the model the ESP rate needs the pump (NEEDS_PUMP) — never the natural-flow number
+      assert.ok(!r.esp.ok && (r.esp.code === 'ESP_NOT_AVAILABLE' || r.esp.code === 'NEEDS_PUMP') && r.esp.q == null, 'ESP without a pump: no rate, no natural-flow number (' + r.esp.code + ')');
+      if (G.WTS_wp_esp) {
+        const Me = JSON.parse(JSON.stringify(M)); Me.lift = { type: 'none', esp: { pump: G.WTS_wp_esp.example(), pumpMd: 7900, freq: 60, stages: 150 } };
+        const re = run(SC.job(Me, { pwfMin: 500 })), Re = SY.solve(Object.assign({}, Me, { lift: Object.assign({}, Me.lift, { type: 'esp' }) }));
+        assert.ok(re.esp.ok && Re.ok && Math.abs(re.esp.q - Re.op.q) < 1e-9 && (!r.natural.ok || re.esp.q > r.natural.q), 'ESP rate = the pumped solve: ' + JSON.stringify([re.esp, Re.ok && Re.op.q, r.natural]));
+      }
       const F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), I = G.WTS_wp_ipr.curve(M.res, F);
       assert.ok(Math.abs(r.potential.q - I.qAt(500)) < 1e-9 && r.potential.pwf === 500, 'pump potential');
       assert.ok(r.evals < 120, 'screening ' + r.evals + ' E');
