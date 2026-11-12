@@ -69,6 +69,8 @@ const BENCH = [
   { kind: 'system', key: 'nodal', status: 'pending', source: 'Beggs, Production Optimization Using Nodal Analysis — operating point ±2 % q' },
   { kind: 'well', key: 'minCurvature', status: 'pinned', source: 'closed-form circular arc (FIX.devSurvey, wellperf-well) ±0.01 ft' },
   { kind: 'temp', key: 'relax', status: 'pending', source: 'Hasan & Kabir, Fluid Flow and Heat Transfer in Wellbores (Ramey / Hasan-Kabir relaxation), ±2 °F — A2 WP14; closed form + RK4 cross-check X16 only' },
+  // B (WP22)
+  { kind: 'temp', key: 'enthalpy', status: 'pending', source: 'Alves, Alhanati & Shoham (1992) unified wellbore temperature model; Hasan & Kabir — no verifiable published traverse (Q9); identities X40–X42 only' },
   // A2
   { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
   // B (WP23): PVT lab match (least squares — needs no published example), the differential → flash adjustment, the modified black oil
@@ -84,7 +86,7 @@ const BENCH = [
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
 const BUDGET = {
-  traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
+  traverse: 1, solve1: 20, solve2: 24, solveEnth1: 30, solveEnth2: 34, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
 };
 
 function _load() {
@@ -158,6 +160,15 @@ function gate(G) {
     if (!Rr.ok || !Rr.heat || Rr.heat.mode !== 'relax') bad('temp relax', 'no relaxation result on FIX.oilWell');
     else if (pend && (Rr.heat.verified !== false || Rr.heat.provisional !== PROVISIONAL)) bad('temp relax', 'pending without the provisional label');
     if (pend && D && D.well && D.well.heat && D.well.heat.mode === 'relax') bad('temp relax', 'a pending method is the default temperature model');
+  }
+  // 5b. the enthalpy-balance temperature (B, WP22): pending → R.heat carries the label and verified:false, never the default
+  const te = benchOf('temp', 'enthalpy');
+  if (te && G.WTS_wp_well && typeof G.WTS_wp_well.enthalpy === 'function') {
+    const Me = S.FIX.gasWell; Me.well.heat.mode = 'enthalpy';
+    const Re = G.WTS_wp_system.solve(Me), pend = te.status === 'pending';
+    if (!Re.ok || !Re.heat || Re.heat.mode !== 'enthalpy') bad('temp enthalpy', 'no enthalpy result on FIX.gasWell');
+    else if (pend && (Re.heat.verified !== false || Re.heat.provisional !== PROVISIONAL || !Re.flags.some((x) => x.code === 'PROVISIONAL_TEMP'))) bad('temp enthalpy', 'pending without the provisional label');
+    if (pend && D && D.well && D.well.heat && D.well.heat.mode === 'enthalpy') bad('temp enthalpy', 'a pending method is the default temperature model');
   }
   // 6. the choke model (A2, WP15): pending → verified:false, the provisional label on every flag / validity line, never the default
   const SD = G.WTS_chokeperf_SACHDEVA, bS = benchOf('choke', 'sachdeva');
@@ -460,6 +471,41 @@ function checks(G) {
     });
     add('X27', 'direction agreement, the five B correlations (oil and wet gas): top-down then bottom-up returns the wellhead pressure', worst < 0.5, worst, 0.5);
   }
+  // X40 enthalpy balance (B, WP22): the piecewise-exact march with a step source and two U layers vs RK4 on the deviated FIX.gasWell path (°F),
+  // and the adiabatic gravity lapse TVD / (J c_p) with U → 0
+  if (G.WTS_wellbore && typeof G.WTS_wellbore.flowingTemp === 'function') {
+    const WB = G.WTS_wellbore, M = S.FIX.gasWell, W = G.WTS_wp_well.build(M.well, { res: M.res }), mid = W.nodes.midPerfMd;
+    const o = { w: 12000, cp: 0.55, U_to: 2, ke: 1.4, r_to: 2.875 / 24, rwb: 8.5 / 24, t_hr: 720, geo: { points: [[0, 70], [4000, 120], [9300, 230]] }, Tin: 240 };
+    const col = { tvdAt: W.tvdAt, mdAt: W.mdAt, datumMd: mid, survey: W.stations.map((x) => [x.md, x.tvd]), segments: [] };
+    const ly = [{ topMd: 0, botMd: 2500, U_to: 12, ke: 1.1 }, { topMd: 6000, botMd: 7000, U_to: 0.3 }], psiAt = (md) => (md < 3000 ? 0.012 : md < 6500 ? -0.004 : 0.0021);
+    const r = WB.flowingTemp(col, Object.assign({}, o, { layers: ly, src: (a, b) => psiAt(0.5 * (a + b)), srcCuts: [3000, 6500] }));
+    const Aof = (md) => { const L = md <= 2500 ? ly[0] : (md >= 6000 && md <= 7000 ? ly[1] : null); if (!L) return r.A; const ke = L.ke || 1.4; return (o.w * o.cp / (2 * Math.PI)) * (ke + o.r_to * L.U_to * r.fTD) / (o.r_to * L.U_to * ke); };
+    const geoF = (tvd) => (tvd <= 4000 ? 70 + 50 * tvd / 4000 : 120 + 110 * (tvd - 4000) / 5300), f = (md, T) => (geoF(W.tvdAt(md)) - T) / Aof(md) + psiAt(md);
+    let T = 240, md = mid; while (md > 1e-9) { const h = Math.min(1, md), k1 = f(md, T), k2 = f(md - h / 2, T + h * k1 / 2), k3 = f(md - h / 2, T + h * k2 / 2), k4 = f(md - h, T + h * k3); T += h * (k1 + 2 * k2 + 2 * k3 + k4) / 6; md -= h; }
+    const e1 = Math.abs(r.tOut - T);
+    const ad = WB.flowingTemp(col, Object.assign({}, o, { U_to: 1e-9, src: (a, b) => -((W.tvdAt(b) - W.tvdAt(a)) / (b - a)) / (778.17 * o.cp) }));
+    const e2 = Math.abs(ad.tOut - (240 - W.nodes.midPerfTvd / (778.17 * o.cp)));
+    add('X40', 'enthalpy balance: march with a step source and U layers vs RK4 on the deviated path; adiabatic gravity lapse (°F)', e1 < 0.02 && e2 < 1e-3, Math.max(e1, e2), 0.02);
+  }
+  // X41 the liquid identity (J-T + gravity = −β T_R sinθ / (J c_p) in a hydrostatic water column), η_gas = the real-gas μ_JT of WTS_gaspvt_state
+  // (≤ 0.5 %), and the energy budget of FIX.gasWell closes (T_in + loss + J-T + gravity + kinetic = THT)
+  if (G.WTS_wp_well && typeof G.WTS_wp_well.jtMix === 'function') {
+    const N = G.WTS_wp_well, Mw = S.FIX.oilWell; Mw.fluid.wc = 1; Mw.fluid.gor = 0;
+    const Fw = G.WTS_wp_fluid.build(Mw.fluid, { T_F: Mw.res.T_F, table: true }), hw = N.heatFlow(Fw, 1000, { T: 150, p: 2000 });
+    const jw = N.jtMix(Fw, 1000, 3000, 200, hw), pr = G.WTS_flowline_props(G.WTS_wp_fluid.flowlineFluid(Fw, 1000), 3000, 200), TR = 659.67;
+    const e1 = Math.abs((jw.eta * (-pr.rhoW / 144) - 1 / (778.17 * hw.cp)) - (-N.ENTH.beta.water * TR / (778.17 * hw.cp)));
+    const Mg = S.FIX.gasWell, Fg = G.WTS_wp_fluid.build(Mg.fluid, { T_F: Mg.res.T_F, table: true }), hg = N.heatFlow(Fg, 7400, { T: 160, p: 2500 });
+    const jg = N.jtMix(Fg, 7400, 2500, 160, hg), st = G.WTS_gaspvt_state(Fg.sgg, 2500, 160, 0, 0, 0), e2 = Math.abs(jg.etaGas * hg.cpParts.gas / (st.cpReal / 4.1868 / st.M) / st.muJT - 1);
+    Mg.well.heat.mode = 'enthalpy';
+    const Re = G.WTS_wp_system.solve(Mg), b = Re.ok && Re.heat && Re.heat.budget, e3 = b ? Math.abs(b.tIn + b.loss + b.jt + b.grav + b.kin - b.tOut) : 1;
+    add('X41', 'enthalpy balance: liquid adiabatic identity (°F/ft), η_gas vs real-gas μ_JT (rel.), energy budget closure (°F)', e1 < 1e-12 && e2 < 0.005 && e3 < 1e-9, Math.max(e1, e3), 1e-9);
+  }
+  // X42 the predictor pass: the enthalpy THT re-run on the reported traverse's pressures moves < 0.5 °F (both fixtures)
+  if (G.WTS_wp_well && typeof G.WTS_wp_well.enthalpy === 'function') {
+    let w = 0;
+    ['oilWell', 'gasWell'].forEach((k) => { const M = S.FIX[k]; M.well.heat.mode = 'enthalpy'; const R = G.WTS_wp_system.solve(M); w = Math.max(w, R.ok && R.heat && Number.isFinite(R.heat.passCheck) ? R.heat.passCheck : 99); });
+    add('X42', 'enthalpy balance: predictor pass check, THT on the solution pressures vs the predictor (°F)', w < 0.5, w, 0.5);
+  }
   return { ok: out.every((c) => c.ok), rows: out };
 }
 
@@ -505,6 +551,12 @@ function timing(G) {
     const M = S.FIX[k]; M.well.heat.mode = 'relax';
     const t0 = nowMs(); const R = SY.solve(M);
     rec('system solve, relaxation temperature', k, R.evals, R.roots.length > 1 ? BUDGET.solve2 : BUDGET.solve1, nowMs() - t0);
+  });
+  // the enthalpy balance (B, WP22): + one ¼ E predictor traverse per distinct rate (R.counts.pred)
+  ['oilWell', 'gasWell'].forEach((k) => {
+    const M = S.FIX[k]; M.well.heat.mode = 'enthalpy';
+    const t0 = nowMs(); const R = SY.solve(M);
+    rec('system solve, enthalpy temperature (' + ((R.counts && R.counts.pred) || 0) + ' predictors)', k, R.evals, R.roots.length > 1 ? BUDGET.solveEnth2 : BUDGET.solveEnth1, nowMs() - t0);
   });
   {
     const M = S.FIX.oilWell; M.surface.choke.present = false; M.system.thp_psig = 300;

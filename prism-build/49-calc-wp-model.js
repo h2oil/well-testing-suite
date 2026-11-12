@@ -8,6 +8,8 @@
 //   wts_page_wellperf   host autosave of the page's id'd scalar controls ({f: {id: value}}; unit-tagged inputs canonical imperial)
 //   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases,
 //                       corrSections (v4.5 WP21: per-section correlations → M.system.corr.sections)}
+//                       (B, WP22: geo.layers [[topMd, botMd, U, ke|null]] — heat-transfer layers by depth → M.well.heat.layers [{topMd,
+//                       botMd, U, ke}], present only when the record has layers)
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -126,7 +128,7 @@
         wp_perfTop: { path: 'well.perfTopMd', kind: 'num' }, wp_perfBot: { path: 'well.perfBotMd', kind: 'num' },
         wp_midPerf: { path: 'well.midPerfMd', kind: 'num' }, wp_path: { path: 'well.path', kind: 'str', enumv: ['tubing', 'annulus'] },
         wp_surfT: { path: 'well.geo.surfT_F', kind: 'num' },
-        wp_heat: { path: 'well.heat.mode', kind: 'str', enumv: ['linear', 'relax'] }, wp_tht: { path: 'well.heat.tht_F', kind: 'num' },
+        wp_heat: { path: 'well.heat.mode', kind: 'str', enumv: ['linear', 'relax', 'enthalpy'] }, wp_tht: { path: 'well.heat.tht_F', kind: 'num' },
         wp_thtMeas: { path: 'well.heat.thtMeasured', kind: 'bool' },
         wp_Uto: { path: 'well.heat.U_to', kind: 'num' }, wp_tprod: { path: 'well.heat.tProd_d', kind: 'num' },
         wp_ke: { path: 'well.heat.ke', kind: 'num' }, wp_alpha: { path: 'well.heat.alpha', kind: 'num' },
@@ -248,6 +250,17 @@
         }).filter(function (x) { return _fin(x.md) && x.md >= 0 && _fin(x.id) && x.id > 0; }).slice(0, 20);
         var geo = _isObj(r.geo) ? r.geo : {};
         out.geo = { points: _rowsNum(geo.points, 2).filter(function (p) { return p[0] >= 0; }).sort(function (a, b) { return a[0] - b[0]; }).slice(0, 50) };
+        // B (WP22): heat-transfer layers by depth [[topMd, botMd, U, ke | null]] (U on the model's basis); kept only when present
+        if (Array.isArray(geo.layers) && geo.layers.length) {
+            var ly = [];
+            geo.layers.forEach(function (r) {
+                if (!Array.isArray(r) || r.length < 3) return;
+                var a = _num(r[0]), b = _num(r[1]), u = _num(r[2]), k = _num(r[3]);
+                if (_fin(a) && _fin(b) && a >= 0 && b > a && _fin(u) && u > 0) ly.push([a, b, u, _fin(k) && k > 0 ? k : null]);
+            });
+            if (ly.length !== geo.layers.length) warnings.push(_w('ROWS_DROPPED', 'heat layers: ' + (geo.layers.length - ly.length) + ' row(s) dropped (top MD < bottom MD and U > 0 needed)'));
+            if (ly.length) out.geo.layers = ly.sort(function (x, y) { return x[0] - y[0]; }).slice(0, 20);
+        }
         out.flowline = (Array.isArray(r.flowline) ? r.flowline : []).filter(_isObj).map(function (s) {
             return { name: String(s.name == null ? '' : s.name).slice(0, 40), len: _num(s.len), id: _num(s.id), dz: _num(s.dz) || 0 };
         }).filter(function (s) { return _fin(s.len) && s.len > 0 && _fin(s.id) && s.id > 0; }).slice(0, 10);
@@ -348,6 +361,7 @@
         if (rec) {
             M.well.survey = rec.survey; M.well.strings = rec.strings; M.well.restrictions = rec.restrictions;
             M.well.geo.points = rec.geo.points; M.surface.flowline = rec.flowline;
+            if (rec.geo.layers) M.well.heat.layers = rec.geo.layers.map(function (r) { return { topMd: r[0], botMd: r[1], U: r[2], ke: r[3] }; });   // B (WP22)
             M.surface.rating = rec.rating; M.surface.beans = rec.beans.length ? rec.beans : M.surface.beans; M.tests = rec.tests;
             M.cases = rec.cases; if (rec.pump) M.lift.esp = { pump: rec.pump };
             if (rec.lab) {

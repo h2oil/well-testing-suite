@@ -1603,6 +1603,52 @@ lab match itself is least squares on the user's points (no published example nee
   interfacial shear in the combined balance; Orkiszewski and AGF transition / mist reuse the Duns & Ros chart readings (provisional).
   Sections apply to the producing well only (flowline keeps one correlation). The help screenshots of step ⑤ were not re-taken (image cap
   full); the guide carries one sentence (text cap).
+#### 18.3.3 WP22 record (2026-11-12, branch wp/b-wp22)
+
+- **Engine (`48-calc-wellbore.js`, additive):** `flowingTemp(column, opts)` takes `opts.layers [{topMd, botMd, U_to, ke?}]` (U by depth on the
+  outside-radius basis; outside every layer the scalar U) and `opts.src(mdA, mdB)` → ψ °F/ft along the flow with `opts.srcCuts`. Per piece
+  dT/dz = (T_ei − T)/A_k + ψ, solved exactly: T = T_ei + (T_0 − T_ei,0)e^(−L/A_k) + (ψ − s)A_k(1 − e^(−L/A_k)). Without both options the
+  result is the v4.4 one bit for bit (no new keys; TT1–TT9 unchanged, TH1); with them the result adds `layers`, `Amin`, `Amax`, `src:true`
+  and profile rows `psi`, `A`; `offsetOut` = (ψ − s)·A of the last piece. `flowingTempFitU` passes both through.
+- **`WTS_wp_well` (additive):** `enthalpy(W, F, q, {rows, heat, budget})` — the steady enthalpy balance (Alves et al. 1992 unified form,
+  Hasan & Kabir): ψ = η dp/dz − g sinθ/(g_c J c_p) − v_m dv_m/dz/(g_c J c_p) per interval of a traverse's rows (MD, TVD, p psia, v_m; a
+  restriction belongs to the interval above), η the mixture J-T coefficient Σ x_i c_p,i η_i / c_p with in-situ mass fractions
+  (WTS_flowline_props), gas η = R T² (∂Z/∂T)_p / (p M c_p) from WTS_gaspvt_z (equal to WTS_gaspvt_state.muJT within 0.5 %; the isenthalp
+  as a fallback), liquids −(1 − βT_R)·144/(ρ J c_p) with assumed β oil 5.0e-4, water 2.5e-4 1/°F; η evaluated on the relaxation
+  temperatures. Returns the relax() fields plus `mode:'enthalpy'`, `tht`, `thtRelax`, `tAtRelax`, `dT`, `intervals[{md0, md1, eta, x,
+  dpdz, psiJT, psiG, psiK}]`, `eta{top, bottom, min, max, gasSource}`, `budget{tIn, loss, jt, grav, kin, tOut}` (linear superposition on
+  the same piece cuts — closes exactly), `beta`, `provisional`, `verified:false`; `NO_PROFILE` without rows. `jtMix(F, q, p, T, hf?)`,
+  `ENTH {beta, J, gc, label}`. Layered U (`heat.layers [{topMd, botMd, U (model basis), ke}]`) applies to `relax()` too (adds `layers`,
+  `Amin`, `Amax`; null without layers). `fitU(W, F, q, tht, {rows})` fits U with the enthalpy source held (one fixed-point pass on the
+  property temperatures; `model:'enthalpy'|'relax'`). `temperature(W, {mode:'enthalpy', profile})` → verdict `'enthalpy'`, thtHyd = the
+  profile THT (the J-T change is in the profile; no double correction). Schematic: profile keys `tRelax`, `djt`; `heatLayers [{topMd,
+  botMd, topTvd, botTvd, U, ke}]`. Version '4.5-wp22'.
+- **`WTS_wp_system`:** `M.well.heat.mode 'enthalpy'` — per rate a predictor traverse bottom-up from the IPR's pwf(q) on a coarse path
+  (pieces of one bore merged to ≤ 1,500 ft, true TVD change kept), step 4 × stepFt (≤ 400 ft), no refine, its own frozen grid (`R.grid.pred`,
+  passed by `warm` and `evalAt`), on the relaxation profile; then `enthalpy()` on its rows is the march's tProfile and the THT at q (cache by
+  q). Counted ¼ E each (`R.counts.pred`, present only in this mode). `R.heat` adds `thtRelax, dT, eta, beta, budget, passCheck` (THT
+  re-run on the reported traverse pressures: 0.005 °F oil, 0.11 °F gas), `intervals`, `layers`, `Amin`, `Amax`; traverse rows `tRelax`.
+  Gas lift and a failed balance fall back to the relaxation (`ENTH_FALLBACK`), no geotherm to linear (`R.heat.enthFallback`). Flag
+  `PROVISIONAL_TEMP` names the enthalpy balance.
+- **`WTS_wp_match.thtFit`:** in the enthalpy mode each test with a THP is marched down (400 ft, no refine) and U fitted with that source
+  (`row.model`). `compare` / QC_THT keep the A2 paths (the enthalpy mode is marched like the linear mode with each test's THT).
+- **Model:** `wp_heat` enum adds `'enthalpy'`; `geo.layers [[topMd, botMd, U, ke|null]]` in `wts_wellperf_model` (validated, ≤ 20 rows,
+  present only when given) → `M.well.heat.layers`. DEFAULTS unchanged (linear; no layers key).
+- **Page:** temperature option "Enthalpy balance (J-T, gravity, kinetic; U by depth)" (relaxation inputs serve it too); step ③ box
+  "Enthalpy balance at the operating point" (THT, against the relaxation, J-T coefficient at the perforations / wellhead in °F/psi or °C/bar,
+  U layers with the A range, pass check) and an energy-budget waterfall (reservoir → heat to the earth → J-T → gravity → kinetic → THT,
+  HTML bars with CSS transitions, reduced-motion off); heat-layer table (MD with computed TVD columns; re-rendered on a geo write from
+  elsewhere); traverse: "Temperature (enthalpy balance)" with the dashed relaxation curve, U / TIME rails re-solve live; schematic: layer
+  sleeves labelled with U (component, click / Enter edits the row) and "J-T + gravity ΔT" colouring; KPI THT chip "enthalpy · J-T etc. ±x";
+  checks, case summary, studies and Notes in `#wp_res`. Help: one sentence in the wellperf "Flowing temperature" part; reviewedSrc updated.
+- **Validation:** BENCH `temp enthalpy` pending (Q9: no verifiable published traverse), gate 5b (label, never the default); X40 (march with a
+  step source and two U layers vs RK4 on the deviated FIX.gasWell path 9.9e-4 °F; adiabatic gravity lapse), X41 (liquid identity J-T +
+  gravity = −βT_R sinθ/(J c_p) exact; η_gas vs real-gas μ_JT; budget closure), X42 (pass check < 0.5 °F); `--time` rows "system solve,
+  enthalpy temperature": oil 27.8 E (27 predictors, budget 34), gas 20.3 E (budget 30), ≈ +15–20 % ms over the relaxation. (Numbered X40+
+  to avoid the X22–X25 of WP20 / WP21.) Tests `wellperf-temp3` (10: TH1–TH10).
+- **Gaps:** J-T across the drawdown at the sandface not included (inlet = reservoir temperature); gas lift uses the relaxation; liquid β
+  constants assumed; the predictor pressure (IPR pwf, coarse path) is one pass (pass check reported); QC_THT band and `compare` stay on
+  the relaxation / linear paths; no new help screenshot (cap full); layer boundaries are edited in the table (no drag handle).
 
 ### 18.4 Increment C
 

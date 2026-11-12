@@ -56,6 +56,11 @@
 //   from WTS_wp_well.relax (geotherm on TVD, relaxation along MD, decoupled from pressure) handed to the march as tProfile and used
 //   for the THT of that rate (choke gas temperature, flowline temperature); R.heat summarises it at the operating point (A, f(t_D),
 //   w, c_p, U, THT) and every traverse row carries te (the static earth temperature at its TVD).
+//   B (WP22): M.well.heat.mode 'enthalpy' — per rate, a predictor traverse bottom-up from the IPR's pwf(q) at 4 × the step (its own frozen
+//   grid, ¼ E, R.counts.pred) on the relaxation profile, then WTS_wp_well.enthalpy (J-T, gravity and kinetic terms, layered U) on its
+//   pressures; that profile is the march's tProfile and the THT at q. R.heat adds thtRelax, dT, budget{loss, jt, grav, kin}, eta, layers,
+//   passCheck (|THT from the reported traverse − THT|); traverse rows add tRelax. Gas lift, or a predictor that cannot reach the
+//   wellhead, falls back to the relaxation profile (ENTH_FALLBACK, info). The hydrate check takes the enthalpy THT as it is.
 // HYDRATE. THT_hyd (WTS_wp_well.temperature: J-T corrected for gas wells when the THT is not measured) and the choke-downstream
 //   temperature (WTS_flowline_isenthalp) against WTS_hydrate_temp(p, sg); sg = the well-stream gravity for gas and condensate wells
 //   (R.surface.sgHyd). ✗ below 0, ⚠ within 10 °F at either place.
@@ -65,7 +70,7 @@
 //   mid-perforation TVD (or o.levels). ✓ / ⚠ (within 10 %) / ✗ against rating.wellhead_psi; no verdict without a rating (Q20).
 //
 // EVALUATIONS (§16, D16). One fine evaluation E = one well traverse at the fine step + the flowline march + the choke; a coarse
-//   evaluation counts ½ E. R.evals is in E; R.counts = {fine, coarse, line}. Budget for one solve: ≤ 16 E with one root (+ 4 E for
+//   evaluation counts ½ E. R.evals is in E; R.counts = {fine, coarse, line} (+ pred, ¼ E each, in the enthalpy mode, B). Budget for one solve: ≤ 16 E with one root (+ 4 E for
 //   q_s), ≤ 20 E with two roots; wellperf-validate.js --time reports them per operation.
 //
 // Interfaces (field units, §3.0; psia inside, psig at surface inputs/outputs named *_psig; every result {ok, errors[], warnings[]}):
@@ -274,8 +279,11 @@
             tht: (W.temp && _fin(W.temp.tht)) ? W.temp.tht : (W.tAt ? W.tAt(0) : 100),
             grids: { coarse: null, fine: null, line: null }, cache: {}, counts: { fine: 0, coarse: 0, line: 0 }, warnings: [], lostSeen: {}, trWarn: null,
             // A2 (WP14, §4.6): the relaxation model — one flowing-temperature profile per rate, before the march (tProfile)
-            relax: !!(M.well.heat && M.well.heat.mode === 'relax') && _fn('WTS_wp_well.relax') !== null, tCache: {}
+            relax: !!(M.well.heat && (M.well.heat.mode === 'relax' || M.well.heat.mode === 'enthalpy')) && _fn('WTS_wp_well.relax') !== null, tCache: {},
+            // B (WP22, §4.6): the enthalpy balance — per rate a ¼ E predictor traverse, then the J-T / gravity / kinetic profile
+            enth: !!(M.well.heat && M.well.heat.mode === 'enthalpy') && _fn('WTS_wp_well.enthalpy') !== null
         };
+        C.counts.pred = 0;
         C.pMax = Math.max(2 * C.pr, C.pr + 3000);
         // gas lift (A2, WP18; §7.1): M.lift.type 'gaslift' with an injection rate lift.gl.qinj_Mscfd > 0 (0 or blank = natural flow, the
         // exact natural-flow path). Single injection point: the shallower of the packer depth and the depth where the casing gas column
@@ -296,12 +304,13 @@
             pvtLift.injGas = { qg_MMscfd: qinj / 1000, sg: sgi };
             var Finj = {}; Object.keys(F).forEach(function (k) { Finj[k] = F[k]; }); Finj.pvt = pvtLift;
             C.gl = { qinj: qinj, sg: sgi, pinj: pinj, dpv: _fin(dpv) && dpv >= 0 ? dpv : 100, packerMd: pk, packerTvd: W.tvdAt ? W.tvdAt(pk) : null, Finj: Finj, cas: {} };
+            if (C.enth) { C.enth = false; C.warnings.push(_w('ENTH_FALLBACK', 'Enthalpy balance: gas lift is not in the energy balance in this release; the relaxation profile is used.', 'info', 'wp_heat')); }
         }
         if (C.choke.present && !(C.choke.bean > 0)) return { fail: _fail('NEEDS_BEAN', ['the choke bean size is needed (or take the choke out of line)'], { F: F, I: I, W: W }) };
         if (!C.choke.present && mode !== 'max' && !_fin(C.thpFix)) { C.maxBC = true; C.warnings.push(_w('NO_THP', 'No wellhead pressure entered: the lowest admissible THP (separator + flowline) is used.', 'info', 'wp_thp')); }
         if (mode === 'max') C.maxBC = true;
         var warm = o.warm && (o.warm.grid || o.warm);
-        if (warm && warm.dir === C.node) { C.grids.coarse = warm.coarse || null; C.grids.fine = warm.fine || null; C.grids.line = warm.line || null; }
+        if (warm && warm.dir === C.node) { C.grids.coarse = warm.coarse || null; C.grids.fine = warm.fine || null; C.grids.line = warm.line || null; if (warm.pred) C.grids.pred = warm.pred; }
         return { C: C };
     }
 
@@ -313,10 +322,44 @@
         var r = G.WTS_wp_well.relax(C.W, C.F, q);
         if (!r || !r.ok) {
             if (!C.relaxFail) { C.relaxFail = true; C.warnings.push(_w('RELAX_FALLBACK', 'Relaxation model not available (' + ((r && r.errors && r.errors[0]) || 'failed') + '): the linear THT → BHT profile is used.', 'warn', 'wp_heat')); }
-            C.relax = false; return null;
+            C.relax = false; C.enth = false; return null;
         }
+        if (C.enth) { var en = _enthProf(C, q, r); if (en) r = en; }
         C.tCache[k] = r;
         return r;
+    }
+    // B (WP22): the predictor's coarse path — consecutive pieces of one bore merged up to 1,500 ft (true TVD change kept; a restriction
+    // starts a new piece), so a finely surveyed hole does not cost 10 steps per survey interval; only its pressures feed the J-T source
+    function _predPath(W) {
+        var out = [], cur = null;
+        (W.segments || []).forEach(function (sg) {
+            var same = cur && !sg.restr && sg.id === cur.id && (sg.area || 0) === (cur.area || 0) && sg.rough === cur.rough && cur.len + sg.len <= 1500;
+            if (!same) { cur = Object.assign({}, sg); delete cur.incMin; delete cur.incMax; out.push(cur); return; }
+            cur.len += sg.len; cur.dz += sg.dz; cur.md1 = sg.md1; cur.tvd1 = sg.tvd1;
+            cur.inc = Math.acos(Math.max(-1, Math.min(1, cur.dz / cur.len))) * 180 / Math.PI;
+        });
+        return { ok: true, segments: out, nodes: W.nodes, tvdAt: W.tvdAt, tAt: W.tAt };
+    }
+    // B (WP22): the enthalpy-balance profile at q — a predictor traverse bottom-up from the IPR's pwf(q) at 4 × the step on the
+    // relaxation profile rx (its own frozen grid), then WTS_wp_well.enthalpy on its pressures and velocities; null → rx stays
+    function _enthProf(C, q, rx) {
+        var pwf = C.I.pwfAt(q), V = G.WTS_wp_vlp;
+        if (!(pwf > PATM)) return null;
+        var o = { corr: C.corrWell, stepFt: Math.min(400, 4 * C.stepFt), eroC: C.eroC, refine: false, pMax: C.pMax, from: 'bottom', p0: pwf, tProfile: rx.tAt };
+        if (C.mult) o.mult = C.mult;
+        o.grid = C.grids.pred || true;
+        if (!C.Wpred) C.Wpred = _predPath(C.W);
+        var tr = V.traverse(C.F, C.Wpred, q, o);
+        C.counts.pred++;
+        if (tr && tr.grid && !C.grids.pred) C.grids.pred = tr.grid;
+        if (!tr || !tr.ok) { C.enthLost = (C.enthLost || 0) + 1; return null; }
+        var en = G.WTS_wp_well.enthalpy(C.W, C.F, q, { rows: tr.profile });
+        if (!en || !en.ok) {
+            if (!C.enthFail) { C.enthFail = true; C.warnings.push(_w('ENTH_FALLBACK', 'Enthalpy balance not available (' + ((en && en.errors && en.errors[0]) || 'failed') + '): the relaxation profile is used.', 'warn', 'wp_heat')); }
+            C.enth = false; return null;
+        }
+        en.rowsPred = tr.profile;
+        return en;
     }
     function _thtQ(C, q) { var r = _tProf(C, q); return r ? r.tht : C.tht; }
 
@@ -602,7 +645,7 @@
         C.cache[key] = r;
         return r;
     }
-    function _evalsE(C) { return C.counts.fine + 0.5 * C.counts.coarse; }
+    function _evalsE(C) { return C.counts.fine + 0.5 * C.counts.coarse + 0.25 * (C.counts.pred || 0); }
 
     // ── scan, roots, stability ────────────────────────────────────────────────
     function _scan(C, fracs) {
@@ -808,14 +851,28 @@
         R.breakdown = bd;
         // surface
         var rxo = _tProf(C, opQ);
-        var Wt = (typeof G.WTS_wp_well.temperature === 'function') ? G.WTS_wp_well.temperature(C.W, { F: C.F, fluidType: C.type, pwf: pwf, thp: thpA, q: rxo ? opQ : undefined, mode: rxo ? 'relax' : (C.W.heat && C.W.heat.mode === 'relax' ? 'linear' : undefined) }) : null;
+        var rxe = rxo && rxo.mode === 'enthalpy' ? rxo : null;
+        var Wt = (typeof G.WTS_wp_well.temperature === 'function') ? G.WTS_wp_well.temperature(C.W, { F: C.F, fluidType: C.type, pwf: pwf, thp: thpA, q: rxo ? opQ : undefined, mode: rxe ? 'enthalpy' : rxo ? 'relax' : (C.W.heat && (C.W.heat.mode === 'relax' || C.W.heat.mode === 'enthalpy') ? 'linear' : undefined), profile: rxe || undefined }) : null;
         // the earth (static geotherm) temperature along the traverse, and the relaxation summary (A2, WP14)
         var geoAt = C.W.temp && typeof C.W.temp.geoAt === 'function' ? C.W.temp.geoAt : null;
         if (R.traverse && geoAt) R.traverse.profile.forEach(function (row) { var te = _fin(row.tvd) ? geoAt(row.tvd) : null; row.te = _fin(te) ? te : null; });
         R.heat = rxo ? { mode: 'relax', q: opQ, tht: rxo.tht, teTop: rxo.teTop, bht: rxo.bht, A: rxo.A, fTD: rxo.fTD, tD: rxo.tD, U: rxo.U_in, U_to: rxo.U_to, Ubasis: rxo.Ubasis,
             r_to: rxo.r_to, rwb: rxo.rwb, rwbSource: rxo.rwbSource, ke: rxo.ke, alpha: rxo.alpha, tProd_d: rxo.tProd_d, w: rxo.w, cp: rxo.cp, frac: rxo.frac,
-            offsetTop: rxo.offsetTop, verified: false, provisional: rxo.provisional }
-            : { mode: (Wt && Wt.mode) || 'linear', tht: Wt && Wt.ok ? Wt.tht : C.tht, fallback: !!(C.W.heat && C.W.heat.mode === 'relax') };
+            offsetTop: rxo.offsetTop, verified: false, provisional: rxo.provisional, layers: rxo.layers || null, Amin: rxo.Amin, Amax: rxo.Amax }
+            : { mode: (Wt && Wt.mode) || 'linear', tht: Wt && Wt.ok ? Wt.tht : C.tht, fallback: !!(C.W.heat && (C.W.heat.mode === 'relax' || C.W.heat.mode === 'enthalpy')) };
+        if (rxe) {
+            // B (WP22): the energy budget at the operating rate (each source term's share of the THT, linear superposition) and the pass
+            // check: the balance re-run on the reported traverse's pressures (no march) against the profile the march used
+            var bud = G.WTS_wp_well.enthalpy(C.W, C.F, opQ, { rows: rxe.rowsPred, budget: true });
+            var pc = R.traverse ? G.WTS_wp_well.enthalpy(C.W, C.F, opQ, { rows: R.traverse.profile }) : null;
+            R.heat.mode = 'enthalpy'; R.heat.thtRelax = rxe.thtRelax; R.heat.dT = rxe.dT; R.heat.eta = rxe.eta; R.heat.beta = rxe.beta;
+            R.heat.budget = bud && bud.ok ? bud.budget : null;
+            R.heat.passCheck = pc && pc.ok ? Math.abs(pc.tht - rxe.tht) : null;
+            R.heat.intervals = rxe.intervals.map(function (v) { return { md0: v.md0, md1: v.md1, eta: v.eta, psiJT: v.psiJT, psiG: v.psiG, psiK: v.psiK, xg: v.x.gas }; });
+            if (R.traverse) R.traverse.profile.forEach(function (row) { row.tRelax = rxe.tAtRelax(row.md); });
+        } else if (C.W.heat && C.W.heat.mode === 'enthalpy' && R.heat) R.heat.enthFallback = true;
+        if (C.enthLost && rxe) R.heat.predLost = C.enthLost;
+        C.warnings.forEach(function (w) { if (w.code === 'ENTH_FALLBACK' && !R.warnings.some(function (x) { return x.code === 'ENTH_FALLBACK'; })) R.warnings.push(w); });
         if (C.relaxFail) C.warnings.forEach(function (w) { if (w.code === 'RELAX_FALLBACK' && !R.warnings.some(function (x) { return x.code === 'RELAX_FALLBACK'; })) R.warnings.push(w); });
         var tht = Wt && Wt.ok ? Wt.tht : C.tht, thtHyd = Wt && Wt.ok && _fin(Wt.thtHyd) ? Wt.thtHyd : tht;
         var gasy = _hasGas(C), p2 = e.top && e.top.p2;
@@ -888,6 +945,7 @@
         if (trS) trS.forEach(function (sr) { var Es = (G.WTS_flowline_corr || {})[sr.corr]; if (seenS[sr.corr] || !Es) return; seenS[sr.corr] = 1;
             if (Es.verified !== true) F.push(_w('PROVISIONAL', (Es.label || sr.corr) + ' (section ' + _f(sr.mdTop, 0) + '–' + _f(sr.mdBot, 0) + ' ft MD): provisional — not verified against a published example.', 'info')); });
         if (R.heat && R.heat.mode === 'relax') F.push(_w('PROVISIONAL_TEMP', 'Flowing temperature (heat-transfer relaxation, Ramey / Hasan-Kabir): ' + PROVISIONAL + '.', 'info'));
+        if (R.heat && R.heat.mode === 'enthalpy') F.push(_w('PROVISIONAL_TEMP', 'Flowing temperature (enthalpy balance with Joule-Thomson, gravity and kinetic terms, Alves et al. / Hasan & Kabir): ' + PROVISIONAL + '.', 'info'));
         if (C.nodeAsked === 'separator') F.push(_w('NODE_SEPARATOR', 'The separator node is solved at the wellhead node in this release (same operating point).', 'info'));
         R.flags = F;
     }
@@ -918,9 +976,9 @@
         R.ok = !!R.traverse;
         if (!R.ok) return null;
         _flags(C, R);
-        R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line };
+        R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line }; if (C.counts.pred) R.counts.pred = C.counts.pred;
         R.evals = _evalsE(C);
-        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line };
+        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred;
         R.I = { aof: C.aof, pr: C.pr, kind: C.I.kind, key: C.I.key };
         return R;
     }
@@ -1006,9 +1064,9 @@
                 flows: _fin(et.delta) ? et.delta <= 0 : false, lost: !!et.lost };
         }
         _flags(C, R);
-        R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line };
+        R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line }; if (C.counts.pred) R.counts.pred = C.counts.pred;
         R.evals = _evalsE(C);
-        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line };
+        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred;
         R.I = { aof: C.aof, pr: C.pr, kind: C.I.kind, key: C.I.key };
         return R;
     }
@@ -1581,10 +1639,10 @@
         var cx = _ctx(M, o);
         if (cx.fail) return cx.fail;
         var C = cx.C;
-        if (o.grid) { C.grids.fine = o.grid.fine || null; C.grids.coarse = o.grid.coarse || null; C.grids.line = o.grid.line || null; }
+        if (o.grid) { C.grids.fine = o.grid.fine || null; C.grids.coarse = o.grid.coarse || null; C.grids.line = o.grid.line || null; if (o.grid.pred) C.grids.pred = o.grid.pred; }
         var e = _eval(C, q, o.coarse ? false : true, true);
         return { ok: !e.lost, q: q, pOut: e.pOut, pIn: e.pIn, delta: e.delta, thp: e.top && !e.top.lost ? e.top.thp : null, regime: e.top && e.top.regime,
-            lost: e.lost || null, tr: e.tr || null, grid: { dir: C.node, fine: C.grids.fine, coarse: C.grids.coarse, line: C.grids.line }, counts: C.counts, warnings: [], errors: [] };
+            lost: e.lost || null, tr: e.tr || null, grid: Object.assign({ dir: C.node, fine: C.grids.fine, coarse: C.grids.coarse, line: C.grids.line }, C.grids.pred ? { pred: C.grids.pred } : {}), counts: C.counts, warnings: [], errors: [] };
     }
 
     var NS = G.WTS_wp_system = G.WTS_wp_system || {};

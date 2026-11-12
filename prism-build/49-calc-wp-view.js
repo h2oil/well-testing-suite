@@ -717,7 +717,7 @@
     var PROPS = {
         pressure: { key: 'p', label: 'Pressure' }, temperature: { key: 't', label: 'Temperature' }, holdup: { key: 'hl', label: 'Liquid holdup' },
         velocity: { key: 'vm', label: 'Mixture velocity' }, pattern: { key: 'pattern', label: 'Flow pattern' },
-        heatloss: { key: 'dte', label: 'Fluid − earth temperature' }, none: { key: null, label: '' }
+        heatloss: { key: 'dte', label: 'Fluid − earth temperature' }, jt: { key: 'djt', label: 'Joule-Thomson + gravity ΔT (against the relaxation)' }, none: { key: null, label: '' }
     };
     function scale(prop, profile) {
         var P = PROPS[prop] || PROPS.none;
@@ -788,6 +788,19 @@
             }
             g.push('</g>');
         }
+        // heat-transfer layers by depth (B, WP22): a dashed sleeve outside the strings over each layer's MD range, labelled with its U;
+        // a component like the strings (click / Enter edits the layer row)
+        (S.heatLayers || []).forEach(function (ly, li) {
+            var a1 = Math.max(0, ly.topMd), b1 = Math.min(ly.botMd, mdMax);
+            if (!(b1 > a1)) return;
+            var pl1 = _poly(_sub(path, a1, b1)), mp = interp(path, 0.5 * (a1 + b1));
+            if (!pl1 || !mp) return;
+            var lab = 'U ' + (fm.U ? fm.U(ly.U) : (Math.round(ly.U * 100) / 100));
+            g.push('<g class="wp-comp wp-layer" data-comp="layer:' + li + '" tabindex="0" role="button" aria-label="' + _esc('Heat-transfer layer ' + (li + 1) + ', ' + lab + ', ' + D(ly.topMd) + ' to ' + D(ly.botMd) + ' — edit') + '">');
+            g.push('<path d="' + pl1 + '" fill="none" stroke="' + T.purple + '" stroke-opacity=".55" stroke-width="34" stroke-dasharray="3 5" stroke-linecap="butt" stroke-linejoin="round"/>');
+            g.push('<text x="' + (mp.x + 22).toFixed(1) + '" y="' + (mp.y + 3).toFixed(1) + '" fill="' + T.purple + '" font-size="10" font-weight="700">' + _esc(lab) + '</text>');
+            g.push('<title>' + _esc('Layer ' + (li + 1) + ': ' + lab + (ly.ke ? ', k_e ' + ly.ke : '') + ' — ' + D(ly.topMd) + ' to ' + D(ly.botMd)) + '</title></g>');
+        });
         // strings along the path: casing / liner (wide), tubing (narrow); stroke width scales with the OD
         var strs = (S.strings || []).filter(function (s) { return _fin(s.topMd) && _fin(s.botMd) && s.botMd > s.topMd; });
         var odMax = strs.reduce(function (a, s) { return Math.max(a, _fin(s.od) ? s.od : 0); }, 0) || 7;
