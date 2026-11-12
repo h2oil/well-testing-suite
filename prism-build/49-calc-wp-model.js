@@ -167,6 +167,14 @@
         wp_refine: { path: 'system.refine', kind: 'bool' }
     };
     var IP_PREFIX = 'wp_ip_';
+    // B (WP26): the ESP setting and equipment (M.lift.esp; the pump curve itself is the table key 'pump' → M.lift.esp.pump). Defaults live in
+    // WTS_wp_esp (60 Hz, natural separation and the viscosity correction on, no separator, 4.0 in OD, #2 cable to the pump MD + 100 ft)
+    [['wp_esp_md', 'lift.esp.pumpMd', 'num'], ['wp_esp_freq', 'lift.esp.freq', 'num'], ['wp_esp_stages', 'lift.esp.stages', 'num'], ['wp_esp_sep', 'lift.esp.sepEff', 'num', 0.01],
+     ['wp_esp_nat', 'lift.esp.natSep', 'bool'], ['wp_esp_visc', 'lift.esp.visc', 'bool'], ['wp_esp_od', 'lift.esp.od_in', 'num'], ['wp_esp_hp', 'lift.esp.motor.hp', 'num'],
+     ['wp_esp_volt', 'lift.esp.motor.volt', 'num'], ['wp_esp_amp', 'lift.esp.motor.amp', 'num'], ['wp_esp_clen', 'lift.esp.cable.len_ft', 'num']].forEach(function (r) {
+        SCALARS[r[0]] = r[3] ? { path: r[1], kind: r[2], scale: r[3] } : { path: r[1], kind: r[2] };
+    });
+    SCALARS.wp_esp_awg = { path: 'lift.esp.cable.awg', kind: 'str', enumv: ['1/0', '1', '2', '4', '6'] };
 
     function _scalarValue(spec, raw) {
         if (raw === undefined) return undefined;
@@ -299,7 +307,7 @@
             return o;
         }).filter(function (x) { return _fin(x.md) && x.md > 0; }).sort(function (a, b) { return a.md - b.md; }).slice(0, 20);
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
-        out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
+        out.pump = _isObj(r.pump) ? _pumpClean(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
         // per-section correlations (v4.5 WP21): [{by:'md'|'inc', from, to, corr}] — MD in ft, inclination in degrees from vertical; a key
         // string of WTS_flowline_corr (checked by the engines: an unknown key is skipped there, with a warning)
@@ -311,6 +319,14 @@
         return { rec: out, warnings: warnings };
     }
 
+    // the pump curve (B, WP26): {v, name, f0 Hz, rows:[[q bbl/d, head ft/stage, efficiency %, BHP hp/stage]], qMin, qMax (bbl/d at f0), od_in,
+    // example} — numbers cleaned, ≤ 40 rows (WTS_wp_esp.normPump checks the curve itself)
+    function _pumpClean(p) {
+        var o = { v: 1, name: String(p.name == null ? '' : p.name).replace(/[\u0000-\u001f<>]/g, '').slice(0, 48), f0: _num(p.f0), qMin: _num(p.qMin), qMax: _num(p.qMax), od_in: _num(p.od_in), example: p.example === true };
+        o.rows = (Array.isArray(p.rows) ? p.rows : []).filter(Array.isArray).slice(0, 40).map(function (r) { return [_num(r[0]), _num(r[1]), _num(r[2]), _num(r[3])]; })
+            .filter(function (r) { return _fin(r[0]) && r[0] >= 0 && _fin(r[1]); });
+        return o;
+    }
     // the lab record (B, WP23): {v, T_F, basis, pb, rsbF, bobF, rows:[{p, rs, bo, muo}], rv:[[p, rv]], emul:[[fw, ratio]], example,
     // adopt:{on, pbFactor, mult{rs, bo, muo}, shift{rs, bo, muo}, corr{rs, bo, muod, muo}, T_F, mare, ts, edited}} — numbers cleaned, ≤ 60 rows each
     function _labClean(L) {

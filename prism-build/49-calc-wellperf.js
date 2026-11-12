@@ -482,6 +482,18 @@
             tables: { survey: [[0, 0, 0], [1500, 0, 200], [2500, 20, 200], [3500, 35, 200], [7000, 35, 200], [9200, 35, 200]],
                       strings: [{ kind: 'tubing', od: 3.5, id: 2.992, rough: 0.0006, topMd: 0, botMd: 8850 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 9200 }],
                       restrictions: [], geo: { points: [[0, 60], [7700, 200]] }, flowline: [], tests: [], layers: [] }
+        },
+        // B (WP26): a deviated oil well on an ESP — high water cut, depleted; the generic example pump set in the 35° tangent
+        esp: {
+            label: 'Deviated oil well on an ESP',
+            scalars: { wp_ftype: 'oil', wp_api: 30, wp_sgg: 0.7, wp_gor: 250, wp_wc: 75, wp_ipr: 'pi', wp_pr: 2400, wp_tres: 210, wp_ip_J: 3,
+                       wp_perfTop: 8930, wp_perfBot: 8990, wp_midPerf: 8960, wp_tht: 130, wp_surfT: 70, wp_choke: false, wp_thp: 150, wp_psep: 100,
+                       wp_lift: 'esp', wp_esp_md: 8450, wp_esp_freq: 60, wp_esp_stages: 236, wp_esp_sep: 0, wp_esp_nat: true, wp_esp_visc: true, wp_esp_od: 4.56,
+                       wp_esp_hp: 120, wp_esp_volt: 2100, wp_esp_amp: 36, wp_esp_awg: '2' },
+            tables: { survey: [[0, 0, 45], [1500, 0, 45], [2000, 10, 45], [2500, 20, 45], [3000, 30, 45], [3250, 35, 45], [9100, 35, 45]],
+                      strings: [{ kind: 'tubing', od: 3.5, id: 2.992, rough: 0.0006, topMd: 0, botMd: 8450 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 9100 }],
+                      restrictions: [], geo: { points: [[0, 70], [7750, 210]] }, flowline: [{ name: 'Flowline', len: 1500, id: 3, dz: 0 }], tests: [], layers: [],
+                      pump: 'example' }
         }
     };
 
@@ -821,7 +833,10 @@
             out.push({ k: 'wc', l: 'Water cut', v: M && _fin(M.fluid.wc) ? _fmt(M.fluid.wc * 100, 1) + ' %' : '—', s: _fin(rates.qw) ? _u(rates.qw, 'liquidRate', 0, 'BWPD') : '' });
         }
         if (ok && R.lift && R.lift.type === 'gaslift') out.push({ k: 'gl', l: 'Lift gas', v: _u(R.lift.qinj, 'gasRateSmall', 0, 'Mscf/d'), s: _fin(R.lift.injMd) ? '@ ' + _u(R.lift.injMd, 'length', 0, 'ft') + ' MD · ' + _u(R.lift.injTvd, 'length', 0, 'ft') + ' TVD' : '', st: R.lift.atPacker ? 'info' : 'ok', title: 'Gas lift: injection point ' + (R.lift.atPacker ? 'at the packer' : 'at the point of balance') });
-        var L = ST.loading, mg = L && _fin(L.margin) ? L.margin : null, lifted = ok && R.lift && R.lift.type === 'gaslift';
+        // B (WP26): the pump — stages, frequency, motor load or TDH; ✓ / ! / ✕ from its checks
+        if (ok && R.lift && R.lift.type === 'esp') { var el = R.lift, ew = (el.flags || []).some(function (x) { return x.sev === 'fail'; }) ? 'fail' : ((el.flags || []).some(function (x) { return x.sev === 'warn'; }) ? 'warn' : 'ok');
+            out.push({ k: 'esp', l: 'ESP', v: _fmt(el.stages, 0) + ' st · ' + _fmt(el.freq, 1) + ' Hz', s: (el.motor && el.motor.ok ? 'motor ' + _fmt(el.motor.load * 100, 0) + ' % · ' : '') + 'TDH ' + _u(el.tdh, 'length', 0, 'ft'), st: ew, title: 'ESP at ' + _mdTvdTxt(el.pumpMd, el.pumpTvd) }); }
+        var L = ST.loading, mg = L && _fin(L.margin) ? L.margin : null, lifted = ok && R.lift && (R.lift.type === 'gaslift' || R.lift.type === 'esp');
         // a gas-lifted oil well shows the lift gas in place of the (not applicable) loading margin: the strip keeps ten KPIs
         if (!(lifted && !gas)) out.push({ k: 'load', l: 'Loading margin', v: mg == null ? (gas ? '—' : 'n/a') : (mg >= 0 ? '+' : '') + _fmt(mg * 100, 0) + ' %', s: L && L.method ? String(L.method).replace(/^./, function (c) { return c.toUpperCase(); }) + (_fin(L.qc_MMscfd) ? ' q_c ' + _u(L.qc_MMscfd, 'gasRate', 2, 'MMscf/d') : '') : (gas ? '' : 'oil well'),
                    st: mg == null ? 'none' : (mg < 0 ? 'fail' : mg < 0.1 ? 'warn' : 'ok') });
@@ -1005,7 +1020,7 @@
     //   R.corr.sections / M.system.corr.sections [{fromMd, toMd, key}] (the correlation per section)
     function _schLiftMarks() {
         var R = ST.R, M = ST.M, out = [], L = R && R.ok && R.lift ? R.lift : null;
-        if (L && Array.isArray(L.marks)) return L.marks.filter(function (m) { return m && _fin(m.md); }).map(function (m) { return Object.assign({}, m, { label: m.label || (m.kind === 'esp' ? 'ESP ' : 'valve ') + _mdTvdTxt(m.md) }); });
+        if (L && Array.isArray(L.marks)) return L.marks.filter(function (m) { return m && _fin(m.md); }).map(function (m) { return Object.assign({}, m, { label: m.label || (m.kind === 'esp' ? 'ESP ' + (_fin(m.stages) ? _fmt(m.stages, 0) + ' st · ' + _fmt(m.hz, 1) + ' Hz · ' : '') : 'valve ') + _mdTvdTxt(m.md) }); });
         if (L && Array.isArray(L.valves)) L.valves.forEach(function (v, i) { if (v && _fin(v.md)) out.push({ md: v.md, kind: 'mandrel', state: v.state || (v.operating ? 'operating' : 'closed'), label: v.label || ('valve ' + (i + 1) + (v.operating || v.state === 'operating' ? ' · operating' : '')) }); });
         var esp = M && M.lift && M.lift.type === 'esp' ? (M.lift.esp || {}) : null, pmd = L && _fin(L.pumpMd) ? L.pumpMd : (esp && _fin(+esp.pumpMd) ? +esp.pumpMd : null);
         if (esp && _fin(pmd)) out.push({ md: pmd, kind: 'esp', label: 'ESP ' + _mdTvdTxt(pmd, L && L.pumpTvd), comp: 'esp' });
@@ -1736,7 +1751,7 @@
 
     // Δp breakdown (canvas bars)
     var BD_LABEL = { reservoir: 'Reservoir (drawdown)', completion: 'Completion (skin)', skin: 'Completion (skin)', gravity: 'Tubing gravity', friction: 'Tubing friction', acceleration: 'Tubing acceleration',
-                     restrictions: 'Downhole restrictions', choke: 'Surface choke', flowline: 'Flowline', separator: 'Separator' };
+                     restrictions: 'Downhole restrictions', choke: 'Surface choke', flowline: 'Flowline', separator: 'Separator', pump: 'ESP (pressure added)' };
     function _renderBreakdown() {
         var cv = _byId('wp_cv_bd'); if (!cv || !cv.getContext) return;
         var V = G.WTS_wp_view, T = V ? V.theme() : {}, R = ST.R, items = (R && R.ok && R.breakdown) ? R.breakdown.filter(function (b) { return _fin(b.dp); }) : [];
@@ -1751,17 +1766,17 @@
         var tot = items.reduce(function (a, b) { return a + Math.max(0, b.dp); }, 0) || 1, lw = 10, bw = cw - 20;
         var cols = [T.green, '#2dd4bf', T.blue, '#7dd3fc', T.purple, T.yellow, T.accent, T.red, T.text2];
         items.forEach(function (b, i) {
-            var y = 8 + i * rowH, w = Math.max(1.5, bw * Math.max(0, b.dp) / tot);
+            var y = 8 + i * rowH, w = Math.max(1.5, bw * Math.abs(b.key === 'pump' ? b.dp : Math.max(0, b.dp)) / tot);
             c.fillStyle = T.text2 || '#8b949e'; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
             c.fillText(BD_LABEL[b.key] || b.key, lw, y + 11);
             c.fillStyle = T.text || '#e6edf3'; c.textAlign = 'right';
-            c.fillText(_fmt(_dv(b.dp, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '  ' + _fmt(100 * b.dp / tot, 0) + ' %', lw + bw, y + 11);
+            c.fillText(b.key === 'pump' ? '+' + _fmt(_dv(-b.dp, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') : _fmt(_dv(b.dp, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '  ' + _fmt(100 * b.dp / tot, 0) + ' %', lw + bw, y + 11);
             c.fillStyle = T.panel || '#161b22'; c.fillRect(lw, y + 15, bw, 8);
-            c.fillStyle = cols[i % cols.length]; c.fillRect(lw, y + 15, w, 8);
+            c.fillStyle = b.key === 'pump' ? (T.green || '#3fb950') : cols[i % cols.length]; c.fillRect(lw, y + 15, w, 8);
         });
         c.fillStyle = T.text2 || '#8b949e'; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
         if (R && R.injector) { var gain = items.filter(function (b) { return b.dp < 0; }).reduce(function (a, b) { return a - b.dp; }, 0); c.fillText('Injection: THP − p̄r ' + _fmt(_dv(R.surface.thp - R.pr, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '; the column adds ' + _fmt(_dv(gain, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14); }
-        else c.fillText('Total p̄r − p_sep: ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14);
+        else { var pg = items.filter(function (b) { return b.key === 'pump'; }).reduce(function (a, b) { return a - b.dp; }, 0); c.fillText(pg > 0 ? 'Losses ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + ' = p̄r − p_sep ' + _fmt(_dv(tot - pg, 'pressure'), 0) + ' + the pump ' + _fmt(_dv(pg, 'pressure'), 0) : 'Total p̄r − p_sep: ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14); }
         cv.__h2oilSnapshot = null;
     }
 
@@ -3282,8 +3297,12 @@
         if (!conf) return;
         // the table write is batched (its model-changed event does not solve): the one committed change below runs the one solve
         ST.batch = (ST.batch || 0) + 1;
-        try { Mm.write(JSON.parse(JSON.stringify(ex.tables))); } finally { ST.batch--; }
+        var tb = JSON.parse(JSON.stringify(ex.tables));
+        if (tb.pump === 'example') tb.pump = G.WTS_wp_esp && typeof G.WTS_wp_esp.example === 'function' ? G.WTS_wp_esp.example() : null;   // B (WP26): the generic example pump
+        try { Mm.write(tb); } finally { ST.batch--; }
         ST.M = _read() || ST.M;
+        // B (WP26): an example without a lift type leaves an ESP selection behind it (its pump belongs to the ESP example)
+        if (!('wp_lift' in ex.scalars) && (_byId('wp_lift') || {}).value === 'esp') _setCtrl('wp_lift', 'none', false);
         Object.keys(ex.scalars).forEach(function (id) { _setCtrl(id, ex.scalars[id], typeof ex.scalars[id] === 'number'); });
         ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {};
         _renderAllTables();
@@ -3708,7 +3727,7 @@
             return '<button type="button" data-step="' + s.n + '"><span class="wp-dot" id="wp_dot_' + s.n + '" aria-hidden="true"></span>' + CIRC[s.n] + ' ' + s.label + '<span class="wp-sr" id="wp_dotsr_' + s.n + '"></span></button>';
         }).join('') + '<span class="wp-sp"></span><span class="wp-ex">Examples: </span>' +
             '<button type="button" data-act="example" data-ex="oil" title="Load the example vertical oil well">Oil</button><button type="button" data-act="example" data-ex="gas" title="Load the example deviated gas-condensate well">Gas</button>' +
-            '<button type="button" data-act="example" data-ex="hz" title="Load the example horizontal oil well (Joshi inflow on the surveyed lateral)">Horizontal</button><button type="button" data-act="example" data-ex="ml" title="Load the example two-layer oil well with crossflow">Layers</button><button type="button" data-act="example" data-ex="inj" title="Load the example deviated water injector with a fracture-pressure limit">Injector</button></nav>';
+            '<button type="button" data-act="example" data-ex="hz" title="Load the example horizontal oil well (Joshi inflow on the surveyed lateral)">Horizontal</button><button type="button" data-act="example" data-ex="ml" title="Load the example two-layer oil well with crossflow">Layers</button><button type="button" data-act="example" data-ex="inj" title="Load the example deviated water injector with a fracture-pressure limit">Injector</button><button type="button" data-act="example" data-ex="esp" title="Load the example deviated oil well on an electrical submersible pump">ESP</button></nav>';
     }
     function _tableBlock(t, title, hint, o) {
         o = o || {};
@@ -3805,8 +3824,8 @@
                 _tableBlock('geo', 'Geothermal points', 'TVD and static temperature; at least the surface and the reservoir. The relaxation model reads the geotherm on TVD and relaxes along MD.') +
                 '<div data-heat="relax">' + _tableBlock('hlayers', 'Heat-transfer layers (U by depth)', 'Optional MD ranges with their own U (same basis as U above) and k_e — for example an insulated or a riser section. Outside the layers the U above applies. TVD shown.') + '</div>') +
             _card('Flow segments', '<div id="wp_segs"></div>') + '</div></section>';
-        var s4 = '<section id="wp_step_4" class="wp-sec" style="display:none"><div class="wp-sec-h">④ Lift <span>natural flow or the gas-lift quick look</span></div><div class="wp-2c">' +
-            _card('Artificial lift', '<div class="fg">' + _fg('wp_lift', 'Lift type', { options: [['none', 'Natural flow'], ['gaslift', 'Gas lift (quick look)'], ['esp', 'ESP (release 4.5)', true]] }) +
+        var s4 = '<section id="wp_step_4" class="wp-sec" style="display:none"><div class="wp-sec-h">④ Lift <span>natural flow, the gas-lift quick look or an ESP</span></div><div class="wp-2c">' +
+            _card('Artificial lift', '<div class="fg">' + _fg('wp_lift', 'Lift type', { options: [['none', 'Natural flow'], ['gaslift', 'Gas lift (quick look)'], ['esp', 'ESP (electrical submersible pump)']] }) +
                 _fg('wp_gl_qinj', 'Lift-gas injection rate', { unit: 'Mscf/d', data: 'data-lift="gaslift"', hint: 'The operating point uses it; 0 = natural flow. Drag the line on the performance curve.' }) +
                 _fg('wp_gl_pinj', 'Surface injection (casing) pressure', { unit: 'psig', data: 'data-lift="gaslift"', ph: 'required' }) +
                 _fg('wp_gl_sg', 'Lift-gas specific gravity', { unit: 'air = 1', data: 'data-lift="gaslift"' }) +
@@ -3816,11 +3835,12 @@
                 _fg('wp_gl_incgor', 'Incremental GOR limit (economic point)', { unit: 'scf/STB', data: 'data-lift="gaslift"', hint: '0 = the maximum rate.' }) + '</div>' +
                 '<div class="wp-btns rp-skip" data-lift="gaslift"><button type="button" class="btn btn-primary" data-act="glpc">Run the gas-lift performance curve</button></div><div id="wp_glmsg" class="rp-skip"></div>' +
                 '<div id="wp_glres" data-lift="gaslift" style="margin-top:12px"></div>' +
+                '<div class="wp-hint" data-lift="esp" style="margin-top:10px">ESP: set the pump depth, frequency and stages and enter the pump curve below; the pump becomes a node of the system solve, and its plot (with the frequency and stages rails) sits in the results above.</div>' +
                 '<div class="wp-hint" data-lift="none" style="margin-top:10px">Choose gas lift for the quick look: the injection depth solved at every rate on the deviated path, the lift-gas performance curve with the optimum and economic points and the rate gain over natural flow. Unloading valves, valve throughput, diagnosis from a test and a gradient survey: the gas-lift design card of this step.</div>') +
             _card('Gas-lift performance', '<div data-lift="gaslift"><div class="chart-wrap"><canvas id="wp_cv_glpc" aria-label="Gas-lift performance curve: liquid rate against the lift-gas rate; drag the line to change the injection rate"></canvas></div>' +
                 '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_gldepth" aria-label="Injection depth against the lift-gas rate"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag the dashed <b>q_inj</b> line (or focus the plot, [ / ] then the arrows) and the well re-solves with that much lift gas.</div></div>' +
-                '<div class="wp-v info" data-lift="none esp">The performance curve appears here with gas lift selected.</div>') + '</div>' + _ext('stepHtml', 4).join('') + '</section>';
+                '<div class="wp-v info" data-lift="none">The performance curve appears here with gas lift selected.</div>') + '</div>' + _ext('stepHtml', 4).join('') + '</section>';
         var s5 = '<section id="wp_step_5" class="wp-sec" style="display:none"><div class="wp-sec-h">⑤ System <span>node, surface boundary, correlations, ratings and studies</span></div><div class="wp-2c">' +
             _card('Surface and solve', '<div class="fg">' +
                 _fg('wp_mode', 'Solve for', { options: [['rate', 'Rate at these settings'], ['pressure', 'Pressures for a rate'], ['max', 'Maximum rate (no choke)'], ['design', 'Bean or THP for a target rate']] }) +
@@ -4017,7 +4037,8 @@
                     setCtrl: _setCtrl, commit: _commit, syncUi: _syncUi, liveScalars: _liveScalars, plots: _plots, plotsSet: _plotsSet, mdTvdTxt: _mdTvdTxt, tvdAt: _tvdAt,
                     tempDiff: _tempDiff, phone: _phone, reduced: _reduced, parseList: _parseList, fmtListNum: _fmtListNum, decComma: _decComma, sensVarLabel: _sensVarLabel, sensDv: _sensDv,
                     renderSystemPlot: _renderSystemPlot, renderStudies: _renderStudies, renderSchematic: _renderSchematic, renderNotes: _renderNotes, renderAllTables: _renderAllTables,
-                    goStep: function (n) { _goStep(n, true); }, solveNow: _solveNow, mkey: _mkey };
+                    goStep: function (n) { _goStep(n, true); }, solveNow: _solveNow, mkey: _mkey,
+                    solveLive: function () { if (!ST.slow && _liveMs() <= LIVE_MS) { _solveLive(); return true; } return false; } };
             };
             var w = { u: _u, dv: _dv, lab: _lab, fmt: _fmt, esc: _esc, vHtml: _vHtml, drive: function (job, onDone, label, boxId) { _drive(job, onDone, label, boxId); },
               liveScalars: function () { return _byId('wp_root') ? _liveScalars() : null; }, reduced: _reduced, phone: _phone };

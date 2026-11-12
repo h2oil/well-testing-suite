@@ -93,7 +93,13 @@
 //                A2 (WP18, M.lift.type 'gaslift' with lift.gl.qinj_Mscfd > 0): rates.qinj / qgTotal, lift:{type, qinj, sginj, pinj_psig,
 //                dpValve, packerMd, packerTvd, injMd, injTvd, pTub psia, pCas psia, atPacker, casing:[{md, tvd, p psia}]}, traverse rows
 //                carry lift: true above the injection point}
-//     .designFor(M, target /*{bean: q} | {thp: q} | {tubingId: q} | {qinj: q} (A2)*/) → Job: result() → {ok, bean | thp (psig), q, R, solves};
+//                B (WP26, M.lift.type 'esp'): the pump is a node between the intake segment (mid-perforations → pump MD) and the discharge
+//                segment (pump → wellhead, the ingested stream) — WTS_wp_esp prepares and runs the pump; R.lift = {type 'esp', pumpMd, pumpTvd,
+//                inc, dls, freq, stages, pInt, pDis, pDisReq, dp, dpNeed, tdh, hPerStage, Qin, Qout, gvfIn, phi, En, E, ventMscfd, bhp, eff,
+//                range, rangeStatus, motor, flags[], curve:[{q, Qin, tdhReq, tdhPump}], methods[], marks[]}; breakdown key 'pump' (negative =
+//                a gain); R.scan rows carry esp; R.grid.esp the segment layouts; traverse rows esp 'intake'|'discharge'; outflowOnly marches
+//                top-down and solves the intake pressure (lift tables); a gas well → ESP_NOT_APPLICABLE
+//     .designFor(M, target /*{bean: q} | {thp: q} | {tubingId: q} | {qinj: q} (A2) | {freq: q} (B, WP26: the ESP frequency 30–90 Hz)*/) → Job: result() → {ok, bean | thp (psig), q, R, solves};
 //                tubingId: {ok, tubingId in, tubKey, od, label, q, rows:[{key, label, id, od, ok, q, stable, loadingMargin, ero, thp, pwf,
 //                regime}], current, solves, evals} — the smallest catalogue size whose stable rate reaches the target
 //     .maxRate(M)   → {ok, q, thp_psig, tht, thtMax, rating:{verdict, margin}, R}
@@ -133,7 +139,7 @@
     var BIG = 1e6;
     var LIQ_ORIFICE = 1022.7;             // bbl/d per (in² · √(psi/SG)): incompressible orifice, q = 1022.7·Cd·d²·√(Δp/SG)
     var BD = { reservoir: 'reservoir', completion: 'completion', gravity: 'gravity', friction: 'friction', acceleration: 'acceleration',
-        restrictions: 'restrictions', choke: 'choke', wellhead: 'wellhead', flowline: 'flowline' };
+        restrictions: 'restrictions', choke: 'choke', wellhead: 'wellhead', flowline: 'flowline', pump: 'pump' };
     var PROVISIONAL = 'provisional — not verified against a published example';
     var SACH_LABEL = 'Sachdeva et al. (1986)', SACH_RANGE = [8, 40];   // Appendix A: bean 8–40/64 in, the data range of the paper
     var CK_NAMES = { gilbert: 'Gilbert', ros: 'Ros', baxendell: 'Baxendell', achong: 'Achong', sachdeva: 'Sachdeva et al.' };
@@ -314,11 +320,22 @@
             C.gl = { qinj: qinj, sg: sgi, pinj: pinj, dpv: _fin(dpv) && dpv >= 0 ? dpv : 100, packerMd: pk, packerTvd: W.tvdAt ? W.tvdAt(pk) : null, Finj: Finj, cas: {} };
             if (C.enth) { C.enth = false; C.warnings.push(_w('ENTH_FALLBACK', 'Enthalpy balance: gas lift is not in the energy balance in this release; the relaxation profile is used.', 'info', 'wp_heat')); }
         }
+        // B (WP26, §7.3): an electrical submersible pump — a node Δp(q) between the intake segment (mid-perforations → pump, formation
+        // fluid) and the discharge segment (pump → wellhead, the stream the pump ingests); WTS_wp_esp prepares the setting and the pump
+        if (lf.type === 'esp' && !o.noLift) {
+            if (_isGas(type)) return { fail: _fail('ESP_NOT_APPLICABLE', ['The ESP is modelled for oil and water producers in this release; this is a ' + type + ' well.'], { F: F, I: I, W: W }) };
+            if (!G.WTS_wp_esp || typeof G.WTS_wp_esp.prepare !== 'function') return { fail: _fail('MISSING_ENGINE', ['WTS_wp_esp is not available'], { name: 'WTS_wp_esp' }) };
+            var ep = G.WTS_wp_esp.prepare(M, W);
+            if (!ep.ok) return { fail: _fail(ep.code || 'NEEDS_PUMP', ep.errors, { F: F, I: I, W: W }) };
+            (ep.warnings || []).forEach(function (w) { C.warnings.push(w); });
+            C.esp = ep; C.espGrids = {};
+            if (C.enth) { C.enth = false; C.warnings.push(_w('ENTH_FALLBACK', 'Enthalpy balance: the pump is not in the energy balance in this release; the relaxation profile is used.', 'info', 'wp_heat')); }
+        }
         if (C.choke.present && !(C.choke.bean > 0)) return { fail: _fail('NEEDS_BEAN', ['the choke bean size is needed (or take the choke out of line)'], { F: F, I: I, W: W }) };
         if (!C.choke.present && mode !== 'max' && !_fin(C.thpFix)) { C.maxBC = true; C.warnings.push(_w('NO_THP', 'No wellhead pressure entered: the lowest admissible THP (separator + flowline) is used.', 'info', 'wp_thp')); }
         if (mode === 'max') C.maxBC = true;
         var warm = o.warm && (o.warm.grid || o.warm);
-        if (warm && warm.dir === C.node) { C.grids.coarse = warm.coarse || null; C.grids.fine = warm.fine || null; C.grids.line = warm.line || null; if (warm.pred) C.grids.pred = warm.pred; }
+        if (warm && warm.dir === C.node) { C.grids.coarse = warm.coarse || null; C.grids.fine = warm.fine || null; C.grids.line = warm.line || null; if (warm.pred) C.grids.pred = warm.pred; if (warm.esp && C.esp) C.espGrids = Object.assign({}, warm.esp); }
         return { C: C };
     }
 
@@ -468,6 +485,85 @@
             vmMax: Math.max(up.vmMax || 0, lo.vmMax || 0), eroMax: Math.max(up.eroMax || 0, lo.eroMax || 0), restrictionsDp: (up.restrictionsDp || 0) + (lo.restrictionsDp || 0),
             warnings: (up.warnings || []).concat(lo.warnings || []), lost: null, corr: up.corr,
             lift: { qinj: C.gl.qinj, injMd: inj.md, injTvd: injTvd, pTub: inj.p, pCas: _pCasAt(C, inj.md), balance: !!inj.balance, packerMd: C.gl.packerMd } };
+    }
+
+    // ── ESP (B, WP26) ─────────────────────────────────────────────────────────
+    // one pumped-well evaluation at q: the intake segment marched bottom-up from the inflow's pwf(q) to the pump (formation fluid; the
+    // intake state is the one the reservoir delivers, so at a root it is exact), the pump stage by stage (WTS_wp_esp.pump: natural /
+    // separator gas venting, affinity, viscosity), then the discharge segment with the ingested stream — top-down from the THP (bottom
+    // node: p_out = pwf + (p_discharge,required − p_discharge,pump), so Δ = p_dis,req − p_dis,pump) or bottom-up from the discharge
+    // (wellhead node: the THP available). Each segment has its own frozen step layout.
+    function _espTraverse(C, q, p0, dir, keep, fine) {
+        var V = G.WTS_wp_vlp, P = C.esp, mid = C.W.nodes.midPerfMd, gk = fine ? 'f' : 'c';
+        var o = { corr: C.corrWell, stepFt: C.stepFt, coarse: !fine, eroC: C.eroC, refine: C.refine, pMax: C.pMax, sections: C.sections };
+        if (C.mult) o.mult = C.mult;
+        var tpe = _tProf(C, q); if (tpe) o.tProfile = tpe.tAt;
+        var pwf = C.I.pwfAt(q), pBot = dir === 'down' ? pwf : p0;
+        if (dir === 'down' && C.I.outflowOnly) return _espDown(C, q, p0, o, gk);
+        if (!(pBot > PATM)) return { ok: false, lost: { reason: 'pressure' }, warnings: [] };
+        var lo = { ok: true, profile: [], segments: [], pEnd: pBot, vmMax: 0, eroMax: 0, restrictionsDp: 0, warnings: [] };
+        if (P.md < mid - 1) {
+            lo = V.traverse(C.F, _wPart(C, mid, P.md), q, Object.assign({}, o, { from: 'bottom', p0: pBot, grid: C.espGrids['lo' + gk] || true }));
+            if (!lo.ok) return lo;
+            if (lo.grid && !C.espGrids['lo' + gk]) C.espGrids['lo' + gk] = lo.grid;
+        }
+        var T = tpe && typeof tpe.tAt === 'function' ? tpe.tAt(P.md) : (C.W.tAt ? C.W.tAt(P.md) : C.tht);
+        var st = G.WTS_wp_esp.pump(P, C.F, q, lo.pEnd, T);
+        if (!st.ok) return { ok: false, lost: { reason: 'pump' }, warnings: lo.warnings };
+        var upW = _wPart(C, P.md, 0), up, pEnd;
+        if (dir === 'down') {
+            up = V.traverse(C.F, upW, st.qIng, Object.assign({}, o, { from: 'top', p0: p0, grid: C.espGrids['up' + gk] || true }));
+            if (!up.ok) return up;
+            st.pDisReq = up.pEnd; st.dpNeed = up.pEnd - st.pInt;
+            pEnd = pwf + (up.pEnd - st.pDis);
+        } else {
+            if (!(st.pDis > PATM)) return { ok: false, lost: { reason: 'pump' }, warnings: [] };
+            up = V.traverse(C.F, upW, st.qIng, Object.assign({}, o, { from: 'bottom', p0: st.pDis, grid: C.espGrids['up' + gk] || true }));
+            if (!up.ok) return up;
+            pEnd = up.pEnd;
+        }
+        if (up.grid && !C.espGrids['up' + gk]) C.espGrids['up' + gk] = up.grid;
+        var upRows = up.profile.filter(function (r) { return r.md <= P.md + 1e-6; }), loRows = lo.profile.filter(function (r) { return r.md > P.md + 1e-6; });
+        upRows.forEach(function (r) { r.esp = 'discharge'; }); loRows.forEach(function (r) { r.esp = 'intake'; });
+        return { ok: true, profile: upRows.concat(loRows), segments: (up.segments || []).concat(lo.segments || []), pEnd: pEnd, pBottom: pBot,
+            vmMax: Math.max(up.vmMax || 0, lo.vmMax || 0), eroMax: Math.max(up.eroMax || 0, lo.eroMax || 0), restrictionsDp: (up.restrictionsDp || 0) + (lo.restrictionsDp || 0),
+            warnings: (up.warnings || []).concat(lo.warnings || []), lost: null, corr: up.corr, sections: up.sections, esp: st };
+    }
+
+    // the pumped well top-down from the THP with no inflow (lift tables, WP20 outflowOnly): the discharge segment down to the pump, the
+    // intake pressure that the pump lifts to that discharge pressure (secant on p_intake: p_int + Δp_pump(p_int) = p_dis; the vented
+    // gas follows the intake state, the discharge segment is re-marched when it changes by more than 1 %), then the intake segment down
+    function _espDown(C, q, thp, o, gk) {
+        var V = G.WTS_wp_vlp, P = C.esp, EP = G.WTS_wp_esp, mid = C.W.nodes.midPerfMd, upW = _wPart(C, P.md, 0);
+        var T = o.tProfile ? o.tProfile(P.md) : (C.W.tAt ? C.W.tAt(P.md) : C.tht);
+        var march = function (qq) { var u = V.traverse(C.F, upW, qq, Object.assign({}, o, { from: 'top', p0: thp, grid: C.espGrids['up' + gk] || true })); if (u.grid && !C.espGrids['up' + gk]) C.espGrids['up' + gk] = u.grid; return u; };
+        var up = march(q); if (!up.ok) return up;
+        var pDis = up.pEnd, vent = 0, st = null, x0 = null, r0 = null;
+        var res = function (pi) { var s = EP.pump(P, C.F, q, pi, T); return s.ok ? { s: s, r: pi + s.dp - pDis } : null; };
+        var x = Math.max(PATM + 5, pDis * 0.5), a = res(x);
+        for (var it = 0; it < 30 && a; it++) {
+            st = a.s;
+            if (Math.abs(st.ventMscfd - vent) > 0.01 * Math.max(vent, 1e-3) && st.ventMscfd > 1e-6) { vent = st.ventMscfd; up = march(st.qIng); if (!up.ok) return up; pDis = up.pEnd; a = res(x); if (!a) break; st = a.s; }
+            if (Math.abs(a.r) < 0.01) break;
+            var xn;
+            if (x0 != null && r0 != null && a.r !== r0) xn = x - a.r * (x - x0) / (a.r - r0); else xn = x - a.r * 0.8;
+            x0 = x; r0 = a.r; x = Math.max(PATM + 1, xn);
+            a = res(x);
+        }
+        if (!a || !st) return { ok: false, lost: { reason: 'pump' }, warnings: [] };
+        if (Math.abs(a.r) > 1) return { ok: false, lost: { reason: 'pump-off' }, warnings: [] };   // the pump would draw the intake below atmospheric
+        st = a.s; st.pDisReq = pDis; st.dpNeed = pDis - st.pInt;
+        var lo = { ok: true, profile: [], segments: [], pEnd: st.pInt, vmMax: 0, eroMax: 0, restrictionsDp: 0, warnings: [] };
+        if (P.md < mid - 1) {
+            lo = V.traverse(C.F, _wPart(C, mid, P.md), q, Object.assign({}, o, { from: 'top', p0: st.pInt, grid: C.espGrids['ld' + gk] || true }));
+            if (!lo.ok) return lo;
+            if (lo.grid && !C.espGrids['ld' + gk]) C.espGrids['ld' + gk] = lo.grid;
+        }
+        var upRows = up.profile.filter(function (r) { return r.md <= P.md + 1e-6; }), loRows = lo.profile.filter(function (r) { return r.md > P.md + 1e-6; });
+        upRows.forEach(function (r) { r.esp = 'discharge'; }); loRows.forEach(function (r) { r.esp = 'intake'; });
+        return { ok: true, profile: upRows.concat(loRows), segments: (up.segments || []).concat(lo.segments || []), pEnd: lo.pEnd, pBottom: lo.pEnd,
+            vmMax: Math.max(up.vmMax || 0, lo.vmMax || 0), eroMax: Math.max(up.eroMax || 0, lo.eroMax || 0), restrictionsDp: (up.restrictionsDp || 0) + (lo.restrictionsDp || 0),
+            warnings: (up.warnings || []).concat(lo.warnings || []), lost: null, corr: up.corr, sections: up.sections, esp: st, topDown: true };
     }
 
     // the upstream pressure p1 (psia) that passes q Mscf/d through the nozzle to p2 psia: WTS_chokeperf_gasRate is linear in p1/√z(p1)
@@ -633,6 +729,11 @@
             if (C.node === 'bottom') { tr = _glTraverse(C, q, top.thp, 'down', keep); r.pIn = pwfI; r.pOut = tr.ok ? tr.pEnd : null; }
             else { tr = (pwfI > PATM) ? _glTraverse(C, q, pwfI, 'up', keep) : { ok: false, lost: { reason: 'pressure' }, warnings: [] }; r.pOut = top.thp; r.pIn = tr.ok ? tr.pEnd : null; }
             if (fine) C.counts.fine += 0.5; else C.counts.coarse += 0.5;      // two partial marches (≈ 1.5 traverses of the path)
+        } else if (C.esp) {
+            // B (WP26): the pumped well — the intake and discharge segments (one traverse of the path) and the pump
+            if (C.node === 'bottom') { tr = _espTraverse(C, q, top.thp, 'down', keep, fine); r.pIn = pwfI; r.pOut = tr.ok ? tr.pEnd : null; }
+            else { tr = _espTraverse(C, q, pwfI, 'up', keep, fine); r.pOut = top.thp; r.pIn = tr.ok ? tr.pEnd : null; }
+            if (tr.ok && tr.esp) r.esp = { Qin: tr.esp.Qin, tdh: tr.esp.tdh, dp: tr.esp.dp, dpNeed: tr.esp.dpNeed, rho: tr.esp.rho, pInt: tr.esp.pInt, rangeStatus: tr.esp.rangeStatus };
         } else if (C.node === 'bottom') {
             o.from = 'top'; o.p0 = top.thp;
             tr = V.traverse(C.F, C.W, q, o);
@@ -643,7 +744,7 @@
             else tr = V.traverse(C.F, C.W, q, o);
             r.pOut = top.thp; r.pIn = tr.ok ? tr.pEnd : null;
         }
-        if (tr && tr.grid && !C.grids[gkey] && !C.gl) C.grids[gkey] = tr.grid;
+        if (tr && tr.grid && !C.grids[gkey] && !C.gl && !C.esp) C.grids[gkey] = tr.grid;
         if (!C.trWarn && tr && tr.warnings) C.trWarn = tr.warnings;
         if (!tr.ok) { r.lost = tr.lost || { reason: tr.code || 'failed' }; r.delta = BIG; C.lostSeen[r.lost.reason] = q; }
         else r.delta = r.pOut - r.pIn;
@@ -810,11 +911,33 @@
     function _sgHyd(C) { if (C.gas && _fin(C.F.sgWell) && C.F.sgWell > 0) return C.F.sgWell; return C.F.sgg > 0 ? C.F.sgg : 0.65; }
     function _hydT(C, pA) { var h = G.WTS_hydrate_temp; if (typeof h !== 'function' || !(pA > 0)) return null; var t = h(pA, _sgHyd(C)); return _fin(t) ? t : null; }
     function _hasGas(C) { return C.gas || (C.type === 'oil' && (+C.F.gor > 0)); }
+    // B (WP26): R.lift for a pumped well — the pump state on the reported traverse, the motor and cable, the flags, the methods used
+    // (provisional ones named), the system head curve from the scan (the required rise at each scan rate as head at its intake rate)
+    // and the schematic mark
+    function _espAtOp(C, R, opQ, tr, e, thpA) {
+        var P = C.esp, EP = G.WTS_wp_esp, st = tr && tr.ok && tr.esp ? tr.esp : null;
+        if (!st) return;
+        if (!_fin(st.dpNeed) && _fin(thpA)) st.dpNeed = st.dp;          // wellhead node: at the root the pump's rise is the rise needed
+        var mo = EP.motor(P, st, { T_pump: st.T, T_surf: _thtQ(C, opQ) }), fl = EP.flags(P, st, mo);
+        var curve = (R.scan || []).filter(function (p) { return p.esp && _fin(p.esp.Qin) && _fin(p.esp.dpNeed) && p.esp.rho > 0; })
+            .map(function (p) { return { q: p.q, Qin: p.esp.Qin, tdhReq: p.esp.dpNeed * 144 / p.esp.rho, tdhPump: p.esp.dp * 144 / p.esp.rho }; });
+        var used = [{ key: 'affinity', label: EP.METHODS.affinity.label, verified: true }];
+        if (st.visc && st.visc.Qstar != null && st.visc.CQ < 0.999) used.push({ key: 'turzo', label: EP.METHODS.turzo.label, verified: false });
+        if (st.En > 0) used.push({ key: 'alhanati', label: EP.METHODS.alhanati.label, verified: false });
+        used.push({ key: 'turpin', label: EP.METHODS.turpin.label, verified: false });
+        if (mo && mo.ok) used.push({ key: 'motor', label: EP.METHODS.motor.label, verified: false });
+        R.lift = { type: 'esp', pumpMd: P.md, pumpTvd: P.tvd, inc: P.inc, dls: P.dls, freq: P.f, stages: P.N, sepEff: P.sepEff, natSep: P.natSep, viscOn: P.visc, od: P.od, casingId: P.casingId,
+            pump: { name: P.pump.name, f0: P.pump.f0, bep: P.pump.bep, range: P.pump.range, example: P.pump.example, rows: P.pump.rows },
+            pInt: st.pInt, pDis: st.pDis, pDisReq: _fin(st.pDisReq) ? st.pDisReq : null, dp: st.dp, dpNeed: st.dpNeed, tdh: st.tdh, hPerStage: st.tdh / P.N, rho: st.rho, T: st.T,
+            Qin: st.Qin, Qout: st.Qout, gvfIn: st.gvfIn, phi: st.phi, En: st.En, E: st.E, ventMscfd: st.ventMscfd, freeIn: st.freeIn, nu: st.nu, visc: st.visc,
+            bhp: st.bhp, hydHp: st.hydHp, eff: st.eff, range: st.range, bep: st.bep, rangeStatus: st.rangeStatus, motor: mo, flags: fl, curve: curve, methods: used,
+            marks: [{ md: P.md, kind: 'esp', comp: 'esp', stages: P.N, hz: P.f }], verified: false, provisional: PROVISIONAL };
+    }
     function _atOp(C, R, opQ) {
         var e = _eval(C, opQ, true, true), V = G.WTS_wp_vlp;
         var tr = e.tr;
         // the reported traverse is always the wellhead → bottom march at the operating point (bottom node: e.tr already)
-        if (C.node !== 'bottom' && e.top && !e.top.lost) {
+        if (C.node !== 'bottom' && e.top && !e.top.lost && !C.esp) {
             var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax, sections: C.sections };
             if (C.mult) o.mult = C.mult;
             var tpo = _tProf(C, opQ); if (tpo) o.tProfile = tpo.tAt;
@@ -842,6 +965,8 @@
             R.lift = { type: 'gaslift', qinj: C.gl.qinj, sginj: C.gl.sg, pinj_psig: C.gl.pinj, dpValve: C.gl.dpv, packerMd: C.gl.packerMd, packerTvd: C.gl.packerTvd,
                 injMd: lt ? lt.injMd : null, injTvd: lt ? lt.injTvd : null, pTub: lt ? lt.pTub : null, pCas: lt ? lt.pCas : null, atPacker: lt ? !lt.balance : null, casing: casProf };
         }
+        // B (WP26): the pump at the operating point (state, motor and cable, flags, the system head curve from the scan, schematic mark)
+        if (C.esp) _espAtOp(C, R, opQ, tr, e, thpA);
         // breakdown: p̄r − pwf (skin split) + tubing (gravity / friction / acceleration / restrictions) + choke + flowline
         var bd = [], dpSkin = null;
         if (C.I.skin && typeof C.I.skin.dpSkin === 'function') { try { dpSkin = C.I.skin.dpSkin(opQ, pwf); } catch (x) { dpSkin = null; } }
@@ -852,8 +977,11 @@
             var el = 0, fr = 0, ac = 0;
             R.traverse.segments.forEach(function (s) { el += s.dpEl || 0; fr += s.dpF || 0; ac += s.dpAcc || 0; });
             // the marcher's segments sum to the tubing Δp exactly; the restriction losses are booked separately
-            var tub = pwf - thpA, rs = R.traverse.restrictionsDp || 0, resid = tub - (el + fr + ac + rs);
+            // B (WP26): with a pump the tubing losses exceed pwf − THP by the pump's rise (booked as a negative entry, a gain)
+            var pmp = R.lift && R.lift.type === 'esp' && _fin(R.lift.dp) ? R.lift.dp : 0;
+            var tub = pwf - thpA + pmp, rs = R.traverse.restrictionsDp || 0, resid = tub - (el + fr + ac + rs);
             bd.push({ key: BD.gravity, dp: el + resid }, { key: BD.friction, dp: fr }, { key: BD.acceleration, dp: ac });
+            if (pmp) bd.push({ key: BD.pump, dp: -pmp });
             if (rs) bd.push({ key: BD.restrictions, dp: rs });
         }
         if (e.top && !e.top.lost) {
@@ -935,6 +1063,14 @@
             F.push(_w('GL_POINT', 'Gas lift: ' + _f(lf.qinj, 0) + ' Mscf/d injected at ' + _f(lf.injMd, 0) + ' ft MD (' + _f(lf.injTvd, 0) + ' ft TVD), ' + (lf.atPacker ? 'at the packer' : 'the point of balance above the packer') +
                 '; casing ' + _f(lf.pCas - PATM, 0) + ' psig against tubing ' + _f(lf.pTub - PATM, 0) + ' psig. Quick look: one injection point, no valve mechanics.', 'info'));
         }
+        if (R.lift && R.lift.type === 'esp') {
+            // B (WP26): the pump at the operating point, its warnings / failures, and each provisional method actually used
+            var le = R.lift;
+            F.push(_w('ESP_POINT', 'ESP: ' + _f(le.stages, 0) + ' stages at ' + _f(le.freq, 1) + ' Hz set at ' + _f(le.pumpMd, 0) + ' ft MD (' + _f(le.pumpTvd, 0) + ' ft TVD); intake ' + _f(le.pInt - PATM, 0) +
+                ' psig, discharge ' + _f(le.pDis - PATM, 0) + ' psig, TDH ' + _f(le.tdh, 0) + ' ft, ' + _f(le.bhp, 0) + ' hp.', 'info'));
+            (le.flags || []).forEach(function (x) { if (x.sev === 'warn' || x.sev === 'fail') F.push(_w(x.code, x.msg, 'warn', x.field)); });
+            (le.methods || []).forEach(function (m) { if (!m.verified) F.push(_w('PROVISIONAL_ESP', m.label + ': ' + PROVISIONAL + '.', 'info')); });
+        }
         if (R.layers && R.layers.thief && R.layers.thief.length) F.push(_w('CROSSFLOW', 'Crossflow while flowing: ' + R.layers.thief.join(', ') + ' take' + (R.layers.thief.length === 1 ? 's' : '') + ' fluid at the operating point (wellbore pressure above the layer pressure).'));
         if (ch && ch.regime === 'liquid') F.push(_w('CHOKE_LIQUID', 'Liquid with no free gas: the choke is an incompressible orifice.', 'info'));
         R.discontinuities.forEach(function (d) {
@@ -993,7 +1129,7 @@
         _flags(C, R);
         R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line }; if (C.counts.pred) R.counts.pred = C.counts.pred;
         R.evals = _evalsE(C);
-        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred;
+        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred; if (C.esp) R.grid.esp = C.espGrids;
         R.I = { aof: C.aof, pr: C.pr, kind: C.I.kind, key: C.I.key };
         return R;
     }
@@ -1017,7 +1153,7 @@
             loading: null, warnings: C.warnings.slice(), errors: [], aof: C.aof, pr: C.pr, choke: { present: C.choke.present } };
         if (C.sections) R.corr.sections = JSON.parse(JSON.stringify(C.sections));
         var pts = _scan(C, o.scanFracs);
-        R.scan = pts.map(function (p) { return { q: p.q, pOut: p.pOut, pIn: p.pIn, lost: p.lost ? p.lost.reason : null, eroMax: p.eroMax }; });
+        R.scan = pts.map(function (p) { var sc = { q: p.q, pOut: p.pOut, pIn: p.pIn, lost: p.lost ? p.lost.reason : null, eroMax: p.eroMax }; if (p.esp) sc.esp = p.esp; return sc; });
         var runs = _runs(C, pts);
         var bt = _bracketsFrom(C, pts, runs);
         var roots = [];
@@ -1083,7 +1219,7 @@
         _flags(C, R);
         R.counts = { fine: C.counts.fine, coarse: C.counts.coarse, line: C.counts.line }; if (C.counts.pred) R.counts.pred = C.counts.pred;
         R.evals = _evalsE(C);
-        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred;
+        R.grid = { dir: C.node, coarse: C.grids.coarse, fine: C.grids.fine, line: C.grids.line }; if (C.grids.pred) R.grid.pred = C.grids.pred; if (C.esp) R.grid.esp = C.espGrids;
         R.I = { aof: C.aof, pr: C.pr, kind: C.I.kind, key: C.I.key };
         return R;
     }
@@ -1282,6 +1418,20 @@
             else if (_n(glc.qinj_Mscfd) > 0 && !(_n(glc.pinj_psig) > 0)) add('GL_PINJ', 'error', 'wp_gl_pinj', 'Gas lift: enter the surface injection (casing) pressure.');
             if (_n(glc.packerMd) > 0 && _n(well.midPerfMd) > 0 && _n(glc.packerMd) > _n(well.midPerfMd)) add('GL_PACKER', 'warn', 'wp_gl_packer', 'Gas lift: the packer is below the mid-perforations; the injection point is limited to the end of the tubing.');
         }
+        // B (WP26): the ESP — oil / water producers, a pump curve, stages, 30–90 Hz, set above the perforations; the provisional methods
+        if (lfc.type === 'esp') {
+            var ec = lfc.esp || {}, EPc = G.WTS_wp_esp;
+            if (gas) add('ESP_NOT_APPLICABLE', 'error', 'wp_lift', 'The ESP is modelled for oil and water producers; choose natural flow for a ' + fl.type + ' well.');
+            var np = EPc && typeof EPc.normPump === 'function' ? EPc.normPump(ec.pump) : null;
+            if (np && !np.ok) add(np.code || 'NEEDS_PUMP', 'error', 'wp_esp_pump', np.errors[0]);
+            if (!(_n(ec.stages) >= 1)) add('NEEDS_STAGES', 'error', 'wp_esp_stages', 'ESP: enter the number of stages (or size them for a target rate).');
+            var fz = _n(ec.freq); if (fz != null && !(fz >= 30 && fz <= 90)) add('ESP_FREQ', 'error', 'wp_esp_freq', 'ESP: the frequency must be between 30 and 90 Hz.');
+            if (_n(ec.pumpMd) > 0 && _fin(mid) && _n(ec.pumpMd) > mid) add('ESP_BELOW_PERFS', 'warn', 'wp_esp_md', 'ESP: the pump is set below the mid-perforations; the intake is taken at the perforations (a shroud is needed for motor cooling).');
+            if (EPc && EPc.METHODS) ['turzo', 'alhanati', 'turpin'].forEach(function (k) {
+                var on = k === 'turzo' ? ec.visc !== false : (k === 'alhanati' ? ec.natSep !== false : true);
+                if (on) validity.push({ corr: 'esp_' + k, label: EPc.METHODS[k].label, inRange: true, msg: EPc.METHODS[k].label + ' (ESP): ' + PROVISIONAL + '.', provisional: true });
+            });
+        }
         // the surface choke (A2, WP15): the Sachdeva et al. (1986) model — the whole choke ('sachdeva') or the sub-critical branch of a
         // critical correlation (the default) — is provisional (D17) and its data range is bean 8–40/64 in (Appendix A)
         var chk = sf.choke || {};
@@ -1451,22 +1601,24 @@
         target = target || {};
         if (target.tubingId != null) return _tubingDesign(M, +target.tubingId);
         // A2 (WP18): {qinj: q} — the lift-gas rate (Mscf/d, 0–5,000 or the largest of the GLPC list) that gives the target rate
-        var kind = target.bean != null ? 'bean' : (target.thp != null ? 'thp' : (target.qinj != null ? 'qinj' : null)), qT = kind ? +target[kind] : NaN;
+        // B (WP26): {freq: q} — the ESP frequency (30–90 Hz) that gives the target rate (M.lift.type 'esp')
+        var kind = target.bean != null ? 'bean' : (target.thp != null ? 'thp' : (target.qinj != null ? 'qinj' : (target.freq != null ? 'freq' : null))), qT = kind ? +target[kind] : NaN;
         var base = M ? _clone(M) : null;
-        if (!kind || !(qT > 0) || !base || !base.surface || !base.system) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'BAD_TARGET', errors: ['a target rate {bean: q}, {thp: q} or {qinj: q} is needed'], warnings: [] }; } });
-        if (kind !== 'qinj') base.surface.choke.present = kind === 'bean';
+        if (!kind || !(qT > 0) || !base || !base.surface || !base.system) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'BAD_TARGET', errors: ['a target rate {bean: q}, {thp: q}, {qinj: q} or {freq: q} is needed'], warnings: [] }; } });
+        if (kind !== 'qinj' && kind !== 'freq') base.surface.choke.present = kind === 'bean';
         base.system.mode = 'rate';
         var gl0 = (base.lift && base.lift.gl) || {}, qlMax = Math.max.apply(null, [5000].concat((gl0.qinjList_Mscfd || []).map(Number).filter(_fin)));
-        var LO = kind === 'bean' ? 8 : (kind === 'qinj' ? 0 : Math.max(0, _n(base.surface.psep_psig) || 0));
-        var HI = kind === 'bean' ? 128 : (kind === 'qinj' ? qlMax : Math.max(LO + 50, (_n(base.res.pr) || 3000) - PATM - 10));
-        var x0 = kind === 'bean' ? (_n(base.surface.choke.bean64) || 32) : (kind === 'qinj' ? (_n(gl0.qinj_Mscfd) || 500) : (_n(base.system.thp_psig) || LO + 100));
+        var LO = kind === 'bean' ? 8 : (kind === 'qinj' ? 0 : (kind === 'freq' ? 30 : Math.max(0, _n(base.surface.psep_psig) || 0)));
+        var HI = kind === 'bean' ? 128 : (kind === 'qinj' ? qlMax : (kind === 'freq' ? 90 : Math.max(LO + 50, (_n(base.res.pr) || 3000) - PATM - 10)));
+        var x0 = kind === 'bean' ? (_n(base.surface.choke.bean64) || 32) : (kind === 'qinj' ? (_n(gl0.qinj_Mscfd) || 500) : (kind === 'freq' ? (_n(_get(base, ['lift', 'esp', 'freq'])) || 60) : (_n(base.system.thp_psig) || LO + 100)));
         x0 = Math.min(Math.max(x0, LO), HI);
         var pts = [], S = { solves: 0, best: null, fail: null, warm: null }, maxSolves = 16;
-        var tolQ = Math.max(1e-3 * qT, 0.5), tolX = kind === 'bean' ? 0.05 : (kind === 'qinj' ? 5 : 0.5);
+        var tolQ = Math.max(1e-3 * qT, 0.5), tolX = kind === 'bean' ? 0.05 : (kind === 'qinj' ? 5 : (kind === 'freq' ? 0.05 : 0.5));
         function at(x) {
             var Mx = _clone(base);
             if (kind === 'bean') Mx.surface.choke.bean64 = x;
             else if (kind === 'qinj') { Mx.lift = Mx.lift || {}; Mx.lift.type = x > 0 ? 'gaslift' : 'none'; Mx.lift.gl = Mx.lift.gl || {}; Mx.lift.gl.qinj_Mscfd = x; }
+            else if (kind === 'freq') { Mx.lift = Mx.lift || {}; Mx.lift.type = 'esp'; Mx.lift.esp = Mx.lift.esp || {}; Mx.lift.esp.freq = x; }
             else Mx.system.thp_psig = x;
             // warm start from the evaluated setting nearest to x
             var near = null; pts.forEach(function (p) { if (p.R && p.R.ok && (!near || Math.abs(p.x - x) < Math.abs(near.x - x))) near = p; });
@@ -1513,8 +1665,9 @@
             }
             if (pts.length === 1) {
                 if (kind === 'qinj') return (!(last.q > 0) || last.q < qT) ? Math.min(HI, last.x * 2 + 250) : last.x * 0.5;
-                if (!(last.q > 0)) return kind === 'bean' ? Math.min(HI, last.x * 2) : Math.max(LO, last.x * 0.5);
+                if (!(last.q > 0)) return kind === 'bean' ? Math.min(HI, last.x * 2) : (kind === 'freq' ? Math.min(HI, last.x + 10) : Math.max(LO, last.x * 0.5));
                 if (kind === 'bean') return last.x * Math.pow(qT / last.q, 1 / 1.89);
+                if (kind === 'freq') return last.x * Math.pow(qT / last.q, 1 / 1.3);
                 var sl = last.R && last.R.op ? last.R.op.dDdq : null;
                 return last.x - (qT - last.q) * (_fin(sl) && sl > 0 ? sl : 1);
             }
@@ -1524,7 +1677,7 @@
                 var xn = p1.x - p1.f * (p1.x - p2.x) / (p1.f - p2.f);
                 if (_fin(xn) && !_seen(xn)) return xn;
             }
-            var up = (kind === 'bean' || kind === 'qinj') === (last.f < 0);
+            var up = (kind === 'bean' || kind === 'qinj' || kind === 'freq') === (last.f < 0);
             var bound = up ? HI : LO;
             // no-flow on the far side: half-way back towards the flowing side rather than to the bound
             if (!(last.q > 0)) { var fl = pts.filter(function (p) { return p.q > 0; }); if (fl.length) { var nb = fl.reduce(function (a, b) { return Math.abs(b.x - last.x) < Math.abs(a.x - last.x) ? b : a; }); return 0.5 * (nb.x + last.x); } }
@@ -1565,7 +1718,7 @@
                     if (S.fail === 'NOT_REACHABLE_GAP') notes.push('The target lies in the rates the well cannot hold steadily: the rate drops to no flow across the stability limit between the closest settings.');
                     return notes;
                 };
-                if (!b || (S.fail && Math.abs(b.f) > Math.max(0.01 * qT, 1))) return { ok: false, code: S.fail || 'FAILED', errors: ['No ' + (kind === 'bean' ? 'bean between 8/64 and 128/64 in' : kind === 'qinj' ? 'lift-gas rate up to ' + _f(HI, 0) + ' Mscf/d' : 'wellhead pressure') + ' reaches the target rate ' + _f(qT, 0) + '.'].concat(why()), warnings: [], solves: S.solves, best: b ? { x: b.x, q: b.q } : null, maxRate: S.maxQ != null ? S.maxQ : null };
+                if (!b || (S.fail && Math.abs(b.f) > Math.max(0.01 * qT, 1))) return { ok: false, code: S.fail || 'FAILED', errors: ['No ' + (kind === 'bean' ? 'bean between 8/64 and 128/64 in' : kind === 'qinj' ? 'lift-gas rate up to ' + _f(HI, 0) + ' Mscf/d' : kind === 'freq' ? 'ESP frequency between 30 and 90 Hz' : 'wellhead pressure') + ' reaches the target rate ' + _f(qT, 0) + '.'].concat(why()), warnings: [], solves: S.solves, best: b ? { x: b.x, q: b.q } : null, maxRate: S.maxQ != null ? S.maxQ : null };
                 var out = { ok: Math.abs(b.f) <= Math.max(0.01 * qT, 1), q: b.q, R: b.R, solves: S.solves, target: qT, kind: kind, evals: pts.reduce(function (a, p) { return a + (p.R && p.R.evals || 0); }, 0), errors: [], warnings: [] };
                 out[kind] = b.x;
                 if (!out.ok) { out.errors.push('the closest setting gives ' + _f(b.q, 0) + ' against the target ' + _f(qT, 0)); why().forEach(function (t) { out.errors.push(t); }); out.maxRate = S.maxQ != null ? S.maxQ : null; }
@@ -1670,10 +1823,10 @@
         if (cx.fail) return cx.fail;
         var C = cx.C;
         if (o.ctx && o.ctx.C) { C.cache = {}; C.counts = { fine: 0, coarse: 0, line: 0, pred: 0 }; if (_fin(_n(o.thp_psig))) C.thpFix = _n(o.thp_psig); }
-        if (o.grid) { C.grids.fine = o.grid.fine || null; C.grids.coarse = o.grid.coarse || null; C.grids.line = o.grid.line || null; if (o.grid.pred) C.grids.pred = o.grid.pred; }
+        if (o.grid) { C.grids.fine = o.grid.fine || null; C.grids.coarse = o.grid.coarse || null; C.grids.line = o.grid.line || null; if (o.grid.pred) C.grids.pred = o.grid.pred; if (o.grid.esp && C.esp) C.espGrids = Object.assign({}, o.grid.esp); }
         var e = _eval(C, q, o.coarse ? false : true, true);
         return { ok: !e.lost, q: q, pOut: e.pOut, pIn: e.pIn, delta: e.delta, thp: e.top && !e.top.lost ? e.top.thp : null, regime: e.top && e.top.regime,
-            lost: e.lost || null, tr: e.tr || null, grid: Object.assign({ dir: C.node, fine: C.grids.fine, coarse: C.grids.coarse, line: C.grids.line }, C.grids.pred ? { pred: C.grids.pred } : {}), counts: C.counts, warnings: [], errors: [] };
+            lost: e.lost || null, tr: e.tr || null, grid: Object.assign({ dir: C.node, fine: C.grids.fine, coarse: C.grids.coarse, line: C.grids.line }, C.grids.pred ? { pred: C.grids.pred } : {}, C.esp ? { esp: C.espGrids } : {}), counts: C.counts, warnings: [], errors: [] };
     }
 
     var NS = G.WTS_wp_system = G.WTS_wp_system || {};

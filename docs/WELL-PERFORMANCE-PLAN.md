@@ -1073,7 +1073,7 @@ changes (5). **Total A2 ≈ 53.**
 
 `wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2` (WP24: 15), `wellperf-gl2`,
 `wellperf-esp`, `wellperf-cases`, `wellperf-mech`. WP27 shipped `wellperf-cases` (6), `wellperf-envelope` (5), `wellperf-tornado` (3) and
-`wellperf-studies` (5) — §18.3.6; WP25 shipped `wellperf-gl2` (8) — §18.3.9.
+`wellperf-studies` (5) — §18.3.6; WP25 shipped `wellperf-gl2` (8) — §18.3.9; WP26 shipped `wellperf-esp` (13) — §18.3.10.
 
 ---
 
@@ -1954,6 +1954,65 @@ existing API RP 11V6 engine, calc-gaslift against an independent RK4 gas column)
   closing pressure, formation gas = metered gas − lift gas, no hole-in-tubing model); the survey is in field units unless its header says
   otherwise and is not used for tuning (step ⑥ tunes on gauges); no valve / mandrel library (Q11); valve labels can overlap on the chart
   when two valves are close; GLPC points carry no Asheim numbers.
+
+#### 18.3.10 WP26 record (2026-11-12, branch wp/b-wp26)
+
+Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so the viscosity correction, the natural
+separation, the gas criterion and the motor / cable basics ship `verified:false` with the D17 label (BENCH kind `esp` pending) and are
+never a default (the default lift type stays natural flow); the affinity laws are exact similarity relations (`pinned`, X60). Q11 at its
+default (a device-wide pump library) — as a device preference `wtspref_wp_pumplib` rather than a project library key (the library-key rule
+of 29-project-save is PRiSM-only and would need a Round-6 edit). Q21 open.
+
+- **Engine (new `49-calc-wp-esp.js`, `WTS_wp_esp`)** as §7.3: `normPump` (user table rate / head per stage / efficiency % / BHP per stage at
+  f0, monotone cubic with linear continuation, efficiency ↔ BHP fill, BEP = the efficiency maximum, recommended range from the table else
+  70–130 % of the BEP rate, stated), `curve` (affinity q ∝ f, H ∝ f², P ∝ f³; viscosity by the Turzo, Takacs & Zsuga (2000) fit, normalised
+  to its water value so a catalogue water curve is unchanged, factors in [0.1, 1], held beyond Q* = 40 and flagged), `fan`, `natSep`
+  (Harmathy v∞, E = v∞/(v∞ + v_SL) after Alhanati; a rotary separator in series), `turpin`, `prepare` (setting MD with TVD, inclination and
+  dogleg; defaults: end of tubing, 60 Hz, natural separation and viscosity on, OD 4 in, #2 cable to MD + 100 ft), `pump` (stage by stage in
+  ≤ 20 groups, midpoint rule, gas dissolving as the pressure rises, hydraulic and shaft power), `motor` (V/Hz constant, load, linear current
+  estimate, copper cable at the mean cable temperature, surface voltage, kVA, motor cooling velocity), `flags` (range down- / upthrust, gas
+  interference φ > 1, GVF > 10 %, viscosity, overload / high / light load, cable drop > 5 %, cooling < 1 ft/s, below the perforations,
+  dogleg > 3 (fail > 6)°/100 ft), `sizeStages` (≤ 3 evaluations at the target rate), `sweep` (rate against frequency, a Job),
+  `example` (a generic synthetic pump, not a catalogue pump).
+- **Solver (49-calc-wp-system.js, additive; no ESP → unchanged):** `M.lift.type 'esp'` makes the pump a node: the intake segment is marched
+  bottom-up from the inflow's pwf(q) (so the intake state is exact at a root), the pump runs stage by stage, the discharge segment carries
+  the stream less the vented gas (the separated gas rejoins at the wellhead: the choke and flowline carry the full stream); bottom node
+  p_out = pwf + (p_dis,needed − p_dis,pump), wellhead node marches up; `outflowOnly` (lift tables) marches top-down and solves the intake
+  pressure by a secant (lost 'pump-off' when the pump would draw it below atmospheric). Each segment has its own frozen layout (`R.grid.esp`,
+  carried by warm starts). One evaluation = one traverse of the path (counted 1 E). `R.lift` as in the file header (state, motor, flags,
+  methods, the system head curve from the scan, `marks`), breakdown key `pump` (negative = a gain; gravity residual corrected), flags
+  `ESP_POINT`, the warn / fail ESP flags and `PROVISIONAL_ESP` per provisional method used; `designFor({freq: q})` (30–90 Hz);
+  `WTS_wp_check`: ESP_NOT_APPLICABLE (gas wells), NEEDS_PUMP / BAD_PUMP, NEEDS_STAGES, ESP_FREQ, ESP_BELOW_PERFS and provisional validity rows
+  `esp_turzo` / `esp_alhanati` / `esp_turpin`. Enthalpy temperature mode falls back to the relaxation with a pump (ENTH_FALLBACK).
+- **Contract changes (additive).** Model: scalars `wp_esp_md, _freq, _stages, _sep (%), _nat, _visc, _od, _hp, _volt, _amp, _awg, _clen` →
+  `M.lift.esp.{pumpMd, freq, stages, sepEff, natSep, visc, od_in, motor{hp, volt, amp}, cable{awg, len_ft}}`; table key `pump` =
+  `{v, name, f0, rows[[q, h, eff %, bhp]], qMin, qMax, od_in, example}` (cleaned, ≤ 40 rows) → `M.lift.esp.pump`; DEFAULTS unchanged
+  (`esp: null`). Export: ALQ type `FREQ` (Hz, oil / water, the model's pump), `suggest` offers it for an ESP model, a table without a lift
+  axis keeps the model's pump (`ALQ_MODEL_ESP`). Page: `WTS_wellperf_page.ui().solveLive()` (an extension's live drag), breakdown label
+  `pump`, KPI `esp` (replaces the loading margin of a pumped oil well), schematic ESP label with stages · Hz · MD · TVD, example **ESP**
+  (an example without a lift type clears an ESP selection), the ESP option enabled. Screening (WP27): the ESP rate is now the pumped solve
+  when the model has a pump (`NEEDS_PUMP` otherwise; test WSC2 updated).
+- **Page (new `49-calc-wp-espui.js`, extension `WTS_wellperf_ext.esp`).** Step ④: "ESP — setting, pump and motor" (MD with TVD /
+  inclination / dogleg pills, frequency, stages, gas, motor and cable; Size the stages → Use N stages; Frequency for this rate (Job) → Use;
+  Rate against frequency (Job)), "Pump curve" (display-unit table editor, meta row, Add row / Example / Paste CSV / Clear, device library
+  Save / Load / Remove, BEP / range pills), "Rate against frequency" (rate per frequency coloured by the range verdict, in-range band, a
+  draggable frequency line). `#wp_res` "ESP — pump and system head" (visible only with the ESP): eight KPI chips with ✓ / ! / ✕, the pump plot
+  (total head against the rate through the pump: recommended range band across 30–90 Hz, BEP locus, frequency fan, the pump at f and N, the
+  head the well needs from the scan, the pump on this fluid when gas / viscosity matter, the operating point; FREQ and STAGES rails re-solve
+  live and commit on release), a stage strip intake → discharge, the summary rbox, the checks. Studies row, CSV sections, Notes. Phone: a taller
+  plot and a shorter legend. Help: the notDocumented pattern takes `^wpe_` and `(gl|esp)_` (production help file 47,619 of 47,670 bytes); no
+  guide text, no screenshot (cap full, Q21).
+- **Tests / gates.** `wellperf-esp` ES1–ES13 (13: record, affinity, Turzo, separation / Turpin, stage by stage, system identities, top-down
+  and the FREQ axis, monotone and tracking, sizing / frequency design, sweep Job, motor / cable and flags incl. a dogleg on a deviated path,
+  model and checks, the page). wellperf-validate: BENCH `esp` (5 rows), gate 11, X60–X63 (numbered from X60 to stay clear of WP25), `--time`
+  rows ESP solve (≤ solve budget), stage sizing (3 E), sweep 7 frequencies (budget 70 E), frequency design, a FREQ lift table (reported).
+  Screenshots at 1280 × 800 and 390 px in the session scratchpad (`shots-b-WP26`).
+- **Known gaps.** No verified published example (Q9): Turzo coefficients as published in the fit, to verify; natural separation is the
+  simplified Alhanati form; no head degradation by gas beyond the homogeneous density (Turpin only flags); no temperature rise through the pump
+  and no motor heat in the temperature profile (enthalpy mode falls back); current is a linear estimate of load; the cable drop is resistive
+  copper only (the host electrical engines are not exported); no thrust-bearing load number (range flags only); the separated gas has no
+  casing-pressure model; gas wells (dewatering ESP) not modelled; no ESP in the sensitivity variables, the forecast or the batch over wells
+  beyond what the solve gives; the pump library is per device; help text for the ESP not added (cap, Q21).
 
 ### 18.4 Increment C
 
