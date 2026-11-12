@@ -13,9 +13,11 @@
 //               bands:[{x0, x1, color, label}] (vertical shading), hbands:[{y0, y1, color, label}] (horizontal strips at the
 //               left edge, e.g. flow-pattern bands along depth), vlines:[{x, color, label, dash}], hlines:[{y, color, label, dash}],
 //               markers:[{x, y, kind:'filled'|'hollow'|'diamond', color, label, r}],
-//               handles:[{key, kind:'point'|'railY'|'railX'|'pointX', x, y, value, min, max, step, label, color, fmt(v), rail:[f0, f1]}],
+//               handles:[{key, kind:'point'|'railY'|'railX'|'pointX'|'lineX', x, y, value, min, max, step, label, color, fmt(v),
+//                         rail:[f0, f1]}],
 //               ('pointX' (A2, WP13): a handle at x = value on the plot (y = h.y, else the bottom of the plot) dragged along x, with a
-//               dashed guide line across the plot — e.g. the bubble point on the fluid-property plot)
+//               dashed guide line across the plot — e.g. the bubble point on the fluid-property plot;
+//               'lineX' (A2, WP18): a vertical line at x = value, dragged along x — e.g. the gas-lift injection rate)
 //               readout:'x'|'y'|'near' (crosshair interpolation along x or along y; 'near' = the nearest point of a series with
 //               info:[string | [strings]] per point, WP12), empty:'message when there is nothing to draw',
 //               onHandle(key, value, phase 'move'|'end'), onLegend(hiddenMap), hidden:{seriesKey:true} (initial)}
@@ -332,6 +334,12 @@
                 ctx.strokeStyle = col; ctx.globalAlpha = active || focus ? 0.8 : 0.45; ctx.lineWidth = 1.2; if (ctx.setLineDash) ctx.setLineDash([4, 4]);
                 ctx.beginPath(); ctx.moveTo(hx, P.y); ctx.lineTo(hx, P.y + P.h); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]); ctx.globalAlpha = 1;
             }
+            else if (h.kind === 'lineX') {
+                // a vertical line at x = value across the plot (A2: the gas-lift injection rate), the knob at the top of the plot
+                hx = _clamp(toX(h.value), P.x, P.x + P.w); hy = P.y + 12;
+                ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha = 0.75; ctx.lineWidth = 1.6; if (ctx.setLineDash) ctx.setLineDash([5, 4]);
+                ctx.beginPath(); ctx.moveTo(hx, P.y); ctx.lineTo(hx, P.y + P.h); ctx.stroke(); ctx.restore();
+            }
             else if (h.kind === 'railY') {
                 hx = P.x + P.w + (m.r / 2); hy = _clamp(toY(h.value), P.y, P.y + P.h);
                 ctx.strokeStyle = T.axis; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(hx, P.y + 4); ctx.lineTo(hx, P.y + P.h - 4); ctx.stroke(); ctx.lineCap = 'butt';
@@ -358,6 +366,7 @@
             if (h.kind === 'railY') { tx = hx - r - 4 - tw; ty = hy; }
             else if (h.kind === 'railX') { tx = _clamp(hx - tw / 2, 2, cw - tw - 2); ty = hy + 15; }
             else if (h.kind === 'pointX') { tx = _clamp(hx - tw / 2, P.x + 2, P.x + P.w - tw - 2); ty = hy - r - 12; }
+            else if (h.kind === 'lineX') { tx = (hx + r + 6 + tw > P.x + P.w) ? hx - r - 6 - tw : hx + r + 6; ty = hy; }
             else { tx = hx + r + 6; ty = hy - 14; }
             if (h.kind !== 'railX' || active || focus) {
                 ctx.fillStyle = T.bg; ctx.globalAlpha = 0.85; ctx.fillRect(tx, ty - 8, tw, 16); ctx.globalAlpha = 1;
@@ -483,6 +492,7 @@
         var A = cv._wpAxes, v;
         if (h.kind === 'railX') { var f = _clamp((p.x - h._rx0) / Math.max(1, h._rx1 - h._rx0), 0, 1); v = h.min + f * (h.max - h.min); }
         else if (h.kind === 'pointX') v = A.fromX(_clamp(p.x, A.plot.x, A.plot.x + A.plot.w));
+        else if (h.kind === 'lineX') v = A.fromX(_clamp(p.x, A.plot.x, A.plot.x + A.plot.w));
         else v = A.fromY(_clamp(p.y, A.plot.y, A.plot.y + A.plot.h));
         if (_fin(h.step) && h.step > 0) v = Math.round(v / h.step) * h.step;
         if (_fin(h.min)) v = Math.max(h.min, v);
@@ -762,6 +772,30 @@
             g.push('<g class="wp-comp" data-comp="gauge:' + i + '" tabindex="0" role="button" aria-label="' + _esc('Gauge ' + (gg.name || gg.id || (i + 1)) + ' at ' + D(md) + ' — edit') + '">' +
                 '<path d="M' + (q.x + 12).toFixed(1) + ' ' + q.y.toFixed(1) + 'l10 -6v12z" fill="' + T.green + '" stroke="' + T.bg + '"/></g>');
             labs.push({ side: 1, x: q.x + 22, y: q.y, t: 'gauge ' + (gg.name || gg.id || (i + 1)), c: T.green });
+        });
+        // extra marks (A2, WP18): o.marks = [{md, kind:'gl'|'packer', label, color, comp}] — the gas-lift injection point with the lift-gas
+        // path down the annulus (dashed, from the wellhead to the point) and the packer across the annulus
+        (o.marks || []).forEach(function (mk) {
+            if (!mk || !_fin(mk.md)) return;
+            var q = interp(path, Math.min(mk.md, mdMax)); if (!q) return;
+            var col = mk.color || T.blue, nx = -Math.sin(q.ang), ny = Math.cos(q.ang), cmp = mk.comp ? ' class="wp-comp" data-comp="' + _esc(mk.comp) + '" tabindex="0" role="button"' : '';
+            if (mk.kind === 'gl') {
+                // the lift-gas path: down the annulus (offset 15 px on the casing side) from the wellhead to the point
+                var ln = [], nS = 32, mdI = Math.min(mk.md, mdMax);
+                for (var k2 = 0; k2 <= nS; k2++) { var qq = interp(path, mdI * k2 / nS); if (qq) ln.push((qq.x + Math.sin(qq.ang) * 15).toFixed(1) + ',' + (qq.y - Math.cos(qq.ang) * 15).toFixed(1)); }
+                g.push('<polyline points="' + ln.join(' ') + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-dasharray="5 4" stroke-opacity="0.8"/>');
+                var vx = q.x + Math.sin(q.ang) * 15, vy = q.y - Math.cos(q.ang) * 15, bub = '';
+                // gas bubbles in the tubing just above the point (the injected gas rising with the liquid)
+                [1, 2, 3].forEach(function (i2) { var qb = interp(path, Math.max(0, mdI - mdMax * 0.025 * i2)); if (qb) bub += '<circle cx="' + qb.x.toFixed(1) + '" cy="' + qb.y.toFixed(1) + '" r="' + (3.2 - 0.6 * i2).toFixed(1) + '" fill="none" stroke="' + col + '" stroke-width="1.4" stroke-opacity="' + (1 - 0.22 * i2).toFixed(2) + '"/>'; });
+                g.push('<g' + cmp + ' aria-label="' + _esc(mk.label || 'Gas-lift injection point') + '">' + bub +
+                    '<line x1="' + vx.toFixed(1) + '" y1="' + vy.toFixed(1) + '" x2="' + q.x.toFixed(1) + '" y2="' + q.y.toFixed(1) + '" stroke="' + col + '" stroke-width="2.5" stroke-linecap="round"/>' +
+                    '<circle cx="' + vx.toFixed(1) + '" cy="' + vy.toFixed(1) + '" r="6.5" fill="' + col + '" stroke="' + T.bg + '" stroke-width="2"/>' +
+                    '<path d="M' + (vx - 3).toFixed(1) + ' ' + (vy - 2).toFixed(1) + 'h6l-3 4z" fill="' + T.bg + '"/></g>');
+                labs.push({ side: 1, x: vx + 10, y: vy, t: mk.label || 'GL injection', c: col });
+            } else if (mk.kind === 'packer') {
+                [-1, 1].forEach(function (sd) { g.push('<rect x="' + (q.x + sd * nx * 13 - 4).toFixed(1) + '" y="' + (q.y + sd * ny * 13 - 4).toFixed(1) + '" width="8" height="8" fill="' + (mk.color || '#9ca3af') + '" stroke="' + T.bg + '"/>'); });
+                labs.push({ side: 1, x: q.x + 20, y: q.y, t: mk.label || 'packer', c: mk.color || '#9ca3af' });
+            }
         });
         // side labels: sorted by depth on each side and pushed apart (12 px), with a leader when moved
         [-1, 1].forEach(function (sd) {

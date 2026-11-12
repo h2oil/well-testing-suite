@@ -1326,6 +1326,51 @@ correlations ship provisional through the §15.1 gate. Built to the contracts be
   Notes carry the model. Help: `wellperf` inputs + reviewedSrc.
 - **Validation**: BENCH row `temp relax` (pending), gate 5 (label, never default), X16 (march vs RK4 on the deviated FIX.gasWell path
   < 0.02 °F, large-z limit), `--time` rows. Tests `wellperf-temp2` (9: TT1–TT9).
+#### 18.2.1 WP15 / WP16 / WP18 record (lane S, 2026-11-12, branch wp/a2-sys)
+
+Owner default: every open question at its proposed default; Q9 (textbooks) not provided, so the Sachdeva choke and the gas-lift quick
+look ship provisional through the D17 gate (`wellperf-validate.js` BENCH `choke sachdeva`, `lift glpc` pending).
+
+- **WP15 choke (§4.7).** `WTS_chokeperf_sachdeva(o)` (49-calc-chokeperf.js): critical ratio from the published implicit equation as a
+  bracketed fixed point (regula falsi on ln y, ≤ 30 evaluations over the whole input grid, X16 / WCK1), mass flux on both sides; limits
+  exact (gas only → isentropic ratio and nozzle; liquid only → incompressible orifice). `WTS_chokeperf_liquidCv(o)` (q = 34.2857·Cv·√(Δp/SG),
+  the bean's Cv from the solver's 1022.7 orifice). `WTS_chokeperf_SACHDEVA` {cd 0.75, verified:false, range bean 8–40/64}. In the solver
+  the regime of a critical correlation now comes from the Sachdeva y_c at the correlation's p1: critical → the correlation's p1 exactly;
+  sub-critical → the Sachdeva branch scaled (rate factor) to the correlation at its critical point (regime `subcritical`, model
+  `sachdeva-scaled`; continuous, X6 / WCK3). This is the new default and replaces the A1 bound (D17 note: the critical rates still come
+  from the verified correlations; only the sub-critical continuation is the provisional branch, labelled in the flag, the validity
+  verdict and the Notes). The A1 rule stays as `surface.choke.subcritical: 'bound'`. `surface.choke.corr: 'sachdeva'` = the model alone
+  (Cd `surface.choke.cd`, × `surface.choke.rateFactor`); for gas wells it carries the condensate and water through the bean (the nozzle
+  does not). `chokeCurve(M, {R})` and `chokeFactor(M, corrKey, {R})`. Effect on FIX.oilWell: the same operating point (critical there),
+  the A1 bound's unstable low root disappears (WSY1 / WSY7 / WRV8 now pin `'bound'`), the bean design is no longer capped. QC_CHOKE still
+  warns on a sub-critical test (provisional branch). The help example's q_s / tubing-curve minimum moved (319 → 305, 561 → 431 STB/d).
+- **WP16 sensitivity (§6).** `WTS_wp_sens.job(M, vars)` takes two variables: the 2-D grid walked from the start cell (= the single solve
+  when both model values are listed, X17), each cell a tracking solve from a solved neighbour; pairs that set the same input are refused
+  (`BAD_PAIR`), three variables `B_ONLY` (was `A2_ONLY` for two). 2 × 10 = 117 E of 160. `designFor(M, {tubingId: q})`: the smallest
+  `WTS_tubulars` tubing (fitting the casing) whose stable rate reaches the target; every size listed (rate, stability, loading margin,
+  erosion).
+- **WP18 gas lift (§7.1).** In `WTS_wp_system.solve`: `M.lift.type 'gaslift'` with `lift.gl.qinj_Mscfd > 0` (0 / blank = the natural-flow
+  path exactly, X18); the injection depth inside every evaluation = the shallower of the packer (blank → the end of tubing) and the point
+  of balance p_cas − ΔP_valve = p_tub (X19), p_cas = `WTS_gaslift_casingP` over the TVD; top-down for the bottom node, bottom-up at pwf(q)
+  for the wellhead node (same answer within 0.5 %); the lift gas is free gas only above the point (`fluid.pvt.injGas`), and the choke
+  (GLR incl. lift gas, Sachdeva mixture) and flowline carry it. The lifted marches do not use the frozen step layout (the depth moves with
+  q). `designFor(M, {qinj: q})`. New file 49-calc-wp-lift.js: `WTS_wp_gl.glpc / quickLook / summary / DEFAULT_LIST` (12 points 0–5 MMscf/d,
+  a Job with tracking solves, 111 E of 200; economic point by `lift.gl.incGor`, scf/STB; gas for 90 % of the maximum GAIN).
+- **Contract additions (additive).** M: `surface.choke.subcritical` ('sachdeva' default | 'bound'), `surface.choke.rateFactor`,
+  `system.target.kind` + 'tubingId' | 'qinj', `lift.gl.qinj_Mscfd`, `lift.gl.incGor`; scalars `wp_cksub`, `wp_ckrf`, `wp_gl_qinj`,
+  `wp_gl_incgor`. R: `surface.choke.{model, rateFactor, x1, ycIt, cv, subcritical, cd, fallback}`, `lift {…}`, `rates.qinj / qgTotal`,
+  traverse rows `lift`. Flags `CHOKE_SUBCRITICAL`, `CHOKE_PROVISIONAL`, `CHOKE_RANGE`, `GL_POINT`; check items `GL_NOT_APPLICABLE`,
+  `GL_PINJ`, `GL_PACKER`; validity row `sachdeva`. Solver codes `GL_NOT_APPLICABLE`, `NEEDS_PINJ`. `WTS_wp_view.chart` handle kind
+  `lineX`; `schematic` option `marks`.
+- **Page.** Choke model / sub-critical rule / Cd / rate factor + Fit; the Choke tab (rate vs p2/p1, y_c, operating point, bean handle);
+  second sensitivity variable, heat-map table (select → marker, Use these values), a rate line per second value; tubing-size design table
+  and chart with Use; step ④ gas lift: the performance curve with the draggable q_inj line, the injection depth (MD / TVD) per rate, the
+  quick-look summary, Use the optimum / economic point; Lift gas KPI (replaces the n/a loading KPI of a lifted oil well); schematic
+  injection point with the annulus gas path and the packer; traverse casing curve, injection line and a packer drag handle.
+- **Tests.** wellperf-choke2 (6), wellperf-sens2 (5), wellperf-gaslift (6); validate X6b, X16–X19, the 2 × 10 and GLPC timing rows.
+- **Known gaps.** Sachdeva Cd 0.75 and the liquid heat capacities (oil 0.5, water 1.0 Btu/lbm·°F) are unverified (the help screenshot
+  `sys` was re-shot: 14.4 kB, the image total 7,994,340 bytes); GLPC stability is the static check only (Asheim in B); the depth plot of a
+  dead well starts at the first lifted point.
 
 ### 18.3 Increment B (v4.5)
 

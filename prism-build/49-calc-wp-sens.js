@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------------------
 // Well Performance sensitivity (WP6, increment A1) — docs/WELL-PERFORMANCE-PLAN.md §3.6, §6, §15.2, §16, D9.
 //
-// One variable at a time (A1; two in A2, up to four in B): every value is one system solve (WTS_wp_system.solve — nothing here
+// One variable at a time (A1) or two (A2, WP16: a rate line per value of the second and the 2-D table; up to four in B): every value is one system solve (WTS_wp_system.solve — nothing here
 // re-implements a correlation, a march or a root search), driven as a Job through PRiSM_autoInterp.drive on a button press, with
 // progress and Cancel (cancel within one case; the results are discarded). No timer, no polling.
 //
@@ -30,7 +30,9 @@
 //     .suggest(M, key, n?)        → {ok, values[]} n (default 5) values around the base inside the validity range
 //     .matrix(vars /*[{key, values[]}]*/)
 //         → {ok, cases:[{values:{key: v}}], errors, warnings}  full factorial, ≤ 4 variables, ≤ 1,000 cases
-//     .job(M, vars, o?)           → Job for PRiSM_autoInterp.drive: {step() → {done, progress, label}, done(), progress(), result(),
+//     .job(M, vars, o?)           (A2: one or two variables; two → result.two, key2, label2, unit2, base2, start {x, y},
+//                                   grid {x[], y[], q[j][i], stable[j][i], labelsX, labelsY}, cases[{values, R, i, j}], no curves)
+//                                 → Job for PRiSM_autoInterp.drive: {step() → {done, progress, label}, done(), progress(), result(),
 //                                   cancel()}; result() → {ok, key, label, unit, family, base, start, cases:[{values, label?, R}],
 //                                   table, evals, cancelled?, errors, warnings}; R-summary = {ok, code, error, q, qo, qw, qg, qL,
 //                                   pwf, thp, tht, stable, loadingMargin, regime, tracked, evals, op, qs, curve:[{q, p}], family}
@@ -233,7 +235,8 @@
         if (!M || !M.res || !M.fluid || !M.surface || !M.system) return _failJob('NO_MODEL', ['the model is incomplete'], []);
         var mx = matrix(list);
         if (!mx.ok) return _failJob('BAD_VARS', mx.errors, mx.warnings);
-        if (mx.axes.length > 1) return _failJob('A2_ONLY', ['Two-variable sensitivities come in release 4.4; this release varies one parameter at a time.'], []);
+        if (mx.axes.length > 2) return _failJob('B_ONLY', ['Up to two variables in this release (three and four come with the tornado in a later release).'], []);
+        if (mx.axes.length === 2) return job2(M, mx, o);
         var key = mx.axes[0].key, d = VARS[key], why = _applicable(M, key);
         if (why) return _failJob('NOT_APPLICABLE', [d.label + ': ' + why], []);
         var SY = G.WTS_wp_system, base = _clone(M), bv = d.base(M), fams = o.families !== false;
@@ -320,15 +323,107 @@
         return J;
     }
 
+
+    // ── two variables (A2, WP16; §6.2): the primary variable along x, one line per value of the second ─────────────────
+    // The start cell (both model values when listed, else the nearest) is a cold solve — the plain single solve when both values
+    // are the model's own (§15.2). Its row walks outwards along the primary variable; every further row starts from the cell of
+    // the row before at the same primary value (tracking solve), so each cell is warm-started from a solved neighbour on the start
+    // cell's frozen layout. Rates only (no family curves: one rate line per second-variable value; the 2-D table is the heat map).
+    var CONFLICT = [['thp', 'bean'], ['thp', 'psep'], ['gor', 'glr'], ['skin', 'kh']];
+    function job2(M, mx, o) {
+        var a1 = mx.axes[0], a2 = mx.axes[1], k1 = a1.key, k2 = a2.key, d1 = VARS[k1], d2 = VARS[k2];
+        var w1 = _applicable(M, k1), w2 = _applicable(M, k2);
+        if (w1) return _failJob('NOT_APPLICABLE', [d1.label + ': ' + w1], []);
+        if (w2) return _failJob('NOT_APPLICABLE', [d2.label + ': ' + w2], []);
+        var cf = CONFLICT.filter(function (c) { return (c[0] === k1 && c[1] === k2) || (c[0] === k2 && c[1] === k1); })[0];
+        if (cf) return _failJob('BAD_PAIR', [d1.label + ' and ' + d2.label + ' cannot be varied together (' + (cf[0] === 'thp' && cf[1] === 'bean' ? 'a fixed wellhead pressure takes the choke out of line' : cf[0] === 'thp' ? 'with a fixed wellhead pressure the separator pressure has no effect' : 'they set the same input') + ').'], []);
+        var SY = G.WTS_wp_system, base = _clone(M);
+        var sortV = function (vals) { return vals.slice().sort(function (a, b) { return a - b; }); };
+        var xs = sortV(a1.values), ys = sortV(a2.values), b1 = d1.base(M), b2 = d2.base(M);
+        var raw1 = {}, raw2 = {};
+        mx.cases.forEach(function (c) { raw1[c.values[k1]] = c.raw[k1]; raw2[c.values[k2]] = c.raw[k2]; });
+        var near = function (vals, b) { var k = Math.floor((vals.length - 1) / 2), ex = false; if (_fin(b)) { k = 0; vals.forEach(function (v, i) { if (Math.abs(v - b) < Math.abs(vals[k] - b)) k = i; }); ex = Math.abs(vals[k] - b) <= 1e-9 * Math.max(1, Math.abs(b)); } return { i: k, exact: ex }; };
+        var s1 = near(xs, b1), s2 = near(ys, b2);
+        var cell = [];
+        ys.forEach(function (y, j) { cell[j] = xs.map(function (x, i) { return { i: i, j: j, x: x, y: y, R: null, res: null }; }); });
+        var walk = function (n, s) { var o2 = [s]; for (var i = s + 1; i < n; i++) o2.push(i); for (var k = s - 1; k >= 0; k--) o2.push(k); return o2; };
+        var order = [];
+        walk(ys.length, s2.i).forEach(function (j) { walk(xs.length, s1.i).forEach(function (i) { order.push(cell[j][i]); }); });
+        var st = { i: 0, done: false, cancelled: false, grid: null, res: null, warnings: mx.warnings.slice() };
+        if (_fin(b1) && !s1.exact) st.warnings.push(_w('NO_BASE_CASE', 'The model value ' + _f(b1) + ' ' + d1.unit + ' of ' + d1.label + ' is not in the list.', 'info'));
+        if (_fin(b2) && !s2.exact) st.warnings.push(_w('NO_BASE_CASE', 'The model value ' + _f(b2) + ' ' + d2.unit + ' of ' + d2.label + ' is not in the list.', 'info'));
+        var startCell = cell[s2.i][s1.i], exactBoth = s1.exact && s2.exact;
+        function nb(c) {
+            var dj = c.j > s2.i ? -1 : 1, up = cell[c.j + dj] && cell[c.j + dj][c.i];
+            if (c.j !== s2.i && up && up.R && up.R.ok) return { q: up.R.op.q, slope: up.R.op.dDdq };
+            var di = c.i > s1.i ? -1 : 1, lf = cell[c.j][c.i + di];
+            if (lf && lf.R && lf.R.ok) return { q: lf.R.op.q, slope: lf.R.op.dDdq };
+            return null;
+        }
+        function solveCell(c) {
+            var Mx = _clone(base);
+            if (!(c === startCell && exactBoth)) {
+                var e = d2.apply(Mx, c.y, raw2[c.y]) || d1.apply(Mx, c.x, raw1[c.x]);
+                if (e) { c.res = { ok: false, code: 'NOT_APPLICABLE', error: e, evals: 0, curve: [], family: d1.family }; return; }
+            }
+            var R, opt = {};
+            if (c === startCell) R = SY.solve(Mx);
+            else { if (st.grid) opt.warm = st.grid; var n2 = nb(c); if (n2 && n2.q > 0) opt.track = { q: n2.q, slope: n2.slope }; R = SY.solve(Mx, opt); }
+            if (!st.grid && R && R.grid && (R.grid.fine || R.grid.coarse)) st.grid = R.grid;
+            c.R = R; c.res = _summary(R, d1.family);
+        }
+        function finish() {
+            if (st.res) return st.res;
+            if (st.cancelled) { st.res = { ok: false, code: 'CANCELLED', key: k1, key2: k2, cases: [], table: { head: [], rows: [] }, evals: 0, cancelled: true, errors: ['cancelled'], warnings: [] }; return st.res; }
+            var cases = [], q = [], stab = [], nOk = 0;
+            ys.forEach(function (y, j) {
+                q[j] = []; stab[j] = [];
+                xs.forEach(function (x, i) {
+                    var c = cell[j][i], r = c.res || { ok: false, code: 'NOT_RUN', error: 'not run', evals: 0, curve: [], family: d1.family }, v = {};
+                    v[k1] = x; v[k2] = y;
+                    var cs = { values: v, R: r, i: i, j: j };
+                    if (typeof raw1[x] === 'string') cs.label = raw1[x];
+                    if (typeof raw2[y] === 'string') cs.label2 = raw2[y];
+                    cases.push(cs);
+                    q[j][i] = r.ok ? r.q : null; stab[j][i] = r.ok ? !!r.stable : null;
+                    if (r.ok) nOk++;
+                });
+            });
+            var tp = _type(M), res = { ok: nOk > 0, key: k1, key2: k2, label: d1.label, label2: d2.label, unit: d1.unit, unit2: d2.unit, family: d1.family, fluidType: tp, two: true,
+                rateUnit: tp === 'oil' ? 'STB/d liquid' : tp === 'water' ? 'BWPD' : 'Mscf/d',
+                base: { value: _fin(b1) ? b1 : null, inList: s1.exact }, base2: { value: _fin(b2) ? b2 : null, inList: s2.exact }, start: { x: xs[s1.i], y: ys[s2.i] },
+                grid: { x: xs.slice(), y: ys.slice(), q: q, stable: stab, labelsX: xs.map(function (x) { return typeof raw1[x] === 'string' ? raw1[x] : null; }), labelsY: ys.map(function (y) { return typeof raw2[y] === 'string' ? raw2[y] : null; }) },
+                cases: cases, evals: cases.reduce(function (a, c) { return a + (c.R.evals || 0); }, 0), errors: nOk ? [] : ['No case has an operating point.'], warnings: st.warnings };
+            cases.forEach(function (c) { if (!c.R.ok && c.R.code === 'NOT_APPLICABLE' && !res.warnings.some(function (w) { return w.msg === String(c.R.error).slice(0, 299); })) res.warnings.push(_w('CASE_NA', c.R.error)); });
+            res.table = table(res);
+            st.res = res;
+            return res;
+        }
+        return {
+            key: k1, key2: k2, n: order.length,
+            step: function () {
+                if (!st.done && !st.cancelled) { solveCell(order[st.i]); st.i++; if (st.i >= order.length) st.done = true; } else st.done = true;
+                if (st.done) finish();
+                var nx = order[Math.min(st.i, order.length - 1)];
+                return { done: st.done, progress: st.done ? 1 : Math.min(0.99, st.i / order.length), label: st.done ? 'done' : (d1.label + ' ' + _f(nx.x) + ', ' + d2.label + ' ' + _f(nx.y) + ' (' + (st.i + 1) + ' of ' + order.length + ')') };
+            },
+            done: function () { return st.done; },
+            progress: function () { return st.done ? 1 : st.i / order.length; },
+            result: function () { return finish(); },
+            cancel: function () { st.cancelled = true; st.done = true; st.res = null; }
+        };
+    }
+
     // ── table / CSV ──────────────────────────────────────────────────────────
     var HEAD_TAIL = ['q_o (STB/d)', 'q_w (BWPD)', 'q_g (Mscf/d)', 'q_L (STB/d)', 'pwf (psia)', 'THP (psig)', 'THT (°F)', 'Stable', 'Loading margin (%)', 'Choke regime', 'Note'];
     function table(res) {
         if (!res || !Array.isArray(res.cases) || !res.key || !VARS[res.key]) return { head: [], rows: [] };
-        var d = VARS[res.key], head = [d.label + (d.unit ? ' (' + d.unit + ')' : ''), 'Rate (' + (res.rateUnit || 'IPR basis') + ')'].concat(HEAD_TAIL);
+        var d = VARS[res.key], d2 = res.key2 ? VARS[res.key2] : null;
+        var head = [d.label + (d.unit ? ' (' + d.unit + ')' : '')].concat(d2 ? [d2.label + (d2.unit ? ' (' + d2.unit + ')' : '')] : []).concat(['Rate (' + (res.rateUnit || 'IPR basis') + ')']).concat(HEAD_TAIL);
         var rows = res.cases.map(function (c) {
             var R = c.R || {}, v = c.values ? c.values[res.key] : null;
-            return [c.label || v, R.ok ? R.q : null, R.qo, R.qw, R.qg, R.qL, R.pwf, R.thp, R.tht, R.ok ? (R.stable ? 'yes' : 'no') : '',
-                _fin(R.loadingMargin) ? R.loadingMargin * 100 : null, R.regime || '', R.ok ? (R.tracked ? 'tracked' : '') : (R.error || R.code || '')];
+            return [c.label || v].concat(d2 ? [c.label2 || (c.values ? c.values[res.key2] : null)] : []).concat([R.ok ? R.q : null, R.qo, R.qw, R.qg, R.qL, R.pwf, R.thp, R.tht, R.ok ? (R.stable ? 'yes' : 'no') : '',
+                _fin(R.loadingMargin) ? R.loadingMargin * 100 : null, R.regime || '', R.ok ? (R.tracked ? 'tracked' : '') : (R.error || R.code || '')]);
         });
         return { head: head, rows: rows };
     }
@@ -351,6 +446,14 @@
             L.push(_cell('Family curves (' + (d.family === 'ipr' ? 'inflow, one IPR per value' : 'outflow, one curve per value') + ')'));
             L.push([d.label + (d.unit ? ' (' + d.unit + ')' : ''), 'q (' + (res.rateUnit || 'IPR basis') + ')', 'p (psia)'].map(_cell).join(','));
             fam.forEach(function (c) { c.R.curve.forEach(function (p) { L.push([c.label || c.values[res.key], p.q, p.p].map(_cell).join(',')); }); });
+        }
+        if (res.grid && res.key2 && VARS[res.key2]) {
+            // the 2-D rate table (rows: the second variable; columns: the primary variable); empty cell = no operating point
+            var d2 = VARS[res.key2];
+            L.push('');
+            L.push(_cell('Rate (' + (res.rateUnit || '') + '): rows ' + d2.label + (d2.unit ? ' (' + d2.unit + ')' : '') + ', columns ' + d.label + (d.unit ? ' (' + d.unit + ')' : '')));
+            L.push([''].concat(res.grid.x.map(function (x, i) { return res.grid.labelsX[i] || x; })).map(_cell).join(','));
+            res.grid.y.forEach(function (y, j) { L.push([res.grid.labelsY[j] || y].concat(res.grid.q[j]).map(_cell).join(',')); });
         }
         return L.join('\n');
     }

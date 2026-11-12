@@ -80,9 +80,9 @@
                     strings: [], path: 'tubing', restrictions: [],
                     geo: { surfT_F: 60, points: [] },
                     heat: { mode: 'linear', tht_F: null, thtMeasured: false, U_to: 2, tProd_d: 30, ke: 1.4, alpha: 0.04, Ubasis: 'to', dwb_in: null } },
-            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75 }, flowline: [], psep_psig: 100, ambient_F: 60,
+            surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'sachdeva', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
-            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100 }, esp: null },
+            lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
             system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb' },
                       mult: { hl: 1, f: 1 }, eroC: 100, stepFt: 100, stepFtLine: 50, refine: true },
             tests: [],
@@ -125,15 +125,21 @@
         wp_Ubasis: { path: 'well.heat.Ubasis', kind: 'str', enumv: ['to', 'ti'] }, wp_dwb: { path: 'well.heat.dwb_in', kind: 'num' },   // A2 (WP14)
         wp_choke: { path: 'surface.choke.present', kind: 'bool' }, wp_bean: { path: 'surface.choke.bean64', kind: 'num' },
         wp_ckcorr: { path: 'surface.choke.corr', kind: 'str' }, wp_ckcd: { path: 'surface.choke.cd', kind: 'num' },
+        // A2 (WP15): the sub-critical rule ('sachdeva' = the continuous Sachdeva et al. branch scaled to the critical correlation;
+        // 'bound' = the A1 conservative bound p1 ≥ p2 / 0.588) and the rate factor of the Sachdeva model (blank = 1)
+        wp_cksub: { path: 'surface.choke.subcritical', kind: 'str', enumv: ['sachdeva', 'bound'] }, wp_ckrf: { path: 'surface.choke.rateFactor', kind: 'num' },
         wp_psep: { path: 'surface.psep_psig', kind: 'num' }, wp_tamb: { path: 'surface.ambient_F', kind: 'num' },
         wp_lift: { path: 'lift.type', kind: 'str', enumv: ['none', 'gaslift', 'esp'] },
         wp_gl_packer: { path: 'lift.gl.packerMd', kind: 'num' }, wp_gl_sg: { path: 'lift.gl.sginj', kind: 'num' },
         wp_gl_pinj: { path: 'lift.gl.pinj_psig', kind: 'num' }, wp_gl_dpv: { path: 'lift.gl.dpValve', kind: 'num' },
         wp_gl_qlist: { path: 'lift.gl.qinjList_Mscfd', kind: 'list' },
+        // A2 (WP18): the operating lift-gas rate (Mscf/d; blank or 0 = natural flow) and the incremental gas-oil ratio limit of the
+        // economic point (scf/STB; 0 = the optimum)
+        wp_gl_qinj: { path: 'lift.gl.qinj_Mscfd', kind: 'num' }, wp_gl_incgor: { path: 'lift.gl.incGor', kind: 'num' },
         wp_thp: { path: 'system.thp_psig', kind: 'num' },
         wp_node: { path: 'system.node', kind: 'str', enumv: ['bottom', 'wellhead', 'separator'] },
         wp_mode: { path: 'system.mode', kind: 'str', enumv: ['rate', 'pressure', 'max', 'design'] },
-        wp_tkind: { path: 'system.target.kind', kind: 'str', enumv: ['bean', 'thp'] }, wp_tq: { path: 'system.target.q', kind: 'num' },
+        wp_tkind: { path: 'system.target.kind', kind: 'str', enumv: ['bean', 'thp', 'tubingId', 'qinj'] }, wp_tq: { path: 'system.target.q', kind: 'num' },
         wp_corr_well: { path: 'system.corr.well', kind: 'str' }, wp_corr_line: { path: 'system.corr.line', kind: 'str' },
         wp_mult_hl: { path: 'system.mult.hl', kind: 'num' }, wp_mult_f: { path: 'system.mult.f', kind: 'num' },
         wp_eroC: { path: 'system.eroC', kind: 'num' }, wp_stepFt: { path: 'system.stepFt', kind: 'num' },

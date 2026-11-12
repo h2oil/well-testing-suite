@@ -142,7 +142,7 @@ noRefs: 'A unit conversion.',
 related: ['chokeperf'],
 shots: [Sv('Choke Size Conversions page', ['#cc_64~1', '#pgBody .dtable~2'])]
 }),
-chokeperf: Gd('chokeperf', '1ba7c679', {
+chokeperf: Gd('chokeperf', '34e08996', {
 notDocumented: [{ id: 'ck_calc', why: 'Calculate button: optional, the page updates on every change (step 6)' }],
 purpose: 'Critical-flow check, gas and multiphase rate through a [[glossary#bean|bean]], and a bean-up plan.',
 what: ['Gas: nozzle equation, k and Z from [[gaspvt]]. Oil wells: four correlations. The [[glossary#sithp|SITHP]] gives the next beans.'],

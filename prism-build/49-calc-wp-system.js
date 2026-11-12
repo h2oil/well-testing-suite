@@ -26,10 +26,14 @@
 //   polished by a secant step on fine central differences); only q < q_s is shaded. The tubing-curve minimum (dp_out/dq = 0) comes
 //   from a parabola through the three coarse points around the smallest p_out — the conventional, more conservative rule; it lies
 //   right of q_s. Heading flag: the operating point within 10 % above q_s. The static criterion does not predict heading dynamics.
-// CHOKE (§4.7, A1). Multiphase: critical correlations (Gilbert, Ros, Baxendell, Achong) through WTS_chokeperf_multiphaseRate,
-//   p1_crit(q) psig = q·a·GLR^c / S^b, and the continuous conservative bound p1(q) = max(p1_crit(q), p2 / y_c) (absolute pressures,
-//   y_c = 0.588 for the Gilbert family as in 49-calc-chokeperf.js): when the second term governs the regime is
-//   'subcritical-bound' ("the critical correlation does not apply; the rate shown is a conservative bound"). Gas and condensate:
+// CHOKE (§4.7; A2, WP15). Multiphase: critical correlations (Gilbert, Ros, Baxendell, Achong) through WTS_chokeperf_multiphaseRate,
+//   p1_crit(q) psig = q·a·GLR^c / S^b. The regime comes from the Sachdeva et al. (1986) critical ratio y_c (WTS_chokeperf_sachdeva,
+//   fixed point ≤ 30 iterations) at the correlation's p1: critical (p2/p1 ≤ y_c) → p1 = p1_crit exactly; sub-critical → the Sachdeva
+//   sub-critical mass rate scaled by the rate factor that makes it equal the correlation's rate at its critical point (continuous at
+//   y_c; regime 'subcritical', model 'sachdeva-scaled'). surface.choke.corr 'sachdeva' = the Sachdeva model alone on both sides (Cd,
+//   default 0.75, × surface.choke.rateFactor, default 1; model 'sachdeva'; it also carries the condensate and water of a gas well
+//   through the bean). surface.choke.subcritical 'bound' keeps the A1 rule: the continuous conservative bound p1(q) =
+//   max(p1_crit(q), p2 / y_c) with y_c = 0.588 (regime 'subcritical-bound'). Every Sachdeva use is provisional (D17). Gas and condensate:
 //   the isentropic nozzle WTS_chokeperf_gasRate (critical and sub-critical, continuous), inverted for p1 by bisection; the liquids
 //   of a wet gas are not in the nozzle (info). A liquid with no gas (GLR < 10 scf/STB): the incompressible orifice
 //   q(bbl/d) = 1022.7·Cd·d²·√(Δp/SG) (d in, Δp psi; = 29.84 gal/min × 34.2857 = 8074/√62.4: Torricelli's 19.636 gal/min is for
@@ -68,15 +72,25 @@
 //         → R = {ok, code?, node, mode, corr:{well, line}, roots:[{q, p, stable, dDdq}], op, qs, vlpMin, pwf, traverse,
 //                breakdown:[{key, dp}], surface:{thp psia, thp_psig, tht, thtHyd (THT of the hydrate check), tHyd (hydrate T at
 //                the THP), hydMargin, pChokeDn psia, pChokeDn_psig, tChokeDn, tHydDn, choke:{present, regime:'critical'|
-//                'subcritical-bound'|'subcritical'|'liquid'|'none', ratio, yc, bean, corr, p1crit_psig, dp}},
+//                'subcritical-bound'|'subcritical'|'liquid'|'none', ratio, yc, bean, corr, p1crit_psig, dp; A2: model 'sachdeva'|
+//                'sachdeva-scaled'|null, rateFactor, x1, ycIt, cv, subcritical 'sachdeva'|'bound', cd, fallback}},
 //                rates:{qo, qw, qg Mscf/d, qL}, velocities:{vmMax, eroMax, eroC, qEro}, curves:{ipr:[{q, p}], vlp:[{q, p}]},
 //                scan:[{q, pOut, pIn, lost}], flags[], discontinuities[], loading, atTarget?, warnings, errors, evals, counts, grid,
 //                heat:{mode:'relax'|'linear'|'static', tht, …relax: q, A, fTD, tD, U, U_to, Ubasis, r_to, rwb, ke, alpha, tProd_d, w, cp,
-//                frac, teTop, offsetTop, verified:false, provisional} (A2)}; traverse rows also carry te (earth temperature, A2)
-//     .designFor(M, target /*{bean: q} | {thp: q}*/) → Job: result() → {ok, bean | thp (psig), q, R, solves}
+//                frac, teTop, offsetTop, verified:false, provisional} (A2)}; traverse rows also carry te (earth temperature, A2);
+//                A2 (WP18, M.lift.type 'gaslift' with lift.gl.qinj_Mscfd > 0): rates.qinj / qgTotal, lift:{type, qinj, sginj, pinj_psig,
+//                dpValve, packerMd, packerTvd, injMd, injTvd, pTub psia, pCas psia, atPacker, casing:[{md, tvd, p psia}]}, traverse rows
+//                carry lift: true above the injection point}
+//     .designFor(M, target /*{bean: q} | {thp: q} | {tubingId: q} | {qinj: q} (A2)*/) → Job: result() → {ok, bean | thp (psig), q, R, solves};
+//                tubingId: {ok, tubingId in, tubKey, od, label, q, rows:[{key, label, id, od, ok, q, stable, loadingMargin, ero, thp, pwf,
+//                regime}], current, solves, evals} — the smallest catalogue size whose stable rate reaches the target
 //     .maxRate(M)   → {ok, q, thp_psig, tht, thtMax, rating:{verdict, margin}, R}
 //     .shutIn(M, o?) → {ok, gasFilled, actualFluid, partLiquid:[{liquidTopMd, liquidTopTvd, sithp}], liquidLevelMd, sgCol, zAvg,
 //                       sithp (worst), rating:{verdict:'ok'|'warn'|'fail'|'none', margin}, notes[]}   (pressures psig)
+//     .chokeCurve(M, {R?}) → {ok, p1, p1_psig, tht, bean, corr, model, regime, yc, ycCorr, ycSachdeva, op:{y, q}, rateUnit,
+//                              series:{sachdeva:[{y, q}], corr:[{y, q}], nozzle:[{y, q}]}, rateFactor, x1}   (A2: the choke tab)
+//     .chokeFactor(M, corrKey, {R?}) → {ok, factor, corr, q, p1_psig, yc, cd}   the rate factor that scales the Sachdeva model to a
+//                              critical correlation at the operating point's critical rate (§4.7)
 //     .beanSchedule(M, beans) → Job: result() → [{bean, q, thp, tht, dpChoke, regime, stable, loadingMargin, ok}]
 //     .job(steps)   the small Job helper (step / done / result / cancel / progress) used by the three Jobs
 //   WTS_wp_loading(R, F, W) → {ok, applicable, method, suggested, qc_MMscfd, limitingMd, limitingTvd, margin, verdict,
@@ -109,6 +123,9 @@
     var BD = { reservoir: 'reservoir', completion: 'completion', gravity: 'gravity', friction: 'friction', acceleration: 'acceleration',
         restrictions: 'restrictions', choke: 'choke', wellhead: 'wellhead', flowline: 'flowline' };
     var PROVISIONAL = 'provisional — not verified against a published example';
+    var SACH_LABEL = 'Sachdeva et al. (1986)', SACH_RANGE = [8, 40];   // Appendix A: bean 8–40/64 in, the data range of the paper
+    var CK_NAMES = { gilbert: 'Gilbert', ros: 'Ros', baxendell: 'Baxendell', achong: 'Achong', sachdeva: 'Sachdeva et al.' };
+    function _corrName(k) { return CK_NAMES[k] || String(k || ''); }
     var DEF_LEVELS = [0.25, 0.5, 0.75];
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -244,7 +261,8 @@
             stepFt: +sys.stepFt > 0 ? +sys.stepFt : 100, stepFtLine: +sys.stepFtLine > 0 ? +sys.stepFtLine : 50,
             refine: sys.refine !== false, eroC: +sys.eroC > 0 ? +sys.eroC : 100, mult: mult,
             pr: +I.pr, aof: +I.aof, psep: _fin(_n(_get(M, ['surface', 'psep_psig']))) ? +M.surface.psep_psig : 100,
-            choke: { present: mode !== 'max' && !!choke.present && !o.noChoke, bean: _n(choke.bean64), corr: choke.corr || 'gilbert', cd: _n(choke.cd) },
+            choke: { present: mode !== 'max' && !!choke.present && !o.noChoke, bean: _n(choke.bean64), corr: choke.corr || 'gilbert', cd: _n(choke.cd),
+                sub: choke.subcritical === 'bound' ? 'bound' : 'sachdeva', rateFactor: _n(choke.rateFactor), cdS: (_n(choke.cd) >= 0.3 && _n(choke.cd) <= 1.2) ? _n(choke.cd) : 0.75 },
             thpFix: _n(sys.thp_psig), flowline: (M.surface && Array.isArray(M.surface.flowline) ? M.surface.flowline : []).filter(function (s) { return s && +s.len > 0 && +s.id > 0; }),
             tht: (W.temp && _fin(W.temp.tht)) ? W.temp.tht : (W.tAt ? W.tAt(0) : 100),
             grids: { coarse: null, fine: null, line: null }, cache: {}, counts: { fine: 0, coarse: 0, line: 0 }, warnings: [], lostSeen: {}, trWarn: null,
@@ -252,6 +270,26 @@
             relax: !!(M.well.heat && M.well.heat.mode === 'relax') && _fn('WTS_wp_well.relax') !== null, tCache: {}
         };
         C.pMax = Math.max(2 * C.pr, C.pr + 3000);
+        // gas lift (A2, WP18; §7.1): M.lift.type 'gaslift' with an injection rate lift.gl.qinj_Mscfd > 0 (0 or blank = natural flow, the
+        // exact natural-flow path). Single injection point: the shallower of the packer depth and the depth where the casing gas column
+        // (WTS_gaslift_casingP from the surface injection pressure) less the valve ΔP equals the tubing pressure; above it the lift gas
+        // is free gas only (fluid.pvt.injGas, WP0b), below it the formation fluid.
+        var lf = M.lift || {}, glS = lf.gl || {}, qinj = _n(glS.qinj_Mscfd);
+        if (lf.type === 'gaslift' && qinj > 0 && !o.noLift) {
+            if (_isGas(type)) return { fail: _fail('GL_NOT_APPLICABLE', ['Gas lift is a quick look for oil wells; this well is a ' + type + ' well.'], { F: F, I: I, W: W }) };
+            var pinj = _n(glS.pinj_psig);
+            if (!(pinj > 0)) return { fail: _fail('NEEDS_PINJ', ['Gas lift: the surface injection (casing) pressure is needed (step ④).'], { F: F, I: I, W: W }) };
+            if (typeof G.WTS_gaslift_casingP !== 'function') return { fail: _fail('MISSING_ENGINE', ['WTS_gaslift_casingP is not available'], { name: 'WTS_gaslift_casingP' }) };
+            var shoe = W.nodes && _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd : null, mid = W.nodes.midPerfMd;
+            var pk = _n(glS.packerMd), pkMax = Math.min(_fin(shoe) ? shoe : mid, mid);
+            if (!(pk > 0)) pk = pkMax;
+            if (pk > pkMax) { C.warnings.push(_w('GL_PACKER_DEEP', 'Gas lift: the packer depth is below the end of the tubing; the injection point is limited to ' + _f(pkMax, 0) + ' ft MD.', 'info')); pk = pkMax; }
+            var sgi = _n(glS.sginj) > 0.5 && _n(glS.sginj) < 2 ? _n(glS.sginj) : 0.65, dpv = _n(glS.dpValve), pvtLift = {};
+            Object.keys(F.pvt || {}).forEach(function (k) { pvtLift[k] = F.pvt[k]; });
+            pvtLift.injGas = { qg_MMscfd: qinj / 1000, sg: sgi };
+            var Finj = {}; Object.keys(F).forEach(function (k) { Finj[k] = F[k]; }); Finj.pvt = pvtLift;
+            C.gl = { qinj: qinj, sg: sgi, pinj: pinj, dpv: _fin(dpv) && dpv >= 0 ? dpv : 100, packerMd: pk, packerTvd: W.tvdAt ? W.tvdAt(pk) : null, Finj: Finj, cas: {} };
+        }
         if (C.choke.present && !(C.choke.bean > 0)) return { fail: _fail('NEEDS_BEAN', ['the choke bean size is needed (or take the choke out of line)'], { F: F, I: I, W: W }) };
         if (!C.choke.present && mode !== 'max' && !_fin(C.thpFix)) { C.maxBC = true; C.warnings.push(_w('NO_THP', 'No wellhead pressure entered: the lowest admissible THP (separator + flowline) is used.', 'info', 'wp_thp')); }
         if (mode === 'max') C.maxBC = true;
@@ -278,7 +316,7 @@
     // ── surface boundary: THP required at a rate (choke + flowline + separator, or fixed) ─────────────────────────────
     function _line(C, q, tLine) {
         if (!C.flowline.length) return { p2: C.psep + PATM, dp: 0, eroMax: null, vmMax: null };
-        var ff = G.WTS_wp_fluid.flowlineFluid(C.F, q);
+        var ff = _ffs(C, q);
         var segs = C.flowline.map(function (s) { return { name: s.name || 'Flowline', len: +s.len, id: +s.id, dz: +s.dz || 0 }; });
         var mo = { reverse: true, corr: C.corrLine, stepFt: C.stepFtLine, rough: 0.0018, accel: true, payne: true, refine: C.refine, eroC: C.eroC };
         mo.grid = C.grids.line || true;
@@ -300,6 +338,80 @@
         C.kGas = (st && st.k > 1 && st.k < 1.7) ? st.k : 1.28;
         return C.kGas;
     }
+    // ── gas lift helpers (A2, WP18) ───────────────────────────────────────────
+    // the surface stream: the formation fluid, plus the lift gas above the injection point (and in the choke and flowline)
+    function _ffs(C, q) { return G.WTS_wp_fluid.flowlineFluid(C.gl ? C.gl.Finj : C.F, q); }
+    // casing pressure (psia) at a measured depth: the static lift-gas column from the surface injection pressure (WTS_gaslift_casingP,
+    // DAK Z) over the TVD, at the flowing-temperature profile; cached per 25 ft of MD for one solve (the column does not depend on q)
+    function _pCas(C, md) {
+        var k = Math.round(md / 25), c = C.gl.cas[k];
+        if (c != null) return c;
+        var m = k * 25, tvd = C.W.tvdAt ? C.W.tvdAt(Math.max(0, m)) : m, t0 = C.W.tAt ? C.W.tAt(0) : C.tht, t1 = C.W.tAt ? C.W.tAt(Math.max(0, m)) : t0;
+        var r = G.WTS_gaslift_casingP(C.gl.pinj, Math.max(0, tvd), C.gl.sg, t0, t1);
+        c = C.gl.cas[k] = (r && _fin(r.p)) ? r.p + PATM : NaN;
+        return c;
+    }
+    function _pCasAt(C, md) { var a = Math.floor(md / 25) * 25, f = (md - a) / 25; return _pCas(C, a) * (1 - f) + _pCas(C, a + 25) * f; }
+    function _wPart(C, fromMd, toMd) {
+        var sg = G.WTS_wp_well.segmentsFor(C.W, { from: fromMd, toMd: toMd });
+        return { segments: Array.isArray(sg) ? sg : [], tAt: C.W.tAt, nodes: C.W.nodes };
+    }
+    // the injection depth on a profile of {md, p} rows (MD order): the first MD where p_tub ≥ p_cas − ΔP_valve (top-down: the gas can
+    // enter above it), or the deepest MD ≤ the packer where p_tub ≤ p_cas − ΔP_valve (bottom-up); linear between the rows
+    function _injOn(C, prof, dir) {
+        var rows = prof.filter(function (r) { return !r.restr && r.md <= C.gl.packerMd + 1e-6; }), g = function (r) { return r.p - (_pCasAt(C, r.md) - C.gl.dpv); };
+        if (!rows.length) return null;
+        if (dir === 'down') {
+            if (g(rows[0]) >= 0) return { none: true };
+            for (var i = 1; i < rows.length; i++) { var a = g(rows[i - 1]), b = g(rows[i]); if (b >= 0) { var f = a / (a - b); return { md: rows[i - 1].md + f * (rows[i].md - rows[i - 1].md), p: rows[i - 1].p + f * (rows[i].p - rows[i - 1].p), balance: true }; } }
+            var l = rows[rows.length - 1]; return { md: l.md, p: l.p, balance: false };
+        }
+        for (var j = rows.length - 1; j >= 0; j--) {
+            if (g(rows[j]) <= 0) {
+                if (j === rows.length - 1) return { md: rows[j].md, p: rows[j].p, balance: false };
+                var a2 = g(rows[j]), b2 = g(rows[j + 1]), f2 = a2 / (a2 - b2);
+                return { md: rows[j].md + f2 * (rows[j + 1].md - rows[j].md), p: rows[j].p + f2 * (rows[j + 1].p - rows[j].p), balance: true };
+            }
+        }
+        return { none: true };
+    }
+    // one gas-lifted well evaluation at q: the tubing in two marches (lift gas above the injection point, formation fluid below);
+    // the frozen step layout is not used (the injection depth moves with q). → a traverse-like object (profile, segments, pEnd, …)
+    function _glTraverse(C, q, p0, dir, keep) {
+        var V = G.WTS_wp_vlp, o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, pMax: C.pMax };
+        if (C.mult) o.mult = C.mult;
+        var tpg = _tProf(C, q); if (tpg) o.tProfile = tpg.tAt;     // relaxation mode (WP14): the formation-fluid profile at q
+        var mid = C.W.nodes.midPerfMd, inj, up, lo;
+        if (dir === 'down') {
+            up = V.traverse(C.gl.Finj, _wPart(C, C.gl.packerMd, 0), q, Object.assign({}, o, { from: 'top', p0: p0 }));
+            if (!up.ok) return up;
+            inj = _injOn(C, up.profile, 'down');
+            if (!inj || inj.none) return { ok: false, lost: { reason: 'injection' }, warnings: up.warnings, code: 'GL_NO_INJECTION' };
+            if (keep && inj.md < C.gl.packerMd - 1) { up = V.traverse(C.gl.Finj, _wPart(C, inj.md, 0), q, Object.assign({}, o, { from: 'top', p0: p0 })); if (up.ok) inj.p = up.pEnd; C.counts.fine += 0.5; }
+            lo = inj.md < mid - 1 ? V.traverse(C.F, _wPart(C, mid, inj.md), q, Object.assign({}, o, { from: 'top', p0: inj.p })) : { ok: true, profile: [], segments: [], pEnd: inj.p, vmMax: 0, eroMax: 0, restrictionsDp: 0, warnings: [] };
+            if (!lo.ok) return lo;
+        } else {
+            var full = V.traverse(C.F, C.W, q, Object.assign({}, o, { from: 'bottom', p0: p0 }));
+            if (!full.ok) return full;
+            inj = _injOn(C, full.profile, 'up');
+            if (!inj || inj.none) return { ok: false, lost: { reason: 'injection' }, warnings: full.warnings, code: 'GL_NO_INJECTION' };
+            // below the injection point the full formation march is the lower part already (same fluid, same start): its pressure at
+            // the injection depth starts the lifted march up (the wellhead node's reported traverse is re-marched top-down in _atOp)
+            lo = { ok: true, profile: full.profile, segments: [], pEnd: inj.p, vmMax: full.vmMax, eroMax: full.eroMax, restrictionsDp: 0, warnings: [] };
+            up = V.traverse(C.gl.Finj, _wPart(C, inj.md, 0), q, Object.assign({}, o, { from: 'bottom', p0: inj.p }));
+            if (!up.ok) return up;
+        }
+        var upRows = up.profile.filter(function (r) { return r.md <= inj.md + 1e-6; });
+        var prof = upRows.concat(lo.profile.filter(function (r) { return r.md > inj.md + 1e-6; }));
+        prof.forEach(function (r) { r.lift = r.md <= inj.md + 1e-6; });
+        var upSegs = keep || dir !== 'down' ? up.segments : up.segments.filter(function (s) { return s.mdBot <= inj.md + 1e-6; });
+        var injTvd = C.W.tvdAt ? C.W.tvdAt(inj.md) : null;
+        return { ok: true, profile: prof, segments: upSegs.concat(lo.segments || []), pEnd: dir === 'down' ? lo.pEnd : up.pEnd, pBottom: dir === 'down' ? lo.pEnd : p0,
+            vmMax: Math.max(up.vmMax || 0, lo.vmMax || 0), eroMax: Math.max(up.eroMax || 0, lo.eroMax || 0), restrictionsDp: (up.restrictionsDp || 0) + (lo.restrictionsDp || 0),
+            warnings: (up.warnings || []).concat(lo.warnings || []), lost: null, corr: up.corr,
+            lift: { qinj: C.gl.qinj, injMd: inj.md, injTvd: injTvd, pTub: inj.p, pCas: _pCasAt(C, inj.md), balance: !!inj.balance, packerMd: C.gl.packerMd } };
+    }
+
     // the upstream pressure p1 (psia) that passes q Mscf/d through the nozzle to p2 psia: WTS_chokeperf_gasRate is linear in p1/√z(p1)
     // when critical (fixed point on z), and monotone in p1 below the critical ratio (regula falsi, Illinois, on [p2, p2/r_c])
     function _gasP1(C, q, p2, T) {
@@ -326,6 +438,59 @@
         }
         return { p1: 0.5 * (a + b), regime: 'subcritical', yc: rc };
     }
+    // ── Sachdeva et al. (1986) choke node (A2, WP15; §4.7) ────────────────────
+    // The inlet mixture at (p psia, T °F) for the rate q: the free-gas mass fraction x1, the liquid and gas densities, the total mass
+    // rate (lbm/s; conserved along the stream: the oil density carries its dissolved gas) and the liquid heat capacity (oil 0.5,
+    // water 1.0 Btu/lbm·°F, mass weighted).
+    function _mixAt(C, q, p, T) {
+        var pr = C.gl ? G.WTS_flowline_props(_ffs(C, q), Math.max(p, 15), T) : C.F.at(Math.max(p, 15), T, q);
+        if (!pr) return null;
+        var wO = pr.qL * pr.fo * pr.rhoO, wW = pr.qL * pr.fw * pr.rhoW, wL = wO + wW, wG = pr.qG * pr.rhoG, w = wL + wG;
+        if (!(w > 0)) return null;
+        return { x1: wG / w, rhoL: pr.rhoL > 0 ? pr.rhoL : (pr.rhoO || pr.rhoW || 50), rhoG1: pr.rhoG, w: w, cL: wL > 0 ? (0.5 * wO + 1.0 * wW) / wL : 0.5, sg: pr.sgGas > 0 ? pr.sgGas : C.F.sgg };
+    }
+    function _sachAt(C, q, p1, p2, T) {
+        var m = _mixAt(C, q, p1, T), sd = G.WTS_chokeperf_sachdeva;
+        if (!m || typeof sd !== 'function') return null;
+        var cd = _fin(C.choke.cdS) ? C.choke.cdS : 0.75;
+        var r = sd({ s64: C.choke.bean, cd: cd, p1a: p1, p2a: p2, x1: m.x1, rhoL: m.rhoL, rhoG1: m.rhoG1, k: _kGas(C, T), sg: m.sg, cL: m.cL });
+        if (!r || !r.ok) return null;
+        r.mix = m;
+        return r;
+    }
+    // the upstream pressure p1 (psia) that passes q through the bean to p2 psia: fac·w_Sachdeva(p1, p2) = w(q), Illinois on [p2, hi]
+    // (w_Sachdeva rises with p1). empKey: a critical correlation the model is scaled to at its critical point (the rate factor of §4.7):
+    // in critical flow p1 is the correlation's p1 exactly, below the Sachdeva critical ratio the scaled sub-critical branch continues it.
+    function _sachTop(C, q, p2, T, empKey, glr, qL) {
+        var m0 = _mixAt(C, q, p2, T);
+        if (!m0) return null;
+        var W = m0.w, fac = _fin(C.choke.rateFactor) && C.choke.rateFactor > 0 ? C.choke.rateFactor : 1, p1e = null, sc = null;
+        if (empKey) {
+            var mp = G.WTS_chokeperf_multiphaseRate, per = typeof mp === 'function' && glr > 0 ? mp(empKey, 1, C.choke.bean, glr) : NaN;
+            if (!(per > 0)) return null;
+            p1e = qL / per + PATM;
+            sc = _sachAt(C, q, p1e, p1e * 1e-6, T);                         // the critical (choked) Sachdeva rate at the correlation's p1
+            if (!sc || !(sc.w > 0)) return null;
+            fac = W / sc.w;
+            if (p2 / p1e <= sc.yc) return { p1: p1e, regime: 'critical', yc: sc.yc, fac: fac, x1: sc.mix.x1, it: sc.it, p1crit: p1e - PATM, model: 'sachdeva-scaled' };
+        }
+        var f = function (p1) { var s = _sachAt(C, q, p1, p2, T); return s ? { v: fac * s.w - W, s: s } : null; };
+        var a = p2 * (1 + 1e-9), fa = -W, b = empKey ? p1e : Math.max(p2 * 1.25, p2 + 20), rb = f(b), side = 0, last = rb;
+        if (!rb) return null;
+        for (var dbl = 0; rb.v < 0 && dbl < 30; dbl++) { a = b; fa = rb.v; b *= 1.6; rb = f(b); if (!rb) return null; last = rb; }
+        if (rb.v < 0) return null;
+        var fb = rb.v;
+        for (var j = 0; j < 80; j++) {
+            var x = (a * fb - b * fa) / (fb - fa), fx = f(x);
+            if (!fx) return null;
+            last = fx;
+            if (Math.abs(fx.v) <= 1e-11 * W || Math.abs(b - a) <= 1e-11 * b) { a = b = x; break; }
+            if ((fx.v > 0) === (fb > 0)) { b = x; fb = fx.v; if (side === -1) fa /= 2; side = -1; }
+            else { a = x; fa = fx.v; if (side === 1) fb /= 2; side = 1; }
+        }
+        var p1 = 0.5 * (a + b), sl = last.s;
+        return { p1: p1, regime: sl.critical ? 'critical' : 'subcritical', yc: sl.yc, fac: fac, x1: sl.mix.x1, it: sl.it, p1crit: p1e != null ? p1e - PATM : null, model: empKey ? 'sachdeva-scaled' : 'sachdeva' };
+    }
     function _top(C, q) {
         var tht = _thtQ(C, q);
         var ln = _line(C, q);
@@ -333,6 +498,13 @@
         var out = { p2: ln.p2, lineDp: ln.dp, regime: 'none', ratio: null, yc: null, p1crit: null, lineEro: ln.eroMax, lineVm: ln.vmMax, tLine: ln.tLine != null ? ln.tLine : null };
         if (C.maxBC) { out.thp = ln.p2; return out; }
         if (!C.choke.present) { out.thp = C.thpFix + PATM; out.fixed = true; return out; }
+        if (C.gas && C.choke.corr === 'sachdeva') {
+            // the continuous two-phase model carries the condensate and water through the bean too (the gas nozzle does not)
+            var sg0 = _sachTop(C, q, ln.p2, C.tht, null);
+            if (!sg0) return { lost: true, reason: 'choke' };
+            out.thp = sg0.p1; out.regime = sg0.regime; out.yc = sg0.yc; out.ratio = ln.p2 / sg0.p1; out.model = sg0.model; out.rateFactor = sg0.fac; out.x1 = sg0.x1; out.ycIt = sg0.it;
+            return out;
+        }
         if (C.gas) {
             var g = _gasP1(C, q, ln.p2, tht);
             if (!g) return { lost: true, reason: 'choke' };
@@ -348,11 +520,19 @@
             out.thp = g.p1; out.regime = g.regime; out.yc = g.yc; out.ratio = ln.p2 / g.p1;
             return out;
         }
-        var ff = G.WTS_wp_fluid.flowlineFluid(C.F, q), qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
+        var ff = G.WTS_wp_fluid.flowlineFluid(C.F, q), qL = ff.qo + ff.qw, glr = qL > 0 ? (ff.qg_MMscfd * 1e6 + (C.gl ? C.gl.qinj * 1000 : 0)) / qL : 0;
         if (glr < 10) {
             var cd = (C.choke.cd >= 0.5 && C.choke.cd <= 1.2) ? C.choke.cd : 0.85, d = C.choke.bean / 64, sgL = ff.qw > 0 && ff.qo > 0 ? (ff.qw * C.F.sgw + ff.qo * 141.5 / (131.5 + C.F.api)) / qL : (ff.qw > 0 ? C.F.sgw : 141.5 / (131.5 + C.F.api));
-            var dp = sgL * Math.pow(qL / (LIQ_ORIFICE * cd * d * d), 2);
-            out.thp = ln.p2 + dp; out.regime = 'liquid'; out.ratio = ln.p2 / out.thp;
+            // the liquid valve-coefficient law of the choke file (A2, WTS_chokeperf_liquidCv: the same 1022.7 orifice constant)
+            var lc = typeof G.WTS_chokeperf_liquidCv === 'function' ? G.WTS_chokeperf_liquidCv({ s64: C.choke.bean, cd: cd, sg: sgL, q_bpd: qL }) : null;
+            var dp = (lc && lc.ok) ? lc.dp_psi : sgL * Math.pow(qL / (LIQ_ORIFICE * cd * d * d), 2);
+            out.thp = ln.p2 + dp; out.regime = 'liquid'; out.ratio = ln.p2 / out.thp; if (lc && lc.ok) out.cv = lc.cv;
+            return out;
+        }
+        if (C.choke.corr === 'sachdeva') {
+            var sp = _sachTop(C, q, ln.p2, C.tht, null);
+            if (!sp) return { lost: true, reason: 'choke' };
+            out.thp = sp.p1; out.regime = sp.regime; out.yc = sp.yc; out.ratio = ln.p2 / sp.p1; out.model = sp.model; out.rateFactor = sp.fac; out.x1 = sp.x1; out.ycIt = sp.it;
             return out;
         }
         var mp = G.WTS_chokeperf_multiphaseRate;
@@ -361,6 +541,14 @@
         if (!(per > 0)) return { lost: true, reason: 'choke' };
         var p1crit = qL / per, pBound = ln.p2 / GILBERT_YC - PATM;
         out.p1crit = p1crit; out.yc = GILBERT_YC;
+        if (C.choke.sub !== 'bound') {
+            // A2 (§4.7): one regime criterion, the Sachdeva et al. (1986) critical ratio y_c at the correlation's p1. Critical: the
+            // correlation's p1 exactly; sub-critical: the Sachdeva sub-critical branch scaled to the correlation at its critical point
+            // (rate factor) — continuous with it. The A1 conservative bound p1 ≥ p2 / 0.588 stays available as choke.subcritical 'bound'.
+            var hs = _sachTop(C, q, ln.p2, C.tht, C.choke.corr, glr, qL);
+            if (hs) { out.thp = hs.p1; out.regime = hs.regime; out.yc = hs.yc; out.model = hs.model; out.rateFactor = hs.fac; out.x1 = hs.x1; out.ycIt = hs.it; out.ratio = ln.p2 / out.thp; return out; }
+            out.fallback = true;                                         // the Sachdeva inlet state failed: the A1 bound, flagged
+        }
         if (p1crit >= pBound) { out.thp = p1crit + PATM; out.regime = 'critical'; }
         else { out.thp = pBound + PATM; out.regime = 'subcritical-bound'; }
         out.ratio = ln.p2 / out.thp;
@@ -383,7 +571,11 @@
         if (fine) C.counts.fine++; else C.counts.coarse++;
         if (top.lost) { r.lost = { reason: top.reason }; r.delta = BIG; r.pOut = null; r.pIn = C.node === 'bottom' ? pwfI : null; C.cache[key] = r; return r; }
         var tr;
-        if (C.node === 'bottom') {
+        if (C.gl) {
+            if (C.node === 'bottom') { tr = _glTraverse(C, q, top.thp, 'down', keep); r.pIn = pwfI; r.pOut = tr.ok ? tr.pEnd : null; }
+            else { tr = (pwfI > PATM) ? _glTraverse(C, q, pwfI, 'up', keep) : { ok: false, lost: { reason: 'pressure' }, warnings: [] }; r.pOut = top.thp; r.pIn = tr.ok ? tr.pEnd : null; }
+            if (fine) C.counts.fine += 0.5; else C.counts.coarse += 0.5;      // two partial marches (≈ 1.5 traverses of the path)
+        } else if (C.node === 'bottom') {
             o.from = 'top'; o.p0 = top.thp;
             tr = V.traverse(C.F, C.W, q, o);
             r.pIn = pwfI; r.pOut = tr.ok ? tr.pEnd : null;
@@ -393,7 +585,7 @@
             else tr = V.traverse(C.F, C.W, q, o);
             r.pOut = top.thp; r.pIn = tr.ok ? tr.pEnd : null;
         }
-        if (tr && tr.grid && !C.grids[gkey]) C.grids[gkey] = tr.grid;
+        if (tr && tr.grid && !C.grids[gkey] && !C.gl) C.grids[gkey] = tr.grid;
         if (!C.trWarn && tr && tr.warnings) C.trWarn = tr.warnings;
         if (!tr.ok) { r.lost = tr.lost || { reason: tr.code || 'failed' }; r.delta = BIG; C.lostSeen[r.lost.reason] = q; }
         else r.delta = r.pOut - r.pIn;
@@ -568,7 +760,7 @@
             var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax };
             if (C.mult) o.mult = C.mult;
             var tpo = _tProf(C, opQ); if (tpo) o.tProfile = tpo.tAt;
-            tr = V.traverse(C.F, C.W, opQ, o); C.counts.fine++;
+            tr = C.gl ? _glTraverse(C, opQ, e.top.thp, 'down', true) : V.traverse(C.F, C.W, opQ, o); C.counts.fine++;
         }
         var pwf = C.I.pwfAt(opQ), thpA = e.top && !e.top.lost ? e.top.thp : null;
         if (tr && tr.ok) {
@@ -579,6 +771,13 @@
         var ff = G.WTS_wp_fluid.flowlineFluid(C.F, opQ);
         R.rates = { q: opQ, qo: ff.qo, qw: ff.qw, qg: ff.qg_MMscfd * 1000, qL: ff.qo + ff.qw, basis: C.F.rateBasis };
         R.pwf = pwf;
+        if (C.gl) {
+            R.rates.qinj = C.gl.qinj; R.rates.qgTotal = R.rates.qg + C.gl.qinj;
+            var lt = tr && tr.ok && tr.lift ? tr.lift : null, casProf = [];
+            for (var cm = 0; cm <= C.gl.packerMd + 1e-6; cm += Math.max(100, C.gl.packerMd / 40)) casProf.push({ md: cm, tvd: C.W.tvdAt ? C.W.tvdAt(cm) : cm, p: _pCasAt(C, cm) });
+            R.lift = { type: 'gaslift', qinj: C.gl.qinj, sginj: C.gl.sg, pinj_psig: C.gl.pinj, dpValve: C.gl.dpv, packerMd: C.gl.packerMd, packerTvd: C.gl.packerTvd,
+                injMd: lt ? lt.injMd : null, injTvd: lt ? lt.injTvd : null, pTub: lt ? lt.pTub : null, pCas: lt ? lt.pCas : null, atPacker: lt ? !lt.balance : null, casing: casProf };
+        }
         // breakdown: p̄r − pwf (skin split) + tubing (gravity / friction / acceleration / restrictions) + choke + flowline
         var bd = [], dpSkin = null;
         if (C.I.skin && typeof C.I.skin.dpSkin === 'function') { try { dpSkin = C.I.skin.dpSkin(opQ, pwf); } catch (x) { dpSkin = null; } }
@@ -621,8 +820,13 @@
             muJT: Wt && Wt.muJT, tHyd: tHyd, hydMargin: (_fin(thtHyd) && _fin(tHyd)) ? thtHyd - tHyd : null,
             pChokeDn: _fin(p2) ? p2 : null, pChokeDn_psig: _fin(p2) ? p2 - PATM : null, tChokeDn: tDn, tHydDn: tHydDn,
             hydMarginDn: (_fin(tDn) && _fin(tHydDn)) ? tDn - tHydDn : null,
-            choke: { present: C.choke.present, bean: C.choke.bean, corr: C.gas ? 'gasNozzle' : C.choke.corr, regime: e.top ? e.top.regime : 'none',
-                ratio: e.top ? e.top.ratio : null, yc: e.top ? e.top.yc : null, p1crit_psig: e.top ? e.top.p1crit : null, dp: (e.top && C.choke.present) ? e.top.thp - e.top.p2 : null },
+            choke: { present: C.choke.present, bean: C.choke.bean, corr: (C.gas && C.choke.corr !== 'sachdeva') ? 'gasNozzle' : C.choke.corr, regime: e.top ? e.top.regime : 'none',
+                ratio: e.top ? e.top.ratio : null, yc: e.top ? e.top.yc : null, p1crit_psig: e.top ? e.top.p1crit : null, dp: (e.top && C.choke.present) ? e.top.thp - e.top.p2 : null,
+                // A2 (WP15): the model behind the regime ('sachdeva' | 'sachdeva-scaled' | null), its rate factor, the inlet gas mass fraction,
+                // the fixed-point iterations of y_c, the liquid Cv, the sub-critical rule and whether the Sachdeva state failed (A1 bound used)
+                model: e.top && e.top.model ? e.top.model : null, rateFactor: e.top && _fin(e.top.rateFactor) ? e.top.rateFactor : null, x1: e.top && _fin(e.top.x1) ? e.top.x1 : null,
+                ycIt: e.top && _fin(e.top.ycIt) ? e.top.ycIt : null, cv: e.top && _fin(e.top.cv) ? e.top.cv : null, subcritical: C.choke.sub, cd: C.choke.corr === 'sachdeva' ? C.choke.cdS : C.choke.cd,
+                fallback: !!(e.top && e.top.fallback) },
             lineDp: e.top ? e.top.lineDp : null };
         if (Wt && Wt.warnings) Wt.warnings.forEach(function (w) { R.warnings.push(w); });
         // velocities and the erosional rate (interpolated on the scan)
@@ -641,8 +845,18 @@
     function _flags(C, R) {
         var F = [];
         var ch = R.surface && R.surface.choke;
-        if (ch && ch.regime === 'subcritical-bound') F.push(_w('SUBCRITICAL_BOUND', 'Sub-critical choke flow — the critical correlation does not apply; the rate shown is a conservative bound (a later release adds a continuous sub-critical model).'));
-        if (ch && ch.present && C.gas && C.F && (+C.F.cgr > 0 || +C.F.wgr > 0)) F.push(_w('NOZZLE_GAS_ONLY', 'The gas choke nozzle carries the gas only; the condensate and water through the choke are not included.', 'info'));
+        if (ch && ch.regime === 'subcritical-bound') F.push(_w('SUBCRITICAL_BOUND', ch.fallback ? 'Sub-critical choke flow and the continuous sub-critical model has no inlet state at this rate: the rate shown is the conservative bound p1 ≥ p2 / 0.588 of the critical correlation.'
+            : 'Sub-critical choke flow — the critical correlation does not apply; the rate shown is the conservative bound p1 ≥ p2 / 0.588 (the A1 rule chosen in the choke settings).'));
+        if (ch && ch.model === 'sachdeva-scaled' && ch.regime === 'subcritical') F.push(_w('CHOKE_SUBCRITICAL', 'Sub-critical choke flow (p2/p1 ' + _f(ch.ratio, 3) + ' above the critical ratio ' + _f(ch.yc, 3) + '): the rate follows the ' + SACH_LABEL +
+            ' sub-critical branch scaled to the ' + _corrName(ch.corr) + ' correlation at its critical point (rate factor ' + _f(ch.rateFactor, 3) + ') — ' + PROVISIONAL + '.', 'info'));
+        if (ch && ch.model === 'sachdeva') F.push(_w('CHOKE_PROVISIONAL', 'Choke: the ' + SACH_LABEL + ' continuous two-phase model (Cd ' + _f(ch.cd, 2) + ', rate factor ' + _f(ch.rateFactor, 3) + ', ' + ch.regime + ', y_c ' + _f(ch.yc, 3) + ') — ' + PROVISIONAL + '.', 'info'));
+        if (ch && ch.present && ch.model === 'sachdeva' && _fin(ch.bean) && (ch.bean < SACH_RANGE[0] || ch.bean > SACH_RANGE[1])) F.push(_w('CHOKE_RANGE', 'The bean ' + _f(ch.bean, 0) + '/64 in is outside the ' + SACH_LABEL + ' data range (' + SACH_RANGE[0] + '–' + SACH_RANGE[1] + '/64 in): extrapolation.', 'info'));
+        if (ch && ch.present && C.gas && ch.corr !== 'sachdeva' && C.F && (+C.F.cgr > 0 || +C.F.wgr > 0)) F.push(_w('NOZZLE_GAS_ONLY', 'The gas choke nozzle carries the gas only; the condensate and water through the choke are not included (the ' + SACH_LABEL + ' choke model in the choke settings carries them).', 'info'));
+        if (R.lift && R.lift.type === 'gaslift') {
+            var lf = R.lift;
+            F.push(_w('GL_POINT', 'Gas lift: ' + _f(lf.qinj, 0) + ' Mscf/d injected at ' + _f(lf.injMd, 0) + ' ft MD (' + _f(lf.injTvd, 0) + ' ft TVD), ' + (lf.atPacker ? 'at the packer' : 'the point of balance above the packer') +
+                '; casing ' + _f(lf.pCas - PATM, 0) + ' psig against tubing ' + _f(lf.pTub - PATM, 0) + ' psig. Quick look: one injection point, no valve mechanics.', 'info'));
+        }
         if (ch && ch.regime === 'liquid') F.push(_w('CHOKE_LIQUID', 'Liquid with no free gas: the choke is an incompressible orifice.', 'info'));
         R.discontinuities.forEach(function (d) {
             F.push(_w('DISCONTINUITY', d.kind === 'lift-limit' ? 'The outflow curve ends at about ' + _f(d.q, 0) + ' (the march cannot carry a higher rate): no root there.'
@@ -946,6 +1160,24 @@
         var lk = (sys.corr && sys.corr.line) || 'bb', EL = REG[lk];
         if (EL && (sf.flowline || []).length) validity.push({ corr: lk, label: (EL.label || lk) + ' (flowline)', inRange: true, provisional: EL.verified !== true,
             msg: (EL.label || lk) + ' (flowline): any inclination; data from 1–1.5 in test pipe, commonly used beyond.' });
+        // gas lift (A2, WP18): oil / water producers only; the surface injection pressure is needed once a rate is injected
+        var lfc = M.lift || {}, glc = lfc.gl || {};
+        if (lfc.type === 'gaslift') {
+            if (gas) add('GL_NOT_APPLICABLE', 'error', 'wp_lift', 'Gas lift is a quick look for oil wells; choose natural flow for a ' + fl.type + ' well.');
+            else if (_n(glc.qinj_Mscfd) > 0 && !(_n(glc.pinj_psig) > 0)) add('GL_PINJ', 'error', 'wp_gl_pinj', 'Gas lift: enter the surface injection (casing) pressure.');
+            if (_n(glc.packerMd) > 0 && _n(well.midPerfMd) > 0 && _n(glc.packerMd) > _n(well.midPerfMd)) add('GL_PACKER', 'warn', 'wp_gl_packer', 'Gas lift: the packer is below the mid-perforations; the injection point is limited to the end of the tubing.');
+        }
+        // the surface choke (A2, WP15): the Sachdeva et al. (1986) model — the whole choke ('sachdeva') or the sub-critical branch of a
+        // critical correlation (the default) — is provisional (D17) and its data range is bean 8–40/64 in (Appendix A)
+        var chk = sf.choke || {};
+        if (chk.present && !(sys.mode === 'max')) {
+            var bean = _n(chk.bean64), sachUsed = chk.corr === 'sachdeva' || (!gas && chk.subcritical !== 'bound');
+            if (sachUsed) {
+                var inR = !(_fin(bean) && (bean < SACH_RANGE[0] || bean > SACH_RANGE[1]));
+                validity.push({ corr: 'sachdeva', label: SACH_LABEL + ' choke', inRange: inR, provisional: true,
+                    msg: SACH_LABEL + (chk.corr === 'sachdeva' ? ' choke model' : ' sub-critical choke branch') + (inR ? ': inside the published data range (bean 8–40/64 in).' : ': outside the data range — bean ' + _f(bean, 0) + '/64 in, data 8–40/64 in (extrapolation).') });
+            }
+        }
         var errors = items.filter(function (x) { return x.sev === 'error'; }).map(function (x) { return x.msg; });
         // warnings = the ⚠ items the page lists; the information notes (e.g. "not applicable") stay in items / infos
         var warnings = items.filter(function (x) { return x.sev === 'warn'; }).map(function (x) { return _w(x.code, x.msg, 'warn', x.field); });
@@ -1049,22 +1281,78 @@
     // setting, a first guess from the choke law (critical rate ∝ S^1.89) or from the root slope (dq/dTHP ≈ −1/(dΔ/dq)), then secant /
     // Illinois steps; every later solve is a TRACKING solve warm-started from the nearest setting (≈ 5 E). Reverse communication: one
     // solve per Job step.
+    // Tubing-ID design (A2, WP16; §4.9): a discrete scan over the WTS_tubulars tubing catalogue (every tubing size whose OD fits
+    // inside the casing / liner around the tubing). One solve per size, smallest first, each a tracking solve warm-started from the
+    // previous size's root (a full solve when the bracket fails). The answer is the SMALLEST size whose stable rate reaches the target
+    // (tubing is sized for the rate it must carry, the smallest string keeps the highest velocity against loading); every size is
+    // listed with its rate, stability, loading margin (gas) and erosion ratio. Not reachable: the size with the highest rate, and why.
+    function _tubingCands(M) {
+        var T = G.WTS_tubulars; if (!T || typeof T.list !== 'function') return [];
+        var strs = (_get(M, ['well', 'strings'], []) || []), tub = strs.filter(function (x) { return x && (x.kind || 'tubing') === 'tubing'; });
+        var top = tub.length ? Math.min.apply(null, tub.map(function (x) { return +x.topMd || 0; })) : 0, bot = tub.length ? Math.max.apply(null, tub.map(function (x) { return +x.botMd || 0; })) : 0;
+        var dMin = Infinity; strs.forEach(function (c) { if (c && c.kind !== 'tubing' && +c.id > 0 && +c.topMd < bot && +c.botMd > top) dMin = Math.min(dMin, +c.id); });
+        var seen = {}, out = [];
+        T.list('tubing').slice().sort(function (a, b) { return a.id - b.id || a.od - b.od; }).forEach(function (e) {
+            if (!(e.id > 0) || e.od >= dMin - 0.25 || seen[e.id.toFixed(3)]) return;
+            seen[e.id.toFixed(3)] = 1; out.push({ key: e.key, id: e.id, od: e.od, wall: e.wall, label: e.label || e.key });
+        });
+        return out;
+    }
+    function _tubingDesign(M, qT) {
+        var base = M ? _clone(M) : null, cands = base ? _tubingCands(base) : [];
+        var tub = base ? (base.well.strings || []).filter(function (x) { return x && (x.kind || 'tubing') === 'tubing'; }) : [];
+        if (!base || !tub.length || !cands.length) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'NO_TUBING', errors: [!tub.length ? 'The well has no tubing string to size.' : 'No catalogue tubing fits inside the casing.'], warnings: [], rows: [] }; } });
+        if (base.system.mode === 'design' || base.system.mode === 'max') base.system.mode = 'rate';
+        var rows = [], prev = null, ev = 0;
+        return job({
+            label: function (i) { return 'tubing ' + (i < cands.length ? cands[i].label : '') + ' (' + Math.min(i + 1, cands.length) + ' of ' + cands.length + ')'; },
+            progress: function (i) { return i / cands.length; },
+            next: function (i) {
+                if (i >= cands.length) return true;
+                var c = cands[i], Mx = _clone(base);
+                Mx.well.strings.forEach(function (x) { if (x && (x.kind || 'tubing') === 'tubing') { x.tubKey = c.key; x.id = c.id; x.od = c.od; x.wall = c.wall; } });
+                var o = {};
+                if (prev && prev.R.ok) o = { track: { q: prev.R.op.q * Math.pow(c.id / prev.id, 1.5), slope: prev.R.op.dDdq } };   // a new path: no warm grid
+                var R = solve(Mx, o), ok = !!(R && R.ok && R.op);
+                ev += R ? (R.evals || 0) : 0;
+                if (ok) prev = { id: c.id, R: R };
+                rows.push({ key: c.key, label: c.label, id: c.id, od: c.od, ok: ok, q: ok ? R.op.q : null, stable: ok ? !!R.op.stable : false,
+                    loadingMargin: ok && R.loading ? R.loading.margin : null, ero: ok && R.velocities ? R.velocities.eroMax : null,
+                    thp: ok ? R.surface.thp_psig : null, pwf: ok ? R.pwf : null, regime: ok ? (R.surface.choke && R.surface.choke.regime) : ((R && R.code) || 'no flow'), R: R });
+                return i + 1 >= cands.length;
+            },
+            finish: function () {
+                var hit = rows.filter(function (r) { return r.ok && r.stable && r.q >= qT * (1 - 1e-3); }), best = hit[0] || null;
+                var top = rows.filter(function (r) { return r.ok; }).sort(function (a, b) { return b.q - a.q; })[0] || null;
+                var cur = _n(tub[0].id), plain = rows.map(function (r) { var o = {}; Object.keys(r).forEach(function (k) { if (k !== 'R') o[k] = r[k]; }); return o; });
+                if (best) return { ok: true, kind: 'tubingId', tubingId: best.id, tubKey: best.key, od: best.od, label: best.label, q: best.q, target: qT, R: best.R, rows: plain, current: cur, solves: rows.length, evals: ev, errors: [], warnings: [] };
+                var why = top ? 'The largest rate of the catalogue sizes is ' + _f(top.q, 0) + ' with ' + top.label + ': the inflow or the surface limits the rate, not the tubing.' : 'No catalogue size flows.';
+                return { ok: false, code: 'NOT_REACHABLE', kind: 'tubingId', target: qT, best: top ? { x: top.id, q: top.q, key: top.key } : null, rows: plain, current: cur, solves: rows.length, evals: ev,
+                    errors: ['No catalogue tubing reaches the target rate ' + _f(qT, 0) + '.', why], warnings: [] };
+            }
+        });
+    }
     function designFor(M, target) {
         target = target || {};
-        var kind = target.bean != null ? 'bean' : (target.thp != null ? 'thp' : null), qT = kind ? +target[kind] : NaN;
+        if (target.tubingId != null) return _tubingDesign(M, +target.tubingId);
+        // A2 (WP18): {qinj: q} — the lift-gas rate (Mscf/d, 0–5,000 or the largest of the GLPC list) that gives the target rate
+        var kind = target.bean != null ? 'bean' : (target.thp != null ? 'thp' : (target.qinj != null ? 'qinj' : null)), qT = kind ? +target[kind] : NaN;
         var base = M ? _clone(M) : null;
-        if (!kind || !(qT > 0) || !base || !base.surface || !base.system) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'BAD_TARGET', errors: ['a target rate {bean: q} or {thp: q} is needed'], warnings: [] }; } });
-        base.surface.choke.present = kind === 'bean';
+        if (!kind || !(qT > 0) || !base || !base.surface || !base.system) return job({ next: function () { return true; }, finish: function () { return { ok: false, code: 'BAD_TARGET', errors: ['a target rate {bean: q}, {thp: q} or {qinj: q} is needed'], warnings: [] }; } });
+        if (kind !== 'qinj') base.surface.choke.present = kind === 'bean';
         base.system.mode = 'rate';
-        var LO = kind === 'bean' ? 8 : Math.max(0, _n(base.surface.psep_psig) || 0);
-        var HI = kind === 'bean' ? 128 : Math.max(LO + 50, (_n(base.res.pr) || 3000) - PATM - 10);
-        var x0 = kind === 'bean' ? (_n(base.surface.choke.bean64) || 32) : (_n(base.system.thp_psig) || LO + 100);
+        var gl0 = (base.lift && base.lift.gl) || {}, qlMax = Math.max.apply(null, [5000].concat((gl0.qinjList_Mscfd || []).map(Number).filter(_fin)));
+        var LO = kind === 'bean' ? 8 : (kind === 'qinj' ? 0 : Math.max(0, _n(base.surface.psep_psig) || 0));
+        var HI = kind === 'bean' ? 128 : (kind === 'qinj' ? qlMax : Math.max(LO + 50, (_n(base.res.pr) || 3000) - PATM - 10));
+        var x0 = kind === 'bean' ? (_n(base.surface.choke.bean64) || 32) : (kind === 'qinj' ? (_n(gl0.qinj_Mscfd) || 500) : (_n(base.system.thp_psig) || LO + 100));
         x0 = Math.min(Math.max(x0, LO), HI);
         var pts = [], S = { solves: 0, best: null, fail: null, warm: null }, maxSolves = 16;
-        var tolQ = Math.max(1e-3 * qT, 0.5), tolX = kind === 'bean' ? 0.05 : 0.5;
+        var tolQ = Math.max(1e-3 * qT, 0.5), tolX = kind === 'bean' ? 0.05 : (kind === 'qinj' ? 5 : 0.5);
         function at(x) {
             var Mx = _clone(base);
-            if (kind === 'bean') Mx.surface.choke.bean64 = x; else Mx.system.thp_psig = x;
+            if (kind === 'bean') Mx.surface.choke.bean64 = x;
+            else if (kind === 'qinj') { Mx.lift = Mx.lift || {}; Mx.lift.type = x > 0 ? 'gaslift' : 'none'; Mx.lift.gl = Mx.lift.gl || {}; Mx.lift.gl.qinj_Mscfd = x; }
+            else Mx.system.thp_psig = x;
             // warm start from the evaluated setting nearest to x
             var near = null; pts.forEach(function (p) { if (p.R && p.R.ok && (!near || Math.abs(p.x - x) < Math.abs(near.x - x))) near = p; });
             var o = {};
@@ -1109,6 +1397,7 @@
                 return xs;
             }
             if (pts.length === 1) {
+                if (kind === 'qinj') return (!(last.q > 0) || last.q < qT) ? Math.min(HI, last.x * 2 + 250) : last.x * 0.5;
                 if (!(last.q > 0)) return kind === 'bean' ? Math.min(HI, last.x * 2) : Math.max(LO, last.x * 0.5);
                 if (kind === 'bean') return last.x * Math.pow(qT / last.q, 1 / 1.89);
                 var sl = last.R && last.R.op ? last.R.op.dDdq : null;
@@ -1120,7 +1409,7 @@
                 var xn = p1.x - p1.f * (p1.x - p2.x) / (p1.f - p2.f);
                 if (_fin(xn) && !_seen(xn)) return xn;
             }
-            var up = (kind === 'bean') === (last.f < 0);
+            var up = (kind === 'bean' || kind === 'qinj') === (last.f < 0);
             var bound = up ? HI : LO;
             // no-flow on the far side: half-way back towards the flowing side rather than to the bound
             if (!(last.q > 0)) { var fl = pts.filter(function (p) { return p.q > 0; }); if (fl.length) { var nb = fl.reduce(function (a, b) { return Math.abs(b.x - last.x) < Math.abs(a.x - last.x) ? b : a; }); return 0.5 * (nb.x + last.x); } }
@@ -1148,20 +1437,20 @@
             },
             finish: function () {
                 var b = S.best;
-                // why a target is out of reach: the conservative sub-critical bound of the A1 critical choke correlation caps the bean
+                // why a target is out of reach: the conservative sub-critical bound (choke.subcritical 'bound') of the critical choke correlation caps the bean
                 // rate (the no-choke maximum is shown next to it), or the target lies in the rates the well cannot hold (stability cliff)
                 var why = function () {
                     var notes = [], bnd = pts.filter(function (p) { return p.R && p.R.ok && p.R.surface && p.R.surface.choke && p.R.surface.choke.regime === 'subcritical-bound'; });
                     if (kind === 'bean' && bnd.length) {
                         var qb = Math.max.apply(null, bnd.map(function (p) { return p.q; })), mr = maxRate(base);
                         notes.push('The critical choke correlation caps the rate at its conservative sub-critical bound (about ' + _f(qb, 0) + '): the bound p1 ≥ p2 / ' + GILBERT_YC + ' applies to every larger bean.' +
-                            (mr && mr.ok ? ' Without a choke the well can deliver ' + _f(mr.q, 0) + ' (maximum rate); a continuous sub-critical choke model comes in a later release.' : ''));
+                            (mr && mr.ok ? ' Without a choke the well can deliver ' + _f(mr.q, 0) + ' (maximum rate); the continuous sub-critical model (the choke settings) lifts this cap.' : ''));
                         S.maxQ = mr && mr.ok ? mr.q : null;
                     }
                     if (S.fail === 'NOT_REACHABLE_GAP') notes.push('The target lies in the rates the well cannot hold steadily: the rate drops to no flow across the stability limit between the closest settings.');
                     return notes;
                 };
-                if (!b || (S.fail && Math.abs(b.f) > Math.max(0.01 * qT, 1))) return { ok: false, code: S.fail || 'FAILED', errors: ['No ' + (kind === 'bean' ? 'bean between 8/64 and 128/64 in' : 'wellhead pressure') + ' reaches the target rate ' + _f(qT, 0) + '.'].concat(why()), warnings: [], solves: S.solves, best: b ? { x: b.x, q: b.q } : null, maxRate: S.maxQ != null ? S.maxQ : null };
+                if (!b || (S.fail && Math.abs(b.f) > Math.max(0.01 * qT, 1))) return { ok: false, code: S.fail || 'FAILED', errors: ['No ' + (kind === 'bean' ? 'bean between 8/64 and 128/64 in' : kind === 'qinj' ? 'lift-gas rate up to ' + _f(HI, 0) + ' Mscf/d' : 'wellhead pressure') + ' reaches the target rate ' + _f(qT, 0) + '.'].concat(why()), warnings: [], solves: S.solves, best: b ? { x: b.x, q: b.q } : null, maxRate: S.maxQ != null ? S.maxQ : null };
                 var out = { ok: Math.abs(b.f) <= Math.max(0.01 * qT, 1), q: b.q, R: b.R, solves: S.solves, target: qT, kind: kind, evals: pts.reduce(function (a, p) { return a + (p.R && p.R.evals || 0); }, 0), errors: [], warnings: [] };
                 out[kind] = b.x;
                 if (!out.ok) { out.errors.push('the closest setting gives ' + _f(b.q, 0) + ' against the target ' + _f(qT, 0)); why().forEach(function (t) { out.errors.push(t); }); out.maxRate = S.maxQ != null ? S.maxQ : null; }
@@ -1203,6 +1492,61 @@
         return { ok: true, thp: t.thp, thp_psig: t.thp - PATM, p2: t.p2, p2_psig: t.p2 - PATM, regime: t.regime, ratio: t.ratio, yc: t.yc,
             p1crit_psig: t.p1crit, lineDp: t.lineDp, warnings: [], errors: [] };
     }
+    // ── the choke performance curve at the operating point (A2, WP15; the page's "Choke" tab) ──────────────────────────────
+    // At the operating THP p1 (psia) and THT: the rate through the bean against the pressure ratio y = p2/p1 — the Sachdeva et al.
+    // (1986) curve (scaled by the rate factor, or to the critical correlation at its critical point), the critical correlation's
+    // rate (flat, valid below its critical ratio 0.588) and, for gas wells, the isentropic nozzle; the operating point (y, q) on it.
+    // chokeCurve(M, {R}) → {ok, p1 psia, p1_psig, tht, bean, corr, model, regime, yc, ycCorr, op:{y, q}, rateUnit,
+    //                        series:{sachdeva:[{y, q}], corr:[{y, q}], nozzle:[{y, q}]}, rateFactor, x1}
+    function chokeCurve(M, o) {
+        o = o || {};
+        var R = o.R && o.R.ok ? o.R : solve(M);
+        if (!R || !R.ok || !R.op) return { ok: false, code: (R && R.code) || 'NO_SOLUTION', errors: (R && R.errors && R.errors.length) ? R.errors : ['no operating point'], warnings: [] };
+        var ch = R.surface && R.surface.choke;
+        if (!ch || !ch.present) return { ok: false, code: 'NO_CHOKE', errors: ['no surface choke in line'], warnings: [] };
+        var cx = _ctx(M, {}); if (cx.fail) return cx.fail;
+        var C = cx.C, q0 = R.op.q, p1 = R.surface.thp, T = R.surface.tht, ff = G.WTS_wp_fluid.flowlineFluid(C.F, q0);
+        var qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
+        var m = _mixAt(C, q0, p1, T); if (!m) return { ok: false, code: 'NO_STATE', errors: ['the choke inlet state could not be evaluated'], warnings: [] };
+        var perQ = m.w / q0, ys = [];
+        for (var i = 1; i <= 40; i++) ys.push(Math.min(0.999, 0.025 * i));
+        var out = { ok: true, p1: p1, p1_psig: p1 - PATM, tht: T, bean: C.choke.bean, corr: ch.corr, model: ch.model, regime: ch.regime, yc: ch.yc, ycCorr: null,
+            op: { y: ch.ratio, q: q0 }, rateUnit: C.gas ? 'Mscf/d' : 'STB/d liquid', series: { sachdeva: [], corr: [], nozzle: [] }, rateFactor: ch.rateFactor, x1: m.x1, warnings: [], errors: [] };
+        var fac = _fin(ch.rateFactor) ? ch.rateFactor : 1, ycS = null;
+        if (!C.gas && glr >= 10 && C.choke.corr !== 'sachdeva') {
+            var per = G.WTS_chokeperf_multiphaseRate(C.choke.corr, 1, C.choke.bean, glr), qc = per * (p1 - PATM);
+            out.ycCorr = GILBERT_YC;
+            ys.filter(function (y) { return y <= GILBERT_YC + 1e-12; }).concat([GILBERT_YC]).forEach(function (y) { out.series.corr.push({ y: y, q: qc }); });
+            var scC = _sachAt(C, qc, p1, p1 * 1e-6, T); if (scC && scC.w > 0) fac = (qc * perQ) / scC.w;   // scaled to the correlation's critical rate at p1
+        }
+        if (!C.gas && glr < 10) return Object.assign(out, { model: 'liquid' });
+        if (C.gas && C.choke.corr !== 'sachdeva') {
+            var gr = G.WTS_chokeperf_gasRate, k = _kGas(C, T), z = (C.F.at(p1, T, q0) || {}).z || 0.9, cd = (C.choke.cd >= 0.5 && C.choke.cd <= 1.2) ? C.choke.cd : 0.85;
+            if (typeof gr === 'function') ys.forEach(function (y) { out.series.nozzle.push({ y: y, q: gr({ s64: C.choke.bean, cd: cd, p1a: p1, p2a: y * p1, tR: T + RANK, sg: C.F.sgg, k: k, z: z }) }); });
+            out.ycCorr = Math.pow(2 / (k + 1), k / (k - 1));
+        }
+        if (C.choke.corr === 'sachdeva' || !C.gas) {
+            ys.forEach(function (y) { var s = _sachAt(C, q0, p1, y * p1, T); if (s) { if (ycS == null) ycS = s.yc; out.series.sachdeva.push({ y: y, q: fac * s.w / perQ }); } });
+            if (_fin(ycS)) out.ycSachdeva = ycS;
+        }
+        return out;
+    }
+    // the rate factor that makes the Sachdeva model equal a critical correlation at the operating point's critical rate (§4.7):
+    // factor = w(q_op) / w_Sachdeva,critical(p1_corr(q_op)) — the number the page writes into the rate factor control
+    function chokeFactor(M, corrKey, o) {
+        o = o || {};
+        var R = o.R && o.R.ok ? o.R : solve(M);
+        if (!R || !R.ok || !R.op) return { ok: false, code: 'NO_SOLUTION', errors: ['no operating point'], warnings: [] };
+        var cx = _ctx(M, {}); if (cx.fail) return cx.fail;
+        var C = cx.C, q = R.op.q, T = R.surface.tht, ff = G.WTS_wp_fluid.flowlineFluid(C.F, q), qL = ff.qo + ff.qw, glr = qL > 0 ? ff.qg_MMscfd * 1e6 / qL : 0;
+        if (C.gas || glr < 10) return { ok: false, code: 'NOT_APPLICABLE', errors: ['the critical multiphase correlations apply to oil wells with free gas (GLR ≥ 10 scf/STB)'], warnings: [] };
+        var per = typeof G.WTS_chokeperf_multiphaseRate === 'function' ? G.WTS_chokeperf_multiphaseRate(corrKey, 1, C.choke.bean, glr) : NaN;
+        if (!(per > 0)) return { ok: false, code: 'UNKNOWN_CORR', errors: ['unknown critical correlation ' + String(corrKey).slice(0, 30)], warnings: [] };
+        var p1e = qL / per + PATM, sc = _sachAt(C, q, p1e, p1e * 1e-6, T), m = _mixAt(C, q, p1e, T);
+        if (!sc || !m || !(sc.w > 0)) return { ok: false, code: 'NO_STATE', errors: ['the choke inlet state could not be evaluated'], warnings: [] };
+        var fac = m.w / sc.w;                       // relative to the Cd in the model (w_Sachdeva ∝ Cd)
+        return { ok: true, factor: fac, corr: corrKey, q: q, p1_psig: p1e - PATM, yc: sc.yc, cd: C.choke.cdS, warnings: [], errors: [] };
+    }
     function evalAt(M, q, o) {
         o = o || {};
         var cx = _ctx(M, o);
@@ -1216,7 +1560,7 @@
 
     var NS = G.WTS_wp_system = G.WTS_wp_system || {};
     NS.solve = solve; NS.designFor = designFor; NS.maxRate = maxRate; NS.shutIn = shutIn; NS.beanSchedule = beanSchedule; NS.job = job;
-    NS.boundary = boundary; NS.evalAt = evalAt;
+    NS.boundary = boundary; NS.evalAt = evalAt; NS.chokeCurve = chokeCurve; NS.chokeFactor = chokeFactor;
     NS._pchip = _pchip; NS._brent = _brent;
     NS.SCAN_FRACS = SCAN_FRACS.slice(); NS.TOL_P = TOL_P; NS.TOL_Q = TOL_Q; NS.GILBERT_YC = GILBERT_YC; NS.LOAD = LOAD; NS.HEADING_FRAC = HEADING_FRAC;
     G.WTS_wp_loading = loading;

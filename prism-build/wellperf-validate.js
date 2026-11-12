@@ -63,11 +63,14 @@ const BENCH = [
   { kind: 'system', key: 'nodal', status: 'pending', source: 'Beggs, Production Optimization Using Nodal Analysis — operating point ±2 % q' },
   { kind: 'well', key: 'minCurvature', status: 'pinned', source: 'closed-form circular arc (FIX.devSurvey, wellperf-well) ±0.01 ft' },
   { kind: 'temp', key: 'relax', status: 'pending', source: 'Hasan & Kabir, Fluid Flow and Heat Transfer in Wellbores (Ramey / Hasan-Kabir relaxation), ±2 °F — A2 WP14; closed form + RK4 cross-check X16 only' },
+  // A2
+  { kind: 'lift', key: 'glpc', status: 'pending', source: 'Takacs, Gas Lift Manual (GLPC), ±3 % — a B item; A2 checks the point of balance and the natural-flow identity only' },
+  { kind: 'choke', key: 'sachdeva', status: 'pending', source: 'Brill & Mukherjee, choke chapter (Sachdeva et al. 1986), ±3 % — limits checked: isentropic gas, incompressible liquid' },
 ];
 
 // §16: evaluation budgets (E = one fine well traverse + flowline march + choke; a coarse evaluation = ½ E)
 const BUDGET = {
-  traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80,
+  traverse: 1, solve1: 20, solve2: 24, page: 26, design: 60, beans6: 50, maxRate: 24, sens10: 80, sens2x10: 160, glpc12: 200,
 };
 
 function _load() {
@@ -140,7 +143,22 @@ function gate(G) {
     else if (pend && (Rr.heat.verified !== false || Rr.heat.provisional !== PROVISIONAL)) bad('temp relax', 'pending without the provisional label');
     if (pend && D && D.well && D.well.heat && D.well.heat.mode === 'relax') bad('temp relax', 'a pending method is the default temperature model');
   }
-  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
+  // 6. the choke model (A2, WP15): pending → verified:false, the provisional label on every flag / validity line, never the default
+  const SD = G.WTS_chokeperf_SACHDEVA, bS = benchOf('choke', 'sachdeva');
+  if (SD) {
+    const okS = bS && (bS.status === 'verified' || bS.status === 'pinned');
+    if (!!SD.verified !== !!okS) bad('choke sachdeva', 'registry verified=' + SD.verified + ' but BENCH status ' + (bS && bS.status));
+    if (!SD.verified) {
+      if (D && D.surface && D.surface.choke && D.surface.choke.corr === 'sachdeva') bad('choke sachdeva', 'is the default choke model');
+      const Mc = S.FIX.oilWell; Mc.surface.choke.bean64 = 64;
+      const Rc = G.WTS_wp_system.solve(Mc), f = (Rc.flags || []).find((x) => x.code === 'CHOKE_SUBCRITICAL');
+      if (!f || f.msg.indexOf(PROVISIONAL) === -1) bad('choke sachdeva', 'the sub-critical flag does not carry the provisional label');
+      const vv = (G.WTS_wp_check(Mc).validity || []).find((x) => x.corr === 'sachdeva');
+      if (!vv || vv.provisional !== true) bad('choke sachdeva', 'check validity does not mark it provisional');
+    }
+    rows.push({ kind: 'choke', key: 'sachdeva', label: SD.label, verified: !!SD.verified, status: bS ? bS.status : 'missing', source: bS ? bS.source : '' });
+  }
+  BENCH.filter((b) => b.kind === 'loading' || b.kind === 'system' || b.kind === 'well' || b.kind === 'temp' || b.kind === 'lift').forEach((b) => rows.push({ kind: b.kind, key: b.key, label: b.key, verified: b.status !== 'pending', status: b.status, source: b.source }));
   return { ok: errors.length === 0, rows, errors };
 }
 
@@ -219,7 +237,24 @@ function checks(G) {
       const M = S.FIX[k], q = find(M, a, b), e = 1e-6 * q;
       worst = Math.max(worst, Math.abs(SY.boundary(M, q + e).thp - SY.boundary(M, q - e).thp));
     });
-    add('X6', 'choke continuity at the regime change (multiphase max rule, gas nozzle)', worst < 0.1, worst, 0.1);
+    add('X6', 'choke continuity at the regime change (multiphase Sachdeva-scaled default, gas nozzle)', worst < 0.1, worst, 0.1);
+    let wb = 0;
+    [['oilWell', 'bound', 100, 900], ['oilWell', 'sachdeva', 150, 3000]].forEach(([k, mode, a, b]) => {
+      const M = S.FIX[k]; if (mode === 'bound') M.surface.choke.subcritical = 'bound'; else M.surface.choke.corr = 'sachdeva';
+      const q = find(M, a, b), e = 1e-6 * q;
+      wb = Math.max(wb, Math.abs(SY.boundary(M, q + e).thp - SY.boundary(M, q - e).thp));
+    });
+    add('X6b', 'choke continuity: the A1 bound (subcritical \'bound\') and the Sachdeva model alone', wb < 0.1, wb, 0.1);
+  }
+  // X20 (§15.3, A2; X16 on its branch) the Sachdeva critical-ratio fixed point converges in ≤ 30 iterations over the input grid
+  if (typeof G.WTS_chokeperf_sachdeva === 'function') {
+    let worst = 0, ok = true;
+    [1e-4, 1e-3, 0.01, 0.05, 0.2, 0.5, 0.9, 0.999, 1].forEach((x1) => [1.1, 1.3, 1.6].forEach((k) => [[50, 0.5], [55, 5], [62, 25]].forEach(([rL, rG]) => {
+      const r = G.WTS_chokeperf_sachdeva({ s64: 32, p1a: 1500, p2a: 100, x1, rhoL: rL, rhoG1: rG, k, sg: 0.7 });
+      if (!r.ok || !r.converged || !(r.yc > 0 && r.yc < 1)) ok = false;
+      worst = Math.max(worst, r.it || 0);
+    })));
+    add('X20', 'Sachdeva critical ratio: fixed point ≤ 30 iterations over the input grid (81 cases)', ok && worst <= 30, worst, 30);
   }
   // X7 breakdown sums to p̄r − p_sep
   {
@@ -296,8 +331,21 @@ function checks(G) {
       if (!b || b.R.q !== R.op.q || b.R.pwf !== R.pwf) { ok = false; worst = Math.max(worst, b ? Math.abs(b.R.q - R.op.q) : 1); }
     });
     add('X15', 'sensitivity at the base value = the single solve (identical)', ok, worst, 0);
+    // X17 (A2, WP16) two variables: the start cell (both model values) = the single solve exactly
+    const M = S.FIX.oilWell, R = solve(M), r2 = runJ(G.WTS_wp_sens.job(M, [{ key: 'wc', values: [20, 30, 40] }, { key: 'pr', values: [2800, 3000] }]));
+    const c = r2.ok && r2.cases.find((x) => x.values.wc === 30 && x.values.pr === 3000);
+    add('X17', 'two-variable sensitivity: the start cell = the single solve (identical)', !!(c && c.R.q === R.op.q && c.R.pwf === R.pwf), c ? Math.abs(c.R.q - R.op.q) : 1, 0);
   }
-  // X16 flowing temperature (A2, WP14): the piecewise-exact relaxation march vs an RK4 integration of the steady energy balance on the
+  // X18 (A2, WP18) gas lift at q_inj = 0 equals natural flow exactly (§15.2); the point of balance p_cas − ΔP_valve = p_tub
+  if (G.WTS_wp_gl && typeof G.WTS_wp_gl.glpc === 'function') {
+    const Mn = S.FIX.oilWell, Rn = solve(Mn), M0 = S.FIX.oilWell; M0.lift = { type: 'gaslift', gl: { qinj_Mscfd: 0, pinj_psig: 1200 } };
+    const R0 = solve(M0);
+    add('X18', 'gas lift at q_inj = 0 = natural flow (identical)', R0.op.q === Rn.op.q && R0.pwf === Rn.pwf, Math.abs(R0.op.q - Rn.op.q), 0);
+    const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 500, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+    const Rl = solve(Ml), e = Rl.ok && Rl.lift ? Math.abs(Rl.lift.pCas - 100 - Rl.lift.pTub) : Infinity;
+    add('X19', 'gas lift: point of balance p_cas − ΔP_valve = p_tub at the injection depth (psi)', e < 1, e, 1);
+  }
+  // X21 flowing temperature (A2, WP14; X16 on its branch): the piecewise-exact relaxation march vs an RK4 integration of the steady energy balance on the
   // deviated FIX.gasWell path (geotherm on TVD, relaxation along MD), and the large-z limit g_G·A·sinθ on a vertical hole
   if (G.WTS_wellbore && typeof G.WTS_wellbore.flowingTemp === 'function') {
     const WB = G.WTS_wellbore, M = S.FIX.gasWell, W = G.WTS_wp_well.build(M.well, { res: M.res }), mid = W.nodes.midPerfMd;
@@ -310,7 +358,7 @@ function checks(G) {
     const cv = WB.column({ datumTvd: 20000, survey: [[0, 0], [20000, 20000]], strings: [{ id: 2.441, od: 2.875, topMd: 0, botMd: 20000 }] });
     const rv = WB.flowingTemp(cv, { w: 1500, cp: 0.55, U_to: 20, r_to: 2.875 / 24, rwb: 8.5 / 24, t_hr: 720, geo: { surfF: 60, gradFper100: 1.6 } });
     const e2 = Math.abs((rv.tOut - rv.teOut) - 0.016 * rv.A);
-    add('X16', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
+    add('X21', 'flowing temperature: relaxation march vs RK4 on the deviated path (°F), large-z limit g_G·A·sinθ', e1 < 0.02 && e2 < 1e-6, Math.max(e1, e2), 0.02);
   }
   return { ok: out.every((c) => c.ok), rows: out };
 }
@@ -363,6 +411,13 @@ function timing(G) {
     const t0 = nowMs(); const r = run(G.WTS_wp_sens.job(M, [{ key: 'wc', values: vals }]));
     const ev = r && r.cases ? r.cases.reduce((a, c) => a + ((c.R && c.R.evals) || 0), 0) : null;
     rec('sensitivity, 10 cases', 'oilWell', ev == null ? 0 : ev, BUDGET.sens10, nowMs() - t0);
+    const t1 = nowMs(); const r2 = run(G.WTS_wp_sens.job(M, [{ key: 'wc', values: vals }, { key: 'pr', values: [2600, 3000] }]));
+    rec('sensitivity, 2 × 10 cases', 'oilWell', r2 && r2.ok ? r2.evals : 0, BUDGET.sens2x10, nowMs() - t1);
+    if (G.WTS_wp_gl && typeof G.WTS_wp_gl.glpc === 'function') {
+      const Ml = S.FIX.oilWell; Ml.fluid.wc = 0.6; Ml.res.pr = 2600; Ml.lift = { type: 'gaslift', gl: { qinj_Mscfd: 500, pinj_psig: 1200, sginj: 0.65, dpValve: 100, packerMd: 7800 } };
+      const t2 = nowMs(); const g = run(G.WTS_wp_gl.glpc(Ml));
+      rec('gas-lift performance curve, 12 points', 'oilWell', g && g.ok ? g.evals : 0, BUDGET.glpc12, nowMs() - t2);
+    }
   } else out.push({ op: 'sensitivity, 10 cases', fixture: 'oilWell', evals: null, budget: BUDGET.sens10, ms: null, okE: true, okMs: true, note: 'WTS_wp_sens not merged (WP6)' });
   return { ok: out.every((r) => r.okE), okMs: out.every((r) => r.okMs), rows: out, E, baselineEms: _S().BASELINE.E_ms };
 }
