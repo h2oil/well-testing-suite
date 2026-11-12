@@ -6,7 +6,8 @@
 //
 // Storage (both keys start with "wts_", so 29-multiwell makes them per well and project files carry them; no project module):
 //   wts_page_wellperf   host autosave of the page's id'd scalar controls ({f: {id: value}}; unit-tagged inputs canonical imperial)
-//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases}
+//   wts_wellperf_model  tables, JSON v1: {v:1, survey, strings, restrictions, geo, flowline, rating, beans, tests, lab, pump, cases,
+//                       corrSections (v4.5 WP21: per-section correlations → M.system.corr.sections)}
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -31,7 +32,8 @@
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases'];
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections'];   // corrSections: v4.5 WP21
+    var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
 
@@ -85,7 +87,7 @@
             surface: { choke: { present: true, bean64: 32, corr: 'gilbert', cd: 0.75, subcritical: 'bound', rateFactor: null }, flowline: [], psep_psig: 100, ambient_F: 60,
                        rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48] },
             lift: { type: 'none', gl: { packerMd: null, qinjList_Mscfd: [], sginj: 0.65, pinj_psig: null, dpValve: 100, qinj_Mscfd: null, incGor: 0 }, esp: null },
-            system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb' },
+            system: { node: 'bottom', mode: 'rate', thp_psig: null, target: { kind: 'bean', q: null }, corr: { well: null, line: 'bb', sections: [] },
                       mult: { hl: 1, f: 1 }, eroC: 100, stepFt: 100, stepFtLine: 50, refine: true },
             tests: [],
             cases: []
@@ -195,7 +197,7 @@
     // ── table record: empty / migrate / validate / decimate ───────────────────
     function empty() {
         return { v: VERSION, survey: [], strings: [], restrictions: [], geo: { points: [] }, flowline: [],
-                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [] };
+                 rating: { wellhead_psi: null, tht_max_F: null }, beans: [16, 20, 24, 32, 40, 48], tests: [], lab: null, pump: null, cases: [], corrSections: [] };
     }
     function migrate(rec) {
         if (!_isObj(rec)) return { ok: false, code: 'BAD_RECORD', notes: ['the stored model is not an object'] };
@@ -263,6 +265,12 @@
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _clone(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
+        // per-section correlations (v4.5 WP21): [{by:'md'|'inc', from, to, corr}] — MD in ft, inclination in degrees from vertical; a key
+        // string of WTS_flowline_corr (checked by the engines: an unknown key is skipped there, with a warning)
+        out.corrSections = (Array.isArray(r.corrSections) ? r.corrSections : []).filter(_isObj).map(function (x) {
+            var by = SEC_BY.indexOf(x.by) !== -1 ? x.by : 'md', k = typeof x.corr === 'string' ? x.corr.trim() : '';
+            return { by: by, from: _num(x.from), to: _num(x.to), corr: /^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(k) ? k : '' };
+        }).filter(function (x) { return x.corr && (x.from === null || x.from >= 0) && (x.to === null || x.from === null || x.to > x.from); }).slice(0, SEC_MAX);
         TABLE_KEYS.forEach(function (k) { if (Array.isArray(out[k]) && out[k].length > MAX_ROWS && k !== 'survey') out[k] = out[k].slice(0, MAX_ROWS); });
         return { rec: out, warnings: warnings };
     }
@@ -349,6 +357,7 @@
                     corr: rec.lab.adopt.corr, T_F: rec.lab.adopt.T_F, edited: rec.lab.adopt.edited } : { lab: rec.lab };
                 M.fluid.rv.rows = rec.lab.rv; M.fluid.emul.rows = rec.lab.emul;
             }
+            M.system.corr.sections = rec.corrSections || [];
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);

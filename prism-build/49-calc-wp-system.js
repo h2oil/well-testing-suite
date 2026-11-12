@@ -253,12 +253,17 @@
         // a dry-gas-only method (the liquids are ignored) is not applicable to an oil or water well: refused, never a silent answer
         if (!_isGas(type) && (_gasOnly(REG[corrWell]) || _gasOnly(REG[corrLine])))
             return { fail: _fail('CORR_NOT_APPLICABLE', ['The dry-gas method (' + (_gasOnly(REG[corrWell]) ? REG[corrWell].label || corrWell : REG[corrLine].label || corrLine) + ') ignores the oil and water columns: it is not applicable to a ' + type + ' well. Choose another correlation.'], { F: F, I: I, W: W }) };
+        // per-section correlations (v4.5 WP21; WTS_wp_vlp.traverse o.sections): rows with a known key; a dry-gas-only key in a section of an
+        // oil or water well is refused like the whole-well choice
+        var secs = (sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections.filter(function (r) { return r && r.corr && REG[r.corr]; }) : [];
+        for (var si = 0; si < secs.length; si++) if (!_isGas(type) && _gasOnly(REG[secs[si].corr]))
+            return { fail: _fail('CORR_NOT_APPLICABLE', ['Section ' + (si + 1) + ': the dry-gas method (' + (REG[secs[si].corr].label || secs[si].corr) + ') ignores the oil and water columns: it is not applicable to a ' + type + ' well.'], { F: F, I: I, W: W }) };
         var mode = o.mode || sys.mode || 'rate';
         var choke = M.surface && M.surface.choke ? M.surface.choke : { present: false };
         var mult = sys.mult && (+sys.mult.hl !== 1 || +sys.mult.f !== 1) ? { hl: _fin(+sys.mult.hl) ? +sys.mult.hl : 1, f: _fin(+sys.mult.f) ? +sys.mult.f : 1 } : null;
         var node = o.node || sys.node || 'bottom';
         var C = {
-            M: M, F: F, I: I, W: W, type: type, gas: _isGas(type), corrWell: corrWell, corrLine: corrLine, mode: mode,
+            M: M, F: F, I: I, W: W, type: type, gas: _isGas(type), corrWell: corrWell, corrLine: corrLine, mode: mode, sections: secs.length ? secs : null,
             node: node === 'separator' ? 'wellhead' : (node === 'wellhead' ? 'wellhead' : 'bottom'), nodeAsked: node,
             stepFt: +sys.stepFt > 0 ? +sys.stepFt : 100, stepFtLine: +sys.stepFtLine > 0 ? +sys.stepFtLine : 50,
             refine: sys.refine !== false, eroC: +sys.eroC > 0 ? +sys.eroC : 100, mult: mult,
@@ -380,7 +385,7 @@
     // one gas-lifted well evaluation at q: the tubing in two marches (lift gas above the injection point, formation fluid below);
     // the frozen step layout is not used (the injection depth moves with q). → a traverse-like object (profile, segments, pEnd, …)
     function _glTraverse(C, q, p0, dir, keep) {
-        var V = G.WTS_wp_vlp, o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, pMax: C.pMax };
+        var V = G.WTS_wp_vlp, o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, pMax: C.pMax, sections: C.sections };
         if (C.mult) o.mult = C.mult;
         var tpg = _tProf(C, q); if (tpg) o.tProfile = tpg.tAt;     // relaxation mode (WP14): the formation-fluid profile at q
         var mid = C.W.nodes.midPerfMd, inj, up, lo;
@@ -566,7 +571,7 @@
         r.top = top;
         var pwfI = C.I.pwfAt(q);
         var gkey = fine ? 'fine' : 'coarse';
-        var o = { corr: C.corrWell, stepFt: C.stepFt, coarse: !fine, eroC: C.eroC, refine: C.refine, pMax: C.pMax };
+        var o = { corr: C.corrWell, stepFt: C.stepFt, coarse: !fine, eroC: C.eroC, refine: C.refine, pMax: C.pMax, sections: C.sections };
         if (C.mult) o.mult = C.mult;
         var tpr = _tProf(C, q); if (tpr) o.tProfile = tpr.tAt;
         o.grid = C.grids[gkey] || true;
@@ -759,7 +764,7 @@
         var tr = e.tr;
         // the reported traverse is always the wellhead → bottom march at the operating point (bottom node: e.tr already)
         if (C.node !== 'bottom' && e.top && !e.top.lost) {
-            var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax };
+            var o = { corr: C.corrWell, stepFt: C.stepFt, eroC: C.eroC, refine: C.refine, from: 'top', p0: e.top.thp, pMax: C.pMax, sections: C.sections };
             if (C.mult) o.mult = C.mult;
             var tpo = _tProf(C, opQ); if (tpo) o.tProfile = tpo.tAt;
             tr = C.gl ? _glTraverse(C, opQ, e.top.thp, 'down', true) : V.traverse(C.F, C.W, opQ, o); C.counts.fine++;
@@ -877,6 +882,11 @@
         (C.trWarn || []).forEach(function (w) { if (w && w.code !== 'LOST' && w.code !== 'PROVISIONAL') F.push(_w(w.code, w.msg, w.sev)); });
         var E = (G.WTS_flowline_corr || {})[C.corrWell];
         if (E && E.verified !== true) F.push(_w('PROVISIONAL', (E.label || C.corrWell) + ': provisional — not verified against a published example.', 'info'));
+        // per-section correlations (v4.5 WP21): each provisional section correlation actually on the path, once
+        var trS = R.traverse && R.traverse.sections, seenS = {};
+        seenS[C.corrWell] = 1;
+        if (trS) trS.forEach(function (sr) { var Es = (G.WTS_flowline_corr || {})[sr.corr]; if (seenS[sr.corr] || !Es) return; seenS[sr.corr] = 1;
+            if (Es.verified !== true) F.push(_w('PROVISIONAL', (Es.label || sr.corr) + ' (section ' + _f(sr.mdTop, 0) + '–' + _f(sr.mdBot, 0) + ' ft MD): provisional — not verified against a published example.', 'info')); });
         if (R.heat && R.heat.mode === 'relax') F.push(_w('PROVISIONAL_TEMP', 'Flowing temperature (heat-transfer relaxation, Ramey / Hasan-Kabir): ' + PROVISIONAL + '.', 'info'));
         if (C.nodeAsked === 'separator') F.push(_w('NODE_SEPARATOR', 'The separator node is solved at the wellhead node in this release (same operating point).', 'info'));
         R.flags = F;
@@ -899,6 +909,7 @@
             roots: [{ q: r.q, p: C.node === 'bottom' ? C.I.pwfAt(r.q) : _eval(C, r.q, true).pOut, dDdq: d, stable: true, conv: r.conv, evals: r.evals }],
             op: null, qs: null, vlpMin: null, pwf: null, traverse: null, breakdown: [], surface: {}, rates: {}, velocities: {}, flags: [], discontinuities: [], marginal: [],
             loading: null, warnings: C.warnings.slice(), errors: [], aof: C.aof, pr: C.pr, choke: { present: C.choke.present }, scan: [], curves: { ipr: [], vlp: [] } };
+        if (C.sections) R.corr.sections = JSON.parse(JSON.stringify(C.sections));
         R.op = { q: r.q, p: R.roots[0].p, stable: true, dDdq: d };
         // a live drag carries the curves, q_s and the tubing-curve minimum of the last full solve until the release (R.carried)
         if (o.track.curves) { R.curves = { ipr: C.node === 'bottom' ? [] : (o.track.curves.ipr || []), vlp: o.track.curves.vlp || [] }; R.qs = o.track.qs || null; R.vlpMin = o.track.vlpMin || null; R.carried = true; }
@@ -929,6 +940,7 @@
         var R = { ok: false, node: C.node, nodeAsked: C.nodeAsked, mode: C.mode, corr: { well: C.corrWell, line: C.corrLine }, roots: [], op: null, qs: null,
             vlpMin: null, pwf: null, traverse: null, breakdown: [], surface: {}, rates: {}, velocities: {}, flags: [], discontinuities: [], marginal: [],
             loading: null, warnings: C.warnings.slice(), errors: [], aof: C.aof, pr: C.pr, choke: { present: C.choke.present } };
+        if (C.sections) R.corr.sections = JSON.parse(JSON.stringify(C.sections));
         var pts = _scan(C, o.scanFracs);
         R.scan = pts.map(function (p) { return { q: p.q, pOut: p.pOut, pIn: p.pIn, lost: p.lost ? p.lost.reason : null, eroMax: p.eroMax }; });
         var runs = _runs(C, pts);
@@ -1159,6 +1171,21 @@
             validity.push({ corr: ck, label: E.label || ck, inRange: !outs.length, provisional: E.verified !== true,
                 msg: (E.label || ck) + (outs.length ? ': outside the data range — ' + outs.join('; ') + ' (extrapolation).' : ': inside the published data range.') });
         }
+        // per-section correlations (v4.5 WP21): a validity row per section (provisional label, vertical-only rule on the section's
+        // inclination — the inclination band itself, or the survey's maximum inside the MD interval), dry-gas keys refused for oil / water
+        ((sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections : []).forEach(function (sr, i) {
+            if (!sr || !sr.corr) return;
+            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : '180') + '° from vertical'
+                : 'MD ' + _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : 'TD') + ' ft';
+            if (!Es) { add('SECTION_CORR', 'warn', 'wp_sections', 'Section ' + (i + 1) + ': unknown correlation ' + String(sr.corr).slice(0, 24) + ' (skipped).'); return; }
+            if (!gas && _gasOnly(Es)) { add('CORR_NOT_APPLICABLE', 'error', 'wp_sections', 'Section ' + (i + 1) + ': ' + (Es.label || sr.corr) + ' ignores the oil and water columns: not applicable to a ' + (fl.type || 'oil') + ' well.'); return; }
+            var incS = 0;
+            if (sr.by === 'inc') incS = _fin(+sr.to) ? Math.min(+sr.to, 180) : 180;
+            else if (three) sv.forEach(function (r2) { var md = +r2[0]; if (md >= (+sr.from || 0) && (!_fin(+sr.to) || md <= +sr.to) && +r2[1] > incS && +r2[1] <= 180) incS = +r2[1]; });
+            var outsS = (Es.vertical && incS > 30) ? ['a vertical-well correlation on a section reaching ' + _f(Math.min(incS, 90), 0) + '°'] : [];
+            validity.push({ corr: sr.corr, label: (Es.label || sr.corr) + ' (section ' + where + ')', inRange: !outsS.length, provisional: Es.verified !== true, section: i + 1,
+                msg: (Es.label || sr.corr) + ' (section ' + where + ')' + (outsS.length ? ': outside the data range — ' + outsS.join('; ') + ' (extrapolation).' : ': per-section correlation.') });
+        });
         var lk = (sys.corr && sys.corr.line) || 'bb', EL = REG[lk];
         if (EL && (sf.flowline || []).length) validity.push({ corr: lk, label: (EL.label || lk) + ' (flowline)', inRange: true, provisional: EL.verified !== true,
             msg: (EL.label || lk) + ' (flowline): any inclination; data from 1–1.5 in test pipe, commonly used beyond.' });
