@@ -24,7 +24,10 @@
 //       oil (Havlena & Odeh 1963 straight line with the user's N, no aquifer): F = N·(E_o + m·E_g + E_f,w) with
 //         F = N_p·[B_o + (R_p − R_s)·B_g] + W_p·B_w, E_o = (B_o − B_oi) + (R_si − R_s)·B_g, E_g = B_oi·(B_g/B_gi − 1),
 //         E_f,w = (1 + m)·B_oi·(c_w·S_wi + c_f)/(1 − S_wi)·Δp; PVT from the model's fluid (WTS_wp_fluid.table, the same correlations as
-//         the march); R_p = the model's producing GOR, held (no relative-permeability gas breakthrough: optimistic below p_b).
+//         the march); the producing GOR (spec.gas, default 'corey'): solution-gas drive R = R_s + (k_rg/k_ro)·(μ_o·B_o)/(μ_g·B_g) on the
+//         material-balance saturations with Corey curves k_ro = (S_o/(1 − S_wi))^n_o, k_rg = ((S_g − S_gc)/(1 − S_wi − S_gc))^n_g —
+//         ASSUMED defaults S_gc 5 %, n_o 3, n_g 2, S_wi 0.2 (spec.sgc / no / ng / swi); 'retained' keeps the liberated gas in the reservoir
+//         (R = R_s: optimistic below p_b). R_p = G_p / N_p integrates R over the steps (review fix v4.5: this header said R_p was held).
 //     The tank models have no verified published example yet (Q9): every tank result is verified:false with the provisional label
 //     and the tank mode is never the default (D17; wellperf-validate BENCH forecast gasTank / oilTank 'pending').
 //   Decline / EUR cross-check against 35-rta-dca: when PRiSM_declineResults() has a decline fit ({ok, eur, remaining, units}), the

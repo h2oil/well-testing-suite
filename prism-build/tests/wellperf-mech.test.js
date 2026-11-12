@@ -106,8 +106,15 @@ module.exports = [
       const G0m = 0.0127 * Math.log10(3) / Math.pow(d, 1.415) - 0.284 + 0.167 * Math.log10(vm) + 0.113 * Math.log10(d);
       assert.rel(g.Gamma0, G0m, 1e-12, 'Γ oil, v_m < 10');
       const rs0 = (50 * (2 + vb) + 5 * 6) / (vm + vb), Gm = Math.max(G0m, -0.065 * vm);
-      const rhoS = Math.min(50, Math.max(50 * 0.25 + 5 * 0.75, rs0 + Gm * 50));
+      const rhoS = Math.min(50, Math.max(5, rs0 + Gm * 50));
       assert.rel(g.rhoS, rhoS, 1e-9, 'ρ_s');
+      // review fix (v4.5): the published ρ_s is not held at the no-slip density — hand point vsl 2, vsg 3 ft/s: Γ −0.1878, v_b 1.741 ft/s,
+      // ρ_s ≈ 20.6 lbm/ft³ (no-slip 23.0), elevation gradient ≈ 0.143 psi/ft
+      const h = C.ork.grad(gIn({ vsl: 2, vsg: 3, props: { fw: 0 } }));
+      assert.strictEqual(h.pattern, 'slug');
+      assert.ok(Math.abs(h.Gamma - (-0.1878)) < 5e-4, 'Γ ' + h.Gamma); assert.ok(Math.abs(h.vb - 1.741) < 2e-3, 'v_b ' + h.vb);
+      assert.ok(Math.abs(h.rhoS - 20.6) < 0.1 && h.rhoS < 50 * 0.4 + 5 * 0.6, 'ρ_s below no-slip ' + h.rhoS);
+      assert.ok(Math.abs(h.gradEl - 0.143) < 0.002, 'elevation ' + h.gradEl);
       const f = colebrook(nreL, 0.0006 / 12 / d);
       assert.rel(g.gradF, f * 50 * vm * vm / (2 * GC * d) * ((2 + vb) / (vm + vb) + Gm) / 144, 1e-6, 'slug friction');
       assert.ok(Math.abs(g.gradAcc) < 1e-15 && g.Ek === 0, 'no acceleration term');
@@ -163,10 +170,14 @@ module.exports = [
       const NLv = 2, Ngv = 5, NL = 0.01;
       const p = V.mbPattern(NLv, Ngv, NL, th);
       assert.rel(p.NgvSM, Math.pow(10, 1.401 - 2.694 * NL + 0.521 * Math.pow(NLv, 0.329)), 1e-12, 'slug / annular');
-      assert.rel(p.NgvBS, Math.pow(10, Math.log10(NLv) + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL), 1e-12, 'bubble / slug uphill');
-      assert.strictEqual(p.pattern, Ngv < p.NgvBS ? 'bubble' : 'slug');
-      const pd = V.mbPattern(NLv, Ngv, NL, -th), lg = Math.log10(Ngv);
-      assert.rel(pd.NLvBS, Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lg * -s - 0.429 * lg * lg * -s + 1.132 * -s), 1e-12, 'N_LvBS downhill');
+      assert.rel(p.NLvBS, Math.pow(10, Math.log10(Ngv) + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL), 1e-12, 'bubble / slug uphill (N_LvBS of N_gv)');
+      assert.strictEqual(p.pattern, NLv > p.NLvBS ? 'bubble' : 'slug');
+      // review fix (v4.5) hand point: vertical, N_Lv = N_gv = 1, N_L = 0.01 → N_LvBS = 10^0.19595 ≈ 1.57 > 1 → slug (the swapped form said bubble)
+      const pv = V.mbPattern(1, 1, 0.01, Math.PI / 2);
+      assert.rel(pv.NLvBS, Math.pow(10, 0.940 + 0.074 - 0.855 + 0.03695), 1e-12, 'N_LvBS vertical'); assert.strictEqual(pv.pattern, 'slug', 'hand point slug');
+      assert.strictEqual(V.mbPattern(3, 1, 0.01, Math.PI / 2).pattern, 'bubble', 'more liquid → bubble');
+      const pd = V.mbPattern(NLv, Ngv, NL, -th), lg = Math.log10(Ngv), lgL = Math.log10(NLv);
+      assert.rel(pd.NgvBS, Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lgL * -s - 0.429 * lgL * lgL * -s + 1.132 * -s), 1e-12, 'N_gvBS downhill (of N_Lv)');
       assert.rel(pd.NLvST, Math.pow(10, 0.321 - 0.017 * Ngv - 4.267 * -s - 2.972 * NL - 0.033 * lg * lg - 3.925 * s * s), 1e-12, 'N_LvST downhill');
       assert.strictEqual(V.mbPattern(0.05, 500, NL, th).pattern, 'annular');
       // holdup sets (Brill & Mukherjee coefficient table, pinned)
@@ -436,6 +447,37 @@ module.exports = [
       assert.strictEqual(A.consoleErrors().length, 0, 'no console errors');
       G.WTS_wp_model.write({ corrSections: [] });
       S.resetWellPerf(A);
+    },
+  },
+  {
+    name: 'VM11 review fixes (v4.5): Ansari takes the thin film root and bridges a thick film to slug; FIX.gasWell at 2600 psia flows; outflow steps bounded; Orkiszewski / Hasan-Kabir pattern-step note',
+    wp: WP,
+    run(_a, assert, ctx) {
+      const G = app(ctx).win, C = G.WTS_flowline_corr, V = G.WTS_wp_vlp, SY = G.WTS_wp_system;
+      // three roots at v_sg 15 ft/s on a wet-gas point: the thin one is taken (the residual vanishes and it is the smallest sign change)
+      const x = { vsl: 0.05, vsg: 10, d: 2.441, rhoL: 45, rhoG: 6, muL: 0.5, muG: 0.016, sigma: 20, theta: 90, rough: 0.0006, p: 1500 };
+      const a = C.ansari.grad(x);
+      assert.strictEqual(a.pattern, 'annular'); assert.ok(a.delta < 0.01 && a.hl < 0.12, 'thin film δ ' + a.delta + ' H_L ' + a.hl);
+      const zc = 24 * Math.pow(45 / 6, 1 / 3), fd = (d) => { const w = 4 * d * (1 - d); return a.YM - (a.FE > 0.9 ? 1 + 300 * d : 1 + zc * d) / (w * Math.pow(1 - w, 2.5)) + a.XM2 / (w * w * w); };
+      for (let d = 1e-7; d < a.delta * 0.98; d *= 1.05) assert.ok(fd(d) > 0, 'no smaller root at ' + d);
+      // a thick film only (lower gas rate): bridged → slug, and the pattern rule agrees with the gradient
+      const xb = Object.assign({}, x, { vsg: 5 }), b = C.ansari.grad(xb);
+      assert.strictEqual(b.pattern, 'slug'); assert.strictEqual(V.ansariPattern(xb).pattern, 'slug'); assert.ok(V.ansariPattern(xb).bridged === true, 'bridged');
+      // FIX.gasWell at 2600 psia: Ansari flows like the other correlations (was UNSTABLE_ONLY)
+      const M = S.FIX.gasWell; M.res.pr = 2600; M.system.corr.well = 'ansari';
+      const R = SY.solve(M);
+      assert.ok(R.ok && R.op.q > 3000 && R.op.q < 4500, 'Ansari operating rate ' + (R.op && R.op.q));
+      // the outflow along a rate grid has no step above 10 % (it was 27 % at 4,750 → 5,000 Mscf/d)
+      const Mg = S.FIX.gasWell, F = G.WTS_wp_fluid.build(Mg.fluid, { T_F: Mg.res.T_F }), W = G.WTS_wp_well.build(Mg.well, { res: Mg.res });
+      let prev = null, worst = 0;
+      for (let q = 3000; q <= 7000; q += 250) { const tr = V.traverse(F, W, q, { from: 'top', p0: 1000, corr: 'ansari' }); assert.ok(tr.ok); if (prev) worst = Math.max(worst, Math.abs(tr.pEnd - prev) / prev); prev = tr.pEnd; }
+      assert.ok(worst < 0.10, 'largest step ' + worst);
+      // the Orkiszewski / Hasan-Kabir boundary note: present when a traverse crosses it, absent otherwise
+      const tk = V.traverse(F, W, 1280, { from: 'top', p0: 1000, corr: 'hk' }), pats = new Set(tk.profile.map((r) => r.pattern));
+      const crosses = pats.has('churn') && pats.has('annular');
+      assert.strictEqual(tk.warnings.some((w) => w.code === 'PATTERN_STEP'), crosses, 'HK note ⇔ the traverse crosses churn / annular');
+      const tb = V.traverse(F, W, 1280, { from: 'top', p0: 1000, corr: 'bb' });
+      assert.ok(!tb.warnings.some((w) => w.code === 'PATTERN_STEP'), 'no note for Beggs & Brill');
     },
   },
 ];

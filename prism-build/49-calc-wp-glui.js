@@ -86,8 +86,8 @@
             return { src: 'installed', rows: rows };
         }
         if (S.desRows && S.desRows.length) {
-            rows = S.desRows.map(function (v, i) { var r = {}; Object.keys(v).forEach(function (k) { r[k] = v[k]; }); r.i = i; r.src = 'design'; r.kind = 'ipo'; return r; });
-            if (S.drag && S.drag.src === 'design' && rows[S.drag.i] && S.drag.row) { var d0 = S.drag.row; Object.keys(d0).forEach(function (k) { rows[S.drag.i][k] = d0[k]; }); rows[S.drag.i].i = S.drag.i; rows[S.drag.i].dragging = true; }
+            rows = S.desRows.map(function (v, i) { var r = {}; Object.keys(v).forEach(function (k) { r[k] = v[k]; }); r.i = i; r.src = 'design'; r.kind = 'ipo'; r.tvd = tvdAt(r.md); return r; });
+            if (S.drag && S.drag.src === 'design' && rows[S.drag.i] && S.drag.row) { var d0 = S.drag.row; Object.keys(d0).forEach(function (k) { rows[S.drag.i][k] = d0[k]; }); rows[S.drag.i].i = S.drag.i; rows[S.drag.i].tvd = tvdAt(rows[S.drag.i].md); rows[S.drag.i].dragging = true; }
             return { src: 'design', rows: rows };
         }
         void W;
@@ -138,7 +138,7 @@
             '<button type="button" class="btn btn-secondary" data-act="wpg_use">Use this design</button>' +
             '<button type="button" class="btn btn-secondary" data-act="wpg_port" style="display:none">Use the recommended port</button></div>' +
             '<div id="wpg_msg" class="rp-skip" role="status"></div>' +
-            '<div class="wp-hint" style="margin:6px 0 4px">Spacing on the deviated path with the model\'s inflow, correlation and flowing temperatures (the injection pressure and rate above). Installed valves (written to the well):</div>' +
+            '<div class="wp-hint" style="margin:6px 0 4px">Spacing on the deviated path with the model\'s inflow, correlation and flowing temperatures (the injection pressure and rate above) — provisional, not verified against a published example. Installed valves (written to the well):</div>' +
             '<div id="wpg_edit" class="rp-skip"></div>' +
             '<div class="wpg-go rp-skip"><button type="button" class="btn btn-secondary" data-act="wpg_add">Add a valve</button><button type="button" class="btn btn-secondary" data-act="wpg_clear">Remove all valves</button></div>',
             { id: 'wpg_dcard' });
@@ -198,23 +198,30 @@
         Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_view"]'), function (b) { var on = b.getAttribute('data-v') === view; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
         Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_depth"]'), function (b) { var on = b.getAttribute('data-v') === dax; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
     }
-    function _kfmt(p, md, tvd) { return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(_fin(tvd) ? tvd : p.tvdAt(md), 'length'), 0) + ' TVD ' + p.lab('length', 'ft'); }
+    function _kfmt(p, md, tvd) { var t2 = p.tvdAt(md); return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(_fin(t2) ? t2 : tvd, 'length'), 0) + ' TVD ' + p.lab('length', 'ft'); }
     function _renderKpi(p) {
         var h = _byId('wpg_kpi'); if (!h) return;
         var vs = _vset(p), R = p.ST.R, out = [], k = function (l, v, s, st, t) { out.push(p.kpiHtml(l, v, s, st, t)); };
-        k('Valves', vs.rows.length ? String(vs.rows.length) : '—', vs.src === 'installed' ? 'installed' : (vs.src === 'design' ? 'design' + (S.desEdited ? ' (moved)' : '') + ' — not installed' : 'design the valves'), vs.rows.length ? (vs.src === 'installed' ? 'ok' : 'info') : 'none');
+        var spI = _spacingIssue(p, vs.rows);
+        k('Valves', vs.rows.length ? String(vs.rows.length) : '—', vs.src === 'installed' ? 'installed' + (spI ? ' · spacing' : '') : (vs.src === 'design' ? 'design' + (S.desEdited ? ' (moved)' : '') + ' — not installed' + (spI ? ' · spacing' : '') : 'design the valves'), vs.rows.length ? (spI ? 'warn' : (vs.src === 'installed' ? 'ok' : 'info')) : 'none');
         var op = S.diag && S.diag.ok && S.diag.operating ? S.diag.operating : (S.des && S.des.ok && S.des.operating && vs.src === 'design' ? S.des.operating : null);
         var deepest = vs.rows.length ? vs.rows[vs.rows.length - 1] : null;
         if (op) k('Operating valve', 'V' + op.n, _kfmt(p, op.md, op.tvd), deepest && Math.abs(deepest.md - op.md) > 1 && S.diag && S.diag.ok ? 'warn' : 'ok', 'The valve that passes the lift gas');
-        else if (R && R.ok && R.lift) k('Injection point', _kfmt(p, R.lift.injMd, R.lift.injTvd).replace(/ ft$|\s\S+$/, ''), 'point of balance (no valves)', 'info');
+        else if (R && R.ok && R.lift) {
+            // the system solve injects at the point of balance (plan §18.3.9); with valves shown say so, and warn when that depth is below
+            // the deepest valve (it cannot inject there)
+            var below = deepest && R.lift.injMd > deepest.md + 1;
+            k('Injection point', _kfmt(p, R.lift.injMd, R.lift.injTvd).replace(/ ft$|\s\S+$/, ''), !vs.rows.length ? 'point of balance (no valves)' : ('system solve: point of balance — not yet at the ' + (vs.src === 'installed' ? 'installed' : 'design') + ' valves' + (below ? ' (below the deepest valve)' : '')), below ? 'warn' : 'info',
+                vs.rows.length ? 'The operating solve injects at the point of balance; the valve set is not yet used by the system solve' : 'The point of balance of the operating solve');
+        }
         if (S.des && S.des.ok && S.des.valves) {
             var ov = S.des.valves.filter(function (v) { return v.role === 'Operating'; })[0];
             if (ov && ov.tc) k('Port throughput', p.u(ov.tc.q, 'gasRateSmall', 0, 'Mscf/d'), 'need ' + p.u(S.des.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' · ' + (PORT_TXT[ov.port] || ov.port + '/64') + ' in' + (ov.tc.critical ? ' · critical' : ''), ov.tc.q >= S.des.qinj ? 'ok' : 'fail', 'Thornhill-Craver (provisional) at the operating valve');
         }
         var a = S.ash;
         if (a && a.ok) {
-            k('Asheim F1', _fin(a.F1) ? p.fmt(a.F1, 2) : '∞', 'inflow · stable > 1', a.stable1 ? 'ok' : 'fail', 'Static inflow criterion at the operating point — provisional');
-            if (_fin(a.F2)) k('Asheim F2', p.fmt(a.F2, 2), 'injection' + (a.parts.critical ? ' · critical port' : '') + ' · stable < 1', a.stable2 ? 'ok' : 'warn', 'Valve–tubing loop gain — provisional');
+            k('Static stability F1', _fin(a.F1) ? p.fmt(a.F1, 2) : '∞', 'inflow / outflow slopes · stable > 1', a.stable1 ? 'ok' : 'fail', 'Static inflow-to-outflow slope ratio at the operating point (screening, after Asheim 1988) — provisional');
+            if (_fin(a.F2)) k('Injection loop gain F2', p.fmt(a.F2, 2), 'valve–column' + (a.parts.critical ? ' · critical port' : '') + ' · stable < 1', a.stable2 ? 'ok' : 'warn', 'Valve-to-column loop gain (screening, after Asheim 1988; casing heading not assessed) — provisional');
         }
         if (S.diag) k('Diagnosis', S.diag.ok ? ({ ok: 'normal', warn: 'check', fail: 'problem' }[S.diag.verdict]) : 'not run', S.diag.ok ? (S.diag.test.id ? 'test ' + S.diag.test.id : 'selected test') : ((S.diag.errors || [])[0] || ''), S.diag.ok ? S.diag.verdict : 'info');
         if (S.sur && S.sur.ok) k('Survey match', 'RMS ' + p.fmt(p.dv(S.sur.rms, 'pressure'), 0) + ' ' + p.lab('pressure', 'psi'), S.sur.n + ' stops · bias ' + p.fmt(p.dv(S.sur.bias, 'pressure'), 0), S.sur.verdict);
@@ -228,7 +235,7 @@
         var head = ['#', 'MD (' + dl + ')', 'TVD (' + dl + ')', 'T (' + tl + ')', 'Port', 'p<sub>tro</sub> (' + pl + ')'].concat(diag ? ['p<sub>c</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'p<sub>vo</sub> (' + pl + ')', 'Gas (' + ql + ')', 'Status'] : ['p<sub>vo</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'Capacity (' + ql + ')', 'Role']);
         var rows = vs.rows.map(function (v, i) {
             var st = _state(v), cls = (st === 'operating' ? ' class="op"' : '');
-            var c = [String(i + 1), p.fmt(p.dv(v.md, 'length'), 0), p.fmt(p.dv(_fin(v.tvd) ? v.tvd : p.tvdAt(v.md), 'length'), 0)];
+            var c = [String(i + 1), p.fmt(p.dv(v.md, 'length'), 0), p.fmt(p.dv(p.tvdAt(v.md), 'length'), 0)];
             if (diag) {
                 var d = diag.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] || {};
                 c.push(_fin(d.t) ? p.fmt(p.dv(d.t, 'temperature'), 0) : '—', (PORT_TXT[v.port] || v.port + '/64'), _fin(v.ptro) ? p.fmt(p.dv(v.ptro, 'pressureG'), 0) : '—',
@@ -253,16 +260,20 @@
             var g = D.gl;
             add(g.reachesPoi ? 'ok' : 'warn', D.valves.length + ' valves; operating valve at ' + _kfmt(p, D.operating ? D.operating.md : g.poiValve, D.operating ? D.operating.tvd : g.poiValveTvd) + ', operating surface injection ' + p.u(D.valves[D.valves.length - 1].pso, 'pressureG', 0, 'psig') + ' (' + p.u(D.inputs.dpdrop, 'pressure', 0, 'psi') + ' per valve).');
             // the design's own sub-critical note is left out when a diagnosis of a test says the same about the installed valve
-            (D.warnings || []).forEach(function (w) { if (w.code !== 'TC_PROVISIONAL' && !(w.code === 'GL_SUBCRITICAL' && S.diag && S.diag.ok)) add(w.sev === 'info' ? 'info' : 'warn', w.msg); });
+            (D.warnings || []).forEach(function (w) { if (w.code !== 'TC_PROVISIONAL' && w.code !== 'GLD_PROVISIONAL' && !(w.code === 'GL_SUBCRITICAL' && S.diag && S.diag.ok)) add(w.sev === 'info' ? 'info' : 'warn', w.msg); });
+            // a valve moved off the design (drag) — order and spacing against the minimum (review fix v4.5)
+            var spc = _spacingIssue(p, _vset(p).rows);
+            if (spc) add('warn', spc);
         } else if (D && !D.ok) add('warn', 'Design: ' + ((D.errors || [])[0] || 'failed'));
+        if (!(D && D.ok)) { var spc2 = _spacingIssue(p, _vset(p).rows); if (spc2) add('warn', spc2); }
         if (S.diag && S.diag.ok) {
             if (!S.diag.flags.length) add('ok', 'Diagnosis: valve ' + S.diag.operating.n + ' operates alone at ' + _kfmt(p, S.diag.operating.md, S.diag.operating.tvd) + '; ' + p.u(S.diag.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' within the valve throughput.');
             S.diag.flags.forEach(function (f) { add(f.sev === 'fail' ? 'fail' : (f.sev === 'info' ? 'info' : 'warn'), f.msg); });
         } else if (S.diag && !S.diag.ok) add('info', (S.diag.errors || [])[0] || 'Diagnosis not available.');
         var a = S.ash;
-        if (a && a.ok) add(a.verdict === 'ok' ? 'ok' : a.verdict === 'fail' ? 'fail' : 'warn', 'Stability after Asheim (1988): F1 ' + (_fin(a.F1) ? p.fmt(a.F1, 2) : '∞') + (a.stable1 ? ' > 1' : ' ≤ 1') + (_fin(a.F2) ? ', F2 ' + p.fmt(a.F2, 2) + (a.stable2 ? ' < 1' : ' ≥ 1 (heading risk: a larger valve ΔP or a smaller port makes the port flow critical)') : '') + ' — provisional.');
+        if (a && a.ok) add(a.verdict === 'ok' ? 'ok' : a.verdict === 'fail' ? 'fail' : 'warn', 'Static stability and injection loop gain (screening, after Asheim 1988; annulus-volume casing heading not modelled): F1 ' + (_fin(a.F1) ? p.fmt(a.F1, 2) : '∞') + (a.stable1 ? ' > 1' : ' ≤ 1') + (_fin(a.F2) ? ', F2 ' + p.fmt(a.F2, 2) + (a.stable2 ? ' < 1' : ' ≥ 1 (heading risk: a larger valve ΔP or a smaller port makes the port flow critical)') : '') + ' — provisional.');
         if (S.sur && S.sur.ok && S.sur.brk) add('info', 'Survey gradient break at ' + _kfmt(p, S.sur.brk.md, S.sur.brk.tvd) + (S.sur.nearValve ? ' — valve ' + S.sur.nearValve.n + ' (' + p.u(S.sur.nearValve.dMd, 'length', 0, 'ft') + ' away)' : '') + '.');
-        if ((D && D.ok) || (a && a.ok)) add('info', 'Thornhill-Craver throughput and the Asheim numbers are provisional — not verified against a published example.');
+        if ((D && D.ok) || (a && a.ok)) add('info', 'The valve design on the model path, the Thornhill-Craver throughput and the stability screening numbers are provisional — not verified against a published example.');
         h.innerHTML = out.join('');
     }
     function _renderEditor(p) {
@@ -343,7 +354,7 @@
             legs.forEach(function (lg, i) { var pts = lg.map(function (q) { return [Xg(q.p), Y(q.d, q.tvd)]; }); ser.push({ key: 'ld' + i, label: i ? '' : 'Unloading (kill fluid)', legend: i === 0, color: T.blue, width: 1.3, pts: pts }); });
             line('ab', 'Tubing, with lift gas', c.above, T.accent, 2.4, null, Xg);
             line('bl', 'Tubing, formation gas', c.below, T.red, 1.8, [3, 3], Xg);
-            if (_fin(D.gl.poiValve)) hl.push({ y: Y(D.gl.poiValve, D.gl.poiValveTvd), label: 'point of injection', color: T.accent, dash: [2, 3] });
+            if (_fin(D.gl.poiValve)) hl.push({ y: Y(D.gl.poiValve), label: 'point of injection', color: T.accent, dash: [2, 3] });
         } else if (view === 'diag' && dg) {
             ser.push({ key: 'cas', label: 'Casing from the CHP', color: T.purple, width: 2.2, pts: dg.casing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
             ser.push({ key: 'tub', label: 'Tubing from the THP', color: T.accent, width: 2.4, pts: dg.tubing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
@@ -368,7 +379,7 @@
             var st = _state(v), col = T[STATE_COL[st]] || T.blue, dgv = dg ? dg.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] : null;
             var xv = dgv && _fin(dgv.pc) ? Xa(dgv.pc) : (_fin(v.pvo) ? Xg(v.pvo) : (_fin(v.ptro) ? Xg(v.ptro) : xMax * 0.9));
             handles.push({ key: 'glv' + i, kind: 'point', x: xv, value: Y(v.md, v.tvd), min: 0, max: Y(Math.max(0, (pk || yMaxMd) - 10)), step: p.metric() ? 3 : 10, label: 'V' + (i + 1), color: col,
-                fmt: function (vv) { var md = _mdOf(p, vv, dax); return p.phone() ? p.fmt(p.dv(md, 'length'), 0) : p.fmt(p.dv(md, 'length'), 0) + ' MD'; } });
+                fmt: function (vv) { var dr = S.drag && S.drag.i === i, md = dr ? _mdOf(p, vv, dax) : v.md; return p.phone() ? p.fmt(p.dv(md, 'length'), 0) : p.fmt(p.dv(md, 'length'), 0) + ' MD'; } });
         });
         var empty = !_on(p.ST.M) ? 'Choose gas lift to design the valves.' : (view === 'diag' ? 'Choose a test with a CHP (step ⑥) and valves to see the diagnosis.' : 'Design the valves in step ④ to see the design chart.');
         V.chart(cv, { key: 'glv:' + view + ':' + dax + (p.metric() ? 'm' : 'i'), aspect: p.phone() ? 1.3 : 0.7, minH: 300, maxH: 560, w: 640, readout: 'y',
@@ -376,6 +387,21 @@
             y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + p.lab('length', 'ft') + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { var md = _mdOf(p, v, dax), tvd = dax === 'md' ? p.tvdAt(md) : p.fromDisp(v, 'length'); return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(tvd, 'length'), 0) + ' TVD'; } },
             series: ser, markers: mk, hlines: hl, handles: handles, onHandle: _onHandle, empty: (ser.length || handles.length) ? null : empty,
             hidden: p.plots().glvHidden || null, onLegend: function (hid) { p.plotsSet({ glvHidden: hid }); } });
+    }
+    function _minSp(p) {
+        var d = (p.ST.M && p.ST.M.lift && p.ST.M.lift.gl && p.ST.M.lift.gl.design) || {}, v = _num(d.minsp);
+        if (!_fin(v) && S.des && S.des.inputs && _fin(S.des.inputs.minsp)) v = S.des.inputs.minsp;
+        return _fin(v) && v >= 0 ? v : 250;
+    }
+    // valves out of order or closer than the minimum spacing (MD) → a warning text, else null
+    function _spacingIssue(p, rows) {
+        if (!rows || rows.length < 2) return null;
+        var msp = _minSp(p), bad = null;
+        for (var i = 1; i < rows.length && !bad; i++) {
+            var d = rows[i].md - rows[i - 1].md;
+            if (d < msp - 0.5) bad = 'Valves ' + i + ' and ' + (i + 1) + ' are ' + p.u(Math.max(0, d), 'length', 0, 'ft') + ' apart (MD), below the minimum spacing ' + p.u(msp, 'length', 0, 'ft') + (d < 0 ? ' — out of order' : '') + ': move one or design again.';
+        }
+        return bad;
     }
     function _mdOf(p, vDisp, dax) {
         var v = p.fromDisp(vDisp, 'length');
@@ -389,6 +415,12 @@
         var vs = _vset(p); if (!vs.rows[i]) return;
         var W = p.ST.W, lim = W && W.nodes ? Math.min(_fin(p.ST.R && p.ST.R.lift && p.ST.R.lift.packerMd) ? p.ST.R.lift.packerMd : Infinity, _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd : Infinity, W.nodes.midPerfMd || Infinity) : Infinity;
         md = Math.max(50, Math.min(_fin(lim) ? lim - 10 : md, Math.round(md / 5) * 5));
+        // keep the order and the minimum spacing: between the neighbouring valves ± the minimum spacing (review fix v4.5)
+        var msp = _minSp(p), prevV = vs.rows[i - 1], nextV = vs.rows[i + 1];
+        var lo = prevV ? prevV.md + msp : 50, hi = nextV ? nextV.md - msp : Infinity, cur0 = vs.rows[i].md;
+        // a set that already breaks the spacing (typed in the editor): only the order is kept, so the move is not pushed away
+        if (!(lo <= hi && cur0 >= lo - 1 && cur0 <= hi + 1)) { lo = prevV ? prevV.md + 5 : 50; hi = nextV ? nextV.md - 5 : Infinity; }
+        if (lo <= hi) md = Math.max(lo, Math.min(hi, md));
         if (vs.src === 'design') {
             var base = S.desRows[i], row = L.setValve({ ok: true, valves: S.desRows, gl: S.des.gl, inputs: S.des.inputs, _tAt: S.des._tAt, _tvdAt: S.des._tvdAt }, i, md);
             if (!row) return;
@@ -555,7 +587,7 @@
     }
     function notes() {
         var p = P(); if (!p || !_on(p.ST.M)) return null;
-        return ['Gas-lift design: unloading valves spaced with API RP 11V6 on the deviated path (gas column and kill-fluid gradient on TVD, spacing on MD) with the model\'s inflow, well correlation and flowing temperatures; Thornhill-Craver valve throughput with the critical-ratio cap and the Asheim (1988) stability numbers are provisional — not verified against a published example.'];
+        return ['Gas-lift design: unloading valves spaced after API RP 11V6 on the deviated path (gas column and kill-fluid gradient on TVD, spacing on MD) with the model\'s inflow, well correlation and flowing temperatures — the design on the model path, the Thornhill-Craver valve throughput with the critical-ratio cap and the static stability / injection loop-gain screening numbers (after Asheim 1988; casing heading from the annulus volume not modelled) are provisional — not verified against a published example. The system solve injects at the point of balance, not yet at the installed valves.'];
     }
     function reset() { S.des = null; S.desKey = null; S.desRows = null; S.desEdited = false; S.diag = null; S.diagKey = null; S.ash = null; S.ashR = null; S.sur = null; S.surR = null; S.surRows = null; S.surParse = null; S.drag = null; S.sdrag = null; S.msg = null; }
     function resize() { var cv = _byId('wp_cv_glv'); if (cv && G.WTS_wp_view) G.WTS_wp_view.redraw(cv); }

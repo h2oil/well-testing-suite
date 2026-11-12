@@ -261,7 +261,8 @@
         var awg = String(cb.awg == null || cb.awg === '' ? '2' : cb.awg); if (!CU_R20[awg]) awg = '2';
         out.ok = true; out.errors = [];
         out.md = md; out.tvd = typeof W.tvdAt === 'function' ? W.tvdAt(md) : md; out.inc = at && _fin(at.inc) ? at.inc : null; out.dls = dls;
-        out.f = f; out.N = N; out.pump = np.pump; out.sepEff = sep; out.natSep = e.natSep !== false; out.visc = e.visc !== false; out.od = od;
+        out.f = f; out.N = N; out.pump = np.pump; out.sepEff = sep; out.natSep = e.natSep === true; out.visc = e.visc === true;   // D17 (review fix v4.5): both provisional → opt-in, never a default
+        out.od = od;
         out.casingId = _casingAt(M.well && M.well.strings, md);
         out.motor = { hp: _n(mo.hp), volt: _n(mo.volt), amp: _n(mo.amp) };
         out.cable = { awg: awg, len: _n(cb.len_ft) > 0 ? _n(cb.len_ft) : md + 100, lenDefault: !(_n(cb.len_ft) > 0) };

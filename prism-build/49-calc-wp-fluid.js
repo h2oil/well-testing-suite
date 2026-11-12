@@ -176,7 +176,8 @@
     var MATCH_KEYS = ['rs', 'bo', 'muod', 'muo'];
     function _matchNorm(m, c) {
         if (!m || typeof m !== 'object' || m.on !== true) return null;
-        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null };
+        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null,
+            rsPb: _fin(+m.rsPb) && +m.rsPb > 0 ? +m.rsPb : null };   // review fix (v4.5): the Rs shift tapers to zero below this pressure
         ['rs', 'bo', 'muo'].forEach(function (k) {
             var a = m.mult && +m.mult[k], b = m.shift && +m.shift[k];
             if (_fin(a) && a > 0 && a !== 1) out.mult[k] = a;
@@ -431,7 +432,9 @@
         if (yi > 0 && !water) pvt.imp = { n2: +s.yN2 || 0, co2: +s.yCO2 || 0, h2s: +s.yH2S || 0 };
         var matchApplied = !!(oil && s.match && !s.match.stale);
         if (s.mult && !(s.match && s.match.stale)) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
-        if (matchApplied && Object.keys(s.match.shift).length) pvt.shift = Object.assign({}, s.match.shift);
+        // the lab-matched Rs maps the GOR back for the bubble point (flowline _gorCorr) — only for a match, not for a plain mult.rs
+        if (matchApplied && ((s.match.mult.rs && s.match.mult.rs !== 1) || s.match.shift.rs)) pvt.matchRs = true;
+        if (matchApplied && Object.keys(s.match.shift).length) { pvt.shift = Object.assign({}, s.match.shift); if (s.match.shift.rs && s.match.rsPb) pvt.shift.rsPb = s.match.rsPb; }
         var rvOn = !!(s.rv && gasT && cgr > 0 && s.rv.rows.length);
         if (rvOn) pvt.rv = { rows: s.rv.rows, pd: _rvPd(s.rv, cgr) };
         var emOn = !!(s.emul && oil && (s.emul.model !== 'table' || s.emul.rows.length));

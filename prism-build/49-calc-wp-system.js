@@ -1397,7 +1397,7 @@
         // inclination — the inclination band itself, or the survey's maximum inside the MD interval), dry-gas keys refused for oil / water
         ((sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections : []).forEach(function (sr, i) {
             if (!sr || !sr.corr) return;
-            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : '180') + '° from vertical'
+            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(Math.max(0, Math.min(90, +sr.from || 0)), 0) + '–' + _f(_fin(+sr.to) ? Math.max(0, Math.min(90, +sr.to)) : 90, 0) + '° from vertical'
                 : 'MD ' + _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : 'TD') + ' ft';
             if (!Es) { add('SECTION_CORR', 'warn', 'wp_sections', 'Section ' + (i + 1) + ': unknown correlation ' + String(sr.corr).slice(0, 24) + ' (skipped).'); return; }
             if (!gas && _gasOnly(Es)) { add('CORR_NOT_APPLICABLE', 'error', 'wp_sections', 'Section ' + (i + 1) + ': ' + (Es.label || sr.corr) + ' ignores the oil and water columns: not applicable to a ' + (fl.type || 'oil') + ' well.'); return; }
@@ -1428,7 +1428,7 @@
             var fz = _n(ec.freq); if (fz != null && !(fz >= 30 && fz <= 90)) add('ESP_FREQ', 'error', 'wp_esp_freq', 'ESP: the frequency must be between 30 and 90 Hz.');
             if (_n(ec.pumpMd) > 0 && _fin(mid) && _n(ec.pumpMd) > mid) add('ESP_BELOW_PERFS', 'warn', 'wp_esp_md', 'ESP: the pump is set below the mid-perforations; the intake is taken at the perforations (a shroud is needed for motor cooling).');
             if (EPc && EPc.METHODS) ['turzo', 'alhanati', 'turpin'].forEach(function (k) {
-                var on = k === 'turzo' ? ec.visc !== false : (k === 'alhanati' ? ec.natSep !== false : true);
+                var on = k === 'turzo' ? ec.visc === true : (k === 'alhanati' ? ec.natSep === true : true);   // opt-in (D17, review fix v4.5)
                 if (on) validity.push({ corr: 'esp_' + k, label: EPc.METHODS[k].label, inRange: true, msg: EPc.METHODS[k].label + ' (ESP): ' + PROVISIONAL + '.', provisional: true });
             });
         }

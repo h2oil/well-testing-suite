@@ -76,7 +76,7 @@ module.exports = [
         assert.ok(q.mareAfter < 0.05, k + ' error after ' + q.mareAfter);
         assert.ok(q.mareBefore > q.mareAfter * 10, k + ' improved');
         // LM against the closed-form weighted least squares on the same points
-        const cf = P.wls(q.yc, q.y, q.fixedB);
+        const cf = P.wls(q.yc, q.y, q.fixedB, q.xb);
         assert.near(q.a, cf.a, 1e-6 * Math.abs(cf.a), k + ' a = closed form'); assert.near(q.b, cf.b, 1e-6 * Math.max(1, Math.abs(cf.b)), k + ' b = closed form');
       });
       assert.near(r.props.bo.a, 1.012, 2e-3); assert.near(r.props.bo.b, -0.004, 2e-3);
@@ -360,6 +360,28 @@ module.exports = [
       }
       A.select('wp_emul', 'none'); A.flush(30);
       assert.ok(!G.WTS_wellperf_page.state().F.emul, 'back to the mixture');
+    },
+  },
+  {
+    name: 'PM13 review fixes (v4.5): the Rs shift tapers below the lab pb (Rs at 14.7 / 50 psia stays the correlation\'s), the fit recovers the example with it; a plain mult.rs keeps the A2 bubble point',
+    wp: WP,
+    run(_a, assert, ctx) {
+      const G = app0(ctx).win, P = G.WTS_wp_pvtmatch, spec = OIL(), lab = P.example(spec, 200), r = P.fit(spec, lab);
+      assert.ok(r.ok && r.match.rsPb === lab.pb, 'the taper pressure is the lab pb');
+      assert.ok(r.props.rs.xb && r.props.rs.xb.every((x, i) => Math.abs(x - Math.min(1, r.props.rs.used[i] / lab.pb)) < 1e-12), 'regressor min(1, p / pb)');
+      assert.near(r.props.rs.a, 0.93, 2e-3, 'a recovered'); assert.near(r.props.rs.b, 12, 1.5, 'b recovered');
+      const W = G.WTS_wp_fluid, base = Object.assign({}, spec, { corr: { rs: 'standing', bo: 'standing', muod: 'beggsRobinson', muo: 'beggsRobinson' } });
+      const mk = (m) => { const s2 = JSON.parse(JSON.stringify(base)); if (m) s2.match = Object.assign({ on: true, corr: base.corr }, m); return W.build(s2, { T_F: 200, table: false }); };
+      const F0 = mk(null), Fm = mk({ pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 11.8, bo: 0, muo: 0 }, rsPb: 2900 });
+      const rs = (F, p) => F.table([p], 200).rows[0].rs;
+      // the review's case: b = +11.8 scf/STB used to lift Rs at 14.7 psia from 3.4 to 15.0 — with the taper it moves by ≤ 0.1
+      [14.7, 50].forEach((p) => assert.ok(Math.abs(rs(Fm, p) - rs(F0, p)) <= 11.8 * p / 2900 + 1e-9, 'Rs at ' + p + ' psia: ' + rs(Fm, p) + ' vs ' + rs(F0, p)));
+      assert.near(rs(Fm, 2000) - rs(F0, 2000), 11.8 * 2000 / 2900, 1e-6, 'the shift scales with p / pb below the lab pb');
+      // F26: a fluid with only mult.rs (no match, no shift) keeps the A2 bubble point — pb is the correlation's at the GOR
+      const fl = W.flowlineFluid(F0, { qo: 1000, qw: 0, qg_Mscfd: 600 }), pv = JSON.parse(JSON.stringify(fl.pvt || {}));
+      const props = (mult) => { const f2 = Object.assign({}, fl, { pvt: Object.assign({}, pv, { undersat: true }, mult ? { mult: { rs: mult } } : {}) }); return G.WTS_flowline_props(f2, 30000, 200); };
+      const p1 = props(null), p12 = props(1.2), p08 = props(0.8);
+      assert.ok(Number.isFinite(p1.pb) && p12.pb === p1.pb && p08.pb === p1.pb, 'mult.rs alone: pb unchanged (' + p1.pb + ' / ' + p12.pb + ' / ' + p08.pb + ')');
     },
   },
 ];

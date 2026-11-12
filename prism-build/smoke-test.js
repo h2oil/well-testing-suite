@@ -601,11 +601,12 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
     !!reg && reg.key === 'wellperf' && reg.group === 'Production & Reservoir' && !!reg.hooks && reg.hooks.silent === true &&
     typeof reg.render === 'function' && typeof win.renderWellPerf === 'function' && typeof win.calcWellPerf === 'function']);
   const ns = ['WTS_wp_model', 'WTS_wp_fluid', 'WTS_wp_ipr', 'WTS_wp_vlp', 'WTS_wp_well', 'WTS_wp_system', 'WTS_wp_sens', 'WTS_wp_match',
-    'WTS_wp_cases', 'WTS_wp_forecast', 'WTS_wp_envelope', 'WTS_wp_screen', 'WTS_wellperf_ext'];   // B (WP27): cases, forecast, envelope, screening, page extensions
-  const fns = ['WTS_wp_loading', 'WTS_wp_check', 'WTS_wp_qc'];
+    'WTS_wp_cases', 'WTS_wp_forecast', 'WTS_wp_envelope', 'WTS_wp_screen', 'WTS_wellperf_ext',   // B (WP27): cases, forecast, envelope, screening, page extensions
+    'WTS_wp_esp', 'WTS_wp_gl', 'WTS_wp_pvtmatch', 'WTS_wp_export', 'WTS_wp_tables', 'WTS_wp_inj', 'WTS_wp_batch', 'WTS_wp_wellsUi'];   // the other B engines (review fix v4.5)
+  const fns = ['WTS_wp_loading', 'WTS_wp_check', 'WTS_wp_qc', 'WTS_flowline_emulsion', 'WTS_flowline_rvAt'];
   const miss = ns.filter((k) => !win[k] || typeof win[k] !== 'object').concat(fns.filter((k) => typeof win[k] !== 'function'));
   if (miss.length) console.error('[wellperf] missing namespaces: ' + miss.join(', '));
-  checks.push(['WTS_wp_* namespaces present (model, fluid, ipr, vlp, well, system, sens, match, cases, forecast, envelope, screen, page extensions; loading / check / qc)', miss.length === 0]);
+  checks.push(['WTS_wp_* namespaces present (model, fluid, ipr, vlp, well, system, sens, match, cases, forecast, envelope, screen, page extensions, esp, gl, pvtmatch, export, tables, inj, batch, wellsUi; loading / check / qc; flowline emulsion / rvAt)', miss.length === 0]);
   const C = win.WTS_flowline_corr, bb = C && C.bb;
   let okBb = false;
   try { okBb = !!bb && bb.key === 'bb' && typeof bb.grad === 'function' && bb.grad({ vsl: 1, vsg: 1, d: 2.441, rhoL: 50, rhoG: 5, muL: 1, muG: 0.015, sigma: 20, theta: 90, rough: 0.0006, p: 1000 }).grad > 0; } catch (e) { okBb = false; }

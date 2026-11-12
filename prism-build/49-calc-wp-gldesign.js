@@ -67,7 +67,12 @@
     var PATM = 14.696, RANK = 459.67, GFT = 32.16;
     var TC = { cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32], verified: false, label: 'Thornhill-Craver' };
     var PROVISIONAL = 'provisional — not verified against a published example';
+    // the valve design on the model path (deviated well, the model's inflow / correlation / temperatures): no published worked example
+    // checked (Q9) → verified:false, labelled provisional on the card, verdicts, notes and report (review fix v4.5, BENCH lift glDesign)
+    var DESIGN = { verified: false, label: 'Gas-lift valve design on the model path (spacing after API RP 11V6)' };
     var UNDER = 0.8, OVER = 1.2;
+    var PORT_TXT = { 8: '1/8', 12: '3/16', 16: '1/4', 20: '5/16', 24: '3/8', 28: '7/16', 32: '1/2' };
+    function _portTxt(p64) { return PORT_TXT[p64] || (p64 + '/64'); }
 
     function _fin(v) { return typeof v === 'number' && isFinite(v); }
     function _n(v) { if (typeof v === 'number') return isFinite(v) ? v : null; if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v; return null; }
@@ -194,12 +199,13 @@
             var T = _throughput(D, st.In, st.In.port), warnings = [];
             (D.warnings || []).forEach(function (t) { warnings.push(_w('GL_DESIGN', t, 'info')); });
             if (D.spacingFail) warnings.push(_w('GL_SPACING', 'The unloading valves cannot reach the point of injection: the spacing stops after valve ' + D.spacingFail.after + ' (' + _f(D.spacingFail.d, 0) + ' ft MD). Raise the kickoff pressure or lower the kill-fluid gradient.'));
-            if (T.op && T.op.tc && T.op.tc.q < st.In.qinj) warnings.push(_w('GL_PORT_SMALL', 'The ' + T.op.port + '/64 in port of the operating valve passes ' + _f(T.op.tc.q, 0) + ' Mscf/d at its opening conditions, less than the design ' + _f(st.In.qinj, 0) + ' Mscf/d' + (T.rec ? ': use ' + T.rec + '/64 in.' : '.')));
+            if (T.op && T.op.tc && T.op.tc.q < st.In.qinj) warnings.push(_w('GL_PORT_SMALL', 'The ' + _portTxt(T.op.port) + ' in port of the operating valve passes ' + _f(T.op.tc.q, 0) + ' Mscf/d at its opening conditions, less than the design ' + _f(st.In.qinj, 0) + ' Mscf/d' + (T.rec ? ': use ' + _portTxt(T.rec) + ' in.' : '.')));
             if (T.op && T.op.tc && !T.op.tc.critical) warnings.push(_w('GL_SUBCRITICAL', 'Port flow at the operating valve is sub-critical (p_t/p_c ' + _f(T.op.tc.r, 2) + ' > ' + _f(T.op.tc.rc, 2) + '): the injection follows the tubing pressure (heading risk; see the stability numbers).', 'info'));
             warnings.push(_w('TC_PROVISIONAL', 'Thornhill-Craver valve throughput is ' + PROVISIONAL + '.', 'info'));
+            warnings.push(_w('GLD_PROVISIONAL', DESIGN.label + ': ' + PROVISIONAL + '.', 'info'));
             st.res = { ok: true, gl: D, valves: T.rows, operating: T.op ? { n: T.op.n, md: T.op.md, tvd: T.op.tvd } : null, qinj: st.In.qinj, qL: st.In.qL, port: st.In.port, R: st.In.R,
                 portRec: T.rec, capOk: !!(T.op && T.op.ok), packerMd: st.In.packerMd, tSrc: st.In.tSrc, inputs: (function () { var c = {}; Object.keys(st.In.input).forEach(function (k) { if (k !== 'ipr' && k !== 'segments' && k !== 'tAt' && k !== 'pvt') c[k] = st.In.input[k]; }); return c; })(),
-                notes: st.In.notes, warnings: warnings, errors: [], ms: Date.now() - st.t0, provisional: [TC.label] };
+                notes: st.In.notes, warnings: warnings, errors: [], ms: Date.now() - st.t0, provisional: [DESIGN.label, TC.label], verified: false };
             // kept for setValve (a valve dragged to another depth is re-set on the same design lines); functions, not serialised
             Object.defineProperty(st.res, '_tAt', { value: st.In.input.tAt, enumerable: false });
             Object.defineProperty(st.res, '_tvdAt', { value: st.In.ctx.W.tvdAt, enumerable: false });
@@ -448,14 +454,14 @@
         var F2 = t.ok ? Math.abs(dpdq) * Math.abs(t.dqdp2) : null;
         var s1 = F1 > 1, s2 = _fin(F2) ? F2 < 1 : null;
         var verdict = !s1 ? 'fail' : (s2 === false ? 'warn' : 'ok');
-        return { ok: true, F1: F1, F2: F2, stable1: s1, stable2: s2, verdict: verdict, label: 'Asheim (1988) criteria', verified: false, provisional: PROVISIONAL,
+        return { ok: true, F1: F1, F2: F2, stable1: s1, stable2: s2, verdict: verdict, label: 'Static stability and injection loop gain (screening, after Asheim 1988)', verified: false, casingHeading: false, provisional: PROVISIONAL,
             parts: { q: q, dpInDq: dIn, dpOutDq: dOut, dDdq: dD, H: H, pti: pti, pca: pca, qLres_ft3s: qLr, vG_ft3s: vG, rhoL: rhoL, rhoG: rhoG, Bg: Bg, dpdqg: dpdq,
                 port64: port, critical: t.ok ? t.critical : null, r: t.ok ? t.r : null, rc: t.ok ? t.rc : null, dqvdpt: t.ok ? t.dqdp2 : null, qValve: t.ok ? t.q : null, qinj: L.qinj, dpValve: _n(gl.dpValve) },
             errors: [], warnings: [] };
     }
 
     var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
-    NS.TC = TC; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
+    NS.TC = TC; NS.DESIGN = DESIGN; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
     NS.diagnose = diagnose; NS.parseSurvey = parseSurvey; NS.matchSurvey = matchSurvey; NS.asheim = asheim; NS.pdAt = _pdAt;
 })();
 

@@ -168,7 +168,8 @@
     };
     var IP_PREFIX = 'wp_ip_';
     // B (WP26): the ESP setting and equipment (M.lift.esp; the pump curve itself is the table key 'pump' → M.lift.esp.pump). Defaults live in
-    // WTS_wp_esp (60 Hz, natural separation and the viscosity correction on, no separator, 4.0 in OD, #2 cable to the pump MD + 100 ft)
+    // WTS_wp_esp (60 Hz, natural separation and the viscosity correction OFF — both provisional, opt-in (D17, review fix v4.5) — no
+    // separator, 4.0 in OD, #2 cable to the pump MD + 100 ft)
     [['wp_esp_md', 'lift.esp.pumpMd', 'num'], ['wp_esp_freq', 'lift.esp.freq', 'num'], ['wp_esp_stages', 'lift.esp.stages', 'num'], ['wp_esp_sep', 'lift.esp.sepEff', 'num', 0.01],
      ['wp_esp_nat', 'lift.esp.natSep', 'bool'], ['wp_esp_visc', 'lift.esp.visc', 'bool'], ['wp_esp_od', 'lift.esp.od_in', 'num'], ['wp_esp_hp', 'lift.esp.motor.hp', 'num'],
      ['wp_esp_volt', 'lift.esp.motor.volt', 'num'], ['wp_esp_amp', 'lift.esp.motor.amp', 'num'], ['wp_esp_clen', 'lift.esp.cable.len_ft', 'num']].forEach(function (r) {
@@ -340,7 +341,7 @@
             var num3 = function (m, d) { var r = {}; ['rs', 'bo', 'muo'].forEach(function (k) { var v = _isObj(m) ? _num(m[k]) : null; r[k] = v == null ? d : v; }); return r; };
             var c = _isObj(a.corr) ? a.corr : {}, cc = {};
             ['rs', 'bo', 'muod', 'muo'].forEach(function (k) { if (typeof c[k] === 'string' && /^[A-Za-z0-9_]{1,32}$/.test(c[k])) cc[k] = c[k]; });
-            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
+            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), rsPb: _num(a.rsPb), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
                         mare: _isObj(a.mare) ? _clone(a.mare) : null, ts: _num(a.ts), labKey: typeof a.labKey === 'string' ? a.labKey.slice(0, 64) : null };
         } else o.adopt = null;
         return o;
@@ -406,7 +407,7 @@
             if (rec.lab) {
                 // B (WP23): the lab record; an adopted match goes to fluid.match (WTS_wp_fluid applies it while the correlations agree)
                 M.fluid.lab = rec.lab;
-                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift,
+                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift, rsPb: rec.lab.adopt.rsPb,
                     corr: rec.lab.adopt.corr, T_F: rec.lab.adopt.T_F, edited: rec.lab.adopt.edited } : { lab: rec.lab };
                 M.fluid.rv.rows = rec.lab.rv; M.fluid.emul.rows = rec.lab.emul;
             }

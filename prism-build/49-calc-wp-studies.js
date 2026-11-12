@@ -42,7 +42,11 @@
     function _gas(M) { var t = M && M.fluid && M.fluid.type; return t === 'gas' || t === 'condensate' || t === 'gasinj'; }
 
     var TABS = [['env', 'Operating envelope'], ['fcst', 'Depletion forecast'], ['torn', 'Tornado'], ['mat', 'Matrix (3–4 variables)'], ['cases', 'Cases']];
-    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor' };
+    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor', J: 'productivityIndex' };
+    var VD_WORD = { ok: 'suitable', warn: 'marginal', fail: 'unsuitable', na: 'not applicable' };
+    var STUDY_ARIA = { env: 'Operating envelope: wellhead deliverability against rate with every limit; drag the point along the curve, or focus the plot and use [ then the arrows',
+        fcst: 'Depletion forecast: rate, average pressure or cumulative against time; drag the time line, or focus the plot and use [ then the arrows', torn: 'Tornado study plot',
+        mat: 'Sensitivity matrix: rate against the column variable, one line per row value at the selected slice', cases: 'Case comparison: inflow and outflow curves of the compared cases' };
     var SENS_ID = { pr: 'wp_pr', wc: 'wp_wc', gor: 'wp_gor', thp: 'wp_thp', psep: 'wp_psep', bean: 'wp_bean', J: 'wp_ip_J', skin: 'wp_ip_S', cgr: 'wp_cgr', wgr: 'wp_wgr' };
     var KIND_LAB = { base: 'Base', matched: 'Matched', proposed: 'Proposed', other: 'Other' };
     var UNIT_TAGS = { wpv_env_dd: 'pressure', wpv_env_pwf: 'pressure', wpv_env_qfo: 'liquidRate', wpv_env_qfg: 'gasRateSmall', wpv_fc_pi: 'pressure', wpv_fc_pab: 'pressure',
@@ -147,7 +151,8 @@
             '<div id="wpb_msg" class="rp-skip" role="status"></div><div class="wp-cmpk" id="wpb_kpi"></div>' +
             '<div class="chart-wrap" id="wpb_cvw"><canvas id="wp_cv_st" tabindex="0" aria-label="Study plot"></canvas></div>' +
             '<div class="wpb-slider rp-skip wp-off" id="wpb_tslider"><label for="wpv_fc_t">Time</label><input type="range" id="wpv_fc_t" min="0" max="1" step="1" value="0" aria-label="Forecast time" aria-describedby="wpb_tval"><b id="wpb_tval">—</b></div>' +
-            '<div class="wpb-read" id="wpb_read" aria-live="polite"></div><div id="wpb_body"></div><div class="wp-legend-hint rp-skip" id="wpb_hint"></div>', { tools: tabs, id: 'wpb_card' });
+            '<div class="wpb-read" id="wpb_read" aria-live="polite"></div><div id="wpb_body"></div><div class="wp-legend-hint rp-skip" id="wpb_hint"></div>' +
+            '<div id="wpb_all"></div><div id="wpb_scr_r" class="rbox wp-off" style="margin-top:10px"></div>', { tools: tabs, id: 'wpb_card' });
     }
     function stepHtml(n) {
         var p = P(); if (!p || n !== 4) return null;
@@ -190,6 +195,9 @@
         Array.prototype.forEach.call(document.querySelectorAll('#wpb_card .wpb-steps, #wpb_card .wpb-tank'), function (e) { var isT = e.classList && e.classList.contains('wpb-tank'); if (e.style) e.style.display = (isT === (mode === 'tank')) ? '' : 'none'; });
         var ts = _byId('wpb_tslider'); if (ts && ts.classList) ts.classList.toggle('wp-off', !(tab === 'fcst' && S.fc && S.fc.ok && S.fc.rows.length > 1));
         var cw = _byId('wpb_cvw'); if (cw && cw.classList) cw.classList.toggle('wp-off', tab === 'torn');
+        var cvs = _byId('wp_cv_st'); if (cvs && cvs.setAttribute) cvs.setAttribute('aria-label', STUDY_ARIA[tab] || 'Study plot');
+        // the matrix variable lists follow the unit system (review fix v4.5: they kept the field-unit labels after a switch to Metric)
+        for (var mi = 1; mi <= 4; mi++) { var ms = _byId('wpv_mx' + mi); if (ms && ms.tagName === 'SELECT') { var mv = ms.value, nh = _varOpts(mv); if (ms._wpbOpts !== nh) { ms.innerHTML = nh; ms.value = mv; ms._wpbOpts = nh; } } }
         // the steps list follows the model's p̄r when it is empty
         var st = _byId('wpv_fc_steps'), M = p.ST.M;
         if (st && !String(st.value || '').trim() && M && _fin(M.res.pr)) { var a = []; for (var i = 0; i < 6; i++) a.push(p.fmtListNum(+p.dv(M.res.pr * (1 - 0.1 * i), 'pressure').toPrecision(4))); st.value = a.join(' '); }
@@ -202,6 +210,7 @@
         else if (tab === 'torn') _drawTorn(p);
         else if (tab === 'mat') _drawMat(p);
         else _drawCases(p);
+        _renderAll(p);
     }
 
     // ── operating envelope ───────────────────────────────────────────────────
@@ -398,7 +407,7 @@
         kp.innerHTML = (stale ? _staleChip(p) : '') +
             _chip('First step', r.rows[0] && r.rows[0].ok ? p.u(gas ? r.rows[0].qg : r.rows[0].q, rc[0], 0, rc[1]) : '—', 'p̄r ' + p.u(r.rows[0] && r.rows[0].pr, 'pressure', 0, 'psia'), r.rows[0] && r.rows[0].ok ? 'ok' : 'warn') +
             (gas ? _chip('Liquid loading', when(E.loading), E.loading && _fin(E.loading.md) ? p.mdTvdTxt(E.loading.md, E.loading.tvd) : '', E.loading ? 'warn' : 'ok') : '') +
-            _chip('Lift needed', when(E.lift), E.lift ? String(E.lift.reason || '').slice(0, 60) : 'flows to the end', E.lift ? 'warn' : 'ok') +
+            _chip('Lift needed', when(E.lift), E.lift ? 'does not flow — lift needed' : 'flows to the end', E.lift ? 'warn' : 'ok') +
             (r.totals ? _chip(gas ? 'Cumulative gas (provisional)' : 'Cumulative oil (provisional)', gas ? p.fmt(r.totals.produced / 1e6, 2) + ' Bscf' : p.fmt(r.totals.produced / 1e6, 3) + ' MMSTB', 'recovery ' + p.fmt(100 * (r.tank.recovery || 0), 1) + ' % · ' + p.fmt((last.t_d || 0) / 365.25, 1) + ' y', 'warn') : '') +
             (r.decline && r.decline.ok ? _chip('Decline cross-check', r.decline.ok && _fin(r.decline.remaining) ? 'remaining ' + p.fmt(r.decline.remaining, 0) + ' ' + ((r.decline.units && r.decline.units.vol) || '') : 'n/a', r.decline.ok ? (r.decline.model || '') + (_fin(r.decline.ratio) ? ' · forecast / decline ' + p.fmt(r.decline.ratio, 2) : '') : (r.decline.reason || ''), '') : '');
     }
@@ -468,6 +477,10 @@
         _mxCount(p);
     }
     function _mxCount(p) { var vs = _mxVars(p), n = vs.reduce(function (a, v) { return a * Math.max(1, v.values.length); }, 1), e = _byId('wpb_mxn'); if (e) e.textContent = vs.length + ' variable' + (vs.length === 1 ? '' : 's') + ' · ' + n + ' case' + (n === 1 ? '' : 's') + (n > 1000 ? ' — too many (≤ 1,000)' : '') + ' · each warm-started from a solved neighbour.'; }
+    // a short variable name and its display unit for the best-case labels (review fix v4.5: '0 · 3,300 · 48' had no labels)
+    var MX_SHORT = { wc: 'WC', pr: 'p̄r', bean: 'bean', gor: 'GOR', glr: 'GLR', thp: 'THP', psep: 'p_sep', tubingId: 'tubing', J: 'J', skin: 'S', kh: 'kh', wgr: 'WGR', cgr: 'CGR' };
+    function _mxShort(p, r, d) { return MX_SHORT[r.keys[d]] || r.labels[d].replace(/ \(.*\)$/, ''); }
+    function _mxUnit(p, r, d) { var k = r.keys[d], u = r.units && r.units[d]; if (r.axes[d].labels && r.axes[d].labels.some(Boolean)) return ''; if (k === 'bean') return '/64'; if (k === 'wc') return ' %'; return u ? ' ' + (SENS_CAT[k] ? p.lab(SENS_CAT[k], u) : u) : ''; }
     function _mxFlat(r, ix) { var f = 0; for (var d = 0; d < ix.length; d++) f += ix[d] * r.strides[d]; return f; }
     function _drawMat(p) {
         var r = S.mat, bd = _byId('wpb_body'), kp = _byId('wpb_kpi'), cv = _byId('wp_cv_st'), V = G.WTS_wp_view; if (!bd || !cv || !V) return;
@@ -489,7 +502,7 @@
         var best = r.cases.filter(function (c) { return c.R.ok && c.R.stable; }).sort(function (a, b) { return b.R.q - a.R.q; }).slice(0, 5);
         if (kp) kp.innerHTML = (stale ? _staleChip(p) : '') + _chip('Cases', String(r.cases.length), r.labels.map(function (l) { return l.replace(/ \(.*\)$/, ''); }).join(' × '), '') +
             _chip('Rate range', p.fmt(p.dv(qmin, rc[0]), 0) + '–' + p.fmt(p.dv(qmax, rc[0]), 0) + ' ' + p.lab(rc[0], rc[1]), r.cases.filter(function (c) { return !c.R.ok; }).length + ' do not flow', '') +
-            (best[0] ? _chip('Best stable case', p.u(best[0].R.q, rc[0], 0, rc[1]), r.keys.map(function (k, d4) { return lab(d4, best[0].idx[d4]); }).join(' · '), 'ok') : '');
+            (best[0] ? _chip('Best stable case', p.u(best[0].R.q, rc[0], 0, rc[1]), r.keys.map(function (k, d4) { return _mxShort(p, r, d4) + ' ' + lab(d4, best[0].idx[d4]) + _mxUnit(p, r, d4); }).join(' · '), 'ok') : '');
         var axSel = function (id, cur) { return '<select id="' + id + '" aria-label="' + (id === 'wpv_mxax' ? 'Heat-map columns' : 'Heat-map rows') + '">' + r.keys.map(function (k, d5) { return '<option value="' + d5 + '"' + (d5 === cur ? ' selected' : '') + '>' + _esc(r.labels[d5].replace(/ \(.*\)$/, '')) + '</option>'; }).join('') + '</select>'; };
         var h = '<div class="wpb-ctl rp-skip" style="margin-top:2px"><div class="fg-item"><label for="wpv_mxax">Columns</label>' + axSel('wpv_mxax', xy[0]) + '</div><div class="fg-item"><label for="wpv_mxay">Rows</label>' + axSel('wpv_mxay', xy[1]) + '</div>' +
             others.map(function (d6) { var ax = r.axes[d6]; return '<div class="fg-item"><label for="wpv_mxs' + d6 + '">' + _esc(r.labels[d6].replace(/ \(.*\)$/, '')) + ': <b>' + _esc(lab(d6, S.matSlice[d6])) + '</b></label><input type="range" id="wpv_mxs' + d6 + '" data-mxd="' + d6 + '" min="0" max="' + (ax.values.length - 1) + '" step="1" value="' + S.matSlice[d6] + '"></div>'; }).join('') + '</div>';
@@ -609,13 +622,13 @@
             var cs = m.checks.filter(function (c) { return key === 'other' ? ['tvd', 'rate', 'inc', 'dls', 'temp', 'api', 'glr', 'window'].indexOf(c.key) === -1 : c.key === key; });
             if (!cs.length) return '<td class="c"><span class="wp-qcb">–</span></td>';
             var worst = cs.some(function (c) { return c.st === 'fail'; }) ? 'fail' : cs.some(function (c) { return c.st === 'warn'; }) ? 'warn' : cs.every(function (c) { return c.st === 'na'; }) ? 'na' : 'ok';
-            return '<td class="c"><span class="wp-qcb ' + worst + '" title="' + _esc(cs.map(function (c) { return c.label + ': ' + c.msg; }).join(' · ')) + '">' + sym[worst] + '</span></td>';
+            return '<td class="c"><span class="wp-qcb ' + worst + '" title="' + _esc(cs.map(function (c) { return c.label + ': ' + (p.msgU ? p.msgU(c.msg) : c.msg); }).join(' · ')) + '">' + sym[worst] + '</span></td>';
         };
         var ranked = mx.methods.filter(function (m) { return m.key !== 'natural'; }).slice().sort(function (a, b) { return a.rank - b.rank; });
-        var h = '<div class="wp-cmpk">' + _chip('Well', p.u(w.tvd, 'length', 0, 'ft') + ' TVD', p.u(w.md, 'length', 0, 'ft') + ' MD · max ' + p.fmt(w.maxInc, 1) + '° · ' + p.fmt(w.maxDls, 1) + '°/100 ft', '') +
+        var h = '<div class="wp-cmpk">' + _chip('Well', p.u(w.tvd, 'length', 0, 'ft') + ' TVD', p.u(w.md, 'length', 0, 'ft') + ' MD · max ' + p.fmt(w.maxInc, 1) + '° · ' + (p.dls ? p.dls(w.maxDls) : p.fmt(w.maxDls, 1) + '°/100 ft'), '') +
             _chip('Natural flow', mx.methods[0].verdict === 'ok' ? 'flows' : mx.methods[0].verdict === 'warn' ? 'marginal' : 'does not flow', _fin(w.qL) ? p.u(w.qL, 'liquidRate', 0, 'STB/d') + ' liquid' : '', mx.methods[0].verdict) +
             _chip('Best screened lift', ranked[0] ? ranked[0].label : '—', ranked[1] ? 'then ' + ranked[1].label : '', ranked[0] ? ranked[0].verdict : '') +
-            (mx.windows.esp ? _chip('ESP setting window', 'MD ' + p.fmt(p.dv(mx.windows.esp.md0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.md1, 'length'), 0) + ' ' + p.lab('length', 'ft'), 'TVD ' + p.fmt(p.dv(mx.windows.esp.tvd0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.tvd1, 'length'), 0) + ' ' + p.lab('length', 'ft') + ' · ≤ 3°/100 ft', 'ok') : '') + '</div>';
+            (mx.windows.esp ? _chip('ESP setting window', 'MD ' + p.fmt(p.dv(mx.windows.esp.md0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.md1, 'length'), 0) + ' ' + p.lab('length', 'ft'), 'TVD ' + p.fmt(p.dv(mx.windows.esp.tvd0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.tvd1, 'length'), 0) + ' ' + p.lab('length', 'ft') + ' · ≤ ' + (p.dls ? p.dls(3) : '3°/100 ft'), 'ok') : '') + '</div>';
         h += '<div class="wp-tw"><table class="dtable wpb-sc wp-qc" aria-label="Lift screening matrix"><thead><tr><th>Method</th><th>Verdict</th>' + SC_COLS.map(function (c) { return '<th class="c">' + c[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
             mx.methods.map(function (m) { return '<tr><td>' + _esc(m.label) + (m.rank ? ' <span style="color:var(--text3)">#' + m.rank + '</span>' : '') + '</td><td><span class="wpb-vd ' + m.verdict + '">' + { ok: 'suitable', warn: 'marginal', fail: 'unsuitable' }[m.verdict] + '</span></td>' + SC_COLS.map(function (c) { return cell(m, c[0]); }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
         var j = S.scr, stale = _stale(p, S.scrKey);
@@ -629,6 +642,52 @@
         }
         h += '<div class="wp-hint"><span class="wp-chip prov">provisional</span> Screening aid: ' + _esc(mx.source) + ' — ' + _esc(mx.provisional) + '. Rod pump, progressing-cavity, jet pump and plunger lift are screened only (no rate model in this release).</div>';
         box.innerHTML = h;
+        _renderScreenRes(p, mx, ranked);
+    }
+
+    // the screening ranking inside #wp_res (review fix v4.5: the step ④ table is not in a report taken from another step): shown with a
+    // lift type chosen or after "Compare the lift rates"
+    function _scrShown(p) { var M = p.ST.M; return !!(M && ((M.lift && M.lift.type !== 'none') || S.scr)); }
+    function _renderScreenRes(p, mx, ranked) {
+        var h = _byId('wpb_scr_r'); if (!h) return;
+        if (!mx || !mx.ok || !_scrShown(p)) { h.innerHTML = ''; if (h.classList) h.classList.add('wp-off'); return; }
+        if (h.classList) h.classList.remove('wp-off');
+        var j = S.scr && S.scr.ok && !_stale(p, S.scrKey) ? S.scr : null, rc = _rc(p);
+        var rate = function (k) { if (!j) return '—'; var v = k === 'gaslift' ? (j.gaslift && j.gaslift.ok ? j.gaslift.qL : null) : k === 'esp' ? (j.esp && j.esp.ok ? j.esp.q : null) : k === 'natural' ? (j.natural.ok ? j.natural.q : null) : null; return _fin(v) ? p.u(v, rc[0], 0, rc[1]) : '—'; };
+        h.innerHTML = '<div class="rbox-title">Lift screening (provisional)</div><div class="wp-tw"><table class="dtable wp-dense" aria-label="Lift screening ranking"><thead><tr><th>Method</th><th class="num">Rank</th><th>Verdict</th><th class="num">Rate</th></tr></thead><tbody>' +
+            mx.methods.map(function (m) { return '<tr><td>' + _esc(m.label) + '</td><td class="num">' + (m.rank ? '#' + m.rank : '—') + '</td><td>' + _esc(VD_WORD[m.verdict] || m.verdict) + '</td><td class="num">' + _esc(rate(m.key)) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+            '<div class="rrow"><span class="rl">Best screened lift</span><span class="rv">' + _esc(ranked[0] ? ranked[0].label + ' (' + (VD_WORD[ranked[0].verdict] || '') + ')' : '—') + '</span></div>';
+    }
+    // every study that has results, as a compact table inside #wp_res, except the one on screen (its own body shows it): the page report
+    // and the Quick Report then carry all of them whichever tab is open (review fix v4.5)
+    function _renderAll(p) {
+        var h = _byId('wpb_all'); if (!h) return;
+        var tab = _tab(), rc = _rc(p), M = p.ST.M, out = [], q = function (v) { return _fin(v) ? p.fmt(p.dv(v, rc[0]), 0) : '—'; }, ql = _esc(p.lab(rc[0], rc[1]));
+        var box = function (t, body) { out.push('<div class="rbox" style="margin-top:10px"><div class="rbox-title">' + _esc(t) + '</div>' + body + '</div>'); };
+        var e = S.env;
+        if (tab !== 'env' && e && e.ok) {
+            var lr = Object.keys(e.limits).filter(function (k) { return _fin(e.limits[k].q); }).map(function (k) { var L = e.limits[k]; return '<tr><td>' + _esc(L.label) + '</td><td class="num">' + q(L.q) + '</td><td>' + _esc(L.kind || '') + '</td></tr>'; });
+            box('Operating envelope' + (_stale(p, S.envKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Limit</th><th class="num">Rate (' + ql + ')</th><th>Kind</th></tr></thead><tbody>' + lr.join('') + '</tbody></table></div>' +
+                (e.window.ok ? '<div class="rrow"><span class="rl">Operating window</span><span class="rv">' + _esc(q(e.window.qLo) + '–' + q(e.window.qHi) + ' ' + p.lab(rc[0], rc[1])) + '</span></div>' : ''));
+        }
+        if (tab !== 'fcst' && S.fc && S.fc.ok) box('Depletion forecast' + (_stale(p, S.fcKey) ? ' (previous inputs)' : '') + (S.fc.provisional ? ' — provisional' : ''), _fcTable(p));
+        var t = S.torn;
+        if (tab !== 'torn' && t && t.ok && t.bars.length) {
+            var vf = function (b, v) { return SENS_CAT[b.key] ? p.fmt(p.dv(v, SENS_CAT[b.key]), 3) : p.fmt(v, 3); }, un = function (b) { return SENS_CAT[b.key] ? p.lab(SENS_CAT[b.key], b.unit) : b.unit; };
+            box('Tornado (±' + p.fmt(100 * t.frac, 0) + ' %)' + (_stale(p, S.tornKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Variable</th><th class="num">Low</th><th class="num">Rate low</th><th class="num">High</th><th class="num">Rate high</th><th class="num">Swing (' + ql + ')</th></tr></thead><tbody>' +
+                t.bars.map(function (b) { return '<tr><td>' + _esc(b.label.replace(/ \(.*\)$/, '')) + '</td><td class="num">' + _esc(vf(b, b.lo) + ' ' + un(b)) + '</td><td class="num">' + (b.okLo ? q(b.qLo) : 'no flow') + '</td><td class="num">' + _esc(vf(b, b.hi) + ' ' + un(b)) + '</td><td class="num">' + (b.okHi ? q(b.qHi) : 'no flow') + '</td><td class="num">' + q(b.swing) + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        }
+        var m = S.mat;
+        if (tab !== 'mat' && m && m.ok && m.nd) {
+            var bst = m.cases.filter(function (c) { return c.R.ok && c.R.stable; }).sort(function (a, b) { return b.R.q - a.R.q; }).slice(0, 5);
+            var labm = function (d, i) { var ax = m.axes[d], v = ax.values[i]; return ax.labels[i] || p.fmt(SENS_CAT[ax.key] ? p.dv(v, SENS_CAT[ax.key]) : v, 3); };
+            box('Sensitivity matrix — best stable cases' + (_stale(p, S.matKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr>' + m.keys.map(function (k, d) { return '<th>' + _esc(m.labels[d]) + '</th>'; }).join('') + '<th class="num">Rate (' + ql + ')</th></tr></thead><tbody>' +
+                bst.map(function (c) { return '<tr>' + m.keys.map(function (k, d) { return '<td>' + _esc(labm(d, c.idx[d])) + '</td>'; }).join('') + '<td class="num">' + q(c.R.q) + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        }
+        var c = S.cmp;
+        if (tab !== 'cases' && c && c.ok) box('Cases compared' + (_stale(p, S.cmpKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Case</th><th class="num">Rate (' + ql + ')</th><th class="num">Δ vs first</th><th class="num">pwf (' + _esc(p.lab('pressure', 'psia')) + ')</th></tr></thead><tbody>' +
+            c.rows.map(function (r, i) { return '<tr><td>' + _esc(r.name) + '</td><td class="num">' + (r.R.ok ? q(_qmain(M, r.R)) : '—') + '</td><td class="num">' + (i && _fin(r.dqPct) ? (r.dqPct >= 0 ? '+' : '') + p.fmt(r.dqPct, 1) + ' %' : '—') + '</td><td class="num">' + (r.R.ok ? p.fmt(p.dv(r.R.pwf, 'pressure'), 0) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        h.innerHTML = out.join('');
     }
 
     // ── the page hooks ───────────────────────────────────────────────────────
@@ -727,9 +786,12 @@
         var c = S.cmp;
         if (c && c.ok) rows.push(['Cases compared' + st(S.cmpKey), c.rows.map(function (r, i) { return r.name + ' ' + (r.R.ok ? q(_qmain(M, r.R)) : 'no flow') + (i && _fin(r.dqPct) ? ' (' + (r.dqPct >= 0 ? '+' : '') + p.fmt(r.dqPct, 1) + ' %)' : ''); }).join(' · ')]);
         else if (_cases(p).length) rows.push(['Saved cases', _cases(p).map(function (x) { return x.name + (x.summary && x.summary.ok ? ' ' + q(_qmain(M, x.summary)) : ''); }).join(' · ')]);
-        var sm = S.scrMx, sj = S.scr;
+        // the screening matrix of THIS model (review fix v4.5: S.scrMx was refreshed only after these rows were built, so a new example
+        // showed the previous model's ranking), with the table's words
+        var SCm = G.WTS_wp_screen, sm = (SCm && typeof SCm.matrix === 'function' && M) ? SCm.matrix(M, { R: p.ST.R && p.ST.R.ok ? p.ST.R : null, W: p.ST.W && p.ST.W.ok ? p.ST.W : null }) : null, sj = S.scr;
+        if (sm && sm.ok) S.scrMx = sm;
         if (sm && sm.ok && (sj || (M && M.lift && M.lift.type !== 'none'))) {
-            var rk = sm.methods.filter(function (x) { return x.key !== 'natural'; }).sort(function (a, b) { return a.rank - b.rank; }).slice(0, 3).map(function (x) { return x.label + ' (' + x.verdict + ')'; }).join(', ');
+            var rk = sm.methods.filter(function (x) { return x.key !== 'natural'; }).sort(function (a, b) { return a.rank - b.rank; }).slice(0, 3).map(function (x) { return x.label + ' (' + (VD_WORD[x.verdict] || x.verdict) + ')'; }).join(', ');
             rows.push(['Lift screening' + (sj ? st(S.scrKey) : ''), rk + (sj && sj.ok ? '; natural ' + (sj.natural.ok ? q(sj.natural.q) : 'no flow') + ', gas lift ' + (sj.gaslift && sj.gaslift.ok ? q(sj.gaslift.qL) : 'n/a') + ', pump potential ' + (sj.potential ? q(sj.potential.q) : 'n/a') : '') + ' — provisional screening']);
         }
         return rows.length ? { rows: rows } : null;

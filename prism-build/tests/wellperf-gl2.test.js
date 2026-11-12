@@ -270,7 +270,7 @@ module.exports = [
       assert.ok(pst.R && pst.R.ok && pst.R.lift, 'gas-lifted solve');
       assert.ok(A.el('wpg_dcard') && A.el('wpg_xcard') && A.el('wpg_card'), 'step ④ cards and the result card');
       assert.ok(A.el('wpg_card').closest('#wp_res'), 'the result card is inside #wp_res (reports)');
-      assert.ok(/Asheim F1/.test(txt(A.el('wpg_kpi'))), 'Asheim KPI without a design');
+      assert.ok(/Static stability F1/.test(txt(A.el('wpg_kpi'))), 'stability KPI without a design');
       // Design (a Job through the driver)
       A.change('wp_gld_minsp', '300'); A.flush(30);
       A.click(A.find('[data-act="wpg_design"]'));
@@ -333,6 +333,70 @@ module.exports = [
       // natural flow: the gas-lift parts are emptied
       A.select('wp_lift', 'none'); A.flush(30);
       assert.strictEqual(txt(A.el('wpg_kpi')), '', 'emptied for natural flow');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs();
+    },
+  },
+  {
+    name: 'WG29 review fixes (v4.5): Gas lift example designs its valves; design labelled provisional (gate glDesign pending); stability screening names; injection-point KPI with valves; chart ArrowDown = deeper; drag clamped to the neighbours ± minimum spacing with a spacing verdict; one TVD source and knob labels from the valve MD; one port notation',
+    wp: WP, opts: false, timeoutMs: 180000,
+    async run(_a, assert, ctx) {
+      const A = app(ctx), G = A.win, txt = (e) => String(e && e.textContent || '').replace(/\s+/g, ' ').trim(), BAD = /NaN|undefined|\[object Object\]/;
+      if (G.__WP_MOCK) return assert.ok(true, 'mock installed in this app');
+      S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs();
+      A.hook.nav('wellperf'); A.flush(30);
+      // the Gas lift example: deviated well, p_inj / q_inj / packer set, the design Job starts on load
+      assert.ok(A.find('[data-act="example"][data-ex="gl"]'), 'Gas lift example chip');
+      assert.ok(A.find('#wp_steps .wp-exs [data-ex="gl"]'), 'examples grouped (they wrap as one group)');
+      A.click(A.find('[data-act="example"][data-ex="gl"]')); A.flush(30);
+      const P = G.WTS_wellperf_page, pst = P.state(), E = G.WTS_wellperf_ext.gldesign, ES = E.state();
+      for (let i = 0; i < 120 && !ES.des; i++) await A.flushAsync(1);
+      assert.ok(pst.M.lift.type === 'gaslift' && pst.R && pst.R.ok, 'gas-lifted solve');
+      assert.ok(pst.W.nodes && pst.M.well.survey.some((r) => r[1] > 30), 'deviated');
+      assert.ok(ES.des && ES.des.ok && ES.des.valves.length >= 3, 'designed on load');
+      // F2: the design is provisional (engine flag, warning, verdicts, notes); the gate keeps glDesign pending
+      assert.ok(ES.des.verified === false && G.WTS_wp_gl.DESIGN.verified === false && ES.des.warnings.some((w) => w.code === 'GLD_PROVISIONAL' && /provisional — not verified against a published example/.test(w.msg)), 'design provisional');
+      assert.match(txt(A.el('wpg_verd')), /valve design on the model path, the Thornhill-Craver throughput and the stability screening numbers are provisional/);
+      assert.match(txt(A.el('wp_notesbox')), /the design on the model path.*provisional/);
+      assert.match(txt(A.el('wpg_dcard')), /provisional, not verified against a published example/);
+      // F5: the stability numbers are named for what they are
+      const kp = txt(A.el('wpg_kpi'));
+      assert.ok(/Static stability F1/.test(kp) && !/Asheim F1/.test(kp), 'F1 name');
+      assert.match(txt(A.el('wpg_verd')), /screening, after Asheim 1988; annulus-volume casing heading not modelled/);
+      assert.ok(/after Asheim/.test(G.WTS_wp_gl.asheim(pst.M, pst.R, { port64: 16 }).label), 'engine label');
+      // F17: one TVD for a design row and an installed row; knob labels from the valve's MD; one port notation
+      const d0 = ES.desRows[1], sp = A.el('wp_cv_glv')._wp.spec;
+      assert.strictEqual(sp.handles[1].fmt(sp.handles[1].value + 3), P.ui().fmt(P.ui().dv(d0.md, 'length'), 0) + ' MD', 'knob label = the valve MD, not the pixel value');
+      const tvdTxt = txt(A.el('wpg_tbl').querySelectorAll('tbody tr')[1].querySelectorAll('td')[2]);
+      A.click(A.find('[data-act="wpg_use"]')); A.flush(30);
+      assert.ok(pst.M.lift.gl.valves.length === ES.desRows.length, 'installed');
+      assert.strictEqual(txt(A.el('wpg_edit').querySelectorAll('tbody tr')[1].querySelectorAll('td')[2]), tvdTxt, 'installed TVD = design TVD (minimum curvature)');
+      assert.ok(!/\/64 in/.test(txt(A.el('wpg_verd'))) && !/\/64 in/.test(txt(A.el('wpg_kpi'))), 'port as a fraction in KPI and verdicts');
+      // F11: with installed valves the KPI says the solve is still at the point of balance (warn when below the deepest valve)
+      const inj = pst.R.lift.injMd, deep = Math.max.apply(null, pst.M.lift.gl.valves.map((v) => v.md));
+      const kp2 = txt(A.el('wpg_kpi'));
+      if (!(ES.diag && ES.diag.ok)) {
+        assert.match(kp2, /system solve: point of balance — not yet at the installed valves/);
+        assert.ok(!/no valves/.test(kp2), 'no "no valves" text');
+        if (inj > deep + 1) assert.match(kp2, /below the deepest valve/);
+      }
+      assert.ok(/point of balance/.test(A.el('wp_sch').innerHTML) && !/>gas lift [\d,]+/.test(A.el('wp_sch').innerHTML), 'schematic marker labelled as the point of balance');
+      // F16: a drag cannot cross a neighbour or come closer than the minimum spacing
+      const vs = pst.M.lift.gl.valves.map((v) => v.md), msp = 250;
+      E.move(2, vs[3] + 500, 'end'); A.flush(30);
+      const after = pst.M.lift.gl.valves.map((v) => v.md);
+      assert.ok(after[2] <= vs[3] - msp + 5 && after.every((v, i) => !i || v > after[i - 1]), 'clamped: ' + JSON.stringify(after));
+      // F15: on the valve chart (depth down) ArrowDown moves the picked valve deeper
+      const cv = A.el('wp_cv_glv'), st = cv._wp, key = (k) => cv.dispatchEvent(new G.KeyboardEvent('keydown', { key: k, bubbles: true }));
+      st.focusHandle = -1; key(']'); const i0 = st.focusHandle, y0 = st.spec.handles[i0].value; key('ArrowDown');
+      assert.ok(ES.drag && ES.drag.i === i0 && ES.drag.md > pst.M.lift.gl.valves[i0].md, 'ArrowDown → deeper (' + (ES.drag && ES.drag.md) + ')');
+      key('Escape'); void y0;
+      // the verdict / KPI warn when an editor change breaks the spacing
+      const rows = pst.M.lift.gl.valves.map((v) => ({ md: v.md, port: v.port, ptro: v.ptro, R: v.R, kind: v.kind })); rows[1].md = rows[0].md + 40;
+      G.WTS_wp_model.write({ glValves: rows }); A.flush(30);
+      assert.match(txt(A.el('wpg_verd')), /below the minimum spacing/);
+      assert.ok(A.el('wpg_kpi').querySelector('.wp-kpi.warn, .wp-kpi[class*="warn"]') || /spacing/.test(txt(A.el('wpg_kpi'))), 'Valves KPI warns');
+      assert.ok(!BAD.test(txt(A.el('wpg_card'))) && !BAD.test(txt(A.el('wpg_dcard'))), 'clean text');
+      assert.strictEqual(A.consoleErrors().length, 0, 'no console errors: ' + JSON.stringify(A.consoleErrors()).slice(0, 600));
       S.resetWellPerf(A); G.WTS_wellperf_page.resetJobs();
     },
   },

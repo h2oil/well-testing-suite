@@ -424,7 +424,8 @@
     //   (B, WP23; each absent → the paths above, unchanged)
     //   shift        {rs, bo, muo} the additive part of the lab match y = a·y_corr + b (a = mult, default 0): Rs = max(0, a·Rs + b),
     //                Bo = a·Bo + b, μo = max(1e-4, a·μo + b); with a matched Rs (mult.rs or shift.rs) the bubble point of the
-    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a
+    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a;
+    //                shift.rsPb (psia, optional) tapers the Rs shift: b·min(1, p / rsPb) (review fix v4.5: Rs at standard conditions unchanged)
     //   rv           {rows: [[p psia, Rv STB/MMscf]] ascending, pd psia} modified black oil for a wet gas (liquidNoTransfer): the
     //                vaporised condensate Rv(p) (≤ the stream CGR; = CGR at and above the dew point pd, linear to the last row
     //                below it) travels in the gas — its standard volume and mass are added with the Standing well-stream
@@ -441,7 +442,9 @@
         var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
         var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
         var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, pv.sep ? rsF(api, sgg, p * pbF, t, pv.sep) : rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
-        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs);
+        // the Rs shift b of a lab match: with shift.rsPb (the lab bubble point, psia) it is applied as b·min(1, p / rsPb), so Rs at stock-tank
+        // and separator pressures stays the correlation's (review fix v4.5); without rsPb as before (b at every pressure)
+        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs * ((+pv.shift.rsPb > 0) ? Math.min(1, p / +pv.shift.rsPb) : 1));
         var z = NaN, TR = t + RANK;
         var imp = pv.imp;
         if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
@@ -630,7 +633,9 @@
         return out;
     }
     // the GOR seen by the correlation when Rs is matched (WP23): Rs_m = a·Rs_c + b reaches the GOR where Rs_c = (GOR − b) / a
+    // review fix (v4.5): only for a lab match (pvt.matchRs, or a shift.rs) — a plain mult.rs keeps the A2 bubble point bit for bit
     function _gorCorr(pv, gor) {
+        if (!pv.matchRs && !(pv.shift && _fin(+pv.shift.rs) && +pv.shift.rs !== 0)) return gor;
         var m = pv.mult || {}, a = _fin(+m.rs) && +m.rs > 0 ? +m.rs : 1, b = pv.shift && _fin(+pv.shift.rs) ? +pv.shift.rs : 0;
         if (a === 1 && b === 0) return gor;
         return Math.max(1e-6, (gor - b) / a);

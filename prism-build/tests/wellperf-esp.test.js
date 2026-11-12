@@ -39,7 +39,8 @@ const plain = (x) => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 function espWell(G, o) {
   const M = S.FIX.oilWell; M.res.pr = 2200; M.fluid.wc = 0.6;
   M.well.strings.push({ kind: 'casing', tubKey: null, rough: 0.0006, topMd: 0, botMd: 7950, id: 6.276, od: 7, wall: 0.362 });
-  M.lift = { type: 'esp', gl: {}, esp: Object.assign({ pump: G.WTS_wp_esp.example(), pumpMd: 7900, freq: 60, stages: 120 }, o || {}) };
+  // natural separation and the viscosity correction are provisional and OFF by default (D17, review fix v4.5): the method tests turn them on
+  M.lift = { type: 'esp', gl: {}, esp: Object.assign({ pump: G.WTS_wp_esp.example(), pumpMd: 7900, freq: 60, stages: 120, natSep: true, visc: true }, o || {}) };
   return M;
 }
 const _memo = new Map();
@@ -280,13 +281,21 @@ module.exports = [
       const codes = (r) => r.items.map((i) => i.code);
       assert.ok(codes(c({})).indexOf('NEEDS_PUMP') !== -1 && codes(c({})).indexOf('NEEDS_STAGES') !== -1, 'needs pump / stages');
       assert.ok(codes(c({ pump: G.WTS_wp_esp.example(), stages: 100, freq: 95 })).indexOf('ESP_FREQ') !== -1, 'frequency range');
-      const v = c({ pump: G.WTS_wp_esp.example(), stages: 100 }).validity.filter((x) => /^esp_/.test(x.corr));
+      const v = c({ pump: G.WTS_wp_esp.example(), stages: 100, natSep: true, visc: true }).validity.filter((x) => /^esp_/.test(x.corr));
       assert.ok(v.length === 3 && v.every((x) => x.provisional && /provisional — not verified against a published example/.test(x.msg)), 'provisional validity rows');
+      assert.strictEqual(c({ pump: G.WTS_wp_esp.example(), stages: 100 }).validity.filter((x) => /^esp_/.test(x.corr)).length, 1, 'defaults: only the gas criterion row (viscosity and natural separation off)');
       const Mg = S.FIX.gasWell; Mg.lift = { type: 'esp', gl: {}, esp: { pump: G.WTS_wp_esp.example(), stages: 100 } };
       assert.strictEqual(SY.solve(Mg).code, 'ESP_NOT_APPLICABLE');
       assert.ok(codes(G.WTS_wp_check(Mg)).indexOf('ESP_NOT_APPLICABLE') !== -1, 'check: gas well');
       const Mo = S.FIX.oilWell; Mo.lift = { type: 'esp', gl: {}, esp: { pump: G.WTS_wp_esp.example() } };
       assert.strictEqual(SY.solve(Mo).code, 'NEEDS_STAGES');
+      // D17 (review fix v4.5): the two provisional ESP methods are opt-in — absent keys → off, in prepare() and in the solve
+      const Md = S.FIX.oilWell; Md.res.pr = 2200; Md.fluid.wc = 0.6; Md.well.strings.push({ kind: 'casing', tubKey: null, rough: 0.0006, topMd: 0, botMd: 7950, id: 6.276, od: 7, wall: 0.362 });
+      Md.lift = { type: 'esp', gl: {}, esp: { pump: G.WTS_wp_esp.example(), pumpMd: 7900, freq: 60, stages: 120 } };
+      const Pd = G.WTS_wp_esp.prepare(Md, G.WTS_wp_well.build(Md.well, { res: Md.res }));
+      assert.ok(Pd.natSep === false && Pd.visc === false, 'defaults off: ' + Pd.natSep + ' / ' + Pd.visc);
+      const Rd = SY.solve(Md);
+      assert.ok(Rd.ok && Rd.lift.natSep === false && Rd.lift.viscOn === false, 'solve defaults off');
     },
   },
   {

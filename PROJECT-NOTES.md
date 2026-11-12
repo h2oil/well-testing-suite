@@ -35,7 +35,14 @@ the help caps) stays open — no cap was raised for B.
   forecast steps and matrix values; the lift-table axes follow the model again when the fluid type changes the axis type (the selects fell
   back before the "still auto-filled" check); schematic of a wide well keeps 6 % of the width each side, and side labels that would run
   past the drawing are set against its edge (the horizontal example on a phone). wellperf `reviewedSrc` re-hashed (076f5af1).
-- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2398/2398 (194 files, run per file);
+- **Review fixes (plan §18.3.12).** Ansari thin-film root and film bridging, Mukherjee-Brill bubble / slug boundaries, Orkiszewski slug
+  density as published, pattern-step check X5c and `PATTERN_STEP` note; glDesign provisional (BENCH pending), stability numbers renamed
+  (screening after Asheim), ESP viscosity / natural separation opt-in; Rs shift tapered below the lab pb, plain mult.rs keeps the A2 pb;
+  every B result in #wp_res (frequency sweep, screening, inflow study, condensate, all studies); Gas lift example; valve drag clamp,
+  keyboard direction, TVD / port consistency, label layout, Metric text. Gates after the fixes: smoke 347/347; accept-test 2235/2235
+  unique (195 files); wellperf-validate gate PASS, 62/62, budgets ok; wts3d 147/149.
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2398/2398 (194 files, run per file;
+  a per-file sum with substring matching — 2,229 unique by --list);
   wts3d-test 147/149 (the two CRLF checks); wellperf-validate --html --gate --check --time: D17 gate PASS, 60/60 cross-checks, every E
   budget ok; wellperf-identity (FI, flowline / chokeperf / wellbore / tubulars / oilipr / gasdeliv / gaslift vs v4.2) pass; help-shots
   --check, build-user-guide --check, publish-site --check ok; server unchanged. GUI sweep `--route wellperf,oilipr,gasdeliv,gaslift` full

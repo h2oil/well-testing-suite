@@ -8119,7 +8119,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 496f13d3,view-p 780 1688 5072dd17",
+    "releasenotes": "view-d 1280 800 e6930d41,view-p 780 1688 5072dd17",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -8141,7 +8141,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 218;
-  M.bytes = 7983698;   // total size of the image files (the offline download label)
+  M.bytes = 7980332;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8893,7 +8893,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '076f5af1', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'fc010354', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -8935,7 +8935,7 @@ var wellperf = {
   { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** on the true inclination against the TVD geotherm; **Enthalpy balance** adds J-T, gravity, kinetic terms and U layers. **Fit U to the test THT**.'] }, { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab: rate against downstream pressure; **Fit** matches Sachdeva to a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest point the casing pressure reaches above the packer. **Run the gas-lift performance curve**: rate against lift-gas rate, optimum and economic points; drag the injection-rate or packer handle.'] }, { id: 'study', title: 'Two variables and tubing size', what: ['A **Second variable** gives a rate line per value and a heat-map table: select a cell, then **Use these values**. **Tubing size (catalogue scan)** lists each size with rate, stability, loading margin and erosion ([[course#wp2|course exercise 2]]).'] },
   { id: 'tune', title: 'VLP tuning', what: ['**Tune to the tests** fits the holdup multiplier m_h (0.8–1.25) to the gauges, and the friction multiplier m_f (0.7–1.5) only when the test rates span 2:1. Tuned and untuned traverses are drawn against the gauges; **Apply to the model** uses them in every solve. See the [[wpcourse|Well performance course]].'] }, { id: 'studies', title: 'Studies', what: ['Jobs on the **Studies** card: envelope (drag the point), forecast (time slider), tornado, 3–4 variable matrix, cases.'] },
-  { id: 'gldesign', title: 'Gas-lift design', what: ['④ **Design the valves**: valves on MD with TVD; drag one. **Diagnosis** from a test; **Match the survey**. Throughput and Asheim stability: provisional.'] }, { id: 'esp', title: 'ESP', what: ['④ pump MD, frequency, stages, curve; drag the frequency or stages rail; **Size the stages**. Gas, viscosity, motor checks: provisional.'] }],
+  { id: 'gldesign', title: 'Gas-lift design', what: ['④ **Design the valves**: valves on MD with TVD; drag one. **Diagnosis** from a test; **Match the survey**. Design, throughput, stability screening: provisional.'] }, { id: 'esp', title: 'ESP', what: ['④ pump MD, frequency, stages, curve; drag the frequency or stages rail; **Size the stages**. Gas, viscosity, motor checks: provisional.'] }],
   boldExempt: ['Use this bean'],
   tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT bounds the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
   refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading')],
@@ -10281,7 +10281,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: 'a1cf5b58', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: 'eabd20a6', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -36147,7 +36147,8 @@ pipesz: {
     //   (B, WP23; each absent → the paths above, unchanged)
     //   shift        {rs, bo, muo} the additive part of the lab match y = a·y_corr + b (a = mult, default 0): Rs = max(0, a·Rs + b),
     //                Bo = a·Bo + b, μo = max(1e-4, a·μo + b); with a matched Rs (mult.rs or shift.rs) the bubble point of the
-    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a
+    //                undersaturated branch is the correlation's Pb at the GOR mapped back through the match, (GOR − b) / a;
+    //                shift.rsPb (psia, optional) tapers the Rs shift: b·min(1, p / rsPb) (review fix v4.5: Rs at standard conditions unchanged)
     //   rv           {rows: [[p psia, Rv STB/MMscf]] ascending, pd psia} modified black oil for a wet gas (liquidNoTransfer): the
     //                vaporised condensate Rv(p) (≤ the stream CGR; = CGR at and above the dew point pd, linear to the last row
     //                below it) travels in the gas — its standard volume and mass are added with the Standing well-stream
@@ -36164,7 +36165,9 @@ pipesz: {
         var zF = _pvtFn(L, 'Z_', c.z, L.Z_dranchukAbouKassem), mugF = _pvtFn(L, 'mu_g_', c.mug, L.mu_g_leeGonzalezEakin);
         var pbF = _fin(+pv.pbFactor) && pv.pbFactor > 0 ? +pv.pbFactor : 1;
         var rsRaw = pv.liquidNoTransfer ? 0 : Math.max(0, pv.sep ? rsF(api, sgg, p * pbF, t, pv.sep) : rsF(api, sgg, p * pbF, t)) * (_fin(+m.rs) ? +m.rs : 1);
-        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs);
+        // the Rs shift b of a lab match: with shift.rsPb (the lab bubble point, psia) it is applied as b·min(1, p / rsPb), so Rs at stock-tank
+        // and separator pressures stays the correlation's (review fix v4.5); without rsPb as before (b at every pressure)
+        if (pv.shift && _fin(+pv.shift.rs) && !pv.liquidNoTransfer) rsRaw = Math.max(0, rsRaw + +pv.shift.rs * ((+pv.shift.rsPb > 0) ? Math.min(1, p / +pv.shift.rsPb) : 1));
         var z = NaN, TR = t + RANK;
         var imp = pv.imp;
         if (imp && typeof G.WTS_gaspvt_z === 'function' && ((+imp.n2 || 0) + (+imp.co2 || 0) + (+imp.h2s || 0)) > 0) {
@@ -36353,7 +36356,9 @@ pipesz: {
         return out;
     }
     // the GOR seen by the correlation when Rs is matched (WP23): Rs_m = a·Rs_c + b reaches the GOR where Rs_c = (GOR − b) / a
+    // review fix (v4.5): only for a lab match (pvt.matchRs, or a shift.rs) — a plain mult.rs keeps the A2 bubble point bit for bit
     function _gorCorr(pv, gor) {
+        if (!pv.matchRs && !(pv.shift && _fin(+pv.shift.rs) && +pv.shift.rs !== 0)) return gor;
         var m = pv.mult || {}, a = _fin(+m.rs) && +m.rs > 0 ? +m.rs : 1, b = pv.shift && _fin(+pv.shift.rs) ? +pv.shift.rs : 0;
         if (a === 1 && b === 0) return gor;
         return Math.max(1e-6, (gor - b) / a);
@@ -41696,6 +41701,19 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var s = Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
         return s === '-0' ? '0' : s;
     }
+    // field-unit numbers inside an engine message, shown in the display units (review fix v4.5: the B engine flags read 'ft', 'ft/s',
+    // 'bbl/d', 'psig' in Metric); identity in field units
+    var MSG_U = { 'ft/s': 'velocity', 'ft': 'length', 'bbl/d': 'liquidRate', 'STB/d': 'liquidRate', 'psig': 'pressureG', 'psia': 'pressure', 'psi': 'pressure', '°F': 'temperature', 'hp': 'power' };
+    function _msgU(s) {
+        s = String(s == null ? '' : s);
+        if (!_metric()) return s;
+        return s.replace(/(-?\d[\d,]*(?:\.\d+)?)\s?(ft\/s|bbl\/d|STB\/d|psig|psia|psi|°F|ft|hp)(?![\w\/])/g, function (m, num, un) {
+            var v = parseFloat(num.replace(/,/g, '')), dp = (num.split('.')[1] || '').length; if (!_fin(v)) return m;
+            return _u(v, MSG_U[un], dp, un);
+        }).replace(/(\d+(?:\.\d+)?)°\/100 ft/g, function (m, num) { return _dls(parseFloat(num)); });
+    }
+    // dogleg severity: °/100 ft in field units, °/30 m in Metric
+    function _dls(v) { if (!_fin(v)) return '—'; return _metric() ? _fmt(v * 30 / 30.48, 1) + '°/30 m' : _fmt(v, 1) + '°/100 ft'; }
     function _u(v, cat, d, imp, dMet) { if (!_fin(v)) return '—'; return _fmt(_dv(v, cat), _metric() ? (dMet == null ? d : dMet) : d) + ' ' + _lab(cat, imp); }
     function _canon(fn) { var U = _U(); return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _tag(map) { var U = _U(); if (!U || !U.tagInput) return; Object.keys(map).forEach(function (id) { if (_byId(id)) U.tagInput(id, map[id]); }); }
@@ -41894,7 +41912,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var CSS = '<style>' +
         '#wp_root{--wp-gap:14px;--wp-ok:var(--green,#3fb950);--wp-warn:var(--yellow,#d29922);--wp-fail:var(--red,#f85149)}' +
-        '#wp_root .wp-steps{position:sticky;top:-24px;z-index:5;display:flex;gap:6px;align-items:center;margin:-6px 0 14px;padding:8px 0;background:var(--bg1);overflow-x:auto;scrollbar-width:thin}' +
+        '#wp_root .wp-steps{position:sticky;top:-24px;z-index:5;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-6px 0 14px;padding:8px 0;background:var(--bg1);overflow-x:auto;scrollbar-width:thin}' +
+        // review fix (v4.5): the example chips wrap as one group to a second line on desktop (they ran off-screen at 1280 px)
+        '#wp_root .wp-exs{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;flex:0 1 auto;justify-content:flex-end;margin-left:auto}#wp_root .wp-exs button{padding:5px 10px;font-size:11.5px}' +
         '#wp_root .wp-steps button{flex:0 0 auto;display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:18px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,color .15s}' +
         '#wp_root .wp-steps button:hover{border-color:var(--border-light);color:var(--text)}' +
         '#wp_root .wp-steps button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}' +
@@ -42017,7 +42037,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '@media (max-width:1180px){#wp_root .wp-row3{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-row3>:last-child{grid-column:1/-1}}' +
         '@media (max-width:1000px){#wp_root .wp-bench,#wp_root .wp-2c{grid-template-columns:minmax(0,1fr)}}' +
         '@media (max-width:640px){#wp_root .wp-row3{grid-template-columns:minmax(0,1fr)}#wp_root .wp-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#wp_root .wp-kpi .kpi-v{font-size:15px}' +
-        '#wp_root .wp-card{padding:12px}#wp_root .wp-steps{top:-14px}#wp_root .wp-tools{margin-left:0;width:100%}#wp_root .wp-drawer-b{grid-template-columns:minmax(0,1fr)}}' +
+        '#wp_root .wp-card{padding:12px}#wp_root .wp-steps{top:-14px;flex-wrap:nowrap}#wp_root .wp-exs{flex-wrap:nowrap;margin-left:0}#wp_root .wp-tools{margin-left:0;width:100%}#wp_root .wp-drawer-b{grid-template-columns:minmax(0,1fr)}}' +
         // B (WP28): the all-wells card
         '#wp_root .wp-wells-cta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;margin:0 0 var(--wp-gap);border:1px dashed var(--border-light);border-radius:8px;font-size:12.5px;color:var(--text2)}' +
         '#wp_root .wp-wells-host:empty{display:none}#wp_root .wp-wkpis{margin:10px 0 8px;grid-template-columns:repeat(auto-fit,minmax(136px,1fr))}#wp_root #wp_wsel:empty{display:none}' +
@@ -42083,12 +42103,24 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             label: 'Deviated oil well on an ESP',
             scalars: { wp_ftype: 'oil', wp_api: 30, wp_sgg: 0.7, wp_gor: 250, wp_wc: 75, wp_ipr: 'pi', wp_pr: 2400, wp_tres: 210, wp_ip_J: 3,
                        wp_perfTop: 8930, wp_perfBot: 8990, wp_midPerf: 8960, wp_tht: 130, wp_surfT: 70, wp_choke: false, wp_thp: 150, wp_psep: 100,
-                       wp_lift: 'esp', wp_esp_md: 8450, wp_esp_freq: 60, wp_esp_stages: 236, wp_esp_sep: 0, wp_esp_nat: true, wp_esp_visc: true, wp_esp_od: 4.56,
+                       wp_lift: 'esp', wp_esp_md: 8450, wp_esp_freq: 60, wp_esp_stages: 236, wp_esp_sep: 0, wp_esp_nat: false, wp_esp_visc: false, wp_esp_od: 4.56,
                        wp_esp_hp: 120, wp_esp_volt: 2100, wp_esp_amp: 36, wp_esp_awg: '2' },
             tables: { survey: [[0, 0, 45], [1500, 0, 45], [2000, 10, 45], [2500, 20, 45], [3000, 30, 45], [3250, 35, 45], [9100, 35, 45]],
                       strings: [{ kind: 'tubing', od: 3.5, id: 2.992, rough: 0.0006, topMd: 0, botMd: 8450 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 9100 }],
                       restrictions: [], geo: { points: [[0, 70], [7750, 210]] }, flowline: [{ name: 'Flowline', len: 1500, id: 3, dz: 0 }], tests: [], layers: [],
                       pump: 'example' }
+        },
+        // review fix (v4.5): a deviated oil well on continuous gas lift — injection pressure, rate and packer set; loading it designs the
+        // unloading valves (a Job) so the deviated-valve chart, the mandrels on the schematic and the KPIs show straight away
+        gl: {
+            label: 'Deviated oil well on gas lift',
+            scalars: { wp_ftype: 'oil', wp_api: 35, wp_sgg: 0.7, wp_gor: 300, wp_wc: 60, wp_ipr: 'pi', wp_pr: 2600, wp_tres: 200, wp_ip_J: 2,
+                       wp_perfTop: 8930, wp_perfBot: 8990, wp_midPerf: 8960, wp_tht: 120, wp_surfT: 70, wp_choke: false, wp_thp: 150, wp_psep: 100,
+                       wp_lift: 'gaslift', wp_gl_pinj: 1200, wp_gl_qinj: 800, wp_gl_packer: 8400, wp_gl_sg: 0.65, wp_gl_dpv: 100 },
+            tables: { survey: [[0, 0, 45], [1500, 0, 45], [2000, 10, 45], [2500, 20, 45], [3000, 30, 45], [3250, 35, 45], [9100, 35, 45]],
+                      strings: [{ kind: 'tubing', od: 2.875, id: 2.441, rough: 0.0006, topMd: 0, botMd: 8500 }, { kind: 'casing', od: 7, id: 6.276, rough: 0.0006, topMd: 0, botMd: 9100 }],
+                      restrictions: [{ kind: 'sssv', md: 1000, id: 2.313 }], geo: { points: [[0, 70], [7750, 200]] }, flowline: [{ name: 'Flowline', len: 1500, id: 3, dz: 0 }], tests: [], layers: [], glValves: [] },
+            design: true
         }
     };
 
@@ -42613,6 +42645,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     //   R.lift.marks [{md, kind:'esp'|'mandrel'|'gl'|'packer', label, state}] (any lift engine), else R.lift.valves [{md, state, label}]
     //   (gas-lift design) and R.lift.pumpMd / M.lift.esp.pumpMd (ESP); M.res.layers [{topMd, botMd | topTvd, botTvd, label | name}];
     //   R.corr.sections / M.system.corr.sections [{fromMd, toMd, key}] (the correlation per section)
+    // the solve's injection point: the point of balance (the system solve does not yet inject at the installed valves, plan §18.3.9) —
+    // said so on the schematic when valves are installed, with a warning when it lies below the deepest one (review fix v4.5)
+    function _glMarkLabel() {
+        var L = ST.R.lift, vs = (ST.M && ST.M.lift && ST.M.lift.gl && Array.isArray(ST.M.lift.gl.valves)) ? ST.M.lift.gl.valves.filter(function (v) { return v && _fin(+v.md); }) : [];
+        if (!vs.length) return 'gas lift ' + _mdTvdTxt(L.injMd, L.injTvd);
+        var deep = Math.max.apply(null, vs.map(function (v) { return +v.md; }));
+        return 'point of balance ' + _mdTvdTxt(L.injMd, L.injTvd) + (L.injMd > deep + 1 ? ' — below the deepest valve' : '');
+    }
     function _schLiftMarks() {
         var R = ST.R, M = ST.M, out = [], L = R && R.ok && R.lift ? R.lift : null;
         if (L && Array.isArray(L.marks)) return L.marks.filter(function (m) { return m && _fin(m.md); }).map(function (m) { return Object.assign({}, m, { label: m.label || (m.kind === 'esp' ? 'ESP ' + (_fin(m.stages) ? _fmt(m.stages, 0) + ' st · ' + _fmt(m.hz, 1) + ' Hz · ' : '') : 'valve ') + _mdTvdTxt(m.md) }); });
@@ -42659,7 +42699,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             labels: { tvd: 'TVD (' + _lab('length', 'ft') + ')', vs: 'Vertical section (' + _lab('length', 'ft') + '), equal scale', closure: '', earth: 'halo: earth (geotherm)', prop: { pressure: 'Pressure (' + _lab('pressure', 'psia') + ')', temperature: 'Temperature (' + _lab('temperature', '°F') + ')', heatloss: 'Fluid − earth (' + _lab('tempDiff', '°F') + ')', jt: 'Enthalpy − relaxation (' + _lab('tempDiff', '°F') + ')', holdup: 'Liquid holdup (–)', velocity: 'Mixture velocity (' + _lab('velocity', 'ft/s') + ')', pattern: 'Flow pattern', none: '' }[prop] },
             empty: (ST.stubs && ST.stubs.indexOf('WTS_wp_well.build') !== -1) || _isStub(ST.SC) ? 'The well path engine draws the deviated well here once it is installed.' : 'Enter a survey and the strings (step ③) to draw the well.',
             bands: prop === 'correlation' ? [] : (_secRuns() || []).map(function (x) { return { mdTop: x.mdTop, mdBot: x.mdBot, color: _corrCol(x.corr), label: _corrShort(x.corr), title: _corrShortL(x.corr) + ' ' + _mdTvdTxt(x.mdTop, x.tvdTop) + ' to ' + _mdTvdTxt(x.mdBot, x.tvdBot) }; }),
-            marks: ((ST.R && ST.R.ok && ST.R.lift && _fin(ST.R.lift.injMd)) ? [{ md: ST.R.lift.injMd, kind: 'gl', comp: 'gl', label: 'gas lift ' + _mdTvdTxt(ST.R.lift.injMd, ST.R.lift.injTvd), color: '#58a6ff' }].concat(_fin(ST.R.lift.packerMd) ? [{ md: ST.R.lift.packerMd, kind: 'packer', label: 'packer' }] : []) : []).concat(_schLiftMarks()),
+            marks: ((ST.R && ST.R.ok && ST.R.lift && _fin(ST.R.lift.injMd)) ? [{ md: ST.R.lift.injMd, kind: 'gl', comp: 'gl', label: _glMarkLabel(), color: '#58a6ff' }].concat(_fin(ST.R.lift.packerMd) ? [{ md: ST.R.lift.packerMd, kind: 'packer', label: 'packer' }] : []) : []).concat(_schLiftMarks()),
             layers: _schLayers(), sections: _schSections(prop),
             aria: 'Well schematic: vertical section and plan view, coloured by ' + prop
         };
@@ -42989,7 +43029,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (act === 'pvtadopt') {
             var f = ST.pvtm && ST.pvtm.fit; if (!f || !f.ok) return;
             var m = ST.pvtmEdit ? ST.pvtmEdit.match : f.match, Lr = _labRec(M);
-            _labWrite({ adopt: { on: true, pbFactor: m.pbFactor, mult: m.mult, shift: m.shift, corr: m.corr, T_F: f.T_F, mare: ST.pvtmEdit ? null : m.mare, ts: Date.now(), edited: !!ST.pvtmEdit, labKey: _labKey(Lr) } });
+            _labWrite({ adopt: { on: true, pbFactor: m.pbFactor, mult: m.mult, shift: m.shift, rsPb: m.rsPb || null, corr: m.corr, T_F: f.T_F, mare: ST.pvtmEdit ? null : m.mare, ts: Date.now(), edited: !!ST.pvtmEdit, labKey: _labKey(Lr) } });
             if (h) h.innerHTML = _vHtml({ st: 'ok', t: '✓ The matched black-oil set is applied: every solve, table and plot on this page now uses it.' });
             _renderPvtLab(); return;
         }
@@ -43267,7 +43307,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var hx = _hx(R);
         row('Temperature', hx ? (hx.mode === 'enthalpy' ? 'enthalpy balance (J-T, gravity, kinetic; Alves et al. / Hasan & Kabir), THT ' + _u(hx.tht, 'temperature', 0, '°F') + ' (' + _tdS(hx.dT) + ' against the relaxation)' + (hx.layers && hx.layers.length ? ', ' + hx.layers.length + ' U layer(s)' : '') + ', ' : 'relaxation (Ramey / Hasan-Kabir), ') + 'U ' + _u(hx.U, 'heatTransferCoef', 2, 'Btu/hr·ft²·°F') + ' (' + (hx.Ubasis === 'ti' ? 'inside' : 'outside') + ' radius), ' + _fmt(hx.tProd_d, 0) + ' d, k_e ' + _u(hx.ke, 'thermalConductivity', 2, 'Btu/hr·ft·°F') + ', α ' + _fmt(hx.alpha, 3) + ' ft²/hr, A ' + _u(hx.A, 'length', 0, 'ft') + ' · geotherm ' + _u(M.well.geo.surfT_F, 'temperature', 0, '°F') + ' at surface'
             : (_heatAsked(M) ? (M.well.heat.mode === 'enthalpy' ? 'enthalpy balance' : 'relaxation') + ' asked, linear used (no geotherm)' : 'linear, THT ' + (_fin(M.well.heat.tht_F) ? _u(M.well.heat.tht_F, 'temperature', 0, '°F') + (M.well.heat.thtMeasured ? ' measured' : ' estimated') : 'not entered (static geotherm)') + ' → BHT'));
-        row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
+        var srn0 = _secRuns();
+        row('Correlations', 'well ' + CORR_NAME(cw || 'bb') + (srn0 ? ' (elsewhere) · sections ' + _secSummary(srn0) : '') + ' · flowline ' + CORR_NAME(cl || 'bb') + ' · node ' + (M.system.node || 'bottom'));
         var srn = _secRuns(); if (srn) row('Per-section correlations', srn.map(function (x) { return CORR_NAME(x.corr) + ' ' + _u(x.mdTop, 'length', 0, 'ft') + '–' + _u(x.mdBot, 'length', 0, 'ft') + ' MD (' + _fmt(_dv(x.tvdTop, 'length'), 0) + '–' + _fmt(_dv(x.tvdBot, 'length'), 0) + ' TVD, ' + _fmt(x.incMin, 0) + '–' + _fmt(x.incMax, 0) + '°)'; }).join('; '));
         var mc = _multOf(M); if (mc.tuned) row('VLP multipliers', 'holdup m_h ' + _fx(mc.hl, 3) + ' · friction m_f ' + _fx(mc.f, 3) + (ST.tune && ST.tune.ok && Math.abs(ST.tune.mult.hl - mc.hl) < 1e-5 && Math.abs(ST.tune.mult.f - mc.f) < 1e-5 ? ' (tuned to ' + (ST.tune.tests || []).join(', ') + ')' : ''));
         h.innerHTML = '<div class="rbox-title">Case summary</div>' + rows.join('');
@@ -43350,7 +43391,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _renderBreakdown() {
         var cv = _byId('wp_cv_bd'); if (!cv || !cv.getContext) return;
         var V = G.WTS_wp_view, T = V ? V.theme() : {}, R = ST.R, items = (R && R.ok && R.breakdown) ? R.breakdown.filter(function (b) { return _fin(b.dp); }) : [];
-        var cw = (cv.clientWidth > 160) ? Math.min(cv.clientWidth, 900) : 420, rowH = 32, ch = Math.max(120, items.length * rowH + 30);
+        var cw = (cv.clientWidth > 160) ? Math.min(cv.clientWidth, 900) : 420, rowH = 32;
+        // the footer sentence wraps to the width (review fix v4.5: it was cut off on the ESP example)
+        var tot0 = items.reduce(function (a, b) { return a + Math.max(0, b.dp); }, 0) || 1, foot;
+        if (R && R.injector) { var gain0 = items.filter(function (b) { return b.dp < 0; }).reduce(function (a, b) { return a - b.dp; }, 0); foot = 'Injection: THP − p̄r ' + _fmt(_dv(R.surface.thp - R.pr, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '; the column adds ' + _fmt(_dv(gain0, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'); }
+        else { var pg0 = items.filter(function (b) { return b.key === 'pump'; }).reduce(function (a, b) { return a - b.dp; }, 0); foot = pg0 > 0 ? 'Losses ' + _fmt(_dv(tot0, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + ' = p̄r − p_sep ' + _fmt(_dv(tot0 - pg0, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + ' + the pump ' + _fmt(_dv(pg0, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') : 'Total p̄r − p_sep: ' + _fmt(_dv(tot0, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'); }
+        var fWords = foot.split(' '), fLines = [], cur = '', maxCh = Math.max(20, Math.floor((cw - 20) / 6.4));
+        fWords.forEach(function (wd) { if ((cur + ' ' + wd).trim().length > maxCh && cur) { fLines.push(cur); cur = wd; } else cur = (cur + ' ' + wd).trim(); }); if (cur) fLines.push(cur);
+        var ch = Math.max(120, items.length * rowH + 16 + 15 * fLines.length);
         var dpr = Math.min(2, Math.max(1, G.devicePixelRatio || 1));
         cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
         var c = cv.getContext('2d'); if (!c) return;
@@ -43370,15 +43418,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             c.fillStyle = b.key === 'pump' ? (T.green || '#3fb950') : cols[i % cols.length]; c.fillRect(lw, y + 15, w, 8);
         });
         c.fillStyle = T.text2 || '#8b949e'; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
-        if (R && R.injector) { var gain = items.filter(function (b) { return b.dp < 0; }).reduce(function (a, b) { return a - b.dp; }, 0); c.fillText('Injection: THP − p̄r ' + _fmt(_dv(R.surface.thp - R.pr, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + '; the column adds ' + _fmt(_dv(gain, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14); }
-        else { var pg = items.filter(function (b) { return b.key === 'pump'; }).reduce(function (a, b) { return a - b.dp; }, 0); c.fillText(pg > 0 ? 'Losses ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi') + ' = p̄r − p_sep ' + _fmt(_dv(tot - pg, 'pressure'), 0) + ' + the pump ' + _fmt(_dv(pg, 'pressure'), 0) : 'Total p̄r − p_sep: ' + _fmt(_dv(tot, 'pressure'), 0) + ' ' + _lab('pressure', 'psi'), lw, 8 + items.length * rowH + 14); }
+        fLines.forEach(function (ln, k) { c.fillText(ln, lw, 8 + items.length * rowH + 14 + 15 * k); });
+        cv.setAttribute && cv.setAttribute('data-foot', foot);
         cv.__h2oilSnapshot = null;
     }
 
     // Verdicts (report-captured ✓ / ⚠ / ✗ lines) + validity
     function _verdicts() {
         var R = ST.R, M = ST.M, out = [], ok = !!(R && R.ok);
-        var add = function (st, t) { out.push({ st: st, t: String(t).slice(0, 290) }); };
+        var add = function (st, t) { t = String(t); if (/^[✓⚠✗ℹ]?\s?ESP[: ]/.test(t)) t = _msgU(t); out.push({ st: st, t: t.slice(0, 290) }); };   // ESP engine lines in display units (review fix v4.5)
         if (!M) return out;
         if (!ok) { if (R && !_isStub(R)) add('fail', '✗ No operating point: ' + (((R.errors || [])[0]) || 'the outflow curve lies above the inflow curve.')); return out; }
         var gasW = _isGasType(M.fluid.type), qv = function (q) { return gasW ? _u(q / 1000, 'gasRate', 3, 'MMscf/d') : _u(q, 'liquidRate', 0, 'STB/d'); };
@@ -43450,7 +43498,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         (c.validity || []).forEach(function (v) {
             if (!v) return;
             var prov = v.provisional || v.verified === false;
-            out.push({ st: v.inRange === false ? 'warn' : 'ok', t: ((v.inRange === false ? '⚠ ' : '✓ ') + (v.msg || (v.corr + (v.inRange === false ? ': outside the data range (extrapolation)' : ': inside the data range'))) + (prov ? ' — provisional — not verified against a published example.' : '')).slice(0, 290) });
+            // review fix (v4.5): the provisional label once (a message may carry it already) and the info style for a provisional entry
+            var msg = v.msg || (v.corr + (v.inRange === false ? ': outside the data range (extrapolation)' : ': inside the data range'));
+            var st = v.inRange === false ? 'warn' : (prov ? 'info' : 'ok');
+            out.push({ st: st, t: ((st === 'warn' ? '⚠ ' : st === 'info' ? 'ℹ ' : '✓ ') + msg + (prov && !/provisional/i.test(msg) ? ' — provisional — not verified against a published example.' : '')).slice(0, 290) });
         });
         (c.warnings || []).slice(0, 4).forEach(function (w) { var m = w && (w.msg || w); if (m) out.push({ st: 'warn', t: ('⚠ ' + m).slice(0, 290) }); });
         return out;
@@ -44017,7 +44068,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // Sensitivity variables (WTS_wp_sens.VARS, WP6): [key, label, field unit]; the fallback list keeps the page usable without the engine.
     // Values are typed in display units (SENS_CAT converts Metric entries to the field units of the engine); WC is in %.
     var SENS_FALLBACK = [['wc', 'Water cut', '%'], ['pr', 'Reservoir pressure p̄r', 'psia'], ['bean', 'Choke bean', '/64 in'], ['thp', 'Wellhead pressure (fixed, choke out of line)', 'psig'], ['gor', 'Producing GOR', 'scf/STB'], ['psep', 'Separator pressure', 'psig'], ['J', 'Productivity index J', 'STB/d/psi']];
-    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor' };
+    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor', J: 'productivityIndex' };
     function _sensDefs() {
         var SN = G.WTS_wp_sens;
         if (SN && SN.VARS && Array.isArray(SN.ORDER) && (G.__WP_STUBS || []).indexOf('WTS_wp_sens.job') === -1) return SN.ORDER.map(function (k) { return [k, SN.VARS[k].label, SN.VARS[k].unit]; });
@@ -44276,7 +44327,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var ue = _byId('wp_notes'); if (ue && ue.value && String(ue.value).trim()) user = String(ue.value).trim().slice(0, 560);
         var box = function (t) { return '<div style="margin-bottom:6px"><b>Notes</b> ' + _esc(t) + '</div>'; };
         h.innerHTML = box('Steady-state nodal analysis: the operating point is where the inflow (IPR) meets the outflow of the tubing, restrictions, choke and flowline to the separator. ' +
-                'The vertical lift marches on the true inclination of every segment (hydrostatic on TVD, friction on MD); one correlation for the whole well.') +
+                'The vertical lift marches on the true inclination of every segment (hydrostatic on TVD, friction on MD); ' + (_secRuns() ? 'per-section correlations by MD / inclination (' + _secSummary(_secRuns()) + ').' : 'one correlation for the whole well.')) +
             box('Black-oil fluid model' + (gas ? '; the gas-condensate well is a wet gas with a constant condensate volume (no retrograde dropout)' : '') + '. ' +
                 'Correlations outside their data range are extrapolations; those without a verified published example are labelled provisional. Restrictions use a homogeneous loss coefficient.') +
             box('The stability verdict is a static criterion (q_s): it does not predict heading or slugging. ' + (M && M.well.heat.mode === 'enthalpy'
@@ -44916,6 +44967,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         _commit('wp_ftype');
         // the sensitivity values were suggested for the previous model (review fix): suggest them again for the example
         _sensSuggest(1); _sensSuggest(2);
+        // the gas-lift example designs its valves straight away (a Job through the driver, like the button)
+        if (ex.design) { var gx = (G.WTS_wellperf_ext || {}).gldesign; if (gx && typeof gx.act === 'function' && ST.R && ST.R.ok) { _goStep(4, false); gx.act('wpg_design', null); } }
     }
     function _addRow(t) {
         var tbl = _byId('wp_tbl_' + t), tb = tbl && tbl.querySelector('tbody'); if (!tb) return;
@@ -45331,9 +45384,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _stepsHtml() {
         return '<nav class="wp-steps rp-skip" id="wp_steps" aria-label="Well performance steps">' + STEPS.map(function (s) {
             return '<button type="button" data-step="' + s.n + '"><span class="wp-dot" id="wp_dot_' + s.n + '" aria-hidden="true"></span>' + CIRC[s.n] + ' ' + s.label + '<span class="wp-sr" id="wp_dotsr_' + s.n + '"></span></button>';
-        }).join('') + '<span class="wp-sp"></span><span class="wp-ex">Examples: </span>' +
+        }).join('') + '<span class="wp-exs" role="group" aria-label="Examples"><span class="wp-ex">Examples: </span>' +
             '<button type="button" data-act="example" data-ex="oil" title="Load the example vertical oil well">Oil</button><button type="button" data-act="example" data-ex="gas" title="Load the example deviated gas-condensate well">Gas</button>' +
-            '<button type="button" data-act="example" data-ex="hz" title="Load the example horizontal oil well (Joshi inflow on the surveyed lateral)">Horizontal</button><button type="button" data-act="example" data-ex="ml" title="Load the example two-layer oil well with crossflow">Layers</button><button type="button" data-act="example" data-ex="inj" title="Load the example deviated water injector with a fracture-pressure limit">Injector</button><button type="button" data-act="example" data-ex="esp" title="Load the example deviated oil well on an electrical submersible pump">ESP</button></nav>';
+            '<button type="button" data-act="example" data-ex="hz" title="Load the example horizontal oil well (Joshi inflow on the surveyed lateral)">Horizontal</button><button type="button" data-act="example" data-ex="ml" title="Load the example two-layer oil well with crossflow">Layers</button><button type="button" data-act="example" data-ex="inj" title="Load the example deviated water injector with a fracture-pressure limit">Injector</button><button type="button" data-act="example" data-ex="esp" title="Load the example deviated oil well on an electrical submersible pump">ESP</button><button type="button" data-act="example" data-ex="gl" title="Load the example deviated oil well on gas lift and design its unloading valves">Gas lift</button></span></nav>';
     }
     function _tableBlock(t, title, hint, o) {
         o = o || {};
@@ -45359,10 +45412,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             _card('Condensate drop-out', '<div class="fg">' + _fg('wp_rvmode', 'Condensate model', { options: [['none', 'Wet gas — no mass transfer (default)'], ['table', 'Modified black oil — Rv table (provisional)']] }) +
                 _fg('wp_pdew', 'Dew point', { unit: 'psia', data: 'data-rv="table"', ph: 'from the table', hint: 'Blank = where the Rv table reaches the CGR. Drag it on the plot.' }) + '</div>' +
                 '<div data-rv="table">' + _tableBlock('rv', 'Vaporised condensate Rv', 'Lab constant-volume depletion: pressure and the condensate still in the gas (Rv ≤ CGR). Above the dew point all the condensate is vaporised.',
-                    { btns: '<button type="button" class="btn btn-secondary" data-act="rvex">Example Rv table</button>' }) + '</div>') +
-            _card('Condensate along the well', '<div id="wp_rvk" aria-live="polite"></div><div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rv" tabindex="0" aria-label="Vaporised and free condensate against pressure, with the dew point handle"></canvas></div>' +
-                '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rvd" tabindex="0" aria-label="Free condensate along the well at the operating point against depth"></canvas></div>' +
-                '<div class="wp-hint rp-skip">Drag the dew point on the left plot: the drop-out depth follows on release. The right plot reads MD and TVD along the deviated well (the TVD / MD switch of the traverse card).</div>') + '</div>' +
+                    { btns: '<button type="button" class="btn btn-secondary" data-act="rvex">Example Rv table</button>' }) + '</div>') + '</div>' +
             '<div class="wp-2c" data-for="oil">' +
             _card('Emulsion', '<div class="fg">' + _fg('wp_emul', 'Liquid viscosity', { options: [['none', 'Oil + water mixture (default)'], ['woelflin', 'Woelflin emulsion curves (provisional)'], ['brinkman', 'Brinkman emulsion (provisional)'], ['table', 'Emulsion table (μ_em / μo)']] }) +
                 _fg('wp_emulT', 'Emulsion', { options: [['loose', 'Loose'], ['medium', 'Medium'], ['tight', 'Tight']], data: 'data-emul="woelflin"' }) +
@@ -45405,7 +45455,6 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 _fg('wp_respb', 'Bubble point (composite)', { unit: 'psia' }) + ipFields + '</div><div id="wp_iprchip" class="rp-skip" style="margin-top:6px"></div>' +
                 '<div class="wp-btns rp-skip"><button type="button" class="btn btn-secondary" data-act="prism">Import from PRiSM</button><button type="button" class="btn btn-secondary" data-act="bu" title="k, h, skin and p̄r from the latest interpreted build-up of this well">Import from Build-up Surveillance</button></div><div id="wp_prismmsg"></div><div id="wp_bumsg"></div>') +
             '<div class="wp-col">' + _card('Inflow performance', '<div class="chart-wrap"><canvas id="wp_cv_ipr" aria-label="Inflow performance relationship plot"></canvas></div><div id="wp_iprsum" style="margin-top:8px"></div>') +
-            '<div id="wp_iprsbox" class="wp-off">' + _card('Inflow study', '<div class="wp-hint" id="wp_iprs_t" style="margin:0 0 6px;font-weight:700;color:var(--text2)"></div><div class="chart-wrap"><canvas id="wp_cv_iprs" tabindex="0" aria-label="Inflow study plot with a drag handle on the model variable"></canvas></div><div class="wp-legend-hint rp-skip" id="wp_iprs_n"></div>', { cls: 'rp-skip' }) + '</div>' +
             '<div data-ip="layers">' + _card('Layers', _tableBlock('layers', 'Layers (commingled)', 'Top / bottom MD and p̄r per layer; J (oil) or LIT a, b (gas, p²), or k, h and S with rw and re from the inflow card. TVD comes from the deviation survey; the rate column is the operating point (negative = crossflow into the layer).')) + '</div>' +
             '</div></div></section>';
         var s3 = '<section id="wp_step_3" class="wp-sec" style="display:none"><div class="wp-sec-h">③ Well <span>deviation survey, strings, restrictions, perforations and temperature</span></div>' +
@@ -45535,6 +45584,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 { tools: '<span class="wp-tabs" id="wp_trtabs" role="tablist">' + [['traverse', 'Pressure & temperature'], ['corr', 'Correlations'], ['map', 'Flow-regime map'], ['loading', 'Liquid loading'], ['choke', 'Choke'], ['sens', 'Sensitivity'], ['beans', 'Bean schedule']].map(function (t) { return '<button type="button" data-tab="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</span>' +
                     '<span class="wp-seg" id="wp_depthseg"><button type="button" data-depth="tvd">TVD</button><button type="button" data-depth="md">MD</button></span>' }) +
             _ext('resHtml').join('') +
+            // review fix (v4.5): the inflow-study plot and the condensate plots are results — inside #wp_res, so the page report and the
+            // Quick Report carry them from any step (their inputs stay in steps ① / ②)
+            '<div id="wp_iprsbox" class="wp-off">' + _card('Inflow study', '<div class="wp-hint" id="wp_iprs_t" style="margin:0 0 6px;font-weight:700;color:var(--text2)"></div><div class="chart-wrap"><canvas id="wp_cv_iprs" tabindex="0" aria-label="Inflow study plot with a drag handle on the model variable"></canvas></div><div class="wp-legend-hint rp-skip" id="wp_iprs_n"></div>', {}) + '</div>' +
+            '<div data-for="gas condensate" data-rv="table">' + _card('Condensate along the well', '<div id="wp_rvk" aria-live="polite"></div><div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rv" tabindex="0" aria-label="Vaporised and free condensate against pressure, with the dew point handle"></canvas></div>' +
+                '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_rvd" tabindex="0" aria-label="Free condensate along the well at the operating point against depth"></canvas></div>' +
+                '<div class="wp-hint rp-skip">Drag the dew point on the left plot: the drop-out depth follows on release. The right plot reads MD and TVD along the deviated well (the TVD / MD switch of the traverse card).</div>') + '</div>' +
             '<div class="rbox" id="wp_valid"></div>' +
             '<div class="rbox wp-case" id="wp_case"></div>' +
             '<div class="rbox wp-case" id="wp_studies"></div>' +
@@ -45641,7 +45696,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 return { ST: ST, PATM: PATM, PROVISIONAL: PROVISIONAL_TXT, byId: _byId, esc: _esc, fin: _fin, fmt: _fmt, fx: _fx, u: _u, dv: _dv, fromDisp: _fromDisp, lab: _lab, metric: _metric,
                     rateCat: _rateCat, isGas: _isGasType, read: _read, card: _card, fg: _fg, kpiHtml: _kpiHtml, vHtml: _vHtml, drive: _drive, jobOf: _jobOf, call: _call, fn: _fn,
                     setCtrl: _setCtrl, commit: _commit, syncUi: _syncUi, liveScalars: _liveScalars, plots: _plots, plotsSet: _plotsSet, mdTvdTxt: _mdTvdTxt, tvdAt: _tvdAt,
-                    tempDiff: _tempDiff, phone: _phone, reduced: _reduced, parseList: _parseList, fmtListNum: _fmtListNum, decComma: _decComma, sensVarLabel: _sensVarLabel, sensDv: _sensDv,
+                    tempDiff: _tempDiff, msgU: _msgU, dls: _dls, phone: _phone, reduced: _reduced, parseList: _parseList, fmtListNum: _fmtListNum, decComma: _decComma, sensVarLabel: _sensVarLabel, sensDv: _sensDv,
                     renderSystemPlot: _renderSystemPlot, renderStudies: _renderStudies, renderSchematic: _renderSchematic, renderNotes: _renderNotes, renderAllTables: _renderAllTables,
                     goStep: function (n) { _goStep(n, true); }, solveNow: _solveNow, mkey: _mkey,
                     solveLive: function () { if (!ST.slow && _liveMs() <= LIVE_MS) { _solveLive(); return true; } return false; } };
@@ -46011,7 +46066,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //       oil (Havlena & Odeh 1963 straight line with the user's N, no aquifer): F = N·(E_o + m·E_g + E_f,w) with
 //         F = N_p·[B_o + (R_p − R_s)·B_g] + W_p·B_w, E_o = (B_o − B_oi) + (R_si − R_s)·B_g, E_g = B_oi·(B_g/B_gi − 1),
 //         E_f,w = (1 + m)·B_oi·(c_w·S_wi + c_f)/(1 − S_wi)·Δp; PVT from the model's fluid (WTS_wp_fluid.table, the same correlations as
-//         the march); R_p = the model's producing GOR, held (no relative-permeability gas breakthrough: optimistic below p_b).
+//         the march); the producing GOR (spec.gas, default 'corey'): solution-gas drive R = R_s + (k_rg/k_ro)·(μ_o·B_o)/(μ_g·B_g) on the
+//         material-balance saturations with Corey curves k_ro = (S_o/(1 − S_wi))^n_o, k_rg = ((S_g − S_gc)/(1 − S_wi − S_gc))^n_g —
+//         ASSUMED defaults S_gc 5 %, n_o 3, n_g 2, S_wi 0.2 (spec.sgc / no / ng / swi); 'retained' keeps the liberated gas in the reservoir
+//         (R = R_s: optimistic below p_b). R_p = G_p / N_p integrates R over the steps (review fix v4.5: this header said R_p was held).
 //     The tank models have no verified published example yet (Q9): every tank result is verified:false with the provisional label
 //     and the tank mode is never the default (D17; wellperf-validate BENCH forecast gasTank / oilTank 'pending').
 //   Decline / EUR cross-check against 35-rta-dca: when PRiSM_declineResults() has a decline fit ({ok, eur, remaining, units}), the
@@ -47096,7 +47154,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var awg = String(cb.awg == null || cb.awg === '' ? '2' : cb.awg); if (!CU_R20[awg]) awg = '2';
         out.ok = true; out.errors = [];
         out.md = md; out.tvd = typeof W.tvdAt === 'function' ? W.tvdAt(md) : md; out.inc = at && _fin(at.inc) ? at.inc : null; out.dls = dls;
-        out.f = f; out.N = N; out.pump = np.pump; out.sepEff = sep; out.natSep = e.natSep !== false; out.visc = e.visc !== false; out.od = od;
+        out.f = f; out.N = N; out.pump = np.pump; out.sepEff = sep; out.natSep = e.natSep === true; out.visc = e.visc === true;   // D17 (review fix v4.5): both provisional → opt-in, never a default
+        out.od = od;
         out.casingId = _casingAt(M.well && M.well.strings, md);
         out.motor = { hp: _n(mo.hp), volt: _n(mo.volt), amp: _n(mo.amp) };
         out.cable = { awg: awg, len: _n(cb.len_ft) > 0 ? _n(cb.len_ft) : md + 100, lenDefault: !(_n(cb.len_ft) > 0) };
@@ -47353,7 +47412,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<div class="chart-wrap"><canvas id="wp_cv_esp" tabindex="0" aria-label="ESP pump plot: total head against the rate through the pump; the frequency fan, the recommended range, the head the well needs and the operating point; drag the frequency and stages rails to re-solve"></canvas></div>' +
             '<div class="wp-legend-hint rp-skip">Drag <b>FREQ</b> or <b>STAGES</b> on the top rails (or focus the plot, [ / ] then the arrows) and the well re-solves with the pump. Shaded: the recommended operating range across frequency; dashed: the frequency fan; blue: the head the well needs at each rate.</div>' +
             '<div class="wpe-stage rp-skip" id="wpe_stage" aria-hidden="true"></div><div class="wpe-stagel rp-skip" id="wpe_stagel"></div>' +
-            '<div class="rbox" id="wpe_sum" style="margin-top:10px"></div><div class="wpe-flags" id="wpe_flags"></div>', { id: 'wpe_rescard', cls: 'wp-off' });
+            '<div class="rbox" id="wpe_sum" style="margin-top:10px"></div><div class="wpe-flags" id="wpe_flags"></div>' +
+            // review fix (v4.5): the frequency sweep result lives here, inside #wp_res, so the report and the Quick Report carry it from any
+            // step (the frequency list and the button stay in step ④)
+            '<div id="wpe_frres" class="wp-off" style="margin-top:12px"><div class="rbox-title">Rate against frequency</div><div class="wp-cmpk" id="wpe_frk"></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_espf" tabindex="0" aria-label="Liquid rate against the ESP frequency; drag the frequency line to re-solve"></canvas></div><div id="wpe_sweep"></div></div>', { id: 'wpe_rescard', cls: 'wp-off' });
     }
     function stepHtml(n) {
         var p = P(); if (!p || n !== 4) return null;
@@ -47365,8 +47428,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             _fgx('wp_esp_freq', 'Frequency', { unit: 'Hz', def: '60', step: '0.5' }) + _fgx('wp_esp_stages', 'Stages', { def: '', step: '1', ph: 'size below' }) +
             '<div class="wpe-grp">Gas and fluid</div>' +
             _fgx('wp_esp_sep', 'Gas separator efficiency', { unit: '%', def: '0', hint: '0 = no rotary separator.' }) +
-            _fgx('wp_esp_nat', 'Natural gas separation at the intake', { check: true, def: true }) +
-            _fgx('wp_esp_visc', 'Viscosity correction', { check: true, def: true }) +
+            _fgx('wp_esp_nat', 'Natural gas separation at the intake (provisional)', { check: true, def: false }) +
+            _fgx('wp_esp_visc', 'Viscosity correction (provisional)', { check: true, def: false }) +
             _fgx('wp_esp_od', 'Pump and motor OD', { unit: 'in', def: '4', step: '0.01' }) +
             '<div class="wpe-grp">Motor and cable</div>' +
             _fgx('wp_esp_hp', 'Motor power (base frequency)', { unit: 'hp', ph: 'nameplate' }) + _fgx('wp_esp_volt', 'Motor voltage', { unit: 'V', ph: 'nameplate' }) +
@@ -47384,9 +47447,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<div class="wpe-lib rp-skip"><label for="wpe_lib" style="font-size:11px;color:var(--text2)">Pump library (this device)</label><select id="wpe_lib" aria-label="Saved pumps"></select>' +
             '<button type="button" class="btn btn-secondary" data-act="esplibload">Load</button><button type="button" class="btn btn-secondary" data-act="esplibsave">Save this pump</button><button type="button" class="btn btn-secondary" data-act="esplibdel">Remove</button></div>' +
             '<div id="wpe_pumpsum" style="margin-top:8px"></div>', { id: 'wpe_curvecard' });
-        var fr = p.card('Rate against frequency', '<div class="chart-wrap"><canvas id="wp_cv_espf" tabindex="0" aria-label="Liquid rate against the ESP frequency; drag the frequency line to re-solve"></canvas></div>' +
-            '<div class="wpe-go rp-skip">' + _fgx('wpv_esp_flist', 'Frequencies', { text: true, unit: 'Hz', def: FAN.join(' ') }) + '<span class="wp-hint" style="flex:1 1 220px;margin:0">One solve per frequency, each warm-started from the one before (a Job). Points are coloured by the operating range: green inside, amber down- or upthrust.</span></div>' +
-            '<div id="wpe_sweep"></div>', { id: 'wpe_frcard' });
+        var fr = p.card('Rate against frequency',
+            '<div class="wpe-go rp-skip">' + _fgx('wpv_esp_flist', 'Frequencies', { text: true, unit: 'Hz', def: FAN.join(' ') }) + '<span class="wp-hint" style="flex:1 1 220px;margin:0">One solve per frequency, each warm-started from the one before (a Job): the plot and table appear in the ESP results card. Points are coloured by the operating range: green inside, amber down- or upthrust.</span></div>', { id: 'wpe_frcard' });
         return '<div data-lift="esp" class="wpe-wrap">' + '<div class="wpe-2c">' + setting + '<div>' + curve + fr + '</div></div></div>';
     }
 
@@ -47421,7 +47483,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (W && W.ok && typeof W.at === 'function' && !L) { var a = W.at(md); inc = a && _fin(a.inc) ? a.inc : null; }
         var pill = function (t, st) { return '<span class="wpe-pill' + (st ? ' ' + st : '') + '">' + _esc(t) + '</span>'; };
         h.innerHTML = pill(p.mdTvdTxt(md, L ? L.pumpTvd : null)) + (_fin(inc) ? pill('inclination ' + p.fmt(inc, 1) + '°', inc > 80 ? 'warn' : '') : '') +
-            (_fin(dls) ? pill('dogleg ' + p.fmt(dls, 1) + '°/100 ft', dls > 6 ? 'fail' : (dls > 3 ? 'warn' : 'ok')) : '') + (L && !_fin(+e.pumpMd) ? pill('default: end of tubing', '') : '');
+            (_fin(dls) ? pill('dogleg ' + (p.dls ? p.dls(dls) : p.fmt(dls, 1) + '°/100 ft'), dls > 6 ? 'fail' : (dls > 3 ? 'warn' : 'ok')) : '') + (L && !_fin(+e.pumpMd) ? pill('default: end of tubing', '') : '');
     }
     function _kpis(p) {
         var h = _byId('wpe_kpi'); if (!h) return;
@@ -47449,7 +47511,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var rows = [], row = function (l, v) { rows.push('<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv">' + _esc(v) + '</span></div>'); };
         if (L) {
             row('Pump', L.pump.name + (L.pump.example && !/generic/i.test(L.pump.name) ? ' (generic example)' : '') + ', base ' + p.fmt(L.pump.f0, 0) + ' Hz, BEP ' + _qL(p, L.pump.bep.q) + ' at ' + p.fmt(L.pump.bep.eff * 100, 0) + ' %');
-            row('Setting', p.mdTvdTxt(L.pumpMd, L.pumpTvd) + (_fin(L.inc) ? ', ' + p.fmt(L.inc, 1) + '°' : '') + (_fin(L.dls) ? ', dogleg ' + p.fmt(L.dls, 1) + '°/100 ft' : ''));
+            row('Setting', p.mdTvdTxt(L.pumpMd, L.pumpTvd) + (_fin(L.inc) ? ', ' + p.fmt(L.inc, 1) + '°' : '') + (_fin(L.dls) ? ', dogleg ' + (p.dls ? p.dls(L.dls) : p.fmt(L.dls, 1) + '°/100 ft') : ''));
             row('Frequency, stages', p.fmt(L.freq, 1) + ' Hz, ' + p.fmt(L.stages, 0) + ' stages');
             row('Rate (surface / through the pump)', _qL(p, R.rates.qL) + ' / ' + _qL(p, L.Qin) + ' at the intake, ' + _qL(p, L.Qout) + ' at the discharge');
             row('Intake / discharge pressure', p.u(L.pInt - p.PATM, 'pressureG', 0, 'psig') + ' / ' + p.u(L.pDis - p.PATM, 'pressureG', 0, 'psig') + ' (rise ' + p.u(L.dp, 'pressure', 0, 'psi') + ')');
@@ -47464,7 +47526,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             row('Methods', L.methods.map(function (m) { return m.label + (m.verified ? '' : ' — provisional'); }).join('; '));
         }
         h.innerHTML = rows.length ? '<div class="rbox-title">Electrical submersible pump</div>' + rows.join('') : '';
-        if (fl) fl.innerHTML = L ? (L.flags || []).map(function (f) { return p.vHtml({ st: f.sev === 'fail' ? 'fail' : f.sev === 'warn' ? 'warn' : f.sev === 'ok' ? 'ok' : 'info', t: (f.sev === 'fail' ? '✗ ' : f.sev === 'warn' ? '⚠ ' : f.sev === 'ok' ? '✓ ' : 'ℹ ') + f.msg }); }).join('') +
+        if (fl) fl.innerHTML = L ? (L.flags || []).map(function (f) { return p.vHtml({ st: f.sev === 'fail' ? 'fail' : f.sev === 'warn' ? 'warn' : f.sev === 'ok' ? 'ok' : 'info', t: (f.sev === 'fail' ? '✗ ' : f.sev === 'warn' ? '⚠ ' : f.sev === 'ok' ? '✓ ' : 'ℹ ') + (p.msgU ? p.msgU(f.msg) : f.msg) }); }).join('') +
             p.vHtml({ st: 'info', t: 'ℹ ESP methods without a verified published example are labelled provisional — not verified against a published example (viscosity correction, natural separation, gas criterion, motor and cable basics).' }) : '';
         _stageBar(p, L);
     }
@@ -47548,6 +47610,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             y: { label: 'Liquid rate (' + p.lab('liquidRate', 'bbl/d') + ')', min: 0, short: 'q_L', fmtR: function (v) { return p.fmt(v, 0) + ' ' + p.lab('liquidRate', 'bbl/d'); } },
             series: ser, markers: mk, bands: bands, handles: L && rows.length ? [{ key: 'espF', kind: 'lineX', value: L.freq, min: 30, max: 90, step: 0.5, label: 'f', color: T.blue, fmt: function (v) { return p.fmt(v, 1) + ' Hz'; } }] : [], onHandle: _onHandle,
             legendNote: stale ? 'Faint curve: previous inputs — re-run' : null, empty: 'Run “Rate against frequency” (one solve per frequency).' });
+        var box = _byId('wpe_frres'); if (box && box.classList) box.classList.toggle('wp-off', !(s && s.ok));
+        var fk = _byId('wpe_frk');
+        if (fk) {
+            var best = rows.filter(function (r) { return r.rangeStatus === 'ok'; }).sort(function (a, b) { return b.qL - a.qL; })[0] || rows.slice().sort(function (a, b) { return b.qL - a.qL; })[0];
+            fk.innerHTML = best ? '<div class="wp-cmpc st-' + (best.rangeStatus === 'ok' ? 'ok' : 'warn') + '"><span class="kpi-l">Best in range</span><span class="kpi-v">' + _esc(p.fmt(best.f, 1) + ' Hz · ' + _qL(p, best.qL)) + '</span><em class="kpi-s">' + _esc(rows.length + ' frequencies' + (stale ? ' · previous inputs' : '')) + '</em></div>' : '';
+        }
         var tb = _byId('wpe_sweep');
         if (tb) tb.innerHTML = s && s.ok ? '<div class="wp-tw"><table class="dtable"><thead><tr><th>Hz</th><th>Liquid (' + _esc(p.lab('liquidRate', 'bbl/d')) + ')</th><th>Intake (' + _esc(p.lab('pressureG', 'psig')) + ')</th><th>Gas in</th><th>Pump hp</th><th>Motor load</th><th>Range</th></tr></thead><tbody>' +
             s.rows.map(function (r) { return '<tr><td>' + p.fmt(r.f, 1) + '</td><td class="num">' + (r.ok ? p.fmt(p.dv(r.qL, 'liquidRate'), 0) : 'no flow') + '</td><td class="num">' + (r.ok ? p.fmt(p.dv(r.pInt - p.PATM, 'pressureG'), 0) : '—') + '</td><td class="num">' + (r.ok ? p.fmt(r.gvf * 100, 1) + ' %' : '—') + '</td><td class="num">' + (r.ok ? p.fmt(p.dv(r.bhp, 'power'), 0) : '—') + '</td><td class="num">' + (_fin(r.load) ? p.fmt(r.load * 100, 0) + ' %' : '—') + '</td><td>' + (r.ok ? (r.rangeStatus === 'ok' ? '✓ inside' : (r.rangeStatus === 'down' ? '⚠ downthrust' : '⚠ upthrust')) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
@@ -47583,7 +47651,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (!np.ok) { h.innerHTML = p.vHtml({ st: 'fail', t: '✗ ' + np.errors[0] }); return; }
         var P0 = np.pump;
         h.innerHTML = '<div class="wpe-md" style="margin:0">' + ['BEP ' + _qL(p, P0.bep.q) + ' · ' + p.u(P0.bep.h, 'length', 1, 'ft') + '/stage · ' + p.fmt(P0.bep.eff * 100, 0) + ' %', 'range ' + p.fmt(p.dv(P0.range.qMin, 'liquidRate'), 0) + '–' + _qL(p, P0.range.qMax) + (P0.range.assumed ? ' (assumed ±30 %)' : ''), 'at ' + p.fmt(P0.f0, 0) + ' Hz', P0.rows.length + ' rows' + (P0.example ? ' · generic example' : '')]
-            .map(function (t) { return '<span class="wpe-pill">' + _esc(t) + '</span>'; }).join('') + '</div>' + (np.warnings || []).map(function (w) { return p.vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + w.msg }); }).join('');
+            .map(function (t) { return '<span class="wpe-pill">' + _esc(t) + '</span>'; }).join('') + '</div>' + (np.warnings || []).map(function (w) { return p.vHtml({ st: w.sev === 'info' ? 'info' : 'warn', t: (w.sev === 'info' ? 'ℹ ' : '⚠ ') + (p.msgU ? p.msgU(w.msg) : w.msg) }); }).join('');
     }
     function _collect(p) {
         var tb = _byId('wpe_tbl'), meta = _byId('wpe_meta'); if (!tb) return null;
@@ -48732,7 +48800,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var MATCH_KEYS = ['rs', 'bo', 'muod', 'muo'];
     function _matchNorm(m, c) {
         if (!m || typeof m !== 'object' || m.on !== true) return null;
-        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null };
+        var out = { pbFactor: _fin(+m.pbFactor) && +m.pbFactor > 0 ? +m.pbFactor : null, mult: {}, shift: {}, stale: false, corr: m.corr || null,
+            rsPb: _fin(+m.rsPb) && +m.rsPb > 0 ? +m.rsPb : null };   // review fix (v4.5): the Rs shift tapers to zero below this pressure
         ['rs', 'bo', 'muo'].forEach(function (k) {
             var a = m.mult && +m.mult[k], b = m.shift && +m.shift[k];
             if (_fin(a) && a > 0 && a !== 1) out.mult[k] = a;
@@ -48987,7 +49056,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (yi > 0 && !water) pvt.imp = { n2: +s.yN2 || 0, co2: +s.yCO2 || 0, h2s: +s.yH2S || 0 };
         var matchApplied = !!(oil && s.match && !s.match.stale);
         if (s.mult && !(s.match && s.match.stale)) { var m = {}; ['rs', 'bo', 'muo', 'mug', 'z'].forEach(function (k) { if (_fin(+s.mult[k]) && +s.mult[k] > 0) m[k] = +s.mult[k]; }); if (Object.keys(m).length) pvt.mult = m; }
-        if (matchApplied && Object.keys(s.match.shift).length) pvt.shift = Object.assign({}, s.match.shift);
+        // the lab-matched Rs maps the GOR back for the bubble point (flowline _gorCorr) — only for a match, not for a plain mult.rs
+        if (matchApplied && ((s.match.mult.rs && s.match.mult.rs !== 1) || s.match.shift.rs)) pvt.matchRs = true;
+        if (matchApplied && Object.keys(s.match.shift).length) { pvt.shift = Object.assign({}, s.match.shift); if (s.match.shift.rs && s.match.rsPb) pvt.shift.rsPb = s.match.rsPb; }
         var rvOn = !!(s.rv && gasT && cgr > 0 && s.rv.rows.length);
         if (rvOn) pvt.rv = { rows: s.rv.rows, pd: _rvPd(s.rv, cgr) };
         var emOn = !!(s.emul && oil && (s.emul.model !== 'table' || s.emul.rows.length));
@@ -49175,7 +49246,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var PATM = 14.696, RANK = 459.67, GFT = 32.16;
     var TC = { cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32], verified: false, label: 'Thornhill-Craver' };
     var PROVISIONAL = 'provisional — not verified against a published example';
+    // the valve design on the model path (deviated well, the model's inflow / correlation / temperatures): no published worked example
+    // checked (Q9) → verified:false, labelled provisional on the card, verdicts, notes and report (review fix v4.5, BENCH lift glDesign)
+    var DESIGN = { verified: false, label: 'Gas-lift valve design on the model path (spacing after API RP 11V6)' };
     var UNDER = 0.8, OVER = 1.2;
+    var PORT_TXT = { 8: '1/8', 12: '3/16', 16: '1/4', 20: '5/16', 24: '3/8', 28: '7/16', 32: '1/2' };
+    function _portTxt(p64) { return PORT_TXT[p64] || (p64 + '/64'); }
 
     function _fin(v) { return typeof v === 'number' && isFinite(v); }
     function _n(v) { if (typeof v === 'number') return isFinite(v) ? v : null; if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v; return null; }
@@ -49302,12 +49378,13 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var T = _throughput(D, st.In, st.In.port), warnings = [];
             (D.warnings || []).forEach(function (t) { warnings.push(_w('GL_DESIGN', t, 'info')); });
             if (D.spacingFail) warnings.push(_w('GL_SPACING', 'The unloading valves cannot reach the point of injection: the spacing stops after valve ' + D.spacingFail.after + ' (' + _f(D.spacingFail.d, 0) + ' ft MD). Raise the kickoff pressure or lower the kill-fluid gradient.'));
-            if (T.op && T.op.tc && T.op.tc.q < st.In.qinj) warnings.push(_w('GL_PORT_SMALL', 'The ' + T.op.port + '/64 in port of the operating valve passes ' + _f(T.op.tc.q, 0) + ' Mscf/d at its opening conditions, less than the design ' + _f(st.In.qinj, 0) + ' Mscf/d' + (T.rec ? ': use ' + T.rec + '/64 in.' : '.')));
+            if (T.op && T.op.tc && T.op.tc.q < st.In.qinj) warnings.push(_w('GL_PORT_SMALL', 'The ' + _portTxt(T.op.port) + ' in port of the operating valve passes ' + _f(T.op.tc.q, 0) + ' Mscf/d at its opening conditions, less than the design ' + _f(st.In.qinj, 0) + ' Mscf/d' + (T.rec ? ': use ' + _portTxt(T.rec) + ' in.' : '.')));
             if (T.op && T.op.tc && !T.op.tc.critical) warnings.push(_w('GL_SUBCRITICAL', 'Port flow at the operating valve is sub-critical (p_t/p_c ' + _f(T.op.tc.r, 2) + ' > ' + _f(T.op.tc.rc, 2) + '): the injection follows the tubing pressure (heading risk; see the stability numbers).', 'info'));
             warnings.push(_w('TC_PROVISIONAL', 'Thornhill-Craver valve throughput is ' + PROVISIONAL + '.', 'info'));
+            warnings.push(_w('GLD_PROVISIONAL', DESIGN.label + ': ' + PROVISIONAL + '.', 'info'));
             st.res = { ok: true, gl: D, valves: T.rows, operating: T.op ? { n: T.op.n, md: T.op.md, tvd: T.op.tvd } : null, qinj: st.In.qinj, qL: st.In.qL, port: st.In.port, R: st.In.R,
                 portRec: T.rec, capOk: !!(T.op && T.op.ok), packerMd: st.In.packerMd, tSrc: st.In.tSrc, inputs: (function () { var c = {}; Object.keys(st.In.input).forEach(function (k) { if (k !== 'ipr' && k !== 'segments' && k !== 'tAt' && k !== 'pvt') c[k] = st.In.input[k]; }); return c; })(),
-                notes: st.In.notes, warnings: warnings, errors: [], ms: Date.now() - st.t0, provisional: [TC.label] };
+                notes: st.In.notes, warnings: warnings, errors: [], ms: Date.now() - st.t0, provisional: [DESIGN.label, TC.label], verified: false };
             // kept for setValve (a valve dragged to another depth is re-set on the same design lines); functions, not serialised
             Object.defineProperty(st.res, '_tAt', { value: st.In.input.tAt, enumerable: false });
             Object.defineProperty(st.res, '_tvdAt', { value: st.In.ctx.W.tvdAt, enumerable: false });
@@ -49556,14 +49633,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var F2 = t.ok ? Math.abs(dpdq) * Math.abs(t.dqdp2) : null;
         var s1 = F1 > 1, s2 = _fin(F2) ? F2 < 1 : null;
         var verdict = !s1 ? 'fail' : (s2 === false ? 'warn' : 'ok');
-        return { ok: true, F1: F1, F2: F2, stable1: s1, stable2: s2, verdict: verdict, label: 'Asheim (1988) criteria', verified: false, provisional: PROVISIONAL,
+        return { ok: true, F1: F1, F2: F2, stable1: s1, stable2: s2, verdict: verdict, label: 'Static stability and injection loop gain (screening, after Asheim 1988)', verified: false, casingHeading: false, provisional: PROVISIONAL,
             parts: { q: q, dpInDq: dIn, dpOutDq: dOut, dDdq: dD, H: H, pti: pti, pca: pca, qLres_ft3s: qLr, vG_ft3s: vG, rhoL: rhoL, rhoG: rhoG, Bg: Bg, dpdqg: dpdq,
                 port64: port, critical: t.ok ? t.critical : null, r: t.ok ? t.r : null, rc: t.ok ? t.rc : null, dqvdpt: t.ok ? t.dqdp2 : null, qValve: t.ok ? t.q : null, qinj: L.qinj, dpValve: _n(gl.dpValve) },
             errors: [], warnings: [] };
     }
 
     var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
-    NS.TC = TC; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
+    NS.TC = TC; NS.DESIGN = DESIGN; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
     NS.diagnose = diagnose; NS.parseSurvey = parseSurvey; NS.matchSurvey = matchSurvey; NS.asheim = asheim; NS.pdAt = _pdAt;
 })();
 
@@ -49661,8 +49738,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             return { src: 'installed', rows: rows };
         }
         if (S.desRows && S.desRows.length) {
-            rows = S.desRows.map(function (v, i) { var r = {}; Object.keys(v).forEach(function (k) { r[k] = v[k]; }); r.i = i; r.src = 'design'; r.kind = 'ipo'; return r; });
-            if (S.drag && S.drag.src === 'design' && rows[S.drag.i] && S.drag.row) { var d0 = S.drag.row; Object.keys(d0).forEach(function (k) { rows[S.drag.i][k] = d0[k]; }); rows[S.drag.i].i = S.drag.i; rows[S.drag.i].dragging = true; }
+            rows = S.desRows.map(function (v, i) { var r = {}; Object.keys(v).forEach(function (k) { r[k] = v[k]; }); r.i = i; r.src = 'design'; r.kind = 'ipo'; r.tvd = tvdAt(r.md); return r; });
+            if (S.drag && S.drag.src === 'design' && rows[S.drag.i] && S.drag.row) { var d0 = S.drag.row; Object.keys(d0).forEach(function (k) { rows[S.drag.i][k] = d0[k]; }); rows[S.drag.i].i = S.drag.i; rows[S.drag.i].tvd = tvdAt(rows[S.drag.i].md); rows[S.drag.i].dragging = true; }
             return { src: 'design', rows: rows };
         }
         void W;
@@ -49713,7 +49790,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<button type="button" class="btn btn-secondary" data-act="wpg_use">Use this design</button>' +
             '<button type="button" class="btn btn-secondary" data-act="wpg_port" style="display:none">Use the recommended port</button></div>' +
             '<div id="wpg_msg" class="rp-skip" role="status"></div>' +
-            '<div class="wp-hint" style="margin:6px 0 4px">Spacing on the deviated path with the model\'s inflow, correlation and flowing temperatures (the injection pressure and rate above). Installed valves (written to the well):</div>' +
+            '<div class="wp-hint" style="margin:6px 0 4px">Spacing on the deviated path with the model\'s inflow, correlation and flowing temperatures (the injection pressure and rate above) — provisional, not verified against a published example. Installed valves (written to the well):</div>' +
             '<div id="wpg_edit" class="rp-skip"></div>' +
             '<div class="wpg-go rp-skip"><button type="button" class="btn btn-secondary" data-act="wpg_add">Add a valve</button><button type="button" class="btn btn-secondary" data-act="wpg_clear">Remove all valves</button></div>',
             { id: 'wpg_dcard' });
@@ -49773,23 +49850,30 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_view"]'), function (b) { var on = b.getAttribute('data-v') === view; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
         Array.prototype.forEach.call(document.querySelectorAll('#wpg_card [data-act="wpg_depth"]'), function (b) { var on = b.getAttribute('data-v') === dax; if (b.classList) b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
     }
-    function _kfmt(p, md, tvd) { return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(_fin(tvd) ? tvd : p.tvdAt(md), 'length'), 0) + ' TVD ' + p.lab('length', 'ft'); }
+    function _kfmt(p, md, tvd) { var t2 = p.tvdAt(md); return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(_fin(t2) ? t2 : tvd, 'length'), 0) + ' TVD ' + p.lab('length', 'ft'); }
     function _renderKpi(p) {
         var h = _byId('wpg_kpi'); if (!h) return;
         var vs = _vset(p), R = p.ST.R, out = [], k = function (l, v, s, st, t) { out.push(p.kpiHtml(l, v, s, st, t)); };
-        k('Valves', vs.rows.length ? String(vs.rows.length) : '—', vs.src === 'installed' ? 'installed' : (vs.src === 'design' ? 'design' + (S.desEdited ? ' (moved)' : '') + ' — not installed' : 'design the valves'), vs.rows.length ? (vs.src === 'installed' ? 'ok' : 'info') : 'none');
+        var spI = _spacingIssue(p, vs.rows);
+        k('Valves', vs.rows.length ? String(vs.rows.length) : '—', vs.src === 'installed' ? 'installed' + (spI ? ' · spacing' : '') : (vs.src === 'design' ? 'design' + (S.desEdited ? ' (moved)' : '') + ' — not installed' + (spI ? ' · spacing' : '') : 'design the valves'), vs.rows.length ? (spI ? 'warn' : (vs.src === 'installed' ? 'ok' : 'info')) : 'none');
         var op = S.diag && S.diag.ok && S.diag.operating ? S.diag.operating : (S.des && S.des.ok && S.des.operating && vs.src === 'design' ? S.des.operating : null);
         var deepest = vs.rows.length ? vs.rows[vs.rows.length - 1] : null;
         if (op) k('Operating valve', 'V' + op.n, _kfmt(p, op.md, op.tvd), deepest && Math.abs(deepest.md - op.md) > 1 && S.diag && S.diag.ok ? 'warn' : 'ok', 'The valve that passes the lift gas');
-        else if (R && R.ok && R.lift) k('Injection point', _kfmt(p, R.lift.injMd, R.lift.injTvd).replace(/ ft$|\s\S+$/, ''), 'point of balance (no valves)', 'info');
+        else if (R && R.ok && R.lift) {
+            // the system solve injects at the point of balance (plan §18.3.9); with valves shown say so, and warn when that depth is below
+            // the deepest valve (it cannot inject there)
+            var below = deepest && R.lift.injMd > deepest.md + 1;
+            k('Injection point', _kfmt(p, R.lift.injMd, R.lift.injTvd).replace(/ ft$|\s\S+$/, ''), !vs.rows.length ? 'point of balance (no valves)' : ('system solve: point of balance — not yet at the ' + (vs.src === 'installed' ? 'installed' : 'design') + ' valves' + (below ? ' (below the deepest valve)' : '')), below ? 'warn' : 'info',
+                vs.rows.length ? 'The operating solve injects at the point of balance; the valve set is not yet used by the system solve' : 'The point of balance of the operating solve');
+        }
         if (S.des && S.des.ok && S.des.valves) {
             var ov = S.des.valves.filter(function (v) { return v.role === 'Operating'; })[0];
             if (ov && ov.tc) k('Port throughput', p.u(ov.tc.q, 'gasRateSmall', 0, 'Mscf/d'), 'need ' + p.u(S.des.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' · ' + (PORT_TXT[ov.port] || ov.port + '/64') + ' in' + (ov.tc.critical ? ' · critical' : ''), ov.tc.q >= S.des.qinj ? 'ok' : 'fail', 'Thornhill-Craver (provisional) at the operating valve');
         }
         var a = S.ash;
         if (a && a.ok) {
-            k('Asheim F1', _fin(a.F1) ? p.fmt(a.F1, 2) : '∞', 'inflow · stable > 1', a.stable1 ? 'ok' : 'fail', 'Static inflow criterion at the operating point — provisional');
-            if (_fin(a.F2)) k('Asheim F2', p.fmt(a.F2, 2), 'injection' + (a.parts.critical ? ' · critical port' : '') + ' · stable < 1', a.stable2 ? 'ok' : 'warn', 'Valve–tubing loop gain — provisional');
+            k('Static stability F1', _fin(a.F1) ? p.fmt(a.F1, 2) : '∞', 'inflow / outflow slopes · stable > 1', a.stable1 ? 'ok' : 'fail', 'Static inflow-to-outflow slope ratio at the operating point (screening, after Asheim 1988) — provisional');
+            if (_fin(a.F2)) k('Injection loop gain F2', p.fmt(a.F2, 2), 'valve–column' + (a.parts.critical ? ' · critical port' : '') + ' · stable < 1', a.stable2 ? 'ok' : 'warn', 'Valve-to-column loop gain (screening, after Asheim 1988; casing heading not assessed) — provisional');
         }
         if (S.diag) k('Diagnosis', S.diag.ok ? ({ ok: 'normal', warn: 'check', fail: 'problem' }[S.diag.verdict]) : 'not run', S.diag.ok ? (S.diag.test.id ? 'test ' + S.diag.test.id : 'selected test') : ((S.diag.errors || [])[0] || ''), S.diag.ok ? S.diag.verdict : 'info');
         if (S.sur && S.sur.ok) k('Survey match', 'RMS ' + p.fmt(p.dv(S.sur.rms, 'pressure'), 0) + ' ' + p.lab('pressure', 'psi'), S.sur.n + ' stops · bias ' + p.fmt(p.dv(S.sur.bias, 'pressure'), 0), S.sur.verdict);
@@ -49803,7 +49887,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var head = ['#', 'MD (' + dl + ')', 'TVD (' + dl + ')', 'T (' + tl + ')', 'Port', 'p<sub>tro</sub> (' + pl + ')'].concat(diag ? ['p<sub>c</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'p<sub>vo</sub> (' + pl + ')', 'Gas (' + ql + ')', 'Status'] : ['p<sub>vo</sub> (' + pl + ')', 'p<sub>t</sub> (' + pl + ')', 'Capacity (' + ql + ')', 'Role']);
         var rows = vs.rows.map(function (v, i) {
             var st = _state(v), cls = (st === 'operating' ? ' class="op"' : '');
-            var c = [String(i + 1), p.fmt(p.dv(v.md, 'length'), 0), p.fmt(p.dv(_fin(v.tvd) ? v.tvd : p.tvdAt(v.md), 'length'), 0)];
+            var c = [String(i + 1), p.fmt(p.dv(v.md, 'length'), 0), p.fmt(p.dv(p.tvdAt(v.md), 'length'), 0)];
             if (diag) {
                 var d = diag.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] || {};
                 c.push(_fin(d.t) ? p.fmt(p.dv(d.t, 'temperature'), 0) : '—', (PORT_TXT[v.port] || v.port + '/64'), _fin(v.ptro) ? p.fmt(p.dv(v.ptro, 'pressureG'), 0) : '—',
@@ -49828,16 +49912,20 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var g = D.gl;
             add(g.reachesPoi ? 'ok' : 'warn', D.valves.length + ' valves; operating valve at ' + _kfmt(p, D.operating ? D.operating.md : g.poiValve, D.operating ? D.operating.tvd : g.poiValveTvd) + ', operating surface injection ' + p.u(D.valves[D.valves.length - 1].pso, 'pressureG', 0, 'psig') + ' (' + p.u(D.inputs.dpdrop, 'pressure', 0, 'psi') + ' per valve).');
             // the design's own sub-critical note is left out when a diagnosis of a test says the same about the installed valve
-            (D.warnings || []).forEach(function (w) { if (w.code !== 'TC_PROVISIONAL' && !(w.code === 'GL_SUBCRITICAL' && S.diag && S.diag.ok)) add(w.sev === 'info' ? 'info' : 'warn', w.msg); });
+            (D.warnings || []).forEach(function (w) { if (w.code !== 'TC_PROVISIONAL' && w.code !== 'GLD_PROVISIONAL' && !(w.code === 'GL_SUBCRITICAL' && S.diag && S.diag.ok)) add(w.sev === 'info' ? 'info' : 'warn', w.msg); });
+            // a valve moved off the design (drag) — order and spacing against the minimum (review fix v4.5)
+            var spc = _spacingIssue(p, _vset(p).rows);
+            if (spc) add('warn', spc);
         } else if (D && !D.ok) add('warn', 'Design: ' + ((D.errors || [])[0] || 'failed'));
+        if (!(D && D.ok)) { var spc2 = _spacingIssue(p, _vset(p).rows); if (spc2) add('warn', spc2); }
         if (S.diag && S.diag.ok) {
             if (!S.diag.flags.length) add('ok', 'Diagnosis: valve ' + S.diag.operating.n + ' operates alone at ' + _kfmt(p, S.diag.operating.md, S.diag.operating.tvd) + '; ' + p.u(S.diag.qinj, 'gasRateSmall', 0, 'Mscf/d') + ' within the valve throughput.');
             S.diag.flags.forEach(function (f) { add(f.sev === 'fail' ? 'fail' : (f.sev === 'info' ? 'info' : 'warn'), f.msg); });
         } else if (S.diag && !S.diag.ok) add('info', (S.diag.errors || [])[0] || 'Diagnosis not available.');
         var a = S.ash;
-        if (a && a.ok) add(a.verdict === 'ok' ? 'ok' : a.verdict === 'fail' ? 'fail' : 'warn', 'Stability after Asheim (1988): F1 ' + (_fin(a.F1) ? p.fmt(a.F1, 2) : '∞') + (a.stable1 ? ' > 1' : ' ≤ 1') + (_fin(a.F2) ? ', F2 ' + p.fmt(a.F2, 2) + (a.stable2 ? ' < 1' : ' ≥ 1 (heading risk: a larger valve ΔP or a smaller port makes the port flow critical)') : '') + ' — provisional.');
+        if (a && a.ok) add(a.verdict === 'ok' ? 'ok' : a.verdict === 'fail' ? 'fail' : 'warn', 'Static stability and injection loop gain (screening, after Asheim 1988; annulus-volume casing heading not modelled): F1 ' + (_fin(a.F1) ? p.fmt(a.F1, 2) : '∞') + (a.stable1 ? ' > 1' : ' ≤ 1') + (_fin(a.F2) ? ', F2 ' + p.fmt(a.F2, 2) + (a.stable2 ? ' < 1' : ' ≥ 1 (heading risk: a larger valve ΔP or a smaller port makes the port flow critical)') : '') + ' — provisional.');
         if (S.sur && S.sur.ok && S.sur.brk) add('info', 'Survey gradient break at ' + _kfmt(p, S.sur.brk.md, S.sur.brk.tvd) + (S.sur.nearValve ? ' — valve ' + S.sur.nearValve.n + ' (' + p.u(S.sur.nearValve.dMd, 'length', 0, 'ft') + ' away)' : '') + '.');
-        if ((D && D.ok) || (a && a.ok)) add('info', 'Thornhill-Craver throughput and the Asheim numbers are provisional — not verified against a published example.');
+        if ((D && D.ok) || (a && a.ok)) add('info', 'The valve design on the model path, the Thornhill-Craver throughput and the stability screening numbers are provisional — not verified against a published example.');
         h.innerHTML = out.join('');
     }
     function _renderEditor(p) {
@@ -49918,7 +50006,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             legs.forEach(function (lg, i) { var pts = lg.map(function (q) { return [Xg(q.p), Y(q.d, q.tvd)]; }); ser.push({ key: 'ld' + i, label: i ? '' : 'Unloading (kill fluid)', legend: i === 0, color: T.blue, width: 1.3, pts: pts }); });
             line('ab', 'Tubing, with lift gas', c.above, T.accent, 2.4, null, Xg);
             line('bl', 'Tubing, formation gas', c.below, T.red, 1.8, [3, 3], Xg);
-            if (_fin(D.gl.poiValve)) hl.push({ y: Y(D.gl.poiValve, D.gl.poiValveTvd), label: 'point of injection', color: T.accent, dash: [2, 3] });
+            if (_fin(D.gl.poiValve)) hl.push({ y: Y(D.gl.poiValve), label: 'point of injection', color: T.accent, dash: [2, 3] });
         } else if (view === 'diag' && dg) {
             ser.push({ key: 'cas', label: 'Casing from the CHP', color: T.purple, width: 2.2, pts: dg.casing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
             ser.push({ key: 'tub', label: 'Tubing from the THP', color: T.accent, width: 2.4, pts: dg.tubing.map(function (r) { return [Xa(r.p), Y(r.md, r.tvd)]; }) });
@@ -49943,7 +50031,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var st = _state(v), col = T[STATE_COL[st]] || T.blue, dgv = dg ? dg.valves.filter(function (x) { return Math.abs(x.md - v.md) < 0.5; })[0] : null;
             var xv = dgv && _fin(dgv.pc) ? Xa(dgv.pc) : (_fin(v.pvo) ? Xg(v.pvo) : (_fin(v.ptro) ? Xg(v.ptro) : xMax * 0.9));
             handles.push({ key: 'glv' + i, kind: 'point', x: xv, value: Y(v.md, v.tvd), min: 0, max: Y(Math.max(0, (pk || yMaxMd) - 10)), step: p.metric() ? 3 : 10, label: 'V' + (i + 1), color: col,
-                fmt: function (vv) { var md = _mdOf(p, vv, dax); return p.phone() ? p.fmt(p.dv(md, 'length'), 0) : p.fmt(p.dv(md, 'length'), 0) + ' MD'; } });
+                fmt: function (vv) { var dr = S.drag && S.drag.i === i, md = dr ? _mdOf(p, vv, dax) : v.md; return p.phone() ? p.fmt(p.dv(md, 'length'), 0) : p.fmt(p.dv(md, 'length'), 0) + ' MD'; } });
         });
         var empty = !_on(p.ST.M) ? 'Choose gas lift to design the valves.' : (view === 'diag' ? 'Choose a test with a CHP (step ⑥) and valves to see the diagnosis.' : 'Design the valves in step ④ to see the design chart.');
         V.chart(cv, { key: 'glv:' + view + ':' + dax + (p.metric() ? 'm' : 'i'), aspect: p.phone() ? 1.3 : 0.7, minH: 300, maxH: 560, w: 640, readout: 'y',
@@ -49951,6 +50039,21 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + p.lab('length', 'ft') + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { var md = _mdOf(p, v, dax), tvd = dax === 'md' ? p.tvdAt(md) : p.fromDisp(v, 'length'); return p.fmt(p.dv(md, 'length'), 0) + ' MD · ' + p.fmt(p.dv(tvd, 'length'), 0) + ' TVD'; } },
             series: ser, markers: mk, hlines: hl, handles: handles, onHandle: _onHandle, empty: (ser.length || handles.length) ? null : empty,
             hidden: p.plots().glvHidden || null, onLegend: function (hid) { p.plotsSet({ glvHidden: hid }); } });
+    }
+    function _minSp(p) {
+        var d = (p.ST.M && p.ST.M.lift && p.ST.M.lift.gl && p.ST.M.lift.gl.design) || {}, v = _num(d.minsp);
+        if (!_fin(v) && S.des && S.des.inputs && _fin(S.des.inputs.minsp)) v = S.des.inputs.minsp;
+        return _fin(v) && v >= 0 ? v : 250;
+    }
+    // valves out of order or closer than the minimum spacing (MD) → a warning text, else null
+    function _spacingIssue(p, rows) {
+        if (!rows || rows.length < 2) return null;
+        var msp = _minSp(p), bad = null;
+        for (var i = 1; i < rows.length && !bad; i++) {
+            var d = rows[i].md - rows[i - 1].md;
+            if (d < msp - 0.5) bad = 'Valves ' + i + ' and ' + (i + 1) + ' are ' + p.u(Math.max(0, d), 'length', 0, 'ft') + ' apart (MD), below the minimum spacing ' + p.u(msp, 'length', 0, 'ft') + (d < 0 ? ' — out of order' : '') + ': move one or design again.';
+        }
+        return bad;
     }
     function _mdOf(p, vDisp, dax) {
         var v = p.fromDisp(vDisp, 'length');
@@ -49964,6 +50067,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var vs = _vset(p); if (!vs.rows[i]) return;
         var W = p.ST.W, lim = W && W.nodes ? Math.min(_fin(p.ST.R && p.ST.R.lift && p.ST.R.lift.packerMd) ? p.ST.R.lift.packerMd : Infinity, _fin(W.nodes.tubingShoeMd) ? W.nodes.tubingShoeMd : Infinity, W.nodes.midPerfMd || Infinity) : Infinity;
         md = Math.max(50, Math.min(_fin(lim) ? lim - 10 : md, Math.round(md / 5) * 5));
+        // keep the order and the minimum spacing: between the neighbouring valves ± the minimum spacing (review fix v4.5)
+        var msp = _minSp(p), prevV = vs.rows[i - 1], nextV = vs.rows[i + 1];
+        var lo = prevV ? prevV.md + msp : 50, hi = nextV ? nextV.md - msp : Infinity, cur0 = vs.rows[i].md;
+        // a set that already breaks the spacing (typed in the editor): only the order is kept, so the move is not pushed away
+        if (!(lo <= hi && cur0 >= lo - 1 && cur0 <= hi + 1)) { lo = prevV ? prevV.md + 5 : 50; hi = nextV ? nextV.md - 5 : Infinity; }
+        if (lo <= hi) md = Math.max(lo, Math.min(hi, md));
         if (vs.src === 'design') {
             var base = S.desRows[i], row = L.setValve({ ok: true, valves: S.desRows, gl: S.des.gl, inputs: S.des.inputs, _tAt: S.des._tAt, _tvdAt: S.des._tvdAt }, i, md);
             if (!row) return;
@@ -50130,7 +50239,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     }
     function notes() {
         var p = P(); if (!p || !_on(p.ST.M)) return null;
-        return ['Gas-lift design: unloading valves spaced with API RP 11V6 on the deviated path (gas column and kill-fluid gradient on TVD, spacing on MD) with the model\'s inflow, well correlation and flowing temperatures; Thornhill-Craver valve throughput with the critical-ratio cap and the Asheim (1988) stability numbers are provisional — not verified against a published example.'];
+        return ['Gas-lift design: unloading valves spaced after API RP 11V6 on the deviated path (gas column and kill-fluid gradient on TVD, spacing on MD) with the model\'s inflow, well correlation and flowing temperatures — the design on the model path, the Thornhill-Craver valve throughput with the critical-ratio cap and the static stability / injection loop-gain screening numbers (after Asheim 1988; casing heading from the annulus volume not modelled) are provisional — not verified against a published example. The system solve injects at the point of balance, not yet at the installed valves.'];
     }
     function reset() { S.des = null; S.desKey = null; S.desRows = null; S.desEdited = false; S.diag = null; S.diagKey = null; S.ash = null; S.ashR = null; S.sur = null; S.surR = null; S.surRows = null; S.surParse = null; S.drag = null; S.sdrag = null; S.msg = null; }
     function resize() { var cv = _byId('wp_cv_glv'); if (cv && G.WTS_wp_view) G.WTS_wp_view.redraw(cv); }
@@ -51633,7 +51742,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 gain: sm.gain, gas90: sm.gas90, stable: sm.stable, incGor: _fin(incGor) ? incGor : 0, evals: pts.reduce(function (a, p) { return a + (p.evals || 0); }, 0), warnings: warnings.slice(), errors: [] };
             if (!res.ok) { res.code = 'NO_FLOW'; res.errors.push('No injection rate gives an operating point: check the injection pressure, the packer depth and the surface boundary.'); }
             if (nat && !nat.ok) res.warnings.push(_w('GL_DEAD_WELL', 'The well does not flow naturally at these settings: every rate on the curve is lifted.', 'info'));
-            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; see the Asheim stability numbers of the gas-lift design card).'));
+            if (sm.stable.length) res.warnings.push(_w('GL_UNSTABLE', 'Statically unstable at ' + sm.stable.map(function (x) { return _f(x, 0); }).join(', ') + ' Mscf/d of lift gas (heading risk; see the stability screening numbers of the gas-lift design card).'));
             var noInj = pts.filter(function (p) { return !p.ok && /injection/i.test(String(p.error || '') + String(p.code || '')); });
             if (noInj.length) res.warnings.push(_w('GL_NO_INJECTION', 'At some rates the casing pressure cannot open a point above the packer: raise the injection pressure or lower the valve ΔP.'));
             if (sm.optimum && sm.optimum.qinj === list[list.length - 1] && list.length > 2) res.warnings.push(_w('GL_OPT_AT_END', 'The maximum rate is at the largest injection rate of the list: extend the list to find the optimum.', 'info'));
@@ -52677,7 +52786,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     };
     var IP_PREFIX = 'wp_ip_';
     // B (WP26): the ESP setting and equipment (M.lift.esp; the pump curve itself is the table key 'pump' → M.lift.esp.pump). Defaults live in
-    // WTS_wp_esp (60 Hz, natural separation and the viscosity correction on, no separator, 4.0 in OD, #2 cable to the pump MD + 100 ft)
+    // WTS_wp_esp (60 Hz, natural separation and the viscosity correction OFF — both provisional, opt-in (D17, review fix v4.5) — no
+    // separator, 4.0 in OD, #2 cable to the pump MD + 100 ft)
     [['wp_esp_md', 'lift.esp.pumpMd', 'num'], ['wp_esp_freq', 'lift.esp.freq', 'num'], ['wp_esp_stages', 'lift.esp.stages', 'num'], ['wp_esp_sep', 'lift.esp.sepEff', 'num', 0.01],
      ['wp_esp_nat', 'lift.esp.natSep', 'bool'], ['wp_esp_visc', 'lift.esp.visc', 'bool'], ['wp_esp_od', 'lift.esp.od_in', 'num'], ['wp_esp_hp', 'lift.esp.motor.hp', 'num'],
      ['wp_esp_volt', 'lift.esp.motor.volt', 'num'], ['wp_esp_amp', 'lift.esp.motor.amp', 'num'], ['wp_esp_clen', 'lift.esp.cable.len_ft', 'num']].forEach(function (r) {
@@ -52849,7 +52959,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var num3 = function (m, d) { var r = {}; ['rs', 'bo', 'muo'].forEach(function (k) { var v = _isObj(m) ? _num(m[k]) : null; r[k] = v == null ? d : v; }); return r; };
             var c = _isObj(a.corr) ? a.corr : {}, cc = {};
             ['rs', 'bo', 'muod', 'muo'].forEach(function (k) { if (typeof c[k] === 'string' && /^[A-Za-z0-9_]{1,32}$/.test(c[k])) cc[k] = c[k]; });
-            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
+            o.adopt = { on: true, pbFactor: _num(a.pbFactor), mult: num3(a.mult, 1), shift: num3(a.shift, 0), rsPb: _num(a.rsPb), corr: cc, T_F: _num(a.T_F), edited: a.edited === true,
                         mare: _isObj(a.mare) ? _clone(a.mare) : null, ts: _num(a.ts), labKey: typeof a.labKey === 'string' ? a.labKey.slice(0, 64) : null };
         } else o.adopt = null;
         return o;
@@ -52915,7 +53025,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (rec.lab) {
                 // B (WP23): the lab record; an adopted match goes to fluid.match (WTS_wp_fluid applies it while the correlations agree)
                 M.fluid.lab = rec.lab;
-                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift,
+                M.fluid.match = rec.lab.adopt && rec.lab.adopt.on ? { lab: rec.lab, on: true, pbFactor: rec.lab.adopt.pbFactor, mult: rec.lab.adopt.mult, shift: rec.lab.adopt.shift, rsPb: rec.lab.adopt.rsPb,
                     corr: rec.lab.adopt.corr, T_F: rec.lab.adopt.T_F, edited: rec.lab.adopt.edited } : { lab: rec.lab };
                 M.fluid.rv.rows = rec.lab.rv; M.fluid.emul.rows = rec.lab.emul;
             }
@@ -53162,7 +53272,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _build(spec, T, match) {
         var W = G.WTS_wp_fluid; if (!W || typeof W.build !== 'function') return null;
         var s = _clone(spec);
-        if (match) s.match = { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr || null };
+        if (match) s.match = { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, rsPb: match.rsPb || null, corr: match.corr || null };
         return W.build(s, { T_F: T, table: false });
     }
     function _corrOf(spec) { var c = (spec && spec.corr) || {}; return { rs: c.rs || 'standing', bo: c.bo || 'standing', muod: c.muod || 'beggsRobinson', muo: c.muo || 'beggsRobinson' }; }
@@ -53191,15 +53301,16 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return n ? 100 * s / n : null;
     }
     // closed-form relative (1 / y²) weighted least squares of y ≈ a·yc + b (b = 0 when fixB) — the cross-check of the LM fit (X22)
-    function wls(yc, y, fixB) {
+    // xb (optional): the regressor of b per point (the Rs shift tapers as min(1, p / pb_lab); default 1)
+    function wls(yc, y, fixB, xb) {
         var n = y.length, Sw = 0, Sx = 0, Sy = 0, Sxx = 0, Sxy = 0;
-        for (var i = 0; i < n; i++) { var w = 1 / (y[i] * y[i]); Sw += w; Sx += w * yc[i]; Sy += w * y[i]; Sxx += w * yc[i] * yc[i]; Sxy += w * yc[i] * y[i]; }
+        for (var i = 0; i < n; i++) { var w = 1 / (y[i] * y[i]), u = xb ? xb[i] : 1; Sw += w * u * u; Sx += w * yc[i] * u; Sy += w * y[i] * u; Sxx += w * yc[i] * yc[i]; Sxy += w * yc[i] * y[i]; }
         if (!(Sxx > 0)) return null;
         if (fixB || n < 2) return { a: Sxy / Sxx, b: 0 };
         var det = Sw * Sxx - Sx * Sx; if (!(Math.abs(det) > 1e-300)) return { a: Sxy / Sxx, b: 0 };
         return { a: (Sw * Sxy - Sx * Sy) / det, b: (Sxx * Sy - Sx * Sxy) / det };
     }
-    function _lmFit(yc, y, bnd, fixB) {
+    function _lmFit(yc, y, bnd, fixB, xb) {
         // relative least squares of y ≈ a·yc + b with PRiSM_lm; one point → a only
         var LM = G.PRiSM_lm;
         if (typeof LM !== 'function') return { ok: false, code: 'MISSING_ENGINE', name: 'PRiSM_lm' };
@@ -53209,7 +53320,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var yMax = Math.max.apply(null, y.map(Math.abs).concat([1e-9]));
         var bB = bnd.b || [-0.5 * yMax, 0.5 * yMax];
         var a0 = 1;
-        var model = function (tt, pr) { return tt.map(function (k) { return pr.a * yc[k] + pr.b; }); };
+        var model = function (tt, pr) { return tt.map(function (k) { return pr.a * yc[k] + pr.b * (xb ? xb[k] : 1); }); };
         var lm;
         try {
             lm = LM(model, { t: T, p: P, weights: Wt }, { a: a0, b: 0 }, { a: bnd.a, b: bB }, fixB ? { b: true } : null,
@@ -53218,7 +53329,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var a = Math.min(bnd.a[1], Math.max(bnd.a[0], +lm.params.a)), b = fixB ? 0 : Math.min(bB[1], Math.max(bB[0], +lm.params.b));
         // the problem is linear in (a, b): the closed-form weighted least squares is the optimality check of the LM answer (an LM stop on
         // its damping limit at the noise floor of rounded lab values is still the optimum when the objectives agree)
-        var cf = wls(yc, y, fixB), ssr = function (aa, bb) { var t = 0; for (var j = 0; j < n; j++) { var e = (aa * yc[j] + bb - y[j]) / y[j]; t += e * e; } return t; };
+        var cf = wls(yc, y, fixB, xb), ssr = function (aa, bb) { var t = 0; for (var j = 0; j < n; j++) { var e = (aa * yc[j] + bb * (xb ? xb[j] : 1) - y[j]) / y[j]; t += e * e; } return t; };
         var sL = ssr(a, b), sC = cf ? ssr(cf.a, cf.b) : null, inB = cf && cf.a >= bnd.a[0] && cf.a <= bnd.a[1] && (fixB || (cf.b >= bB[0] && cf.b <= bB[1]));
         var conv = !!lm.converged || (inB && Math.abs(sL - sC) <= 1e-9 * sC + 1e-18);
         return { ok: true, a: a, b: b, lm: lm, ci95: lm.ci95 || null, converged: conv, stopReason: lm.stopReason, iterations: lm.iterations, nEval: lm.nEval, bBounds: bB, cf: cf, ssr: sL };
@@ -53242,7 +53353,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var pts = rows.map(function (r, i) { return { p: r.p, lab: { rs: r.rs, bo: r.bo, muo: r.muo }, before: before[i], after: null }; });
         // 1. the bubble point (one value → the one-point factor of A1)
         var pbCorr = F0.pb(T), pbOut = { lab: L.pb, corr: pbCorr, after: null, factor: 1, errPct: null };
-        var match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: corr, T_F: T };
+        var match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: corr, T_F: T, rsPb: _fin(L.pb) ? L.pb : null };
         if (_fin(L.pb) && _fin(pbCorr) && pbCorr > 14.7) { match.pbFactor = pbCorr / L.pb; pbOut.factor = match.pbFactor; pbOut.errPct = 100 * (pbCorr / L.pb - 1); }
         else if (_fin(L.pb)) warnings.push(_w('PB_NOT_MATCHED', 'The correlation bubble point could not be evaluated: the lab bubble point is not matched.'));
         else warnings.push(_w('PB_NO_LAB', 'No lab bubble point: the bubble point is not matched (Rs, Bo and μo are).', 'info'));
@@ -53258,12 +53369,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 var y = q.lab[k];
                 if (!_fin(y) || !(y > 0) || !_fin(cur[i][k])) return;
                 if (k === 'rs' && ((pbLab != null && q.p > pbLab * (1 + 1e-9)) || (pbLab == null && y >= rsb * 0.999))) return;   // Rs above pb is Rsb by definition
+                if (k === 'rs' && pbLab != null && y >= rsb * 0.999 && q.p >= pbLab * 0.995) return;   // the lab pb point itself (Rs = Rsb) carries no slope
                 idx.push(i);
             });
             if (!idx.length) return;
             var yc = idx.map(function (i) { return cur[i][k]; }), y = idx.map(function (i) { return pts[i].lab[k]; });
             var fixB = idx.length < 2 || o.fixB === true;
-            var r = _lmFit(yc, y, BOUNDS[k], fixB);
+            var xb = (k === 'rs' && match.rsPb) ? idx.map(function (i) { return Math.min(1, pts[i].p / match.rsPb); }) : null;
+            var r = _lmFit(yc, y, BOUNDS[k], fixB, xb);
             if (k === 'rs' && r.ok && pbLab != null && match.pbFactor !== 1) {
                 // g(f) = f(a, b refitted at f) − f, solved by the secant method (Rs_c(p·f)·a is nearly a power law, so a plain fixed point
                 // creeps); the refit at the root is the answer
@@ -53271,8 +53384,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                     var mr2 = _clone(match); mr2.pbFactor = fv; mr2.mult.rs = 1; mr2.shift.rs = 0;
                     var cur2 = _props(_build(base, T, mr2), ps, T, rsb), yc2 = idx.map(function (i) { return cur2[i].rs; });
                     if (!yc2.every(_fin)) return null;
-                    var r2 = _lmFit(yc2, y, BOUNDS.rs, fixB); if (!r2.ok) return null;
-                    var Fp = _build(base, T, { pbFactor: 1, mult: { rs: r2.a, bo: 1, muo: 1 }, shift: { rs: r2.b, bo: 0, muo: 0 }, corr: corr }), pbm = Fp && Fp.ok ? Fp.pb(T) : null;
+                    var r2 = _lmFit(yc2, y, BOUNDS.rs, fixB, xb); if (!r2.ok) return null;
+                    var Fp = _build(base, T, { pbFactor: 1, mult: { rs: r2.a, bo: 1, muo: 1 }, shift: { rs: r2.b, bo: 0, muo: 0 }, rsPb: match.rsPb, corr: corr }), pbm = Fp && Fp.ok ? Fp.pb(T) : null;
                     return _fin(pbm) ? { f: fv, g: pbm / pbLab - fv, r: r2, yc: yc2 } : null;
                 };
                 var e0 = gOf(match.pbFactor), e1 = e0 ? gOf(e0.f + e0.g) : null;
@@ -53290,7 +53403,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (!r.ok) { warnings.push(_w('LM_' + k.toUpperCase(), (k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo') + ': the fit failed (' + (r.msg || r.code) + ').')); return; }
             match.mult[k] = r.a; match.shift[k] = r.b;
             props[k] = { n: idx.length, a: r.a, b: r.b, iter: k === 'rs' ? rsIter : undefined, ci95: r.ci95 ? { a: r.ci95.a || null, b: fixB ? null : (r.ci95.b || null) } : null, converged: r.converged,
-                iterations: r.iterations, nEval: r.nEval, stopReason: r.stopReason, cf: r.cf, yc: yc.slice(), y: y.slice(), fixedB: fixB, used: idx.map(function (i) { return pts[i].p; }) };
+                iterations: r.iterations, nEval: r.nEval, stopReason: r.stopReason, cf: r.cf, yc: yc.slice(), y: y.slice(), xb: xb ? xb.slice() : null, fixedB: fixB, used: idx.map(function (i) { return pts[i].p; }) };
             var lab = k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo';
             if (r.a < BAND.warn[0] || r.a > BAND.warn[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.8–1.25: the correlation is stretched far — try the family ranked first.', 'fail'));
             else if (r.a < BAND.ok[0] || r.a > BAND.ok[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.9–1.1.', 'warn'));
@@ -53347,7 +53460,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var c = Object.assign({}, (spec && spec.corr) || {}, { muod: muod, muo: muo });
         var s = Object.assign({}, spec, { corr: c });
         var n = normLab(lab), L = n.lab, fl = diffToFlash(L), rows = fl.rows;
-        var m = base && base.ok ? { on: true, pbFactor: base.match.pbFactor, mult: { rs: base.match.mult.rs, bo: 1, muo: 1 }, shift: { rs: base.match.shift.rs, bo: 0, muo: 0 }, corr: _corrOf(s) } : null;
+        var m = base && base.ok ? { on: true, pbFactor: base.match.pbFactor, mult: { rs: base.match.mult.rs, bo: 1, muo: 1 }, shift: { rs: base.match.shift.rs, bo: 0, muo: 0 }, rsPb: base.match.rsPb || null, corr: _corrOf(s) } : null;
         var F = _build(labOil(s, L, base ? base.rsb : _rsb(L, rows)), L.T_F, m);
         if (!F || !F.ok) return { muod: muod, muo: muo, label: label, verified: verified, ok: false };
         var pv = _props(F, rows.map(function (r) { return r.p; }), L.T_F, base ? base.rsb : _rsb(L, rows));
@@ -53406,7 +53519,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     function applyTo(spec, match) {
         var s = _clone(spec || {}) || {};
-        s.match = match ? Object.assign({}, s.match || {}, { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr }) : null;
+        s.match = match ? Object.assign({}, s.match || {}, { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, rsPb: match.rsPb || null, corr: match.corr }) : null;
         return s;
     }
 
@@ -53422,6 +53535,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var m = { pbFactor: EX.pbF, mult: { rs: EX.rs[0], bo: EX.bo[0], muo: EX.muo[0] }, shift: { rs: EX.rs[1], bo: EX.bo[1], muo: EX.muo[1] }, corr: _corrOf(base) };
         var F = _build(base, T, m); if (!F || !F.ok) return null;
         var pb = F.pb(T); if (!_fin(pb)) return null;
+        // the Rs shift tapers below the bubble point, as a fit applies it (the bubble point itself is unchanged: the taper is 1 there)
+        m.rsPb = Math.round(pb); F = _build(base, T, m); if (!F || !F.ok) return null;
         var ps = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map(function (x) { return Math.round(pb * x / 5) * 5; }).concat([Math.round(pb * 1.15 / 5) * 5, Math.round(pb * 1.35 / 5) * 5]);
         var rows = _props(F, ps, T, gor).map(function (r) { return { p: r.p, rs: Math.round(r.rs * 10) / 10, bo: Math.round(r.bo * 10000) / 10000, muo: Math.round(r.muo * 1000) / 1000 }; });
         return { v: 1, example: true, T_F: T, basis: 'flash', pb: Math.round(pb), rsbF: gor, bobF: null, rows: rows };
@@ -54179,7 +54294,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _gas(M) { var t = M && M.fluid && M.fluid.type; return t === 'gas' || t === 'condensate' || t === 'gasinj'; }
 
     var TABS = [['env', 'Operating envelope'], ['fcst', 'Depletion forecast'], ['torn', 'Tornado'], ['mat', 'Matrix (3–4 variables)'], ['cases', 'Cases']];
-    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor' };
+    var SENS_CAT = { pr: 'pressure', thp: 'pressureG', psep: 'pressureG', tubingId: 'lengthSmall', gor: 'gor', glr: 'gor', J: 'productivityIndex' };
+    var VD_WORD = { ok: 'suitable', warn: 'marginal', fail: 'unsuitable', na: 'not applicable' };
+    var STUDY_ARIA = { env: 'Operating envelope: wellhead deliverability against rate with every limit; drag the point along the curve, or focus the plot and use [ then the arrows',
+        fcst: 'Depletion forecast: rate, average pressure or cumulative against time; drag the time line, or focus the plot and use [ then the arrows', torn: 'Tornado study plot',
+        mat: 'Sensitivity matrix: rate against the column variable, one line per row value at the selected slice', cases: 'Case comparison: inflow and outflow curves of the compared cases' };
     var SENS_ID = { pr: 'wp_pr', wc: 'wp_wc', gor: 'wp_gor', thp: 'wp_thp', psep: 'wp_psep', bean: 'wp_bean', J: 'wp_ip_J', skin: 'wp_ip_S', cgr: 'wp_cgr', wgr: 'wp_wgr' };
     var KIND_LAB = { base: 'Base', matched: 'Matched', proposed: 'Proposed', other: 'Other' };
     var UNIT_TAGS = { wpv_env_dd: 'pressure', wpv_env_pwf: 'pressure', wpv_env_qfo: 'liquidRate', wpv_env_qfg: 'gasRateSmall', wpv_fc_pi: 'pressure', wpv_fc_pab: 'pressure',
@@ -54284,7 +54403,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             '<div id="wpb_msg" class="rp-skip" role="status"></div><div class="wp-cmpk" id="wpb_kpi"></div>' +
             '<div class="chart-wrap" id="wpb_cvw"><canvas id="wp_cv_st" tabindex="0" aria-label="Study plot"></canvas></div>' +
             '<div class="wpb-slider rp-skip wp-off" id="wpb_tslider"><label for="wpv_fc_t">Time</label><input type="range" id="wpv_fc_t" min="0" max="1" step="1" value="0" aria-label="Forecast time" aria-describedby="wpb_tval"><b id="wpb_tval">—</b></div>' +
-            '<div class="wpb-read" id="wpb_read" aria-live="polite"></div><div id="wpb_body"></div><div class="wp-legend-hint rp-skip" id="wpb_hint"></div>', { tools: tabs, id: 'wpb_card' });
+            '<div class="wpb-read" id="wpb_read" aria-live="polite"></div><div id="wpb_body"></div><div class="wp-legend-hint rp-skip" id="wpb_hint"></div>' +
+            '<div id="wpb_all"></div><div id="wpb_scr_r" class="rbox wp-off" style="margin-top:10px"></div>', { tools: tabs, id: 'wpb_card' });
     }
     function stepHtml(n) {
         var p = P(); if (!p || n !== 4) return null;
@@ -54327,6 +54447,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         Array.prototype.forEach.call(document.querySelectorAll('#wpb_card .wpb-steps, #wpb_card .wpb-tank'), function (e) { var isT = e.classList && e.classList.contains('wpb-tank'); if (e.style) e.style.display = (isT === (mode === 'tank')) ? '' : 'none'; });
         var ts = _byId('wpb_tslider'); if (ts && ts.classList) ts.classList.toggle('wp-off', !(tab === 'fcst' && S.fc && S.fc.ok && S.fc.rows.length > 1));
         var cw = _byId('wpb_cvw'); if (cw && cw.classList) cw.classList.toggle('wp-off', tab === 'torn');
+        var cvs = _byId('wp_cv_st'); if (cvs && cvs.setAttribute) cvs.setAttribute('aria-label', STUDY_ARIA[tab] || 'Study plot');
+        // the matrix variable lists follow the unit system (review fix v4.5: they kept the field-unit labels after a switch to Metric)
+        for (var mi = 1; mi <= 4; mi++) { var ms = _byId('wpv_mx' + mi); if (ms && ms.tagName === 'SELECT') { var mv = ms.value, nh = _varOpts(mv); if (ms._wpbOpts !== nh) { ms.innerHTML = nh; ms.value = mv; ms._wpbOpts = nh; } } }
         // the steps list follows the model's p̄r when it is empty
         var st = _byId('wpv_fc_steps'), M = p.ST.M;
         if (st && !String(st.value || '').trim() && M && _fin(M.res.pr)) { var a = []; for (var i = 0; i < 6; i++) a.push(p.fmtListNum(+p.dv(M.res.pr * (1 - 0.1 * i), 'pressure').toPrecision(4))); st.value = a.join(' '); }
@@ -54339,6 +54462,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         else if (tab === 'torn') _drawTorn(p);
         else if (tab === 'mat') _drawMat(p);
         else _drawCases(p);
+        _renderAll(p);
     }
 
     // ── operating envelope ───────────────────────────────────────────────────
@@ -54535,7 +54659,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         kp.innerHTML = (stale ? _staleChip(p) : '') +
             _chip('First step', r.rows[0] && r.rows[0].ok ? p.u(gas ? r.rows[0].qg : r.rows[0].q, rc[0], 0, rc[1]) : '—', 'p̄r ' + p.u(r.rows[0] && r.rows[0].pr, 'pressure', 0, 'psia'), r.rows[0] && r.rows[0].ok ? 'ok' : 'warn') +
             (gas ? _chip('Liquid loading', when(E.loading), E.loading && _fin(E.loading.md) ? p.mdTvdTxt(E.loading.md, E.loading.tvd) : '', E.loading ? 'warn' : 'ok') : '') +
-            _chip('Lift needed', when(E.lift), E.lift ? String(E.lift.reason || '').slice(0, 60) : 'flows to the end', E.lift ? 'warn' : 'ok') +
+            _chip('Lift needed', when(E.lift), E.lift ? 'does not flow — lift needed' : 'flows to the end', E.lift ? 'warn' : 'ok') +
             (r.totals ? _chip(gas ? 'Cumulative gas (provisional)' : 'Cumulative oil (provisional)', gas ? p.fmt(r.totals.produced / 1e6, 2) + ' Bscf' : p.fmt(r.totals.produced / 1e6, 3) + ' MMSTB', 'recovery ' + p.fmt(100 * (r.tank.recovery || 0), 1) + ' % · ' + p.fmt((last.t_d || 0) / 365.25, 1) + ' y', 'warn') : '') +
             (r.decline && r.decline.ok ? _chip('Decline cross-check', r.decline.ok && _fin(r.decline.remaining) ? 'remaining ' + p.fmt(r.decline.remaining, 0) + ' ' + ((r.decline.units && r.decline.units.vol) || '') : 'n/a', r.decline.ok ? (r.decline.model || '') + (_fin(r.decline.ratio) ? ' · forecast / decline ' + p.fmt(r.decline.ratio, 2) : '') : (r.decline.reason || ''), '') : '');
     }
@@ -54605,6 +54729,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         _mxCount(p);
     }
     function _mxCount(p) { var vs = _mxVars(p), n = vs.reduce(function (a, v) { return a * Math.max(1, v.values.length); }, 1), e = _byId('wpb_mxn'); if (e) e.textContent = vs.length + ' variable' + (vs.length === 1 ? '' : 's') + ' · ' + n + ' case' + (n === 1 ? '' : 's') + (n > 1000 ? ' — too many (≤ 1,000)' : '') + ' · each warm-started from a solved neighbour.'; }
+    // a short variable name and its display unit for the best-case labels (review fix v4.5: '0 · 3,300 · 48' had no labels)
+    var MX_SHORT = { wc: 'WC', pr: 'p̄r', bean: 'bean', gor: 'GOR', glr: 'GLR', thp: 'THP', psep: 'p_sep', tubingId: 'tubing', J: 'J', skin: 'S', kh: 'kh', wgr: 'WGR', cgr: 'CGR' };
+    function _mxShort(p, r, d) { return MX_SHORT[r.keys[d]] || r.labels[d].replace(/ \(.*\)$/, ''); }
+    function _mxUnit(p, r, d) { var k = r.keys[d], u = r.units && r.units[d]; if (r.axes[d].labels && r.axes[d].labels.some(Boolean)) return ''; if (k === 'bean') return '/64'; if (k === 'wc') return ' %'; return u ? ' ' + (SENS_CAT[k] ? p.lab(SENS_CAT[k], u) : u) : ''; }
     function _mxFlat(r, ix) { var f = 0; for (var d = 0; d < ix.length; d++) f += ix[d] * r.strides[d]; return f; }
     function _drawMat(p) {
         var r = S.mat, bd = _byId('wpb_body'), kp = _byId('wpb_kpi'), cv = _byId('wp_cv_st'), V = G.WTS_wp_view; if (!bd || !cv || !V) return;
@@ -54626,7 +54754,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var best = r.cases.filter(function (c) { return c.R.ok && c.R.stable; }).sort(function (a, b) { return b.R.q - a.R.q; }).slice(0, 5);
         if (kp) kp.innerHTML = (stale ? _staleChip(p) : '') + _chip('Cases', String(r.cases.length), r.labels.map(function (l) { return l.replace(/ \(.*\)$/, ''); }).join(' × '), '') +
             _chip('Rate range', p.fmt(p.dv(qmin, rc[0]), 0) + '–' + p.fmt(p.dv(qmax, rc[0]), 0) + ' ' + p.lab(rc[0], rc[1]), r.cases.filter(function (c) { return !c.R.ok; }).length + ' do not flow', '') +
-            (best[0] ? _chip('Best stable case', p.u(best[0].R.q, rc[0], 0, rc[1]), r.keys.map(function (k, d4) { return lab(d4, best[0].idx[d4]); }).join(' · '), 'ok') : '');
+            (best[0] ? _chip('Best stable case', p.u(best[0].R.q, rc[0], 0, rc[1]), r.keys.map(function (k, d4) { return _mxShort(p, r, d4) + ' ' + lab(d4, best[0].idx[d4]) + _mxUnit(p, r, d4); }).join(' · '), 'ok') : '');
         var axSel = function (id, cur) { return '<select id="' + id + '" aria-label="' + (id === 'wpv_mxax' ? 'Heat-map columns' : 'Heat-map rows') + '">' + r.keys.map(function (k, d5) { return '<option value="' + d5 + '"' + (d5 === cur ? ' selected' : '') + '>' + _esc(r.labels[d5].replace(/ \(.*\)$/, '')) + '</option>'; }).join('') + '</select>'; };
         var h = '<div class="wpb-ctl rp-skip" style="margin-top:2px"><div class="fg-item"><label for="wpv_mxax">Columns</label>' + axSel('wpv_mxax', xy[0]) + '</div><div class="fg-item"><label for="wpv_mxay">Rows</label>' + axSel('wpv_mxay', xy[1]) + '</div>' +
             others.map(function (d6) { var ax = r.axes[d6]; return '<div class="fg-item"><label for="wpv_mxs' + d6 + '">' + _esc(r.labels[d6].replace(/ \(.*\)$/, '')) + ': <b>' + _esc(lab(d6, S.matSlice[d6])) + '</b></label><input type="range" id="wpv_mxs' + d6 + '" data-mxd="' + d6 + '" min="0" max="' + (ax.values.length - 1) + '" step="1" value="' + S.matSlice[d6] + '"></div>'; }).join('') + '</div>';
@@ -54746,13 +54874,13 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var cs = m.checks.filter(function (c) { return key === 'other' ? ['tvd', 'rate', 'inc', 'dls', 'temp', 'api', 'glr', 'window'].indexOf(c.key) === -1 : c.key === key; });
             if (!cs.length) return '<td class="c"><span class="wp-qcb">–</span></td>';
             var worst = cs.some(function (c) { return c.st === 'fail'; }) ? 'fail' : cs.some(function (c) { return c.st === 'warn'; }) ? 'warn' : cs.every(function (c) { return c.st === 'na'; }) ? 'na' : 'ok';
-            return '<td class="c"><span class="wp-qcb ' + worst + '" title="' + _esc(cs.map(function (c) { return c.label + ': ' + c.msg; }).join(' · ')) + '">' + sym[worst] + '</span></td>';
+            return '<td class="c"><span class="wp-qcb ' + worst + '" title="' + _esc(cs.map(function (c) { return c.label + ': ' + (p.msgU ? p.msgU(c.msg) : c.msg); }).join(' · ')) + '">' + sym[worst] + '</span></td>';
         };
         var ranked = mx.methods.filter(function (m) { return m.key !== 'natural'; }).slice().sort(function (a, b) { return a.rank - b.rank; });
-        var h = '<div class="wp-cmpk">' + _chip('Well', p.u(w.tvd, 'length', 0, 'ft') + ' TVD', p.u(w.md, 'length', 0, 'ft') + ' MD · max ' + p.fmt(w.maxInc, 1) + '° · ' + p.fmt(w.maxDls, 1) + '°/100 ft', '') +
+        var h = '<div class="wp-cmpk">' + _chip('Well', p.u(w.tvd, 'length', 0, 'ft') + ' TVD', p.u(w.md, 'length', 0, 'ft') + ' MD · max ' + p.fmt(w.maxInc, 1) + '° · ' + (p.dls ? p.dls(w.maxDls) : p.fmt(w.maxDls, 1) + '°/100 ft'), '') +
             _chip('Natural flow', mx.methods[0].verdict === 'ok' ? 'flows' : mx.methods[0].verdict === 'warn' ? 'marginal' : 'does not flow', _fin(w.qL) ? p.u(w.qL, 'liquidRate', 0, 'STB/d') + ' liquid' : '', mx.methods[0].verdict) +
             _chip('Best screened lift', ranked[0] ? ranked[0].label : '—', ranked[1] ? 'then ' + ranked[1].label : '', ranked[0] ? ranked[0].verdict : '') +
-            (mx.windows.esp ? _chip('ESP setting window', 'MD ' + p.fmt(p.dv(mx.windows.esp.md0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.md1, 'length'), 0) + ' ' + p.lab('length', 'ft'), 'TVD ' + p.fmt(p.dv(mx.windows.esp.tvd0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.tvd1, 'length'), 0) + ' ' + p.lab('length', 'ft') + ' · ≤ 3°/100 ft', 'ok') : '') + '</div>';
+            (mx.windows.esp ? _chip('ESP setting window', 'MD ' + p.fmt(p.dv(mx.windows.esp.md0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.md1, 'length'), 0) + ' ' + p.lab('length', 'ft'), 'TVD ' + p.fmt(p.dv(mx.windows.esp.tvd0, 'length'), 0) + '–' + p.fmt(p.dv(mx.windows.esp.tvd1, 'length'), 0) + ' ' + p.lab('length', 'ft') + ' · ≤ ' + (p.dls ? p.dls(3) : '3°/100 ft'), 'ok') : '') + '</div>';
         h += '<div class="wp-tw"><table class="dtable wpb-sc wp-qc" aria-label="Lift screening matrix"><thead><tr><th>Method</th><th>Verdict</th>' + SC_COLS.map(function (c) { return '<th class="c">' + c[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
             mx.methods.map(function (m) { return '<tr><td>' + _esc(m.label) + (m.rank ? ' <span style="color:var(--text3)">#' + m.rank + '</span>' : '') + '</td><td><span class="wpb-vd ' + m.verdict + '">' + { ok: 'suitable', warn: 'marginal', fail: 'unsuitable' }[m.verdict] + '</span></td>' + SC_COLS.map(function (c) { return cell(m, c[0]); }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
         var j = S.scr, stale = _stale(p, S.scrKey);
@@ -54766,6 +54894,52 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         h += '<div class="wp-hint"><span class="wp-chip prov">provisional</span> Screening aid: ' + _esc(mx.source) + ' — ' + _esc(mx.provisional) + '. Rod pump, progressing-cavity, jet pump and plunger lift are screened only (no rate model in this release).</div>';
         box.innerHTML = h;
+        _renderScreenRes(p, mx, ranked);
+    }
+
+    // the screening ranking inside #wp_res (review fix v4.5: the step ④ table is not in a report taken from another step): shown with a
+    // lift type chosen or after "Compare the lift rates"
+    function _scrShown(p) { var M = p.ST.M; return !!(M && ((M.lift && M.lift.type !== 'none') || S.scr)); }
+    function _renderScreenRes(p, mx, ranked) {
+        var h = _byId('wpb_scr_r'); if (!h) return;
+        if (!mx || !mx.ok || !_scrShown(p)) { h.innerHTML = ''; if (h.classList) h.classList.add('wp-off'); return; }
+        if (h.classList) h.classList.remove('wp-off');
+        var j = S.scr && S.scr.ok && !_stale(p, S.scrKey) ? S.scr : null, rc = _rc(p);
+        var rate = function (k) { if (!j) return '—'; var v = k === 'gaslift' ? (j.gaslift && j.gaslift.ok ? j.gaslift.qL : null) : k === 'esp' ? (j.esp && j.esp.ok ? j.esp.q : null) : k === 'natural' ? (j.natural.ok ? j.natural.q : null) : null; return _fin(v) ? p.u(v, rc[0], 0, rc[1]) : '—'; };
+        h.innerHTML = '<div class="rbox-title">Lift screening (provisional)</div><div class="wp-tw"><table class="dtable wp-dense" aria-label="Lift screening ranking"><thead><tr><th>Method</th><th class="num">Rank</th><th>Verdict</th><th class="num">Rate</th></tr></thead><tbody>' +
+            mx.methods.map(function (m) { return '<tr><td>' + _esc(m.label) + '</td><td class="num">' + (m.rank ? '#' + m.rank : '—') + '</td><td>' + _esc(VD_WORD[m.verdict] || m.verdict) + '</td><td class="num">' + _esc(rate(m.key)) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+            '<div class="rrow"><span class="rl">Best screened lift</span><span class="rv">' + _esc(ranked[0] ? ranked[0].label + ' (' + (VD_WORD[ranked[0].verdict] || '') + ')' : '—') + '</span></div>';
+    }
+    // every study that has results, as a compact table inside #wp_res, except the one on screen (its own body shows it): the page report
+    // and the Quick Report then carry all of them whichever tab is open (review fix v4.5)
+    function _renderAll(p) {
+        var h = _byId('wpb_all'); if (!h) return;
+        var tab = _tab(), rc = _rc(p), M = p.ST.M, out = [], q = function (v) { return _fin(v) ? p.fmt(p.dv(v, rc[0]), 0) : '—'; }, ql = _esc(p.lab(rc[0], rc[1]));
+        var box = function (t, body) { out.push('<div class="rbox" style="margin-top:10px"><div class="rbox-title">' + _esc(t) + '</div>' + body + '</div>'); };
+        var e = S.env;
+        if (tab !== 'env' && e && e.ok) {
+            var lr = Object.keys(e.limits).filter(function (k) { return _fin(e.limits[k].q); }).map(function (k) { var L = e.limits[k]; return '<tr><td>' + _esc(L.label) + '</td><td class="num">' + q(L.q) + '</td><td>' + _esc(L.kind || '') + '</td></tr>'; });
+            box('Operating envelope' + (_stale(p, S.envKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Limit</th><th class="num">Rate (' + ql + ')</th><th>Kind</th></tr></thead><tbody>' + lr.join('') + '</tbody></table></div>' +
+                (e.window.ok ? '<div class="rrow"><span class="rl">Operating window</span><span class="rv">' + _esc(q(e.window.qLo) + '–' + q(e.window.qHi) + ' ' + p.lab(rc[0], rc[1])) + '</span></div>' : ''));
+        }
+        if (tab !== 'fcst' && S.fc && S.fc.ok) box('Depletion forecast' + (_stale(p, S.fcKey) ? ' (previous inputs)' : '') + (S.fc.provisional ? ' — provisional' : ''), _fcTable(p));
+        var t = S.torn;
+        if (tab !== 'torn' && t && t.ok && t.bars.length) {
+            var vf = function (b, v) { return SENS_CAT[b.key] ? p.fmt(p.dv(v, SENS_CAT[b.key]), 3) : p.fmt(v, 3); }, un = function (b) { return SENS_CAT[b.key] ? p.lab(SENS_CAT[b.key], b.unit) : b.unit; };
+            box('Tornado (±' + p.fmt(100 * t.frac, 0) + ' %)' + (_stale(p, S.tornKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Variable</th><th class="num">Low</th><th class="num">Rate low</th><th class="num">High</th><th class="num">Rate high</th><th class="num">Swing (' + ql + ')</th></tr></thead><tbody>' +
+                t.bars.map(function (b) { return '<tr><td>' + _esc(b.label.replace(/ \(.*\)$/, '')) + '</td><td class="num">' + _esc(vf(b, b.lo) + ' ' + un(b)) + '</td><td class="num">' + (b.okLo ? q(b.qLo) : 'no flow') + '</td><td class="num">' + _esc(vf(b, b.hi) + ' ' + un(b)) + '</td><td class="num">' + (b.okHi ? q(b.qHi) : 'no flow') + '</td><td class="num">' + q(b.swing) + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        }
+        var m = S.mat;
+        if (tab !== 'mat' && m && m.ok && m.nd) {
+            var bst = m.cases.filter(function (c) { return c.R.ok && c.R.stable; }).sort(function (a, b) { return b.R.q - a.R.q; }).slice(0, 5);
+            var labm = function (d, i) { var ax = m.axes[d], v = ax.values[i]; return ax.labels[i] || p.fmt(SENS_CAT[ax.key] ? p.dv(v, SENS_CAT[ax.key]) : v, 3); };
+            box('Sensitivity matrix — best stable cases' + (_stale(p, S.matKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr>' + m.keys.map(function (k, d) { return '<th>' + _esc(m.labels[d]) + '</th>'; }).join('') + '<th class="num">Rate (' + ql + ')</th></tr></thead><tbody>' +
+                bst.map(function (c) { return '<tr>' + m.keys.map(function (k, d) { return '<td>' + _esc(labm(d, c.idx[d])) + '</td>'; }).join('') + '<td class="num">' + q(c.R.q) + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        }
+        var c = S.cmp;
+        if (tab !== 'cases' && c && c.ok) box('Cases compared' + (_stale(p, S.cmpKey) ? ' (previous inputs)' : ''), '<div class="wp-tw"><table class="dtable wp-dense"><thead><tr><th>Case</th><th class="num">Rate (' + ql + ')</th><th class="num">Δ vs first</th><th class="num">pwf (' + _esc(p.lab('pressure', 'psia')) + ')</th></tr></thead><tbody>' +
+            c.rows.map(function (r, i) { return '<tr><td>' + _esc(r.name) + '</td><td class="num">' + (r.R.ok ? q(_qmain(M, r.R)) : '—') + '</td><td class="num">' + (i && _fin(r.dqPct) ? (r.dqPct >= 0 ? '+' : '') + p.fmt(r.dqPct, 1) + ' %' : '—') + '</td><td class="num">' + (r.R.ok ? p.fmt(p.dv(r.R.pwf, 'pressure'), 0) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>');
+        h.innerHTML = out.join('');
     }
 
     // ── the page hooks ───────────────────────────────────────────────────────
@@ -54864,9 +55038,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var c = S.cmp;
         if (c && c.ok) rows.push(['Cases compared' + st(S.cmpKey), c.rows.map(function (r, i) { return r.name + ' ' + (r.R.ok ? q(_qmain(M, r.R)) : 'no flow') + (i && _fin(r.dqPct) ? ' (' + (r.dqPct >= 0 ? '+' : '') + p.fmt(r.dqPct, 1) + ' %)' : ''); }).join(' · ')]);
         else if (_cases(p).length) rows.push(['Saved cases', _cases(p).map(function (x) { return x.name + (x.summary && x.summary.ok ? ' ' + q(_qmain(M, x.summary)) : ''); }).join(' · ')]);
-        var sm = S.scrMx, sj = S.scr;
+        // the screening matrix of THIS model (review fix v4.5: S.scrMx was refreshed only after these rows were built, so a new example
+        // showed the previous model's ranking), with the table's words
+        var SCm = G.WTS_wp_screen, sm = (SCm && typeof SCm.matrix === 'function' && M) ? SCm.matrix(M, { R: p.ST.R && p.ST.R.ok ? p.ST.R : null, W: p.ST.W && p.ST.W.ok ? p.ST.W : null }) : null, sj = S.scr;
+        if (sm && sm.ok) S.scrMx = sm;
         if (sm && sm.ok && (sj || (M && M.lift && M.lift.type !== 'none'))) {
-            var rk = sm.methods.filter(function (x) { return x.key !== 'natural'; }).sort(function (a, b) { return a.rank - b.rank; }).slice(0, 3).map(function (x) { return x.label + ' (' + x.verdict + ')'; }).join(', ');
+            var rk = sm.methods.filter(function (x) { return x.key !== 'natural'; }).sort(function (a, b) { return a.rank - b.rank; }).slice(0, 3).map(function (x) { return x.label + ' (' + (VD_WORD[x.verdict] || x.verdict) + ')'; }).join(', ');
             rows.push(['Lift screening' + (sj ? st(S.scrKey) : ''), rk + (sj && sj.ok ? '; natural ' + (sj.natural.ok ? q(sj.natural.q) : 'no flow') + ', gas lift ' + (sj.gaslift && sj.gaslift.ok ? q(sj.gaslift.qL) : 'n/a') + ', pump potential ' + (sj.potential ? q(sj.potential.q) : 'n/a') : '') + ' — provisional screening']);
         }
         return rows.length ? { rows: rows } : null;
@@ -56318,7 +56495,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // inclination — the inclination band itself, or the survey's maximum inside the MD interval), dry-gas keys refused for oil / water
         ((sys.corr && Array.isArray(sys.corr.sections)) ? sys.corr.sections : []).forEach(function (sr, i) {
             if (!sr || !sr.corr) return;
-            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : '180') + '° from vertical'
+            var Es = REG[sr.corr], where = sr.by === 'inc' ? _f(Math.max(0, Math.min(90, +sr.from || 0)), 0) + '–' + _f(_fin(+sr.to) ? Math.max(0, Math.min(90, +sr.to)) : 90, 0) + '° from vertical'
                 : 'MD ' + _f(+sr.from || 0, 0) + '–' + (_fin(+sr.to) ? _f(+sr.to, 0) : 'TD') + ' ft';
             if (!Es) { add('SECTION_CORR', 'warn', 'wp_sections', 'Section ' + (i + 1) + ': unknown correlation ' + String(sr.corr).slice(0, 24) + ' (skipped).'); return; }
             if (!gas && _gasOnly(Es)) { add('CORR_NOT_APPLICABLE', 'error', 'wp_sections', 'Section ' + (i + 1) + ': ' + (Es.label || sr.corr) + ' ignores the oil and water columns: not applicable to a ' + (fl.type || 'oil') + ' well.'); return; }
@@ -56349,7 +56526,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var fz = _n(ec.freq); if (fz != null && !(fz >= 30 && fz <= 90)) add('ESP_FREQ', 'error', 'wp_esp_freq', 'ESP: the frequency must be between 30 and 90 Hz.');
             if (_n(ec.pumpMd) > 0 && _fin(mid) && _n(ec.pumpMd) > mid) add('ESP_BELOW_PERFS', 'warn', 'wp_esp_md', 'ESP: the pump is set below the mid-perforations; the intake is taken at the perforations (a shroud is needed for motor cooling).');
             if (EPc && EPc.METHODS) ['turzo', 'alhanati', 'turpin'].forEach(function (k) {
-                var on = k === 'turzo' ? ec.visc !== false : (k === 'alhanati' ? ec.natSep !== false : true);
+                var on = k === 'turzo' ? ec.visc === true : (k === 'alhanati' ? ec.natSep === true : true);   // opt-in (D17, review fix v4.5)
                 if (on) validity.push({ corr: 'esp_' + k, label: EPc.METHODS[k].label, inRange: true, msg: EPc.METHODS[k].label + ' (ESP): ' + PROVISIONAL + '.', provisional: true });
             });
         }
@@ -57437,6 +57614,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var hx0 = _clamp(toX(h.value), P.x, P.x + P.w), tx0 = (hx0 + 13.5 + tw0 > P.x + P.w) ? hx0 - 13.5 - tw0 : hx0 + 13.5;
             hLabs.push({ x0: tx0, x1: tx0 + tw0, y0: P.y + 4, y1: P.y + 20 });
         });
+        // the pointX handle labels (centred above the knob, e.g. the envelope's 'q 914 STB/d') are obstacles for the marker labels too
+        // (review fix v4.5: the label ran over 'operating point')
+        (sp.handles || []).forEach(function (h) {
+            if (h.kind !== 'pointX' || !_fin(h.value)) return;
+            var t = h.label + ' ' + (h.fmt ? h.fmt(h.value) : _fmtTick(h.value)), tw0 = (ctx.measureText ? ctx.measureText(t).width : t.length * 6) + 10;
+            var hx0 = _clamp(toX(h.value), P.x, P.x + P.w), hy0 = _fin(h.y) ? _clamp(toY(h.y), P.y, P.y + P.h) : P.y + P.h, tx0 = _clamp(hx0 - tw0 / 2, P.x + 2, P.x + P.w - tw0 - 2);
+            hLabs.push({ x0: tx0, x1: tx0 + tw0, y0: hy0 - 9 - 22, y1: hy0 + 9 });
+        });
         // the marker symbols themselves (with their halo) and the lineX knobs are obstacles for every label too
         var mSyms = [];
         (sp.markers || []).forEach(function (mk, i) { if (_fin(mk.x) && _fin(mk.y) && (mk.r || 6) >= 2) { var mx = toX(mk.x), my = toY(mk.y), rr = (mk.r || 6) + (mk.kind === 'filled' && mk.halo !== false ? 6 : 2); mSyms.push({ x0: mx - rr, x1: mx + rr, y0: my - rr, y1: my + rr, i: i }); } });
@@ -57500,12 +57685,28 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             placed.push({ x0: lx0, x1: lx1, y0: ys, y1: ys + tw, label: l.label });
             ctx.save(); ctx.translate(lx0 + 10, ys); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore();
         });
+        var hPlaced = st.hlabels = [];
         (sp.hlines || []).forEach(function (l) {
             if (!_fin(l.y)) return;
             var y = toY(l.y);
             ctx.strokeStyle = l.color || T.text2; ctx.lineWidth = 1.2; if (ctx.setLineDash) ctx.setLineDash(l.dash || [5, 4]);
             ctx.beginPath(); ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]);
-            if (l.label) { ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, P.x + P.w - 6, y - 3); }
+            if (l.label) {
+                // review fix (v4.5): the label keeps clear of the point-handle labels, the marker labels and the other line labels —
+                // right above, right below, left above, left below, else right above (as before)
+                ctx.font = font(10, '600');
+                var tw2 = (ctx.measureText ? ctx.measureText(l.label).width : l.label.length * 6) + 4;
+                var cands = [{ x0: P.x + P.w - 6 - tw2, y0: y - 15, al: 'right' }, { x0: P.x + P.w - 6 - tw2, y0: y + 2, al: 'right' }, { x0: P.x + 6, y0: y - 15, al: 'left' }, { x0: P.x + 6, y0: y + 2, al: 'left' }];
+                var pk2 = null;
+                for (var ci = 0; ci < cands.length && !pk2; ci++) {
+                    var cq = cands[ci], bx = { x0: cq.x0, x1: cq.x0 + tw2, y0: cq.y0, y1: cq.y0 + 13 };
+                    if (bx.y0 < P.y || bx.y1 > P.y + P.h) continue;
+                    if (!obst.concat(hPlaced).some(function (o) { return rHit(bx, o); })) { pk2 = cq; pk2.b = bx; }
+                }
+                if (!pk2) { pk2 = cands[0]; pk2.b = { x0: cands[0].x0, x1: cands[0].x0 + tw2, y0: cands[0].y0, y1: cands[0].y0 + 13 }; }
+                hPlaced.push(pk2.b);
+                ctx.fillStyle = l.color || T.text2; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, pk2.b.x0, pk2.b.y1);
+            }
         });
         // series
         (sp.series || []).forEach(function (s) {
@@ -57877,6 +58078,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if ((k === ']' || k === '[') && hs.length) { st.focusHandle = (st.focusHandle + (k === ']' ? 1 : hs.length - 1) + (st.focusHandle < 0 && k === '[' ? 1 : 0)) % hs.length; _draw(cv); }
             else if (st.focusHandle >= 0 && hs[st.focusHandle] && /^Arrow/.test(k)) {
                 var h = hs[st.focusHandle], stp = _fin(h.step) && h.step > 0 ? h.step : (h.max - h.min) / 100, dir = (k === 'ArrowUp' || k === 'ArrowRight') ? 1 : -1;
+                // a handle whose value is on an inverted y axis (depth down): ArrowDown moves it down the screen = a larger value (review fix v4.5)
+                if ((k === 'ArrowUp' || k === 'ArrowDown') && (h.kind === 'point' || h.kind === 'railY') && st.spec.y && st.spec.y.invert) dir = -dir;
                 if (e.shiftKey) stp *= 10;
                 var v = _clamp(h.value + dir * stp, h.min, h.max); _emitHandle(cv, st.focusHandle, v, 'move');
             } else if (st.focusHandle >= 0 && hs[st.focusHandle] && k === 'Enter') { _emitHandle(cv, st.focusHandle, hs[st.focusHandle].value, 'end'); }
@@ -57950,6 +58153,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return { prop: prop, label: P.label, lo: lo, hi: hi, key: P.key };
     }
 
+    var _clipN = 0;
     function schematic(S, o) {
         o = o || {};
         var W0 = o.width || 420, H0 = o.height || 560, T = _theme(), fm = o.fmt || {};
@@ -57985,6 +58189,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         g.push('<rect x="0" y="0" width="' + W0 + '" height="' + H0 + '" rx="8" fill="' + T.bg + '"/>');
         // ground + depth grid (TVD)
         g.push('<rect x="' + mL + '" y="' + mT + '" width="' + aw + '" height="' + ah + '" fill="' + T.panel + '" stroke="' + T.axis + '"/>');
+        // the section frame as a clip for the marks drawn across the hole (perforation ticks, correlation rail; review fix v4.5)
+        var clipId = 'wpSchClip' + (++_clipN);
+        g.push('<defs><clipPath id="' + clipId + '"><rect x="' + mL + '" y="' + (mT - 2) + '" width="' + aw + '" height="' + (ah + 2) + '"/></clipPath></defs>');
         _ticks(0, tvdMax, 6, false).forEach(function (t) {
             var y = Y(t);
             g.push('<line x1="' + mL + '" x2="' + (mL + aw) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + T.grid + '"/>');
@@ -58058,7 +58265,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (o.prop === 'correlation') { sc2 = { prop: 'correlation', label: 'Correlation', lo: null, hi: null }; P2 = secs.length ? PROPS.correlation : PROPS.none; }
         var flowBot = prof.length ? prof[prof.length - 1].md : (S.perfs && _fin(S.perfs.midMd) ? S.perfs.midMd : mdMax);
         if (P2.key === 'corr') {
-            secs.forEach(function (x) { var sp = _poly(_sub(path, Math.max(0, x.fromMd), Math.min(x.toMd, mdMax))); if (sp) g.push('<path d="' + sp + '" fill="none" stroke="' + x.color + '" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"' + (x.provisional ? ' stroke-dasharray="9 4"' : '') + '/>'); });
+            secs.forEach(function (x) { var sp = _poly(_sub(path, Math.max(0, x.fromMd), Math.min(x.toMd, mdMax))); if (sp) g.push('<path clip-path="url(#' + clipId + ')" d="' + sp + '" fill="none" stroke="' + x.color + '" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"' + (x.provisional ? ' stroke-dasharray="9 4"' : '') + '/>'); });
         } else if (prof.length > 1 && P2.key) {
             for (var i = 1; i < prof.length; i++) {
                 var a = interp(path, prof[i - 1].md), b = interp(path, prof[i].md);
@@ -58075,7 +58282,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // (the side away from the gas-lift annulus path), one per run of a correlation, labelled at its middle
         var bands = (o.bands || []).filter(function (bd) { return bd && _fin(bd.mdTop) && _fin(bd.mdBot) && bd.mdBot > bd.mdTop; });
         if (bands.length > 1 || (bands.length === 1 && o.bandsAlways)) {
-            g.push('<g class="wp-secband" aria-label="Correlation by section">');
+            g.push('<g class="wp-secband" clip-path="url(#' + clipId + ')" aria-label="Correlation by section">');
             bands.forEach(function (bd) {
                 var pl = [], nS = Math.max(4, Math.min(40, Math.round((bd.mdBot - bd.mdTop) / Math.max(1, mdMax) * 60)));
                 for (var kb = 0; kb <= nS; kb++) { var qb = interp(path, Math.min(mdMax, bd.mdTop + (bd.mdBot - bd.mdTop) * kb / nS)); if (qb) pl.push((qb.x - Math.sin(qb.ang) * 17).toFixed(1) + ',' + (qb.y + Math.cos(qb.ang) * 17).toFixed(1)); }
@@ -58089,7 +58296,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         // perforations + mid-perf
         var pf = S.perfs || {};
         if (_fin(pf.topMd) && _fin(pf.botMd) && pf.botMd > pf.topMd) {
-            g.push('<g class="wp-comp" data-comp="perf" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + D(pf.topMd) + ' to ' + D(pf.botMd) + (_fin(pf.midMd) ? ', mid-perforation ' + D(pf.midMd) : '') + ' — edit') + '">');
+            g.push('<g class="wp-comp" data-comp="perf" clip-path="url(#' + clipId + ')" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + D(pf.topMd) + ' to ' + D(pf.botMd) + (_fin(pf.midMd) ? ', mid-perforation ' + D(pf.midMd) : '') + ' — edit') + '">');
             var n = Math.max(3, Math.min(14, Math.round((pf.botMd - pf.topMd) / Math.max(1, mdMax) * 400)));
             for (var k = 0; k <= n; k++) {
                 var q = interp(path, pf.topMd + (pf.botMd - pf.topMd) * k / n), nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
@@ -58197,7 +58404,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             secs.forEach(function (x) {
                 var rl = [], m0 = Math.max(0, x.fromMd), m1 = Math.min(x.toMd, mdMax), nS = 24;
                 for (var k3 = 0; k3 <= nS; k3++) { var q3 = interp(path, m0 + (m1 - m0) * k3 / nS); if (q3) rl.push((q3.x - Math.sin(q3.ang) * 30).toFixed(1) + ',' + (q3.y + Math.cos(q3.ang) * 30).toFixed(1)); }
-                g.push('<polyline class="wp-secrail" points="' + rl.join(' ') + '" fill="none" stroke="' + x.color + '" stroke-width="4" stroke-linecap="round"' + (x.provisional ? ' stroke-dasharray="7 4"' : '') + '><title>' + _esc((x.label || x.key) + ', ' + D(x.fromMd) + ' to ' + D(x.toMd)) + '</title></polyline>');
+                g.push('<polyline class="wp-secrail" clip-path="url(#' + clipId + ')" points="' + rl.join(' ') + '" fill="none" stroke="' + x.color + '" stroke-width="4" stroke-linecap="round"' + (x.provisional ? ' stroke-dasharray="7 4"' : '') + '><title>' + _esc((x.label || x.key) + ', ' + D(x.fromMd) + ' to ' + D(x.toMd)) + '</title></polyline>');
                 var qb = interp(path, m1); if (qb && m1 < mdMax - 1) g.push('<line x1="' + (qb.x - Math.sin(qb.ang) * 24).toFixed(1) + '" y1="' + (qb.y + Math.cos(qb.ang) * 24).toFixed(1) + '" x2="' + (qb.x - Math.sin(qb.ang) * 36).toFixed(1) + '" y2="' + (qb.y + Math.cos(qb.ang) * 36).toFixed(1) + '" stroke="' + T.text + '" stroke-width="1.5"/>');
             });
         }
@@ -58243,24 +58450,39 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 g.push('<g class="wp-hz" aria-label="' + _esc('Horizontal section ' + D(h.md0) + ' to ' + D(h.md1)) + '"><path d="' + _poly(bl) + '" fill="none" stroke="' + T.green + '" stroke-width="1.6" stroke-dasharray="4 3"/>' +
                     (q0 ? '<line x1="' + q0.x.toFixed(1) + '" y1="' + q0.y.toFixed(1) + '" x2="' + pa[0].toFixed(1) + '" y2="' + pa[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') +
                     (q1 ? '<line x1="' + q1.x.toFixed(1) + '" y1="' + q1.y.toFixed(1) + '" x2="' + pz[0].toFixed(1) + '" y2="' + pz[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') + '</g>');
-                var mid2 = bl[Math.floor(bl.length / 2)];
+                var qm2 = interp(path, 0.5 * (h.md0 + h.md1));
+                var mid2 = qm2 ? [qm2.x + Math.sin(qm2.ang) * 46, qm2.y - Math.cos(qm2.ang) * 46] : bl[Math.floor(bl.length / 2)];
                 labs.push({ side: 1, x: mid2[0] + 4, y: mid2[1], t: 'horizontal ' + fmtMd(h.md1 - h.md0), c: T.green });
             });
         }
-        // side labels: sorted by depth on each side and pushed apart (12 px), with a leader when moved
-        [-1, 1].forEach(function (sd) {
-            var L = labs.filter(function (l) { return l.side === sd; }).sort(function (a, b) { return a.y - b.y; }), prevY = -1e9;
-            L.forEach(function (l) { l.ty = Math.max(l.y, prevY + 12); prevY = l.ty; });
-            var over = L.length ? L[L.length - 1].ty - (mT + ah - 4) : 0;
-            if (over > 0) L.forEach(function (l) { l.ty -= over; });
-            L.forEach(function (l) {
-                var tx = l.x + sd * 6, tw = String(l.t).length * 6, anc = sd < 0 ? ' text-anchor="end"' : '';
-                if (Math.abs(l.ty - l.y) > 2) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + tx.toFixed(1) + '" y2="' + l.ty.toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
-                var lx = tx + sd * 2;
-                // a label that would run past the drawing's edge is set against that edge instead (WPI3: horizontal wells on a phone)
-                if (sd > 0 && lx + tw > secW - 4) { lx = secW - 4; anc = ' text-anchor="end"'; } else if (sd < 0 && lx - tw < 4) { lx = 4; anc = ''; }
-                g.push('<text x="' + lx.toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + anc + '>' + _esc(l.t) + '</text>');
-            });
+        // side labels (review fix v4.5): placed one by one in depth order, each at the first free spot — its own side at its depth, then
+        // stepped down / up 12 px, then the other side — clear of the labels already placed and of the flow path, inside the section frame
+        // (not over the depth ticks); a leader when moved
+        var pathPts = [];
+        for (var kp = 0; kp <= 160; kp++) { var qp = interp(path, mdMax * kp / 160); if (qp) pathPts.push(qp); }
+        var placedL = [], fx0 = mL + 2, fx1 = secW - 4, fy0 = mT + 8, fy1 = mT + ah - 4;
+        var boxOf = function (l, sd, ty) {
+            var tw = String(l.t).length * 6 + 2, tx = l.x + sd * 8, lx = sd > 0 ? tx : tx - tw;
+            if (lx < fx0) lx = fx0; if (lx + tw > fx1) lx = fx1 - tw;
+            return { x0: lx, x1: lx + tw, y0: ty - 8, y1: ty + 4 };
+        };
+        var hitL = function (b) { return placedL.some(function (o) { return b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0; }); };
+        var hitP = function (b) { return pathPts.some(function (q) { return q.x > b.x0 - 3 && q.x < b.x1 + 3 && q.y > b.y0 - 3 && q.y < b.y1 + 3; }); };
+        labs.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (l) {
+            var tries = [], dys = [0, 12, -12, 24, -24, 36, -36, 48];
+            [l.side, -l.side].forEach(function (sd) { dys.forEach(function (dy) { tries.push({ sd: sd, ty: _clamp(l.y + dy, fy0, fy1) }); }); });
+            var pick = null, soft = null;
+            for (var t = 0; t < tries.length && !pick; t++) {
+                var bx = boxOf(l, tries[t].sd, tries[t].ty);
+                if (hitL(bx)) continue;
+                if (!hitP(bx)) pick = { sd: tries[t].sd, ty: tries[t].ty, b: bx };
+                else if (!soft) soft = { sd: tries[t].sd, ty: tries[t].ty, b: bx };
+            }
+            if (!pick) pick = soft || { sd: l.side, ty: _clamp(l.y, fy0, fy1), b: boxOf(l, l.side, _clamp(l.y, fy0, fy1)) };
+            placedL.push(pick.b);
+            var ax = pick.sd > 0 ? pick.b.x0 : pick.b.x1;
+            if (Math.abs(pick.ty - l.y) > 2 || pick.sd !== l.side) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + (ax - pick.sd * 2).toFixed(1) + '" y2="' + (pick.ty - 2).toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
+            g.push('<text x="' + pick.b.x0.toFixed(1) + '" y="' + (pick.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700">' + _esc(l.t) + '</text>');
         });
         // wellhead + choke
         var wh = path[0], ck = S.choke || {};
@@ -58875,7 +59097,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     //     oil,   v_m ≥ 10: Γ = 0.0274·log(μ_L + 1) / d^1.371 + 0.161 + 0.569·log d + X,
     //                      X = −log v_m·[0.01·log(μ_L + 1) / d^1.571 + 0.397 + 0.63·log d]
     //     lower limits: v_m < 10: Γ ≥ −0.065·v_m;  v_m ≥ 10: Γ ≥ −v_b/(v_m + v_b)·(1 − ρ_s0/ρ_L)
-    //   ρ_s = [ρ_L·(v_sl + v_b) + ρ_g·v_sg]/(v_m + v_b) + Γ·ρ_L  (= ρ_s0 + Γ·ρ_L), held within [ρ_n, ρ_L] (holdup ≥ no-slip)
+    //   ρ_s = [ρ_L·(v_sl + v_b) + ρ_g·v_sg]/(v_m + v_b) + Γ·ρ_L  (= ρ_s0 + Γ·ρ_L), within the physical bounds [ρ_g, ρ_L] only (as published;
+    //   the reported H_L is shown ≥ λ_L, the gradient uses ρ_s itself)
     //   dp/dL_f = f·ρ_L·v_m²/(2·g_c·d)·[(v_sl + v_b)/(v_m + v_b) + Γ] / 144, f Moody at N_ReL; no acceleration term in slug flow.
     function _orkVb(b, nreL) {
         var sq = Math.sqrt(GRAV * b.dFt), vb = 0.5 * sq, it = 0;
@@ -58924,8 +59147,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var rs0 = (b.rL * (b.vsl + vb) + b.rG * b.vsg) / (b.vm + vb);
         var gMin = b.vm < 10 ? -0.065 * b.vm : -vb / (b.vm + vb) * (1 - rs0 / b.rL);
         var Gm = G0 < gMin ? gMin : G0;
-        var rhoS = rs0 + Gm * b.rL, rhoN = r.rhoN;
-        if (rhoS < rhoN) rhoS = rhoN;
+        // published Orkiszewski: ρ_s is NOT held at the no-slip density (review fix v4.5 — the earlier clamp added ≈ 12 % to the elevation
+        // term at low v_m); only the physical bounds ρ_g ≤ ρ_s ≤ ρ_L are kept
+        var rhoS = rs0 + Gm * b.rL;
+        if (rhoS < b.rG) rhoS = b.rG;
         if (rhoS > b.rL) rhoS = b.rL;
         var f = _fMoody(nreL, b.rough / 12 / b.dFt);
         var gF = f * b.rL * b.vm * b.vm / (2 * GC * b.dFt) * ((b.vsl + vb) / (b.vm + vb) + Gm) / 144;
@@ -58997,10 +59222,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // ── Mukherjee & Brill (1985) ────────────────────────────────────────────────────────────────────────────────────────
     // Groups N_Lv, N_gv, N_L as Hagedorn & Brown; θ from horizontal (+ up), s = sin θ, log = log10.
     //   slug / annular:   N_gvSM = 10^(1.401 − 2.694·N_L + 0.521·N_Lv^0.329)            annular when N_gv > N_gvSM
-    //   uphill (θ > 0):   N_gvBS = 10^(log N_Lv + 0.940 + 0.074·s − 0.855·s² + 3.695·N_L)   bubble when N_gv < N_gvBS, else slug
-    //   level / downhill: N_LvBS = 10^(0.431 − 3.003·N_L − 1.138·log N_gv·s − 0.429·(log N_gv)²·s + 1.132·s)
+    //   uphill (θ > 0):   N_LvBS = 10^(log N_gv + 0.940 + 0.074·s − 0.855·s² + 3.695·N_L)   bubble when N_Lv > N_LvBS, else slug
+    //   level / downhill: N_gvBS = 10^(0.431 − 3.003·N_L − 1.138·log N_Lv·s − 0.429·(log N_Lv)²·s + 1.132·s)
     //                     N_LvST = 10^(0.321 − 0.017·N_gv − 4.267·s − 2.972·N_L − 0.033·(log N_gv)² − 3.925·s²)
-    //                     bubble when N_Lv > N_LvBS; slug when N_LvST < N_Lv ≤ N_LvBS; stratified otherwise
+    //                     stratified when N_Lv ≤ N_LvST; otherwise bubble when N_gv < N_gvBS, slug when N_gv ≥ N_gvBS
+    //   (review fix v4.5: the bubble / slug boundaries had N_Lv and N_gv swapped; book not available (Q9), the form above is the one
+    //   recorded in the review — provisional like the whole method)
     //   holdup H_L = exp[(C1 + C2·s + C3·s² + C4·N_L²)·N_gv^C5 / N_Lv^C6] with the three published coefficient sets (MB_C below: uphill
     //   for θ ≥ 0, downhill stratified, downhill other); in upward flow H_L ≥ λ_L (as the other correlations of this page).
     //   bubble / slug: dp/dL_f = f·ρ_s·v_m²/(2·g_c·d)/144, f Moody at the no-slip N_Re = 1488·ρ_n·v_m·d/μ_n;
@@ -59025,17 +59252,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return 1;
     }
     function mbPattern(NLv, Ngv, NL, th) {
-        var s = Math.sin(th), lg = _log10(Math.max(Ngv, 1e-12));
+        var s = Math.sin(th), lg = _log10(Math.max(Ngv, 1e-12)), lgL = _log10(Math.max(NLv, 1e-12));
         var SM = Math.pow(10, 1.401 - 2.694 * NL + 0.521 * Math.pow(Math.max(NLv, 0), 0.329));
         var out = { NgvSM: SM, NgvBS: null, NLvBS: null, NLvST: null, up: th > 0 };
-        if (th > 0) out.NgvBS = Math.pow(10, _log10(Math.max(NLv, 1e-12)) + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL);
+        if (th > 0) out.NLvBS = Math.pow(10, lg + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL);
         else {
-            out.NLvBS = Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lg * s - 0.429 * lg * lg * s + 1.132 * s);
+            out.NgvBS = Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lgL * s - 0.429 * lgL * lgL * s + 1.132 * s);
             out.NLvST = Math.pow(10, 0.321 - 0.017 * Ngv - 4.267 * s - 2.972 * NL - 0.033 * lg * lg - 3.925 * s * s);
         }
         if (Ngv > SM) out.pattern = 'annular';
-        else if (th > 0) out.pattern = Ngv < out.NgvBS ? 'bubble' : 'slug';
-        else out.pattern = NLv > out.NLvBS ? 'bubble' : (NLv > out.NLvST ? 'slug' : 'stratified');
+        else if (th > 0) out.pattern = NLv > out.NLvBS ? 'bubble' : 'slug';
+        else out.pattern = NLv <= out.NLvST ? 'stratified' : (Ngv < out.NgvBS ? 'bubble' : 'slug');
         return out;
     }
     function mbHoldup(NLv, Ngv, NL, th, set) {
@@ -59098,8 +59325,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     //     ρ_c, μ_c by λ_LC, v_sc = v_sg + F_E·v_sl; (dp/dL)_SC = f_SC·ρ_c·v_sc²/(2·g_c·d), (dp/dL)_SL = f_SL·ρ_L·v_sl²/(2·g_c·d);
     //     X_M² = (1 − F_E)²·(dp/dL)_SL/(dp/dL)_SC (film friction factor taken equal to f_SL), Y_M = sin θ·(ρ_L − ρ_c)/(dp/dL)_SC;
     //     Z = 1 + 300·δ (F_E > 0.9) else 1 + 24·(ρ_L/ρ_g)^⅓·δ; δ (film thickness / d) from
-    //       Y_M − Z/[4δ(1 − δ)·(1 − 4δ(1 − δ))^2.5] + X_M²/[4δ(1 − δ)]³ = 0      (bisection on 0 < δ < ½)
+    //       Y_M − Z/[4δ(1 − δ)·(1 − 4δ(1 − δ))^2.5] + X_M²/[4δ(1 − δ)]³ = 0      (the thin-film root: first sign change upward)
     //     dp/dL = Z/(1 − 2δ)⁵·(dp/dL)_SC + ρ_c·sin θ (core), H_L = 4δ(1 − δ) + λ_LC·(1 − 2δ)².
+    //     Annular only while the thin film exists and H_L ≤ 0.12 (film bridging, Barnea as used by Ansari et al.); otherwise slug.
     function _ansariProps(b) {
         var sigM = b.sig * SIG_LBM, drho = b.rL - b.rG;
         return { sigM: sigM, drho: drho, vs: 1.53 * Math.pow(GRAV * sigM * drho / (b.rL * b.rL), 0.25),
@@ -59111,13 +59339,50 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var lhs = 2 * Math.sqrt(0.4 * sigM / (drho * GRAV)) * Math.pow(b.rL / sigM, 0.6) * Math.pow(fn / (2 * b.dFt), 0.4) * Math.pow(b.vm, 1.2);
         return lhs - (0.725 + 4.15 * Math.sqrt(b.vsg / b.vm));
     }
+    // annular film (Alves et al.): the film equation can have up to three roots (thin film, thick film and one between); Ansari and Alves
+    // take the THIN film — scan δ upward on a log grid from the thin end, take the first sign change and bisect only inside that bracket.
+    // thin:false when the root found is a thick film (no thin root: the film cannot be carried). Review fix (v4.5).
+    function _ansariFilm(b, rel) {
+        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL);
+        var FE = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (FE < 0) FE = 0; if (FE > 0.9999) FE = 0.9999;
+        var vsc = b.vsg + FE * b.vsl, lLC = FE * b.vsl / vsc, rhoC = b.rL * lLC + b.rG * (1 - lLC), muC = b.muL * lLC + b.muG * (1 - lLC);
+        var fSC = _fMoody(1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), rel), dpSC = fSC * rhoC * vsc * vsc / (2 * GC * b.dFt);
+        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, dpSL = fSL * b.rL * b.vsl * b.vsl / (2 * GC * b.dFt);
+        var XM2 = dpSC > 0 ? (1 - FE) * (1 - FE) * dpSL / dpSC : 0, YM = dpSC > 0 ? Math.sin(b.th) * (b.rL - rhoC) / dpSC : 0;
+        var hiZ = FE > 0.9, zc = 24 * Math.pow(b.rL / Math.max(b.rG, 1e-9), 1 / 3);
+        var Zf = function (dd) { return hiZ ? 1 + 300 * dd : 1 + zc * dd; };
+        var fd = function (dd) { var w = 4 * dd * (1 - dd); return YM - Zf(dd) / (w * Math.pow(1 - w, 2.5)) + XM2 / (w * w * w); };
+        var dlo = 1e-7, dhi = 0.5 - 1e-7, nroots = 0, first = null;
+        if (fd(dlo) <= 0) { dhi = dlo; nroots = 1; first = [dlo, dlo]; }
+        else {
+            var NSC = 96, rS = Math.pow(dhi / dlo, 1 / NSC), dPrev = dlo, sPrev = true;
+            for (var ks = 1; ks <= NSC; ks++) {
+                var dNext = ks === NSC ? dhi : dlo * Math.pow(rS, ks), sN = fd(dNext) > 0;
+                if (sN !== sPrev) { nroots++; if (!first) first = [dPrev, dNext]; }
+                sPrev = sN; dPrev = dNext;
+            }
+            if (first) { dlo = first[0]; dhi = first[1]; }
+            for (var k3 = 0; k3 < 48; k3++) { var dm = Math.sqrt(dlo * dhi); if (fd(dm) > 0) dlo = dm; else dhi = dm; }
+        }
+        var dl = Math.sqrt(dlo * dhi), Z = Zf(dl);
+        var hl = 4 * dl * (1 - dl) + lLC * Math.pow(1 - 2 * dl, 2);
+        return { FE: FE, vcrit: vcrit, delta: dl, Z: Z, XM2: XM2, YM: YM, lambdaLC: lLC, rhoC: rhoC, fn: fSC, roots: nroots,
+            coreF: Z / Math.pow(1 - 2 * dl, 5) * dpSC / 144, hl: hl,
+            // bridging (Barnea, as used by Ansari et al.): annular only while the film is thin — a single (thick) root or a total liquid
+            // holdup above 0.12 sends the flow to slug (a thick root alone always exceeds it)
+            thin: hl <= ANSARI_HL_BRIDGE };
+    }
+    var ANSARI_HL_BRIDGE = 0.12;
     function ansariPattern(b) {
         var a = _ansariProps(b), lam = b.vsl / b.vm;
         var rhoN = b.rL * lam + b.rG * (1 - lam), muN = b.muL * lam + b.muG * (1 - lam);
         var fn = _fMoody(1488 * rhoN * b.vm * b.dFt / Math.max(muN, 1e-9), b.rough / 12 / b.dFt);
         var vsgBS = 0.25 * a.vs + 0.333 * b.vsl, bar = _barnea(b, a.sigM, a.drho, fn);
-        var pat = b.vsg > a.vsgA ? 'annular' : ((bar > 0 && 1 - lam <= 0.52) ? 'dispersed bubble' : ((b.vsg < vsgBS && b.dFt > a.dMin) ? 'bubble' : 'slug'));
-        return { pattern: pat, vs: a.vs, vsgBS: vsgBS, vsgA: a.vsgA, dMin: a.dMin, barnea: bar, fn: fn, sigM: a.sigM, drho: a.drho };
+        var film = null, bridged = false;
+        if (b.vsg > a.vsgA) { film = _ansariFilm(b, b.rough / 12 / b.dFt); bridged = !film.thin; }
+        var pat = (b.vsg > a.vsgA && !bridged) ? 'annular' : ((bar > 0 && 1 - lam <= 0.52) ? 'dispersed bubble' : ((b.vsg < vsgBS && b.dFt > a.dMin) ? 'bubble' : 'slug'));
+        return { pattern: pat, vs: a.vs, vsgBS: vsgBS, vsgA: a.vsgA, dMin: a.dMin, barnea: bar, fn: fn, sigM: a.sigM, drho: a.drho,
+            film: pat === 'annular' ? film : null, bridged: bridged };
     }
     function ansari(inp) {
         var b = _base(inp);
@@ -59156,23 +59421,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             r.hl = _clampHl((rhoS2 - b.rG) / (b.rL - b.rG), lam, up);
             return _assemble(b, r, rhoS2, f2 * rhoLS * b.vm * b.vm / (2 * GC * b.dFt) * (1 - beta) / 144, 0);
         }
-        // annular
-        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL);
-        var FE = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (FE < 0) FE = 0; if (FE > 0.9999) FE = 0.9999;
-        var vsc = b.vsg + FE * b.vsl, lLC = FE * b.vsl / vsc, rhoC = b.rL * lLC + b.rG * (1 - lLC), muC = b.muL * lLC + b.muG * (1 - lLC);
-        var fSC = _fMoody(1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), rel), dpSC = fSC * rhoC * vsc * vsc / (2 * GC * b.dFt);
-        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, dpSL = fSL * b.rL * b.vsl * b.vsl / (2 * GC * b.dFt);
-        var XM2 = dpSC > 0 ? (1 - FE) * (1 - FE) * dpSL / dpSC : 0, YM = dpSC > 0 ? Math.sin(b.th) * (b.rL - rhoC) / dpSC : 0;
-        var hiZ = FE > 0.9, zc = 24 * Math.pow(b.rL / Math.max(b.rG, 1e-9), 1 / 3);
-        var Zf = function (dd) { return hiZ ? 1 + 300 * dd : 1 + zc * dd; };
-        var fd = function (dd) { var w = 4 * dd * (1 - dd); return YM - Zf(dd) / (w * Math.pow(1 - w, 2.5)) + XM2 / (w * w * w); };
-        var dlo = 1e-7, dhi = 0.5 - 1e-7;
-        if (fd(dlo) <= 0) dhi = dlo;
-        else for (var k3 = 0; k3 < 48; k3++) { var dm = Math.sqrt(dlo * dhi); if (fd(dm) > 0) dlo = dm; else dhi = dm; }
-        var dl = Math.sqrt(dlo * dhi), Z = Zf(dl), coreF = Z / Math.pow(1 - 2 * dl, 5) * dpSC / 144;
-        r.FE = FE; r.vcrit = vcrit; r.delta = dl; r.Z = Z; r.XM2 = XM2; r.YM = YM; r.lambdaLC = lLC; r.rhoC = rhoC; r.fn = fSC;
-        r.hl = _clampHl(4 * dl * (1 - dl) + lLC * Math.pow(1 - 2 * dl, 2), 0, false);
-        return _assemble(b, r, rhoC, coreF, _ekOf(b, rhoC));
+        // annular (the thin film; ansariPattern already sent a bridged / missing film to slug)
+        var A = P.film || _ansariFilm(b, rel);
+        r.FE = A.FE; r.vcrit = A.vcrit; r.delta = A.delta; r.Z = A.Z; r.XM2 = A.XM2; r.YM = A.YM; r.lambdaLC = A.lambdaLC; r.rhoC = A.rhoC; r.fn = A.fn;
+        r.hl = _clampHl(A.hl, 0, false);
+        return _assemble(b, r, A.rhoC, A.coreF, _ekOf(b, A.rhoC));
     }
 
     // ── Hasan & Kabir (1988; 2002 text), drift flux, inclined wells ─────────────────────────────────────────────────────
@@ -59438,7 +59691,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
             s.corr = key; s.secRow = rule >= 0 ? rows[rule].row : -1;
         });
-        rows.forEach(function (r, i) { if (!hit[i]) n.warnings.push(_w('SECTION_EMPTY', 'Section ' + (r.row + 1) + ' (' + (r.by === 'md' ? 'MD ' + _fmt(r.from, 0) + '–' + (_fin(r.to) ? _fmt(r.to, 0) : 'TD') + ' ft' : _fmt(r.from, 0) + '–' + _fmt(r.to, 0) + '° from vertical') + ') covers no part of this flow path.', 'info')); });
+        rows.forEach(function (r, i) { if (!hit[i]) n.warnings.push(_w('SECTION_EMPTY', 'Section ' + (r.row + 1) + ' (' + (r.by === 'md' ? 'MD ' + _fmt(r.from, 0) + '–' + (_fin(r.to) ? _fmt(r.to, 0) : 'TD') + ' ft' : _fmt(Math.max(0, Math.min(90, r.from)), 0) + '–' + _fmt(_fin(r.to) ? Math.max(0, Math.min(90, r.to)) : 90, 0) + '° from vertical') + ') covers no part of this flow path.', 'info')); });
         return { segs: sp, active: true, warnings: n.warnings, rows: rows };
     }
     // the contiguous runs of one correlation along a segment list, top → bottom
@@ -59462,6 +59715,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     }
 
     // ── traverse ─────────────────────────────────────────────────────────────────────────────────────────────────────
+    var PATTERN_STEPS = { ork: ['slug', ['transition', 'mist'], 'slug / transition'], hk: ['churn', ['annular'], 'churn / annular'] };
     function traverse(F, W, q, o) {
         o = o || {};
         var errors = [], warnings = [];
@@ -59566,6 +59820,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (uk === 'single' && prof.some(function (r) { return r.pattern === 'homogeneous' && (!SEC || r.corr === 'single'); })) warnings.push(_w('SINGLE_TWO_PHASE', 'Single-phase method with free gas present: a homogeneous mixture is used; choose a multiphase correlation.'));
             if ((uk === 'gasTZ' || uk === 'gasCS' || (Ru.note === 'gas only')) && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
             if (Eu.verified !== true) warnings.push(_w('PROVISIONAL', Eu.label + ': ' + PROVISIONAL + '.', 'info'));
+            // review fix (v4.5): the published Orkiszewski (slug → Duns & Ros transition) and Hasan-Kabir (churn → annular) boundaries are
+            // steps in the gradient, not blends — say so when this traverse crosses one (the outflow curve kinks at the rate it moves)
+            var STEP = PATTERN_STEPS[uk];
+            if (STEP) {
+                var rowsU = prof.filter(function (rw) { return !SEC || rw.corr === uk; }), hasA = null, hasB = false;
+                rowsU.forEach(function (rw) { if (rw.pattern === STEP[0] && hasA == null) hasA = rw.md; if (STEP[1].indexOf(rw.pattern) !== -1) hasB = true; });
+                if (hasA != null && hasB) warnings.push(_w('PATTERN_STEP', Eu.label + ': the traverse crosses the ' + STEP[2] + ' boundary (from MD ' + _fmt(hasA, 0) +
+                    ' ft); the published method has a step in the gradient there, so the outflow curve can kink near this rate.', 'info'));
+            }
         });
         if (lost) warnings.push(_w('LOST', 'The traverse stops at MD ' + _fmt(lost.md, 0) + ' ft (' + lost.reason + ').'));
         var res = { ok: !lost, corr: key, from: from, inject: inj, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
@@ -59859,9 +60122,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         } else if (kind === 'mb') {
             var NL = out.ref.NL, th = B.th, xs = _logspace(1e-3, 100, 60), ys2 = _logspace(1e-2, 1000, 60);
             L.push({ key: 'sm', label: 'slug / annular boundary', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvSM]; }) });
-            if (th > 0) L.push({ key: 'bs', label: 'bubble / slug', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvBS]; }) });
+            if (th > 0) L.push({ key: 'bs', label: 'bubble / slug', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvBS, v]; }) });
             else {
-                L.push({ key: 'bs', label: 'bubble / slug', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvBS, v]; }) });
+                L.push({ key: 'bs', label: 'bubble / slug', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvBS]; }) });
                 L.push({ key: 'st', label: 'slug / stratified', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvST, v]; }) });
             }
             LB.push({ x: 10, y: 0.05, text: 'bubble', pattern: 'bubble' }, { x: 0.05, y: 3, text: 'slug', pattern: 'slug' }, { x: 0.05, y: 300, text: 'annular', pattern: 'annular' });

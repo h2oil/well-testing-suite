@@ -534,7 +534,8 @@
     //     oil,   v_m ≥ 10: Γ = 0.0274·log(μ_L + 1) / d^1.371 + 0.161 + 0.569·log d + X,
     //                      X = −log v_m·[0.01·log(μ_L + 1) / d^1.571 + 0.397 + 0.63·log d]
     //     lower limits: v_m < 10: Γ ≥ −0.065·v_m;  v_m ≥ 10: Γ ≥ −v_b/(v_m + v_b)·(1 − ρ_s0/ρ_L)
-    //   ρ_s = [ρ_L·(v_sl + v_b) + ρ_g·v_sg]/(v_m + v_b) + Γ·ρ_L  (= ρ_s0 + Γ·ρ_L), held within [ρ_n, ρ_L] (holdup ≥ no-slip)
+    //   ρ_s = [ρ_L·(v_sl + v_b) + ρ_g·v_sg]/(v_m + v_b) + Γ·ρ_L  (= ρ_s0 + Γ·ρ_L), within the physical bounds [ρ_g, ρ_L] only (as published;
+    //   the reported H_L is shown ≥ λ_L, the gradient uses ρ_s itself)
     //   dp/dL_f = f·ρ_L·v_m²/(2·g_c·d)·[(v_sl + v_b)/(v_m + v_b) + Γ] / 144, f Moody at N_ReL; no acceleration term in slug flow.
     function _orkVb(b, nreL) {
         var sq = Math.sqrt(GRAV * b.dFt), vb = 0.5 * sq, it = 0;
@@ -583,8 +584,10 @@
         var rs0 = (b.rL * (b.vsl + vb) + b.rG * b.vsg) / (b.vm + vb);
         var gMin = b.vm < 10 ? -0.065 * b.vm : -vb / (b.vm + vb) * (1 - rs0 / b.rL);
         var Gm = G0 < gMin ? gMin : G0;
-        var rhoS = rs0 + Gm * b.rL, rhoN = r.rhoN;
-        if (rhoS < rhoN) rhoS = rhoN;
+        // published Orkiszewski: ρ_s is NOT held at the no-slip density (review fix v4.5 — the earlier clamp added ≈ 12 % to the elevation
+        // term at low v_m); only the physical bounds ρ_g ≤ ρ_s ≤ ρ_L are kept
+        var rhoS = rs0 + Gm * b.rL;
+        if (rhoS < b.rG) rhoS = b.rG;
         if (rhoS > b.rL) rhoS = b.rL;
         var f = _fMoody(nreL, b.rough / 12 / b.dFt);
         var gF = f * b.rL * b.vm * b.vm / (2 * GC * b.dFt) * ((b.vsl + vb) / (b.vm + vb) + Gm) / 144;
@@ -656,10 +659,12 @@
     // ── Mukherjee & Brill (1985) ────────────────────────────────────────────────────────────────────────────────────────
     // Groups N_Lv, N_gv, N_L as Hagedorn & Brown; θ from horizontal (+ up), s = sin θ, log = log10.
     //   slug / annular:   N_gvSM = 10^(1.401 − 2.694·N_L + 0.521·N_Lv^0.329)            annular when N_gv > N_gvSM
-    //   uphill (θ > 0):   N_gvBS = 10^(log N_Lv + 0.940 + 0.074·s − 0.855·s² + 3.695·N_L)   bubble when N_gv < N_gvBS, else slug
-    //   level / downhill: N_LvBS = 10^(0.431 − 3.003·N_L − 1.138·log N_gv·s − 0.429·(log N_gv)²·s + 1.132·s)
+    //   uphill (θ > 0):   N_LvBS = 10^(log N_gv + 0.940 + 0.074·s − 0.855·s² + 3.695·N_L)   bubble when N_Lv > N_LvBS, else slug
+    //   level / downhill: N_gvBS = 10^(0.431 − 3.003·N_L − 1.138·log N_Lv·s − 0.429·(log N_Lv)²·s + 1.132·s)
     //                     N_LvST = 10^(0.321 − 0.017·N_gv − 4.267·s − 2.972·N_L − 0.033·(log N_gv)² − 3.925·s²)
-    //                     bubble when N_Lv > N_LvBS; slug when N_LvST < N_Lv ≤ N_LvBS; stratified otherwise
+    //                     stratified when N_Lv ≤ N_LvST; otherwise bubble when N_gv < N_gvBS, slug when N_gv ≥ N_gvBS
+    //   (review fix v4.5: the bubble / slug boundaries had N_Lv and N_gv swapped; book not available (Q9), the form above is the one
+    //   recorded in the review — provisional like the whole method)
     //   holdup H_L = exp[(C1 + C2·s + C3·s² + C4·N_L²)·N_gv^C5 / N_Lv^C6] with the three published coefficient sets (MB_C below: uphill
     //   for θ ≥ 0, downhill stratified, downhill other); in upward flow H_L ≥ λ_L (as the other correlations of this page).
     //   bubble / slug: dp/dL_f = f·ρ_s·v_m²/(2·g_c·d)/144, f Moody at the no-slip N_Re = 1488·ρ_n·v_m·d/μ_n;
@@ -684,17 +689,17 @@
         return 1;
     }
     function mbPattern(NLv, Ngv, NL, th) {
-        var s = Math.sin(th), lg = _log10(Math.max(Ngv, 1e-12));
+        var s = Math.sin(th), lg = _log10(Math.max(Ngv, 1e-12)), lgL = _log10(Math.max(NLv, 1e-12));
         var SM = Math.pow(10, 1.401 - 2.694 * NL + 0.521 * Math.pow(Math.max(NLv, 0), 0.329));
         var out = { NgvSM: SM, NgvBS: null, NLvBS: null, NLvST: null, up: th > 0 };
-        if (th > 0) out.NgvBS = Math.pow(10, _log10(Math.max(NLv, 1e-12)) + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL);
+        if (th > 0) out.NLvBS = Math.pow(10, lg + 0.940 + 0.074 * s - 0.855 * s * s + 3.695 * NL);
         else {
-            out.NLvBS = Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lg * s - 0.429 * lg * lg * s + 1.132 * s);
+            out.NgvBS = Math.pow(10, 0.431 - 3.003 * NL - 1.138 * lgL * s - 0.429 * lgL * lgL * s + 1.132 * s);
             out.NLvST = Math.pow(10, 0.321 - 0.017 * Ngv - 4.267 * s - 2.972 * NL - 0.033 * lg * lg - 3.925 * s * s);
         }
         if (Ngv > SM) out.pattern = 'annular';
-        else if (th > 0) out.pattern = Ngv < out.NgvBS ? 'bubble' : 'slug';
-        else out.pattern = NLv > out.NLvBS ? 'bubble' : (NLv > out.NLvST ? 'slug' : 'stratified');
+        else if (th > 0) out.pattern = NLv > out.NLvBS ? 'bubble' : 'slug';
+        else out.pattern = NLv <= out.NLvST ? 'stratified' : (Ngv < out.NgvBS ? 'bubble' : 'slug');
         return out;
     }
     function mbHoldup(NLv, Ngv, NL, th, set) {
@@ -757,8 +762,9 @@
     //     ρ_c, μ_c by λ_LC, v_sc = v_sg + F_E·v_sl; (dp/dL)_SC = f_SC·ρ_c·v_sc²/(2·g_c·d), (dp/dL)_SL = f_SL·ρ_L·v_sl²/(2·g_c·d);
     //     X_M² = (1 − F_E)²·(dp/dL)_SL/(dp/dL)_SC (film friction factor taken equal to f_SL), Y_M = sin θ·(ρ_L − ρ_c)/(dp/dL)_SC;
     //     Z = 1 + 300·δ (F_E > 0.9) else 1 + 24·(ρ_L/ρ_g)^⅓·δ; δ (film thickness / d) from
-    //       Y_M − Z/[4δ(1 − δ)·(1 − 4δ(1 − δ))^2.5] + X_M²/[4δ(1 − δ)]³ = 0      (bisection on 0 < δ < ½)
+    //       Y_M − Z/[4δ(1 − δ)·(1 − 4δ(1 − δ))^2.5] + X_M²/[4δ(1 − δ)]³ = 0      (the thin-film root: first sign change upward)
     //     dp/dL = Z/(1 − 2δ)⁵·(dp/dL)_SC + ρ_c·sin θ (core), H_L = 4δ(1 − δ) + λ_LC·(1 − 2δ)².
+    //     Annular only while the thin film exists and H_L ≤ 0.12 (film bridging, Barnea as used by Ansari et al.); otherwise slug.
     function _ansariProps(b) {
         var sigM = b.sig * SIG_LBM, drho = b.rL - b.rG;
         return { sigM: sigM, drho: drho, vs: 1.53 * Math.pow(GRAV * sigM * drho / (b.rL * b.rL), 0.25),
@@ -770,13 +776,50 @@
         var lhs = 2 * Math.sqrt(0.4 * sigM / (drho * GRAV)) * Math.pow(b.rL / sigM, 0.6) * Math.pow(fn / (2 * b.dFt), 0.4) * Math.pow(b.vm, 1.2);
         return lhs - (0.725 + 4.15 * Math.sqrt(b.vsg / b.vm));
     }
+    // annular film (Alves et al.): the film equation can have up to three roots (thin film, thick film and one between); Ansari and Alves
+    // take the THIN film — scan δ upward on a log grid from the thin end, take the first sign change and bisect only inside that bracket.
+    // thin:false when the root found is a thick film (no thin root: the film cannot be carried). Review fix (v4.5).
+    function _ansariFilm(b, rel) {
+        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL);
+        var FE = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (FE < 0) FE = 0; if (FE > 0.9999) FE = 0.9999;
+        var vsc = b.vsg + FE * b.vsl, lLC = FE * b.vsl / vsc, rhoC = b.rL * lLC + b.rG * (1 - lLC), muC = b.muL * lLC + b.muG * (1 - lLC);
+        var fSC = _fMoody(1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), rel), dpSC = fSC * rhoC * vsc * vsc / (2 * GC * b.dFt);
+        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, dpSL = fSL * b.rL * b.vsl * b.vsl / (2 * GC * b.dFt);
+        var XM2 = dpSC > 0 ? (1 - FE) * (1 - FE) * dpSL / dpSC : 0, YM = dpSC > 0 ? Math.sin(b.th) * (b.rL - rhoC) / dpSC : 0;
+        var hiZ = FE > 0.9, zc = 24 * Math.pow(b.rL / Math.max(b.rG, 1e-9), 1 / 3);
+        var Zf = function (dd) { return hiZ ? 1 + 300 * dd : 1 + zc * dd; };
+        var fd = function (dd) { var w = 4 * dd * (1 - dd); return YM - Zf(dd) / (w * Math.pow(1 - w, 2.5)) + XM2 / (w * w * w); };
+        var dlo = 1e-7, dhi = 0.5 - 1e-7, nroots = 0, first = null;
+        if (fd(dlo) <= 0) { dhi = dlo; nroots = 1; first = [dlo, dlo]; }
+        else {
+            var NSC = 96, rS = Math.pow(dhi / dlo, 1 / NSC), dPrev = dlo, sPrev = true;
+            for (var ks = 1; ks <= NSC; ks++) {
+                var dNext = ks === NSC ? dhi : dlo * Math.pow(rS, ks), sN = fd(dNext) > 0;
+                if (sN !== sPrev) { nroots++; if (!first) first = [dPrev, dNext]; }
+                sPrev = sN; dPrev = dNext;
+            }
+            if (first) { dlo = first[0]; dhi = first[1]; }
+            for (var k3 = 0; k3 < 48; k3++) { var dm = Math.sqrt(dlo * dhi); if (fd(dm) > 0) dlo = dm; else dhi = dm; }
+        }
+        var dl = Math.sqrt(dlo * dhi), Z = Zf(dl);
+        var hl = 4 * dl * (1 - dl) + lLC * Math.pow(1 - 2 * dl, 2);
+        return { FE: FE, vcrit: vcrit, delta: dl, Z: Z, XM2: XM2, YM: YM, lambdaLC: lLC, rhoC: rhoC, fn: fSC, roots: nroots,
+            coreF: Z / Math.pow(1 - 2 * dl, 5) * dpSC / 144, hl: hl,
+            // bridging (Barnea, as used by Ansari et al.): annular only while the film is thin — a single (thick) root or a total liquid
+            // holdup above 0.12 sends the flow to slug (a thick root alone always exceeds it)
+            thin: hl <= ANSARI_HL_BRIDGE };
+    }
+    var ANSARI_HL_BRIDGE = 0.12;
     function ansariPattern(b) {
         var a = _ansariProps(b), lam = b.vsl / b.vm;
         var rhoN = b.rL * lam + b.rG * (1 - lam), muN = b.muL * lam + b.muG * (1 - lam);
         var fn = _fMoody(1488 * rhoN * b.vm * b.dFt / Math.max(muN, 1e-9), b.rough / 12 / b.dFt);
         var vsgBS = 0.25 * a.vs + 0.333 * b.vsl, bar = _barnea(b, a.sigM, a.drho, fn);
-        var pat = b.vsg > a.vsgA ? 'annular' : ((bar > 0 && 1 - lam <= 0.52) ? 'dispersed bubble' : ((b.vsg < vsgBS && b.dFt > a.dMin) ? 'bubble' : 'slug'));
-        return { pattern: pat, vs: a.vs, vsgBS: vsgBS, vsgA: a.vsgA, dMin: a.dMin, barnea: bar, fn: fn, sigM: a.sigM, drho: a.drho };
+        var film = null, bridged = false;
+        if (b.vsg > a.vsgA) { film = _ansariFilm(b, b.rough / 12 / b.dFt); bridged = !film.thin; }
+        var pat = (b.vsg > a.vsgA && !bridged) ? 'annular' : ((bar > 0 && 1 - lam <= 0.52) ? 'dispersed bubble' : ((b.vsg < vsgBS && b.dFt > a.dMin) ? 'bubble' : 'slug'));
+        return { pattern: pat, vs: a.vs, vsgBS: vsgBS, vsgA: a.vsgA, dMin: a.dMin, barnea: bar, fn: fn, sigM: a.sigM, drho: a.drho,
+            film: pat === 'annular' ? film : null, bridged: bridged };
     }
     function ansari(inp) {
         var b = _base(inp);
@@ -815,23 +858,11 @@
             r.hl = _clampHl((rhoS2 - b.rG) / (b.rL - b.rG), lam, up);
             return _assemble(b, r, rhoS2, f2 * rhoLS * b.vm * b.vm / (2 * GC * b.dFt) * (1 - beta) / 144, 0);
         }
-        // annular
-        var vcrit = 3048 * b.vsg * b.muG / b.sig * Math.sqrt(b.rG / b.rL);
-        var FE = 1 - Math.exp(-0.125 * (vcrit - 1.5)); if (FE < 0) FE = 0; if (FE > 0.9999) FE = 0.9999;
-        var vsc = b.vsg + FE * b.vsl, lLC = FE * b.vsl / vsc, rhoC = b.rL * lLC + b.rG * (1 - lLC), muC = b.muL * lLC + b.muG * (1 - lLC);
-        var fSC = _fMoody(1488 * rhoC * vsc * b.dFt / Math.max(muC, 1e-9), rel), dpSC = fSC * rhoC * vsc * vsc / (2 * GC * b.dFt);
-        var fSL = b.vsl > 0 ? _fMoody(1488 * b.rL * b.vsl * b.dFt / Math.max(b.muL, 1e-9), rel) : 0, dpSL = fSL * b.rL * b.vsl * b.vsl / (2 * GC * b.dFt);
-        var XM2 = dpSC > 0 ? (1 - FE) * (1 - FE) * dpSL / dpSC : 0, YM = dpSC > 0 ? Math.sin(b.th) * (b.rL - rhoC) / dpSC : 0;
-        var hiZ = FE > 0.9, zc = 24 * Math.pow(b.rL / Math.max(b.rG, 1e-9), 1 / 3);
-        var Zf = function (dd) { return hiZ ? 1 + 300 * dd : 1 + zc * dd; };
-        var fd = function (dd) { var w = 4 * dd * (1 - dd); return YM - Zf(dd) / (w * Math.pow(1 - w, 2.5)) + XM2 / (w * w * w); };
-        var dlo = 1e-7, dhi = 0.5 - 1e-7;
-        if (fd(dlo) <= 0) dhi = dlo;
-        else for (var k3 = 0; k3 < 48; k3++) { var dm = Math.sqrt(dlo * dhi); if (fd(dm) > 0) dlo = dm; else dhi = dm; }
-        var dl = Math.sqrt(dlo * dhi), Z = Zf(dl), coreF = Z / Math.pow(1 - 2 * dl, 5) * dpSC / 144;
-        r.FE = FE; r.vcrit = vcrit; r.delta = dl; r.Z = Z; r.XM2 = XM2; r.YM = YM; r.lambdaLC = lLC; r.rhoC = rhoC; r.fn = fSC;
-        r.hl = _clampHl(4 * dl * (1 - dl) + lLC * Math.pow(1 - 2 * dl, 2), 0, false);
-        return _assemble(b, r, rhoC, coreF, _ekOf(b, rhoC));
+        // annular (the thin film; ansariPattern already sent a bridged / missing film to slug)
+        var A = P.film || _ansariFilm(b, rel);
+        r.FE = A.FE; r.vcrit = A.vcrit; r.delta = A.delta; r.Z = A.Z; r.XM2 = A.XM2; r.YM = A.YM; r.lambdaLC = A.lambdaLC; r.rhoC = A.rhoC; r.fn = A.fn;
+        r.hl = _clampHl(A.hl, 0, false);
+        return _assemble(b, r, A.rhoC, A.coreF, _ekOf(b, A.rhoC));
     }
 
     // ── Hasan & Kabir (1988; 2002 text), drift flux, inclined wells ─────────────────────────────────────────────────────
@@ -1097,7 +1128,7 @@
             }
             s.corr = key; s.secRow = rule >= 0 ? rows[rule].row : -1;
         });
-        rows.forEach(function (r, i) { if (!hit[i]) n.warnings.push(_w('SECTION_EMPTY', 'Section ' + (r.row + 1) + ' (' + (r.by === 'md' ? 'MD ' + _fmt(r.from, 0) + '–' + (_fin(r.to) ? _fmt(r.to, 0) : 'TD') + ' ft' : _fmt(r.from, 0) + '–' + _fmt(r.to, 0) + '° from vertical') + ') covers no part of this flow path.', 'info')); });
+        rows.forEach(function (r, i) { if (!hit[i]) n.warnings.push(_w('SECTION_EMPTY', 'Section ' + (r.row + 1) + ' (' + (r.by === 'md' ? 'MD ' + _fmt(r.from, 0) + '–' + (_fin(r.to) ? _fmt(r.to, 0) : 'TD') + ' ft' : _fmt(Math.max(0, Math.min(90, r.from)), 0) + '–' + _fmt(_fin(r.to) ? Math.max(0, Math.min(90, r.to)) : 90, 0) + '° from vertical') + ') covers no part of this flow path.', 'info')); });
         return { segs: sp, active: true, warnings: n.warnings, rows: rows };
     }
     // the contiguous runs of one correlation along a segment list, top → bottom
@@ -1121,6 +1152,7 @@
     }
 
     // ── traverse ─────────────────────────────────────────────────────────────────────────────────────────────────────
+    var PATTERN_STEPS = { ork: ['slug', ['transition', 'mist'], 'slug / transition'], hk: ['churn', ['annular'], 'churn / annular'] };
     function traverse(F, W, q, o) {
         o = o || {};
         var errors = [], warnings = [];
@@ -1225,6 +1257,15 @@
             if (uk === 'single' && prof.some(function (r) { return r.pattern === 'homogeneous' && (!SEC || r.corr === 'single'); })) warnings.push(_w('SINGLE_TWO_PHASE', 'Single-phase method with free gas present: a homogeneous mixture is used; choose a multiphase correlation.'));
             if ((uk === 'gasTZ' || uk === 'gasCS' || (Ru.note === 'gas only')) && (ff.qo > 0 || ff.qw > 0)) warnings.push(_w('GAS_ONLY', 'Dry-gas method: the liquids are not included in the gradient.'));
             if (Eu.verified !== true) warnings.push(_w('PROVISIONAL', Eu.label + ': ' + PROVISIONAL + '.', 'info'));
+            // review fix (v4.5): the published Orkiszewski (slug → Duns & Ros transition) and Hasan-Kabir (churn → annular) boundaries are
+            // steps in the gradient, not blends — say so when this traverse crosses one (the outflow curve kinks at the rate it moves)
+            var STEP = PATTERN_STEPS[uk];
+            if (STEP) {
+                var rowsU = prof.filter(function (rw) { return !SEC || rw.corr === uk; }), hasA = null, hasB = false;
+                rowsU.forEach(function (rw) { if (rw.pattern === STEP[0] && hasA == null) hasA = rw.md; if (STEP[1].indexOf(rw.pattern) !== -1) hasB = true; });
+                if (hasA != null && hasB) warnings.push(_w('PATTERN_STEP', Eu.label + ': the traverse crosses the ' + STEP[2] + ' boundary (from MD ' + _fmt(hasA, 0) +
+                    ' ft); the published method has a step in the gradient there, so the outflow curve can kink near this rate.', 'info'));
+            }
         });
         if (lost) warnings.push(_w('LOST', 'The traverse stops at MD ' + _fmt(lost.md, 0) + ' ft (' + lost.reason + ').'));
         var res = { ok: !lost, corr: key, from: from, inject: inj, label: E.label, verified: E.verified === true, profile: prof, pEnd: pEnd,
@@ -1518,9 +1559,9 @@
         } else if (kind === 'mb') {
             var NL = out.ref.NL, th = B.th, xs = _logspace(1e-3, 100, 60), ys2 = _logspace(1e-2, 1000, 60);
             L.push({ key: 'sm', label: 'slug / annular boundary', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvSM]; }) });
-            if (th > 0) L.push({ key: 'bs', label: 'bubble / slug', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvBS]; }) });
+            if (th > 0) L.push({ key: 'bs', label: 'bubble / slug', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvBS, v]; }) });
             else {
-                L.push({ key: 'bs', label: 'bubble / slug', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvBS, v]; }) });
+                L.push({ key: 'bs', label: 'bubble / slug', pts: xs.map(function (v) { return [v, mbPattern(v, 1, NL, th).NgvBS]; }) });
                 L.push({ key: 'st', label: 'slug / stratified', pts: ys2.map(function (v) { return [mbPattern(1, v, NL, th).NLvST, v]; }) });
             }
             LB.push({ x: 10, y: 0.05, text: 'bubble', pattern: 'bubble' }, { x: 0.05, y: 3, text: 'slug', pattern: 'slug' }, { x: 0.05, y: 300, text: 'annular', pattern: 'annular' });

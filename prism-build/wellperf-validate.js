@@ -103,9 +103,11 @@ const BENCH = [
   { kind: 'screen', key: 'lift', status: 'pending', source: 'Brown (1982); Clegg, Bucaram & Hein (1993) — indicative screening ranges' },
   // B (WP25): the gas-lift design is the existing API RP 11V6 engine (49-calc-gaslift.js, pinned by calc-gaslift against an independent
   // RK4 gas column) on the shared model (identity X55); the valve throughput and the stability numbers have no checked example (Q9)
-  { kind: 'lift', key: 'glDesign', status: 'pinned', source: 'API RP 11V6 spacing — calc-gaslift tests (independent RK4 gas column); vertical-path identity X55' },
+  // review fix (v4.5): the calc-gaslift tests check hand calculations and an independent RK4 gas column, not a published worked example,
+  // and the B design on the deviated path with the model's inflow / correlation / temperatures is new → pending (D17), labelled provisional
+  { kind: 'lift', key: 'glDesign', status: 'pending', source: 'API RP 11V6 spacing — no published worked example checked (Q9); calc-gaslift hand / RK4 tests and the vertical-path identity X55 only' },
   { kind: 'lift', key: 'thornhillCraver', status: 'pending', source: 'Thornhill & Craver; API RP 11V2, Brown vol. 2a — no worked example checked (Q9); isentropic-nozzle cross-check X54 only' },
-  { kind: 'lift', key: 'asheim', status: 'pending', source: 'Asheim (1988) gas-lift stability criteria — written from the lumped model, coefficients not checked (Q9); identities X57 only' },
+  { kind: 'lift', key: 'asheim', status: 'pending', source: 'static stability and injection loop gain (screening, after Asheim 1988; casing heading not modelled) — not the published criteria (Q9); identities X57 only' },
   // B (WP26): the ESP — the affinity laws are exact similarity relations (pinned: X60); the viscosity correction, the natural separation,
   // the gas criterion and the motor / cable basics have no checked published example (Q9: Takacs, Electrical Submersible Pumps Manual)
   { kind: 'esp', key: 'affinity', status: 'pinned', source: 'affinity laws q ∝ f, H ∝ f², P ∝ f³ — exact (X60, wellperf-esp ES2)' },
@@ -307,6 +309,8 @@ function gate(G) {
     let s0, j = GLB.design(Ml, Rl), n0 = 0; do { s0 = j.step(); n0++; } while (!s0.done && n0 < 20);
     const Dl = j.result();
     if (pend('thornhillCraver') && (!Dl.ok || !Dl.warnings.some((w) => w.code === 'TC_PROVISIONAL' && w.msg.indexOf(PROVISIONAL) !== -1))) bad('lift thornhillCraver', 'the design does not carry the provisional note');
+    if (pend('glDesign') && (!GLB.DESIGN || GLB.DESIGN.verified !== false || !Dl.ok || Dl.verified !== false || !Dl.warnings.some((w) => w.code === 'GLD_PROVISIONAL' && w.msg.indexOf(PROVISIONAL) !== -1))) bad('lift glDesign', 'pending but the design is not labelled provisional');
+    if (!pend('glDesign') && GLB.DESIGN && GLB.DESIGN.verified === false) bad('lift glDesign', 'BENCH pinned but the engine says verified:false');
   }
   // 12. the ESP (B, WP26): the method flags agree with BENCH, a pending method is labelled provisional where it is used (the solve's flags
   // and the check validity), and the default lift type stays natural flow
@@ -395,6 +399,30 @@ function checks(G) {
       for (let i = 1; i < 9; i++) worst = Math.max(worst, Math.abs(p[i + 1] - 2 * p[i] + p[i - 1]));
     });
     add('X5', 'p_out(q) smooth on the frozen grid (tubing; gas Beggs & Brill / Gray, oil no-slip)', worst < 0.01, worst, 0.01);
+  }
+  // X5b / X5c (review fix v4.5): the B correlations' outflow along a rate grid (oil and wet gas, two wellhead pressures): the largest
+  // relative pwf step between neighbouring rates (×1.12). The mechanistic / map methods (AGF, Mukherjee-Brill, Ansari) must stay below
+  // 20 % (Ansari was 27 % before the thin-film fix); Orkiszewski and Hasan-Kabir step at their published pattern boundaries (slug →
+  // transition, churn → annular) — reported against a recorded limit, and the traverse says so (PATTERN_STEP)
+  {
+    const steps = {};
+    [['gasWell', 1000, 9000, [400, 1000]], ['oilWell', 100, 2500, [200]]].forEach(([k, q0, q1, p0s]) => {
+      const M = S.FIX[k], F = G.WTS_wp_fluid.build(M.fluid, { T_F: M.res.T_F }), W = G.WTS_wp_well.build(M.well, { res: M.res });
+      ['ork', 'agf', 'mb', 'ansari', 'hk'].forEach((c) => {
+        p0s.forEach((p0) => {
+          let prev = null;
+          for (let i = 0; i <= 20; i++) {
+            const q = q0 * Math.pow(q1 / q0, i / 20), tr = V.traverse(F, W, q, { from: 'top', p0, corr: c });
+            if (!tr.ok) { prev = null; continue; }
+            if (prev != null) steps[c] = Math.max(steps[c] || 0, Math.abs(tr.pEnd - prev) / (0.5 * (tr.pEnd + prev)));
+            prev = tr.pEnd;
+          }
+        });
+      });
+    });
+    const mech = Math.max(steps.agf || 0, steps.mb || 0, steps.ansari || 0), pub = Math.max(steps.ork || 0, steps.hk || 0);
+    add('X5b', 'outflow step along a rate grid: AGF / Mukherjee-Brill / Ansari (largest relative pwf step; ' + ['agf', 'mb', 'ansari'].map((c) => c + ' ' + (steps[c] || 0).toFixed(3)).join(', ') + ')', mech < 0.2, mech, 0.2);
+    add('X5c', 'outflow step at the published Orkiszewski / Hasan-Kabir pattern boundaries (known limitation; ork ' + (steps.ork || 0).toFixed(3) + ', hk ' + (steps.hk || 0).toFixed(3) + ')', pub < 0.8, pub, 0.8);
   }
   // X6 choke continuity across the critical ratio
   {
@@ -533,7 +561,7 @@ function checks(G) {
   if (G.WTS_wp_pvtmatch) {
     const P = G.WTS_wp_pvtmatch, sp = { type: 'oil', api: 35, sgg: 0.75, gor: 600, psep_psig: 100, tsep_F: 80 }, lab = P.example(sp, 200), r = P.fit(sp, lab);
     let worst = r.ok ? 0 : Infinity;
-    if (r.ok) Object.keys(r.props).forEach((k) => { const q = r.props[k], cf = P.wls(q.yc, q.y, q.fixedB); worst = Math.max(worst, Math.abs(q.a / cf.a - 1), Math.abs(q.b - cf.b) / Math.max(1, Math.abs(cf.b))); });
+    if (r.ok) Object.keys(r.props).forEach((k) => { const q = r.props[k], cf = P.wls(q.yc, q.y, q.fixedB, q.xb); worst = Math.max(worst, Math.abs(q.a / cf.a - 1), Math.abs(q.b - cf.b) / Math.max(1, Math.abs(cf.b))); });
     const ep = r.ok ? Math.abs(r.pb.after / lab.pb - 1) : Infinity;
     add('X22', 'PVT lab match: LM = closed-form weighted least squares (a, b of Rs / Bo / μo); matched pb = lab pb (1e-4)', worst < 1e-6 && ep < 1e-4, worst, 1e-6);
     // X23 modified black oil: total mass flow equal at the top and bottom of the deviated FIX.gasWell traverse (and at every station)
@@ -814,7 +842,7 @@ function checks(G) {
     // X57 Asheim: F1 > 1 exactly when the solver's static criterion dΔ/dq > 0; a critical port gives F2 = 0
     const a = GL.asheim(Ml, Rl, { port64: 16 }), Mc = S.FIX.oilWell; Mc.fluid.wc = 0.6; Mc.res.pr = 2600; Mc.lift = { type: 'gaslift', gl: { qinj_Mscfd: 800, pinj_psig: 1200, sginj: 0.65, dpValve: 700, packerMd: 7800 } };
     const ac = GL.asheim(Mc, solve(Mc), { port64: 16 }), ok57 = a.ok && a.stable1 === (Rl.op.dDdq > 0) && ac.ok && ac.parts.critical && ac.F2 === 0;
-    add('X57', 'Asheim F1 > 1 ⇔ dΔ/dq > 0; a critical port gives F2 = 0', ok57, ok57 ? 0 : 1, 0);
+    add('X57', 'static stability F1 > 1 ⇔ dΔ/dq > 0; a critical port gives loop gain F2 = 0 (screening, after Asheim)', ok57, ok57 ? 0 : 1, 0);
     // X58 the solve's own traverse read as a survey matches it exactly, and its gradient break lies at the injection point
     const rows = Rl.traverse.profile.filter((r, i) => !r.restr && i % 4 === 0).map((r) => ({ md: r.md, p: r.p }));
     const ms = GL.matchSurvey(Ml, Rl, rows), dB = ms.ok && ms.brk ? Math.abs(ms.brk.md - Rl.lift.injMd) : Infinity;

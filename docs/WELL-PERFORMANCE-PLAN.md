@@ -1073,7 +1073,7 @@ changes (5). **Total A2 ≈ 53.**
 
 `wellperf-export` (round-trip parser, monotone fill and monotonicity check), `wellperf-pvtmatch`, `wellperf-ipr2` (WP24: 15), `wellperf-gl2`,
 `wellperf-esp`, `wellperf-cases`, `wellperf-mech`. WP27 shipped `wellperf-cases` (6), `wellperf-envelope` (5), `wellperf-tornado` (3) and
-`wellperf-studies` (5) — §18.3.6; WP25 shipped `wellperf-gl2` (8) — §18.3.9; WP26 shipped `wellperf-esp` (13) — §18.3.10.
+`wellperf-studies` (5) — §18.3.6; WP25 shipped `wellperf-gl2` (8) — §18.3.9; WP26 shipped `wellperf-esp` (13) — §18.3.10; the review fixes `wellperf-bfix` (3) — §18.3.12.
 
 ---
 
@@ -1881,7 +1881,7 @@ after every merge; the wellperf and flowline guides re-hashed (reviewed v4.5). R
 - **`WTS_wp_system` _ctx**: the well path is built before the inflow (WP24) and `o.outflowOnly` skips the inflow (WP20); evalAt with a
   reused context also resets the predictor count (WP22).
 - **Gates at the integration HEAD**: node --check ok; smoke 347/347; accept-test --html --integration file by file 192 files, 2208/2208
-  (2122 + 86 new); wellperf-validate --html --gate --check --time: gate PASS, 51/51 cross-checks, every E budget ok (one wall-clock row,
+  (2122 + 86 new; per-file sums with substring matching — see §18.3.12 for the unique counts); wellperf-validate --html --gate --check --time: gate PASS, 51/51 cross-checks, every E budget ok (one wall-clock row,
   the gas enthalpy solve, ran over its ms cap on the loaded container: 1.46 s against 1.36 s); help-shots / build-user-guide /
   publish-site --check ok; help production file under its cap (no screenshot added).
 
@@ -1968,7 +1968,7 @@ of 29-project-save is PRiSM-only and would need a Round-6 edit). Q21 open.
   70–130 % of the BEP rate, stated), `curve` (affinity q ∝ f, H ∝ f², P ∝ f³; viscosity by the Turzo, Takacs & Zsuga (2000) fit, normalised
   to its water value so a catalogue water curve is unchanged, factors in [0.1, 1], held beyond Q* = 40 and flagged), `fan`, `natSep`
   (Harmathy v∞, E = v∞/(v∞ + v_SL) after Alhanati; a rotary separator in series), `turpin`, `prepare` (setting MD with TVD, inclination and
-  dogleg; defaults: end of tubing, 60 Hz, natural separation and viscosity on, OD 4 in, #2 cable to MD + 100 ft), `pump` (stage by stage in
+  dogleg; defaults: end of tubing, 60 Hz, natural separation and viscosity OFF (opt-in since the review fix, §18.3.12), OD 4 in, #2 cable to MD + 100 ft), `pump` (stage by stage in
   ≤ 20 groups, midpoint rule, gas dissolving as the pressure rises, hydraulic and shaft power), `motor` (V/Hz constant, load, linear current
   estimate, copper cable at the mean cable temperature, surface voltage, kVA, motor cooling velocity), `flags` (range down- / upthrust, gas
   interference φ > 1, GVF > 10 %, viscosity, overload / high / light load, cable drop > 5 %, cooling < 1 ft/s, below the perforations,
@@ -2028,8 +2028,47 @@ of 29-project-save is PRiSM-only and would need a Round-6 edit). Q21 open.
   clears the forecast steps and matrix values so they are suggested for the example; 49-calc-wp-tables `_sync` decides "still auto-filled"
   before the axis selects fall back to an applicable type; 49-calc-wp-view schematic fits a wide well in 88 % of the section width and sets a
   side label that would run past the section against its edge.
-- **Gates**: smoke 347/347, accept-test 2398/2398 (194 files), wts3d 147/149 (CRLF checks), wellperf-validate gate PASS + 60/60 + budgets,
+- **Gates**: smoke 347/347, accept-test 2398/2398 (194 files; per-file sums — 2,229 unique by --list, §18.3.12), wts3d 147/149 (CRLF checks), wellperf-validate gate PASS + 60/60 + budgets,
   help / guide / publish checks, GUI sweep full and --mobile 0 findings.
+
+#### 18.3.12 Review-fix record (2026-11-12, branch wp/b)
+
+Twenty-seven review findings verified and fixed (regression tests in wellperf-mech VM4 / VM2 / VM11, wellperf-gl2 WG29, wellperf-esp ES12,
+wellperf-pvtmatch PM13 and the new wellperf-bfix RB1–RB3; checks X5b / X5c in wellperf-validate):
+- **Lift correlations.** Ansari annular: the film equation is scanned upward from the thin end and the first sign change is bisected (the
+  thin film, as Ansari and Alves take it); a film that has only the thick root or a total holdup above 0.12 is bridged to slug (Barnea, as
+  used by Ansari et al.; the same rule in `ansariPattern`, so the map and the gradient agree). FIX.gasWell at 2,600 psia now flows with
+  Ansari (≈ 3,710 Mscf/d; was UNSTABLE_ONLY) and its largest outflow step on a rate grid fell from 27 % to ≈ 15 %. Mukherjee-Brill: uphill
+  bubble when N_Lv > N_LvBS(N_gv), level / downhill bubble below N_gvBS(N_Lv) and stratified when N_Lv ≤ N_LvST (the review's reading of
+  §4.3.3; Q9). Orkiszewski: the slug density is no longer held at the no-slip density (published method; hand point ρ_s ≈ 20.6 lbm/ft³).
+  Orkiszewski / Hasan-Kabir keep their published pattern steps: X5c reports them (known limitation), the traverse warns `PATTERN_STEP`.
+- **D17.** BENCH `lift glDesign` → pending (no published worked example checked; the design carries `GLD_PROVISIONAL`, `WTS_wp_gl.DESIGN`
+  verified:false, the card / verdicts / Notes / release note say provisional). The Asheim numbers are renamed "static stability and
+  injection loop gain (screening, after Asheim 1988)"; casing heading from the annulus volume is not assessed. ESP natural separation and
+  the viscosity correction are opt-in (`=== true`; checkboxes unchecked; the ESP example leaves them off) — the WP26 record line "natural
+  separation and viscosity on" is superseded.
+- **PVT / flowline.** The lab-match Rs shift is applied as b·min(1, p / pb_lab) (`match.rsPb`; the fit regresses b on that taper and skips
+  the lab-pb point itself): Rs at stock-tank and separator pressures stays the correlation's. A plain `fluid.pvt.mult.rs` no longer maps the
+  GOR back for the bubble point (only a lab match does: `pvt.matchRs` or a shift) — the A2 bubble point bit for bit (PM13).
+- **Forecast header.** The oil tank's producing GOR is the Corey solution-gas-drive R (S_gc 5 %, n_o 3, n_g 2, S_wi 0.2 assumed), 'retained'
+  holds R_s; the 49-calc-wp-cases header said R_p was held.
+- **Reports from any step.** The ESP frequency sweep (plot, table, best-in-range chip), the inflow-study plot, the condensate plots, the
+  lift-screening ranking and a compact table of every study that has results (envelope, forecast, tornado, matrix, cases — the active tab
+  shows its own) are inside #wp_res; the 'Lift screening' report row is built from the current model's matrix in the table's words.
+- **Page.** Gas lift example (deviated, p_inj / q_inj / packer; designs its valves on load); example chips wrap as one group; validity box
+  labels a provisional entry once (ℹ); Notes / Case summary name the per-section correlations; inclination text clamped to 0–90°;
+  injection-point KPI and schematic marker say "point of balance — not yet at the installed valves" (warn below the deepest valve); valve
+  drag clamped between the neighbours ± the minimum spacing with a spacing verdict / KPI; ArrowDown = deeper on a depth-down chart; one TVD
+  source and knob labels from the valve MD; one port notation; schematic side labels placed without overlaps and off the path, perforation
+  ticks and the correlation rail clipped to the frame, the horizontal label off its bracket; hline labels and the envelope point label
+  avoid the other labels; Metric: matrix variable lists, J, the ESP engine lines and doglegs (°/30 m) in display units; the breakdown
+  footer wraps; the forecast chip's short sub-line; labelled matrix best case; per-study plot names.
+- **Records.** The earlier counts were per-file sums with substring matching (`--file wellperf-sens` also runs wellperf-sens2 …): unique by
+  `--list` 1,964 at 8ce1989 (A2, not 2,122) and 2,229 at the WPI3 release (not 2,398). Smoke namespaces now include every B engine.
+- **Gates (Linux, LF, built HTML).** node --check ok; smoke 347/347; accept-test --html --integration 2235/2235 unique (195 files, each run
+  with its full name); wts3d-test 147/149 (the two CRLF checks); wellperf-validate --html --gate --check --time: gate PASS, 62/62
+  cross-checks (X5b ≤ 0.2, X5c recorded), every E budget ok; help-shots --check (release-notes desktop shot re-taken, image total 7,980,332),
+  build-user-guide --check, publish-site --check ok; wellperf and flowline guides re-reviewed (reviewedSrc).
 
 ### 18.4 Increment C
 

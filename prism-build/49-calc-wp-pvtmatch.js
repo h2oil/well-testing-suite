@@ -151,7 +151,7 @@
     function _build(spec, T, match) {
         var W = G.WTS_wp_fluid; if (!W || typeof W.build !== 'function') return null;
         var s = _clone(spec);
-        if (match) s.match = { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr || null };
+        if (match) s.match = { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, rsPb: match.rsPb || null, corr: match.corr || null };
         return W.build(s, { T_F: T, table: false });
     }
     function _corrOf(spec) { var c = (spec && spec.corr) || {}; return { rs: c.rs || 'standing', bo: c.bo || 'standing', muod: c.muod || 'beggsRobinson', muo: c.muo || 'beggsRobinson' }; }
@@ -180,15 +180,16 @@
         return n ? 100 * s / n : null;
     }
     // closed-form relative (1 / y²) weighted least squares of y ≈ a·yc + b (b = 0 when fixB) — the cross-check of the LM fit (X22)
-    function wls(yc, y, fixB) {
+    // xb (optional): the regressor of b per point (the Rs shift tapers as min(1, p / pb_lab); default 1)
+    function wls(yc, y, fixB, xb) {
         var n = y.length, Sw = 0, Sx = 0, Sy = 0, Sxx = 0, Sxy = 0;
-        for (var i = 0; i < n; i++) { var w = 1 / (y[i] * y[i]); Sw += w; Sx += w * yc[i]; Sy += w * y[i]; Sxx += w * yc[i] * yc[i]; Sxy += w * yc[i] * y[i]; }
+        for (var i = 0; i < n; i++) { var w = 1 / (y[i] * y[i]), u = xb ? xb[i] : 1; Sw += w * u * u; Sx += w * yc[i] * u; Sy += w * y[i] * u; Sxx += w * yc[i] * yc[i]; Sxy += w * yc[i] * y[i]; }
         if (!(Sxx > 0)) return null;
         if (fixB || n < 2) return { a: Sxy / Sxx, b: 0 };
         var det = Sw * Sxx - Sx * Sx; if (!(Math.abs(det) > 1e-300)) return { a: Sxy / Sxx, b: 0 };
         return { a: (Sw * Sxy - Sx * Sy) / det, b: (Sxx * Sy - Sx * Sxy) / det };
     }
-    function _lmFit(yc, y, bnd, fixB) {
+    function _lmFit(yc, y, bnd, fixB, xb) {
         // relative least squares of y ≈ a·yc + b with PRiSM_lm; one point → a only
         var LM = G.PRiSM_lm;
         if (typeof LM !== 'function') return { ok: false, code: 'MISSING_ENGINE', name: 'PRiSM_lm' };
@@ -198,7 +199,7 @@
         var yMax = Math.max.apply(null, y.map(Math.abs).concat([1e-9]));
         var bB = bnd.b || [-0.5 * yMax, 0.5 * yMax];
         var a0 = 1;
-        var model = function (tt, pr) { return tt.map(function (k) { return pr.a * yc[k] + pr.b; }); };
+        var model = function (tt, pr) { return tt.map(function (k) { return pr.a * yc[k] + pr.b * (xb ? xb[k] : 1); }); };
         var lm;
         try {
             lm = LM(model, { t: T, p: P, weights: Wt }, { a: a0, b: 0 }, { a: bnd.a, b: bB }, fixB ? { b: true } : null,
@@ -207,7 +208,7 @@
         var a = Math.min(bnd.a[1], Math.max(bnd.a[0], +lm.params.a)), b = fixB ? 0 : Math.min(bB[1], Math.max(bB[0], +lm.params.b));
         // the problem is linear in (a, b): the closed-form weighted least squares is the optimality check of the LM answer (an LM stop on
         // its damping limit at the noise floor of rounded lab values is still the optimum when the objectives agree)
-        var cf = wls(yc, y, fixB), ssr = function (aa, bb) { var t = 0; for (var j = 0; j < n; j++) { var e = (aa * yc[j] + bb - y[j]) / y[j]; t += e * e; } return t; };
+        var cf = wls(yc, y, fixB, xb), ssr = function (aa, bb) { var t = 0; for (var j = 0; j < n; j++) { var e = (aa * yc[j] + bb * (xb ? xb[j] : 1) - y[j]) / y[j]; t += e * e; } return t; };
         var sL = ssr(a, b), sC = cf ? ssr(cf.a, cf.b) : null, inB = cf && cf.a >= bnd.a[0] && cf.a <= bnd.a[1] && (fixB || (cf.b >= bB[0] && cf.b <= bB[1]));
         var conv = !!lm.converged || (inB && Math.abs(sL - sC) <= 1e-9 * sC + 1e-18);
         return { ok: true, a: a, b: b, lm: lm, ci95: lm.ci95 || null, converged: conv, stopReason: lm.stopReason, iterations: lm.iterations, nEval: lm.nEval, bBounds: bB, cf: cf, ssr: sL };
@@ -231,7 +232,7 @@
         var pts = rows.map(function (r, i) { return { p: r.p, lab: { rs: r.rs, bo: r.bo, muo: r.muo }, before: before[i], after: null }; });
         // 1. the bubble point (one value → the one-point factor of A1)
         var pbCorr = F0.pb(T), pbOut = { lab: L.pb, corr: pbCorr, after: null, factor: 1, errPct: null };
-        var match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: corr, T_F: T };
+        var match = { on: true, pbFactor: 1, mult: { rs: 1, bo: 1, muo: 1 }, shift: { rs: 0, bo: 0, muo: 0 }, corr: corr, T_F: T, rsPb: _fin(L.pb) ? L.pb : null };
         if (_fin(L.pb) && _fin(pbCorr) && pbCorr > 14.7) { match.pbFactor = pbCorr / L.pb; pbOut.factor = match.pbFactor; pbOut.errPct = 100 * (pbCorr / L.pb - 1); }
         else if (_fin(L.pb)) warnings.push(_w('PB_NOT_MATCHED', 'The correlation bubble point could not be evaluated: the lab bubble point is not matched.'));
         else warnings.push(_w('PB_NO_LAB', 'No lab bubble point: the bubble point is not matched (Rs, Bo and μo are).', 'info'));
@@ -247,12 +248,14 @@
                 var y = q.lab[k];
                 if (!_fin(y) || !(y > 0) || !_fin(cur[i][k])) return;
                 if (k === 'rs' && ((pbLab != null && q.p > pbLab * (1 + 1e-9)) || (pbLab == null && y >= rsb * 0.999))) return;   // Rs above pb is Rsb by definition
+                if (k === 'rs' && pbLab != null && y >= rsb * 0.999 && q.p >= pbLab * 0.995) return;   // the lab pb point itself (Rs = Rsb) carries no slope
                 idx.push(i);
             });
             if (!idx.length) return;
             var yc = idx.map(function (i) { return cur[i][k]; }), y = idx.map(function (i) { return pts[i].lab[k]; });
             var fixB = idx.length < 2 || o.fixB === true;
-            var r = _lmFit(yc, y, BOUNDS[k], fixB);
+            var xb = (k === 'rs' && match.rsPb) ? idx.map(function (i) { return Math.min(1, pts[i].p / match.rsPb); }) : null;
+            var r = _lmFit(yc, y, BOUNDS[k], fixB, xb);
             if (k === 'rs' && r.ok && pbLab != null && match.pbFactor !== 1) {
                 // g(f) = f(a, b refitted at f) − f, solved by the secant method (Rs_c(p·f)·a is nearly a power law, so a plain fixed point
                 // creeps); the refit at the root is the answer
@@ -260,8 +263,8 @@
                     var mr2 = _clone(match); mr2.pbFactor = fv; mr2.mult.rs = 1; mr2.shift.rs = 0;
                     var cur2 = _props(_build(base, T, mr2), ps, T, rsb), yc2 = idx.map(function (i) { return cur2[i].rs; });
                     if (!yc2.every(_fin)) return null;
-                    var r2 = _lmFit(yc2, y, BOUNDS.rs, fixB); if (!r2.ok) return null;
-                    var Fp = _build(base, T, { pbFactor: 1, mult: { rs: r2.a, bo: 1, muo: 1 }, shift: { rs: r2.b, bo: 0, muo: 0 }, corr: corr }), pbm = Fp && Fp.ok ? Fp.pb(T) : null;
+                    var r2 = _lmFit(yc2, y, BOUNDS.rs, fixB, xb); if (!r2.ok) return null;
+                    var Fp = _build(base, T, { pbFactor: 1, mult: { rs: r2.a, bo: 1, muo: 1 }, shift: { rs: r2.b, bo: 0, muo: 0 }, rsPb: match.rsPb, corr: corr }), pbm = Fp && Fp.ok ? Fp.pb(T) : null;
                     return _fin(pbm) ? { f: fv, g: pbm / pbLab - fv, r: r2, yc: yc2 } : null;
                 };
                 var e0 = gOf(match.pbFactor), e1 = e0 ? gOf(e0.f + e0.g) : null;
@@ -279,7 +282,7 @@
             if (!r.ok) { warnings.push(_w('LM_' + k.toUpperCase(), (k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo') + ': the fit failed (' + (r.msg || r.code) + ').')); return; }
             match.mult[k] = r.a; match.shift[k] = r.b;
             props[k] = { n: idx.length, a: r.a, b: r.b, iter: k === 'rs' ? rsIter : undefined, ci95: r.ci95 ? { a: r.ci95.a || null, b: fixB ? null : (r.ci95.b || null) } : null, converged: r.converged,
-                iterations: r.iterations, nEval: r.nEval, stopReason: r.stopReason, cf: r.cf, yc: yc.slice(), y: y.slice(), fixedB: fixB, used: idx.map(function (i) { return pts[i].p; }) };
+                iterations: r.iterations, nEval: r.nEval, stopReason: r.stopReason, cf: r.cf, yc: yc.slice(), y: y.slice(), xb: xb ? xb.slice() : null, fixedB: fixB, used: idx.map(function (i) { return pts[i].p; }) };
             var lab = k === 'rs' ? 'Rs' : k === 'bo' ? 'Bo' : 'μo';
             if (r.a < BAND.warn[0] || r.a > BAND.warn[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.8–1.25: the correlation is stretched far — try the family ranked first.', 'fail'));
             else if (r.a < BAND.ok[0] || r.a > BAND.ok[1]) flags.push(_w('MULT_' + k.toUpperCase(), lab + ' multiplier ' + _f(r.a, 3) + ' is outside 0.9–1.1.', 'warn'));
@@ -336,7 +339,7 @@
         var c = Object.assign({}, (spec && spec.corr) || {}, { muod: muod, muo: muo });
         var s = Object.assign({}, spec, { corr: c });
         var n = normLab(lab), L = n.lab, fl = diffToFlash(L), rows = fl.rows;
-        var m = base && base.ok ? { on: true, pbFactor: base.match.pbFactor, mult: { rs: base.match.mult.rs, bo: 1, muo: 1 }, shift: { rs: base.match.shift.rs, bo: 0, muo: 0 }, corr: _corrOf(s) } : null;
+        var m = base && base.ok ? { on: true, pbFactor: base.match.pbFactor, mult: { rs: base.match.mult.rs, bo: 1, muo: 1 }, shift: { rs: base.match.shift.rs, bo: 0, muo: 0 }, rsPb: base.match.rsPb || null, corr: _corrOf(s) } : null;
         var F = _build(labOil(s, L, base ? base.rsb : _rsb(L, rows)), L.T_F, m);
         if (!F || !F.ok) return { muod: muod, muo: muo, label: label, verified: verified, ok: false };
         var pv = _props(F, rows.map(function (r) { return r.p; }), L.T_F, base ? base.rsb : _rsb(L, rows));
@@ -395,7 +398,7 @@
 
     function applyTo(spec, match) {
         var s = _clone(spec || {}) || {};
-        s.match = match ? Object.assign({}, s.match || {}, { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, corr: match.corr }) : null;
+        s.match = match ? Object.assign({}, s.match || {}, { on: true, pbFactor: match.pbFactor, mult: match.mult, shift: match.shift, rsPb: match.rsPb || null, corr: match.corr }) : null;
         return s;
     }
 
@@ -411,6 +414,8 @@
         var m = { pbFactor: EX.pbF, mult: { rs: EX.rs[0], bo: EX.bo[0], muo: EX.muo[0] }, shift: { rs: EX.rs[1], bo: EX.bo[1], muo: EX.muo[1] }, corr: _corrOf(base) };
         var F = _build(base, T, m); if (!F || !F.ok) return null;
         var pb = F.pb(T); if (!_fin(pb)) return null;
+        // the Rs shift tapers below the bubble point, as a fit applies it (the bubble point itself is unchanged: the taper is 1 there)
+        m.rsPb = Math.round(pb); F = _build(base, T, m); if (!F || !F.ok) return null;
         var ps = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map(function (x) { return Math.round(pb * x / 5) * 5; }).concat([Math.round(pb * 1.15 / 5) * 5, Math.round(pb * 1.35 / 5) * 5]);
         var rows = _props(F, ps, T, gor).map(function (r) { return { p: r.p, rs: Math.round(r.rs * 10) / 10, bo: Math.round(r.bo * 10000) / 10000, muo: Math.round(r.muo * 1000) / 1000 }; });
         return { v: 1, example: true, T_F: T, basis: 'flash', pb: Math.round(pb), rsbF: gor, bobF: null, rows: rows };

@@ -260,6 +260,14 @@
             var hx0 = _clamp(toX(h.value), P.x, P.x + P.w), tx0 = (hx0 + 13.5 + tw0 > P.x + P.w) ? hx0 - 13.5 - tw0 : hx0 + 13.5;
             hLabs.push({ x0: tx0, x1: tx0 + tw0, y0: P.y + 4, y1: P.y + 20 });
         });
+        // the pointX handle labels (centred above the knob, e.g. the envelope's 'q 914 STB/d') are obstacles for the marker labels too
+        // (review fix v4.5: the label ran over 'operating point')
+        (sp.handles || []).forEach(function (h) {
+            if (h.kind !== 'pointX' || !_fin(h.value)) return;
+            var t = h.label + ' ' + (h.fmt ? h.fmt(h.value) : _fmtTick(h.value)), tw0 = (ctx.measureText ? ctx.measureText(t).width : t.length * 6) + 10;
+            var hx0 = _clamp(toX(h.value), P.x, P.x + P.w), hy0 = _fin(h.y) ? _clamp(toY(h.y), P.y, P.y + P.h) : P.y + P.h, tx0 = _clamp(hx0 - tw0 / 2, P.x + 2, P.x + P.w - tw0 - 2);
+            hLabs.push({ x0: tx0, x1: tx0 + tw0, y0: hy0 - 9 - 22, y1: hy0 + 9 });
+        });
         // the marker symbols themselves (with their halo) and the lineX knobs are obstacles for every label too
         var mSyms = [];
         (sp.markers || []).forEach(function (mk, i) { if (_fin(mk.x) && _fin(mk.y) && (mk.r || 6) >= 2) { var mx = toX(mk.x), my = toY(mk.y), rr = (mk.r || 6) + (mk.kind === 'filled' && mk.halo !== false ? 6 : 2); mSyms.push({ x0: mx - rr, x1: mx + rr, y0: my - rr, y1: my + rr, i: i }); } });
@@ -323,12 +331,28 @@
             placed.push({ x0: lx0, x1: lx1, y0: ys, y1: ys + tw, label: l.label });
             ctx.save(); ctx.translate(lx0 + 10, ys); ctx.rotate(-Math.PI / 2); ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, 0, 0); ctx.restore();
         });
+        var hPlaced = st.hlabels = [];
         (sp.hlines || []).forEach(function (l) {
             if (!_fin(l.y)) return;
             var y = toY(l.y);
             ctx.strokeStyle = l.color || T.text2; ctx.lineWidth = 1.2; if (ctx.setLineDash) ctx.setLineDash(l.dash || [5, 4]);
             ctx.beginPath(); ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); ctx.stroke(); if (ctx.setLineDash) ctx.setLineDash([]);
-            if (l.label) { ctx.fillStyle = l.color || T.text2; ctx.font = font(10, '600'); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, P.x + P.w - 6, y - 3); }
+            if (l.label) {
+                // review fix (v4.5): the label keeps clear of the point-handle labels, the marker labels and the other line labels —
+                // right above, right below, left above, left below, else right above (as before)
+                ctx.font = font(10, '600');
+                var tw2 = (ctx.measureText ? ctx.measureText(l.label).width : l.label.length * 6) + 4;
+                var cands = [{ x0: P.x + P.w - 6 - tw2, y0: y - 15, al: 'right' }, { x0: P.x + P.w - 6 - tw2, y0: y + 2, al: 'right' }, { x0: P.x + 6, y0: y - 15, al: 'left' }, { x0: P.x + 6, y0: y + 2, al: 'left' }];
+                var pk2 = null;
+                for (var ci = 0; ci < cands.length && !pk2; ci++) {
+                    var cq = cands[ci], bx = { x0: cq.x0, x1: cq.x0 + tw2, y0: cq.y0, y1: cq.y0 + 13 };
+                    if (bx.y0 < P.y || bx.y1 > P.y + P.h) continue;
+                    if (!obst.concat(hPlaced).some(function (o) { return rHit(bx, o); })) { pk2 = cq; pk2.b = bx; }
+                }
+                if (!pk2) { pk2 = cands[0]; pk2.b = { x0: cands[0].x0, x1: cands[0].x0 + tw2, y0: cands[0].y0, y1: cands[0].y0 + 13 }; }
+                hPlaced.push(pk2.b);
+                ctx.fillStyle = l.color || T.text2; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(l.label, pk2.b.x0, pk2.b.y1);
+            }
         });
         // series
         (sp.series || []).forEach(function (s) {
@@ -700,6 +724,8 @@
             if ((k === ']' || k === '[') && hs.length) { st.focusHandle = (st.focusHandle + (k === ']' ? 1 : hs.length - 1) + (st.focusHandle < 0 && k === '[' ? 1 : 0)) % hs.length; _draw(cv); }
             else if (st.focusHandle >= 0 && hs[st.focusHandle] && /^Arrow/.test(k)) {
                 var h = hs[st.focusHandle], stp = _fin(h.step) && h.step > 0 ? h.step : (h.max - h.min) / 100, dir = (k === 'ArrowUp' || k === 'ArrowRight') ? 1 : -1;
+                // a handle whose value is on an inverted y axis (depth down): ArrowDown moves it down the screen = a larger value (review fix v4.5)
+                if ((k === 'ArrowUp' || k === 'ArrowDown') && (h.kind === 'point' || h.kind === 'railY') && st.spec.y && st.spec.y.invert) dir = -dir;
                 if (e.shiftKey) stp *= 10;
                 var v = _clamp(h.value + dir * stp, h.min, h.max); _emitHandle(cv, st.focusHandle, v, 'move');
             } else if (st.focusHandle >= 0 && hs[st.focusHandle] && k === 'Enter') { _emitHandle(cv, st.focusHandle, hs[st.focusHandle].value, 'end'); }
@@ -773,6 +799,7 @@
         return { prop: prop, label: P.label, lo: lo, hi: hi, key: P.key };
     }
 
+    var _clipN = 0;
     function schematic(S, o) {
         o = o || {};
         var W0 = o.width || 420, H0 = o.height || 560, T = _theme(), fm = o.fmt || {};
@@ -808,6 +835,9 @@
         g.push('<rect x="0" y="0" width="' + W0 + '" height="' + H0 + '" rx="8" fill="' + T.bg + '"/>');
         // ground + depth grid (TVD)
         g.push('<rect x="' + mL + '" y="' + mT + '" width="' + aw + '" height="' + ah + '" fill="' + T.panel + '" stroke="' + T.axis + '"/>');
+        // the section frame as a clip for the marks drawn across the hole (perforation ticks, correlation rail; review fix v4.5)
+        var clipId = 'wpSchClip' + (++_clipN);
+        g.push('<defs><clipPath id="' + clipId + '"><rect x="' + mL + '" y="' + (mT - 2) + '" width="' + aw + '" height="' + (ah + 2) + '"/></clipPath></defs>');
         _ticks(0, tvdMax, 6, false).forEach(function (t) {
             var y = Y(t);
             g.push('<line x1="' + mL + '" x2="' + (mL + aw) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + T.grid + '"/>');
@@ -881,7 +911,7 @@
         if (o.prop === 'correlation') { sc2 = { prop: 'correlation', label: 'Correlation', lo: null, hi: null }; P2 = secs.length ? PROPS.correlation : PROPS.none; }
         var flowBot = prof.length ? prof[prof.length - 1].md : (S.perfs && _fin(S.perfs.midMd) ? S.perfs.midMd : mdMax);
         if (P2.key === 'corr') {
-            secs.forEach(function (x) { var sp = _poly(_sub(path, Math.max(0, x.fromMd), Math.min(x.toMd, mdMax))); if (sp) g.push('<path d="' + sp + '" fill="none" stroke="' + x.color + '" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"' + (x.provisional ? ' stroke-dasharray="9 4"' : '') + '/>'); });
+            secs.forEach(function (x) { var sp = _poly(_sub(path, Math.max(0, x.fromMd), Math.min(x.toMd, mdMax))); if (sp) g.push('<path clip-path="url(#' + clipId + ')" d="' + sp + '" fill="none" stroke="' + x.color + '" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"' + (x.provisional ? ' stroke-dasharray="9 4"' : '') + '/>'); });
         } else if (prof.length > 1 && P2.key) {
             for (var i = 1; i < prof.length; i++) {
                 var a = interp(path, prof[i - 1].md), b = interp(path, prof[i].md);
@@ -898,7 +928,7 @@
         // (the side away from the gas-lift annulus path), one per run of a correlation, labelled at its middle
         var bands = (o.bands || []).filter(function (bd) { return bd && _fin(bd.mdTop) && _fin(bd.mdBot) && bd.mdBot > bd.mdTop; });
         if (bands.length > 1 || (bands.length === 1 && o.bandsAlways)) {
-            g.push('<g class="wp-secband" aria-label="Correlation by section">');
+            g.push('<g class="wp-secband" clip-path="url(#' + clipId + ')" aria-label="Correlation by section">');
             bands.forEach(function (bd) {
                 var pl = [], nS = Math.max(4, Math.min(40, Math.round((bd.mdBot - bd.mdTop) / Math.max(1, mdMax) * 60)));
                 for (var kb = 0; kb <= nS; kb++) { var qb = interp(path, Math.min(mdMax, bd.mdTop + (bd.mdBot - bd.mdTop) * kb / nS)); if (qb) pl.push((qb.x - Math.sin(qb.ang) * 17).toFixed(1) + ',' + (qb.y + Math.cos(qb.ang) * 17).toFixed(1)); }
@@ -912,7 +942,7 @@
         // perforations + mid-perf
         var pf = S.perfs || {};
         if (_fin(pf.topMd) && _fin(pf.botMd) && pf.botMd > pf.topMd) {
-            g.push('<g class="wp-comp" data-comp="perf" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + D(pf.topMd) + ' to ' + D(pf.botMd) + (_fin(pf.midMd) ? ', mid-perforation ' + D(pf.midMd) : '') + ' — edit') + '">');
+            g.push('<g class="wp-comp" data-comp="perf" clip-path="url(#' + clipId + ')" tabindex="0" role="button" aria-label="' + _esc('Perforations ' + D(pf.topMd) + ' to ' + D(pf.botMd) + (_fin(pf.midMd) ? ', mid-perforation ' + D(pf.midMd) : '') + ' — edit') + '">');
             var n = Math.max(3, Math.min(14, Math.round((pf.botMd - pf.topMd) / Math.max(1, mdMax) * 400)));
             for (var k = 0; k <= n; k++) {
                 var q = interp(path, pf.topMd + (pf.botMd - pf.topMd) * k / n), nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
@@ -1020,7 +1050,7 @@
             secs.forEach(function (x) {
                 var rl = [], m0 = Math.max(0, x.fromMd), m1 = Math.min(x.toMd, mdMax), nS = 24;
                 for (var k3 = 0; k3 <= nS; k3++) { var q3 = interp(path, m0 + (m1 - m0) * k3 / nS); if (q3) rl.push((q3.x - Math.sin(q3.ang) * 30).toFixed(1) + ',' + (q3.y + Math.cos(q3.ang) * 30).toFixed(1)); }
-                g.push('<polyline class="wp-secrail" points="' + rl.join(' ') + '" fill="none" stroke="' + x.color + '" stroke-width="4" stroke-linecap="round"' + (x.provisional ? ' stroke-dasharray="7 4"' : '') + '><title>' + _esc((x.label || x.key) + ', ' + D(x.fromMd) + ' to ' + D(x.toMd)) + '</title></polyline>');
+                g.push('<polyline class="wp-secrail" clip-path="url(#' + clipId + ')" points="' + rl.join(' ') + '" fill="none" stroke="' + x.color + '" stroke-width="4" stroke-linecap="round"' + (x.provisional ? ' stroke-dasharray="7 4"' : '') + '><title>' + _esc((x.label || x.key) + ', ' + D(x.fromMd) + ' to ' + D(x.toMd)) + '</title></polyline>');
                 var qb = interp(path, m1); if (qb && m1 < mdMax - 1) g.push('<line x1="' + (qb.x - Math.sin(qb.ang) * 24).toFixed(1) + '" y1="' + (qb.y + Math.cos(qb.ang) * 24).toFixed(1) + '" x2="' + (qb.x - Math.sin(qb.ang) * 36).toFixed(1) + '" y2="' + (qb.y + Math.cos(qb.ang) * 36).toFixed(1) + '" stroke="' + T.text + '" stroke-width="1.5"/>');
             });
         }
@@ -1066,24 +1096,39 @@
                 g.push('<g class="wp-hz" aria-label="' + _esc('Horizontal section ' + D(h.md0) + ' to ' + D(h.md1)) + '"><path d="' + _poly(bl) + '" fill="none" stroke="' + T.green + '" stroke-width="1.6" stroke-dasharray="4 3"/>' +
                     (q0 ? '<line x1="' + q0.x.toFixed(1) + '" y1="' + q0.y.toFixed(1) + '" x2="' + pa[0].toFixed(1) + '" y2="' + pa[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') +
                     (q1 ? '<line x1="' + q1.x.toFixed(1) + '" y1="' + q1.y.toFixed(1) + '" x2="' + pz[0].toFixed(1) + '" y2="' + pz[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') + '</g>');
-                var mid2 = bl[Math.floor(bl.length / 2)];
+                var qm2 = interp(path, 0.5 * (h.md0 + h.md1));
+                var mid2 = qm2 ? [qm2.x + Math.sin(qm2.ang) * 46, qm2.y - Math.cos(qm2.ang) * 46] : bl[Math.floor(bl.length / 2)];
                 labs.push({ side: 1, x: mid2[0] + 4, y: mid2[1], t: 'horizontal ' + fmtMd(h.md1 - h.md0), c: T.green });
             });
         }
-        // side labels: sorted by depth on each side and pushed apart (12 px), with a leader when moved
-        [-1, 1].forEach(function (sd) {
-            var L = labs.filter(function (l) { return l.side === sd; }).sort(function (a, b) { return a.y - b.y; }), prevY = -1e9;
-            L.forEach(function (l) { l.ty = Math.max(l.y, prevY + 12); prevY = l.ty; });
-            var over = L.length ? L[L.length - 1].ty - (mT + ah - 4) : 0;
-            if (over > 0) L.forEach(function (l) { l.ty -= over; });
-            L.forEach(function (l) {
-                var tx = l.x + sd * 6, tw = String(l.t).length * 6, anc = sd < 0 ? ' text-anchor="end"' : '';
-                if (Math.abs(l.ty - l.y) > 2) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + tx.toFixed(1) + '" y2="' + l.ty.toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
-                var lx = tx + sd * 2;
-                // a label that would run past the drawing's edge is set against that edge instead (WPI3: horizontal wells on a phone)
-                if (sd > 0 && lx + tw > secW - 4) { lx = secW - 4; anc = ' text-anchor="end"'; } else if (sd < 0 && lx - tw < 4) { lx = 4; anc = ''; }
-                g.push('<text x="' + lx.toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + anc + '>' + _esc(l.t) + '</text>');
-            });
+        // side labels (review fix v4.5): placed one by one in depth order, each at the first free spot — its own side at its depth, then
+        // stepped down / up 12 px, then the other side — clear of the labels already placed and of the flow path, inside the section frame
+        // (not over the depth ticks); a leader when moved
+        var pathPts = [];
+        for (var kp = 0; kp <= 160; kp++) { var qp = interp(path, mdMax * kp / 160); if (qp) pathPts.push(qp); }
+        var placedL = [], fx0 = mL + 2, fx1 = secW - 4, fy0 = mT + 8, fy1 = mT + ah - 4;
+        var boxOf = function (l, sd, ty) {
+            var tw = String(l.t).length * 6 + 2, tx = l.x + sd * 8, lx = sd > 0 ? tx : tx - tw;
+            if (lx < fx0) lx = fx0; if (lx + tw > fx1) lx = fx1 - tw;
+            return { x0: lx, x1: lx + tw, y0: ty - 8, y1: ty + 4 };
+        };
+        var hitL = function (b) { return placedL.some(function (o) { return b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0; }); };
+        var hitP = function (b) { return pathPts.some(function (q) { return q.x > b.x0 - 3 && q.x < b.x1 + 3 && q.y > b.y0 - 3 && q.y < b.y1 + 3; }); };
+        labs.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (l) {
+            var tries = [], dys = [0, 12, -12, 24, -24, 36, -36, 48];
+            [l.side, -l.side].forEach(function (sd) { dys.forEach(function (dy) { tries.push({ sd: sd, ty: _clamp(l.y + dy, fy0, fy1) }); }); });
+            var pick = null, soft = null;
+            for (var t = 0; t < tries.length && !pick; t++) {
+                var bx = boxOf(l, tries[t].sd, tries[t].ty);
+                if (hitL(bx)) continue;
+                if (!hitP(bx)) pick = { sd: tries[t].sd, ty: tries[t].ty, b: bx };
+                else if (!soft) soft = { sd: tries[t].sd, ty: tries[t].ty, b: bx };
+            }
+            if (!pick) pick = soft || { sd: l.side, ty: _clamp(l.y, fy0, fy1), b: boxOf(l, l.side, _clamp(l.y, fy0, fy1)) };
+            placedL.push(pick.b);
+            var ax = pick.sd > 0 ? pick.b.x0 : pick.b.x1;
+            if (Math.abs(pick.ty - l.y) > 2 || pick.sd !== l.side) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + (ax - pick.sd * 2).toFixed(1) + '" y2="' + (pick.ty - 2).toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
+            g.push('<text x="' + pick.b.x0.toFixed(1) + '" y="' + (pick.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700">' + _esc(l.t) + '</text>');
         });
         // wellhead + choke
         var wh = path[0], ck = S.choke || {};

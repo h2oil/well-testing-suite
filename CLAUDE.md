@@ -259,7 +259,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2398 tests; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2235 unique tests by --list; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -392,7 +392,8 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2398/2398) and
+   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2235/2235; count with --list — `--file` matches by substring, so
+   a per-file run must pass the full name, e.g. `--file wellperf-sens.test.js`) and
    `node prism-build/wts3d-test.js` (149 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
    after server/ or accounts (66-69) changes also `node server/test/run.js` (278 tests on a throwaway cluster);
@@ -712,12 +713,17 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   the plan's 250 ms. Not in A2: ESP, rod pump, Asheim stability, multi-layer, the D5 preferred defaults (B).
 - **Well Performance B (v4.5)** (docs/WELL-PERFORMANCE-PLAN.md §18.3.x; PROJECT-NOTES 4.5): Q9 still not provided, so Orkiszewski,
   Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, the enthalpy-balance temperature, the differential → flash adjustment, Rv and
-  the emulsion models, every B inflow model, the forecast tank models, the lift screening ranges, Thornhill-Craver, Asheim F1 / F2 and the ESP
-  viscosity (Turzo coefficients to check against the paper), natural separation, gas criterion and motor / cable checks ship provisional
-  (BENCH rows pending) and are never defaults; the design traverses use a mixed lift-gas gravity (the design tubing curve differs slightly from
+  the emulsion models, every B inflow model, the forecast tank models, the lift screening ranges, the gas-lift valve design on the model path
+  (BENCH glDesign pending since the review fix), Thornhill-Craver, the static stability F1 / injection loop gain F2 (screening after Asheim
+  1988 — not the published criteria; casing heading from the annulus volume is not assessed) and the ESP viscosity (Turzo coefficients to check
+  against the paper), natural separation (both opt-in, off by default), gas criterion and motor / cable checks ship provisional (BENCH rows
+  pending) and are never defaults; Orkiszewski (slug → transition) and Hasan-Kabir (churn → annular) step at their published pattern
+  boundaries (outflow steps up to ≈ 60 % / 30 % between neighbouring rates on FIX.gasWell; wellperf-validate X5c, the traverse says
+  PATTERN_STEP); Ansari takes the thin film root and sends a thick film (H_L > 0.12) to slug; the Mukherjee-Brill bubble / slug boundaries
+  and the Ansari bridging rule follow the review's reading of the book (Q9); the lab-match Rs shift tapers as b·min(1, p / pb_lab); the design traverses use a mixed lift-gas gravity (the design tubing curve differs slightly from
   the solve's), the operating solve injects at its own balance point, not at the installed valves; valve / pump temperatures use the relaxation
   or linear profile (enthalpy mode falls back to relaxation with gas lift or an ESP); no pump heating, thrust, casing gas or gas-well ESP; the
-  pump library is per device (wtspref_wp_pumplib); valve labels can overlap on the chart; the help text sits at the Q21 caps (no screenshots of
+  pump library is per device (wtspref_wp_pumplib); the help text sits at the Q21 caps (no screenshots of
   the B cards; correlation names, Rv / emulsion, U layers, B inflow, batch, ESP checks and gas-lift design inputs are help gaps); Q21 open.
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
@@ -745,7 +751,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 347 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 2398 acceptance tests passed" (run per file with --file on a small heap; help-* need 6144 MB)
+# Expect: "[ok] all 2235 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -817,7 +823,7 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2398/2398 pass, 194 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5)
+Acceptance tests:             2235/2235 pass (unique, --list), 195 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
                               Well performance course of 3 exercises (4.4), 218 screenshots (7,983,698 of the 8 MB cap — a new shot
