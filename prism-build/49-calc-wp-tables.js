@@ -124,6 +124,7 @@
     function _sync() {
         var X = _X(), M = _M(); if (!X || !M) return;
         var k = X.kind(M), t = M.fluid && M.fluid.type;
+        var wasAuto = !!(S.autoSig && S.autoSig === _sig());   // before the selects below fall back to an applicable type (WPI3)
         var chip = _byId('wplt_kind'); if (chip) chip.textContent = k === 'inj' ? 'injector' : (k === 'prod' ? 'producer' : 'not available');
         [['flot', X.FLO], ['wfrt', X.WFR], ['gfrt', X.GFR], ['alqt', X.ALQ]].forEach(function (p) {
             var sel = _byId('wplt_' + p[0]); if (!sel || !sel.options) return;
@@ -139,7 +140,7 @@
             var a = el.getAttribute('data-ltax'), on = k === 'prod' || a === 'flo' || a === 'thp';
             if (el.classList) el.classList.toggle('wp-off', !on);
         });
-        if ((!_val('wplt_flov').trim() && !_val('wplt_thpv').trim()) || (S.autoSig && S.autoSig === _sig())) _suggest(true);
+        if ((!_val('wplt_flov').trim() && !_val('wplt_thpv').trim()) || wasAuto) _suggest(true);
         else _meta();
         _pvt();                                            // the PVT preview pills (rows, temperature, bubble point, provisional)
         var key = _mkey(M);

@@ -5,6 +5,48 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-12 — v4.5 release: Well Performance B (artificial lift, studies, all wells)
+
+App and App Store version 4.5 (`RELEASE_NOTES[0]`, dated 2026-11-12, both platforms, title "Well Performance: artificial lift, studies
+and all wells"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`, the static `#appVersionLabel` fallback;
+help/user-guide.html stamp "Version 4.5"). Increment B of docs/WELL-PERFORMANCE-PLAN.md (§18.3, records §18.3.1–§18.3.11). Owner decision
+"go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so every new method without a
+verified published example ships `verified:false` with the provisional label (D17 gate) and is never a default; Q21 (a second raise of
+the help caps) stays open — no cap was raised for B.
+
+- **Built on `wp/b`** from master 8ce1989 (v4.4), merged `--no-ff` in the order WP23 (PVT lab match, Rv, emulsion), WP21 (Orkiszewski,
+  Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir; a correlation per MD / inclination section), WP22 (enthalpy-balance flowing
+  temperature, layered U, J-T in the tubing), WP24 (water-cut composite, horizontal, fractured, multilayer, transient and injector inflow;
+  Build-up Surveillance hand-off), WP20 (lift-curve tables, PVT table export), WP27 (cases and compare, depletion forecast, lift screening,
+  operating envelope, tornado, 4-variable matrix — all Jobs through `PRiSM_autoInterp.drive`), WP28 (Run all wells over `WTS_wells`,
+  read-only; schematic: horizontal section, layers, correlation rail), WP25 (gas-lift design on the shared model with valves on MD and
+  TVD, drag knobs, Thornhill-Craver, diagnosis, gradient survey match, Asheim) and WP26 (ESP: pump curves, affinity and viscosity, intake
+  gas, motor and cable, pump node in the system solve, frequency / stages rails). Generated files regenerated after every merge, never
+  hand-merged; the help guide covers the B features within the Q21 caps (gaps listed in plan §18.3.11).
+- **Verified / provisional.** Provisional (BENCH rows pending): the five B lift correlations, enthalpy-balance temperature, differential →
+  flash, Rv, emulsion, every B inflow model, forecast tank models, lift screening, Thornhill-Craver, Asheim, ESP viscosity / natural
+  separation / gas criterion / motor and cable. Pinned (exact or closed-form checks): the lab match least squares, the API RP 11V6 design
+  engine, the affinity laws. Beggs & Brill stays the default lift correlation, linear the default temperature, natural flow the default lift.
+- **WPI3 lead items.** Release notes v4.5 (short entry; release-notes help shots re-taken: 73,970 / 59,198 bytes, image total 7,983,698 of
+  8,000,000); Round 9 rebuilt, LF, synced, user guide regenerated. Fixes from the GUI sweep and the Playwright pass: the separator-test Bob
+  and condensate B_c inputs read rm³/sm³ in Metric mode; loading an example now puts every control another example sets (THP, layer,
+  ESP and inflow inputs) back to its page default, so an example gives the same state whatever was loaded before (the Oil example after
+  the injector kept THP 1,200 psig; after the ESP example the forecast steps were the ESP well's and no step flowed) and re-suggests the
+  forecast steps and matrix values; the lift-table axes follow the model again when the fluid type changes the axis type (the selects fell
+  back before the "still auto-filled" check); schematic of a wide well keeps 6 % of the width each side, and side labels that would run
+  past the drawing are set against its edge (the horizontal example on a phone). wellperf `reviewedSrc` re-hashed (076f5af1).
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2398/2398 (194 files, run per file);
+  wts3d-test 147/149 (the two CRLF checks); wellperf-validate --html --gate --check --time: D17 gate PASS, 60/60 cross-checks, every E
+  budget ok; wellperf-identity (FI, flowline / chokeperf / wellbore / tubulars / oilipr / gasdeliv / gaslift vs v4.2) pass; help-shots
+  --check, build-user-guide --check, publish-site --check ok; server unchanged. GUI sweep `--route wellperf,oilipr,gasdeliv,gaslift` full
+  and --mobile: 0 findings after the fixes (1 before: the Metric Bob label); Playwright pass over every step, traverse tab and study tab
+  with the Oil, Gas, Horizontal, Multilayer, Injector and ESP examples (lab match, envelope, forecast + time slider, tornado, matrix,
+  cases, screening, all wells, gas-lift design, ESP sizing and sweep) at 1280 and 390 px: no overflow, no NaN, no page error.
+- **Open items (B).** Help at the Q21 caps: no screenshots of the B cards and the help gaps of plan §18.3.11; design traverses on a mixed
+  lift-gas gravity and the operating solve at its own balance point (not the installed valves); valve / pump temperatures on the relaxation
+  or linear profile; no ESP pump heating, thrust, casing gas or gas wells; pump library per device; valve labels can overlap; schematic
+  labels can still touch each other near a horizontal toe. Not in B: rod pump, the D5 preferred defaults (wait for verified examples).
+
 ## 2026-11-12 — v4.4 release: Well Performance A2 (correlations, flowing temperature, choke, two-variable sensitivity, gas lift, VLP tuning, course)
 
 App and App Store version 4.4 (`RELEASE_NOTES[0]`, dated 2026-11-12, both platforms, title "Well Performance: correlations, temperature,

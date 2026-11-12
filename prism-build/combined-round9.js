@@ -8119,7 +8119,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 d8090486,view-p 780 1688 a1b566ff",
+    "releasenotes": "view-d 1280 800 496f13d3,view-p 780 1688 5072dd17",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -8141,7 +8141,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 218;
-  M.bytes = 7989310;   // total size of the image files (the offline download label)
+  M.bytes = 7983698;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8893,7 +8893,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '6a213046', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '076f5af1', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -44898,6 +44898,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         ST.M = _read() || ST.M;
         // B (WP26): an example without a lift type leaves an ESP selection behind it (its pump belongs to the ESP example)
         if (!('wp_lift' in ex.scalars) && (_byId('wp_lift') || {}).value === 'esp') _setCtrl('wp_lift', 'none', false);
+        // B (WPI3): a control that another example sets but this one does not goes back to its page default, so an example
+        // loads the same state whatever was loaded before it (e.g. the injector's THP after the Oil example); wp_lift keeps the rule above
+        var dflt = {};
+        Object.keys(EXAMPLES).forEach(function (k2) { Object.keys(EXAMPLES[k2].scalars || {}).forEach(function (id) { if (id !== 'wp_lift' && !(id in ex.scalars)) dflt[id] = 1; }); });
+        Object.keys(dflt).forEach(function (id) {
+            var e = _byId(id); if (!e || e.type === 'checkbox') return;
+            var d = e.tagName === 'SELECT' ? (Array.prototype.filter.call(e.options || [], function (o) { return o.defaultSelected; })[0] || (e.options || [])[0] || { value: '' }).value : e.defaultValue;
+            if (d != null && String(e.value) !== String(d)) e.value = String(d);
+        });
+        // the study lists suggested for the previous model are suggested again for the example (empty → re-suggested on render)
+        ['wpv_fc_steps', 'wpv_mxv1', 'wpv_mxv2', 'wpv_mxv3', 'wpv_mxv4'].forEach(function (id) { var e = _byId(id); if (e) e.value = ''; });
         Object.keys(ex.scalars).forEach(function (id) { _setCtrl(id, ex.scalars[id], typeof ex.scalars[id] === 'number'); });
         ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {};
         _renderAllTables();
@@ -45336,7 +45347,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _pvtBHtml() {
         var lab = '<div class="fg">' + _fg('wpl_T', 'Lab temperature', { unit: '°F', ph: 'required' }) + _fg('wpl_basis', 'Lab basis', { options: [['flash', 'Flash (separator) values'], ['differential', 'Differential liberation']] }) +
             _fg('wpl_pb', 'Lab bubble point', { unit: 'psia' }) + _fg('wpl_rsbF', 'Separator-test Rsb (flash)', { unit: 'scf/STB', hint: 'The lab oil\'s solution GOR; blank = the highest Rs of the table.' }) +
-            _fg('wpl_bobF', 'Separator-test Bob (flash)', { unit: 'rb/STB', hint: 'With differential data: adjusts the table to flash (provisional).' }) + '</div>';
+            _fg('wpl_bobF', 'Separator-test Bob (flash)', { unit: _fvfLab(), hint: 'With differential data: adjusts the table to flash (provisional).' }) + '</div>';
         return '<div class="wp-2c" data-for="oil">' +
             _card('PVT lab data', lab + _tableBlock('lab', 'Lab table', 'Pressure with any of Rs, Bo and μo at the lab temperature; Rs above the bubble point is the Rsb. Pressures in absolute units.',
                 { btns: '<button type="button" class="btn btn-secondary" data-act="labex" title="Synthetic example data for trying the match">Example lab data</button>' }) +
@@ -45374,7 +45385,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 _fg('wp_sgw', 'Water specific gravity', { unit: 'water = 1' }) + _fg('wp_sal', 'Salinity', { unit: 'ppm' }) +
                 _fg('wp_n2', 'N₂', { unit: 'mol %' }) + _fg('wp_co2', 'CO₂', { unit: 'mol %' }) + _fg('wp_h2s', 'H₂S', { unit: 'mol %' }) +
                 _fg('wp_pbUser', 'Bubble point (optional)', { unit: 'psia', data: 'data-for="oil"', hint: 'Shifts the correlation to this pb (one point).' }) +
-                _fg('wp_bc', 'Condensate FVF B_c', { unit: 'rb/STB', data: 'data-for="condensate"' }) +
+                _fg('wp_bc', 'Condensate FVF B_c', { unit: _fvfLab(), data: 'data-for="condensate"' }) +
                 '</div><details class="rp-skip" style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--text2)">PVT correlations</summary><div class="fg" style="margin-top:10px">' +
                 _fg('wp_corr_pb', 'Black-oil family (Pb, Rs, Bo)', { options: _famOpts('family'), data: 'data-for="oil"' }) + _fg('wp_corr_rs', 'Solution GOR and bubble point', { options: _famOpts('rs'), data: 'data-for="oil"' }) +
                 _fg('wp_corr_bo', 'Oil FVF', { options: _famOpts('bo'), data: 'data-for="oil"' }) + _fg('wp_corr_co', 'Undersaturated compressibility (Bo above pb)', { options: _famOpts('co'), data: 'data-for="oil"' }) +
@@ -56880,6 +56891,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _sync() {
         var X = _X(), M = _M(); if (!X || !M) return;
         var k = X.kind(M), t = M.fluid && M.fluid.type;
+        var wasAuto = !!(S.autoSig && S.autoSig === _sig());   // before the selects below fall back to an applicable type (WPI3)
         var chip = _byId('wplt_kind'); if (chip) chip.textContent = k === 'inj' ? 'injector' : (k === 'prod' ? 'producer' : 'not available');
         [['flot', X.FLO], ['wfrt', X.WFR], ['gfrt', X.GFR], ['alqt', X.ALQ]].forEach(function (p) {
             var sel = _byId('wplt_' + p[0]); if (!sel || !sel.options) return;
@@ -56895,7 +56907,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var a = el.getAttribute('data-ltax'), on = k === 'prod' || a === 'flo' || a === 'thp';
             if (el.classList) el.classList.toggle('wp-off', !on);
         });
-        if ((!_val('wplt_flov').trim() && !_val('wplt_thpv').trim()) || (S.autoSig && S.autoSig === _sig())) _suggest(true);
+        if ((!_val('wplt_flov').trim() && !_val('wplt_thpv').trim()) || wasAuto) _suggest(true);
         else _meta();
         _pvt();                                            // the PVT preview pills (rows, temperature, bubble point, provisional)
         var key = _mkey(M);
@@ -57962,7 +57974,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var vmin = Math.min(0, Math.min.apply(null, vs)), vmax = Math.max(0, Math.max.apply(null, vs));
         var ah = H0 - mT - mB - pb, aw = secW - mL - mR;
         // equal scale; a minimum horizontal span keeps a vertical well in the middle of the panel
-        var spanH = Math.max(vmax - vmin, tvdMax * (aw / ah) * 0.999, 1), sc = Math.min(ah / tvdMax, aw / spanH);
+        // a wide well keeps 6 % of the width each side for the strings and perforations (WPI3)
+        var spanH = Math.max((vmax - vmin) / 0.88, tvdMax * (aw / ah) * 0.999, 1), sc = Math.min(ah / tvdMax, aw / spanH);
         var cx0 = mL + aw / 2 - ((vmin + vmax) / 2) * sc;
         var X = function (v) { return cx0 + v * sc; }, Y = function (t) { return mT + t * sc; };
         var path = traj.map(function (r, i) { return { md: r.md, x: X(vs[i]), y: Y(r.tvd), tvd: r.tvd, inc: r.inc }; });
@@ -58241,9 +58254,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var over = L.length ? L[L.length - 1].ty - (mT + ah - 4) : 0;
             if (over > 0) L.forEach(function (l) { l.ty -= over; });
             L.forEach(function (l) {
-                var tx = l.x + sd * 6;
+                var tx = l.x + sd * 6, tw = String(l.t).length * 6, anc = sd < 0 ? ' text-anchor="end"' : '';
                 if (Math.abs(l.ty - l.y) > 2) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + tx.toFixed(1) + '" y2="' + l.ty.toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
-                g.push('<text x="' + (tx + sd * 2).toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + (sd < 0 ? ' text-anchor="end"' : '') + '>' + _esc(l.t) + '</text>');
+                var lx = tx + sd * 2;
+                // a label that would run past the drawing's edge is set against that edge instead (WPI3: horizontal wells on a phone)
+                if (sd > 0 && lx + tw > secW - 4) { lx = secW - 4; anc = ' text-anchor="end"'; } else if (sd < 0 && lx - tw < 4) { lx = 4; anc = ''; }
+                g.push('<text x="' + lx.toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + anc + '>' + _esc(l.t) + '</text>');
             });
         });
         // wellhead + choke

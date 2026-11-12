@@ -797,7 +797,8 @@
         var vmin = Math.min(0, Math.min.apply(null, vs)), vmax = Math.max(0, Math.max.apply(null, vs));
         var ah = H0 - mT - mB - pb, aw = secW - mL - mR;
         // equal scale; a minimum horizontal span keeps a vertical well in the middle of the panel
-        var spanH = Math.max(vmax - vmin, tvdMax * (aw / ah) * 0.999, 1), sc = Math.min(ah / tvdMax, aw / spanH);
+        // a wide well keeps 6 % of the width each side for the strings and perforations (WPI3)
+        var spanH = Math.max((vmax - vmin) / 0.88, tvdMax * (aw / ah) * 0.999, 1), sc = Math.min(ah / tvdMax, aw / spanH);
         var cx0 = mL + aw / 2 - ((vmin + vmax) / 2) * sc;
         var X = function (v) { return cx0 + v * sc; }, Y = function (t) { return mT + t * sc; };
         var path = traj.map(function (r, i) { return { md: r.md, x: X(vs[i]), y: Y(r.tvd), tvd: r.tvd, inc: r.inc }; });
@@ -1076,9 +1077,12 @@
             var over = L.length ? L[L.length - 1].ty - (mT + ah - 4) : 0;
             if (over > 0) L.forEach(function (l) { l.ty -= over; });
             L.forEach(function (l) {
-                var tx = l.x + sd * 6;
+                var tx = l.x + sd * 6, tw = String(l.t).length * 6, anc = sd < 0 ? ' text-anchor="end"' : '';
                 if (Math.abs(l.ty - l.y) > 2) g.push('<line x1="' + l.x.toFixed(1) + '" y1="' + l.y.toFixed(1) + '" x2="' + tx.toFixed(1) + '" y2="' + l.ty.toFixed(1) + '" stroke="' + l.c + '" stroke-opacity="0.6"/>');
-                g.push('<text x="' + (tx + sd * 2).toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + (sd < 0 ? ' text-anchor="end"' : '') + '>' + _esc(l.t) + '</text>');
+                var lx = tx + sd * 2;
+                // a label that would run past the drawing's edge is set against that edge instead (WPI3: horizontal wells on a phone)
+                if (sd > 0 && lx + tw > secW - 4) { lx = secW - 4; anc = ' text-anchor="end"'; } else if (sd < 0 && lx - tw < 4) { lx = 4; anc = ''; }
+                g.push('<text x="' + lx.toFixed(1) + '" y="' + (l.ty + 3.5).toFixed(1) + '" fill="' + l.c + '" font-size="10" font-weight="700"' + anc + '>' + _esc(l.t) + '</text>');
             });
         });
         // wellhead + choke

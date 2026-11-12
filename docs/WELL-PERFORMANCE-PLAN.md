@@ -2014,6 +2014,23 @@ of 29-project-save is PRiSM-only and would need a Round-6 edit). Q21 open.
   casing-pressure model; gas wells (dewatering ESP) not modelled; no ESP in the sensitivity variables, the forecast or the batch over wells
   beyond what the solve gives; the pump library is per device; help text for the ESP not added (cap, Q21).
 
+#### 18.3.11 WPI3 record — B release (2026-11-12, branch wp/b)
+
+- **Help guide** (11e2a5c): the wellperf guide lists the ESP example, step ④ natural flow / gas lift / ESP, step ⑦ lift-curve tables, PVT
+  table export and Run all wells, PVT lab match, and three new parts (Studies, Gas-lift design, ESP) within the Q21 caps (production
+  47,635 / 47,670 bytes; all help 367,950 / 369,000 raw, 127,774 / 128,000 gzip). Gaps (did not fit, Q21): the names of the five B lift
+  correlations, Rv / emulsion options, the enthalpy U layers, the B inflow models, how to use the batch, how the ESP motor / cable / gas checks
+  work, the gas-lift design inputs and the limits of diagnosis / survey matching, any screenshot of the B cards.
+- **Release**: RELEASE_NOTES v4.5 (both platforms, six items, provisional methods marked), App Store 4.5, the release-notes help shots
+  re-taken (image total 7,983,698 bytes).
+- **Fixes** (GUI sweep + Playwright pass): Metric FVF unit on the separator-test Bob and condensate B_c inputs; `_loadExample` puts the
+  controls that another example sets back to their page defaults (`defaultValue` / `defaultSelected`; `wp_lift` keeps its own rule) and
+  clears the forecast steps and matrix values so they are suggested for the example; 49-calc-wp-tables `_sync` decides "still auto-filled"
+  before the axis selects fall back to an applicable type; 49-calc-wp-view schematic fits a wide well in 88 % of the section width and sets a
+  side label that would run past the section against its edge.
+- **Gates**: smoke 347/347, accept-test 2398/2398 (194 files), wts3d 147/149 (CRLF checks), wellperf-validate gate PASS + 60/60 + budgets,
+  help / guide / publish checks, GUI sweep full and --mobile 0 findings.
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative

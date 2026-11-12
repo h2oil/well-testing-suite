@@ -3303,6 +3303,17 @@
         ST.M = _read() || ST.M;
         // B (WP26): an example without a lift type leaves an ESP selection behind it (its pump belongs to the ESP example)
         if (!('wp_lift' in ex.scalars) && (_byId('wp_lift') || {}).value === 'esp') _setCtrl('wp_lift', 'none', false);
+        // B (WPI3): a control that another example sets but this one does not goes back to its page default, so an example
+        // loads the same state whatever was loaded before it (e.g. the injector's THP after the Oil example); wp_lift keeps the rule above
+        var dflt = {};
+        Object.keys(EXAMPLES).forEach(function (k2) { Object.keys(EXAMPLES[k2].scalars || {}).forEach(function (id) { if (id !== 'wp_lift' && !(id in ex.scalars)) dflt[id] = 1; }); });
+        Object.keys(dflt).forEach(function (id) {
+            var e = _byId(id); if (!e || e.type === 'checkbox') return;
+            var d = e.tagName === 'SELECT' ? (Array.prototype.filter.call(e.options || [], function (o) { return o.defaultSelected; })[0] || (e.options || [])[0] || { value: '' }).value : e.defaultValue;
+            if (d != null && String(e.value) !== String(d)) e.value = String(d);
+        });
+        // the study lists suggested for the previous model are suggested again for the example (empty → re-suggested on render)
+        ['wpv_fc_steps', 'wpv_mxv1', 'wpv_mxv2', 'wpv_mxv3', 'wpv_mxv4'].forEach(function (id) { var e = _byId(id); if (e) e.value = ''; });
         Object.keys(ex.scalars).forEach(function (id) { _setCtrl(id, ex.scalars[id], typeof ex.scalars[id] === 'number'); });
         ST.sens = null; ST.beans = null; ST.match = null; ST.prov = {};
         _renderAllTables();
@@ -3741,7 +3752,7 @@
     function _pvtBHtml() {
         var lab = '<div class="fg">' + _fg('wpl_T', 'Lab temperature', { unit: '°F', ph: 'required' }) + _fg('wpl_basis', 'Lab basis', { options: [['flash', 'Flash (separator) values'], ['differential', 'Differential liberation']] }) +
             _fg('wpl_pb', 'Lab bubble point', { unit: 'psia' }) + _fg('wpl_rsbF', 'Separator-test Rsb (flash)', { unit: 'scf/STB', hint: 'The lab oil\'s solution GOR; blank = the highest Rs of the table.' }) +
-            _fg('wpl_bobF', 'Separator-test Bob (flash)', { unit: 'rb/STB', hint: 'With differential data: adjusts the table to flash (provisional).' }) + '</div>';
+            _fg('wpl_bobF', 'Separator-test Bob (flash)', { unit: _fvfLab(), hint: 'With differential data: adjusts the table to flash (provisional).' }) + '</div>';
         return '<div class="wp-2c" data-for="oil">' +
             _card('PVT lab data', lab + _tableBlock('lab', 'Lab table', 'Pressure with any of Rs, Bo and μo at the lab temperature; Rs above the bubble point is the Rsb. Pressures in absolute units.',
                 { btns: '<button type="button" class="btn btn-secondary" data-act="labex" title="Synthetic example data for trying the match">Example lab data</button>' }) +
@@ -3779,7 +3790,7 @@
                 _fg('wp_sgw', 'Water specific gravity', { unit: 'water = 1' }) + _fg('wp_sal', 'Salinity', { unit: 'ppm' }) +
                 _fg('wp_n2', 'N₂', { unit: 'mol %' }) + _fg('wp_co2', 'CO₂', { unit: 'mol %' }) + _fg('wp_h2s', 'H₂S', { unit: 'mol %' }) +
                 _fg('wp_pbUser', 'Bubble point (optional)', { unit: 'psia', data: 'data-for="oil"', hint: 'Shifts the correlation to this pb (one point).' }) +
-                _fg('wp_bc', 'Condensate FVF B_c', { unit: 'rb/STB', data: 'data-for="condensate"' }) +
+                _fg('wp_bc', 'Condensate FVF B_c', { unit: _fvfLab(), data: 'data-for="condensate"' }) +
                 '</div><details class="rp-skip" style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--text2)">PVT correlations</summary><div class="fg" style="margin-top:10px">' +
                 _fg('wp_corr_pb', 'Black-oil family (Pb, Rs, Bo)', { options: _famOpts('family'), data: 'data-for="oil"' }) + _fg('wp_corr_rs', 'Solution GOR and bubble point', { options: _famOpts('rs'), data: 'data-for="oil"' }) +
                 _fg('wp_corr_bo', 'Oil FVF', { options: _famOpts('bo'), data: 'data-for="oil"' }) + _fg('wp_corr_co', 'Undersaturated compressibility (Bo above pb)', { options: _famOpts('co'), data: 'data-for="oil"' }) +
