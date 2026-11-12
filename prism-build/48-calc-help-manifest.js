@@ -73,13 +73,13 @@
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
-    "wellperf": "sys-d 531 421 e8d0d7cb",
+    "wellperf": "sys-d 531 421 99f5f323",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
     "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 218;
-  M.bytes = 7994788;   // total size of the image files (the offline download label)
+  M.bytes = 7994340;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

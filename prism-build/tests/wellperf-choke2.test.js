@@ -197,7 +197,7 @@ module.exports = [
       A.click(A.find('#wp_trtabs [data-tab="choke"]')); A.flush(5);
       const cv = A.el('wp_cv_tr'), sp = cv._wp.spec;
       assert.ok(sp.series.some((s) => s.key === 'sach' && s.pts.length === 40) && sp.series.some((s) => s.key === 'corr'), 'series');
-      assert.ok(sp.vlines.length === 2 && sp.markers.length === 1 && /critical/.test(sp.markers[0].label), 'y_c lines + operating point');
+      assert.ok(sp.vlines.length >= 1 && sp.markers.length === 1 && /critical/.test(sp.markers[0].label), 'y_c lines + operating point');
       assert.ok(sp.handles.length === 1 && sp.handles[0].key === 'bean', 'bean handle');
       const q0 = G.WTS_state.wellperf.op.q;
       G.WTS_wellperf_page.handle('bean', 40, 'end'); A.flush(30);

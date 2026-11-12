@@ -744,7 +744,7 @@
                     '<line x1="' + vx.toFixed(1) + '" y1="' + vy.toFixed(1) + '" x2="' + q.x.toFixed(1) + '" y2="' + q.y.toFixed(1) + '" stroke="' + col + '" stroke-width="2.5" stroke-linecap="round"/>' +
                     '<circle cx="' + vx.toFixed(1) + '" cy="' + vy.toFixed(1) + '" r="6.5" fill="' + col + '" stroke="' + T.bg + '" stroke-width="2"/>' +
                     '<path d="M' + (vx - 3).toFixed(1) + ' ' + (vy - 2).toFixed(1) + 'h6l-3 4z" fill="' + T.bg + '"/></g>');
-                labs.push({ side: -1, x: vx - 10, y: vy, t: mk.label || 'GL injection', c: col });
+                labs.push({ side: 1, x: vx + 10, y: vy, t: mk.label || 'GL injection', c: col });
             } else if (mk.kind === 'packer') {
                 [-1, 1].forEach(function (sd) { g.push('<rect x="' + (q.x + sd * nx * 13 - 4).toFixed(1) + '" y="' + (q.y + sd * ny * 13 - 4).toFixed(1) + '" width="8" height="8" fill="' + (mk.color || '#9ca3af') + '" stroke="' + T.bg + '"/>'); });
                 labs.push({ side: 1, x: q.x + 20, y: q.y, t: mk.label || 'packer', c: mk.color || '#9ca3af' });
