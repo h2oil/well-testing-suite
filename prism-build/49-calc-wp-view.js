@@ -33,6 +33,15 @@
 //       o = {prop:'pressure'|'temperature'|'holdup'|'velocity'|'pattern'|'heatloss' (A2: fluid − earth)|'none', fmt:{p, t, md, vm},
 //            labels, width, height}. Temperature colouring also paints the formation along the hole by the static earth temperature
 //            (profile te, A2) on the same scale, so the relaxation (heat lost to the earth) reads as the colour step.
+//       B (WP28, additive; absent → the A2 drawing, except the deviation marks below):
+//         o.layers   = [{topMd, botMd, label, color}]  reservoir layers as bands across the hole between their MDs (label MD · TVD)
+//         o.sections = [{fromMd, toMd, key, label, color, provisional}]  the correlation per section: a rail beside the flow path with a
+//                      legend; o.prop 'correlation' paints the flow path by section
+//         o.marks kinds 'esp' {md, label, stages?, hz?} (pump, seal and motor along the hole) and 'mandrel' {md, state:'operating'|'open'|
+//                      'closed'|'orifice'|'dummy', label} (side-pocket mandrel with its valve) besides 'gl' / 'packer'
+//         o.deviation (default true): kick-off point (first station ≥ 3°), every horizontal stretch (≥ 80°, ≥ 2 % of the MD) bracketed
+//                      with its MD length, and the maximum inclination in the caption corner
+//         returns also dev = {kopMd, kopTvd, incMax, incMaxMd, hz:[{md0, md1, tvd0, tvd1}]}
 //       Side view (vertical section: TVD against horizontal departure, equal scale) with the strings drawn along the path, the
 //       flow path coloured by the chosen property (a heat map along the well), restrictions, perforations, mid-perf, gauges,
 //       wellhead and choke; plan view (north against east) and the colour bar on the right. Components carry data-comp
@@ -716,8 +725,28 @@
     var PROPS = {
         pressure: { key: 'p', label: 'Pressure' }, temperature: { key: 't', label: 'Temperature' }, holdup: { key: 'hl', label: 'Liquid holdup' },
         velocity: { key: 'vm', label: 'Mixture velocity' }, pattern: { key: 'pattern', label: 'Flow pattern' },
-        heatloss: { key: 'dte', label: 'Fluid − earth temperature' }, none: { key: null, label: '' }
+        heatloss: { key: 'dte', label: 'Fluid − earth temperature' }, correlation: { key: 'corr', label: 'Correlation' }, none: { key: null, label: '' }
     };
+    var SEC_COLORS = ['#58a6ff', '#f0883e', '#3fb950', '#bc8cff', '#d29922', '#39c5cf'];
+    // deviation marks (B, WP28): kick-off point, horizontal stretches and the maximum inclination from the trajectory stations
+    function devInfo(traj, o) {
+        o = o || {};
+        var kopInc = _fin(o.kopInc) ? o.kopInc : 3, hzInc = _fin(o.hzInc) ? o.hzInc : 80, out = { kopMd: null, kopTvd: null, incMax: 0, incMaxMd: null, hz: [] };
+        var tr = (traj || []).filter(function (r) { return _fin(r.md) && _fin(r.tvd); }), mdMax = tr.length ? tr[tr.length - 1].md : 0, cur = null;
+        tr.forEach(function (r, i) {
+            var inc = _fin(r.inc) ? r.inc : 0;
+            if (inc > out.incMax) { out.incMax = inc; out.incMaxMd = r.md; }
+            if (out.kopMd == null && inc >= kopInc && i > 0) {
+                var a = tr[i - 1], ia = _fin(a.inc) ? a.inc : 0, f = inc > ia ? (kopInc - ia) / (inc - ia) : 0;
+                f = _clamp(f, 0, 1); out.kopMd = a.md + f * (r.md - a.md); out.kopTvd = a.tvd + f * (r.tvd - a.tvd);
+            }
+            if (inc >= hzInc) { if (!cur) cur = { md0: r.md, tvd0: r.tvd }; cur.md1 = r.md; cur.tvd1 = r.tvd; }
+            else if (cur) { out.hz.push(cur); cur = null; }
+        });
+        if (cur) out.hz.push(cur);
+        out.hz = out.hz.filter(function (h) { return h.md1 - h.md0 >= Math.max(1, 0.02 * mdMax); });
+        return out;
+    }
     function scale(prop, profile) {
         var P = PROPS[prop] || PROPS.none;
         if (!P.key || P.key === 'pattern') return { prop: prop, label: P.label, lo: null, hi: null };
@@ -787,6 +816,17 @@
             }
             g.push('</g>');
         }
+        // reservoir layers (B, WP28): translucent bands across the hole between their MDs, behind the strings
+        var labsPre = [];
+        (o.layers || []).forEach(function (ly, li) {
+            if (!ly || !_fin(ly.topMd) || !_fin(ly.botMd) || ly.botMd <= ly.topMd) return;
+            var pl = _poly(_sub(path, Math.max(0, ly.topMd), Math.min(ly.botMd, mdMax))); if (!pl) return;
+            var col = ly.color || ['#d29922', '#39c5cf', '#bc8cff', '#3fb950'][li % 4];
+            g.push('<g class="wp-layer" aria-label="' + _esc((ly.label || 'Layer ' + (li + 1)) + ' ' + D(ly.topMd) + ' to ' + D(ly.botMd)) + '"><path d="' + pl + '" fill="none" stroke="' + col + '" stroke-opacity="0.22" stroke-width="54" stroke-linecap="butt" stroke-linejoin="round"/>' +
+                '<path d="' + pl + '" fill="none" stroke="' + col + '" stroke-opacity="0.55" stroke-width="54" stroke-linecap="butt" stroke-dasharray="1 7"/></g>');
+            var lq = interp(path, (ly.topMd + Math.min(ly.botMd, mdMax)) / 2);
+            if (lq) labsPre.push({ side: -1, x: lq.x - 30, y: lq.y, t: (ly.label || 'Layer ' + (li + 1)), c: col });
+        });
         // strings along the path: casing / liner (wide), tubing (narrow); stroke width scales with the OD
         var strs = (S.strings || []).filter(function (s) { return _fin(s.topMd) && _fin(s.botMd) && s.botMd > s.topMd; });
         var odMax = strs.reduce(function (a, s) { return Math.max(a, _fin(s.od) ? s.od : 0); }, 0) || 7;
@@ -805,9 +845,14 @@
         });
         // heat map along the flow path (the tubing, or the deepest string when there is no tubing)
         var prof = (S.profile || []).filter(function (r) { return _fin(r.md); }).sort(function (a, b) { return a.md - b.md; });
+        var secs = (o.sections || []).filter(function (x) { return x && _fin(x.fromMd) && _fin(x.toMd) && x.toMd > x.fromMd; }).map(function (x, k) { return Object.assign({}, x, { color: x.color || SEC_COLORS[k % SEC_COLORS.length] }); });
+        var secAt = function (md) { for (var k = 0; k < secs.length; k++) if (md >= secs[k].fromMd - 1e-6 && md <= secs[k].toMd + 1e-6) return secs[k]; return null; };
         var sc2 = scale(o.prop || 'pressure', prof), P2 = PROPS[o.prop] || PROPS.none;
+        if (o.prop === 'correlation') { sc2 = { prop: 'correlation', label: 'Correlation', lo: null, hi: null }; P2 = secs.length ? PROPS.correlation : PROPS.none; }
         var flowBot = prof.length ? prof[prof.length - 1].md : (S.perfs && _fin(S.perfs.midMd) ? S.perfs.midMd : mdMax);
-        if (prof.length > 1 && P2.key) {
+        if (P2.key === 'corr') {
+            secs.forEach(function (x) { var sp = _poly(_sub(path, Math.max(0, x.fromMd), Math.min(x.toMd, mdMax))); if (sp) g.push('<path d="' + sp + '" fill="none" stroke="' + x.color + '" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"' + (x.provisional ? ' stroke-dasharray="9 4"' : '') + '/>'); });
+        } else if (prof.length > 1 && P2.key) {
             for (var i = 1; i < prof.length; i++) {
                 var a = interp(path, prof[i - 1].md), b = interp(path, prof[i].md);
                 if (!a || !b) continue;
@@ -877,6 +922,62 @@
                 labs.push({ side: 1, x: q.x + 20, y: q.y, t: mk.label || 'packer', c: mk.color || '#9ca3af' });
             }
         });
+        labs = labsPre.concat(labs);
+        // the correlation per section (B, WP28): a rail beside the flow path, a tick at each boundary
+        if (secs.length > 1 || (secs.length && o.prop !== 'correlation')) {
+            secs.forEach(function (x) {
+                var rl = [], m0 = Math.max(0, x.fromMd), m1 = Math.min(x.toMd, mdMax), nS = 24;
+                for (var k3 = 0; k3 <= nS; k3++) { var q3 = interp(path, m0 + (m1 - m0) * k3 / nS); if (q3) rl.push((q3.x - Math.sin(q3.ang) * 30).toFixed(1) + ',' + (q3.y + Math.cos(q3.ang) * 30).toFixed(1)); }
+                g.push('<polyline class="wp-secrail" points="' + rl.join(' ') + '" fill="none" stroke="' + x.color + '" stroke-width="4" stroke-linecap="round"' + (x.provisional ? ' stroke-dasharray="7 4"' : '') + '><title>' + _esc((x.label || x.key) + ', ' + D(x.fromMd) + ' to ' + D(x.toMd)) + '</title></polyline>');
+                var qb = interp(path, m1); if (qb && m1 < mdMax - 1) g.push('<line x1="' + (qb.x - Math.sin(qb.ang) * 24).toFixed(1) + '" y1="' + (qb.y + Math.cos(qb.ang) * 24).toFixed(1) + '" x2="' + (qb.x - Math.sin(qb.ang) * 36).toFixed(1) + '" y2="' + (qb.y + Math.cos(qb.ang) * 36).toFixed(1) + '" stroke="' + T.text + '" stroke-width="1.5"/>');
+            });
+        }
+        // artificial lift equipment (B, WP28; the lift engines supply the depths): ESP and side-pocket mandrels
+        (o.marks || []).forEach(function (mk) {
+            if (!mk || !_fin(mk.md) || (mk.kind !== 'esp' && mk.kind !== 'mandrel')) return;
+            var mdE = Math.min(mk.md, mdMax), q = interp(path, mdE); if (!q) return;
+            var cmp = mk.comp ? ' class="wp-comp" data-comp="' + _esc(mk.comp) + '" tabindex="0" role="button"' : '';
+            if (mk.kind === 'esp') {
+                var col = mk.color || T.accent, len = Math.max(28, Math.min(60, mdMax * 0.035 * sc)), a0 = q.ang, ux = Math.cos(a0), uy = Math.sin(a0), nx2 = -uy, ny2 = ux;
+                // pump (ribbed), seal and motor stacked along the hole below the setting depth
+                var seg = function (f0, f1, w, fill, rib) {
+                    var x0 = q.x + ux * len * f0, y0 = q.y + uy * len * f0, x1 = q.x + ux * len * f1, y1 = q.y + uy * len * f1;
+                    var d = 'M' + (x0 + nx2 * w).toFixed(1) + ' ' + (y0 + ny2 * w).toFixed(1) + 'L' + (x1 + nx2 * w).toFixed(1) + ' ' + (y1 + ny2 * w).toFixed(1) + 'L' + (x1 - nx2 * w).toFixed(1) + ' ' + (y1 - ny2 * w).toFixed(1) + 'L' + (x0 - nx2 * w).toFixed(1) + ' ' + (y0 - ny2 * w).toFixed(1) + 'Z';
+                    var r = '<path d="' + d + '" fill="' + fill + '" stroke="' + T.bg + '" stroke-width="1.2"/>';
+                    if (rib) for (var k4 = 1; k4 < 5; k4++) { var f = f0 + (f1 - f0) * k4 / 5, xr = q.x + ux * len * f, yr = q.y + uy * len * f; r += '<line x1="' + (xr + nx2 * w).toFixed(1) + '" y1="' + (yr + ny2 * w).toFixed(1) + '" x2="' + (xr - nx2 * w).toFixed(1) + '" y2="' + (yr - ny2 * w).toFixed(1) + '" stroke="' + T.bg + '" stroke-width="1"/>'; }
+                    return r;
+                };
+                g.push('<g' + cmp + ' aria-label="' + _esc((mk.label || 'ESP') + ' at ' + D(mk.md)) + '">' + seg(0, 0.45, 7, col, true) + seg(0.45, 0.6, 5.5, '#9ca3af', false) + seg(0.6, 1, 7, '#6b7280', false) +
+                    '<circle cx="' + q.x.toFixed(1) + '" cy="' + q.y.toFixed(1) + '" r="3" fill="' + T.text + '"/></g>');
+                labs.push({ side: 1, x: q.x + 14, y: q.y + uy * len * 0.3, t: mk.label || 'ESP', c: col });
+            } else {
+                var stc = { operating: T.accent, open: T.green, closed: '#6b7280', orifice: T.blue, dummy: '#4b5563' }[mk.state] || T.blue;
+                var ox = q.x + Math.sin(q.ang) * 13, oy = q.y - Math.cos(q.ang) * 13, ang = (q.ang * 180 / Math.PI - 90).toFixed(1);
+                g.push('<g' + cmp + ' aria-label="' + _esc((mk.label || 'Gas-lift mandrel') + ' at ' + D(mk.md) + (mk.state ? ', valve ' + mk.state : '')) + '">' +
+                    '<rect x="' + (ox - 3.5).toFixed(1) + '" y="' + (oy - 9).toFixed(1) + '" width="7" height="18" rx="2" transform="rotate(' + ang + ' ' + ox.toFixed(1) + ' ' + oy.toFixed(1) + ')" fill="#374151" stroke="#9ca3af" stroke-width="1"/>' +
+                    '<circle cx="' + ox.toFixed(1) + '" cy="' + oy.toFixed(1) + '" r="' + (mk.state === 'operating' ? 4.5 : 3.2) + '" fill="' + (mk.state === 'closed' || mk.state === 'dummy' ? 'none' : stc) + '" stroke="' + stc + '" stroke-width="1.6"/></g>');
+                labs.push({ side: 1, x: ox + 8, y: oy, t: mk.label || ('valve' + (mk.state ? ' · ' + mk.state : '')), c: stc });
+            }
+        });
+        // deviation marks (B, WP28): kick-off point, horizontal stretches with their MD length
+        var dev = devInfo(traj, o.dev);
+        if (o.deviation !== false && dev.incMax >= 5) {
+            if (_fin(dev.kopMd) && dev.kopMd > 0) {
+                var kq = interp(path, dev.kopMd);
+                if (kq) { g.push('<circle cx="' + kq.x.toFixed(1) + '" cy="' + kq.y.toFixed(1) + '" r="4" fill="none" stroke="' + T.yellow + '" stroke-width="2"/>'); labs.push({ side: -1, x: kq.x - 8, y: kq.y, t: 'KOP', c: T.yellow }); }
+            }
+            dev.hz.forEach(function (h) {
+                var bl = [], nS2 = 30;
+                for (var k5 = 0; k5 <= nS2; k5++) { var q5 = interp(path, h.md0 + (h.md1 - h.md0) * k5 / nS2); if (q5) bl.push([q5.x + Math.sin(q5.ang) * 34, q5.y - Math.cos(q5.ang) * 34]); }
+                if (bl.length < 2) return;
+                var pa = bl[0], pz = bl[bl.length - 1], q0 = interp(path, h.md0), q1 = interp(path, h.md1);
+                g.push('<g class="wp-hz" aria-label="' + _esc('Horizontal section ' + D(h.md0) + ' to ' + D(h.md1)) + '"><path d="' + _poly(bl) + '" fill="none" stroke="' + T.green + '" stroke-width="1.6" stroke-dasharray="4 3"/>' +
+                    (q0 ? '<line x1="' + q0.x.toFixed(1) + '" y1="' + q0.y.toFixed(1) + '" x2="' + pa[0].toFixed(1) + '" y2="' + pa[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') +
+                    (q1 ? '<line x1="' + q1.x.toFixed(1) + '" y1="' + q1.y.toFixed(1) + '" x2="' + pz[0].toFixed(1) + '" y2="' + pz[1].toFixed(1) + '" stroke="' + T.green + '" stroke-width="1.2"/>' : '') + '</g>');
+                var mid2 = bl[Math.floor(bl.length / 2)];
+                labs.push({ side: 1, x: mid2[0] + 4, y: mid2[1], t: 'horizontal ' + fmtMd(h.md1 - h.md0), c: T.green });
+            });
+        }
         // side labels: sorted by depth on each side and pushed apart (12 px), with a leader when moved
         [-1, 1].forEach(function (sd) {
             var L = labs.filter(function (l) { return l.side === sd; }).sort(function (a, b) { return a.y - b.y; }), prevY = -1e9;
@@ -923,7 +1024,12 @@
             if (narrow) { px0 = px0 + pw + 34; cbY = py0 + 6; cbH = ph - 6; }
             if (P2.key) {
                 g.push('<text x="' + px0 + '" y="' + (cbY - 8) + '" fill="' + T.text2 + '" font-size="10" font-weight="700">' + _esc((o.labels && o.labels.prop) || sc2.label) + '</text>');
-                if (P2.key === 'pattern') {
+                if (P2.key === 'corr') {
+                    secs.slice(0, 7).forEach(function (x, j) {
+                        g.push('<rect x="' + px0 + '" y="' + (cbY + j * 18) + '" width="14" height="12" rx="2" fill="' + x.color + '"/><text x="' + (px0 + 20) + '" y="' + (cbY + j * 18 + 10) + '" fill="' + T.text + '" font-size="10">' + _esc(String(x.label || x.key).slice(0, 26) + (x.provisional ? ' *' : '')) + '</text>');
+                    });
+                    if (secs.some(function (x) { return x.provisional; })) g.push('<text x="' + px0 + '" y="' + (cbY + Math.min(7, secs.length) * 18 + 10) + '" fill="' + T.text2 + '" font-size="9">* provisional</text>');
+                } else if (P2.key === 'pattern') {
                     var seen = [];
                     prof.forEach(function (r) { var kk = _patternKey(r.pattern); if (seen.indexOf(kk) === -1) seen.push(kk); });
                     if (!seen.length) seen = ['unknown'];
@@ -946,12 +1052,12 @@
         // hover stations: the trajectory densified to ~ every 1 % of MD (screen coordinates in viewBox units)
         var pts = [], N = 120;
         for (var j = 0; j <= N; j++) { var mdj = mdMax * j / N, q2 = interp(path, mdj); pts.push({ x: q2.x, y: q2.y, md: mdj, i: j }); }
-        return { svg: g.join(''), pts: pts, width: W0, height: H0, scale: sc2 };
+        return { svg: g.join(''), pts: pts, width: W0, height: H0, scale: sc2, dev: dev, sections: secs };
     }
 
     G.WTS_wp_view = {
         chart: chart, redraw: redraw, schematic: schematic, colorFor: colorFor, PATTERN_COLORS: PATTERN_COLORS, scale: scale, interp: interp,
-        patternKey: _patternKey, ramp: _ramp, ticks: _ticks, theme: _theme, esc: _esc, VERSION: '1.0.0'
+        patternKey: _patternKey, ramp: _ramp, ticks: _ticks, theme: _theme, esc: _esc, devInfo: devInfo, SEC_COLORS: SEC_COLORS, VERSION: '1.1.0'
     };
 })();
 
