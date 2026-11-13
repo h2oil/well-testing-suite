@@ -337,9 +337,58 @@
     function _foamApply(on) { var ppm = _numv('wd_foam') || 0; return _act(function (sim) { return sim.setFoamer({ on: !!on && ppm > 0, ppm: ppm, injMd: null }); }); }
     function _liftApply() {
         var M = ST.M; if (!M) return null;
-        if (M.lift.type === 'esp') { var hz = _numv('wd_hz'); return _act(function (sim) { return sim.setLift({ type: 'esp', on: _fin(hz) && hz > 0, freq: hz || 0, ramp_Hz_s: 1 }); }); }
+        if (M.lift.type === 'esp') { var hz = _numv('wd_hz'), rp = _numv('wd_ramp'); return _act(function (sim) { return sim.setLift({ type: 'esp', on: _fin(hz) && hz > 0, freq: hz || 0, ramp_Hz_s: _fin(rp) && rp > 0 ? rp : 1 }); }); }
         if (M.lift.type === 'gaslift') { var q = _canon(function () { return _numv('wd_glq'); }); return _act(function (sim) { return sim.setLift({ type: 'gaslift', qinj_Mscfd: q || 0, mode: 'valves' }); }); }
         return null;
+    }
+    // WD4: an intermittent programme started now (timer or pressure trigger) or stopped (mode off)
+    function _cycleApply(off) {
+        var a = off ? { mode: 'off' } : _canon(function () {
+            return { mode: _val('wd_cyc_mode') === 'pressure' ? 'pressure' : 'timer', open_h: _numv('wd_cyc_open'), shut_h: _numv('wd_cyc_shut'), cycles: _numv('wd_cyc_n'),
+                pOpen_psig: _numv('wd_cyc_pon'), pClose_psig: _numv('wd_cyc_poff'), qClose_Mscfd: _numv('wd_cyc_qoff'), minOpen_h: _numv('wd_cyc_minon'), minShut_h: _numv('wd_cyc_minoff') };
+        });
+        return _act(function (sim) { return sim.schedule([{ t: sim.state.t, type: 'cycle', args: a, src: 'user' }]); });
+    }
+    // the lift rows (label, value in display units) and the valve table of the simulator shown — the Lift status box and the report
+    function _liftRows(s) {
+        var S = s && s.state, L = S && S.lift, rows = [], M = (s && s.M) || ST.M, lift = M && M.lift ? M.lift.type : 'none', tbl = '';
+        var rr = function (l, v) { rows.push([l, v]); };
+        if (!S) return { rows: rows, tbl: tbl, none: true };
+        if (L && L.gl) {
+            var g = L.gl;
+            rr('Gas lift', g.mode === 'nodal' ? 'nodal injection point, ' + _u(g.injMd, 'length', 0, 'ft') + ' MD' : 'installed valves (annulus to ' + _u(g.packerMd, 'length', 0, 'ft') + ' MD)');
+            rr('Casing pressure / lift gas', _u(g.pcs_psig, 'pressureG', 0, 'psig') + ' / ' + _u(g.qinj, 'gasRateSmall', 0, 'Mscf/d'));
+            if (g.mode !== 'nodal') {
+                rr('Annulus liquid', _u(g.annLiq_bbl, 'volume', 1, 'bbl') + ' · top ' + _u(g.liqTopMd, 'length', 0, 'ft') + ' MD');
+                rr('Operating valve', g.opValve ? 'valve ' + g.opValve + (g.multi ? ' (more than one valve passing)' : '') : 'none passing gas');
+                tbl = '<div class="wd-tw"><table class="dtable"><thead><tr><th>Valve</th><th>MD</th><th>State</th><th>Passing</th><th>Rate</th><th>Casing</th><th>Tubing</th><th>Opens at</th></tr></thead><tbody>' +
+                    (g.valves || []).map(function (v) {
+                        return '<tr><td>' + v.n + (v.kind !== 'ipo' ? ' (' + _esc(v.kind) + ')' : '') + '</td><td>' + _u(v.md, 'length', 0, 'ft') + '</td><td>' + (v.open ? 'open' : 'closed') + '</td><td>' + _esc(v.passing || '—') + '</td><td>' +
+                            (v.passing === 'gas' ? _u(v.q, 'gasRateSmall', 0, 'Mscf/d') : v.passing === 'liquid' ? _u(v.q, 'liquidRate', 0, 'bbl/d') : '—') + '</td><td>' + _u(v.pc_psig, 'pressureG', 0, 'psig') + '</td><td>' + _u(v.pt_psig, 'pressureG', 0, 'psig') + '</td><td>' + _u(v.pvo_psig, 'pressureG', 0, 'psig') + '</td></tr>';
+                    }).join('') + '</tbody></table></div>';
+            }
+        }
+        if (L && L.esp) {
+            var e = L.esp;
+            rr('ESP frequency', _fmt(e.freq, 1) + ' Hz (command ' + _fmt(e.fCmd, 1) + ' Hz)' + (e.tripped ? ' · tripped: ' + e.tripped : ''));
+            rr('Intake / discharge', _u(e.pint, 'pressure', 0, 'psia') + ' / ' + _u(e.pdis, 'pressure', 0, 'psia') + ' · rise ' + _u(e.dp, 'pressure', 0, 'psi'));
+            rr('Motor load / intake gas', _fmt(100 * (e.load || 0), 0) + ' %' + (e.motorAssumed ? ' (motor power assumed)' : '') + ' / ' + _fmt(100 * (e.gvf || 0), 1) + ' %' + (e.vent_Mscfd > 0 ? ' · vented ' + _u(e.vent_Mscfd, 'gasRateSmall', 0, 'Mscf/d') : ''));
+        }
+        if (S.foamer && (S.foamer.on || S.foamer.dosed_lbm > 0)) rr('Foamer', (S.foamer.on ? _fmt(S.foamer.ppm, 0) + ' ppm' : 'off') + ' · at the end of the tubing ' + _fmt(S.foamer.cBottom_ppm || 0, 0) + ' ppm, surface-tension factor ' + _fmt(_fin(S.foamer.eff) ? S.foamer.eff : 1, 2));
+        if (L && L.cycle && L.cycle.mode && L.cycle.mode !== 'off') {
+            var c = L.cycle, last = c.hist && c.hist.length ? c.hist[c.hist.length - 1] : null;
+            rr('Intermittent (' + (c.mode === 'pressure' ? 'by pressure' : 'timer') + ')', 'cycle ' + c.n + ', ' + (c.phase === 'open' ? 'open' : 'shut in') + (c.next ? ' · next ' + (c.next.type === 'open' ? 'open' : 'shut-in') + ' at ' + _hms(c.next.t) : ''));
+            if (last) rr('Last cycle', _u(last.liq_bbl, 'volume', 1, 'bbl') + ' liquid produced · ' + _u(last.removed_bbl, 'volume', 1, 'bbl') + ' removed from the tubing · ' + _fmt(last.gas_Mscf, 0) + ' Mscf gas');
+        }
+        if (L && L.heading) rr('Heading check', L.heading.heading ? 'heading: ' + L.heading.pairs + ' THP peak pairs, period ' + _fmt((L.heading.period_s || 0) / 60, 0) + ' min' : 'no heading (' + (L.heading.pairs || 0) + ' peak pairs in 3 h)');
+        return { rows: rows, tbl: tbl, lift: lift };
+    }
+    function _renderLift() {
+        var h = _byId('wd_liftstat'); if (!h) return;
+        var r = _liftRows(_vsim());
+        if (r.none) { h.innerHTML = '<div class="rbox-title">Lift status</div><div class="wd-hint">Press Play or Step: the lift state appears with the run.</div>'; return; }
+        if (!r.rows.length) r.rows.push(['Lift', r.lift === 'none' ? 'natural flow — add foamer or an intermittent programme below' : '—']);
+        h.innerHTML = '<div class="rbox-title">Lift status</div>' + r.rows.map(function (x) { return '<div class="rrow"><span class="rl">' + _esc(x[0]) + '</span><span class="rv">' + _esc(x[1]) + '</span></div>'; }).join('') + r.tbl;
     }
     function _stepOnce() {
         if (!ST.sim && !_build('step')) { _renderAll(); return null; }
@@ -437,13 +486,16 @@
             case 'cycle':
                 ev = [{ t: 0, type: 'cycle', args: { mode: 'timer', open_h: 2, shut_h: 2, cycles: 3 } }]; set.wd_dur = 12; break;
             case 'glunload':
-                set.wd_start = 'static'; set.wd_static = 'liquid'; set.wd_liquid = 'water'; set.wd_prior = 'none';
+                // WD4: killed to the static water level of the reservoir pressure (a column above it drains into the formation), opened with
+                // the lift gas on from t = 0 (WTS_wd_lift.balanceLevel)
+                var LFT = G.WTS_wd_lift, bl = LFT && typeof LFT.balanceLevel === 'function' && M ? LFT.balanceLevel(M) : null;
+                set.wd_start = 'static'; set.wd_static = bl ? 'level' : 'liquid'; set.wd_liquid = 'water'; set.wd_prior = 'none'; if (bl) set.wd_level = Math.round(_dv(bl.md, 'length'));   // the tagged input shows display units
                 var q = M && M.lift.gl && M.lift.gl.qinj_Mscfd ? M.lift.gl.qinj_Mscfd : 600;
-                ev = [{ t: 0, type: 'gl', args: { qinj_Mscfd: q, mode: 'valves' } }]; set.wd_dur = 12;
+                ev = [{ t: 0, type: 'open', args: {} }, { t: 0, type: 'gl', args: { qinj_Mscfd: q, mode: 'valves' } }]; set.wd_dur = 12;
                 if (!M || M.lift.type !== 'gaslift') note = 'Set gas lift in Well Performance step ④ first.'; break;
             case 'espstart':
                 set.wd_start = 'static'; set.wd_static = 'liquid'; set.wd_liquid = 'water'; set.wd_prior = 'none';
-                ev = [{ t: 0, type: 'esp', args: { on: true, freq: 60, ramp_Hz_s: 1 } }]; set.wd_dur = 2;
+                ev = [{ t: 0, type: 'open', args: {} }, { t: 0, type: 'esp', args: { on: true, freq: M && M.lift.esp && M.lift.esp.freq ? M.lift.esp.freq : 60, ramp_Hz_s: 1 } }]; set.wd_dur = 2;
                 if (!M || M.lift.type !== 'esp') note = 'Set an ESP in Well Performance step ④ first.'; break;
             default:
                 key = 'steady'; set.wd_dur = 2;
@@ -706,6 +758,7 @@
         return out;
     }
     function _renderKpis() {
+        _renderLift();
         var h = _byId('wd_kpis'); if (!h) return;
         h.innerHTML = _kpis().map(function (k) { return _kpiHtml(k.l, k.v, k.s, k.st); }).join('');
     }
@@ -720,6 +773,7 @@
         if (gl) gl.style.display = lift === 'gaslift' ? '' : 'none';
         if (es) es.style.display = lift === 'esp' ? '' : 'none';
         var fo = _byId('wd_foam_w'); if (fo) fo.style.display = _isGas(M) ? '' : 'none';
+        ['wd_ramp_w', 'wd_ramp_w0'].forEach(function (id) { var r = _byId(id); if (r) r.style.display = lift === 'esp' ? '' : 'none'; });
     }
     function _renderTimeline() {
         var sl = _byId('wd_scrub'), sp = _span(), t = _curT();
@@ -757,7 +811,8 @@
         var gas = _isGas(M), lift = M && M.lift ? M.lift.type : 'none';
         if (tab === 'rates') return gas ? ['qg', 'qgForm', 'qg_res', 'qo'] : ['qL', 'qo', 'qw', 'qo_res', 'qg'];
         if (tab === 'press') return ['thp', 'pwf', 'pr'].concat(lift === 'gaslift' ? ['pcs'] : lift === 'esp' ? ['pint'] : []);
-        if (tab === 'lift') return lift === 'gaslift' ? ['pcs', 'qinj', 'opValve'] : lift === 'esp' ? ['pint', 'freq', 'load'] : (gas ? ['lratio', 'liq', 'foam'] : ['liq', 'gor']);
+        // WD4: one y axis per chart — channels of one magnitude (casing / tubing-head pressure with the lift-gas rate; the drive frequency)
+        if (tab === 'lift') return lift === 'gaslift' ? ['pcs', 'thp', 'qinj'] : lift === 'esp' ? ['freq'] : (gas ? ['lratio', 'liq', 'foam'] : ['liq', 'gor']);
         return ['qL'];
     }
     function _renderChart(force) {
@@ -911,6 +966,7 @@
             rr('Most liquid in the well', _u(sum.liqMax_bbl, 'volume', 1, 'bbl'));
             if (sum.tLoading_h > 0 || sum.tDead_h > 0) rr('Time loading / dead', _fmt(sum.tLoading_h, 2) + ' h / ' + _fmt(sum.tDead_h, 2) + ' h');
             rr('Cumulative oil / water / gas', _u(sum.cumO_STB, 'liquidVolume', 0, 'STB') + ' / ' + _u(sum.cumW_STB, 'liquidVolume', 0, 'STB') + ' / ' + _fmt(sum.cumG_MMscf, 3) + ' MMscf');
+            _liftRows(s).rows.slice(0, 6).forEach(function (x) { rr(x[0], x[1]); });
             if (sum.buildup) rr('Build-up', 'p_ws ' + _u(sum.buildup.pws_end, 'pressure', 0, 'psia') + ' · dp/dln Δt ' + _u(sum.buildup.dpdlnDt, 'pressure', 1, 'psi') + (_fin(sum.buildup.k_est) ? ' · k ≈ ' + _fmt(sum.buildup.k_est, 1) + ' md' : ''));
         }
         h.innerHTML = '<div class="rbox-title">Run summary</div>' + (rows.length ? rows.join('') : '<div class="wd-hint">The summary appears once the run has data (press Play).</div>');
@@ -1120,9 +1176,19 @@
                 '<div class="wd-evadd rp-skip">' + _fg('wd_ev_t', 'At', { unit: 'h', def: '' }) + _fg('wd_ev_type', 'Event', { options: EV_TYPES, def: 'bean' }) + _fg('wd_ev_v', 'Value', { def: '' }) +
                 '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="evadd">Add event</button></div></div>' +
                 '<div class="fg" style="margin-top:10px"><div class="fg-item" style="grid-column:1/-1"><label for="wd_notes">Engineer notes (printed in the Notes)</label><textarea id="wd_notes" rows="2" placeholder="Assumptions, data sources, decisions…"></textarea></div></div>', { id: 'wd_scen' });
+        var liftc = _card('Lift and intermittent production', '<div class="rbox" id="wd_liftstat"></div>' +
+                '<div class="wd-sub rp-skip">Intermittent production (provisional controller)</div><div class="fg rp-skip">' +
+                _fg('wd_cyc_mode', 'Trigger', { options: [['timer', 'Timer (open / shut times)'], ['pressure', 'Pressure (open at / shut below)']], def: 'timer' }) +
+                _fg('wd_cyc_open', 'Open for', { unit: 'h', def: 2 }) + _fg('wd_cyc_shut', 'Shut for', { unit: 'h', def: 2 }) + _fg('wd_cyc_n', 'Cycles', { def: 3 }) +
+                _fg('wd_cyc_pon', 'Open when THP (CHP) reaches', { unit: 'psig', def: '' }) + _fg('wd_cyc_poff', 'Shut when THP falls below', { unit: 'psig', def: '' }) +
+                _fg('wd_cyc_qoff', 'or the gas rate below', { unit: 'Mscf/d', def: '' }) + _fg('wd_cyc_minon', 'Minimum open', { unit: 'h', def: 0.5 }) + _fg('wd_cyc_minoff', 'Minimum shut', { unit: 'h', def: 0.5 }) +
+                '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="cycgo">Start the cycle now</button></div>' +
+                '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="cycoff">Stop the cycle</button></div></div>' +
+                '<div class="wd-sub rp-skip" id="wd_ramp_w0">ESP drive</div><div class="fg rp-skip" id="wd_ramp_w">' + _fg('wd_ramp', 'Frequency ramp', { unit: 'Hz/s', def: 1 }) +
+                '<div class="wd-hint" style="grid-column:1/-1">Set the frequency on the toolbar (ESP Hz → Set); Set again after a trip restarts the pump.</div></div>', { id: 'wd_liftcard' });
         var cases = _card('Cases', '<div class="fg rp-skip"><div class="fg-item"><label for="wd_case_name">Case name</label><input type="text" id="wd_case_name" maxlength="60" placeholder="e.g. Bean-up to 32/64"></div>' +
                 '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="casesave">Save case with this well</button></div></div><div id="wd_cases" class="rp-skip"></div>', { id: 'wd_casecard' });
-        return '<div id="wd_root">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div></div>';
+        return '<div id="wd_root">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div>' + liftc + '</div>';
     }
 
     // ── events on #wd_root ───────────────────────────────────────────────────
@@ -1173,6 +1239,8 @@
                 case 'csvmark': var m2 = (ST.rec ? ST.rec.marks() : []).filter(function (x) { return x.id === b.getAttribute('data-id'); })[0]; if (m2) _csv({ from: m2.t0, to: m2.t1 }); break;
                 case 'unmark': if (ST.rec) ST.rec.unmark(b.getAttribute('data-id')); _renderTimeline(); _renderChart(); break;
                 case 'evadd': _evAdd(); break;
+                case 'cycgo': _cycleApply(false); break;
+                case 'cycoff': _cycleApply(true); break;
                 case 'evdel': var i = +b.getAttribute('data-i'); if (ST.events[i]) { ST.events.splice(i, 1); if (!_hasData()) _build('events'); else ST.note = 'The event is removed from the scenario; the running simulator keeps the events already scheduled (Reset to apply).'; _renderAll(); } break;
                 case 'casesave': _caseSave(); break;
                 case 'caseload': _caseLoad(b.getAttribute('data-id')); break;
@@ -1231,7 +1299,7 @@
         ST.M = _read();
         body.innerHTML = CSS + _bodyHtml();
         var U = _U();
-        if (U && U.tagInput) [['wd_psep', 'pressureG'], ['wd_level', 'length'], ['wd_h', 'length'], ['wd_rw', 'length'], ['wd_re', 'length'], ['wd_glq', 'gasRateSmall']].forEach(function (x) { if (_byId(x[0])) U.tagInput(x[0], x[1]); });
+        if (U && U.tagInput) [['wd_psep', 'pressureG'], ['wd_level', 'length'], ['wd_h', 'length'], ['wd_rw', 'length'], ['wd_re', 'length'], ['wd_glq', 'gasRateSmall'], ['wd_cyc_pon', 'pressureG'], ['wd_cyc_poff', 'pressureG'], ['wd_cyc_qoff', 'gasRateSmall']].forEach(function (x) { if (_byId(x[0])) U.tagInput(x[0], x[1]); });
         _bind();
         ST.wb = null; ST.nav = null; ST.rwb = null;
         _setTab(ST.tab);

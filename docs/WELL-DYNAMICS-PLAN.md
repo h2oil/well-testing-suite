@@ -1455,6 +1455,103 @@ y_c is not implemented (Gilbert y_c); the line table has no isenthalpic second m
 
 ### 11.4 WD4 record
 
+**2026-11-13, branch `wd/wd4` (from `wd/int` 88e2770, after merge 1).** Lift transients and the oil-heading detector. WD0 had not run
+(no `_welldyn-shapes.js` / mock), so the lift fixtures of §3.9 are built in the lane helper `tests/_welldyn-wd4.js` on top of WD1's
+`tests/_welldyn-wd1.js` (FIX, gate options, runners); the integrator folds them into WD0's frozen file. Decisions at their defaults: Q1
+(fallback only in the loading presets), Q10 (r_max 0.6, c_50 500 ppm), Q13 (IPO / orifice / dummy valves), Q15 (thresholds provisional).
+
+**Built.** `prism-build/49-calc-wd-lift.js` — the five extensions in `WTS_wd_engine.ext` (`foamer`, `cycle`, `heading`, `gaslift`, `esp`; the
+keys are assigned at registration, not as object-literal keys, so the help-guide source hash of the `gaslift` page does not take this file in)
+and `WTS_wd_lift {VERSION, DEFAULTS, PRESETS, PROVISIONAL, sigmaFactor, annulus, casingP, gasMass, pcsFromMass, column, valveBalance,
+headingOf, pumpDp, pumpStream, describe, balanceLevel, EXT}`:
+- *foamer* — tracer m_F dosed at ppm of the formation water entering the well at the injection MD (blank = the end of the tubing: the engine
+  stores a blank `injMd` as 0, read as blank), sigF = 1 − 0.6·c/(c + 500) per cell from 10⁶·m_F/m_W, returned through `sigma`; q_c falls by
+  sigF^¼ exactly (LF14). `S.foamer.eff / cBottom_ppm / dosed_lbm`.
+- *cycle* — timer programmes are scheduled ahead with `sim.schedule` (src `controller`), so every open / shut-in lands exactly on its time
+  (LF16); the last re-open leaves the well flowing; mode `pressure` emits the events from `control` (THP, or CHP on a gas-lift well; q_close;
+  minimum open / shut times; ≤ cycles opens); mode `off` cancels the scheduled controller events. Each open period is booked (liquid and gas
+  produced, tubing liquid at open / shut-in, removed) in `S.lift.cycle.hist`.
+- *heading* — THP ring at 30 s over 3 h; turning points with a 5 %-of-mean hysteresis; heading when ≥ 3 peak pairs with a mean period of
+  2 min – 3 h (`S.lift.heading`). Not imposed: on oilVert a bean right of q_s (16/64) settles on the nodal root (350.8 vs 351 STB/d) and a bean
+  with no stable nodal root (14/64) dies away through `dying` to ≈ 88 STB/d in 4 h; neither heads (LF15).
+- *gaslift* — `nodal`: q_inj as an I source in the cell above the R0.lift.injMd break (the gate, G5). `valves` (default with installed
+  valves): annulus geometry from the strings (casing ID / tubing OD, 60 nodes to the packer), gas column p_cs·exp(0.01875γ/z̄·∫dTVD/T_R) with
+  z̄ by Dranchuk-Abou-Kassem on Sutton pseudo-criticals at the column mean (within 0.5 % of `WTS_gaslift_casingP`, LF2), the gas mass ↔ p_cs
+  inverse, IPO balance in gauge with the dome from `WTS_wp_gl.pdAt`, gas by `WTS_wp_gl.tc`, annulus liquid by the orifice law (C_d 0.6),
+  check valves, surface injection while p_cs < p_ko (design p_ko, else p_inj + 100 psi). Two decisions beyond §4.12: (1) *throttling* — the
+  effective port grows linearly from p_vc to p_vo (full above p_vo; provisional, option `ext.gaslift.throttle`, default on): with on / off
+  valves the operating valve of the fixture cycled open and shut every few minutes (its port passes more than the 600 Mscf/d injected) and the
+  label chattered `gl_lifting` ↔ `dying`; throttling settles where the valve passes the injected gas (LF4: 603 vs 600 Mscf/d); (2) a *stable
+  explicit coupling* — one step never moves more annulus liquid (or lift gas) than lowers the casing-to-tubing Δp at that valve by half.
+- *esp* — `faceDp` = `WTS_wp_esp.pump` of `C.esp` at the drive frequency (a shallow copy of P with f), the stock-tank stream of the pump face
+  at Q (the lagged face stream scaled, else the intake cell's composition), the face pressure as the intake; ±1 % slope. A stopped pump
+  (f < 1 Hz) and the discharge check valve are resistances anchored at Q = 0 (dp = −k·Q, k 1e7 psi per ft³/s — anchoring at the lagged flux let
+  a stopped pump pass the lagged flow); `dtLimit` holds Δt ≤ 1 s while the drive ramps or a lock fades; drive ramp then motor lag τ_m 0.5 s;
+  vent gas (natural separation opt-in) a negative G source below the pump, in `qvent` / `qg` / cumOut (LF22); motor power = the nameplate,
+  else 1.25 × the stages' BHP at the BEP (assumed, shown). Trips / states: underload (load < 0.4 for 30 s → a controller `esp` {on:false,
+  trip} event, LF11), gas lock (intake gas fraction > 0.5 → the pump head fades over τ_lock 10 s; restart when the intake contents are below
+  0.3 after 30 s; label `esp_gaslock` also at > 0.3 for 60 s, LF10), pump-off (intake < 30 psia → head fades; restart above 150 psia after
+  15 min idle; label `esp_pumpoff`, LF9) — all provisional.
+
+**Engine edits (WD1's file; findings fixed here because the lift lanes depend on them — the integrator reviews; each is identical at a steady
+state, the WD1 suites pass unchanged: engine 30/30, res 12/12, gate 7/7 + G5/G6, int 6/6):**
+1. *Implicit flowline back pressure at the choke* (`_attempt`, the wellhead boundary): p_dn is evaluated at the trial rate of the face-n stream
+   (∂p_dn/∂Q in the boundary slope), not at the lagged surface rate. Case: gasLift `glUnload`, first liquid at the wellhead at ≈ 1.9 h: p_dn
+   (lagged 12,000 STB/d, extrapolated) ≈ 1,700 psia > THP closed the choke, the next step opened it to 30× the rate, alternating
+   gas-nozzle / multiphase at Δt ≈ 0.01 s (12,387 steps and 7,210 rejections in that half hour, 82 s). Regression: LFX.
+2. *Lift labels replace `dead` / `dying`* (`_labels`): the gas-lift and ESP states override a dead or dying base label (a well being unloaded
+   by gas lift, or held by a stopped / tripped pump, is described by the lift). Plan §4.13 said "override stable / unloading".
+3. *Additive hook `dtLimit(sim, ctx, t)`* (step size): the ESP ramp at Δt 57 s jumped 60 → 90 Hz in one step (pump Δp 2,860 → 6,600 psi) and
+   the pressure-change limit could not halve it away (STEP_FAIL).
+4. *Pump re-linearisation* (`step`): the plan's §4.12 rule — when the converged pump-face flux moved > 5 % from the linearisation point the
+   step is redone with the Δp re-linearised there (at most twice, on a flowing face, then the last converged attempt stands).
+5. *ESP steady start* (`_initSteady`): the equilibration subtracts the nodal pump rise at the pump face (a low-J pumped well started with a
+   bottom pressure above p̄r).
+6. *`S.surface.qinj`*: the engine's surface pass resets it every step; the gas-lift `label` hook writes it back (a stop-gap; the engine should
+   read `S.lift.gl.qinj`). `S.surface.qvent` written by the ESP `after` hook is kept by the engine (as designed).
+
+**Page edits (WD3's file `49-calc-welldyn.js`, additive):** a *Lift and intermittent production* card (full width under Scenario / Cases):
+`#wd_liftstat` lift status (gas lift: mode, casing pressure, lift gas, annulus liquid, operating valve and a valve table — state, passing,
+rate, casing / tubing pressure, opening pressure; ESP: frequency and command, intake / discharge / rise, load, intake gas, vent; foamer;
+intermittent phase, next event and the last cycle's liquid; heading check), refreshed with the KPIs (every 6th frame) and in display units;
+intermittent form (timer / pressure, open / shut h, cycles, p_open / p_close psig, q_close, minimum open / shut; Start now / Stop → a `cycle`
+event); ESP drive ramp (Hz/s) used by the toolbar Set. Presets: *gas-lift unloading* starts from the static water level of p̄r
+(`WTS_wd_lift.balanceLevel`: 2,486 ft MD on the fixture, written in display units) and opens the well with the lift gas on; *ESP start* opens
+the well (a static start is shut in). Lift chart keys: gas lift `pcs, thp, qinj`, ESP `freq` (one y axis per chart). The run summary carries
+the lift rows. `welldyn-page` PG11 updated for the two presets (`open` first).
+
+**Fixture deviations (`_welldyn-wd4.js`):** gasLift p̄r 2,600 psia (the (tune) number; at 2,400 the design spacing stops short of the injection
+point), valve ΔP 250 psi and design port 12/64 in (at 100 psi / 16/64 the Asheim loop gain F2 ≈ 2.0: screen (c) fails; F2 = 0.39 here), a full
+7" casing to the packer (the annulus); 4 valves from `WTS_wp_gl.design` (1,970 / 2,956 / 3,709 / 4,334 ft MD, the last the design operating
+valve), nodal q_op 460 STB/d, injection at 4,562 ft MD, critical choke. esp: bean 20/64 in (at 32 the nodal choke is sub-critical, screen
+(a)), 224 stages (`sizeStages` at 1,500 STB/d), a full 7" casing. `glUnload` starts at the balance level (the full kill column of §3.9 is
+above p̄r: it drains into the formation and, with no reverse flow through the choke, the tubing top drops below the separator pressure — a
+STEP_FAIL at 600 s; with back-flow off the gas pocket / liquid choke switch failed Newton at 113 s), run 4.5 h in the test.
+
+**Tests.** `welldyn-lift` LF1–LF23, LFX, LF24–LF26 (27, LF7 `integration`): 27/27 (≈ 100 s); `welldyn-gate` + G5, G6: 9/9 (≈ 58 s). On
+`--html` after the Round-9 rebuild (LF, 0 CR) and sync: smoke 347/347 (no checks added), `node --check` ok, welldyn-engine 30, -res 12,
+-view 14, -rec 16, -page 24, -int 6; wellperf-identity 10, -page 14, -names 1, -gl2 9, -esp 13, -shapes 4; sidebar-nav 9, calc-registry 6,
+v3-ux 17; help-content 7/8 (only "no guide for welldyn", the known WD6 item); `help-shots --check` and `build-user-guide --check` ok.
+
+**Gate G5 / G6 (time-means of the last 600 s vs `WTS_wp_system.solve`):** gasLift (nodal) rate +0.78 %, BHP −0.08 %, THP +1.29 psi, settled at
+1.0 h; esp rate −0.03 %, BHP +0.01 %, THP −0.08 psi, pump intake +0.01 %, settled at 0.34 h; both critical as the solve, mass ≤ 1e-15.
+
+**Measured (container Node; §5.6 budget in brackets).** create cold gasLift 640 ms / esp 376 ms [≤ 800]; flowing step gasLift 5.6 ms (Δt 5.3 s,
+×950) and esp 5.7 ms (Δt 20 s, ×3,560) [2.5 ms — the gas-lift cells take the exact (untabled) props of the lift-gas view, WD1 gap]; the
+extensions cost ≈ 2.5 % of a step (107 ms of 4,334 ms in an hour of unloading); `glUnload` 4.5 h 15.8 s / 2,489 steps, 12 h ≈ 42 s [≤ 25 —
+missed ×1.7, the step cost]; `espStart` 2 h ≈ 10 s / 1,488 steps (631 DP_LIMIT rejections while the static column drains) [≤ 4 — missed];
+foamer (bean 26, 5 h) 12.6 s; timer cycle 2.25 h ≈ 7 s. Chromium (built page, 1280×800 and 390 px, field and Metric; gas-lift unloading,
+ESP start, foamer): no horizontal overflow, no NaN / undefined, no page errors; screenshots (not committed) in the scratchpad `shots-wd-WD4/`.
+
+**Known gaps / findings.** (1) The Asheim cross-check (LF7) is one-sided: the F2 ≈ 2 fixture did not head in time (the throttling valve damps
+it) — reported, not asserted. (2) `foamerOn` (bean 16 in §3.9) does not unload: the foamer lowers q_c by sigF^¼ = 0.88 only (no foam density
+model), so the test uses bean 26 (ratio 0.82 → 0.93: loading → marginal). (3) Gas lock and pump-off are modelled as a head fade with a
+restart rule (cycling), not as gas-liquid pump physics; a pump-off restart at 90 Hz on the weak water well is stiff (not run in the tests).
+(4) ESP `natSep` vent differs from the nodal (17.9 vs 25.6 Mscf/d at GOR 500) — opt-in, provisional, not a gate. (5) The correlation closure
+uses the reference stream with the lift gas above the nodal injection cell also in `valves` mode (WD1 design) — the drift there is the
+lifted stream's while the cells unload. (6) No form fields for an event at a future time of the cycle (the Start button acts now; future
+cycles go through the events table). (7) Budgets above; the heading detector also reports the decaying THP oscillation after an unloading.
+
 ### 11.5 WD5 record
 
 ### 11.6 WD6 record

@@ -1029,6 +1029,9 @@
             for (var c2 = n - 1; c2 >= 0; c2--) {
                 var jm = 0.5 * (fs.Q[c2] + fs.Q[c2 + 1]) / X.area[c2];
                 var pc = pk[c2 + 1] + ((cs.rhoM[c2] + X.drho[c2]) * X.dz[c2] / 144 + this._gf(c2, jm) * X.len[c2]) / (1 - X.Ek[c2]);
+                // the pump node of the steady reference (ESP): the column below the pump starts from the nodal pump's discharge minus its rise
+                // (WD4 §11.4 — without it a low-J pumped well started at a bottom pressure above p̄r)
+                if (c2 === g.pumpFace && R0.lift && R0.lift.type === 'esp' && _fin(R0.lift.dp)) pc -= R0.lift.dp;
                 if (this.Y.restrK[c2] > 0) { var jr = fs.Q[c2] / this.Y.A[c2] / this.Y.restrB2[c2]; pc += this.Y.restrK[c2] * this.Y.rhoN[c2] * jr * Math.abs(jr) / (2 * GC * 144); }
                 pk[c2] = pc;
             }
@@ -1215,6 +1218,9 @@
         var tEv = this.pend.length ? this.pend[0].t : Infinity, landing = false;
         if (S.ctl.strokeLeft_s > 0) dt = Math.min(dt, Math.max(S.ctl.strokeTime_s / 5, 1e-3), S.ctl.strokeLeft_s);
         if (_fin(+dtReq) && +dtReq > 0) dt = Math.min(dt, +dtReq);
+        // an extension may cap the step (additive hook dtLimit, WD4 §11.4: the ESP drive ramp — a frequency change inside one long step is a
+        // pump Δp jump the pressure-change limit cannot halve away)
+        for (var xd = 0; xd < this.exts.length; xd++) { var XD = this.exts[xd]; if (typeof XD.e.dtLimit !== 'function') continue; var lim = XD.e.dtLimit(this, XD.ctx, S.t); if (_fin(lim) && lim > 0 && lim < dt) dt = lim; }
         if (S.t + dt >= tEv - 1e-9) { dt = tEv - S.t; landing = true; }
         dt = Math.max(dt, o.dtMin);
         // sources from the extensions (lagged pressures, fixed for the step)
@@ -1233,8 +1239,26 @@
             for (var fk2 = 0; fk2 <= n; fk2++) { var r = X3.e.faceDp(this, X3.ctx, fk2, fs.Q[fk2]); if (r && _fin(r.dp)) { Y.dpPump[fk2] += r.dp; Y.ddpPump[fk2] += _fin(r.ddpdQ) ? r.ddpdQ : 0; } }
         }
         var rejects = 0, res = null, code = null; this._dpRatio = 0;
+        var pumpF = []; for (var pf = 0; pf <= n; pf++) if (Y.dpPump[pf] !== 0 || Y.ddpPump[pf] !== 0) pumpF.push(pf);
         for (var att = 0; att <= 8; att++) {
             res = this._attempt(dt, this._dpRatio);
+            // a face Δp (the pump) is linearised at the lagged flux: when the converged flux moved by more than 5 % the step is redone with
+            // the Δp re-linearised there (§4.12; at most twice, then the last converged attempt stands — WD4 §11.4); only on a flowing
+            // face (both fluxes above 1e-3 ft³/s: a stopped pump or a closed check valve is linear already)
+            for (var rl = 0; res.ok && pumpF.length && rl < 2; rl++) {
+                var far = false;
+                for (var pi = 0; pi < pumpF.length; pi++) { var fq = pumpF[pi], qn = this.tmp.Q[fq], ql = Y.Qlag[fq]; if (qn > 1e-3 && ql > 1e-3 && Math.abs(qn - ql) > 0.05 * Math.max(ql, qn)) far = true; }
+                if (!far) break;
+                var keep = res;
+                for (var pj = 0; pj < pumpF.length; pj++) { var fz = pumpF[pj]; Y.dpPump[fz] = 0; Y.ddpPump[fz] = 0; Y.Qlag[fz] = this.tmp.Q[fz]; }
+                for (var xr = 0; xr < this.exts.length; xr++) {
+                    var XR = this.exts[xr]; if (typeof XR.e.faceDp !== 'function') continue;
+                    for (var pk2 = 0; pk2 < pumpF.length; pk2++) { var fy = pumpF[pk2], rr = XR.e.faceDp(this, XR.ctx, fy, Y.Qlag[fy]); if (rr && _fin(rr.dp)) { Y.dpPump[fy] += rr.dp; Y.ddpPump[fy] += _fin(rr.ddpdQ) ? rr.ddpdQ : 0; } }
+                }
+                res = this._attempt(dt, this._dpRatio);
+                this.stats.relin = (this.stats.relin || 0) + 1;
+                if (!res.ok) { res = keep; break; }
+            }
             if (!res.ok && res.code === 'DP_LIMIT') this._dpRatio = res.ratio;
             if (res.ok) break;
             code = res.code; rejects++; this.stats.rej = this.stats.rej || {}; this.stats.rej[code] = (this.stats.rej[code] || 0) + 1;
@@ -1334,8 +1358,16 @@
             else if (fixedP != null) { Bres = pn - fixedP; Bq = 0; Bp = 1; }
             else if (lineBC) { Bres = pn - this._pdn(basis(T.FG[n], T.FO[n], T.FW[n])); Bq = 0; Bp = 1; }
             else {
+                // the flowline back pressure at the TRIAL rate of the face-n stream (implicit; WD4 §11.4 finding: the lagged p_dn of the step
+                // start made a liquid slug arriving at the wellhead chatter — p_dn(q_lag) above the THP closed the choke, the next step
+                // opened it to 30× the rate). Identical at a steady state (the same fixed point); ∂p_dn/∂Q enters the boundary slope.
+                var bT = basis(T.FG[n], T.FO[n], T.FW[n]), pdT = this._pdn(bT);
+                ch.pdn = pdT;
                 var dpn = Math.max(1e-3, 1e-6 * pn), qa = this._chokeQ(pn + dpn), qb = this._chokeQ(pn);
-                Bres = W.I0[n] - qb; Bq = W.ip[n]; Bp = -(qa - qb) / dpn;
+                var dpd = Math.max(1e-3, 1e-6 * pdT); ch.pdn = pdT + dpd; var qd = this._chokeQ(pn); ch.pdn = pdT; this._chokeQ(pn);
+                var Qn0 = Q_[n], dpdQ = 0;
+                if (Qn0 > 1e-9 && bT > 0) { var hb = Math.max(1e-6, 1e-4 * bT); dpdQ = (this._pdn(bT + hb) - pdT) / hb * bT / Qn0; }
+                Bres = W.I0[n] - qb; Bq = W.ip[n] - (qd - qb) / dpd * dpdQ; Bp = -(qa - qb) / dpn;
                 if (!(Bp < 0)) Bp = Math.min(Bp, -1e-12);
             }
             var dpN = (-Bres - Bq * be) / (Bq * al + Bp);
@@ -1655,7 +1687,7 @@
             else { cand = 'stable'; reason = gas && ratio != null && ratio < 1.1 ? 'steady' : 'steady flow'; }
         }
         // lift labels override (extensions)
-        for (var xi = 0; xi < this.exts.length; xi++) { var E = this.exts[xi]; if (typeof E.e.label === 'function') { var lb = E.e.label(this, E.ctx); if (lb && lb.state && STATES[lb.state]) { if (cand === 'stable' || cand === 'unloading' || cand === 'startup') { cand = lb.state; reason = lb.reason || reason; } break; } } }
+        for (var xi = 0; xi < this.exts.length; xi++) { var E = this.exts[xi]; if (typeof E.e.label === 'function') { var lb = E.e.label(this, E.ctx); if (lb && lb.state && STATES[lb.state]) { if (cand === 'stable' || cand === 'unloading' || cand === 'startup' || ((cand === 'dead' || cand === 'dying') && LIFT_OVER[lb.state])) { cand = lb.state; reason = lb.reason || reason; } break; } } }
         if (first) { W.state = cand; W.since = t; W.reason = reason; L.pending = null; return; }
         if (cand === W.state) { L.pending = null; return; }
         // shut-in and the immediate commands switch at once; others persist 120 s (no chatter)
@@ -1663,6 +1695,9 @@
         if (!L.pending || L.pending.key !== cand) { L.pending = { key: cand, since: t }; return; }
         if (t - L.pending.since >= STATE_HOLD - 1e-9) this._switch(cand, t, reason);
     };
+    // lift states that also replace a 'dead' / 'dying' base label (WD4 §11.4): a well being unloaded by gas lift or held by a stopped / tripped
+    // pump is described by the lift, not as a dead or dying natural-flow well
+    var LIFT_OVER = { gl_unloading: 1, gl_lifting: 1, gl_multipoint: 1, esp_off: 1, esp_ramp: 1, esp_running: 1, esp_pumpoff: 1, esp_gaslock: 1, esp_tripped: 1 };
     P._switch = function (to, t, reason) {
         var W = this.state.well, from = W.state;
         W.prev = from; W.state = to; W.since = t; W.reason = reason; this.labels.pending = null;
