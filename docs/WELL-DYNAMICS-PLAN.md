@@ -1,6 +1,7 @@
 # Well Dynamics — transient well simulator (v4.6) — implementation plan
 
-> **Status: draft for owner review, revision 1** (2026-11-13, on top of dev-87qwkg f68eb65 = v4.5). Nothing is built yet. Test counts
+> **Status: draft for owner review, revision 2** (2026-11-13, on top of dev-87qwkg f68eb65 = v4.5). Revision 2 applies the plan review
+> (required changes R1–R25, recommended C1–C11; §12 maps each to the section that changed). Nothing is built yet. Test counts
 > are relative to the v4.5 gates (smoke 347, acceptance 2,235, server 278).
 > The module is our own design and our own code. Published methods are cited by their authors and year only. A coefficient marked
 > "to verify" is used as written here and labelled provisional (D17) until it is checked against the paper (owner question Q9 of the
@@ -15,7 +16,8 @@
 | Release | one increment, v4.6 (both platforms; Q5) |
 | New files | Round 9 only: `49-calc-wd-engine.js`, `49-calc-wd-res.js`, `49-calc-wd-lift.js`, `49-calc-wd-view.js`, `49-calc-wd-rec.js`, `49-calc-welldyn.js` (page), `48-calc-help-welldyn.js` (help); `prism-build/welldyn-validate.js`; tests (§2.3) |
 | Host edits | one: `'welldyn'` in `__NAV_ORDER` after `'gaslift'` (WD0). No route-table, hub or static markup edit (the plug-in registry mounts the row and the tile). |
-| Shared engines reused (never duplicated) | `WTS_wp_model`, `WTS_wp_fluid` (PVT, Z, wet gas), `WTS_flowline_props`, `WTS_flowline_corr` (gradient correlations), `WTS_flowline_march` (flowline back pressure), `WTS_wp_ipr` (steady inflow), `WTS_wp_well` (path, segments, stations, temperature), `WTS_wp_system` (steady reference, loading rule, choke rule, shut-in columns), `WTS_chokeperf_multiphaseRate` / `_gasRate` / `_sachdeva`, `WTS_wp_gl` (`tc`, `pdAt`, `portR`, installed valves), `WTS_gaslift_ct`, `WTS_wp_esp` (`prepare`, `curve`, `pump`), `WTS_wp_view` (chart, colours, schematic helpers), `PRiSM_E1`, `PRiSM_autoInterp.drive` / `hash16`, `PRiSM_getWell` |
+| Shared-engine edits (WD0, additive) | `49-calc-wp-model.js`: the `dyn` table key; `49-calc-flowline.js`: one export `WTS_flowline_gradAt` = the private `_gAt` (correlation call + VLP-tuning multipliers) with an identity test (§2.5, R5) |
+| Shared engines reused (never duplicated) | `WTS_wp_model`, `WTS_wp_system.context` (the solve's own F / I / W / correlation keys / sections / choke / lift context, R18), `WTS_wp_fluid` (PVT, Z, wet gas), `WTS_flowline_props`, `WTS_flowline_gradAt` (gradient correlations exactly as the nodal march calls them), `WTS_flowline_march` (flowline back pressure), `WTS_wp_ipr` (steady inflow), `WTS_wp_well` (path, segments, stations, temperature), `WTS_wp_vlp.sectionsFor`, `WTS_wp_system` (steady reference, `GILBERT_YC`, choke rule, shut-in columns), `WTS_wp_loading`, `WTS_chokeperf_multiphaseRate` / `_gasRate` / `_sachdeva`, `WTS_wp_gl` (`tc`, `pdAt`, `portR`, `asheim`, installed valves), `WTS_gaslift_casingP`, `WTS_wp_esp` (`prepare`, `curve`, `pump`), `WTS_wp_view` (chart, colours, schematic helpers), `PRiSM_E1`, `PRiSM_autoInterp.drive` / `hash16`, `PRiSM_getWell` |
 
 ---
 
@@ -25,19 +27,20 @@
 |---|---|---|
 | WD-D1 | One page `welldyn`, its own sidebar row in Production & Reservoir after the `perf` hub (owner 2026-11-13). Not a hub member, not a PRiSM mode, not part of the 3-D simulator (31/32/38 are not touched). | §2.1 |
 | WD-D2 | **One model.** The page reads the Well Performance model with `WTS_wp_model.read()`; it never keeps a copy of fluid, inflow, well or lift inputs. Its own inputs are scenario settings (scalars `wd_*` in `wts_page_welldyn`) and cases (`dyn` table key in `wts_wellperf_model`, additive, §7). | §7 |
-| WD-D3 | **Physics:** 1-D transient drift-flux model along MD on the shared path; three components (gas, oil-or-condensate, water) + a passive foamer tracer; black-oil flash per cell through `WTS_wp_fluid`; **quasi-steady mixture momentum** per cell; volume-constrained pressure coupling solved once per step by a scalar root on the wellhead pressure (a "no-pressure-wave" scheme — no acoustic time-step limit). | §4.1–§4.6 |
-| WD-D4 | **Closure:** default `corr` = the drift parameters are set at every face so the steady holdup equals the holdup of the well's gradient correlation (the same key the nodal solve uses, Beggs & Brill by default, D5 / D17 of the Well Performance plan) and the friction is that correlation's friction gradient; below a low mixture velocity it blends into the published drift-flux closure (Zuber-Findlay with the Shi et al. inclination form), which is the only closure that exists for counter-current flow and shut-in. Option `driftflux` uses the drift-flux closure everywhere. | §4.4 |
-| WD-D5 | **Consistency gate:** a steady flowing run must settle on `WTS_wp_system.solve` for the same model — rate within 2 %, BHP within 1 %, THP within 1 % or 3 psi — on six fixtures (gas vertical, gas horizontal, oil vertical, oil deviated, gas lift, ESP). This is the release gate of the module. | §5.1 |
-| WD-D6 | **Reservoir:** mode `ipr` (instantaneous steady inflow from `WTS_wp_ipr`, exact consistency with nodal) and mode `transient` (line-source Ei superposition of the IPR's drawdown, bounded by the stabilised IPR, so a long constant-rate run converges to the IPR). Wellbore storage and afterflow are not inputs: they emerge from the cells. | §4.7 |
-| WD-D7 | **Time integration:** explicit, conservative, first-order upwind transport (option second-order MUSCL / minmod); step limited by a material CFL (default 0.5), a pressure-change limit, event times and `dtMax`; rejected steps are halved. Mass balance checked every step. | §4.6 |
-| WD-D8 | **Determinism:** the step sequence depends only on the model, the settings and the event list — never on the frame rate or wall time. `run(seconds)` never splits a step to land on a frame; events cut a step exactly at their time. A replay re-run is bit-identical; `snapshot()` / `restore()` continue bit-identically. | §3.2, §5.4 |
-| WD-D9 | **Run loop:** the page drives the engine from `requestAnimationFrame` only while playing; paused, hidden tab, page left or run ended → no frame is requested. No `setInterval`, no watchdog, no polling, no function wrapping. The page opens paused. | §6.6 |
+| WD-D3 | **Physics:** 1-D transient drift-flux model along MD on the shared path; four conserved components (formation gas G, oil-or-condensate O, water W, **lift gas I** — free only, never dissolves) + a passive foamer tracer F; black-oil flash per cell through the solve's own fluid context; **quasi-steady mixture momentum** per cell; a **volume-balance** pressure equation (Σ_c ∂V/∂m_c · ṁ_c + ∂V/∂p · ṗ = 0 per cell) solved once per step by a scalar root on the wellhead pressure with inner Picard sweeps (a "no-pressure-wave" scheme — no acoustic time-step limit). | §4.1–§4.6 |
+| WD-D4 | **Closure:** default `corr` = at every co-current face the drift parameters are set so the steady holdup equals the holdup of the well's gradient correlation, called exactly as the nodal march calls it (`WTS_flowline_gradAt`: the same segment angle, roughness, Payne / acceleration flags, per-section key and VLP-tuning multipliers), and the friction is that correlation's friction gradient; only counter-current or near-stagnant faces (|j| < 0.10 ft/s) blend into the published drift-flux closure (Zuber-Findlay with the Shi et al. profile and inclination forms), the only closure that exists for counter-current flow and shut-in; counter-current faces use a bounded Godunov flux. Option `driftflux` uses the drift-flux closure everywhere. | §4.4 |
+| WD-D5 | **Consistency gate:** a steady flowing run must settle on `WTS_wp_system.solve` for the same model — **time-means** over the last 600 s: rate within 2 %, BHP within 1 %, THP within 1 % or 3 psi, choke regime equal to `R.surface.choke.regime` — on seven fixtures (gas vertical, gas horizontal, oil vertical, oil vertical tuned, oil deviated, gas lift, ESP). A bounded oscillation is allowed and reported (amplitude ≤ 0.5 % of q). This is the release gate of the module. | §5.1 |
+| WD-D6 | **Reservoir:** mode `ipr` (instantaneous steady inflow from the solve's `I`, exact consistency with nodal; reverse flow into the formation by the IPR slope at p̄r when p_0 > p̄r) and mode `transient` (line-source E1 superposition of the IPR's drawdown with r_w,eff for negative skin and a stated prior history, bounded by the stabilised IPR, so a long constant-rate run converges to the IPR). Wellbore storage and afterflow are not inputs: they emerge from the cells. | §4.7 |
+| WD-D7 | **Time integration:** explicit, conservative, first-order upwind transport (Godunov at counter-current faces; option second-order MUSCL / minmod); step limited by a CFL on the larger of the phase velocities and the kinematic-wave speed (default 0.5), a pressure-change limit, event times and `dtMax`; rejected steps are halved. Mass balance checked every step. | §4.6 |
+| WD-D8 | **Determinism:** the step sequence depends only on the model, the settings and the event list — never on the frame rate or wall time. `run(seconds)` never splits a step to land on a frame; events cut a step exactly at their time. Within one JavaScript engine a replay re-run is bit-identical and `snapshot()` / `restore()` continue bit-identically; across engines (web / iOS) `Math.exp / log / pow` may differ in the last bit, so a re-run is equal within a stated tolerance and never reported as corrupt (R25). | §3.2, §3.7, §5.4 |
+| WD-D9 | **Run loop:** the page drives the engine from `requestAnimationFrame` only while playing; paused, hidden tab, page left or run ended → no frame is requested. No `setInterval`, no watchdog, no polling, no function wrapping. The page opens paused. The loop accumulates a simulated-time target (target += speed · Δwall) so the achieved speed does not drift. | §6.6 |
 | WD-D10 | **Recorder:** scalar channels at a fixed simulated interval + full engine snapshots at a coarser interval, in memory, capped (32 MB); scrub shows any recorded moment; "Continue from here" restores the engine from the snapshot. A replay file (`.wdrun`, JSON) holds model, settings, events, series and snapshots. | §3.4, §7 |
-| WD-D11 | **D17 applies unchanged.** Every method is in the method table (§4.14) with `verified` and what would verify it. A method without a verified published example is labelled "provisional — not verified against a published example" and is never a default where a verified or identity-checked alternative exists. Where no alternative exists (shut-in segregation needs a drift closure) the provisional method runs and the run is labelled. The page shows the list of provisional methods active in a run. | §4.14 |
-| WD-D12 | Engines are field units only (psia inside, psig at surface named `*_psig`, ft, in, °F, STB/d, Mscf/d, lbm, s for time). The page displays through the units layer (Metric works); categories are those the Well Performance page uses (guarded local registration, D12 of that plan). | §3.0, §6.8 |
-| WD-D13 | Lift transients (foamer, gas lift, ESP, intermittent controller, heading detector) are **engine extensions** registered in `WTS_wd_engine.ext`, so lane WD4 adds them without editing the engine. | §3.3 |
+| WD-D11 | **D17 applies unchanged.** Every method is in the method table (§4.14) with `verified` and what would verify it. A method without a verified published example is labelled "provisional — not verified against a published example" and is never a default where a verified or identity-checked alternative exists (so the Belfroid correction is an option, default off — Q16). Where no alternative exists (shut-in segregation needs a drift closure) the provisional method runs and the run is labelled. The page shows the list of provisional methods active in a run. | §4.14 |
+| WD-D12 | Engines are field units only (psia inside, psig at surface named `*_psig`, ft, in, °F, STB/d, Mscf/d, lbm, s for time). Gauge-pressure inputs of shared engines (multiphase choke p1, gas-lift dome pressures) are converted explicitly (p_psig = p_psia − 14.696, the PATM of the solve). The page displays through the units layer (Metric works); categories are those the Well Performance page uses (guarded local registration, D12 of that plan). | §3.0, §6.8 |
+| WD-D13 | Lift transients (foamer, gas lift, ESP, intermittent controller, heading detector) are **engine extensions** registered in `WTS_wd_engine.ext`, so lane WD4 adds them without editing the engine. Sources are evaluated once per step **before** the pressure solve from the lagged pressures. | §3.3 |
 | WD-D14 | Naming: methods by their published authors only; no product, vendor, company or web address anywhere; `welldyn-names` greps every Well Dynamics file. | §2.5 |
-| WD-D15 | Reports: an always-visible compact block `#wd_res` (inputs, run summary, KPI chips, the wellbore at the current time, the run trend, state timeline, provisional list, Notes); editors, controls and step-only plots are `.rp-skip`; canvases drawn at explicit sizes; Quick Report snapshot ≤ 60 kB. | §6.7 |
+| WD-D15 | Reports: an always-visible compact block `#wd_res` (inputs, run summary, KPI chips, the wellbore at the current time, the run trend, state timeline, provisional list, Notes); editors, controls and step-only plots are `.rp-skip`; canvases drawn at fixed sizes (wellbore 360×480, trend 640×220 CSS px); Quick Report snapshot ≤ 60 kB, measured at WD3. | §6.7 |
+| WD-D16 | **One context with the solve.** The engine takes F, I, W, the correlation keys, sections, choke settings and the gas-lift / ESP context from `WTS_wp_system.context(M)` — the same constructor the solve uses (`WTS_wp_fluid.build(M.fluid, {T_F: M.res.T_F, table: true})`, wp-system `_ctx`), pinned by a property-identity test (EN24); the steady reference R0 is cached by the model hash (create ≤ 800 ms cold, ≈ 0 when cached). | §2.4, §4.1 |
 
 ---
 
@@ -98,9 +101,12 @@ User stories (each is an acceptance item in the named test file):
 - **Cross-links.** Well Performance gets one `.rp-skip` button `#wp_go_welldyn` "▶ Play in time (Well Dynamics)" in the step ⑤ header
   and on the KPI strip; Well Dynamics has `#wd_go_wellperf` "Back to nodal analysis". Both call the host `nav(route)`; nothing is written
   across pages (both read the same model).
-- **WD0 host edit and checks:** `__NAV_ORDER` only; `tests/sidebar-nav.test.js` Production & Reservoir rows become
-  `['prism', 'oilgas', 'solgor', 'hub:perf', 'welldyn', 'buildup']` (6 rows); `ux-layout-check.js` must report the 1280×800 fit
-  without scrolling; the help group routes list gains `welldyn`.
+- **WD0 host edit and checks (R24):** `__NAV_ORDER` only. `tests/sidebar-nav.test.js` gets both assertions changed: the full button list
+  with the hub members (line 57) becomes `['prism', 'oilgas', 'solgor', 'hub:perf', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'welldyn',
+  'buildup']`, and the row list (line 58) becomes `['prism', 'oilgas', 'solgor', 'hub:perf', 'welldyn', 'buildup']` with the message
+  '6 rows' (and the comment above it "six rows"); `ux-layout-check.js` must report the 1280×800 fit without scrolling. Help: the help
+  page's group route list (the Production & Reservoir routes the Help page and `help-content.test.js` check against the live registry)
+  gains `welldyn` with the WD0 stub guide; at WD6 `help-content.test.js` `PARTS` gains `'welldyn'` (the 14 kB PART cap, §8).
 
 ### 2.2 Files, lanes and public symbols
 
@@ -131,17 +137,18 @@ names from `__WD_STUBS`.
 |---|---|---|
 | `welldyn-shapes.test.js` | WD0 | fixtures frozen (hash pin), shapes, stubs listed, the `dyn` model key additive (wellperf identity), sidebar row and tile |
 | `welldyn-names.test.js` | WD0 | banned-name grep over every Well Dynamics file (the list of `wellperf-names` + the module's own) |
-| `welldyn-engine.test.js` | WD1 | EN1–EN22 (§5.2) |
-| `welldyn-res.test.js` | WD1 | RS1–RS10 |
-| `welldyn-gate.test.js` | WD1 (G1–G4), WD4 (G5–G6) | the consistency gate per fixture |
+| `flowline-gradat.test.js` | WD0 | `WTS_flowline_gradAt` identity: on the oil / gas / tuned (m_h, m_f ≠ 1) / per-section fixtures, every station of a `WTS_flowline_march` traverse equals `gradAt` at the station's (p, T, segment, opt) bit for bit; the export is additive (the `wellperf-*` suite and `wellperf-validate --check` unchanged) |
+| `welldyn-engine.test.js` | WD1 | EN1–EN28 (§5.2) |
+| `welldyn-res.test.js` | WD1 | RS1–RS12 |
+| `welldyn-gate.test.js` | WD1 (G1–G4, G7), WD4 (G5–G6) | the consistency gate per fixture (time-means, §5.1) |
 | `welldyn-view.test.js` | WD2 | VW1–VW14 on the mock and the recording canvas |
 | `welldyn-rec.test.js` | WD3 | RC1–RC16 |
 | `welldyn-page.test.js` | WD3 | PG1–PG24 on the mock; PG25–PG28 with the real engine (`integration: true`, after WD1 merges) |
-| `welldyn-lift.test.js` | WD4 | LF1–LF20 |
+| `welldyn-lift.test.js` | WD4 | LF1–LF23 |
 | `welldyn-validate.test.js` | WD5 | the `--check` quick subset and the `--time` evaluation counts |
-| `help-content.test.js` (edit) | WD6 | the help file cap, PART route |
+| `help-content.test.js` (edit) | WD6 | `PARTS` gains `'welldyn'` (PART cap), the help file cap |
 
-Estimated +140 acceptance tests; smoke +4 checks (§9, WD0).
+Estimated +155 acceptance tests; smoke +4 checks (§9, WD0).
 
 ### 2.4 Data flow
 
@@ -149,12 +156,13 @@ Estimated +140 acceptance tests; smoke +4 checks (§9, WD0).
  wts_page_wellperf ─┐                         wts_page_welldyn (wd_* scenario scalars)
  wts_wellperf_model ┴─► WTS_wp_model.read() ─► M (frozen) ──┐   M.dyn (cases, reservoir transient inputs)
                                                              ▼
-   WTS_wd_engine.create(M, opts)
-     ├─ R0 = WTS_wp_system.solve(M)       steady reference: op, corr keys, temperature profile, traverse, loading, choke regime
-     ├─ F  = WTS_wp_fluid.build(M.fluid, {T_F, table:true})   one PVT path (props via WTS_flowline_props)
-     ├─ W  = WTS_wp_well.build(M.well, …)  segments / stations → the cell grid (§4.2)
-     ├─ I  = WTS_wp_ipr.curve(M.res, F)    → WTS_wd_res.create(I, M, opts.reservoir)
-     ├─ line table p_dn(q) from WTS_flowline_march (flowline + separator)
+   WTS_wd_engine.create(M, opts)          (opts.ref with the same model hash → R0, C and the line table are reused, C7)
+     ├─ C  = WTS_wp_system.context(M).C   the solve's own context (R18): F (WTS_wp_fluid.build(M.fluid, {T_F: M.res.T_F, table:true})),
+     │                                     I (WTS_wp_ipr.curve), W (WTS_wp_well.build), corrWell / corrLine / sections, choke, mult, gl (Finj), esp
+     ├─ R0 = WTS_wp_system.solve(M)       steady reference: op, traverse, temperature profile, loading, choke regime, lift.injMd
+     ├─ grid from W.segmentsFor + WTS_wp_vlp.sectionsFor (the marcher segments, §4.2)
+     ├─ WTS_wd_res.create(C.I, M, opts.reservoir)
+     ├─ line table p_dn(q) from WTS_flowline_march (the solve's flowline options)
      └─ ext.init for each active extension (foamer / gaslift / esp / cycle / heading)
    sim.step / sim.run ─► S (state) ─► WTS_wd_rec (series + snapshots) ─► WTS_wd_view (canvas) ─► page (#wd_res, reports, CSV, .wdrun)
 ```
@@ -170,7 +178,10 @@ only the page runs the frame loop.
 - Lanes code against §3 only. A contract change goes through the lead (a §11 record + a fixture hash bump), never silently.
 - The mock (§3.10) lets WD2 / WD3 build and test without the engine; WD1 does not depend on WD2 / WD3.
 - Naming rule (WD-D14) in code, comments, labels, help, tests and commit messages.
-- Nothing edits 31/32/38, 22-units.js, the PRiSM files, or any `49-calc-wp-*.js` engine other than the WD0 `dyn` key.
+- Nothing edits 31/32/38, 22-units.js, the PRiSM files, or any `49-calc-wp-*.js` engine other than the WD0 `dyn` key. One additive edit
+  to `49-calc-flowline.js` (WD0, lead, R5): `G.WTS_flowline_gradAt = function (fluid, p, T, seg, opt) { return _gAt(fluid, p, T, seg, opt || {}); }`
+  next to the other exports — no change to `_gAt`, `_applyMult` or the march; pinned by `flowline-gradat.test.js` and the unchanged
+  `wellperf-*` suite / `wellperf-validate --check`. Shared files therefore also include `49-calc-flowline.js` (WD0 only).
 
 ---
 
@@ -192,70 +203,89 @@ only the page runs the frame loop.
 opts = {
   cells: 60,                         // 20..200; snapped to segment breaks (§4.2)
   start: 'steady' | 'static' | 'snapshot',
-  static: { kind: 'gas' | 'liquid' | 'level', liquidTopMd: null /*ft, kind 'level'*/, liquid: 'water' | 'oil' | 'kill', killSg: 1.05 },
+  static: { kind: 'gas' | 'liquid' | 'level', liquidTopMd: null /*ft, kind 'level'*/, liquid: 'water' | 'oil' },
+                                     // R22: no kill-fluid density — a "kill" column is the model's water (γ_w); a heavier brine is not modelled
   snapshot: null,                    // a Snap (start 'snapshot')
-  reservoir: { mode: 'ipr' | 'transient', k, h, phi, ct, mu, B, rw, re, S, tPrior_h: 720, potential: 'auto' | 'p' | 'p2' | 'mp' },
+  ref: null,                         // a previous sim.ref {mHashModel, R0, C} — reused when mHashModel matches (no solve; C7)
+  reservoir: { mode: 'ipr' | 'transient', k, h, phi, ct, mu, B, rw, re, S, potential: 'auto' | 'p' | 'p2' | 'mp',
+               prior: { kind: 'steady' | 'none' | 'shutin', t_h: 720, shut_h: 0 },   // R15; default 'steady' for start 'steady', 'none' for 'static'
+               backflow: true },     // R14: reverse flow into the formation when p_0 > p̄r (provisional, key res_back)
   closure: 'corr' | 'driftflux',     // WD-D4; default 'corr'
+  closureOpt: { jLo: 0.05, jHi: 0.10 /*ft/s, C1*/, omega: 0.5 /*under-relaxation of the lagged corr v_d, R20*/ },
   fallback: false,                   // liquid fallback below the critical velocity (§4.10; provisional; Q1)
+  loading: { belfroid: false },      // Belfroid inclination correction of v_c (provisional; Q16; both q_c are always reported)
+  compliance: { pipe_psi: 3e-6, cwMin_psi: 3e-6 },   // C6: tubing elastic compliance and water compressibility floor, 1/psi (ASSUMED)
   order: 1 | 2,                      // transport order (2 = MUSCL / minmod)
   cfl: 0.5, dtMax: 60, dtMin: 1e-3, dpMaxFrac: 0.02,
+  picard: { maxSweeps: 3, tolQ: 1e-6 /*ft³/s*/, tolQrel: 1e-4 },   // inner sweeps of the wellhead root (R3)
   temperature: 'frozen' | 'relax', tauT_h: 2,
-  choke: { subcritical: 'nodal' | 'sachdeva', strokeTime_s: 10 },
+  choke: { subcritical: 'model' | 'shape', strokeTime_s: 10 },   // 'model' = the model's surface.choke.subcritical rule (§4.8); 'shape' = the provisional closing shape
   ext: { foamer: {...}, gaslift: {...}, esp: {...}, cycle: {...}, heading: {...} },   // §3.3 (absent → each ext's defaults / off)
   events: []                         // Event[] scheduled from t = 0 (§3.5)
 }
 sim = {
-  ok: true, version: '1.0.0', M, R0 /*the steady reference solve*/, mHash /*hash16 of the canonical M + opts*/,
+  ok: true, version: '1.0.0', M, R0 /*the steady reference solve*/, C /*WTS_wp_system.context(M).C — F, I, W, keys, sections, choke, gl, esp*/,
+  ref /*{mHashModel, R0, C} for reuse*/, mHash /*hash16 of canonical(M without M.dyn) + resolved opts (incl. resolved reservoir); R17*/,
   grid,                              // §3.2
   state: S,                          // §3.2
-  step(dt?)            → StepInfo {ok, t, dt, iters, rejects, massErr:{G, O, W}, applied:[Event], code?},
+  step(dt?)            → StepInfo {ok, t, dt, iters, sweeps, rejects, massErr:{G, O, W, I}, applied:[Event], code?},
   run(seconds, o?)     → {ok, t, steps, wallMs, stopped: 'target'|'wall'|'steps'|'end'|'error', code?}   // o {maxWallMs, maxSteps}
   snapshot()           → Snap (§3.6),
   restore(snap)        → {ok, code?}  ('MODEL_MISMATCH' when snap.mHash ≠ sim.mHash; 'VERSION' when snap.engine major differs),
   schedule(events)     → {ok, n},      // add Event[]; times ≥ state.t
   setChoke(bean64),    shutIn(),  open(),  setSeparator(psig),
   setFoamer({on, ppm, injMd}),  setLift(spec /*{type:'gaslift', qinj_Mscfd, mode:'valves'|'nodal'} | {type:'esp', on, freq, ramp_Hz_s}*/),
-  steadyCheck(win_s?)  → {steady, dq, dp},          // the §5.1 criterion on the engine's own ring buffer
+  steadyCheck(win_s?)  → {steady, qMean, pwfMean, thpMean, ampQ, ampP, dq, dp},   // the §5.1 time-mean criterion on the engine's own ring buffer
   on(type, fn), off(type, fn),       // synchronous engine events (§3.5); no DOM events
   dispose()
 }
 ```
 
 All `set*` / `shutIn` / `open` calls are converted into Events at the current `state.t` and go into the event log, so an interactive
-session is a scenario (WD-D8). `create` performs one `WTS_wp_system.solve(M)` (≈ 16–20 E, §5.6); a model with no stable root cannot use
-`start: 'steady'` (`code: 'NO_STEADY'`) and offers the static start.
+session is a scenario (WD-D8). `create` performs one `WTS_wp_system.context(M)` and one `WTS_wp_system.solve(M)` (≈ 16–20 E, ≈ 400–450 ms
+measured for the A1 fixtures) unless `opts.ref` carries the same model hash; a model with no stable root cannot use `start: 'steady'`
+(`code: 'NO_STEADY'`) and offers the static start. Refusals: `RV_NOT_IN_TRANSIENT` (the fluid has a vaporised-condensate Rv table,
+`pvt.rv.mode` ≠ 'none' — the transient flash has no Rv; R13), `INJECTOR` (an injection well), `GL_NOT_APPLICABLE` / `ESP_NOT_APPLICABLE`
+as the solve, `MISSING_ENGINE`.
 
 ### 3.2 Grid and state
 
 ```js
-grid = { n, cells: [{ i, md0, md1, mdc, tvd0, tvd1, tvdc, len /*ft MD*/, dz /*ft TVD, + up*/, inc /*deg from vertical*/, id /*in*/,
-                      area /*ft²*/, vol /*ft³*/, rough /*in*/, kind: 'tubing'|'casing'|'liner'|'annulus', seg /*segment index*/,
-                      corr /*registry key of this section*/ }],
+grid = { n, cells: [{ i, md0, md1, mdc, tvd0, tvd1, tvdc, len /*ft MD*/, dz /*ft TVD, + up*/, inc /*deg from vertical, display*/, id /*in*/,
+                      area /*ft²*/, vol /*ft³*/, kind: 'tubing'|'casing'|'liner'|'annulus', seg /*index into segs*/,
+                      corr /*registry key of this cell's segment (section key or C.corrWell)*/ }],
+         segs: [ /*the marcher segment objects of the nodal traverse, as WTS_wp_vlp.sectionsFor builds them: {id, len, dz, theta
+                   (deg from HORIZONTAL, asin(dz/len), + = flow up), area, corr, restr} — passed unchanged to WTS_flowline_gradAt (R5)*/ ],
+         rough /*in: the one length-weighted W.rough the march uses (R5b)*/,
          faces: [{ md, tvd, restr: {d, k} | null }],
-         eotCell, pumpFace /*or -1*/, valveCells: [{ n, md, cell }], gaugeCells: [{ md, cell }],
+         eotCell, pumpFace /*or -1*/, injCell /*R0.lift.injMd cell, nodal gas lift, or -1*/, valveCells: [{ n, md, cell }], gaugeCells: [{ md, cell }],
          traj: [{ md, tvd, dep, n, e }] /*W.stations, for the view*/ }
 S = {
-  t, dt, n /*steps*/, open, bean64, beanEff /*during a stroke*/, psep_psig,
-  cells: { p, T, ag, ao, aw, mG, mO, mW, mF, vg, vl, vm, rhoM, vc, sigF, regime },   // psia, °F, fractions, lbm, ft/s, lbm/ft³, ft/s, –, codes
-  faces: { Q /*ft³/s mixture*/, jg, jo, jw /*ft/s superficial*/ },
-  surface: { thp, thp_psig, tht, pDn_psig, qo, qw, qg, qL, glr, gor, wc, regime: 'critical'|'subcritical'|'closed'|'none', y },
-  bottom:  { pwf, pr, qo, qw, qg /*sandface, stock-tank*/, drawdown },
+  t, dt, n /*steps*/, open, bean64, beanEff /*during a stroke*/, psep_psig, tOpen /*time of the last open*/, qRef /*highest surface rate since tOpen*/,
+  cells: { p, T, ag, ao, aw, mG, mO, mW, mI, mF, vg, vl, vm, rhoM, vc, sigF, regime },   // psia, °F, fractions (ag = all free gas incl. lift gas), lbm, ft/s, lbm/ft³, ft/s, –, codes
+  faces: { Q /*ft³/s mixture*/, jg, jo, jw /*ft/s superficial*/, xI /*lift-gas fraction of the free-gas flux*/, vd, c0 /*closure in use, lagged*/, w /*blend weight*/ },
+  surface: { thp, thp_psig, tht, pDn_psig, qo, qw, qL, qg /*total gas = formation + lift + vented*/, qgForm, qinj, qvent,
+             glr, gor /*total*/, gorForm, wc, regime: 'critical'|'subcritical'|'subcritical-bound'|'closed'|'none', y, yc },
+  bottom:  { pwf, pr, qo, qw, qg /*sandface, stock-tank; negative = back-flow*/, drawdown },
   well:    { state /*STATES key*/, since, reason, prev },
-  loading: { method: 'turner'|'coleman', qc_MMscfd, limitingMd, limitingTvd, ratio, vRatioMin },
-  inventory: { liq_bbl, liqTubing_bbl, gas_Mscf, liquidTopMd, gasCapBottomMd },
-  balance: { m: {G, O, W}, cumIn: {G, O, W}, cumOut: {G, O, W}, errStep, errCum },
+  loading: { method: 'turner'|'coleman', both /*500 ≤ WHP ≤ 1,000*/, liquid: 'water'|'condensate', qc_MMscfd /*the one in use*/,
+             qcVert_MMscfd, qcBelfroid_MMscfd, belfroid /*on?*/, limitingMd, limitingTvd, ratio, vRatioMin, belowEot },
+  inventory: { liq_bbl, liqTubing_bbl, gas_Mscf, liftGas_Mscf, liquidTopMd, gasCapBottomMd },
+  balance: { m: {G, O, W, I}, cumIn: {G, O, W, I}, cumOut: {G, O, W, I}, errStep, errCum, volDrift },
   lift: { gl: null | {...}, esp: null | {...} },    // filled by the extensions (§3.3)
   foamer: { on, ppm, eff },
-  res: { mode, terms, f0 },
+  res: { mode, terms, f0, backflow },
   flags: [{ code, sev, msg }],
   provisional: [ /*method keys active so far in this run (§4.14)*/ ]
 }
 ```
 
-`WTS_wd_engine.REGIMES = ['liquid', 'bubble', 'slug', 'churn', 'annular', 'mist', 'stratified', 'segregated', 'gas', 'unknown']` (the
-keys of `WTS_wp_view.PATTERN_COLORS`). `WTS_wd_engine.STATES` (§4.13) is a frozen table
-`{key: {label, sev, kinds:['gas'|'oil'|'gl'|'esp']}}` with keys `stable, startup, unloading, marginal, loading, heading, dying, dead,
-shutin, gl_unloading, gl_lifting, gl_multipoint, esp_off, esp_ramp, esp_running, esp_pumpoff, esp_gaslock, esp_tripped`.
+`WTS_wd_engine.COMP = ['G', 'O', 'W', 'I', 'F']` (frozen). `WTS_wd_engine.REGIMES = ['liquid', 'bubble', 'slug', 'churn', 'annular',
+'mist', 'stratified', 'segregated', 'gas', 'unknown']` (the keys of `WTS_wp_view.PATTERN_COLORS`). `WTS_wd_engine.STATES` (§4.13) is a
+frozen table `{key: {label, sev, kinds:['gas'|'oil'|'gl'|'esp']}}`; `WTS_wd_engine.STATE_ORDER` is the frozen key order (the recorder's
+`state` channel is an index into it; pinned in the fixtures, C9): `stable, startup, unloading, marginal, loading, heading, dying, dead,
+shutin, gl_unloading, gl_lifting, gl_multipoint, esp_off, esp_ramp, esp_running, esp_pumpoff, esp_gaslock, esp_tripped`. New states are
+appended, never inserted.
 
 ### 3.3 Extensions (WD-D13)
 
@@ -264,9 +294,12 @@ WTS_wd_engine.ext[key] = {
   key, label, verified: false, provisional: 'text',
   applies(M, opts)          → boolean,
   init(sim, opts)           → ctx /*JSON-safe state of the extension*/,
-  control(sim, ctx, t)      → Event[] | null,          // once per step before the pressure solve (cycle controller, ESP trips)
-  sources(sim, ctx, dt)     → { G?: Float64Array(n), O?, W?, F? } | null,   // lbm/s per cell (gas-lift valves, kill fluid U-tube)
-  faceDp(sim, ctx, k, Q)    → { dp /*psi, + = pressure rise in the flow direction*/, ddpdQ /*psi per ft³/s*/ } | null,   // ESP
+  control(sim, ctx, t)      → Event[] | null,          // once per step, first (cycle controller, ESP trips)
+  sources(sim, ctx, dt)     → { G?: Float64Array(n), O?, W?, I?, F? } | null,   // lbm/s per cell, from the LAGGED state (p^n, T^n);
+                                                       // gas-lift valve gas is I (lift gas), annulus liquid through a valve is W, ESP vent is a
+                                                       // negative G / I at the cell below the pump; enters Q_src of the volume balance (§4.6)
+  faceDp(sim, ctx, k, Q)    → { dp /*psi, + = pressure rise in the flow direction*/, ddpdQ /*psi per ft³/s*/ } | null,   // ESP; linearised once
+                                                       // per step at the lagged Q (§4.12), evaluated inside the root as dp + ddpdQ·(Q − Q_lag)
   sigma(sim, ctx)           → Float64Array(n) | null,  // surface-tension factor per cell (foamer)
   after(sim, ctx, info)     → void,                     // after the transport (annulus mass, valve states, ESP motor)
   label(sim, ctx)           → { state, reason } | null,  // lift states override the base label
@@ -274,9 +307,11 @@ WTS_wd_engine.ext[key] = {
 }
 ```
 
-The engine calls the hooks in this order every step: `control` → pressure solve (with `faceDp`) → `sources` → transport → `after` →
-`sigma` (for the next step) → labels. An extension may only write its own `ctx` and `S.lift.*` / `S.foamer`. WD1 tests the hook order and
-contract with a dummy extension (EN20); WD4 implements the five real ones.
+The engine calls the hooks in this order every step (R23): `control` → **`sources`** (lagged pressures; the source arrays are fixed for
+the step) → `faceDp` linearisation → pressure solve (sources in Q_src, §4.6) → transport (sources in S_c, §4.3) → `after` → `sigma`
+(for the next step) → labels. A rejected step is retried with Δt/2 from the pressure solve on (`control` is not called again and the source rates of the step
+are re-used unchanged). An extension may only write its own `ctx` and `S.lift.*` / `S.foamer`. WD1 tests the hook order and contract with a
+dummy extension (EN20); WD4 implements the five real ones.
 
 ### 3.4 Recorder `WTS_wd_rec.create(o) → rec`
 
@@ -303,10 +338,13 @@ WTS_wd_rec.fromFile(obj | text) → { ok, run /*RunFile, validated*/, rec /*a re
 gas lift), `qo`, `qw`, `qL` (STB/d), `qg` (Mscf/d), `qo_res`, `qw_res` (STB/d), `qg_res` (Mscf/d), `gor` (scf/STB), `wc` (fraction),
 `bean` (/64 in), `open` (0/1), `state` (index in STATES), `lratio` (q / q_c), `qc` (MMscf/d), `liq` (bbl in the tubing and liner),
 `gascap` (ft, MD of the gas–liquid interface when shut in, else NaN), `qinj` (Mscf/d), `opValve` (n or 0), `pint` (psia), `freq` (Hz),
-`load` (fraction), `foam` (ppm at the bottom cell), `dt` (s), `massErr` (relative, cumulative).
+`load` (fraction), `foam` (ppm at the bottom cell), `dt` (s), `massErr` (relative, cumulative), and (revision 2, appended — the order is
+frozen, new keys go at the end, C9) `qgForm` (Mscf/d, formation gas at the surface), `gorForm` (scf/STB), `qvent` (Mscf/d, ESP vent gas),
+`liftgas` (Mscf in the tubing), `qcVert`, `qcBelfroid` (MMscf/d). `qg` is the total surface gas (formation + lift + vent, C8); `state` is
+the index in `WTS_wd_engine.STATE_ORDER`.
 
 Cap rule: when `bytes()` exceeds `capMB`, every second snapshot older than the last hour of simulated time is dropped (repeatable);
-series are never dropped (24 h at 10 s ≈ 8,640 samples × 30 channels × 8 B ≈ 2.1 MB).
+series are never dropped (24 h at 10 s ≈ 8,640 samples × 36 channels × 8 B ≈ 2.5 MB).
 
 ### 3.5 Events
 
@@ -322,40 +360,55 @@ passing, t}), `'trip'` ({kind, t}), `'warn'` ({code, msg}), `'end'`.
 ### 3.6 Snapshot (versioned, JSON-safe)
 
 ```js
-Snap = { kind: 'wd-snap', v: 1, engine: '1.0.0', mHash, n, t, steps, dtPrev,
-  cells: { mG, mO, mW, mF, T, p },  faces: { Q },                    // plain arrays (numbers round-trip exactly through JSON)
-  ctl: { open, bean64, beanEff, strokeLeft_s, psep_psig },
-  res: { mode, terms: [[t_s, dPhi]], base, qPrev: {o, w, g} },
-  labels: { state, since, ringT: [], ringLiq: [], ringQ: [], ringP: [] },
+Snap = { kind: 'wd-snap', v: 1, engine: '1.0.0', engineId /*§3.7*/, mHash, n, t, steps, dtPrev,
+  cells: { mG, mO, mW, mI, mF, T, p },
+  faces: { Q, jg, jo, jw, xI, vd, c0, w },                            // R16: the lagged closure state (the corr closure reads last-step values)
+  ctl: { open, bean64, beanEff, strokeLeft_s, psep_psig, tOpen, qRef },
+  line: { refGor, refWc, q: [], pdn: [] },                            // R16: the flowline p_dn(q) table in use and its reference GOR / WC (§4.8)
+  res: { mode, terms: [[t_s, dPhi]], base, qPrev: {o, w, g}, prior },
+  labels: { state, since, prev, reason, pending: {key, since} | null,  // the 120 s persistence candidate
+            ringT: [], ringLiq: [], ringQ: [], ringP: [], dying: {...}, heading: {...} },   // R16: dying / heading histories
+  steady: { ringT: [], ringQ: [], ringPwf: [], ringThp: [] },         // the steadyCheck buffer
   pend: [Event], log: [Event], ext: { key: json },
-  bal: { m0: {G, O, W}, cumIn: {G, O, W}, cumOut: {G, O, W} }, prov: [] }
+  bal: { m0: {G, O, W, I}, cumIn: {G, O, W, I}, cumOut: {G, O, W, I} }, prov: [], flags: [] }
 ```
 
-`restore(snapshot())` followed by `run(T)` is bit-identical to an uninterrupted `run` (EN15). A Snap of 60 cells ≈ 6–10 kB as JSON.
+Numbers are plain arrays (doubles round-trip exactly through JSON; `NaN` / ±∞ are written as `null` and only ever appear in display
+channels, never in state). `restore(snapshot())` followed by `run(T)` is bit-identical to an uninterrupted `run` in the same JavaScript
+engine (EN15) — WD1 lists in its §11 record every field the step reads and EN15b asserts each is in the Snap (a field-coverage check on a
+dummy step). A Snap of 60 cells ≈ 10–14 kB as JSON.
 
 ### 3.7 Replay file (`.wdrun`, JSON, MIME application/json)
 
 ```js
-RunFile = { format: 'wts-welldyn-run', v: 1, app /*RELEASE_NOTES[0].ver*/, created /*ISO*/, engine: '1.0.0',
+RunFile = { format: 'wts-welldyn-run', v: 1, app /*RELEASE_NOTES[0].ver*/, created /*ISO*/, engine: '1.0.0', engineId,
   well: { name },                                       // display only (the WTS_wells name), escaped on display
   model: { scalars: {wp_*: v}, tables: {survey, strings, restrictions, geo, flowline, rating, beans, lab, pump, corrSections, layers, glValves} },
-  settings: { …opts of §3.1 except snapshot },  events: [Event], duration_s,
+  settings: { …opts of §3.1 except snapshot and ref },  events: [Event], duration_s,
   rec: { every_s, t: [], ch: { key: [] }, marks: [] },
   snaps: { every_s, list: [Snap] } | null,              // dropped (null) when the file would exceed 5 MB
   summary: Summary (§3.8), hash /*hash16 of model + settings + events*/ }
 ```
 
 The `model` part uses the same scalar / table form as a Well Performance case (`WTS_wp_cases`), so M is rebuilt the way
-`WTS_wp_cases.model(c)` does it (`WTS_wp_model.read` on an in-memory record and scalars), without touching storage. Opening a run never changes the stored well model; "Adopt this model for the well" is a separate,
-confirmed action (WTS_wp_model.write + host autosave of the scalars), off by default (Q14).
+`WTS_wp_cases.model(c)` does it (`WTS_wp_model.read` on an in-memory record and scalars), without touching storage. Opening a run never
+changes the stored well model; "Adopt this model for the well" is a separate, confirmed action (WTS_wp_model.write + host autosave of the
+scalars), off by default (Q14).
+
+**Engines (R25).** `engineId` = hash16 of `Math.exp / log / pow / sqrt / sin` results on a fixed argument list, computed once at load.
+The file's series are always shown as stored (never recomputed for display). A replay re-run or "Continue from here" from a file snapshot
+is bit-identical when `engineId` matches; when it differs, the re-run is compared with the stored series at the stored samples and is
+accepted within 0.5 % in rates and 1 psi in pressures until the first state change of a chaotic regime (heading); outside that it shows the
+info note "made with a different JavaScript engine: the re-run differs from the recording after h:mm" — never "corrupt". `fromFile`
+refuses only format / version / size / malformed JSON (`FORMAT`, `VERSION`, `TOO_BIG`).
 
 ### 3.8 Cases and summary
 
 ```js
 Case = { id, name /*≤ 60 chars*/, created, settings, events, duration_s, summary: Summary | null, note /*≤ 200 chars*/ }
-Summary = { duration_s, endState, states: [{key, from, to}] /*≤ 50*/, qo, qw, qg /*at the end*/, thp_psig, pwf, qMax, qMin, thpMax_psig,
+Summary = { duration_s, endState, states: [{key, from, to}] /*≤ 50*/, qo, qw, qg, qgForm, gorForm /*at the end*/, prior /*the reservoir prior used*/, thp_psig, pwf, qMax, qMin, thpMax_psig,
             pwfMax, liqMax_bbl, tLoading_h, tDead_h, cumO_STB, cumW_STB, cumG_MMscf, buildup: { pws_end, dpdlnDt, k_est } | null,
-            gate: { dq, dp } | null, provisional: [], massErr }
+            gate: { dq, dp, ampQ, ampP } | null, provisional: [], massErr, engineId }
 WTS_wd_cases.list(M) → Case[] (from M.dyn.cases)
 WTS_wd_cases.save(case) → WTS_wp_model.write({dyn: {...}}) result (≤ 20 cases, ≤ 24 kB of dyn in total; oldest unnamed dropped first)
 WTS_wd_cases.remove(id), WTS_wd_cases.toScenario(case) → {settings, events, duration_s}
@@ -365,37 +418,55 @@ WTS_wd_cases.remove(id), WTS_wd_cases.toScenario(case) → {settings, events, du
 
 Built from the Well Performance fixtures (`require('./_wellperf-shapes').FIX`) with the changes listed; WD0 runs `WTS_wp_system.solve` on
 each one, adjusts only the numbers marked *(tune)* within the stated range so the stated condition holds, and pins the steady reference
-(`expect.op`: q, pwf, thp, regime) and the fixture hash. All are complete models M (SHAPE.M of the Well Performance shapes).
+(`expect.op`: q, pwf, thp, choke regime, `R.lift.injMd` / pump intake where present) and the fixture hash. All are complete models M
+(SHAPE.M of the Well Performance shapes), with `pvt.rv.mode 'none'` (no Rv, R13) and the default `surface.choke.subcritical` ('bound').
+
+**Static and dynamic screens (WD0, R20).** For each gate fixture WD0 also confirms and pins: (a) the stable root and a critical choke
+(y = p_dn / p_n ≤ the y_c of the model's rule, with a margin of ≥ 0.05); (b) no correlation pattern change in any segment of the R0 traverse
+between 0.95 q_op and 1.05 q_op (a fixture sitting on a Beggs & Brill / Hagedorn & Brown pattern boundary is moved by its *(tune)* number);
+(c) gas lift: `WTS_wp_gl.asheim(M, R)` verdict stable on both criteria; (d) loading margin as stated. WD0's lead spike (§9.0) runs a
+prototype step loop on `gasVert` and `oilVert` for 1 h and records in §11.0 whether they settle; WD1 owns the final check (G1–G7).
 
 | FIX | Built from | Changes | Condition WD0 confirms |
 |---|---|---|---|
-| `gasVert` | wellperf `gasWell` | vertical survey `[[0,0],[10000,10000]]`, 2-7/8" tubing to 9,850 ft, p̄r 3,500 psia, WGR 10 STB/MMscf, separator 500 psig, bean 24 *(tune 16–32)* | stable root, **critical** choke, loading margin ≥ +0.3 |
+| `gasVert` | wellperf `gasWell` | vertical survey `[[0,0],[10000,10000]]`, 2-7/8" tubing to 9,850 ft, p̄r 3,500 psia, WGR 10 STB/MMscf, separator 500 psig, bean 24 *(tune 16–32)* | screens (a)(b), loading margin ≥ +0.3 |
 | `gasLoad` | `gasVert` | p̄r 1,200 psia, WGR 30 STB/MMscf, separator 300 psig, bean 32 *(tune)* | loading margin in [−0.05, +0.10] at bean 32; < −0.15 at bean 16 |
-| `gasHz` | `gasWell` | survey vertical to 7,000 ft, build 8°/100 ft to 90°, 2,000 ft lateral (azimuth 120°); tubing to the heel, 4-1/2" liner along the lateral; mid-perf at the lateral midpoint; bean 24 *(tune)* | stable root, critical choke |
-| `oilVert` | wellperf `oilWell` | none (bean 32) — if the nodal choke regime is not critical, bean *(tune 24–32)* | stable root, critical choke |
-| `oilDev` | `oilWell` | the S-shaped `GAS_SURVEY` (MD 10,000 ft), mid-perf 9,950 ft MD, strings extended (tubing to 9,850 ft) | stable root, critical choke |
-| `gasLift` | `oilWell` | WC 0.6, GOR 200, p̄r 2,400 psia *(tune)*; lift `gaslift`, packer 7,900 ft, q_inj 600 Mscf/d, p_inj 1,100 psig, sginj 0.65; `glValves` = `WTS_wp_gl.valvesFromDesign` of the WTS_wp_gl.design result on this model (pinned rows) | no natural stable root; stable root with gas lift (nodal injection) |
-| `esp` | `oilWell` | WC 0.8, GOR 100, p̄r 2,500 psia; lift `esp`, pump MD 7,500 ft, 60 Hz, pump = `WTS_wp_esp.example()`, stages from `sizeStages` at 1,500 STB/d *(pinned)* | stable pumped root in the recommended range |
-| `staticOil` | `oilVert` | none; settings `start:'static', static:{kind:'liquid'}` | the well flows after opening |
-| `buildup` | `oilVert` | IPR `darcyOil` with k 50 md, h 50 ft, rw 0.354 ft, re 1,500 ft, S 2, φ 0.2, ct 1.5e-5 1/psi (μ, B from the fluid) | J of `darcyOil` within 1 % of the `pi` it replaces |
+| `gasHz` | `gasWell` | survey vertical to 7,000 ft, build 8°/100 ft to 90°, 2,000 ft lateral (azimuth 120°); tubing to the heel, 4-1/2" liner along the lateral; mid-perf at the lateral midpoint; bean 24 *(tune)* | screens (a)(b) |
+| `oilVert` | wellperf `oilWell` | none (bean 32) — if the nodal choke regime is not critical, bean *(tune 24–32)* | screens (a)(b) |
+| `oilVertTuned` | `oilVert` | `system.mult {hl: 1.10, f: 0.90}` (VLP tuning multipliers, R5d) | screens (a)(b) |
+| `oilDev` | `oilWell` | the S-shaped `GAS_SURVEY` (MD 10,000 ft), mid-perf 9,950 ft MD, strings extended (tubing to 9,850 ft) | screens (a)(b) |
+| `gasLift` | `oilWell` | WC 0.6, GOR 200, p̄r 2,400 psia *(tune)*; lift `gaslift`, packer 7,900 ft, q_inj 600 Mscf/d, p_inj 1,100 psig, sginj 0.65; `glValves` = `WTS_wp_gl.valvesFromDesign` of the WTS_wp_gl.design result on this model (pinned rows) | no natural stable root; stable root with gas lift (nodal injection); screens (a)(b)(c); `R.lift.injMd` pinned |
+| `esp` | `oilWell` | WC 0.8, GOR 100, p̄r 2,500 psia; lift `esp`, pump MD 7,500 ft, 60 Hz, pump = `WTS_wp_esp.example()`, stages from `sizeStages` at 1,500 STB/d *(pinned)*, natural separation off | stable pumped root in the recommended range; screens (a)(b) |
+| `staticOil` | `oilVert` | none; settings `start:'static', static:{kind:'liquid', liquid:'oil'}`, reservoir prior `none` | the well flows after opening |
+| `buildup` | `oilVert` | IPR `darcyOil` with k 50 md, h 50 ft, rw 0.354 ft, re 1,500 ft, S 2, φ 0.2, ct 1.5e-5 1/psi (μ, B from the fluid) | J of `darcyOil` within 1 % of the `pi` it replaces; t_wbs and t_pss computed and pinned (C10: f = 1 is reached near 50 h and 0.1 t_pss ≈ 16 h at the review's estimate, so the 8 h shut-in of `shutInBuildup` lies in the infinite-acting window — WD0 records the exact values) |
 
-Also `FIX.scenarios` (Event lists + durations): `beanUp` (beans 16 → 24 → 32 at 0 / 1 / 2 h, 4 h), `shutInBuildup` (steady 2 h, shut in
-8 h), `gasLoadDown` (gasLoad: bean 32 → 16 at 1 h, 8 h), `cycleTimer` (gasLoad: 2 h open / 2 h shut × 3), `foamerOn` (gasLoad at bean
-16, foamer 1,000 ppm at 4 h, 10 h), `glUnload` (gasLift static, annulus and tubing full of kill fluid sg 1.05, injection 600 Mscf/d from
-0, 12 h), `espStart` (esp static liquid, start 0 → 60 Hz at 1 Hz/s, 2 h).
-Shapes: `SHAPE.Sim`, `SHAPE.State`, `SHAPE.StepInfo`, `SHAPE.Snap`, `SHAPE.Event`, `SHAPE.Rec`, `SHAPE.RunFile`, `SHAPE.Case`,
-`SHAPE.Summary`, `SHAPE.Ext`, `checkShape(name, obj)`. Helpers: `sharedApp(ctx, opts)`, `resetWellDyn(app)` (clears `wts_page_welldyn`,
-the `dyn` key, `WTS_state.welldyn`, device prefs `wtspref_wd_*`), `loadFix(app, key)` (writes the fixture through `WTS_wp_model.write`
-and the scalar store), `files()`, `STUBS`, `BASELINE` (WD1 fills the step timing, §5.6).
+Also `FIX.scenarios` (Event lists + durations + the opts they need): `beanUp` (oilVert: beans 16 → 24 → 32 at 0 / 1 / 2 h, 4 h),
+`shutInBuildup` (buildup: **reservoir `transient`, prior `steady` 720 h**, steady 2 h, shut in 8 h; C10), `gasLoadDown` (gasLoad,
+fallback on: bean 32 → 16 at 1 h, 8 h), `cycleTimer` (gasLoad: 2 h open / 2 h shut × 3), `foamerOn` (gasLoad at bean 16, fallback on,
+foamer 1,000 ppm at 4 h, 10 h), `glUnload` (gasLift, `start:'static', static:{kind:'liquid', liquid:'water'}` — tubing and annulus full of
+the model's water as the kill fluid (R22), reservoir prior `none`, injection 600 Mscf/d from 0, 12 h), `espStart` (esp, static liquid,
+start 0 → 60 Hz at 1 Hz/s, 2 h), `levelSettle` (staticOil with `static:{kind:'level', liquidTopMd: 4000}` shut in 8 h: the sharp gas cap /
+liquid level case of EN25, R11), `killColumn` (gasVert with `static:{kind:'liquid', liquid:'water'}` shut in 2 h: the column exceeds p̄r
+and back-flows, EN5 / EN26, R14).
+
+Frozen orders: `ORDER.COMP` (= `WTS_wd_engine.COMP`), `ORDER.STATES` (= `STATE_ORDER`, C9), `ORDER.CHANNELS` (= the CHANNELS keys),
+`ORDER.REGIMES`. Shapes: `SHAPE.Sim`, `SHAPE.State`, `SHAPE.StepInfo`, `SHAPE.Snap`, `SHAPE.Event`, `SHAPE.Rec`, `SHAPE.RunFile`,
+`SHAPE.Case`, `SHAPE.Summary`, `SHAPE.Ext`, `checkShape(name, obj)`. Helpers: `sharedApp(ctx, opts)`, `resetWellDyn(app)` (clears
+`wts_page_welldyn`, the `dyn` key, `WTS_state.welldyn`, device prefs `wtspref_wd_*`), `loadFix(app, key)` (writes the fixture through
+`WTS_wp_model.write` and the scalar store), `files()`, `STUBS`, `BASELINE` (the WD0 spike's step cost per fixture; WD1 replaces it with
+its measured values, §5.6).
 
 ### 3.10 Mock engine `tests/_welldyn-mock.js` (WD0; not shipped)
 
-`installWellDynMock(G, opts)` replaces the stubs with a deterministic closed-form stand-in with the **contract shapes**: `create` builds
-the grid from the model (minimum curvature on the survey, cells snapped like §4.2), the rate relaxes to `R0.op` (or to 0 shut in) with a
-10 min time constant, a liquid level rises / falls with the state, holdups and regimes follow the level, BHP follows a storage-like
-exponential, valve / pump fields are filled for gas-lift / ESP fixtures, snapshots / restore / events / `run` / `on` behave as §3 (and are
-bit-identical on repeat). `opts.slow` makes `run` cost wall time (page "running slower" path); `opts.fail` returns errors. Also usable as
-plain browser code for screenshots (no `require`).
+`installWellDynMock(G, opts)` replaces the stubs with a deterministic closed-form stand-in with the **contract shapes** of revision 2:
+`create` builds the grid from the model (minimum curvature on the survey, cells snapped like §4.2 incl. the injection-MD and pump breaks,
+`segs` / `rough` filled), returns `C` / `ref` / `mHash` (hash16 of M without `dyn` + opts), the rate relaxes to `R0.op` (or to 0 shut in)
+with a 10 min time constant, a liquid level rises / falls with the state, holdups and regimes follow the level, BHP follows a storage-like
+exponential, all five components (`mI` zero unless gas lift) and every `faces` / `surface` / `loading` field of §3.2 are filled (lift gas,
+vent and formation GOR for gas-lift / ESP fixtures), `STATE_ORDER` / `COMP` / `CHANNELS` are the frozen orders, snapshots carry every
+§3.6 field, restore / events / `run` / `on` / `steadyCheck` behave as §3 (and are bit-identical on repeat). `opts.slow` makes `run` cost
+wall time (page "running slower" path); `opts.fail` returns errors; `opts.engineId` overrides the engine fingerprint (cross-engine replay
+path of RC). Also usable as plain browser code for screenshots (no `require`).
 
 ### 3.11 View API `WTS_wd_view` (WD2)
 
@@ -426,136 +497,223 @@ The wellbore canvas sets its size from fixed CSS sizes (as WTS_wp_view), so it d
 Notation: i = cell (0 bottom … n−1 top), k = face (0 … n), Δt s, ΔL_i ft (MD), ΔZ_i ft (TVD, + up), A_i ft², V_i = A_i ΔL_i ft³,
 θ_i inclination from vertical (deg), g/g_c = 1 lbf/lbm in field units, so ρ (lbm/ft³) × ΔZ (ft) / 144 = psi.
 
-### 4.1 Components and the flash (black oil, one path through `WTS_wp_fluid`)
+### 4.1 Components and the flash (black oil, one path through the solve's fluid context)
 
-Conserved per cell: gas component m_G, stock-tank oil (or condensate) m_O, water m_W, foamer m_F (lbm). With γ_o, γ_g, γ_w the
-stock-tank gravities and the app's base conditions (`WTS_baseConditions`, the same as `WTS_flowline_props` uses for B_g):
+Conserved per cell: formation gas m_G, stock-tank oil (or condensate) m_O, water m_W, lift gas m_I, foamer m_F (lbm). With γ_o, γ_g, γ_w the
+stock-tank gravities, γ_I = `C.gl.sg` (sginj) and the app's base conditions (`WTS_baseConditions`, the same as `WTS_flowline_props` uses
+for B_g):
 
-- N_o (STB) = m_O / (350.17 γ_o), N_w (STB) = m_W / (350.17 γ_w), G (scf) = m_G / (0.076362 γ_g).
-- Properties at (p_i, T_i): R_s, B_o, B_w, B_g (ft³/scf), ρ_o, ρ_w, ρ_g, μ_o, μ_w, μ_g, σ_o, σ_w from **one** call per cell per step of
-  `WTS_flowline_props(WTS_wp_fluid.flowlineFluid(F, F.refQ), p, T)` (the (p, T)-binned table of `F.pvt.table`). These phase properties do
-  not depend on the rate argument (only the in-situ mixing fractions do, which the engine computes itself).
-- Dissolved gas G_d = min(G, N_o R_s); free gas G_f = G − G_d. Wet gas (`pvt.liquidNoTransfer`, D14 of the Well Performance plan):
-  R_s = 0, B_o = B_c (constant).
-- Phase volumes (ft³): V_o = 5.6146 N_o B_o, V_w = 5.6146 N_w B_w, V_g = G_f B_g; holdups α_k = V_k / (V_o + V_w + V_g).
-- Volume compressibility of a cell (ft³/psi), for the pressure coupling:
-  ∂V/∂p = 5.6146 N_o ∂B_o/∂p + 5.6146 N_w ∂B_w/∂p + G_f ∂B_g/∂p − B_g N_o ∂R_s/∂p (gas liberation, below p_b),
-  by a one-sided difference of the table (Δp = 1 psi). Above p_b, ∂B_o/∂p = −c_o B_o (Vasquez-Beggs c_o of the fluid).
+- N_o (STB) = m_O / (350.17 γ_o), N_w (STB) = m_W / (350.17 γ_w), G (scf) = m_G / (0.076362 γ_g), G_I (scf) = m_I / (0.076362 γ_I).
+- **One fluid object.** F = `C.F` of `WTS_wp_system.context(M)` — built by the solve's own `_ctx` as
+  `WTS_wp_fluid.build(M.fluid, {T_F: M.res.T_F, table: true})` (wp-system ≈ line 256) — so every property is the same binned table, bit for
+  bit, as the steady reference (R18; pinned by EN24). Never a second `WTS_wp_fluid.build`.
+- **Per-cell properties (R13).** `WTS_flowline_props` caps the solution ratio at the fluid's GOR (rs = min(GOR, R_s(p))) and weights σ_L
+  and the emulsion viscosity by the rate fractions f_o / f_w. The engine therefore evaluates each cell with a per-cell fluid view
+  `WTS_wp_fluid.flowlineFluid(F, q_cell)` whose GOR is the cell's own ratio R_cell = G / N_o (formation gas only) and whose oil / water
+  fractions are the cell's N_o : N_w; with lift gas present the view carries `pvt.injGas = {qg_MMscfd ∝ G_I, sg: γ_I}` in the cell's
+  G_I : G_f ratio, exactly the mechanism of the nodal `C.gl.Finj` (R8). In a steady flowing column R_cell = the produced GOR, f_o / f_w =
+  the produced split and G_I / G_f = q_inj / q_g,free, so the properties equal the nodal ones at the same (p, T). WD1 checks whether the
+  (p, T)-binned table is keyed on GOR / injGas; where it is not (one table per fluid), cells whose view differs from the table's reference
+  use the exact props path (`table: false` semantics for that call) — measured in §11.1 and budgeted in §5.6. One props call per cell per
+  step at (p_i^n, T_i) plus one at (p_i^n + 1 psi, T_i) for ∂V/∂p; the rate argument passed is the cell's in-situ composition, never the
+  well's reference rate.
+- Dissolved gas G_d = min(G, N_o R_s(p)); free formation gas G_f = G − G_d; lift gas is always free (never dissolves, never counted in
+  R_cell). Wet gas (`pvt.liquidNoTransfer`, D14 of the Well Performance plan): R_s = 0, B_o = B_c (constant). Rv (vaporised condensate,
+  `pvt.rv`) is refused (`RV_NOT_IN_TRANSIENT`, §3.1) and kept out of the fixtures.
+- Phase volumes (ft³): V_o = 5.6146 N_o B_o, V_w = 5.6146 N_w B_w, V_g = (G_f + G_I) B_g,mix (B_g at the mixed gravity of the view);
+  V^content = V_o + V_w + V_g; holdups α_k = V_k / V^content (α_g = all free gas; the lift-gas share of it is x_I = G_I / (G_f + G_I)).
+- **Volume derivatives** of the same function V^content(m_G, m_O, m_W, m_I, p) (R2, R13c), in ft³/lbm and ft³/psi:
+  - ∂V/∂m_W = 5.6146 B_w / (350.17 γ_w);  ∂V/∂m_I = B_g,mix / (0.076362 γ_I);
+  - saturated cell (G_f > 0): ∂V/∂m_G = B_g,mix / (0.076362 γ_g); ∂V/∂m_O = (5.6146 B_o − B_g,mix R_s) / (350.17 γ_o);
+  - undersaturated cell (G_f = 0): ∂V/∂m_G = 5.6146 (∂B_o/∂R)_p / (0.076362 γ_g), ∂V/∂m_O = 5.6146 (B_o − R (∂B_o/∂R)_p) / (350.17 γ_o),
+    with (∂B_o/∂R)_p by a one-sided difference of the same props view (R → R + 1 scf/STB; only in undersaturated cells holding oil);
+  - ∂V/∂p by a one-sided difference of V^content at fixed masses (Δp = +1 psi) through the same props view — the liberation term
+    −B_g N_o ∂R_s/∂p then appears only where G_f > 0 (R13d) and no separate c_o is mixed in (R13c) — plus the compliance term
+    −V_i (c_pipe + max(0, c_w,min − c_w,cell) α_w) with c_pipe = 3e-6 1/psi and c_w,min = 3e-6 1/psi (ASSUMED, C6, key `compliance`). The
+    compliance only acts through dp/dt: it does not change a steady state (the gate) and keeps a liquid-full shut-in well well-conditioned.
 
 ### 4.2 Discretisation
 
-- The flow path is `WTS_wp_well.segmentsFor(W)` from the mid-perforations to the wellhead (tubing, then casing / liner below the end of
-  tubing; the annulus path when `M.well.path = 'annulus'`). n cells (default 60, 20–200) are allotted to segments in proportion to MD
-  (at least one per segment, largest remainder), so **no cell straddles a bore change, a restriction, the end of tubing, a gas-lift valve
-  or the pump depth** (those MDs are added as forced breaks before the allotment). Each cell carries its segment's ID, roughness,
-  inclination (cell-average from the stations) and exact ΔZ from minimum curvature (gravity on TVD, friction on MD — as the nodal march).
-- A restriction (SSSV, nipple, downhole choke) is a face loss Δp = k ρ_m v_m² / (2 g_c · 144) at its face, the same k as the nodal model.
-- Horizontal sections are ordinary cells with θ = 90° (ΔZ ≈ 0): gravity vanishes, the drift closure uses the inclination form (§4.4).
+- The flow path is the nodal traverse's segment list: `WTS_wp_well.segmentsFor(W)` from the mid-perforations to the wellhead, split by
+  `WTS_wp_vlp.sectionsFor(W, C.sections, C.corrWell)` into per-section correlation keys exactly as the solve (R5e) — tubing, then casing /
+  liner below the end of tubing; the annulus path when `M.well.path = 'annulus'`. n cells (default 60, 20–200) are allotted to segments in
+  proportion to MD (at least one per segment, largest remainder), so **no cell straddles a bore change, a restriction, a section boundary,
+  the end of tubing, a gas-lift valve, the nodal injection depth `R0.lift.injMd` (nodal gas-lift mode, R9) or the pump depth** (those MDs
+  are added as forced breaks before the allotment). A cell keeps a reference to its segment object (`grid.segs`): its `theta` (degrees
+  from horizontal, asin(dz/len) of the marcher segment, R5a), ID, area, `corr` key and restriction are passed unchanged to the correlation.
+  Roughness is the one length-weighted `W.rough` the march uses (R5b). ΔZ is exact from minimum curvature (gravity on TVD, friction on
+  MD — as the nodal march). `inc` (from vertical, the station average) is kept for display and the drift closure only.
+- A restriction (SSSV, nipple, downhole choke) at a face is the marcher's rule (49-calc-flowline `_restr`, R7):
+  Δp = K ρ_n v² / (2 g_c · 144) (psi), v = v_m A / A_d = j / β² the **bore-throat** velocity (ft/s), ρ_n = (ρ_L j_L + ρ_g j_g) / j the no-slip
+  density of the face (lbm/ft³), β = d / ID, K = `restr.k` when given else 0.5 (1 − β²) + (1 − β²)².
+- Horizontal sections are ordinary cells with theta = 0° (ΔZ ≈ 0): gravity vanishes; the correlation sees the same angle as in the
+  nodal march; the drift closure uses the inclination form (§4.4).
 
 ### 4.3 Conservation
 
-For each component c ∈ {G, O, W, F}:
+For each component c ∈ {G, O, W, I, F}:
 
-  m_c,i^{n+1} = m_c,i^n + Δt (F_c,k=i − F_c,k=i+1 + S_c,i)        (lbm; F lbm/s at faces, + upward; S lbm/s from extensions)
+  m_c,i^{n+1} = m_c,i^n + Δt (F_c,k=i − F_c,k=i+1 + S_c,i)        (lbm; F lbm/s at faces, + upward; S lbm/s from extensions, fixed for the step)
 
-Face mass fluxes from the superficial velocities (ft/s) and the **upwind** cell's properties (upwind per phase by the sign of the phase
-velocity):
+Face mass fluxes from the superficial velocities (ft/s) and the **donor** cell of each phase flux (the cell below for an upward phase flux,
+the cell above for a downward one; at counter-current faces the bounded flux of §4.4 decides the phase fluxes and the donors):
 
-  F_O = A j_o (350.17 γ_o) / (5.6146 B_o)        (j_o ft/s in situ; 350.17 γ_o lbm per STB; 5.6146 B_o ft³ per STB)
+  F_O = A j_o (350.17 γ_o) / (5.6146 B_o)                                   (j_o ft/s in situ; 350.17 γ_o lbm per STB; 5.6146 B_o ft³ per STB)
   F_W = A j_w (350.17 γ_w) / (5.6146 B_w)
-  F_G = A j_g ρ_g + R_s (0.076362 γ_g) · A j_o / (5.6146 B_o)        (free gas + gas dissolved in the oil)
-  F_F = A j_w ρ_w · c_F                                              (foamer travels with the water, c_F = m_F / m_W)
+  F_G = A j_g (1 − x_I) / B_g,mix · 0.076362 γ_g + (G_d / N_o)_donor (0.076362 γ_g) · A j_o / (5.6146 B_o)     (free + dissolved gas)
+  F_I = A j_g x_I / B_g,mix · 0.076362 γ_I                                  (lift gas, free only)
+  F_F = F_W · c_F                                                           (foamer travels with the water, c_F = m_F / m_W of the donor)
 
-Face 0 carries the reservoir inflow (stock-tank rates of §4.7 converted to lbm/s); face n carries what leaves through the choke. The
-scheme is conservative: Σ_i m_c changes exactly by Δt (F_c,0 − F_c,n + Σ S_c) up to round-off (§5.2, EN2).
+with B_o, B_g,mix, x_I of the phase's donor cell and the dissolved ratio taken as the donor cell's **actual** G_d / N_o (R13a), not R_s(p) —
+an undersaturated cell then loses dissolved gas at its own ratio. Face 0 carries the reservoir inflow (stock-tank rates of §4.7 converted
+to lbm/s; the formation stream, I = 0) or, on back-flow, cell 0's contents (§4.7); face n carries what leaves through the choke at the top
+cell's composition. The scheme is conservative: Σ_i m_c changes exactly by Δt (F_c,0 − F_c,n + Σ S_c) up to round-off (§5.2, EN2).
 
 ### 4.4 Drift-flux closure (WD-D4)
 
-At face k with mixture flux j = Q_k / A (ft/s) and the upwind gas fraction α_g:
+At face k with mixture flux j = Q_k / A (ft/s), the gas flux follows the drift-flux form
 
   j_g = α_g (C_0 j + v_d),   j_L = j − j_g,   j_w = f_w j_L − φ_ow,   j_o = j_L − j_w
 
-with f_w the upwind water fraction of the liquid and φ_ow the oil–water settling flux of §4.10.
+with α_g from the donor (below) cell for co-current faces and from the bounded counter-current flux otherwise (below), f_w the water
+fraction of the liquid donor and φ_ow the oil–water settling flux of §4.10.
 
-**`driftflux` closure** (provisional, D17 — no verified worked example; the coefficients to verify against the papers):
+**`driftflux` closure** (provisional, D17 — no verified worked example; the coefficients to verify against the papers, Q9):
 
 - Zuber & Findlay (1965) form; profile parameter of Shi et al. (2005): C_0 = A / (1 + (A − 1) γ²), γ = clamp((β − B)/(1 − B), 0, 1),
   β = max(α_g, F_v α_g |j| / v_sgf), A = 1.2, B = 0.3, F_v = 1; v_sgf = the flooding (Kutateladze) velocity
   K_u (σ g Δρ / ρ_g²)^¼ with K_u from the Wallis-Makkenchery fit of the critical Kutateladze number on the dimensionless diameter.
-- Drift velocity: v_d = (1 − α_g C_0) C_0 K(α_g) v_c m(θ) / (α_g C_0 √(ρ_g/ρ_L) + 1 − α_g C_0),
-  v_c = (σ g Δρ / ρ_L²)^¼ (ft/s with σ dyn/cm → lbf/ft by × 6.852e-5 and g = 32.174 ft/s² with g_c), K = 1.53 for α_g ≤ a_1 = 0.06,
-  K = K_u for α_g ≥ a_2 = 0.21, linear between; inclination factor m(θ) = m_0 (cos θ)^{n_1} (1 + sin θ)^{n_2} with m_0 = 1.27,
-  n_1 = 0.24, n_2 = 1.08 (Shi et al. 2005; θ from vertical) — values to verify (Q9).
-- Liquid properties: the upwind liquid mixture (oil + water by volume); σ = σ_L · sigF_i (foamer factor, §4.11).
+- Drift velocity: v_d = (1 − α_g C_0) C_0 K(α_g) v_c m(θ) / (α_g C_0 √(ρ_g/ρ_L) + 1 − α_g C_0) (ft/s),
+  v_c = (σ g Δρ / ρ_L²)^¼ (σ dyn/cm → lbf/ft by × 6.852e-5, g = 32.174 ft/s² with g_c; ρ lbm/ft³), K = 1.53 / C_0 for α_g ≤ a_1 = 0.06
+  (the Shi et al. form, C3), K = K_u for α_g ≥ a_2 = 0.21, linear between; inclination factor m(θ) = m_0 (cos θ)^{n_1} (1 + sin θ)^{n_2}
+  with θ from vertical, m_0 = 1.27, n_1 = 0.24, n_2 = 1.08 — constants **to verify** against Shi et al. (2005) (C3, Q9; labelled).
+  Because of the (1 − α_g C_0) factor and C_0 → 1 as α_g → 1, the flux function f(α) = α (C_0 j + v_d) has f(0) = 0 and f(1) = j.
+- Liquid properties: the donor liquid mixture (oil + water by volume); σ = σ_L · sigF_i (foamer factor, §4.11).
 
 **`corr` closure** (default):
 
-- At every face, once per step, the correlation of the cell's section (`grid.cells[i].corr` — the key the steady reference used,
-  `R0.corr.well`, or the per-section keys) is evaluated with the face's lagged superficial velocities (v_sL, v_sg of the last step), the
-  face properties and the cell inclination, through `WTS_flowline_corr[key].grad(inp)` (the exact `inp` object the marcher builds in
-  `_gAt`, 49-calc-flowline.js; WD1 reads it there). From its holdup H_L:
-  C_0 = 1, v_d,corr = v_sg / (1 − H_L) − (v_sL + v_sg), clamped to [0, 3 v_d,ZF] (v_d,ZF = the drift-flux value above).
-  At a fixed point (steady flow) the cell gas fraction is then exactly 1 − H_L of the correlation.
-- Below a low mixture velocity the correlation holdup has no meaning (counter-current flow, shut-in). Blend weight
-  w = smoothstep((|j| − j_lo)/(j_hi − j_lo)), j_lo = 0.2 ft/s, j_hi = 1.0 ft/s: C_0 = w + (1 − w) C_0,DF, v_d = w v_d,corr + (1 − w) v_d,DF.
-  The gate fixtures flow with |j| > j_hi in every cell (checked by the gate; EN11).
+- Once per step and cell, the cell's correlation is evaluated **exactly as the nodal march evaluates it**, through the WD0 export
+  `WTS_flowline_gradAt(fluidView, p_i, T_i, seg_i, opt)` (= the private `_gAt` of 49-calc-flowline.js, which builds `inp`, calls
+  `WTS_flowline_corr[seg.corr ?? opt.corr].grad(inp)` and applies the VLP-tuning multipliers `_applyMult`, R5d): `seg_i` the cell's marcher
+  segment (`theta` from horizontal, ID, area, section key — R5a / R5e), `opt = {corr: C.corrWell, rough: grid.rough, payne: C's flag,
+  accel: C's flag, mult: C.mult}` — the same object the solve builds for its traverse (wp-system ≈ lines 282–288, R5c). It is evaluated at
+  the **cell centre** (C2): p_i^n, T_i, and a fluid view whose stock-tank stream is the mean of the cell's two face stock-tank fluxes of the
+  last step, so v_sL, v_sg are the march's for the same stream at the same (p, T). From its holdup H_L (after the multipliers):
+  C_0 = 1, v_d,corr = v_sg / (1 − H_L) − (v_sL + v_sg), bounded only by the co-current limits −j ≤ v_d ≤ j α_L / α_g (so that j_g ≥ 0
+  and j_L ≥ 0 at the face's own α_g; R4 — no upper clamp tied to v_d,ZF, which vanishes in horizontal cells and at high gas fraction).
+  The lagged value is under-relaxed, v_d^n = v_d^{n−1} + ω (v_d,corr − v_d^{n−1}), ω = 0.5 (R20). At a fixed point (steady flow) the cell
+  gas fraction is exactly 1 − H_L of the correlation and the gate cells see the nodal holdup.
+- **Blend only where needed (C1).** A face is co-current when its last-step j > 0, j_g > 0 and j_L ≥ 0. Weight w = 1 for a co-current
+  face with |j| ≥ j_hi (0.10 ft/s); w = smoothstep((|j| − j_lo)/(j_hi − j_lo)) for a co-current face with j_lo ≤ |j| < j_hi (j_lo = 0.05
+  ft/s); w = 0 for a counter-current face or |j| < j_lo. Then C_0 = w + (1 − w) C_0,DF, v_d = w v_d,corr + (1 − w) v_d,DF. Low-velocity
+  co-current cells (a casing rathole below the end of tubing, an ESP intake section) keep the correlation holdup.
+
+**Bounded face flux (R11).** The gas flux at every face is the Godunov flux of the scalar flux function f_k(α) = α (C_0(α) j + v_d(α))
+at the root's j, with the face properties frozen for the step (α_dn = the cell below, α_up = the cell above):
+
+  j_g,k = min_{α ∈ [α_dn, α_up]} f_k(α)  if α_dn ≤ α_up,     j_g,k = max_{α ∈ [α_up, α_dn]} f_k(α)  otherwise.
+
+On a co-current `corr` face f is linear and increasing in α, so this is the upwind value α_dn (j + v_d). Elsewhere the extremum is found
+from the end points and a golden-section search on the interior (≤ 12 evaluations, arithmetic only). Because f(0) = 0 and f(1) = j, no gas
+is taken from a liquid-full cell below and no liquid is drawn from a gas-full cell above (a sharp gas cap or liquid level, EN25). Donors:
+gas from the cell below when j_g > 0 (above when < 0); liquid from the cell above when j_L < 0 (below when > 0). The CFL of §4.6 keeps every
+phase outflow below the donor's content; a step that would still make a mass negative is rejected (§4.6).
 
 ### 4.5 Quasi-steady momentum (pressure profile)
 
-Given the wellhead pressure p_n (face n) of the trial, faces are filled downward:
+Given the wellhead pressure p_n (face n) of a root trial and the face fluxes Q of the current Picard sweep (§4.6), faces are filled
+downward:
 
-  p_k = p_{k+1} + [ ρ_m,i ΔZ_i + (dp/dL)_f,i ΔL_i · 144 ] / 144 / (1 − E_k,i) + Δp_restr,k − Δp_pump,k          (psi)
+  p_k = p_{k+1} + [ ρ_m,i ΔZ_i / 144 + g_f,i(j_i) ΔL_i ] / (1 − E_i) + Δp_restr,k(j_k) − Δp_pump,k(Q_k)          (psi)
 
-- ρ_m,i = Σ α_k ρ_k of the cell (lbm/ft³) at the **current** holdups (the storage term — a column that loses gas gets heavier);
-- (dp/dL)_f,i (psi/ft) = the correlation's friction gradient `gradF` evaluated once per step at the cell's (v_sL, v_sg) and scaled to the
-  trial mixture flux by (j_trial / j_last)·|j_trial / j_last| (so the root iterations cost O(n) arithmetic, no correlation call); for
-  |j| < j_lo the single-phase Fanning gradient of the mixture (`WTS_flowline_friction`); `driftflux` closure: the same correlation
-  friction gradient (only the holdup closure changes);
-- E_k = the correlation's acceleration factor (`Ek`, clamped to ≤ 0.9) when the correlation applies it (the same rule as the marcher), else 0;
-- Δp_restr from §4.2; Δp_pump from the ESP extension's `faceDp` with its derivative (§4.12).
+- ρ_m,i = Σ α ρ of the cell (lbm/ft³) at the holdups at the start of the step (the storage term — a column that loses gas gets heavier);
+  ΔZ_i ft TVD, ΔL_i ft MD; i = the cell between faces k and k+1; j_i = ½ (Q_k + Q_{k+1}) / A_i.
+- Friction gradient (psi/ft), magnitude × sign (R3): g_f,i(j) = |g_f,i,last| · sign(j) · (j / j_i,last)², with g_f,i,last the correlation's
+  `gradF` from the once-per-step `WTS_flowline_gradAt` call of §4.4 (multipliers included) and j_i,last the cell's mean flux of the last
+  step. When |j_i,last| < j_lo or |j| < j_lo (near-zero flow, shut-in, flow reversal), the single-phase mixture form is used instead:
+  g_f = f_M ρ_m j |j| / (2 g_c d_ft · 144), f_M the Moody friction factor at Re = 1488 ρ_m |j| d_ft / μ_m and ε / d of `grid.rough` —
+  arithmetic only (μ_m from the cell's props of the step). No division by j_last ever occurs below j_lo.
+- E_i = the correlation's acceleration factor `Ek` of the step's call (clamped to ≤ 0.9) when the solve's `accel` flag is on, else 0.
+- Δp_restr from §4.2 at the face's no-slip density and throat velocity; Δp_pump from the ESP extension's linearised `faceDp` (§4.12).
 - Cell pressure p_i = ½ (p_k + p_{k+1}); BHP = p_0 (mid-perforations, the nodal bottom node).
 
 ### 4.6 Pressure coupling, time step and integrator
 
-**Volume constraint.** The mixture volume flux leaving the top of cell i (ft³/s) follows from the volume the cell's contents need at the
-new pressure:
+**Volume balance (R1, R2).** Each cell's contents must fill its fixed volume V_i (ft³, plus the compliance of §4.1). Differentiating
+V^content(m_G, m_O, m_W, m_I, p) = V_i in time and keeping the linearisation residual:
 
-  Q_{i+1} = Q_i − (∂V/∂p)_i (p_i^{n+1} − p_i^n)/Δt − (V_i^{content}(p_i^n) − V_i)/τ_V + Q_src,i
+  Σ_c (∂V/∂m_c)_i (F_c,i − F_c,i+1 + S_c,i) + (∂V/∂p)_i (p_i^{n+1} − p_i^n)/Δt = (V_i − V_i^content(m^n, p^n)) / Δt          (ft³/s)
 
-with V_i^{content} the phase volume sum of §4.1 at the start of the step (its mismatch with the cell volume is relaxed over
-τ_V = max(Δt, 5 s), which keeps the volume error bounded — reported as `S.flags` VOL_DRIFT when > 0.5 %), and Q_src,i the in-situ volume
-of extension sources. Q_0 = the in-situ volume rate of the reservoir inflow at (p_0, T_0) (§4.7).
+with the derivatives of §4.1 (ft³/lbm, ft³/psi; (∂V/∂p)_i < 0), F_c lbm/s, S_c lbm/s. Solved for the outflow at the top face of the cell:
 
-**Wellhead root.** Unknown: p_n^{n+1}. For a trial p_n: march §4.5 down → p_0 → inflow (§4.7) → Q_0 → march the volume constraint up →
-Q_n. Residual r(p_n) = Q_n − Q_choke(p_n) (§4.8). Bracket [p_dn + 0.01, p_max] (p_max = p̄r + the column), safeguarded secant / Illinois,
-≤ 12 iterations, tolerance |Δp_n| ≤ 0.01 psi or |r| ≤ 1e-7 ft³/s. Shut in: Q_choke = 0. No choke (`M.surface.choke.present = false`):
-r = p_n − p_dn(Q_n) (the flowline back pressure, or the fixed `M.system.thp_psig` when given — the nodal boundary).
-A trial whose march produces a negative pressure is "lost" (as in the nodal scan) and the bracket shrinks.
+  Σ_c (∂V/∂m_c)_i F_c,i+1(Q_{i+1}) = Σ_c (∂V/∂m_c)_i (F_c,i + S_c,i) + (∂V/∂p)_i (p_i^{n+1} − p_i^n)/Δt + (V_i^content − V_i)/Δt
 
-**Phase fluxes and transport** with the converged Q_k (§4.4, §4.3). Order 1: upwind values; order 2: MUSCL slopes of α with the minmod
+The left side is the in-situ volume rate of the stream leaving the cell, measured at the cell's state ("Q_out"); the first right-hand term
+is the volume rate arriving plus the sources ("Q_in + Q_src"). So a pressure rise (∂V/∂p · Δp < 0) gives Q_out < Q_in (the contents
+compress and accept more), and an over-full cell (V^content > V_i) expels more — the drift is corrected, not amplified (EN23 tests the
+first with a closed column). The mismatch term only carries the linearisation residual of the previous step (second order in Δt, ≈
+round-off in steady flow, where the expansion of gas along the well is carried by the Σ (∂V/∂m_c) F terms themselves); `S.balance.volDrift`
+= max_i |V^content − V_i| / V_i and the flag VOL_DRIFT appear when it exceeds 0.5 %. F_c,i+1(Q) is the face flux of §4.3 / §4.4 at
+j = Q / A: linear in Q on a co-current `corr` face (a closed-form solve), monotone otherwise (≤ 8 safeguarded secant steps, arithmetic only).
+Q_0 is the in-situ volume rate of the reservoir inflow at (p_0, T_0) (§4.7; negative on back-flow).
+
+**Wellhead root with inner Picard sweeps (R3).** Unknown: p_n^{n+1}. Per root iterate r with trial p_n:
+
+1. Q^(0) = the face fluxes of the previous root iterate (for r = 0: the converged Q of the last step).
+2. Sweep s = 1 … `picard.maxSweeps` (3): march §4.5 **down** with friction / throat / pump terms at Q^(s−1) → p_k, p_0 → inflow q(p_0)
+   (§4.7) → Q_0 → march the volume balance **up** with p_i = ½ (p_k + p_{k+1}) → Q^(s). Stop when
+   max_k |Q_k^(s) − Q_k^(s−1)| ≤ tolQ + tolQrel |Q_k^(s)| (1e-6 ft³/s + 1e-4 relative).
+3. Residual r(p_n) = Q_n^(s) − Q_choke(p_n) (§4.8).
+
+Bracket [p_dn + 0.01, p_max] (p_max = max(p̄r, p_0^n) + the static column + 500 psi), safeguarded secant / Illinois, ≤ 12 iterations,
+tolerance |Δp_n| ≤ 0.01 psi or |r| ≤ 1e-7 ft³/s. After convergence one more sweep at the root must move p_0 by ≤ 0.01 psi, else the step
+is rejected (`PICARD`). Shut in: Q_choke = 0. No choke (`M.surface.choke.present = false`): r = p_n − p_dn(Q_n) (the flowline back
+pressure, or the fixed `M.system.thp_psig` when given — the nodal boundary). A trial whose march produces a negative pressure is "lost" (as
+in the nodal scan) and the bracket shrinks.
+**Cost per step:** outside the root, per cell 2 props calls (+1 in undersaturated oil cells, §4.1), 1 `WTS_flowline_gradAt` call, the
+face Godunov extrema where w < 1, and 2 `faceDp` calls for an ESP; inside the root, ≤ 12 iterates × ≤ 3 sweeps × (one O(n) down pass + one
+O(n) up pass) of arithmetic and one choke evaluation per iterate (closed-form multiphase / gas choke, §4.8) — typically 4–6 iterates × 1–2
+sweeps in smooth flow. Budgets in §5.6.
+
+**Phase fluxes and transport** with the converged Q_k (§4.4, §4.3). Order 1: donor values; order 2: MUSCL slopes of α with the minmod
 limiter (option; the gate uses order 1).
 
-**Time step.**
-  Δt = min( dtMax, 1.5 Δt_prev, CFL · min_i ΔL_i / max(|v_g,i|, |v_L,i|, 1e-6), Δt_event, Δt_stroke )
-  CFL default 0.5. After the step: if any |p_k^{n+1} − p_k^n| > dpMaxFrac · p_k^n, or a component mass would turn negative, or the
-  root failed, the step is **rejected** and retried with Δt/2 (≤ 8 halvings, then `code: 'STEP_FAIL'` and the run stops with a message).
-  Δt_event lands a step exactly on the next scheduled event; Δt_stroke resolves a choke stroke in ≥ 5 steps.
-**Mass balance** per step: e_c = |Σ m_c^{n+1} − Σ m_c^n − Δt (F_c,0 − F_c,n + Σ S_c)| / max(Σ m_c^n, 1); max_c e_c ≤ 1e-10 (round-off);
-the cumulative error vs the initial mass + cumulative in − out ≤ 1e-8 over 24 h (EN2, C2). Reported in `S.balance` and the run summary.
+**Time step (R12).**
+  Δt = min( dtMax, 1.5 Δt_prev, CFL · min_i ΔL_i / max(|v_g,i|, |v_L,i|, |λ_k|, |λ_{k+1}|, 1e-6), Δt_event, Δt_stroke )
+  with v_g = j_g / α_g, v_L = j_L / α_L the phase velocities of the cell's faces (explicit donor transport of each phase) and λ_k = ∂f_k/∂α
+  the kinematic-wave (characteristic) speed of the drift-flux flux function at the face, C_0 j + v_d + α (∂(C_0 j + v_d)/∂α), by a central
+  difference (±1e-3 in α) — larger than the phase velocities in counter-current flow. CFL default 0.5. After the step: if any
+  |p_k^{n+1} − p_k^n| > dpMaxFrac · p_k^n, or a component mass would turn negative, or the root / Picard sweeps failed, the step is
+  **rejected** and retried with Δt/2 (≤ 8 halvings, then `code: 'STEP_FAIL'` and the run stops with a message). Δt_event lands a step
+  exactly on the next scheduled event; Δt_stroke resolves a choke stroke in ≥ 5 steps.
+**Mass balance** per step, c ∈ {G, O, W, I} (the foamer tracer separately): e_c = |Σ m_c^{n+1} − Σ m_c^n − Δt (F_c,0 − F_c,n + Σ S_c)| /
+max(Σ m_c^n, 1); max_c e_c ≤ 1e-10 (round-off); the cumulative error vs the initial mass + cumulative in − out ≤ 1e-8 over 24 h (EN2, C2).
+Reported in `S.balance` and the run summary.
 
 ### 4.7 Reservoir (`WTS_wd_res`)
 
-- **Mode `ipr`** (default; exact consistency): sandface stock-tank rates q = I.qAt(p_0) from `WTS_wp_ipr.curve(M.res, F)` (oil: q_o with
-  q_w by WC and q_g by GOR; gas: q_g with CGR / WGR liquids), instantaneous. Afterflow and storage then come from the cells only.
+- **Mode `ipr`** (default; exact consistency): sandface stock-tank rates q = I.qAt(p_0) from the solve's `C.I` (oil: q_o with q_w by WC
+  and q_g by GOR; gas: q_g with CGR / WGR liquids), instantaneous. Afterflow and storage then come from the cells only.
+- **Back-flow (R14; option `backflow`, default on, provisional key `res_back`).** When p_0 > p̄r the formation takes fluid:
+  q = −J_r (p_0 − p̄r) in reservoir volume, J_r = the IPR's slope at p̄r (|dq/dp_wf| as q → 0⁺, by a difference of `I.qAt` at p̄r − 1 psi;
+  for p² / m(p) models the same slope applied to the potential difference). The stream is cell 0's contents (face 0 is donor-upwinded by
+  the sign of Q_0: liquid first where cell 0 is liquid — the drift flux still separates the phases inside the well), converted to stock-tank
+  masses with cell 0's properties and booked as `cumOut` at face 0. With `backflow: false` the inflow is clamped to q ≥ 0 and the flag
+  RES_NO_BACKFLOW is raised when p_0 > p̄r. EN5 (a liquid column above p̄r forms a level / gas cap) and EN26 run with back-flow on.
 - **Mode `transient`** (line source with superposition of the IPR's drawdown). Let Φ be the IPR's potential (`p` for oil and linear
   models, `p²` for back-pressure / LIT p², `m(p)` for LIT m(p) and Darcy gas, chosen by `potential: 'auto'`) and
   u(q) = Φ(p̄r) − Φ(I.pwfAt(q)) the steady drawdown in that potential; split u = u_D (Darcy, time-dependent) + u_ND (non-Darcy b·q² or
   D·q terms, instantaneous) where the model gives the split. Then
     Φ(p̄r) − Φ(p_wf(t)) = Σ_j [u_D(q_j) − u_D(q_{j−1})] · f(t − t_j) + u_ND(q(t))
-    f(τ) = clamp( [½ E1(r_w² / (4 η τ)) + S] / [ln(r_e/r_w) − 0.75 + S], 0, 1 ),   η = 0.0002637 k / (φ μ c_t)   (ft²/h, τ in h)
-  E1 = `PRiSM_E1` (01-foundation). As τ → ∞ with a constant rate, f → 1 and the inflow equals the IPR (so the gate also holds in
-  transient mode after stabilisation, RS5). Before t = 0 the well produced at q_op for `tPrior_h` (default 720 h, one term).
-  Each step solves q at the trial p_0 with the past sum precomputed (it does not depend on the current rate): u_D(q_n) =
+    f(τ) = clamp( [½ E1(r_w,e² / (4 η τ)) + S_e] / [ln(r_e / r_w,e) − 0.75 + S_e], 0, 1 ),   η = 0.0002637 k / (φ μ c_t)   (ft²/h, τ in h)
+  with r_w,e = r_w, S_e = S for S ≥ 0 and the effective radius r_w,e = r_w e^{−S}, S_e = 0 for S < 0 (R15 — a stimulated or fractured well
+  never gets f ≤ 0 at small τ). E1 = `PRiSM_E1` (01-foundation). As τ → ∞ with a constant rate, f → 1 and the inflow equals the IPR (so
+  the gate also holds in transient mode after stabilisation, RS5). Negative rates (back-flow) use the linear (Darcy) part only.
+- **Prior history (R15).** `reservoir.prior`: `steady` — before t = 0 the well produced at q_op for `t_h` (default 720 h; one term),
+  the default for `start: 'steady'`; `none` — the reservoir is at p̄r and in equilibrium at t = 0 (no terms), the default for
+  `start: 'static'`; `shutin` — produced at q_op for `t_h`, then shut in for `shut_h` before t = 0 (two terms). The run summary states
+  the prior used.
+- Each step solves q at the trial p_0 with the past sum precomputed (it does not depend on the current rate): u_D(q_n) =
   u_D(q_{n−1}) + [Φ(p̄r) − Φ(p_0) − u_ND(q_n) − Σ_{j<n} Δu_j f(t − t_j)] / max(f(Δt), 1e-3), by a safeguarded Newton on the monotone u.
   Term compaction: consecutive terms with f(t − t_j) = 1 merge into the base; at most 400 terms (two adjacent terms merge at their
   Δu-weighted log-mean time when the count is exceeded; RS8 bounds the error).
@@ -565,26 +723,36 @@ the cumulative error vs the initial mass + cumulative in − out ≤ 1e-8 over 2
 - Gas uses Φ = m(p) by `PRiSM_mpTable` (as `WTS_wp_ipr` does) with η at p̄r (pseudo-time not used — provisional for large drawdowns).
 - **Verification status (D17):** the infinite-acting line source E1 term is an exact analytical solution — `verified` by identity with
   PRiSM model #1 (homogeneous, Stehfest) on a constant-rate drawdown within 0.5 % for t_D > 100 (RS1, X-check C8). The superposition
-  of a non-linear IPR's drawdown, the bounded-reservoir cap at f = 1 (no pseudo-steady depletion in a run) and the gas η are
-  **provisional**.
+  of a non-linear IPR's drawdown, the bounded-reservoir cap at f = 1 (no pseudo-steady depletion in a run), the negative-skin effective
+  radius, back-flow and the gas η are **provisional** (never defaults where `ipr` serves; `transient` is used by the build-up preset only).
 
 ### 4.8 Choke and flowline (surface boundary)
 
-- Downstream pressure p_dn(q): the flowline marched back from the separator by `WTS_flowline_march` (the nodal surface model, its
-  correlation and temperature) on 12 rates (0 … 1.5 × max(q_op, 10 % AOF)), tabulated at `create` and re-tabulated when the produced GOR or
-  WC drifts by more than 10 % from the table's (cost: 12 line marches, §5.6). Monotone cubic in between.
-- Choke rate at p_1 = p_n, p_2 = p_dn, y = p_2 / p_1 (absolute):
+- Downstream pressure p_dn(q): the flowline marched back from the separator by `WTS_flowline_march` with the solve's own options (wp-system
+  ≈ line 396: `C.corrLine`, `C.stepFtLine`, roughness 0.0018 in, accel / Payne on) on 12 rates (0 … 1.5 × max(q_op, 10 % AOF)), tabulated at
+  `create` (reused through `opts.ref`) and re-tabulated when the produced GOR or WC drifts by more than 10 % from the table's reference
+  (the table and its reference GOR / WC are in the Snap, R16). Monotone cubic (PCHIP, `WTS_wp_system._pchip`) in between.
+- Pressures: the engine holds p_n in **psia**; every shared choke function that takes gauge pressure gets p1_psig = p_n − 14.696 and
+  p2_psig = p_dn,psig (the PATM of the solve; R6). y = p_2 / p_1 is formed in absolute pressures.
+- **Critical-ratio rule = the model's nodal rule (R6).** With `surface.choke.subcritical` 'bound' (the default, also when the key is
+  missing): y_c = `WTS_wp_system.GILBERT_YC` = 0.588; critical when y ≤ y_c. With 'sachdeva': y_c from `WTS_chokeperf_sachdeva` at the top
+  cell's state, as the solve. `S.surface.yc` records it.
+- Choke rate at p_1 = p_n, p_2 = p_dn:
   - gas / condensate: `WTS_chokeperf_gasRate` (isentropic nozzle, critical and sub-critical, continuous; the nodal gas choke);
-  - multiphase: critical rate q_c(p_1) by inverting the nodal critical correlation at the top cell's GLR (`WTS_chokeperf_multiphaseRate`);
-    for y ≤ y_c (Sachdeva critical ratio, `WTS_chokeperf_sachdeva`) q = q_c(p_1) — identical to the nodal choke in critical flow;
-    for y > y_c: `subcritical: 'nodal'` (default) q = q_c(p_1) · √(1 − ((y − y_c)/(1 − y_c))²) (a continuous closing shape to zero flow at
-    y = 1, provisional) or `'sachdeva'` (the continuous model scaled by the nodal rate factor, provisional per the Well Performance A2
-    review). The nodal 'subcritical-bound' is a static conservative construction with no transient meaning; the gate fixtures are chosen
-    with critical flow (§3.9).
+  - multiphase, critical (y ≤ y_c): q = q_c(p1_psig) by inverting the nodal critical correlation (`C.choke.corr`, Gilbert family by
+    default) at the top cell's GLR — closed form, identical to the nodal choke in critical flow;
+  - multiphase, sub-critical (y > y_c): the nodal 'bound' rule is a static conservative construction (p1 = max(p1_crit, p2 / y_c)) with no
+    transient meaning; the engine uses, by `opts.choke.subcritical`: `model` (default) — under 'bound' the provisional closing shape
+    q = q_c(p_1) · √(1 − ((y − y_c)/(1 − y_c))²) (continuous at y_c, zero flow at y = 1), under 'sachdeva' the continuous Sachdeva model
+    scaled by the nodal rate factor (as the solve, provisional); `shape` — the closing shape in both cases. Both are provisional (key
+    `choke_sub`) and **never used by a gate fixture** (§3.9 screen (a): critical with a 0.05 margin); `S.surface.regime` is 'critical' |
+    'subcritical' (never 'subcritical-bound' in time).
   - liquid only (GLR < 10 scf/STB): the incompressible orifice of the nodal solver (1022.7 C_d d² √(Δp/SG)).
+- The gate compares `S.surface.regime` with `R.surface.choke.regime` of the steady reference (both 'critical' on the fixtures).
 - Bean changes and shut-in move the effective bean area linearly over `strokeTime_s` (default 10 s); a closed choke is Q_choke = 0.
-- Stock-tank rates at the wellhead from the top cell's composition (oil, water, free + dissolved gas), converted to in-situ volume at
-  (p_n, T_n) for the residual.
+- Stock-tank rates at the wellhead from the top cell's composition (oil, water, free + dissolved formation gas, lift gas), converted to
+  in-situ volume at (p_n, T_n) for the residual. Surface accounting (C8): `qg` = formation gas + lift gas leaving the choke + ESP vent gas
+  (§4.12); `qgForm` = formation gas only; `gorForm` = qgForm / qo (the formation GOR, reported apart); `gor` = qg / qo.
 
 ### 4.9 Temperature
 
@@ -596,9 +764,10 @@ cell TVD); dT_i/dt = (T_target − T_i)/τ_T, τ_T = 2 h (ASSUMED). THT = T of t
 
 ### 4.10 Segregation, settling and liquid fallback
 
-- **Gas–liquid segregation** in a shut-in or slow well comes from the drift closure with j ≈ 0: gas rises at α_g v_d and the liquid
-  falls by the same volume (counter-current through each face, upwinded per phase). A gas cap forms at the top and the liquid collects at
-  the bottom; `inventory.liquidTopMd` / `gasCapBottomMd` are the MDs where α_L crosses 0.5 from below / above (interpolated).
+- **Gas–liquid segregation** in a shut-in or slow well comes from the drift closure with j ≈ 0: gas rises and the liquid falls by the
+  same volume through each face, with the **bounded Godunov flux** of §4.4 (R11) — no gas is drawn from a liquid-full cell and no liquid
+  from a gas-full cell, so a sharp gas cap or liquid level forms without step rejections (EN25). A gas cap forms at the top and the liquid
+  collects at the bottom; `inventory.liquidTopMd` / `gasCapBottomMd` are the MDs where α_L crosses 0.5 from below / above (interpolated).
 - **Oil–water (or condensate–water) settling** within the liquid (provisional): φ_ow = α_o α_w / α_L · v_s (1 − α_w)^{2.39} (hindered
   settling, Richardson-Zaki exponent), v_s = v_s0 · (ρ_w − ρ_o)/(ρ_w − ρ_o)_ref, v_s0 = 0.05 ft/s at Δρ_ref = 15 lbm/ft³ (ASSUMED);
   water moves down relative to oil; applied only where |j_L| < j_hi.
@@ -609,15 +778,22 @@ cell TVD); dT_i/dt = (T_target − T_i)/τ_T, τ_T = 2 h (ASSUMED). THT = T of t
 
 ### 4.11 Critical velocity, foamer and loading
 
-- Critical velocity per cell from the wellhead to the end of tubing (the nodal rule; the rathole below the EOT is reported apart):
-  v_c = C σ_e^¼ (ρ_L − ρ_g)^¼ / ρ_g^½ (ft/s; σ_e dyn/cm, ρ lbm/ft³), C = 1.912 Turner et al. (1969, with the 20 % uplift) or 1.593
-  Coleman et al. (1991); method by the flowing wellhead pressure as `WTS_wp_loading` (Coleman below 500 psia, Turner above 1,000 psia;
-  between, the larger q_c — conservative). **Belfroid et al. (2008) inclination correction:**
-  v_c,θ = v_c · [sin(1.7 β)]^{0.38} / 0.74, β = 90° − θ (angle from horizontal), applied for 0° < θ < 90° (deviated cells;
-  provisional, as Turner and Coleman are in the nodal module).
-- q_c,i (MMscf/d) = 3.067 p_i v_c,i A_i / ((T_i + 460) z_i); `loading.qc_MMscfd` = max_i q_c,i, limiting MD / TVD there;
-  `loading.ratio` = q_g,surface / q_c,max; `vRatioMin` = min_i v_g,i / v_c,i. A steady run's q_c equals `WTS_wp_loading` on the same
-  model within 2 % (EN12).
+- Critical velocity per cell from the wellhead to the end of tubing, **the nodal rule of `WTS_wp_loading`** (R21): the rathole below the
+  EOT is reported apart (`loading.belowEot`); the liquid is **water** when the well makes water (WGR > 0 or WC > 0), else condensate
+  (its ρ_o, σ_o); v_c = C σ^¼ (ρ_L − ρ_g)^¼ / ρ_g^½ (ft/s; σ dyn/cm, ρ lbm/ft³), C = the coefficient of `WTS_wp_system.LOAD.turner` (Turner
+  et al. 1969, with the 20 % uplift) or `LOAD.coleman` (Coleman et al. 1991) — the same constants object, never re-typed. **Method rule =
+  the nodal rule:** Coleman when the flowing wellhead pressure (the same quantity the nodal rule reads, `S.surface.thp`) is below 500,
+  else Turner; between 500 and 1,000 both are reported (`loading.both`) and the verdict uses Turner, as `WTS_wp_loading`.
+- q_c,i (MMscf/d) = 3.067 p_i v_c,i A_i / ((T_i + 460) z_i) with the area of the conduit above the cell's lower face (the nodal `areaAt`
+  rule); `loading.qcVert_MMscfd` = max_i q_c,i over the tubing; `ratio` = q_g,formation,surface / q_c in use; `vRatioMin` = min_i v_g,i /
+  v_c,i; limiting MD / TVD at the maximum.
+- **Belfroid et al. (2008) inclination correction** (option `loading.belfroid`, **default off** — Q16; provisional): v_c,θ = v_c ·
+  [sin(1.7 β)]^{0.38} / 0.74 with β the angle from horizontal **in radians** (β = π/2 − θ, θ from vertical), applied for 0 < β < π/2.
+  `loading.qcBelfroid_MMscfd` is always computed and shown beside the vertical value; the one in use (`qc_MMscfd`, the states and the
+  fallback of §4.10) follows the option. With the option off (the default) the engine is identical to the nodal rule.
+- **Consistency (EN12):** on a steady run with Belfroid off, q_c (both methods), the method choice and the limiting depth equal
+  `WTS_wp_loading(R0, …)` on the same model within 2 %; with Belfroid on, EN13 checks the factor on a 60° cell in closed form and EN12b
+  checks that a vertical fixture is unchanged.
 - **Foamer** (extension `foamer`, provisional): concentration c (ppm by mass in the water) is transported with the water (§4.3) from the
   injection MD (capillary string) or the surface (batch / down the annulus — injected into the top cell); the effective surface tension
   factor sigF = 1 − r(c), r(c) = r_max c / (c + c_50), r_max = 0.6, c_50 = 500 ppm (ASSUMED; Q10). σ_e = σ_L · sigF lowers v_c by
@@ -625,30 +801,43 @@ cell TVD); dT_i/dt = (T_target − T_i)/τ_T, τ_T = 2 h (ASSUMED). THT = T of t
 
 ### 4.12 Gas lift and ESP (extensions)
 
-**Gas lift** (`gaslift`; provisional except the static gas column and the dome correction, which reuse existing engines):
+**Gas lift** (`gaslift`; provisional except the static gas column, the dome correction and the mixed-gravity lift gas, which reuse
+existing engines). Lift gas is the separate component I (§4.1): free only, never dissolved, properties at the mixed gravity through the
+same `pvt.injGas` mechanism as the nodal `C.gl.Finj` (key `liftgas_mix`, identity with nodal), counted in the surface gas rate, the mass
+balance, the Snap, CHANNELS (`qinj`, `liftgas`) and the CSV (R8).
 
-- Mode `nodal`: the lift gas q_inj enters the tubing cell of `R0.lift.injMd` (the nodal balance-point injection) — used by the gate (G5).
+- Mode `nodal`: the lift gas q_inj (`C.gl.qinj`, gravity `C.gl.sg`) enters the tubing cell just above the forced break at `R0.lift.injMd`
+  (§4.2, R9) as an I source — used by the gate (G5).
 - Mode `valves` (default when `M.lift.gl.valves` has rows): annulus = one control volume from the surface to the packer, volume
-  V_a = Σ π/4 (ID_csg² − OD_tbg²)/144 · L; contents: gas mass m_a and a liquid column (kill fluid or produced liquid) of volume V_al with
-  its top at MD z_L. Casing surface pressure from the real-gas law on the gas volume above z_L (Z from `WTS_gaspvt_z`, mean annulus T);
-  casing pressure at depth: gas column p_c(z) = p_cs exp(0.01875 γ_g ΔTVD / (z̄ T̄_R)) (one Z iteration; cross-checked against
-  `WTS_gaslift_casingP` within 0.5 %, LF2), below z_L + ρ_L ΔTVD / 144.
-- Valves (IPO, nitrogen dome; `WTS_wp_gl.pdAt` for the dome at the valve temperature, `WTS_wp_gl.portR`): open when
-  p_c ≥ p_vo = (p_d − R p_t)/(1 − R), close when p_c < p_vc = p_d (hysteresis); orifice valves always open; dummy valves shut.
-  Gas through an open valve above z_L: `WTS_wp_gl.tc({port64, p1: p_c, p2: p_t, T, sg})` (Thornhill-Craver, provisional) → a gas source in
-  the valve's tubing cell; liquid through an open valve below z_L: orifice q = C_d A √(2 g_c 144 Δp / ρ_L) (ft³/s, C_d 0.6) → a water
-  source; no reverse flow (check valves). Annulus balance: dm_a/dt = ṁ_inj − Σ ṁ_valves,gas; dV_al/dt = −Σ q_valves,liquid.
-- Surface injection: constant rate q_inj, or pressure-limited (q = 0 while p_cs ≥ p_inj,max). States: `gl_unloading` (valve n, the
-  deepest passing valve is not the operating valve), `gl_lifting`, `gl_multipoint` (> 1 valve passing for > 10 min).
-**ESP** (`esp`; provisional except the affinity laws, which are exact similarity relations as in the nodal module):
+  V_a = Σ π/4 (ID_csg² − OD_tbg²)/144 · L; contents: lift-gas mass m_a and a liquid column (the model's water as the kill fluid, R22, or
+  produced liquid) of volume V_al with its top at MD z_L. Casing surface pressure from the real-gas law on the gas volume above z_L (Z from
+  `WTS_gaspvt_z`, mean annulus T); casing pressure at depth: gas column p_c(z) = p_cs exp(0.01875 γ_I ΔTVD / (z̄ T̄_R)) (psia; one Z
+  iteration; cross-checked against `WTS_gaslift_casingP` within 0.5 %, LF2), below z_L + ρ_L ΔTVD / 144.
+- **Valve mechanics in gauge (R23).** `WTS_wp_gl.pdAt(ptro, R, T)` returns the dome pressure in psig; the engine forms
+  p_c,g = p_c − 14.696 and p_t,g = p_t − 14.696 from its psia values and evaluates the IPO balance in gauge: open when
+  p_c,g ≥ p_vo = (p_d − R p_t,g)/(1 − R), close when p_c,g < p_vc = p_d (hysteresis); orifice valves always open; dummy valves shut.
+  Gas through an open valve above z_L: `WTS_wp_gl.tc({port64, p1: p_c, p2: p_t, T, sg: γ_I})` (Thornhill-Craver, provisional; the pressure
+  basis as that function documents) → an I source in the valve's tubing cell; liquid through an open valve below z_L: orifice
+  q = C_d A √(2 g_c 144 Δp / ρ_L) (ft³/s, C_d 0.6) → a W source; no reverse flow (check valves).
+- **Sources are evaluated once per step before the pressure solve** from the lagged p_c, p_t (R23, §3.3); they enter Q_src of the volume
+  balance and S_c of the transport. Annulus balance (in `after`): dm_a/dt = ṁ_inj − Σ ṁ_valves,gas; dV_al/dt = −Σ q_valves,liquid.
+- Surface injection: constant rate q_inj, or pressure-limited (q = 0 while p_cs ≥ p_inj,max). States: `gl_unloading` (the deepest
+  passing valve is not the operating valve), `gl_lifting`, `gl_multipoint` (> 1 valve passing for > 10 min).
 
-- The pump is the face `grid.pumpFace`; `faceDp(Q)` = stages · H_f(Q_in) · ρ_in / 144 (psi) with H_f from
-  `WTS_wp_esp.curve(pump, f(t), ν).head(Q_in)` (affinity H ∝ f², q ∝ f), Q_in the in-situ intake rate (bbl/d) of the cell below, ρ_in the
-  homogeneous intake density; its derivative by a ±1 % difference. A check valve at the discharge: Q ≥ 0 at the pump face.
+**ESP** (`esp`; the pump node is the nodal one — identity; ramp, motor lag and trips provisional; R10):
+
+- The pump is the face `grid.pumpFace`. `faceDp` uses the **nodal pump model** `WTS_wp_esp.pump(P, F, q, pInt, T)` (gas-fraction
+  degradation φ / E_n, Turzo viscosity correction, natural-separation venting — the same call the nodal pump node makes) with P the prepared
+  pump (`C.esp` from the context) at the current frequency f(t), q = the stock-tank rates of the intake cell's stream at the face flux Q_k
+  (Q_k times the intake cell's stock-tank-per-in-situ ratios), pInt = the intake cell pressure and T its temperature: dp = pump().dp (psi);
+  ddpdQ by a ±1 % difference in Q. Linearised once per step at the lagged Q (2 pump calls) and used in the root as dp + ddpdQ (Q − Q_lag);
+  if the converged Q differs from Q_lag by > 5 % the step is redone once with the new linearisation point.
+- Vented gas (`ventMscfd` of the pump result, natural separation opt-in as the nodal `natSep`) is removed from the cell below the pump as
+  a negative G (and I) source and **added to the surface gas rate and `cumOut`** (C8): it leaves through the casing to the surface.
+- A check valve at the discharge: Q ≥ 0 at the pump face when stopped.
 - Drive: f follows f_cmd at the ramp limit (default 1 Hz/s), then a first-order motor lag τ_m = 0.5 s (ASSUMED; the shaft inertia is not
-  modelled otherwise). Natural separation (opt-in, the nodal `natSep`) vents gas from the cell below the pump to the surface.
-- Load = `WTS_wp_esp.pump(...)`.bhp / motor hp. States: `esp_off`, `esp_ramp`, `esp_running`, `esp_pumpoff` (p_intake < 50 psia or
-  Q_in < 5 % of the BEP rate with f > 30 Hz for 60 s), `esp_gaslock` (intake GVF > 0.3 for 60 s), `esp_tripped` (load < 0.4 for 30 s →
+  modelled otherwise). Load = `pump(...)`.bhp / motor hp. States: `esp_off`, `esp_ramp`, `esp_running`, `esp_pumpoff` (p_intake < 50 psia
+  or Q_in < 5 % of the BEP rate with f > 30 Hz for 60 s), `esp_gaslock` (intake GVF > 0.3 for 60 s), `esp_tripped` (load < 0.4 for 30 s →
   f_cmd = 0) — thresholds ASSUMED (provisional).
 
 **Intermittent production** (`cycle`, a controller with no physics): `timer` (open_h / shut_h / cycles) or `pressure` (open when the
@@ -664,9 +853,10 @@ THP — or CHP for a gas-lift well — reaches p_open; shut when q_g < q_close o
   inclination test, provisional); the cell holding the shut-in gas–liquid interface → `segregated`. Barnea's (1987) unified map is a
   later option (non-goal for v4.6).
 - **Well states** (evaluated after every step; a change needs the new condition to persist for 120 s of simulated time; the engine keeps
-  its own ring buffer of (t, liq, q_g, p_0) at 30 s spacing for the trends; thresholds ASSUMED and provisional):
+  its own ring buffer of (t, liq, q_g, p_0) at 30 s spacing for the trends — the buffers, the pending candidate and the dying / heading
+  histories are in the Snap; thresholds ASSUMED and provisional; `ratio` uses the q_c in use, §4.11):
 
-| State | Rule (q_ref = the highest surface rate since the last open) |
+| State | Rule (q_ref = `S.qRef`, the highest surface rate since the last open `S.tOpen` — both in the Snap, R16) |
 |---|---|
 | `shutin` | choke closed (or a downhole shut-in) |
 | `dead` | open and (q_surface < 2 % q_ref, or q_res < 1 % q_ref with p̄r − p_wf < 1 psi) for 10 min |
@@ -685,27 +875,34 @@ THP — or CHP for a gas-lift well — reaches p_open; shut when q_g < q_close o
 
 ### 4.14 Method table (D17)
 
-| Key | Method | verified | What would verify it |
-|---|---|---|---|
-| `cons` | conservative upwind transport, black-oil flash, volume coupling | identity | mass balance to round-off (EN2, C2) — a numerical property, not a published example |
-| `corr` | correlation-consistent closure on the model's correlation | as the correlation (B&B default: verified) | the gate (steady run = nodal) |
-| `driftflux` | Zuber-Findlay / Shi et al. drift flux | false | a published drift-flux holdup example (Shi et al. data tables) — Q9 |
-| `res_ipr` | instantaneous IPR inflow | identity | = `WTS_wp_ipr` |
-| `res_ls` | line-source E1 | true (analytical) | identity with PRiSM #1 (RS1) |
-| `res_sup` | superposition of a non-linear IPR drawdown, bounded cap, gas η | false | a published multi-rate example |
-| `choke_crit` | nodal critical choke | as the nodal choke | = the nodal solve |
-| `choke_sub` | sub-critical closing shape / Sachdeva scaled | false | a published sub-critical choke example |
-| `temp_relax` | temperature relaxation τ_T | false | field data |
-| `settle` | oil–water hindered settling | false | a published settling example |
-| `fallback` | liquid fallback below v_c | false | a published loading transient |
-| `turner`, `coleman`, `belfroid` | critical velocity | false | Q9 (the papers' examples) |
-| `foamer` | surface-tension factor r(c) | false | published lab data — Q10 |
-| `regime_lowv` | low-velocity regime labels | false | Q9 |
-| `gl_valves` | annulus, IPO valves, Thornhill-Craver | false | a published unloading example |
-| `esp_start` | ramp, motor lag, trips | false | field data |
-| `states` | well-state thresholds | false | owner review |
+| Key | Method | verified | Default? | What would verify it |
+|---|---|---|---|---|
+| `cons` | conservative donor transport, black-oil flash, volume-balance coupling | identity | yes | mass balance to round-off (EN2, C2), EN23 — a numerical property, not a published example |
+| `corr` | correlation-consistent closure on the model's correlation through `WTS_flowline_gradAt` (incl. tuning multipliers) | as the correlation (B&B default: verified) | yes | the gate (steady run = nodal), G1–G7 |
+| `driftflux` | Zuber-Findlay / Shi et al. drift flux (counter-current, near-stagnant, shut-in) | false | only where `corr` has no meaning (w < 1) | a published drift-flux holdup example (Shi et al. data tables) — Q9 |
+| `godunov` | bounded counter-current face flux | identity | yes | a numerical property (positivity, EN25) |
+| `compliance` | tubing compliance and water compressibility floor | false | yes (no effect on any steady state) | a published shut-in storage example |
+| `res_ipr` | instantaneous IPR inflow | identity | yes | = `WTS_wp_ipr` |
+| `res_back` | reverse flow into the formation by the IPR slope at p̄r | false | yes (no alternative; inactive while p_0 < p̄r) | a published kill / cross-flow example |
+| `res_ls` | line-source E1 | true (analytical) | build-up preset | identity with PRiSM #1 (RS1) |
+| `res_sup` | superposition of a non-linear IPR drawdown, bounded cap, negative-skin r_w,eff, gas η | false | **never a default** | a published multi-rate example |
+| `choke_crit` | nodal critical choke (model's y_c rule) | as the nodal choke | yes | = the nodal solve |
+| `choke_sub` | sub-critical closing shape / Sachdeva scaled | false | **never a default for the nodal regime test**; active only when the choke goes sub-critical in time (no alternative exists) | a published sub-critical choke example |
+| `liftgas_mix` | lift gas as a separate free component at the mixed gravity (`pvt.injGas`) | identity | yes | = the nodal `C.gl.Finj` (G5) |
+| `esp_node` | the nodal pump model `WTS_wp_esp.pump` as a face Δp | identity | yes | = the nodal pump node (G6) |
+| `temp_relax` | temperature relaxation τ_T | false | no (`frozen` is the default) | field data |
+| `settle` | oil–water hindered settling | false | yes where no alternative (shut-in liquid) | a published settling example |
+| `fallback` | liquid fallback below v_c | false | no (Q1) | a published loading transient |
+| `turner`, `coleman` | critical velocity | false | as the nodal module | Q9 (the papers' examples) |
+| `belfroid` | Belfroid inclination correction of v_c | false | **no** (Q16; both q_c always shown) | Q9 (the paper's examples) |
+| `foamer` | surface-tension factor r(c) | false | only when the user adds foamer | published lab data — Q10 |
+| `regime_lowv` | low-velocity regime labels | false | display | Q9 |
+| `gl_valves` | annulus, IPO valves, Thornhill-Craver | false | mode `valves` when valves exist | a published unloading example |
+| `esp_start` | ramp, motor lag, trips | false | ESP runs | field data |
+| `states` | well-state thresholds | false | display | owner review (Q15) |
 
-The page's run summary lists the keys with `verified: false` that were active, with the provisional label.
+The page's run summary lists the keys with `verified: false` that were active, with the provisional label. `welldyn-validate --gate`
+checks that no key marked "never a default" is active in a run made with default settings on any gate fixture.
 
 ---
 
@@ -713,96 +910,132 @@ The page's run summary lists the keys with `verified: false` that were active, w
 
 ### 5.1 Consistency gate (WD-D5) — `welldyn-gate` and `welldyn-validate.js --check`
 
-For each of `gasVert`, `gasHz`, `oilVert`, `oilDev` (G1–G4, WD1), `gasLift` (mode `nodal`), `esp` (G5–G6, WD4):
-`R = WTS_wp_system.solve(M)`; `sim = create(M, {start:'steady', reservoir:{mode:'ipr'}, closure:'corr', temperature:'frozen', cells: 60})`;
-run until **steady** — over the last 600 s of simulated time |Δq|/q < 1e-4 per 60 s and |Δp_wf| < 0.01 psi per 60 s — capped at 6 h. Then:
+For each of `gasVert`, `gasHz`, `oilVert`, `oilVertTuned`, `oilDev` (G1–G4 + G7, WD1), `gasLift` (mode `nodal`), `esp` (G5–G6, WD4):
+`R = WTS_wp_system.solve(M)`; `sim = create(M, {start:'steady', reservoir:{mode:'ipr'}, closure:'corr', temperature:'frozen', cells: 60})`
+(all other options at their defaults — Belfroid off, fallback off); run until **steady** (R20): the means of q, p_wf and THP over two
+consecutive 600 s windows of simulated time differ by |Δq̄|/q̄ < 1e-3, |Δp̄_wf| < 0.05 psi and |ΔTHP̄| < 0.05 psi, capped at 6 h. A
+bounded oscillation is allowed: its amplitude (max − min in the last window) is reported and must stay ≤ 0.5 % of q̄ and ≤ 2 psi in p_wf
+(else NOT_STEADY and the row fails). Then, on the **time-means of the last window**:
 
 | Quantity | Tolerance |
 |---|---|
-| surface rate (q_o or q_g) | ≤ 2 % of R.op.q |
+| surface rate (q_o or q_g formation) | ≤ 2 % of R.op.q |
 | BHP (p_wf at the mid-perforations) | ≤ 1 % of R.pwf |
 | THP | ≤ max(1 %, 3 psi) |
-| choke regime | equal (critical) |
-| gas lift / ESP | injection cell = the cell of R.lift.injMd; pump intake within 1 % |
+| choke regime | `S.surface.regime` = `R.surface.choke.regime` (critical on every fixture) |
+| gas lift / ESP | injection cell = the cell above the `R.lift.injMd` break; q_inj equal; pump intake within 1 % |
 
-Also: the same six from `start: 'static'` reach the same point within the same tolerances (oil and gas wells that flow naturally; gas
-lift and ESP from their start scenario), and transient mode converges to the IPR mode within 0.5 % after stabilisation (RS5). Grid
-convergence: 30 / 60 / 120 cells — BHP(60) vs BHP(120) ≤ 0.5 % (C12). If a fixture misses, cells, closure numerics and the step limits are
-tuned — never the tolerances.
+Also: the same seven from `start: 'static'` (reservoir prior `none`) reach the same point within the same tolerances (oil and gas wells
+that flow naturally; gas lift and ESP from their start scenario), and transient mode converges to the IPR mode within 0.5 % after
+stabilisation (RS5). Grid convergence: 30 / 60 / 120 cells — BHP(60) vs BHP(120) ≤ 0.5 % (C12). **Diagnostic (C2, report only):**
+`welldyn-validate --check` also re-runs the nodal march with `stepFt` = the cell length and prints the gate distance against both, which
+separates the discretisation error from the model error. If a fixture misses, cells, closure numerics (ω, j_lo / j_hi) and the step limits
+are tuned — never the tolerances.
 
 ### 5.2 Engine tests (WD1, `welldyn-engine`, `welldyn-res`)
 
 EN1 grid snapping (no cell across a break; Σ len = path MD; Σ dz = TVD) · EN2 mass balance ≤ 1e-10 per step, ≤ 1e-8 cumulative over the
 `shutInBuildup` scenario · EN3 static gas column p_wh vs `WTS_wp_system.shutIn` gas-filled SITHP within 1 % · EN4 partly liquid-filled
-static columns vs `shutIn.partLiquid` within 1 % · EN5 static liquid well whose column exceeds p̄r forms a gas cap / liquid level ·
+static columns vs `shutIn.partLiquid` within 1 % · EN5 static liquid well whose column exceeds p̄r (`killColumn`, back-flow on) forms a gas cap / liquid level ·
 EN6 steady start equals the nodal traverse at t = 0 within 1 % at every cell · EN7 open from static: oil well flows and settles (US8)
 · EN8 shut-in: afterflow decays, the gas cap forms, the liquid top settles, segregation conserves mass · EN9 oil–water settling moves water
-down (with settling on) · EN10 CFL respected; rejected steps halve; STEP_FAIL path · EN11 every gate cell has |j| > j_hi · EN12 q_c vs
-`WTS_wp_loading` within 2 % · EN13 Belfroid factor on a 60° cell (closed form) · EN14 choke stroke and bean step: the rate moves
-monotonically to the new nodal point (oilVert beans 24 → 32) · EN15 snapshot / restore bit-identical continuation · EN16 determinism:
+down (with settling on) · EN10 CFL (phase and kinematic-wave speeds) respected; rejected steps halve; STEP_FAIL / PICARD paths · EN11 every gate face has blend
+weight w = 1 (co-current, |j| ≥ j_hi) — incl. the rathole and ESP intake cells (C1) · EN12 q_c (Turner and Coleman), method choice and
+limiting depth vs `WTS_wp_loading` within 2 % with Belfroid off; EN12b Belfroid on leaves a vertical fixture unchanged · EN13 Belfroid
+factor on a 60° cell (closed form, β in radians) · EN14 choke stroke and bean step: the rate moves
+monotonically to the new nodal point (oilVert beans 24 → 32) · EN15 snapshot / restore bit-identical continuation; EN15b Snap field coverage (every field the step reads is in the Snap, R16) · EN16 determinism:
 the same scenario with different `run` chunkings (1 s, 7 s, 600 s) gives bit-identical results · EN17 events land exactly on their times ·
 EN18 gas-well loading: `gasLoadDown` with fallback goes stable → marginal → loading (→ dead) and the switch happens within one
 recording interval of q_g crossing q_c,max (Turner switch-over, C4) · EN19 states persistence (no chatter) · EN20 extension hook order and
 contract with a dummy extension · EN21 `driftflux` closure: bubble rise in a closed liquid column at the drift velocity (closed form) ·
-EN22 no timers, no DOM, no storage in the engine files (static check).
+EN22 no timers, no DOM, no storage in the engine files (static check) · EN23 volume-balance sign (R1): a closed column (choke shut, no
+inflow) under an imposed pressure rise gives Q_out < Q_in in every cell, and an over-full cell expels more · EN24 one fluid context (R18):
+the engine's props at 10 (p, T) points equal those of `WTS_wp_system.context(M).C.F` and of the solve's traverse rows bit for bit ·
+EN25 `levelSettle`: a sharp gas cap over a liquid level settles with zero rejected steps, no negative mass and the liquid top within one
+cell of the volume-balance value (R11) · EN26 back-flow (R14): `killColumn` with back-flow on loses liquid to the formation until
+p_0 ≈ p̄r; with it off the flag RES_NO_BACKFLOW appears · EN27 Picard sweeps (R3): converged sweeps change p_0 by ≤ 0.01 psi; sweep and
+iterate counts per step reported · EN28 Rv refusal (`RV_NOT_IN_TRANSIENT`) and the per-cell GOR cap (R13b: a shut-in oil column under a gas
+cap gets its own-ratio B_o, not the production-GOR B_o) · EN29 dissolved-gas flux at the donor's actual G_d/N_o in an undersaturated cell
+(R13a) · EN30 `corr` holdup in a horizontal cell and at α_g ≈ 0.97 equals the correlation's (no clamp to no-slip, R4).
 RS1 E1 line source vs PRiSM #1 within 0.5 % (t_D > 100) · RS2 f(∞) = 1 reproduces the darcy IPR · RS3 superposition of two rate steps (oil,
-linear) = analytical · RS4 build-up: the Bourdet derivative of p_ws(Δt) in the infinite-acting window (10 t_wbs < Δt < 0.1 t_pss) on the
-`buildup` fixture equals 70.6 q B μ / (k h) within 3 % (C3) · RS5 transient → IPR after stabilisation · RS6 gas p² / m(p) potentials ·
+linear) = analytical · RS4 build-up (`shutInBuildup`, reservoir `transient` explicitly, C10): the Bourdet derivative of p_ws(Δt) in the infinite-acting window
+(10 t_wbs < Δt < 0.1 t_pss, both pinned in the fixture) on the `buildup` fixture equals 70.6 q B μ / (k h) within 3 % (C3) · RS5 transient → IPR after stabilisation · RS6 gas p² / m(p) potentials ·
 RS7 non-Darcy part instantaneous · RS8 term compaction error ≤ 0.05 psi · RS9 missing parameters keep `ipr` with a message · RS10 the
-`horner` / `derivative` helpers.
+`horner` / `derivative` helpers · RS11 negative skin (S = −4): f > 0 and monotone for all τ > 0 with r_w,eff (R15) · RS12 prior history:
+`none` keeps p_wf = p̄r on a shut, static start; `steady` / `shutin` reproduce the analytical superposition.
 
 ### 5.3 Lift tests (WD4, `welldyn-lift`)
 
 LF1 annulus volume · LF2 casing gas column vs `WTS_gaslift_casingP` ≤ 0.5 % · LF3 valve open / close hysteresis on p_vo / p_vc · LF4
 Thornhill-Craver through `WTS_wp_gl.tc` unchanged · LF5 `glUnload`: valves uncover top-down, the operating valve ends at the design's
 operating valve (or the deepest reachable, reported), multi-pointing flagged, casing pressure falls at each transfer · LF6 gas-lift gate
-(nodal mode, G5) · LF7 casing heading vs `WTS_wp_gl.asheim` verdict on two fixtures (stable / unstable) — a cross-check, provisional ·
+(nodal mode, G5; injection cell above the `R.lift.injMd` break) · LF7 casing heading vs `WTS_wp_gl.asheim` verdict on two fixtures (stable / unstable) — a cross-check, provisional ·
 LF8 ESP ramp: intake draws down, settles on the pumped root (G6) · LF9 pump-off · LF10 gas lock · LF11 underload trip · LF12 check valve:
 no back-flow when stopped · LF13 foamer transport delay from the injection MD · LF14 foamer: q_c falls by sigF^¼ (C11) and `foamerOn`
 unloads gasLoad (state loading → unloading → stable or marginal) · LF15 oil heading / stability (§4.13) · LF16 cycle timer events ·
 LF17 cycle pressure trigger with minimum times · LF18 intermittent gas well: liquid removed per cycle reported · LF19 extension
-snapshot / restore · LF20 lift states and labels.
+snapshot / restore · LF20 lift states and labels · LF21 ESP `faceDp` equals `WTS_wp_esp.pump(...).dp` of the nodal pump node at the
+same intake state (R10) · LF22 ESP vent gas (natural separation on) leaves the cell below the pump and appears in `qg`, `qvent` and
+`cumOut` (C8) · LF23 lift gas: m_I never dissolves (undersaturated oil below p_b keeps its R_s), mixed-gravity properties equal the nodal
+`Finj` at the same (p, T), the surface `qg` = qgForm + qinj at steady state, valve balance in gauge (R8, R23).
 
 ### 5.4 Recorder, page and view tests
 
 RC1–RC16 (WD3): sampling cadence, event samples, `at` interpolation, snapshots and the cap rule, truncate / continue (bit-identical with
 an uninterrupted run on the real engine — integration), marks, CSV columns / units (field and Metric) / decimal comma / escaping, RunFile
 round trip (series identical; hash), `fromFile` errors (format, version, too big, malformed), snapshots dropped above 5 MB, replay re-run
-reproduces the series bit for bit, cases save / list / remove / caps (20, 24 kB), `dyn` key carried in a project file and per well.
+reproduces the series bit for bit (same `engineId`) and, with a different `engineId` from the mock, shows the info note within tolerance,
+never "corrupt" (R25), the `state` column indexes `STATE_ORDER`, cases save / list / remove / caps (20, 24 kB), `dyn` key carried in a project file and per well.
 PG1–PG28 (WD3) and VW1–VW14 (WD2): §6.
 
 ### 5.5 `welldyn-validate.js` (WD5)
 
 - `--gate`: the §4.14 method table (verified flags as shipped, label present in the page / report for each provisional method).
-- `--check`: X1–X16: the gate G1–G6, static columns (EN3 / EN4), mass balance on all scenarios, build-up derivative (RS4), Turner switch
+- `--check`: X1–X18: the gate G1–G7 (time-means, amplitude reported) with the C2 diagnostic (nodal march at stepFt = cell length), static columns (EN3 / EN4), mass balance on all scenarios, build-up derivative (RS4), Turner switch
   (EN18), E1 vs PRiSM (RS1), foamer factor (C11), grid convergence (C12), determinism and restore (EN15 / EN16), casing column (LF2),
-  unloading sequence (LF5), ESP gate (LF8), transient → IPR (RS5).
+  unloading sequence (LF5), ESP gate (LF8), transient → IPR (RS5), sharp level (EN25), back-flow (EN26).
 - `--time`: per §5.6, measured on the container (Node), with step counts; `--html` loads the built page; with Playwright and Chromium at
   `/opt/pw-browsers` it also reports the achieved speed of the page at ×1000 with drawing (report only; never `playwright install`).
-- Exit 1 on a failed gate / check row; the timing rows fail only above 2 × the WD1 baseline (as the Well Performance gate).
+- Exit 1 on a failed gate / check row; the timing rows fail only above 2 × the WD1 baseline (as the Well Performance gate); the timing table
+  prints Δt, steps and the cost per step for every scenario of §5.6 so the derived budgets can be re-checked.
 
 ### 5.6 Budgets (container Node; phone factor ×3 for planning)
 
-| Operation | Budget |
-|---|---|
-| `create` (one nodal solve + grid + line table) | ≤ 400 ms (≈ 16–20 E of the nodal solve + 12 line marches) |
-| one step, 60 cells, flowing, `corr` (one correlation call per cell, ≤ 12 root iterations of O(n)) | ≤ 1.5 ms mean |
-| simulated / wall time, flowing fixtures, 60 cells, headless | ≥ 1,000× (the browser target is ≥ 500× with drawing on a laptop) |
-| simulated / wall time, shut-in (Δt at dtMax) | ≥ 10,000× |
-| 24 h `gasLoadDown` + 6 h shut-in + reopen scenario | ≤ 30 s wall |
-| 24 h `shutInBuildup` (oil) | ≤ 15 s wall |
-| `glUnload` 12 h | ≤ 60 s wall |
-| `espStart` 2 h | ≤ 10 s wall |
-| snapshot / restore, 60 cells | ≤ 2 ms |
-| page frame: wellbore + particles at 60 cells | ≤ 4 ms (op count reported in Node; ms in the browser report) |
-| charts | redrawn at most every 6th frame while playing (~10 Hz), always on pause / scrub |
-| recorder memory, 24 h at defaults | ≈ 2 MB series + ≈ 1,440 snapshots ≈ 10 MB ≤ 32 MB cap |
-| replay file | ≤ 5 MB (snapshots dropped above) |
-| Round-9 parse of the new files | ≤ +15 ms on the app load |
-| Well Dynamics acceptance files | ≤ 90 s in total (gate and lift scenarios are `integration: true`) |
+Budgets are derived from the expected time step and step count of each fixture (R19), not set independently. Expected Δt: flowing gas
+cells of ≈ 167 ft at gas velocities of 20–60 ft/s → Δt ≈ 1.4–4 s (CFL 0.5); flowing oil (v_g 5–20 ft/s near the top) → 4–15 s; shut-in
+after the afterflow → dtMax 60 s. Step cost (60 cells, flowing, `corr`): 2–3 props calls + 1 correlation call per cell + 4–6 root iterates
+× 1–2 Picard sweeps of O(n) arithmetic (§4.6). **WD0 lead spike (§9.0):** a prototype loop of exactly that work (props / gradAt calls on
+the `gasVert` and `oilVert` grids + the arithmetic passes, no transport logic) is timed and recorded in §11.0 and in `BASELINE`; if the
+measured step cost exceeds the 2.5 ms target, WD0 resets the per-step and wall budgets below by the measured factor before Wave 1 (the
+derivation stays), and the cell-count default is reviewed (Q7).
 
-If a budget is missed: the property table bins, the correlation call per cell per step, dtMax and the cell count default are tuned —
-never the accuracy tolerances of §5.1.
+| Operation / scenario | Expected Δt · steps | Budget |
+|---|---|---|
+| `create`, cold (context + one nodal solve ≈ 400–450 ms measured in A1 + grid + 12 line marches) | — | ≤ 800 ms |
+| `create` with `opts.ref` of the same model hash (C7) | — | ≤ 30 ms |
+| one step, 60 cells, flowing, `corr` | — | ≤ 2.5 ms mean (target; the spike confirms) |
+| one step, shut-in / static (no correlation call, w = 0) | — | ≤ 1.0 ms mean |
+| simulated / wall, flowing gas, headless | Δt 1.4–4 s | ≥ 500× (×1000 shows "running slower than ×1000" on fast gas wells — expected) |
+| simulated / wall, flowing oil, headless | Δt 4–15 s | ≥ 1,500× |
+| simulated / wall, shut-in at dtMax | Δt 60 s | ≥ 20,000× |
+| gate G1–G7 (from steady; typically settled within 1 h simulated, cap 6 h) | gas ≈ 2,400 steps / h, oil ≈ 600 / h | ≤ 8 s each (gas), ≤ 3 s (oil) per simulated hour |
+| `gasLoadDown` 8 h (gasLoad, lower rates) | Δt 2–6 s, ≈ 7,000 steps | ≤ 18 s |
+| `shutInBuildup` 2 h + 8 h shut-in (oil, transient) | ≈ 1,000 + ≈ 600 steps | ≤ 5 s |
+| `cycleTimer` 12 h | ≈ 7,000 open + ≈ 500 shut | ≤ 20 s |
+| `foamerOn` 10 h | ≈ 9,000 steps | ≤ 23 s |
+| `glUnload` 12 h | Δt 3–6 s, ≈ 10,000 steps | ≤ 25 s |
+| `espStart` 2 h | ramp at Δt ≤ 5 s, ≈ 1,500 steps | ≤ 4 s |
+| `levelSettle` 8 h / `killColumn` 2 h (shut-in, counter-current) | ≈ 800 / ≈ 400 steps | ≤ 2 s each |
+| snapshot / restore, 60 cells | — | ≤ 2 ms |
+| page frame: wellbore + particles at 60 cells | — | ≤ 4 ms (op count reported in Node; ms in the browser report) |
+| charts | — | redrawn at most every 6th frame while playing (~10 Hz), always on pause / scrub |
+| recorder memory, 24 h at defaults | — | ≈ 2.2 MB series + ≈ 1,440 snapshots × ≈ 12 kB ≈ 17 MB ≤ 32 MB cap |
+| replay file | — | ≤ 5 MB (snapshots dropped above) |
+| Round-9 parse of the new files | — | ≤ +15 ms on the app load |
+| Well Dynamics acceptance files | — | ≤ 150 s in total; long scenarios run shortened (first 1–2 h) in the acceptance tests and in full only in `welldyn-validate --check` / `integration: true` |
+
+If a budget is missed: the property calls per cell per step (re-use of the step's props for the closure stream where the views coincide),
+dtMax, the Picard tolerance and the cell-count default are tuned — never the accuracy tolerances of §5.1.
 
 ---
 
@@ -859,7 +1092,9 @@ WHP vs rate (the run's path); depth log (p, α_L, v_g with v_c) vs MD; lift (cas
 play(): if (raf) return; raf = requestAnimationFrame(frame)
 frame(ts): raf = 0
    if (!document.getElementById('wd_root') || document.hidden || !ST.playing) return            // left the page / hidden / paused → stop
-   simSeconds = speed × clamp(ts − lastTs, 0, 100 ms)/1000;  sim.run(simSeconds, {maxWallMs: 10})  // deterministic chunks (WD-D8)
+   target += speed × clamp(ts − lastTs, 0, 100 ms)/1000          // C4: a simulated-time target, not "seconds from now"
+   if (target > sim.state.t) sim.run(target − sim.state.t, {maxWallMs: 10})   // run never splits a step: the overshoot is carried, not lost
+   if (target < sim.state.t − speed × 0.1) target = sim.state.t     // after a wall-limited frame the target is not allowed to run away
    achieved speed = simulated / wall over the last second (shown; "running slower than ×N" when lower)
    draw wellbore (every frame), KPIs, charts (every 6th frame); recorder samples via rec.attach
    if (sim ended or a fatal step error) { pause(); return }
@@ -872,8 +1107,9 @@ visible does not auto-resume. The page opens **paused**; the smoke test opens it
 ### 6.7 Reports
 
 `collectPageReport(#pgBody)` captures `#wd_res` (inputs, run summary, KPI chips, wellbore and trend canvases, state timeline, verdicts,
-provisional list, Notes); toolbar, timeline, editors, chart tabs and the navigator are `.rp-skip`. Quick Report: the same block; snapshot
-≤ 60 kB on the fixtures (PG). `REPORT_DISCLAIMER` prints as on every page.
+provisional list, Notes); toolbar, timeline, editors, chart tabs and the navigator are `.rp-skip`. The two report canvases have fixed CSS
+sizes — wellbore 360×480, trend 640×220 (C5) — and WD3 measures the Quick Report snapshot on every fixture (≤ 60 kB, PG; if exceeded, the
+trend is drawn at 1× device pixel ratio first, then the wellbore at 300×400). `REPORT_DISCLAIMER` prints as on every page.
 
 ### 6.8 Units, keyboard, ARIA
 
@@ -892,10 +1128,12 @@ provisional list, Notes); toolbar, timeline, editors, chart tabs and the navigat
 
 Registry entry `welldyn` {key, title 'Well Dynamics', navTitle 'Well Dynamics', sub 'Transient well simulation: loading, unloading,
 shut-in, start-up and lift in time', group 'Production & Reservoir', icon '&#8767;', badge 'Production', bc 'dc-b-green', desc,
-`hooks: {silent: true, after}`, render}. `window.calcWellDyn()` re-reads the model (`WTS_wp_model.read()`), rebuilds the steady reference
-and the static preview — it never starts a run. `WTS_state.welldyn = {v:1, ok, playing, t, state, summary, model:{ok, notes}}`.
+`hooks: {silent: true, after}`, render}. `window.calcWellDyn()` re-reads the model (`WTS_wp_model.read()`), and rebuilds the steady reference
+only when the model hash (M without `dyn`) changed — the page keeps one cached `sim.ref` per hash (C7), so a scenario-input change costs
+no nodal solve — then the static preview; it never starts a run. `WTS_state.welldyn = {v:1, ok, playing, t, state, summary, model:{ok, notes}}`.
 Events listened to: `wts:well-changed`, `wts:project-loaded` (stop, discard the run after a confirm if it has data, re-read),
-`wts:wellperf-model-changed` (the model changed: banner "the well model changed — Rebuild" — a running sim keeps its frozen M),
+`wts:wellperf-model-changed` (the model changed: banner "the well model changed — Rebuild" — a running sim keeps its frozen M; an
+event whose `detail.keys` is exactly `['dyn']` — the page's own case save — is ignored, R17),
 `wts:unit-system-changed` (re-render readouts). Test hook `WTS_welldyn_page` {state, sim, rec, play, pause, frame(ts) (drives one frame in
 tests), csv, runFile, load, scenario}.
 
@@ -910,7 +1148,8 @@ tests), csv, runFile, load, scenario}.
 | `wtspref_wd_speed`, `wtspref_wd_layer`, `wtspref_wd_tab`, `wtspref_wd_cols`, `wtspref_wd_follow` | device | speed, wellbore layer, chart tab, CSV columns, follow-the-front | WD3 |
 | replay files `.wdrun` | user files | §3.7 | WD3 |
 
-Identity rules for the `dyn` edit (WD0): `wellperf-shapes` WS1 fixture hash unchanged; `WTS_wp_model.read()` of a record without `dyn`
+The engine's `mHash` hashes M **without** `M.dyn` plus the resolved options (incl. the resolved reservoir parameters), so saving a case
+never invalidates the recorder's snapshots (R17). Identity rules for the `dyn` edit (WD0): `wellperf-shapes` WS1 fixture hash unchanged; `WTS_wp_model.read()` of a record without `dyn`
 deep-equals today's M; `WTS_wp_cases` TABLES unchanged (cases of Well Performance never carry `dyn`); the full `wellperf-*` suite and
 `wellperf-validate --check` unchanged. Recorded runs are not stored in the browser (memory and files only); a reload loses an unsaved
 run (the page warns on leave when a run has data — via the host's existing leave confirmation if present, else a banner).
@@ -938,20 +1177,31 @@ run (the page warns on leave when a run has data — via the host's existing lea
 
 ## 9. Work packages, lanes and merge order
 
-### 9.0 WD0 — contracts and skeleton (lead, before Wave 1; branch `wd/wd0` from `wd/plan`)
+### 9.0 WD0 — contracts and skeleton (lead, before Wave 1; branch `wd/wd0` from `wd/int`)
 
-Host `__NAV_ORDER` edit; `sidebar-nav.test.js` (6 rows, the row after the hub); `ux-layout-check.js` fit; the `dyn` key in
-`49-calc-wp-model.js` with its identity checks; the six stub files + the help stub entry (non-PART, minimal) with `__WD_STUBS`;
-`tests/_welldyn-shapes.js` (fixtures tuned and pinned with the real Well Performance engines, §3.9), `tests/_welldyn-mock.js`,
-`welldyn-shapes.test.js`, `welldyn-names.test.js`; smoke +4 checks (namespaces present, `welldyn` registry entry, `__WD_STUBS` empty at
-release — skipped while stubs exist, no pending timers 5 s after opening `welldyn`); the §11 WD0 record. Merged into `wd/int` before any
-lane starts. Gates: smoke, `--file` runs of the new tests and the full `wellperf-*` + `sidebar-nav` set.
+1. Host `__NAV_ORDER` edit; `sidebar-nav.test.js` both assertions (the full button list with the hub members and the 6-row list, §2.1,
+   R24); `ux-layout-check.js` fit at 1280×800.
+2. The `dyn` key in `49-calc-wp-model.js` with its identity checks (§7).
+3. The additive export `WTS_flowline_gradAt` in `49-calc-flowline.js` + `flowline-gradat.test.js` (R5).
+4. The six stub files + the help stub entry (non-PART, minimal; the help group route list gains `welldyn`) with `__WD_STUBS`; the stub
+   engine exports the frozen orders `COMP`, `REGIMES`, `STATES`, `STATE_ORDER`, `CHANNELS` (they are contract, not physics).
+5. `tests/_welldyn-shapes.js` (fixtures tuned and pinned with the real Well Performance engines, the static and dynamic screens of §3.9,
+   the frozen orders, `t_wbs` / `t_pss` of `buildup`), `tests/_welldyn-mock.js` (revision-2 shapes, §3.10), `welldyn-shapes.test.js`,
+   `welldyn-names.test.js`.
+6. **Lead spike (R19, R20):** a throw-away prototype (in the scratchpad, not committed) of the step work on `gasVert` and `oilVert`
+   (props + `gradAt` per cell, the down / up passes, 1 h of simulated time with a crude transport) — records the step cost, Δt and whether
+   both settle (§11.0); resets the §5.6 budgets by the measured factor if the 2.5 ms target is missed, before Wave 1 starts.
+7. Smoke +4 checks (namespaces present, `welldyn` registry entry, `__WD_STUBS` empty at release — skipped while stubs exist, no pending
+   timers 5 s after opening `welldyn`); the §11 WD0 record.
+
+Merged into `wd/int` before any lane starts. Gates: smoke, `--file` runs of the new tests and the full `wellperf-*` + `sidebar-nav` +
+`help-content` set, `wellperf-validate.js --check` unchanged.
 
 ### 9.1 Wave 1 (parallel, each branch from `wd/int` after WD0)
 
 | Lane | Branch | Files | Depends on | Done when |
 |---|---|---|---|---|
-| **WD1 engine + reservoir** | `wd/wd1` | `49-calc-wd-engine.js`, `49-calc-wd-res.js`, `welldyn-engine`, `welldyn-res`, `welldyn-gate` (G1–G4) | WD0 | EN1–EN22, RS1–RS10, G1–G4 pass; §5.6 engine budgets measured (BASELINE filled through the lead) |
+| **WD1 engine + reservoir** | `wd/wd1` | `49-calc-wd-engine.js`, `49-calc-wd-res.js`, `welldyn-engine`, `welldyn-res`, `welldyn-gate` (G1–G4, G7) | WD0 | EN1–EN30, RS1–RS12, G1–G4 and G7 pass; §5.6 engine budgets measured (BASELINE filled through the lead); the Snap field list in §11.1 |
 | **WD2 view + charts** | `wd/wd2` | `49-calc-wd-view.js`, `welldyn-view` | WD0 (mock) | VW1–VW14 pass on the mock: trajectory geometry (vertical, S, horizontal), layers and colours, particle determinism, pick / hover / select, navigator window, close-up, depth log / trend / nodal / whpRate / stateStrip specs, hidden-canvas size, reduced motion, theme, op counts per frame |
 | **WD3 page + recorder / replay / cases** | `wd/wd3` | `49-calc-wd-rec.js`, `49-calc-welldyn.js`, the `#wp_go_welldyn` button in `49-calc-wellperf.js`, `welldyn-rec`, `welldyn-page` | WD0 (mock; view at call time — the WD0 stub until WD2 merges) | RC1–RC16, PG1–PG24 pass on the mock; `wellperf-page` unchanged plus one cross-link test |
 
@@ -966,7 +1216,7 @@ after WD1 merges): a real 10-minute run of each fixture through the page.
 
 | Lane | Branch | Files | Done when |
 |---|---|---|---|
-| **WD4 lift transients + oil heading** | `wd/wd4` | `49-calc-wd-lift.js`, `welldyn-lift`, `welldyn-gate` G5–G6 (append) | LF1–LF20, G5–G6 pass |
+| **WD4 lift transients + oil heading** | `wd/wd4` | `49-calc-wd-lift.js`, `welldyn-lift`, `welldyn-gate` G5–G6 (append) | LF1–LF23, G5–G6 pass |
 | **WD5 validation script + gate + perf** | `wd/wd5` | `prism-build/welldyn-validate.js`, `welldyn-validate` | `--gate --check --time` pass on `wd/int` (lift rows marked pending until WD4 merges; the integrator re-runs) |
 
 Lanes do not edit each other's files. A defect a lane finds in another lane's file is written in its §11 record as a finding (file, case,
@@ -976,7 +1226,7 @@ expected / actual); the integrator fixes it with a regression test.
 
 - **WD6 help** (`wd/wd6`): §8, after the owner's cap decision.
 - **WDI integration and release (lead, `wd/int` → `wd/rel`)**: merge order **WD0 → WD1 → WD2 → WD3 → WD4 → WD5 → WD6**, each merge gated by
-  smoke + the welldyn / wellperf / sidebar files; then the full rebuild (Round 9 + host; CRLF check; sync), smoke 351/351, the full
+  smoke + the welldyn / wellperf / sidebar / `flowline-gradat` files; then the full rebuild (Round 9 + host; CRLF check; sync), smoke 351/351, the full
   acceptance suite (count by `--list`), `wts3d-test.js`, `wellperf-validate.js --html --gate --check --time` (unchanged),
   `welldyn-validate.js --html --gate --check --time`, `ux-layout-check.js`, a GUI sweep of `welldyn` (`gui-sweep.js --route welldyn,wellperf`
   + `--mobile`), browser check of play / scrub / Metric / phone, RELEASE_NOTES v4.6 item (engineering text, no names), CLAUDE.md (file map,
@@ -1003,6 +1253,8 @@ expected / actual); the integrator fixes it with a regression test.
 | Q13 | Gas-lift valves: IPO and orifice only (no PPO)? | Yes |
 | Q14 | May Well Dynamics write the model back (adopt the model of a replay file)? | Only by an explicit, confirmed "Adopt this model" action |
 | Q15 | Well-state thresholds (§4.13) | As stated, provisional, shown in the help |
+| Q16 | The Belfroid inclination correction of the critical velocity was asked for, but it is provisional (D17) and the nodal loading check has no inclination correction. Make it the default for deviated gas wells? | **Off by default** (identical to the nodal check); one switch turns it on; both critical rates (vertical and Belfroid) are always shown side by side in the KPI strip, the depth log and the report |
+| Q17 | Reverse flow into the formation when the well pressure exceeds the reservoir pressure (a kill column, a shut-in hump) — provisional, needed for a kill-fluid column to fall | On by default (inactive while p_wf < p̄r); a switch turns it off |
 
 ---
 
@@ -1024,3 +1276,46 @@ built (engines, contracts — additive only), tests / gates with counts, measure
 ### 11.6 WD6 record
 
 ### 11.7 Integration and release record
+
+---
+
+## 12. Revision 2 — review changes and where they landed
+
+| Review item | Change | Section |
+|---|---|---|
+| R1 | volume-balance signs fixed (Q_out = Q_in + Q_src + (∂V/∂p)Δp/Δt + (V^content − V)/Δt); EN23 | §4.6, §5.2 |
+| R2 | Σ_c (∂V/∂m_c) ṁ_c + (∂V/∂p) ṗ = 0 closure with ∂V/∂m_c from the same flash; mismatch term = linearisation residual only | §4.1, §4.6 |
+| R3 | wellhead root with ≤ 3 inner Picard sweeps per trial, tolerances, final-sweep check, cost; friction = magnitude × sign(j), mixture form below j_lo | §4.5, §4.6, EN27 |
+| R4 | `corr` v_d clamp to [0, 3 v_d,ZF] removed; only the co-current limits −j ≤ v_d ≤ j α_L/α_g (j_g ≥ 0, j_L ≥ 0) | §4.4, EN30 |
+| R5 | closure through the new additive export `WTS_flowline_gradAt` (segment theta from horizontal, W.rough, payne / accel from the context, VLP multipliers, per-section keys); tuned fixture `oilVertTuned` in the gate | header, §2.5, §4.2, §4.4, §3.9, §9.0 |
+| R6 | choke y_c = the model's rule (0.588 under 'bound', Sachdeva only under 'sachdeva'); psia → psig for p1; regime compared with `R.surface.choke.regime` | §4.8, §5.1 |
+| R7 | restriction loss = the marcher's K ρ_n v²/(2 g_c 144) at the throat velocity, K default 0.5(1 − β²) + (1 − β²)² | §4.2 |
+| R8 | fifth conserved component m_I (lift gas, free only, mixed gravity via `pvt.injGas`) in fluxes, balance, Snap, CHANNELS, CSV | §3.2, §3.4, §3.6, §4.1, §4.3, §4.12, LF23 |
+| R9 | `R0.lift.injMd` a forced cell break in nodal gas-lift mode | §4.2, §4.12 |
+| R10 | ESP faceDp = `WTS_wp_esp.pump().dp` at the intake cell's state, linearised per step; vent gas a sink counted at the surface | §4.12, LF21, LF22 |
+| R11 | bounded Godunov face flux of the drift-flux function; `levelSettle` scenario and EN25 | §4.4, §4.10, §3.9 |
+| R12 | CFL with the kinematic-wave speed ∂f/∂α as well as the phase velocities | §4.6 |
+| R13 | flash: donor's actual G_d/N_o for dissolved gas, per-cell GOR cap and rate fractions, ∂V/∂p by differencing the same props, liberation only with G_f > 0, Rv refused (`RV_NOT_IN_TRANSIENT`) | §3.1, §4.1, §4.3, EN28, EN29 |
+| R14 | reservoir back-flow by the IPR slope at p̄r (option, default on, provisional `res_back`); `killColumn` scenario, EN26 | §3.1, §4.7, Q17 |
+| R15 | r_w,eff = r_w e^(−S) for S < 0; `prior` history setting (steady / none / shutin) | §3.1, §4.7, RS11, RS12 |
+| R16 | Snap gains faces (jg / jo / jw / xI / vd / c0 / w), the line table and its reference, q_ref / tOpen, label histories, steady buffer, lift gas; EN15b coverage | §3.6 |
+| R17 | mHash excludes M.dyn and hashes the resolved reservoir; the page ignores model-changed with keys ['dyn'] | §3.1, §6.9, §7 |
+| R18 | F / I / W / keys from `WTS_wp_system.context(M)`; EN24 identity | §2.4, §4.1, WD-D16 |
+| R19 | budgets derived from Δt and step counts per scenario; create ≤ 800 ms (≈ 30 ms with a cached ref); WD0 lead spike | §5.6, §9.0 |
+| R20 | dynamic screens of the fixtures, lagged v_d under-relaxed (ω 0.5), time-mean steady criterion with a bounded amplitude | §3.9, §4.4, §5.1 |
+| R21 | Belfroid default off (Q16), both q_c reported, EN12 against `WTS_wp_loading` with Belfroid off, the nodal method rule, water / condensate rule, β in radians | §4.11, §4.14, Q16 |
+| R22 | `killSg` removed: the kill fluid is the model's water; `glUnload` text fixed | §3.1, §3.9, §4.12 |
+| R23 | valve balance in gauge; sources once per step before the pressure solve from lagged pressures | §3.3, §4.12 |
+| R24 | WD0 test edits: sidebar-nav full list + 6 rows, help-content PARTS (WD6), help group route list | §2.1, §2.3, §9.0 |
+| R25 | bit-identical within one JavaScript engine; `engineId`; cross-engine replay within a tolerance, never "corrupt" | WD-D8, §3.7 |
+| C1 | correlation holdup on every co-current face; drift flux only below 0.05–0.10 ft/s or counter-current; EN11 on w = 1 | §4.4, §5.2 |
+| C2 | correlation at the cell centre; `--check` diagnostic with the nodal march at stepFt = cell length | §4.4, §5.1 |
+| C3 | K = 1.53 / C_0 in the bubbly range; m(θ) constants "to verify" | §4.4 |
+| C4 | run loop accumulates a simulated-time target | §6.6 |
+| C5 | report canvases 360×480 and 640×220, Quick Report measured at WD3 | WD-D15, §6.7 |
+| C6 | tubing compliance and water compressibility floor (key `compliance`) | §3.1, §4.1 |
+| C7 | R0 / context / line table cached by model hash (`opts.ref`) | §3.1, §6.9 |
+| C8 | surface gas = formation + lift + vent; formation GOR reported apart | §3.2, §3.4, §4.8 |
+| C9 | `STATE_ORDER` and the channel order frozen in the fixtures; new keys appended | §3.2, §3.4, §3.9 |
+| C10 | RS4 uses the transient preset explicitly; t_wbs / t_pss pinned in the `buildup` fixture | §3.9, §5.2 |
+| C11 | D17 table: `belfroid` own row (default off), `res_sup` / `choke_sub` never defaults, `liftgas_mix` and `esp_node` identity | §4.14 |
