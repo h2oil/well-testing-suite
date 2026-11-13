@@ -1539,7 +1539,7 @@ const __NAV_ORDER = [
     'home', 'help', /* help-host-patch:H1 */ 'clientinfo', 'wells', 'privacy',
     'aga3', 'orifice', 'choke', 'chokeflow', 'chokecnv', 'chokeperf', 'mcfshr', 'turbmeter', 'proving', 'sepqc',
     'wts', 'bottomsup', 'casing', 'flowline', 'lineheat', 'pipesz',
-    'prism', 'oilgas', 'solgor', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'buildup',
+    'prism', 'oilgas', 'solgor', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'welldyn', 'buildup',
     'wellos', 'modbus', 'historian',
     'esdhi', 'esdlo', 'hydrate', 'cheminj', 'liquidline', 'pipelife', 'h2sroe', 'wellkill', 'complfluids',
     'sep', 'seprate', 'sephand', 'heater', 'vessel', 'tank', 'pumpsz', 'arc', 'aircomp',
@@ -110573,6 +110573,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   • 49-calc-proving
 //   • 49-calc-scale
 //   • 49-calc-sepqc
+//   • 49-calc-wd-rec
+//   • 49-calc-welldyn
 //   • 49-calc-wellperf
 //   • 49-calc-wp-batch
 //   • 49-calc-wp-cases
@@ -119414,7 +119416,7 @@ var solgor = {
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'fc010354', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'd2d99de3', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -119438,7 +119440,7 @@ var wellperf = {
   W('Separator pressure', 'psep', '{{100|pressureG}}'), W('Target rate', 'tq', null, 'For Solve the design.'), W('Well', 'corr_well', 'Default for the fluid', 'Vertical lift correlation.'),
   inp('Wellhead rating', 'wpt_rate_wh', null, 'Checks the shut-in pressure.')],
   notDocumented: [{ pattern: '^wpl_|^wp_(sggBasis|fpsep|ftsep|sgw|sal|n2|co2|h2s|pbUser|bc|cgr|wgr|tres|respb|ip_[A-Za-z]+|rvmode|pdew|emul\\w*)$|^wp_corr_(?!well$|line$)[a-z]+$|^wplt|^wp_gld_', why: 'details, export' },
-  { pattern: '^wp_pastet_|^wpv_|^wpe_|^wpt_(rate_tht|beans)$|^wp_(path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|(gl|esp)_[a-z]+)$', why: 'defaults, options, studies' }],
+  { pattern: '^wp_pastet_|^wpv_|^wpe_|^wpt_(rate_tht|beans)$|^wp_(go_welldyn(_k)?|path|datum|datumOff|perfTop|perfBot|surfT|thtMeas|heat|Ubasis|tprod|ke|alpha|dwb|lift|tamb|ckcorr|tkind|corr_line|mult_hl|mult_f|eroC|stepFt|refine|m_solve|notes|cksub|ckcd|ckrf|(gl|esp)_[a-z]+)$', why: 'defaults, options, studies' }],
   outputs: [o('KPI strip', 'Rate, BHP, THP, THT, drawdown, GOR, WC, loading, erosion and hydrate margins.'), o('Well', 'Section and plan view coloured by a property; hover for MD, TVD, p, T; click to edit.'),
   o('System — inflow and outflow', 'Curves, operating point, q_s, drag handles.'), o('Pressure-loss breakdown', 'Adds up to p̄r minus the separator pressure.'),
   o('Traverse', 'p and T against depth; Correlations, Flow-regime map, Liquid loading, Choke, Sensitivity, Bean schedule.')],
@@ -152117,6 +152119,1895 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-wd-rec ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-wd-rec.js  (Round 9; helper module: no page in window.WTS_calcRegistry)
+// -----------------------------------------------------------------------------
+// Well Dynamics recorder, replay files and cases (lane WD3; docs/WELL-DYNAMICS-PLAN.md §3.4, §3.7, §3.8, §7).
+// Pure data code: no DOM, no storage of its own (cases go through WTS_wp_model.write, the one writer of the well model), no timers.
+//
+//   WTS_wd_rec.create(o) → rec       o {every_s 10, snapEvery_s 60, capMB 32, channels null (all)}
+//     rec.attach(sim)                 subscribes to the sim's 'step' / 'event' / 'state' (synchronous engine events, §3.5); samples when
+//                                     t crosses the next sample time and on every event / state change; snapshots every snapEvery_s
+//     rec.sample(sim, force?) → bool, rec.snap(sim) → bool, rec.channels() → [{key, label, unit, cat, dp}] (= WTS_wd_engine.CHANNELS)
+//     rec.times() / rec.series(key)   Float64Array views (same length)
+//     rec.at(t) → {t, values}         linear between samples; step channels (bean, open, state, opValve) hold the earlier sample
+//     rec.snapAt(t) → Snap | null     the latest snapshot at or before t
+//     rec.frameAt(t) → {t, cells, liquidTopMd, gasCapMd} | null   (additive) the display arrays kept with the latest snapshot at or
+//                                     before t — a Snap holds masses, p and T only, so a scrubbed wellbore draws from these
+//     rec.truncate(t)                 drops samples, snapshots, events and marks after t (the "Continue from here" branch)
+//     rec.mark(t0, t1, label) → id, rec.marks(), rec.unmark(id), rec.events() → the applied Event log
+//     rec.csv(o) → string             o {cols, from, to, every_s, system:'field'|'metric', u(v, cat) → display value, decimalComma, marks}
+//     rec.toFile(meta) → RunFile (§3.7), rec.bytes(), rec.clear(), rec.count(), rec.span() → [t0, t1]
+//   WTS_wd_rec.fromFile(obj | text) → {ok, run, rec, warnings, code?: 'FORMAT'|'VERSION'|'TOO_BIG'}
+//   WTS_wd_rec.compare(stored, rerun, o?) → {ok, n, firstDiff_t, maxRel, maxDp}   the cross-engine replay check (R25: 0.5 % rates, 1 psi)
+//   WTS_wd_rec.summarize(rec, sim?) → Summary (§3.8)
+//   WTS_wd_rec.RUN_FORMAT 'wts-welldyn-run', RUN_VERSION 1, EXT '.wdrun', MAX_FILE 5 MB (snapshots dropped above), MAX_OPEN 64 MB,
+//   WTS_wd_rec.engineId() (the engine's fingerprint, else this module's of the same function list), hash(o), channelMeta()
+//
+//   WTS_wd_cases.list(M) → Case[] (M.dyn.cases), save(case) → the WTS_wp_model.write result (≤ 20 cases, ≤ 24 kB of dyn: the oldest
+//   unnamed cases go first, then the oldest), remove(id), toScenario(case) → {settings, events, duration_s}, make(o) → Case, MAX 20,
+//   CAP_BYTES 24,000, readDyn() → the stored dyn record or null
+// =============================================================================
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    var RUN_FORMAT = 'wts-welldyn-run', RUN_VERSION = 1, EXT = '.wdrun';
+    var MAX_FILE = 5 * 1024 * 1024, MAX_OPEN = 64 * 1024 * 1024;
+    var CASE_MAX = 20, CASE_CAP = 24000;
+    var PATM = 14.696;
+    // the frozen channel order of §3.4 (the engine's own CHANNELS win when it is loaded; these are the fallback copies)
+    var CH_KEYS = ['t', 'thp', 'tht', 'pwf', 'pr', 'pcs', 'qo', 'qw', 'qL', 'qg', 'qo_res', 'qw_res', 'qg_res', 'gor', 'wc', 'bean', 'open', 'state',
+        'lratio', 'qc', 'liq', 'gascap', 'qinj', 'opValve', 'pint', 'freq', 'load', 'foam', 'dt', 'massErr', 'qgForm', 'gorForm', 'qvent', 'liftgas', 'qcVert', 'qcBelfroid'];
+    var STATE_ORDER = ['stable', 'startup', 'unloading', 'marginal', 'loading', 'heading', 'dying', 'dead', 'shutin', 'gl_unloading',
+        'gl_lifting', 'gl_multipoint', 'esp_off', 'esp_ramp', 'esp_running', 'esp_pumpoff', 'esp_gaslock', 'esp_tripped'];
+    // key: [label, field unit, units-layer category | null, decimals]
+    var META = {
+        t: ['Time', 's', null, 0], thp: ['THP', 'psig', 'pressureG', 1], tht: ['THT', '°F', 'temperature', 1], pwf: ['BHP', 'psia', 'pressure', 1],
+        pr: ['Reservoir pressure', 'psia', 'pressure', 1], pcs: ['Casing pressure', 'psig', 'pressureG', 1], qo: ['Oil / condensate rate', 'STB/d', 'liquidRate', 1],
+        qw: ['Water rate', 'STB/d', 'liquidRate', 1], qL: ['Liquid rate', 'STB/d', 'liquidRate', 1], qg: ['Gas rate (total)', 'Mscf/d', 'gasRateSmall', 1],
+        qo_res: ['Oil rate at the sandface', 'STB/d', 'liquidRate', 1], qw_res: ['Water rate at the sandface', 'STB/d', 'liquidRate', 1],
+        qg_res: ['Gas rate at the sandface', 'Mscf/d', 'gasRateSmall', 1], gor: ['GOR (total)', 'scf/STB', 'gor', 0], wc: ['Water cut', 'fraction', null, 4],
+        bean: ['Bean', '/64 in', null, 1], open: ['Open', '0/1', null, 0], state: ['Well state (index)', '-', null, 0], lratio: ['Rate / critical rate', '-', null, 3],
+        qc: ['Critical rate', 'MMscf/d', 'gasRate', 3], liq: ['Liquid in the tubing and liner', 'bbl', 'volume', 2], gascap: ['Gas-liquid interface (MD)', 'ft', 'length', 0],
+        qinj: ['Lift-gas rate', 'Mscf/d', 'gasRateSmall', 1], opValve: ['Operating valve', 'n', null, 0], pint: ['Pump intake pressure', 'psia', 'pressure', 1],
+        freq: ['Frequency', 'Hz', null, 2], load: ['Motor load', 'fraction', null, 3], foam: ['Foamer at the bottom', 'ppm', null, 0], dt: ['Time step', 's', null, 3],
+        massErr: ['Mass balance error (cumulative)', 'relative', null, 8], qgForm: ['Formation gas rate', 'Mscf/d', 'gasRateSmall', 1], gorForm: ['GOR (formation)', 'scf/STB', 'gor', 0],
+        qvent: ['Vented gas rate', 'Mscf/d', 'gasRateSmall', 1], liftgas: ['Lift gas in the tubing', 'Mscf', null, 3], qcVert: ['Critical rate (vertical)', 'MMscf/d', 'gasRate', 3],
+        qcBelfroid: ['Critical rate (Belfroid)', 'MMscf/d', 'gasRate', 3]
+    };
+    var HOLD = { bean: 1, open: 1, state: 1, opValve: 1 };
+
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+    function _clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    function _num(v) { return _fin(v) ? v : NaN; }
+    function _E() { return G.WTS_wd_engine || null; }
+    function _keys() { var E = _E(); return (E && Array.isArray(E.CHANNELS) && E.CHANNELS.length) ? E.CHANNELS.slice() : CH_KEYS.slice(); }
+    function _stateOrder() { var E = _E(); return (E && Array.isArray(E.STATE_ORDER) && E.STATE_ORDER.length) ? E.STATE_ORDER : STATE_ORDER; }
+    function _canon(o) {
+        var AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.canon === 'function') { try { return AI.canon(o); } catch (e) { /* fall through */ } }
+        return JSON.stringify(o, function (k, v) { return (typeof v === 'number' && !isFinite(v)) ? null : v; });
+    }
+    function _fnv(s, h) { for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; }
+    function _hash(o) {
+        var s = typeof o === 'string' ? o : _canon(o), AI = G.PRiSM_autoInterp;
+        if (AI && typeof AI.hash16 === 'function') return AI.hash16(s);
+        var a = _fnv(s, 0x811c9dc5), b = _fnv(s, 0x01000193);
+        return ('0000000' + a.toString(16)).slice(-8) + ('0000000' + b.toString(16)).slice(-8);
+    }
+    var _eid = null;
+    function engineId() {
+        var E = _E();
+        if (E && typeof E.engineId === 'string' && E.engineId) return E.engineId;
+        if (E && typeof E.engineId === 'function') { try { var v = E.engineId(); if (v) return String(v); } catch (e) { /* ignore */ } }
+        if (!_eid) _eid = _hash([Math.exp(1.1), Math.log(7.3), Math.pow(2.2, 3.3), Math.sqrt(5.1), Math.sin(0.7), Math.exp(-3.7), Math.log(0.37), Math.pow(10, -0.43)]);
+        return _eid;
+    }
+    function channelMeta(key) {
+        var m = META[key] || [key, '', null, 3];
+        return { key: key, label: m[0], unit: m[1], cat: m[2], dp: m[3] };
+    }
+
+    // ── the channel values of one engine state (§3.2 → §3.4) ────────────────────
+    function _values(S, keys) {
+        var su = S.surface || {}, bo = S.bottom || {}, lo = S.loading || {}, inv = S.inventory || {}, li = S.lift || {}, gl = li.gl || null, esp = li.esp || null;
+        var c = S.cells || {}, foam = NaN;
+        if (c.mF && c.mW && c.mW.length) foam = c.mW[0] > 0 ? 1e6 * c.mF[0] / c.mW[0] : 0;
+        else if (S.foamer && _fin(S.foamer.ppm)) foam = S.foamer.on ? S.foamer.ppm : 0;
+        var st = S.well && S.well.state, si = _stateOrder().indexOf(st);
+        var pcs = gl ? (_fin(gl.pcs_psig) ? gl.pcs_psig : _fin(gl.chp_psig) ? gl.chp_psig : _fin(gl.pcs) ? gl.pcs - PATM : NaN) : NaN;
+        var bal = S.balance || {};
+        var v = {
+            t: S.t, thp: su.thp_psig, tht: su.tht, pwf: bo.pwf, pr: bo.pr, pcs: pcs, qo: su.qo, qw: su.qw, qL: su.qL, qg: su.qg,
+            qo_res: bo.qo, qw_res: bo.qw, qg_res: bo.qg, gor: su.gor, wc: su.wc, bean: _fin(S.beanEff) ? S.beanEff : S.bean64, open: S.open ? 1 : 0,
+            state: si < 0 ? NaN : si, lratio: lo.ratio, qc: lo.qc_MMscfd, liq: _fin(inv.liqTubing_bbl) ? inv.liqTubing_bbl : inv.liq_bbl,
+            gascap: S.open ? NaN : inv.gasCapBottomMd, qinj: su.qinj, opValve: gl ? (_fin(gl.opValve) ? gl.opValve : 0) : NaN,
+            pint: esp ? esp.pint : NaN, freq: esp ? esp.freq : NaN, load: esp ? esp.load : NaN, foam: foam, dt: S.dt,
+            massErr: _fin(bal.errCum) ? bal.errCum : NaN, qgForm: su.qgForm, gorForm: su.gorForm, qvent: su.qvent,
+            liftgas: inv.liftGas_Mscf, qcVert: lo.qcVert_MMscfd, qcBelfroid: lo.qcBelfroid_MMscfd
+        };
+        return keys.map(function (k) { return _num(v[k]); });
+    }
+
+    // display arrays of one state for a scrubbed wellbore (4 significant digits; regimes as codes)
+    var DISP = ['p', 'T', 'ag', 'ao', 'aw', 'vg', 'vl', 'vm', 'vc'];
+    function _r4(v) { return _fin(v) ? +v.toPrecision(4) : null; }
+    function _disp(S) {
+        var c = S && S.cells; if (!c || !c.p) return null;
+        var o = { cells: {} };
+        DISP.forEach(function (k) { if (c[k]) o.cells[k] = Array.prototype.map.call(c[k], _r4); });
+        if (c.regime) o.cells.regime = Array.prototype.slice.call(c.regime);
+        var inv = S.inventory || {};
+        o.liquidTopMd = _fin(inv.liquidTopMd) ? inv.liquidTopMd : null;
+        o.gasCapMd = (!S.open && _fin(inv.gasCapBottomMd)) ? inv.gasCapBottomMd : null;
+        return o;
+    }
+
+    // ── recorder ──────────────────────────────────────────────────────────────
+    function create(o) {
+        o = o || {};
+        var every = _fin(o.every_s) && o.every_s > 0 ? o.every_s : 10;
+        var snapEvery = _fin(o.snapEvery_s) && o.snapEvery_s > 0 ? o.snapEvery_s : 60;
+        var capB = (_fin(o.capMB) && o.capMB > 0 ? o.capMB : 32) * 1024 * 1024;
+        var keys = _keys();
+        if (Array.isArray(o.channels) && o.channels.length) keys = keys.filter(function (k) { return k === 't' || o.channels.indexOf(k) !== -1; });
+        var K = keys.length, cap = 256, n = 0, cols = keys.map(function () { return new Float64Array(cap); });
+        var snaps = [], snapBytes = 0, ev = [], mk = [], mkSeq = 0, nextT = -Infinity, nextSnap = -Infinity, sim = null, subs = null;
+        function grow() {
+            cap *= 2;
+            cols = cols.map(function (a) { var b = new Float64Array(cap); b.set(a); return b; });
+        }
+        function push(vals) {
+            var t = vals[0];
+            if (n && t < cols[0][n - 1] - 1e-9) return false;
+            if (n && Math.abs(t - cols[0][n - 1]) <= 1e-9) n--;                      // the same moment again: the later values win
+            if (n >= cap) grow();
+            for (var j = 0; j < K; j++) cols[j][n] = vals[j];
+            n++;
+            return true;
+        }
+        function capRule() {
+            // §3.4: above capMB drop every second snapshot older than the last hour of simulated time (repeatable); series never
+            var guard = 0;
+            while (rec.bytes() > capB && guard++ < 64) {
+                var tEnd = n ? cols[0][n - 1] : 0, keep = [], drop = false, dropped = 0;
+                snaps.forEach(function (s) {
+                    if (s.t < tEnd - 3600) { if (drop) { snapBytes -= s.b; dropped++; } else keep.push(s); drop = !drop; }
+                    else keep.push(s);
+                });
+                snaps = keep;
+                if (!dropped) break;
+            }
+        }
+        function onStep(info) {
+            if (!sim) return;
+            var t = sim.state.t;
+            if (t >= nextT - 1e-9) { rec.sample(sim); }
+            if (t >= nextSnap - 1e-9) { rec.snap(sim); }
+        }
+        function onEvent(e) { if (!sim) return; ev.push(_clone(e)); rec.sample(sim, true); }
+        function onState() { if (sim) rec.sample(sim, true); }
+        var rec = {
+            every_s: every, snapEvery_s: snapEvery, capMB: capB / 1048576,
+            attach: function (s) {
+                rec.detach();
+                sim = s;
+                if (!s || typeof s.on !== 'function') return false;
+                subs = { step: onStep, event: onEvent, state: onState };
+                s.on('step', onStep); s.on('event', onEvent); s.on('state', onState);
+                var t = s.state ? s.state.t : 0;
+                if (!n || t > cols[0][n - 1] + 1e-9) { rec.sample(s, true); }
+                if (!snaps.length || t > snaps[snaps.length - 1].t + 1e-9) rec.snap(s);
+                return true;
+            },
+            detach: function () {
+                if (sim && subs && typeof sim.off === 'function') { sim.off('step', subs.step); sim.off('event', subs.event); sim.off('state', subs.state); }
+                sim = null; subs = null;
+            },
+            sample: function (s, force) {
+                s = s || sim; if (!s || !s.state) return false;
+                var t = s.state.t;
+                if (!force && t < nextT - 1e-9) return false;
+                var ok = push(_values(s.state, keys));
+                if (t >= nextT - 1e-9) nextT = (Math.floor(t / every + 1e-9) + 1) * every;
+                return ok;
+            },
+            snap: function (s) {
+                s = s || sim; if (!s || typeof s.snapshot !== 'function') return false;
+                var sn; try { sn = s.snapshot(); } catch (e) { return false; }
+                if (!sn) return false;
+                var t = _fin(sn.t) ? sn.t : s.state.t;
+                while (snaps.length && snaps[snaps.length - 1].t >= t - 1e-9) { snapBytes -= snaps[snaps.length - 1].b; snaps.pop(); }
+                var d = _disp(s.state), b = JSON.stringify(sn).length + (d ? JSON.stringify(d).length : 0);
+                snaps.push({ t: t, s: sn, d: d, b: b }); snapBytes += b;
+                nextSnap = (Math.floor(t / snapEvery + 1e-9) + 1) * snapEvery;
+                capRule();
+                return true;
+            },
+            channels: function () { return keys.map(channelMeta); },
+            keys: function () { return keys.slice(); },
+            count: function () { return n; },
+            span: function () { return n ? [cols[0][0], cols[0][n - 1]] : [0, 0]; },
+            times: function () { return cols[0].subarray(0, n); },
+            series: function (key) { var j = keys.indexOf(key); return j < 0 ? null : cols[j].subarray(0, n); },
+            at: function (t) {
+                var out = { t: t, values: {} };
+                if (!n) return out;
+                var T = cols[0], lo = 0, hi = n - 1;
+                if (t <= T[0]) { lo = hi = 0; } else if (t >= T[n - 1]) { lo = hi = n - 1; }
+                else { while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (T[mid] <= t) lo = mid; else hi = mid; } }
+                var f = (hi > lo && T[hi] > T[lo]) ? (t - T[lo]) / (T[hi] - T[lo]) : 0;
+                for (var j = 0; j < K; j++) {
+                    var a = cols[j][lo], b = cols[j][hi], k = keys[j];
+                    out.values[k] = (k === 't') ? t : (HOLD[k] || !_fin(a) || !_fin(b)) ? (f >= 1 - 1e-12 ? b : a) : a + f * (b - a);
+                }
+                return out;
+            },
+            snapAt: function (t) {
+                var best = null;
+                for (var i = 0; i < snaps.length; i++) { if (snaps[i].t <= t + 1e-9) best = snaps[i]; else break; }
+                return best ? best.s : null;
+            },
+            snaps: function () { return snaps.map(function (x) { return x.s; }); },
+            // the display arrays kept with each snapshot (a Snap holds masses, p and T only): the scrubbed wellbore draws from them
+            frameAt: function (t) {
+                var best = null;
+                for (var i = 0; i < snaps.length; i++) { if (snaps[i].t <= t + 1e-9) { if (snaps[i].d) best = snaps[i]; } else break; }
+                return best ? { t: best.t, cells: best.d.cells, liquidTopMd: best.d.liquidTopMd, gasCapMd: best.d.gasCapMd } : null;
+            },
+            frames: function () { return snaps.map(function (x) { return x.d || null; }); },
+            truncate: function (t) {
+                var m = n; while (m > 0 && cols[0][m - 1] > t + 1e-9) m--;
+                n = m;
+                snaps = snaps.filter(function (x) { if (x.t <= t + 1e-9) return true; snapBytes -= x.b; return false; });
+                ev = ev.filter(function (e) { return !(e.t > t + 1e-9); });
+                mk = mk.filter(function (m0) { return m0.t0 <= t + 1e-9; }).map(function (m0) { if (m0.t1 > t) m0.t1 = t; return m0; });
+                nextT = n ? (Math.floor(cols[0][n - 1] / every + 1e-9) + 1) * every : -Infinity;
+                nextSnap = snaps.length ? (Math.floor(snaps[snaps.length - 1].t / snapEvery + 1e-9) + 1) * snapEvery : -Infinity;
+                return n;
+            },
+            mark: function (t0, t1, label) {
+                if (!_fin(t0)) return null;
+                if (!_fin(t1)) t1 = t0;
+                if (t1 < t0) { var x = t0; t0 = t1; t1 = x; }
+                var id = 'm' + (++mkSeq);
+                mk.push({ id: id, t0: t0, t1: t1, label: String(label == null ? '' : label).replace(/[\u0000-\u001f]/g, ' ').slice(0, 60) });
+                mk.sort(function (a, b) { return a.t0 - b.t0; });
+                return id;
+            },
+            marks: function () { return _clone(mk); },
+            unmark: function (id) { var l = mk.length; mk = mk.filter(function (m0) { return m0.id !== id; }); return mk.length !== l; },
+            events: function () { return _clone(ev); },
+            logEvent: function (e) { if (e && _fin(e.t)) ev.push(_clone(e)); },
+            bytes: function () { return n * K * 8 + snapBytes + ev.length * 120; },
+            clear: function () { n = 0; snaps = []; snapBytes = 0; ev = []; mk = []; nextT = -Infinity; nextSnap = -Infinity; },
+            csv: function (co) { return _csv(rec, keys, co || {}); },
+            toFile: function (meta) { return _toFile(rec, keys, meta || {}); },
+            _load: function (t, ch, marks, events, snapList, sev, frameList) {
+                n = 0; snaps = []; snapBytes = 0; mk = []; ev = [];
+                var m = t.length;
+                while (cap < m) cap *= 2;
+                cols = keys.map(function () { return new Float64Array(cap); });
+                for (var i = 0; i < m; i++) {
+                    cols[0][i] = t[i];
+                    for (var j = 1; j < K; j++) { var a = ch[keys[j]]; var v = a ? a[i] : null; cols[j][i] = (v === null || v === undefined) ? NaN : +v; }
+                }
+                n = m;
+                (marks || []).forEach(function (x) { if (x && _fin(x.t0)) { var id = rec.mark(x.t0, x.t1, x.label); if (id && x.id) mk[mk.length - 1].id = String(x.id).slice(0, 12); } });
+                ev = _clone(events || []);
+                (snapList || []).forEach(function (s, i) {
+                    if (!(s && s.kind === 'wd-snap' && _fin(s.t))) return;
+                    var d = frameList && frameList[i] && _isObj(frameList[i].cells) ? frameList[i] : null, b = JSON.stringify(s).length + (d ? JSON.stringify(d).length : 0);
+                    snaps.push({ t: s.t, s: s, d: d, b: b }); snapBytes += b;
+                });
+                snaps.sort(function (a, b) { return a.t - b.t; });
+                nextT = n ? (Math.floor(t[n - 1] / every + 1e-9) + 1) * every : -Infinity;
+                if (sev) snapEvery = sev;
+            }
+        };
+        return rec;
+    }
+
+    // ── CSV (§3.4, §6.3) ──────────────────────────────────────────────────────
+    function _defaultU(system) {
+        var U = G.WTS_units;
+        return function (v, cat) {
+            if (system !== 'metric' || !cat || !_fin(v) || !U || !U.CATEGORIES || !U.CATEGORIES[cat] || typeof U.convertCategory !== 'function') return v;
+            return U.convertCategory(v, cat, 'imperial', 'metric');
+        };
+    }
+    function _unitLabel(meta, system) {
+        var U = G.WTS_units;
+        if (system === 'metric' && meta.cat && U && U.CATEGORIES && U.CATEGORIES[meta.cat]) return U.CATEGORIES[meta.cat].metric.label;
+        return meta.unit;
+    }
+    function _cell(s, sep) {
+        s = String(s == null ? '' : s);
+        if (/^[=+\-@\t\r]/.test(s) && !/^-?\d/.test(s)) s = "'" + s;                // a spreadsheet must not read a label as a formula
+        if (s.indexOf(sep) !== -1 || /["\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+        return s;
+    }
+    function _num2s(v, dp, dc) {
+        if (!_fin(v)) return '';
+        var s = (Math.abs(v) >= 1e15 || (v !== 0 && Math.abs(v) < 1e-6 && dp > 6)) ? v.toExponential(6) : v.toFixed(Math.max(0, Math.min(10, dp)));
+        if (/^-0(\.0+)?$/.test(s)) s = s.slice(1);
+        return dc ? s.replace('.', ',') : s;
+    }
+    function _csv(rec, keys, o) {
+        var sys = o.system === 'metric' ? 'metric' : 'field', dc = !!o.decimalComma, sep = dc ? ';' : ',';
+        var u = typeof o.u === 'function' ? o.u : _defaultU(sys);
+        var cols = (Array.isArray(o.cols) && o.cols.length ? o.cols.filter(function (k) { return keys.indexOf(k) !== -1; }) : keys.slice());
+        if (cols.indexOf('t') === -1) cols.unshift('t');
+        var T = rec.times(), n = T.length, from = _fin(o.from) ? o.from : -Infinity, to = _fin(o.to) ? o.to : Infinity, ev = _fin(o.every_s) && o.every_s > 0 ? o.every_s : 0;
+        var L = [];
+        var head = cols.map(function (k) {
+            var m = channelMeta(k);
+            if (k === 't') return _cell('Time (s)', sep);
+            var un = _unitLabel(m, sys);
+            return _cell(m.label + (un ? ' (' + un + ')' : ''), sep);
+        });
+        if (o.title) L.push(_cell('# ' + String(o.title).replace(/[\r\n]+/g, ' '), sep));
+        L.push(head.concat(o.hms ? [_cell('Time (h:mm:ss)', sep)] : []).join(sep));
+        var series = cols.map(function (k) { return rec.series(k); }), metas = cols.map(channelMeta), next = -Infinity;
+        for (var i = 0; i < n; i++) {
+            var t = T[i];
+            if (t < from - 1e-9 || t > to + 1e-9) continue;
+            if (ev) { if (t < next - 1e-9) continue; next = (Math.floor(t / ev + 1e-9) + 1) * ev; }
+            var row = [];
+            for (var j = 0; j < cols.length; j++) {
+                var k = cols[j], v = series[j][i], m = metas[j];
+                if (k === 'state' && o.stateNames) { var so = _stateOrder(); row.push(_cell(_fin(v) ? (so[v] || '') : '', sep)); continue; }
+                row.push(_num2s(m.cat ? u(v, m.cat) : v, m.dp + (sys === 'metric' && m.cat ? 1 : 0), dc));
+            }
+            if (o.hms) row.push(_hms(t));
+            L.push(row.join(sep));
+        }
+        if (o.marks !== false) {
+            var mk = rec.marks().filter(function (m0) { return m0.t1 >= from && m0.t0 <= to; });
+            if (mk.length) {
+                L.push('');
+                L.push(['Mark', 'From (s)', 'To (s)'].map(function (x) { return _cell(x, sep); }).join(sep));
+                mk.forEach(function (m0) { L.push([_cell(m0.label || m0.id, sep), _num2s(m0.t0, 0, dc), _num2s(m0.t1, 0, dc)].join(sep)); });
+            }
+        }
+        return L.join('\r\n') + '\r\n';
+    }
+    function _hms(t) {
+        if (!_fin(t)) return '';
+        var s = Math.max(0, Math.round(t)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+        return h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
+    }
+
+    // ── replay files (§3.7) ───────────────────────────────────────────────────
+    function _jsonNum(v) { return _fin(v) ? v : null; }
+    function _toFile(rec, keys, meta) {
+        var T = rec.times(), ch = {};
+        keys.forEach(function (k) { if (k === 't') return; var a = rec.series(k), out = new Array(a.length); for (var i = 0; i < a.length; i++) out[i] = _jsonNum(a[i]); ch[k] = out; });
+        var model = _clone(meta.model) || { scalars: {}, tables: {} }, settings = _clone(meta.settings) || {};
+        if (settings) { delete settings.snapshot; delete settings.ref; }
+        var events = _clone(meta.events || rec.events()) || [];
+        var run = {
+            format: RUN_FORMAT, v: RUN_VERSION, app: meta.app || _appVer(), created: meta.created || new Date().toISOString(),
+            engine: meta.engine || ((_E() && _E().VERSION) || ''), engineId: meta.engineId || engineId(),
+            well: { name: String((meta.well && meta.well.name) || '').slice(0, 80) },
+            model: model, settings: settings, events: events, duration_s: _fin(meta.duration_s) ? meta.duration_s : (T.length ? T[T.length - 1] : 0),
+            rec: { every_s: rec.every_s, t: Array.prototype.slice.call(T), ch: ch, marks: rec.marks() },
+            snaps: { every_s: rec.snapEvery_s, list: rec.snaps(), frames: rec.frames() },   // frames: additive (display arrays per snapshot)
+            summary: meta.summary || null,
+            hash: _hash({ model: model, settings: settings, events: events })
+        };
+        var size = JSON.stringify(run).length;
+        if (size > (meta.maxBytes || MAX_FILE)) { run.snaps = null; run.notes = ['snapshots dropped: the file would exceed ' + Math.round((meta.maxBytes || MAX_FILE) / 1048576) + ' MB']; }
+        return run;
+    }
+    function _appVer() { try { var R = G.RELEASE_NOTES; return (R && R[0] && R[0].ver) ? String(R[0].ver) : ''; } catch (e) { return ''; } }
+    function fromFile(src) {
+        var obj = src, warnings = [];
+        if (typeof src === 'string') {
+            if (src.length > MAX_OPEN) return { ok: false, code: 'TOO_BIG', errors: ['the replay file is larger than ' + Math.round(MAX_OPEN / 1048576) + ' MB'], warnings: [] };
+            try { obj = JSON.parse(src); } catch (e) { return { ok: false, code: 'FORMAT', errors: ['the file is not a Well Dynamics replay file (malformed JSON)'], warnings: [] }; }
+        }
+        if (!_isObj(obj) || obj.format !== RUN_FORMAT) return { ok: false, code: 'FORMAT', errors: ['the file is not a Well Dynamics replay file'], warnings: [] };
+        if (!(obj.v === RUN_VERSION)) return { ok: false, code: 'VERSION', errors: ['replay file version ' + String(obj.v).slice(0, 8) + ' is not supported by this version (' + RUN_VERSION + ')'], warnings: [] };
+        var r = obj.rec;
+        if (!_isObj(r) || !Array.isArray(r.t) || !_isObj(r.ch)) return { ok: false, code: 'FORMAT', errors: ['the replay file has no recorded series'], warnings: [] };
+        var t = r.t.map(function (x) { return +x; }), bad = false;
+        for (var i = 0; i < t.length; i++) if (!_fin(t[i]) || (i && t[i] < t[i - 1])) { bad = true; break; }
+        if (bad) return { ok: false, code: 'FORMAT', errors: ['the recorded times are not ascending numbers'], warnings: [] };
+        var ch = {}, keys = _keys();
+        Object.keys(r.ch).forEach(function (k) {
+            if (keys.indexOf(k) === -1) { warnings.push({ code: 'UNKNOWN_CHANNEL', msg: 'channel ' + String(k).slice(0, 24) + ' is not known to this version and was skipped', sev: 'info' }); return; }
+            var a = r.ch[k]; if (!Array.isArray(a) || a.length !== t.length) { warnings.push({ code: 'CHANNEL_LENGTH', msg: 'channel ' + k + ' has the wrong length and was skipped', sev: 'warn' }); return; }
+            ch[k] = a;
+        });
+        var rec = create({ every_s: _fin(r.every_s) ? r.every_s : 10, snapEvery_s: obj.snaps && _fin(obj.snaps.every_s) ? obj.snaps.every_s : 60 });
+        var snaps = obj.snaps && Array.isArray(obj.snaps.list) ? obj.snaps.list : [];
+        if (!obj.snaps) warnings.push({ code: 'NO_SNAPSHOTS', msg: 'the file has no snapshots (dropped to keep it under 5 MB): the recording can be viewed, not continued', sev: 'info' });
+        rec._load(t, ch, Array.isArray(r.marks) ? r.marks : [], Array.isArray(obj.events) ? obj.events : [], snaps, obj.snaps && obj.snaps.every_s,
+            obj.snaps && Array.isArray(obj.snaps.frames) ? obj.snaps.frames : null);
+        var run = _clone(obj);
+        run.well = { name: String((obj.well && obj.well.name) || '').slice(0, 80) };
+        if (!_isObj(run.model)) run.model = { scalars: {}, tables: {} };
+        if (!_isObj(run.settings)) run.settings = {};
+        if (!Array.isArray(run.events)) run.events = [];
+        var h = _hash({ model: run.model, settings: run.settings, events: run.events });
+        if (obj.hash && obj.hash !== h) warnings.push({ code: 'HASH', msg: 'the model or settings in the file were changed after it was saved', sev: 'warn' });
+        if (obj.engineId && obj.engineId !== engineId()) warnings.push({ code: 'ENGINE', msg: 'made with a different JavaScript engine: a re-run is compared with the recording (0.5 % in rates, 1 psi in pressures)', sev: 'info' });
+        return { ok: true, run: run, rec: rec, warnings: warnings, sameEngine: !obj.engineId || obj.engineId === engineId() };
+    }
+    // the replay re-run check (R25): equal at the stored samples within 0.5 % in rates and 1 psi in pressures, up to the first difference
+    var RATE_KEYS = ['qo', 'qw', 'qL', 'qg', 'qgForm', 'qo_res', 'qw_res', 'qg_res', 'qinj'], P_KEYS = ['thp', 'pwf', 'pcs', 'pint'];
+    function compare(a, b, o) {
+        o = o || {};
+        var relTol = _fin(o.relTol) ? o.relTol : 0.005, pTol = _fin(o.pTol) ? o.pTol : 1;
+        var Ta = a.times(), out = { ok: true, n: 0, identical: true, firstDiff_t: null, maxRel: 0, maxDp: 0 };
+        for (var i = 0; i < Ta.length; i++) {
+            var t = Ta[i], sp = b.span(); if (t > sp[1] + 1e-9) break;
+            var vb = b.at(t).values; out.n++;
+            RATE_KEYS.forEach(function (k) {
+                var sa = a.series(k), x = sa ? sa[i] : NaN, y = vb[k];
+                if (!_fin(x) || !_fin(y)) return;
+                if (x !== y) out.identical = false;
+                var scale = Math.max(Math.abs(x), Math.abs(y), 1), r = Math.abs(x - y) / scale;
+                if (r > out.maxRel) out.maxRel = r;
+                if (r > relTol && out.firstDiff_t === null) out.firstDiff_t = t;
+            });
+            P_KEYS.forEach(function (k) {
+                var sa = a.series(k), x = sa ? sa[i] : NaN, y = vb[k];
+                if (!_fin(x) || !_fin(y)) return;
+                if (x !== y) out.identical = false;
+                var d = Math.abs(x - y); if (d > out.maxDp) out.maxDp = d;
+                if (d > pTol && out.firstDiff_t === null) out.firstDiff_t = t;
+            });
+        }
+        out.ok = out.firstDiff_t === null;
+        return out;
+    }
+
+    // ── run summary (§3.8) ────────────────────────────────────────────────────
+    function summarize(rec, sim) {
+        var T = rec.times(), n = T.length, so = _stateOrder();
+        var s = function (k) { return rec.series(k) || new Float64Array(n); };
+        var last = function (k) { var a = s(k); return n ? (_fin(a[n - 1]) ? a[n - 1] : null) : null; };
+        var mx = function (k, f) { var a = s(k), v = null; for (var i = 0; i < n; i++) if (_fin(a[i])) v = v === null ? a[i] : f(v, a[i]); return v; };
+        var gas = false;
+        try { var Mx = sim && sim.M; gas = !!(Mx && Mx.fluid && /gas|condensate/.test(Mx.fluid.type)); } catch (e) { gas = false; }
+        var qk = gas ? 'qg' : 'qL';
+        var states = [], st = s('state'), cur = null;
+        for (var i = 0; i < n; i++) {
+            var k = _fin(st[i]) ? so[st[i]] : null;
+            if (k !== (cur && cur.key)) { if (cur) cur.to = T[i]; if (k) { cur = { key: k, from: T[i], to: T[i] }; states.push(cur); } else cur = null; }
+        }
+        if (cur) cur.to = n ? T[n - 1] : 0;
+        if (states.length > 50) states = states.slice(states.length - 50);
+        var tIn = function (key) { var h = 0; states.forEach(function (x) { if (x.key === key) h += x.to - x.from; }); return h / 3600; };
+        // cumulative production (trapezoid, rates per day)
+        var cum = function (k) { var a = s(k), c = 0; for (var i = 1; i < n; i++) { var x = a[i - 1], y = a[i]; if (_fin(x) && _fin(y)) c += 0.5 * (x + y) * (T[i] - T[i - 1]) / 86400; } return c; };
+        var buildup = null, open = s('open');
+        if (n > 3 && open[n - 1] === 0) {
+            var k0 = n - 1; while (k0 > 0 && open[k0 - 1] === 0) k0--;
+            var tShut = T[k0], pw = s('pwf');
+            var i2 = n - 1, i1 = k0; for (var j = n - 1; j > k0; j--) { if ((T[j] - tShut) <= 0.5 * (T[n - 1] - tShut)) { i1 = j; break; } }
+            var d1 = T[i1] - tShut, d2 = T[i2] - tShut;
+            if (d1 > 0 && d2 > d1 && _fin(pw[i1]) && _fin(pw[i2])) {
+                var m = (pw[i2] - pw[i1]) / Math.log(d2 / d1), k_est = null;
+                try {
+                    var R = sim && sim.opts && sim.opts.reservoir, q = k0 > 0 ? s(gas ? 'qg' : 'qL')[k0 - 1] : NaN;
+                    if (R && R.mode === 'transient' && _fin(R.h) && R.h > 0 && _fin(R.mu) && _fin(R.B) && _fin(q) && m > 0 && !gas) k_est = 70.6 * q * R.B * R.mu / (R.h * m);
+                } catch (e) { k_est = null; }
+                buildup = { pws_end: pw[i2], dpdlnDt: m, k_est: k_est };
+            }
+        }
+        var gate = null;
+        if (sim && typeof sim.steadyCheck === 'function') { try { var g = sim.steadyCheck(); if (g && _fin(g.dq)) gate = { dq: g.dq, dp: g.dp, ampQ: g.ampQ, ampP: g.ampP }; } catch (e) { gate = null; } }
+        var prior = null; try { prior = _clone(sim && sim.opts && sim.opts.reservoir && sim.opts.reservoir.prior) || null; } catch (e) { prior = null; }
+        var prov = []; try { prov = (sim && sim.state && sim.state.provisional) ? sim.state.provisional.slice() : []; } catch (e) { prov = []; }
+        return {
+            duration_s: n ? T[n - 1] - T[0] : 0, endState: states.length ? states[states.length - 1].key : null, states: states,
+            qo: last('qo'), qw: last('qw'), qg: last('qg'), qgForm: last('qgForm'), gorForm: last('gorForm'), prior: prior,
+            thp_psig: last('thp'), pwf: last('pwf'), qMax: mx(qk, Math.max), qMin: mx(qk, Math.min), thpMax_psig: mx('thp', Math.max),
+            pwfMax: mx('pwf', Math.max), liqMax_bbl: mx('liq', Math.max), tLoading_h: tIn('loading'), tDead_h: tIn('dead'),
+            cumO_STB: cum('qo'), cumW_STB: cum('qw'), cumG_MMscf: cum('qg') / 1000, buildup: buildup, gate: gate, provisional: prov,
+            massErr: last('massErr'), engineId: engineId()
+        };
+    }
+
+    // ── cases (§3.8, §7) — the dyn key of the shared well model ─────────────────
+    function _M() { var W = G.WTS_wp_model; if (!W || typeof W.read !== 'function') return null; try { return W.read(); } catch (e) { return null; } }
+    function readDyn() {
+        var W = G.WTS_wp_model; if (!W || typeof W.readRaw !== 'function') return null;
+        var r = W.readRaw(); if (!r || r.status !== 'ok' || !r.rec) return null;
+        var d = r.rec.dyn; if (!_isObj(d)) return null;
+        var v = typeof W.validate === 'function' ? W.validate(r.rec).rec.dyn : d;
+        return _isObj(v) ? _clone(v) : null;
+    }
+    function list(M) {
+        M = M || _M();
+        var d = M && M.dyn; if (!_isObj(d) || !Array.isArray(d.cases)) return [];
+        return _clone(d.cases);
+    }
+    function _cleanText(s, n) { return String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n); }
+    var _seq = 0;
+    function make(o) {
+        o = o || {};
+        var id = (typeof o.id === 'string' && /^[A-Za-z0-9_-]{1,24}$/.test(o.id)) ? o.id : 'c' + Date.now().toString(36) + (++_seq).toString(36);
+        var st = _clone(o.settings) || {}; delete st.snapshot; delete st.ref;
+        return { id: id, name: _cleanText(o.name, 60), created: typeof o.created === 'string' ? o.created.slice(0, 24) : new Date().toISOString().slice(0, 16).replace('T', ' '),
+            settings: st, events: (Array.isArray(o.events) ? _clone(o.events) : []).slice(0, 200), duration_s: _fin(o.duration_s) ? o.duration_s : 0,
+            summary: _isObj(o.summary) ? _clone(o.summary) : null, note: _cleanText(o.note, 200) };
+    }
+    function _size(d) { return JSON.stringify(d).length; }
+    function _fit(d) {
+        // ≤ 20 cases, ≤ 24 kB: the oldest unnamed cases go first, then the oldest (never the newest one)
+        var dropped = [];
+        while (d.cases.length > CASE_MAX || (_size(d) > CASE_CAP && d.cases.length > 1)) {
+            var idx = -1;
+            for (var i = 0; i < d.cases.length - 1; i++) if (!d.cases[i].name) { idx = i; break; }
+            if (idx < 0) idx = 0;
+            dropped.push(d.cases[idx].id); d.cases.splice(idx, 1);
+        }
+        if (_size(d) > CASE_CAP && d.cases.length === 1 && d.cases[0].summary) { d.cases[0].summary = null; dropped.push(d.cases[0].id + ':summary'); }
+        return dropped;
+    }
+    function _write(d) {
+        var W = G.WTS_wp_model;
+        if (!W || typeof W.write !== 'function') return { ok: false, code: 'MISSING_ENGINE', errors: ['WTS_wp_model.write is not available'], warnings: [] };
+        if (!W.TABLE_KEYS || W.TABLE_KEYS.indexOf('dyn') === -1) return { ok: false, code: 'NO_DYN_KEY', errors: ['this version of the well model has no Well Dynamics cases'], warnings: [] };
+        return W.write({ dyn: d });
+    }
+    function _baseDyn() { var d = readDyn() || {}; return { v: 1, cases: Array.isArray(d.cases) ? d.cases : [], res: _isObj(d.res) ? d.res : null, preset: typeof d.preset === 'string' ? d.preset : null }; }
+    function save(c) {
+        var cc = c && c.id && c.settings ? make(c) : make(c || {});
+        var d = _baseDyn(), i = -1;
+        d.cases.forEach(function (x, j) { if (x && x.id === cc.id) i = j; });
+        if (i < 0 && cc.name) d.cases.forEach(function (x, j) { if (i < 0 && x && x.name && x.name.toLowerCase() === cc.name.toLowerCase()) i = j; });
+        if (i >= 0) { cc.id = d.cases[i].id; d.cases.splice(i, 1); }
+        d.cases.push(cc);
+        var dropped = _fit(d);
+        var r = _write(d);
+        if (r && r.ok) { r.id = cc.id; r.dropped = dropped; r.replaced = i >= 0; }
+        return r;
+    }
+    function remove(id) {
+        var d = _baseDyn(), l = d.cases.length;
+        d.cases = d.cases.filter(function (x) { return x && x.id !== id; });
+        if (d.cases.length === l) return { ok: false, code: 'NOT_FOUND', errors: ['no case ' + String(id).slice(0, 24)], warnings: [] };
+        return _write(d);
+    }
+    function setRes(res, preset) {
+        var d = _baseDyn();
+        if (res !== undefined) d.res = _isObj(res) ? _clone(res) : null;
+        if (preset !== undefined) d.preset = typeof preset === 'string' ? preset.slice(0, 24) : null;
+        return _write(d);
+    }
+    function toScenario(c) {
+        if (!_isObj(c)) return null;
+        return { settings: _clone(c.settings) || {}, events: _clone(c.events) || [], duration_s: _fin(c.duration_s) ? c.duration_s : 0 };
+    }
+
+    var NS = G.WTS_wd_rec = G.WTS_wd_rec || {};
+    NS.create = create; NS.fromFile = fromFile; NS.compare = compare; NS.summarize = summarize; NS.engineId = engineId; NS.hash = _hash;
+    NS.channelMeta = channelMeta; NS.hms = _hms;
+    NS.RUN_FORMAT = RUN_FORMAT; NS.RUN_VERSION = RUN_VERSION; NS.EXT = EXT; NS.MAX_FILE = MAX_FILE; NS.MAX_OPEN = MAX_OPEN;
+    NS.CHANNELS_FALLBACK = CH_KEYS.slice(); NS.STATE_ORDER_FALLBACK = STATE_ORDER.slice();
+    var CS = G.WTS_wd_cases = G.WTS_wd_cases || {};
+    CS.list = list; CS.save = save; CS.remove = remove; CS.toScenario = toScenario; CS.make = make; CS.readDyn = readDyn; CS.setRes = setRes;
+    CS.MAX = CASE_MAX; CS.CAP_BYTES = CASE_CAP;
+    // WD0 stub contract: a lane's file removes its own names from window.__WD_STUBS when it loads
+    if (Array.isArray(G.__WD_STUBS)) G.__WD_STUBS = G.__WD_STUBS.filter(function (s) { return !/^WTS_wd_(rec|cases)\b/.test(String(s)); });
+})();
+
+// ─── END 49-calc-wd-rec ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-welldyn ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// WTS — 49-calc-welldyn.js  (Round 9) — Well Dynamics page, route `welldyn` (lane WD3)
+// -----------------------------------------------------------------------------
+// docs/WELL-DYNAMICS-PLAN.md §2.1, §3.4–§3.8, §6, §7. Its own sidebar row in Production & Reservoir, right after the Well Performance
+// hub row (owner 2026-11-13: "just build it into menu") — not a hub member; a dashboard tile from the registry.
+//
+// Contract
+//   registry  WTS_calcRegistry.welldyn {key, title 'Well Dynamics', navTitle, sub, group 'Production & Reservoir', icon '&#8767;', badge,
+//             bc, desc, hooks: {silent: true, after: → one calcWellDyn()}, render}
+//   window.renderWellDyn(body), window.calcWellDyn() — re-reads the shared model (WTS_wp_model.read(); no copy is kept), rebuilds the
+//             simulator only when the model hash (M without dyn) or the scenario settings changed and no run has data; the steady
+//             reference is cached per model hash (sim.ref → opts.ref); it never starts a run (the page opens paused)
+//   WTS_state.welldyn = {v:1, ok, playing, t, state, summary, model:{ok, notes}}
+//   WTS_welldyn_page  test hook {state, sim, rec, play, pause, frame(ts), step, csv, runFile, load, scenario, scrub, cont, mark, …}
+//   events    listens to 'wts:well-changed' / 'wts:project-loaded' (stop and discard the run), 'wts:wellperf-model-changed' (banner
+//             "the well model changed — Rebuild"; ignored when detail.keys is exactly ['dyn'] — the page's own case save),
+//             'wts:unit-system-changed' (re-render readouts), document 'visibilitychange' (hidden → pause; visible never resumes)
+//   markup    #wd_root; header (#wd_go_wellperf, model status); #wd_toolbar (role toolbar, .rp-skip); #wd_timeline (.rp-skip: scrub slider,
+//             marks, state strip, Continue from here); #wd_kpis; the wellbore (#wd_cv_well, #wd_cv_nav) and the chart tabs (.rp-skip);
+//             cards Scenario and Cases; #wd_res = the compact report block, always visible (inputs, run summary, KPI chips, wellbore and
+//             trend canvases at fixed sizes, state timeline, provisional methods, verdicts, Notes)
+//
+// Run loop (WD-D9): requestAnimationFrame only while playing; paused, hidden, ended or off the page → no frame is requested. No
+// setInterval, no polling, no function wrapping (setTimeout(frame, 16) only while playing, and only without requestAnimationFrame).
+// The loop keeps a simulated-time target (target += speed · Δwall) and runs the engine with run(target − t, {maxWallMs: 10}); the
+// engine never splits a step, so the overshoot is carried; after a wall-limited frame the target may lead the engine by at most
+// speed × 0.1 s (the deficit is dropped and the achieved speed is shown: "running slower than ×N").
+// Engines are resolved at call time (WTS_wd_engine, WTS_wd_rec, WTS_wd_view); a missing engine shows a plain "not available" state.
+// =============================================================================
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var KEY = 'welldyn', TITLE = 'Well Dynamics';
+    var SUB = 'Transient well simulation: loading, unloading, shut-in, start-up and lift in time';
+    var PATM = 14.696, SPEEDS = [1, 10, 60, 300, 1000], DEF_SPEED = 60;
+    var PROVISIONAL_TXT = 'provisional — not verified against a published example';
+    var TABS = [['rates', 'Rates'], ['press', 'Pressures'], ['nodal', 'IPR / VLP'], ['whp', 'WHP vs rate'], ['depth', 'Depth log'], ['lift', 'Lift'], ['close', 'Close-up']];
+    var LAYERS = [['phase', 'Phase'], ['regime', 'Flow regime'], ['pressure', 'Pressure'], ['holdup', 'Holdup'], ['velocity', 'Velocity']];
+    var PRESETS = [['steady', 'Steady flow'], ['beanup', 'Bean-up steps'], ['shutin', 'Shut-in build-up'], ['gasload', 'Gas-well loading'],
+        ['foamer', 'Foamer'], ['cycle', 'Intermittent'], ['glunload', 'Gas-lift unloading'], ['espstart', 'ESP start']];
+    var EV_TYPES = [['bean', 'Bean (/64 in)'], ['shutin', 'Shut in'], ['open', 'Open'], ['psep', 'Separator (psig)'], ['foamer', 'Foamer (ppm)'], ['gl', 'Lift gas (Mscf/d)'], ['esp', 'ESP (Hz)']];
+    var calcs = 0;
+    var ST = {
+        M: null, mHash: null, optsHash: null, refs: {}, sim: null, rec: null, err: null, playing: false, ended: false, speed: DEF_SPEED, target: 0,
+        lastTs: null, raf: 0, rafKind: null, frameN: 0, ach: { t0: null, s0: 0, w0: 0, val: null }, scrubT: null, wb: null, nav: null, tab: 'rates',
+        layer: 'phase', modelStale: false, settingsStale: false, run: null, runNote: null, markStart: null, trail: [], events: [], openCmd: true,
+        endT: 4 * 3600, lastState: null, live: '', note: '', closeInfo: null, csvOpen: false
+    };
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _fin(v) { return typeof v === 'number' && isFinite(v); }
+    function _isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+    function _clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    function _esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function _now() { try { return (G.performance && typeof G.performance.now === 'function') ? G.performance.now() : Date.now(); } catch (e) { return Date.now(); } }
+    function _emit(name, detail) {
+        try {
+            if (typeof document === 'undefined' || !document.dispatchEvent) return;
+            var ev = (typeof CustomEvent === 'function') ? new CustomEvent(name, { detail: detail }) : null;
+            if (ev) document.dispatchEvent(ev);
+        } catch (e) { /* smoke stub */ }
+    }
+    function _NS(n) { var o = G[n]; return (o && typeof o === 'object') ? o : null; }
+    function _E() { var E = _NS('WTS_wd_engine'); return (E && typeof E.create === 'function') ? E : null; }
+    function _REC() { var R = _NS('WTS_wd_rec'); return (R && typeof R.create === 'function') ? R : null; }
+    function _V() { var V = _NS('WTS_wd_view'); return (V && typeof V.wellbore === 'function') ? V : null; }
+    function _pref(k, v) {
+        var key = 'wtspref_wd_' + k;
+        try {
+            if (v === undefined) { var s = G.localStorage ? G.localStorage.getItem(key) : null; return s == null ? null : s; }   /* ls-raw: device pref */
+            if (G.localStorage) G.localStorage.setItem(key, String(v));                                                       /* ls-raw: device pref */
+        } catch (e) { /* private window, blocked storage */ }
+        return null;
+    }
+    function _hms(t) {
+        if (!_fin(t)) return '—';
+        var s = Math.max(0, Math.round(t)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+        return h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
+    }
+    function _hmin(t) {
+        if (!_fin(t)) return '—';
+        var m = Math.round(Math.max(0, t) / 60), h = Math.floor(m / 60); m = m % 60;
+        return h ? h + ' h ' + m + ' min' : m + ' min';
+    }
+
+    // ── units (display) — the categories and helpers the Well Performance page uses ──
+    function _U() { return G.WTS_units; }
+    function _metric() { var U = _U(); return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _hasCat(cat) { var U = _U(); return !!(U && U.CATEGORIES && U.CATEGORIES[cat]); }
+    function _dv(v, cat) { var U = _U(); return (_fin(v) && _metric() && _hasCat(cat) && U.convertCategory) ? U.convertCategory(v, cat, 'imperial', 'metric') : v; }
+    function _lab(cat, imp) { var U = _U(); return (_metric() && _hasCat(cat)) ? U.CATEGORIES[cat].metric.label : imp; }
+    function _fmt(v, d) {
+        if (v == null || !_fin(v)) return '—';
+        var s = Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return s === '-0' ? '0' : s;
+    }
+    function _u(v, cat, d, imp, dMet) { if (!_fin(v)) return '—'; return _fmt(_dv(v, cat), _metric() ? (dMet == null ? d : dMet) : d) + ' ' + _lab(cat, imp); }
+    function _canon(fn) { var U = _U(); return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _decComma() { return !!(G.WTS_a11y && typeof G.WTS_a11y.decimalComma === 'function' && G.WTS_a11y.decimalComma()); }
+    function _isGas(M) { return !!(M && M.fluid && /gas|condensate/.test(M.fluid.type) && M.fluid.type !== 'gasinj'); }
+    function _rateCat(M) { return _isGas(M) ? ['gasRateSmall', 'Mscf/d'] : ['liquidRate', 'STB/d']; }
+    function _reduced() { try { return !!(G.matchMedia && G.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; } }
+    function _phone() { var w = G.innerWidth; return _fin(w) && w <= 600; }
+
+    // ── the shared model ──────────────────────────────────────────────────────
+    function _read() {
+        var W = G.WTS_wp_model; if (!W || typeof W.read !== 'function') return null;
+        try { return W.read(); } catch (e) { return null; }
+    }
+    function _hash(o) { var R = _REC(); if (R && R.hash) return R.hash(o); var E = _E(); if (E && E.hash) return E.hash(o); return JSON.stringify(o).length + ':' + JSON.stringify(o).slice(0, 64); }
+    function _modelHash(M) { if (!M) return null; var c = _clone(M); delete c.dyn; delete c.meta; return _hash(c); }
+    function _modelStatus(M) {
+        var notes = [], ok = true;
+        if (!M) return { ok: false, notes: ['the Well Performance model is not available'] };
+        if (!_fin(M.res.pr)) { ok = false; notes.push('average reservoir pressure p̄r needed'); }
+        if (!M.well.strings || !M.well.strings.length) notes.push('no strings: the default tubing is used');
+        if (!_fin(M.well.midPerfMd)) notes.push('mid-perforation depth not set');
+        if (M.fluid.type === 'waterinj' || M.fluid.type === 'gasinj') { ok = false; notes.push('injection wells are not simulated in time'); }
+        if (M.fluid.rv && M.fluid.rv.mode && M.fluid.rv.mode !== 'none') { ok = false; notes.push('a vaporised-condensate (Rv) fluid is not simulated in time'); }
+        return { ok: ok, notes: notes };
+    }
+    function _modelSummary(M) {
+        if (!M) return '—';
+        var ft = { oil: 'Oil', gas: 'Gas', condensate: 'Gas-condensate', water: 'Water', gasinj: 'Gas injector', waterinj: 'Water injector' }[M.fluid.type] || M.fluid.type;
+        var sv = M.well.survey || [], td = sv.length ? sv[sv.length - 1][0] : null;
+        var lift = { none: 'natural flow', gaslift: 'gas lift', esp: 'ESP' }[M.lift.type] || M.lift.type;
+        return ft + ' · inflow ' + (M.res.model || '—') + ' · ' + (_fin(M.well.midPerfMd) ? 'mid-perf ' + _u(M.well.midPerfMd, 'length', 0, 'ft') + ' MD' : (td ? 'TD ' + _u(td, 'length', 0, 'ft') : 'well —')) +
+            ' · ' + (sv.length ? sv.length + ' survey stations' : 'vertical') + ' · ' + lift;
+    }
+    function _wellName() {
+        var W = G.WTS_wells;
+        try {
+            if (W && typeof W.list === 'function') { var l = W.list() || [], a = l.filter(function (x) { return x && x.active; })[0]; if (a && a.name) return String(a.name); }
+        } catch (e) { /* ignore */ }
+        return 'Well';
+    }
+    // the model as a replay file carries it (§3.7): the Well Performance scalars (wp_*) and the table record
+    function _modelForFile() {
+        var sc = {}, tb = {};
+        try {
+            var s = G.localStorage ? G.localStorage.getItem('wts_page_wellperf') : null;   /* ls-raw: read-only copy of the shared scalars */
+            var p = s ? JSON.parse(s) : null;
+            if (p && _isObj(p.f)) Object.keys(p.f).forEach(function (k) { if (/^wp_/.test(k)) sc[k] = p.f[k]; });
+        } catch (e) { sc = {}; }
+        var W = G.WTS_wp_model;
+        if (W && typeof W.readRaw === 'function') {
+            var r = W.readRaw();
+            // the §3.7 table list plus tests and cases (additive): they are part of M, so the engine's model hash of a file-built
+            // simulator equals the live one and a file snapshot can be continued
+            if (r && r.status === 'ok' && r.rec) ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'lab', 'pump', 'corrSections', 'layers', 'glValves', 'tests', 'cases'].forEach(function (k) {
+                if (r.rec[k] !== undefined) tb[k] = _clone(r.rec[k]);
+            });
+        }
+        return { scalars: sc, tables: tb };
+    }
+    function _modelFromFile(model) {
+        var W = G.WTS_wp_model; if (!W || typeof W.read !== 'function' || typeof W.empty !== 'function') return null;
+        var rec = W.empty();
+        Object.keys((model && model.tables) || {}).forEach(function (k) { if (k !== 'dyn' && model.tables[k] != null) rec[k] = _clone(model.tables[k]); });
+        var d = { wts_wellperf_model: JSON.stringify(rec) };
+        var mem = { getItem: function (k) { return k in d ? d[k] : null; }, setItem: function (k, v) { d[k] = String(v); }, removeItem: function (k) { delete d[k]; } };
+        try { return W.read({ storage: mem, scalars: (model && model.scalars) || {} }); } catch (e) { return null; }
+    }
+
+    // ── settings (scenario scalars wd_*) ──────────────────────────────────────
+    var DEFS = { wd_start: 'steady', wd_static: 'liquid', wd_liquid: 'water', wd_level: 4000, wd_dur: 4, wd_cells: 60, wd_resmode: 'ipr', wd_prior: 'auto',
+        wd_prior_h: 720, wd_closure: 'corr', wd_fallback: false, wd_belfroid: false, wd_backflow: true, wd_temp: 'frozen', wd_preset: 'steady',
+        wd_k: '', wd_h: '', wd_phi: '', wd_ct: '', wd_mu: '', wd_B: '', wd_rw: '', wd_re: '', wd_S: '' };
+    function _val(id) {
+        var e = _byId(id); if (!e) return DEFS[id];
+        if (e.type === 'checkbox') return !!e.checked;
+        return e.value;
+    }
+    function _numv(id) { var v = parseFloat(_val(id)); return _fin(v) ? v : null; }
+    function _settings() {
+        return _canon(function () {
+            var start = _val('wd_start') === 'static' ? 'static' : 'steady';
+            var res = { mode: _val('wd_resmode') === 'transient' ? 'transient' : 'ipr', backflow: _val('wd_backflow') !== false };
+            ['k', 'h', 'phi', 'ct', 'mu', 'B', 'rw', 're', 'S'].forEach(function (k) { var v = _numv('wd_' + k); if (v !== null) res[k] = v; });
+            var pk = _val('wd_prior'); if (pk === 'auto' || !pk) pk = start === 'steady' ? 'steady' : 'none';
+            res.prior = { kind: pk, t_h: _numv('wd_prior_h') || 720, shut_h: 0 };
+            var st = { kind: ['gas', 'liquid', 'level'].indexOf(_val('wd_static')) !== -1 ? _val('wd_static') : 'liquid', liquidTopMd: null, liquid: _val('wd_liquid') === 'oil' ? 'oil' : 'water' };
+            if (st.kind === 'level') st.liquidTopMd = _numv('wd_level');
+            return {
+                cells: Math.max(20, Math.min(200, Math.round(_numv('wd_cells') || 60))), start: start, static: start === 'static' ? st : null, reservoir: res,
+                closure: _val('wd_closure') === 'driftflux' ? 'driftflux' : 'corr', fallback: !!_val('wd_fallback'), loading: { belfroid: !!_val('wd_belfroid') },
+                temperature: _val('wd_temp') === 'relax' ? 'relax' : 'frozen', duration_s: Math.max(60, (_numv('wd_dur') || 4) * 3600)
+            };
+        });
+    }
+    function _optsOf(set) {
+        var o = _clone(set); delete o.duration_s;
+        if (!o.static) delete o.static;
+        o.events = _clone(ST.events) || [];
+        return o;
+    }
+    function _resComplete(r) { return ['k', 'h', 'phi', 'ct', 'mu', 'B', 'rw'].filter(function (k) { return !_fin(r[k]); }); }
+
+    // ── simulator life cycle ──────────────────────────────────────────────────
+    function _dispose() {
+        _pause('reset');
+        if (ST.rec && ST.rec.detach) ST.rec.detach();
+        if (ST.sim && typeof ST.sim.dispose === 'function') { try { ST.sim.dispose(); } catch (e) { /* ignore */ } }
+        ST.sim = null; ST.rec = null; ST.trail = []; ST.scrubT = null; ST.ended = false; ST.markStart = null; ST.lastState = null;
+    }
+    function _hasData() { return !!(ST.rec && ST.rec.count && ST.rec.count() > 1); }
+    function _build(why) {
+        _dispose();
+        ST.run = null; ST.runNote = null;
+        ST.M = _read(); ST.mHash = _modelHash(ST.M);
+        var set = _settings(), E = _E(), RC = _REC();
+        ST.endT = set.duration_s;
+        ST.optsHash = _hash(_optsOf(set));
+        ST.modelStale = false; ST.settingsStale = false;
+        if (!ST.M) { ST.err = { code: 'NO_MODEL', msg: 'The Well Performance model is not available.' }; return false; }
+        if (!E) { ST.err = { code: 'MISSING_ENGINE', msg: 'The Well Dynamics engine is not available in this build.' }; return false; }
+        var ms = _modelStatus(ST.M);
+        if (!ms.ok) { ST.err = { code: 'MODEL', msg: 'Set up this well in Well Performance first: ' + ms.notes.join('; ') + '.' }; return false; }
+        var opts = _optsOf(set);
+        ST.createOpts = _clone(opts);                                   // the settings of this simulator (a replay file carries them)
+        var ref = ST.refs[ST.mHash]; if (ref) opts.ref = ref;
+        var t0 = _now(), sim;
+        try { sim = E.create(ST.M, opts); } catch (e) { if (typeof console !== 'undefined') console.error('[welldyn] create', e); sim = { ok: false, code: 'ENGINE_ERROR', errors: [String(e && e.message)] }; }
+        ST.createMs = _now() - t0;
+        if (!sim || sim.ok === false) {
+            var code = sim && sim.code || 'ENGINE_ERROR';
+            ST.err = { code: code, msg: _refusal(code, sim) };
+            return false;
+        }
+        ST.err = null;
+        if (sim.ref && ST.mHash) ST.refs = (function () { var o = {}; o[ST.mHash] = sim.ref; return o; })();   // one cached reference (C7)
+        ST.sim = sim; ST.openCmd = !!(sim.state && sim.state.open);
+        if (RC) { ST.rec = RC.create({ every_s: 10, snapEvery_s: 60, capMB: 32 }); ST.rec.attach(sim); }
+        sim.on('state', _onState);
+        ST.target = sim.state.t; ST.lastState = sim.state.well && sim.state.well.state;
+        _mountViews();
+        return true;
+    }
+    function _refusal(code, r) {
+        var m = {
+            NO_STEADY: 'No stable operating point for this well at these settings: start from a static well (Scenario → Start).',
+            RV_NOT_IN_TRANSIENT: 'A vaporised-condensate (Rv) fluid is not simulated in time; switch the fluid to the wet-gas model in Well Performance.',
+            INJECTOR: 'Injection wells are not simulated in time.',
+            GL_NOT_APPLICABLE: 'Gas lift does not apply to this well (see Well Performance step ④).',
+            ESP_NOT_APPLICABLE: 'The ESP does not apply to this well (see Well Performance step ④).',
+            MISSING_ENGINE: 'A shared engine is not available in this build.',
+            NOT_BUILT: 'The Well Dynamics engine is being built.'
+        }[code];
+        return m || ('The simulator could not start' + (r && r.errors && r.errors.length ? ': ' + String(r.errors[0]).slice(0, 200) : '.'));
+    }
+    function _onState(d) {
+        if (!d || !d.to) return;
+        var E = _E(), lab = (E && E.STATES && E.STATES[d.to] && E.STATES[d.to].label) || d.to;
+        ST.live = 'Well state: ' + lab + ' at ' + _hms(d.t);
+        var lr = _byId('wd_live'); if (lr) lr.textContent = ST.live;
+    }
+
+    // ── run loop (WD-D9) ─────────────────────────────────────────────────────
+    function _req() {
+        if (ST.raf) return;
+        if (typeof G.requestAnimationFrame === 'function') { ST.rafKind = 'raf'; ST.raf = G.requestAnimationFrame(_frame); }
+        else if (typeof G.setTimeout === 'function') { ST.rafKind = 'to'; ST.raf = G.setTimeout(function () { _frame(_now()); }, 16); }
+    }
+    function _cancel() {
+        if (!ST.raf) return;
+        try { if (ST.rafKind === 'raf' && typeof G.cancelAnimationFrame === 'function') G.cancelAnimationFrame(ST.raf); else if (typeof G.clearTimeout === 'function') G.clearTimeout(ST.raf); } catch (e) { /* ignore */ }
+        ST.raf = 0;
+    }
+    function _play() {
+        if (ST.playing) return true;
+        if (!ST.sim && !_build('play')) { _renderAll(); return false; }
+        if (ST.scrubT !== null) { ST.scrubT = null; }
+        var S = ST.sim.state;
+        if (S.t >= ST.endT - 1e-9) { ST.endT = S.t + _settings().duration_s; ST.ended = false; }
+        ST.playing = true; ST.lastTs = null; ST.target = S.t; ST.ach = { t0: null, s0: S.t, w0: 0, val: null };
+        _syncToolbar();
+        _req();
+        _publish();
+        return true;
+    }
+    function _pause(why) {
+        ST.playing = false; _cancel(); ST.lastTs = null;
+        if (why === 'end') ST.ended = true;
+        _syncToolbar();
+        if (why !== 'reset') {
+            _renderSlow(); _publish();
+            // the Quick Report snapshot of the current state and the run summary (the host's own debounce waits for a click)
+            if (_byId('wd_root') && typeof G.WTS_snapshotNow === 'function') { try { G.WTS_snapshotNow(); } catch (e) { /* ignore */ } }
+        }
+    }
+    function _frame(ts) {
+        ST.raf = 0;
+        if (!_byId('wd_root') || (typeof document !== 'undefined' && document.hidden) || !ST.playing || !ST.sim) { if (ST.playing && !_byId('wd_root')) ST.playing = false; return; }
+        var sim = ST.sim, S = sim.state;
+        var dw = ST.lastTs == null ? 0 : Math.max(0, Math.min(100, ts - ST.lastTs));
+        ST.lastTs = ts;
+        ST.target += ST.speed * dw / 1000;
+        if (ST.target > ST.endT) ST.target = ST.endT;
+        var r = null;
+        if (ST.target > S.t + 1e-9) {
+            try { r = sim.run(ST.target - S.t, { maxWallMs: 10 }); } catch (e) { if (typeof console !== 'undefined') console.error('[welldyn] run', e); r = { ok: false, code: 'ENGINE_ERROR' }; }
+        }
+        if (ST.target > S.t + ST.speed * 0.1) ST.target = S.t + ST.speed * 0.1;          // the target may not run away after a wall-limited frame
+        // achieved speed: simulated / wall over the last second
+        var a = ST.ach;
+        if (a.t0 == null) { a.t0 = ts; a.s0 = S.t; }
+        else if (ts - a.t0 >= 1000) { a.val = (S.t - a.s0) / ((ts - a.t0) / 1000); a.t0 = ts; a.s0 = S.t; }
+        ST.frameN++;
+        _drawLive(dw / 1000);
+        if (ST.frameN % 6 === 0) { _renderKpis(); _renderTimeline(); _renderChart(); }
+        if (r && r.ok === false) { ST.note = 'The run stopped: ' + (r.code || 'engine error') + '.'; _pause('error'); return; }
+        if (S.t >= ST.endT - 1e-9) { _pause('end'); return; }
+        _req();
+    }
+
+    // ── controls → events (WD-D8) ─────────────────────────────────────────────
+    function _act(fn) { if (!ST.sim && !_build('control')) { _renderAll(); return null; } var r = fn(ST.sim); _renderAll(); return r; }
+    function _shutToggle() {
+        return _act(function (sim) {
+            ST.openCmd = !ST.openCmd;
+            return ST.openCmd ? sim.open() : sim.shutIn();
+        });
+    }
+    function _beanApply() { var b = parseFloat(_val('wd_bean')); if (!_fin(b)) return null; return _act(function (sim) { return sim.setChoke(b); }); }
+    function _psepApply() { var p = _canon(function () { return _numv('wd_psep'); }); if (!_fin(p)) return null; return _act(function (sim) { return sim.setSeparator(p); }); }
+    function _foamApply(on) { var ppm = _numv('wd_foam') || 0; return _act(function (sim) { return sim.setFoamer({ on: !!on && ppm > 0, ppm: ppm, injMd: null }); }); }
+    function _liftApply() {
+        var M = ST.M; if (!M) return null;
+        if (M.lift.type === 'esp') { var hz = _numv('wd_hz'); return _act(function (sim) { return sim.setLift({ type: 'esp', on: _fin(hz) && hz > 0, freq: hz || 0, ramp_Hz_s: 1 }); }); }
+        if (M.lift.type === 'gaslift') { var q = _canon(function () { return _numv('wd_glq'); }); return _act(function (sim) { return sim.setLift({ type: 'gaslift', qinj_Mscfd: q || 0, mode: 'valves' }); }); }
+        return null;
+    }
+    function _stepOnce() {
+        if (!ST.sim && !_build('step')) { _renderAll(); return null; }
+        if (ST.playing) _pause('step');
+        ST.scrubT = null;
+        var r; try { r = ST.sim.step(); } catch (e) { r = { ok: false, code: 'ENGINE_ERROR' }; }
+        ST.target = ST.sim.state.t;
+        _renderAll();
+        return r;
+    }
+    function _setSpeed(v) {
+        v = +v; if (SPEEDS.indexOf(v) === -1) v = DEF_SPEED;
+        ST.speed = v; _pref('speed', v);
+        var s = _byId('wd_speed'); if (s && String(s.value) !== String(v)) s.value = String(v);
+        _renderKpis();
+    }
+    function _speedStep(d) { var i = SPEEDS.indexOf(ST.speed); i = Math.max(0, Math.min(SPEEDS.length - 1, (i < 0 ? 2 : i) + d)); _setSpeed(SPEEDS[i]); }
+
+    // ── timeline, scrub, continue, marks ──────────────────────────────────────
+    function _span() { return ST.rec ? ST.rec.span() : [0, 0]; }
+    function _curT() { return ST.scrubT !== null ? ST.scrubT : (ST.sim ? ST.sim.state.t : 0); }
+    function _scrub(t) {
+        if (!ST.rec || !ST.rec.count()) return;
+        if (ST.playing) _pause('scrub');
+        var sp = _span(); t = Math.max(sp[0], Math.min(sp[1], t));
+        ST.scrubT = (ST.sim && Math.abs(t - ST.sim.state.t) < 1e-6 && !ST.run) ? null : t;
+        _renderAll();
+    }
+    function _cont() {
+        if (ST.scrubT === null || !ST.rec) return { ok: false, code: 'LIVE' };
+        var sn = ST.rec.snapAt(ST.scrubT);
+        if (!sn) { ST.note = 'No snapshot at or before this moment: the recording can be viewed, not continued.'; _renderAll(); return { ok: false, code: 'NO_SNAPSHOT' }; }
+        var later = _span()[1] > sn.t + 1e-6;
+        if (later && typeof G.confirm === 'function' && !G.confirm('Continue from ' + _hms(sn.t) + '? The recording after this moment is discarded.')) return { ok: false, code: 'CANCELLED' };
+        if (ST.run && !ST.sim) {                                       // a replay file: build its own simulator from the file's model
+            var M = _modelFromFile(ST.run.model), E = _E();
+            if (!M || !E) return { ok: false, code: 'MISSING_ENGINE' };
+            var o = _clone(ST.run.settings) || {};                   // the same options → the same model hash → the snapshot restores
+            var sim = E.create(M, o);
+            if (!sim || sim.ok === false) { ST.note = _refusal(sim && sim.code, sim); _renderAll(); return { ok: false, code: sim && sim.code }; }
+            ST.sim = sim; ST.M = M; sim.on('state', _onState);
+        }
+        var r = ST.sim.restore(sn);
+        if (!r || !r.ok) {
+            ST.note = r && r.code === 'MODEL_MISMATCH' ? 'This snapshot belongs to another model or settings: Continue is not possible.' : 'The snapshot could not be restored (' + (r && r.code) + ').';
+            _renderAll(); return r || { ok: false };
+        }
+        ST.rec.truncate(sn.t);
+        ST.rec.attach(ST.sim);
+        ST.scrubT = null; ST.target = sn.t; ST.ended = false; ST.endT = Math.max(ST.endT, sn.t + 60);
+        ST.openCmd = !!ST.sim.state.open;
+        if (ST.run) ST.runNote = 'Continued from the replay file at ' + _hms(sn.t) + '.';
+        _mountViews();
+        _renderAll();
+        return { ok: true, t: sn.t };
+    }
+    function _mark() {
+        if (!ST.rec) return null;
+        var t = _curT();
+        if (ST.markStart === null) { ST.markStart = t; _syncToolbar(); return { started: t }; }
+        var t0 = ST.markStart; ST.markStart = null;
+        var id = ST.rec.mark(t0, t, 'Mark ' + (ST.rec.marks().length + 1));
+        _syncToolbar(); _renderTimeline(); _renderChart();
+        return { id: id };
+    }
+
+    // ── presets (§6.1) ────────────────────────────────────────────────────────
+    function _beans(M) { var b = (M && M.surface && M.surface.beans && M.surface.beans.length) ? M.surface.beans.slice() : [16, 20, 24, 32, 40, 48]; return b.sort(function (x, y) { return x - y; }); }
+    function _setCtl(id, v) {
+        var e = _byId(id); if (!e) return;
+        if (e.type === 'checkbox') e.checked = !!v; else e.value = String(v == null ? '' : v);
+    }
+    function _preset(key) {
+        var M = ST.M || _read(), gas = _isGas(M), b0 = (M && M.surface.choke.bean64) || 32, beans = _beans(M), H = 3600, ev = [], set = {};
+        set.wd_start = 'steady'; set.wd_fallback = false; set.wd_resmode = 'ipr'; set.wd_prior = 'auto';
+        var note = '';
+        switch (key) {
+            case 'beanup':
+                var lo = beans.filter(function (b) { return b < b0; }), b1 = lo.length ? lo[Math.max(0, lo.length - 2)] : Math.max(8, b0 / 2), b2 = lo.length ? lo[lo.length - 1] : (b1 + b0) / 2;
+                ev = [{ t: 0, type: 'bean', args: { bean64: b1 } }, { t: 1 * H, type: 'bean', args: { bean64: b2 } }, { t: 2 * H, type: 'bean', args: { bean64: b0 } }];
+                set.wd_dur = 4; break;
+            case 'shutin':
+                ev = [{ t: 2 * H, type: 'shutin', args: {} }]; set.wd_dur = 10;
+                var miss = _resComplete(_settings().reservoir);
+                if (!miss.length) { set.wd_resmode = 'transient'; set.wd_prior = 'steady'; }
+                else note = 'Transient reservoir needs ' + miss.join(', ') + ' (Scenario → Reservoir): the build-up uses the IPR until they are entered.';
+                break;
+            case 'gasload':
+                set.wd_fallback = true;
+                var half = beans.filter(function (b) { return b <= b0 / 2; }); ev = [{ t: 1 * H, type: 'bean', args: { bean64: half.length ? half[half.length - 1] : Math.max(8, Math.round(b0 / 2)) } }];
+                set.wd_dur = 8; if (!gas) note = 'This preset is meant for a gas well.'; break;
+            case 'foamer':
+                set.wd_fallback = true; ev = [{ t: 4 * H, type: 'foamer', args: { on: true, ppm: 1000, injMd: null } }]; set.wd_dur = 10;
+                if (!gas) note = 'This preset is meant for a gas well.'; break;
+            case 'cycle':
+                ev = [{ t: 0, type: 'cycle', args: { mode: 'timer', open_h: 2, shut_h: 2, cycles: 3 } }]; set.wd_dur = 12; break;
+            case 'glunload':
+                set.wd_start = 'static'; set.wd_static = 'liquid'; set.wd_liquid = 'water'; set.wd_prior = 'none';
+                var q = M && M.lift.gl && M.lift.gl.qinj_Mscfd ? M.lift.gl.qinj_Mscfd : 600;
+                ev = [{ t: 0, type: 'gl', args: { qinj_Mscfd: q, mode: 'valves' } }]; set.wd_dur = 12;
+                if (!M || M.lift.type !== 'gaslift') note = 'Set gas lift in Well Performance step ④ first.'; break;
+            case 'espstart':
+                set.wd_start = 'static'; set.wd_static = 'liquid'; set.wd_liquid = 'water'; set.wd_prior = 'none';
+                ev = [{ t: 0, type: 'esp', args: { on: true, freq: 60, ramp_Hz_s: 1 } }]; set.wd_dur = 2;
+                if (!M || M.lift.type !== 'esp') note = 'Set an ESP in Well Performance step ④ first.'; break;
+            default:
+                key = 'steady'; set.wd_dur = 2;
+        }
+        Object.keys(set).forEach(function (id) { _setCtl(id, set[id]); });
+        _setCtl('wd_preset', key);
+        ST.events = ev.map(function (e) { e.src = 'scenario'; return e; });
+        ST.note = note;
+        _syncScenario();
+        var C = G.WTS_wd_cases; if (C && typeof C.setRes === 'function' && G.WTS_wp_model && G.WTS_wp_model.TABLE_KEYS && G.WTS_wp_model.TABLE_KEYS.indexOf('dyn') !== -1) { try { C.setRes(undefined, key); } catch (e) { /* ignore */ } }
+        _build('preset');
+        _renderAll();
+        return { ok: true, key: key, events: _clone(ST.events), note: note };
+    }
+
+    // ── CSV, replay file, cases ───────────────────────────────────────────────
+    function _download(text, name, type) {
+        try {
+            var blob = new Blob([text], { type: type }), a = document.createElement('a');
+            a.href = URL.createObjectURL(blob); a.download = name; a.click();
+            if (URL.revokeObjectURL) URL.revokeObjectURL(a.href);
+            return true;
+        } catch (e) { return false; }
+    }
+    function _fname(ext) { return 'well_dynamics_' + _wellName().replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40) + '_' + new Date().toISOString().slice(0, 10) + ext; }
+    function _csvOpts() {
+        var cols = [];
+        Array.prototype.forEach.call((typeof document !== 'undefined' && document.querySelectorAll) ? document.querySelectorAll('#wd_csvcols input[data-col]') : [], function (c) { if (c.checked) cols.push(c.getAttribute('data-col')); });
+        var from = _numv('wd_csv_from'), to = _numv('wd_csv_to'), ev = _numv('wd_csv_every');
+        return { cols: cols.length ? cols : null, from: _fin(from) ? from * 3600 : null, to: _fin(to) ? to * 3600 : null, every_s: _fin(ev) && ev > 0 ? ev : null,
+            system: _val('wd_csv_sys') === 'metric' ? 'metric' : 'field', decimalComma: _decComma(), hms: true, stateNames: true,
+            title: 'Well Dynamics — ' + _wellName() + ' — ' + new Date().toISOString().slice(0, 16).replace('T', ' ') };
+    }
+    function _csv(o, download) {
+        if (!ST.rec || !ST.rec.count()) return '';
+        var co = Object.assign(_csvOpts(), o || {});
+        if (co.cols) _pref('cols', co.cols.join(','));
+        var s = ST.rec.csv(co);
+        ST.lastCsv = s;
+        if (download !== false) _download(s, _fname('.csv'), 'text/csv');
+        return s;
+    }
+    function _runFile(download) {
+        if (!ST.rec || !ST.rec.count()) return null;
+        // §3.7: settings = the create options (their scenario events included); events = the applied log
+        var set = ST.run ? _clone(ST.run.settings) : (_clone(ST.createOpts) || _optsOf(_settings()));
+        var meta = { model: ST.run ? _clone(ST.run.model) : _modelForFile(), settings: set, events: ST.rec.events(), well: { name: ST.run ? ST.run.well.name : _wellName() },
+            engine: ST.sim && ST.sim.version, summary: _summary() };
+        var RC = _REC(), run = ST.rec.toFile(meta);
+        ST.lastRun = run;
+        if (download !== false) _download(JSON.stringify(run), _fname(RC ? RC.EXT : '.wdrun'), 'application/json');
+        return run;
+    }
+    function _load(src) {
+        var RC = _REC(); if (!RC) return { ok: false, code: 'MISSING_ENGINE' };
+        var r = RC.fromFile(src);
+        if (!r.ok) { ST.note = 'The replay file could not be opened: ' + (r.errors && r.errors[0] || r.code) + '.'; _renderAll(); return r; }
+        _dispose();
+        ST.run = r.run; ST.rec = r.rec; ST.err = null;
+        var sp = r.rec.span(); ST.scrubT = sp[1];
+        ST.endT = Math.max(sp[1], r.run.duration_s || 0);
+        ST.runNote = 'Replay of "' + r.run.well.name + '" (' + _hmin(sp[1] - sp[0]) + ', recorded ' + String(r.run.created || '').slice(0, 10) + '). The stored well model is not changed.' +
+            (r.warnings.length ? ' ' + r.warnings.map(function (w) { return w.msg; }).join(' ') : '');
+        ST.runWarnings = r.warnings;
+        // the grid for the wellbore comes from a simulator of the file's model (no run); without an engine the recording still plays
+        var M = _modelFromFile(r.run.model), E = _E();
+        if (M && E) {
+            var o = _clone(r.run.settings) || {}; o.events = [];
+            try { var s = E.create(M, o); if (s && s.ok !== false) { ST.viewSim = s; ST.M = M; } } catch (e) { /* ignore */ }
+        }
+        _mountViews();
+        _renderAll();
+        return r;
+    }
+    // the replay re-run (R25): a fresh simulator of the file's model and settings replays the file's events; compared at the samples
+    function _rerun(maxWallMs) {
+        if (!ST.run) return { ok: false, code: 'NO_RUN' };
+        var M = _modelFromFile(ST.run.model), E = _E(), RC = _REC();
+        if (!M || !E || !RC) return { ok: false, code: 'MISSING_ENGINE' };
+        var o = _clone(ST.run.settings) || {};
+        // the scenario events of the settings plus the interactive ones of the log (controller events are re-made by the engine)
+        o.events = (Array.isArray(o.events) ? o.events : []).concat((ST.run.events || []).filter(function (e) { return e && e.src === 'user'; }));
+        var sim = E.create(M, o); if (!sim || sim.ok === false) return { ok: false, code: sim && sim.code };
+        var rec = RC.create({ every_s: ST.rec.every_s, snapEvery_s: 1e9 }); rec.attach(sim);
+        var dur = ST.run.duration_s || _span()[1], w0 = _now();
+        var r = sim.run(dur - sim.state.t, { maxWallMs: _fin(maxWallMs) ? maxWallMs : 15000 });
+        var cmp = RC.compare(ST.rec, rec, {});
+        var sameEngine = !ST.run.engineId || ST.run.engineId === RC.engineId();
+        var full = sim.state.t >= dur - 1e-6;
+        var msg;
+        if (cmp.identical && sameEngine) msg = 'Re-run: identical to the recording' + (full ? '.' : ' up to ' + _hms(sim.state.t) + ' (stopped there).');
+        else if (cmp.ok) msg = 'Re-run: equal to the recording within 0.5 % in rates and 1 psi in pressures' + (sameEngine ? '' : ' (made with a different JavaScript engine)') + (full ? '.' : ' up to ' + _hms(sim.state.t) + '.');
+        else msg = sameEngine ? 'Re-run: the re-run differs from the recording after ' + _hms(cmp.firstDiff_t) + ' (the model or the engine version changed).'
+            : 'Made with a different JavaScript engine: the re-run differs from the recording after ' + _hms(cmp.firstDiff_t) + '.';
+        ST.runNote = msg;
+        rec.detach(); if (sim.dispose) sim.dispose();
+        _renderAll();
+        return { ok: true, cmp: cmp, msg: msg, sameEngine: sameEngine, wallMs: _now() - w0, complete: full, stopped: r && r.stopped };
+    }
+    function _cases() { var C = G.WTS_wd_cases; return (C && typeof C.list === 'function') ? C.list(_read()) : []; }
+    function _caseSave(name) {
+        var C = G.WTS_wd_cases; if (!C) return { ok: false, code: 'MISSING_ENGINE' };
+        var set = _settings(), raw = {};
+        Object.keys(DEFS).forEach(function (id) { raw[id] = _val(id); });
+        var c = C.make({ name: name != null ? name : _val('wd_case_name'), settings: { opts: _optsOf(set), controls: raw }, events: _clone(ST.events) || [], duration_s: set.duration_s,
+            summary: _hasData() ? _summary() : null, note: '' });
+        var r = C.save(c);
+        if (r && r.ok) { ST.note = 'Case "' + (c.name || 'unnamed') + '" saved with this well' + (r.dropped && r.dropped.length ? ' (' + r.dropped.length + ' older case(s) dropped to stay within 20 cases / 24 kB)' : '') + '.'; _setCtl('wd_case_name', ''); }
+        else ST.note = 'The case was not saved: ' + ((r && r.errors && r.errors[0]) || (r && r.code) || 'unknown') + '.';
+        _renderCases(); _renderNote();
+        return r;
+    }
+    function _caseLoad(id) {
+        var c = _cases().filter(function (x) { return x.id === id; })[0]; if (!c) return { ok: false, code: 'NOT_FOUND' };
+        var ctl = c.settings && c.settings.controls;
+        if (_isObj(ctl)) Object.keys(ctl).forEach(function (k) { if (k in DEFS) _setCtl(k, ctl[k]); });
+        ST.events = _clone(c.events) || [];
+        _syncScenario();
+        _build('case');
+        ST.note = 'Case "' + (c.name || 'unnamed') + '" loaded: press Play.';
+        _renderAll();
+        return { ok: true };
+    }
+    function _caseRemove(id) {
+        var C = G.WTS_wd_cases; if (!C) return { ok: false };
+        var c = _cases().filter(function (x) { return x.id === id; })[0];
+        if (c && typeof G.confirm === 'function' && !G.confirm('Delete the case "' + (c.name || 'unnamed') + '"?')) return { ok: false, code: 'CANCELLED' };
+        var r = C.remove(id); _renderCases(); return r;
+    }
+    function _summary() {
+        var RC = _REC(); if (!RC || !ST.rec || !ST.rec.count()) return null;
+        try { return RC.summarize(ST.rec, ST.sim || ST.viewSim || null); } catch (e) { return null; }
+    }
+    function _importPrism() {
+        var W = typeof G.PRiSM_getWell === 'function' ? G.PRiSM_getWell() : null, F = typeof G.PRiSM_getLastFit === 'function' ? G.PRiSM_getLastFit() : null;
+        if (!W && !F) { ST.note = 'PRiSM has no well inputs or fit to import.'; _renderNote(); return { ok: false }; }
+        var map = { mu: W && W.mu, B: W && W.B, ct: W && W.ct, h: W && W.h, phi: W && W.phi, rw: W && W.rw, k: F && F.phys && F.phys.k, S: F && F.phys && F.phys.S };
+        var n = 0; Object.keys(map).forEach(function (k) { if (_fin(map[k])) { _setCtl('wd_' + k, map[k]); n++; } });
+        _resWrite('prism');
+        ST.note = n ? 'Imported ' + n + ' reservoir value(s) from PRiSM.' : 'PRiSM has no reservoir values to import.';
+        _onSettings();
+        return { ok: n > 0, n: n };
+    }
+    function _resWrite(src) {
+        var C = G.WTS_wd_cases, Wm = G.WTS_wp_model;
+        if (!C || typeof C.setRes !== 'function' || !Wm || !Wm.TABLE_KEYS || Wm.TABLE_KEYS.indexOf('dyn') === -1) return;
+        var r = _settings().reservoir, o = { source: src || 'user' };
+        ['k', 'h', 'phi', 'ct', 'mu', 'B', 'rw', 're', 'S'].forEach(function (k) { o[k] = _fin(r[k]) ? r[k] : null; });
+        try { C.setRes(o); } catch (e) { /* ignore */ }
+    }
+
+    // ── views ────────────────────────────────────────────────────────────────
+    function _vsim() { return ST.sim || ST.viewSim || null; }
+    function _mountViews() {
+        var V = _V(), s = _vsim();
+        if (ST.wb && ST.wb.destroy) { try { ST.wb.destroy(); } catch (e) { /* ignore */ } }
+        if (ST.nav && ST.nav.destroy) { try { ST.nav.destroy(); } catch (e) { /* ignore */ } }
+        ST.wb = null; ST.nav = null;
+        var cv = _byId('wd_cv_well'), nv = _byId('wd_cv_nav');
+        if (!V || !s || !s.grid || !cv) return;
+        var M = s.M || ST.M;
+        try {
+            ST.wb = V.wellbore(cv, { grid: s.grid, traj: s.grid.traj, strings: M && M.well ? M.well.strings : [], layer: ST.layer, exaggerate: 25, aspect: 'true', labels: true,
+                particles: { on: true, max: 300 }, reduced: _reduced(), liquid: _isGas(M) ? 'condensate' : 'oil', w: _phone() ? 240 : 360, h: _phone() ? 360 : 480,
+                onHover: function (info) { _hover(info); }, onSelect: function (i) { _select(i); }, onZoom: function (a, b) { if (ST.nav && ST.nav.setWindow) ST.nav.setWindow(a, b); } });
+            if (nv && V.navigator) ST.nav = V.navigator(nv, { grid: s.grid, traj: s.grid.traj, w: _phone() ? 56 : 72, h: _phone() ? 360 : 480, onWindow: function (a, b) { if (ST.wb && ST.wb.setZoom) ST.wb.setZoom(a, b); } });
+        } catch (e) { if (typeof console !== 'undefined') console.error('[welldyn] view', e); ST.wb = null; }
+    }
+    function _markers(s) {
+        var g = s && s.grid, M = s && s.M, out = [];
+        if (!g) return out;
+        if (M && _fin(M.well.midPerfMd)) out.push({ md: M.well.midPerfMd, kind: 'perf', label: 'perforations' });
+        if (g.cells && g.cells[g.eotCell]) out.push({ md: g.cells[g.eotCell].md0, kind: 'eot', label: 'end of tubing' });
+        (g.valveCells || []).forEach(function (v) { out.push({ md: v.md, kind: 'valve', label: 'valve ' + v.n }); });
+        if (g.pumpFace >= 0 && g.faces && g.faces[g.pumpFace]) out.push({ md: g.faces[g.pumpFace].md, kind: 'pump', label: 'pump' });
+        (g.gaugeCells || []).forEach(function (x) { out.push({ md: x.md, kind: 'gauge', label: 'gauge' }); });
+        return out;
+    }
+    // the frame shown: live engine state, or a recorded moment (scrub) from the recorder's display copies
+    function _frameData(dtWall) {
+        var s = _vsim();
+        if (ST.scrubT !== null && ST.rec) {
+            var f = ST.rec.frameAt ? ST.rec.frameAt(ST.scrubT) : null;
+            if (f) return { t: ST.scrubT, tFrame: f.t, cells: f.cells, faces: {}, markers: _markers(s), gasCapMd: f.gasCapMd, liquidTopMd: f.liquidTopMd, dtWall: 0, playing: false };
+            return null;
+        }
+        if (!ST.sim) return null;
+        var S = ST.sim.state, inv = S.inventory || {};
+        return { t: S.t, cells: S.cells, faces: S.faces, markers: _markers(ST.sim), gasCapMd: S.open ? null : inv.gasCapBottomMd, liquidTopMd: inv.liquidTopMd, dtWall: dtWall || 0, playing: ST.playing };
+    }
+    function _drawLive(dtWall) {
+        var fr = _frameData(dtWall);
+        if (fr && ST.wb && ST.wb.draw) { try { ST.wb.draw(fr); } catch (e) { /* drawing never stops the run */ } }
+        if (fr && ST.nav && ST.nav.draw) { try { ST.nav.draw(fr); } catch (e) { /* ignore */ } }
+        var tr = _byId('wd_tread'); if (tr) tr.textContent = _hms(_curT());
+    }
+    function _hover(info) {
+        var h = _byId('wd_hover'); if (!h) return;
+        if (!info) { h.textContent = 'Hover the well for MD, TVD, pressure, temperature, holdups, velocities and the flow regime; click a cell for its close-up.'; return; }
+        var lines = (ST.wb && ST.wb.infoLines) ? ST.wb.infoLines(info) : [];
+        h.textContent = lines.length ? lines.join(' · ') : '';
+    }
+    function _select(i) {
+        ST.closeInfo = (ST.wb && ST.wb.info) ? ST.wb.info(i) : { i: i };
+        _setTab('close');
+    }
+
+    // ── rendering ────────────────────────────────────────────────────────────
+    function _kpiHtml(label, val, sub, st) {
+        return '<div class="kpi wd-kpi st-' + (st || 'none') + '" role="group" aria-label="' + _esc(label + ' ' + val) + '"><div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' +
+            (sub ? '<div class="kpi-s">' + _esc(sub) + '</div>' : '') + '</div>';
+    }
+    function _stateInfo(key) {
+        var E = _E(), s = E && E.STATES && E.STATES[key];
+        var LBL = { stable: 'Stable', startup: 'Start-up', unloading: 'Unloading', marginal: 'Marginal', loading: 'Loading', heading: 'Heading', dying: 'Dying', dead: 'Dead', shutin: 'Shut in' };
+        var lab = (s && s.label) || LBL[key] || (key ? String(key).replace(/_/g, ' ') : '—');
+        var sev = (s && s.sev) || ({ stable: 'ok', dead: 'fail', loading: 'warn', marginal: 'warn', heading: 'warn', dying: 'warn' }[key]) || 'info';
+        return { label: lab, st: sev === 'fail' ? 'fail' : sev === 'warn' ? 'warn' : sev === 'ok' ? 'ok' : 'info' };
+    }
+    function _vals() {
+        // the values shown: the recorded moment when scrubbed (or a replay), else the live state through the recorder's channel map
+        if (ST.rec && (ST.scrubT !== null || !ST.sim)) { var a = ST.rec.at(_curT()); return a.values; }
+        if (ST.rec && ST.sim) { var b = ST.rec.at(ST.sim.state.t); if (ST.rec.count()) { var sp = ST.rec.span(); if (sp[1] >= ST.sim.state.t - 1e-6) return b.values; } }
+        if (ST.sim) {
+            var S = ST.sim.state, su = S.surface || {}, bo = S.bottom || {}, lo = S.loading || {}, inv = S.inventory || {}, li = S.lift || {};
+            var E = _E(), so = (E && E.STATE_ORDER) || [];
+            return { t: S.t, thp: su.thp_psig, pwf: bo.pwf, pr: bo.pr, qo: su.qo, qw: su.qw, qL: su.qL, qg: su.qg, qgForm: su.qgForm, lratio: lo.ratio, qc: lo.qc_MMscfd,
+                qcVert: lo.qcVert_MMscfd, qcBelfroid: lo.qcBelfroid_MMscfd, liq: inv.liqTubing_bbl, state: so.indexOf(S.well && S.well.state), open: S.open ? 1 : 0, bean: S.bean64,
+                pcs: li.gl ? li.gl.pcs_psig : NaN, pint: li.esp ? li.esp.pint : NaN, freq: li.esp ? li.esp.freq : NaN, qinj: su.qinj, gor: su.gor, wc: su.wc };
+        }
+        return null;
+    }
+    function _stateKey(v) {
+        var E = _E(), RC = _REC(), so = (E && E.STATE_ORDER) || (RC && RC.STATE_ORDER_FALLBACK) || [];
+        if (ST.scrubT === null && ST.sim && ST.sim.state.well) return ST.sim.state.well.state;
+        return v && _fin(v.state) ? so[v.state] : null;
+    }
+    function _kpis() {
+        var M = _vsim() ? (_vsim().M || ST.M) : ST.M, v = _vals(), gas = _isGas(M), out = [], rc = _rateCat(M);
+        if (!v) return [{ l: 'Well state', v: ST.err ? 'Not running' : 'Paused', s: ST.err ? ST.err.code : 'press Play', st: ST.err ? 'fail' : 'none' }];
+        var sk = _stateKey(v), si = _stateInfo(sk);
+        out.push({ l: 'Well state', v: si.label, s: (v.open === 0 ? 'choke closed' : 'bean ' + _fmt(v.bean, 0) + '/64'), st: si.st });
+        if (gas) out.push({ l: 'Gas rate', v: _u(v.qg, 'gasRateSmall', 0, 'Mscf/d'), s: _fin(v.qo) ? 'cond. ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
+        else out.push({ l: 'Liquid rate', v: _u(v.qL, 'liquidRate', 0, 'STB/d'), s: _fin(v.qo) ? 'oil ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
+        out.push({ l: 'THP', v: _u(v.thp, 'pressureG', 0, 'psig'), s: '' });
+        out.push({ l: 'BHP', v: _u(v.pwf, 'pressure', 0, 'psia'), s: _fin(v.pr) ? 'p̄r ' + _u(v.pr, 'pressure', 0, 'psia') : '' });
+        var lift = M && M.lift ? M.lift.type : 'none';
+        if (lift === 'gaslift') out.push({ l: 'Casing pressure', v: _u(v.pcs, 'pressureG', 0, 'psig'), s: _fin(v.qinj) ? 'lift gas ' + _u(v.qinj, 'gasRateSmall', 0, 'Mscf/d') : '' });
+        else if (lift === 'esp') out.push({ l: 'Pump intake', v: _u(v.pint, 'pressure', 0, 'psia'), s: _fin(v.freq) ? _fmt(v.freq, 1) + ' Hz' : '' });
+        else if (gas) {
+            var r = v.lratio, belf = !!_val('wd_belfroid');
+            out.push({ l: 'Rate / critical rate', v: _fin(r) ? _fmt(r, 2) : '—', st: _fin(r) ? (r < 0.9 ? 'fail' : r < 1.1 ? 'warn' : 'ok') : 'none',
+                s: 'q_c ' + _u(v.qcVert, 'gasRate', 2, 'MMscf/d') + ' vertical · ' + _u(v.qcBelfroid, 'gasRate', 2, 'MMscf/d') + ' Belfroid' + (belf ? ' (in use)' : '') });
+        }
+        out.push({ l: 'Liquid in the well', v: _u(v.liq, 'volume', 1, 'bbl'), s: '' });
+        var ach = ST.ach && ST.ach.val, slow = ST.playing && _fin(ach) && ach < 0.8 * ST.speed;
+        out.push({ l: 'Time', v: _hms(_curT()), s: ST.scrubT !== null ? 'recorded moment' : (ST.playing ? '×' + ST.speed + (_fin(ach) ? ' · achieved ×' + _fmt(ach, 0) : '') : 'paused · ×' + ST.speed),
+            st: slow ? 'warn' : 'none' });
+        if (slow) out[out.length - 1].s = 'running slower than ×' + ST.speed + ' (×' + _fmt(ach, 0) + ')';
+        return out;
+    }
+    function _renderKpis() {
+        var h = _byId('wd_kpis'); if (!h) return;
+        h.innerHTML = _kpis().map(function (k) { return _kpiHtml(k.l, k.v, k.s, k.st); }).join('');
+    }
+    function _syncToolbar() {
+        var p = _byId('wd_play');
+        if (p) { p.textContent = ST.playing ? '❚❚ Pause' : '▶ Play'; p.setAttribute('aria-pressed', ST.playing ? 'true' : 'false'); p.disabled = !!(ST.run && !ST.sim); }
+        var s = _byId('wd_shut'); if (s) { s.textContent = ST.openCmd ? 'Shut in' : 'Open'; s.disabled = !!(ST.run && !ST.sim); }
+        var m = _byId('wd_mark'); if (m) { m.textContent = ST.markStart === null ? 'Mark' : 'End mark'; m.setAttribute('aria-pressed', ST.markStart === null ? 'false' : 'true'); }
+        var st = _byId('wd_step'); if (st) st.disabled = !!(ST.run && !ST.sim);
+        var M = ST.M, lift = M && M.lift ? M.lift.type : 'none';
+        var gl = _byId('wd_lift_gl'), es = _byId('wd_lift_esp');
+        if (gl) gl.style.display = lift === 'gaslift' ? '' : 'none';
+        if (es) es.style.display = lift === 'esp' ? '' : 'none';
+        var fo = _byId('wd_foam_w'); if (fo) fo.style.display = _isGas(M) ? '' : 'none';
+    }
+    function _renderTimeline() {
+        var sl = _byId('wd_scrub'), sp = _span(), t = _curT();
+        if (sl) {
+            var f = sp[1] > sp[0] ? (t - sp[0]) / (sp[1] - sp[0]) : 1;
+            sl.value = String(Math.round(1000 * Math.max(0, Math.min(1, f))));
+            sl.disabled = !(ST.rec && ST.rec.count() > 1);
+            var sk = _stateKey(_vals());
+            sl.setAttribute('aria-valuetext', _hmin(t) + (sk ? ' — ' + _stateInfo(sk).label.toLowerCase() : ''));
+        }
+        var rd = _byId('wd_tread'); if (rd) rd.textContent = _hms(t);
+        var rng = _byId('wd_trange'); if (rng) rng.textContent = 'recorded ' + _hms(sp[0]) + ' – ' + _hms(sp[1]) + (ST.scrubT !== null ? ' · viewing a recorded moment' : '');
+        var c = _byId('wd_cont'); if (c) c.style.display = (ST.scrubT !== null && ST.rec && ST.rec.snapAt(ST.scrubT) && (ST.sim || ST.run)) ? '' : 'none';
+        var ml = _byId('wd_marks');
+        if (ml) {
+            var mk = ST.rec ? ST.rec.marks() : [];
+            ml.innerHTML = mk.length ? mk.map(function (m) {
+                return '<span class="wd-mk"><button type="button" class="wd-chip" data-act="gomark" data-id="' + _esc(m.id) + '">' + _esc(m.label) + ' ' + _hms(m.t0) + '–' + _hms(m.t1) + '</button>' +
+                    '<button type="button" class="wd-x" data-act="csvmark" data-id="' + _esc(m.id) + '" aria-label="Export ' + _esc(m.label) + ' as CSV" title="Export as CSV">CSV</button>' +
+                    '<button type="button" class="wd-x" data-act="unmark" data-id="' + _esc(m.id) + '" aria-label="Remove ' + _esc(m.label) + '" title="Remove">&#10005;</button></span>';
+            }).join('') : '<span class="wd-hint">No marked windows. Press <b>Mark</b> (or M) at the start and at the end of a window.</span>';
+        }
+        var V = _V(), sc = _byId('wd_cv_strip');
+        if (V && sc && ST.rec && V.stateStrip) { try { V.stateStrip(sc, ST.rec, { window: sp, cursor: t, onScrub: function (tt) { _scrub(tt); } }); } catch (e) { /* ignore */ } }
+    }
+    function _setTab(k) {
+        if (!TABS.some(function (t) { return t[0] === k; })) k = 'rates';
+        ST.tab = k; _pref('tab', k);
+        Array.prototype.forEach.call(document.querySelectorAll('#wd_tabs [data-tab]'), function (b) { var on = b.getAttribute('data-tab') === k; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        var ts = _byId('wd_tabsel'); if (ts && ts.value !== k) ts.value = k;
+        TABS.forEach(function (t) { var w = _byId('wd_cw_' + t[0]); if (w) w.style.display = t[0] === k ? '' : 'none'; });
+        _renderChart();
+    }
+    function _trendKeys(tab, M) {
+        var gas = _isGas(M), lift = M && M.lift ? M.lift.type : 'none';
+        if (tab === 'rates') return gas ? ['qg', 'qgForm', 'qg_res', 'qo'] : ['qL', 'qo', 'qw', 'qo_res', 'qg'];
+        if (tab === 'press') return ['thp', 'pwf', 'pr'].concat(lift === 'gaslift' ? ['pcs'] : lift === 'esp' ? ['pint'] : []);
+        if (tab === 'lift') return lift === 'gaslift' ? ['pcs', 'qinj', 'opValve'] : lift === 'esp' ? ['pint', 'freq', 'load'] : (gas ? ['lratio', 'liq', 'foam'] : ['liq', 'gor']);
+        return ['qL'];
+    }
+    function _renderChart(force) {
+        var V = _V(), s = _vsim(), M = s ? (s.M || ST.M) : ST.M, k = ST.tab, cv = _byId('wd_cv_' + k), msg = _byId('wd_chartmsg');
+        if (!cv) return;
+        if (!V || !ST.rec) { if (msg) msg.textContent = !V ? 'The charts are not available in this build.' : 'Press Play to record the run.'; return; }
+        if (msg) msg.textContent = '';
+        var sp = _span(), t = _curT();
+        try {
+            if (k === 'rates' || k === 'press' || k === 'lift') V.trend(cv, ST.rec, { keys: _trendKeys(k, M), window: [sp[0], Math.max(sp[1], sp[0] + 60)], cursor: t, marks: ST.rec.marks(), onScrub: function (tt) { _scrub(tt); } });
+            else if (k === 'nodal') {
+                var R0 = s && s.R0, v = _vals() || {}, gas = R0 && R0.rates && R0.rates.basis === 'gas';
+                var q = gas ? (ST.rec.at(t).values.qg_res) : ((ST.rec.at(t).values.qo_res || 0) + (ST.rec.at(t).values.qw_res || 0));
+                if (ST.scrubT === null && _fin(q) && _fin(v.pwf)) { var last = ST.trail[ST.trail.length - 1]; if (!last || last[0] !== q || last[1] !== v.pwf) { ST.trail.push([q, v.pwf]); if (ST.trail.length > 120) ST.trail.shift(); } }
+                V.nodal(cv, { curves: R0 && R0.curves ? R0.curves : null, op: R0 && R0.op ? { q: R0.op.q, p: R0.op.p } : null, live: _fin(q) && _fin(v.pwf) ? { q: q, p: v.pwf } : null, trail: ST.trail.slice(), gas: !!gas });
+            }
+            else if (k === 'whp') V.whpRate(cv, ST.rec, { gas: _isGas(M), qKey: _isGas(M) ? 'qg' : 'qL', cursor: t, op: s && s.R0 && s.R0.op ? { q: s.R0.op.q, thp_psig: s.R0.surface && s.R0.surface.thp_psig } : null });
+            else if (k === 'depth') { var fr = _frameData(0); if (fr && s) V.depthLog(cv, fr, { grid: s.grid, track: 'pressure', markers: fr.markers }); }
+            else if (k === 'close') {
+                var info = ST.closeInfo || (ST.wb && ST.wb.info ? ST.wb.info(0) : null);
+                if (info && V.closeUp) V.closeUp(cv, info, { reduced: _reduced() });
+            }
+        } catch (e) { if (msg) msg.textContent = 'The chart could not be drawn.'; if (typeof console !== 'undefined') console.error('[welldyn] chart', e); }
+    }
+    function _banner() {
+        var b = _byId('wd_banner'); if (!b) return;
+        var h = [];
+        if (ST.err) h.push(_vOpen('fail') + '✗ ' + _esc(ST.err.msg) + (ST.err.code === 'NO_STEADY' ? ' <button type="button" class="btn btn-secondary" data-act="static">Start from a static well</button>' : '') +
+            (ST.err.code === 'MODEL' || ST.err.code === 'NO_MODEL' ? ' <button type="button" class="btn btn-secondary" data-act="gowp">Open Well Performance</button>' : '') + '</div>');
+        if (ST.modelStale) h.push(_vOpen('warn') + '⚠ The well model changed in Well Performance. <button type="button" class="btn btn-secondary" data-act="rebuild">Rebuild</button> (the recorded run is discarded)</div>');
+        if (ST.settingsStale) h.push(_vOpen('warn') + '⚠ The scenario settings changed. <button type="button" class="btn btn-secondary" data-act="rebuild">Reset to apply</button> (the recorded run is discarded)</div>');
+        if (ST.runNote) h.push(_vOpen('info') + 'ℹ ' + _esc(ST.runNote) + (ST.run ? ' <button type="button" class="btn btn-secondary" data-act="rerun">Re-run and compare</button> <button type="button" class="btn btn-secondary" data-act="closerun">Close the replay</button>' : '') + '</div>');
+        b.innerHTML = h.join('');
+    }
+    var V_COL = { ok: 'green', warn: 'yellow', fail: 'red', info: 'text2' };
+    function _vOpen(st) { return '<div class="wd-v ' + st + '" style="color:var(--' + (V_COL[st] || 'text2') + ')">'; }
+    function _renderNote() { var n = _byId('wd_note'); if (n) n.textContent = ST.note || ''; }
+    function _renderHeader() {
+        var M = ST.run ? (_vsim() && _vsim().M) : ST.M, ms = _modelStatus(M);
+        var h = _byId('wd_model');
+        if (h) h.innerHTML = '<span class="wd-wn">' + _esc(ST.run ? ST.run.well.name : _wellName()) + '</span> · ' + _esc(_modelSummary(M)) + ' · ' +
+            (ms.ok ? '<span class="wd-ok">✓ from Well Performance</span>' : '<span class="wd-bad">✗ set up in Well Performance</span>');
+    }
+    function _renderEvents() {
+        var tb = _byId('wd_evbody'); if (!tb) return;
+        var t = ST.sim ? ST.sim.state.t : 0, rows = [];
+        var log = ST.rec ? ST.rec.events() : [];
+        log.forEach(function (e) { rows.push('<tr class="ro"><td>' + _hms(e.t) + '</td><td>' + _esc(_evLabel(e)) + '</td><td>' + _esc(e.src || '') + '</td><td>applied</td></tr>'); });
+        ST.events.forEach(function (e, i) {
+            if (e.t < t - 1e-9 && ST.sim && t > 0) return;
+            rows.push('<tr><td>' + _hms(e.t) + '</td><td>' + _esc(_evLabel(e)) + '</td><td>' + _esc(e.src || 'scenario') + '</td><td><button type="button" class="btn btn-secondary wd-x" data-act="evdel" data-i="' + i + '" aria-label="Delete event">&#10005;</button></td></tr>');
+        });
+        tb.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="wd-hint">No events: the well runs at its settings. Add events below or pick a preset.</td></tr>';
+    }
+    function _evLabel(e) {
+        var a = e.args || {};
+        switch (e.type) {
+            case 'bean': return 'Bean ' + _fmt(a.bean64, 1) + '/64';
+            case 'shutin': return 'Shut in';
+            case 'open': return 'Open';
+            case 'psep': return 'Separator ' + _u(a.psig, 'pressureG', 0, 'psig');
+            case 'foamer': return a.on === false ? 'Foamer off' : 'Foamer ' + _fmt(a.ppm, 0) + ' ppm';
+            case 'gl': return 'Lift gas ' + _u(a.qinj_Mscfd, 'gasRateSmall', 0, 'Mscf/d');
+            case 'esp': return a.on === false ? 'ESP off' : 'ESP ' + _fmt(a.freq, 1) + ' Hz';
+            case 'cycle': return 'Intermittent: ' + (a.mode === 'pressure' ? 'by pressure' : _fmt(a.open_h, 1) + ' h open / ' + _fmt(a.shut_h, 1) + ' h shut × ' + _fmt(a.cycles, 0));
+            case 'mark': return 'Mark ' + String(a.label || '').slice(0, 40);
+            case 'end': return 'End';
+            default: return String(e.type || '').slice(0, 20);
+        }
+    }
+    function _evAdd() {
+        var th = _numv('wd_ev_t'), ty = _val('wd_ev_type'), v = _canon(function () { return _numv('wd_ev_v'); });
+        if (!_fin(th) || th < 0) { ST.note = 'Enter the event time in hours (0 or more).'; _renderNote(); return null; }
+        var t = th * 3600, now = ST.sim ? ST.sim.state.t : 0;
+        if (ST.sim && t < now - 1e-9) { ST.note = 'Events in the past cannot be added: scrub back and continue from there, or add a later time.'; _renderNote(); return null; }
+        var args = {};
+        if (ty === 'bean') { if (!_fin(v)) { ST.note = 'Enter the bean in /64 in.'; _renderNote(); return null; } args.bean64 = v; }
+        else if (ty === 'psep') { if (!_fin(v)) { ST.note = 'Enter the separator pressure.'; _renderNote(); return null; } args.psig = v; }
+        else if (ty === 'foamer') args = { on: _fin(v) && v > 0, ppm: _fin(v) ? v : 0, injMd: null };
+        else if (ty === 'gl') args = { qinj_Mscfd: _fin(v) ? v : 0, mode: 'valves' };
+        else if (ty === 'esp') args = { on: _fin(v) && v > 0, freq: _fin(v) ? v : 0, ramp_Hz_s: 1 };
+        var e = { t: t, type: ty, args: args, src: 'user' };
+        ST.events.push(e); ST.events.sort(function (a, b) { return a.t - b.t; });
+        if (ST.sim) ST.sim.schedule([e]);
+        ST.note = '';
+        _renderEvents(); _renderNote();
+        return e;
+    }
+    function _renderCases() {
+        var h = _byId('wd_cases'); if (!h) return;
+        var Wm = G.WTS_wp_model, okKey = !!(Wm && Wm.TABLE_KEYS && Wm.TABLE_KEYS.indexOf('dyn') !== -1);
+        var L = okKey ? _cases() : [];
+        h.innerHTML = !okKey ? '<div class="wd-hint">Cases need the Well Dynamics key of the well model (not in this build).</div>' :
+            (L.length ? '<div class="wd-tw"><table class="dtable wd-ct"><thead><tr><th>Case</th><th>Saved</th><th>Duration</th><th>End state</th><th></th></tr></thead><tbody>' + L.slice().reverse().map(function (c) {
+                var es = c.summary && c.summary.endState ? _stateInfo(c.summary.endState).label : '—';
+                return '<tr><td>' + _esc(c.name || 'Unnamed') + '</td><td>' + _esc(c.created || '') + '</td><td>' + _hmin(c.duration_s) + '</td><td>' + _esc(es) + '</td><td class="wd-nw">' +
+                    '<button type="button" class="btn btn-secondary" data-act="caseload" data-id="' + _esc(c.id) + '">Load</button> ' +
+                    '<button type="button" class="btn btn-secondary wd-x" data-act="casedel" data-id="' + _esc(c.id) + '" aria-label="Delete case ' + _esc(c.name || 'Unnamed') + '">&#10005;</button></td></tr>';
+            }).join('') + '</tbody></table></div>' : '<div class="wd-hint">No saved cases for this well. A case keeps the scenario (start, reservoir, events) and the run summary; it travels with the well in the project file.</div>');
+    }
+    function _syncScenario() {
+        var st = _val('wd_start'), sk = _val('wd_static'), rm = _val('wd_resmode');
+        var a = _byId('wd_static_w'), b = _byId('wd_level_w'), c = _byId('wd_res_t'), d = _byId('wd_liq_w');
+        if (a) a.style.display = st === 'static' ? '' : 'none';
+        if (d) d.style.display = st === 'static' && sk !== 'gas' ? '' : 'none';
+        if (b) b.style.display = st === 'static' && sk === 'level' ? '' : 'none';
+        if (c) c.style.display = rm === 'transient' ? '' : 'none';
+        var miss = _byId('wd_res_miss');
+        if (miss) { var m = rm === 'transient' ? _resComplete(_settings().reservoir) : []; miss.textContent = m.length ? 'Needed for the transient reservoir: ' + m.join(', ') + '.' : ''; }
+        _renderEvents();
+    }
+    function _verdicts(sum) {
+        var out = [], s = _vsim();
+        if (ST.err) out.push({ st: 'fail', t: '✗ ' + ST.err.msg });
+        if (sum && sum.gate && _fin(sum.gate.dq)) {
+            var dq = Math.abs(sum.gate.dq) * 100, dp = Math.abs(sum.gate.dp) * 100, ok = dq <= 2 && dp <= 1;
+            out.push({ st: ok ? 'ok' : 'warn', t: (ok ? '✓ ' : '⚠ ') + 'Distance from the nodal operating point: rate ' + _fmt(dq, 2) + ' %, BHP ' + _fmt(dp, 2) + ' % (gate 2 % / 1 %)' });
+        }
+        if (sum && _fin(sum.massErr)) out.push({ st: Math.abs(sum.massErr) < 1e-6 ? 'ok' : 'warn', t: (Math.abs(sum.massErr) < 1e-6 ? '✓ ' : '⚠ ') + 'Mass balance error ' + sum.massErr.toExponential(1) + ' (cumulative, relative)' });
+        if (sum && sum.endState) { var si = _stateInfo(sum.endState); out.push({ st: si.st === 'fail' ? 'fail' : si.st === 'warn' ? 'warn' : 'ok', t: (si.st === 'fail' ? '✗ ' : si.st === 'warn' ? '⚠ ' : '✓ ') + 'Well state at the end: ' + si.label }); }
+        if (s && s.mock) out.push({ st: 'warn', t: '⚠ Stand-in engine: not a simulation' });
+        return out;
+    }
+    function _renderReport() {
+        var h = _byId('wd_rsum'); if (!h) return;
+        var sum = _summary(), s = _vsim(), M = s ? (s.M || ST.M) : ST.M, rc = _rateCat(M), set = ST.run ? (ST.run.settings || {}) : _settings();
+        var rows = [];
+        var rr = function (l, v) { rows.push('<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv">' + _esc(v) + '</span></div>'); };
+        // inputs
+        var ih = _byId('wd_rinp');
+        if (ih) {
+            var res = set.reservoir || {}, inp = [];
+            var ir = function (l, v) { inp.push('<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv wd-rvt">' + _esc(v) + '</span></div>'); };
+            ir('Well', (ST.run ? ST.run.well.name : _wellName()) + ' — ' + _modelSummary(M));
+            ir('Start', set.start === 'static' ? 'static well (' + ((set.static && set.static.kind) || 'liquid') + ')' : 'steady flow at the nodal operating point');
+            ir('Reservoir', res.mode === 'transient' ? 'transient (radial, superposition; prior ' + ((res.prior && res.prior.kind) || '—') + ')' : 'steady inflow (IPR)');
+            ir('Closure / cells', (set.closure === 'driftflux' ? 'drift flux everywhere' : 'gradient correlation, drift flux at low velocity') + ' · ' + (set.cells || 60) + ' cells');
+            ir('Options', [set.fallback ? 'liquid fallback' : null, set.loading && set.loading.belfroid ? 'Belfroid inclination correction' : null, set.temperature === 'relax' ? 'temperature relaxation' : 'frozen temperature', res.backflow === false ? 'no back-flow' : 'back-flow into the formation'].filter(Boolean).join(' · '));
+            if (s && s.R0 && s.R0.op) ir('Nodal operating point', _u(s.R0.op.q, rc[0], 0, rc[1]) + ' at ' + _u(s.R0.op.p, 'pressure', 0, 'psia'));
+            ih.innerHTML = '<div class="rbox-title">Inputs</div>' + inp.join('');
+        }
+        if (sum) {
+            var gas = _isGas(M);
+            rr('Duration', _hmin(sum.duration_s));
+            rr('State at the end', sum.endState ? _stateInfo(sum.endState).label : '—');
+            if (gas) rr('Gas rate at the end', _u(sum.qg, 'gasRateSmall', 0, 'Mscf/d') + (_fin(sum.qgForm) && Math.abs(sum.qgForm - sum.qg) > 0.5 ? ' (formation ' + _u(sum.qgForm, 'gasRateSmall', 0, 'Mscf/d') + ')' : ''));
+            else rr('Oil / water at the end', _u(sum.qo, 'liquidRate', 0, 'STB/d') + ' / ' + _u(sum.qw, 'liquidRate', 0, 'STB/d'));
+            rr('THP / BHP at the end', _u(sum.thp_psig, 'pressureG', 0, 'psig') + ' / ' + _u(sum.pwf, 'pressure', 0, 'psia'));
+            rr('Rate range', _u(sum.qMin, rc[0], 0, rc[1]) + ' – ' + _u(sum.qMax, rc[0], 0, rc[1]));
+            rr('Highest THP / BHP', _u(sum.thpMax_psig, 'pressureG', 0, 'psig') + ' / ' + _u(sum.pwfMax, 'pressure', 0, 'psia'));
+            rr('Most liquid in the well', _u(sum.liqMax_bbl, 'volume', 1, 'bbl'));
+            if (sum.tLoading_h > 0 || sum.tDead_h > 0) rr('Time loading / dead', _fmt(sum.tLoading_h, 2) + ' h / ' + _fmt(sum.tDead_h, 2) + ' h');
+            rr('Cumulative oil / water / gas', _u(sum.cumO_STB, 'liquidVolume', 0, 'STB') + ' / ' + _u(sum.cumW_STB, 'liquidVolume', 0, 'STB') + ' / ' + _fmt(sum.cumG_MMscf, 3) + ' MMscf');
+            if (sum.buildup) rr('Build-up', 'p_ws ' + _u(sum.buildup.pws_end, 'pressure', 0, 'psia') + ' · dp/dln Δt ' + _u(sum.buildup.dpdlnDt, 'pressure', 1, 'psi') + (_fin(sum.buildup.k_est) ? ' · k ≈ ' + _fmt(sum.buildup.k_est, 1) + ' md' : ''));
+        }
+        h.innerHTML = '<div class="rbox-title">Run summary</div>' + (rows.length ? rows.join('') : '<div class="wd-hint">The summary appears once the run has data (press Play).</div>');
+        var kc = _byId('wd_rkpi'); if (kc) kc.innerHTML = _kpis().slice(0, 6).map(function (k) { return _kpiHtml(k.l, k.v, k.s, k.st); }).join('');
+        var stl = _byId('wd_rstates');
+        if (stl) {
+            var states = sum ? sum.states : [];
+            stl.innerHTML = '<div class="rbox-title">State timeline</div>' + (states.length ? '<table class="dtable"><thead><tr><th>From</th><th>To</th><th>State</th></tr></thead><tbody>' +
+                states.slice(-12).map(function (x) { return '<tr><td>' + _hms(x.from) + '</td><td>' + _hms(x.to) + '</td><td>' + _esc(_stateInfo(x.key).label) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="wd-hint">—</div>');
+        }
+        var pv = _byId('wd_rprov');
+        if (pv) {
+            var pl = (sum && sum.provisional && sum.provisional.length) ? sum.provisional : (s && s.state && s.state.provisional) || [];
+            pv.innerHTML = '<div class="rbox-title">Provisional methods in this run</div>' + (pl.length ? _vOpen('info') + '⚠ ' + _esc(pl.join(', ')) + ': ' + PROVISIONAL_TXT + '.</div>' : _vOpen('ok') + '✓ None active so far.</div>');
+        }
+        var vd = _byId('wd_rverd'); if (vd) { var vs = _verdicts(sum); vd.innerHTML = '<div class="rbox-title">Checks</div>' + (vs.length ? vs.map(function (v) { return _vOpen(v.st) + _esc(v.t) + '</div>'; }).join('') : '<div class="wd-hint">The checks appear once the run has data.</div>'); }
+        var nb = _byId('wd_notesbox');
+        if (nb) nb.innerHTML = '<b>Notes</b> ' + _esc('A time-stepping model of one well on the shared Well Performance model (fluid, inflow, survey, strings, choke, lift). ' +
+            'A steady flowing run settles on the nodal operating point; the methods listed as provisional are labelled until they are verified. ' + (String(_val('wd_notes') || '').slice(0, 600)));
+        _reportCanvases();
+    }
+    function _reportCanvases() {
+        var V = _V(), s = _vsim();
+        var cw = _byId('wd_cv_rwell'), ct = _byId('wd_cv_rtrend');
+        if (!V || !s || !s.grid) return;
+        var fr = _frameData(0);
+        if (cw && fr) {
+            try {
+                // fixed report size (WD-D15: 360 × 480 CSS px); a phone draws it at 270 × 360
+                var ph = _phone(), key = (ph ? 'p' : 'd');
+                if (!ST.rwb || ST.rwb.__grid !== s.grid || ST.rwb.__key !== key) {
+                    if (ST.rwb && ST.rwb.destroy) ST.rwb.destroy();
+                    ST.rwb = V.wellbore(cw, { grid: s.grid, traj: s.grid.traj, strings: (s.M || ST.M).well.strings, layer: 'phase', exaggerate: 25, aspect: 'fit', labels: true, particles: { on: false, max: 0 }, reduced: true, w: ph ? 270 : 360, h: ph ? 360 : 480, fixed: true });
+                }
+                ST.rwb.__grid = s.grid; ST.rwb.__key = key;
+                fr.playing = false; fr.dtWall = 0; ST.rwb.draw(fr);
+            } catch (e) { /* ignore */ }
+        }
+        if (ct && ST.rec && ST.rec.count()) {
+            var sp = _span(), M = s.M || ST.M;
+            try { V.trend(ct, ST.rec, { keys: _isGas(M) ? ['qg', 'thp', 'pwf'] : ['qL', 'thp', 'pwf'], window: [sp[0], Math.max(sp[1], sp[0] + 60)], cursor: _curT(), marks: ST.rec.marks(), w: 640, h: 220, fixed: !_phone() }); } catch (e) { /* ignore */ }
+        }
+    }
+    function _renderSlow() { _renderKpis(); _renderTimeline(); _renderChart(); _renderReport(); _renderEvents(); }
+    function _renderAll() {
+        _renderHeader(); _banner(); _renderNote(); _syncToolbar(); _drawLive(0); _renderSlow(); _renderCases();
+    }
+    function _publish() {
+        var s = _vsim(), S = ST.sim && ST.sim.state, sum = null;
+        try { sum = _hasData() ? _summary() : null; } catch (e) { sum = null; }
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.welldyn = { v: 1, ok: !!(s && !ST.err), playing: ST.playing, t: S ? S.t : (ST.scrubT || 0), state: S && S.well ? S.well.state : null, summary: sum,
+            model: _modelStatus(ST.M), replay: !!ST.run, mock: !!(s && s.mock) };
+    }
+
+    // ── markup ───────────────────────────────────────────────────────────────
+    function _card(title, body, o) {
+        o = o || {};
+        return '<div class="card wd-card' + (o.cls ? ' ' + o.cls : '') + '"' + (o.id ? ' id="' + o.id + '"' : '') + '><div class="card-title">' + _esc(title) + '</div>' + body + '</div>';
+    }
+    function _fg(id, label, o) {
+        o = o || {};
+        var d = o.def != null ? o.def : DEFS[id], lab = '<label for="' + id + '">' + _esc(label) + (o.unit ? ' (' + _esc(o.unit) + ')' : '') + '</label>';
+        if (o.options) return '<div class="fg-item"' + (o.wid ? ' id="' + o.wid + '"' : '') + '>' + lab + '<select id="' + id + '">' + o.options.map(function (op) { return '<option value="' + _esc(op[0]) + '"' + (String(op[0]) === String(d) ? ' selected' : '') + '>' + _esc(op[1]) + '</option>'; }).join('') + '</select></div>';
+        if (o.check) return '<div class="fg-item wd-chk"' + (o.wid ? ' id="' + o.wid + '"' : '') + '><label><input type="checkbox" id="' + id + '"' + (d ? ' checked' : '') + '> ' + _esc(label) + '</label></div>';
+        return '<div class="fg-item"' + (o.wid ? ' id="' + o.wid + '"' : '') + '>' + lab + '<input type="number" step="any" inputmode="decimal" id="' + id + '" value="' + _esc(d == null ? '' : d) + '"' + (o.ph ? ' placeholder="' + _esc(o.ph) + '"' : '') + '></div>';
+    }
+    var CSS = '<style>' +
+        '#wd_root{--wd-gap:14px;--wd-ok:var(--green,#3fb950);--wd-warn:var(--yellow,#d29922);--wd-fail:var(--red,#f85149)}' +
+        '#wd_root .wd-head{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 10px}#wd_root .wd-model{flex:1 1 320px;min-width:0;font-size:12.5px;color:var(--text2)}' +
+        '#wd_root .wd-wn{font-weight:700;color:var(--text)}#wd_root .wd-ok{color:var(--wd-ok);font-weight:600}#wd_root .wd-bad{color:var(--wd-fail);font-weight:600}' +
+        '#wd_root .wd-tb{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:8px 10px;margin:0 0 10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px}' +
+        '#wd_root .wd-tb .btn{padding:6px 11px;font-size:12.5px}#wd_root .wd-tb label{font-size:11.5px;color:var(--text2);font-weight:600}#wd_root .wd-tb select,#wd_root .wd-tb input{font-size:12.5px;padding:4px 6px;max-width:92px}' +
+        '#wd_root .wd-grp{display:inline-flex;gap:5px;align-items:center;flex-wrap:nowrap}#wd_root .wd-sep{width:1px;align-self:stretch;background:var(--border);margin:0 2px}' +
+        '#wd_root .wd-play{min-width:92px;font-weight:700}#wd_root .wd-play[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}' +
+        '#wd_root .wd-more{position:relative}#wd_root .wd-more>summary{list-style:none;cursor:pointer;padding:6px 11px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-weight:600;background:var(--bg2)}' +
+        '#wd_root .wd-more>summary::-webkit-details-marker{display:none}#wd_root .wd-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:210px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px}' +
+        '#wd_root .wd-menu .btn{text-align:left}' +
+        '#wd_root .wd-tl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 10px;align-items:center;margin:0 0 10px}#wd_root .wd-tl input[type=range]{width:100%;margin:0}' +
+        '#wd_root .wd-tread{font-variant-numeric:tabular-nums;font-weight:700;font-size:13px}#wd_root .wd-trange{font-size:11px;color:var(--text3);grid-column:1/-1}' +
+        '#wd_root .wd-strip{grid-column:1/-1;width:100%;height:26px;display:block}#wd_root .wd-marks{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}' +
+        '#wd_root .wd-mk{display:inline-flex;gap:2px;align-items:center}#wd_root .wd-chip{padding:3px 9px;border-radius:12px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:11.5px;cursor:pointer}' +
+        '#wd_root .wd-x{padding:2px 7px;font-size:11px;min-width:0}' +
+        '#wd_root .wd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-kpi{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:8px 11px;min-width:0}' +
+        '#wd_root .wd-kpi.st-ok{border-left-color:var(--wd-ok)}#wd_root .wd-kpi.st-warn{border-left-color:var(--wd-warn)}#wd_root .wd-kpi.st-fail{border-left-color:var(--wd-fail)}#wd_root .wd-kpi.st-info{border-left-color:var(--accent)}' +
+        '#wd_root .wd-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wd_root .wd-kpi .kpi-v{font-size:17px;font-weight:700;color:var(--text);margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wd_root .wd-kpi .kpi-s{font-size:11px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wd_root .wd-main{display:grid;grid-template-columns:minmax(0,500px) minmax(0,1fr);gap:var(--wd-gap);margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-wbw{display:flex;gap:8px;align-items:flex-start}#wd_root .wd-wbw canvas{display:block;max-width:100%;border-radius:6px}' +
+        '#wd_root #wd_cv_well{width:360px;height:480px}#wd_root #wd_cv_nav{width:72px;height:480px}' +
+        '#wd_root .wd-hover{font-size:11.5px;color:var(--text2);margin-top:6px;min-height:30px;font-variant-numeric:tabular-nums}' +
+        '#wd_root .wd-tabs{display:flex;flex-wrap:wrap;gap:4px}#wd_root .wd-tabs button{padding:4px 10px;border-radius:14px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:11.5px;font-weight:600;cursor:pointer}' +
+        '#wd_root .wd-tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}#wd_root .wd-tabsel{display:none}' +
+        '#wd_root .wd-cw canvas{width:100%;display:block}#wd_root .wd-chartmsg{font-size:12px;color:var(--text3);min-height:16px}' +
+        '#wd_root .wd-cards{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:var(--wd-gap);margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-card .fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 12px}#wd_root .wd-chk label{display:flex;gap:6px;align-items:center;font-size:12.5px}' +
+        '#wd_root .wd-sub{font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 6px}' +
+        '#wd_root .wd-tw{overflow-x:auto;max-width:100%}#wd_root .wd-ct td,#wd_root .wd-et td{font-size:12px;padding:4px 6px}#wd_root .wd-et tr.ro td{color:var(--text3)}#wd_root .wd-nw{white-space:nowrap}' +
+        '#wd_root .wd-evadd{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end;margin-top:8px}#wd_root .wd-evadd .fg-item{min-width:110px;flex:1 1 110px}' +
+        '#wd_root .wd-hint{font-size:11.5px;color:var(--text3)}#wd_root .wd-note{font-size:12px;color:var(--text2);min-height:0;margin:0 0 8px}' +
+        '#wd_root .wd-v{font-size:12.5px;margin:3px 0}#wd_root .wd-v.ok{color:var(--wd-ok)}#wd_root .wd-v.warn{color:var(--wd-warn)}#wd_root .wd-v.fail{color:var(--wd-fail)}#wd_root .wd-v.info{color:var(--text2)}' +
+        '#wd_root .wd-banner .wd-v{padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);margin:0 0 8px}#wd_root .wd-banner .btn{padding:3px 9px;font-size:11.5px;margin-left:6px}' +
+        '#wd_root .wd-res{margin:var(--wd-gap) 0}#wd_root .wd-rvt{font-family:inherit;font-size:12.5px;font-weight:600;text-align:right}#wd_root .wd-rgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wd-gap)}' +
+        '#wd_root .wd-rkpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-rcv{display:flex;flex-wrap:wrap;gap:var(--wd-gap);align-items:flex-start}#wd_root #wd_cv_rwell{width:360px;height:480px}#wd_root #wd_cv_rtrend{width:640px;height:220px}' +
+        '#wd_root .wd-rcv .chart-wrap{max-width:100%;overflow:hidden}#wd_root .wd-csv{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg3)}' +
+        '#wd_root .wd-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px;max-height:160px;overflow:auto;font-size:12px;margin:6px 0}' +
+        '#wd_root button:focus-visible,#wd_root select:focus-visible,#wd_root input:focus-visible,#wd_root canvas:focus-visible,#wd_root summary:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:2px}' +
+        '@media (max-width:1100px){#wd_root .wd-main,#wd_root .wd-cards,#wd_root .wd-rgrid{grid-template-columns:minmax(0,1fr)}}' +
+        '@media (max-width:600px){#wd_root .wd-tb{padding:6px}#wd_root .wd-tb .wd-opt{display:none}#wd_root .wd-tabs{display:none}#wd_root .wd-tabsel{display:block;width:100%}' +
+        '#wd_root #wd_cv_well{width:240px;height:360px}#wd_root #wd_cv_nav{width:56px;height:360px}' +
+        '#wd_root #wd_cv_rwell{width:270px;height:360px}#wd_root #wd_cv_rtrend{width:100%;height:200px}#wd_root .wd-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#wd_root .wd-kpi .kpi-v{font-size:15px}' +
+        '#wd_root .wd-tl{grid-template-columns:auto minmax(0,1fr)}}' +
+        '@media (prefers-reduced-motion:reduce){#wd_root *{transition:none!important;animation:none!important}}' +
+        '</style>';
+    function _toolbarHtml() {
+        var sp = parseInt(_pref('speed'), 10); ST.speed = SPEEDS.indexOf(sp) !== -1 ? sp : DEF_SPEED;
+        var M = ST.M, beans = _beans(M), b0 = M && M.surface.choke.bean64;
+        return '<div class="wd-tb rp-skip" id="wd_toolbar" role="toolbar" aria-label="Simulation controls">' +
+            '<button type="button" class="btn btn-primary wd-play" id="wd_play" aria-pressed="false" aria-keyshortcuts="Space">▶ Play</button>' +
+            '<button type="button" class="btn btn-secondary" id="wd_step" aria-keyshortcuts=".">Step</button>' +
+            '<button type="button" class="btn btn-secondary" id="wd_shut" aria-keyshortcuts="S">Shut in</button>' +
+            '<span class="wd-grp"><label for="wd_speed">Speed</label><select id="wd_speed" aria-label="Speed" aria-keyshortcuts="+ -">' + SPEEDS.map(function (s) { return '<option value="' + s + '"' + (s === ST.speed ? ' selected' : '') + '>×' + s + '</option>'; }).join('') + '</select></span>' +
+            '<span class="wd-sep" aria-hidden="true"></span>' +
+            '<span class="wd-grp"><label for="wd_bean">Bean</label><select id="wd_bean" aria-label="Bean (/64 in)">' + beans.map(function (b) { return '<option value="' + b + '"' + (b === b0 ? ' selected' : '') + '>' + b + '/64</option>'; }).join('') + '</select>' +
+            '<button type="button" class="btn btn-secondary" id="wd_bean_go" title="Change the bean now">Set</button></span>' +
+            '<span class="wd-grp wd-opt"><label for="wd_psep">Separator</label><input type="number" step="any" id="wd_psep" aria-label="Separator pressure" value="' + _esc(M ? M.surface.psep_psig : 100) + '"><button type="button" class="btn btn-secondary" id="wd_psep_go">Set</button></span>' +
+            '<span class="wd-grp wd-opt" id="wd_foam_w"><label for="wd_foam">Foamer ppm</label><input type="number" step="any" id="wd_foam" aria-label="Foamer concentration (ppm)" value="1000"><button type="button" class="btn btn-secondary" id="wd_foam_on">On</button><button type="button" class="btn btn-secondary" id="wd_foam_off">Off</button></span>' +
+            '<span class="wd-grp" id="wd_lift_gl" style="display:none"><label for="wd_glq">Lift gas</label><input type="number" step="any" id="wd_glq" aria-label="Lift-gas rate" value="' + _esc(M && M.lift.gl && M.lift.gl.qinj_Mscfd ? M.lift.gl.qinj_Mscfd : 600) + '"><button type="button" class="btn btn-secondary" id="wd_lift_go">Set</button></span>' +
+            '<span class="wd-grp" id="wd_lift_esp" style="display:none"><label for="wd_hz">ESP Hz</label><input type="number" step="any" id="wd_hz" aria-label="ESP frequency (Hz)" value="60"><button type="button" class="btn btn-secondary" id="wd_esp_go">Set</button></span>' +
+            '<span class="wd-sep" aria-hidden="true"></span>' +
+            '<button type="button" class="btn btn-secondary" id="wd_mark" aria-pressed="false" aria-keyshortcuts="M">Mark</button>' +
+            '<details class="wd-more" id="wd_export"><summary aria-label="Export, replay files">Export ▾</summary><div class="wd-menu">' +
+            '<button type="button" class="btn btn-secondary" data-act="csvopen">CSV of the run…</button>' +
+            '<button type="button" class="btn btn-secondary" data-act="saverun">Save replay file (.wdrun)</button>' +
+            '<button type="button" class="btn btn-secondary" data-act="openrun">Open replay file…</button>' +
+            '<input type="file" id="wd_file" accept=".wdrun,.json,application/json" style="display:none" aria-label="Open a replay file"></div></details>' +
+            '<button type="button" class="btn btn-secondary" id="wd_reset" title="Rebuild the simulator from the model and the scenario (the recording is discarded)">Reset</button>' +
+            '</div>';
+    }
+    function _csvHtml() {
+        var RC = _REC(), keys = RC ? (_E() && _E().CHANNELS ? _E().CHANNELS : RC.CHANNELS_FALLBACK) : [], saved = String(_pref('cols') || '').split(',').filter(Boolean);
+        var def = ['t', 'thp', 'pwf', 'qo', 'qw', 'qg', 'bean', 'open', 'state', 'liq'];
+        var on = function (k) { return saved.length ? saved.indexOf(k) !== -1 : def.indexOf(k) !== -1; };
+        return '<div class="wd-csv rp-skip" id="wd_csvbox" style="display:none" role="group" aria-label="CSV export">' +
+            '<div class="wd-sub" style="margin-top:0">CSV of the run</div>' +
+            '<div class="wd-cols" id="wd_csvcols">' + keys.filter(function (k) { return k !== 't'; }).map(function (k) { var m = RC.channelMeta(k); return '<label><input type="checkbox" data-col="' + k + '"' + (on(k) ? ' checked' : '') + '> ' + _esc(m.label) + '</label>'; }).join('') + '</div>' +
+            '<div class="fg">' + _fg('wd_csv_from', 'From', { unit: 'h', def: '' }) + _fg('wd_csv_to', 'To', { unit: 'h', def: '' }) + _fg('wd_csv_every', 'Every', { unit: 's', def: '' }) +
+            _fg('wd_csv_sys', 'Units', { options: [['field', 'Field units'], ['metric', 'Metric']], def: _metric() ? 'metric' : 'field' }) + '</div>' +
+            '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn btn-primary" data-act="csvgo">Download CSV</button><button type="button" class="btn btn-secondary" data-act="csvall">All columns</button><button type="button" class="btn btn-secondary" data-act="csvclose">Close</button></div></div>';
+    }
+    function _bodyHtml() {
+        var tab = _pref('tab'); if (tab && TABS.some(function (t) { return t[0] === tab; })) ST.tab = tab;
+        var ly = _pref('layer'); if (ly && LAYERS.some(function (l) { return l[0] === ly; })) ST.layer = ly;
+        var s1 = '<div class="wd-head"><div class="wd-model" id="wd_model"></div>' +
+            '<button type="button" class="btn btn-secondary rp-skip" id="wd_go_wellperf">◀ Back to nodal analysis</button></div>' +
+            '<div class="wd-banner rp-skip" id="wd_banner"></div>' + _toolbarHtml() + _csvHtml() +
+            '<div class="wd-note rp-skip" id="wd_note" role="status"></div>' +
+            '<div class="wd-tl rp-skip" id="wd_timeline"><span class="wd-tread" id="wd_tread">0:00:00</span>' +
+            '<input type="range" id="wd_scrub" min="0" max="1000" step="1" value="1000" aria-label="Timeline: scrub to a recorded moment" aria-keyshortcuts="ArrowLeft ArrowRight Home End">' +
+            '<button type="button" class="btn btn-secondary" id="wd_cont" style="display:none">Continue from here</button>' +
+            '<canvas class="wd-strip" id="wd_cv_strip" aria-label="Well state along the run"></canvas>' +
+            '<span class="wd-trange" id="wd_trange"></span><div class="wd-marks" id="wd_marks"></div></div>' +
+            '<div class="wd-kpis" id="wd_kpis"></div>' +
+            '<div class="sr-only" id="wd_live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>';
+        var main = '<div class="wd-main rp-skip">' +
+            _card('Wellbore', '<div class="fg" style="margin-bottom:8px">' + _fg('wd_layer', 'Colour by', { options: LAYERS, def: ST.layer }) + '</div>' +
+                '<div class="wd-wbw"><canvas id="wd_cv_well" tabindex="0" role="img" aria-label="Wellbore along the true trajectory: cells coloured by phase, the flow regime, liquid film, droplets and slugs moving at the local velocity"></canvas>' +
+                '<canvas id="wd_cv_nav" tabindex="0" role="img" aria-label="Navigator: the whole well with the zoom window"></canvas></div><div class="wd-hover" id="wd_hover"></div>') +
+            _card('Charts', '<div class="wd-tabs" id="wd_tabs" role="tablist" aria-keyshortcuts="[ ]">' + TABS.map(function (t) { return '<button type="button" role="tab" data-tab="' + t[0] + '" aria-selected="false">' + _esc(t[1]) + '</button>'; }).join('') + '</div>' +
+                '<select class="wd-tabsel" id="wd_tabsel" aria-label="Chart">' + TABS.map(function (t) { return '<option value="' + t[0] + '">' + _esc(t[1]) + '</option>'; }).join('') + '</select>' +
+                '<div class="wd-chartmsg" id="wd_chartmsg"></div>' +
+                TABS.map(function (t) { return '<div class="wd-cw chart-wrap" id="wd_cw_' + t[0] + '"' + (t[0] === ST.tab ? '' : ' style="display:none"') + '><canvas id="wd_cv_' + t[0] + '" tabindex="0" role="img" aria-label="' + _esc(t[1]) + ' chart"></canvas></div>'; }).join('')) +
+            '</div>';
+        var res = '<div id="wd_res" class="wd-res">' +
+            '<div class="wd-rkpi" id="wd_rkpi"></div>' +
+            '<div class="wd-rgrid"><div class="rbox" id="wd_rinp"></div><div class="rbox" id="wd_rsum"></div></div>' +
+            _card('Wellbore and run trend', '<div class="wd-rcv"><div class="chart-wrap"><canvas id="wd_cv_rwell" role="img" aria-label="Wellbore at the moment shown"></canvas></div>' +
+                '<div class="chart-wrap"><canvas id="wd_cv_rtrend" role="img" aria-label="Run trend: rate and pressures against time"></canvas></div></div>') +
+            '<div class="wd-rgrid"><div class="rbox" id="wd_rstates"></div><div><div class="rbox" id="wd_rverd"></div><div class="rbox" id="wd_rprov"></div></div></div>' +
+            '<div class="wd-notes" id="wd_notesbox" style="margin:var(--wd-gap) 0"></div></div>';
+        var scen = _card('Scenario', '<div class="fg">' +
+                _fg('wd_preset', 'Preset', { options: PRESETS }) +
+                '<div class="fg-item rp-skip"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="preset">Apply preset</button></div>' +
+                _fg('wd_start', 'Start', { options: [['steady', 'Steady flow (nodal point)'], ['static', 'Static well']] }) +
+                _fg('wd_static', 'Static well', { options: [['liquid', 'Full of liquid'], ['gas', 'Gas-filled'], ['level', 'Liquid level']], wid: 'wd_static_w' }) +
+                _fg('wd_liquid', 'Liquid', { options: [['water', 'Water (the model\'s)'], ['oil', 'Oil']], wid: 'wd_liq_w' }) +
+                _fg('wd_level', 'Liquid top (MD)', { unit: 'ft', wid: 'wd_level_w' }) +
+                _fg('wd_dur', 'Duration', { unit: 'h' }) + _fg('wd_cells', 'Cells', { unit: '20–200' }) +
+                _fg('wd_closure', 'Closure', { options: [['corr', 'Gradient correlation (default)'], ['driftflux', 'Drift flux everywhere']] }) +
+                _fg('wd_temp', 'Temperature', { options: [['frozen', 'Frozen (default)'], ['relax', 'Relaxation (provisional)']] }) +
+                _fg('wd_fallback', 'Liquid fallback (provisional)', { check: true }) +
+                _fg('wd_belfroid', 'Belfroid correction (provisional)', { check: true }) +
+                _fg('wd_backflow', 'Back-flow to the formation (provisional)', { check: true }) +
+                '</div><div class="wd-sub">Reservoir</div><div class="fg">' +
+                _fg('wd_resmode', 'Inflow in time', { options: [['ipr', 'Steady inflow (IPR, default)'], ['transient', 'Transient radial (superposition)']] }) +
+                _fg('wd_prior', 'Prior history', { options: [['auto', 'From the start'], ['steady', 'Steady'], ['none', 'None'], ['shutin', 'Shut in']] }) +
+                _fg('wd_prior_h', 'Prior time', { unit: 'h' }) +
+                '<div class="fg-item rp-skip"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="prism">Import from PRiSM</button></div></div>' +
+                '<div class="fg" id="wd_res_t">' + _fg('wd_k', 'Permeability k', { unit: 'md', ph: '—' }) + _fg('wd_h', 'Net thickness h', { unit: 'ft', ph: '—' }) + _fg('wd_phi', 'Porosity φ', { unit: 'fraction', ph: '—' }) +
+                _fg('wd_ct', 'Total compressibility c_t', { unit: '1/psi', ph: '—' }) + _fg('wd_mu', 'Viscosity μ', { unit: 'cp', ph: '—' }) + _fg('wd_B', 'Formation volume factor B', { unit: 'rb/STB', ph: '—' }) +
+                _fg('wd_rw', 'Wellbore radius r_w', { unit: 'ft', ph: '—' }) + _fg('wd_re', 'Drainage radius r_e', { unit: 'ft', ph: '—' }) + _fg('wd_S', 'Skin S', { ph: '—' }) +
+                '<div class="wd-hint" id="wd_res_miss" style="grid-column:1/-1"></div></div>' +
+                '<div class="wd-sub">Events</div><div class="wd-tw"><table class="dtable wd-et"><thead><tr><th>Time</th><th>Event</th><th>Source</th><th></th></tr></thead><tbody id="wd_evbody"></tbody></table></div>' +
+                '<div class="wd-evadd rp-skip">' + _fg('wd_ev_t', 'At', { unit: 'h', def: '' }) + _fg('wd_ev_type', 'Event', { options: EV_TYPES, def: 'bean' }) + _fg('wd_ev_v', 'Value', { def: '' }) +
+                '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="evadd">Add event</button></div></div>' +
+                '<div class="fg" style="margin-top:10px"><div class="fg-item" style="grid-column:1/-1"><label for="wd_notes">Engineer notes (printed in the Notes)</label><textarea id="wd_notes" rows="2" placeholder="Assumptions, data sources, decisions…"></textarea></div></div>', { id: 'wd_scen' });
+        var cases = _card('Cases', '<div class="fg rp-skip"><div class="fg-item"><label for="wd_case_name">Case name</label><input type="text" id="wd_case_name" maxlength="60" placeholder="e.g. Bean-up to 32/64"></div>' +
+                '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="casesave">Save case with this well</button></div></div><div id="wd_cases" class="rp-skip"></div>', { id: 'wd_casecard' });
+        return '<div id="wd_root">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div></div>';
+    }
+
+    // ── events on #wd_root ───────────────────────────────────────────────────
+    function _onSettings() {
+        _syncScenario();
+        var h = _hash(_optsOf(_settings()));
+        if (h !== ST.optsHash) {
+            if (_hasData() || ST.run) ST.settingsStale = true;
+            else _build('settings');
+        }
+        ST.endT = Math.max(ST.sim ? ST.sim.state.t : 0, _settings().duration_s);
+        _renderAll(); _publish();
+    }
+    function _bind() {
+        var root = _byId('wd_root'); if (!root) return;
+        root.addEventListener('click', function (e) {
+            var t = e.target, b = t && t.closest ? t.closest('button,[data-act]') : null;
+            if (!b || !root.contains(b)) return;
+            var id = b.id, act = b.getAttribute('data-act');
+            if (id === 'wd_play') { if (ST.playing) _pause('user'); else _play(); return; }
+            if (id === 'wd_step') { _stepOnce(); return; }
+            if (id === 'wd_shut') { _shutToggle(); return; }
+            if (id === 'wd_bean_go') { _beanApply(); return; }
+            if (id === 'wd_psep_go') { _psepApply(); return; }
+            if (id === 'wd_foam_on') { _foamApply(true); return; }
+            if (id === 'wd_foam_off') { _foamApply(false); return; }
+            if (id === 'wd_lift_go' || id === 'wd_esp_go') { _liftApply(); return; }
+            if (id === 'wd_mark') { _mark(); return; }
+            if (id === 'wd_cont') { _cont(); return; }
+            if (id === 'wd_reset') { _build('reset'); _renderAll(); _publish(); return; }
+            if (id === 'wd_go_wellperf') { _nav('wellperf'); return; }
+            if (b.hasAttribute('data-tab')) { _setTab(b.getAttribute('data-tab')); return; }
+            var ex = _byId('wd_export');
+            switch (act) {
+                case 'preset': _preset(_val('wd_preset')); break;
+                case 'static': _setCtl('wd_start', 'static'); _onSettings(); break;
+                case 'gowp': _nav('wellperf'); break;
+                case 'rebuild': _build('rebuild'); _renderAll(); _publish(); break;
+                case 'rerun': _rerun(); break;
+                case 'closerun': ST.run = null; ST.runNote = null; ST.viewSim = null; _build('closerun'); _renderAll(); break;
+                case 'csvopen': if (ex) ex.open = false; var cb = _byId('wd_csvbox'); if (cb) cb.style.display = ''; ST.csvOpen = true; break;
+                case 'csvclose': var cb2 = _byId('wd_csvbox'); if (cb2) cb2.style.display = 'none'; ST.csvOpen = false; break;
+                case 'csvall': Array.prototype.forEach.call(document.querySelectorAll('#wd_csvcols input[data-col]'), function (c) { c.checked = true; }); break;
+                case 'csvgo': _csv(); break;
+                case 'saverun': if (ex) ex.open = false; _runFile(); break;
+                case 'openrun': if (ex) ex.open = false; var f = _byId('wd_file'); if (f && f.click) f.click(); break;
+                case 'gomark': var m = (ST.rec ? ST.rec.marks() : []).filter(function (x) { return x.id === b.getAttribute('data-id'); })[0]; if (m) _scrub(m.t0); break;
+                case 'csvmark': var m2 = (ST.rec ? ST.rec.marks() : []).filter(function (x) { return x.id === b.getAttribute('data-id'); })[0]; if (m2) _csv({ from: m2.t0, to: m2.t1 }); break;
+                case 'unmark': if (ST.rec) ST.rec.unmark(b.getAttribute('data-id')); _renderTimeline(); _renderChart(); break;
+                case 'evadd': _evAdd(); break;
+                case 'evdel': var i = +b.getAttribute('data-i'); if (ST.events[i]) { ST.events.splice(i, 1); if (!_hasData()) _build('events'); else ST.note = 'The event is removed from the scenario; the running simulator keeps the events already scheduled (Reset to apply).'; _renderAll(); } break;
+                case 'casesave': _caseSave(); break;
+                case 'caseload': _caseLoad(b.getAttribute('data-id')); break;
+                case 'casedel': _caseRemove(b.getAttribute('data-id')); break;
+                case 'prism': _importPrism(); break;
+                default: break;
+            }
+        });
+        root.addEventListener('change', function (e) {
+            var t = e.target, id = t && t.id; if (!id) return;
+            if (id === 'wd_speed') { _setSpeed(t.value); return; }
+            if (id === 'wd_layer') { ST.layer = t.value; _pref('layer', t.value); if (ST.wb && ST.wb.setLayer) ST.wb.setLayer(t.value); _drawLive(0); return; }
+            if (id === 'wd_tabsel') { _setTab(t.value); return; }
+            if (id === 'wd_file') {
+                var fl = t.files && t.files[0]; if (!fl) return;
+                try { var rd = new FileReader(); rd.onload = function () { _load(String(rd.result || '')); }; rd.readAsText(fl); } catch (er) { /* no FileReader */ }
+                t.value = ''; return;
+            }
+            if (/^wd_(k|h|phi|ct|mu|B|rw|re|S)$/.test(id)) _resWrite('user');
+            if (id in DEFS && id !== 'wd_preset') _onSettings();
+        });
+        root.addEventListener('input', function (e) {
+            var t = e.target; if (!t || t.id !== 'wd_scrub') return;
+            var sp = _span(); _scrub(sp[0] + (sp[1] - sp[0]) * (+t.value) / 1000);
+        });
+        root.addEventListener('keydown', function (e) {
+            var t = e.target, tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
+            if (tag === 'INPUT' && t.type !== 'range' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            if (tag === 'CANVAS' && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape' || e.key === '0' || ((e.key === '+' || e.key === '-') && t.id === 'wd_cv_well'))) return;   // the wellbore's own keys
+            var k = e.key, sp = _span(), w = sp[1] - sp[0], cur = _curT(), done = true;
+            if (k === ' ' || k === 'Spacebar') { if (tag === 'BUTTON') return; if (ST.playing) _pause('user'); else _play(); }
+            else if (k === '.') _stepOnce();
+            else if (k === 'ArrowLeft' || k === 'ArrowRight') { if (tag === 'INPUT' && t.type === 'range') return; _scrub(cur + (k === 'ArrowLeft' ? -1 : 1) * w * (e.shiftKey ? 0.1 : 0.01)); }
+            else if (k === 'Home') _scrub(sp[0]);
+            else if (k === 'End') { ST.scrubT = null; _renderAll(); }
+            else if (k === '+' || k === '=') _speedStep(1);
+            else if (k === '-') _speedStep(-1);
+            else if (k === 's' || k === 'S') _shutToggle();
+            else if (k === 'm' || k === 'M') _mark();
+            else if (k === '[' || k === ']') { var i = TABS.map(function (x) { return x[0]; }).indexOf(ST.tab); _setTab(TABS[(i + (k === ']' ? 1 : TABS.length - 1)) % TABS.length][0]); }
+            else done = false;
+            if (done && e.preventDefault) e.preventDefault();
+        });
+    }
+    function _nav(route) {
+        if (typeof G.WTS_nav === 'function') { G.WTS_nav(route); return true; }
+        var b = (typeof document !== 'undefined') ? document.querySelector('#sidebar .nav-btn[data-p="' + route + '"]') : null;
+        if (b && b.click) { b.click(); return true; }
+        if (G.__WTS_TEST__ && typeof G.__WTS_TEST__.nav === 'function') { G.__WTS_TEST__.nav(route); return true; }
+        return false;
+    }
+
+    // ── page entry points ────────────────────────────────────────────────────
+    function render(body) {
+        _pause('reset'); _cancel();
+        ST.M = _read();
+        body.innerHTML = CSS + _bodyHtml();
+        var U = _U();
+        if (U && U.tagInput) [['wd_psep', 'pressureG'], ['wd_level', 'length'], ['wd_h', 'length'], ['wd_rw', 'length'], ['wd_re', 'length'], ['wd_glq', 'gasRateSmall']].forEach(function (x) { if (_byId(x[0])) U.tagInput(x[0], x[1]); });
+        _bind();
+        ST.wb = null; ST.nav = null; ST.rwb = null;
+        _setTab(ST.tab);
+        // the host restores the autosaved scenario values silently and then calls hooks.after → one calcWellDyn() per open
+    }
+    function calcWellDyn() {
+        calcs++;
+        if (!_byId('wd_root')) return;
+        var M = _read(), h = _modelHash(M);
+        _syncScenario();
+        if (ST.run) { _renderAll(); _publish(); return; }
+        var oh = _hash(_optsOf(_settings()));
+        if (!ST.sim || h !== ST.mHash || oh !== ST.optsHash) {
+            if (ST.sim && _hasData() && h !== ST.mHash) ST.modelStale = true;
+            else if (ST.sim && _hasData() && oh !== ST.optsHash) ST.settingsStale = true;
+            else _build('calc');
+        }
+        if (!ST.sim) ST.M = M;
+        if (ST.sim && !ST.wb) _mountViews();
+        _renderAll();
+        _publish();
+    }
+    G.renderWellDyn = function (body) { return render(body); };
+    G.calcWellDyn = function () { return calcWellDyn(); };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        var gone = function () {
+            if (!ST.sim && !ST.run) return;
+            _dispose(); ST.run = null; ST.runNote = null; ST.viewSim = null; ST.mHash = null; ST.optsHash = null; ST.events = [];
+            ST.note = 'The well changed: the previous run was discarded.';
+        };
+        document.addEventListener('wts:well-changed', gone);
+        document.addEventListener('wts:project-loaded', gone);
+        document.addEventListener('wts:wellperf-model-changed', function (e) {
+            var k = e && e.detail && e.detail.keys;
+            if (Array.isArray(k) && k.length === 1 && k[0] === 'dyn') return;     // the page's own case save (R17)
+            if (!_byId('wd_root')) { ST.mHash = null; return; }
+            if (_hasData() || ST.playing) { ST.modelStale = true; _banner(); }
+            else G.calcWellDyn();
+        });
+        document.addEventListener('wts:unit-system-changed', function () { if (_byId('wd_root')) { _renderAll(); } });
+        document.addEventListener('visibilitychange', function () { if (document.hidden && ST.playing) { _pause('hidden'); ST.note = 'Paused: the page was hidden.'; _renderNote(); } });
+    }
+
+    // ── registry and test hook ───────────────────────────────────────────────
+    G.WTS_welldyn_page = {
+        state: function () { return ST; },
+        sim: function () { return ST.sim; },
+        rec: function () { return ST.rec; },
+        calcs: function () { return calcs; },
+        play: _play, pause: function () { _pause('user'); }, frame: function (ts) { _cancel(); _frame(ts); }, step: _stepOnce,
+        csv: function (o) { return _csv(o, false); }, runFile: function () { return _runFile(false); }, load: _load, rerun: _rerun,
+        scenario: _preset, scrub: _scrub, cont: _cont, mark: _mark, shut: _shutToggle, speed: _setSpeed, build: function () { var r = _build('test'); _renderAll(); return r; },
+        caseSave: _caseSave, caseLoad: _caseLoad, caseRemove: _caseRemove, cases: _cases, evAdd: _evAdd, importPrism: _importPrism,
+        kpis: _kpis, summary: _summary, settings: _settings, tab: _setTab
+    };
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.welldyn = {
+        key: KEY,
+        title: TITLE,
+        navTitle: 'Well Dynamics',
+        sub: SUB,
+        group: 'Production & Reservoir',
+        icon: '&#8767;',
+        badge: 'Production',
+        bc: 'dc-b-green',
+        desc: 'Play a Well Performance well in time: start-up, choke changes, shut-in and build-up, gas-well loading and unloading, foamer, intermittent production, gas-lift unloading and ESP start-up, with a recorder, replay files and cases.',
+        hooks: { silent: true, after: function () { G.calcWellDyn(); } },
+        render: function (body) { return G.renderWellDyn(body); }
+    };
+    if (Array.isArray(G.__WD_STUBS)) G.__WD_STUBS = G.__WD_STUBS.filter(function (s) { return !/^(renderWellDyn|calcWellDyn|WTS_welldyn_page|welldyn)\b/.test(String(s)); });
+})();
+
+// ─── END 49-calc-welldyn ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 49-calc-wellperf ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
@@ -152444,6 +154335,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wp_root .wp-steps .wp-sp{flex:1 1 auto}' +
         '#wp_root .wp-ex{font-size:12px}' +
         '#wp_root button:focus-visible,#wp_root select:focus-visible,#wp_root input:focus-visible,#wp_root canvas:focus-visible,#wp_root summary:focus-visible,#wp_root .wp-comp:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:2px}' +
+        '#wp_root .wp-gowd{margin-left:auto;padding:4px 11px;font-size:12px}#wp_root .wp-gowd-k{display:flex;justify-content:flex-end;margin:-6px 0 8px}' +
         '#wp_root .wp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px;margin:0 0 var(--wp-gap)}' +
         '#wp_root .wp-kpi{position:relative;background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:9px 12px 9px 12px;min-width:0;transition:border-color .2s}' +
         '#wp_root .wp-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:16px}' +
@@ -154927,6 +156819,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (act === 'cancel') { if (ST.job) ST.job.cancel(); return; }
         if (/^wells/.test(act)) { if (G.WTS_wp_wellsUi) G.WTS_wp_wellsUi.act(act, btn); return; }       // B (WP28)
         if (act === 'example') { _loadExample(btn.getAttribute('data-ex')); return; }
+        if (act === 'welldyn') { if (typeof G.WTS_nav === 'function') G.WTS_nav('welldyn'); return; }   // v4.6 cross-link (both pages read the one model)
         if (act === 'csv') { _csv(); return; }
         if (act === 'bu') { _importBuildup(); return; }
         if (act === 'design') {
@@ -156017,7 +157910,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_gldepth" aria-label="Injection depth against the lift-gas rate"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag the dashed <b>q_inj</b> line (or focus the plot, [ / ] then the arrows) and the well re-solves with that much lift gas.</div></div>' +
                 '<div class="wp-v info" data-lift="none">The performance curve appears here with gas lift selected.</div>') + '</div>' + _ext('stepHtml', 4).join('') + '</section>';
-        var s5 = '<section id="wp_step_5" class="wp-sec" style="display:none"><div class="wp-sec-h">⑤ System <span>node, surface boundary, correlations, ratings and studies</span></div><div class="wp-2c">' +
+        var s5 = '<section id="wp_step_5" class="wp-sec" style="display:none"><div class="wp-sec-h">⑤ System <span>node, surface boundary, correlations, ratings and studies</span>' + (G.WTS_calcRegistry && G.WTS_calcRegistry.welldyn ? '<button type="button" class="btn btn-secondary rp-skip wp-gowd" id="wp_go_welldyn" data-act="welldyn" title="Play this well in time on the Well Dynamics page (the same model)">▶ Play in time (Well Dynamics)</button>' : '') + '</div><div class="wp-2c">' +
             _card('Surface and solve', '<div class="fg">' +
                 _fg('wp_mode', 'Solve for', { options: [['rate', 'Rate at these settings'], ['pressure', 'Pressures for a rate'], ['max', 'Maximum rate (no choke)'], ['design', 'Bean or THP for a target rate']] }) +
                 _fg('wp_node', 'Solution node', { options: [['bottom', 'Bottom hole (mid-perf)'], ['wellhead', 'Wellhead'], ['separator', 'Separator']] }) +
@@ -156088,6 +157981,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return '<div id="wp_res">' +
             '<div class="wp-banner rp-skip" id="wp_banner"></div>' +
             '<div class="wp-kpis" id="wp_kpis" aria-live="polite"></div>' +
+            // v4.6: the cross-link to Well Dynamics (the same well model played in time); a link, not a report item
+            (G.WTS_calcRegistry && G.WTS_calcRegistry.welldyn ? '<div class="wp-gowd-k rp-skip"><button type="button" class="btn btn-secondary wp-gowd" id="wp_go_welldyn_k" data-act="welldyn" title="Play this well in time on the Well Dynamics page (the same model)">▶ Play in time (Well Dynamics)</button></div>' : '') +
             '<div class="wp-bench" id="wp_bench">' +
             _card('Well', '<div class="wp-schw" id="wp_schw"><div id="wp_sch"></div><div class="wp-tip" id="wp_tip" role="status"></div></div><div class="wp-legend-hint" id="wp_sch_cap"></div>' +
                 '<div class="wp-legend-hint rp-skip">Hover the well for MD, TVD, inclination, pressure, temperature and holdup; click a string, restriction, the perforations, a gauge or the choke to edit it.</div>',
@@ -163151,7 +165046,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //                       botMd, U, ke}], present only when the record has layers)
 //                       layers (B, WP24: multilayer rows → M.res.layers),
 //                       glValves (B, WP25: installed gas-lift valves [{md ft, port /64 in, ptro psig, R, kind 'ipo'|'orifice'|'dummy'}], ≤ 20,
-//                       sorted by MD → M.lift.gl.valves)}; read() also copies the perforations to M.res.perf
+//                       sorted by MD → M.lift.gl.valves),
+//                       dyn (v4.6, Well Dynamics: {v:1, cases ≤ 20, res, preset} ≤ 24 kB → M.dyn, present only when the record has dyn)};
+//                       read() also copies the perforations to M.res.perf
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -163176,7 +165073,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25)
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves', 'dyn'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25); dyn: Well Dynamics (v4.6)
     var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
@@ -163449,6 +165346,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _pumpClean(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
+        // Well Dynamics (v4.6, docs/WELL-DYNAMICS-PLAN.md §7): {v:1, cases:[Case] ≤ 20, res, preset} ≤ 24 kB; kept only when present
+        // (a record without dyn validates and reads exactly as before)
+        if (_isObj(r.dyn)) out.dyn = _dynClean(r.dyn);
         // per-section correlations (v4.5 WP21): [{by:'md'|'inc', from, to, corr}] — MD in ft, inclination in degrees from vertical; a key
         // string of WTS_flowline_corr (checked by the engines: an unknown key is skipped there, with a warning)
         out.corrSections = (Array.isArray(r.corrSections) ? r.corrSections : []).filter(_isObj).map(function (x) {
@@ -163459,6 +165359,19 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return { rec: out, warnings: warnings };
     }
 
+    // Well Dynamics cases and transient-reservoir inputs (v4.6): the cases are the page's own JSON (settings, events, summary); numbers
+    // in res are cleaned; the record is cut to ≤ 20 cases and ≤ 24 kB (the oldest go first)
+    function _dynClean(d) {
+        var o = { v: 1, cases: (Array.isArray(d.cases) ? d.cases : []).filter(function (c) { return _isObj(c) && typeof c.id === 'string'; }).map(_clone).slice(-20), res: null,
+                  preset: typeof d.preset === 'string' ? d.preset.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) : null };
+        if (_isObj(d.res)) {
+            o.res = {};
+            ['k', 'h', 'phi', 'ct', 'mu', 'B', 'rw', 're', 'S'].forEach(function (k) { o.res[k] = _num(d.res[k]); });
+            o.res.source = typeof d.res.source === 'string' ? d.res.source.replace(/[\u0000-\u001f<>]/g, '').slice(0, 40) : null;
+        }
+        while (o.cases.length > 1 && JSON.stringify(o).length > 24000) o.cases.shift();
+        return o;
+    }
     // the pump curve (B, WP26): {v, name, f0 Hz, rows:[[q bbl/d, head ft/stage, efficiency %, BHP hp/stage]], qMin, qMax (bbl/d at f0), od_in,
     // example} — numbers cleaned, ≤ 40 rows (WTS_wp_esp.normPump checks the curve itself)
     function _pumpClean(p) {
@@ -163553,6 +165466,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             M.system.corr.sections = rec.corrSections || [];
             M.res.layers = rec.layers || [];
             M.lift.gl.valves = rec.glValves || [];   // B (WP25)
+            if (rec.dyn) M.dyn = rec.dyn;                // Well Dynamics (v4.6): present only when the record has dyn
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);

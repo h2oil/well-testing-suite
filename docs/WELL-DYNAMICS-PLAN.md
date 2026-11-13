@@ -1269,6 +1269,64 @@ built (engines, contracts — additive only), tests / gates with counts, measure
 
 ### 11.3 WD3 record
 
+- **Date / branch:** 2026-11-13, `wd/wd3` from `wd/int` at b4a375b. WD0 and WD1 had not merged when WD3 ran (no stubs, no
+  `tests/_welldyn-shapes.js` / `_welldyn-mock.js`, no engine). Decisions at their defaults: Q6 `.wdrun`, Q7 60 cells, Q14 (no write-back
+  of a replay file's model; "Adopt this model" is not built), Q16 Belfroid off (both q_c shown), Q17 back-flow on.
+- **WD0 items done here because the page needs them (identical to §2.1 / §7; the integrator keeps one copy when WD0 lands):** host
+  `__NAV_ORDER` gains `'welldyn'` after `'gaslift'`; `sidebar-nav.test.js` both assertions (the full list with the hub members and the
+  six-row list, "six rows"); the additive `dyn` table key in `49-calc-wp-model.js` (TABLE_KEYS, `validate` → `_dynClean` {v, cases ≤ 20,
+  res, preset} ≤ 24 kB, `read` → `M.dyn` only when the record has `dyn`; `empty()` unchanged). Not done (WD0's): the stubs, the
+  fixtures and mock, `flowline-gradat`, the smoke +4 checks and the **help stub guide** — so `help-content` reports "no guide for
+  welldyn" on this branch (the production help file has no headroom for a stub under its 47.67 kB cap: a cap decision, Q4).
+- **Built:** `prism-build/49-calc-wd-rec.js` — `WTS_wd_rec` (`create`: cadence sampling + forced samples on every engine `event` /
+  `state`, snapshots every `snapEvery_s`, the §3.4 cap rule, `at` with held step channels, `snapAt`, `truncate`, marks, `csv` (columns,
+  range, every, field / Metric through the units layer, decimal comma with `;`, h:mm:ss, state names, labels quoted and defused against
+  formula prefixes), `toFile` / `fromFile` (§3.7; snapshots dropped above 5 MB; refuses only FORMAT / VERSION / TOO_BIG (64 MB) /
+  malformed JSON; a changed file is flagged HASH, another engine ENGINE as information), `compare` (R25: 0.5 % rates, 1 psi),
+  `summarize` (§3.8 incl. the build-up read at the end of a shut-in, the cumulatives, the steadyCheck gate), `engineId`) and
+  `WTS_wd_cases` (`list`, `save` (≤ 20 cases, ≤ 24 kB: oldest unnamed first, then oldest; a same-name save replaces), `remove`,
+  `toScenario`, `make`, `setRes`) writing only through `WTS_wp_model.write({dyn})`; `prism-build/49-calc-welldyn.js` — the page
+  (registry entry, own row, tile, toolbar, timeline with marks and the state strip, KPI strip per well type, wellbore + navigator +
+  chart tabs on `WTS_wd_view` resolved at call time, Scenario card with the eight presets, reservoir inputs + Import from PRiSM, events
+  editor (future only), Cases card, CSV dialog, replay save / open / Continue / Re-run and compare, `#wd_res` report block, keyboard map,
+  ARIA, phone rules); `49-calc-wellperf.js` — `#wp_go_welldyn` in the step ⑤ header and `#wp_go_welldyn_k` beside the KPI strip
+  (outside `#wp_kpis`, so the KPI counts are unchanged), both `.rp-skip`, `data-act="welldyn"` → `WTS_nav('welldyn')`; the wellperf
+  guide's `reviewedSrc` re-pinned (fc010354 → d2d99de3; the page change is the link only) and its notDocumented pattern gains
+  `go_welldyn(_k)?` (+17 bytes, inside the caps).
+- **Additive to §3 (no frozen contract changed):** `rec.frameAt(t)` / `rec.frames()` — the display arrays (p, T, α, v, regime; 4
+  significant digits, ≈ 2.7 kB at 60 cells) kept with each snapshot and carried in the RunFile as `snaps.frames`, so a scrubbed or
+  replayed wellbore draws (answers WD2 finding 1); `rec.keys / count / span / snaps / detach / logEvent`; `WTS_wd_rec.compare /
+  summarize / engineId / hash / channelMeta / hms / CHANNELS_FALLBACK / STATE_ORDER_FALLBACK / EXT / MAX_FILE / MAX_OPEN`;
+  `WTS_wd_cases.make / readDyn / setRes / MAX / CAP_BYTES`. RunFile `settings` = the create-time options **with their scenario events**
+  (`events` stays the applied log) and `model.tables` also carries `tests` and `cases`, so a file-built M hashes like the live one and a
+  file snapshot can be continued. Test hook `WTS_welldyn_page` as §6.9 plus `build`, `rerun`, `shut`, `speed`, `caseSave / caseLoad /
+  caseRemove / cases`, `evAdd`, `importPrism`, `kpis`, `summary`, `settings`, `tab`.
+- **Run loop (§6.6) as built:** rAF only while playing (setTimeout(16) only without rAF), stops off the page / hidden / paused / ended;
+  target += speed · min(Δwall, 100 ms); `run(target − t, {maxWallMs: 10})`; the plan's runaway line is read as "the target may lead the
+  engine by at most speed × 0.1 s" (the deficit is dropped and the KPI says "running slower than ×N"); KPIs, timeline and the active
+  chart every 6th frame, everything on pause / scrub / end; the Quick Report snapshot is taken on every pause (`WTS_snapshotNow`).
+- **Deviations:** a well switch / project open discards the run without a confirm (the switch has already happened) and says so; a
+  run stays in memory when the user leaves and re-opens the page (a model change then shows the Rebuild banner); a replay opens in view
+  mode (Play disabled; Continue from here or Re-run and compare build a simulator from the file's model, never touching storage); the
+  re-run is synchronous with a 15 s wall cap and reports how far it compared.
+- **Tests:** `welldyn-rec` RC1–RC16 (16) and `welldyn-page` PG1–PG24 (24) on the lane's stand-in engine `tests/_wd3-mock.js`
+  (deterministic closed form with the §3.1 / §3.2 / §3.6 shapes, installable in a browser for screenshots; named apart from WD0's
+  `_welldyn-mock.js` to avoid an add / add conflict). PG25–PG28 (real-engine runs through the page) wait for WD1. Gates on the branch:
+  Round 9 rebuilt (LF, 0 CR), sync, `node --check` of the main script, smoke 347/347 (no checks added), `--html`: welldyn-rec 16,
+  welldyn-page 24, all 37 `wellperf-*` files pass (identity 10, page 14, shapes 4, names 1, …), sidebar-nav 9, calc-registry 6, v3-ux 16,
+  help-content 7 of 8 (the missing welldyn guide above), `build-user-guide --check` ok, `ux-layout-check --web --quick` 58 checks ok
+  (1280×800 sidebar fits). `help-shots --check` reports home/view and start/screen stale — the same on the base tree (not from WD3).
+- **Measured (container Node, stand-in engine):** page open incl. one cold nodal solve 588 ms; rebuild with the cached reference
+  10 ms; page frame without the view 0.13 ms (WD2: ≈ 3 ms with 60 cells and 300 particles); 24 h at the defaults: 8,641 samples, CSV of
+  all 36 channels 84 ms / 566 kB, replay file 231 ms / 2.39 MB (the stand-in's 9–27 kB snapshots exceed 5 MB in total, so they were
+  dropped; the cap rule thinned them to 542 at 19.5 MB of 32 MB), opening it 65 ms; Quick Report snapshot ≈ 5 kB (text only, ≤ 60 kB
+  asserted in PG20). Playwright / Chromium at 1280×800 and 390 px (oil, gas, gas lift; field and Metric) with the WD2 view and the
+  stand-in: no horizontal overflow, no NaN / undefined, no page errors. Screenshots (not committed): scratchpad `shots-wd-WD3/`.
+- **Known gaps / findings:** (1) WD1: the model hash should not depend on `M.tests` / `M.cases` / `M.meta` (no physics) — WD3 carries
+  them in the file meanwhile. (2) The help stub guide and the help cap (WD0 / WD6, Q4). (3) PG25–PG28 after WD1. (4) Events are added
+  and deleted, not edited in place; an intermittent cycle by pressure is an event (no form fields yet); the casing / pump charts and lift
+  states come from WD2 / WD4. (5) The `Adopt this model` action (Q14) is not built.
+
 ### 11.4 WD4 record
 
 ### 11.5 WD5 record

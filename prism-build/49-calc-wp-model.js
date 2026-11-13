@@ -12,7 +12,9 @@
 //                       botMd, U, ke}], present only when the record has layers)
 //                       layers (B, WP24: multilayer rows → M.res.layers),
 //                       glValves (B, WP25: installed gas-lift valves [{md ft, port /64 in, ptro psig, R, kind 'ipo'|'orifice'|'dummy'}], ≤ 20,
-//                       sorted by MD → M.lift.gl.valves)}; read() also copies the perforations to M.res.perf
+//                       sorted by MD → M.lift.gl.valves),
+//                       dyn (v4.6, Well Dynamics: {v:1, cases ≤ 20, res, preset} ≤ 24 kB → M.dyn, present only when the record has dyn)};
+//                       read() also copies the perforations to M.res.perf
 //
 // API (field units, §3.0; nothing throws for user data)
 //   SCALARS                      control id → {path, kind:'num'|'str'|'bool'|'list', scale?} — the page's scalar contract (wp_*)
@@ -37,7 +39,7 @@
 
     var KEY = 'wts_wellperf_model', PAGE_KEY = 'wts_page_wellperf', VERSION = 1;
     var CAP_BYTES = 256 * 1024, MAX_SURVEY = 2000, MAX_ROWS = 500;
-    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25)
+    var TABLE_KEYS = ['survey', 'strings', 'restrictions', 'geo', 'flowline', 'rating', 'beans', 'tests', 'lab', 'pump', 'cases', 'corrSections', 'layers', 'glValves', 'dyn'];   // corrSections: v4.5 WP21; layers: B (WP24); glValves: B (WP25); dyn: Well Dynamics (v4.6)
     var SEC_BY = ['md', 'inc'], SEC_MAX = 12;
     var RESTR_KINDS = ['sssv', 'nipple', 'sleeve', 'xo', 'downholeChoke'];
     var STRING_KINDS = ['tubing', 'casing', 'liner'];
@@ -310,6 +312,9 @@
         out.lab = _isObj(r.lab) ? _labClean(r.lab) : null;
         out.pump = _isObj(r.pump) ? _pumpClean(r.pump) : null;
         out.cases = Array.isArray(r.cases) ? _clone(r.cases).slice(0, 20) : [];
+        // Well Dynamics (v4.6, docs/WELL-DYNAMICS-PLAN.md §7): {v:1, cases:[Case] ≤ 20, res, preset} ≤ 24 kB; kept only when present
+        // (a record without dyn validates and reads exactly as before)
+        if (_isObj(r.dyn)) out.dyn = _dynClean(r.dyn);
         // per-section correlations (v4.5 WP21): [{by:'md'|'inc', from, to, corr}] — MD in ft, inclination in degrees from vertical; a key
         // string of WTS_flowline_corr (checked by the engines: an unknown key is skipped there, with a warning)
         out.corrSections = (Array.isArray(r.corrSections) ? r.corrSections : []).filter(_isObj).map(function (x) {
@@ -320,6 +325,19 @@
         return { rec: out, warnings: warnings };
     }
 
+    // Well Dynamics cases and transient-reservoir inputs (v4.6): the cases are the page's own JSON (settings, events, summary); numbers
+    // in res are cleaned; the record is cut to ≤ 20 cases and ≤ 24 kB (the oldest go first)
+    function _dynClean(d) {
+        var o = { v: 1, cases: (Array.isArray(d.cases) ? d.cases : []).filter(function (c) { return _isObj(c) && typeof c.id === 'string'; }).map(_clone).slice(-20), res: null,
+                  preset: typeof d.preset === 'string' ? d.preset.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) : null };
+        if (_isObj(d.res)) {
+            o.res = {};
+            ['k', 'h', 'phi', 'ct', 'mu', 'B', 'rw', 're', 'S'].forEach(function (k) { o.res[k] = _num(d.res[k]); });
+            o.res.source = typeof d.res.source === 'string' ? d.res.source.replace(/[\u0000-\u001f<>]/g, '').slice(0, 40) : null;
+        }
+        while (o.cases.length > 1 && JSON.stringify(o).length > 24000) o.cases.shift();
+        return o;
+    }
     // the pump curve (B, WP26): {v, name, f0 Hz, rows:[[q bbl/d, head ft/stage, efficiency %, BHP hp/stage]], qMin, qMax (bbl/d at f0), od_in,
     // example} — numbers cleaned, ≤ 40 rows (WTS_wp_esp.normPump checks the curve itself)
     function _pumpClean(p) {
@@ -414,6 +432,7 @@
             M.system.corr.sections = rec.corrSections || [];
             M.res.layers = rec.layers || [];
             M.lift.gl.valves = rec.glValves || [];   // B (WP25)
+            if (rec.dyn) M.dyn = rec.dyn;                // Well Dynamics (v4.6): present only when the record has dyn
         }
         var f = Object.assign({}, _pageScalars(o), _isObj(o.scalars) ? o.scalars : {});
         _applyScalars(M, f, notes);
