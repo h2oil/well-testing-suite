@@ -1267,6 +1267,43 @@ built (engines, contracts — additive only), tests / gates with counts, measure
 
 ### 11.2 WD2 record
 
+- **Date / branch:** 2026-11-13, `wd/wd2` from `wd/int` at b4a375b (the plan commit). WD0 had not merged when WD2 ran: no stubs, no
+  `tests/_welldyn-shapes.js` / `_welldyn-mock.js`. The view therefore resolves the engine at call time (`WTS_wd_engine.REGIMES` /
+  `STATE_ORDER` / `STATES` when loaded, else its own copies of the frozen orders of §3.2) and `welldyn-view.test.js` builds its grids and
+  frames in the §3.2 shapes from the shared survey engine (`WTS_wellbore.surveyMC`) instead of the mock. The file removes any
+  `WTS_wd_view*` name from `__WD_STUBS` when it loads (WD0 stub contract).
+- **Built:** `prism-build/49-calc-wd-view.js` (Round 9 helper, no registry page, no timers / storage / engines): `WTS_wd_view.wellbore`,
+  `navigator`, `closeUp`, `depthLog`, `trend`, `nodal`, `whpRate`, `stateStrip`, `STATE_COLORS` as §3.11. Wellbore along the true
+  trajectory (vertical section along the bottom-hole azimuth, equal scale in `aspect:'true'`, `fit` stretches), width exaggerated with a
+  visible minimum (wider strings drawn wider), five layers, phase pictures per regime (films and gas core for annular / mist, liquid on the
+  low side for stratified, a sharp level for segregated, liquid fill with a gas core / bubbles / Taylor bubbles for bubble / slug / churn),
+  deterministic particles (golden-ratio sequences per cell, offsets advanced only by `frame.dtWall`, so a scrub frame with dtWall 0 is still),
+  reduced motion → velocity arrows, interface lines (liquid top, gas cap), markers (perf, eot, valve, pump, gauge, restr), one regime label
+  per run, hover / select outlines, depth ticks, time and legend, an ARIA text summary on the canvas. Charts reuse `WTS_wp_view.chart`
+  (decimated min / max series, lineX cursor = scrub, marks as bands, regime hbands on the depth log, holdup on the top axis).
+- **Additive to §3.11 (no change to the frozen contracts):** `spec.view: 'trajectory'|'schematic'` and `V.setView` (the schematic mode:
+  MD straightened into one column); `V.info(i)`, `V.infoLines(info)` (the hover readout lines), `V.zoom()`, `V.layout()`, `V.cellAt(i, s, u)`
+  (tests / page); `onSelect(i, how)` gets a second argument `'click'|'key'`; `spec.units` (default `WTS_wd_view.units()`, which follows the
+  units layer — the arrays stay in field units, the views convert); `spec.w / h / fixed`; `depthLog` `spec.track: 'pressure'|'velocity'`;
+  `nodal` spec `{curves, op, live, trail, gas}`; `whpRate` spec `{gas, qKey, cursor, op:{q, thp_psig}}`; `stateStrip` returns `{segments}`;
+  helpers `units(system?)`, `describe(frame, grid, U)`, `stateColors()`, `fmtTime`, `CH_META` (display metadata of the 36 channels; the
+  recorder's `channels()` wins), `PHASE_COLORS`, `REGIMES`, `STATE_ORDER`, `STATE_LABELS`. Interaction: wheel zooms only when the canvas
+  has focus or with Ctrl (the page keeps scrolling), drag pans a zoomed window, ↑ / ↓ / Enter / Esc / 0 / + / − on the wellbore,
+  ↑ / ↓ / 0 on the navigator, pointer scrub on the state strip.
+- **Tests:** `welldyn-view.test.js` VW1–VW14 (14 tests) pass with `--sources` and `--html`. Gates on the branch: Round 9 rebuilt (LF, 0 CR),
+  sync, `node --check` of the extracted main script, smoke 347/347 (unchanged — no checks added), `wellperf-identity` 10, `wellperf-page` 14,
+  `wellperf-shapes` 4, `wellperf-names` 1, `sidebar-nav` 9, `calc-registry` 6, `v3-ux` 17, `help-content` 8 — all pass (no help text added).
+- **Measured:** wellbore frame with 60 cells and 300 particles on the S well: ≈ 3,450 recorded canvas operations (budget asserted ≤ 4,500),
+  ≈ 3 ms per frame in Node with the recording context (the §5.6 page-frame budget is 4 ms in the browser); Playwright / Chromium at 1280×800
+  and 390 px (field and Metric): no horizontal overflow, no page errors, ≈ 3,700–3,950 operations per frame. File 76 kB, parse ≈ 0.3 ms.
+  Screenshots (not committed): scratchpad `shots-wd-WD2/wd2-{desktop,phone}[-metric].png`.
+- **Known gaps / findings for other lanes:** (1) WD3: a recorder snapshot (§3.6) carries masses and p, T only — no α / v / regime arrays — so
+  a scrubbed wellbore needs display arrays from somewhere (keep `S.cells` display copies with the snapshots, or let WD1 export a pure
+  `displayFrom(snap)`); until then a frame without `ag` draws grey cells (the pressure layer still works). (2) At the whole-well view of a
+  10,000 ft well on a 360×480 canvas the pipe is 9–20 px wide in `aspect:'true'`; detail comes from the navigator zoom or the schematic mode.
+  (3) The close-up is a static picture per call (the page passes `spec.phase` to animate it). (4) Op counts are measured with the harness's
+  recording context; the browser ms per frame is for WD5's `--time --html` report.
+
 ### 11.3 WD3 record
 
 ### 11.4 WD4 record
