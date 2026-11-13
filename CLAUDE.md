@@ -328,7 +328,7 @@ docs/BUILDUP-SURVEILLANCE-PLAN.md ← Build-up Surveillance plan (v3.3; interfac
 docs/DFIT-PLAN.md               ← DFIT module plan (v3.4; PRiSM workspace mode 'dfit', Round-8 files 56–59)
 docs/WELL-PERFORMANCE-PLAN.md   ← Well performance / nodal analysis module plan (route wellperf in hub `perf`, Round-9 files
                                   49-calc-wp-*.js; A1 = v4.3 shipped, records §18.1.x; A2 = v4.4 shipped, records §18.2.x; B = v4.5 shipped, records §18.3.x; owner questions §20 at
-                                  their defaults, Q9 textbooks not provided, Q21 second help-cap raise open)
+                                  their defaults, Q9 textbooks not provided, Q21 second help-cap raise approved 2026-11-13, record §18.3.13)
 PROJECT-NOTES.md                ← Running changelog (newest on top)
 README.md                       ← Public-facing description
 ```
@@ -708,7 +708,7 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   tabulated readings pinned to their own values; Glasø / Petrosky-Farshad Rs invert Pb only to their printed constants; GLPC stability is
   the static check only (Asheim in B) and the depth plot of a dead well starts at the first lifted point; VLP tuning fits m_h only unless
   the tests span ≥ 2:1 in rate, and has no time budget in §16 (3 tests with both multipliers ≈ 2.5 s); the help text pool is full again
-  (≈ 1 kB raw / 0.26 kB gzip left; caps 369 / 128 kB — a second raise after Q15's, owner question Q21, open) and the image cap has ≈ 13 kB left (no shots of the A2 cards were added).
+  (≈ 1 kB raw / 0.26 kB gzip left at 4.4; caps 369 / 128 kB — Q21, approved 2026-11-13, raised them for the B help, §18.3.13); no shots of the A2 cards were added.
   Still open from A1: sensitivity not marked stale on input changes, all-tests RMS comparison without a traverse plot, solves slower than
   the plan's 250 ms. Not in A2: ESP, rod pump, Asheim stability, multi-layer, the D5 preferred defaults (B).
 - **Well Performance B (v4.5)** (docs/WELL-PERFORMANCE-PLAN.md §18.3.x; PROJECT-NOTES 4.5): Q9 still not provided, so Orkiszewski,
@@ -723,8 +723,7 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   and the Ansari bridging rule follow the review's reading of the book (Q9); the lab-match Rs shift tapers as b·min(1, p / pb_lab); the design traverses use a mixed lift-gas gravity (the design tubing curve differs slightly from
   the solve's), the operating solve injects at its own balance point, not at the installed valves; valve / pump temperatures use the relaxation
   or linear profile (enthalpy mode falls back to relaxation with gas lift or an ESP); no pump heating, thrust, casing gas or gas-well ESP; the
-  pump library is per device (wtspref_wp_pumplib); the help text sits at the Q21 caps (no screenshots of
-  the B cards; correlation names, Rv / emulsion, U layers, B inflow, batch, ESP checks and gas-lift design inputs are help gaps); Q21 open.
+  pump library is per device (wtspref_wp_pumplib).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
   on the benchmark pre set the leak-off mechanism is right in only ≈ 19 % of cases (a q-tip case reads as PDL), so the type is
@@ -826,8 +825,9 @@ Smoke-test checks:            347/347 pass
 Acceptance tests:             2235/2235 pass (unique, --list), 195 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
-                              Well performance course of 3 exercises (4.4), 218 screenshots (7,983,698 of the 8 MB cap — a new shot
-                              needs an owner cap decision); help text 369 kB raw / 128 kB gzip caps (367,950 / 127,774 bytes used at 4.5)
+                              Well performance course of 3 exercises (4.4), 224 screenshots (8,110,924 of the 8.15 MB cap since Q21 — a new shot
+                              needs an owner cap decision); help text 381 kB raw / 133 kB gzip caps (378,001 / 131,598 bytes used, Q21 2026-11-13);
+                              wellperf guide complete for B (6 B card shots, wpJob action in help-shots.js), 15 "How do I…" tasks
 Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 60/60 cross-checks, every E budget ok)
 3D simulator tests:           149 checks (wts3d-test.js; 147/149 on a Linux LF checkout — the two CRLF checks)
 Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.00-1.01, both items in ≈ 1.45 / 1.6, ck2 ≈ 1.0 / 1.10,

@@ -60,7 +60,7 @@ const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[d
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
 const CAPS = {
   'desktop:viewport': 150 * 1000, 'desktop:crop': 90 * 1000, 'phone:viewport': 110 * 1000, 'phone:crop': 70 * 1000,
-  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.8 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool)
+  totalBytes: 8.15 * 1000 * 1000, files: 300, moduleBytes: 9 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool); Q21 (owner, 2026-11-13): images 8 → 8.15 MB (measured 8,110,924 with the six Well Performance B shots), module 8.8 → 9 kB (measured 8,914)
 };
 const capFor = (view, target) => CAPS[view + ':' + (isViewport(target) ? 'viewport' : 'crop')];
 const isViewport = (target) => target == null || target === 'viewport';
@@ -259,6 +259,16 @@ const ACTIONS = {
       if (!ok) throw new Error('Quick Report template not found: ' + template);
       await s.advance(300);
     }
+  } },
+  // Well Performance Jobs (Studies, lift-curve tables, Run all wells, the gas-lift example's design): {click?, done} — click the
+  // control (optional), then wait (real time, 120 s cap) until the `done` selector exists. The jsdom fingerprint does not run
+  // these Jobs, so a shot using this action is browser-only (checked by its recipe hash).
+  wpJob: { clock: 'fixed', run: async (s, a) => {
+    const o = a || {};
+    if (!o.done) throw new Error('wpJob needs args.done');
+    if (o.click) await mustClick(s, o.click, 'Well Performance control');
+    await until(s, () => s.page.evaluate((q) => !!document.querySelector(q), o.done), 'the Well Performance job (' + o.done + ')');
+    await s.advance(500);
   } },
   metric: { clock: 'fixed', run: async (s, on) => {
     await s.page.evaluate((m) => { if (!window.WTS_units || typeof window.WTS_units.setSystem !== 'function') throw new Error('units layer missing'); window.WTS_units.setSystem(m ? 'metric' : 'imperial'); }, on !== false);

@@ -142,7 +142,10 @@ S('wellperf', 'Step ⑤: Solve for → Bean or THP for a target rate, Target rat
 S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstream of the choke.')] },
 { id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
 S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
-S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] }];
+S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] },
+{ id: 'artlift', title: 'Design gas-lift valves or size an ESP', purpose: 'Artificial lift for a well that will not flow, or flows too little.', steps: [
+S('wellperf', 'Steps ① to ③, then ④ Lift. Gas lift: design inputs, Design the valves, Use this design ([[wellperf#gldesign|Gas-lift design]]).', 'valve depths, port, injection pressure'),
+S('wellperf', 'ESP: pump curve and setting depth, Target liquid rate, Size the stages; check the range, gas, motor and cable ([[wellperf#esp|ESP]]).', 'stages, frequency, motor load')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
