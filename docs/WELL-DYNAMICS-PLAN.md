@@ -1265,6 +1265,95 @@ built (engines, contracts — additive only), tests / gates with counts, measure
 
 ### 11.1 WD1 record
 
+**2026-11-13, branch `wd/wd1` (from `wd/int` b4a375b).** Engine and reservoir only; no UI (no page code, no Playwright shots). No shared
+file was edited: WD0's export `WTS_flowline_gradAt` and fixtures were not on the base, so the lane test helper
+`tests/_welldyn-wd1.js` stands in for them (it adds `WTS_flowline_gradAt = (fluid, p, T, seg, opt) → _gAt(…)` in memory through
+`sourceOverrides`, a no-op once WD0's export is merged, and carries FIX / SCEN / TOL / GATE for the three WD1 files). The integrator
+replaces it with WD0's `_welldyn-shapes.js` / `_welldyn-mock.js` and deletes it.
+
+**Built.** `49-calc-wd-res.js` — `WTS_wd_res {create, f, derivative, horner, lsConst, E1, VERSION}`: `ipr` mode (the model's IPR, back-flow
+at the slope J_r at p̄r) and `transient` mode (E1 line source, superposed u_D, instantaneous u_ND, potentials p / p² / m(p), r_w,eff for
+S < 0, prior history steady / none / shutin, term compaction to 400). Missing transient inputs → `ipr` with `RES_PARAMS_MISSING`.
+`49-calc-wd-engine.js` — `WTS_wd_engine {create, ext, COMP, REGIMES, STATES, STATE_ORDER (18), CHANNELS (36, frozen), METHODS, VERSION
+'1.0.0', engineId, hash, canon, GILBERT_YC, DF, buildGrid}`: five-component (G/O/W/I/F) mass transport on the §4 grid, black-oil flash per
+cell through `WTS_flowline_props` on a per-cell view, drift-flux closure (Zuber-Findlay with the Shi et al. profile / drift and the
+Kutateladze / Wallis-Makkenchery limits) blended with the correlation closure through `WTS_flowline_gradAt`, choke (Gilbert y_c),
+surface line table, loading (Turner / Coleman, Belfroid factor), well states with 120 s persistence, regimes, inventory, steady
+detector, events, `run` / `step` / `schedule` / set*, snapshot / restore, steady and static starts.
+
+**Decisions taken here (deviations from the plan text, recorded for review):**
+- *Newton with a Riccati sweep replaces the Picard pressure iteration (§4.6).* Picard diverged at small Δt (column compressibility × friction
+  feedback). The step solves (p_0…p_n, Q_1…Q_n) by a bottom-up sweep δQ_k = α_k δp_k + β_k and back substitution from the wellhead
+  boundary (choke residual in measure units, Q_n when closed); damped, accepted "loose" at max |δp| ≤ 0.01 psi after 4 iterations. Interior
+  face fluxes are then polished by a monotone 1-D volume-balance solve per face.
+- *Correlation closure on the reference stream.* The correlation is evaluated on the formation (reference) stream scaled to the face's
+  mixture flux j, so v_d = v_d(j, p, T) (feeding it the face stream cascaded liquid in gas wells; inverting the cell state is not unique
+  for Beggs & Brill). Under-relaxation ω = 0.5; drift cap 20 + 2|j| ft/s with a lagged density correction Δρ = ρ_corr − ρ_m when the
+  holdup clamps at 1 or the drift is capped (tuned m_h 1.10); eligibility from the lagged co-current test (j_g ≥ 0 accepted, single-phase
+  faces included); w(j) a smoothstep at the current j; the correlation part clamped to [0, j] with upwind holdups; correlation off while
+  the well is shut in.
+- *Friction blend:* correlation gradient scaled by (j/j_L)² blended with Moody (Swamee-Jain) over j = 0.05…0.10 ft/s (no slosh at shut-in).
+- *Time step:* CFL on phase and kinematic speeds with λ weighted by the minority-phase content of the face pair (a static column is not
+  held to the droplet speed); a DP_LIMIT rejection is accepted once halving Δt no longer reduces the change by 25 % (gravity jumps are
+  not Δt-dependent). Round-off negative masses are clamped and booked in `S.balance.clamp`.
+- *Compaction (RS8):* merge the closest same-sign pair in log-age (the opposite-sign merge gave 9.86 psi error).
+- *Steady start* equilibrates 4 passes on the engine's own discretised column (the traverse state alone blew the volume balance up).
+- *Static liquid start* leaves a gas pocket in the top cell; a static start with temperature `relax` begins on the geotherm.
+- *Fixture deviations:* `gasLoad` p̄r 1,400 psia (plan 1,200) and `oilDev` p̄r 3,500 psia (plan 3,000), chosen so the
+  fixtures keep a stable flowing nodal point with margin for the scenarios run on them (the integrator re-checks against WD0's FIX).
+- Line table and the label ring: a `ref` of the same model hash (and separator pressure) and `restore` copy the line rows (no march);
+  the label ring keeps 120 entries.
+
+**Contracts — additive only.** State: `S.faces.p`, `S.faces.FG/FO/FW/FI/FF` (face mass fluxes), `S.ctl`, `S.balance.clamp`,
+`S.loading.methods {turner, coleman}`, `S.loading.coef`. Sim: `stats {steps, rejects, iters, rej{code}, loose, props, grads, createMs}`,
+`unit`, `k`, `gopt`, `res`, `exts`, `log`, `pend`, `ref.line`. Events `foamer` / `gl` / `esp` / `cycle` set `S.foamer`,
+`S.lift.glCmd / espCmd` and `S.cycle` for WD4 (no lift physics in WD1). Debug hooks `_dbg`, `_dbgNeg`, `_dbgDp` act only when set.
+
+**Snap field list (EN15b, R16).** `kind, v, engine, engineId, mHash, n, t, steps, dtPrev`; `cells {mG, mO, mW, mI, mF, T, p, sigF, vc}`;
+`faces {Q, jg, jo, jw, xI, vd, c0, w, p, FG, FO, FW, FI, FF}`; `ctl {open, bean64, beanEff, strokeLeft_s, beanFrom, beanTo, strokeTime_s,
+chokeMode, ended, psep_psig, tOpen, qRef}`; `line {refGor, refWc, q, pdn, unit, psep, flowline}`; `res {mode, qPrev, + terms / history of
+the transient mode}`; `labels {state, since, prev, reason, pending, ringT, ringLiq, ringQ, ringP, ringThp, lastRing, deadSince, lastBot,
+dying, heading}`; `steady {ringT, ringQ, ringPwf, ringThp, next}`; `surface {thp, thp_psig, tht, pDn_psig, qo, qw, qL, qg, qgForm, qinj,
+qvent, glr, gor, gorForm, wc, regime, y, yc}`; `foamer {on, ppm, eff, injMd}`; `lift {glCmd, espCmd, gl, esp}`; `cycle`, `pend`, `seq`,
+`log`, `ext` (per extension), `bal {m0, cumIn, cumOut, clamp}`, `prov`, `flags`. Size ≈ 45 kB at 60 cells (plan estimate 10–14 kB: the
+face arrays, line rows and rings) — the §5.6 recorder memory line needs ≈ 3.5× (≈ 65 MB for 1,440 snapshots) unless WD3 stores deltas
+or drops the rings / line rows from recorder snapshots.
+
+**Gate (G1–G4, G7 + the WD1 companions), time-means of the last window vs `WTS_wp_system.solve`:** gasVert rate +0.064 %, BHP −0.017 %,
+THP +1.18 psi; gasHz +0.004 % / −0.001 % / +0.13 psi; oilVert +0.244 % / −0.043 % / +0.76 psi; oilVertTuned +0.419 % / −0.063 % /
++1.17 psi; oilDev +0.264 % / −0.037 % / +0.79 psi; all critical choke as the solve, cumulative mass error ≈ 1e-15. G8 static companion
+(staticOil from a static column) settles on the same point; G9 grid convergence (integration) 60 vs 120 cells ≤ 0.5 %, 30 vs 120 ≤ 1 %.
+
+**Tests.** `welldyn-engine` EN1–EN30: 30/30 (≈ 69 s); `welldyn-res` RS1–RS12: 12/12 (≈ 20 s); `welldyn-gate` G1–G4, G7, G8, G9: 7/7
+(≈ 52 s, G9 `integration`). Smoke 347/347 (no checks added). After the Round-9 rebuild (`--html`): `wellperf-*` 334/334, `sidebar-nav`
+9/9, `calc-registry` 6/6, `v3-ux` 17/17, `help-content` 8/8. RS4: build-up derivative ≈ 21.07 psi/cycle within 3 %.
+
+**Measured budgets (Node, this container; §5.6 budget in brackets).**
+
+| Item | gasVert | oilVert | gasHz (63 cells) |
+|---|---|---|---|
+| `create` cold | 513 ms | 485 ms | 679 ms [≤ 800] |
+| `create` with `ref` | 27.6 ms | 33.3 ms | 27.9 ms [≤ 30] |
+| flowing step, 60 cells | 3.46 ms | 3.64 ms | 3.41 ms [≤ 2.5 — missed ×1.4] |
+| cells × steps / s | 17,400 | 16,500 | 18,500 |
+| mean Δt flowing | 5.5 s | 7.0 s | 1.6 s |
+| simulated / wall flowing | 1,600× [≥ 500] | 1,900× [≥ 1,500] | 464× [≥ 500 — missed] |
+| wall per simulated hour | 2.3 s [≤ 8] | 1.9 s [≤ 3] | 7.8 s [≤ 8] |
+| shut-in step / mean Δt | 4.7 ms / 26 s | 4.2 ms / 25 s | 3.8 ms / 18 s [≤ 1.0 ms, Δt 60 s — missed] |
+| simulated / wall shut-in | 5,700× | 5,800× | 4,700× [≥ 20,000 — missed] |
+| snapshot / restore | 0.33 / 2.7 ms | 0.22 / 3.3 ms | 0.24 / 2.5 ms [≤ 2 ms — restore missed] |
+
+Scenarios: `gasLoadDown` 8 h 3,077 steps 12.7 s [≤ 18 ✓]; `levelSettle` 8 h 516 steps 1.3 s [≤ 2 ✓]; `shutInBuildup` 10 h 1,887 steps
+10.3 s [≤ 5 — missed ×2]; `killColumn` 2 h 722 steps (290 rejects) 4.0 s [≤ 2 — missed ×2]; `staticOil` 2 h 1,314 steps 5.4 s.
+The shut-in budgets assumed a 1 ms step without the correlation; the WD1 step still flashes every cell and runs the Newton sweep while
+shut in, and the counter-current CFL keeps Δt at ≈ 20–30 s, not 60 s. Per §5.6 the lead resets these budgets by the measured factor or a
+follow-up reuses the step's props while shut in and relaxes the CFL weighting at a settled column.
+
+**Known gaps.** Top-column pressure jitter in the first minutes after a shut-in (reduced by the friction blend and corr-off, not gone);
+the shut-in / kill budgets above; gas lift and ESP physics (G5 / G6) are WD4's — lift-gas props use exact (untabled) props; the Sachdeva
+y_c is not implemented (Gilbert y_c); the line table has no isenthalpic second march and is rebuilt only on a separator-pressure change
+(no re-tabulation on GOR / WC drift); the static liquid start puts a gas pocket in the top cell; Snap size above the plan estimate.
+
 ### 11.2 WD2 record
 
 ### 11.3 WD3 record
