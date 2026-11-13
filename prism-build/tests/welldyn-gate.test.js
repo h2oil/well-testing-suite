@@ -92,3 +92,35 @@ module.exports = [
       assert.rel(bhp[30], bhp[120], 0.01, '30 vs 120');
     } },
 ];
+
+// ── WD4 (appended, §5.1): G5 gas lift in nodal mode, G6 ESP — fixtures of tests/_welldyn-wd4.js (§11.4) ─────────────────────
+const L4 = require('./_welldyn-wd4');
+function gate4(ctx, assert, key) {
+  const g = G(ctx), M = key === 'esp' ? L4.FIXL(g).esp() : L4.FIXL(g).gasLift();
+  const m = W.memo('lift:gate:' + key, () => { const sim = g.WTS_wd_engine.create(M, Object.assign({}, W.GATE_OPTS, L4.GATE4[key])); return { sim, rs: sim.ok ? W.runSteady(sim, { cap_s: 3 * 3600 }) : { ok: false, code: sim.code } }; });
+  const sim = m.sim; assert.ok(sim.ok, 'create ' + key + ': ' + (sim.code || ''));
+  const R = sim.R0, c = m.rs.chk;
+  assert.ok(m.rs.ok && c.steady, key + ' steady (Δq̄ ' + c.dq + ', Δp̄ ' + c.dp + ')');
+  assert.ok(c.ampQ <= W.TOL.ampQ * c.qMean && c.ampP <= W.TOL.ampP, key + ' oscillation amplitude');
+  assert.rel(c.qMean, R.op.q, W.TOL.q, key + ' rate'); assert.rel(c.pwfMean, R.pwf, W.TOL.pwf, key + ' BHP');
+  assert.ok(Math.abs(c.thpMean - R.surface.thp) <= Math.max(W.TOL.thpRel * R.surface.thp, W.TOL.thpAbs), key + ' THP ' + c.thpMean.toFixed(2) + ' vs ' + R.surface.thp.toFixed(2));
+  assert.strictEqual(sim.state.surface.regime, R.surface.choke.regime, key + ' choke regime');
+  ['res_sup', 'choke_sub', 'belfroid', 'fallback', 'temp_relax'].forEach((k) => assert.ok(sim.state.provisional.indexOf(k) === -1, key + ': ' + k + ' active in a default run'));
+  assert.ok(sim.state.balance.errCum <= 1e-8, key + ' cumulative mass balance ' + sim.state.balance.errCum);
+  return { sim, R };
+}
+module.exports.push(
+  { name: 'G5 gasLift (nodal injection): settles on the gas-lifted nodal operating point; injection cell above the R.lift.injMd break, q_inj equal', wp: 'WD4', opts: false, timeoutMs: 120000,
+    run(_a, assert, ctx) {
+      const { sim, R } = gate4(ctx, assert, 'gasLift');
+      assert.near(sim.grid.cells[sim.grid.injCell].md0, R.lift.injMd, 1e-6, 'injection cell');
+      assert.rel(sim.state.surface.qinj, R.lift.qinj, 1e-12, 'q_inj');
+      assert.ok(sim.state.provisional.indexOf('gl_valves') === -1, 'nodal mode: no valve model');
+    } },
+  { name: 'G6 esp: settles on the pumped nodal operating point; pump intake within 1 %', wp: 'WD4', opts: false, timeoutMs: 120000,
+    run(_a, assert, ctx) {
+      const { sim, R } = gate4(ctx, assert, 'esp');
+      assert.rel(sim.state.lift.esp.pint, R.lift.pInt, 0.01, 'pump intake');
+      assert.strictEqual(sim.state.well.state, 'esp_running');
+    } }
+);

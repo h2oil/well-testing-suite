@@ -319,7 +319,9 @@ module.exports = [
       r = PR('cycle'); assert.deepStrictEqual(plain(r.events[0].args), { mode: 'timer', open_h: 2, shut_h: 2, cycles: 3 });
       r = PR('glunload'); assert.strictEqual(app.el('wd_start').value, 'static'); assert.strictEqual(P(app).sim().opts.reservoir.prior.kind, 'none');
       assert.match(r.note, /Set gas lift/);
-      r = PR('espstart'); assert.strictEqual(r.events[0].type, 'esp');
+      // WD4: the static-start lift presets open the well at t = 0 (a static start is shut in), then the lift command
+      assert.deepStrictEqual(plain(r.events.map((e) => e.type)), ['open', 'gl'], 'gas-lift unloading opens the well with the lift gas on');
+      r = PR('espstart'); assert.deepStrictEqual(plain(r.events.map((e) => e.type)), ['open', 'esp']);
       r = PR('steady'); assert.strictEqual(r.events.length, 0); assert.strictEqual(app.el('wd_start').value, 'steady');
       assert.ok(app.el('wd_evbody').querySelectorAll('tr').length >= 1);
       leave(app); fresh(app);
