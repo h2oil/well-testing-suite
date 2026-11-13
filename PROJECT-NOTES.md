@@ -5,7 +5,27 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
-## 2026-11-13 — Help: Well Performance B guide completed (owner question Q21 approved)
+## 2026-11-13 — v4.5.1 release: Well Performance help completed (owner question Q21)
+
+App and App Store version 4.5.1 (`RELEASE_NOTES[0]` v4.5.1, dated 2026-11-13, both platforms, title "Well Performance help completed";
+both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`, the static `#appVersionLabel` fallback). A three-part
+version, as 3.3.1 / 3.4.1 / 3.4.2 were (the ci_post_clone.sh reader takes 2 or 3 parts; higher than the released 4.5 for ITMS-90062).
+
+- **Q21 approved by the owner on 2026-11-13** ("do Q21 now"): the second raise of the help caps, with the help growth needed to document
+  Well Performance B fully, screenshots of the B cards included (docs/WELL-PERFORMANCE-PLAN.md §20, record §18.3.13).
+- **Caps old → new** (measured, then a small margin): help text sum 369 → 381 kB raw, 128 → 133 kB gzip (379,816 / 132,221 bytes used);
+  48-calc-help-production.js 57.6 → 59.2 kB; wellperf guide serialised 21.75 → 23.5 kB (23,892 B);
+  images 8.0 → 8.15 MB (8,120,766 B used after the release-notes shots); manifest module 8.8 → 9 kB.
+- **Documented** (entry below): ESP inputs and checks, gas-lift design inputs field by field, B inflow models, a correlation per section,
+  enthalpy-balance temperature with layered U, PVT lab match / Rv / emulsion, lift screening, studies (cases, forecast, envelope, tornado,
+  matrix), lift-curve and PVT tables, Run all wells; the artificial-lift task; search keywords; the provisional methods marked as such.
+- **Shots**: six B card shots (wellperf wells-d with two wells, ltab-d, env-d, gld-d, esp-d, esp-p); release-notes shots re-taken for
+  the new entry (view-d 73,330 B, view-p 63,534 B). Round 9 rebuilt, LF kept, user guide regenerated, synced.
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2235/2235 (195 files, run file by
+  file); wellperf-validate --html --gate --check --time: D17 gate PASS, 62/62 cross-checks, every E budget ok; help-shots --check (224
+  files, 8,120,766 B), build-user-guide --check, publish-site --check ok; wts3d-test 147/149 (the two CRLF checks on LF).
+
+ (owner question Q21 approved)
 
 Owner question Q21 (a second raise of the help caps) was approved on 2026-11-13 ("do Q21 now") with the help growth needed to document
 Well Performance B fully, screenshots of the B cards included (docs/WELL-PERFORMANCE-PLAN.md §20, record §18.3.13). The wellperf guide

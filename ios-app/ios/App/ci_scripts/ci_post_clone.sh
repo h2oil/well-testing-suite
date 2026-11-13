@@ -83,7 +83,7 @@ grep -E '\.package\(' ios/App/CapApp-SPM/Package.swift || true
 # is released). Every shipped batch adds a newer release-notes entry (v3.1.1, v3.2 …),
 # which raises the App Store version for the next release — Apple rejects a
 # version that is not higher than the released one (ITMS-90062).
-VERSION_BASE="4.5"   # fallback only, if the release notes cannot be read
+VERSION_BASE="4.5.1"   # fallback only, if the release notes cannot be read
 APP_HTML="$CI_PRIMARY_REPOSITORY_PATH/well-testing-app.html"
 if [ -f "$APP_HTML" ]; then
     RN_VER=$(node -e "const s=require('fs').readFileSync(process.argv[1],'utf8');const i=s.indexOf('const RELEASE_NOTES = [');const m=i<0?null:s.slice(i).match(/ver\s*:\s*'v?([0-9]+(?:\.[0-9]+){1,2})'/);process.stdout.write(m?m[1]:'')" "$APP_HTML" 2>/dev/null || true)

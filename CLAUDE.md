@@ -811,7 +811,7 @@ node prism-build/gui-sweep.js --mobile                       # click sweep at 39
 
 ---
 
-## Cumulative stats (as of 2026-11-12, v4.5)
+## Cumulative stats (as of 2026-11-13, v4.5.1)
 
 ```
 PRiSM source files:           01-21 + 33-37, 39, 51-59 (Round-8; 56-59 = DFIT) + tooling
@@ -825,17 +825,22 @@ Smoke-test checks:            347/347 pass
 Acceptance tests:             2235/2235 pass (unique, --list), 195 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
-                              Well performance course of 3 exercises (4.4), 224 screenshots (8,113,704 of the 8.15 MB cap since Q21 — a new shot
+                              Well performance course of 3 exercises (4.4), 224 screenshots (8,120,766 of the 8.15 MB cap since Q21 — a new shot
                               needs an owner cap decision); help text 381 kB raw / 133 kB gzip caps (379,816 / 132,221 bytes used, Q21 2026-11-13);
                               wellperf guide complete for B (6 B card shots, wpJob action in help-shots.js), 15 "How do I…" tasks
-Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 60/60 cross-checks, every E budget ok)
+Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 62/62 cross-checks, every E budget ok)
 3D simulator tests:           149 checks (wts3d-test.js; 147/149 on a Linux LF checkout — the two CRLF checks)
 Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.00-1.01, both items in ≈ 1.45 / 1.6, ck2 ≈ 1.0 / 1.10,
                               cushion ≈ 1.10 / 1.15, line ≈ 0.9 / 1.05); wts-calc-golden.js --check --time
-Generated HTML:               ~181.8k lines (12.2 MB, LF); www bundle ~12.6 MB (+ www/help 8.0 MB images and the guide)
+Generated HTML:               ~182.2k lines (12.6 MB, LF); www bundle ~12.6 MB (+ www/help 8.0 MB images and the guide)
 ```
 
-Latest release: v4.5 (Well Performance B, docs/WELL-PERFORMANCE-PLAN.md §18.3, both platforms: ESP (pump curves, affinity, pump node in
+Latest release: v4.5.1 (Well Performance help completed, owner question Q21 approved 2026-11-13, both platforms: the wellperf
+guide covers every B feature — ESP and gas-lift design inputs, B inflow, correlation per section, enthalpy temperature with layered U, PVT lab
+match / Rv / emulsion, lift screening, studies, lift-curve / PVT tables, Run all wells — six B card screenshots, the artificial-lift task,
+search keywords; help caps raised per Q21 (images 8.15 MB, text 381 kB raw / 133 kB gzip, wellperf guide 23.5 kB); no calculation change;
+App Store 4.5.1), dated 2026-11-13, on top of
+v4.5 (Well Performance B, docs/WELL-PERFORMANCE-PLAN.md §18.3, both platforms: ESP (pump curves, affinity, pump node in
 the solve, frequency / stages rails, Size the stages), gas-lift design on MD with TVD (draggable valves, diagnosis, survey match,
 Thornhill-Craver and Asheim provisional), B inflow models (water-cut composite, horizontal, fractured, multilayer, transient, injector,
 Build-up hand-off), five more lift correlations + a correlation per section, enthalpy-balance temperature with layered U, PVT lab match /
@@ -910,7 +915,7 @@ as the 8th row of Test System Safety, THI hydrate design with real-gas J-T × 1.
 chemicals, pump settings ranked for classified areas with the air-driven liquid pump as the H1 default, surface discharge
 pressure / relief band, drive gas, calibration, tank; Hydrate-page rp-skip banner and Chemical & Dosage cross-link; Quick
 Report final + daily entries; 3.2b — H2S scavenger card, downhole capillary, LDHI screening, second expansion, batch — still
-to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.5**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
+to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.5.1**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
 
 **Shared engines (reuse, never duplicate):** `PRiSM_dfit_pipeline` (57; the only place that knows the DFIT stage order, with a
 Job twin), `WTS_wellbore` (48-calc-wellbore: survey, strings, column, `convert`, `csys`, `stepRate`, `ramp`, `hammerQuick`),
