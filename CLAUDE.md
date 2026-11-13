@@ -825,8 +825,8 @@ Smoke-test checks:            347/347 pass
 Acceptance tests:             2235/2235 pass (unique, --list), 195 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
-                              Well performance course of 3 exercises (4.4), 224 screenshots (8,110,924 of the 8.15 MB cap since Q21 — a new shot
-                              needs an owner cap decision); help text 381 kB raw / 133 kB gzip caps (378,001 / 131,598 bytes used, Q21 2026-11-13);
+                              Well performance course of 3 exercises (4.4), 224 screenshots (8,113,704 of the 8.15 MB cap since Q21 — a new shot
+                              needs an owner cap decision); help text 381 kB raw / 133 kB gzip caps (379,816 / 132,221 bytes used, Q21 2026-11-13);
                               wellperf guide complete for B (6 B card shots, wpJob action in help-shots.js), 15 "How do I…" tasks
 Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 60/60 cross-checks, every E budget ok)
 3D simulator tests:           149 checks (wts3d-test.js; 147/149 on a Linux LF checkout — the two CRLF checks)

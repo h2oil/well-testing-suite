@@ -182,6 +182,8 @@ module.exports = [
       assert.notStrictEqual(HS.recipeHash(alt), HS.recipeHash(res), 'and the recipe hash');
       const caption = Object.assign({}, res, { recipe: Object.assign({}, res.recipe, { caption: 'Other words', alt: 'Other alt' }) });
       assert.strictEqual(HS.recipeHash(caption), HS.recipeHash(res), 'caption / alt edits do not re-shoot');
+      const pad = Object.assign({}, res, { recipe: Object.assign({}, res.recipe, { padTop: 0 }) });
+      assert.notStrictEqual(HS.recipeHash(pad), HS.recipeHash(res), 'padTop re-shoots (absent padTop keeps the old hashes)');
     },
   },
   {
@@ -211,6 +213,8 @@ module.exports = [
       bad({ callouts: [{ sel: '#a', n: 10 }] }, /n must be 1–9/, 'call-out out of range');
       bad({ callouts: [{ n: 2 }] }, /needs sel/, 'call-out without selector');
       bad({ mask: [''] }, /mask must be a list of selectors/, 'empty mask');
+      bad({ padTop: 9 }, /padTop must be an integer 0–8/, 'padTop out of range');
+      assert.deepStrictEqual(HS.validateShots([shot(Object.assign({}, ok, { padTop: 0 }))]), [], 'padTop 0 is valid');
       const dup = HS.validateShots([shot(ok), shot(Object.assign({}, ok))]);
       assert.ok(dup.some((e) => /duplicate shot orifice\/res/.test(e)), 'duplicate id in one folder');
       // course / scenario / start folders and stems
@@ -229,7 +233,7 @@ module.exports = [
     wp: WP, opts: false,
     run(app, assert) {
       const want = ['prismAnalyse', 'prismStep', 'prismDfit', 'buildupDemo', 'modbusSimDemo', 'wellosDemo', 'simReset', 'simRun', 'simFault', 'simRigup', 'simCard',
-        'simMenu', 'simView', 'quickReport', 'metric', 'wpJob'];
+        'simMenu', 'simView', 'quickReport', 'metric', 'wpJob', 'wellAdd'];
       assert.deepStrictEqual(Object.keys(HS.ACTIONS).sort(), want.slice().sort(), 'the initial set of named actions');
       want.forEach((k) => {
         assert.ok(['install', 'fixed'].indexOf(HS.ACTIONS[k].clock) >= 0, k + ' clock mode');
@@ -368,6 +372,8 @@ module.exports = [
       assert.ok(c.warnings.length === 1 && /does not fit the 1280×800 viewport/.test(c.warnings[0]), c.warnings.join(';'));
       assert.strictEqual(c.clip.y + c.clip.height, 800, 'clipped to the viewport');
       assert.deepStrictEqual(HS.cropFor('#t', rect, { boxes: [] }).warnings, [], 'a target that fits: no warning');
+      const c0 = HS.cropFor('#t', rect, { boxes: [] }), cp = HS.cropFor('#t', rect, { boxes: [] }, 0);
+      assert.ok(cp.clip.y === c0.clip.y + 8 && cp.clip.height === c0.clip.height - 8 && cp.clip.x === c0.clip.x, 'padTop 0: no strip above the target');
       assert.strictEqual(HS.parseArgs(['--route', 'x', '--strict']).strict, true, '--strict');
       // harness globals: the same seeded generator as the shots, and the shot date
       const g1 = HS.harnessGlobals().Math, g2 = HS.harnessGlobals().Math;

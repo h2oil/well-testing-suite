@@ -5,6 +5,17 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-13 — Help: Well Performance B guide completed (owner question Q21 approved)
+
+Owner question Q21 (a second raise of the help caps) was approved on 2026-11-13 ("do Q21 now") with the help growth needed to document
+Well Performance B fully, screenshots of the B cards included (docs/WELL-PERFORMANCE-PLAN.md §20, record §18.3.13). The wellperf guide
+now covers every B gap of §18.3.11 plus lift screening, the full gas-lift design and ESP input tables and the artificial-lift task; six B
+shots (wells-d with two wells, ltab-d, env-d, gld-d, esp-d, esp-p; clean top edge through the recipe field padTop). Caps from the measured
+text: production 59.2 kB, start 20.55 kB, sum 381 kB raw / 133 kB gzip, wellperf guide 23.5 kB serialised, images 8.15 MB, manifest module
+9 kB. New help-shots named actions wpJob and wellAdd (browser-only shots). The RELEASE_NOTES item (4.5.1) is left to the integrator.
+
+---
+
 ## 2026-11-12 — v4.5 release: Well Performance B (artificial lift, studies, all wells)
 
 App and App Store version 4.5 (`RELEASE_NOTES[0]`, dated 2026-11-12, both platforms, title "Well Performance: artificial lift, studies
@@ -12,7 +23,7 @@ and all wells"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VER
 help/user-guide.html stamp "Version 4.5"). Increment B of docs/WELL-PERFORMANCE-PLAN.md (§18.3, records §18.3.1–§18.3.11). Owner decision
 "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so every new method without a
 verified published example ships `verified:false` with the provisional label (D17 gate) and is never a default; Q21 (a second raise of
-the help caps) stays open — no cap was raised for B.
+the help caps) stays open — no cap was raised for B (Q21 approved on 2026-11-13, entry above).
 
 - **Built on `wp/b`** from master 8ce1989 (v4.4), merged `--no-ff` in the order WP23 (PVT lab match, Rv, emulsion), WP21 (Orkiszewski,
   Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir; a correlation per MD / inclination section), WP22 (enthalpy-balance flowing
@@ -22,7 +33,7 @@ the help caps) stays open — no cap was raised for B.
   read-only; schematic: horizontal section, layers, correlation rail), WP25 (gas-lift design on the shared model with valves on MD and
   TVD, drag knobs, Thornhill-Craver, diagnosis, gradient survey match, Asheim) and WP26 (ESP: pump curves, affinity and viscosity, intake
   gas, motor and cable, pump node in the system solve, frequency / stages rails). Generated files regenerated after every merge, never
-  hand-merged; the help guide covers the B features within the Q21 caps (gaps listed in plan §18.3.11).
+  hand-merged; the help guide covers the B features within the Q21 caps (gaps listed in plan §18.3.11; completed on 2026-11-13 after the Q21 approval, entry above).
 - **Verified / provisional.** Provisional (BENCH rows pending): the five B lift correlations, enthalpy-balance temperature, differential →
   flash, Rv, emulsion, every B inflow model, forecast tank models, lift screening, Thornhill-Craver, Asheim, ESP viscosity / natural
   separation / gas criterion / motor and cable. Pinned (exact or closed-form checks): the lab match least squares, the API RP 11V6 design
@@ -49,7 +60,8 @@ the help caps) stays open — no cap was raised for B.
   and --mobile: 0 findings after the fixes (1 before: the Metric Bob label); Playwright pass over every step, traverse tab and study tab
   with the Oil, Gas, Horizontal, Multilayer, Injector and ESP examples (lab match, envelope, forecast + time slider, tornado, matrix,
   cases, screening, all wells, gas-lift design, ESP sizing and sweep) at 1280 and 390 px: no overflow, no NaN, no page error.
-- **Open items (B).** Help at the Q21 caps: no screenshots of the B cards and the help gaps of plan §18.3.11; design traverses on a mixed
+- **Open items (B).** Help at the Q21 caps: no screenshots of the B cards and the help gaps of plan §18.3.11 (resolved 2026-11-13: Q21
+  approved, see the entry above); design traverses on a mixed
   lift-gas gravity and the operating solve at its own balance point (not the installed valves); valve / pump temperatures on the relaxation
   or linear profile; no ESP pump heating, thrust, casing gas or gas wells; pump library per device; valve labels can overlap; schematic
   labels can still touch each other near a horizontal toe. Not in B: rod pump, the D5 preferred defaults (wait for verified examples).
@@ -62,7 +74,7 @@ fallback; help/user-guide.html stamp from RELEASE_NOTES[0].date). Increment A2 o
 §18.2.1–§18.2.8). Owner decision "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so
 every new method without a verified published example ships `verified:false` with the provisional label (D17 gate) and is never a
 default; Q15 → help text caps +12 kB raw / +4 kB gzip (used by A1); the A2 course needed a second raise (SUM_CAP 357 → 369 kB, GZIP_CAP
-124 → 128 kB, per-file production / 49-calc-help / print / start) — that is owner question Q21 (plan §20), open before release, not the
+124 → 128 kB, per-file production / 49-calc-help / print / start) — that is owner question Q21 (plan §20; approved on 2026-11-13), open before release, not the
 Q15 default; Q16 → `WTS_wellbore.flowingTemp` with `direction:'inject'` available to DFIT 3.4b.
 
 - **Built on `wp/a2`** from master 9775e07 (v4.3): WP13 PVT correlation families (16-pvt, Round 3; 38 keys, `PRiSM_pvt_corrInfo`,

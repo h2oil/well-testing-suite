@@ -2094,6 +2094,20 @@ fully, B card screenshots included. (The task named this record §18.3.12; that 
 - **Caps (old → new; measured)**: production 47.67 → 57.6 kB (57,009 B); start 19.8 → 20.55 kB (20,333 B); SUM_CAP 369 → 381 kB
   (378,001 B); GZIP_CAP 128 → 133 kB (131,598 B); wellperf guide serialised 14 → 21.75 kB (new GUIDE_CAP_KB, 21,920 B); images 8 → 8.15 MB
   (8,110,924 B, 224 files); manifest module (help-shots moduleBytes) 8.8 → 9 kB (8,914 B). Other per-file caps unchanged.
+- **Review fixes (2026-11-13, same branch)**: a *Lift screening* part (step ④ card, one matrix per solve, deviation / dogleg / depth first,
+  pump-setting window, Compare the lift rates with optimum gas lift at the ④ injection pressure or the screening pressure (blank 1000
+  psig) and the pump potential; provisional, indicative ranges after Brown (1982) and Clegg, Bucaram and Hein (1993), a screening aid and
+  not a design; rod pump / PCP / jet pump / plunger lift screened only); the U layers moved to the relaxation paragraph (they serve both
+  models); gas-lift design inputs complete (tubing effect, minimum spacing, design liquid rate, deepest mandrel; defaults 0.465 psi/ft,
+  25 psi, port 1/4 in; kickoff blank = injection pressure + 100 psi as a unit token); ESP inputs complete (pump and motor OD, motor
+  voltage and current, cable length; the cable row keeps the page label "Cable" — the drift check reads the label without its
+  parenthesis, the text says copper); wording (down- or upthrust, the overall U (③), the non-Darcy coefficient D); five B keywords and the part title
+  "Lift-curve and PVT tables" (search: lift curve → that part first, pump → the ESP inputs in the top 5, U layers → wellperf).
+  Shots: wj() crops with the new recipe field `padTop: 0` (help-shots.js; 0–8 px, in the recipe hash only when set), so the five desktop
+  B crops lose the strip of the tab row above the plot; Run all wells now shows two wells (new named action `wellAdd` duplicates the
+  well as Example-2, then p̄r 3400, WC 10 %, J 1.2). Retaken: wells-d 14,836 B, ltab-d 17,266 B, env-d 19,912 B, gld-d 29,588 B, esp-d
+  25,854 B, esp-p 25,916 B. Caps (measured): production 57.6 → 59.2 kB (58,824 B); wellperf guide 21.75 → 23.5 kB (23,892 B serialised);
+  images 8,113,704 B under the 8.15 MB cap (unchanged); SUM_CAP / GZIP_CAP unchanged (measured 379,816 B raw, 132,221 B gzip).
 
 ### 18.4 Increment C
 

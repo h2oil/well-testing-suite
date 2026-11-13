@@ -30,7 +30,7 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
 const KB = 1000;
 const CAPS = {
   '49-calc-help.js': 48.52, '49-calc-help-print.js': 15.68, '48-calc-help-start.js': 20.55, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 57.6, '48-calc-help-livedata.js': 16.03,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 59.2, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
   '48-calc-help-simcourse.js': 41.72, '48-calc-help-wpcourse.js': 9.83, '48-calc-help-manifest.js': 8.75,
 };
@@ -86,14 +86,16 @@ const CAPS = {
 // Build-up hand-off, lift-curve / PVT tables, Studies, Run all wells, gas-lift design and ESP parts, six shot recipes), start 19.8 → 20.55
 // (measured 20,333: the artificial-lift task, 14 → 15); SUM_CAP 369 → 381 kB (measured 378,001), GZIP_CAP 128 → 133 kB (measured
 // 131,598); the wellperf guide's serialised cap 14 → 21.75 kB (GUIDE_CAP_KB; measured 21,920 bytes). Other files unchanged.
+// Q21 review fixes (2026-11-13): production 57.6 → 59.2 (measured 58,824: the Lift screening part, the full gas-lift design and ESP
+// input tables, the U-layers wording, five B keywords, the two-well shot recipe); the wellperf guide 21.75 → 23.5 kB (measured 23,892).
 const SUM_CAP = 381 * KB, GZIP_CAP = 133 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
 const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
 const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus', 'wellperf'];
-// serialised guide cap in kB (1024 bytes): 14 for a parts route, 6 otherwise; wellperf 21.75 since Q21 (owner, 2026-11-13)
-const GUIDE_CAP_KB = { wellperf: 21.75 };
+// serialised guide cap in kB (1024 bytes): 14 for a parts route, 6 otherwise; wellperf 23.5 since Q21 (owner, 2026-11-13)
+const GUIDE_CAP_KB = { wellperf: 23.5 };
 const guideCap = (r) => GUIDE_CAP_KB[r] || (PARTS.indexOf(r) !== -1 ? 14 : 6);
 const SRC_OVERRIDE = { wts: ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'] };
 const SEC_KEYS = ['top', 'what', 'when', 'steps', 'inputs', 'results', 'example', 'tips', 'refs', 'related'];

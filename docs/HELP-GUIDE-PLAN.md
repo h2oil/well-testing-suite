@@ -494,6 +494,10 @@ choice for the owner (Q13) is:
 
 A re-baseline is an owner decision; it is never done silently.
 
+**Q21 (owner, 2026-11-13):** all images ≤ 8.15 MB; the wellperf guide's serialised cap is 23.5 kB (`GUIDE_CAP_KB` in
+help-content.test.js; 21.75 kB at the approval, raised by the review fixes), the other parts routes stay at 14 kB; per-file and sum caps
+as in help-content.test.js — see docs/WELL-PERFORMANCE-PLAN.md §18.3.13.
+
 **Decision (owner, 2026-11-06): option 1.** The v3.3.2 Help allocation is **345 kB raw and 120 kB gzip**, with the per-file
 caps above; no content is cut and the guide prose stays in the HTML (D6). `help-content.test.js` enforces the new caps.
 Measured after the v3.3.1 update (help branch, DS-101 / T-202 content in, manifest still a stub): **323.4 kB raw and
