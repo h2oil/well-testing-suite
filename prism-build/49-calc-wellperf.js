@@ -323,6 +323,7 @@
         '#wp_root .wp-steps .wp-sp{flex:1 1 auto}' +
         '#wp_root .wp-ex{font-size:12px}' +
         '#wp_root button:focus-visible,#wp_root select:focus-visible,#wp_root input:focus-visible,#wp_root canvas:focus-visible,#wp_root summary:focus-visible,#wp_root .wp-comp:focus-visible{outline:2px solid var(--focus,#58a6ff);outline-offset:2px}' +
+        '#wp_root .wp-gowd{margin-left:auto;padding:4px 11px;font-size:12px}#wp_root .wp-gowd-k{display:flex;justify-content:flex-end;margin:-6px 0 8px}' +
         '#wp_root .wp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px;margin:0 0 var(--wp-gap)}' +
         '#wp_root .wp-kpi{position:relative;background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:9px 12px 9px 12px;min-width:0;transition:border-color .2s}' +
         '#wp_root .wp-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:16px}' +
@@ -2806,6 +2807,7 @@
         if (act === 'cancel') { if (ST.job) ST.job.cancel(); return; }
         if (/^wells/.test(act)) { if (G.WTS_wp_wellsUi) G.WTS_wp_wellsUi.act(act, btn); return; }       // B (WP28)
         if (act === 'example') { _loadExample(btn.getAttribute('data-ex')); return; }
+        if (act === 'welldyn') { if (typeof G.WTS_nav === 'function') G.WTS_nav('welldyn'); return; }   // v4.6 cross-link (both pages read the one model)
         if (act === 'csv') { _csv(); return; }
         if (act === 'bu') { _importBuildup(); return; }
         if (act === 'design') {
@@ -3896,7 +3898,7 @@
                 '<div class="chart-wrap" style="margin-top:8px"><canvas id="wp_cv_gldepth" aria-label="Injection depth against the lift-gas rate"></canvas></div>' +
                 '<div class="wp-legend-hint rp-skip">Drag the dashed <b>q_inj</b> line (or focus the plot, [ / ] then the arrows) and the well re-solves with that much lift gas.</div></div>' +
                 '<div class="wp-v info" data-lift="none">The performance curve appears here with gas lift selected.</div>') + '</div>' + _ext('stepHtml', 4).join('') + '</section>';
-        var s5 = '<section id="wp_step_5" class="wp-sec" style="display:none"><div class="wp-sec-h">⑤ System <span>node, surface boundary, correlations, ratings and studies</span></div><div class="wp-2c">' +
+        var s5 = '<section id="wp_step_5" class="wp-sec" style="display:none"><div class="wp-sec-h">⑤ System <span>node, surface boundary, correlations, ratings and studies</span>' + (G.WTS_calcRegistry && G.WTS_calcRegistry.welldyn ? '<button type="button" class="btn btn-secondary rp-skip wp-gowd" id="wp_go_welldyn" data-act="welldyn" title="Play this well in time on the Well Dynamics page (the same model)">▶ Play in time (Well Dynamics)</button>' : '') + '</div><div class="wp-2c">' +
             _card('Surface and solve', '<div class="fg">' +
                 _fg('wp_mode', 'Solve for', { options: [['rate', 'Rate at these settings'], ['pressure', 'Pressures for a rate'], ['max', 'Maximum rate (no choke)'], ['design', 'Bean or THP for a target rate']] }) +
                 _fg('wp_node', 'Solution node', { options: [['bottom', 'Bottom hole (mid-perf)'], ['wellhead', 'Wellhead'], ['separator', 'Separator']] }) +
@@ -3967,6 +3969,8 @@
         return '<div id="wp_res">' +
             '<div class="wp-banner rp-skip" id="wp_banner"></div>' +
             '<div class="wp-kpis" id="wp_kpis" aria-live="polite"></div>' +
+            // v4.6: the cross-link to Well Dynamics (the same well model played in time); a link, not a report item
+            (G.WTS_calcRegistry && G.WTS_calcRegistry.welldyn ? '<div class="wp-gowd-k rp-skip"><button type="button" class="btn btn-secondary wp-gowd" id="wp_go_welldyn_k" data-act="welldyn" title="Play this well in time on the Well Dynamics page (the same model)">▶ Play in time (Well Dynamics)</button></div>' : '') +
             '<div class="wp-bench" id="wp_bench">' +
             _card('Well', '<div class="wp-schw" id="wp_schw"><div id="wp_sch"></div><div class="wp-tip" id="wp_tip" role="status"></div></div><div class="wp-legend-hint" id="wp_sch_cap"></div>' +
                 '<div class="wp-legend-hint rp-skip">Hover the well for MD, TVD, inclination, pressure, temperature and holdup; click a string, restriction, the perforations, a gauge or the choke to edit it.</div>',

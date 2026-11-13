@@ -1167,6 +1167,8 @@
     G.WTS_flowline_bb = bb;
     G.WTS_flowline_props = function (fluid, p, t) { return _lib() ? props(fluid, p, t) : null; };
     G.WTS_flowline_compute = compute;
+    // Well Dynamics (v4.6, plan §2.5 R5): the private gradient call exactly as the march makes it (correlation + VLP-tuning multipliers)
+    G.WTS_flowline_gradAt = function (fluid, p, T, seg, opt) { return _gAt(fluid, p, T, seg, opt || {}); };
     G.WTS_flowline_isenthalp = isenthalp;
     // Pressure traverse along a list of segments (used by the gas-lift design page, 49-calc-gaslift.js):
     //   segments [{name, len ft, id in, dz ft (+ = flow goes up)}], fluid {qo, qw, qg MMSCFD, api, sgg, sgw},

@@ -465,7 +465,7 @@ module.exports = [
       assert.ok(a.canvasTexts(cv).includes('Stable'), 'label drawn');
       ev(a, cv, 'pointerdown', { clientX: 320 }); ev(a, cv, 'pointerup', { clientX: 320 });
       near(assert, seen[seen.length - 1][0], 21600 * (318 / 636), 1, 'scrub time'); assert.strictEqual(seen[seen.length - 1][1], 'end');
-      assert.ok(/Well states: .*Loading from 5:00:00/.test(cv.getAttribute('aria-label')), cv.getAttribute('aria-label'));
+      assert.ok(/Well states: .*Loading( up)? from 5:00:00/.test(cv.getAttribute('aria-label')), cv.getAttribute('aria-label'));
       const e = V.stateStrip(canvas(a, 640, 26), rec({ t: [] }), {}); assert.strictEqual(e.segments.length, 0, 'empty recorder');
     },
   },

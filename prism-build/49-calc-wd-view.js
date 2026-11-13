@@ -43,9 +43,9 @@
     var REGIMES = ['liquid', 'bubble', 'slug', 'churn', 'annular', 'mist', 'stratified', 'segregated', 'gas', 'unknown'];
     var STATE_ORDER = ['stable', 'startup', 'unloading', 'marginal', 'loading', 'heading', 'dying', 'dead', 'shutin', 'gl_unloading',
                        'gl_lifting', 'gl_multipoint', 'esp_off', 'esp_ramp', 'esp_running', 'esp_pumpoff', 'esp_gaslock', 'esp_tripped'];
-    var STATE_LABELS = { stable: 'Stable', startup: 'Start-up', unloading: 'Unloading', marginal: 'Marginal', loading: 'Loading',
-                         heading: 'Heading', dying: 'Dying', dead: 'Dead', shutin: 'Shut in', gl_unloading: 'GL unloading',
-                         gl_lifting: 'GL lifting', gl_multipoint: 'GL multipoint', esp_off: 'ESP off', esp_ramp: 'ESP ramp',
+    var STATE_LABELS = { stable: 'Stable', startup: 'Start-up', unloading: 'Unloading', marginal: 'Marginal', loading: 'Loading up',
+                         heading: 'Heading', dying: 'Dying', dead: 'Dead', shutin: 'Shut in', gl_unloading: 'Gas lift: unloading',
+                         gl_lifting: 'Gas lift: lifting', gl_multipoint: 'Gas lift: multipointing', esp_off: 'ESP off', esp_ramp: 'ESP ramping',
                          esp_running: 'ESP running', esp_pumpoff: 'ESP pump-off', esp_gaslock: 'ESP gas lock', esp_tripped: 'ESP tripped' };
     function _regimes() { var E = G.WTS_wd_engine; return (E && E.REGIMES && E.REGIMES.length) ? E.REGIMES : REGIMES; }
     function _stateOrder() { var E = G.WTS_wd_engine; return (E && E.STATE_ORDER && E.STATE_ORDER.length) ? E.STATE_ORDER : STATE_ORDER; }

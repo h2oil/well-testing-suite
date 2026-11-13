@@ -315,6 +315,7 @@
         this.ref = { mHashModel: mHashModel, R0: R0, C: C };
         this.stats = { steps: 0, rejects: 0, iters: 0, sweeps: 0, props: 0, grads: 0, wallMs: 0, createMs: 0 };
         var o = this.o = _resolveOpts(opts, C, R0, start);
+        this.opts = o;                       // the resolved options under the §3.1 name (integration: the recorder and the page read sim.opts)
         var F = C.F, gasWell = !!C.gas;
         // ── grid with the forced breaks ──
         var extra = [];
@@ -399,9 +400,9 @@
         this.thtRef = (R0 && R0.surface && _fin(R0.surface.tht)) ? R0.surface.tht : (C.tht || X.Tflow[n - 1]);
         // ── per-cell views (one mutable fluid object per call) ──
         this.view = { qo: 0, qw: 0, qg: 0, api: F.api, sgg: F.sgg, sgw: F.sgw, pvt: F.pvt };
-        var pvtI = {}; Object.keys(F.pvt || {}).forEach(function (kk) { if (kk !== 'table') pvtI[kk] = F.pvt[kk]; });
-        pvtI.injGas = { qg_MMscfd: 0, sg: sgI };
-        this.pvtI = pvtI;
+        var pvtLift = {}; Object.keys(F.pvt || {}).forEach(function (kk) { if (kk !== 'table') pvtLift[kk] = F.pvt[kk]; });
+        pvtLift.injGas = { qg_MMscfd: 0, sg: sgI };
+        this.pvtLift = pvtLift;
         this.gopt = { corr: C.corrWell, rough: grid.rough, payne: true, accel: true };
         if (C.mult) this.gopt.mult = C.mult;
         this.surfT = (C.W && C.W.geo && _fin(C.W.geo.surfT_F)) ? C.W.geo.surfT_F : 60;
@@ -529,7 +530,7 @@
         var k = this.k, cs = this.cs;
         var No = cs.mO[i] / k.O, Nw = cs.mW[i] / k.W, Gs = cs.mG[i] / k.G, GI = cs.mI[i] / k.I;
         view.qo = No; view.qw = Nw; view.qg = Gs / 1e6;
-        if (GI > 0) { this.pvtI.injGas.qg_MMscfd = GI / 1e6; view.pvt = this.pvtI; } else view.pvt = this.C.F.pvt;
+        if (GI > 0) { this.pvtLift.injGas.qg_MMscfd = GI / 1e6; view.pvt = this.pvtLift; } else view.pvt = this.C.F.pvt;
         if (!(No > 0) && !(Nw > 0) && !(Gs > 0) && !(GI > 0)) view.qg = 1e-12;
         this.stats.props++;
         return G.WTS_flowline_props(view, p, cs.T[i]);
@@ -594,13 +595,13 @@
             if (co && corrOn) {
                 var lift = glRef > 0 && grid.injCell >= 0 && c >= grid.injCell;
                 view.qo = u1.qo; view.qw = u1.qw; view.qg = u1.qg / 1e6;
-                if (lift) { this.pvtI.injGas.qg_MMscfd = glRef / 1e6; view.pvt = this.pvtI; } else view.pvt = this.C.F.pvt;
+                if (lift) { this.pvtLift.injGas.qg_MMscfd = glRef / 1e6; view.pvt = this.pvtLift; } else view.pvt = this.C.F.pvt;
                 var pU = G.WTS_flowline_props(view, cs.p[c], cs.T[c]); this.stats.props++;
                 var tot1 = pU ? pU.qL + pU.qG : 0;
                 if (tot1 > 0) {
                     var sc = qa * A0 / tot1;
                     view.qo = u1.qo * sc; view.qw = u1.qw * sc; view.qg = u1.qg * sc / 1e6;
-                    if (lift) this.pvtI.injGas.qg_MMscfd = glRef * sc / 1e6;
+                    if (lift) this.pvtLift.injGas.qg_MMscfd = glRef * sc / 1e6;
                     var g = G.WTS_flowline_gradAt(view, cs.p[c], cs.T[c], segs[grid.cells[c].seg], gopt); this.stats.grads++;
                     if (g && _fin(g.hl)) {
                         X.haveCorr[c] = 1; X.hl[c] = g.hl; X.gfL[c] = _fin(g.gradF) ? g.gradF : 0; X.Ek[c] = gopt.accel && _fin(g.Ek) ? Math.min(0.9, Math.max(0, g.Ek)) : 0;
@@ -948,7 +949,7 @@
                 var q = qmax * i / 11;
                 if (q === 0) { L.q.push(0); L.pdn.push(psepA); continue; }
                 var view = { qo: u.qo * q, qw: u.qw * q, qg: (u.qg * q) / 1e6, api: C.F.api, sgg: C.F.sgg, sgw: C.F.sgw, pvt: C.F.pvt };
-                if (u.qi > 0) { view.pvt = Object.assign({}, this.pvtI, { injGas: { qg_MMscfd: u.qi * q / 1e6, sg: this.k.sgI } }); }
+                if (u.qi > 0) { view.pvt = Object.assign({}, this.pvtLift, { injGas: { qg_MMscfd: u.qi * q / 1e6, sg: this.k.sgI } }); }
                 var m = G.WTS_flowline_march(segs, view, S.psep_psig, tl, tl, mo);
                 if (!m || m.ok === false || m.lost || !_fin(m.pOut)) break;
                 last = m.pOut + PATM;
@@ -975,7 +976,7 @@
         // lift gas) and free gas 1 − hl; the free gas is split between formation and lift gas in their flowing ratio
         var cs = this.cs, X = this.X, k = this.k, V = X.vol[i], qi = stream.qi > 0 ? stream.qi : 0;
         var view = { qo: stream.qo, qw: stream.qw, qg: stream.qg / 1e6, api: this.C.F.api, sgg: this.C.F.sgg, sgw: this.C.F.sgw, pvt: this.C.F.pvt };
-        if (qi > 0) { this.pvtI.injGas.qg_MMscfd = qi / 1e6; view.pvt = this.pvtI; }
+        if (qi > 0) { this.pvtLift.injGas.qg_MMscfd = qi / 1e6; view.pvt = this.pvtLift; }
         if (!(view.qo > 0) && !(view.qw > 0) && !(view.qg > 0)) view.qg = 1e-12;
         var pr = G.WTS_flowline_props(view, p, cs.T[i]);
         var VL = FT3 * stream.qo * pr.bo + FT3 * stream.qw * pr.bw;

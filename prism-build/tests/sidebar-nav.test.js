@@ -52,10 +52,10 @@ module.exports = [
       // plug-ins land in their place inside the group (host order), not at its end
       const mc = Array.from(grp(app, 'Metering & Chokes').querySelectorAll('.nav-btn')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
       assert.deepStrictEqual(mc, ['aga3', 'orifice', 'hub:chokes', 'choke', 'chokeflow', 'chokecnv', 'chokeperf', 'mcfshr', 'turbmeter', 'proving', 'sepqc']);
-      // Production & Reservoir: five rows (prism, oilgas, solgor, the Well Performance hub, buildup); the hub's members follow it
+      // Production & Reservoir: six rows (prism, oilgas, solgor, the Well Performance hub, Well Dynamics, buildup); the hub's members follow it
       const pr = Array.from(grp(app, 'Production & Reservoir').querySelectorAll('.nav-btn')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
-      assert.deepStrictEqual(pr, ['prism', 'oilgas', 'solgor', 'hub:perf', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'buildup']);
-      assert.deepStrictEqual(rows(grp(app, 'Production & Reservoir')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub')), ['prism', 'oilgas', 'solgor', 'hub:perf', 'buildup'], '5 rows');
+      assert.deepStrictEqual(pr, ['prism', 'oilgas', 'solgor', 'hub:perf', 'wellperf', 'oilipr', 'gasdeliv', 'gaslift', 'welldyn', 'buildup']);
+      assert.deepStrictEqual(rows(grp(app, 'Production & Reservoir')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub')), ['prism', 'oilgas', 'solgor', 'hub:perf', 'welldyn', 'buildup'], '6 rows');
       assert.strictEqual(text(hubBtn(app, 'perf').querySelector('span:last-child')), 'Well Performance');
     },
   },
