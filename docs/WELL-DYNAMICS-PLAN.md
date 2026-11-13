@@ -1554,6 +1554,82 @@ cycles go through the events table). (7) Budgets above; the heading detector als
 
 ### 11.5 WD5 record
 
+**2026-11-13, branch `wd/wd5` from `wd/int` 88e2770 (after merge 1).** Validation tool and its acceptance file only; no engine, page or
+shared file was edited (nothing in Round 9 changed: the Round-9 concat / inject and the sync gave no diff). WD0 had not run, so the tool
+reads the fixtures from `tests/_welldyn-shapes.js` when that file exists and otherwise from the wave-1 stand-in `tests/_welldyn-wd1.js`
+(the same FIX / SCEN / TOL / GATE keys). WD4 had not merged: every row that needs the lift extensions or the `gasLift` / `esp`
+fixtures is SKIP (never a silent pass) and becomes live once `WTS_wd_engine.ext.gaslift / esp / foamer / cycle` load.
+
+**Built.** `prism-build/welldyn-validate.js` — `--gate` (the §4.14 table: keys and shipped verified flags = `WTS_wd_engine.METHODS` both ways;
+`PROVISIONAL` text; the page carries the label and the "Provisional methods in this run" box; each user-selectable provisional method's
+control (`wd_backflow`, `wd_temp`, `wd_fallback`, `wd_belfroid`) says "provisional"; on default runs of every gate fixture no "never a
+default" key (`res_sup`, `choke_sub`, `temp_relax`, `fallback`, `belfroid`, `foamer`) is active, every listed key is verified:false and
+`WTS_wd_rec.summarize` lists the engine's keys; an option switched on is listed), `--check` X1–X18, `--time` (§5.6 rows with steps,
+mean Δt, ms per step, simulated / wall; fail line 2 × the §11.1 WD1 baseline, the §5.6 budget reported as "over budget" and failing only
+with `--strict`), `--browser` (the built page in Chromium at ×1000, 1280 × 800 and 390 × 844, report only), `--html`, `--quick`,
+`--only`, `--json`. Exports `gate / checks / timing / browser / METHOD_TABLE / NEVER_DEFAULT / BUDGET / BASELINE` for the tests.
+`tests/welldyn-validate.test.js` VA1–VA7 (method table = METHODS; quick gate; X1 on oilVert with the C2 diagnostic; X3 / X7 / X8 / X18;
+X10 / X17; the quick timing step counts; the banned-name scan over the tool and the test) — 7/7, ≈ 33 s.
+
+**Checks (X1–X18).** X1 the gate G1–G7 with the C2 diagnostic · X2 static-start companions (staticOil and a gasVert gas column, opened at
+60 s, prior none) · X3 static columns (EN3 / EN4) · X4 mass balance on every scenario · X5 build-up derivative (RS4) · X6 Turner switch-over
+(EN18) · X7 E1 vs PRiSM #1 (RS1) · X8 foamer factor C11 (through the `sigma` hook: the WD4 foamer when loaded, else a validation
+extension with sigF = 0.4) · X9 grid convergence (C12) · X10 determinism + snapshot / JSON / restore (EN15 / EN16) · X11 casing column
+(LF2) · X12 unloading sequence (LF5) · X13 ESP start (LF8) · X14 transient → IPR (RS5) · X15 sharp level (EN25) · X16 back-flow (EN26) · X17
+replay round trip (recorder → RunFile → JSON → `fromFile` series identical; a re-run from the file's events identical by
+`WTS_wd_rec.compare`; a continuation from a file snapshot bit-identical) · X18 the loading rule = the nodal rule (EN12).
+
+**Results (`--html`, this container).** Gate PASS. Checks 19 / 19 pass, 5 SKIP (G5, G6, X11, X12, X13 — WD4). Measured:
+
+| Check | Value |
+|---|---|
+| G1 gasVert | Δq +0.064 %, ΔBHP −0.017 %, ΔTHP +1.18 psi, steady at 0.93 h; C2 (march at 166 ft): +0.064 % / −0.017 % |
+| G2 gasHz | +0.004 % / −0.001 % / +0.13 psi, 0.58 h; C2 (145 ft) unchanged |
+| G3 oilVert | +0.244 % / −0.043 % / +0.76 psi, 0.92 h; C2 (133 ft): +0.292 % / −0.051 % |
+| G4 oilVertTuned | +0.419 % / −0.063 % / +1.17 psi, 1.01 h; C2 +0.421 % / −0.063 % |
+| G7 oilDev | +0.264 % / −0.037 % / +0.79 psi, 1.01 h; C2 +0.266 % / −0.038 % |
+| X2 static starts | staticOil Δq 0.235 % / ΔBHP 0.044 % at 1.94 h; gasVert 0.027 % / 0.008 % at 2.19 h |
+| X3 | gas-filled 0.18 %, part liquid 0.29 % |
+| X4 | worst step 1.5e-15, cumulative 2.8e-15 (6 scenarios) |
+| X5 | slope 21.64 vs 21.07 psi per ln cycle (2.7 % of the 3 % tolerance) |
+| X6 | margin at bean 32 +0.015; loading 120.8 s after q_g < q_c (tolerance 130 s) |
+| X7 | 0.36 % (tolerance 0.5 %) · X8 exact to 4e-16 (q_c 2.133 → 1.697 MMscf/d = 0.4^¼) |
+| X9 | BHP 2,541.19 / 2,541.98 / 2,542.59 psia at 30 / 60 / 120 cells (0.024 %) |
+| X10, X17 | identical; Snap 26.7 kB through JSON (≈ 40 kB as the in-memory object counted by the timing row) |
+| X14 | 0.011 % · X15 level 4,178 vs 4,180 ft, 0 rejects · X16 p_wf − p̄r 0.00 psi · X18 Turner / Coleman 0.01 %, limiting MD Δ 65 ft |
+
+The C2 diagnostic separates the discretisation: on the gas fixtures the gate distance is the same against the 100 ft and the cell-length
+march; on the oil fixtures the distance to the cell-length march is slightly larger (+0.29 vs +0.24 % on oilVert), so the residual rate
+offset is model, not grid. No engine discrepancy was found by the checks; no engine file was changed.
+
+**Measured budgets (`--time --html`; §5.6 budget / WD1 in brackets).** create cold 377 / 454 / 618 ms (gasVert / oilVert / gasHz)
+[≤ 800 ✓]; with ref 24.8 / 34.9 / 27.8 ms [≤ 30 — oilVert over]; flowing step 3.47 / 3.65 / 3.42 ms [≤ 2.5 — missed ×1.4, = WD1];
+simulated / wall flowing 1,589× / 1,867× / 463× [gas ≥ 500 — gasHz missed, oil ≥ 1,500 ✓]; shut-in, first hour after the afterflow
+2,478× / 3,084× / 3,822× (Δt 12.5 / 16.4 / 15.7 s, 5.1 / 5.3 / 4.1 ms per step); **settled shut-in 3.2–5.2 h after the shut: Δt reaches
+dtMax 60 s on gasVert and oilVert (29 s on gasHz), 2.11 / 3.67 / 2.63 ms per step [≤ 1.0 — missed], 28,435× / 16,333× / 11,161× [≥ 20,000
+— gasVert ✓]** (the WD1 "shut-in" numbers were the early, CFL-limited phase); snapshot 0.19–0.22 ms, restore 1.0–1.7 ms [≤ 2 ✓ — the WD1
+restore miss is gone]; gate runs to steady 2.3 (gasVert) / 2.1 (oilVert) / 8.7 (gasHz) / 5.4 (oilVertTuned) / 4.4 (oilDev) s per simulated
+hour [gas ≤ 8 — gasHz over; oil ≤ 3 — the tuned and deviated oil fixtures over: Δt 2.6 / 3.2 s against 6.8 s on oilVert]; scenarios
+beanUp 4 h 6.8 s, shutInBuildup 10.6 s [≤ 5 — missed], gasLoadDown 12.6 s [≤ 18 ✓], levelSettle 1.4 s [≤ 2 ✓], killColumn 3.8 s (290
+rejects) [≤ 2 — missed], staticOil 5.2 s; the 2 × WD1 fail line holds on every row. Recorder at the defaults 2.37 MB per simulated hour
+(snapshots ≈ 40 kB each) → 55.6 MB projected for 24 h [≤ 32 MB — the cap rule thins snapshots after ≈ 13 h]; replay file 2.35 MB after 1 h,
+so a run longer than ≈ 2 h writes its file without snapshots (X17's 2 h file was 5.07 MB). Wellbore frame at 60 cells with particles: 1,064
+draw operations (Node). **Browser (Chromium, built page, ×1000, 5 s wall, 1280 × 800 and 390 × 844):** the achieved speed is ×998–×1,000
+on oilVert, gasVert and gasHz (gasHz too: the browser runs the engine faster than the Node harness), 298–302 frames, wellbore draw median
+0.9–1.2 ms, p95 1.8–2.4 ms [≤ 4 ms ✓], no NaN / undefined, no horizontal overflow, no page errors (screenshots not committed).
+
+**Tests run.** welldyn-validate 7/7; welldyn-engine 30/30, -res 12/12, -gate 7/7, -view 14/14, -rec 16/16, -page 24/24, -int 6/6;
+wellperf-identity 10/10, wellperf-page 14/14; sidebar-nav 9/9; calc-registry 6/6; v3-ux 17/17; help-content 7/8 (only "no guide for
+welldyn" — WD6, Q4); smoke 347/347 (no checks added); `node --check` of the extracted main script OK.
+
+**Known gaps / follow-ups (WD1 engine, recorded, not changed here).** (1) Step cost: the flowing step (≈ 3.5 ms) and the settled shut-in step
+(2.1–3.7 ms at 60 s) still flash every cell (≈ 2.3 property calls per cell per step, 2–3 Newton iterations); reusing the step's props in a
+settled shut-in column and in cells whose (p, T) moved less than a tolerance is the §5.6 remedy. (2) Δt on the tuned / deviated oil fixtures
+(2.6–3.2 s) is half of oilVert's; gasHz at Δt 1.6 s stays at ≈ 463× in Node. (3) killColumn 290 rejects (MASS_NEG halving) and
+shutInBuildup 36 rejects. (4) Snapshot ≈ 40 kB (plan 10–14 kB) → recorder memory and replay-file size above §5.6 (delta snapshots or no
+rings / line rows in recorder snapshots, WD3 / WD1). (5) X5 at 2.7 % and X6 at 121 of 130 s are close to their tolerances. (6) G5 / G6 / X11–X13
+wait for WD4; the foamer row X8 checks the engine's σ path with a validation extension until the WD4 foamer loads.
+
 ### 11.6 WD6 record
 
 ### 11.7 Integration and release record
