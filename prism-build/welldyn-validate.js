@@ -38,7 +38,34 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 // ── fixtures (§3.9): the frozen WD0 file when it exists, else the WD1 stand-in ───────────────────────────────────────────
 let _F = null;
-function fixtures() {
+const _FL = new WeakMap();
+// with an app whose WD4 lift extensions are loaded, the WD4 lane fixtures (tests/_welldyn-wd4.js: gasLift, esp; scenarios glUnload,
+// espStart, cycleTimer; gate options GATE4) are added to the base set; fixtures() without an app is the base set
+function fixtures(G) {
+  const base = _fixturesBase();
+  if (!G || !(_haveLift(G, 'gaslift') || _haveLift(G, 'esp'))) return base;
+  if (_FL.has(G)) return _FL.get(G);
+  let L4 = null;
+  try { L4 = require('./tests/_welldyn-wd4'); } catch (e) { L4 = null; }
+  if (!L4) { _FL.set(G, base); return base; }
+  const FL = L4.FIXL(G), FIX = {}, SCEN = Object.assign({}, base.SCEN);
+  Object.keys(base.FIX).forEach((k) => Object.defineProperty(FIX, k, { enumerable: true, get: () => base.FIX[k] }));
+  if (_haveLift(G, 'gaslift')) Object.defineProperty(FIX, 'gasLift', { enumerable: true, get: () => FL.gasLift() });
+  if (_haveLift(G, 'esp')) Object.defineProperty(FIX, 'esp', { enumerable: true, get: () => FL.esp() });
+  // glUnload starts at the balance level (§11.4: a full kill column drains into the formation); 4.5 h covers the transfers to the
+  // operating valve (the 12 h run is welldyn-lift LF5)
+  if (_haveLift(G, 'gaslift') && G.WTS_wd_lift && typeof G.WTS_wd_lift.balanceLevel === 'function') {
+    const o = clone(L4.SCEN4.glUnload.opts);
+    o.static = { kind: 'level', liquidTopMd: G.WTS_wd_lift.balanceLevel(FL.gasLift()).md, liquid: 'water' };
+    SCEN.glUnload = { fix: 'gasLift', opts: o, duration_s: 4.5 * H };
+  }
+  if (_haveLift(G, 'esp')) SCEN.espStart = clone(L4.SCEN4.espStart);
+  if (_haveLift(G, 'cycle') && 'gasLoad' in base.FIX) SCEN.cycleTimer = clone(L4.SCEN4.cycleTimer);
+  const out = Object.assign({}, base, { FIX, SCEN, GATE4: L4.GATE4, lane4: true });
+  _FL.set(G, out);
+  return out;
+}
+function _fixturesBase() {
   if (_F) return _F;
   const shapes = path.join(ROOT, 'tests', '_welldyn-shapes.js');
   let mod = null;
@@ -123,7 +150,7 @@ function runSteady(sim, o) {
 }
 function steadySim(G, key, opts) {
   return _memo(G, 'steady:' + key + JSON.stringify(opts || {}), () => {
-    const F = fixtures(), t0 = nowMs();
+    const F = fixtures(G), t0 = nowMs();
     const sim = G.WTS_wd_engine.create(F.FIX[key], Object.assign({}, GATE_OPTS, opts || {}));
     const createMs = nowMs() - t0;
     return { sim, createMs, rs: sim.ok ? runSteady(sim, { cap_s: 6 * H }) : { ok: false, code: sim.code } };
@@ -132,7 +159,7 @@ function steadySim(G, key, opts) {
 // a §3.9 scenario: per-step records the checks read (as tests/_welldyn-wd1.js runScenario), memoised by name + duration
 function runScenario(G, name, o) {
   o = o || {};
-  const F = fixtures(), sc = F.SCEN[name];
+  const F = fixtures(G), sc = F.SCEN[name];
   if (!sc) return { ok: false, code: 'NO_SCENARIO' };
   const dur = o.duration_s || sc.duration_s;
   return _memo(G, 'scen:' + name + ':' + dur + JSON.stringify(o.opts || {}), () => {
@@ -193,7 +220,7 @@ function gate(G, o) {
     rows.push({ key: m.key, label: em.label || '', verified: shipped, never: m.never, ui: m.ui || null, source: m.source });
   });
   // the "never a default" rule on default runs of every gate fixture (t = 0 and after 30 min); a key listed must be verified:false
-  const F = fixtures(), fixList = o.fixtures || (o.quick ? ['oilVert', 'gasVert'] : F.GATE.slice());
+  const F = fixtures(G), fixList = o.fixtures || (o.quick ? ['oilVert', 'gasVert'] : F.GATE.slice());
   const runs = [];
   fixList.forEach((key) => {
     const sim = E.create(F.FIX[key], {});
@@ -221,7 +248,7 @@ function gate(G, o) {
 // --check X1–X18
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 function gateRow(G, key, opts) {
-  const F = fixtures(), TOL = F.TOL, m = steadySim(G, key, opts), sim = m.sim;
+  const F = fixtures(G), TOL = F.TOL, m = steadySim(G, key, opts), sim = m.sim;
   if (!sim.ok) return { ok: false, note: 'create ' + sim.code };
   const R = sim.R0, rs = m.rs;
   if (!rs.ok) return { ok: false, note: 'run ' + rs.code };
@@ -250,7 +277,7 @@ function gateRow(G, key, opts) {
 
 function checks(G, o) {
   o = o || {};
-  const F = fixtures(), E = G.WTS_wd_engine, out = [];
+  const F = fixtures(G), E = G.WTS_wd_engine, out = [];
   const only = o.only ? new Set(o.only) : null, want = (id) => !only || only.has(id);
   const row = (id, name, fn) => {
     if (!want(id)) return;
@@ -269,7 +296,7 @@ function checks(G, o) {
     fx.forEach((key) => row('X1', 'gate ' + label[key] + ' ' + key + ': steady run = WTS_wp_system.solve (rate 2 %, BHP 1 %, THP max(1 %, 3 psi), regime)', () => {
       if (!(key in F.FIX)) return skip('fixture ' + key + ' not in the fixture file (WD4 / WD0)');
       if ((key === 'gasLift' && !_haveLift(G, 'gaslift')) || (key === 'esp' && !_haveLift(G, 'esp'))) return skip('the WD4 lift extension is not loaded');
-      const r = gateRow(G, key);
+      const r = gateRow(G, key, F.GATE4 && F.GATE4[key]);
       return Object.assign(r, { value: Math.max(Math.abs(r.dq || 0) / F.TOL.q, Math.abs(r.dp || 0) / F.TOL.pwf), tol: 1 });
     }));
   }
@@ -440,15 +467,17 @@ function checks(G, o) {
     const RC = G.WTS_wd_rec;
     if (!RC || typeof RC.create !== 'function') return skip('the recorder is not loaded');
     const dur = o.quick ? 900 : 2 * H, settings = { cells: 60, events: [{ t: 300, type: 'bean', args: { bean64: 24 } }, { t: dur / 2, type: 'shutin' }] };
-    const a = E.create(F.FIX.oilVert, clone(settings)), rec = RC.create({ every_s: 10, snapEvery_s: 60 });
+    // snapshots every 300 s: at 60 s a 2 h run (about 40 kB per snapshot, §11.5) passes the 5 MB file limit and the file drops them
+    const a = E.create(F.FIX.oilVert, clone(settings)), rec = RC.create({ every_s: 10, snapEvery_s: 300 });
     rec.attach(a); a.run(dur);
     const txt = JSON.stringify(rec.toFile(G.JSON.parse(JSON.stringify({ settings: { cells: 60 }, model: {}, well: { name: 'validation' } }))));
     const opened = RC.fromFile(txt);
     if (!opened.ok) return { ok: false, note: 'fromFile ' + opened.code };
+    if (!opened.rec.snapAt(dur * 0.4)) return { ok: false, note: 'the file has no snapshots (' + (txt.length / 1048576).toFixed(2) + ' MB)' };
     const keys = ['t', 'qL', 'thp', 'pwf', 'bean', 'state'];
     const same = keys.every((k) => JSON.stringify(Array.from(opened.rec.series(k))) === JSON.stringify(Array.from(rec.series(k))));
     // re-run from the file's events
-    const b = E.create(F.FIX.oilVert, { cells: 60, events: JSON.parse(JSON.stringify(opened.run.events || [])) }), rec2 = RC.create({ every_s: 10, snapEvery_s: 60 });
+    const b = E.create(F.FIX.oilVert, { cells: 60, events: JSON.parse(JSON.stringify(opened.run.events || [])) }), rec2 = RC.create({ every_s: 10, snapEvery_s: 300 });
     rec2.attach(b); b.run(dur);
     const cmp = RC.compare(opened.rec, rec2);
     // continue from the middle snapshot of the file
@@ -480,7 +509,7 @@ function checks(G, o) {
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 function timing(G, o) {
   o = o || {};
-  const F = fixtures(), E = G.WTS_wd_engine, rows = [];
+  const F = fixtures(G), E = G.WTS_wd_engine, rows = [];
   // ok = within 2 × the WD1 baseline (the fail line); budgetOk = within §5.6
   const add = (r) => { r.ok = r.base == null || r.v == null || (r.lower ? r.v >= r.base / 2 : r.v <= 2 * r.base); r.budgetOk = r.budget == null || r.v == null || (r.lower ? r.v >= r.budget : r.v <= r.budget); rows.push(r); if (o.onRow) o.onRow(r); };
   const fx = o.quick ? ['oilVert'] : ['gasVert', 'oilVert', 'gasHz'];

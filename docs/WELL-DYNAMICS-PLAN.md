@@ -772,8 +772,9 @@ cell TVD); dT_i/dt = (T_target − T_i)/τ_T, τ_T = 2 h (ASSUMED). THT = T of t
   settling, Richardson-Zaki exponent), v_s = v_s0 · (ρ_w − ρ_o)/(ρ_w − ρ_o)_ref, v_s0 = 0.05 ft/s at Δρ_ref = 15 lbm/ft³ (ASSUMED);
   water moves down relative to oil; applied only where |j_L| < j_hi.
 - **Liquid fallback** (`fallback: true`, provisional, Q1): where the local gas velocity v_g = j_g/α_g is below the critical velocity
-  v_c,i of §4.11, part of the liquid flux reverses: j_L ← j_L − α_L v_fb (1 − v_g/v_c,i), v_fb = 0.5 ft/s (ASSUMED film fall-back
-  velocity), limited by the CFL. Off by default (D17); on in the "gas-well loading" scenario preset; zero above the critical velocity, so
+  v_c,i of §4.11, part of the liquid flux reverses: j_L ← j_L − α_L,above α_g,below v_fb (1 − v_g/v_c,i), v_fb = 0.5 ft/s (ASSUMED film fall-back
+  velocity), limited by the CFL; the exchange is scaled by α_L of the cell above and α_g of the cell below (the liquid falls from above
+  and swaps with gas from below), so it vanishes when either donor is empty (positivity; integration fix, §11.7). Off by default (D17); on in the "gas-well loading" scenario preset; zero above the critical velocity, so
   the gate is unaffected.
 
 ### 4.11 Critical velocity, foamer and loading
@@ -1656,6 +1657,28 @@ the toolbar bean, shut-in build-up on the transient reservoir, horizontal gas st
 column), INT1 (seams) and INT2 (banned names over every Well Dynamics file). Chromium at 1280×800 and 390 px on the built page: the four
 fixtures play as in the tests (gasLoad: loading at 3 h, marginal after bean 32; buildup: transient, 2,957 psia at 6 h; gasHz: stable
 8,249 Mscf/d; oil start-up: stable 916 STB/d), scrub and the replay file work, no NaN / undefined, no horizontal overflow, no page errors.
+
+**Wave 2 (2026-11-13, `wd/int`).** Merged `wd/wd4` → `wd/wd5` (`--no-ff`, no conflicts; Round 9 and the sync gave no diff). The WD4 engine
+edits of §11.4 (flowline back pressure at the trial rate, lift states over dead / dying, the `dtLimit` hook, pump re-linearisation, the
+ESP steady start, the `qinj` write-back) were reviewed and kept: each gives the WD1 answer at steady state (welldyn-engine 30/30 and the
+gate unchanged). Integration fixes:
+- **Validation tool fixtures.** `welldyn-validate.js` `fixtures(G)` adds the WD4 lane fixtures (`tests/_welldyn-wd4.js`: `gasLift`,
+  `esp`; scenarios `glUnload` from the balance level for 4.5 h, `espStart`, `cycleTimer`; gate options `GATE4` — nodal injection for
+  G5) when the lift extensions are loaded, so G5, G6, X12 and X13 run instead of SKIP. X11 stays a pointer to welldyn-lift LF2.
+- **X17** records snapshots every 300 s: with the WD4 snapshot fields (about 40 kB each) a 2 h oilVert run at 60 s passed the 5 MB file
+  limit and the file dropped them (continuation "DIFFERS" was "no snapshot"). The check now also fails explicitly on a file without
+  snapshots. The page still records every 60 s (a run longer than about 2 h saves without snapshots — §11.5 gap 4).
+- **Liquid fallback positivity (engine).** The `cycleTimer` scenario (fallback on, gasLoad) failed MASS_NEG about 950 s after each
+  shut-in: the fallback exchange moved gas out of a liquid-full lower cell. The exchange is now j_L ← j_L − α_L,above · α_g,below · v_fb
+  (1 − v_g / v_c) (§4.10 updated), which vanishes when either donor is empty, as the bounded Godunov flux; new test EN31. X6 (loading
+  121.0 s after q_g < q_c, tolerance 130 s) and every welldyn test are unchanged in result.
+
+Gates on the built page (`welldyn-validate.js --html --gate --check --time`): D17 table PASS; 23 / 23 checks pass, X11 skipped. G1 gasVert
++0.064 % / −0.017 % BHP, G2 gasHz +0.004 % / −0.001 %, G3 oilVert +0.244 % / −0.043 %, G4 oilVertTuned +0.419 % / −0.063 %, G5 gasLift
+(nodal) +0.782 % / −0.077 %, G6 esp −0.028 % / +0.012 %, G7 oilDev +0.264 % / −0.037 %; X4 cumulative 5.7e-15 over nine scenarios; X12
+gl_unloading → gl_lifting; X13 esp_ramp → esp_running; X17 identical. Every timing row inside its fail line; the §5.6 budget misses of
+§11.4 / §11.5 stand (cycleTimer 12 h: 28 s, 248 rejected steps, no budget row in §5.6). Tests: welldyn-engine 31, -gate 9, -int 6,
+-lift 27, -page 24, -rec 16, -res 12, -validate 7, -view 14 — all pass.
 
 ---
 

@@ -152996,7 +152996,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (this.o.fallback && jg > 0 && !top) {
             var dg = d, vgl = cs.ag[dg] > 1e-9 ? jg / cs.ag[dg] : 0, vcr = cs.vc[dg];
             if (vcr > 0 && vgl < vcr && jL > -1e3) {
-                var aLd = top ? 0 : 1 - cs.ag[u], dj = aLd * FALLBACK_V * (1 - vgl / vcr);          // the liquid that falls comes from the cell above
+                // the liquid that falls comes from the cell above and swaps with gas of the cell below: × α_L(above) α_g(below), so the
+                // exchange vanishes when either donor is empty (positivity, as the bounded Godunov flux; a shut-in column with the option
+                // on failed MASS_NEG with α_L alone — integration fix, §11.7)
+                var aLd = top ? 0 : 1 - cs.ag[u], dj = aLd * cs.ag[dg] * FALLBACK_V * (1 - vgl / vcr);
                 if (dj > 0) { jL -= dj; jg += dj; this._fb = true; }
             }
         }

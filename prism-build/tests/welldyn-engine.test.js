@@ -1,4 +1,4 @@
-// Well Dynamics — the transient engine WTS_wd_engine (lane WD1). docs/WELL-DYNAMICS-PLAN.md §3.1–§3.6, §4, §5.2 EN1–EN30.
+// Well Dynamics — the transient engine WTS_wd_engine (lane WD1). docs/WELL-DYNAMICS-PLAN.md §3.1–§3.6, §4, §5.2 EN1–EN30; EN31 = the integration fix of the fallback flux (§11.7).
 // Fixtures and the in-memory WTS_flowline_gradAt export: tests/_welldyn-wd1.js (the WD0 files were not on wd/int; §11.1).
 // Long scenarios are shared through the helper's memo (shutInBuildup with welldyn-res RS4; the gate runs with welldyn-gate).
 'use strict';
@@ -537,6 +537,19 @@ module.exports = [
         const lamL = (fs2.jo[i + 1] + fs2.jw[i + 1]) / (fs2.Q[i + 1] / gv.Y.A[i + 1]);
         assert.ok(1 - cg.ag[i] > 1.5 * lamL, 'slip holdup above the no-slip ' + lamL.toFixed(4));
       });
+    },
+  },
+  {
+    name: 'EN31 (integration fix) liquid fallback is positive: a gasLoad shut-in with fallback on runs on with no MASS_NEG, mass balance to round-off',
+    wp: WP, opts: false, timeoutMs: 120000,
+    run(_a, assert, ctx) {
+      const g = G(ctx), sim = g.WTS_wd_engine.create(W.FIX.gasLoad, { fallback: true, events: [{ t: 2 * H, type: 'shutin' }] });
+      assert.ok(sim.ok, sim.code);
+      const r = sim.run(2.75 * H);
+      assert.ok(r.ok, 'ran past the old MASS_NEG time (≈ 950 s after the shut-in): ' + r.code);
+      assert.ok(!sim.state.flags.some((f) => f.code === 'STEP_FAIL'), 'no STEP_FAIL flag');
+      assert.ok(sim.state.balance.errCum <= 1e-8, 'cumulative mass error ' + sim.state.balance.errCum);
+      ['mG', 'mO', 'mW'].forEach((k) => assert.ok(Array.from(sim.state.cells[k]).every((v) => v >= 0), k + ' ≥ 0'));
     },
   },
 ];
