@@ -566,7 +566,7 @@ function timing(G, o) {
     const b1 = typeof rec.bytes === 'function' ? rec.bytes() : null;
     const file = JSON.stringify(rec.toFile(G.JSON.parse('{}'))).length;
     add({ op: 'recorder memory, 24 h projected from 1 h', fixture: 'oilVert', v: b1 != null ? b1 * 24 / 1048576 : null, unit: 'MB', budget: BUDGET.recMB24h, base: null, note: b1 != null ? (b1 / 1024).toFixed(0) + ' kB per hour' : 'rec.bytes() not available' });
-    add({ op: 'replay file after 1 h (5 MB limit drops snapshots)', fixture: 'oilVert', v: file / 1048576, unit: 'MB', budget: BUDGET.fileMB, base: null, note: 'per hour; ' + (file * 24 / 1048576).toFixed(1) + ' MB projected for 24 h' });
+    add({ op: 'replay file after 1 h (5 MB limit thins snapshots)', fixture: 'oilVert', v: file / 1048576, unit: 'MB', budget: BUDGET.fileMB, base: null, note: 'per hour; ' + (file * 24 / 1048576).toFixed(1) + ' MB projected for 24 h' });
     if (typeof rec.detach === 'function') rec.detach();
   }
   // the wellbore frame: draw op count on the recording canvas (Node); the ms in the browser (--browser)

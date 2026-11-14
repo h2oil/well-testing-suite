@@ -327,6 +327,11 @@ module.exports = [
       const h = L.headingOf(T, P);
       assert.ok(h.heading && h.pairs >= 3, 'heading: ' + JSON.stringify(h)); assert.rel(h.period_s, 1200, 0.03, 'period');
       assert.ok(!L.headingOf(T, P2).heading, 'a 2 % wave is not heading');
+      // LF15b (review fix): a decaying oscillation (the THP tail after an unloading, 40 psi → e^-t/40min) has the pairs but is not heading
+      const P3 = T.map((t) => 400 + 40 * Math.exp(-t / 2400) * Math.sin(2 * Math.PI * t / 1200));
+      const h3 = L.headingOf(T, P3);
+      assert.ok(!h3.heading && h3.sustained === false, 'decaying wave is not heading: ' + JSON.stringify(h3));
+      assert.ok(h.sustained === true, 'the steady wave is sustained');
     }
   },
   {

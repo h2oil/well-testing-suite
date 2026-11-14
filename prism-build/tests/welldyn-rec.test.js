@@ -15,7 +15,8 @@
 // RC10 CSV: decimal comma (';' separator), escaping of labels (quotes, formula prefixes)
 // RC11 replay file round trip: series identical, marks, events, settings, hash, engineId
 // RC12 fromFile errors: FORMAT (malformed / wrong format / bad times), VERSION, TOO_BIG
-// RC13 snapshots dropped above the file limit (snaps null + note); the opened file warns NO_SNAPSHOTS
+// RC13 snapshots thinned above the file limit (first / last / events / marks / state changes kept, interval doubled, note); dropped (snaps
+//      null + note, NO_SNAPSHOTS) only when the kept set does not fit
 // RC14 replay re-run: same engine → identical; a different engineId → within tolerance with an info note; a changed recording → "differs after"
 // RC15 the state column indexes STATE_ORDER; summarize() fields (§3.8)
 // RC16 cases: save / list / remove / caps (20 cases, 24 kB, oldest unnamed first); the dyn key per well and in the project payload;
@@ -200,7 +201,9 @@ module.exports = [
       rec.mark(600, 900, 'Window 1');
       const csv = rec.csv(app.toWin({ cols: ['thp', 'pwf', 'qL', 'state'], from: 300, to: 1200, every_s: 60, hms: true, stateNames: true }));
       const L = csv.trim().split('\r\n');
-      assert.strictEqual(L[0], 'Time (s),THP (psig),BHP (psia),Liquid rate (STB/d),Well state (index) (-),Time (h:mm:ss)');
+      assert.strictEqual(L[0], 'Time (s),THP (psig),BHP (psia),Liquid rate (STB/d),Well state,Time (h:mm:ss)');   // names in the cells: no index unit (review fix)
+      const csvIx = rec.csv(app.toWin({ cols: ['state'], from: 300, to: 300 }));
+      assert.ok(/Well state \(index\) \(-\)/.test(csvIx.split('\r\n')[0]), 'without stateNames the index header stays');
       const rows = L.slice(1, L.indexOf(''));
       assert.ok(rows.length >= 15 && rows.length <= 16, 'rows every 60 s in [300, 1200]: ' + rows.length);
       assert.strictEqual(rows[0].split(',')[0], '300');
@@ -297,21 +300,39 @@ module.exports = [
     },
   },
   {
-    name: 'RC13 a replay file above the size limit drops its snapshots (snaps null, note); opened, it plays but cannot continue',
+    name: 'RC13 a replay file above the size limit thins its snapshots (first, last, events, marks, state changes kept; interval doubled, note) and still continues; only a kept set that does not fit drops them (snaps null, NO_SNAPSHOTS)',
     wp: WP,
     run(app, assert, ctx) {
       app = app0(ctx);
       const s = sim(app), rec = R(app).create({ every_s: 10, snapEvery_s: 60 });
-      rec.attach(s); s.run(1800);
-      const run = rec.toFile(app.toWin({ maxBytes: 50000 }));
-      assert.strictEqual(run.snaps, null, 'snapshots dropped');
-      assert.ok(run.notes && /snapshots dropped/.test(run.notes[0]));
-      assert.ok(JSON.stringify(run).length < 50000 * 2, 'the series stay');
+      rec.attach(s); s.run(6 * 3600);                                           // a 6 h run (review fix: long runs kept their snapshots)
+      rec.mark(7200, 7500, 'W');
+      const full = rec.toFile(app.toWin({})), F = JSON.stringify(full).length, nFull = full.snaps.list.length;
+      assert.ok(full.snaps && nFull > 20 && F <= R(app).MAX_FILE, 'default limit 5 MB: snapshots kept (' + nFull + ', ' + F + ' B)');
+      const base = JSON.stringify(Object.assign({}, full, { snaps: { every_s: 60, list: [], frames: [] } })).length;
+      // thinned: a limit between the series alone and the full file
+      const lim = Math.round(base + 0.3 * (F - base));
+      const run = rec.toFile(app.toWin({ maxBytes: lim }));
+      assert.ok(run.snaps && run.snaps.list.length >= 3 && run.snaps.list.length < nFull, 'thinned, not dropped: ' + (run.snaps && run.snaps.list.length));
+      assert.ok(JSON.stringify(run).length <= lim, 'fits the limit');
+      assert.ok(run.snaps.every_s >= 2 * full.snaps.every_s, 'interval doubled: ' + run.snaps.every_s);
+      assert.ok(run.notes && /thinned to every \d+ s/.test(run.notes[0]), run.notes && run.notes[0]);
+      const L = run.snaps.list;
+      assert.strictEqual(L[0].t, full.snaps.list[0].t, 'first kept'); assert.strictEqual(L[L.length - 1].t, full.snaps.list[nFull - 1].t, 'last kept');
+      const atMark = full.snaps.list.filter((x) => x.t <= 7200 + 1e-9).pop();
+      assert.ok(L.some((x) => x.t === atMark.t), 'the snapshot at (or just before) the mark start kept: ' + atMark.t);
+      assert.strictEqual(run.snaps.frames.length, L.length, 'frames thinned with the snapshots');
       const o = R(app).fromFile(JSON.stringify(run));
-      assert.ok(o.ok && o.rec.snaps().length === 0 && o.rec.snapAt(900) === null);
-      assert.ok(o.warnings.some((w) => w.code === 'NO_SNAPSHOTS'));
-      const full = rec.toFile(app.toWin({}));
-      assert.ok(full.snaps && full.snaps.list.length > 20 && JSON.stringify(full).length <= R(app).MAX_FILE, 'default limit 5 MB: snapshots kept');
+      assert.ok(o.ok && o.rec.snaps().length === L.length, 'reopened with its snapshots');
+      assert.ok(o.rec.snapAt(4 * 3600 + 30) !== null, 'snapAt works (Continue from here)');
+      assert.ok(!o.warnings.some((w) => w.code === 'NO_SNAPSHOTS'));
+      // dropped only when even the kept set does not fit
+      const run2 = rec.toFile(app.toWin({ maxBytes: base + 10 }));
+      assert.strictEqual(run2.snaps, null, 'snapshots dropped');
+      assert.ok(run2.notes && /snapshots dropped/.test(run2.notes[0]));
+      const o2 = R(app).fromFile(JSON.stringify(run2));
+      assert.ok(o2.ok && o2.rec.snaps().length === 0 && o2.rec.snapAt(900) === null);
+      assert.ok(o2.warnings.some((w) => w.code === 'NO_SNAPSHOTS'));
       rec.detach();
     },
   },

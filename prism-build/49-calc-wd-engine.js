@@ -110,7 +110,7 @@
         fallback: { label: 'Liquid fallback below the critical velocity', verified: false },
         turner: { label: 'Turner et al. (1969) critical velocity', verified: false },
         coleman: { label: 'Coleman et al. (1991) critical velocity', verified: false },
-        belfroid: { label: 'Belfroid et al. (2008) inclination correction', verified: false },
+        belfroid: { label: 'Belfroid et al. (2008) inclination correction (β floored at 5° from horizontal, ASSUMED)', verified: false },
         foamer: { label: 'Foamer surface-tension factor', verified: false },
         regime_lowv: { label: 'Low-velocity regime labels (Taitel, Barnea & Dukler; Taitel & Dukler)', verified: false },
         gl_valves: { label: 'Annulus, IPO valves, Thornhill-Craver', verified: false },
@@ -171,6 +171,9 @@
         churn: 'churn', transition: 'churn', froth: 'churn', annular: 'annular', mist: 'mist', segregated: 'stratified', stratified: 'stratified', wavy: 'stratified',
         gas: 'gas', homogeneous: 'unknown' };
     var PAT_CACHE = {};
+    // Belfroid floor: β (from horizontal) ≥ 5° so a horizontal or up-dip cell keeps a finite v_c (the correlation → 0 at β = 0);
+    // ASSUMED, provisional (§4.11, method table)
+    var BEL_BETA_MIN = 5 * Math.PI / 180;
     function _patIdx(s) {
         if (s == null) return RIX.unknown;
         if (Object.prototype.hasOwnProperty.call(PAT_CACHE, s)) return PAT_CACHE[s];
@@ -1580,14 +1583,16 @@
         var F = C.F, water = (+F.wgr > 0) || (+F.wc > 0);
         var whp = S.surface.thp, method = !_fin(whp) ? 'turner' : (whp < 500 ? 'coleman' : 'turner');
         var coef = LOAD[method].coef, bel = !!this.o.loading.belfroid;
-        var best = -1, bestB = -1, bestMd = null, bestTvd = null, vrMin = Infinity, below = -1, belowMd = null;
+        var best = -1, bestB = -1, bestMd = null, bestTvd = null, bestBMd = null, bestBTvd = null, vrMin = Infinity, below = -1, belowMd = null;
         var eot = g.eotCell;
         for (var i = 0; i < n; i++) {
             var rhoL = water ? X.rhoW[i] : X.rhoO[i], sig = (water ? X.sigW[i] : X.sigO[i]) * cs.sigF[i], rhoG = X.rhoG[i], z = X.z[i];
             if (!(rhoL > rhoG && rhoG > 0 && sig > 0 && z > 0)) { cs.vc[i] = 0; continue; }
             var base = Math.pow(sig, 0.25) * Math.pow(rhoL - rhoG, 0.25) / Math.sqrt(rhoG), vc = coef * base;
-            var beta = Math.PI / 2 - _clamp(X.inc[i], 0, 90) * Math.PI / 180;
-            var fb = (beta > 0 && beta < Math.PI / 2) ? Math.pow(Math.sin(1.7 * beta), 0.38) / 0.74 : 1;
+            // β from horizontal in radians for every cell (up-dip cells fold back: θ → 180° − θ); floored at BEL_BETA_MIN (provisional, §4.11)
+            var th = _clamp(X.inc[i], 0, 180); th = Math.min(th, 180 - th);
+            var beta = Math.max(Math.PI / 2 - th * Math.PI / 180, BEL_BETA_MIN);
+            var fb = Math.pow(Math.sin(1.7 * beta), 0.38) / 0.74;
             var vcB = vc * fb, use = bel ? vcB : vc;
             cs.vc[i] = use; X.vcv[i] = vc; X.vcb[i] = vcB;
             if (!this.gasWell()) continue;
@@ -1596,14 +1601,14 @@
             var isBelow = eot >= 0 && i < eot;
             if (isBelow) { var qu = bel ? qb2 : qv; if (qu > below) { below = qu; belowMd = g.cells[i].mdc; } continue; }
             if (qv > best) { best = qv; bestMd = g.cells[i].mdc; bestTvd = g.cells[i].tvdc; }
-            if (qb2 > bestB) bestB = qb2;
+            if (qb2 > bestB) { bestB = qb2; bestBMd = g.cells[i].mdc; bestBTvd = g.cells[i].tvdc; }
             var vr = cs.vg[i] > 0 && use > 0 ? cs.vg[i] / use : 0; if (vr < vrMin) vrMin = vr;
         }
         if (!this.gasWell()) { L.method = null; return; }
         L.method = method; L.both = _fin(whp) && whp >= 500 && whp <= 1000; L.liquid = water ? 'water' : 'condensate';
         L.qcVert_MMscfd = best > 0 ? best : null; L.qcBelfroid_MMscfd = bestB > 0 ? bestB : null; L.belfroid = bel;
         L.qc_MMscfd = bel ? L.qcBelfroid_MMscfd : L.qcVert_MMscfd;
-        L.limitingMd = bestMd; L.limitingTvd = bestTvd;
+        L.limitingMd = bel ? bestBMd : bestMd; L.limitingTvd = bel ? bestBTvd : bestTvd;     // at the maximum of the q_c in use (§4.11)
         L.ratio = L.qc_MMscfd > 0 ? (S.surface.qgForm / 1000) / L.qc_MMscfd : null;
         L.vRatioMin = _fin(vrMin) ? vrMin : null;
         L.belowEot = below > 0 ? { qc_MMscfd: below, md: belowMd } : null;
@@ -1620,9 +1625,13 @@
         var iface = this._interfaceCell();
         for (var i = 0; i < n; i++) {
             var j = Math.abs(cs.vm[i]), a = cs.ag[i], r;
-            if (j >= jhi && X.haveCorr[i]) r = X.pat[i];
+            // review fix: a correlation 'segregated' / stratified pattern is kept only in a near-horizontal cell (inc > 80°); in a vertical or
+            // deviated cell the low-velocity classification below labels it (annular / churn / slug …), so the view never puts liquid on
+            // the low side of a vertical tubing
+            var corrOk = j >= jhi && X.haveCorr[i] && !(X.pat[i] === RIX.stratified && X.inc[i] <= 80);
+            if (corrOk) r = X.pat[i];
             else {
-                low = true;
+                if (!(j >= jhi && X.haveCorr[i])) low = true;
                 if (a < 0.02) r = RIX.liquid; else if (a >= 0.98) r = RIX.gas;
                 else if (X.inc[i] > 80) r = RIX.stratified;
                 else if (a < 0.25) r = RIX.bubble; else if (a < 0.75) r = RIX.slug;
@@ -1857,7 +1866,7 @@
     NS.create = create; NS.COMP = COMP; NS.REGIMES = REGIMES; NS.STATES = STATES; NS.STATE_ORDER = STATE_ORDER; NS.CHANNELS = CHANNELS; NS.METHODS = METHODS;
     NS.VERSION = VERSION; NS.engineId = ENGINE_ID; NS.hash = hash; NS.canon = canon; NS.PROVISIONAL = PROVISIONAL;
     NS.GILBERT_YC = function () { return (G.WTS_wp_system && _fin(G.WTS_wp_system.GILBERT_YC)) ? G.WTS_wp_system.GILBERT_YC : 0.588; };
-    NS.DF = DF; NS.buildGrid = buildGrid; NS._Sim = Sim;
+    NS.BEL_BETA_MIN = BEL_BETA_MIN; NS.DF = DF; NS.buildGrid = buildGrid; NS._Sim = Sim;
 })();
 // === SELF-TEST ===
 (function () {

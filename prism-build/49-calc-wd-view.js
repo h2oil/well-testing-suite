@@ -442,7 +442,8 @@
             }
             across(frame.liquidTopMd, PH.water, 'liquid top', false);
             across(frame.gasCapMd, T.yellow, 'gas cap', true);
-            // markers
+            // markers (labels collected and placed after the loop without overlaps — review fix)
+            var mLabels = [];
             (frame.markers || []).forEach(function (mk) {
                 if (!mk || !_fin(mk.md) || mk.md < g.md0 || mk.md > g.md1) return;
                 var gc = null; vis.forEach(function (c) { if (mk.md >= c.a && mk.md <= c.b) gc = c; });
@@ -465,8 +466,23 @@
                 } else {           // eot and anything else: a bar across
                     ctx.strokeStyle = T.text; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(r[0], r[1]); ctx.stroke(); ops += 5;
                 }
-                if (mk.label && spec.labels !== false) { ctx.fillStyle = T.text2; ctx.font = _font(9); ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(String(mk.label).slice(0, 18), Math.min(l[0], r[0]) - 6, c0[1]); ops += 5; }
+                if (mk.label && spec.labels !== false) mLabels.push({ text: String(mk.label).slice(0, 18), x: Math.min(l[0], r[0]) - 6, y: c0[1] });
             });
+            if (mLabels.length) {
+                // sort by Y; a label closer than the font height + 2 px to the previous one at a similar X moves down below it; a stack that
+                // runs past the bottom is shifted up as a whole
+                var LH = 11, yMax = sz.h - 6; mLabels.sort(function (a, b) { return a.y - b.y; });
+                for (var li = 1; li < mLabels.length; li++) for (var lj = 0; lj < li; lj++) {
+                    if (Math.abs(mLabels[lj].x - mLabels[li].x) < 90 && mLabels[li].y < mLabels[lj].y + LH) mLabels[li].y = mLabels[lj].y + LH;
+                }
+                var over = mLabels.length ? mLabels[mLabels.length - 1].y - yMax : 0;
+                if (over > 0) for (var lk = mLabels.length - 1; lk >= 0; lk--) {
+                    var cap = lk === mLabels.length - 1 ? yMax : mLabels[lk + 1].y - LH;
+                    if (Math.abs(mLabels[lk].x - mLabels[mLabels.length - 1].x) < 90 && mLabels[lk].y > cap) mLabels[lk].y = cap;
+                }
+                ctx.fillStyle = T.text2; ctx.font = _font(9); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                mLabels.forEach(function (lb) { ctx.fillText(lb.text, lb.x, lb.y); ops += 5; });
+            }
             // regime labels: one per run of equal regime, at the middle of the run, right of the pipe, no overlaps
             if (spec.labels !== false && rg) {
                 var boxes = [], runs = [], cur = null;

@@ -140,6 +140,36 @@ module.exports = [
     },
   },
   {
+    name: 'PG29 review fixes through the page (real engine, oilVert steady 2 h): the Checks distance is measured from the nodal point R0 (not the window drift); the settled line apart; the heading row names the window examined; a well with no choke shows "no choke", never "bean 0/64"',
+    wp: WPK, integration: true,
+    run(_a, assert, ctx) {
+      const app = app0(ctx);
+      openFix(app, W.FIX.oilVert);
+      P(app).scenario('steady');
+      playTo(app, 2 * 3600);
+      const s = P(app).sim(), chk = s.steadyCheck(), R0 = s.R0;
+      const vs = P(app).verdicts(), dist = vs.find((v) => /Distance from the nodal operating point/.test(v.t));
+      assert.ok(dist, 'distance line: ' + vs.map((v) => v.t).join(' | '));
+      const m = dist.t.match(/rate ([\d.,]+) %, BHP ([\d.,]+) %/);
+      const dq = 100 * Math.abs(chk.qMean - R0.op.q) / R0.op.q, dp = 100 * Math.abs(chk.pwfMean - R0.pwf) / R0.pwf;
+      assert.ok(m && Math.abs(+m[1] - dq) < 0.006 && Math.abs(+m[2] - dp) < 0.006, 'distance from R0: ' + dist.t + ' vs ' + dq.toFixed(3) + ' / ' + dp.toFixed(3));
+      assert.ok(dq > 0.01, 'the end rate differs from the nodal rate (not the zero drift): ' + dq);
+      assert.strictEqual(dist.st, dq <= 2 && dp <= 1 ? 'ok' : 'warn');
+      assert.ok(vs.some((v) => /^Settled — drift over the last 10 min: rate [\d.,]+ %, BHP [\d.,]+ psi$/.test(v.t)), 'the drift line apart, BHP in psi');
+      const lift = String(app.el('wd_liftstat').textContent || '');
+      assert.ok(/no heading \(\d+ peak pairs in 2 h 0 min\)/.test(lift), 'heading window = the run length: ' + lift);
+      assert.ok(!/0\/64/.test(P(app).kpis()[0].s), 'bean shown on a choked well: ' + P(app).kpis()[0].s);
+      assert.ok(/^bean \d+\/64$/.test(P(app).kpis()[0].s), P(app).kpis()[0].s);
+      // a well without a surface choke
+      const M = W.FIX.oilVert; M.surface.choke = { present: false, bean64: 0 };
+      openFix(app, M); P(app).scenario('steady'); playTo(app, 600);
+      const k0 = P(app).kpis()[0];
+      assert.strictEqual(k0.s, 'no choke', 'no choke: ' + JSON.stringify(k0));
+      clean(app, assert);
+      app._fix = null;
+    },
+  },
+  {
     name: 'INT1 seams: recorder keys = the engine CHANNELS keys; the view state labels = the engine labels; WTS_flowline_gradAt shipped',
     wp: WPK,
     run(_a, assert, ctx) {

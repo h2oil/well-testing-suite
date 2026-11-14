@@ -88,13 +88,15 @@ const CAPS = {
 // 131,598); the wellperf guide's serialised cap 14 → 21.75 kB (GUIDE_CAP_KB; measured 21,920 bytes). Other files unchanged.
 // Q21 review fixes (2026-11-13): production 57.6 → 59.2 (measured 58,824: the Lift screening part, the full gas-lift design and ESP
 // input tables, the U-layers wording, five B keywords, the two-well shot recipe); the wellperf guide 21.75 → 23.5 kB (measured 23,892).
-// Well Dynamics WD6 (integrator, 2026-11-14): owner question Q21 (approved 2026-11-13 for the help growth of the Well Performance
-// module, which Well Dynamics extends): the caps rise by the measured need plus a small margin. The welldyn guide (a PART route,
+// Well Dynamics WD6 (integrator, 2026-11-14): PENDING the owner's decision on the Well Dynamics plan's open question Q4 (help caps) —
+// Q21 (2026-11-13) approved the Well Performance help only and does not cover these raises; do not merge to Dev / master before the
+// owner answers. If Q4 is declined, the plan's fallback ships (a non-PART welldyn guide of about 6 kB, no shots) and these caps roll back.
+// The caps rise by the measured need plus a small margin. The welldyn guide (a PART route,
 // 9.8 kB serialised) and its three shots: production 47.67 → 57.95 kB (measured 57,859); start 19.8 → 21.75 kB (measured 21,705: the
 // tasks wdload and wdgl, five glossary terms); sum 369 → 381.3 kB raw (measured 380,169) and 128 → 132 kB gzip (measured 131,736);
 // help-shots totalBytes 8.0 → 8.12 MB (measured 8,105,852) and moduleBytes 8.8 → 8.9 kB (measured 8,860). Tasks 10–15 → 10–16.
 // Release 4.6 (integrator, 2026-11-14): the Q21 line (4.5.1) and Well Dynamics merged, so the caps are both sides' measured need together
-// plus a small margin: production 69.25 kB (measured 69,040), start 22.45 kB (measured 22,241: 17 tasks), sum 392.5 kB raw (measured
+// plus a small margin (the Well Dynamics share still pending Q4, see above): production 69.25 kB (measured 69,040), start 22.45 kB (measured 22,241: 17 tasks), sum 392.5 kB raw (measured
 // 392,027) and 136.5 kB gzip (measured 136,245); help-shots images 8.27 MB (measured 8,254,838) and module 9.1 kB (measured 9,001).
 // Tasks 10–16 → 10–17.
 const SUM_CAP = 392.5 * KB, GZIP_CAP = 136.5 * KB;

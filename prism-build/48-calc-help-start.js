@@ -153,7 +153,7 @@ S('welldyn', 'Bean up on the toolbar, or Foamer ppm On, and watch it unload; Mar
 { id: 'wdgl', title: 'Unload a gas-lift well step by step', purpose: 'Valve by valve from a killed well to lifting.', steps: [
 S('wellperf', 'Load the Gas lift example; when its valve design is done, Use this design in step ④ installs the valves.', 'installed valves'),
 S('welldyn', 'Preset Gas-lift unloading, Apply preset, Play; the Lift chart shows the casing pressure and the operating valve stepping down ([[welldyn#lift|Gas lift and ESP]]).', 'operating valve, casing pressure'),
-S('welldyn', 'Check that it ends lifting on the nodal point (Checks); export the run or save it as a case.')] }];
+S('welldyn', 'Checks gives the distance from the nodal point; it closes as deeper valves take over (run longer to unload fully). Export or save a case.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },

@@ -283,7 +283,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2382 unique tests by --list; welldyn-* = v4.6 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2385 unique tests by --list; welldyn-* = v4.6 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -416,7 +416,7 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2382/2382; count with --list — `--file` matches by substring, so
+   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2385/2385; count with --list — `--file` matches by substring, so
    a per-file run must pass the full name, e.g. `--file wellperf-sens.test.js`) and
    `node prism-build/wts3d-test.js` (149 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
@@ -756,11 +756,14 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   fallback, Belfroid, foamer, the gas-lift valve model (TAU_VALVE 20 s is an ASSUMPTION) and the ESP transients. Gas-lift unloading in
   valves mode rejects many steps (≈ 500–1,100 DP_LIMIT per 4 h, 15–40 s wall for 4 h) and the Well Performance Gas lift example is still
   on valve 5 (of 6) after 4 h (1,046–1,148 STB/d against the nodal 1,181); several §5.6 budgets are missed (flowing step ≈ 3.5 ms against
-  2.5, settled shut-in step, cycleTimer 12 h ≈ 28 s) though inside the 2 × WD1 fail lines; the page records snapshots every 60 s, so a
-  run longer than about 2 h saves its replay file without snapshots (5 MB limit; the series are kept); recorder memory projects to
-  ≈ 59 MB for 24 h; a reload loses an unsaved run; on a gas-lift well with no choke the KPI strip shows "bean 0/64"; the "end of gauge" and
-  "perforations" labels at the bottom of the wellbore view overlap; the WD0 fixture file tests/_welldyn-shapes.js was never written
-  (the lane fixtures _welldyn-wd1.js / _welldyn-wd4.js stand in).
+  2.5, settled shut-in step, cycleTimer 12 h ≈ 28 s) though inside the 2 × WD1 fail lines; a replay file over 5 MB thins its snapshots
+  (first / last / events / marks / state changes kept, interval doubled; dropped only when even that set does not fit); recorder memory
+  projects to ≈ 59 MB for 24 h; a reload loses an unsaved run; oil heading was not reproduced on the test wells (LF15: the well settles
+  or dies) — the detector needs a sustained amplitude (last peak-to-peak ≥ 0.8 × the first) so the decaying THP oscillation after an
+  unloading is not called heading; Belfroid (option) floors β at 5° from horizontal (ASSUMED) and uses the published 0.74 normalisation
+  (factor 1.001 at vertical); the help cap raises for the welldyn guide and shots are PENDING the owner's answer to the plan's Q4 (Q21
+  covers the Well Performance help only) — no merge to Dev / master before it; the WD0 fixture file tests/_welldyn-shapes.js was never
+  written (the lane fixtures _welldyn-wd1.js / _welldyn-wd4.js stand in).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
   on the benchmark pre set the leak-off mechanism is right in only ≈ 19 % of cases (a q-tip case reads as PDL), so the type is
@@ -787,7 +790,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 347 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 2382 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
+# Expect: "[ok] all 2385 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -859,7 +862,7 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2382/2382 pass (unique, --list), 204 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6)
+Acceptance tests:             2385/2385 pass (unique, --list), 204 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
                               Well performance course of 3 exercises (4.4), 227 screenshots (8,254,838 of the 8.27 MB cap since 4.6 — a new shot

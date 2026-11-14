@@ -386,7 +386,8 @@ RunFile = { format: 'wts-welldyn-run', v: 1, app /*RELEASE_NOTES[0].ver*/, creat
   model: { scalars: {wp_*: v}, tables: {survey, strings, restrictions, geo, flowline, rating, beans, lab, pump, corrSections, layers, glValves} },
   settings: { …opts of §3.1 except snapshot and ref },  events: [Event], duration_s,
   rec: { every_s, t: [], ch: { key: [] }, marks: [] },
-  snaps: { every_s, list: [Snap] } | null,              // dropped (null) when the file would exceed 5 MB
+  snaps: { every_s, list: [Snap] } | null,              // thinned above 5 MB (first / last / events / marks / state changes kept, every_s
+                                                        // doubled per round, note); null only when even the kept set does not fit (review fix)
   summary: Summary (§3.8), hash /*hash16 of model + settings + events*/ }
 ```
 
@@ -789,7 +790,10 @@ cell TVD); dT_i/dt = (T_target − T_i)/τ_T, τ_T = 2 h (ASSUMED). THT = T of t
   rule); `loading.qcVert_MMscfd` = max_i q_c,i over the tubing; `ratio` = q_g,formation,surface / q_c in use; `vRatioMin` = min_i v_g,i /
   v_c,i; limiting MD / TVD at the maximum.
 - **Belfroid et al. (2008) inclination correction** (option `loading.belfroid`, **default off** — Q16; provisional): v_c,θ = v_c ·
-  [sin(1.7 β)]^{0.38} / 0.74 with β the angle from horizontal **in radians** (β = π/2 − θ, θ from vertical), applied for 0 < β < π/2.
+  [sin(1.7 β)]^{0.38} / 0.74 with β the angle from horizontal **in radians** (β = π/2 − min(θ, 180° − θ), θ from vertical), applied to
+  **every** cell (review fix: no special case at vertical — the published 0.74 normalisation gives 1.0010 there — and no jump at 90°)
+  with a floor β ≥ β_min = 5° (ASSUMED, provisional) so a horizontal or up-dip cell keeps a finite v_c (the correlation → 0 at β = 0).
+  The limiting MD / TVD are those of the maximum of the q_c in use (Belfroid maximum when the option is on).
   `loading.qcBelfroid_MMscfd` is always computed and shown beside the vertical value; the one in use (`qc_MMscfd`, the states and the
   fallback of §4.10) follows the option. With the option off (the default) the engine is identical to the nodal rule.
 - **Consistency (EN12):** on a steady run with Belfroid off, q_c (both methods), the method choice and the limiting depth equal
@@ -865,14 +869,16 @@ THP — or CHP for a gas-lift well — reaches p_open; shut when q_g < q_close o
 | `unloading` | open, d(liq)/dt < −0.05 bbl/min, and (gas wells) ratio ≥ 0.9 |
 | `loading` (gas) | ratio < 0.9 and (d(liq)/dt > +0.01 bbl/min or the bottom 3 cells' α_L rising) |
 | `marginal` (gas) | 0.9 ≤ ratio < 1.1 |
-| `heading` (oil) | from the `heading` extension: ≥ 3 WHP peak pairs in the last 3 h with peak-to-peak > 5 % of the mean and a period 2 min – 3 h |
+| `heading` (oil) | from the `heading` extension: ≥ 3 WHP peak pairs in the last 3 h with peak-to-peak > 5 % of the mean, a period 2 min – 3 h and a sustained amplitude (last peak-to-peak ≥ 0.8 × the first; review fix, so a decaying oscillation is not heading) |
 | `dying` (oil) | q falling > 10 % per hour for 30 min with liq rising |
 | `stable` | otherwise, with |d(liq)/dt| ≤ 0.01 bbl/min (gas: ratio ≥ 1.1) |
 | lift states | from the extensions (§4.12) override `stable` / `unloading` |
 
 - **Oil heading** is not imposed: it emerges (or the well dies) when the transient is run near or below the static stability limit q_s of
   the nodal solve (D6 of the Well Performance plan). The detector only labels it. LF15 checks that a run right of q_s settles and a run
-  forced left of q_s (by the choke) does not settle on that root.
+  forced left of q_s (by the choke) does not settle on that root. **Not reproduced (review, 2026-11-14):** on the test wells no engine run
+  has headed — right of q_s the well settles on the nodal root, with no stable root it dies (LF15); the release note and the help say "a
+  heading detector flags sustained wellhead-pressure oscillations (provisional)", not that heading is simulated.
 
 ### 4.14 Method table (D17)
 
@@ -984,7 +990,7 @@ same intake state (R10) · LF22 ESP vent gas (natural separation on) leaves the 
 
 RC1–RC16 (WD3): sampling cadence, event samples, `at` interpolation, snapshots and the cap rule, truncate / continue (bit-identical with
 an uninterrupted run on the real engine — integration), marks, CSV columns / units (field and Metric) / decimal comma / escaping, RunFile
-round trip (series identical; hash), `fromFile` errors (format, version, too big, malformed), snapshots dropped above 5 MB, replay re-run
+round trip (series identical; hash), `fromFile` errors (format, version, too big, malformed), snapshots thinned above 5 MB (dropped only when the kept set does not fit), replay re-run
 reproduces the series bit for bit (same `engineId`) and, with a different `engineId` from the mock, shows the info note within tolerance,
 never "corrupt" (R25), the `state` column indexes `STATE_ORDER`, cases save / list / remove / caps (20, 24 kB), `dyn` key carried in a project file and per well.
 PG1–PG28 (WD3) and VW1–VW14 (WD2): §6.
@@ -1031,7 +1037,7 @@ derivation stays), and the cell-count default is reviewed (Q7).
 | page frame: wellbore + particles at 60 cells | — | ≤ 4 ms (op count reported in Node; ms in the browser report) |
 | charts | — | redrawn at most every 6th frame while playing (~10 Hz), always on pause / scrub |
 | recorder memory, 24 h at defaults | — | ≈ 2.2 MB series + ≈ 1,440 snapshots × ≈ 12 kB ≈ 17 MB ≤ 32 MB cap |
-| replay file | — | ≤ 5 MB (snapshots dropped above) |
+| replay file | — | ≤ 5 MB (snapshots thinned above) |
 | Round-9 parse of the new files | — | ≤ +15 ms on the app load |
 | Well Dynamics acceptance files | — | ≤ 150 s in total; long scenarios run shortened (first 1–2 h) in the acceptance tests and in full only in `welldyn-validate --check` / `integration: true` |
 
@@ -1242,7 +1248,7 @@ expected / actual); the integrator fixes it with a regression test.
 | Q1 | Liquid fallback below the critical velocity is provisional (D17). Make it the default for gas wells? | Off by default; on in the "gas-well loading" preset and the loading fixtures |
 | Q2 | Temperature in time: `frozen` (gate) or `relax` (provisional) by default? | `frozen`; `relax` as an option |
 | Q3 | Reservoir default: `ipr` (exact with nodal) or `transient` when k, h, φ, μ, c_t are complete? | `ipr`; the shut-in build-up preset switches to `transient` when the parameters are complete, else says what is missing |
-| Q4 | Help caps: raise by +14 kB raw / +5 kB gzip and the image cap by +120 kB for a PART guide with three screenshots? | Ask with the measured draft; if declined, a 6 kB guide and no screenshots |
+| Q4 | Help caps: raise by +14 kB raw / +5 kB gzip and the image cap by +120 kB for a PART guide with three screenshots? | Ask with the measured draft; if declined, a 6 kB guide and no screenshots. **OPEN (2026-11-14):** the measured draft is in `wd/int` (production 69.25 kB, start 22.45 kB, sum 392.5 / 136.5 kB, images 8.27 MB, module 9.1 kB, together with 4.5.1); not covered by Q21; no merge to Dev / master before the owner answers |
 | Q5 | Release on both platforms (iOS included; phone speed ≈ ⅓)? | Both, as v4.6 |
 | Q6 | Replay file extension `.wdrun` (JSON inside)? | `.wdrun` |
 | Q7 | Cell count: default 60, range 20–200? | Yes |
@@ -1645,8 +1651,9 @@ cycles, recorder / files / cases) and the provisional label on every provisional
 Shots (new help-shots action `welldynRun` {ex, preset, h, tab}: loads the Well Performance example, waits for it (for `gl` the valve
 design, then **Use this design**), opens Well Dynamics, applies the preset and runs it through the page hook to h hours; clock `fixed`):
 `run-d` (Gas example, Gas-well loading, 3 h, 55.5 kB), `wb-p` (the same run's wellbore on a phone, crop, 12.3 kB), `gl-d` (Gas lift
-example, Gas-lift unloading, 4 h, Lift chart, 54.9 kB); `help/view` re-shot (the landing page lists the new tasks). Caps (Q21, owner
-approval 2026-11-13 for the help growth of the Well Performance hub, which Well Dynamics extends; measured need + a small margin):
+example, Gas-lift unloading, 4 h, Lift chart, 54.9 kB); `help/view` re-shot (the landing page lists the new tasks). Caps (**pending the
+owner's decision on Q4** — Q21, approved 2026-11-13, covers the Well Performance help only, not these raises; measured need + a small
+margin; if Q4 is declined, the fallback of §8 / Q4 ships: a non-PART welldyn guide of about 6 kB with no shots, the caps rolled back):
 
 | Cap | Old | New | Measured |
 |---|---|---|---|
@@ -1718,8 +1725,8 @@ gl_unloading → gl_lifting; X13 esp_ramp → esp_running; X17 identical. Every 
 only in the help files and the generated files: the task lists of both sides kept (artlift, wdload, wdgl: 17 tasks, check 10–17); the
 wellperf guide takes the 4.5.1 text and keywords with this line's `reviewedSrc` (the cross-link button); the help-shots named actions of
 both sides (`wpJob`, `wellAdd`, `welldynRun`); the caps are both sides' measured need together plus a small margin (production 69.25 kB,
-start 22.45 kB, sum 392.5 kB raw / 136.5 kB gzip, images 8.27 MB, manifest module 9.1 kB — the Q21 rule; above either side alone, so the
-owner may want to confirm them). Generated files (combined-round9.js, the HTML, www, manifest, user guide) regenerated with the tooling.
+start 22.45 kB, sum 392.5 kB raw / 136.5 kB gzip, images 8.27 MB, manifest module 9.1 kB; the Well Dynamics share of these raises is
+**pending the owner's decision on Q4** (Q21 covers the Well Performance help only) — not to be merged to Dev / master before the answer). Generated files (combined-round9.js, the HTML, www, manifest, user guide) regenerated with the tooling.
 The 4.5.1 wellperf text named "drift flux" before the glossary term (added here) — now linked. Fixes found by the full gates:
 - `buildup-page` PG1 expected Build-up Surveillance right after the Well Performance hub; now hub → welldyn → buildup.
 - `acct-lswrite-scan` LS1: the page's device-pref write was a raw `localStorage.setItem`; it now goes through `WTS_lsSet` with a marked
@@ -1731,6 +1738,31 @@ release-notes shots re-taken. Gates on the built page: node --check, smoke 347/3
 file by file), welldyn-validate (D17 PASS, 23 / 23, X11 skipped, G1–G7 as wave 2), wellperf-validate (D17 PASS, 62 / 62, budgets ok),
 help-shots / build-user-guide / publish-site --check ok, ux-layout-check --web ok, wts3d-test 147/149 (the two CRLF checks on LF), GUI
 sweep of welldyn + wellperf (desktop and --mobile): 0 errors, 0 warnings, 0 cosmetic (one info: a hidden control clicked by script).
+
+
+**Review fixes (2026-11-14, `wd/int`, after the release-4.6 review).** Each with a regression test:
+- Belfroid (§4.11): the factor is applied to every cell with β = π/2 − min(θ, 180° − θ), floored at 5° (ASSUMED, provisional; `BEL_BETA_MIN`,
+  the method-table label says so); no special case at vertical (the published 0.74 normalisation gives 1.0010 there — EN12b now within
+  0.2 %), no jump at 90°; the limiting MD / TVD come from the maximum of the q_c in use (EN13 / EN13b / EN13c).
+- Heading (§4.13): not reproduced on the test wells — release note and help reworded ("a heading detector flags sustained wellhead-pressure
+  oscillations (provisional)"); the detector needs a sustained amplitude (last peak-to-peak ≥ 0.8 × the first) so the decaying THP tail
+  after an unloading is not labelled heading (LF15b).
+- Checks (page): "Distance from the nodal operating point" is now |q̄ − q_R0| / q_R0 and |p̄wf − pwf_R0| / pwf_R0 over the last 10 min
+  (as welldyn-validate X1), gated 2 % / 1 % only when no event other than open changed the well; the window drift is a separate
+  "Settled / Still changing" line (rate %, BHP psi). Help example corrected (0.2 % / 0.04 %), help task wdgl step 3 reworded (PG29).
+- KPI strip: no ellipsis (values / labels wrap, grid minmax 150 px, q_c sub-line on two lines, full text in a title); "no choke" instead
+  of "bean 0/64" on a well without a surface choke (PG19, PG29).
+- Report wellbore canvas legend: condensate on a gas well. Regimes: a correlation stratified pattern is kept only above 80° inclination
+  (EN13d); welldyn help shots re-taken. Keyboard: the character shortcuts act only on the page itself, a canvas or the timeline; the chart
+  tabs have a roving tabindex with ← → Home End, aria-controls and tab panels (PG23b). The heading row names the window examined
+  (min(run, 3 h)). CSV: the state column header is "Well state" when the cells hold names. Wellbore marker labels never overlap (VW15).
+- Replay file (§3.7): above 5 MB the snapshots are thinned (first / last / events / marks / state changes kept, interval doubled per round,
+  note), dropped only when the kept set does not fit (RC13 on a 6 h run).
+- Export menu below 600 px: in the toolbar flow (full row) when opened — the mobile sweep found it off-screen at 390 px.
+- Help caps: the Well Dynamics share of the raises is **pending Q4** (not covered by Q21) — no merge to Dev / master before the owner
+  answers. Gates after the fixes: node --check OK, smoke 347/347, accept-test --html --integration 2385/2385 (204 files, file by file),
+  welldyn-validate (D17 PASS, 23 / 23, X11 skipped), wellperf-validate (D17 PASS, 62 / 62), help-shots / build-user-guide / publish-site
+  --check ok, ux-layout-check --web ok (135), wts3d-test 147/149 (the two CRLF checks on LF), GUI sweep welldyn desktop + --mobile 0 findings.
 
 ---
 

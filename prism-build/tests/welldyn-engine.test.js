@@ -195,9 +195,10 @@ module.exports = [
       ['turner', 'coleman'].forEach((k) => assert.rel(L.methods[k].qc_MMscfd, R0L.methods[k].qc_MMscfd, 0.02, k));
       assert.ok(Math.abs(L.limitingMd - R0L.limitingMd) <= 2 * sim.grid.cells[sim.n - 1].len, 'limiting depth ' + L.limitingMd + ' vs ' + R0L.limitingMd);
       assert.rel(L.ratio, (sim.state.surface.qgForm / 1000) / L.qc_MMscfd, 1e-12);
-      // EN12b: on a vertical well the Belfroid factor is 1 (β = π/2): identical q_c
+      // EN12b: on a vertical well the Belfroid factor is sin(1.7 π/2)^0.38 / 0.74 = 1.0010 (β = π/2; the published 0.74 normalisation,
+      // applied to every cell since the review fix — no special case at vertical): q_c within 0.2 %
       const sb = g.WTS_wd_engine.create(W.FIX.gasVert, { loading: { belfroid: true } });
-      assert.rel(sb.state.loading.qcBelfroid_MMscfd, sb.state.loading.qcVert_MMscfd, 1e-12, 'vertical: Belfroid = vertical');
+      assert.rel(sb.state.loading.qcBelfroid_MMscfd, sb.state.loading.qcVert_MMscfd, 2e-3, 'vertical: Belfroid ≈ vertical');
       assert.ok(sb.state.provisional.indexOf('belfroid') !== -1 && sim.state.provisional.indexOf('belfroid') === -1);
     },
   },
@@ -209,13 +210,57 @@ module.exports = [
       let n = 0;
       sim.grid.cells.forEach((c, i) => {
         if (!(c.inc > 1 && c.inc < 89) || !(X.vcv[i] > 0)) return;
-        const b = Math.PI / 2 - c.inc * Math.PI / 180;
+        const b = Math.max(Math.PI / 2 - c.inc * Math.PI / 180, g.WTS_wd_engine.BEL_BETA_MIN);
         assert.rel(X.vcb[i] / X.vcv[i], Math.pow(Math.sin(1.7 * b), 0.38) / 0.74, 1e-12, 'cell ' + i + ' at ' + c.inc.toFixed(1) + '°');
         n++;
       });
       assert.ok(n >= 3, 'deviated cells checked: ' + n);
+      // EN13b (review fix): every cell follows the curve — a 90° (and an up-dip) cell gets the floored factor, not the vertical v_c;
+      // no jump between 89° and 90° (both at the 5° floor)
+      assert.rel(g.WTS_wd_engine.BEL_BETA_MIN, 5 * Math.PI / 180, 1e-15, 'floor 5°');
+      const fFloor = Math.pow(Math.sin(1.7 * g.WTS_wd_engine.BEL_BETA_MIN), 0.38) / 0.74;
+      let nh = 0;
+      sim.grid.cells.forEach((c, i) => {
+        if (!(X.vcv[i] > 0) || c.inc < 85) return;
+        assert.rel(X.vcb[i] / X.vcv[i], fFloor, 1e-12, 'near-horizontal cell ' + i + ' at ' + c.inc.toFixed(2) + '° on the floor');
+        nh++;
+      });
+      assert.ok(nh >= 1, 'near-horizontal cells checked: ' + nh);
+      assert.ok(fFloor < 0.7, 'floored factor ' + fFloor + ' well below 1');
+      // EN13c: the limiting depth with Belfroid on sits at the maximum of the Belfroid q_c over the tubing
+      const L = sim.state.loading, eot = sim.grid.eotCell, cs = sim.cs;
+      let bq = -1, bmd = null;
+      for (let i = 0; i < sim.n; i++) {
+        if (eot >= 0 && i < eot) continue;
+        if (!(X.vcb[i] > 0)) continue;
+        const q = 3.067 * cs.p[i] * X.vcb[i] * X.area[i] / ((cs.T[i] + 460) * X.z[i]);
+        if (q > bq) { bq = q; bmd = sim.grid.cells[i].mdc; }
+      }
+      assert.rel(L.qc_MMscfd, bq, 1e-9, 'q_c in use = Belfroid maximum');
+      assert.strictEqual(L.limitingMd, bmd, 'limiting MD at the Belfroid maximum');
       const at60 = Math.pow(Math.sin(1.7 * (Math.PI / 6)), 0.38) / 0.74;      // θ = 60° from vertical → β = 30° = π/6 rad
       assert.rel(at60, 1.22789, 2e-5, 'the 60° factor (sin 0.8901 = 0.7771)');
+    },
+  },
+  {
+    name: 'EN13d regimes (review fix): a correlation stratified pattern is kept only in a cell above 80° inclination; vertical cells get the low-velocity class',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const g = G(ctx), E = g.WTS_wd_engine, RS = E.REGIMES.indexOf('stratified');
+      ['gasVert', 'gasHz'].forEach((key) => {
+        const sim = E.create(W.FIX[key], {}), X = sim.X, n = sim.n;
+        assert.ok(sim.ok, key);
+        for (let i = 0; i < n; i++) X.pat[i] = RS;                 // as if the correlation said 'segregated' everywhere
+        sim._regimes();
+        let vert = 0, hz = 0;
+        for (let i = 0; i < n; i++) {
+          const fast = Math.abs(sim.cs.vm[i]) >= sim.o.closureOpt.jHi && X.haveCorr[i];
+          if (X.inc[i] <= 80) { assert.notStrictEqual(sim.cs.regime[i], RS, key + ' cell ' + i + ' at ' + X.inc[i].toFixed(1) + '° labelled stratified'); vert++; }
+          else if (fast) { assert.strictEqual(sim.cs.regime[i], RS, key + ' near-horizontal cell ' + i + ' keeps stratified'); hz++; }
+        }
+        assert.ok(vert > 0, key + ' vertical cells checked');
+        if (key === 'gasHz') assert.ok(hz > 0, 'gasHz horizontal cells checked: ' + hz);
+      });
     },
   },
   {

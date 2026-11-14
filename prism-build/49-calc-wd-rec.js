@@ -20,7 +20,7 @@
 //   WTS_wd_rec.fromFile(obj | text) → {ok, run, rec, warnings, code?: 'FORMAT'|'VERSION'|'TOO_BIG'}
 //   WTS_wd_rec.compare(stored, rerun, o?) → {ok, n, firstDiff_t, maxRel, maxDp}   the cross-engine replay check (R25: 0.5 % rates, 1 psi)
 //   WTS_wd_rec.summarize(rec, sim?) → Summary (§3.8)
-//   WTS_wd_rec.RUN_FORMAT 'wts-welldyn-run', RUN_VERSION 1, EXT '.wdrun', MAX_FILE 5 MB (snapshots dropped above), MAX_OPEN 64 MB,
+//   WTS_wd_rec.RUN_FORMAT 'wts-welldyn-run', RUN_VERSION 1, EXT '.wdrun', MAX_FILE 5 MB (snapshots thinned above, dropped only when the kept set does not fit), MAX_OPEN 64 MB,
 //   WTS_wd_rec.engineId() (the engine's fingerprint, else this module's of the same function list), hash(o), channelMeta()
 //
 //   WTS_wd_cases.list(M) → Case[] (M.dyn.cases), save(case) → the WTS_wp_model.write result (≤ 20 cases, ≤ 24 kB of dyn: the oldest
@@ -325,6 +325,7 @@
         var head = cols.map(function (k) {
             var m = channelMeta(k);
             if (k === 't') return _cell('Time (s)', sep);
+            if (k === 'state' && o.stateNames) return _cell('Well state', sep);     // names in the cells, no index unit (review fix)
             var un = _unitLabel(m, sys);
             return _cell(m.label + (un ? ' (' + un + ')' : ''), sep);
         });
@@ -378,9 +379,40 @@
             summary: meta.summary || null,
             hash: _hash({ model: model, settings: settings, events: events })
         };
-        var size = JSON.stringify(run).length;
-        if (size > (meta.maxBytes || MAX_FILE)) { run.snaps = null; run.notes = ['snapshots dropped: the file would exceed ' + Math.round((meta.maxBytes || MAX_FILE) / 1048576) + ' MB']; }
+        var size = JSON.stringify(run).length, maxB = meta.maxBytes || MAX_FILE;
+        if (size > maxB) {
+            var th = _thinSnaps(rec, run.snaps, size, maxB);
+            if (th) { run.snaps = th.snaps; run.notes = ['snapshots thinned to every ' + th.every_s + ' s (kept at the start, the end, the events, the marks and the state changes) to keep the file under ' + Math.round(maxB / 1048576) + ' MB']; }
+            else { run.snaps = null; run.notes = ['snapshots dropped: the file would exceed ' + Math.round(maxB / 1048576) + ' MB']; }
+        }
         return run;
+    }
+    // review fix: thin the snapshots instead of dropping them all. The first and the last snapshot and the one at (or just before) every event,
+    // mark edge and state change are kept; every second one of the rest goes, repeatedly, until the file fits (the interval doubles each
+    // round). Returns {snaps, every_s} or null when even the kept set does not fit.
+    function _thinSnaps(rec, sn, size, maxB) {
+        var list = sn && sn.list, frames = sn && sn.frames, N = list ? list.length : 0;
+        if (N < 3) return null;
+        var sz = new Array(N), sum = 0;
+        for (var i = 0; i < N; i++) { sz[i] = JSON.stringify(list[i]).length + (frames && frames[i] ? JSON.stringify(frames[i]).length : 4) + 2; sum += sz[i]; }
+        var base = size - sum, keyT = [];
+        (rec.events() || []).forEach(function (e) { if (e && _fin(e.t)) keyT.push(e.t); });
+        (rec.marks() || []).forEach(function (m) { if (m && _fin(m.t0)) { keyT.push(m.t0); if (_fin(m.t1)) keyT.push(m.t1); } });
+        var st = rec.series('state'), T = rec.times();
+        if (st) for (var j = 1; j < st.length; j++) if (st[j] !== st[j - 1] && _fin(st[j])) keyT.push(T[j]);
+        var prot = {}; prot[0] = true; prot[N - 1] = true;
+        keyT.forEach(function (t) { var b = -1; for (var k = 0; k < N; k++) { if (list[k].t <= t + 1e-9) b = k; else break; } if (b >= 0) prot[b] = true; });
+        var idx = []; for (var a = 0; a < N; a++) idx.push(a);
+        var every = rec.snapEvery_s, est = size;
+        while (est > maxB) {
+            var nx = [], odd = false, total = base;
+            for (var q = 0; q < idx.length; q++) { var ii = idx[q]; if (prot[ii]) { nx.push(ii); continue; } odd = !odd; if (odd) nx.push(ii); }   // keep, drop, keep, …
+            if (nx.length === idx.length) return null;
+            idx = nx; every *= 2;
+            for (var r = 0; r < idx.length; r++) total += sz[idx[r]];
+            est = total;
+        }
+        return { every_s: every, snaps: { every_s: every, list: idx.map(function (x) { return list[x]; }), frames: frames ? idx.map(function (x) { return frames[x]; }) : frames } };
     }
     function _appVer() { try { var R = G.RELEASE_NOTES; return (R && R[0] && R[0].ver) ? String(R[0].ver) : ''; } catch (e) { return ''; } }
     function fromFile(src) {
@@ -481,7 +513,22 @@
             }
         }
         var gate = null;
-        if (sim && typeof sim.steadyCheck === 'function') { try { var g = sim.steadyCheck(); if (g && _fin(g.dq)) gate = { dq: g.dq, dp: g.dp, ampQ: g.ampQ, ampP: g.ampP }; } catch (e) { gate = null; } }
+        // gate (review fix): dq / dp = the drift between the last two 10-min windows (dq relative, dp in psi); nodal.dq / nodal.dp = the relative
+        // distance of the last window's means from the nodal operating point R0 (as welldyn-validate X1); changed = an event other than
+        // 'open' changed the well during the run (the distance is then not gated)
+        if (sim && typeof sim.steadyCheck === 'function') {
+            try {
+                var g = sim.steadyCheck();
+                if (g && _fin(g.dq)) {
+                    gate = { dq: g.dq, dp: g.dp, ampQ: g.ampQ, ampP: g.ampP, qMean: g.qMean, pwfMean: g.pwfMean, steady: !!g.steady, nodal: null, changed: false };
+                    var R0 = sim.R0 || (sim.ref && sim.ref.R0);
+                    if (R0 && R0.op && _fin(R0.op.q) && R0.op.q !== 0 && _fin(R0.pwf) && R0.pwf !== 0)
+                        gate.nodal = { dq: Math.abs(g.qMean - R0.op.q) / Math.abs(R0.op.q), dp: Math.abs(g.pwfMean - R0.pwf) / Math.abs(R0.pwf), q: R0.op.q, pwf: R0.pwf };
+                    var evl = []; try { evl = rec.events() || []; } catch (e2) { evl = []; }
+                    gate.changed = evl.some(function (e3) { return e3 && e3.type && e3.type !== 'open'; });
+                }
+            } catch (e) { gate = null; }
+        }
         var prior = null; try { prior = _clone(sim && sim.opts && sim.opts.reservoir && sim.opts.reservoir.prior) || null; } catch (e) { prior = null; }
         var prov = []; try { prov = (sim && sim.state && sim.state.provisional) ? sim.state.provisional.slice() : []; } catch (e) { prov = []; }
         return {

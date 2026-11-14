@@ -381,7 +381,7 @@
             rr('Intermittent (' + (c.mode === 'pressure' ? 'by pressure' : 'timer') + ')', 'cycle ' + c.n + ', ' + (c.phase === 'open' ? 'open' : 'shut in') + (c.next ? ' · next ' + (c.next.type === 'open' ? 'open' : 'shut-in') + ' at ' + _hms(c.next.t) : ''));
             if (last) rr('Last cycle', _u(last.liq_bbl, 'volume', 1, 'bbl') + ' liquid produced · ' + _u(last.removed_bbl, 'volume', 1, 'bbl') + ' removed from the tubing · ' + _fmt(last.gas_Mscf, 0) + ' Mscf gas');
         }
-        if (L && L.heading) rr('Heading check', L.heading.heading ? 'heading: ' + L.heading.pairs + ' THP peak pairs, period ' + _fmt((L.heading.period_s || 0) / 60, 0) + ' min' : 'no heading (' + (L.heading.pairs || 0) + ' peak pairs in 3 h)');
+        if (L && L.heading) rr('Heading check', L.heading.heading ? 'heading: ' + L.heading.pairs + ' THP peak pairs, period ' + _fmt((L.heading.period_s || 0) / 60, 0) + ' min' : 'no heading (' + (L.heading.pairs || 0) + ' peak pairs in ' + _hmin(Math.min(Math.max(0, S.t - (_fin(S.tOpen) ? S.tOpen : 0)), 10800)) + ')');
         return { rows: rows, tbl: tbl, lift: lift };
     }
     function _renderLift() {
@@ -706,7 +706,7 @@
 
     // ── rendering ────────────────────────────────────────────────────────────
     function _kpiHtml(label, val, sub, st) {
-        return '<div class="kpi wd-kpi st-' + (st || 'none') + '" role="group" aria-label="' + _esc(label + ' ' + val) + '"><div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' +
+        return '<div class="kpi wd-kpi st-' + (st || 'none') + '" role="group" title="' + _esc(label + ': ' + val + (sub ? ' — ' + String(sub).replace(/\n/g, ' · ') : '')) + '" aria-label="' + _esc(label + ' ' + val) + '"><div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' +
             (sub ? '<div class="kpi-s">' + _esc(sub) + '</div>' : '') + '</div>';
     }
     function _stateInfo(key) {
@@ -738,7 +738,9 @@
         var M = _vsim() ? (_vsim().M || ST.M) : ST.M, v = _vals(), gas = _isGas(M), out = [], rc = _rateCat(M);
         if (!v) return [{ l: 'Well state', v: ST.err ? 'Not running' : 'Paused', s: ST.err ? ST.err.code : 'press Play', st: ST.err ? 'fail' : 'none' }];
         var sk = _stateKey(v), si = _stateInfo(sk);
-        out.push({ l: 'Well state', v: si.label, s: (v.open === 0 ? 'choke closed' : 'bean ' + _fmt(v.bean, 0) + '/64'), st: si.st });
+        var chk0 = !!(M && M.surface && M.surface.choke && M.surface.choke.present !== false);
+        // review fix: no 'bean 0/64' on a well with no surface choke (gas lift / ESP examples)
+        out.push({ l: 'Well state', v: si.label, s: (v.open === 0 ? 'choke closed' : (chk0 && _fin(v.bean) && v.bean > 0 ? 'bean ' + _fmt(v.bean, 0) + '/64' : 'no choke')), st: si.st });
         if (gas) out.push({ l: 'Gas rate', v: _u(v.qg, 'gasRateSmall', 0, 'Mscf/d'), s: _fin(v.qo) ? 'cond. ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
         else out.push({ l: 'Liquid rate', v: _u(v.qL, 'liquidRate', 0, 'STB/d'), s: _fin(v.qo) ? 'oil ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
         out.push({ l: 'THP', v: _u(v.thp, 'pressureG', 0, 'psig'), s: '' });
@@ -749,7 +751,7 @@
         else if (gas) {
             var r = v.lratio, belf = !!_val('wd_belfroid');
             out.push({ l: 'Rate / critical rate', v: _fin(r) ? _fmt(r, 2) : '—', st: _fin(r) ? (r < 0.9 ? 'fail' : r < 1.1 ? 'warn' : 'ok') : 'none',
-                s: 'q_c ' + _u(v.qcVert, 'gasRate', 2, 'MMscf/d') + ' vertical · ' + _u(v.qcBelfroid, 'gasRate', 2, 'MMscf/d') + ' Belfroid' + (belf ? ' (in use)' : '') });
+                s: 'q_c ' + _u(v.qcVert, 'gasRate', 2, 'MMscf/d') + ' vertical\n' + _u(v.qcBelfroid, 'gasRate', 2, 'MMscf/d') + ' Belfroid' + (belf ? ' (in use)' : '') });
         }
         out.push({ l: 'Liquid in the well', v: _u(v.liq, 'volume', 1, 'bbl'), s: '' });
         var ach = ST.ach && ST.ach.val, slow = ST.playing && _fin(ach) && ach < 0.8 * ST.speed;
@@ -803,7 +805,7 @@
     function _setTab(k) {
         if (!TABS.some(function (t) { return t[0] === k; })) k = 'rates';
         ST.tab = k; _pref('tab', k);
-        Array.prototype.forEach.call(document.querySelectorAll('#wd_tabs [data-tab]'), function (b) { var on = b.getAttribute('data-tab') === k; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        Array.prototype.forEach.call(document.querySelectorAll('#wd_tabs [data-tab]'), function (b) { var on = b.getAttribute('data-tab') === k; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.setAttribute('tabindex', on ? '0' : '-1'); });
         var ts = _byId('wd_tabsel'); if (ts && ts.value !== k) ts.value = k;
         TABS.forEach(function (t) { var w = _byId('wd_cw_' + t[0]); if (w) w.style.display = t[0] === k ? '' : 'none'; });
         _renderChart();
@@ -928,10 +930,15 @@
     function _verdicts(sum) {
         var out = [], s = _vsim();
         if (ST.err) out.push({ st: 'fail', t: '✗ ' + ST.err.msg });
-        if (sum && sum.gate && _fin(sum.gate.dq)) {
-            var dq = Math.abs(sum.gate.dq) * 100, dp = Math.abs(sum.gate.dp) * 100, ok = dq <= 2 && dp <= 1;
-            out.push({ st: ok ? 'ok' : 'warn', t: (ok ? '✓ ' : '⚠ ') + 'Distance from the nodal operating point: rate ' + _fmt(dq, 2) + ' %, BHP ' + _fmt(dp, 2) + ' % (gate 2 % / 1 %)' });
+        var gt = sum && sum.gate;
+        if (gt && gt.nodal && _fin(gt.nodal.dq) && _fin(gt.nodal.dp)) {
+            // the distance of the last 10-min means from the nodal operating point (review fix: not the drift between windows)
+            var dq = gt.nodal.dq * 100, dp = gt.nodal.dp * 100, ok = !gt.changed && dq <= 2 && dp <= 1;
+            out.push({ st: ok ? 'ok' : 'warn', t: (ok ? '✓ ' : '⚠ ') + 'Distance from the nodal operating point: rate ' + _fmt(dq, 2) + ' %, BHP ' + _fmt(dp, 2) + ' %' +
+                (gt.changed ? ' (the run changed the well: not gated)' : ' (gate 2 % / 1 %)') });
         }
+        if (gt && _fin(gt.dq) && _fin(gt.dp))
+            out.push({ st: 'info', t: (gt.steady ? 'Settled' : 'Still changing') + ' — drift over the last 10 min: rate ' + _fmt(Math.abs(gt.dq) * 100, 2) + ' %, BHP ' + _u(Math.abs(gt.dp), 'pressure', 2, 'psi') });
         if (sum && _fin(sum.massErr)) out.push({ st: Math.abs(sum.massErr) < 1e-6 ? 'ok' : 'warn', t: (Math.abs(sum.massErr) < 1e-6 ? '✓ ' : '⚠ ') + 'Mass balance error ' + sum.massErr.toExponential(1) + ' (cumulative, relative)' });
         if (sum && sum.endState) { var si = _stateInfo(sum.endState); out.push({ st: si.st === 'fail' ? 'fail' : si.st === 'warn' ? 'warn' : 'ok', t: (si.st === 'fail' ? '✗ ' : si.st === 'warn' ? '⚠ ' : '✓ ') + 'Well state at the end: ' + si.label }); }
         if (s && s.mock) out.push({ st: 'warn', t: '⚠ Stand-in engine: not a simulation' });
@@ -1000,7 +1007,7 @@
                 var ph = _phone(), key = (ph ? 'p' : 'd');
                 if (!ST.rwb || ST.rwb.__grid !== s.grid || ST.rwb.__key !== key) {
                     if (ST.rwb && ST.rwb.destroy) ST.rwb.destroy();
-                    ST.rwb = V.wellbore(cw, { grid: s.grid, traj: s.grid.traj, strings: (s.M || ST.M).well.strings, layer: 'phase', exaggerate: 25, aspect: 'fit', labels: true, particles: { on: false, max: 0 }, reduced: true, w: ph ? 270 : 360, h: ph ? 360 : 480, fixed: true });
+                    ST.rwb = V.wellbore(cw, { grid: s.grid, traj: s.grid.traj, strings: (s.M || ST.M).well.strings, layer: 'phase', exaggerate: 25, aspect: 'fit', labels: true, particles: { on: false, max: 0 }, reduced: true, liquid: _isGas(s.M || ST.M) ? 'condensate' : 'oil', w: ph ? 270 : 360, h: ph ? 360 : 480, fixed: true });
                 }
                 ST.rwb.__grid = s.grid; ST.rwb.__key = key;
                 fr.playing = false; fr.dtWall = 0; ST.rwb.draw(fr);
@@ -1046,18 +1053,18 @@
         '#wd_root .wd-more{position:relative}#wd_root .wd-more>summary{list-style:none;cursor:pointer;padding:6px 11px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-weight:600;background:var(--bg2)}' +
         '#wd_root .wd-more>summary::-webkit-details-marker{display:none}#wd_root .wd-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:210px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px}' +
         '#wd_root .wd-menu .btn{text-align:left}' +
-        '#wd_root .wd-more:not([open]) .wd-menu{display:none}@media (max-width:600px){#wd_root .wd-menu{right:auto;left:0}}' +
+        '#wd_root .wd-more:not([open]) .wd-menu{display:none}@media (max-width:600px){#wd_root .wd-more[open]{flex-basis:100%}#wd_root .wd-menu{position:static;margin-top:4px;min-width:0;box-shadow:none}}' +
         '#wd_root .wd-tl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 10px;align-items:center;margin:0 0 10px}#wd_root .wd-tl input[type=range]{width:100%;margin:0}' +
         '#wd_root .wd-tread{font-variant-numeric:tabular-nums;font-weight:700;font-size:13px}#wd_root .wd-trange{font-size:11px;color:var(--text3);grid-column:1/-1}' +
         '#wd_root .wd-strip{grid-column:1/-1;width:100%;height:26px;display:block}#wd_root .wd-marks{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}' +
         '#wd_root .wd-mk{display:inline-flex;gap:2px;align-items:center}#wd_root .wd-chip{padding:3px 9px;border-radius:12px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:11.5px;cursor:pointer}' +
         '#wd_root .wd-x{padding:2px 7px;font-size:11px;min-width:0}' +
-        '#wd_root .wd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-kpi{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:8px 11px;min-width:0}' +
         '#wd_root .wd-kpi.st-ok{border-left-color:var(--wd-ok)}#wd_root .wd-kpi.st-warn{border-left-color:var(--wd-warn)}#wd_root .wd-kpi.st-fail{border-left-color:var(--wd-fail)}#wd_root .wd-kpi.st-info{border-left-color:var(--accent)}' +
-        '#wd_root .wd-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-        '#wd_root .wd-kpi .kpi-v{font-size:17px;font-weight:700;color:var(--text);margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-        '#wd_root .wd-kpi .kpi-s{font-size:11px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wd_root .wd-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:normal;overflow-wrap:anywhere}' +
+        '#wd_root .wd-kpi .kpi-v{font-size:17px;font-weight:700;color:var(--text);margin-top:3px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere;line-height:1.2}' +
+        '#wd_root .wd-kpi .kpi-s{font-size:11px;color:var(--text3);margin-top:1px;white-space:pre-line;overflow-wrap:anywhere}' +
         '#wd_root .wd-main{display:grid;grid-template-columns:minmax(0,500px) minmax(0,1fr);gap:var(--wd-gap);margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-wbw{display:flex;gap:8px;align-items:flex-start}#wd_root .wd-wbw canvas{display:block;max-width:100%;border-radius:6px}' +
         '#wd_root #wd_cv_well{width:360px;height:480px}#wd_root #wd_cv_nav{width:72px;height:480px}' +
@@ -1074,7 +1081,7 @@
         '#wd_root .wd-v{font-size:12.5px;margin:3px 0}#wd_root .wd-v.ok{color:var(--wd-ok)}#wd_root .wd-v.warn{color:var(--wd-warn)}#wd_root .wd-v.fail{color:var(--wd-fail)}#wd_root .wd-v.info{color:var(--text2)}' +
         '#wd_root .wd-banner .wd-v{padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);margin:0 0 8px}#wd_root .wd-banner .btn{padding:3px 9px;font-size:11.5px;margin-left:6px}' +
         '#wd_root .wd-res{margin:var(--wd-gap) 0}#wd_root .wd-rvt{font-family:inherit;font-size:12.5px;font-weight:600;text-align:right}#wd_root .wd-rgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wd-gap)}' +
-        '#wd_root .wd-rkpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-rkpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-rcv{display:flex;flex-wrap:wrap;gap:var(--wd-gap);align-items:flex-start}#wd_root #wd_cv_rwell{width:360px;height:480px}#wd_root #wd_cv_rtrend{width:640px;height:220px}' +
         '#wd_root .wd-rcv .chart-wrap{max-width:100%;overflow:hidden}#wd_root .wd-csv{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg3)}' +
         '#wd_root .wd-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px;max-height:160px;overflow:auto;font-size:12px;margin:6px 0}' +
@@ -1140,10 +1147,10 @@
             _card('Wellbore', '<div class="fg" style="margin-bottom:8px">' + _fg('wd_layer', 'Colour by', { options: LAYERS, def: ST.layer }) + '</div>' +
                 '<div class="wd-wbw"><canvas id="wd_cv_well" tabindex="0" role="img" aria-label="Wellbore along the true trajectory: cells coloured by phase, the flow regime, liquid film, droplets and slugs moving at the local velocity"></canvas>' +
                 '<canvas id="wd_cv_nav" tabindex="0" role="img" aria-label="Navigator: the whole well with the zoom window"></canvas></div><div class="wd-hover" id="wd_hover"></div>') +
-            _card('Charts', '<div class="wd-tabs" id="wd_tabs" role="tablist" aria-keyshortcuts="[ ]">' + TABS.map(function (t) { return '<button type="button" role="tab" data-tab="' + t[0] + '" aria-selected="false">' + _esc(t[1]) + '</button>'; }).join('') + '</div>' +
+            _card('Charts', '<div class="wd-tabs" id="wd_tabs" role="tablist" aria-keyshortcuts="[ ]">' + TABS.map(function (t) { return '<button type="button" role="tab" id="wd_tab_' + t[0] + '" data-tab="' + t[0] + '" aria-controls="wd_cw_' + t[0] + '" aria-selected="' + (t[0] === ST.tab ? 'true' : 'false') + '" tabindex="' + (t[0] === ST.tab ? '0' : '-1') + '">' + _esc(t[1]) + '</button>'; }).join('') + '</div>' +
                 '<select class="wd-tabsel" id="wd_tabsel" aria-label="Chart">' + TABS.map(function (t) { return '<option value="' + t[0] + '">' + _esc(t[1]) + '</option>'; }).join('') + '</select>' +
                 '<div class="wd-chartmsg" id="wd_chartmsg"></div>' +
-                TABS.map(function (t) { return '<div class="wd-cw chart-wrap" id="wd_cw_' + t[0] + '"' + (t[0] === ST.tab ? '' : ' style="display:none"') + '><canvas id="wd_cv_' + t[0] + '" tabindex="0" role="img" aria-label="' + _esc(t[1]) + ' chart"></canvas></div>'; }).join('')) +
+                TABS.map(function (t) { return '<div class="wd-cw chart-wrap" id="wd_cw_' + t[0] + '" role="tabpanel" aria-labelledby="wd_tab_' + t[0] + '"' + (t[0] === ST.tab ? '' : ' style="display:none"') + '><canvas id="wd_cv_' + t[0] + '" tabindex="0" role="img" aria-label="' + _esc(t[1]) + ' chart"></canvas></div>'; }).join('')) +
             '</div>';
         var res = '<div id="wd_res" class="wd-res">' +
             '<div class="wd-rkpi" id="wd_rkpi"></div>' +
@@ -1190,7 +1197,7 @@
                 '<div class="wd-hint" style="grid-column:1/-1">Set the frequency on the toolbar (ESP Hz → Set); Set again after a trip restarts the pump.</div></div>', { id: 'wd_liftcard' });
         var cases = _card('Cases', '<div class="fg rp-skip"><div class="fg-item"><label for="wd_case_name">Case name</label><input type="text" id="wd_case_name" maxlength="60" placeholder="e.g. Bean-up to 32/64"></div>' +
                 '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="casesave">Save case with this well</button></div></div><div id="wd_cases" class="rp-skip"></div>', { id: 'wd_casecard' });
-        return '<div id="wd_root">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div>' + liftc + '</div>';
+        return '<div id="wd_root" tabindex="-1">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div>' + liftc + '</div>';
     }
 
     // ── events on #wd_root ───────────────────────────────────────────────────
@@ -1271,6 +1278,17 @@
         root.addEventListener('keydown', function (e) {
             var t = e.target, tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
             if (tag === 'INPUT' && t.type !== 'range' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            // review fix (WCAG 2.1.4): a chart tab moves between the tabs (roving tabindex); a focused button, summary or link keeps its own keys;
+            // the shortcuts act only with the focus on the page itself, a canvas or the timeline
+            var role = t && t.getAttribute ? t.getAttribute('role') : null;
+            if (role === 'tab') {
+                var ks = e.key, ix = TABS.map(function (x) { return x[0]; }).indexOf(t.getAttribute('data-tab')), nx = -1;
+                if (ks === 'ArrowRight') nx = (ix + 1) % TABS.length; else if (ks === 'ArrowLeft') nx = (ix + TABS.length - 1) % TABS.length;
+                else if (ks === 'Home') nx = 0; else if (ks === 'End') nx = TABS.length - 1;
+                if (nx >= 0 && ix >= 0) { _setTab(TABS[nx][0]); var nb = _byId('wd_tab_' + TABS[nx][0]); if (nb && nb.focus) nb.focus(); if (e.preventDefault) e.preventDefault(); }
+                return;
+            }
+            if (t !== root && tag !== 'CANVAS' && !(tag === 'INPUT' && t.type === 'range')) return;
             if (tag === 'CANVAS' && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape' || e.key === '0' || ((e.key === '+' || e.key === '-') && t.id === 'wd_cv_well'))) return;   // the wellbore's own keys
             var k = e.key, sp = _span(), w = sp[1] - sp[0], cur = _curT(), done = true;
             if (k === ' ' || k === 'Spacebar') { if (tag === 'BUTTON') return; if (ST.playing) _pause('user'); else _play(); }
@@ -1356,7 +1374,7 @@
         csv: function (o) { return _csv(o, false); }, runFile: function () { return _runFile(false); }, load: _load, rerun: _rerun,
         scenario: _preset, scrub: _scrub, cont: _cont, mark: _mark, shut: _shutToggle, speed: _setSpeed, build: function () { var r = _build('test'); _renderAll(); return r; },
         caseSave: _caseSave, caseLoad: _caseLoad, caseRemove: _caseRemove, cases: _cases, evAdd: _evAdd, importPrism: _importPrism,
-        kpis: _kpis, summary: _summary, settings: _settings, tab: _setTab
+        kpis: _kpis, summary: _summary, settings: _settings, tab: _setTab, verdicts: function () { return _verdicts(_summary()); }
     };
     G.WTS_calcRegistry = G.WTS_calcRegistry || {};
     G.WTS_calcRegistry.welldyn = {

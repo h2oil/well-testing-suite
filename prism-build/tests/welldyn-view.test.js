@@ -470,6 +470,21 @@ module.exports = [
     },
   },
   {
+    name: 'VW15 marker labels never overlap (review fix): perforations and the end of the gauge at nearly the same MD are drawn one under the other',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const a = app(ctx), V = a.win.WTS_wd_view, g = buildGrid(a.win, 'vertical');
+      const cv = canvas(a, 360, 480), W = V.wellbore(cv, { grid: g, traj: g.traj, labels: true });
+      clearLog(cv);
+      W.draw(frame(g, { markers: [{ md: 9950, kind: 'perf', label: 'perforations' }, { md: 9960, kind: 'gauge', label: 'end of gauge' }, { md: 9990, kind: 'eot', label: 'EOT' }] }));
+      const ys = log(cv).filter((e) => e.op === 'fillText' && /^(perforations|end of gauge|EOT)$/.test(e.args[0])).map((e) => e.args[2]).sort((x, y) => x - y);
+      assert.strictEqual(ys.length, 3, 'three marker labels');
+      for (let i = 1; i < ys.length; i++) assert.ok(ys[i] - ys[i - 1] >= 11 - 1e-9, 'labels ' + ys.join(', ') + ' at least 11 px apart');
+      assert.ok(ys[ys.length - 1] <= 480 - 6 + 1e-9, 'inside the canvas');
+      W.destroy();
+    },
+  },
+  {
     name: 'VW12 hidden canvases draw at their fixed sizes (wellbore 360×480 CSS px, the report sizes), Metric labels on the depth axis follow the units layer',
     wp: WP, opts: false,
     run(_a, assert, ctx) {

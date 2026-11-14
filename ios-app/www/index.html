@@ -11160,7 +11160,7 @@ const RELEASE_NOTES = [
         ['calc', 'Transient engine', 'One-dimensional drift-flux model along measured depth on the survey: gas, oil or condensate, water and lift gas per cell, mixture momentum from the well\'s own lift correlation, mass balance checked every step. A steady run settles on the nodal operating point (rate within 2 %, bottom-hole pressure within 1 %).'],
         ['calc', 'Gas-well liquid loading', 'Holdup, pressure and flow regime per cell; Turner and Coleman critical rates (Belfroid inclination correction optional, provisional); well state stable, unloading, marginal, loading or dead; continuous foamer and intermittent open / shut cycles.'],
         ['calc', 'Shut-in and build-up', 'Afterflow, phase segregation, gas cap and liquid settling in the wellbore, and a radial line-source reservoir with superposition for the build-up (provisional).'],
-        ['calc', 'Oil, gas lift and ESP', 'Natural-flow start-up from static and heading near the stable limit; gas-lift unloading valve by valve on the installed design with casing and tubing pressures; ESP start-up and frequency ramp on the pump node. Provisional.'],
+        ['calc', 'Oil, gas lift and ESP', 'Natural-flow start-up from static; a heading detector flags sustained wellhead-pressure oscillations (provisional); gas-lift unloading valve by valve on the installed design with casing and tubing pressures; ESP start-up and frequency ramp on the pump node. Provisional.'],
         ['ux', 'Controls and views', 'Play, pause, shut in, open, speed ×1 to ×1000, choke and bean schedule in time, timeline scrub with Continue from here; animated wellbore on the true trajectory with a close-up and readout, depth log, rate and pressure charts and the live point on the IPR / VLP plot.'],
         ['report', 'Recorder, files and reports', 'Marked windows, CSV export of chosen columns in field or Metric units, a replay file that reopens a run, saved cases kept with the well in the project file, page report and Quick Report entry. Help guide and two tasks. The App Store version is 4.6.'],
       ] },
@@ -118665,7 +118665,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 6fc9b699,view-p 780 1688 33460de8",
+    "releasenotes": "view-d 1280 800 b3a00091,view-p 780 1688 33460de8",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -118679,7 +118679,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
-    "welldyn": "gl-d 1280 800 c8cc50df,run-d 1280 800 38b60d3b,wb-p 512 754 6ebb4612",
+    "welldyn": "gl-d 1280 800 1fd0260c,run-d 1280 800 b2fbe46d,wb-p 512 754 9f668399",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
     "wellperf": "env-d 948 487 cf4cee67,esp-d 930 439 38fd4894,esp-p 668 748 4878e542,gld-d 930 568 1558703a,ltab-d 948 427 22914a05,sys-d 531 421 3222ff8c,wells-d 930 521 4d48dd2d",
@@ -118688,7 +118688,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 227;
-  M.bytes = 8254838;   // total size of the image files (the offline download label)
+  M.bytes = 8251576;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -119548,7 +119548,7 @@ function Y(l, id, d, t) { return inp(l, 'wd_' + id, d, t); }
 function ds(id, view, t, alt, a, sc) { return { id: id, view: view, target: t, alt: alt, caption: alt, setup: [{ action: 'welldynRun', args: a }, { scroll: sc }] }; }
 var PV = 'provisional — not verified against a published example';
 var welldyn = {
-  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: '972e7561', units: 'dual',
+  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: 'efe4ffb2', units: 'dual',
   keywords: ['transient', 'liquid loading', 'unloading', 'shut-in', 'start-up', 'gas lift', 'ESP', 'replay'],
   purpose: 'Plays a Well Performance well in time: start-up, choke changes, shut-in and build-up, loading and unloading, foamer, cycles, gas lift and ESP.',
   what: ['A 1-D transient model of the well on the same model as [[wellperf]]: no re-entry. Mass of gas, oil and water per cell along MD; pressure from the gradient correlation of the well, and a [[glossary#driftflux|drift flux]] model at low velocity. A steady run settles on the nodal operating point.',
@@ -119567,7 +119567,7 @@ var welldyn = {
   Y('Prior history', 'prior', 'From the start'), Y('Temperature', 'temp', 'Frozen (default)', 'Relaxation: provisional.'), Y('Liquid fallback', 'fallback', 'Off', 'Provisional; on in the gas-well presets.'),
   Y('Belfroid correction', 'belfroid', 'Off', 'Provisional.'), Y('Back-flow to the formation', 'backflow', 'On', 'Provisional.'), Y('Speed', 'speed', '×60'), Y('Bean', 'bean', null, 'Strokes the choke in time.'),
   Y('Foamer ppm', 'foam', '1000'), Y('Lift gas', 'glq', '{{600|gasRateSmall}}'), Y('ESP Hz', 'hz', '60'), Y('Trigger', 'cyc_mode', 'Timer (open / shut times)', 'Intermittent production.')],
-  notDocumented: [{ pattern: '^wd_(play|step|shut|bean_go|psep_go|foam_on|foam_off|lift_go|esp_go|mark|file|reset|cont|scrub|go_wellperf|tabsel|layer|csv_\\w+|ev_\\w+|case_name|notes)$', why: 'toolbar, timeline, export, events, cases (the steps)' },
+  notDocumented: [{ pattern: '^wd_(play|step|shut|bean_go|psep_go|foam_on|foam_off|lift_go|esp_go|mark|file|reset|cont|scrub|go_wellperf|tabsel|tab_\\w+|layer|csv_\\w+|ev_\\w+|case_name|notes)$', why: 'toolbar, timeline, export, events, cases (the steps)' },
   { pattern: '^wd_(psep|static|liquid|closure|prior_h|k|h|phi|ct|mu|B|rw|re|S|ramp|cyc_\\w+)$', why: 'details of the scenario, reservoir and lift cards' }],
   outputs: [o('KPI strip', 'Well state, bean, rate, wellhead and bottom-hole pressure, p̄r, rate over critical rate (gas), casing pressure (gas lift), pump intake (ESP), time and speed.'),
   o('Wellbore', 'The well on its true trajectory, cells coloured by phase, regime, pressure, holdup or velocity; liquid film, droplets and slugs move at the local velocity. Hover for a cell; Close-up for one cell.'),
@@ -119575,18 +119575,18 @@ var welldyn = {
   o('Run summary', 'Rates, pressures, cumulative volumes, time loading, the build-up, the distance from the nodal point, the state timeline.')],
   verdicts: [vd('✗', 'set up in Well Performance', 'Open Well Performance and enter the well.'), vd('✗', 'Set up this well', 'The missing items are listed.'), vd('✓', 'from Well Performance', 'The model is complete.'),
   vd('✓', 'None active so far', 'Only verified methods so far.'), vd('⚠', 'provisional — not verified', 'Listed methods are provisional.'),
-  vd('✓', 'Distance from the nodal operating point', 'Within 2 % rate, 1 % BHP.'), vd('⚠', 'Distance from the nodal operating point', 'Not settled, or the run changed the well.'),
+  vd('✓', 'Distance from the nodal operating point', 'Within 2 % rate, 1 % BHP.'), vd('⚠', 'Distance from the nodal operating point', 'Outside 2 % / 1 %, or the run changed the well.'),
   vd('✓', 'Mass balance error', 'Round-off.'), vd('⚠', 'Mass balance error', 'Report it.'), vd('✓', 'Well state at the end', 'Stable, lifting or running.'), vd('⚠', 'Well state at the end', 'Marginal, loading, heading, dying.'),
   vd('✗', 'Well state at the end', 'Dead or tripped.'), vd('⚠', 'The well model changed', 'Rebuild.'), vd('⚠', 'The scenario settings changed', 'Reset to apply.')],
   example: { title: 'The Oil example of Well Performance', setup: ['Load **Oil** in Well Performance (bean 32, p̄r {{3000|pressure}}), open Well Dynamics, **▶ Play** to 2 h.'],
-  result: ['Start-up for about 0.2 h, then Stable at {{916|liquidRate}}, BHP {{2542|pressure}}; the nodal point is {{914|liquidRate}} at {{2543|pressure}}: ✓ distance 0 % / 0.04 %.'],
+  result: ['Start-up for about 0.2 h, then Stable at {{916|liquidRate}}, BHP {{2542|pressure}}; the nodal point is {{914|liquidRate}} at {{2543|pressure}}: ✓ distance 0.2 % / 0.04 %.'],
   check: { kind: 'compute', fn: 'WTS_wd_engine.create', input: { fluid: { type: 'oil', api: 35, sgg: 0.65, gor: 500, wc: 0.3, sgw: 1.07, psep_psig: 100, tsep_F: 80 },
     res: { model: 'pi', pr: 3000, T_F: 200, params: { J: 2 } }, well: { survey: [[0, 0], [8000, 8000]], midPerfMd: 8000, strings: [{ kind: 'tubing', id: 2.441, od: 2.875, topMd: 0, botMd: 8000 }],
     geo: { points: [[0, 60], [8000, 200]] }, heat: { tht_F: 120 } }, surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, n: 60, 'R0.op.q': 914.0, 'R0.pwf': 2543.0, 'state.surface.qL': 914.0, 'state.surface.regime': 'critical' } } },
   parts: [{ id: 'loading', title: 'Gas-well loading and unloading', what: ['Critical velocity per cell, Turner or Coleman by the nodal rule (provisional), with the Belfroid inclination correction as an option. States: stable, unloading, marginal, loading up, dead. With liquid fallback on, the liquid below the critical velocity falls back and builds up; a bean-up or foamer unloads it. See [[task#wdload|the task]].'] },
   { id: 'shutin', title: 'Shut-in and build-up', what: ['**Shut in** closes the choke; the formation keeps flowing for a while (afterflow), gas rises and liquid settles. With **Transient radial (superposition)** the bottom-hole pressure builds up; the Run summary gives the build-up for [[prism]].'] },
-  { id: 'oil', title: 'Start-up and heading', what: ['From a static well (**Start**: static) the well unloads its column and settles, or dies. Near the static stability limit an oil well may oscillate: [[glossary#flowheading|flow heading]] is flagged from the wellhead pressure history (provisional).'] },
+  { id: 'oil', title: 'Start-up and heading', what: ['From a static well (**Start**: static) the well unloads its column and settles, or dies. A detector flags [[glossary#flowheading|flow heading]] when the wellhead pressure swings with a sustained amplitude (provisional; not seen on the example wells, which settle or die).'] },
   { id: 'lift', title: 'Gas lift and ESP', what: ['Gas lift: the casing and the installed valves of the Well Performance design; valves open and close on their pressures and the operating valve steps down (provisional). ESP: the pump curve of the model at the drive frequency, ramp, pump-off, gas lock and underload (provisional). See [[task#wdgl|the task]].'] },
   { id: 'cycles', title: 'Foamer and cycles', what: ['**Foamer ppm** lowers the surface tension and so the critical rate (provisional). Intermittent production: a timer or pressure programme of shut-ins and reopenings (provisional controller).'] },
   { id: 'record', title: 'Recorder, files and cases', what: ['Every run is recorded. **CSV of the run…**: columns, window, field or Metric units. **Save replay file (.wdrun)** reopens the run with its events; **Save case with this well** keeps the scenario in the well model and the project file.'] }],
@@ -120495,7 +120495,7 @@ S('welldyn', 'Bean up on the toolbar, or Foamer ppm On, and watch it unload; Mar
 { id: 'wdgl', title: 'Unload a gas-lift well step by step', purpose: 'Valve by valve from a killed well to lifting.', steps: [
 S('wellperf', 'Load the Gas lift example; when its valve design is done, Use this design in step ④ installs the valves.', 'installed valves'),
 S('welldyn', 'Preset Gas-lift unloading, Apply preset, Play; the Lift chart shows the casing pressure and the operating valve stepping down ([[welldyn#lift|Gas lift and ESP]]).', 'operating valve, casing pressure'),
-S('welldyn', 'Check that it ends lifting on the nodal point (Checks); export the run or save it as a case.')] }];
+S('welldyn', 'Checks gives the distance from the nodal point; it closes as deeper valves take over (run longer to unload fully). Export or save a case.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
@@ -152385,7 +152385,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         fallback: { label: 'Liquid fallback below the critical velocity', verified: false },
         turner: { label: 'Turner et al. (1969) critical velocity', verified: false },
         coleman: { label: 'Coleman et al. (1991) critical velocity', verified: false },
-        belfroid: { label: 'Belfroid et al. (2008) inclination correction', verified: false },
+        belfroid: { label: 'Belfroid et al. (2008) inclination correction (β floored at 5° from horizontal, ASSUMED)', verified: false },
         foamer: { label: 'Foamer surface-tension factor', verified: false },
         regime_lowv: { label: 'Low-velocity regime labels (Taitel, Barnea & Dukler; Taitel & Dukler)', verified: false },
         gl_valves: { label: 'Annulus, IPO valves, Thornhill-Craver', verified: false },
@@ -152446,6 +152446,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         churn: 'churn', transition: 'churn', froth: 'churn', annular: 'annular', mist: 'mist', segregated: 'stratified', stratified: 'stratified', wavy: 'stratified',
         gas: 'gas', homogeneous: 'unknown' };
     var PAT_CACHE = {};
+    // Belfroid floor: β (from horizontal) ≥ 5° so a horizontal or up-dip cell keeps a finite v_c (the correlation → 0 at β = 0);
+    // ASSUMED, provisional (§4.11, method table)
+    var BEL_BETA_MIN = 5 * Math.PI / 180;
     function _patIdx(s) {
         if (s == null) return RIX.unknown;
         if (Object.prototype.hasOwnProperty.call(PAT_CACHE, s)) return PAT_CACHE[s];
@@ -153855,14 +153858,16 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var F = C.F, water = (+F.wgr > 0) || (+F.wc > 0);
         var whp = S.surface.thp, method = !_fin(whp) ? 'turner' : (whp < 500 ? 'coleman' : 'turner');
         var coef = LOAD[method].coef, bel = !!this.o.loading.belfroid;
-        var best = -1, bestB = -1, bestMd = null, bestTvd = null, vrMin = Infinity, below = -1, belowMd = null;
+        var best = -1, bestB = -1, bestMd = null, bestTvd = null, bestBMd = null, bestBTvd = null, vrMin = Infinity, below = -1, belowMd = null;
         var eot = g.eotCell;
         for (var i = 0; i < n; i++) {
             var rhoL = water ? X.rhoW[i] : X.rhoO[i], sig = (water ? X.sigW[i] : X.sigO[i]) * cs.sigF[i], rhoG = X.rhoG[i], z = X.z[i];
             if (!(rhoL > rhoG && rhoG > 0 && sig > 0 && z > 0)) { cs.vc[i] = 0; continue; }
             var base = Math.pow(sig, 0.25) * Math.pow(rhoL - rhoG, 0.25) / Math.sqrt(rhoG), vc = coef * base;
-            var beta = Math.PI / 2 - _clamp(X.inc[i], 0, 90) * Math.PI / 180;
-            var fb = (beta > 0 && beta < Math.PI / 2) ? Math.pow(Math.sin(1.7 * beta), 0.38) / 0.74 : 1;
+            // β from horizontal in radians for every cell (up-dip cells fold back: θ → 180° − θ); floored at BEL_BETA_MIN (provisional, §4.11)
+            var th = _clamp(X.inc[i], 0, 180); th = Math.min(th, 180 - th);
+            var beta = Math.max(Math.PI / 2 - th * Math.PI / 180, BEL_BETA_MIN);
+            var fb = Math.pow(Math.sin(1.7 * beta), 0.38) / 0.74;
             var vcB = vc * fb, use = bel ? vcB : vc;
             cs.vc[i] = use; X.vcv[i] = vc; X.vcb[i] = vcB;
             if (!this.gasWell()) continue;
@@ -153871,14 +153876,14 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var isBelow = eot >= 0 && i < eot;
             if (isBelow) { var qu = bel ? qb2 : qv; if (qu > below) { below = qu; belowMd = g.cells[i].mdc; } continue; }
             if (qv > best) { best = qv; bestMd = g.cells[i].mdc; bestTvd = g.cells[i].tvdc; }
-            if (qb2 > bestB) bestB = qb2;
+            if (qb2 > bestB) { bestB = qb2; bestBMd = g.cells[i].mdc; bestBTvd = g.cells[i].tvdc; }
             var vr = cs.vg[i] > 0 && use > 0 ? cs.vg[i] / use : 0; if (vr < vrMin) vrMin = vr;
         }
         if (!this.gasWell()) { L.method = null; return; }
         L.method = method; L.both = _fin(whp) && whp >= 500 && whp <= 1000; L.liquid = water ? 'water' : 'condensate';
         L.qcVert_MMscfd = best > 0 ? best : null; L.qcBelfroid_MMscfd = bestB > 0 ? bestB : null; L.belfroid = bel;
         L.qc_MMscfd = bel ? L.qcBelfroid_MMscfd : L.qcVert_MMscfd;
-        L.limitingMd = bestMd; L.limitingTvd = bestTvd;
+        L.limitingMd = bel ? bestBMd : bestMd; L.limitingTvd = bel ? bestBTvd : bestTvd;     // at the maximum of the q_c in use (§4.11)
         L.ratio = L.qc_MMscfd > 0 ? (S.surface.qgForm / 1000) / L.qc_MMscfd : null;
         L.vRatioMin = _fin(vrMin) ? vrMin : null;
         L.belowEot = below > 0 ? { qc_MMscfd: below, md: belowMd } : null;
@@ -153895,9 +153900,13 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var iface = this._interfaceCell();
         for (var i = 0; i < n; i++) {
             var j = Math.abs(cs.vm[i]), a = cs.ag[i], r;
-            if (j >= jhi && X.haveCorr[i]) r = X.pat[i];
+            // review fix: a correlation 'segregated' / stratified pattern is kept only in a near-horizontal cell (inc > 80°); in a vertical or
+            // deviated cell the low-velocity classification below labels it (annular / churn / slug …), so the view never puts liquid on
+            // the low side of a vertical tubing
+            var corrOk = j >= jhi && X.haveCorr[i] && !(X.pat[i] === RIX.stratified && X.inc[i] <= 80);
+            if (corrOk) r = X.pat[i];
             else {
-                low = true;
+                if (!(j >= jhi && X.haveCorr[i])) low = true;
                 if (a < 0.02) r = RIX.liquid; else if (a >= 0.98) r = RIX.gas;
                 else if (X.inc[i] > 80) r = RIX.stratified;
                 else if (a < 0.25) r = RIX.bubble; else if (a < 0.75) r = RIX.slug;
@@ -154132,7 +154141,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.create = create; NS.COMP = COMP; NS.REGIMES = REGIMES; NS.STATES = STATES; NS.STATE_ORDER = STATE_ORDER; NS.CHANNELS = CHANNELS; NS.METHODS = METHODS;
     NS.VERSION = VERSION; NS.engineId = ENGINE_ID; NS.hash = hash; NS.canon = canon; NS.PROVISIONAL = PROVISIONAL;
     NS.GILBERT_YC = function () { return (G.WTS_wp_system && _fin(G.WTS_wp_system.GILBERT_YC)) ? G.WTS_wp_system.GILBERT_YC : 0.588; };
-    NS.DF = DF; NS.buildGrid = buildGrid; NS._Sim = Sim;
+    NS.BEL_BETA_MIN = BEL_BETA_MIN; NS.DF = DF; NS.buildGrid = buildGrid; NS._Sim = Sim;
 })();
 
 // ─── END 49-calc-wd-engine ─────────────────────────────────────────────
@@ -154164,7 +154173,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //            pOpen_psig after minShut_h; shut when the gas rate falls below qClose_Mscfd or THP below pClose_psig after minOpen_h). Each
 //            open period is booked: liquid and gas produced, tubing liquid at the open and at the shut-in (the liquid removed per cycle).
 //   heading  oil wells: labels heading when the THP ring (30 s samples, last 3 h) shows ≥ 3 peak pairs with a peak-to-peak above 5 % of
-//            the mean and a period of 2 min – 3 h (provisional thresholds, Q15). Heading is not imposed: it emerges, or the well dies.
+//            the mean, a period of 2 min – 3 h and a sustained amplitude (last peak-to-peak ≥ 0.8 × the first; review fix) (provisional
+//            thresholds, Q15). Heading is not imposed: it emerges, or the well dies (not reproduced on the test wells, §11.7).
 //   gaslift  'nodal' — the lift gas q_inj enters the tubing cell above the R0.lift.injMd break as a lift-gas (I) source (the gate, G5;
 //            identity with the nodal C.gl.Finj); 'valves' (default when the model has installed valves) — the annulus is one control
 //            volume from the surface to the packer holding a lift-gas mass m_a and a liquid column (the model's water) of volume V_al
@@ -154208,7 +154218,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         esp: Object.freeze({ ramp_Hz_s: 1, tauM_s: 0.5, kStop: 1e7, kCheck: 1e7, lockTau_s: 10, qCheck: 1e-4, motorFactor: 1.25,
             pumpoff: Object.freeze({ pInt_psia: 50, qFrac: 0.05, fMin: 30, hold_s: 60, pLock_psia: 30, pRestart_psia: 150, idle_s: 900 }), gaslock: Object.freeze({ gvf: 0.3, hold_s: 60, lock: 0.5, relock_s: 30 }),
             underload: Object.freeze({ load: 0.4, hold_s: 30, fMin: 30 }) }),
-        heading: Object.freeze({ every_s: 30, window_s: 10800, pp: 0.05, pairs: 3, periodMin_s: 120, periodMax_s: 10800 }),
+        heading: Object.freeze({ every_s: 30, window_s: 10800, pp: 0.05, pairs: 3, periodMin_s: 120, periodMax_s: 10800, sustain: 0.8 }),
         cycle: Object.freeze({ minOpen_h: 0, minShut_h: 0 }),
         multipoint_s: 600
     });
@@ -154372,11 +154382,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (dir === 0 && Math.abs(p - P[0]) >= th) dir = p > P[0] ? 1 : -1;
         }
         var maxima = ext.filter(function (e) { return e.max; }), pairs = 0, periods = [];
-        for (var a = 1; a < ext.length; a++) if (ext[a - 1].max && !ext[a].max && ext[a - 1].p - ext[a].p >= th) pairs++;
+        var pp = [];
+        for (var a = 1; a < ext.length; a++) if (ext[a - 1].max && !ext[a].max && ext[a - 1].p - ext[a].p >= th) { pairs++; pp.push(ext[a - 1].p - ext[a].p); }
+        // sustained (review fix): the last peak-to-peak ≥ sustain × the first, so a decaying oscillation (the THP tail after an unloading) is not heading
+        var sus = _fin(+o.sustain) ? +o.sustain : 0.8, sustained = pp.length >= 2 && pp[pp.length - 1] >= sus * pp[0];
         for (var b = 1; b < maxima.length; b++) periods.push(maxima[b].t - maxima[b - 1].t);
         var per = periods.length ? periods.reduce(function (s, x) { return s + x; }, 0) / periods.length : NaN;
         var amp = 0; for (var c = 1; c < ext.length; c++) amp = Math.max(amp, Math.abs(ext[c].p - ext[c - 1].p));
-        return { pairs: pairs, period_s: per, amp: amp, mean: mean, heading: pairs >= o.pairs && _fin(per) && per >= o.periodMin_s && per <= o.periodMax_s };
+        return { pairs: pairs, period_s: per, amp: amp, mean: mean, sustained: sustained,
+            heading: pairs >= o.pairs && sustained && _fin(per) && per >= o.periodMin_s && per <= o.periodMax_s };
     }
     var HEADING = {
         label: 'Oil-well heading detector', verified: false, provisional: PROVISIONAL,
@@ -154901,7 +154915,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   WTS_wd_rec.fromFile(obj | text) → {ok, run, rec, warnings, code?: 'FORMAT'|'VERSION'|'TOO_BIG'}
 //   WTS_wd_rec.compare(stored, rerun, o?) → {ok, n, firstDiff_t, maxRel, maxDp}   the cross-engine replay check (R25: 0.5 % rates, 1 psi)
 //   WTS_wd_rec.summarize(rec, sim?) → Summary (§3.8)
-//   WTS_wd_rec.RUN_FORMAT 'wts-welldyn-run', RUN_VERSION 1, EXT '.wdrun', MAX_FILE 5 MB (snapshots dropped above), MAX_OPEN 64 MB,
+//   WTS_wd_rec.RUN_FORMAT 'wts-welldyn-run', RUN_VERSION 1, EXT '.wdrun', MAX_FILE 5 MB (snapshots thinned above, dropped only when the kept set does not fit), MAX_OPEN 64 MB,
 //   WTS_wd_rec.engineId() (the engine's fingerprint, else this module's of the same function list), hash(o), channelMeta()
 //
 //   WTS_wd_cases.list(M) → Case[] (M.dyn.cases), save(case) → the WTS_wp_model.write result (≤ 20 cases, ≤ 24 kB of dyn: the oldest
@@ -155206,6 +155220,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var head = cols.map(function (k) {
             var m = channelMeta(k);
             if (k === 't') return _cell('Time (s)', sep);
+            if (k === 'state' && o.stateNames) return _cell('Well state', sep);     // names in the cells, no index unit (review fix)
             var un = _unitLabel(m, sys);
             return _cell(m.label + (un ? ' (' + un + ')' : ''), sep);
         });
@@ -155259,9 +155274,40 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             summary: meta.summary || null,
             hash: _hash({ model: model, settings: settings, events: events })
         };
-        var size = JSON.stringify(run).length;
-        if (size > (meta.maxBytes || MAX_FILE)) { run.snaps = null; run.notes = ['snapshots dropped: the file would exceed ' + Math.round((meta.maxBytes || MAX_FILE) / 1048576) + ' MB']; }
+        var size = JSON.stringify(run).length, maxB = meta.maxBytes || MAX_FILE;
+        if (size > maxB) {
+            var th = _thinSnaps(rec, run.snaps, size, maxB);
+            if (th) { run.snaps = th.snaps; run.notes = ['snapshots thinned to every ' + th.every_s + ' s (kept at the start, the end, the events, the marks and the state changes) to keep the file under ' + Math.round(maxB / 1048576) + ' MB']; }
+            else { run.snaps = null; run.notes = ['snapshots dropped: the file would exceed ' + Math.round(maxB / 1048576) + ' MB']; }
+        }
         return run;
+    }
+    // review fix: thin the snapshots instead of dropping them all. The first and the last snapshot and the one at (or just before) every event,
+    // mark edge and state change are kept; every second one of the rest goes, repeatedly, until the file fits (the interval doubles each
+    // round). Returns {snaps, every_s} or null when even the kept set does not fit.
+    function _thinSnaps(rec, sn, size, maxB) {
+        var list = sn && sn.list, frames = sn && sn.frames, N = list ? list.length : 0;
+        if (N < 3) return null;
+        var sz = new Array(N), sum = 0;
+        for (var i = 0; i < N; i++) { sz[i] = JSON.stringify(list[i]).length + (frames && frames[i] ? JSON.stringify(frames[i]).length : 4) + 2; sum += sz[i]; }
+        var base = size - sum, keyT = [];
+        (rec.events() || []).forEach(function (e) { if (e && _fin(e.t)) keyT.push(e.t); });
+        (rec.marks() || []).forEach(function (m) { if (m && _fin(m.t0)) { keyT.push(m.t0); if (_fin(m.t1)) keyT.push(m.t1); } });
+        var st = rec.series('state'), T = rec.times();
+        if (st) for (var j = 1; j < st.length; j++) if (st[j] !== st[j - 1] && _fin(st[j])) keyT.push(T[j]);
+        var prot = {}; prot[0] = true; prot[N - 1] = true;
+        keyT.forEach(function (t) { var b = -1; for (var k = 0; k < N; k++) { if (list[k].t <= t + 1e-9) b = k; else break; } if (b >= 0) prot[b] = true; });
+        var idx = []; for (var a = 0; a < N; a++) idx.push(a);
+        var every = rec.snapEvery_s, est = size;
+        while (est > maxB) {
+            var nx = [], odd = false, total = base;
+            for (var q = 0; q < idx.length; q++) { var ii = idx[q]; if (prot[ii]) { nx.push(ii); continue; } odd = !odd; if (odd) nx.push(ii); }   // keep, drop, keep, …
+            if (nx.length === idx.length) return null;
+            idx = nx; every *= 2;
+            for (var r = 0; r < idx.length; r++) total += sz[idx[r]];
+            est = total;
+        }
+        return { every_s: every, snaps: { every_s: every, list: idx.map(function (x) { return list[x]; }), frames: frames ? idx.map(function (x) { return frames[x]; }) : frames } };
     }
     function _appVer() { try { var R = G.RELEASE_NOTES; return (R && R[0] && R[0].ver) ? String(R[0].ver) : ''; } catch (e) { return ''; } }
     function fromFile(src) {
@@ -155362,7 +155408,22 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
         }
         var gate = null;
-        if (sim && typeof sim.steadyCheck === 'function') { try { var g = sim.steadyCheck(); if (g && _fin(g.dq)) gate = { dq: g.dq, dp: g.dp, ampQ: g.ampQ, ampP: g.ampP }; } catch (e) { gate = null; } }
+        // gate (review fix): dq / dp = the drift between the last two 10-min windows (dq relative, dp in psi); nodal.dq / nodal.dp = the relative
+        // distance of the last window's means from the nodal operating point R0 (as welldyn-validate X1); changed = an event other than
+        // 'open' changed the well during the run (the distance is then not gated)
+        if (sim && typeof sim.steadyCheck === 'function') {
+            try {
+                var g = sim.steadyCheck();
+                if (g && _fin(g.dq)) {
+                    gate = { dq: g.dq, dp: g.dp, ampQ: g.ampQ, ampP: g.ampP, qMean: g.qMean, pwfMean: g.pwfMean, steady: !!g.steady, nodal: null, changed: false };
+                    var R0 = sim.R0 || (sim.ref && sim.ref.R0);
+                    if (R0 && R0.op && _fin(R0.op.q) && R0.op.q !== 0 && _fin(R0.pwf) && R0.pwf !== 0)
+                        gate.nodal = { dq: Math.abs(g.qMean - R0.op.q) / Math.abs(R0.op.q), dp: Math.abs(g.pwfMean - R0.pwf) / Math.abs(R0.pwf), q: R0.op.q, pwf: R0.pwf };
+                    var evl = []; try { evl = rec.events() || []; } catch (e2) { evl = []; }
+                    gate.changed = evl.some(function (e3) { return e3 && e3.type && e3.type !== 'open'; });
+                }
+            } catch (e) { gate = null; }
+        }
         var prior = null; try { prior = _clone(sim && sim.opts && sim.opts.reservoir && sim.opts.reservoir.prior) || null; } catch (e) { prior = null; }
         var prov = []; try { prov = (sim && sim.state && sim.state.provisional) ? sim.state.provisional.slice() : []; } catch (e) { prov = []; }
         return {
@@ -156196,7 +156257,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             }
             across(frame.liquidTopMd, PH.water, 'liquid top', false);
             across(frame.gasCapMd, T.yellow, 'gas cap', true);
-            // markers
+            // markers (labels collected and placed after the loop without overlaps — review fix)
+            var mLabels = [];
             (frame.markers || []).forEach(function (mk) {
                 if (!mk || !_fin(mk.md) || mk.md < g.md0 || mk.md > g.md1) return;
                 var gc = null; vis.forEach(function (c) { if (mk.md >= c.a && mk.md <= c.b) gc = c; });
@@ -156219,8 +156281,23 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 } else {           // eot and anything else: a bar across
                     ctx.strokeStyle = T.text; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(l[0], l[1]); ctx.lineTo(r[0], r[1]); ctx.stroke(); ops += 5;
                 }
-                if (mk.label && spec.labels !== false) { ctx.fillStyle = T.text2; ctx.font = _font(9); ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(String(mk.label).slice(0, 18), Math.min(l[0], r[0]) - 6, c0[1]); ops += 5; }
+                if (mk.label && spec.labels !== false) mLabels.push({ text: String(mk.label).slice(0, 18), x: Math.min(l[0], r[0]) - 6, y: c0[1] });
             });
+            if (mLabels.length) {
+                // sort by Y; a label closer than the font height + 2 px to the previous one at a similar X moves down below it; a stack that
+                // runs past the bottom is shifted up as a whole
+                var LH = 11, yMax = sz.h - 6; mLabels.sort(function (a, b) { return a.y - b.y; });
+                for (var li = 1; li < mLabels.length; li++) for (var lj = 0; lj < li; lj++) {
+                    if (Math.abs(mLabels[lj].x - mLabels[li].x) < 90 && mLabels[li].y < mLabels[lj].y + LH) mLabels[li].y = mLabels[lj].y + LH;
+                }
+                var over = mLabels.length ? mLabels[mLabels.length - 1].y - yMax : 0;
+                if (over > 0) for (var lk = mLabels.length - 1; lk >= 0; lk--) {
+                    var cap = lk === mLabels.length - 1 ? yMax : mLabels[lk + 1].y - LH;
+                    if (Math.abs(mLabels[lk].x - mLabels[mLabels.length - 1].x) < 90 && mLabels[lk].y > cap) mLabels[lk].y = cap;
+                }
+                ctx.fillStyle = T.text2; ctx.font = _font(9); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                mLabels.forEach(function (lb) { ctx.fillText(lb.text, lb.x, lb.y); ops += 5; });
+            }
             // regime labels: one per run of equal regime, at the middle of the run, right of the pipe, no overlaps
             if (spec.labels !== false && rg) {
                 var boxes = [], runs = [], cur = null;
@@ -157063,7 +157140,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             rr('Intermittent (' + (c.mode === 'pressure' ? 'by pressure' : 'timer') + ')', 'cycle ' + c.n + ', ' + (c.phase === 'open' ? 'open' : 'shut in') + (c.next ? ' · next ' + (c.next.type === 'open' ? 'open' : 'shut-in') + ' at ' + _hms(c.next.t) : ''));
             if (last) rr('Last cycle', _u(last.liq_bbl, 'volume', 1, 'bbl') + ' liquid produced · ' + _u(last.removed_bbl, 'volume', 1, 'bbl') + ' removed from the tubing · ' + _fmt(last.gas_Mscf, 0) + ' Mscf gas');
         }
-        if (L && L.heading) rr('Heading check', L.heading.heading ? 'heading: ' + L.heading.pairs + ' THP peak pairs, period ' + _fmt((L.heading.period_s || 0) / 60, 0) + ' min' : 'no heading (' + (L.heading.pairs || 0) + ' peak pairs in 3 h)');
+        if (L && L.heading) rr('Heading check', L.heading.heading ? 'heading: ' + L.heading.pairs + ' THP peak pairs, period ' + _fmt((L.heading.period_s || 0) / 60, 0) + ' min' : 'no heading (' + (L.heading.pairs || 0) + ' peak pairs in ' + _hmin(Math.min(Math.max(0, S.t - (_fin(S.tOpen) ? S.tOpen : 0)), 10800)) + ')');
         return { rows: rows, tbl: tbl, lift: lift };
     }
     function _renderLift() {
@@ -157388,7 +157465,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     // ── rendering ────────────────────────────────────────────────────────────
     function _kpiHtml(label, val, sub, st) {
-        return '<div class="kpi wd-kpi st-' + (st || 'none') + '" role="group" aria-label="' + _esc(label + ' ' + val) + '"><div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' +
+        return '<div class="kpi wd-kpi st-' + (st || 'none') + '" role="group" title="' + _esc(label + ': ' + val + (sub ? ' — ' + String(sub).replace(/\n/g, ' · ') : '')) + '" aria-label="' + _esc(label + ' ' + val) + '"><div class="kpi-l">' + _esc(label) + '</div><div class="kpi-v">' + _esc(val) + '</div>' +
             (sub ? '<div class="kpi-s">' + _esc(sub) + '</div>' : '') + '</div>';
     }
     function _stateInfo(key) {
@@ -157420,7 +157497,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var M = _vsim() ? (_vsim().M || ST.M) : ST.M, v = _vals(), gas = _isGas(M), out = [], rc = _rateCat(M);
         if (!v) return [{ l: 'Well state', v: ST.err ? 'Not running' : 'Paused', s: ST.err ? ST.err.code : 'press Play', st: ST.err ? 'fail' : 'none' }];
         var sk = _stateKey(v), si = _stateInfo(sk);
-        out.push({ l: 'Well state', v: si.label, s: (v.open === 0 ? 'choke closed' : 'bean ' + _fmt(v.bean, 0) + '/64'), st: si.st });
+        var chk0 = !!(M && M.surface && M.surface.choke && M.surface.choke.present !== false);
+        // review fix: no 'bean 0/64' on a well with no surface choke (gas lift / ESP examples)
+        out.push({ l: 'Well state', v: si.label, s: (v.open === 0 ? 'choke closed' : (chk0 && _fin(v.bean) && v.bean > 0 ? 'bean ' + _fmt(v.bean, 0) + '/64' : 'no choke')), st: si.st });
         if (gas) out.push({ l: 'Gas rate', v: _u(v.qg, 'gasRateSmall', 0, 'Mscf/d'), s: _fin(v.qo) ? 'cond. ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
         else out.push({ l: 'Liquid rate', v: _u(v.qL, 'liquidRate', 0, 'STB/d'), s: _fin(v.qo) ? 'oil ' + _u(v.qo, 'liquidRate', 0, 'STB/d') : '' });
         out.push({ l: 'THP', v: _u(v.thp, 'pressureG', 0, 'psig'), s: '' });
@@ -157431,7 +157510,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         else if (gas) {
             var r = v.lratio, belf = !!_val('wd_belfroid');
             out.push({ l: 'Rate / critical rate', v: _fin(r) ? _fmt(r, 2) : '—', st: _fin(r) ? (r < 0.9 ? 'fail' : r < 1.1 ? 'warn' : 'ok') : 'none',
-                s: 'q_c ' + _u(v.qcVert, 'gasRate', 2, 'MMscf/d') + ' vertical · ' + _u(v.qcBelfroid, 'gasRate', 2, 'MMscf/d') + ' Belfroid' + (belf ? ' (in use)' : '') });
+                s: 'q_c ' + _u(v.qcVert, 'gasRate', 2, 'MMscf/d') + ' vertical\n' + _u(v.qcBelfroid, 'gasRate', 2, 'MMscf/d') + ' Belfroid' + (belf ? ' (in use)' : '') });
         }
         out.push({ l: 'Liquid in the well', v: _u(v.liq, 'volume', 1, 'bbl'), s: '' });
         var ach = ST.ach && ST.ach.val, slow = ST.playing && _fin(ach) && ach < 0.8 * ST.speed;
@@ -157485,7 +157564,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _setTab(k) {
         if (!TABS.some(function (t) { return t[0] === k; })) k = 'rates';
         ST.tab = k; _pref('tab', k);
-        Array.prototype.forEach.call(document.querySelectorAll('#wd_tabs [data-tab]'), function (b) { var on = b.getAttribute('data-tab') === k; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        Array.prototype.forEach.call(document.querySelectorAll('#wd_tabs [data-tab]'), function (b) { var on = b.getAttribute('data-tab') === k; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.setAttribute('tabindex', on ? '0' : '-1'); });
         var ts = _byId('wd_tabsel'); if (ts && ts.value !== k) ts.value = k;
         TABS.forEach(function (t) { var w = _byId('wd_cw_' + t[0]); if (w) w.style.display = t[0] === k ? '' : 'none'; });
         _renderChart();
@@ -157610,10 +157689,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     function _verdicts(sum) {
         var out = [], s = _vsim();
         if (ST.err) out.push({ st: 'fail', t: '✗ ' + ST.err.msg });
-        if (sum && sum.gate && _fin(sum.gate.dq)) {
-            var dq = Math.abs(sum.gate.dq) * 100, dp = Math.abs(sum.gate.dp) * 100, ok = dq <= 2 && dp <= 1;
-            out.push({ st: ok ? 'ok' : 'warn', t: (ok ? '✓ ' : '⚠ ') + 'Distance from the nodal operating point: rate ' + _fmt(dq, 2) + ' %, BHP ' + _fmt(dp, 2) + ' % (gate 2 % / 1 %)' });
+        var gt = sum && sum.gate;
+        if (gt && gt.nodal && _fin(gt.nodal.dq) && _fin(gt.nodal.dp)) {
+            // the distance of the last 10-min means from the nodal operating point (review fix: not the drift between windows)
+            var dq = gt.nodal.dq * 100, dp = gt.nodal.dp * 100, ok = !gt.changed && dq <= 2 && dp <= 1;
+            out.push({ st: ok ? 'ok' : 'warn', t: (ok ? '✓ ' : '⚠ ') + 'Distance from the nodal operating point: rate ' + _fmt(dq, 2) + ' %, BHP ' + _fmt(dp, 2) + ' %' +
+                (gt.changed ? ' (the run changed the well: not gated)' : ' (gate 2 % / 1 %)') });
         }
+        if (gt && _fin(gt.dq) && _fin(gt.dp))
+            out.push({ st: 'info', t: (gt.steady ? 'Settled' : 'Still changing') + ' — drift over the last 10 min: rate ' + _fmt(Math.abs(gt.dq) * 100, 2) + ' %, BHP ' + _u(Math.abs(gt.dp), 'pressure', 2, 'psi') });
         if (sum && _fin(sum.massErr)) out.push({ st: Math.abs(sum.massErr) < 1e-6 ? 'ok' : 'warn', t: (Math.abs(sum.massErr) < 1e-6 ? '✓ ' : '⚠ ') + 'Mass balance error ' + sum.massErr.toExponential(1) + ' (cumulative, relative)' });
         if (sum && sum.endState) { var si = _stateInfo(sum.endState); out.push({ st: si.st === 'fail' ? 'fail' : si.st === 'warn' ? 'warn' : 'ok', t: (si.st === 'fail' ? '✗ ' : si.st === 'warn' ? '⚠ ' : '✓ ') + 'Well state at the end: ' + si.label }); }
         if (s && s.mock) out.push({ st: 'warn', t: '⚠ Stand-in engine: not a simulation' });
@@ -157682,7 +157766,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 var ph = _phone(), key = (ph ? 'p' : 'd');
                 if (!ST.rwb || ST.rwb.__grid !== s.grid || ST.rwb.__key !== key) {
                     if (ST.rwb && ST.rwb.destroy) ST.rwb.destroy();
-                    ST.rwb = V.wellbore(cw, { grid: s.grid, traj: s.grid.traj, strings: (s.M || ST.M).well.strings, layer: 'phase', exaggerate: 25, aspect: 'fit', labels: true, particles: { on: false, max: 0 }, reduced: true, w: ph ? 270 : 360, h: ph ? 360 : 480, fixed: true });
+                    ST.rwb = V.wellbore(cw, { grid: s.grid, traj: s.grid.traj, strings: (s.M || ST.M).well.strings, layer: 'phase', exaggerate: 25, aspect: 'fit', labels: true, particles: { on: false, max: 0 }, reduced: true, liquid: _isGas(s.M || ST.M) ? 'condensate' : 'oil', w: ph ? 270 : 360, h: ph ? 360 : 480, fixed: true });
                 }
                 ST.rwb.__grid = s.grid; ST.rwb.__key = key;
                 fr.playing = false; fr.dtWall = 0; ST.rwb.draw(fr);
@@ -157728,18 +157812,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wd_root .wd-more{position:relative}#wd_root .wd-more>summary{list-style:none;cursor:pointer;padding:6px 11px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-weight:600;background:var(--bg2)}' +
         '#wd_root .wd-more>summary::-webkit-details-marker{display:none}#wd_root .wd-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:210px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px}' +
         '#wd_root .wd-menu .btn{text-align:left}' +
-        '#wd_root .wd-more:not([open]) .wd-menu{display:none}@media (max-width:600px){#wd_root .wd-menu{right:auto;left:0}}' +
+        '#wd_root .wd-more:not([open]) .wd-menu{display:none}@media (max-width:600px){#wd_root .wd-more[open]{flex-basis:100%}#wd_root .wd-menu{position:static;margin-top:4px;min-width:0;box-shadow:none}}' +
         '#wd_root .wd-tl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 10px;align-items:center;margin:0 0 10px}#wd_root .wd-tl input[type=range]{width:100%;margin:0}' +
         '#wd_root .wd-tread{font-variant-numeric:tabular-nums;font-weight:700;font-size:13px}#wd_root .wd-trange{font-size:11px;color:var(--text3);grid-column:1/-1}' +
         '#wd_root .wd-strip{grid-column:1/-1;width:100%;height:26px;display:block}#wd_root .wd-marks{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}' +
         '#wd_root .wd-mk{display:inline-flex;gap:2px;align-items:center}#wd_root .wd-chip{padding:3px 9px;border-radius:12px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:11.5px;cursor:pointer}' +
         '#wd_root .wd-x{padding:2px 7px;font-size:11px;min-width:0}' +
-        '#wd_root .wd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-kpi{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--text3);border-radius:8px;padding:8px 11px;min-width:0}' +
         '#wd_root .wd-kpi.st-ok{border-left-color:var(--wd-ok)}#wd_root .wd-kpi.st-warn{border-left-color:var(--wd-warn)}#wd_root .wd-kpi.st-fail{border-left-color:var(--wd-fail)}#wd_root .wd-kpi.st-info{border-left-color:var(--accent)}' +
-        '#wd_root .wd-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-        '#wd_root .wd-kpi .kpi-v{font-size:17px;font-weight:700;color:var(--text);margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-        '#wd_root .wd-kpi .kpi-s{font-size:11px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        '#wd_root .wd-kpi .kpi-l{font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;white-space:normal;overflow-wrap:anywhere}' +
+        '#wd_root .wd-kpi .kpi-v{font-size:17px;font-weight:700;color:var(--text);margin-top:3px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere;line-height:1.2}' +
+        '#wd_root .wd-kpi .kpi-s{font-size:11px;color:var(--text3);margin-top:1px;white-space:pre-line;overflow-wrap:anywhere}' +
         '#wd_root .wd-main{display:grid;grid-template-columns:minmax(0,500px) minmax(0,1fr);gap:var(--wd-gap);margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-wbw{display:flex;gap:8px;align-items:flex-start}#wd_root .wd-wbw canvas{display:block;max-width:100%;border-radius:6px}' +
         '#wd_root #wd_cv_well{width:360px;height:480px}#wd_root #wd_cv_nav{width:72px;height:480px}' +
@@ -157756,7 +157840,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wd_root .wd-v{font-size:12.5px;margin:3px 0}#wd_root .wd-v.ok{color:var(--wd-ok)}#wd_root .wd-v.warn{color:var(--wd-warn)}#wd_root .wd-v.fail{color:var(--wd-fail)}#wd_root .wd-v.info{color:var(--text2)}' +
         '#wd_root .wd-banner .wd-v{padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);margin:0 0 8px}#wd_root .wd-banner .btn{padding:3px 9px;font-size:11.5px;margin-left:6px}' +
         '#wd_root .wd-res{margin:var(--wd-gap) 0}#wd_root .wd-rvt{font-family:inherit;font-size:12.5px;font-weight:600;text-align:right}#wd_root .wd-rgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--wd-gap)}' +
-        '#wd_root .wd-rkpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
+        '#wd_root .wd-rkpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 var(--wd-gap)}' +
         '#wd_root .wd-rcv{display:flex;flex-wrap:wrap;gap:var(--wd-gap);align-items:flex-start}#wd_root #wd_cv_rwell{width:360px;height:480px}#wd_root #wd_cv_rtrend{width:640px;height:220px}' +
         '#wd_root .wd-rcv .chart-wrap{max-width:100%;overflow:hidden}#wd_root .wd-csv{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--bg3)}' +
         '#wd_root .wd-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px;max-height:160px;overflow:auto;font-size:12px;margin:6px 0}' +
@@ -157822,10 +157906,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             _card('Wellbore', '<div class="fg" style="margin-bottom:8px">' + _fg('wd_layer', 'Colour by', { options: LAYERS, def: ST.layer }) + '</div>' +
                 '<div class="wd-wbw"><canvas id="wd_cv_well" tabindex="0" role="img" aria-label="Wellbore along the true trajectory: cells coloured by phase, the flow regime, liquid film, droplets and slugs moving at the local velocity"></canvas>' +
                 '<canvas id="wd_cv_nav" tabindex="0" role="img" aria-label="Navigator: the whole well with the zoom window"></canvas></div><div class="wd-hover" id="wd_hover"></div>') +
-            _card('Charts', '<div class="wd-tabs" id="wd_tabs" role="tablist" aria-keyshortcuts="[ ]">' + TABS.map(function (t) { return '<button type="button" role="tab" data-tab="' + t[0] + '" aria-selected="false">' + _esc(t[1]) + '</button>'; }).join('') + '</div>' +
+            _card('Charts', '<div class="wd-tabs" id="wd_tabs" role="tablist" aria-keyshortcuts="[ ]">' + TABS.map(function (t) { return '<button type="button" role="tab" id="wd_tab_' + t[0] + '" data-tab="' + t[0] + '" aria-controls="wd_cw_' + t[0] + '" aria-selected="' + (t[0] === ST.tab ? 'true' : 'false') + '" tabindex="' + (t[0] === ST.tab ? '0' : '-1') + '">' + _esc(t[1]) + '</button>'; }).join('') + '</div>' +
                 '<select class="wd-tabsel" id="wd_tabsel" aria-label="Chart">' + TABS.map(function (t) { return '<option value="' + t[0] + '">' + _esc(t[1]) + '</option>'; }).join('') + '</select>' +
                 '<div class="wd-chartmsg" id="wd_chartmsg"></div>' +
-                TABS.map(function (t) { return '<div class="wd-cw chart-wrap" id="wd_cw_' + t[0] + '"' + (t[0] === ST.tab ? '' : ' style="display:none"') + '><canvas id="wd_cv_' + t[0] + '" tabindex="0" role="img" aria-label="' + _esc(t[1]) + ' chart"></canvas></div>'; }).join('')) +
+                TABS.map(function (t) { return '<div class="wd-cw chart-wrap" id="wd_cw_' + t[0] + '" role="tabpanel" aria-labelledby="wd_tab_' + t[0] + '"' + (t[0] === ST.tab ? '' : ' style="display:none"') + '><canvas id="wd_cv_' + t[0] + '" tabindex="0" role="img" aria-label="' + _esc(t[1]) + ' chart"></canvas></div>'; }).join('')) +
             '</div>';
         var res = '<div id="wd_res" class="wd-res">' +
             '<div class="wd-rkpi" id="wd_rkpi"></div>' +
@@ -157872,7 +157956,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 '<div class="wd-hint" style="grid-column:1/-1">Set the frequency on the toolbar (ESP Hz → Set); Set again after a trip restarts the pump.</div></div>', { id: 'wd_liftcard' });
         var cases = _card('Cases', '<div class="fg rp-skip"><div class="fg-item"><label for="wd_case_name">Case name</label><input type="text" id="wd_case_name" maxlength="60" placeholder="e.g. Bean-up to 32/64"></div>' +
                 '<div class="fg-item"><label>&nbsp;</label><button type="button" class="btn btn-secondary" data-act="casesave">Save case with this well</button></div></div><div id="wd_cases" class="rp-skip"></div>', { id: 'wd_casecard' });
-        return '<div id="wd_root">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div>' + liftc + '</div>';
+        return '<div id="wd_root" tabindex="-1">' + s1 + main + res + '<div class="wd-cards">' + scen + cases + '</div>' + liftc + '</div>';
     }
 
     // ── events on #wd_root ───────────────────────────────────────────────────
@@ -157953,6 +158037,17 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         root.addEventListener('keydown', function (e) {
             var t = e.target, tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
             if (tag === 'INPUT' && t.type !== 'range' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            // review fix (WCAG 2.1.4): a chart tab moves between the tabs (roving tabindex); a focused button, summary or link keeps its own keys;
+            // the shortcuts act only with the focus on the page itself, a canvas or the timeline
+            var role = t && t.getAttribute ? t.getAttribute('role') : null;
+            if (role === 'tab') {
+                var ks = e.key, ix = TABS.map(function (x) { return x[0]; }).indexOf(t.getAttribute('data-tab')), nx = -1;
+                if (ks === 'ArrowRight') nx = (ix + 1) % TABS.length; else if (ks === 'ArrowLeft') nx = (ix + TABS.length - 1) % TABS.length;
+                else if (ks === 'Home') nx = 0; else if (ks === 'End') nx = TABS.length - 1;
+                if (nx >= 0 && ix >= 0) { _setTab(TABS[nx][0]); var nb = _byId('wd_tab_' + TABS[nx][0]); if (nb && nb.focus) nb.focus(); if (e.preventDefault) e.preventDefault(); }
+                return;
+            }
+            if (t !== root && tag !== 'CANVAS' && !(tag === 'INPUT' && t.type === 'range')) return;
             if (tag === 'CANVAS' && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape' || e.key === '0' || ((e.key === '+' || e.key === '-') && t.id === 'wd_cv_well'))) return;   // the wellbore's own keys
             var k = e.key, sp = _span(), w = sp[1] - sp[0], cur = _curT(), done = true;
             if (k === ' ' || k === 'Spacebar') { if (tag === 'BUTTON') return; if (ST.playing) _pause('user'); else _play(); }
@@ -158038,7 +158133,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         csv: function (o) { return _csv(o, false); }, runFile: function () { return _runFile(false); }, load: _load, rerun: _rerun,
         scenario: _preset, scrub: _scrub, cont: _cont, mark: _mark, shut: _shutToggle, speed: _setSpeed, build: function () { var r = _build('test'); _renderAll(); return r; },
         caseSave: _caseSave, caseLoad: _caseLoad, caseRemove: _caseRemove, cases: _cases, evAdd: _evAdd, importPrism: _importPrism,
-        kpis: _kpis, summary: _summary, settings: _settings, tab: _setTab
+        kpis: _kpis, summary: _summary, settings: _settings, tab: _setTab, verdicts: function () { return _verdicts(_summary()); }
     };
     G.WTS_calcRegistry = G.WTS_calcRegistry || {};
     G.WTS_calcRegistry.welldyn = {

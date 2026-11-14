@@ -21,7 +21,8 @@
 //            pOpen_psig after minShut_h; shut when the gas rate falls below qClose_Mscfd or THP below pClose_psig after minOpen_h). Each
 //            open period is booked: liquid and gas produced, tubing liquid at the open and at the shut-in (the liquid removed per cycle).
 //   heading  oil wells: labels heading when the THP ring (30 s samples, last 3 h) shows ≥ 3 peak pairs with a peak-to-peak above 5 % of
-//            the mean and a period of 2 min – 3 h (provisional thresholds, Q15). Heading is not imposed: it emerges, or the well dies.
+//            the mean, a period of 2 min – 3 h and a sustained amplitude (last peak-to-peak ≥ 0.8 × the first; review fix) (provisional
+//            thresholds, Q15). Heading is not imposed: it emerges, or the well dies (not reproduced on the test wells, §11.7).
 //   gaslift  'nodal' — the lift gas q_inj enters the tubing cell above the R0.lift.injMd break as a lift-gas (I) source (the gate, G5;
 //            identity with the nodal C.gl.Finj); 'valves' (default when the model has installed valves) — the annulus is one control
 //            volume from the surface to the packer holding a lift-gas mass m_a and a liquid column (the model's water) of volume V_al
@@ -65,7 +66,7 @@
         esp: Object.freeze({ ramp_Hz_s: 1, tauM_s: 0.5, kStop: 1e7, kCheck: 1e7, lockTau_s: 10, qCheck: 1e-4, motorFactor: 1.25,
             pumpoff: Object.freeze({ pInt_psia: 50, qFrac: 0.05, fMin: 30, hold_s: 60, pLock_psia: 30, pRestart_psia: 150, idle_s: 900 }), gaslock: Object.freeze({ gvf: 0.3, hold_s: 60, lock: 0.5, relock_s: 30 }),
             underload: Object.freeze({ load: 0.4, hold_s: 30, fMin: 30 }) }),
-        heading: Object.freeze({ every_s: 30, window_s: 10800, pp: 0.05, pairs: 3, periodMin_s: 120, periodMax_s: 10800 }),
+        heading: Object.freeze({ every_s: 30, window_s: 10800, pp: 0.05, pairs: 3, periodMin_s: 120, periodMax_s: 10800, sustain: 0.8 }),
         cycle: Object.freeze({ minOpen_h: 0, minShut_h: 0 }),
         multipoint_s: 600
     });
@@ -229,11 +230,15 @@
             if (dir === 0 && Math.abs(p - P[0]) >= th) dir = p > P[0] ? 1 : -1;
         }
         var maxima = ext.filter(function (e) { return e.max; }), pairs = 0, periods = [];
-        for (var a = 1; a < ext.length; a++) if (ext[a - 1].max && !ext[a].max && ext[a - 1].p - ext[a].p >= th) pairs++;
+        var pp = [];
+        for (var a = 1; a < ext.length; a++) if (ext[a - 1].max && !ext[a].max && ext[a - 1].p - ext[a].p >= th) { pairs++; pp.push(ext[a - 1].p - ext[a].p); }
+        // sustained (review fix): the last peak-to-peak ≥ sustain × the first, so a decaying oscillation (the THP tail after an unloading) is not heading
+        var sus = _fin(+o.sustain) ? +o.sustain : 0.8, sustained = pp.length >= 2 && pp[pp.length - 1] >= sus * pp[0];
         for (var b = 1; b < maxima.length; b++) periods.push(maxima[b].t - maxima[b - 1].t);
         var per = periods.length ? periods.reduce(function (s, x) { return s + x; }, 0) / periods.length : NaN;
         var amp = 0; for (var c = 1; c < ext.length; c++) amp = Math.max(amp, Math.abs(ext[c].p - ext[c - 1].p));
-        return { pairs: pairs, period_s: per, amp: amp, mean: mean, heading: pairs >= o.pairs && _fin(per) && per >= o.periodMin_s && per <= o.periodMax_s };
+        return { pairs: pairs, period_s: per, amp: amp, mean: mean, sustained: sustained,
+            heading: pairs >= o.pairs && sustained && _fin(per) && per >= o.periodMin_s && per <= o.periodMax_s };
     }
     var HEADING = {
         label: 'Oil-well heading detector', verified: false, provisional: PROVISIONAL,

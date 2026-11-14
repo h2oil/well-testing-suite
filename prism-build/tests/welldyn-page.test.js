@@ -519,7 +519,7 @@ module.exports = [
       open(app, 'gas');
       assert.deepStrictEqual(labels(), ['Well state', 'Gas rate', 'THP', 'BHP', 'Rate / critical rate', 'Liquid in the well', 'Time']);
       const kk = app.findAll('#wd_kpis .kpi')[4];
-      assert.match(txt(kk), /vertical · .* Belfroid/);
+      assert.match(txt(kk), /vertical .* Belfroid/);
       assert.ok(!/in use/.test(txt(kk)), 'Belfroid off by default');
       leave(app);
       open(app, 'gl');
@@ -629,6 +629,18 @@ module.exports = [
       app.key('wd_root', '['); assert.strictEqual(P(app).state().tab, 'rates');
       app.key('wd_root', 's'); assert.strictEqual(txt(app.el('wd_shut')), 'Open');
       assert.ok(app.findAll('#wd_tabs [role="tab"]').length === 7);
+      // PG23b (review fix, WCAG 2.1.4): on a focused chart tab, S does not shut in and the arrows move between the tabs (roving tabindex);
+      // a focused toolbar button ignores the character shortcuts
+      const shut0 = txt(app.el('wd_shut'));
+      app.key('wd_tab_rates', 's'); assert.strictEqual(txt(app.el('wd_shut')), shut0, 'S on a tab does nothing');
+      app.key('wd_tab_rates', 'ArrowRight'); assert.strictEqual(P(app).state().tab, 'press', '→ on a tab selects the next tab');
+      assert.strictEqual(app.el('wd_tab_press').getAttribute('tabindex'), '0'); assert.strictEqual(app.el('wd_tab_rates').getAttribute('tabindex'), '-1');
+      assert.strictEqual(app.el('wd_tab_press').getAttribute('aria-controls'), 'wd_cw_press'); assert.strictEqual(app.el('wd_cw_press').getAttribute('role'), 'tabpanel');
+      app.key('wd_tab_press', 'End'); assert.strictEqual(P(app).state().tab, 'close', 'End → the last tab');
+      app.key('wd_tab_close', 'Home'); assert.strictEqual(P(app).state().tab, 'rates', 'Home → the first tab');
+      const sc0 = P(app).state().scrubT;
+      app.key('wd_mark', 'm'); app.key('wd_play', 'ArrowLeft');
+      assert.strictEqual(P(app).state().scrubT, sc0, 'a focused button: no scrub'); assert.strictEqual(P(app).state().markStart, null, 'a focused button: no mark');
       leave(app); fresh(app);
     },
   },
