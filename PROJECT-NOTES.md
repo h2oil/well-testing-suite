@@ -5,6 +5,73 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
+
+App and App Store version 4.6 (`RELEASE_NOTES[0]` v4.6, dated 2026-11-14, both platforms, title "Well Dynamics: transient well
+simulator"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`, the static `#appVersionLabel` fallback). Plan:
+docs/WELL-DYNAMICS-PLAN.md (decisions §0, physics §4, gate §5, records §11.1–§11.7).
+
+- **Page** `welldyn` (49-calc-welldyn.js): its own sidebar row in Production & Reservoir right after the Well Performance hub row (owner
+  2026-11-13: "just build it into menu"; not a hub member; the group has 6 of 8 rows), a dashboard tile, a cross-link button each way with
+  Well Performance. It reads the one well model `wts_wellperf_model` (`WTS_wp_model`): fluid, PVT, IPR, survey, strings, choke and lift —
+  no re-entry. Cases are kept in the model under the additive `dyn` key (per well, in project files); scenario scalars autosave to
+  `wts_page_welldyn`; device prefs `wtspref_wd_*`; replay files `.wdrun`.
+- **Engines** (Round 9 helper modules, field units, no timers): `WTS_wd_engine` (49-calc-wd-engine.js: 1-D drift-flux along MD, four
+  components G / O / W / lift gas I + a foamer tracer, quasi-steady mixture momentum from the solve's own gradient correlations,
+  volume-balance pressure equation — no acoustic limit —, CFL sub-stepping, mass balance every step), `WTS_wd_res` (IPR or radial
+  line-source with superposition, back-flow), `WTS_wd_lift` (foamer, gas-lift unloading on the installed `WTS_wp_gl` design, ESP start-up /
+  ramp on the `WTS_wp_esp` pump node, intermittent cycles, oil heading), `WTS_wd_rec` (recorder, marks, CSV, replay files, cases),
+  `WTS_wd_view` (animated wellbore on the true trajectory, navigator, close-up, depth log, trends, IPR / VLP with the live point).
+- **Consistency gate** (WD-D5): a steady run settles on `WTS_wp_system.solve` — time-means over the last 600 s, rate within 2 %, BHP within
+  1 %, THP within 1 % or 3 psi, same choke regime — on seven fixtures: gasVert +0.064 % / −0.017 %, gasHz +0.004 % / −0.001 %, oilVert
+  +0.244 % / −0.043 %, oilVertTuned +0.419 % / −0.063 %, gasLift +0.782 % / −0.077 %, esp −0.028 % / +0.012 %, oilDev +0.264 % / −0.037 %.
+- **D17**: the transient reservoir superposition, sub-critical choke, temperature relaxation, liquid fallback, Belfroid correction, foamer,
+  gas-lift valve model (incl. the 20 s valve lag) and ESP transients are verified:false, labelled provisional and never defaults.
+- **Merge with 4.5.1** (origin/dev-87qwkg, the Q21 help): both task lists kept (17 tasks), named shot actions of both sides, caps = both
+  sides' measured need together + a small margin: production help 69.25 kB, start 22.45 kB, help text 392.5 kB raw / 136.5 kB gzip
+  (392,050 / 136,248 used), images 8.27 MB (8,254,838 B, 227 files), manifest module 9.1 kB (9,001 B). Generated files regenerated.
+- **Fixes at release**: buildup-page PG1 row order (hub → welldyn → buildup); the page's device-pref write through `WTS_lsSet` (LS1);
+  the Export menu at 375 px (closed menus `display:none`, left-anchored below 600 px; ux-layout-check).
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2382/2382 (204 files, file by file);
+  welldyn-validate --html --gate --check --time: D17 PASS, 23 / 23 checks (X11 = a pointer to welldyn-lift LF2), every timing row inside
+  its fail line; wellperf-validate: D17 PASS, 62 / 62, budgets ok; help-shots / build-user-guide / publish-site --check ok; ux-layout-check
+  --web ok (135 checks); wts3d-test 147/149 (the two CRLF checks on LF); GUI sweep welldyn + wellperf desktop and --mobile: 0 error /
+  warning / cosmetic findings.
+- **Open**: see the CLAUDE.md known limitation "Well Dynamics (v4.6)" and plan §11.
+
+---
+
+## 2026-11-13 — v4.5.1 release: Well Performance help completed (owner question Q21)
+
+App and App Store version 4.5.1 (`RELEASE_NOTES[0]` v4.5.1, dated 2026-11-13, both platforms, title "Well Performance help completed";
+both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VERSION_BASE`, the static `#appVersionLabel` fallback). A three-part
+version, as 3.3.1 / 3.4.1 / 3.4.2 were (the ci_post_clone.sh reader takes 2 or 3 parts; higher than the released 4.5 for ITMS-90062).
+
+- **Q21 approved by the owner on 2026-11-13** ("do Q21 now"): the second raise of the help caps, with the help growth needed to document
+  Well Performance B fully, screenshots of the B cards included (docs/WELL-PERFORMANCE-PLAN.md §20, record §18.3.13).
+- **Caps old → new** (measured, then a small margin): help text sum 369 → 381 kB raw, 128 → 133 kB gzip (379,816 / 132,221 bytes used);
+  48-calc-help-production.js 57.6 → 59.2 kB; wellperf guide serialised 21.75 → 23.5 kB (23,892 B);
+  images 8.0 → 8.15 MB (8,120,766 B used after the release-notes shots); manifest module 8.8 → 9 kB.
+- **Documented** (entry below): ESP inputs and checks, gas-lift design inputs field by field, B inflow models, a correlation per section,
+  enthalpy-balance temperature with layered U, PVT lab match / Rv / emulsion, lift screening, studies (cases, forecast, envelope, tornado,
+  matrix), lift-curve and PVT tables, Run all wells; the artificial-lift task; search keywords; the provisional methods marked as such.
+- **Shots**: six B card shots (wellperf wells-d with two wells, ltab-d, env-d, gld-d, esp-d, esp-p); release-notes shots re-taken for
+  the new entry (view-d 73,330 B, view-p 63,534 B). Round 9 rebuilt, LF kept, user guide regenerated, synced.
+- **Gates (Linux, LF, built HTML).** node --check OK; smoke 347/347; accept-test --html --integration 2235/2235 (195 files, run file by
+  file); wellperf-validate --html --gate --check --time: D17 gate PASS, 62/62 cross-checks, every E budget ok; help-shots --check (224
+  files, 8,120,766 B), build-user-guide --check, publish-site --check ok; wts3d-test 147/149 (the two CRLF checks on LF).
+
+ (owner question Q21 approved)
+
+Owner question Q21 (a second raise of the help caps) was approved on 2026-11-13 ("do Q21 now") with the help growth needed to document
+Well Performance B fully, screenshots of the B cards included (docs/WELL-PERFORMANCE-PLAN.md §20, record §18.3.13). The wellperf guide
+now covers every B gap of §18.3.11 plus lift screening, the full gas-lift design and ESP input tables and the artificial-lift task; six B
+shots (wells-d with two wells, ltab-d, env-d, gld-d, esp-d, esp-p; clean top edge through the recipe field padTop). Caps from the measured
+text: production 59.2 kB, start 20.55 kB, sum 381 kB raw / 133 kB gzip, wellperf guide 23.5 kB serialised, images 8.15 MB, manifest module
+9 kB. New help-shots named actions wpJob and wellAdd (browser-only shots). The RELEASE_NOTES item (4.5.1) is left to the integrator.
+
+---
+
 ## 2026-11-12 — v4.5 release: Well Performance B (artificial lift, studies, all wells)
 
 App and App Store version 4.5 (`RELEASE_NOTES[0]`, dated 2026-11-12, both platforms, title "Well Performance: artificial lift, studies
@@ -12,7 +79,7 @@ and all wells"; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks `VER
 help/user-guide.html stamp "Version 4.5"). Increment B of docs/WELL-PERFORMANCE-PLAN.md (§18.3, records §18.3.1–§18.3.11). Owner decision
 "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so every new method without a
 verified published example ships `verified:false` with the provisional label (D17 gate) and is never a default; Q21 (a second raise of
-the help caps) stays open — no cap was raised for B.
+the help caps) stays open — no cap was raised for B (Q21 approved on 2026-11-13, entry above).
 
 - **Built on `wp/b`** from master 8ce1989 (v4.4), merged `--no-ff` in the order WP23 (PVT lab match, Rv, emulsion), WP21 (Orkiszewski,
   Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir; a correlation per MD / inclination section), WP22 (enthalpy-balance flowing
@@ -22,7 +89,7 @@ the help caps) stays open — no cap was raised for B.
   read-only; schematic: horizontal section, layers, correlation rail), WP25 (gas-lift design on the shared model with valves on MD and
   TVD, drag knobs, Thornhill-Craver, diagnosis, gradient survey match, Asheim) and WP26 (ESP: pump curves, affinity and viscosity, intake
   gas, motor and cable, pump node in the system solve, frequency / stages rails). Generated files regenerated after every merge, never
-  hand-merged; the help guide covers the B features within the Q21 caps (gaps listed in plan §18.3.11).
+  hand-merged; the help guide covers the B features within the Q21 caps (gaps listed in plan §18.3.11; completed on 2026-11-13 after the Q21 approval, entry above).
 - **Verified / provisional.** Provisional (BENCH rows pending): the five B lift correlations, enthalpy-balance temperature, differential →
   flash, Rv, emulsion, every B inflow model, forecast tank models, lift screening, Thornhill-Craver, Asheim, ESP viscosity / natural
   separation / gas criterion / motor and cable. Pinned (exact or closed-form checks): the lab match least squares, the API RP 11V6 design
@@ -49,7 +116,8 @@ the help caps) stays open — no cap was raised for B.
   and --mobile: 0 findings after the fixes (1 before: the Metric Bob label); Playwright pass over every step, traverse tab and study tab
   with the Oil, Gas, Horizontal, Multilayer, Injector and ESP examples (lab match, envelope, forecast + time slider, tornado, matrix,
   cases, screening, all wells, gas-lift design, ESP sizing and sweep) at 1280 and 390 px: no overflow, no NaN, no page error.
-- **Open items (B).** Help at the Q21 caps: no screenshots of the B cards and the help gaps of plan §18.3.11; design traverses on a mixed
+- **Open items (B).** Help at the Q21 caps: no screenshots of the B cards and the help gaps of plan §18.3.11 (resolved 2026-11-13: Q21
+  approved, see the entry above); design traverses on a mixed
   lift-gas gravity and the operating solve at its own balance point (not the installed valves); valve / pump temperatures on the relaxation
   or linear profile; no ESP pump heating, thrust, casing gas or gas wells; pump library per device; valve labels can overlap; schematic
   labels can still touch each other near a horizontal toe. Not in B: rod pump, the D5 preferred defaults (wait for verified examples).
@@ -62,7 +130,7 @@ fallback; help/user-guide.html stamp from RELEASE_NOTES[0].date). Increment A2 o
 §18.2.1–§18.2.8). Owner decision "go and continue all": every open question at the plan's default; Q9 (textbooks) still not provided, so
 every new method without a verified published example ships `verified:false` with the provisional label (D17 gate) and is never a
 default; Q15 → help text caps +12 kB raw / +4 kB gzip (used by A1); the A2 course needed a second raise (SUM_CAP 357 → 369 kB, GZIP_CAP
-124 → 128 kB, per-file production / 49-calc-help / print / start) — that is owner question Q21 (plan §20), open before release, not the
+124 → 128 kB, per-file production / 49-calc-help / print / start) — that is owner question Q21 (plan §20; approved on 2026-11-13), open before release, not the
 Q15 default; Q16 → `WTS_wellbore.flowingTemp` with `direction:'inject'` available to DFIT 3.4b.
 
 - **Built on `wp/a2`** from master 9775e07 (v4.3): WP13 PVT correlation families (16-pvt, Round 3; 38 keys, `PRiSM_pvt_corrInfo`,

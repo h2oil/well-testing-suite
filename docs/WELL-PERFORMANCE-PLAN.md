@@ -2070,6 +2070,45 @@ wellperf-pvtmatch PM13 and the new wellperf-bfix RB1–RB3; checks X5b / X5c in 
   cross-checks (X5b ≤ 0.2, X5c recorded), every E budget ok; help-shots --check (release-notes desktop shot re-taken, image total 7,980,332),
   build-user-guide --check, publish-site --check ok; wellperf and flowline guides re-reviewed (reviewedSrc).
 
+#### 18.3.13 Q21 help completion (2026-11-13, branch help-q21)
+
+Owner question Q21 approved on 2026-11-13 ("do Q21 now"): the second help-cap raise, with the help growth needed to document the B features
+fully, B card screenshots included. (The task named this record §18.3.12; that number was already the review-fix record, so it is §18.3.13.)
+- **New text** (48-calc-help-production.js, wellperf guide; every provisional method called provisional, D17): parts *PVT lab match* (inputs,
+  pb one-point factor, Rs / Bo / μo as a·y + b, ranking, the b·min(1, p / pb) taper, differential → flash), *Condensate and emulsion* (wet gas
+  vs the Rv table, dew point; mixture default, Woelflin / Brinkman / table), *Correlations and flow regimes* (Orkiszewski, Aziz-Govier-
+  Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir by name; pattern steps; per-section rows by MD or inclination, first row wins, the two
+  fill buttons), *Flowing temperature* (enthalpy balance terms, U layers, fallback with gas lift / ESP), *More inflow models* (water-cut
+  composite, Joshi / Babu-Odeh / Furui, fractured oil and gas, transient, multilayer, injector, the Build-up Surveillance hand-off and its
+  p* caution), *Studies* (five steps: envelope, forecast + time slider and the tank mode, tornado, matrix, cases), *Tables* (lift-curve
+  axes, datum, Fill from the model, Run lift table, text / CSV; PVT table export), *Gas-lift design* (inputs kickoff pressure, kill-fluid
+  gradient, pressure drop per valve, port, R; Design / recommended port / Use this design; diagnosis; survey match; F1 / F2 screening after
+  Asheim; limits: the solve injects at its point of balance, mixed lift-gas gravity), *ESP* (pump curve and library, affinity, rails, Size
+  the stages / Frequency for this rate, Rate against frequency, range / gas / motor / cable / velocity checks, opt-in natural separation
+  and viscosity; not modelled: heating, thrust, casing gas, gas wells). Main steps: the Gas lift example, step ⑦ split with Run all wells
+  (read-only batch). Refs + Asheim (1988), Turpin, Lea and Bearden (1986); related + buildup. 48-calc-help-start.js: task *Design gas-lift
+  valves or size an ESP* (14 → 15, the format's maximum).
+- **Shots** (help/img/wellperf, desktop crops; ESP also phone): wells-d 11,996 B, ltab-d 17,222 B, env-d 20,040 B, gld-d 29,702 B, esp-d
+  25,716 B, esp-p 25,916 B (130,592 B). Jobs run through the new named action `wpJob` (help-shots.js: click, then wait for a done selector;
+  browser-only shots, checked by recipe hash); the sticky step bar is masked. help/view re-fingerprinted (pixels unchanged).
+- **Caps (old → new; measured)**: production 47.67 → 57.6 kB (57,009 B); start 19.8 → 20.55 kB (20,333 B); SUM_CAP 369 → 381 kB
+  (378,001 B); GZIP_CAP 128 → 133 kB (131,598 B); wellperf guide serialised 14 → 21.75 kB (new GUIDE_CAP_KB, 21,920 B); images 8 → 8.15 MB
+  (8,110,924 B, 224 files); manifest module (help-shots moduleBytes) 8.8 → 9 kB (8,914 B). Other per-file caps unchanged.
+- **Review fixes (2026-11-13, same branch)**: a *Lift screening* part (step ④ card, one matrix per solve, deviation / dogleg / depth first,
+  pump-setting window, Compare the lift rates with optimum gas lift at the ④ injection pressure or the screening pressure (blank 1000
+  psig) and the pump potential; provisional, indicative ranges after Brown (1982) and Clegg, Bucaram and Hein (1993), a screening aid and
+  not a design; rod pump / PCP / jet pump / plunger lift screened only); the U layers moved to the relaxation paragraph (they serve both
+  models); gas-lift design inputs complete (tubing effect, minimum spacing, design liquid rate, deepest mandrel; defaults 0.465 psi/ft,
+  25 psi, port 1/4 in; kickoff blank = injection pressure + 100 psi as a unit token); ESP inputs complete (pump and motor OD, motor
+  voltage and current, cable length; the cable row keeps the page label "Cable" — the drift check reads the label without its
+  parenthesis, the text says copper); wording (down- or upthrust, the overall U (③), the non-Darcy coefficient D); five B keywords and the part title
+  "Lift-curve and PVT tables" (search: lift curve → that part first, pump → the ESP inputs in the top 5, U layers → wellperf).
+  Shots: wj() crops with the new recipe field `padTop: 0` (help-shots.js; 0–8 px, in the recipe hash only when set), so the five desktop
+  B crops lose the strip of the tab row above the plot; Run all wells now shows two wells (new named action `wellAdd` duplicates the
+  well as Example-2, then p̄r 3400, WC 10 %, J 1.2). Retaken: wells-d 14,836 B, ltab-d 17,266 B, env-d 19,912 B, gld-d 29,588 B, esp-d
+  25,854 B, esp-p 25,916 B. Caps (measured): production 57.6 → 59.2 kB (58,824 B); wellperf guide 21.75 → 23.5 kB (23,892 B serialised);
+  images 8,113,704 B under the 8.15 MB cap (unchanged); SUM_CAP / GZIP_CAP unchanged (measured 379,816 B raw, 132,221 B gzip).
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative
@@ -2124,7 +2163,7 @@ multilateral branches; annulus + tubing simultaneous flow; multi-well gas-lift a
 | Q18 | Release notes: the well performance items on both platforms (web and iOS)? | yes, both |
 | Q19 | Do the oilipr / gasdeliv / gaslift guides and dashboard tiles change wording once they are hub members? | one hub note per guide, tiles unchanged |
 | Q20 | Default equipment ratings for the shut-in / THT verdicts (wellhead pressure class, maximum THT)? | no default — the user enters the rating; verdict hidden until entered |
-| Q21 | Second help-cap raise for A2 (the course and the A2 guide parts): SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB, per-file caps production 45.41 → 47.67, 49-calc-help 47.6 → 48.52, print 15.33 → 15.68, start 19.74 → 19.8 kB, wpcourse 9.83 kB (new)? Q15's default was one raise (+12 / +4 kB), used by A1; raising a cap is an owner decision (§14) | **open — to the owner before release 4.4** (the caps in help-content.test.js already carry the raise; recorded here as its own decision, not as the Q15 default) |
+| Q21 | Second help-cap raise for A2 (the course and the A2 guide parts): SUM_CAP 357 → 369 kB, GZIP_CAP 124 → 128 kB, per-file caps production 45.41 → 47.67, 49-calc-help 47.6 → 48.52, print 15.33 → 15.68, start 19.74 → 19.8 kB, wpcourse 9.83 kB (new)? Q15's default was one raise (+12 / +4 kB), used by A1; raising a cap is an owner decision (§14) | **approved by the owner on 2026-11-13** ("do Q21 now"), with the help growth needed to document B fully, screenshots of the B cards included; caps set from the measured draft (§18.3.13) |
 
 ---
 

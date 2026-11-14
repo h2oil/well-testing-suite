@@ -143,6 +143,9 @@ S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstre
 { id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
 S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
 S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] },
+{ id: 'artlift', title: 'Design gas-lift valves or size an ESP', purpose: 'Artificial lift for a well that will not flow, or flows too little.', steps: [
+S('wellperf', 'Steps ① to ③, then ④ Lift. Gas lift: design inputs, Design the valves, Use this design ([[wellperf#gldesign|Gas-lift design]]).', 'valve depths, port, injection pressure'),
+S('wellperf', 'ESP: pump curve and setting depth, Target liquid rate, Size the stages; check the range, gas, motor and cable ([[wellperf#esp|ESP]]).', 'stages, frequency, motor load')] },
 { id: 'wdload', title: 'See when my gas well loads up', purpose: 'In time: when the well loads after a choke-back, and what unloads it.', steps: [
 S('wellperf', 'Set up the gas well (or load the Gas example) and check it solves.', 'operating point'),
 S('welldyn', 'Preset Gas-well loading, Apply preset, Play at ×1000 (bean halved at 1 h). Watch the state and Rate / critical rate ([[welldyn#loading|loading]]).', 'time to loading, critical rate'),

@@ -494,6 +494,13 @@ choice for the owner (Q13) is:
 
 A re-baseline is an owner decision; it is never done silently.
 
+**Q21 (owner, 2026-11-13):** all images ≤ 8.15 MB; the wellperf guide's serialised cap is 23.5 kB (`GUIDE_CAP_KB` in
+help-content.test.js; 21.75 kB at the approval, raised by the review fixes), the other parts routes stay at 14 kB; per-file and sum caps
+as in help-content.test.js — see docs/WELL-PERFORMANCE-PLAN.md §18.3.13.
+**Release 4.6 (integrator, 2026-11-14):** the Q21 line and the Well Dynamics help merged; the caps are both sides' measured need together plus a
+small margin: all images ≤ 8.27 MB (8,254,838 B, 227 files), manifest module 9.1 kB, help text 392.5 kB raw / 136.5 kB gzip, production
+69.25 kB, start 22.45 kB; welldyn is a parts route (14 kB serialised); 10–17 tasks — see docs/WELL-DYNAMICS-PLAN.md §11.7.
+
 **Decision (owner, 2026-11-06): option 1.** The v3.3.2 Help allocation is **345 kB raw and 120 kB gzip**, with the per-file
 caps above; no content is cut and the guide prose stays in the HTML (D6). `help-content.test.js` enforces the new caps.
 Measured after the v3.3.1 update (help branch, DS-101 / T-202 content in, manifest still a stub): **323.4 kB raw and

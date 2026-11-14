@@ -60,7 +60,7 @@ const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[d
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
 const CAPS = {
   'desktop:viewport': 150 * 1000, 'desktop:crop': 90 * 1000, 'phone:viewport': 110 * 1000, 'phone:crop': 70 * 1000,
-  totalBytes: 8120 * 1000, files: 300, moduleBytes: 8900,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool); Well Dynamics (Q21, 2026-11-14): 8.0 → 8.12 MB images (measured 8,105,852), module 8.8 → 8.9 kB (measured 8,860)
+  totalBytes: 8.27 * 1000 * 1000, files: 300, moduleBytes: 9.1 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool); Q21 (owner, 2026-11-13): images 8 → 8.15 MB (measured 8,110,924 with the six Well Performance B shots), module 8.8 → 9 kB (measured 8,914); Well Dynamics v4.6 (integrator, 2026-11-14, Q21 rule: the measured need of both lines merged): images 8.15 → 8.27 MB (measured 8,254,838 with the three Well Dynamics shots), module 9 → 9.1 kB (measured 9,001)
 };
 const capFor = (view, target) => CAPS[view + ':' + (isViewport(target) ? 'viewport' : 'crop')];
 const isViewport = (target) => target == null || target === 'viewport';
@@ -292,6 +292,23 @@ const ACTIONS = {
       await s.advance(300);
     }
   } },
+  // Well Performance Jobs (Studies, lift-curve tables, Run all wells, the gas-lift example's design): {click?, done} — click the
+  // control (optional), then wait (real time, 120 s cap) until the `done` selector exists. The jsdom fingerprint does not run
+  // these Jobs, so a shot using this action is browser-only (checked by its recipe hash).
+  wpJob: { clock: 'fixed', run: async (s, a) => {
+    const o = a || {};
+    if (!o.done) throw new Error('wpJob needs args.done');
+    if (o.click) await mustClick(s, o.click, 'Well Performance control');
+    await until(s, () => s.page.evaluate((q) => !!document.querySelector(q), o.done), 'the Well Performance job (' + o.done + ')');
+    await s.advance(500);
+  } },
+  // A second well for the Well Performance Run all wells shot: duplicate the active well under {name} (WTS_wells.create), then
+  // the recipe changes its inputs. Browser-only like wpJob.
+  wellAdd: { clock: 'fixed', run: async (s, a) => {
+    const ok = await s.page.evaluate((nm) => { const W = window.WTS_wells; if (!W || typeof W.create !== 'function') return false; const r = W.create(nm, { duplicate: true }); return !!(r && r.ok); }, (a && a.name) || 'Well 2');
+    if (!ok) throw new Error('wellAdd: could not create the well');
+    await s.advance(800);
+  } },
   metric: { clock: 'fixed', run: async (s, on) => {
     await s.page.evaluate((m) => { if (!window.WTS_units || typeof window.WTS_units.setSystem !== 'function') throw new Error('units layer missing'); window.WTS_units.setSystem(m ? 'metric' : 'imperial'); }, on !== false);
     await s.advance(300);
@@ -399,6 +416,7 @@ function validateShots(shots) {
     else if (r.caption.length > 160) errs.push(at + ': caption longer than 160 characters');
     if (r.target != null && (typeof r.target !== 'string' || !r.target.trim())) errs.push(at + ': target must be "viewport" or a selector');
     if (r.route != null && !/^[a-z][a-z0-9_]*$/.test(r.route)) errs.push(at + ': bad route ' + r.route);
+    if (r.padTop != null && !(Number.isInteger(r.padTop) && r.padTop >= 0 && r.padTop <= 8)) errs.push(at + ': padTop must be an integer 0–8');
     if (r.mask != null && !(Array.isArray(r.mask) && r.mask.every((m) => typeof m === 'string' && m.trim()))) errs.push(at + ': mask must be a list of selectors');
     (Array.isArray(r.setup) ? r.setup : r.setup == null ? [] : (errs.push(at + ': setup must be a list'), [])).forEach((op, i) => {
       const keys = op && typeof op === 'object' ? Object.keys(op).filter((k) => k !== 'args') : [];
@@ -427,8 +445,8 @@ function validateShots(shots) {
 
 function recipeHash(s) {
   const r = s.recipe;
-  return sha256(stableJSON({ schema: RECIPE_SCHEMA, route: s.route, target: r.target || 'viewport', setup: r.setup || [], callouts: r.callouts || [],
-    mask: r.mask || [], view: r.view || 'desktop' })).slice(0, 16);
+  return sha256(stableJSON(Object.assign({ schema: RECIPE_SCHEMA, route: s.route, target: r.target || 'viewport', setup: r.setup || [], callouts: r.callouts || [],
+    mask: r.mask || [], view: r.view || 'desktop' }, r.padTop != null ? { padTop: r.padTop } : {}))).slice(0, 16);
 }
 function clockOf(s) {
   const acts = (s.recipe.setup || []).filter((o) => o && o.action).map((o) => ACTIONS[o.action] && ACTIONS[o.action].clock);
@@ -770,13 +788,13 @@ async function decorate(s, shot) {
   }, [masks, shot.recipe.callouts || []]);
 }
 
-// The crop for an element shot: the target's box + 8 px, grown to hold every call-out marker, clipped to the viewport.
+// The crop for an element shot: the target's box + 8 px (recipe padTop: 0–8 px at the top, e.g. to leave out a tab row above), grown to hold every call-out marker, clipped to the viewport.
 // → { clip, errors[], warnings[] }. A call-out whose element lies outside the padded target, or whose marker does not
 // fit in the final clip, is an error (it would not appear in the image). A target larger than the viewport is a warning
 // (the image is cut at the viewport edge: target a smaller element, e.g. one .rbox).
-function cropFor(target, rect, deco) {
+function cropFor(target, rect, deco, padTop) {
   const P = 8, errors = [], warnings = [];
-  const box = { l: rect.l - P, t: rect.t - P, r: rect.r + P, b: rect.b + P };
+  const box = { l: rect.l - P, t: rect.t - (padTop != null ? padTop : P), r: rect.r + P, b: rect.b + P };
   const vw = rect.vw, vh = rect.vh;
   if (rect.l < 0 || rect.t < 0 || rect.r > vw || rect.b > vh) {
     warnings.push('target ' + target + ' (' + Math.round(rect.r - rect.l) + '×' + Math.round(rect.b - rect.t) + ') does not fit the ' + vw + '×' + vh +
@@ -826,7 +844,7 @@ async function captureOne(browser, base, shot, view, opts) {
     const deco = await decorate(s, shot);
     if (deco.bad.length) throw new Error('call-out selector not visible in the ' + view + ' view: ' + deco.bad.join(', '));
     if (rect) {
-      const c = cropFor(target, rect, deco);
+      const c = cropFor(target, rect, deco, shot.recipe.padTop);
       if (c.errors.length) throw new Error(c.errors.join('; '));
       c.warnings.forEach((w) => warnings.push(w));
       if (opts && opts.strict && warnings.length) throw new Error(warnings.join('; ') + ' (--strict)');

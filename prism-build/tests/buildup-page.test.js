@@ -381,7 +381,7 @@ module.exports = [
       assert.ok(app.el('pgTitle').textContent === 'Build-up Surveillance');
       const btn = app.find('#sidebar .nav-btn[data-p="buildup"]');
       const grp = btn.closest('.nav-group'), rows = Array.from(grp.querySelectorAll('.nav-btn')).filter((b) => !b.classList.contains('nav-hub-member')).map((b) => b.getAttribute('data-p') || 'hub:' + b.getAttribute('data-hub'));
-      assert.deepStrictEqual(rows.slice(-2), ['hub:perf', 'buildup'], 'last row of Production & Reservoir, after the Well Performance hub (v4.3): ' + rows.join(','));
+      assert.deepStrictEqual(rows.slice(-3), ['hub:perf', 'welldyn', 'buildup'], 'last row of Production & Reservoir, after the Well Performance hub (v4.3) and Well Dynamics (v4.6): ' + rows.join(','));
     },
   },
   {

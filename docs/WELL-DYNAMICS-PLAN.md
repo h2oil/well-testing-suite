@@ -1714,6 +1714,24 @@ gl_unloading → gl_lifting; X13 esp_ramp → esp_running; X17 identical. Every 
 §11.4 / §11.5 stand (cycleTimer 12 h: 28 s, 248 rejected steps, no budget row in §5.6). Tests: welldyn-engine 31, -gate 9, -int 6,
 -lift 28, -page 24, -rec 16, -res 12, -validate 7, -view 14 — all pass (after every fix above).
 
+**Release 4.6 (2026-11-14, `wd/int`).** Merged `origin/dev-87qwkg` (release 4.5.1, the Q21 Well Performance help) into `wd/int`. Conflicts
+only in the help files and the generated files: the task lists of both sides kept (artlift, wdload, wdgl: 17 tasks, check 10–17); the
+wellperf guide takes the 4.5.1 text and keywords with this line's `reviewedSrc` (the cross-link button); the help-shots named actions of
+both sides (`wpJob`, `wellAdd`, `welldynRun`); the caps are both sides' measured need together plus a small margin (production 69.25 kB,
+start 22.45 kB, sum 392.5 kB raw / 136.5 kB gzip, images 8.27 MB, manifest module 9.1 kB — the Q21 rule; above either side alone, so the
+owner may want to confirm them). Generated files (combined-round9.js, the HTML, www, manifest, user guide) regenerated with the tooling.
+The 4.5.1 wellperf text named "drift flux" before the glossary term (added here) — now linked. Fixes found by the full gates:
+- `buildup-page` PG1 expected Build-up Surveillance right after the Well Performance hub; now hub → welldyn → buildup.
+- `acct-lswrite-scan` LS1: the page's device-pref write was a raw `localStorage.setItem`; it now goes through `WTS_lsSet` with a marked
+  fallback (count table +1 for 49-calc-welldyn.js).
+- `ux-layout-check` at 375 px: the closed Export menu (`.wd-menu`, right-anchored) measured off the left edge, and opened it ran off the
+  screen on a phone. Closed menus are now `display:none`, and below 600 px the menu anchors left (opened: 82–292 px of 375).
+RELEASE_NOTES v4.6 dated 2026-11-14 on top (both platforms); versions 4.6 (label fallback, both MARKETING_VERSION, both VERSION_BASE);
+release-notes shots re-taken. Gates on the built page: node --check, smoke 347/347, accept-test --html --integration 2382/2382 (204 files,
+file by file), welldyn-validate (D17 PASS, 23 / 23, X11 skipped, G1–G7 as wave 2), wellperf-validate (D17 PASS, 62 / 62, budgets ok),
+help-shots / build-user-guide / publish-site --check ok, ux-layout-check --web ok, wts3d-test 147/149 (the two CRLF checks on LF), GUI
+sweep of welldyn + wellperf (desktop and --mobile): 0 errors, 0 warnings, 0 cosmetic (one info: a hidden control clicked by script).
+
 ---
 
 ## 12. Revision 2 — review changes and where they landed

@@ -57,7 +57,7 @@
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 e6930d41,view-p 780 1688 5072dd17",
+    "releasenotes": "view-d 1280 800 6fc9b699,view-p 780 1688 33460de8",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -74,13 +74,13 @@
     "welldyn": "gl-d 1280 800 c8cc50df,run-d 1280 800 38b60d3b,wb-p 512 754 6ebb4612",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
-    "wellperf": "sys-d 531 421 3222ff8c",
+    "wellperf": "env-d 948 487 cf4cee67,esp-d 930 439 38fd4894,esp-p 668 748 4878e542,gld-d 930 568 1558703a,ltab-d 948 427 22914a05,sys-d 531 421 3222ff8c,wells-d 930 521 4d48dd2d",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
     "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 221;
-  M.bytes = 8105852;   // total size of the image files (the offline download label)
+  M.count = 227;
+  M.bytes = 8254838;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

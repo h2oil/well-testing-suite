@@ -41,7 +41,7 @@ const MARKED = {
   '29-multiwell.js': 4, '29-project-save.js': 6, '33-pta-core.js': 3, '35-rta-dca.js': 1, '36-report.js': 1,
   '37-prism-workflow.js': 2, '39-prism-fieldtools.js': 1, '47-calc-historian.js': 1, '49-calc-buildup-store.js': 1,
   '49-calc-help.js': 1, '50-a11y.js': 1, '51-prism-workspace.js': 2, '54-prism-skin.js': 1, '61-modbus-station.js': 1,
-  '63-wellos.js': 1, '49-calc-wp-model.js': 1,
+  '63-wellos.js': 1, '49-calc-wp-model.js': 1, '49-calc-welldyn.js': 1,
 };
 const HOST_MARKED = 6;   // __lsSet, __lsSetRaw, __lsRemove, the two snapshot-eviction writes inside __lsSet, and the analytics
                          // consent choice (wtspref_analytics_consent, head GA block: runs before WTS_lsSet exists; a device pref)

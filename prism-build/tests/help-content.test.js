@@ -29,8 +29,8 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 48.52, '49-calc-help-print.js': 15.68, '48-calc-help-start.js': 21.75, '48-calc-help-overview.js': 9.98,
-  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 57.95, '48-calc-help-livedata.js': 16.03,
+  '49-calc-help.js': 48.52, '49-calc-help-print.js': 15.68, '48-calc-help-start.js': 22.45, '48-calc-help-overview.js': 9.98,
+  '48-calc-help-metering.js': 27.61, '48-calc-help-welltest.js': 35.38, '48-calc-help-production.js': 69.25, '48-calc-help-livedata.js': 16.03,
   '48-calc-help-safety.js': 35.4, '48-calc-help-process.js': 19.97, '48-calc-help-flare.js': 11.98, '48-calc-help-utilities.js': 19.99,
   '48-calc-help-simcourse.js': 41.72, '48-calc-help-wpcourse.js': 9.83, '48-calc-help-manifest.js': 8.75,
 };
@@ -81,17 +81,31 @@ const CAPS = {
 // exercises); production +2.26 (seven guide parts: PVT families, correlations and flow regimes, flowing temperature, choke, gas lift,
 // two variables and tubing size, VLP tuning), 49-calc-help +0.92 (a course list per course), print +0.35 (a course chapter and
 // worksheets per course), start +0.06 (the training FAQ); the 2.11 kB WP10 left unallocated are used. Measured: 367,974 raw, 127,744 gzip.
+// Q21 (owner approved, 2026-11-13: "do Q21 now"): the Well Performance B help completed from the measured draft. production 47.67 → 57.6
+// (measured 57,009: B correlations and per-section rows, PVT lab match, Rv / emulsion, enthalpy U layers, the B inflow models and the
+// Build-up hand-off, lift-curve / PVT tables, Studies, Run all wells, gas-lift design and ESP parts, six shot recipes), start 19.8 → 20.55
+// (measured 20,333: the artificial-lift task, 14 → 15); SUM_CAP 369 → 381 kB (measured 378,001), GZIP_CAP 128 → 133 kB (measured
+// 131,598); the wellperf guide's serialised cap 14 → 21.75 kB (GUIDE_CAP_KB; measured 21,920 bytes). Other files unchanged.
+// Q21 review fixes (2026-11-13): production 57.6 → 59.2 (measured 58,824: the Lift screening part, the full gas-lift design and ESP
+// input tables, the U-layers wording, five B keywords, the two-well shot recipe); the wellperf guide 21.75 → 23.5 kB (measured 23,892).
 // Well Dynamics WD6 (integrator, 2026-11-14): owner question Q21 (approved 2026-11-13 for the help growth of the Well Performance
 // module, which Well Dynamics extends): the caps rise by the measured need plus a small margin. The welldyn guide (a PART route,
 // 9.8 kB serialised) and its three shots: production 47.67 → 57.95 kB (measured 57,859); start 19.8 → 21.75 kB (measured 21,705: the
 // tasks wdload and wdgl, five glossary terms); sum 369 → 381.3 kB raw (measured 380,169) and 128 → 132 kB gzip (measured 131,736);
 // help-shots totalBytes 8.0 → 8.12 MB (measured 8,105,852) and moduleBytes 8.8 → 8.9 kB (measured 8,860). Tasks 10–15 → 10–16.
-const SUM_CAP = 381.3 * KB, GZIP_CAP = 132 * KB;
+// Release 4.6 (integrator, 2026-11-14): the Q21 line (4.5.1) and Well Dynamics merged, so the caps are both sides' measured need together
+// plus a small margin: production 69.25 kB (measured 69,040), start 22.45 kB (measured 22,241: 17 tasks), sum 392.5 kB raw (measured
+// 392,027) and 136.5 kB gzip (measured 136,245); help-shots images 8.27 MB (measured 8,254,838) and module 9.1 kB (measured 9,001).
+// Tasks 10–16 → 10–17.
+const SUM_CAP = 392.5 * KB, GZIP_CAP = 136.5 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
 const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
 const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus', 'wellperf', 'welldyn'];
+// serialised guide cap in kB (1024 bytes): 14 for a parts route, 6 otherwise; wellperf 23.5 since Q21 (owner, 2026-11-13)
+const GUIDE_CAP_KB = { wellperf: 23.5 };
+const guideCap = (r) => GUIDE_CAP_KB[r] || (PARTS.indexOf(r) !== -1 ? 14 : 6);
 const SRC_OVERRIDE = { wts: ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'] };
 const SEC_KEYS = ['top', 'what', 'when', 'steps', 'inputs', 'results', 'example', 'tips', 'refs', 'related'];
 
@@ -233,7 +247,7 @@ function limitIssues(r, g, warn) {
   });
   st.forEach((s, i) => { if (s && s.shot && !A(g.shots).some((x) => x.id === s.shot)) e('steps[' + i + '] names unknown shot ' + s.shot); });
   const size = Buffer.byteLength(JSON.stringify(g), 'utf8');
-  if (size > (PARTS.indexOf(r) !== -1 ? 14 : 6) * 1024) e('guide is ' + size + ' bytes serialised (cap ' + (PARTS.indexOf(r) !== -1 ? 14 : 6) + ' kB)');
+  if (size > guideCap(r) * 1024) e('guide is ' + size + ' bytes serialised (cap ' + guideCap(r) + ' kB)');
   parts.forEach((p, i) => {
     if (!p || !p.id || !/^[a-z0-9-]+$/.test(p.id)) e('parts[' + i + '] id must be [a-z0-9-]');
     if (!p || typeof p !== 'object') return;
@@ -545,7 +559,7 @@ function otherIssues(C, ctx) {
     if (size(t) > 1024) out.push(w + ': over 1 kB');
     (t.steps || []).forEach((s, j) => { if (s.route && !ctx.routes.has(s.route)) out.push(w + '.steps[' + j + ']: route ' + s.route + ' is not live'); });
   });
-  if ((C.factories || []).some((f) => f && f.group === 'start') && ((C.tasks || []).length < 10 || C.tasks.length > 16)) out.push('tasks: 10–16 "How do I…" tasks expected');
+  if ((C.factories || []).some((f) => f && f.group === 'start') && ((C.tasks || []).length < 10 || C.tasks.length > 17)) out.push('tasks: 10–17 "How do I…" tasks expected');
   const CK = new Set((C.COURSES || [['sim'], ['wellperf']]).map((c) => c[0]));
   (C.course || []).forEach((x, i) => {
     if (size(x) > 4096) out.push('course[' + i + ']: over 4 kB');
@@ -697,7 +711,7 @@ const TESTS = [
     },
   },
   {
-    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 381.3 kB raw and ≤ 132 kB gzip',
+    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 392.5 kB raw and ≤ 136.5 kB gzip',
     wp: WP,
     opts: false,
     run(app, assert) {

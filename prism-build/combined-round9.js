@@ -8125,7 +8125,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 e6930d41,view-p 780 1688 5072dd17",
+    "releasenotes": "view-d 1280 800 6fc9b699,view-p 780 1688 33460de8",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -8142,13 +8142,13 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "welldyn": "gl-d 1280 800 c8cc50df,run-d 1280 800 38b60d3b,wb-p 512 754 6ebb4612",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
-    "wellperf": "sys-d 531 421 3222ff8c",
+    "wellperf": "env-d 948 487 cf4cee67,esp-d 930 439 38fd4894,esp-p 668 748 4878e542,gld-d 930 568 1558703a,ltab-d 948 427 22914a05,sys-d 531 421 3222ff8c,wells-d 930 521 4d48dd2d",
     "wells": "view-d 1280 800 5e088aea,view-p 780 1688 91822f80",
     "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 221;
-  M.bytes = 8105852;   // total size of the image files (the offline download label)
+  M.count = 227;
+  M.bytes = 8254838;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8899,14 +8899,20 @@ var solgor = {
 // Well Performance (plan §14)
 function W(l, id, d, t) { return inp(l, 'wp_' + id, d, t); }
 function ws(id, t, alt, ex, more) { return { id: id, view: 'desktop', target: t, alt: alt, caption: alt, setup: [{ click: '#wp_steps [data-ex=' + ex + ']' }].concat(more || []) }; }
+// B shots: a step, an optional Job (wpJob: click, then wait for `done`), the target scrolled to the top under the hidden step bar
+function wj(id, t, alt, ex, n, click, done, pre, view, sc) {
+  var j = { done: done }; if (click) j.click = click;
+  var o = ws(id, t, alt, ex, [{ click: '#wp_steps [data-step="' + n + '"]' }].concat(pre || [], [{ action: 'wpJob', args: j }, { scroll: sc || t }]));
+  o.mask = ['#wp_steps']; o.padTop = 0; if (view) o.view = view; return o;
+}
 var wellperf = {
   route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'd2d99de3', units: 'dual',
-  keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey'],
+  keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey', 'ESP pump', 'gas-lift design', 'lift curve tables', 'heat-transfer U layers', 'lift screening'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
   'The top block updates on every solve and goes into the report.'],
   when: ['Before a test: the rate and wellhead pressure at a choke.', 'After a test: do the rate, THP and gauge agree?', 'Gas wells: does it load up, and where?'],
-  steps: ['**Oil**, **Gas**, **Horizontal**, **Layers**, **Injector** or **ESP** loads an example.',
+  steps: ['**Oil**, **Gas**, **Horizontal**, **Layers**, **Injector**, **ESP** or **Gas lift** loads an example.',
   '① **Fluid**: type, gravity, [[glossary#gor|GOR]] and water cut (CGR and WGR for gas).',
   '② **Reservoir**: inflow model (horizontal, fractured, layers, injector: provisional), p̄r (never defaulted), or **Import from PRiSM** / **Build-up Surveillance**.',
   '③ **Well**: survey, strings, restrictions, perforations, temperature (**Paste from a spreadsheet**), or a [[glossary#dfit|DFIT]] test (**Import well geometry from a DFIT test**).',
@@ -8914,7 +8920,8 @@ var wellperf = {
   { t: '⑤ **System**: node, surface [[glossary#bean|bean]] or fixed wellhead pressure, separator, flowline. Read the operating point.', shot: 'sys' },
   'Drag a handle (p̄r, THP, bean, WC) on the system plot: the well re-solves. A slow case shows **Solve now**.',
   'Read the **Checks** and the **Traverse** (**TVD** or **MD**); for gas, the **Liquid loading** tab.',
-  '⑥ **Match**: tests, then **Compare and QC**. **Tune to the tests** fits lift multipliers to the gauges. ⑦ **Report**: notes, **Export CSV bundle**, **Lift-curve tables**, **PVT table export**, **Run all wells**.'],
+  '⑥ **Match**: tests, then **Compare and QC**. **Tune to the tests** fits lift multipliers to the gauges.',
+  { t: '⑦ **Report**: notes, **Export CSV bundle**, **Lift-curve tables**, **PVT table export** ([[wellperf#tables|Tables]]). **Run all wells** solves every well of the project, each from its own saved inputs; no well is changed. The map and table go into the report.', shot: 'wells' }],
   inputs: [W('Fluid type', 'ftype', 'Oil'), W('Oil / condensate gravity', 'api', '35'), W('Gas specific gravity', 'sgg', '0.65'), W('Producing GOR', 'gor', '{{500|gor}}'),
   W('Water cut', 'wc', '0 %'), W('Inflow model', 'ipr', 'PI'), W('Average reservoir pressure p̄r', 'pr', null, 'Absolute; never defaulted.'),
   W('Productivity index J', 'ip_J', null, 'Each model shows its own parameters.'), inp('Survey stations', null, null, 'MD, inclination, azimuth (or MD, TVD); minimum curvature.'),
@@ -8938,23 +8945,70 @@ var wellperf = {
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] }, { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node, wellhead to shoe; the worst depth is shown. A wider casing below the shoe is information.'] },
   { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
-  { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation; drag the pb handle. Provisional ones are dashed. **PVT lab match** fits lab data.'] }, { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations**: each one marched from the solved THP (BHP spread, **Use**). **Flow-regime map**: four maps. **Per-section correlations** (⑤) by MD or inclination.'] },
-  { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** on the true inclination against the TVD geotherm; **Enthalpy balance** adds J-T, gravity, kinetic terms and U layers. **Fit U to the test THT**.'] }, { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab: rate against downstream pressure; **Fit** matches Sachdeva to a critical correlation.'] },
+  { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation; drag the pb handle. Provisional ones are dashed.'] },
+  { id: 'labmatch', title: 'PVT lab match', what: ['**PVT lab data** in ①: lab temperature, basis (flash or differential), lab bubble point and a table of pressure with Rs, Bo and μo. **Match to the lab data** fits pb by a one-point factor, then Rs below pb, Bo and μo each as a·y + b (least squares on relative errors). Every black-oil correlation and viscosity pair is ranked against the points.',
+  'The Rs shift tapers as b·min(1, p / pb), so Rs at stock-tank and separator pressures stays the correlation\'s. Differential data with a separator test are adjusted to flash (provisional). Apply sends the matched set into every solve.'] },
+  { id: 'rv', title: 'Condensate and emulsion', what: ['Gas-condensate, **Condensate model**: wet gas with no mass transfer (default), or a modified black oil with an Rv table (provisional): the condensate still in the gas against pressure, from a lab constant-volume depletion (Rv ≤ CGR). Above the dew point all of it is vaporised; blank dew point = where Rv reaches the CGR.',
+  'Oil with water, **Liquid viscosity**: the volume-weighted oil + water mixture (default); for a stable water-in-oil emulsion the Woelflin curves (loose, medium, tight), Brinkman (both provisional) or a table of μ_em / μo against water cut.'] },
+  { id: 'corr', title: 'Correlations and flow regimes', what: ['**Correlations** (Traverse): each one marched from the solved THP (BHP spread, **Use**). **Flow-regime map**: four maps.',
+  'Five more lift correlations, all provisional: Orkiszewski (1967); Aziz, Govier and Fogarasi (1972); Mukherjee and Brill (1985, by inclination, also for flowlines); Ansari et al. (1994, mechanistic); Hasan and Kabir (1988, [[glossary#driftflux|drift flux]]). Orkiszewski and Hasan-Kabir jump at their published pattern boundaries; the traverse warns.',
+  '**Per-section correlations** in ⑤: rows by MD interval or inclination band (degrees from vertical). The first row covering a part of the path sets its correlation; the well correlation applies elsewhere. Drag a boundary on the Traverse plot, or use **Deviated → Mukherjee-Brill** or **Mechanistic by inclination**.'] },
+  { id: 'temp', title: 'Flowing temperature', what: ['**Heat-transfer relaxation (Ramey / Hasan-Kabir)** on the true inclination against the TVD geotherm. **Fit U to the test THT**.',
+  '**Heat-transfer layers (U by depth)**, for the relaxation and the enthalpy balance: MD ranges with their own U and k_e (an insulated or riser section); the overall U (③) applies elsewhere.',
+  '**Enthalpy balance** (provisional) marches the energy along the well; the energy budget shows the heat to the earth, Joule-Thomson, gravity and kinetic parts. With gas lift or an ESP it falls back to the relaxation.'] },
+  { id: 'inflow', title: 'More inflow models', what: ['Each model in ② shows its own parameters. All are provisional and never a default.'],
+  inputs: [inp('Water-cut composite', null, null, 'Oil by Vogel plus water by a straight-line PI, by the water cut.'), inp('Horizontal well — Joshi, Babu-Odeh, Furui', null, null, 'k, h, lateral length L (blank = the perforated MD), kv/kh, rw, skin; Joshi a drainage radius, Babu-Odeh a box and the well position in it, Furui the half-width.'),
+  inp('Fractured well (oil, gas)', null, null, 'Half-length xf and conductivity F_cD as a skin (Prats / Cinco-Ley); gas adds the non-Darcy coefficient D.'), inp('Transient', null, null, 'Line source at a flowing time: k, h, φ, ct, rw, time, skin; J falls with time.'),
+  inp('Multilayer commingled', null, null, 'A row per layer: depth, p̄r and J (or the gas a and b, or k·h and skin); crossflow and thief layers reported.'), inp('Injector', null, null, 'Injectivity index (or k, h, skin) with a fracture-pressure limit; the rate at the limit is the maximum.'),
+  inp('Build-up Surveillance', null, null, 'Takes k, h and skin and the [[glossary#pstar|extrapolated pressure]] of the stored build-up, moved to mid-perforations. Check p̄r: p* is higher in a bounded reservoir.')] },
+  { id: 'choke', title: 'Choke', what: ['A critical correlation (Gilbert, Ros, Baxendell, Achong) or Sachdeva. **Sub-critical flow**: conservative bound (default) or continuous Sachdeva (provisional). The **Choke** tab: rate against downstream pressure; **Fit** matches Sachdeva to a critical correlation.'] },
   { id: 'gaslift', title: 'Gas lift (quick look)', what: ['Lift gas enters at the deepest point the casing pressure reaches above the packer. **Run the gas-lift performance curve**: rate against lift-gas rate, optimum and economic points; drag the injection-rate or packer handle.'] }, { id: 'study', title: 'Two variables and tubing size', what: ['A **Second variable** gives a rate line per value and a heat-map table: select a cell, then **Use these values**. **Tubing size (catalogue scan)** lists each size with rate, stability, loading margin and erosion ([[course#wp2|course exercise 2]]).'] },
-  { id: 'tune', title: 'VLP tuning', what: ['**Tune to the tests** fits the holdup multiplier m_h (0.8–1.25) to the gauges, and the friction multiplier m_f (0.7–1.5) only when the test rates span 2:1. Tuned and untuned traverses are drawn against the gauges; **Apply to the model** uses them in every solve. See the [[wpcourse|Well performance course]].'] }, { id: 'studies', title: 'Studies', what: ['Jobs on the **Studies** card: envelope (drag the point), forecast (time slider), tornado, 3–4 variable matrix, cases.'] },
-  { id: 'gldesign', title: 'Gas-lift design', what: ['④ **Design the valves**: valves on MD with TVD; drag one. **Diagnosis** from a test; **Match the survey**. Design, throughput, stability screening: provisional.'] }, { id: 'esp', title: 'ESP', what: ['④ pump MD, frequency, stages, curve; drag the frequency or stages rail; **Size the stages**. Gas, viscosity, motor checks: provisional.'] }],
+  { id: 'tune', title: 'VLP tuning', what: ['**Tune to the tests** fits the holdup multiplier m_h (0.8–1.25) to the gauges, and the friction multiplier m_f (0.7–1.5) only when the test rates span 2:1. Tuned and untuned traverses are drawn against the gauges; **Apply to the model** uses them in every solve. See the [[wpcourse|Well performance course]].'] }, { id: 'studies', title: 'Studies', what: ['Jobs on the **Studies** card, run on the current model. Each tab keeps its result, and the report carries every study that has one.'],
+  steps: [{ t: '**Operating envelope**: enter the limits (drawdown, minimum pwf, facility rate, erosional ratio, pwf above pb). Select **Run the operating envelope**, then drag the point along the curve; release for the bean.', shot: 'env' },
+  '**Depletion forecast**: p̄r per step (water cut and GOR optional), or **Tank material balance (provisional)**. Run it, then move the time slider.',
+  '**Tornado**: **Run the tornado**: the rate at the low and high value of each variable, largest swing first.',
+  '**Matrix (3–4 variables)**: values per variable; every combination is solved and the best case is labelled.',
+  '**Cases**: **Save the current inputs as a case** (up to 20 per well), then **Compare the chosen cases**: IPR and outflow on one plot, the rate change and the inputs that differ.'] },
+  { id: 'tables', title: 'Lift-curve and PVT tables', what: ['**Lift-curve tables**: BHP at the datum for every combination of rate, THP, water fraction, gas fraction and lift quantity (lift-gas rate or ESP frequency). Each point is one top-down traverse with the model\'s correlation, temperature, tuning and path; the THP is the boundary (no choke, flowline or separator).',
+  'Datum blank = mid-perforations. Axis values are in the table\'s field units. **PVT table export**: Rs, Bo, μo, co, Z, Bg, μg, Bw, μw and densities against pressure at the reservoir temperature, the bubble point always a row; CSV in the page units, the black-oil PVT text in field units.'],
+  steps: ['Open ⑦ **Report** and choose the table number, datum and the five axes.', '**Fill from the model** suggests values around the operating point; the point count and time show below.',
+  { t: '**Run lift table** (a Job) fills every point; then **Download table (text)** (lift-curve table text, producer or injector) or **Download CSV**.', shot: 'ltab' }] },
+  { id: 'gldesign', title: 'Gas-lift design', what: ['Unloading valves spaced on the deviated path (MD with TVD) with the model\'s inflow, correlation and flowing temperatures. The design, the Thornhill-Craver port throughput and the stability screening are provisional.',
+  'Screening after Asheim (1988): static stability F1 (stable above 1) and injection loop gain F2 (stable below 1); casing heading from the annulus volume is not assessed.',
+  'Limits: the operating solve injects at its own point of balance, not at the installed valves (the KPI and schematic say so); the design traverses use a mixed lift-gas gravity.'],
+  steps: ['Load **Gas lift**, or set gas lift in ④ with the injection pressure, rate and packer.', { t: 'Enter the design inputs and select **Design the valves**. Drag a valve along the hole: MD and TVD show.', shot: 'gld' },
+  'If the operating port passes too little gas, **Use the recommended port**. **Use this design** installs the valves.', '**Diagnosis**: a test with its CHP and lift gas (⑥) finds the operating valve.', 'Paste a flowing gradient survey and **Match the survey**.'],
+  inputs: [W('Kickoff pressure (surface)', 'gld_pko', null, 'Casing pressure for the top valve; blank = injection pressure + {{100|pressure}}.'), W('Kill-fluid gradient', 'gld_gs', '{{0.465|pressureGradient|3}}', 'The fluid in the well at kickoff; sets the top valve depth.'),
+  W('Design tubing effect', 'gld_ftub', '20 %', 'Surface design line, share of p_so − p_wh.'), W('Pressure drop per valve', 'gld_dpdrop', '{{25|pressure}}', 'Each lower valve opens at this much less casing pressure.'),
+  W('Minimum spacing (MD)', 'gld_minsp', '{{250|length}}'), W('Port size', 'gld_port', 'from the design ({{0.25|lengthSmall|2}})', 'The throughput check recommends one.'), W('Port / bellows R', 'gld_R', null, 'Port area over bellows area; blank = from the port.'),
+  W('Design liquid rate', 'gld_qL', null, 'Blank = the operating point.'), W('Deepest mandrel MD', 'gld_dmax', null, 'Blank = packer − {{30|length}}.')] },
+  { id: 'esp', title: 'ESP', what: ['The pump is a node in the solve. Pump curve: rate against head, efficiency and power per stage at the base frequency (example pump, pasted CSV or the device pump library); affinity laws scale it with frequency (q ∝ f, H ∝ f², P ∝ f³).',
+  'Checks: operating range (down- or upthrust), gas at the intake (Turpin), motor load, cable voltage drop, velocity past the motor. The gas criterion, motor and cable basics, natural separation and viscosity correction (both off unless ticked) are provisional.',
+  'Not modelled: pump heating, thrust, casing gas, gas-well ESP.'],
+  steps: [{ t: 'Load **ESP**, or set ESP in ④: **Pump setting depth MD**, frequency, stages and the pump curve.', shot: 'esp' }, 'Drag the frequency or stages rail on the plot; the well re-solves.',
+  'Enter the **Target liquid rate**, then **Size the stages** or **Frequency for this rate**.', '**Rate against frequency**: one solve per frequency (a Job); green inside the range, amber in down- or upthrust.'],
+  inputs: [W('Gas separator efficiency', 'esp_sep', null, '0 = no rotary separator.'), W('Pump and motor OD', 'esp_od', '{{4|lengthSmall}}', 'The casing gap for the velocity past the motor.'), W('Motor power (base frequency)', 'esp_hp'),
+  W('Motor voltage', 'esp_volt', null, 'Nameplate, for the motor-load check.'), W('Motor current', 'esp_amp', null, 'Nameplate.'), W('Cable', 'esp_awg', '#2', 'Copper; size for the voltage-drop check.'), W('Cable length', 'esp_clen', null, 'Blank = pump MD + {{100|length}}.')] },
+  { id: 'screen', title: 'Lift screening', what: ['**Lift screening** in ④ (provisional: indicative ranges after Brown (1982) and Clegg, Bucaram and Hein (1993); a screening aid, not a design). One matrix per solve: natural flow, gas lift, ESP, rod pump, progressing-cavity pump, jet pump and plunger lift against the well, deviation, dogleg and depth first. The pump-setting window (MD and TVD) is bracketed on the schematic.',
+  '**Compare the lift rates**: natural flow, optimum gas lift at the ④ injection pressure (else the **Screening injection pressure**, blank = {{1000|pressureG}}) and ESP, with the **Pump potential at pwf**. Rod pump, PCP, jet pump and plunger lift are screened only (no rate model).'] }],
   boldExempt: ['Use this bean'],
   tips: ['Enter the survey even for a near-vertical well.', 'An estimated THT bounds the hydrate check.'], pitfalls: ['p̄r and the gauge are absolute; THP and separator gauge.'],
-  refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading')],
-  related: ['oilipr', 'gasdeliv', 'gaslift', 'prism', 'flowline'],
-  shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil')]
+  refs: [rf('Beggs and Brill (1973)'), rf('Gilbert (1954)', 'choke'), rf('Turner, Hubbard and Dukler (1969)', 'loading'), rf('Asheim (1988)', 'gas-lift stability'), rf('Turpin, Lea and Bearden (1986)', 'pump gas')],
+  related: ['oilipr', 'gasdeliv', 'gaslift', 'prism', 'flowline', 'buildup'],
+  shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil'),
+  wj('wells', '#wp_cv_wells', 'Run all wells: the operating point of each well of the project on one map', 'oil', 7, '[data-act=wellsrun]', '#wp_cv_wells',
+  [{ action: 'wellAdd', args: { name: 'Example-2' } }, { set: { '#wp_pr': '3400', '#wp_wc': '10', '#wp_ip_J': '1.2' } }, { click: '#wp_steps [data-step="7"]' }]),
+  wj('ltab', '#wplt_res .chart-wrap', 'Lift-curve table: BHP at the datum against rate, one curve per THP', 'oil', 7, '[data-lt=run]', '#wplt_cv', [{ set: { '#wplt_thpv': '150, 300, 600', '#wplt_wfrv': '0.3', '#wplt_gfrv': '0.5' } }]),
+  wj('env', '#wpb_cvw', 'Operating envelope of the Oil example: deliverability, limits and the draggable point', 'oil', 5, '[data-act=b27env]', '#wpb_kpi .kpi-v'),
+  wj('gld', '#wp_cv_glv', 'Gas lift example: unloading valves on the deviated path, design lines and the point of injection', 'gl', 4, null, '#wpg_tbl table'),
+  wj('esp', '#wp_cv_esp', 'ESP example: pump head across frequency, the head the well needs and the frequency and stages rails', 'esp', 4, null, '#wpe_kpi .kpi-v', null, 'both')]
 };
 
 function Y(l, id, d, t) { return inp(l, 'wd_' + id, d, t); }
 function ds(id, view, t, alt, a, sc) { return { id: id, view: view, target: t, alt: alt, caption: alt, setup: [{ action: 'welldynRun', args: a }, { scroll: sc }] }; }
 var PV = 'provisional — not verified against a published example';
 var welldyn = {
-  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: '5debfe8b', units: 'dual',
+  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: '972e7561', units: 'dual',
   keywords: ['transient', 'liquid loading', 'unloading', 'shut-in', 'start-up', 'gas lift', 'ESP', 'replay'],
   purpose: 'Plays a Well Performance well in time: start-up, choke changes, shut-in and build-up, loading and unloading, foamer, cycles, gas lift and ESP.',
   what: ['A 1-D transient model of the well on the same model as [[wellperf]]: no re-entry. Mass of gas, oil and water per cell along MD; pressure from the gradient correlation of the well, and a [[glossary#driftflux|drift flux]] model at low velocity. A steady run settles on the nodal operating point.',
@@ -9891,6 +9945,9 @@ S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstre
 { id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
 S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
 S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] },
+{ id: 'artlift', title: 'Design gas-lift valves or size an ESP', purpose: 'Artificial lift for a well that will not flow, or flows too little.', steps: [
+S('wellperf', 'Steps ① to ③, then ④ Lift. Gas lift: design inputs, Design the valves, Use this design ([[wellperf#gldesign|Gas-lift design]]).', 'valve depths, port, injection pressure'),
+S('wellperf', 'ESP: pump curve and setting depth, Target liquid rate, Size the stages; check the range, gas, motor and cable ([[wellperf#esp|ESP]]).', 'stages, frequency, motor load')] },
 { id: 'wdload', title: 'See when my gas well loads up', purpose: 'In time: when the well loads after a choke-back, and what unloads it.', steps: [
 S('wellperf', 'Set up the gas well (or load the Gas example) and check it solves.', 'operating point'),
 S('welldyn', 'Preset Gas-well loading, Apply preset, Play at ×1000 (bean halved at 1 h). Watch the state and Rate / critical rate ([[welldyn#loading|loading]]).', 'time to loading, critical rate'),
@@ -46154,7 +46211,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var key = 'wtspref_wd_' + k;
         try {
             if (v === undefined) { var s = G.localStorage ? G.localStorage.getItem(key) : null; return s == null ? null : s; }   /* ls-raw: device pref */
-            if (G.localStorage) G.localStorage.setItem(key, String(v));                                                       /* ls-raw: device pref */
+            if (typeof G.WTS_lsSet === 'function') G.WTS_lsSet(key, String(v));
+            else if (G.localStorage) G.localStorage.setItem(key, String(v));   /* ls-raw: fallback (no host WTS_lsSet: smoke stub, tests) */
         } catch (e) { /* private window, blocked storage */ }
         return null;
     }
@@ -47130,6 +47188,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         '#wd_root .wd-more{position:relative}#wd_root .wd-more>summary{list-style:none;cursor:pointer;padding:6px 11px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;font-weight:600;background:var(--bg2)}' +
         '#wd_root .wd-more>summary::-webkit-details-marker{display:none}#wd_root .wd-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:210px;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:4px}' +
         '#wd_root .wd-menu .btn{text-align:left}' +
+        '#wd_root .wd-more:not([open]) .wd-menu{display:none}@media (max-width:600px){#wd_root .wd-menu{right:auto;left:0}}' +
         '#wd_root .wd-tl{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 10px;align-items:center;margin:0 0 10px}#wd_root .wd-tl input[type=range]{width:100%;margin:0}' +
         '#wd_root .wd-tread{font-variant-numeric:tabular-nums;font-weight:700;font-size:13px}#wd_root .wd-trange{font-size:11px;color:var(--text3);grid-column:1/-1}' +
         '#wd_root .wd-strip{grid-column:1/-1;width:100%;height:26px;display:block}#wd_root .wd-marks{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}' +
