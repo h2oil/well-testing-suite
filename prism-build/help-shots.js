@@ -60,7 +60,7 @@ const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[d
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
 const CAPS = {
   'desktop:viewport': 150 * 1000, 'desktop:crop': 90 * 1000, 'phone:viewport': 110 * 1000, 'phone:crop': 70 * 1000,
-  totalBytes: 8 * 1000 * 1000, files: 300, moduleBytes: 8.8 * 1000,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool)
+  totalBytes: 8120 * 1000, files: 300, moduleBytes: 8900,   // 8.7 kB: owner decision Q13 option 1 (plan §3.6); +0.2 for the SIM-FOLLOWUP shots (lead, WP-HC); +0.05 DFIT (WP7); +0.05 wellperf (WP10, from the help pool); Well Dynamics (Q21, 2026-11-14): 8.0 → 8.12 MB images (measured 8,105,852), module 8.8 → 8.9 kB (measured 8,860)
 };
 const capFor = (view, target) => CAPS[view + ':' + (isViewport(target) ? 'viewport' : 'crop')];
 const isViewport = (target) => target == null || target === 'viewport';
@@ -241,6 +241,38 @@ const ACTIONS = {
       await simQuiet(s);
     }
     await s.advance(32);
+  } },
+  // Well Dynamics (v4.6): {ex, preset, h, tab} — load the Well Performance example ex ('oil' | 'gas' | 'gl' | …; the gas-lift example
+  // designs its valves in a Job, so the action waits for them), open Well Dynamics, apply the preset and run it to h simulated hours
+  // through the page's test hook (the engine's run plus one Step: deterministic, the frame loop never starts), then show a chart tab.
+  welldynRun: { clock: 'fixed', run: async (s, a) => {
+    const x = a || {}, ex = String(x.ex || 'oil');
+    await s.page.evaluate(() => { window.confirm = () => true; if (typeof window.WTS_nav !== 'function') throw new Error('WTS_nav missing'); window.WTS_nav('wellperf'); });
+    await s.advance(500);
+    await mustClick(s, '#pgBody [data-act=example][data-ex=' + ex + ']', 'Well Performance example ' + ex);
+    await until(s, () => s.page.evaluate(() => { const M = window.WTS_wp_model && window.WTS_wp_model.read(); return !!(M && M.res && M.res.pr > 0); }), 'the Well Performance example', 60000);
+    if (ex === 'gl') {
+      // the example designs the valves (a Job); "Use this design" installs them in the well model
+      await until(s, () => s.page.evaluate(() => { const b = document.querySelector('#wpg_dcard [data-act="wpg_use"]'); return !!b && !b.disabled; }), 'the gas-lift valve design', 120000);
+      await mustClick(s, '#wpg_dcard [data-act="wpg_use"]', 'Use this design');
+      await until(s, () => s.page.evaluate(() => { const M = window.WTS_wp_model.read(); return ((M.lift && M.lift.gl && M.lift.gl.valves) || []).length > 0; }), 'the installed valves', 30000);
+    }
+    await s.page.evaluate(() => window.WTS_nav('welldyn'));
+    await s.advance(500);
+    await s.page.evaluate((o) => {
+      const p = window.WTS_welldyn_page;
+      if (!p) throw new Error('the Well Dynamics page is not mounted');
+      p.build();
+      if (o.preset) p.scenario(String(o.preset));
+      const sim = p.sim();
+      if (!sim) throw new Error('Well Dynamics has no simulator for this well');
+      const T = (+o.h || 0) * 3600;
+      if (T > sim.state.t) { const r = sim.run(T - sim.state.t); if (r && r.ok === false) throw new Error('the run stopped: ' + r.code + ' at t = ' + sim.state.t.toFixed(1) + ' s (' + ((sim.state.flags || []).slice(-1)[0] || {}).msg + ')'); }
+      p.step();
+      if (o.tab) p.tab(String(o.tab));
+    }, x);
+    await s.advance(500);
+    if (s.render) await s.render();
   } },
   quickReport: { clock: 'fixed', run: async (s, template) => {
     const opened = await s.page.evaluate(() => {

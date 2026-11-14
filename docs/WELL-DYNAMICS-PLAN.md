@@ -1633,6 +1633,30 @@ wait for WD4; the foamer row X8 checks the engine's σ path with a validation ex
 
 ### 11.6 WD6 record
 
+**Help guide (2026-11-14, `wd/int`, done by the integrator).** Route `welldyn` in `48-calc-help-production.js` (a PART route, 9.8 kB
+serialised; `reviewed: 'v4.6'`, `reviewedSrc` of `49-calc-welldyn.js` — the page registers with `key: KEY`, so help-content names the file
+in `SRC_OVERRIDE.welldyn`): purpose, what, when, seven steps, 17 inputs (the rest by two `notDocumented` patterns), four outputs, 14 verdict
+entries, the worked example (the Oil example of Well Performance: start-up about 0.2 h, then Stable at 916 STB/d and BHP 2,542 psia against
+the nodal 914 / 2,543; compute check of `WTS_wd_engine.create` — `R0.op.q` 914.0, `R0.pwf` 2,543, `state.surface.qL` 914.0, regime
+critical, 60 cells), six parts (gas-well loading and unloading, shut-in and build-up, start-up and heading, gas lift and ESP, foamer and
+cycles, recorder / files / cases) and the provisional label on every provisional method (D17). Two tasks in `48-calc-help-start.js`:
+`wdload` "See when my gas well loads up" and `wdgl` "Unload a gas-lift well step by step" (task limit 10–15 → 10–16); five glossary terms
+(afterflow, drift flux, flow heading, liquid fallback, intermittent production — "heading" alone is a column heading elsewhere).
+Shots (new help-shots action `welldynRun` {ex, preset, h, tab}: loads the Well Performance example, waits for it (for `gl` the valve
+design, then **Use this design**), opens Well Dynamics, applies the preset and runs it through the page hook to h hours; clock `fixed`):
+`run-d` (Gas example, Gas-well loading, 3 h, 55.5 kB), `wb-p` (the same run's wellbore on a phone, crop, 12.3 kB), `gl-d` (Gas lift
+example, Gas-lift unloading, 4 h, Lift chart, 54.9 kB); `help/view` re-shot (the landing page lists the new tasks). Caps (Q21, owner
+approval 2026-11-13 for the help growth of the Well Performance hub, which Well Dynamics extends; measured need + a small margin):
+
+| Cap | Old | New | Measured |
+|---|---|---|---|
+| `48-calc-help-production.js` | 47.67 kB | 57.95 kB | 57,859 B |
+| `48-calc-help-start.js` | 19.8 kB | 21.75 kB | 21,705 B |
+| help files raw (SUM_CAP) | 369 kB | 381.3 kB | 380,169 B |
+| help files gzip (GZIP_CAP) | 128 kB | 132 kB | 131,736 B |
+| images (help-shots totalBytes) | 8.0 MB | 8.12 MB | 8,105,852 B (221 files) |
+| manifest module (help-shots moduleBytes) | 8.8 kB | 8.9 kB | 8,860 B |
+
 ### 11.7 Integration and release record
 
 **Wave 1 (2026-11-13, `wd/int`).** Merged `wd/wd1` → `wd/wd2` → `wd/wd3` (`--no-ff`). WD0 had not run, so the merge also carries the WD0
@@ -1673,12 +1697,22 @@ gate unchanged). Integration fixes:
   (1 − v_g / v_c) (§4.10 updated), which vanishes when either donor is empty, as the bounded Godunov flux; new test EN31. X6 (loading
   121.0 s after q_g < q_c, tolerance 130 s) and every welldyn test are unchanged in result.
 
+- **Gas-lift example robustness (engine + lift).** The Well Performance "Gas lift" example (no choke, fixed THP 150 psig) failed its
+  unloading preset: (1) the static column balanced against the separator (100 psig) while the wellhead is held at the fixed THP, so the
+  open stepped the wellhead up and the run failed DP_LIMIT at 0.5 s — `_initStatic` and `WTS_wd_lift.balanceLevel` now use the fixed THP
+  as the wellhead floor of a well with no choke; (2) with the designed valves, 6 of 9 perturbed runs (level, cells, q_inj) ended STEP_FAIL
+  (CFL) within 3 h — the CFL divided a downward gas flux by the near-zero gas fraction of the liquid-full cell below; it now takes each
+  phase velocity from its donor cell; (3) a valve's throughput now lags its target by τ = 20 s (`TAU_VALVE`, ASSUMED, provisional with
+  `gl_valves`; a closed valve's rate decays and stops below 0.1 % of the injection / 0.1 bbl/d): without it one of the seven runs still
+  failed (NEWTON). All seven now run 4 h to valve 5 at 1,046–1,148 STB/d (nodal 1,181). LF4 compares the valve rate with throttle ×
+  Thornhill-Craver within 1e-3 (the lag), new LF27 runs the example 2.5 h. The browser shot runs it 4 h: 1,063 STB/d, casing 1,109 psig.
+
 Gates on the built page (`welldyn-validate.js --html --gate --check --time`): D17 table PASS; 23 / 23 checks pass, X11 skipped. G1 gasVert
 +0.064 % / −0.017 % BHP, G2 gasHz +0.004 % / −0.001 %, G3 oilVert +0.244 % / −0.043 %, G4 oilVertTuned +0.419 % / −0.063 %, G5 gasLift
 (nodal) +0.782 % / −0.077 %, G6 esp −0.028 % / +0.012 %, G7 oilDev +0.264 % / −0.037 %; X4 cumulative 5.7e-15 over nine scenarios; X12
 gl_unloading → gl_lifting; X13 esp_ramp → esp_running; X17 identical. Every timing row inside its fail line; the §5.6 budget misses of
 §11.4 / §11.5 stand (cycleTimer 12 h: 28 s, 248 rejected steps, no budget row in §5.6). Tests: welldyn-engine 31, -gate 9, -int 6,
--lift 27, -page 24, -rec 16, -res 12, -validate 7, -view 14 — all pass.
+-lift 28, -page 24, -rec 16, -res 12, -validate 7, -view 14 — all pass (after every fix above).
 
 ---
 

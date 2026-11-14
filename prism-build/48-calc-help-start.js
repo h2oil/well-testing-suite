@@ -142,7 +142,15 @@ S('wellperf', 'Step ⑤: Solve for → Bean or THP for a target rate, Target rat
 S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstream of the choke.')] },
 { id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
 S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
-S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] }];
+S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] },
+{ id: 'wdload', title: 'See when my gas well loads up', purpose: 'In time: when the well loads after a choke-back, and what unloads it.', steps: [
+S('wellperf', 'Set up the gas well (or load the Gas example) and check it solves.', 'operating point'),
+S('welldyn', 'Preset Gas-well loading, Apply preset, Play at ×1000 (bean halved at 1 h). Watch the state and Rate / critical rate ([[welldyn#loading|loading]]).', 'time to loading, critical rate'),
+S('welldyn', 'Bean up on the toolbar, or Foamer ppm On, and watch it unload; Mark the window and export the CSV.')] },
+{ id: 'wdgl', title: 'Unload a gas-lift well step by step', purpose: 'Valve by valve from a killed well to lifting.', steps: [
+S('wellperf', 'Load the Gas lift example; when its valve design is done, Use this design in step ④ installs the valves.', 'installed valves'),
+S('welldyn', 'Preset Gas-lift unloading, Apply preset, Play; the Lift chart shows the casing pressure and the operating valve stepping down ([[welldyn#lift|Gas lift and ESP]]).', 'operating valve, casing pressure'),
+S('welldyn', 'Check that it ends lifting on the nodal point (Checks); export the run or save it as a case.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
@@ -168,7 +176,12 @@ tipext: { term: 'tip extension', def: 'The fracture grows after shut-in.' },
 hrecess: { term: 'height recession', def: 'The fracture closes on higher-stress layers first.' },
 rvis: { term: 'R_vis', def: 'Closure visibility: the fracture share of the storage.' },
 aca: { term: 'after-closure', def: 'The falloff after closure: reservoir flow, for p_i and k.' },
-impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' } };
+impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' },
+afterflow: { term: 'afterflow', def: 'Flow from the formation into the well after the surface shut-in, until the wellbore is compressed.' },
+driftflux: { term: 'drift flux', variants: ['drift-flux'], def: 'A two-phase model: the gas moves at the mixture velocity times a profile factor plus a drift velocity.' },
+flowheading: { term: 'flow heading', def: 'A slow, self-sustained swing of rate and wellhead pressure in a well near its stability limit.' },
+fallback: { term: 'liquid fallback', def: 'Liquid that the gas can no longer carry falls back down the tubing below the critical velocity.' },
+intermittent: { term: 'intermittent production', def: 'Producing a weak well in cycles: shut in to build pressure, then open to unload.' } };
 
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([

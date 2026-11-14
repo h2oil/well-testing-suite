@@ -137,7 +137,7 @@ module.exports = [
       r = HS.check({ imgDir: fx.dir, moduleFile: fx.module, html: fx.html, fingerprints: false });
       assert.ok(has(r, /res-d\.webp is 90001 bytes, over its 90000-byte cap/), r.errors.join('\n'));
       assert.strictEqual(HS.capFor('desktop', undefined), 150000); assert.strictEqual(HS.capFor('phone', 'viewport'), 110000);
-      assert.strictEqual(HS.capFor('phone', '#x'), 70000); assert.strictEqual(HS.CAPS.totalBytes, 8000000); assert.strictEqual(HS.CAPS.files, 300);
+      assert.strictEqual(HS.capFor('phone', '#x'), 70000); assert.strictEqual(HS.CAPS.totalBytes, 8120000); assert.strictEqual(HS.CAPS.files, 300);
     },
   },
   {
@@ -229,7 +229,7 @@ module.exports = [
     wp: WP, opts: false,
     run(app, assert) {
       const want = ['prismAnalyse', 'prismStep', 'prismDfit', 'buildupDemo', 'modbusSimDemo', 'wellosDemo', 'simReset', 'simRun', 'simFault', 'simRigup', 'simCard',
-        'simMenu', 'simView', 'quickReport', 'metric'];
+        'simMenu', 'simView', 'quickReport', 'metric', 'welldynRun'];
       assert.deepStrictEqual(Object.keys(HS.ACTIONS).sort(), want.slice().sort(), 'the initial set of named actions');
       want.forEach((k) => {
         assert.ok(['install', 'fixed'].indexOf(HS.ACTIONS[k].clock) >= 0, k + ' clock mode');
@@ -237,6 +237,7 @@ module.exports = [
       });
       ['simRun', 'simView', 'prismAnalyse', 'prismDfit', 'simReset'].forEach((k) => assert.strictEqual(HS.ACTIONS[k].clock, 'install', k));
       assert.strictEqual(HS.ACTIONS.metric.clock, 'fixed');
+      assert.strictEqual(HS.ACTIONS.welldynRun.clock, 'fixed');   // v4.6: the run is driven through the page hook, no frame loop
       const s = (route, setup) => ({ route, recipe: { setup: setup || [] } });
       assert.strictEqual(HS.clockOf(s('orifice')), 'fixed');
       assert.strictEqual(HS.clockOf(s('orifice', [{ action: 'metric', args: true }])), 'fixed');

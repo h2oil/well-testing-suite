@@ -10,6 +10,7 @@
 // LF13 foamer transport delay from the injection MD · LF14 foamer: q_c × sigF^¼ (C11) and a loading well recovers to marginal
 // LF15 oil heading / stability: right of q_s settles on the nodal root, a bean with no stable root dies; the detector on a signal
 // LF16 timer cycle events land exactly · LF17 pressure cycle with minimum times · LF18 liquid removed per cycle reported
+// LF27 (integration §11.7) the Well Performance gas-lift example unloads with no STEP_FAIL
 // LF19 extension snapshot / restore continues bit-identically · LF20 lift states and labels · LF21 ESP faceDp = the nodal pump node
 // LF22 ESP vent gas leaves the cell below the pump and appears in qg, qvent and cumOut · LF23 lift gas: free only, mixed gravity, surface qg
 // LFX  (WD4 engine finding) a liquid slug at the wellhead does not chatter the choke (implicit flowline back pressure)
@@ -121,7 +122,7 @@ module.exports = [
       assert.ok(op, 'a valve passes gas');
       const t = g.WTS_wp_gl.tc({ port64: op.port, p1: op.pc, p2: op.pt, T: op.T, sg: c.sg });
       assert.ok(t.ok && t.q > 0);
-      assert.rel(op.q, op.thr * t.q, 1e-6, 'valve rate = throttle × Thornhill-Craver (Mscf/d)');
+      assert.rel(op.q, op.thr * t.q, 1e-3, 'valve rate = throttle × Thornhill-Craver (Mscf/d; the throughput lags its target by τ = 20 s, integration §11.7)');
       assert.ok(op.thr > 0 && op.thr <= 1, 'throttle in (0, 1]');
       // at the lifting state the valve passes the surface injection (the casing pressure is steady)
       assert.rel(op.q, 600, 0.03, 'valve throughput = the injected 600 Mscf/d');
@@ -460,7 +461,38 @@ module.exports = [
       assert.ok((sim.stats.rej && sim.stats.rej.NEWTON || 0) === 0, 'no Newton failures');
       assert.ok(sim.state.surface.pDn_psig < sim.state.surface.thp_psig, 'p_dn below the THP while flowing');
     }
-  }
+  },
+  {
+    name: 'LF27 (integration) the Well Performance gas-lift example (no choke, fixed THP) with its designed valves unloads from the balance level for 2.5 h with no STEP_FAIL',
+    wp: WPK, opts: false, integration: true, timeoutMs: 240000,
+    run(_a, assert, ctx) {
+      // §11.7: the static column balances against the fixed THP (not the separator); the CFL takes each phase velocity from its donor
+      // cell; a valve's throughput lags its target by 20 s. Before, the example failed DP_LIMIT at 0.5 s (no valves) or CFL within 3 h.
+      const app = W.sharedApp(ctx), g = app.win;
+      g.confirm = () => true;
+      app.hook.nav('wellperf'); app.flush(200);
+      const b = app.document.querySelector('[data-act=example][data-ex=gl]');
+      assert.ok(b, 'the Gas lift example button');
+      b.click(); app.flush(500);
+      let M = g.WTS_wp_model.read();
+      const D = (() => { const j = g.WTS_wp_gl.design(M, g.WTS_wp_system.solve(M)); let st, n = 0; do { st = j.step(); n++; } while (!st.done && n < 1000); return j.result(); })();
+      assert.ok(D && D.ok, 'the example design');
+      g.WTS_wp_model.write({ glValves: app.toWin(g.WTS_wp_gl.valvesFromDesign(D)) });
+      M = g.WTS_wp_model.read();
+      app.hook.nav('home'); app.flush(50);
+      assert.ok(M.surface.choke.present === false && M.system.thp_psig > M.surface.psep_psig, 'fixed THP above the separator');
+      const bl = g.WTS_wd_lift.balanceLevel(M), M2 = clone(M); M2.system.thp_psig = null; M2.surface.choke.present = true;
+      assert.ok(bl.md > g.WTS_wd_lift.balanceLevel(M2).md, 'the column balances against the fixed THP (a deeper level): ' + bl.md.toFixed(0));
+      const sim = create(g, M, { start: 'static', static: { kind: 'level', liquidTopMd: Math.round(bl.md), liquid: 'water' }, reservoir: { prior: { kind: 'none' } },
+        events: [{ t: 0, type: 'open' }, { t: 0, type: 'gl', args: { qinj_Mscfd: M.lift.gl.qinj_Mscfd, mode: 'valves' } }] });
+      assert.ok(sim.state.surface.thp_psig >= M.system.thp_psig - 1, 'the static wellhead not below the fixed THP (no back-flow from the line on open): ' + sim.state.surface.thp_psig);
+      const ops = []; sim.on('step', () => { const o = sim.state.lift.gl.opValve; if (o && ops[ops.length - 1] !== o) ops.push(o); });
+      const r = sim.run(2.5 * H);
+      assert.ok(r.ok, 'run: ' + r.code + ' at ' + sim.state.t.toFixed(0) + ' s');
+      assert.ok(ops.length >= 1 && ops.every((o, k) => !k || o > ops[k - 1]), 'operating valve steps down: ' + ops.join(' → '));
+      assert.ok(sim.state.balance.errCum <= 1e-8, 'mass balance ' + sim.state.balance.errCum);
+    }
+  },
 ];
 
 // ── page tests (WD4 UI on the WD3 page) ─────────────────────────────────────────────────────────────────────────────────────

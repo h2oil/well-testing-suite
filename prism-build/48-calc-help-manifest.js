@@ -39,7 +39,7 @@
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 7847caa4,view-p 780 1688 9545f48d",
+    "help": "view-d 1280 800 7847caa4,view-p 780 1688 4fe4cd44",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 360e9101,view-p 780 1688 3e8e1358",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -71,6 +71,7 @@
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
+    "welldyn": "gl-d 1280 800 c8cc50df,run-d 1280 800 38b60d3b,wb-p 512 754 6ebb4612",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
     "wellperf": "sys-d 531 421 3222ff8c",
@@ -78,8 +79,8 @@
     "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 218;
-  M.bytes = 7980382;   // total size of the image files (the offline download label)
+  M.count = 221;
+  M.bytes = 8105852;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

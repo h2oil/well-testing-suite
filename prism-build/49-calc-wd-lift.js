@@ -58,6 +58,7 @@
     var VERSION = '1.0.0';
     var PATM = 14.696, RANK = 459.67, FT3 = 5.614583, GC = 32.174;
     var PROVISIONAL = 'provisional — not verified against a published example';
+    var TAU_VALVE = 20;                     // s, lag of a gas-lift valve's throughput behind its target (ASSUMED; integration fix §11.7)
     var DEFAULTS = Object.freeze({
         foamer: Object.freeze({ rMax: 0.6, c50: 500 }),                              // ppm (ASSUMED, Q10)
         gaslift: Object.freeze({ cdLiq: 0.6, pkoAbove_psi: 100, staticCap_ft: 30, nodes: 60 }),
@@ -427,7 +428,18 @@
                 if (b.open !== v.open) _emit(sim, 'valve', { n: v.n, open: b.open, passing: v.passing, t: S.t });
                 v.open = b.open; v.pc = pc; v.pt = pt; v.pvo = b.pvo; v.pvc = b.pvc; v.T = _tAtMd(sim, v.md);
                 gasR[i] = 0; liqR[i] = 0;
-                if (!v.open || !(pc > pt)) return;
+                // the valve throughput follows its target with a lag of TAU_VALVE (provisional, integration fix §11.7): an explicit valve
+                // rate that jumps with the lagged tubing pressure of a liquid-full string chattered step to step, a jump the
+                // pressure-change limit cannot halve away (the runs ended STEP_FAIL); a lagged rate changes by dt / τ per step
+                var wf = Math.min(1, dt / TAU_VALVE), fG = _fin(v.qfG) ? v.qfG : 0, fL = _fin(v.qfL) ? v.qfL : 0;
+                if (!(pc > pt)) return;                                   // no reverse flow: the rate stops at once
+                if (!v.open) {
+                    // a closed valve's throughput decays over τ and stops below 0.1 % of the surface injection (gas) or 0.1 bbl/d (liquid)
+                    var dG = fG * (1 - wf), dL = fL * (1 - wf);
+                    if (dG > 1e-3 * Math.max(ctx.q0 || 0, 1) * 1000 / 86400 * k.I) gasR[i] = dG;
+                    if (dL > 0.1 * FT3 / 86400) liqR[i] = dL;
+                    return;
+                }
                 var dpv = pc - pt;
                 if (v.md < st.zL) {
                     var t = G.WTS_wp_gl && G.WTS_wp_gl.tc ? G.WTS_wp_gl.tc({ port64: v.port, p1: pc, p2: pt, T: v.T, sg: sg }) : null;
@@ -439,14 +451,15 @@
                     var qm = t && t.ok ? thr * t.q * 1000 / 86400 * k.I : 0;                           // lbm/s
                     // stable explicit coupling: one step never removes more gas than lowers p_c − p_t by half
                     var lim = 0.5 * dpv / Math.max(1, st.pcs) * st.m / Math.max(1e-9, dt);
-                    gasR[i] = Math.max(0, Math.min(qm, lim)); totGas += gasR[i];
+                    gasR[i] = Math.max(0, Math.min(fG + (qm - fG) * wf, lim)); totGas += gasR[i];
                 } else {
                     var A = Math.PI / 4 * Math.pow(v.port / 64, 2) / 144, rho = X.rhoW[v.cell] > 0 ? X.rhoW[v.cell] : st.rhoL;
                     var ql = ctx.cdLiq * A * Math.sqrt(2 * GC * 144 * dpv / rho);                   // ft³/s
                     var limL = 0.5 * dpv * Vg / Math.max(1, st.pcs) / Math.max(1e-9, dt);
-                    liqR[i] = Math.max(0, Math.min(ql, limL, st.Val / Math.max(1e-9, dt))); totLiq += liqR[i];
+                    liqR[i] = Math.max(0, Math.min(fL + (ql - fL) * wf, limL, st.Val / Math.max(1e-9, dt))); totLiq += liqR[i];
                 }
             });
+            totGas = 0; totLiq = 0; gasR.forEach(function (x) { totGas += x; }); liqR.forEach(function (x) { totLiq += x; });
             // the totals stay within the annulus contents
             if (totLiq * dt > st.Val && totLiq > 0) { var f1 = st.Val / (totLiq * dt); liqR = liqR.map(function (x) { return x * f1; }); totLiq *= f1; }
             if (totGas * dt > 0.9 * st.m && totGas > 0) { var f2 = 0.9 * st.m / (totGas * dt); gasR = gasR.map(function (x) { return x * f2; }); totGas *= f2; }
@@ -466,6 +479,7 @@
             if (ctx.mode === 'valves') {
                 var an = ctx.ann, st = ctx.st, sg = ctx.sg, gs = 0, ls = 0;
                 (ctx.rate.gas || []).forEach(function (x) { gs += x; }); (ctx.rate.liq || []).forEach(function (x) { ls += x; });
+                ctx.valves.forEach(function (v, i) { v.qfG = (ctx.rate.gas || [])[i] || 0; v.qfL = (ctx.rate.liq || [])[i] || 0; });   // the lagged rates (§11.7)
                 st.m = Math.max(1e-9, st.m + (ctx.rate.inj - gs) * dt);
                 st.Val = Math.max(0, st.Val - ls * dt);
                 st.zL = _zL(an, st.Val);
@@ -693,6 +707,9 @@
         var W = G.WTS_wp_well && typeof G.WTS_wp_well.build === 'function' ? G.WTS_wp_well.build(M.well, { res: M.res, fluidType: M.fluid.type || 'oil', surface: M.surface }) : null;
         if (!W || !W.ok || !W.nodes || typeof W.tvdAt !== 'function') return null;
         var pr = +M.res.pr, psep = ((M.surface && +M.surface.psep_psig) || 0) + PATM, grad = 0.433 * (+M.fluid.sgw || 1.07);
+        // a well with no choke flows against its fixed wellhead pressure: the column balances against that (integration fix, §11.7)
+        var thpF = M.surface && M.surface.choke && M.surface.choke.present === false && M.system && M.system.thp_psig != null ? +M.system.thp_psig : NaN;
+        if (_fin(thpF) && thpF + PATM > psep) psep = thpF + PATM;
         if (!(pr > psep)) return null;
         var midTvd = W.tvdAt(W.nodes.midPerfMd), tvd = midTvd - (pr - psep) / grad - 150;
         if (!(tvd > 0)) return { md: 0, tvd: 0 };

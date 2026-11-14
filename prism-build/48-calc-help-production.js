@@ -4,7 +4,7 @@
 var G = (typeof window !== 'undefined') ? window : globalThis;
 G.WTS_helpContent = G.WTS_helpContent || { guides: {}, factories: [] };
 G.WTS_helpContent.factories = G.WTS_helpContent.factories || [];
-G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'wellperf', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
+G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'wellperf', 'welldyn', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
 var V = 'v3.3.2', NC = 'the Calculate button';
 function sel(n, s) { return { sel: s, n: n }; }
 function inp(label, id, def, text) { var o = { label: label }; if (id) o.id = id; if (def) o.def = def; if (text) o.text = text; return o; }
@@ -210,6 +210,62 @@ var wellperf = {
   shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil')]
 };
 
+function Y(l, id, d, t) { return inp(l, 'wd_' + id, d, t); }
+function ds(id, view, t, alt, a, sc) { return { id: id, view: view, target: t, alt: alt, caption: alt, setup: [{ action: 'welldynRun', args: a }, { scroll: sc }] }; }
+var PV = 'provisional — not verified against a published example';
+var welldyn = {
+  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: '5debfe8b', units: 'dual',
+  keywords: ['transient', 'liquid loading', 'unloading', 'shut-in', 'start-up', 'gas lift', 'ESP', 'replay'],
+  purpose: 'Plays a Well Performance well in time: start-up, choke changes, shut-in and build-up, loading and unloading, foamer, cycles, gas lift and ESP.',
+  what: ['A 1-D transient model of the well on the same model as [[wellperf]]: no re-entry. Mass of gas, oil and water per cell along MD; pressure from the gradient correlation of the well, and a [[glossary#driftflux|drift flux]] model at low velocity. A steady run settles on the nodal operating point.',
+  'The reservoir is the steady IPR, or a transient radial model with superposition for shut-ins and [[glossary#afterflow|afterflow]]. Methods without a verified published example are labelled ' + PV + ' and are never a default.'],
+  when: ['How does the well start up, and where does it settle?', 'Does a gas well load up after a [[glossary#bean|bean]] change, with [[glossary#fallback|liquid fallback]], and does it recover?', 'Shut-in: afterflow, phase segregation and the build-up.', 'Foamer, [[glossary#intermittent|intermittent production]], gas-lift unloading valve by valve, ESP start-up.'],
+  steps: ['Set the well up in [[wellperf]] or load an example there. Then select **▶ Play in time (Well Dynamics)** in its step ⑤, or **Well Dynamics** in the sidebar.',
+  'Check the model line at the top: ✓ from Well Performance. **◀ Back to nodal analysis** edits the well; the page rebuilds.',
+  { t: '**Scenario**: pick a **Preset** and **Apply preset**, or set **Start**, **Duration**, **Inflow in time** and the events yourself.', shot: 'gl' },
+  { t: '**▶ Play**, **Step** or Space; **Speed** ×1 to ×1000. The wellbore, the KPI strip and the **Charts** follow the run.', shot: 'run' },
+  { t: 'On a phone the cards stack: the KPI strip, the wellbore, then the charts.', shot: 'wb' },
+  'Change the well while it runs: **Bean** and **Set**, **Shut in**, **Separator**, **Foamer ppm**, **Lift gas**, **ESP Hz**. Each change is an event on the timeline.',
+  'Drag the timeline to any recorded moment; **Continue from here** branches the run. **Mark** (or M) twice marks a window.',
+  'Read **Checks** and **Provisional methods in this run**; **Export ▾** saves the CSV or a replay file, **Save case with this well** keeps the scenario.'],
+  inputs: [Y('Preset', 'preset', 'Steady flow'), Y('Start', 'start', 'Steady flow (nodal point)', 'Or a static well: full of liquid, gas-filled or a liquid level.'), Y('Liquid top (MD)', 'level', null, 'For a liquid level start.'),
+  Y('Duration', 'dur', '4 h'), Y('Cells', 'cells', '60', '20–200 along MD.'), Y('Inflow in time', 'resmode', 'Steady inflow (IPR, default)', 'Transient radial needs k, h, φ, c_t, r_w, r_e (or Import from PRiSM).'),
+  Y('Prior history', 'prior', 'From the start'), Y('Temperature', 'temp', 'Frozen (default)', 'Relaxation: provisional.'), Y('Liquid fallback', 'fallback', 'Off', 'Provisional; on in the gas-well presets.'),
+  Y('Belfroid correction', 'belfroid', 'Off', 'Provisional.'), Y('Back-flow to the formation', 'backflow', 'On', 'Provisional.'), Y('Speed', 'speed', '×60'), Y('Bean', 'bean', null, 'Strokes the choke in time.'),
+  Y('Foamer ppm', 'foam', '1000'), Y('Lift gas', 'glq', '{{600|gasRateSmall}}'), Y('ESP Hz', 'hz', '60'), Y('Trigger', 'cyc_mode', 'Timer (open / shut times)', 'Intermittent production.')],
+  notDocumented: [{ pattern: '^wd_(play|step|shut|bean_go|psep_go|foam_on|foam_off|lift_go|esp_go|mark|file|reset|cont|scrub|go_wellperf|tabsel|layer|csv_\\w+|ev_\\w+|case_name|notes)$', why: 'toolbar, timeline, export, events, cases (the steps)' },
+  { pattern: '^wd_(psep|static|liquid|closure|prior_h|k|h|phi|ct|mu|B|rw|re|S|ramp|cyc_\\w+)$', why: 'details of the scenario, reservoir and lift cards' }],
+  outputs: [o('KPI strip', 'Well state, bean, rate, wellhead and bottom-hole pressure, p̄r, rate over critical rate (gas), casing pressure (gas lift), pump intake (ESP), time and speed.'),
+  o('Wellbore', 'The well on its true trajectory, cells coloured by phase, regime, pressure, holdup or velocity; liquid film, droplets and slugs move at the local velocity. Hover for a cell; Close-up for one cell.'),
+  o('Charts', 'Rates, Pressures, IPR / VLP with the nodal point and the live point, wellhead pressure against rate, Depth log, Lift, Close-up.'),
+  o('Run summary', 'Rates, pressures, cumulative volumes, time loading, the build-up, the distance from the nodal point, the state timeline.')],
+  verdicts: [vd('✗', 'set up in Well Performance', 'Open Well Performance and enter the well.'), vd('✗', 'Set up this well', 'The missing items are listed.'), vd('✓', 'from Well Performance', 'The model is complete.'),
+  vd('✓', 'None active so far', 'Only verified methods so far.'), vd('⚠', 'provisional — not verified', 'Listed methods are provisional.'),
+  vd('✓', 'Distance from the nodal operating point', 'Within 2 % rate, 1 % BHP.'), vd('⚠', 'Distance from the nodal operating point', 'Not settled, or the run changed the well.'),
+  vd('✓', 'Mass balance error', 'Round-off.'), vd('⚠', 'Mass balance error', 'Report it.'), vd('✓', 'Well state at the end', 'Stable, lifting or running.'), vd('⚠', 'Well state at the end', 'Marginal, loading, heading, dying.'),
+  vd('✗', 'Well state at the end', 'Dead or tripped.'), vd('⚠', 'The well model changed', 'Rebuild.'), vd('⚠', 'The scenario settings changed', 'Reset to apply.')],
+  example: { title: 'The Oil example of Well Performance', setup: ['Load **Oil** in Well Performance (bean 32, p̄r {{3000|pressure}}), open Well Dynamics, **▶ Play** to 2 h.'],
+  result: ['Start-up for about 0.2 h, then Stable at {{916|liquidRate}}, BHP {{2542|pressure}}; the nodal point is {{914|liquidRate}} at {{2543|pressure}}: ✓ distance 0 % / 0.04 %.'],
+  check: { kind: 'compute', fn: 'WTS_wd_engine.create', input: { fluid: { type: 'oil', api: 35, sgg: 0.65, gor: 500, wc: 0.3, sgw: 1.07, psep_psig: 100, tsep_F: 80 },
+    res: { model: 'pi', pr: 3000, T_F: 200, params: { J: 2 } }, well: { survey: [[0, 0], [8000, 8000]], midPerfMd: 8000, strings: [{ kind: 'tubing', id: 2.441, od: 2.875, topMd: 0, botMd: 8000 }],
+    geo: { points: [[0, 60], [8000, 200]] }, heat: { tht_F: 120 } }, surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
+    expect: { ok: true, n: 60, 'R0.op.q': 914.0, 'R0.pwf': 2543.0, 'state.surface.qL': 914.0, 'state.surface.regime': 'critical' } } },
+  parts: [{ id: 'loading', title: 'Gas-well loading and unloading', what: ['Critical velocity per cell, Turner or Coleman by the nodal rule (provisional), with the Belfroid inclination correction as an option. States: stable, unloading, marginal, loading up, dead. With liquid fallback on, the liquid below the critical velocity falls back and builds up; a bean-up or foamer unloads it. See [[task#wdload|the task]].'] },
+  { id: 'shutin', title: 'Shut-in and build-up', what: ['**Shut in** closes the choke; the formation keeps flowing for a while (afterflow), gas rises and liquid settles. With **Transient radial (superposition)** the bottom-hole pressure builds up; the Run summary gives the build-up for [[prism]].'] },
+  { id: 'oil', title: 'Start-up and heading', what: ['From a static well (**Start**: static) the well unloads its column and settles, or dies. Near the static stability limit an oil well may oscillate: [[glossary#flowheading|flow heading]] is flagged from the wellhead pressure history (provisional).'] },
+  { id: 'lift', title: 'Gas lift and ESP', what: ['Gas lift: the casing and the installed valves of the Well Performance design; valves open and close on their pressures and the operating valve steps down (provisional). ESP: the pump curve of the model at the drive frequency, ramp, pump-off, gas lock and underload (provisional). See [[task#wdgl|the task]].'] },
+  { id: 'cycles', title: 'Foamer and cycles', what: ['**Foamer ppm** lowers the surface tension and so the critical rate (provisional). Intermittent production: a timer or pressure programme of shut-ins and reopenings (provisional controller).'] },
+  { id: 'record', title: 'Recorder, files and cases', what: ['Every run is recorded. **CSV of the run…**: columns, window, field or Metric units. **Save replay file (.wdrun)** reopens the run with its events; **Save case with this well** keeps the scenario in the well model and the project file.'] }],
+  boldExempt: ['▶ Play in time (Well Dynamics)', 'Oil'],
+  tips: ['Start with the steady preset: the run should settle on the nodal point; if not, check the well in Well Performance.', 'A long run is faster at ×1000 or with Step held down.'],
+  pitfalls: ['p̄r and BHP are absolute, the wellhead pressure gauge.', 'Provisional methods give trends, not verified numbers.'],
+  refs: [rf('Turner, Hubbard and Dukler (1969)', 'loading'), rf('Coleman et al. (1991)', 'loading'), rf('Belfroid et al. (2008)', 'inclination'), rf('Shi et al. (2005)', 'drift flux'), rf('Thornhill-Craver', 'lift valves')],
+  related: ['wellperf', 'prism', 'gaslift', 'oilipr', 'gasdeliv'],
+  shots: [ds('run', 'desktop', 'viewport', 'Gas example after a choke-back: the state strip, the KPI strip, the wellbore loading up and the rate chart', { ex: 'gas', preset: 'gasload', h: 3, tab: 'rates' }, '#wd_toolbar'),
+  ds('wb', 'phone', '#wd_cv_well', 'On a phone: the wellbore of the same run on its trajectory, with the regime labels and the liquid top', { ex: 'gas', preset: 'gasload', h: 3, tab: 'rates' }, '#wd_cv_well'),
+  ds('gl', 'desktop', 'viewport', 'Gas lift example after 4 h: the unloading strip, casing pressure on the Lift chart and the valves on the wellbore', { ex: 'gl', preset: 'glunload', h: 4, tab: 'lift' }, '#wd_timeline')]
+};
+
 var gasdeliv = {
   route: 'gasdeliv', reviewed: V, reviewedSrc: 'ad557373', units: 'dual',
   keywords: ['AOF', 'deliverability', 'back-pressure', 'isochronal'],
@@ -366,7 +422,7 @@ var buildup = {
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
-return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, wellperf: wellperf, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
+return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, wellperf: wellperf, welldyn: welldyn, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
 } });
 })();
 

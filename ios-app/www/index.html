@@ -118628,7 +118628,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 7847caa4,view-p 780 1688 9545f48d",
+    "help": "view-d 1280 800 7847caa4,view-p 780 1688 4fe4cd44",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
     "home": "view-d 1280 800 360e9101,view-p 780 1688 3e8e1358",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
@@ -118660,6 +118660,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
     "vdrop": "view-d 1280 800 afd58e50,view-p 780 1688 0dc0785d",
     "vessel": "view-d 1280 800 4d6a7d0f,view-p 780 1688 6968077f",
+    "welldyn": "gl-d 1280 800 c8cc50df,run-d 1280 800 38b60d3b,wb-p 512 754 6ebb4612",
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 b2536079,view-d 1280 800 452c6a6d,view-p 780 1688 d4c9432b",
     "wellperf": "sys-d 531 421 3222ff8c",
@@ -118667,8 +118668,8 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "wts": "card-d 296 349 f5aa0e91,card-p 752 858 21d0aa37,rigup-d 982 525 adf6b5f2,tb-d 980 481 1c22568f,view-d 1280 800 e0db8af3,view-p 780 1688 e25b67c8"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 218;
-  M.bytes = 7980382;   // total size of the image files (the offline download label)
+  M.count = 221;
+  M.bytes = 8105852;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -119264,7 +119265,7 @@ return { guides: g };
 var G = (typeof window !== 'undefined') ? window : globalThis;
 G.WTS_helpContent = G.WTS_helpContent || { guides: {}, factories: [] };
 G.WTS_helpContent.factories = G.WTS_helpContent.factories || [];
-G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'wellperf', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
+G.WTS_helpContent.factories.push({ group: 'production', routes: ['prism', 'oilgas', 'solgor', 'wellperf', 'welldyn', 'gasdeliv', 'oilipr', 'gaslift', 'buildup'], build: function () {
 var V = 'v3.3.2', NC = 'the Calculate button';
 function sel(n, s) { return { sel: s, n: n }; }
 function inp(label, id, def, text) { var o = { label: label }; if (id) o.id = id; if (def) o.def = def; if (text) o.text = text; return o; }
@@ -119470,6 +119471,62 @@ var wellperf = {
   shots: [ws('sys', '#wp_cv_sys', 'Oil example: inflow, outflow, the operating point and the drag handles', 'oil')]
 };
 
+function Y(l, id, d, t) { return inp(l, 'wd_' + id, d, t); }
+function ds(id, view, t, alt, a, sc) { return { id: id, view: view, target: t, alt: alt, caption: alt, setup: [{ action: 'welldynRun', args: a }, { scroll: sc }] }; }
+var PV = 'provisional — not verified against a published example';
+var welldyn = {
+  route: 'welldyn', reviewed: 'v4.6', reviewedSrc: '5debfe8b', units: 'dual',
+  keywords: ['transient', 'liquid loading', 'unloading', 'shut-in', 'start-up', 'gas lift', 'ESP', 'replay'],
+  purpose: 'Plays a Well Performance well in time: start-up, choke changes, shut-in and build-up, loading and unloading, foamer, cycles, gas lift and ESP.',
+  what: ['A 1-D transient model of the well on the same model as [[wellperf]]: no re-entry. Mass of gas, oil and water per cell along MD; pressure from the gradient correlation of the well, and a [[glossary#driftflux|drift flux]] model at low velocity. A steady run settles on the nodal operating point.',
+  'The reservoir is the steady IPR, or a transient radial model with superposition for shut-ins and [[glossary#afterflow|afterflow]]. Methods without a verified published example are labelled ' + PV + ' and are never a default.'],
+  when: ['How does the well start up, and where does it settle?', 'Does a gas well load up after a [[glossary#bean|bean]] change, with [[glossary#fallback|liquid fallback]], and does it recover?', 'Shut-in: afterflow, phase segregation and the build-up.', 'Foamer, [[glossary#intermittent|intermittent production]], gas-lift unloading valve by valve, ESP start-up.'],
+  steps: ['Set the well up in [[wellperf]] or load an example there. Then select **▶ Play in time (Well Dynamics)** in its step ⑤, or **Well Dynamics** in the sidebar.',
+  'Check the model line at the top: ✓ from Well Performance. **◀ Back to nodal analysis** edits the well; the page rebuilds.',
+  { t: '**Scenario**: pick a **Preset** and **Apply preset**, or set **Start**, **Duration**, **Inflow in time** and the events yourself.', shot: 'gl' },
+  { t: '**▶ Play**, **Step** or Space; **Speed** ×1 to ×1000. The wellbore, the KPI strip and the **Charts** follow the run.', shot: 'run' },
+  { t: 'On a phone the cards stack: the KPI strip, the wellbore, then the charts.', shot: 'wb' },
+  'Change the well while it runs: **Bean** and **Set**, **Shut in**, **Separator**, **Foamer ppm**, **Lift gas**, **ESP Hz**. Each change is an event on the timeline.',
+  'Drag the timeline to any recorded moment; **Continue from here** branches the run. **Mark** (or M) twice marks a window.',
+  'Read **Checks** and **Provisional methods in this run**; **Export ▾** saves the CSV or a replay file, **Save case with this well** keeps the scenario.'],
+  inputs: [Y('Preset', 'preset', 'Steady flow'), Y('Start', 'start', 'Steady flow (nodal point)', 'Or a static well: full of liquid, gas-filled or a liquid level.'), Y('Liquid top (MD)', 'level', null, 'For a liquid level start.'),
+  Y('Duration', 'dur', '4 h'), Y('Cells', 'cells', '60', '20–200 along MD.'), Y('Inflow in time', 'resmode', 'Steady inflow (IPR, default)', 'Transient radial needs k, h, φ, c_t, r_w, r_e (or Import from PRiSM).'),
+  Y('Prior history', 'prior', 'From the start'), Y('Temperature', 'temp', 'Frozen (default)', 'Relaxation: provisional.'), Y('Liquid fallback', 'fallback', 'Off', 'Provisional; on in the gas-well presets.'),
+  Y('Belfroid correction', 'belfroid', 'Off', 'Provisional.'), Y('Back-flow to the formation', 'backflow', 'On', 'Provisional.'), Y('Speed', 'speed', '×60'), Y('Bean', 'bean', null, 'Strokes the choke in time.'),
+  Y('Foamer ppm', 'foam', '1000'), Y('Lift gas', 'glq', '{{600|gasRateSmall}}'), Y('ESP Hz', 'hz', '60'), Y('Trigger', 'cyc_mode', 'Timer (open / shut times)', 'Intermittent production.')],
+  notDocumented: [{ pattern: '^wd_(play|step|shut|bean_go|psep_go|foam_on|foam_off|lift_go|esp_go|mark|file|reset|cont|scrub|go_wellperf|tabsel|layer|csv_\\w+|ev_\\w+|case_name|notes)$', why: 'toolbar, timeline, export, events, cases (the steps)' },
+  { pattern: '^wd_(psep|static|liquid|closure|prior_h|k|h|phi|ct|mu|B|rw|re|S|ramp|cyc_\\w+)$', why: 'details of the scenario, reservoir and lift cards' }],
+  outputs: [o('KPI strip', 'Well state, bean, rate, wellhead and bottom-hole pressure, p̄r, rate over critical rate (gas), casing pressure (gas lift), pump intake (ESP), time and speed.'),
+  o('Wellbore', 'The well on its true trajectory, cells coloured by phase, regime, pressure, holdup or velocity; liquid film, droplets and slugs move at the local velocity. Hover for a cell; Close-up for one cell.'),
+  o('Charts', 'Rates, Pressures, IPR / VLP with the nodal point and the live point, wellhead pressure against rate, Depth log, Lift, Close-up.'),
+  o('Run summary', 'Rates, pressures, cumulative volumes, time loading, the build-up, the distance from the nodal point, the state timeline.')],
+  verdicts: [vd('✗', 'set up in Well Performance', 'Open Well Performance and enter the well.'), vd('✗', 'Set up this well', 'The missing items are listed.'), vd('✓', 'from Well Performance', 'The model is complete.'),
+  vd('✓', 'None active so far', 'Only verified methods so far.'), vd('⚠', 'provisional — not verified', 'Listed methods are provisional.'),
+  vd('✓', 'Distance from the nodal operating point', 'Within 2 % rate, 1 % BHP.'), vd('⚠', 'Distance from the nodal operating point', 'Not settled, or the run changed the well.'),
+  vd('✓', 'Mass balance error', 'Round-off.'), vd('⚠', 'Mass balance error', 'Report it.'), vd('✓', 'Well state at the end', 'Stable, lifting or running.'), vd('⚠', 'Well state at the end', 'Marginal, loading, heading, dying.'),
+  vd('✗', 'Well state at the end', 'Dead or tripped.'), vd('⚠', 'The well model changed', 'Rebuild.'), vd('⚠', 'The scenario settings changed', 'Reset to apply.')],
+  example: { title: 'The Oil example of Well Performance', setup: ['Load **Oil** in Well Performance (bean 32, p̄r {{3000|pressure}}), open Well Dynamics, **▶ Play** to 2 h.'],
+  result: ['Start-up for about 0.2 h, then Stable at {{916|liquidRate}}, BHP {{2542|pressure}}; the nodal point is {{914|liquidRate}} at {{2543|pressure}}: ✓ distance 0 % / 0.04 %.'],
+  check: { kind: 'compute', fn: 'WTS_wd_engine.create', input: { fluid: { type: 'oil', api: 35, sgg: 0.65, gor: 500, wc: 0.3, sgw: 1.07, psep_psig: 100, tsep_F: 80 },
+    res: { model: 'pi', pr: 3000, T_F: 200, params: { J: 2 } }, well: { survey: [[0, 0], [8000, 8000]], midPerfMd: 8000, strings: [{ kind: 'tubing', id: 2.441, od: 2.875, topMd: 0, botMd: 8000 }],
+    geo: { points: [[0, 60], [8000, 200]] }, heat: { tht_F: 120 } }, surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
+    expect: { ok: true, n: 60, 'R0.op.q': 914.0, 'R0.pwf': 2543.0, 'state.surface.qL': 914.0, 'state.surface.regime': 'critical' } } },
+  parts: [{ id: 'loading', title: 'Gas-well loading and unloading', what: ['Critical velocity per cell, Turner or Coleman by the nodal rule (provisional), with the Belfroid inclination correction as an option. States: stable, unloading, marginal, loading up, dead. With liquid fallback on, the liquid below the critical velocity falls back and builds up; a bean-up or foamer unloads it. See [[task#wdload|the task]].'] },
+  { id: 'shutin', title: 'Shut-in and build-up', what: ['**Shut in** closes the choke; the formation keeps flowing for a while (afterflow), gas rises and liquid settles. With **Transient radial (superposition)** the bottom-hole pressure builds up; the Run summary gives the build-up for [[prism]].'] },
+  { id: 'oil', title: 'Start-up and heading', what: ['From a static well (**Start**: static) the well unloads its column and settles, or dies. Near the static stability limit an oil well may oscillate: [[glossary#flowheading|flow heading]] is flagged from the wellhead pressure history (provisional).'] },
+  { id: 'lift', title: 'Gas lift and ESP', what: ['Gas lift: the casing and the installed valves of the Well Performance design; valves open and close on their pressures and the operating valve steps down (provisional). ESP: the pump curve of the model at the drive frequency, ramp, pump-off, gas lock and underload (provisional). See [[task#wdgl|the task]].'] },
+  { id: 'cycles', title: 'Foamer and cycles', what: ['**Foamer ppm** lowers the surface tension and so the critical rate (provisional). Intermittent production: a timer or pressure programme of shut-ins and reopenings (provisional controller).'] },
+  { id: 'record', title: 'Recorder, files and cases', what: ['Every run is recorded. **CSV of the run…**: columns, window, field or Metric units. **Save replay file (.wdrun)** reopens the run with its events; **Save case with this well** keeps the scenario in the well model and the project file.'] }],
+  boldExempt: ['▶ Play in time (Well Dynamics)', 'Oil'],
+  tips: ['Start with the steady preset: the run should settle on the nodal point; if not, check the well in Well Performance.', 'A long run is faster at ×1000 or with Step held down.'],
+  pitfalls: ['p̄r and BHP are absolute, the wellhead pressure gauge.', 'Provisional methods give trends, not verified numbers.'],
+  refs: [rf('Turner, Hubbard and Dukler (1969)', 'loading'), rf('Coleman et al. (1991)', 'loading'), rf('Belfroid et al. (2008)', 'inclination'), rf('Shi et al. (2005)', 'drift flux'), rf('Thornhill-Craver', 'lift valves')],
+  related: ['wellperf', 'prism', 'gaslift', 'oilipr', 'gasdeliv'],
+  shots: [ds('run', 'desktop', 'viewport', 'Gas example after a choke-back: the state strip, the KPI strip, the wellbore loading up and the rate chart', { ex: 'gas', preset: 'gasload', h: 3, tab: 'rates' }, '#wd_toolbar'),
+  ds('wb', 'phone', '#wd_cv_well', 'On a phone: the wellbore of the same run on its trajectory, with the regime labels and the liquid top', { ex: 'gas', preset: 'gasload', h: 3, tab: 'rates' }, '#wd_cv_well'),
+  ds('gl', 'desktop', 'viewport', 'Gas lift example after 4 h: the unloading strip, casing pressure on the Lift chart and the valves on the wellbore', { ex: 'gl', preset: 'glunload', h: 4, tab: 'lift' }, '#wd_timeline')]
+};
+
 var gasdeliv = {
   route: 'gasdeliv', reviewed: V, reviewedSrc: 'ad557373', units: 'dual',
   keywords: ['AOF', 'deliverability', 'back-pressure', 'isochronal'],
@@ -119626,7 +119683,7 @@ var buildup = {
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
-return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, wellperf: wellperf, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
+return { guides: { prism: prism, oilgas: oilgas, solgor: solgor, wellperf: wellperf, welldyn: welldyn, gasdeliv: gasdeliv, oilipr: oilipr, gaslift: gaslift, buildup: buildup } };
 } });
 })();
 
@@ -120354,7 +120411,15 @@ S('wellperf', 'Step ⑤: Solve for → Bean or THP for a target rate, Target rat
 S('choke', 'Critical flow at that bean.'), S('hydrate', 'Hydrate margin downstream of the choke.')] },
 { id: 'loading', title: 'Check a gas well for liquid loading', purpose: 'Will it lift its liquids at this rate?', steps: [
 S('wellperf', 'Enter the gas well; read the Loading margin and the check ([[wellperf#loading|Liquid loading]]).', 'critical rate, limiting depth'),
-S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] }];
+S('wellperf', 'Traverse → Liquid loading: the critical rate along the well. Try a smaller string or a lower wellhead pressure.')] },
+{ id: 'wdload', title: 'See when my gas well loads up', purpose: 'In time: when the well loads after a choke-back, and what unloads it.', steps: [
+S('wellperf', 'Set up the gas well (or load the Gas example) and check it solves.', 'operating point'),
+S('welldyn', 'Preset Gas-well loading, Apply preset, Play at ×1000 (bean halved at 1 h). Watch the state and Rate / critical rate ([[welldyn#loading|loading]]).', 'time to loading, critical rate'),
+S('welldyn', 'Bean up on the toolbar, or Foamer ppm On, and watch it unload; Mark the window and export the CSV.')] },
+{ id: 'wdgl', title: 'Unload a gas-lift well step by step', purpose: 'Valve by valve from a killed well to lifting.', steps: [
+S('wellperf', 'Load the Gas lift example; when its valve design is done, Use this design in step ④ installs the valves.', 'installed valves'),
+S('welldyn', 'Preset Gas-lift unloading, Apply preset, Play; the Lift chart shows the casing pressure and the operating valve stepping down ([[welldyn#lift|Gas lift and ESP]]).', 'operating valve, casing pressure'),
+S('welldyn', 'Check that it ends lifting on the nodal point (Checks); export the run or save it as a case.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
@@ -120380,7 +120445,12 @@ tipext: { term: 'tip extension', def: 'The fracture grows after shut-in.' },
 hrecess: { term: 'height recession', def: 'The fracture closes on higher-stress layers first.' },
 rvis: { term: 'R_vis', def: 'Closure visibility: the fracture share of the storage.' },
 aca: { term: 'after-closure', def: 'The falloff after closure: reservoir flow, for p_i and k.' },
-impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' } };
+impulse: { term: 'impulse', def: 'After-closure lines that treat the injection as a pulse.' },
+afterflow: { term: 'afterflow', def: 'Flow from the formation into the well after the surface shut-in, until the wellbore is compressed.' },
+driftflux: { term: 'drift flux', variants: ['drift-flux'], def: 'A two-phase model: the gas moves at the mixture velocity times a profile factor plus a drift velocity.' },
+flowheading: { term: 'flow heading', def: 'A slow, self-sustained swing of rate and wellhead pressure in a well near its stability limit.' },
+fallback: { term: 'liquid fallback', def: 'Liquid that the gas can no longer carry falls back down the tubing below the critical velocity.' },
+intermittent: { term: 'intermittent production', def: 'Producing a weak well in cycles: shut in to build pressure, then open to unload.' } };
 
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
@@ -153182,7 +153252,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var n = this.n, cs = this.cs, X = this.X, k = this.k, C = this.C, F = C.F, g = this.grid, fs = this.fs;
         var kind = spec.kind === 'liquid' ? 'liquid' : (spec.kind === 'level' ? 'level' : 'gas');
         var liq = spec.liquid || (this.gasWell() ? 'water' : 'oil');
+        // the wellhead floor: the separator pressure, or the fixed wellhead pressure of a well with no choke (a column whose top sits
+        // below a fixed THP would take flow back from the line on open — no reverse flow at the wellhead; integration fix, §11.7)
         var pr0 = C.pr, psepA = this.state.psep_psig + PATM;
+        if (!C.choke.present && _fin(C.thpFix) && !C.maxBC) psepA = Math.max(psepA, C.thpFix + PATM);
         var topLiq = kind === 'liquid' ? g.cells[n - 1].md0 : (kind === 'level' ? (_fin(spec.liquidTopMd) ? spec.liquidTopMd : g.mdTotal / 2) : Infinity);
         var gasStream = { qo: 0, qw: 0, qg: 1e6 }, oilStream = { qo: 1, qw: 0, qg: Math.max(0, F.gor || 0) }, watStream = { qo: 0, qw: 1, qg: 0 };
         var liqStream = liq === 'water' ? watStream : oilStream;
@@ -153576,7 +153649,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             return { ok: false, code: 'DP_LIMIT', ratio: ratio };
         }
         for (var f2 = 1; f2 <= n; f2++) {
-            var dd = f2 - 1, vgx = cs.ag[dd] > 1e-6 ? Math.abs(T.jg[f2]) / cs.ag[dd] : 0, vlx = (1 - cs.ag[dd]) > 1e-6 ? Math.abs(T.jo[f2] + T.jw[f2]) / (1 - cs.ag[dd]) : 0;
+            // phase velocity at the face from its donor's holdup (downward flow is donated by the cell above: dividing a downward gas flux
+            // by the near-zero gas fraction of a liquid-full cell below rejected every halving — integration fix, §11.7)
+            var dd = f2 - 1, jgf = T.jg[f2], jlf = T.jo[f2] + T.jw[f2];
+            var gD = jgf < 0 && f2 < n ? f2 : dd, lD = jlf < 0 && f2 < n ? f2 : dd;
+            var vgx = cs.ag[gD] > 1e-6 ? Math.abs(jgf) / cs.ag[gD] : 0, vlx = (1 - cs.ag[lD]) > 1e-6 ? Math.abs(jlf) / (1 - cs.ag[lD]) : 0;
             if (Math.max(vgx, vlx) * dt > 1.0 * Math.min(X.len[dd], f2 < n ? X.len[f2] : X.len[dd]) && dt > o.dtMin * 2) return { ok: false, code: 'CFL' };
         }
         var massErr = { G: 0, O: 0, W: 0, I: 0 }, clamp = { G: 0, O: 0, W: 0, I: 0 };
@@ -154048,6 +154125,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var VERSION = '1.0.0';
     var PATM = 14.696, RANK = 459.67, FT3 = 5.614583, GC = 32.174;
     var PROVISIONAL = 'provisional — not verified against a published example';
+    var TAU_VALVE = 20;                     // s, lag of a gas-lift valve's throughput behind its target (ASSUMED; integration fix §11.7)
     var DEFAULTS = Object.freeze({
         foamer: Object.freeze({ rMax: 0.6, c50: 500 }),                              // ppm (ASSUMED, Q10)
         gaslift: Object.freeze({ cdLiq: 0.6, pkoAbove_psi: 100, staticCap_ft: 30, nodes: 60 }),
@@ -154417,7 +154495,18 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 if (b.open !== v.open) _emit(sim, 'valve', { n: v.n, open: b.open, passing: v.passing, t: S.t });
                 v.open = b.open; v.pc = pc; v.pt = pt; v.pvo = b.pvo; v.pvc = b.pvc; v.T = _tAtMd(sim, v.md);
                 gasR[i] = 0; liqR[i] = 0;
-                if (!v.open || !(pc > pt)) return;
+                // the valve throughput follows its target with a lag of TAU_VALVE (provisional, integration fix §11.7): an explicit valve
+                // rate that jumps with the lagged tubing pressure of a liquid-full string chattered step to step, a jump the
+                // pressure-change limit cannot halve away (the runs ended STEP_FAIL); a lagged rate changes by dt / τ per step
+                var wf = Math.min(1, dt / TAU_VALVE), fG = _fin(v.qfG) ? v.qfG : 0, fL = _fin(v.qfL) ? v.qfL : 0;
+                if (!(pc > pt)) return;                                   // no reverse flow: the rate stops at once
+                if (!v.open) {
+                    // a closed valve's throughput decays over τ and stops below 0.1 % of the surface injection (gas) or 0.1 bbl/d (liquid)
+                    var dG = fG * (1 - wf), dL = fL * (1 - wf);
+                    if (dG > 1e-3 * Math.max(ctx.q0 || 0, 1) * 1000 / 86400 * k.I) gasR[i] = dG;
+                    if (dL > 0.1 * FT3 / 86400) liqR[i] = dL;
+                    return;
+                }
                 var dpv = pc - pt;
                 if (v.md < st.zL) {
                     var t = G.WTS_wp_gl && G.WTS_wp_gl.tc ? G.WTS_wp_gl.tc({ port64: v.port, p1: pc, p2: pt, T: v.T, sg: sg }) : null;
@@ -154429,14 +154518,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                     var qm = t && t.ok ? thr * t.q * 1000 / 86400 * k.I : 0;                           // lbm/s
                     // stable explicit coupling: one step never removes more gas than lowers p_c − p_t by half
                     var lim = 0.5 * dpv / Math.max(1, st.pcs) * st.m / Math.max(1e-9, dt);
-                    gasR[i] = Math.max(0, Math.min(qm, lim)); totGas += gasR[i];
+                    gasR[i] = Math.max(0, Math.min(fG + (qm - fG) * wf, lim)); totGas += gasR[i];
                 } else {
                     var A = Math.PI / 4 * Math.pow(v.port / 64, 2) / 144, rho = X.rhoW[v.cell] > 0 ? X.rhoW[v.cell] : st.rhoL;
                     var ql = ctx.cdLiq * A * Math.sqrt(2 * GC * 144 * dpv / rho);                   // ft³/s
                     var limL = 0.5 * dpv * Vg / Math.max(1, st.pcs) / Math.max(1e-9, dt);
-                    liqR[i] = Math.max(0, Math.min(ql, limL, st.Val / Math.max(1e-9, dt))); totLiq += liqR[i];
+                    liqR[i] = Math.max(0, Math.min(fL + (ql - fL) * wf, limL, st.Val / Math.max(1e-9, dt))); totLiq += liqR[i];
                 }
             });
+            totGas = 0; totLiq = 0; gasR.forEach(function (x) { totGas += x; }); liqR.forEach(function (x) { totLiq += x; });
             // the totals stay within the annulus contents
             if (totLiq * dt > st.Val && totLiq > 0) { var f1 = st.Val / (totLiq * dt); liqR = liqR.map(function (x) { return x * f1; }); totLiq *= f1; }
             if (totGas * dt > 0.9 * st.m && totGas > 0) { var f2 = 0.9 * st.m / (totGas * dt); gasR = gasR.map(function (x) { return x * f2; }); totGas *= f2; }
@@ -154456,6 +154546,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (ctx.mode === 'valves') {
                 var an = ctx.ann, st = ctx.st, sg = ctx.sg, gs = 0, ls = 0;
                 (ctx.rate.gas || []).forEach(function (x) { gs += x; }); (ctx.rate.liq || []).forEach(function (x) { ls += x; });
+                ctx.valves.forEach(function (v, i) { v.qfG = (ctx.rate.gas || [])[i] || 0; v.qfL = (ctx.rate.liq || [])[i] || 0; });   // the lagged rates (§11.7)
                 st.m = Math.max(1e-9, st.m + (ctx.rate.inj - gs) * dt);
                 st.Val = Math.max(0, st.Val - ls * dt);
                 st.zL = _zL(an, st.Val);
@@ -154683,6 +154774,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var W = G.WTS_wp_well && typeof G.WTS_wp_well.build === 'function' ? G.WTS_wp_well.build(M.well, { res: M.res, fluidType: M.fluid.type || 'oil', surface: M.surface }) : null;
         if (!W || !W.ok || !W.nodes || typeof W.tvdAt !== 'function') return null;
         var pr = +M.res.pr, psep = ((M.surface && +M.surface.psep_psig) || 0) + PATM, grad = 0.433 * (+M.fluid.sgw || 1.07);
+        // a well with no choke flows against its fixed wellhead pressure: the column balances against that (integration fix, §11.7)
+        var thpF = M.surface && M.surface.choke && M.surface.choke.present === false && M.system && M.system.thp_psig != null ? +M.system.thp_psig : NaN;
+        if (_fin(thpF) && thpF + PATM > psep) psep = thpF + PATM;
         if (!(pr > psep)) return null;
         var midTvd = W.tvdAt(W.nodes.midPerfMd), tvd = midTvd - (pr - psep) / grad - 150;
         if (!(tvd > 0)) return { md: 0, tvd: 0 };

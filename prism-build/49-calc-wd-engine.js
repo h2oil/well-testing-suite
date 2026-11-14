@@ -1053,7 +1053,10 @@
         var n = this.n, cs = this.cs, X = this.X, k = this.k, C = this.C, F = C.F, g = this.grid, fs = this.fs;
         var kind = spec.kind === 'liquid' ? 'liquid' : (spec.kind === 'level' ? 'level' : 'gas');
         var liq = spec.liquid || (this.gasWell() ? 'water' : 'oil');
+        // the wellhead floor: the separator pressure, or the fixed wellhead pressure of a well with no choke (a column whose top sits
+        // below a fixed THP would take flow back from the line on open — no reverse flow at the wellhead; integration fix, §11.7)
         var pr0 = C.pr, psepA = this.state.psep_psig + PATM;
+        if (!C.choke.present && _fin(C.thpFix) && !C.maxBC) psepA = Math.max(psepA, C.thpFix + PATM);
         var topLiq = kind === 'liquid' ? g.cells[n - 1].md0 : (kind === 'level' ? (_fin(spec.liquidTopMd) ? spec.liquidTopMd : g.mdTotal / 2) : Infinity);
         var gasStream = { qo: 0, qw: 0, qg: 1e6 }, oilStream = { qo: 1, qw: 0, qg: Math.max(0, F.gor || 0) }, watStream = { qo: 0, qw: 1, qg: 0 };
         var liqStream = liq === 'water' ? watStream : oilStream;
@@ -1447,7 +1450,11 @@
             return { ok: false, code: 'DP_LIMIT', ratio: ratio };
         }
         for (var f2 = 1; f2 <= n; f2++) {
-            var dd = f2 - 1, vgx = cs.ag[dd] > 1e-6 ? Math.abs(T.jg[f2]) / cs.ag[dd] : 0, vlx = (1 - cs.ag[dd]) > 1e-6 ? Math.abs(T.jo[f2] + T.jw[f2]) / (1 - cs.ag[dd]) : 0;
+            // phase velocity at the face from its donor's holdup (downward flow is donated by the cell above: dividing a downward gas flux
+            // by the near-zero gas fraction of a liquid-full cell below rejected every halving — integration fix, §11.7)
+            var dd = f2 - 1, jgf = T.jg[f2], jlf = T.jo[f2] + T.jw[f2];
+            var gD = jgf < 0 && f2 < n ? f2 : dd, lD = jlf < 0 && f2 < n ? f2 : dd;
+            var vgx = cs.ag[gD] > 1e-6 ? Math.abs(jgf) / cs.ag[gD] : 0, vlx = (1 - cs.ag[lD]) > 1e-6 ? Math.abs(jlf) / (1 - cs.ag[lD]) : 0;
             if (Math.max(vgx, vlx) * dt > 1.0 * Math.min(X.len[dd], f2 < n ? X.len[f2] : X.len[dd]) && dt > o.dtMin * 2) return { ok: false, code: 'CFL' };
         }
         var massErr = { G: 0, O: 0, W: 0, I: 0 }, clamp = { G: 0, O: 0, W: 0, I: 0 };
