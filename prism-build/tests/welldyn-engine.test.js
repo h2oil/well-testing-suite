@@ -1,11 +1,11 @@
 // Well Dynamics — the transient engine WTS_wd_engine (lane WD1). docs/WELL-DYNAMICS-PLAN.md §3.1–§3.6, §4, §5.2 EN1–EN30; EN31 = the integration fix of the fallback flux (§11.7).
-// Fixtures and the in-memory WTS_flowline_gradAt export: tests/_welldyn-wd1.js (the WD0 files were not on wd/int; §11.1).
+// Fixtures: tests/_welldyn-shapes.js (the frozen §3.9 file, 4.6.1; the wave-1 stand-in tests/_welldyn-wd1.js is retired).
 // Long scenarios are shared through the helper's memo (shutInBuildup with welldyn-res RS4; the gate runs with welldyn-gate).
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const W = require('./_welldyn-wd1');
+const W = require('./_welldyn-shapes');
 
 const WP = 'WD1';
 const G = (ctx) => W.sharedApp(ctx).win;
@@ -170,6 +170,31 @@ module.exports = [
       assert.ok(tried.length >= 2 && tried.every((d, i) => i === 0 || Math.abs(d - tried[i - 1] / 2) < 1e-12), 'halvings');
       assert.ok(sim2.state.flags.some((f) => f.code === 'STEP_FAIL'));
       assert.strictEqual(sim2.run(10).stopped, 'end');
+    },
+  },
+  {
+    // 4.6.1 (§11.7): the fallback choke hold — a step that failed every halving while the wellhead sat within 1 psi of the choke's downstream
+    // pressure is retried once with the choke passing nothing; anywhere else the failure stands; the flag never outlives the step
+    name: 'EN32 fallback choke hold: within 1 psi of p_dn a failed step is retried with the choke closed (one step, flag cleared); farther away STEP_FAIL stands',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const g = G(ctx), mk = (near) => {
+        const sim = g.WTS_wd_engine.create(W.FIX.oilVert, {}), orig = sim._attempt, seen = [];
+        sim._attempt = function (dt, att) { seen.push(!!this._chokeHold); return this._chokeHold ? orig.call(this, dt, att) : { ok: false, code: 'TEST' }; };
+        sim._chokePrep(sim.state.t);
+        sim.state.surface.thp = sim.ch.pdn + (near ? 0.5 : 50);
+        return { sim, seen, r: sim.step() };
+      };
+      const a = mk(true);
+      assert.ok(a.r.ok, 'near p_dn: the step is taken (' + a.r.code + ')');
+      assert.strictEqual(a.sim.stats.chokeHold, 1, 'one fallback step');
+      assert.ok(a.seen.indexOf(true) > 0 && a.seen.slice(0, a.seen.indexOf(true)).every((x) => !x), 'the hold only after the normal halvings: ' + a.seen.length);
+      assert.strictEqual(a.sim._chokeHold, false, 'flag cleared after the step');
+      assert.strictEqual(a.sim.fs.Q[a.sim.n], 0, 'the choke passed nothing in the held step');
+      assert.ok(a.sim.state.balance.errCum <= 1e-8);
+      const b = mk(false);
+      assert.strictEqual(b.r.code, 'STEP_FAIL', 'far from p_dn: no fallback');
+      assert.ok(b.seen.every((x) => !x) && !b.sim.stats.chokeHold);
     },
   },
   {

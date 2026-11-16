@@ -41847,6 +41847,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     ['WTS_wd_engine.create', 'WTS_wd_engine.hash'].forEach(function (n) { var i = STUBS.indexOf(n); if (i !== -1) STUBS.splice(i, 1); });
 
     var VERSION = '1.0.0';
+    var CHOKE_HOLD_DP = 1;                  // psi: the fallback choke hold applies only this close to p_dn (4.6.1; see step)
     var PATM = 14.696, RANK = 459.67, FT3 = 5.614583, GC = 32.174, GRAV = 32.174, RHO_W = 62.366, RHO_OIL = 62.37;
     var SIG_LBF = 6.852e-5;                  // lbf/ft per dyn/cm
     var PROVISIONAL = 'provisional — not verified against a published example';
@@ -42650,7 +42651,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var a0 = ctl.beanFrom * ctl.beanFrom, a1 = ctl.beanTo * ctl.beanTo;
             b = Math.sqrt(Math.max(0, a0 + (a1 - a0) * _clamp(fr, 0, 1)));
         }
-        var ch = this.ch = { bean: b, closed: !C.choke.present ? false : !(b > 1e-9), mode: 'closed' };
+        var ch = this.ch = { bean: b, closed: !C.choke.present ? false : !(b > 1e-9) || !!this._chokeHold, mode: 'closed' };
         if (!C.choke.present) { ch.mode = _fin(C.thpFix) && !C.maxBC ? 'fixed' : 'line'; }
         // the lagged composition of the face-n stream (or of the top cell when nothing flowed)
         var FO = fs.FO[n], FW = fs.FW[n], FG = fs.FG[n], FI = fs.FI[n];
@@ -43051,7 +43052,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var X3 = this.exts[xf]; if (typeof X3.e.faceDp !== 'function') continue;
             for (var fk2 = 0; fk2 <= n; fk2++) { var r = X3.e.faceDp(this, X3.ctx, fk2, fs.Q[fk2]); if (r && _fin(r.dp)) { Y.dpPump[fk2] += r.dp; Y.ddpPump[fk2] += _fin(r.ddpdQ) ? r.ddpdQ : 0; } }
         }
-        var rejects = 0, res = null, code = null; this._dpRatio = 0;
+        var rejects = 0, res = null, code = null, dt0 = dt, landing0 = landing; this._dpRatio = 0;
         var pumpF = []; for (var pf = 0; pf <= n; pf++) if (Y.dpPump[pf] !== 0 || Y.ddpPump[pf] !== 0) pumpF.push(pf);
         for (var att = 0; att <= 8; att++) {
             res = this._attempt(dt, this._dpRatio);
@@ -43078,8 +43079,26 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             dt = dt / 2; landing = false;
             if (dt < o.dtMin) break;
         }
+        if ((!res || !res.ok) && !this._chokeHold && this.C.choke.present && S.open && this.ch && S.surface.thp - this.ch.pdn <= CHOKE_HOLD_DP) {
+            // fallback (4.6.1, §11.7): a step that failed every halving while the wellhead sat within CHOKE_HOLD_DP of the choke's
+            // downstream pressure is taken once more from its first Δt with the choke passing nothing — at Δp → 0 the choke laws have an
+            // infinite slope and the face-n flux a kink at Q = 0, and the wellhead Newton cycled between them (the gas-lift heading runs:
+            // a gas slug reaching a dead, liquid-full tubing). The flow lost is the choke's at Δp ≤ 1 psi; the flag lives only inside this
+            // step (not state, not in the Snap), and a run that never failed a step never takes this branch (bit-identical)
+            this._chokeHold = true; dt = dt0; landing = landing0; this._dpRatio = 0;
+            for (var att2 = 0; att2 <= 8; att2++) {
+                res = this._attempt(dt, this._dpRatio);
+                if (!res.ok && res.code === 'DP_LIMIT') this._dpRatio = res.ratio;
+                if (res.ok) break;
+                code = res.code; rejects++; this.stats.rej = this.stats.rej || {}; this.stats.rej[code] = (this.stats.rej[code] || 0) + 1;
+                dt = dt / 2; landing = false;
+                if (dt < o.dtMin) break;
+            }
+            if (res && res.ok) this.stats.chokeHold = (this.stats.chokeHold || 0) + 1;
+        }
         this.stats.rejects += rejects;
         if (!res || !res.ok) {
+            this._chokeHold = false;
             this.ended = true;
             var msg = 'The time step failed (' + (code || 'STEP_FAIL') + ') at t = ' + S.t.toFixed(1) + ' s.';
             this._flag('STEP_FAIL', msg, 'warn');
@@ -43088,6 +43107,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             return infoF;
         }
         this._commit(res, dt, landing ? tEv : null);
+        this._chokeHold = false;
         this.stats.steps++;
         var info = { ok: true, t: S.t, dt: dt, iters: res.iters, sweeps: res.sweeps, rejects: rejects, massErr: res.massErr, applied: applied };
         this.stats.wallMs += _now() - t0w;

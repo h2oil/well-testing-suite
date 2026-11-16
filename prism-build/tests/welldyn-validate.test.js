@@ -1,5 +1,5 @@
 // Well Dynamics — the validation tool (lane WD5): the --gate method table, the --check quick subset and the --time step counts.
-// docs/WELL-DYNAMICS-PLAN.md §4.14, §5.1, §5.5, §5.6, §11.5. The full tool (all of X1–X18, the scenario budgets, the browser report) is
+// docs/WELL-DYNAMICS-PLAN.md §4.14, §5.1, §5.5, §5.6, §11.5. The full tool (all of X1–X19, the scenario budgets, the browser report) is
 // `node prism-build/welldyn-validate.js [--html]`; these tests run its functions on the shared app with short runs.
 //
 // VA1 the D17 table of the tool = WTS_wd_engine.METHODS (keys and verified flags); the "never a default" keys are verified:false
@@ -12,7 +12,7 @@
 //     oil Δt in the §5.6 band), every row has a value, the baseline table is the §11.1 record
 'use strict';
 
-const W = require('./_welldyn-wd1');
+const W = require('./_welldyn-shapes');
 const V = require('../welldyn-validate');
 
 const WP = 'WD5';

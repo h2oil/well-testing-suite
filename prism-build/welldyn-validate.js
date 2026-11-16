@@ -7,7 +7,7 @@
 //   --gate     the D17 method table: every key of §4.14 is in WTS_wd_engine.METHODS with the verified flag as shipped; every key
 //              shipped verified:false is labelled provisional where the user meets it (page controls, the run summary, the report
 //              box); the keys marked "never a default" are not active in a default run of any gate fixture
-//   --check    X1–X18 (below): one PASS / FAIL / SKIP row per check with the measured value and the tolerance; X1 prints one row per
+//   --check    X1–X19 (below): one PASS / FAIL / SKIP row per check with the measured value and the tolerance; X1 prints one row per
 //              gate fixture with the C2 diagnostic (the nodal march re-run at stepFt = the cell length)
 //   --time     the §5.6 operations and scenarios: Δt, steps, ms per step, simulated / wall, wall time, against the §5.6 budget and
 //              the WD1 baseline (§11.1); a row fails only above 2 × its WD1 baseline (the plan's rule, as the Well Performance gate);
@@ -20,8 +20,8 @@
 //   --only     run only the listed check ids
 //
 // Exit codes: 0 ok; 1 a gate row, a check or a 2 × baseline timing row failed (or a budget with --strict); 2 crash.
-// Field units throughout. The fixtures are the frozen §3.9 file (tests/_welldyn-shapes.js) when present, else the wave-1 stand-in
-// (tests/_welldyn-wd1.js, the same keys). Checks that need the WD4 lift extensions (gas lift, ESP) are SKIP while those are not loaded.
+// Field units throughout. The fixtures are the frozen §3.9 file (tests/_welldyn-shapes.js; 4.6.1 — the wave-1 stand-ins are retired).
+// Checks that need the WD4 lift extensions (gas lift, ESP) are SKIP while those are not loaded.
 'use strict';
 
 const fs = require('fs');
@@ -39,40 +39,33 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 // ── fixtures (§3.9): the frozen WD0 file when it exists, else the WD1 stand-in ───────────────────────────────────────────
 let _F = null;
 const _FL = new WeakMap();
-// with an app whose WD4 lift extensions are loaded, the WD4 lane fixtures (tests/_welldyn-wd4.js: gasLift, esp; scenarios glUnload,
-// espStart, cycleTimer; gate options GATE4) are added to the base set; fixtures() without an app is the base set
+// the frozen fixture file (tests/_welldyn-shapes.js, §3.9; 4.6.1 — it replaced the lane stand-ins tests/_welldyn-wd1.js / _welldyn-wd4.js).
+// With an app whose lift extensions are loaded the lift fixtures and scenarios are in; glUnload starts at the balance level (§11.4: a full
+// kill column drains into the formation) and runs 4.5 h (the transfers to the operating valve; the 12 h run is welldyn-lift LF5)
 function fixtures(G) {
   const base = _fixturesBase();
-  if (!G || !(_haveLift(G, 'gaslift') || _haveLift(G, 'esp'))) return base;
+  if (!G) return base;
   if (_FL.has(G)) return _FL.get(G);
-  let L4 = null;
-  try { L4 = require('./tests/_welldyn-wd4'); } catch (e) { L4 = null; }
-  if (!L4) { _FL.set(G, base); return base; }
-  const FL = L4.FIXL(G), FIX = {}, SCEN = Object.assign({}, base.SCEN);
-  Object.keys(base.FIX).forEach((k) => Object.defineProperty(FIX, k, { enumerable: true, get: () => base.FIX[k] }));
-  if (_haveLift(G, 'gaslift')) Object.defineProperty(FIX, 'gasLift', { enumerable: true, get: () => FL.gasLift() });
-  if (_haveLift(G, 'esp')) Object.defineProperty(FIX, 'esp', { enumerable: true, get: () => FL.esp() });
-  // glUnload starts at the balance level (§11.4: a full kill column drains into the formation); 4.5 h covers the transfers to the
-  // operating valve (the 12 h run is welldyn-lift LF5)
-  if (_haveLift(G, 'gaslift') && G.WTS_wd_lift && typeof G.WTS_wd_lift.balanceLevel === 'function') {
-    const o = clone(L4.SCEN4.glUnload.opts);
-    o.static = { kind: 'level', liquidTopMd: G.WTS_wd_lift.balanceLevel(FL.gasLift()).md, liquid: 'water' };
-    SCEN.glUnload = { fix: 'gasLift', opts: o, duration_s: 4.5 * H };
+  const FIX = {}, SCEN = {};
+  const liftFix = { gasLift: 'gaslift', esp: 'esp', heading: 'gaslift' };
+  Object.keys(base.FIX).forEach((k) => { if (!liftFix[k] || _haveLift(G, liftFix[k])) Object.defineProperty(FIX, k, { enumerable: true, get: () => base.FIX[k] }); });
+  Object.keys(base.SCEN).forEach((nm) => {
+    const ext = base.SCEN_EXT[nm];
+    if (ext && !_haveLift(G, ext)) return;
+    SCEN[nm] = clone(base.SCEN[nm]);
+  });
+  if (SCEN.glUnload && G.WTS_wd_lift && typeof G.WTS_wd_lift.balanceLevel === 'function') {
+    SCEN.glUnload.opts.static = { kind: 'level', liquidTopMd: G.WTS_wd_lift.balanceLevel(base.FIX.gasLift).md, liquid: 'water' };
+    SCEN.glUnload.duration_s = 4.5 * H;
   }
-  if (_haveLift(G, 'esp')) SCEN.espStart = clone(L4.SCEN4.espStart);
-  if (_haveLift(G, 'cycle') && 'gasLoad' in base.FIX) SCEN.cycleTimer = clone(L4.SCEN4.cycleTimer);
-  const out = Object.assign({}, base, { FIX, SCEN, GATE4: L4.GATE4, lane4: true });
+  const out = Object.assign({}, base, { FIX, SCEN, lane4: _haveLift(G, 'gaslift') || _haveLift(G, 'esp') });
   _FL.set(G, out);
   return out;
 }
 function _fixturesBase() {
   if (_F) return _F;
-  const shapes = path.join(ROOT, 'tests', '_welldyn-shapes.js');
-  let mod = null;
-  if (fs.existsSync(shapes)) { try { mod = require(shapes); } catch (e) { mod = null; } }
-  if (!mod || !mod.FIX || !mod.SCEN || !('gasVert' in mod.FIX)) mod = require('./tests/_welldyn-wd1');
-  _F = mod;
-  return mod;
+  _F = require(path.join(ROOT, 'tests', '_welldyn-shapes.js'));
+  return _F;
 }
 
 // ── D17 method table (§4.14): key → shipped verified flag, whether it is ever a default, where the user meets the label ──
@@ -124,10 +117,7 @@ const BASELINE = {   // WD1 record §11.1 (Node, this container) — the "2 × b
 // ── app ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function _load() {
   const harness = require('./tests/_harness');
-  const F = fixtures(), ov = typeof F.sourceOverrides === 'function' && !flag('--html') ? F.sourceOverrides() : null;
-  const o = { fromSources: !flag('--html'), timers: 'real', console: 'errors', silentBuild: true };
-  if (ov && Object.keys(ov).length) o.sourceOverrides = ov;
-  return harness.loadApp(o);
+  return harness.loadApp({ fromSources: !flag('--html'), timers: 'real', console: 'errors', silentBuild: true });
 }
 
 // ── shared runs (memoised per app, so --check and --time reuse them) ────────────────────────────────────────────────────
@@ -156,7 +146,7 @@ function steadySim(G, key, opts) {
     return { sim, createMs, rs: sim.ok ? runSteady(sim, { cap_s: 6 * H }) : { ok: false, code: sim.code } };
   });
 }
-// a §3.9 scenario: per-step records the checks read (as tests/_welldyn-wd1.js runScenario), memoised by name + duration
+// a §3.9 scenario: per-step records the checks read (as tests/_welldyn-shapes.js runScenario), memoised by name + duration
 function runScenario(G, name, o) {
   o = o || {};
   const F = fixtures(G), sc = F.SCEN[name];
@@ -174,7 +164,7 @@ function runScenario(G, name, o) {
       if (e > out.maxErrStep) out.maxErrStep = e;
       if (st.balance.errCum > out.maxErrCum) out.maxErrCum = st.balance.errCum;
       out.steps.push({ t: i.t, dt: i.dt, rejects: i.rejects, liq: st.inventory.liqTubing_bbl, ratio: st.loading.ratio, state: st.well.state,
-        qres: gas ? st.bottom.qg : st.bottom.qo + st.bottom.qw });
+        qres: gas ? st.bottom.qg : st.bottom.qo + st.bottom.qw, thpg: st.surface.thp_psig, qL: st.surface.qL });
       if (tShut != null && st.t > tShut + 1e-9) {
         if (nextBu == null) { nextBu = tShut + 10; out.qShut = out.lastQres; }
         if (st.t >= nextBu) { out.bu.push({ dt: st.t - tShut, p: st.bottom.pwf }); nextBu = tShut + (st.t - tShut) * 1.03; }
@@ -245,7 +235,7 @@ function gate(G, o) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// --check X1–X18
+// --check X1–X19
 // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 function gateRow(G, key, opts) {
   const F = fixtures(G), TOL = F.TOL, m = steadySim(G, key, opts), sim = m.sim;
@@ -500,6 +490,22 @@ function checks(G, o) {
     return { ok: L.method === R0L.method && eT <= 0.02 && eC <= 0.02 && dMd <= 2 * cl, value: Math.max(eT, eC), tol: 0.02,
       note: 'method ' + L.method + ', Turner ' + (100 * eT).toFixed(2) + ' %, Coleman ' + (100 * eC).toFixed(2) + ' %, limiting MD Δ ' + dMd.toFixed(0) + ' ft' };
   });
+  // X19 casing heading (4.6.1, §4.13, §11.7): the heading fixture cycles from the model (no imposed signal) — the shipped detector over the
+  // last 3 h (≥ 3 THP peak pairs, the last peak-to-peak ≥ 0.8 × the first) and, independently, the main cycles (mid-level crossings)
+  row('X19', 'casing heading (heading fixture, gas-lift orifice): the shipped detector flags ≥ 3 sustained THP peak pairs in the last 3 h; main cycles repeat (period, swing)', () => {
+    if (!('heading' in F.FIX) || !F.SCEN.casingHeading) return skip('the gas-lift extension is not loaded');
+    const r = runScenario(G, 'casingHeading', o.quick ? { duration_s: 4.5 * H } : null);
+    if (!r.ok) return { ok: false, note: 'run ' + r.code };
+    const ring = []; let next = 0;
+    r.steps.forEach((x) => { if (x.t >= next) { ring.push([x.t, x.thpg, x.qL]); next = x.t + 30; } });
+    const h = F.headingRead(G, ring), d = h.det || {};
+    const per = h.periods.length ? h.periods.reduce((a, b) => a + b, 0) / h.periods.length : NaN;
+    const sw0 = h.swings[0], sw1 = h.swings[h.swings.length - 1];
+    const ok = !!d.heading && d.pairs >= F.HEADING.pairs && d.sustained === true && h.up.length >= 2 && per >= 45 * 60 && per <= 105 * 60 && h.hi - h.lo >= 100 &&
+      (h.swings.length < 2 || sw1 >= F.HEADING.sustain * sw0) && r.maxErrCum <= 1e-8;
+    return { ok, value: d.pairs, tol: F.HEADING.pairs, note: 'detector ' + (d.heading ? 'heading' : 'not heading') + ', ' + d.pairs + ' pairs, period ' + Math.round((d.period_s || 0) / 60) + ' min, sustained ' + d.sustained +
+      '; main cycles ' + h.up.length + ' crossings, period ' + (isFinite(per) ? (per / 60).toFixed(1) : '—') + ' min, THP ' + h.lo.toFixed(0) + '–' + h.hi.toFixed(0) + ' psig; cumulative mass ' + r.maxErrCum.toExponential(1) };
+  });
   const counted = out.filter((r) => !r.skip);
   return { ok: counted.every((r) => r.ok), rows: out };
 }
@@ -551,7 +557,7 @@ function timing(G, o) {
   // scenarios (§5.6 rows; the lift scenarios when WD4 is loaded)
   Object.keys(F.SCEN).forEach((nm) => {
     if (o.quick && nm !== 'levelSettle') return;
-    const lift = { glUnload: 'gaslift', espStart: 'esp', foamerOn: 'foamer', cycleTimer: 'cycle' }[nm];
+    const lift = { glUnload: 'gaslift', espStart: 'esp', foamerOn: 'foamer', cycleTimer: 'cycle', casingHeading: 'gaslift' }[nm];
     if (lift && !_haveLift(G, lift)) return;
     const r = runScenario(G, nm);
     if (!r.ok) { add({ op: 'scenario ' + nm, fixture: F.SCEN[nm].fix, v: null, unit: 'ms', budget: BUDGET.scen[nm] || null, base: BASELINE.scen[nm] || null, note: 'FAILED ' + r.code }); rows[rows.length - 1].ok = false; return; }
@@ -639,7 +645,7 @@ async function main() {
   const t0 = nowMs();
   const app = _load(), G = app.win;
   console.log('[welldyn-validate] app loaded from ' + (flag('--html') ? 'the built HTML' : 'sources') + ' in ' + (nowMs() - t0).toFixed(0) + ' ms; fixtures: ' +
-    (fixtures().sourceOverrides ? 'tests/_welldyn-wd1.js (wave-1 stand-in)' : 'tests/_welldyn-shapes.js') + '; WD4 lift extensions: ' + (_haveLift(G, 'gaslift') || _haveLift(G, 'esp') ? 'loaded' : 'not loaded'));
+    'tests/_welldyn-shapes.js' + '; WD4 lift extensions: ' + (_haveLift(G, 'gaslift') || _haveLift(G, 'esp') ? 'loaded' : 'not loaded'));
   const summary = {}; let fail = false;
   if (doGate || all) {
     const g = gate(G, { quick }); summary.gate = g;
@@ -650,7 +656,7 @@ async function main() {
     if (!g.ok) fail = true;
   }
   if (doCheck || all) {
-    console.log('\nCross-checks X1–X18 (§5.5):');
+    console.log('\nCross-checks X1–X19 (§5.5; X19 4.6.1):');
     const c = checks(G, { quick, only, onRow: (r) => {
       console.log('  ' + (r.skip ? 'SKIP' : (r.ok ? 'PASS' : 'FAIL')) + '  ' + r.id.padEnd(4) + r.name + '  [' + _f(r.value, 4) + ' / tol ' + _f(r.tol, 4) + ', ' + (r.ms / 1000).toFixed(1) + ' s]');
       if (r.id === 'X1' && r.dq != null) {

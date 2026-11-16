@@ -417,6 +417,13 @@ WTS_wd_cases.remove(id), WTS_wd_cases.toScenario(case) → {settings, events, du
 
 ### 3.9 Frozen fixtures `tests/_welldyn-shapes.js` (WD0, hash-pinned like `_wellperf-shapes.js`)
 
+**Written at 4.6.1 (§11.7).** WD0 never ran before the waves, so the lanes shipped against stand-ins (`_welldyn-wd1.js`, `_welldyn-wd4.js`);
+4.6.1 wrote this file with the numbers as shipped (the §11.1 / §11.4 deviations below the table stay), pinned the gas-lift valve rows and the
+example pump record as data, added the casing-heading fixture `heading` and the scenario `casingHeading`, and retired both stand-ins. Pins:
+`welldyn-shapes` WS1 (sha256 of the fixtures, scenarios, EXPECT and ORDER), WS2 (`EXPECT` = the steady solve of every fixture within 1e-6),
+WS3 (valve rows = the design re-run, pump = `WTS_wp_esp.example()`), WS4 (the §3 shapes on live objects), WS5 (helpers). There are no WD0 stubs
+(`STUBS` = {}) and no `_welldyn-mock.js` (the page and recorder tests use the WD3 stand-in `tests/_wd3-mock.js`).
+
 Built from the Well Performance fixtures (`require('./_wellperf-shapes').FIX`) with the changes listed; WD0 runs `WTS_wp_system.solve` on
 each one, adjusts only the numbers marked *(tune)* within the stated range so the stated condition holds, and pins the steady reference
 (`expect.op`: q, pwf, thp, choke regime, `R.lift.injMd` / pump intake where present) and the fixture hash. All are complete models M
@@ -879,6 +886,12 @@ THP — or CHP for a gas-lift well — reaches p_open; shut when q_g < q_close o
   forced left of q_s (by the choke) does not settle on that root. **Not reproduced (review, 2026-11-14):** on the test wells no engine run
   has headed — right of q_s the well settles on the nodal root, with no stable root it dies (LF15); the release note and the help say "a
   heading detector flags sustained wellhead-pressure oscillations (provisional)", not that heading is simulated.
+  **Reproduced at 4.6.1 (§11.7), on a gas-lift casing-heading case:** the fixture `heading` (the gasLift well with one 20/64 in orifice
+  valve at 3,000 ft MD, the packer at 3,100 ft, a constant 200 Mscf/d of lift gas into the 7" annulus) cycles from the model alone — the
+  annulus blows down through the orifice, the tubing loads and the well stops, the annulus recharges until the casing pressure at the orifice
+  passes the tubing pressure, gas enters and the well unloads (period ≈ 75 min, THP ≈ 100 ↔ 255 psig, rate 0 ↔ ≈ 440 STB/d, casing
+  ≈ 423 ↔ 546 psig). The detector flags it over the last 3 h at 60 cells (LF28, welldyn-validate X19). Oil-well heading right or left of q_s
+  on the natural-flow fixtures is still not reproduced (LF15); the Asheim screening (provisional) says 'ok' on the heading fixture.
 
 ### 4.14 Method table (D17)
 
@@ -979,7 +992,8 @@ operating valve (or the deepest reachable, reported), multi-pointing flagged, ca
 (nodal mode, G5; injection cell above the `R.lift.injMd` break) · LF7 casing heading vs `WTS_wp_gl.asheim` verdict on two fixtures (stable / unstable) — a cross-check, provisional ·
 LF8 ESP ramp: intake draws down, settles on the pumped root (G6) · LF9 pump-off · LF10 gas lock · LF11 underload trip · LF12 check valve:
 no back-flow when stopped · LF13 foamer transport delay from the injection MD · LF14 foamer: q_c falls by sigF^¼ (C11) and `foamerOn`
-unloads gasLoad (state loading → unloading → stable or marginal) · LF15 oil heading / stability (§4.13) · LF16 cycle timer events ·
+unloads gasLoad (state loading → unloading → stable or marginal) · LF15 oil heading / stability (§4.13) · LF28 (4.6.1) casing heading on
+the `heading` fixture: the detector flags ≥ 3 sustained THP peak pairs in the last 3 h, the main cycle repeats (§4.13, §11.7) · LF16 cycle timer events ·
 LF17 cycle pressure trigger with minimum times · LF18 intermittent gas well: liquid removed per cycle reported · LF19 extension
 snapshot / restore · LF20 lift states and labels · LF21 ESP `faceDp` equals `WTS_wp_esp.pump(...).dp` of the nodal pump node at the
 same intake state (R10) · LF22 ESP vent gas (natural separation on) leaves the cell below the pump and appears in `qg`, `qvent` and
@@ -1000,7 +1014,8 @@ PG1–PG28 (WD3) and VW1–VW14 (WD2): §6.
 - `--gate`: the §4.14 method table (verified flags as shipped, label present in the page / report for each provisional method).
 - `--check`: X1–X18: the gate G1–G7 (time-means, amplitude reported) with the C2 diagnostic (nodal march at stepFt = cell length), static columns (EN3 / EN4), mass balance on all scenarios, build-up derivative (RS4), Turner switch
   (EN18), E1 vs PRiSM (RS1), foamer factor (C11), grid convergence (C12), determinism and restore (EN15 / EN16), casing column (LF2),
-  unloading sequence (LF5), ESP gate (LF8), transient → IPR (RS5), sharp level (EN25), back-flow (EN26).
+  unloading sequence (LF5), ESP gate (LF8), transient → IPR (RS5), sharp level (EN25), back-flow (EN26); X19 (4.6.1) casing heading on the
+  `heading` fixture (the detector and the main cycles, as LF28).
 - `--time`: per §5.6, measured on the container (Node), with step counts; `--html` loads the built page; with Playwright and Chromium at
   `/opt/pw-browsers` it also reports the achieved speed of the page at ×1000 with drawing (report only; never `playwright install`).
 - Exit 1 on a failed gate / check row; the timing rows fail only above 2 × the WD1 baseline (as the Well Performance gate); the timing table
@@ -1762,6 +1777,53 @@ sweep of welldyn + wellperf (desktop and --mobile): 0 errors, 0 warnings, 0 cosm
 - Help caps: the Well Dynamics share of the raises was **approved under Q4** by the owner on 2026-11-16 (not covered by Q21). Gates after the fixes: node --check OK, smoke 347/347, accept-test --html --integration 2385/2385 (204 files, file by file),
   welldyn-validate (D17 PASS, 23 / 23, X11 skipped), wellperf-validate (D17 PASS, 62 / 62), help-shots / build-user-guide / publish-site
   --check ok, ux-layout-check --web ok (135), wts3d-test 147/149 (the two CRLF checks on LF), GUI sweep welldyn desktop + --mobile 0 findings.
+
+**4.6.1 lane `f461/wdhead` (2026-11-16, from 939f9d8): heading and the WD0 fixture file.**
+
+*Heading — reproduced on one gas-lift casing-heading case; natural-flow oil heading still not.* Physics only from the model (no imposed
+signal, no event: the surface injection is a constant rate and the casing stays below the kick-off pressure). Cases tried (the gasLift well
+— WC 0.6, GOR 200, p̄r 2,600 psia, 2-7/8" tubing — with one orifice valve; 60 cells, steady start, 6 h unless stated):
+- valve at 7,800 ft, below the nodal injection depth (4,521 ft at p_inj 1,100 psig): the casing never reaches the tubing pressure at the
+  valve and the well dies;
+- valve at 4,400 ft, packer 7,900 ft: 7" annulus, q_inj 300 Mscf/d, port 16/64 — a slow oscillation that decays; ports 24–48 with q_inj
+  450–900 (7" and 9-5/8") settle on a steady point; q_inj 300–400 (7", 9-5/8", 5-1/2") give sustained relaxation cycles (the well stops,
+  the annulus recharges, the well unloads) with periods of 1.5 h to over 5 h (5-1/2", 400 Mscf/d, port 32: 106 min, THP ≈ 100 ↔ 560 psig) —
+  real heading but at most 1–2 peak pairs in a 3 h window; packer 4,500 ft: 400 settles, 300 cycles at ≈ 90 min;
+- valve at 3,000 ft, packer 3,100 ft, p_inj 750 psig: q_inj 300 settles; q_inj 200, port 24 heads (the detector: 3 sustained pairs, main
+  period ≈ 77 min). Its neighbours (q_inj 180 / 250, port 20 / 28, 40 / 80 cells) ended STEP_FAIL (NEWTON) when the gas slug reached the dead,
+  liquid-full tubing with the wellhead within 0.2 psi of the choke's downstream pressure: the wellhead Newton cycled between Q_n ≈ −0.01 and
+  ≈ +2 ft³/s (the choke laws' infinite slope at Δp → 0 and the face-n flux kink at Q = 0).
+- Engine fix (fallback choke hold, `CHOKE_HOLD_DP` 1 psi, EN32): a step that failed every halving while the lagged THP is within 1 psi of
+  p_dn is retried once from its first Δt with the choke passing nothing; the flag lives only inside the step (not in the Snap). A run that
+  never failed a step takes the identical path (bit-identical; all welldyn tests and every gate number unchanged). With it every neighbour
+  completes: q_inj 200 / port 20 (5 pairs), port 24 at 40 / 60 / 80 cells (5 / 3 / 3), q_inj 220 / port 22 (5), q_inj 250 / ports 20 and 24
+  (3, 3) head; q_inj 180 and port 28 cycle with 71–79 min periods (2 pairs in 3 h, not flagged); q_inj 300 / port 20 and 250 / port 16 settle.
+- Shorter periods were not found: a 5-1/2" annulus at q_inj 120–130 runs CFL-bound (≈ 1 h simulated in 4 min wall), 6-5/8" at 150 gives 76 min,
+  p̄r 2,300–2,400 has no steady root (NO_STEADY), p̄r 2,800 gives 110 min, a valve at 2,500 ft settles, J 4 runs CFL-bound. The dead phase
+  (≈ 40 min, the annulus recharge of ≈ 115 psi at q_inj) sets the period, and a faster recharge (more gas or a smaller annulus) crosses
+  into the stable side.
+- **Fixture `heading`** (§3.9): q_inj 200 Mscf/d, p_inj 750 psig (kick-off 850), packer 3,100 ft, orifice 20/64 in at 3,000 ft; nodal root
+  57.3 STB/d (surface choke 'subcritical-bound'), the Asheim screening 'ok' (F2 0.31) — the transient does not settle on the root. Scenario
+  `casingHeading`: default options, 4.5 h. At 60 cells: main period 4,512 s (75 min), THP 99.6 ↔ 253.8 psig, rate 0 ↔ 439 STB/d, casing
+  423 ↔ 546 psig, detector 5 pairs / sustained / heading; 40 cells 4,483 s, 151 psi swing, 4 pairs (heading); 80 cells 4,518 s, 154 psi,
+  2 pairs (not flagged — the extra pairs at 40 / 60 cells are the secondary re-surges after the main peak). The main cycle is grid-converged
+  (period within 0.8 %, swing within 2 %); the detector's flag depends on the secondary surges at this period. The run uses the choke hold
+  2 times; ≈ 5,300 steps, ≈ 31–40 s wall.
+- Tests: welldyn-lift LF28 (integration; the detector over the last 3 h, the main cycle 45–105 min with a sustained swing ≥ 100 psi, the rate
+  0 ↔ > 300 STB/d, constant forcing, mass balance), welldyn-engine EN32 (the hold: only after the normal halvings, only within 1 psi, one
+  step, flag cleared; farther away STEP_FAIL stands); welldyn-validate X19 (as LF28). **No page preset**: the run needs 4.5 h (≈ 31–40 s
+  wall), over the 10 s limit for a preset. RELEASE_NOTES are not edited (the integrator writes 4.6.1).
+
+*WD0 fixture file.* `tests/_welldyn-shapes.js` written per §3.9 (see the note there): FIX (11 models), EXPECT, SCEN (10 scenarios incl. the lift
+ones and `casingHeading`), SCEN_EXT, GATE / GATE4 / GATE_OPTS / TOL / HEADING, ORDER, SHAPE_SPECS + checkShape, FIXL(g) (design / pump variants),
+sharedApp, resetWellDyn, loadFix, files(), STUBS ({}), BASELINE, runners and headingRead. The tests (engine, res, gate, int, lift, validate) and
+`welldyn-validate.js` read it; `_welldyn-wd1.js` / `_welldyn-wd4.js` are deleted; INT2 (names) scans `files()`. New `welldyn-shapes` WS1–WS5.
+
+Gates (lane, built page): node --check OK; smoke 347/347; accept-test --html --integration per file: welldyn-engine 33, -gate 9, -int 7,
+-lift 29, -page 24, -rec 16, -res 12, -shapes 5, -validate 7, -view 15 — all pass; welldyn-validate --html --gate --check --time (224 s): D17 PASS; 24 / 24 checks
+pass, X11 skipped (G1–G7, X2–X18 the 4.6 numbers unchanged, X4 cumulative 5.7e-15 over the ten scenarios incl. casingHeading); X19 PASS (detector
+heading, 5 pairs, sustained; main cycles 2 crossings, period 75.2 min, THP 100–254 psig; cumulative mass 3.7e-15); every timing row inside
+its fail line — scenario casingHeading (4.5 h) 31.6 s, 5,264 steps, 458 rejects, 6.0 ms per step (no §5.6 budget row).
 
 ---
 

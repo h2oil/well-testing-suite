@@ -12,7 +12,7 @@
 // G9 (WD1 extra) grid convergence (C12): oilVert BHP(60) vs BHP(120) ≤ 0.5 %, and 30 cells within 1 %
 'use strict';
 
-const W = require('./_welldyn-wd1');
+const W = require('./_welldyn-shapes');
 
 const WP = 'WD1';
 const G = (ctx) => W.sharedApp(ctx).win;
@@ -93,11 +93,10 @@ module.exports = [
     } },
 ];
 
-// ── WD4 (appended, §5.1): G5 gas lift in nodal mode, G6 ESP — fixtures of tests/_welldyn-wd4.js (§11.4) ─────────────────────
-const L4 = require('./_welldyn-wd4');
+// ── WD4 (appended, §5.1): G5 gas lift in nodal mode, G6 ESP — the gasLift / esp fixtures of tests/_welldyn-shapes.js (§11.4) ───────
 function gate4(ctx, assert, key) {
-  const g = G(ctx), M = key === 'esp' ? L4.FIXL(g).esp() : L4.FIXL(g).gasLift();
-  const m = W.memo('lift:gate:' + key, () => { const sim = g.WTS_wd_engine.create(M, Object.assign({}, W.GATE_OPTS, L4.GATE4[key])); return { sim, rs: sim.ok ? W.runSteady(sim, { cap_s: 3 * 3600 }) : { ok: false, code: sim.code } }; });
+  const g = G(ctx), M = key === 'esp' ? W.FIX.esp : W.FIX.gasLift;
+  const m = W.memo('lift:gate:' + key, () => { const sim = g.WTS_wd_engine.create(M, Object.assign({}, W.GATE_OPTS, W.GATE4[key])); return { sim, rs: sim.ok ? W.runSteady(sim, { cap_s: 3 * 3600 }) : { ok: false, code: sim.code } }; });
   const sim = m.sim; assert.ok(sim.ok, 'create ' + key + ': ' + (sim.code || ''));
   const R = sim.R0, c = m.rs.chk;
   assert.ok(m.rs.ok && c.steady, key + ' steady (Δq̄ ' + c.dq + ', Δp̄ ' + c.dp + ')');

@@ -15,7 +15,7 @@
 // RS12 prior history: 'none' keeps p_wf = p̄r on a shut static start; 'steady' / 'shutin' reproduce the analytical superposition
 'use strict';
 
-const W = require('./_welldyn-wd1');
+const W = require('./_welldyn-shapes');
 
 const WP = 'WD1';
 const G = (ctx) => W.sharedApp(ctx).win;

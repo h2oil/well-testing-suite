@@ -11,6 +11,7 @@
 // LF15 oil heading / stability: right of q_s settles on the nodal root, a bean with no stable root dies; the detector on a signal
 // LF16 timer cycle events land exactly · LF17 pressure cycle with minimum times · LF18 liquid removed per cycle reported
 // LF27 (integration §11.7) the Well Performance gas-lift example unloads with no STEP_FAIL
+// LF28 (integration, 4.6.1) casing heading from the model: the heading fixture cycles; the detector flags it (≥ 3 sustained pairs in 3 h)
 // LF19 extension snapshot / restore continues bit-identically · LF20 lift states and labels · LF21 ESP faceDp = the nodal pump node
 // LF22 ESP vent gas leaves the cell below the pump and appears in qg, qvent and cumOut · LF23 lift gas: free only, mixed gravity, surface qg
 // LFX  (WD4 engine finding) a liquid slug at the wellhead does not chatter the choke (implicit flowline back pressure)
@@ -20,8 +21,8 @@
 // LF26 page report: the lift rows in the run summary (display units)
 'use strict';
 
-const L4 = require('./_welldyn-wd4');
-const W = L4.W;
+const W = require('./_welldyn-shapes');
+const L4 = W;   // the lift fixtures moved from the lane helper into the frozen file (4.6.1)
 
 const WPK = 'WD4';
 const H = 3600, PATM = 14.696;
@@ -53,7 +54,7 @@ function glUnload(ctx, dur) {
 }
 function espStart(ctx) {
   return memo('espStart', () => {
-    const g = G(ctx), sc = L4.SCEN4.espStart, sim = create(g, F(ctx).esp(), clone(sc.opts)), tr = track(sim), pint = [];
+    const g = G(ctx), sc = W.SCEN.espStart, sim = create(g, F(ctx).esp(), clone(sc.opts)), tr = track(sim), pint = [];
     sim.on('step', () => { if (sim.state.lift.esp) pint.push([sim.state.t, sim.state.lift.esp.pint]); });
     const t0 = Date.now(), r = sim.run(sc.duration_s);
     return { sim, tr, pint, r, wallMs: Date.now() - t0 };
@@ -381,7 +382,7 @@ module.exports = [
     wp: WPK, opts: false, timeoutMs: 120000,
     run(_a, assert, ctx) {
       const g = G(ctx), f = F(ctx);
-      [[f.gasLift(), glOpts(g, f.gasLift()), 1800, 600], [f.esp(), clone(L4.SCEN4.espStart.opts), 20, 400]].forEach(([M, opts, t1, t2]) => {
+      [[f.gasLift(), glOpts(g, f.gasLift()), 1800, 600], [f.esp(), clone(W.SCEN.espStart.opts), 20, 400]].forEach(([M, opts, t1, t2]) => {
         const a = create(g, M, opts); a.run(t1); const snap = JSON.parse(JSON.stringify(a.snapshot())); a.run(t2);
         const b = create(g, M, opts), rr = b.restore(snap); assert.ok(rr.ok, 'restore ' + rr.code); b.run(a.state.t - b.state.t);
         assert.strictEqual(b.state.t, a.state.t, 't');
@@ -496,6 +497,39 @@ module.exports = [
       assert.ok(r.ok, 'run: ' + r.code + ' at ' + sim.state.t.toFixed(0) + ' s');
       assert.ok(ops.length >= 1 && ops.every((o, k) => !k || o > ops[k - 1]), 'operating valve steps down: ' + ops.join(' → '));
       assert.ok(sim.state.balance.errCum <= 1e-8, 'mass balance ' + sim.state.balance.errCum);
+    }
+  },
+  {
+    // 4.6.1 (§4.13, §11.7): heading reproduced by the model — a constant lift-gas rate into a 7" annulus through one orifice (20/64 in at
+    // 3,000 ft) cycles: the annulus blows down, the tubing loads and the well stops, the annulus recharges, gas enters and the well unloads
+    name: 'LF28 (integration) casing heading from the model: the heading fixture (constant 200 Mscf/d, orifice valve) cycles — the detector flags ≥ 3 sustained THP peak pairs in the last 3 h; the main cycle repeats',
+    wp: WPK, opts: false, timeoutMs: 180000, integration: true,
+    run(_a, assert, ctx) {
+      const g = G(ctx), H3 = W.HEADING;
+      const s = memo('casingHeading', () => W.runScenario(g, 'casingHeading')), sim = s.sim, S = sim.state;
+      assert.ok(s.ok, 'run ' + (s.code || '') + ' at ' + S.t.toFixed(0) + ' s');
+      assert.ok(s.maxErrStep <= 1e-10 && S.balance.errCum <= 1e-8, 'mass balance: step ' + s.maxErrStep + ', cumulative ' + S.balance.errCum);
+      // the forcing is constant: the surface injection never changes (the kick-off pressure 850 psig is not reached) and no event is applied
+      const win = s.ring.filter((r) => r[0] >= S.t - H3.window_s);
+      assert.ok(win.every((r) => r[3] < 850 - 14.696), 'casing below the kick-off pressure: max ' + Math.max(...win.map((r) => r[3])).toFixed(1) + ' psig');
+      assert.rel(S.surface.qinj, 200, 1e-12, 'surface injection constant');
+      assert.deepStrictEqual(sim.log.filter((e) => e.type !== 'open').length, 0, 'no event applied');
+      // the shipped detector over the last 3 h
+      const h = W.headingRead(g, s.ring), d = h.det;
+      assert.ok(d.heading && d.pairs >= H3.pairs && d.sustained === true, 'detector: ' + JSON.stringify(d));
+      assert.ok(S.lift.heading && S.lift.heading.heading === true, 'the heading extension reads the same: ' + JSON.stringify(S.lift.heading));
+      // independently: the main cycle (mid-level crossings) repeats with a period of 45–105 min and a sustained swing ≥ 100 psi
+      const per = h.periods.reduce((a, b) => a + b, 0) / h.periods.length;
+      assert.ok(h.up.length >= 2 && per >= 45 * 60 && per <= 105 * 60, 'main cycles: ' + h.up.length + ' crossings, period ' + (per / 60).toFixed(1) + ' min');
+      assert.ok(h.hi - h.lo >= 100, 'THP swing ' + h.lo.toFixed(0) + '–' + h.hi.toFixed(0) + ' psig');
+      assert.ok(h.swings.length < 2 || h.swings[h.swings.length - 1] >= H3.sustain * h.swings[0], 'swings sustained: ' + h.swings.map((x) => x.toFixed(0)).join(', '));
+      // the well stops and unloads in every cycle
+      const q = win.map((r) => r[2]);
+      assert.ok(Math.min(...q) < 1 && Math.max(...q) > 300, 'surface rate ' + Math.min(...q).toFixed(1) + ' ↔ ' + Math.max(...q).toFixed(0) + ' STB/d');
+      // the nodal solve has a stable root at 57 STB/d and the Asheim screening says ok — the transient does not settle on it (reported, §11.7)
+      const R = sim.R0, A = g.WTS_wp_gl.asheim(sim.M, R, { port64: 20 });
+      assert.rel(R.op.q, W.EXPECT.heading.q, 1e-6, 'nodal root');
+      assert.ok(A.ok && A.verified === false, 'Asheim screening provisional (verdict ' + A.verdict + ', F2 ' + A.F2 + ')');
     }
   },
 ];

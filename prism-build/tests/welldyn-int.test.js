@@ -11,7 +11,7 @@
 // INT1 the recorder keys follow the engine's CHANNELS objects (no "[object Object]" columns); the view's state labels are the engine's
 'use strict';
 
-const W = require('./_welldyn-wd1');
+const W = require('./_welldyn-shapes');
 
 const WPK = 'WDI';
 const BAD = /NaN|undefined|Infinity|\[object Object\]/;
@@ -182,7 +182,7 @@ module.exports = [
     },
   },
   {
-    name: 'INT2 names: the wellperf-names banned list finds nothing in the Well Dynamics engines, page, view, recorder, tests or plan',
+    name: 'INT2 names: the wellperf-names banned list finds nothing in the Well Dynamics engines, page, view, recorder, validate tool, tests, fixtures or plan (_welldyn-shapes files())',
     wp: WPK,
     run(_a, assert) {
       const fs = require('fs'), path = require('path');
@@ -191,10 +191,10 @@ module.exports = [
       const rq = (p) => require(p.startsWith('./') ? path.join(__dirname, p) : p);
       const N = new Function('require', 'module', head + '; return { patterns, scan };')(rq, {});
       const B = path.resolve(__dirname, '..');
-      const files = fs.readdirSync(B).filter((f) => /^49-calc-(wd-[a-z]+|welldyn)\.js$/.test(f)).map((f) => path.join(B, f))
-        .concat(fs.readdirSync(__dirname).filter((f) => /^(welldyn-.*\.test\.js|_welldyn-.*\.js|_wd3-mock\.js)$/.test(f) && f !== 'welldyn-int.test.js').map((f) => path.join(__dirname, f)))
-        .concat([path.join(B, '..', 'docs', 'WELL-DYNAMICS-PLAN.md')]);
-      assert.ok(files.length >= 13, 'file list ' + files.length);
+      // the list of the frozen fixture file (4.6.1): engines, page, view, recorder, the validate tool, tests, helpers and the plan
+      const files = W.files().filter((f) => path.basename(f) !== 'welldyn-int.test.js');
+      assert.ok(files.length >= 18 && files.some((f) => /_welldyn-shapes\.js$/.test(f)) && files.some((f) => /WELL-DYNAMICS-PLAN\.md$/.test(f)), 'file list ' + files.length);
+      void B;
       const bad = [];
       files.forEach((f) => { const h = N.scan(fs.readFileSync(f, 'utf8'), N.patterns()); if (h.length) bad.push(path.basename(f) + ': ' + h.length); });
       assert.deepStrictEqual(bad, []);
