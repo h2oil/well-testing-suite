@@ -5,8 +5,27 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
-## 4.6.1 (draft)
+## 2026-11-16 — v4.6.1 release: Well Dynamics, DFIT and Well Performance fixes
 
+App and App Store version 4.6.1 (`RELEASE_NOTES[0]` v4.6.1, dated 2026-11-16, both platforms, title "Well Dynamics, DFIT and Well Performance
+fixes"; one web-only accounts item inside ACCT markers with platform:'web'; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks
+`VERSION_BASE`, the static `#appVersionLabel` fallback). Six lanes from 939f9d8 merged with --no-ff on f461/int in the order acctflake,
+wpperf, dfitui, dfitcal, wdhead, wdgl; generated files regenerated (rounds 1–10 rebuilt, LF, sync, user guide).
+
+- **Integration.** Conflicts: PROJECT-NOTES / CLAUDE.md / plan text (both kept); 48-calc-help-production.js (three lanes): merged by hunk,
+  the prism guide re-reviewed at the merged sources (reviewedSrc a681e95b) and the lanes' added wording shortened together so the file
+  fits its 69.25 kB cap (69,247 bytes; nothing dropped — each lane's statement kept in fewer words); welldyn-lift: wdhead and wdgl both
+  added LF28 — wdgl's gas-lift unloading test is LF29. The wdgl engine changes and the wdhead choke hold merged without conflict; on the
+  combined engine the casingHeading scenario (5 h) takes 12.8 s / 3,794 steps / 306 rejects (31.6 s / 458 rejects on the wdhead tree),
+  X19 still flags heading (5 pairs, main period 75.4 min, THP 100–252 psig) — still over the 10 s preset limit, so no page preset.
+  Release-notes help shot re-taken (images 8,245,988 bytes of the 8.27 MB cap). Gates on the built page: node --check; smoke 347/347;
+  accept-test --html --integration file by file 2407/2407 (207 files); welldyn-validate --html --gate --check --time ok (D17 PASS,
+  24/24, X11 skipped; every timing row inside its fail line); wellperf-validate --html --gate --check --time ok (D17 PASS, 62/62; 9 relative
+  ms caps reported over after the speed-up); dfit-validate --quick ok (replay / spread / multi-start; the tiny-subset single high / medium
+  lower bounds as at 3.4a); help-shots / build-user-guide / publish-site --check ok; ux-layout-check --web ok (135); wts3d-test 147/149 (the two
+  CRLF checks on LF); server suite 278/278; GUI sweep welldyn + wellperf + prism (desktop): 0 errors, 1 warning (PRiSM Tab 7
+  "Clear events" with no events to clear — no effect, 39 untouched) and 1 cosmetic (PRiSM is field-unit only in Metric mode, a known
+  limitation); --mobile on welldyn: 0 findings.
 - **Accounts e2e E2 flake fixed (lane acctflake).** The sign-in completion in 66 (`completeSignIn`) closed whatever dialog was open
   when the cloud hand-over finished, so a step-up started in between (linking a provider right after a provider sign-in) was
   settled as cancelled. It now closes only its own dialog (`dlg.gen` + mode). New regression test acct-oauth OA11; E2 went from

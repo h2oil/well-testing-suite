@@ -1909,6 +1909,14 @@ shows the same valve sequence and casing pressure at 4 h (still valve 5): not re
 
 ---
 
+**4.6.1 integration (f461/int, 2026-11-16).** The wdhead (choke hold, `heading` fixture, frozen tests/_welldyn-shapes.js) and wdgl
+(gas-flux-weighted Δρ, step growth to DP_TARGET, Newton choke clip, CFL 0.8) engine changes merged without conflict; wdgl's welldyn-lift
+test is LF29 (wdhead's casing heading test keeps LF28). On the combined engine (built page): welldyn-validate --gate --check --time ok —
+D17 PASS, 24 / 24, X11 skipped, G5 gasLift +0.783 % / −0.076 %, X4 4.1e-15, X6 123.4 s; X19 heading, 5 pairs, main period 75.4 min, THP
+100–252 psig; casingHeading (5 h) 12.8 s, 3,794 steps, 306 rejects (31.6 s / 458 on the wdhead tree — the wdgl step control also helps
+the heading run, still over the 10 s preset limit); glUnload 5 h 4.7 s, 68 rejects; cycleTimer 12 h 11.7 s, 369 rejects. Every welldyn-*
+test passes (accept-test --html --integration per file).
+
 ## 12. Revision 2 — review changes and where they landed
 
 | Review item | Change | Section |

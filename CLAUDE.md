@@ -288,7 +288,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   (wall-clock budgets); --set all --workers 4 --write calibrates (out of fold, tightening-only threshold
                                   search on recorded label evidence, 3.4a-rule labels via --base-rule) and writes 49-calc-dfit-cal.js (WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2392 unique tests by --list; welldyn-* = v4.6 / v4.6.1 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2407 unique tests by --list; welldyn-* = v4.6 / v4.6.1 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -421,7 +421,7 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2389/2389; count with --list — `--file` matches by substring, so
+   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2407/2407; count with --list — `--file` matches by substring, so
    a per-file run must pass the full name, e.g. `--file wellperf-sens.test.js`) and
    `node prism-build/wts3d-test.js` (149 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
@@ -762,9 +762,13 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   live-data coupling, no plunger / rod pump / PCP / jet pump, IPO and orifice gas-lift valves only, vented ESP gas leaves at the surface.
   Provisional (verified:false, never defaults): transient reservoir superposition, sub-critical choke, temperature relaxation, liquid
   fallback, Belfroid, foamer, the gas-lift valve model (TAU_VALVE 20 s is an ASSUMPTION) and the ESP transients. Gas-lift unloading in
-  valves mode rejects many steps (≈ 500–1,100 DP_LIMIT per 4 h, 15–40 s wall for 4 h) and the Well Performance Gas lift example is still
-  on valve 5 (of 6) after 4 h (1,046–1,148 STB/d against the nodal 1,181); several §5.6 budgets are missed (flowing step ≈ 3.5 ms against
-  2.5, settled shut-in step, cycleTimer 12 h ≈ 28 s) though inside the 2 × WD1 fail lines; a replay file over 5 MB thins its snapshots
+  valves mode (4.6.1, plan §11.8: gas-flux-weighted drift Δρ `DRHO_JG`, step growth to 0.8 of the pressure-change limit `DP_TARGET`, Newton
+  clip of the choke flux, default CFL 0.8) rejects ≈ 100–130 DP_LIMIT per 4 h on the seven perturbed LF27 runs (500–1,200 at 4.6) and takes
+  ≈ 12 s wall for 4 h at 60 cells (7 s at 40, 18 s at 80) — the 8 s aim is not met (≈ 70 % of a step is the property calls in `_prep`); the
+  Well Performance Gas lift example reaches its operating valve 6 at 4.5–4.7 h and lifts 1,120–1,135 STB/d at 6 h against the nodal 1,181
+  (the nodal solve injects at its balance point, 6,757 ft, valve 6 sits at 6,270 ft and passes 563 of the 800 Mscf/d — design ok:false);
+  TAU_VALVE 20 s is no longer needed for robustness (τ 1 s also completes) and is kept as a model choice; several §5.6 budgets are missed
+  (flowing step ≈ 3.5 ms against 2.5, settled shut-in step; cycleTimer 12 h ≈ 17 s with ≈ 370 rejects) though inside the 2 × WD1 fail lines; a replay file over 5 MB thins its snapshots
   (first / last / events / marks / state changes kept, interval doubled; dropped only when even that set does not fit); recorder memory
   projects to ≈ 59 MB for 24 h; a reload loses an unsaved run; heading was reproduced (4.6.1) on one gas-lift casing-heading case — the
   `heading` fixture (an orifice valve at 3,000 ft, constant 200 Mscf/d into the 7" annulus) cycles from the model with a ≈ 75 min period
@@ -805,7 +809,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 347 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 2389 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
+# Expect: "[ok] all 2407 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -866,7 +870,7 @@ node prism-build/gui-sweep.js --mobile                       # click sweep at 39
 
 ---
 
-## Cumulative stats (as of 2026-11-14, v4.6)
+## Cumulative stats (as of 2026-11-16, v4.6.1)
 
 ```
 PRiSM source files:           01-21 + 33-37, 39, 51-59 (Round-8; 56-59 = DFIT) + tooling
@@ -877,26 +881,33 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2392 unique (--list; 2385/2385 passed at 4.6, + 7 in the 4.6.1 wdhead lane, its welldyn-* files pass), 205 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6)
+Acceptance tests:             2407/2407 pass (unique, --list), 207 files (accept-test.js --html --integration, run file by file at 4.6.1; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6 / v4.6.1)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
-                              Well performance course of 3 exercises (4.4), 227 screenshots (8,254,838 of the 8.27 MB cap since 4.6 — a new shot
-                              needs an owner cap decision); help text 392.5 kB raw / 136.5 kB gzip caps (392,050 / 136,248 bytes used, 4.6 = the
+                              Well performance course of 3 exercises (4.4), 227 screenshots (8,245,988 of the 8.27 MB cap at 4.6.1 — a new shot
+                              needs an owner cap decision); help text 392.5 kB raw / 136.5 kB gzip caps (392,332 / 136,376 bytes used at 4.6.1; 4.6 = the
                               Q21 line and Well Dynamics merged); wellperf guide complete for B (6 B card shots, wpJob action in help-shots.js), welldyn
                               guide (3 shots, welldynRun action), 17 "How do I…" tasks (wdload, wdgl in 4.6)
-Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 62/62 cross-checks, every E budget ok)
+Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 62/62 cross-checks, every E budget ok; the ms caps are relative to one evaluation, so after the 4.6.1 speed-up 9 rows read "ms over cap" though each is faster in absolute terms — not a failure without --strict)
 Well Dynamics gate:           welldyn-validate.js --html --gate --check --time (D17 PASS, G1–G7 within 2 % / 1 % (largest gasLift +0.78 % rate),
-                              24/24 checks (X19 casing heading, 4.6.1), X11 a pointer to welldyn-lift LF2; every timing row inside its fail line, §5.6 budget misses reported)
-DFIT calibration (WP8):       dfit-validate.js --set all --workers 4 --write (4.6.1 draft): 900/900 cases scored in ≈ 1.5 min; out of fold
+                              24/24 checks (X19 casing heading, 4.6.1; gasLift +0.78 % rate, X4 4.1e-15), X11 a pointer to welldyn-lift LF2; every timing row inside its fail line, §5.6 budget misses reported)
+DFIT calibration (WP8):       dfit-validate.js --set all --workers 4 --write (4.6.1): 900/900 cases scored in ≈ 1.5 min; out of fold
                               single high 97.0 % (n 101) and single medium 87.6 % (n 145) met → calibrated; range medium missed (interval score);
                               lows measured; thresholds wLow 1 / gLow 2.5 / rvisLow 0.6; type 16.4 % (no confidence); tests/dfit-cal.test.js CA1–CA4
 3D simulator tests:           149 checks (wts3d-test.js; 147/149 on a Linux LF checkout — the two CRLF checks)
 Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.00-1.01, both items in ≈ 1.45 / 1.6, ck2 ≈ 1.0 / 1.10,
                               cushion ≈ 1.10 / 1.15, line ≈ 0.9 / 1.05); wts-calc-golden.js --check --time
-Generated HTML:               ~188.4k lines (12.8 MB, LF); www bundle ~13.1 MB (+ www/help 8.3 MB images and the guide)
+Generated HTML:               ~188.7k lines (12.8 MB, LF); www bundle ~13.1 MB (+ www/help 8.2 MB images and the guide)
 ```
 
-Latest release: v4.6 (Well Dynamics, docs/WELL-DYNAMICS-PLAN.md, both platforms: the `welldyn` page — its own row in Production &
+Latest release: v4.6.1 (Well Dynamics, DFIT and Well Performance fixes, both platforms; one web-only accounts item inside ACCT markers;
+release title "Well Dynamics, DFIT and Well Performance fixes"; App Store 4.6.1), dated 2026-11-16, merging six lanes (PROJECT-NOTES 4.6.1):
+Well Dynamics gas-lift unloading robustness and speed (plan §11.8, LF29) and casing heading on the `heading` fixture with the fallback choke hold
+and the frozen tests/_welldyn-shapes.js (plan §11.7, LF28, X19, EN32, WS1–WS5); DFIT WP8 calibration (single high / medium closure labels
+calibrated, plan §8.7) and the four DFIT page fixes (Appendix E, U17–U21); Well Performance stale marks in Solve-button mode, per-test
+traverse in the all-tests comparison and ≈ 2× faster solves with identical results (§18.3.14, WFU1–WFU4); the accounts E2 flake fix (OA11);
+on top of
+v4.6 (Well Dynamics, docs/WELL-DYNAMICS-PLAN.md, both platforms: the `welldyn` page — its own row in Production &
 Reservoir after the Well Performance hub and a dashboard tile, cross-links with Well Performance — plays the shared well model in time: 1-D
 drift-flux engine along MD with mixture momentum from the well's lift correlation and a mass balance every step; gas-well loading /
 unloading with Turner / Coleman (Belfroid optional), well states, shut-in afterflow, segregation and build-up from a radial line-source
@@ -984,7 +995,7 @@ as the 8th row of Test System Safety, THI hydrate design with real-gas J-T × 1.
 chemicals, pump settings ranked for classified areas with the air-driven liquid pump as the H1 default, surface discharge
 pressure / relief band, drive gas, calibration, tank; Hydrate-page rp-skip banner and Chemical & Dosage cross-link; Quick
 Report final + daily entries; 3.2b — H2S scavenger card, downhole capillary, LDHI screening, second expansion, batch — still
-to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.6**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
+to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **4.6.1**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
 
 **Shared engines (reuse, never duplicate):** `PRiSM_dfit_pipeline` (57; the only place that knows the DFIT stage order, with a
 Job twin), `WTS_wellbore` (48-calc-wellbore: survey, strings, column, `convert`, `csys`, `stepRate`, `ramp`, `hammerQuick`),
