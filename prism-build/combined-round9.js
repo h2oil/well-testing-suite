@@ -8124,7 +8124,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
-    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
+    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 290 08283526,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
     "privacy": "view-d 1280 800 954ea29b,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
@@ -8152,7 +8152,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 227;
-  M.bytes = 8251576;   // total size of the image files (the offline download label)
+  M.bytes = 8248694;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8770,7 +8770,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '2ec40df3', units: 'field',
+  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: 'a681e95b', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -8836,17 +8836,17 @@ var prism = {
   { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
     steps: ['Select Test **DFIT (fracture injection)**.', 'Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.',
       { t: 'Read the triage checks, re-pump verdict and grade A–D (provisional).', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
-    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, calibrated); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
-  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
-    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
+  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Calibrated closure labels show a hit rate; rest provisional.'],
+    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'The [[glossary#gfunction|G-function]] plot opens on closure (Reset view: all).', 'A pick under the frictional limit is vetoed.',
       'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
   { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
     steps: [{ t: 'Set the origin; read the log-log, F_L, F_R and [[glossary#impulse|impulse]] plots.', shot: 'dfit-aca' }, 'Tab Leak-off model: Simulate in the sandbox, or History match, Fit.',
       'Tab Uncertainty: P10/P50/P90 of each output.', 'Tab What this test can tell (after a fit).'] },
   { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],
-    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
+    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Designer shut-in fits the expected outcome; radial flow needs longer.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
 };
 
 var oilgas = {
@@ -8948,7 +8948,7 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] }, { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node, wellhead to shoe; the worst depth is shown. A wider casing below the shoe is information.'] },
-  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there (**All used tests**: the RMS; pick a test above the plot for its traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
+  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there (All used tests: RMS; pick a test for traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation; drag the pb handle. Provisional ones are dashed.'] },
   { id: 'labmatch', title: 'PVT lab match', what: ['**PVT lab data** in ①: lab temperature, basis (flash or differential), lab bubble point and a table of pressure with Rs, Bo and μo. **Match to the lab data** fits pb by a one-point factor, then Rs below pb, Bo and μo each as a·y + b (least squares on relative errors). Every black-oil correlation and viscosity pair is ranked against the points.',
   'The Rs shift tapers as b·min(1, p / pb), so Rs at stock-tank and separator pressures stays the correlation\'s. Differential data with a separator test are adjusted to flash (provisional). Apply sends the matched set into every solve.'] },
@@ -10003,7 +10003,7 @@ var faq = [
 'Questions about training: {{email}}.'] },
 { id: 'sand', q: 'Can the simulator train sand handling and a second surge tank?', a: [
 'Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the **Rig-up** card ([[wts]]), then follow [[course#ex9|exercise 9]], [[course#ex10|exercise 10]] and field scenario [[fs#FS-3|FS-3]].'] },
-{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and the label uncalibrated?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.'] },
+{ id: 'dfitlabel', q: 'Why is the DFIT closure a range, and some labels provisional?', a: ['Methods read different events and can disagree a lot; PRiSM then carries both ends. A closure label shows its synthetic hit rate where it met its target; the rest are provisional rules.'] },
 { id: 'saved', q: 'Is my work saved?', a: ['Yes, on this device, as you type. To keep a copy or move it, save a project file ([[start#saving|Saving work]]).'] },
 { id: 'device', q: 'How do I move my work to another device?', a: ['File → Save on the first device, then File → Open… on the other one.'] },
 { id: 'metric', q: 'Why does a value change when I select Metric?', a: ['It is the same value converted. Calculations always run in oilfield units ([[start#units|Units]]).'] },
@@ -32233,14 +32233,15 @@ pipesz: {
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
 // WTS — 49-calc-dfit-cal.js  (Round 9)
-// GENERATED by dfit-validate.js --write (3.4b, WP8) — do not edit by hand
-// placeholder (3.4a): written by WP0, uncalibrated
+// GENERATED by dfit-validate.js --write — never edit by hand
 // -----------------------------------------------------------------------------
 // helper module: does not add a page to window.WTS_calcRegistry
 //
-// window.PRiSM_dfit_cal — the DFIT confidence-label calibration table (docs/DFIT-PLAN.md §3.9, §8.4). In 3.4a it is the
-// uncalibrated placeholder of §3.9: labels say "uncalibrated" and no hit rate is shown. Loads with no document and no
-// other symbol; the table is deep-frozen.
+// window.PRiSM_dfit_cal — the DFIT confidence-label calibration table (docs/DFIT-PLAN.md §3.9, §8.4), measured on 900 synthetic
+// cases (generator g1). Loads with no document and no other symbol; the table is deep-frozen.
+// WP8 (3.4b): hit rates are OUT OF FOLD over 5 seed folds; thresholds = the tightened "cal" label thresholds
+// chosen on all folds; a (mode, label) cell is calibrated only where met is true. ISIP / p_i / step-down labels, the grade
+// and the leak-off type are not calibrated by this benchmark (labels.*, typeCalibrated false).
 // =============================================================================
 
 (function () {
@@ -32248,11 +32249,248 @@ pipesz: {
     var G = (typeof window !== 'undefined') ? window : globalThis;
     function freeze(o) { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); } return o; }
     G.PRiSM_dfit_cal = freeze({
-        calibrated: false, version: null, generator: null, n: 0,
-        hitRate: { single: { high: null, medium: null, low: null }, range: { medium: null, low: null } },
-        intervalScore: { range: null },
-        cusum: { k: 0.5, h: 5, decimate: '2L' },
-        thresholds: {}
+        "calibrated": true,
+        "version": "g1-wp8-2026-11-16",
+        "generator": "g1",
+        "n": 900,
+        "hitRate": {
+            "single": {
+                "high": {
+                    "p": 0.9703,
+                    "lo": 0.9163,
+                    "hi": 0.9898,
+                    "n": 101,
+                    "met": true,
+                    "target": {
+                        "p": 0.9,
+                        "lo": 0.85
+                    }
+                },
+                "medium": {
+                    "p": 0.8759,
+                    "lo": 0.8123,
+                    "hi": 0.92,
+                    "n": 145,
+                    "met": true,
+                    "target": {
+                        "p": 0.7,
+                        "lo": 0.6
+                    }
+                },
+                "low": {
+                    "p": 0.2686,
+                    "lo": 0.2167,
+                    "hi": 0.3277,
+                    "n": 242,
+                    "met": true,
+                    "target": null
+                }
+            },
+            "range": {
+                "medium": {
+                    "p": 0.9259,
+                    "lo": 0.7663,
+                    "hi": 0.9794,
+                    "n": 27,
+                    "met": false,
+                    "target": {
+                        "p": 0.7,
+                        "lo": null,
+                        "intervalScore": "no worse than the single-mode P10-P90 width of the same strata"
+                    }
+                },
+                "low": {
+                    "p": 0.7349,
+                    "lo": 0.6311,
+                    "hi": 0.818,
+                    "n": 83,
+                    "met": true,
+                    "target": null
+                }
+            }
+        },
+        "intervalScore": {
+            "range": 584.5,
+            "rangeMedium": {
+                "n": 2,
+                "nRangeMedium": 27,
+                "meanIntervalScore": 108.9,
+                "meanSingleWidth": 35.9,
+                "ok": false
+            }
+        },
+        "cusum": {
+            "k": 0.5,
+            "h": 5,
+            "decimate": "2L"
+        },
+        "thresholds": {
+            "wLow": 1,
+            "gLow": 2.5,
+            "rvisLow": 0.6
+        },
+        "labels": {
+            "closure": "per-cell",
+            "isip": false,
+            "pi": false,
+            "stepDown": false,
+            "grade": false
+        },
+        "typeCalibrated": false,
+        "benchmark": {
+            "classify": {
+                "p": 0.1644,
+                "lo": 0.1417,
+                "hi": 0.1901,
+                "n": 900
+            },
+            "isip": {
+                "p": 0.8333,
+                "lo": 0.8076,
+                "hi": 0.8563,
+                "n": 900
+            },
+            "pi": {
+                "p": 0.2311,
+                "lo": 0.2006,
+                "hi": 0.2647,
+                "n": 662
+            },
+            "note": "measured for information; no §8.4 target exists for these, so their labels stay provisional and the leak-off type has no confidence"
+        },
+        "inSample": {
+            "single": {
+                "high": {
+                    "p": 0.9703,
+                    "lo": 0.9163,
+                    "hi": 0.9898,
+                    "n": 101
+                },
+                "medium": {
+                    "p": 0.8819,
+                    "lo": 0.8191,
+                    "hi": 0.925,
+                    "n": 144
+                },
+                "low": {
+                    "p": 0.2675,
+                    "lo": 0.2158,
+                    "hi": 0.3264,
+                    "n": 243
+                }
+            },
+            "range": {
+                "medium": {
+                    "p": 0.9231,
+                    "lo": 0.7586,
+                    "hi": 0.9786,
+                    "n": 26
+                },
+                "low": {
+                    "p": 0.7381,
+                    "lo": 0.6352,
+                    "hi": 0.8202,
+                    "n": 84
+                }
+            }
+        },
+        "uncalibrated": {
+            "single": {
+                "high": {
+                    "p": 0.9703,
+                    "lo": 0.9163,
+                    "hi": 0.9898,
+                    "n": 101
+                },
+                "medium": {
+                    "p": 0.6574,
+                    "lo": 0.5919,
+                    "hi": 0.7175,
+                    "n": 216
+                },
+                "low": {
+                    "p": 0.2924,
+                    "lo": 0.2294,
+                    "hi": 0.3645,
+                    "n": 171
+                }
+            },
+            "range": {
+                "medium": {
+                    "p": 0.8947,
+                    "lo": 0.7888,
+                    "hi": 0.9509,
+                    "n": 57
+                },
+                "low": {
+                    "p": 0.6604,
+                    "lo": 0.5259,
+                    "hi": 0.7731,
+                    "n": 53
+                }
+            }
+        },
+        "folds": {
+            "k": 5,
+            "n": [
+                181,
+                180,
+                180,
+                180,
+                179
+            ],
+            "pooled": false,
+            "choice": [
+                {
+                    "fold": 0,
+                    "nTrain": 719,
+                    "nTest": 181,
+                    "searched": true,
+                    "wLow": 1,
+                    "gLow": 2.5,
+                    "rvisLow": 0.6
+                },
+                {
+                    "fold": 1,
+                    "nTrain": 720,
+                    "nTest": 180,
+                    "searched": true,
+                    "wLow": 1.5,
+                    "gLow": 2.5,
+                    "rvisLow": 0.7
+                },
+                {
+                    "fold": 2,
+                    "nTrain": 720,
+                    "nTest": 180,
+                    "searched": true,
+                    "wLow": 1,
+                    "gLow": 2.5,
+                    "rvisLow": 0.6
+                },
+                {
+                    "fold": 3,
+                    "nTrain": 720,
+                    "nTest": 180,
+                    "searched": true,
+                    "wLow": 1,
+                    "gLow": 2.5,
+                    "rvisLow": 0.6
+                },
+                {
+                    "fold": 4,
+                    "nTrain": 721,
+                    "nTest": 179,
+                    "searched": true,
+                    "wLow": 1,
+                    "gLow": 2.5,
+                    "rvisLow": 0.6
+                }
+            ],
+            "note": "hitRate = out of fold (each fold labelled with thresholds chosen on the other folds); inSample = the shipped thresholds on all cases; uncalibrated = the 3.4a rule"
+        },
+        "date": "2026-11-16",
+        "appVersion": "4.6"
     });
 })();
 
@@ -35163,7 +35401,8 @@ pipesz: {
     // ═══════════════════════════════════════════════════════════════════════
     var LRANK = { high: 3, medium: 2, low: 1 };
     // the labels behind grades A and B are rule labels, not yet calibrated in 3.4a (WP8 calibrates them in 3.4b)
-    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
+    // WP8 (3.4b) calibrates only the closure labels; the grade (and the p_i label behind it) stays provisional until cal.labels.grade
+    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true && c.labels && c.labels.grade === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
     function gradeCore(triage, consensus, aca, opts) {
         var why = [], light = triage && triage.light, verdict = triage && triage.verdict;
         var checks = triage && Array.isArray(triage.checks) ? triage.checks : [];

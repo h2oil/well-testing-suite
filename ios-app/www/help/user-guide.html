@@ -8,7 +8,7 @@
 <style>body{font:13px/1.5 sans-serif;max-width:860px;margin:auto;padding:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:4px}.help-book h2{border-bottom:2px solid #f0883e}.bk-ch,.bk-card,.bk-ws{break-before:page}.bk-n,.bk-k{color:#bc4c00;font-weight:700}.help-book figure img{width:60%;height:auto;border:.5px solid #999}.help-book figcaption,.help-book .help-note{color:#666;font-size:12px}.help-book .help-shot-missing{border:1px dashed #999;padding:8px}.help-book .help-enlarge{display:none}.help-book .help-co{display:inline-block;width:16px;border-radius:50%;background:#f0b429;font:700 10px/16px sans-serif;text-align:center}.help-v-ok{color:#1a7f37}.help-v-warn{color:#9a6700}.help-v-bad{color:#cf222e}.bk-x,.bk-toc a{color:inherit;text-decoration:none}.bk-toc ol{list-style:none}.bk-line{border-bottom:1px solid #999;height:24px}@page{size:A4;margin:14mm}@media print{body{padding:0}.help-book figure,.help-book tr{break-inside:avoid}.help-book h3,.help-book h4{break-after:avoid}}</style>
 </head>
 <body class="help-book">
-<section class="bk-front"><h1>Well Testing Suite — User Guide</h1><p>Version 4.6 · 2026-11-14</p>
+<section class="bk-front"><h1>Well Testing Suite — User Guide</h1><p>Version 4.6.1 · 2026-11-16</p>
 <p>welltest.h2oil.co.uk</p>
 <nav class="bk-toc"><h2>Contents</h2>
 <ol>
@@ -1046,11 +1046,11 @@
 </section>
 <section class="help-part" id="help-prism-dfit-closure"><h4>DFIT <span class="help-co" aria-label="call-out 2">2</span> ISIP &amp; friction, <span class="help-co" aria-label="call-out 3">3</span> Pre-closure</h4>
 <section class="help-sec" id="help-prism-dfit-closure-what"><h5>What it does</h5>
-<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Closure labels show a synthetic hit rate where calibrated; other labels are provisional.</p>
+<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Calibrated closure labels show a hit rate; rest provisional.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-closure-steps"><h5>Step by step</h5>
 <ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=9031b4d9" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
-</li><li>The G-function (see <a class="bk-x" href="#help-glossary-gfunction">Appendix B</a>) plot opens from shut-in to past closure; Reset view shows it all.</li><li>A pick under the frictional limit is vetoed.</li><li>Override with Use another value and a reason.</li><li>Read the provisional leak-off type (PDL (see <a class="bk-x" href="#help-glossary-pdl">Appendix B</a>)…), η, pn, R_vis (see <a class="bk-x" href="#help-glossary-rvis">Appendix B</a>), CL, geometry, what-if.</li></ol>
+</li><li>The G-function (see <a class="bk-x" href="#help-glossary-gfunction">Appendix B</a>) plot opens on closure (Reset view: all).</li><li>A pick under the frictional limit is vetoed.</li><li>Override with Use another value and a reason.</li><li>Read the provisional leak-off type (PDL (see <a class="bk-x" href="#help-glossary-pdl">Appendix B</a>)…), η, pn, R_vis (see <a class="bk-x" href="#help-glossary-rvis">Appendix B</a>), CL, geometry, what-if.</li></ol>
 </section>
 </section>
 <section class="help-part" id="help-prism-dfit-aca"><h4>DFIT <span class="help-co" aria-label="call-out 4">4</span> After closure &amp; model</h4>
@@ -1067,7 +1067,7 @@
 <p>PDF, picks, frac-design CSV; a Quick Report key line; Well Comparison (see <a class="bk-x" href="#help-wells-top">Chapter 2.4</a>) shows the closure gradient.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-report-steps"><h5>Step by step</h5>
-<ol class="help-steps"><li>Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.</li><li>Tools: designer, sandbox, replay, water hammer, notes. The designer sizes the shut-in for the expected outcome; the goal Radial confirmation often needs far longer.<figure class="help-fig" data-help-shot="prism/dfit-plan"><picture><img class="help-img" src="img/prism/dfit-plan-d.webp?v=08283526" width="549" height="290" alt="DFIT designer (pre-job): the design and its shut-in verdict"></picture><figcaption>DFIT designer (pre-job): the design and its shut-in verdict</figcaption></figure>
+<ol class="help-steps"><li>Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.</li><li>Tools: designer, sandbox, replay, water hammer, notes. Designer shut-in fits the expected outcome; radial flow needs longer.<figure class="help-fig" data-help-shot="prism/dfit-plan"><picture><img class="help-img" src="img/prism/dfit-plan-d.webp?v=08283526" width="549" height="290" alt="DFIT designer (pre-job): the design and its shut-in verdict"></picture><figcaption>DFIT designer (pre-job): the design and its shut-in verdict</figcaption></figure>
 </li><li>Spurt is not separable: η is an upper bound.</li></ol>
 </section>
 </section>
@@ -1204,7 +1204,7 @@
 </section>
 <section class="help-part" id="help-wellperf-match"><h4>Comparison and QC</h4>
 <section class="help-sec" id="help-wellperf-match-what"><h5>What it does</h5>
-<p>Tests with a gauge rank the correlations by their error there (<b>All used tests</b>: the RMS; pick a test above the plot for its traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or skin (see <a class="bk-x" href="#help-glossary-skin">Appendix B</a>).</p>
+<p>Tests with a gauge rank the correlations by their error there (All used tests: RMS; pick a test for traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or skin (see <a class="bk-x" href="#help-glossary-skin">Appendix B</a>).</p>
 </section>
 </section>
 <section class="help-part" id="help-wellperf-design"><h4>Design</h4>
