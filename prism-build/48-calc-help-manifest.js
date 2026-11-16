@@ -52,7 +52,7 @@
     "orifice": "res-d 491 325 bc63aa00,tbl-d 456 306 aec54993,view-d 1280 800 a6c93990,view-p 780 1688 b4535154",
     "pipelife": "res-d 940 76 96558a57,view-d 1280 800 8ed850b2,view-p 780 1688 0af05196",
     "pipesz": "ero-d 454 429 be9a7d62,view-d 1280 800 bf0131ed,view-p 780 1688 cf57a994",
-    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 293 824675a0,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
+    "prism": "dfit-aca-d 622 257 40b6b215,dfit-board-d 648 635 9031b4d9,dfit-plan-d 549 290 08283526,dfit-tri-d 648 635 4c461fe5,load-d 324 528 78213a33,rail-d 341 604 10204018,tools-d 1280 800 b5709ad6,view-d 1280 800 ee011959,view-p 780 1688 ccdf6c57",
     "privacy": "view-d 1280 800 954ea29b,view-p 780 1688 13d63a80",
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
@@ -80,7 +80,7 @@
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 227;
-  M.bytes = 8251576;   // total size of the image files (the offline download label)
+  M.bytes = 8248694;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

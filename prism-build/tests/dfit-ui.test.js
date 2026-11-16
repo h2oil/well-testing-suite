@@ -14,6 +14,9 @@
 //   U6  dfitTangent pick: stored, logged, not in analysisKeyResults  U14 exact Tools list per mode
 //   U7  a drag through the pointer owner commits one log entry       U15 tests table add / open / delete; overlay of two curves
 //   U8  Analyse through the Job: progress, cancel keeps results      U16 method notes
+//   4.6.1 follow-up (help-round page issues): U17 G-function plot opens on the shut-in → closure window, full range one click away;
+//   U18 rail label never squeezed (CSS + markup); U19 step ⑤ shows each DFIT table once; U20 / U21 designer defaults (P50 shut-in
+//   within the allowed time with the real engine; stored / user ranges untouched)
 'use strict';
 
 const fs = require('fs');
@@ -718,6 +721,167 @@ module.exports = [
       assert(!app.el('prism_dfit_override'), 'dialog closed');
       const cp = w.PRiSM_dfit_test().picks.closure;
       assert(cp.source === 'user' && cp.p === 6990 && cp.reason === 'Offset well closure', 'override stored');
+    },
+  },
+
+  {
+    name: 'U17 4.6.1 the G-function plot opens on shut-in → latest closure pick + 50 %; Reset view gives the full record and sticks; back from another plot = the window again',
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
+      const w = app.win, U = w.PRiSM_dfit_ui, run = withRun(app);
+      const gMax = Math.max.apply(null, run.derivs.G.filter((g) => typeof g === 'number' && isFinite(g)));
+      const W = U.gWindow(run);
+      assert(W && Math.abs(W.gLast - 18) < 1e-9 && Math.abs(W.x.max - 27) < 1e-9, 'window = closure G 18 × 1.5: ' + JSON.stringify(W));
+      assert(W.x.min <= 0 && W.x.max < 0.85 * gMax && Math.abs(W.gMax - gMax) < 1e-9, 'from shut-in (G = 0), well inside the record (G max ' + gMax + ')');
+      const pIn = run.derivs.p.filter((p, i) => run.derivs.G[i] <= W.x.max);
+      assert(W.y.min < Math.min.apply(null, pIn) && W.y.max > Math.max.apply(null, pIn), 'the pressure axis fits the points in the window');
+      if (!hooks(w)) { skip('window applied on the canvas through PRiSM_drawPlot'); return; }
+      const h = host(app), cv = app.document.createElement('canvas');
+      cv.style.width = '800px'; cv.style.height = '400px'; h.appendChild(cv);
+      assert(U.drawPlot(cv, 'dfitG'), 'dfitG draws');
+      let ax = cv._prismAxes;
+      assert(ax && ax.plotKey === 'dfitG' && ax.userView && Math.abs(ax.scaleX.max - W.x.max) < 1e-9, 'opens on the window (a zoomed view): ' + (ax && ax.scaleX.max));
+      assert(ax.autoScale.x.max >= gMax, 'the full range stays the auto range (Reset view target): ' + ax.autoScale.x.max);
+      // the closure marks are drawn in the window (the post-draw hook ran on the windowed axes)
+      const marks = app.canvasLog(cv).filter((e) => e.op === 'fillText' && /closure|override|user/.test(String(e.args && e.args[0])));
+      assert(marks.length >= 1, 'closure label drawn');
+      U.drawPlot(cv, 'dfitG');
+      assert(Math.abs(cv._prismAxes.scaleX.max - W.x.max) < 1e-9, 'a redraw keeps the window');
+      // one click: Reset view (double-click / the Tab-2 button) → the whole record, and it sticks on later redraws
+      assert(w.PRiSM_plotResetView(cv) === true, 'reset');
+      assert(cv._prismAxes.scaleX.max >= gMax && !cv._prismAxes.userView, 'full range after Reset view: ' + cv._prismAxes.scaleX.max);
+      U.drawPlot(cv, 'dfitG');
+      assert(cv._prismAxes.scaleX.max >= gMax, 'the full range sticks on a redraw of the same record');
+      // the host Reset view button path (axes deleted, resetView redraw) also sticks
+      U.drawPlot(cv, 'dfitSqrt'); U.drawPlot(cv, 'dfitG');
+      assert(Math.abs(cv._prismAxes.scaleX.max - W.x.max) < 1e-9, 'back from another plot: the window again');
+      delete cv._prismAxes;
+      U.drawPlot(cv, 'dfitG', { resetView: true });
+      assert(cv._prismAxes.scaleX.max >= gMax, 'host Reset view button path keeps the full range');
+      // no pick and no consensus → no window (the whole record), and a window that would cover the record is not applied
+      const bare = JSON.parse(JSON.stringify(run)); bare.picks = []; bare.consensus = { mode: 'none' }; bare.consensusLite = null;
+      assert.strictEqual(U.gWindow(bare, { picks: {} }), null, 'no closure pick → no window');
+      const late = JSON.parse(JSON.stringify(run)); late.picks.forEach((pk) => { pk.G = gMax * 0.9; });
+      late.consensus = { mode: 'none' }; late.consensusLite = null;
+      assert.strictEqual(U.gWindow(late, { picks: {} }), null, 'a pick near the end of the record → the whole record');
+      // a user override later than the consensus moves the window end
+      const T = { picks: { closure: { source: 'user', p: run.derivs.p[run.derivs.G.findIndex((g) => g >= 30)] }, user: {} } };
+      const W2 = U.gWindow(run, T);
+      assert(W2 && W2.gLast >= 29.9 && W2.x.max > W.x.max, 'the latest pick (a user override at G ≈ 30) sets the window: ' + (W2 && W2.gLast));
+    },
+  },
+  {
+    name: 'U18 4.6.1 rail rows: the label keeps its width (flex 0 0 auto) and the value wraps on its side, at desktop and in the 390 px sheet',
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
+      const w = app.win, U = w.PRiSM_dfit_ui;
+      withRun(app);
+      const css = U.css();
+      assert(/\.prism-dfit-rail \.rrow\{gap:10px;align-items:baseline\}/.test(css), 'row gap between label and value');
+      assert(/\.prism-dfit-rail \.rrow \.rl\{flex:0 0 auto;max-width:45%\}/.test(css), 'label not shrunk under a long value');
+      assert(/\.prism-dfit-rail \.rrow \.rv\{flex:1 1 auto;min-width:0;text-align:right;overflow-wrap:anywhere\}/.test(css), 'value wraps on its own side');
+      ['', 'prism-rail--sheet'].forEach((cls) => {
+        const el = app.document.createElement('div'); el.className = cls; host(app).appendChild(el);
+        U.rail(el);
+        const rail = el.querySelector('.prism-dfit-rail');
+        assert(rail, 'rail root carries .prism-dfit-rail (' + (cls || 'desktop') + ')');
+        const pi = Array.from(rail.querySelectorAll('.rrow')).find((r) => r.querySelector('.rl') && r.querySelector('.rl').textContent === 'p_i');
+        assert(pi && pi.querySelector('.rv') && /psia \[/.test(pi.querySelector('.rv').textContent), 'p_i row: label and value in their own spans');
+        el.parentNode.removeChild(el);
+      });
+    },
+  },
+  {
+    name: 'U19 4.6.1 step ⑤: each DFIT report table is shown once (blocks only, no legacy kv / table / notes copy); cells formatted; one verdict mark',
+    wp: WP, opts: OPTS(),
+    run(app, assert) {
+      const w = app.win;
+      app.openPRiSM(); w.PRiSM.setMode('dfit'); app.flush(50);
+      if (!hooks(w)) { skip('step ⑤ in DFIT mode'); return; }
+      withRun(app); app.flush(20);
+      const secs = w.PRiSM_dfit_ui.sections.map((f) => f({})).filter(Boolean);
+      assert(secs.length >= 3, 'sections from the fixture report: ' + secs.length);
+      secs.forEach((s) => {
+        assert(s.kv.length === 0 && s.table === null && s.notes.length === 0, s.id + ': no legacy copy next to the blocks');
+        assert(s.blocks.length >= 1, s.id + ': blocks');
+      });
+      const hd = secs.find((s) => s.id === 'dfit-headline');
+      const tb = hd.blocks.find((b) => b.kind === 'table');
+      assert(tb && tb.rows.every((r) => r.every((c) => typeof c === 'string' && !/^-?\d+\.\d{4,}$/.test(c))), 'table cells formatted: ' + JSON.stringify(tb && tb.rows[0]));
+      w.PRiSM_gotoStep(5); app.flush(50);
+      const tab = app.el('prism_tab_7');
+      const card = tab.querySelector('#prism_report_x_dfit-headline');
+      assert(card, 'headline card');
+      const nTables = hd.blocks.filter((b) => b.kind === 'table').length;
+      assert.strictEqual(card.querySelectorAll('table').length, nTables, 'headline: one table per table block');
+      const heads = Array.from(tab.querySelectorAll('[id^="prism_report_x_dfit-"] table')).map((t) => (t.closest('[id^="prism_report_x_"]').id + '|' + (t.rows[0] ? t.rows[0].textContent : '')));
+      assert.strictEqual(new Set(heads).size, heads.length, 'no table repeated in a section: ' + heads.join(' / '));
+      const verdicts = Array.from(card.querySelectorAll('*')).filter((e) => !e.children.length && /Closure .*psia \(single/.test(e.textContent)).map((e) => e.textContent);
+      assert(verdicts.length === 1 && !/[✓⚠✗]\s*[✓⚠✗]/.test(verdicts[0]), 'one verdict with one mark: ' + verdicts.join(' | '));
+      const pdf = w.PRiSM_buildReportHTML();
+      const hdSec = pdf.slice(pdf.indexOf('DFIT headline'), pdf.indexOf('</section>', pdf.indexOf('DFIT headline')));
+      assert.strictEqual((hdSec.match(/<table class="rp-tbl">/g) || []).length, nTables, 'PDF: the headline table once');
+    },
+  },
+  {
+    name: 'U20 4.6.1 designer: the default ranges ask for the expected-outcome shut-in; stored ranges (no goal field) keep the radial-confirmation rule; user values pass untouched',
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      const app = shared(ctx);
+      const w = app.win, U = w.PRiSM_dfit_ui;
+      const seen = [], fake = w.PRiSM_dfit_design;
+      w.PRiSM_dfit_design = function (r, o) { seen.push(JSON.parse(JSON.stringify(r))); return fake(r, o); };
+      try {
+        w.PRiSM_dfit_state().plan = null;
+        const h = host(app);
+        w.PRiSM_renderDfitDesignerTool(h);
+        const sel = app.el('prism_dfit_dr_goal');
+        assert(sel && sel.value === 'outcome' && Array.from(sel.querySelectorAll('option')).map((o) => o.value).join() === 'outcome,radial', 'goal select, default = expected outcome');
+        assert(U.design(), 'design runs');
+        assert.strictEqual(seen[0].shutInGoal, 'outcome', 'default ranges → shutInGoal outcome');
+        assert.strictEqual(seen[0].allowedShutInD, 10, 'allowed shut-in default unchanged (10 d)');
+        // a stored plan made before 4.6.1 (no goal field) keeps the 3.4a rule, and its numbers are not changed
+        const old = JSON.parse(JSON.stringify(seen[0])); delete old.shutInGoal; old.k = { p10: 0.0005, p90: 0.02 }; old.allowedShutInD = 4;
+        w.PRiSM_dfit_state().plan = { ranges: old, summary: null, corridor: null, ticks: {} };
+        h.innerHTML = ''; w.PRiSM_renderDfitDesignerTool(h);
+        assert.strictEqual(app.el('prism_dfit_dr_goal').value, 'radial', 'stored ranges without a goal show radial confirmation');
+        assert.strictEqual(app.el('prism_dfit_dr_k10').value, '0.0005', 'stored k P10 shown as entered');
+        U.design();
+        const r2 = seen[seen.length - 1];
+        assert(r2.shutInGoal === 'radial' && r2.k.p10 === 0.0005 && r2.k.p90 === 0.02 && r2.allowedShutInD === 4, 'stored / user ranges passed untouched: ' + JSON.stringify({ g: r2.shutInGoal, k: r2.k, a: r2.allowedShutInD }));
+        // the user picks the goal: it is read from the form
+        app.el('prism_dfit_dr_goal').value = 'outcome'; U.design();
+        assert.strictEqual(seen[seen.length - 1].shutInGoal, 'outcome', 'goal read from the form');
+        assert(/Shut-in goal/.test(app.el('prism_dfit_design_out').textContent), 'the design box names the goal');
+      } finally { w.PRiSM_dfit_design = fake; w.PRiSM_dfit_state().plan = null; }
+    },
+  },
+  {
+    name: 'U21 4.6.1 designer (real engine): the default design\'s P50 shut-in is within the allowed 10 d; the same ranges with the radial rule still bind on radial confirmation',
+    wp: WP, integration: true, opts: { timers: 'manual' },
+    run(app, assert) {
+      const w = app.win;
+      if (!w.PRiSM_dfit_design || /SM\.Design/.test(String(w.PRiSM_dfit_design))) { console.log('      skip (real 58 absent)'); return; }
+      w.PRiSM_dfit_ui.loadDemo('reference'); app.flush(20);
+      w.PRiSM_dfit_state().plan = null;
+      const h = app.document.createElement('div'); app.document.body.appendChild(h);
+      w.PRiSM_renderDfitDesignerTool(h);
+      app.el('prism_dfit_design_n').value = '200';
+      const D = w.PRiSM_dfit_ui.design();
+      assert(D && D.ok, 'design ok');
+      const pl = w.PRiSM_dfit_state().plan;
+      assert.strictEqual(pl.ranges.shutInGoal, 'outcome', 'default goal');
+      assert(D.shutIn.goal === 'outcome' && D.shutIn.p50 <= pl.ranges.allowedShutInD * 24, 'P50 shut-in ' + (D.shutIn.p50 / 24).toFixed(2) + ' d ≤ allowed ' + pl.ranges.allowedShutInD + ' d (' + D.outcome.label + ', ' + D.shutIn.binding + ')');
+      assert(D.outcome.label !== 'radial' ? D.shutIn.binding !== 'radial' : true, 'radial confirmation binds only when radial flow is the expected outcome');
+      const out = app.el('prism_dfit_design_out').textContent;
+      assert(!/longer than the allowed/.test(out), 'no over-allowed warning on the default design: ' + out.slice(0, 200));
+      // the engine keeps the 3.4a rule when the goal is absent (stored ranges): same draws, radial confirmation binds
+      const legacy = JSON.parse(JSON.stringify(pl.ranges)); delete legacy.shutInGoal;
+      const L = w.PRiSM_dfit_design(legacy, { n: 200, seed: 1, grid: 'coarse' });
+      assert(L.ok && L.shutIn.goal === 'radial' && L.shutIn.binding === 'radial' && L.shutIn.p50 > D.shutIn.p50, 'legacy rule unchanged: ' + JSON.stringify(L.shutIn));
+      assert.deepStrictEqual([L.tc.p50, L.tConfirm.p50, L.outcome.label], [D.tc.p50, D.tConfirm.p50, D.outcome.label], 'the goal changes only the shut-in recommendation');
     },
   },
 ];

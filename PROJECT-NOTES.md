@@ -5,6 +5,14 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 4.6.1 (draft)
+
+- **DFIT page fixes (lane dfitui, docs/DFIT-PLAN.md Appendix E):** the G-function plot opens on shut-in → latest closure pick × 1.5
+  (Reset view = the whole record); the rail label is never squeezed by a long value (p_i, desktop and 390 px); step ⑤ / the PDF show
+  each DFIT table once (blocks only, formatted cells, one verdict mark); the designer gains `DesignRanges.shutInGoal` — the default
+  ranges use 'outcome' (reference default design: P50 shut-in 634 d → 1.5 d, within the allowed 10 d), stored / engine ranges without
+  it keep the radial rule. Files 58, 59, 48-calc-help-production (re-reviewed), `dfit-plan` shot; tests dfit-ui U17–U21.
+
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 
 App and App Store version 4.6 (`RELEASE_NOTES[0]` v4.6, dated 2026-11-14, both platforms, title "Well Dynamics: transient well
