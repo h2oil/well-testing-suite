@@ -118872,7 +118872,7 @@ noRefs: 'A unit conversion.',
 related: ['chokeperf'],
 shots: [Sv('Choke Size Conversions page', ['#cc_64~1', '#pgBody .dtable~2'])]
 }),
-chokeperf: Gd('chokeperf', '34e08996', {
+chokeperf: Gd('chokeperf', '84c233e6', {
 notDocumented: [{ id: 'ck_calc', why: 'Calculate button: optional, the page updates on every change (step 6)' }],
 purpose: 'Critical-flow check, gas and multiphase rate through a [[glossary#bean|bean]], and a bean-up plan.',
 what: ['Gas: nozzle equation, k and Z from [[gaspvt]]. Oil wells: four correlations. The [[glossary#sithp|SITHP]] gives the next beans.'],
@@ -119314,7 +119314,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '39cfa292', units: 'field',
+  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '2ec40df3', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -119454,7 +119454,7 @@ function wj(id, t, alt, ex, n, click, done, pre, view, sc) {
   o.mask = ['#wp_steps']; o.padTop = 0; if (view) o.view = view; return o;
 }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'd2d99de3', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '157cfae5', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey', 'ESP pump', 'gas-lift design', 'lift curve tables', 'heat-transfer U layers', 'lift screening'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -119492,7 +119492,7 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] }, { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node, wellhead to shoe; the worst depth is shown. A wider casing below the shoe is information.'] },
-  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
+  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there (**All used tests**: the RMS; pick a test above the plot for its traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation; drag the pb handle. Provisional ones are dashed.'] },
   { id: 'labmatch', title: 'PVT lab match', what: ['**PVT lab data** in ①: lab temperature, basis (flash or differential), lab bubble point and a table of pressure with Rs, Bo and μo. **Match to the lab data** fits pb by a one-point factor, then Rs below pb, Bo and μo each as a·y + b (least squares on relative errors). Every black-oil correlation and viscosity pair is ranked against the points.',
   'The Rs shift tapers as b·min(1, p / pb), so Rs at stock-tank and separator pressures stays the correlation\'s. Differential data with a separator test are adjusted to flash (provisional). Apply sends the matched set into every solve.'] },
@@ -119671,7 +119671,7 @@ var oilipr = {
 };
 
 var gaslift = {
-  route: 'gaslift', reviewed: V, reviewedSrc: 'cbcbf995', units: 'dual',
+  route: 'gaslift', reviewed: V, reviewedSrc: 'db2eec97', units: 'dual',
   keywords: ['gas lift', 'artificial lift', 'unloading', 'valve spacing'],
   purpose: 'Screening design of continuous gas lift: point of injection, gas needed, valve spacing and schedule.',
   what: ['Balances the gas column against the flowing traverse ([[flowline]] engine), then spaces and sets the valves.'],
@@ -120625,7 +120625,7 @@ example: { title: 'Defaults', setup: ['42.8 °API at {{76|temperature}}.'], resu
 pitfalls: ['Standing is black-oil: condensates are estimates.'],
 refs: [{ std: 'API MPMS Ch. 11.1 / ASTM D1250', note: 'API correction' }, { std: 'Standing (1947)', note: 'bubble point, Bo' }], related: ['oilgas', 'solgor', 'gaspvt'],
 shots: S('Fluid Properties, API Gravity tab', ['#flt1', '#fp_api']) }),
-gaspvt: G0('gaspvt', 'a342498a', ['Z-factor', 'DAK', 'sour gas', 'Fpv'], {
+gaspvt: G0('gaspvt', '44b4497f', ['Z-factor', 'DAK', 'sour gas', 'Fpv'], {
 purpose: 'Natural-gas properties at one pressure and temperature: Z by two correlations, Bg, density, viscosity, cg, k and speed of sound.',
 what: ['Sutton pseudo-criticals, Wichert–Aziz for sour gas, Z by Dranchuk–Abou-Kassem (DAK) and Hall–Yarborough (HY). A separator point adds Fpv.'],
 when: ['You need Z, Bg or density.', 'The gas carries CO2 or H2S.'],
@@ -120962,7 +120962,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: '5bc3c131', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: 'ca62df3e', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -121038,7 +121038,7 @@ flowline: {
 },
 
 lineheat: {
-  route: 'lineheat', reviewed: V, reviewedSrc: '6f953c11', units: 'dual',
+  route: 'lineheat', reviewed: V, reviewedSrc: '13914f9e', units: 'dual',
   keywords: ['heat loss', 'arrival temperature', 'insulation', 'buried', 'hydrate'],
   notDocumented: [{ pattern: '^lh_s[1-6]_(name|len|od|wall|ins|type|depth|dpc)$', why: 'segment table (step 4)' }],
   purpose: 'Temperature along bare, insulated or buried lines, with J-T cooling at chokes, arrival temperature and a hydrate check.',

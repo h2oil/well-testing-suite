@@ -194,7 +194,7 @@ casing: {
 },
 
 flowline: {
-  route: 'flowline', reviewed: V, reviewedSrc: '5bc3c131', units: 'dual',
+  route: 'flowline', reviewed: V, reviewedSrc: 'ca62df3e', units: 'dual',
   keywords: ['multiphase', 'back pressure'],
   notDocumented: [{ pattern: '^fl_[wf][1-6]_(name|len|id|dz)$', why: 'segment tables (steps 4, 5)' },
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
@@ -270,7 +270,7 @@ flowline: {
 },
 
 lineheat: {
-  route: 'lineheat', reviewed: V, reviewedSrc: '6f953c11', units: 'dual',
+  route: 'lineheat', reviewed: V, reviewedSrc: '13914f9e', units: 'dual',
   keywords: ['heat loss', 'arrival temperature', 'insulation', 'buried', 'hydrate'],
   notDocumented: [{ pattern: '^lh_s[1-6]_(name|len|od|wall|ins|type|depth|dpc)$', why: 'segment table (step 4)' }],
   purpose: 'Temperature along bare, insulated or buried lines, with J-T cooling at chokes, arrival temperature and a hydrate check.',

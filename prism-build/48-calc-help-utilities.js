@@ -58,7 +58,7 @@ example: { title: 'Defaults', setup: ['42.8 °API at {{76|temperature}}.'], resu
 pitfalls: ['Standing is black-oil: condensates are estimates.'],
 refs: [{ std: 'API MPMS Ch. 11.1 / ASTM D1250', note: 'API correction' }, { std: 'Standing (1947)', note: 'bubble point, Bo' }], related: ['oilgas', 'solgor', 'gaspvt'],
 shots: S('Fluid Properties, API Gravity tab', ['#flt1', '#fp_api']) }),
-gaspvt: G0('gaspvt', 'a342498a', ['Z-factor', 'DAK', 'sour gas', 'Fpv'], {
+gaspvt: G0('gaspvt', '44b4497f', ['Z-factor', 'DAK', 'sour gas', 'Fpv'], {
 purpose: 'Natural-gas properties at one pressure and temperature: Z by two correlations, Bg, density, viscosity, cg, k and speed of sound.',
 what: ['Sutton pseudo-criticals, Wichert–Aziz for sour gas, Z by Dranchuk–Abou-Kassem (DAK) and Hall–Yarborough (HY). A separator point adds Fpv.'],
 when: ['You need Z, Bg or density.', 'The gas carries CO2 or H2S.'],

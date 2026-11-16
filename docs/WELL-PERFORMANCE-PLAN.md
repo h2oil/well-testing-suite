@@ -2149,6 +2149,13 @@ The three items left open since A1 (§18.1, PROJECT-NOTES 4.3 / 4.4), on top of 
   code outside this path (the plain-props marches of the gas-lift design, the Rv trilinear table, the relaxation profile) are now
   reported "ms over cap" without --strict although each is 2–6 × faster in absolute terms (gas-lift design 658 → 262 ms, Rv solve
   625 → 122 ms).
+- **Help.** The guides of the changed page sources were re-checked and their `reviewedSrc` updated (chokeperf, prism — 16-pvt is part of
+  its source —, wellperf, gaslift, gaspvt, flowline, lineheat; no text change needed for the speed-up); the wellperf "Comparison and QC"
+  part gains one clause on the all-tests RMS and the per-test traverse plot; help/user-guide.html rebuilt; help-shots --check ok (no
+  shot retaken).
+- **Gates.** smoke 347/347; node --check of the extracted main script; accept-test --html --integration run file by file (the one-process
+  full run was killed by the container's memory at ≈ 300 tests): 205 / 205 files pass, incl. the new wellperf-followup (4 tests);
+  wellperf-validate --html --gate --check --time ok (D17 PASS, 62 / 62 cross-checks, every E budget ok); welldyn-validate --html ok.
 
 ### 18.4 Increment C
 
