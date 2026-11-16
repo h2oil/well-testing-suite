@@ -153,6 +153,9 @@
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
+    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
+    var _GO = (typeof globalThis !== 'undefined' ? globalThis : G), Math = _GO.Math, isFinite = _GO.isFinite, Number = _GO.Number, Object = _GO.Object;
 
     // ── Constants ────────────────────────────────────────────────────
     var GRAV = 32.174, GC = 32.174;         // ft/s², lbm·ft/(lbf·s²)
@@ -374,7 +377,7 @@
     }
 
     // ── Fluid properties ────────────────────────────────────────────
-    function _lib() { var L = G.PRiSM_pvt_correlations; return (L && L.Z_dranchukAbouKassem && L.Rs_standing) ? L : null; }
+    function _lib() { if (_lMemo) return _lMemo; var L = G.PRiSM_pvt_correlations; return (L && L.Z_dranchukAbouKassem && L.Rs_standing) ? L : null; }
     function _pc(sg) {
         if (typeof G.WTS_gaspvt_pseudoCriticals === 'function') {
             var p = G.WTS_gaspvt_pseudoCriticals(sg, 0, 0, 0);
@@ -383,7 +386,11 @@
         var L = _lib();
         return { Tpc: L.Tpc_sutton(sg), Ppc: L.Ppc_sutton(sg) };
     }
+    // 4.6.1 (performance, results unchanged): inside one march the base conditions cannot change (the march is synchronous), so the
+    // march resolves them once (_bMemo) instead of once per property call; outside a march every call resolves them as before
+    var _bMemo = null, _lMemo = null;      // and the PVT library (_lMemo; read once per march)
     function _basis() {
+        if (_bMemo) return _bMemo;
         var B = G.WTS_baseConditions;
         var b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
         return (b && _fin(b.Tb_F) && _fin(b.Pb_psia)) ? b : { Tb_F: 60, Pb_psia: 14.696 };
@@ -435,6 +442,7 @@
     var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
     function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
     function _pvtCore(fluid, pv, p, t, sgMix) {
+        // (4.6.1: _pvtCoreTab interpolates these fields by name — keep its list in step with the object returned here)
         // (p, T)-only properties for this fluid's api / sgg / sgw (and the gas gravity in use)
         var L = _lib(), c = pv.corr || {}, m = pv.mult || {};
         var api = +fluid.api, sgg = +fluid.sgg;
@@ -455,29 +463,64 @@
         return { rsRaw: rsRaw, z: z, mug: mugF(sgMix, t, z, p) * (_fin(+m.mug) ? +m.mug : 1), bw: L.Bw_meehan(p, t), muw: L.mu_w_meehan(t, 0),
                  muod: muodF(api, t), sigO: sigmaOil(api, t, p), sigW: sigmaWater(t, p) };
     }
+    // 4.6.1 (performance, results unchanged): a node of the table is _pvtCore at the node's (p, T) for this fluid, so it depends only on
+    // what _pvtCore reads — api, sgg, the gas gravity in use, the bin sizes and the pvt fields corr / mult / pbFactor / liquidNoTransfer /
+    // sep / shift / imp. The tables are shared between pvt objects with the same content (every solve builds a new frozen pvt): the
+    // registry is keyed by that content (numbers written with a type tag so NaN, null and 0 never meet) and keeps the last TAB_KEEP tables.
+    var _TAB_REG = (typeof Map === 'function') ? new Map() : null, TAB_KEEP = 24, _TAB_PVSIG = (typeof WeakMap === 'function') ? new WeakMap() : null;
+    function _sigVal(k, v) { return typeof v === 'number' ? 'n' + String(v) : v === undefined ? 'u' : v; }
+    function _pvSig(pv) {
+        var s = _TAB_PVSIG.get(pv);
+        if (s == null) {
+            s = JSON.stringify([pv.corr, pv.mult, pv.pbFactor, pv.liquidNoTransfer, pv.sep, pv.shift, pv.imp], _sigVal);
+            _TAB_PVSIG.set(pv, s);
+        }
+        return s;
+    }
+    function _tabFor(pv, api, sgg, sgMix, dp, dT) {
+        var last = _TABS.get(pv);
+        // fast path: the same numbers as the last lookup on this pvt (=== implies the same text key)
+        if (last && last.api === api && last.sgg === sgg && last.sgMix === sgMix && last.dp === dp && last.dT === dT) return last;
+        var sig = api + '|' + sgg + '|' + sgMix + '|' + dp + '|' + dT;
+        if (last && last.sig === sig) return last;
+        var tab = null;
+        if (_TAB_REG && _TAB_PVSIG) {
+            var full = _pvSig(pv) + '#' + sig;
+            tab = _TAB_REG.get(full) || null;
+            if (!tab) {
+                tab = { sig: sig, api: api, sgg: sgg, sgMix: sgMix, dp: dp, dT: dT, map: new Map() };
+                _TAB_REG.set(full, tab);
+                if (_TAB_REG.size > TAB_KEEP) _TAB_REG.delete(_TAB_REG.keys().next().value);
+            }
+        } else tab = { sig: sig, api: api, sgg: sgg, sgMix: sgMix, dp: dp, dT: dT, map: new Map() };
+        _TABS.set(pv, tab);
+        return tab;
+    }
     function _pvtCoreTab(fluid, pv, p, t, sgMix) {
         var o = pv.table === true ? {} : pv.table, dp = (+o.dp > 0) ? +o.dp : 5, dT = (+o.dT > 0) ? +o.dT : 2;
         if (pv.rv) return _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT);
-        var tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, sgMix, dp, dT].join('|');
-        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var map = _tabFor(pv, fluid.api, fluid.sgg, sgMix, dp, dT).map;
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), fp = p / dp - ip, ft = t / dT - it;
+        // the nodes in a two-level map (pressure bin → temperature bin) instead of 'a,b' text keys: the same node values
         function at(a, b) {
-            var k = a + ',' + b, v = tab.map[k];
-            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, sgMix);
+            var row = map.get(a), v;
+            if (!row) { row = new Map(); map.set(a, row); }
+            v = row.get(b);
+            if (!v) { v = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, sgMix); row.set(b, v); }
             return v;
         }
-        var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), out = {};
-        for (var k in c00) out[k] = (c00[k] * (1 - fp) + c10[k] * fp) * (1 - ft) + (c01[k] * (1 - fp) + c11[k] * fp) * ft;
-        return out;
+        var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), gp = 1 - fp, gt = 1 - ft;
+        // the bilinear interpolation of every _pvtCore field, in _pvtCore's key order (the same expression as the loop it replaces)
+        function bl(k) { return (c00[k] * gp + c10[k] * fp) * gt + (c01[k] * gp + c11[k] * fp) * ft; }
+        return { rsRaw: bl('rsRaw'), z: bl('z'), mug: bl('mug'), bw: bl('bw'), muw: bl('muw'), muod: bl('muod'), sigO: bl('sigO'), sigW: bl('sigW') };
     }
     // Rv (WP23): the free-gas gravity changes with p, so the table is also binned in the gravity (0.005) and interpolated trilinearly
     function _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT) {
-        var dS = 0.005, tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, 'rv', dp, dT].join('|');
-        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var dS = 0.005, tab = _tabFor(pv, fluid.api, fluid.sgg, 'rv', dp, dT), map = tab.map;      // shared like _pvtCoreTab (4.6.1)
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), is = Math.floor(sgMix / dS), fp = p / dp - ip, ft = t / dT - it, fs = sgMix / dS - is, out = {};
         function at(a, b, c) {
-            var k = a + ',' + b + ',' + c, v = tab.map[k];
-            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS);
+            var k = a + ',' + b + ',' + c, v = map.get(k);
+            if (!v) { v = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS); map.set(k, v); }
             return v;
         }
         var c000 = at(ip, it, is), c100 = at(ip + 1, it, is), c010 = at(ip, it + 1, is), c110 = at(ip + 1, it + 1, is);
@@ -740,6 +783,11 @@
     //       refine (split steps with > 3 % pressure change), chokeRaise (reverse only: choked-exit pressure),
     //       pMax (psia: the march stops, lost 'high', when the pressure would pass it)}
     function march(route, fluid, p0g, t0, t1, opt) {
+        if (_bMemo) return _march(route, fluid, p0g, t0, t1, opt);
+        _bMemo = _basis(); _lMemo = _lib();
+        try { return _march(route, fluid, p0g, t0, t1, opt); } finally { _bMemo = null; _lMemo = null; }
+    }
+    function _march(route, fluid, p0g, t0, t1, opt) {
         if (opt.corr != null && !_corrOf(opt.corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(opt.corr), errors: ['unknown correlation key ' + String(opt.corr).slice(0, 40)] };
         var segs = route.segments, total = 0;
         for (var ks = 0; ks < segs.length; ks++) if (segs[ks].corr != null && !_corrOf(segs[ks].corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(segs[ks].corr), errors: ['unknown correlation key ' + String(segs[ks].corr).slice(0, 40)] };

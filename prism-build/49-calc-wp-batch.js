@@ -28,6 +28,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
+    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
+    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
     var VERSION = '1.0.0';
     var PAGE_KEY = 'wts_page_wellperf', MODEL_KEY = 'wts_wellperf_model';
     var HZ_INC = 80;            // a section at ≥ 80° inclination counts as horizontal (the schematic uses the same rule)

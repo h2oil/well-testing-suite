@@ -66,6 +66,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
+    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
+    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
 
     var RANK = 459.67, MW_AIR = 28.9647, R_GAS = 10.7316;
     var RHO_W_BBL = 62.37 * 5.614583;              // lbm per bbl of water (the 62.37 of the flowline oil density)

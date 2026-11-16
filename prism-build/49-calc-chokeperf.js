@@ -85,6 +85,9 @@
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
+    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
+    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
 
     // ── Constants ────────────────────────────────────────────────────
     var PATM = 14.696;                 // psia
