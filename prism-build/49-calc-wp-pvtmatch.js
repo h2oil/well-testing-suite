@@ -46,6 +46,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var PROV = 'provisional — not verified against a published example';
     var PROPS = ['rs', 'bo', 'muo'];
     var MAX_ROWS = 60;
@@ -450,6 +453,7 @@
     NS.emulsion = emulsion; NS.rvAt = rvAt; NS.emulCurve = emulCurve; NS.rvCurve = rvCurve;
     NS.METHODS = METHODS; NS.PROV_NOTE = PROV; NS.BOUNDS = BOUNDS; NS.BAND = BAND; NS.PROPS = PROPS.slice(); NS._EX = EX;
     NS.evals = function () { return _evals; };
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

@@ -60,17 +60,21 @@
 
     var LS_KEY = 'wts_prism_pvt';
 
-    function _isFiniteNum(v) { return (typeof v === 'number') && isFinite(v); }
+    // 4.6.1 (performance, results unchanged): Math and isFinite are read through module variables bound to the same global objects
+    // (_M, _isFin) in the engine code above the self-test — the correlations are on the Well Performance hot path, where a global name
+    // lookup per call was the main cost (the self-test below keeps the global names)
+    var _M = Math, _isFin = isFinite;
+    function _isFiniteNum(v) { return (typeof v === 'number') && _isFin(v); }
     function _isPos(v) { return _isFiniteNum(v) && v > 0; }
     function _fmt(n, dp) {
-        if (n == null || !isFinite(n)) return '—';
+        if (n == null || !_isFin(n)) return '—';
         return Number(n).toFixed(dp == null ? 4 : dp);
     }
     function _fmtSig(n, sig) {
-        if (n == null || !isFinite(n)) return '—';
+        if (n == null || !_isFin(n)) return '—';
         if (n === 0) return '0';
         sig = sig || 4;
-        var a = Math.abs(n);
+        var a = _M.abs(n);
         if (a >= 1e6 || a < 1e-3) return Number(n).toExponential(sig - 1);
         return Number(n).toPrecision(sig).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
     }
@@ -211,8 +215,8 @@
     function Pb_standing(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
         if (Rs <= 0 || SG_g <= 0) return 14.7;
-        var ratio = Math.pow(Rs / SG_g, 0.83);
-        var exp10 = Math.pow(10, 0.00091 * T_F - 0.0125 * API);
+        var ratio = _M.pow(Rs / SG_g, 0.83);
+        var exp10 = _M.pow(10, 0.00091 * T_F - 0.0125 * API);
         return 18.2 * (ratio * exp10 - 1.4);
     }
 
@@ -220,34 +224,34 @@
     function Rs_standing(API, SG_g, P, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F)) return NaN;
         if (P <= 0) return 0;
-        var inner = (P / 18.2 + 1.4) * Math.pow(10, 0.0125 * API - 0.00091 * T_F);
+        var inner = (P / 18.2 + 1.4) * _M.pow(10, 0.0125 * API - 0.00091 * T_F);
         // inner = (Rs/SG_g)^0.83  →  Rs = SG_g · inner^(1/0.83)
-        return SG_g * Math.pow(inner, 1 / 0.83);
+        return SG_g * _M.pow(inner, 1 / 0.83);
     }
 
     // Standing oil formation-volume factor at saturation (= at Pb if P ≥ Pb).
     function Bo_standing(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
         var SG_o = 141.5 / (API + 131.5);
-        var F = Rs * Math.sqrt(SG_g / SG_o) + 1.25 * T_F;
-        return 0.972 + 0.000147 * Math.pow(F, 1.175);
+        var F = Rs * _M.sqrt(SG_g / SG_o) + 1.25 * T_F;
+        return 0.972 + 0.000147 * _M.pow(F, 1.175);
     }
 
     // Beggs-Robinson dead-oil viscosity (gas-free).
     function mu_oD_beggsRobinson(API, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(T_F) || T_F <= 0) return NaN;
         var Y = 3.0324 - 0.02023 * API;
-        var X = Math.pow(T_F, -1.163) * Math.pow(10, Y);
-        return Math.pow(10, X) - 1;
+        var X = _M.pow(T_F, -1.163) * _M.pow(10, Y);
+        return _M.pow(10, X) - 1;
     }
 
     // Beggs-Robinson live-oil viscosity (with solution gas).
     function mu_o_beggsRobinson(mu_oD, Rs) {
         if (!_isFiniteNum(mu_oD) || !_isFiniteNum(Rs) || mu_oD <= 0) return NaN;
         if (Rs < 0) Rs = 0;
-        var A = 10.715 * Math.pow(Rs + 100, -0.515);
-        var B = 5.44   * Math.pow(Rs + 150, -0.338);
-        return A * Math.pow(mu_oD, B);
+        var A = 10.715 * _M.pow(Rs + 100, -0.515);
+        var B = 5.44   * _M.pow(Rs + 150, -0.338);
+        return A * _M.pow(mu_oD, B);
     }
 
     // Vasquez-Beggs oil compressibility (P ≥ Pb).
@@ -266,15 +270,15 @@
         if (!_isFiniteNum(Bob) || !_isFiniteNum(P) || !_isFiniteNum(Pb) || !(Pb > 0) || P <= Pb) return Bob;
         var A = -1433 + 5 * Rs + 17.2 * T_F - 1180 * SG_g + 12.61 * API;
         if (!_isFiniteNum(A) || A <= 0) return Bob;
-        return Bob * Math.pow(P / Pb, -A / 1e5);
+        return Bob * _M.pow(P / Pb, -A / 1e5);
     }
 
     // Undersaturated oil viscosity (Vasquez-Beggs 1980):
     //   μo = μob · (P/Pb)^m,  m = 2.6·P^1.187·exp(−11.513 − 8.98e−5·P).
     function mu_o_vasquezBeggs(mu_ob, P, Pb) {
         if (!_isFiniteNum(mu_ob) || !_isFiniteNum(P) || !_isFiniteNum(Pb) || !(Pb > 0) || P <= Pb) return mu_ob;
-        var m = 2.6 * Math.pow(P, 1.187) * Math.exp(-11.513 - 8.98e-5 * P);
-        return mu_ob * Math.pow(P / Pb, m);
+        var m = 2.6 * _M.pow(P, 1.187) * _M.exp(-11.513 - 8.98e-5 * P);
+        return mu_ob * _M.pow(P / Pb, m);
     }
 
 
@@ -336,7 +340,7 @@
         var a10 = DAK.A10 / Tpr3, a11 = DAK.A11;
         var fr = 0, dfr = 0;
         function evalF(r) {              // sets fr = f(ρ), dfr = f'(ρ)
-            var r2 = r * r, r4 = r2 * r2, e = Math.exp(-a11 * r2);
+            var r2 = r * r, r4 = r2 * r2, e = _M.exp(-a11 * r2);
             fr = 1 + c1 * r + c2 * r2 - c3 * r4 * r + a10 * (r2 + a11 * r4) * e - k / r;
             dfr = c1 + 2 * c2 * r - 5 * c3 * r4
                 + a10 * e * (2 * r + 2 * a11 * r2 * r - 2 * a11 * a11 * r4 * r) + k / r2;
@@ -346,11 +350,11 @@
         var lo = 0, hi = Infinity, r = k;
         for (var iter = 0; iter < 100; iter++) {
             evalF(r);
-            if (!isFinite(fr)) { hi = r; r = 0.5 * (lo + hi); continue; }
+            if (!_isFin(fr)) { hi = r; r = 0.5 * (lo + hi); continue; }
             if (fr < 0) lo = r; else hi = r;
-            var rn = (isFinite(dfr) && dfr > 0) ? r - fr / dfr : NaN;
-            if (!(rn > lo && rn < hi)) rn = isFinite(hi) ? 0.5 * (lo + hi) : 2 * r;
-            if (Math.abs(rn - r) <= 1e-11 * r) { r = rn; break; }
+            var rn = (_isFin(dfr) && dfr > 0) ? r - fr / dfr : NaN;
+            if (!(rn > lo && rn < hi)) rn = _isFin(hi) ? 0.5 * (lo + hi) : 2 * r;
+            if (_M.abs(rn - r) <= 1e-11 * r) { r = rn; break; }
             r = rn;
         }
         var Z = k / r;
@@ -363,7 +367,7 @@
         if (!_isFiniteNum(Tpr) || !_isFiniteNum(Ppr) || Tpr <= 0 || Ppr < 0) return NaN;
         if (Ppr === 0) return 1;
         var t = 1 / Tpr;
-        var A = 0.06125 * Ppr * t * Math.exp(-1.2 * (1 - t) * (1 - t));
+        var A = 0.06125 * Ppr * t * _M.exp(-1.2 * (1 - t) * (1 - t));
         var B = 14.76 * t - 9.76 * t * t + 4.58 * t * t * t;
         var C = 90.7 * t - 242.2 * t * t + 42.4 * t * t * t;
         var D = 2.18 + 2.82 * t;
@@ -372,19 +376,19 @@
         for (var iter = 0; iter < 50; iter++) {
             var y2 = y * y, y3 = y2 * y, y4 = y3 * y;
             var num1 = (y + y2 + y3 - y4);
-            var den1 = Math.pow(1 - y, 3);
-            var f = -A + num1 / den1 - B * y2 + C * Math.pow(y, D);
+            var den1 = _M.pow(1 - y, 3);
+            var f = -A + num1 / den1 - B * y2 + C * _M.pow(y, D);
             // df/dy
             var d_num1 = 1 + 2 * y + 3 * y2 - 4 * y3;
-            var d_den1 = -3 * Math.pow(1 - y, 2);  // d/dy of (1-y)^3 is -3(1-y)^2
+            var d_den1 = -3 * _M.pow(1 - y, 2);  // d/dy of (1-y)^3 is -3(1-y)^2
             // d(num1/den1)/dy
             var dRatio = (d_num1 * den1 - num1 * d_den1) / (den1 * den1);
-            var df = dRatio - 2 * B * y + C * D * Math.pow(y, D - 1);
-            if (!isFinite(df) || df === 0) break;
+            var df = dRatio - 2 * B * y + C * D * _M.pow(y, D - 1);
+            if (!_isFin(df) || df === 0) break;
             var ynew = y - f / df;
             if (ynew <= 0) ynew = y * 0.5;
             if (ynew >= 1) ynew = (y + 1) * 0.5;
-            if (Math.abs(ynew - y) < 1e-9) { y = ynew; break; }
+            if (_M.abs(ynew - y) < 1e-9) { y = ynew; break; }
             y = ynew;
         }
         if (!_isFiniteNum(y) || y <= 0 || y >= 1) return NaN;
@@ -398,12 +402,12 @@
         var M = 28.9647 * SG_g;  // apparent molecular weight
         var T_R = T_F + 459.67;  // Rankine
         if (T_R <= 0 || Z <= 0) return NaN;
-        var K = (9.4 + 0.02 * M) * Math.pow(T_R, 1.5) / (209 + 19 * M + T_R);
+        var K = (9.4 + 0.02 * M) * _M.pow(T_R, 1.5) / (209 + 19 * M + T_R);
         var X = 3.5 + 986 / T_R + 0.01 * M;
         var Y = 2.4 - 0.2 * X;
         // ρ_g in g/cc — see Lee 1966 / McCain text.
         var rho_g = 1.4935e-3 * (P * M) / (Z * T_R);
-        return 1e-4 * K * Math.exp(X * Math.pow(rho_g, Y));
+        return 1e-4 * K * _M.exp(X * _M.pow(rho_g, Y));
     }
 
     // Gas formation-volume factor in RB/Mscf (q is in Mscf/d, so q·Bg is RB/d).
@@ -423,9 +427,9 @@
         var Tpc = Tpc_sutton(SG_g), Ppc = Ppc_sutton(SG_g);
         if (!_isFiniteNum(Tpc) || !_isFiniteNum(Ppc) || Ppc <= 0) return 1 / P;
         var Tpr = (T_F + 459.67) / Tpc;
-        var dP = Math.max(P * 1e-3, 1.0);
+        var dP = _M.max(P * 1e-3, 1.0);
         var Z1 = Z_dranchukAbouKassem(Tpr, (P + dP) / Ppc);
-        var Z0 = Z_dranchukAbouKassem(Tpr, Math.max(1e-6, (P - dP) / Ppc));
+        var Z0 = Z_dranchukAbouKassem(Tpr, _M.max(1e-6, (P - dP) / Ppc));
         if (!_isFiniteNum(Z1) || !_isFiniteNum(Z0)) return 1 / P;
         var dZdP = (Z1 - Z0) / (2 * dP);
         return 1 / P - (1 / Z) * dZdP;
@@ -476,7 +480,7 @@
         var A = 109.574 - 8.40564 * S + 0.313314 * S * S + 8.72213e-3 * S * S * S;
         var B = -1.12166 + 2.63951e-2 * S - 6.79461e-4 * S * S
                 - 5.47119e-5 * S * S * S + 1.55586e-6 * S * S * S * S;
-        var mu_w = A * Math.pow(T_F, B);
+        var mu_w = A * _M.pow(T_F, B);
         if (!_isFiniteNum(mu_w) || mu_w <= 0) return 0.5;
         return mu_w;
     }
@@ -592,7 +596,7 @@
     // Vasquez-Beggs separator-gas-gravity normalisation to 100 psig (argument order of the host _vbGasGravity100).
     function sg_gas100_vasquezBeggs(SG_g, API, Tsep_F, Psep_psig) {
         if (!_isFiniteNum(SG_g) || !_isFiniteNum(API) || !_isFiniteNum(Tsep_F) || !_isFiniteNum(Psep_psig) || Psep_psig + 14.7 <= 0) return NaN;
-        return SG_g * (1 + 5.912e-5 * API * Tsep_F * Math.log10((Psep_psig + 14.7) / 114.7));
+        return SG_g * (1 + 5.912e-5 * API * Tsep_F * _M.log10((Psep_psig + 14.7) / 114.7));
     }
     function _vbC(API) { return API <= 30 ? { c1: 0.0362, c2: 1.0937, c3: 25.7240, b1: 4.677e-4, b2: 1.751e-5, b3: -1.811e-8 }
                                          : { c1: 0.0178, c2: 1.1870, c3: 23.9310, b1: 4.670e-4, b2: 1.100e-5, b3: 1.337e-9 }; }
@@ -601,14 +605,14 @@
         if (P <= 0) return 0;
         var g = _sepGravity(SG_g, API, sep), c = _vbC(API);
         if (!(g > 0)) return NaN;
-        return c.c1 * g * Math.pow(P, c.c2) * Math.exp(c.c3 * API / (T_F + 460));
+        return c.c1 * g * _M.pow(P, c.c2) * _M.exp(c.c3 * API / (T_F + 460));
     }
     function Pb_vasquezBeggs(API, SG_g, Rs, T_F, sep) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
         if (Rs <= 0 || SG_g <= 0) return 14.7;
         var g = _sepGravity(SG_g, API, sep), c = _vbC(API);
         if (!(g > 0)) return NaN;
-        return Math.pow(Rs / (c.c1 * g * Math.exp(c.c3 * API / (T_F + 460))), 1 / c.c2);
+        return _M.pow(Rs / (c.c1 * g * _M.exp(c.c3 * API / (T_F + 460))), 1 / c.c2);
     }
     function Bo_vasquezBeggs(API, SG_g, Rs, T_F, sep) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
@@ -619,82 +623,82 @@
     }
 
     // Glasø (1980), North Sea oils (no API / paraffinicity correction).
-    var GLASO_PMAX = Math.pow(10, 14.1811 / 3.3093);   // the vertex of the quadratic: Rs is flat above it (≈ 19,280 psia)
+    var GLASO_PMAX = _M.pow(10, 14.1811 / 3.3093);   // the vertex of the quadratic: Rs is flat above it (≈ 19,280 psia)
     function Pb_glaso(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
         if (Rs <= 0 || SG_g <= 0) return 14.7;
-        var x = Math.log10(Math.pow(Rs / SG_g, 0.816) * Math.pow(T_F, 0.172) / Math.pow(API, 0.989));
-        return Math.pow(10, 1.7669 + 1.7447 * x - 0.30218 * x * x);
+        var x = _M.log10(_M.pow(Rs / SG_g, 0.816) * _M.pow(T_F, 0.172) / _M.pow(API, 0.989));
+        return _M.pow(10, 1.7669 + 1.7447 * x - 0.30218 * x * x);
     }
     function Rs_glaso(API, SG_g, P, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
         if (P <= 0) return 0;
-        var X = 2.8869 - Math.sqrt(Math.max(0, 14.1811 - 3.3093 * Math.log10(Math.min(P, GLASO_PMAX))));
-        return SG_g * Math.pow(Math.pow(API, 0.989) / Math.pow(T_F, 0.172) * Math.pow(10, X), 1 / 0.816);
+        var X = 2.8869 - _M.sqrt(_M.max(0, 14.1811 - 3.3093 * _M.log10(_M.min(P, GLASO_PMAX))));
+        return SG_g * _M.pow(_M.pow(API, 0.989) / _M.pow(T_F, 0.172) * _M.pow(10, X), 1 / 0.816);
     }
     function Bo_glaso(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F)) return NaN;
         var SG_o = 141.5 / (API + 131.5);
-        var bs = Math.max(0, Rs) * Math.pow(SG_g / SG_o, 0.526) + 0.968 * T_F;
+        var bs = _M.max(0, Rs) * _M.pow(SG_g / SG_o, 0.526) + 0.968 * T_F;
         if (!(bs > 0)) return NaN;
-        var y = Math.log10(bs);
-        return 1 + Math.pow(10, -6.58511 + 2.91329 * y - 0.27683 * y * y);
+        var y = _M.log10(bs);
+        return 1 + _M.pow(10, -6.58511 + 2.91329 * y - 0.27683 * y * y);
     }
 
     // Petrosky & Farshad (1993), Gulf of Mexico oils.
-    function _pfX(API, T_F) { return 7.916e-4 * Math.pow(API, 1.5410) - 4.561e-5 * Math.pow(T_F, 1.3911); }
+    function _pfX(API, T_F) { return 7.916e-4 * _M.pow(API, 1.5410) - 4.561e-5 * _M.pow(T_F, 1.3911); }
     function Pb_petrosky(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
         if (Rs <= 0 || SG_g <= 0) return 14.7;
-        return 112.727 * (Math.pow(Rs, 0.577421) / (Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F))) - 12.340);
+        return 112.727 * (_M.pow(Rs, 0.577421) / (_M.pow(SG_g, 0.8439) * _M.pow(10, _pfX(API, T_F))) - 12.340);
     }
     function Rs_petrosky(API, SG_g, P, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(P) || !_isFiniteNum(T_F) || API <= 0 || T_F <= 0) return NaN;
         if (P <= 0) return 0;
-        return Math.pow((P / 112.727 + 12.340) * Math.pow(SG_g, 0.8439) * Math.pow(10, _pfX(API, T_F)), 1.73184);
+        return _M.pow((P / 112.727 + 12.340) * _M.pow(SG_g, 0.8439) * _M.pow(10, _pfX(API, T_F)), 1.73184);
     }
     function Bo_petrosky(API, SG_g, Rs, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rs) || !_isFiniteNum(T_F) || T_F < 0) return NaN;
         var SG_o = 141.5 / (API + 131.5);
-        var F = Math.pow(Math.max(0, Rs), 0.3738) * Math.pow(SG_g, 0.2914) / Math.pow(SG_o, 0.6265) + 0.24626 * Math.pow(T_F, 0.5371);
-        return 1.0113 + 7.2046e-5 * Math.pow(F, 3.0936);
+        var F = _M.pow(_M.max(0, Rs), 0.3738) * _M.pow(SG_g, 0.2914) / _M.pow(SG_o, 0.6265) + 0.24626 * _M.pow(T_F, 0.5371);
+        return 1.0113 + 7.2046e-5 * _M.pow(F, 3.0936);
     }
     // Petrosky-Farshad undersaturated oil compressibility (P ≥ Pb), Rsb = the solution GOR at the bubble point.
     function co_petrosky(API, SG_g, Rsb, P, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(SG_g) || !_isFiniteNum(Rsb) || !_isFiniteNum(P) || !_isFiniteNum(T_F) ||
             P <= 0 || Rsb < 0 || SG_g <= 0 || API <= 0 || T_F <= 0) return NaN;
-        return 1.705e-7 * Math.pow(Rsb, 0.69357) * Math.pow(SG_g, 0.1885) * Math.pow(API, 0.3272) * Math.pow(T_F, 0.6729) * Math.pow(P, -0.5906);
+        return 1.705e-7 * _M.pow(Rsb, 0.69357) * _M.pow(SG_g, 0.1885) * _M.pow(API, 0.3272) * _M.pow(T_F, 0.6729) * _M.pow(P, -0.5906);
     }
 
     // Dead-oil viscosity (cp).
     function mu_oD_egbogah(API, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(T_F) || T_F <= 0) return NaN;
-        return Math.pow(10, Math.pow(10, 1.8653 - 0.025086 * API - 0.5644 * Math.log10(T_F))) - 1;
+        return _M.pow(10, _M.pow(10, 1.8653 - 0.025086 * API - 0.5644 * _M.log10(T_F))) - 1;
     }
     function mu_oD_bergmanSutton(API, T_F) {
         if (!_isFiniteNum(API) || !_isFiniteNum(T_F) || T_F + 310 <= 1) return NaN;
         var A0 = 22.33 - 0.194 * API + 0.00033 * API * API, A1 = -3.20 + 0.0185 * API;
-        return Math.exp(Math.exp(A0 + A1 * Math.log(T_F + 310))) - 1;
+        return _M.exp(_M.exp(A0 + A1 * _M.log(T_F + 310))) - 1;
     }
     // Chew-Connally live-oil (saturated) viscosity from the dead-oil viscosity.
     function mu_o_chewConnally(mu_oD, Rs) {
         if (!_isFiniteNum(mu_oD) || !_isFiniteNum(Rs) || mu_oD <= 0) return NaN;
         if (Rs < 0) Rs = 0;
         var a = Rs * (2.2e-7 * Rs - 7.4e-4);
-        var b = 0.68 / Math.pow(10, 8.62e-5 * Rs) + 0.25 / Math.pow(10, 1.1e-3 * Rs) + 0.062 / Math.pow(10, 3.74e-3 * Rs);
-        return Math.pow(10, a) * Math.pow(mu_oD, b);
+        var b = 0.68 / _M.pow(10, 8.62e-5 * Rs) + 0.25 / _M.pow(10, 1.1e-3 * Rs) + 0.062 / _M.pow(10, 3.74e-3 * Rs);
+        return _M.pow(10, a) * _M.pow(mu_oD, b);
     }
     // Abdul-Majeed gas-oil surface tension (dyn/cm); Rs = the solution GOR at the pressure (0 = dead oil).
     function sigma_og_abdulMajeed(API, T_F, Rs) {
         if (!_isFiniteNum(API) || !_isFiniteNum(T_F)) return NaN;
         var sod = (1.17013 - 1.694e-3 * T_F) * (38.085 - 0.259 * API);
         var r = _isFiniteNum(Rs) && Rs > 0 ? Rs : 0;
-        return Math.max(0, sod) * (0.056379 + 0.94362 * Math.exp(-3.8491e-3 * r));
+        return _M.max(0, sod) * (0.056379 + 0.94362 * _M.exp(-3.8491e-3 * r));
     }
 
     // Water (McCain 1990).
     function rho_w_mcCain(salinity_ppm, Bw, Rsw, SG_g) {
-        var S = (_isFiniteNum(salinity_ppm) ? Math.max(0, salinity_ppm) : 0) / 1e4;   // wt %
+        var S = (_isFiniteNum(salinity_ppm) ? _M.max(0, salinity_ppm) : 0) / 1e4;   // wt %
         var rs = 62.368 + 0.438603 * S + 1.60074e-3 * S * S;
         if (!_isFiniteNum(Bw) || !(Bw > 0)) return rs;
         var gas = (_isFiniteNum(Rsw) && Rsw > 0 && _isFiniteNum(SG_g) && SG_g > 0) ? 0.01361 * Rsw * SG_g : 0;
@@ -708,9 +712,9 @@
         var A = 8.15839 - 6.12265e-2 * T + 1.91663e-4 * T2 - 2.1654e-7 * T3;
         var B = 1.01021e-2 - 7.44241e-5 * T + 3.05553e-7 * T2 - 2.94883e-10 * T3;
         var C = -1e-7 * (9.02505 - 0.130237 * T + 8.53425e-4 * T2 - 2.34122e-6 * T3 + 2.37049e-9 * T4);
-        var rp = Math.max(0, A + B * P + C * P * P);
-        var S = (_isFiniteNum(salinity_ppm) ? Math.max(0, salinity_ppm) : 0) / 1e4;
-        return rp * Math.pow(10, -0.0840655 * S * Math.pow(T, -0.285854));
+        var rp = _M.max(0, A + B * P + C * P * P);
+        var S = (_isFiniteNum(salinity_ppm) ? _M.max(0, salinity_ppm) : 0) / 1e4;
+        return rp * _M.pow(10, -0.0840655 * S * _M.pow(T, -0.285854));
     }
 
 
@@ -857,12 +861,12 @@
             } else {
                 // Below bubble point — small free-gas saturation. Use a simple
                 // approximation; user can override by setting cg directly.
-                Sg = Math.min(0.10, 0.05);
-                So = Math.max(0, 1 - Sw - Sg);
+                Sg = _M.min(0.10, 0.05);
+                So = _M.max(0, 1 - Sw - Sg);
             }
             // 8. Gas compressibility (only matters if Sg > 0).
             var cg_ = (Sg > 0)
-                ? (_isFiniteNum(s.cg) ? s.cg : 1 / Math.max(P, 1))
+                ? (_isFiniteNum(s.cg) ? s.cg : 1 / _M.max(P, 1))
                 : 0;
             // 9. Total compressibility.
             var ct_total = ct(So, co_, Sw, cw_, Sg, cg_, s.cf);
@@ -1096,14 +1100,14 @@
             if (!_isFiniteNum(P)) return NaN;
             if (P <= p0) return m[0] * (P > 0 ? (P / p0) * (P / p0) : 0);
             if (P >= pmax) return m[N - 1] + d[N - 1] * (P - pmax);
-            var j = Math.min(N - 2, Math.floor((P - p0) / h));
+            var j = _M.min(N - 2, _M.floor((P - p0) / h));
             var u = (P - p[j]) / h, u2 = u * u, u3 = u2 * u;
             return (2 * u3 - 3 * u2 + 1) * m[j] + (u3 - 2 * u2 + u) * h * d[j] +
                    (-2 * u3 + 3 * u2) * m[j + 1] + (u3 - u2) * h * d[j + 1];
         }
         function pOf(M) {
             if (!_isFiniteNum(M)) return NaN;
-            if (M <= m[0]) return M > 0 ? p0 * Math.sqrt(M / m[0]) : 0;
+            if (M <= m[0]) return M > 0 ? p0 * _M.sqrt(M / m[0]) : 0;
             if (M >= m[N - 1]) return pmax + (M - m[N - 1]) / d[N - 1];
             var lo = 0, hi = N - 1;
             while (hi - lo > 1) { var md = (lo + hi) >> 1; if (m[md] <= M) lo = md; else hi = md; }
@@ -1181,21 +1185,21 @@
         function sse(lk) {
             var ph = {};
             for (var kk in base) ph[kk] = base[kk];
-            ph.k = Math.pow(10, lk);
+            ph.k = _M.pow(10, lk);
             var m = pm.dp(t, ph), s2 = 0, n = 0;
             for (var i = 0; i < t.length; i++) {
                 if (!_isFiniteNum(m[i])) continue;
                 var r = y[i] - m[i];
                 s2 += r * r; n++;
             }
-            return n >= Math.max(3, 0.5 * t.length) ? s2 / n : Infinity;
+            return n >= _M.max(3, 0.5 * t.length) ? s2 / n : Infinity;
         }
         var best = null, bestV = Infinity;
         for (var lk = -3; lk <= 5.0001; lk += 0.125) {
             var v = sse(lk);
             if (v < bestV) { bestV = v; best = lk; }
         }
-        if (best == null || !isFinite(bestV)) return null;
+        if (best == null || !_isFin(bestV)) return null;
         var a = best - 0.125, b = best + 0.125, gr = 0.6180339887498949;
         var c = b - gr * (b - a), d = a + gr * (b - a), fc = sse(c), fd = sse(d);
         for (var it = 0; it < 50 && (b - a) > 1e-7; it++) {
@@ -1203,7 +1207,7 @@
             else { a = c; c = d; fc = fd; d = a + gr * (b - a); fd = sse(d); }
         }
         var lkBest = 0.5 * (a + b);
-        return { k: Math.pow(10, lkBest), rmse: Math.sqrt(sse(lkBest)), pRefSource: adata.pRefSource };
+        return { k: _M.pow(10, lkBest), rmse: _M.sqrt(sse(lkBest)), pRefSource: adata.pRefSource };
     }
 
     G.PRiSM_dimensionalize = function PRiSM_dimensionalize(modelKey, fittedParams) {
@@ -1248,8 +1252,8 @@
         } else if (sl && (_isPos(sl.kh) || _isPos(sl.k) || (_isFiniteNum(sl.m) && sl.m !== 0))) {
             if (_isPos(sl.kh)) kh_md_ft = sl.kh;
             else if (_isPos(sl.k)) kh_md_ft = sl.k * h;
-            else kh_md_ft = (gasPseudo || sl.pseudo) ? 1637 * q * well.T_R / Math.abs(sl.m)
-                                                     : 162.6 * q * B * mu / Math.abs(sl.m);
+            else kh_md_ft = (gasPseudo || sl.pseudo) ? 1637 * q * well.T_R / _M.abs(sl.m)
+                                                     : 162.6 * q * B * mu / _M.abs(sl.m);
             k_md = kh_md_ft / h; kSource = 'semilog';
         } else if (adata && adata.ok) {
             var ls = _lsK(modelKey, fittedParams, well, adata);
@@ -1292,9 +1296,9 @@
         var rinv_ft = null;
         if (_isPos(k_md)) {
             var tEnd = null;
-            if (adata && adata.ok && adata.t.length) tEnd = Math.max.apply(null, adata.t);
+            if (adata && adata.ok && adata.t.length) tEnd = _M.max.apply(null, adata.t);
             else if (G.PRiSM_dataset && G.PRiSM_dataset.t && G.PRiSM_dataset.t.length) tEnd = G.PRiSM_dataset.t[G.PRiSM_dataset.t.length - 1];
-            if (_isPos(tEnd)) rinv_ft = Math.sqrt(k_md * tEnd / (948 * phi * mu * ct_));
+            if (_isPos(tEnd)) rinv_ft = _M.sqrt(k_md * tEnd / (948 * phi * mu * ct_));
         }
 
         var out = {

@@ -85,6 +85,9 @@
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // ── Constants ────────────────────────────────────────────────────
     var PATM = 14.696;                 // psia
@@ -683,6 +686,7 @@
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcChokePerf();
         });
     }
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

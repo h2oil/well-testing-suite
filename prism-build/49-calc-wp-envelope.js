@@ -49,6 +49,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PROVISIONAL = 'provisional — not verified against a published example';
     var PATM = 14.696;
@@ -357,6 +360,7 @@
     NS.job = envJob; NS.at = at; NS.FRACS = FRACS.slice();
     var SC = G.WTS_wp_screen = G.WTS_wp_screen || {};
     SC.PROVISIONAL = PROVISIONAL; SC.METHODS = METHODS; SC.RANGE = RANGE; SC.matrix = matrix; SC.job = screenJob; SC._window = _window;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

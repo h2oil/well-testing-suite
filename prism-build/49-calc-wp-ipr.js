@@ -53,6 +53,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PROVISIONAL = 'provisional — not verified against a published example';
     var P_AOF = 14.65, NCURVE = 41, RANK = 459.67;
@@ -1096,6 +1099,7 @@
     api.darcyX = darcyX;
     api.PROVISIONAL = PROVISIONAL;
     api.CONST = { P_AOF: P_AOF, C_DARCY_OIL: C_DARCY_OIL, C_DARCY_GAS: C_DARCY_GAS, C_FORCH: C_FORCH, C_D: C_D, C_BETA: C_BETA };
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

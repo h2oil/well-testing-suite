@@ -739,6 +739,7 @@
         if (ST.slow && !_force && !_liveCall) {
             ST.stale = true;
             _renderStale();
+            _staleStudies(M, true);
             S.wellperf = Object.assign({}, S.wellperf || {}, { stale: true });
             _emit('wts:wellperf-solved', { ok: false, stale: true });
             return S.wellperf;
@@ -752,10 +753,7 @@
         if (live) ST.liveMs = ST.solveMs;
         else { ST.liveMs = null; if (X.R && X.R.ok && !X.R.tracked) ST.Rfull = X.R; ST.lastKey = _mkey(M); }
         // sensitivity / bean-schedule results made on other inputs are marked stale (dimmed, with a re-run chip)
-        var mk = _mkey(M);
-        if (ST.sens) ST.sens.stale = !!(ST.sensKey && ST.sensKey !== mk);
-        if (ST.beans) ST.beans.stale = !!(ST.beansKey && ST.beansKey !== mk);
-        if (ST.gl) ST.gl.stale = !!(ST.glKey && ST.glKey !== _glKey(M));
+        _staleStudies(M, false);
         if (!live) { if (_multOf(M).tuned && X.R && X.R.ok) _untunedRef(); else if (!_multOf(M).tuned) ST.untuned = null; }
         var R = (X.R && X.R.ok !== undefined) ? X.R : null, ok = !!(R && R.ok);
         S.wellperf = {
@@ -769,6 +767,22 @@
         if (root) _renderAll(live);
         _emit('wts:wellperf-solved', { ok: ok });
         return S.wellperf;
+    }
+    // the stale flags of the study results (1- / 2-variable sensitivity with its heat map, bean schedule, gas-lift curve) against the
+    // model they were run on; a re-run stores a new result with the new key, so the flag clears. 4.6.1: also called when the page
+    // waits for the Solve button (a slow device): the results are marked and their tables re-drawn at once, without a solve
+    // (the study card compares its own keys — envelope, forecast, tornado, matrix, cases, screening — when it renders).
+    function _staleStudies(M, redraw) {
+        var mk = _mkey(M);
+        if (ST.sens) ST.sens.stale = !!(ST.sensKey && ST.sensKey !== mk);
+        if (ST.beans) ST.beans.stale = !!(ST.beansKey && ST.beansKey !== mk);
+        if (ST.gl) ST.gl.stale = !!(ST.glKey && ST.glKey !== _glKey(M));
+        if (!redraw || !_byId('wp_root')) return;
+        if (ST.sens) _renderSensTable(); else _renderStudies();
+        if (ST.beans) _renderBeans();
+        _renderGl();
+        var sx = (G.WTS_wellperf_ext || {}).studies;
+        if (sx && typeof sx.render === 'function') { try { sx.render(false); } catch (e) { if (typeof console !== 'undefined') console.error('[wellperf ext] studies: ' + (e && e.message)); } }
     }
     // the model identity used to tell whether a solve is needed again and whether study results are stale
     function _mkey(M) { if (!M) return ''; try { return JSON.stringify([M.fluid, M.res, M.well, M.surface, M.system, M.lift]); } catch (e) { return String(Math.random()); } }
@@ -3104,9 +3118,11 @@
                         '<td><div class="wp-bar" aria-hidden="true"><i style="left:0;width:' + w.toFixed(1) + '%;background:var(--' + col + ')"></i></div></td></tr>';
                 }).join('') + '</tbody></table></div>' + (cmp.gauge ? '<div class="wp-hint">Gauge ' + _u(cmp.gauge.p, 'pressure', 0, 'psia') + ' at ' + _u(cmp.gauge.md, 'length', 0, 'ft') + ' MD / ' + _u(cmp.gauge.tvd, 'length', 0, 'ft') + ' TVD; each correlation is marched down from the THP along the surveyed path at the test rates.</div>' : '');
         } else rk = _vHtml({ st: 'warn', t: '⚠ ' + (((cmp && cmp.errors) || [])[0] || 'The comparison engine is not available yet.') });
-        var dax = _plots().mdepth === 'md' ? 'md' : 'tvd';
-        out.push('<div class="wp-mres"><div class="wp-card" style="margin:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div class="rbox-title" style="margin:0">Traverses against the gauge</div><div class="wp-tabs rp-skip" id="wp_mdepth" style="margin-left:auto" role="group" aria-label="Depth axis"><button type="button" data-mdepth="tvd" class="' + (dax === 'tvd' ? 'on' : '') + '">TVD</button><button type="button" data-mdepth="md" class="' + (dax === 'md' ? 'on' : '') + '">MD</button></div></div>' +
-            '<div class="chart-wrap"><canvas id="wp_cv_match" tabindex="0" aria-label="Correlation comparison: pressure against depth for each correlation, with the measured gauge and wellhead pressures"></canvas></div><div class="wp-hint">Click a legend entry to hide a correlation; wheel or pinch to zoom, drag to pan, double-click to reset.</div></div><div>' + rk + '</div></div>');
+        var dax = _plots().mdepth === 'md' ? 'md' : 'tvd', pti = _matchTravTests(m), ti = _matchTravIdx(m);
+        // all used tests (RMS, 4.6.1): one traverse plot per test, picked here; each correlation's march at that test's rates
+        var tpick = pti.length > 1 ? '<div class="wp-tabs rp-skip" id="wp_mtrav" role="group" aria-label="Test shown on the traverse plot">' + pti.map(function (x, i) { return '<button type="button" data-mtrav="' + i + '" class="' + (i === ti ? 'on' : '') + '" aria-pressed="' + (i === ti ? 'true' : 'false') + '">' + _esc(String(x.id).slice(0, 24)) + '</button>'; }).join('') + '</div>' : '';
+        out.push('<div class="wp-mres"><div class="wp-card" style="margin:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div class="rbox-title" style="margin:0">Traverses against the gauge' + (pti.length ? ' — test ' + _esc(String(pti[ti].id).slice(0, 24)) : '') + '</div>' + tpick + '<div class="wp-tabs rp-skip" id="wp_mdepth" style="margin-left:auto" role="group" aria-label="Depth axis"><button type="button" data-mdepth="tvd" class="' + (dax === 'tvd' ? 'on' : '') + '">TVD</button><button type="button" data-mdepth="md" class="' + (dax === 'md' ? 'on' : '') + '">MD</button></div></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_match" tabindex="0" aria-label="Correlation comparison: pressure against depth for each correlation, with the measured gauge and wellhead pressures"></canvas></div><div class="wp-hint">' + (pti.length ? 'All used tests: pick a test above to see each correlation\'s traverse against its gauge (the legend gives that test\'s error); the ranking on the right is the RMS over the tests. ' : '') + 'Click a legend entry to hide a correlation; wheel or pinch to zoom, drag to pan, double-click to reset.</div></div><div>' + rk + '</div></div>');
         // back-calculated inflow value
         var NAME = { pr: 'reservoir pressure p̄r', J: 'productivity (PI equivalent)', S: 'skin S' };
         if (ip && ip.ok !== false && _fin(ip.value)) {
@@ -3124,6 +3140,19 @@
         var pal = [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, T.text2];
         var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
         var ser = [], markers = [], reg = G.WTS_flowline_corr || {};
+        if (cmp && cmp.ok !== false && m.all) {
+            // all used tests (4.6.1): the picked test's march per correlation, its gauge and THP; the legend carries that test's error
+            var pti = _matchTravTests(m), ti = _matchTravIdx(m), inf = pti[ti];
+            if (inf) {
+                (cmp.rows || []).forEach(function (r, i) {
+                    var pt = (r.perTest || [])[ti]; if (!pt || !pt.profile || !pt.profile.length) return;
+                    ser.push({ key: r.corr, label: ((reg[r.corr] && reg[r.corr].label) || r.corr).replace(/\s*\(.*$/, '') + (r.verified ? '' : ' (prov.)') + (_fin(pt.errPct) ? ' ' + (pt.errPct >= 0 ? '+' : '') + _fmt(pt.errPct, 1) + ' %' : ''),
+                        color: pal[i % pal.length], width: i === 0 ? 2.6 : 1.8, dash: r.verified ? null : [6, 3], pts: pt.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) });
+                });
+                if (inf.gauge) markers.push({ x: _dv(inf.gauge.p, 'pressure'), y: dk(inf.gauge), kind: 'diamond', color: T.green, r: 7, label: 'Gauge (' + String(inf.id).slice(0, 24) + ')' });
+                if (_fin(inf.thp)) markers.push({ x: _dv(inf.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, label: 'THP' });
+            }
+        }
         if (cmp && cmp.ok !== false && !m.all) {
             (cmp.rows || []).forEach(function (r, i) { if (r.profile && r.profile.length) ser.push({ key: r.corr, label: ((reg[r.corr] && reg[r.corr].label) || r.corr).replace(/\s*\(.*$/, '') + (r.verified ? '' : ' (prov.)'), color: pal[i % pal.length], width: i === 0 ? 2.6 : 1.8, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
             if (cmp.gauge) markers.push({ x: _dv(cmp.gauge.p, 'pressure'), y: dk(cmp.gauge), kind: 'diamond', color: T.green, r: 7, label: 'Gauge' });
@@ -3131,12 +3160,15 @@
         }
         var ip = m.ipr;
         if (ip && ip.ok !== false && _fin(ip.pwf) && ST.SC && ST.SC.perfs && _fin(ST.SC.perfs.midMd)) markers.push({ x: _dv(ip.pwf, 'pressure'), y: _dv(dax === 'md' ? ST.SC.perfs.midMd : (_fin(ST.SC.perfs.midTvd) ? ST.SC.perfs.midTvd : ST.SC.perfs.midMd), 'length'), kind: 'hollow', color: T.accent, r: 6, label: 'pwf' });
-        V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
+        V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i') + (m.all ? ':t' + _matchTravIdx(m) : ''), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
             x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
             y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
             series: ser, markers: markers, hidden: _plots().mHidden || null, onLegend: function (hid) { _plotsSet({ mHidden: hid }); },
-            empty: m.all ? 'Pick one test to see its traverses (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
+            empty: m.all ? 'No correlation reached this test\'s gauge (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
     }
+    // the tests of an all-tests comparison (WTS_wp_match.compare perTestInfo, 4.6.1) and the one shown (device pref, clamped)
+    function _matchTravTests(m) { var c = m && m.all && m.compare; return (c && c.ok !== false && Array.isArray(c.perTestInfo)) ? c.perTestInfo : []; }
+    function _matchTravIdx(m) { var n = _matchTravTests(m).length, i = Math.floor(+_plots().mTrav); return n && _fin(i) && i >= 0 && i < n ? i : 0; }
     // ── VLP tuning (WP17, A2; plan §5.2, D10) ────────────────────────────────
     // WTS_wp_match.tuneJob fits the holdup multiplier m_h (and the friction multiplier m_f when the used tests span ≥ 2:1 in rate)
     // with PRiSM_lm against the gauge pressures; the result card shows the multipliers as KPI chips, the flags, the parameter
@@ -4059,6 +4091,7 @@
             if (b.getAttribute('data-tab')) { _plotsSet({ trTab: b.getAttribute('data-tab') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-mapk')) { _plotsSet({ mapKind: b.getAttribute('data-mapk') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-depth')) { _plotsSet({ depth: b.getAttribute('data-depth') }); _renderTraverseCard(); return; }
+            if (b.getAttribute('data-mtrav') != null) { _plotsSet({ mTrav: +b.getAttribute('data-mtrav') || 0 }); _renderMatch(); var nb = document.querySelector && document.querySelector('#wp_mtrav [data-mtrav="' + b.getAttribute('data-mtrav') + '"]'); if (nb && nb.focus) nb.focus(); return; }
             if (b.getAttribute('data-mdepth')) { _plotsSet({ mdepth: b.getAttribute('data-mdepth') }); Array.prototype.forEach.call(document.querySelectorAll('#wp_mdepth button'), function (x) { if (x.classList) x.classList.toggle('on', x === b); }); _drawMatchPlot(); _drawTunePlot(); return; }
             var act = b.getAttribute('data-act'); if (act) _act(act, b);
         });

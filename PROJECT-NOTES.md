@@ -11,6 +11,16 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
   when the cloud hand-over finished, so a step-up started in between (linking a provider right after a provider sign-in) was
   settled as cancelled. It now closes only its own dialog (`dlg.gen` + mode). New regression test acct-oauth OA11; E2 went from
   10 / 15 to 75 / 75 consecutive whole-file runs; server suite 278 / 278 (docs/ACCOUNTS-PLAN.md §12.4 record 4.6.1). Web only (ACCT block).
+- **Well Performance open items (lane wpperf, branch f461/wpperf; plan docs/WELL-PERFORMANCE-PLAN.md §18.3.14).** Study results
+  (1- / 2-variable sensitivity and heat map, bean schedule, gas-lift curve, Studies card) are marked "previous inputs — re-run" also
+  when the page waits for the Solve button (marked at once, no solve; cleared on a re-run). The all-tests (RMS) comparison draws a
+  traverse plot per test (test picker, gauge and THP of that test, its error per correlation in the legend; `WTS_wp_match.compare`
+  adds `perTest[].profile` and `perTestInfo`, ranking unchanged). Solves are faster with every result bit for bit unchanged (59-output
+  dump equal to 939f9d8; FI1–FI9; wellperf-validate --html --gate --check --time ok): the marcher's (p, T) property tables are shared
+  between solves (registry keyed by the PVT content), base conditions / PVT library once per march, Math / isFinite as local bindings
+  in the engines on the path. Harness oil 311 → 44 ms, gas 453 → 59 ms, sensitivity 10 cases 1,301 → 153 ms; headless Chromium
+  oil ≈ 57 → 28 ms, gas ≈ 67 → 37 ms, sensitivity ≈ 0.21 → 0.1 s. New test file wellperf-followup (WFU1–WFU4). Rounds 3 (16-pvt) and
+  9 rebuilt.
 
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 

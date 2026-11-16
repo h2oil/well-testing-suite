@@ -720,10 +720,9 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   (inflow), Turner / Coleman / Li (critical rate) and the nodal benchmark ship verified:false with the provisional label, and Beggs &
   Brill is the default lift correlation for every fluid (D5 preferred defaults wait for a verified example); A1 temperature is the
   linear THT → BHT profile (J-T corrected THT for the gas hydrate check), maximum THT = the entered THT; the choke uses the max rule
-  (sub-critical = conservative bound); the separator node is solved at the wellhead node; solves are slower than planned (oil ≈ 450 ms,
-  gas ≈ 400 ms; sensitivity 10 cases ≈ 1.9 s against 1.2 s); Beggs & Brill / Hagedorn & Brown step 0.2–1 psi at pattern switches
+  (sub-critical = conservative bound); the separator node is solved at the wellhead node; Beggs & Brill / Hagedorn & Brown step 0.2–1 psi at pattern switches
   (non-monotone Beggs & Brill WGR sensitivity on FIX.gasWell); FIX.fallingBranch (J 0.3) does not flow (tests use J = 1); Karakas-Tariq
-  perforation skin disabled (enter it); sensitivity not marked stale on input changes; all-tests RMS comparison has no traverse plot;
+  perforation skin disabled (enter it);
   QC_THT vs BHT only, QC_VLP before tuning; engine warnings in field units; the help image cap is full (the loading-traverse, schematic
   and KPI shots are not taken) and ≈ 2 kB of help text remain. Not in A1: Duns & Ros, Cullender-Smith, temperature relaxation, Sachdeva
   choke, 2-variable sensitivity, VLP tuning, gas-lift quick look, course (A2) and everything of B.
@@ -735,8 +734,10 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   the static check only (Asheim in B) and the depth plot of a dead well starts at the first lifted point; VLP tuning fits m_h only unless
   the tests span ≥ 2:1 in rate, and has no time budget in §16 (3 tests with both multipliers ≈ 2.5 s); the help text pool is full again
   (≈ 1 kB raw / 0.26 kB gzip left at 4.4; caps 369 / 128 kB — Q21, approved 2026-11-13, raised them for the B help, §18.3.13); no shots of the A2 cards were added.
-  Still open from A1: sensitivity not marked stale on input changes, all-tests RMS comparison without a traverse plot, solves slower than
-  the plan's 250 ms. Not in A2: ESP, rod pump, Asheim stability, multi-layer, the D5 preferred defaults (B).
+  Closed in 4.6.1 (plan §18.3.14, branch f461/wpperf): study results marked stale also in Solve-button mode, a traverse plot per test in
+  the all-tests RMS comparison, solves ≈ 2× faster in Chromium (oil ≈ 25–32 ms, gas ≈ 37 ms, sensitivity 10 cases ≈ 0.1 s; the A1
+  ≈ 450 ms was the vm test harness, now ≈ 44 / 59 ms there) with every result bit for bit unchanged (shared (p, T) property tables
+  keyed by the PVT content, base conditions / library once per march, Math / isFinite as local bindings). Not in A2: ESP, rod pump, Asheim stability, multi-layer, the D5 preferred defaults (B).
 - **Well Performance B (v4.5)** (docs/WELL-PERFORMANCE-PLAN.md §18.3.x; PROJECT-NOTES 4.5): Q9 still not provided, so Orkiszewski,
   Aziz-Govier-Fogarasi, Mukherjee-Brill, Ansari, Hasan-Kabir, the enthalpy-balance temperature, the differential → flash adjustment, Rv and
   the emulsion models, every B inflow model, the forecast tank models, the lift screening ranges, the gas-lift valve design on the model path

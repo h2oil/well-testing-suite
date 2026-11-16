@@ -32,6 +32,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var PATM = 14.696, TOL_P = 0.1;
     var PROVISIONAL = 'provisional — not verified against a published example';
 
@@ -206,6 +209,7 @@
 
     var NS = G.WTS_wp_inj = G.WTS_wp_inj || {};
     NS.solve = solve; NS.fracFromDfit = fracFromDfit; NS.isInjector = isInjector; NS.PROVISIONAL = PROVISIONAL;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

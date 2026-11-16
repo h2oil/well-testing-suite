@@ -57,8 +57,9 @@
 //   WTS_wp_match
 //     .compare(M, test | tests[], corrKeys?, o? /*{stepFt, mult, profiles:false}*/)
 //         → {ok, tests:[id], gauge:{md, tvd, p} (one test), thp, rows:[{corr, label, pCalc psia|null, err, errPct, errPctDp, rank,
-//            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct}], n}],
-//            best, warnings, errors}
+//            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct, profile}], n}],
+//            best, warnings, errors; several tests (4.6.1, additive): perTestInfo:[{id, gauge, thp, thp_psig, rates}] in the order of
+//            each row's perTest, and perTest[].profile = that test's march (the all-tests traverse plot) — the ranking is unchanged}
 //     .thtFit(M, tests) → {ok, rows:[{id, use, tht, q, ok, U, Ubasis, A, w, cp, range, msg}], uRange:[lo, hi] | null, U (geometric
 //            mean of the used fits), n, provisional}   (A2, WP14: U fitted to each test's measured THT, relaxation model)
 //     .iprFromTest(M, test, solveFor /*'pr'|'J'|'S'*/, o? /*{corr}*/)
@@ -87,6 +88,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP7 implements compare / iprFromTest / qc and WP17 (A2) tune: their names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -328,7 +332,7 @@
                 row.warnings = r.warnings; row.profile = r.profile; row.n = r.pCalc == null ? 0 : 1;
             } else {
                 var e2 = 0, p2 = 0, n = 0;
-                row.perTest = good.map(function (p) { var r = p.res[k]; if (r.pCalc != null) { e2 += r.err * r.err; p2 += r.errPct * r.errPct; n++; } return { id: p.id, pCalc: r.pCalc, err: r.err, errPct: r.errPct }; });
+                row.perTest = good.map(function (p) { var r = p.res[k]; if (r.pCalc != null) { e2 += r.err * r.err; p2 += r.errPct * r.errPct; n++; } return { id: p.id, pCalc: r.pCalc, err: r.err, errPct: r.errPct, profile: r.profile }; });
                 row.n = n; row.pCalc = null; row.err = n ? Math.sqrt(e2 / n) : null; row.errPct = n ? Math.sqrt(p2 / n) : null; row.errPctDp = null;
                 row.lost = n < good.length; row.rms = true; row.warnings = [];
             }
@@ -344,6 +348,7 @@
         if (rows.some(function (r) { return !r.verified; })) warnings.push(_w('PROVISIONAL', 'Correlations marked provisional have no verified published example (' + PROVISIONAL + ').', 'info'));
         var out = { ok: !!best, tests: good.map(function (p) { return p.id; }), rows: rows, best: best, warnings: warnings, errors: best ? [] : ['Every march was lost before the gauge.'] };
         if (!multi) { out.gauge = good[0].gauge; out.thp = good[0].thp; out.thp_psig = good[0].thp - PATM; out.rates = good[0].rates; }
+        else out.perTestInfo = good.map(function (p) { return { id: p.id, gauge: p.gauge, thp: p.thp, thp_psig: _fin(p.thp) ? p.thp - PATM : null, rates: p.rates }; });
         return out;
     }
 
@@ -824,6 +829,7 @@
     NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL, tht: THT_TOL };
     NS.tune = tune; NS.tuneJob = tuneJob; NS.TUNE = { bounds: { hl: TUNE_BOUNDS.hl.slice(), f: TUNE_BOUNDS.f.slice() }, flag: TUNE_FLAG.slice(), rho: TUNE_RHO, span: TUNE_SPAN, scan: TUNE_SCAN, inseparable: INSEP_MSG };
     G.WTS_wp_qc = qc;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

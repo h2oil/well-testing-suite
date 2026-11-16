@@ -66,6 +66,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var RANK = 459.67, MW_AIR = 28.9647, R_GAS = 10.7316;
     var RHO_W_BBL = 62.37 * 5.614583;              // lbm per bbl of water (the 62.37 of the flowline oil density)
@@ -545,6 +548,7 @@
     // this file is the implementation: drop the WP0 stub names
     var STUBS = G.__WP_STUBS;
     if (Array.isArray(STUBS)) for (var i = STUBS.length - 1; i >= 0; i--) if (/^WTS_wp_fluid\./.test(STUBS[i])) STUBS.splice(i, 1);
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

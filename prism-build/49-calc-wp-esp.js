@@ -73,6 +73,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var VERSION = '4.5-wp26';
     var PROVISIONAL = 'provisional — not verified against a published example';
     var PATM = 14.696, BBL_FT3 = 5.614583, HHP = 135770, RHO_W = 62.428;
@@ -414,6 +417,7 @@
     NS.VERSION = VERSION; NS.PROVISIONAL = PROVISIONAL; NS.METHODS = METHODS; NS.CU_R20 = CU_R20; NS.MAX_GROUPS = MAX_GROUPS;
     NS.example = example; NS.normPump = normPump; NS.curve = curve; NS.fan = fan; NS.turzo = turzo; NS.natSep = natSep; NS.turpin = turpin;
     NS.prepare = prepare; NS.pump = pump; NS.motor = motor; NS.flags = flags; NS.sizeStages = sizeStages; NS.sweep = sweep;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===
