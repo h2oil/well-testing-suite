@@ -761,8 +761,8 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   projects to ≈ 59 MB for 24 h; a reload loses an unsaved run; oil heading was not reproduced on the test wells (LF15: the well settles
   or dies) — the detector needs a sustained amplitude (last peak-to-peak ≥ 0.8 × the first) so the decaying THP oscillation after an
   unloading is not called heading; Belfroid (option) floors β at 5° from horizontal (ASSUMED) and uses the published 0.74 normalisation
-  (factor 1.001 at vertical); the help cap raises for the welldyn guide and shots are PENDING the owner's answer to the plan's Q4 (Q21
-  covers the Well Performance help only) — no merge to Dev / master before it; the WD0 fixture file tests/_welldyn-shapes.js was never
+  (factor 1.001 at vertical); the help cap raises for the welldyn guide and shots were approved under the plan's Q4 (owner, 2026-11-16;
+  images 8.27 MB, text 392.5 kB raw / 136.5 kB gzip — a new shot or text growth needs another owner cap decision); the WD0 fixture file tests/_welldyn-shapes.js was never
   written (the lane fixtures _welldyn-wd1.js / _welldyn-wd4.js stand in).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);

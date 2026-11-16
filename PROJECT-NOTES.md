@@ -40,8 +40,8 @@ docs/WELL-DYNAMICS-PLAN.md (decisions §0, physics §4, gate §5, records §11.1
 - **Review fixes (2026-11-14)**: Belfroid on every cell (β floor 5°, limiting depth at the q_c in use); heading not reproduced — note / help
   reworded, sustained-amplitude rule; Checks distance measured from the nodal point (drift apart); KPI strip without ellipsis, "no choke";
   report legend condensate; no stratified label in vertical cells; scoped keyboard shortcuts + roving tabs; CSV state header; marker labels
-  apart; replay files thin their snapshots instead of dropping them; phone Export menu in flow; help caps for Well Dynamics pending the
-  owner's Q4 (not Q21). Plan §11.7 "Review fixes". 2385/2385 acceptance tests.
+  apart; replay files thin their snapshots instead of dropping them; phone Export menu in flow; help caps for Well Dynamics approved by
+  the owner under Q4 (2026-11-16). Plan §11.7 "Review fixes". 2385/2385 acceptance tests.
 - **Open**: see the CLAUDE.md known limitation "Well Dynamics (v4.6)" and plan §11.
 
 ---

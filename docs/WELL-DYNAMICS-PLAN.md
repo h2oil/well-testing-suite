@@ -1248,7 +1248,7 @@ expected / actual); the integrator fixes it with a regression test.
 | Q1 | Liquid fallback below the critical velocity is provisional (D17). Make it the default for gas wells? | Off by default; on in the "gas-well loading" preset and the loading fixtures |
 | Q2 | Temperature in time: `frozen` (gate) or `relax` (provisional) by default? | `frozen`; `relax` as an option |
 | Q3 | Reservoir default: `ipr` (exact with nodal) or `transient` when k, h, φ, μ, c_t are complete? | `ipr`; the shut-in build-up preset switches to `transient` when the parameters are complete, else says what is missing |
-| Q4 | Help caps: raise by +14 kB raw / +5 kB gzip and the image cap by +120 kB for a PART guide with three screenshots? | Ask with the measured draft; if declined, a 6 kB guide and no screenshots. **OPEN (2026-11-14):** the measured draft is in `wd/int` (production 69.25 kB, start 22.45 kB, sum 392.5 / 136.5 kB, images 8.27 MB, module 9.1 kB, together with 4.5.1); not covered by Q21; no merge to Dev / master before the owner answers |
+| Q4 | Help caps: raise by +14 kB raw / +5 kB gzip and the image cap by +120 kB for a PART guide with three screenshots? | Ask with the measured draft; if declined, a 6 kB guide and no screenshots. **APPROVED (owner, 2026-11-16):** the measured draft (production 69.25 kB, start 22.45 kB, sum 392.5 / 136.5 kB, images 8.27 MB, module 9.1 kB, together with 4.5.1) ships in 4.6 |
 | Q5 | Release on both platforms (iOS included; phone speed ≈ ⅓)? | Both, as v4.6 |
 | Q6 | Replay file extension `.wdrun` (JSON inside)? | `.wdrun` |
 | Q7 | Cell count: default 60, range 20–200? | Yes |
@@ -1651,9 +1651,9 @@ cycles, recorder / files / cases) and the provisional label on every provisional
 Shots (new help-shots action `welldynRun` {ex, preset, h, tab}: loads the Well Performance example, waits for it (for `gl` the valve
 design, then **Use this design**), opens Well Dynamics, applies the preset and runs it through the page hook to h hours; clock `fixed`):
 `run-d` (Gas example, Gas-well loading, 3 h, 55.5 kB), `wb-p` (the same run's wellbore on a phone, crop, 12.3 kB), `gl-d` (Gas lift
-example, Gas-lift unloading, 4 h, Lift chart, 54.9 kB); `help/view` re-shot (the landing page lists the new tasks). Caps (**pending the
-owner's decision on Q4** — Q21, approved 2026-11-13, covers the Well Performance help only, not these raises; measured need + a small
-margin; if Q4 is declined, the fallback of §8 / Q4 ships: a non-PART welldyn guide of about 6 kB with no shots, the caps rolled back):
+example, Gas-lift unloading, 4 h, Lift chart, 54.9 kB); `help/view` re-shot (the landing page lists the new tasks). Caps (**approved under Q4
+by the owner, 2026-11-16** — Q21 covered the Well Performance help only; measured need + a small
+margin):
 
 | Cap | Old | New | Measured |
 |---|---|---|---|
@@ -1726,7 +1726,7 @@ only in the help files and the generated files: the task lists of both sides kep
 wellperf guide takes the 4.5.1 text and keywords with this line's `reviewedSrc` (the cross-link button); the help-shots named actions of
 both sides (`wpJob`, `wellAdd`, `welldynRun`); the caps are both sides' measured need together plus a small margin (production 69.25 kB,
 start 22.45 kB, sum 392.5 kB raw / 136.5 kB gzip, images 8.27 MB, manifest module 9.1 kB; the Well Dynamics share of these raises is
-**pending the owner's decision on Q4** (Q21 covers the Well Performance help only) — not to be merged to Dev / master before the answer). Generated files (combined-round9.js, the HTML, www, manifest, user guide) regenerated with the tooling.
+**approved under Q4 by the owner, 2026-11-16** (Q21 covers the Well Performance help only)). Generated files (combined-round9.js, the HTML, www, manifest, user guide) regenerated with the tooling.
 The 4.5.1 wellperf text named "drift flux" before the glossary term (added here) — now linked. Fixes found by the full gates:
 - `buildup-page` PG1 expected Build-up Surveillance right after the Well Performance hub; now hub → welldyn → buildup.
 - `acct-lswrite-scan` LS1: the page's device-pref write was a raw `localStorage.setItem`; it now goes through `WTS_lsSet` with a marked
@@ -1759,8 +1759,7 @@ sweep of welldyn + wellperf (desktop and --mobile): 0 errors, 0 warnings, 0 cosm
 - Replay file (§3.7): above 5 MB the snapshots are thinned (first / last / events / marks / state changes kept, interval doubled per round,
   note), dropped only when the kept set does not fit (RC13 on a 6 h run).
 - Export menu below 600 px: in the toolbar flow (full row) when opened — the mobile sweep found it off-screen at 390 px.
-- Help caps: the Well Dynamics share of the raises is **pending Q4** (not covered by Q21) — no merge to Dev / master before the owner
-  answers. Gates after the fixes: node --check OK, smoke 347/347, accept-test --html --integration 2385/2385 (204 files, file by file),
+- Help caps: the Well Dynamics share of the raises was **approved under Q4** by the owner on 2026-11-16 (not covered by Q21). Gates after the fixes: node --check OK, smoke 347/347, accept-test --html --integration 2385/2385 (204 files, file by file),
   welldyn-validate (D17 PASS, 23 / 23, X11 skipped), wellperf-validate (D17 PASS, 62 / 62), help-shots / build-user-guide / publish-site
   --check ok, ux-layout-check --web ok (135), wts3d-test 147/149 (the two CRLF checks on LF), GUI sweep welldyn desktop + --mobile 0 findings.
 
