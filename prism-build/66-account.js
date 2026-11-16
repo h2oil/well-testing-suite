@@ -274,8 +274,13 @@
       lastSeenAt: now(), v: 3 });
     dlg.welcome = false; dlg.welcomeChoice = null;    // signing in: the first-open form stores no guest choice on close
     setStep('busy', { text: 'Signing in…' });
+    // the dialog this sign-in owns: the closes below must never close a dialog opened after it (4.6.1: a step-up started
+    // while the hand-over was still running — e.g. linking a provider right after a provider sign-in — was closed by the
+    // tail of this chain, which settled the step-up as cancelled)
+    var own = { gen: dlg.gen, mode: dlg.mode };
+    function closeOwn() { if (dlg.gen === own.gen && dlg.mode === own.mode) closeDialog(); }
     return refresh().then(function () {
-      if (current.status !== 'signedIn') { closeDialog(); return state(); }
+      if (current.status !== 'signedIn') { closeOwn(); return state(); }
       // the reload below needs the page's pending autosave written first: write it BEFORE the hand-over, so the upload
       // includes it and no rewrite after the binding marks a just-saved project dirty (review fix)
       var reloads = G.__wtsGaLoaded === true;
@@ -288,15 +293,16 @@
           rl();
           return state();
         }
-        closeDialog();
+        closeOwn();
         return state();
       });
     });
   }
 
   // ── dialog (§11.2) ─────────────────────────────────────────────────────────────────────────────────────────────────
+  // gen counts the dialog's fresh opens (openDialog while closed): a flow that closes the dialog later checks it still owns it
   var dlg = { open: false, mode: null, step: null, email: '', publicDevice: false, consent: null, opener: null, resolve: null,
-    choice: null, onKey: null, signup: false, profile: null };
+    choice: null, onKey: null, signup: false, profile: null, gen: 0 };
   var hooks = { renderProviders: null, onPublicSignOut: null };
   var MSG = {
     network: 'Sign-in needs a connection. Your work keeps saving on this device.',
@@ -478,6 +484,7 @@
       document.addEventListener('keydown', dlg.onKey);
       try { dlg.opener = document.activeElement; } catch (e) { dlg.opener = null; }
     }
+    if (!dlg.open) dlg.gen++;
     dlg.open = true; dlg.mode = mode || dlg.mode || 'signin';
     if (opts && opts.title) $('acct_dlg_t').textContent = opts.title;
     return ov;

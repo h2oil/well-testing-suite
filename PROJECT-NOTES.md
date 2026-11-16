@@ -5,6 +5,13 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 4.6.1 (draft)
+
+- **Accounts e2e E2 flake fixed (lane acctflake).** The sign-in completion in 66 (`completeSignIn`) closed whatever dialog was open
+  when the cloud hand-over finished, so a step-up started in between (linking a provider right after a provider sign-in) was
+  settled as cancelled. It now closes only its own dialog (`dlg.gen` + mode). New regression test acct-oauth OA11; E2 went from
+  10 / 15 to 75 / 75 consecutive whole-file runs; server suite 278 / 278 (docs/ACCOUNTS-PLAN.md §12.4 record 4.6.1). Web only (ACCT block).
+
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 
 App and App Store version 4.6 (`RELEASE_NOTES[0]` v4.6, dated 2026-11-14, both platforms, title "Well Dynamics: transient well

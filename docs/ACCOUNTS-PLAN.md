@@ -1631,6 +1631,18 @@ extended to 30 min and refused after; link-confirm code; a sign-in finish revoke
 logged; the production pins (a localhost issuer or a non-https key address refuses start-up); `GET /auth/providers`; the
 retire-client script. About 25 more tests (≈ 180 in all).
 
+**Record 4.6.1 — the e2e E2 flake (fixed at the cause).** E2 (Google sign-up → link LinkedIn) failed about 1 run in 3 with
+"linkProvider rejected before the step-up code: cancelled", only when E1 ran before it in the same process (15 runs of E2 alone:
+15 / 15; 15 runs of the whole e2e file: 10 / 15, a further 8: 5 / 8). Cause, in the client (66 `completeSignIn`): after `refresh()`
+the page is signed in and the provider finish dialog has already closed, but the hand-over (`WTS_cloudSync.afterSignIn`, IndexedDB
+and digests on the thread pool) still runs; its tail called `closeDialog()` unconditionally. A step-up opened in that window (the
+test links LinkedIn as soon as the page reads signed in; a person pressing "Add LinkedIn" just as quickly gets the same) was closed
+by it, which settled the step-up's `dlg.choice` with null → `stepUpThen` threw `cancelled`. Fix: `dlg.gen` counts fresh dialog opens
+and `completeSignIn` closes only the dialog it owns (same generation and mode), so a later dialog survives. Regression test
+`acct-oauth` OA11 holds the hand-over open, starts the link, releases it and checks the step-up stays open and the link goes on
+(fails on the old client with `rejected: cancelled`). After the fix: 40 / 40 and 35 / 35 consecutive runs of the whole e2e file
+(E2 inside each), full server suite 278 / 278. The test itself was not changed.
+
 ### 12.5 GUI sweep and help
 `gui-sweep.js`: `serve()` answers `/api/v1/me` with `401` and other `/api/v1/*` with a minimal fake so the signed-out and sign-in
 paths are swept (`/auth/providers` answers both `on`; provider `start` answers with a fake URL that the sweep records as a
