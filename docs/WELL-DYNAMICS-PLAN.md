@@ -31,7 +31,7 @@
 | WD-D4 | **Closure:** default `corr` = at every co-current face the drift parameters are set so the steady holdup equals the holdup of the well's gradient correlation, called exactly as the nodal march calls it (`WTS_flowline_gradAt`: the same segment angle, roughness, Payne / acceleration flags, per-section key and VLP-tuning multipliers), and the friction is that correlation's friction gradient; only counter-current or near-stagnant faces (|j| < 0.10 ft/s) blend into the published drift-flux closure (Zuber-Findlay with the Shi et al. profile and inclination forms), the only closure that exists for counter-current flow and shut-in; counter-current faces use a bounded Godunov flux. Option `driftflux` uses the drift-flux closure everywhere. | §4.4 |
 | WD-D5 | **Consistency gate:** a steady flowing run must settle on `WTS_wp_system.solve` for the same model — **time-means** over the last 600 s: rate within 2 %, BHP within 1 %, THP within 1 % or 3 psi, choke regime equal to `R.surface.choke.regime` — on seven fixtures (gas vertical, gas horizontal, oil vertical, oil vertical tuned, oil deviated, gas lift, ESP). A bounded oscillation is allowed and reported (amplitude ≤ 0.5 % of q). This is the release gate of the module. | §5.1 |
 | WD-D6 | **Reservoir:** mode `ipr` (instantaneous steady inflow from the solve's `I`, exact consistency with nodal; reverse flow into the formation by the IPR slope at p̄r when p_0 > p̄r) and mode `transient` (line-source E1 superposition of the IPR's drawdown with r_w,eff for negative skin and a stated prior history, bounded by the stabilised IPR, so a long constant-rate run converges to the IPR). Wellbore storage and afterflow are not inputs: they emerge from the cells. | §4.7 |
-| WD-D7 | **Time integration:** explicit, conservative, first-order upwind transport (Godunov at counter-current faces; option second-order MUSCL / minmod); step limited by a CFL on the larger of the phase velocities and the kinematic-wave speed (default 0.5), a pressure-change limit, event times and `dtMax`; rejected steps are halved. Mass balance checked every step. | §4.6 |
+| WD-D7 | **Time integration:** explicit, conservative, first-order upwind transport (Godunov at counter-current faces; option second-order MUSCL / minmod); step limited by a CFL on the larger of the phase velocities and the kinematic-wave speed (default 0.5; 0.8 since 4.6.1, §11.8), a pressure-change limit, event times and `dtMax`; rejected steps are halved. Mass balance checked every step. | §4.6 |
 | WD-D8 | **Determinism:** the step sequence depends only on the model, the settings and the event list — never on the frame rate or wall time. `run(seconds)` never splits a step to land on a frame; events cut a step exactly at their time. Within one JavaScript engine a replay re-run is bit-identical and `snapshot()` / `restore()` continue bit-identically; across engines (web / iOS) `Math.exp / log / pow` may differ in the last bit, so a re-run is equal within a stated tolerance and never reported as corrupt (R25). | §3.2, §3.7, §5.4 |
 | WD-D9 | **Run loop:** the page drives the engine from `requestAnimationFrame` only while playing; paused, hidden tab, page left or run ended → no frame is requested. No `setInterval`, no watchdog, no polling, no function wrapping. The page opens paused. The loop accumulates a simulated-time target (target += speed · Δwall) so the achieved speed does not drift. | §6.6 |
 | WD-D10 | **Recorder:** scalar channels at a fixed simulated interval + full engine snapshots at a coarser interval, in memory, capped (32 MB); scrub shows any recorded moment; "Continue from here" restores the engine from the snapshot. A replay file (`.wdrun`, JSON) holds model, settings, events, series and snapshots. | §3.4, §7 |
@@ -216,7 +216,7 @@ opts = {
   loading: { belfroid: false },      // Belfroid inclination correction of v_c (provisional; Q16; both q_c are always reported)
   compliance: { pipe_psi: 3e-6, cwMin_psi: 3e-6 },   // C6: tubing elastic compliance and water compressibility floor, 1/psi (ASSUMED)
   order: 1 | 2,                      // transport order (2 = MUSCL / minmod)
-  cfl: 0.5, dtMax: 60, dtMin: 1e-3, dpMaxFrac: 0.02,
+  cfl: 0.8 /*0.5 until 4.6.1, §11.8*/, dtMax: 60, dtMin: 1e-3, dpMaxFrac: 0.02,
   picard: { maxSweeps: 3, tolQ: 1e-6 /*ft³/s*/, tolQrel: 1e-4 },   // inner sweeps of the wellhead root (R3)
   temperature: 'frozen' | 'relax', tauT_h: 2,
   choke: { subcritical: 'model' | 'shape', strokeTime_s: 10 },   // 'model' = the model's surface.choke.subcritical rule (§4.8); 'shape' = the provisional closing shape
@@ -680,10 +680,13 @@ sweeps in smooth flow. Budgets in §5.6.
 limiter (option; the gate uses order 1).
 
 **Time step (R12).**
-  Δt = min( dtMax, 1.5 Δt_prev, CFL · min_i ΔL_i / max(|v_g,i|, |v_L,i|, |λ_k|, |λ_{k+1}|, 1e-6), Δt_event, Δt_stroke )
+  Δt = min( dtMax, g · Δt_prev, CFL · min_i ΔL_i / max(|v_g,i|, |v_L,i|, |λ_k|, |λ_{k+1}|, 1e-6), Δt_event, Δt_stroke )
+  with g = 1.5, or min(1.5, max(0.5, 0.8 / r_prev)) when the last step's largest relative pressure change r_prev (its share of the
+  dpMaxFrac limit) was in (0, 1] — the step grows to 0.8 of the limit instead of into it (4.6.1, §11.8)
   with v_g = j_g / α_g, v_L = j_L / α_L the phase velocities of the cell's faces (explicit donor transport of each phase) and λ_k = ∂f_k/∂α
   the kinematic-wave (characteristic) speed of the drift-flux flux function at the face, C_0 j + v_d + α (∂(C_0 j + v_d)/∂α), by a central
-  difference (±1e-3 in α) — larger than the phase velocities in counter-current flow. CFL default 0.5. After the step: if any
+  difference (±1e-3 in α) — larger than the phase velocities in counter-current flow. CFL default 0.5 (0.8 since 4.6.1, §11.8; the
+  a-posteriori phase-velocity check stays at 1.0). After the step: if any
   |p_k^{n+1} − p_k^n| > dpMaxFrac · p_k^n, or a component mass would turn negative, or the root / Picard sweeps failed, the step is
   **rejected** and retried with Δt/2 (≤ 8 halvings, then `code: 'STEP_FAIL'` and the run stops with a message). Δt_event lands a step
   exactly on the next scheduled event; Δt_stroke resolves a choke stroke in ≥ 5 steps.
@@ -1296,7 +1299,7 @@ detector, events, `run` / `step` / `schedule` / set*, snapshot / restore, steady
 - *Correlation closure on the reference stream.* The correlation is evaluated on the formation (reference) stream scaled to the face's
   mixture flux j, so v_d = v_d(j, p, T) (feeding it the face stream cascaded liquid in gas wells; inverting the cell state is not unique
   for Beggs & Brill). Under-relaxation ω = 0.5; drift cap 20 + 2|j| ft/s with a lagged density correction Δρ = ρ_corr − ρ_m when the
-  holdup clamps at 1 or the drift is capped (tuned m_h 1.10); eligibility from the lagged co-current test (j_g ≥ 0 accepted, single-phase
+  holdup clamps at 1 or the drift is capped (tuned m_h 1.10; since 4.6.1 weighted by the cell's gas flux, §11.8); eligibility from the lagged co-current test (j_g ≥ 0 accepted, single-phase
   faces included); w(j) a smoothstep at the current j; the correlation part clamped to [0, j] with upwind holdups; correlation off while
   the well is shut in.
 - *Friction blend:* correlation gradient scaled by (j/j_L)² blended with Moody (Swamee-Jain) over j = 0.05…0.10 ft/s (no slosh at shut-in).
@@ -1762,6 +1765,86 @@ sweep of welldyn + wellperf (desktop and --mobile): 0 errors, 0 warnings, 0 cosm
 - Help caps: the Well Dynamics share of the raises was **approved under Q4** by the owner on 2026-11-16 (not covered by Q21). Gates after the fixes: node --check OK, smoke 347/347, accept-test --html --integration 2385/2385 (204 files, file by file),
   welldyn-validate (D17 PASS, 23 / 23, X11 skipped), wellperf-validate (D17 PASS, 62 / 62), help-shots / build-user-guide / publish-site
   --check ok, ux-layout-check --web ok (135), wts3d-test 147/149 (the two CRLF checks on LF), GUI sweep welldyn desktop + --mobile 0 findings.
+
+
+### 11.8 4.6.1 follow-up — gas-lift unloading robustness and speed (lane `wdgl`, 2026-11-16, branch `f461/wdgl`)
+
+**Problem at 4.6.** The Well Performance "Gas lift" example (six designed IPO valves, no choke, fixed THP 150 psig) unloaded from the
+balance level with 500–1,300 rejected steps per 4 simulated hours (mostly DP_LIMIT) and took 14–33 s of wall time for 4 h (27.4 s for the
+60-cell case alone); after 4 h it was on valve 5.
+
+**Root causes (measured, each with the fix).**
+1. *A see-saw in the killed column (most of the DP_LIMIT rejects in the first 1.5 h).* Behind a gas-lift valve passing annulus water, the
+   liquid-full tubing cells (α_g = 0) flow up co-currently, so the correlation closure runs on the gassy reference stream scaled to the
+   cell's tiny j; the drift then exceeds the cap and the lagged density correction Δρ = ρ_corr − ρ_m (§11.1, meant for a tuned holdup at 1)
+   took about −8 lbm/ft³ in a band of cells. The column lightened, the flow reversed, the correction dropped to 0 (no longer co-current),
+   the column fell back: ±70 psi at the faces above valves 3 and 4 every other step. **Fix (engine `_prep`):** the correction is weighted by
+   the cell's lagged gas flux against the reference stream's, w_g = smoothstep(j̄_g / (0.5 v_sg)) (`DRHO_JG` 0.5): 1 at a steady state where
+   the stream is the produced stream (G1–G7 unchanged to the printed digit with this fix alone), 0 in a cell without gas.
+2. *Blind step growth into the pressure-change limit (most of the rest).* A liquid front rising through the gas column changes the
+   pressures at a rate proportional to Δt; the step grew by 1.5 per step into the 2 % limit and was halved back (ratios 1.07–1.26). **Fix
+   (engine `step`):** the growth factor is min(1.5, max(0.5, 0.8 / r_prev)) when the last accepted step's largest relative change r_prev was
+   within the limit (`DP_TARGET` 0.8; a change accepted above the limit — not Δt-driven, §11.1 — is ignored); r_prev is in the snapshot
+   (`dpRatio`, additive) so a restored run continues bit-identically (X10, X17).
+3. *Two Newton cycles that the new trajectories exposed (one NEWTON reject in welldyn-lift LFX, a STEP_FAIL in LF15 while tuning).*
+   (a) At a small choke Δp the choke slope ∝ 1/√Δp is near-singular; a full Newton step carried the wellhead flux through zero onto the
+   no-reverse-flow branch and the iteration cycled. **Fix:** with a choke boundary, a Newton update clips the flowing wellhead flux at a
+   tenth of its value (the other unknowns take the full step). (b) The damping 0.5 was dropped whenever one iterate looked converging,
+   re-launching the cycle. **Fix:** the damping stays at 0.5 once the iteration has cycled twice (0.25 was tried: too slow for a liquid
+   slug transient — LF15 ran out of iterations).
+4. *The step is CFL-limited for most of the run.* After the kick-off every step is set by the CFL (measured: 100 % of the steps after 3.5 h):
+   gas velocities of 25–70 ft/s in the 125–143 ft cells near the top, and the 58 ft cell where valve 1's forced break splits a survey
+   segment. **Change:** the default Courant number 0.5 → 0.8 (`CFL_DEF`; WD-D7, §3.1, §4.6 updated). The first-order donor scheme is
+   monotone up to 1 and less diffusive closer to it; the a-posteriori phase-velocity check (1.0) and the negative-mass check still reject a
+   step that overshoots. 0.9 was measured too: more CFL / DP rejects and no fewer steps than 0.8.
+
+Not changed: the valve model and `TAU_VALVE` (20 s, ASSUMED, provisional — see the lag check below), the annulus model, the valve
+throughput law; the unloading sequence and transfer times are physics of the model, not numerics: valve 2 / 3 / 4 / 5 at 1.66 / 2.25 /
+2.94 / 3.72 h before the fixes and 1.67 / 2.25 / 2.94 / 3.75 h after (60 cells), the same on 40 / 80 cells within ±0.1 h.
+
+**The seven perturbed LF27 runs** (balance level 2,430 ft MD unless stated, 60 cells, q_inj 800 Mscf/d; 4 h; wall time on this container,
+one run at a time; 4.6 numbers from the same script on the 4.6 tree):
+
+| Run | 4.6 rejects (DP / MASS_NEG / CFL) | 4.6 wall | 4.6.1 rejects (DP / MASS_NEG / CFL) | 4.6.1 wall | 4.6.1 steps | valve 6 reached | q_L at 6 h (valve 6) |
+|---|---|---|---|---|---|---|---|
+| base | 1,006 / 57 / 4 | 27.4 s | 108 / 7 / 2 | 12.3 s | 2,381 | 4.66 h | 1,125 STB/d |
+| level 2,460 | 547 / 39 / 12 | 20.4 s | 125 / 13 / 2 | 11.9 s | 2,342 | 4.59 h | 1,125 |
+| 59 cells | 1,227 / 55 / 9 | 27.8 s | 121 / 7 / 2 | 11.9 s | 2,389 | 4.66 h | 1,125 |
+| 61 cells | 1,117 / 45 / 5 | 28.1 s | 126 / 7 / 2 | 12.1 s | 2,343 | 4.58 h | 1,125 |
+| q_inj 810 | 489 / 41 / 8 | 20.9 s | 133 / 2 / 2 | 12.3 s | 2,424 | 4.61 h | 1,127 |
+| 80 cells | 560 / 73 / 3 | 33.0 s | 114 / 17 / 1 | 17.9 s | 2,759 | 4.69 h | 1,120 |
+| 40 cells | 658 / 25 / 3 | 13.8 s | 96 / 9 / 11 | 7.1 s | 2,066 | 4.52 h | 1,135 |
+
+(4.6 wall times other than the base row were measured with another run on the machine — a few per cent high.) DP_LIMIT rejects fall
+3.7–10× (all rejects 3.9–9.9×), wall time 1.9–2.3× (27.4 → 12.3 s on the base case); every run is still on valve 5 at 4 h and reaches
+the design's operating valve 6 at 4.5–4.7 h; at 6 h every run is lifting from valve 6 at 1,120–1,135 STB/d, casing 1,078–1,084 psig,
+against the nodal 1,181 STB/d (−3.9 … −5.2 %). The difference is expected: the nodal solve injects at its balance point (6,757 ft MD),
+the installed operating valve is at 6,270 ft and the design itself reports it passes 563 of the 800 Mscf/d asked (valve 6 `ok:false`).
+Mass balance ≤ 4e-15 cumulative in every run.
+
+**The 8 s aim for 4 h is not met** on the 60-cell example (12.3 s; 7.1 s on 40 cells). After the fixes the step is CFL-limited and costs
+≈ 5 ms, ≈ 70 % of it in the PVT calls of `_prep` (≈ 250 property evaluations per step: the cell flash at p and p + 1 psi, the reference
+stream and the correlation call per cell). Measured upper bounds of two caches (not shipped): reusing ∂V/∂p within 0.5 % of p and the
+reference-stream props within 0.5 % together −17 % (≈ 10 s) — they need snapshot fields and approximate the compressibility; passing the
+reference props to `WTS_flowline_gradAt` would need an additive argument in the shared flowline engine (and a re-pin of its help
+`reviewedSrc`). Merging the forced-break sliver cell (58 ft) would gain a few per cent. Left for a follow-up.
+
+**Valve lag.** `TAU_VALVE` is unchanged (20 s, ASSUMED, provisional with `gl_valves`). It was added in §11.7 because one of the seven runs
+failed NEWTON without it; with the fixes above it is no longer needed for robustness: with τ = 1 s all seven runs complete 5 h, reach
+valve 6 at 4.46–4.63 h (20 s: 4.52–4.69 h) with 70–119 DP_LIMIT rejects (5 h) and lift from it at 1,126–1,131 STB/d. Whether the lag
+stays (a valve's response time) is a model decision, not a numerical one; it is kept so 4.6 runs keep their valve behaviour.
+
+**Gates (built page).** `welldyn-validate --html` (gate, checks, timing): D17 PASS; 23 / 23 checks pass, X11 skipped; G1 +0.064 % /
+−0.017 %, G2 +0.004 % / −0.001 %, G3 +0.245 % / −0.043 %, G4 +0.420 % / −0.063 %, G5 +0.783 % / −0.076 %, G6 −0.028 % / +0.012 %, G7
++0.264 % / −0.037 % (4.6: +0.244 / +0.419 / +0.782 for G3–G5, the rest identical); X4 ≤ 3.2e-15; X6 123.4 s (tolerance 130; 4.6 121.9).
+Timing rows all inside their fail lines (glUnload 5 h 8.7 s, 68 rejects; cycleTimer 12 h 16.8 s — 28 s at 4.6 — with 369 rejects,
+248 at 4.6; the §5.6 misses of §11.4 / §11.5 otherwise as before). Smoke 347 / 347. Tests: welldyn-engine 32, -lift 29 (new LF28), -gate 9, -int 7, -page 24, -rec 16, -res 12, -validate 7, -view 15 — all pass on the
+built page. New **LF28** (integration): the example with its designed valves from the balance level — no correlation Δρ in a liquid-full
+cell during the first 30 min, ≤ 300 DP_LIMIT / ≤ 400 rejects and no NEWTON in 4 h, the valves uncover 2 → 6 in time order and the
+operating valve 6 is reached and lifting by 5.5 h, mass balance.
+
+**Help.** The `welldyn` guide states no unloading numbers ("run longer to unload fully" stays true) and the `gl-d` shot (4 h, Lift chart)
+shows the same valve sequence and casing pressure at 4 h (still valve 5): not re-taken (images stay within the 8.27 MB cap unchanged).
 
 ---
 

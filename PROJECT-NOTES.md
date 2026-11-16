@@ -5,6 +5,18 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 4.6.1 (draft)
+
+- **Well Dynamics gas-lift unloading (lane `wdgl`, branch `f461/wdgl`; plan docs/WELL-DYNAMICS-PLAN.md §11.8).** Root causes of the
+  4.6 step rejections fixed in `49-calc-wd-engine.js`: the drift-cap density correction is weighted by the cell's gas flux (a liquid-full
+  cell of the killed column took the gassy reference's −8 lbm/ft³ and the column see-sawed ±70 psi step to step); the step grows to 0.8
+  of the pressure-change limit of the last step instead of into it (`dpRatio` in the snapshot); a Newton step no longer carries a flowing
+  wellhead flux through zero at a choke, and the damping stays on once the iteration cycled; default CFL 0.5 → 0.8. The Well Performance
+  Gas lift example (seven perturbed runs): DP_LIMIT rejects per 4 h 489–1,227 → 96–133, wall time for 4 h 14–33 s → 7–18 s (base case
+  27.4 → 12.3 s; the 8 s aim is not met on 60 cells — CFL-limited steps, ~70 % of a step in PVT calls), valve 6 (the design's operating
+  valve) reached at 4.5–4.7 h, lifting from it at 1,120–1,135 STB/d at 6 h against the nodal 1,181 (the nodal injects deeper, at its
+  balance point). G1–G7, X4 and every welldyn test pass; new test welldyn-lift LF28. The help shot gl-d is unchanged.
+
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 
 App and App Store version 4.6 (`RELEASE_NOTES[0]` v4.6, dated 2026-11-14, both platforms, title "Well Dynamics: transient well

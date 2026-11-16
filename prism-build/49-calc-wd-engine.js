@@ -121,6 +121,9 @@
     // drift-flux constants (Shi et al. 2005 form; "to verify" — Q9, provisional)
     var DF = { A: 1.2, B: 0.3, Fv: 1, a1: 0.06, a2: 0.21, m0: 1.27, n1: 0.24, n2: 1.08, CK: 75, Cw: 0.008 };
     var J_LO = 0.05, J_HI = 0.10;
+    var CFL_DEF = 0.8;                       // default Courant number (WD-D7 0.5 → 0.8 in 4.6.1, plan §11.8; the a-posteriori check stays at 1.0)
+    var DP_TARGET = 0.8;                     // the step grows to bring the last relative pressure change to 0.8 of the limit (4.6.1, §11.8)
+    var DRHO_JG = 0.5;                       // the corr density difference is full above j_g = 0.5 v_sg of the reference (4.6.1, §11.8)
     var VD_CAP = 20;                         // ft/s, base of the drift cap (§11.1)            // ft/s, blend window of the corr closure (C1)
     var SETTLE = { vs0: 0.05, dRho: 15, rz: 2.39 };      // ft/s, lbm/ft³, Richardson-Zaki exponent (ASSUMED)
     var FALLBACK_V = 0.5;                    // ft/s film fall-back velocity (ASSUMED)
@@ -447,7 +450,7 @@
         this.bal = { m0: { G: 0, O: 0, W: 0, I: 0 } };
         this.prov = {};
         this.exts = [];
-        this.dtPrev = 0;
+        this.dtPrev = 0; this.dpRatioPrev = 0;
         this.ended = false;
         this.src = { G: f64(n), O: f64(n), W: f64(n), I: f64(n), F: f64(n) };
         this.tmp = { p: f64(n + 1), Q: f64(n + 1), Q2: f64(n + 1), FG: f64(n + 1), FO: f64(n + 1), FW: f64(n + 1), FI: f64(n + 1), FF: f64(n + 1),
@@ -503,7 +506,7 @@
             fallback: opts.fallback === true, settle: opts.settle !== false,
             loading: { belfroid: !!(opts.loading && opts.loading.belfroid) },
             compliance: { pipe_psi: _fin(+(opts.compliance || {}).pipe_psi) ? +opts.compliance.pipe_psi : 3e-6, cwMin_psi: _fin(+(opts.compliance || {}).cwMin_psi) ? +opts.compliance.cwMin_psi : 3e-6 },
-            order: opts.order === 2 ? 2 : 1, cfl: _fin(+opts.cfl) ? _clamp(+opts.cfl, 0.05, 1) : 0.5, dtMax: _fin(+opts.dtMax) ? Math.max(0.01, +opts.dtMax) : 60,
+            order: opts.order === 2 ? 2 : 1, cfl: _fin(+opts.cfl) ? _clamp(+opts.cfl, 0.05, 1) : CFL_DEF, dtMax: _fin(+opts.dtMax) ? Math.max(0.01, +opts.dtMax) : 60,
             dtMin: _fin(+opts.dtMin) ? Math.max(1e-6, +opts.dtMin) : 1e-3, dpMaxFrac: _fin(+opts.dpMaxFrac) ? _clamp(+opts.dpMaxFrac, 1e-4, 0.5) : 0.02,
             picard: { maxSweeps: _clamp(Math.round(_fin(+(opts.picard || {}).maxSweeps) ? +opts.picard.maxSweeps : 3), 1, 10), tolQ: _fin(+(opts.picard || {}).tolQ) ? +opts.picard.tolQ : 1e-6,
                 tolQrel: _fin(+(opts.picard || {}).tolQrel) ? +opts.picard.tolQrel : 1e-4 },
@@ -617,7 +620,16 @@
                         // the momentum takes the correlation's density difference (lagged, §11.1): at steady state the column weighs what
                         // the march weighs while the transported gas fraction is the capped one
                         var cap = VD_CAP + 2 * Math.abs(qa);
-                        if (vsg > 0 && (g.hl >= 1 - 1e-12 || X.vdc[c] > cap)) { X.vdc[c] = cap; X.drho[c] = _fin(g.rhoS) ? g.rhoS - cs.rhoM[c] : 0; }
+                        // The density difference describes a cell that carries the reference stream's gas: it is weighted by the cell's
+                        // lagged gas flux against the stream's (w_g = smoothstep(j_g / (0.5 v_sg)), 1 at a steady state where the stream IS
+                        // the produced stream). A liquid-full cell of a killed well (no gas, j_g = 0) flowing upward behind a gas-lift valve
+                        // took the full −8 lbm/ft³ of the gassy reference while it flowed up and none when the flow reversed: the column
+                        // see-sawed step to step, ±70 psi, the DP_LIMIT rejects of the unloading (4.6.1, plan §11.8)
+                        if (vsg > 0 && (g.hl >= 1 - 1e-12 || X.vdc[c] > cap)) {
+                            X.vdc[c] = cap;
+                            var jgc = 0.5 * (Math.max(0, fs.jg[c]) + Math.max(0, fs.jg[c + 1])), wg = _ss(jgc / (DRHO_JG * vsg));
+                            X.drho[c] = _fin(g.rhoS) ? wg * (g.rhoS - cs.rhoM[c]) : 0;
+                        }
                         else X.drho[c] = 0;
                     }
                 }
@@ -1223,7 +1235,12 @@
             if (Array.isArray(evs)) for (var ej = 0; ej < evs.length; ej++) { var ev = Object.assign({ src: 'controller' }, evs[ej], { t: S.t }); this._apply(ev); applied.push(ev); }
         }
         // step size
-        var dt = Math.min(o.dtMax, this.dtPrev > 0 ? 1.5 * this.dtPrev : 1, this._cflDt());
+        // growth: 1.5× the last step, and no more than brings the last step's largest relative pressure change to DP_TARGET of the limit
+        // (a Δt-driven change grows with Δt; growing blindly by 1.5 into the limit and halving back was most of the DP_LIMIT rejects of
+        // a liquid front rising through a gas column — 4.6.1, plan §11.8); a change accepted above the limit (not Δt-driven) is ignored
+        var grow = 1.5, rP = this.dpRatioPrev;
+        if (rP > 0 && rP <= 1) grow = Math.min(grow, Math.max(0.5, DP_TARGET / rP));
+        var dt = Math.min(o.dtMax, this.dtPrev > 0 ? grow * this.dtPrev : 1, this._cflDt());
         var tEv = this.pend.length ? this.pend[0].t : Infinity, landing = false;
         if (S.ctl.strokeLeft_s > 0) dt = Math.min(dt, Math.max(S.ctl.strokeTime_s / 5, 1e-3), S.ctl.strokeLeft_s);
         if (_fin(+dtReq) && +dtReq > 0) dt = Math.min(dt, +dtReq);
@@ -1307,10 +1324,11 @@
         var P_ = T.p, Q_ = T.Q;
         for (var k = 0; k <= n; k++) { P_[k] = fs.p[k]; Q_[k] = fs.Q[k]; }
         var closed = ch.mode === 'closed', fixedP = ch.mode === 'fixed' ? this.C.thpFix + PATM : null, lineBC = ch.mode === 'line';
+        var chokeBC = !closed && fixedP == null && !lineBC;
         var self = this, conv = false, it, maxIt = 30, MS = this.k;
         var meas = function (FG, FO, FW, FI) { return (ch.mode === 'gas' || ch.mode === 'gasNozzle') ? (FG / MS.G + FI / MS.I) * 86.4 : (FO / MS.O + FW / MS.W) * 86400; };
         var basis = function (FG, FO, FW) { return self.gasWell() ? FG / MS.G * 86.4 : (FO / MS.O + FW / MS.W) * 86400; };
-        var lastNorm = Infinity, lastMx = 0; W.cyc = false;
+        var lastNorm = Infinity, lastMx = 0; W.cyc = false; W.ncyc = 0;
         for (it = 0; it < maxIt; it++) {
             // inflow at p0 and its slope
             var p0 = P_[0], dp0 = Math.max(1e-3, 1e-6 * p0);
@@ -1388,7 +1406,9 @@
             }
             // damped update: no pressure below 1 psia, at most a 30 % change of a pressure per iteration; halved when the iteration
             // cycles (a non-smooth face flux: a donor or branch switch near Q = 0)
-            var lam = it >= 3 && lastMx > 0 && W.cyc ? 0.5 : 1, mx = 0, mq = 0;
+            // the damping stays on once the iteration has cycled twice: a full step taken whenever one iterate looked converging re-launched
+            // the cycle across a near-singular choke slope (q ∝ √Δp at a small choke Δp — 4.6.1, §11.8)
+            var lam = it >= 3 && lastMx > 0 && (W.cyc || W.ncyc >= 2) ? 0.5 : 1, mx = 0, mq = 0;
             for (var k2 = 0; k2 <= n; k2++) {
                 var dpk = W.dp[k2];
                 if (!_fin(dpk)) return { ok: false, code: 'NEWTON' };
@@ -1396,9 +1416,13 @@
                 if (Math.abs(dpk) * lam > lim) lam = lim / Math.abs(dpk);
                 if (P_[k2] + lam * dpk < 1) lam = Math.min(lam, 0.5 * (P_[k2] - 1) / Math.max(1e-12, -dpk));
             }
+            // a choke passes no reverse flow: a Newton step that would carry a flowing wellhead flux through zero lands at a tenth of it
+            // instead (its face function switches branch at Q = 0 and the iteration cycled across the kink — 4.6.1, plan §11.8)
+            var qnFloor = chokeBC && Q_[n] > 0 ? 0.1 * Q_[n] : -Infinity;
             for (var k3 = 0; k3 <= n; k3++) {
                 P_[k3] += lam * W.dp[k3];
                 if (k3 >= 1) Q_[k3] += lam * W.dQ[k3];
+                if (k3 === n && Q_[n] < qnFloor) Q_[n] = qnFloor;
                 var ap = Math.abs(W.dp[k3]); if (ap > mx) mx = ap;
                 if (k3 >= 1) { var aq = Math.abs(W.dQ[k3]) / Math.max(Math.abs(Q_[k3]), 1e-3); if (aq > mq) mq = aq; }
             }
@@ -1409,7 +1433,7 @@
             // the plan's pressure tolerance (0.01 psi) once Newton stalls on a non-smooth flux: the small volume residual left is carried
             // by the (V^content − V)/Δt term of the next step; the mass balance is exact either way (the transport uses the final fluxes)
             if (it >= 4 && mx <= 0.01) { conv = true; this.stats.loose = (this.stats.loose || 0) + 1; break; }
-            W.cyc = it >= 1 && mx > 0.5 * lastMx;
+            W.cyc = it >= 1 && mx > 0.5 * lastMx; if (W.cyc) W.ncyc++;
             lastMx = mx;
             lastNorm = norm;
         }
@@ -1470,7 +1494,7 @@
             // round-off negatives (within 1e-9 of the cell's mass) are set to zero and booked apart (S.balance.clamp)
             for (var i3 = 0; i3 < n; i3++) if (NM[i3] < 0) { clamp[cc] += -NM[i3]; NM[i3] = 0; }
         }
-        return { ok: true, clamp: clamp, pn: P_[n], iters: it + 1, sweeps: it + 1, massErr: massErr, chMode: ch.mode, regime: ch.regime, y: ch.y, yc: ch.ycNow };
+        return { ok: true, ratio: ratio, clamp: clamp, pn: P_[n], iters: it + 1, sweeps: it + 1, massErr: massErr, chMode: ch.mode, regime: ch.regime, y: ch.y, yc: ch.ycNow };
     };
     P._measureScale = function () { var S = this.state; return this.gasWell() ? S.surface.qg : S.surface.qL; };
     P._basisOf = function (T) { var k = this.k, n = this.n; return this.gasWell() ? (T.FG[n] / k.G) * 86400 / 1000 : (T.FO[n] / k.O + T.FW[n] / k.W) * 86400; };
@@ -1499,7 +1523,7 @@
         }
         // time
         S.t = tLand != null ? tLand : t0 + dt;
-        S.dt = dt; S.n++; this.dtPrev = dt;
+        S.dt = dt; S.n++; this.dtPrev = dt; this.dpRatioPrev = _fin(res.ratio) ? res.ratio : 0;
         // the stroke
         var ctl = S.ctl;
         if (ctl.strokeLeft_s > 0) {
@@ -1788,7 +1812,7 @@
         this.exts.forEach(function (x) { ext[x.key] = typeof x.e.snapshot === 'function' ? x.e.snapshot(x.ctx) : JSON.parse(JSON.stringify(x.ctx || null)); });
         var L = this.labels, St = this.steady, line = this.line;
         return {
-            kind: 'wd-snap', v: 1, engine: VERSION, engineId: ENGINE_ID, mHash: this.mHash, n: this.n, t: S.t, steps: S.n, dtPrev: this.dtPrev,
+            kind: 'wd-snap', v: 1, engine: VERSION, engineId: ENGINE_ID, mHash: this.mHash, n: this.n, t: S.t, steps: S.n, dtPrev: this.dtPrev, dpRatio: this.dpRatioPrev,
             cells: { mG: _arr(cs.mG), mO: _arr(cs.mO), mW: _arr(cs.mW), mI: _arr(cs.mI), mF: _arr(cs.mF), T: _arr(cs.T), p: _arr(cs.p), sigF: _arr(cs.sigF), vc: _arr(cs.vc) },
             faces: { Q: _arr(fs.Q), jg: _arr(fs.jg), jo: _arr(fs.jo), jw: _arr(fs.jw), xI: _arr(fs.xI), vd: _arr(fs.vd), c0: _arr(fs.c0), w: _arr(fs.w), p: _arr(fs.p),
                 FG: _arr(fs.FG), FO: _arr(fs.FO), FW: _arr(fs.FW), FI: _arr(fs.FI), FF: _arr(fs.FF) },
@@ -1820,7 +1844,7 @@
         if (c.vc) _put(cs.vc, c.vc);
         _put(fs.Q, f.Q); _put(fs.jg, f.jg); _put(fs.jo, f.jo); _put(fs.jw, f.jw); _put(fs.xI, f.xI); _put(fs.vd, f.vd); _put(fs.c0, f.c0); _put(fs.w, f.w); _put(fs.p, f.p);
         _put(fs.FG, f.FG); _put(fs.FO, f.FO); _put(fs.FW, f.FW); _put(fs.FI, f.FI); _put(fs.FF, f.FF);
-        S.t = +snap.t; S.n = +snap.steps || 0; this.dtPrev = +snap.dtPrev || 0; S.dt = this.dtPrev;
+        S.t = +snap.t; S.n = +snap.steps || 0; this.dtPrev = +snap.dtPrev || 0; this.dpRatioPrev = +snap.dpRatio || 0; S.dt = this.dtPrev;
         var k = snap.ctl || {};
         S.open = k.open ? 1 : 0; S.bean64 = +k.bean64 || 0; S.beanEff = +k.beanEff || 0; S.psep_psig = _fin(+k.psep_psig) ? +k.psep_psig : S.psep_psig; S.tOpen = +k.tOpen || 0; S.qRef = +k.qRef || 0;
         S.ctl.strokeLeft_s = +k.strokeLeft_s || 0; S.ctl.beanFrom = +k.beanFrom || 0; S.ctl.beanTo = +k.beanTo || 0; S.ctl.strokeTime_s = _fin(+k.strokeTime_s) ? +k.strokeTime_s : S.ctl.strokeTime_s;

@@ -153,7 +153,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN10 time step: dt ≤ CFL on the phase / kinematic speeds (0.5) and ≤ dtMax; rejected steps halve; STEP_FAIL ends the run with a flag',
+    name: 'EN10 time step: dt ≤ CFL on the phase / kinematic speeds (default 0.8, 4.6.1) and ≤ dtMax; rejected steps halve; STEP_FAIL ends the run with a flag',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const g = G(ctx), sim = g.WTS_wd_engine.create(W.FIX.gasVert, {});
