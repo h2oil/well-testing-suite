@@ -429,7 +429,7 @@ T.push({
       w.PRiSM_dfit_cal = pl();
       assert(/\((high|medium|low), provisional/.test(U.railRows().find((r) => r[0] === 'Closure')[1]) && U.railRows().find((r) => r[0] === 'Labels')[1] === 'provisional — not yet calibrated', 'placeholder: closure provisional');
       // a table that calibrates every kind drops every suffix, but the type stays provisional until it is calibrated itself
-      const all = { p: 0.95, lo: 0.9, hi: 0.98, n: 100, met: true, target: null };
+      const all = { p: 0.95, lo: 0.9, hi: 0.98, n: 100, met: true, target: { p: 0.9, lo: 0.85 } };   // a met cell carries its target (a target-less cell is never calibrated)
       w.PRiSM_dfit_cal = pl({ calibrated: true, hitRate: { single: { high: all, medium: all, low: all }, range: { medium: all, low: all } },
         labels: { closure: 'per-cell', isip: true, pi: true, stepDown: true, grade: true }, typeCalibrated: false });
       assert(!/provisional/.test(U.keyLine()) && !U.railRows().some((r) => r[0] === 'Labels'), 'all calibrated: no provisional suffix: ' + U.keyLine());

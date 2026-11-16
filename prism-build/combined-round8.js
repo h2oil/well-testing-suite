@@ -23088,7 +23088,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var calTab = G.PRiSM_dfit_cal, calibrated = false, hitRate = null;
         if (calTab && calTab.calibrated === true && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
             var hrr = calTab.hitRate[mode][conf];
-            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
+            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true && hrr.target != null) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
         }
         return {
             ok: true, mode: mode, value: value, range: range, families: fams, tau: _r(tau, 2), metrics: { w: _r(w, 2), s: _r(s, 2), g: _r(g, 2) },
@@ -25379,7 +25379,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // a confidence (its benchmark agreement is low)
     var PROV = 'provisional — not yet calibrated';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true); }
+    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true && h.target != null); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _pl(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', provisional' : l; }
     function _plLong(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', ' + PROV : l; }
@@ -30208,7 +30208,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     var PROV = 'provisional — not yet calibrated';
     var TYPE_NOTE = 'provisional — not yet calibrated: on the synthetic benchmark the type often differs from the true leak-off mechanism; read it with the evidence below';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && _isNum(h.p)) ? h : null; }
+    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && h.target != null && _isNum(h.p)) ? h : null; }
     function _clCal(mode, l) { return !!_clHr(mode, l); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _typeCal() { var c = _cal(); return !!(c && c.typeCalibrated === true); }

@@ -8129,7 +8129,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 d71396d5,view-p 780 1688 64d4afab",
+    "releasenotes": "view-d 1280 800 e5e27a7e,view-p 780 1688 de74cab4",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -8152,7 +8152,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 227;
-  M.bytes = 8245988;   // total size of the image files (the offline download label)
+  M.bytes = 8247516;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8770,7 +8770,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: 'a681e95b', units: 'field',
+  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: '1c073211', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -32282,7 +32282,7 @@ pipesz: {
                     "lo": 0.2167,
                     "hi": 0.3277,
                     "n": 242,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             },
@@ -32304,7 +32304,7 @@ pipesz: {
                     "lo": 0.6311,
                     "hi": 0.818,
                     "n": 83,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             }
@@ -32490,7 +32490,7 @@ pipesz: {
             "note": "hitRate = out of fold (each fold labelled with thresholds chosen on the other folds); inSample = the shipped thresholds on all cases; uncalibrated = the 3.4a rule"
         },
         "date": "2026-11-16",
-        "appVersion": "4.6"
+        "appVersion": "4.6.1"
     });
 })();
 

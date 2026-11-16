@@ -3163,7 +3163,7 @@
         var calTab = G.PRiSM_dfit_cal, calibrated = false, hitRate = null;
         if (calTab && calTab.calibrated === true && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
             var hrr = calTab.hitRate[mode][conf];
-            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
+            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true && hrr.target != null) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
         }
         return {
             ok: true, mode: mode, value: value, range: range, families: fams, tau: _r(tau, 2), metrics: { w: _r(w, 2), s: _r(s, 2), g: _r(g, 2) },

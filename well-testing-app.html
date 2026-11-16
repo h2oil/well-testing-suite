@@ -11265,11 +11265,11 @@ window.calcVDrop=function(){
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
     { ver:'v4.6.1', date:'2026-11-16', title:'Well Dynamics, DFIT and Well Performance fixes',
-      note:'Faster and steadier gas-lift unloading and a heading example in Well Dynamics, calibrated DFIT closure labels and DFIT page fixes, and faster Well Performance solves with no change to their results.',
+      note:'Faster and steadier gas-lift unloading and a heading check reproduced on a test well (not yet a page example) in Well Dynamics, calibrated DFIT closure labels and DFIT page fixes, and faster Well Performance solves with no change to their results.',
       items:[
         ['calc', 'Gas-lift unloading', 'Well Dynamics unloads the Well Performance gas-lift example with far fewer rejected time steps and in about half the time: a liquid-full cell no longer takes the density correction of the gassy stream, and the time step grows only as far as the pressure-change limit allows. The well now reaches its operating valve within about 4.7 h.'],
-        ['calc', 'Heading on a gas-lift well', 'Casing heading is reproduced on a gas-lift example with an orifice valve and a low lift-gas rate: the well cycles between stopping and unloading about every 75 min and the heading detector flags it (provisional). Natural-flow oil heading is still not reproduced. A time step that fails at a near-zero choke pressure drop is retried with the choke closed instead of stopping the run.'],
-        ['calc', 'DFIT closure labels calibrated', 'Closure labels high and medium for a single value are calibrated on 900 synthetic tests and show their hit rate (97 % and 88 % right). Range labels, ISIP, p_i, step-down, the grade and the leak-off type stay provisional.'],
+        ['calc', 'Heading on a gas-lift well', 'Casing heading is reproduced on a test gas-lift well (one orifice valve, low lift-gas rate): it cycles between stopping and unloading about every 75 min and the heading detector flags it (provisional). It is not yet offered as a page example. Natural-flow oil heading is still not reproduced. A time step that fails at a near-zero choke pressure drop is retried with the choke closed instead of stopping the run.'],
+        ['calc', 'DFIT closure labels calibrated', 'Closure labels high and medium for a single value are calibrated on 900 synthetic tests and show their hit rate (97 % and 88 % right). Low labels, range labels, ISIP, p_i, step-down, the grade and the leak-off type stay provisional.'],
         ['ux', 'DFIT page', 'The G-function plot opens on the closure window (Reset view shows the whole record); the rail labels no longer run into their values; step &#9316; shows each table once, also in the PDF; the pre-job designer sizes the shut-in for the expected outcome, with a Shut-in goal choice for radial confirmation.'],
         ['ux', 'Well Performance', 'Study results are marked &ldquo;previous inputs &mdash; re-run&rdquo; at once when the page waits for the Solve button; the all-tests comparison draws the traverses of a chosen test; solves and sensitivities run about twice as fast in the browser, with identical results.'],
         // ── ACCT:START — web only; sync-from-main.js strips this block ──
@@ -102002,7 +102002,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var calTab = G.PRiSM_dfit_cal, calibrated = false, hitRate = null;
         if (calTab && calTab.calibrated === true && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
             var hrr = calTab.hitRate[mode][conf];
-            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
+            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true && hrr.target != null) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
         }
         return {
             ok: true, mode: mode, value: value, range: range, families: fams, tau: _r(tau, 2), metrics: { w: _r(w, 2), s: _r(s, 2), g: _r(g, 2) },
@@ -104293,7 +104293,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // a confidence (its benchmark agreement is low)
     var PROV = 'provisional — not yet calibrated';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true); }
+    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true && h.target != null); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _pl(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', provisional' : l; }
     function _plLong(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', ' + PROV : l; }
@@ -109122,7 +109122,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     var PROV = 'provisional — not yet calibrated';
     var TYPE_NOTE = 'provisional — not yet calibrated: on the synthetic benchmark the type often differs from the true leak-off mechanism; read it with the evidence below';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && _isNum(h.p)) ? h : null; }
+    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && h.target != null && _isNum(h.p)) ? h : null; }
     function _clCal(mode, l) { return !!_clHr(mode, l); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _typeCal() { var c = _cal(); return !!(c && c.typeCalibrated === true); }
@@ -118943,7 +118943,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 d71396d5,view-p 780 1688 64d4afab",
+    "releasenotes": "view-d 1280 800 e5e27a7e,view-p 780 1688 de74cab4",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 3955688a,fs-1-rigup-d 982 525 625e975c,fs-3-rigup-d 982 479 d5f30ae0",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -118966,7 +118966,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 227;
-  M.bytes = 8245988;   // total size of the image files (the offline download label)
+  M.bytes = 8247516;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -119584,7 +119584,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: 'a681e95b', units: 'field',
+  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: '1c073211', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -143096,7 +143096,7 @@ pipesz: {
                     "lo": 0.2167,
                     "hi": 0.3277,
                     "n": 242,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             },
@@ -143118,7 +143118,7 @@ pipesz: {
                     "lo": 0.6311,
                     "hi": 0.818,
                     "n": 83,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             }
@@ -143304,7 +143304,7 @@ pipesz: {
             "note": "hitRate = out of fold (each fold labelled with thresholds chosen on the other folds); inSample = the shipped thresholds on all cases; uncalibrated = the 3.4a rule"
         },
         "date": "2026-11-16",
-        "appVersion": "4.6"
+        "appVersion": "4.6.1"
     });
 })();
 

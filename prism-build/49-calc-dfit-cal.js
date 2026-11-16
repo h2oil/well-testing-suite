@@ -49,7 +49,7 @@
                     "lo": 0.2167,
                     "hi": 0.3277,
                     "n": 242,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             },
@@ -71,7 +71,7 @@
                     "lo": 0.6311,
                     "hi": 0.818,
                     "n": 83,
-                    "met": true,
+                    "met": false,
                     "target": null
                 }
             }
@@ -257,7 +257,7 @@
             "note": "hitRate = out of fold (each fold labelled with thresholds chosen on the other folds); inSample = the shipped thresholds on all cases; uncalibrated = the 3.4a rule"
         },
         "date": "2026-11-16",
-        "appVersion": "4.6"
+        "appVersion": "4.6.1"
     });
 })();
 

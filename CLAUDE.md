@@ -288,7 +288,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   (wall-clock budgets); --set all --workers 4 --write calibrates (out of fold, tightening-only threshold
                                   search on recorded label evidence, 3.4a-rule labels via --base-rule) and writes 49-calc-dfit-cal.js (WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2407 unique tests by --list; welldyn-* = v4.6 / v4.6.1 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2408 unique tests by --list; welldyn-* = v4.6 / v4.6.1 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -421,7 +421,7 @@ via numbered "rounds":
    one baseline "Google" remain in www/index.html (plan §9; acct-ios tests).
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2407/2407; count with --list — `--file` matches by substring, so
+   (347/347 must pass), `node prism-build/accept-test.js --html --integration` (2408/2408; count with --list — `--file` matches by substring, so
    a per-file run must pass the full name, e.g. `--file wellperf-sens.test.js`) and
    `node prism-build/wts3d-test.js` (149 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
    `--integration` needs `NODE_OPTIONS=--max-old-space-size=6144` (the default heap runs out in the help tests);
@@ -781,8 +781,8 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   images 8.27 MB, text 392.5 kB raw / 136.5 kB gzip — a new shot or text growth needs another owner cap decision).
 - **DFIT (v3.4, 3.4a; WP8 calibration 4.6.1)** (docs/DFIT-PLAN.md §8.4, §8.7, Appendix D): `PRiSM_dfit_cal` is the WP8 table
   (900 synthetic cases, out of fold, "cal" low thresholds tightened to wLow 1 τ / R_vis 0.6): closure labels single high (97.0 %,
-  Wilson lo 91.6 %) and single medium (87.6 %, lo 81.2 %) are calibrated and show their hit rate; low cells show their measured rate
-  (single 26.9 %, range 73.5 %; no target); range medium (92.6 % of 27) misses the interval-score condition (range far wider than the
+  Wilson lo 91.6 %) and single medium (87.6 %, lo 81.2 %) are calibrated and show their hit rate; low cells are measured only
+  (single 26.9 %, range 73.5 %; no target, so met:false and the label stays provisional; 56 / 57 / 59 also require a target); range medium (92.6 % of 27) misses the interval-score condition (range far wider than the
   single-mode band) and stays "provisional — not yet calibrated"; ISIP / p_i / step-down labels and the grade stay provisional (no
   benchmark target; p_i right 23 %); the leak-off type is right in 16.4 % of the 900 cases, so it is shown without a confidence, with a
   "provisional" note and rule scores that are not probabilities; the CUSUM was checked on the 20-seed replay only (0 % false early),
@@ -809,7 +809,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 347 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 2407 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
+# Expect: "[ok] all 2408 acceptance tests passed" (run per file with --file <full name>.test.js on a small heap; help-* need 6144 MB)
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -881,10 +881,10 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2407/2407 pass (unique, --list), 207 files (accept-test.js --html --integration, run file by file at 4.6.1; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6 / v4.6.1)
+Acceptance tests:             2408/2408 pass (unique, --list), 207 files (accept-test.js --html --integration, run file by file at 4.6.1; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6 / v4.6.1)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
-                              Well performance course of 3 exercises (4.4), 227 screenshots (8,245,988 of the 8.27 MB cap at 4.6.1 — a new shot
+                              Well performance course of 3 exercises (4.4), 227 screenshots (8,247,516 of the 8.27 MB cap at 4.6.1 — a new shot
                               needs an owner cap decision); help text 392.5 kB raw / 136.5 kB gzip caps (392,332 / 136,376 bytes used at 4.6.1; 4.6 = the
                               Q21 line and Well Dynamics merged); wellperf guide complete for B (6 B card shots, wpJob action in help-shots.js), welldyn
                               guide (3 shots, welldynRun action), 17 "How do I…" tasks (wdload, wdgl in 4.6)

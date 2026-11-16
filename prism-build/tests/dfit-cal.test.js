@@ -9,6 +9,8 @@
 //       is low with the table, and medium again with the placeholder
 //   CA4 the calibration tool (dfit-validate.js calibrate): out-of-fold search on synthetic records only tightens, picks R_vis when
 //       low-R_vis medium cases are wrong, marks a missed cell met:false and refuses no fold
+//   CA5 a cell without a §8.4 target (the low labels, e.g. range low) is never calibrated: the shipped table writes met:false,
+//       and even a table that marks such a cell met:true leaves the consensus label provisional with no hit rate
 'use strict';
 
 const SH = require('./_dfit-shapes');
@@ -39,7 +41,7 @@ T.push({
       if (m === 'single' && l === 'high') want = h.p >= TG.singleHigh && h.lo >= TG.singleHighLo;
       else if (m === 'single' && l === 'medium') want = h.p >= TG.singleMedium && h.lo >= TG.singleMediumLo;
       else if (m === 'range' && l === 'medium') want = h.p >= TG.rangeMedium && !!(c.intervalScore.rangeMedium && c.intervalScore.rangeMedium.ok);
-      else want = true;
+      else want = false;                                   // low cells: no §8.4 target, never calibrated
       assert.strictEqual(h.met, want, m + ' ' + l + ' met follows the §8.4 target: ' + JSON.stringify(h));
       assert(l === 'low' ? h.target === null : !!h.target, m + ' ' + l + ' target recorded');
     });
@@ -109,13 +111,36 @@ T.push({
     const t = V.calibrate(recs, 5);
     assert(t.thresholds.rvisLow >= 0.5 && t.thresholds.rvisLow <= 0.8 && t.thresholds.wLow <= 2.5, 'R_vis tightened: ' + JSON.stringify(t.thresholds));
     assert(t.hitRate.single.medium.met === true && t.hitRate.single.medium.n === 200 && Math.abs(t.hitRate.single.medium.p - 0.9) < 1e-9, 'single medium out of fold: ' + JSON.stringify(t.hitRate.single.medium));
-    assert(t.hitRate.single.low.n === 140 && t.hitRate.single.low.met === true && t.hitRate.single.low.target === null, 'low cell measured, no target');
+    assert(t.hitRate.single.low.n === 140 && t.hitRate.single.low.met === false && t.hitRate.single.low.target === null, 'low cell measured, no target, not calibrated');
     assert(t.hitRate.range.medium.met === false, 'range medium below 0.70: missed');
     assert(t.folds.choice.every((f) => f.searched && f.rvisLow >= 0.5), 'every fold searched: ' + JSON.stringify(t.folds.choice));
     // the 3.4a rule alone already meets the targets → the least tightening (no change) is chosen
     const easy = recs.filter((r) => !(r.cons.conf === 'medium' && r.cons.Rvis < 0.6) && r.score.closure.mode === 'single');
     const t2 = V.calibrate(easy, 5);
     assert.deepStrictEqual(t2.thresholds, { wLow: 2.5, gLow: 2.5, rvisLow: 0.3 }, 'no tightening when the 3.4a rule meets the targets');
+  },
+});
+T.push({
+  name: 'CA5 a target-less cell (low, e.g. range low) reads provisional: met:false in the table, and the engine ignores met:true without a target',
+  wp: WP, opts: false,
+  run(_a, assert, ctx) {
+    const w = eng(ctx), S = w.PRiSM_dfit_synth, cal = w.PRiSM_dfit_cal;
+    [['single', 'low'], ['range', 'low']].forEach(([m, l]) => {
+      const h = cal.hitRate[m][l];
+      if (h) assert(h.target === null && h.met === false, m + ' ' + l + ' no target, not calibrated: ' + JSON.stringify(h));
+    });
+    if (!real(w.PRiSM_dfit_pipeline) || !S || !real(S.make)) return;
+    const sp = S.demoSpec('reference');
+    const go = () => w.PRiSM_dfit_pipeline(S.demo('reference'), S.inputsFor(sp.spec), S.wellFor(sp.spec),
+      { isip: null, closure: null, user: {}, aca: { origin: 'centroid', linWin: null, radWin: null, piLevel: null } }, { fast: false, seed: 1 }).consensus;
+    const c0 = go();
+    // a table whose every cell is met:true with no target (the pre-fix low-cell form): no label may read as calibrated
+    const cell = { p: 0.735, lo: 0.63, hi: 0.82, n: 83, met: true, target: null };
+    const fake = Object.assign({}, cal, { hitRate: { single: { high: cell, medium: cell, low: cell }, range: { medium: cell, low: cell } } });
+    let c;
+    try { w.PRiSM_dfit_cal = fake; c = go(); } finally { w.PRiSM_dfit_cal = cal; }
+    assert(c.mode === c0.mode && c.confidence === c0.confidence, 'same mode and confidence');
+    assert(c.calibrated === false && c.hitRate === null && /provisional rule label — not yet calibrated/.test(c.label), 'target-less cell: provisional (' + c.label + ')');
   },
 });
 

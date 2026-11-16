@@ -2982,15 +2982,17 @@ re-running the 900 cases with the table installed reproduces the offline re-labe
 |---|---|---|---|---|---|---|
 | single | high | 97.0 % | 91.6–99.0 % | 101 | ≥ 90 %, lo ≥ 85 % | met — calibrated |
 | single | medium | 87.6 % | 81.2–92.0 % | 145 | ≥ 70 %, lo ≥ 60 % | met — calibrated |
-| single | low | 26.9 % | 21.7–32.8 % | 242 | none | measured rate shown |
+| single | low | 26.9 % | 21.7–32.8 % | 242 | none | measured only (met:false) — provisional |
 | range | medium | 92.6 % | 76.6–97.9 % | 27 | ≥ 70 % **and** interval score ≤ single P10–P90 width | **missed** (interval score) — provisional |
-| range | low | 73.5 % | 63.1–81.8 % | 83 | none | measured rate shown |
+| range | low | 73.5 % | 63.1–81.8 % | 83 | none | measured only (met:false) — provisional |
 
 In sample with the shipped thresholds: single medium 88.2 % of 144, range medium 92.3 % of 26 (the rest unchanged).
 Range medium: mean interval score 108.9 psi against a mean single-mode P10–P90 width of 35.9 psi on the 2 range-medium cases that have
 single-mode cases in their stratum (25 of the 27 have none); by mechanism the gap is larger (contact-hyp ≈ 260 vs 128, contact-exp ≈ 365
 vs 162, height recession ≈ 575 vs 114 psi), so the condition is missed under any reading of "same strata" and range labels stay
-provisional. Mean interval score over all 110 range cases: 584.5 psi.
+provisional. Mean interval score over all 110 range cases: 584.5 psi. Low cells have no §8.4 target, so the generator writes them
+met:false (review fix, 4.6.1) and the engine and the page also require a target before a cell counts as calibrated: a low label (single
+or range) keeps the provisional wording and shows no hit rate.
 
 **Not calibrated by this benchmark (stay provisional):** ISIP labels (ISIP right 83.3 % of 900, no label target), p_i labels (23.1 % of
 662 right), step-down labels, the grade (built on the p_i label) and the leak-off type (16.4 % of 900 right; top confusions normal →

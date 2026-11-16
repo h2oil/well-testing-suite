@@ -7,6 +7,11 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ## 2026-11-16 — v4.6.1 release: Well Dynamics, DFIT and Well Performance fixes
 
+Review-fix round: DFIT closure cells without a §8.4 target (single low, range low) are written met:false by dfit-validate.js and
+56 / 57 / 59 also require a target before a cell counts as calibrated, so low labels stay provisional (dfit-cal CA5); 49-calc-dfit-cal.js
+regenerated with --set all --write (same rates, appVersion 4.6.1); the release notes say low and range labels stay provisional and that
+the casing-heading case is a test well, not yet a page example; PRiSM guide re-reviewed (source hash 1c073211).
+
 App and App Store version 4.6.1 (`RELEASE_NOTES[0]` v4.6.1, dated 2026-11-16, both platforms, title "Well Dynamics, DFIT and Well Performance
 fixes"; one web-only accounts item inside ACCT markers with platform:'web'; both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks
 `VERSION_BASE`, the static `#appVersionLabel` fallback). Six lanes from 939f9d8 merged with --no-ff on f461/int in the order acctflake,
@@ -18,8 +23,8 @@ wpperf, dfitui, dfitcal, wdhead, wdgl; generated files regenerated (rounds 1–1
   added LF28 — wdgl's gas-lift unloading test is LF29. The wdgl engine changes and the wdhead choke hold merged without conflict; on the
   combined engine the casingHeading scenario (5 h) takes 12.8 s / 3,794 steps / 306 rejects (31.6 s / 458 rejects on the wdhead tree),
   X19 still flags heading (5 pairs, main period 75.4 min, THP 100–252 psig) — still over the 10 s preset limit, so no page preset.
-  Release-notes help shot re-taken (images 8,245,988 bytes of the 8.27 MB cap). Gates on the built page: node --check; smoke 347/347;
-  accept-test --html --integration file by file 2407/2407 (207 files); welldyn-validate --html --gate --check --time ok (D17 PASS,
+  Release-notes help shot re-taken (images 8,247,516 bytes of the 8.27 MB cap after the review-fix round). Gates on the built page: node --check; smoke 347/347;
+  accept-test --html --integration file by file 2408/2408 (207 files; review-fix round: dfit-cal CA5 added); welldyn-validate --html --gate --check --time ok (D17 PASS,
   24/24, X11 skipped; every timing row inside its fail line); wellperf-validate --html --gate --check --time ok (D17 PASS, 62/62; 9 relative
   ms caps reported over after the speed-up); dfit-validate --quick ok (replay / spread / multi-start; the tiny-subset single high / medium
   lower bounds as at 3.4a); help-shots / build-user-guide / publish-site --check ok; ux-layout-check --web ok (135); wts3d-test 147/149 (the two
@@ -49,7 +54,7 @@ wpperf, dfitui, dfitcal, wdhead, wdgl; generated files regenerated (rounds 1–1
   sharding, identical records to a serial run; ≈ 1.5 min for the 900 cases) generated `49-calc-dfit-cal.js` (calibrated:true, out of fold
   by seed, 5 folds). The 3.4a rule missed single medium (65.7 % of 216); a tightening-only search of the "cal" low thresholds chose
   wLow 1 τ / gLow 2.5 τ / R_vis 0.6, giving out of fold single high 97.0 % (lo 91.6 %, n 101) and single medium 87.6 % (lo 81.2 %, n 145) —
-  both met and now shown with their hit rate; lows carry measured rates (single 26.9 %, range 73.5 %); range medium (92.6 % of 27) misses
+  both met and now shown with their hit rate; lows are measured only (single 26.9 %, range 73.5 %; no target, so met:false — review fix: they stay provisional); range medium (92.6 % of 27) misses
   the interval-score condition and stays provisional; ISIP / p_i / step-down labels, the grade and the leak-off type (16.4 % right) stay
   provisional (`labels.*` / `typeCalibrated` false). 56 reads the thresholds and per-cell `met`; 57 / 59 / triage keep ISIP, p_i and grade
   provisional; help wording (prism guide example, dfit-closure, FAQ dfitlabel) and the guide stamp updated; new tests/dfit-cal.test.js

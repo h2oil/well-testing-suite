@@ -2137,7 +2137,7 @@
     // a confidence (its benchmark agreement is low)
     var PROV = 'provisional — not yet calibrated';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true); }
+    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true && h.target != null); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _pl(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', provisional' : l; }
     function _plLong(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', ' + PROV : l; }

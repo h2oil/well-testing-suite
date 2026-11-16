@@ -1943,7 +1943,7 @@
     var PROV = 'provisional — not yet calibrated';
     var TYPE_NOTE = 'provisional — not yet calibrated: on the synthetic benchmark the type often differs from the true leak-off mechanism; read it with the evidence below';
     function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
-    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && _isNum(h.p)) ? h : null; }
+    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && h.target != null && _isNum(h.p)) ? h : null; }
     function _clCal(mode, l) { return !!_clHr(mode, l); }
     function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
     function _typeCal() { var c = _cal(); return !!(c && c.typeCalibrated === true); }

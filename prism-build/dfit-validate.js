@@ -266,7 +266,7 @@ function calibrate(recs, folds) {
     if (mode === 'single' && lb === 'high') { target = { p: TARGETS.singleHigh, lo: TARGETS.singleHighLo }; met = h.p >= target.p && h.lo >= target.lo; }
     else if (mode === 'single' && lb === 'medium') { target = { p: TARGETS.singleMedium, lo: TARGETS.singleMediumLo }; met = h.p >= target.p && h.lo >= target.lo; }
     else if (mode === 'range' && lb === 'medium') { target = { p: TARGETS.rangeMedium, lo: null, intervalScore: 'no worse than the single-mode P10-P90 width of the same strata' }; met = h.p >= target.p && isChk.ok; }
-    else met = true;                                         // low labels: no §8.4 target, the measured rate is shown
+    else met = false;                                        // low labels: no §8.4 target — measured for information, never calibrated
     hitRate[mode][lb] = Object.assign({}, h, { met, target });
   });
   const range = scored.filter((r) => r.score.closure.mode === 'range').map((r) => r.score.closure.intervalScore).filter(fin);
