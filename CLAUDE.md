@@ -711,8 +711,10 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   the opt-in --inline-jobs fallback runs them in place under a 25 s budget that stops with an alert); same-site mode refuses
   any WTS_ENV but production / staging;
   no Report-Only CSP on the live site (quota); sign-up is open (ACCOUNTS_SIGNUP=open, owner 2026-11-10); the invite list WTS_INVITE_BOOTSTRAP (env) matters only with
-  ACCOUNTS_SIGNUP=invite (it also names the admins when WTS_ADMIN_EMAILS is unset); the e2e test E2 (link LinkedIn) is
-  flaky on the base branch too ("linkProvider rejected before the step-up code: cancelled", about 1 run in 3).
+  ACCOUNTS_SIGNUP=invite (it also names the admins when WTS_ADMIN_EMAILS is unset); the e2e test E2 (link LinkedIn) flake
+  ("linkProvider rejected before the step-up code: cancelled", about 1 run in 3 after E1) is fixed since 4.6.1: the sign-in
+  completion in 66 closed a step-up dialog opened while its hand-over still ran — it now closes only its own dialog (`dlg.gen`;
+  acct-oauth OA11; docs/ACCOUNTS-PLAN.md §12.4 record 4.6.1).
 - **Well Performance (v4.3, A1)** (docs/WELL-PERFORMANCE-PLAN.md §18.1.x; PROJECT-NOTES 4.3): the owner's textbooks (Q9) were not
   provided, so Hagedorn & Brown, Gray, no-slip, single-phase and average T-Z (lift), Jones-Blount-Glaze, Darcy oil / gas and LIT in m(p)
   (inflow), Turner / Coleman / Li (critical rate) and the nodal benchmark ship verified:false with the provisional label, and Beggs &

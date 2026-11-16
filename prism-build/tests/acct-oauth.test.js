@@ -468,4 +468,31 @@ module.exports = [
       click(p.q('#acct_oauth_close')); assert.strictEqual(p.q('#acct_oauth_dlg'), null);
     },
   },
+  {
+    // 4.6.1 (the e2e E2 flake, "linkProvider rejected before the step-up code: cancelled"): the tail of the sign-in completion
+    // closed whatever dialog was open when the hand-over finished, so a step-up opened in between was settled as cancelled
+    name: 'OA11 a link started while the sign-in hand-over still runs: its step-up dialog survives the completion and the link goes on', wp: WP, opts: false,
+    async run(app, assert) {
+      const fake = F.createFakeServer({});
+      const email = 'race.person@' + CONSUMER;
+      const r = await roundTrip(page({ fake }), 'google', { key: 'g-race', email }, { fake });
+      let release = null;
+      r.win.WTS_cloudSync = { afterSignIn: () => new Promise((res) => { release = res; }) };
+      r.q('#acct_oauth_consent_ok').checked = true; click(r.q('#acct_oauth_create')); await settle(30);
+      assert.strictEqual(r.A.state().status, 'signedIn', 'signed in (the session is read before the hand-over)');
+      assert.strictEqual(typeof release, 'function', 'the hand-over is still running');
+      assert.strictEqual(r.q('#acct_dlg_ov'), null, 'no sign-in dialog open');
+      let link = 'pending';
+      r.A.linkProvider('linkedin').then(() => { link = 'resolved'; }, (e) => { link = 'rejected: ' + (e && e.code); });
+      await settle(30);
+      assert(r.q('#acct_code'), 'the step-up asks for a code (a provider session carries no step-up)');
+      release(null); await settle(30);
+      assert.strictEqual(link, 'pending', 'the completion did not cancel the step-up');
+      assert(r.q('#acct_code'), 'the step-up dialog is still open');
+      typeIn(r.q('#acct_code'), fake.codeFor(email, 'code_stepup')); r.q('#acct_verify').click(); await settle(30);
+      assert.strictEqual(link, 'resolved', 'the link went on after the step-up');
+      assert.strictEqual(r.q('#acct_dlg_ov'), null, 'the step-up dialog closed');
+      assert(/linkedin/i.test(String(r.rec.assigned[r.rec.assigned.length - 1] || '')), 'location.assign to the provider');
+    },
+  },
 ];
