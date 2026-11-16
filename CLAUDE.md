@@ -204,10 +204,12 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
                                   example are verified:false / provisional (D17) and never defaults
   welldyn-validate.js           ← Well Dynamics gate: --gate (D17 method table + consistency gate G1–G7: steady run = WTS_wp_system.solve,
                                   time-means of the last 600 s, rate 2 %, BHP 1 %, THP max(1 %, 3 psi), same choke regime; fixtures gasVert,
-                                  gasHz, oilVert, oilVertTuned, gasLift, esp, oilDev), --check (X1–X18; X4 mass balance, X17 replay round trip),
-                                  --time (§5.6 budgets, fail line 2 × the WD1 baseline); --html loads the built page. Fixtures:
-                                  tests/_welldyn-wd1.js (gas / oil / horizontal / build-up / static, scenarios), tests/_welldyn-wd4.js (gasLift,
-                                  esp, glUnload / espStart / cycleTimer, GATE4); tests welldyn-{engine,gate,int,lift,page,rec,res,validate,view}
+                                  gasHz, oilVert, oilVertTuned, gasLift, esp, oilDev), --check (X1–X19; X4 mass balance, X17 replay round trip,
+                                  X19 casing heading, 4.6.1), --time (§5.6 budgets, fail line 2 × the WD1 baseline); --html loads the built page.
+                                  Fixtures: tests/_welldyn-shapes.js (frozen §3.9 file since 4.6.1, hash-pinned by welldyn-shapes: FIX gas / oil /
+                                  horizontal / build-up / static / gasLift (pinned valve rows) / esp (pinned pump) / heading, EXPECT, SCEN incl.
+                                  glUnload / espStart / cycleTimer / casingHeading, GATE4, ORDER, SHAPE, FIXL(g) variants; never edit without the
+                                  lead); tests welldyn-{engine,gate,int,lift,page,rec,res,shapes,validate,view}
   47-calc-historian.js          ← Mini WellOS historian (v3.0): WTS_historian (SQLite WASM/OPFS → sql.js/IndexedDB →
                                   IndexedDB → memory), trend viewer, table, CSV/XLSX/.sqlite export + restore; libs lazy,
                                   SHA-384 pinned, bundled for iOS in ios-additions/libs
@@ -283,7 +285,7 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   dfit-validate.js              ← DFIT benchmark: --quick (12-case subset, 20-seed replay, structural spread, multi-start), --perf
                                   (wall-clock budgets); --set all --write calibrates and writes 49-calc-dfit-cal.js (3.4b, WP8)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (347/347; 5 accounts checks of plan §12.3)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2385 unique tests by --list; welldyn-* = v4.6 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (2392 unique tests by --list; welldyn-* = v4.6 / v4.6.1 Well Dynamics; wellperf-* = v4.3 / v4.4 / v4.5 Well Performance; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
@@ -758,12 +760,15 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   on valve 5 (of 6) after 4 h (1,046–1,148 STB/d against the nodal 1,181); several §5.6 budgets are missed (flowing step ≈ 3.5 ms against
   2.5, settled shut-in step, cycleTimer 12 h ≈ 28 s) though inside the 2 × WD1 fail lines; a replay file over 5 MB thins its snapshots
   (first / last / events / marks / state changes kept, interval doubled; dropped only when even that set does not fit); recorder memory
-  projects to ≈ 59 MB for 24 h; a reload loses an unsaved run; oil heading was not reproduced on the test wells (LF15: the well settles
-  or dies) — the detector needs a sustained amplitude (last peak-to-peak ≥ 0.8 × the first) so the decaying THP oscillation after an
-  unloading is not called heading; Belfroid (option) floors β at 5° from horizontal (ASSUMED) and uses the published 0.74 normalisation
+  projects to ≈ 59 MB for 24 h; a reload loses an unsaved run; heading was reproduced (4.6.1) on one gas-lift casing-heading case — the
+  `heading` fixture (an orifice valve at 3,000 ft, constant 200 Mscf/d into the 7" annulus) cycles from the model with a ≈ 75 min period
+  and the detector flags it at 60 cells (LF28, X19; at 80 cells the same cycle reads 2 pairs in 3 h, so the flag depends on secondary
+  surges), while natural-flow oil heading is still not reproduced (LF15: the well settles or dies); the detector needs a sustained amplitude
+  (last peak-to-peak ≥ 0.8 × the first) so the decaying THP oscillation after an unloading is not called heading; a step that failed every
+  halving within 1 psi of the choke's p_dn is retried once with the choke closed (fallback choke hold, 4.6.1, EN32; runs that never failed a
+  step are bit-identical); Belfroid (option) floors β at 5° from horizontal (ASSUMED) and uses the published 0.74 normalisation
   (factor 1.001 at vertical); the help cap raises for the welldyn guide and shots were approved under the plan's Q4 (owner, 2026-11-16;
-  images 8.27 MB, text 392.5 kB raw / 136.5 kB gzip — a new shot or text growth needs another owner cap decision); the WD0 fixture file tests/_welldyn-shapes.js was never
-  written (the lane fixtures _welldyn-wd1.js / _welldyn-wd4.js stand in).
+  images 8.27 MB, text 392.5 kB raw / 136.5 kB gzip — a new shot or text growth needs another owner cap decision).
 - **DFIT (v3.4, 3.4a)** (docs/DFIT-PLAN.md §8.4, Appendix D): every closure / ISIP / p_i / step-down label and the grade are rule
   labels shown as "provisional — not yet calibrated" (`PRiSM_dfit_cal` is the calibrated:false placeholder until WP8 in 3.4b);
   on the benchmark pre set the leak-off mechanism is right in only ≈ 19 % of cases (a q-tip case reads as PDL), so the type is
@@ -862,7 +867,7 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 PRiSM PVT (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.); PRiSM_pvt_correlations 38 keys (18 A2 additions, provisional)
 Smoke-test checks:            347/347 pass
-Acceptance tests:             2385/2385 pass (unique, --list), 204 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6)
+Acceptance tests:             2392 unique (--list; 2385/2385 passed at 4.6, + 7 in the 4.6.1 wdhead lane, its welldyn-* files pass), 205 files (accept-test.js --html --integration; acct-* = v4.0 / v4.2 accounts client; wellperf-* v4.3 / v4.4 / v4.5; welldyn-* v4.6)
 Server tests:                 278/278 (node server/test/run.js; throwaway database cluster)
 Help:                         a guide for every routed page (PRiSM incl. DFIT), 11 simulator course exercises, 5 field scenarios (FS-5 4.1),
                               Well performance course of 3 exercises (4.4), 227 screenshots (8,254,838 of the 8.27 MB cap since 4.6 — a new shot
@@ -871,7 +876,7 @@ Help:                         a guide for every routed page (PRiSM incl. DFIT), 
                               guide (3 shots, welldynRun action), 17 "How do I…" tasks (wdload, wdgl in 4.6)
 Well Performance gate:        wellperf-validate.js --html --gate --check --time (D17 gate PASS, 62/62 cross-checks, every E budget ok)
 Well Dynamics gate:           welldyn-validate.js --html --gate --check --time (D17 PASS, G1–G7 within 2 % / 1 % (largest gasLift +0.78 % rate),
-                              23/23 checks, X11 a pointer to welldyn-lift LF2; every timing row inside its fail line, §5.6 budget misses reported)
+                              24/24 checks (X19 casing heading, 4.6.1), X11 a pointer to welldyn-lift LF2; every timing row inside its fail line, §5.6 budget misses reported)
 3D simulator tests:           149 checks (wts3d-test.js; 147/149 on a Linux LF checkout — the two CRLF checks)
 Simulator perf gate:          wts-sim-perf.js (vs frozen v3.3.1: default ≈ 1.00-1.01, both items in ≈ 1.45 / 1.6, ck2 ≈ 1.0 / 1.10,
                               cushion ≈ 1.10 / 1.15, line ≈ 0.9 / 1.05); wts-calc-golden.js --check --time

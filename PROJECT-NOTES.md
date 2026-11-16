@@ -5,6 +5,19 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 4.6.1 (draft)
+
+- **Well Dynamics heading + WD0 fixture file (lane `f461/wdhead`, docs/WELL-DYNAMICS-PLAN.md §3.9, §4.13, §11.7).** Heading reproduced from
+  the model on one gas-lift casing-heading case: the new fixture `heading` (gasLift well, one 20/64 in orifice valve at 3,000 ft, packer
+  3,100 ft, constant 200 Mscf/d into the 7" annulus) cycles with a ≈ 75 min period (THP ≈ 100 ↔ 254 psig, rate 0 ↔ ≈ 440 STB/d); the
+  detector flags it over the last 3 h at 60 cells (welldyn-lift LF28, welldyn-validate X19); natural-flow oil heading is still not
+  reproduced (LF15). Engine: a step that failed every halving within 1 psi of the choke's downstream pressure is retried once with the
+  choke closed (fallback choke hold, EN32) — the wellhead Newton cycled at the choke's Δp → 0 kink when a gas slug reached a dead,
+  liquid-full tubing; runs that never failed a step are bit-identical (every welldyn gate and test unchanged). The frozen §3.9 file
+  `tests/_welldyn-shapes.js` is written (FIX incl. pinned gas-lift valve rows and pump, EXPECT, SCEN, ORDER, SHAPE, helpers), hash-pinned by
+  the new `welldyn-shapes` (WS1–WS5); the lane stand-ins `_welldyn-wd1.js` / `_welldyn-wd4.js` are retired. No page preset (a 4.5 h
+  heading run takes ≈ 30–40 s wall, over the 10 s preset limit).
+
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 
 App and App Store version 4.6 (`RELEASE_NOTES[0]` v4.6, dated 2026-11-14, both platforms, title "Well Dynamics: transient well
