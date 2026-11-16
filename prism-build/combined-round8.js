@@ -28119,6 +28119,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var nRad = ok.filter(function (d) { return d.tRec <= st.allowedH; }).length;
             var nLin = ok.filter(function (d) { return d.tc != null && 2 * d.tc <= st.allowedH; }).length;
             var label = nRad >= 0.5 * n ? 'radial' : (nLin >= 0.5 * n ? 'linear' : 'closure-only');
+            // shut-in goal (4.6.1): 'radial' (also when the field is absent: stored ranges keep the §6.5 rule max(t_shut, 3 t_c, t_ε, t_W))
+            // or 'outcome' (the designer's default ranges): radial confirmation counts only when radial flow is the expected outcome,
+            // so a 'linear' or 'closure-only' design recommends the shut-in its own goal needs (max(3 t_c, t_ε, t_W)); t_shut stays in tConfirm
+            var goal = R.shutInGoal === 'outcome' ? 'outcome' : 'radial';
+            if (goal === 'outcome' && label !== 'radial') ok.forEach(function (d) {
+                var b2 = null;
+                [['3tc', d.t3tc], ['afterflow', d.tEps], ['precision', d.tW]].forEach(function (c) { if (c[1] != null && _isFinite(c[1]) && (!b2 || c[1] > b2[1])) b2 = c; });
+                if (b2) { d.shutIn = b2[1]; d.binding = b2[0]; }
+            });
             var shutP = _p3(ok.map(function (d) { return d.shutIn; })), bindCount = {};
             ok.forEach(function (d) { bindCount[d.binding] = (bindCount[d.binding] || 0) + 1; });
             var binding = Object.keys(bindCount).sort(function (a, b) { return bindCount[b] - bindCount[a]; })[0];
@@ -28178,7 +28187,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             });
             if (nClosed < n) warnings.push(_w('NO_CLOSURE_SOME', 'info', (n - nClosed) + ' of ' + n + ' draws do not close within the allowed shut-in.'));
             if (st.V < st.Vmin) warnings.push(_w('VOLUME_BELOW_VMIN', 'warn', 'The planned ' + _sig(st.V, 3) + ' bbl is below V_min ≈ ' + _sig(st.Vmin, 3) + ' bbl: afterflow may bias the after-closure analysis.'));
-            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding };
+            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding, goal: goal };
             var vmn = _p3(ok.map(function (d) { return d.Rvis; }));
             finish({
                 ok: true, n: n, seed: st.seed, outcome: { label: label, text: text.slice(0, 299) },
@@ -29834,12 +29843,64 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         return null;
     }
     var PICK_PLOTS = { dfitG: 1, dfitSqrt: 1, dfitLogLog: 1, dfitCompliance: 1, dfitStrip: 1, dfitIsip: 1 };
+    // G-function plot window (4.6.1): the record's G axis runs to the end of the falloff, which squeezes the closure region into the
+    // left quarter. The plot opens on shut-in (G = 0) through the latest closure pick + 50 % (voting picks, the consensus, user
+    // picks and the override); the full range is one click away (Reset view / double-click), as on every zoomed PRiSM plot.
+    // null when there is no pick or the window would cover nearly the whole record.
+    var G_WIN_MARGIN = 0.5, G_WIN_MIN_GAIN = 0.85;
+    function gWindow(run, T) {
+        var d = run && run.derivs;
+        if (!d || !_arr(d.G) || !_arr(d.p)) return null;
+        var gAll = _finiteVals(d.G);
+        if (gAll.length < 5) return null;
+        var gMax = Math.max.apply(null, gAll), last = null;
+        function take(p, g) { var x = _isNum(g) ? g : _gAtP(d, p); if (_isNum(x) && x > 0 && (last == null || x > last)) last = x; }
+        (_arr(run.picks) ? run.picks : []).forEach(function (pk) { if (pk && pk.ok !== false && pk.vote && !pk.vetoed && _isNum(pk.p)) take(pk.p, pk.G); });
+        var c = _closureOf(run);
+        if (c.mode === 'single') take(c.value);
+        else if (c.mode === 'range') { take(c.lo); (c.medians || []).forEach(function (m) { take(m); }); }
+        T = T || test();
+        var U = (T && T.picks && T.picks.user) || {};
+        Object.keys(U).forEach(function (k) { var u = U[k]; if (u && (k === 'dfitClosure' || /closure/i.test(k)) && _isNum(u.p)) take(u.p, u.G); });
+        var cp = T && T.picks && T.picks.closure;
+        if (cp && cp.source === 'user' && _isNum(cp.p)) take(cp.p, cp.G);
+        if (last == null) return null;
+        var xm = Math.min(gMax, last * (1 + G_WIN_MARGIN));
+        if (!(xm > 0) || xm >= G_WIN_MIN_GAIN * gMax) return null;
+        var ys = [];
+        for (var i = 0; i < d.G.length; i++) if (_isNum(d.G[i]) && d.G[i] <= xm && _isNum(d.p[i])) ys.push(d.p[i]);
+        if (ys.length < 2) return null;
+        var ylo = Math.min.apply(null, ys), yhi = Math.max.apply(null, ys), pad = 0.06 * ((yhi - ylo) || Math.abs(yhi) || 1);
+        return { x: { min: -0.02 * xm, max: xm }, y: { min: ylo - pad, max: yhi + pad }, gMax: gMax, gLast: last };
+    }
+    // Applied when the G plot is drawn without a user view: on its first draw for a record (the plot's data signature) and each time
+    // the canvas comes back to it from another plot. A Reset view (button or double-click) while on the G plot sticks: the next
+    // redraws of the same record keep the full range.
+    function _applyGWindow(canvas, ax, lastKey) {
+        if (!canvas || !ax || ax.userView) return false;   // the user's own zoom (or the window already applied) is kept
+        if (lastKey === 'dfitG' && canvas._dfitGWin === ax.dataSig) return false;   // reset to the full range
+        var w = gWindow(_run(), test());
+        if (!w) return false;
+        canvas._dfitGWin = ax.dataSig;
+        var setView = G.PRiSM_plotSetView || (typeof PRiSM_plotSetView === 'function' ? PRiSM_plotSetView : null);
+        if (typeof setView !== 'function') return false;
+        try { return setView(canvas, { x: { min: w.x.min, max: w.x.max }, y: { min: w.y.min, max: w.y.max } }) === true; } catch (e) { return false; }
+    }
     function picksHook(info) {
-        if (!info || !info.canvas || !PICK_PLOTS[info.plotKey]) return;
+        if (!info || !info.canvas) return;
+        var lastKey = info.canvas._dfitLastKey;
+        try { info.canvas._dfitLastKey = info.plotKey; } catch (e) { /* frozen */ }
+        if (!PICK_PLOTS[info.plotKey]) return;
         if (!info.exporting) _attachOwner(info.canvas, info.plotKey);
         var ax = info.canvas._prismAxes || info.axes;
         var run = _run();
         if (!ax || typeof ax.toX !== 'function' || !run) return;
+        // the window repaint runs this hook again (reason 'view') with the new axes, which draws the marks
+        // (the hooks after this one in the same loop then read the new axes through the shared info)
+        if (info.plotKey === 'dfitG' && info.reason !== 'view' && info.reason !== 'reset' && _applyGWindow(info.canvas, ax, lastKey)) {
+            try { info.axes = info.canvas._prismAxes || info.axes; } catch (e) { /* frozen info */ }
+            return;
+        }
         var ctx = info.canvas.getContext && info.canvas.getContext('2d');
         if (!ctx) return;
         var d = run.derivs, T = test(), plot = ax.plot || { x: 0, y: 0, w: 300, h: 150 };
@@ -31251,7 +31312,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (f) { try { var m = f(run, dstate().report || {}); if (m && _arr(m.sections)) return m; } catch (e) { /* none */ } }
         return null;
     }
-    function _blockCell(c) { if (_isNum(c)) return _f(c, Math.abs(c) < 10 ? 3 : (Math.abs(c) < 1000 ? 1 : 0)); return c == null ? '—' : String(c); }
+    // report cells: integers as they are (counts, log numbers), small values to 3 significant figures (CL ~1e-4), else 3 / 1 / 0 dp
+    function _blockCell(c) {
+        if (_isNum(c)) return (c % 1 === 0) ? _f(c, 0) : ((Math.abs(c) < 0.01) ? _sig(c, 3) : _f(c, Math.abs(c) < 10 ? 3 : (Math.abs(c) < 1000 ? 1 : 0)));
+        return c == null ? '—' : String(c);
+    }
     function _sectionFn(id, title, order) {
         var fn = function () {
             if (!_inDfit()) return null;
@@ -31266,14 +31331,19 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 else if (logBlocks.length) sec = { id: id, title: title, order: order, blocks: logBlocks };
             }
             if (!sec || !_arr(sec.blocks) || !sec.blocks.length) return null;
-            var kv = [], table = null, notesOut = [];
+            // 36 renders a section's legacy kv / table / notes AND its blocks, so a section that gave both showed every table twice
+            // (4.6.1): the blocks alone carry the content, in their own order, with the cells formatted here (36 prints them as given)
+            var blocks = [];
             sec.blocks.forEach(function (b) {
-                if (b.kind === 'kv' && _arr(b.rows)) b.rows.forEach(function (r) { kv.push([_txt(r[0]), _txt(_blockCell(r[1]))]); });
-                else if (b.kind === 'kpi' && _arr(b.items)) b.items.forEach(function (it) { kv.push([_txt(it.label), _txt(_blockCell(it.value))]); });
-                else if (b.kind === 'table' && !table && _arr(b.head)) table = { head: b.head.map(_txt), rows: (b.rows || []).map(function (r) { return r.map(function (c) { return _txt(_blockCell(c)); }); }) };
-                else if (b.kind === 'verdict' || b.kind === 'notes') notesOut.push(_txt(b.text));
+                if (!_isObj(b)) return;
+                if (b.kind === 'kv' && _arr(b.rows)) blocks.push({ kind: 'kv', pairs: b.rows.map(function (r) { return [_txt(r[0]), _txt(_blockCell(r[1]))]; }) });
+                else if (b.kind === 'kpi' && _arr(b.items)) blocks.push({ kind: 'kv', pairs: b.items.map(function (it) { return [_txt(it.label), _txt(_blockCell(it.value))]; }) });
+                else if (b.kind === 'table' && _arr(b.head)) blocks.push({ kind: 'table', title: b.title ? _txt(b.title) : '', head: b.head.map(_txt), rows: (b.rows || []).map(function (r) { return (_arr(r) ? r : []).map(function (c) { return _txt(_blockCell(c)); }); }) });
+                else if (b.kind === 'verdict') blocks.push({ kind: 'verdict', level: b.level, text: _txt(b.text).replace(/^[✓⚠✗]\s*/, '') });   // 36 adds the mark
+                else if (b.kind === 'notes') blocks.push({ kind: 'notes', items: _arr(b.items) ? b.items.map(_txt) : [_txt(b.text)] });
+                else blocks.push(_clone(b));
             });
-            return { id: id, title: _txt(sec.title || title), order: order, kv: kv, table: table, notes: notesOut, blocks: _clone(sec.blocks) };
+            return { id: id, title: _txt(sec.title || title), order: order, kv: [], table: null, notes: [], blocks: blocks };
         };
         fn.modes = ['dfit'];
         fn._prismId = id;
@@ -31338,8 +31408,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                  hf: { p10: 40, p90: 100 }, hp: 40, Ep: { p50: 5e6, sdLn: 0.25 }, nu: 0.25, sigmaGrad: { p50: 0.7, sd: 0.02 }, piGrad: { p50: 0.45, sd: 0.02 }, datumTvd: z,
                  strings: T.inputs.strings, fluid: { kind: T.inputs.fluid.kind, rhoPpg: T.inputs.fluid.rhoPpg, muCp: T.inputs.fluid.muCp },
                  gauge: { kind: T.inputs.channels.primary === 'surface' ? 'surface' : 'bh', sigma: 0.05, resolution: 0.01, hz: 1, driftPsiPerDay: 0.1 },
-                 V: null, q: null, suggest: true, allowedShutInD: 10, targetW: null, repressurise: false, epsMax: 0.05, leakEps: 0.05 };
+                 V: null, q: null, suggest: true, allowedShutInD: 10, targetW: null, repressurise: false, epsMax: 0.05, leakEps: 0.05, shutInGoal: 'outcome' };
     }
+    // shut-in goal (4.6.1): 'outcome' = the shut-in the expected outcome needs (radial confirmation only when radial flow is expected;
+    // the default for new designs), 'radial' = always long enough to confirm radial flow (the 3.4a rule; stored ranges without the
+    // field keep it, so a saved design is never changed)
+    var GOAL_OPTS = [['outcome', 'Expected outcome (default)'], ['radial', 'Radial confirmation']];
+    function _goalOf(R) { return R && R.shutInGoal === 'outcome' ? 'outcome' : 'radial'; }
     function _designRanges() { var pl = dstate().plan; return (pl && _isObj(pl.ranges)) ? pl.ranges : _defaultRanges(); }
     function _dfVal(v) { return _isNum(v) ? String(+(+v).toPrecision(6)) : ''; }
     function renderDesignerTool(host) {
@@ -31351,6 +31426,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var h = _toolHost(host, 'prism_dfit_designer', '<div class="card"><div class="card-title">DFIT designer (pre-job)</div>' +
             _note('Plans the injection volume, rate, shut-in duration and gauge from ranges of the reservoir and rock properties (seeded ensemble). Field units.') +
             '<div class="fg">' + items + '</div>' +
+            '<div class="fg"><div class="fg-item"><label for="prism_dfit_dr_goal">Shut-in goal</label><select id="prism_dfit_dr_goal">' +
+            GOAL_OPTS.map(function (o) { return '<option value="' + o[0] + '"' + (_goalOf(R) === o[0] ? ' selected' : '') + '>' + _esc(o[1]) + '</option>'; }).join('') + '</select></div></div>' +
             '<div class="fg"><div class="fg-item"><label for="prism_dfit_design_n">Draws</label><input type="text" inputmode="decimal" id="prism_dfit_design_n" value="500"></div>' +
             '<div class="fg-item"><label for="prism_dfit_design_seed">Seed</label><input type="text" inputmode="decimal" id="prism_dfit_design_seed" value="1"></div></div>' +
             '<div class="prism-dfit-bar">' + _btn('prism_dfit_design_go', 'Design', 'design', 'btn-primary') + '</div>' +
@@ -31374,6 +31451,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         });
         ['k', 'phi', 'ct', 'muRes', 'h', 'hf'].forEach(function (k) { if (_isObj(R[k]) && _isNum(R[k].p10) && _isNum(R[k].p90) && R[k].p10 > R[k].p90) errs.push(k + ': P10 is above P90'); });
         R.suggest = !(_isNum(R.V) && _isNum(R.q));
+        var gEl = _byId('prism_dfit_dr_goal');
+        if (gEl) R.shutInGoal = String(gEl.value) === 'outcome' ? 'outcome' : 'radial';
         return { ranges: R, errors: errs };
     }
     var BIND_WORDS = { radial: 'radial confirmation', '3tc': 'three closure times', afterflow: 'afterflow', precision: 'p_i precision' };
@@ -31383,6 +31462,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var shTxt = sh && _isNum(sh.p50) ? _f(sh.p50 / 24, sh.p50 / 24 < 10 ? 1 : 0) + ' d (' + _f(sh.p50, 0) + ' h)' : '—';
         var html = _rbox('Design', [_rrow('Outcome', D.outcome ? D.outcome.label : '—'), _rrow('Closure time P50 (h)', _f(D.tc && D.tc.p50, 1)),
                     _rrow('Shut-in P50', shTxt + (sh ? ', set by ' + (BIND_WORDS[sh.binding] || sh.binding) : '')),
+                    _rrow('Shut-in goal', sh && sh.goal === 'outcome' ? 'expected outcome' : 'radial confirmation'),
                     _rrow('Allowed shut-in', _isNum(allow) ? _f(allow, 1) + ' d' : '—'), _rrow('Minimum volume (bbl)', _f(D.Vmin, 1))]);
         if (sh && _isNum(sh.p50) && _isNum(allow) && sh.p50 / 24 > allow)
             html += _verdict('warn', 'The P50 shut-in (' + _f(sh.p50 / 24, 1) + ' d, ' + (BIND_WORDS[sh.binding] || sh.binding) + ') is longer than the allowed ' + _f(allow, 1) + ' d.');
@@ -31402,7 +31482,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!_need(D && D.ok !== false, 'The design failed for these ranges.')) return null;
         var c = D.corridor || {};
         var cap = function (a) { return _arr(a) ? a.slice(0, 60) : []; };
-        dstate().plan = { ranges: ranges, summary: { ok: true, outcome: D.outcome, tc: D.tc, shutIn: D.shutIn, Vmin: D.Vmin, allowedShutInD: ranges.allowedShutInD, checklist: (D.checklist || []).slice(0, 20) },
+        dstate().plan = { ranges: ranges, summary: { ok: true, outcome: D.outcome, tc: D.tc, shutIn: D.shutIn, tConfirm: D.tConfirm || null, Vmin: D.Vmin, allowedShutInD: ranges.allowedShutInD, checklist: (D.checklist || []).slice(0, 20) },
                           corridor: { t: cap(c.t), p10: cap(c.p10), p50: cap(c.p50), p90: cap(c.p90) }, ticks: {} };
         _emit('prism:dfit-updated', { what: 'all', source: 'user' });
         var out = _byId('prism_dfit_design_out'); if (out) out.innerHTML = _designHTML(dstate().plan.summary, ranges);
@@ -31481,6 +31561,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // =========================================================================
     var CSS_ID = 'prism-dfit-css';
     var CSS = '.prism-dfit-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}' +
+        // rail rows (4.6.1): the label keeps its width (never squeezed under a long value, e.g. p_i), the value wraps on its side
+        '.prism-dfit-rail .rrow{gap:10px;align-items:baseline}.prism-dfit-rail .rrow .rl{flex:0 0 auto;max-width:45%}' +
+        '.prism-dfit-rail .rrow .rv{flex:1 1 auto;min-width:0;text-align:right;overflow-wrap:anywhere}' +
         '.prism-dfit-status{font-size:12px;color:var(--text2)}.prism-dfit-status--ok{color:var(--green)}.prism-dfit-status--warn{color:var(--yellow)}' +
         '.prism-dfit-progress{font-size:12px;color:var(--accent)}' +
         '.prism-dfit-warn{margin:6px 0;padding:6px 8px;border-left:3px solid var(--yellow);background:rgba(210,153,34,.08);font-size:12.5px}' +
@@ -31777,7 +31860,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         lkSimulate: _lkSimulate, lkFit: _lkFit, design: _design, replay: _replay, exportText: _exportText, exportSheet: _exportSheet,
         publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
         statusText: function () { return _status.text; },
-        handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch,
+        handles: _handles, gWindow: gWindow, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch,
         schematic: schematicSVG, schematicAt: _schemUpdate, applyBlunderFix: applyBlunderFix, applyDemoSetup: function (name) { var S = G.PRiSM_dfit_synth; return _applyDemoSetup(test(), S, name); }
     };
 

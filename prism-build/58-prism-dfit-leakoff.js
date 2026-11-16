@@ -1998,6 +1998,15 @@
             var nRad = ok.filter(function (d) { return d.tRec <= st.allowedH; }).length;
             var nLin = ok.filter(function (d) { return d.tc != null && 2 * d.tc <= st.allowedH; }).length;
             var label = nRad >= 0.5 * n ? 'radial' : (nLin >= 0.5 * n ? 'linear' : 'closure-only');
+            // shut-in goal (4.6.1): 'radial' (also when the field is absent: stored ranges keep the §6.5 rule max(t_shut, 3 t_c, t_ε, t_W))
+            // or 'outcome' (the designer's default ranges): radial confirmation counts only when radial flow is the expected outcome,
+            // so a 'linear' or 'closure-only' design recommends the shut-in its own goal needs (max(3 t_c, t_ε, t_W)); t_shut stays in tConfirm
+            var goal = R.shutInGoal === 'outcome' ? 'outcome' : 'radial';
+            if (goal === 'outcome' && label !== 'radial') ok.forEach(function (d) {
+                var b2 = null;
+                [['3tc', d.t3tc], ['afterflow', d.tEps], ['precision', d.tW]].forEach(function (c) { if (c[1] != null && _isFinite(c[1]) && (!b2 || c[1] > b2[1])) b2 = c; });
+                if (b2) { d.shutIn = b2[1]; d.binding = b2[0]; }
+            });
             var shutP = _p3(ok.map(function (d) { return d.shutIn; })), bindCount = {};
             ok.forEach(function (d) { bindCount[d.binding] = (bindCount[d.binding] || 0) + 1; });
             var binding = Object.keys(bindCount).sort(function (a, b) { return bindCount[b] - bindCount[a]; })[0];
@@ -2057,7 +2066,7 @@
             });
             if (nClosed < n) warnings.push(_w('NO_CLOSURE_SOME', 'info', (n - nClosed) + ' of ' + n + ' draws do not close within the allowed shut-in.'));
             if (st.V < st.Vmin) warnings.push(_w('VOLUME_BELOW_VMIN', 'warn', 'The planned ' + _sig(st.V, 3) + ' bbl is below V_min ≈ ' + _sig(st.Vmin, 3) + ' bbl: afterflow may bias the after-closure analysis.'));
-            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding };
+            var shut = { p10: shutP.p10, p50: shutP.p50, p90: shutP.p90, binding: binding, goal: goal };
             var vmn = _p3(ok.map(function (d) { return d.Rvis; }));
             finish({
                 ok: true, n: n, seed: st.seed, outcome: { label: label, text: text.slice(0, 299) },

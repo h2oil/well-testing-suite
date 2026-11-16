@@ -26,7 +26,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '2ec40df3', units: 'field',
+  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: '7ac80760', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -96,13 +96,13 @@ var prism = {
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
   { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
-    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
+    steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'The [[glossary#gfunction|G-function]] plot opens from shut-in to past closure; Reset view shows it all.', 'A pick under the frictional limit is vetoed.',
       'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
   { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
     steps: [{ t: 'Set the origin; read the log-log, F_L, F_R and [[glossary#impulse|impulse]] plots.', shot: 'dfit-aca' }, 'Tab Leak-off model: Simulate in the sandbox, or History match, Fit.',
       'Tab Uncertainty: P10/P50/P90 of each output.', 'Tab What this test can tell (after a fit).'] },
   { id: 'dfit-report', title: 'DFIT ⑤ Report, Tools', what: ['PDF, picks, frac-design CSV; a Quick Report key line; [[wells]] shows the closure gradient.'],
-    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. Radial flow often needs far more shut-in than allowed: plan for p_i and k bounds.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
+    steps: ['Open in PTA (transient) hands over p_i only if labelled high or medium; with a closure range pick the F1 or F2 chain.', { t: 'Tools: designer, sandbox, replay, water hammer, notes. The designer sizes the shut-in for the expected outcome; the goal Radial confirmation often needs far longer.', shot: 'dfit-plan' }, 'Spurt is not separable: η is an upper bound.'] }]
 };
 
 var oilgas = {
@@ -166,7 +166,7 @@ function wj(id, t, alt, ex, n, click, done, pre, view, sc) {
   o.mask = ['#wp_steps']; o.padTop = 0; if (view) o.view = view; return o;
 }
 var wellperf = {
-  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: '157cfae5', units: 'dual',
+  route: 'wellperf', reviewed: 'v4.5', reviewedSrc: 'd2d99de3', units: 'dual',
   keywords: ['nodal analysis', 'VLP', 'IPR', 'operating point', 'liquid loading', 'deviation survey', 'ESP pump', 'gas-lift design', 'lift curve tables', 'heat-transfer U layers', 'lift screening'],
   purpose: 'Nodal analysis: the rate where the inflow meets the lift through the tubing, choke and flowline to the separator.',
   what: ['The crossing of the inflow (IPR) and the outflow is the operating point. The lift marches on the inclination of each segment: gravity on TVD, friction on MD.',
@@ -204,7 +204,7 @@ var wellperf = {
     surface: { choke: { present: true, bean64: 32 }, psep_psig: 100, flowline: [{ len: 2000, id: 3, dz: 0 }] } },
     expect: { ok: true, 'op.q': 913.9, 'op.p': 2543.1, 'qs.q': 318.6, 'vlpMin.q': 560.9, 'surface.thp_psig': 320.4 } } },
   parts: [{ id: 'stability', title: 'Stability', what: ['q_s is the lowest stable rate: below it the well dies or heads. The tubing-curve minimum is an older, stricter rule; a point between them is stable.'] }, { id: 'loading', title: 'Liquid loading', what: ['Gas wells: the critical rate (Turner, Coleman or Li, provisional) is checked at every node, wellhead to shoe; the worst depth is shown. A wider casing below the shoe is information.'] },
-  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there (**All used tests**: the RMS; pick a test above the plot for its traverses); QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
+  { id: 'match', title: 'Comparison and QC', what: ['Tests with a gauge rank the correlations by their error there; QC codes flag bad tests. A test can back-calculate p̄r, J or [[glossary#skin|skin]].'] }, { id: 'design', title: 'Design', steps: ['**Solve for**: **Bean or THP for a target rate**; enter the **Target rate**.', 'Select **Solve the design**, then **Use this bean**.', '**Bean schedule** solves each bean of the **Bean list**.'] },
   { id: 'pvt', title: 'PVT correlations', what: ['**Fluid properties** in ① overlays each black-oil correlation; drag the pb handle. Provisional ones are dashed.'] },
   { id: 'labmatch', title: 'PVT lab match', what: ['**PVT lab data** in ①: lab temperature, basis (flash or differential), lab bubble point and a table of pressure with Rs, Bo and μo. **Match to the lab data** fits pb by a one-point factor, then Rs below pb, Bo and μo each as a·y + b (least squares on relative errors). Every black-oil correlation and viscosity pair is ranked against the points.',
   'The Rs shift tapers as b·min(1, p / pb), so Rs at stock-tank and separator pressures stays the correlation\'s. Differential data with a separator test are adjusted to flash (provisional). Apply sends the matched set into every solve.'] },
@@ -383,7 +383,7 @@ var oilipr = {
 };
 
 var gaslift = {
-  route: 'gaslift', reviewed: V, reviewedSrc: 'db2eec97', units: 'dual',
+  route: 'gaslift', reviewed: V, reviewedSrc: 'cbcbf995', units: 'dual',
   keywords: ['gas lift', 'artificial lift', 'unloading', 'valve spacing'],
   purpose: 'Screening design of continuous gas lift: point of injection, gas needed, valve spacing and schedule.',
   what: ['Balances the gas column against the flowing traverse ([[flowline]] engine), then spaces and sets the valves.'],

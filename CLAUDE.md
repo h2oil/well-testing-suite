@@ -779,10 +779,10 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   far-field extension reading (gate G6; PRiSM_dfit_hFn / farField return null), the uncertainty tornado / input-share display
   (computed in PRiSM_dfit_uncertainty, not shown) (3.4b, v3.4.1). The re-pump verdict has no
   acknowledgement control and the triage salvage list is not displayed. Measured file budgets exceed the plan (dfit-integration
-  ≈ 10 s for 17 tests, ≤ 8 s planned; the 17 DFIT files ≈ 46 s in one run). Owner-visible page issues seen at the help round: the
-  G-function plot's default x-range spans the whole record, the rail's p_i label
-  can run into its value, step ⑤ shows each table twice, and the designer's default ranges give a P50 shut-in far above the allowed
-  time. Field units only; `WTS_state.dfit` carries `labelsCalibrated` / `labelNote`.
+  ≈ 10 s for 17 tests, ≤ 8 s planned; the 17 DFIT files ≈ 46 s in one run). The four page issues seen at the help round (G-function
+  plot over the whole record, rail p_i label, step ⑤ tables twice, designer default P50 shut-in above the allowed time) are fixed in
+  4.6.1 (docs/DFIT-PLAN.md Appendix E; the designer's `shutInGoal` 'outcome' default, absent = the 3.4a radial rule).
+  Field units only; `WTS_state.dfit` carries `labelsCalibrated` / `labelNote`.
 
 ---
 

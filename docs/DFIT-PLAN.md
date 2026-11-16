@@ -983,10 +983,11 @@ LkFit = { ok, preset, params, ci95, ci95Inflated, corr, nEff, rho1, structural:{
 DesignRanges = { k:{p10, p90}, phi:{p10, p90}, ct:{p10, p90}, muRes:{p10, p90}, h:{p10, p90}, hf:{p10, p90}, hp,
                  Ep:{p50, sdLn}, nu, sigmaGrad:{p50, sd}, piGrad:{p50, sd}, datumTvd, strings, fluid,
                  gauge:{kind:'surface'|'bh', sigma, resolution, hz, driftPsiPerDay}, V:null|bbl, q:null|bbl/min, suggest:true,
-                 allowedShutInD, targetW, repressurise:false, epsMax:0.05, leakEps:0.05 }
+                 allowedShutInD, targetW, repressurise:false, epsMax:0.05, leakEps:0.05,
+                 shutInGoal?:'outcome'|'radial' }   // 4.6.1, Appendix E: absent = 'radial' (the §6.5 rule); the UI defaults = 'outcome'
 
 Design = { ok, n, seed, outcome:{label:'closure-only'|'linear'|'radial', text},
-           tc:{p10,p50,p90}, shutIn:{p10,p50,p90, binding:'radial'|'3tc'|'afterflow'|'precision'},
+           tc:{p10,p50,p90}, shutIn:{p10,p50,p90, binding:'radial'|'3tc'|'afterflow'|'precision', goal:'outcome'|'radial'},
            tRadial:{p10,p50,p90}, signalPsi:{p10,p50,p90}, Vmin, Rvis:{p50}, vacuum:{risk, text},
            gauge:{bhRequired, why:[], hz, resolutionPsi, driftPsiPerDay}, leak:{qkMax, theta, holdMin, dTneeded},
            stepDown:{rates:[]}, repressurise:{q, V, kneeP:{p10,p50,p90}}|null, precision:[{tEndD, sdPi}],
@@ -2369,7 +2370,9 @@ the hinge model (§4.15b), so WP2 needs neither the mini-model nor the generator
   - impulse validity t ≥ 3 t_c; afterflow t ≥ 33,890·C_ac·μ/(kh); signal at radial recognition
     Δp = 0.4468·V/(t_DL·φc_t·h·L²) with t_DL = 1.6 ≥ 35–50 σ_gauge (independent of k);
   - p_i bracket width W: linear t_W = (m_L′/(2W))² with m_L′ = 97.54·(V/A)·√(μ/(kφc_t)), radial t_W = 1,694.5·Vμ/(khW).
-  **Recommended shut-in = max(t_shut, 3 t_c, t_ε, t_W)** as P10/P50/P90 with the binding criterion named.
+  **Recommended shut-in = max(t_shut, 3 t_c, t_ε, t_W)** as P10/P50/P90 with the binding criterion named. Since 4.6.1 (Appendix E)
+  this is the `shutInGoal:'radial'` rule; with `'outcome'` (the designer's default ranges) t_shut counts only when the outcome label is
+  radial, so a linear or closure-only design recommends max(3 t_c, t_ε, t_W).
 - **Outputs:** outcome label "closure only" / "linear: p_i ± W" / "radial: kh/μ ± x %" (the class reached by ≥ 50 % of draws within
   the allowed shut-in) with a sentence saying the width comes from the k range; t_c P10/P50/P90; V_min ≈ C_ac·(p_c − p_i)/ε_max
   (7.5e-4 × 2,500/0.05 = 37.5 bbl; 19 bbl at ε_max 0.10); predicted R_vis (storage-consistent); vacuum risk ("surface gauge
@@ -3811,3 +3814,37 @@ PRiSM guide parts) plus shots recipes, within the `help-content.test.js` byte ca
     labels being uncalibrated and on closure ranges.
 12. Screenshots: step ① with triage, step ③ closure board on the reference demo, step ④ after-closure, the designer; then
     `help-shots.js --route prism` and `build-user-guide.js`.
+
+## Appendix E. 4.6.1 follow-up — DFIT page issues seen at the help round (lane dfitui)
+
+Four owner-visible page issues recorded in CLAUDE.md after the 3.4.1 help round, fixed on branch `f461/dfitui` (files 58, 59, the
+prism help guide and its `dfit-plan` shot; tests `dfit-ui` U17–U21). Measured on the reference demo in the built page (Chromium,
+1280×800 and 390×844, deviceScaleFactor 1).
+
+- **(a) G-function plot window.** The plot's x-range ran to the end of the falloff (G 0–72.9 on the reference demo; closure at G ≈ 18
+  sat in the left quarter). The plot now opens on shut-in (G = 0) through the latest closure pick × 1.5 (voting picks, the consensus
+  value or range ends and medians, user closure picks and the override): G −0.5–27 on the reference demo, with the pressure axis fitted
+  to the points inside. The window is applied as a zoomed view by the `dfit-picks` post-draw hook (`PRiSM_dfit_ui.gWindow`), so the
+  auto range stays the whole record: **Reset view** (the Tab-2 button, enabled with "Restore the full axis range") or a double-click
+  shows it, and that choice sticks for the record; the window comes back when the canvas returns from another plot or the data change.
+  No window when there is no pick, or when it would cover ≥ 85 % of the record. Step ⑤'s G-function plot block uses the same window.
+- **(b) Rail p_i label.** The host `.rrow` flex row let a long value squeeze the label (`p_i` drawn as `p_|` against its value at
+  1280 px and in the 390 px sheet). DFIT rail rows now keep the label at its width (`flex:0 0 auto; max-width:45%`, gap 10 px) and wrap
+  the value on its side (`min-width:0; overflow-wrap:anywhere`). Measured at 390 px: every label ends 10 px before its value; values
+  end inside the sheet (367 of 376 px).
+- **(c) Step ⑤ tables twice.** 36 renders a section's legacy `kv` / `table` / `notes` and then its `blocks`; 59's section adapter gave
+  both, so each DFIT table appeared twice (17 tables on the reference demo, 9 after the fix; the PDF had the same duplication). The
+  adapter now returns the blocks only, with the cells formatted (integers as they are, |x| < 0.01 to 3 significant figures — CL showed
+  0.000 before — else 3 / 1 / 0 dp) and the leading ✓ / ⚠ / ✗ of a verdict text dropped (36 adds the mark; the headline showed "⚠ ⚠").
+- **(d) Designer default shut-in.** With the default ranges the reference design read outcome *linear* but recommended a P50 shut-in of
+  634 d (15,207 h), set by radial confirmation, against 10 d allowed. The ranges are a tight-rock default on purpose (radial needs
+  ≈ 140 d at P50), so they were not widened; instead `DesignRanges.shutInGoal` was added: `'outcome'` (the designer's default ranges
+  and the new **Shut-in goal** select, "Expected outcome (default)") counts radial confirmation only when radial is the expected
+  outcome; `'radial'` keeps the §6.5 rule. A stored plan's ranges (no field) and the engine called without it keep `'radial'`, so user
+  and saved ranges are untouched. Default design after: P50 shut-in 1.5 d (37 h), set by afterflow, within 10 d (P10 3.2 h, P90
+  369 h); t_c, t_shut (tConfirm), the outcome and its text are unchanged. Not a new method (D17 does not apply): the same candidate
+  times, only the choice of which ones bind.
+- **Help.** The `dfit-plan` shot was re-taken (14,202 → 11,320 bytes; image total 8,248,694 of the 8.27 MB cap); the other DFIT shots
+  are unchanged by these fixes (`dfit-board` shows the board panel, not the G plot). The prism guide gained one step on the G window and
+  a designer sentence on the goal; re-reviewed at v4.6.1 (reviewedSrc 7ac80760). The PRiSM `view-d` / `tools-d` shots drift for
+  reasons outside this lane (sidebar rows since v3.4) and were left as they were.

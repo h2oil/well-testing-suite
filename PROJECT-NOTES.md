@@ -21,6 +21,11 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
   in the engines on the path. Harness oil 311 → 44 ms, gas 453 → 59 ms, sensitivity 10 cases 1,301 → 153 ms; headless Chromium
   oil ≈ 57 → 28 ms, gas ≈ 67 → 37 ms, sensitivity ≈ 0.21 → 0.1 s. New test file wellperf-followup (WFU1–WFU4). Rounds 3 (16-pvt) and
   9 rebuilt.
+- **DFIT page fixes (lane dfitui, docs/DFIT-PLAN.md Appendix E):** the G-function plot opens on shut-in → latest closure pick × 1.5
+  (Reset view = the whole record); the rail label is never squeezed by a long value (p_i, desktop and 390 px); step ⑤ / the PDF show
+  each DFIT table once (blocks only, formatted cells, one verdict mark); the designer gains `DesignRanges.shutInGoal` — the default
+  ranges use 'outcome' (reference default design: P50 shut-in 634 d → 1.5 d, within the allowed 10 d), stored / engine ranges without
+  it keep the radial rule. Files 58, 59, 48-calc-help-production (re-reviewed), `dfit-plan` shot; tests dfit-ui U17–U21.
 
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 
