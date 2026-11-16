@@ -12,6 +12,7 @@
 // LF16 timer cycle events land exactly · LF17 pressure cycle with minimum times · LF18 liquid removed per cycle reported
 // LF27 (integration §11.7) the Well Performance gas-lift example unloads with no STEP_FAIL
 // LF28 (integration, 4.6.1) casing heading from the model: the heading fixture cycles; the detector flags it (≥ 3 sustained pairs in 3 h)
+// LF29 (4.6.1, §11.8) the example unloads to its operating valve 6 within 5.5 h with few rejects; liquid-full cells carry no corr Δρ
 // LF19 extension snapshot / restore continues bit-identically · LF20 lift states and labels · LF21 ESP faceDp = the nodal pump node
 // LF22 ESP vent gas leaves the cell below the pump and appears in qg, qvent and cumOut · LF23 lift gas: free only, mixed gravity, surface qg
 // LFX  (WD4 engine finding) a liquid slug at the wellhead does not chatter the choke (implicit flowline back pressure)
@@ -530,6 +531,53 @@ module.exports = [
       const R = sim.R0, A = g.WTS_wp_gl.asheim(sim.M, R, { port64: 20 });
       assert.rel(R.op.q, W.EXPECT.heading.q, 1e-6, 'nodal root');
       assert.ok(A.ok && A.verified === false, 'Asheim screening provisional (verdict ' + A.verdict + ', F2 ' + A.F2 + ')');
+    }
+  },
+  {
+    name: 'LF29 (4.6.1) the Well Performance gas-lift example unloads to its operating valve 6 within 5.5 h, with few rejected steps; a liquid-full cell takes no gassy correlation density',
+    wp: WPK, opts: false, integration: true, timeoutMs: 300000,
+    run(_a, assert, ctx) {
+      // §11.8: (1) the correlation density difference of the drift cap is weighted by the cell's gas flux — a liquid-full cell of the
+      // killed column flowing up behind a valve took the −8 lbm/ft³ of the gassy reference stream and the column see-sawed ±70 psi step
+      // to step (4.6: 500–1,100 DP_LIMIT rejects per 4 h, 15–40 s); (2) the step grows to 0.8 of the pressure-change limit of the last
+      // step; (3) a choke's wellhead flux is not carried through zero by a Newton step and the damping stays on once the iteration cycled;
+      // (4) CFL 0.8. Measured at 4.6.1: valve 6 at ≈ 4.7 h, ≈ 100–150 DP_LIMIT rejects per 4 h.
+      const app = W.sharedApp(ctx), g = app.win;
+      g.confirm = () => true;
+      app.hook.nav('wellperf'); app.flush(200);
+      app.document.querySelector('[data-act=example][data-ex=gl]').click(); app.flush(500);
+      let M = g.WTS_wp_model.read();
+      const D = (() => { const j = g.WTS_wp_gl.design(M, g.WTS_wp_system.solve(M)); let st, n = 0; do { st = j.step(); n++; } while (!st.done && n < 1000); return j.result(); })();
+      assert.ok(D && D.ok, 'the example design');
+      const opN = D.valves.findIndex((v) => v.role === 'Operating') + 1;
+      g.WTS_wp_model.write({ glValves: app.toWin(g.WTS_wp_gl.valvesFromDesign(D)) });
+      M = g.WTS_wp_model.read();
+      app.hook.nav('home'); app.flush(50);
+      assert.strictEqual(opN, M.lift.gl.valves.length, 'the deepest of ' + M.lift.gl.valves.length + ' valves is the operating valve');
+      const bl = g.WTS_wd_lift.balanceLevel(M);
+      const sim = create(g, M, { start: 'static', static: { kind: 'level', liquidTopMd: Math.round(bl.md), liquid: 'water' }, reservoir: { prior: { kind: 'none' } },
+        events: [{ t: 0, type: 'open' }, { t: 0, type: 'gl', args: { qinj_Mscfd: M.lift.gl.qinj_Mscfd, mode: 'valves' } }] });
+      const first = {}; let liqChecked = 0;
+      sim.on('step', () => {
+        const o = sim.state.lift.gl.opValve; if (o && first[o] == null) first[o] = sim.state.t;
+        // (1) a liquid-full cell (no gas flux through it) carries no correlation density difference
+        if (sim.state.t < 1800) for (let i = 0; i < sim.n; i++) if (sim.cs.ag[i] < 1e-6 && sim.fs.jg[i] <= 0 && sim.fs.jg[i + 1] <= 0) { liqChecked++; if (sim.X.drho[i] !== 0) assert.fail('drho ' + sim.X.drho[i] + ' in the liquid-full cell ' + i + ' at ' + sim.state.t.toFixed(0) + ' s'); }
+      });
+      const r1 = sim.run(4 * H);
+      assert.ok(r1.ok, 'run: ' + r1.code + ' at ' + sim.state.t.toFixed(0) + ' s');
+      assert.ok(liqChecked > 0, 'liquid-full cells were checked');
+      const rej4 = sim.stats.rej || {};
+      assert.ok((rej4.DP_LIMIT || 0) <= 300, 'DP_LIMIT rejects in 4 h: ' + (rej4.DP_LIMIT || 0) + ' (4.6: 500–1,100)');
+      assert.ok(sim.stats.rejects <= 400, 'all rejects in 4 h: ' + JSON.stringify(rej4));
+      assert.ok(!(rej4.NEWTON > 0), 'no Newton failures: ' + JSON.stringify(rej4));
+      const r2 = sim.run(1.5 * H);
+      assert.ok(r2.ok, 'run to 5.5 h: ' + r2.code);
+      const seq = Object.keys(first).map(Number).sort((a, b) => a - b);
+      assert.deepStrictEqual(seq, [2, 3, 4, 5, 6].slice(0, seq.length), 'valves reached: ' + JSON.stringify(first));
+      assert.ok(first[opN] != null && first[opN] <= 5.5 * H, 'the operating valve ' + opN + ' reached at ' + (first[opN] / H || NaN).toFixed(2) + ' h');
+      assert.ok(seq.every((v, k) => !k || first[v] > first[seq[k - 1]]), 'valves uncover top-down in time');
+      assert.strictEqual(sim.state.lift.gl.opValve, opN, 'lifting from the operating valve at 5.5 h');
+      assert.ok(sim.state.balance.errCum <= 1e-8, 'mass balance ' + sim.state.balance.errCum);
     }
   },
 ];
